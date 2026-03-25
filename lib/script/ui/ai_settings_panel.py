@@ -150,6 +150,7 @@ _DICT_TO_CONFIG_FILE = {
     "TOOL_DISPATCHER": "config_timeouts.py",
     "TIMEOUTS": "config_timeouts.py",
     "DRAW": "config_runtime.py",
+    "STARTUP": "config_runtime.py",
 }
 
 _GENERAL_CONFIG_CATEGORIES = [
@@ -207,6 +208,7 @@ _GENERAL_CONFIG_CATEGORIES = [
             ("TOOL_DISPATCHER", "工具调度"),
             ("CLOUD_MUSIC", "鸣潮设置"),
             ("DRAW", "绘制"),
+            ("STARTUP", "启动"),
         ],
     },
 ]
@@ -314,6 +316,9 @@ _CATEGORY_KEY_ALLOWLIST = {
         "DRAW": {
             "scale",
         },
+        "STARTUP": {
+            "ensure_desktop_shortcut",
+        },
     },
 }
 
@@ -321,6 +326,7 @@ _GENERAL_BOOL_KEYS: set[tuple[str, str]] = {
     ("ANIMATION", "start_exit_enabled"),
     ("PARTICLES", "enable_stroke"),
     ("MORTOR", "bgm_enabled"),
+    ("STARTUP", "ensure_desktop_shortcut"),
 }
 
 _GENERAL_NUMERIC_RULES: dict[tuple[str, str], tuple[str, float, float]] = {
@@ -431,6 +437,7 @@ _DICT_FRIENDLY_NAME = {
     "TIMEOUTS": "超时",
     "TOOL_DISPATCHER": "工具调度",
     "DRAW": "绘制",
+    "STARTUP": "启动",
 }
 
 _KEY_FRIENDLY_NAME = {
@@ -448,6 +455,9 @@ _KEY_FRIENDLY_NAME = {
         "gif_fps": "GIF帧率",
         "frame_fps": "帧率",
         "start_exit_enabled": "启动/退出动画",
+    },
+    "STARTUP": {
+        "ensure_desktop_shortcut": "启动时创建快捷方式",
     },
     "BUBBLE_CONFIG": {
         "default_min_ticks": "默认最小显示tick",
@@ -894,6 +904,32 @@ def _num_gpu_from_mode(mode: str) -> int:
 
 class _WatermarkComboBox(QComboBox):
     """项目风格下拉框：自绘按钮内三角与 List 水印。"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._before_popup_callback: Callable[[], None] | None = None
+        self._popup_refreshing = False
+
+    def set_before_popup_callback(self, callback: Callable[[], None] | None) -> None:
+        self._before_popup_callback = callback
+
+    def showPopup(self) -> None:
+        callback = self._before_popup_callback
+        if callable(callback) and not self._popup_refreshing:
+            self._popup_refreshing = True
+            try:
+                callback()
+            finally:
+                self._popup_refreshing = False
+
+        if self.count() <= 0:
+            return
+
+        super().showPopup()
+        popup = self.view().window() if self.view() is not None else None
+        if popup is not None:
+            popup.raise_()
+            popup.activateWindow()
 
     def paintEvent(self, event) -> None:
         super().paintEvent(event)
@@ -1457,7 +1493,7 @@ class AISettingsPanel(QWidget):
         self._set_form_row_description(
             form,
             self._api_base_url,
-            "外部接口基地址，通常使用兼容 OpenAI 的 API 地址。启用 YuanBao-Free-API 时，这里应填写你的中转 API 地址，而不是腾讯元宝网页地址。",
+            "外部接口地址，通常填写兼容 OpenAI 的基地址；若直接填写完整的 `/chat/completions` 或 `/v1/chat/completions` 端点也可兼容。启用 YuanBao-Free-API 时，这里应填写你的中转 API 地址，而不是腾讯元宝网页地址。",
         )
 
         self._api_model = QLineEdit()
@@ -1545,6 +1581,7 @@ class AISettingsPanel(QWidget):
         self._ollama_model.setView(QListView(self._ollama_model))
         self._ollama_model.setEditable(True)
         self._ollama_model.setInsertPolicy(QComboBox.NoInsert)
+        self._ollama_model.set_before_popup_callback(self._refresh_ollama_model_dropdown)
         if self._ollama_model.lineEdit():
             self._ollama_model.lineEdit().setPlaceholderText("自动检测本地模型")
         form.addRow("Ollama模型", self._ollama_model)
@@ -1859,7 +1896,7 @@ class AISettingsPanel(QWidget):
                 consumed_keys.add(key)
                 section_fields_added = True
 
-                if category_id == "ui_anim" and str(dict_name) == "ANIMATION" and key == "start_exit_enabled":
+                if category_id == "system_dispatch" and str(dict_name) == "STARTUP" and key == "ensure_desktop_shortcut":
                     self._append_autostart_field(
                         form,
                         fields,
@@ -3498,6 +3535,12 @@ class AISettingsPanel(QWidget):
             if selected_text:
                 self._ollama_model.setEditText(selected_text)
         self._ollama_model.blockSignals(False)
+
+    def _refresh_ollama_model_dropdown(self) -> None:
+        if not isinstance(self._ollama_model, QComboBox):
+            return
+        selected_text = self._ollama_model.currentText().strip()
+        self._refresh_ollama_model_choices(selected_text)
 
     def _emit_info(self, text: str, min_tick: int = 12, max_tick: int = 140) -> None:
         self._ec.publish(Event(EventType.INFORMATION, {

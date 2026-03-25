@@ -5,11 +5,44 @@ from __future__ import annotations
 import json
 import threading
 import time
+from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 
 class YuanBaoAuthError(RuntimeError):
     """元宝登录态抓取失败。"""
+
+
+def _project_root() -> Path:
+    return Path(__file__).resolve().parents[3]
+
+
+def _iter_local_playwright_executables(root_dir: Path):
+    if not root_dir.exists() or not root_dir.is_dir():
+        return
+    for candidate in root_dir.rglob("chromium-*"):
+        if not candidate.is_dir():
+            continue
+        for relative in (
+            Path("chrome-win") / "chrome.exe",
+            Path("chrome-win64") / "chrome.exe",
+        ):
+            executable = candidate / relative
+            if executable.exists():
+                yield executable
+                break
+
+
+def _find_local_playwright_executable() -> Path | None:
+    roots = (
+        _project_root() / "resc" / "playwright" / "browsers" / "ms-playwright",
+        _project_root() / "resc" / "playwright",
+        _project_root() / "resc",
+    )
+    for root in roots:
+        for executable in _iter_local_playwright_executables(root):
+            return executable
+    return None
 
 
 def _parse_cookie_header(raw: str) -> dict[str, str]:
@@ -198,7 +231,15 @@ def capture_yuanbao_login_state(
         emit('正在启动浏览器并打开元宝登录页...')
         playwright = sync_playwright().start()
         launch_errors: list[str] = []
+        local_executable = _find_local_playwright_executable()
+        if local_executable is not None:
+            try:
+                browser = playwright.chromium.launch(executable_path=str(local_executable), headless=False)
+            except Exception as exc:
+                launch_errors.append(f'local:{local_executable}: {exc}')
         for channel in ('msedge', 'chrome', None):
+            if browser is not None:
+                break
             try:
                 kwargs = {'headless': False}
                 if channel:

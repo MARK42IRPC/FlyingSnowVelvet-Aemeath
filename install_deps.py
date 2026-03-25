@@ -9,7 +9,7 @@
    - python_executable
    - pythonw_executable
 5. 下载 Vosk 中/英文模型到 resc/models/vosk-model-small-*/.
-6. 准备 yuanbao-free-api 本地中转服务及其依赖.
+6. 准备 yuanbao-free-api 本地中转服务资源.
 7. 启动主程序.
 """
 
@@ -48,18 +48,26 @@ DEPENDENCIES = [
     # (pip package, description, import checks)
     ("PyQt5", "Qt GUI framework", ("PyQt5",)),
     ("Pillow", "image processing", ("PIL",)),
+    ("fastapi", "YuanBao relay API framework", ("fastapi",)),
+    ("httpx", "async HTTP client for YuanBao relay", ("httpx",)),
     ("packaging", "version / requirement parsing helpers", ("packaging",)),
+    ("openai", "OpenAI-compatible client for YuanBao relay", ("openai",)),
+    ("opencv-python", "image preprocessing for YuanBao relay", ("cv2",)),
     ("playwright", "browser automation for YuanBao login capture", ("playwright",)),
+    ("pydantic", "data validation for YuanBao relay", ("pydantic",)),
+    ("pydantic-settings", "settings loader for YuanBao relay", ("pydantic_settings",)),
     ("pygame", "audio playback", ("pygame",)),
     ("requests", "HTTP client", ("requests",)),
     ("musicdl", "Kugou fallback parser", ("musicdl",)),
     ("pyncm", "NetEase Cloud Music API", ("pyncm",)),
     ("qrcode", "QR code generation for music login", ("qrcode",)),
+    ("sse-starlette", "SSE streaming for YuanBao relay", ("sse_starlette",)),
     ("mutagen", "local audio metadata parsing", ("mutagen",)),
     ("pycaw", "Windows audio meter", ("pycaw",)),
     ("comtypes", "COM bindings for pycaw", ("comtypes",)),
     ("pywin32", "Windows COM bridge (win32com/pythoncom)", ("pythoncom", "win32com")),
     ("sounddevice", "microphone capture for speech-to-text", ("sounddevice",)),
+    ("uvicorn", "ASGI server for YuanBao relay", ("uvicorn",)),
     ("vosk", "offline speech-to-text engine", ("vosk",)),
 ]
 
@@ -74,6 +82,21 @@ YUANBAO_SERVICE_BUNDLED_ZIP = PROJECT_ROOT / "services" / "bundles" / "yuanbao-f
 YUANBAO_SERVICE_DIR = PROJECT_ROOT / "services" / "yuanbao-free-api"
 YUANBAO_SERVICE_REQUIRED_FILES = ("app.py", "requirements.txt")
 YUANBAO_SERVICE_BROWSER = "chromium"
+PLAYWRIGHT_RESOURCE_ROOT = PROJECT_ROOT / "resc" / "playwright"
+PLAYWRIGHT_RESOURCE_BROWSERS_DIR = PLAYWRIGHT_RESOURCE_ROOT / "browsers" / "ms-playwright"
+PLAYWRIGHT_BROWSER_ARCHIVE_DIRS = (
+    PLAYWRIGHT_RESOURCE_ROOT,
+    PROJECT_ROOT / "resc" / "bundles",
+)
+PLAYWRIGHT_BROWSER_ARCHIVE_PATTERNS = (
+    "*chromium*.zip",
+    "*playwright*.zip",
+)
+PLAYWRIGHT_BROWSER_DIR_PREFIXES = ("chromium-",)
+PLAYWRIGHT_BROWSER_EXECUTABLE_RELATIVE_PATHS = (
+    Path("chrome-win") / "chrome.exe",
+    Path("chrome-win64") / "chrome.exe",
+)
 
 
 def _enable_ansi_color() -> bool:
@@ -601,7 +624,7 @@ def _install_one(python_exe, pkg, mirrors):
 
 
 def install_all(python_exe, mirrors):
-    _print_stage(3, "检查并安装依赖...")
+    _print_stage(3, "检查并安装桌宠/元宝依赖...")
     failed = []
 
     for pkg, desc, import_checks in DEPENDENCIES:
@@ -695,6 +718,84 @@ def _find_bundle_root(extract_root: Path, required_files) -> Optional[Path]:
     return None
 
 
+def _iter_playwright_browser_dirs(root_dir: Path):
+    if not root_dir.exists() or not root_dir.is_dir():
+        return
+
+    seen = set()
+    candidates = [root_dir]
+    try:
+        candidates.extend(path for path in root_dir.rglob("*") if path.is_dir())
+    except Exception:
+        pass
+
+    for candidate in candidates:
+        name = candidate.name.lower()
+        if not any(name.startswith(prefix) for prefix in PLAYWRIGHT_BROWSER_DIR_PREFIXES):
+            continue
+        for relative in PLAYWRIGHT_BROWSER_EXECUTABLE_RELATIVE_PATHS:
+            executable = candidate / relative
+            if executable.exists():
+                resolved = candidate.resolve()
+                if resolved in seen:
+                    break
+                seen.add(resolved)
+                yield candidate
+                break
+
+
+def _find_local_playwright_browser_dir() -> Optional[Path]:
+    search_roots = [PLAYWRIGHT_RESOURCE_BROWSERS_DIR, PLAYWRIGHT_RESOURCE_ROOT]
+    for root in search_roots:
+        for candidate in _iter_playwright_browser_dirs(root):
+            return candidate
+    return None
+
+
+def _find_local_playwright_browser_archive() -> Optional[Path]:
+    for base_dir in PLAYWRIGHT_BROWSER_ARCHIVE_DIRS:
+        if not base_dir.exists() or not base_dir.is_dir():
+            continue
+        for pattern in PLAYWRIGHT_BROWSER_ARCHIVE_PATTERNS:
+            for archive_path in sorted(base_dir.glob(pattern)):
+                if archive_path.is_file():
+                    return archive_path
+    return None
+
+
+def _install_playwright_browser_from_local_archive() -> bool:
+    archive_path = _find_local_playwright_browser_archive()
+    if archive_path is None:
+        return False
+
+    temp_root = Path(os.environ.get("TEMP", "C:\\Temp")) / "fsv_playwright_browser"
+    extract_root = temp_root / "extract"
+    _rmtree_if_exists(temp_root, ignore_errors=True)
+    temp_root.mkdir(parents=True, exist_ok=True)
+    try:
+        print(f"  发现本地 Chromium 资源包: {archive_path.relative_to(PROJECT_ROOT)}")
+        extract_root.mkdir(parents=True, exist_ok=True)
+        _extract_zip_with_progress(archive_path, extract_root)
+        browser_dir = None
+        for candidate in _iter_playwright_browser_dirs(extract_root):
+            browser_dir = candidate
+            break
+        if browser_dir is None:
+            raise FileNotFoundError("压缩包中未找到 Chromium 浏览器目录")
+
+        target_dir = PLAYWRIGHT_RESOURCE_BROWSERS_DIR / browser_dir.name
+        _rmtree_if_exists(target_dir, ignore_errors=True)
+        target_dir.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(browser_dir), str(target_dir))
+        print(f"  已安装本地 Chromium 资源: {target_dir.relative_to(PROJECT_ROOT)}")
+        return True
+    except Exception as exc:
+        _print_warn(f"  本地 Chromium 资源包安装失败: {exc}")
+        return False
+    finally:
+        _rmtree_if_exists(temp_root, ignore_errors=True)
+
+
 def _download_yuanbao_service_bundle() -> bool:
     if _service_bundle_ready(YUANBAO_SERVICE_DIR, YUANBAO_SERVICE_REQUIRED_FILES):
         print(f"  已存在服务目录: {YUANBAO_SERVICE_DIR}")
@@ -761,34 +862,16 @@ def _download_yuanbao_service_bundle() -> bool:
         _rmtree_if_exists(temp_root, ignore_errors=True)
 
 
-def _install_requirements_file(python_exe, requirements_path: Path, mirrors) -> bool:
-    if not requirements_path.exists():
-        _print_warn(f"  requirements 文件不存在: {requirements_path}")
-        return False
-    for i, mirror in enumerate(mirrors):
-        label = "primary" if i == 0 else f"backup{i}"
-        print(f"  [{label}] 安装服务依赖 {requirements_path.name} via {mirror['name']} ...", end=" ", flush=True)
-        r = _run_pip(
-            python_exe,
-            "install",
-            "-r",
-            str(requirements_path),
-            "-i",
-            mirror["url"],
-            "--trusted-host",
-            mirror["host"],
-            "--no-warn-script-location",
-            timeout=600,
-        )
-        if r and r.returncode == 0:
-            print("ok")
-            return True
-        print("failed, switching")
-    return False
-
-
 def _ensure_playwright_browser(python_exe) -> bool:
-    print(f"  安装 Playwright 浏览器运行时 ({YUANBAO_SERVICE_BROWSER}) ...", end=" ", flush=True)
+    local_browser_dir = _find_local_playwright_browser_dir()
+    if local_browser_dir is not None:
+        print(f"  使用 resc 内置 Chromium 资源: {local_browser_dir.relative_to(PROJECT_ROOT)}")
+        return True
+
+    if _install_playwright_browser_from_local_archive():
+        return True
+
+    print(f"  在线安装 Playwright 浏览器运行时 ({YUANBAO_SERVICE_BROWSER}) ...", end=" ", flush=True)
     r = _run_python_module(python_exe, "playwright", "install", YUANBAO_SERVICE_BROWSER, timeout=1200)
     if r and r.returncode == 0:
         print("ok")
@@ -797,25 +880,17 @@ def _ensure_playwright_browser(python_exe) -> bool:
     return False
 
 
-def ensure_yuanbao_service_bundle(python_exe, mirrors) -> bool:
+def ensure_yuanbao_service_bundle(python_exe) -> bool:
     _print_stage(5, "准备 YuanBao-Free-API 本地中转服务...")
     bundle_ok = _download_yuanbao_service_bundle()
     if not bundle_ok:
         return False
 
-    requirements_ok = _install_requirements_file(
-        python_exe,
-        YUANBAO_SERVICE_DIR / "requirements.txt",
-        mirrors,
-    )
-    if not requirements_ok:
-        _print_warn("  YuanBao-Free-API 依赖安装失败，元宝 web 模式可能不可用")
-
     browser_ok = _ensure_playwright_browser(python_exe)
     if not browser_ok:
         _print_warn("  Playwright Chromium 安装失败，自动抓取登录态功能可能不可用")
 
-    return bundle_ok and requirements_ok
+    return bundle_ok
 
 
 def _stream_download_with_progress(url, dest_path, *, label, timeout=30, chunk_size=256 * 1024, use_env_proxy=True):
@@ -1015,7 +1090,7 @@ def main():
         else:
             _print_stage(4, "跳过 Vosk 模型下载（sounddevice/vosk 未就绪）")
 
-        if not ensure_yuanbao_service_bundle(python_exe, mirrors):
+        if not ensure_yuanbao_service_bundle(python_exe):
             _print_warn("YuanBao-Free-API 本地中转未准备完成，元宝 web 模式可能不可用")
 
 

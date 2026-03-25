@@ -79,6 +79,7 @@ python lib/core/qt_desktop_pet.py
 ### 语音与识别
 
 - `install_deps.py` 会在检测到 `sounddevice` 和 `vosk` 安装后，自动下载 `vosk-model-small-cn-0.22` / `vosk-model-small-en-us-0.15`。也可手动放入 `resc/models/`。
+- `install_deps.py` 会优先检查 `resc/playwright/` 与 `resc/bundles/` 下的 Chromium 离线资源；只有本地资源不存在时，才回退到在线执行 `playwright install chromium`。
 - `lib/script/gsvmove/service.py` 会在 `APP_PRE_START` 背景启动本地 GSVmove（默认从共享目录的 `start_gsvmove.bat`），并监听 `EventType.AI_VOICE_REQUEST`。
 - Push-to-Talk 逻辑位于 `lib/script/microphone_stt/push_to_talk.py`，可在 `config/config_voice.py` 自定义快捷键、输入增益等。
 
@@ -108,6 +109,10 @@ python lib/core/qt_desktop_pet.py
   - `python scripts/package_release.py --version LTS1.0.5pre1`：产出 `dist/FlyingSnowVelvet-LTS1.0.5pre1.zip`；
   - `--dry-run`：仅打印将被打包的文件，CI 用于校验；
   - 自动排除 `logs/`、`resc/models/`、`resc/user/`、`__pycache__/`、`.git/`、`.github/` 等运行时或仓库文件，并写入 `.keep` 占位符确保必要目录存在。
+- `scripts/package_green_release.py`：
+  - `python scripts/package_green_release.py --version LTS1.0.5pre1`：产出包含 `resc/models/` 与 `resc/playwright/` 资源的 `dist/FlyingSnowVelvet-LTS1.0.5pre1-green.zip`，适合 QQ / 网盘分发。
+- `scripts/fetch_playwright_chromium_resource.py`：
+  - `python scripts/fetch_playwright_chromium_resource.py`：将本机已安装的 Playwright Chromium 运行时重打包到 `resc/playwright/`，供 green 包离线使用。
 
 ---
 

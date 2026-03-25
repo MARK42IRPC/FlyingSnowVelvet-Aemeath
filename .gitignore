@@ -30,6 +30,7 @@ AA更新日志.txt.bak
 
 # Generated assets & downloads
 resc/models/
+resc/playwright/
 resc/gsvmove_update/
 resc/user/
 resc/VFX/cache/

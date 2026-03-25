@@ -62,7 +62,7 @@ YUANBAO_FREE_API = {
     'x_uskey': '',
     'agent_id': 'naQivTmsDa',
     'chat_id': '',
-    'should_remove_conversation': False,
+    'should_remove_conversation': True,
     'upload_images': True,
 }
 

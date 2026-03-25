@@ -18,6 +18,14 @@ logger = get_logger(__name__)
 
 class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
     @staticmethod
+    def _strip_openai_endpoint_suffix(url: str) -> str:
+        text = (url or "").rstrip("/")
+        for suffix in ("/v1/chat/completions", "/chat/completions"):
+            if text.lower().endswith(suffix):
+                return text[:-len(suffix)].rstrip("/")
+        return text
+
+    @staticmethod
     def _merge_stream_piece(full_text: str, piece: str) -> tuple[str, str, str]:
         """合并流式文本分片，兼容增量、累计和重复片段。"""
         if not piece:
@@ -53,11 +61,15 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
         - 已包含 /v1：.../v1
         - 未包含 /v1：.../
         """
-        base = (base_url or "").rstrip("/")
+        raw_base = (base_url or "").rstrip("/")
+        base = _ApiClientOpenAIMixin._strip_openai_endpoint_suffix(raw_base)
         if not base:
             return ["/chat/completions"]
 
-        candidates = [f"{base}/chat/completions"]
+        candidates: list[str] = []
+        if raw_base.lower().endswith("/v1/chat/completions") or raw_base.lower().endswith("/chat/completions"):
+            candidates.append(raw_base)
+        candidates.append(f"{base}/chat/completions")
         tail = base.rsplit("/", 1)[-1].lower()
         if tail != "v1":
             candidates.append(f"{base}/v1/chat/completions")
@@ -132,7 +144,7 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
 
     @staticmethod
     def _yuanbao_api_root(base_url: str) -> str:
-        base = (base_url or '').rstrip('/')
+        base = _ApiClientOpenAIMixin._strip_openai_endpoint_suffix(base_url)
         if base.lower().endswith('/v1'):
             return base[:-3].rstrip('/')
         return base

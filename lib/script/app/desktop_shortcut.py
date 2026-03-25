@@ -6,6 +6,7 @@ import os
 import subprocess
 import tempfile
 
+from config.config import STARTUP
 from lib.core.logger import get_logger
 
 logger = get_logger(__name__)
@@ -301,6 +302,10 @@ def _get_shortcut_target(shortcut_path: str) -> tuple[str | None, str]:
 
 def ensure_desktop_shortcut(script_dir: str) -> None:
     try:
+        if not bool(STARTUP.get('ensure_desktop_shortcut', True)):
+            logger.info('已关闭启动时快捷方式检查与创建，跳过桌面快捷方式同步')
+            return
+
         script_dir = os.path.abspath(script_dir)
         bat_path = os.path.join(script_dir, '启动程序.bat')
         ico_path = os.path.join(script_dir, 'resc', 'icon.ico')

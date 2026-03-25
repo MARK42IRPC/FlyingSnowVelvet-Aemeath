@@ -96,5 +96,9 @@ DRAW = {
 DRAW['scale'] = _resolve_draw_scale(DRAW.get('scale', 'auto'), _screen_height)
 set_draw_scale(DRAW['scale'])
 
+STARTUP = {
+    'ensure_desktop_shortcut': True,
+}
+
 _user_scale_config = get_user_scale_config()
 USER_SCALE = get_user_scale()
