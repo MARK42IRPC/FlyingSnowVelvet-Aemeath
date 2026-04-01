@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 from typing import Dict, Optional
 
-from playwright.async_api import Browser, Locator, Page, TimeoutError as PlaywrightTimeoutError, async_playwright
+from playwright.async_api import Browser, BrowserContext, Locator, Page, TimeoutError as PlaywrightTimeoutError, async_playwright
 
 from src.config import settings
 from src.utils.qr_utils import decode_qr_from_image, extract_qr_region_from_image, print_qr_to_terminal
@@ -87,6 +87,77 @@ def _preferred_chromium_channels() -> tuple[str, ...]:
     return tuple(ordered)
 
 
+def _parse_cookie_header(raw: str) -> Dict[str, str]:
+    cookies: Dict[str, str] = {}
+    for part in str(raw or "").split(";"):
+        segment = part.strip()
+        if not segment or "=" not in segment:
+            continue
+        key, value = segment.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if key:
+            cookies[key] = value
+    return cookies
+
+
+def _storage_state_path() -> Path:
+    raw = str(getattr(settings, "storage_state_path", "") or "").strip()
+    if not raw:
+        raw = "storage_state.json"
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        path = _service_root() / path
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+    return path
+
+
+def _remove_storage_state_file() -> None:
+    try:
+        path = _storage_state_path()
+        if path.exists():
+            path.unlink()
+    except Exception:
+        pass
+
+
+def _has_basic_login_cookies(cookies: Dict[str, str]) -> bool:
+    hy_user = str(cookies.get("hy_user") or "").strip()
+    hy_token = str(cookies.get("hy_token") or "").strip()
+    return bool(hy_user and hy_token)
+
+
+_AUTH_COOKIE_MARKERS = (
+    "uin",
+    "skey",
+    "p_uin",
+    "p_skey",
+    "wxuin",
+    "wx_skey",
+    "wx_sid",
+    "pt4_token",
+    "ptcz",
+    "pt_login_sig",
+)
+
+
+def _has_login_cookies(cookies: Dict[str, str]) -> bool:
+    if not _has_basic_login_cookies(cookies):
+        return False
+
+    names = {str(name).lower() for name in cookies.keys()}
+    if any(marker in names for marker in _AUTH_COOKIE_MARKERS):
+        return True
+    # 兼容类似 xxx_uin / xxx_skey 的命名
+    for name in names:
+        if name.endswith("_uin") or name.endswith("_skey"):
+            return True
+    return False
+
+
 class BrowserManager:
     """浏览器管理器 - 单例模式"""
 
@@ -101,6 +172,7 @@ class BrowserManager:
     def __init__(self):
         if not hasattr(self, "_initialized"):
             self.browser: Optional[Browser] = None
+            self.context: Optional[BrowserContext] = None
             self.page: Optional[Page] = None
             self.playwright = None
             self._route_handler = None
@@ -108,6 +180,9 @@ class BrowserManager:
             self._login_in_progress = False
             self._last_error = ""
             self._last_message = ""
+            self._cookie_marker_warned = False
+            self._login_confirmed_via_ui = False
+            self._storage_state_saved = False
             self._initialized = True
 
     def status(self) -> Dict:
@@ -404,40 +479,97 @@ class BrowserManager:
 
     async def _is_login_confirmed(self, login_button: Locator) -> bool:
         try:
+            if await self._has_authenticated_session():
+                return True
+        except Exception:
+            return False
+        # 登录按钮消失或 DOM 变化并不等价于已登录；避免误判游客态为成功。
+        try:
             await login_button.wait_for(state="hidden", timeout=800)
-            return True
         except PlaywrightTimeoutError:
             pass
         except Exception:
             pass
+        return False
 
-        fresh_button = await self._find_login_entry()
-        return fresh_button is None
 
+    async def _page_login_markers(self) -> Dict[str, bool]:
+        if not self.page:
+            return {}
+        try:
+            return await self.page.evaluate(
+                """
+                () => {
+                  const isVisible = (el) => {
+                    if (!el) return false;
+                    const style = window.getComputedStyle(el);
+                    if (!style || style.visibility === 'hidden' || style.display === 'none') return false;
+                    const rect = el.getBoundingClientRect();
+                    return rect.width > 0 && rect.height > 0;
+                  };
+                  const texts = Array.from(document.querySelectorAll('button,a,[role="button"],span,div'))
+                    .filter(isVisible)
+                    .map((el) => (el.innerText || el.textContent || '').trim())
+                    .filter(Boolean)
+                    .slice(0, 400);
+                  const hasLoginEntry = texts.some((text) => /登录|注册|扫码登录/.test(text));
+                  const hasLoggedInEntry = texts.some((text) => /退出登录|个人中心|我的智能体|帐号设置|账号设置/.test(text));
+                  return { hasLoginEntry, hasLoggedInEntry };
+                }
+                """
+            ) or {}
+        except Exception:
+            return {}
+
+    async def _is_page_logged_in(self) -> bool:
+        markers = await self._page_login_markers()
+        if not markers:
+            return False
+        if markers.get("hasLoggedInEntry"):
+            return True
+        return not bool(markers.get("hasLoginEntry"))
+
+    async def _persist_storage_state(self, reason: str = "") -> bool:
+        if self._storage_state_saved:
+            return True
+        ctx = self.context or (self.page.context if self.page is not None else None)
+        if ctx is None:
+            return False
+        path = _storage_state_path()
+        try:
+            await ctx.storage_state(path=str(path))
+            self._storage_state_saved = True
+            suffix = f"({reason}) " if reason else ""
+            logger.info("[Browser] 持久化登录态完成 %s%s", suffix, path)
+            return True
+        except Exception as exc:
+            logger.debug("[Browser] 持久化登录态失败: %s", exc)
+            return False
 
     async def _has_authenticated_session(self) -> bool:
-        try:
-            headers = await self.get_headers()
-            if headers and headers.get('x-uskey'):
-                logger.info('[Browser] Auth headers detected, treat as logged in')
-                return True
-        except Exception as exc:
-            logger.debug('[Browser] Auth header confirmation failed: %s', exc)
-
         try:
             cookies = await self.get_cookies()
         except Exception as exc:
             logger.debug('[Browser] Cookie confirmation failed: %s', exc)
             return False
 
-        if not cookies:
-            return False
-
-        auth_keys = ('skey', 'uin', 'wx', 'auth', 'token', 'session', 'uskey')
-        cookie_names = {str(name).lower() for name in cookies.keys()}
-        if any(any(token in name for token in auth_keys) for name in cookie_names):
-            logger.info('[Browser] Auth cookies detected, treat as logged in: %s', sorted(cookie_names))
+        if _has_login_cookies(cookies):
+            self._login_confirmed_via_ui = True
+            logger.info('[Browser] Auth cookies detected (hy_user/hy_token + account markers), treat as logged in')
             return True
+
+        if _has_basic_login_cookies(cookies):
+            if await self._is_page_logged_in():
+                self._login_confirmed_via_ui = True
+                logger.info('[Browser] UI indicates logged in with hy_user/hy_token present')
+                return True
+            logger.debug('[Browser] hy_user/hy_token present but UI still shows login entry')
+
+        if cookies:
+            cookie_names = sorted({str(name).lower() for name in cookies.keys()})
+            if not self._cookie_marker_warned:
+                self._cookie_marker_warned = True
+                logger.info('[Browser] Cookies present but no confirmed account markers: %s', cookie_names)
         return False
 
     async def _wait_for_login_or_refresh(self, login_button: Locator) -> bool:
@@ -530,7 +662,13 @@ class BrowserManager:
 
         self._last_message = "creating_page"
         if self.page is None:
-            self.page = await self.browser.new_page()
+            storage_path = _storage_state_path()
+            context_kwargs: Dict[str, object] = {}
+            if storage_path.exists():
+                context_kwargs["storage_state"] = str(storage_path)
+                logger.info("[Browser] 使用持久化登录态: %s", storage_path)
+            self.context = await self.browser.new_context(**context_kwargs)
+            self.page = await self.context.new_page()
             await self._load_page()
         self._last_error = ""
         self._last_message = "browser_initialized"
@@ -553,6 +691,7 @@ class BrowserManager:
         self._login_in_progress = True
         self._last_error = ""
         self._last_message = "starting_login"
+        self._storage_state_saved = False
 
         try:
             await self.ensure_browser()
@@ -573,6 +712,20 @@ class BrowserManager:
                 "message": "already_logged_in",
                 "qrcode_path": settings.qrcode_path,
             }
+
+        if not force:
+            try:
+                if await self._has_authenticated_session():
+                    self._is_logged_in = True
+                    self._login_in_progress = False
+                    self._last_message = "already_logged_in"
+                    return {
+                        "success": True,
+                        "message": "already_logged_in",
+                        "qrcode_path": settings.qrcode_path,
+                    }
+            except Exception:
+                pass
 
         try:
             if force and self.page is not None:
@@ -612,6 +765,7 @@ class BrowserManager:
             logger.info("[Browser] Waiting for scan confirmation and QR refresh...")
             logged_in = await self._wait_for_login_or_refresh(login_button)
             if logged_in:
+                await self._persist_storage_state("login_success")
                 self._is_logged_in = True
                 self._login_in_progress = False
                 self._last_message = "login_success"
@@ -651,8 +805,14 @@ class BrowserManager:
 
             if settings.header_api_pattern in url:
                 if "x-uskey" in headers and not captured_headers.get("x-uskey"):
-                    captured_headers = headers
-                    logger.info(f"[Browser] 捕获到请求头 from {url}")
+                    cookie_map = _parse_cookie_header(headers.get("cookie", ""))
+                    if _has_login_cookies(cookie_map) or (
+                        self._login_confirmed_via_ui and _has_basic_login_cookies(cookie_map)
+                    ):
+                        captured_headers = headers
+                        logger.info(f"[Browser] 捕获到请求头 from {url}")
+                    else:
+                        logger.debug("[Browser] x-uskey 已出现但未检测到账户标记，判定为游客态")
 
             await route.continue_()
 
@@ -703,12 +863,22 @@ class BrowserManager:
         cookies = await self.page.context.cookies()
         return {c["name"]: c["value"] for c in cookies}
 
+    async def logout(self):
+        """退出登录并清理持久化状态。"""
+        _remove_storage_state_file()
+        await self.close()
+
     async def close(self):
         """关闭浏览器。"""
         async with self._lock:
             tasks = []
             self._is_logged_in = False
             self._login_in_progress = False
+            self._login_confirmed_via_ui = False
+            self._storage_state_saved = False
+            if self.context:
+                tasks.append(self.context.close())
+                self.context = None
             if self.page:
                 tasks.append(self.page.close())
                 self.page = None

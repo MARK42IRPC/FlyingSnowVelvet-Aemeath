@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     page_timeout: int = 60000
     login_timeout: int = 120000
     qrcode_path: str = "qrcode.png"
+    storage_state_path: str = "storage_state.json"
     header_timeout: float = 3.0
     header_api_pattern: str = "yuanbao.tencent.com/api"
     upload_host: str = "hunyuan-prod-1258344703.cos.accelerate.myqcloud.com"

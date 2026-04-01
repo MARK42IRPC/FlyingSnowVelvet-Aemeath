@@ -254,11 +254,9 @@ class ApplicationState:
             return
 
         self._shutdown_steps = [
-            ('stop_primary_windows', self._shutdown_stop_primary_windows, 30),
             ('cleanup_runtime_services', self._shutdown_cleanup_runtime_services, 30),
-            ('cleanup_visual_components', self._shutdown_cleanup_visual_components, 30),
-            ('play_exit_animation', self._shutdown_play_exit_animation, 120),
-            ('quit_application', self._shutdown_quit_application, 0),
+            ('play_exit_animation', self._shutdown_play_exit_animation, 80),
+            ('force_quit_application', self._shutdown_force_quit_application, 0),
         ]
         self._shutdown_step_index = 0
         QTimer.singleShot(0, self._run_next_shutdown_step)
@@ -336,6 +334,10 @@ class ApplicationState:
         if self._app:
             self._app.quit()
         self._exit_completed = True
+
+    def _shutdown_force_quit_application(self):
+        self._exit_completed = True
+        os._exit(int(self._exit_code))
 
     def _perform_component_cleanup(self, skip_visual_cleanup: bool = False):
         if self._components_cleaned:

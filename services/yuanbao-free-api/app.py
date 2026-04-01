@@ -106,7 +106,7 @@ async def fsv_logout():
         _login_task.cancel()
         await asyncio.gather(_login_task, return_exceptions=True)
     _login_task = None
-    await browser_manager.close()
+    await browser_manager.logout()
     status = dict(browser_manager.status())
     status["success"] = True
     status["message"] = "logged_out"
