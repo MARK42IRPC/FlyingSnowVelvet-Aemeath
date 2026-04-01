@@ -1,4 +1,4 @@
-"""Music service facade.
+﻿"""Music service facade.
 
 This module provides a single entry-point for all music platform interactions.
 Callers should avoid importing provider-specific modules directly.
@@ -15,6 +15,7 @@ from lib.core.logger import get_logger
 
 from .provider import MusicProvider
 from .providers import KugouMusicProvider, NetEaseMusicProvider, QQMusicProvider
+from .router import SourceRouter
 from .types import MusicTrack
 
 logger = get_logger(__name__)
@@ -24,12 +25,16 @@ _PROVIDER_ORDER: tuple[str, ...] = ("netease", "qq", "kugou")
 _CONFIG_DICT_FILE_MAP: dict[str, str] = {
     "CLOUD_MUSIC": "config_music.py",
 }
+_PROVIDER_LABELS: dict[str, str] = {
+    "netease": "NetEase Music",
+    "qq": "QQ Music",
+    "kugou": "Kugou Music",
+}
 _PROVIDER_MODE_LABELS: dict[str, str] = {
     "netease": "网易模式",
-    "qq": "QQ模式",
+    "qq": "QQ 模式",
     "kugou": "酷狗模式",
 }
-
 
 class MusicService:
     """Facade for provider search + playback backend access."""
@@ -40,14 +45,15 @@ class MusicService:
             "qq": QQMusicProvider(),
             "kugou": KugouMusicProvider(),
         }
+        self._router = SourceRouter()
         default_provider = _PROVIDER_ORDER[0]
         requested = str(CLOUD_MUSIC.get("provider", default_provider) or default_provider).strip().lower()
         if requested not in self._providers:
-            logger.warning("[MusicService] 未知 provider=%s，回退 netease", requested)
+            logger.warning("[MusicService] Unknown provider=%s, fallback to netease", requested)
             requested = default_provider
         self._provider_name = requested
         CLOUD_MUSIC["provider"] = requested
-        logger.info("[MusicService] 当前 provider=%s", self._provider_name)
+        logger.info("[MusicService] Current provider=%s", self._provider_name)
 
     # ------------------------------------------------------------------
     # Provider routing
@@ -59,7 +65,7 @@ class MusicService:
 
     @property
     def provider_mode_label(self) -> str:
-        return _PROVIDER_MODE_LABELS.get(self._provider_name, f"{self._provider_name.upper()}模式")
+        return _PROVIDER_MODE_LABELS.get(self._provider_name, f"{self._provider_name.upper()} 模式")
 
     def available_providers(self) -> list[str]:
         ordered = [name for name in _PROVIDER_ORDER if name in self._providers]
@@ -82,8 +88,8 @@ class MusicService:
                 self._persist_provider_config(normalized)
             return True
 
-        # netease / qq / kugou 共用同一个 cloudmusic backend，切换平台不销毁后端，
-        # 以保留各平台已恢复的登录会话，避免频繁切换后重复登录。
+        # netease / qq / kugou 鍏辩敤鍚屼竴涓?cloudmusic backend锛屽垏鎹㈠钩鍙颁笉閿€姣佸悗绔紝
+        # 浠ヤ繚鐣欏悇骞冲彴宸叉仮澶嶇殑鐧诲綍浼氳瘽锛岄伩鍏嶉绻佸垏鎹㈠悗閲嶅鐧诲綍銆?
         old_provider = self._provider_name
         should_keep_backend = {old_provider, normalized}.issubset({"netease", "qq", "kugou"})
         if not should_keep_backend:
@@ -96,7 +102,7 @@ class MusicService:
                 mgr.refresh_login_status()
             except Exception:
                 pass
-        logger.info("[MusicService] provider 已切换: %s", normalized)
+        logger.info("[MusicService] Provider switched to %s", normalized)
         if persist:
             self._persist_provider_config(normalized)
         return True
@@ -118,11 +124,84 @@ class MusicService:
         return self._providers[self._provider_name]
 
     def search(self, keyword: str, mode: str = "song", limit: int = 25) -> list[MusicTrack]:
-        return self.get_provider().search(keyword, mode=mode, limit=limit)
+        tracks = self._router.search(
+            providers=self._providers,
+            primary_provider=self._provider_name,
+            keyword=keyword,
+            mode=mode,
+            limit=limit,
+            fallback_enabled=self._search_fallback_enabled(),
+            fallback_order=self._search_provider_order(),
+        )
+        if not bool(CLOUD_MUSIC.get("search_append_source_label", True)):
+            return tracks
+        normalized: list[MusicTrack] = []
+        for track in tracks:
+            display = self.format_track_display(track)
+            if display == str(track.display or "").strip():
+                normalized.append(track)
+                continue
+            normalized.append(
+                MusicTrack(
+                    provider=track.provider,
+                    track_id=track.track_id,
+                    title=track.title,
+                    artist=track.artist,
+                    duration_ms=track.duration_ms,
+                    display=display,
+                    raw=track.raw,
+                )
+            )
+        return normalized
 
     def search_first(self, keyword: str, mode: str = "song", limit: int = 20) -> MusicTrack | None:
         tracks = self.search(keyword, mode=mode, limit=limit)
         return tracks[0] if tracks else None
+
+    def provider_label(self, provider_name: str | None = None) -> str:
+        normalized = str(provider_name or self._provider_name).strip().lower()
+        provider = self._providers.get(normalized)
+        if provider is not None and str(getattr(provider, "provider_label", "")).strip():
+            return str(provider.provider_label).strip()
+        return _PROVIDER_LABELS.get(normalized, normalized.upper() or "UNKNOWN")
+
+    def format_track_display(self, track: MusicTrack, *, include_provider: bool | None = None) -> str:
+        title = str(track.title or "鏈煡姝屾洸").strip() or "鏈煡姝屾洸"
+        artist = str(track.artist or "").strip()
+        display = str(track.display or "").strip()
+        if not display:
+            display = f"--:-- {title} - {artist}" if artist else f"--:-- {title}"
+        if include_provider is None:
+            include_provider = bool(CLOUD_MUSIC.get("search_append_source_label", True)) and (
+                str(track.provider or "").strip().lower() != self._provider_name
+            )
+        if include_provider:
+            return f"{display} [{self.provider_label(track.provider)}]"
+        return display
+
+    def provider_route_stats(self) -> dict[str, dict]:
+        return self._router.provider_stats()
+
+    def _search_fallback_enabled(self) -> bool:
+        return bool(CLOUD_MUSIC.get("search_fallback_enabled", True))
+
+    def _search_provider_order(self) -> list[str]:
+        configured = CLOUD_MUSIC.get("search_fallback_order")
+        ordered: list[str] = []
+        if isinstance(configured, (list, tuple)):
+            for raw in configured:
+                name = str(raw or "").strip().lower()
+                if name in self._providers and name not in ordered:
+                    ordered.append(name)
+        if not ordered:
+            ordered = list(_PROVIDER_ORDER)
+        if self._provider_name in ordered:
+            ordered.remove(self._provider_name)
+        ordered.insert(0, self._provider_name)
+        for name in self.available_providers():
+            if name not in ordered:
+                ordered.append(name)
+        return ordered
 
     # ------------------------------------------------------------------
     # Playback backend bridge (current provider implementation)
@@ -146,7 +225,7 @@ class MusicService:
 
                 cleanup_cloud_music_manager()
             except Exception as e:
-                logger.warning("[MusicService] 清理音乐 backend 失败: %s", e)
+                logger.warning("[MusicService] 娓呯悊闊充箰 backend 澶辫触: %s", e)
 
     def is_playing(self) -> bool:
         mgr = self._get_backend_manager()
@@ -278,7 +357,7 @@ class MusicService:
             tmp_path.replace(cfg_path)
             return True
         except Exception as e:
-            logger.warning("[MusicService] 保存 provider 到配置失败: %s", e)
+            logger.warning("[MusicService] 淇濆瓨 provider 鍒伴厤缃け璐? %s", e)
             return False
 
 

@@ -1,4 +1,4 @@
-"""Kugou music API client.
+﻿"""Kugou music API client.
 
 Provides search, track metadata, playable URL lookup, and QR login helpers.
 """
@@ -20,6 +20,7 @@ from typing import Any
 import requests
 
 from lib.core.logger import get_logger
+from lib.script.browser_auth import launch_playwright_chromium
 
 logger = get_logger(__name__)
 
@@ -40,6 +41,16 @@ class KugouClient:
     _FAVOR_RETRY_BACKOFF = 0.35
     _QR_KEY_URL = "https://login-user.kugou.com/v2/qrcode"
     _QR_CHECK_URL = "https://login-user.kugou.com/v2/get_userinfo_qrcode"
+    _COOKIE_DOMAINS = (
+        ".kugou.com",
+        ".www.kugou.com",
+        ".m.kugou.com",
+        ".login-user.kugou.com",
+        ".gateway.kugou.com",
+        ".gatewayretry.kugou.com",
+        ".wwwapi.kugou.com",
+        ".wwwapiretry.kugou.com",
+    )
 
     _WEB_SIGN_KEY = "NVPh5oo715z5DIWAeQlhMDsWXXQV4hwt"
     _APPID = 1005
@@ -215,7 +226,7 @@ class KugouClient:
         musicdl_duration = self._safe_positive_int(musicdl_track.get("duration_ms"))
         if detail.get("title") in {"", hash_text} and musicdl_title:
             detail["title"] = musicdl_title
-        if detail.get("artist") in {"", "未知作者"} and musicdl_artist:
+        if detail.get("artist") in {"", "未知歌手"} and musicdl_artist:
             detail["artist"] = musicdl_artist
         if not detail.get("duration_ms") and musicdl_duration > 0:
             detail["duration_ms"] = musicdl_duration
@@ -500,6 +511,11 @@ class KugouClient:
         except Exception:
             pass
 
+    def _set_cookie_all_domains(self, key: str, value: str) -> None:
+        self._set_cookie(key, value)
+        for domain in self._COOKIE_DOMAINS:
+            self._set_cookie(key, value, domain=domain)
+
     @staticmethod
     def _safe_positive_int(raw: Any) -> int:
         try:
@@ -541,7 +557,7 @@ class KugouClient:
         mid = str(cookies.get("kg_mid") or cookies.get("mid") or self._mid).strip()
         if len(mid) >= 16:
             return mid
-        # 与官网 getBaseInfo 行为对齐：kg_mid 为 32 位 md5。
+        # Align identity cookies with the web client behavior.
         mid = self._random_mid()
         self._mid = mid
         self._set_cookie("kg_mid", mid)
@@ -561,12 +577,12 @@ class KugouClient:
     def _ensure_identity_cookies(self) -> None:
         mid = self._current_mid()
         if mid:
-            self._set_cookie("kg_mid", mid)
-            self._set_cookie("mid", mid)
+            self._set_cookie_all_domains("kg_mid", mid)
+            self._set_cookie_all_domains("mid", mid)
         dfid = self._current_dfid()
         if dfid:
-            self._set_cookie("kg_dfid", dfid)
-            self._set_cookie("dfid", dfid)
+            self._set_cookie_all_domains("kg_dfid", dfid)
+            self._set_cookie_all_domains("dfid", dfid)
 
     def set_cookies(self, cookies: dict[str, str]) -> None:
         if not isinstance(cookies, dict):
@@ -574,10 +590,7 @@ class KugouClient:
         self._session.cookies.clear()
         for key, value in cookies.items():
             if key and value is not None:
-                try:
-                    self._session.cookies.set(str(key), str(value))
-                except Exception:
-                    continue
+                self._set_cookie_all_domains(str(key), str(value))
         self._ensure_identity_cookies()
 
     def export_cookies(self) -> dict[str, str]:
@@ -595,6 +608,99 @@ class KugouClient:
     def is_logged_in(self) -> bool:
         token, userid = self._login_identity()
         return bool(token and userid and userid != "0")
+
+    def _warmup_login_requests(self) -> None:
+        if not self.is_logged_in():
+            return
+        for url in (
+            "https://www.kugou.com/",
+            "https://www.kugou.com/yy/html/rank.html",
+        ):
+            try:
+                self._session.get(url, timeout=self._timeout)
+            except Exception:
+                continue
+        with contextlib.suppress(Exception):
+            self._kugou_favor_page(page=1, pagesize=1)
+
+    def _build_browser_cookie_items(self) -> list[dict[str, object]]:
+        items: list[dict[str, object]] = []
+        for name, value in self.export_cookies().items():
+            cookie_name = str(name or "").strip()
+            cookie_value = str(value or "").strip()
+            if not cookie_name or not cookie_value:
+                continue
+            for domain in self._COOKIE_DOMAINS:
+                items.append(
+                    {
+                        "name": cookie_name,
+                        "value": cookie_value,
+                        "domain": domain,
+                        "path": "/",
+                        "httpOnly": False,
+                        "secure": True,
+                    }
+                )
+        return items
+
+    def _warmup_login_browser_context(self) -> None:
+        try:
+            from playwright.sync_api import sync_playwright
+        except Exception:
+            return
+
+        browser = None
+        context = None
+        playwright = None
+        try:
+            playwright = sync_playwright().start()
+            browser = launch_playwright_chromium(playwright, headless=True)
+            context = browser.new_context(locale="zh-CN", viewport={"width": 1280, "height": 900})
+            cookie_items = self._build_browser_cookie_items()
+            if cookie_items:
+                with contextlib.suppress(Exception):
+                    context.add_cookies(cookie_items)
+            page = context.new_page()
+            for url in (
+                "https://www.kugou.com/",
+                "https://www.kugou.com/yy/html/rank.html",
+            ):
+                with contextlib.suppress(Exception):
+                    page.goto(url, wait_until="domcontentloaded", timeout=20000)
+                    page.wait_for_timeout(1200)
+            for item in context.cookies():
+                if not isinstance(item, dict):
+                    continue
+                name = str(item.get("name") or "").strip()
+                value = str(item.get("value") or "").strip()
+                if name and value:
+                    self._set_cookie_all_domains(name, value)
+        except Exception:
+            return
+        finally:
+            with contextlib.suppress(Exception):
+                if context is not None:
+                    context.close()
+            with contextlib.suppress(Exception):
+                if browser is not None:
+                    browser.close()
+            with contextlib.suppress(Exception):
+                if playwright is not None:
+                    playwright.stop()
+
+    def finalize_login(self) -> dict[str, Any]:
+        self._ensure_identity_cookies()
+        self._warmup_login_requests()
+        self._warmup_login_browser_context()
+        self._warmup_login_requests()
+        token, userid = self._login_identity()
+        return {
+            "ok": self.is_logged_in(),
+            "token": token,
+            "userid": userid,
+            "cookies": self.export_cookies(),
+            "liked_meta": self.get_last_liked_meta(),
+        }
 
     def _build_signed_params(self, params: dict[str, Any] | None = None) -> dict[str, Any]:
         merged: dict[str, Any] = {
@@ -923,7 +1029,7 @@ class KugouClient:
             if not song_hash:
                 continue
             title = self._clean_text(item.get("SongName")) or "未知歌曲"
-            artist = self._clean_text(item.get("SingerName")) or "未知作者"
+            artist = self._clean_text(item.get("SingerName")) or "未知歌手"
             duration_sec = self._safe_int(item.get("Duration"), 0)
             album_id = self._safe_int(item.get("AlbumID"), 0)
             audio_id = self._safe_int(item.get("Audioid"), 0)
@@ -968,7 +1074,7 @@ class KugouClient:
             return None
 
         info_v2: dict[str, Any] = {}
-        info_legacy: dict[str, Any] = {}
+        info_fallback: dict[str, Any] = {}
         try:
             info_v2 = self._fetch_song_info_v2(
                 song_hash=hash_text,
@@ -989,21 +1095,21 @@ class KugouClient:
 
         if not title or not artist or duration_ms <= 0 or not url_candidates:
             try:
-                info_legacy = self._fetch_song_info(hash_text)
+                info_fallback = self._fetch_song_info(hash_text)
             except Exception:
-                info_legacy = {}
+                info_fallback = {}
             if not title:
-                title = self._clean_text(info_legacy.get("songName") or info_legacy.get("fileName"))
+                title = self._clean_text(info_fallback.get("songName") or info_fallback.get("fileName"))
             if not artist:
-                artist = self._clean_text(info_legacy.get("singerName") or info_legacy.get("author_name"))
+                artist = self._clean_text(info_fallback.get("singerName") or info_fallback.get("author_name"))
             if duration_ms <= 0:
-                duration_ms = self._safe_int(info_legacy.get("timeLength"), 0)
+                duration_ms = self._safe_int(info_fallback.get("timeLength"), 0)
                 if duration_ms <= 0:
-                    duration_sec = self._safe_int(info_legacy.get("time"), 0)
+                    duration_sec = self._safe_int(info_fallback.get("time"), 0)
                     duration_ms = duration_sec * 1000 if duration_sec > 0 else 0
-            url_candidates = self._song_url_candidates_from_payloads(raw_payload, info_legacy)
+            url_candidates = self._song_url_candidates_from_payloads(raw_payload, info_fallback)
             if not raw_payload:
-                raw_payload = info_legacy
+                raw_payload = info_fallback
 
         if hash_text:
             cached_meta = self._song_meta_cache.get(hash_text, {})
@@ -1066,7 +1172,7 @@ class KugouClient:
                 encode_album_audio_id=mix_id,
             )
         except Exception as e:
-            logger.debug("[KugouClient] songinfo v2 URL 失败 hash=%s: %s", hash_text or mix_id, e)
+            logger.debug("[KugouClient] songinfo v2 URL 澶辫触 hash=%s: %s", hash_text or mix_id, e)
         url = self._song_url_from_info(info_v2)
         if url:
             return url
@@ -1076,7 +1182,7 @@ class KugouClient:
         try:
             info = self._fetch_song_info(hash_text)
         except Exception as e:
-            logger.debug("[KugouClient] legacy URL 失败 hash=%s: %s", hash_text, e)
+            logger.debug("[KugouClient] legacy URL 澶辫触 hash=%s: %s", hash_text, e)
             info = {}
         url = self._song_url_from_info(info)
         if url:
@@ -1495,7 +1601,7 @@ class KugouClient:
             try:
                 page_items = self._kugou_favor_page(page=page, pagesize=page_size)
             except Exception as e:
-                logger.debug("[KugouClient] 获取喜欢列表失败 page=%s: %s", page, e)
+                logger.debug("[KugouClient] liked tracks fetch failed page=%s: %s", page, e)
                 self._last_liked_meta = {
                     "ok": False,
                     "reason": "page_exception",
@@ -1567,7 +1673,7 @@ class KugouClient:
     def poll_login_qr(self, qr_key: str) -> dict[str, Any]:
         key = str(qr_key or "").strip()
         if not key:
-            return {"status": -1, "message": "二维码 key 为空"}
+            return {"status": -1, "message": "浜岀淮鐮?key 涓虹┖"}
         params = self._build_signed_params(
             {
                 "appid": self._APPID,
@@ -1603,8 +1709,8 @@ class KugouClient:
         if not token_text or not uid_text or uid_text == "0":
             return False
         try:
-            self._set_cookie("token", token_text)
-            self._set_cookie("userid", uid_text)
+            self._set_cookie_all_domains("token", token_text)
+            self._set_cookie_all_domains("userid", uid_text)
 
             ku = self._kugou_cookie_payload()
             ku["t"] = token_text
@@ -1613,7 +1719,7 @@ class KugouClient:
                 ku["a_id"] = str(self._APPID)
             ku_cookie = "&".join(f"{k}={ku[k]}" for k in ku if str(k).strip())
             if ku_cookie:
-                self._set_cookie("KuGoo", ku_cookie)
+                self._set_cookie_all_domains("KuGoo", ku_cookie)
 
             self._ensure_identity_cookies()
             return True
@@ -1629,3 +1735,5 @@ def get_kugou_client() -> KugouClient:
     if _instance is None:
         _instance = KugouClient()
     return _instance
+
+

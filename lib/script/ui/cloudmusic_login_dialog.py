@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from PyQt5.QtWidgets import QWidget, QGraphicsOpacityEffect, QPushButton
-from PyQt5.QtCore import Qt, QRect, QPropertyAnimation, QEasingCurve
+from PyQt5.QtCore import Qt, QRect, QPropertyAnimation, QEasingCurve, QTimer
 from PyQt5.QtGui import QPainter, QPixmap, QFontMetrics, QCursor
 
 from config.config import UI, UI_THEME
@@ -38,11 +38,10 @@ class CloudMusicLoginDialog(QWidget):
 
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowFlags(
-            Qt.Tool
-            | Qt.FramelessWindowHint
-            | Qt.WindowStaysOnTopHint
-        )
+        flags = Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
+        if hasattr(Qt, 'WindowDoesNotAcceptFocus'):
+            flags |= Qt.WindowDoesNotAcceptFocus
+        self.setWindowFlags(flags)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFocusPolicy(Qt.NoFocus)
         self.setFixedSize(_WIDTH, _HEIGHT)
@@ -53,6 +52,8 @@ class CloudMusicLoginDialog(QWidget):
         self._status: str = '请使用音乐App扫码登录'
         self._qr_pixmap: QPixmap | None = None
         self._refresh_left: int | None = None
+        self._allow_hide_once: bool = False
+        self._allow_close_once: bool = False
 
         self._title_font = get_ui_font()
         self._title_font.setBold(True)
@@ -174,6 +175,8 @@ class CloudMusicLoginDialog(QWidget):
             pix = QPixmap()
             if pix.loadFromData(qr_png, 'PNG') or pix.loadFromData(qr_png):
                 self._qr_pixmap = pix
+        elif not self._visible:
+            self._qr_pixmap = None
         if title:
             self._title = title
         if status:
@@ -208,7 +211,36 @@ class CloudMusicLoginDialog(QWidget):
         except (RuntimeError, TypeError):
             pass
         if not self._visible:
+            self._allow_hide_once = True
             self.hide()
+
+    def hideEvent(self, event) -> None:
+        super().hideEvent(event)
+        if self._allow_hide_once:
+            self._allow_hide_once = False
+            return
+        if self._visible:
+            QTimer.singleShot(0, self._restore_if_needed)
+
+    def closeEvent(self, event) -> None:
+        if self._allow_close_once:
+            self._allow_close_once = False
+            super().closeEvent(event)
+            return
+        if self._visible:
+            event.ignore()
+            QTimer.singleShot(0, self._restore_if_needed)
+            return
+        super().closeEvent(event)
+
+    def _restore_if_needed(self) -> None:
+        if not self._visible:
+            return
+        try:
+            self.show()
+            self.raise_()
+        except Exception:
+            return
 
     def _on_qr_show(self, event: Event) -> None:
         self.show_dialog(
@@ -335,6 +367,7 @@ def cleanup_cloudmusic_login_dialog() -> None:
     if _instance is not None:
         try:
             _instance.cleanup()
+            _instance._allow_close_once = True
             _instance.close()
         except Exception:
             pass

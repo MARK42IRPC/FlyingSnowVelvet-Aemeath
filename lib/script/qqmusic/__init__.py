@@ -1,4 +1,4 @@
-"""QQ music integration package."""
+﻿"""QQ music integration package."""
 
 from .qqmisic import QQmisic, QQMusic, get_qqmusic_client
 

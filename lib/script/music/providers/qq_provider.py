@@ -21,6 +21,7 @@ class QQMusicProvider(MusicProvider):
     """QQ provider adapter based on QQmisic API client."""
 
     provider_name = "qq"
+    provider_label = "QQ音乐"
 
     def __init__(self) -> None:
         self._api = get_qqmusic_client()

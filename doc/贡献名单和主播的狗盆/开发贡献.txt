@@ -39,6 +39,12 @@
 贡献:chenwr727/yuanbao-free-api-元宝 OpenAI 兼容中转服务基础项目（以源码压缩包形式集成到 services/bundles/）
 ===https://github.com/chenwr727/yuanbao-free-api
 
+贡献:jsososo/QQMusicApi-QQ 音乐用户歌单/我喜欢歌单接口兼容逻辑参考（已适配集成到 lib/script/qqmusic/qqmisic.py）
+===https://github.com/jsososo/QQMusicApi
+
+贡献:listen1/listen1_chrome_extension-QQ 音乐歌单解析与兼容请求参数参考（已适配集成到 lib/script/qqmusic/qqmisic.py）
+===https://github.com/listen1/listen1_chrome_extension
+
 ai平台技术支持:
 ===claude-CODE	(核心架构)
 ===IFLOW心流平台	(代码协助)
@@ -62,3 +68,4 @@ ai平台技术支持:
 如认为内容涉及侵权，请携带权属证明联系作者，核实后将立即删除
 
 默认素材来源：鸣潮-库洛游戏
+

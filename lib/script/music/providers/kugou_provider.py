@@ -21,6 +21,7 @@ class KugouMusicProvider(MusicProvider):
     """Provider adapter based on Kugou API client."""
 
     provider_name = "kugou"
+    provider_label = "酷狗音乐"
 
     def __init__(self) -> None:
         self._api = get_kugou_client()

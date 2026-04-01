@@ -1,4 +1,4 @@
-"""Kugou music integration package."""
+﻿"""Kugou music integration package."""
 
 from .kugou import KugouClient, get_kugou_client
 

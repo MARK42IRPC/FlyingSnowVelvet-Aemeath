@@ -5,18 +5,22 @@ import math
 import re
 import threading
 import time
-from urllib.parse import quote_plus
+import base64
+from pathlib import Path
+from urllib.parse import quote_plus, urljoin
 
 import requests
 
 from lib.core.event.center import EventType, Event
 from lib.core.logger import get_logger
+from lib.script.browser_auth import launch_playwright_chromium, parse_cookie_header, parse_set_cookie_headers
 from config.config import TIMEOUTS, CLOUD_MUSIC
 
 from ._provider_clients import get_kugou_provider_client, get_qqmusic_provider_client
 from ._constants import (
     _KUGOU_LOGIN_CACHE_FILE,
     _LOGIN_CACHE_FILE,
+    _PROJECT_ROOT,
     _QQ_LOGIN_CACHE_FILE,
     _QR_LOGIN_TIMEOUT,
     _QR_POLL_INTERVAL,
@@ -24,6 +28,8 @@ from ._constants import (
 )
 
 logger = get_logger(__name__)
+
+_QQ_QR_AUTO_REFRESH_INTERVAL = 45.0
 
 
 class _LoginMixin:
@@ -116,6 +122,12 @@ class _LoginMixin:
             return code, redirect, msg, nickname
         return "", "", text, ""
 
+    @staticmethod
+    def _normalize_qq_uin(raw_uin: str | None) -> str:
+        text = str(raw_uin or '0').strip()
+        match = re.search(r'(\d+)', text)
+        return match.group(1) if match else '0'
+
     @classmethod
     def _qq_xlogin_params(cls) -> dict[str, str]:
         # 同步 QQ 官方 login_10.js 当前参数，避免旧参数导致 ptqrlogin 403。
@@ -178,6 +190,71 @@ class _LoginMixin:
                 session.get(str(url), headers=headers, timeout=self._QQ_LOGIN_TIMEOUT, allow_redirects=True)
             except Exception:
                 continue
+
+    @staticmethod
+    def _qq_build_browser_cookie_items(cookie_map: dict[str, str] | None) -> list[dict[str, object]]:
+        data = cookie_map if isinstance(cookie_map, dict) else {}
+        items: list[dict[str, object]] = []
+        if not data:
+            return items
+        for name, value in data.items():
+            cookie_name = str(name or '').strip()
+            cookie_value = str(value or '').strip()
+            if not cookie_name or not cookie_value:
+                continue
+            for domain in ('.qq.com', '.y.qq.com', '.music.qq.com', '.c.y.qq.com', '.c6.y.qq.com'):
+                items.append(
+                    {
+                        'name': cookie_name,
+                        'value': cookie_value,
+                        'domain': domain,
+                        'path': '/',
+                        'httpOnly': False,
+                        'secure': True,
+                    }
+                )
+        return items
+
+    def _qq_sync_login_context(self, context, page, redirect_url: str, seed_cookie_map: dict[str, str] | None = None) -> dict[str, str]:
+        merged_cookie_map: dict[str, str] = {}
+        if isinstance(seed_cookie_map, dict):
+            merged_cookie_map.update({str(k): str(v) for k, v in seed_cookie_map.items() if k and v is not None})
+
+        if context is not None and merged_cookie_map:
+            try:
+                context.add_cookies(self._qq_build_browser_cookie_items(merged_cookie_map))
+            except Exception:
+                pass
+
+        urls = [
+            redirect_url,
+            self._QQ_LOGIN_S_URL,
+            'https://y.qq.com/m/login/redirect.html?is_qq_connect=1&login_type=1&surl=https%3A%2F%2Fy.qq.com%2Fn%2Fryqq%2Findex.html',
+            'https://y.qq.com/n/ryqq/index.html',
+            'https://y.qq.com/portal/profile.html',
+        ]
+        for url in urls:
+            if not url:
+                continue
+            try:
+                page.goto(str(url), wait_until='domcontentloaded', timeout=15000)
+            except Exception:
+                continue
+            try:
+                page.wait_for_timeout(500)
+            except Exception:
+                time.sleep(0.5)
+            try:
+                merged_cookie_map.update(self._qq_collect_context_cookie_map(context))
+            except Exception:
+                pass
+            try:
+                merged_cookie_map.update(self._qq_collect_storage_state_map(page, context))
+            except Exception:
+                pass
+            if self._qq_cookie_map_has_uin(merged_cookie_map) and self._qq_cookie_map_has_music_auth(merged_cookie_map):
+                break
+        return merged_cookie_map
 
     @staticmethod
     def _qq_nickname_hint(session, fallback: str = "QQ账号") -> str:
@@ -265,6 +342,807 @@ class _LoginMixin:
         except Exception:
             return False
         return bool(str(cookies.get('uin') or cookies.get('wxuin') or cookies.get('p_uin') or '').strip())
+
+
+    @staticmethod
+    def _qq_has_music_auth_cookies(session) -> bool:
+        if session is None:
+            return False
+        try:
+            cookies = session.cookies.get_dict() or {}
+        except Exception:
+            return False
+        return bool(
+            str(cookies.get('qqmusic_key') or '').strip()
+            or str(cookies.get('music_key') or '').strip()
+            or str(cookies.get('qm_keyst') or '').strip()
+        )
+
+    @staticmethod
+    def _qq_cookie_map_has_uin(cookie_map: dict[str, str] | None) -> bool:
+        data = cookie_map if isinstance(cookie_map, dict) else {}
+        return bool(str(data.get('uin') or data.get('wxuin') or data.get('p_uin') or '').strip())
+
+    @staticmethod
+    def _qq_cookie_map_has_music_auth(cookie_map: dict[str, str] | None) -> bool:
+        data = cookie_map if isinstance(cookie_map, dict) else {}
+        return bool(
+            str(data.get('qqmusic_key') or '').strip()
+            or str(data.get('music_key') or '').strip()
+            or str(data.get('qm_keyst') or '').strip()
+        )
+
+    @staticmethod
+    def _qq_cookie_map_has_auth(cookie_map: dict[str, str] | None) -> bool:
+        data = cookie_map if isinstance(cookie_map, dict) else {}
+        return bool(
+            str(data.get('p_skey') or '').strip()
+            or str(data.get('skey') or '').strip()
+            or str(data.get('qqmusic_key') or '').strip()
+            or str(data.get('music_key') or '').strip()
+            or str(data.get('qm_keyst') or '').strip()
+            or str(data.get('pt4_token') or '').strip()
+        )
+
+    @staticmethod
+    def _qq_collect_browser_cookie_map(raw_cookies) -> dict[str, str]:
+        cookie_map: dict[str, str] = {}
+        for item in raw_cookies or []:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get('name') or '').strip()
+            value = str(item.get('value') or '').strip()
+            if not name or not value:
+                continue
+            cookie_map[name] = value
+        if cookie_map.get('p_uin') and not cookie_map.get('uin'):
+            cookie_map['uin'] = cookie_map['p_uin']
+        if cookie_map.get('p_skey') and not cookie_map.get('skey'):
+            cookie_map['skey'] = cookie_map['p_skey']
+        return cookie_map
+
+    @staticmethod
+    def _qq_collect_context_cookie_map(context) -> dict[str, str]:
+        if context is None:
+            return {}
+        try:
+            raw_cookies = context.cookies()
+        except Exception:
+            return {}
+        return _LoginMixin._qq_collect_browser_cookie_map(raw_cookies)
+
+    @staticmethod
+    def _qq_collect_document_cookie_map(page) -> dict[str, str]:
+        cookie_map: dict[str, str] = {}
+        if page is None:
+            return cookie_map
+        try:
+            frames = list(page.frames)
+        except Exception:
+            frames = []
+        for frame in frames:
+            try:
+                raw_cookie = frame.evaluate("() => document.cookie || ''")
+            except Exception:
+                continue
+            cookie_map.update(parse_cookie_header(raw_cookie))
+        if cookie_map.get('p_uin') and not cookie_map.get('uin'):
+            cookie_map['uin'] = cookie_map['p_uin']
+        if cookie_map.get('p_skey') and not cookie_map.get('skey'):
+            cookie_map['skey'] = cookie_map['p_skey']
+        return cookie_map
+
+    @staticmethod
+    def _qq_collect_network_cookie_map(headers) -> dict[str, str]:
+        if not isinstance(headers, dict):
+            return {}
+        raw_cookie = str(headers.get('cookie') or headers.get('Cookie') or '').strip()
+        cookie_map = parse_cookie_header(raw_cookie)
+        if cookie_map.get('p_uin') and not cookie_map.get('uin'):
+            cookie_map['uin'] = cookie_map['p_uin']
+        if cookie_map.get('p_skey') and not cookie_map.get('skey'):
+            cookie_map['skey'] = cookie_map['p_skey']
+        return cookie_map
+
+    @staticmethod
+    def _qq_extract_music_auth_from_storage(storage_items) -> dict[str, str]:
+        result: dict[str, str] = {}
+
+        def _walk(value):
+            if isinstance(value, dict):
+                for key, item in value.items():
+                    key_text = str(key or '').strip()
+                    if key_text in {'qqmusic_key', 'music_key', 'qm_keyst', 'qm_uin', 'qqmusic_uin'}:
+                        text = str(item or '').strip()
+                        if text:
+                            result[key_text] = text
+                    _walk(item)
+            elif isinstance(value, list):
+                for item in value:
+                    _walk(item)
+
+        for item in storage_items or []:
+            if not isinstance(item, dict):
+                continue
+            key = str(item.get('key') or '').strip()
+            value = item.get('value')
+            if key in {'qqmusic_key', 'music_key', 'qm_keyst', 'qm_uin', 'qqmusic_uin'}:
+                text = str(value or '').strip()
+                if text:
+                    result[key] = text
+                    continue
+            if isinstance(value, str):
+                text = value.strip()
+                if not text:
+                    continue
+                try:
+                    parsed = json.loads(text)
+                except Exception:
+                    parsed = None
+                if parsed is not None:
+                    _walk(parsed)
+        return result
+
+    def _qq_collect_storage_state_map(self, page, context=None) -> dict[str, str]:
+        storage_items = []
+        if context is not None:
+            try:
+                state = context.storage_state()
+                for origin in (state or {}).get('origins', []) or []:
+                    if not isinstance(origin, dict):
+                        continue
+                    for item in origin.get('localStorage', []) or []:
+                        if isinstance(item, dict):
+                            payload = dict(item)
+                            payload['scope'] = str(origin.get('origin') or '')
+                            storage_items.append(payload)
+            except Exception:
+                pass
+
+        frames = []
+        if page is not None:
+            try:
+                frames = list(page.frames)
+            except Exception:
+                frames = []
+
+        for frame in frames:
+            try:
+                page_items = frame.evaluate(
+                    """
+                    () => {
+                      const dump = (store, scope) => {
+                        const items = [];
+                        try {
+                          for (let i = 0; i < store.length; i += 1) {
+                            const key = store.key(i);
+                            items.push({ scope, key, value: store.getItem(key) });
+                          }
+                        } catch (e) {}
+                        return items;
+                      };
+                      return [...dump(window.localStorage, 'localStorage'), ...dump(window.sessionStorage, 'sessionStorage')];
+                    }
+                    """
+                )
+                storage_items.extend(page_items or [])
+            except Exception:
+                pass
+
+        return self._qq_extract_music_auth_from_storage(storage_items)
+
+    def _qq_probe_music_auth_context(self, page, cookie_map: dict[str, str] | None = None) -> None:
+        if page is None:
+            return
+        normalized_uin = self._normalize_qq_uin((cookie_map or {}).get('uin') or (cookie_map or {}).get('p_uin'))
+        probe_urls = [
+            'https://y.qq.com/',
+            'https://y.qq.com/n/ryqq/index.html',
+            'https://y.qq.com/portal/profile.html',
+        ]
+        if normalized_uin and normalized_uin != '0':
+            probe_urls.extend(
+                [
+                    f'https://y.qq.com/n/ryqq/profile/{normalized_uin}',
+                    f'https://y.qq.com/portal/profile.html?uin={normalized_uin}',
+                ]
+            )
+        seen: set[str] = set()
+        for url in probe_urls:
+            target = str(url or '').strip()
+            if not target or target in seen:
+                continue
+            seen.add(target)
+            try:
+                page.goto(target, wait_until='domcontentloaded', timeout=20000)
+            except Exception:
+                continue
+            try:
+                page.wait_for_timeout(1200)
+            except Exception:
+                time.sleep(1.2)
+            try:
+                page.evaluate(
+                    """
+                    async (uin) => {
+                      const tasks = [];
+                      const profileUrl = uin && uin !== '0'
+                        ? `https://c.y.qq.com/rsc/fcgi-bin/fcg_get_profile_homepage.fcg?format=json&hostuin=${uin}&loginUin=${uin}&needNewCode=0`
+                        : 'https://c.y.qq.com/rsc/fcgi-bin/fcg_get_profile_homepage.fcg?format=json&needNewCode=0';
+                      tasks.push(fetch(profileUrl, { credentials: 'include', mode: 'no-cors' }).catch(() => null));
+                      tasks.push(fetch('https://c.y.qq.com/splcloud/fcgi-bin/fcg_musiclist_getmyfav.fcg?format=json&needNewCode=0', { credentials: 'include', mode: 'no-cors' }).catch(() => null));
+                      await Promise.all(tasks);
+                      return true;
+                    }
+                    """,
+                    normalized_uin,
+                )
+            except Exception:
+                pass
+            try:
+                page.wait_for_timeout(800)
+            except Exception:
+                time.sleep(0.8)
+
+    def _qq_build_requests_session_from_context(self, context) -> requests.Session:
+        session = requests.Session()
+        session.headers.update({'User-Agent': 'Mozilla/5.0', 'Referer': 'https://xui.ptlogin2.qq.com/'})
+        try:
+            raw_cookies = context.cookies() if context is not None else []
+        except Exception:
+            raw_cookies = []
+        for item in raw_cookies or []:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get('name') or '').strip()
+            value = str(item.get('value') or '').strip()
+            domain = str(item.get('domain') or '').strip() or None
+            if name and value:
+                session.cookies.set(name, value, domain=domain)
+        return session
+
+    def _qq_poll_login_result(self, context) -> tuple[str, str, str, str, dict[str, str]]:
+        session = self._qq_build_requests_session_from_context(context)
+        cookie_map = session.cookies.get_dict() or {}
+        qrsig = str(cookie_map.get('qrsig') or '').strip()
+        if not qrsig:
+            return '', '', '', '', cookie_map
+        ptqrtoken = str(self._qq_ptqrtoken(qrsig))
+        headers = {'Referer': 'https://xui.ptlogin2.qq.com/', 'User-Agent': 'Mozilla/5.0'}
+        try:
+            response = session.get(
+                self._QQ_PTQRLOGIN_URL,
+                params=self._qq_ptqrlogin_params(ptqrtoken),
+                headers=headers,
+                timeout=self._QQ_LOGIN_TIMEOUT,
+            )
+            raw_text = str(response.text or '').strip()
+        except Exception:
+            return '', '', '', '', cookie_map
+        code, redirect_url, message, nickname = self._parse_qq_login_cb(raw_text)
+        if code == '0' and redirect_url:
+            self._qq_sync_login_session(session, headers, redirect_url)
+            cookie_map = session.cookies.get_dict() or cookie_map
+        return code, redirect_url, message, nickname, cookie_map
+
+    @staticmethod
+    def _qq_login_qrcode_path() -> Path:
+        return _PROJECT_ROOT / 'logs' / 'qqmusic_login_qrcode.png'
+
+    def _qq_clear_login_qrcode(self) -> None:
+        try:
+            self._qq_login_qrcode_path().unlink(missing_ok=True)
+        except Exception:
+            pass
+
+    @staticmethod
+    def _qq_first_visible(candidates, timeout: int = 1200):
+        for locator in candidates:
+            try:
+                locator.wait_for(state='visible', timeout=timeout)
+                box = locator.bounding_box()
+                if box and float(box.get('width') or 0) >= 12 and float(box.get('height') or 0) >= 12:
+                    return locator
+            except Exception:
+                continue
+        return None
+
+    def _qq_find_login_entry(self, page):
+        text_regex = re.compile(r'登录|立即登录|去登录|QQ登录|扫码登录|二维码登录|login|sign in|scan', re.I)
+        primary_candidates = [
+            page.get_by_role('button', name=text_regex).first,
+            page.get_by_role('link', name=text_regex).first,
+            page.get_by_text(text_regex).first,
+            page.locator(
+                "header [class*='login'], nav [class*='login'], [class*='top_login'], "
+                "[class*='sign'], [data-testid*='login'], [data-event*='login']"
+            ).first,
+        ]
+        primary = self._qq_first_visible(primary_candidates, timeout=1500)
+        if primary is not None:
+            return primary
+
+        group = page.locator("button, a, [role='button'], [class*='login'], [class*='sign']")
+        try:
+            count = min(group.count(), 24)
+        except Exception:
+            return None
+
+        for idx in range(count):
+            locator = group.nth(idx)
+            try:
+                locator.wait_for(state='visible', timeout=300)
+                text_content = (locator.text_content() or '').strip()
+                aria_label = (locator.get_attribute('aria-label') or '').strip()
+                title = (locator.get_attribute('title') or '').strip()
+                class_name = (locator.get_attribute('class') or '').strip().lower()
+                hint = ' '.join(part for part in (text_content, aria_label, title, class_name) if part)
+                if text_regex.search(hint) or 'login' in class_name or 'sign' in class_name:
+                    return locator
+            except Exception:
+                continue
+        return None
+
+    def _qq_try_switch_scan_tab(self, page) -> bool:
+        iframe = self._qq_login_frame_locator(page)
+        ready_candidates = [
+            iframe.locator('#qrlogin_img').first,
+            iframe.locator('#qlogin').first,
+            iframe.locator('#qr_area').first,
+        ]
+        for locator in ready_candidates:
+            try:
+                locator.wait_for(state='visible', timeout=500)
+                return True
+            except Exception:
+                continue
+
+        scan_regex = re.compile(r'扫码登录|二维码登录|QQ扫码登录|手机扫码登录|扫码授权|二维码|扫码|切换扫码', re.I)
+        candidates = [
+            page.locator('.yqq-dialog-wrap .login-box-tit__item').filter(has_text=scan_regex).first,
+            page.locator(".yqq-dialog-wrap [role='tab']").filter(has_text=scan_regex).first,
+            iframe.get_by_role('tab', name=scan_regex).first,
+            iframe.get_by_role('button', name=scan_regex).first,
+            iframe.get_by_text(scan_regex).first,
+        ]
+        clicked = False
+        for locator in candidates:
+            try:
+                locator.wait_for(state='visible', timeout=600)
+                locator.click(force=True, timeout=1500)
+                clicked = True
+                try:
+                    page.wait_for_timeout(800)
+                except Exception:
+                    time.sleep(0.8)
+            except Exception:
+                continue
+        return clicked
+
+    def _qq_try_click_account_provider(self, page) -> bool:
+        provider_regex = re.compile(r'^QQ登录$|^QQ账号登录$|^使用QQ登录$|^使用QQ账号登录$', re.I)
+        iframe = self._qq_login_frame_locator(page)
+        ready_candidates = [
+            iframe.locator('#qrlogin_img').first,
+            iframe.locator('#qlogin').first,
+            iframe.locator('#qr_area').first,
+        ]
+        for locator in ready_candidates:
+            try:
+                locator.wait_for(state='visible', timeout=500)
+                return True
+            except Exception:
+                continue
+
+        candidates = [
+            page.locator('.yqq-dialog-wrap .login-box-tit__item').filter(has_text=provider_regex).first,
+            page.locator(".yqq-dialog-wrap [role='tab']").filter(has_text=provider_regex).first,
+            page.locator(".yqq-dialog-wrap a.login-box-tit__item.current").first,
+            page.locator(".yqq-dialog-wrap a.login-box-tit__item").filter(has_text='QQ登录').first,
+        ]
+        clicked = False
+        for locator in candidates:
+            try:
+                locator.wait_for(state='visible', timeout=800)
+                locator.click(force=True, timeout=1800)
+                clicked = True
+                try:
+                    page.wait_for_timeout(900)
+                except Exception:
+                    time.sleep(0.9)
+                break
+            except Exception:
+                continue
+        return clicked
+
+    @staticmethod
+    def _qq_login_frame_locator(page):
+        outer = page.frame_locator(
+            "iframe#login_frame, "
+            "iframe.login-box-bd__ifr_qq, "
+            "iframe[src*='graph.qq.com/oauth2.0/authorize'], "
+            "iframe[src*='graph.qq.com/oauth2.0/show']"
+        )
+        return outer.frame_locator(
+            "iframe#ptlogin_iframe, "
+            "iframe[name='ptlogin_iframe'], "
+            "iframe[src*='xui.ptlogin2.qq.com/cgi-bin/xlogin']"
+        )
+
+    def _qq_prepare_official_login_flow(self, page) -> bool:
+        clicked_any = False
+        login_button = self._qq_find_login_entry(page)
+        if login_button is not None:
+            try:
+                login_button.scroll_into_view_if_needed()
+            except Exception:
+                pass
+            try:
+                login_button.click(timeout=5000)
+                clicked_any = True
+            except Exception:
+                try:
+                    login_button.click(force=True, timeout=2500)
+                    clicked_any = True
+                except Exception:
+                    pass
+            if clicked_any:
+                try:
+                    page.wait_for_timeout(1200)
+                except Exception:
+                    time.sleep(1.2)
+
+        if self._qq_try_click_account_provider(page):
+            clicked_any = True
+        if self._qq_try_switch_scan_tab(page):
+            clicked_any = True
+        return clicked_any
+
+    def _qq_try_confirm_authorization(self, page) -> bool:
+        return False
+
+    def _qq_login_frame_text(self, page) -> str:
+        iframe = self._qq_login_frame_locator(page)
+        text_parts: list[str] = []
+        for locator in (
+            iframe.locator('body').first,
+            iframe.locator('#qlogin').first,
+            iframe.locator('#login').first,
+            iframe.locator('#authorize').first,
+            iframe.locator('#accredit_info').first,
+        ):
+            try:
+                locator.wait_for(state='attached', timeout=300)
+                text = str(locator.text_content() or '').strip()
+                if text:
+                    text_parts.append(text)
+            except Exception:
+                continue
+        return '\n'.join(text_parts)
+
+    def _qq_login_frame_state(self, page) -> str:
+        text = self._qq_login_frame_text(page)
+        if not text:
+            return ''
+        if any(token in text for token in ('登录成功', '授权成功', '正在跳转', '跳转中', '已成功登录')):
+            return 'success'
+        if any(token in text for token in ('请在手机上确认', '扫描成功', '扫码成功', '请确认登录')):
+            return 'scanned'
+        if any(token in text for token in ('二维码失效', '请点击刷新', '已过期')):
+            return 'expired'
+        if any(token in text for token in ('授权即同意', '获取以下权限', '授权登录', '同意授权')):
+            return 'authorize'
+        if any(token in text for token in ('扫码登录', '二维码登录', '使用QQ手机版扫码登录')):
+            return 'qrcode'
+        return ''
+
+    @staticmethod
+    def _qq_choose_best_qrcode_locator(group):
+        best_locator = None
+        best_score = -1.0
+        try:
+            count = min(group.count(), 20)
+        except Exception:
+            return None
+
+        for idx in range(count):
+            locator = group.nth(idx)
+            try:
+                locator.wait_for(state='visible', timeout=500)
+                box = locator.bounding_box()
+                if not box:
+                    continue
+                width = float(box.get('width') or 0.0)
+                height = float(box.get('height') or 0.0)
+                if width < 60 or height < 60:
+                    continue
+                ratio = max(width, height) / max(1.0, min(width, height))
+                if ratio > 1.35:
+                    continue
+
+                text_content = (locator.text_content() or '').strip().lower()
+                class_name = ((locator.get_attribute('class')) or '').strip().lower()
+                alt_text = ((locator.get_attribute('alt')) or '').strip().lower()
+                src = ((locator.get_attribute('src')) or '').strip().lower()
+                hint = ' '.join(part for part in (text_content, class_name, alt_text, src) if part)
+                if any(token in hint for token in ('logo', 'icon', 'avatar', 'close', 'cover', 'album', 'song', 'poster', 'mv', 'background', 'bg')):
+                    continue
+
+                score = width * height
+                if any(token in hint for token in ('qr', 'qrcode', 'code', 'scan', '二维码', '扫码', 'ptqrshow')):
+                    score += 1_000_000
+                if score > best_score:
+                    best_score = score
+                    best_locator = locator
+            except Exception:
+                continue
+        return best_locator
+
+    def _qq_find_qrcode_locator(self, page):
+        iframe = self._qq_login_frame_locator(page)
+        upstream_candidates = [
+            iframe.locator('#qrlogin_img').first,
+            iframe.locator('#qr_area').first,
+            iframe.locator('.qrImg').first,
+            iframe.locator("img[src*='ptqrshow'], img[src*='qrcode'], img[src*='qr']").first,
+            iframe.locator('canvas').first,
+            page.locator("img[src*='ptqrshow'], img[src*='qrcode'], img[src*='qr']").first,
+            page.locator('canvas').first,
+        ]
+
+        locator = self._qq_first_visible(upstream_candidates, timeout=1200)
+        if locator is not None:
+            box = locator.bounding_box()
+            if box and float(box.get('width') or 0) >= 60 and float(box.get('height') or 0) >= 60:
+                return locator
+
+        groups = (
+            iframe.locator("#qrlogin_img, #qr_area, .qrImg, .qrlogin_img_out, .qlogin_show, img, canvas, svg, [class*='qr'], [class*='code'], [id*='qr'], [id*='code']"),
+            page.locator(
+                "[role='dialog'] img, [role='dialog'] canvas, [role='dialog'] svg, "
+                "[role='dialog'] [class*='qr'], [role='dialog'] [class*='code'], "
+                "img, canvas, svg, [class*='qr'], [class*='code'], [id*='qr'], [id*='code']"
+            ),
+        )
+        for group in groups:
+            best = self._qq_choose_best_qrcode_locator(group)
+            if best is not None:
+                return best
+        return None
+
+    def _qq_wait_for_qrcode_locator(self, page, timeout_ms: int = 15000):
+        deadline = time.monotonic() + max(1.0, timeout_ms / 1000.0)
+        scan_switched = False
+        while time.monotonic() < deadline:
+            locator = self._qq_find_qrcode_locator(page)
+            if locator is not None:
+                return locator
+            if not scan_switched:
+                scan_switched = self._qq_try_switch_scan_tab(page)
+            time.sleep(0.4)
+        return None
+
+    @staticmethod
+    def _qq_decode_data_url_bytes(data_url: str) -> bytes | None:
+        text = str(data_url or '').strip()
+        if not text.startswith('data:image') or ',' not in text:
+            return None
+        try:
+            _, encoded = text.split(',', 1)
+            return base64.b64decode(encoded)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _qq_crop_qr_image_bytes(data: bytes) -> bytes | None:
+        raw = bytes(data or b'')
+        if not raw:
+            return None
+        try:
+            import cv2
+            import numpy as np
+        except Exception:
+            return None
+
+        try:
+            img = cv2.imdecode(np.frombuffer(raw, dtype=np.uint8), cv2.IMREAD_COLOR)
+        except Exception:
+            img = None
+        if img is None:
+            return None
+
+        detector = cv2.QRCodeDetector()
+
+        def _crop(points) -> bytes | None:
+            if points is None:
+                return None
+            pts = np.array(points, dtype=np.float32).reshape(-1, 2)
+            if pts.size < 8:
+                return None
+            min_x = max(0, int(np.floor(np.min(pts[:, 0]))) - 16)
+            min_y = max(0, int(np.floor(np.min(pts[:, 1]))) - 16)
+            max_x = min(img.shape[1], int(np.ceil(np.max(pts[:, 0]))) + 16)
+            max_y = min(img.shape[0], int(np.ceil(np.max(pts[:, 1]))) + 16)
+            if max_x <= min_x or max_y <= min_y:
+                return None
+            cropped = img[min_y:max_y, min_x:max_x]
+            if cropped.size == 0:
+                return None
+            ok, encoded = cv2.imencode('.png', cropped)
+            if not ok:
+                return None
+            return bytes(encoded)
+
+        try:
+            ok, decoded_info, points, _ = detector.detectAndDecodeMulti(img)
+        except Exception:
+            ok, decoded_info, points = False, (), None
+        if ok and points is not None and len(points):
+            best_idx = 0
+            best_area = -1.0
+            for idx, quad in enumerate(points):
+                quad_np = np.array(quad, dtype=np.float32).reshape(-1, 2)
+                area = float(cv2.contourArea(quad_np.astype(np.int32)))
+                if area > best_area and str((decoded_info[idx] if idx < len(decoded_info) else '') or '').strip():
+                    best_area = area
+                    best_idx = idx
+            cropped = _crop(points[best_idx])
+            if cropped:
+                return cropped
+
+        try:
+            decoded, points, _ = detector.detectAndDecode(img)
+        except Exception:
+            decoded, points = '', None
+        if str(decoded or '').strip() and points is not None:
+            return _crop(points)
+        return None
+
+    def _qq_fetch_locator_image_bytes(self, page, locator) -> bytes | None:
+        if locator is None:
+            return None
+        try:
+            tag_name = str(locator.evaluate("el => (el.tagName || '').toLowerCase()") or '').strip().lower()
+        except Exception:
+            tag_name = ''
+
+        if tag_name == 'img':
+            try:
+                src = str(locator.get_attribute('src') or '').strip()
+            except Exception:
+                src = ''
+            if src:
+                data = self._qq_decode_data_url_bytes(src)
+                if data:
+                    return data
+            try:
+                data = locator.screenshot(type='png')
+                if data:
+                    return data
+            except Exception:
+                pass
+
+        if tag_name == 'canvas':
+            try:
+                data_url = str(locator.evaluate("el => el.toDataURL('image/png')") or '').strip()
+            except Exception:
+                data_url = ''
+            return self._qq_decode_data_url_bytes(data_url)
+
+        try:
+            return locator.screenshot(type='png')
+        except Exception:
+            return None
+
+    def _qq_capture_qrcode_png(self, page, locator=None) -> bytes | None:
+        png_bytes = None
+        candidates = []
+        if locator is not None:
+            candidates.append(locator)
+        iframe = self._qq_login_frame_locator(page)
+        candidates.extend([
+            iframe.locator('#qrlogin_img').first,
+            iframe.locator('#qr_area').first,
+            iframe.locator('.qrImg').first,
+            iframe.locator("img[src*='ptqrshow'], img[src*='qrcode'], img[src*='qr'], canvas, svg").first,
+            page.locator("[role='dialog'] img[src*='ptqrshow'], [role='dialog'] img[src*='qrcode'], [role='dialog'] img[src*='qr'], [role='dialog'] canvas, [role='dialog'] svg").first,
+        ])
+
+        for candidate in candidates:
+            try:
+                candidate.wait_for(state='visible', timeout=1000)
+                raw_bytes = self._qq_fetch_locator_image_bytes(page, candidate)
+                png_bytes = self._qq_crop_qr_image_bytes(raw_bytes or b'')
+                if not png_bytes and raw_bytes:
+                    try:
+                        hint = ' '.join(
+                            str(candidate.get_attribute(name) or '').strip().lower()
+                            for name in ('src', 'class', 'alt', 'id')
+                        )
+                    except Exception:
+                        hint = ''
+                    if any(token in hint for token in ('ptqrshow', 'qrcode', 'qrlogin', 'qr_code', 'qrsig')):
+                        png_bytes = raw_bytes
+                if png_bytes:
+                    break
+            except Exception:
+                continue
+
+        if not png_bytes:
+            try:
+                dialog = page.locator("[role='dialog']").first
+                dialog.wait_for(state='visible', timeout=1000)
+                raw_bytes = dialog.screenshot(type='png')
+                png_bytes = self._qq_crop_qr_image_bytes(raw_bytes or b'')
+            except Exception:
+                png_bytes = None
+
+        if not png_bytes:
+            try:
+                raw_bytes = page.screenshot(type='png', full_page=False)
+                png_bytes = self._qq_crop_qr_image_bytes(raw_bytes or b'')
+            except Exception:
+                png_bytes = None
+
+        if png_bytes:
+            try:
+                path = self._qq_login_qrcode_path()
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(png_bytes)
+            except Exception:
+                pass
+        return png_bytes or None
+
+    def _qq_current_qrcode_signature(self, page) -> str:
+        iframe = self._qq_login_frame_locator(page)
+        candidates = [
+            iframe.locator('#qrlogin_img').first,
+            iframe.locator('.qrImg').first,
+            iframe.locator("img[src*='ptqrshow'], img[src*='qrcode'], img[src*='qr']").first,
+        ]
+        for locator in candidates:
+            try:
+                locator.wait_for(state='visible', timeout=500)
+                src = str(locator.get_attribute('src') or '').strip()
+                if src:
+                    return src
+            except Exception:
+                continue
+        return ''
+
+    def _qq_publish_qrcode_snapshot(self, page, status: str, locator=None, title: str = 'QQ音乐扫码登录') -> bool:
+        qr_png = self._qq_capture_qrcode_png(page, locator=locator)
+        if not qr_png:
+            return False
+        self._publish_qr_show(qr_png, status, title=title)
+        return True
+
+    def _qq_refresh_expired_qrcode(self, page) -> bool:
+        refresh_regex = re.compile(r'二维码已失效|二维码过期|已过期|刷新|重新获取|重试|retry|refresh|expired', re.I)
+        iframe = self._qq_login_frame_locator(page)
+        candidates = [
+            page.get_by_role('button', name=refresh_regex).first,
+            page.get_by_text(refresh_regex).first,
+            iframe.get_by_role('button', name=refresh_regex).first,
+            iframe.get_by_text(refresh_regex).first,
+            iframe.locator('#qr_area').first,
+            iframe.locator('#qlogin_show').first,
+            iframe.locator('.qrlogin_img_out').first,
+            page.locator("[class*='refresh'], [aria-label*='refresh' i], [title*='refresh' i], [aria-label*='刷新'], [title*='刷新']").first,
+            iframe.locator("[class*='refresh'], [aria-label*='refresh' i], [title*='refresh' i], [aria-label*='刷新'], [title*='刷新']").first,
+        ]
+        for locator in candidates:
+            try:
+                locator.wait_for(state='visible', timeout=600)
+                locator.click(force=True, timeout=1500)
+                try:
+                    page.wait_for_timeout(1000)
+                except Exception:
+                    time.sleep(1.0)
+                return True
+            except Exception:
+                continue
+        return False
 
     # ------------------------------------------------------------------
     # Cookie 管理
@@ -448,7 +1326,10 @@ class _LoginMixin:
                 self._set_login_state(False, {}, provider='qq')
                 return False
             self._set_login_state(True, {'nickname': 'QQ账号'}, provider='qq')
-            logger.info('[CloudMusic] 已从缓存恢复 QQ 登录态')
+            if not self._qq_has_music_auth_cookies(client.get_session()):
+                logger.warning('[CloudMusic] 已恢复 QQ 基础登录态，但缺少 QQ 音乐专用 Cookie；喜欢歌单需重新浏览器登录')
+            else:
+                logger.info('[CloudMusic] 已从缓存恢复 QQ 登录态')
             return True
         except Exception as e:
             logger.warning('[CloudMusic] 恢复 QQ 登录缓存失败: %s', e)
@@ -574,7 +1455,7 @@ class _LoginMixin:
     # 二维码登录事件发布
     # ------------------------------------------------------------------
 
-    def _publish_qr_show(self, qr_png: bytes, status: str, title: str = '音乐扫码登录'):
+    def _publish_qr_show(self, qr_png: bytes | None, status: str, title: str = '音乐扫码登录'):
         self._ec.publish(Event(EventType.MUSIC_LOGIN_QR_SHOW, {
             'qr_png': qr_png,
             'status': status,
@@ -746,147 +1627,291 @@ class _LoginMixin:
         self._qr_login_thread.start()
 
     def _on_qq_login_request(self):
+        client = get_qqmusic_provider_client()
         already_logged_in = self.provider_logged_in('qq')
-        if already_logged_in:
+        has_music_auth = self._qq_has_music_auth_cookies(client.get_session())
+        if already_logged_in and has_music_auth:
             self._show_info('QQ账号已登录')
             return
 
         if self._qr_login_thread is not None and self._qr_login_thread.is_alive():
-            self._show_info('QQ扫码登录进行中，请完成手机确认')
+            self._show_info('QQ登录进行中，请在浏览器中完成扫码或确认')
             return
 
+        if already_logged_in and not has_music_auth:
+            self._show_info('检测到当前QQ登录态缺少QQ音乐专用凭据，正在重新打开浏览器补齐')
+
         self._qr_login_cancel.clear()
+        self._publish_qr_show(None, '正在启动QQ音乐登录流程，请稍候...', title='QQ音乐扫码登录')
         self._qr_login_thread = threading.Thread(
             target=self._qq_login_worker,
             daemon=True,
-            name='cm-qq-qr-login',
+            name='cm-qq-browser-login',
         )
         self._qr_login_thread.start()
 
     def _qq_login_worker(self):
-        """后台执行 QQ 二维码登录轮询。"""
+        """Run QQ Music browser login flow."""
+        self._qq_browser_login_worker()
+
+    def _qq_browser_login_worker(self):
+        browser = None
+        context = None
+        page = None
+        playwright = None
+        last_cookie_map: dict[str, str] = {}
+        captured_cookie_map: dict[str, str] = {}
+        promoted = False
         should_hide_qr = False
+        basic_auth_since: float | None = None
+        last_qr_refresh_at: float | None = None
+        last_qr_signature = ''
+        last_qr_snapshot_at: float | None = None
+        official_login_confirmed = False
+        official_nickname = ''
+        promotion_started_at: float | None = None
         try:
+            try:
+                from playwright.sync_api import sync_playwright
+            except Exception as exc:
+                raise RuntimeError('未安装 Playwright，无法启动内置浏览器登录') from exc
+
             client = get_qqmusic_provider_client()
-            session = client.get_session()
-            headers = {
-                'User-Agent': (
-                    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-                    'AppleWebKit/537.36 (KHTML, like Gecko) '
-                    'Chrome/122.0.0.0 Safari/537.36'
-                ),
-            }
-            xlogin = session.get(
-                self._QQ_XLOGIN_URL,
-                params=self._qq_xlogin_params(),
-                headers=headers,
-                timeout=self._QQ_LOGIN_TIMEOUT,
-            )
-            xlogin.raise_for_status()
-            headers["Referer"] = str(xlogin.url or self._QQ_XLOGIN_URL)
+            self._qq_clear_login_qrcode()
+            self._publish_qr_show(None, '正在启动QQ音乐内置浏览器，请稍候...', title='QQ音乐扫码登录')
+            self._publish_qr_status('正在启动QQ音乐内置浏览器...')
+            self._show_info('正在启动QQ音乐官方网页登录流程，请在二维码窗口中扫码或确认登录')
 
-            def _request_qq_qr_payload(status_text: str, show_text: str) -> str:
-                self._publish_qr_status(status_text)
-                qr_resp = session.get(
-                    self._QQ_QRSHOW_URL,
-                    params=self._qq_qrshow_params(),
-                    headers=headers,
-                    timeout=self._QQ_LOGIN_TIMEOUT,
-                )
-                if qr_resp.status_code != 200:
-                    raise RuntimeError(f'QQ二维码获取失败: {qr_resp.status_code}')
-                qrsig = session.cookies.get('qrsig') or ''
-                if not qrsig:
-                    raise RuntimeError('QQ二维码获取失败: 缺少 qrsig')
-                ptqrtoken = str(self._qq_ptqrtoken(qrsig))
-                qr_png = self._qq_qr_png_from_response(qr_resp)
-                if not qr_png:
-                    raise RuntimeError('QQ二维码渲染失败')
-                self._publish_qr_show(qr_png, show_text, title='QQ扫码登录')
-                return ptqrtoken
+            playwright = sync_playwright().start()
+            browser = launch_playwright_chromium(playwright, headless=False)
 
-            ptqrtoken = _request_qq_qr_payload('正在生成QQ二维码...', '请使用QQ扫码登录')
+            context = browser.new_context(locale='zh-CN', viewport={'width': 1280, 'height': 960})
+            page = context.new_page()
 
-            begin_ts = time.time()
-            last_refresh_ts = begin_ts
-            last_refresh_left: int | None = None
-            while not self._qr_login_cancel.is_set():
-                now_ts = time.time()
-                if now_ts - begin_ts > _QR_LOGIN_TIMEOUT:
-                    self._publish_qr_status('QQ二维码超时，请重新点击登录')
-                    self._show_info('QQ二维码已超时，请重新点击登录音乐')
+            def _merge_cookie_candidates(source: dict[str, str] | None) -> None:
+                nonlocal last_cookie_map, captured_cookie_map
+                if not isinstance(source, dict) or not source:
+                    return
+                captured_cookie_map.update({str(k): str(v) for k, v in source.items() if k and v is not None})
+                merged_cookie_map = dict(last_cookie_map or {})
+                merged_cookie_map.update(captured_cookie_map)
+                last_cookie_map = merged_cookie_map
+                client.set_cookies(last_cookie_map)
+
+            def _on_request(request) -> None:
+                try:
+                    headers = request.all_headers()
+                except Exception:
+                    headers = getattr(request, 'headers', None) or {}
+                _merge_cookie_candidates(self._qq_collect_network_cookie_map(headers))
+
+            def _on_response(response) -> None:
+                try:
+                    header_items = response.headers_array()
+                except Exception:
+                    header_items = []
+                _merge_cookie_candidates(parse_set_cookie_headers(header_items))
+
+            context.on('request', _on_request)
+            context.on('response', _on_response)
+            self._publish_qr_status('正在打开QQ音乐页面...')
+            page.goto('https://y.qq.com/n/ryqq/index.html', wait_until='domcontentloaded', timeout=30000)
+            try:
+                page.wait_for_timeout(1500)
+            except Exception:
+                time.sleep(1.5)
+
+            self._publish_qr_status('正在点击QQ音乐登录入口...')
+            if self._qq_prepare_official_login_flow(page):
+                self._publish_qr_show(None, '二维码准备中，请稍候...', title='QQ音乐扫码登录')
+                self._publish_qr_status('二维码准备中，请稍候...')
+
+            self._publish_qr_show(None, '正在等待QQ音乐登录二维码...', title='QQ音乐扫码登录')
+            self._publish_qr_status('正在等待QQ音乐登录二维码...')
+            qrcode_locator = self._qq_wait_for_qrcode_locator(page, timeout_ms=20000)
+
+            if qrcode_locator is None:
+                self._publish_qr_show(None, '未拿到官网二维码，正在重试QQ音乐登录入口...', title='QQ音乐扫码登录')
+                self._publish_qr_status('未拿到官网二维码，正在重试QQ音乐登录入口...')
+                self._qq_prepare_official_login_flow(page)
+                qrcode_locator = self._qq_wait_for_qrcode_locator(page, timeout_ms=20000)
+
+            if qrcode_locator is None and not self._qq_publish_qrcode_snapshot(page, '请使用QQ扫码登录QQ音乐'):
+                raise RuntimeError('未能在QQ音乐官网登录弹层中捕获二维码')
+
+            if qrcode_locator is not None:
+                self._qq_publish_qrcode_snapshot(page, '请使用QQ扫码登录QQ音乐', locator=qrcode_locator)
+                last_qr_signature = self._qq_current_qrcode_signature(page)
+                last_qr_snapshot_at = time.monotonic()
+            last_qr_refresh_at = time.monotonic()
+
+            self._publish_qr_status('二维码已生成，请使用QQ扫码登录')
+
+            deadline = time.monotonic() + max(90, int(_QR_LOGIN_TIMEOUT))
+            while time.monotonic() < deadline:
+                if self._qr_login_cancel.is_set():
+                    self._publish_qr_status('已取消QQ登录')
                     return
 
-                poll_resp = session.get(
-                    self._QQ_PTQRLOGIN_URL,
-                    params=self._qq_ptqrlogin_params(ptqrtoken),
-                    headers=headers,
-                    timeout=self._QQ_LOGIN_TIMEOUT,
-                )
-                code, redirect_url, message, nickname = self._parse_qq_login_cb(poll_resp.text)
-                if code == '66':
-                    left = int(math.ceil(max(0.0, _QR_REFRESH_INTERVAL - (now_ts - last_refresh_ts))))
-                    if left != last_refresh_left:
-                        self._publish_qr_status('等待扫码...', refresh_left=left)
-                        last_refresh_left = left
-                    if (now_ts - last_refresh_ts) >= _QR_REFRESH_INTERVAL:
-                        ptqrtoken = _request_qq_qr_payload('正在刷新QQ二维码...', 'QQ二维码已自动刷新，请扫码登录')
-                        last_refresh_ts = time.time()
-                        last_refresh_left = None
-                        continue
-                elif code == '67':
-                    self._publish_qr_status('已扫码，请在手机端确认登录')
-                    last_refresh_left = None
-                elif code == '65':
-                    ptqrtoken = _request_qq_qr_payload('二维码已过期，正在自动刷新...', 'QQ二维码已自动刷新，请重新扫码')
-                    last_refresh_ts = time.time()
-                    last_refresh_left = None
-                    continue
-                elif code == '0':
-                    self._publish_qr_status('登录成功，正在同步...')
-                    self._qq_sync_login_session(session, headers, redirect_url)
-                    cookie_ok = self._qq_has_login_cookies(session)
-                    if not cookie_ok:
-                        # 某些环境只写入 uin + qqmusic_key 相关 Cookie，先做一次宽松确认，避免误判失败。
-                        if not self._qq_has_uin_cookie(session):
-                            self._publish_qr_status('QQ登录同步失败，请重试')
-                            self._show_error('QQ登录状态异常，请重试')
-                            return
-                        logger.warning('[CloudMusic] QQ 登录同步后仅检测到 uin，按成功继续')
-                    nickname = str(nickname or "").strip() or self._qq_nickname_hint(session)
+                current_qr_signature = self._qq_current_qrcode_signature(page)
+                now = time.monotonic()
+                if (not has_uin if 'has_uin' in locals() else True):
+                    should_refresh_snapshot = False
+                    if current_qr_signature and current_qr_signature != last_qr_signature:
+                        should_refresh_snapshot = True
+                    elif last_qr_snapshot_at is None or (now - last_qr_snapshot_at) >= 8.0:
+                        should_refresh_snapshot = True
+                    if should_refresh_snapshot:
+                        qr_locator_for_update = self._qq_find_qrcode_locator(page)
+                        if self._qq_publish_qrcode_snapshot(page, '请使用QQ扫码登录QQ音乐', locator=qr_locator_for_update):
+                            last_qr_signature = current_qr_signature or last_qr_signature
+                            last_qr_snapshot_at = now
+
+                poll_code, poll_redirect_url, poll_message, poll_nickname, polled_cookie_map = self._qq_poll_login_result(context)
+                if polled_cookie_map:
+                    _merge_cookie_candidates(polled_cookie_map)
+
+                if poll_code == '66':
+                    self._publish_qr_status('等待扫码...')
+                elif poll_code == '67':
+                    self._publish_qr_status('已扫码，请在手机上确认登录')
+                elif poll_code == '65':
+                    self._publish_qr_status('二维码已失效，请稍候刷新')
+                elif poll_code == '0':
+                    official_login_confirmed = True
+                    official_nickname = str(poll_nickname or '').strip()
+                    self._publish_qr_status('QQ音乐授权成功，正在同步登录态...')
+                    logger.info('[CloudMusic] QQ官方扫码确认成功，开始同步浏览器登录态')
+                    synced_cookie_map = self._qq_sync_login_context(
+                        context,
+                        page,
+                        poll_redirect_url,
+                        seed_cookie_map=last_cookie_map,
+                    )
+                    if synced_cookie_map:
+                        _merge_cookie_candidates(synced_cookie_map)
+                    self._qq_probe_music_auth_context(page, last_cookie_map)
+                    _merge_cookie_candidates(self._qq_collect_context_cookie_map(context))
+                    _merge_cookie_candidates(self._qq_collect_document_cookie_map(page))
+                    _merge_cookie_candidates(self._qq_collect_storage_state_map(page, context))
+                    logger.info(
+                        '[CloudMusic] QQ登录态同步结果 uin=%s auth=%s music_auth=%s',
+                        self._qq_cookie_map_has_uin(last_cookie_map),
+                        self._qq_cookie_map_has_auth(last_cookie_map),
+                        self._qq_cookie_map_has_music_auth(last_cookie_map),
+                        )
+
+                frame_state = self._qq_login_frame_state(page)
+                if not poll_code and frame_state == 'scanned':
+                    self._publish_qr_status('已扫码，请在手机上确认登录')
+                elif not official_login_confirmed and frame_state == 'authorize':
+                    self._publish_qr_status('已扫码成功，正在等待授权确认...')
+                elif not official_login_confirmed and frame_state == 'success':
+                    official_login_confirmed = True
+                    self._publish_qr_status('QQ音乐授权成功，正在同步登录态...')
+
+                context_cookie_map = self._qq_collect_context_cookie_map(context)
+                document_cookie_map = self._qq_collect_document_cookie_map(page)
+                storage_state_map = self._qq_collect_storage_state_map(page, context)
+                _merge_cookie_candidates(context_cookie_map)
+                _merge_cookie_candidates(document_cookie_map)
+                _merge_cookie_candidates(storage_state_map)
+
+                has_uin = self._qq_cookie_map_has_uin(last_cookie_map)
+                has_auth = self._qq_cookie_map_has_auth(last_cookie_map)
+                has_music_auth = self._qq_cookie_map_has_music_auth(last_cookie_map)
+                if has_uin and has_auth:
+                    if basic_auth_since is None:
+                        basic_auth_since = time.monotonic()
+
+                if has_uin and has_music_auth:
+                    nickname = official_nickname or self._qq_nickname_hint(client.get_session())
                     self._set_login_state(True, {'nickname': nickname}, provider='qq')
                     self._save_qq_login_cache()
-                    self._show_info(self._login_success_message("QQ平台", nickname))
                     should_hide_qr = True
+                    self._publish_qr_status('QQ音乐登录成功，已同步完整权限')
+                    self._show_info(self._login_success_message('QQ平台', nickname))
                     return
-                elif code:
-                    self._publish_qr_status(message or 'QQ登录处理中...')
-                    last_refresh_left = None
-                elif int(poll_resp.status_code or 0) >= 400:
-                    if self._qq_has_login_cookies(session):
-                        nickname = self._qq_nickname_hint(session)
-                        self._set_login_state(True, {'nickname': nickname}, provider='qq')
-                        self._save_qq_login_cache()
-                        self._publish_qr_status('已检测到QQ登录成功，正在同步...')
-                        self._show_info(self._login_success_message("QQ平台", nickname))
-                        should_hide_qr = True
-                        return
-                    self._publish_qr_status(f'QQ登录接口返回 {poll_resp.status_code}，正在重试...')
-                    last_refresh_left = None
-                    time.sleep(max(_QR_POLL_INTERVAL, 2.0))
-                    continue
-                else:
-                    self._publish_qr_status(message or 'QQ登录处理中...')
-                    last_refresh_left = None
 
-                time.sleep(_QR_POLL_INTERVAL)
+                if official_login_confirmed and not promoted:
+                    promoted = True
+                    promotion_started_at = time.monotonic()
+                    self._publish_qr_status('已扫码成功，正在同步QQ音乐登录态...')
+                    synced_cookie_map = self._qq_sync_login_context(
+                        context,
+                        page,
+                        poll_redirect_url,
+                        seed_cookie_map=last_cookie_map,
+                    )
+                    if synced_cookie_map:
+                        _merge_cookie_candidates(synced_cookie_map)
+                    self._qq_probe_music_auth_context(page, last_cookie_map)
+                    _merge_cookie_candidates(self._qq_collect_context_cookie_map(context))
+                    _merge_cookie_candidates(self._qq_collect_document_cookie_map(page))
+                    _merge_cookie_candidates(self._qq_collect_storage_state_map(page, context))
+                    continue
+
+                if promoted and not has_music_auth:
+                    elapsed = 0.0 if promotion_started_at is None else (time.monotonic() - promotion_started_at)
+                    if elapsed >= 30.0:
+                        raise RuntimeError('QQ已登录，但未拿到QQ音乐专用凭据，请重新登录后重试')
+                    self._publish_qr_status('已扫码成功，正在等待QQ音乐权限补齐...')
+                    if elapsed >= 1.5 and int(elapsed * 2) != int(max(0.0, elapsed - 0.5) * 2):
+                        self._qq_probe_music_auth_context(page, last_cookie_map)
+                        synced_cookie_map = self._qq_sync_login_context(
+                            context,
+                            page,
+                            poll_redirect_url,
+                            seed_cookie_map=last_cookie_map,
+                        )
+                        if synced_cookie_map:
+                            _merge_cookie_candidates(synced_cookie_map)
+                        _merge_cookie_candidates(self._qq_collect_context_cookie_map(context))
+                        _merge_cookie_candidates(self._qq_collect_document_cookie_map(page))
+                        _merge_cookie_candidates(self._qq_collect_storage_state_map(page, context))
+
+                if not has_uin:
+                    if last_qr_refresh_at is not None and (now - last_qr_refresh_at) >= _QQ_QR_AUTO_REFRESH_INTERVAL:
+                        if self._qq_refresh_expired_qrcode(page):
+                            last_qr_refresh_at = now
+                            self._publish_qr_status('二维码已自动刷新，请重新扫码')
+                            if self._qq_publish_qrcode_snapshot(page, '二维码已自动刷新，请重新扫码'):
+                                last_qr_signature = self._qq_current_qrcode_signature(page)
+                                last_qr_snapshot_at = now
+                            time.sleep(0.8)
+                            continue
+
+                time.sleep(0.5)
+
+            if self._qq_cookie_map_has_uin(last_cookie_map):
+                raise RuntimeError('已登录QQ，但仍未拿到QQ音乐专用Cookie。请确认浏览器停留在QQ音乐页面后重试')
+            raise RuntimeError('QQ浏览器登录超时，请重试')
         except Exception as e:
-            logger.error('[CloudMusic] QQ二维码登录失败: %s', e)
-            self._publish_qr_status('QQ二维码登录失败，请稍后重试')
-            self._show_error('QQ二维码登录失败，请稍后重试')
+            logger.error('[CloudMusic] QQ浏览器登录失败: %s', e)
+            self._publish_qr_status('QQ浏览器登录失败，请稍后重试')
+            self._show_error(str(e) or 'QQ浏览器登录失败，请稍后重试')
         finally:
-            if should_hide_qr or self._qr_login_cancel.is_set():
-                self._publish_qr_hide()
+            try:
+                if context is not None:
+                    context.close()
+            except Exception:
+                pass
+            try:
+                if browser is not None:
+                    browser.close()
+            except Exception:
+                pass
+            try:
+                if playwright is not None:
+                    playwright.stop()
+            except Exception:
+                pass
+            self._qq_clear_login_qrcode()
+            self._publish_qr_hide()
+
+    def _qq_legacy_login_worker(self):
+        """Legacy QQ QR login is intentionally disabled."""
+        raise RuntimeError('legacy qq qr login is disabled')
 
     def _kugou_login_worker(self):
         """后台执行酷狗二维码登录轮询。"""
@@ -947,6 +1972,13 @@ class _LoginMixin:
                     if not client.set_login_token(token, userid):
                         self._publish_qr_status('酷狗登录状态异常，请重试')
                         self._show_error('酷狗登录状态异常，请重试')
+                        return
+                    self._publish_qr_status('酷狗授权成功，正在补齐网页登录态...')
+                    login_meta = client.finalize_login()
+                    if not bool(login_meta.get('ok')):
+                        logger.warning('[CloudMusic] 酷狗登录补齐失败 meta=%s', login_meta)
+                        self._publish_qr_status('酷狗登录态补齐失败，请重试')
+                        self._show_error('酷狗登录态补齐失败，请重试')
                         return
                     nickname = str(result.get('nickname') or '').strip()
                     if not nickname:

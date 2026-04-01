@@ -38,13 +38,16 @@ SPEAKER_SEARCH_UI = {
 }
 CLOUD_MUSIC = {
     # 当前音乐平台（抽象层路由入口，后续可扩展 qq / kugou）
-    'provider': 'netease',
+    'provider': 'qq',
     'bitrate_ladder':   (320000, 192000, 128000),  # 音质梯度（bps）
     'default_volume':   0.2,                      # 默认音量（15%）
     'pygame_init_wait': 5,                         # pygame 初始化最大等待时间（秒）
     'particle_interval': 60,                       # 音符粒子生成间隔（帧数）
     'search_result_limit': 128,                    # 音响搜索结果上限（首）
     # 缓存目录（相对于项目根目录）
+    'search_fallback_enabled': True,               # 当前平台搜索不足或失败时自动补充其它平台
+    'search_fallback_order': ('qq', 'kugou', 'netease'),  # 多源搜索回退顺序
+    'search_append_source_label': True,            # 混合搜索结果标注来源平台
     'cache_dir': 'resc/user/temp',
     # 本地音乐目录（支持绝对路径；相对路径按项目根目录解析，默认空）
     'local_music_dir': '',

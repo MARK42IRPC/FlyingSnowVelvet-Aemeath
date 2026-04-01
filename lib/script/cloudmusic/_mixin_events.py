@@ -374,7 +374,9 @@ class _EventsMixin:
         info = meta if isinstance(meta, dict) else {}
         reason = str(info.get("reason") or "").strip()
         if reason == "no_uin":
-            return "QQ平台未登录或登录态失效，请重新登录后重试"
+            return "QQ 平台未登录或登录态失效，请重新登录后重试"
+        if reason == "missing_music_auth_cookie":
+            return "当前 QQ 登录态缺少 QQ 音乐专用凭据，请重新点击 QQ 登录，并在内置浏览器中完成扫码后重试"
         if reason in {
             "playlist_request_failed",
             "playlist_empty",
@@ -383,8 +385,8 @@ class _EventsMixin:
             "liked_playlist_not_found",
             "liked_playlist_tracks_empty",
         }:
-            return "QQ喜欢列表为空或不可访问，请检查账号歌单权限后重试"
-        return "QQ喜欢列表为空或登录态已过期，请重新登录后重试"
+            return "QQ 喜欢列表为空或不可访问，请检查账号歌单权限后重试"
+        return "QQ 喜欢列表为空或登录态已过期，请重新登录后重试"
 
     @staticmethod
     def _kugou_liked_fail_message(meta: dict | None) -> str:
@@ -404,7 +406,7 @@ class _EventsMixin:
         current_provider = str(self._current_provider()).strip().lower()
         provider_label = {
             "netease": "网易云",
-            "qq": "QQ音乐",
+            "qq": "QQ 音乐",
             "kugou": "酷狗音乐",
             "local": "本地模式",
         }.get(current_provider, "当前平台")
@@ -444,7 +446,6 @@ class _EventsMixin:
             daemon=True,
             name=f'cm-liked-load-{current_provider}',
         ).start()
-
     def _enqueue_liked_worker(self, provider: str):
         """后台线程：拉取各平台喜欢列表，随机入队并开始播放。"""
         try:

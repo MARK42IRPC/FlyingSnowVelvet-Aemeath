@@ -70,7 +70,7 @@ def _music_login_snapshot(
     return logged_in, provider.strip().lower()
 
 
-def _music_provider_mode_label(default: str = '????') -> str:
+def _music_provider_mode_label(default: str = '音乐模式') -> str:
     service = _safe_music_service()
     if service is None:
         return default
@@ -103,7 +103,7 @@ def _music_volume_percent(default: int = 0) -> int:
 def _publish_volume_bubble(event_center) -> None:
     vol = _music_volume_percent()
     event_center.publish(Event(EventType.INFORMATION, {
-        'text': f'???{vol}%',
+        'text': f'\u97f3\u91cf {vol}%',
         'min': 0,
     }))
 
@@ -379,7 +379,7 @@ class MusicLoginButton(SpeakerControlButton):
 
 
 class PlatformModeButton(SpeakerControlButton):
-    """音乐平台模式按钮（80px 文字按钮）。"""
+    """Platform music mode switch button."""
 
     def __init__(self):
         super().__init__(_BTN_PLAYLIST_W, _BTN_HEIGHT)
@@ -427,105 +427,6 @@ class PlatformModeButton(SpeakerControlButton):
             'min': 0,
             'max': 120,
         }))
-
-
-class VolumeUpButton(SpeakerControlButton):
-    """音量加按钮 - 每次点击音量 +5%"""
-
-    def __init__(self):
-        super().__init__(_BTN_WIDTH, _BTN_HEIGHT)
-        self._description = TOOLTIPS['speaker_volume_up']
-
-    def _draw_icon(self, painter, rect):
-        cx = rect.center().x()
-        cy = rect.center().y()
-        size = min(rect.width(), rect.height()) * 0.35
-
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(_C_ICON)
-
-        # 喇叭主体（梯形）
-        body = QPolygonF([
-            QPointF(cx - size * 0.7, cy - size * 0.4),
-            QPointF(cx - size * 0.7, cy + size * 0.4),
-            QPointF(cx - size * 0.1, cy + size * 0.4),
-            QPointF(cx - size * 0.1, cy - size * 0.4),
-        ])
-        painter.drawPolygon(body)
-        cone = QPolygonF([
-            QPointF(cx - size * 0.1, cy - size * 0.4),
-            QPointF(cx - size * 0.1, cy + size * 0.4),
-            QPointF(cx + size * 0.4, cy + size * 0.8),
-            QPointF(cx + size * 0.4, cy - size * 0.8),
-        ])
-        painter.drawPolygon(cone)
-
-        # "+" 号
-        pen = QPen(_C_ICON)
-        pen.setWidth(_LAYER)
-        painter.setPen(pen)
-        painter.setBrush(Qt.NoBrush)
-        plus_x = cx + size * 0.65
-        plus_y = cy - size * 0.55
-        half = size * 0.22
-        painter.drawLine(int(plus_x - half), int(plus_y), int(plus_x + half), int(plus_y))
-        painter.drawLine(int(plus_x), int(plus_y - half), int(plus_x), int(plus_y + half))
-
-    def on_clicked(self):
-        self._event_center.publish(Event(EventType.MUSIC_VOLUME, {'delta': 0.05}))
-        self._show_volume_bubble()
-
-    def _show_volume_bubble(self):
-        _publish_volume_bubble(self._event_center)
-
-
-class VolumeDownButton(SpeakerControlButton):
-    """音量减按钮 - 每次点击音量 -5%"""
-
-    def __init__(self):
-        super().__init__(_BTN_WIDTH, _BTN_HEIGHT)
-        self._description = TOOLTIPS['speaker_volume_down']
-
-    def _draw_icon(self, painter, rect):
-        cx = rect.center().x()
-        cy = rect.center().y()
-        size = min(rect.width(), rect.height()) * 0.35
-
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(_C_ICON)
-
-        # 喇叭主体（梯形）
-        body = QPolygonF([
-            QPointF(cx - size * 0.7, cy - size * 0.4),
-            QPointF(cx - size * 0.7, cy + size * 0.4),
-            QPointF(cx - size * 0.1, cy + size * 0.4),
-            QPointF(cx - size * 0.1, cy - size * 0.4),
-        ])
-        painter.drawPolygon(body)
-        cone = QPolygonF([
-            QPointF(cx - size * 0.1, cy - size * 0.4),
-            QPointF(cx - size * 0.1, cy + size * 0.4),
-            QPointF(cx + size * 0.4, cy + size * 0.8),
-            QPointF(cx + size * 0.4, cy - size * 0.8),
-        ])
-        painter.drawPolygon(cone)
-
-        # "-" 号
-        pen = QPen(_C_ICON)
-        pen.setWidth(_LAYER)
-        painter.setPen(pen)
-        painter.setBrush(Qt.NoBrush)
-        minus_x = cx + size * 0.65
-        minus_y = cy - size * 0.55
-        half = size * 0.22
-        painter.drawLine(int(minus_x - half), int(minus_y), int(minus_x + half), int(minus_y))
-
-    def on_clicked(self):
-        self._event_center.publish(Event(EventType.MUSIC_VOLUME, {'delta': -0.05}))
-        self._show_volume_bubble()
-
-    def _show_volume_bubble(self):
-        _publish_volume_bubble(self._event_center)
 
 
 class PlayModeButton(SpeakerControlButton):
@@ -774,6 +675,50 @@ class LikedQueueButton(SpeakerControlButton):
             }))
             return
         self._event_center.publish(Event(EventType.MUSIC_ENQUEUE_LIKED, {}))
+
+
+class VolumeDownButton(SpeakerControlButton):
+    """??????"""
+
+    _STEP = -0.05
+
+    def __init__(self):
+        super().__init__(_BTN_WIDTH, _BTN_HEIGHT)
+        self._label_font = get_ui_font()
+        self._label_font.setBold(True)
+        self._description = TOOLTIPS.get('speaker_volume_down', '????')
+
+    def _draw_icon(self, painter, rect):
+        painter.setRenderHint(QPainter.Antialiasing, False)
+        painter.setFont(self._label_font)
+        painter.setPen(_C_TEXT)
+        painter.drawText(rect, Qt.AlignCenter, '-')
+
+    def on_clicked(self):
+        self._event_center.publish(Event(EventType.MUSIC_VOLUME, {'delta': self._STEP}))
+        _publish_volume_bubble(self._event_center)
+
+
+class VolumeUpButton(SpeakerControlButton):
+    """??????"""
+
+    _STEP = 0.05
+
+    def __init__(self):
+        super().__init__(_BTN_WIDTH, _BTN_HEIGHT)
+        self._label_font = get_ui_font()
+        self._label_font.setBold(True)
+        self._description = TOOLTIPS.get('speaker_volume_up', '????')
+
+    def _draw_icon(self, painter, rect):
+        painter.setRenderHint(QPainter.Antialiasing, False)
+        painter.setFont(self._label_font)
+        painter.setPen(_C_TEXT)
+        painter.drawText(rect, Qt.AlignCenter, '+')
+
+    def on_clicked(self):
+        self._event_center.publish(Event(EventType.MUSIC_VOLUME, {'delta': self._STEP}))
+        _publish_volume_bubble(self._event_center)
 
 
 class SpeakerControlButtons:
