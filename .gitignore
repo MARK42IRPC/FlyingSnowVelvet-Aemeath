@@ -27,6 +27,7 @@ logs/
 *.log
 py.ini
 AA更新日志.txt.bak
+services/storage_state.json
 
 # Generated assets & downloads
 resc/models/
@@ -35,6 +36,7 @@ resc/gsvmove_update/
 resc/user/
 resc/VFX/cache/
 config/.shared_pending/
+musicdl_outputs/
 *.zip
 *.7z
 *.tar
