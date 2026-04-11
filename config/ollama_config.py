@@ -43,7 +43,7 @@ FORCE_REPLY_MODE = '4'
 # - Moonshot:   'https://api.moonshot.cn/v1'
 # - 智谱AI:     'https://open.bigmodel.cn/api/paas/v4'
 # - 通义千问:   'https://dashscope.aliyuncs.com/compatible-mode/v1'
-API_BASE_URL = 'http://127.0.0.1:8000/v1'
+API_BASE_URL = 'http://127.0.0.1:9000/v1'
 
 # 使用 API Key 时的模型名称
 # 例如: 'gpt-4o-mini', 'deepseek-chat', 'moonshot-v1-8k'

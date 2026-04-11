@@ -1683,7 +1683,11 @@ class _LoginMixin:
             self._show_info('正在启动QQ音乐官方网页登录流程，请在二维码窗口中扫码或确认登录')
 
             playwright = sync_playwright().start()
-            browser = launch_playwright_chromium(playwright, headless=False)
+            browser = launch_playwright_chromium(
+                playwright,
+                headless=True,
+                allow_visible_fallback=False,
+            )
 
             context = browser.new_context(locale='zh-CN', viewport={'width': 1280, 'height': 960})
             page = context.new_page()

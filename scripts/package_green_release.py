@@ -7,7 +7,9 @@ such as Vosk models and Chromium resources for direct file sharing.
 from __future__ import annotations
 
 import argparse
+import ast
 import json
+import re
 import sys
 import zipfile
 from dataclasses import dataclass
@@ -39,6 +41,12 @@ EXCLUDE_PATH_PREFIXES = {
     Path("resc") / "gsvmove_update",
 }
 
+EXCLUDE_EXACT_PATHS = {
+    Path("config") / "user_scale.json",
+    Path("config") / "music" / "volume.json",
+    Path("services") / "storage_state.json",
+}
+
 EXCLUDE_SUFFIXES = {
     ".pyc",
     ".pyo",
@@ -66,11 +74,54 @@ PLACEHOLDER_DIRS = (
     Path("resc") / "user",
 )
 
+SANITIZED_TEXT_FILES = {
+    Path("config") / "ollama_config.py",
+}
+
 
 @dataclass
 class FileEntry:
     relative: Path
     size: int
+
+
+def _replace_assignment(text: str, name: str, value_literal: str) -> str:
+    pattern = rf"(?m)^(\s*{re.escape(name)}\s*=\s*).*$"
+    replacement = rf"\g<1>{value_literal}"
+    return re.sub(pattern, replacement, text)
+
+
+def _replace_named_dict_item(text: str, dict_name: str, key: str, value_literal: str) -> str:
+    pattern = (
+        rf"(?ms)(^\s*{re.escape(dict_name)}\s*=\s*\{{.*?^[ \t]*['\"]{re.escape(key)}['\"]\s*:\s*)"
+        rf"([^\r\n#]*?)"
+        rf"(\s*,\s*(?:#.*)?$|\s*(?:#.*)?$)"
+    )
+    replacement = rf"\g<1>{value_literal}\g<3>"
+    return re.sub(pattern, replacement, text)
+
+
+def _sanitize_ollama_config(text: str) -> str:
+    sanitized = text
+    sanitized = _replace_assignment(sanitized, "API_KEY", "''")
+    sanitized = _replace_named_dict_item(sanitized, "YUANBAO_FREE_API", "hy_user", "''")
+    sanitized = _replace_named_dict_item(sanitized, "YUANBAO_FREE_API", "x_uskey", "''")
+    sanitized = _replace_named_dict_item(sanitized, "YUANBAO_FREE_API", "chat_id", "''")
+    return sanitized
+
+
+def _build_inline_payloads() -> Dict[Path, bytes]:
+    payloads: Dict[Path, bytes] = {}
+    for relative in SANITIZED_TEXT_FILES:
+        src = ROOT / relative
+        if not src.exists():
+            continue
+        text = src.read_text(encoding="utf-8")
+        if relative == Path("config") / "ollama_config.py":
+            text = _sanitize_ollama_config(text)
+            ast.parse(text, filename=str(relative))
+        payloads[relative] = text.encode("utf-8")
+    return payloads
 
 
 def _is_under(path: Path, prefix: Path) -> bool:
@@ -83,6 +134,8 @@ def _is_under(path: Path, prefix: Path) -> bool:
 
 def _should_exclude(path: Path) -> bool:
     rel = path.relative_to(ROOT)
+    if rel in EXCLUDE_EXACT_PATHS:
+        return True
     for part in rel.parts:
         if part in EXCLUDE_PART_NAMES:
             return True
@@ -98,7 +151,7 @@ def _should_exclude(path: Path) -> bool:
     return False
 
 
-def _iter_files() -> Iterator[FileEntry]:
+def _iter_files(inline_payloads: Dict[Path, bytes]) -> Iterator[FileEntry]:
     for path in ROOT.rglob("*"):
         try:
             if not path.is_file():
@@ -108,7 +161,8 @@ def _iter_files() -> Iterator[FileEntry]:
         if _should_exclude(path):
             continue
         rel = path.relative_to(ROOT)
-        size = path.stat().st_size
+        payload = inline_payloads.get(rel)
+        size = len(payload) if payload is not None else path.stat().st_size
         yield FileEntry(relative=rel, size=size)
 
 
@@ -128,11 +182,16 @@ def _write_archive(
     file_entries: List[FileEntry],
     placeholder_entries: List[FileEntry],
     placeholder_payloads: Dict[Path, str],
+    inline_payloads: Dict[Path, bytes],
 ) -> None:
     if zip_path.exists():
         zip_path.unlink()
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         for entry in file_entries:
+            payload = inline_payloads.get(entry.relative)
+            if payload is not None:
+                zf.writestr(entry.relative.as_posix(), payload)
+                continue
             src = ROOT / entry.relative
             zf.write(src, arcname=entry.relative.as_posix())
         for entry in placeholder_entries:
@@ -171,7 +230,8 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
 
 def main(argv: Optional[List[str]] = None) -> int:
     args = parse_args(argv or sys.argv[1:])
-    entries = sorted(_iter_files(), key=lambda e: e.relative.as_posix())
+    inline_payloads = _build_inline_payloads()
+    entries = sorted(_iter_files(inline_payloads), key=lambda e: e.relative.as_posix())
     placeholder_entries, placeholder_payloads = _build_placeholder_entries(args.version)
     all_entries = entries + placeholder_entries
     total_size = sum(entry.size for entry in entries)
@@ -187,7 +247,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     zip_path = args.output / f"FlyingSnowVelvet-{args.version}-green.zip"
     manifest_path = args.output / f"FlyingSnowVelvet-{args.version}-green-manifest.json"
 
-    _write_archive(zip_path, entries, placeholder_entries, placeholder_payloads)
+    _write_archive(zip_path, entries, placeholder_entries, placeholder_payloads, inline_payloads)
     _write_manifest(manifest_path, all_entries)
 
     print(f"[green-package] wrote {zip_path.relative_to(ROOT)} ({_format_size(zip_path.stat().st_size)})")

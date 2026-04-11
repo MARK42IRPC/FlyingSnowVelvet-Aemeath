@@ -50,7 +50,7 @@ def parse_set_cookie_headers(headers: Any) -> dict[str, str]:
     return cookie_map
 
 
-def launch_playwright_chromium(playwright, *, headless: bool):
+def launch_playwright_chromium(playwright, *, headless: bool, allow_visible_fallback: bool = True):
     from lib.script.chat.yuanbao_auth import _find_local_playwright_executable, _preferred_chromium_channels
 
     launch_errors: list[str] = []
@@ -73,7 +73,7 @@ def launch_playwright_chromium(playwright, *, headless: bool):
         except Exception as exc:
             launch_errors.append(f'{channel or "chromium"}: {exc}')
 
-    if browser is None and headless:
+    if browser is None and headless and allow_visible_fallback:
         try:
             browser = playwright.chromium.launch(headless=False)
         except Exception as exc:
@@ -82,4 +82,3 @@ def launch_playwright_chromium(playwright, *, headless: bool):
     if browser is None:
         raise RuntimeError("无法启动可用浏览器: " + " | ".join(launch_errors))
     return browser
-
