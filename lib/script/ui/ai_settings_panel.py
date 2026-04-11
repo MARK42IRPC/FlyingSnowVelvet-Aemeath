@@ -212,6 +212,12 @@ _GENERAL_CONFIG_CATEGORIES = [
             ("STARTUP", "启动"),
         ],
     },
+    {
+        "id": "desktop_pet_update",
+        "tab": "桌宠更新",
+        "title": "桌宠更新管理",
+        "sections": [],
+    },
 ]
 
 _CATEGORY_KEY_ALLOWLIST = {
@@ -321,6 +327,7 @@ _CATEGORY_KEY_ALLOWLIST = {
             "ensure_desktop_shortcut",
         },
     },
+    "desktop_pet_update": {},  # 桌宠更新标签页 - 没有配置字段，只有按钮
 }
 
 _GENERAL_BOOL_KEYS: set[tuple[str, str]] = {
@@ -1287,7 +1294,6 @@ class AISettingsPanel(QWidget):
         self._ec = get_event_center()
         self._autostart_checkbox = None
         self._autostart_status_subscribed = False
-        self._check_update_btn = None
         self._checking_updates = False
         self._subscribe_autostart_events()
         self.setWindowTitle("控制面板")
@@ -1384,8 +1390,7 @@ class AISettingsPanel(QWidget):
     def _set_check_updates_busy(self, busy: bool) -> None:
         def apply():
             self._checking_updates = busy
-            if self._check_update_btn is not None:
-                self._check_update_btn.setEnabled(not busy)
+            # 检查更新按钮已移除，不再需要更新按钮状态
         self._run_on_ui_thread(apply)
 
     def _create_action_button_row(self, *button_specs):
@@ -1744,10 +1749,9 @@ class AISettingsPanel(QWidget):
 
         btn_row, root_buttons = self._create_action_button_row(
             ("恢复默认", self._on_restore_defaults),
-            ("检查更新", self._on_check_updates),
             ("保存并退出", self._on_save_and_exit),
         )
-        self._reload_btn, self._check_update_btn, self._save_exit_btn = root_buttons
+        self._reload_btn, self._save_exit_btn = root_buttons
         layout.addLayout(btn_row)
 
         attach_ai_settings_tabs(self, _GENERAL_CONFIG_CATEGORIES)
@@ -1774,6 +1778,10 @@ class AISettingsPanel(QWidget):
             category_title,
             _GENERAL_HINT_TEXT,
         )
+
+        # 特殊处理：桌宠更新标签页 - 只有按钮，没有配置字段
+        if category_id == "desktop_pet_update":
+            return self._build_desktop_pet_update_panel(panel, layout, category_title)
 
         scroll = _SmoothScrollArea(panel)
         scroll.setWidgetResizable(True)
@@ -2000,6 +2008,99 @@ class AISettingsPanel(QWidget):
             "hint_label": hint_label,
         }
         return panel
+
+    def _build_desktop_pet_update_panel(self, panel: QWidget, layout: QVBoxLayout, category_title: str) -> QWidget:
+        """构建桌宠更新标签页 - 只有按钮，没有配置字段"""
+        from PyQt5.QtCore import Qt
+        from PyQt5.QtWidgets import QLabel, QVBoxLayout, QHBoxLayout, QPushButton, QWidget
+
+        # 添加说明文本
+        description_label = QLabel("在这里可以检查桌宠更新和同步开发版本。")
+        description_font = self._get_ui_font(size=scale_px(12, min_abs=10))
+        description_label.setFont(description_font)
+        description_label.setWordWrap(True)
+        description_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+        description_label.setContentsMargins(0, 0, 0, scale_px(16))
+        layout.addWidget(description_label)
+
+        # 创建按钮容器
+        button_container = QWidget()
+        button_layout = QVBoxLayout(button_container)
+        button_layout.setContentsMargins(0, 0, 0, 0)
+        button_layout.setSpacing(scale_px(16))
+
+        # 创建"检查新版本"按钮
+        check_update_btn = QPushButton("检查新版本")
+        check_update_btn.setObjectName("checkUpdateButton")
+        check_update_btn.setFixedHeight(scale_px(36, min_abs=30))
+        check_update_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #4CAF50;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                font-weight: bold;
+                font-size: 14px;
+            }
+            QPushButton:hover {
+                background-color: #45a049;
+            }
+            QPushButton:pressed {
+                background-color: #3d8b40;
+            }
+        """)
+        # 暂时不连接功能，只显示按钮
+        check_update_btn.clicked.connect(lambda: self._show_info_message("检查新版本功能暂未实现"))
+
+        # 创建"同步开发版"按钮
+        sync_dev_btn = QPushButton("同步开发版")
+        sync_dev_btn.setObjectName("syncDevButton")
+        sync_dev_btn.setFixedHeight(scale_px(36, min_abs=30))
+        sync_dev_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #2196F3;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                font-weight: bold;
+                font-size: 14px;
+            }
+            QPushButton:hover {
+                background-color: #0b7dda;
+            }
+            QPushButton:pressed {
+                background-color: #0069c0;
+            }
+        """)
+        # 暂时不连接功能，只显示按钮
+        sync_dev_btn.clicked.connect(lambda: self._show_info_message("同步开发版功能暂未实现"))
+
+        # 添加按钮到布局
+        button_layout.addWidget(check_update_btn)
+        button_layout.addWidget(sync_dev_btn)
+        button_layout.addStretch(1)
+
+        layout.addWidget(button_container, 1)
+
+        # 添加底部间距
+        layout.addStretch(1)
+
+        # 保存元数据（保持与其他标签页一致）
+        self._config_tab_meta["desktop_pet_update"] = {
+            "panel": panel,
+            "fields": [],
+            "defaults": {},
+            "title": category_title,
+            "title_label": None,  # 标题已经在_add_panel_title_row中创建
+            "hint_label": None,
+        }
+
+        return panel
+
+    def _show_info_message(self, message: str):
+        """显示信息消息框"""
+        from PyQt5.QtWidgets import QMessageBox
+        QMessageBox.information(self, "提示", message)
 
     def _create_compact_pair_editor(
         self,
