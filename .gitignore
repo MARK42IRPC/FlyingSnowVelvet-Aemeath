@@ -52,3 +52,6 @@ Desktop.ini
 
 # Release outputs
 FlyingSnowVelvet-*.zip
+
+# AI tool configurations
+.claude/
