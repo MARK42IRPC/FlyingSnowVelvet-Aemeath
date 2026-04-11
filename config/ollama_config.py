@@ -43,7 +43,7 @@ FORCE_REPLY_MODE = '4'
 # - Moonshot:   'https://api.moonshot.cn/v1'
 # - 智谱AI:     'https://open.bigmodel.cn/api/paas/v4'
 # - 通义千问:   'https://dashscope.aliyuncs.com/compatible-mode/v1'
-API_BASE_URL = 'http://127.0.0.1:9000/v1'
+API_BASE_URL = 'http://127.0.0.1:8000/v1'
 
 # 使用 API Key 时的模型名称
 # 例如: 'gpt-4o-mini', 'deepseek-chat', 'moonshot-v1-8k'
@@ -83,7 +83,7 @@ OLLAMA = {
     'api_temperature':     0.8,      # 外部 API 采样温度（0~2）
     'gsv_temperature':     1.35,      # GSV 文本转语音采样温度（0~2）
     'gsv_speed_factor':    1.0,      # GSV 文本转语音语速（0.5~2.0）
-    'ai_voice_max_chars':  65,       # GSV 语音合成最大文本长度（20~80）
+    'ai_voice_max_chars':  40,       # GSV 语音合成最大文本长度（20~80）
     'memory_context_limit': 12,      # 发送给 AI 时附带的 recent memory 条数（0~48，0 = 不附带）
     'api_enable_thinking': False,   # 外部 API 思考模式（Qwen3.5-plus 默认 True；关闭可提升可见流式与命令稳定性）
     'api_thinking_budget': 0,       # >0 时限制思考 token；0 表示不指定
@@ -92,7 +92,7 @@ OLLAMA = {
 }
 
 # Ollama 模型配置
-OLLAMA_MODEL = 'qwen2.5:latest'
+OLLAMA_MODEL = 'qwen2.5'
 
 # Ollama 推理参数（直接映射到 API 请求的 options 字段）
 #

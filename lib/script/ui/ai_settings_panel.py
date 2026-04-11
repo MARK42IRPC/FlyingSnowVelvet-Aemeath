@@ -2016,7 +2016,7 @@ class AISettingsPanel(QWidget):
 
         # 添加说明文本
         description_label = QLabel("在这里可以检查桌宠更新和同步开发版本。")
-        description_font = self._get_ui_font(size=scale_px(12, min_abs=10))
+        description_font = get_ui_font(size=scale_px(12, min_abs=10))
         description_label.setFont(description_font)
         description_label.setWordWrap(True)
         description_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
@@ -2033,21 +2033,27 @@ class AISettingsPanel(QWidget):
         check_update_btn = QPushButton("检查新版本")
         check_update_btn.setObjectName("checkUpdateButton")
         check_update_btn.setFixedHeight(scale_px(36, min_abs=30))
-        check_update_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #4CAF50;
-                color: white;
-                border: none;
-                border-radius: 4px;
+        # 使用项目主题颜色
+        border_color = UI_THEME["border"].name()
+        bg_color = UI_THEME["bg"].name()
+        mid_color = UI_THEME["mid"].name()
+        highlight_color = UI_THEME["deep_cyan"].name()
+        text_color = UI_THEME["text"].name()
+        check_update_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {bg_color};
+                color: {text_color};
+                border: 2px solid {border_color};
+                border-radius: 0px;
                 font-weight: bold;
-                font-size: 14px;
-            }
-            QPushButton:hover {
-                background-color: #45a049;
-            }
-            QPushButton:pressed {
-                background-color: #3d8b40;
-            }
+                padding: 4px 10px;
+            }}
+            QPushButton:hover {{
+                background-color: {mid_color};
+            }}
+            QPushButton:pressed {{
+                background-color: {highlight_color};
+            }}
         """)
         # 暂时不连接功能，只显示按钮
         check_update_btn.clicked.connect(lambda: self._show_info_message("检查新版本功能暂未实现"))
@@ -2056,21 +2062,21 @@ class AISettingsPanel(QWidget):
         sync_dev_btn = QPushButton("同步开发版")
         sync_dev_btn.setObjectName("syncDevButton")
         sync_dev_btn.setFixedHeight(scale_px(36, min_abs=30))
-        sync_dev_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #2196F3;
-                color: white;
-                border: none;
-                border-radius: 4px;
+        sync_dev_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {bg_color};
+                color: {text_color};
+                border: 2px solid {border_color};
+                border-radius: 0px;
                 font-weight: bold;
-                font-size: 14px;
-            }
-            QPushButton:hover {
-                background-color: #0b7dda;
-            }
-            QPushButton:pressed {
-                background-color: #0069c0;
-            }
+                padding: 4px 10px;
+            }}
+            QPushButton:hover {{
+                background-color: {mid_color};
+            }}
+            QPushButton:pressed {{
+                background-color: {highlight_color};
+            }}
         """)
         # 暂时不连接功能，只显示按钮
         sync_dev_btn.clicked.connect(lambda: self._show_info_message("同步开发版功能暂未实现"))
@@ -3115,7 +3121,10 @@ class AISettingsPanel(QWidget):
 
         tab_font = get_ui_font(size=_CONFIG_FONT_SIZE)
         tab_font.setBold(True)
-        self._top_tab_bar.setFont(tab_font)
+        # 设置标签按钮字体
+        if hasattr(self, '_tab_buttons') and self._tab_buttons:
+            for btn in self._tab_buttons:
+                btn.setFont(tab_font)
         self._install_line_edit_context_menus()
 
     def _apply_style(self) -> None:
@@ -3367,30 +3376,7 @@ class AISettingsPanel(QWidget):
             }}
             """
         )
-        self._top_tab_bar.setStyleSheet(
-            f"""
-            QTabBar::tab {{
-                background: {bg};
-                color: {text};
-                border: 2px solid {border};
-                border-top-left-radius: 0px;
-                border-top-right-radius: 0px;
-                min-width: {tab_min_w}px;
-                min-height: {tab_min_h}px;
-                padding: {tab_pad_y}px {tab_pad_x}px;
-                margin-right: {tab_margin_r}px;
-            }}
-            QTabBar::tab:selected {{
-                background: {mid};
-            }}
-            QTabBar::tab:hover:!selected {{
-                background: {mid};
-            }}
-            QTabBar::tab:pressed {{
-                background: {highlight};
-            }}
-            """
-        )
+        # 垂直标签栏样式已在 ai_settings_tabs.py 中通过按钮样式设置
 
     def _layout_top_tab_bar(self) -> None:
         layout_ai_settings_tab_bar(self)
@@ -3430,8 +3416,14 @@ class AISettingsPanel(QWidget):
     def show_centered(self) -> None:
         self.load_values()
         current_index = 0
-        if self._top_tab_bar is not None:
-            current_index = max(0, self._top_tab_bar.currentIndex())
+        # 获取当前选中的标签索引（从按钮组或按钮列表）
+        if hasattr(self, '_tab_button_group') and self._tab_button_group is not None:
+            current_index = max(0, self._tab_button_group.checkedId())
+        elif hasattr(self, '_tab_buttons') and self._tab_buttons:
+            for i, btn in enumerate(self._tab_buttons):
+                if btn.isChecked():
+                    current_index = i
+                    break
         target_panel = None
         if 0 <= current_index < len(self._tab_pages):
             target_panel = self._tab_pages[current_index]
