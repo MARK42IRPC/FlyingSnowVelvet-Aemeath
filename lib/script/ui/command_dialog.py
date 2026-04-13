@@ -126,6 +126,8 @@ class CommandDialog(QWidget):
         # 当前锚点位置
         self._anchor_point = None
         self._pet_top_left = None
+        # 当前关联的实体（用于CMD窗口定位）
+        self._entity = None
 
         # 从配置文件读取位置偏移参数
         self._offset_x = COMMAND_DIALOG.get('offset_x', scale_px(6))
@@ -216,6 +218,7 @@ class CommandDialog(QWidget):
     def _on_command_toggle(self, event: Event):
         """处理命令框切换事件（异步）"""
         entity = event.data.get('entity')
+        self._entity = entity  # 保存实体引用，用于CMD窗口定位
         if entity:
             # 调用toggle方法
             self.toggle(entity)
@@ -544,7 +547,12 @@ class CommandDialog(QWidget):
 
         # 3. 按前缀发布输入事件
         if raw.startswith('/'):
-            event = Event(EventType.INPUT_COMMAND, {'text': raw[1:].strip(), 'raw': raw})
+            # 打开CMD窗口并执行命令
+            event = Event(EventType.UI_OPEN_CMD_WINDOW_WITH_COMMAND, {
+                'command': raw[1:].strip(),
+                'entity': self._entity,
+                'raw': raw
+            })
         elif raw.startswith('#'):
             text = raw[1:].strip()
             if not text:
@@ -563,8 +571,12 @@ class CommandDialog(QWidget):
         self._entry.clear()
 
         if raw.startswith('/'):
-            text = raw[1:].strip()
-            event = Event(EventType.INPUT_COMMAND, {'text': text, 'raw': raw})
+            # 打开CMD窗口并执行命令
+            event = Event(EventType.UI_OPEN_CMD_WINDOW_WITH_COMMAND, {
+                'command': raw[1:].strip(),
+                'entity': self._entity,
+                'raw': raw
+            })
         elif raw.startswith('#'):
             text = raw[1:].strip()
             event = Event(EventType.INPUT_HASH, {'text': text, 'raw': raw})

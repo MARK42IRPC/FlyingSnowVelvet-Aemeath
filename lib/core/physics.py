@@ -76,6 +76,10 @@ class PhysicsBody:
         # 重力开关（True = 受重力影响，False = 不受重力）
         self.gravity_enabled: bool = True
 
+        # ── per-body 物理覆盖（None = 使用 PhysicsWorld 世界常数）───
+        # 触地水平速度保留比例（地面摩擦）；None 时沿用 BOUNCE_VX_RETAIN
+        self.bounce_vx_retain: Optional[float] = None
+
         # ── 回调（调用方注册） ────────────────────────────────────
         # 每帧位置变化后触发（仅 active=True 期间）
         self.on_position_change: Optional[Callable[[PhysicsBody], None]] = None
@@ -197,7 +201,9 @@ class PhysicsWorld:
         if body.gravity_enabled and body.y >= body.ground_y:
             body.y   = body.ground_y
             body.vy  = -abs(body.vy) * self.BOUNCE_VY_RETAIN   # 垂直反弹（弹性衰减）
-            body.vx *= self.BOUNCE_VX_RETAIN                    # 水平摩擦（低衰减）
+            # 水平摩擦：优先使用 per-body 覆盖值，无则使用世界常数
+            vx_retain = body.bounce_vx_retain if body.bounce_vx_retain is not None else self.BOUNCE_VX_RETAIN
+            body.vx *= vx_retain
             body.bounce_count += 1
 
             # 弹力不足 或 已达最大弹跳次数 → 停止

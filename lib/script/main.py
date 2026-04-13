@@ -12,6 +12,7 @@ from lib.core.event.center import get_event_center, EventType, Event, cleanup_ev
 from lib.script.SEanima.animation import get_start_exit_animation, cleanup_start_exit_animation
 from lib.core.logger import initialize as initialize_app_logger, cleanup as cleanup_app_logger, get_logger
 from lib.core.cmd_center import get_cmd_center, cleanup_cmd_center
+from lib.script.ui.cmd_window import get_cmd_window, cleanup_cmd_window
 from lib.script.chat.ollama import get_ollama_manager, cleanup_ollama_manager
 from lib.script.chat.handler import get_chat_handler, cleanup_chat_handler
 from lib.script.chat.memory import get_stream_memory, cleanup_stream_memory
@@ -147,6 +148,9 @@ class ApplicationState:
         # ── 初始化说明书（鼠标悬停提示面板）────────────────────────────
         from lib.script.ui.tooltip_panel import init_tooltip_panel
         init_tooltip_panel()
+
+        # ── 初始化CMD窗口 ──────────────────────────────────────────────
+        get_cmd_window()
 
         # 发布main事件，进入main状态
         self._publish_event(EventType.APP_MAIN, {
@@ -358,6 +362,7 @@ class ApplicationState:
         cleanup_tool_dispatcher()
         cleanup_ollama_manager()
         cleanup_cmd_center()
+        cleanup_cmd_window()
         cleanup_voice_request_handler()
         cleanup_gsvmove_service()
         cleanup_yuanbao_free_api_service()

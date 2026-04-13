@@ -68,6 +68,8 @@ class EventType(Enum):
     UI_BUBBLE_SHOW = "ui_bubble_show"                    # 显示气泡
     UI_BUBBLE_HIDE = "ui_bubble_hide"                    # 隐藏气泡
     UI_COMMAND_TOGGLE = "ui_command_toggle"              # 切换命令框
+    UI_OPEN_CMD_WINDOW = "ui_open_cmd_window"            # 打开CMD窗口
+    UI_OPEN_CMD_WINDOW_WITH_COMMAND = "ui_open_cmd_window_with_command"  # 打开CMD窗口并执行命令
     UI_CREATE = "ui_create"                              # UI 组件创建请求
     UI_ANCHOR_RESPONSE = "ui_anchor_response"            # 锚点坐标响应
     UI_HINT_PICK = "ui_hint_pick"                        # 命令提示框条目点击

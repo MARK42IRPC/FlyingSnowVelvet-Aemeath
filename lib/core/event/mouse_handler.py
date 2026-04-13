@@ -50,7 +50,7 @@ class MouseEventHandler:
             gpos = self._entity.mapToGlobal(pos)
             self._entity.spawn_particles(gpos.x(), gpos.y(), particle_id='pink_scatter_fall')
 
-            # 发布命令框切换事件（异步，由事件处理器处理）
+            # 发布切换命令框事件（打开/关闭右键UI）
             self._event_center.publish(Event(EventType.UI_COMMAND_TOGGLE, {
                 'entity': self._entity
             }))

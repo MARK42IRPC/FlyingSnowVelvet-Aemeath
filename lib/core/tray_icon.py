@@ -268,6 +268,13 @@ class TrayIcon(QObject):
         ai_settings_action.triggered.connect(self._on_ai_settings)
         self._menu.addAction(ai_settings_action)
 
+        # CMD窗口动作
+        cmd_window_action = QAction('CMD终端', self._menu)
+        cmd_window_action.setToolTip(TOOLTIPS['tray_cmd_window'])
+        cmd_window_action.setStatusTip(TOOLTIPS['tray_cmd_window'])
+        cmd_window_action.triggered.connect(self._on_cmd_window)
+        self._menu.addAction(cmd_window_action)
+
         # 关注作者动作
         follow_author_action = QAction('关注作者', self._menu)
         follow_author_action.setToolTip(TOOLTIPS['tray_follow_author'])
@@ -448,6 +455,23 @@ class TrayIcon(QObject):
             _logger.error('打开控制面板失败: %s', e)
             self._event_center.publish(Event(EventType.INFORMATION, {
                 'text': f'打开控制面板失败: {e}',
+                'min': 12,
+                'max': 120,
+            }))
+
+    def _on_cmd_window(self):
+        """处理CMD窗口动作：打开CMD终端窗口。"""
+        try:
+            from lib.script.ui.cmd_window import get_cmd_window
+            cmd_window = get_cmd_window()
+            # 发布打开CMD窗口事件，由事件处理器处理显示逻辑
+            self._event_center.publish(Event(EventType.UI_OPEN_CMD_WINDOW, {
+                'entity': None  # 从托盘打开，没有实体引用
+            }))
+        except Exception as e:
+            _logger.error('打开CMD窗口失败: %s', e)
+            self._event_center.publish(Event(EventType.INFORMATION, {
+                'text': f'打开CMD窗口失败: {e}',
                 'min': 12,
                 'max': 120,
             }))

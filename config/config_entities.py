@@ -124,6 +124,40 @@ SPEAKER = {
     'spawn_y_max': 0.9,
 }
 
+SNOWBALL = {
+    # PNG 资源路径
+    'png_file': 'resc/GIF/snowball.png',
+
+    # 生成区域：屏幕高度占比（0.0=顶部, 1.0=底部）
+    'spawn_y_min': 0.85,
+    'spawn_y_max': 0.95,
+
+    # 同时存在的雪球数量上限（FIFO，超出则淘汰最早的）
+    'max_count': 16,
+
+    # 雪球直径范围（像素）
+    'size_min': 24,
+    'size_max': 48,
+
+    # 雪球自然消亡寿命范围（秒，随机取区间内均匀分布值）
+    'lifetime_min': 10,
+    'lifetime_max': 15,
+
+    # 地面水平摩擦系数（触地时 vx 保留比例）
+    # 默认世界常数 0.80；雪球更滑，设为 0.96 使其在地面上继续滑行
+    'ground_friction': 0.96,
+
+    # 球间碰撞弹性系数（碰撞后法线方向速度保留比例，0=完全非弹性，1=完全弹性）
+    'collision_elasticity': 0.60,
+
+    # 球间切向摩擦系数（Coulomb 模型，切向冲量上限 = ball_friction × |法向冲量|）
+    # 0=无摩擦（纯弹性），越大切向能量损失越多，0.45 约等于"较涩的雪球"
+    'ball_friction': 0.45,
+
+    # 冻结解冻阈值（法向冲量，单位像素/帧）
+    # 静止冻结的雪球被撞时，法向冲量 >= 此值才解冻并重新参与物理
+    'freeze_impulse_threshold': 2.5,
+}
 OBJECTS = {
     # obj 物体统一透明度（0.0-1.0）
     'object_opacity': 1.0,
