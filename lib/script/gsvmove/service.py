@@ -7,6 +7,7 @@
 """
 
 import locale
+import shutil
 import subprocess
 import threading
 import time
@@ -69,6 +70,15 @@ def _get_gsv_speed_factor() -> float:
     except (TypeError, ValueError):
         speed_factor = 1.0
     return max(0.5, min(2.0, speed_factor))
+
+
+def _get_gsv_cache_max_files() -> int:
+    raw_value = oc.OLLAMA.get("gsv_cache_max_files", 20)
+    try:
+        max_files = int(float(raw_value))
+    except (TypeError, ValueError):
+        max_files = 20
+    return max(1, min(128, max_files))
 
 
 def _is_gsv_auto_start_enabled() -> bool:
@@ -181,12 +191,17 @@ class GsvmoveService:
         self._warmup_done = False
         self._host = _DEFAULT_HOST
         self._port = _DEFAULT_PORT
+        self._project_root = Path(__file__).resolve().parents[3]
         self._root_dir = get_shared_root_dir()
         self._launcher_path = self._root_dir / "start_gsvmove.bat"
         self._launcher_log_path = get_shared_config_path("gsvmove", "launcher.log")
         self._output_dir = get_shared_config_path("gsvmove", "cache")
+        self._saved_audio_root = self._project_root / "resc" / "user" / "temp" / "gsv_voice"
+        self._saved_audio_lock = threading.Lock()
         self._launcher_log_path.parent.mkdir(parents=True, exist_ok=True)
         self._output_dir.mkdir(parents=True, exist_ok=True)
+        self._saved_audio_root.mkdir(parents=True, exist_ok=True)
+        self.cleanup_saved_audio_cache()
 
         self._ec.subscribe(EventType.APP_PRE_START, self._on_app_pre_start)
         self._ec.subscribe(EventType.AI_VOICE_REQUEST, self._on_ai_voice_request)
@@ -283,6 +298,59 @@ class GsvmoveService:
             return None
         return root
 
+    def get_saved_audio_cache_root(self) -> Path:
+        self._saved_audio_root.mkdir(parents=True, exist_ok=True)
+        return self._saved_audio_root
+
+    def cleanup_saved_audio_cache(self) -> None:
+        with self._saved_audio_lock:
+            self._cleanup_saved_audio_cache_locked()
+
+    def _cleanup_saved_audio_cache_locked(self) -> None:
+        cache_root = self.get_saved_audio_cache_root()
+        entries: list[tuple[float, Path]] = []
+        for child in cache_root.iterdir():
+            try:
+                mtime = child.stat().st_mtime
+            except OSError:
+                mtime = 0.0
+            entries.append((mtime, child))
+
+        max_files = _get_gsv_cache_max_files()
+        if len(entries) <= max_files:
+            return
+
+        entries.sort(key=lambda item: item[0])
+        for _, old_path in entries[:-max_files]:
+            try:
+                if old_path.is_dir():
+                    shutil.rmtree(old_path)
+                else:
+                    old_path.unlink(missing_ok=True)
+                logger.info("[GsvmoveService] 已清理旧语音缓存: %s", old_path)
+            except FileNotFoundError:
+                continue
+            except Exception as e:
+                logger.warning("[GsvmoveService] 清理旧语音缓存失败 %s: %s", old_path, e)
+
+    def _create_saved_audio_path(self, suffix: str) -> Path:
+        cache_root = self.get_saved_audio_cache_root()
+        while True:
+            millis = int((time.time() % 1) * 1000)
+            file_name = f"voice_{time.strftime('%Y%m%d_%H%M%S')}_{millis:03d}_{uuid.uuid4().hex[:8]}{suffix}"
+            candidate = cache_root / file_name
+            if candidate.exists():
+                continue
+            return candidate
+
+    def _persist_generated_audio(self, temp_path: Path) -> Path:
+        suffix = temp_path.suffix or ".wav"
+        with self._saved_audio_lock:
+            target_path = self._create_saved_audio_path(suffix)
+            temp_path.replace(target_path)
+            self._cleanup_saved_audio_cache_locked()
+            return target_path
+
     def _on_app_pre_start(self, event: Event):
         del event
         if not self.auto_start_enabled():
@@ -330,6 +398,7 @@ class GsvmoveService:
                     warmup_file = self._synthesize_to_file({
                         'text': warmup_text,
                         'interruptible': True,
+                        'save_audio_cache': False,
                     })
                 if warmup_file is None:
                     logger.warning('[GsvmoveService] GSV 预热失败：未生成音频')
@@ -543,9 +612,16 @@ class GsvmoveService:
                     return None
             media_type = str(payload.get("media_type") or _DEFAULT_MEDIA_TYPE).lower()
             suffix = f".{media_type if media_type in ('wav', 'ogg', 'aac', 'raw') else 'wav'}"
-            output_path = self._output_dir / f"gsv_{uuid.uuid4().hex}{suffix}"
-            output_path.write_bytes(resp.content)
-            logger.info("[GsvmoveService] 已生成语音文件: %s", output_path.name)
+            temp_path = self._output_dir / f"gsv_{uuid.uuid4().hex}{suffix}"
+            temp_path.write_bytes(resp.content)
+            output_path = temp_path
+            if bool(data.get("save_audio_cache", True)):
+                try:
+                    output_path = self._persist_generated_audio(temp_path)
+                except Exception as e:
+                    logger.warning("[GsvmoveService] 归档语音缓存失败，继续使用临时文件: %s", e)
+                    output_path = temp_path
+            logger.info("[GsvmoveService] 已生成语音文件: %s", output_path)
             return output_path
         except Exception as e:
             logger.error("[GsvmoveService] TTS 推理失败: %s", e)

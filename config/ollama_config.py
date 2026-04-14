@@ -84,7 +84,8 @@ OLLAMA = {
     'gsv_auto_start':      True,     # 启用 GSV 语音模块；关闭后不预热，也不响应文本语音请求
     'gsv_temperature':     1.35,      # GSV 文本转语音采样温度（0~2）
     'gsv_speed_factor':    1.0,      # GSV 文本转语音语速（0.5~2.0）
-    'ai_voice_max_chars':  40,       # GSV 语音合成最大文本长度（20~80）
+    'ai_voice_max_chars':  80,       # GSV 语音合成最大文本长度（20~80）
+    'gsv_cache_max_files': 20,       # GSV 语音缓存最大保存条数（1~128）
     'memory_context_limit': 12,      # 发送给 AI 时附带的 recent memory 条数（0~48，0 = 不附带）
     'api_enable_thinking': False,   # 外部 API 思考模式（Qwen3.5-plus 默认 True；关闭可提升可见流式与命令稳定性）
     'api_thinking_budget': 0,       # >0 时限制思考 token；0 表示不指定

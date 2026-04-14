@@ -38,6 +38,7 @@ def load_ai_values(default_values: dict) -> dict:
         "gsv_temperature": oc.OLLAMA.get("gsv_temperature", values.get("gsv_temperature", 1.35)),
         "gsv_speed_factor": oc.OLLAMA.get("gsv_speed_factor", values.get("gsv_speed_factor", 1.0)),
         "ai_voice_max_chars": oc.OLLAMA.get("ai_voice_max_chars", values.get("ai_voice_max_chars", 40)),
+        "gsv_cache_max_files": oc.OLLAMA.get("gsv_cache_max_files", values.get("gsv_cache_max_files", 20)),
         "memory_context_limit": oc.OLLAMA.get("memory_context_limit", values.get("memory_context_limit", default_values["memory_context_limit"])),
         "api_enable_thinking": bool(oc.OLLAMA.get("api_enable_thinking", values.get("api_enable_thinking", False))),
         "auto_companion_enabled": bool(oc.AUTO_COMPANION.get("enabled", values.get("auto_companion_enabled", True))),
@@ -71,7 +72,8 @@ def save_ai_values(values: dict, default_values: dict) -> None:
     text = _replace_or_insert_dict_item_after(text, "gsv_temperature", _py_literal(values["gsv_temperature"]), "gsv_auto_start")
     text = _replace_or_insert_dict_item_after(text, "gsv_speed_factor", _py_literal(values["gsv_speed_factor"]), "gsv_temperature")
     text = _replace_or_insert_dict_item_after(text, "ai_voice_max_chars", _py_literal(values["ai_voice_max_chars"]), "gsv_speed_factor")
-    text = _replace_or_insert_dict_item_after(text, "memory_context_limit", _py_literal(memory_context_limit_value), "ai_voice_max_chars")
+    text = _replace_or_insert_dict_item_after(text, "gsv_cache_max_files", _py_literal(values["gsv_cache_max_files"]), "ai_voice_max_chars")
+    text = _replace_or_insert_dict_item_after(text, "memory_context_limit", _py_literal(memory_context_limit_value), "gsv_cache_max_files")
     text = _replace_dict_item(text, "api_enable_thinking", _py_literal(values["api_enable_thinking"]))
     text = _replace_named_dict_item(text, "AUTO_COMPANION", "enabled", _py_literal(values["auto_companion_enabled"]))
 
@@ -107,6 +109,7 @@ def apply_ai_runtime(values: dict, default_values: dict) -> None:
     oc.OLLAMA["gsv_temperature"] = values["gsv_temperature"]
     oc.OLLAMA["gsv_speed_factor"] = values["gsv_speed_factor"]
     oc.OLLAMA["ai_voice_max_chars"] = values["ai_voice_max_chars"]
+    oc.OLLAMA["gsv_cache_max_files"] = values["gsv_cache_max_files"]
     oc.OLLAMA["memory_context_limit"] = memory_context_limit_value
     oc.OLLAMA["api_enable_thinking"] = values["api_enable_thinking"]
     oc.AUTO_COMPANION["enabled"] = values["auto_companion_enabled"]

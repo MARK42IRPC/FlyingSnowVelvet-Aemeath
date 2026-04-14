@@ -94,6 +94,7 @@ _DEFAULT_VALUES = {
     "gsv_temperature": 1.35,
     "gsv_speed_factor": 1.0,
     "ai_voice_max_chars": 40,
+    "gsv_cache_max_files": 20,
     "memory_context_limit": 12,
     "api_enable_thinking": False,
     "auto_companion_enabled": True,
@@ -1762,6 +1763,31 @@ class AISettingsPanel(QWidget):
             "GSV 语音合成最大文本长度，超过此长度的回复不会转为语音。",
         )
 
+        self._gsv_cache_max_files = _DecimalSliderField(1, 128, 1, value=_DEFAULT_VALUES["gsv_cache_max_files"], decimals=0)
+        form.addRow("GSV缓存上限", self._gsv_cache_max_files)
+        self._set_form_row_description(
+            form,
+            self._gsv_cache_max_files,
+            "保留最近生成的 GSV 语音条数，超出后按时间自动删除旧缓存，默认 20，范围 1~128。",
+        )
+
+        gsv_cache_row, gsv_cache_layout = self._create_fixed_width_row_group(
+            field_width=_CONFIG_FIELD_WIDTH,
+            spacing=scale_px(8, min_abs=6),
+        )
+        self._open_gsv_cache_dir_btn = QPushButton("打开缓存文件夹")
+        self._open_gsv_cache_dir_btn.setFixedWidth(scale_px(132, min_abs=112))
+        self._open_gsv_cache_dir_btn.clicked.connect(self._on_open_gsv_cache_dir)
+        gsv_cache_layout.addWidget(self._open_gsv_cache_dir_btn, 0)
+        gsv_cache_layout.addStretch(1)
+        form.addRow("语音缓存", gsv_cache_row)
+        self._set_form_row_description(
+            form,
+            gsv_cache_row,
+            "打开 GSV 语音缓存目录，方便查看并保留最近生成的喜欢音频。",
+        )
+        self._set_widget_description(self._open_gsv_cache_dir_btn, "打开 GSV 语音缓存目录。")
+
         self._memory_context_limit = _DecimalSliderField(0, 48, 1, value=_DEFAULT_VALUES["memory_context_limit"])
         form.addRow("记忆上下文条数", self._memory_context_limit)
         self._set_form_row_description(
@@ -2434,6 +2460,21 @@ class AISettingsPanel(QWidget):
         except Exception as e:
             _logger.error("打开 Ollama 下载页面失败: %s", e)
             self._emit_info(f"打开 Ollama 页面失败: {e}", min_tick=20, max_tick=180)
+
+    def _on_open_gsv_cache_dir(self) -> None:
+        try:
+            from lib.script.gsvmove import get_gsvmove_service
+
+            cache_dir = get_gsvmove_service().get_saved_audio_cache_root()
+            if hasattr(os, "startfile"):
+                os.startfile(str(cache_dir))  # type: ignore[attr-defined]
+            else:
+                subprocess.Popen(["explorer", str(cache_dir)], shell=False)
+            self._emit_info("已打开 GSV 语音缓存文件夹。", min_tick=10, max_tick=90)
+        except Exception as e:
+            _logger.error("打开 GSV 语音缓存文件夹失败: %s", e)
+            self._emit_info(f"打开 GSV 语音缓存文件夹失败: {e}", min_tick=20, max_tick=180)
+
     def _on_start_yuanbao_login(self) -> None:
         api_key = self._api_key.raw_text().strip()
 
@@ -3677,6 +3718,13 @@ class AISettingsPanel(QWidget):
             raise ValueError("GSV语音字数限制范围应为 20~80")
 
         try:
+            gsv_cache_max_files = int(float(self._gsv_cache_max_files.text().strip() or "20"))
+        except ValueError as e:
+            raise ValueError("GSV缓存上限必须是整数") from e
+        if not (1 <= gsv_cache_max_files <= 128):
+            raise ValueError("GSV缓存上限范围应为 1~128")
+
+        try:
             memory_context_limit = int(float(self._memory_context_limit.text().strip() or "12"))
         except ValueError as e:
             raise ValueError("记忆上下文条数必须是整数") from e
@@ -3706,6 +3754,7 @@ class AISettingsPanel(QWidget):
             "gsv_temperature": gsv_temperature,
             "gsv_speed_factor": gsv_speed_factor,
             "ai_voice_max_chars": ai_voice_max_chars,
+            "gsv_cache_max_files": gsv_cache_max_files,
             "memory_context_limit": memory_context_limit,
             "api_enable_thinking": bool(self._api_enable_thinking.isChecked()),
             "auto_companion_enabled": bool(self._auto_companion_enabled.isChecked()),
@@ -3737,6 +3786,7 @@ class AISettingsPanel(QWidget):
         self._gsv_temperature.setText(str(values.get("gsv_temperature", 1.35)))
         self._gsv_speed_factor.setText(str(values.get("gsv_speed_factor", 1.0)))
         self._ai_voice_max_chars.setText(str(values.get("ai_voice_max_chars", 40)))
+        self._gsv_cache_max_files.setText(str(values.get("gsv_cache_max_files", 20)))
         self._memory_context_limit.setText(str(values.get("memory_context_limit", 12)))
         self._api_enable_thinking.setChecked(bool(values.get("api_enable_thinking", False)))
         self._auto_companion_enabled.setChecked(bool(values.get("auto_companion_enabled", True)))
@@ -3839,6 +3889,12 @@ class AISettingsPanel(QWidget):
             apply_ai_runtime(ai_values, _DEFAULT_VALUES)
             _apply_general_runtime(general_values)
             self._apply_all_external_config_fields()
+            try:
+                from lib.script.gsvmove import get_gsvmove_service
+
+                get_gsvmove_service().cleanup_saved_audio_cache()
+            except Exception as trim_exc:
+                _logger.warning("应用 GSV 语音缓存上限失败: %s", trim_exc)
             self._reset_shared_on_next_save = False
             self._emit_info("控制面板设置已保存，重启程序后完整生效。")
             return True

@@ -44,6 +44,7 @@ def validate_ai_values(values: dict) -> None:
     api_enable_thinking = values.get("api_enable_thinking")
     auto_companion_enabled = values.get("auto_companion_enabled")
     ai_voice_max_chars = values.get("ai_voice_max_chars")
+    gsv_cache_max_files = values.get("gsv_cache_max_files")
     memory_context_limit = values.get("memory_context_limit")
 
     if force_mode not in ("", "0", "2", "3", "4"):
@@ -134,6 +135,11 @@ def validate_ai_values(values: dict) -> None:
         raise ValueError("GSV语音字数限制必须是整数")
     if not (20 <= ai_voice_max_chars <= 80):
         raise ValueError("GSV语音字数限制范围应为 20~80")
+
+    if isinstance(gsv_cache_max_files, bool) or not isinstance(gsv_cache_max_files, int):
+        raise ValueError("GSV缓存上限必须是整数")
+    if not (1 <= gsv_cache_max_files <= 128):
+        raise ValueError("GSV缓存上限范围应为 1~128")
 
     if isinstance(memory_context_limit, bool) or not isinstance(memory_context_limit, int):
         raise ValueError("记忆上下文条数必须是整数")
