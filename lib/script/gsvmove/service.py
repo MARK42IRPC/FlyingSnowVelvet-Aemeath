@@ -71,6 +71,14 @@ def _get_gsv_speed_factor() -> float:
     return max(0.5, min(2.0, speed_factor))
 
 
+def _is_gsv_auto_start_enabled() -> bool:
+    raw_value = oc.OLLAMA.get("gsv_auto_start", True)
+    if isinstance(raw_value, str):
+        normalized = raw_value.strip().lower()
+        return normalized not in {"", "0", "false", "off", "no"}
+    return bool(raw_value)
+
+
 def _extract_response_detail(resp: requests.Response) -> str:
     try:
         return str(resp.json())
@@ -277,9 +285,16 @@ class GsvmoveService:
 
     def _on_app_pre_start(self, event: Event):
         del event
+        if not self.auto_start_enabled():
+            return
         self.kickoff_prestart()
 
+    def auto_start_enabled(self) -> bool:
+        return _is_gsv_auto_start_enabled()
+
     def kickoff_prestart(self) -> None:
+        if not self.auto_start_enabled():
+            return
         with self._prestart_lock:
             if self._prestart_started:
                 return
@@ -337,6 +352,11 @@ class GsvmoveService:
         if event.handled:
             return
 
+        if not self.auto_start_enabled():
+            logger.info("[GsvmoveService] GSV 语音模块已关闭，忽略文本语音申请")
+            event.mark_handled()
+            return
+
         self._request_queue.put(dict(data))
         event.mark_handled()
 
@@ -356,6 +376,10 @@ class GsvmoveService:
                 self._request_queue.task_done()
 
     def _process_ai_voice_request(self, data: dict):
+        if not self.auto_start_enabled():
+            logger.info("[GsvmoveService] GSV 语音模块已关闭，跳过文本语音处理")
+            return
+
         if not self._ensure_service_ready():
             logger.warning("[GsvmoveService] GSVmove 服务未就绪，忽略文本语音申请")
             return

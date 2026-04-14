@@ -34,6 +34,7 @@ def load_ai_values(default_values: dict) -> dict:
         "num_gpu": oc.OLLAMA_OPTIONS.get("num_gpu", values.get("num_gpu", -1)),
         "num_thread": oc.OLLAMA_OPTIONS.get("num_thread", values.get("num_thread", 0)),
         "api_temperature": oc.OLLAMA.get("api_temperature", values.get("api_temperature", 0.8)),
+        "gsv_auto_start": bool(oc.OLLAMA.get("gsv_auto_start", values.get("gsv_auto_start", True))),
         "gsv_temperature": oc.OLLAMA.get("gsv_temperature", values.get("gsv_temperature", 1.35)),
         "gsv_speed_factor": oc.OLLAMA.get("gsv_speed_factor", values.get("gsv_speed_factor", 1.0)),
         "ai_voice_max_chars": oc.OLLAMA.get("ai_voice_max_chars", values.get("ai_voice_max_chars", 40)),
@@ -66,7 +67,8 @@ def save_ai_values(values: dict, default_values: dict) -> None:
 
     text = _replace_dict_item(text, "base_url", _py_literal(values["ollama_base_url"]))
     text = _replace_dict_item(text, "api_temperature", _py_literal(values["api_temperature"]))
-    text = _replace_dict_item(text, "gsv_temperature", _py_literal(values["gsv_temperature"]))
+    text = _replace_or_insert_dict_item_after(text, "gsv_auto_start", _py_literal(values["gsv_auto_start"]), "api_temperature")
+    text = _replace_or_insert_dict_item_after(text, "gsv_temperature", _py_literal(values["gsv_temperature"]), "gsv_auto_start")
     text = _replace_or_insert_dict_item_after(text, "gsv_speed_factor", _py_literal(values["gsv_speed_factor"]), "gsv_temperature")
     text = _replace_or_insert_dict_item_after(text, "ai_voice_max_chars", _py_literal(values["ai_voice_max_chars"]), "gsv_speed_factor")
     text = _replace_or_insert_dict_item_after(text, "memory_context_limit", _py_literal(memory_context_limit_value), "ai_voice_max_chars")
@@ -101,6 +103,7 @@ def apply_ai_runtime(values: dict, default_values: dict) -> None:
     oc.OLLAMA_MODEL = values["ollama_model"]
     oc.OLLAMA["base_url"] = values["ollama_base_url"]
     oc.OLLAMA["api_temperature"] = values["api_temperature"]
+    oc.OLLAMA["gsv_auto_start"] = values["gsv_auto_start"]
     oc.OLLAMA["gsv_temperature"] = values["gsv_temperature"]
     oc.OLLAMA["gsv_speed_factor"] = values["gsv_speed_factor"]
     oc.OLLAMA["ai_voice_max_chars"] = values["ai_voice_max_chars"]

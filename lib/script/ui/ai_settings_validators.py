@@ -40,6 +40,7 @@ def validate_ai_values(values: dict) -> None:
     api_temperature = values.get("api_temperature")
     gsv_temperature = values.get("gsv_temperature")
     gsv_speed_factor = values.get("gsv_speed_factor")
+    gsv_auto_start = values.get("gsv_auto_start")
     api_enable_thinking = values.get("api_enable_thinking")
     auto_companion_enabled = values.get("auto_companion_enabled")
     ai_voice_max_chars = values.get("ai_voice_max_chars")
@@ -125,6 +126,9 @@ def validate_ai_values(values: dict) -> None:
         raise ValueError("GSV语速必须是有限数字")
     if not (0.5 <= speed <= 2.0):
         raise ValueError("GSV语速范围应为 0.5~2.0")
+
+    if not isinstance(gsv_auto_start, bool):
+        raise ValueError("GSV自动启用开关无效")
 
     if isinstance(ai_voice_max_chars, bool) or not isinstance(ai_voice_max_chars, int):
         raise ValueError("GSV语音字数限制必须是整数")

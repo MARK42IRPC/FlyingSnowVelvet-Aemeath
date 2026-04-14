@@ -76,7 +76,7 @@ class ApplicationState:
         # 音频核心在事件中心初始化后立即创建，以便订阅 APP_PRE_START 完成 MCI 预热
         from lib.core.voice.core import get_voice_core
         self._voice = get_voice_core()
-        # GSVmove 文本转语音桥接：预启动阶段后台拉起本地 TTS 服务
+        # GSVmove 文本转语音桥接：按配置决定是否在预启动阶段后台拉起本地 TTS 服务
         self._gsvmove = get_gsvmove_service()
         self._yuanbao_free_api = get_yuanbao_free_api_service()
         self._microphone_stt = get_microphone_stt_service()
@@ -210,8 +210,8 @@ class ApplicationState:
         # 创建Qt应用（需要在发布事件前创建，以便 QTimer 工作）
         self._app = _new_create_qt_application(logger, sys.argv)
 
-        # GSVmove 需要尽早拉起，以便与后续预启动延时并行完成服务启动/预热。
-        if self._gsvmove is not None:
+        # GSVmove 按配置尽早拉起，以便与后续预启动延时并行完成服务启动/预热。
+        if self._gsvmove is not None and self._gsvmove.auto_start_enabled():
             self._gsvmove.kickoff_prestart()
 
         # 初始化字体配置（DPI 缩放，需在 QApplication 创建后调用）

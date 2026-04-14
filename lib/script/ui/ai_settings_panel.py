@@ -90,6 +90,7 @@ _DEFAULT_VALUES = {
     "num_gpu": -1,
     "num_thread": 0,
     "api_temperature": 0.8,
+    "gsv_auto_start": True,
     "gsv_temperature": 1.35,
     "gsv_speed_factor": 1.0,
     "ai_voice_max_chars": 40,
@@ -1726,6 +1727,15 @@ class AISettingsPanel(QWidget):
             form,
             self._api_temperature,
             "大模型采样温度范围 0~2，越高回复越发散。",
+        )
+
+        self._gsv_auto_start = QCheckBox("自动启用GSV语音模块")
+        self._gsv_auto_start.setChecked(_DEFAULT_VALUES["gsv_auto_start"])
+        form.addRow("", self._gsv_auto_start)
+        self._set_form_row_description(
+            form,
+            self._gsv_auto_start,
+            "开启后，桌宠启动时会在后台预拉起并预热 GSV 服务；关闭后不自动拉起，也不处理 AI 文本语音。",
         )
 
         self._gsv_temperature = _DecimalSliderField(0.0, 2.0, 0.05, value=_DEFAULT_VALUES["gsv_temperature"])
@@ -3692,6 +3702,7 @@ class AISettingsPanel(QWidget):
             "num_gpu": num_gpu,
             "num_thread": num_thread,
             "api_temperature": api_temperature,
+            "gsv_auto_start": bool(self._gsv_auto_start.isChecked()),
             "gsv_temperature": gsv_temperature,
             "gsv_speed_factor": gsv_speed_factor,
             "ai_voice_max_chars": ai_voice_max_chars,
@@ -3722,6 +3733,7 @@ class AISettingsPanel(QWidget):
         self._gpu_mode.setCurrentIndex(max(0, gpu_idx))
         self._num_thread.setText(str(values.get("num_thread", 0)))
         self._api_temperature.setText(str(values.get("api_temperature", 0.8)))
+        self._gsv_auto_start.setChecked(bool(values.get("gsv_auto_start", True)))
         self._gsv_temperature.setText(str(values.get("gsv_temperature", 1.35)))
         self._gsv_speed_factor.setText(str(values.get("gsv_speed_factor", 1.0)))
         self._ai_voice_max_chars.setText(str(values.get("ai_voice_max_chars", 40)))

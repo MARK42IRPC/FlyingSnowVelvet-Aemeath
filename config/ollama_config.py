@@ -81,6 +81,7 @@ OLLAMA = {
     'api_retry_backoff':   0.8,     # 外部 API 重试退避基数（秒）
     'api_disable_env_proxy': False, # 默认遵循系统代理配置；设为 True 时优先忽略
     'api_temperature':     0.8,      # 外部 API 采样温度（0~2）
+    'gsv_auto_start':      True,     # 启用 GSV 语音模块；关闭后不预热，也不响应文本语音请求
     'gsv_temperature':     1.35,      # GSV 文本转语音采样温度（0~2）
     'gsv_speed_factor':    1.0,      # GSV 文本转语音语速（0.5~2.0）
     'ai_voice_max_chars':  40,       # GSV 语音合成最大文本长度（20~80）
