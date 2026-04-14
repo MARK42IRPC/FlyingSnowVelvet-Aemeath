@@ -26,6 +26,7 @@ DEFAULT_VERSION = APP_VERSION
 DIST_DIR = ROOT / "dist"
 
 EXCLUDE_PART_NAMES = {
+    ".claude",
     ".git",
     ".github",
     ".idea",

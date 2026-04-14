@@ -26,6 +26,7 @@ DEFAULT_VERSION = APP_VERSION
 DIST_DIR = ROOT / "dist"
 
 EXCLUDE_PART_NAMES = {
+    ".claude",
     ".git",
     ".github",
     ".idea",
@@ -43,6 +44,7 @@ EXCLUDE_PART_NAMES = {
 EXCLUDE_PATH_PREFIXES = {
     Path("config") / ".shared_pending",
     Path("resc") / "models",
+    Path("resc") / "playwright",
     Path("resc") / "user",
     Path("resc") / "gsvmove_update",
 }

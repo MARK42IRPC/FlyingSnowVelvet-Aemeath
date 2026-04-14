@@ -1,58 +1,60 @@
-飞行雪绒开发贡献与外部项目说明（LTS1.0.5pre2）
+本项目得以完成，离不开以下个人、粉丝与社区的支持：
 
-一、项目定位
-- 本项目是一个以桌宠为核心、叠加 AI、语音、音乐和场景对象系统的长期维护项目
-- 当前版本重点是稳定性、运行时数据隔离、控制面板整合和文档同步
+【支持】
 
-二、核心贡献
-- 核心开发与仓库维护：Mark42
-- 测试与反馈：粉丝群、测试用户、日常使用反馈者
-- 启动动画支持：K39゜
-- 关闭动画支持：大yi巴狐狸_
-- 字体与素材制作：社区作者与粉丝协作
-- 安装教程与使用引导：社区贡献者协助补完
+贡献:开发者-Mark42的铁镐（Mark42IRPC）-保留所有权利
+===如果粉丝们能去B站点点关注的话...
+===https://space.bilibili.com/486401719
 
-三、已集成或参考的外部项目
-- `chenwr727/yuanbao-free-api`
-  - 用途：元宝 OpenAI 兼容中转服务基础实现
-  - 当前仓库以源码和离线 bundle 形式维护在 `services/`
+贡献:debug-所有粉丝
+===郑重感谢所有参与测试版使用的粉丝们
+===谢谢你们的喜欢呀!我会努力更新哒!
 
-- `jsososo/QQMusicApi`
-  - 用途：QQ 音乐接口兼容逻辑参考
+贡献:claude/codex支持-秋秋233丶
+===https://b23.tv/CxdeXfS
 
-- `listen1/listen1_chrome_extension`
-  - 用途：QQ 音乐歌单解析与兼容参数参考
+贡献:启动动画-K39゜
+===https://space.bilibili.com/419336032
 
-- `Ollama`
-  - 用途：本地大模型部署与推理
+贡献:关闭动画-大yi巴狐狸_
+===https://space.bilibili.com/220895159
 
-- `GPT-SoVITs / GSVmove`
-  - 用途：文本转语音链路
+贡献:鸣潮字体素材制作
+===言语关系		https://space.bilibili.com/379335206
+===-华氏451	https://space.bilibili.com/51436514
+===野宫meko	https://space.bilibili.com/1829091
+=== 鸟居枫		https://space.bilibili.com/10599
 
-- `Vosk`
-  - 用途：本地语音识别
+贡献:部分素材收集
+===粉丝群的大家
 
-四、AI 协作说明
-- 项目开发过程中长期使用 AI 编程与分析工具辅助：
-  - Claude Code
-  - Codex / GPT-5 系列
-  - DeepSeek
-  - 豆包等日常辅助工具
+贡献:安装教程指引-五更流年さま
+===https://space.bilibili.com/904605 
 
-AI 工具用于：
-- 架构讨论
-- 重构建议
-- 文档整理
-- 脚本与配置校验
+贡献:爱弥斯语音模型-Depthscaper
+===https://space.bilibili.com/347135954
 
-最终代码、合并与仓库内容仍由维护者负责审查和落地。
+贡献:yuanbao-free-api-元宝 OpenAI 兼容中转服务-chenwr727
+===https://github.com/chenwr727/yuanbao-free-api
 
-五、资源与使用声明
-- 项目中的视觉素材、音频、字体和非官方接口能力来源复杂
-- 源码与资源许可证分离，使用时请分别阅读：
-  - `LICENSE-CODE`
-  - `LICENSE-ASSETS`
+ai平台技术支持:
+===claude-CODE	(核心架构)
+===IFLOW心流平台	(代码协助)
+===Openai-codeX	(代码协助)
+===deepseek深度求索,豆包	(日常帮助)
+===ollama			(本地部署)
+===GPT-SoVITs		(语音合成模块)
+部分使用到的ai模型:opus/sonnet4.6,gml5,gml4.7,GPT-5.3/5.4-codeX,deepseek-v3.2,qwen2.5  
 
-六、致谢
-- 感谢所有测试用户、赞助者、素材提供者、功能建议提交者
-- 赞助名单见：`感谢大佬投喂名单.txt`
+音乐模块支持:网易云音乐/QQ音乐/酷狗音乐(非官方,仅供学习交流)
+由于aip官方版权限制,默认模块推荐:网易云音乐
+
+【声明】
+
+严禁使用任何手段使用此程序进行商业化牟利
+
+项目中包含的部分视觉素材及非官方API来源于互联网。
+素材版权归原作者所有；
+如认为内容涉及侵权，请携带权属证明联系作者，核实后将立即删除
+
+默认素材来源：鸣潮-库洛游戏
