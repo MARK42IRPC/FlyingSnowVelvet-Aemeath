@@ -1,134 +1,94 @@
-飞行雪绒粒子效果说明（当前注册项）
+飞行雪绒粒子效果说明（LTS1.0.5pre2）
 
-1. 总览
-入口与渲染
+一、总体说明
 - 事件入口：`EventType.PARTICLE_REQUEST`
-- 覆盖层：`lib/core/qt_particle_system.py`（`ParticleOverlay`）
-- 脚本管理：`lib/script/practical/manager.py`
-- 自动发现：`discover_particles()` 扫描 `lib/script/practical/*_particle.py`
+- 渲染层：`lib/core/qt_particle_system.py`
+- 粒子脚本发现：`lib/script/practical/manager.py`
+- 自动扫描目录：`lib/script/practical/*_particle.py`
 
-全局配置（`config/config.py`）
-- `PARTICLES.enable_stroke`：是否描边
-- `PARTICLES.fade_threshold`：开始淡出的生命比例阈值
+当前已注册粒子：16 个
 
-注意
-- 当前注册粒子共 14 个
-- 默认粒子 ID 是 `scatter_fall`
-- 历史 ID（如 `snowflake`、`heart`）当前未注册，不可用
+二、已注册粒子列表
 
-2. 已注册粒子（14个）
+1. `scatter_fall`
+- 文件：`scatter_fall_particle.py`
+- 作用：主宠动作扩散落点粒子
 
-[1] `scatter_fall`
-- 文件：`lib/script/practical/scatter_fall_particle.py`
-- 形态：浅青色方块
-- 行为：四向扩散，阻力 + 重力下落
-- 触发：主宠动作 `jumping` 开始（`Actions.JUMPING`）
+2. `pink_scatter_fall`
+- 文件：`pink_scatter_fall_particle.py`
+- 作用：主宠右键与开心动作的粉色散落粒子
 
-[2] `pink_scatter_fall`
-- 文件：`lib/script/practical/pink_scatter_fall_particle.py`
-- 形态：浅粉色方块
-- 行为：与 `scatter_fall` 同模型
-- 触发：
-  - 主宠右键按下（`MouseEventHandler`）
-  - 主宠动作 `happy` 开始（`Actions.HAPPY`）
+3. `cyan_pink_scatter_fall`
+- 文件：`cyan_pink_scatter_fall_particle.py`
+- 作用：主宠左键触发的青粉混色散落粒子
 
-[3] `cyan_pink_scatter_fall`
-- 文件：`lib/script/practical/cyan_pink_scatter_fall_particle.py`
-- 形态：青/粉随机混色方块
-- 行为：与 `scatter_fall` 同模型
-- 触发：主宠左键按下（`MouseEventHandler`）
+4. `snow`
+- 文件：`snow_particle.py`
+- 作用：雪豹淡出、雪堆触发等场景使用的白色雪粒
 
-[4] `snow`
-- 文件：`lib/script/practical/snow_particle.py`
-- 形态：白色圆形雪粒（`is_circle=True`）
-- 行为：全向发射，阻力 + 重力，随生命周期淡出
-- 触发：
-  - 雪豹淡出消失
-  - 雪堆触发生成雪豹时的出现特效
+5. `snow_drift`
+- 文件：`snow_drift_particle.py`
+- 作用：雪豹跳跃、雪堆交互时的落雪堆积效果
 
-[5] `snow_drift`
-- 文件：`lib/script/practical/snow_drift_particle.py`
-- 形态：白色圆形雪粒（`is_circle=True`）
-- 行为：下落后在底部短暂停留堆积，再缓慢消退
-- 触发：
-  - 雪豹跳跃开始与落地弹跳
-  - 雪堆左键、右键、双击交互
+6. `snowball_burst`
+- 文件：`snowball_burst_particle.py`
+- 作用：雪球淡出或破碎时的轻量爆散效果
 
-[6] `burst_line`
-- 文件：`lib/script/practical/burst_line_particle.py`
-- 形态：彩色线段（`is_line=True`，`no_fade=True`）
-- 行为：中心爆发，匀减速，线长随寿命缩短
-- 触发：
-  - 雪豹单击确认（触发跳跃）
-  - 主宠瞬移时的原地爆发效果
+7. `snowball_drift`
+- 文件：`snowball_drift_particle.py`
+- 作用：雪球落地后的轻量溅雪效果
 
-[7] `right_fade`
-- 文件：`lib/script/practical/right_fade_particle.py`
-- 形态：浅青色横向小矩形
-- 行为：向右漂移并淡出
-- 触发：多处 UI 淡出/关闭（命令框、气泡、按钮、播放列表、搜索框等）
+8. `burst_line`
+- 文件：`burst_line_particle.py`
+- 作用：瞬移、点击确认等场景的线性爆发效果
 
-[8] `up_fade`
-- 文件：`lib/script/practical/up_fade_particle.py`
-- 形态：粉色方块（小概率黑色变体）
-- 行为：向上移动并淡出
-- 触发：Bubble 替换旧文本且 `particle=True` 时
+9. `right_fade`
+- 文件：`right_fade_particle.py`
+- 作用：多类 UI 关闭或淡出时的右向漂移粒子
 
-[9] `music_note`
-- 文件：`lib/script/practical/music_note_particle.py`
-- 形态：彩色方块音符粒子
-- 行为：向上移动 + 轻微布朗运动，无重力
-- 触发：音乐播放中按帧间隔触发（`CLOUD_MUSIC.particle_interval`）
+10. `up_fade`
+- 文件：`up_fade_particle.py`
+- 作用：气泡替换内容时向上淡出
 
-[10] `click`
-- 文件：`lib/script/practical/click_particle.py`
-- 形态：浅青色 `Click` 文字粒子（`is_text=True`）
-- 行为：随机方向喷射，线性减速，寿命结束消失
-- 触发：UI 点击辅助函数左键（`publish_click_particle`）
+11. `music_note`
+- 文件：`music_note_particle.py`
+- 作用：音乐播放中的音符粒子
 
-[11] `pink_click`
-- 文件：`lib/script/practical/pink_click_particle.py`
-- 形态：浅粉色 `Click` 文字粒子（`is_text=True`）
-- 行为：与 `click` 相同，仅颜色不同
-- 触发：UI 点击辅助函数右键（`publish_click_particle`）
+12. `click`
+- 文件：`click_particle.py`
+- 作用：左键点击辅助文字粒子
 
-[12] `white_pink_collision`
-- 文件：`lib/script/practical/white_pink_collision_particle.py`
-- 形态：白/粉随机方块
-- 行为：边界反弹 + 重力 + 阻力，寿命衰减
-- 触发：音响与闹钟的碰墙、落地弹跳
+13. `pink_click`
+- 文件：`pink_click_particle.py`
+- 作用：右键点击辅助文字粒子
 
-[13] `collision`
-- 文件：`lib/script/practical/collision_particle.py`
-- 形态：棕/灰随机方块
-- 行为：边界反弹 + 重力 + 阻力，寿命衰减
-- 触发：沙发的碰墙、落地弹跳
+14. `white_pink_collision`
+- 文件：`white_pink_collision_particle.py`
+- 作用：音响与闹钟的碰撞粒子
 
-[14] `flicker_data`
-- 文件：`lib/script/practical/flicker_data_particle.py`
-- 形态：横向短矩形（宽高比约 4:1），每帧换色
-- 行为：轻微布朗运动，无重力
-- 触发：
-  - 主宠移动累计每 30px 触发一次
-  - AI 设置面板可见时，边缘持续闪烁特效
+15. `collision`
+- 文件：`collision_particle.py`
+- 作用：沙发等对象的碰撞粒子
 
-3. 事件数据格式
-统一发布格式
+16. `flicker_data`
+- 文件：`flicker_data_particle.py`
+- 作用：主宠移动与 AI 设置面板边缘闪烁特效
+
+三、统一事件格式
 ```python
 Event(EventType.PARTICLE_REQUEST, {
-    'particle_id': 'xxx',
-    'area_type': 'point' | 'rect' | 'circle',
-    'area_data': (...)
+    "particle_id": "scatter_fall",
+    "area_type": "point",
+    "area_data": (x, y),
 })
 ```
 
-区域数据
+区域数据格式
 - `point`: `(x, y)`
 - `rect`: `(x1, y1, x2, y2)`
 - `circle`: `(x, y, radius)`
 
-4. 维护清单
-新增粒子时至少同步以下位置
-- 粒子脚本：`lib/script/practical/*_particle.py`
-- 触发调用点（发布 `PARTICLE_REQUEST` 的业务代码）
-- 本文档
+四、维护约定
+- 新增粒子后，必须同步更新本文档
+- 需要说明触发场景时，优先写“业务用途”而不是只写视觉形态
+- 若粒子数量发生变化，请同步更新 `doc/README.txt` 和 `README.md`

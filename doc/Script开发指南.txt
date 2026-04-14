@@ -1,96 +1,103 @@
-飞行雪绒 Script 开发指南（按当前代码）
+飞行雪绒 Script 开发指南（LTS1.0.5pre2）
 
-1. 启动与自动发现
-- 主入口：`lib/script/main.py`
+一、总览
+- 主入口：`lib/core/qt_desktop_pet.py`
+- 应用编排：`lib/script/main.py`
 - 动态发现：`lib/core/plugin_registry.py`
-  - 管理器扫描：`lib/script/obj-*/manager.py`
-  - 粒子扫描：`lib/script/practical/*_particle.py`
-- 初始化流程：
-  1) `discover_all()`
-  2) `init_all_managers(pet)`
-  3) 管理器在 `cleanup_all_managers()` 中统一清理
+- 管理器目录：`lib/script/obj-*`
+- 粒子目录：`lib/script/practical/*_particle.py`
+- UI 目录：`lib/script/ui/`
 
-2. 管理器开发规范
-文件位置
-- 推荐：`lib/script/obj-你的模块/manager.py`
+二、启动与自动发现
+桌宠启动时，`lib/script/main.py` 会依次完成：
+1. 初始化日志、Qt 运行环境、单实例与快捷方式
+2. 加载 GIF 与粒子覆盖层
+3. 调用 `discover_all()` 自动发现管理器与粒子
+4. 调用 `init_all_managers()` 创建管理器实例
+5. 初始化命令框、气泡、托盘、AI 相关组件
 
-必备要素
+扩展开发默认遵循这个发现链路，不需要手动在主入口硬编码注册。
+
+三、管理器开发
+推荐位置
+- `lib/script/obj-你的模块/manager.py`
+
+基础要求
 - 继承 `BaseManager`
-- 定义：`MANAGER_ID / DISPLAY_NAME / COMMAND_TRIGGER / COMMAND_HELP`
-- 实现：`@classmethod create(...)`、`cleanup()`
-- 在 `cleanup()` 里完整 `unsubscribe`，并关闭已创建窗口/对象
-- 文件末尾注册：`manager_registry.register(YourManager.MANAGER_ID, YourManager)`
+- 定义 `MANAGER_ID`
+- 定义 `DISPLAY_NAME`
+- 定义 `COMMAND_TRIGGER`
+- 定义 `COMMAND_HELP`
+- 提供 `create()` 工厂方法
+- 提供 `cleanup()` 并完成退订、资源释放
 
-建议实践
-- # 命令提示：在 `__init__` 调用 `get_hash_cmd_registry().register(...)`
-- 跨管理器通信优先用事件：
-  - 生成：`MANAGER_SPAWN_REQUEST`
-  - 查询：`MANAGER_QUERY_REQUEST / MANAGER_QUERY_RESPONSE`
-  - 目标查询：`TARGET_POSITION_QUERY / TARGET_POSITION_RESPONSE`
-  - 保护检测：`PROTECTION_CHECK / PROTECTION_RESPONSE`
+当前内置管理器
+- `snow_leopard`
+- `snow_pile`
+- `sofa`
+- `mortor`
+- `clock`
+- `speaker`
+- `snowball`
 
-当前已内置管理器（obj-*）
-- `snow_leopard`（#雪豹）
-- `snow_pile`（#雪堆）
-- `sofa`（#沙发 / #沙发重力）
-- `mortor`（#摩托）
-- `clock`（#闹钟 / #闹钟重力）
-- `speaker`（#音响 / #音响重力 / #退出音乐登录）
+推荐做法
+- 需要跨模块通信时，优先发事件，不直接互相引用
+- 管理器响应 `#命令` 时，只处理自己负责的范围
+- 所有窗口、实体、线程、任务都要在 `cleanup()` 中回收
 
-补充处理器（非 obj 目录）
-- `lib/script/practical/cleanup_handler.py`：注册 `#清理`
+四、粒子开发
+推荐位置
+- `lib/script/practical/xxx_particle.py`
 
-3. 粒子脚本开发规范
-文件位置
-- 推荐：`lib/script/practical/xxx_particle.py`
-
-必备要素
+基础要求
 - 继承 `BaseParticleScript`
 - 使用 `@register_particle("particle_id")`
 - 定义 `PARTICLE_ID`
 - 实现 `create_particles(area_type, area_data)`
 
-粒子实例约定（被 `ParticleOverlay` 渲染）
-- 必需：`update()`、`alive`（属性或可调用）
-- 生命周期字段：`life`、`max_life`（建议提供，便于统一淡出）
-- 可选绘制标记：
-  - `is_text=True`（文字）
-  - `is_line=True`（线段）
-  - `is_circle=True`（圆）
-  - `no_fade=True`（不参与透明度淡出）
-  - `width/height`（矩形分支）
+粒子实例约定
+- 需要 `update()`
+- 需要 `alive`
+- 建议提供 `life` / `max_life`
+- 可选使用：
+  - `is_text`
+  - `is_line`
+  - `is_circle`
+  - `no_fade`
 
-区域参数约定
-- `point`: `(x, y)`
-- `rect`: `(x1, y1, x2, y2)`
-- `circle`: `(x, y, radius)`
+五、输入链路
+命令输入框位于 `lib/script/ui/command_dialog.py`
 
-4. 实体接口（PetWindow / BaseEntity）
-- 状态切换：`change_state(state)`
-- 播放动画：`play_animation(state, duration=0)`
-- 调度任务：`schedule_task(callback, delay_ms, repeat=False)`
-- 取消任务：`cancel_task(task_id)`
-- 粒子：`spawn_particles(x, y, particle_id='scatter_fall', area_type='point', area_data=None)`
+当前输入分流规则：
+- `/xxx` → `EventType.INPUT_COMMAND`
+- `#xxx` → `EventType.INPUT_HASH`
+- 普通文本 → `EventType.INPUT_CHAT`
 
-注意
-- 当前默认粒子 ID 是 `scatter_fall`（不是历史的 `snowflake`）
-- 建议显式传入粒子 ID，避免默认值变化影响行为
+AI 工具调度位于 `lib/script/tool_dispatcher/dispatcher.py`，会从 `STREAM_FINAL` 中提取 `###指令###`。
 
-5. 输入链路与命令分发
-命令输入框：`lib/script/ui/command_dialog.py`
-- `/xxx` -> 发布 `INPUT_COMMAND`（由 `CmdCenter` 执行 shell）
-- `#xxx` -> 发布 `INPUT_HASH`（由各管理器/处理器订阅）
-- 普通文本 -> 发布 `INPUT_CHAT`（由 `ChatHandler` 处理）
+六、配置项落地链路
+如果新增 AI 控制面板配置，至少同步以下文件：
+- `lib/script/ui/ai_settings_panel.py`
+- `lib/script/ui/ai_settings_storage.py`
+- `lib/script/ui/ai_settings_validators.py`
+- `config/ollama_config.py`
 
-AI 工具调度
-- `ToolDispatcher` 监听 `STREAM_FINAL`
-- 从模型回复中提取 `###指令###` / `###指令 参数###`
-- 当前支持：音乐、下一曲、暂停、雪豹、沙发、摩托、闹钟/计时、音量、瞬移、回忆
+如果新增普通配置，优先放到对应的 `config/config_*.py` 或共享配置体系中，不要把运行时状态写死回源码默认值。
 
-6. 最小管理器模板
+七、运行时数据边界
+以下路径视为运行时目录：
+- `resc/user/`
+- `logs/`
+- `config/music/volume.json`
+- `config/user_scale.json`
+
+像 GSV 语音缓存这类自动生成文件，应写入 `resc/user/temp/` 这一类已忽略目录，而不是可提交源码目录。
+
+八、最小管理器模板
 ```python
 from lib.core.plugin_registry import BaseManager, manager_registry
 from lib.core.event.center import get_event_center, EventType
+
 
 class DemoManager(BaseManager):
     MANAGER_ID = "demo"
@@ -113,39 +120,13 @@ class DemoManager(BaseManager):
     def cleanup(self):
         self._ec.unsubscribe(EventType.INPUT_HASH, self._on_hash)
 
+
 manager_registry.register(DemoManager.MANAGER_ID, DemoManager)
 ```
 
-7. 最小粒子模板
-```python
-from lib.script.practical.base_particle import BaseParticleScript
-from lib.core.plugin_registry import register_particle
-
-@register_particle("demo_particle")
-class DemoParticleScript(BaseParticleScript):
-    PARTICLE_ID = "demo_particle"
-
-    def create_particles(self, area_type, area_data):
-        x, y = area_data[0], area_data[1]
-        return [DemoParticle(x, y)]
-
-class DemoParticle:
-    def __init__(self, x, y):
-        self.x = x
-        self.y = y
-        self.life = 1.0
-        self.max_life = 1.0
-
-    def update(self):
-        self.life -= 0.05
-
-    @property
-    def alive(self):
-        return self.life > 0
-```
-
-8. 交付前自检
-- 是否完成注册（管理器/粒子）
-- 是否补齐 `cleanup` 退订与资源释放
-- 是否符合事件数据格式
-- 是否更新 `doc` 目录对应说明
+九、交付前自检
+- 是否完成注册
+- 是否实现完整清理
+- 是否补齐事件字段与参数校验
+- 是否更新对应文档
+- 是否确认没有引入新的运行时垃圾文件

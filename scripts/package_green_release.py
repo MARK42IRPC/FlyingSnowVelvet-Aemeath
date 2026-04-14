@@ -17,7 +17,12 @@ from pathlib import Path
 from typing import Dict, Iterable, Iterator, List, Optional, Tuple
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_VERSION = "LTS1.0.5pre1"
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from config.version_info import APP_VERSION
+
+DEFAULT_VERSION = APP_VERSION
 DIST_DIR = ROOT / "dist"
 
 EXCLUDE_PART_NAMES = {

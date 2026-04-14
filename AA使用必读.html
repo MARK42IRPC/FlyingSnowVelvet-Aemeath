@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>飞行雪绒资料舱 · LTS1.0.5pre1</title>
+    <title>飞行雪绒资料舱 · LTS1.0.5pre2</title>
     <style>
         @font-face {
             font-family: 'HarmonyOS Sans';
@@ -266,7 +266,7 @@
     <main>
         <div class="hero">
             <h1>飞行雪绒资料舱</h1>
-            <p>贡献 + 赞助 + 文档 · LTS1.0.5pre1<br>基于项目默认配色 + 粒子灵感打造，方便在浏览器里查阅 doc 与贡献记录。生成时间：2026-03-19 15:08:45</p>
+            <p>贡献 + 赞助 + 文档 · LTS1.0.5pre2<br>基于项目默认配色 + 粒子灵感打造，方便在浏览器里查阅 doc 与贡献记录。生成时间：2026-04-15 00:43:59</p>
         </div>
         <section id="top-panels">
             <div class="top-panels">
@@ -275,74 +275,68 @@
                     <div class="cards">
         <article class="card">
             <header>
-                <div class="eyebrow">2026-03-19 15:05</div>
+                <div class="eyebrow">2026-04-15 00:16</div>
                 <h3>开发贡献</h3>
                 <a class="download" href="doc/贡献名单和主播的狗盆/开发贡献.txt" download>下载原文件</a>
             </header>
-            <pre>本项目得以完成，离不开以下个人、粉丝与社区的支持：
+            <pre>飞行雪绒开发贡献与外部项目说明（LTS1.0.5pre2）
 
-【支持】
+一、项目定位
+- 本项目是一个以桌宠为核心、叠加 AI、语音、音乐和场景对象系统的长期维护项目
+- 当前版本重点是稳定性、运行时数据隔离、控制面板整合和文档同步
 
-贡献:开发者-Mark42的铁镐-保留所有权利
-===如果粉丝们能去B站点点关注的话...
-===https://space.bilibili.com/486401719
+二、核心贡献
+- 核心开发与仓库维护：Mark42
+- 测试与反馈：粉丝群、测试用户、日常使用反馈者
+- 启动动画支持：K39゜
+- 关闭动画支持：大yi巴狐狸_
+- 字体与素材制作：社区作者与粉丝协作
+- 安装教程与使用引导：社区贡献者协助补完
 
-贡献:debug-所有粉丝
-===郑重感谢所有参与测试版使用的粉丝们
-===谢谢你们的喜欢呀!我会努力更新哒!
+三、已集成或参考的外部项目
+- `chenwr727/yuanbao-free-api`
+  - 用途：元宝 OpenAI 兼容中转服务基础实现
+  - 当前仓库以源码和离线 bundle 形式维护在 `services/`
 
-贡献:claude/codex支持-秋秋233丶
-===https://b23.tv/CxdeXfS
+- `jsososo/QQMusicApi`
+  - 用途：QQ 音乐接口兼容逻辑参考
 
-贡献:启动动画-K39゜
-===https://space.bilibili.com/419336032
+- `listen1/listen1_chrome_extension`
+  - 用途：QQ 音乐歌单解析与兼容参数参考
 
-贡献:关闭动画-大yi巴狐狸_
-===https://space.bilibili.com/220895159
+- `Ollama`
+  - 用途：本地大模型部署与推理
 
-贡献:鸣潮字体素材制作
-===言语关系		https://space.bilibili.com/379335206
-===-华氏451	https://space.bilibili.com/51436514
-===野宫meko	https://space.bilibili.com/1829091
-=== 鸟居枫		https://space.bilibili.com/10599
+- `GPT-SoVITs / GSVmove`
+  - 用途：文本转语音链路
 
-贡献:部分素材收集
-===粉丝群的大家
+- `Vosk`
+  - 用途：本地语音识别
 
-贡献:安装教程指引-五更流年さま
-===https://space.bilibili.com/904605 
+四、AI 协作说明
+- 项目开发过程中长期使用 AI 编程与分析工具辅助：
+  - Claude Code
+  - Codex / GPT-5 系列
+  - DeepSeek
+  - 豆包等日常辅助工具
 
-贡献:爱弥斯语音模型-Depthscaper
-===https://space.bilibili.com/347135954
+AI 工具用于：
+- 架构讨论
+- 重构建议
+- 文档整理
+- 脚本与配置校验
 
-贡献:夸克网盘-提供部分资金支持与文件分发
+最终代码、合并与仓库内容仍由维护者负责审查和落地。
 
-贡献:chenwr727/yuanbao-free-api-元宝 OpenAI 兼容中转服务基础项目（以源码压缩包形式集成到 services/bundles/）
-===https://github.com/chenwr727/yuanbao-free-api
+五、资源与使用声明
+- 项目中的视觉素材、音频、字体和非官方接口能力来源复杂
+- 源码与资源许可证分离，使用时请分别阅读：
+  - `LICENSE-CODE`
+  - `LICENSE-ASSETS`
 
-ai平台技术支持:
-===claude-CODE	(核心架构)
-===IFLOW心流平台	(代码协助)
-===Openai-codeX	(代码协助)
-===deepseek深度求索,豆包	(日常帮助)
-===ollama			(本地部署)
-===GPT-SoVITs		(语音合成模块)
-使用的ai模型:sonnet4.6,gml5,gml4.7,GPT-5.3-codeX,GPT-5.4-codeX,deepseek-v3.2,qwen2.5  
-
-音乐模块支持:网易云音乐/QQ音乐/酷狗音乐(非官方,仅供学习交流)
-由于aip官方版权限制,默认模块推荐:网易云音乐
-
-【声明】
-
-此程序完全免费，开源，支持任何修改
-（特地做成了模块化结构便于扩展）
-严禁使用任何手段使用此程序进行商业化牟利
-
-项目中包含的部分视觉素材及非官方API来源于互联网。
-素材版权归原作者所有；
-如认为内容涉及侵权，请携带权属证明联系作者，核实后将立即删除
-
-默认素材来源：鸣潮-库洛游戏
+六、致谢
+- 感谢所有测试用户、赞助者、素材提供者、功能建议提交者
+- 赞助名单见：`感谢大佬投喂名单.txt`
 </pre>
         </article>
                     </div>
@@ -429,162 +423,168 @@ kailYum
             <div class="cards">
         <article class="card">
             <header>
-                <div class="eyebrow">2026-03-19 14:28</div>
+                <div class="eyebrow">2026-04-15 00:43</div>
                 <h3>README</h3>
                 <a class="download" href="doc/README.txt" download>下载原文件</a>
             </header>
-            <pre>飞行雪绒文档索引（LTS1.0.5pre1）
+            <pre>飞行雪绒文档索引（LTS1.0.5pre2）
 
 适用范围
-- 本目录文档对应当前工程：飞行雪绒LTS1.0.5pre1
-- 以源码为准，文档用于快速定位实现与扩展入口
+- 本目录文档对应当前工程：飞行雪绒 LTS1.0.5pre2
+- 以源码为准，本文档用于快速定位当前实现与扩展入口
 
-项目现状速览
-- 启动入口：`lib/core/qt_desktop_pet.py` -&gt; `lib/script/main.py`
-- 核心架构：PyQt5 + 事件总线（`EventCenter`）+ 动态插件发现（管理器/粒子）
-- 单实例保护：Windows Mutex（`Local\\FeiXingXueRongDesktopPet_SingleInstance`）
-- 命令输入：`/`（shell）、`#`（扩展命令）、无前缀（聊天）
-- AI 模式：OpenAI 兼容 API / 本地 Ollama / 规则回复（见 `config/ollama_config.py`）
-- 音乐系统：`netease / qq / kugou` 抽象层（默认配置当前为 `qq`）
+当前工程状态
+- 主入口：`lib/core/qt_desktop_pet.py`
+- 应用编排：`lib/script/main.py`
+- 核心机制：PyQt5 + EventCenter + 动态插件发现
+- AI 模式：OpenAI 兼容 API / Ollama / YuanBao-Free-API / 规则回复
+- 语音能力：GSV 文本转语音 + Vosk 本地识别
+- 音乐能力：QQ / 网易云 / 酷狗多源搜索与统一播放入口
+- 运行时数据：`resc/user/`、`logs/`、共享配置目录默认不进入 Git
 
-当前 # 命令（由各模块注册）
-- `#雪豹 [数量]`
-- `#雪堆 [数量]`
-- `#沙发 [数量]`
-- `#沙发重力`
-- `#摩托 [数量]`
-- `#闹钟 [秒]`
-- `#闹钟重力`
-- `#音响 [数量]`
-- `#音响重力`
-- `#退出音乐登录`
+当前内置对象管理器
+- `#雪豹`
+- `#雪堆`
+- `#沙发`
+- `#摩托`
+- `#闹钟`
+- `#音响`
+- `#雪球`
 - `#清理`
 
 文档列表
 - `Script开发指南.txt`
-  扩展开发入口、管理器与粒子脚本规范、命令注册与清理约定。
+  当前扩展开发方式、管理器/粒子规范、配置落地链路。
 - `事件系统使用说明.txt`
-  `EventCenter` 工作机制、常用事件协议、输入/管理器通信链路。
+  EventCenter 机制、关键事件协议、输入/聊天/语音/音乐链路。
 - `调度系统使用说明.txt`
-  `TimingManager` 三定时器模型、任务精度、暂停/恢复机制。
+  TimingManager 的 tick/frame/gif_frame 与定时任务机制。
 - `粒子效果说明.txt`
-  当前全部已注册粒子（14个）的行为和触发点。
+  当前 16 个已注册粒子的用途、文件位置和触发点。
+- `音乐多源优化方案计划.txt`
+  音乐多源能力现状、已落地内容和后续路线。
+- `贡献名单和主播的狗盆/开发贡献.txt`
+  项目开发贡献、外部项目来源与协作说明。
+- `贡献名单和主播的狗盆/感谢大佬投喂名单.txt`
+  赞助与支持名单。
 
-推荐阅读顺序
-1. `Script开发指南.txt`
-2. `事件系统使用说明.txt`
-3. `调度系统使用说明.txt`
-4. `粒子效果说明.txt`
+资料舱门户
+- 运行 `python scripts/generate_doc_portal.py`
+- 生成文件：`AA使用必读.html`
 
 维护约定
-- 关键源码入口：
-  - `lib/script/main.py`
-  - `lib/core/plugin_registry.py`
-  - `lib/core/event/center.py`
-  - `lib/core/timing/manager.py`
-  - `lib/core/qt_particle_system.py`
-- 新增/修改管理器、事件协议、粒子后，同步更新本目录文档。
+- 新增/修改事件协议后，更新 `事件系统使用说明.txt`
+- 新增/修改粒子后，更新 `粒子效果说明.txt`
+- 新增/修改扩展开发模式后，更新 `Script开发指南.txt`
+- 版本行为变化后，同步 `README.md` 与 `CHANGELOG.md`
 </pre>
         </article>
         <article class="card">
             <header>
-                <div class="eyebrow">2026-03-17 23:52</div>
+                <div class="eyebrow">2026-04-15 00:16</div>
                 <h3>Script开发指南</h3>
                 <a class="download" href="doc/Script开发指南.txt" download>下载原文件</a>
             </header>
-            <pre>飞行雪绒 Script 开发指南（按当前代码）
+            <pre>飞行雪绒 Script 开发指南（LTS1.0.5pre2）
 
-1. 启动与自动发现
-- 主入口：`lib/script/main.py`
+一、总览
+- 主入口：`lib/core/qt_desktop_pet.py`
+- 应用编排：`lib/script/main.py`
 - 动态发现：`lib/core/plugin_registry.py`
-  - 管理器扫描：`lib/script/obj-*/manager.py`
-  - 粒子扫描：`lib/script/practical/*_particle.py`
-- 初始化流程：
-  1) `discover_all()`
-  2) `init_all_managers(pet)`
-  3) 管理器在 `cleanup_all_managers()` 中统一清理
+- 管理器目录：`lib/script/obj-*`
+- 粒子目录：`lib/script/practical/*_particle.py`
+- UI 目录：`lib/script/ui/`
 
-2. 管理器开发规范
-文件位置
-- 推荐：`lib/script/obj-你的模块/manager.py`
+二、启动与自动发现
+桌宠启动时，`lib/script/main.py` 会依次完成：
+1. 初始化日志、Qt 运行环境、单实例与快捷方式
+2. 加载 GIF 与粒子覆盖层
+3. 调用 `discover_all()` 自动发现管理器与粒子
+4. 调用 `init_all_managers()` 创建管理器实例
+5. 初始化命令框、气泡、托盘、AI 相关组件
 
-必备要素
+扩展开发默认遵循这个发现链路，不需要手动在主入口硬编码注册。
+
+三、管理器开发
+推荐位置
+- `lib/script/obj-你的模块/manager.py`
+
+基础要求
 - 继承 `BaseManager`
-- 定义：`MANAGER_ID / DISPLAY_NAME / COMMAND_TRIGGER / COMMAND_HELP`
-- 实现：`@classmethod create(...)`、`cleanup()`
-- 在 `cleanup()` 里完整 `unsubscribe`，并关闭已创建窗口/对象
-- 文件末尾注册：`manager_registry.register(YourManager.MANAGER_ID, YourManager)`
+- 定义 `MANAGER_ID`
+- 定义 `DISPLAY_NAME`
+- 定义 `COMMAND_TRIGGER`
+- 定义 `COMMAND_HELP`
+- 提供 `create()` 工厂方法
+- 提供 `cleanup()` 并完成退订、资源释放
 
-建议实践
-- # 命令提示：在 `__init__` 调用 `get_hash_cmd_registry().register(...)`
-- 跨管理器通信优先用事件：
-  - 生成：`MANAGER_SPAWN_REQUEST`
-  - 查询：`MANAGER_QUERY_REQUEST / MANAGER_QUERY_RESPONSE`
-  - 目标查询：`TARGET_POSITION_QUERY / TARGET_POSITION_RESPONSE`
-  - 保护检测：`PROTECTION_CHECK / PROTECTION_RESPONSE`
+当前内置管理器
+- `snow_leopard`
+- `snow_pile`
+- `sofa`
+- `mortor`
+- `clock`
+- `speaker`
+- `snowball`
 
-当前已内置管理器（obj-*）
-- `snow_leopard`（#雪豹）
-- `snow_pile`（#雪堆）
-- `sofa`（#沙发 / #沙发重力）
-- `mortor`（#摩托）
-- `clock`（#闹钟 / #闹钟重力）
-- `speaker`（#音响 / #音响重力 / #退出音乐登录）
+推荐做法
+- 需要跨模块通信时，优先发事件，不直接互相引用
+- 管理器响应 `#命令` 时，只处理自己负责的范围
+- 所有窗口、实体、线程、任务都要在 `cleanup()` 中回收
 
-补充处理器（非 obj 目录）
-- `lib/script/practical/cleanup_handler.py`：注册 `#清理`
+四、粒子开发
+推荐位置
+- `lib/script/practical/xxx_particle.py`
 
-3. 粒子脚本开发规范
-文件位置
-- 推荐：`lib/script/practical/xxx_particle.py`
-
-必备要素
+基础要求
 - 继承 `BaseParticleScript`
 - 使用 `@register_particle(&quot;particle_id&quot;)`
 - 定义 `PARTICLE_ID`
 - 实现 `create_particles(area_type, area_data)`
 
-粒子实例约定（被 `ParticleOverlay` 渲染）
-- 必需：`update()`、`alive`（属性或可调用）
-- 生命周期字段：`life`、`max_life`（建议提供，便于统一淡出）
-- 可选绘制标记：
-  - `is_text=True`（文字）
-  - `is_line=True`（线段）
-  - `is_circle=True`（圆）
-  - `no_fade=True`（不参与透明度淡出）
-  - `width/height`（矩形分支）
+粒子实例约定
+- 需要 `update()`
+- 需要 `alive`
+- 建议提供 `life` / `max_life`
+- 可选使用：
+  - `is_text`
+  - `is_line`
+  - `is_circle`
+  - `no_fade`
 
-区域参数约定
-- `point`: `(x, y)`
-- `rect`: `(x1, y1, x2, y2)`
-- `circle`: `(x, y, radius)`
+五、输入链路
+命令输入框位于 `lib/script/ui/command_dialog.py`
 
-4. 实体接口（PetWindow / BaseEntity）
-- 状态切换：`change_state(state)`
-- 播放动画：`play_animation(state, duration=0)`
-- 调度任务：`schedule_task(callback, delay_ms, repeat=False)`
-- 取消任务：`cancel_task(task_id)`
-- 粒子：`spawn_particles(x, y, particle_id=&#x27;scatter_fall&#x27;, area_type=&#x27;point&#x27;, area_data=None)`
+当前输入分流规则：
+- `/xxx` → `EventType.INPUT_COMMAND`
+- `#xxx` → `EventType.INPUT_HASH`
+- 普通文本 → `EventType.INPUT_CHAT`
 
-注意
-- 当前默认粒子 ID 是 `scatter_fall`（不是历史的 `snowflake`）
-- 建议显式传入粒子 ID，避免默认值变化影响行为
+AI 工具调度位于 `lib/script/tool_dispatcher/dispatcher.py`，会从 `STREAM_FINAL` 中提取 `###指令###`。
 
-5. 输入链路与命令分发
-命令输入框：`lib/script/ui/command_dialog.py`
-- `/xxx` -&gt; 发布 `INPUT_COMMAND`（由 `CmdCenter` 执行 shell）
-- `#xxx` -&gt; 发布 `INPUT_HASH`（由各管理器/处理器订阅）
-- 普通文本 -&gt; 发布 `INPUT_CHAT`（由 `ChatHandler` 处理）
+六、配置项落地链路
+如果新增 AI 控制面板配置，至少同步以下文件：
+- `lib/script/ui/ai_settings_panel.py`
+- `lib/script/ui/ai_settings_storage.py`
+- `lib/script/ui/ai_settings_validators.py`
+- `config/ollama_config.py`
 
-AI 工具调度
-- `ToolDispatcher` 监听 `STREAM_FINAL`
-- 从模型回复中提取 `###指令###` / `###指令 参数###`
-- 当前支持：音乐、下一曲、暂停、雪豹、沙发、摩托、闹钟/计时、音量、瞬移、回忆
+如果新增普通配置，优先放到对应的 `config/config_*.py` 或共享配置体系中，不要把运行时状态写死回源码默认值。
 
-6. 最小管理器模板
+七、运行时数据边界
+以下路径视为运行时目录：
+- `resc/user/`
+- `logs/`
+- `config/music/volume.json`
+- `config/user_scale.json`
+
+像 GSV 语音缓存这类自动生成文件，应写入 `resc/user/temp/` 这一类已忽略目录，而不是可提交源码目录。
+
+八、最小管理器模板
 ```python
 from lib.core.plugin_registry import BaseManager, manager_registry
 from lib.core.event.center import get_event_center, EventType
+
 
 class DemoManager(BaseManager):
     MANAGER_ID = &quot;demo&quot;
@@ -607,557 +607,386 @@ class DemoManager(BaseManager):
     def cleanup(self):
         self._ec.unsubscribe(EventType.INPUT_HASH, self._on_hash)
 
+
 manager_registry.register(DemoManager.MANAGER_ID, DemoManager)
 ```
 
-7. 最小粒子模板
-```python
-from lib.script.practical.base_particle import BaseParticleScript
-from lib.core.plugin_registry import register_particle
-
-@register_particle(&quot;demo_particle&quot;)
-class DemoParticleScript(BaseParticleScript):
-    PARTICLE_ID = &quot;demo_particle&quot;
-
-    def create_particles(self, area_type, area_data):
-        x, y = area_data[0], area_data[1]
-        return [DemoParticle(x, y)]
-
-class DemoParticle:
-    def __init__(self, x, y):
-        self.x = x
-        self.y = y
-        self.life = 1.0
-        self.max_life = 1.0
-
-    def update(self):
-        self.life -= 0.05
-
-    @property
-    def alive(self):
-        return self.life &gt; 0
-```
-
-8. 交付前自检
-- 是否完成注册（管理器/粒子）
-- 是否补齐 `cleanup` 退订与资源释放
-- 是否符合事件数据格式
-- 是否更新 `doc` 目录对应说明
+九、交付前自检
+- 是否完成注册
+- 是否实现完整清理
+- 是否补齐事件字段与参数校验
+- 是否更新对应文档
+- 是否确认没有引入新的运行时垃圾文件
 </pre>
         </article>
         <article class="card">
             <header>
-                <div class="eyebrow">2026-03-17 23:52</div>
+                <div class="eyebrow">2026-04-15 00:16</div>
                 <h3>事件系统使用说明</h3>
                 <a class="download" href="doc/事件系统使用说明.txt" download>下载原文件</a>
             </header>
-            <pre>飞行雪绒事件系统使用说明（按当前代码）
+            <pre>飞行雪绒事件系统使用说明（LTS1.0.5pre2）
 
-1. 核心机制
-实现位置
-- `lib/core/event/center.py`
-- 全局入口：`get_event_center()`（单例）
+一、核心入口
+- 实现：`lib/core/event/center.py`
+- 单例访问：`get_event_center()`
+- 事件对象：`Event`
+- 事件枚举：`EventType`
 
-处理模型
-- `publish(Event)` -&gt; 入队 -&gt; 按订阅顺序依次回调
-- 主线程发布：若当前未处理队列，立即 drain
-- 非主线程发布：通过 Qt signal 回主线程再处理
-- 防长循环保护：单次最多处理 100 个事件，剩余事件下一轮继续
+二、处理模型
+- `publish(Event)` 将事件放入队列
+- 主线程发布时，会尽快在主线程 drain 队列
+- 非主线程发布时，会通过 Qt signal 切回主线程处理
+- 回调可以调用 `event.mark_handled()` 中断同类型事件后续传播
 
-中断机制
-- 回调中可调用 `event.mark_handled()`
-- 同一事件类型后续订阅者将被跳过
-
-2. 常用用法
+三、基础用法
 ```python
-from lib.core.event.center import get_event_center, EventType, Event
+from lib.core.event.center import Event, EventType, get_event_center
 
 ec = get_event_center()
 
-def on_event(event: Event):
-    data = event.data
+def on_info(event: Event):
+    print(event.data)
 
-ec.subscribe(EventType.TICK, on_event)
-ec.publish(Event(EventType.INFORMATION, {&#x27;text&#x27;: &#x27;hello&#x27;}))
-ec.unsubscribe(EventType.TICK, on_event)
+ec.subscribe(EventType.INFORMATION, on_info)
+ec.publish(Event(EventType.INFORMATION, {&quot;text&quot;: &quot;hello&quot;}))
+ec.unsubscribe(EventType.INFORMATION, on_info)
 ```
 
-3. 输入事件链路（实际行为）
-鼠标
-- Qt 原始事件 -&gt; `ClickHandler` -&gt; 发布：
-  - `MOUSE_PRESS`（按下即发）
-  - `MOUSE_MOVE`
-  - `MOUSE_ENTER` / `MOUSE_LEAVE`
-  - `MOUSE_CLICK`（双击窗口超时后确认单击）
-  - `MOUSE_DOUBLE_CLICK`（双击窗口内第二次点击立即确认）
+四、输入链路
+- 鼠标：`MOUSE_PRESS` / `MOUSE_MOVE` / `MOUSE_ENTER` / `MOUSE_LEAVE` / `MOUSE_CLICK` / `MOUSE_DOUBLE_CLICK`
+- 键盘：`KEY_PRESS` / `KEY_RELEASE`
+- 命令框：
+  - `/xxx` → `INPUT_COMMAND`
+  - `#xxx` → `INPUT_HASH`
+  - 普通文本 → `INPUT_CHAT`
 
-键盘
-- Qt 原始事件 -&gt; `KeyHandler` -&gt; `KEY_PRESS` / `KEY_RELEASE`
+五、应用生命周期
+- `APP_PRE_START`
+- `APP_INIT_READY`
+- `APP_START`
+- `APP_MAIN`
+- `APP_EXIT`
+- `APP_QUIT`
 
-命令框回车
-- `/xxx` -&gt; `INPUT_COMMAND`
-- `#xxx` -&gt; `INPUT_HASH`
-- `xxx` -&gt; `INPUT_CHAT`
+其中：
+- `APP_PRE_START` 适合预热、静态准备和后台服务启动检查
+- `APP_QUIT` 是统一退出请求入口，适合阻止直接粗暴退出
 
-4. 关键事件协议（高频使用）
+六、当前高频事件协议
+
 INFORMATION
-- `EventType.INFORMATION`
-- 常用字段：
-  - `text: str`
-  - `min: int`（最少显示 tick）
-  - `max: int`（最多显示 tick）
-  - `align: &#x27;left&#x27;|&#x27;center&#x27;`（可选）
-  - `particle: bool`（可选）
+- 用途：信息气泡
+- 常见字段：
+  - `text`
+  - `min`
+  - `max`
+  - `particle`
 
 PARTICLE_REQUEST
-- `EventType.PARTICLE_REQUEST`
+- 用途：申请粒子
 - 字段：
-  - `particle_id: str`
-  - `area_type: &#x27;point&#x27;|&#x27;rect&#x27;|&#x27;circle&#x27;`
-  - `area_data: tuple`
-- 坐标使用全局坐标，`ParticleOverlay` 内部转本地坐标
+  - `particle_id`
+  - `area_type`
+  - `area_data`
+
+SOUND_REQUEST
+- 用途：请求播放音频文件
+- 字段：
+  - `audio_class`
+  - `file_path`
+  - `volume`
+  - `interruptible`
+
+VOICE_REQUEST
+- 用途：语音播放抽象层入口
+- 当前文本类请求会继续分流到 `AI_VOICE_REQUEST`
+
+AI_VOICE_REQUEST
+- 用途：AI 文本转语音申请
+- 当前由 `lib/script/gsvmove/service.py` 消费
+- 当 GSV 模块在控制面板中关闭时，这类事件会被直接忽略
+
+MIC_STT_*
+- `MIC_STT_START`
+- `MIC_STT_STOP`
+- `MIC_STT_PARTIAL`
+- `MIC_STT_FINAL`
+- `MIC_STT_STATE_CHANGE`
+
+MUSIC_*
+- 播放控制、登录状态、进度同步、队列操作都在 `MUSIC_*` 命名空间
+- 统一由音乐服务和 UI 组件解耦协作
 
 MANAGER_SPAWN_REQUEST
-- 请求某管理器生成对象
+- 用途：请求对象管理器生成实体
 - 常见字段：
-  - `manager_id: &#x27;snow_leopard&#x27;|&#x27;snow_pile&#x27;|&#x27;sofa&#x27;|&#x27;mortor&#x27;|&#x27;clock&#x27;|&#x27;speaker&#x27;`
-  - `count: int`（可选）
-  - `spawn_type: str`（如 `natural` / `command`）
-  - 其他管理器自定义字段（如闹钟 `seconds`）
+  - `manager_id`
+  - `count`
+  - `spawn_type`
 
-MANAGER_QUERY_REQUEST / RESPONSE
-- 跨管理器查询信息（数量、位置、保护范围等）
-- 建议携带 `request_id` 做请求-响应配对
+MANAGER_QUERY_REQUEST / MANAGER_QUERY_RESPONSE
+- 用途：跨管理器查询状态、数量、保护范围等
 
-TARGET_POSITION_QUERY / RESPONSE
-- 统一目标位置查询（解耦状态机与具体管理器）
+TARGET_POSITION_QUERY / TARGET_POSITION_RESPONSE
+- 用途：统一查询目标位置，减少状态机与具体管理器的直接耦合
 
-PROTECTION_CHECK / RESPONSE
-- 主宠保护半径检测，支持多管理器聚合响应
+PROTECTION_CHECK / PROTECTION_RESPONSE
+- 用途：检测主宠保护半径或实体保护区
 
-ENTITY_POSITION_REQUEST / RESPONSE
-- 查询实体（当前主要是 `pet_window`）位置与尺寸
-
-ENTITY_STATE_QUERY / RESPONSE
-- 查询实体移动状态/当前状态
-
-PET_TELEPORT
-- 主宠物瞬移事件
-- 支持：
-  - `x, y`
-  - `position: QPoint|(x,y)`
-
-5. 音乐与聊天事件
-音乐
-- 播放控制：`MUSIC_PLAY_TOP`、`MUSIC_ENQUEUE`、`MUSIC_NEXT_TRACK`、`MUSIC_PLAY_PAUSE`
-- 队列操作：`MUSIC_PLAY_QUEUE_INDEX`、`MUSIC_ENQUEUE_HISTORY`、`MUSIC_ENQUEUE_LIKED`、`MUSIC_ENQUEUE_LOCAL`
-- 进度：`MUSIC_PROGRESS_REQUEST` -&gt; `MUSIC_PROGRESS`
-- 登录：`MUSIC_LOGIN_REQUEST` / `MUSIC_LOGOUT_REQUEST` / `MUSIC_LOGIN_STATUS_CHANGE`
-
-聊天
-- 输入：`INPUT_CHAT`
-- 流式最终文本：`STREAM_FINAL`
-- `ToolDispatcher` 订阅 `STREAM_FINAL` 解析 `###工具指令###`
-
-6. 生命周期事件
-- `APP_PRE_START`：预启动（发现插件、启动延时逻辑）
-- `APP_INIT_READY`：初始化就绪
-- `APP_START`：进入启动阶段
-- `APP_MAIN`：主循环就绪
-- `APP_EXIT`：退出清理
-- `APP_QUIT`：应用退出请求
-
-7. 开发约束
-- 回调必须短小，避免阻塞 UI 线程
-- 每个 `subscribe` 都要有对称 `unsubscribe`（通常在 `cleanup`）
-- `mark_handled()` 仅用于需要阻断传播的场景
-- 事件字段命名保持稳定，避免同语义多套 key
+七、开发约束
+- 回调应尽量短小，避免阻塞 UI
+- 所有订阅都必须在 `cleanup()` 中退订
+- `mark_handled()` 只用于确实需要阻断传播的场景
+- 公共事件字段一旦公开使用，尽量保持兼容，不要频繁改 key
 </pre>
         </article>
         <article class="card">
             <header>
-                <div class="eyebrow">2026-03-17 23:52</div>
+                <div class="eyebrow">2026-04-15 00:16</div>
                 <h3>粒子效果说明</h3>
                 <a class="download" href="doc/粒子效果说明.txt" download>下载原文件</a>
             </header>
-            <pre>飞行雪绒粒子效果说明（当前注册项）
+            <pre>飞行雪绒粒子效果说明（LTS1.0.5pre2）
 
-1. 总览
-入口与渲染
+一、总体说明
 - 事件入口：`EventType.PARTICLE_REQUEST`
-- 覆盖层：`lib/core/qt_particle_system.py`（`ParticleOverlay`）
-- 脚本管理：`lib/script/practical/manager.py`
-- 自动发现：`discover_particles()` 扫描 `lib/script/practical/*_particle.py`
+- 渲染层：`lib/core/qt_particle_system.py`
+- 粒子脚本发现：`lib/script/practical/manager.py`
+- 自动扫描目录：`lib/script/practical/*_particle.py`
 
-全局配置（`config/config.py`）
-- `PARTICLES.enable_stroke`：是否描边
-- `PARTICLES.fade_threshold`：开始淡出的生命比例阈值
+当前已注册粒子：16 个
 
-注意
-- 当前注册粒子共 14 个
-- 默认粒子 ID 是 `scatter_fall`
-- 历史 ID（如 `snowflake`、`heart`）当前未注册，不可用
+二、已注册粒子列表
 
-2. 已注册粒子（14个）
+1. `scatter_fall`
+- 文件：`scatter_fall_particle.py`
+- 作用：主宠动作扩散落点粒子
 
-[1] `scatter_fall`
-- 文件：`lib/script/practical/scatter_fall_particle.py`
-- 形态：浅青色方块
-- 行为：四向扩散，阻力 + 重力下落
-- 触发：主宠动作 `jumping` 开始（`Actions.JUMPING`）
+2. `pink_scatter_fall`
+- 文件：`pink_scatter_fall_particle.py`
+- 作用：主宠右键与开心动作的粉色散落粒子
 
-[2] `pink_scatter_fall`
-- 文件：`lib/script/practical/pink_scatter_fall_particle.py`
-- 形态：浅粉色方块
-- 行为：与 `scatter_fall` 同模型
-- 触发：
-  - 主宠右键按下（`MouseEventHandler`）
-  - 主宠动作 `happy` 开始（`Actions.HAPPY`）
+3. `cyan_pink_scatter_fall`
+- 文件：`cyan_pink_scatter_fall_particle.py`
+- 作用：主宠左键触发的青粉混色散落粒子
 
-[3] `cyan_pink_scatter_fall`
-- 文件：`lib/script/practical/cyan_pink_scatter_fall_particle.py`
-- 形态：青/粉随机混色方块
-- 行为：与 `scatter_fall` 同模型
-- 触发：主宠左键按下（`MouseEventHandler`）
+4. `snow`
+- 文件：`snow_particle.py`
+- 作用：雪豹淡出、雪堆触发等场景使用的白色雪粒
 
-[4] `snow`
-- 文件：`lib/script/practical/snow_particle.py`
-- 形态：白色圆形雪粒（`is_circle=True`）
-- 行为：全向发射，阻力 + 重力，随生命周期淡出
-- 触发：
-  - 雪豹淡出消失
-  - 雪堆触发生成雪豹时的出现特效
+5. `snow_drift`
+- 文件：`snow_drift_particle.py`
+- 作用：雪豹跳跃、雪堆交互时的落雪堆积效果
 
-[5] `snow_drift`
-- 文件：`lib/script/practical/snow_drift_particle.py`
-- 形态：白色圆形雪粒（`is_circle=True`）
-- 行为：下落后在底部短暂停留堆积，再缓慢消退
-- 触发：
-  - 雪豹跳跃开始与落地弹跳
-  - 雪堆左键、右键、双击交互
+6. `snowball_burst`
+- 文件：`snowball_burst_particle.py`
+- 作用：雪球淡出或破碎时的轻量爆散效果
 
-[6] `burst_line`
-- 文件：`lib/script/practical/burst_line_particle.py`
-- 形态：彩色线段（`is_line=True`，`no_fade=True`）
-- 行为：中心爆发，匀减速，线长随寿命缩短
-- 触发：
-  - 雪豹单击确认（触发跳跃）
-  - 主宠瞬移时的原地爆发效果
+7. `snowball_drift`
+- 文件：`snowball_drift_particle.py`
+- 作用：雪球落地后的轻量溅雪效果
 
-[7] `right_fade`
-- 文件：`lib/script/practical/right_fade_particle.py`
-- 形态：浅青色横向小矩形
-- 行为：向右漂移并淡出
-- 触发：多处 UI 淡出/关闭（命令框、气泡、按钮、播放列表、搜索框等）
+8. `burst_line`
+- 文件：`burst_line_particle.py`
+- 作用：瞬移、点击确认等场景的线性爆发效果
 
-[8] `up_fade`
-- 文件：`lib/script/practical/up_fade_particle.py`
-- 形态：粉色方块（小概率黑色变体）
-- 行为：向上移动并淡出
-- 触发：Bubble 替换旧文本且 `particle=True` 时
+9. `right_fade`
+- 文件：`right_fade_particle.py`
+- 作用：多类 UI 关闭或淡出时的右向漂移粒子
 
-[9] `music_note`
-- 文件：`lib/script/practical/music_note_particle.py`
-- 形态：彩色方块音符粒子
-- 行为：向上移动 + 轻微布朗运动，无重力
-- 触发：音乐播放中按帧间隔触发（`CLOUD_MUSIC.particle_interval`）
+10. `up_fade`
+- 文件：`up_fade_particle.py`
+- 作用：气泡替换内容时向上淡出
 
-[10] `click`
-- 文件：`lib/script/practical/click_particle.py`
-- 形态：浅青色 `Click` 文字粒子（`is_text=True`）
-- 行为：随机方向喷射，线性减速，寿命结束消失
-- 触发：UI 点击辅助函数左键（`publish_click_particle`）
+11. `music_note`
+- 文件：`music_note_particle.py`
+- 作用：音乐播放中的音符粒子
 
-[11] `pink_click`
-- 文件：`lib/script/practical/pink_click_particle.py`
-- 形态：浅粉色 `Click` 文字粒子（`is_text=True`）
-- 行为：与 `click` 相同，仅颜色不同
-- 触发：UI 点击辅助函数右键（`publish_click_particle`）
+12. `click`
+- 文件：`click_particle.py`
+- 作用：左键点击辅助文字粒子
 
-[12] `white_pink_collision`
-- 文件：`lib/script/practical/white_pink_collision_particle.py`
-- 形态：白/粉随机方块
-- 行为：边界反弹 + 重力 + 阻力，寿命衰减
-- 触发：音响与闹钟的碰墙、落地弹跳
+13. `pink_click`
+- 文件：`pink_click_particle.py`
+- 作用：右键点击辅助文字粒子
 
-[13] `collision`
-- 文件：`lib/script/practical/collision_particle.py`
-- 形态：棕/灰随机方块
-- 行为：边界反弹 + 重力 + 阻力，寿命衰减
-- 触发：沙发的碰墙、落地弹跳
+14. `white_pink_collision`
+- 文件：`white_pink_collision_particle.py`
+- 作用：音响与闹钟的碰撞粒子
 
-[14] `flicker_data`
-- 文件：`lib/script/practical/flicker_data_particle.py`
-- 形态：横向短矩形（宽高比约 4:1），每帧换色
-- 行为：轻微布朗运动，无重力
-- 触发：
-  - 主宠移动累计每 30px 触发一次
-  - AI 设置面板可见时，边缘持续闪烁特效
+15. `collision`
+- 文件：`collision_particle.py`
+- 作用：沙发等对象的碰撞粒子
 
-3. 事件数据格式
-统一发布格式
+16. `flicker_data`
+- 文件：`flicker_data_particle.py`
+- 作用：主宠移动与 AI 设置面板边缘闪烁特效
+
+三、统一事件格式
 ```python
 Event(EventType.PARTICLE_REQUEST, {
-    &#x27;particle_id&#x27;: &#x27;xxx&#x27;,
-    &#x27;area_type&#x27;: &#x27;point&#x27; | &#x27;rect&#x27; | &#x27;circle&#x27;,
-    &#x27;area_data&#x27;: (...)
+    &quot;particle_id&quot;: &quot;scatter_fall&quot;,
+    &quot;area_type&quot;: &quot;point&quot;,
+    &quot;area_data&quot;: (x, y),
 })
 ```
 
-区域数据
+区域数据格式
 - `point`: `(x, y)`
 - `rect`: `(x1, y1, x2, y2)`
 - `circle`: `(x, y, radius)`
 
-4. 维护清单
-新增粒子时至少同步以下位置
-- 粒子脚本：`lib/script/practical/*_particle.py`
-- 触发调用点（发布 `PARTICLE_REQUEST` 的业务代码）
-- 本文档
+四、维护约定
+- 新增粒子后，必须同步更新本文档
+- 需要说明触发场景时，优先写“业务用途”而不是只写视觉形态
+- 若粒子数量发生变化，请同步更新 `doc/README.txt` 和 `README.md`
 </pre>
         </article>
         <article class="card">
             <header>
-                <div class="eyebrow">2026-03-17 23:52</div>
+                <div class="eyebrow">2026-04-15 00:16</div>
                 <h3>调度系统使用说明</h3>
                 <a class="download" href="doc/调度系统使用说明.txt" download>下载原文件</a>
             </header>
-            <pre>飞行雪绒调度系统使用说明（按当前代码）
+            <pre>飞行雪绒调度系统使用说明（LTS1.0.5pre2）
 
-1. 调度器结构
-实现位置
-- `lib/core/timing/manager.py`
-- 全局访问注册：`lib/core/timing/__init__.py`
+一、核心实现
+- 文件：`lib/core/timing/manager.py`
+- 对外入口：`lib/core/timing/__init__.py`
+- 核心类：`TimingManager`
 
-核心类
-- `TimingManager(QObject)`
-- 三个独立 QTimer：
-  - `TICK`：固定 50ms（20Hz）
-  - `FRAME`：`1000 // frame_fps` ms
-  - `GIF_FRAME`：`1000 // gif_fps` ms
+二、三套周期计时
+调度器内部维护三个独立 QTimer：
+- `TICK`：固定 50ms
+- `FRAME`：按 `frame_fps` 计算
+- `GIF_FRAME`：按 `gif_fps` 计算
 
-当前默认值（由 `config/config.py` 提供）
-- `ANIMATION[&#x27;frame_fps&#x27;] = 60`
-- `ANIMATION[&#x27;gif_fps&#x27;] = 16`
+默认配置来自 `config/config.py` 中导出的 `ANIMATION`：
+- `frame_fps = 60`
+- `gif_fps = 16`
 
-2. 事件发布
-`TimingManager` 周期发布：
-- `EventType.TICK`（`tick_count`）
-- `EventType.FRAME`（`frame_count`）
-- `EventType.GIF_FRAME`（`frame_count`）
+三、周期事件
+调度器会发布：
+- `EventType.TICK`
+- `EventType.FRAME`
+- `EventType.GIF_FRAME`
 
-任务到时发布：
-- `EventType.TIMER`
-  - `task_id`
-  - `repeat`
+对应常见字段：
+- `tick_count`
+- `frame_count`
 
-3. 任务 API
-底层接口
-- `add_task(interval_ms, repeat=True) -&gt; task_id`
+四、定时任务机制
+底层接口：
+- `add_task(interval_ms, repeat=True)`
 - `remove_task(task_id)`
-- `pause_task(task_id)` / `resume_task(task_id)`
+- `pause_task(task_id)`
+- `resume_task(task_id)`
 - `clear_all()`
 
-实体层推荐接口（PetWindow）
+实体侧常用封装：
 ```python
 task_id = pet.schedule_task(callback, delay_ms=1000, repeat=False)
 pet.cancel_task(task_id)
 ```
 
-实际执行链路
-1. `schedule_task()` 调用 `TimingManager.add_task()`
-2. `PetWindow` 将 `task_id -&gt; callback` 存入 `_task_callbacks`
-3. 到时收到 `TIMER` 事件后执行 callback
-4. 非重复任务执行后自动移除 callback 映射
+执行流程
+1. 业务调用 `schedule_task()`
+2. `TimingManager.add_task()` 记录任务
+3. 到时后发布 `EventType.TIMER`
+4. 实体或管理器在对应回调中执行自己的 callback
 
-4. 时间精度与换算
-内部换算
-- `interval_ticks = max(1, int(interval_ms / 50))`
+五、时间精度
+- 所有任务都按 50ms tick 对齐
+- 小于 50ms 的任务会被提升到 1 tick
+- 非 50ms 整数倍的延时会存在 tick 对齐误差
 
-含义
-- 所有任务按 50ms tick 对齐
-- 小于 50ms 会被提升为 1 tick（50ms）
-- 非 50ms 整数倍会向下取整
-
-示例
+例子
 - `1000ms -&gt; 20 ticks`
-- `120ms -&gt; 2 ticks`（约 100ms）
-- `30ms -&gt; 1 tick`（50ms）
+- `120ms -&gt; 2 ticks`
+- `30ms -&gt; 1 tick`
 
-5. 任务暂停机制（全局）
-事件
+六、全局暂停
+任务系统支持通过事件做引用计数式暂停：
 - `TIMER_PAUSE`
 - `TIMER_RESUME`
 
-行为
-- 只暂停“任务系统”（`TIMER` 任务），不暂停 `TICK/FRAME/GIF_FRAME`
-- 支持多来源引用计数：
-  - `TIMER_PAUSE` 可携带 `source`
-  - 必须对应 `TIMER_RESUME(source)` 才会解除该来源的暂停
-- 典型场景：命令框显示时暂停漫游任务，关闭后恢复
+特点
+- 只暂停任务系统，不暂停 `TICK / FRAME / GIF_FRAME`
+- 不同模块可通过 `source` 区分暂停来源
+- 常见场景：打开命令框或模态 UI 时暂停一部分行为任务
 
-6. FPS 动态调整
-- `set_frame_fps(fps)`：范围钳制 1~120
-- `set_gif_fps(fps)`：范围钳制 1~60
-- 运行中调用会即时 `setInterval`
-
-7. 开发建议
-- 业务逻辑优先订阅 `TICK/FRAME`，不要自行创建并行 QTimer
-- 高频重计算尽量避开 `FRAME`
-- 在 `cleanup` 中移除任务并退订事件，避免残留回调
-- 需要更高精度时请明确说明“tick 对齐误差”对业务是否可接受
+七、开发建议
+- 高频业务优先订阅 `TICK` 或 `FRAME`，不要自己再开一套平行 QTimer
+- 在 `cleanup()` 中移除任务并退订事件
+- 对于需要高精度的逻辑，先评估 50ms tick 是否足够
+- 服务类后台逻辑（如语音预热、网络轮询）如果不依赖 UI 节拍，可以使用线程或专用等待逻辑，不必强行接入 `TimingManager`
 </pre>
         </article>
         <article class="card">
             <header>
-                <div class="eyebrow">2026-03-18 13:57</div>
-                <h3>迁移清单任务</h3>
-                <a class="download" href="doc/迁移清单任务.txt" download>下载原文件</a>
+                <div class="eyebrow">2026-04-15 00:16</div>
+                <h3>音乐多源优化方案计划</h3>
+                <a class="download" href="doc/音乐多源优化方案计划.txt" download>下载原文件</a>
             </header>
-            <pre>﻿飞行雪绒 迁移清单任务
-========================
+            <pre>飞行雪绒音乐多源能力现状与后续计划（LTS1.0.5pre2）
 
-当前整体进度：86%
-当前阶段：Phase 8 - 兼容层瘦身与旧结构清理
-状态说明：
-[x] 已完成
-[&gt;] 进行中
-[ ] 未开始
-Phase 0 - 准备
---------------
-[x] 完成仓库体检与超大文件分析报告
-[x] 建立迁移清单任务文件并开始记录进度
-Phase 1 - 主入口低风险拆分
----------------------------
-[x] 新建 `lib/script/app/` 作为应用级基础模块目录
-[x] 从 `lib/script/main.py` 拆出单实例锁模块
-[x] 从 `lib/script/main.py` 拆出启动硬件探测模块
-[x] 从 `lib/script/main.py` 拆出桌面快捷方式模块
-[x] 从 `lib/script/main.py` 拆出 Qt 环境初始化模块
-[x] 修复 `lib/script/main.py` 启动动画与退出动画回归问题
-[&gt;] 持续收缩 `lib/script/main.py` 体积与职责
-Phase 2 - 配置与基础设施
--------------------------
-[x] 拆分 `config/shared_storage.py` 为 paths / io / merge / bootstrap
-[x] 拆分 `config/config.py` 为 ui / animation / music / voice / timeouts
-[x] 补齐配置迁移兼容层，保证旧导入路径可用
-[x] 收缩 `config/config.py` 公共导出，仅保留仓内真实使用配置
-[x] 收缩 `lib/core/logger.py`，仅保留 `initialize` / `cleanup` / `get_logger`
-[x] 新增 `lib/core/anchor_utils.py::publish_widget_anchor_response()` 并切换多处 UI 回包逻辑
-Phase 3 - 聊天链路
-------------------
-[x] 拆分 `lib/script/chat/handler.py` 为 persona / auto_companion / stream_presenter
-[x] 拆分 `lib/script/chat/ollama.py` 为状态 / 拉模 / 会话执行
-[x] 拆分 `lib/script/chat/_api_client.py` 为 client / payload / stream_parser
-[x] 拆分 `lib/script/chat/_multimodal.py` 为截图与图像编码模块
-[x] 清理聊天链路旧兼容转发与冗余 mixin 别名
-Phase 4 - 语音与识别
---------------------
-[x] 完成 `lib/script/gsvmove/service.py` 首轮低风险 helper 收敛与导入/语法复检
-[x] 完成 `lib/script/microphone_stt/service.py` 首轮低风险 helper 收敛与导入/语法复检
-[ ] 拆分 `lib/script/gsvmove/service.py` 为 discovery / deps / launcher / tts / process_guard
-[ ] 拆分 `lib/script/microphone_stt/service.py` 为 bootstrap / audio / worker / auto_mode
-Phase 5 - 音乐系统
-------------------
-[x] 完成 `lib/script/cloudmusic/_mixin_playback.py` 首轮下载/播放 helper 收敛与导入/语法复检
-[x] 收敛 `lib/script/qqmusic/qqmisic.py` 的 Musicu payload / vkey 请求拼装 / playlist 概览样板
-[x] 收敛 `lib/script/kugou/kugou.py` 的 songinfo fallback / musicdl URL 回退 / 收藏请求头样板
-[ ] 将 `cloudmusic` mixin 改造成组合式 service
-[ ] 拆分 `qqmusic/qqmisic.py` 为 api / auth / parser / download
-[ ] 拆分 `kugou/kugou.py` 为 api / auth / parser / download
-[ ] 收缩 `lib/script/cloudmusic/manager.py` 为 orchestration 层
-Phase 6 - 桌宠与 UI
--------------------
-[x] 收敛 `speaker_control_buttons.py` 的重复状态读取与音乐控制样板
-[x] 收敛 `playlist_panel.py` 的重复刷新链与控制按钮显隐样板
-[x] 收敛 `speaker_search_result_box.py` 的重复刷新逻辑
-[x] 收敛 `ai_settings_panel.py` 的按钮行、固定宽度容器与编辑器创建样板
-[ ] 拆分 `lib/core/pet_window.py` 为 render / movement / event_bridge / ui_factory
-[ ] 拆分 `lib/script/ui/ai_settings_panel.py` 为 panel / widgets / validators / storage
-[ ] 拆分 `lib/script/ui/playlist_panel.py` 为 model / view / action / pagination
-[ ] 将 `speaker_control_buttons.py` 改为数据驱动按钮工厂
-[ ] 统一浮动按钮、提示框、列表弹层基类
-Phase 7 - 对象脚本与管理器
----------------------------
-[ ] 为 obj-* 抽取公共 entity / manager / command adapter 基类
-[ ] 收缩雪豹 / 沙发 / 摩托 / 音响 / 闹钟脚本体积
-Phase 8 - 工具与清理
---------------------
-[x] 新增 `.gitignore` 忽略日志、缓存、编译产物
-[x] 完成首批模块的语法编译与导入冒烟验证
-[x] 清理首批冗余兼容结构、旧转发与无引用别名
-[&gt;] 持续回收老结构、兼容结构与无意义代码
-[ ] 拆分 `install_deps.py` 为 python / mirror / install / model / launcher
-[ ] 增加最小 smoke test 与持续语法检查清单
-累计关键落地项
---------------
-1. `lib/script/main.py` 已拆出单实例锁、硬件探测、桌面快捷方式与 Qt 运行时初始化，当前主要承担 orchestration 入口职责。
-2. `config/shared_storage.py` 已拆为 paths / io / merge / bootstrap；`config/config.py` 已收缩为 public facade。
-3. chat 链路已拆分 `_multimodal.py`、`_api_client.py`、`ollama.py`、`handler.py`，并清理旧兼容转发与冗余别名。
-4. `lib/core/logger.py` 已最小化；`lib/core/anchor_utils.py` 已统一多处 UI 锚点回包逻辑。
-5. `speaker_control_buttons.py`、`playlist_panel.py`、`speaker_search_result_box.py`、`ai_settings_panel.py` 已完成首轮低风险样板收敛。
-6. `lib/script/gsvmove/service.py` 已新增 `_completed_process_detail()`、`_parse_json_stdout()`、`_string_items()` 与 `_get_ranked_mirrors()`，收敛 subprocess 结果读取、JSON 解析与镜像排序样板。
-7. `lib/script/microphone_stt/service.py` 已新增 `_publish_start_error()`、`_cancel_bootstrap_locked()`、`_queue_replace_nowait()`、`_close_stream_safely()` 与 `_start_failure_message()`，收敛启动错误、bootstrap 取消、队列替换与 stream 安全关闭样板逻辑。
-8. `microphone_stt/service.py` 的 `start_listening()`、`_bootstrap_startup()`、`_on_audio_chunk()`、`stop_listening()` 与 `_stop_locked()` 已切到共享 helper。
-9. `lib/script/cloudmusic/_mixin_playback.py` 已新增 `_append_unique_urls()`、`_build_play_display()` 与 `_kugou_url_candidates()`，收敛播放展示文本与酷狗 URL 候选拼装/刷新逻辑。
-10. `cloudmusic/_mixin_playback.py` 的网易 / QQ / 酷狗下载完成播放展示，以及酷狗 URL 刷新重试路径已切到共享 helper。
-11. 已完成 `lib.script.gsvmove.service`、`lib.script.microphone_stt.service`、`lib.script.cloudmusic._mixin_playback` 导入冒烟验证。
-12. 已多次执行 `py -3 -m compileall config lib install_deps.py` 全仓语法检查并通过。
-13. `lib/script/qqmusic/qqmisic.py` 已新增 Musicu 请求、嵌套响应读取、vkey payload 与 playlist 概览 helper，搜索 / 歌曲详情 / 取流 / 歌单概览路径已切到共享样板。
-14. `lib/script/qqmusic/qqmisic.py` 已继续收敛 playlist detail 参数/变体构造、尝试记录与 liked-song 候选排序/失败元数据样板，`_request_playlist_tracks()` 与 `get_liked_tracks()` 进一步向 orchestration 靠拢。
-15. `lib/script/kugou/kugou.py` 已新增 songinfo 元数据更新、musicdl 缓存/回退与 WebFilter 头构造 helper，`get_song_detail()`、`get_song_url()` 与收藏请求 profile 复用共享样板。
-16. 已修正 QQ / 酷狗会员取流优先级：QQ 取流新增基于返回 URL 的试听资源判定，并在仅命中试听资源时自动刷新 musickey 后重试；酷狗播放链改为官方 `songinfo` 取流优先、`musicdl` 缓存/回退置后，避免 VIP 账号仍命中试听/降级地址。
-17. `lib/script/chat/handler_stream_presenter.py` 已移除按用户意图补全工具标记的防漏逻辑与相关死代码，工具调用仅由 AI 显式输出 `###指令###` 触发，并同步清理 `lib/script/chat/bot_reply.py` 未使用的旧别名。
-18. `lib/script/kugou/kugou.py` 已新增 `_request_json_payload()`、`_favor_endpoint_candidates()`、`_normalize_favor_track()` 与 `_song_url_candidates_from_payloads()`；`songinfo v2`、收藏列表重试/归一化与详情 URL 候选合并链路已切到共享 helper。
-19. `lib/script/qqmusic/qqmisic.py` 已新增 `_request_json_text_payload()`、`_build_req0_musicu_payload()`、`_set_liked_meta_success()` 与 `_probe_direct_liked_or_fail()`；用户歌单请求、myFavDissId 探测、歌单详情 legacy/musicu 包装与 liked-song 分支收口已切到共享 helper。
-20. `lib/script/cloudmusic/manager.py` 已新增 `_clear_queue_locked()` 与 `_editable_queue_move_target_locked()`；`stop()`、`clear_queue()`、`move_queue_item()` 与 `cleanup()` 的队列清理/移动边界判断已切到共享编排 helper。
-21. `lib/script/cloudmusic/manager.py` 已新增 `_publish_brief_info()` 与 `_disconnect_play_signal()`；播放信号重复解绑与 `pause()` / `_resume()` 的短提示广播已切到共享 helper，继续收缩 orchestration 杂项样板。
-22. `lib/script/cloudmusic/manager.py` 已新增 `_subscribe_all_events()` 与 `_unsubscribe_all_events()`；`__init__()` / `cleanup()` 的事件订阅生命周期已切到共享 helper，减少管理器初始化与清理样板。
-23. `lib/script/cloudmusic/manager.py` 已新增 `_normalize_provider_name()` 与 provider 常量；`_current_provider_name()`、`_publish_login_status()`、`_set_login_state()` 与 `provider_logged_in()` 的 provider 归一化/枚举样板已切到共享 helper。
-24. `install_deps.py` 已新增 `_unlink_if_exists()` 与 `_rmtree_if_exists()`；Vosk 模型下载/解压链路中的临时文件删除、目录清理与收尾清理样板已切到共享 helper。
-25. `install_deps.py` 已新增 `_cleanup_vosk_temp_artifacts()`；`ensure_vosk_model()` 中下载前与 finally 收尾阶段的临时 zip/part/解压目录清理已切到共享 helper。
-26. `install_deps.py` 已新增 `_python_module_cmd()`、`_run_python_module()` 与 `_run_pip()`；`_has_pip()`、`ensure_pip()`、`_pkg_installed()`、`_install_one()` 与失败提示命令的 `-m pip`/`-m ensurepip` 拼装样板已统一，且 `get-pip.py` 的局部重复导入与临时文件残留已清理。
-27. `install_deps.py` 已将 `_resolve_pythonw_path()` 扩展为可传 fallback，并切换 `launch()` 复用该 helper；优化过程中遗留的 `pythonw.exe` 手写路径判断已移除。
-28. `install_deps.py` 已新增 `_fallback_python_selection()` 与 `_select_ranked_python()`；`select_best_python()` 中“选有 pip / 选无 pip / 回退到 python”的重复返回与展示样板已切到共享 helper。
-29. `lib/script/cloudmusic/manager.py` 已移除仅写不读的 `_login_profile` 兼容旧字段；登录态同步现仅保留仍被事件链路读取的 `_is_logged_in`，清理了一处优化后残留的无用结构。
-30. `lib/script/cloudmusic/manager.py` 与 `lib/script/cloudmusic/_mixin_playback.py` 已移除仅写不读的 `_current_downloading` 字段；下载链路中的一处优化残留状态已清理。
-31. `lib/script/cloudmusic/manager.py` 已移除仅初始化/清空但从未读取的 `_pending_particle_rects` 字段；进一步回收了一处优化后遗留的无用状态容器。
-32. `lib/script/chat/handler.py`、`lib/script/chat/handler_stream_presenter.py`、`lib/script/chat/memory.py`、`lib/script/kugou/kugou.py` 与 `lib/script/qqmusic/qqmisic.py` 已移除无用的 `from __future__ import annotations`；清理了一批优化后遗留的冗余兼容导入。
-33. `lib/script/cloudmusic/_mixin_playback.py` 已移除与 `lib/script/cloudmusic/manager.py` 重复定义的 `_history_provider_for_song_id()`；历史记录 provider 归类统一回收至管理器侧实现。
-34. `lib/script/chat/` 下剩余 `api_client_*`、`handler_auto_companion.py`、`handler_persona.py`、`ollama*.py`、`_api_client.py`，以及 `lib/script/cloudmusic/_provider_clients.py` 已继续移除无用的 `from __future__ import annotations`；进一步清理优化后残留的冗余兼容导入。
-35. `lib/script/cloudmusic/_player.py` 已移除未使用的局部 `time` 导入；`lib/script/cloudmusic/_constants.py`、`lib/script/chat/api_client_ollama.py` 与 `lib/script/chat/api_client_openai.py` 也已清理未用导入，继续回收优化过程中的轻量冗余。
-36. `lib/script/cloudmusic/_mixin_cache.py` 已移除未被调用的 `_load_meta()` 与其唯一依赖 `_legacy_meta_path()`；回收了一组优化后残留的死 helper。
-37. `lib/script/gsvmove/service.py` 与 `lib/script/microphone_stt/service.py` 已移除无用的 `from __future__ import annotations`；继续清理 Phase 4 链路中的冗余兼容导入。
-38. `lib/script/gsvmove/service.py` 已移除整条未接线的运行时依赖补齐 / PyPI 镜像回退 / NLTK 资源补齐死链，以及随之失效的状态字段、专属常量与未用导入；进一步回收优化过程中遗留的无用结构。
-39. `lib/script/music/providers/qq_provider.py` 与 `lib/script/music/providers/kugou_provider.py` 已在 provider 侧统一搜索结果规格化；QQ / 酷狗模式现与网易模式一致，仅保留时长、歌名与首个歌手，并优先从原始搜索字段提取首歌手。
-40. `lib/core/tray_icon.py` 已新增托盘“清理历史”动作，并接入 `lib/script/cloudmusic/manager.py` 的统一清理入口；该动作会清空所有平台音乐历史与登录数据，而“清理缓存”现仅清理缓存本身，不再混清登录数据。
-41. 已新增 `lib/script/ui/shutdown.py` 统一收口全局 UI 关闭/清理入口，并将退出链路前移为“先收 UI、再退服务、最后播退出动画”，避免浮层与面板拖到退出动画结束。
-42. 已新增 `lib/core/pet_window_ui_factory.py`，将 `lib/core/pet_window.py` 中主 UI 组件构造样板抽离为独立工厂；`PetWindow` 当前改为通过工厂挂载关闭按钮、命令框、提示框、缩放按钮等主 UI 组件。
-43. 已新增 `lib/core/pet_window_setup.py`，收拢 `PetWindow` 的窗口居中、窗口属性配置与启动后显示/预加载逻辑；`lib/core/pet_window.py` 继续向 orchestration 角色收缩。
-44. 已新增 `lib/script/ui/ai_settings_validators.py`，将 `AISettingsPanel` 的 AI 配置 URL/温度/线程/GSV 参数校验从面板类中抽离；面板侧现仅保留调用与报错展示。
-45. 已新增 `lib/script/ui/ai_settings_storage.py`，将 `AISettingsPanel` 的 AI 配置加载、`ollama_config.py` 持久化与运行时应用逻辑从面板类中抽离；面板侧现仅保留表单编排与保存入口。
-46. 已新增 `lib/script/ui/ai_settings_tabs.py`，将 `AISettingsPanel` 的分类 tab 页挂载、浮层 tab 条布局与 tab 切换显隐逻辑从面板类中抽离；面板侧仅保留调用入口。
-当前备注
---------
-1. `lib/script/main.py` 已从 948 行收缩到 313 行，现主要承担 orchestration 入口职责。
-2. Qt 插件路径与应用属性初始化已统一下沉到 `lib/script/app/qt_runtime.py`。
-3. `config/config.py` 当前为精简 facade，只暴露仓内实际使用配置。
-4. `config/shared_storage.py` 当前为 bootstrap 外观层，路径 / IO / merge 已拆出。
-5. `lib/script/chat/ollama.py` 当前仅保留 `OllamaManager` 与单例入口，不再转发截图与图像编码接口。
-6. `lib/script/chat/handler.py` 当前主要承担输入编排入口，人格、自动伴聊、流式呈现已拆到独立模块。
-7. 当前优化策略仍以“低风险收敛”为主：优先回收老结构、兼容结构、重复样板与无意义代码，不贸然改动核心业务行为。
-8. 本文件已按 UTF-8 重新整理，替换早先 shell 管道导致的问号乱码版本。
-下一个建议执行项
-----------------
-1. 继续收敛 `lib/script/kugou/kugou.py` 中鉴权 profile、收藏列表重试与 URL 候选刷新链路的重复实现。
-2. 视音乐链路收敛结果，决定是否将 `lib/script/qqmusic/qqmisic.py` 与 `lib/script/kugou/kugou.py` 拆为 `api / auth / parser / download`。
-3. 继续拆分 `lib/script/ui/ai_settings_panel.py` 的 widgets / tabs 组装逻辑，进一步收缩面板类中的 UI 样板与旧结构。
+一、当前目标
+- 统一 QQ / 网易云 / 酷狗三套 provider 的宿主入口
+- 提升搜索命中率与回退能力
+- 降低 UI、工具调度、历史记录对单一平台实现的直接耦合
+
+二、当前已落地
+
+阶段 1：统一入口
+- 已完成
+- `lib/script/music/service.py` 作为统一入口
+- 调用方不再直接依赖具体 provider 模块
+
+阶段 2：搜索回退
+- 已完成
+- 当前平台搜索不足或失败时，可按配置回退到其它平台
+- 默认回退顺序由 `config/config_music.py` 控制
+
+阶段 3：来源标注
+- 已完成
+- 混合搜索结果可追加来源平台标记，减少误判
+
+阶段 4：健康度统计
+- 已完成基础版
+- 已记录 provider 搜索路由与统计信息
+- 为后续播放回退和优先级调整打基础
+
+三、当前尚未完全落地
+
+阶段 5：播放回退
+- 未完全完成
+- 目标是在当前平台解析失败时，基于标题 / 歌手 / 时长尝试跨源匹配备用音源
+
+阶段 6：登录与资料库治理
+- 未完全完成
+- 目标是统一二维码登录、Cookie 持久化、喜欢列表和歌单同步模型
+
+阶段 7：外置 provider / 插件化
+- 规划中
+- 目标是把平台适配层进一步从宿主逻辑中剥离
+
+四、当前验收标准
+- 当前平台搜索正常时，优先显示当前平台结果
+- 当前平台失败或结果不足时，可以自动补充其它平台结果
+- 搜索结果来源可识别
+- 现有播放、队列、历史、登录主流程不被破坏
+
+五、后续建议
+- 播放回退优先做“兜底模式”，不要先做激进跨源替换
+- 登录治理优先统一状态机，再处理平台差异
+- 若后续继续拆分 provider，请同步更新 `README.md` 和本文档
 </pre>
         </article>
             </div>
         </section>
     </main>
-    <footer>由飞行雪绒 LTS1.0.5pre1 代码生成 · 粉粉青青也是科技感 (ﾉ◕ヮ◕)ﾉ*:･ﾟ✧</footer>
+    <footer>由飞行雪绒 LTS1.0.5pre2 代码生成 · 粉粉青青也是科技感 (ﾉ◕ヮ◕)ﾉ*:･ﾟ✧</footer>
     <script>
     (() => {
         const letters = "FLYINGSNOWVELVET";

@@ -4,16 +4,23 @@
 from __future__ import annotations
 
 import html
-import random
+import sys
 from datetime import datetime
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from config.version_info import APP_VERSION
+
 DOC_DIR = ROOT / "doc"
 CONTRIB_DIR = DOC_DIR / "贡献名单和主播的狗盆"
 PORTAL_PATH = ROOT / "AA使用必读.html"
-IMAGE_PATH = CONTRIB_DIR / "如果想给作者买鸡腿饭的话" / "喵-感谢支持喵-欢迎工单喵.jpg"
+IMAGE_PATH = (
+    CONTRIB_DIR / "如果想给作者买鸡腿饭的话" / "喵-感谢支持喵-欢迎工单喵.jpg"
+)
 
 
 def _relative_href(path: Path) -> str:
@@ -44,9 +51,10 @@ def _render_cards(paths: list[Path]) -> str:
 
 
 def _generate_portal() -> str:
-    doc_files = sorted(DOC_DIR.glob("*.txt"))
     dev_contrib_files = sorted(CONTRIB_DIR.glob("开发贡献*.txt"))
     sponsor_files = sorted(CONTRIB_DIR.glob("感谢*.txt"))
+    excluded_names = {path.name for path in [*dev_contrib_files, *sponsor_files]}
+    doc_files = sorted(path for path in DOC_DIR.glob("*.txt") if path.name not in excluded_names)
 
     doc_cards = _render_cards(doc_files)
     contrib_cards = _render_cards(dev_contrib_files)
@@ -72,7 +80,7 @@ def _generate_portal() -> str:
 
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     image_rel = _relative_href(IMAGE_PATH)
-    hero_subtitle = "贡献 + 赞助 + 文档 · LTS1.0.5pre1"
+    hero_subtitle = f"贡献 + 赞助 + 文档 · {APP_VERSION}"
     harmony_font = "resc/FRONTS/HarmonyOS_Sans_SC_Bold.ttf"
     lahairoi_font = "resc/FRONTS/WuWa%20Lahai-Roi%20Regular.ttf"
 
@@ -81,7 +89,7 @@ def _generate_portal() -> str:
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>飞行雪绒资料舱 · LTS1.0.5pre1</title>
+    <title>飞行雪绒资料舱 · {version}</title>
     <style>
         @font-face {{
             font-family: 'HarmonyOS Sans';
@@ -330,7 +338,7 @@ def _generate_portal() -> str:
             </div>
         </section>
     </main>
-    <footer>由飞行雪绒 LTS1.0.5pre1 代码生成 · 粉粉青青也是科技感 (ﾉ◕ヮ◕)ﾉ*:･ﾟ✧</footer>
+    <footer>由飞行雪绒 {version} 代码生成 · 粉粉青青也是科技感 (ﾉ◕ヮ◕)ﾉ*:･ﾟ✧</footer>
     <script>
     (() => {{
         const letters = "FLYINGSNOWVELVET";
@@ -366,6 +374,7 @@ def _generate_portal() -> str:
         sponsor_cards=sponsor_cards,
         harmony_font=harmony_font,
         lahairoi_font=lahairoi_font,
+        version=APP_VERSION,
     )
 
 

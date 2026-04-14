@@ -1,84 +1,72 @@
-飞行雪绒调度系统使用说明（按当前代码）
+飞行雪绒调度系统使用说明（LTS1.0.5pre2）
 
-1. 调度器结构
-实现位置
-- `lib/core/timing/manager.py`
-- 全局访问注册：`lib/core/timing/__init__.py`
+一、核心实现
+- 文件：`lib/core/timing/manager.py`
+- 对外入口：`lib/core/timing/__init__.py`
+- 核心类：`TimingManager`
 
-核心类
-- `TimingManager(QObject)`
-- 三个独立 QTimer：
-  - `TICK`：固定 50ms（20Hz）
-  - `FRAME`：`1000 // frame_fps` ms
-  - `GIF_FRAME`：`1000 // gif_fps` ms
+二、三套周期计时
+调度器内部维护三个独立 QTimer：
+- `TICK`：固定 50ms
+- `FRAME`：按 `frame_fps` 计算
+- `GIF_FRAME`：按 `gif_fps` 计算
 
-当前默认值（由 `config/config.py` 提供）
-- `ANIMATION['frame_fps'] = 60`
-- `ANIMATION['gif_fps'] = 16`
+默认配置来自 `config/config.py` 中导出的 `ANIMATION`：
+- `frame_fps = 60`
+- `gif_fps = 16`
 
-2. 事件发布
-`TimingManager` 周期发布：
-- `EventType.TICK`（`tick_count`）
-- `EventType.FRAME`（`frame_count`）
-- `EventType.GIF_FRAME`（`frame_count`）
+三、周期事件
+调度器会发布：
+- `EventType.TICK`
+- `EventType.FRAME`
+- `EventType.GIF_FRAME`
 
-任务到时发布：
-- `EventType.TIMER`
-  - `task_id`
-  - `repeat`
+对应常见字段：
+- `tick_count`
+- `frame_count`
 
-3. 任务 API
-底层接口
-- `add_task(interval_ms, repeat=True) -> task_id`
+四、定时任务机制
+底层接口：
+- `add_task(interval_ms, repeat=True)`
 - `remove_task(task_id)`
-- `pause_task(task_id)` / `resume_task(task_id)`
+- `pause_task(task_id)`
+- `resume_task(task_id)`
 - `clear_all()`
 
-实体层推荐接口（PetWindow）
+实体侧常用封装：
 ```python
 task_id = pet.schedule_task(callback, delay_ms=1000, repeat=False)
 pet.cancel_task(task_id)
 ```
 
-实际执行链路
-1. `schedule_task()` 调用 `TimingManager.add_task()`
-2. `PetWindow` 将 `task_id -> callback` 存入 `_task_callbacks`
-3. 到时收到 `TIMER` 事件后执行 callback
-4. 非重复任务执行后自动移除 callback 映射
+执行流程
+1. 业务调用 `schedule_task()`
+2. `TimingManager.add_task()` 记录任务
+3. 到时后发布 `EventType.TIMER`
+4. 实体或管理器在对应回调中执行自己的 callback
 
-4. 时间精度与换算
-内部换算
-- `interval_ticks = max(1, int(interval_ms / 50))`
+五、时间精度
+- 所有任务都按 50ms tick 对齐
+- 小于 50ms 的任务会被提升到 1 tick
+- 非 50ms 整数倍的延时会存在 tick 对齐误差
 
-含义
-- 所有任务按 50ms tick 对齐
-- 小于 50ms 会被提升为 1 tick（50ms）
-- 非 50ms 整数倍会向下取整
-
-示例
+例子
 - `1000ms -> 20 ticks`
-- `120ms -> 2 ticks`（约 100ms）
-- `30ms -> 1 tick`（50ms）
+- `120ms -> 2 ticks`
+- `30ms -> 1 tick`
 
-5. 任务暂停机制（全局）
-事件
+六、全局暂停
+任务系统支持通过事件做引用计数式暂停：
 - `TIMER_PAUSE`
 - `TIMER_RESUME`
 
-行为
-- 只暂停“任务系统”（`TIMER` 任务），不暂停 `TICK/FRAME/GIF_FRAME`
-- 支持多来源引用计数：
-  - `TIMER_PAUSE` 可携带 `source`
-  - 必须对应 `TIMER_RESUME(source)` 才会解除该来源的暂停
-- 典型场景：命令框显示时暂停漫游任务，关闭后恢复
+特点
+- 只暂停任务系统，不暂停 `TICK / FRAME / GIF_FRAME`
+- 不同模块可通过 `source` 区分暂停来源
+- 常见场景：打开命令框或模态 UI 时暂停一部分行为任务
 
-6. FPS 动态调整
-- `set_frame_fps(fps)`：范围钳制 1~120
-- `set_gif_fps(fps)`：范围钳制 1~60
-- 运行中调用会即时 `setInterval`
-
-7. 开发建议
-- 业务逻辑优先订阅 `TICK/FRAME`，不要自行创建并行 QTimer
-- 高频重计算尽量避开 `FRAME`
-- 在 `cleanup` 中移除任务并退订事件，避免残留回调
-- 需要更高精度时请明确说明“tick 对齐误差”对业务是否可接受
+七、开发建议
+- 高频业务优先订阅 `TICK` 或 `FRAME`，不要自己再开一套平行 QTimer
+- 在 `cleanup()` 中移除任务并退订事件
+- 对于需要高精度的逻辑，先评估 50ms tick 是否足够
+- 服务类后台逻辑（如语音预热、网络轮询）如果不依赖 UI 节拍，可以使用线程或专用等待逻辑，不必强行接入 `TimingManager`

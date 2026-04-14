@@ -1,62 +1,116 @@
 # Release Playbook
 
-> Applies to the LTS1.0.5 beta series. Adjust version strings and artifact names as needed.
+适用于 `LTS1.0.5pre2` 及后续 `pre` 系列发布。目标是：**版本号一致、文档一致、发布包不夹带运行时垃圾文件**。
 
-## 1. Pre-flight checklist
+## 1. 更新版本号
 
-1. **Set the version**  
-   - Update user-facing text (`README.md`, `CHANGELOG.md`, installer banner if required).  
-   - Bump default tag in `scripts/package_release.py` if the marketing codename changes.
-2. **License sanity check**  
-   - Confirm code changes remain under Apache-2.0 (no third-party files with incompatible licenses).  
-   - Ensure any new fonts/audio/images have distribution rights per [LICENSE-ASSETS](LICENSE-ASSETS) and are documented if restrictions apply.
-3. **Regenerate docs**  
-   ```powershell
-   python scripts/generate_doc_portal.py
-   ```
-   Validate `AA使用必读.html`，确保贡献/赞助/文档卡片刷新。
-4. **Static checks**  
-   ```powershell
-   python -m compileall config lib install_deps.py scripts
-   python scripts/package_release.py --dry-run
-   ```
-   The dry-run prints the final manifest and ensures runtime-only files (logs, resc/user, models) are excluded.
-5. **Runtime smoke**  
-   Launch `python lib/core/qt_desktop_pet.py` once, verify：  
-   - AI 模式（OpenAI/Ollama）能初始化；  
-   - 音乐（任选 `netease/qq/kugou`）能搜索/播放；  
-   - 粒子与对象命令（`#雪豹/#沙发/...`）可生成并清理；  
-   - GSVmove / STT（若启用）可以启动且不会阻塞退出。
+至少同步以下位置：
 
-## 2. Build artifacts
+- `config/version_info.py`
+- `README.md`
+- `CHANGELOG.md`
+- `AA更新日志.txt`
+
+资料舱脚本和两个打包脚本都会直接读取 `config/version_info.py`，不再单独维护默认版本号。
+
+## 2. 发布前检查
+
+### 文档与门户
 
 ```powershell
-python scripts/package_release.py --version LTS1.0.5beta9
+python scripts/generate_doc_portal.py
 ```
 
-- 输出位置：`dist/FlyingSnowVelvet-LTS1.0.5beta9.zip`
-- 附带 `dist/FlyingSnowVelvet-LTS1.0.5beta9-manifest.json`，列出所有文件与大小，便于校验
-- zip 会排除 `logs/`、`resc/models/`、`resc/user/`、`.git/`、`.github/`、`__pycache__/`、安装脚本产生的临时文件，并写入占位 `.keep` 以确保必要目录存在
+检查：
 
-可选：运行 `Get-FileHash dist/FlyingSnowVelvet-LTS1.0.5beta9.zip -Algorithm SHA256` 生成校验值。
+- `AA使用必读.html` 能正常生成
+- 门户中的版本号与当前版本一致
+- 文档卡片、开发贡献、赞助名单都能正确显示
 
-## 3. GitHub release
+### 静态检查
 
-1. 创建 Tag（例如 `git tag -a LTS1.0.5beta9 -m "LTS 1.0.5 beta 9"`，`git push origin LTS1.0.5beta9`）
-2. 新建 Release，标题建议与 Tag 一致
-3. Release Notes：复制 `CHANGELOG.md` 相应段落，并附加“已知问题 / 迁移阶段”
-4. 附件：
-   - `dist/FlyingSnowVelvet-LTS1.0.5beta9.zip`
-   - `AA使用必读.html`（方便在线查看文档）
-   - 可选：`logs/README.txt` 或示例配置
+```powershell
+python -m compileall config lib scripts install_deps.py
+python scripts/package_release.py --dry-run
+python scripts/package_green_release.py --dry-run
+```
 
-## 4. Post-release
+### 运行冒烟
 
-- 在 `doc/迁移清单任务.txt` 更新阶段进度
-- 如涉及 API key / 配置变更，通知群内粉丝重新生成 `config/ollama_config.py`
-- 观察 GitHub Actions CI（`CI` workflow）结果，确保依赖安装 + `compileall` + 打包干跑全部通过
-- 若出现热补丁，务必在 `CHANGELOG.md` 补充 `hotfix` 记录
+至少确认一次：
 
----
+- 桌宠能正常启动和退出
+- 控制面板能正常打开与保存
+- AI 回复可用
+- GSV / STT（若启用）不会阻塞退出
+- 音乐搜索与播放不回归
 
-Happy shipping!
+## 3. 生成发布包
+
+普通发布包：
+
+```powershell
+python scripts/package_release.py --version LTS1.0.5pre2
+```
+
+输出示例：
+
+- `dist/FlyingSnowVelvet-LTS1.0.5pre2.zip`
+- `dist/FlyingSnowVelvet-LTS1.0.5pre2-manifest.json`
+
+绿色资源包：
+
+```powershell
+python scripts/package_green_release.py --version LTS1.0.5pre2
+```
+
+输出示例：
+
+- `dist/FlyingSnowVelvet-LTS1.0.5pre2-green.zip`
+- `dist/FlyingSnowVelvet-LTS1.0.5pre2-green-manifest.json`
+
+## 4. 发布包内容要求
+
+必须排除：
+
+- `logs/`
+- `resc/user/`
+- `dist/`
+- `__pycache__/`
+- `.git/`
+- `.github/`
+- 本地临时文件、调试文件、共享待同步缓存
+
+发布前建议再检查一次：
+
+```powershell
+git status --short
+git status --ignored --short
+```
+
+确保没有把运行时状态或本地测试文件混入发布提交。
+
+## 5. Git 标签与 Release
+
+示例：
+
+```powershell
+git tag -a LTS1.0.5pre2 -m "LTS 1.0.5 pre2"
+git push origin LTS1.0.5pre2
+```
+
+Release 建议上传：
+
+- `dist/FlyingSnowVelvet-LTS1.0.5pre2.zip`
+- `dist/FlyingSnowVelvet-LTS1.0.5pre2-green.zip`（如需要）
+- `AA使用必读.html`
+
+Release Notes 直接整理自 `CHANGELOG.md` 当前版本段落即可。
+
+## 6. 发布后
+
+- 推送分支与标签
+- 检查 CI 结果
+- 如本次改动影响运行目录、配置迁移或缓存结构，记得在群内或说明文档中补充迁移提示
+
+发版本质上是“把当前可运行状态冻结成一个可复现快照”，不是把开发机的运行痕迹一起打进去。
