@@ -26,6 +26,8 @@ dist/
 logs/
 *.log
 py.ini
+config/music/volume.json
+config/user_scale.json
 AA更新日志.txt.bak
 services/storage_state.json
 
