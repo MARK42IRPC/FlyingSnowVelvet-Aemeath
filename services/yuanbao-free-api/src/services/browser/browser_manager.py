@@ -254,39 +254,154 @@ class BrowserManager:
                 continue
         return None
 
-    async def _find_login_entry(self) -> Optional[Locator]:
+    async def _describe_locator(self, locator: Locator) -> str:
+        try:
+            tag_name = await locator.evaluate("(el) => (el.tagName || '').toLowerCase()")
+        except Exception:
+            tag_name = ""
+        try:
+            text_content = (await locator.text_content() or "").strip()
+        except Exception:
+            text_content = ""
+        try:
+            aria_label = (await locator.get_attribute("aria-label") or "").strip()
+        except Exception:
+            aria_label = ""
+        try:
+            title = (await locator.get_attribute("title") or "").strip()
+        except Exception:
+            title = ""
+        try:
+            class_name = (await locator.get_attribute("class") or "").strip()
+        except Exception:
+            class_name = ""
+        hint = " | ".join(part for part in (text_content, aria_label, title, class_name) if part)
+        if not hint:
+            hint = "(no-hint)"
+        return f"{tag_name}:{hint[:160]}"
+
+    async def _find_login_entry_candidates(self) -> list[Locator]:
         if not self.page:
-            return None
+            return []
 
         text_regex = re.compile(r"登录|扫码登录|微信登录|立即登录|去登录|login|sign in|scan", re.I)
-        primary_candidates = [
-            self.page.get_by_role("img").first,
-            self.page.locator("header img, nav img, .header img, .navbar img").first,
+        direct_candidates = [
+            self.page.locator("a.top_login__link, button.top_login__link, [role='button'].top_login__link").first,
             self.page.get_by_role("button", name=text_regex).first,
+            self.page.get_by_role("link", name=text_regex).first,
             self.page.get_by_text(text_regex).first,
+            self.page.locator(
+                "[class*='login'], [class*='Login'], [data-testid*='login'], [aria-label*='登录'], "
+                "[aria-label*='login' i], [title*='登录'], [title*='login' i]"
+            ).first,
         ]
-        primary = await self._first_visible(primary_candidates, timeout=1500)
-        if primary is not None:
-            return primary
+        candidates: list[Locator] = []
+        for locator in direct_candidates:
+            try:
+                await locator.wait_for(state="visible", timeout=600)
+                box = await locator.bounding_box()
+                if box and float(box.get("width") or 0) >= 12 and float(box.get("height") or 0) >= 12:
+                    candidates.append(locator)
+            except Exception:
+                continue
 
         group = self.page.locator("button, [role='button'], img")
         try:
-            count = min(await group.count(), 16)
+            count = min(await group.count(), 24)
         except Exception:
-            return None
+            return candidates
+
+        scored: list[tuple[float, Locator]] = []
+        image_hint_tokens = ("avatar", "user", "account", "profile", "login", "scan", "qr", "code", "member", "head")
 
         for idx in range(count):
             locator = group.nth(idx)
             try:
                 await locator.wait_for(state="visible", timeout=300)
+                box = await locator.bounding_box()
+                if not box or float(box.get("width") or 0) < 12 or float(box.get("height") or 0) < 12:
+                    continue
                 text_content = (await locator.text_content() or "").strip()
                 aria_label = (await locator.get_attribute("aria-label") or "").strip()
                 title = (await locator.get_attribute("title") or "").strip()
                 class_name = (await locator.get_attribute("class") or "").strip().lower()
-                hint = " ".join(part for part in (text_content, aria_label, title, class_name) if part)
-                if text_regex.search(hint) or "login" in class_name or "scan" in class_name:
-                    return locator
+                alt_text = (await locator.get_attribute("alt") or "").strip().lower()
+                src = (await locator.get_attribute("src") or "").strip().lower()
+                tag_name = str(await locator.evaluate("(el) => (el.tagName || '').toLowerCase()") or "").strip().lower()
+                hint = " ".join(part for part in (text_content, aria_label, title, class_name, alt_text, src) if part).lower()
+
+                if tag_name == "img" and not any(token in hint for token in image_hint_tokens):
+                    continue
+                if not (text_regex.search(hint) or "login" in class_name or "scan" in class_name):
+                    continue
+
+                score = float(box.get("width") or 0) * float(box.get("height") or 0)
+                if text_regex.search(hint):
+                    score += 1_000_000
+                if "top_login__link" in class_name:
+                    score += 500_000
+                if tag_name in ("button", "a"):
+                    score += 50_000
+                if tag_name == "img":
+                    score -= 10_000
+                scored.append((score, locator))
             except Exception:
+                continue
+
+        scored.sort(key=lambda item: item[0], reverse=True)
+        candidates.extend(locator for _, locator in scored)
+        return candidates
+
+    async def _wait_for_login_prompt(self, timeout_ms: int = 2500) -> bool:
+        if not self.page:
+            return False
+
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + max(0.8, timeout_ms / 1000.0)
+        prompt_regex = re.compile(r"扫码登录|微信登录|二维码|刷新|重新获取|重试|expired|refresh", re.I)
+
+        while loop.time() < deadline:
+            try:
+                if await self._find_qrcode_locator() is not None:
+                    return True
+            except Exception:
+                pass
+
+            dialog_candidates = [
+                self.page.locator(".t-dialog__position, .t-portal-wrapper .t-dialog, [role='dialog']").first,
+                self.page.get_by_text(prompt_regex).first,
+            ]
+            visible = await self._first_visible(dialog_candidates, timeout=300)
+            if visible is not None:
+                return True
+            await asyncio.sleep(0.25)
+        return False
+
+    async def _open_login_prompt(self) -> Optional[Locator]:
+        candidates = await self._find_login_entry_candidates()
+        if not candidates:
+            return None
+
+        for index, locator in enumerate(candidates, start=1):
+            locator_desc = await self._describe_locator(locator)
+            try:
+                self._last_message = "clicking_login_button"
+                try:
+                    await locator.scroll_into_view_if_needed()
+                except Exception:
+                    pass
+                try:
+                    await locator.click(timeout=2500)
+                except Exception:
+                    await self._dismiss_blocking_dialogs()
+                    await locator.click(force=True, timeout=2000)
+
+                if await self._wait_for_login_prompt(timeout_ms=3000):
+                    logger.info("[Browser] Login prompt opened by candidate #%s (%s)", index, locator_desc)
+                    return locator
+                logger.info("[Browser] Login candidate #%s did not open prompt, try next (%s)", index, locator_desc)
+            except Exception as exc:
+                logger.debug("[Browser] Login candidate #%s click failed (%s): %s", index, locator_desc, exc)
                 continue
 
         return None
@@ -733,20 +848,9 @@ class BrowserManager:
             await self._dismiss_blocking_dialogs()
 
             self._last_message = "resolving_login_button"
-            login_button = await self._find_login_entry()
+            login_button = await self._open_login_prompt()
             if login_button is None:
                 raise RuntimeError("login_entry_not_found")
-
-            self._last_message = "clicking_login_button"
-            try:
-                await login_button.scroll_into_view_if_needed()
-            except Exception:
-                pass
-            try:
-                await login_button.click(timeout=5000)
-            except Exception:
-                await self._dismiss_blocking_dialogs()
-                await login_button.click(force=True, timeout=3000)
 
             self._last_message = "waiting_qrcode"
             await self.page.wait_for_timeout(1200)
