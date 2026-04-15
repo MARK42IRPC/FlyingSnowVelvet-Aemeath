@@ -29,6 +29,7 @@ from lib.core.action import Actions
 from lib.core.pet_window_ui_factory import attach_pet_window_ui, iter_pet_window_ui
 from lib.core.pet_window_setup import setup_pet_window, finalize_pet_window_startup
 from lib.core.timing import register_timing_manager
+from lib.core.clickthrough_state import set_clickthrough_enabled
 from lib.core.anchor_utils import (
     get_anchor_point as resolve_anchor_point,
     publish_widget_anchor_response,
@@ -70,6 +71,7 @@ class PetWindow(BaseEntity):
 
         # 鼠标穿透状态
         self._clickthrough = False
+        set_clickthrough_enabled(False)
 
         # ── 输入处理器 ────────────────────────────────────────────────
         self._click_handler = ClickHandler(self)
@@ -242,6 +244,7 @@ class PetWindow(BaseEntity):
         """处理鼠标穿透模式切换事件"""
         enabled = event.data.get('enabled', False)
         self._clickthrough = enabled
+        set_clickthrough_enabled(enabled)
 
         # 保存基础窗口标志
         base_flags = Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool

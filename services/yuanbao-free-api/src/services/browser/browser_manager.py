@@ -1,6 +1,7 @@
 """浏览器管理器模块"""
 
 import asyncio
+import json
 import logging
 import re
 from pathlib import Path
@@ -115,6 +116,11 @@ def _storage_state_path() -> Path:
     return path
 
 
+def _headers_state_path() -> Path:
+    storage_path = _storage_state_path()
+    return storage_path.with_name(f"{storage_path.stem}_headers.json")
+
+
 def _remove_storage_state_file() -> None:
     try:
         path = _storage_state_path()
@@ -122,6 +128,55 @@ def _remove_storage_state_file() -> None:
             path.unlink()
     except Exception:
         pass
+
+
+def _remove_headers_state_file() -> None:
+    try:
+        path = _headers_state_path()
+        if path.exists():
+            path.unlink()
+    except Exception:
+        pass
+
+
+def _normalize_headers(headers: Optional[Dict]) -> Dict[str, str]:
+    normalized: Dict[str, str] = {}
+    for key, value in (headers or {}).items():
+        name = str(key or "").strip().lower()
+        text = str(value or "").strip()
+        if not name or not text or name.startswith(":"):
+            continue
+        if name == "content-length":
+            continue
+        normalized[name] = text
+    return normalized
+
+
+def _build_cookie_header(cookies: Dict[str, str]) -> str:
+    parts: list[str] = []
+    for key, value in (cookies or {}).items():
+        name = str(key or "").strip()
+        text = str(value or "").strip()
+        if not name or not text:
+            continue
+        parts.append(f"{name}={text}")
+    return "; ".join(parts)
+
+
+def _merge_headers_with_current_cookies(headers: Optional[Dict], cookies: Dict[str, str]) -> Dict[str, str]:
+    merged = _normalize_headers(headers)
+    if not merged.get("x-uskey"):
+        return {}
+
+    cookie_header = _build_cookie_header(cookies)
+    if cookie_header:
+        merged["cookie"] = cookie_header
+    else:
+        merged.pop("cookie", None)
+
+    merged.setdefault("origin", "https://yuanbao.tencent.com")
+    merged.setdefault("referer", str(getattr(settings, "page_url", "") or "https://yuanbao.tencent.com/"))
+    return merged
 
 
 def _has_basic_login_cookies(cookies: Dict[str, str]) -> bool:
@@ -176,6 +231,7 @@ class BrowserManager:
             self.page: Optional[Page] = None
             self.playwright = None
             self._route_handler = None
+            self._request_listener_bound = False
             self._is_logged_in = False
             self._login_in_progress = False
             self._last_error = ""
@@ -183,7 +239,77 @@ class BrowserManager:
             self._cookie_marker_warned = False
             self._login_confirmed_via_ui = False
             self._storage_state_saved = False
+            self._latest_headers = self._load_headers_state()
             self._initialized = True
+
+    def _load_headers_state(self) -> Dict[str, str]:
+        path = _headers_state_path()
+        try:
+            if not path.exists():
+                return {}
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            logger.debug("[Browser] 读取认证头缓存失败: %s", exc)
+            return {}
+        return _normalize_headers(data if isinstance(data, dict) else {})
+
+    def _persist_headers_state(self) -> None:
+        path = _headers_state_path()
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                json.dumps(self._latest_headers, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except Exception as exc:
+            logger.debug("[Browser] 持久化认证头缓存失败: %s", exc)
+
+    def _cache_headers(self, headers: Optional[Dict], source: str = "") -> None:
+        normalized = _normalize_headers(headers)
+        if not normalized.get("x-uskey"):
+            return
+        if normalized == self._latest_headers:
+            return
+        self._latest_headers = normalized
+        self._persist_headers_state()
+        if source:
+            logger.info("[Browser] 捕获到请求头 from %s", source)
+
+    def _capture_request_headers(self, url: str, headers: Optional[Dict]) -> bool:
+        normalized = _normalize_headers(headers)
+        if settings.header_api_pattern not in str(url or ""):
+            return False
+        if not normalized.get("x-uskey"):
+            return False
+        cookie_map = _parse_cookie_header(normalized.get("cookie", ""))
+        if _has_login_cookies(cookie_map) or (
+            self._login_confirmed_via_ui and _has_basic_login_cookies(cookie_map)
+        ):
+            self._cache_headers(normalized, source=str(url))
+            return True
+        logger.debug("[Browser] x-uskey 已出现但未检测到账户标记，判定为游客态")
+        return False
+
+    def _on_page_request(self, request) -> None:
+        try:
+            self._capture_request_headers(request.url, request.headers)
+        except Exception as exc:
+            logger.debug("[Browser] 监听请求头失败: %s", exc)
+
+    def _ensure_request_listener(self) -> None:
+        if self.page is None or self._request_listener_bound:
+            return
+        try:
+            self.page.on("request", self._on_page_request)
+            self._request_listener_bound = True
+        except Exception as exc:
+            logger.debug("[Browser] 绑定请求监听失败: %s", exc)
+
+    def _build_cached_headers(self, cookies: Dict[str, str]) -> Optional[Dict[str, str]]:
+        if not self._latest_headers:
+            self._latest_headers = self._load_headers_state()
+        merged = _merge_headers_with_current_cookies(self._latest_headers, cookies)
+        return merged or None
 
     def status(self) -> Dict:
         qrcode_path = Path(str(settings.qrcode_path or "")).expanduser()
@@ -784,6 +910,7 @@ class BrowserManager:
                 logger.info("[Browser] 使用持久化登录态: %s", storage_path)
             self.context = await self.browser.new_context(**context_kwargs)
             self.page = await self.context.new_page()
+            self._ensure_request_listener()
             await self._load_page()
         self._last_error = ""
         self._last_message = "browser_initialized"
@@ -900,24 +1027,18 @@ class BrowserManager:
     async def get_headers(self) -> Optional[Dict]:
         """获取请求头。"""
         await self.ensure_browser()
+        current_cookies = await self.get_cookies()
+        cached_headers = self._build_cached_headers(current_cookies)
+        if cached_headers is not None:
+            logger.info("[Browser] 使用缓存认证头")
+            return cached_headers
+
         captured_headers = {}
 
         async def handle_route(route, request):
             nonlocal captured_headers
-            url = request.url
-            headers = request.headers
-
-            if settings.header_api_pattern in url:
-                if "x-uskey" in headers and not captured_headers.get("x-uskey"):
-                    cookie_map = _parse_cookie_header(headers.get("cookie", ""))
-                    if _has_login_cookies(cookie_map) or (
-                        self._login_confirmed_via_ui and _has_basic_login_cookies(cookie_map)
-                    ):
-                        captured_headers = headers
-                        logger.info(f"[Browser] 捕获到请求头 from {url}")
-                    else:
-                        logger.debug("[Browser] x-uskey 已出现但未检测到账户标记，判定为游客态")
-
+            if self._capture_request_headers(request.url, request.headers):
+                captured_headers = dict(self._latest_headers)
             await route.continue_()
 
         if self._route_handler:
@@ -936,13 +1057,18 @@ class BrowserManager:
             while (asyncio.get_event_loop().time() - start_time) < settings.header_timeout:
                 if captured_headers.get("x-uskey"):
                     break
+                if self._latest_headers.get("x-uskey"):
+                    captured_headers = dict(self._latest_headers)
+                    break
                 await asyncio.sleep(0.05)
 
-            if captured_headers.get("x-uskey"):
+            if not reload_task.done():
                 reload_task.cancel()
                 try:
                     await reload_task
                 except asyncio.CancelledError:
+                    pass
+                except Exception:
                     pass
 
         except Exception as e:
@@ -955,7 +1081,11 @@ class BrowserManager:
                 except Exception:
                     pass
 
-        return captured_headers if captured_headers.get("x-uskey") else None
+        current_cookies = await self.get_cookies()
+        merged_headers = _merge_headers_with_current_cookies(captured_headers, current_cookies)
+        if merged_headers:
+            return merged_headers
+        return self._build_cached_headers(current_cookies)
 
     async def get_cookies(self) -> Dict[str, str]:
         """获取 Cookie。"""
@@ -970,6 +1100,8 @@ class BrowserManager:
     async def logout(self):
         """退出登录并清理持久化状态。"""
         _remove_storage_state_file()
+        _remove_headers_state_file()
+        self._latest_headers = {}
         await self.close()
 
     async def close(self):
@@ -980,6 +1112,7 @@ class BrowserManager:
             self._login_in_progress = False
             self._login_confirmed_via_ui = False
             self._storage_state_saved = False
+            self._request_listener_bound = False
             if self.context:
                 tasks.append(self.context.close())
                 self.context = None

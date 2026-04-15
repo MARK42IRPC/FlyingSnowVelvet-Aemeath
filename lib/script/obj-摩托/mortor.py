@@ -10,6 +10,7 @@ from PyQt5.QtGui     import QPainter, QPixmap
 from config.config            import BEHAVIOR, PHYSICS, MORTOR
 from lib.core.topmost_manager  import get_topmost_manager
 from lib.core.event.center     import get_event_center, EventType, Event
+from lib.core.clickthrough_state import is_clickthrough_enabled
 from lib.core.physics          import get_physics_world, PhysicsBody
 from lib.core.screen_utils     import get_screen_geometry_for_point
 from lib.core.voice.chrack     import ChrackSound
@@ -100,6 +101,7 @@ class Mortor(QWidget):
         )
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_NoSystemBackground)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, is_clickthrough_enabled())
         self.setFixedSize(*size)
         self.setCursor(Qt.OpenHandCursor)
         self.setFocusPolicy(Qt.StrongFocus)

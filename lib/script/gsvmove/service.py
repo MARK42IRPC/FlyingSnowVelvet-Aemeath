@@ -41,7 +41,7 @@ _DEFAULT_PORT = 9880
 _DEFAULT_TIMEOUT = (3.0, 120.0)
 _DEFAULT_AUDIO_CLASS = "voice"
 _DEFAULT_MEDIA_TYPE = "wav"
-_STARTUP_WAIT_SECS = 45.0
+_STARTUP_WAIT_SECS = 90.0
 _HEALTH_POLL_INTERVAL = 0.5
 _SHORT_TEXT_SPLIT_METHOD = "cut0"
 _LAUNCHER_LOG_TAIL_LINES = 12
@@ -271,6 +271,7 @@ class GsvmoveService:
             return None, None
 
         root_file = self._resolve_launcher_root_file(launcher_text)
+
         if root_file.exists():
             try:
                 configured_root_text = _read_text_best_effort(root_file).strip().strip('"')
@@ -477,6 +478,7 @@ class GsvmoveService:
             return False
 
     def _ensure_service_ready(self) -> bool:
+        started_at = time.monotonic()
         if self._health_check():
             return True
 
@@ -484,7 +486,7 @@ class GsvmoveService:
         deadline = time.monotonic() + _STARTUP_WAIT_SECS
         while time.monotonic() < deadline:
             if self._health_check():
-                logger.info("[GsvmoveService] GSVmove 服务已就绪")
+                logger.info("[GsvmoveService] GSVmove 服务已就绪 dt=%.1fs", time.monotonic() - started_at)
                 return True
             with self._proc_lock:
                 proc = self._process
@@ -505,7 +507,15 @@ class GsvmoveService:
                         logger.error("[GsvmoveService] GSVmove 启动器提前退出 exit_code=%s", exit_code)
                     return False
             time.sleep(_HEALTH_POLL_INTERVAL)
-        logger.warning("[GsvmoveService] GSVmove 服务启动超时")
+        log_tail = self._read_launcher_log_tail()
+        if log_tail:
+            logger.warning(
+                "[GsvmoveService] GSVmove 服务启动超时 %.1fs，最近输出:\n%s",
+                time.monotonic() - started_at,
+                log_tail,
+            )
+        else:
+            logger.warning("[GsvmoveService] GSVmove 服务启动超时 %.1fs", time.monotonic() - started_at)
         return False
 
     def _start_service_process(self):

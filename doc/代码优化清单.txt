@@ -1,0 +1,231 @@
+飞行雪绒代码优化清单（静态审查版）
+
+适用范围
+- 本清单基于当前工程源码静态审查整理。
+- 本轮未做系统级性能 profiling，也未逐条走完整 UI / 登录 / 播放交互链路。
+- `py -3 -m compileall config lib services\yuanbao-free-api\src` 已通过，因此当前重点不在语法错误，而在正确性风险、结构债、冗余胶水和性能路径设计。
+
+一、立即处理
+
+1. 修复 AI 设置面板覆盖元宝隐藏配置的问题
+- 风险级别：高
+- 现象：设置面板会在加载或回填时，把 `login_url`、`hy_source`、`hy_user`、`x_uskey`、`agent_id` 重置为默认值或空值，保存时再写回配置，存在静默覆盖已有配置的风险。
+- 关键位置：
+  - `lib/script/ui/ai_settings_panel.py`
+  - `lib/script/ui/ai_settings_storage.py`
+  - `lib/script/ui/ai_settings_validators.py`
+- 建议动作：
+  - 面板初始化与表单回填时，直接使用已加载值，不要二次覆盖隐藏字段。
+  - 保存时仅写回真实值，不要回退到 `_DEFAULT_VALUES` 或硬编码空串。
+  - 为 YuanBao-Free-API 的“读配置 -> 打开面板 -> 直接保存”补一条回归测试。
+
+2. 重整退出链路，消除未接线的关闭步骤与默认强退
+- 风险级别：高
+- 现象：当前退出步骤表只执行运行时清理、退出动画和 `os._exit`，但文件内仍保留未接线的主窗口停止、视觉清理、`app.quit()` 阶段，属于明显历史残留。
+- 关键位置：
+  - `lib/script/main.py`
+- 建议动作：
+  - 明确退出模型：要么完整优雅关闭，要么超时后强退，不要两套半成品并存。
+  - 若保留强退，应先执行窗口关闭、定时器停止、事件解绑、UI 清理，再设置超时兜底。
+  - 删除不会再被调用的 shutdown stage，避免后续维护误判。
+
+二、高收益重构
+
+3. 拆分 `AISettingsPanel`，结束 God File 状态
+- 当前问题：
+  - `lib/script/ui/ai_settings_panel.py` 约 3600+ 行，承担配置元数据、配置文件改写、硬件探测、UI 构建、保存逻辑、运行时应用等多种职责。
+  - 面板层已经同时耦合“视图 + 存储 + 运行时副作用”。
+- 建议拆分：
+  - `schema / defaults`
+  - `widgets / form sections`
+  - `storage / persistence`
+  - `runtime apply`
+  - `external integrations`
+- 优先目标：
+  - 先把“读写配置”和“运行时应用”从 UI 文件中搬出去。
+  - 再按 AI 模式拆子面板，避免单文件继续膨胀。
+
+4. 统一配置持久化层，停止继续复制“正则改写 Python 配置文件”的胶水代码
+- 当前问题：
+  - `lib/script/ui/ai_settings_storage.py`
+  - `lib/script/ui/ai_settings_panel.py`
+  - `lib/script/music/service.py`
+  里都存在相似的文本替换、字典项替换、原子写入逻辑。
+- 风险：
+  - 修改一个配置格式后，多个实现需要同步修。
+  - 正则替换对格式和注释位置敏感，长期维护脆弱。
+- 建议动作：
+  - 收敛到单一配置编辑器模块，统一提供：
+    - 原子写入
+    - 顶层变量赋值
+    - 命名字典项替换
+    - 缺失项插入
+    - 共享配置镜像
+  - 中期考虑把运行时可编辑配置迁移到 JSON / TOML / YAML，而不是继续编辑 `.py` 文件源码。
+
+5. 把音乐系统真正收敛到单一抽象层
+- 当前问题：
+  - `lib/script/music/service.py` 已经作为统一入口存在，但播放、登录、清理仍回落到 `lib/script/cloudmusic/manager.py`。
+  - 当前是“新 facade + 旧单体 backend 并存”，而不是完整抽象落地。
+- 典型表现：
+  - 搜索与 provider 选择走新层。
+  - 播放生命周期和状态管理仍被旧 `CloudMusicManager` 掌控。
+- 建议动作：
+  - 先定义清晰的 provider 接口边界：
+    - 搜索
+    - 解析播放 URL
+    - 登录状态
+    - 用户资料/喜欢列表
+    - 历史记录
+  - 逐步把 `CloudMusicManager` 中与单一平台无关的队列、播放、缓存逻辑挪成共享播放器层。
+  - 最终避免 `MusicService` 直接 import 旧 manager。
+
+6. 启动链路做懒加载，减少首屏启动负担
+- 当前问题：
+  - 应用启动时统一初始化全部管理器。
+  - 主宠 GIF 在启动时全量加载。
+  - 某些对象管理器在初始化时就创建搜索对话框、登录对话框和音乐后端。
+- 典型位置：
+  - `lib/script/main.py`
+  - `lib/core/qt_gif_loader.py`
+  - `lib/script/obj-音响/manager.py`
+  - `lib/script/obj-雪豹/manager.py`
+- 建议动作：
+  - 对象管理器改为按首次使用或首次命令触发时初始化。
+  - 主宠资源保留必要基础状态，低频资源延后加载。
+  - 音乐搜索框、登录框、播放器后端在第一次打开或第一次播放时再建。
+- 预期收益：
+  - 缩短冷启动时间。
+  - 降低空闲内存和无意义资源占用。
+
+7. 聊天网络层补上连接复用与流式读取优化
+- 当前问题：
+  - `lib/script/chat/api_client_common.py` 每次请求新建 `requests.Session()`。
+  - 代理回退会额外重复建连。
+  - 关闭响应时又立刻关闭 session。
+  - 流式读取使用 `iter_lines(chunk_size=1)`，CPU 开销偏高。
+- 建议动作：
+  - 改成进程级或客户端级 Session 复用。
+  - 把“禁用代理”和“允许代理”做成可缓存的两套 session。
+  - 调整流式读取 chunk 策略，按真实延迟和 CPU 占用取平衡值。
+  - 为超时、代理回退、流式中断补统一重试策略。
+
+三、结构清理
+
+8. 抽公共浏览器登录辅助层，消除重复实现与分层倒挂
+- 当前问题：
+  - `lib/script/browser_auth.py` 反向依赖 `lib/script/chat/yuanbao_auth.py` 的内部函数。
+  - 项目主进程与 `services/yuanbao-free-api` 各自维护一套 Playwright 启动和 Cookie 解析逻辑。
+- 建议动作：
+  - 抽出独立的浏览器登录基础模块，统一：
+    - 本地 Chromium 查找
+    - 系统 channel 选择
+    - Cookie 头解析
+    - Set-Cookie 归一化
+  - 主进程和独立服务都依赖同一套 helper，不再互相借内部实现。
+
+9. 为对象管理器抽公共基类，减少平行复制
+- 当前问题：
+  - `雪豹 / 沙发 / 音响 / 雪堆` 管理器在资源加载、事件订阅、cleanup、注册方式上高度相似。
+- 建议动作：
+  - 提炼出对象管理公共能力：
+    - 基础资源缓存
+    - 统一事件订阅/解绑
+    - 统一对象存活清理
+    - 统一命令注册
+  - 将差异部分下沉到子类策略方法。
+- 预期收益：
+  - 新对象功能接入时少复制一整份 manager 模板。
+  - cleanup 漏解绑、漏 close 的概率更低。
+
+10. 清理半成品 registry 和未落地抽象
+- 当前问题：
+  - `command_handler_registry` / `register_command_handler()` 已定义但未形成真实使用链路。
+  - `register_manager()` 装饰器存在，但实际 manager 仍在文件底部手工注册。
+  - `ParticleScriptManager.register_script()` 基本处于闲置状态。
+  - `ToolDispatcher` 仍是一个大分发器。
+- 建议动作：
+  - 二选一：
+    - 真正落地注册式命令处理器；
+    - 或删除未使用 registry，回归更简单的明确实现。
+  - 若继续保留 `ToolDispatcher`，至少拆成按命令类型分发的小 handler。
+
+11. 优化置顶管理器，减少周期性无效调用
+- 当前问题：
+  - `lib/core/topmost_manager.py` 每 30 帧遍历全部窗口重申 topmost。
+  - 无去重注册，无显式 unregister。
+- 建议动作：
+  - 注册时去重。
+  - 在窗口销毁时显式注销。
+  - 优先基于窗口显示、激活、穿透模式切换等事件触发置顶，而不是长期轮询。
+- 说明：
+  - 当前窗口数量不大时问题不致命，但这是会随着功能扩展线性放大的持续成本。
+
+四、兼容与历史包袱治理
+
+12. 逐步下线 legacy/new 双写路径
+- 当前问题：
+  - 用户缩放、音量、音乐历史等模块仍同时写新路径和 legacy 路径。
+- 典型位置：
+  - `config/user_scale_config.py`
+  - `config/music/volume_config.py`
+  - `config/music/history.py`
+- 建议动作：
+  - 保留一次性迁移与兜底读取。
+  - 迁移完成后改成“只读旧路径，不再回写旧路径”。
+  - 最终删除 legacy 输出逻辑，避免每次保存都双写。
+
+13. 删除纯兼容 re-export 和无价值包装层
+- 当前问题：
+  - `lib/script/qqmusic/client.py`
+  - `lib/script/kugou/client.py`
+  仅做简单转发，长期只会增加跳转成本。
+- 建议动作：
+  - 若无外部稳定依赖，直接内联引用路径。
+  - 若必须兼容旧 import，标注弃用并规划删除时间。
+
+14. 清理乱码、编码污染和历史注释噪音
+- 当前问题：
+  - 多个文件存在明显乱码日志、乱码注释或被错误编码污染的文本。
+- 典型位置：
+  - `lib/script/main.py`
+  - `lib/script/music/service.py`
+  - `lib/core/pet_window.py`
+  - `lib/script/kugou/kugou.py`
+- 建议动作：
+  - 统一确认文件编码为 UTF-8。
+  - 清理无意义乱码注释和日志文本。
+  - 顺带删除误导性的历史说明，减少阅读噪音。
+
+五、建议排期
+
+第一批：本周应处理
+- AI 设置面板配置覆盖问题。
+- 退出链路梳理。
+- 聊天网络层 Session 复用。
+- 启动路径里最重的 eager 初始化点。
+
+第二批：短中期高收益
+- 拆分 `AISettingsPanel`。
+- 统一配置持久化层。
+- 音乐系统收敛到单一抽象。
+- 抽浏览器登录公共 helper。
+
+第三批：清理与长期维护
+- 管理器公共基类。
+- registry / dispatcher 抽象治理。
+- 置顶管理器去轮询化。
+- legacy 双写、兼容 re-export、乱码清理。
+
+六、建议补充的观测指标
+- 启动耗时：应用启动到主宠首次可交互的总时长。
+- 启动内存：冷启动后 10 秒内常驻内存峰值。
+- 聊天请求：首 token 延迟、总响应时间、代理回退命中率。
+- 音乐链路：首次搜索耗时、首次播放耗时、provider 切换耗时。
+- UI 稳定性：退出耗时、关闭过程中残留线程/窗口数量。
+
+七、执行原则
+- 先修正确性问题，再做结构优化。
+- 先收口重复实现，再做大规模抽象。
+- 先补最小必要回归验证，再动高耦合模块。
+- 对外行为不变时，优先做内部收敛；对外行为会变时，先补迁移方案与兼容策略。

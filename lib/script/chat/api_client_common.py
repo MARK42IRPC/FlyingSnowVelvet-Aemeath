@@ -1,8 +1,28 @@
-"""API client ???????????"""
+"""API client 公共辅助。"""
 
+import atexit
+import threading
 from typing import Any
 
 import requests
+
+_STREAM_LINE_CHUNK_SIZE = 128
+_SESSION_LOCK = threading.Lock()
+_SESSION_CACHE: dict[bool, requests.Session] = {}
+
+
+def _close_cached_sessions() -> None:
+    with _SESSION_LOCK:
+        sessions = list(_SESSION_CACHE.values())
+        _SESSION_CACHE.clear()
+    for sess in sessions:
+        try:
+            sess.close()
+        except Exception:
+            pass
+
+
+atexit.register(_close_cached_sessions)
 
 
 class _ApiClientCommonMixin:
@@ -38,9 +58,10 @@ class _ApiClientCommonMixin:
     def _iter_stream_lines(resp: requests.Response):
         """
         低延迟逐行读取流式响应。
-        使用小 chunk 规避 requests 默认缓冲导致的"伪流式"。
+        使用小块读取规避 requests 默认缓冲导致的"伪流式"，
+        同时避免 chunk_size=1 带来的高 CPU 开销。
         """
-        for raw_line in resp.iter_lines(chunk_size=1, decode_unicode=False):
+        for raw_line in resp.iter_lines(chunk_size=_STREAM_LINE_CHUNK_SIZE, decode_unicode=False):
             if not raw_line:
                 continue
             if isinstance(raw_line, bytes):
@@ -59,7 +80,16 @@ class _ApiClientCommonMixin:
             resp.close()
         except Exception:
             pass
-        sess = getattr(resp, "_snowrol_session", None)
+
+    @staticmethod
+    def _session_cache_key(*, trust_env: bool) -> bool:
+        return bool(trust_env)
+
+    @classmethod
+    def _discard_cached_session(cls, *, trust_env: bool) -> None:
+        key = cls._session_cache_key(trust_env=trust_env)
+        with _SESSION_LOCK:
+            sess = _SESSION_CACHE.pop(key, None)
         if sess is not None:
             try:
                 sess.close()
@@ -67,7 +97,7 @@ class _ApiClientCommonMixin:
                 pass
 
     @staticmethod
-    def _request_once(method: str, url: str, *, trust_env: bool, **kwargs) -> requests.Response:
+    def _build_session(*, trust_env: bool) -> requests.Session:
         sess = requests.Session()
         sess.trust_env = bool(trust_env)
         if not trust_env:
@@ -75,15 +105,25 @@ class _ApiClientCommonMixin:
                 sess.proxies.clear()
             except Exception:
                 pass
+        return sess
+
+    @classmethod
+    def _get_cached_session(cls, *, trust_env: bool) -> requests.Session:
+        key = cls._session_cache_key(trust_env=trust_env)
+        with _SESSION_LOCK:
+            sess = _SESSION_CACHE.get(key)
+            if sess is None:
+                sess = cls._build_session(trust_env=trust_env)
+                _SESSION_CACHE[key] = sess
+            return sess
+
+    @classmethod
+    def _request_once(cls, method: str, url: str, *, trust_env: bool, **kwargs) -> requests.Response:
+        sess = cls._get_cached_session(trust_env=trust_env)
         try:
-            resp = sess.request(method=method, url=url, **kwargs)
-            setattr(resp, "_snowrol_session", sess)
-            return resp
+            return sess.request(method=method, url=url, **kwargs)
         except Exception:
-            try:
-                sess.close()
-            except Exception:
-                pass
+            cls._discard_cached_session(trust_env=trust_env)
             raise
 
     @classmethod

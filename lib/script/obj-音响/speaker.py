@@ -12,6 +12,7 @@ from PyQt5.QtGui     import QPainter, QPixmap, QTransform
 from config.config           import BEHAVIOR, PHYSICS, SPEAKER_AUDIO
 from lib.core.topmost_manager import get_topmost_manager
 from lib.core.event.center    import get_event_center, EventType, Event
+from lib.core.clickthrough_state import is_clickthrough_enabled
 from lib.core.physics         import get_physics_world, PhysicsBody
 from lib.core.particle_utils  import spawn_particle_at_point
 from lib.core.voice.sofa      import SofaSound
@@ -94,6 +95,7 @@ class Speaker(QWidget):
         )
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_NoSystemBackground)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, is_clickthrough_enabled())
         self.setFixedSize(*size)
         self.setCursor(Qt.OpenHandCursor)
 
@@ -129,6 +131,7 @@ class Speaker(QWidget):
         self._event_center = get_event_center()
         self._event_center.subscribe(EventType.TICK,                   self._on_tick_click)
         self._event_center.subscribe(EventType.FRAME,                  self._on_frame_frequency)
+        self._event_center.subscribe(EventType.UI_CLICKTHROUGH_TOGGLE, self._on_clickthrough_toggle)
 
         # 弹跳音效（复用沙发音效）
         self._sofa_sound = SofaSound()
@@ -259,6 +262,10 @@ class Speaker(QWidget):
         alpha = _EMA_ATTACK if freq_intensity > self._freq_intensity else _EMA_DECAY
         self._freq_intensity = alpha * freq_intensity + (1.0 - alpha) * self._freq_intensity
         self.update()
+
+    def _on_clickthrough_toggle(self, event: Event) -> None:
+        """穿透模式开启/关闭时同步自身鼠标透传状态。"""
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, event.data.get('enabled', False))
 
     # ==================================================================
     # 内部辅助
@@ -421,6 +428,7 @@ class Speaker(QWidget):
     def closeEvent(self, event):
         self._event_center.unsubscribe(EventType.TICK,                   self._on_tick_click)
         self._event_center.unsubscribe(EventType.FRAME,                  self._on_frame_frequency)
+        self._event_center.unsubscribe(EventType.UI_CLICKTHROUGH_TOGGLE, self._on_clickthrough_toggle)
         self._fade_timer.stop()
         self._cleanup_physics()
         self._alive = False

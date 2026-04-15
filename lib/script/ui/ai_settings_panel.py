@@ -1613,11 +1613,7 @@ class AISettingsPanel(QWidget):
             "外部接口模型名，例如 qwen3.5-plus。",
         )
 
-        self._yuanbao_login_url_value = str(_DEFAULT_VALUES.get("yuanbao_login_url", ""))
-        self._yuanbao_hy_source_value = str(_DEFAULT_VALUES.get("yuanbao_hy_source", "web"))
-        self._yuanbao_hy_user_value = str(_DEFAULT_VALUES.get("yuanbao_hy_user", ""))
-        self._yuanbao_x_uskey_value = str(_DEFAULT_VALUES.get("yuanbao_x_uskey", ""))
-        self._yuanbao_agent_id_value = str(_DEFAULT_VALUES.get("yuanbao_agent_id", "naQivTmsDa"))
+        self._set_hidden_yuanbao_values(_DEFAULT_VALUES)
 
         yuanbao_login_row, yuanbao_login_layout = self._create_fixed_width_row_group(
             field_width=_CONFIG_FIELD_WIDTH,
@@ -3807,12 +3803,7 @@ class AISettingsPanel(QWidget):
             "force_reply_mode": force_mode,
             "api_base_url": self._api_base_url.text().strip(),
             "api_model": self._api_model.text().strip(),
-            "yuanbao_login_url": str(_DEFAULT_VALUES.get("yuanbao_login_url", "") or "").strip(),
             "yuanbao_free_api_enabled": bool(self._yuanbao_free_api_enabled.isChecked()),
-            "yuanbao_hy_source": str(_DEFAULT_VALUES.get("yuanbao_hy_source", "web") or "").strip(),
-            "yuanbao_hy_user": "",
-            "yuanbao_x_uskey": "",
-            "yuanbao_agent_id": str(_DEFAULT_VALUES.get("yuanbao_agent_id", "naQivTmsDa") or "").strip(),
             "yuanbao_chat_id": self._yuanbao_chat_id.text().strip(),
             "yuanbao_remove_conversation": bool(self._yuanbao_remove_conversation.isChecked()),
             "yuanbao_upload_images": bool(self._yuanbao_upload_images.isChecked()),
@@ -3830,19 +3821,33 @@ class AISettingsPanel(QWidget):
             "api_enable_thinking": bool(self._api_enable_thinking.isChecked()),
             "auto_companion_enabled": bool(self._auto_companion_enabled.isChecked()),
         }
+        values.update(self._collect_hidden_yuanbao_values())
         self._validate_ai_values(values)
         return values
+
+    def _set_hidden_yuanbao_values(self, values: dict | None) -> None:
+        source = values or {}
+        self._yuanbao_login_url_value = str(source.get("yuanbao_login_url", _DEFAULT_VALUES.get("yuanbao_login_url", "")) or "")
+        self._yuanbao_hy_source_value = str(source.get("yuanbao_hy_source", _DEFAULT_VALUES.get("yuanbao_hy_source", "web")) or "")
+        self._yuanbao_hy_user_value = str(source.get("yuanbao_hy_user", _DEFAULT_VALUES.get("yuanbao_hy_user", "")) or "")
+        self._yuanbao_x_uskey_value = str(source.get("yuanbao_x_uskey", _DEFAULT_VALUES.get("yuanbao_x_uskey", "")) or "")
+        self._yuanbao_agent_id_value = str(source.get("yuanbao_agent_id", _DEFAULT_VALUES.get("yuanbao_agent_id", "naQivTmsDa")) or "")
+
+    def _collect_hidden_yuanbao_values(self) -> dict:
+        return {
+            "yuanbao_login_url": str(getattr(self, "_yuanbao_login_url_value", _DEFAULT_VALUES.get("yuanbao_login_url", "")) or "").strip(),
+            "yuanbao_hy_source": str(getattr(self, "_yuanbao_hy_source_value", _DEFAULT_VALUES.get("yuanbao_hy_source", "web")) or "").strip(),
+            "yuanbao_hy_user": str(getattr(self, "_yuanbao_hy_user_value", _DEFAULT_VALUES.get("yuanbao_hy_user", "")) or "").strip(),
+            "yuanbao_x_uskey": str(getattr(self, "_yuanbao_x_uskey_value", _DEFAULT_VALUES.get("yuanbao_x_uskey", "")) or "").strip(),
+            "yuanbao_agent_id": str(getattr(self, "_yuanbao_agent_id_value", _DEFAULT_VALUES.get("yuanbao_agent_id", "naQivTmsDa")) or "").strip(),
+        }
 
     def _set_values_to_form(self, values: dict) -> None:
         self._api_key.set_raw_text(str(values.get("api_key", "")))
         self._api_base_url.setText(str(values.get("api_base_url", "")))
         self._api_model.setText(str(values.get("api_model", "")))
-        self._yuanbao_login_url_value = str(_DEFAULT_VALUES.get("yuanbao_login_url", ""))
+        self._set_hidden_yuanbao_values(values)
         self._yuanbao_free_api_enabled.setChecked(bool(values.get("yuanbao_free_api_enabled", False)))
-        self._yuanbao_hy_source_value = str(_DEFAULT_VALUES.get("yuanbao_hy_source", "web"))
-        self._yuanbao_hy_user_value = ""
-        self._yuanbao_x_uskey_value = ""
-        self._yuanbao_agent_id_value = str(_DEFAULT_VALUES.get("yuanbao_agent_id", "naQivTmsDa"))
         self._yuanbao_chat_id.setText(str(values.get("yuanbao_chat_id", "")))
         self._yuanbao_remove_conversation.setChecked(bool(values.get("yuanbao_remove_conversation", False)))
         self._yuanbao_upload_images.setChecked(bool(values.get("yuanbao_upload_images", True)))

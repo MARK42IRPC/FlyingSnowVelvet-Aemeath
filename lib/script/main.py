@@ -41,6 +41,7 @@ from lib.script.app.desktop_shortcut import ensure_desktop_shortcut as _new_ensu
 from lib.script.app.qt_runtime import create_qt_application as _new_create_qt_application
 
 logger = get_logger(__name__)
+_SHUTDOWN_FORCE_TIMEOUT_MS = 4000
 
 class ApplicationState:
     """应用程序状态管理"""
@@ -72,6 +73,7 @@ class ApplicationState:
         self._exit_code = 0
         self._shutdown_steps = []
         self._shutdown_step_index = 0
+        self._shutdown_force_quit_armed = False
 
         # 音频核心在事件中心初始化后立即创建，以便订阅 APP_PRE_START 完成 MCI 预热
         from lib.core.voice.core import get_voice_core
@@ -182,7 +184,7 @@ class ApplicationState:
         self.request_exit(0)
 
     def _on_app_quit(self, event: Event):
-        """缁熶竴鎺ョ APP_QUIT锛岄伩鍏嶇洿鎺ュ己閫€ Qt 浜嬩欢寰幆銆?"""
+        """统一接管 APP_QUIT，避免组件直接强退 Qt 事件循环。"""
         event.mark_handled()
         self.request_exit(int((event.data or {}).get('exit_code', 0)))
 
@@ -257,10 +259,13 @@ class ApplicationState:
             self._exit_completed = True
             return
 
+        self._arm_force_quit_fallback()
         self._shutdown_steps = [
+            ('stop_primary_windows', self._shutdown_stop_primary_windows, 20),
             ('cleanup_runtime_services', self._shutdown_cleanup_runtime_services, 30),
+            ('cleanup_visual_components', self._shutdown_cleanup_visual_components, 20),
             ('play_exit_animation', self._shutdown_play_exit_animation, 80),
-            ('force_quit_application', self._shutdown_force_quit_application, 0),
+            ('quit_application', self._shutdown_quit_application, 0),
         ]
         self._shutdown_step_index = 0
         QTimer.singleShot(0, self._run_next_shutdown_step)
@@ -290,6 +295,18 @@ class ApplicationState:
             self._app.processEvents()
         except Exception:
             pass
+
+    def _arm_force_quit_fallback(self):
+        if self._app is None or self._shutdown_force_quit_armed:
+            return
+        self._shutdown_force_quit_armed = True
+        QTimer.singleShot(_SHUTDOWN_FORCE_TIMEOUT_MS, self._force_quit_if_still_pending)
+
+    def _force_quit_if_still_pending(self):
+        if self._exit_completed or not self._exit_in_progress:
+            return
+        logger.warning('优雅退出超过 %d ms，执行强退兜底', _SHUTDOWN_FORCE_TIMEOUT_MS)
+        self._shutdown_force_quit_application()
 
     def _shutdown_stop_primary_windows(self):
         if self._tray_icon:
@@ -336,8 +353,11 @@ class ApplicationState:
 
     def _shutdown_quit_application(self):
         if self._app:
-            self._app.quit()
-        self._exit_completed = True
+            try:
+                self._app.quit()
+            except Exception:
+                import traceback
+                logger.error('触发 Qt 退出失败:\n%s', traceback.format_exc())
 
     def _shutdown_force_quit_application(self):
         self._exit_completed = True
@@ -416,6 +436,7 @@ class ApplicationState:
 
         self._app = None
         self._exit_completed = True
+        self._shutdown_force_quit_armed = False
 
         if not self._logger_cleaned:
             cleanup_app_logger()
