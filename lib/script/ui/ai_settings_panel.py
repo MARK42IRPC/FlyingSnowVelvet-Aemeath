@@ -47,6 +47,7 @@ from config.scale import scale_px
 from config.shared_storage import ensure_shared_config_ready, get_shared_config_path
 from lib.script.ui.ai_settings_validators import validate_ai_values
 from lib.script.ui.ai_settings_storage import load_ai_values, save_ai_values, apply_ai_runtime
+from lib.script.ui.qq_group_dialog import QQGroupDialog
 from lib.script.ui.ai_settings_tabs import (
     attach_ai_settings_tabs,
     layout_ai_settings_tab_bar,
@@ -114,6 +115,8 @@ _SCROLLBAR_RIGHT_SHIFT = scale_px(10, min_abs=8)
 _CONFIG_FIELD_WIDTH = scale_px(320, min_abs=280)
 _CONFIG_LABEL_WIDTH = scale_px(176, min_abs=152)
 _CONTROL_PANEL_CONTENT_HEIGHT = int(round(scale_px(620, min_abs=540) * 2.0 / 3.0))
+_UPDATE_BUTTON_ROW_GAP = scale_px(10, min_abs=10)
+_QUARK_UPDATE_URL = "https://pan.quark.cn/s/9158e62439e2"
 _CORE_CONFIG_FILES = (
     "config.py",
     "config_ui.py",
@@ -1329,6 +1332,7 @@ class AISettingsPanel(QWidget):
         self._autostart_checkbox = None
         self._autostart_status_subscribed = False
         self._update_dialog: DesktopPetUpdateDialog | None = None
+        self._qq_group_dialog: QQGroupDialog | None = None
         self._subscribe_autostart_events()
         self.setWindowTitle("控制面板")
         self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
@@ -1843,7 +1847,13 @@ class AISettingsPanel(QWidget):
 
         # 特殊处理：桌宠更新标签页 - 只有按钮，没有配置字段
         if category_id == "desktop_pet_update":
-            return self._build_desktop_pet_update_panel(panel, layout, category_title)
+            return self._build_desktop_pet_update_panel(
+                panel,
+                layout,
+                category_title,
+                title_label,
+                hint_label,
+            )
 
         scroll = _SmoothScrollArea(panel)
         scroll.setWidgetResizable(True)
@@ -2071,25 +2081,47 @@ class AISettingsPanel(QWidget):
         }
         return panel
 
-    def _build_desktop_pet_update_panel(self, panel: QWidget, layout: QVBoxLayout, category_title: str) -> QWidget:
+    def _build_desktop_pet_update_panel(
+        self,
+        panel: QWidget,
+        layout: QVBoxLayout,
+        category_title: str,
+        title_label: QLabel,
+        hint_label: QLabel,
+    ) -> QWidget:
         """构建桌宠更新标签页 - 只有按钮，没有配置字段"""
         from PyQt5.QtCore import Qt
         from PyQt5.QtWidgets import QLabel, QVBoxLayout, QHBoxLayout, QPushButton, QWidget
 
-        # 添加说明文本
-        description_label = QLabel("在这里可以检查桌宠更新和同步开发版本。")
-        description_font = get_ui_font(size=scale_px(12, min_abs=10))
-        description_label.setFont(description_font)
-        description_label.setWordWrap(True)
-        description_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
-        description_label.setContentsMargins(0, 0, 0, scale_px(16))
-        layout.addWidget(description_label)
+        def _create_section_title(text: str) -> QLabel:
+            label = QLabel(text)
+            font = get_ui_font(size=max(scale_px(12, min_abs=10), _CONFIG_FONT_SIZE))
+            font.setBold(True)
+            label.setFont(font)
+            label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            return label
+
+        def _create_section_hint(text: str, *, bottom_margin: int = 0) -> QLabel:
+            label = QLabel(text)
+            font = self._build_hint_font()
+            label.setFont(font)
+            label.setWordWrap(True)
+            label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+            if bottom_margin:
+                label.setContentsMargins(0, 0, 0, bottom_margin)
+            return label
+
+        intro_label = _create_section_hint(
+            "你可以在这里检查桌宠更新、同步开发版本，或通过网盘和 QQ 群手动获取最新内容。",
+            bottom_margin=scale_px(18, min_abs=14),
+        )
+        layout.addWidget(intro_label)
 
         # 创建按钮容器
         button_container = QWidget()
         button_layout = QVBoxLayout(button_container)
         button_layout.setContentsMargins(0, 0, 0, 0)
-        button_layout.setSpacing(scale_px(16))
+        button_layout.setSpacing(scale_px(10, min_abs=8))
 
         # 创建"检查新版本"按钮
         check_update_btn = QPushButton("检查新版本")
@@ -2141,9 +2173,44 @@ class AISettingsPanel(QWidget):
         """)
         sync_dev_btn.clicked.connect(self._on_sync_dev_build)
 
+        quark_update_btn = QPushButton("使用夸克手动更新")
+        quark_update_btn.setObjectName("quarkManualUpdateButton")
+        quark_update_btn.setFixedHeight(scale_px(36, min_abs=30))
+        quark_update_btn.setStyleSheet(check_update_btn.styleSheet())
+        quark_update_btn.clicked.connect(self._open_quark_manual_update)
+
+        qq_group_btn = QPushButton("进入QQ群获取更新")
+        qq_group_btn.setObjectName("qqGroupUpdateButton")
+        qq_group_btn.setFixedHeight(scale_px(36, min_abs=30))
+        qq_group_btn.setStyleSheet(check_update_btn.styleSheet())
+        qq_group_btn.clicked.connect(self._show_qq_group_qrcode)
+
+        extra_button_row = QHBoxLayout()
+        extra_button_row.setContentsMargins(0, 0, 0, 0)
+        extra_button_row.setSpacing(_UPDATE_BUTTON_ROW_GAP)
+        extra_button_row.addWidget(quark_update_btn, 1)
+        extra_button_row.addWidget(qq_group_btn, 1)
+
+        auto_update_title = _create_section_title("使用github自动更新")
+        auto_update_hint = _create_section_hint(
+            "自动检查最新分发包，或直接与远端开发版同步。",
+            bottom_margin=scale_px(6, min_abs=4),
+        )
+        manual_update_title = _create_section_title("使用以下方式手动更新")
+        manual_update_hint = _create_section_hint(
+            "若自动更新不可用，可使用夸克网盘或 QQ 群获取最新版本。",
+            bottom_margin=scale_px(6, min_abs=4),
+        )
+
         # 添加按钮到布局
+        button_layout.addWidget(auto_update_title, 0, Qt.AlignLeft)
+        button_layout.addWidget(auto_update_hint, 0, Qt.AlignLeft)
         button_layout.addWidget(check_update_btn)
         button_layout.addWidget(sync_dev_btn)
+        button_layout.addSpacing(scale_px(10, min_abs=8))
+        button_layout.addWidget(manual_update_title, 0, Qt.AlignLeft)
+        button_layout.addWidget(manual_update_hint, 0, Qt.AlignLeft)
+        button_layout.addLayout(extra_button_row)
         button_layout.addStretch(1)
 
         layout.addWidget(button_container, 1)
@@ -2157,8 +2224,10 @@ class AISettingsPanel(QWidget):
             "fields": [],
             "defaults": {},
             "title": category_title,
-            "title_label": None,  # 标题已经在_add_panel_title_row中创建
-            "hint_label": None,
+            "title_label": title_label,
+            "hint_label": hint_label,
+            "section_title_labels": [auto_update_title, manual_update_title],
+            "section_hint_labels": [intro_label, auto_update_hint, manual_update_hint],
         }
 
         return panel
@@ -3193,6 +3262,16 @@ class AISettingsPanel(QWidget):
                 title_label.setFont(title_font)
             if isinstance(hint_label, QLabel):
                 hint_label.setFont(hint_font)
+            section_title_labels = meta.get("section_title_labels") or []
+            section_hint_labels = meta.get("section_hint_labels") or []
+            section_title_font = get_ui_font(size=max(scale_px(12, min_abs=10), _CONFIG_FONT_SIZE))
+            section_title_font.setBold(True)
+            for widget in section_title_labels:
+                if isinstance(widget, QLabel):
+                    widget.setFont(section_title_font)
+            for widget in section_hint_labels:
+                if isinstance(widget, QLabel):
+                    widget.setFont(hint_font)
 
         tab_font = get_ui_font(size=_CONFIG_FONT_SIZE)
         tab_font.setBold(True)
@@ -3865,6 +3944,24 @@ class AISettingsPanel(QWidget):
 
     def _on_sync_dev_build(self) -> None:
         self._open_update_dialog("git")
+
+    def _ensure_qq_group_dialog(self) -> QQGroupDialog:
+        if self._qq_group_dialog is None:
+            image_path = _project_root() / "resc" / "GIF" / "QQqrc.png"
+            self._qq_group_dialog = QQGroupDialog(image_path)
+        return self._qq_group_dialog
+
+    def _open_quark_manual_update(self) -> None:
+        try:
+            opened = webbrowser.open(_QUARK_UPDATE_URL)
+        except Exception as exc:
+            self._show_info_message(f"打开夸克更新链接失败：{exc}")
+            return
+        if not opened:
+            self._show_info_message(f"未能调用系统默认浏览器，请手动打开：{_QUARK_UPDATE_URL}")
+
+    def _show_qq_group_qrcode(self) -> None:
+        self._ensure_qq_group_dialog().show_dialog()
 
     def _on_restore_defaults(self) -> None:
         self._set_values_to_form(_DEFAULT_VALUES)
