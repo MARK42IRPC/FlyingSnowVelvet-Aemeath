@@ -74,6 +74,7 @@ class ApplicationState:
         self._shutdown_steps = []
         self._shutdown_step_index = 0
         self._shutdown_force_quit_armed = False
+        self._exit_animation_started = False
 
         # 音频核心在事件中心初始化后立即创建，以便订阅 APP_PRE_START 完成 MCI 预热
         from lib.core.voice.core import get_voice_core
@@ -259,12 +260,13 @@ class ApplicationState:
             self._exit_completed = True
             return
 
+        # 退出动画要尽早拉起，避免被后续耗时清理/强退兜底抢先中断。
+        self._shutdown_play_exit_animation()
         self._arm_force_quit_fallback()
         self._shutdown_steps = [
             ('stop_primary_windows', self._shutdown_stop_primary_windows, 20),
             ('cleanup_runtime_services', self._shutdown_cleanup_runtime_services, 30),
             ('cleanup_visual_components', self._shutdown_cleanup_visual_components, 20),
-            ('play_exit_animation', self._shutdown_play_exit_animation, 80),
             ('quit_application', self._shutdown_quit_application, 0),
         ]
         self._shutdown_step_index = 0
@@ -344,9 +346,12 @@ class ApplicationState:
         self._process_pending_events()
 
     def _shutdown_play_exit_animation(self):
+        if self._exit_animation_started:
+            return
         if self._animation is not None:
             try:
                 self._animation.play_exit()
+                self._exit_animation_started = True
             except Exception:
                 import traceback
                 logger.error('启动退出动画失败:\n%s', traceback.format_exc())
@@ -421,9 +426,15 @@ class ApplicationState:
     def finalize_after_event_loop(self, exit_code: int) -> int:
         final_exit_code = self._exit_code if self._exit_requested else exit_code
 
-        if self._exit_requested and not self._exit_completed and self._animation is not None:
+        if (
+            self._exit_requested
+            and not self._exit_completed
+            and not self._exit_animation_started
+            and self._animation is not None
+        ):
             try:
                 self._animation.play_exit()
+                self._exit_animation_started = True
             except Exception:
                 pass
 
@@ -437,6 +448,7 @@ class ApplicationState:
         self._app = None
         self._exit_completed = True
         self._shutdown_force_quit_armed = False
+        self._exit_animation_started = False
 
         if not self._logger_cleaned:
             cleanup_app_logger()
