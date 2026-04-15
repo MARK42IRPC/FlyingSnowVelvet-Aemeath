@@ -45,6 +45,9 @@ class TrayIcon(QObject):
         self._tray_icon = None
         self._menu = None
         self._autostart_action = None
+        self._clickthrough_action = None
+        self._clickthrough_enabled = False
+        self._clickthrough_status_subscribed = False
         self._ai_settings_panel = None
         self._icon = None
         self._icon_path = None
@@ -64,6 +67,8 @@ class TrayIcon(QObject):
         Returns:
             是否初始化成功
         """
+        self._subscribe_clickthrough_events()
+
         if self._initialized:
             return True
 
@@ -229,6 +234,33 @@ class TrayIcon(QObject):
 
         self._menu = TrayContextMenu()
 
+        # ── 常用入口 ───────────────────────────────────────────────
+        # 控制面板动作
+        ai_settings_action = QAction('控制面板', self._menu)
+        ai_settings_action.setToolTip(TOOLTIPS['tray_ai_settings'])
+        ai_settings_action.setStatusTip(TOOLTIPS['tray_ai_settings'])
+        ai_settings_action.triggered.connect(self._on_ai_settings)
+        self._menu.addAction(ai_settings_action)
+
+        # CMD窗口动作
+        cmd_window_action = QAction('CMD终端', self._menu)
+        cmd_window_action.setToolTip(TOOLTIPS['tray_cmd_window'])
+        cmd_window_action.setStatusTip(TOOLTIPS['tray_cmd_window'])
+        cmd_window_action.triggered.connect(self._on_cmd_window)
+        self._menu.addAction(cmd_window_action)
+
+        # 鼠标穿透动作（可勾选）
+        self._clickthrough_action = QAction('鼠标穿透', self._menu)
+        self._clickthrough_action.setCheckable(True)
+        self._set_clickthrough_action_checked(self._clickthrough_enabled)
+        self._clickthrough_action.setToolTip(TOOLTIPS['tray_clickthrough'])
+        self._clickthrough_action.setStatusTip(TOOLTIPS['tray_clickthrough'])
+        self._clickthrough_action.triggered.connect(self._on_toggle_clickthrough)
+        self._menu.addAction(self._clickthrough_action)
+
+        self._menu.addSeparator()
+
+        # ── 启动配置 ───────────────────────────────────────────────
         # 开机启动动作
         self._autostart_action = QAction('开机启动', self._menu)
         self._autostart_action.setCheckable(True)
@@ -240,6 +272,9 @@ class TrayIcon(QObject):
         self._menu.addAction(self._autostart_action)
         self._publish_autostart_status(autostart_enabled, source='tray_init')
 
+        self._menu.addSeparator()
+
+        # ── 清理维护 ───────────────────────────────────────────────
         # 清理桌面动作
         cleanup_action = QAction('清理桌面', self._menu)
         cleanup_action.setToolTip(TOOLTIPS['tray_cleanup_desktop'])
@@ -261,20 +296,9 @@ class TrayIcon(QObject):
         cleanup_history_action.triggered.connect(self._on_cleanup_history)
         self._menu.addAction(cleanup_history_action)
 
-        # 控制面板动作
-        ai_settings_action = QAction('控制面板', self._menu)
-        ai_settings_action.setToolTip(TOOLTIPS['tray_ai_settings'])
-        ai_settings_action.setStatusTip(TOOLTIPS['tray_ai_settings'])
-        ai_settings_action.triggered.connect(self._on_ai_settings)
-        self._menu.addAction(ai_settings_action)
+        self._menu.addSeparator()
 
-        # CMD窗口动作
-        cmd_window_action = QAction('CMD终端', self._menu)
-        cmd_window_action.setToolTip(TOOLTIPS['tray_cmd_window'])
-        cmd_window_action.setStatusTip(TOOLTIPS['tray_cmd_window'])
-        cmd_window_action.triggered.connect(self._on_cmd_window)
-        self._menu.addAction(cmd_window_action)
-
+        # ── 其它 ───────────────────────────────────────────────────
         # 关注作者动作
         follow_author_action = QAction('关注作者', self._menu)
         follow_author_action.setToolTip(TOOLTIPS['tray_follow_author'])
@@ -476,6 +500,61 @@ class TrayIcon(QObject):
                 'max': 120,
             }))
 
+    def _on_toggle_clickthrough(self, checked: bool):
+        """处理鼠标穿透开关动作。"""
+        target = bool(checked)
+        self._clickthrough_enabled = target
+        self._set_clickthrough_action_checked(target)
+
+        self._event_center.publish(Event(EventType.UI_CLICKTHROUGH_TOGGLE, {
+            'enabled': target,
+        }))
+        self._event_center.publish(Event(EventType.INFORMATION, {
+            'text': '鼠标穿透已开启' if target else '鼠标穿透已关闭',
+            'min': 0,
+            'max': 60,
+        }))
+
+    def _subscribe_clickthrough_events(self):
+        """订阅鼠标穿透状态事件，用于同步托盘勾选状态。"""
+        if self._clickthrough_status_subscribed:
+            return
+        self._event_center.subscribe(
+            EventType.UI_CLICKTHROUGH_TOGGLE,
+            self._on_clickthrough_status_change,
+        )
+        self._clickthrough_status_subscribed = True
+
+    def _unsubscribe_clickthrough_events(self):
+        """取消订阅鼠标穿透状态事件。"""
+        if not self._clickthrough_status_subscribed:
+            return
+        self._event_center.unsubscribe(
+            EventType.UI_CLICKTHROUGH_TOGGLE,
+            self._on_clickthrough_status_change,
+        )
+        self._clickthrough_status_subscribed = False
+
+    def _on_clickthrough_status_change(self, event: Event):
+        """接收鼠标穿透状态变化并同步托盘动作。"""
+        data = event.data if isinstance(event.data, dict) else {}
+        enabled = bool(data.get('enabled', False))
+        self._clickthrough_enabled = enabled
+        self._set_clickthrough_action_checked(enabled)
+
+    def _set_clickthrough_action_checked(self, enabled: bool):
+        """同步托盘鼠标穿透动作的勾选状态，避免重复触发信号。"""
+        if self._clickthrough_action is None:
+            return
+        target = bool(enabled)
+        if self._clickthrough_action.isChecked() == target:
+            return
+        blocked = self._clickthrough_action.blockSignals(True)
+        try:
+            self._clickthrough_action.setChecked(target)
+        finally:
+            self._clickthrough_action.blockSignals(blocked)
+
     def _on_follow_author(self):
         """处理关注作者动作"""
         try:
@@ -619,6 +698,7 @@ class TrayIcon(QObject):
 
     def cleanup(self):
         """清理托盘图标资源"""
+        self._unsubscribe_clickthrough_events()
         self._stop_retry()
         self._teardown_tray_icon()
         if self._menu:
@@ -632,6 +712,8 @@ class TrayIcon(QObject):
         self._icon = None
         self._icon_path = None
         self._autostart_action = None
+        self._clickthrough_action = None
+        self._clickthrough_enabled = False
         self._initialized = False
         _logger.info('系统托盘图标已清理')
 

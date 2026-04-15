@@ -52,6 +52,8 @@ TOOLTIPS: dict[str, str] = {
     'tray_cleanup_history':     '清空所有平台音乐历史与登录数据，不清理缓存',
     'tray_ai_settings':         '打开控制面板（含 AI 设置）',
     'tray_cmd_window':          '打开CMD终端窗口',
+    'tray_clickthrough':        '切换鼠标穿透模式',
+    'tray_restore_clickthrough':'关闭鼠标穿透模式，恢复正常交互',
     'tray_follow_author':       '打开作者 B 站主页',
     'tray_quit':                '退出程序',
 }
