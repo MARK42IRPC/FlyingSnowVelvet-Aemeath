@@ -60,7 +60,7 @@ from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.logger import get_logger
 from lib.script.chat.ollama_registry import get_available_model_names, get_model_list_error
 from lib.script.microphone_stt.push_to_talk import parse_hotkey_binding
-from lib.script.update_manager import UpdateManager, UpdateError
+from lib.script.ui.update_dialog import DesktopPetUpdateDialog
 from lib.script.yuanbao_free_api import get_yuanbao_free_api_service
 from lib.script.yuanbao_free_api.service import get_yuanbao_free_api_log_path
 
@@ -1328,7 +1328,7 @@ class AISettingsPanel(QWidget):
         self._ec = get_event_center()
         self._autostart_checkbox = None
         self._autostart_status_subscribed = False
-        self._checking_updates = False
+        self._update_dialog: DesktopPetUpdateDialog | None = None
         self._subscribe_autostart_events()
         self.setWindowTitle("控制面板")
         self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
@@ -1420,12 +1420,6 @@ class AISettingsPanel(QWidget):
             func()
         else:
             self._ui_thread_call.emit(func)
-
-    def _set_check_updates_busy(self, busy: bool) -> None:
-        def apply():
-            self._checking_updates = busy
-            # 检查更新按钮已移除，不再需要更新按钮状态
-        self._run_on_ui_thread(apply)
 
     def _create_action_button_row(self, *button_specs):
         button_row = QHBoxLayout()
@@ -2123,8 +2117,7 @@ class AISettingsPanel(QWidget):
                 background-color: {highlight_color};
             }}
         """)
-        # 暂时不连接功能，只显示按钮
-        check_update_btn.clicked.connect(lambda: self._show_info_message("检查新版本功能暂未实现"))
+        check_update_btn.clicked.connect(self._on_check_updates)
 
         # 创建"同步开发版"按钮
         sync_dev_btn = QPushButton("同步开发版")
@@ -2146,8 +2139,7 @@ class AISettingsPanel(QWidget):
                 background-color: {highlight_color};
             }}
         """)
-        # 暂时不连接功能，只显示按钮
-        sync_dev_btn.clicked.connect(lambda: self._show_info_message("同步开发版功能暂未实现"))
+        sync_dev_btn.clicked.connect(self._on_sync_dev_build)
 
         # 添加按钮到布局
         button_layout.addWidget(check_update_btn)
@@ -3843,29 +3835,36 @@ class AISettingsPanel(QWidget):
             "max": max_tick,
         }))
 
-    def _on_check_updates(self) -> None:
-        if self._checking_updates:
-            self._emit_info("正在检查更新，请稍候...", min_tick=12, max_tick=140)
+    def _ensure_update_dialog(self) -> DesktopPetUpdateDialog:
+        if self._update_dialog is None:
+            self._update_dialog = DesktopPetUpdateDialog()
+        return self._update_dialog
+
+    def _open_update_dialog(self, mode: str) -> None:
+        dialog = self._ensure_update_dialog()
+        if dialog.is_busy():
+            self._emit_info("更新窗口正在处理任务，请稍候。", min_tick=12, max_tick=160)
             return
 
-        def info_callback(message: str) -> None:
-            self._emit_info(message, min_tick=12, max_tick=160)
+        self.fade_out()
+        delay_ms = max(80, int(UI.get("ui_fade_duration", 180)))
 
-        def worker() -> None:
-            manager = UpdateManager(info_callback=info_callback)
-            try:
-                manager.check_and_update()
-            except UpdateError as exc:
-                self._emit_info(f"检查更新失败: {exc}", min_tick=18, max_tick=200)
-            except Exception as exc:  # pragma: no cover - 防御性日志
-                _logger.error("Unhandled update exception: %s", exc)
-                self._emit_info(f"检查更新失败: {exc}", min_tick=18, max_tick=200)
-            finally:
-                self._set_check_updates_busy(False)
+        def show_dialog() -> None:
+            started = (
+                dialog.begin_release_check()
+                if mode == "release"
+                else dialog.begin_git_sync_check()
+            )
+            if not started:
+                self._emit_info("更新窗口正在处理任务，请稍候。", min_tick=12, max_tick=160)
 
-        self._set_check_updates_busy(True)
-        self._emit_info("正在通过 GitHub 检查更新...", min_tick=12, max_tick=160)
-        threading.Thread(target=worker, daemon=True, name="ai-update-check").start()
+        QTimer.singleShot(delay_ms, show_dialog)
+
+    def _on_check_updates(self) -> None:
+        self._open_update_dialog("release")
+
+    def _on_sync_dev_build(self) -> None:
+        self._open_update_dialog("git")
 
     def _on_restore_defaults(self) -> None:
         self._set_values_to_form(_DEFAULT_VALUES)
