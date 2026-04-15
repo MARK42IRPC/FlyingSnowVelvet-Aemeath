@@ -1,7 +1,6 @@
 """宠物窗口模块"""
 import math
 import random
-import time
 from PyQt5.QtWidgets import QWidget
 from PyQt5.QtCore    import Qt, QTimer, QPoint
 from PyQt5.QtGui     import QPainter
@@ -24,7 +23,6 @@ from lib.core.event.app_handler import AppEventHandler
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.entity.base import BaseEntity
 from lib.script.mainpet.state import StateMachine
-from lib.script.ui.restore_button import RestoreButton
 from config.user_scale_config import get_user_scale_config
 from lib.core.draw_core import DrawRequest, get_draw_core
 from lib.core.action import Actions
@@ -73,13 +71,6 @@ class PetWindow(BaseEntity):
         # 鼠标穿透状态
         self._clickthrough = False
 
-        # 穿透模式下的鼠标距离检测
-        self._restore_btn_threshold = scale_px(100, min_abs=1)  # 鼠标靠近阈值（像素）
-        self._restore_btn_show_delay_sec = 3.0  # 鼠标进入范围后持续停留多久才显示恢复按钮
-        self._current_mouse_pos = None    # 当前鼠标位置
-        self._restore_btn_created = False # 恢复按钮是否已创建
-        self._restore_btn_hover_start_ts = None
-
         # ── 输入处理器 ────────────────────────────────────────────────
         self._click_handler = ClickHandler(self)
         self._key_handler = KeyHandler(self)
@@ -123,9 +114,6 @@ class PetWindow(BaseEntity):
         self._event_center.subscribe(EventType.UI_CREATE, self._handle_ui_create)
         self._event_center.subscribe(EventType.UI_CLICKTHROUGH_TOGGLE, self._handle_clickthrough_toggle)
 
-        # ── 订阅鼠标事件 ─────────────────────────────────────────────
-        self._event_center.subscribe(EventType.MOUSE_POSITION_RESPONSE, self._handle_mouse_position_response)
-
         # ── 订阅实体位置请求事件（支持管理器解耦通信）────────────────
         self._event_center.subscribe(EventType.ENTITY_POSITION_REQUEST, self._handle_entity_position_request)
 
@@ -155,9 +143,6 @@ class PetWindow(BaseEntity):
         # 鈹€鈹€ 鍒濆浣嶇疆 / UI / 绐楀彛灞炴€?鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
         setup_pet_window(self)
         attach_pet_window_ui(self, on_close=self._request_app_quit)
-
-        # 鎭㈠绌块€忔寜閽湪鍚敤鏃舵寜闇€鍒涘缓
-        self._restore_btn = None
 
 
         # ── 定时器 ────────────────────────────────────────────────────
@@ -271,10 +256,6 @@ class PetWindow(BaseEntity):
             self.setWindowFlags(base_flags)
             # 显示窗口
             self.show()
-
-            # 重置恢复按钮创建标志，让tick检测逻辑决定何时创建
-            self._restore_btn_created = False
-            self._restore_btn_hover_start_ts = None
         else:
             # 禁用鼠标穿透
             # 先隐藏窗口
@@ -285,15 +266,6 @@ class PetWindow(BaseEntity):
             self.setWindowFlags(base_flags | Qt.WindowSystemMenuHint)
             # 显示窗口
             self.show()
-
-            # 关闭恢复穿透按钮
-            if self._restore_btn is not None:
-                self._restore_btn.hide()
-                self._restore_btn = None
-
-            # 重置恢复按钮创建标志
-            self._restore_btn_created = False
-            self._restore_btn_hover_start_ts = None
 
     def _change_state(self, new_state: str):
         """切换状态"""
@@ -606,61 +578,9 @@ class PetWindow(BaseEntity):
         get_topmost_manager().enforce_on_frame()
 
     def _handle_tick_event(self, event):
-        """处理 TICK 事件 - 用于速度计算、穿透模式下的鼠标距离检测"""
+        """处理 TICK 事件 - 用于速度计算。"""
         if self._movement.is_moving:
             self._movement.update_tick(self.frameGeometry().topLeft())
-
-        # 穿透模式下的鼠标距离检测
-        if self._clickthrough:
-            # 发布获取鼠标位置请求
-            get_pos_event = Event(EventType.MOUSE_GET_POSITION, {
-                'request_id': 'restore_btn_check'
-            })
-            self._event_center.publish(get_pos_event)
-
-    def _handle_mouse_position_response(self, event):
-        """处理鼠标位置响应 - 检测距离并创建/销毁恢复按钮"""
-        request_id = event.data.get('request_id')
-        mouse_pos = event.data.get('global_pos')
-
-        # 只处理恢复按钮的检测请求
-        if request_id != 'restore_btn_check' or mouse_pos is None:
-            return
-
-        # 计算底锚点位置
-        from config.config import ANIMATION
-        pet_width = ANIMATION['pet_size'][0]
-        pet_height = ANIMATION['pet_size'][1]
-        pet_pos = self.get_position()
-
-        bottom_anchor = QPoint(
-            pet_pos.x() + pet_width // 2,
-            pet_pos.y() + pet_height
-        )
-
-        # 计算距离
-        distance = ((mouse_pos.x() - bottom_anchor.x()) ** 2 +
-                   (mouse_pos.y() - bottom_anchor.y()) ** 2) ** 0.5
-
-        # 如果距离小于阈值，创建恢复按钮
-        if distance < self._restore_btn_threshold:
-            if self._restore_btn is None:
-                now = time.monotonic()
-                if self._restore_btn_hover_start_ts is None:
-                    self._restore_btn_hover_start_ts = now
-                elif now - self._restore_btn_hover_start_ts >= self._restore_btn_show_delay_sec:
-                    self._restore_btn = RestoreButton(pet_widget=self)
-                    self._restore_btn_created = True
-                    self._restore_btn_hover_start_ts = None
-            else:
-                self._restore_btn_hover_start_ts = None
-        else:
-            self._restore_btn_hover_start_ts = None
-            # 距离超出阈值，销毁恢复按钮
-            if self._restore_btn is not None:
-                self._restore_btn.fade_out()
-                self._restore_btn = None
-                self._restore_btn_created = False
 
     def _handle_entity_position_request(self, event):
         """
@@ -842,17 +762,6 @@ class PetWindow(BaseEntity):
                 pass
             try:
                 widget.close()
-            except Exception:
-                pass
-
-        restore_btn = getattr(self, '_restore_btn', None)
-        if restore_btn is not None:
-            try:
-                restore_btn.hide()
-            except Exception:
-                pass
-            try:
-                restore_btn.close()
             except Exception:
                 pass
 

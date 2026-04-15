@@ -1,6 +1,6 @@
 # Release Playbook
 
-适用于 `LTS1.0.5pre2` 及后续 `pre` 系列发布。目标是：**版本号一致、文档一致、发布包不夹带运行时垃圾文件**。
+适用于 `LTS1.0.5pre3` 及后续 `pre` 系列发布。目标是：**版本号一致、文档一致、发布包不夹带运行时垃圾文件**。
 
 ## 1. 更新版本号
 
@@ -50,24 +50,24 @@ python scripts/package_green_release.py --dry-run
 普通发布包：
 
 ```powershell
-python scripts/package_release.py --version LTS1.0.5pre2
+python scripts/package_release.py --version LTS1.0.5pre3
 ```
 
 输出示例：
 
-- `dist/FlyingSnowVelvet-LTS1.0.5pre2.zip`
-- `dist/FlyingSnowVelvet-LTS1.0.5pre2-manifest.json`
+- `dist/FlyingSnowVelvet-LTS1.0.5pre3.zip`
+- `dist/FlyingSnowVelvet-LTS1.0.5pre3-manifest.json`
 
 绿色资源包：
 
 ```powershell
-python scripts/package_green_release.py --version LTS1.0.5pre2
+python scripts/package_green_release.py --version LTS1.0.5pre3
 ```
 
 输出示例：
 
-- `dist/FlyingSnowVelvet-LTS1.0.5pre2-green.zip`
-- `dist/FlyingSnowVelvet-LTS1.0.5pre2-green-manifest.json`
+- `dist/FlyingSnowVelvet-LTS1.0.5pre3-green.zip`
+- `dist/FlyingSnowVelvet-LTS1.0.5pre3-green-manifest.json`
 
 ## 4. 发布包内容要求
 
@@ -95,14 +95,14 @@ git status --ignored --short
 示例：
 
 ```powershell
-git tag -a LTS1.0.5pre2 -m "LTS 1.0.5 pre2"
-git push origin LTS1.0.5pre2
+git tag -a LTS1.0.5pre3 -m "LTS 1.0.5 pre3"
+git push origin LTS1.0.5pre3
 ```
 
 Release 建议上传：
 
-- `dist/FlyingSnowVelvet-LTS1.0.5pre2.zip`
-- `dist/FlyingSnowVelvet-LTS1.0.5pre2-green.zip`（如需要）
+- `dist/FlyingSnowVelvet-LTS1.0.5pre3.zip`
+- `dist/FlyingSnowVelvet-LTS1.0.5pre3-green.zip`（如需要）
 - `AA使用必读.html`
 
 Release Notes 直接整理自 `CHANGELOG.md` 当前版本段落即可。

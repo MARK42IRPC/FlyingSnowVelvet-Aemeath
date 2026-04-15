@@ -1,4 +1,4 @@
-飞行雪绒调度系统使用说明（LTS1.0.5pre2）
+飞行雪绒调度系统使用说明（LTS1.0.5pre3）
 
 一、核心实现
 - 文件：`lib/core/timing/manager.py`

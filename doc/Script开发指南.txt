@@ -1,4 +1,4 @@
-飞行雪绒 Script 开发指南（LTS1.0.5pre2）
+飞行雪绒 Script 开发指南（LTS1.0.5pre3）
 
 一、总览
 - 主入口：`lib/core/qt_desktop_pet.py`

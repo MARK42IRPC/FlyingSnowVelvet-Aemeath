@@ -10,6 +10,7 @@ from config.tooltip_config import TOOLTIPS
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.topmost_manager import get_topmost_manager
 from lib.core.screen_utils import clamp_rect_position
+from lib.core.voice.ams_clickthrough_reminder import AmsClickthroughReminderSound
 from lib.core.anchor_utils import (
     get_anchor_point as resolve_anchor_point,
     publish_widget_anchor_response,
@@ -95,6 +96,9 @@ class ClickThroughButton(QWidget):
         # 空闲超时自动关闭功能（与 command_dialog 共享超时时间）
         self._idle_timeout = TIMEOUTS['idle_close_ms']  # 10秒无操作自动关闭
         self._last_activity_time = 0
+        self._clickthrough_reminder_sound = AmsClickthroughReminderSound(
+            interruptible=False
+        )
 
         # 订阅鼠标事件以重置空闲计时器
         self._event_center.subscribe(EventType.MOUSE_PRESS, self._reset_idle_timer)
@@ -302,6 +306,7 @@ class ClickThroughButton(QWidget):
     def click(self):
         """处理点击事件 - 始终启用鼠标穿透模式"""
         self._clickthrough_enabled = True
+        self._clickthrough_reminder_sound.play()
 
         # 发布鼠标穿透模式开启事件
         toggle_event = Event(EventType.UI_CLICKTHROUGH_TOGGLE, {

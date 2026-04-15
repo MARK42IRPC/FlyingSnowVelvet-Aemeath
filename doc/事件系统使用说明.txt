@@ -1,4 +1,4 @@
-飞行雪绒事件系统使用说明（LTS1.0.5pre2）
+飞行雪绒事件系统使用说明（LTS1.0.5pre3）
 
 一、核心入口
 - 实现：`lib/core/event/center.py`

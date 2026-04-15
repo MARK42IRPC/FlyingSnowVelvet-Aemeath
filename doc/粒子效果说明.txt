@@ -1,4 +1,4 @@
-飞行雪绒粒子效果说明（LTS1.0.5pre2）
+飞行雪绒粒子效果说明（LTS1.0.5pre3）
 
 一、总体说明
 - 事件入口：`EventType.PARTICLE_REQUEST`

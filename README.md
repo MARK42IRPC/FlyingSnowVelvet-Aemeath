@@ -1,9 +1,9 @@
-# 飞行雪绒 LTS 1.0.5 pre2
+# 飞行雪绒 LTS 1.0.5 pre3
 
-飞行雪绒是一个以 Windows 10/11 为主要目标平台的桌面宠物项目，围绕 **桌宠展示、AI 伴聊、语音播报、语音识别、音乐播放、可生成场景对象** 这几条主线持续迭代。当前 `pre2` 版本的重点是：整理运行时数据边界、收紧 GSV 语音模块控制逻辑、补齐语音缓存管理，并同步重写整套仓库文档。
+飞行雪绒是一个以 Windows 10/11 为主要目标平台的桌面宠物项目，围绕 **桌宠展示、AI 伴聊、语音播报、语音识别、音乐播放、可生成场景对象** 这几条主线持续迭代。当前 `pre3` 已作为新一轮开发基线启用，先完成版本号、文档入口与发布脚本基线同步，后续功能与修复将在这一轮迭代中继续累计。
 
-> 当前版本：`LTS1.0.5pre2`  
-> 发布日期：`2026-04-14`
+> 当前版本：`LTS1.0.5pre3`  
+> 发布日期：`2026-04-15`
 
 ---
 
@@ -178,13 +178,13 @@ python scripts/generate_doc_portal.py
 普通发布包：
 
 ```powershell
-python scripts/package_release.py --version LTS1.0.5pre2
+python scripts/package_release.py --version LTS1.0.5pre3
 ```
 
 绿色资源包：
 
 ```powershell
-python scripts/package_green_release.py --version LTS1.0.5pre2
+python scripts/package_green_release.py --version LTS1.0.5pre3
 ```
 
 两者默认都会排除运行时用户数据；绿色包会额外保留模型与浏览器资源，适合离线分发。
@@ -195,15 +195,14 @@ python scripts/package_green_release.py --version LTS1.0.5pre2
 
 ## 版本说明
 
-`pre2` 主要聚焦以下工作：
+`pre3` 当前作为新一轮开发基线，先完成以下准备：
 
-- GSV 语音模块开关逻辑收紧
-- GSV 语音缓存改为项目内统一目录直存，并支持自动清理
-- 控制面板新增缓存管理入口
-- 运行时配置文件从 Git 跟踪中剥离
-- 文档、发布说明、资料舱门户统一重写并更新到 `pre2`
+- 项目版本号切换到 `LTS1.0.5pre3`
+- 资料舱门户、打包命令与仓库入口文档同步到 `pre3`
+- 后续功能、修复与兼容性调整将继续累计到 `CHANGELOG.md`
+- `pre2` 已发布内容保留在历史变更记录中
 
-详见 `CHANGELOG.md`。
+详见 `CHANGELOG.md` 与 `AA更新日志.txt`。
 
 ---
 

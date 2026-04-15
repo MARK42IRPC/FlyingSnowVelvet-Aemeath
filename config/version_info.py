@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 # 当前应用版本（与 README / 发布标签保持一致）
-APP_VERSION = "LTS1.0.5pre2"
+APP_VERSION = "LTS1.0.5pre3"
 # 版本发布日期（ISO 日期字符串，便于比较）
-APP_RELEASE_DATE = "2026-04-14"
+APP_RELEASE_DATE = "2026-04-15"
 
 # 资源包版本：初始与 APP 保持一致，后续若有独立资源包可单独更新
 RESOURCE_VERSION = APP_VERSION
