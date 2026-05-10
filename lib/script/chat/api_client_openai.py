@@ -150,18 +150,13 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
 
     @staticmethod
     def _should_include_yuanbao_context(options: dict | None) -> bool:
-        """???????????????/???????????"""
-        opts = options or {}
-        return bool(opts.get('should_remove_conversation', False))
+        return True
 
     @staticmethod
     def _build_yuanbao_extra_fields(options: dict, multimedia: list[dict] | None = None) -> dict:
         fields = {
-            'should_remove_conversation': bool(options.get('should_remove_conversation', False)),
+            'should_remove_conversation': True,
         }
-        chat_id = str(options.get('chat_id', '') or '').strip()
-        if chat_id:
-            fields['chat_id'] = chat_id
         if multimedia:
             fields['multimedia'] = multimedia
         return fields
@@ -180,34 +175,7 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
         return bool(status.get('logged_in'))
 
     def _resolve_yuanbao_context_policy(self, options: dict | None) -> tuple[bool, bool]:
-        opts = options or {}
-        if bool(opts.get('should_remove_conversation', False)):
-            return True, True
-
-        logged_in = self._get_yuanbao_login_state()
-        with self._yuanbao_state_lock:
-            last_logged_in = self._yuanbao_last_logged_in
-            pending = self._yuanbao_context_once_pending
-            consumed = getattr(self, '_yuanbao_context_consumed', False)
-
-            if logged_in is True and last_logged_in is not True:
-                pending = True
-                consumed = False
-            elif logged_in is False and last_logged_in is True:
-                pending = False
-                consumed = False
-
-            if last_logged_in is None and not consumed:
-                pending = True
-
-            if logged_in is not None:
-                self._yuanbao_last_logged_in = logged_in
-
-            self._yuanbao_context_once_pending = pending
-            self._yuanbao_context_consumed = consumed
-            include_persona_once = pending
-
-        return include_persona_once, False
+        return True, True
 
     def _commit_yuanbao_context_once(self) -> None:
         with self._yuanbao_state_lock:
@@ -651,14 +619,14 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
         yuanbao_include_persona_once = False
         if use_yuanbao_free_api:
             include_persona, include_history = self._resolve_yuanbao_context_policy(yuanbao_options)
-            yuanbao_include_persona_once = bool(include_persona and not bool(yuanbao_options.get('should_remove_conversation', False)))
+            yuanbao_include_persona_once = False
             if not include_persona:
                 effective_persona = ''
             if not include_history:
                 effective_history = None
-            logger.debug('[APIClient] YuanBao ?????: include_persona=%s include_history=%s remove_conversation=%s',
-                         include_persona, include_history, bool(yuanbao_options.get('should_remove_conversation', False)))
-        if images and use_yuanbao_free_api and bool(yuanbao_options.get('upload_images', True)):
+            logger.debug('[APIClient] YuanBao ?????: include_persona=%s include_history=%s remove_conversation=True',
+                         include_persona, include_history)
+        if images and use_yuanbao_free_api:
             try:
                 uploaded_multimedia = self._upload_yuanbao_multimedia(
                     base_url,

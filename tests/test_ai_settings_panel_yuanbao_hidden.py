@@ -46,10 +46,6 @@ def _build_dummy_panel() -> _DummyPanel:
     panel._force_mode = _ComboField("4", "优先走元宝web(默认)")
     panel._api_base_url = _TextField("http://127.0.0.1:8000/v1")
     panel._api_model = _TextField("deepseek-v3")
-    panel._yuanbao_free_api_enabled = _CheckField(True)
-    panel._yuanbao_chat_id = _TextField("chat-001")
-    panel._yuanbao_remove_conversation = _CheckField(False)
-    panel._yuanbao_upload_images = _CheckField(True)
     panel._ollama_base_url = _TextField("http://localhost:11434")
     panel._ollama_model = _ComboField("qwen2.5", "qwen2.5")
     panel._gpu_mode = _ComboField(_GPU_MODE_AUTO, "自动")
@@ -61,6 +57,7 @@ def _build_dummy_panel() -> _DummyPanel:
     panel._ai_voice_max_chars = _TextField("40")
     panel._gsv_cache_max_files = _TextField("20")
     panel._memory_context_limit = _TextField("12")
+    panel._memory_recall_count = _TextField("5")
     panel._api_enable_thinking = _CheckField(False)
     panel._auto_companion_enabled = _CheckField(True)
     panel._validate_ai_values = lambda values: None

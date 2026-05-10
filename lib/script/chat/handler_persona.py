@@ -88,14 +88,14 @@ class ChatHandlerPersonaMixin:
 
         return ""
 
-    def _build_runtime_persona(self) -> str:
+    def _build_runtime_persona(self, *, skip_memory_block: bool = False) -> str:
         """
         生成本次请求使用的人格词，并附带当前时间（精确到秒）。
         """
         now_text = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         time_suffix = f'当前时间：{now_text}'
         base = (self._persona or '').strip()
-        memory_block = self._build_recent_memory_block()
+        memory_block = "" if skip_memory_block else self._build_recent_memory_block()
 
         sections: list[str] = []
         if base:

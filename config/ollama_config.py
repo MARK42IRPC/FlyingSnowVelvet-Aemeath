@@ -61,9 +61,6 @@ YUANBAO_FREE_API = {
     'hy_user': '',
     'x_uskey': '',
     'agent_id': 'naQivTmsDa',
-    'chat_id': '',
-    'should_remove_conversation': True,
-    'upload_images': True,
 }
 
 # ============================================================
@@ -81,12 +78,13 @@ OLLAMA = {
     'api_retry_backoff':   0.8,     # 外部 API 重试退避基数（秒）
     'api_disable_env_proxy': False, # 默认遵循系统代理配置；设为 True 时优先忽略
     'api_temperature':     0.8,      # 外部 API 采样温度（0~2）
-    'gsv_auto_start':      True,     # 启用 GSV 语音模块；关闭后不预热，也不响应文本语音请求
+    'gsv_auto_start':      False,     # 启用 GSV 语音模块；关闭后不预热，也不响应文本语音请求
     'gsv_temperature':     1.35,      # GSV 文本转语音采样温度（0~2）
     'gsv_speed_factor':    1.0,      # GSV 文本转语音语速（0.5~2.0）
     'ai_voice_max_chars':  80,       # GSV 语音合成最大文本长度（20~80）
     'gsv_cache_max_files': 20,       # GSV 语音缓存最大保存条数（1~128）
     'memory_context_limit': 12,      # 发送给 AI 时附带的 recent memory 条数（0~48，0 = 不附带）
+    'memory_recall_count': 30,        # 回忆工具单次提取条数（5~50）
     'api_enable_thinking': False,   # 外部 API 思考模式（Qwen3.5-plus 默认 True；关闭可提升可见流式与命令稳定性）
     'api_thinking_budget': 0,       # >0 时限制思考 token；0 表示不指定
     'pull_emit_interval':  2.0,     # 下载进度气泡更新间隔（秒）
@@ -139,14 +137,11 @@ def _normalize_force_mode(value) -> str:
 
 def _is_yuanbao_web_ready(api_key: str) -> bool:
     """判断当前 YuanBao-Free-API 配置是否足以优先发起请求。"""
-    options = YUANBAO_FREE_API if isinstance(YUANBAO_FREE_API, dict) else {}
-    if not bool(options.get('enabled', False)):
-        return False
     if not (API_BASE_URL or '').strip() or not (API_MODEL or '').strip():
         return False
     if not str(api_key or '').strip():
         return False
-    if not str(options.get('agent_id', '') or '').strip():
+    if not str((YUANBAO_FREE_API or {}).get('agent_id', '') or '').strip():
         return False
     return True
 
@@ -236,7 +231,7 @@ def get_active_config() -> dict:
         return _build_ollama_config(force_mode)
     if force_mode == '3':
         return _build_rule_reply_config(force_mode)
-    if force_mode == '4' and bool(YUANBAO_FREE_API.get('enabled', False)) and not _is_yuanbao_web_ready(preferred_api_key):
+    if force_mode == '4' and not _is_yuanbao_web_ready(preferred_api_key):
         return _build_error_config(force_mode, '优先走元宝 web 失败：配置不完整，至少需要接口密钥、agent_id，并确保本地中转接口可用')
     if force_mode == '4' and _is_yuanbao_web_ready(preferred_api_key):
         cfg = _build_openai_config(preferred_api_key, preferred_source, force_mode)

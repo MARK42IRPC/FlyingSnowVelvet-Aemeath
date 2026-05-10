@@ -48,6 +48,7 @@ class ChatHandler(ChatHandlerPersonaMixin, ChatHandlerAutoCompanionMixin, ChatHa
 
         source = str(event.data.get("source", "")).strip()
         include_history = source != 'tool_recall'
+        is_tool_recall = source == 'tool_recall'
         context_history = self._get_recent_context_snapshot()
 
         logger.debug("[ChatHandler] 收到聊天消息: %s", text[:60])
@@ -92,7 +93,7 @@ class ChatHandler(ChatHandlerPersonaMixin, ChatHandlerAutoCompanionMixin, ChatHa
 
         self._ollama.stream_chat(
             message=text,
-            persona=self._build_runtime_persona(),
+            persona=self._build_runtime_persona(skip_memory_block=is_tool_recall),
             callback=lambda reply_text, user_text=text, keep_history=include_history: self._publish_response(
                 reply_text,
                 user_text=user_text,

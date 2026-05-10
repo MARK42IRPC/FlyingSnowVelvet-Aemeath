@@ -30,9 +30,6 @@ def validate_ai_values(values: dict) -> None:
     yuanbao_hy_user = str(values.get("yuanbao_hy_user", "") or "").strip()
     yuanbao_x_uskey = str(values.get("yuanbao_x_uskey", "") or "").strip()
     yuanbao_agent_id = str(values.get("yuanbao_agent_id", "") or "").strip()
-    yuanbao_chat_id = str(values.get("yuanbao_chat_id", "") or "").strip()
-    yuanbao_remove_conversation = values.get("yuanbao_remove_conversation")
-    yuanbao_upload_images = values.get("yuanbao_upload_images")
     ollama_base_url = str(values.get("ollama_base_url", "") or "").strip()
     ollama_model = str(values.get("ollama_model", "") or "").strip()
     num_gpu = values.get("num_gpu")
@@ -46,6 +43,7 @@ def validate_ai_values(values: dict) -> None:
     ai_voice_max_chars = values.get("ai_voice_max_chars")
     gsv_cache_max_files = values.get("gsv_cache_max_files")
     memory_context_limit = values.get("memory_context_limit")
+    memory_recall_count = values.get("memory_recall_count")
 
     if force_mode not in ("", "0", "2", "3", "4"):
         raise ValueError("回复模式值无效")
@@ -70,12 +68,6 @@ def validate_ai_values(values: dict) -> None:
             raise ValueError("启用 YuanBao-Free-API 时，agent_id 不能为空")
         if yuanbao_x_uskey and any(ch.isspace() for ch in yuanbao_x_uskey):
             raise ValueError("x_uskey 不能包含空白字符")
-        if yuanbao_chat_id and any(ch.isspace() for ch in yuanbao_chat_id):
-            raise ValueError("chat_id 不能包含空白字符")
-        if not isinstance(yuanbao_remove_conversation, bool):
-            raise ValueError("YuanBao-Free-API 清理会话开关无效")
-        if not isinstance(yuanbao_upload_images, bool):
-            raise ValueError("YuanBao-Free-API 图片上传开关无效")
 
     if force_mode in ("", "2"):
         if not ollama_base_url:
@@ -145,6 +137,11 @@ def validate_ai_values(values: dict) -> None:
         raise ValueError("记忆上下文条数必须是整数")
     if not (0 <= memory_context_limit <= 48):
         raise ValueError("记忆上下文条数范围应为 0~48")
+
+    if isinstance(memory_recall_count, bool) or not isinstance(memory_recall_count, int):
+        raise ValueError("回忆提取条数必须是整数")
+    if not (5 <= memory_recall_count <= 50):
+        raise ValueError("回忆提取条数范围应为 5~50")
 
     if not isinstance(api_enable_thinking, bool):
         raise ValueError("思考模式配置无效")

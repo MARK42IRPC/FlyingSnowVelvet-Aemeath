@@ -21,14 +21,10 @@ def load_ai_values(default_values: dict) -> dict:
         "api_base_url": str(oc.API_BASE_URL or ""),
         "api_model": str(oc.API_MODEL or ""),
         "yuanbao_login_url": str(getattr(oc, "YUANBAO_FREE_API", {}).get("login_url", values.get("yuanbao_login_url", "")) or ""),
-        "yuanbao_free_api_enabled": bool(getattr(oc, "YUANBAO_FREE_API", {}).get("enabled", values.get("yuanbao_free_api_enabled", False))),
         "yuanbao_hy_source": str(getattr(oc, "YUANBAO_FREE_API", {}).get("hy_source", values.get("yuanbao_hy_source", "web")) or ""),
         "yuanbao_hy_user": str(getattr(oc, "YUANBAO_FREE_API", {}).get("hy_user", values.get("yuanbao_hy_user", "")) or ""),
         "yuanbao_x_uskey": str(getattr(oc, "YUANBAO_FREE_API", {}).get("x_uskey", values.get("yuanbao_x_uskey", "")) or ""),
         "yuanbao_agent_id": str(getattr(oc, "YUANBAO_FREE_API", {}).get("agent_id", values.get("yuanbao_agent_id", "")) or ""),
-        "yuanbao_chat_id": str(getattr(oc, "YUANBAO_FREE_API", {}).get("chat_id", values.get("yuanbao_chat_id", "")) or ""),
-        "yuanbao_remove_conversation": bool(getattr(oc, "YUANBAO_FREE_API", {}).get("should_remove_conversation", values.get("yuanbao_remove_conversation", False))),
-        "yuanbao_upload_images": bool(getattr(oc, "YUANBAO_FREE_API", {}).get("upload_images", values.get("yuanbao_upload_images", True))),
         "ollama_base_url": str(oc.OLLAMA.get("base_url", values.get("ollama_base_url", ""))),
         "ollama_model": str(oc.OLLAMA_MODEL or ""),
         "num_gpu": oc.OLLAMA_OPTIONS.get("num_gpu", values.get("num_gpu", -1)),
@@ -40,6 +36,7 @@ def load_ai_values(default_values: dict) -> dict:
         "ai_voice_max_chars": oc.OLLAMA.get("ai_voice_max_chars", values.get("ai_voice_max_chars", 40)),
         "gsv_cache_max_files": oc.OLLAMA.get("gsv_cache_max_files", values.get("gsv_cache_max_files", 20)),
         "memory_context_limit": oc.OLLAMA.get("memory_context_limit", values.get("memory_context_limit", default_values["memory_context_limit"])),
+        "memory_recall_count": oc.OLLAMA.get("memory_recall_count", values.get("memory_recall_count", 5)),
         "api_enable_thinking": bool(oc.OLLAMA.get("api_enable_thinking", values.get("api_enable_thinking", False))),
         "auto_companion_enabled": bool(oc.AUTO_COMPANION.get("enabled", values.get("auto_companion_enabled", True))),
     })
@@ -56,15 +53,11 @@ def save_ai_values(values: dict, default_values: dict) -> None:
     text = _replace_assignment(text, "API_BASE_URL", _py_literal(values["api_base_url"]))
     text = _replace_assignment(text, "API_MODEL", _py_literal(values["api_model"]))
     text = _replace_assignment(text, "OLLAMA_MODEL", _py_literal(values["ollama_model"]))
-    text = _replace_named_dict_item(text, "YUANBAO_FREE_API", "enabled", _py_literal(values["yuanbao_free_api_enabled"]))
     text = _replace_named_dict_item(text, "YUANBAO_FREE_API", "login_url", _py_literal(values["yuanbao_login_url"]))
     text = _replace_named_dict_item(text, "YUANBAO_FREE_API", "hy_source", _py_literal(values["yuanbao_hy_source"]))
     text = _replace_named_dict_item(text, "YUANBAO_FREE_API", "hy_user", _py_literal(values["yuanbao_hy_user"]))
     text = _replace_named_dict_item(text, "YUANBAO_FREE_API", "x_uskey", _py_literal(values["yuanbao_x_uskey"]))
     text = _replace_named_dict_item(text, "YUANBAO_FREE_API", "agent_id", _py_literal(values["yuanbao_agent_id"]))
-    text = _replace_named_dict_item(text, "YUANBAO_FREE_API", "chat_id", _py_literal(values["yuanbao_chat_id"]))
-    text = _replace_named_dict_item(text, "YUANBAO_FREE_API", "should_remove_conversation", _py_literal(values["yuanbao_remove_conversation"]))
-    text = _replace_named_dict_item(text, "YUANBAO_FREE_API", "upload_images", _py_literal(values["yuanbao_upload_images"]))
 
     text = _replace_dict_item(text, "base_url", _py_literal(values["ollama_base_url"]))
     text = _replace_dict_item(text, "api_temperature", _py_literal(values["api_temperature"]))
@@ -74,6 +67,7 @@ def save_ai_values(values: dict, default_values: dict) -> None:
     text = _replace_or_insert_dict_item_after(text, "ai_voice_max_chars", _py_literal(values["ai_voice_max_chars"]), "gsv_speed_factor")
     text = _replace_or_insert_dict_item_after(text, "gsv_cache_max_files", _py_literal(values["gsv_cache_max_files"]), "ai_voice_max_chars")
     text = _replace_or_insert_dict_item_after(text, "memory_context_limit", _py_literal(memory_context_limit_value), "gsv_cache_max_files")
+    text = _replace_or_insert_dict_item_after(text, "memory_recall_count", _py_literal(values["memory_recall_count"]), "memory_context_limit")
     text = _replace_dict_item(text, "api_enable_thinking", _py_literal(values["api_enable_thinking"]))
     text = _replace_named_dict_item(text, "AUTO_COMPANION", "enabled", _py_literal(values["auto_companion_enabled"]))
 
@@ -93,15 +87,11 @@ def apply_ai_runtime(values: dict, default_values: dict) -> None:
     oc.FORCE_REPLY_MODE = values["force_reply_mode"]
     oc.API_BASE_URL = values["api_base_url"]
     oc.API_MODEL = values["api_model"]
-    oc.YUANBAO_FREE_API["enabled"] = values["yuanbao_free_api_enabled"]
     oc.YUANBAO_FREE_API["login_url"] = values["yuanbao_login_url"]
     oc.YUANBAO_FREE_API["hy_source"] = values["yuanbao_hy_source"]
     oc.YUANBAO_FREE_API["hy_user"] = values["yuanbao_hy_user"]
     oc.YUANBAO_FREE_API["x_uskey"] = values["yuanbao_x_uskey"]
     oc.YUANBAO_FREE_API["agent_id"] = values["yuanbao_agent_id"]
-    oc.YUANBAO_FREE_API["chat_id"] = values["yuanbao_chat_id"]
-    oc.YUANBAO_FREE_API["should_remove_conversation"] = values["yuanbao_remove_conversation"]
-    oc.YUANBAO_FREE_API["upload_images"] = values["yuanbao_upload_images"]
     oc.OLLAMA_MODEL = values["ollama_model"]
     oc.OLLAMA["base_url"] = values["ollama_base_url"]
     oc.OLLAMA["api_temperature"] = values["api_temperature"]
@@ -111,6 +101,7 @@ def apply_ai_runtime(values: dict, default_values: dict) -> None:
     oc.OLLAMA["ai_voice_max_chars"] = values["ai_voice_max_chars"]
     oc.OLLAMA["gsv_cache_max_files"] = values["gsv_cache_max_files"]
     oc.OLLAMA["memory_context_limit"] = memory_context_limit_value
+    oc.OLLAMA["memory_recall_count"] = values["memory_recall_count"]
     oc.OLLAMA["api_enable_thinking"] = values["api_enable_thinking"]
     oc.AUTO_COMPANION["enabled"] = values["auto_companion_enabled"]
     oc.OLLAMA_OPTIONS["num_gpu"] = values["num_gpu"]

@@ -64,10 +64,30 @@ _DEFAULT_MUSIC_CHOICES = ('靛青宇宙', '碎花', '纸飞机', '小小奇迹',
 _DEFAULT_TIMER_SECONDS = 30
 _MAX_TIMER_SECONDS = 99 * 3600 + 59 * 60 + 59
 _USER_DIR = Path(__file__).resolve().parents[3] / 'resc' / 'user'
-_MEMORY_FILES = (_USER_DIR / 'memory.txt', _USER_DIR / 'memory')
+_MEMORY_DIR = _USER_DIR / 'memory'
+_MEMORY_FILE_PREFIX_DISPATCHER = 'memory_'
+_MEMORY_FILE_SUFFIX = '.txt'
 _MEMORY_TIMESTAMP_FORMAT = '%Y-%m-%d %H:%M:%S'
-_MEMORY_RECENT_COUNT = 5
-_MEMORY_RANGE_MAX_COUNT = 10
+_MEMORY_RECENT_COUNT_DEFAULT = 5
+_MEMORY_RANGE_MAX_RATIO = 2
+
+
+def _get_memory_recall_count() -> int:
+    try:
+        import config.ollama_config as oc
+        raw = oc.OLLAMA.get("memory_recall_count", _MEMORY_RECENT_COUNT_DEFAULT)
+        count = int(raw)
+    except Exception:
+        count = _MEMORY_RECENT_COUNT_DEFAULT
+    return max(5, min(50, count))
+
+
+def _get_memory_recall_recent_count() -> int:
+    return _get_memory_recall_count()
+
+
+def _get_memory_recall_range_count() -> int:
+    return _get_memory_recall_count() * _MEMORY_RANGE_MAX_RATIO
 _MEMORY_RECALL_REDISPATCH_DELAY_SEC = 5.0
 _DEFAULT_TOPIC = '日常'
 _DATETIME_RANGE_PATTERN = re.compile(
@@ -541,56 +561,60 @@ class ToolDispatcher:
     @staticmethod
     def _read_memory_entries() -> list[tuple[datetime, str, str, str]]:
         entries: list[tuple[datetime, str, str, str]] = []
-        memory_file = None
-        for candidate in _MEMORY_FILES:
-            if candidate.exists():
-                memory_file = candidate
-                break
-        if memory_file is None:
+        # 优先读取分日文件目录；兼容旧版单文件 memory.txt
+        if _MEMORY_DIR.exists() and _MEMORY_DIR.is_dir():
+            memory_files = sorted(
+                f for f in _MEMORY_DIR.iterdir()
+                if f.is_file() and f.name.startswith(_MEMORY_FILE_PREFIX_DISPATCHER) and f.name.endswith(_MEMORY_FILE_SUFFIX)
+            )
+        elif (_USER_DIR / 'memory.txt').exists():
+            memory_files = [_USER_DIR / 'memory.txt']
+        else:
             return entries
 
-        try:
-            with memory_file.open('r', encoding='utf-8') as f:
-                for raw_line in f:
-                    line = raw_line.strip()
-                    if not line:
-                        continue
-
-                    # 新格式：[时间][主题][user:/you:]内容
-                    match = _MEMORY_LINE_WITH_TOPIC_PATTERN.match(line)
-                    if match:
-                        ts_text = (match.group('ts') or '').strip()
-                        topic = _normalize_topic(match.group('topic') or '')
-                        role = (match.group('role') or '').strip().lower()
-                        content = (match.group('content') or '').strip()
-                        ts = _parse_datetime_loose(ts_text)
-                        if ts is None or not content:
+        for file_path in memory_files:
+            try:
+                with file_path.open('r', encoding='utf-8') as f:
+                    for raw_line in f:
+                        line = raw_line.strip()
+                        if not line:
                             continue
-                        entries.append((ts, topic, role, content))
-                        continue
 
-                    # 兼容上一版格式：[时间][user:/you:]内容（无主题）
-                    match = _MEMORY_LINE_NO_TOPIC_PATTERN.match(line)
-                    if match:
-                        ts_text = (match.group('ts') or '').strip()
-                        role = (match.group('role') or '').strip().lower()
-                        content = (match.group('content') or '').strip()
-                        ts = _parse_datetime_loose(ts_text)
-                        if ts is None or not content:
+                        # 新格式：[时间][主题][user:/you:]内容
+                        match = _MEMORY_LINE_WITH_TOPIC_PATTERN.match(line)
+                        if match:
+                            ts_text = (match.group('ts') or '').strip()
+                            topic = _normalize_topic(match.group('topic') or '')
+                            role = (match.group('role') or '').strip().lower()
+                            content = (match.group('content') or '').strip()
+                            ts = _parse_datetime_loose(ts_text)
+                            if ts is None or not content:
+                                continue
+                            entries.append((ts, topic, role, content))
                             continue
-                        entries.append((ts, _DEFAULT_TOPIC, role, content))
-                        continue
 
-                    # 兼容旧格式：YYYY-MM-DD HH:MM:SS,内容（默认按 you + 日常 处理）
-                    if ',' in line:
-                        ts_text, content = line.split(',', 1)
-                        ts = _parse_datetime_loose(ts_text)
-                        content = content.strip()
-                        if ts is None or not content:
+                        # 兼容上一版格式：[时间][user:/you:]内容（无主题）
+                        match = _MEMORY_LINE_NO_TOPIC_PATTERN.match(line)
+                        if match:
+                            ts_text = (match.group('ts') or '').strip()
+                            role = (match.group('role') or '').strip().lower()
+                            content = (match.group('content') or '').strip()
+                            ts = _parse_datetime_loose(ts_text)
+                            if ts is None or not content:
+                                continue
+                            entries.append((ts, _DEFAULT_TOPIC, role, content))
                             continue
-                        entries.append((ts, _DEFAULT_TOPIC, 'you', content))
-        except OSError as e:
-            logger.error("[ToolDispatcher] 读取 memory 文本失败: %s", e)
+
+                        # 兼容旧格式：YYYY-MM-DD HH:MM:SS,内容（默认按 you + 日常 处理）
+                        if ',' in line:
+                            ts_text, content = line.split(',', 1)
+                            ts = _parse_datetime_loose(ts_text)
+                            content = content.strip()
+                            if ts is None or not content:
+                                continue
+                            entries.append((ts, _DEFAULT_TOPIC, 'you', content))
+            except OSError as e:
+                logger.error("[ToolDispatcher] 读取 memory 文件失败 %s: %s", file_path.name, e)
         return entries
 
     @staticmethod
@@ -629,6 +653,45 @@ class ToolDispatcher:
             return only, only, remain
 
         return None, None, ''
+
+    @staticmethod
+    def _score_recall_items(
+        items: list[tuple[datetime, str, str, str]],
+        topic_filter: str,
+    ) -> list[tuple[float, tuple[datetime, str, str, str]]]:
+        """对匹配条目加权评分：匹配质量 × 时间衰减，返回 (score, item) 列表按分降序。"""
+        tf = topic_filter.lower()
+        now = datetime.now()
+        today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+        scored: list[tuple[float, tuple[datetime, str, str, str]]] = []
+        for ts, topic, role, content in items:
+            topic_lower = topic.lower()
+            content_lower = content.lower()
+
+            if topic_lower == tf:
+                match_score = 3.0
+            elif tf in topic_lower:
+                match_score = 2.0
+            elif tf in content_lower:
+                match_score = 1.0
+            else:
+                continue
+
+            days_ago = (today - ts.replace(hour=0, minute=0, second=0, microsecond=0)).days
+            if days_ago <= 0:
+                decay = 1.0
+            elif days_ago <= 7:
+                decay = 0.8
+            elif days_ago <= 30:
+                decay = 0.5
+            else:
+                decay = 0.3
+
+            scored.append((match_score * decay, (ts, topic, role, content)))
+
+        scored.sort(key=lambda pair: pair[0], reverse=True)
+        return scored
 
     @staticmethod
     def _build_recall_message(scope: str, items: list[tuple[datetime, str, str, str]]) -> str:
@@ -670,14 +733,12 @@ class ToolDispatcher:
 
         if is_recent_mode:
             topic_filter = mode_arg.strip()
-            pool = entries
+            limit = _get_memory_recall_recent_count()
             if topic_filter:
-                tf = topic_filter.lower()
-                pool = [
-                    item for item in pool
-                    if tf in item[1].lower() or tf in item[3].lower()
-                ]
-            selected = pool[-_MEMORY_RECENT_COUNT:]
+                scored = self._score_recall_items(entries, topic_filter)
+                selected = [item for _, item in scored[:limit]]
+            else:
+                selected = entries[-limit:]
             scope_text = '最近'
             if topic_filter:
                 scope_text += f' / 主题:{topic_filter}'
@@ -694,13 +755,12 @@ class ToolDispatcher:
                 start_dt, end_dt = end_dt, start_dt
 
             pool = [item for item in entries if start_dt <= item[0] <= end_dt]
+            limit = _get_memory_recall_range_count()
             if topic_filter:
-                tf = topic_filter.lower()
-                pool = [
-                    item for item in pool
-                    if tf in item[1].lower() or tf in item[3].lower()
-                ]
-            selected = pool[-_MEMORY_RANGE_MAX_COUNT:]
+                scored = self._score_recall_items(pool, topic_filter)
+                selected = [item for _, item in scored[:limit]]
+            else:
+                selected = pool[-limit:]
             scope_text = f'{start_dt.strftime(_MEMORY_TIMESTAMP_FORMAT)} ~ {end_dt.strftime(_MEMORY_TIMESTAMP_FORMAT)}'
             if topic_filter:
                 scope_text += f' / 主题:{topic_filter}'

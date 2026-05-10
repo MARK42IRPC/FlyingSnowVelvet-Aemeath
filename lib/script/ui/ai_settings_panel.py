@@ -78,14 +78,10 @@ _DEFAULT_VALUES = {
     "api_base_url": "http://127.0.0.1:8000/v1",
     "api_model": "deepseek-v3",
     "yuanbao_login_url": "https://yuanbao.tencent.com/chat/naQivTmsDa",
-    "yuanbao_free_api_enabled": False,
     "yuanbao_hy_source": "web",
     "yuanbao_hy_user": "",
     "yuanbao_x_uskey": "",
     "yuanbao_agent_id": "naQivTmsDa",
-    "yuanbao_chat_id": "",
-    "yuanbao_remove_conversation": False,
-    "yuanbao_upload_images": True,
     "ollama_base_url": "http://localhost:11434",
     "ollama_model": "qwen2.5",
     "num_gpu": -1,
@@ -97,6 +93,7 @@ _DEFAULT_VALUES = {
     "ai_voice_max_chars": 40,
     "gsv_cache_max_files": 20,
     "memory_context_limit": 12,
+    "memory_recall_count": 5,
     "api_enable_thinking": False,
     "auto_companion_enabled": True,
 }
@@ -1632,38 +1629,6 @@ class AISettingsPanel(QWidget):
         self._set_widget_description(self._start_yuanbao_login_btn, "启动本地 YuanBao-Free-API 服务，弹出二维码面板并等待扫码登录。")
         self._set_widget_description(self._stop_yuanbao_login_btn, "停止元宝登录流程并关闭本地元宝服务。")
 
-        self._yuanbao_free_api_enabled = QCheckBox("启用 YuanBao-Free-API 附加参数")
-        form.addRow("元宝Free-API", self._yuanbao_free_api_enabled)
-        self._set_form_row_description(
-            form,
-            self._yuanbao_free_api_enabled,
-            "启用后会自动附加元宝兼容参数，并可按选项复用会话或上传图片；登录态由扫码流程自动处理，无需手填。",
-        )
-
-        self._yuanbao_chat_id = self._create_config_line_edit(expanding=True)
-        form.addRow("chat_id", self._yuanbao_chat_id)
-        self._set_form_row_description(
-            form,
-            self._yuanbao_chat_id,
-            "可选；留空时由服务端创建新会话，填写则尽量复用指定会话。",
-        )
-
-        yuanbao_flags = QWidget()
-        yuanbao_flags_layout = QHBoxLayout(yuanbao_flags)
-        yuanbao_flags_layout.setContentsMargins(0, 0, 0, 0)
-        yuanbao_flags_layout.setSpacing(scale_px(12, min_abs=8))
-        self._yuanbao_remove_conversation = QCheckBox("请求后删除会话")
-        self._yuanbao_upload_images = QCheckBox("图片先走 /upload")
-        yuanbao_flags_layout.addWidget(self._yuanbao_remove_conversation, 0)
-        yuanbao_flags_layout.addWidget(self._yuanbao_upload_images, 0)
-        yuanbao_flags_layout.addStretch(1)
-        form.addRow("附加开关", yuanbao_flags)
-        self._set_form_row_description(
-            form,
-            yuanbao_flags,
-            "启用图片上传后，桌宠截图会先发到 /upload 生成 multimedia，再随聊天请求一并提交。",
-        )
-
         base_row, base_layout = self._create_fixed_width_row_group(
             field_width=_CONFIG_FIELD_WIDTH,
             spacing=scale_px(8, min_abs=6),
@@ -1788,6 +1753,14 @@ class AISettingsPanel(QWidget):
             form,
             self._memory_context_limit,
             "附带给 AI 的 recent memory 条数，0 表示不附带，范围 0~48。",
+        )
+
+        self._memory_recall_count = _DecimalSliderField(5, 50, 1, value=_DEFAULT_VALUES["memory_recall_count"])
+        form.addRow("回忆提取条数", self._memory_recall_count)
+        self._set_form_row_description(
+            form,
+            self._memory_recall_count,
+            "回忆工具单次提取的记忆条数，范围 5~50。",
         )
 
         self._api_enable_thinking = QCheckBox("启用思考模式(外部接口可用)")
@@ -2535,7 +2508,6 @@ class AISettingsPanel(QWidget):
     def _on_start_yuanbao_login(self) -> None:
         api_key = self._api_key.raw_text().strip()
 
-        self._yuanbao_free_api_enabled.setChecked(True)
         if not self._api_base_url.text().strip():
             self._api_base_url.setText("http://127.0.0.1:8000/v1")
         if not self._api_model.text().strip():
@@ -3798,15 +3770,19 @@ class AISettingsPanel(QWidget):
         if not (0 <= memory_context_limit <= 48):
             raise ValueError("记忆上下文条数范围应为 0~48")
 
+        try:
+            memory_recall_count = int(float(self._memory_recall_count.text().strip() or "5"))
+        except ValueError as e:
+            raise ValueError("回忆提取条数必须是整数") from e
+        if not (5 <= memory_recall_count <= 50):
+            raise ValueError("回忆提取条数范围应为 5~50")
+
         values = {
             "api_key": self._api_key.raw_text(),
             "force_reply_mode": force_mode,
             "api_base_url": self._api_base_url.text().strip(),
             "api_model": self._api_model.text().strip(),
-            "yuanbao_free_api_enabled": bool(self._yuanbao_free_api_enabled.isChecked()),
-            "yuanbao_chat_id": self._yuanbao_chat_id.text().strip(),
-            "yuanbao_remove_conversation": bool(self._yuanbao_remove_conversation.isChecked()),
-            "yuanbao_upload_images": bool(self._yuanbao_upload_images.isChecked()),
+            "yuanbao_free_api_enabled": True,
             "ollama_base_url": self._ollama_base_url.text().strip(),
             "ollama_model": self._ollama_model.currentText().strip(),
             "num_gpu": num_gpu,
@@ -3818,6 +3794,7 @@ class AISettingsPanel(QWidget):
             "ai_voice_max_chars": ai_voice_max_chars,
             "gsv_cache_max_files": gsv_cache_max_files,
             "memory_context_limit": memory_context_limit,
+            "memory_recall_count": memory_recall_count,
             "api_enable_thinking": bool(self._api_enable_thinking.isChecked()),
             "auto_companion_enabled": bool(self._auto_companion_enabled.isChecked()),
         }
@@ -3847,10 +3824,6 @@ class AISettingsPanel(QWidget):
         self._api_base_url.setText(str(values.get("api_base_url", "")))
         self._api_model.setText(str(values.get("api_model", "")))
         self._set_hidden_yuanbao_values(values)
-        self._yuanbao_free_api_enabled.setChecked(bool(values.get("yuanbao_free_api_enabled", False)))
-        self._yuanbao_chat_id.setText(str(values.get("yuanbao_chat_id", "")))
-        self._yuanbao_remove_conversation.setChecked(bool(values.get("yuanbao_remove_conversation", False)))
-        self._yuanbao_upload_images.setChecked(bool(values.get("yuanbao_upload_images", True)))
         self._ollama_base_url.setText(str(values.get("ollama_base_url", "")))
         self._refresh_ollama_model_choices(str(values.get("ollama_model", "")))
         gpu_mode = _gpu_mode_from_num_gpu(values.get("num_gpu", -1))
@@ -3864,6 +3837,7 @@ class AISettingsPanel(QWidget):
         self._ai_voice_max_chars.setText(str(values.get("ai_voice_max_chars", 40)))
         self._gsv_cache_max_files.setText(str(values.get("gsv_cache_max_files", 20)))
         self._memory_context_limit.setText(str(values.get("memory_context_limit", 12)))
+        self._memory_recall_count.setText(str(values.get("memory_recall_count", 5)))
         self._api_enable_thinking.setChecked(bool(values.get("api_enable_thinking", False)))
         self._auto_companion_enabled.setChecked(bool(values.get("auto_companion_enabled", True)))
 
