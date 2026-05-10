@@ -10,6 +10,11 @@
       增量/全量更新、进度展示与自动重启
     - 配置面板集成更新检查入口
 
+  ● 鼠标穿透托盘开关
+    - 托盘右键菜单"鼠标穿透"从固定行为改为可勾选开关
+    - 新增 clickthrough_state.py 全局穿透状态模块
+    - 延迟创建的窗口自动同步当前穿透状态
+
   ● 元宝附加参数硬编码
     - chat_id / should_remove_conversation / upload_images 全部内置
     - AI 设置面板移除对应复选框和输入框，防止误操作覆盖
@@ -27,9 +32,18 @@
     - 新增"回忆提取条数" UI 滑块 (5~50)，替换硬编码常量
 
   ● QR 登录对话框统一重构
-    - 新增 qr_dialog_base.py 基类，网易云/元宝 QQ 登录共用
+    - 新增 qr_dialog_base.py 基类，网易云 / 元宝 / QQ 登录共用
     - 减少约 500 行重复代码
     - 新增 QQ 群展示对话框
+
+  ● YuanBao 认证头持久化缓存
+    - 新增 storage_state_headers.json，持久化存储认证请求头
+    - 页面级 request 监听器被动捕获，降低路由拦截开销
+    - 退出登录时自动清理缓存
+
+  ● 语音提醒模块
+    - 新增 ams_clickthrough_reminder.py 语音提示
+    - 内置音频资源文件
 
 
 【修复】
@@ -37,9 +51,12 @@
   ● 退出动画恢复
     - 修复应用关闭时退出动画被跳过的问题
 
+  ● 元宝二维码登录稳定性
+    - 扩展按钮选择器覆盖范围，提升登录入口识别成功率
+
   ● pyncm 依赖修复
     - PyPI 已下架 pyncm，现内置为项目源码 (pyncm/ 目录)
-    - 不再依赖外部 pip 安装
+    - 不再依赖外部 pip 安装，消除 CI 构建失败
 
   ● GSVmove 服务稳定性
     - 启动等待从 45s 延长到 90s
@@ -51,11 +68,6 @@
     - text 类型提取兼容 msg/text/content/value/output_text 多种字段
     - 控制类 payload ([plugin:/[MSGINDEX:/[TRACEID:) 静默跳过
 
-  ● 元宝请求头缓存
-    - 新增 storage_state_headers.json 持久化认证头
-    - 页面级 request 监听器被动捕获，降低路由开销
-    - 退出登录时清理头缓存
-
 
 【优化】
 
@@ -63,9 +75,9 @@
     - api_client_common 引入 Session 缓存池，减少 TLS 握手开销
     - 流式读取 chunk_size 从 1 调整为 128，降低 CPU 开销
 
-  ● 鼠标穿透全局状态
-    - 新增 clickthrough_state.py，统一管理穿透开关
-    - 延迟创建的窗口可自动同步当前状态
+  ● AI 设置面板简化
+    - 移除元宝相关三个复选框和输入框，降低用户误操作风险
+    - 隐藏配置项改为仅通过 ollama_config.py 管理
 
 
 【开发】
@@ -76,4 +88,4 @@
     - test_yuanbao_free_api_stream.py
 
   ● 本次发版提交范围
-    05a37b9..af73ab1 共 7 个提交
+    b978035..aa51c24 共 11 个提交 (2026-04-15 ~ 2026-05-10)

@@ -2,14 +2,40 @@
 
 本文件记录飞行雪绒 LTS 系列的公开版本变更。版本标签与发布包名称保持一致，例如 `LTS1.0.5pre3`。
 
-## [LTS1.0.5pre3] - 2026-04-15
+## [LTS1.0.5] - 2026-05-10
+
+本条目按 `2026-04-15` 至 `2026-05-10` 的提交整理，涵盖 11 个提交。
+
+### Added
+- 控制面板新增 **桌宠更新** 标签页，提供版本检测、增量/全量更新、进度展示与自动重启。
+- 托盘菜单 **鼠标穿透** 改为可勾选开关，并新增全局穿透状态模块 `clickthrough_state.py`。
+- 新增 **QR 对话框统一基类** `qr_dialog_base.py`，网易云 / 元宝 / QQ 群登录共用。
+- 控制面板新增 **QQ 群二维码展示** 对话框。
+- YuanBao 认证头持久化缓存 `storage_state_headers.json`，页面级 request 监听器被动捕获。
+- 记忆系统重构：单文件 `memory.txt` → `memory/memory_YYYY-MM-DD.txt` 按日分片，启动自动迁移旧数据。
+- 回忆工具 **加权评分算法**：匹配质量(精确3/子串2/内容1) × 时间衰减(1.0/0.8/0.5/0.3)。
+- 控制面板新增 **回忆提取条数** UI 滑块 (5~50)，替换硬编码常量。
+- 元宝附加参数硬编码：chat_id 恒空，should_remove_conversation/upload_images 恒 True。
+- 新增语音提醒音频资源与 `ams_clickthrough_reminder` 模块。
+- 仓库内置 `pyncm` 源码（因 PyPI 已下架该包）。
+- 新增测试用例：`test_ai_settings_panel_yuanbao_hidden`、`test_gsvmove_root_resolution`、`test_yuanbao_free_api_stream`。
 
 ### Changed
-- 项目当前版本号切换至 `LTS1.0.5pre3`，作为新一轮开发基线。
-- 资料舱门户、发布命令与仓库入口文档已同步切换到 `pre3` 标识。
+- AI 设置面板移除 chat_id / should_remove_conversation / upload_images 复选框与输入框，防止误操作覆盖。
+- QR 登录对话框重构减少约 500 行重复代码。
+- HTTP 会话引入缓存池复用，减少 TLS 握手开销；流式读取 chunk_size 从 1 调整为 128。
+- GSVmove 启动等待从 45s 延长到 90s，超时时输出日志尾部便于诊断。
+- 回忆匹配逻辑从"取最新 N 条"改为加权评分，跳过 tool_recall 触发的 AI 回复写入记忆。
+- tool_recall 消息不再附带 [默认记忆] 块，避免双路记忆混淆。
+- 版本号从 `LTS1.0.5pre3` 发布为 `LTS1.0.5`。
 
-### Notes
-- 本条目作为 `pre3` 开发期累计入口，后续功能、修复与兼容性调整请继续追加到这里。
+### Fixed
+- 修复应用关闭时退出动画被跳过的问题。
+- 元宝二维码登录入口识别稳定性提升（扩展按钮选择器覆盖范围）。
+- 元宝流式响应兼容 SSE 多行 data/event 协议，text 类型提取覆盖 msg/text/content/value 等字段。
+- GSVmove 根目录解析增加空值保护。
+- pyncm 从 pip 依赖改为项目内置源码，解决 PyPI 下架导致 CI 构建失败的问题。
+- 元宝退出登录时清理认证头缓存，避免残留登录态。
 
 ## [LTS1.0.5pre2] - 2026-04-14
 
