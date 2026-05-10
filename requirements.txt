@@ -11,7 +11,6 @@ playwright>=1.50.0
 pydantic>=2.12.5
 pydantic_settings>=2.13.1
 pygame>=2.5.2
-pyncm @ git+https://github.com/greats3an/pyncm.git
 pycaw>=20181226
 PyQt5>=5.15.10
 pywin32>=306

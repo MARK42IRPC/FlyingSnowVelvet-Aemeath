@@ -59,7 +59,6 @@ DEPENDENCIES = [
     ("pygame", "audio playback", ("pygame",)),
     ("requests", "HTTP client", ("requests",)),
     ("musicdl", "Kugou fallback parser", ("musicdl",)),
-    ("pyncm", "NetEase Cloud Music API", ("pyncm",)),
     ("qrcode", "QR code generation for music login", ("qrcode",)),
     ("sse-starlette", "SSE streaming for YuanBao relay", ("sse_starlette",)),
     ("mutagen", "local audio metadata parsing", ("mutagen",)),
