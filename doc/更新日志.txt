@@ -1,0 +1,79 @@
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  飞行雪绒 Flying Snow Velvet — 更新日志
+  版本 LTS1.0.5  发布日期 2026-05-10
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+【新功能】
+
+  ● 更新面板工作流
+    - 新增 update_dialog.py 与 update_manager.py，支持版本检测、
+      增量/全量更新、进度展示与自动重启
+    - 配置面板集成更新检查入口
+
+  ● 元宝附加参数硬编码
+    - chat_id / should_remove_conversation / upload_images 全部内置
+    - AI 设置面板移除对应复选框和输入框，防止误操作覆盖
+    - chat_id 恒空，仅保留 x_uskey / hy_user 为隐藏配置
+
+  ● 记忆系统重构
+    - 单文件 memory.txt → memory/memory_YYYY-MM-DD.txt 按日分片
+    - 启动时自动迁移旧数据到新格式
+    - 跳过 tool_recall 触发的 AI 回复，防止反馈环污染
+    - tool_recall 消息不再附带 [默认记忆] 块，避免双路记忆混淆
+
+  ● 回忆工具加权评分
+    - 匹配逻辑从"取最新 N 条"改为加权评分算法：
+      匹配质量（精确×3 / 子串×2 / 内容×1）× 时间衰减（1.0/0.8/0.5/0.3）
+    - 新增"回忆提取条数" UI 滑块 (5~50)，替换硬编码常量
+
+  ● QR 登录对话框统一重构
+    - 新增 qr_dialog_base.py 基类，网易云/元宝 QQ 登录共用
+    - 减少约 500 行重复代码
+    - 新增 QQ 群展示对话框
+
+
+【修复】
+
+  ● 退出动画恢复
+    - 修复应用关闭时退出动画被跳过的问题
+
+  ● pyncm 依赖修复
+    - PyPI 已下架 pyncm，现内置为项目源码 (pyncm/ 目录)
+    - 不再依赖外部 pip 安装
+
+  ● GSVmove 服务稳定性
+    - 启动等待从 45s 延长到 90s
+    - 超时时输出最近日志尾部便于诊断
+    - 根目录解析增加空值保护
+
+  ● YuanBao 流式响应增强
+    - SSE 事件协议支持多行 data + event 字段解析
+    - text 类型提取兼容 msg/text/content/value/output_text 多种字段
+    - 控制类 payload ([plugin:/[MSGINDEX:/[TRACEID:) 静默跳过
+
+  ● 元宝请求头缓存
+    - 新增 storage_state_headers.json 持久化认证头
+    - 页面级 request 监听器被动捕获，降低路由开销
+    - 退出登录时清理头缓存
+
+
+【优化】
+
+  ● HTTP 会话复用
+    - api_client_common 引入 Session 缓存池，减少 TLS 握手开销
+    - 流式读取 chunk_size 从 1 调整为 128，降低 CPU 开销
+
+  ● 鼠标穿透全局状态
+    - 新增 clickthrough_state.py，统一管理穿透开关
+    - 延迟创建的窗口可自动同步当前状态
+
+
+【开发】
+
+  ● 新增测试用例
+    - test_ai_settings_panel_yuanbao_hidden.py
+    - test_gsvmove_root_resolution.py
+    - test_yuanbao_free_api_stream.py
+
+  ● 本次发版提交范围
+    05a37b9..af73ab1 共 7 个提交
