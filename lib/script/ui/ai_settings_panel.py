@@ -74,9 +74,9 @@ _GPU_MODE_AUTO = "auto"
 
 _DEFAULT_VALUES = {
     "api_key": "",
-    "force_reply_mode": "4",
-    "api_base_url": "http://127.0.0.1:8000/v1",
-    "api_model": "deepseek-v3",
+    "force_reply_mode": "",
+    "api_base_url": "https://zzmapi.zzmsgdsg.xyz/v1",
+    "api_model": "gpt-5.4-mini",
     "yuanbao_login_url": "https://yuanbao.tencent.com/chat/naQivTmsDa",
     "yuanbao_hy_source": "web",
     "yuanbao_hy_user": "",
@@ -86,14 +86,14 @@ _DEFAULT_VALUES = {
     "ollama_model": "qwen2.5",
     "num_gpu": -1,
     "num_thread": 0,
-    "api_temperature": 0.8,
+    "api_temperature": 1.35,
     "gsv_auto_start": True,
     "gsv_temperature": 1.35,
-    "gsv_speed_factor": 1.0,
-    "ai_voice_max_chars": 40,
+    "gsv_speed_factor": 1.05,
+    "ai_voice_max_chars": 80,
     "gsv_cache_max_files": 20,
     "memory_context_limit": 12,
-    "memory_recall_count": 5,
+    "memory_recall_count": 30,
     "api_enable_thinking": False,
     "auto_companion_enabled": True,
 }
@@ -226,7 +226,14 @@ _GENERAL_CONFIG_CATEGORIES = [
 
 _CATEGORY_KEY_ALLOWLIST = {
     "ui_anim": {
-        "ANIMATION": {"frame_fps", "gif_fps", "start_exit_enabled"},
+        "ANIMATION": {
+            "frame_fps",
+            "gif_fps",
+            "start_exit_enabled",
+            "exit_shadow_strength",
+            "exit_shadow_blur_radius",
+            "exit_shadow_offset_direction",
+        },
         "UI": {"pet_opacity", "ui_widget_opacity", "ui_fade_duration", "auto_hide_mouse_distance"},
         "COMMAND_DIALOG": {"idle_timeout_ms"},
     },
@@ -353,6 +360,8 @@ _GENERAL_BOOL_KEYS: set[tuple[str, str]] = {
 _GENERAL_NUMERIC_RULES: dict[tuple[str, str], tuple[str, float, float]] = {
     ("ANIMATION", "frame_fps"): ("int", 1, 120),
     ("ANIMATION", "gif_fps"): ("int", 1, 60),
+    ("ANIMATION", "exit_shadow_strength"): ("int", 0, 255),
+    ("ANIMATION", "exit_shadow_blur_radius"): ("int", 0, 128),
     ("UI", "pet_opacity"): ("number", 0.0, 1.0),
     ("UI", "ui_widget_opacity"): ("number", 0.0, 1.0),
     ("UI", "ui_fade_duration"): ("int", 0, 5000),
@@ -446,6 +455,149 @@ _VOLUME_SLIDER_FIELDS: set[tuple[str, str]] = {
     ("CLOUD_MUSIC", "default_volume"),
 }
 
+_GENERAL_DECIMAL_SLIDER_SPECS: dict[tuple[str, str], tuple[float, float, float, int]] = {
+    ("UI", "pet_opacity"): (0.0, 1.0, 0.05, 2),
+    ("UI", "ui_widget_opacity"): (0.0, 1.0, 0.05, 2),
+    ("OBJECTS", "object_opacity"): (0.0, 1.0, 0.05, 2),
+    ("ANIMATION", "exit_shadow_strength"): (0.0, 255.0, 1.0, 0),
+    ("ANIMATION", "exit_shadow_blur_radius"): (0.0, 128.0, 1.0, 0),
+}
+
+_GENERAL_CHOICE_FIELD_OPTIONS: dict[tuple[str, str], list[tuple[str, str]]] = {
+    ("ANIMATION", "exit_shadow_offset_direction"): [
+        ("向下", "down"),
+        ("向上", "up"),
+        ("向右", "right"),
+        ("向左", "left"),
+        ("右下", "down_right"),
+        ("左下", "down_left"),
+        ("右上", "up_right"),
+        ("左上", "up_left"),
+        ("不偏移", "center"),
+    ],
+}
+
+_GENERAL_CONFIG_DEFAULTS: dict[str, dict[str, object]] = {
+    "ANIMATION": {
+        "frame_fps": 60,
+        "gif_fps": 16,
+        "start_exit_enabled": True,
+        "exit_shadow_strength": 230,
+        "exit_shadow_blur_radius": 10,
+        "exit_shadow_offset_direction": "down_right",
+    },
+    "UI": {
+        "pet_opacity": 1.0,
+        "ui_widget_opacity": 1.0,
+        "ui_fade_duration": 200,
+        "auto_hide_mouse_distance": 300,
+    },
+    "COMMAND_DIALOG": {
+        "idle_timeout_ms": 10000,
+    },
+    "PARTICLES": {
+        "enable_stroke": False,
+        "fade_threshold": 0.75,
+    },
+    "BEHAVIOR": {
+        "wander_near_speaker_radius": 150,
+        "double_click_ticks": 4,
+        "move_max_speed": 2.0,
+        "move_acceleration": 0.1,
+        "move_min_speed": 1.0,
+    },
+    "PHYSICS": {
+        "max_bounces": 5,
+        "ground_y_pct": 0.9,
+        "air_resistance": 0.95,
+    },
+    "SNOW_LEOPARD": {
+        "spawn_y_min": 0.95,
+        "spawn_y_max": 0.99,
+        "interact_radius": 50,
+        "natural_spawn_limit": 12,
+        "jump_power_min": 2,
+        "jump_power_max": 2.5,
+    },
+    "SNOW_PILE": {
+        "spawn_y_min": 0.82,
+        "spawn_y_max": 0.93,
+        "scale_min": 1.2,
+        "scale_max": 1.5,
+        "batch_interval": (10000, 20000),
+        "batch_size": (1, 2),
+        "batch_item_interval": (3000, 5000),
+        "spawn_power_min": 3,
+        "spawn_power_max": 5,
+    },
+    "SOFA": {
+        "spawn_y_min": 0.8,
+        "spawn_y_max": 0.9,
+        "protect_radius": 10,
+    },
+    "MORTOR": {
+        "spawn_y_min": 0.8,
+        "spawn_y_max": 0.9,
+        "move_speed_px_per_frame": 2.0,
+        "bgm_enabled": True,
+    },
+    "CLOCK": {
+        "spawn_y_min": 0.8,
+        "spawn_y_max": 0.9,
+        "countdown_ss": 30,
+    },
+    "SPEAKER": {
+        "spawn_y_min": 0.8,
+        "spawn_y_max": 0.9,
+    },
+    "OBJECTS": {
+        "object_opacity": 1.0,
+    },
+    "SNOWBALL": {
+        "max_count": 16,
+        "spawn_y_min": 0.85,
+        "spawn_y_max": 0.95,
+        "size_min": 24,
+        "size_max": 48,
+        "lifetime_min": 10,
+        "lifetime_max": 15,
+    },
+    "SOUND": {
+        "master_volume": 0.68,
+        "main_pet_volume": 0.4,
+        "game_object_volume": 0.9,
+    },
+    "VOICE": {
+        "voice_volume": 0.79,
+        "microphone_push_to_talk_key": "V",
+        "microphone_silence_timeout_secs": 3.0,
+        "microphone_speech_rms_threshold": 550,
+    },
+    "CLOUD_MUSIC": {
+        "provider": "netease",
+        "default_volume": 0.2,
+        "particle_interval": 60,
+        "search_result_limit": 128,
+        "cache_dir": "resc/user/temp",
+        "local_music_dir": "",
+        "launch_wuwa_path": "",
+    },
+    "TIMEOUTS": {
+        "api_list": 2,
+        "api_request": 10,
+        "login_wait": 30,
+        "login_call": 20,
+        "cmd_exec": 30,
+        "idle_close_ms": 10000,
+    },
+    "DRAW": {
+        "scale": 1.0,
+    },
+    "STARTUP": {
+        "ensure_desktop_shortcut": True,
+    },
+}
+
 _DICT_FRIENDLY_NAME = {
     "UI": "界面",
     "ANIMATION": "动画",
@@ -487,6 +639,9 @@ _KEY_FRIENDLY_NAME = {
         "gif_fps": "GIF帧率",
         "frame_fps": "帧率",
         "start_exit_enabled": "启动/退出动画",
+        "exit_shadow_strength": "退出阴影强度",
+        "exit_shadow_blur_radius": "退出阴影模糊半径(px)",
+        "exit_shadow_offset_direction": "退出阴影偏移方向",
     },
     "STARTUP": {
         "ensure_desktop_shortcut": "启动时创建快捷方式",
@@ -668,6 +823,23 @@ def _friendly_field_section_name(dict_name: str, key: str) -> str:
 
 def _friendly_key_name(dict_name: str, key: str) -> str:
     return _KEY_FRIENDLY_NAME.get(dict_name, {}).get(key, key)
+
+
+def _choice_label_for_value(dict_name: str, key: str, value) -> str | None:
+    options = _GENERAL_CHOICE_FIELD_OPTIONS.get((str(dict_name), str(key)))
+    if not options:
+        return None
+    for label, option_value in options:
+        if option_value == value:
+            return label
+    return None
+
+
+def _hardcoded_general_default(dict_name: str, key: str, fallback):
+    section = _GENERAL_CONFIG_DEFAULTS.get(str(dict_name))
+    if isinstance(section, dict) and key in section:
+        return copy.deepcopy(section[key])
+    return copy.deepcopy(fallback)
 
 
 def _range_pair_signature(key: str) -> tuple[str, str] | None:
@@ -1464,6 +1636,15 @@ class AISettingsPanel(QWidget):
         return editor
 
     @staticmethod
+    def _create_config_choice_editor(options: list[tuple[str, str]], *, field_width: int = _CONFIG_FIELD_WIDTH) -> QComboBox:
+        editor = _WatermarkComboBox()
+        editor.setView(QListView(editor))
+        editor.setFixedWidth(int(field_width))
+        for label, value in options:
+            editor.addItem(str(label), value)
+        return editor
+
+    @staticmethod
     def _description_preview_value(value, max_len: int = 72) -> str:
         text = _format_config_editor_value(value)
         if len(text) <= max_len:
@@ -1490,6 +1671,9 @@ class AISettingsPanel(QWidget):
         section_name = _friendly_field_section_name(dict_name, key)
         value_type = self._description_value_type(value)
         preview = self._description_preview_value(value)
+        choice_label = _choice_label_for_value(dict_name, key, value)
+        if choice_label and choice_label != preview:
+            preview = f"{choice_label} ({preview})"
         return (
             f"{section_name} · {friendly_name}\n"
             f"配置键: {dict_name}.{key}\n"
@@ -1935,8 +2119,12 @@ class AISettingsPanel(QWidget):
                             "editors": [left_editor, right_editor],
                             "templates": [copy.deepcopy(left_value), copy.deepcopy(right_value)],
                         })
-                        defaults.setdefault(str(dict_name), {})[left_key] = copy.deepcopy(left_value)
-                        defaults.setdefault(str(dict_name), {})[right_key] = copy.deepcopy(right_value)
+                        defaults.setdefault(str(dict_name), {})[left_key] = _hardcoded_general_default(
+                            str(dict_name), left_key, left_value
+                        )
+                        defaults.setdefault(str(dict_name), {})[right_key] = _hardcoded_general_default(
+                            str(dict_name), right_key, right_value
+                        )
                         consumed_keys.add(left_key)
                         consumed_keys.add(right_key)
                         section_fields_added = True
@@ -1959,22 +2147,37 @@ class AISettingsPanel(QWidget):
                         "editors": editors,
                         "template": copy.deepcopy(value),
                     })
-                    defaults.setdefault(str(dict_name), {})[key] = copy.deepcopy(value)
+                    defaults.setdefault(str(dict_name), {})[key] = _hardcoded_general_default(
+                        str(dict_name), key, value
+                    )
                     consumed_keys.add(key)
                     section_fields_added = True
                     continue
 
                 open_dir_btn = None
                 extra_widgets: list[QWidget] = []
+                slider_spec = self._get_decimal_slider_spec(str(dict_name), key, value)
+                choice_options = self._get_choice_field_options(str(dict_name), key)
                 if self._is_volume_slider_field(str(dict_name), key, value):
                     editor, percent_label, row_widget = self._create_volume_slider_editor(
                         value,
                         field_width=category_field_width,
                     )
                     extra_widgets.append(percent_label)
-                elif self._is_decimal_slider_field(str(dict_name), key, value):
-                    editor = _DecimalSliderField(0.0, 1.0, 0.05, value=float(value), field_width=category_field_width)
+                elif slider_spec is not None:
+                    minimum, maximum, step, decimals = slider_spec
+                    editor = _DecimalSliderField(
+                        minimum,
+                        maximum,
+                        step,
+                        value=float(value),
+                        decimals=decimals,
+                        field_width=category_field_width,
+                    )
                     row_widget = editor
+                elif choice_options is not None:
+                    editor = self._create_config_choice_editor(choice_options, field_width=category_field_width)
+                    row_widget = self._wrap_fixed_width_field(editor, field_width=category_field_width)
                 elif self._is_local_music_path_field(str(dict_name), key) and isinstance(value, str):
                     editor, open_dir_btn, row_widget = self._create_path_editor_with_open_button(
                         str(dict_name),
@@ -2005,7 +2208,7 @@ class AISettingsPanel(QWidget):
                         "volume_slider"
                         if self._is_volume_slider_field(str(dict_name), key, value)
                         else "decimal_slider"
-                        if self._is_decimal_slider_field(str(dict_name), key, value)
+                        if slider_spec is not None
                         else "single"
                     ),
                     "dict_name": str(dict_name),
@@ -2013,7 +2216,9 @@ class AISettingsPanel(QWidget):
                     "editor": editor,
                     "template": copy.deepcopy(value),
                 })
-                defaults.setdefault(str(dict_name), {})[key] = copy.deepcopy(value)
+                defaults.setdefault(str(dict_name), {})[key] = _hardcoded_general_default(
+                    str(dict_name), key, value
+                )
                 consumed_keys.add(key)
                 section_fields_added = True
 
@@ -2338,11 +2543,17 @@ class AISettingsPanel(QWidget):
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             return False
         pair = (str(dict_name), str(key))
-        return pair in {
-            ("UI", "pet_opacity"),
-            ("UI", "ui_widget_opacity"),
-            ("OBJECTS", "object_opacity"),
-        }
+        return pair in _GENERAL_DECIMAL_SLIDER_SPECS
+
+    @staticmethod
+    def _get_decimal_slider_spec(dict_name: str, key: str, value) -> tuple[float, float, float, int] | None:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        return _GENERAL_DECIMAL_SLIDER_SPECS.get((str(dict_name), str(key)))
+
+    @staticmethod
+    def _get_choice_field_options(dict_name: str, key: str) -> list[tuple[str, str]] | None:
+        return _GENERAL_CHOICE_FIELD_OPTIONS.get((str(dict_name), str(key)))
 
     @staticmethod
     def _volume_percent_from_value(value) -> int:
@@ -2683,6 +2894,15 @@ class AISettingsPanel(QWidget):
         if isinstance(editor, _DecimalSliderField):
             editor.set_value(value)
             return
+        if isinstance(editor, QComboBox):
+            index = editor.findData(value)
+            if index < 0:
+                index = editor.findText(str(value))
+            if index >= 0:
+                editor.setCurrentIndex(index)
+            elif editor.count() > 0:
+                editor.setCurrentIndex(0)
+            return
         if isinstance(editor, QLineEdit):
             editor.setText(_format_config_editor_value(value))
 
@@ -2823,6 +3043,15 @@ class AISettingsPanel(QWidget):
         template = field.get("template")
         if isinstance(editor, QCheckBox):
             return {key: bool(editor.isChecked())}
+        if isinstance(editor, QComboBox):
+            selected = editor.currentData()
+            if selected is None:
+                selected = editor.currentText().strip()
+            if isinstance(template, str):
+                return {key: str(selected)}
+            if template is not None and isinstance(selected, type(template)):
+                return {key: selected}
+            return {key: self._parse_text_by_template(str(selected), template)}
         if not isinstance(editor, QLineEdit):
             raise ValueError("不支持的配置编辑控件")
         text = editor.text().strip()
@@ -2934,6 +3163,16 @@ class AISettingsPanel(QWidget):
                 self._raise_config_value_error(dict_name, key, "内容包含非法换行字符")
             if parse_hotkey_binding(normalized) is None:
                 self._raise_config_value_error(dict_name, key, "格式无效，示例：Ctrl+Shift+V")
+            return
+
+        choice_options = _GENERAL_CHOICE_FIELD_OPTIONS.get(pair)
+        if choice_options is not None:
+            if not isinstance(value, str):
+                self._raise_config_value_error(dict_name, key, "必须为文本选项")
+            allowed_values = [option_value for _label, option_value in choice_options]
+            if value not in allowed_values:
+                joined = " / ".join(str(option_value) for option_value in allowed_values)
+                self._raise_config_value_error(dict_name, key, f"必须为以下之一：{joined}")
             return
 
         numeric_rule = _GENERAL_NUMERIC_RULES.get(pair)
@@ -3073,7 +3312,7 @@ class AISettingsPanel(QWidget):
                         for idx in range(2):
                             key = str(keys[idx] or "")
                             if key and key not in bucket:
-                                bucket[key] = copy.deepcopy(templates[idx])
+                                bucket[key] = _hardcoded_general_default(dict_name, key, templates[idx])
                     continue
                 key = str(field.get("key") or "")
                 if not key:
@@ -3081,9 +3320,9 @@ class AISettingsPanel(QWidget):
                 if key in bucket:
                     continue
                 if kind == "sequence":
-                    bucket[key] = copy.deepcopy(field.get("template", []))
+                    bucket[key] = _hardcoded_general_default(dict_name, key, field.get("template", []))
                 else:
-                    bucket[key] = copy.deepcopy(field.get("template"))
+                    bucket[key] = _hardcoded_general_default(dict_name, key, field.get("template"))
 
     def _on_restore_config_category(self, category_id: str, *, emit_message: bool = True) -> None:
         meta = self._config_tab_meta.get(category_id)

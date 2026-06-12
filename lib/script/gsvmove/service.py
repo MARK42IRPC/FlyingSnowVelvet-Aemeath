@@ -52,6 +52,22 @@ _BATCH_FIND_ROOT_PATTERN = re.compile(r'(?im)^\s*call\s+:find_root\s+"(?P<path>[
 _BATCH_EXPAND_ROUNDS = 8
 
 
+def _hidden_console_kwargs() -> dict:
+    if os.name != "nt":
+        return {}
+    kwargs = {}
+    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    if creationflags:
+        kwargs["creationflags"] = creationflags
+    startupinfo_cls = getattr(subprocess, "STARTUPINFO", None)
+    if startupinfo_cls is not None:
+        startupinfo = startupinfo_cls()
+        startupinfo.dwFlags |= getattr(subprocess, "STARTF_USESHOWWINDOW", 0)
+        startupinfo.wShowWindow = getattr(subprocess, "SW_HIDE", 0)
+        kwargs["startupinfo"] = startupinfo
+    return kwargs
+
+
 
 
 def _get_gsv_temperature() -> float:
@@ -699,6 +715,7 @@ class GsvmoveService:
                     stderr=subprocess.DEVNULL,
                     timeout=8,
                     check=False,
+                    **_hidden_console_kwargs(),
                 )
                 return result.returncode == 0
         except Exception as e:
@@ -719,6 +736,7 @@ class GsvmoveService:
                 text=True,
                 timeout=10,
                 check=False,
+                **_hidden_console_kwargs(),
             )
             for line in (result.stdout or "").splitlines():
                 line = line.strip()

@@ -42,6 +42,22 @@ _REQUIRED_MODULES = (
 )
 
 
+def _hidden_console_kwargs() -> dict[str, object]:
+    if os.name != 'nt':
+        return {}
+    kwargs: dict[str, object] = {}
+    creationflags = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+    if creationflags:
+        kwargs['creationflags'] = creationflags
+    startupinfo_cls = getattr(subprocess, 'STARTUPINFO', None)
+    if startupinfo_cls is not None:
+        startupinfo = startupinfo_cls()
+        startupinfo.dwFlags |= getattr(subprocess, 'STARTF_USESHOWWINDOW', 0)
+        startupinfo.wShowWindow = getattr(subprocess, 'SW_HIDE', 0)
+        kwargs['startupinfo'] = startupinfo
+    return kwargs
+
+
 def _project_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
@@ -330,6 +346,7 @@ def _find_listener_pids(host: str, port: int) -> list[int]:
             errors='ignore',
             timeout=8,
             check=False,
+            **_hidden_console_kwargs(),
         )
     except Exception as exc:
         logger.debug('[YuanbaoFreeApiService] 查询监听端口失败: %s', exc)
@@ -363,6 +380,7 @@ def _kill_process_by_pid(pid: int) -> bool:
             stderr=subprocess.DEVNULL,
             timeout=8,
             check=False,
+            **_hidden_console_kwargs(),
         )
         return result.returncode == 0
     except Exception as exc:
@@ -823,6 +841,7 @@ class YuanbaoFreeApiService:
                 stderr=subprocess.DEVNULL,
                 timeout=8,
                 check=False,
+                **_hidden_console_kwargs(),
             )
             return result.returncode == 0
         except Exception as exc:

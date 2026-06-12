@@ -22,7 +22,7 @@ if project_root not in sys.path:
 from PyQt5.QtWidgets import QWidget, QApplication
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QImage, QPixmap, QPainter
-from PIL import Image
+from PIL import Image, ImageFilter
 
 # 项目核心模块（路径已在上方注入，可安全导入）
 from lib.core.topmost_manager import get_topmost_manager
@@ -38,6 +38,169 @@ except AttributeError:
     _LANCZOS = Image.LANCZOS
 
 _ANIMATION_DEFAULT_SIZE_MULTIPLIER = 2.0
+_EXIT_SHADOW_COLOR = (0, 0, 0)
+_EXIT_SHADOW_DEFAULT_STRENGTH = 112
+_EXIT_SHADOW_DEFAULT_BLUR_RADIUS = 14
+_EXIT_SHADOW_DEFAULT_DIRECTION = 'down'
+_EXIT_SHADOW_MAX_STRENGTH = 255
+_EXIT_SHADOW_MAX_BLUR_RADIUS = 128
+_EXIT_SHADOW_OFFSET_DISTANCE_RATIO = 0.45
+_EXIT_SHADOW_MIN_OFFSET_DISTANCE = 4
+_EXIT_SHADOW_PADDING_MULTIPLIER = 2.2
+_EXIT_SHADOW_DIRECTION_VECTORS = {
+    'center': (0, 0),
+    'down': (0, 1),
+    'up': (0, -1),
+    'left': (-1, 0),
+    'right': (1, 0),
+    'down_left': (-1, 1),
+    'down_right': (1, 1),
+    'up_left': (-1, -1),
+    'up_right': (1, -1),
+}
+_EXIT_SHADOW_DIRECTION_ALIASES = {
+    '': 'down',
+    'center': 'center',
+    'none': 'center',
+    'off': 'center',
+    'middle': 'center',
+    'stay': 'center',
+    '静止': 'center',
+    '无': 'center',
+    '不偏移': 'center',
+    'down': 'down',
+    'bottom': 'down',
+    'south': 'down',
+    '下': 'down',
+    '向下': 'down',
+    'up': 'up',
+    'top': 'up',
+    'north': 'up',
+    '上': 'up',
+    '向上': 'up',
+    'left': 'left',
+    'west': 'left',
+    '左': 'left',
+    '向左': 'left',
+    'right': 'right',
+    'east': 'right',
+    '右': 'right',
+    '向右': 'right',
+    'down_left': 'down_left',
+    'bottom_left': 'down_left',
+    'south_west': 'down_left',
+    'southwest': 'down_left',
+    '左下': 'down_left',
+    '向左下': 'down_left',
+    'down_right': 'down_right',
+    'bottom_right': 'down_right',
+    'south_east': 'down_right',
+    'southeast': 'down_right',
+    '右下': 'down_right',
+    '向右下': 'down_right',
+    'up_left': 'up_left',
+    'top_left': 'up_left',
+    'north_west': 'up_left',
+    'northwest': 'up_left',
+    '左上': 'up_left',
+    '向左上': 'up_left',
+    'up_right': 'up_right',
+    'top_right': 'up_right',
+    'north_east': 'up_right',
+    'northeast': 'up_right',
+    '右上': 'up_right',
+    '向右上': 'up_right',
+}
+
+
+def _clamp_int(value, default: int, minimum: int, maximum: int) -> int:
+    try:
+        number = int(round(float(value)))
+    except (TypeError, ValueError):
+        number = int(default)
+    return max(minimum, min(maximum, number))
+
+
+def _normalize_exit_shadow_direction(value) -> str:
+    key = str(value or '').strip().lower().replace('-', '_').replace(' ', '_')
+    return _EXIT_SHADOW_DIRECTION_ALIASES.get(key, _EXIT_SHADOW_DEFAULT_DIRECTION)
+
+
+def _build_exit_shadow_metrics(width: int, height: int, strength: int, blur_radius: int, direction: str):
+    """按配置生成退出动画羽化阴影参数。"""
+    strength = _clamp_int(strength, _EXIT_SHADOW_DEFAULT_STRENGTH, 0, _EXIT_SHADOW_MAX_STRENGTH)
+    blur_radius = _clamp_int(
+        blur_radius,
+        _EXIT_SHADOW_DEFAULT_BLUR_RADIUS,
+        0,
+        min(_EXIT_SHADOW_MAX_BLUR_RADIUS, max(0, min(width, height))),
+    )
+    if strength <= 0:
+        return None
+
+    direction_key = _normalize_exit_shadow_direction(direction)
+    vec_x, vec_y = _EXIT_SHADOW_DIRECTION_VECTORS.get(direction_key, _EXIT_SHADOW_DIRECTION_VECTORS['down'])
+    offset_distance = 0
+    if vec_x or vec_y:
+        offset_distance = max(
+            _EXIT_SHADOW_MIN_OFFSET_DISTANCE,
+            int(round(max(1, blur_radius) * _EXIT_SHADOW_OFFSET_DISTANCE_RATIO)),
+        )
+    offset_x = vec_x * offset_distance
+    offset_y = vec_y * offset_distance
+    feather_pad = max(
+        2,
+        blur_radius + 2,
+        int(round(max(1, blur_radius) * _EXIT_SHADOW_PADDING_MULTIPLIER)),
+    )
+    frame_x = feather_pad + max(0, -offset_x)
+    frame_y = feather_pad + max(0, -offset_y)
+    canvas_w = width + feather_pad * 2 + abs(offset_x)
+    canvas_h = height + feather_pad * 2 + abs(offset_y)
+    return {
+        'strength': strength,
+        'blur_radius': blur_radius,
+        'direction': direction_key,
+        'offset_x': offset_x,
+        'offset_y': offset_y,
+        'frame_x': frame_x,
+        'frame_y': frame_y,
+        'canvas_w': canvas_w,
+        'canvas_h': canvas_h,
+        'alpha_lut': [(value * strength) // 255 for value in range(256)],
+    }
+
+
+def _resolve_exit_shadow_metrics(width: int, height: int):
+    animation_cfg = ANIMATION if isinstance(ANIMATION, dict) else {}
+    return _build_exit_shadow_metrics(
+        width,
+        height,
+        animation_cfg.get('exit_shadow_strength', _EXIT_SHADOW_DEFAULT_STRENGTH),
+        animation_cfg.get('exit_shadow_blur_radius', _EXIT_SHADOW_DEFAULT_BLUR_RADIUS),
+        animation_cfg.get('exit_shadow_offset_direction', _EXIT_SHADOW_DEFAULT_DIRECTION),
+    )
+
+
+def _compose_exit_shadow_frame(frame: Image.Image, metrics) -> Image.Image:
+    """为退出动画帧合成羽化阴影，并扩出画布避免裁切。"""
+    shadow_alpha = frame.getchannel('A').point(metrics['alpha_lut'])
+    shadow = Image.new('RGBA', frame.size, _EXIT_SHADOW_COLOR + (0,))
+    shadow.putalpha(shadow_alpha)
+    shadow = shadow.filter(ImageFilter.GaussianBlur(radius=metrics['blur_radius']))
+
+    canvas = Image.new(
+        'RGBA',
+        (metrics['canvas_w'], metrics['canvas_h']),
+        (0, 0, 0, 0),
+    )
+    canvas.paste(
+        shadow,
+        (metrics['frame_x'] + metrics['offset_x'], metrics['frame_y'] + metrics['offset_y']),
+        shadow,
+    )
+    canvas.paste(frame, (metrics['frame_x'], metrics['frame_y']), frame)
+    return canvas
 
 
 class AnimationWindow(QWidget):
@@ -68,6 +231,8 @@ class AnimationWindow(QWidget):
         # 目标帧尺寸（后台线程写一次，主线程读）
         self._target_w = 0
         self._target_h = 0
+        self._visual_anchor_x = 0.0
+        self._visual_anchor_y = 0.0
 
         # 淡出
         self._opacity          = 1.0
@@ -132,8 +297,22 @@ class AnimationWindow(QWidget):
         target_box_w = max(1, int(round(max(1, int(pet_w)) * _ANIMATION_DEFAULT_SIZE_MULTIPLIER)))
         target_box_h = max(1, int(round(max(1, int(pet_h)) * _ANIMATION_DEFAULT_SIZE_MULTIPLIER)))
         fit_scale = min(target_box_w / max(1, orig_w), target_box_h / max(1, orig_h))
-        target_w = max(1, int(orig_w * fit_scale))
-        target_h = max(1, int(orig_h * fit_scale))
+        base_w = max(1, int(orig_w * fit_scale))
+        base_h = max(1, int(orig_h * fit_scale))
+
+        shadow_metrics = None
+        target_w = base_w
+        target_h = base_h
+        self._visual_anchor_x = target_w / 2.0
+        self._visual_anchor_y = target_h / 2.0
+
+        if self._animation_type == 'exit':
+            shadow_metrics = _resolve_exit_shadow_metrics(base_w, base_h)
+            if shadow_metrics is not None:
+                target_w = int(shadow_metrics['canvas_w'])
+                target_h = int(shadow_metrics['canvas_h'])
+                self._visual_anchor_x = float(shadow_metrics['frame_x']) + (base_w / 2.0)
+                self._visual_anchor_y = float(shadow_metrics['frame_y']) + (base_h / 2.0)
 
         # 先写尺寸，再往 queue 里放数据；主线程 get 之后读尺寸保证可见
         self._target_w = target_w
@@ -141,12 +320,23 @@ class AnimationWindow(QWidget):
 
         _log.info("[AnimationWindow] 帧尺寸(主宠物模式x%.1f): %dx%d → %dx%d",
                   _ANIMATION_DEFAULT_SIZE_MULTIPLIER, orig_w, orig_h, target_w, target_h)
+        if shadow_metrics is not None:
+            _log.info(
+                "[AnimationWindow] 退出动画羽化阴影: strength=%d, blur=%d, direction=%s, offset=(%d,%d)",
+                shadow_metrics['strength'],
+                shadow_metrics['blur_radius'],
+                shadow_metrics['direction'],
+                shadow_metrics['offset_x'],
+                shadow_metrics['offset_y'],
+            )
 
         def decode_one(idx: int):
             path = os.path.join(folder, files[idx])
             try:
                 with Image.open(path) as img:
-                    img = img.convert('RGBA').resize((target_w, target_h), _LANCZOS)
+                    img = img.convert('RGBA').resize((base_w, base_h), _LANCZOS)
+                    if shadow_metrics is not None:
+                        img = _compose_exit_shadow_frame(img, shadow_metrics)
                     return img.tobytes()
             except Exception as e:
                 _log.error("[AnimationWindow] 帧 %d 解码失败: %s", idx, e)
@@ -245,9 +435,11 @@ class AnimationWindow(QWidget):
         self.setAttribute(Qt.WA_ShowWithoutActivating)
 
         screen = QApplication.primaryScreen().geometry()
+        anchor_x = self._visual_anchor_x or (tw / 2.0)
+        anchor_y = self._visual_anchor_y or (th / 2.0)
         self.move(
-            screen.width()  // 2 - tw // 2,
-            screen.height() // 2 - th // 2,
+            int(round(screen.x() + (screen.width() / 2.0) - anchor_x)),
+            int(round(screen.y() + (screen.height() / 2.0) - anchor_y)),
         )
         self.setWindowOpacity(apply_ui_opacity(1.0))
         self.show()
