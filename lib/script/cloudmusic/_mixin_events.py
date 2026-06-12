@@ -376,7 +376,7 @@ class _EventsMixin:
         if reason == "no_uin":
             return "QQ 平台未登录或登录态失效，请重新登录后重试"
         if reason == "missing_music_auth_cookie":
-            return "当前 QQ 登录态缺少 QQ 音乐专用凭据，请重新点击 QQ 登录，并在内置浏览器中完成扫码后重试"
+            return "当前 QQ 登录态缺少 QQ 音乐专用凭据，请重新点击 QQ 登录，并在系统浏览器中完成扫码后重试"
         if reason in {
             "playlist_request_failed",
             "playlist_empty",

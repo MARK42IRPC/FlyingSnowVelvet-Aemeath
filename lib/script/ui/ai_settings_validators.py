@@ -48,7 +48,7 @@ def validate_ai_values(values: dict) -> None:
     if force_mode not in ("", "0", "2", "3", "4"):
         raise ValueError("回复模式值无效")
 
-    if force_mode in ("", "0", "4"):
+    if force_mode in ("", "0"):
         if not api_base_url:
             raise ValueError("接口地址不能为空")
         if not is_valid_http_url(api_base_url):
@@ -62,8 +62,6 @@ def validate_ai_values(values: dict) -> None:
         raise ValueError("元宝登录页地址必须是有效的 http/https 地址")
 
     if yuanbao_free_api_enabled:
-        if not api_key:
-            raise ValueError("启用 YuanBao-Free-API 时，接口密钥不能为空（此处填写本地服务访问密钥）")
         if not yuanbao_agent_id:
             raise ValueError("启用 YuanBao-Free-API 时，agent_id 不能为空")
         if yuanbao_x_uskey and any(ch.isspace() for ch in yuanbao_x_uskey):

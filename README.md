@@ -102,6 +102,7 @@ python install_deps.py
 - 发现可用 Python 并写入 `py.ini`
 - 安装 `requirements.txt`
 - 准备本地语音识别模型与部分运行资源
+- 元宝登录复用系统已安装的 Microsoft Edge / Google Chrome，不再下载内置 Chromium
 - 启动桌宠主程序
 
 ### 面向开发者
@@ -187,7 +188,7 @@ python scripts/package_release.py --version LTS1.0.5pre3
 python scripts/package_green_release.py --version LTS1.0.5pre3
 ```
 
-两者默认都会排除运行时用户数据；绿色包会额外保留模型与浏览器资源，适合离线分发。
+两者默认都会排除运行时用户数据；绿色包会额外保留模型等离线资源，适合离线分发。
 
 更完整的发布步骤请看 `RELEASING.md`。
 

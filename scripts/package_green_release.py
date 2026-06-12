@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Create a green distribution archive that keeps bundled runtime assets
-such as Vosk models and Chromium resources for direct file sharing.
+such as Vosk models for direct file sharing.
 """
 
 from __future__ import annotations
@@ -43,6 +43,7 @@ EXCLUDE_PART_NAMES = {
 
 EXCLUDE_PATH_PREFIXES = {
     Path("config") / ".shared_pending",
+    Path("resc") / "playwright",
     Path("resc") / "user",
     Path("resc") / "gsvmove_update",
 }
@@ -72,7 +73,6 @@ ROOT_ARCHIVE_SUFFIXES = {
 
 EXCLUDE_FILE_NAMES = {
     "py.ini",
-    "playwright-chromium-chromium-1208.zip",
 }
 
 PLACEHOLDER_DIRS = (

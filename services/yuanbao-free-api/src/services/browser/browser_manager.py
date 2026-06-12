@@ -1,7 +1,6 @@
 """浏览器管理器模块"""
 
 import asyncio
-import json
 import logging
 import re
 from pathlib import Path
@@ -19,73 +18,8 @@ def _service_root() -> Path:
     return Path(__file__).resolve().parents[4]
 
 
-def _project_root_candidates() -> tuple[Path, ...]:
-    service_root = _service_root()
-    return (
-        service_root,
-        service_root.parent,
-    )
-
-
-def _iter_local_playwright_executables(root_dir: Path):
-    if not root_dir.exists() or not root_dir.is_dir():
-        return
-    for candidate in root_dir.rglob("chromium-*"):
-        if not candidate.is_dir():
-            continue
-        for relative in (
-            Path("chrome-win") / "chrome.exe",
-            Path("chrome-win64") / "chrome.exe",
-        ):
-            executable = candidate / relative
-            if executable.exists():
-                yield executable
-                break
-
-
-def _find_local_playwright_executable() -> Optional[Path]:
-    for project_root in _project_root_candidates():
-        for root in (
-            project_root / "resc" / "playwright" / "browsers" / "ms-playwright",
-            project_root / "resc" / "playwright",
-            project_root / "resc",
-        ):
-            for executable in _iter_local_playwright_executables(root):
-                return executable
-    return None
-
-
-def _detect_windows_default_chromium_channel() -> Optional[str]:
-    try:
-        import winreg
-    except Exception:
-        return None
-
-    try:
-        key_path = r"Software\Microsoft\Windows\Shell\Associations\UrlAssociations\https\UserChoice"
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path) as key:
-            prog_id = str(winreg.QueryValueEx(key, "ProgId")[0] or "").strip().lower()
-    except Exception:
-        return None
-
-    if not prog_id:
-        return None
-    if prog_id.startswith("msedgehtm") or "edge" in prog_id:
-        return "msedge"
-    if prog_id.startswith("chromehtml") or "chrome" in prog_id:
-        return "chrome"
-    return None
-
-
 def _preferred_chromium_channels() -> tuple[str, ...]:
-    preferred = _detect_windows_default_chromium_channel()
-    ordered: list[str] = []
-    if preferred:
-        ordered.append(preferred)
-    for channel in ("msedge", "chrome"):
-        if channel not in ordered:
-            ordered.append(channel)
-    return tuple(ordered)
+    return ("msedge", "chrome")
 
 
 def _parse_cookie_header(raw: str) -> Dict[str, str]:
@@ -116,7 +50,7 @@ def _storage_state_path() -> Path:
     return path
 
 
-def _headers_state_path() -> Path:
+def _legacy_headers_state_path() -> Path:
     storage_path = _storage_state_path()
     return storage_path.with_name(f"{storage_path.stem}_headers.json")
 
@@ -130,11 +64,12 @@ def _remove_storage_state_file() -> None:
         pass
 
 
-def _remove_headers_state_file() -> None:
+def _remove_legacy_headers_state_file() -> None:
     try:
-        path = _headers_state_path()
+        path = _legacy_headers_state_path()
         if path.exists():
             path.unlink()
+            logger.info("[Browser] 已清理旧版认证头缓存: %s", path)
     except Exception:
         pass
 
@@ -150,33 +85,6 @@ def _normalize_headers(headers: Optional[Dict]) -> Dict[str, str]:
             continue
         normalized[name] = text
     return normalized
-
-
-def _build_cookie_header(cookies: Dict[str, str]) -> str:
-    parts: list[str] = []
-    for key, value in (cookies or {}).items():
-        name = str(key or "").strip()
-        text = str(value or "").strip()
-        if not name or not text:
-            continue
-        parts.append(f"{name}={text}")
-    return "; ".join(parts)
-
-
-def _merge_headers_with_current_cookies(headers: Optional[Dict], cookies: Dict[str, str]) -> Dict[str, str]:
-    merged = _normalize_headers(headers)
-    if not merged.get("x-uskey"):
-        return {}
-
-    cookie_header = _build_cookie_header(cookies)
-    if cookie_header:
-        merged["cookie"] = cookie_header
-    else:
-        merged.pop("cookie", None)
-
-    merged.setdefault("origin", "https://yuanbao.tencent.com")
-    merged.setdefault("referer", str(getattr(settings, "page_url", "") or "https://yuanbao.tencent.com/"))
-    return merged
 
 
 def _has_basic_login_cookies(cookies: Dict[str, str]) -> bool:
@@ -231,7 +139,6 @@ class BrowserManager:
             self.page: Optional[Page] = None
             self.playwright = None
             self._route_handler = None
-            self._request_listener_bound = False
             self._is_logged_in = False
             self._login_in_progress = False
             self._last_error = ""
@@ -239,77 +146,23 @@ class BrowserManager:
             self._cookie_marker_warned = False
             self._login_confirmed_via_ui = False
             self._storage_state_saved = False
-            self._latest_headers = self._load_headers_state()
+            _remove_legacy_headers_state_file()
             self._initialized = True
 
-    def _load_headers_state(self) -> Dict[str, str]:
-        path = _headers_state_path()
-        try:
-            if not path.exists():
-                return {}
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except Exception as exc:
-            logger.debug("[Browser] 读取认证头缓存失败: %s", exc)
-            return {}
-        return _normalize_headers(data if isinstance(data, dict) else {})
-
-    def _persist_headers_state(self) -> None:
-        path = _headers_state_path()
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(
-                json.dumps(self._latest_headers, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-        except Exception as exc:
-            logger.debug("[Browser] 持久化认证头缓存失败: %s", exc)
-
-    def _cache_headers(self, headers: Optional[Dict], source: str = "") -> None:
-        normalized = _normalize_headers(headers)
-        if not normalized.get("x-uskey"):
-            return
-        if normalized == self._latest_headers:
-            return
-        self._latest_headers = normalized
-        self._persist_headers_state()
-        if source:
-            logger.info("[Browser] 捕获到请求头 from %s", source)
-
-    def _capture_request_headers(self, url: str, headers: Optional[Dict]) -> bool:
+    def _capture_request_headers(self, url: str, headers: Optional[Dict]) -> Optional[Dict[str, str]]:
         normalized = _normalize_headers(headers)
         if settings.header_api_pattern not in str(url or ""):
-            return False
+            return None
         if not normalized.get("x-uskey"):
-            return False
+            return None
         cookie_map = _parse_cookie_header(normalized.get("cookie", ""))
         if _has_login_cookies(cookie_map) or (
             self._login_confirmed_via_ui and _has_basic_login_cookies(cookie_map)
         ):
-            self._cache_headers(normalized, source=str(url))
-            return True
+            logger.info("[Browser] 现场捕获到认证头 from %s", url)
+            return normalized
         logger.debug("[Browser] x-uskey 已出现但未检测到账户标记，判定为游客态")
-        return False
-
-    def _on_page_request(self, request) -> None:
-        try:
-            self._capture_request_headers(request.url, request.headers)
-        except Exception as exc:
-            logger.debug("[Browser] 监听请求头失败: %s", exc)
-
-    def _ensure_request_listener(self) -> None:
-        if self.page is None or self._request_listener_bound:
-            return
-        try:
-            self.page.on("request", self._on_page_request)
-            self._request_listener_bound = True
-        except Exception as exc:
-            logger.debug("[Browser] 绑定请求监听失败: %s", exc)
-
-    def _build_cached_headers(self, cookies: Dict[str, str]) -> Optional[Dict[str, str]]:
-        if not self._latest_headers:
-            self._latest_headers = self._load_headers_state()
-        merged = _merge_headers_with_current_cookies(self._latest_headers, cookies)
-        return merged or None
+        return None
 
     def status(self) -> Dict:
         qrcode_path = Path(str(settings.qrcode_path or "")).expanduser()
@@ -866,40 +719,25 @@ class BrowserManager:
         self._last_message = "launching_browser"
         if self.browser is None:
             launch_errors: list[str] = []
-            local_executable = _find_local_playwright_executable()
-            if local_executable is not None:
-                try:
-                    self.browser = await self.playwright.chromium.launch(
-                        executable_path=str(local_executable),
-                        headless=True,
-                    )
-                    logger.info("[Browser] 已使用本地 Chromium 资源启动: %s", local_executable)
-                except Exception as exc:
-                    launch_errors.append(f"local:{local_executable}: {exc}")
-
-            if self.browser is None:
+            for headless in (True, False):
+                if self.browser is not None:
+                    break
                 for channel in _preferred_chromium_channels():
                     try:
                         self.browser = await self.playwright.chromium.launch(
                             channel=channel,
-                            headless=True,
+                            headless=headless,
                         )
-                        logger.info("[Browser] Launched system browser channel: %s", channel)
+                        logger.info("[Browser] 已启动系统浏览器通道: %s (headless=%s)", channel, headless)
                         break
                     except Exception as exc:
-                        launch_errors.append(f"{channel}: {exc}")
+                        launch_errors.append(f"{channel}(headless={headless}): {exc}")
 
             if self.browser is None:
-                for headless in (False, True):
-                    try:
-                        self.browser = await self.playwright.chromium.launch(headless=headless)
-                        logger.info("[Browser] 已使用 Playwright 默认 Chromium 启动: headless=%s", headless)
-                        break
-                    except Exception as exc:
-                        launch_errors.append(f"default(headless={headless}): {exc}")
-
-            if self.browser is None:
-                raise RuntimeError("无法启动可用浏览器: " + " | ".join(launch_errors))
+                raise RuntimeError(
+                    "未检测到可用的系统浏览器内核，请确认已安装桌面版 Microsoft Edge 或 Google Chrome: "
+                    + " | ".join(launch_errors)
+                )
 
         self._last_message = "creating_page"
         if self.page is None:
@@ -910,7 +748,6 @@ class BrowserManager:
                 logger.info("[Browser] 使用持久化登录态: %s", storage_path)
             self.context = await self.browser.new_context(**context_kwargs)
             self.page = await self.context.new_page()
-            self._ensure_request_listener()
             await self._load_page()
         self._last_error = ""
         self._last_message = "browser_initialized"
@@ -1027,18 +864,20 @@ class BrowserManager:
     async def get_headers(self) -> Optional[Dict]:
         """获取请求头。"""
         await self.ensure_browser()
-        current_cookies = await self.get_cookies()
-        cached_headers = self._build_cached_headers(current_cookies)
-        if cached_headers is not None:
-            logger.info("[Browser] 使用缓存认证头")
-            return cached_headers
+        if not self.page:
+            return None
+        try:
+            self._is_logged_in = await self._has_authenticated_session()
+        except Exception as exc:
+            logger.debug("[Browser] 现场抓头前确认登录态失败: %s", exc)
 
-        captured_headers = {}
+        captured_headers: Optional[Dict[str, str]] = None
 
         async def handle_route(route, request):
             nonlocal captured_headers
-            if self._capture_request_headers(request.url, request.headers):
-                captured_headers = dict(self._latest_headers)
+            live_headers = self._capture_request_headers(request.url, request.headers)
+            if live_headers is not None:
+                captured_headers = dict(live_headers)
             await route.continue_()
 
         if self._route_handler:
@@ -1051,14 +890,12 @@ class BrowserManager:
         self._route_handler = handle_route
 
         try:
+            loop = asyncio.get_running_loop()
             reload_task = asyncio.create_task(self.page.reload(timeout=10000))
 
-            start_time = asyncio.get_event_loop().time()
-            while (asyncio.get_event_loop().time() - start_time) < settings.header_timeout:
-                if captured_headers.get("x-uskey"):
-                    break
-                if self._latest_headers.get("x-uskey"):
-                    captured_headers = dict(self._latest_headers)
+            start_time = loop.time()
+            while (loop.time() - start_time) < settings.header_timeout:
+                if captured_headers and captured_headers.get("x-uskey"):
                     break
                 await asyncio.sleep(0.05)
 
@@ -1081,11 +918,10 @@ class BrowserManager:
                 except Exception:
                     pass
 
-        current_cookies = await self.get_cookies()
-        merged_headers = _merge_headers_with_current_cookies(captured_headers, current_cookies)
-        if merged_headers:
-            return merged_headers
-        return self._build_cached_headers(current_cookies)
+        if captured_headers and captured_headers.get("x-uskey"):
+            return dict(captured_headers)
+        logger.warning("[Browser] 未能从当前浏览器会话现场抓到认证头")
+        return None
 
     async def get_cookies(self) -> Dict[str, str]:
         """获取 Cookie。"""
@@ -1100,8 +936,7 @@ class BrowserManager:
     async def logout(self):
         """退出登录并清理持久化状态。"""
         _remove_storage_state_file()
-        _remove_headers_state_file()
-        self._latest_headers = {}
+        _remove_legacy_headers_state_file()
         await self.close()
 
     async def close(self):
@@ -1112,7 +947,7 @@ class BrowserManager:
             self._login_in_progress = False
             self._login_confirmed_via_ui = False
             self._storage_state_saved = False
-            self._request_listener_bound = False
+            self._route_handler = None
             if self.context:
                 tasks.append(self.context.close())
                 self.context = None

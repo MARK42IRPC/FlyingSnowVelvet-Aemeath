@@ -29,8 +29,7 @@ cd yuanbao-free-api
 # 安装依赖
 pip install -r requirements.txt
 
-# 安装 Playwright 浏览器
-playwright install chromium
+# 确认系统已安装 Microsoft Edge 或 Google Chrome
 ```
 
 ### 配置环境变量
@@ -102,7 +101,7 @@ API_KEYS=sk-your-api-key-here,sk-another-api-key
 
 本项目使用浏览器自动化方式自动获取认证参数：
 
-- 服务启动时自动启动无头浏览器
+- 服务启动时自动调用系统已安装的 Edge，失败后回退到 Chrome
 - 自动打开腾讯元宝登录页面
 - 通过二维码扫码登录
 - 自动拦截认证请求头（x-uskey 等）

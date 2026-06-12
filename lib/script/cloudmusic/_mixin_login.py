@@ -1674,12 +1674,12 @@ class _LoginMixin:
             try:
                 from playwright.sync_api import sync_playwright
             except Exception as exc:
-                raise RuntimeError('未安装 Playwright，无法启动内置浏览器登录') from exc
+                raise RuntimeError('未安装 Playwright，无法启动系统浏览器登录') from exc
 
             client = get_qqmusic_provider_client()
             self._qq_clear_login_qrcode()
-            self._publish_qr_show(None, '正在启动QQ音乐内置浏览器，请稍候...', title='QQ音乐扫码登录')
-            self._publish_qr_status('正在启动QQ音乐内置浏览器...')
+            self._publish_qr_show(None, '正在启动QQ音乐系统浏览器，请稍候...', title='QQ音乐扫码登录')
+            self._publish_qr_status('正在启动QQ音乐系统浏览器...')
             self._show_info('正在启动QQ音乐官方网页登录流程，请在二维码窗口中扫码或确认登录')
 
             playwright = sync_playwright().start()

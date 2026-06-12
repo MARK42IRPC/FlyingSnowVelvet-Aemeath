@@ -156,8 +156,7 @@ def _build_page_url(agent_id: str, login_url: str) -> str:
 
 def _build_service_env() -> Dict[str, str]:
     options = getattr(oc, 'YUANBAO_FREE_API', {}) or {}
-    active = oc.get_active_config() if hasattr(oc, 'get_active_config') else {}
-    api_key = str((active or {}).get('api_key') or getattr(oc, 'API_KEY', '') or '').strip()
+    api_key = str(oc.get_yuanbao_local_api_key() if hasattr(oc, 'get_yuanbao_local_api_key') else 'sk-yuanbao-local').strip()
     agent_id = str(options.get('agent_id', '') or 'naQivTmsDa').strip() or 'naQivTmsDa'
     page_url = _build_page_url(agent_id, str(options.get('login_url', '') or '').strip())
 
@@ -180,7 +179,7 @@ def _remove_qrcode_if_exists() -> None:
 
 
 def _parse_local_target() -> Optional[Tuple[str, int]]:
-    base_url = str(getattr(oc, 'API_BASE_URL', '') or '').strip()
+    base_url = str(oc.get_yuanbao_local_base_url() if hasattr(oc, 'get_yuanbao_local_base_url') else 'http://127.0.0.1:8000/v1').strip()
     if not base_url:
         return None
     parsed = urlparse(base_url)
@@ -192,9 +191,8 @@ def _parse_local_target() -> Optional[Tuple[str, int]]:
 
 
 def _should_manage_local_service() -> bool:
-    options = getattr(oc, 'YUANBAO_FREE_API', {}) or {}
     force_mode = str(getattr(oc, 'FORCE_REPLY_MODE', '') or '').strip()
-    if not bool(options.get('enabled', False)) and force_mode != '4':
+    if force_mode != '4':
         return False
     return _parse_local_target() is not None
 

@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import threading
 import time
-from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 
@@ -13,69 +12,8 @@ class YuanBaoAuthError(RuntimeError):
     """元宝登录态抓取失败。"""
 
 
-def _project_root() -> Path:
-    return Path(__file__).resolve().parents[3]
-
-
-def _iter_local_playwright_executables(root_dir: Path):
-    if not root_dir.exists() or not root_dir.is_dir():
-        return
-    for candidate in root_dir.rglob("chromium-*"):
-        if not candidate.is_dir():
-            continue
-        for relative in (
-            Path("chrome-win") / "chrome.exe",
-            Path("chrome-win64") / "chrome.exe",
-        ):
-            executable = candidate / relative
-            if executable.exists():
-                yield executable
-                break
-
-
-def _find_local_playwright_executable() -> Path | None:
-    roots = (
-        _project_root() / "resc" / "playwright" / "browsers" / "ms-playwright",
-        _project_root() / "resc" / "playwright",
-        _project_root() / "resc",
-    )
-    for root in roots:
-        for executable in _iter_local_playwright_executables(root):
-            return executable
-    return None
-
-
-def _detect_windows_default_chromium_channel() -> str | None:
-    try:
-        import winreg
-    except Exception:
-        return None
-
-    try:
-        key_path = r"Software\Microsoft\Windows\Shell\Associations\UrlAssociations\https\UserChoice"
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path) as key:
-            prog_id = str(winreg.QueryValueEx(key, "ProgId")[0] or "").strip().lower()
-    except Exception:
-        return None
-
-    if not prog_id:
-        return None
-    if prog_id.startswith("msedgehtm") or "edge" in prog_id:
-        return "msedge"
-    if prog_id.startswith("chromehtml") or "chrome" in prog_id:
-        return "chrome"
-    return None
-
-
 def _preferred_chromium_channels() -> tuple[str, ...]:
-    preferred = _detect_windows_default_chromium_channel()
-    ordered: list[str] = []
-    if preferred:
-        ordered.append(preferred)
-    for channel in ("msedge", "chrome"):
-        if channel not in ordered:
-            ordered.append(channel)
-    return tuple(ordered)
+    return ("msedge", "chrome")
 
 
 def _parse_cookie_header(raw: str) -> dict[str, str]:
@@ -187,7 +125,7 @@ def capture_yuanbao_login_state(
         from playwright.sync_api import sync_playwright
     except Exception as exc:  # pragma: no cover - 依赖缺失
         raise YuanBaoAuthError(
-            "未安装 Playwright。请先执行 `pip install playwright`，再执行 `playwright install chromium`。"
+            "未安装 Playwright。请先执行 `pip install playwright`，并确认系统已安装桌面版 Microsoft Edge 或 Google Chrome。"
         ) from exc
 
     state: dict[str, str] = {'hy_source': 'web'}
@@ -264,25 +202,17 @@ def capture_yuanbao_login_state(
         emit('正在启动浏览器并打开元宝登录页...')
         playwright = sync_playwright().start()
         launch_errors: list[str] = []
-        local_executable = _find_local_playwright_executable()
-        if local_executable is not None:
+        for channel in _preferred_chromium_channels():
             try:
-                browser = playwright.chromium.launch(executable_path=str(local_executable), headless=False)
-            except Exception as exc:
-                launch_errors.append(f'local:{local_executable}: {exc}')
-        for channel in (*_preferred_chromium_channels(), None):
-            if browser is not None:
-                break
-            try:
-                kwargs = {'headless': False}
-                if channel:
-                    kwargs['channel'] = channel
-                browser = playwright.chromium.launch(**kwargs)
+                browser = playwright.chromium.launch(channel=channel, headless=False)
                 break
             except Exception as exc:
-                launch_errors.append(f'{channel or "chromium"}: {exc}')
+                launch_errors.append(f'{channel}(headless=False): {exc}')
         if browser is None:
-            raise YuanBaoAuthError('无法启动可用浏览器：' + ' | '.join(launch_errors))
+            raise YuanBaoAuthError(
+                '未检测到可用的系统浏览器内核，请确认已安装桌面版 Microsoft Edge 或 Google Chrome：'
+                + ' | '.join(launch_errors)
+            )
 
         context = browser.new_context(locale='zh-CN')
         context.on('request', on_request)

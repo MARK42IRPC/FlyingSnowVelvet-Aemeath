@@ -74,9 +74,9 @@ _GPU_MODE_AUTO = "auto"
 
 _DEFAULT_VALUES = {
     "api_key": "",
-    "force_reply_mode": "",
-    "api_base_url": "https://zzmapi.zzmsgdsg.xyz/v1",
-    "api_model": "gpt-5.4-mini",
+    "force_reply_mode": "4",
+    "api_base_url": "",
+    "api_model": "",
     "yuanbao_login_url": "https://yuanbao.tencent.com/chat/naQivTmsDa",
     "yuanbao_hy_source": "web",
     "yuanbao_hy_user": "",
@@ -86,10 +86,10 @@ _DEFAULT_VALUES = {
     "ollama_model": "qwen2.5",
     "num_gpu": -1,
     "num_thread": 0,
-    "api_temperature": 1.35,
-    "gsv_auto_start": True,
+    "api_temperature": 0.8,
+    "gsv_auto_start": False,
     "gsv_temperature": 1.35,
-    "gsv_speed_factor": 1.05,
+    "gsv_speed_factor": 1.0,
     "ai_voice_max_chars": 80,
     "gsv_cache_max_files": 20,
     "memory_context_limit": 12,
@@ -1761,7 +1761,7 @@ class AISettingsPanel(QWidget):
         self._set_form_row_description(
             form,
             self._api_key,
-            "外部接口密钥；接入内置 YuanBao-Free-API 时，这里填写你为本地服务设置的访问密钥。",
+            "外部接口密钥；仅用于手动 OpenAI 兼容接口，不参与元宝本地中转认证。",
         )
 
         self._force_mode = _WatermarkComboBox()
@@ -1783,7 +1783,7 @@ class AISettingsPanel(QWidget):
         self._set_form_row_description(
             form,
             self._api_base_url,
-            "外部接口地址，通常填写兼容 OpenAI 的基地址；若直接填写完整的 `/chat/completions` 或 `/v1/chat/completions` 端点也可兼容。启用 YuanBao-Free-API 时，这里应填写你的中转 API 地址，而不是腾讯元宝网页地址。",
+            "外部接口地址，通常填写兼容 OpenAI 的基地址；若直接填写完整的 `/chat/completions` 或 `/v1/chat/completions` 端点也可兼容。",
         )
 
         self._api_model = QLineEdit()
@@ -1791,7 +1791,7 @@ class AISettingsPanel(QWidget):
         self._set_form_row_description(
             form,
             self._api_model,
-            "外部接口模型名，例如 qwen3.5-plus。",
+            "外部接口模型名，例如 qwen3.5-plus；元宝模式会改走程序内置的本地模型标识。",
         )
 
         self._set_hidden_yuanbao_values(_DEFAULT_VALUES)
@@ -1810,7 +1810,7 @@ class AISettingsPanel(QWidget):
         yuanbao_login_layout.addWidget(self._stop_yuanbao_login_btn, 0)
         yuanbao_login_layout.addStretch(1)
         form.addRow("元宝登录", yuanbao_login_row)
-        self._set_widget_description(self._start_yuanbao_login_btn, "启动本地 YuanBao-Free-API 服务，弹出二维码面板并等待扫码登录。")
+        self._set_widget_description(self._start_yuanbao_login_btn, "启动本地 YuanBao-Free-API 服务；程序会固定使用内置 loopback 地址、占位密钥和默认模型，并弹出二维码面板等待扫码登录。")
         self._set_widget_description(self._stop_yuanbao_login_btn, "停止元宝登录流程并关闭本地元宝服务。")
 
         base_row, base_layout = self._create_fixed_width_row_group(
@@ -2717,19 +2717,7 @@ class AISettingsPanel(QWidget):
             self._emit_info(f"打开 GSV 语音缓存文件夹失败: {e}", min_tick=20, max_tick=180)
 
     def _on_start_yuanbao_login(self) -> None:
-        api_key = self._api_key.raw_text().strip()
-
-        if not self._api_base_url.text().strip():
-            self._api_base_url.setText("http://127.0.0.1:8000/v1")
-        if not self._api_model.text().strip():
-            self._api_model.setText("deepseek-v3")
-
         import config.ollama_config as oc
-        oc.API_KEY = api_key
-        oc.API_BASE_URL = self._api_base_url.text().strip() or "http://127.0.0.1:8000/v1"
-        oc.API_MODEL = self._api_model.text().strip() or "deepseek-v3"
-        oc.FORCE_REPLY_MODE = str(self._force_mode.currentData() or self._force_mode.currentText() or "4").strip() or "4"
-        oc.YUANBAO_FREE_API["enabled"] = True
         oc.YUANBAO_FREE_API["login_url"] = str(getattr(self, "_yuanbao_login_url_value", _DEFAULT_VALUES.get("yuanbao_login_url", "")) or "")
         oc.YUANBAO_FREE_API["agent_id"] = str(getattr(self, "_yuanbao_agent_id_value", _DEFAULT_VALUES.get("yuanbao_agent_id", "naQivTmsDa")) or "")
 
@@ -2789,7 +2777,7 @@ class AISettingsPanel(QWidget):
             'status': '正在启动元宝服务并等待二维码生成，请稍候...',
             'qr_png': None,
         }))
-        self._emit_info("正在启动元宝服务并准备登录二维码，请稍候...", min_tick=12, max_tick=180)
+        self._emit_info("正在启动元宝服务并准备登录二维码；本地回环地址、占位密钥与模型名均由程序内部管理。", min_tick=12, max_tick=200)
         threading.Thread(target=worker, daemon=True, name="yuanbao-login-start").start()
 
     def _on_stop_yuanbao_login(self) -> None:
@@ -4021,7 +4009,7 @@ class AISettingsPanel(QWidget):
             "force_reply_mode": force_mode,
             "api_base_url": self._api_base_url.text().strip(),
             "api_model": self._api_model.text().strip(),
-            "yuanbao_free_api_enabled": True,
+            "yuanbao_free_api_enabled": force_mode == "4",
             "ollama_base_url": self._ollama_base_url.text().strip(),
             "ollama_model": self._ollama_model.currentText().strip(),
             "num_gpu": num_gpu,

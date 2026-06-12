@@ -28,12 +28,13 @@ _ENV_API_KEY, _ENV_API_KEY_SOURCE = _load_env_api_key()
 # API Key 配置（优先使用）
 # 如果设置了有效的 API Key，将使用 OpenAI 兼容 API 而非本地 Ollama。
 # 默认保持为空，请优先通过环境变量或 AI 设置面板注入，避免把密钥提交到仓库。
-API_KEY = 'sss'
+API_KEY = ''
 
 # 回复模式强制开关（留空=默认检索顺序）
 # 0: 强制配置文件 API_KEY
 # 2: 强制本地 Ollama
 # 3: 强制规则回复
+# 4: 强制元宝 Web 本地中转
 FORCE_REPLY_MODE = '4'
 
 # OpenAI 兼容 API 基础地址（使用 API Key 时生效）
@@ -43,19 +44,25 @@ FORCE_REPLY_MODE = '4'
 # - Moonshot:   'https://api.moonshot.cn/v1'
 # - 智谱AI:     'https://open.bigmodel.cn/api/paas/v4'
 # - 通义千问:   'https://dashscope.aliyuncs.com/compatible-mode/v1'
-API_BASE_URL = 'http://127.0.0.1:8000/v1'
+API_BASE_URL = ''
 
 # 使用 API Key 时的模型名称
 # 例如: 'gpt-4o-mini', 'deepseek-chat', 'moonshot-v1-8k'
-API_MODEL = 'deepseek-v3'
+API_MODEL = ''
 
-# YuanBao-Free-API 兼容配置（参考 chenwr727/yuanbao-free-api）
+# YuanBao-Free-API 固定本地回环配置。
+# 这套地址 / 占位密钥 / 默认模型由程序内部管理，不再从控制面板复用手动 OpenAI 配置。
+YUANBAO_FREE_API_LOCAL = {
+    'base_url': 'http://127.0.0.1:8000/v1',
+    'api_key': 'sk-yuanbao-local',
+    'model': 'deepseek-v3',
+}
+
+# YuanBao-Free-API 登录/会话配置（参考 chenwr727/yuanbao-free-api）
 # 当前集成的是仓库内置的本地中转服务：
-# - 服务认证使用 API Key（Authorization: Bearer <API_KEY>）
 # - 启动后会自动生成登录二维码图片并等待扫码
 # - chat_id / 图片上传等能力仍沿用 OpenAI 兼容接口
 YUANBAO_FREE_API = {
-    'enabled': True,
     'login_url': 'https://yuanbao.tencent.com/chat/naQivTmsDa',
     'hy_source': 'web',
     'hy_user': '',
@@ -135,18 +142,42 @@ def _normalize_force_mode(value) -> str:
     return text if text in ('', '0', '2', '3', '4') else ''
 
 
-def _is_yuanbao_web_ready(api_key: str) -> bool:
+def get_yuanbao_local_base_url() -> str:
+    return str((YUANBAO_FREE_API_LOCAL or {}).get('base_url', '') or '').strip() or 'http://127.0.0.1:8000/v1'
+
+
+def get_yuanbao_local_api_key() -> str:
+    return str((YUANBAO_FREE_API_LOCAL or {}).get('api_key', '') or '').strip() or 'sk-yuanbao-local'
+
+
+def get_yuanbao_local_model() -> str:
+    return str((YUANBAO_FREE_API_LOCAL or {}).get('model', '') or '').strip() or 'deepseek-v3'
+
+
+def _build_yuanbao_provider_options(*, enabled: bool) -> dict:
+    options = dict(YUANBAO_FREE_API)
+    options['enabled'] = bool(enabled)
+    options['base_url'] = get_yuanbao_local_base_url()
+    options['model'] = get_yuanbao_local_model()
+    return {
+        'yuanbao_free_api': options,
+    }
+
+
+def _is_yuanbao_web_ready() -> bool:
     """判断当前 YuanBao-Free-API 配置是否足以优先发起请求。"""
-    if not (API_BASE_URL or '').strip() or not (API_MODEL or '').strip():
+    if not get_yuanbao_local_base_url():
         return False
-    if not str(api_key or '').strip():
+    if not get_yuanbao_local_model():
+        return False
+    if not get_yuanbao_local_api_key():
         return False
     if not str((YUANBAO_FREE_API or {}).get('agent_id', '') or '').strip():
         return False
     return True
 
 
-def _build_openai_config(api_key: str, key_source: str, force_mode: str) -> dict:
+def _build_openai_config(api_key: str, key_source: str, force_mode: str, *, provider_options: dict | None = None) -> dict:
     """构造 OpenAI 兼容模式配置。"""
     return {
         'api_type': 'openai_compatible',
@@ -157,9 +188,22 @@ def _build_openai_config(api_key: str, key_source: str, force_mode: str) -> dict
         'force_mode': force_mode,
         'strict_mode': bool(force_mode),
         'error': '',
-        'provider_options': {
-            'yuanbao_free_api': dict(YUANBAO_FREE_API),
-        },
+        'provider_options': provider_options or _build_yuanbao_provider_options(enabled=False),
+    }
+
+
+def _build_yuanbao_web_config(force_mode: str) -> dict:
+    """构造 YuanBao-Free-API 本地中转配置。"""
+    return {
+        'api_type': 'openai_compatible',
+        'base_url': get_yuanbao_local_base_url(),
+        'model': get_yuanbao_local_model(),
+        'api_key': get_yuanbao_local_api_key(),
+        'key_source': 'yuanbao_local',
+        'force_mode': force_mode,
+        'strict_mode': bool(force_mode),
+        'error': '',
+        'provider_options': _build_yuanbao_provider_options(enabled=True),
     }
 
 
@@ -231,22 +275,15 @@ def get_active_config() -> dict:
         return _build_ollama_config(force_mode)
     if force_mode == '3':
         return _build_rule_reply_config(force_mode)
-    if force_mode == '4' and not _is_yuanbao_web_ready(preferred_api_key):
-        return _build_error_config(force_mode, '优先走元宝 web 失败：配置不完整，至少需要接口密钥、agent_id，并确保本地中转接口可用')
-    if force_mode == '4' and _is_yuanbao_web_ready(preferred_api_key):
-        cfg = _build_openai_config(preferred_api_key, preferred_source, force_mode)
-        cfg['strict_mode'] = False
-        return cfg
+    if force_mode == '4':
+        if not _is_yuanbao_web_ready():
+            return _build_error_config(force_mode, '优先走元宝 web 失败：配置不完整，至少需要 agent_id，并确保本地中转接口可用')
+        return _build_yuanbao_web_config(force_mode)
     # 默认检索顺序：
-    # 1) 元宝web（当选择“优先走元宝web”且配置完整时）
-    # 2) 配置文件 API_KEY
-    # 3) 环境变量 API Key
-    # 4) 本地 Ollama
-    # 5) 规则回复（由上层在 Ollama 不可用时触发）
-    if force_mode == '4' and _is_yuanbao_web_ready(preferred_api_key):
-        cfg = _build_openai_config(preferred_api_key, preferred_source, '')
-        cfg['strict_mode'] = False
-        return cfg
+    # 1) 配置文件 API_KEY
+    # 2) 环境变量 API Key
+    # 3) 本地 Ollama
+    # 4) 规则回复（由上层在 Ollama 不可用时触发）
     if config_api_key:
         return _build_openai_config(config_api_key, 'config_api', '')
     if env_api_key:

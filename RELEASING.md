@@ -69,6 +69,8 @@ python scripts/package_green_release.py --version LTS1.0.5pre3
 - `dist/FlyingSnowVelvet-LTS1.0.5pre3-green.zip`
 - `dist/FlyingSnowVelvet-LTS1.0.5pre3-green-manifest.json`
 
+绿色包会保留模型等离线资源，但不再附带 Playwright Chromium 运行时。
+
 ## 4. 发布包内容要求
 
 必须排除：

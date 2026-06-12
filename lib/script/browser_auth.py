@@ -50,35 +50,31 @@ def parse_set_cookie_headers(headers: Any) -> dict[str, str]:
     return cookie_map
 
 
-def launch_playwright_chromium(playwright, *, headless: bool, allow_visible_fallback: bool = True):
-    from lib.script.chat.yuanbao_auth import _find_local_playwright_executable, _preferred_chromium_channels
+def _preferred_chromium_channels() -> tuple[str, ...]:
+    return ("msedge", "chrome")
 
+
+def launch_playwright_chromium(playwright, *, headless: bool, allow_visible_fallback: bool = True):
     launch_errors: list[str] = []
     browser = None
-    local_executable = _find_local_playwright_executable()
-    if local_executable is not None:
+    for channel in _preferred_chromium_channels():
         try:
-            browser = playwright.chromium.launch(executable_path=str(local_executable), headless=headless)
-        except Exception as exc:
-            launch_errors.append(f"local:{local_executable}: {exc}")
-
-    for channel in (*_preferred_chromium_channels(), None):
-        if browser is not None:
+            browser = playwright.chromium.launch(channel=channel, headless=headless)
             break
-        try:
-            kwargs = {"headless": headless}
-            if channel:
-                kwargs["channel"] = channel
-            browser = playwright.chromium.launch(**kwargs)
         except Exception as exc:
-            launch_errors.append(f'{channel or "chromium"}: {exc}')
+            launch_errors.append(f"{channel}(headless={headless}): {exc}")
 
     if browser is None and headless and allow_visible_fallback:
-        try:
-            browser = playwright.chromium.launch(headless=False)
-        except Exception as exc:
-            launch_errors.append(f"default-visible: {exc}")
+        for channel in _preferred_chromium_channels():
+            try:
+                browser = playwright.chromium.launch(channel=channel, headless=False)
+                break
+            except Exception as exc:
+                launch_errors.append(f"{channel}(headless=False): {exc}")
 
     if browser is None:
-        raise RuntimeError("无法启动可用浏览器: " + " | ".join(launch_errors))
+        raise RuntimeError(
+            "未检测到可用的系统浏览器内核，请确认已安装桌面版 Microsoft Edge 或 Google Chrome: "
+            + " | ".join(launch_errors)
+        )
     return browser
