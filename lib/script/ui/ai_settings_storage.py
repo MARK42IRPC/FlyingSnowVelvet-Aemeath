@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -9,6 +10,12 @@ from config.shared_storage import ensure_shared_config_ready, get_shared_config_
 from lib.core.logger import get_logger
 
 _logger = get_logger(__name__)
+
+_LOCAL_SECRET_KEYS = (
+    "api_key",
+    "yuanbao_hy_user",
+    "yuanbao_x_uskey",
+)
 
 
 def load_ai_values(default_values: dict) -> dict:
@@ -48,15 +55,17 @@ def save_ai_values(values: dict, default_values: dict) -> None:
     text = cfg_path.read_text(encoding="utf-8")
     memory_context_limit_value = values.get("memory_context_limit", default_values["memory_context_limit"])
 
-    text = _replace_assignment(text, "API_KEY", _py_literal(values["api_key"]))
+    _write_local_ai_secrets(values)
+
+    text = _replace_assignment(text, "API_KEY", _py_literal(""))
     text = _replace_assignment(text, "FORCE_REPLY_MODE", _py_literal(values["force_reply_mode"]))
     text = _replace_assignment(text, "API_BASE_URL", _py_literal(values["api_base_url"]))
     text = _replace_assignment(text, "API_MODEL", _py_literal(values["api_model"]))
     text = _replace_assignment(text, "OLLAMA_MODEL", _py_literal(values["ollama_model"]))
     text = _replace_named_dict_item(text, "YUANBAO_FREE_API", "login_url", _py_literal(values["yuanbao_login_url"]))
     text = _replace_named_dict_item(text, "YUANBAO_FREE_API", "hy_source", _py_literal(values["yuanbao_hy_source"]))
-    text = _replace_named_dict_item(text, "YUANBAO_FREE_API", "hy_user", _py_literal(values["yuanbao_hy_user"]))
-    text = _replace_named_dict_item(text, "YUANBAO_FREE_API", "x_uskey", _py_literal(values["yuanbao_x_uskey"]))
+    text = _replace_named_dict_item(text, "YUANBAO_FREE_API", "hy_user", _py_literal(""))
+    text = _replace_named_dict_item(text, "YUANBAO_FREE_API", "x_uskey", _py_literal(""))
     text = _replace_named_dict_item(text, "YUANBAO_FREE_API", "agent_id", _py_literal(values["yuanbao_agent_id"]))
 
     text = _replace_dict_item(text, "base_url", _py_literal(values["ollama_base_url"]))
@@ -116,10 +125,25 @@ def _ollama_config_path() -> Path:
     return _project_root() / "config" / "ollama_config.py"
 
 
+def _local_ai_secret_path() -> Path:
+    return _project_root() / "resc" / "user" / "ai" / "ollama_secrets.json"
+
+
 def _write_text_atomic(path: Path, text: str) -> None:
     tmp_path = path.with_suffix(path.suffix + ".tmp")
+    path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path.write_text(text, encoding="utf-8")
     tmp_path.replace(path)
+
+
+def _write_local_ai_secrets(values: dict) -> None:
+    secret_path = _local_ai_secret_path()
+    payload = {
+        key: str(values.get(key, "") or "").strip()
+        for key in _LOCAL_SECRET_KEYS
+    }
+    text = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+    _write_text_atomic(secret_path, text)
 
 
 def _mirror_config_text_to_shared(rel_name: str, text: str) -> None:

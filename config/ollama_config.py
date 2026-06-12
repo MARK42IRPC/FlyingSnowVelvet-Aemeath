@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import os
+from pathlib import Path
 
 # Ollama / OpenAI 兼容 API 配置文件
 
@@ -25,10 +27,41 @@ def _load_env_api_key() -> tuple[str, str]:
 
 _ENV_API_KEY, _ENV_API_KEY_SOURCE = _load_env_api_key()
 
+
+def _project_root() -> Path:
+    return Path(__file__).resolve().parents[1]
+
+
+def _local_secret_path() -> Path:
+    return _project_root() / 'resc' / 'user' / 'ai' / 'ollama_secrets.json'
+
+
+def _normalize_secret_text(value: object) -> str:
+    return str(value or '').strip()
+
+
+def _load_local_secret_overrides(path: Path | None = None) -> dict[str, str]:
+    secret_path = path or _local_secret_path()
+    try:
+        payload = json.loads(secret_path.read_text(encoding='utf-8'))
+    except (OSError, ValueError, TypeError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    return {
+        str(key or '').strip(): _normalize_secret_text(value)
+        for key, value in payload.items()
+        if str(key or '').strip()
+    }
+
+
+_LOCAL_SECRET_OVERRIDES = _load_local_secret_overrides()
+
 # API Key 配置（优先使用）
 # 如果设置了有效的 API Key，将使用 OpenAI 兼容 API 而非本地 Ollama。
-# 默认保持为空，请优先通过环境变量或 AI 设置面板注入，避免把密钥提交到仓库。
-API_KEY = ''
+# 默认保持为空；AI 设置面板会把本地密钥写到 resc/user/ai/ollama_secrets.json，
+# 避免把密钥提交到仓库。
+API_KEY = _LOCAL_SECRET_OVERRIDES.get('api_key', '')
 
 # 回复模式强制开关（留空=默认检索顺序）
 # 0: 强制配置文件 API_KEY
@@ -65,8 +98,8 @@ YUANBAO_FREE_API_LOCAL = {
 YUANBAO_FREE_API = {
     'login_url': 'https://yuanbao.tencent.com/chat/naQivTmsDa',
     'hy_source': 'web',
-    'hy_user': '',
-    'x_uskey': '',
+    'hy_user': _LOCAL_SECRET_OVERRIDES.get('yuanbao_hy_user', ''),
+    'x_uskey': _LOCAL_SECRET_OVERRIDES.get('yuanbao_x_uskey', ''),
     'agent_id': 'naQivTmsDa',
 }
 
