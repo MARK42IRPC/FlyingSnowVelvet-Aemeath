@@ -82,9 +82,9 @@ OLLAMA_OPTIONS = {
                 storage.save_ai_values(values, default_values)
 
             updated_text = cfg_path.read_text(encoding='utf-8')
-            self.assertIn("API_KEY = ''", updated_text)
-            self.assertIn("'hy_user': ''", updated_text)
-            self.assertIn("'x_uskey': ''", updated_text)
+            self.assertIn("API_KEY = _LOCAL_SECRET_OVERRIDES.get('api_key', '')", updated_text)
+            self.assertIn("'hy_user': _LOCAL_SECRET_OVERRIDES.get('yuanbao_hy_user', '')", updated_text)
+            self.assertIn("'x_uskey': _LOCAL_SECRET_OVERRIDES.get('yuanbao_x_uskey', '')", updated_text)
             self.assertIn("FORCE_REPLY_MODE = '4'", updated_text)
             self.assertIn("'agent_id': 'custom-agent'", updated_text)
 
@@ -94,9 +94,17 @@ OLLAMA_OPTIONS = {
             self.assertEqual(secret_payload['yuanbao_hy_user'], 'user-123')
             self.assertEqual(secret_payload['yuanbao_x_uskey'], 'secret-uskey')
 
+            shared_secret_path = root / 'shared-root' / 'resc' / 'user' / 'ai' / 'ollama_secrets.json'
+            with patch.object(storage, '_shared_ai_secret_path', return_value=shared_secret_path):
+                storage._write_local_ai_secrets(values)
+            shared_secret_payload = json.loads(shared_secret_path.read_text(encoding='utf-8'))
+            self.assertEqual(shared_secret_payload['api_key'], 'new-api-key')
+            self.assertEqual(shared_secret_payload['yuanbao_hy_user'], 'user-123')
+            self.assertEqual(shared_secret_payload['yuanbao_x_uskey'], 'secret-uskey')
+
             self.assertEqual(len(mirrored), 1)
             self.assertEqual(mirrored[0][0], 'ollama_config.py')
-            self.assertIn("API_KEY = ''", mirrored[0][1])
+            self.assertIn("API_KEY = _LOCAL_SECRET_OVERRIDES.get('api_key', '')", mirrored[0][1])
 
 
 if __name__ == '__main__':

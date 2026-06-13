@@ -14,6 +14,7 @@
 """
 
 import configparser
+import json
 import os
 import re
 import shutil
@@ -31,8 +32,7 @@ PROJECT_ROOT = Path(__file__).parent
 
 # 最低支持 Python 版本
 MIN_VERSION = (3, 7, 0)
-# 超过该版本后, 仍可用, 但优先级降低(兼容性考虑)
-MAX_PREFERRED_VERSION = (3, 13, 999)
+TARGET_PYTHON = (3, 11)
 
 PYPI_MIRRORS = [
     {"name": "Tsinghua", "url": "https://pypi.tuna.tsinghua.edu.cn/simple", "host": "pypi.tuna.tsinghua.edu.cn"},
@@ -154,6 +154,23 @@ def _print_stage(step: int, text: str) -> None:
     print(_fmt_color(message, "stage"))
 
 
+def _console_safe(text: str) -> str:
+    if os.name == "nt" and text:
+        macro = _to_env_macro_path(text)
+        try:
+            macro.encode("ascii")
+            text = macro
+        except Exception:
+            text = _to_batch_safe_path(text)
+
+    encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+    try:
+        text.encode(encoding)
+        return text
+    except Exception:
+        return text.encode(encoding, errors="replace").decode(encoding, errors="replace")
+
+
 VOSK_MODEL_MARKERS = ("am", "conf", "graph", "ivector")
 VOSK_MODELS_DIR = PROJECT_ROOT / "resc" / "models"
 VOSK_MODEL_SPECS = (
@@ -208,28 +225,44 @@ def _run_pip(python_exe, *args, timeout=12):
 
 
 def _discover_all_pythons():
-    """Find python executables from launcher, PATH, registry and common paths."""
+    """Find python executables from current runtime, launcher, PATH, registry and common paths."""
     import glob
 
     candidates = []
+
+    current_exe = sys.executable or ""
+    if current_exe and os.path.isfile(current_exe):
+        candidates.append(current_exe)
 
     # 1) py launcher
     r = _run(["py", "-0p"])
     if r and r.returncode == 0:
         for line in r.stdout.splitlines():
-            m = re.search(r"([A-Za-z]:\\[^\s]+python(?:w)?\.exe)", line, re.IGNORECASE)
+            m = re.search(r"([A-Za-z]:\\.*python(?:w)?\.exe)$", line.strip(), re.IGNORECASE)
             if m:
                 exe = m.group(1)
                 if os.path.isfile(exe):
                     candidates.append(exe)
 
-    # 2) where python/python3
+    # 2) PATH commands
     for name in ("python", "python3"):
-        r = _run(["where", name])
+        try:
+            r = _run(
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-Command",
+                    f"Get-Command {name} -All -ErrorAction SilentlyContinue | ForEach-Object {{$_.Source}}",
+                ]
+            )
+        except Exception:
+            r = None
         if r and r.returncode == 0:
             for line in r.stdout.splitlines():
                 exe = line.strip()
-                if exe and "WindowsApps" not in exe and os.path.isfile(exe):
+                if exe and os.path.isfile(exe):
                     candidates.append(exe)
 
     # 3) Windows registry
@@ -248,9 +281,16 @@ def _discover_all_pythons():
                         try:
                             ver = winreg.EnumKey(key, i)
                             with winreg.OpenKey(hive, rf"{base}\{ver}\InstallPath") as ip:
-                                exe, _ = winreg.QueryValueEx(ip, "ExecutablePath")
-                                if os.path.isfile(exe):
-                                    candidates.append(exe)
+                                try:
+                                    exe, _ = winreg.QueryValueEx(ip, "ExecutablePath")
+                                    if os.path.isfile(exe):
+                                        candidates.append(exe)
+                                except OSError:
+                                    base_dir, _ = winreg.QueryValueEx(ip, "")
+                                    if base_dir:
+                                        exe = os.path.join(base_dir, "python.exe")
+                                        if os.path.isfile(exe):
+                                            candidates.append(exe)
                         except OSError:
                             pass
             except OSError:
@@ -258,17 +298,42 @@ def _discover_all_pythons():
     except ImportError:
         pass
 
-    # 4) common install paths
+    # 4) App Paths registry entries
+    try:
+        import winreg
+
+        app_path_roots = [
+            (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\python.exe"),
+            (winreg.HKEY_CURRENT_USER, r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\python.exe"),
+            (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\python3.exe"),
+            (winreg.HKEY_CURRENT_USER, r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\python3.exe"),
+        ]
+        for hive, key_path in app_path_roots:
+            try:
+                with winreg.OpenKey(hive, key_path) as key:
+                    exe, _ = winreg.QueryValueEx(key, "")
+                    if os.path.isfile(exe):
+                        candidates.append(exe)
+            except OSError:
+                pass
+    except ImportError:
+        pass
+
+    # 5) common install paths
     local_py = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "Python")
     home = os.path.expanduser("~")
+    program_data = os.environ.get("ProgramData", r"C:\ProgramData")
     patterns = [
         os.path.join(local_py, "Python3*", "python.exe"),
+        os.path.join(home, "scoop", "apps", "python*", "current", "python.exe"),
+        os.path.join(program_data, "chocolatey", "lib", "python*", "tools", "python.exe"),
         r"C:\Python3*\python.exe",
         r"C:\Program Files\Python3*\python.exe",
         r"C:\Program Files (x86)\Python3*\python.exe",
         os.path.join(home, "miniconda3", "python.exe"),
         os.path.join(home, "anaconda3", "python.exe"),
         os.path.join(home, "miniconda3", "envs", "*", "python.exe"),
+        os.path.join(home, "anaconda3", "envs", "*", "python.exe"),
     ]
     for pat in patterns:
         for exe in glob.glob(pat):
@@ -286,20 +351,52 @@ def _discover_all_pythons():
     return unique
 
 
+def _probe_python_info(python_exe):
+    """Return resolved executable path and version tuple for a candidate."""
+    code = (
+        "import json, sys; "
+        "payload = {'version': list(sys.version_info[:3]), 'executable': sys.executable}; "
+        "sys.stdout.buffer.write(json.dumps(payload, ensure_ascii=False).encode('utf-8'))"
+    )
+    r = _run([python_exe, "-c", code])
+    if not r or r.returncode != 0:
+        return None
+
+    try:
+        payload = json.loads((r.stdout or "").strip())
+    except Exception:
+        return None
+
+    version_parts = payload.get("version")
+    resolved_exe = str(payload.get("executable") or "").strip()
+    if not resolved_exe or "WindowsApps" in resolved_exe:
+        return None
+
+    try:
+        parts = list(version_parts or [])[:3]
+        while len(parts) < 3:
+            parts.append(0)
+        version = tuple(int(x) for x in parts)
+    except Exception:
+        return None
+
+    return resolved_exe, version
+
+
+def _current_runtime_executable():
+    probed = _probe_python_info(sys.executable)
+    if probed:
+        return probed[0]
+    return sys.executable
+
+
 def _get_version(python_exe):
     """Return (major, minor, patch), or (0,0,0) if unknown."""
-    r = _run([python_exe, "--version"])
-    if not r:
+    probed = _probe_python_info(python_exe)
+    if not probed:
         return (0, 0, 0)
-
-    text = (r.stdout + r.stderr).strip().replace("Python ", "")
-    try:
-        parts = text.split(".")[:3]
-        while len(parts) < 3:
-            parts.append("0")
-        return tuple(int(x) for x in parts)
-    except Exception:
-        return (0, 0, 0)
+    _resolved_exe, version = probed
+    return version
 
 
 def _has_pip(python_exe):
@@ -312,15 +409,20 @@ def _fmt_ver(ver):
 
 
 def _sort_key(item):
-    """Sort by preferred version range first, then higher version."""
-    ver, _exe = item
-    in_preferred = 0 if ver <= MAX_PREFERRED_VERSION else 1
-    return (in_preferred, (-ver[0], -ver[1], -ver[2]))
+    """Match batch-file selection: current interpreter first, then prefer Python 3.11."""
+    ver, exe = item
+    current_exe = _current_runtime_executable()
+    current = 0 if os.path.normcase(os.path.abspath(exe)) == os.path.normcase(os.path.abspath(current_exe)) else 1
+    target_major, target_minor = TARGET_PYTHON
+    exact_target = 0 if (ver[0], ver[1]) == TARGET_PYTHON else 1
+    distance = abs(ver[1] - target_minor) if ver[0] == target_major else 99
+    non_py3 = 0 if ver[0] == target_major else 1
+    return (current, exact_target, distance, non_py3, -ver[0], -ver[1], -ver[2], exe.lower())
 
 
-def _fallback_python_selection(message="  No Python found via scan, fallback to command: python"):
+def _fallback_python_selection(message="  No Python found via scan, fallback to current interpreter"):
     print(message)
-    return "python", _has_pip("python")
+    return sys.executable, _has_pip(sys.executable)
 
 
 def _select_ranked_python(candidates, *, pip_ready):
@@ -330,7 +432,7 @@ def _select_ranked_python(candidates, *, pip_ready):
     best_ver, best_exe = candidates[0]
     detail = "pip ready" if pip_ready else "pip will be installed"
     print(f"\n  -> Selected Python {_fmt_ver(best_ver)} ({detail})")
-    print(f"     Path: {best_exe}")
+    print(f"     Path: {_console_safe(best_exe)}")
     return best_exe, pip_ready
 
 
@@ -345,16 +447,28 @@ def select_best_python():
     without_pip = []
 
     for exe in all_exes:
-        ver = _get_version(exe)
-        if ver < MIN_VERSION:
-            print(f"  [skip] Python {_fmt_ver(ver)} below minimum {_fmt_ver(MIN_VERSION)}: {exe}")
+        probed = _probe_python_info(exe)
+        if not probed:
+            print(f"  [skip] Python probe failed: {_console_safe(exe)}")
             continue
 
-        has_pip = _has_pip(exe)
+        resolved_exe, ver = probed
+        if ver < MIN_VERSION:
+            print(f"  [skip] Python {_fmt_ver(ver)} below minimum {_fmt_ver(MIN_VERSION)}: {_console_safe(resolved_exe)}")
+            continue
+
+        has_pip = _has_pip(resolved_exe)
         status = "pip" if has_pip else "no-pip"
-        pref = "preferred" if ver <= MAX_PREFERRED_VERSION else "higher-version"
-        print(f"  [{status}] Python {_fmt_ver(ver):<8} {pref:<14} {exe}")
-        (with_pip if has_pip else without_pip).append((ver, exe))
+        if os.path.normcase(os.path.abspath(resolved_exe)) == os.path.normcase(os.path.abspath(_current_runtime_executable())):
+            pref = "current"
+        elif (ver[0], ver[1]) == TARGET_PYTHON:
+            pref = "target-3.11"
+        elif ver[0] == TARGET_PYTHON[0]:
+            pref = f"distance-{abs(ver[1] - TARGET_PYTHON[1])}"
+        else:
+            pref = "non-target-major"
+        print(f"  [{status}] Python {_fmt_ver(ver):<8} {pref:<14} {_console_safe(resolved_exe)}")
+        (with_pip if has_pip else without_pip).append((ver, resolved_exe))
 
     selected = _select_ranked_python(with_pip, pip_ready=True)
     if selected is not None:
@@ -364,7 +478,7 @@ def select_best_python():
     if selected is not None:
         return selected
 
-    return _fallback_python_selection("  No executable candidate remained, fallback to command: python")
+    return _fallback_python_selection("  No executable candidate remained, fallback to current interpreter")
 
 
 def ensure_pip(python_exe):

@@ -1,6 +1,6 @@
 @echo off
 chcp 65001 >nul 2>&1
-setlocal enabledelayedexpansion
+setlocal EnableDelayedExpansion
 cd /d "%~dp0"
 
 echo ========================================
@@ -8,97 +8,154 @@ echo  Flying Snow Velvet LTS - Install and Launch
 echo ========================================
 echo.
 
+set "CANDIDATE_FILE=%TEMP%\fsv_python_candidates_%RANDOM%_%RANDOM%.txt"
+set "PYTHON_FOUND="
+set "INSTALL_OK="
+
 REM =============================================
-REM  Goal: find any usable Python to run install_deps.py
-REM  install_deps.py will scan and select the best version internally
+REM  Goal:
+REM  1) scan as many real Python executables as possible
+REM  2) prefer Python 3.11
+REM  3) if one candidate cannot complete startup, try the next one
 REM =============================================
 
-set "PYTHON_CMD="
-set "PYTHON_ARGS="
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$ErrorActionPreference='SilentlyContinue';" ^
+  "$seen=@{};" ^
+  "$candidates=New-Object System.Collections.Generic.List[object];" ^
+  "function Get-PythonInfo([string]$exe){" ^
+  "  try{" ^
+  "    $psi=New-Object System.Diagnostics.ProcessStartInfo;" ^
+  "    $psi.FileName=$exe;" ^
+  "    $psi.Arguments='-c ""import sys; print(''.''.join(map(str, sys.version_info[:3]))); print(sys.executable)""';" ^
+  "    $psi.UseShellExecute=$false;" ^
+  "    $psi.RedirectStandardOutput=$true;" ^
+  "    $psi.RedirectStandardError=$true;" ^
+  "    $proc=[System.Diagnostics.Process]::Start($psi);" ^
+  "    if(-not $proc){return $null}" ^
+  "    $stdout=$proc.StandardOutput.ReadToEnd();" ^
+  "    $stderr=$proc.StandardError.ReadToEnd();" ^
+  "    $proc.WaitForExit();" ^
+  "    if($proc.ExitCode -ne 0){return $null}" ^
+  "    $lines=@($stdout -split '\r?\n' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) });" ^
+  "    if($lines.Count -lt 2){return $null}" ^
+  "    return [pscustomobject]@{Version=$lines[0].Trim();Executable=$lines[1].Trim()};" ^
+  "  }catch{return $null}" ^
+  "}" ^
+  "function Add-Candidate([string]$path){" ^
+  "  if([string]::IsNullOrWhiteSpace($path)){return}" ^
+  "  try{$resolved=[System.IO.Path]::GetFullPath($path)}catch{return}" ^
+  "  if(-not (Test-Path -LiteralPath $resolved -PathType Leaf)){return}" ^
+  "  if($resolved -match 'WindowsApps'){return}" ^
+  "  $key=$resolved.ToLowerInvariant();" ^
+  "  if($seen.ContainsKey($key)){return}" ^
+  "  $info=Get-PythonInfo $resolved;" ^
+  "  if(-not $info){return}" ^
+  "  if($info.Executable -match 'WindowsApps'){return}" ^
+  "  $versionText=$info.Version;" ^
+  "  if(-not $versionText){return}" ^
+  "  $parts=$versionText.Split('.');" ^
+  "  if($parts.Count -lt 2){return}" ^
+  "  $major=[int]$parts[0];" ^
+  "  $minor=[int]$parts[1];" ^
+  "  $patch=if($parts.Count -ge 3){[int]$parts[2]}else{0};" ^
+  "  if($major -lt 3 -or ($major -eq 3 -and $minor -lt 7)){return}" ^
+  "  $seen[$key]=$true;" ^
+  "  $candidates.Add([pscustomobject]@{Path=$resolved;Version=$versionText;Major=$major;Minor=$minor;Patch=$patch}) | Out-Null;" ^
+  "}" ^
+  "try{$launcher=& py -0p; if($LASTEXITCODE -eq 0){foreach($line in $launcher){if($line -match '([A-Za-z]:\\.*python(?:w)?\.exe)$'){Add-Candidate $matches[1]}}}}catch{}" ^
+  "foreach($name in @('python','python3')){foreach($cmd in @(Get-Command $name -All -ErrorAction SilentlyContinue)){if($cmd -and $cmd.Source){Add-Candidate $cmd.Source}}}" ^
+  "$regRoots=@(" ^
+  "  'HKLM:\SOFTWARE\Python\PythonCore'," ^
+  "  'HKCU:\SOFTWARE\Python\PythonCore'," ^
+  "  'HKLM:\SOFTWARE\WOW6432Node\Python\PythonCore'" ^
+  ");" ^
+  "foreach($root in $regRoots){" ^
+  "  if(-not (Test-Path $root)){continue}" ^
+  "  foreach($item in Get-ChildItem $root){" ^
+  "    $installPath=Join-Path $item.PSPath 'InstallPath';" ^
+  "    $props=Get-ItemProperty -LiteralPath $installPath -ErrorAction SilentlyContinue;" ^
+  "    if($props){" ^
+  "      Add-Candidate $props.ExecutablePath;" ^
+  "      $defaultBase=$props.'(default)';" ^
+  "      if($defaultBase){Add-Candidate (Join-Path $defaultBase 'python.exe')}" ^
+  "    }" ^
+  "  }" ^
+  "}" ^
+  "$appPathRoots=@(" ^
+  "  'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\python.exe'," ^
+  "  'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\python.exe'," ^
+  "  'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\python3.exe'," ^
+  "  'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\python3.exe'" ^
+  ");" ^
+  "foreach($appKey in $appPathRoots){$item=Get-ItemProperty -LiteralPath $appKey -ErrorAction SilentlyContinue; if($item){Add-Candidate $item.'(default)'; Add-Candidate $item.Path}}" ^
+  "$patterns=@(" ^
+  "  (Join-Path $env:LOCALAPPDATA 'Programs\Python\Python*\python.exe')," ^
+  "  (Join-Path $env:USERPROFILE 'scoop\apps\python*\current\python.exe')," ^
+  "  (Join-Path $env:ProgramData 'chocolatey\lib\python*\tools\python.exe')," ^
+  "  (Join-Path $env:USERPROFILE 'miniconda3\python.exe')," ^
+  "  (Join-Path $env:USERPROFILE 'anaconda3\python.exe')," ^
+  "  (Join-Path $env:USERPROFILE 'miniconda3\envs\*\python.exe')," ^
+  "  (Join-Path $env:USERPROFILE 'anaconda3\envs\*\python.exe')," ^
+  "  'C:\Python3*\python.exe'," ^
+  "  'C:\Program Files\Python3*\python.exe'," ^
+  "  'C:\Program Files (x86)\Python3*\python.exe'" ^
+  ");" ^
+  "foreach($pattern in $patterns){foreach($match in Get-ChildItem -Path $pattern -File -ErrorAction SilentlyContinue){Add-Candidate $match.FullName}}" ^
+  "$sorted=$candidates | Sort-Object @{Expression={if($_.Major -eq 3 -and $_.Minor -eq 11){0}else{1}}}, @{Expression={if($_.Major -eq 3){[math]::Abs($_.Minor-11)}else{99}}}, @{Expression={if($_.Major -eq 3){0}else{1}}}, @{Expression={-$_.Major}}, @{Expression={-$_.Minor}}, @{Expression={-$_.Patch}}, Path;" ^
+  "$sorted | ForEach-Object { '{0}|{1}' -f $_.Path, $_.Version }" > "%CANDIDATE_FILE%"
 
-REM [1] Windows Python Launcher (most reliable)
-where py >nul 2>&1
-if %errorlevel% equ 0 (
-    py -3 --version >nul 2>&1
-    if %errorlevel% equ 0 (
-        set "PYTHON_CMD=py"
-        set "PYTHON_ARGS=-3"
-        goto :run
+if not exist "%CANDIDATE_FILE%" goto :no_python
+
+for %%Z in ("%CANDIDATE_FILE%") do if %%~zZ equ 0 goto :no_python
+
+echo [INFO] Python candidates found:
+for /f "usebackq tokens=1,2 delims=|" %%A in ("%CANDIDATE_FILE%") do (
+    echo   [%%B] %%A
+)
+echo.
+
+for /f "usebackq tokens=1,2 delims=|" %%A in ("%CANDIDATE_FILE%") do (
+    set "PYTHON_FOUND=1"
+    set "CURRENT_PY=%%~A"
+    set "CURRENT_VER=%%~B"
+    echo [INFO] Trying Python !CURRENT_VER!: !CURRENT_PY!
+    echo.
+    "%%~A" install_deps.py
+    set "RC=!errorlevel!"
+    if !RC! equ 0 (
+        set "INSTALL_OK=1"
+        goto :cleanup
     )
+    echo.
+    echo [WARN] Python !CURRENT_VER! failed with exit code !RC!, switching to next candidate...
+    echo.
 )
 
-REM [2] Direct python command (avoids parsing where-output with non-ASCII paths)
-python --version >nul 2>&1
-if %errorlevel% equ 0 (
-    set "PYTHON_CMD=python"
-    goto :run
-)
+if defined PYTHON_FOUND goto :all_failed
 
-REM [3] Direct python3 command
-python3 --version >nul 2>&1
-if %errorlevel% equ 0 (
-    set "PYTHON_CMD=python3"
-    goto :run
-)
-
-REM [4] Registry + user install scan via PowerShell (Unicode-safe)
-for /f "usebackq delims=" %%i in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='SilentlyContinue';$paths=@();$roots=@('HKLM:\SOFTWARE\Python\PythonCore','HKCU:\SOFTWARE\Python\PythonCore','HKLM:\SOFTWARE\WOW6432Node\Python\PythonCore');foreach($root in $roots){if(Test-Path $root){Get-ChildItem $root | ForEach-Object {$ip=(Join-Path $_.PSPath 'InstallPath');$exe=(Get-ItemProperty -Path $ip -Name ExecutablePath -ErrorAction SilentlyContinue).ExecutablePath;if($exe -and (Test-Path $exe)){$paths+=$exe}else{$base=(Get-ItemProperty -Path $ip -ErrorAction SilentlyContinue).'(default)';if($base){$alt=Join-Path $base 'python.exe';if(Test-Path $alt){$paths+=$alt}}}}}};$local=Join-Path $env:LOCALAPPDATA 'Programs\Python';if(Test-Path $local){Get-ChildItem $local -Directory -Filter 'Python*' | Sort-Object Name -Descending | ForEach-Object {$exe=Join-Path $_.FullName 'python.exe';if(Test-Path $exe){$paths+=$exe}}};$paths | Select-Object -Unique | ForEach-Object {& $_ --version >$null 2>$null;if($LASTEXITCODE -eq 0){Write-Output $_;exit 0}};exit 1"`) do (
-    if not defined PYTHON_CMD set "PYTHON_CMD=%%i"
-)
-if defined PYTHON_CMD goto :run
-
-REM [5] User local install: %LOCALAPPDATA%\Programs\Python
-set "LOCALPY=%LOCALAPPDATA%\Programs\Python"
-for %%V in (313 312 311 310 39 38 37) do (
-    if not defined PYTHON_CMD (
-        set "TRY=%LOCALPY%\Python%%V\python.exe"
-        if exist "!TRY!" (
-            "!TRY!" --version >nul 2>&1
-            if !errorlevel! equ 0 set "PYTHON_CMD=!TRY!"
-        )
-    )
-)
-if defined PYTHON_CMD goto :run
-
-REM [6] Common fixed paths on system drive
-for %%P in (
-    "C:\Python313\python.exe"
-    "C:\Python312\python.exe"
-    "C:\Python311\python.exe"
-    "C:\Python310\python.exe"
-    "C:\Python39\python.exe"
-    "C:\Python38\python.exe"
-    "C:\Python37\python.exe"
-    "C:\Program Files\Python313\python.exe"
-    "C:\Program Files\Python312\python.exe"
-    "C:\Program Files\Python311\python.exe"
-    "C:\Program Files\Python310\python.exe"
-    "C:\aemeath\python\python.exe"
-) do (
-    if not defined PYTHON_CMD (
-        if exist %%P (
-            %%P --version >nul 2>&1
-            if !errorlevel! equ 0 set "PYTHON_CMD=%%~P"
-        )
-    )
-)
-if defined PYTHON_CMD goto :run
-
-REM --- No Python found ---
+:no_python
 echo [ERROR] No usable Python environment found!
 echo.
-echo Please download and install Python from:
-echo   https://www.python.org/downloads/
+echo Please download and install Python 3.11 from:
+echo   https://www.python.org/downloads/release/python-3119/
 echo.
-echo Make sure to check "Add Python to PATH" during installation.
+echo If you install another version, make sure it is Python 3.7+ and can run from command line.
 echo.
+goto :cleanup
+
+:all_failed
+echo [ERROR] All scanned Python candidates failed to start install_deps.py successfully.
+echo.
+echo Recommendation:
+echo   Install Python 3.11 and retry.
+echo   https://www.python.org/downloads/release/python-3119/
+echo.
+
+:cleanup
+if exist "%CANDIDATE_FILE%" del /q "%CANDIDATE_FILE%" >nul 2>&1
 pause
+if defined INSTALL_OK (
+    exit /b 0
+)
 exit /b 1
-
-:run
-echo [INFO] Using Python: %PYTHON_CMD% %PYTHON_ARGS%
-echo.
-"%PYTHON_CMD%" %PYTHON_ARGS% install_deps.py
-
-:end
-pause

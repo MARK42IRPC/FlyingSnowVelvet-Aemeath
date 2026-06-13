@@ -7,6 +7,7 @@ import re
 from pathlib import Path
 
 from config.shared_storage import ensure_shared_config_ready, get_shared_config_path
+from config.shared_storage_paths import get_shared_root_dir
 from lib.core.logger import get_logger
 
 _logger = get_logger(__name__)
@@ -16,6 +17,10 @@ _LOCAL_SECRET_KEYS = (
     "yuanbao_hy_user",
     "yuanbao_x_uskey",
 )
+
+_API_KEY_SECRET_EXPR = "_LOCAL_SECRET_OVERRIDES.get('api_key', '')"
+_YUANBAO_HY_USER_SECRET_EXPR = "_LOCAL_SECRET_OVERRIDES.get('yuanbao_hy_user', '')"
+_YUANBAO_X_USKEY_SECRET_EXPR = "_LOCAL_SECRET_OVERRIDES.get('yuanbao_x_uskey', '')"
 
 
 def load_ai_values(default_values: dict) -> dict:
@@ -57,15 +62,15 @@ def save_ai_values(values: dict, default_values: dict) -> None:
 
     _write_local_ai_secrets(values)
 
-    text = _replace_assignment(text, "API_KEY", _py_literal(""))
+    text = _replace_assignment(text, "API_KEY", _API_KEY_SECRET_EXPR)
     text = _replace_assignment(text, "FORCE_REPLY_MODE", _py_literal(values["force_reply_mode"]))
     text = _replace_assignment(text, "API_BASE_URL", _py_literal(values["api_base_url"]))
     text = _replace_assignment(text, "API_MODEL", _py_literal(values["api_model"]))
     text = _replace_assignment(text, "OLLAMA_MODEL", _py_literal(values["ollama_model"]))
     text = _replace_named_dict_item(text, "YUANBAO_FREE_API", "login_url", _py_literal(values["yuanbao_login_url"]))
     text = _replace_named_dict_item(text, "YUANBAO_FREE_API", "hy_source", _py_literal(values["yuanbao_hy_source"]))
-    text = _replace_named_dict_item(text, "YUANBAO_FREE_API", "hy_user", _py_literal(""))
-    text = _replace_named_dict_item(text, "YUANBAO_FREE_API", "x_uskey", _py_literal(""))
+    text = _replace_named_dict_item(text, "YUANBAO_FREE_API", "hy_user", _YUANBAO_HY_USER_SECRET_EXPR)
+    text = _replace_named_dict_item(text, "YUANBAO_FREE_API", "x_uskey", _YUANBAO_X_USKEY_SECRET_EXPR)
     text = _replace_named_dict_item(text, "YUANBAO_FREE_API", "agent_id", _py_literal(values["yuanbao_agent_id"]))
 
     text = _replace_dict_item(text, "base_url", _py_literal(values["ollama_base_url"]))
@@ -129,6 +134,10 @@ def _local_ai_secret_path() -> Path:
     return _project_root() / "resc" / "user" / "ai" / "ollama_secrets.json"
 
 
+def _shared_ai_secret_path() -> Path:
+    return get_shared_root_dir() / "resc" / "user" / "ai" / "ollama_secrets.json"
+
+
 def _write_text_atomic(path: Path, text: str) -> None:
     tmp_path = path.with_suffix(path.suffix + ".tmp")
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -137,13 +146,23 @@ def _write_text_atomic(path: Path, text: str) -> None:
 
 
 def _write_local_ai_secrets(values: dict) -> None:
-    secret_path = _local_ai_secret_path()
     payload = {
         key: str(values.get(key, "") or "").strip()
         for key in _LOCAL_SECRET_KEYS
     }
     text = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
-    _write_text_atomic(secret_path, text)
+    _write_text_atomic(_local_ai_secret_path(), text)
+
+    try:
+        shared_path = _shared_ai_secret_path()
+        try:
+            if shared_path.resolve() != _local_ai_secret_path().resolve():
+                _write_text_atomic(shared_path, text)
+        except Exception:
+            if shared_path != _local_ai_secret_path():
+                _write_text_atomic(shared_path, text)
+    except Exception as exc:
+        _logger.warning("写入共享 AI secrets 失败: %s", exc)
 
 
 def _mirror_config_text_to_shared(rel_name: str, text: str) -> None:

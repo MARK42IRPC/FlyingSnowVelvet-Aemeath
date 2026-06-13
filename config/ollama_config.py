@@ -4,6 +4,8 @@ import json
 import os
 from pathlib import Path
 
+from config.shared_storage_paths import get_shared_root_dir
+
 # Ollama / OpenAI 兼容 API 配置文件
 
 # ============================================================
@@ -36,23 +38,49 @@ def _local_secret_path() -> Path:
     return _project_root() / 'resc' / 'user' / 'ai' / 'ollama_secrets.json'
 
 
+def _candidate_secret_paths() -> list[Path]:
+    candidates: list[Path] = []
+
+    local_path = _local_secret_path()
+    candidates.append(local_path)
+
+    try:
+        shared_path = get_shared_root_dir() / 'resc' / 'user' / 'ai' / 'ollama_secrets.json'
+    except Exception:
+        shared_path = None
+
+    if shared_path is not None:
+        try:
+            if shared_path.resolve() != local_path.resolve():
+                candidates.append(shared_path)
+        except Exception:
+            if shared_path != local_path:
+                candidates.append(shared_path)
+
+    return candidates
+
+
 def _normalize_secret_text(value: object) -> str:
     return str(value or '').strip()
 
 
 def _load_local_secret_overrides(path: Path | None = None) -> dict[str, str]:
-    secret_path = path or _local_secret_path()
-    try:
-        payload = json.loads(secret_path.read_text(encoding='utf-8'))
-    except (OSError, ValueError, TypeError):
-        return {}
-    if not isinstance(payload, dict):
-        return {}
-    return {
-        str(key or '').strip(): _normalize_secret_text(value)
-        for key, value in payload.items()
-        if str(key or '').strip()
-    }
+    secret_paths = [path] if path is not None else _candidate_secret_paths()
+    for secret_path in secret_paths:
+        try:
+            payload = json.loads(secret_path.read_text(encoding='utf-8'))
+        except (OSError, ValueError, TypeError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        normalized = {
+            str(key or '').strip(): _normalize_secret_text(value)
+            for key, value in payload.items()
+            if str(key or '').strip()
+        }
+        if normalized:
+            return normalized
+    return {}
 
 
 _LOCAL_SECRET_OVERRIDES = _load_local_secret_overrides()

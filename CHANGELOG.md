@@ -4,10 +4,27 @@
 
 ## [Unreleased]
 
+暂无。
+
+## [LTS1.0.6beta1] - 2026-06-12
+
+本条目按 `2026-06-12` 最近一轮推送整理，涵盖 3 个提交：
+`752344c`、`20c2971`、`200ced6`。
+
+### Added
+- 退出动画新增阴影强度、模糊半径、偏移方向配置项，并补充对应测试 `test_exit_animation_shadow_config`。
+- AI 本地敏感配置独立存放到 `resc/user/ai/ollama_secrets.json`，新增保存链路测试 `test_ai_settings_storage_local_secrets`。
+
 ### Changed
-- 元宝网页登录与本地中转改为只复用系统已安装的 Microsoft Edge / Google Chrome，不再打包或部署内置 Chromium 运行时。
-- 元宝认证头改为每次从当前登录会话现场抓取，不再持久化缓存认证头文件；仅保留 `storage_state` 登录态。
-- 绿色包与安装脚本移除 Playwright Chromium 资源部署逻辑，避免继续携带过时浏览器内核。
+- 元宝网页登录与本地中转改为复用系统已安装的 Microsoft Edge / Google Chrome，不再打包或部署内置 Chromium 运行时。
+- 绿色包与安装脚本移除 Playwright Chromium 资源部署逻辑，减小浏览器运行时负担，避免继续携带过时内核。
+- AI 设置面板补充退出动画阴影相关编辑项，并同步整理部分默认值与通用配置回填逻辑。
+- 退出动画阴影渲染细节调整，关闭流程相关清理链路进一步收口。
+- GSVmove 与 Yuanbao-Free-API 在 Windows 下的探测、拉起与清理命令改为隐藏控制台执行，减少闪窗。
+
+### Fixed
+- 元宝认证头改为每次从当前登录会话现场抓取，不再持久化缓存认证头文件；仅保留 `storage_state` 登录态，降低失效缓存导致的登录异常。
+- API Key、`hy_user`、`x_uskey` 不再写入受 Git 跟踪的配置文件，避免误提交本机敏感数据。
 
 ## [LTS1.0.5] - 2026-05-10
 
