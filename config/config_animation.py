@@ -12,6 +12,8 @@ ANIMATION = {
     'gif_fps': 16,           # GIF帧率（每秒帧数）
     'frame_fps': 60,          # 全局帧率（每秒帧数）
     'start_exit_enabled': True,  # 启用启动/退出动画（同时控制启动延时）
+    'start_animation_folder': '耶比_anima',  # 启动动画序列帧目录（兼容旧目录 start-anim-compressed）
+    'exit_animation_folder': '爱弥斯联合_anima',  # 退出动画序列帧目录（兼容旧目录 exit-anim-compressed）
     'exit_shadow_strength': 230,  # 退出动画阴影强度（0~255，0=关闭）
     'exit_shadow_blur_radius': 10,  # 退出动画阴影模糊半径（像素）
     'exit_shadow_offset_direction': 'down_right',  # 退出动画阴影偏移方向（如 down / up / left / right / center）

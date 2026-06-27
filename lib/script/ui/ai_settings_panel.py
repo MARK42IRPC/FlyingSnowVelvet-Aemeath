@@ -59,6 +59,11 @@ from lib.script.ui.ai_settings_tabs import (
 from lib.core.anchor_utils import animate_opacity
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.logger import get_logger
+from lib.script.SEanima.clip import (
+    DEFAULT_EXIT_ANIMATION_FOLDER,
+    DEFAULT_START_ANIMATION_FOLDER,
+    list_animation_folder_choices,
+)
 from lib.script.chat.ollama_registry import get_available_model_names, get_model_list_error
 from lib.script.microphone_stt.push_to_talk import parse_hotkey_binding
 from lib.script.ui.update_dialog import DesktopPetUpdateDialog
@@ -230,6 +235,8 @@ _CATEGORY_KEY_ALLOWLIST = {
             "frame_fps",
             "gif_fps",
             "start_exit_enabled",
+            "start_animation_folder",
+            "exit_animation_folder",
             "exit_shadow_strength",
             "exit_shadow_blur_radius",
             "exit_shadow_offset_direction",
@@ -482,6 +489,8 @@ _GENERAL_CONFIG_DEFAULTS: dict[str, dict[str, object]] = {
         "frame_fps": 60,
         "gif_fps": 16,
         "start_exit_enabled": True,
+        "start_animation_folder": DEFAULT_START_ANIMATION_FOLDER,
+        "exit_animation_folder": DEFAULT_EXIT_ANIMATION_FOLDER,
         "exit_shadow_strength": 230,
         "exit_shadow_blur_radius": 10,
         "exit_shadow_offset_direction": "down_right",
@@ -639,6 +648,8 @@ _KEY_FRIENDLY_NAME = {
         "gif_fps": "GIF帧率",
         "frame_fps": "帧率",
         "start_exit_enabled": "启动/退出动画",
+        "start_animation_folder": "启动序列帧目录",
+        "exit_animation_folder": "退出序列帧目录",
         "exit_shadow_strength": "退出阴影强度",
         "exit_shadow_blur_radius": "退出阴影模糊半径(px)",
         "exit_shadow_offset_direction": "退出阴影偏移方向",
@@ -2553,7 +2564,16 @@ class AISettingsPanel(QWidget):
 
     @staticmethod
     def _get_choice_field_options(dict_name: str, key: str) -> list[tuple[str, str]] | None:
-        return _GENERAL_CHOICE_FIELD_OPTIONS.get((str(dict_name), str(key)))
+        pair = (str(dict_name), str(key))
+        static_options = _GENERAL_CHOICE_FIELD_OPTIONS.get(pair)
+        if static_options is not None:
+            return static_options
+        if pair in {
+            ("ANIMATION", "start_animation_folder"),
+            ("ANIMATION", "exit_animation_folder"),
+        }:
+            return [(name, name) for name in list_animation_folder_choices()]
+        return None
 
     @staticmethod
     def _volume_percent_from_value(value) -> int:
@@ -3153,7 +3173,7 @@ class AISettingsPanel(QWidget):
                 self._raise_config_value_error(dict_name, key, "格式无效，示例：Ctrl+Shift+V")
             return
 
-        choice_options = _GENERAL_CHOICE_FIELD_OPTIONS.get(pair)
+        choice_options = self._get_choice_field_options(dict_name, key)
         if choice_options is not None:
             if not isinstance(value, str):
                 self._raise_config_value_error(dict_name, key, "必须为文本选项")

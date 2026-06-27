@@ -8,6 +8,7 @@ from PIL import Image
 from PyQt5.QtGui import QPixmap, QImage
 
 from lib.core.logger import get_logger
+from lib.script.SEanima.clip import resolve_animation_clip
 logger = get_logger(__name__)
 
 
@@ -35,11 +36,7 @@ class FramePrefetchBuffer:
 
     def _get_animation_path(self, animation_type: str) -> str:
         """获取动画文件夹路径"""
-        if animation_type == 'start':
-            return os.path.join(self._project_root, 'resc', 'GIF', 'start-anim-compressed')
-        elif animation_type == 'exit':
-            return os.path.join(self._project_root, 'resc', 'GIF', 'exit-anim-compressed')
-        return ""
+        return resolve_animation_clip(animation_type).folder_path
 
     def _scan_frames(self, animation_type: str) -> bool:
         """扫描动画帧文件"""
