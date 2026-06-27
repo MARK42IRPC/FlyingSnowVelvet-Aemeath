@@ -807,15 +807,16 @@ class LahaiTetrisWidget(QWidget):
     def _emit_line_clear_particles(self, cleared_rows: list[int]) -> None:
         inner = self._board_inner_screen_rect()
         for row in cleared_rows:
-            y1 = int(inner.y() + row * self._block_size)
-            y2 = int(y1 + self._block_size)
-            x1 = int(inner.x())
-            x2 = int(inner.x() + inner.width())
-            gx1, gy1 = self._to_global_point(x1, y1)
-            gx2, gy2 = self._to_global_point(x2, y2)
-            spawn_particle_in_rect(gx1, gy1, gx2, gy2, "lahai_line_flash", {
-                "rgb": (180, 228, 255),
-            })
+            for col, cell in enumerate(self._board[row]):
+                if cell is None:
+                    continue
+                base, _, _ = _THEME[cell]
+                cell_rect = self._cell_rect(inner, float(col), float(row))
+                gx1, gy1 = self._to_global_point(cell_rect.left(), cell_rect.top())
+                gx2, gy2 = self._to_global_point(cell_rect.right(), cell_rect.bottom())
+                spawn_particle_in_rect(gx1, gy1, gx2, gy2, "lahai_line_flash", {
+                    "rgb": (base.red(), base.green(), base.blue()),
+                })
 
     def _particle_direction_for_piece(self) -> tuple[float, float]:
         if len(self._anim_from_cells) != len(self._anim_to_cells):
