@@ -14,11 +14,15 @@ _logger = get_logger(__name__)
 
 _LOCAL_SECRET_KEYS = (
     "api_key",
+    "api_base_url",
+    "api_model",
     "yuanbao_hy_user",
     "yuanbao_x_uskey",
 )
 
 _API_KEY_SECRET_EXPR = "_LOCAL_SECRET_OVERRIDES.get('api_key', '')"
+_API_BASE_URL_SECRET_EXPR = "_LOCAL_SECRET_OVERRIDES.get('api_base_url', '')"
+_API_MODEL_SECRET_EXPR = "_LOCAL_SECRET_OVERRIDES.get('api_model', 'gpt-5.4')"
 _YUANBAO_HY_USER_SECRET_EXPR = "_LOCAL_SECRET_OVERRIDES.get('yuanbao_hy_user', '')"
 _YUANBAO_X_USKEY_SECRET_EXPR = "_LOCAL_SECRET_OVERRIDES.get('yuanbao_x_uskey', '')"
 
@@ -64,8 +68,8 @@ def save_ai_values(values: dict, default_values: dict) -> None:
 
     text = _replace_assignment(text, "API_KEY", _API_KEY_SECRET_EXPR)
     text = _replace_assignment(text, "FORCE_REPLY_MODE", _py_literal(values["force_reply_mode"]))
-    text = _replace_assignment(text, "API_BASE_URL", _py_literal(values["api_base_url"]))
-    text = _replace_assignment(text, "API_MODEL", _py_literal(values["api_model"]))
+    text = _replace_assignment(text, "API_BASE_URL", _API_BASE_URL_SECRET_EXPR)
+    text = _replace_assignment(text, "API_MODEL", _API_MODEL_SECRET_EXPR)
     text = _replace_assignment(text, "OLLAMA_MODEL", _py_literal(values["ollama_model"]))
     text = _replace_named_dict_item(text, "YUANBAO_FREE_API", "login_url", _py_literal(values["yuanbao_login_url"]))
     text = _replace_named_dict_item(text, "YUANBAO_FREE_API", "hy_source", _py_literal(values["yuanbao_hy_source"]))

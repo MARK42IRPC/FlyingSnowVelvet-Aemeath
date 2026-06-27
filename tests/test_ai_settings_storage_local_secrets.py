@@ -83,6 +83,8 @@ OLLAMA_OPTIONS = {
 
             updated_text = cfg_path.read_text(encoding='utf-8')
             self.assertIn("API_KEY = _LOCAL_SECRET_OVERRIDES.get('api_key', '')", updated_text)
+            self.assertIn("API_BASE_URL = _LOCAL_SECRET_OVERRIDES.get('api_base_url', '')", updated_text)
+            self.assertIn("API_MODEL = _LOCAL_SECRET_OVERRIDES.get('api_model', 'gpt-5.4')", updated_text)
             self.assertIn("'hy_user': _LOCAL_SECRET_OVERRIDES.get('yuanbao_hy_user', '')", updated_text)
             self.assertIn("'x_uskey': _LOCAL_SECRET_OVERRIDES.get('yuanbao_x_uskey', '')", updated_text)
             self.assertIn("FORCE_REPLY_MODE = '4'", updated_text)
@@ -91,6 +93,8 @@ OLLAMA_OPTIONS = {
             secret_path = root / 'resc' / 'user' / 'ai' / 'ollama_secrets.json'
             secret_payload = json.loads(secret_path.read_text(encoding='utf-8'))
             self.assertEqual(secret_payload['api_key'], 'new-api-key')
+            self.assertEqual(secret_payload['api_base_url'], 'http://127.0.0.1:8000/v1')
+            self.assertEqual(secret_payload['api_model'], 'deepseek-v3')
             self.assertEqual(secret_payload['yuanbao_hy_user'], 'user-123')
             self.assertEqual(secret_payload['yuanbao_x_uskey'], 'secret-uskey')
 
@@ -99,12 +103,16 @@ OLLAMA_OPTIONS = {
                 storage._write_local_ai_secrets(values)
             shared_secret_payload = json.loads(shared_secret_path.read_text(encoding='utf-8'))
             self.assertEqual(shared_secret_payload['api_key'], 'new-api-key')
+            self.assertEqual(shared_secret_payload['api_base_url'], 'http://127.0.0.1:8000/v1')
+            self.assertEqual(shared_secret_payload['api_model'], 'deepseek-v3')
             self.assertEqual(shared_secret_payload['yuanbao_hy_user'], 'user-123')
             self.assertEqual(shared_secret_payload['yuanbao_x_uskey'], 'secret-uskey')
 
             self.assertEqual(len(mirrored), 1)
             self.assertEqual(mirrored[0][0], 'ollama_config.py')
             self.assertIn("API_KEY = _LOCAL_SECRET_OVERRIDES.get('api_key', '')", mirrored[0][1])
+            self.assertIn("API_BASE_URL = _LOCAL_SECRET_OVERRIDES.get('api_base_url', '')", mirrored[0][1])
+            self.assertIn("API_MODEL = _LOCAL_SECRET_OVERRIDES.get('api_model', 'gpt-5.4')", mirrored[0][1])
 
 
 if __name__ == '__main__':

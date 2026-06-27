@@ -96,7 +96,7 @@ API_KEY = _LOCAL_SECRET_OVERRIDES.get('api_key', '')
 # 2: 强制本地 Ollama
 # 3: 强制规则回复
 # 4: 强制元宝 Web 本地中转
-FORCE_REPLY_MODE = '4'
+FORCE_REPLY_MODE = '0'
 
 # OpenAI 兼容 API 基础地址（使用 API Key 时生效）
 # 常见兼容服务地址：
@@ -105,11 +105,11 @@ FORCE_REPLY_MODE = '4'
 # - Moonshot:   'https://api.moonshot.cn/v1'
 # - 智谱AI:     'https://open.bigmodel.cn/api/paas/v4'
 # - 通义千问:   'https://dashscope.aliyuncs.com/compatible-mode/v1'
-API_BASE_URL = ''
+API_BASE_URL = _LOCAL_SECRET_OVERRIDES.get('api_base_url', '')
 
 # 使用 API Key 时的模型名称
 # 例如: 'gpt-4o-mini', 'deepseek-chat', 'moonshot-v1-8k'
-API_MODEL = ''
+API_MODEL = _LOCAL_SECRET_OVERRIDES.get('api_model', 'gpt-5.4')
 
 # YuanBao-Free-API 固定本地回环配置。
 # 这套地址 / 占位密钥 / 默认模型由程序内部管理，不再从控制面板复用手动 OpenAI 配置。
@@ -146,7 +146,7 @@ OLLAMA = {
     'api_retry_backoff':   0.8,     # 外部 API 重试退避基数（秒）
     'api_disable_env_proxy': False, # 默认遵循系统代理配置；设为 True 时优先忽略
     'api_temperature':     1.35,      # 外部 API 采样温度（0~2）
-    'gsv_auto_start':      True,     # 启用 GSV 语音模块；关闭后不预热，也不响应文本语音请求
+    'gsv_auto_start':      False,     # 启用 GSV 语音模块；关闭后不预热，也不响应文本语音请求
     'gsv_temperature':     1.35,      # GSV 文本转语音采样温度（0~2）
     'gsv_speed_factor':    1.05,      # GSV 文本转语音语速（0.5~2.0）
     'ai_voice_max_chars':  80,       # GSV 语音合成最大文本长度（20~80）

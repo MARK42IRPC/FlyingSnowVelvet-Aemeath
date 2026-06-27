@@ -1,34 +1,48 @@
-飞行雪绒 LTS1.0.5pre3 更新日志
-==============================
+飞行雪绒 LTS1.0.6beta2 更新日志
+==========================
 
-版本发布日期：2026-04-15
-本条目从 2026-04-15 起累计 pre3 阶段变更。
+版本发布日期：2026-06-27
+本条目按 `2026-06-12` 至 `2026-06-27` 最近一轮推送整理，覆盖 `beta1` 之后的主要更新。
 
-`pre3` 当前处于新一轮迭代起点，先完成版本号切换、文档入口同步与发布基线对齐；后续功能、修复与兼容性调整请继续直接追加到本文件与 `CHANGELOG.md`。
-
-一、本次调整
-------------
-1. 项目版本号切换为 `LTS1.0.5pre3`。
-   - `config/version_info.py` 已同步版本号与发布日期。
-   - 打包脚本默认版本、资料舱门户版本展示会随之切换。
-
-2. 仓库入口文档同步切换到 `pre3` 基线。
-   - `README.md`
-   - `CONTRIBUTING.md`
-   - `RELEASING.md`
-   - `doc/` 下中文说明文档
-
-3. 资料舱门户将以 `pre3` 版本重新生成。
-   - 执行命令：`python scripts/generate_doc_portal.py`
-
-二、后续记录方式
+一、本次更新重点
 ----------------
-1. 新功能、行为变化、修复项直接追加到本文件和 `CHANGELOG.md` 的 `LTS1.0.5pre3` 段落。
-2. 若涉及运行目录、配置迁移或发布包结构变化，务必同步更新 `README.md` 与 `RELEASING.md`。
-3. `pre2` 的已发布历史请继续以 `CHANGELOG.md` 中的 `LTS1.0.5pre2` 条目为准。
+1. 启动/退出序列帧动画模块重构。
+   - `SEanima` 拆分为动画定义、帧解码、特效处理三层。
+   - 设置面板新增启动/退出动画目录下拉框，可直接选择 `resc/GIF` 下的 `*_anima` 文件夹。
+   - 默认启动动画为 `耶比_anima`，默认退出动画为 `爱弥斯联合_anima`。
 
-三、当前版本状态
-----------------
-- 当前版本：`LTS1.0.5pre3`
-- 当前阶段：开发进行中
-- 基线日期：`2026-04-15`
+2. 动画资源目录规范化。
+   - 原 `start-anim-compressed`、`exit-anim-compressed` 已迁移到 `*_anima` 命名。
+   - 播放器内部保留兼容回退，不改变外部启动/退出动画触发方式。
+
+3. 外部 API 配置进一步脱敏。
+   - `API Key`、`API_BASE_URL`、`API_MODEL` 全部改为写入 `resc/user/ai/ollama_secrets.json`。
+   - `config/ollama_config.py` 不再保留这三项的明文用户值，降低误提交风险。
+
+4. 安装器与本地配置保留逻辑继续修正。
+   - Windows 下 Python 探测与调用链路进一步稳定。
+   - 安装/修复流程更注意保留已有本地 AI secrets，减少重装后配置丢失。
+
+5. 本地默认内容继续调整。
+   - 同步更新部分默认配置和人格文本，使新装环境更贴近当前版本预期。
+
+二、兼容与发布说明
+------------------
+1. 当前版本号：`LTS1.0.6beta2`
+2. 绿色包已生成：
+   - `dist/FlyingSnowVelvet-LTS1.0.6beta2-green.zip`
+   - `dist/FlyingSnowVelvet-LTS1.0.6beta2-green-manifest.json`
+3. 本次更新补充了回归测试：
+   - `tests/test_exit_animation_shadow_config.py`
+   - `tests/test_ai_settings_storage_local_secrets.py`
+   - `tests/test_ollama_config_shared_secret_fallback.py`
+   - `tests/test_seanima_clip_config.py`
+
+三、最近一周推送记录
+--------------------
+1. `2026-06-12` `752344c` `feat: refine exit animation shadow and shutdown cleanup`
+2. `2026-06-12` `20c2971` `Use system browsers for Yuanbao auth`
+3. `2026-06-12` `200ced6` `Move AI secrets into user storage`
+4. `2026-06-27` `25a6da3` `Update local defaults and persona settings`
+5. `2026-06-27` `d91ef63` `Fix installer python detection and preserve local AI secrets`
+6. `2026-06-27` `e4f3fd4` `feat: refactor SEanima clip config and folder selection`

@@ -1,10 +1,33 @@
 # Changelog
 
-本文件记录飞行雪绒 LTS 系列的公开版本变更。版本标签与发布包名称保持一致，例如 `LTS1.0.5pre3`。
+本文件记录飞行雪绒 LTS 系列的公开版本变更。版本标签与发布包名称保持一致，例如 `LTS1.0.6beta2`。
 
 ## [Unreleased]
 
 暂无。
+
+## [LTS1.0.6beta2] - 2026-06-27
+
+本条目按 `2026-06-12` 至 `2026-06-27` 最近一轮推送整理，涵盖 4 个功能批次：
+`25a6da3`、`d91ef63`、`e4f3fd4`，以及当前工作区内对外部 API 配置脱敏补丁。
+
+### Added
+- `SEanima` 模块拆分为 `clip.py`、`decoder.py`、`effects.py`，将动画定义、帧解码计划与退出阴影特效分层解耦，便于后续扩展个性化序列帧资源。
+- AI 设置面板新增启动/退出序列帧目录下拉配置，可直接从 `resc/GIF` 下的 `*_anima` 文件夹中选择动画资源。
+- 新增测试 `tests/test_seanima_clip_config.py`，覆盖序列帧目录默认值与兼容回退逻辑。
+- 新增测试 `tests/test_ollama_config_shared_secret_fallback.py`，覆盖共享 secrets 回退读取链路。
+
+### Changed
+- 版本号更新为 `LTS1.0.6beta2`，并同步 README、文档索引与发布说明入口。
+- 启动动画默认目录调整为 `耶比_anima`，退出动画默认目录调整为 `爱弥斯联合_anima`。
+- 旧的 `start-anim-compressed` / `exit-anim-compressed` 资源目录迁移为 `*_anima` 命名，播放器内部保留兼容回退解析，不改变外部启动/退出动画通信逻辑。
+- 安装脚本对 Windows 下 Python 探测与调用链路进一步收口，减少多 Python 环境下的误判与拉起失败。
+- 本地默认人格与部分本地默认配置同步调整，使新装环境的默认对话与对象行为更贴近当前版本设定。
+
+### Fixed
+- 外部 API 的 `API Key`、`API_BASE_URL`、`API_MODEL` 现在全部写入 `resc/user/ai/ollama_secrets.json`，不再明文落入受 Git 跟踪的 `config/ollama_config.py`。
+- AI secrets 在项目目录与共享目录之间的读取/写入回退逻辑进一步补强，安装或迁移场景下更不容易丢失本地配置。
+- 安装流程对本机 Python 解释器的识别更稳定，并继续保留本地 AI secrets，避免重新安装后覆盖用户已有敏感配置。
 
 ## [LTS1.0.6beta1] - 2026-06-12
 

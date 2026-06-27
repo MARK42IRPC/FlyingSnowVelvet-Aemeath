@@ -1,9 +1,9 @@
-# 飞行雪绒 LTS 1.0.5 pre3
+# 飞行雪绒 LTS 1.0.6 beta2
 
-飞行雪绒是一个以 Windows 10/11 为主要目标平台的桌面宠物项目，围绕 **桌宠展示、AI 伴聊、语音播报、语音识别、音乐播放、可生成场景对象** 这几条主线持续迭代。当前 `pre3` 已作为新一轮开发基线启用，先完成版本号、文档入口与发布脚本基线同步，后续功能与修复将在这一轮迭代中继续累计。
+飞行雪绒是一个以 Windows 10/11 为主要目标平台的桌面宠物项目，围绕 **桌宠展示、AI 伴聊、语音播报、语音识别、音乐播放、可生成场景对象** 这几条主线持续迭代。当前 `beta2` 继续在 `1.0.6` 开发线上推进，重点补齐动画资源解耦、安装兼容性和外部 API 配置脱敏。
 
-> 当前版本：`LTS1.0.5pre3`  
-> 发布日期：`2026-04-15`
+> 当前版本：`LTS1.0.6beta2`  
+> 发布日期：`2026-06-27`
 
 ---
 
@@ -179,13 +179,13 @@ python scripts/generate_doc_portal.py
 普通发布包：
 
 ```powershell
-python scripts/package_release.py --version LTS1.0.5pre3
+python scripts/package_release.py --version LTS1.0.6beta2
 ```
 
 绿色资源包：
 
 ```powershell
-python scripts/package_green_release.py --version LTS1.0.5pre3
+python scripts/package_green_release.py --version LTS1.0.6beta2
 ```
 
 两者默认都会排除运行时用户数据；绿色包会额外保留模型等离线资源，适合离线分发。
@@ -196,12 +196,13 @@ python scripts/package_green_release.py --version LTS1.0.5pre3
 
 ## 版本说明
 
-`pre3` 当前作为新一轮开发基线，先完成以下准备：
+`beta2` 当前对应最近一轮公开开发快照，主要包含以下方向：
 
-- 项目版本号切换到 `LTS1.0.5pre3`
-- 资料舱门户、打包命令与仓库入口文档同步到 `pre3`
-- 后续功能、修复与兼容性调整将继续累计到 `CHANGELOG.md`
-- `pre2` 已发布内容保留在历史变更记录中
+- 项目版本号切换到 `LTS1.0.6beta2`
+- `SEanima` 拆分为动画定义 / 解码 / 特效三层，并接入启动/退出动画目录选择
+- 外部 API 的密钥、接口地址、接口模型全部迁移到 `resc/user/ai/ollama_secrets.json`
+- 安装器 Python 探测与本地 AI secrets 保留逻辑进一步修正
+- 资料舱门户、打包命令与仓库入口文档同步到 `beta2`
 
 详见 `CHANGELOG.md` 与 `AA更新日志.txt`。
 
