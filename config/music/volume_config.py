@@ -18,7 +18,7 @@ _logger = get_logger(__name__)
 _VOLUME_CONFIG_FILE = "volume.json"
 
 # 默认音量（与 config.py 中的 CLOUD_MUSIC['default_volume'] 保持一致）
-_DEFAULT_VOLUME = 0.15
+_DEFAULT_VOLUME = 0.14
 
 # 单例实例
 _instance: Optional["VolumeConfig"] = None

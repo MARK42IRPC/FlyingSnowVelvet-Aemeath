@@ -1,29 +1,26 @@
 """关闭按钮类"""
-from PyQt5.QtWidgets import QWidget, QGraphicsOpacityEffect
-from PyQt5.QtCore import Qt, QPropertyAnimation, QEasingCurve, QPoint
-from PyQt5.QtGui import QColor, QFont, QPainter
+from PyQt5.QtCore import Qt, QPoint
+from PyQt5.QtGui import QColor
 
-from config.config import COLORS, UI, FONT, TIMEOUTS
-from config.font_config import get_ui_font
+from config.config import TIMEOUTS
 from config.scale import scale_px
 from config.tooltip_config import TOOLTIPS
 from lib.script.ui.close_button_handler import CloseButtonEventHandler
 from lib.core.event.center import get_event_center, EventType, Event
-from lib.core.topmost_manager import get_topmost_manager
 from lib.core.screen_utils import clamp_rect_position
 from lib.core.anchor_utils import (
     get_anchor_point as resolve_anchor_point,
     publish_widget_anchor_response,
-    animate_opacity,
     refresh_last_activity,
 )
+from lib.script.ui.rect_action_button_style import RectActionButton
 
 
 def _hex(color: QColor) -> str:
     return color.name()
 
 
-class CloseButton(QWidget):
+class CloseButton(RectActionButton):
     """
     关闭按钮，与输入框风格一致，对齐到输入框右上角上方4px处。
     当输入框显示时显示，输入框隐藏时隐藏。
@@ -33,30 +30,9 @@ class CloseButton(QWidget):
     HEIGHT = scale_px(32, min_abs=1)
 
     def __init__(self, on_close):
-        super().__init__()
-        self.setWindowFlags(
-            Qt.Tool
-            | Qt.FramelessWindowHint
-            | Qt.WindowStaysOnTopHint
-        )
-        self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setFixedSize(self.WIDTH, self.HEIGHT)
-        self.setCursor(Qt.PointingHandCursor)
-        get_topmost_manager().register(self)
-
-        # 透明度效果
-        self._opacity = QGraphicsOpacityEffect(self)
-        self._opacity.setOpacity(0.0)
-        self.setGraphicsEffect(self._opacity)
-
-        # 淡入淡出动画
-        self._anim = QPropertyAnimation(self._opacity, b'opacity', self)
-        self._anim.setDuration(UI['ui_fade_duration'])
-        self._anim.setEasingCurve(QEasingCurve.InOutQuad)
+        super().__init__(self.WIDTH, self.HEIGHT, TOOLTIPS['close_button'])
 
         self._on_close = on_close
-        self._visible = False
-        self._description = TOOLTIPS['close_button']
 
         # 创建事件处理器
         self._event_handler = CloseButtonEventHandler(self)
@@ -91,10 +67,6 @@ class CloseButton(QWidget):
         # 锚点是否可用（当锚点物体消失时设为False）
         self._anchor_available = False
 
-        # 字体设置
-        self._font = get_ui_font()
-        self._font.setBold(True)
-
         # 空闲超时自动关闭功能（与 command_dialog 共享超时时间）
         self._idle_timeout = TIMEOUTS['idle_close_ms']  # 10秒无操作自动关闭
         self._last_activity_time = 0
@@ -117,30 +89,8 @@ class CloseButton(QWidget):
         """
         return resolve_anchor_point(self, anchor_id)
 
-    def paintEvent(self, event):
-        """绘制2px黑色边框、2px青色边框、粉色背景和居中的"关闭桌宠"文字"""
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing, False)
-        layer = scale_px(2, min_abs=1)
-        content_inset = layer * 2
-
-        # 绘制2px黑色边框（最外层）
-        painter.fillRect(self.rect(), COLORS['black'])
-
-        # 绘制2px青色边框（中间层）
-        cyan_rect = self.rect().adjusted(layer, layer, -layer, -layer)
-        painter.fillRect(cyan_rect, COLORS['cyan'])
-
-        # 绘制粉色背景（最内层）
-        content_rect = self.rect().adjusted(
-            content_inset, content_inset, -content_inset, -content_inset
-        )
-        painter.fillRect(content_rect, COLORS['pink'])
-
-        # 绘制居中的"关闭桌宠"粗体文字
-        painter.setPen(COLORS['black'])
-        painter.setFont(self._font)
-        painter.drawText(content_rect, Qt.AlignCenter, '关闭桌宠')
+    def _button_text(self) -> str:
+        return '关闭桌宠'
 
     def _on_frame(self, event):
         """帧事件处理 - 刷新位置"""
@@ -296,9 +246,6 @@ class CloseButton(QWidget):
     def _reset_idle_timer(self, event=None):
         """重置空闲计时器"""
         refresh_last_activity(self)
-
-    def _animate(self, target: float):
-        animate_opacity(self._anim, self._opacity, target)
 
     def click(self):
         """处理点击事件"""

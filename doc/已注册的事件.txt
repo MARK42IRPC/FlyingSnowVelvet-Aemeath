@@ -1,0 +1,728 @@
+模块事件系统注册汇总
+
+生成范围: 所有 *.py 中的 EventCenter subscribe / unsubscribe / publish(Event(EventType.*)) 静态扫描结果
+仓库根目录: C:\Users\白草净华\Desktop\飞行雪绒项目\飞行雪绒WORKINGSPACE
+已发现订阅事件种类: 65
+已发现发布事件种类: 63
+
+=== 订阅汇总（按事件类型） ===
+
+[AI_VOICE_REQUEST]
+- lib/script/gsvmove/service.py -> self._on_ai_voice_request [has unsubscribe]
+  发布方: lib/script/chat/handler_stream_presenter.py
+
+[APP_EXIT]
+- lib/script/SEanima/animation.py -> self._handle_exit [has unsubscribe]
+
+[APP_INIT_READY]
+- lib/script/main.py -> self._on_init_ready
+
+[APP_MAIN]
+- lib/script/chat/handler.py -> self._on_app_main [has unsubscribe]
+- lib/script/chat/ollama.py -> self._on_app_main
+- lib/script/chat/ollama_bootstrap.py -> self._on_app_main [has unsubscribe]
+
+[APP_PRE_START]
+- lib/core/physics.py -> _on_pre_start [has unsubscribe]
+- lib/core/voice/core.py -> self._on_pre_start [has unsubscribe]
+- lib/script/chat/ollama.py -> self._on_app_pre_start
+- lib/script/chat/ollama_bootstrap.py -> self._on_app_pre_start [has unsubscribe]
+- lib/script/gsvmove/service.py -> self._on_app_pre_start [has unsubscribe]
+- lib/script/main.py -> self._on_pre_start
+- lib/script/SEanima/animation.py -> self._handle_pre_start [has unsubscribe]
+- lib/script/yuanbao_free_api/service.py -> self._on_app_pre_start [has unsubscribe]
+
+[APP_QUIT]
+- lib/core/event/app_handler.py -> self._on_app_quit
+- lib/script/main.py -> self._on_app_quit
+  发布方: lib/core/pet_window.py
+
+[AUTOSTART_STATUS_CHANGE]
+- lib/script/ui/ai_settings_panel.py -> self._on_autostart_status_change [has unsubscribe]
+  发布方: lib/core/tray_icon.py
+
+[DRAW_RENDER]
+- lib/core/pet_window.py -> self._handle_draw_render
+
+[DRAW_REQUEST]
+- lib/core/pet_window.py -> self._handle_draw_request
+
+[ENTITY_POSITION_REQUEST]
+- lib/core/pet_window.py -> self._handle_entity_position_request
+  发布方: lib/core/event/center.py, lib/script/obj-雪豹/manager.py
+
+[ENTITY_POSITION_RESPONSE]
+- lib/script/obj-雪豹/manager.py -> self._handle_entity_position_response [has unsubscribe]
+  发布方: lib/core/pet_window.py
+
+[ENTITY_STATE_QUERY]
+- lib/core/pet_window.py -> self._handle_entity_state_query
+  发布方: lib/core/event/center.py, lib/script/obj-雪豹/manager.py
+
+[ENTITY_STATE_RESPONSE]
+- lib/script/obj-雪豹/manager.py -> self._handle_entity_state_response [has unsubscribe]
+  发布方: lib/core/pet_window.py
+
+[FRAME]
+- lib/core/pet_window.py -> self._handle_frame_event
+- lib/core/physics.py -> self._on_frame [has unsubscribe]
+- lib/core/qt_particle_system.py -> self._on_frame [has unsubscribe]
+- lib/script/obj-摩托/manager.py -> self._on_frame [has unsubscribe]
+- lib/script/obj-摩托/mortor.py -> self._on_frame_move [has unsubscribe]
+- lib/script/obj-音响/speaker.py -> self._on_frame_frequency [has unsubscribe]
+- lib/script/ui/auto_chat_button.py -> self._on_frame [has unsubscribe]
+- lib/script/ui/chat_mode_button.py -> self._on_frame [has unsubscribe]
+- lib/script/ui/clickthrough_button.py -> self._on_frame
+- lib/script/ui/close_button.py -> self._on_frame
+- lib/script/ui/command_dialog.py -> self._on_frame
+- lib/script/ui/command_hint_box.py -> self._on_frame
+- lib/script/ui/launch_wuwa_button.py -> self._on_frame [has unsubscribe]
+- lib/script/ui/mic_stt_indicator.py -> self._on_frame [has unsubscribe]
+- lib/script/ui/more_functions_button.py -> self._on_frame [has unsubscribe]
+- lib/script/ui/playlist_panel.py -> self._on_frame
+- lib/script/ui/progress_panel.py -> self._on_frame
+- lib/script/ui/restore_button.py -> self._on_frame
+- lib/script/ui/scale_button.py -> self._on_frame
+- lib/script/ui/speaker_search_dialog.py -> self._on_frame [has unsubscribe]
+
+[GIF_FRAME]
+- lib/core/pet_window.py -> self._handle_gif_frame_event
+- lib/script/obj-雪豹/snow_leopard.py -> self._on_gif_frame [has unsubscribe]
+
+[GIF_LOOP_COMPLETED]
+- lib/script/mainpet/state.py -> self._on_gif_loop_completed
+
+[INFORMATION]
+- lib/script/ui/bubble.py -> self._on_information
+  发布方: lib/core/cmd_center.py, lib/core/tray_icon.py, lib/script/chat/handler.py, lib/script/chat/handler_stream_presenter.py, lib/script/cloudmusic/_mixin_cache.py, lib/script/cloudmusic/manager.py, lib/script/microphone_stt/service.py, lib/script/obj-摩托/manager.py, lib/script/obj-沙发/manager.py, lib/script/obj-闹钟/manager.py, lib/script/obj-雪堆/manager.py, lib/script/obj-雪球/manager.py, lib/script/obj-雪豹/manager.py, lib/script/obj-音响/manager.py, lib/script/practical/cleanup_handler.py, lib/script/tool_dispatcher/dispatcher.py, lib/script/ui/ai_settings_panel.py, lib/script/ui/launch_wuwa_button.py, lib/script/ui/more_functions_button.py, lib/script/ui/playlist_panel.py, lib/script/ui/speaker_control_buttons.py, lib/script/ui/speaker_search_dialog.py, lib/script/ui/yuanbao_login_dialog.py, lib/script/yuanbao_free_api/service.py
+
+[INPUT_CHAT]
+- lib/script/chat/handler.py -> self._on_input_chat [has unsubscribe]
+- lib/script/chat/memory.py -> self._on_input_chat [has unsubscribe]
+  发布方: lib/script/microphone_stt/service.py, lib/script/tool_dispatcher/dispatcher.py
+
+[INPUT_COMMAND]
+- lib/core/cmd_center.py -> self._on_input_command [has unsubscribe]
+
+[INPUT_HASH]
+- lib/core/cmd_center.py -> self._on_input_hash [has unsubscribe]
+- lib/script/obj-摩托/manager.py -> self._on_hash_command [has unsubscribe]
+- lib/script/obj-沙发/manager.py -> self._on_hash_command [has unsubscribe]
+- lib/script/obj-闹钟/manager.py -> self._on_hash_command [has unsubscribe]
+- lib/script/obj-雪堆/manager.py -> self._on_hash_command [has unsubscribe]
+- lib/script/obj-雪球/manager.py -> self._on_hash_command [has unsubscribe]
+- lib/script/obj-雪豹/manager.py -> self._on_hash_command [has unsubscribe]
+- lib/script/obj-音响/manager.py -> self._on_hash_command [has unsubscribe]
+- lib/script/practical/cleanup_handler.py -> self._on_hash_command [has unsubscribe]
+  发布方: lib/core/tray_icon.py, lib/script/ui/command_hint_box.py
+
+[KEY_PRESS]
+- lib/core/event/key_handler.py -> self._on_key_press
+- lib/script/microphone_stt/push_to_talk.py -> self._on_key_press [has unsubscribe]
+- lib/script/obj-摩托/mortor.py -> self._on_key_press [has unsubscribe]
+
+[KEY_RELEASE]
+- lib/script/microphone_stt/push_to_talk.py -> self._on_key_release [has unsubscribe]
+- lib/script/obj-摩托/mortor.py -> self._on_key_release [has unsubscribe]
+
+[MANAGER_QUERY_REQUEST]
+- lib/script/obj-摩托/manager.py -> self._on_query_request [has unsubscribe]
+- lib/script/obj-沙发/manager.py -> self._on_query_request [has unsubscribe]
+- lib/script/obj-闹钟/manager.py -> self._on_query_request [has unsubscribe]
+- lib/script/obj-雪豹/manager.py -> self._on_query_request [has unsubscribe]
+  发布方: lib/script/obj-雪堆/manager.py
+
+[MANAGER_QUERY_RESPONSE]
+- lib/script/obj-雪堆/manager.py -> self.handle_query_response [has unsubscribe]
+  发布方: lib/script/obj-摩托/manager.py, lib/script/obj-沙发/manager.py, lib/script/obj-闹钟/manager.py, lib/script/obj-雪豹/manager.py
+
+[MANAGER_SPAWN_REQUEST]
+- lib/script/obj-摩托/manager.py -> self._on_spawn_request [has unsubscribe]
+- lib/script/obj-沙发/manager.py -> self._on_spawn_request [has unsubscribe]
+- lib/script/obj-闹钟/manager.py -> self._on_spawn_request [has unsubscribe]
+- lib/script/obj-雪球/manager.py -> self._on_spawn_request [has unsubscribe]
+- lib/script/obj-雪豹/manager.py -> self._on_spawn_request [has unsubscribe]
+- lib/script/obj-音响/manager.py -> self._on_spawn_request [has unsubscribe]
+  发布方: lib/script/obj-雪堆/manager.py, lib/script/tool_dispatcher/dispatcher.py
+
+[MIC_STT_START]
+- lib/script/microphone_stt/service.py -> self._on_start_request [has unsubscribe]
+  发布方: lib/script/microphone_stt/push_to_talk.py, lib/script/ui/auto_chat_button.py, lib/script/ui/chat_mode_button.py
+
+[MIC_STT_STATE_CHANGE]
+- lib/script/microphone_stt/push_to_talk.py -> self._on_stt_state_change [has unsubscribe]
+- lib/script/ui/auto_chat_button.py -> self._on_stt_state_change [has unsubscribe]
+- lib/script/ui/chat_mode_button.py -> self._on_stt_state_change [has unsubscribe]
+- lib/script/ui/mic_stt_indicator.py -> self._on_state_change [has unsubscribe]
+  发布方: lib/script/microphone_stt/service.py
+
+[MIC_STT_STOP]
+- lib/script/microphone_stt/service.py -> self._on_stop_request [has unsubscribe]
+  发布方: lib/script/microphone_stt/push_to_talk.py, lib/script/ui/auto_chat_button.py, lib/script/ui/chat_mode_button.py, lib/script/ui/mic_stt_indicator.py
+
+[MOUSE_ENTER]
+- lib/script/ui/close_button_handler.py -> self._on_mouse_enter
+
+[MOUSE_GET_POSITION]
+- lib/core/input/click.py -> self._handle_get_position
+
+[MOUSE_LEAVE]
+- lib/script/ui/close_button_handler.py -> self._on_mouse_leave
+
+[MOUSE_MOVE]
+- lib/core/event/mouse_handler.py -> self._on_mouse_move
+- lib/script/ui/clickthrough_button.py -> self._reset_idle_timer
+- lib/script/ui/close_button.py -> self._reset_idle_timer
+- lib/script/ui/restore_button.py -> self._on_mouse_move
+- lib/script/ui/scale_button.py -> self._reset_idle_timer
+
+[MOUSE_PRESS]
+- lib/core/event/mouse_handler.py -> self._on_mouse_press
+- lib/script/mainpet/state.py -> self._on_mouse_press
+- lib/script/ui/clickthrough_button.py -> self._reset_idle_timer
+- lib/script/ui/close_button.py -> self._reset_idle_timer
+- lib/script/ui/close_button_handler.py -> self._on_mouse_press
+- lib/script/ui/command_dialog_handler.py -> self._on_mouse_press
+- lib/script/ui/scale_button.py -> self._reset_idle_timer
+
+[MUSIC_LOGIN_QR_HIDE]
+- lib/script/ui/cloudmusic_login_dialog.py -> self._on_qr_hide [has unsubscribe]
+  发布方: lib/script/cloudmusic/_mixin_login.py
+
+[MUSIC_LOGIN_QR_SHOW]
+- lib/script/ui/cloudmusic_login_dialog.py -> self._on_qr_show [has unsubscribe]
+  发布方: lib/script/cloudmusic/_mixin_login.py
+
+[MUSIC_LOGIN_QR_STATUS]
+- lib/script/ui/cloudmusic_login_dialog.py -> self._on_qr_status [has unsubscribe]
+  发布方: lib/script/cloudmusic/_mixin_login.py
+
+[MUSIC_LOGIN_STATUS_CHANGE]
+- lib/script/ui/speaker_control_buttons.py -> self._on_login_status_change
+  发布方: lib/script/cloudmusic/manager.py, lib/script/ui/speaker_control_buttons.py
+
+[MUSIC_PROGRESS]
+- lib/script/ui/progress_panel.py -> self._on_music_progress
+  发布方: lib/script/cloudmusic/_mixin_playback.py
+
+[MUSIC_SONG_END]
+- lib/script/ui/playlist_panel.py -> self._on_song_end
+- lib/script/ui/progress_panel.py -> self._on_song_end
+  发布方: lib/script/cloudmusic/_mixin_playback.py
+
+[MUSIC_STATUS_CHANGE]
+- lib/script/ui/playlist_panel.py -> self._on_music_status
+- lib/script/ui/progress_panel.py -> self._on_music_status
+- lib/script/ui/speaker_control_buttons.py -> self._on_status_change
+  发布方: lib/script/cloudmusic/manager.py
+
+[PARTICLE_REQUEST]
+- lib/core/qt_particle_system.py -> self._on_particle_request [has unsubscribe]
+  发布方: lib/script/cloudmusic/_mixin_events.py, lib/script/obj-雪堆/manager.py, lib/script/obj-雪堆/snow_pile.py, lib/script/obj-雪球/snowball.py, lib/script/obj-雪豹/snow_leopard.py, lib/script/ui/_particle_helper.py, lib/script/ui/ai_settings_panel.py, lib/script/ui/auto_chat_button.py, lib/script/ui/bubble.py, lib/script/ui/chat_mode_button.py, lib/script/ui/command_hint_box.py, lib/script/ui/launch_wuwa_button.py, lib/script/ui/more_functions_button.py, lib/script/ui/playlist_panel.py, lib/script/ui/speaker_search_dialog.py, lib/script/ui/speaker_search_result_box.py, lib/script/ui/tray_menu.py
+
+[PET_TELEPORT]
+- lib/core/pet_window.py -> self._handle_pet_teleport
+  发布方: lib/script/tool_dispatcher/dispatcher.py
+
+[PROTECTION_CHECK]
+- lib/script/obj-摩托/manager.py -> self._on_protection_check [has unsubscribe]
+- lib/script/obj-沙发/manager.py -> self._on_protection_check [has unsubscribe]
+- lib/script/obj-闹钟/manager.py -> self._on_protection_check [has unsubscribe]
+  发布方: lib/script/mainpet/state.py
+
+[PROTECTION_RESPONSE]
+- lib/script/mainpet/state.py -> self._on_protection_response
+  发布方: lib/script/obj-摩托/manager.py, lib/script/obj-沙发/manager.py, lib/script/obj-闹钟/manager.py
+
+[SOUND_REQUEST]
+- lib/core/voice/core.py -> self._on_sound_request [has unsubscribe]
+  发布方: lib/script/gsvmove/service.py, lib/script/voice/handler.py
+
+[SPEAKER_WINDOW_REQUEST]
+- lib/script/obj-音响/manager.py -> self._on_window_request [has unsubscribe]
+  发布方: lib/script/cloudmusic/_mixin_playback.py, lib/script/tool_dispatcher/dispatcher.py
+
+[SPEAKER_WINDOW_RESPONSE]
+- lib/script/tool_dispatcher/dispatcher.py -> _on_response [has unsubscribe]
+  发布方: lib/script/obj-音响/manager.py
+
+[STATE_CHANGE_REQUEST]
+- lib/script/mainpet/state.py -> self._on_state_change_request
+  发布方: lib/core/pet_window.py, lib/script/obj-雪豹/manager.py
+
+[STREAM_FINAL]
+- lib/script/chat/memory.py -> self._on_stream_final [has unsubscribe]
+- lib/script/tool_dispatcher/dispatcher.py -> self._on_stream_final [has unsubscribe]
+  发布方: lib/script/chat/handler_stream_presenter.py
+
+[TARGET_POSITION_QUERY]
+- lib/script/obj-摩托/manager.py -> self._on_target_position_query [has unsubscribe]
+- lib/script/obj-沙发/manager.py -> self._on_target_position_query [has unsubscribe]
+- lib/script/obj-闹钟/manager.py -> self._on_target_position_query [has unsubscribe]
+- lib/script/obj-雪豹/manager.py -> self._on_target_position_query [has unsubscribe]
+
+[TICK]
+- lib/core/input/click.py -> self._on_tick
+- lib/core/object/base.py -> self._tick_fade [has unsubscribe]
+- lib/core/pet_window.py -> self._handle_tick_event
+- lib/script/mainpet/state.py -> self._on_tick_tracking
+- lib/script/obj-摩托/mortor.py -> self._on_tick_click [has unsubscribe]
+- lib/script/obj-摩托/mortor.py -> self._on_tick_motion [has unsubscribe]
+- lib/script/obj-摩托/mortor.py -> self._on_tick_render_jitter [has unsubscribe]
+- lib/script/obj-摩托/mortor.py -> self._tick_fade [has unsubscribe]
+- lib/script/obj-沙发/sofa.py -> self._on_tick_click [has unsubscribe]
+- lib/script/obj-沙发/sofa.py -> self._tick_fade [has unsubscribe]
+- lib/script/obj-闹钟/clock.py -> self._on_tick_click [has unsubscribe]
+- lib/script/obj-闹钟/clock.py -> self._tick_fade [has unsubscribe]
+- lib/script/obj-雪堆/snow_pile.py -> self._on_tick_click [has unsubscribe]
+- lib/script/obj-雪堆/snow_pile.py -> self._tick_fade [has unsubscribe]
+- lib/script/obj-雪球/manager.py -> self._on_tick [has unsubscribe]
+- lib/script/obj-雪球/snowball.py -> self._on_tick [has unsubscribe]
+- lib/script/obj-雪球/snowball.py -> self._tick_fade [has unsubscribe]
+- lib/script/obj-雪豹/manager.py -> self._on_tick [has unsubscribe]
+- lib/script/obj-雪豹/snow_leopard.py -> self._on_tick_click [has unsubscribe]
+- lib/script/obj-雪豹/snow_leopard.py -> self._tick_fade [has unsubscribe]
+- lib/script/obj-音响/speaker.py -> self._on_tick_click [has unsubscribe]
+- lib/script/ui/ai_settings_panel.py -> self._on_tick [has unsubscribe]
+- lib/script/ui/bubble.py -> self._on_tick
+- lib/script/ui/tooltip_panel.py -> self._on_tick
+
+[TIMER]
+- lib/core/pet_window.py -> self._handle_timer_event
+- lib/script/mainpet/state.py -> self._on_timer_event
+- lib/script/obj-雪堆/snow_pile.py -> self._on_timer_event [has unsubscribe]
+- lib/script/obj-雪豹/snow_leopard.py -> self._on_timer_event [has unsubscribe]
+
+[TIMER_PAUSE]
+- lib/core/timing/manager.py -> self._on_timer_pause
+
+[TIMER_RESUME]
+- lib/core/timing/manager.py -> self._on_timer_resume
+
+[UI_ANCHOR_RESPONSE]
+- lib/script/ui/auto_chat_button.py -> self._on_anchor_response [has unsubscribe]
+- lib/script/ui/bubble.py -> self._on_anchor_response
+- lib/script/ui/chat_mode_button.py -> self._on_anchor_response [has unsubscribe]
+- lib/script/ui/clickthrough_button.py -> self._on_anchor_response
+- lib/script/ui/close_button.py -> self._on_anchor_response
+- lib/script/ui/command_dialog.py -> self._on_anchor_response
+- lib/script/ui/command_hint_box.py -> self._on_anchor_response
+- lib/script/ui/launch_wuwa_button.py -> self._on_anchor_response [has unsubscribe]
+- lib/script/ui/more_functions_button.py -> self._on_anchor_response [has unsubscribe]
+- lib/script/ui/restore_button.py -> self._on_anchor_response
+- lib/script/ui/scale_button.py -> self._on_anchor_response
+- lib/script/ui/speaker_control_buttons.py -> self._on_anchor_response [has unsubscribe]
+- lib/script/ui/speaker_search_result_box.py -> self._on_anchor_response
+  发布方: lib/core/anchor_utils.py, lib/core/event/mouse_handler.py, lib/core/pet_window.py, lib/script/ui/speaker_search_dialog.py
+
+[UI_CLICKTHROUGH_TOGGLE]
+- lib/core/pet_window.py -> self._handle_clickthrough_toggle
+- lib/core/tray_icon.py -> self._on_clickthrough_status_change [has unsubscribe]
+- lib/script/obj-摩托/mortor.py -> self._on_clickthrough_toggle [has unsubscribe]
+- lib/script/obj-沙发/sofa.py -> self._on_clickthrough_toggle [has unsubscribe]
+- lib/script/obj-闹钟/clock.py -> self._on_clickthrough_toggle [has unsubscribe]
+- lib/script/obj-雪堆/snow_pile.py -> self._on_clickthrough_toggle
+- lib/script/obj-雪球/snowball.py -> self._on_clickthrough_toggle [has unsubscribe]
+- lib/script/obj-雪豹/snow_leopard.py -> self._on_clickthrough_toggle
+- lib/script/obj-音响/speaker.py -> self._on_clickthrough_toggle [has unsubscribe]
+- lib/script/ui/auto_chat_button.py -> self._on_clickthrough_toggle [has unsubscribe]
+- lib/script/ui/bubble.py -> self._on_clickthrough_toggle
+- lib/script/ui/chat_mode_button.py -> self._on_clickthrough_toggle [has unsubscribe]
+- lib/script/ui/close_button.py -> self._on_clickthrough_toggle
+- lib/script/ui/cloudmusic_login_dialog.py -> self._on_clickthrough_toggle [has unsubscribe]
+- lib/script/ui/command_dialog.py -> self._on_clickthrough_toggle
+- lib/script/ui/command_hint_box.py -> self._on_clickthrough_toggle
+- lib/script/ui/launch_wuwa_button.py -> self._on_clickthrough_toggle [has unsubscribe]
+- lib/script/ui/mic_stt_indicator.py -> self._on_clickthrough_toggle [has unsubscribe]
+- lib/script/ui/more_functions_button.py -> self._on_clickthrough_toggle [has unsubscribe]
+- lib/script/ui/page_turn_buttons.py -> self._on_clickthrough_toggle
+- lib/script/ui/playlist_panel.py -> self._on_clickthrough_toggle
+- lib/script/ui/progress_panel.py -> self._on_clickthrough_toggle
+- lib/script/ui/restore_button.py -> self._on_clickthrough_toggle
+- lib/script/ui/scale_button.py -> self._on_clickthrough_toggle
+- lib/script/ui/speaker_control_buttons.py -> self._on_clickthrough_toggle
+- lib/script/ui/speaker_search_dialog.py -> self._on_clickthrough_toggle [has unsubscribe]
+- lib/script/ui/speaker_search_result_box.py -> self._on_clickthrough_toggle
+- lib/script/ui/yuanbao_login_dialog.py -> self._on_clickthrough_toggle [has unsubscribe]
+  发布方: lib/core/tray_icon.py
+
+[UI_COMMAND_TOGGLE]
+- lib/script/ui/command_dialog.py -> self._on_command_toggle
+  发布方: lib/core/event/mouse_handler.py
+
+[UI_CREATE]
+- lib/core/pet_window.py -> self._handle_ui_create
+- lib/script/ui/bubble.py -> self._on_ui_create
+- lib/script/ui/clickthrough_button.py -> self._on_ui_create
+- lib/script/ui/close_button.py -> self._on_ui_create
+- lib/script/ui/command_dialog.py -> self._on_ui_create
+- lib/script/ui/restore_button.py -> self._on_ui_create
+- lib/script/ui/scale_button.py -> self._on_ui_create
+- lib/script/ui/speaker_control_buttons.py -> self._on_ui_create [has unsubscribe]
+  发布方: lib/script/ui/command_hint_box.py
+
+[UI_HINT_PICK]
+- lib/script/ui/command_dialog.py -> self._on_hint_pick
+  发布方: lib/script/ui/command_hint_box.py
+
+[UI_OPEN_CMD_WINDOW]
+- lib/script/ui/cmd_window.py -> self._on_open_cmd_window
+  发布方: lib/core/tray_icon.py
+
+[UI_OPEN_CMD_WINDOW_WITH_COMMAND]
+- lib/script/ui/cmd_window.py -> self._on_open_cmd_window_with_command
+
+[VOICE_REQUEST]
+- lib/script/voice/handler.py -> self._on_voice_request [has unsubscribe]
+  发布方: lib/core/voice/random_sound.py
+
+[YUANBAO_LOGIN_QR_HIDE]
+- lib/script/ui/yuanbao_login_dialog.py -> self._on_qr_hide [has unsubscribe]
+  发布方: lib/script/ui/yuanbao_login_dialog.py, lib/script/yuanbao_free_api/service.py
+
+[YUANBAO_LOGIN_QR_SHOW]
+- lib/script/ui/yuanbao_login_dialog.py -> self._on_qr_show [has unsubscribe]
+  发布方: lib/script/ui/ai_settings_panel.py, lib/script/yuanbao_free_api/service.py
+
+[YUANBAO_LOGIN_QR_STATUS]
+- lib/script/ui/yuanbao_login_dialog.py -> self._on_qr_status [has unsubscribe]
+  发布方: lib/script/yuanbao_free_api/service.py
+
+=== 仅发布未订阅的事件 ===
+
+[MANAGER_INTERACTION]
+- lib/script/obj-雪豹/manager.py
+
+[MIC_STT_FINAL]
+- lib/script/microphone_stt/service.py
+
+[MIC_STT_PARTIAL]
+- lib/script/microphone_stt/service.py
+
+[MOUSE_CLICK]
+- lib/core/input/click.py
+
+[MOUSE_DOUBLE_CLICK]
+- lib/core/input/click.py
+
+[MUSIC_ENQUEUE]
+- lib/script/ui/speaker_search_result_box.py
+
+[MUSIC_ENQUEUE_HISTORY]
+- lib/script/ui/speaker_control_buttons.py
+
+[MUSIC_ENQUEUE_LIKED]
+- lib/script/ui/speaker_control_buttons.py
+
+[MUSIC_ENQUEUE_LOCAL]
+- lib/script/ui/speaker_control_buttons.py
+
+[MUSIC_LOGIN_CANCEL_REQUEST]
+- lib/script/ui/cloudmusic_login_dialog.py
+
+[MUSIC_LOGIN_REQUEST]
+- lib/script/ui/speaker_control_buttons.py
+
+[MUSIC_LOGOUT_REQUEST]
+- lib/script/obj-音响/manager.py
+
+[MUSIC_NEXT_TRACK]
+- lib/script/tool_dispatcher/dispatcher.py
+- lib/script/ui/speaker_control_buttons.py
+
+[MUSIC_PLAY_MODE_TOGGLE]
+- lib/script/ui/speaker_control_buttons.py
+
+[MUSIC_PLAY_PAUSE]
+- lib/script/practical/cleanup_handler.py
+- lib/script/tool_dispatcher/dispatcher.py
+- lib/script/ui/speaker_control_buttons.py
+
+[MUSIC_PLAY_QUEUE_INDEX]
+- lib/script/ui/playlist_panel.py
+
+[MUSIC_PLAY_TOP]
+- lib/script/obj-摩托/manager.py
+- lib/script/tool_dispatcher/dispatcher.py
+- lib/script/ui/speaker_search_result_box.py
+
+[MUSIC_PROGRESS_REQUEST]
+- lib/script/ui/progress_panel.py
+
+[MUSIC_SEEK]
+- lib/script/ui/progress_panel.py
+
+[MUSIC_VOLUME]
+- lib/script/tool_dispatcher/dispatcher.py
+- lib/script/ui/speaker_control_buttons.py
+
+[TARGET_POSITION_RESPONSE]
+- lib/script/obj-摩托/manager.py
+- lib/script/obj-沙发/manager.py
+- lib/script/obj-闹钟/manager.py
+- lib/script/obj-雪豹/manager.py
+
+=== 仅退订记录（未扫到订阅） ===
+
+=== 发布方索引（按事件类型） ===
+
+[AI_VOICE_REQUEST]
+- lib/script/chat/handler_stream_presenter.py
+
+[APP_QUIT]
+- lib/core/pet_window.py
+
+[AUTOSTART_STATUS_CHANGE]
+- lib/core/tray_icon.py
+
+[ENTITY_POSITION_REQUEST]
+- lib/core/event/center.py
+- lib/script/obj-雪豹/manager.py
+
+[ENTITY_POSITION_RESPONSE]
+- lib/core/pet_window.py
+
+[ENTITY_STATE_QUERY]
+- lib/core/event/center.py
+- lib/script/obj-雪豹/manager.py
+
+[ENTITY_STATE_RESPONSE]
+- lib/core/pet_window.py
+
+[INFORMATION]
+- lib/core/cmd_center.py
+- lib/core/tray_icon.py
+- lib/script/chat/handler.py
+- lib/script/chat/handler_stream_presenter.py
+- lib/script/cloudmusic/_mixin_cache.py
+- lib/script/cloudmusic/manager.py
+- lib/script/microphone_stt/service.py
+- lib/script/obj-摩托/manager.py
+- lib/script/obj-沙发/manager.py
+- lib/script/obj-闹钟/manager.py
+- lib/script/obj-雪堆/manager.py
+- lib/script/obj-雪球/manager.py
+- lib/script/obj-雪豹/manager.py
+- lib/script/obj-音响/manager.py
+- lib/script/practical/cleanup_handler.py
+- lib/script/tool_dispatcher/dispatcher.py
+- lib/script/ui/ai_settings_panel.py
+- lib/script/ui/launch_wuwa_button.py
+- lib/script/ui/more_functions_button.py
+- lib/script/ui/playlist_panel.py
+- lib/script/ui/speaker_control_buttons.py
+- lib/script/ui/speaker_search_dialog.py
+- lib/script/ui/yuanbao_login_dialog.py
+- lib/script/yuanbao_free_api/service.py
+
+[INPUT_CHAT]
+- lib/script/microphone_stt/service.py
+- lib/script/tool_dispatcher/dispatcher.py
+
+[INPUT_HASH]
+- lib/core/tray_icon.py
+- lib/script/ui/command_hint_box.py
+
+[MANAGER_INTERACTION]
+- lib/script/obj-雪豹/manager.py
+
+[MANAGER_QUERY_REQUEST]
+- lib/script/obj-雪堆/manager.py
+
+[MANAGER_QUERY_RESPONSE]
+- lib/script/obj-摩托/manager.py
+- lib/script/obj-沙发/manager.py
+- lib/script/obj-闹钟/manager.py
+- lib/script/obj-雪豹/manager.py
+
+[MANAGER_SPAWN_REQUEST]
+- lib/script/obj-雪堆/manager.py
+- lib/script/tool_dispatcher/dispatcher.py
+
+[MIC_STT_FINAL]
+- lib/script/microphone_stt/service.py
+
+[MIC_STT_PARTIAL]
+- lib/script/microphone_stt/service.py
+
+[MIC_STT_START]
+- lib/script/microphone_stt/push_to_talk.py
+- lib/script/ui/auto_chat_button.py
+- lib/script/ui/chat_mode_button.py
+
+[MIC_STT_STATE_CHANGE]
+- lib/script/microphone_stt/service.py
+
+[MIC_STT_STOP]
+- lib/script/microphone_stt/push_to_talk.py
+- lib/script/ui/auto_chat_button.py
+- lib/script/ui/chat_mode_button.py
+- lib/script/ui/mic_stt_indicator.py
+
+[MOUSE_CLICK]
+- lib/core/input/click.py
+
+[MOUSE_DOUBLE_CLICK]
+- lib/core/input/click.py
+
+[MUSIC_ENQUEUE]
+- lib/script/ui/speaker_search_result_box.py
+
+[MUSIC_ENQUEUE_HISTORY]
+- lib/script/ui/speaker_control_buttons.py
+
+[MUSIC_ENQUEUE_LIKED]
+- lib/script/ui/speaker_control_buttons.py
+
+[MUSIC_ENQUEUE_LOCAL]
+- lib/script/ui/speaker_control_buttons.py
+
+[MUSIC_LOGIN_CANCEL_REQUEST]
+- lib/script/ui/cloudmusic_login_dialog.py
+
+[MUSIC_LOGIN_QR_HIDE]
+- lib/script/cloudmusic/_mixin_login.py
+
+[MUSIC_LOGIN_QR_SHOW]
+- lib/script/cloudmusic/_mixin_login.py
+
+[MUSIC_LOGIN_QR_STATUS]
+- lib/script/cloudmusic/_mixin_login.py
+
+[MUSIC_LOGIN_REQUEST]
+- lib/script/ui/speaker_control_buttons.py
+
+[MUSIC_LOGIN_STATUS_CHANGE]
+- lib/script/cloudmusic/manager.py
+- lib/script/ui/speaker_control_buttons.py
+
+[MUSIC_LOGOUT_REQUEST]
+- lib/script/obj-音响/manager.py
+
+[MUSIC_NEXT_TRACK]
+- lib/script/tool_dispatcher/dispatcher.py
+- lib/script/ui/speaker_control_buttons.py
+
+[MUSIC_PLAY_MODE_TOGGLE]
+- lib/script/ui/speaker_control_buttons.py
+
+[MUSIC_PLAY_PAUSE]
+- lib/script/practical/cleanup_handler.py
+- lib/script/tool_dispatcher/dispatcher.py
+- lib/script/ui/speaker_control_buttons.py
+
+[MUSIC_PLAY_QUEUE_INDEX]
+- lib/script/ui/playlist_panel.py
+
+[MUSIC_PLAY_TOP]
+- lib/script/obj-摩托/manager.py
+- lib/script/tool_dispatcher/dispatcher.py
+- lib/script/ui/speaker_search_result_box.py
+
+[MUSIC_PROGRESS]
+- lib/script/cloudmusic/_mixin_playback.py
+
+[MUSIC_PROGRESS_REQUEST]
+- lib/script/ui/progress_panel.py
+
+[MUSIC_SEEK]
+- lib/script/ui/progress_panel.py
+
+[MUSIC_SONG_END]
+- lib/script/cloudmusic/_mixin_playback.py
+
+[MUSIC_STATUS_CHANGE]
+- lib/script/cloudmusic/manager.py
+
+[MUSIC_VOLUME]
+- lib/script/tool_dispatcher/dispatcher.py
+- lib/script/ui/speaker_control_buttons.py
+
+[PARTICLE_REQUEST]
+- lib/script/cloudmusic/_mixin_events.py
+- lib/script/obj-雪堆/manager.py
+- lib/script/obj-雪堆/snow_pile.py
+- lib/script/obj-雪球/snowball.py
+- lib/script/obj-雪豹/snow_leopard.py
+- lib/script/ui/_particle_helper.py
+- lib/script/ui/ai_settings_panel.py
+- lib/script/ui/auto_chat_button.py
+- lib/script/ui/bubble.py
+- lib/script/ui/chat_mode_button.py
+- lib/script/ui/command_hint_box.py
+- lib/script/ui/launch_wuwa_button.py
+- lib/script/ui/more_functions_button.py
+- lib/script/ui/playlist_panel.py
+- lib/script/ui/speaker_search_dialog.py
+- lib/script/ui/speaker_search_result_box.py
+- lib/script/ui/tray_menu.py
+
+[PET_TELEPORT]
+- lib/script/tool_dispatcher/dispatcher.py
+
+[PROTECTION_CHECK]
+- lib/script/mainpet/state.py
+
+[PROTECTION_RESPONSE]
+- lib/script/obj-摩托/manager.py
+- lib/script/obj-沙发/manager.py
+- lib/script/obj-闹钟/manager.py
+
+[SOUND_REQUEST]
+- lib/script/gsvmove/service.py
+- lib/script/voice/handler.py
+
+[SPEAKER_WINDOW_REQUEST]
+- lib/script/cloudmusic/_mixin_playback.py
+- lib/script/tool_dispatcher/dispatcher.py
+
+[SPEAKER_WINDOW_RESPONSE]
+- lib/script/obj-音响/manager.py
+
+[STATE_CHANGE_REQUEST]
+- lib/core/pet_window.py
+- lib/script/obj-雪豹/manager.py
+
+[STREAM_FINAL]
+- lib/script/chat/handler_stream_presenter.py
+
+[TARGET_POSITION_RESPONSE]
+- lib/script/obj-摩托/manager.py
+- lib/script/obj-沙发/manager.py
+- lib/script/obj-闹钟/manager.py
+- lib/script/obj-雪豹/manager.py
+
+[UI_ANCHOR_RESPONSE]
+- lib/core/anchor_utils.py
+- lib/core/event/mouse_handler.py
+- lib/core/pet_window.py
+- lib/script/ui/speaker_search_dialog.py
+
+[UI_CLICKTHROUGH_TOGGLE]
+- lib/core/tray_icon.py
+
+[UI_COMMAND_TOGGLE]
+- lib/core/event/mouse_handler.py
+
+[UI_CREATE]
+- lib/script/ui/command_hint_box.py
+
+[UI_HINT_PICK]
+- lib/script/ui/command_hint_box.py
+
+[UI_OPEN_CMD_WINDOW]
+- lib/core/tray_icon.py
+
+[VOICE_REQUEST]
+- lib/core/voice/random_sound.py
+
+[YUANBAO_LOGIN_QR_HIDE]
+- lib/script/ui/yuanbao_login_dialog.py
+- lib/script/yuanbao_free_api/service.py
+
+[YUANBAO_LOGIN_QR_SHOW]
+- lib/script/ui/ai_settings_panel.py
+- lib/script/yuanbao_free_api/service.py
+
+[YUANBAO_LOGIN_QR_STATUS]
+- lib/script/yuanbao_free_api/service.py

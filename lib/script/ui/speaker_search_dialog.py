@@ -15,10 +15,10 @@ import re
 
 from PyQt5.QtWidgets import QWidget, QLineEdit, QGraphicsOpacityEffect
 from PyQt5.QtCore import Qt, QPoint, QPropertyAnimation, QEasingCurve, QObject, QRect, QEvent
-from PyQt5.QtGui import QColor, QFont, QPainter, QCursor
+from PyQt5.QtGui import QColor, QPainter, QCursor
 from PyQt5.QtCore import pyqtSignal
 
-from config.config import UI, SPEAKER_SEARCH_UI, CLOUD_MUSIC, FONT
+from config.config import UI, SPEAKER_SEARCH_UI, CLOUD_MUSIC
 from config.font_config import get_ui_font
 from config.scale import scale_px, scale_style_px
 from config.tooltip_config import TOOLTIPS
@@ -27,6 +27,13 @@ from lib.core.topmost_manager import get_topmost_manager
 from lib.core.screen_utils import clamp_rect_position
 from lib.core.anchor_utils import apply_ui_opacity
 from lib.script.music import get_music_service
+from lib.script.ui.speaker_menu_style import (
+    _C_BG,
+    _C_ACTION_TEXT,
+    _C_ENTRY_BG,
+    paint_speaker_menu_panel,
+    paint_speaker_action_button,
+)
 
 _DURATION_TEXT_RE = re.compile(r"^\s*(\d{1,3}):(\d{2})\s*$")
 _SEARCH_MODE_ORDER = ('song', 'artist', 'album', 'playlist')
@@ -50,16 +57,7 @@ _TOTAL_W = _INPUT_W + _BTN_W
 _HEIGHT  = SPEAKER_SEARCH_UI.get('height', scale_px(36, min_abs=1))
 _BORDER  = SPEAKER_SEARCH_UI.get('border', scale_px(4, min_abs=1))
 _GAP     = SPEAKER_SEARCH_UI.get('gap', scale_px(6, min_abs=1))
-_LAYER   = max(1, _BORDER // 2)
 _AUTO_HIDE_MOUSE_DISTANCE = UI.get('auto_hide_mouse_distance', scale_px(300, min_abs=1))
-
-# ── 从配置文件读取颜色参数 ───────────────────────────────────────────
-_C_BORDER = QColor(*SPEAKER_SEARCH_UI.get('border_color', (0, 0, 0)))
-_C_MID    = QColor(*SPEAKER_SEARCH_UI.get('mid_color', (173, 216, 230)))
-_C_BG     = QColor(*SPEAKER_SEARCH_UI.get('bg_color', (255, 182, 193)))
-_C_TEXT   = QColor(*SPEAKER_SEARCH_UI.get('text_color', (0, 0, 0)))
-_C_ENTRY_BG = QColor(*SPEAKER_SEARCH_UI.get('entry_bg_color', (255, 255, 255)))
-
 
 # ── 跨线程信号载体 ────────────────────────────────────────────────────
 class _SearchSignals(QObject):
@@ -84,6 +82,7 @@ class SpeakerSearchDialog(QWidget):
         )
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFixedSize(_TOTAL_W, _HEIGHT)
+        self.setMouseTracking(True)
         get_topmost_manager().register(self)
 
         # ── 输入框 ──────────────────────────────────────────────────
@@ -114,6 +113,8 @@ class SpeakerSearchDialog(QWidget):
         self._searching       = False
         self._search_mode     = 'song'
         self._description     = TOOLTIPS['speaker_search_dialog']
+        self._search_btn_hovered = False
+        self._search_btn_pressed = False
 
         # ── 透明度 & 动画 ────────────────────────────────────────────
         self._opacity = QGraphicsOpacityEffect(self)
@@ -469,29 +470,25 @@ class SpeakerSearchDialog(QWidget):
         p.setRenderHint(QPainter.Antialiasing, False)
 
         # ── 输入框区域（左侧 _INPUT_W px）──────────────────────────
-        p.fillRect(QRect(0, 0, _INPUT_W, _HEIGHT), _C_BORDER)
-        p.fillRect(QRect(_LAYER, _LAYER, _INPUT_W - _LAYER * 2, _HEIGHT - _LAYER * 2), _C_MID)
-        p.fillRect(QRect(_BORDER, _BORDER,
-                         _INPUT_W - _BORDER * 2, _HEIGHT - _BORDER * 2), _C_BG)
+        paint_speaker_menu_panel(p, QRect(0, 0, _INPUT_W, _HEIGHT))
 
         # ── 按钮区域（右侧 _BTN_W px）───────────────────────────────
         bx = _INPUT_W
-        p.fillRect(QRect(bx, 0, _BTN_W, _HEIGHT), _C_BORDER)
-        p.fillRect(
-            QRect(bx + _LAYER, _LAYER, _BTN_W - _LAYER * 2, _HEIGHT - _LAYER * 2),
-            _C_MID
+        btn_content = paint_speaker_action_button(
+            p,
+            QRect(bx, 0, _BTN_W, _HEIGHT),
+            hovered=self._search_btn_hovered,
+            pressed=self._search_btn_pressed,
         )
-        p.fillRect(QRect(bx + _BORDER, _BORDER,
-                         _BTN_W - _BORDER * 2, _HEIGHT - _BORDER * 2), _C_BG)
 
         # 按钮文字
-        p.setPen(_C_TEXT)
-        p.setFont(get_ui_font())
-        p.font().setBold(True)
+        font = get_ui_font()
+        font.setBold(True)
+        p.setPen(_C_ACTION_TEXT)
+        p.setFont(font)
         btn_label = '搜索中...' if self._searching else '搜索歌曲'
         p.drawText(
-            QRect(bx + _BORDER, _BORDER,
-                  _BTN_W - _BORDER * 2, _HEIGHT - _BORDER * 2),
+            btn_content,
             Qt.AlignCenter,
             btn_label,
         )
@@ -503,8 +500,40 @@ class SpeakerSearchDialog(QWidget):
         if event.button() == Qt.LeftButton:
             # 点击了按钮区域（右侧 80px）
             if event.pos().x() >= _INPUT_W:
-                self._trigger_search()
+                self._search_btn_pressed = True
+                try:
+                    self.grabMouse()
+                except RuntimeError:
+                    pass
+                self.update()
         super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if self._search_btn_pressed:
+            commit = event.button() == Qt.LeftButton and event.pos().x() >= _INPUT_W and self.rect().contains(event.pos())
+            self._search_btn_pressed = False
+            try:
+                if self.mouseGrabber() is self:
+                    self.releaseMouse()
+            except RuntimeError:
+                pass
+            self.update()
+            if commit:
+                self._trigger_search()
+        super().mouseReleaseEvent(event)
+
+    def mouseMoveEvent(self, event):
+        hovered = event.pos().x() >= _INPUT_W
+        if hovered != self._search_btn_hovered:
+            self._search_btn_hovered = hovered
+            self.update()
+        super().mouseMoveEvent(event)
+
+    def leaveEvent(self, event):
+        if self._search_btn_hovered:
+            self._search_btn_hovered = False
+            self.update()
+        super().leaveEvent(event)
 
     def _on_clickthrough_toggle(self, event: Event) -> None:
         self.setAttribute(Qt.WA_TransparentForMouseEvents,

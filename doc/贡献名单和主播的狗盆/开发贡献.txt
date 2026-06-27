@@ -44,7 +44,7 @@ ai平台技术支持:
 ===deepseek深度求索,豆包	(日常帮助)
 ===ollama			(本地部署)
 ===GPT-SoVITs		(语音合成模块)
-部分使用到的ai模型:opus/sonnet4.6,gml5,gml4.7,GPT-5.3/5.4-codeX,deepseek-v3.2,qwen2.5  
+部分使用到的ai模型:opus/sonnet4.6/4.7,gml5/gml5.1,gml4.7,GPT-5.3/5.4/5.5-codeX,deepseek-v3.2,qwen2.5，deepseekV4flash/pro  
 
 音乐模块支持:网易云音乐/QQ音乐/酷狗音乐(非官方,仅供学习交流)
 由于aip官方版权限制,默认模块推荐:网易云音乐

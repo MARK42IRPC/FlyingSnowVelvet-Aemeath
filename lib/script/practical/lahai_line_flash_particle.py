@@ -1,0 +1,93 @@
+"""Explosive gravity particles for Lahai Tetris line clear."""
+
+from __future__ import annotations
+
+import random
+from typing import Tuple
+
+from PyQt5.QtGui import QColor
+
+from lib.core.plugin_registry import register_particle
+from lib.script.practical.base_particle import BaseParticleScript
+
+
+@register_particle("lahai_line_flash")
+class LahaiLineFlashParticleScript(BaseParticleScript):
+    PARTICLE_ID = "lahai_line_flash"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._config = {
+            "count_range": (8, 12),
+            "size_range": (2, 4),
+            "speed_x": (-3.4, 3.4),
+            "speed_y": (-4.6, -2.0),
+            "gravity": 0.18,
+            "drag": 0.97,
+            "brownian": 0.07,
+            "life_decay": 0.012,
+        }
+        self._request_options: dict = {}
+
+    def set_request_options(self, options: dict) -> None:
+        self._request_options = dict(options or {})
+
+    def create_particles(self, area_type: str, area_data: Tuple) -> list:
+        if area_type == "rect":
+            x1, y1, x2, y2 = area_data
+        else:
+            cx, cy = area_data[:2]
+            x1 = cx - 20
+            x2 = cx + 20
+            y1 = cy - 2
+            y2 = cy + 2
+        return [
+            LahaiLineFlashParticle(
+                random.uniform(x1, x2),
+                random.uniform(y1, y2),
+                self._config,
+                dict(self._request_options),
+            )
+            for _ in range(random.randint(*self._config["count_range"]))
+        ]
+
+
+class LahaiLineFlashParticle:
+    def __init__(self, x: float, y: float, config: dict, options: dict) -> None:
+        self.x = float(x)
+        self.y = float(y)
+        self.size = random.randint(*config["size_range"])
+        self.vx = random.uniform(*config["speed_x"])
+        self.vy = random.uniform(*config["speed_y"])
+        self.color = _vary_color(options.get("rgb", (255, 255, 255)))
+        self.gravity = float(config["gravity"])
+        self.drag = float(config["drag"])
+        self._brownian = float(config["brownian"])
+        self.life_decay = float(config["life_decay"])
+        self.max_life = 1.0
+        self.life = 1.0
+
+    def update(self) -> None:
+        self.vx += random.uniform(-self._brownian, self._brownian)
+        self.vy += random.uniform(-self._brownian, self._brownian)
+        self.vx *= self.drag
+        self.vy *= self.drag
+        self.vy += self.gravity
+        self.x += self.vx
+        self.y += self.vy
+        self.life -= self.life_decay
+
+    @property
+    def alive(self) -> bool:
+        return self.life > 0.0
+
+
+def _vary_color(rgb: tuple[int, int, int] | list[int]) -> QColor:
+    r, g, b = [max(0, min(255, int(v))) for v in rgb]
+    luma = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255.0
+    jitter = 20 if luma < 0.65 else 14
+    return QColor(
+        max(0, min(255, r + random.randint(-jitter, jitter))),
+        max(0, min(255, g + random.randint(-jitter, jitter))),
+        max(0, min(255, b + random.randint(-jitter, jitter))),
+    )

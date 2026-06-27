@@ -1,14 +1,12 @@
 """音响控制按钮类 - 暂停/播放、下一曲"""
 from PyQt5.QtWidgets import QWidget, QGraphicsOpacityEffect
 from PyQt5.QtCore import Qt, QPropertyAnimation, QEasingCurve, QPoint, QPointF, QRectF
-from PyQt5.QtGui import QColor, QFont, QPainter, QPen, QBrush, QPolygonF
+from PyQt5.QtGui import QPainter, QPolygonF
 
-from config.config import COLORS, FONT, UI_THEME, SPEAKER_SEARCH_UI
-from config.font_config import get_ui_font
+from config.config import SPEAKER_SEARCH_UI
 from config.scale import scale_px
 from config.tooltip_config import TOOLTIPS
 from lib.core.event.center import get_event_center, EventType, Event
-from lib.core.topmost_manager import get_topmost_manager
 from lib.core.screen_utils import clamp_rect_position
 from lib.script.music import get_music_service
 from lib.core.anchor_utils import (
@@ -16,21 +14,15 @@ from lib.core.anchor_utils import (
     publish_widget_anchor_response,
     animate_opacity,
 )
-
-
-# ── 配色（从 UI_THEME 获取）──────────────────────────────────────────
-_C_BORDER = UI_THEME['border']
-_C_MID    = UI_THEME['mid']
-_C_BG     = UI_THEME['bg']
-_C_TEXT   = UI_THEME['text']
-_C_ICON   = UI_THEME['icon']
+from lib.script.ui.speaker_menu_style import (
+    _C_ACTION_TEXT,
+    SpeakerActionButtonMixin,
+)
 
 # ── 尺寸 ──────────────────────────────────────────────────────────────
 _BTN_WIDTH        = scale_px(40, min_abs=1)  # 图标按钮宽度（播放/暂停、下一曲）
 _BTN_HEIGHT       = scale_px(32, min_abs=1)  # 所有按钮统一高度
 _BTN_PLAYLIST_W   = scale_px(80, min_abs=1)  # 播放列表按钮宽度（与搜索按钮等宽）
-_LAYER            = scale_px(2, min_abs=1)
-_BORDER           = _LAYER * 2
 _SEARCH_DIALOG_W  = SPEAKER_SEARCH_UI.get('input_width', scale_px(160, min_abs=1)) + SPEAKER_SEARCH_UI.get('button_width', scale_px(80, min_abs=1))
 
 
@@ -108,7 +100,7 @@ def _publish_volume_bubble(event_center) -> None:
     }))
 
 
-class SpeakerControlButton(QWidget):
+class SpeakerControlButton(SpeakerActionButtonMixin, QWidget):
     """
     音响控制按钮基类。
 
@@ -123,16 +115,7 @@ class SpeakerControlButton(QWidget):
         super().__init__()
         self._width = width
         self._height = height
-
-        self.setWindowFlags(
-            Qt.Tool
-            | Qt.FramelessWindowHint
-            | Qt.WindowStaysOnTopHint
-        )
-        self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setFixedSize(width, height)
-        self.setCursor(Qt.PointingHandCursor)
-        get_topmost_manager().register(self)
+        self._init_speaker_action_button(width, height)
 
         # 透明度效果
         self._opacity = QGraphicsOpacityEffect(self)
@@ -159,18 +142,7 @@ class SpeakerControlButton(QWidget):
     def paintEvent(self, event):
         """绘制按钮"""
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing, False)
-
-        # 绘制2px黑色边框（最外层）
-        painter.fillRect(self.rect(), _C_BORDER)
-
-        # 绘制2px灰白色边框（中间层）
-        mid_rect = self.rect().adjusted(_LAYER, _LAYER, -_LAYER, -_LAYER)
-        painter.fillRect(mid_rect, _C_MID)
-
-        # 绘制棕色背景（最内层）
-        content_rect = self.rect().adjusted(_BORDER, _BORDER, -_BORDER, -_BORDER)
-        painter.fillRect(content_rect, _C_BG)
+        content_rect = self._paint_action_button_shell(painter)
 
         # 绘制几何图标（由子类实现）
         painter.setRenderHint(QPainter.Antialiasing, True)
@@ -188,6 +160,7 @@ class SpeakerControlButton(QWidget):
         self._animate(1.0)
 
     def fade_out(self):
+        self._cancel_action_press()
         if not self._visible:
             return
         self._visible = False
@@ -209,14 +182,13 @@ class SpeakerControlButton(QWidget):
         from lib.script.ui._particle_helper import publish_click_particle
         publish_click_particle(self, event)
         if event.button() == Qt.LeftButton:
-            self._pressed = True
-            self.update()
+            self._begin_action_press()
 
     def mouseReleaseEvent(self, event):
-        if event.button() == Qt.LeftButton and self._pressed:
-            self._pressed = False
-            self.on_clicked()
-            self.update()
+        if event.button() == Qt.LeftButton:
+            commit = self.rect().contains(event.pos())
+            if self._finish_action_press(commit=commit):
+                self.on_clicked()
 
     def on_clicked(self):
         """子类重写此方法实现点击逻辑"""
@@ -259,7 +231,7 @@ class PlayPauseButton(SpeakerControlButton):
         size = min(rect.width(), rect.height()) * 0.4 * 0.85  # 缩小到 0.85
 
         painter.setPen(Qt.NoPen)
-        painter.setBrush(_C_ICON)
+        painter.setBrush(_C_ACTION_TEXT)
 
         if self._playing:
             # 暂停图标：两条竖线
@@ -300,7 +272,7 @@ class NextTrackButton(SpeakerControlButton):
         size = min(rect.width(), rect.height()) * 0.4
 
         painter.setPen(Qt.NoPen)
-        painter.setBrush(_C_ICON)
+        painter.setBrush(_C_ACTION_TEXT)
 
         # 三角形（播放图标）
         triangle = QPolygonF([
@@ -326,8 +298,6 @@ class MusicLoginButton(SpeakerControlButton):
 
     def __init__(self):
         super().__init__(_BTN_PLAYLIST_W, _BTN_HEIGHT)
-        self._label_font = get_ui_font()
-        self._label_font.setBold(True)
         self._logged_in = False
         self._provider = 'netease'
         self._description = TOOLTIPS['speaker_music_login']
@@ -352,7 +322,7 @@ class MusicLoginButton(SpeakerControlButton):
     def _draw_icon(self, painter, rect):
         painter.setRenderHint(QPainter.Antialiasing, False)
         painter.setFont(self._label_font)
-        painter.setPen(_C_TEXT)
+        painter.setPen(_C_ACTION_TEXT)
         try:
             provider = self._provider
         except Exception:
@@ -383,8 +353,6 @@ class PlatformModeButton(SpeakerControlButton):
 
     def __init__(self):
         super().__init__(_BTN_PLAYLIST_W, _BTN_HEIGHT)
-        self._label_font = get_ui_font()
-        self._label_font.setBold(True)
         self._mode_label = "网易模式"
         self._description = TOOLTIPS.get('speaker_platform_mode', '切换当前音乐平台模式')
         self._sync_mode_state()
@@ -399,7 +367,7 @@ class PlatformModeButton(SpeakerControlButton):
     def _draw_icon(self, painter, rect):
         painter.setRenderHint(QPainter.Antialiasing, False)
         painter.setFont(self._label_font)
-        painter.setPen(_C_TEXT)
+        painter.setPen(_C_ACTION_TEXT)
         painter.drawText(rect, Qt.AlignCenter, self._mode_label)
 
     def on_clicked(self):
@@ -440,8 +408,6 @@ class PlayModeButton(SpeakerControlButton):
 
     def __init__(self):
         super().__init__(_BTN_PLAYLIST_W, _BTN_HEIGHT)
-        self._label_font = get_ui_font()
-        self._label_font.setBold(True)
         self._mode = 'list_loop'
         self._description = TOOLTIPS['speaker_play_mode']
         self._event_center.subscribe(EventType.MUSIC_STATUS_CHANGE, self._on_status_change)
@@ -459,7 +425,7 @@ class PlayModeButton(SpeakerControlButton):
     def _draw_icon(self, painter, rect):
         painter.setRenderHint(QPainter.Antialiasing, False)
         painter.setFont(self._label_font)
-        painter.setPen(_C_TEXT)
+        painter.setPen(_C_ACTION_TEXT)
         label = self._MODE_LABELS.get(self._mode, self._MODE_LABELS['list_loop'])
         painter.drawText(rect, Qt.AlignCenter, label)
 
@@ -474,8 +440,6 @@ class SearchPriorityButton(SpeakerControlButton):
 
     def __init__(self):
         super().__init__(_BTN_PLAYLIST_W, _BTN_HEIGHT)
-        self._label_font = get_ui_font()
-        self._label_font.setBold(True)
         self._dialog = None
         self._label_index = 0
         self._label = self._FALLBACK_LABELS[self._label_index]
@@ -492,7 +456,7 @@ class SearchPriorityButton(SpeakerControlButton):
     def _draw_icon(self, painter, rect):
         painter.setRenderHint(QPainter.Antialiasing, False)
         painter.setFont(self._label_font)
-        painter.setPen(_C_TEXT)
+        painter.setPen(_C_ACTION_TEXT)
         painter.drawText(rect, Qt.AlignCenter, self._label)
 
     def on_clicked(self):
@@ -519,8 +483,6 @@ class PlaylistButton(SpeakerControlButton):
 
     def __init__(self):
         super().__init__(_BTN_PLAYLIST_W, _BTN_HEIGHT)
-        self._label_font  = get_ui_font()
-        self._label_font.setBold(True)
         self._dialog      = None   # 由 SpeakerControlButtons 注入
         self._description = TOOLTIPS['speaker_playlist_toggle']
 
@@ -532,7 +494,7 @@ class PlaylistButton(SpeakerControlButton):
         """绘制文字标签（覆盖基类的图标绘制方法）。"""
         painter.setRenderHint(QPainter.Antialiasing, False)
         painter.setFont(self._label_font)
-        painter.setPen(_C_TEXT)
+        painter.setPen(_C_ACTION_TEXT)
         painter.drawText(rect, Qt.AlignCenter, '播放列表')
 
     def on_clicked(self):
@@ -561,14 +523,12 @@ class HistoryQueueButton(SpeakerControlButton):
 
     def __init__(self):
         super().__init__(_BTN_PLAYLIST_W, _BTN_HEIGHT)
-        self._label_font = get_ui_font()
-        self._label_font.setBold(True)
         self._description = TOOLTIPS['speaker_history_queue']
 
     def _draw_icon(self, painter, rect):
         painter.setRenderHint(QPainter.Antialiasing, False)
         painter.setFont(self._label_font)
-        painter.setPen(_C_TEXT)
+        painter.setPen(_C_ACTION_TEXT)
         painter.drawText(rect, Qt.AlignCenter, '一键历史')
 
     def on_clicked(self):
@@ -580,14 +540,12 @@ class ClearQueueButton(SpeakerControlButton):
 
     def __init__(self):
         super().__init__(_BTN_PLAYLIST_W, _BTN_HEIGHT)
-        self._label_font = get_ui_font()
-        self._label_font.setBold(True)
         self._description = TOOLTIPS.get('speaker_clear_queue', '清空列表')
 
     def _draw_icon(self, painter, rect):
         painter.setRenderHint(QPainter.Antialiasing, False)
         painter.setFont(self._label_font)
-        painter.setPen(_C_TEXT)
+        painter.setPen(_C_ACTION_TEXT)
         painter.drawText(rect, Qt.AlignCenter, '清空列表')
 
     def on_clicked(self):
@@ -599,14 +557,12 @@ class LocalQueueButton(SpeakerControlButton):
 
     def __init__(self):
         super().__init__(_BTN_PLAYLIST_W, _BTN_HEIGHT)
-        self._label_font = get_ui_font()
-        self._label_font.setBold(True)
         self._description = TOOLTIPS.get('speaker_local_queue', '加载本地音乐到队列')
 
     def _draw_icon(self, painter, rect):
         painter.setRenderHint(QPainter.Antialiasing, False)
         painter.setFont(self._label_font)
-        painter.setPen(_C_TEXT)
+        painter.setPen(_C_ACTION_TEXT)
         painter.drawText(rect, Qt.AlignCenter, '一键本地')
 
     def on_clicked(self):
@@ -618,8 +574,6 @@ class LikedQueueButton(SpeakerControlButton):
 
     def __init__(self):
         super().__init__(_BTN_PLAYLIST_W, _BTN_HEIGHT)
-        self._label_font = get_ui_font()
-        self._label_font.setBold(True)
         self._logged_in = False
         self._provider = 'netease'
         self._description = TOOLTIPS['speaker_like_queue']
@@ -652,7 +606,7 @@ class LikedQueueButton(SpeakerControlButton):
     def _draw_icon(self, painter, rect):
         painter.setRenderHint(QPainter.Antialiasing, False)
         painter.setFont(self._label_font)
-        painter.setPen(_C_TEXT)
+        painter.setPen(_C_ACTION_TEXT)
         painter.drawText(rect, Qt.AlignCenter, '一键喜欢')
 
     def fade_in(self):
@@ -684,14 +638,12 @@ class VolumeDownButton(SpeakerControlButton):
 
     def __init__(self):
         super().__init__(_BTN_WIDTH, _BTN_HEIGHT)
-        self._label_font = get_ui_font()
-        self._label_font.setBold(True)
         self._description = TOOLTIPS.get('speaker_volume_down', '????')
 
     def _draw_icon(self, painter, rect):
         painter.setRenderHint(QPainter.Antialiasing, False)
         painter.setFont(self._label_font)
-        painter.setPen(_C_TEXT)
+        painter.setPen(_C_ACTION_TEXT)
         painter.drawText(rect, Qt.AlignCenter, '-')
 
     def on_clicked(self):
@@ -706,14 +658,12 @@ class VolumeUpButton(SpeakerControlButton):
 
     def __init__(self):
         super().__init__(_BTN_WIDTH, _BTN_HEIGHT)
-        self._label_font = get_ui_font()
-        self._label_font.setBold(True)
         self._description = TOOLTIPS.get('speaker_volume_up', '????')
 
     def _draw_icon(self, painter, rect):
         painter.setRenderHint(QPainter.Antialiasing, False)
         painter.setFont(self._label_font)
-        painter.setPen(_C_TEXT)
+        painter.setPen(_C_ACTION_TEXT)
         painter.drawText(rect, Qt.AlignCenter, '+')
 
     def on_clicked(self):

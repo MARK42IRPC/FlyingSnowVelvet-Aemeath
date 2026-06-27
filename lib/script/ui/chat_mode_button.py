@@ -13,6 +13,7 @@ from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.topmost_manager import get_topmost_manager
 from lib.core.screen_utils import clamp_rect_position
 from lib.core.anchor_utils import apply_ui_opacity
+from lib.script.ui.rect_action_button_style import paint_rect_action_button
 
 
 class ChatModeButton(QWidget):
@@ -37,6 +38,7 @@ class ChatModeButton(QWidget):
         self._visible = False
         self._listening = False
         self._description = "点击切换语音/文字模式"
+        self._hovered = False
 
         self._opacity = QGraphicsOpacityEffect(self)
         self._opacity.setOpacity(0.0)
@@ -152,18 +154,7 @@ class ChatModeButton(QWidget):
     # ------------------------------------------------------------------
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing, False)
-        layer = scale_px(2, min_abs=1)
-        content_inset = layer * 2
-
-        painter.fillRect(self.rect(), COLORS['black'])
-        painter.fillRect(self.rect().adjusted(layer, layer, -layer, -layer), COLORS['cyan'])
-        content_rect = self.rect().adjusted(content_inset, content_inset, -content_inset, -content_inset)
-        painter.fillRect(content_rect, COLORS['pink'])
-
-        painter.setPen(COLORS['black'])
-        painter.setFont(self._font)
-        painter.drawText(content_rect, Qt.AlignCenter, self._text())
+        paint_rect_action_button(painter, self.rect(), self._font, self._text(), hovered=self._hovered)
 
     def mousePressEvent(self, event):
         from lib.script.ui._particle_helper import publish_click_particle
@@ -190,3 +181,13 @@ class ChatModeButton(QWidget):
         self._event_center.unsubscribe(EventType.UI_CLICKTHROUGH_TOGGLE, self._on_clickthrough_toggle)
         self._event_center.unsubscribe(EventType.MIC_STT_STATE_CHANGE, self._on_stt_state_change)
         super().closeEvent(event)
+
+    def enterEvent(self, event):
+        self._hovered = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._hovered = False
+        self.update()
+        super().leaveEvent(event)

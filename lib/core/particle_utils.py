@@ -2,7 +2,12 @@
 from lib.core.event.center import get_event_center, EventType, Event
 
 
-def spawn_particle(particle_id: str = 'scatter_fall', area_type: str = 'point', area_data=None):
+def spawn_particle(
+    particle_id: str = 'scatter_fall',
+    area_type: str = 'point',
+    area_data=None,
+    particle_options: dict | None = None,
+):
     """
     发布粒子申请事件的便捷函数
 
@@ -17,12 +22,18 @@ def spawn_particle(particle_id: str = 'scatter_fall', area_type: str = 'point', 
     event = Event(EventType.PARTICLE_REQUEST, {
         'particle_id': particle_id,
         'area_type': area_type,
-        'area_data': area_data
+        'area_data': area_data,
+        'particle_options': dict(particle_options or {}),
     })
     get_event_center().publish(event)
 
 
-def spawn_particle_at_point(x: int, y: int, particle_id: str = 'scatter_fall'):
+def spawn_particle_at_point(
+    x: int,
+    y: int,
+    particle_id: str = 'scatter_fall',
+    particle_options: dict | None = None,
+):
     """
     在指定点生成粒子（便捷函数）
 
@@ -31,10 +42,17 @@ def spawn_particle_at_point(x: int, y: int, particle_id: str = 'scatter_fall'):
         y: Y 坐标
         particle_id: 粒子ID
     """
-    spawn_particle(particle_id, 'point', (x, y))
+    spawn_particle(particle_id, 'point', (x, y), particle_options)
 
 
-def spawn_particle_in_rect(x1: int, y1: int, x2: int, y2: int, particle_id: str = 'scatter_fall'):
+def spawn_particle_in_rect(
+    x1: int,
+    y1: int,
+    x2: int,
+    y2: int,
+    particle_id: str = 'scatter_fall',
+    particle_options: dict | None = None,
+):
     """
     在矩形范围内生成粒子（便捷函数）
 
@@ -45,10 +63,16 @@ def spawn_particle_in_rect(x1: int, y1: int, x2: int, y2: int, particle_id: str 
         y2: 右下角 Y 坐标
         particle_id: 粒子ID
     """
-    spawn_particle(particle_id, 'rect', (x1, y1, x2, y2))
+    spawn_particle(particle_id, 'rect', (x1, y1, x2, y2), particle_options)
 
 
-def spawn_particle_in_circle(x: int, y: int, radius: int, particle_id: str = 'scatter_fall'):
+def spawn_particle_in_circle(
+    x: int,
+    y: int,
+    radius: int,
+    particle_id: str = 'scatter_fall',
+    particle_options: dict | None = None,
+):
     """
     在圆形范围内生成粒子（便捷函数）
 
@@ -58,4 +82,4 @@ def spawn_particle_in_circle(x: int, y: int, radius: int, particle_id: str = 'sc
         radius: 半径
         particle_id: 粒子ID
     """
-    spawn_particle(particle_id, 'circle', (x, y, radius))
+    spawn_particle(particle_id, 'circle', (x, y, radius), particle_options)

@@ -352,6 +352,14 @@ class TrayIcon(QObject):
 
         self._menu.popup(QPoint(x, y))
 
+    def show_context_menu(self):
+        """主动弹出系统托盘右键菜单。"""
+        if not self._initialized:
+            self.initialize(self._icon_path)
+        if self._menu is None:
+            return
+        self._show_menu_above_cursor()
+
     def _on_quit(self):
         """处理退出动作"""
         _logger.info('用户通过托盘菜单请求退出')

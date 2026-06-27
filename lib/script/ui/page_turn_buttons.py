@@ -14,19 +14,14 @@ from PyQt5.QtWidgets import QWidget, QGraphicsOpacityEffect
 from PyQt5.QtCore import Qt, QPropertyAnimation, QEasingCurve, QPointF, QRectF
 from PyQt5.QtGui import QPainter, QPolygonF
 
-from config.config import UI_THEME
 from config.scale import scale_px
 from lib.core.event.center import get_event_center, EventType
-from lib.core.topmost_manager import get_topmost_manager
 from lib.core.screen_utils import clamp_rect_position
 from lib.core.anchor_utils import apply_ui_opacity
-
-
-# ── 配色（从 UI_THEME 获取）────────────────────────────────────────
-_C_BORDER = UI_THEME['border']
-_C_MID    = UI_THEME['mid']
-_C_BG     = UI_THEME['bg']
-_C_ICON   = UI_THEME['icon']
+from lib.script.ui.speaker_menu_style import (
+    SpeakerActionButtonMixin,
+    _C_ACTION_TEXT,
+)
 
 # ── 尺寸 ──────────────────────────────────────────────────────────────
 BTN_W  = scale_px(120, min_abs=1)  # 宽度（px）
@@ -35,7 +30,7 @@ _LAYER = scale_px(2, min_abs=1)
 _BORDER = _LAYER * 2
 
 
-class _PageTurnButton(QWidget):
+class _PageTurnButton(SpeakerActionButtonMixin, QWidget):
     """翻页按钮基类。"""
 
     def __init__(self, direction: int, callback) -> None:
@@ -47,17 +42,9 @@ class _PageTurnButton(QWidget):
         self._direction = direction
         self._callback  = callback
 
-        self.setWindowFlags(
-            Qt.Tool
-            | Qt.FramelessWindowHint
-            | Qt.WindowStaysOnTopHint
-        )
-        self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setFixedSize(BTN_W, BTN_H)
-        self.setCursor(Qt.PointingHandCursor)
+        self._init_speaker_action_button(BTN_W, BTN_H)
         # 不抢夺键盘焦点（避免点击时导致输入框失焦）
         self.setFocusPolicy(Qt.NoFocus)
-        get_topmost_manager().register(self)
 
         self._opacity = QGraphicsOpacityEffect(self)
         self._opacity.setOpacity(0.0)
@@ -83,6 +70,7 @@ class _PageTurnButton(QWidget):
         self._animate(1.0)
 
     def hide_btn(self) -> None:
+        self._cancel_action_press()
         if not self._visible:
             return
         self._visible = False
@@ -113,29 +101,22 @@ class _PageTurnButton(QWidget):
         from lib.script.ui._particle_helper import publish_click_particle
         publish_click_particle(self, event)
         if event.button() == Qt.LeftButton:
-            self._pressed = True
-            self.update()
+            self._begin_action_press()
         event.accept()  # 阻止事件传播，防止输入框失焦
 
     def mouseReleaseEvent(self, event) -> None:
-        if event.button() == Qt.LeftButton and self._pressed:
-            self._pressed = False
-            self.update()
-            if self._callback:
-                self._callback()
+        if event.button() == Qt.LeftButton:
+            commit = self.rect().contains(event.pos())
+            if self._finish_action_press(commit=commit):
+                if self._callback:
+                    self._callback()
         event.accept()  # 阻止事件传播，防止输入框失焦
 
     # ── 绘制 ──────────────────────────────────────────────────────────
 
     def paintEvent(self, event) -> None:
         p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing, False)
-
-        # 三层边框
-        p.fillRect(self.rect(), _C_BORDER)
-        p.fillRect(self.rect().adjusted(_LAYER, _LAYER, -_LAYER, -_LAYER), _C_MID)
-        content = self.rect().adjusted(_BORDER, _BORDER, -_BORDER, -_BORDER)
-        p.fillRect(content, _C_BG)
+        content = self._paint_action_button_shell(p)
 
         # 箭头图标
         p.setRenderHint(QPainter.Antialiasing, True)
@@ -144,7 +125,7 @@ class _PageTurnButton(QWidget):
         s  = min(content.width(), content.height()) * 0.35
 
         p.setPen(Qt.NoPen)
-        p.setBrush(_C_ICON)
+        p.setBrush(_C_ACTION_TEXT)
 
         if self._direction == -1:
             # 左箭头 ◀

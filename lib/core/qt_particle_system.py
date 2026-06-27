@@ -68,6 +68,7 @@ class ParticleOverlay(QWidget):
         particle_id = data.get('particle_id')
         area_type = data.get('area_type', 'point')
         area_data = data.get('area_data')
+        particle_options = data.get('particle_options') or {}
 
         if not particle_id or not area_data:
             return
@@ -76,6 +77,11 @@ class ParticleOverlay(QWidget):
         script = self._particle_manager.get_script(particle_id)
         if not script:
             return
+        if hasattr(script, 'set_request_options'):
+            try:
+                script.set_request_options(dict(particle_options))
+            except Exception:
+                pass
 
         # 首批粒子到来前，先同步覆盖层几何，保证本地坐标准确
         if not self._particles:

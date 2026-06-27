@@ -217,7 +217,7 @@ def draw_mixed_text(painter, rect, text: str, default_font, digit_font, align=No
     total_w = sum((fm_dig if is_digit else fm_def).horizontalAdvance(seg) for seg, is_digit in segments)
 
     if align & Qt.AlignHCenter:
-        x = rect.x() + (rect.width() - total_w) // 2
+        x = rect.x() + (rect.width() - total_w) / 2.0
     elif align & Qt.AlignRight:
         x = rect.x() + rect.width() - total_w
     else:
@@ -225,14 +225,14 @@ def draw_mixed_text(painter, rect, text: str, default_font, digit_font, align=No
 
     ascent = max(fm_def.ascent(), fm_dig.ascent())
     descent = max(fm_def.descent(), fm_dig.descent())
-    y = rect.y() + (rect.height() + ascent - descent) // 2
+    y = rect.y() + (rect.height() + ascent - descent) / 2.0
 
     painter.save()
     painter.setClipRect(rect)
     for seg, is_digit in segments:
         fm = fm_dig if is_digit else fm_def
         painter.setFont(digit_font if is_digit else default_font)
-        painter.drawText(x, y, seg)
+        painter.drawText(int(round(x)), int(round(y)), seg)
         x += fm.horizontalAdvance(seg)
     painter.restore()
 

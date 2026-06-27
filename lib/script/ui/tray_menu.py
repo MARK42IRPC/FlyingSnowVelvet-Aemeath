@@ -15,6 +15,7 @@ from config.config import UI_THEME, UI
 from config.font_config import get_ui_font, get_digit_font
 from config.scale import scale_px
 from lib.core.anchor_utils import apply_ui_opacity
+from lib.core.event.center import get_event_center, EventType, Event
 
 
 _TRAY_MENU_STYLE_FLAG = '_fxr_tray_menu_style'
@@ -217,26 +218,50 @@ class TrayContextMenu(QMenu):
         self.setWindowFlag(Qt.NoDropShadowWindowHint, True)
         self._menu_style = _TrayMenuHintStyle(self.style(), self)
         self.setStyle(self._menu_style)
+        self.setStyleSheet(
+            """
+            QToolTip {
+                background-color: rgb(255, 182, 193);
+                color: rgb(0, 0, 0);
+                border: 1px solid rgb(0, 0, 0);
+                padding: 2px 4px;
+            }
+            """
+        )
 
     def popup(self, p, action=None):
         # 每次弹出前重置不透明度，避免复用上次淡出结束态。
         self._opacity_anim.stop()
         self._fading_out = False
         self._allow_hide_once = False
-        self.setWindowOpacity(apply_ui_opacity(1.0))
+        self.setWindowOpacity(0.0)
         super().popup(p, action)
+        self._opacity_anim.setStartValue(0.0)
+        self._opacity_anim.setEndValue(apply_ui_opacity(1.0))
+        self._opacity_anim.start()
 
     def hide(self):
         # 统一将菜单隐藏转为淡出动画（包括点空白处关闭、点菜单项后关闭）。
         if self._allow_hide_once or self._fading_out or not self.isVisible():
             super().hide()
             return
+        self._publish_fade_particle()
         self._fading_out = True
         self._opacity_anim.stop()
         current_opacity = self.windowOpacity()
         self._opacity_anim.setStartValue(max(0.0, min(1.0, float(current_opacity))))
         self._opacity_anim.setEndValue(0.0)
         self._opacity_anim.start()
+
+    def _publish_fade_particle(self):
+        rect = self.geometry()
+        if not rect.isValid():
+            return
+        get_event_center().publish(Event(EventType.PARTICLE_REQUEST, {
+            'particle_id': 'right_fade',
+            'area_type': 'rect',
+            'area_data': (rect.x(), rect.y(), rect.x() + rect.width(), rect.y() + rect.height()),
+        }))
 
     def _on_opacity_anim_finished(self):
         if not self._fading_out:

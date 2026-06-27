@@ -35,6 +35,7 @@ UI = {
     'bubble_max_width':        scale_px(360),   # 气泡最大宽度（像素）
     'pet_opacity':             1.0,             # 主宠物透明度（0.0-1.0）
     'ui_widget_opacity':       1.0,             # UI控件透明度（0.0-1.0）
+    'tooltip_opacity':         0.8,             # 鼠标悬浮说明透明度（0.0-1.0）
     'ui_fade_duration':        200,  # UI淡入/淡出持续时间（毫秒）
     'auto_hide_mouse_distance': 300,  # 右键相关UI自动关闭距离阈值（xp）
 }

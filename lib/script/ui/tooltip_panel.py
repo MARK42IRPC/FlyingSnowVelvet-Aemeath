@@ -4,13 +4,13 @@
 读取该组件的 _description 属性并在鼠标右侧淡入显示。
 鼠标移动时立即淡出（无粒子特效）。
 
-绘制风格：2px 黑边 + 2px 青边 + 粉色背景（与主宠物 UI 一致）。
+绘制风格：1px 黑边 + 1px 蓝色内框 + 粉色背景。
 """
 from __future__ import annotations
 
 from PyQt5.QtWidgets import QWidget, QApplication, QGraphicsOpacityEffect
 from PyQt5.QtCore import Qt, QPoint, QPropertyAnimation, QEasingCurve
-from PyQt5.QtGui import QPainter, QFontMetrics, QCursor, QColor
+from PyQt5.QtGui import QPainter, QFontMetrics, QCursor
 
 from config.config import COLORS, UI, UI_THEME
 from config.font_config import (
@@ -27,18 +27,21 @@ from lib.core.screen_utils import clamp_rect_position, get_screen_geometry_for_p
 from lib.core.anchor_utils import apply_ui_opacity
 
 # ── 布局常量 ──────────────────────────────────────────────────────────
-_LAYER       = scale_px(2, min_abs=1)
-_BORDER      = _LAYER * 2  # 2px 黑边 + 2px 青边
-_PAD_X       = scale_px(8, min_abs=1)   # 文字水平内边距
-_PAD_Y       = scale_px(5, min_abs=1)   # 文字垂直内边距
+_LAYER       = scale_px(1, min_abs=1)
+_BORDER      = _LAYER * 2  # 1px 黑边 + 1px 蓝边
+_PAD_X       = scale_px(6, min_abs=1)   # 文字水平内边距
+_PAD_Y       = scale_px(3, min_abs=1)   # 文字垂直内边距
 _MAX_TEXT_W  = scale_px(220, min_abs=1)  # 文字区最大宽度（px），超出自动换行
-_CURSOR_GAP  = scale_px(14, min_abs=1)   # 面板左边与光标的间距（px）
+_CURSOR_GAP  = scale_px(10, min_abs=1)   # 面板左边与光标的间距（px）
 _HOVER_TICKS = 20    # 静止多少 tick 后显示（20 tick = 1s @20tick/s）
-_BG_INFO_TEXT = 'INFORmation:'
-_BG_INFO_H = scale_px(14, min_abs=1)
-_BG_INFO_FONT_SIZE = scale_px(14, min_abs=1)
-_BG_INFO_PAD_X = scale_px(8, min_abs=1)
-_BG_INFO_OFFSET_Y = scale_px(2, min_abs=1)
+
+
+def _tooltip_target_opacity() -> float:
+    try:
+        value = float(UI.get('tooltip_opacity', 0.8))
+    except Exception:
+        value = 0.8
+    return max(0.0, min(1.0, value))
 
 
 class TooltipPanel(QWidget):
@@ -70,8 +73,6 @@ class TooltipPanel(QWidget):
         self._font = get_ui_font()
         self._font.setBold(True)
         self._digit_font = get_digit_font()
-        self._bg_info_font = get_digit_font(size=_BG_INFO_FONT_SIZE)
-        self._bg_info_font.setBold(True)
 
         # ── 悬停状态 ─────────────────────────────────────────────────
         self._visible          = False
@@ -181,7 +182,7 @@ class TooltipPanel(QWidget):
     def _animate(self, target: float) -> None:
         self._anim.stop()
         self._anim.setStartValue(float(self._opacity.opacity()))
-        self._anim.setEndValue(apply_ui_opacity(target))
+        self._anim.setEndValue(apply_ui_opacity(target * _tooltip_target_opacity()))
         self._anim.start()
 
     def _on_anim_finished(self) -> None:
@@ -206,7 +207,7 @@ class TooltipPanel(QWidget):
         text_h = line_h * len(lines)
         self.setFixedSize(
             text_w + _PAD_X * 2 + _BORDER * 2,
-            text_h + _PAD_Y * 2 + _BORDER * 2 + _BG_INFO_H,
+            text_h + _PAD_Y * 2 + _BORDER * 2,
         )
 
     def _reposition(self, cursor_pos: QPoint) -> None:
@@ -241,25 +242,15 @@ class TooltipPanel(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, False)
 
-        # 三层边框（与主宠物 UI 风格一致：黑 → 青 → 粉）
+        # 轻量三层边框：黑 → 蓝 → 粉
         painter.fillRect(self.rect(), COLORS['black'])
-        painter.fillRect(self.rect().adjusted(_LAYER, _LAYER, -_LAYER, -_LAYER), COLORS['cyan'])
+        painter.fillRect(self.rect().adjusted(_LAYER, _LAYER, -_LAYER, -_LAYER), UI_THEME['deep_cyan'])
         inner_rect = self.rect().adjusted(_BORDER, _BORDER, -_BORDER, -_BORDER)
         painter.fillRect(inner_rect, COLORS['pink'])
 
-        # 顶部水印条：固定 14px 高度与字号（随全局缩放），右对齐显示
-        info_h = min(_BG_INFO_H, inner_rect.height())
-        info_strip = inner_rect.adjusted(0, 0, 0, -(inner_rect.height() - info_h))
-        info_color = QColor(UI_THEME['deep_pink'])
-        info_rect = info_strip.adjusted(_BG_INFO_PAD_X, 0, -_BG_INFO_PAD_X, 0)
-        info_rect.translate(0, _BG_INFO_OFFSET_Y)
-        painter.setFont(self._bg_info_font)
-        painter.setPen(info_color)
-        painter.drawText(info_rect, Qt.AlignRight | Qt.AlignVCenter, _BG_INFO_TEXT)
-
         # 文字区域
         content = self.rect().adjusted(
-            _BORDER + _PAD_X, _BORDER + _PAD_Y + _BG_INFO_H,
+            _BORDER + _PAD_X, _BORDER + _PAD_Y,
             -_BORDER - _PAD_X, -_BORDER - _PAD_Y,
         )
         lines = self._wrap_text(self._current_text)

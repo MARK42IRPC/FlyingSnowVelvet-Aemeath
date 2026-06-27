@@ -26,6 +26,7 @@ from lib.script.microphone_stt import (
     get_microphone_stt_service,
 )
 from lib.script.voice.handler import get_voice_request_handler, cleanup_voice_request_handler
+from lib.script.gemes import get_game_runtime, cleanup_game_runtime
 from lib.core.plugin_registry import (
     discover_all, init_all_managers, cleanup_all_managers, get_manager
 )
@@ -59,6 +60,8 @@ class ApplicationState:
         self._cleanup_handler = None
         # 工具调度器
         self._tool_dispatcher = None
+        # 小游戏 runtime
+        self._game_runtime = None
         # 工作目录
         self._script_dir = None
         # 初始化完成标志
@@ -147,6 +150,9 @@ class ApplicationState:
 
         # ── 初始化工具调度器 ────────────────────────────────────────────
         self._tool_dispatcher = get_tool_dispatcher()
+
+        # ── 初始化小游戏 runtime ───────────────────────────────────────
+        self._game_runtime = get_game_runtime()
 
         # ── 初始化说明书（鼠标悬停提示面板）────────────────────────────
         from lib.script.ui.tooltip_panel import init_tooltip_panel
@@ -385,6 +391,7 @@ class ApplicationState:
         cleanup_chat_handler()
         cleanup_stream_memory()
         cleanup_tool_dispatcher()
+        cleanup_game_runtime()
         cleanup_ollama_manager()
         cleanup_cmd_center()
         cleanup_cmd_window()

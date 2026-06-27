@@ -6,8 +6,8 @@ CHAT = {
     # 人格文件路径已移至 ollama_config.py 的 PERSONA_FILE
 }
 VOICE = {
-    # 语音音量系数（0.0-1.0），默认 25%
-    'voice_volume': 0.79,
+    # 语音音量系数（0.0-1.0）
+    'voice_volume': 1.0,
     # Push-to-talk hotkey for microphone STT; leave empty to disable (e.g. "Ctrl+Shift+V")
     'microphone_push_to_talk_key': 'V',
     # Vosk 模型列表：默认同时加载中英小模型，支持混合识别

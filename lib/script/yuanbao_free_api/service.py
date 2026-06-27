@@ -190,6 +190,17 @@ def _parse_local_target() -> Optional[Tuple[str, int]]:
     return host, port
 
 
+def _find_free_local_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(('127.0.0.1', 0))
+        sock.listen(1)
+        return int(sock.getsockname()[1])
+
+
+def _build_local_base_url_for_port(port: int) -> str:
+    return f'http://127.0.0.1:{int(port)}/v1'
+
+
 def _should_manage_local_service() -> bool:
     force_mode = str(getattr(oc, 'FORCE_REPLY_MODE', '') or '').strip()
     if force_mode != '4':
@@ -473,14 +484,15 @@ class YuanbaoFreeApiService:
         if target is None:
             return None
         host, port = target
-        return self._ensure_status_endpoint(host, port)
+        status, _host, _port = self._ensure_status_endpoint(host, port)
+        return status
 
     def ensure_service_ready(self) -> bool:
         target = _parse_local_target()
         if target is None:
             return False
         host, port = target
-        status = self._ensure_status_endpoint(host, port)
+        status, host, port = self._ensure_status_endpoint(host, port)
         if status is None:
             return False
         if _status_bool(status, 'logged_in'):
@@ -536,7 +548,7 @@ class YuanbaoFreeApiService:
             }
 
         host, port = target
-        status = self._ensure_status_endpoint(host, port)
+        status, host, port = self._ensure_status_endpoint(host, port)
         if status is None:
             self._publish_login_dialog_status({'last_error': f'元宝服务未能启动，请查看 {_log_path().name}。'})
             return {
@@ -606,18 +618,52 @@ class YuanbaoFreeApiService:
             'message': last_error or _status_text(refreshed, 'last_message') or '元宝登录未能启动。',
         }
 
-    def _ensure_status_endpoint(self, host: str, port: int) -> Optional[Dict[str, object]]:
+    def _ensure_status_endpoint(self, host: str, port: int) -> Tuple[Optional[Dict[str, object]], str, int]:
         state, status = _probe_status_endpoint(host, port)
         if state == 'ok' and status is not None:
             logger.info('[YuanbaoFreeApiService] 检测到元宝服务已在运行: %s:%s status=%s', host, port, status)
-            return status
+            return status, host, port
         if state == 'missing':
             logger.warning('[YuanbaoFreeApiService] %s:%s 存在旧版或错误服务，占用了端口但缺少 %s', host, port, _STATUS_ENDPOINT)
             if self._terminate_conflicting_listener(host, port):
                 time.sleep(1.0)
+            else:
+                switched = self._switch_to_random_local_port(host, port)
+                if switched is not None:
+                    host, port = switched
         if not self._start_service_process(host, port):
+            return None, host, port
+        return self._wait_for_status_endpoint(host, port), host, port
+
+    def _switch_to_random_local_port(self, host: str, port: int) -> Optional[Tuple[str, int]]:
+        try:
+            new_port = _find_free_local_port()
+        except OSError as exc:
+            logger.error('[YuanbaoFreeApiService] 为元宝服务分配随机端口失败: %s', exc)
             return None
-        return self._wait_for_status_endpoint(host, port)
+        if new_port == port:
+            return host, port
+
+        new_base_url = _build_local_base_url_for_port(new_port)
+        try:
+            oc.YUANBAO_FREE_API_LOCAL['base_url'] = new_base_url
+        except Exception:
+            logger.error('[YuanbaoFreeApiService] 更新运行时元宝 base_url 失败，无法切换到随机端口')
+            return None
+
+        logger.warning(
+            '[YuanbaoFreeApiService] %s:%s 被其他服务占用，已切换元宝本地中转到随机端口 %s',
+            host,
+            port,
+            new_port,
+        )
+        self._ec.publish(Event(EventType.INFORMATION, {
+            'text': f'元宝服务默认端口 {port} 被占用，已自动切换到 {new_port} 端口。',
+            'min': 18,
+            'max': 220,
+            'particle': False,
+        }))
+        return '127.0.0.1', new_port
 
     def _terminate_conflicting_listener(self, host: str, port: int) -> bool:
         pids = _find_listener_pids(host, port)

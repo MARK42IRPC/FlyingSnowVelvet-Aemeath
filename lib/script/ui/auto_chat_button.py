@@ -2,55 +2,28 @@
 
 from __future__ import annotations
 
-from PyQt5.QtWidgets import QWidget, QGraphicsOpacityEffect
-from PyQt5.QtCore import Qt, QPropertyAnimation, QEasingCurve, QPoint
-from PyQt5.QtGui import QPainter
+from PyQt5.QtCore import Qt, QPoint
 
-from config.config import COLORS, UI
-from config.font_config import get_ui_font
 from config.scale import scale_px
 from config.tooltip_config import TOOLTIPS
 from lib.core.event.center import get_event_center, EventType, Event
-from lib.core.topmost_manager import get_topmost_manager
 from lib.core.screen_utils import clamp_rect_position
-from lib.core.anchor_utils import apply_ui_opacity
+from lib.script.ui.rect_action_button_style import RectActionButton
 
 
-class AutoChatButton(QWidget):
+class AutoChatButton(RectActionButton):
     """右键 UI 的自动语聊开关按钮。"""
 
     WIDTH = scale_px(80, min_abs=1)
     HEIGHT = scale_px(32, min_abs=1)
 
     def __init__(self, launch_wuwa_button=None):
-        super().__init__()
-        self.setWindowFlags(
-            Qt.Tool
-            | Qt.FramelessWindowHint
-            | Qt.WindowStaysOnTopHint
-        )
-        self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setFixedSize(self.WIDTH, self.HEIGHT)
-        self.setCursor(Qt.PointingHandCursor)
-        get_topmost_manager().register(self)
+        super().__init__(self.WIDTH, self.HEIGHT, TOOLTIPS.get('auto_chat_button', '开启或关闭自动语聊'))
 
         self._launch_wuwa_button = launch_wuwa_button
-        self._visible = False
         self._enabled = False
-        self._description = TOOLTIPS.get('auto_chat_button', '开启或关闭自动语聊')
         self._ui_id = 'auto_chat_button'
         self._target_ui_id = 'launch_wuwa_button'
-
-        self._opacity = QGraphicsOpacityEffect(self)
-        self._opacity.setOpacity(0.0)
-        self.setGraphicsEffect(self._opacity)
-
-        self._anim = QPropertyAnimation(self._opacity, b'opacity', self)
-        self._anim.setDuration(UI['ui_fade_duration'])
-        self._anim.setEasingCurve(QEasingCurve.InOutQuad)
-
-        self._font = get_ui_font()
-        self._font.setBold(True)
 
         self._event_center = get_event_center()
         self._event_center.subscribe(EventType.FRAME, self._on_frame)
@@ -60,23 +33,6 @@ class AutoChatButton(QWidget):
 
     def _button_text(self) -> str:
         return '自动语聊' if self._enabled else '语聊关闭'
-
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing, False)
-        layer = scale_px(2, min_abs=1)
-        content_inset = layer * 2
-
-        painter.fillRect(self.rect(), COLORS['black'])
-        painter.fillRect(self.rect().adjusted(layer, layer, -layer, -layer), COLORS['cyan'])
-        content_rect = self.rect().adjusted(
-            content_inset, content_inset, -content_inset, -content_inset
-        )
-        painter.fillRect(content_rect, COLORS['pink'])
-
-        painter.setPen(COLORS['black'])
-        painter.setFont(self._font)
-        painter.drawText(content_rect, Qt.AlignCenter, self._button_text())
 
     def _on_frame(self, event):
         if self._visible:
@@ -148,12 +104,6 @@ class AutoChatButton(QWidget):
         except TypeError:
             pass
         self.hide()
-
-    def _animate(self, target: float):
-        self._anim.stop()
-        self._anim.setStartValue(self._opacity.opacity())
-        self._anim.setEndValue(apply_ui_opacity(target))
-        self._anim.start()
 
     def _on_clickthrough_toggle(self, event: Event) -> None:
         self.setAttribute(Qt.WA_TransparentForMouseEvents, event.data.get('enabled', False))

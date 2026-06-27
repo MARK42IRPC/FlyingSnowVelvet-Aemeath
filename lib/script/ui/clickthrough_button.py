@@ -17,6 +17,7 @@ from lib.core.anchor_utils import (
     animate_opacity,
     refresh_last_activity,
 )
+from lib.script.ui.rect_action_button_style import paint_rect_action_button
 
 
 def _hex(color: QColor) -> str:
@@ -58,6 +59,7 @@ class ClickThroughButton(QWidget):
         self._visible = False
         self._clickthrough_enabled = False  # 鼠标穿透状态
         self._description = TOOLTIPS['clickthrough_button']
+        self._hovered = False
 
         # 事件中心
         self._event_center = get_event_center()
@@ -120,27 +122,7 @@ class ClickThroughButton(QWidget):
     def paintEvent(self, event):
         """绘制2px黑色边框、2px青色边框、粉色背景和居中的文字"""
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing, False)
-        layer = scale_px(2, min_abs=1)
-        content_inset = layer * 2
-
-        # 绘制2px黑色边框（最外层）
-        painter.fillRect(self.rect(), COLORS['black'])
-
-        # 绘制2px青色边框（中间层）
-        cyan_rect = self.rect().adjusted(layer, layer, -layer, -layer)
-        painter.fillRect(cyan_rect, COLORS['cyan'])
-
-        # 绘制粉色背景（最内层）
-        content_rect = self.rect().adjusted(
-            content_inset, content_inset, -content_inset, -content_inset
-        )
-        painter.fillRect(content_rect, COLORS['pink'])
-
-        # 绘制居中的"鼠标穿透"粗体文字
-        painter.setPen(COLORS['black'])
-        painter.setFont(self._font)
-        painter.drawText(content_rect, Qt.AlignCenter, '鼠标穿透')
+        paint_rect_action_button(painter, self.rect(), self._font, '鼠标穿透', hovered=self._hovered)
 
     def _on_frame(self, event):
         """帧事件处理 - 刷新位置"""
@@ -347,3 +329,13 @@ class ClickThroughButton(QWidget):
         publish_click_particle(self, event)
         if event.button() == Qt.LeftButton:
             self.click()
+
+    def enterEvent(self, event):
+        self._hovered = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._hovered = False
+        self.update()
+        super().leaveEvent(event)

@@ -30,20 +30,20 @@ from lib.core.topmost_manager import get_topmost_manager
 from lib.core.screen_utils import clamp_rect_position
 from lib.core.anchor_utils import apply_ui_opacity
 from lib.script.ui.page_turn_buttons import make_page_buttons, update_page_buttons_position
-
-
-# ── 配色（从 UI_THEME 获取）─────────────────────────────────────────────
-_C_BORDER = UI_THEME['border']
-_C_MID    = UI_THEME['mid']
-_C_BG     = UI_THEME['bg']
-_C_TEXT   = UI_THEME['text']
-_C_HL     = UI_THEME['highlight']
+from lib.script.ui.speaker_menu_style import (
+    _C_BORDER,
+    _C_MID,
+    _C_BG,
+    _C_TEXT,
+    _C_HL,
+    _LAYER,
+    _BORDER,
+    paint_speaker_menu_panel,
+)
 
 # ── 布局常量 ──────────────────────────────────────────────────────────
 _PAGE_SIZE = 5     # 每页条目数
 _ROW_H     = scale_px(20, min_abs=1)  # 每行高度（px）
-_LAYER     = scale_px(2, min_abs=1)
-_BORDER    = _LAYER * 2  # 边框总厚度（2px 黑 + 2px 灰白）
 _PAD_X     = scale_px(6, min_abs=1)   # 文字水平内边距（px）
 _GAP_Y     = scale_px(2, min_abs=1)   # 与搜索框的垂直间距（px）
 _MAX_WIDTH = scale_px(360, min_abs=1)  # 最大宽度（px）
@@ -375,10 +375,7 @@ class SpeakerSearchResultBox(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing, False)
         p.setFont(self._font)
-        # 三层边框（与搜索框风格一致）
-        p.fillRect(self.rect(), _C_BORDER)
-        p.fillRect(self.rect().adjusted(_LAYER, _LAYER, -_LAYER, -_LAYER), _C_MID)
-        p.fillRect(self.rect().adjusted(_BORDER, _BORDER, -_BORDER, -_BORDER), _C_BG)
+        paint_speaker_menu_panel(p, self.rect())
 
         content_x = _BORDER
         content_w = self.width() - _BORDER * 2

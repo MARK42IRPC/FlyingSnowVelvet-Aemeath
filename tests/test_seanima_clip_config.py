@@ -15,7 +15,7 @@ class SEAnimaClipConfigTests(unittest.TestCase):
         self.assertIn(DEFAULT_START_ANIMATION_FOLDER, choices)
         self.assertIn(DEFAULT_EXIT_ANIMATION_FOLDER, choices)
 
-    def test_default_start_clip_falls_back_to_legacy_folder(self):
+    def test_default_start_clip_resolves_to_configured_folder(self):
         clip = resolve_animation_clip("start", {
             "frame_fps": 60,
             "start_exit_enabled": True,
@@ -25,7 +25,7 @@ class SEAnimaClipConfigTests(unittest.TestCase):
         self.assertEqual(clip.folder_name, DEFAULT_START_ANIMATION_FOLDER)
         self.assertTrue(clip.folder_path.endswith(DEFAULT_START_ANIMATION_FOLDER))
 
-    def test_default_exit_clip_falls_back_to_legacy_folder(self):
+    def test_default_exit_clip_resolves_to_configured_folder(self):
         clip = resolve_animation_clip("exit", {
             "frame_fps": 60,
             "start_exit_enabled": True,

@@ -43,6 +43,10 @@ from lib.script.ui.speaker_control_buttons import (
     _BTN_PLAYLIST_W,
 )
 from lib.script.ui.page_turn_buttons import make_page_buttons, update_page_buttons_position
+from lib.script.ui.speaker_menu_style import (
+    SpeakerActionButtonMixin,
+    _C_ACTION_TEXT,
+)
 
 
 # ── 布局常量 ──────────────────────────────────────────────────────────
@@ -59,7 +63,7 @@ _REMOVE_BTN_H = scale_px(20, min_abs=1)
 _AUTO_HIDE_MOUSE_DISTANCE = UI.get('auto_hide_mouse_distance', scale_px(300, min_abs=1))
 
 
-class _QueueRemoveButton(QWidget):
+class _QueueRemoveButton(SpeakerActionButtonMixin, QWidget):
     """队列删除按钮（x）。"""
 
     def __init__(self, callback) -> None:
@@ -68,19 +72,8 @@ class _QueueRemoveButton(QWidget):
         self._pressed = False
         self._visible = False
         self._description = ''
-        self._font = get_ui_font()
-        self._font.setBold(True)
-
-        self.setWindowFlags(
-            Qt.Tool
-            | Qt.FramelessWindowHint
-            | Qt.WindowStaysOnTopHint
-        )
-        self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setFixedSize(_REMOVE_BTN_W, _REMOVE_BTN_H)
-        self.setCursor(Qt.PointingHandCursor)
+        self._init_speaker_action_button(_REMOVE_BTN_W, _REMOVE_BTN_H)
         self.setFocusPolicy(Qt.NoFocus)
-        get_topmost_manager().register(self)
 
         self._opacity = QGraphicsOpacityEffect(self)
         self._opacity.setOpacity(0.0)
@@ -101,6 +94,7 @@ class _QueueRemoveButton(QWidget):
         self._animate(1.0)
 
     def hide_btn(self) -> None:
+        self._cancel_action_press()
         if not self._visible:
             return
         self._visible = False
@@ -129,29 +123,24 @@ class _QueueRemoveButton(QWidget):
         from lib.script.ui._particle_helper import publish_click_particle
         publish_click_particle(self, event)
         if event.button() == Qt.LeftButton:
-            self._pressed = True
-            self.update()
+            self._begin_action_press()
         event.accept()
 
     def mouseReleaseEvent(self, event) -> None:
-        if event.button() == Qt.LeftButton and self._pressed:
-            self._pressed = False
-            self.update()
-            if self._callback:
-                self._callback()
+        if event.button() == Qt.LeftButton:
+            commit = self.rect().contains(event.pos())
+            if self._finish_action_press(commit=commit):
+                if self._callback:
+                    self._callback()
         event.accept()
 
     def paintEvent(self, event) -> None:
         p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing, False)
-        p.fillRect(self.rect(), COLORS['black'])
-        p.fillRect(self.rect().adjusted(_LAYER, _LAYER, -_LAYER, -_LAYER), COLORS['cyan'])
-        content = self.rect().adjusted(_BORDER, _BORDER, -_BORDER, -_BORDER)
-        p.fillRect(content, _C_HL if self._pressed else COLORS['pink'])
+        content = self._paint_action_button_shell(p)
 
         p.setRenderHint(QPainter.Antialiasing, True)
         icon = content.adjusted(_LAYER, _LAYER, -_LAYER, -_LAYER)
-        pen = QPen(COLORS['text'])
+        pen = QPen(_C_ACTION_TEXT)
         pen.setWidth(_LAYER)
         pen.setCapStyle(Qt.RoundCap)
         p.setPen(pen)
@@ -165,15 +154,11 @@ class _QueuePlayNowButton(_QueueRemoveButton):
 
     def paintEvent(self, event) -> None:
         p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing, False)
-        p.fillRect(self.rect(), COLORS['black'])
-        p.fillRect(self.rect().adjusted(_LAYER, _LAYER, -_LAYER, -_LAYER), COLORS['cyan'])
-        content = self.rect().adjusted(_BORDER, _BORDER, -_BORDER, -_BORDER)
-        p.fillRect(content, _C_HL if self._pressed else COLORS['pink'])
+        content = self._paint_action_button_shell(p)
 
         p.setRenderHint(QPainter.Antialiasing, True)
         p.setPen(Qt.NoPen)
-        p.setBrush(COLORS['text'])
+        p.setBrush(_C_ACTION_TEXT)
         cx = content.center().x()
         cy = content.center().y()
         half_w = max(3, content.width() // 4)

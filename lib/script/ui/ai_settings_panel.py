@@ -241,7 +241,7 @@ _CATEGORY_KEY_ALLOWLIST = {
             "exit_shadow_blur_radius",
             "exit_shadow_offset_direction",
         },
-        "UI": {"pet_opacity", "ui_widget_opacity", "ui_fade_duration", "auto_hide_mouse_distance"},
+        "UI": {"pet_opacity", "ui_widget_opacity", "tooltip_opacity", "ui_fade_duration", "auto_hide_mouse_distance"},
         "COMMAND_DIALOG": {"idle_timeout_ms"},
     },
     "behavior_physics": {
@@ -371,6 +371,7 @@ _GENERAL_NUMERIC_RULES: dict[tuple[str, str], tuple[str, float, float]] = {
     ("ANIMATION", "exit_shadow_blur_radius"): ("int", 0, 128),
     ("UI", "pet_opacity"): ("number", 0.0, 1.0),
     ("UI", "ui_widget_opacity"): ("number", 0.0, 1.0),
+    ("UI", "tooltip_opacity"): ("number", 0.0, 1.0),
     ("UI", "ui_fade_duration"): ("int", 0, 5000),
     ("UI", "auto_hide_mouse_distance"): ("int", 0, 5000),
     ("COMMAND_DIALOG", "idle_timeout_ms"): ("int", 0, 3600000),
@@ -465,6 +466,7 @@ _VOLUME_SLIDER_FIELDS: set[tuple[str, str]] = {
 _GENERAL_DECIMAL_SLIDER_SPECS: dict[tuple[str, str], tuple[float, float, float, int]] = {
     ("UI", "pet_opacity"): (0.0, 1.0, 0.05, 2),
     ("UI", "ui_widget_opacity"): (0.0, 1.0, 0.05, 2),
+    ("UI", "tooltip_opacity"): (0.0, 1.0, 0.05, 2),
     ("OBJECTS", "object_opacity"): (0.0, 1.0, 0.05, 2),
     ("ANIMATION", "exit_shadow_strength"): (0.0, 255.0, 1.0, 0),
     ("ANIMATION", "exit_shadow_blur_radius"): (0.0, 128.0, 1.0, 0),
@@ -498,6 +500,7 @@ _GENERAL_CONFIG_DEFAULTS: dict[str, dict[str, object]] = {
     "UI": {
         "pet_opacity": 1.0,
         "ui_widget_opacity": 1.0,
+        "tooltip_opacity": 0.8,
         "ui_fade_duration": 200,
         "auto_hide_mouse_distance": 300,
     },
@@ -577,14 +580,14 @@ _GENERAL_CONFIG_DEFAULTS: dict[str, dict[str, object]] = {
         "game_object_volume": 0.9,
     },
     "VOICE": {
-        "voice_volume": 0.79,
+        "voice_volume": 1.0,
         "microphone_push_to_talk_key": "V",
         "microphone_silence_timeout_secs": 3.0,
         "microphone_speech_rms_threshold": 550,
     },
     "CLOUD_MUSIC": {
         "provider": "netease",
-        "default_volume": 0.2,
+        "default_volume": 0.14,
         "particle_interval": 60,
         "search_result_limit": 128,
         "cache_dir": "resc/user/temp",
@@ -640,6 +643,7 @@ _KEY_FRIENDLY_NAME = {
         "bubble_max_width": "气泡最大宽度",
         "pet_opacity": "桌宠透明度",
         "ui_widget_opacity": "UI控件透明度",
+        "tooltip_opacity": "悬浮说明透明度",
         "ui_fade_duration": "淡入淡出时长(ms)",
         "auto_hide_mouse_distance": "自动关闭阈值",
     },

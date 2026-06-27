@@ -18,6 +18,7 @@ from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.topmost_manager import get_topmost_manager
 from lib.core.screen_utils import clamp_rect_position
 from lib.core.anchor_utils import apply_ui_opacity
+from lib.script.ui.rect_action_button_style import paint_rect_action_button
 
 
 class LaunchWutheringWavesButton(QWidget):
@@ -61,6 +62,7 @@ class LaunchWutheringWavesButton(QWidget):
         self._clickthrough_button = clickthrough_button
         self._visible = False
         self._description = TOOLTIPS.get('launch_wuwa_button', '检测并启动鸣潮')
+        self._hovered = False
         self._cached_exe_path: str | None = None
         self._cached_app_id: str | None = None
         self._ui_id = 'launch_wuwa_button'
@@ -84,20 +86,7 @@ class LaunchWutheringWavesButton(QWidget):
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing, False)
-        layer = scale_px(2, min_abs=1)
-        content_inset = layer * 2
-
-        painter.fillRect(self.rect(), COLORS['black'])
-        painter.fillRect(self.rect().adjusted(layer, layer, -layer, -layer), COLORS['cyan'])
-        content_rect = self.rect().adjusted(
-            content_inset, content_inset, -content_inset, -content_inset
-        )
-        painter.fillRect(content_rect, COLORS['pink'])
-
-        painter.setPen(COLORS['black'])
-        painter.setFont(self._font)
-        painter.drawText(content_rect, Qt.AlignCenter, '启动鸣潮')
+        paint_rect_action_button(painter, self.rect(), self._font, '启动鸣潮', hovered=self._hovered)
 
     def _on_frame(self, event):
         if self._visible:
@@ -190,6 +179,16 @@ class LaunchWutheringWavesButton(QWidget):
         publish_click_particle(self, event)
         if event.button() == Qt.LeftButton:
             self._launch_wuthering_waves()
+
+    def enterEvent(self, event):
+        self._hovered = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._hovered = False
+        self.update()
+        super().leaveEvent(event)
 
     @staticmethod
     def _project_root() -> Path:

@@ -11,11 +11,6 @@ from config.config import ANIMATION
 DEFAULT_START_ANIMATION_FOLDER = "耶比_anima"
 DEFAULT_EXIT_ANIMATION_FOLDER = "爱弥斯联合_anima"
 
-_LEGACY_FOLDER_ALIASES = {
-    DEFAULT_START_ANIMATION_FOLDER: "start-anim-compressed",
-    DEFAULT_EXIT_ANIMATION_FOLDER: "exit-anim-compressed",
-}
-
 
 def get_project_root() -> str:
     return os.path.dirname(
@@ -28,7 +23,7 @@ def get_project_root() -> str:
 
 
 def get_animation_root() -> str:
-    return os.path.join(get_project_root(), "resc", "GIF")
+    return os.path.join(get_project_root(), "resc", "GIF", "SEanima")
 
 
 def get_default_animation_folder_name(animation_type: str) -> str:
@@ -92,15 +87,6 @@ def resolve_animation_folder_path(folder_name: str) -> str:
         return root
 
     direct_path = os.path.join(root, normalized)
-    if os.path.isdir(direct_path):
-        return direct_path
-
-    legacy_name = _LEGACY_FOLDER_ALIASES.get(normalized, "")
-    if legacy_name:
-        legacy_path = os.path.join(root, legacy_name)
-        if os.path.isdir(legacy_path):
-            return legacy_path
-
     return direct_path
 
 
