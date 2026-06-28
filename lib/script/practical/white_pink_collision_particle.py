@@ -6,7 +6,7 @@ from typing import Tuple
 from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import QApplication
 
-from lib.script.practical.base_particle import BaseParticleScript
+from lib.script.practical.base_particle import BaseParticleScript, per_second_delta, tick_seconds
 from lib.core.plugin_registry import register_particle
 
 
@@ -28,9 +28,9 @@ _PINKS = [
 
 _ALL_COLORS = _WHITES + _PINKS
 
-# 物理常数（60fps 基准）
-_GRAVITY = 0.15   # 重力加速度 px/帧²
-_DRAG    = 0.97   # 空气阻力系数（每帧速度保留比例）
+# 物理常数（20Hz tick 语义）
+_GRAVITY = per_second_delta(9.0)
+_DRAG    = 0.912673
 
 
 @register_particle("white_pink_collision")
@@ -44,7 +44,7 @@ class WhitePinkCollisionParticleScript(BaseParticleScript):
         self._config = {
             'count_range': (5, 8),       # 每次 5~8 个
             'size_range':  (2, 4),       # 边长 2~4px 正方形
-            'speed_range': (1.25, 2.75), # 初速度 px/帧
+            'speed_range': (75.0, 165.0), # 初速度 px/s
             'life_range':  (0.6, 1.0),   # 寿命 0.6~1.0 秒
             'colors':      _ALL_COLORS,  # 白色 + 粉色随机
         }
@@ -87,7 +87,7 @@ class WhitePinkCollisionParticle:
 
         # 随机全方向初速度
         angle = random.uniform(0.0, math.pi * 2.0)
-        speed = random.uniform(*config['speed_range'])
+        speed = per_second_delta(random.uniform(*config['speed_range']))
         self.vx = math.cos(angle) * speed
         self.vy = math.sin(angle) * speed
 
@@ -133,8 +133,7 @@ class WhitePinkCollisionParticle:
             self.y = self._screen_h - half
             self.vy = -abs(self.vy)
 
-        # 60fps 生命衰减
-        self.life -= 1.0 / 60.0
+        self.life -= tick_seconds()
 
     @property
     def alive(self) -> bool:

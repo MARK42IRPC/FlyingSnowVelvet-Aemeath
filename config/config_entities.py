@@ -16,8 +16,8 @@ SNOW_LEOPARD = {
 
     # 生成区域：屏幕高度占比（0.0=顶部, 1.0=底部），默认接近屏幕底部
     # spawn_y_min 为生成区域的上边界，spawn_y_max 为下边界
-    'spawn_y_min': 0.95,
-    'spawn_y_max': 0.99,
+    'spawn_y_min': 0.8,
+    'spawn_y_max': 0.9,
 
     # 主宠物中心锚点触发淡出的交互半径（像素）
     'interact_radius': 50,

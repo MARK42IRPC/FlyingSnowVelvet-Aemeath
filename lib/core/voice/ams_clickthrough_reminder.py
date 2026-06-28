@@ -12,7 +12,7 @@ class AmsClickthroughReminderSound(DirectoryRandomSound):
     def __init__(self, interruptible: bool = False):
         super().__init__(
             sound_dir=os.path.join('resc', 'sound', 'ams', '鼠标穿透提醒'),
-            audio_class='voice',
+            audio_type='voice',
             logger=_logger,
             log_name='AmsClickthroughReminderSound',
             volume_range=(0.30, 0.50),

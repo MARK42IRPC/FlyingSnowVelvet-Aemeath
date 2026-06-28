@@ -33,25 +33,24 @@ async def _ensure_login_task(*, force: bool = False) -> tuple[asyncio.Task, bool
     return _login_task, True
 
 
+async def _cancel_login_task() -> None:
+    global _login_task
+    if _login_task is not None and not _login_task.done():
+        _login_task.cancel()
+        await asyncio.gather(_login_task, return_exceptions=True)
+    _login_task = None
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     """应用生命周期事件处理器"""
-    logger.info("[Startup] 正在初始化浏览器...")
-    try:
-        _, started = await _ensure_login_task(force=False)
-        logger.info("[Startup] 浏览器登录任务%s启动", "已" if started else "复用")
-    except Exception as e:
-        logger.error(f"[Startup] 浏览器初始化失败: {e}")
+    logger.info("[Startup] 元宝服务已启动，等待登录请求触发浏览器初始化")
 
     yield
 
     logger.info("[Shutdown] 正在关闭浏览器..")
     try:
-        global _login_task
-        if _login_task is not None and not _login_task.done():
-            _login_task.cancel()
-            await asyncio.gather(_login_task, return_exceptions=True)
-        _login_task = None
+        await _cancel_login_task()
         await browser_manager.close()
         logger.info("[Shutdown] 浏览器已关闭")
     except Exception as e:
@@ -101,11 +100,7 @@ async def fsv_login():
 
 @app.post("/fsv/logout")
 async def fsv_logout():
-    global _login_task
-    if _login_task is not None and not _login_task.done():
-        _login_task.cancel()
-        await asyncio.gather(_login_task, return_exceptions=True)
-    _login_task = None
+    await _cancel_login_task()
     await browser_manager.logout()
     status = dict(browser_manager.status())
     status["success"] = True

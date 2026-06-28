@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import threading
 from datetime import datetime
 from typing import Callable
 
@@ -22,6 +21,7 @@ from config.config import UI, UI_THEME
 from config.font_config import get_ui_font
 from config.scale import scale_px, scale_style_px
 from lib.core.anchor_utils import apply_ui_opacity
+from lib.core.compute_hub import get_compute_hub
 from lib.core.screen_utils import clamp_rect_position, get_screen_geometry_for_point
 from lib.core.topmost_manager import get_topmost_manager
 from lib.script.update_manager import (
@@ -311,8 +311,7 @@ class DesktopPetUpdateDialog(QWidget):
         self._progress_bar.setFormat("完成")
 
     def _start_worker(self, func: Callable[[], None], name: str) -> None:
-        thread = threading.Thread(target=func, daemon=True, name=name)
-        thread.start()
+        get_compute_hub().submit_io(func)
 
     def _run_release_check(self) -> None:
         manager = UpdateManager(

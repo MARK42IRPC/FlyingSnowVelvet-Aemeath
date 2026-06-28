@@ -3,6 +3,37 @@ from typing import Tuple, Dict, Any
 from PyQt5.QtCore import QPointF
 
 
+_LEGACY_PARTICLE_FPS = 60.0
+_PARTICLE_TICK_FPS = 20.0
+_PARTICLE_STEP_SCALE = _LEGACY_PARTICLE_FPS / _PARTICLE_TICK_FPS
+_PARTICLE_TICK_SECONDS = 1.0 / _PARTICLE_TICK_FPS
+
+
+def frame_delta(value: float) -> float:
+    """将旧的 60fps 每帧线性增量换算为每 tick 增量。"""
+    return float(value) * _PARTICLE_STEP_SCALE
+
+
+def frame_ratio(value: float) -> float:
+    """将旧的 60fps 每帧乘法比例换算为每 tick 比例。"""
+    return float(value) ** _PARTICLE_STEP_SCALE
+
+
+def frames_to_ticks(value: float) -> float:
+    """将旧的 60fps 帧数寿命换算为 tick 数。"""
+    return float(value) / _PARTICLE_STEP_SCALE
+
+
+def per_second_delta(value: float) -> float:
+    """将按秒速度/位移换算为每 tick 增量。"""
+    return float(value) / _PARTICLE_TICK_FPS
+
+
+def tick_seconds() -> float:
+    """单个 tick 的秒数。"""
+    return _PARTICLE_TICK_SECONDS
+
+
 class BaseParticleScript:
     """粒子效果基类 - 所有粒子脚本都继承此类"""
 

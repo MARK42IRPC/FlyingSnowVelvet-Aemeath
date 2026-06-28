@@ -12,7 +12,7 @@ class SnowSound(DirectoryRandomSound):
     def __init__(self, interruptible: bool = True):
         super().__init__(
             sound_dir=os.path.join('resc', 'SOUND', 'snow'),
-            audio_class='snow',
+            audio_type='world_sfx',
             logger=_logger,
             log_name='SnowSound',
             volume_range=(0.30, 0.50),

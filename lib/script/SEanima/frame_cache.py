@@ -3,10 +3,12 @@ import os
 import threading
 import time
 from collections import deque
+from concurrent.futures import Future
 from typing import Optional, List
 from PIL import Image
 from PyQt5.QtGui import QPixmap, QImage
 
+from lib.core.compute_hub import get_compute_hub
 from lib.core.logger import get_logger
 from lib.script.SEanima.clip import resolve_animation_clip
 logger = get_logger(__name__)
@@ -31,6 +33,7 @@ class FramePrefetchBuffer:
         self._total_frames = 0
         self._is_loading = False
         self._is_complete = False
+        self._prefetch_future: Optional[Future] = None
         self._anim_folder = ""
         self._project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
@@ -141,9 +144,8 @@ class FramePrefetchBuffer:
         self._current_index = 0
         self._buffer.clear()
 
-        # 启动预取线程
-        thread = threading.Thread(target=self._prefetch_worker, daemon=True)
-        thread.start()
+        # 启动预取任务
+        self._prefetch_future = get_compute_hub().submit_io(self._prefetch_worker)
 
         return True
 
@@ -188,6 +190,7 @@ class FramePrefetchBuffer:
         with self._lock:
             self._is_loading = False
             self._condition.notify_all()
+        self._prefetch_future = None
 
     @property
     def buffer_size(self) -> int:

@@ -1,6 +1,7 @@
 """计时器管理模块 - 统一管理所有定时任务，通过事件系统发布事件"""
 from PyQt5.QtCore import QTimer, QObject
 from typing import Optional
+import time
 import uuid
 
 from lib.core.event.center import get_event_center, EventType, Event
@@ -45,12 +46,14 @@ class TimingManager(QObject):
         self._tick_timer.timeout.connect(self._on_tick)
         self._tick_interval_ms = self.TICK_INTERVAL_MS
         self._tick_count = 0
+        self._last_tick_monotonic = time.monotonic()
 
         # Frame定时器：每16.67ms触发一次（60fps）
         self._frame_timer = QTimer(self)
         self._frame_timer.timeout.connect(self._on_frame)
         self._frame_interval_ms = 1000 // frame_fps
         self._frame_count = 0
+        self._last_frame_monotonic = time.monotonic()
 
         # GIF帧定时器：每100ms触发一次（10fps）
         self._gif_timer = QTimer(self)
@@ -91,11 +94,16 @@ class TimingManager(QObject):
 
     def _on_tick(self):
         """Tick定时器回调：发布tick事件，更新所有任务"""
+        now = time.monotonic()
+        dt_ms = max(0.0, (now - self._last_tick_monotonic) * 1000.0)
+        self._last_tick_monotonic = now
         self._tick_count += 1
         
         # 发布tick事件（每50ms一次，20次/秒）
         tick_event = Event(EventType.TICK, {
-            'tick_count': self._tick_count
+            'tick_count': self._tick_count,
+            'dt_ms': dt_ms,
+            'timestamp': now,
         })
         self._event_center.publish(tick_event)
 
@@ -124,9 +132,17 @@ class TimingManager(QObject):
 
     def _on_frame(self):
         """Frame定时器回调：发布frame事件（用于窗口移动）"""
+        now = time.monotonic()
+        frame_dt_ms = max(0.0, (now - self._last_frame_monotonic) * 1000.0)
+        self._last_frame_monotonic = now
         self._frame_count += 1
+        tick_elapsed_ms = max(0.0, (now - self._last_tick_monotonic) * 1000.0)
+        alpha = min(1.0, tick_elapsed_ms / max(1.0, float(self._tick_interval_ms)))
         frame_event = Event(EventType.FRAME, {
-            'frame_count': self._frame_count
+            'frame_count': self._frame_count,
+            'dt_ms': frame_dt_ms,
+            'tick_alpha': alpha,
+            'timestamp': now,
         })
         self._event_center.publish(frame_event)
 

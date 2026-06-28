@@ -102,6 +102,7 @@ class CommandDialog(QWidget):
         self._offset_y = 0   # 垂直无偏移
 
         # 订阅帧事件用于位置刷新
+        self._event_center.subscribe(EventType.TICK, self._on_tick)
         self._event_center.subscribe(EventType.FRAME, self._on_frame)
 
         # 订阅锚点响应事件
@@ -374,12 +375,16 @@ class CommandDialog(QWidget):
                 ui_id=ui_id,
             )
 
-    def _on_frame(self, event):
-        """帧事件处理 - 刷新位置"""
+    def _on_tick(self, event):
+        """Tick 事件处理 - 自动隐藏守卫。"""
         if not self._visible:
             return
         if self._is_mouse_far_from_family():
             self.toggle(None)
+
+    def _on_frame(self, event):
+        """帧事件处理 - 刷新位置"""
+        if not self._visible:
             return
         if self._anchor_point:
             # 直接使用当前锚点位置更新窗口位置

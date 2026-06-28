@@ -5,7 +5,7 @@ from typing import Tuple
 from PyQt5.QtCore import QPointF
 from PyQt5.QtGui import QColor
 
-from lib.script.practical.base_particle import BaseParticleScript
+from lib.script.practical.base_particle import BaseParticleScript, per_second_delta, tick_seconds
 from lib.core.plugin_registry import register_particle
 
 
@@ -27,7 +27,7 @@ class RightFadeParticleScript(BaseParticleScript):
         }
 
     def create_particles(self, area_type: str, area_data: Tuple) -> list:
-        """创建方形粒子，粒子数由面积决定：每1000像素面积生成3个粒子（向上取整）"""
+        """创建方形粒子，粒子数由面积决定：每1000像素面积生成1.5个粒子（向上取整）"""
         particles = []
 
         # 根据区域类型计算面积，进而确定粒子数量
@@ -40,7 +40,7 @@ class RightFadeParticleScript(BaseParticleScript):
         else:
             area = 1  # 单点退化为最少1个粒子
 
-        count = math.ceil(area * 3 / 1000)
+        count = math.ceil(area * 1.5 / 1000)
 
         for _ in range(count):
             # 根据区域类型生成位置
@@ -75,9 +75,7 @@ class RightFadeParticle:
         variation = config['speed_variation']
         speed = base_speed + random.uniform(-variation, variation)
 
-        # 使用60fps计算每帧速度
-        fps = 60
-        self.vx = speed / fps
+        self.vx = per_second_delta(speed)
         self.vy = 0  # 仅水平移动
 
         # 外观 - 水平矩形
@@ -93,7 +91,7 @@ class RightFadeParticle:
         """更新位置和生命值"""
         self.x += self.vx
         self.y += self.vy
-        self.life -= 1.0 / 60.0  # 60fps
+        self.life -= tick_seconds()
 
     @property
     def alive(self) -> bool:

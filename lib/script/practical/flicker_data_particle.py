@@ -4,10 +4,10 @@ Spec:
 - point-based spawn
 - spawn 1-3 particles
 - horizontal rectangle, height 2-4 px, width:height = 4:1
-- color changes every frame among white/light-pink/light-cyan/deep-pink/deep-blue
+- color changes every tick among white/light-pink/light-cyan/deep-pink/deep-blue
 - slight Brownian motion
 - no gravity
-- life about 30-90 ticks (frames)
+- life about 0.5-1.5 seconds
 - fades out via global overlay alpha logic
 """
 
@@ -18,7 +18,7 @@ from typing import Tuple
 
 from PyQt5.QtGui import QColor
 
-from lib.script.practical.base_particle import BaseParticleScript
+from lib.script.practical.base_particle import BaseParticleScript, per_second_delta, tick_seconds
 from lib.core.plugin_registry import register_particle
 
 
@@ -41,9 +41,9 @@ class FlickerDataParticleScript(BaseParticleScript):
             "count_range": (1, 3),
             "height_range": (2, 4),
             "aspect_ratio": 4,
-            "life_range": (30, 90),  # frames
-            "brownian": 0.06,
-            "max_speed": 0.4,
+            "life_range": (0.5, 1.5),  # seconds
+            "brownian": 3.6,           # px/s
+            "max_speed": 24.0,         # px/s
             "spawn_offset_range": (-30, 30),  # px
             "colors": [
                 _COLOR_WHITE,
@@ -84,15 +84,15 @@ class FlickerDataParticle:
         self.height = random.randint(*config["height_range"])
         self.width = self.height * int(config["aspect_ratio"])
 
-        self.vx = random.uniform(-0.08, 0.08)
-        self.vy = random.uniform(-0.08, 0.08)
-        self._brownian = float(config["brownian"])
-        self._max_speed = float(config["max_speed"])
+        self.vx = per_second_delta(random.uniform(-4.8, 4.8))
+        self.vy = per_second_delta(random.uniform(-4.8, 4.8))
+        self._brownian = per_second_delta(float(config["brownian"]))
+        self._max_speed = per_second_delta(float(config["max_speed"]))
 
         self._colors = config["colors"]
         self.color = random.choice(self._colors)
 
-        self.max_life = float(random.randint(*config["life_range"]))
+        self.max_life = float(random.uniform(*config["life_range"]))
         self.life = self.max_life
 
     def update(self) -> None:
@@ -106,7 +106,7 @@ class FlickerDataParticle:
         self.y += self.vy
 
         self.color = random.choice(self._colors)
-        self.life -= 1.0
+        self.life -= tick_seconds()
 
     @property
     def alive(self) -> bool:

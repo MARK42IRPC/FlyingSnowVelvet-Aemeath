@@ -1,12 +1,12 @@
 """CMD命令中心 - 订阅输入事件，分发处理逻辑"""
 import subprocess
-import threading
 
 from lib.core.logger import get_logger
 logger = get_logger(__name__)
 
 from PyQt5.QtCore import QObject, pyqtSignal
 
+from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.hash_cmd_registry import get_hash_cmd_registry
 from config.config import TIMEOUTS
@@ -45,7 +45,7 @@ class CmdCenter:
         cmd = event.data.get('text', '').strip()
         if not cmd:
             return
-        threading.Thread(target=self._run_command, args=(cmd,), daemon=True).start()
+        get_compute_hub().submit_io(self._run_command, cmd)
 
     def _run_command(self, cmd: str):
         """在后台线程中执行命令（超时配置化，不阻塞 Qt 主线程）"""

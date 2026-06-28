@@ -4,7 +4,7 @@ import math
 from typing import Tuple
 from PyQt5.QtGui import QColor
 
-from lib.script.practical.base_particle import BaseParticleScript
+from lib.script.practical.base_particle import BaseParticleScript, per_second_delta, tick_seconds
 from lib.core.plugin_registry import register_particle
 
 
@@ -73,9 +73,8 @@ class UpFadeParticle:
         variation = config['speed_variation']
         speed = base_speed + random.uniform(-variation, variation)
 
-        fps = 60
         self.vx = 0               # 无水平偏移
-        self.vy = -speed / fps    # 向上
+        self.vy = -per_second_delta(speed)
 
         # 外观 - 正方形（使用 size 走渲染器的正方形分支）
         self.size = random.randint(*config['size_range'])
@@ -90,7 +89,7 @@ class UpFadeParticle:
         """更新位置和生命值"""
         self.x += self.vx
         self.y += self.vy
-        self.life -= 1.0 / 60.0  # 60fps
+        self.life -= tick_seconds()
 
     @property
     def alive(self) -> bool:

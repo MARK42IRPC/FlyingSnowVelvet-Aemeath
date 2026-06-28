@@ -1,8 +1,7 @@
 """状态机模块 - 管理宠物动画状态与行为。"""
-from PyQt5.QtCore import QTimer, QPoint, Qt
+from PyQt5.QtCore import QTimer, QPoint, Qt, QRect, QLineF
 import math
 import random
-import time
 
 from config.config import BEHAVIOR
 from lib.core.event.center import get_event_center, EventType, Event
@@ -12,6 +11,15 @@ from lib.core.screen_utils import get_virtual_screen_geometry, get_screen_geomet
 
 _logger = get_logger(__name__)
 _MOVE_MAX_DURATION_MS = 5000
+_MOVE_SOURCE = "mainpet_state"
+_MOVE_TRACK_LEOPARD_ID = "mainpet_track_leopard"
+_MOVE_TRACK_LEOPARD_TYPE = "track_leopard"
+_MOVE_LOCK_SOFA_ID = "mainpet_lock_sofa"
+_MOVE_LOCK_SOFA_TYPE = "lock_sofa"
+_MOVE_NEAR_SPEAKER_ID = "mainpet_near_speaker"
+_MOVE_NEAR_SPEAKER_TYPE = "near_speaker"
+_MOVE_WANDER_RANDOM_ID = "mainpet_wander_random"
+_MOVE_WANDER_RANDOM_TYPE = "wander_random"
 
 
 def log(msg):
@@ -44,10 +52,6 @@ class StateMachine:
         # 是否因保护半径而暂停漫游计时器
         self._paused_by_sofa = False
 
-        # 单次 moving 的起始时间与超时标记
-        self._move_started_ms = None
-        self._move_timeout_triggered = False
-
         # 保护半径检测请求聚合状态
         self._protection_check_seq = 0
         self._pending_protection_request_id = None
@@ -55,6 +59,7 @@ class StateMachine:
 
         # 订阅保护半径检测响应事件
         self._event_center.subscribe(EventType.PROTECTION_RESPONSE, self._on_protection_response)
+        self._event_center.subscribe(EventType.PET_MOVE_DONE, self._on_pet_move_done)
 
         # 订阅相关事件
         self._event_center.subscribe(EventType.TIMER, self._on_timer_event)
@@ -167,13 +172,6 @@ class StateMachine:
         # 切换状态
         self._current_state = new_state
 
-        if new_state == 'moving':
-            self._move_started_ms = time.monotonic() * 1000.0
-            self._move_timeout_triggered = False
-        else:
-            self._move_started_ms = None
-            self._move_timeout_triggered = False
-        
         # 处理漫游计时器暂停/恢复
         if new_state == 'idle':
             # 回到 idle 时恢复计时器；若当前处于保护态则跳过
@@ -307,17 +305,38 @@ class StateMachine:
             if target is not None:
                 self._is_tracking_leopard = True
                 log(f"Leopard tracking target: ({target.x()}, {target.y()})")
+                self._enqueue_move(
+                    target,
+                    event_id=_MOVE_TRACK_LEOPARD_ID,
+                    move_type=_MOVE_TRACK_LEOPARD_TYPE,
+                    radius=self._default_move_radius(),
+                    timeout_ms=_MOVE_MAX_DURATION_MS,
+                )
             else:
                 self._is_tracking_leopard = False
                 # 2) nearest sofa
                 target = self._get_nearest_sofa_pos()
                 if target is not None:
                     log(f"Sofa target: ({target.x()}, {target.y()})")
+                    self._enqueue_move(
+                        target,
+                        event_id=_MOVE_LOCK_SOFA_ID,
+                        move_type=_MOVE_LOCK_SOFA_TYPE,
+                        radius=self._default_move_radius(),
+                        timeout_ms=_MOVE_MAX_DURATION_MS,
+                    )
                 else:
                     # 3) random point around speaker
                     target = self._get_random_pos_near_speaker()
                     if target is not None:
                         log(f"Speaker-near target: ({target.x()}, {target.y()})")
+                        self._enqueue_move(
+                            target,
+                            event_id=_MOVE_NEAR_SPEAKER_ID,
+                            move_type=_MOVE_NEAR_SPEAKER_TYPE,
+                            radius=self._default_move_radius(),
+                            timeout_ms=_MOVE_MAX_DURATION_MS,
+                        )
                     else:
                         # 4) random point on screen
                         screen = get_virtual_screen_geometry()
@@ -333,7 +352,19 @@ class StateMachine:
                             random.randint(min_x, max_x),
                             random.randint(min_y, max_y),
                         )
-            self._entity.start_move(target)
+                        if self._is_wander_target_blocked_by_lahai(target):
+                            log(
+                                f"Wander target skipped by Lahai game area filter: "
+                                f"({target.x()}, {target.y()})"
+                            )
+                            return
+                        self._enqueue_move(
+                            target,
+                            event_id=_MOVE_WANDER_RANDOM_ID,
+                            move_type=_MOVE_WANDER_RANDOM_TYPE,
+                            radius=self._default_move_radius(),
+                            timeout_ms=_MOVE_MAX_DURATION_MS,
+                        )
 
     def _on_tick_tracking(self, event):
         """
@@ -341,10 +372,6 @@ class StateMachine:
         1. 刷新雪豹动态追踪目标（仅在追踪中）
         2. 检测保护半径并统一更新漫游计时器状态
         """
-        # move 超时保护：单次移动最长 5s，超时后打断并进入随机 action。
-        if self._check_move_timeout():
-            return
-
         # 雪豹动态追踪
         if self._is_tracking_leopard:
             if not self._entity.is_moving():
@@ -353,7 +380,13 @@ class StateMachine:
             else:
                 latest = self._get_nearest_leopard_pos()
                 if latest is not None:
-                    self._entity.update_move_target(latest)
+                    self._enqueue_move(
+                        latest,
+                        event_id=_MOVE_TRACK_LEOPARD_ID,
+                        move_type=_MOVE_TRACK_LEOPARD_TYPE,
+                        radius=self._default_move_radius(),
+                        timeout_ms=_MOVE_MAX_DURATION_MS,
+                    )
                 else:
                     # 追踪目标消失（如淡出），解除追踪
                     self._is_tracking_leopard = False
@@ -362,36 +395,24 @@ class StateMachine:
         # 保护半径检测（始终执行）
         self._check_sofa_protection()
 
-    def _check_move_timeout(self) -> bool:
-        """检查 moving 是否超时；超时后打断移动并切入随机动作。"""
-        if self._current_state != 'moving' or not self._entity.is_moving():
-            self._move_started_ms = None
-            self._move_timeout_triggered = False
-            return False
+    def _on_pet_move_done(self, event: Event) -> None:
+        """处理主宠物移动队列完成事件。"""
+        if event.data.get('source') != _MOVE_SOURCE:
+            return
 
-        now_ms = time.monotonic() * 1000.0
-        if self._move_started_ms is None:
-            self._move_started_ms = now_ms
-            self._move_timeout_triggered = False
-            return False
+        move_type = event.data.get('type')
+        result = str(event.data.get('result') or '').strip().lower()
+        if move_type == _MOVE_TRACK_LEOPARD_TYPE:
+            self._is_tracking_leopard = False
 
-        if self._move_timeout_triggered:
-            return False
+        if result != 'timeout':
+            return
 
-        elapsed = now_ms - self._move_started_ms
-        if elapsed < _MOVE_MAX_DURATION_MS:
-            return False
-
-        self._move_timeout_triggered = True
         self._is_tracking_leopard = False
-        log(f"Move timeout: elapsed={int(elapsed)}ms, forcing random action")
-
-        # 先停止移动（会请求回 idle），再立即切换到随机 action。
-        self._entity.stop_move()
+        log("Move timeout from queue manager, forcing random action")
         action = Actions.get_random_action_from_group("action1")
         if action:
             self._publish_state_change_request(action.name, by_event=False)
-        return True
 
     def _get_nearest_leopard_pos(self) -> "QPoint | None":
         """
@@ -549,7 +570,7 @@ class StateMachine:
         if in_protection and not self._paused_by_sofa:
             self._paused_by_sofa = True
             if self._entity.is_moving():
-                self._entity.stop_move()
+                self._pass_move(scope='current')
             if self._timing_manager:
                 self._timing_manager.pause_task(self._wander_task_id)
             log("主宠物进入保护半径，漫游计时器已暂停")
@@ -558,6 +579,112 @@ class StateMachine:
             if self._timing_manager:
                 self._timing_manager.resume_task(self._wander_task_id)
             log("主宠物离开保护半径，漫游计时器已恢复")
+
+    def _is_wander_target_blocked_by_lahai(self, target: QPoint) -> bool:
+        """
+        当默认漫游目标会遮挡拉海洛方块游戏区域的横向中间三分之一时，返回 True。
+
+        拦截两种情况：
+        1. 目标矩形本身会压到游戏区
+        2. 从当前位置到目标位置的移动线段会横跨游戏区
+        """
+        try:
+            from lib.script.gemes import get_game_runtime
+        except Exception:
+            return False
+
+        pet_geom = self._entity.get_geometry()
+        if pet_geom is None:
+            return False
+
+        try:
+            blocked_rect = get_game_runtime().get_lahai_game_middle_third_rect_global()
+        except Exception:
+            return False
+
+        if blocked_rect.isNull() or blocked_rect.isEmpty():
+            return False
+
+        target_rect = QRect(
+            int(target.x()),
+            int(target.y()),
+            int(pet_geom.width()),
+            int(pet_geom.height()),
+        )
+        if target_rect.intersects(blocked_rect):
+            return True
+
+        current_pos = self._entity.get_position()
+        current_center = QPoint(
+            current_pos.x() + pet_geom.width() // 2,
+            current_pos.y() + pet_geom.height() // 2,
+        )
+        target_center = QPoint(
+            target.x() + pet_geom.width() // 2,
+            target.y() + pet_geom.height() // 2,
+        )
+
+        # 将游戏危险区按桌宠半尺寸向外扩一圈。
+        # 这样即使仅移动轨迹中心线擦过，桌宠实体本身也不会横跨遮挡到下落区。
+        expanded_blocked = blocked_rect.adjusted(
+            -pet_geom.width() // 2,
+            -pet_geom.height() // 2,
+            pet_geom.width() // 2,
+            pet_geom.height() // 2,
+        )
+        if expanded_blocked.contains(current_center) or expanded_blocked.contains(target_center):
+            return True
+
+        move_line = QLineF(current_center, target_center)
+        top_left = expanded_blocked.topLeft()
+        top_right = expanded_blocked.topRight()
+        bottom_left = expanded_blocked.bottomLeft()
+        bottom_right = expanded_blocked.bottomRight()
+        edges = (
+            QLineF(top_left, top_right),
+            QLineF(top_right, bottom_right),
+            QLineF(bottom_right, bottom_left),
+            QLineF(bottom_left, top_left),
+        )
+        for edge in edges:
+            if move_line.intersects(edge)[0] == QLineF.BoundedIntersection:
+                return True
+        return False
+
+    def _default_move_radius(self) -> int:
+        raw_value = BEHAVIOR.get('move_arrival_radius', 12)
+        try:
+            return max(1, int(raw_value))
+        except (TypeError, ValueError):
+            return 12
+
+    def _enqueue_move(
+        self,
+        target: QPoint,
+        *,
+        event_id: str,
+        move_type: str,
+        radius: int,
+        timeout_ms: int,
+    ) -> None:
+        self._event_center.publish(Event(EventType.PET_MOVE_ENQUEUE, {
+            'event_id': event_id,
+            'source': _MOVE_SOURCE,
+            'type': move_type,
+            'position': QPoint(target),
+            'radius': radius,
+            'timeout_ms': timeout_ms,
+        }))
+
+    def _pass_move(self, *, scope: str = 'current', move_type: str | None = None) -> None:
+        payload = {
+            'scope': scope,
+            'source': _MOVE_SOURCE,
+            'result': 'cancelled',
+        }
+        if move_type:
+            payload['type'] = move_type
+        self._event_center.publish(Event(EventType.PET_MOVE_PASS, payload))
 
 
 

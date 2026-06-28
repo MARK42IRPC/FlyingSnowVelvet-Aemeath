@@ -12,6 +12,7 @@ from lib.core.event.center import get_event_center, EventType, Event, cleanup_ev
 from lib.script.SEanima.animation import get_start_exit_animation, cleanup_start_exit_animation
 from lib.core.logger import initialize as initialize_app_logger, cleanup as cleanup_app_logger, get_logger
 from lib.core.cmd_center import get_cmd_center, cleanup_cmd_center
+from lib.core.compute_hub import cleanup_compute_hub
 from lib.script.ui.cmd_window import get_cmd_window, cleanup_cmd_window
 from lib.script.chat.ollama import get_ollama_manager, cleanup_ollama_manager
 from lib.script.chat.handler import get_chat_handler, cleanup_chat_handler
@@ -408,6 +409,7 @@ class ApplicationState:
 
     def _cleanup_visual_components(self):
         from lib.core.draw_core import cleanup_draw_core
+        from lib.core.audio_meter import cleanup_audio_meter
         from lib.core.voice.core import cleanup_voice_core
 
         cleanup_all_runtime_ui()
@@ -415,7 +417,9 @@ class ApplicationState:
         cleanup_tray_icon()
         self._tray_icon = None
 
+        cleanup_audio_meter()
         cleanup_voice_core()
+        cleanup_compute_hub()
 
         self._gifs = None
 

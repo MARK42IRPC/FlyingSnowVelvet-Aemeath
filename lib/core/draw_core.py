@@ -163,15 +163,13 @@ class DrawCore:
             painter: QPainter对象
             target_rect: 目标绘制区域，如果为None则使用每个请求自己的位置
         """
+        if not self._active_requests:
+            return
+
         painter.save()
-        
-        # 启用高质量抗锯齿
-        painter.setRenderHints(
-            QPainter.Antialiasing | 
-            QPainter.SmoothPixmapTransform | 
-            QPainter.HighQualityAntialiasing,
-            True
-        )
+        # DrawCore 当前主要绘制 QPixmap，保留平滑缩放即可；
+        # 关闭高质量抗锯齿可明显降低主线程绘制开销。
+        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
 
         for request in self._active_requests.values():
             # 获取帧
@@ -204,25 +202,16 @@ class DrawCore:
                 base_pixmap,
             )
 
-            # 确定绘制位置
-            if target_rect:
-                # 将 pixmap 居中绘制在 target_rect 中
-                pixmap_rect = QRect(QPoint(0, 0), pixmap.size())
-                draw_rect = pixmap_rect
-                draw_rect.moveCenter(target_rect.center())
-            elif request.position:
-                if isinstance(request.position, QPoint):
-                    draw_rect = QRect(request.position, pixmap.size())
-                else:
-                    draw_rect = QRect(QPoint(*request.position), pixmap.size())
-            else:
-                draw_rect = QRect(QPoint(0, 0), pixmap.size())
+            draw_rect = self._resolve_draw_rect(request, pixmap, target_rect)
 
-            # 应用透明度并绘制
-            painter.save()
-            painter.setOpacity(request.alpha)
-            painter.drawPixmap(draw_rect, pixmap)
-            painter.restore()
+            # 仅在需要时切换透明度，减少 painter 状态切换。
+            if abs(request.alpha - 1.0) > 1e-4:
+                painter.save()
+                painter.setOpacity(request.alpha)
+                painter.drawPixmap(draw_rect, pixmap)
+                painter.restore()
+            else:
+                painter.drawPixmap(draw_rect, pixmap)
 
         painter.restore()
 
@@ -315,6 +304,23 @@ class DrawCore:
 
         self._render_pixmap_cache[key] = pixmap
         return pixmap
+
+    def _resolve_draw_rect(
+        self,
+        request: DrawRequest,
+        pixmap: QPixmap,
+        target_rect: Optional[QRect],
+    ) -> QRect:
+        """解析最终绘制矩形。"""
+        if target_rect:
+            draw_rect = QRect(QPoint(0, 0), pixmap.size())
+            draw_rect.moveCenter(target_rect.center())
+            return draw_rect
+        if request.position:
+            if isinstance(request.position, QPoint):
+                return QRect(request.position, pixmap.size())
+            return QRect(QPoint(*request.position), pixmap.size())
+        return QRect(QPoint(0, 0), pixmap.size())
 
 
 # 全局绘制核心实例

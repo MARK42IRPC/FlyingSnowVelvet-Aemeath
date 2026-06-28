@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -159,22 +160,50 @@ class _UpdateBase:
     ) -> None:
         self._info_callback = info_callback
         self._progress_callback = progress_callback
+        self._last_info_message = ""
+        self._last_progress_emit_ts = 0.0
+        self._last_progress_key: tuple[int, int, str] | None = None
 
     def _info(self, message: str) -> None:
+        text = str(message or "").strip()
+        if not text:
+            return
+        if text == self._last_info_message:
+            return
+        self._last_info_message = text
         if self._info_callback:
             try:
-                self._info_callback(message)
+                self._info_callback(text)
                 return
             except Exception:
                 _logger.debug("update info callback failed", exc_info=True)
-        _logger.info("[Update] %s", message)
+        _logger.info("[Update] %s", text)
 
     def _progress(self, current: int, total: int, message: str = "") -> None:
-        if message:
-            self._info(message)
+        current = int(current)
+        total = int(total)
+        text = str(message or "").strip()
+        now = time.monotonic()
+        progress_key = (current, total, text)
+
+        should_emit = False
+        if self._last_progress_key != progress_key:
+            should_emit = True
+        elif total > 0 and current >= total:
+            should_emit = True
+        elif (now - self._last_progress_emit_ts) >= 0.2:
+            should_emit = True
+
+        if not should_emit:
+            return
+
+        self._last_progress_emit_ts = now
+        self._last_progress_key = progress_key
+        if text:
+            self._info(text)
         if self._progress_callback:
             try:
-                self._progress_callback(int(current), int(total), message)
+                self._progress_callback(current, total, text)
                 return
             except Exception:
                 _logger.debug("update progress callback failed", exc_info=True)

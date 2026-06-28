@@ -8,7 +8,7 @@ from typing import Tuple
 from PyQt5.QtGui import QColor
 
 from lib.core.plugin_registry import register_particle
-from lib.script.practical.base_particle import BaseParticleScript
+from lib.script.practical.base_particle import BaseParticleScript, per_second_delta
 
 @register_particle("lahai_glow_burst")
 class LahaiGlowBurstParticleScript(BaseParticleScript):
@@ -19,10 +19,10 @@ class LahaiGlowBurstParticleScript(BaseParticleScript):
         self._config = {
             "count_range": (4, 6),
             "size_range": (2, 4),
-            "speed_range": (2.8, 4.8),
-            "brownian": 0.08,
-            "drag": 0.965,
-            "life_decay": 0.055,
+            "speed_range": (168.0, 288.0),
+            "brownian": 4.8,
+            "drag": 0.898632,
+            "life_decay": 0.165,
         }
         self._request_options: dict = {}
 
@@ -53,12 +53,12 @@ class LahaiGlowBurstParticle:
         base_len = max(0.001, (dir_x * dir_x + dir_y * dir_y) ** 0.5)
         dir_x /= base_len
         dir_y /= base_len
-        speed = random.uniform(*config["speed_range"])
-        self.vx = dir_x * speed + random.uniform(-0.25, 0.25)
-        self.vy = dir_y * speed + random.uniform(-0.25, 0.25)
+        speed = per_second_delta(random.uniform(*config["speed_range"]))
+        self.vx = dir_x * speed + per_second_delta(random.uniform(-15.0, 15.0))
+        self.vy = dir_y * speed + per_second_delta(random.uniform(-15.0, 15.0))
         self.size = random.randint(*config["size_range"])
         self.color = _vary_color(options.get("rgb", (117, 233, 255)))
-        self._brownian = float(config["brownian"])
+        self._brownian = per_second_delta(float(config["brownian"]))
         self.drag = float(config["drag"])
         self.life_decay = float(config["life_decay"])
         self.life = 1.0

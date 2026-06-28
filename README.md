@@ -1,9 +1,9 @@
-# 飞行雪绒 LTS 1.0.6 beta2
+# 飞行雪绒 LTS 1.0.6 beta3
 
-飞行雪绒是一个以 Windows 10/11 为主要目标平台的桌面宠物项目，围绕 **桌宠展示、AI 伴聊、语音播报、语音识别、音乐播放、可生成场景对象** 这几条主线持续迭代。当前 `beta2` 继续在 `1.0.6` 开发线上推进，重点补齐动画资源解耦、安装兼容性和外部 API 配置脱敏。
+飞行雪绒是一个以 Windows 10/11 为主要目标平台的桌面宠物项目，围绕 **桌宠展示、AI 伴聊、语音播报、语音识别、音乐播放、可生成场景对象** 这几条主线持续迭代。当前 `beta3` 继续在 `1.0.6` 开发线上推进，重点收敛音频事件链、桌宠移动队列、`tick/frame` 驱动结构，以及粒子系统的时序与抖动问题。
 
-> 当前版本：`LTS1.0.6beta2`  
-> 发布日期：`2026-06-27`
+> 当前版本：`LTS1.0.6beta3`  
+> 发布日期：`2026-06-28`
 
 ---
 
@@ -179,13 +179,13 @@ python scripts/generate_doc_portal.py
 普通发布包：
 
 ```powershell
-python scripts/package_release.py --version LTS1.0.6beta2
+python scripts/package_release.py --version LTS1.0.6beta3
 ```
 
 绿色资源包：
 
 ```powershell
-python scripts/package_green_release.py --version LTS1.0.6beta2
+python scripts/package_green_release.py --version LTS1.0.6beta3
 ```
 
 两者默认都会排除运行时用户数据；绿色包会额外保留模型等离线资源，适合离线分发。
@@ -196,13 +196,14 @@ python scripts/package_green_release.py --version LTS1.0.6beta2
 
 ## 版本说明
 
-`beta2` 当前对应最近一轮公开开发快照，主要包含以下方向：
+`beta3` 当前对应最近一轮公开开发快照，主要包含以下方向：
 
-- 项目版本号切换到 `LTS1.0.6beta2`
-- `SEanima` 拆分为动画定义 / 解码 / 特效三层，并接入启动/退出动画目录选择
-- 外部 API 的密钥、接口地址、接口模型全部迁移到 `resc/user/ai/ollama_secrets.json`
-- 安装器 Python 探测与本地 AI secrets 保留逻辑进一步修正
-- 资料舱门户、打包命令与仓库入口文档同步到 `beta2`
+- 项目版本号切换到 `LTS1.0.6beta3`
+- 音频播放事件统一收口，语音 / 特效音改为同一类型化事件链，音乐保持独立音量链
+- 主宠移动逻辑重构为事件驱动队列，漫游 / 沙发锁定 / 音响靠近 / 雪豹追踪统一入队
+- `TimingManager` 发布 `TICK` / `FRAME` 双事件，物理与粒子改为 `tick` 更新、`frame` 插值渲染
+- 粒子系统切到统一 `tick` 语义，修复粒子顺序、丢事件、抖动与回弹抽搐问题
+- 拉海洛方块运行时增加桌宠漫游避让，默认漫游不会停在或横穿核心游玩区
 
 详见 `CHANGELOG.md` 与 `AA更新日志.txt`。
 

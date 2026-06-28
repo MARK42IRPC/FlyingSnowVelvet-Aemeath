@@ -4,7 +4,7 @@ import random
 from PyQt5.QtGui import QColor, QPolygonF
 from PyQt5.QtCore import QPointF, QRectF, Qt
 
-from lib.script.practical.base_particle import BaseParticleScript
+from lib.script.practical.base_particle import BaseParticleScript, per_second_delta, tick_seconds
 from lib.core.plugin_registry import register_particle
 
 
@@ -19,9 +19,10 @@ class MusicNoteParticleScript(BaseParticleScript):
         self._config = {
             'count_range': (3, 5),           # 每次生成3-5个粒子
             'width_range':  (8, 12),         # 宽度8-12px
-            'speed_range':  (1, 2),          # 向上移动速度
-            'brownian':    0.3,              # 布朗运动强度
-            'life_range':  (1.0, 1.5),       # 寿命1-1.5秒（假设60fps，约60-90帧）
+            'speed_range':  (42, 84),        # 向上移动速度 px/s（原 0.7x）
+            'brownian':    12.6,             # 布朗运动强度 px/s（原 0.7x）
+            'max_speed':   30.0,             # 水平最大漂移 px/s
+            'life_range':  (1.1, 1.65),      # 寿命 1.1x
             'colors': [                        # 随机颜色
                 QColor(255, 182, 193),  # 粉色
                 QColor(173, 216, 230),  # 青色
@@ -55,7 +56,7 @@ class MusicNoteParticle:
         self.y = random.uniform(y1, y2)
 
         # 向上移动（负y速度）
-        self.vy = -random.uniform(*config['speed_range'])
+        self.vy = -per_second_delta(random.uniform(*config['speed_range']))
         self.vx = 0
 
         # 尺寸：正方形
@@ -65,14 +66,12 @@ class MusicNoteParticle:
         self.color = random.choice(config['colors'])
 
         # 物理参数
-        self.brownian = config['brownian']  # 布朗运动强度
+        self.brownian = per_second_delta(config['brownian'])
         self.gravity = 0  # 无重力
 
-        # 生命值（帧数）
-        life_frames = random.uniform(*config['life_range']) * 60  # 转换为帧数（假设60fps）
-        self.life = life_frames
-        self.max_life = life_frames
-        self.life_decay = 1  # 每帧减少1
+        self.life = random.uniform(*config['life_range'])
+        self.max_life = self.life
+        self._max_vx = per_second_delta(config['max_speed'])
 
     def update(self):
         """物理更新：布朗运动 → 向上移动 → 生命衰减"""
@@ -80,15 +79,14 @@ class MusicNoteParticle:
         self.vx += random.uniform(-self.brownian, self.brownian)
         
         # 限制水平速度
-        max_vx = 0.5
-        self.vx = max(-max_vx, min(max_vx, self.vx))
+        self.vx = max(-self._max_vx, min(self._max_vx, self.vx))
         
         # 向上移动
         self.x += self.vx
         self.y += self.vy
         
         # 生命衰减
-        self.life -= self.life_decay
+        self.life -= tick_seconds()
 
     @property
     def alive(self) -> bool:

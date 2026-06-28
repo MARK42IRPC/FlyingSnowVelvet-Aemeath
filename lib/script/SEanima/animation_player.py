@@ -9,7 +9,6 @@
 import sys
 import os
 import queue
-import threading
 import time
 import logging
 from concurrent.futures import ThreadPoolExecutor
@@ -24,6 +23,7 @@ from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QImage, QPixmap, QPainter
 
 # 项目核心模块（路径已在上方注入，可安全导入）
+from lib.core.compute_hub import get_compute_hub
 from lib.core.topmost_manager import get_topmost_manager
 from lib.core.anchor_utils import apply_ui_opacity
 from lib.script.SEanima.clip import resolve_animation_clip
@@ -85,9 +85,9 @@ class AnimationWindow(QWidget):
         与主宠物统一：尺寸使用 config.config 的 ANIMATION['pet_size']，
         不再基于屏幕宽度做二次推导。
         """
-        threading.Thread(
-            target=self._decode_worker, daemon=True
-        ).start()
+        get_compute_hub().submit_io(
+            self._decode_worker,
+        )
         self._timer.start(16)   # 60 fps；缓冲区有帧前窗口不显示
 
     def _decode_worker(self):

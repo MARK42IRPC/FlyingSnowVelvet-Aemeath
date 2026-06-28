@@ -34,6 +34,9 @@ class EventType(Enum):
     MOVE_START = "move_start"
     MOVE_END = "move_end"
     PET_TELEPORT = "pet_teleport"  # 主宠物瞬移请求（x/y 或 position）
+    PET_MOVE_ENQUEUE = "pet_move_enqueue"  # 主宠物移动队列入队/更新请求
+    PET_MOVE_PASS = "pet_move_pass"  # 主宠物移动队列中止/移除请求
+    PET_MOVE_DONE = "pet_move_done"  # 主宠物移动队列单步完成/取消/超时
 
 
 
@@ -83,7 +86,7 @@ class EventType(Enum):
     PARTICLE_UPDATE = "particle_update"                  # 粒子更新事件
 
     # 音频事件
-    SOUND_REQUEST = "sound_request"                      # 音频播放申请: [audio_class, volume, interruptible]
+    SOUND_REQUEST = "sound_request"                      # 音频播放申请: [audio_type, source, volume_gain, interruptible]
     VOICE_REQUEST = "voice_request"                      # 语音播放申请（script抽象层入口）
     AI_VOICE_REQUEST = "ai_voice_request"                # AI文本转语音申请（清洗后的短文本）
     MIC_STT_START = "mic_stt_start"                     # 麦克风语音识别启动请求

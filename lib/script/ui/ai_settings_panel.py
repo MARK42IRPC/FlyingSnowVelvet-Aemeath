@@ -57,6 +57,7 @@ from lib.script.ui.ai_settings_tabs import (
     set_active_ai_settings_tab,
 )
 from lib.core.anchor_utils import animate_opacity
+from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.logger import get_logger
 from lib.script.SEanima.clip import (
@@ -188,8 +189,8 @@ _GENERAL_CONFIG_CATEGORIES = [
         "tab": "音频音乐",
         "title": "音频与音乐配置",
         "sections": [
-            ("SOUND", "音量"),
-            ("VOICE", "语音"),
+            ("AUDIO_VOLUMES", "音量控制"),
+            ("VOICE", "语音与麦克风"),
             ("SPEAKER_AUDIO", "音频可视化"),
             ("CLOUD_MUSIC", "云音乐"),
         ],
@@ -313,13 +314,8 @@ _CATEGORY_KEY_ALLOWLIST = {
         },
     },
     "audio_music": {
-        "SOUND": {
-            "master_volume",
-            "main_pet_volume",
-            "game_object_volume",
-        },
+        "AUDIO_VOLUMES": set(),
         "VOICE": {
-            "voice_volume",
             "microphone_push_to_talk_key",
             "microphone_silence_timeout_secs",
             "microphone_speech_rms_threshold",
@@ -327,7 +323,6 @@ _CATEGORY_KEY_ALLOWLIST = {
         "SPEAKER_AUDIO": set(),
         "CLOUD_MUSIC": {
             "provider",
-            "default_volume",
             "particle_interval",
             "search_result_limit",
             "cache_dir",
@@ -610,6 +605,16 @@ _GENERAL_CONFIG_DEFAULTS: dict[str, dict[str, object]] = {
     },
 }
 
+_GENERAL_MIXED_SECTION_FIELDS: dict[str, list[tuple[str, str]]] = {
+    "AUDIO_VOLUMES": [
+        ("SOUND", "master_volume"),
+        ("SOUND", "main_pet_volume"),
+        ("SOUND", "game_object_volume"),
+        ("VOICE", "voice_volume"),
+        ("CLOUD_MUSIC", "default_volume"),
+    ],
+}
+
 _DICT_FRIENDLY_NAME = {
     "UI": "界面",
     "ANIMATION": "动画",
@@ -618,6 +623,7 @@ _DICT_FRIENDLY_NAME = {
     "BEHAVIOR": "行为",
     "PHYSICS": "物理",
     "PARTICLES": "粒子",
+    "AUDIO_VOLUMES": "音量控制",
     "SOUND": "音量",
     "VOICE": "语音",
     "SPEAKER_AUDIO": "音频可视化",
@@ -705,15 +711,15 @@ _KEY_FRIENDLY_NAME = {
     },
     "SOUND": {
         "master_volume": "总音量",
-        "main_pet_volume": "主宠物音量",
-        "game_object_volume": "游戏物体音量",
+        "main_pet_volume": "主宠物语音音量",
+        "game_object_volume": "特效音量",
     },
-        "VOICE": {
-            "voice_volume": "语音音量",
-            "microphone_push_to_talk_key": "语聊快捷键(留空禁用)",
-            "microphone_silence_timeout_secs": "静音停止时长(s)",
-            "microphone_speech_rms_threshold": "说话判定阈值",
-        },
+    "VOICE": {
+        "voice_volume": "AI语音音量",
+        "microphone_push_to_talk_key": "语聊快捷键(留空禁用)",
+        "microphone_silence_timeout_secs": "静音停止时长(s)",
+        "microphone_speech_rms_threshold": "说话判定阈值",
+    },
     "SPEAKER_AUDIO": {
         "scale_range": "缩放范围",
         "scale_exp": "缩放指数",
@@ -725,7 +731,7 @@ _KEY_FRIENDLY_NAME = {
     "CLOUD_MUSIC": {
         "provider": "音乐平台",
         "bitrate_ladder": "音质梯度(bps)",
-        "default_volume": "默认音量",
+        "default_volume": "音乐音量",
         "pygame_init_wait": "pygame初始化等待(s)",
         "particle_interval": "音符粒子间隔(帧)",
         "search_result_limit": "搜索结果上限(首)",
@@ -838,6 +844,45 @@ def _friendly_field_section_name(dict_name: str, key: str) -> str:
 
 def _friendly_key_name(dict_name: str, key: str) -> str:
     return _KEY_FRIENDLY_NAME.get(dict_name, {}).get(key, key)
+
+
+def _category_section_entries(category_id: str, section_name: str, cc_module, category_allow_map: dict) -> list[tuple[str, str, object]]:
+    mixed_fields = _GENERAL_MIXED_SECTION_FIELDS.get(str(section_name))
+    if mixed_fields is not None:
+        entries: list[tuple[str, str, object]] = []
+        for dict_name, key in mixed_fields:
+            section_obj = getattr(cc_module, str(dict_name), None)
+            if not isinstance(section_obj, dict):
+                continue
+            if key not in section_obj:
+                continue
+            value = section_obj.get(key)
+            if not _is_supported_config_value(value):
+                continue
+            entries.append((str(dict_name), str(key), value))
+        return entries
+
+    section_obj = getattr(cc_module, str(section_name), None)
+    if not isinstance(section_obj, dict):
+        return []
+
+    allowed_keys = category_allow_map.get(str(section_name))
+    entries = []
+    for key, value in section_obj.items():
+        key_text = str(key)
+        if allowed_keys is not None and key_text not in allowed_keys:
+            continue
+        if not _is_supported_config_value(value):
+            continue
+        entries.append((str(section_name), key_text, value))
+    return entries
+
+
+def _animation_folder_display_name(folder_name: str) -> str:
+    text = str(folder_name or "").strip()
+    if text.endswith("_anima"):
+        text = text[:-6]
+    return text or str(folder_name or "")
 
 
 def _choice_label_for_value(dict_name: str, key: str, value) -> str | None:
@@ -2042,10 +2087,9 @@ class AISettingsPanel(QWidget):
         category_field_width = self._estimate_category_field_width(category_label_width)
 
         for dict_name, section_title in category.get("sections", []):
-            section_obj = getattr(cc, str(dict_name), None)
-            if not isinstance(section_obj, dict):
+            section_entries = _category_section_entries(category_id, str(dict_name), cc, category_allow_map)
+            if not section_entries:
                 continue
-            allowed_keys = category_allow_map.get(str(dict_name))
 
             section_fields_added = False
             section_label = QLabel(_friendly_section_name(str(dict_name), str(section_title)))
@@ -2065,37 +2109,34 @@ class AISettingsPanel(QWidget):
             form.setVerticalSpacing(scale_px(6))
             form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
 
-            section_entries: list[tuple[str, object]] = []
-            for key, value in section_obj.items():
-                key_text = str(key)
-                if allowed_keys is not None and key_text not in allowed_keys:
-                    continue
-                if not _is_supported_config_value(value):
-                    continue
-                section_entries.append((key_text, value))
-
             consumed_keys: set[str] = set()
-            for key, value in section_entries:
-                if key in consumed_keys:
+            for entry_dict_name, key, value in section_entries:
+                entry_id = f"{entry_dict_name}.{key}"
+                if entry_id in consumed_keys:
                     continue
 
                 signature = _range_pair_signature(key)
                 if signature is not None:
                     pair_key = None
                     pair_value = None
+                    pair_dict_name = None
                     sign_base, sign_type = signature
-                    for other_key, other_value in section_entries:
-                        if other_key == key or other_key in consumed_keys:
+                    for other_dict_name, other_key, other_value in section_entries:
+                        other_entry_id = f"{other_dict_name}.{other_key}"
+                        if other_key == key or other_entry_id in consumed_keys:
+                            continue
+                        if other_dict_name != entry_dict_name:
                             continue
                         other_sig = _range_pair_signature(other_key)
                         if other_sig is None:
                             continue
                         if other_sig[0] != sign_base:
                             continue
+                        pair_dict_name = other_dict_name
                         pair_key = other_key
                         pair_value = other_value
                         break
-                    if pair_key is not None and pair_value is not None:
+                    if pair_key is not None and pair_value is not None and pair_dict_name is not None:
                         if sign_type in ("max", "upper"):
                             left_key, left_value = pair_key, pair_value
                             right_key, right_value = key, value
@@ -2111,7 +2152,7 @@ class AISettingsPanel(QWidget):
                         )
                         friendly_name = _friendly_range_name(str(dict_name), left_key, right_key)
                         description = self._build_config_range_description(
-                            str(dict_name),
+                            str(entry_dict_name),
                             left_key,
                             right_key,
                             left_value,
@@ -2129,26 +2170,26 @@ class AISettingsPanel(QWidget):
                         form.addRow(label, pair_widget)
                         fields.append({
                             "kind": "range_pair",
-                            "dict_name": str(dict_name),
+                            "dict_name": str(entry_dict_name),
                             "keys": [left_key, right_key],
                             "editors": [left_editor, right_editor],
                             "templates": [copy.deepcopy(left_value), copy.deepcopy(right_value)],
                         })
-                        defaults.setdefault(str(dict_name), {})[left_key] = _hardcoded_general_default(
-                            str(dict_name), left_key, left_value
+                        defaults.setdefault(str(entry_dict_name), {})[left_key] = _hardcoded_general_default(
+                            str(entry_dict_name), left_key, left_value
                         )
-                        defaults.setdefault(str(dict_name), {})[right_key] = _hardcoded_general_default(
-                            str(dict_name), right_key, right_value
+                        defaults.setdefault(str(entry_dict_name), {})[right_key] = _hardcoded_general_default(
+                            str(entry_dict_name), right_key, right_value
                         )
-                        consumed_keys.add(left_key)
-                        consumed_keys.add(right_key)
+                        consumed_keys.add(f"{entry_dict_name}.{left_key}")
+                        consumed_keys.add(f"{entry_dict_name}.{right_key}")
                         section_fields_added = True
                         continue
 
                 if isinstance(value, (tuple, list)):
                     editors, group_widget = self._create_sequence_editor(value, field_width=category_field_width)
-                    friendly_name = _friendly_key_name(str(dict_name), key)
-                    description = self._build_config_single_description(str(dict_name), key, value, friendly_name)
+                    friendly_name = _friendly_key_name(str(entry_dict_name), key)
+                    description = self._build_config_single_description(str(entry_dict_name), key, value, friendly_name)
                     label = self._create_form_label(friendly_name, category_label_width)
                     self._set_widget_description(label, description)
                     self._set_widget_description(group_widget, description)
@@ -2157,23 +2198,23 @@ class AISettingsPanel(QWidget):
                     form.addRow(label, group_widget)
                     fields.append({
                         "kind": "sequence",
-                        "dict_name": str(dict_name),
+                        "dict_name": str(entry_dict_name),
                         "key": key,
                         "editors": editors,
                         "template": copy.deepcopy(value),
                     })
-                    defaults.setdefault(str(dict_name), {})[key] = _hardcoded_general_default(
-                        str(dict_name), key, value
+                    defaults.setdefault(str(entry_dict_name), {})[key] = _hardcoded_general_default(
+                        str(entry_dict_name), key, value
                     )
-                    consumed_keys.add(key)
+                    consumed_keys.add(entry_id)
                     section_fields_added = True
                     continue
 
                 open_dir_btn = None
                 extra_widgets: list[QWidget] = []
-                slider_spec = self._get_decimal_slider_spec(str(dict_name), key, value)
-                choice_options = self._get_choice_field_options(str(dict_name), key)
-                if self._is_volume_slider_field(str(dict_name), key, value):
+                slider_spec = self._get_decimal_slider_spec(str(entry_dict_name), key, value)
+                choice_options = self._get_choice_field_options(str(entry_dict_name), key)
+                if self._is_volume_slider_field(str(entry_dict_name), key, value):
                     editor, percent_label, row_widget = self._create_volume_slider_editor(
                         value,
                         field_width=category_field_width,
@@ -2193,9 +2234,9 @@ class AISettingsPanel(QWidget):
                 elif choice_options is not None:
                     editor = self._create_config_choice_editor(choice_options, field_width=category_field_width)
                     row_widget = self._wrap_fixed_width_field(editor, field_width=category_field_width)
-                elif self._is_local_music_path_field(str(dict_name), key) and isinstance(value, str):
+                elif self._is_local_music_path_field(str(entry_dict_name), key) and isinstance(value, str):
                     editor, open_dir_btn, row_widget = self._create_path_editor_with_open_button(
-                        str(dict_name),
+                        str(entry_dict_name),
                         str(key),
                         value,
                         field_width=category_field_width,
@@ -2207,8 +2248,8 @@ class AISettingsPanel(QWidget):
                     editor = self._create_config_line_edit(fixed_width=category_field_width)
                     row_widget = editor
                 self._set_config_editor_value(editor, value)
-                friendly_name = _friendly_key_name(str(dict_name), key)
-                description = self._build_config_single_description(str(dict_name), key, value, friendly_name)
+                friendly_name = _friendly_key_name(str(entry_dict_name), key)
+                description = self._build_config_single_description(str(entry_dict_name), key, value, friendly_name)
                 label = self._create_form_label(friendly_name, category_label_width)
                 self._set_widget_description(label, description)
                 self._set_widget_description(row_widget, description)
@@ -2221,23 +2262,23 @@ class AISettingsPanel(QWidget):
                 fields.append({
                     "kind": (
                         "volume_slider"
-                        if self._is_volume_slider_field(str(dict_name), key, value)
+                        if self._is_volume_slider_field(str(entry_dict_name), key, value)
                         else "decimal_slider"
                         if slider_spec is not None
                         else "single"
                     ),
-                    "dict_name": str(dict_name),
+                    "dict_name": str(entry_dict_name),
                     "key": key,
                     "editor": editor,
                     "template": copy.deepcopy(value),
                 })
-                defaults.setdefault(str(dict_name), {})[key] = _hardcoded_general_default(
-                    str(dict_name), key, value
+                defaults.setdefault(str(entry_dict_name), {})[key] = _hardcoded_general_default(
+                    str(entry_dict_name), key, value
                 )
-                consumed_keys.add(key)
+                consumed_keys.add(entry_id)
                 section_fields_added = True
 
-                if category_id == "system_dispatch" and str(dict_name) == "STARTUP" and key == "ensure_desktop_shortcut":
+                if category_id == "system_dispatch" and str(entry_dict_name) == "STARTUP" and key == "ensure_desktop_shortcut":
                     self._append_autostart_field(
                         form,
                         fields,
@@ -2471,49 +2512,46 @@ class AISettingsPanel(QWidget):
         measured = min_w
 
         for dict_name, _section_title in category.get("sections", []):
-            section_obj = getattr(cc_module, str(dict_name), None)
-            if not isinstance(section_obj, dict):
+            entries = _category_section_entries(str(category.get("id") or ""), str(dict_name), cc_module, category_allow_map)
+            if not entries:
                 continue
-            allowed_keys = category_allow_map.get(str(dict_name))
-            entries = []
-            for key, value in section_obj.items():
-                key_text = str(key)
-                if allowed_keys is not None and key_text not in allowed_keys:
-                    continue
-                if not _is_supported_config_value(value):
-                    continue
-                entries.append((key_text, value))
 
             consumed: set[str] = set()
-            for key, _value in entries:
-                if key in consumed:
+            for entry_dict_name, key, _value in entries:
+                entry_id = f"{entry_dict_name}.{key}"
+                if entry_id in consumed:
                     continue
                 signature = _range_pair_signature(key)
                 if signature is not None:
                     sign_base, sign_type = signature
                     pair_key = None
-                    for other_key, _other_value in entries:
-                        if other_key == key or other_key in consumed:
+                    pair_dict_name = None
+                    for other_dict_name, other_key, _other_value in entries:
+                        other_entry_id = f"{other_dict_name}.{other_key}"
+                        if other_key == key or other_entry_id in consumed:
+                            continue
+                        if other_dict_name != entry_dict_name:
                             continue
                         other_sig = _range_pair_signature(other_key)
                         if other_sig is None or other_sig[0] != sign_base:
                             continue
+                        pair_dict_name = other_dict_name
                         pair_key = other_key
                         break
-                    if pair_key is not None:
+                    if pair_key is not None and pair_dict_name is not None:
                         if sign_type in ("max", "upper"):
                             left_key, right_key = pair_key, key
                         else:
                             left_key, right_key = key, pair_key
-                        label_text = _friendly_range_name(str(dict_name), left_key, right_key)
-                        consumed.add(left_key)
-                        consumed.add(right_key)
+                        label_text = _friendly_range_name(str(entry_dict_name), left_key, right_key)
+                        consumed.add(f"{entry_dict_name}.{left_key}")
+                        consumed.add(f"{entry_dict_name}.{right_key}")
                     else:
-                        label_text = _friendly_key_name(str(dict_name), key)
-                        consumed.add(key)
+                        label_text = _friendly_key_name(str(entry_dict_name), key)
+                        consumed.add(entry_id)
                 else:
-                    label_text = _friendly_key_name(str(dict_name), key)
-                    consumed.add(key)
+                    label_text = _friendly_key_name(str(entry_dict_name), key)
+                    consumed.add(entry_id)
                 measured = max(measured, fm.horizontalAdvance(label_text) + scale_px(12, min_abs=10))
 
         return int(max(min_w, min(max_w, measured)))
@@ -2576,7 +2614,7 @@ class AISettingsPanel(QWidget):
             ("ANIMATION", "start_animation_folder"),
             ("ANIMATION", "exit_animation_folder"),
         }:
-            return [(name, name) for name in list_animation_folder_choices()]
+            return [(_animation_folder_display_name(name), name) for name in list_animation_folder_choices()]
         return None
 
     @staticmethod
@@ -2802,7 +2840,7 @@ class AISettingsPanel(QWidget):
             'qr_png': None,
         }))
         self._emit_info("正在启动元宝服务并准备登录二维码；本地回环地址、占位密钥与模型名均由程序内部管理。", min_tick=12, max_tick=200)
-        threading.Thread(target=worker, daemon=True, name="yuanbao-login-start").start()
+        get_compute_hub().submit_io(worker)
 
     def _on_stop_yuanbao_login(self) -> None:
         def worker() -> None:
@@ -2815,7 +2853,7 @@ class AISettingsPanel(QWidget):
                 self._emit_info(f"退出元宝登录失败: {exc}", min_tick=18, max_tick=220)
 
         self._emit_info("正在退出元宝登录并关闭本地元宝服务...", min_tick=10, max_tick=120)
-        threading.Thread(target=worker, daemon=True, name="yuanbao-login-stop").start()
+        get_compute_hub().submit_io(worker)
 
     @staticmethod
     def _describe_yuanbao_stage(stage: str) -> str:

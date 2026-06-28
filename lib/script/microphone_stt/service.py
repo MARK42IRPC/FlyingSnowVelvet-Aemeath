@@ -9,11 +9,13 @@ import re
 import shutil
 import threading
 import time
+from concurrent.futures import Future
 from dataclasses import dataclass
 from pathlib import Path
 
 from config.config import VOICE
 from config.shared_storage import get_shared_root_dir
+from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import Event, EventType, get_event_center
 from lib.core.logger import get_logger
 
@@ -351,7 +353,7 @@ class MicrophoneSttService:
         self._current_options = MicrophoneSttOptions()
         self._last_partial_text = ""
         self._auto_speech_active = False
-        self._bootstrap_thread: threading.Thread | None = None
+        self._bootstrap_thread: Future | None = None
         self._bootstrap_cancel_event: threading.Event | None = None
         self._start_generation = 0
 
@@ -554,9 +556,8 @@ class MicrophoneSttService:
 
     def _clear_bootstrap_thread(self, start_generation: int, cancel_event: threading.Event | None) -> None:
         with self._lock:
-            if self._bootstrap_thread is threading.current_thread():
-                self._bootstrap_thread = None
             if start_generation == self._start_generation and self._bootstrap_cancel_event is cancel_event:
+                self._bootstrap_thread = None
                 self._bootstrap_cancel_event = None
 
     def start_listening(self, data: dict | None = None) -> bool:
@@ -570,14 +571,12 @@ class MicrophoneSttService:
             self._current_options = options
             self._last_partial_text = ""
             self._auto_speech_active = False
-
-            bootstrap = threading.Thread(
-                target=self._bootstrap_startup,
-                args=(start_generation, options, cancel_event),
-                daemon=True,
-                name="microphone-stt-bootstrap",
+            self._bootstrap_thread = get_compute_hub().submit_io(
+                self._bootstrap_startup,
+                start_generation,
+                options,
+                cancel_event,
             )
-            self._bootstrap_thread = bootstrap
 
         self._publish_state(
             "starting",
@@ -586,7 +585,6 @@ class MicrophoneSttService:
             speech_active=False,
             auto_submit=bool(options.auto_submit),
         )
-        bootstrap.start()
         return True
 
     def _bootstrap_startup(
@@ -955,7 +953,7 @@ class MicrophoneSttService:
     def stop_listening(self) -> None:
         should_publish_stopped = False
         with self._lock:
-            was_starting = self._bootstrap_thread is not None and self._bootstrap_thread.is_alive()
+            was_starting = self._bootstrap_thread is not None and not self._bootstrap_thread.done()
             was_running = self._stream is not None or self._worker is not None
 
             self._start_generation += 1

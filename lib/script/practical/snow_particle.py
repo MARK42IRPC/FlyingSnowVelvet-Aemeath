@@ -5,7 +5,7 @@ from typing import Tuple
 
 from PyQt5.QtGui import QColor
 
-from lib.script.practical.base_particle import BaseParticleScript
+from lib.script.practical.base_particle import BaseParticleScript, per_second_delta
 from lib.core.plugin_registry import register_particle
 
 
@@ -20,10 +20,10 @@ class SnowParticleScript(BaseParticleScript):
         self._config = {
             'count_range': (6, 8),
             'radius_range': (2, 5),    # 粒子半径（像素）
-            'speed_range':  (1.5, 4),  # 初始速度
-            'gravity':      0.2,       # 重力加速度（逐帧累加到 vy）
-            'drag':         0.97,      # 空气阻力系数
-            'life_decay':   0.03,      # 每帧生命衰减
+            'speed_range':  (90, 240),  # 初始速度 px/s
+            'gravity':      12.0,       # 重力加速度（每 tick 累加到 vy）
+            'drag':         0.912673,   # 每 tick 空气阻力系数（约等于旧 0.97^3）
+            'life_decay':   0.09,       # 每 tick 生命衰减（约等于旧 0.03*3）
             'color':        QColor(255, 255, 255),  # 纯白色
         }
 
@@ -55,18 +55,18 @@ class SnowParticle:
         # 向四周随机方向发射（全角度）
         angle = random.uniform(0, math.pi * 2)
         speed = random.uniform(*config['speed_range'])
-        self.vx = math.cos(angle) * speed
-        self.vy = math.sin(angle) * speed
+        self.vx = per_second_delta(math.cos(angle) * speed)
+        self.vy = per_second_delta(math.sin(angle) * speed)
 
         # size 在圆形粒子中表示半径
         self.size    = random.randint(*config['radius_range'])
         self.color   = config['color']
-        self.gravity = config['gravity']
-        self.drag    = config['drag']
+        self.gravity = per_second_delta(config['gravity'])
+        self.drag    = float(config['drag'])
 
         self.life     = 1.0
         self.max_life = 1.0
-        self.life_decay = config['life_decay']
+        self.life_decay = float(config['life_decay'])
 
     def update(self):
         """物理更新：阻力 → 重力 → 位移 → 生命衰减"""

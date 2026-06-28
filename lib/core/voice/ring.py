@@ -12,7 +12,7 @@ class RingSound(DirectoryRandomSound):
     def __init__(self, interruptible: bool = True):
         super().__init__(
             sound_dir=os.path.join('resc', 'SOUND', 'ring'),
-            audio_class='ring',
+            audio_type='world_sfx',
             logger=_logger,
             log_name='RingSound',
             volume_range=(0.30, 0.50),

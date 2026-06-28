@@ -211,8 +211,8 @@ class Sofa(QWidget):
 
     def _on_physics_position_change(self, body: PhysicsBody) -> None:
         """物理步进后同步窗口位置到新坐标。"""
-        if not self._fading:
-            self.move(QPoint(int(body.x), int(body.y)))
+        if not self._fading and self._drag_offset is None:
+            self.move(QPoint(int(body.render_x), int(body.render_y)))
 
     def _on_physics_wall_hit(self, body: PhysicsBody, side: str) -> None:
         """
@@ -365,6 +365,13 @@ class Sofa(QWidget):
             # 阶段二：已提交拖拽，正常移动并记录轨迹
             new_pos = event.globalPos() - self._drag_offset
             self.move(new_pos)
+            body = self._physics_body
+            body.x = float(self.x())
+            body.y = float(self.y())
+            body.prev_x = body.x
+            body.prev_y = body.y
+            body.render_x = body.x
+            body.render_y = body.y
             now = time.monotonic()
             self._drag_trail.append((now, event.globalPos()))
             cutoff = now - _DRAG_TRAIL_WINDOW_SEC
@@ -384,6 +391,13 @@ class Sofa(QWidget):
                 # 立即移动到当前鼠标位置并记录轨迹起点
                 new_pos = event.globalPos() - self._drag_offset
                 self.move(new_pos)
+                body = self._physics_body
+                body.x = float(self.x())
+                body.y = float(self.y())
+                body.prev_x = body.x
+                body.prev_y = body.y
+                body.render_x = body.x
+                body.render_y = body.y
                 now = time.monotonic()
                 self._drag_trail.append((now, event.globalPos()))
 
@@ -409,6 +423,10 @@ class Sofa(QWidget):
                 body        = self._physics_body
                 body.x      = float(self.x())
                 body.y      = float(self.y())
+                body.prev_x = body.x
+                body.prev_y = body.y
+                body.render_x = body.x
+                body.render_y = body.y
                 body.vx     = vx
                 body.vy     = vy
                 body.active = True
@@ -421,6 +439,10 @@ class Sofa(QWidget):
                 body        = self._physics_body
                 body.x      = float(self.x())
                 body.y      = float(self.y())
+                body.prev_x = body.x
+                body.prev_y = body.y
+                body.render_x = body.x
+                body.render_y = body.y
                 body.vx     = 0.0
                 body.vy     = 0.0
                 body.active = True

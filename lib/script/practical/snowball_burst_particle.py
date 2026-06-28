@@ -13,7 +13,7 @@ from typing import Tuple
 
 from PyQt5.QtGui import QColor
 
-from lib.script.practical.base_particle import BaseParticleScript
+from lib.script.practical.base_particle import BaseParticleScript, per_second_delta
 from lib.core.plugin_registry import register_particle
 
 
@@ -28,10 +28,10 @@ class SnowballBurstParticleScript(BaseParticleScript):
         self._config = {
             'count_range': (3, 4),             # snow 的一半：(6,8) → (3,4)
             'radius_range': (2, 5),            # 与 snow 相同
-            'speed_range':  (1.5, 4),          # 与 snow 相同
-            'gravity':      0.2,               # 与 snow 相同
-            'drag':         0.97,              # 与 snow 相同
-            'life_decay':   0.06,              # snow 的两倍：0.03 → 0.06（寿命减半）
+            'speed_range':  (90, 240),         # 与 snow 相同，px/s
+            'gravity':      12.0,              # 与 snow 相同，每 tick 累加
+            'drag':         0.912673,          # 与 snow 相同，每 tick 阻力
+            'life_decay':   0.18,              # snow 的两倍：0.09 → 0.18（寿命减半）
             'color':        QColor(255, 255, 255),
         }
 
@@ -60,17 +60,17 @@ class SnowballBurstParticle:
 
         angle = random.uniform(0, math.pi * 2)
         speed = random.uniform(*config['speed_range'])
-        self.vx = math.cos(angle) * speed
-        self.vy = math.sin(angle) * speed
+        self.vx = per_second_delta(math.cos(angle) * speed)
+        self.vy = per_second_delta(math.sin(angle) * speed)
 
         self.size    = random.randint(*config['radius_range'])
         self.color   = config['color']
-        self.gravity = config['gravity']
-        self.drag    = config['drag']
+        self.gravity = per_second_delta(config['gravity'])
+        self.drag    = float(config['drag'])
 
         self.life     = 1.0
         self.max_life = 1.0
-        self.life_decay = config['life_decay']
+        self.life_decay = float(config['life_decay'])
 
     def update(self):
         """物理更新：阻力 → 重力 → 位移 → 生命衰减（无边界碰撞）"""

@@ -89,6 +89,12 @@ class TopmostManager:
         # 恢复后立即执行一次强制置顶
         self._enforce_all()
 
+    def bring_to_front(self, widget) -> None:
+        """立即将指定窗口提升到当前项目窗口栈顶。"""
+        if widget is None or not widget.isVisible():
+            return
+        self._set_topmost(widget)
+
     # ------------------------------------------------------------------
     # 内部实现
     # ------------------------------------------------------------------

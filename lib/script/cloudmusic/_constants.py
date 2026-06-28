@@ -8,13 +8,18 @@ from pathlib import Path
 
 from PyQt5.QtCore import QObject, pyqtSignal
 
-from config.config import CLOUD_MUSIC
+from config.config import CLOUD_MUSIC, ANIMATION
 
 # ── 播放参数 ──────────────────────────────────────────────────────────────
 _BITRATE_LADDER    = CLOUD_MUSIC.get('bitrate_ladder', (320000, 192000, 128000))
 _DEFAULT_VOLUME    = CLOUD_MUSIC.get('default_volume', 0.8)
 _PYGAME_INIT_WAIT  = CLOUD_MUSIC.get('pygame_init_wait', 5)
-_PARTICLE_INTERVAL = CLOUD_MUSIC.get('particle_interval', 60)
+_FRAME_FPS         = max(1, int(ANIMATION.get('frame_fps', 60) or 60))
+_TICK_FPS          = 20
+_PARTICLE_INTERVAL = max(
+    1,
+    int(round(float(CLOUD_MUSIC.get('particle_interval', 60)) * _TICK_FPS / _FRAME_FPS)),
+)
 
 # ── 二维码登录参数 ────────────────────────────────────────────────────────
 _QR_LOGIN_TIMEOUT    = CLOUD_MUSIC.get('qr_login_timeout', 180)

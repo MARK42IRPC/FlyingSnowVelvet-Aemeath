@@ -207,7 +207,7 @@ class Snowball(QWidget):
 
     def _on_physics_position_change(self, body: PhysicsBody) -> None:
         if not self._fading and self._drag_offset is None:
-            self.move(QPoint(int(body.x), int(body.y)))
+            self.move(QPoint(int(body.render_x), int(body.render_y)))
 
     def _on_physics_wall_hit(self, body: PhysicsBody, side: str) -> None:
         self._sound.play()
@@ -352,6 +352,13 @@ class Snowball(QWidget):
             # 阶段二：正常拖拽
             new_pos = event.globalPos() - self._drag_offset
             self.move(new_pos)
+            body = self._physics_body
+            body.x = float(self.x())
+            body.y = float(self.y())
+            body.prev_x = body.x
+            body.prev_y = body.y
+            body.render_x = body.x
+            body.render_y = body.y
             now = time.monotonic()
             self._drag_trail.append((now, event.globalPos()))
             cutoff = now - _DRAG_TRAIL_WINDOW_SEC
@@ -369,6 +376,13 @@ class Snowball(QWidget):
                 self.setCursor(Qt.ClosedHandCursor)
                 new_pos = event.globalPos() - self._drag_offset
                 self.move(new_pos)
+                body = self._physics_body
+                body.x = float(self.x())
+                body.y = float(self.y())
+                body.prev_x = body.x
+                body.prev_y = body.y
+                body.render_x = body.x
+                body.render_y = body.y
                 now = time.monotonic()
                 self._drag_trail.append((now, event.globalPos()))
 
@@ -383,6 +397,10 @@ class Snowball(QWidget):
                 body        = self._physics_body
                 body.x      = float(self.x())
                 body.y      = float(self.y())
+                body.prev_x = body.x
+                body.prev_y = body.y
+                body.render_x = body.x
+                body.render_y = body.y
                 body.vx     = vx
                 body.vy     = vy
                 body.active = True
@@ -395,6 +413,10 @@ class Snowball(QWidget):
                 body        = self._physics_body
                 body.x      = float(self.x())
                 body.y      = float(self.y())
+                body.prev_x = body.x
+                body.prev_y = body.y
+                body.render_x = body.x
+                body.render_y = body.y
                 body.vx     = 0.0
                 body.vy     = 0.0
                 body.active = True

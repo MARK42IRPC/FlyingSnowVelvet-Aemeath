@@ -31,6 +31,7 @@ from config.shared_storage import (
     get_shared_config_path,
     get_shared_root_dir,
 )
+from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import Event, EventType, get_event_center
 from lib.core.logger import get_logger
 
@@ -39,7 +40,7 @@ logger = get_logger(__name__)
 _DEFAULT_HOST = "127.0.0.1"
 _DEFAULT_PORT = 9880
 _DEFAULT_TIMEOUT = (3.0, 120.0)
-_DEFAULT_AUDIO_CLASS = "voice"
+_DEFAULT_AUDIO_TYPE = "voice"
 _DEFAULT_MEDIA_TYPE = "wav"
 _STARTUP_WAIT_SECS = 90.0
 _HEALTH_POLL_INTERVAL = 0.5
@@ -384,7 +385,13 @@ class GsvmoveService:
             if self._prestart_started:
                 return
             self._prestart_started = True
-        threading.Thread(target=self._prestart_worker, daemon=True, name="gsvmove-prestart").start()
+        future = get_compute_hub().submit_latest(
+            "gsvmove_prestart",
+            self._prestart_worker,
+            executor="io",
+        )
+        if future is None:
+            logger.debug("[GsvmoveService] 预热任务仍在运行，跳过重复提交")
 
     def _prestart_worker(self) -> None:
         if not self._ensure_service_ready():
@@ -476,10 +483,10 @@ class GsvmoveService:
             return
 
         self._ec.publish(Event(EventType.SOUND_REQUEST, {
-            "audio_class": _DEFAULT_AUDIO_CLASS,
-            "file_path": str(audio_file),
-            # 这里固定基准音量为 1.0，实际语音响度由 VoiceCore 内部统一套用 VOICE.voice_volume。
-            "volume": 1.0,
+            "audio_type": _DEFAULT_AUDIO_TYPE,
+            "source": str(audio_file),
+            # 这里固定事件增益为 1.0，实际语音响度由配置侧统一套用。
+            "volume_gain": 1.0,
             "interruptible": bool(data.get("interruptible", True)),
         }))
 

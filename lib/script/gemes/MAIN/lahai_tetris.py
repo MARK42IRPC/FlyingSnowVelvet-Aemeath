@@ -615,10 +615,8 @@ class LahaiTetrisWidget(QWidget):
             self._rotate_piece()
         elif key == Qt.Key_Space:
             self._hard_drop()
-        elif key == Qt.Key_P:
+        elif key in (Qt.Key_P, Qt.Key_Escape):
             self._toggle_pause()
-        elif key == Qt.Key_Escape:
-            self._close_runtime()
         elif key == Qt.Key_R:
             self.reset_game()
         else:
@@ -1023,7 +1021,7 @@ class LahaiTetrisWidget(QWidget):
         self._draw_round_panel(painter, help_rect, self._C_PANEL)
         painter.setFont(self._label_font)
         painter.setPen(self._C_NEON)
-        painter.drawText(help_rect.adjusted(self._PADDING, self._PADDING, -self._PADDING, -self._PADDING), Qt.AlignLeft | Qt.AlignTop, "CONTROL")
+        painter.drawText(help_rect.adjusted(self._PADDING, self._PADDING, -self._PADDING, -self._PADDING), Qt.AlignLeft | Qt.AlignTop, "CONTROL / SCORE")
         painter.setFont(self._ui_font)
         painter.setPen(self._C_TEXT_SUB)
         help_lines = [
@@ -1031,7 +1029,7 @@ class LahaiTetrisWidget(QWidget):
             "↑ / X 旋转",
             "↓ 加速下落",
             "空格 直接落底",
-            "P 暂停 / 继续",
+            "P / Esc 暂停 / 继续",
             "R 重新开局",
         ]
         for i, line in enumerate(help_lines):
@@ -1039,6 +1037,40 @@ class LahaiTetrisWidget(QWidget):
                 QRectF(
                     help_rect.x() + self._PADDING,
                     help_rect.y() + self._PADDING * 2 + self._ROW_H() + i * self._ROW_H(),
+                    help_rect.width() - self._PADDING * 2,
+                    self._ROW_H(),
+                ),
+                Qt.AlignLeft | Qt.AlignVCenter,
+                line,
+            )
+
+        score_title_y = help_rect.y() + self._PADDING * 2 + self._ROW_H() + len(help_lines) * self._ROW_H() + self._PADDING * 0.6
+        painter.setFont(self._label_font)
+        painter.setPen(self._C_NEON)
+        painter.drawText(
+            QRectF(
+                help_rect.x() + self._PADDING,
+                score_title_y,
+                help_rect.width() - self._PADDING * 2,
+                self._ROW_H(),
+            ),
+            Qt.AlignLeft | Qt.AlignVCenter,
+            "积分逻辑",
+        )
+        painter.setFont(self._ui_font)
+        painter.setPen(self._C_TEXT_SUB)
+        score_lines = [
+            "落底：距离 x 2 x 当前等级",
+            "消 1 / 2 / 3 / 4 行：100 / 260 / 420 / 700",
+            "连击追加：连击值 > 1 时，加 连击 x 30",
+            "总分统一乘当前等级",
+            "每累计 8 行升 1 级",
+        ]
+        for i, line in enumerate(score_lines):
+            painter.drawText(
+                QRectF(
+                    help_rect.x() + self._PADDING,
+                    score_title_y + self._ROW_H() + i * self._ROW_H(),
                     help_rect.width() - self._PADDING * 2,
                     self._ROW_H(),
                 ),

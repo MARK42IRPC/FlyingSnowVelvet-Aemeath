@@ -18,11 +18,14 @@
 """
 
 import threading
+from concurrent.futures import Future
 from typing import Optional
 
+from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.logger import get_logger
 from config.config import CLOUD_MUSIC
+from config.audio import get_effective_music_volume
 from config.music import get_music_history, get_volume_config
 
 from ._constants import (
@@ -268,12 +271,12 @@ class CloudMusicManager(_LoginMixin, _CacheMixin, _PlaybackMixin, _EventsMixin):
         }
         # 兼容旧字段：始终镜像“当前 provider”登录态
         self._is_logged_in   = False
-        self._qr_login_thread: threading.Thread | None = None
+        self._qr_login_thread: Future | None = None
         self._qr_login_cancel = threading.Event()
 
         # pyncm 登录
         self._login_ready = threading.Event()
-        threading.Thread(target=self._login, daemon=True, name="cm-login").start()
+        get_compute_hub().submit_io(self._login)
 
         # 初始化 pygame mixer（必须在主线程中初始化，避免与Qt事件循环冲突）
         self._pygame_initialized = False
@@ -320,7 +323,7 @@ class CloudMusicManager(_LoginMixin, _CacheMixin, _PlaybackMixin, _EventsMixin):
             (EventType.MUSIC_LOGIN_REQUEST,        self._on_login_request),
             (EventType.MUSIC_LOGIN_CANCEL_REQUEST, self._on_login_cancel_request),
             (EventType.MUSIC_LOGOUT_REQUEST,       self._on_logout_request),
-            (EventType.FRAME,                      self._on_frame),
+            (EventType.TICK,                       self._on_tick),
             (EventType.MUSIC_PROGRESS_REQUEST,     self._on_progress_request),
             (EventType.SPEAKER_WINDOW_RESPONSE,    self._on_speaker_window_response),
         ]
@@ -509,7 +512,7 @@ class CloudMusicManager(_LoginMixin, _CacheMixin, _PlaybackMixin, _EventsMixin):
         self._volume = max(0.0, min(1.0, volume))
         try:
             import pygame
-            pygame.mixer.music.set_volume(self._volume)
+            pygame.mixer.music.set_volume(get_effective_music_volume(self._volume))
         except Exception:
             pass
         get_volume_config().set_volume(self._volume)

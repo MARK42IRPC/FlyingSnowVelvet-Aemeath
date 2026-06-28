@@ -9,6 +9,7 @@ import requests
 from PyQt5.QtCore import QTimer
 
 from config.config import TIMEOUTS
+from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import EventType, Event
 
 from .ollama_registry import record_model_error, update_models_from_names
@@ -37,7 +38,13 @@ class OllamaBootstrapMixin:
             return
 
         logger.info("[OllamaManager] 尝试在后台启动 ollama 服务...")
-        threading.Thread(target=self._try_start_ollama, daemon=True).start()
+        future = get_compute_hub().submit_latest(
+            "ollama_try_start",
+            self._try_start_ollama,
+            executor="io",
+        )
+        if future is None:
+            logger.debug("[OllamaManager] ollama 预启动任务仍在运行，跳过重复提交")
 
     def _on_app_main(self, event: Event):
         """Qt 就绪阶段：创建信号对象、定时器等"""
@@ -49,7 +56,13 @@ class OllamaBootstrapMixin:
         if self._api_type != 'ollama':
             logger.info("[OllamaManager] 当前模式(%s)：跳过 ping 定时器", self._api_type)
         else:
-            threading.Thread(target=self._ping, daemon=True).start()
+            future = get_compute_hub().submit_latest(
+                "ollama_ping",
+                self._ping,
+                executor="io",
+            )
+            if future is None:
+                logger.debug("[OllamaManager] 初始 ping 任务仍在运行，跳过重复提交")
 
             self._ping_timer = QTimer()
             self._ping_timer.timeout.connect(self._on_ping_tick)
@@ -60,7 +73,13 @@ class OllamaBootstrapMixin:
         if getattr(self, "_cli_refresh_started", False):
             return
         self._cli_refresh_started = True
-        threading.Thread(target=self._refresh_models_from_cli, daemon=True).start()
+        future = get_compute_hub().submit_latest(
+            "ollama_cli_refresh",
+            self._refresh_models_from_cli,
+            executor="io",
+        )
+        if future is None:
+            logger.debug("[OllamaManager] CLI 模型刷新任务仍在运行，跳过重复提交")
 
     def _refresh_models_from_cli(self) -> None:
         commands = (
@@ -198,7 +217,13 @@ class OllamaBootstrapMixin:
 
     def _on_ping_tick(self):
         """Qt 主线程定时回调：派发后台 ping 线程，不阻塞主线程"""
-        threading.Thread(target=self._ping, daemon=True).start()
+        future = get_compute_hub().submit_latest(
+            "ollama_ping",
+            self._ping,
+            executor="io",
+        )
+        if future is None:
+            logger.debug("[OllamaManager] ping 任务仍在运行，跳过本轮探测")
 
     def _ping(self):
         """后台线程：GET /api/tags，结果通过信号传回主线程"""

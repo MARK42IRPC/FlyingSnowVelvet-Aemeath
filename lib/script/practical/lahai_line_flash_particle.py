@@ -8,7 +8,7 @@ from typing import Tuple
 from PyQt5.QtGui import QColor
 
 from lib.core.plugin_registry import register_particle
-from lib.script.practical.base_particle import BaseParticleScript
+from lib.script.practical.base_particle import BaseParticleScript, per_second_delta
 
 
 @register_particle("lahai_line_flash")
@@ -20,12 +20,12 @@ class LahaiLineFlashParticleScript(BaseParticleScript):
         self._config = {
             "count_range": (8, 12),
             "size_range": (2, 4),
-            "speed_x": (-3.4, 3.4),
-            "speed_y": (-4.6, -2.0),
-            "gravity": 0.18,
-            "drag": 0.97,
-            "brownian": 0.07,
-            "life_decay": 0.012,
+            "speed_x": (-204.0, 204.0),
+            "speed_y": (-276.0, -120.0),
+            "gravity": 10.8,
+            "drag": 0.912673,
+            "brownian": 4.2,
+            "life_decay": 0.036,
         }
         self._request_options: dict = {}
 
@@ -57,12 +57,12 @@ class LahaiLineFlashParticle:
         self.x = float(x)
         self.y = float(y)
         self.size = random.randint(*config["size_range"])
-        self.vx = random.uniform(*config["speed_x"])
-        self.vy = random.uniform(*config["speed_y"])
+        self.vx = per_second_delta(random.uniform(*config["speed_x"]))
+        self.vy = per_second_delta(random.uniform(*config["speed_y"]))
         self.color = _vary_color(options.get("rgb", (255, 255, 255)))
-        self.gravity = float(config["gravity"])
+        self.gravity = per_second_delta(float(config["gravity"]))
         self.drag = float(config["drag"])
-        self._brownian = float(config["brownian"])
+        self._brownian = per_second_delta(float(config["brownian"]))
         self.life_decay = float(config["life_decay"])
         self.max_life = 1.0
         self.life = 1.0

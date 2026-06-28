@@ -14,7 +14,7 @@ from typing import Tuple
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtGui     import QColor
 
-from lib.script.practical.base_particle import BaseParticleScript
+from lib.script.practical.base_particle import BaseParticleScript, per_second_delta
 from lib.core.plugin_registry import register_particle
 
 
@@ -33,12 +33,12 @@ class SnowballDriftParticleScript(BaseParticleScript):
         self._config = {
             'count_range':        (2, 4),            # snow_drift 的一半：(4,8) → (2,4)
             'radius_range':       (1, 4),            # 与 snow_drift 相同
-            'vx_range':           (-1.5, 1.5),       # 与 snow_drift 相同
-            'vy_range':           (1.5, 3.5),        # 与 snow_drift 相同
-            'drift_noise':        0.25,              # 与 snow_drift 相同
-            'gravity':            0.06,              # 与 snow_drift 相同
-            'drag':               0.99,              # 与 snow_drift 相同
-            'life_decay_settled': 0.006,             # snow_drift 的两倍：0.003 → 0.006（寿命减半 ≈ 2.7s）
+            'vx_range':           (-90, 90),         # 与 snow_drift 相同，px/s
+            'vy_range':           (90, 210),         # 与 snow_drift 相同，px/s
+            'drift_noise':        15.0,              # 与 snow_drift 相同，px/s
+            'gravity':            3.6,               # 与 snow_drift 相同，px/s per tick
+            'drag':               0.970299,          # 与 snow_drift 相同，每 tick 阻力
+            'life_decay_settled': 0.018,             # snow_drift 的两倍：0.009 → 0.018（寿命减半）
             'color':              QColor(255, 255, 255),
             'ground_margin':      6,                 # 与 snow_drift 相同
         }
@@ -74,19 +74,19 @@ class SnowballDriftParticle:
         self.x = float(x)
         self.y = float(y)
 
-        self.vx = random.uniform(*config['vx_range'])
-        self.vy = random.uniform(*config['vy_range'])
+        self.vx = per_second_delta(random.uniform(*config['vx_range']))
+        self.vy = per_second_delta(random.uniform(*config['vy_range']))
 
         self.size    = random.randint(*config['radius_range'])
         self.color   = config['color']
-        self.gravity = config['gravity']
-        self.drag    = config['drag']
+        self.gravity = per_second_delta(config['gravity'])
+        self.drag    = float(config['drag'])
 
-        self._drift_noise = config['drift_noise']
+        self._drift_noise = per_second_delta(config['drift_noise'])
 
         self.life     = 1.0
         self.max_life = 1.0
-        self._life_decay_settled = config['life_decay_settled']
+        self._life_decay_settled = float(config['life_decay_settled'])
 
         self._ground_y = ground_y
         self._settled  = False  # False=下落中，True=已触底消退

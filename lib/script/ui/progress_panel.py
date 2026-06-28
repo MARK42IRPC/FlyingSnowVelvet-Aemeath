@@ -91,6 +91,7 @@ class ProgressPanel(QWidget):
         # ── 事件订阅 ──────────────────────────────────────────────────
         self._event_center = get_event_center()
         self._event_center.subscribe(EventType.FRAME, self._on_frame)
+        self._event_center.subscribe(EventType.TICK, self._on_tick)
         self._event_center.subscribe(EventType.MUSIC_STATUS_CHANGE, self._on_music_status)
         self._event_center.subscribe(EventType.MUSIC_PROGRESS, self._on_music_progress)
         self._event_center.subscribe(EventType.MUSIC_SONG_END, self._on_song_end)
@@ -252,7 +253,7 @@ class ProgressPanel(QWidget):
     # ==================================================================
 
     def _on_frame(self, event: Event) -> None:
-        """帧事件处理：更新位置跟随播放列表，每20tick请求音乐进度。"""
+        """帧事件处理：仅负责位置跟随播放列表。"""
         if not self._visible:
             return
         # 跟随播放列表位置
@@ -264,13 +265,16 @@ class ProgressPanel(QWidget):
             # 播放列表不可见时隐藏进度条
             self.hide_panel()
             return
-        
-        # 每 20 tick 请求音乐进度
-        if not self._dragging:
-            self._tick_counter += 1
-            if self._tick_counter >= 20:
-                self._tick_counter = 0
-                self._event_center.publish(Event(EventType.MUSIC_PROGRESS_REQUEST, {}))
+
+    def _on_tick(self, event: Event) -> None:
+        """Tick 事件处理：固定节奏请求音乐进度。"""
+        if not self._visible or self._dragging:
+            return
+        self._tick_counter += 1
+        if self._tick_counter < 20:
+            return
+        self._tick_counter = 0
+        self._event_center.publish(Event(EventType.MUSIC_PROGRESS_REQUEST, {}))
 
     def _on_music_status(self, event: Event) -> None:
         """播放状态变化时更新。"""
@@ -366,6 +370,17 @@ class ProgressPanel(QWidget):
 
         painter.end()
 
+    def cleanup(self) -> None:
+        try:
+            self._event_center.unsubscribe(EventType.FRAME, self._on_frame)
+            self._event_center.unsubscribe(EventType.TICK, self._on_tick)
+            self._event_center.unsubscribe(EventType.MUSIC_STATUS_CHANGE, self._on_music_status)
+            self._event_center.unsubscribe(EventType.MUSIC_PROGRESS, self._on_music_progress)
+            self._event_center.unsubscribe(EventType.MUSIC_SONG_END, self._on_song_end)
+            self._event_center.unsubscribe(EventType.UI_CLICKTHROUGH_TOGGLE, self._on_clickthrough_toggle)
+        except Exception:
+            pass
+
 
 # ── 全局单例 ──────────────────────────────────────────────────────────
 _instance: 'ProgressPanel | None' = None
@@ -388,6 +403,10 @@ def cleanup_progress_panel():
     """释放全局进度条资源（程序退出时调用）。"""
     global _instance
     if _instance is not None:
+        try:
+            _instance.cleanup()
+        except Exception:
+            pass
         try:
             _instance.close()
         except Exception:

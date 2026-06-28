@@ -46,6 +46,7 @@ class QQmisic:
         self._song_cache: dict[str, dict[str, Any]] = {}
         self._musicdl_client = None
         self._musicdl_init_done = False
+        self._musicdl_disabled_reason = ""
         self._last_vkey_meta: dict[str, Any] = {}
         self._last_liked_meta: dict[str, Any] = {}
 
@@ -152,6 +153,13 @@ class QQmisic:
 
     def get_last_liked_meta(self) -> dict[str, Any]:
         return dict(self._last_liked_meta)
+
+    def get_musicdl_status(self) -> dict[str, Any]:
+        return {
+            "initialized": bool(self._musicdl_init_done),
+            "available": self._musicdl_client is not None,
+            "reason": str(self._musicdl_disabled_reason or "").strip(),
+        }
 
     def _post_musicu(self, payload: dict[str, Any]) -> dict[str, Any]:
         response = self._session.post(self._API_URL, json=payload, timeout=self._timeout)
@@ -310,8 +318,15 @@ class QQmisic:
         try:
             from musicdl.modules.sources.qq import QQMusicClient as MusicDLQQMusicClient
             self._musicdl_client = MusicDLQQMusicClient(disable_print=True, strict_limit_search_size_per_page=True, search_size_per_page=10, search_size_per_source=20)
+            self._musicdl_disabled_reason = ""
         except Exception as exc:
-            logger.warning("[QQMusic] init musicdl failed: %s", exc)
+            self._musicdl_client = None
+            self._musicdl_disabled_reason = str(exc)
+            hint = ""
+            lowered = self._musicdl_disabled_reason.lower()
+            if "c10.dll" in lowered or "dll" in lowered or "winerror 1114" in lowered:
+                hint = " (torch/DLL 依赖不可用，QQMusic 将继续使用内建 Web 接口，仅关闭 musicdl 兜底)"
+            logger.warning("[QQMusic] optional musicdl fallback unavailable: %s%s", exc, hint)
             self._musicdl_client = None
         return self._musicdl_client
 

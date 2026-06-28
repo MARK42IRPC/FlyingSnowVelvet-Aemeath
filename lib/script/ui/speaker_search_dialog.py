@@ -10,8 +10,8 @@
 单例：同时只存在一个 UI 实例，多个音响共享；以最近获焦的音响为主。
 """
 
-import threading
 import re
+from concurrent.futures import Future
 
 from PyQt5.QtWidgets import QWidget, QLineEdit, QGraphicsOpacityEffect
 from PyQt5.QtCore import Qt, QPoint, QPropertyAnimation, QEasingCurve, QObject, QRect, QEvent
@@ -22,6 +22,7 @@ from config.config import UI, SPEAKER_SEARCH_UI, CLOUD_MUSIC
 from config.font_config import get_ui_font
 from config.scale import scale_px, scale_style_px
 from config.tooltip_config import TOOLTIPS
+from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.topmost_manager import get_topmost_manager
 from lib.core.screen_utils import clamp_rect_position
@@ -61,8 +62,8 @@ _AUTO_HIDE_MOUSE_DISTANCE = UI.get('auto_hide_mouse_distance', scale_px(300, min
 
 # ── 跨线程信号载体 ────────────────────────────────────────────────────
 class _SearchSignals(QObject):
-    results_ready = pyqtSignal(list)   # [(track_ref, display_text), ...]
-    error         = pyqtSignal(str)
+    results_ready = pyqtSignal(int, list)   # [(track_ref, display_text), ...]
+    error         = pyqtSignal(int, str)
 
 
 class SpeakerSearchDialog(QWidget):
@@ -112,6 +113,8 @@ class SpeakerSearchDialog(QWidget):
         self._anchor_point: QPoint | None = None
         self._searching       = False
         self._search_mode     = 'song'
+        self._search_generation = 0
+        self._search_future: Future | None = None
         self._description     = TOOLTIPS['speaker_search_dialog']
         self._search_btn_hovered = False
         self._search_btn_pressed = False
@@ -141,6 +144,7 @@ class SpeakerSearchDialog(QWidget):
 
         # ── 事件订阅 ─────────────────────────────────────────────────
         self._event_center = get_event_center()
+        self._event_center.subscribe(EventType.TICK, self._on_tick)
         self._event_center.subscribe(EventType.FRAME, self._on_frame)
         self._event_center.subscribe(EventType.UI_CLICKTHROUGH_TOGGLE,
                                      self._on_clickthrough_toggle)
@@ -292,17 +296,23 @@ class SpeakerSearchDialog(QWidget):
         if not keyword or self._searching:
             return
         mode = self._search_mode
+        self._search_generation += 1
+        generation = self._search_generation
         self._searching = True
         self._result_box.set_searching(True)
         self.update()
-        threading.Thread(
-            target=self._search_worker,
-            args=(keyword, mode),
-            daemon=True,
-            name='speaker-search',
-        ).start()
+        future = get_compute_hub().submit_latest(
+            "speaker_search_dialog",
+            self._search_worker,
+            keyword,
+            mode,
+            generation,
+            executor="io",
+        )
+        if future is not None:
+            self._search_future = future
 
-    def _search_worker(self, keyword: str, mode: str):
+    def _search_worker(self, keyword: str, mode: str, generation: int):
         """后台线程：调用音乐抽象层搜索，结果通过信号投递到主线程。"""
         try:
             tracks = get_music_service().search(keyword, mode=mode, limit=_MAX_SEARCH_RESULTS)
@@ -312,18 +322,24 @@ class SpeakerSearchDialog(QWidget):
                 artist = str(track.artist or '未知作者').strip() or '未知作者'
                 display = str(track.display or '').strip() or f"--:-- {title} - {artist}"
                 items.append((track.track_id, display))
-            self._sig.results_ready.emit(items)
+            self._sig.results_ready.emit(generation, items)
         except Exception as e:
-            self._sig.error.emit(str(e))
+            self._sig.error.emit(generation, str(e))
 
-    def _on_results_ready(self, items: list):
+    def _on_results_ready(self, generation: int, items: list):
+        if generation != self._search_generation:
+            return
         self._searching = False
+        self._search_future = None
         self.update()
         self._result_box.set_results(items)
         self._result_box.set_searching(False)
 
-    def _on_search_error(self, msg: str):
+    def _on_search_error(self, generation: int, msg: str):
+        if generation != self._search_generation:
+            return
         self._searching = False
+        self._search_future = None
         self.update()
         self._result_box.set_results([])
         self._result_box.set_searching(False)
@@ -393,15 +409,18 @@ class SpeakerSearchDialog(QWidget):
             'ui_id':       'all',
         }))
 
-    def _on_frame(self, event: Event):
+    def _on_tick(self, event: Event):
         if not self._visible or self._focused_speaker is None:
             return
-        # 音响被关闭时，自动隐藏 UI
         if not self._focused_speaker.is_alive():
             self._hide()
             return
         if self._is_mouse_far_from_family():
             self._hide()
+            return
+
+    def _on_frame(self, event: Event):
+        if not self._visible or self._focused_speaker is None:
             return
         self._update_anchor()
         self._update_position()
@@ -540,6 +559,7 @@ class SpeakerSearchDialog(QWidget):
                           event.data.get('enabled', False))
 
     def closeEvent(self, event):
+        self._event_center.unsubscribe(EventType.TICK, self._on_tick)
         self._event_center.unsubscribe(EventType.FRAME, self._on_frame)
         self._event_center.unsubscribe(EventType.UI_CLICKTHROUGH_TOGGLE,
                                        self._on_clickthrough_toggle)

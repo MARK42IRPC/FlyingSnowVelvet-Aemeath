@@ -229,6 +229,7 @@ class PlaylistPanel(QWidget):
 
         # ── 事件订阅 ──────────────────────────────────────────────────
         self._event_center = get_event_center()
+        self._event_center.subscribe(EventType.TICK,                   self._on_tick)
         self._event_center.subscribe(EventType.FRAME,                  self._on_frame)
         self._event_center.subscribe(EventType.MUSIC_STATUS_CHANGE,    self._on_music_status)
         self._event_center.subscribe(EventType.MUSIC_SONG_END,         self._on_song_end)
@@ -775,16 +776,20 @@ class PlaylistPanel(QWidget):
     # 事件响应
     # ==================================================================
 
-    def _on_frame(self, event: Event) -> None:
-        """帧事件处理：仅更新位置，不再轮询队列状态。"""
+    def _on_tick(self, event: Event) -> None:
+        """Tick 事件处理：自动隐藏与轻量状态守卫。"""
         if not self._visible or not self._focused_speaker:
             return
-        # 音响消失时自动关闭
         if not self._focused_speaker.is_alive():
             self.hide_panel()
             return
         if self._is_mouse_far_from_family():
             self.hide_panel()
+            return
+
+    def _on_frame(self, event: Event) -> None:
+        """帧事件处理：仅更新位置，不再轮询队列状态。"""
+        if not self._visible or not self._focused_speaker:
             return
         # 仅更新位置（不再每帧轮询队列）
         self._update_position()
@@ -914,6 +919,26 @@ class PlaylistPanel(QWidget):
         painter.end()
 
     def closeEvent(self, event) -> None:
+        try:
+            self._event_center.unsubscribe(EventType.TICK, self._on_tick)
+        except Exception:
+            pass
+        try:
+            self._event_center.unsubscribe(EventType.FRAME, self._on_frame)
+        except Exception:
+            pass
+        try:
+            self._event_center.unsubscribe(EventType.MUSIC_STATUS_CHANGE, self._on_music_status)
+        except Exception:
+            pass
+        try:
+            self._event_center.unsubscribe(EventType.MUSIC_SONG_END, self._on_song_end)
+        except Exception:
+            pass
+        try:
+            self._event_center.unsubscribe(EventType.UI_CLICKTHROUGH_TOGGLE, self._on_clickthrough_toggle)
+        except Exception:
+            pass
         try:
             self._remove_btn.close()
         except Exception:

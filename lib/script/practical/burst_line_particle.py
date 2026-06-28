@@ -17,7 +17,7 @@ from typing import List
 
 from PyQt5.QtGui import QColor
 
-from lib.script.practical.base_particle import BaseParticleScript
+from lib.script.practical.base_particle import BaseParticleScript, per_second_delta
 from lib.core.plugin_registry import register_particle
 
 
@@ -36,7 +36,7 @@ _COLORS: List[QColor] = [
 class BurstLineParticle:
     """单个爆发线条粒子。
 
-    从中心点向外发射，每帧沿发射方向反向（指向中心）绘制固定宽度线段。
+    从中心点向外发射，每 tick 沿发射方向反向（指向中心）绘制固定宽度线段。
     线段长度随寿命线性缩短至 0。
     """
 
@@ -65,7 +65,7 @@ class BurstLineParticle:
         self.y: float = cy
 
         # 初始速度（沿 angle 方向向外）
-        speed = random.uniform(*config['speed_range'])
+        speed = per_second_delta(random.uniform(*config['speed_range']))
         self.vx: float = math.cos(angle) * speed
         self.vy: float = math.sin(angle) * speed
 
@@ -79,12 +79,12 @@ class BurstLineParticle:
         self.color: QColor     = random.choice(config['colors'])
 
         # 减速系数
-        self._drag: float = config['drag']
+        self._drag: float = float(config['drag'])
 
         # 生命值
         self.max_life: float  = 1.0
         self.life: float      = 1.0
-        self._life_decay: float = config['life_decay']
+        self._life_decay: float = float(config['life_decay'])
 
     @property
     def length(self) -> float:
@@ -124,11 +124,11 @@ class BurstLineParticleScript(BaseParticleScript):
         super().__init__()
         self._config = {
             'count_range':  (6, 8),         # 每次线条数量
-            'speed_range':  (3.0, 6.0),     # 初始速度（px/帧）
-            'drag':         0.88,           # 速度保留比例（每帧），约 15 帧内停止
+            'speed_range':  (180.0, 360.0), # 初始速度（px/s）
+            'drag':         0.681472,       # 每 tick 速度保留比例（约等于旧 0.88^3）
             'length_range': (10, 14),       # 线条最大长度（px）
             'width_range':  (1, 2),         # 线条宽度（px）
-            'life_decay':   0.065,          # 每帧寿命衰减（约 15 帧 ≈ 0.25s）
+            'life_decay':   0.195,          # 每 tick 寿命衰减（约等于旧 0.065*3）
             'colors':       _COLORS,
         }
 

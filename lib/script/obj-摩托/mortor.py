@@ -148,7 +148,6 @@ class Mortor(QWidget):
         self._event_center.subscribe(EventType.TICK,                   self._on_tick_render_jitter)
         self._event_center.subscribe(EventType.KEY_PRESS,              self._on_key_press)
         self._event_center.subscribe(EventType.KEY_RELEASE,            self._on_key_release)
-        self._event_center.subscribe(EventType.FRAME,                  self._on_frame_move)
         self._event_center.subscribe(EventType.UI_CLICKTHROUGH_TOGGLE, self._on_clickthrough_toggle)
 
         # 弹跳音效
@@ -242,8 +241,8 @@ class Mortor(QWidget):
 
     def _on_physics_position_change(self, body: PhysicsBody) -> None:
         """物理步进后同步窗口位置到新坐标。"""
-        if not self._fading:
-            self.move(QPoint(int(body.x), int(body.y)))
+        if not self._fading and self._drag_offset is None:
+            self.move(QPoint(int(body.render_x), int(body.render_y)))
 
     def _on_physics_wall_hit(self, body: PhysicsBody, side: str) -> None:
         """碰墙时仅播放弹跳音效（不触发翻转和粒子）。"""
@@ -330,9 +329,10 @@ class Mortor(QWidget):
                 self._move_speed = _BASE_MOVE_SPEED
             else:
                 self._move_speed = min(_MAX_MOVE_SPEED, self._move_speed + _ACCEL_PER_TICK)
-            return
+        else:
+            self._move_speed = max(0.0, self._move_speed - _DECEL_PER_TICK)
 
-        self._move_speed = max(0.0, self._move_speed - _DECEL_PER_TICK)
+        self._apply_keyboard_physics()
 
     def _on_tick_render_jitter(self, event: Event) -> None:
         """按 tick 更新渲染抖动偏移（相对原先幅度减半）。"""
@@ -373,17 +373,6 @@ class Mortor(QWidget):
         p_high = scaled - low
         return high if random.random() < p_high else low
 
-    def _on_frame_move(self, event: Event) -> None:
-        """每帧将当前方向键速度应用到物理体（物理驱动）。"""
-        if self._fading or not self._alive:
-            return
-
-        # 拖拽中不执行键控物理
-        if self._drag_offset is not None:
-            return
-
-        self._apply_keyboard_physics()
-
     def _on_clickthrough_toggle(self, event: Event) -> None:
         """穿透模式开启/关闭时同步自身鼠标透传状态。"""
         self.setAttribute(Qt.WA_TransparentForMouseEvents,
@@ -416,6 +405,10 @@ class Mortor(QWidget):
         body = self._physics_body
         body.x = float(self.x())
         body.y = float(self.y())
+        body.prev_x = body.x
+        body.prev_y = body.y
+        body.render_x = body.x
+        body.render_y = body.y
         body.bounce_count = 0
         body.gravity_enabled = True
         body.active = True
@@ -447,6 +440,10 @@ class Mortor(QWidget):
         # 同步当前位置，避免长时间 idle 后首次加速出现位移跳变
         body.x = float(self.x())
         body.y = float(self.y())
+        body.prev_x = body.x
+        body.prev_y = body.y
+        body.render_x = body.x
+        body.render_y = body.y
 
         if self._is_airborne():
             # 空中阶段始终受重力；可保留水平控制
@@ -603,6 +600,13 @@ class Mortor(QWidget):
             # 阶段二：已提交拖拽，正常移动并记录轨迹
             new_pos = event.globalPos() - self._drag_offset
             self.move(new_pos)
+            body = self._physics_body
+            body.x = float(self.x())
+            body.y = float(self.y())
+            body.prev_x = body.x
+            body.prev_y = body.y
+            body.render_x = body.x
+            body.render_y = body.y
             now = time.monotonic()
             self._drag_trail.append((now, event.globalPos()))
             cutoff = now - _DRAG_TRAIL_WINDOW_SEC
@@ -622,6 +626,13 @@ class Mortor(QWidget):
                 # 立即移动到当前鼠标位置并记录轨迹起点
                 new_pos = event.globalPos() - self._drag_offset
                 self.move(new_pos)
+                body = self._physics_body
+                body.x = float(self.x())
+                body.y = float(self.y())
+                body.prev_x = body.x
+                body.prev_y = body.y
+                body.render_x = body.x
+                body.render_y = body.y
                 now = time.monotonic()
                 self._drag_trail.append((now, event.globalPos()))
 
@@ -647,6 +658,10 @@ class Mortor(QWidget):
                 body        = self._physics_body
                 body.x      = float(self.x())
                 body.y      = float(self.y())
+                body.prev_x = body.x
+                body.prev_y = body.y
+                body.render_x = body.x
+                body.render_y = body.y
                 body.vx     = vx
                 body.vy     = vy
                 body.active = True
@@ -659,6 +674,10 @@ class Mortor(QWidget):
                 body        = self._physics_body
                 body.x      = float(self.x())
                 body.y      = float(self.y())
+                body.prev_x = body.x
+                body.prev_y = body.y
+                body.render_x = body.x
+                body.render_y = body.y
                 body.vx     = 0.0
                 body.vy     = 0.0
                 body.active = True
@@ -692,7 +711,6 @@ class Mortor(QWidget):
         self._event_center.unsubscribe(EventType.TICK,                   self._on_tick_render_jitter)
         self._event_center.unsubscribe(EventType.KEY_PRESS,              self._on_key_press)
         self._event_center.unsubscribe(EventType.KEY_RELEASE,            self._on_key_release)
-        self._event_center.unsubscribe(EventType.FRAME,                  self._on_frame_move)
         self._event_center.unsubscribe(EventType.UI_CLICKTHROUGH_TOGGLE, self._on_clickthrough_toggle)
         self._cleanup_physics()
         self._alive = False

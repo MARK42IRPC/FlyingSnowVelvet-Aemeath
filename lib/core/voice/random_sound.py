@@ -8,7 +8,7 @@ from lib.core.event.center import Event, EventType, get_event_center
 
 
 class DirectoryRandomSound:
-    """Publish VOICE_REQUEST with random file and random volume from a directory."""
+    """Publish VOICE_REQUEST with random file and per-event gain from a directory."""
 
     AUDIO_EXT = ('.mp3', '.wav', '.ogg', '.flac')
 
@@ -16,14 +16,14 @@ class DirectoryRandomSound:
         self,
         *,
         sound_dir: str,
-        audio_class: str,
+        audio_type: str,
         logger,
         log_name: str,
         volume_range: Tuple[float, float] = (0.30, 0.50),
         interruptible: bool = True,
     ):
         self._sound_dir = sound_dir
-        self._audio_class = audio_class
+        self._audio_type = audio_type
         self._logger = logger
         self._log_name = log_name
         self._vol_min = volume_range[0]
@@ -58,9 +58,9 @@ class DirectoryRandomSound:
         selected_file = random.choice(candidates)
         self._last_file_path = selected_file
         self._ec.publish(Event(EventType.VOICE_REQUEST, {
-            'audio_class': self._audio_class,
-            'file_path': selected_file,
-            'volume': random.uniform(self._vol_min, self._vol_max),
+            'audio_type': self._audio_type,
+            'source': selected_file,
+            'volume_gain': random.uniform(self._vol_min, self._vol_max),
             'interruptible': self._interruptible,
         }))
 

@@ -1,11 +1,11 @@
 """网易云音乐管理器 - 播放队列事件路由 Mixin"""
 
 import random
-import threading
 import re
 import time
 from pathlib import Path
 
+from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import EventType, Event
 from lib.core.logger import get_logger
 from config.config import TIMEOUTS, CLOUD_MUSIC
@@ -333,11 +333,13 @@ class _EventsMixin:
         self._publish_status()
         self._show_info("正在加载本地音乐...")
 
-        threading.Thread(
-            target=self._enqueue_local_worker,
-            daemon=True,
-            name="cm-local-load",
-        ).start()
+        future = get_compute_hub().submit_latest(
+            "cloudmusic_enqueue_local",
+            self._enqueue_local_worker,
+            executor="io",
+        )
+        if future is None:
+            self._show_info("本地音乐仍在加载中，请稍候")
 
     def _enqueue_local_worker(self):
         local_dir = self._resolve_local_music_dir()
@@ -440,12 +442,14 @@ class _EventsMixin:
 
         self._show_info(f'正在加载{provider_label}喜欢列表...')
 
-        threading.Thread(
-            target=self._enqueue_liked_worker,
-            args=(current_provider,),
-            daemon=True,
-            name=f'cm-liked-load-{current_provider}',
-        ).start()
+        future = get_compute_hub().submit_latest(
+            f"cloudmusic_enqueue_liked_{current_provider}",
+            self._enqueue_liked_worker,
+            current_provider,
+            executor="io",
+        )
+        if future is None:
+            self._show_info(f'{provider_label}喜欢列表仍在加载中，请稍候')
     def _enqueue_liked_worker(self, provider: str):
         """后台线程：拉取各平台喜欢列表，随机入队并开始播放。"""
         try:

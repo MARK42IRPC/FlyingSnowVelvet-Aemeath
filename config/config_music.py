@@ -9,7 +9,7 @@ from config.scale import scale_px
 
 SOUND = {
     # 总音量系数（0.0-1.0），与各音频类申请的响度相乘得到实际播放音量
-    'master_volume': 0.68,
+    'master_volume': 1.0,
     # 主宠物音效音量系数（0.0-1.0）
     'main_pet_volume': 0.4,
     # 游戏物体音效音量系数（0.0-1.0）
@@ -40,7 +40,7 @@ CLOUD_MUSIC = {
     # 当前音乐平台（抽象层路由入口，后续可扩展 qq / kugou）
     'provider': 'netease',
     'bitrate_ladder':   (320000, 192000, 128000),  # 音质梯度（bps）
-    'default_volume':   0.14,                     # 默认音量（14%）
+    'default_volume':   0.3,                     # 默认音量（14%）
     'pygame_init_wait': 5,                         # pygame 初始化最大等待时间（秒）
     'particle_interval': 60,                       # 音符粒子生成间隔（帧数）
     'search_result_limit': 128,                    # 音响搜索结果上限（首）

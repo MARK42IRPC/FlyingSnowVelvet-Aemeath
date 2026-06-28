@@ -11,7 +11,7 @@ import random
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtGui     import QColor
 
-from lib.script.practical.base_particle import BaseParticleScript
+from lib.script.practical.base_particle import BaseParticleScript, per_second_delta
 from lib.core.plugin_registry import register_particle
 
 
@@ -31,12 +31,12 @@ class SnowDriftParticleScript(BaseParticleScript):
         self._config = {
             'count_range':        (4, 8),
             'radius_range':       (1, 4),        # 粒子半径（像素）
-            'vx_range':           (-1.5, 1.5),   # 初始水平漂移速度（像素/帧）
-            'vy_range':           (1.5, 3.5),    # 初始垂直下落速度（正值=向下，像素/帧）
-            'drift_noise':        0.25,          # 每帧水平随机扰动幅度（仿真雪花飘动）
-            'gravity':            0.06,          # 轻微重力加速度（px/帧²，雪花轻飘感）
-            'drag':               0.99,          # 空气阻力系数（防止速度无限增大）
-            'life_decay_settled': 0.003,         # 落地后每帧生命衰减（≈ 333帧 / 5.5s）
+            'vx_range':           (-90, 90),     # 初始水平漂移速度（px/s）
+            'vy_range':           (90, 210),     # 初始垂直下落速度（正值=向下，px/s）
+            'drift_noise':        15.0,          # 每 tick 水平随机扰动幅度（px/s）
+            'gravity':            3.6,           # 轻微重力加速度（px/s per tick）
+            'drag':               0.970299,      # 每 tick 空气阻力系数（约等于旧 0.99^3）
+            'life_decay_settled': 0.009,         # 落地后每 tick 生命衰减（约等于旧 0.003*3）
             'color':              QColor(255, 255, 255),  # 纯白色
             'ground_margin':      6,             # 距屏幕底部边缘的落地安全距离（像素）
         }
@@ -77,21 +77,21 @@ class SnowDriftParticle:
         self.x = float(x)
         self.y = float(y)
 
-        self.vx = random.uniform(*config['vx_range'])
-        self.vy = random.uniform(*config['vy_range'])
+        self.vx = per_second_delta(random.uniform(*config['vx_range']))
+        self.vy = per_second_delta(random.uniform(*config['vy_range']))
 
         # size 在圆形粒子中表示半径（与 snow_particle.py 保持一致）
         self.size    = random.randint(*config['radius_range'])
         self.color   = config['color']
-        self.gravity = config['gravity']
-        self.drag    = config['drag']
+        self.gravity = per_second_delta(config['gravity'])
+        self.drag    = float(config['drag'])
 
-        self._drift_noise = config['drift_noise']
+        self._drift_noise = per_second_delta(config['drift_noise'])
 
         # 下落阶段：life 固定为 1.0，触底后重置为 1.0 再开始衰减
         self.life     = 1.0
         self.max_life = 1.0
-        self._life_decay_settled = config['life_decay_settled']
+        self._life_decay_settled = float(config['life_decay_settled'])
 
         self._ground_y  = ground_y
         self._settled   = False  # False=下落中，True=已落地堆积

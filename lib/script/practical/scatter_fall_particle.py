@@ -2,10 +2,9 @@
 import random
 import math
 from typing import Tuple
-from PyQt5.QtCore import QPointF
 from PyQt5.QtGui import QColor
 
-from lib.script.practical.base_particle import BaseParticleScript
+from lib.script.practical.base_particle import BaseParticleScript, per_second_delta
 from lib.core.plugin_registry import register_particle
 
 
@@ -20,10 +19,10 @@ class ScatterFallParticleScript(BaseParticleScript):
         self._config = {
             'count_range': (8, 12),
             'size_range': (4, 8),
-            'speed_range': (2, 5),
-            'gravity': 0.175,  # 重力减半
-            'drag': 0.98,  # 空气阻力系数（逐渐减速）
-            'life_decay': 0.05,
+            'speed_range': (120, 300),  # px/s
+            'gravity': 10.5,            # px/s per tick
+            'drag': 0.941192,           # per tick，约等于旧 0.98^3
+            'life_decay': 0.15,         # per tick，约等于旧 0.05*3
             'color': QColor(173, 216, 230),  # 浅青色
         }
 
@@ -63,8 +62,8 @@ class ScatterFallParticle:
         # 速度 - 向上飘散
         angle = random.uniform(0, math.pi * 2)
         speed = random.uniform(*config['speed_range'])
-        self.vx = math.cos(angle) * speed
-        self.vy = math.sin(angle) * speed - random.uniform(2, 4)
+        self.vx = per_second_delta(math.cos(angle) * speed)
+        self.vy = per_second_delta(math.sin(angle) * speed - random.uniform(120, 240))
 
         # 外观
         self.size = random.randint(*config['size_range'])
@@ -73,9 +72,9 @@ class ScatterFallParticle:
         # 生命值 0~1
         self.life = 1.0
         self.max_life = 1.0
-        self.gravity = config['gravity']
-        self.drag = config['drag']  # 空气阻力
-        self.life_decay = config['life_decay']
+        self.gravity = per_second_delta(config['gravity'])
+        self.drag = float(config['drag'])
+        self.life_decay = float(config['life_decay'])
 
     def update(self):
         """更新位置和生命值"""

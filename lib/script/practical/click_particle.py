@@ -13,7 +13,7 @@ from PyQt5.QtGui import QColor, QFont, QFontMetrics
 
 from config.font_config import _ensure_lahai_roi
 from config.scale import scale_px
-from lib.script.practical.base_particle import BaseParticleScript
+from lib.script.practical.base_particle import BaseParticleScript, per_second_delta, tick_seconds
 from lib.core.plugin_registry import register_particle
 
 # ── 配色 ──────────────────────────────────────────────────────────────
@@ -73,21 +73,20 @@ class ClickParticle:
         self._baseline_offset = (fm.ascent() - fm.descent()) // 2
 
         # 初始速度向量（存为 vx0/vy0，update 按剩余生命比例缩放）
-        angle      = random.uniform(0.0, math.tau)
-        speed      = random.uniform(*config['speed_range']) / 60.0  # px/frame @60fps（初始）
-        self.vx0   = math.cos(angle) * speed
-        self.vy0   = math.sin(angle) * speed
+        angle = random.uniform(0.0, math.tau)
+        speed = per_second_delta(random.uniform(*config['speed_range']))
+        self.vx0 = math.cos(angle) * speed
+        self.vy0 = math.sin(angle) * speed
 
         # 生命周期
         self.max_life = random.uniform(*config['life_range'])
         self.life     = self.max_life
 
     def update(self) -> None:
-        # 速度按剩余生命比例线性衰减：life=max_life 时全速，life=0 时速度为 0
-        ratio      = self.life / self.max_life
-        self.x    += self.vx0 * ratio
-        self.y    += self.vy0 * ratio
-        self.life -= 1.0 / 60.0
+        ratio = self.life / self.max_life
+        self.x += self.vx0 * ratio
+        self.y += self.vy0 * ratio
+        self.life -= tick_seconds()
 
     @property
     def alive(self) -> bool:

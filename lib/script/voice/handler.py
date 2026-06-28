@@ -37,20 +37,20 @@ class VoiceRequestHandler:
             # 文本 TTS 请求由 lib.script.gsvmove 消费，这里直接让行。
             return
 
-        audio_class = str(data.get("audio_class") or "").strip()
-        file_path = str(data.get("file_path") or "").strip()
-        if not audio_class or not file_path:
+        audio_type = str(data.get("audio_type") or "").strip()
+        source = str(data.get("source") or "").strip()
+        if not audio_type or not source:
             logger.debug(
-                "[VoiceRequestHandler] 忽略无效语音申请: audio_class=%r file_path=%r",
-                audio_class,
-                file_path,
+                "[VoiceRequestHandler] 忽略无效语音申请: audio_type=%r source=%r",
+                audio_type,
+                source,
             )
             return
 
         self._ec.publish(Event(EventType.SOUND_REQUEST, {
-            "audio_class": audio_class,
-            "file_path": file_path,
-            "volume": _clamp_01(data.get("volume", 1.0)),
+            "audio_type": audio_type,
+            "source": source,
+            "volume_gain": _clamp_01(data.get("volume_gain", 1.0)),
             "interruptible": bool(data.get("interruptible", True)),
         }))
         event.mark_handled()

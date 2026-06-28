@@ -6,11 +6,13 @@ import re
 import threading
 import time
 import base64
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from pathlib import Path
 from urllib.parse import quote_plus, urljoin
 
 import requests
 
+from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import EventType, Event
 from lib.core.logger import get_logger
 from lib.script.browser_auth import launch_playwright_chromium, parse_cookie_header, parse_set_cookie_headers
@@ -1202,26 +1204,16 @@ class _LoginMixin:
         return max(2.0, min(60.0, v))
 
     def _safe_login_call(self, func, *args, **kwargs):
-        done = threading.Event()
-        out = {}
-        err = {}
         timeout_s = self._login_call_timeout()
-
-        def _run():
-            try:
-                out['v'] = self._call_with_cookie_recover(func, *args, **kwargs)
-            except Exception as e:
-                err['e'] = e
-            finally:
-                done.set()
-
-        threading.Thread(target=_run, daemon=True, name='cm-login-call').start()
-        if not done.wait(timeout=timeout_s):
+        future = get_compute_hub().submit_io(self._call_with_cookie_recover, func, *args, **kwargs)
+        try:
+            return future.result(timeout=timeout_s)
+        except FutureTimeoutError:
             name = getattr(func, '__name__', 'login_call')
             raise TimeoutError(f'{name} 超时 ({timeout_s:.1f}s)')
-        if 'e' in err:
-            raise err['e']
-        return out.get('v')
+
+    def _qr_login_running(self) -> bool:
+        return self._qr_login_thread is not None and not self._qr_login_thread.done()
 
     # ------------------------------------------------------------------
     # 登录缓存
@@ -1506,23 +1498,20 @@ class _LoginMixin:
             self._show_info('网易云账号已登录')
             return
 
-        if self._qr_login_thread is not None and self._qr_login_thread.is_alive():
+        if self._qr_login_running():
             self._show_info('二维码登录进行中，请完成手机确认')
             return
 
         self._qr_login_cancel.clear()
-        self._qr_login_thread = threading.Thread(
-            target=self._qr_login_worker,
-            daemon=True,
-            name='cm-qr-login',
+        self._qr_login_thread = get_compute_hub().submit_io(
+            self._qr_login_worker,
         )
-        self._qr_login_thread.start()
 
     def _on_login_cancel_request(self, event: Event):
         """处理退出扫码请求：仅取消当前扫码流程，不执行账号登出。"""
         self._qr_login_cancel.set()
         self._publish_qr_hide()
-        if self._qr_login_thread is not None and self._qr_login_thread.is_alive():
+        if self._qr_login_running():
             self._show_info('已退出扫码登录')
 
     def _on_logout_request(self, event: Event):
@@ -1537,11 +1526,7 @@ class _LoginMixin:
         # 终止可能存在的二维码登录流程，并关闭二维码弹窗。
         self._qr_login_cancel.set()
         self._publish_qr_hide()
-        threading.Thread(
-            target=self._logout_worker,
-            daemon=True,
-            name='cm-logout',
-        ).start()
+        get_compute_hub().submit_io(self._logout_worker)
 
     def _logout_worker(self):
         t0 = time.monotonic()
@@ -1571,11 +1556,7 @@ class _LoginMixin:
     def _on_qq_logout_request(self):
         self._qr_login_cancel.set()
         self._publish_qr_hide()
-        threading.Thread(
-            target=self._qq_logout_worker,
-            daemon=True,
-            name='cm-qq-logout',
-        ).start()
+        get_compute_hub().submit_io(self._qq_logout_worker)
 
     def _qq_logout_worker(self):
         try:
@@ -1589,11 +1570,7 @@ class _LoginMixin:
     def _on_kugou_logout_request(self):
         self._qr_login_cancel.set()
         self._publish_qr_hide()
-        threading.Thread(
-            target=self._kugou_logout_worker,
-            daemon=True,
-            name='cm-kugou-logout',
-        ).start()
+        get_compute_hub().submit_io(self._kugou_logout_worker)
 
     def _kugou_logout_worker(self):
         try:
@@ -1614,17 +1591,14 @@ class _LoginMixin:
             self._show_info('酷狗账号已登录')
             return
 
-        if self._qr_login_thread is not None and self._qr_login_thread.is_alive():
+        if self._qr_login_running():
             self._show_info('酷狗扫码登录进行中，请完成手机确认')
             return
 
         self._qr_login_cancel.clear()
-        self._qr_login_thread = threading.Thread(
-            target=self._kugou_login_worker,
-            daemon=True,
-            name='cm-kugou-qr-login',
+        self._qr_login_thread = get_compute_hub().submit_io(
+            self._kugou_login_worker,
         )
-        self._qr_login_thread.start()
 
     def _on_qq_login_request(self):
         client = get_qqmusic_provider_client()
@@ -1634,7 +1608,7 @@ class _LoginMixin:
             self._show_info('QQ账号已登录')
             return
 
-        if self._qr_login_thread is not None and self._qr_login_thread.is_alive():
+        if self._qr_login_running():
             self._show_info('QQ登录进行中，请在浏览器中完成扫码或确认')
             return
 
@@ -1643,12 +1617,9 @@ class _LoginMixin:
 
         self._qr_login_cancel.clear()
         self._publish_qr_show(None, '正在启动QQ音乐登录流程，请稍候...', title='QQ音乐扫码登录')
-        self._qr_login_thread = threading.Thread(
-            target=self._qq_login_worker,
-            daemon=True,
-            name='cm-qq-browser-login',
+        self._qr_login_thread = get_compute_hub().submit_io(
+            self._qq_login_worker,
         )
-        self._qr_login_thread.start()
 
     def _qq_login_worker(self):
         """Run QQ Music browser login flow."""

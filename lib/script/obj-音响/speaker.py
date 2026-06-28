@@ -130,7 +130,7 @@ class Speaker(QWidget):
 
         self._event_center = get_event_center()
         self._event_center.subscribe(EventType.TICK,                   self._on_tick_click)
-        self._event_center.subscribe(EventType.FRAME,                  self._on_frame_frequency)
+        self._event_center.subscribe(EventType.TICK,                   self._on_tick_frequency)
         self._event_center.subscribe(EventType.UI_CLICKTHROUGH_TOGGLE, self._on_clickthrough_toggle)
 
         # 弹跳音效（复用沙发音效）
@@ -186,8 +186,8 @@ class Speaker(QWidget):
         self._drag_offset         = None
         self._pending_click       = False
         self._pending_click_ticks = 0
-        self._event_center.unsubscribe(EventType.TICK,  self._on_tick_click)
-        self._event_center.unsubscribe(EventType.FRAME,                  self._on_frame_frequency)
+        self._event_center.unsubscribe(EventType.TICK, self._on_tick_click)
+        self._event_center.unsubscribe(EventType.TICK, self._on_tick_frequency)
         self._cleanup_physics()
         if not self._fade_timer.isActive():
             self._fade_timer.start()
@@ -219,8 +219,8 @@ class Speaker(QWidget):
     # ==================================================================
 
     def _on_physics_position_change(self, body: PhysicsBody) -> None:
-        if not self._fading:
-            self.move(QPoint(int(body.x), int(body.y)))
+        if not self._fading and self._drag_offset is None:
+            self.move(QPoint(int(body.render_x), int(body.render_y)))
             self._update_flip()
 
     def _on_physics_wall_hit(self, body: PhysicsBody, side: str) -> None:
@@ -252,8 +252,8 @@ class Speaker(QWidget):
     # 响度缩放
     # ==================================================================
 
-    def _on_frame_frequency(self, event: Event) -> None:
-        """每帧采样系统音频频率，EMA 平滑后触发重绘。"""
+    def _on_tick_frequency(self, event: Event) -> None:
+        """按 tick 采样系统音频频率，EMA 平滑后触发重绘。"""
         from lib.core.audio_meter import get_audio_meter
         freq_intensity = get_audio_meter().get_frequency_intensity()  # 0.0–1.0 频率强度
         if freq_intensity is None:
@@ -347,6 +347,13 @@ class Speaker(QWidget):
         if self._drag_offset is not None:
             new_pos = event.globalPos() - self._drag_offset
             self.move(new_pos)
+            body = self._physics_body
+            body.x = float(self.x())
+            body.y = float(self.y())
+            body.prev_x = body.x
+            body.prev_y = body.y
+            body.render_x = body.x
+            body.render_y = body.y
             self._update_flip()
             now = time.monotonic()
             self._drag_trail.append((now, event.globalPos()))
@@ -364,6 +371,13 @@ class Speaker(QWidget):
                 self.setCursor(Qt.ClosedHandCursor)
                 new_pos = event.globalPos() - self._drag_offset
                 self.move(new_pos)
+                body = self._physics_body
+                body.x = float(self.x())
+                body.y = float(self.y())
+                body.prev_x = body.x
+                body.prev_y = body.y
+                body.render_x = body.x
+                body.render_y = body.y
                 now = time.monotonic()
                 self._drag_trail.append((now, event.globalPos()))
 
@@ -378,6 +392,10 @@ class Speaker(QWidget):
                 body        = self._physics_body
                 body.x      = float(self.x())
                 body.y      = float(self.y())
+                body.prev_x = body.x
+                body.prev_y = body.y
+                body.render_x = body.x
+                body.render_y = body.y
                 body.vx     = vx
                 body.vy     = vy
                 body.active = True
@@ -389,6 +407,10 @@ class Speaker(QWidget):
                 body        = self._physics_body
                 body.x      = float(self.x())
                 body.y      = float(self.y())
+                body.prev_x = body.x
+                body.prev_y = body.y
+                body.render_x = body.x
+                body.render_y = body.y
                 body.vx     = 0.0
                 body.vy     = 0.0
                 body.active = True
@@ -427,7 +449,7 @@ class Speaker(QWidget):
 
     def closeEvent(self, event):
         self._event_center.unsubscribe(EventType.TICK,                   self._on_tick_click)
-        self._event_center.unsubscribe(EventType.FRAME,                  self._on_frame_frequency)
+        self._event_center.unsubscribe(EventType.TICK,                   self._on_tick_frequency)
         self._event_center.unsubscribe(EventType.UI_CLICKTHROUGH_TOGGLE, self._on_clickthrough_toggle)
         self._fade_timer.stop()
         self._cleanup_physics()

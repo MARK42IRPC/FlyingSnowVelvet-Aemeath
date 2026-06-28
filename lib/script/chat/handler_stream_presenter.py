@@ -2,7 +2,7 @@
 
 import re
 
-from config.config import BUBBLE_CONFIG, VOICE
+from config.config import BUBBLE_CONFIG
 from config.ollama_config import OLLAMA
 from lib.core.event.center import Event, EventType
 from lib.core.logger import get_logger
@@ -252,8 +252,6 @@ class ChatHandlerStreamPresenterMixin:
                 self._event_center.publish(Event(EventType.AI_VOICE_REQUEST, {
                     "text": voice_text,
                     "interruptible": True,
-                    # 实际语音音量由 VoiceCore 中的 VOICE.voice_volume 控制。
-                    "voice_volume": VOICE.get("voice_volume", 1.0),
                 }))
 
         if include_history and not _is_non_ai_status_text(text):
@@ -291,7 +289,6 @@ class ChatHandlerStreamPresenterMixin:
             self._event_center.publish(Event(EventType.AI_VOICE_REQUEST, {
                 "text": voice_text,
                 "interruptible": True,
-                "voice_volume": VOICE.get("voice_volume", 1.0),
             }))
         if include_history and from_ai:
             self._append_recent_context('assistant', raw_text)

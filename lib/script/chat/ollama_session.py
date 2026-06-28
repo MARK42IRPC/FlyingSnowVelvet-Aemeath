@@ -6,6 +6,7 @@ import time
 
 import requests
 
+from lib.core.compute_hub import get_compute_hub
 from ._multimodal import is_image_input_error
 from .handler_stream_presenter import _is_non_ai_status_text
 from .ollama_support import (
@@ -26,11 +27,9 @@ class OllamaSessionMixin:
             return
         self._pulling_models.add(model_name)
         logger.info("[OllamaManager] 配置模型 %r 本地不存在，开始后台下载...", model_name)
-        threading.Thread(
-            target=self._pull_model,
-            args=(model_name,),
-            daemon=True,
-        ).start()
+        future = get_compute_hub().submit_io(self._pull_model, model_name)
+        if future is None:
+            self._pulling_models.discard(model_name)
 
     def _pull_model(self, model_name: str):
         """
@@ -78,7 +77,11 @@ class OllamaSessionMixin:
                     break
 
             logger.info("[OllamaManager] 模型下载完成: %s", model_name)
-            threading.Thread(target=self._ping, daemon=True).start()
+            get_compute_hub().submit_latest(
+                "ollama_ping",
+                self._ping,
+                executor="io",
+            )
 
         except requests.HTTPError as e:
             logger.error("[OllamaManager] 下载模型 %r 失败 (%s)", model_name, e.response.status_code)
@@ -163,11 +166,15 @@ class OllamaSessionMixin:
             if on_chunk is not None:
                 self._chat_chunk_callbacks[request_id] = on_chunk
 
-        threading.Thread(
-            target=self._run_stream_chat,
-            args=(message, persona, request_id, on_chunk is not None, images, history),
-            daemon=True,
-        ).start()
+        get_compute_hub().submit_io(
+            self._run_stream_chat,
+            message,
+            persona,
+            request_id,
+            on_chunk is not None,
+            images,
+            history,
+        )
 
     def _run_stream_chat(self, message: str, persona: str, request_id: int,
                          streaming: bool, images: list[bytes] = None,

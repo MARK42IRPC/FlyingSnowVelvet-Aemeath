@@ -12,7 +12,7 @@ class AmsLahaiScore1000Sound(DirectoryRandomSound):
     def __init__(self, interruptible: bool = True):
         super().__init__(
             sound_dir=os.path.join('resc', 'sound', 'ams', '分数达到1000时'),
-            audio_class='voice',
+            audio_type='voice',
             logger=_logger,
             log_name='AmsLahaiScore1000Sound',
             volume_range=(0.30, 0.50),

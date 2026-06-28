@@ -313,7 +313,7 @@ class SnowLeopard(QWidget):
     def _on_physics_position_change(self, body: PhysicsBody) -> None:
         """物理步进后同步窗口位置到新坐标。"""
         if not self._fading:
-            self.move(QPoint(int(body.x), int(body.y)))
+            self.move(QPoint(int(body.render_x), int(body.render_y)))
 
     def _on_physics_wall_hit(self, body: PhysicsBody, side: str) -> None:
         """

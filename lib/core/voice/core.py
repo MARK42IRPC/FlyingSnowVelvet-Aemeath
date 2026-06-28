@@ -2,10 +2,10 @@
 
 事件格式 (SOUND_REQUEST):
     {
-        'audio_class':  str,   # 音频类标识（如 'snow'）
-        'file_path':    str,   # 音频文件绝对路径
-        'volume':       float, # 基础响度 0.0-1.0
-        'interruptible':bool,  # 是否可被后续申请打断
+        'audio_type':     str,   # 音频类型（如 'world_sfx' / 'voice'）
+        'source':         str,   # 音频源，当前为本地文件绝对路径
+        'volume_gain':    float, # 单次事件响度系数 0.0-1.0
+        'interruptible':  bool,  # 是否可被后续申请打断
     }
 
 实现说明:
@@ -17,11 +17,10 @@ import os
 import ctypes
 import threading
 import uuid
-import time
 from typing import Optional, List, Callable
 
 from lib.core.event.center import get_event_center, EventType, Event
-from config.config import SOUND, VOICE
+from config.audio import get_effective_sound_volume
 
 
 # ── Windows MCI ────────────────────────────────────────────────────────
@@ -49,20 +48,7 @@ _MAX_CHANNELS = 4
 
 # 多频道并发时的响度缩放因子（防止叠加失真）
 _VOLUME_SCALE = {1: 1.0, 2: 0.75, 3: 0.60, 4: 0.50}
-_MAIN_PET_AUDIO_CLASSES = {"ams-enh"}
-_VOICE_AUDIO_CLASSES = {"voice"}
-
-
-def _clamp_01(value: float) -> float:
-    return max(0.0, min(1.0, float(value)))
-
-
-def _class_volume_factor(audio_class: str) -> float:
-    if audio_class in _MAIN_PET_AUDIO_CLASSES:
-        return _clamp_01(SOUND.get("main_pet_volume", 1.0))
-    if audio_class in _VOICE_AUDIO_CLASSES:
-        return _clamp_01(VOICE.get("voice_volume", 1.0))
-    return _clamp_01(SOUND.get("game_object_volume", 1.0))
+_VOICE_AUDIO_TYPES = {"voice"}
 
 
 # ==============================================================================
@@ -78,14 +64,14 @@ class _AudioChannel:
         self._on_stop = on_stop
         self._state_lock = threading.Lock()  # 保护状态变量的线程锁
         self.active = False
-        self.audio_class: str = ''   # 当前正在播放的音频类标识
+        self.audio_type: str = ''   # 当前正在播放的音频类型
         self.interruptible = True
         self.base_volume = 100   # 0-100，由 play() 写入
         self._alias: Optional[str] = None
         self._stop_flag = threading.Event()
 
     # ------------------------------------------------------------------
-    def play(self, file_path: str, volume: float, interruptible: bool):
+    def play(self, source: str, volume: float, interruptible: bool):
         """开始播放指定文件（非阻塞）"""
         # 通知旧线程尽快退出
         self._stop_flag.set()
@@ -101,18 +87,18 @@ class _AudioChannel:
 
         threading.Thread(
             target=self._play_thread,
-            args=(file_path, alias, self.base_volume, stop_flag),
+            args=(source, alias, self.base_volume, stop_flag),
             daemon=True,
             name=f'audio-{alias}',
         ).start()
 
     # ------------------------------------------------------------------
-    def _play_thread(self, file_path: str, alias: str,
+    def _play_thread(self, source: str, alias: str,
                      vol: int, stop_flag: threading.Event):
         """播放线程：打开 → 设音量 → 播放 → 轮询结束 → 关闭"""
         opened = False
         try:
-            ret = _mci(f'open "{file_path}" type mpegvideo alias {alias}')
+            ret = _mci(f'open "{source}" type mpegvideo alias {alias}')
             if ret != 0:
                 # 打开失败时重置状态
                 with self._state_lock:
@@ -217,23 +203,20 @@ class VoiceCore:
     def _on_sound_request(self, event: Event):
         """处理音频播放申请"""
         data = event.data
-        audio_class: str  = data.get('audio_class', '')
-        file_path: str    = data.get('file_path', '')
-        volume: float     = float(data.get('volume', 1.0))
+        audio_type: str = str(data.get('audio_type', '') or '').strip()
+        source: str = str(data.get('source', '') or '').strip()
+        volume_gain: float = float(data.get('volume_gain', 1.0))
         interruptible: bool = bool(data.get('interruptible', True))
 
-        if not file_path or not os.path.isfile(file_path):
+        if not audio_type or not source or not os.path.isfile(source):
             return
 
         # 语音互斥：同一时间只允许一个语音实例播放。
-        if audio_class in _VOICE_AUDIO_CLASSES and self._is_voice_playing():
+        if audio_type in _VOICE_AUDIO_TYPES and self._is_voice_playing():
             event.mark_handled()
             return
 
-        # 乘以总音量与分类音量系数（主宠物 / 语音 / 游戏物体）
-        master = _clamp_01(SOUND.get('master_volume', 1.0))
-        class_factor = _class_volume_factor(audio_class)
-        volume = volume * master * class_factor
+        volume = get_effective_sound_volume(audio_type, volume_gain)
 
         # 优先使用空闲频道
         channel = self._free_channel()
@@ -245,17 +228,25 @@ class VoiceCore:
                 return  # 所有频道均被不可打断的音频占用，丢弃申请
             channel.stop()
 
-        channel.audio_class = audio_class
-        channel.play(file_path, volume, interruptible)
+        channel.audio_type = audio_type
+        channel.play(source, volume, interruptible)
         self._rebalance_volumes()
         event.mark_handled()
 
     def _is_voice_playing(self) -> bool:
         """检查是否已有语音类音频正在播放。"""
         return any(
-            ch.active and ch.audio_class in _VOICE_AUDIO_CLASSES
+            ch.active and ch.audio_type in _VOICE_AUDIO_TYPES
             for ch in self._channels
         )
+
+    def is_type_playing(self, audio_type: str) -> bool:
+        """检查指定音频类型是否正在任一频道播放"""
+        return any(ch.active and ch.audio_type == audio_type for ch in self._channels)
+
+    def is_class_playing(self, audio_class: str) -> bool:
+        """兼容旧接口，audio_class 已等价于 audio_type。"""
+        return self.is_type_playing(audio_class)
 
     # ------------------------------------------------------------------
     def _free_channel(self) -> Optional[_AudioChannel]:
@@ -271,10 +262,6 @@ class VoiceCore:
             if ch.active and ch.interruptible:
                 return ch
         return None
-
-    def is_class_playing(self, audio_class: str) -> bool:
-        """检查指定音频类是否正在任一频道播放"""
-        return any(ch.active and ch.audio_class == audio_class for ch in self._channels)
 
     def _rebalance_volumes(self):
         """按活跃频道数重新平衡各频道响度"""

@@ -37,6 +37,7 @@ from typing import Optional
 
 from PyQt5.QtCore import QTimer
 
+from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.logger import get_logger
 from lib.script.music import get_music_service
@@ -319,12 +320,7 @@ class ToolDispatcher:
             if not arg:
                 arg = random.choice(_DEFAULT_MUSIC_CHOICES)
                 logger.info("[ToolDispatcher] 音乐指令缺少歌名，已改为随机播放: %s", arg)
-            threading.Thread(
-                target=self._handle_music_request,
-                args=(arg,),
-                daemon=True,
-                name='tool-dispatcher-music',
-            ).start()
+            get_compute_hub().submit_io(self._handle_music_request, arg)
 
         elif cmd == '下一曲':
             self._ec.publish(Event(EventType.MUSIC_NEXT_TRACK, {}))
@@ -500,7 +496,7 @@ class ToolDispatcher:
                     'max': 100,
                 }))
 
-        threading.Thread(target=_open, daemon=True, name='tool-dispatcher-browser').start()
+        get_compute_hub().submit_io(_open)
 
     def _search_music(self, keyword: str):
         """

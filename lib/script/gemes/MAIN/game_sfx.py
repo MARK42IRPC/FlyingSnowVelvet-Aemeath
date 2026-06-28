@@ -48,9 +48,9 @@ class GameSfx:
         if not path:
             return
         self._ec.publish(Event(EventType.SOUND_REQUEST, {
-            "audio_class": "lahai_tetris",
-            "file_path": path,
-            "volume": volume,
+            "audio_type": "game_sfx",
+            "source": path,
+            "volume_gain": volume,
             "interruptible": True,
         }))
 

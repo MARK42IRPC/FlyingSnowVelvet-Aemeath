@@ -1,7 +1,7 @@
 """雪球管理器 - FIFO 数量控制"""
 import math
 import random
-from concurrent.futures import ThreadPoolExecutor, Future
+from concurrent.futures import Future
 
 import numpy as np
 from PyQt5.QtCore    import QPoint
@@ -9,6 +9,7 @@ from PyQt5.QtGui     import QPixmap
 from PyQt5.QtWidgets import QApplication
 
 from lib.core.event.center        import get_event_center, EventType, Event
+from lib.core.compute_hub         import get_compute_hub
 from lib.core.hash_cmd_registry   import get_hash_cmd_registry
 from lib.core.plugin_registry     import manager_registry, BaseManager
 from lib.core.screen_utils        import get_screen_geometry_for_point
@@ -148,9 +149,6 @@ class SnowballManager(BaseManager):
 
         # ── 后台物理线程 ──────────────────────────────────────────────
         # max_workers=1：单线程队列，保证计算有序，不堆积任务
-        self._physics_executor: ThreadPoolExecutor = ThreadPoolExecutor(
-            max_workers=1, thread_name_prefix='snowball_phys'
-        )
         self._collision_future: Future | None = None
         # 上一帧提交的快照：apply 时用于校验球对象仍然有效
         self._pending_snapshot: list | None   = None
@@ -276,9 +274,17 @@ class SnowballManager(BaseManager):
             return
 
         self._pending_snapshot  = snapshot
-        self._collision_future  = self._physics_executor.submit(
-            _compute_collision_results, snapshot, elasticity, ball_friction
+        future = get_compute_hub().submit_latest(
+            "snowball_collision",
+            _compute_collision_results,
+            snapshot,
+            elasticity,
+            ball_friction,
+            executor="vector",
         )
+        if future is None:
+            return
+        self._collision_future = future
 
     def _apply_collision_results(self) -> None:
         """将后台计算结果应用到主线程的物理体和 Qt 窗口（幂等，未完成则跳过）。"""
@@ -457,8 +463,6 @@ class SnowballManager(BaseManager):
                     pass
         self._balls.clear()
         self._pixmap_cache.clear()
-        # 关闭后台线程（不等待，让已提交的任务自然结束）
-        self._physics_executor.shutdown(wait=False)
         log("已清理")
 
 

@@ -12,7 +12,7 @@ class SnowballSound(DirectoryRandomSound):
     def __init__(self, interruptible: bool = True):
         super().__init__(
             sound_dir=os.path.join('resc', 'SOUND', 'snow'),
-            audio_class='snow',
+            audio_type='world_sfx',
             logger=_logger,
             log_name='SnowballSound',
             volume_range=(0.225, 0.375),  # SnowSound 的 0.75 倍衰减

@@ -81,7 +81,7 @@ class MortorManager(BaseManager):
         # 订阅保护半径检测事件
         self._event_center.subscribe(EventType.PROTECTION_CHECK, self._on_protection_check)
         # 监控摩托存活状态，用于在全部消失时暂停 BGM
-        self._event_center.subscribe(EventType.FRAME, self._on_frame)
+        self._event_center.subscribe(EventType.TICK, self._on_tick)
 
         # 向全局 # 命令注册中心声明本命令（供提示框显示）
         get_hash_cmd_registry().register('摩托', '[数量]', '在屏幕上放置摩托')
@@ -244,8 +244,8 @@ class MortorManager(BaseManager):
                 'manager_id': self.MANAGER_ID,
             }))
 
-    def _on_frame(self, event: Event):
-        """帧更新：清理失活摩托，并在全部消失时暂停摩托 BGM。"""
+    def _on_tick(self, event: Event):
+        """Tick 更新：清理失活摩托，并在全部消失时暂停摩托 BGM。"""
         self._mortors = [m for m in self._mortors if m.is_alive()]
 
         bgm_enabled = bool(self._cfg.get('bgm_enabled', True))
@@ -456,7 +456,7 @@ class MortorManager(BaseManager):
         self._event_center.unsubscribe(EventType.MANAGER_QUERY_REQUEST, self._on_query_request)
         self._event_center.unsubscribe(EventType.TARGET_POSITION_QUERY, self._on_target_position_query)
         self._event_center.unsubscribe(EventType.PROTECTION_CHECK, self._on_protection_check)
-        self._event_center.unsubscribe(EventType.FRAME, self._on_frame)
+        self._event_center.unsubscribe(EventType.TICK, self._on_tick)
         for mortor in self._mortors:
             if mortor.is_alive():
                 try:

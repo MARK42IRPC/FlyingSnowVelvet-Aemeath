@@ -15,8 +15,8 @@
 
 import re
 import os
-import subprocess
 import threading
+import subprocess
 import traceback
 from collections import deque
 
@@ -30,6 +30,7 @@ from PyQt5.QtWidgets import (
 from config.config import COLORS, UI, UI_THEME
 from config.font_config import get_cmd_font, get_ui_font, get_digit_font
 from config.scale import scale_px, scale_style_px
+from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.topmost_manager import get_topmost_manager
 
@@ -413,8 +414,7 @@ class CmdWindow(QWidget):
         self._spinner_label.setVisible(True)
         self._spinner_timer.start()
 
-        t = threading.Thread(target=self._stream_command, args=(cmd,), daemon=True)
-        t.start()
+        get_compute_hub().submit_io(self._stream_command, cmd)
 
     def _stream_command(self, cmd: str):
         """

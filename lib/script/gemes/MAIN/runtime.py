@@ -15,12 +15,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from PyQt5.QtCore import Qt, QPoint, QRect
+from PyQt5.QtCore import Qt, QPoint, QRect, QPropertyAnimation, QEasingCurve
 from PyQt5.QtGui import QColor, QPainter
 from PyQt5.QtWidgets import QWidget
 
+from config.config import UI
 from config.font_config import get_ui_font
 from config.scale import scale_px
+from lib.core.anchor_utils import apply_ui_opacity
+from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.hash_cmd_registry import get_hash_cmd_registry
 from lib.core.logger import get_logger
@@ -85,6 +88,13 @@ class GameRuntimePanel(QWidget):
         self._resize_origin: QPoint | None = None
         self._resize_edges: set[str] = set()
         self._resize_start_geometry: QRect | None = None
+        self._fading_out = False
+        self._allow_hide_once = False
+        self._opacity_anim = QPropertyAnimation(self, b'windowOpacity', self)
+        self._opacity_anim.setDuration(UI.get('ui_fade_duration', 180))
+        self._opacity_anim.setEasingCurve(QEasingCurve.InOutQuad)
+        self._opacity_anim.finished.connect(self._on_opacity_anim_finished)
+        self.setWindowOpacity(0.0)
         self.hide()
         self._refresh_size()
 
@@ -100,6 +110,27 @@ class GameRuntimePanel(QWidget):
         game_y = self._BORDER
         self._game_widget.resize(content_w, content_h)
         self._game_widget.move(game_x, game_y)
+
+    def get_game_middle_third_rect_global(self) -> QRect:
+        """
+        返回小游戏区域横向中间三分之一区域的全局矩形。
+
+        用于外部逻辑避让桌宠漫游目标，避免遮挡拉海洛方块主要游玩区。
+        面板不可见时返回空 QRect。
+        """
+        if not self.isVisible():
+            return QRect()
+        local_rect = self._game_widget.geometry()
+        third_w = max(1, local_rect.width() // 3)
+        middle_x = local_rect.x() + third_w
+        middle_rect = QRect(
+            middle_x,
+            local_rect.y(),
+            third_w,
+            local_rect.height(),
+        )
+        top_left = self.mapToGlobal(middle_rect.topLeft())
+        return QRect(top_left, middle_rect.size())
 
     def _hit_test_edges(self, pos) -> set[str]:
         edges: set[str] = set()
@@ -145,8 +176,45 @@ class GameRuntimePanel(QWidget):
     def deactivate(self) -> None:
         self._game_widget.deactivate()
 
+    def fade_in(self) -> None:
+        self._opacity_anim.stop()
+        self._fading_out = False
+        self._allow_hide_once = False
+        self.setWindowOpacity(0.0)
+        self.show()
+        self.raise_()
+        self._opacity_anim.setStartValue(0.0)
+        self._opacity_anim.setEndValue(apply_ui_opacity(1.0))
+        self._opacity_anim.start()
+
+    def fade_out(self) -> None:
+        if self._fading_out or not self.isVisible():
+            return
+        self._fading_out = True
+        self._opacity_anim.stop()
+        current_opacity = self.windowOpacity()
+        self._opacity_anim.setStartValue(max(0.0, min(1.0, float(current_opacity))))
+        self._opacity_anim.setEndValue(0.0)
+        self._opacity_anim.start()
+
+    def hide(self) -> None:
+        if self._allow_hide_once or self._fading_out or not self.isVisible():
+            super().hide()
+            return
+        self.fade_out()
+
+    def _on_opacity_anim_finished(self) -> None:
+        if not self._fading_out:
+            return
+        self._fading_out = False
+        self._allow_hide_once = True
+        try:
+            super().hide()
+        finally:
+            self._allow_hide_once = False
+            self.setWindowOpacity(apply_ui_opacity(1.0))
+
     def _handle_game_close_request(self) -> None:
-        self.hide()
         runtime = get_game_runtime()
         runtime.close_panel()
 
@@ -228,6 +296,9 @@ class GameRuntime:
         self._event_center = get_event_center()
         self._panel = GameRuntimePanel()
         self._open_lahai_sound = AmsOpenLahaiTetrisSound()
+        self._bgm_track_ref = ""
+        self._bgm_display = ""
+        self._open_generation = 0
         self._games = [
             GameMeta("lahai_tetris", "拉海洛方块", "圆角彩虹字母俄罗斯方块", "可玩"),
             GameMeta("snake", "贪吃蛇", "后续预留"),
@@ -280,13 +351,13 @@ class GameRuntime:
         }))
 
     def open_panel(self) -> None:
+        self._open_generation += 1
         self._panel.set_items(self._games)
         self._panel.move_to_screen_center()
-        self._panel.show()
-        self._panel.raise_()
+        self._panel.fade_in()
         self._panel.activate()
         self._open_lahai_sound.play()
-        self._play_game_bgm()
+        self._play_game_bgm(self._open_generation)
         self._event_center.publish(Event(EventType.INFORMATION, {
             "text": "拉海洛方块已打开",
             "min": 0,
@@ -294,14 +365,19 @@ class GameRuntime:
         }))
 
     def close_panel(self) -> None:
+        self._open_generation += 1
         self._panel.deactivate()
-        self._panel.hide()
+        self._panel.fade_out()
         self._event_center.publish(Event(EventType.MUSIC_PLAY_PAUSE, {}))
         self._event_center.publish(Event(EventType.INFORMATION, {
             "text": "小游戏 runtime 已关闭",
             "min": 0,
             "max": 80,
         }))
+
+    def get_lahai_game_middle_third_rect_global(self) -> QRect:
+        """返回拉海洛方块游戏区域横向中间三分之一区域的全局矩形。"""
+        return self._panel.get_game_middle_third_rect_global()
 
     def report_games(self) -> None:
         game_text = " / ".join(item.name for item in self._games)
@@ -311,7 +387,20 @@ class GameRuntime:
             "max": 180,
         }))
 
-    def _play_game_bgm(self) -> None:
+    def _play_game_bgm(self, open_generation: int) -> None:
+        if self._bgm_track_ref:
+            self._publish_game_bgm_if_current(open_generation, self._bgm_track_ref, self._bgm_display)
+            return
+        future = get_compute_hub().submit_latest(
+            "game_runtime_bgm_search",
+            self._resolve_game_bgm,
+            open_generation,
+            executor="io",
+        )
+        if future is None:
+            log("游戏BGM搜索任务已在进行中")
+
+    def _resolve_game_bgm(self, open_generation: int) -> None:
         try:
             tracks = get_music_service().search(self._GAME_BGM_KEYWORD, mode="song", limit=20)
         except Exception as e:
@@ -346,6 +435,14 @@ class GameRuntime:
             log("游戏BGM搜索结果缺少 track_id")
             return
         display = get_music_service().format_track_display(track, include_provider=False)
+        self._bgm_track_ref = track_ref
+        self._bgm_display = display
+        self._publish_game_bgm_if_current(open_generation, track_ref, display)
+
+    def _publish_game_bgm_if_current(self, open_generation: int, track_ref: str, display: str) -> None:
+        if open_generation != self._open_generation or not self._panel.isVisible():
+            log("游戏BGM结果已过期，跳过自动播放")
+            return
         self._event_center.publish(Event(EventType.MUSIC_PLAY_TOP, {
             "song_id": track_ref,
             "track_ref": track_ref,

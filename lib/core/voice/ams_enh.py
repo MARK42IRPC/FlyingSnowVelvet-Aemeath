@@ -13,7 +13,7 @@ class AmsEnhSound(DirectoryRandomSound):
     def __init__(self, interruptible: bool = True):
         super().__init__(
             sound_dir=os.path.join('resc', 'sound', 'ams', 'enh'),
-            audio_class='ams-enh',
+            audio_type='pet_voice',
             logger=_logger,
             log_name='AmsEnhSound',
             volume_range=(0.30, 0.50),
@@ -21,4 +21,4 @@ class AmsEnhSound(DirectoryRandomSound):
         )
 
     def _can_play(self) -> bool:
-        return not get_voice_core().is_class_playing('ams-enh')
+        return not get_voice_core().is_type_playing('pet_voice')

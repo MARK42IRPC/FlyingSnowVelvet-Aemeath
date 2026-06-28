@@ -10,13 +10,13 @@ from config.scale import scale_px, scale_size
 ANIMATION = {
     'pet_size':  scale_size((150, 150)),  # 宠物尺寸（像素）
     'gif_fps': 16,           # GIF帧率（每秒帧数）
-    'frame_fps': 60,          # 全局帧率（每秒帧数）
+    'frame_fps': 120,          # 全局帧率（每秒帧数）
     'start_exit_enabled': True,  # 启用启动/退出动画（同时控制启动延时）
     'start_animation_folder': '耶比_anima',  # 启动动画序列帧目录（兼容旧目录 start-anim-compressed）
-    'exit_animation_folder': '爱弥斯联合_anima',  # 退出动画序列帧目录（兼容旧目录 exit-anim-compressed）
-    'exit_shadow_strength': 230,  # 退出动画阴影强度（0~255，0=关闭）
-    'exit_shadow_blur_radius': 10,  # 退出动画阴影模糊半径（像素）
-    'exit_shadow_offset_direction': 'down_right',  # 退出动画阴影偏移方向（如 down / up / left / right / center）
+    'exit_animation_folder': '星炬学院_anima',  # 退出动画序列帧目录（兼容旧目录 exit-anim-compressed）
+    'exit_shadow_strength': 255,  # 退出动画阴影强度（0~255，0=关闭）
+    'exit_shadow_blur_radius': 30,  # 退出动画阴影模糊半径（像素）
+    'exit_shadow_offset_direction': 'center',  # 退出动画阴影偏移方向（如 down / up / left / right / center）
 }
 GIF_FILES = [
     'resc/GIF/boring.gif',
@@ -34,9 +34,9 @@ BEHAVIOR = {
     'random_states': ['boring', 'happy', 'wave', 'play', 'jumping'],
     'double_click_ticks': 4,   # 双击判定间隔（tick，1 tick = 50ms，默认 4 tick = 200ms）
     # 移动加速/减速参数
-    'move_min_speed': 1.0,          # 最低速度（起步和结束速度）
-    'move_acceleration': 0.1,       # 起步加速度（每帧增加的速度）
-    'move_max_speed': 2.0,          # 最大速度
+    'move_min_speed': 3.0,          # 最低速度（起步和结束速度，基础移速 *3）
+    'move_acceleration': 0.3,       # 起步加速度（每帧增加的速度，保持原有手感比例）
+    'move_max_speed': 6.0,          # 最大速度（基础移速 *3）
     'move_decel_distance': scale_px(100),  # 开始减速的距离（像素）
 }
 PARTICLES = {

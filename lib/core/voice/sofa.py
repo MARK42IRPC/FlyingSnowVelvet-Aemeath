@@ -12,7 +12,7 @@ class SofaSound(DirectoryRandomSound):
     def __init__(self, interruptible: bool = True):
         super().__init__(
             sound_dir=os.path.join('resc', 'SOUND', 'sofa'),
-            audio_class='sofa',
+            audio_type='world_sfx',
             logger=_logger,
             log_name='SofaSound',
             volume_range=(0.30, 0.50),

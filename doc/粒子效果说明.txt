@@ -1,12 +1,14 @@
-飞行雪绒粒子效果说明（LTS1.0.6beta2）
+飞行雪绒粒子效果说明（LTS1.0.6beta3）
 
 一、总体说明
 - 事件入口：`EventType.PARTICLE_REQUEST`
 - 渲染层：`lib/core/qt_particle_system.py`
 - 粒子脚本发现：`lib/script/practical/manager.py`
 - 自动扫描目录：`lib/script/practical/*_particle.py`
+- 更新机制：`tick` 推进真实状态，`frame` 仅负责插值绘制
+- 运行语义：practical 粒子已统一切到 `tick/秒` 语义，不再依赖运行时 `frame_fps`
 
-当前已注册粒子：16 个
+当前已注册粒子：18 个
 
 二、已注册粒子列表
 
@@ -74,6 +76,14 @@
 - 文件：`flicker_data_particle.py`
 - 作用：主宠移动与 AI 设置面板边缘闪烁特效
 
+17. `lahai_glow_burst`
+- 文件：`lahai_glow_burst_particle.py`
+- 作用：拉海洛方块中高亮块、关键命中等场景的发光漂移粒子
+
+18. `lahai_line_flash`
+- 文件：`lahai_line_flash_particle.py`
+- 作用：拉海洛方块消行时的横向爆散闪光粒子
+
 三、统一事件格式
 ```python
 Event(EventType.PARTICLE_REQUEST, {
@@ -92,3 +102,4 @@ Event(EventType.PARTICLE_REQUEST, {
 - 新增粒子后，必须同步更新本文档
 - 需要说明触发场景时，优先写“业务用途”而不是只写视觉形态
 - 若粒子数量发生变化，请同步更新 `doc/README.txt` 和 `README.md`
+- 若修改粒子时序，优先保持 `tick` 更新、`frame` 插值，不再回退到逐帧逻辑

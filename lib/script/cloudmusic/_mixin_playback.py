@@ -4,13 +4,16 @@ import threading
 import time
 import random
 import re
+import wave
 from pathlib import Path
 from urllib.parse import urlparse
 
 import requests
 
+from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import EventType, Event
 from lib.core.logger import get_logger
+from config.audio import get_effective_music_volume
 from config.config import TIMEOUTS
 from config.music import get_music_history
 from ._provider_clients import get_kugou_provider_client, get_qqmusic_provider_client
@@ -28,6 +31,52 @@ _DISPLAY_PREFIX_RE = re.compile(r"^(?:\d{2}:\d{2}|--:--)\s+(.*)$")
 
 class _PlaybackMixin:
     """播放控制、下载、进度跟踪与 pygame 集成。"""
+
+    def _read_duration_ms(self, target_path: Path) -> int:
+        try:
+            from mutagen import File as MutagenFile
+
+            audio = MutagenFile(str(target_path))
+            length = float(getattr(getattr(audio, "info", None), "length", 0.0) or 0.0)
+            if length > 0:
+                return int(length * 1000)
+        except Exception:
+            pass
+
+        if target_path.suffix.lower() == ".wav":
+            try:
+                with wave.open(str(target_path), "rb") as wav_file:
+                    frame_rate = int(wav_file.getframerate() or 0)
+                    frame_count = int(wav_file.getnframes() or 0)
+                if frame_rate > 0 and frame_count > 0:
+                    return int(frame_count * 1000 / frame_rate)
+            except Exception:
+                pass
+        return 0
+
+    def _cache_duration_probe_result(self, song_id, duration_ms: int) -> None:
+        if duration_ms <= 0:
+            return
+        self._duration_cache[song_id] = duration_ms
+        if self._queue and 0 <= self._current_index < len(self._queue):
+            current_song_id, _ = self._queue[self._current_index]
+            if current_song_id == song_id:
+                self._current_duration_ms = duration_ms
+
+    def _schedule_duration_probe(self, song_id, target_path: Path) -> None:
+        if song_id in self._duration_cache:
+            return
+
+        def _probe() -> None:
+            duration_ms = self._read_duration_ms(target_path)
+            if duration_ms > 0:
+                self._cache_duration_probe_result(song_id, duration_ms)
+
+        get_compute_hub().submit_latest(
+            f"cloudmusic_duration_{song_id}",
+            _probe,
+            executor="io",
+        )
 
     @staticmethod
     def _is_qq_track_ref(song_id) -> bool:
@@ -446,20 +495,20 @@ class _PlaybackMixin:
     # 帧事件与 seek 校对
     # ------------------------------------------------------------------
 
-    def _on_frame(self, event: Event):
-        """帧事件处理 - 生成音符粒子、校对 seek 偏移。
+    def _on_tick(self, event: Event):
+        """Tick 事件处理 - 生成音符粒子、校对 seek 偏移。
 
         进度发布已改为请求-响应模式：进度条每 20 tick 发送 MUSIC_PROGRESS_REQUEST，
         音乐中心通过 _on_progress_request 响应并返回进度百分比。
         """
         if self._is_playing and not self._is_paused:
             self._particle_timer += 1
-            # 按配置的帧间隔生成粒子
+            # 按 tick 间隔生成粒子，避免 frame 速率抖动影响事件节奏。
             if self._particle_timer >= _PARTICLE_INTERVAL:
                 self._particle_timer = 0
                 self._spawn_music_note_particles()
 
-            # 每 20 tick 在后台线程校对 seek 偏移
+            # 每 N tick 在后台线程校对 seek 偏移
             self._sync_timer += 1
             if self._sync_timer >= self._sync_interval:
                 self._sync_timer = 0
@@ -472,17 +521,13 @@ class _PlaybackMixin:
         """在后台线程中执行 seek 偏移校对，避免阻塞主线程。"""
         if not self._is_playing or self._is_paused:
             return
-        sync_lock = getattr(self, "_seek_sync_lock", None)
-        if sync_lock is None:
-            self._sync_seek_offset()
+        future = get_compute_hub().submit_latest(
+            "cloudmusic_seek_sync",
+            self._sync_seek_offset,
+            executor="io",
+        )
+        if future is None:
             return
-        if not sync_lock.acquire(blocking=False):
-            return
-        threading.Thread(
-            target=self._sync_seek_offset_worker,
-            daemon=True,
-            name="cm-seek-sync"
-        ).start()
 
     def _sync_seek_offset_worker(self):
         """后台线程入口：单飞执行 seek 偏移校对。"""
@@ -575,7 +620,7 @@ class _PlaybackMixin:
             logger.error("[CloudMusic] 进度请求处理失败: %s", e)
 
     def _get_current_duration(self) -> int:
-        """获取当前播放歌曲的总时长（毫秒），使用缓存避免重复加载。"""
+        """获取当前播放歌曲的总时长（毫秒），无缓存时后台探测。"""
         if not self._queue or not (0 <= self._current_index < len(self._queue)):
             return 0
 
@@ -593,15 +638,8 @@ class _PlaybackMixin:
             if not target_path:
                 return 0
 
-        try:
-            import pygame
-            sound = pygame.mixer.Sound(str(target_path))
-            duration_ms = int(sound.get_length() * 1000)
-            self._duration_cache[song_id] = duration_ms
-            self._current_duration_ms = duration_ms
-            return duration_ms
-        except Exception:
-            return 0
+        self._schedule_duration_probe(song_id, target_path)
+        return 0
 
     # ------------------------------------------------------------------
     # 粒子生成
@@ -627,21 +665,11 @@ class _PlaybackMixin:
 
         song_id, display = self._queue[self._current_index]
         logger.info("[CloudMusic] 准备播放: song_id=%s, display=%s", song_id, display)
-        if is_local_track_ref(song_id):
-            thread_suffix = "local"
-        elif self._is_qq_track_ref(song_id):
-            thread_suffix = f"qq-{self._qq_mid_from_track_ref(song_id) or 'unknown'}"
-        elif self._is_kugou_track_ref(song_id):
-            thread_suffix = f"kugou-{self._kugou_hash_from_track_ref(song_id) or 'unknown'}"
-        else:
-            thread_suffix = str(song_id)
-
-        threading.Thread(
-            target=self._play_current_worker,
-            args=(song_id, display),
-            daemon=True,
-            name=f"cm-play-{thread_suffix}"
-        ).start()
+        get_compute_hub().submit_io(
+            self._play_current_worker,
+            song_id,
+            display,
+        )
 
     def _play_current_worker(self, song_id, display: str):
         """后台线程：执行实际的播放逻辑。"""
@@ -669,7 +697,7 @@ class _PlaybackMixin:
 
     def _download_and_play(self, song_id, display: str):
         """下载歌曲并播放。"""
-        if self._download_thread is not None and self._download_thread.is_alive():
+        if self._download_thread is not None and not self._download_thread.done():
             self._download_cancel.set()
 
         # 每次下载使用独立取消令牌，避免复用同一个 Event 导致竞态。
@@ -678,13 +706,12 @@ class _PlaybackMixin:
 
         self._show_info(f"♪ 获取中: {display or song_id}")
 
-        self._download_thread = threading.Thread(
-            target=self._download_worker,
-            args=(song_id, display, cancel_event),
-            daemon=True,
-            name=f"cm-download-{song_id}"
+        self._download_thread = get_compute_hub().submit_io(
+            self._download_worker,
+            song_id,
+            display,
+            cancel_event,
         )
-        self._download_thread.start()
 
     def _download_worker(self, song_id, display: str, cancel_event: threading.Event):
         """后台下载线程。"""
@@ -1121,22 +1148,18 @@ class _PlaybackMixin:
             import pygame
 
             pygame.mixer.music.load(str(path))
-            pygame.mixer.music.set_volume(self._volume)
+            pygame.mixer.music.set_volume(get_effective_music_volume(self._volume))
             pygame.mixer.music.play()
 
             # 新歌曲开始，重置 seek 偏移
             self._seek_offset_ms      = 0
             self._last_seek_progress  = -1.0
+            self._current_duration_ms = 0
 
-            # 获取并缓存歌曲时长
-            try:
-                sound = pygame.mixer.Sound(str(path))
-                self._current_duration_ms = int(sound.get_length() * 1000)
-                if self._queue and 0 <= self._current_index < len(self._queue):
-                    song_id, _ = self._queue[self._current_index]
-                    self._duration_cache[song_id] = self._current_duration_ms
-            except Exception:
-                self._current_duration_ms = 0
+            # 时长探测改为后台执行，避免开始播放时阻塞主线程。
+            if self._queue and 0 <= self._current_index < len(self._queue):
+                song_id, _ = self._queue[self._current_index]
+                self._schedule_duration_probe(song_id, path)
 
             with self._state_lock:
                 if self._play_gen != gen:
@@ -1163,17 +1186,16 @@ class _PlaybackMixin:
                 else:
                     title = text
                     artist = ""
-                duration_for_history = self._current_duration_ms if self._current_duration_ms > 0 else None
+                duration_for_history = self._duration_cache.get(song_id)
                 history_provider = self._history_provider_for_song_id(song_id)
                 get_music_history(history_provider).add(song_id, title, artist, duration_for_history)
 
             # 启动播放监控线程
-            threading.Thread(
-                target=self._monitor_playback,
-                args=(display, gen),
-                daemon=True,
-                name="cm-monitor"
-            ).start()
+            get_compute_hub().submit_io(
+                self._monitor_playback,
+                display,
+                gen,
+            )
 
         except Exception as e:
             logger.error("[CloudMusic] 播放失败: %s", e)
@@ -1333,7 +1355,7 @@ class _PlaybackMixin:
         """播放下一首：停止当前播放，移除当前歌曲，播放队列中的下一首。"""
         logger.debug("[CloudMusic] 播放下一首")
 
-        if self._download_thread and self._download_thread.is_alive():
+        if self._download_thread and not self._download_thread.done():
             self._download_cancel.set()
 
         try:
@@ -1362,7 +1384,7 @@ class _PlaybackMixin:
         """停止当前播放（内部使用）。"""
         logger.debug("[CloudMusic] 停止播放")
 
-        if self._download_thread and self._download_thread.is_alive():
+        if self._download_thread and not self._download_thread.done():
             self._download_cancel.set()
 
         try:

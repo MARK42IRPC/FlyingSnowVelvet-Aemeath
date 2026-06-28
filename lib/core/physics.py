@@ -13,10 +13,12 @@
 
 from __future__ import annotations
 
+import math
 from typing import Callable, Optional
 
 from PyQt5.QtWidgets import QApplication
 
+from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import get_event_center, EventType, Event
 from config.config import PHYSICS
 from lib.core.logger import get_logger
@@ -27,6 +29,123 @@ _logger = get_logger(__name__)
 
 def _log(msg: str) -> None:
     _logger.debug("[PhysicsWorld] %s", msg)
+
+
+def _step_physics_batch(
+    snapshot: list[dict],
+    *,
+    gravity: float,
+    bounce_vy_retain: float,
+    bounce_vx_retain: float,
+    min_bounce_vy: float,
+    min_velocity: float,
+    screen_left: int,
+    screen_right: int,
+    screen_top: int,
+    screen_bottom: int,
+    substeps: int = 1,
+) -> list[dict]:
+    """后台批量步进物理体，返回主线程可应用的纯数据结果。"""
+    updates: list[dict] = []
+    substeps = max(1, int(substeps))
+
+    for item in snapshot:
+        x = float(item["x"])
+        y = float(item["y"])
+        vx = float(item["vx"])
+        vy = float(item["vy"])
+        ground_y = float(item["ground_y"])
+        width = int(item["width"])
+        height = int(item["height"])
+        max_bounces = int(item["max_bounces"])
+        bounce_count = int(item["bounce_count"])
+        gravity_enabled = bool(item["gravity_enabled"])
+        active = bool(item["active"])
+        body_bounce_vx_retain = item["bounce_vx_retain"]
+
+        if not active:
+            continue
+
+        wall_hit_side = None
+        ground_stopped = None
+
+        left_limit = screen_left
+        right_limit = screen_right - width
+        top_limit = screen_top
+        bottom_limit = screen_bottom - height
+
+        for _ in range(substeps):
+            if not active:
+                break
+
+            if gravity_enabled:
+                vy += gravity
+
+            x += vx
+            y += vy
+
+            if x <= left_limit:
+                x = float(left_limit)
+                vx = abs(vx)
+                wall_hit_side = "left"
+            elif x >= right_limit:
+                x = float(right_limit)
+                vx = -abs(vx)
+                wall_hit_side = "right"
+
+            if gravity_enabled and y >= ground_y:
+                y = ground_y
+                vy = -abs(vy) * bounce_vy_retain
+                retain = (
+                    float(body_bounce_vx_retain)
+                    if body_bounce_vx_retain is not None
+                    else bounce_vx_retain
+                )
+                vx *= retain
+                bounce_count += 1
+                stopped = abs(vy) < min_bounce_vy or bounce_count >= max_bounces
+                if stopped:
+                    vy = 0.0
+                    vx = 0.0
+                    active = False
+                ground_stopped = stopped
+
+            if not gravity_enabled:
+                if y <= top_limit:
+                    y = float(top_limit)
+                    vy = abs(vy)
+                    wall_hit_side = "top"
+                elif y >= bottom_limit:
+                    y = float(bottom_limit)
+                    vy = -abs(vy)
+                    wall_hit_side = "bottom"
+
+            if active:
+                speed = math.sqrt(vx * vx + vy * vy)
+                speed_factor = min(speed / 30.0, 1.0)
+                dynamic_resistance = 0.995 - (speed_factor * 0.035)
+                vx *= dynamic_resistance
+                vy *= dynamic_resistance
+
+                near_ground = (not gravity_enabled) or (y >= ground_y - 1.0)
+                if near_ground and speed < min_velocity:
+                    vx = 0.0
+                    vy = 0.0
+                    active = False
+
+        updates.append({
+            "body": item["body"],
+            "x": x,
+            "y": y,
+            "vx": vx,
+            "vy": vy,
+            "active": active,
+            "bounce_count": bounce_count,
+            "wall_hit_side": wall_hit_side,
+            "ground_stopped": ground_stopped,
+        })
+
+    return updates
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -63,6 +182,10 @@ class PhysicsBody:
         self.y: float = y
         self.vx: float = 0.0
         self.vy: float = 0.0
+        self.prev_x: float = x
+        self.prev_y: float = y
+        self.render_x: float = x
+        self.render_y: float = y
 
         self.ground_y: float = ground_y
         self.width: int = width
@@ -120,9 +243,11 @@ class PhysicsWorld:
     # 从配置文件读取空气阻力参数
     AIR_RESISTANCE: float   = PHYSICS.get('air_resistance', 0.995)  # 每帧保留速度比例
     MIN_VELOCITY: float     = PHYSICS.get('min_velocity', 0.1)      # 静止速度阈值
+    TICK_SUBSTEPS: int      = max(1, round(60 / 20))
 
     def __init__(self) -> None:
         self._bodies: list[PhysicsBody] = []
+        self._pending_future = None
 
         # 多屏环境使用虚拟桌面边界
         self._screen_left: int = 0
@@ -132,6 +257,7 @@ class PhysicsWorld:
         self._refresh_screen_bounds()
 
         self._event_center = get_event_center()
+        self._event_center.subscribe(EventType.TICK, self._on_tick)
         self._event_center.subscribe(EventType.FRAME, self._on_frame)
 
         _log("物理世界已初始化")
@@ -150,18 +276,115 @@ class PhysicsWorld:
 
     def cleanup(self) -> None:
         """注销事件订阅，清空所有物理体（通常在应用退出时调用）。"""
+        self._event_center.unsubscribe(EventType.TICK, self._on_tick)
         self._event_center.unsubscribe(EventType.FRAME, self._on_frame)
         self._bodies.clear()
         _log("物理世界已清理")
 
     # ── 帧更新 ────────────────────────────────────────────────────
 
-    def _on_frame(self, event: Event) -> None:
-        """FRAME 事件回调：遍历所有活跃物理体并执行步进。"""
+    def _on_tick(self, event: Event) -> None:
+        """TICK 事件回调：应用上一 tick 结果，并提交下一 tick 批量计算。"""
         self._refresh_screen_bounds()
+        self._apply_pending_updates()
+        self._submit_frame_job()
+
+    def _on_frame(self, event: Event) -> None:
+        """FRAME 事件回调：按 tick alpha 插值显示位置。"""
+        alpha = float((event.data or {}).get("tick_alpha", 1.0) or 0.0)
+        alpha = max(0.0, min(1.0, alpha))
         for body in list(self._bodies):
-            if body.active:
-                self._step(body)
+            if not body.active:
+                body.prev_x = body.x
+                body.prev_y = body.y
+                body.render_x = body.x
+                body.render_y = body.y
+                if body.on_position_change:
+                    body.on_position_change(body)
+                continue
+            body.render_x = body.prev_x + (body.x - body.prev_x) * alpha
+            body.render_y = body.prev_y + (body.y - body.prev_y) * alpha
+            if body.on_position_change:
+                body.on_position_change(body)
+
+    def _build_snapshot(self) -> list[dict]:
+        snapshot: list[dict] = []
+        for body in list(self._bodies):
+            if not body.active:
+                continue
+            snapshot.append({
+                "body": body,
+                "x": body.x,
+                "y": body.y,
+                "vx": body.vx,
+                "vy": body.vy,
+                "ground_y": body.ground_y,
+                "width": body.width,
+                "height": body.height,
+                "max_bounces": body.max_bounces,
+                "bounce_count": body.bounce_count,
+                "gravity_enabled": body.gravity_enabled,
+                "active": body.active,
+                "bounce_vx_retain": body.bounce_vx_retain,
+            })
+        return snapshot
+
+    def _submit_frame_job(self) -> None:
+        snapshot = self._build_snapshot()
+        if not snapshot:
+            return
+        future = get_compute_hub().submit_latest(
+            "physics_world_step",
+            _step_physics_batch,
+            snapshot,
+            gravity=self.GRAVITY,
+            bounce_vy_retain=self.BOUNCE_VY_RETAIN,
+            bounce_vx_retain=self.BOUNCE_VX_RETAIN,
+            min_bounce_vy=self.MIN_BOUNCE_VY,
+            min_velocity=self.MIN_VELOCITY,
+            screen_left=self._screen_left,
+            screen_right=self._screen_right,
+            screen_top=self._screen_top,
+            screen_bottom=self._screen_bottom,
+            substeps=self.TICK_SUBSTEPS,
+            executor="vector",
+        )
+        if future is not None:
+            self._pending_future = future
+
+    def _apply_pending_updates(self) -> None:
+        future = self._pending_future
+        if future is None or not future.done():
+            return
+        self._pending_future = None
+        try:
+            updates = future.result()
+        except Exception as exc:
+            _log(f"后台物理步进异常: {exc}")
+            return
+
+        for update in updates:
+            body: PhysicsBody = update["body"]
+            if body not in self._bodies:
+                continue
+            body.prev_x = body.x
+            body.prev_y = body.y
+            body.x = float(update["x"])
+            body.y = float(update["y"])
+            body.render_x = body.x
+            body.render_y = body.y
+            body.vx = float(update["vx"])
+            body.vy = float(update["vy"])
+            body.active = bool(update["active"])
+            body.bounce_count = int(update["bounce_count"])
+
+            side = update.get("wall_hit_side")
+            if side and body.on_wall_hit:
+                body.on_wall_hit(body, side)
+
+            ground_stopped = update.get("ground_stopped")
+            if ground_stopped is not None and body.on_ground_bounce:
+                body.on_ground_bounce(body, bool(ground_stopped))
 
     def _refresh_screen_bounds(self) -> None:
         """刷新当前虚拟桌面边界。"""
@@ -170,97 +393,6 @@ class PhysicsWorld:
         self._screen_top = geom.y()
         self._screen_right = geom.x() + geom.width()
         self._screen_bottom = geom.y() + geom.height()
-
-    def _step(self, body: PhysicsBody) -> None:
-        """单物理体一帧步进（顺序：重力 → 移动 → 边界碰撞 → 地面碰撞 → 空气阻力 → 通知）。"""
-
-        # 1. 施加重力（仅在重力开启时）
-        if body.gravity_enabled:
-            body.vy += self.GRAVITY
-
-        # 2. 移动
-        body.x += body.vx
-        body.y += body.vy
-
-        # 3. 左/右屏幕边界碰撞
-        left_limit  = self._screen_left
-        right_limit = self._screen_right - body.width  # 右边界以窗口左上角为准
-
-        if body.x <= left_limit:
-            body.x  = float(left_limit)
-            body.vx = abs(body.vx)        # 反转为正方向（向右）
-            if body.on_wall_hit:
-                body.on_wall_hit(body, 'left')
-        elif body.x >= right_limit:
-            body.x  = float(right_limit)
-            body.vx = -abs(body.vx)       # 反转为负方向（向左）
-            if body.on_wall_hit:
-                body.on_wall_hit(body, 'right')
-
-        # 4. 地面碰撞（仅在重力开启时处理）
-        if body.gravity_enabled and body.y >= body.ground_y:
-            body.y   = body.ground_y
-            body.vy  = -abs(body.vy) * self.BOUNCE_VY_RETAIN   # 垂直反弹（弹性衰减）
-            # 水平摩擦：优先使用 per-body 覆盖值，无则使用世界常数
-            vx_retain = body.bounce_vx_retain if body.bounce_vx_retain is not None else self.BOUNCE_VX_RETAIN
-            body.vx *= vx_retain
-            body.bounce_count += 1
-
-            # 弹力不足 或 已达最大弹跳次数 → 停止
-            stopped = (
-                abs(body.vy) < self.MIN_BOUNCE_VY
-                or body.bounce_count >= body.max_bounces
-            )
-            if stopped:
-                body.vy     = 0.0
-                body.vx     = 0.0
-                body.active = False
-
-            if body.on_ground_bounce:
-                body.on_ground_bounce(body, stopped)
-
-        # 5. 上下边界碰撞（仅在重力关闭时处理）
-        if not body.gravity_enabled:
-            top_limit    = self._screen_top
-            bottom_limit = self._screen_bottom - body.height  # 下边界以窗口左上角为准
-
-            if body.y <= top_limit:
-                body.y  = float(top_limit)
-                body.vy = abs(body.vy)        # 反转为正方向（向下）
-                if body.on_wall_hit:
-                    body.on_wall_hit(body, 'top')
-            elif body.y >= bottom_limit:
-                body.y  = float(bottom_limit)
-                body.vy = -abs(body.vy)       # 反转为负方向（向上）
-                if body.on_wall_hit:
-                    body.on_wall_hit(body, 'bottom')
-
-        # 6. 空气阻力（每帧衰减速度，仅在物理体仍活跃时）
-        # 速度越快，阻力越大：resistance = 0.995 - (speed_factor * 0.035)
-        # speed_factor 归一化到 [0, 1]，最终 resistance ∈ [0.96, 0.995]
-        if body.active:
-            speed = (body.vx ** 2 + body.vy ** 2) ** 0.5
-            # 以速度 30 为基准进行归一化（速度 >= 30 时阻力最大）
-            speed_factor = min(speed / 30.0, 1.0)
-            # 计算动态阻力系数：速度越快越接近 0.96，速度越慢越接近 0.995
-            dynamic_resistance = 0.995 - (speed_factor * 0.035)
-
-            body.vx *= dynamic_resistance
-            body.vy *= dynamic_resistance
-
-            # 7. 静止检测（空气阻力将速度耗尽至极低时停止）
-            # 重力开启时仅在贴近地面（y >= ground_y - 1.0）时判定，
-            # 避免弹跳最高点速度趋近零时被误判为静止而悬停在空中
-            near_ground = (not body.gravity_enabled) or (body.y >= body.ground_y - 1.0)
-            if near_ground and speed < self.MIN_VELOCITY:
-                body.vx     = 0.0
-                body.vy     = 0.0
-                body.active = False
-
-        # 8. 位置变化通知
-        if body.on_position_change:
-            body.on_position_change(body)
-
 
 # ══════════════════════════════════════════════════════════════════════
 # 全局单例

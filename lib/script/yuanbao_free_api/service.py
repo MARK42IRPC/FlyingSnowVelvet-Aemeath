@@ -11,6 +11,7 @@ import sys
 import threading
 import time
 import zipfile
+from concurrent.futures import Future
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 from urllib.parse import urlparse
@@ -18,6 +19,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 import config.ollama_config as oc
+from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import Event, EventType, get_event_center
 from lib.core.logger import get_logger
 
@@ -403,7 +405,7 @@ class YuanbaoFreeApiService:
         self._proc_lock = threading.RLock()
         self._login_monitor_lock = threading.RLock()
         self._process: Optional[subprocess.Popen] = None
-        self._login_monitor_thread: Optional[threading.Thread] = None
+        self._login_monitor_thread: Optional[Future] = None
         self._started_by_app = False
         self._ec.subscribe(EventType.APP_PRE_START, self._on_app_pre_start)
 
@@ -445,17 +447,18 @@ class YuanbaoFreeApiService:
 
     def _start_login_monitor(self, host: str, port: int) -> None:
         with self._login_monitor_lock:
-            thread = self._login_monitor_thread
-            if thread is not None and thread.is_alive():
+            future = self._login_monitor_thread
+            if future is not None and not future.done():
                 return
-            thread = threading.Thread(
-                target=self._run_login_monitor,
-                args=(host, port),
-                daemon=True,
-                name='yuanbao-login-monitor',
+            future = get_compute_hub().submit_latest(
+                "yuanbao_login_monitor",
+                self._run_login_monitor,
+                host,
+                port,
+                executor="io",
             )
-            self._login_monitor_thread = thread
-            thread.start()
+            if future is not None:
+                self._login_monitor_thread = future
 
     def _run_login_monitor(self, host: str, port: int) -> None:
         deadline = time.monotonic() + _LOGIN_MONITOR_SECS
@@ -473,9 +476,7 @@ class YuanbaoFreeApiService:
                 time.sleep(_POLL_INTERVAL_SECS)
         finally:
             with self._login_monitor_lock:
-                current = threading.current_thread()
-                if self._login_monitor_thread is current:
-                    self._login_monitor_thread = None
+                self._login_monitor_thread = None
         if last_status is not None:
             self._publish_login_dialog_status(last_status)
 
@@ -623,14 +624,24 @@ class YuanbaoFreeApiService:
         if state == 'ok' and status is not None:
             logger.info('[YuanbaoFreeApiService] 检测到元宝服务已在运行: %s:%s status=%s', host, port, status)
             return status, host, port
+        if state != 'offline':
+            logger.warning(
+                '[YuanbaoFreeApiService] %s:%s 已被其他服务占用或响应异常（state=%s），准备切换元宝本地中转端口',
+                host,
+                port,
+                state,
+            )
         if state == 'missing':
-            logger.warning('[YuanbaoFreeApiService] %s:%s 存在旧版或错误服务，占用了端口但缺少 %s', host, port, _STATUS_ENDPOINT)
             if self._terminate_conflicting_listener(host, port):
                 time.sleep(1.0)
             else:
                 switched = self._switch_to_random_local_port(host, port)
                 if switched is not None:
                     host, port = switched
+        elif state != 'offline':
+            switched = self._switch_to_random_local_port(host, port)
+            if switched is not None:
+                host, port = switched
         if not self._start_service_process(host, port):
             return None, host, port
         return self._wait_for_status_endpoint(host, port), host, port

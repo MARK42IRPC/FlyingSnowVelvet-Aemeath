@@ -1,48 +1,44 @@
-飞行雪绒 LTS1.0.6beta2 更新日志
+飞行雪绒 LTS1.0.6beta3 更新日志
 ==========================
 
-版本发布日期：2026-06-27
-本条目按 `2026-06-12` 至 `2026-06-27` 最近一轮推送整理，覆盖 `beta1` 之后的主要更新。
+版本发布日期：2026-06-28
+本条目按 `2026-06-28` 当前一轮系统收敛整理，覆盖 `beta2` 之后的主要更新。
 
 一、本次更新重点
 ----------------
-1. 启动/退出序列帧动画模块重构。
-   - `SEanima` 拆分为动画定义、帧解码、特效处理三层。
-   - 设置面板新增启动/退出动画目录下拉框，可直接选择 `resc/GIF` 下的 `*_anima` 文件夹。
-   - 默认启动动画为 `耶比_anima`，默认退出动画为 `爱弥斯联合_anima`。
+1. 音频链路统一收敛。
+   - 语音、特效音等统一走类型化播放事件。
+   - 音频核心按“主音量 * 类型音量”结算。
+   - 音乐保留独立链路，按“主音量 * 音乐音量”处理。
 
-2. 动画资源目录规范化。
-   - 原 `start-anim-compressed`、`exit-anim-compressed` 已迁移到 `*_anima` 命名。
-   - 播放器内部保留兼容回退，不改变外部启动/退出动画触发方式。
+2. 主宠移动逻辑改为事件驱动队列。
+   - 漫游、沙发锁定、音响靠近、雪豹追踪统一改为移动步骤入队。
+   - 支持按事件完成、取消、超时回收移动流程。
+   - 默认移速曲线同步提高，移动感恢复到重构前预期。
 
-3. 外部 API 配置进一步脱敏。
-   - `API Key`、`API_BASE_URL`、`API_MODEL` 全部改为写入 `resc/user/ai/ollama_secrets.json`。
-   - `config/ollama_config.py` 不再保留这三项的明文用户值，降低误提交风险。
+3. 物理 / 粒子 / 渲染正式切到 tick 驱动。
+   - `TimingManager` 统一发布 `TICK` 与 `FRAME`。
+   - 物理和粒子只在 `tick` 推进真实状态。
+   - `frame` 只负责插值显示，减少不同帧率下的逻辑失真。
 
-4. 安装器与本地配置保留逻辑继续修正。
-   - Windows 下 Python 探测与调用链路进一步稳定。
-   - 安装/修复流程更注意保留已有本地 AI secrets，减少重装后配置丢失。
+4. 粒子系统做了整轮修复与重写。
+   - practical 粒子脚本统一改为明确的 `tick/秒` 语义。
+   - 修复粒子高并发时丢事件、层级被遮挡、整数取整抖动、异步回填回弹等问题。
+   - 左右键点击桌宠粒子与 UI 粒子链路重新梳理，并按实际用途拆开调参。
 
-5. 本地默认内容继续调整。
-   - 同步更新部分默认配置和人格文本，使新装环境更贴近当前版本预期。
+5. 主线程卡顿继续搬运。
+   - 多类重计算改为后台执行。
+   - 若干下载 / HTTP / 音乐准备请求从主线程迁出。
+   - 中低并发下的粒子更新默认改为主线程逐 tick 连续推进，避免视觉跳 tick。
+
+6. 拉海洛方块增加桌宠避让。
+   - 默认随机漫游若会停在游戏主区域中间三分之一，则直接跳过。
+   - 若当前到目标的移动轨迹会横穿核心下落区，也会一并拦截。
 
 二、兼容与发布说明
 ------------------
-1. 当前版本号：`LTS1.0.6beta2`
-2. 绿色包已生成：
-   - `dist/FlyingSnowVelvet-LTS1.0.6beta2-green.zip`
-   - `dist/FlyingSnowVelvet-LTS1.0.6beta2-green-manifest.json`
-3. 本次更新补充了回归测试：
-   - `tests/test_exit_animation_shadow_config.py`
-   - `tests/test_ai_settings_storage_local_secrets.py`
-   - `tests/test_ollama_config_shared_secret_fallback.py`
-   - `tests/test_seanima_clip_config.py`
-
-三、最近一周推送记录
---------------------
-1. `2026-06-12` `752344c` `feat: refine exit animation shadow and shutdown cleanup`
-2. `2026-06-12` `20c2971` `Use system browsers for Yuanbao auth`
-3. `2026-06-12` `200ced6` `Move AI secrets into user storage`
-4. `2026-06-27` `25a6da3` `Update local defaults and persona settings`
-5. `2026-06-27` `d91ef63` `Fix installer python detection and preserve local AI secrets`
-6. `2026-06-27` `e4f3fd4` `feat: refactor SEanima clip config and folder selection`
+1. 当前版本号：`LTS1.0.6beta3`
+2. 当前版本主要是结构性收敛版本：
+   - 重点在系统链路统一、时序修正、性能与视觉稳定性
+   - 不以新增大功能为主，而是为后续继续扩展做底层清理
+3. practical 粒子说明与时序语义已同步重写到仓库自述与 changelog。
