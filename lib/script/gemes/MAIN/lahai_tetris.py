@@ -8,11 +8,15 @@
 
 from __future__ import annotations
 
+import math
 import random
+import time
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from pathlib import Path
 
 from PyQt5.QtCore import QEasingCurve, QPoint, Qt, QRectF, QTimer, QVariantAnimation
-from PyQt5.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPen, QRadialGradient
+from PyQt5.QtGui import QBrush, QColor, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap, QRadialGradient
 from PyQt5.QtWidgets import QWidget
 
 from config.font_config import get_digit_font, get_ui_font
@@ -32,6 +36,15 @@ _BOARD_W = 10
 _BOARD_H = 20
 _PREVIEW_GRID = 4
 _AMS_RECORD_SCORE = 915800
+_WARNING_LINE_ROW = 6
+_WARNING_LINE_DEFAULT_HZ = 0.2
+_WARNING_LINE_FLASH_HZ = 1.0
+_WARNING_LINE_FLASH_STACK_HEIGHT = 10
+_STARLIGHT_SKILL_SLOT = 1
+_STARLIGHT_COOLDOWN_SECS = 90.0
+_STARLIGHT_CLEAR_ROWS = 3
+_GRAVITY_SKILL_SLOT = 2
+_GRAVITY_COOLDOWN_SECS = 120.0
 
 _SHAPES: dict[str, list[tuple[int, int]]] = {
     "A": [(-1, 0), (0, 0), (1, 0), (2, 0)],       # I
@@ -68,6 +81,165 @@ class Piece:
         return [(self.x + px, self.y + py) for px, py in points]
 
 
+class LahaiPieceRandomizer:
+    """Weighted piece randomizer with short-term memory."""
+
+    def __init__(
+        self,
+        kinds: list[str] | tuple[str, ...],
+        rng: random.Random | None = None,
+        *,
+        reset_interval: int = 14,
+        initial_weight: float = 1.0,
+        selected_delta: float = -0.2,
+        other_delta: float = 0.05,
+        min_weight: float = 0.0,
+    ) -> None:
+        self._kinds = [str(kind) for kind in kinds]
+        if not self._kinds:
+            raise ValueError("kinds must not be empty")
+        self._rng = rng or random.Random()
+        self._reset_interval = max(1, int(reset_interval))
+        self._initial_weight = max(0.0, float(initial_weight))
+        self._selected_delta = float(selected_delta)
+        self._other_delta = float(other_delta)
+        self._min_weight = max(0.0, float(min_weight))
+        self._generated_count = 0
+        self._weights: dict[str, float] = {}
+        self.reset()
+
+    def reset(self) -> None:
+        self._weights = {kind: self._initial_weight for kind in self._kinds}
+        self._generated_count = 0
+
+    def next_kind(self) -> str:
+        if self._generated_count > 0 and self._generated_count % self._reset_interval == 0:
+            self.reset()
+        selected = self._weighted_choice()
+        self._generated_count += 1
+        self._apply_selection(selected)
+        return selected
+
+    def weights_snapshot(self) -> dict[str, float]:
+        return dict(self._weights)
+
+    @property
+    def generated_count(self) -> int:
+        return self._generated_count
+
+    def _weighted_choice(self) -> str:
+        total = sum(max(0.0, self._weights.get(kind, 0.0)) for kind in self._kinds)
+        if total <= 0:
+            return self._rng.choice(self._kinds)
+        needle = self._rng.random() * total
+        cumulative = 0.0
+        for kind in self._kinds:
+            cumulative += max(0.0, self._weights.get(kind, 0.0))
+            if needle < cumulative:
+                return kind
+        return self._kinds[-1]
+
+    def _apply_selection(self, selected: str) -> None:
+        for kind in self._kinds:
+            delta = self._selected_delta if kind == selected else self._other_delta
+            self._weights[kind] = max(self._min_weight, self._weights.get(kind, self._initial_weight) + delta)
+
+
+class LahaiSkillSlot(ABC):
+    """Base class for Lahai Tetris skill slots."""
+
+    def __init__(
+        self,
+        slot_index: int,
+        *,
+        name: str = "",
+        avatar_filename: str | None = None,
+        cooldown_secs: float = 0.0,
+    ) -> None:
+        self.slot_index = int(slot_index)
+        self.name = str(name or "")
+        self.avatar_filename = avatar_filename
+        self.cooldown_secs = max(0.0, float(cooldown_secs))
+        self.cooldown_until = 0.0
+        self.avatar = QPixmap()
+
+    def load_assets(self, owner: "LahaiTetrisWidget") -> None:
+        if self.avatar_filename:
+            self.avatar = owner._load_skill_avatar(self.avatar_filename)
+
+    def reset(self) -> None:
+        self.cooldown_until = 0.0
+
+    def cooldown_remaining(self) -> float:
+        return max(0.0, self.cooldown_until - time.monotonic())
+
+    def trigger(self, owner: "LahaiTetrisWidget") -> bool:
+        if not self.can_trigger(owner):
+            return False
+        if not self.apply(owner):
+            return False
+        self.cooldown_until = time.monotonic() + self.cooldown_secs
+        owner.update()
+        return True
+
+    def can_trigger(self, owner: "LahaiTetrisWidget") -> bool:
+        return not owner._game_over and not owner._awaiting_start and not owner._paused and self.cooldown_remaining() <= 0.0
+
+    @abstractmethod
+    def apply(self, owner: "LahaiTetrisWidget") -> bool:
+        raise NotImplementedError
+
+
+class StarlightSkillSlot(LahaiSkillSlot):
+    def __init__(self) -> None:
+        super().__init__(
+            _STARLIGHT_SKILL_SLOT,
+            name="星辉",
+            avatar_filename="爱弥斯.png",
+            cooldown_secs=_STARLIGHT_COOLDOWN_SECS,
+        )
+
+    def apply(self, owner: "LahaiTetrisWidget") -> bool:
+        candidate_rows = [idx for idx, row in enumerate(owner._board) if any(cell is not None for cell in row)]
+        if not candidate_rows:
+            return False
+        clear_count = min(_STARLIGHT_CLEAR_ROWS, len(candidate_rows))
+        cleared_rows = sorted(owner._rng.sample(candidate_rows, clear_count))
+        if not owner._clear_board_rows(cleared_rows):
+            return False
+        owner._start_board_shake(force=8.0)
+        return True
+
+
+class GravitySkillSlot(LahaiSkillSlot):
+    def __init__(self) -> None:
+        super().__init__(
+            _GRAVITY_SKILL_SLOT,
+            name="重力",
+            avatar_filename="达妮娅.png",
+            cooldown_secs=_GRAVITY_COOLDOWN_SECS,
+        )
+
+    def apply(self, owner: "LahaiTetrisWidget") -> bool:
+        if not any(any(cell is not None for cell in row) for row in owner._board):
+            return False
+        changed = owner._apply_board_gravity()
+        cleared_rows = [idx for idx, row in enumerate(owner._board) if all(cell is not None for cell in row)]
+        cleared = owner._clear_board_rows(cleared_rows) if cleared_rows else False
+        if not changed and not cleared:
+            return False
+        owner._start_board_shake(force=7.0)
+        return True
+
+
+class EmptySkillSlot(LahaiSkillSlot):
+    def __init__(self, slot_index: int) -> None:
+        super().__init__(slot_index)
+
+    def apply(self, owner: "LahaiTetrisWidget") -> bool:
+        return False
+
+
 class LahaiTetrisWidget(QWidget):
     """拉海洛方块游戏部件。"""
 
@@ -102,11 +274,15 @@ class LahaiTetrisWidget(QWidget):
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
+        self._warning_pulse_timer = QTimer(self)
+        self._warning_pulse_timer.setInterval(50)
+        self._warning_pulse_timer.timeout.connect(self.update)
 
         self._board: list[list[str | None]] = []
         self._current: Piece | None = None
         self._next_piece: Piece | None = None
         self._rng = random.Random()
+        self._piece_randomizer = LahaiPieceRandomizer(tuple(_SHAPES.keys()), self._rng)
         self._score = 0
         self._lines = 0
         self._level = 1
@@ -122,8 +298,19 @@ class LahaiTetrisWidget(QWidget):
         self._preview_rect = QRectF()
         self._help_rect = QRectF()
         self._stat_cards: list[tuple[str, QRectF]] = []
+        self._skill_slots: list[tuple[int, QRectF]] = []
         self._pause_rect = QRectF()
         self._exit_rect = QRectF()
+        self._skills: dict[int, LahaiSkillSlot] = {
+            _STARLIGHT_SKILL_SLOT: StarlightSkillSlot(),
+            _GRAVITY_SKILL_SLOT: GravitySkillSlot(),
+            3: EmptySkillSlot(3),
+            4: EmptySkillSlot(4),
+            5: EmptySkillSlot(5),
+            6: EmptySkillSlot(6),
+        }
+        for skill in self._skills.values():
+            skill.load_assets(self)
         self._anim_from_cells: list[tuple[float, float]] = []
         self._anim_to_cells: list[tuple[float, float]] = []
         self._anim_progress = 1.0
@@ -153,7 +340,7 @@ class LahaiTetrisWidget(QWidget):
         self._update_layout_metrics()
 
         self._piece_anim = QVariantAnimation(self)
-        self._piece_anim.setDuration(200)
+        self._piece_anim.setDuration(self._piece_animation_duration_ms())
         self._piece_anim.setStartValue(0.0)
         self._piece_anim.setEndValue(1.0)
         self._piece_anim.setEasingCurve(QEasingCurve.InOutCubic)
@@ -215,16 +402,21 @@ class LahaiTetrisWidget(QWidget):
         self._combo_over_five_triggered = False
         self._record_broken_triggered = False
         self._game_over_voice_triggered = False
+        for skill in self._skills.values():
+            skill.reset()
+        self._piece_randomizer.reset()
         self._next_piece = self._make_piece()
         self._spawn_piece()
         if start_running:
             self._timer.start(self._fall_interval_ms())
         else:
             self._timer.stop()
+        self._warning_pulse_timer.start()
         self.update()
 
     def deactivate(self) -> None:
         self._timer.stop()
+        self._warning_pulse_timer.stop()
         self._pending_lock_timer.stop()
         self._piece_anim.stop()
         self._settled_anim.stop()
@@ -246,11 +438,12 @@ class LahaiTetrisWidget(QWidget):
             return
         self._awaiting_start = False
         self._paused = False
+        self._warning_pulse_timer.start()
         self._timer.start(self._fall_interval_ms())
         self.update()
 
     def _make_piece(self) -> Piece:
-        return Piece(self._rng.choice(list(_SHAPES.keys())))
+        return Piece(self._piece_randomizer.next_kind())
 
     def _spawn_piece(self) -> None:
         new_piece = self._next_piece or self._make_piece()
@@ -335,10 +528,16 @@ class LahaiTetrisWidget(QWidget):
         self._anim_from_cells = [(float(x), float(y)) for x, y in from_cells]
         self._anim_to_cells = [(float(x), float(y)) for x, y in to_cells]
         self._anim_progress = 0.0
-        self._piece_anim.setDuration(200 if duration_ms is None else max(1, int(duration_ms)))
+        self._piece_anim.setDuration(self._piece_animation_duration_ms() if duration_ms is None else max(1, int(duration_ms)))
         self._piece_anim.setEasingCurve(QEasingCurve.InOutCubic if easing_curve is None else easing_curve)
         self._piece_anim.start()
         self.update()
+
+    def _piece_animation_duration_ms(self) -> int:
+        """当前方块缓动时长：0.2 - 0.015 * 等级 秒，最小 0.05 秒。"""
+        level = max(1, int(self._level or 1))
+        duration_secs = max(0.05, 0.2 - 0.015 * level)
+        return max(1, int(round(duration_secs * 1000)))
 
     def _on_piece_anim_value_changed(self, value) -> None:
         self._anim_progress = float(value)
@@ -428,7 +627,7 @@ class LahaiTetrisWidget(QWidget):
             probe = next_probe
             distance += 1
         if distance:
-            duration_ms = max(70, min(180, distance * 16))
+            duration_ms = self._piece_animation_duration_ms()
             self._set_current_piece(
                 probe,
                 animated=True,
@@ -475,19 +674,26 @@ class LahaiTetrisWidget(QWidget):
         self.update()
 
     def _clear_lines(self) -> None:
-        original_board = [list(row) for row in self._board]
         cleared_rows = [idx for idx, row in enumerate(self._board) if all(cell is not None for cell in row)]
-        kept_rows = [row for row in self._board if any(cell is None for cell in row)]
-        cleared = len(cleared_rows)
+        self._clear_board_rows(cleared_rows, reset_combo_on_empty=True)
+
+    def _clear_board_rows(self, cleared_rows: list[int], *, reset_combo_on_empty: bool = False) -> bool:
+        normalized_rows = sorted({row for row in cleared_rows if 0 <= row < _BOARD_H})
+        cleared = len(normalized_rows)
         if not cleared:
+            if not reset_combo_on_empty:
+                return False
             self._combo = 0
             self._combo_over_five_triggered = False
-            return
-        self._emit_line_clear_particles(cleared_rows)
+            return False
+        original_board = [list(row) for row in self._board]
+        cleared_set = set(normalized_rows)
+        kept_rows = [row for idx, row in enumerate(self._board) if idx not in cleared_set]
+        self._emit_line_clear_particles(normalized_rows)
         for _ in range(cleared):
             kept_rows.insert(0, [None for _ in range(_BOARD_W)])
         self._board = kept_rows
-        self._prepare_settled_fall_animation(original_board, cleared_rows)
+        self._prepare_settled_fall_animation(original_board, normalized_rows)
         self._lines += cleared
         self._combo += cleared
         self._add_score({1: 100, 2: 260, 3: 420, 4: 700}.get(cleared, cleared * 200))
@@ -501,6 +707,7 @@ class LahaiTetrisWidget(QWidget):
         if self._level > previous_level:
             self._level_up_sound.play()
         self._sfx.play_clear()
+        return True
 
     def _play_game_over_voice(self) -> None:
         if self._game_over_voice_triggered:
@@ -587,6 +794,19 @@ class LahaiTetrisWidget(QWidget):
         self._pause_rect = QRectF(card_x, mini_y, mini_w, mini_h)
         self._exit_rect = QRectF(card_x + mini_w + mini_gap, mini_y, mini_w, mini_h)
 
+        slot_gap = float(max(4, self._block_size * 0.18))
+        slot_top_margin = max(float(scale_px(4, min_abs=1)), card_gap * 0.2)
+        slot_side = (card_w - slot_gap * 2.0) / 3.0
+        slot_y = y + slot_top_margin
+        self._skill_slots = []
+        for row in range(2):
+            for col in range(3):
+                index = row * 3 + col + 1
+                self._skill_slots.append((
+                    index,
+                    QRectF(card_x + col * (slot_side + slot_gap), slot_y + row * (slot_side + slot_gap), slot_side, slot_side),
+                ))
+
     def keyPressEvent(self, event) -> None:
         key = event.key()
         if self._awaiting_start:
@@ -619,10 +839,34 @@ class LahaiTetrisWidget(QWidget):
             self._toggle_pause()
         elif key == Qt.Key_R:
             self.reset_game()
+        elif Qt.Key_1 <= key <= Qt.Key_6:
+            self._trigger_skill_slot(key - Qt.Key_1 + 1)
         else:
             super().keyPressEvent(event)
             return
         event.accept()
+
+    def _trigger_skill_slot(self, slot_index: int) -> None:
+        skill = self._skills.get(slot_index)
+        if skill is not None:
+            skill.trigger(self)
+
+    def _apply_board_gravity(self) -> bool:
+        original_board = [list(row) for row in self._board]
+        new_board = [[None for _ in range(_BOARD_W)] for _ in range(_BOARD_H)]
+        for col in range(_BOARD_W):
+            write_row = _BOARD_H - 1
+            for row in range(_BOARD_H - 1, -1, -1):
+                cell = self._board[row][col]
+                if cell is None:
+                    continue
+                new_board[write_row][col] = cell
+                write_row -= 1
+        if new_board == self._board:
+            return False
+        self._board = new_board
+        self._prepare_gravity_fall_animation(original_board, new_board)
+        return True
 
     def keyReleaseEvent(self, event) -> None:
         if event.key() == Qt.Key_Down and self._soft_drop:
@@ -752,6 +996,140 @@ class LahaiTetrisWidget(QWidget):
                 size=block,
             )
 
+    def _draw_warning_line(self, painter: QPainter, inner: QRectF) -> None:
+        warning_row = _WARNING_LINE_ROW
+        if warning_row <= 0 or warning_row >= _BOARD_H:
+            return
+        frequency_hz = (
+            _WARNING_LINE_FLASH_HZ
+            if self._settled_stack_height() > _WARNING_LINE_FLASH_STACK_HEIGHT
+            else _WARNING_LINE_DEFAULT_HZ
+        )
+        pulse = (math.sin(time.monotonic() * math.tau * frequency_hz) + 1.0) * 0.5
+        alpha_scale = 0.30 + pulse * 0.70
+        y = inner.y() + warning_row * self._block_size
+        glow_h = max(6.0, self._block_size * 0.45)
+        glow_rect = QRectF(inner.x(), y - glow_h * 0.5, inner.width(), glow_h)
+        gradient = QLinearGradient(glow_rect.left(), glow_rect.top(), glow_rect.left(), glow_rect.bottom())
+        edge = QColor(255, 102, 112, 0)
+        mid = QColor(255, 118, 128, int(92 * alpha_scale))
+        core = QColor(255, 186, 190, int(168 * alpha_scale))
+        gradient.setColorAt(0.0, edge)
+        gradient.setColorAt(0.42, mid)
+        gradient.setColorAt(0.5, core)
+        gradient.setColorAt(0.58, mid)
+        gradient.setColorAt(1.0, edge)
+        painter.setPen(Qt.NoPen)
+        painter.fillRect(glow_rect, QBrush(gradient))
+        painter.setPen(QPen(QColor(255, 216, 218, int(145 * alpha_scale)), max(1, scale_px(1, min_abs=1))))
+        painter.drawLine(int(inner.left()), int(round(y)), int(inner.right()), int(round(y)))
+
+    def _settled_stack_height(self) -> int:
+        for row_index, row in enumerate(self._board):
+            if any(cell is not None for cell in row):
+                return _BOARD_H - row_index
+        return 0
+
+    def _draw_skill_slots(self, painter: QPainter) -> None:
+        if not self._skill_slots:
+            return
+        for index, rect in self._skill_slots:
+            painter.save()
+            self._draw_round_panel(painter, rect, QColor(63, 72, 158, 118))
+            skill = self._skills.get(index)
+            if skill is not None and skill.avatar_filename:
+                self._draw_avatar_skill_slot(
+                    painter,
+                    rect,
+                    index,
+                    skill.avatar,
+                    skill.cooldown_remaining(),
+                )
+                painter.restore()
+                continue
+            slot_inner = rect.adjusted(rect.width() * 0.08, rect.height() * 0.14, -rect.width() * 0.08, -rect.height() * 0.14)
+            glow = QLinearGradient(slot_inner.left(), slot_inner.top(), slot_inner.right(), slot_inner.bottom())
+            glow.setColorAt(0.0, QColor(255, 255, 255, 28))
+            glow.setColorAt(1.0, QColor(91, 219, 255, 34))
+            painter.setPen(Qt.NoPen)
+            painter.fillRect(slot_inner, QBrush(glow))
+            painter.setFont(self._digit_font)
+            painter.setPen(QColor(219, 245, 255, 220))
+            painter.drawText(rect, Qt.AlignCenter, str(index))
+            painter.restore()
+
+    def _draw_avatar_skill_slot(
+        self,
+        painter: QPainter,
+        rect: QRectF,
+        index: int,
+        avatar: QPixmap,
+        remaining: float,
+    ) -> None:
+        painter.save()
+        avatar_size = rect.width() * 0.68
+        avatar_rect = QRectF(
+            rect.center().x() - avatar_size * 0.5,
+            rect.y() + rect.height() * 0.16,
+            avatar_size,
+            avatar_size,
+        )
+        self._draw_skill_avatar(painter, avatar_rect, avatar, disabled=remaining > 0.0)
+
+        key_rect = QRectF(rect.x(), rect.bottom() - rect.height() * 0.34, rect.width(), rect.height() * 0.30)
+        key_font = get_digit_font(max(9, int(self._block_size * 0.60)))
+        painter.setFont(key_font)
+        painter.setPen(QColor(232, 247, 255, 232))
+        painter.drawText(key_rect, Qt.AlignHCenter | Qt.AlignVCenter, str(index))
+
+        if remaining <= 0.0:
+            painter.restore()
+            return
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(16, 17, 28, 150))
+        painter.drawRoundedRect(rect.adjusted(3, 3, -3, -3), max(4.0, rect.width() * 0.16), max(4.0, rect.width() * 0.16))
+        painter.setFont(get_digit_font(max(10, int(self._block_size * 0.62))))
+        painter.setPen(QColor(246, 246, 248, 236))
+        painter.drawText(rect, Qt.AlignCenter, str(int(math.ceil(remaining))))
+        painter.restore()
+
+    def _draw_skill_avatar(self, painter: QPainter, rect: QRectF, avatar: QPixmap, *, disabled: bool = False) -> None:
+        path = QPainterPath()
+        path.addEllipse(rect)
+        painter.save()
+        painter.setClipPath(path)
+        if not avatar.isNull():
+            painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+            source = QRectF(avatar.rect())
+            side = min(source.width(), source.height())
+            source = QRectF(
+                source.center().x() - side * 0.5,
+                source.center().y() - side * 0.5,
+                side,
+                side,
+            )
+            painter.drawPixmap(rect, avatar, source)
+        else:
+            painter.fillPath(path, QColor(235, 216, 255, 190))
+            painter.setFont(get_ui_font(max(9, int(rect.width() * 0.28))))
+            painter.setPen(QColor(83, 55, 118))
+            painter.drawText(rect, Qt.AlignCenter, "星")
+        if disabled:
+            painter.fillPath(path, QColor(72, 72, 80, 172))
+        feather = QRadialGradient(rect.center(), rect.width() * 0.52)
+        feather.setColorAt(0.0, QColor(255, 255, 255, 0))
+        feather.setColorAt(0.72, QColor(255, 255, 255, 0))
+        feather.setColorAt(1.0, QColor(18, 21, 46, 178))
+        painter.fillPath(path, QBrush(feather))
+        painter.restore()
+        painter.setPen(QPen(QColor(238, 240, 255, 190), max(1, scale_px(1, min_abs=1))))
+        painter.drawEllipse(rect)
+
+    @staticmethod
+    def _load_skill_avatar(filename: str) -> QPixmap:
+        path = Path(__file__).resolve().parents[4] / "resc" / "GIF" / "角色头像" / filename
+        return QPixmap(str(path))
+
     def _board_screen_rect(self) -> QRectF:
         return self._board_outer_rect.translated(self._board_shake_x, self._board_shake_y)
 
@@ -869,6 +1247,23 @@ class LahaiTetrisWidget(QWidget):
         if self._settled_fall_anim:
             self._settled_anim.start()
 
+    def _prepare_gravity_fall_animation(
+        self,
+        original_board: list[list[str | None]],
+        new_board: list[list[str | None]],
+    ) -> None:
+        self._settled_anim.stop()
+        self._settled_fall_anim = {}
+        for col in range(_BOARD_W):
+            original_cells = [(row, original_board[row][col]) for row in range(_BOARD_H) if original_board[row][col] is not None]
+            new_cells = [(row, new_board[row][col]) for row in range(_BOARD_H) if new_board[row][col] is not None]
+            for (from_y, cell), (to_y, _) in zip(original_cells, new_cells):
+                if from_y == to_y:
+                    continue
+                self._settled_fall_anim[(col, to_y)] = (cell, float(col), float(from_y), float(to_y))
+        if self._settled_fall_anim:
+            self._settled_anim.start()
+
     def _on_settled_anim_value_changed(self, value) -> None:
         self.update()
 
@@ -957,6 +1352,7 @@ class LahaiTetrisWidget(QWidget):
         for row in range(_BOARD_H):
             sy = inner_y + row * self._block_size + self._block_size * 0.5
             painter.fillRect(QRectF(inner.x(), sy, inner.width(), 1), self._C_SCANLINE)
+        self._draw_warning_line(painter, inner)
         painter.restore()
 
         for y, row in enumerate(self._board):
@@ -1010,6 +1406,8 @@ class LahaiTetrisWidget(QWidget):
             painter.setFont(self._stat_digit_font)
             painter.setPen(self._C_NEON)
             painter.drawText(text_rect, Qt.AlignRight | Qt.AlignVCenter, stat_values[label])
+
+        self._draw_skill_slots(painter)
 
         for text, rect in (("暂停" if not self._paused else "继续", self._pause_rect), ("退出", self._exit_rect)):
             self._draw_round_panel(painter, rect, self._C_PANEL)

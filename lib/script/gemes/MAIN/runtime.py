@@ -83,7 +83,7 @@ class GameRuntimePanel(QWidget):
         self._game_widget = LahaiTetrisWidget(self)
         self._game_widget.set_close_callback(self._handle_game_close_request)
         self.setMinimumSize(scale_px(980, min_abs=1), scale_px(620, min_abs=1))
-        self.resize(scale_px(1120, min_abs=1), scale_px(700, min_abs=1))
+        self.resize(scale_px(1056, min_abs=1), scale_px(806, min_abs=1))
         self._drag_origin: QPoint | None = None
         self._resize_origin: QPoint | None = None
         self._resize_edges: set[str] = set()
@@ -298,6 +298,7 @@ class GameRuntime:
         self._open_lahai_sound = AmsOpenLahaiTetrisSound()
         self._bgm_track_ref = ""
         self._bgm_display = ""
+        self._bgm_started_by_game = False
         self._open_generation = 0
         self._games = [
             GameMeta("lahai_tetris", "拉海洛方块", "圆角彩虹字母俄罗斯方块", "可玩"),
@@ -368,7 +369,9 @@ class GameRuntime:
         self._open_generation += 1
         self._panel.deactivate()
         self._panel.fade_out()
-        self._event_center.publish(Event(EventType.MUSIC_PLAY_PAUSE, {}))
+        if self._bgm_started_by_game:
+            self._event_center.publish(Event(EventType.MUSIC_PLAY_PAUSE, {"playing": False}))
+            self._bgm_started_by_game = False
         self._event_center.publish(Event(EventType.INFORMATION, {
             "text": "小游戏 runtime 已关闭",
             "min": 0,
@@ -443,11 +446,15 @@ class GameRuntime:
         if open_generation != self._open_generation or not self._panel.isVisible():
             log("游戏BGM结果已过期，跳过自动播放")
             return
+        if not self._bgm_started_by_game and not get_music_service().can_takeover_for_bgm():
+            log("当前已有音乐播放，跳过游戏BGM自动播放")
+            return
         self._event_center.publish(Event(EventType.MUSIC_PLAY_TOP, {
             "song_id": track_ref,
             "track_ref": track_ref,
             "display": display,
         }))
+        self._bgm_started_by_game = True
 
     def cleanup(self) -> None:
         self._event_center.unsubscribe(EventType.INPUT_HASH, self._on_hash_command)

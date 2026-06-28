@@ -4,7 +4,7 @@ from PyQt5.QtCore import QPoint, Qt
 from PyQt5.QtWidgets import QApplication
 
 from config.config import ANIMATION
-from lib.core.topmost_manager import get_topmost_manager
+from lib.core.topmost_manager import TOPMOST_PRIORITY_MAIN_PET, get_topmost_manager
 
 
 def setup_pet_window(owner) -> None:
@@ -34,6 +34,6 @@ def finalize_pet_window_startup(owner) -> None:
     owner._startup_voice_sound.play()
     owner._move_particle_last_pos = QPoint(owner.frameGeometry().topLeft())
     owner._move_particle_enabled = True
-    get_topmost_manager().register(owner)
+    get_topmost_manager().register(owner, priority=TOPMOST_PRIORITY_MAIN_PET)
     owner.update()
     owner._preload_ui()

@@ -112,6 +112,9 @@ class QQMusicProvider(MusicProvider):
         max_items = max(1, int(limit or 25))
         if normalized_mode not in {"song", "artist", "album", "playlist"}:
             normalized_mode = "song"
+        if normalized_mode == "playlist":
+            logger.info("[MusicProvider:QQ] playlist 搜索暂不返回不可播放的歌单 ID，keyword=%s", query)
+            return []
         try:
             songs = self._api.search_song(query, page_num=1, num_per_page=max_items)
             tracks: list[MusicTrack] = []

@@ -1060,6 +1060,21 @@ def _apply_general_runtime(values_by_dict: dict[str, dict]) -> None:
         target = getattr(cc, dict_name, None)
         if isinstance(target, dict):
             target.update(items)
+        if dict_name == "CLOUD_MUSIC" and "provider" in items:
+            try:
+                from lib.script.music import get_music_service
+
+                get_music_service().set_provider(str(items.get("provider") or ""), persist=False)
+            except Exception as exc:
+                _logger.warning("热重载音乐平台失败: %s", exc)
+
+    try:
+        get_event_center().publish(Event(EventType.CONFIG_UPDATED, {
+            "source": "general",
+            "values": values_by_dict,
+        }))
+    except Exception as exc:
+        _logger.debug("发布通用配置热重载事件失败: %s", exc)
 
 
 def _project_root() -> Path:
@@ -1572,8 +1587,7 @@ class AISettingsPanel(QWidget):
         self._visible = False
         self._dragging = False
         self._drag_offset = QPoint()
-        gpu_line1, gpu_line2 = _query_hardware_watermark_lines()
-        self._gpu_watermark_text = f"{gpu_line1}\n{gpu_line2}"
+        self._gpu_watermark_text = "UnKnow GPU 0.00 GB\nRAM 0.00 GB"
         self._tick_counter = 0
         self._tick_subscribed = False
         self._subscribe_border_effect_events()
@@ -1598,6 +1612,28 @@ class AISettingsPanel(QWidget):
         self._apply_style()
         self._cache_stable_window_size()
         self.load_values()
+        self._refresh_hardware_watermark_async()
+
+    def _refresh_hardware_watermark_async(self) -> None:
+        def worker() -> None:
+            gpu_line1, gpu_line2 = _query_hardware_watermark_lines()
+
+            def apply_result() -> None:
+                self._gpu_watermark_text = f"{gpu_line1}\n{gpu_line2}"
+                try:
+                    self.update()
+                except RuntimeError:
+                    pass
+
+            self._ui_thread_call.emit(apply_result)
+
+        future = get_compute_hub().submit_latest(
+            "ai_settings_hardware_watermark",
+            worker,
+            executor="io",
+        )
+        if future is None:
+            _logger.debug("硬件水印查询任务仍在运行，跳过重复提交")
 
     def _add_panel_title_row(self, layout: QVBoxLayout, title_text: str, hint_text: str) -> tuple[QLabel, QLabel]:
         header_widget = QWidget()

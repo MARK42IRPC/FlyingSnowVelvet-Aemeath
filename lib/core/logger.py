@@ -42,6 +42,34 @@ class _AnsiFormatter(logging.Formatter):
         return f'{color}{message}{_ANSI_RESET}'
 
 
+class _ErrorEventHandler(logging.Handler):
+    """Publish an internal event for red ERROR/CRITICAL log records."""
+
+    def __init__(self):
+        super().__init__(level=logging.ERROR)
+        self._local = threading.local()
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if record.levelno < logging.ERROR:
+            return
+        if getattr(self._local, 'emitting', False):
+            return
+        self._local.emitting = True
+        try:
+            from lib.core.event.center import Event, EventType, get_event_center
+
+            get_event_center().publish(Event(EventType.LOG_ERROR, {
+                'logger': record.name,
+                'level': record.levelname,
+                'levelno': record.levelno,
+                'message': record.getMessage(),
+            }))
+        except Exception:
+            pass
+        finally:
+            self._local.emitting = False
+
+
 def _enable_windows_ansi(stream) -> bool:
     if os.name != 'nt':
         return True
@@ -93,11 +121,14 @@ def initialize(project_root: str) -> None:
         file_handler.setFormatter(logging.Formatter(_FMT, datefmt=_DATEFMT))
         file_handler.setLevel(logging.DEBUG)
 
+        error_event_handler = _ErrorEventHandler()
+
         root = logging.getLogger(_ROOT_NAME)
         root.setLevel(logging.DEBUG)
         root.handlers.clear()
         root.addHandler(console_handler)
         root.addHandler(file_handler)
+        root.addHandler(error_event_handler)
         root.propagate = False
 
         _initialized = True

@@ -2,7 +2,7 @@
 
 飞行雪绒是一个以 Windows 10/11 为主要目标平台的桌面宠物项目，围绕 **桌宠展示、AI 伴聊、语音播报、语音识别、音乐播放、可生成场景对象** 这几条主线持续迭代。当前 `beta3` 继续在 `1.0.6` 开发线上推进，重点收敛音频事件链、桌宠移动队列、`tick/frame` 驱动结构，以及粒子系统的时序与抖动问题。
 
-> 当前版本：`LTS1.0.6beta3`  
+> 当前版本：`LTS1.0.6beta3V2`  
 > 发布日期：`2026-06-28`
 
 ---
@@ -179,13 +179,13 @@ python scripts/generate_doc_portal.py
 普通发布包：
 
 ```powershell
-python scripts/package_release.py --version LTS1.0.6beta3
+python scripts/package_release.py --version LTS1.0.6beta3V2
 ```
 
 绿色资源包：
 
 ```powershell
-python scripts/package_green_release.py --version LTS1.0.6beta3
+python scripts/package_green_release.py --version LTS1.0.6beta3V2
 ```
 
 两者默认都会排除运行时用户数据；绿色包会额外保留模型等离线资源，适合离线分发。
@@ -198,7 +198,7 @@ python scripts/package_green_release.py --version LTS1.0.6beta3
 
 `beta3` 当前对应最近一轮公开开发快照，主要包含以下方向：
 
-- 项目版本号切换到 `LTS1.0.6beta3`
+- 项目版本号切换到 `LTS1.0.6beta3V2`
 - 音频播放事件统一收口，语音 / 特效音改为同一类型化事件链，音乐保持独立音量链
 - 主宠移动逻辑重构为事件驱动队列，漫游 / 沙发锁定 / 音响靠近 / 雪豹追踪统一入队
 - `TimingManager` 发布 `TICK` / `FRAME` 双事件，物理与粒子改为 `tick` 更新、`frame` 插值渲染

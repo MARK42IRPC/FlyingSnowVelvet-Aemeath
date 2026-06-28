@@ -96,7 +96,7 @@ API_KEY = _LOCAL_SECRET_OVERRIDES.get('api_key', '')
 # 2: 强制本地 Ollama
 # 3: 强制规则回复
 # 4: 强制元宝 Web 本地中转
-FORCE_REPLY_MODE = '0'
+FORCE_REPLY_MODE = '4'
 
 # OpenAI 兼容 API 基础地址（使用 API Key 时生效）
 # 常见兼容服务地址：
@@ -114,7 +114,7 @@ API_MODEL = _LOCAL_SECRET_OVERRIDES.get('api_model', 'gpt-5.4')
 # YuanBao-Free-API 固定本地回环配置。
 # 这套地址 / 占位密钥 / 默认模型由程序内部管理，不再从控制面板复用手动 OpenAI 配置。
 YUANBAO_FREE_API_LOCAL = {
-    'base_url': 'http://localhost:11434',
+    'base_url': 'http://127.0.0.1:8000/v1',
     'api_key': 'sk-yuanbao-local',
     'model': 'deepseek-v3',
 }

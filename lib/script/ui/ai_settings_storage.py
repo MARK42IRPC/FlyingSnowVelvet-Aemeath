@@ -77,20 +77,20 @@ def save_ai_values(values: dict, default_values: dict) -> None:
     text = _replace_named_dict_item(text, "YUANBAO_FREE_API", "x_uskey", _YUANBAO_X_USKEY_SECRET_EXPR)
     text = _replace_named_dict_item(text, "YUANBAO_FREE_API", "agent_id", _py_literal(values["yuanbao_agent_id"]))
 
-    text = _replace_dict_item(text, "base_url", _py_literal(values["ollama_base_url"]))
-    text = _replace_dict_item(text, "api_temperature", _py_literal(values["api_temperature"]))
-    text = _replace_or_insert_dict_item_after(text, "gsv_auto_start", _py_literal(values["gsv_auto_start"]), "api_temperature")
-    text = _replace_or_insert_dict_item_after(text, "gsv_temperature", _py_literal(values["gsv_temperature"]), "gsv_auto_start")
-    text = _replace_or_insert_dict_item_after(text, "gsv_speed_factor", _py_literal(values["gsv_speed_factor"]), "gsv_temperature")
-    text = _replace_or_insert_dict_item_after(text, "ai_voice_max_chars", _py_literal(values["ai_voice_max_chars"]), "gsv_speed_factor")
-    text = _replace_or_insert_dict_item_after(text, "gsv_cache_max_files", _py_literal(values["gsv_cache_max_files"]), "ai_voice_max_chars")
-    text = _replace_or_insert_dict_item_after(text, "memory_context_limit", _py_literal(memory_context_limit_value), "gsv_cache_max_files")
-    text = _replace_or_insert_dict_item_after(text, "memory_recall_count", _py_literal(values["memory_recall_count"]), "memory_context_limit")
-    text = _replace_dict_item(text, "api_enable_thinking", _py_literal(values["api_enable_thinking"]))
+    text = _replace_named_dict_item(text, "OLLAMA", "base_url", _py_literal(values["ollama_base_url"]))
+    text = _replace_named_dict_item(text, "OLLAMA", "api_temperature", _py_literal(values["api_temperature"]))
+    text = _replace_or_insert_named_dict_item_after(text, "OLLAMA", "gsv_auto_start", _py_literal(values["gsv_auto_start"]), "api_temperature")
+    text = _replace_or_insert_named_dict_item_after(text, "OLLAMA", "gsv_temperature", _py_literal(values["gsv_temperature"]), "gsv_auto_start")
+    text = _replace_or_insert_named_dict_item_after(text, "OLLAMA", "gsv_speed_factor", _py_literal(values["gsv_speed_factor"]), "gsv_temperature")
+    text = _replace_or_insert_named_dict_item_after(text, "OLLAMA", "ai_voice_max_chars", _py_literal(values["ai_voice_max_chars"]), "gsv_speed_factor")
+    text = _replace_or_insert_named_dict_item_after(text, "OLLAMA", "gsv_cache_max_files", _py_literal(values["gsv_cache_max_files"]), "ai_voice_max_chars")
+    text = _replace_or_insert_named_dict_item_after(text, "OLLAMA", "memory_context_limit", _py_literal(memory_context_limit_value), "gsv_cache_max_files")
+    text = _replace_or_insert_named_dict_item_after(text, "OLLAMA", "memory_recall_count", _py_literal(values["memory_recall_count"]), "memory_context_limit")
+    text = _replace_named_dict_item(text, "OLLAMA", "api_enable_thinking", _py_literal(values["api_enable_thinking"]))
     text = _replace_named_dict_item(text, "AUTO_COMPANION", "enabled", _py_literal(values["auto_companion_enabled"]))
 
-    text = _replace_dict_item(text, "num_gpu", _py_literal(values["num_gpu"]))
-    text = _replace_dict_item(text, "num_thread", _py_literal(values["num_thread"]))
+    text = _replace_named_dict_item(text, "OLLAMA_OPTIONS", "num_gpu", _py_literal(values["num_gpu"]))
+    text = _replace_named_dict_item(text, "OLLAMA_OPTIONS", "num_thread", _py_literal(values["num_thread"]))
 
     _write_text_atomic(cfg_path, text)
     _mirror_config_text_to_shared("ollama_config.py", text)
@@ -124,6 +124,23 @@ def apply_ai_runtime(values: dict, default_values: dict) -> None:
     oc.AUTO_COMPANION["enabled"] = values["auto_companion_enabled"]
     oc.OLLAMA_OPTIONS["num_gpu"] = values["num_gpu"]
     oc.OLLAMA_OPTIONS["num_thread"] = values["num_thread"]
+
+    try:
+        from lib.script.chat.ollama import get_ollama_manager
+
+        get_ollama_manager().reload_config()
+    except Exception as exc:
+        _logger.warning("热重载 AI 配置失败: %s", exc)
+
+    try:
+        from lib.core.event.center import Event, EventType, get_event_center
+
+        get_event_center().publish(Event(EventType.CONFIG_UPDATED, {
+            "source": "ai",
+            "values": dict(values),
+        }))
+    except Exception as exc:
+        _logger.debug("发布 AI 配置热重载事件失败: %s", exc)
 
 
 def _project_root() -> Path:
@@ -231,4 +248,26 @@ def _replace_named_dict_item(text: str, dict_name: str, key: str, py_literal: st
     body_end = body_start + dict_end.start()
     body = text[body_start:body_end]
     body_updated = _replace_dict_item(body, key, py_literal)
+    return text[:body_start] + body_updated + text[body_end:]
+
+
+def _replace_or_insert_named_dict_item_after(
+    text: str,
+    dict_name: str,
+    key: str,
+    py_literal: str,
+    after_key: str,
+) -> str:
+    dict_start = re.search(rf"(?m)^{re.escape(dict_name)}\s*=\s*\{{\s*$", text)
+    if not dict_start:
+        raise ValueError(f"未找到字典定义: {dict_name}")
+
+    dict_end = re.search(r"(?m)^}\s*$", text[dict_start.end():])
+    if not dict_end:
+        raise ValueError(f"未找到字典结束: {dict_name}")
+
+    body_start = dict_start.end()
+    body_end = body_start + dict_end.start()
+    body = text[body_start:body_end]
+    body_updated = _replace_or_insert_dict_item_after(body, key, py_literal, after_key)
     return text[:body_start] + body_updated + text[body_end:]

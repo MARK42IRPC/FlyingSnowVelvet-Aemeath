@@ -18,8 +18,8 @@ class LahaiLineFlashParticleScript(BaseParticleScript):
     def __init__(self) -> None:
         super().__init__()
         self._config = {
-            "count_range": (8, 12),
-            "size_range": (2, 4),
+            "count_range": (2, 3),
+            "size_range": (4, 8),
             "speed_x": (-204.0, 204.0),
             "speed_y": (-276.0, -120.0),
             "gravity": 10.8,

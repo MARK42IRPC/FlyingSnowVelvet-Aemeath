@@ -99,6 +99,7 @@ class Bubble(QWidget):
         # 订阅事件
         self._event_center.subscribe(EventType.TICK, self._on_tick)
         self._event_center.subscribe(EventType.INFORMATION, self._on_information)
+        self._event_center.subscribe(EventType.LOG_ERROR, self._on_log_error)
         self._event_center.subscribe(EventType.UI_CREATE, self._on_ui_create)
         self._event_center.subscribe(EventType.UI_ANCHOR_RESPONSE, self._on_anchor_response)
         self._event_center.subscribe(EventType.UI_CLICKTHROUGH_TOGGLE, self._on_clickthrough_toggle)
@@ -338,36 +339,16 @@ class Bubble(QWidget):
         force_replace = bool(event.data.get('force_replace', False))
 
         if text:
-            if self._is_error_information(event.data):
-                self._bug_sound.play()
             self.add_bubble(text, min_ticks, max_ticks, align, particle, force_replace)
 
-    @staticmethod
-    def _is_error_information(data: dict) -> bool:
-        if not isinstance(data, dict):
-            return False
-        if bool(data.get('error', False)):
-            return True
-        text = str(data.get('text') or '').strip().lower()
-        if not text:
-            return False
-        error_tokens = (
-            '失败',
-            '错误',
-            '异常',
-            '超时',
-            '无法',
-            '不可用',
-            '未找到',
-            '没有找到',
-            '报错',
-            'error',
-            'failed',
-            'exception',
-            'timeout',
-            'not found',
-        )
-        return any(token in text for token in error_tokens)
+    def _on_log_error(self, event: Event):
+        """ERROR/CRITICAL 日志触发报错语音。"""
+        try:
+            levelno = int((event.data or {}).get('levelno', 0) or 0)
+        except (TypeError, ValueError):
+            levelno = 0
+        if levelno >= 40:
+            self._bug_sound.play()
 
     def _on_tick(self, event: Event):
         """Tick事件处理 - 更新气泡状态"""

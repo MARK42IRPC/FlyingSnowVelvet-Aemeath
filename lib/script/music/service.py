@@ -272,6 +272,18 @@ class MusicService:
         except Exception:
             return -1
 
+    def is_playing(self) -> bool:
+        mgr = self._get_backend_manager()
+        return bool(getattr(mgr, "is_playing", False)) if mgr is not None else False
+
+    def is_paused(self) -> bool:
+        mgr = self._get_backend_manager()
+        return bool(getattr(mgr, "is_paused", False)) if mgr is not None else False
+
+    def can_takeover_for_bgm(self) -> bool:
+        """Return True when BGM can start without interrupting audible music."""
+        return (not self.is_playing()) or self.is_paused()
+
     def move_queue_item(self, index: int, direction: int) -> int:
         mgr = self._get_backend_manager()
         if mgr is None:

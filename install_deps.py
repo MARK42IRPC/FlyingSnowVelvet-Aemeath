@@ -58,7 +58,6 @@ DEPENDENCIES = [
     ("pydantic-settings", "settings loader for YuanBao relay", ("pydantic_settings",)),
     ("pygame", "audio playback", ("pygame",)),
     ("requests", "HTTP client", ("requests",)),
-    ("musicdl", "Kugou fallback parser", ("musicdl",)),
     ("qrcode", "QR code generation for music login", ("qrcode",)),
     ("sse-starlette", "SSE streaming for YuanBao relay", ("sse_starlette",)),
     ("mutagen", "local audio metadata parsing", ("mutagen",)),

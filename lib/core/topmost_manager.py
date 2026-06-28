@@ -19,6 +19,10 @@ import weakref
 
 _INSTANCE = None
 
+TOPMOST_PRIORITY_DEFAULT = 0
+TOPMOST_PRIORITY_QR_DIALOG = 90
+TOPMOST_PRIORITY_MAIN_PET = 100
+
 
 def get_topmost_manager() -> 'TopmostManager':
     """返回全局单例 TopmostManager。"""
@@ -48,7 +52,8 @@ class TopmostManager:
     _HWND_TOPMOST: int = -1
 
     def __init__(self) -> None:
-        self._windows: list[weakref.ref] = []
+        self._windows: list[tuple[int, int, weakref.ref]] = []
+        self._register_seq: int = 0
         self._counter: int = 0
         self._paused: bool = False  # 穿透模式下暂停强制置顶
 
@@ -62,9 +67,10 @@ class TopmostManager:
     # 公开接口
     # ------------------------------------------------------------------
 
-    def register(self, widget) -> None:
+    def register(self, widget, priority: int = TOPMOST_PRIORITY_DEFAULT) -> None:
         """注册一个需要保持极高绘制优先级的窗口（弱引用，不阻止 GC）。"""
-        self._windows.append(weakref.ref(widget))
+        self._register_seq += 1
+        self._windows.append((int(priority), self._register_seq, weakref.ref(widget)))
 
     def enforce_on_frame(self) -> None:
         """
@@ -95,17 +101,23 @@ class TopmostManager:
             return
         self._set_topmost(widget)
 
+    def enforce_now(self) -> None:
+        """立即按注册优先级重申全部可见窗口层级。"""
+        if self._paused:
+            return
+        self._enforce_all()
+
     # ------------------------------------------------------------------
     # 内部实现
     # ------------------------------------------------------------------
 
     def _enforce_all(self) -> None:
         """对所有存活窗口调用 SetWindowPos(HWND_TOPMOST) 重申最高置顶层级。"""
-        alive: list[weakref.ref] = []
-        for ref in self._windows:
+        alive: list[tuple[int, int, weakref.ref]] = []
+        for priority, seq, ref in sorted(self._windows, key=lambda item: (item[0], item[1])):
             widget = ref()
             if widget is not None:
-                alive.append(ref)
+                alive.append((priority, seq, ref))
                 if widget.isVisible():
                     self._set_topmost(widget)
         # 同步清理已销毁的弱引用

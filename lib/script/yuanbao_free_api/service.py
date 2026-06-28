@@ -412,7 +412,13 @@ class YuanbaoFreeApiService:
     def _on_app_pre_start(self, _event: Event):
         if not _should_manage_local_service():
             return
-        self.ensure_service_ready()
+        future = get_compute_hub().submit_latest(
+            "yuanbao_prestart_ready",
+            self.ensure_service_process_ready,
+            executor="io",
+        )
+        if future is None:
+            logger.debug('[YuanbaoFreeApiService] 预启动任务仍在运行，跳过重复提交')
 
     def _ensure_login_dialog(self) -> None:
         if threading.current_thread() is not threading.main_thread():
@@ -487,6 +493,18 @@ class YuanbaoFreeApiService:
         host, port = target
         status, _host, _port = self._ensure_status_endpoint(host, port)
         return status
+
+    def ensure_service_process_ready(self) -> bool:
+        """仅确保 YuanBao-Free-API 本地服务可访问，不触发登录或二维码获取。"""
+        target = _parse_local_target()
+        if target is None:
+            return False
+        host, port = target
+        status, host, port = self._ensure_status_endpoint(host, port)
+        if status is None:
+            return False
+        logger.info('[YuanbaoFreeApiService] 元宝本地服务已预热: %s:%s status=%s', host, port, status)
+        return True
 
     def ensure_service_ready(self) -> bool:
         target = _parse_local_target()
@@ -571,6 +589,16 @@ class YuanbaoFreeApiService:
         if login_result is None:
             refreshed = self._wait_for_login_state(host, port, allow_logged_out=True) or status
             self._publish_login_dialog_status(refreshed)
+            if _status_bool(refreshed, 'login_in_progress'):
+                self._start_login_monitor(host, port)
+                return {
+                    'success': True,
+                    'logged_in': False,
+                    'login_in_progress': True,
+                    'qrcode_exists': _status_bool(refreshed, 'qrcode_exists'),
+                    'status': refreshed,
+                    'message': '元宝登录流程已启动，正在等待二维码生成。',
+                }
             error_text = _status_text(refreshed, 'last_error') or '无法调用元宝登录接口。'
             return {
                 'success': False,
@@ -605,8 +633,9 @@ class YuanbaoFreeApiService:
         if _status_bool(refreshed, 'login_in_progress'):
             self._start_login_monitor(host, port)
             return {
-                'success': False,
+                'success': True,
                 'logged_in': False,
+                'login_in_progress': True,
                 'qrcode_exists': False,
                 'status': refreshed,
                 'message': '元宝登录流程已启动，但二维码尚未生成，请稍候再试。',
@@ -729,7 +758,7 @@ class YuanbaoFreeApiService:
         return None
 
     def _wait_for_login_state(self, host: str, port: int, *, allow_logged_out: bool = False) -> Optional[Dict[str, object]]:
-        deadline = time.monotonic() + 20.0
+        deadline = time.monotonic() + 45.0
         last_status: Optional[Dict[str, object]] = None
         while time.monotonic() < deadline:
             status = _fetch_service_status(host, port, timeout=2.0)

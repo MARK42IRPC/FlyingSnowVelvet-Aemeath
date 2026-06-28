@@ -76,6 +76,35 @@ class OllamaManager(_ApiClientMixin, OllamaBootstrapMixin, OllamaStateMixin, Oll
         else:
             logger.info("[OllamaManager] 使用 Ollama 本地模式: %s", OLLAMA_BASE_URL)
 
+    def reload_config(self) -> None:
+        """Reload runtime AI routing config after control-panel save."""
+        self._active_config = get_active_config()
+        self._api_type = self._active_config.get('api_type', 'ollama')
+        self._force_mode = str(self._active_config.get('force_mode', '') or '')
+        self._strict_mode = bool(self._active_config.get('strict_mode', False))
+        self._mode_error = str(self._active_config.get('error', '') or '').strip()
+        self._use_api_key = self._api_type == 'openai_compatible'
+        self._rule_reply_mode = self._api_type == 'rule_reply'
+
+        if self._use_api_key:
+            self._is_running = True
+            self._selected_model = self._active_config.get('model')
+        elif self._rule_reply_mode:
+            self._is_running = False
+            self._selected_model = 'rule_reply'
+        elif self._api_type == 'error':
+            self._is_running = False
+            self._selected_model = None
+        else:
+            self._select_model()
+
+        logger.info(
+            "[OllamaManager] AI 配置已热重载: api_type=%s model=%s force_mode=%s",
+            self._api_type,
+            self._selected_model,
+            self._force_mode or 'default',
+        )
+
 
 
 _ollama_manager: OllamaManager | None = None

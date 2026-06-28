@@ -7,13 +7,11 @@ import base64
 import contextlib
 import hashlib
 import html
-import io
 import random
 import re
 import string
 import time
 import uuid
-from pathlib import Path
 from urllib.parse import parse_qsl
 from typing import Any
 
@@ -64,9 +62,6 @@ class KugouClient:
         self._last_songinfo_meta: dict[str, Any] = {}
         self._last_liked_meta: dict[str, Any] = {}
         self._song_meta_cache: dict[str, dict[str, Any]] = {}
-        self._musicdl_client = None
-        self._musicdl_init_done = False
-        self._musicdl_disabled_reason = ""
         self._session.headers.update(
             {
                 "User-Agent": (
@@ -133,7 +128,6 @@ class KugouClient:
         album_id: int | None = None,
         album_audio_id: int | None = None,
         encode_album_audio_id: str | None = None,
-        musicdl_url: str | None = None,
         raw_search: dict[str, Any] | None = None,
     ) -> None:
         hash_text = self._normalize_hash(song_hash)
@@ -145,7 +139,6 @@ class KugouClient:
         title_text = self._safe_text(title)
         artist_text = self._safe_text(artist)
         encode_text = self._safe_text(encode_album_audio_id)
-        url_text = self._safe_text(musicdl_url)
         duration_val = self._safe_positive_int(duration_ms)
         album_val = self._safe_positive_int(album_id)
         audio_val = self._safe_positive_int(album_audio_id)
@@ -162,8 +155,6 @@ class KugouClient:
             new_meta["album_audio_id"] = audio_val
         if encode_text:
             new_meta["encode_album_audio_id"] = encode_text
-        if url_text.startswith("http"):
-            new_meta["musicdl_url"] = url_text
         if isinstance(raw_search, dict) and raw_search:
             new_meta["raw_search"] = dict(raw_search)
         self._song_meta_cache[hash_text] = new_meta
@@ -173,327 +164,6 @@ class KugouClient:
         meta.update(updates)
         self._last_songinfo_meta = meta
         return meta
-
-    def _cached_musicdl_url(self, song_hash: str | None, *, record_hit: bool = True) -> str:
-        hash_text = self._normalize_hash(song_hash)
-        if not hash_text:
-            return ""
-        cached_url = self._safe_text((self._song_meta_cache.get(hash_text) or {}).get("musicdl_url"))
-        if cached_url.startswith("http"):
-            if record_hit:
-                self._update_last_songinfo_meta(
-                    musicdl_fallback_hit=True,
-                    musicdl_cached_hit=True,
-                )
-            return cached_url
-        return ""
-
-    def _musicdl_url_fallback(self, song_hash: str | None) -> str:
-        hash_text = self._normalize_hash(song_hash)
-        if not hash_text:
-            return ""
-        musicdl_track = self._musicdl_fallback_track(hash_text)
-        musicdl_url = self._safe_text(musicdl_track.get("url"))
-        if not musicdl_url.startswith("http"):
-            return ""
-        self._remember_song_meta(
-            hash_text,
-            title=musicdl_track.get("title"),
-            artist=musicdl_track.get("artist"),
-            duration_ms=musicdl_track.get("duration_ms"),
-            musicdl_url=musicdl_url,
-        )
-        self._update_last_songinfo_meta(
-            legacy_fallback_hit=False,
-            musicdl_fallback_hit=True,
-            musicdl_keyword=self._safe_text(musicdl_track.get("keyword")),
-        )
-        logger.info("[KugouClient] musicdl fallback hit hash=%s", hash_text)
-        return musicdl_url
-
-    def _apply_musicdl_detail_fallback(self, detail: dict[str, Any], song_hash: str | None) -> bool:
-        hash_text = self._normalize_hash(song_hash)
-        if not isinstance(detail, dict) or detail.get("url") or not hash_text:
-            return False
-        musicdl_track = self._musicdl_fallback_track(hash_text)
-        musicdl_url = self._safe_text(musicdl_track.get("url"))
-        if not musicdl_url.startswith("http"):
-            return False
-        detail["url"] = musicdl_url
-        detail["url_candidates"] = [musicdl_url]
-        musicdl_title = self._safe_text(musicdl_track.get("title"))
-        musicdl_artist = self._safe_text(musicdl_track.get("artist"))
-        musicdl_duration = self._safe_positive_int(musicdl_track.get("duration_ms"))
-        if detail.get("title") in {"", hash_text} and musicdl_title:
-            detail["title"] = musicdl_title
-        if detail.get("artist") in {"", "未知歌手"} and musicdl_artist:
-            detail["artist"] = musicdl_artist
-        if not detail.get("duration_ms") and musicdl_duration > 0:
-            detail["duration_ms"] = musicdl_duration
-        self._remember_song_meta(
-            hash_text,
-            title=detail.get("title"),
-            artist=detail.get("artist"),
-            duration_ms=detail.get("duration_ms"),
-            musicdl_url=musicdl_url,
-        )
-        self._update_last_songinfo_meta(
-            musicdl_fallback_hit=True,
-            musicdl_keyword=self._safe_text(musicdl_track.get("keyword")),
-        )
-        return True
-
-    def _musicdl_work_dir(self) -> str:
-        root_dir = Path(__file__).resolve().parents[3]
-        work_dir = root_dir / "resc" / "user" / "temp" / "kugou_musicdl"
-        try:
-            work_dir.mkdir(parents=True, exist_ok=True)
-        except Exception:
-            pass
-        return str(work_dir)
-
-    def _get_musicdl_client(self):
-        if self._musicdl_init_done:
-            return self._musicdl_client
-        self._musicdl_init_done = True
-        try:
-            from musicdl.modules.sources.kugou import KugouMusicClient
-
-            self._musicdl_client = KugouMusicClient(
-                search_size_per_source=8,
-                search_size_per_page=8,
-                strict_limit_search_size_per_page=True,
-                disable_print=True,
-                work_dir=self._musicdl_work_dir(),
-            )
-            logger.info("[KugouClient] musicdl fallback initialized")
-        except Exception as e:
-            self._musicdl_client = None
-            self._musicdl_disabled_reason = str(e)
-            logger.warning("[KugouClient] musicdl fallback unavailable: %s", e)
-        return self._musicdl_client
-
-    def _musicdl_keywords(self, song_hash: str) -> list[str]:
-        hash_text = self._normalize_hash(song_hash)
-        meta = self._song_meta_cache.get(hash_text, {})
-        title = self._safe_text(meta.get("title"))
-        artist = self._safe_text(meta.get("artist"))
-
-        if not title and hash_text:
-            try:
-                info = self._fetch_song_info(hash_text)
-            except Exception:
-                info = {}
-            title = title or self._clean_text(info.get("songName") or info.get("fileName"))
-            artist = artist or self._clean_text(info.get("singerName") or info.get("author_name"))
-            self._remember_song_meta(hash_text, title=title, artist=artist)
-
-        out: list[str] = []
-        if title and artist:
-            out.append(f"{title} {artist}")
-        if title:
-            out.append(title)
-        if artist and title:
-            out.append(f"{artist} {title}")
-        if not out and hash_text:
-            out.append(hash_text)
-
-        uniq: list[str] = []
-        seen: set[str] = set()
-        for item in out:
-            key = self._cmp_text(item)
-            if not key or key in seen:
-                continue
-            seen.add(key)
-            uniq.append(item)
-        return uniq
-
-    def _musicdl_pick_song(self, songs: list[Any], song_hash: str) -> Any:
-        if not songs:
-            return None
-        hash_upper = self._normalize_hash(song_hash)
-        meta = self._song_meta_cache.get(hash_upper, {})
-        title_cmp = self._cmp_text(meta.get("title"))
-        artist_cmp = self._cmp_text(meta.get("artist"))
-
-        fallback = None
-        for song in songs:
-            identifier = self._normalize_hash(getattr(song, "identifier", ""))
-            url = self._safe_text(getattr(song, "download_url", ""))
-            if not url.startswith("http"):
-                continue
-            if identifier and identifier == hash_upper:
-                return song
-            song_name_cmp = self._cmp_text(getattr(song, "song_name", ""))
-            singer_cmp = self._cmp_text(getattr(song, "singers", ""))
-            if title_cmp and title_cmp == song_name_cmp and (not artist_cmp or artist_cmp in singer_cmp):
-                return song
-            if fallback is None:
-                fallback = song
-        return fallback
-
-    def _musicdl_build_search_item(self, song_hash: str) -> dict[str, Any]:
-        hash_upper = self._normalize_hash(song_hash)
-        if not hash_upper:
-            return {}
-        meta = self._song_meta_cache.get(hash_upper, {})
-        raw = meta.get("raw_search")
-        if not isinstance(raw, dict):
-            raw = {}
-
-        file_hash = self._safe_text(raw.get("FileHash")) or hash_upper
-        title = self._clean_text(raw.get("SongName")) or self._safe_text(meta.get("title"))
-        artist = self._clean_text(raw.get("SingerName")) or self._safe_text(meta.get("artist"))
-        duration_sec = self._safe_int(raw.get("Duration"), 0)
-        if duration_sec <= 0:
-            duration_sec = self._safe_int(meta.get("duration_ms"), 0) // 1000
-        album_id = self._safe_positive_int(raw.get("AlbumID") or meta.get("album_id"))
-        album_audio_id = self._safe_positive_int(raw.get("Audioid") or meta.get("album_audio_id"))
-        trans_param = raw.get("trans_param") if isinstance(raw.get("trans_param"), dict) else {}
-        album_name = self._clean_text(raw.get("AlbumName"))
-        filename = self._clean_text(raw.get("FileName"))
-        if not filename:
-            filename = f"{artist} - {title}".strip(" -")
-
-        return {
-            "hash": file_hash.lower(),
-            "album_id": album_id,
-            "album_audio_id": album_audio_id,
-            "songname": title,
-            "songname_original": title,
-            "singername": artist,
-            "duration": duration_sec,
-            "timelen": duration_sec * 1000 if duration_sec > 0 else 0,
-            "album_name": album_name,
-            "filename": filename,
-            "trans_param": trans_param,
-        }
-
-    def _musicdl_track_from_song_info(self, song_info: Any, keyword: str) -> dict[str, Any]:
-        url = self._safe_text(getattr(song_info, "download_url", ""))
-        if not url.startswith("http"):
-            return {}
-        title = self._safe_text(getattr(song_info, "song_name", ""))
-        artist = self._safe_text(getattr(song_info, "singers", ""))
-        duration_s = self._safe_int(getattr(song_info, "duration_s", 0), 0)
-        duration_ms = duration_s * 1000 if duration_s > 0 else None
-        return {
-            "url": url,
-            "title": title,
-            "artist": artist,
-            "duration_ms": duration_ms,
-            "keyword": keyword,
-        }
-
-    def _musicdl_fast_track(self, song_hash: str) -> dict[str, Any]:
-        out: dict[str, Any] = {}
-        hash_upper = self._normalize_hash(song_hash)
-        if not hash_upper:
-            return out
-        client = self._get_musicdl_client()
-        if client is None:
-            return out
-        search_item = self._musicdl_build_search_item(hash_upper)
-        if not search_item:
-            return out
-        if not hasattr(client, "_parsewiththirdpartapis") or not hasattr(client, "_parsewithofficialapiv1"):
-            return out
-
-        request_overrides = {"timeout": max(self._timeout)}
-        try:
-            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-                song_info_flac = client._parsewiththirdpartapis(search_item, request_overrides=request_overrides)
-                song_info = client._parsewithofficialapiv1(
-                    search_item,
-                    request_overrides=request_overrides,
-                    song_info_flac=song_info_flac,
-                    lossless_quality_is_sufficient=True,
-                )
-        except Exception as e:
-            logger.debug("[KugouClient] musicdl fast path failed hash=%s: %s", hash_upper, e)
-            return out
-
-        track = self._musicdl_track_from_song_info(song_info, keyword="__hash_fast__")
-        if not track and song_info_flac is not song_info:
-            track = self._musicdl_track_from_song_info(song_info_flac, keyword="__hash_fast__")
-        if not track:
-            return out
-        self._remember_song_meta(
-            hash_upper,
-            title=track.get("title"),
-            artist=track.get("artist"),
-            duration_ms=track.get("duration_ms"),
-            musicdl_url=track.get("url"),
-        )
-        return track
-
-    def _musicdl_fallback_track(self, song_hash: str) -> dict[str, Any]:
-        out: dict[str, Any] = {}
-        hash_upper = self._normalize_hash(song_hash)
-        if not hash_upper:
-            return out
-
-        cached_url = self._safe_text((self._song_meta_cache.get(hash_upper) or {}).get("musicdl_url"))
-        if cached_url.startswith("http"):
-            out["url"] = cached_url
-            return out
-
-        fast_track = self._musicdl_fast_track(hash_upper)
-        fast_url = self._safe_text(fast_track.get("url"))
-        if fast_url.startswith("http"):
-            return fast_track
-
-        client = self._get_musicdl_client()
-        if client is None:
-            return out
-
-        keyword_hit = ""
-        try:
-            for keyword in self._musicdl_keywords(hash_upper):
-                keyword_hit = keyword
-                try:
-                    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(
-                        io.StringIO()
-                    ):
-                        songs = client.search(
-                            keyword,
-                            num_threadings=1,
-                            request_overrides={"timeout": max(self._timeout)},
-                            rule={"pagesize": 8},
-                        )
-                except Exception as e:
-                    logger.debug("[KugouClient] musicdl search failed keyword=%s: %s", keyword, e)
-                    continue
-
-                picked = self._musicdl_pick_song(songs if isinstance(songs, list) else [], hash_upper)
-                if not picked:
-                    continue
-                url = self._safe_text(getattr(picked, "download_url", ""))
-                if not url.startswith("http"):
-                    continue
-
-                title = self._safe_text(getattr(picked, "song_name", ""))
-                artist = self._safe_text(getattr(picked, "singers", ""))
-                duration_s = self._safe_int(getattr(picked, "duration_s", 0), 0)
-                duration_ms = duration_s * 1000 if duration_s > 0 else 0
-                self._remember_song_meta(
-                    hash_upper,
-                    title=title,
-                    artist=artist,
-                    duration_ms=duration_ms if duration_ms > 0 else None,
-                    musicdl_url=url,
-                )
-                out = {
-                    "url": url,
-                    "title": title,
-                    "artist": artist,
-                    "duration_ms": duration_ms if duration_ms > 0 else None,
-                    "keyword": keyword_hit,
-                }
-                return out
-        except Exception as e:
-            logger.debug("[KugouClient] musicdl fallback exception hash=%s: %s", hash_upper, e)
-        return out
 
     def get_session(self) -> requests.Session:
         return self._session
@@ -1146,8 +816,6 @@ class KugouClient:
             album_audio_id=detail.get("album_audio_id"),
             encode_album_audio_id=detail.get("encode_album_audio_id"),
         )
-        if not detail.get("url"):
-            self._apply_musicdl_detail_fallback(detail, hash_text)
         return detail
 
     def get_song_url(
@@ -1161,8 +829,6 @@ class KugouClient:
         mix_id = str(encode_album_audio_id or "").strip()
         if not hash_text and not mix_id:
             return None
-        cached_url = self._cached_musicdl_url(hash_text, record_hit=False) if hash_text else ""
-
         info_v2: dict[str, Any] = {}
         try:
             info_v2 = self._fetch_song_info_v2(
@@ -1188,28 +854,12 @@ class KugouClient:
         if url:
             self._update_last_songinfo_meta(
                 legacy_fallback_hit=True,
-                musicdl_fallback_hit=False,
             )
             return url
 
-        if cached_url:
-            self._update_last_songinfo_meta(
-                legacy_fallback_hit=False,
-                musicdl_fallback_hit=True,
-                musicdl_cached_hit=True,
-            )
-            return cached_url
-
-        musicdl_url = self._musicdl_url_fallback(hash_text)
-        if musicdl_url:
-            return musicdl_url
-
         meta = self._update_last_songinfo_meta(
             legacy_fallback_hit=False,
-            musicdl_fallback_hit=False,
         )
-        if self._musicdl_disabled_reason:
-            meta["musicdl_reason"] = self._musicdl_disabled_reason
         self._last_songinfo_meta = meta
         return url or None
 
@@ -1735,5 +1385,6 @@ def get_kugou_client() -> KugouClient:
     if _instance is None:
         _instance = KugouClient()
     return _instance
+
 
 

@@ -77,9 +77,11 @@ class EventType(Enum):
     UI_ANCHOR_RESPONSE = "ui_anchor_response"            # 锚点坐标响应
     UI_HINT_PICK = "ui_hint_pick"                        # 命令提示框条目点击
     AUTOSTART_STATUS_CHANGE = "autostart_status_change"  # 开机启动状态变化
+    CONFIG_UPDATED = "config_updated"                    # 运行时配置已更新
 
     # 信息气泡事件
     INFORMATION = "information"                          # 信息气泡事件：text, min, max
+    LOG_ERROR = "log_error"                              # ERROR/CRITICAL 日志事件：logger, level, message
 
     # 粒子事件
     PARTICLE_REQUEST = "particle_request"                # 粒子申请事件

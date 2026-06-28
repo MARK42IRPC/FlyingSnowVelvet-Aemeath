@@ -256,6 +256,7 @@ class ApplicationState:
         self._exit_in_progress = True
         logger.info('收到退出请求，开始分阶段关闭组件')
         hide_all_runtime_ui()
+        cleanup_all_runtime_ui()
         if self._tray_icon is not None:
             try:
                 self._tray_icon.begin_shutdown()

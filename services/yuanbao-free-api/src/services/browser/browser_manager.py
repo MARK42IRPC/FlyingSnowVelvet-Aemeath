@@ -818,7 +818,7 @@ class BrowserManager:
 
             self._last_message = "waiting_qrcode"
             await self.page.wait_for_timeout(1200)
-            qrcode_locator = await self._wait_for_qrcode_locator(timeout_ms=15000)
+            qrcode_locator = await self._wait_for_qrcode_locator(timeout_ms=30000)
             if qrcode_locator is not None:
                 if not await self._save_qrcode_snapshot(qrcode_locator) and not await self._capture_qrcode_fallback():
                     raise RuntimeError("qrcode_extract_failed")
@@ -882,7 +882,7 @@ class BrowserManager:
 
         if self._route_handler:
             try:
-                self.page.remove_route("**/*")
+                await self.page.unroute("**/*", self._route_handler)
             except Exception:
                 pass
 
@@ -913,7 +913,7 @@ class BrowserManager:
         finally:
             if self._route_handler:
                 try:
-                    self.page.remove_route("**/*")
+                    await self.page.unroute("**/*", self._route_handler)
                     self._route_handler = None
                 except Exception:
                     pass

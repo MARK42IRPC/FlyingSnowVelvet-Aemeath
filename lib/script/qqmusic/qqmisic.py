@@ -1,8 +1,6 @@
-"""QQ Music client based on stable web endpoints plus musicdl fallback."""
+"""QQ Music client based on stable web endpoints."""
 from __future__ import annotations
 
-import contextlib
-import io
 import json
 import random
 import re
@@ -44,9 +42,6 @@ class QQmisic:
             }
         )
         self._song_cache: dict[str, dict[str, Any]] = {}
-        self._musicdl_client = None
-        self._musicdl_init_done = False
-        self._musicdl_disabled_reason = ""
         self._last_vkey_meta: dict[str, Any] = {}
         self._last_liked_meta: dict[str, Any] = {}
 
@@ -153,13 +148,6 @@ class QQmisic:
 
     def get_last_liked_meta(self) -> dict[str, Any]:
         return dict(self._last_liked_meta)
-
-    def get_musicdl_status(self) -> dict[str, Any]:
-        return {
-            "initialized": bool(self._musicdl_init_done),
-            "available": self._musicdl_client is not None,
-            "reason": str(self._musicdl_disabled_reason or "").strip(),
-        }
 
     def _post_musicu(self, payload: dict[str, Any]) -> dict[str, Any]:
         response = self._session.post(self._API_URL, json=payload, timeout=self._timeout)
@@ -311,54 +299,6 @@ class QQmisic:
         self._song_cache[mid] = dict(normalized)
         return normalized
 
-    def _get_musicdl_client(self):
-        if self._musicdl_init_done:
-            return self._musicdl_client
-        self._musicdl_init_done = True
-        try:
-            from musicdl.modules.sources.qq import QQMusicClient as MusicDLQQMusicClient
-            self._musicdl_client = MusicDLQQMusicClient(disable_print=True, strict_limit_search_size_per_page=True, search_size_per_page=10, search_size_per_source=20)
-            self._musicdl_disabled_reason = ""
-        except Exception as exc:
-            self._musicdl_client = None
-            self._musicdl_disabled_reason = str(exc)
-            hint = ""
-            lowered = self._musicdl_disabled_reason.lower()
-            if "c10.dll" in lowered or "dll" in lowered or "winerror 1114" in lowered:
-                hint = " (torch/DLL 依赖不可用，QQMusic 将继续使用内建 Web 接口，仅关闭 musicdl 兜底)"
-            logger.warning("[QQMusic] optional musicdl fallback unavailable: %s%s", exc, hint)
-            self._musicdl_client = None
-        return self._musicdl_client
-
-    def _musicdl_search(self, keyword: str) -> list[dict[str, Any]]:
-        client = self._get_musicdl_client()
-        if client is None:
-            return []
-        try:
-            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-                results = client.search(keyword, num_threadings=1)
-        except Exception as exc:
-            logger.debug("[QQMusic] musicdl search failed keyword=%s: %s", keyword, exc)
-            return []
-        out: list[dict[str, Any]] = []
-        for item in results if isinstance(results, list) else []:
-            mid = self._clean_text(item.get("identifier"))
-            if not mid:
-                continue
-            normalized = {
-                "id": 0,
-                "mid": mid,
-                "media_mid": mid,
-                "title": self._clean_text(item.get("song_name")) or mid,
-                "artist": self._clean_text(item.get("singers")) or "Unknown Artist",
-                "duration_ms": None,
-                "url": self._clean_text(item.get("download_url")),
-                "raw": item,
-            }
-            self._song_cache[mid] = dict(normalized)
-            out.append(normalized)
-        return out
-
     def _search_score(self, query: str, song: dict[str, Any]) -> tuple[int, int, int, int]:
         query_text = query.lower().strip()
         tokens = [token for token in re.split(r"\s+", query_text) if token]
@@ -403,8 +343,6 @@ class QQmisic:
                     songs.append(normalized)
         except Exception as exc:
             logger.warning("[QQMusic] search request failed keyword=%s: %s", query, exc)
-        if not songs:
-            songs = self._musicdl_search(query)
         ordered = sorted(songs, key=lambda item: self._search_score(query, item))
         return [dict(item) for item in ordered[: max(1, int(num_per_page or 20))]]
 
@@ -437,8 +375,7 @@ class QQmisic:
                 return dict(normalized)
         except Exception as exc:
             logger.debug("[QQMusic] detail request failed mid=%s: %s", mid, exc)
-        fallback = self._musicdl_search(mid)
-        return dict(fallback[0]) if fallback else None
+        return None
 
     def _filename_ladder(self, song_mid: str, media_mid: str) -> list[str]:
         song_text = self._clean_text(song_mid)
