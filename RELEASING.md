@@ -1,6 +1,6 @@
 # Release Playbook
 
-适用于 `LTS1.0.5pre3` 及后续 `pre` 系列发布。目标是：**版本号一致、文档一致、发布包不夹带运行时垃圾文件**。
+适用于 `LTS1.0.6beta5` 及后续 `beta` 系列发布。目标是：**版本号一致、文档一致、发布包不夹带运行时垃圾文件**。
 
 ## 1. 更新版本号
 
@@ -50,24 +50,24 @@ python scripts/package_green_release.py --dry-run
 普通发布包：
 
 ```powershell
-python scripts/package_release.py --version LTS1.0.5pre3
+python scripts/package_release.py --version LTS1.0.6beta5
 ```
 
 输出示例：
 
-- `dist/FlyingSnowVelvet-LTS1.0.5pre3.zip`
-- `dist/FlyingSnowVelvet-LTS1.0.5pre3-manifest.json`
+- `dist/FlyingSnowVelvet-LTS1.0.6beta5.zip`
+- `dist/FlyingSnowVelvet-LTS1.0.6beta5-manifest.json`
 
 绿色资源包：
 
 ```powershell
-python scripts/package_green_release.py --version LTS1.0.5pre3
+python scripts/package_green_release.py --version LTS1.0.6beta5
 ```
 
 输出示例：
 
-- `dist/FlyingSnowVelvet-LTS1.0.5pre3-green.zip`
-- `dist/FlyingSnowVelvet-LTS1.0.5pre3-green-manifest.json`
+- `dist/FlyingSnowVelvet-LTS1.0.6beta5-green.zip`
+- `dist/FlyingSnowVelvet-LTS1.0.6beta5-green-manifest.json`
 
 绿色包会保留模型等离线资源，但不再附带 Playwright Chromium 运行时。
 
@@ -97,14 +97,14 @@ git status --ignored --short
 示例：
 
 ```powershell
-git tag -a LTS1.0.5pre3 -m "LTS 1.0.5 pre3"
-git push origin LTS1.0.5pre3
+git tag -a LTS1.0.6beta5 -m "LTS 1.0.6 beta5"
+git push origin LTS1.0.6beta5
 ```
 
 Release 建议上传：
 
-- `dist/FlyingSnowVelvet-LTS1.0.5pre3.zip`
-- `dist/FlyingSnowVelvet-LTS1.0.5pre3-green.zip`（如需要）
+- `dist/FlyingSnowVelvet-LTS1.0.6beta5.zip`
+- `dist/FlyingSnowVelvet-LTS1.0.6beta5-green.zip`（如需要）
 - `AA使用必读.html`
 
 Release Notes 直接整理自 `CHANGELOG.md` 当前版本段落即可。
