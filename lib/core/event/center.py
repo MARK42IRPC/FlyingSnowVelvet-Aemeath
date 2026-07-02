@@ -86,6 +86,7 @@ class EventType(Enum):
     # 粒子事件
     PARTICLE_REQUEST = "particle_request"                # 粒子申请事件
     PARTICLE_UPDATE = "particle_update"                  # 粒子更新事件
+    EFFECT_REQUEST = "effect_request"                    # 特效申请事件
 
     # 音频事件
     SOUND_REQUEST = "sound_request"                      # 音频播放申请: [audio_type, source, volume_gain, interruptible]

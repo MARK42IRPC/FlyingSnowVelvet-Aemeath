@@ -42,6 +42,9 @@ BEHAVIOR = {
 PARTICLES = {
     'enable_stroke':   False,    # 启用粒子描边（1px黑色描边）
     'fade_threshold':  0.75,     # 粒子开始淡出的生命比例（剩余生命低于此比例时才淡出）
+    'async_update_enabled': False,  # 纯 Python 对象粒子默认关闭线程池异步更新
+    'perf_log_enabled': False,   # 输出粒子系统低频性能聚合日志
+    'perf_log_interval_ticks': 60,  # 粒子性能日志输出间隔（tick）
 }
 PHYSICS = {
     # 雪豹跳跃参数

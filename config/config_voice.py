@@ -8,6 +8,8 @@ CHAT = {
 VOICE = {
     # 语音音量系数（0.0-1.0）
     'voice_volume': 1.0,
+    # 拉海洛方块技能释放语音音量系数（0.0-1.0）
+    'lahai_skill_release_volume': 0.7,
     # Push-to-talk hotkey for microphone STT; leave empty to disable (e.g. "Ctrl+Shift+V")
     'microphone_push_to_talk_key': 'V',
     # Vosk 模型列表：默认同时加载中英小模型，支持混合识别

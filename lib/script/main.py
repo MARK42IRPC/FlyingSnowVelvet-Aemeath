@@ -6,6 +6,7 @@ from PyQt5.QtCore import QTimer
 
 from config.config import GIF_FILES, DRAW, ANIMATION
 from lib.core.qt_gif_loader import GifLoader
+from lib.core.qt_effect_system import EffectOverlay
 from lib.core.qt_particle_system import ParticleOverlay
 from lib.core.pet_window import PetWindow
 from lib.core.event.center import get_event_center, EventType, Event, cleanup_event_center
@@ -54,6 +55,7 @@ class ApplicationState:
         self._pet = None
         self._gifs = None
         self._particles = None
+        self._effects = None
         self._animation = get_start_exit_animation()
         # 管理器实例字典（由动态发现机制填充）
         self._managers = {}
@@ -234,6 +236,7 @@ class ApplicationState:
 
         # 粒子覆盖层（全局单例）
         self._particles = ParticleOverlay()
+        self._effects = EffectOverlay()
 
         # 发布预启动事件，触发初始化流程
         self._publish_event(EventType.APP_PRE_START, {
@@ -432,6 +435,15 @@ class ApplicationState:
             except Exception:
                 pass
             self._particles = None
+
+        if self._effects:
+            try:
+                self._effects.cleanup()
+                self._effects.close()
+                self._effects.deleteLater()
+            except Exception:
+                pass
+            self._effects = None
 
         cleanup_draw_core()
 

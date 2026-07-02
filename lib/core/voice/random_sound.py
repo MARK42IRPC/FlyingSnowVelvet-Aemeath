@@ -10,7 +10,7 @@ from lib.core.event.center import Event, EventType, get_event_center
 class DirectoryRandomSound:
     """Publish VOICE_REQUEST with random file and per-event gain from a directory."""
 
-    AUDIO_EXT = ('.mp3', '.wav', '.ogg', '.flac')
+    AUDIO_EXT = ('.mp3', '.wav', '.ogg', '.flac', '.m4a')
 
     def __init__(
         self,

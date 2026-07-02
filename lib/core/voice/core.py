@@ -48,7 +48,8 @@ _MAX_CHANNELS = 4
 
 # 多频道并发时的响度缩放因子（防止叠加失真）
 _VOLUME_SCALE = {1: 1.0, 2: 0.75, 3: 0.60, 4: 0.50}
-_VOICE_AUDIO_TYPES = {"voice"}
+_VOICE_AUDIO_TYPES = {"voice", "priority_voice"}
+_PRIORITY_VOICE_AUDIO_TYPES = {"priority_voice"}
 
 
 # ==============================================================================
@@ -211,8 +212,10 @@ class VoiceCore:
         if not audio_type or not source or not os.path.isfile(source):
             return
 
-        # 语音互斥：同一时间只允许一个语音实例播放。
-        if audio_type in _VOICE_AUDIO_TYPES and self._is_voice_playing():
+        if audio_type in _PRIORITY_VOICE_AUDIO_TYPES:
+            self._stop_voice_channels()
+        # 普通语音互斥：高优先级语音播放时，普通语音直接丢弃。
+        elif audio_type in _VOICE_AUDIO_TYPES and self._is_voice_playing():
             event.mark_handled()
             return
 
@@ -239,6 +242,12 @@ class VoiceCore:
             ch.active and ch.audio_type in _VOICE_AUDIO_TYPES
             for ch in self._channels
         )
+
+    def _stop_voice_channels(self) -> None:
+        """停止当前所有语音类频道，让高优先级语音立即接管。"""
+        for ch in self._channels:
+            if ch.active and ch.audio_type in _VOICE_AUDIO_TYPES:
+                ch.stop()
 
     def is_type_playing(self, audio_type: str) -> bool:
         """检查指定音频类型是否正在任一频道播放"""

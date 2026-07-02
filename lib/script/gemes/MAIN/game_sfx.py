@@ -30,6 +30,11 @@ class GameSfx:
             "drop_start": self._ensure_wave("lahai_drop_start.wav", self._build_drop_start),
             "drop_impact": self._ensure_wave("lahai_drop_impact.wav", self._build_drop_impact),
             "clear": self._ensure_wave("lahai_clear.wav", self._build_clear),
+            "skill_press": self._ensure_wave("lahai_skill_press.wav", self._build_skill_press),
+            "skill_cast": self._ensure_wave("lahai_skill_cast.wav", self._build_skill_cast),
+            "skill_release": self._ensure_wave("lahai_skill_release.wav", self._build_skill_release),
+            "partner_burst": self._ensure_wave("lahai_partner_burst.wav", self._build_partner_burst),
+            "game_over": self._ensure_wave("lahai_game_over.wav", self._build_game_over),
         }
 
     def _ensure_wave(self, name: str, builder) -> str:
@@ -158,6 +163,49 @@ class GameSfx:
         sparkle = self._noise(duration=len(sequence) / self._RATE, volume=0.20)
         return self._mix(sequence, sparkle)
 
+    def _build_skill_press(self) -> bytes:
+        return self._mix(
+            self._square_tone(freq_start=920, freq_end=1180, duration=0.045, duty=0.30, volume=0.62),
+            self._square_tone(freq_start=560, freq_end=720, duration=0.050, duty=0.50, volume=0.22),
+        )
+
+    def _build_skill_cast(self) -> bytes:
+        first = self._square_tone(freq_start=520, freq_end=760, duration=0.095, duty=0.34, volume=0.68)
+        second = self._square_tone(freq_start=760, freq_end=1040, duration=0.105, duty=0.30, volume=0.74)
+        third = self._square_tone(freq_start=1040, freq_end=880, duration=0.090, duty=0.40, volume=0.60)
+        tail = self._square_tone(freq_start=660, freq_end=520, duration=0.085, duty=0.48, volume=0.38)
+        gap = [0.0] * int(self._RATE * 0.018)
+        sparkle = self._noise(duration=(len(first) + len(second) + len(third) + len(tail) + len(gap) * 3) / self._RATE, volume=0.12)
+        sequence = first + gap + second + gap + third + gap + tail
+        return self._mix(sequence, sparkle)
+
+    def _build_skill_release(self) -> bytes:
+        hit = self._square_tone(freq_start=420, freq_end=220, duration=0.14, duty=0.46, volume=0.92)
+        top = self._square_tone(freq_start=980, freq_end=620, duration=0.11, duty=0.26, volume=0.58)
+        body = self._square_tone(freq_start=240, freq_end=180, duration=0.18, duty=0.50, volume=0.64)
+        impact = self._noise(duration=0.060, volume=0.62)
+        return self._mix(hit, top, body, impact)
+
+    def _build_partner_burst(self) -> bytes:
+        click = self._square_tone(freq_start=1320, freq_end=980, duration=0.028, duty=0.22, volume=1.00)
+        chirp = self._square_tone(freq_start=920, freq_end=1460, duration=0.040, duty=0.30, volume=0.86)
+        snap = self._square_tone(freq_start=560, freq_end=420, duration=0.050, duty=0.18, volume=0.40)
+        sparkle = self._noise(duration=0.024, volume=0.34)
+        return self._mix(click, chirp, snap, sparkle)
+
+    def _build_game_over(self) -> bytes:
+        note1 = self._square_tone(freq_start=560, freq_end=500, duration=0.20, duty=0.46, volume=0.62)
+        note2 = self._square_tone(freq_start=430, freq_end=380, duration=0.22, duty=0.48, volume=0.68)
+        note3 = self._square_tone(freq_start=320, freq_end=260, duration=0.26, duty=0.50, volume=0.74)
+        bass = self._square_tone(freq_start=150, freq_end=92, duration=0.84, duty=0.52, volume=0.38)
+        undertone = self._square_tone(freq_start=240, freq_end=180, duration=0.52, duty=0.50, volume=0.24)
+        tail_noise = self._noise(duration=0.30, volume=0.22)
+        gap1 = [0.0] * int(self._RATE * 0.030)
+        gap2 = [0.0] * int(self._RATE * 0.040)
+        gap3 = [0.0] * int(self._RATE * 0.020)
+        lead = note1 + gap1 + note2 + gap2 + note3 + gap3
+        return self._mix(lead, bass, undertone, ([0.0] * (len(lead) - len(tail_noise)) + tail_noise) if len(lead) >= len(tail_noise) else tail_noise)
+
     def play_move(self) -> None:
         self._emit("move", 0.28)
 
@@ -178,3 +226,18 @@ class GameSfx:
 
     def play_clear(self) -> None:
         self._emit("clear", 0.46)
+
+    def play_skill_press(self) -> None:
+        self._emit("skill_press", 0.22)
+
+    def play_skill_cast(self) -> None:
+        self._emit("skill_cast", 0.30)
+
+    def play_skill_release(self) -> None:
+        self._emit("skill_release", 0.54)
+
+    def play_partner_burst(self) -> None:
+        self._emit("partner_burst", 0.40)
+
+    def play_game_over(self) -> None:
+        self._emit("game_over", 0.46)

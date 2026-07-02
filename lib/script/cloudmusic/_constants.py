@@ -6,14 +6,11 @@
 
 from pathlib import Path
 
-from PyQt5.QtCore import QObject, pyqtSignal
-
 from config.config import CLOUD_MUSIC, ANIMATION
 
 # ── 播放参数 ──────────────────────────────────────────────────────────────
 _BITRATE_LADDER    = CLOUD_MUSIC.get('bitrate_ladder', (320000, 192000, 128000))
 _DEFAULT_VOLUME    = CLOUD_MUSIC.get('default_volume', 0.8)
-_PYGAME_INIT_WAIT  = CLOUD_MUSIC.get('pygame_init_wait', 5)
 _FRAME_FPS         = max(1, int(ANIMATION.get('frame_fps', 60) or 60))
 _TICK_FPS          = 20
 _PARTICLE_INTERVAL = max(
@@ -112,9 +109,3 @@ def ensure_user_storage_layout() -> None:
             # 目录非空时保留，避免影响正在使用的文件。
             pass
 
-
-# ── Qt 信号载体（用于在主线程中执行播放操作）────────────────────────────
-class _PlaySignal(QObject):
-    """用于在主线程中执行播放操作的信号载体。"""
-
-    play_requested = pyqtSignal(str, str)  # path, display

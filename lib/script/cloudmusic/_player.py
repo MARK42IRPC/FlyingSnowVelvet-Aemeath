@@ -12,7 +12,6 @@ Windows MCI 命令参考：
 """
 
 import ctypes
-import logging
 import threading
 import uuid
 from typing import Callable, Optional
@@ -20,8 +19,6 @@ from typing import Callable, Optional
 from lib.core.logger import get_logger
 
 logger = get_logger(__name__)
-
-logger = logging.getLogger(__name__)
 
 
 # ── Windows MCI ─────────────────────────────────────────────────────────
@@ -63,6 +60,7 @@ class MciMusicPlayer:
         self._lock:      threading.Lock = threading.Lock()
         self._stop_flag: threading.Event = threading.Event()
         self._on_finish: Optional[Callable] = None
+        self._duration_ms: int = 0
 
     # ── 公开接口 ─────────────────────────────────────────────────────────
 
@@ -89,6 +87,12 @@ class MciMusicPlayer:
                 ret = _mci(f'open "{file_path}" type mpegvideo alias {alias}')
                 if ret != 0:
                     return False
+
+            _mci(f'set {alias} time format milliseconds')
+            try:
+                self._duration_ms = max(0, int(_mci_query(f'status {alias} length') or 0))
+            except Exception:
+                self._duration_ms = 0
 
             vol = max(0, min(1000, int(volume * 1000)))
             ret = _mci(f'setaudio {alias} volume to {vol}')
@@ -140,6 +144,52 @@ class MciMusicPlayer:
                 vol = max(0, min(1000, int(volume * 1000)))
                 _mci(f'setaudio {self._alias} volume to {vol}')
 
+    def seek(self, position_ms: int) -> bool:
+        """跳转到指定毫秒位置。"""
+        with self._lock:
+            if not self._alias or self._state not in ("playing", "paused"):
+                return False
+            target = max(0, int(position_ms))
+            _mci(f'seek {self._alias} to {target}')
+            if self._state == "playing":
+                _mci(f'play {self._alias} from {target}')
+            else:
+                _mci(f'play {self._alias} from {target}')
+                _mci(f'pause {self._alias}')
+            return True
+
+    def position_ms(self) -> int:
+        """返回当前播放位置（毫秒）。"""
+        with self._lock:
+            if not self._alias or self._state == "idle":
+                return 0
+            alias = self._alias
+        try:
+            return max(0, int(_mci_query(f'status {alias} position') or 0))
+        except Exception:
+            return 0
+
+    def duration_ms(self) -> int:
+        """返回当前媒体时长（毫秒）。"""
+        with self._lock:
+            if self._duration_ms > 0:
+                return self._duration_ms
+            alias = self._alias
+        if not alias:
+            return 0
+        try:
+            value = max(0, int(_mci_query(f'status {alias} length') or 0))
+        except Exception:
+            value = 0
+        with self._lock:
+            if value > 0:
+                self._duration_ms = value
+        return value
+
+    def is_busy(self) -> bool:
+        with self._lock:
+            return self._state in ("playing", "paused")
+
     @property
     def state(self) -> str:
         """当前状态：'idle' | 'playing' | 'paused'"""
@@ -158,6 +208,7 @@ class MciMusicPlayer:
             self._alias = None
         self._state     = "idle"
         self._on_finish = None
+        self._duration_ms = 0
 
     def _poll(self, alias: str, stop_flag: threading.Event):
         """后台轮询线程：等待 MCI 自然播完后回调 on_finish。"""

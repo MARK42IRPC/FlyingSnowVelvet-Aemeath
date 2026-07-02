@@ -47,6 +47,15 @@ class LahaiPieceRandomizerTests(unittest.TestCase):
         self.assertEqual(randomizer.generated_count, 1)
         self.assertEqual(randomizer.weights_snapshot(), {"A": 0.8, "B": 1.05})
 
+    def test_reset_with_weights_resets_counter_and_applies_overrides(self):
+        randomizer = LahaiPieceRandomizer(("A", "B", "C"), _FixedRng([0.0]))
+
+        randomizer.next_kind()
+        randomizer.reset_with_weights({"A": 5.0}, default_weight=0.5)
+
+        self.assertEqual(randomizer.generated_count, 0)
+        self.assertEqual(randomizer.weights_snapshot(), {"A": 5.0, "B": 0.5, "C": 0.5})
+
 
 if __name__ == "__main__":
     unittest.main()

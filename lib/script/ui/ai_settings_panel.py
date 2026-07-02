@@ -414,6 +414,7 @@ _GENERAL_NUMERIC_RULES: dict[tuple[str, str], tuple[str, float, float]] = {
     ("SOUND", "main_pet_volume"): ("number", 0.0, 1.0),
     ("SOUND", "game_object_volume"): ("number", 0.0, 1.0),
     ("VOICE", "voice_volume"): ("number", 0.0, 1.0),
+    ("VOICE", "lahai_skill_release_volume"): ("number", 0.0, 1.0),
     ("VOICE", "microphone_silence_timeout_secs"): ("number", 0.5, 10.0),
     ("VOICE", "microphone_speech_rms_threshold"): ("int", 50, 8000),
     ("CLOUD_MUSIC", "default_volume"): ("number", 0.0, 1.0),
@@ -576,6 +577,7 @@ _GENERAL_CONFIG_DEFAULTS: dict[str, dict[str, object]] = {
     },
     "VOICE": {
         "voice_volume": 1.0,
+        "lahai_skill_release_volume": 0.7,
         "microphone_push_to_talk_key": "V",
         "microphone_silence_timeout_secs": 3.0,
         "microphone_speech_rms_threshold": 550,
@@ -611,6 +613,7 @@ _GENERAL_MIXED_SECTION_FIELDS: dict[str, list[tuple[str, str]]] = {
         ("SOUND", "main_pet_volume"),
         ("SOUND", "game_object_volume"),
         ("VOICE", "voice_volume"),
+        ("VOICE", "lahai_skill_release_volume"),
         ("CLOUD_MUSIC", "default_volume"),
     ],
 }
@@ -716,6 +719,7 @@ _KEY_FRIENDLY_NAME = {
     },
     "VOICE": {
         "voice_volume": "AI语音音量",
+        "lahai_skill_release_volume": "拉海洛技能语音音量",
         "microphone_push_to_talk_key": "语聊快捷键(留空禁用)",
         "microphone_silence_timeout_secs": "静音停止时长(s)",
         "microphone_speech_rms_threshold": "说话判定阈值",
@@ -732,7 +736,6 @@ _KEY_FRIENDLY_NAME = {
         "provider": "音乐平台",
         "bitrate_ladder": "音质梯度(bps)",
         "default_volume": "音乐音量",
-        "pygame_init_wait": "pygame初始化等待(s)",
         "particle_interval": "音符粒子间隔(帧)",
         "search_result_limit": "搜索结果上限(首)",
         "cache_dir": "缓存目录",

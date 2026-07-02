@@ -11,6 +11,7 @@ echo.
 set "CANDIDATE_FILE=%TEMP%\fsv_python_candidates_%RANDOM%_%RANDOM%.txt"
 set "PYTHON_FOUND="
 set "INSTALL_OK="
+set "PYTHON_AUTO_INSTALL_ATTEMPTED="
 
 REM =============================================
 REM  Goal:
@@ -18,6 +19,10 @@ REM  1) scan as many real Python executables as possible
 REM  2) prefer Python 3.11
 REM  3) if one candidate cannot complete startup, try the next one
 REM =============================================
+
+:scan_python
+set "PYTHON_FOUND="
+if exist "%CANDIDATE_FILE%" del /q "%CANDIDATE_FILE%" >nul 2>&1
 
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$ErrorActionPreference='SilentlyContinue';" ^
@@ -135,6 +140,10 @@ for /f "usebackq tokens=1,2 delims=|" %%A in ("%CANDIDATE_FILE%") do (
 if defined PYTHON_FOUND goto :all_failed
 
 :no_python
+if not defined PYTHON_AUTO_INSTALL_ATTEMPTED (
+    call :install_bundled_python
+    if not errorlevel 1 goto :scan_python
+)
 echo [ERROR] No usable Python environment found!
 echo.
 echo Please download and install Python 3.11 from:
@@ -159,3 +168,30 @@ if defined INSTALL_OK (
     exit /b 0
 )
 exit /b 1
+
+:install_bundled_python
+set "PYTHON_AUTO_INSTALL_ATTEMPTED=1"
+set "BUNDLED_PYTHON_INSTALLER="
+for /f "delims=" %%I in ('dir /b /a-d "resc\python-3.11*-amd64.exe" 2^>nul') do (
+    if not defined BUNDLED_PYTHON_INSTALLER set "BUNDLED_PYTHON_INSTALLER=%CD%\resc\%%I"
+)
+if not defined BUNDLED_PYTHON_INSTALLER (
+    echo [WARN] Bundled Python installer not found under resc\python-3.11*-amd64.exe
+    echo.
+    exit /b 1
+)
+echo [INFO] No usable Python detected. Installing bundled Python 3.11...
+echo [INFO] Installer: "%BUNDLED_PYTHON_INSTALLER%"
+echo.
+"%BUNDLED_PYTHON_INSTALLER%" /passive InstallAllUsers=0 Include_pip=1 Include_launcher=1 InstallLauncherAllUsers=0 PrependPath=0 Include_test=0 SimpleInstall=1
+set "RC=%errorlevel%"
+if not "%RC%"=="0" (
+    echo.
+    echo [WARN] Bundled Python installer exited with code %RC%.
+    echo.
+    exit /b 1
+)
+echo.
+echo [INFO] Bundled Python install completed, rescanning interpreters...
+echo.
+exit /b 0

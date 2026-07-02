@@ -172,6 +172,9 @@ class GameRuntimePanel(QWidget):
         self._game_widget.raise_()
         self.activateWindow()
         self._game_widget.setFocus(Qt.ActiveWindowFocusReason)
+        # 重新激活小游戏后，系统可能在后续几十毫秒内继续调整 z-order，
+        # 用短时连续重排把 overlay 稳定保持在 runtime 之上。
+        get_topmost_manager().enforce_burst()
 
     def deactivate(self) -> None:
         self._game_widget.deactivate()
@@ -183,6 +186,8 @@ class GameRuntimePanel(QWidget):
         self.setWindowOpacity(0.0)
         self.show()
         self.raise_()
+        # show()/raise_() 后不仅当前帧会改 z-order，激活链路也可能稍后再次调整。
+        get_topmost_manager().enforce_burst()
         self._opacity_anim.setStartValue(0.0)
         self._opacity_anim.setEndValue(apply_ui_opacity(1.0))
         self._opacity_anim.start()

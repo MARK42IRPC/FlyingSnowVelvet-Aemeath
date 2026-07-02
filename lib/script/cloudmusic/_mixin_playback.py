@@ -1,7 +1,6 @@
 ﻿"""网易云音乐管理器 - 播放、下载与进度控制 Mixin"""
 
 import threading
-import time
 import random
 import re
 import wave
@@ -30,7 +29,7 @@ _DISPLAY_PREFIX_RE = re.compile(r"^(?:\d{2}:\d{2}|--:--)\s+(.*)$")
 
 
 class _PlaybackMixin:
-    """播放控制、下载、进度跟踪与 pygame 集成。"""
+    """播放控制、下载、进度跟踪与 Qt 播放器集成。"""
 
     def _read_duration_ms(self, target_path: Path) -> int:
         try:
@@ -492,11 +491,11 @@ class _PlaybackMixin:
         return None, last_reason
 
     # ------------------------------------------------------------------
-    # 帧事件与 seek 校对
+    # 帧事件
     # ------------------------------------------------------------------
 
     def _on_tick(self, event: Event):
-        """Tick 事件处理 - 生成音符粒子、校对 seek 偏移。
+        """Tick 事件处理 - 生成音符粒子。
 
         进度发布已改为请求-响应模式：进度条每 20 tick 发送 MUSIC_PROGRESS_REQUEST，
         音乐中心通过 _on_progress_request 响应并返回进度百分比。
@@ -507,67 +506,8 @@ class _PlaybackMixin:
             if self._particle_timer >= _PARTICLE_INTERVAL:
                 self._particle_timer = 0
                 self._spawn_music_note_particles()
-
-            # 每 N tick 在后台线程校对 seek 偏移
-            self._sync_timer += 1
-            if self._sync_timer >= self._sync_interval:
-                self._sync_timer = 0
-                self._schedule_seek_sync()
         else:
             self._particle_timer = 0
-            self._sync_timer = 0
-
-    def _schedule_seek_sync(self):
-        """在后台线程中执行 seek 偏移校对，避免阻塞主线程。"""
-        if not self._is_playing or self._is_paused:
-            return
-        future = get_compute_hub().submit_latest(
-            "cloudmusic_seek_sync",
-            self._sync_seek_offset,
-            executor="io",
-        )
-        if future is None:
-            return
-
-    def _sync_seek_offset_worker(self):
-        """后台线程入口：单飞执行 seek 偏移校对。"""
-        try:
-            self._sync_seek_offset()
-        finally:
-            sync_lock = getattr(self, "_seek_sync_lock", None)
-            if sync_lock is not None and sync_lock.locked():
-                sync_lock.release()
-
-    def _sync_seek_offset(self):
-        """后台线程：校对 seek 偏移，确保进度显示准确。"""
-        try:
-            import pygame
-
-            with self._state_lock:
-                if not self._is_playing or self._is_paused:
-                    return
-                duration_ms = self._current_duration_ms
-
-            if duration_ms <= 0:
-                duration_ms = self._get_current_duration()
-                if duration_ms <= 0:
-                    return
-
-            pos_ms = pygame.mixer.music.get_pos()
-            if pos_ms < 0:
-                return
-
-            real_pos_ms = pos_ms + self._seek_offset_ms
-
-            if real_pos_ms > duration_ms + 1000:  # 允许 1 秒误差
-                new_offset = max(0, duration_ms - pos_ms - 500)
-                if abs(new_offset - self._seek_offset_ms) > 500:
-                    logger.debug("[CloudMusic] 校对 seek 偏移: %d -> %d",
-                                 self._seek_offset_ms, new_offset)
-                    self._seek_offset_ms = new_offset
-
-        except Exception as e:
-            logger.debug("[CloudMusic] seek 校对失败: %s", e)
 
     # ------------------------------------------------------------------
     # 进度查询
@@ -584,33 +524,26 @@ class _PlaybackMixin:
             return
 
         try:
-            import pygame
-            if not pygame.mixer.music.get_busy():
-                return
+            if self._use_qt_player:
+                if not self._music_player.is_busy():
+                    return
+                duration_ms = self._music_player.duration_ms_value() or self._current_duration_ms
+                pos_ms = self._music_player.position_ms()
+            else:
+                if not self._fallback_player.is_busy():
+                    return
+                duration_ms = self._fallback_player.duration_ms() or self._current_duration_ms
+                pos_ms = self._fallback_player.position_ms()
 
-            duration_ms = self._current_duration_ms
+            if pos_ms < 0:
+                return
             if duration_ms <= 0:
                 duration_ms = self._get_current_duration()
                 if duration_ms <= 0:
                     return
 
-            pos_ms = pygame.mixer.music.get_pos()
-            if pos_ms < 0:
-                return
-
-            # 如果刚 seek 过（_last_seek_progress 有效），优先使用目标进度
-            if self._last_seek_progress >= 0:
-                progress = self._last_seek_progress
-                self._last_seek_progress = -1.0
-                remaining = max(0, int((1 - progress) * duration_ms / 1000))
-                target_pos_ms = int(progress * duration_ms)
-                self._seek_offset_ms = target_pos_ms - pos_ms
-                logger.debug("[CloudMusic] 进度请求(使用seek目标): progress=%.4f, 重新计算offset=%dms",
-                             progress, self._seek_offset_ms)
-            else:
-                real_pos_ms = pos_ms + self._seek_offset_ms
-                progress    = min(1.0, max(0.0, real_pos_ms / duration_ms))
-                remaining   = max(0, int((duration_ms - real_pos_ms) / 1000))
+            progress = min(1.0, max(0.0, pos_ms / duration_ms))
+            remaining = max(0, int((duration_ms - pos_ms) / 1000))
 
             self._ec.publish(Event(EventType.MUSIC_PROGRESS, {
                 'progress':  progress,
@@ -1103,249 +1036,130 @@ class _PlaybackMixin:
         return cached
 
     # ------------------------------------------------------------------
-    # pygame 播放
+    # Qt 播放
     # ------------------------------------------------------------------
-
-    def _init_pygame(self):
-        """在主线程中初始化 pygame mixer。"""
-        try:
-            import pygame
-            pygame.mixer.init()
-            with self._state_lock:
-                self._pygame_initialized = True
-            logger.info("[CloudMusic] pygame mixer 初始化完成")
-        except Exception as e:
-            logger.error("[CloudMusic] pygame mixer 初始化失败: %s", e)
 
     def _play_file(self, path: Path, display: str):
-        """
-        播放本地文件（通过信号调度到主线程执行）。
-
-        由于 pygame.mixer 操作必须在主线程中执行，
-        此方法会通过 Qt 信号将播放请求调度到主线程。
-        """
         logger.debug("[CloudMusic] 请求播放文件: %s", path)
-        self._play_signal.play_requested.emit(str(path), display)
-
-    def _do_play_file(self, path_str: str, display: str):
-        """
-        在主线程中执行实际的播放操作。
-
-        此方法由 Qt 信号调用，确保 pygame 操作在主线程中执行。
-        """
-        path = Path(path_str)
-        logger.info("[CloudMusic] 在主线程播放文件: %s", path)
-
         with self._state_lock:
-            pygame_ready = self._pygame_initialized
-            gen          = self._play_gen
-
-        if not pygame_ready:
-            self._show_error("音频系统未就绪")
+            self._current_duration_ms = 0
+            gen = self._play_gen
+        self._pending_play_display = display
+        self._pending_play_path = str(path)
+        if self._queue and 0 <= self._current_index < len(self._queue):
+            song_id, _ = self._queue[self._current_index]
+            self._schedule_duration_probe(song_id, path)
+        if self._use_qt_player:
+            self._music_player.play_requested.emit(str(path), get_effective_music_volume(self._volume), gen)
             return
 
-        try:
-            import pygame
+        ok = self._fallback_player.play(
+            str(path),
+            volume=get_effective_music_volume(self._volume),
+            on_finish=lambda: self._on_player_finished(gen),
+        )
+        if not ok:
+            self._on_player_error(gen, "MCI 播放器打开文件失败")
+            return
+        self._on_player_started(gen)
+        duration_ms = self._fallback_player.duration_ms()
+        if duration_ms > 0:
+            self._on_player_duration_changed(gen, duration_ms)
 
-            pygame.mixer.music.load(str(path))
-            pygame.mixer.music.set_volume(get_effective_music_volume(self._volume))
-            pygame.mixer.music.play()
+    def _on_player_started(self, gen: int) -> None:
+        with self._state_lock:
+            if self._play_gen != gen:
+                return
+            self._is_playing = True
+            self._is_paused = False
+        if self._use_qt_player:
+            self._current_duration_ms = self._music_player.duration_ms_value() or self._current_duration_ms
+        display = self._pending_play_display
+        self._show_info(f"正在播放: {display}")
+        self._publish_status()
 
-            # 新歌曲开始，重置 seek 偏移
-            self._seek_offset_ms      = 0
-            self._last_seek_progress  = -1.0
-            self._current_duration_ms = 0
-
-            # 时长探测改为后台执行，避免开始播放时阻塞主线程。
-            if self._queue and 0 <= self._current_index < len(self._queue):
-                song_id, _ = self._queue[self._current_index]
-                self._schedule_duration_probe(song_id, path)
-
-            with self._state_lock:
-                if self._play_gen != gen:
-                    logger.debug("[CloudMusic] 播放被取消（代次不匹配）")
-                    pygame.mixer.music.stop()
-                    return
-                self._is_playing = True
-                self._is_paused  = False
-
-            self._show_info(f"正在播放: {display}")
-            self._publish_status()
-
-            # 保存到播放历史（去重）
-            if self._queue and 0 <= self._current_index < len(self._queue):
-                song_id, title_display = self._queue[self._current_index]
-                text = str(title_display or "").strip()
-                m = _DISPLAY_PREFIX_RE.match(text)
-                if m:
-                    text = m.group(1).strip()
-                if " - " in text:
-                    parts = text.split(" - ", 1)
-                    title = parts[0].strip()
-                    artist = parts[1].strip()
-                else:
-                    title = text
-                    artist = ""
-                duration_for_history = self._duration_cache.get(song_id)
-                history_provider = self._history_provider_for_song_id(song_id)
-                get_music_history(history_provider).add(song_id, title, artist, duration_for_history)
-
-            # 启动播放监控线程
-            get_compute_hub().submit_io(
-                self._monitor_playback,
-                display,
-                gen,
-            )
-
-        except Exception as e:
-            logger.error("[CloudMusic] 播放失败: %s", e)
-            self._show_error(f"播放失败: {e}")
-            with self._state_lock:
-                self._is_playing = False
-                self._is_paused  = False
-
-    # ------------------------------------------------------------------
-    # 播放状态监控
-    # ------------------------------------------------------------------
-
-    def _monitor_playback(self, display: str, gen: int):
-        """监控播放状态，播放完成后自动播放下一首。gen 为本次播放代次，不匹配则静默退出。"""
-        try:
-            import pygame
-            nonbusy_streak = 0
-            last_pos_ms = 0
-            recover_attempts = 0
-            max_recover_attempts = 2
-
-            while True:
-                with self._state_lock:
-                    if self._play_gen != gen:
-                        return
-                    if not self._is_playing:
-                        return
-                    if self._is_paused:
-                        pass  # 暂停状态，等待恢复
-
-                time.sleep(0.5)
-
-                with self._state_lock:
-                    if self._play_gen != gen:
-                        return
-                    if self._is_paused:
-                        continue
-                    if not self._is_playing:
-                        return
-
-                try:
-                    pos_ms = pygame.mixer.music.get_pos()
-                except Exception:
-                    pos_ms = -1
-                if pos_ms >= 0:
-                    real_pos_ms = max(0, pos_ms + self._seek_offset_ms)
-                    if real_pos_ms > last_pos_ms:
-                        last_pos_ms = real_pos_ms
-
-                is_busy = bool(pygame.mixer.music.get_busy())
-                if is_busy:
-                    nonbusy_streak = 0
-                    continue
-
-                nonbusy_streak += 1
-                duration_ms = self._current_duration_ms
-                if duration_ms <= 0:
-                    duration_ms = self._get_current_duration()
-                near_end = duration_ms > 0 and last_pos_ms >= max(0, duration_ms - 2000)
-
-                # 先防抖：连续两次非 busy 且接近结尾，再判定自然播放完成。
-                if near_end and nonbusy_streak >= 2:
-                    logger.info(
-                        "[CloudMusic] 播放完成: %s (pos=%dms, duration=%dms)",
-                        display,
-                        last_pos_ms,
-                        duration_ms,
-                    )
-                    with self._state_lock:
-                        self._is_playing = False
-                    break
-
-                # 某些音源在试听节点会出现瞬时非 busy，先尝试原位恢复，避免误切歌。
-                if (not near_end) and nonbusy_streak >= 2 and recover_attempts < max_recover_attempts:
-                    recover_attempts += 1
-                    resume_sec = max(0.0, last_pos_ms / 1000.0)
-                    logger.warning(
-                        "[CloudMusic] 检测到疑似提前停止，尝试恢复(%d/%d): %s pos=%.2fs duration=%dms",
-                        recover_attempts,
-                        max_recover_attempts,
-                        display,
-                        resume_sec,
-                        duration_ms,
-                    )
-                    try:
-                        pygame.mixer.music.play()
-                        if resume_sec > 0:
-                            pygame.mixer.music.set_pos(resume_sec)
-                        self._seek_offset_ms = int(resume_sec * 1000)
-                        nonbusy_streak = 0
-                        continue
-                    except Exception as e:
-                        logger.warning("[CloudMusic] 恢复播放失败: %s", e)
-                        try:
-                            pygame.mixer.music.stop()
-                        except Exception:
-                            pass
-
-                if nonbusy_streak >= 4:
-                    logger.info(
-                        "[CloudMusic] 播放结束(未接近结尾且恢复失败): %s (pos=%dms, duration=%dms)",
-                        display,
-                        last_pos_ms,
-                        duration_ms,
-                    )
-                    with self._state_lock:
-                        self._is_playing = False
-                    break
-
-            # 只有歌曲真正播放完成才会执行到这里
-            with self._state_lock:
-                if self._play_gen != gen:
-                    return
-
-                mode = getattr(self, "_play_mode", "list_loop")
-                if mode not in ("single_loop", "list_loop", "random"):
-                    mode = "list_loop"
-
-                queue_len = len(self._queue)
-                has_next = queue_len > 0
-
-                if queue_len <= 0:
-                    self._current_index = -1
-                elif mode == "single_loop":
-                    # 单曲循环：队列不变，继续播放当前歌曲
-                    self._current_index = 0
-                else:
-                    # 列表循环/随机播放：已播放歌曲放到队尾，保持列表可持续播放
-                    current_song = self._queue.pop(0)
-                    self._queue.append(current_song)
-                    if mode == "random" and len(self._queue) > 1:
-                        random.shuffle(self._queue)
-                    self._current_index = 0
-                    has_next = True
-
-            self._ec.publish(Event(EventType.MUSIC_SONG_END, {
-                'play_mode': mode,
-            }))
-
-            if has_next:
-                self._play_current()
+        if self._queue and 0 <= self._current_index < len(self._queue):
+            song_id, title_display = self._queue[self._current_index]
+            text = str(title_display or "").strip()
+            m = _DISPLAY_PREFIX_RE.match(text)
+            if m:
+                text = m.group(1).strip()
+            if " - " in text:
+                parts = text.split(" - ", 1)
+                title = parts[0].strip()
+                artist = parts[1].strip()
             else:
-                with self._state_lock:
-                    self._is_playing = False
-                    self._is_paused  = False
-                self._publish_status()
-                logger.info("[CloudMusic] 队列播放完成")
+                title = text
+                artist = ""
+            duration_for_history = self._duration_cache.get(song_id) or self._current_duration_ms or None
+            history_provider = self._history_provider_for_song_id(song_id)
+            get_music_history(history_provider).add(song_id, title, artist, duration_for_history)
 
-        except Exception as e:
-            logger.error("[CloudMusic] 监控失败: %s", e)
+    def _on_player_duration_changed(self, gen: int, duration_ms: int) -> None:
+        with self._state_lock:
+            if self._play_gen != gen:
+                return
+            current_index = self._current_index
+            queue = list(self._queue)
+        self._current_duration_ms = max(0, int(duration_ms))
+        if queue and 0 <= current_index < len(queue):
+            song_id, _ = queue[current_index]
+            self._cache_duration_probe_result(song_id, self._current_duration_ms)
+
+    def _on_player_error(self, gen: int, message: str) -> None:
+        if self._use_qt_player:
+            logger.warning("[CloudMusic] Qt 播放失败，切换到 MCI fallback: %s", message)
+            self._use_qt_player = False
+            pending_path = str(self._pending_play_path or "").strip()
+            pending_display = str(self._pending_play_display or "").strip()
+            if pending_path:
+                self._play_file(Path(pending_path), pending_display)
+                return
+        with self._state_lock:
+            if self._play_gen != gen:
+                return
+            self._is_playing = False
+            self._is_paused = False
+        logger.error("[CloudMusic] 播放失败: %s", message)
+        self._show_error(f"播放失败: {message}")
+        self._publish_status()
+
+    def _on_player_finished(self, gen: int) -> None:
+        with self._state_lock:
+            if self._play_gen != gen:
+                return
+
+            mode = getattr(self, "_play_mode", "list_loop")
+            if mode not in ("single_loop", "list_loop", "random"):
+                mode = "list_loop"
+
+            queue_len = len(self._queue)
+            has_next = queue_len > 0
+
+            if queue_len <= 0:
+                self._current_index = -1
+            elif mode == "single_loop":
+                self._current_index = 0
+            else:
+                current_song = self._queue.pop(0)
+                self._queue.append(current_song)
+                if mode == "random" and len(self._queue) > 1:
+                    random.shuffle(self._queue)
+                self._current_index = 0
+                has_next = True
+
+            self._is_playing = False
+            self._is_paused = False
+
+        self._ec.publish(Event(EventType.MUSIC_SONG_END, {
+            'play_mode': mode,
+        }))
+
+        if has_next:
+            self._play_current()
+        else:
+            self._publish_status()
+            logger.info("[CloudMusic] 队列播放完成")
 
     # ------------------------------------------------------------------
     # 下一首 / 停止
@@ -1358,11 +1172,10 @@ class _PlaybackMixin:
         if self._download_thread and not self._download_thread.done():
             self._download_cancel.set()
 
-        try:
-            import pygame
-            pygame.mixer.music.stop()
-        except Exception:
-            pass
+        if self._use_qt_player:
+            self._music_player.stop_requested.emit()
+        else:
+            self._fallback_player.stop()
 
         with self._state_lock:
             self._play_gen += 1
@@ -1387,11 +1200,10 @@ class _PlaybackMixin:
         if self._download_thread and not self._download_thread.done():
             self._download_cancel.set()
 
-        try:
-            import pygame
-            pygame.mixer.music.stop()
-        except Exception:
-            pass
+        if self._use_qt_player:
+            self._music_player.stop_requested.emit()
+        else:
+            self._fallback_player.stop()
 
         with self._state_lock:
             self._is_playing    = False

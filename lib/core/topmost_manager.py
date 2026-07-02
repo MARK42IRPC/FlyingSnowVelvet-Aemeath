@@ -17,11 +17,14 @@
 import sys
 import weakref
 
+from PyQt5.QtCore import QTimer
+
 _INSTANCE = None
 
 TOPMOST_PRIORITY_DEFAULT = 0
 TOPMOST_PRIORITY_QR_DIALOG = 90
 TOPMOST_PRIORITY_MAIN_PET = 100
+TOPMOST_PRIORITY_OVERLAY = 200
 
 
 def get_topmost_manager() -> 'TopmostManager':
@@ -106,6 +109,25 @@ class TopmostManager:
         if self._paused:
             return
         self._enforce_all()
+
+    def enforce_burst(self, delays_ms: tuple[int, ...] = (0, 16, 48, 96, 180)) -> None:
+        """
+        在短时间内连续多次重申全部窗口层级。
+
+        用于 Qt/Windows 在 show()/raise_()/activateWindow() 之后仍可能发生
+        一两轮异步 z-order 变动的场景，避免 overlay 短暂掉到业务窗口下方。
+        """
+        if self._paused:
+            return
+        for delay_ms in delays_ms:
+            try:
+                delay = max(0, int(delay_ms))
+            except (TypeError, ValueError):
+                delay = 0
+            if delay == 0:
+                self._enforce_all()
+            else:
+                QTimer.singleShot(delay, self._enforce_all)
 
     # ------------------------------------------------------------------
     # 内部实现

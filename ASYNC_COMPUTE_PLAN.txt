@@ -7,7 +7,7 @@
 - 避免在 FRAME/TICK 订阅链路中直接执行重计算、阻塞 I/O 或重复系统调用。
 
 总原则
-- QWidget/QPixmap/QPainter/pygame 主调用必须留在主线程。
+- QWidget/QPixmap/QPainter/QtMultimedia 主调用必须留在主线程。
 - 后台任务只处理纯数据，不直接操作 Qt 对象。
 - 高频任务必须 single-flight，不允许队列堆积。
 - 下载/搜索/探测类请求优先 io_pool。
@@ -42,7 +42,7 @@
    - CMDWindow 的流式命令入口已接入 io_pool。
    - CloudMusicManager 初始化登录入口已接入 io_pool。
    - 拉海洛方块 runtime 的 BGM 搜索/自动播放已改为异步，并增加打开代次保护。
-   - CloudMusic 开始播放时的时长探测已改为后台缓存，不再在主线程同步 `pygame.mixer.Sound(...).get_length()`。
+- CloudMusic 开始播放时的时长探测已改为后台缓存，不再在主线程同步探测音频时长。
    - CloudMusic 登录链的二维码登录/退出登录入口已接入 io_pool，`_safe_login_call` 已改为线程池超时等待。
    - TimingManager 已为 FRAME 事件补充 `tick_alpha` / `dt_ms` / `timestamp`。
    - PhysicsWorld 已改为 TICK 步进、FRAME 插值；物理挂件窗口已切到 `render_x/render_y`。
@@ -63,7 +63,7 @@ P0：高收益、低风险，优先继续
    - 目标：
      - seek 校对改为 ComputeHub single-flight。
      - 播放准备/下载前置请求收口到 io_pool。
-     - 保留 pygame 主线程播放与必要取消令牌语义。
+     - 保留 Qt 主线程播放与必要取消令牌语义。
 2. lib/script/chat/ollama_session.py
    - 事件链路：
      - 模型自动 pull

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import random
 from typing import Tuple
 
@@ -19,7 +20,7 @@ class LahaiLineFlashParticleScript(BaseParticleScript):
         super().__init__()
         self._config = {
             "count_range": (2, 3),
-            "size_range": (4, 8),
+            "size_range": (2, 4),
             "speed_x": (-204.0, 204.0),
             "speed_y": (-276.0, -120.0),
             "gravity": 10.8,
@@ -27,12 +28,18 @@ class LahaiLineFlashParticleScript(BaseParticleScript):
             "brownian": 4.2,
             "life_decay": 0.036,
         }
+        self._white_mix_ratio = 0.25
+        self._count_scale = 1.25
         self._request_options: dict = {}
 
     def set_request_options(self, options: dict) -> None:
         self._request_options = dict(options or {})
 
     def create_particles(self, area_type: str, area_data: Tuple) -> list:
+        segment_particles = self._create_segment_particles()
+        if segment_particles is not None:
+            return segment_particles
+
         if area_type == "rect":
             x1, y1, x2, y2 = area_data
         else:
@@ -41,25 +48,94 @@ class LahaiLineFlashParticleScript(BaseParticleScript):
             x2 = cx + 20
             y1 = cy - 2
             y2 = cy + 2
-        return [
+
+        base_count = random.randint(*self._config["count_range"])
+        total_count = max(1, int(math.ceil(base_count * self._count_scale)))
+        white_count = min(total_count, max(1, int(math.ceil(base_count * self._white_mix_ratio))))
+        colored_count = max(0, total_count - white_count)
+
+        particles = [
             LahaiLineFlashParticle(
                 random.uniform(x1, x2),
                 random.uniform(y1, y2),
                 self._config,
                 dict(self._request_options),
             )
-            for _ in range(random.randint(*self._config["count_range"]))
+            for _ in range(colored_count)
         ]
+        particles.extend(
+            LahaiLineFlashParticle(
+                random.uniform(x1, x2),
+                random.uniform(y1, y2),
+                self._config,
+                dict(self._request_options),
+                fixed_rgb=(255, 255, 255),
+                fixed_size=2,
+            )
+            for _ in range(white_count)
+        )
+        return particles
+
+    def _create_segment_particles(self) -> list | None:
+        segments = self._request_options.get("segments")
+        if not segments:
+            return None
+        particles: list[LahaiLineFlashParticle] = []
+        for segment in segments:
+            rect = segment.get("rect") if isinstance(segment, dict) else None
+            rgb = segment.get("rgb") if isinstance(segment, dict) else None
+            if not isinstance(rect, (tuple, list)) or len(rect) != 4:
+                continue
+            x1, y1, x2, y2 = rect
+            options = dict(self._request_options)
+            if rgb is not None:
+                options["rgb"] = rgb
+
+            base_count = random.randint(*self._config["count_range"])
+            total_count = max(1, int(math.ceil(base_count * self._count_scale)))
+            white_count = min(total_count, max(1, int(math.ceil(base_count * self._white_mix_ratio))))
+            colored_count = max(0, total_count - white_count)
+            particles.extend(
+                LahaiLineFlashParticle(
+                    random.uniform(x1, x2),
+                    random.uniform(y1, y2),
+                    self._config,
+                    options,
+                )
+                for _ in range(colored_count)
+            )
+            particles.extend(
+                LahaiLineFlashParticle(
+                    random.uniform(x1, x2),
+                    random.uniform(y1, y2),
+                    self._config,
+                    options,
+                    fixed_rgb=(255, 255, 255),
+                    fixed_size=2,
+                )
+                for _ in range(white_count)
+            )
+        return particles
 
 
 class LahaiLineFlashParticle:
-    def __init__(self, x: float, y: float, config: dict, options: dict) -> None:
+    def __init__(
+        self,
+        x: float,
+        y: float,
+        config: dict,
+        options: dict,
+        *,
+        fixed_rgb: tuple[int, int, int] | None = None,
+        fixed_size: int | None = None,
+    ) -> None:
         self.x = float(x)
         self.y = float(y)
-        self.size = random.randint(*config["size_range"])
+        self.size = int(fixed_size) if fixed_size is not None else random.randint(*config["size_range"])
         self.vx = per_second_delta(random.uniform(*config["speed_x"]))
         self.vy = per_second_delta(random.uniform(*config["speed_y"]))
-        self.color = _vary_color(options.get("rgb", (255, 255, 255)))
+        base_rgb = fixed_rgb if fixed_rgb is not None else options.get("rgb", (255, 255, 255))
+        self.color = QColor(*base_rgb) if fixed_rgb is not None else _vary_color(base_rgb)
         self.gravity = per_second_delta(float(config["gravity"]))
         self.drag = float(config["drag"])
         self._brownian = per_second_delta(float(config["brownian"]))

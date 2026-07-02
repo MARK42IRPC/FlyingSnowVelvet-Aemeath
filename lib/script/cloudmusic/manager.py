@@ -33,7 +33,6 @@ from ._constants import (
     _KUGOU_LOGIN_CACHE_FILE,
     _LEGACY_LOGIN_CACHE_FILE,
     _LOGIN_CACHE_FILE,
-    _PlaySignal,
     _QQ_LOGIN_CACHE_FILE,
     ensure_user_storage_layout,
 )
@@ -42,6 +41,8 @@ from ._mixin_login import _LoginMixin
 from ._mixin_cache import _CacheMixin
 from ._mixin_playback import _PlaybackMixin
 from ._mixin_events import _EventsMixin
+from ._player import MciMusicPlayer
+from ._qt_player import QtMusicPlayer
 
 logger = get_logger(__name__)
 
@@ -53,10 +54,6 @@ _PLAY_MODE_LABELS = {
 }
 _DEFAULT_PROVIDER = "netease"
 _KNOWN_PROVIDERS = ("netease", "qq", "kugou")
-
-
-# ── 全局信号实例 ──────────────────────────────────────────────────────────
-_play_signal: Optional[_PlaySignal] = None
 
 
 # ── 全局单例 ─────────────────────────────────────────────────────────────
@@ -278,34 +275,19 @@ class CloudMusicManager(_LoginMixin, _CacheMixin, _PlaybackMixin, _EventsMixin):
         self._login_ready = threading.Event()
         get_compute_hub().submit_io(self._login)
 
-        # 初始化 pygame mixer（必须在主线程中初始化，避免与Qt事件循环冲突）
-        self._pygame_initialized = False
-        self._init_pygame()
-
-        # 初始化播放信号（用于在主线程中执行播放操作）
-        global _play_signal
-        if _play_signal is None:
-            _play_signal = _PlaySignal()
-        self._play_signal = _play_signal
-        # 兼容实例重建：cleanup 断开后需要重新绑定；先断同实例连接以避免重复
-        self._disconnect_play_signal()
-        self._play_signal.play_requested.connect(self._do_play_file)
+        self._music_player = QtMusicPlayer()
+        self._connect_music_player()
+        self._pending_play_display = ""
+        self._pending_play_path = ""
+        self._fallback_player = MciMusicPlayer()
+        self._use_qt_player = True
 
         # 音符粒子控制
         self._particle_timer = 0   # 粒子生成计时器（帧数）
 
-        # seek 偏移：记录最近一次 set_pos 的目标位置（毫秒）
-        self._seek_offset_ms:    int   = 0
-        self._last_seek_progress: float = -1.0
-
         # 时长缓存：避免每次请求进度时重新加载文件
         self._duration_cache:     dict = {}   # {song_id: duration_ms}
         self._current_duration_ms: int = 0    # 当前歌曲的缓存时长
-
-        # 校对计时器：每隔 20 tick 在后台线程校对 seek 偏移
-        self._sync_timer:    int = 0
-        self._sync_interval: int = 20
-        self._seek_sync_lock = threading.Lock()
 
         # 订阅事件（cleanup 中必须逐一对称解绑）
         self._subscriptions = [
@@ -389,13 +371,27 @@ class CloudMusicManager(_LoginMixin, _CacheMixin, _PlaybackMixin, _EventsMixin):
             "max": 30,
         }))
 
-    def _disconnect_play_signal(self) -> None:
-        if getattr(self, '_play_signal', None) is None:
+    def _connect_music_player(self) -> None:
+        self._disconnect_music_player()
+        self._music_player.playback_started.connect(self._on_player_started)
+        self._music_player.playback_finished.connect(self._on_player_finished)
+        self._music_player.playback_error.connect(self._on_player_error)
+        self._music_player.duration_changed.connect(self._on_player_duration_changed)
+
+    def _disconnect_music_player(self) -> None:
+        player = getattr(self, "_music_player", None)
+        if player is None:
             return
-        try:
-            self._play_signal.play_requested.disconnect(self._do_play_file)
-        except (TypeError, RuntimeError):
-            pass
+        for signal, slot in (
+            (player.playback_started, self._on_player_started),
+            (player.playback_finished, self._on_player_finished),
+            (player.playback_error, self._on_player_error),
+            (player.duration_changed, self._on_player_duration_changed),
+        ):
+            try:
+                signal.disconnect(slot)
+            except (TypeError, RuntimeError):
+                pass
 
     def _subscribe_all_events(self) -> None:
         for event_type, handler in self._subscriptions:
@@ -478,8 +474,10 @@ class CloudMusicManager(_LoginMixin, _CacheMixin, _PlaybackMixin, _EventsMixin):
             if not self._is_playing or self._is_paused:
                 return
         try:
-            import pygame
-            pygame.mixer.music.pause()
+            if self._use_qt_player:
+                self._music_player.pause_requested.emit()
+            else:
+                self._fallback_player.pause()
             with self._state_lock:
                 self._is_paused = True
             self._publish_brief_info("已暂停")
@@ -493,8 +491,10 @@ class CloudMusicManager(_LoginMixin, _CacheMixin, _PlaybackMixin, _EventsMixin):
             if not self._is_paused:
                 return
         try:
-            import pygame
-            pygame.mixer.music.unpause()
+            if self._use_qt_player:
+                self._music_player.resume_requested.emit()
+            else:
+                self._fallback_player.resume()
             with self._state_lock:
                 self._is_paused  = False
                 self._is_playing = True
@@ -507,12 +507,23 @@ class CloudMusicManager(_LoginMixin, _CacheMixin, _PlaybackMixin, _EventsMixin):
         """播放下一首。"""
         self._play_next()
 
+    def remove_current_queue_item(self) -> bool:
+        """移除当前播放项并切到下一首；若队列已空则停止。"""
+        with self._state_lock:
+            if not self._queue:
+                return False
+        self._play_next()
+        return True
+
     def set_volume(self, volume: float):
         """设置音量 0.0-1.0，并保存到配置文件。"""
         self._volume = max(0.0, min(1.0, volume))
         try:
-            import pygame
-            pygame.mixer.music.set_volume(get_effective_music_volume(self._volume))
+            effective = get_effective_music_volume(self._volume)
+            if self._use_qt_player:
+                self._music_player.volume_requested.emit(effective)
+            else:
+                self._fallback_player.set_volume(effective)
         except Exception:
             pass
         get_volume_config().set_volume(self._volume)
@@ -675,18 +686,24 @@ class CloudMusicManager(_LoginMixin, _CacheMixin, _PlaybackMixin, _EventsMixin):
         # 先解绑事件，避免 cleanup 过程中继续收到回调
         self._unsubscribe_all_events()
 
-        # 断开全局播放信号与当前实例的连接，防止重建实例后重复回调
-        self._disconnect_play_signal()
-
         # 请求后台线程尽快退出
         self._download_cancel.set()
         self._qr_login_cancel.set()
         self._publish_qr_hide()
 
         self._stop_internal()
+        self._disconnect_music_player()
+        try:
+            self._fallback_player.stop()
+        except Exception:
+            pass
         with self._state_lock:
             self._clear_queue_locked()
         self._duration_cache.clear()
         self._current_duration_ms = 0
+        try:
+            self._music_player.deleteLater()
+        except Exception:
+            pass
 
         logger.info("[CloudMusic] 已清理")

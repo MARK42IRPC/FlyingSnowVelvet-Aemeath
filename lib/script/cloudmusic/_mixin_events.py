@@ -760,17 +760,15 @@ class _EventsMixin:
         if pos_sec < 0:
             return
         try:
-            import pygame
-            pygame.mixer.music.set_pos(pos_sec)
-            self._seek_offset_ms = int(pos_sec * 1000)
-            if progress is not None:
-                self._last_seek_progress = progress
+            if self._use_qt_player:
+                self._music_player.seek_requested.emit(int(pos_sec * 1000))
+            else:
+                self._fallback_player.seek(int(pos_sec * 1000))
             logger.debug(
-                "[CloudMusic] SEEK: 目标progress=%.4f, pos_sec=%.2f, duration_ms=%d, seek_offset=%dms",
+                "[CloudMusic] SEEK: 目标progress=%.4f, pos_sec=%.2f, duration_ms=%d",
                 progress if progress else 0,
                 pos_sec,
                 self._current_duration_ms,
-                self._seek_offset_ms,
             )
         except Exception as e:
             logger.error("[CloudMusic] seek 失败: %s", e)

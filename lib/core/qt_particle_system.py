@@ -1,7 +1,7 @@
 """粒子效果系统 (PyQt5版) - 事件驱动重构版"""
 from concurrent.futures import Future
-from copy import deepcopy
 from collections import deque
+from time import perf_counter
 
 from PyQt5.QtWidgets import QWidget
 from PyQt5.QtCore import Qt, QRectF, QLineF, QPointF
@@ -10,10 +10,12 @@ from PyQt5.QtGui import QPainter, QColor, QPen
 from config.config import PARTICLES, UI_THEME
 from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import get_event_center, EventType, Event
+from lib.core.logger import get_logger
 from lib.script.practical.manager import get_particle_script_manager
-from lib.core.topmost_manager import get_topmost_manager
+from lib.core.topmost_manager import TOPMOST_PRIORITY_OVERLAY, get_topmost_manager
 
 _ASYNC_PARTICLE_UPDATE_THRESHOLD = 1200
+_logger = get_logger(__name__)
 
 
 def _particle_alive(particle) -> bool:
@@ -38,28 +40,15 @@ def _update_particles_batch(particles: list) -> list:
     return alive_particles
 
 
-def _clone_particle_for_update(particle):
-    """
-    生成用于后台计算的粒子副本，避免工作线程直接修改主线程正在绘制的对象。
-    优先深拷贝；失败时退化到复制 __dict__ 的轻量副本。
-    """
-    try:
-        clone = deepcopy(particle)
-    except Exception:
-        clone = particle.__class__.__new__(particle.__class__)
-        if hasattr(particle, "__dict__"):
-            clone.__dict__ = dict(particle.__dict__)
-    # 插值起点优先取“当前屏幕上最后一次渲染到的位置”。
-    # 这样即使后台更新结果晚一个 tick 回填，也不会从更旧的真实坐标重新插值，
-    # 避免慢速粒子沿最近轨迹出现向后回弹的抽搐感。
-    clone._tick_prev_x = float(getattr(particle, '_render_x', getattr(particle, 'x', 0.0)))
-    clone._tick_prev_y = float(getattr(particle, '_render_y', getattr(particle, 'y', 0.0)))
-    return clone
+def _prepare_particles_for_inplace_update(particles: list) -> None:
+    """在原地更新前保存插值起点。"""
+    for particle in particles:
+        particle._tick_prev_x = float(getattr(particle, '_render_x', getattr(particle, 'x', 0.0)))
+        particle._tick_prev_y = float(getattr(particle, '_render_y', getattr(particle, 'y', 0.0)))
 
 
-def _snapshot_particles_for_update(particles: list) -> list:
-    """为后台更新构建隔离快照。"""
-    return [_clone_particle_for_update(p) for p in particles]
+def _can_use_async_updates() -> bool:
+    return bool(PARTICLES.get('async_update_enabled', False))
 
 
 class ParticleOverlay(QWidget):
@@ -81,12 +70,22 @@ class ParticleOverlay(QWidget):
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_TransparentForMouseEvents)
         self.setStyleSheet("background: transparent;")
-        get_topmost_manager().register(self)
+        get_topmost_manager().register(self, priority=TOPMOST_PRIORITY_OVERLAY)
 
         self._particles = []
         self._pending_requests = deque()
         self._pending_future: Future | None = None
         self._pending_snapshot_ids: set[int] = set()
+        self._perf_log_enabled = bool(PARTICLES.get('perf_log_enabled', False))
+        self._perf_log_interval_ticks = max(1, int(PARTICLES.get('perf_log_interval_ticks', 60) or 60))
+        self._perf_tick_count = 0
+        self._perf_frame_count = 0
+        self._perf_request_count = 0
+        self._perf_spawned_count = 0
+        self._perf_update_ms_total = 0.0
+        self._perf_drain_ms_total = 0.0
+        self._perf_paint_ms_total = 0.0
+        self._perf_max_particles = 0
 
         # 获取事件中心和粒子脚本管理器
         self._event_center = get_event_center()
@@ -124,6 +123,8 @@ class ParticleOverlay(QWidget):
             'area_data': area_data,
             'particle_options': dict(particle_options),
         })
+        if self._perf_log_enabled:
+            self._perf_request_count += 1
         event.mark_handled()
 
     # ------------------------------------------------------------------
@@ -131,37 +132,48 @@ class ParticleOverlay(QWidget):
     # ------------------------------------------------------------------
     def _on_tick(self, event: Event):
         """全局 tick 事件处理 - 应用后台更新结果并提交下一 tick 粒子更新。"""
+        tick_start = perf_counter() if self._perf_log_enabled else 0.0
+        drain_before = perf_counter() if self._perf_log_enabled else 0.0
         self._apply_pending_updates()
         self._drain_particle_requests()
+        if self._perf_log_enabled:
+            self._perf_drain_ms_total += (perf_counter() - drain_before) * 1000.0
         if not self._particles:
+            if self._perf_log_enabled:
+                self._perf_tick_count += 1
+                self._maybe_log_perf()
             return
 
-        # 粒子是高度连续的视觉对象。
-        # 当数量不大时，优先在主线程逐 tick 连续推进，避免 submit_latest 在前一帧未完成时
-        # 跳过中间 tick，导致慢速粒子出现“停一拍再追一格”的局部回弹/抽搐感。
-        if len(self._particles) < _ASYNC_PARTICLE_UPDATE_THRESHOLD:
-            updated_particles = _update_particles_batch(_snapshot_particles_for_update(self._particles))
-            self._particles = updated_particles
-            for particle in self._particles:
-                if not hasattr(particle, '_tick_prev_x'):
-                    particle._tick_prev_x = float(getattr(particle, '_render_x', getattr(particle, 'x', 0.0)))
-                if not hasattr(particle, '_tick_prev_y'):
-                    particle._tick_prev_y = float(getattr(particle, '_render_y', getattr(particle, 'y', 0.0)))
+        use_async = _can_use_async_updates() and len(self._particles) >= _ASYNC_PARTICLE_UPDATE_THRESHOLD
+        if not use_async:
+            _prepare_particles_for_inplace_update(self._particles)
+            update_before = perf_counter() if self._perf_log_enabled else 0.0
+            self._particles = _update_particles_batch(self._particles)
+            if self._perf_log_enabled:
+                self._perf_update_ms_total += (perf_counter() - update_before) * 1000.0
             self._pending_future = None
-            self._pending_snapshot_ids = set()
             if not self._particles:
                 self.hide()
+            if self._perf_log_enabled:
+                self._perf_tick_count += 1
+                self._perf_max_particles = max(self._perf_max_particles, len(self._particles))
+                self._maybe_log_perf()
             return
 
         future = get_compute_hub().submit_latest(
             "particle_overlay_update",
             _update_particles_batch,
-            _snapshot_particles_for_update(self._particles),
+            self._particles,
             executor="vector",
         )
         if future is not None:
             self._pending_future = future
-            self._pending_snapshot_ids = {id(p) for p in self._particles}
+            self._pending_snapshot_ids = set()
+        if self._perf_log_enabled:
+            self._perf_tick_count += 1
+            self._perf_update_ms_total += (perf_counter() - tick_start) * 1000.0
+            self._perf_max_particles = max(self._perf_max_particles, len(self._particles))
+            self._maybe_log_perf()
 
     def _on_frame(self, event: Event):
         """全局帧事件处理 - 按 tick alpha 插值并请求重绘。"""
@@ -189,14 +201,8 @@ class ParticleOverlay(QWidget):
         except Exception:
             updated_particles = []
 
-        # 合并后台快照提交之后新到达的粒子，避免高并发申请时被旧结果覆盖。
-        snapshot_ids = self._pending_snapshot_ids
-        extra_particles = [
-            p for p in self._particles
-            if id(p) not in snapshot_ids and _particle_alive(p)
-        ]
         self._pending_snapshot_ids = set()
-        self._particles = updated_particles + extra_particles
+        self._particles = updated_particles
         for particle in self._particles:
             if not hasattr(particle, '_tick_prev_x'):
                 particle._tick_prev_x = float(getattr(particle, 'x', 0.0))
@@ -254,6 +260,8 @@ class ParticleOverlay(QWidget):
                 continue
 
             self._particles.extend(new_particles)
+            if self._perf_log_enabled:
+                self._perf_spawned_count += len(new_particles)
             for particle in new_particles:
                 particle._tick_prev_x = float(getattr(particle, 'x', 0.0))
                 particle._tick_prev_y = float(getattr(particle, 'y', 0.0))
@@ -267,10 +275,12 @@ class ParticleOverlay(QWidget):
         if not had_particles:
             self.show()
             self.raise_()
+            get_topmost_manager().enforce_burst()
         self.update()
 
     # ------------------------------------------------------------------
     def paintEvent(self, event):
+        paint_start = perf_counter() if self._perf_log_enabled else 0.0
         painter = QPainter(self)
         # 透明覆盖层每帧先清屏，避免上一帧像素残留
         painter.setCompositionMode(QPainter.CompositionMode_Source)
@@ -284,6 +294,10 @@ class ParticleOverlay(QWidget):
         # 从配置中读取描边开关
         enable_stroke = PARTICLES.get('enable_stroke', True)
         fade_threshold = PARTICLES.get('fade_threshold', 0.75)
+        square_stroke_pen = None
+        if enable_stroke:
+            square_stroke_pen = QPen(QColor(UI_THEME['border']))
+        painter.setRenderHint(QPainter.Antialiasing, False)
 
         for p in self._particles:
             if not _particle_alive(p):
@@ -302,14 +316,48 @@ class ParticleOverlay(QWidget):
                     alpha = 255
                 else:
                     alpha = max(0, int(life / fade_start * 255))
+            if alpha <= 0:
+                continue
+            painter.setRenderHint(QPainter.Antialiasing, False)
 
             # ── 文字粒子（is_text=True）──────────────────────────────────
             if getattr(p, 'is_text', False):
                 color = QColor(p.color)
-                color.setAlpha(alpha)
+                alpha_value = int(getattr(p, 'alpha_override', alpha))
+                color.setAlpha(max(0, min(255, alpha_value)))
+                bloom = getattr(p, 'bloom', None)
                 painter.setFont(p.font)
-                painter.setPen(color)
                 painter.setRenderHint(QPainter.Antialiasing, True)
+                if isinstance(bloom, (int, float)) and bloom > 0:
+                    glow_color = _make_text_bloom_color(color)
+                    bloom_radius = float(bloom)
+                    center_x = float(getattr(p, '_render_x', p.x) - p._text_w / 2)
+                    center_y = float(getattr(p, '_render_y', p.y) + p._baseline_offset)
+                    bloom_steps = (
+                        (0.45, 0.10),
+                        (0.75, 0.07),
+                        (1.0, 0.04),
+                    )
+                    bloom_alpha_budget = alpha_value * 0.30
+                    for distance_scale, alpha_scale in bloom_steps:
+                        glow_alpha = max(0, min(255, int(bloom_alpha_budget * alpha_scale)))
+                        if glow_alpha <= 0:
+                            continue
+                        glow_color.setAlpha(glow_alpha)
+                        painter.setPen(glow_color)
+                        radius = bloom_radius * distance_scale
+                        for dx, dy in (
+                            (radius, 0.0),
+                            (-radius, 0.0),
+                            (0.0, radius),
+                            (0.0, -radius),
+                            (radius * 0.7, radius * 0.7),
+                            (-radius * 0.7, radius * 0.7),
+                            (radius * 0.7, -radius * 0.7),
+                            (-radius * 0.7, -radius * 0.7),
+                        ):
+                            painter.drawText(QPointF(center_x + dx, center_y + dy), p.text)
+                painter.setPen(color)
                 painter.drawText(
                     QPointF(
                         float(getattr(p, '_render_x', p.x) - p._text_w / 2),
@@ -349,6 +397,18 @@ class ParticleOverlay(QWidget):
                     float(p.width),
                     float(p.height),
                 )
+                if enable_stroke:
+                    pen_color = QColor(UI_THEME['border'])
+                    pen_color.setAlpha(alpha)
+                    painter.setPen(QPen(pen_color))
+                    painter.setBrush(Qt.NoBrush)
+                    painter.drawRect(rect)
+                color = QColor(p.color)
+                color.setAlpha(alpha)
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(color)
+                painter.drawRect(rect)
+                continue
             elif is_circle:
                 # 圆形粒子（snow）：p.size 为半径
                 r = p.size
@@ -361,7 +421,7 @@ class ParticleOverlay(QWidget):
                     float(r * 2),
                 )
             else:
-                # 正方形粒子（其他粒子）
+                # 正方形粒子（热路径）
                 px = float(getattr(p, '_render_x', p.x))
                 py = float(getattr(p, '_render_y', p.y))
                 half = p.size / 2.0
@@ -371,9 +431,21 @@ class ParticleOverlay(QWidget):
                     float(p.size),
                     float(p.size),
                 )
+                if enable_stroke and square_stroke_pen is not None:
+                    pen_color = square_stroke_pen.color()
+                    pen_color.setAlpha(alpha)
+                    square_stroke_pen.setColor(pen_color)
+                    painter.setPen(square_stroke_pen)
+                    painter.setBrush(Qt.NoBrush)
+                    painter.drawRect(rect)
+                color = QColor(p.color)
+                color.setAlpha(alpha)
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(color)
+                painter.drawRect(rect)
+                continue
 
-            # 圆形粒子开启抗锯齿，其他关闭
-            painter.setRenderHint(QPainter.Antialiasing, is_circle)
+            painter.setRenderHint(QPainter.Antialiasing, True)
 
             # ── 描边（可选）──────────────────────────────────────────
             if enable_stroke:
@@ -395,8 +467,40 @@ class ParticleOverlay(QWidget):
                 painter.drawEllipse(rect)
             else:
                 painter.drawRect(rect)
+            painter.setRenderHint(QPainter.Antialiasing, False)
 
         painter.end()
+        if self._perf_log_enabled:
+            self._perf_frame_count += 1
+            self._perf_paint_ms_total += (perf_counter() - paint_start) * 1000.0
+
+    def _maybe_log_perf(self) -> None:
+        if not self._perf_log_enabled or self._perf_tick_count < self._perf_log_interval_ticks:
+            return
+        avg_update_ms = self._perf_update_ms_total / max(1, self._perf_tick_count)
+        avg_drain_ms = self._perf_drain_ms_total / max(1, self._perf_tick_count)
+        avg_paint_ms = self._perf_paint_ms_total / max(1, self._perf_frame_count)
+        _logger.debug(
+            "[ParticlePerf] ticks=%d frames=%d live=%d peak=%d req=%d spawned=%d avg_update=%.3fms avg_drain=%.3fms avg_paint=%.3fms async=%s",
+            self._perf_tick_count,
+            self._perf_frame_count,
+            len(self._particles),
+            self._perf_max_particles,
+            self._perf_request_count,
+            self._perf_spawned_count,
+            avg_update_ms,
+            avg_drain_ms,
+            avg_paint_ms,
+            _can_use_async_updates(),
+        )
+        self._perf_tick_count = 0
+        self._perf_frame_count = 0
+        self._perf_request_count = 0
+        self._perf_spawned_count = 0
+        self._perf_update_ms_total = 0.0
+        self._perf_drain_ms_total = 0.0
+        self._perf_paint_ms_total = 0.0
+        self._perf_max_particles = 0
 
     # ------------------------------------------------------------------
     def cleanup(self):
@@ -410,3 +514,11 @@ class ParticleOverlay(QWidget):
         self._pending_snapshot_ids.clear()
         self._particles.clear()
         self.hide()
+
+
+def _make_text_bloom_color(base: QColor) -> QColor:
+    white_mix = 0.62
+    r = int(base.red() * (1.0 - white_mix) + 255 * white_mix)
+    g = int(base.green() * (1.0 - white_mix) + 255 * white_mix)
+    b = int(base.blue() * (1.0 - white_mix) + 255 * white_mix)
+    return QColor(max(0, min(255, r)), max(0, min(255, g)), max(0, min(255, b)))

@@ -1,9 +1,9 @@
-# 飞行雪绒 LTS 1.0.6 beta5
+# 飞行雪绒 LTS 1.0.6 beta6
 
-飞行雪绒是一个以 Windows 10/11 为主要目标平台的桌面宠物项目，围绕 **桌宠展示、AI 伴聊、语音播报、语音识别、音乐播放、可生成场景对象** 这几条主线持续迭代。当前 `beta5` 继续在 `1.0.6` 开发线上推进，重点收敛拉海洛方块特效系统、右侧说明排版、技能反馈与音频链路。
+飞行雪绒是一个以 Windows 10/11 为主要目标平台的桌面宠物项目，围绕 **桌宠展示、AI 伴聊、语音播报、语音识别、音乐播放、可生成场景对象** 这几条主线持续迭代。当前 `beta6` 继续在 `1.0.6` 开发线上推进，重点收敛拉海洛方块技能反馈、日灵方块机制、Qt 音频链路与安装体验。
 
-> 当前版本：`LTS1.0.6beta5`  
-> 发布日期：`2026-06-30`
+> 当前版本：`LTS1.0.6beta6`  
+> 发布日期：`2026-07-02`
 
 ---
 
@@ -179,13 +179,13 @@ python scripts/generate_doc_portal.py
 普通发布包：
 
 ```powershell
-python scripts/package_release.py --version LTS1.0.6beta5
+python scripts/package_release.py --version LTS1.0.6beta6
 ```
 
 绿色资源包：
 
 ```powershell
-python scripts/package_green_release.py --version LTS1.0.6beta5
+python scripts/package_green_release.py --version LTS1.0.6beta6
 ```
 
 两者默认都会排除运行时用户数据；绿色包会额外保留模型等离线资源，适合离线分发。
@@ -196,14 +196,14 @@ python scripts/package_green_release.py --version LTS1.0.6beta5
 
 ## 版本说明
 
-`beta5` 当前对应最近一轮公开开发快照，主要包含以下方向：
+`beta6` 当前对应最近一轮公开开发快照，主要包含以下方向：
 
-- 项目版本号切换到 `LTS1.0.6beta5`
-- 拉海洛方块新增特效系统、技能展示 webp、语音与失败判定链路
-- 右侧说明区重排，控制提示、最高分与 tips 分层展示，避免文本叠压
-- 拉海洛方块补充计分板漂字聚合、技能 CD 惩罚与释放反馈音效
-- tips 文案改为按行轮换并优先未读，支持 `resc/tips.txt` 配置
-- `B` 键改为音乐暂停/继续事件，不再直接碰队列
+- 项目版本号切换到 `LTS1.0.6beta6`
+- 音频播放链路继续向 Qt 收敛，并清理 `pygame` 相关依赖与调用
+- 拉海洛方块补充闪动文字、技能展示、日灵方块引爆与自动下坠修正
+- 技能 5/6 的颜色统计、引爆逻辑、积分反馈与粒子表现进一步细化
+- 安装脚本继续围绕自动发现 Python 与完整依赖安装做兼容性收敛
+- `B` 键维持音乐暂停/继续事件，不再直接碰队列
 
 详见 `CHANGELOG.md` 与 `AA更新日志.txt`。
 

@@ -53,6 +53,10 @@ class FlickerDataParticleScript(BaseParticleScript):
                 _COLOR_DEEP_BLUE,
             ],
         }
+        self._request_options: dict = {}
+
+    def set_request_options(self, options: dict) -> None:
+        self._request_options = dict(options or {})
 
     def create_particles(self, area_type: str, area_data: Tuple) -> list:
         if area_type == "rect":
@@ -66,11 +70,22 @@ class FlickerDataParticleScript(BaseParticleScript):
 
         count = random.randint(*self._config["count_range"])
         offset_min, offset_max = self._config["spawn_offset_range"]
+        palette_override = self._request_options.get("rgb")
+        config = dict(self._config)
+        if palette_override is not None:
+            custom = QColor(*(max(0, min(255, int(v))) for v in palette_override))
+            config["colors"] = [
+                custom.lighter(150),
+                custom.lighter(125),
+                custom,
+                custom.darker(110),
+                custom.darker(140),
+            ]
         particles = []
         for _ in range(count):
             spawn_x = cx + random.randint(offset_min, offset_max)
             spawn_y = cy + random.randint(offset_min, offset_max)
-            particles.append(FlickerDataParticle(spawn_x, spawn_y, self._config))
+            particles.append(FlickerDataParticle(spawn_x, spawn_y, config))
         return particles
 
 

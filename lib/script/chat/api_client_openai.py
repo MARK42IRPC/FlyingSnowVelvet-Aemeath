@@ -109,6 +109,22 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
         return ("qwen" in text) or ("qwq" in text)
 
     @staticmethod
+    def _is_dashscope_compatible_target(base_url: str, model: str) -> bool:
+        text = f"{base_url or ''} {model or ''}".lower()
+        return (
+            "dashscope.aliyuncs.com" in text
+            or "aliyuncs.com/compatible-mode" in text
+            or "dashscope" in text and "aliyun" in text
+        )
+
+    @staticmethod
+    def _dashscope_model_supports_multimodal(model: str) -> bool:
+        text = str(model or "").strip().lower()
+        if not text:
+            return False
+        return any(marker in text for marker in ("vl", "vision", "qvq"))
+
+    @staticmethod
     def _dedupe_payload_variants(payloads: list[dict]) -> list[dict]:
         """按 JSON 文本去重 payload 变体，保持原顺序。"""
         unique: list[dict] = []
@@ -261,7 +277,9 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
                                        request_user: str | None = None,
                                        include_reasoning_extensions: bool = True,
                                        include_user_field: bool = True,
-                                       include_systemless_fallback: bool = False) -> list[dict]:
+                                       include_systemless_fallback: bool = False,
+                                       include_relaxed_multimodal_variants: bool = True,
+                                       include_input_multimodal_variants: bool = True) -> list[dict]:
         """
         生成 OpenAI 兼容请求体候选（多模态自动回退）。
 
@@ -371,7 +389,7 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
                 "type": "image_url",
                 "image_url": url,
             })
-        if relaxed_blocks:
+        if include_relaxed_multimodal_variants and relaxed_blocks:
             relaxed_content = [{"type": "text", "text": message}] + relaxed_blocks
             payloads.append(with_extra_options({
                 "model": model,
@@ -399,7 +417,7 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
                 "type": "input_image",
                 "image_url": url,
             })
-        if len(input_style_content) > 1:
+        if include_input_multimodal_variants and len(input_style_content) > 1:
             payloads.append(with_extra_options({
                 "model": model,
                 "messages": build_messages(input_style_content, systemless=False),
@@ -596,6 +614,7 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
         yuanbao_options = self._get_yuanbao_free_api_options(getattr(self, '_active_config', {}))
         use_yuanbao_free_api = bool(yuanbao_options.get('enabled', False))
         is_gemini_target = self._is_gemini_compatible_target(base_url, model)
+        is_dashscope_target = self._is_dashscope_compatible_target(base_url, model)
         allow_reasoning_extensions = self._supports_reasoning_extensions(base_url, model)
 
         headers = {
@@ -643,6 +662,12 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
             except Exception as e:
                 logger.warning('[APIClient] YuanBao-Free-API 图片上传失败，回退到内联图片: %s', e)
 
+        if payload_images and is_dashscope_target and not self._dashscope_model_supports_multimodal(model):
+            raise RuntimeError(
+                "阿里云通义当前模型不支持图片 content 列表。"
+                "请改用 VL/视觉模型，或关闭截图/图片输入后再试。"
+            )
+
         endpoint_candidates = self._openai_endpoint_candidates(base_url)
         payload_candidates = self._build_openai_payload_variants(
             model=model,
@@ -657,6 +682,8 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
             include_reasoning_extensions=allow_reasoning_extensions,
             include_user_field=True,
             include_systemless_fallback=bool(payload_images) and is_gemini_target,
+            include_relaxed_multimodal_variants=not is_dashscope_target,
+            include_input_multimodal_variants=not is_dashscope_target,
         )
         # 兼容兜底：仅在多模态请求下追加保守变体（禁用扩展字段+禁用 user 字段）。
         if payload_images:
@@ -673,6 +700,8 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
                 include_reasoning_extensions=False,
                 include_user_field=False,
                 include_systemless_fallback=False,
+                include_relaxed_multimodal_variants=not is_dashscope_target,
+                include_input_multimodal_variants=not is_dashscope_target,
             )
             payload_candidates.extend(conservative_payloads)
         if use_yuanbao_free_api:

@@ -152,6 +152,9 @@ manager_registry = Registry("ManagerRegistry")
 # 粒子脚本注册表
 particle_registry = Registry("ParticleRegistry")
 
+# 特效脚本注册表
+effect_registry = Registry("EffectRegistry")
+
 # 命令处理器注册表
 command_handler_registry = Registry("CommandHandlerRegistry")
 
@@ -188,6 +191,22 @@ def register_particle(particle_id: str):
     """
     def decorator(cls):
         particle_registry.register(particle_id, cls)
+        return cls
+    return decorator
+
+
+def register_effect(effect_id: str):
+    """
+    特效脚本注册装饰器
+
+    Usage:
+        @register_effect('smooth_image_show')
+        class SmoothImageShowEffectScript(BaseEffectScript):
+            EFFECT_ID = 'smooth_image_show'
+            ...
+    """
+    def decorator(cls):
+        effect_registry.register(effect_id, cls)
         return cls
     return decorator
 
@@ -255,10 +274,34 @@ def discover_particles() -> None:
                 logger.warning('[PluginRegistry] 警告：无法加载模块 %s: %s', module_path, e)
 
 
+def discover_effects() -> None:
+    """
+    自动发现并注册所有特效脚本
+
+    扫描 lib/script/effects/ 目录下的 *_effect.py 文件
+    """
+    effects_path = os.path.join(
+        os.path.dirname(__file__), '..', 'script', 'effects'
+    )
+    effects_path = os.path.abspath(effects_path)
+
+    if not os.path.exists(effects_path):
+        return
+
+    for file in os.listdir(effects_path):
+        if file.endswith('_effect.py'):
+            module_path = f"lib.script.effects.{file[:-3]}"
+            try:
+                importlib.import_module(module_path)
+            except Exception as e:
+                logger.warning('[PluginRegistry] 警告：无法加载模块 %s: %s', module_path, e)
+
+
 def discover_all() -> None:
     """发现所有可注册的模块"""
     discover_managers()
     discover_particles()
+    discover_effects()
 
 
 # ======================================================================
@@ -345,3 +388,13 @@ def get_particle_class(particle_id: str) -> Optional[Type]:
 def get_all_particle_ids() -> List[str]:
     """获取所有已注册的粒子ID"""
     return particle_registry.get_all_ids()
+
+
+def get_effect_class(effect_id: str) -> Optional[Type]:
+    """获取特效脚本类"""
+    return effect_registry.get_class(effect_id)
+
+
+def get_all_effect_ids() -> List[str]:
+    """获取所有已注册的特效ID"""
+    return effect_registry.get_all_ids()

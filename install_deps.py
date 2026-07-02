@@ -56,7 +56,6 @@ DEPENDENCIES = [
     ("playwright", "browser automation for YuanBao login capture", ("playwright",)),
     ("pydantic", "data validation for YuanBao relay", ("pydantic",)),
     ("pydantic-settings", "settings loader for YuanBao relay", ("pydantic_settings",)),
-    ("pygame", "audio playback", ("pygame",)),
     ("requests", "HTTP client", ("requests",)),
     ("qrcode", "QR code generation for music login", ("qrcode",)),
     ("sse-starlette", "SSE streaming for YuanBao relay", ("sse_starlette",)),

@@ -131,6 +131,10 @@ class BurstLineParticleScript(BaseParticleScript):
             'life_decay':   0.195,          # 每 tick 寿命衰减（约等于旧 0.065*3）
             'colors':       _COLORS,
         }
+        self._request_options: dict = {}
+
+    def set_request_options(self, options: dict) -> None:
+        self._request_options = dict(options or {})
 
     def create_particles(self, area_type: str, area_data: tuple) -> list:
         """仅对 point 类型有意义；其他类型取区域中心点。"""
@@ -144,7 +148,17 @@ class BurstLineParticleScript(BaseParticleScript):
         else:
             return []
 
-        count = random.randint(*self._config['count_range'])
+        config = dict(self._config)
+        palette_override = self._request_options.get("rgb")
+        if palette_override is not None:
+            custom = QColor(*(max(0, min(255, int(v))) for v in palette_override))
+            config['colors'] = [
+                custom.lighter(145),
+                custom.lighter(120),
+                custom.darker(110),
+            ]
+
+        count = random.randint(*config['count_range'])
         # 均匀角度分布 + 整体随机旋转（每次效果略有不同）
         base_step = (2.0 * math.pi) / count
         offset = random.uniform(0.0, base_step)
@@ -153,6 +167,6 @@ class BurstLineParticleScript(BaseParticleScript):
         for i in range(count):
             # 每条再叠加小幅随机偏转，消除绝对对称感
             angle = offset + base_step * i + random.uniform(-0.12, 0.12)
-            particles.append(BurstLineParticle(cx, cy, angle, self._config))
+            particles.append(BurstLineParticle(cx, cy, angle, config))
 
         return particles

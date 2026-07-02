@@ -310,6 +310,12 @@ class MusicService:
         if mgr is not None:
             mgr.next_track()
 
+    def remove_current_queue_item(self) -> bool:
+        mgr = self._get_backend_manager()
+        if mgr is None or not hasattr(mgr, "remove_current_queue_item"):
+            return False
+        return bool(mgr.remove_current_queue_item())
+
     def clear_queue(self):
         mgr = self._get_backend_manager()
         if mgr is not None:
