@@ -143,6 +143,7 @@ def _step_physics_batch(
             "bounce_count": bounce_count,
             "wall_hit_side": wall_hit_side,
             "ground_stopped": ground_stopped,
+            "state_version": item["state_version"],
         })
 
     return updates
@@ -186,6 +187,7 @@ class PhysicsBody:
         self.prev_y: float = y
         self.render_x: float = x
         self.render_y: float = y
+        self.state_version: int = 0
 
         self.ground_y: float = ground_y
         self.width: int = width
@@ -210,6 +212,10 @@ class PhysicsBody:
         self.on_wall_hit: Optional[Callable[[PhysicsBody, str], None]] = None
         # 触地时触发；stopped=True 表示本次弹跳序列已结束（active 已置 False）
         self.on_ground_bounce: Optional[Callable[[PhysicsBody, bool], None]] = None
+
+    def invalidate_pending_updates(self) -> None:
+        """递增状态版本，丢弃旧快照对应的后台步进结果。"""
+        self.state_version += 1
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -326,6 +332,7 @@ class PhysicsWorld:
                 "gravity_enabled": body.gravity_enabled,
                 "active": body.active,
                 "bounce_vx_retain": body.bounce_vx_retain,
+                "state_version": body.state_version,
             })
         return snapshot
 
@@ -366,6 +373,8 @@ class PhysicsWorld:
         for update in updates:
             body: PhysicsBody = update["body"]
             if body not in self._bodies:
+                continue
+            if int(update.get("state_version", -1)) != body.state_version:
                 continue
             body.prev_x = body.x
             body.prev_y = body.y

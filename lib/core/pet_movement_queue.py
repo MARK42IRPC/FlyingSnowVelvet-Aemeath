@@ -39,12 +39,14 @@ class PetMoveQueueManager:
         on_step_updated: Callable[[MoveStep], None],
         on_step_cancelled: Callable[[], None],
         on_queue_idle: Callable[[], None],
+        can_accept_step: Callable[[], bool] | None = None,
     ) -> None:
         self._event_center = get_event_center()
         self._on_step_activated = on_step_activated
         self._on_step_updated = on_step_updated
         self._on_step_cancelled = on_step_cancelled
         self._on_queue_idle = on_queue_idle
+        self._can_accept_step = can_accept_step
 
         self._queue: list[MoveStep] = []
         self._current: MoveStep | None = None
@@ -86,6 +88,9 @@ class PetMoveQueueManager:
         return self._activate_next()
 
     def _on_enqueue(self, event: Event) -> None:
+        if self._can_accept_step is not None and not self._can_accept_step():
+            event.mark_handled()
+            return
         step = self._build_step(event.data or {})
         if step is None:
             return

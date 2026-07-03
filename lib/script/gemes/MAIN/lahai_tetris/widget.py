@@ -472,7 +472,7 @@ class LahaiTetrisWidget(QWidget):
             self._skill_sequence_freeze_active = True
             self._pending_partner_burst_origins = list(burst_origins)
             self._pending_partner_convert_after_burst = True
-            self._advance_partner_burst_sequence()
+            self._partner_burst_timer.start(0)
             return True
         return self._generate_partner_sun_cells()
 
@@ -493,6 +493,13 @@ class LahaiTetrisWidget(QWidget):
         return False
 
     def _advance_partner_burst_sequence(self) -> None:
+        current_sun_origins = [
+            (x, y)
+            for y, row in enumerate(self._board)
+            for x, cell in enumerate(row)
+            if cell == _SUN_KIND
+        ]
+        self._pending_partner_burst_origins = list(current_sun_origins)
         if not self._pending_partner_burst_origins:
             pending_convert = self._pending_partner_convert_after_burst
             self._pending_partner_convert_after_burst = False
@@ -511,9 +518,16 @@ class LahaiTetrisWidget(QWidget):
             (sun_x + 1, sun_y),
         ]
         original_board = [list(row) for row in self._board]
+        burst_triggered_sun = original_board[sun_y][sun_x] == _SUN_KIND
         next_board, cleared_cells = clear_board_cells(self._board, burst_cells)
         collapsed_board, _collapsed_rows = collapse_empty_rows(next_board)
         self._board = collapsed_board
+        self._pending_partner_burst_origins = [
+            (x, y)
+            for y, row in enumerate(self._board)
+            for x, cell in enumerate(row)
+            if cell == _SUN_KIND
+        ]
         self._mark_settled_board_cache_dirty()
         non_sun_cleared = sum(
             1 for x, y in cleared_cells
@@ -522,6 +536,10 @@ class LahaiTetrisWidget(QWidget):
         self._add_score(non_sun_cleared * 10 + 100)
         self._spawn_partner_burst_particles(cleared_cells)
         self._spawn_partner_burst_center_particles(sun_x, sun_y)
+        if burst_triggered_sun:
+            skill = self._skills.get(_PARTNER_SKILL_SLOT)
+            if skill is not None and skill.reduce_cooldown(_HARD_DROP_SKILL_REWARD_SECS):
+                self._spawn_skill_cooldown_reward_text(_PARTNER_SKILL_SLOT, "1s")
         self._sfx.play_partner_burst()
         self._start_board_shake(force=7.5)
         self.update()

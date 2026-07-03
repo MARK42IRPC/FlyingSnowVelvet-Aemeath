@@ -183,6 +183,7 @@ def _draw_sun_block(widget: "LahaiTetrisWidget", painter: QPainter, outer: QRect
     base = QColor(214, 190, 128)
     inner = QColor(88, 67, 26)
     accent = QColor(255, 244, 214)
+    outer_stroke = QColor(170, 248, 232)
     always_glow = True
     if active or always_glow:
         painter.setPen(Qt.NoPen)
@@ -202,10 +203,16 @@ def _draw_sun_block(widget: "LahaiTetrisWidget", painter: QPainter, outer: QRect
 
     radius = max(4.0, block * 0.22)
     path = QPainterPath()
+    stroke_width = max(1, int(block * 0.07)) + 1
+    stroke_inset = stroke_width * 0.5
+    stroke_rect = outer.adjusted(stroke_inset, stroke_inset, -stroke_inset, -stroke_inset)
+    stroke_radius = max(1.0, radius - stroke_inset)
     path.addRoundedRect(outer, radius, radius)
     painter.fillPath(path, base)
-    painter.setPen(QPen(accent.lighter(110), max(1, int(block * 0.07))))
-    painter.drawPath(path)
+    stroke_path = QPainterPath()
+    stroke_path.addRoundedRect(stroke_rect, stroke_radius, stroke_radius)
+    painter.setPen(QPen(outer_stroke, stroke_width))
+    painter.drawPath(stroke_path)
 
     inner_rect = outer.adjusted(block * 0.12, block * 0.12, -block * 0.12, -block * 0.12)
     inner_path = QPainterPath()
@@ -214,20 +221,20 @@ def _draw_sun_block(widget: "LahaiTetrisWidget", painter: QPainter, outer: QRect
 
     center = inner_rect.center()
     painter.setPen(Qt.NoPen)
-    tooth_fill = QColor(242, 220, 156)
-    tooth_distance = block * 0.15
-    tooth_radius = block * 0.066
-    for index in range(6):
-        angle = math.tau * index / 6.0 - math.pi * 0.5
-        px = center.x() + math.cos(angle) * tooth_distance
-        py = center.y() + math.sin(angle) * tooth_distance
-        painter.setBrush(tooth_fill)
+    petal_fill = QColor(242, 220, 156)
+    petal_distance = block * 0.154
+    petal_radius = block * 0.056
+    for index in range(8):
+        angle = math.tau * index / 8.0 - math.pi * 0.5
+        px = center.x() + math.cos(angle) * petal_distance
+        py = center.y() + math.sin(angle) * petal_distance
+        painter.setBrush(petal_fill)
         painter.drawEllipse(
             QRectF(
-                px - tooth_radius,
-                py - tooth_radius,
-                tooth_radius * 2.0,
-                tooth_radius * 2.0,
+                px - petal_radius,
+                py - petal_radius,
+                petal_radius * 2.0,
+                petal_radius * 2.0,
             )
         )
 

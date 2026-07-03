@@ -1,7 +1,6 @@
 """鼠标事件处理器 - 处理鼠标相关的具体逻辑"""
 from PyQt5.QtCore import Qt
 
-from config.config import BEHAVIOR
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.voice.ams_enh import AmsEnhSound
 
@@ -62,12 +61,11 @@ class MouseEventHandler:
 
         if buttons & Qt.LeftButton and self._drag_offset:
             new_pos = global_pos - self._drag_offset
-            self._entity.move(new_pos)
+            self._entity.begin_user_drag()
+            self._entity.update_user_drag_position(new_pos)
 
-            # 发布锚点更新事件，通知 UI 组件更新位置
-            self._event_center.publish(Event(EventType.UI_ANCHOR_RESPONSE, {
-                'window_id':   'pet_window',
-                'anchor_id':   'all',
-                'anchor_point': new_pos,
-                'ui_id':       'all'
-            }))
+    def handle_release(self, event) -> None:
+        """处理 Qt 原始鼠标释放事件。"""
+        if event.button() == Qt.LeftButton:
+            self._drag_offset = None
+            self._entity.end_user_drag()

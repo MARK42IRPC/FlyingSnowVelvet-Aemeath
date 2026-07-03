@@ -384,12 +384,16 @@ class EffectOverlay(QWidget):
             self.repaint()
         self.hide()
 
+    def flush_immediately(self) -> None:
+        """立即清空当前可见特效，但不解绑事件，供退出流程前段使用。"""
+        self._pending_requests.clear()
+        self._effects.clear()
+        self._clear_and_hide()
+
     def cleanup(self):
         if self._event_center:
             self._event_center.unsubscribe(EventType.EFFECT_REQUEST, self._on_effect_request)
             self._event_center.unsubscribe(EventType.TICK, self._on_tick)
             self._event_center.unsubscribe(EventType.FRAME, self._on_frame)
-        self._pending_requests.clear()
-        self._effects.clear()
+        self.flush_immediately()
         cleanup_effect_script_manager()
-        self._clear_and_hide()

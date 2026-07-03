@@ -298,6 +298,40 @@ class Snowball(QWidget):
         vy = dp.y() / dt_ms * (1000.0 / 60.0)
         return vx, vy
 
+    def _trim_drag_trail(self, now: float) -> None:
+        """仅保留最近一小段拖拽轨迹样本。"""
+        cutoff = now - _DRAG_TRAIL_WINDOW_SEC
+        while self._drag_trail and self._drag_trail[0][0] < cutoff:
+            self._drag_trail.popleft()
+
+    def _sync_drag_body(self, global_pos: QPoint, *, reset_velocity: bool = False) -> None:
+        """拖拽时同步物理体位置、落地面与瞬时速度。"""
+        body = self._physics_body
+        now = time.monotonic()
+        vx = 0.0
+        vy = 0.0
+        if not reset_velocity and self._drag_trail:
+            last_t, last_pos = self._drag_trail[-1]
+            dt_ms = (now - last_t) * 1000.0
+            if dt_ms > 0:
+                delta = global_pos - last_pos
+                vx = delta.x() / dt_ms * (1000.0 / 60.0)
+                vy = delta.y() / dt_ms * (1000.0 / 60.0)
+        body.invalidate_pending_updates()
+        center = QPoint(self.x() + self.width() // 2, self.y() + self.height() // 2)
+        screen_geom = get_screen_geometry_for_point(center)
+        body.ground_y = screen_geom.y() + screen_geom.height() * _GROUND_Y_PCT - self.height()
+        body.x = float(self.x())
+        body.y = float(self.y())
+        body.prev_x = body.x
+        body.prev_y = body.y
+        body.render_x = body.x
+        body.render_y = body.y
+        body.vx = max(-_MAX_THROW_VX, min(_MAX_THROW_VX, vx))
+        body.vy = max(-_MAX_THROW_VY, min(_MAX_THROW_VY, vy))
+        self._drag_trail.append((now, QPoint(global_pos)))
+        self._trim_drag_trail(now)
+
     # ==================================================================
     # TICK 回调（双击超时判定 + 寿命倒计时，二合一）
     # ==================================================================
@@ -335,6 +369,7 @@ class Snowball(QWidget):
             # 解冻（若已静止冻结，抓起时恢复）
             self._frozen = False
             # 中断物理，重置弹跳计数
+            self._physics_body.invalidate_pending_updates()
             self._physics_body.active       = False
             self._physics_body.bounce_count = 0
             self._press_pos   = event.globalPos()
@@ -352,18 +387,7 @@ class Snowball(QWidget):
             # 阶段二：正常拖拽
             new_pos = event.globalPos() - self._drag_offset
             self.move(new_pos)
-            body = self._physics_body
-            body.x = float(self.x())
-            body.y = float(self.y())
-            body.prev_x = body.x
-            body.prev_y = body.y
-            body.render_x = body.x
-            body.render_y = body.y
-            now = time.monotonic()
-            self._drag_trail.append((now, event.globalPos()))
-            cutoff = now - _DRAG_TRAIL_WINDOW_SEC
-            while self._drag_trail and self._drag_trail[0][0] < cutoff:
-                self._drag_trail.popleft()
+            self._sync_drag_body(event.globalPos())
 
         elif self._press_pos is not None:
             # 阶段一：检测是否超过拖拽阈值
@@ -376,15 +400,7 @@ class Snowball(QWidget):
                 self.setCursor(Qt.ClosedHandCursor)
                 new_pos = event.globalPos() - self._drag_offset
                 self.move(new_pos)
-                body = self._physics_body
-                body.x = float(self.x())
-                body.y = float(self.y())
-                body.prev_x = body.x
-                body.prev_y = body.y
-                body.render_x = body.x
-                body.render_y = body.y
-                now = time.monotonic()
-                self._drag_trail.append((now, event.globalPos()))
+                self._sync_drag_body(event.globalPos(), reset_velocity=True)
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.LeftButton and not self._fading:
@@ -395,6 +411,7 @@ class Snowball(QWidget):
                 vy = max(-_MAX_THROW_VY, min(_MAX_THROW_VY, vy))
 
                 body        = self._physics_body
+                body.invalidate_pending_updates()
                 body.x      = float(self.x())
                 body.y      = float(self.y())
                 body.prev_x = body.x
@@ -411,6 +428,7 @@ class Snowball(QWidget):
             elif self._press_pos is not None:
                 # 纯点击释放：零速度原地落体
                 body        = self._physics_body
+                body.invalidate_pending_updates()
                 body.x      = float(self.x())
                 body.y      = float(self.y())
                 body.prev_x = body.x

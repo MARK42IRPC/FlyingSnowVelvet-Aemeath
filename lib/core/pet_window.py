@@ -101,8 +101,10 @@ class PetWindow(BaseEntity):
             on_step_updated=self._update_move_step,
             on_step_cancelled=self._cancel_active_move_step,
             on_queue_idle=self._handle_move_queue_idle,
+            can_accept_step=self._can_accept_move_step,
         )
         self._legacy_move_event_id = "pet_window_api_move"
+        self._user_dragging = False
 
         # 订阅帧事件（用于窗口移动）
         self._event_center.subscribe(EventType.FRAME, self._handle_frame_event)
@@ -436,6 +438,42 @@ class PetWindow(BaseEntity):
         """返回当前是否处于移动中。"""
         return self._movement.is_moving
 
+    def is_user_dragging(self) -> bool:
+        """返回主宠当前是否正被鼠标左键拖拽。"""
+        return self._user_dragging
+
+    def begin_user_drag(self) -> None:
+        """进入用户拖拽状态，并立即清空当前移动队列。"""
+        if self._user_dragging:
+            return
+        self._user_dragging = True
+        self._move_queue.clear_all(result='cancelled')
+        current_pos = QPoint(self.frameGeometry().topLeft())
+        self._movement.sync_position(current_pos)
+        self._move_particle_last_pos = QPoint(current_pos)
+        self._move_particle_distance_accum = 0.0
+
+    def update_user_drag_position(self, new_pos: QPoint) -> None:
+        """由鼠标拖拽直接接管主宠位置。"""
+        self.move(new_pos)
+        self._movement.sync_position(QPoint(new_pos))
+        self._event_center.publish(Event(EventType.UI_ANCHOR_RESPONSE, {
+            'window_id': 'pet_window',
+            'anchor_id': 'all',
+            'anchor_point': QPoint(new_pos),
+            'ui_id': 'all'
+        }))
+
+    def end_user_drag(self) -> None:
+        """结束用户拖拽状态。"""
+        if not self._user_dragging:
+            return
+        self._user_dragging = False
+        current_pos = QPoint(self.frameGeometry().topLeft())
+        self._movement.sync_position(current_pos)
+        self._move_particle_last_pos = QPoint(current_pos)
+        self._move_particle_distance_accum = 0.0
+
     def set_direction(self, flipped: bool):
         """设置当前朝向（是否翻转）。"""
         self._movement.flipped = flipped
@@ -479,6 +517,9 @@ class PetWindow(BaseEntity):
     def mouseMoveEvent(self, event):
         self._click_handler.handle_move(event)
 
+    def mouseReleaseEvent(self, event):
+        self._mouse_event_handler.handle_release(event)
+
     def moveEvent(self, event):
         """窗口移动事件：累计位移并按阈值触发移动粒子。"""
         super().moveEvent(event)
@@ -516,6 +557,8 @@ class PetWindow(BaseEntity):
 
     def _activate_move_step(self, step: MoveStep) -> None:
         """激活新的移动步骤。"""
+        if self._user_dragging:
+            return
         self._movement.sync_position(self.frameGeometry().topLeft())
         self._movement.start_move(step.target, arrival_radius=step.radius)
         if self._state != 'moving':
@@ -523,6 +566,8 @@ class PetWindow(BaseEntity):
 
     def _update_move_step(self, step: MoveStep) -> None:
         """更新当前移动步骤目标。"""
+        if self._user_dragging:
+            return
         if not self._movement.is_moving:
             self._activate_move_step(step)
             return
@@ -532,6 +577,10 @@ class PetWindow(BaseEntity):
         """立即取消当前活动移动步骤。"""
         self._movement.sync_position(self.frameGeometry().topLeft())
         self._movement.stop_move()
+
+    def _can_accept_move_step(self) -> bool:
+        """拖拽期间拒绝任何新的 move 入队/更新。"""
+        return not self._user_dragging
 
     def _handle_move_queue_idle(self) -> None:
         """移动队列空闲时回到 idle。"""

@@ -260,6 +260,17 @@ class ApplicationState:
         logger.info('收到退出请求，开始分阶段关闭组件')
         hide_all_runtime_ui()
         cleanup_all_runtime_ui()
+        if self._particles is not None:
+            try:
+                self._particles.flush_immediately()
+            except Exception:
+                pass
+        if self._effects is not None:
+            try:
+                self._effects.flush_immediately()
+            except Exception:
+                pass
+        self._process_pending_events()
         if self._tray_icon is not None:
             try:
                 self._tray_icon.begin_shutdown()

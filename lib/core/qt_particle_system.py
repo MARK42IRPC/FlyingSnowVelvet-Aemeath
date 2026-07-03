@@ -503,17 +503,29 @@ class ParticleOverlay(QWidget):
         self._perf_max_particles = 0
 
     # ------------------------------------------------------------------
+    def _clear_and_hide(self) -> None:
+        """隐藏前先同步清空透明缓冲，避免退出时残留上一帧粒子。"""
+        if self.isVisible():
+            self.update()
+            self.repaint()
+        self.hide()
+
+    def flush_immediately(self) -> None:
+        """立即清空当前可见粒子，但不解绑事件，供退出流程前段使用。"""
+        self._pending_future = None
+        self._pending_requests.clear()
+        self._pending_snapshot_ids.clear()
+        self._particles.clear()
+        self._clear_and_hide()
+
+    # ------------------------------------------------------------------
     def cleanup(self):
         """清理资源"""
         if self._event_center:
             self._event_center.unsubscribe(EventType.PARTICLE_REQUEST, self._on_particle_request)
             self._event_center.unsubscribe(EventType.TICK, self._on_tick)
             self._event_center.unsubscribe(EventType.FRAME, self._on_frame)
-        self._pending_future = None
-        self._pending_requests.clear()
-        self._pending_snapshot_ids.clear()
-        self._particles.clear()
-        self.hide()
+        self.flush_immediately()
 
 
 def _make_text_bloom_color(base: QColor) -> QColor:
