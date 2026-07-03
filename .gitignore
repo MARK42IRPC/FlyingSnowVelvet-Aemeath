@@ -39,6 +39,7 @@ resc/user/
 resc/VFX/cache/
 config/.shared_pending/
 musicdl_outputs/
+用户反馈/
 *.zip
 *.7z
 *.tar
