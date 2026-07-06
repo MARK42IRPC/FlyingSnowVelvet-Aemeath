@@ -264,7 +264,7 @@ class ChatHandlerStreamPresenterMixin:
         if not _is_non_ai_status_text(text):
             self._event_center.publish(Event(EventType.STREAM_FINAL, {"text": text}))
 
-    def _publish_auto_response(self, text: str, include_history: bool = False):
+    def _publish_auto_response(self, text: str, include_history: bool = False, user_text: str | None = None):
         """
         自动陪伴回调：显示气泡，并复用 STREAM_FINAL 管道识别 ###工具指令###。
         使用与流式回复结束相同的 min_ticks 计算逻辑（按字数计算，防顶出保护）。
@@ -291,6 +291,14 @@ class ChatHandlerStreamPresenterMixin:
                 "interruptible": True,
             }))
         if include_history and from_ai:
+            effective_user = str(user_text or AUTO_COMPANION_PROMPT or '').strip()
+            if effective_user:
+                self._append_recent_context('user', effective_user)
+                try:
+                    from .memory import get_stream_memory
+                    get_stream_memory().record_user_input(effective_user)
+                except Exception as exc:
+                    logger.debug("[ChatHandler] 自动陪伴写入用户侧记忆失败: %s", exc)
             self._append_recent_context('assistant', raw_text)
         self._event_center.publish(Event(EventType.STREAM_FINAL, {"text": raw_text}))
         logger.debug("[ChatHandler] 自动陪伴回复（%d 字，min=%d）: %s",

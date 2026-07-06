@@ -96,7 +96,7 @@ API_KEY = _LOCAL_SECRET_OVERRIDES.get('api_key', '')
 # 2: 强制本地 Ollama
 # 3: 强制规则回复
 # 4: 强制元宝 Web 本地中转
-FORCE_REPLY_MODE = '4'
+FORCE_REPLY_MODE = '0'
 
 # OpenAI 兼容 API 基础地址（使用 API Key 时生效）
 # 常见兼容服务地址：

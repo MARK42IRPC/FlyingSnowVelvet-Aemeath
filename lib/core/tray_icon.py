@@ -398,7 +398,7 @@ class TrayIcon(QObject):
     def _on_cleanup_history(self):
         """处理清理历史动作：清空所有平台历史与登录数据，不清理缓存。"""
         try:
-            from lib.script.cloudmusic import clear_all_history_and_login_data
+            from lib.script.music import clear_all_history_and_login_data
 
             result = clear_all_history_and_login_data()
             history_items = int(result.get('history_items') or 0)

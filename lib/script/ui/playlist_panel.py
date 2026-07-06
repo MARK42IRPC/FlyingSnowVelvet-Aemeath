@@ -175,7 +175,7 @@ class PlaylistPanel(QWidget):
     """
     播放列表栏（全局单例）。
 
-    - 显示 CloudMusicManager 队列中的所有歌曲
+    - 显示音乐运行时队列中的所有歌曲
     - 当前播放行：青色背景高亮 + "♪ " 前缀
     - 使用事件驱动更新，避免每帧轮询
     - 跟随锚定音响的右侧位置移动；音响消失时自动关闭
@@ -392,7 +392,7 @@ class PlaylistPanel(QWidget):
     # ==================================================================
 
     def _refresh_content(self, reset_page: bool = True, preferred_index: int | None = None) -> None:
-        """从 CloudMusicManager 读取最新队列状态并同步页码/选中项。"""
+        """从音乐运行时读取最新队列状态并同步页码/选中项。"""
         old_selected_abs = self._selected_abs_index()
         service = get_music_service()
         self._queue = service.queue_snapshot()

@@ -1,0 +1,83 @@
+飞行雪绒代码收敛整改清单
+
+更新时间
+- 2026-07-06
+
+执行规则
+- `已完成`：已改代码并通过本轮最小验证。
+- `进行中`：本轮正在处理，后续继续收敛。
+- `待处理`：已确认问题，尚未进入代码修改。
+- `暂缓`：需要更大范围联动或兼容方案，暂不直接动。
+
+一、本轮先做的低风险清理
+
+1. 删除聊天层死代码 `lib/script/chat/yuanbao_auth.py`
+- 状态：已完成
+- 原因：仓库内无调用，现有元宝登录已由 `lib/script/yuanbao_free_api/service.py` 接管。
+- 处理方式：直接删除文件，避免继续维护两套元宝登录实现。
+
+2. 删除 `MusicService` 中重复定义的方法
+- 状态：已完成
+- 原因：`is_playing()` / `is_paused()` 在同一文件内被定义两次，前一组被后一组覆盖。
+- 处理方式：保留后一组，删除前一组。
+
+3. 删除已退化成常量分支的元宝上下文兼容状态
+- 状态：已完成
+- 原因：`_should_include_yuanbao_context()`、`_get_yuanbao_login_state()`、`_resolve_yuanbao_context_policy()`、`_commit_yuanbao_context_once()` 及其配套状态位已无有效行为。
+- 处理方式：删掉死分支和无读路径状态，保留当前真实生效路径。
+
+4. 删除空转发 shim
+- 状态：已完成
+- 范围：
+- `lib/script/qqmusic/client.py`
+- `lib/script/kugou/client.py`
+- 原因：文件只做一层重导出，仓库内无引用。
+- 处理方式：删除 shim 文件，直接保留包级入口。
+
+5. 删除 `QQMusic = QQmisic` 兼容别名
+- 状态：已完成
+- 原因：仓库内无引用，继续保留只会增加阅读噪音。
+- 处理方式：清理别名和对应导出。
+
+二、后续继续处理的结构项
+
+6. 收敛音乐架构为单一运行时入口
+- 状态：已完成
+- 原因：`lib/script/music/service.py` 对外，`lib/script/cloudmusic/manager.py` 对内，但当前职责仍交叉。
+- 目标：最终只保留一层明确的音乐运行时抽象。
+- 处理方式：`MusicService` 持有唯一音乐播放 backend，清理历史/登录数据也从 `lib.script.music` 入口导出；`cloudmusic` 包退回内部实现包，旧 manager 入口仅保留兼容委托，不再维护独立单例。
+
+7. 抽本地托管服务公共基类
+- 状态：已完成
+- 范围：
+- `lib/script/gsvmove/service.py`
+- `lib/script/yuanbao_free_api/service.py`
+- 原因：预启动、健康检查、拉起进程、清理进程的模板代码高度重复。
+- 处理方式：新增 `lib/script/local_hosted_service.py`，收敛 APP_PRE_START 订阅、预启动任务去重、进程句柄登记/清空等公共生命周期骨架；两个业务服务保留各自健康检查、端口探测和兜底清理逻辑。
+
+8. 梳理退出链路
+- 状态：已完成
+- 原因：主程序退出阶段仍有历史残留步骤和手工拼接 cleanup。
+- 处理方式：主退出阶段恢复统一 `APP_EXIT` 广播，由已有启动/退出动画订阅者处理退出动画；`request_exit()` 只负责立即隐藏运行时 UI，实际 UI 单例释放统一留给视觉清理阶段，避免重复 `cleanup_all_runtime_ui()` / `cleanup_cmd_window()` 调用。
+
+三、本轮验证计划
+
+1. 运行聊天与音乐相关回归测试
+- 状态：已完成
+- 结果：
+- `py -3 -m py_compile` 已通过。
+- `py -3 -m unittest tests.test_musicdl_removed tests.test_ai_settings_panel_yuanbao_hidden tests.test_yuanbao_free_api_service_port_fallback tests.test_yuanbao_free_api_app_lifecycle` 已通过。
+- 2026-07-06 追加验证：`py -3 -m py_compile lib\script\local_hosted_service.py lib\script\gsvmove\service.py lib\script\yuanbao_free_api\service.py` 已通过。
+- 2026-07-06 追加验证：`py -3 -m unittest tests.test_gsvmove_root_resolution tests.test_yuanbao_free_api_service_port_fallback tests.test_yuanbao_free_api_app_lifecycle` 已通过。
+- 2026-07-06 追加验证：`py -3 -m py_compile lib\script\main.py lib\script\ui\shutdown.py lib\script\SEanima\animation.py` 已通过。
+- 2026-07-06 追加验证：`py -3 -m py_compile lib\script\music\service.py lib\script\music\__init__.py lib\script\cloudmusic\manager.py lib\script\cloudmusic\__init__.py lib\core\tray_icon.py lib\core\event\center.py lib\script\ui\playlist_panel.py lib\script\obj-音响\manager.py lib\script\ui\speaker_control_buttons.py lib\script\ui\speaker_search_dialog.py` 已通过。
+- 2026-07-06 追加验证：`py -3 -m unittest discover -s tests -p "test_*music*.py"` 已通过。
+- 说明：环境中未安装 `pytest`，本轮改用 `unittest` 执行现有测试文件。
+- 目标：
+- 死代码清理后不影响现有导入链路。
+- 元宝聊天路径仍可通过现有测试。
+
+2. 回写状态
+- 状态：已完成
+- 本轮通过验证的项已改为 `已完成`。
+- 需要继续扩面的项保留 `待处理` / `暂缓`。

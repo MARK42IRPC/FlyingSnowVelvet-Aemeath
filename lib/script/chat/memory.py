@@ -194,6 +194,12 @@ class StreamMemory:
             return
         self._append_lines("you", topic, lines)
 
+    def record_user_input(self, text: str) -> None:
+        topic, lines = self._extract_topic_and_lines(text)
+        if not lines:
+            return
+        self._append_lines("user", topic, lines)
+
     def cleanup(self) -> None:
         self._ec.unsubscribe(EventType.INPUT_CHAT, self._on_input_chat)
         self._ec.unsubscribe(EventType.STREAM_FINAL, self._on_stream_final)

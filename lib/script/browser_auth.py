@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from glob import glob
+from pathlib import Path
 from typing import Any
 
 
@@ -50,31 +52,34 @@ def parse_set_cookie_headers(headers: Any) -> dict[str, str]:
     return cookie_map
 
 
-def _preferred_chromium_channels() -> tuple[str, ...]:
-    return ("msedge", "chrome")
+def _project_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+def _candidate_local_chromium_executables() -> list[Path]:
+    root = _project_root()
+    pattern = root / "resc" / "playwright" / "browsers" / "ms-playwright" / "chromium-*" / "chrome-win64" / "chrome.exe"
+    try:
+        return sorted((Path(item) for item in glob(str(pattern))), reverse=True)
+    except Exception:
+        return []
+
+
+def find_local_playwright_chromium() -> Path | None:
+    for candidate in _candidate_local_chromium_executables():
+        try:
+            if candidate.exists() and candidate.is_file():
+                return candidate
+        except Exception:
+            continue
+    return None
 
 
 def launch_playwright_chromium(playwright, *, headless: bool, allow_visible_fallback: bool = True):
-    launch_errors: list[str] = []
-    browser = None
-    for channel in _preferred_chromium_channels():
-        try:
-            browser = playwright.chromium.launch(channel=channel, headless=headless)
-            break
-        except Exception as exc:
-            launch_errors.append(f"{channel}(headless={headless}): {exc}")
-
-    if browser is None and headless and allow_visible_fallback:
-        for channel in _preferred_chromium_channels():
-            try:
-                browser = playwright.chromium.launch(channel=channel, headless=False)
-                break
-            except Exception as exc:
-                launch_errors.append(f"{channel}(headless=False): {exc}")
-
-    if browser is None:
+    local_chromium = find_local_playwright_chromium()
+    if local_chromium is None:
         raise RuntimeError(
-            "未检测到可用的系统浏览器内核，请确认已安装桌面版 Microsoft Edge 或 Google Chrome: "
-            + " | ".join(launch_errors)
+            "未检测到内置 Chromium 运行时，请先执行安装脚本完成离线浏览器安装："
+            " resc/playwright/browsers/ms-playwright/chromium-*/chrome-win64/chrome.exe"
         )
-    return browser
+    launch_args = {"executable_path": str(local_chromium), "headless": headless}
+    return playwright.chromium.launch(**launch_args)

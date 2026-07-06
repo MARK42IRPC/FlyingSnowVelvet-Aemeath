@@ -45,6 +45,7 @@ class MusicService:
             "qq": QQMusicProvider(),
             "kugou": KugouMusicProvider(),
         }
+        self._backend_manager = None
         self._router = SourceRouter()
         default_provider = _PROVIDER_ORDER[0]
         requested = str(CLOUD_MUSIC.get("provider", default_provider) or default_provider).strip().lower()
@@ -209,9 +210,11 @@ class MusicService:
 
     def _get_backend_manager(self):
         if self._provider_name in {"netease", "qq", "kugou"}:
-            from lib.script.cloudmusic.manager import get_cloud_music_manager
+            if self._backend_manager is None:
+                from lib.script.cloudmusic.manager import CloudMusicManager
 
-            return get_cloud_music_manager()
+                self._backend_manager = CloudMusicManager()
+            return self._backend_manager
         return None
 
     def initialize(self):
@@ -219,21 +222,21 @@ class MusicService:
         return self._get_backend_manager()
 
     def cleanup_backend(self):
-        if self._provider_name in {"netease", "qq", "kugou"}:
+        mgr = self._backend_manager
+        self._backend_manager = None
+        if mgr is not None:
             try:
-                from lib.script.cloudmusic.manager import cleanup_cloud_music_manager
-
-                cleanup_cloud_music_manager()
+                mgr.cleanup()
             except Exception as e:
                 logger.warning("[MusicService] 娓呯悊闊充箰 backend 澶辫触: %s", e)
 
-    def is_playing(self) -> bool:
-        mgr = self._get_backend_manager()
-        return bool(getattr(mgr, "is_playing", False)) if mgr is not None else False
+    def clear_all_history_and_login_data(self) -> dict[str, int]:
+        """Clear music history and login data through the single music runtime."""
+        from lib.script.cloudmusic.manager import _clear_music_history_data, _clear_music_login_data
 
-    def is_paused(self) -> bool:
-        mgr = self._get_backend_manager()
-        return bool(getattr(mgr, "is_paused", False)) if mgr is not None else False
+        stats = _clear_music_history_data()
+        stats.update(_clear_music_login_data(runtime_manager=self._backend_manager))
+        return stats
 
     def is_logged_in(self) -> bool:
         mgr = self._get_backend_manager()
@@ -392,3 +395,7 @@ def cleanup_music_service():
         return
     _instance.cleanup_backend()
     _instance = None
+
+
+def clear_all_history_and_login_data() -> dict[str, int]:
+    return get_music_service().clear_all_history_and_login_data()

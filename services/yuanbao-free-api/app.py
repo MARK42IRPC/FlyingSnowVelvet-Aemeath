@@ -6,9 +6,11 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
+from pydantic import BaseModel
 
 from src.routers import chat, upload
 from src.services.browser import browser_manager
+from src.services.runtime import request_gate
 
 logging.basicConfig(
     level=logging.INFO,
@@ -20,7 +22,11 @@ logger = logging.getLogger(__name__)
 _login_task: asyncio.Task | None = None
 
 
-async def _ensure_login_task(*, force: bool = False) -> tuple[asyncio.Task, bool]:
+class LoginRequest(BaseModel):
+    provider: str = "wechat"
+
+
+async def _ensure_login_task(*, force: bool = False, provider: str = "wechat") -> tuple[asyncio.Task, bool]:
     global _login_task
     if _login_task is not None and not _login_task.done():
         if not force:
@@ -29,7 +35,7 @@ async def _ensure_login_task(*, force: bool = False) -> tuple[asyncio.Task, bool
         await asyncio.gather(_login_task, return_exceptions=True)
         _login_task = None
         await browser_manager.close()
-    _login_task = asyncio.create_task(browser_manager.login(force=force))
+    _login_task = asyncio.create_task(browser_manager.login(force=force, provider=provider))
     return _login_task, True
 
 
@@ -44,13 +50,17 @@ async def _cancel_login_task() -> None:
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     """应用生命周期事件处理器"""
-    logger.info("[Startup] 元宝服务已启动，等待登录请求触发浏览器初始化")
+    logger.info("[Startup] 跳过自动登录，等待显式触发登录流程")
 
     yield
 
     logger.info("[Shutdown] 正在关闭浏览器..")
     try:
-        await _cancel_login_task()
+        global _login_task
+        if _login_task is not None and not _login_task.done():
+            _login_task.cancel()
+            await asyncio.gather(_login_task, return_exceptions=True)
+        _login_task = None
         await browser_manager.close()
         logger.info("[Shutdown] 浏览器已关闭")
     except Exception as e:
@@ -69,12 +79,13 @@ async def fsv_status():
     qrcode_path = Path(str(status.get("qrcode_path") or "")).expanduser()
     status["qrcode_exists"] = bool(qrcode_path and qrcode_path.exists())
     status["login_task_running"] = bool(_login_task is not None and not _login_task.done())
+    status["gate"] = request_gate.snapshot()
     return status
 
 
 @app.post("/fsv/login")
-async def fsv_login():
-    task, started = await _ensure_login_task(force=True)
+async def fsv_login(payload: LoginRequest):
+    task, started = await _ensure_login_task(force=True, provider=payload.provider)
     status = dict(browser_manager.status())
     qrcode_path = Path(str(status.get("qrcode_path") or "")).expanduser()
     status["qrcode_exists"] = bool(qrcode_path and qrcode_path.exists())
@@ -100,7 +111,11 @@ async def fsv_login():
 
 @app.post("/fsv/logout")
 async def fsv_logout():
-    await _cancel_login_task()
+    global _login_task
+    if _login_task is not None and not _login_task.done():
+        _login_task.cancel()
+        await asyncio.gather(_login_task, return_exceptions=True)
+    _login_task = None
     await browser_manager.logout()
     status = dict(browser_manager.status())
     status["success"] = True

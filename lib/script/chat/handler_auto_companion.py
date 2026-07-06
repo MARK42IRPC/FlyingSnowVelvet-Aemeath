@@ -120,7 +120,7 @@ class ChatHandlerAutoCompanionMixin:
             self._record_auto_companion_failure(reply_text)
             return
         self._reset_auto_companion_failures()
-        self._publish_auto_response(reply_text, include_history=True)
+        self._publish_auto_response(reply_text, include_history=True, user_text=AUTO_COMPANION_PROMPT)
 
     def _on_auto_companion_tick(self):
         """定时自动向模型发起陪伴观察请求，并尽量附带截图。"""

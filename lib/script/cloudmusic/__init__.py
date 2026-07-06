@@ -1,15 +1,7 @@
-"""cloudmusic 包公开接口"""
+"""cloudmusic internal package.
 
-from lib.script.cloudmusic.manager import (
-    CloudMusicManager,
-    clear_all_history_and_login_data,
-    get_cloud_music_manager,
-    cleanup_cloud_music_manager,
-)
+Runtime access is intentionally exposed through lib.script.music only.
+"""
 
 __all__ = [
-    "CloudMusicManager",
-    "clear_all_history_and_login_data",
-    "get_cloud_music_manager",
-    "cleanup_cloud_music_manager",
 ]

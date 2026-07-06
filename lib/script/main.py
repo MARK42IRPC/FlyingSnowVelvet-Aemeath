@@ -14,7 +14,7 @@ from lib.script.SEanima.animation import get_start_exit_animation, cleanup_start
 from lib.core.logger import initialize as initialize_app_logger, cleanup as cleanup_app_logger, get_logger
 from lib.core.cmd_center import get_cmd_center, cleanup_cmd_center
 from lib.core.compute_hub import cleanup_compute_hub
-from lib.script.ui.cmd_window import get_cmd_window, cleanup_cmd_window
+from lib.script.ui.cmd_window import get_cmd_window
 from lib.script.chat.ollama import get_ollama_manager, cleanup_ollama_manager
 from lib.script.chat.handler import get_chat_handler, cleanup_chat_handler
 from lib.script.chat.memory import get_stream_memory, cleanup_stream_memory
@@ -80,7 +80,7 @@ class ApplicationState:
         self._shutdown_steps = []
         self._shutdown_step_index = 0
         self._shutdown_force_quit_armed = False
-        self._exit_animation_started = False
+        self._app_exit_event_published = False
 
         # 音频核心在事件中心初始化后立即创建，以便订阅 APP_PRE_START 完成 MCI 预热
         from lib.core.voice.core import get_voice_core
@@ -259,7 +259,6 @@ class ApplicationState:
         self._exit_in_progress = True
         logger.info('收到退出请求，开始分阶段关闭组件')
         hide_all_runtime_ui()
-        cleanup_all_runtime_ui()
         if self._particles is not None:
             try:
                 self._particles.flush_immediately()
@@ -368,15 +367,15 @@ class ApplicationState:
         self._process_pending_events()
 
     def _shutdown_play_exit_animation(self):
-        if self._exit_animation_started:
+        self._publish_app_exit_once()
+
+    def _publish_app_exit_once(self):
+        if self._app_exit_event_published:
             return
-        if self._animation is not None:
-            try:
-                self._animation.play_exit()
-                self._exit_animation_started = True
-            except Exception:
-                import traceback
-                logger.error('启动退出动画失败:\n%s', traceback.format_exc())
+        self._app_exit_event_published = True
+        self._publish_event(EventType.APP_EXIT, {
+            'exit_code': self._exit_code,
+        })
 
     def _shutdown_quit_application(self):
         if self._app:
@@ -410,7 +409,6 @@ class ApplicationState:
         cleanup_game_runtime()
         cleanup_ollama_manager()
         cleanup_cmd_center()
-        cleanup_cmd_window()
         cleanup_voice_request_handler()
         cleanup_gsvmove_service()
         cleanup_yuanbao_free_api_service()
@@ -464,14 +462,10 @@ class ApplicationState:
         if (
             self._exit_requested
             and not self._exit_completed
-            and not self._exit_animation_started
+            and not self._app_exit_event_published
             and self._animation is not None
         ):
-            try:
-                self._animation.play_exit()
-                self._exit_animation_started = True
-            except Exception:
-                pass
+            self._publish_app_exit_once()
 
         if not self._components_cleaned:
             logger.warning('Qt 事件循环已经结束，但组件仍未完全清理，开始兜底收尾')
@@ -483,7 +477,7 @@ class ApplicationState:
         self._app = None
         self._exit_completed = True
         self._shutdown_force_quit_armed = False
-        self._exit_animation_started = False
+        self._app_exit_event_published = False
 
         if not self._logger_cleaned:
             cleanup_app_logger()

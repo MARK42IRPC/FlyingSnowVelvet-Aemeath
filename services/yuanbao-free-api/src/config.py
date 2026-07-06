@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     header_timeout: float = 3.0
     header_api_pattern: str = "yuanbao.tencent.com/api"
     upload_host: str = "hunyuan-prod-1258344703.cos.accelerate.myqcloud.com"
+    max_concurrent_requests: int = 1
+    request_min_interval_secs: float = 1.5
+    request_cooldown_initial_secs: float = 30.0
+    request_cooldown_max_secs: float = 300.0
 
     model_config = SettingsConfigDict(
         env_file=".env",

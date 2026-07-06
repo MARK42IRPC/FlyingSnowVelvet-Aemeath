@@ -103,7 +103,7 @@ class EventType(Enum):
     INPUT_HASH    = "input_hash"      # # 开头：扩展命令（由各管理器订阅处理）
     INPUT_CHAT    = "input_chat"      # 无前缀：聊天消息（由 ChatHandler 处理）
 
-    # 音乐播放事件（由 SpeakerSearchResultBox 发布，CloudMusicManager 订阅）
+    # 音乐播放事件（由 SpeakerSearchResultBox 发布，音乐运行时订阅）
     MUSIC_PLAY_TOP = "music_play_top"  # 左键：立即播放，中断当前曲目
     MUSIC_ENQUEUE  = "music_enqueue"   # 右键：加入播放队列末尾
     MUSIC_ENQUEUE_HISTORY = "music_enqueue_history"  # 将历史记录批量加入播放队列末尾

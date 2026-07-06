@@ -20,8 +20,9 @@ from urllib.request import Request, urlopen
 
 import config.ollama_config as oc
 from lib.core.compute_hub import get_compute_hub
-from lib.core.event.center import Event, EventType, get_event_center
+from lib.core.event.center import Event, EventType
 from lib.core.logger import get_logger
+from lib.script.local_hosted_service import LocalHostedServiceBase
 
 logger = get_logger(__name__)
 
@@ -230,11 +231,32 @@ def _logout_url(host: str, port: int) -> str:
     return f'http://{host}:{port}{_LOGOUT_ENDPOINT}'
 
 
-def _http_json(url: str, *, method: str = 'GET', timeout: float = 5.0) -> Optional[Dict[str, object]]:
+def _normalize_login_provider(provider: str | None) -> str:
+    value = str(provider or '').strip().lower()
+    if value == 'qq':
+        return 'qq'
+    return 'wechat'
+
+
+def _login_provider_label(provider: str | None) -> str:
+    return '手机QQ' if _normalize_login_provider(provider) == 'qq' else '微信'
+
+
+def _login_dialog_title(provider: str | None) -> str:
+    return f'{_login_provider_label(provider)}登录元宝'
+
+
+def _http_json(
+    url: str,
+    *,
+    method: str = 'GET',
+    timeout: float = 5.0,
+    payload: Optional[Dict[str, object]] = None,
+) -> Optional[Dict[str, object]]:
     request = Request(url, method=method.upper())
     if method.upper() == 'POST':
         request.add_header('Content-Type', 'application/json')
-        request.data = b'{}'
+        request.data = json.dumps(payload or {}, ensure_ascii=False).encode('utf-8')
     try:
         with urlopen(request, timeout=timeout) as response:
             charset = response.headers.get_content_charset() or 'utf-8'
@@ -278,8 +300,19 @@ def _fetch_service_status(host: str, port: int, timeout: float = 3.0) -> Optiona
     return status if state == 'ok' else None
 
 
-def _request_service_login(host: str, port: int, timeout: float = 10.0) -> Optional[Dict[str, object]]:
-    return _http_json(_login_url(host, port), method='POST', timeout=timeout)
+def _request_service_login(
+    host: str,
+    port: int,
+    provider: str = 'wechat',
+    timeout: float = 10.0,
+) -> Optional[Dict[str, object]]:
+    provider_name = _normalize_login_provider(provider)
+    return _http_json(
+        _login_url(host, port),
+        method='POST',
+        timeout=timeout,
+        payload={'provider': provider_name},
+    )
 
 
 def _request_service_logout(host: str, port: int, timeout: float = 10.0) -> Optional[Dict[str, object]]:
@@ -304,12 +337,14 @@ def _read_qrcode_bytes() -> Optional[bytes]:
     return None
 
 
-def _describe_status_message(status: Optional[Dict[str, object]]) -> str:
+def _describe_status_message(status: Optional[Dict[str, object]], provider: str | None = None) -> str:
+    provider_name = _normalize_login_provider((status or {}).get('login_provider') or provider)
+    provider_label = _login_provider_label(provider_name)
     stage = _status_text(status, 'last_message')
     if _status_bool(status, 'logged_in'):
         return '元宝已登录，可直接使用。'
     if _status_bool(status, 'qrcode_exists'):
-        return '请使用微信扫码登录元宝。'
+        return f'请使用{provider_label}扫码登录元宝。'
     if _status_text(status, 'last_error'):
         return _status_text(status, 'last_error')
     mapping = {
@@ -326,8 +361,11 @@ def _describe_status_message(status: Optional[Dict[str, object]]) -> str:
         'clicking_login_button': '正在点击登录入口',
         'login_button_clicked': '登录入口已点击，正在等待二维码',
         'login_button_not_found': '未找到登录入口',
+        'selecting_login_provider': f'正在切换到{provider_label}登录',
+        'login_provider_selected': f'已切换到{provider_label}登录，正在等待二维码',
+        'login_provider_not_found': f'未找到{provider_label}登录入口，将继续尝试默认扫码入口',
         'waiting_qrcode': '正在等待二维码出现',
-        'qrcode_ready': '二维码已生成，请使用微信扫码登录元宝。',
+        'qrcode_ready': f'二维码已生成，请使用{provider_label}扫码登录元宝。',
         'waiting_scan_confirm': '二维码已生成，正在等待扫码确认',
         'login_success': '元宝登录成功',
         'login_timeout': '扫码超时，请重新扫码',
@@ -399,26 +437,19 @@ def _kill_process_by_pid(pid: int) -> bool:
         return False
 
 
-class YuanbaoFreeApiService:
+class YuanbaoFreeApiService(LocalHostedServiceBase):
     def __init__(self):
-        self._ec = get_event_center()
-        self._proc_lock = threading.RLock()
+        super().__init__('YuanbaoFreeApiService', 'yuanbao_prestart_ready')
         self._login_monitor_lock = threading.RLock()
-        self._process: Optional[subprocess.Popen] = None
         self._login_monitor_thread: Optional[Future] = None
-        self._started_by_app = False
-        self._ec.subscribe(EventType.APP_PRE_START, self._on_app_pre_start)
+        self._active_login_provider = 'wechat'
+        self._subscribe_app_pre_start()
 
-    def _on_app_pre_start(self, _event: Event):
-        if not _should_manage_local_service():
-            return
-        future = get_compute_hub().submit_latest(
-            "yuanbao_prestart_ready",
-            self.ensure_service_process_ready,
-            executor="io",
-        )
-        if future is None:
-            logger.debug('[YuanbaoFreeApiService] 预启动任务仍在运行，跳过重复提交')
+    def _should_prestart(self) -> bool:
+        return _should_manage_local_service()
+
+    def _prestart_worker(self) -> bool:
+        return self.ensure_service_process_ready()
 
     def _ensure_login_dialog(self) -> None:
         if threading.current_thread() is not threading.main_thread():
@@ -432,17 +463,20 @@ class YuanbaoFreeApiService:
 
     def _publish_login_dialog_show(self, status: Optional[Dict[str, object]] = None) -> None:
         self._ensure_login_dialog()
+        provider = (status or {}).get('login_provider') or self._active_login_provider
         payload = {
-            'title': '元宝扫码登录',
-            'status': _describe_status_message(status),
+            'title': _login_dialog_title(str(provider or 'wechat')),
+            'status': _describe_status_message(status, str(provider or 'wechat')),
             'qr_png': _read_qrcode_bytes(),
         }
         self._ec.publish(Event(EventType.YUANBAO_LOGIN_QR_SHOW, payload))
 
     def _publish_login_dialog_status(self, status: Optional[Dict[str, object]] = None) -> None:
         self._ensure_login_dialog()
+        provider = (status or {}).get('login_provider') or self._active_login_provider
         payload = {
-            'status': _describe_status_message(status),
+            'title': _login_dialog_title(str(provider or 'wechat')),
+            'status': _describe_status_message(status, str(provider or 'wechat')),
             'qr_png': _read_qrcode_bytes(),
             'logged_in': _status_bool(status, 'logged_in'),
         }
@@ -520,7 +554,7 @@ class YuanbaoFreeApiService:
         if (not _status_bool(status, 'qrcode_exists')
                 and not _status_bool(status, 'login_in_progress')
                 and not _status_text(status, 'last_error')):
-            login_result = _request_service_login(host, port)
+            login_result = _request_service_login(host, port, provider=self._active_login_provider)
             if login_result:
                 logger.info('[YuanbaoFreeApiService] 已触发元宝登录流程: %s', login_result)
                 status = self._wait_for_login_state(host, port, allow_logged_out=True) or status
@@ -538,11 +572,7 @@ class YuanbaoFreeApiService:
                 result.update(logout_result)
         with self._login_monitor_lock:
             self._login_monitor_thread = None
-        with self._proc_lock:
-            proc = self._process
-            started = self._started_by_app
-            self._process = None
-            self._started_by_app = False
+        proc, started = self._take_tracked_process()
         if started and proc is not None:
             self._terminate_process_tree(proc)
         if target is not None:
@@ -555,24 +585,36 @@ class YuanbaoFreeApiService:
                 _kill_process_by_pid(pid)
         return result
 
-    def begin_login_flow(self) -> Dict[str, object]:
+    def begin_login_flow(self, provider: str = 'wechat') -> Dict[str, object]:
+        self._active_login_provider = _normalize_login_provider(provider)
         _remove_qrcode_if_exists()
-        self._publish_login_dialog_show({'last_message': 'starting_login'})
+        self._publish_login_dialog_show({
+            'last_message': 'starting_login',
+            'login_provider': self._active_login_provider,
+        })
         target = _parse_local_target()
         if target is None:
-            self._publish_login_dialog_status({'last_error': '当前接口地址不是本地 YuanBao-Free-API。'})
+            self._publish_login_dialog_status({
+                'last_error': '当前接口地址不是本地 YuanBao-Free-API。',
+                'login_provider': self._active_login_provider,
+            })
             return {
                 'success': False,
                 'message': '当前接口地址不是本地 YuanBao-Free-API，无法启动登录流程。',
+                'provider': self._active_login_provider,
             }
 
         host, port = target
         status, host, port = self._ensure_status_endpoint(host, port)
         if status is None:
-            self._publish_login_dialog_status({'last_error': f'元宝服务未能启动，请查看 {_log_path().name}。'})
+            self._publish_login_dialog_status({
+                'last_error': f'元宝服务未能启动，请查看 {_log_path().name}。',
+                'login_provider': self._active_login_provider,
+            })
             return {
                 'success': False,
                 'message': f'元宝服务未能启动，请查看 {_log_path().name}。',
+                'provider': self._active_login_provider,
             }
 
         if _status_bool(status, 'logged_in'):
@@ -583,9 +625,10 @@ class YuanbaoFreeApiService:
                 'qrcode_exists': _status_bool(status, 'qrcode_exists'),
                 'status': status,
                 'message': '元宝服务已登录，可直接使用。',
+                'provider': self._active_login_provider,
             }
 
-        login_result = _request_service_login(host, port)
+        login_result = _request_service_login(host, port, provider=self._active_login_provider)
         if login_result is None:
             refreshed = self._wait_for_login_state(host, port, allow_logged_out=True) or status
             self._publish_login_dialog_status(refreshed)
@@ -598,6 +641,7 @@ class YuanbaoFreeApiService:
                     'qrcode_exists': _status_bool(refreshed, 'qrcode_exists'),
                     'status': refreshed,
                     'message': '元宝登录流程已启动，正在等待二维码生成。',
+                    'provider': self._active_login_provider,
                 }
             error_text = _status_text(refreshed, 'last_error') or '无法调用元宝登录接口。'
             return {
@@ -606,6 +650,7 @@ class YuanbaoFreeApiService:
                 'qrcode_exists': _status_bool(refreshed, 'qrcode_exists'),
                 'status': refreshed,
                 'message': error_text,
+                'provider': self._active_login_provider,
             }
 
         refreshed = self._wait_for_login_state(host, port, allow_logged_out=True) or self.get_service_status() or status
@@ -620,6 +665,7 @@ class YuanbaoFreeApiService:
                 'qrcode_exists': _status_bool(refreshed, 'qrcode_exists'),
                 'status': refreshed,
                 'message': '元宝登录已完成，可直接使用。',
+                'provider': self._active_login_provider,
             }
         if _status_bool(refreshed, 'qrcode_exists'):
             self._start_login_monitor(host, port)
@@ -629,6 +675,7 @@ class YuanbaoFreeApiService:
                 'qrcode_exists': _status_bool(refreshed, 'qrcode_exists'),
                 'status': refreshed,
                 'message': '元宝二维码已就绪，请扫码完成登录。',
+                'provider': self._active_login_provider,
             }
         if _status_bool(refreshed, 'login_in_progress'):
             self._start_login_monitor(host, port)
@@ -639,6 +686,7 @@ class YuanbaoFreeApiService:
                 'qrcode_exists': False,
                 'status': refreshed,
                 'message': '元宝登录流程已启动，但二维码尚未生成，请稍候再试。',
+                'provider': self._active_login_provider,
             }
         return {
             'success': False,
@@ -646,6 +694,7 @@ class YuanbaoFreeApiService:
             'qrcode_exists': False,
             'status': refreshed,
             'message': last_error or _status_text(refreshed, 'last_message') or '元宝登录未能启动。',
+            'provider': self._active_login_provider,
         }
 
     def _ensure_status_endpoint(self, host: str, port: int) -> Tuple[Optional[Dict[str, object]], str, int]:
@@ -743,10 +792,9 @@ class YuanbaoFreeApiService:
                         break
                     time.sleep(1.0)
                     continue
-            with self._proc_lock:
-                proc = self._process
-                if proc is not None and proc.poll() is not None:
-                    break
+            proc = self._tracked_process()
+            if proc is not None and proc.poll() is not None:
+                break
             time.sleep(_POLL_INTERVAL_SECS)
         logger.error('[YuanbaoFreeApiService] 元宝服务状态接口启动失败，目标=%s:%s 日志=%s', host, port, _log_path())
         self._ec.publish(Event(EventType.INFORMATION, {
@@ -831,13 +879,13 @@ class YuanbaoFreeApiService:
             return False
 
         with self._proc_lock:
-            if self._process is not None and self._process.poll() is None:
+            if self._has_running_tracked_process():
                 return True
             log_handle = _log_path().open('a', encoding='utf-8', errors='ignore')
             env = _build_service_env()
             create_no_window = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
             try:
-                self._process = subprocess.Popen(
+                proc = subprocess.Popen(
                     [_launcher_python(), '-m', 'uvicorn', 'app:app', '--host', '127.0.0.1', '--port', str(port)],
                     cwd=str(_service_dir()),
                     env=env,
@@ -846,7 +894,7 @@ class YuanbaoFreeApiService:
                     stderr=subprocess.STDOUT,
                     creationflags=create_no_window,
                 )
-                self._started_by_app = True
+                self._set_started_process(proc)
                 log_handle.close()
             except Exception as exc:
                 log_handle.close()
@@ -857,8 +905,7 @@ class YuanbaoFreeApiService:
                     'max': 180,
                     'particle': False,
                 }))
-                self._process = None
-                self._started_by_app = False
+                self._mark_process_start_failed()
                 return False
 
         deadline = time.monotonic() + _STARTUP_WAIT_SECS
@@ -866,10 +913,9 @@ class YuanbaoFreeApiService:
             if _can_connect(host, port):
                 logger.info('[YuanbaoFreeApiService] 元宝服务端口已启动: %s:%s', host, port)
                 return True
-            with self._proc_lock:
-                proc = self._process
-                if proc is not None and proc.poll() is not None:
-                    break
+            proc = self._tracked_process()
+            if proc is not None and proc.poll() is not None:
+                break
             time.sleep(_POLL_INTERVAL_SECS)
 
         logger.error('[YuanbaoFreeApiService] 元宝服务启动超时或已退出，目标=%s:%s 日志=%s', host, port, _log_path())
@@ -882,17 +928,13 @@ class YuanbaoFreeApiService:
         return False
 
     def cleanup(self):
-        self._ec.unsubscribe(EventType.APP_PRE_START, self._on_app_pre_start)
+        self._unsubscribe_app_pre_start()
         self._publish_login_dialog_hide()
 
         with self._login_monitor_lock:
             self._login_monitor_thread = None
 
-        with self._proc_lock:
-            proc = self._process
-            started = self._started_by_app
-            self._process = None
-            self._started_by_app = False
+        proc, started = self._take_tracked_process()
 
         if started and proc is not None:
             self._terminate_process_tree(proc)

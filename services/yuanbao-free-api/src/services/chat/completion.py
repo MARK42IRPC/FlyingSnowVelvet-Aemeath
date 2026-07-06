@@ -6,6 +6,7 @@ import httpx
 
 from src.schemas.chat import YuanBaoChatCompletionRequest
 from src.services.chat.conversation import remove_conversation
+from src.services.runtime import request_gate
 from src.utils.chat import process_response_stream
 
 CHAT_URL = "https://yuanbao.tencent.com/api/chat/{}"
@@ -57,16 +58,18 @@ async def create_completion_stream(
         body["supportFunctions"] = chat_request.support_functions
 
     try:
-        async with httpx.AsyncClient() as client:
-            async with client.stream(
-                "POST",
-                CHAT_URL.format(chat_request.chat_id),
-                json=body,
-                headers=headers,
-                timeout=timeout,
-            ) as response:
-                async for chunk in process_response_stream(response, chat_request.chat_id):
-                    yield chunk
+        async with request_gate.slot("chat.stream"):
+            async with httpx.AsyncClient() as client:
+                async with client.stream(
+                    "POST",
+                    CHAT_URL.format(chat_request.chat_id),
+                    json=body,
+                    headers=headers,
+                    timeout=timeout,
+                ) as response:
+                    await request_gate.record_status("chat.stream", response.status_code)
+                    async for chunk in process_response_stream(response, chat_request.chat_id):
+                        yield chunk
 
     except Exception as e:
         raise ChatCompletionError(e)

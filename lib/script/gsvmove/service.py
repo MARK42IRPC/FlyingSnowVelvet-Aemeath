@@ -31,9 +31,9 @@ from config.shared_storage import (
     get_shared_config_path,
     get_shared_root_dir,
 )
-from lib.core.compute_hub import get_compute_hub
-from lib.core.event.center import Event, EventType, get_event_center
+from lib.core.event.center import Event, EventType
 from lib.core.logger import get_logger
+from lib.script.local_hosted_service import LocalHostedServiceBase
 
 logger = get_logger(__name__)
 
@@ -190,20 +190,15 @@ def _parse_batch_variables(text: str, script_dir: Path) -> dict[str, str]:
 
 
 
-class GsvmoveService:
+class GsvmoveService(LocalHostedServiceBase):
     """GSVmove 文本转语音桥接服务。"""
 
     def __init__(self):
-        self._ec = get_event_center()
+        super().__init__("GsvmoveService", "gsvmove_prestart")
         self._session = requests.Session()
-        self._proc_lock = threading.Lock()
         self._infer_lock = threading.Lock()
         self._request_queue: Queue[dict | None] = Queue()
         self._worker_stop = threading.Event()
-        self._process: subprocess.Popen | None = None
-        self._started_by_app = False
-        self._prestart_lock = threading.Lock()
-        self._prestart_started = False
         self._warmup_lock = threading.Lock()
         self._warmup_done = False
         self._host = _DEFAULT_HOST
@@ -220,7 +215,7 @@ class GsvmoveService:
         self._saved_audio_root.mkdir(parents=True, exist_ok=True)
         self.cleanup_saved_audio_cache()
 
-        self._ec.subscribe(EventType.APP_PRE_START, self._on_app_pre_start)
+        self._subscribe_app_pre_start()
         self._ec.subscribe(EventType.AI_VOICE_REQUEST, self._on_ai_voice_request)
         self._worker = threading.Thread(target=self._worker_loop, daemon=True, name="gsvmove-worker")
         self._worker.start()
@@ -369,29 +364,11 @@ class GsvmoveService:
             self._cleanup_saved_audio_cache_locked()
             return target_path
 
-    def _on_app_pre_start(self, event: Event):
-        del event
-        if not self.auto_start_enabled():
-            return
-        self.kickoff_prestart()
-
     def auto_start_enabled(self) -> bool:
         return _is_gsv_auto_start_enabled()
 
-    def kickoff_prestart(self) -> None:
-        if not self.auto_start_enabled():
-            return
-        with self._prestart_lock:
-            if self._prestart_started:
-                return
-            self._prestart_started = True
-        future = get_compute_hub().submit_latest(
-            "gsvmove_prestart",
-            self._prestart_worker,
-            executor="io",
-        )
-        if future is None:
-            logger.debug("[GsvmoveService] 预热任务仍在运行，跳过重复提交")
+    def _should_prestart(self) -> bool:
+        return self.auto_start_enabled()
 
     def _prestart_worker(self) -> None:
         if not self._ensure_service_ready():
@@ -511,14 +488,11 @@ class GsvmoveService:
             if self._health_check():
                 logger.info("[GsvmoveService] GSVmove 服务已就绪 dt=%.1fs", time.monotonic() - started_at)
                 return True
-            with self._proc_lock:
-                proc = self._process
+            proc = self._tracked_process()
             if proc is not None:
                 exit_code = proc.poll()
                 if exit_code is not None:
-                    with self._proc_lock:
-                        if self._process is proc:
-                            self._process = None
+                    self._clear_tracked_process_if(proc)
                     log_tail = self._read_launcher_log_tail()
                     if log_tail:
                         logger.error(
@@ -543,7 +517,7 @@ class GsvmoveService:
 
     def _start_service_process(self):
         with self._proc_lock:
-            if self._process is not None and self._process.poll() is None:
+            if self._has_running_tracked_process():
                 return
             if not self._launcher_path.exists():
                 logger.warning("[GsvmoveService] 未找到启动脚本: %s", self._launcher_path)
@@ -556,7 +530,7 @@ class GsvmoveService:
                 )
                 launcher_log.flush()
                 creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-                self._process = subprocess.Popen(
+                proc = subprocess.Popen(
                     ["cmd", "/c", str(self._launcher_path)],
                     cwd=str(self._root_dir),
                     stdin=subprocess.DEVNULL,
@@ -564,11 +538,10 @@ class GsvmoveService:
                     stderr=subprocess.STDOUT,
                     creationflags=creationflags,
                 )
-                self._started_by_app = True
+                self._set_started_process(proc)
                 logger.info("[GsvmoveService] 已在后台启动 GSVmove")
             except Exception as e:
-                self._process = None
-                self._started_by_app = False
+                self._mark_process_start_failed()
                 logger.error("[GsvmoveService] 启动 GSVmove 失败: %s", e)
             finally:
                 if launcher_log is not None:
@@ -661,7 +634,7 @@ class GsvmoveService:
             return None
 
     def cleanup(self):
-        self._ec.unsubscribe(EventType.APP_PRE_START, self._on_app_pre_start)
+        self._unsubscribe_app_pre_start()
         self._ec.unsubscribe(EventType.AI_VOICE_REQUEST, self._on_ai_voice_request)
         self._worker_stop.set()
         self._request_queue.put(None)
@@ -670,20 +643,14 @@ class GsvmoveService:
         except Exception:
             pass
 
-        with self._proc_lock:
-            proc = self._process
-            self._process = None
-            self._started_by_app = False
+        proc, _started = self._take_tracked_process()
 
         if self._shutdown_started_service(proc):
             return
         logger.warning("[GsvmoveService] 结束 GSVmove 进程失败：常规终止与兜底清理均未成功")
 
     def shutdown_service_process(self) -> bool:
-        with self._proc_lock:
-            proc = self._process
-            self._process = None
-            self._started_by_app = False
+        proc, _started = self._take_tracked_process()
         stopped = self._shutdown_started_service(proc)
         return stopped
 

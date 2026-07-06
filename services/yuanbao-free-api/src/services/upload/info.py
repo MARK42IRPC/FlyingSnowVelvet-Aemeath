@@ -4,6 +4,8 @@ from typing import Dict
 
 import httpx
 
+from src.services.runtime import request_gate
+
 UPLOAD_URL = "https://yuanbao.tencent.com/api/resource/genUploadInfo"
 
 DEFAULT_TIMEOUT = 60
@@ -30,15 +32,17 @@ async def get_upload_info(file_name: str, headers: Dict[str, str], timeout: int 
         GetUploadInfoError: 获取上传信息失败时抛出
     """
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                UPLOAD_URL,
-                json={"fileName": file_name, "docFrom": "localDoc", "docOpenId": ""},
-                headers=headers,
-                timeout=timeout,
-            )
-            response.raise_for_status()
-            return response.json()
+        async with request_gate.slot("upload.info"):
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    UPLOAD_URL,
+                    json={"fileName": file_name, "docFrom": "localDoc", "docOpenId": ""},
+                    headers=headers,
+                    timeout=timeout,
+                )
+                await request_gate.record_status("upload.info", response.status_code)
+                response.raise_for_status()
+                return response.json()
 
     except Exception as e:
         raise GetUploadInfoError(e)

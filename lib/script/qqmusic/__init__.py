@@ -1,5 +1,5 @@
 ﻿"""QQ music integration package."""
 
-from .qqmisic import QQmisic, QQMusic, get_qqmusic_client
+from .qqmisic import QQmisic, get_qqmusic_client
 
-__all__ = ["QQmisic", "QQMusic", "get_qqmusic_client"]
+__all__ = ["QQmisic", "get_qqmusic_client"]

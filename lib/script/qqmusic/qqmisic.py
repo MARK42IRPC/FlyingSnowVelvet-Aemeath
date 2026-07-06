@@ -808,7 +808,6 @@ class QQmisic:
 
 
 
-QQMusic = QQmisic
 _instance: QQmisic | None = None
 
 

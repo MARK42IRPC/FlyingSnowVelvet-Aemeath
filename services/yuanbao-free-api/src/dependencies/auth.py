@@ -4,7 +4,7 @@ from fastapi import Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from src.config import validate_api_key
-from src.utils.common import HeadersUnavailableError, generate_headers
+from src.utils.common import generate_headers
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -31,9 +31,4 @@ async def get_authorized_headers(
     if not validate_api_key(token):
         raise HTTPException(status_code=403, detail="invalid api_key")
 
-    try:
-        headers = await generate_headers()
-    except HeadersUnavailableError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-
-    return headers
+    return await generate_headers()

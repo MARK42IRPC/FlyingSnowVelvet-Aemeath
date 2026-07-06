@@ -4,6 +4,8 @@ from typing import Dict
 
 import httpx
 
+from src.services.runtime import request_gate
+
 CREATE_URL = "https://yuanbao.tencent.com/api/user/agent/conversation/create"
 CLEAR_URL = "https://yuanbao.tencent.com/api/user/agent/conversation/v1/clear"
 
@@ -37,21 +39,23 @@ async def create_conversation(agent_id: str, headers: Dict[str, str], timeout: i
         ConversationCreationError: 会话创建失败时抛出
     """
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(CREATE_URL, json={"agentId": agent_id}, headers=headers, timeout=timeout)
+        async with request_gate.slot("conversation.create"):
+            async with httpx.AsyncClient() as client:
+                response = await client.post(CREATE_URL, json={"agentId": agent_id}, headers=headers, timeout=timeout)
+                await request_gate.record_status("conversation.create", response.status_code)
 
-            if response.status_code != 200:
-                raise Exception(f"Request failed. Status code: {response.status_code}, Response: {response.text}")
+                if response.status_code != 200:
+                    raise Exception(f"Request failed. Status code: {response.status_code}, Response: {response.text}")
 
-            try:
-                json_data = response.json()
-            except ValueError:
-                raise Exception(f"Failed to parse response as JSON. Response: {response.text}")
+                try:
+                    json_data = response.json()
+                except ValueError:
+                    raise Exception(f"Failed to parse response as JSON. Response: {response.text}")
 
-            if "id" not in json_data:
-                raise Exception(f"Failed to find 'id' in response JSON. Response: {response.text}")
+                if "id" not in json_data:
+                    raise Exception(f"Failed to find 'id' in response JSON. Response: {response.text}")
 
-            return json_data["id"]
+                return json_data["id"]
 
     except Exception as e:
         raise ConversationCreationError(e)
@@ -69,16 +73,18 @@ async def remove_conversation(chat_id: str, headers: Dict[str, str], timeout: in
         ConversationRemoveError: 会话删除失败时抛出
     """
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                CLEAR_URL,
-                json={"conversationIds": [chat_id], "uiOptions": {"noToast": True}},
-                headers=headers,
-                timeout=timeout,
-            )
+        async with request_gate.slot("conversation.remove"):
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    CLEAR_URL,
+                    json={"conversationIds": [chat_id], "uiOptions": {"noToast": True}},
+                    headers=headers,
+                    timeout=timeout,
+                )
+                await request_gate.record_status("conversation.remove", response.status_code)
 
-            if response.status_code != 200:
-                raise Exception(f"Request failed. Status code: {response.status_code}, Response: {response.text}")
+                if response.status_code != 200:
+                    raise Exception(f"Request failed. Status code: {response.status_code}, Response: {response.text}")
 
     except Exception as e:
         raise ConversationRemoveError(e)

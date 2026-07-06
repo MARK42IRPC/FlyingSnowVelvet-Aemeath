@@ -14,7 +14,7 @@ class YuanbaoLoginDialog(BaseQrDialog):
     def __init__(self) -> None:
         super().__init__(
             title="元宝扫码登录",
-            status="请使用微信扫码登录元宝",
+            status="请使用扫码登录元宝",
             action_text="关闭窗口",
             placeholder_text="二维码准备中...",
             qr_background=True,
@@ -43,13 +43,14 @@ class YuanbaoLoginDialog(BaseQrDialog):
     def _on_qr_show(self, event: Event) -> None:
         self.show_dialog(
             qr_png=event.data.get("qr_png"),
-            status=event.data.get("status", "请使用微信扫码登录元宝"),
+            status=event.data.get("status", "请使用扫码登录元宝"),
             title=event.data.get("title", "元宝扫码登录"),
         )
 
     def _on_qr_status(self, event: Event) -> None:
         self._set_qr_pixmap_from_bytes(event.data.get("qr_png"), clear_when_none=True)
         logged_in = bool(event.data.get("logged_in"))
+        self._set_dialog_title(event.data.get("title", self._title))
         self._status = str(event.data.get("status", self._status))
         if logged_in:
             self._status = "元宝登录成功，即将自动关闭…"

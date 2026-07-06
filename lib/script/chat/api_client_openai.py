@@ -125,6 +125,23 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
         return any(marker in text for marker in ("vl", "vision", "qvq"))
 
     @staticmethod
+    def _is_image_input_error_text(error_text: str) -> bool:
+        text = str(error_text or "").strip().lower()
+        if not text:
+            return False
+        image_markers = (
+            "image", "images", "image_url", "input_image", "vision",
+            "multimodal", "multi-modal", "multi_modal", "modal",
+            "图片", "图像", "视觉", "多模态",
+        )
+        error_markers = (
+            "unsupported", "not support", "not supported", "does not support",
+            "invalid", "bad request", "content", "message", "messages",
+            "不支持", "不允许", "不合法", "无效", "参数错误", "请求错误",
+        )
+        return any(marker in text for marker in image_markers) and any(marker in text for marker in error_markers)
+
+    @staticmethod
     def _dedupe_payload_variants(payloads: list[dict]) -> list[dict]:
         """按 JSON 文本去重 payload 变体，保持原顺序。"""
         unique: list[dict] = []
@@ -165,10 +182,6 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
         return base
 
     @staticmethod
-    def _should_include_yuanbao_context(options: dict | None) -> bool:
-        return True
-
-    @staticmethod
     def _build_yuanbao_extra_fields(options: dict, multimedia: list[dict] | None = None) -> dict:
         fields = {
             'should_remove_conversation': True,
@@ -177,28 +190,6 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
             fields['multimedia'] = multimedia
         return fields
 
-
-    def _get_yuanbao_login_state(self) -> bool | None:
-        try:
-            from lib.script.yuanbao_free_api.service import get_yuanbao_free_api_service
-            svc = get_yuanbao_free_api_service()
-            status = svc.get_service_status()
-        except Exception as exc:
-            logger.debug('[APIClient] YuanBao ???????: %s', exc)
-            return None
-        if not isinstance(status, dict):
-            return None
-        return bool(status.get('logged_in'))
-
-    def _resolve_yuanbao_context_policy(self, options: dict | None) -> tuple[bool, bool]:
-        return True, True
-
-    def _commit_yuanbao_context_once(self) -> None:
-        with self._yuanbao_state_lock:
-            self._yuanbao_context_once_pending = False
-            self._yuanbao_context_consumed = True
-            if self._yuanbao_last_logged_in is None:
-                self._yuanbao_last_logged_in = True
 
     def _upload_yuanbao_multimedia(
         self,
@@ -635,16 +626,10 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
         payload_images = images
         effective_persona = persona
         effective_history = history
-        yuanbao_include_persona_once = False
         if use_yuanbao_free_api:
-            include_persona, include_history = self._resolve_yuanbao_context_policy(yuanbao_options)
-            yuanbao_include_persona_once = False
-            if not include_persona:
-                effective_persona = ''
-            if not include_history:
-                effective_history = None
-            logger.debug('[APIClient] YuanBao ?????: include_persona=%s include_history=%s remove_conversation=True',
-                         include_persona, include_history)
+            logger.debug(
+                '[APIClient] YuanBao-Free-API 已启用 remove_conversation=True，沿用当前 persona/history 发送策略'
+            )
         if images and use_yuanbao_free_api:
             try:
                 uploaded_multimedia = self._upload_yuanbao_multimedia(
@@ -663,9 +648,9 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
                 logger.warning('[APIClient] YuanBao-Free-API 图片上传失败，回退到内联图片: %s', e)
 
         if payload_images and is_dashscope_target and not self._dashscope_model_supports_multimodal(model):
-            raise RuntimeError(
-                "阿里云通义当前模型不支持图片 content 列表。"
-                "请改用 VL/视觉模型，或关闭截图/图片输入后再试。"
+            logger.debug(
+                "[APIClient] DashScope/Qwen 模型名未包含 VL 标识，仍先尝试图片请求: model=%s",
+                model,
             )
 
         endpoint_candidates = self._openai_endpoint_candidates(base_url)
@@ -757,8 +742,6 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
                             request_started_at=request_started_at,
                             endpoint=endpoint,
                         )
-                        if use_yuanbao_free_api and yuanbao_include_persona_once:
-                            self._commit_yuanbao_context_once()
                         return result
                     except requests.HTTPError as e:
                         last_http_error = e
@@ -779,6 +762,12 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
                             err = self._extract_error(e)
                         except Exception:
                             err = str(e)
+                        if payload_images and is_dashscope_target and self._is_image_input_error_text(err):
+                            raise RuntimeError(
+                                "阿里云通义接口已尝试携带图片请求，但当前模型或接口返回不支持图片输入。"
+                                "请确认该 qwen 模型是否已开通多模态能力，或关闭截图/图片输入后再试。"
+                                f" 原始错误：{err}"
+                            ) from e
                         logger.debug("[APIClient] OpenAI兼容请求失败 endpoint=%s: %s", endpoint, err)
                         break
                     except (requests.Timeout, requests.ConnectionError) as e:

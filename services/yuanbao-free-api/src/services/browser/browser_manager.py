@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import re
+from glob import glob
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -18,8 +19,49 @@ def _service_root() -> Path:
     return Path(__file__).resolve().parents[4]
 
 
-def _preferred_chromium_channels() -> tuple[str, ...]:
-    return ("msedge", "chrome")
+def _local_chromium_search_patterns() -> tuple[Path, ...]:
+    service_root = _service_root()
+    workspace_root = service_root.parent
+    return (
+        workspace_root / "resc" / "playwright" / "browsers" / "ms-playwright" / "chromium-*" / "chrome-win64" / "chrome.exe",
+        service_root / "playwright" / "browsers" / "ms-playwright" / "chromium-*" / "chrome-win64" / "chrome.exe",
+        service_root / "resc" / "playwright" / "browsers" / "ms-playwright" / "chromium-*" / "chrome-win64" / "chrome.exe",
+    )
+
+
+def _candidate_local_chromium_executables() -> list[Path]:
+    candidates: list[Path] = []
+    for pattern in _local_chromium_search_patterns():
+        try:
+            matched = sorted((Path(item) for item in glob(str(pattern))), reverse=True)
+        except Exception:
+            matched = []
+        candidates.extend(matched)
+    return candidates
+
+
+def _find_local_chromium_executable() -> Optional[Path]:
+    for candidate in _candidate_local_chromium_executables():
+        try:
+            if candidate.exists() and candidate.is_file():
+                return candidate
+        except Exception:
+            continue
+    return None
+
+
+def _headless_launch_args() -> list[str]:
+    # 使用新版 headless，并禁用首次运行/默认浏览器提示，减少系统壳层拉起空窗概率。
+    return [
+        "--headless=new",
+        "--disable-gpu",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--disable-default-apps",
+        "--disable-features=msEdgeFre,EdgeFirstRunExperience",
+        "--disable-background-networking",
+        "--disable-component-update",
+    ]
 
 
 def _parse_cookie_header(raw: str) -> Dict[str, str]:
@@ -121,6 +163,17 @@ def _has_login_cookies(cookies: Dict[str, str]) -> bool:
     return False
 
 
+def _normalize_login_provider(provider: str | None) -> str:
+    value = str(provider or "").strip().lower()
+    if value == "qq":
+        return "qq"
+    return "wechat"
+
+
+def _login_provider_label(provider: str | None) -> str:
+    return "QQ" if _normalize_login_provider(provider) == "qq" else "微信"
+
+
 class BrowserManager:
     """浏览器管理器 - 单例模式"""
 
@@ -139,6 +192,8 @@ class BrowserManager:
             self.page: Optional[Page] = None
             self.playwright = None
             self._route_handler = None
+            self._last_auth_headers: Optional[Dict[str, str]] = None
+            self._request_listener_registered = False
             self._is_logged_in = False
             self._login_in_progress = False
             self._last_error = ""
@@ -146,6 +201,11 @@ class BrowserManager:
             self._cookie_marker_warned = False
             self._login_confirmed_via_ui = False
             self._storage_state_saved = False
+            self._last_header_capture_at = 0.0
+            self._header_refresh_attempts = 0
+            self._header_refresh_failures = 0
+            self._header_refresh_blocked_until = 0.0
+            self._active_login_provider = "wechat"
             _remove_legacy_headers_state_file()
             self._initialized = True
 
@@ -160,9 +220,42 @@ class BrowserManager:
             self._login_confirmed_via_ui and _has_basic_login_cookies(cookie_map)
         ):
             logger.info("[Browser] 现场捕获到认证头 from %s", url)
+            self._last_auth_headers = dict(normalized)
+            self._last_header_capture_at = asyncio.get_running_loop().time()
+            self._header_refresh_attempts = 0
+            self._header_refresh_failures = 0
             return normalized
         logger.debug("[Browser] x-uskey 已出现但未检测到账户标记，判定为游客态")
         return None
+
+    def _observe_request(self, request) -> None:
+        try:
+            self._capture_request_headers(getattr(request, "url", ""), getattr(request, "headers", None))
+        except Exception as exc:
+            logger.debug("[Browser] 持续请求监听抓头失败: %s", exc)
+
+    def _attach_request_listener(self) -> None:
+        if self.context is None or self._request_listener_registered:
+            return
+        try:
+            self.context.on("request", self._observe_request)
+            self._request_listener_registered = True
+            logger.debug("[Browser] 已注册持续请求监听器")
+        except Exception as exc:
+            logger.debug("[Browser] 注册持续请求监听器失败: %s", exc)
+
+    def _detach_request_listener(self) -> None:
+        if self.context is None:
+            self._request_listener_registered = False
+            return
+        try:
+            remove_listener = getattr(self.context, "remove_listener", None)
+            if callable(remove_listener):
+                remove_listener("request", self._observe_request)
+        except Exception as exc:
+            logger.debug("[Browser] 移除持续请求监听器失败: %s", exc)
+        finally:
+            self._request_listener_registered = False
 
     def status(self) -> Dict:
         qrcode_path = Path(str(settings.qrcode_path or "")).expanduser()
@@ -170,12 +263,120 @@ class BrowserManager:
             "browser_initialized": bool(self.browser is not None and self.page is not None),
             "logged_in": bool(self._is_logged_in),
             "login_in_progress": bool(self._login_in_progress),
+            "login_provider": self._active_login_provider,
             "qrcode_path": settings.qrcode_path,
             "qrcode_exists": bool(qrcode_path and qrcode_path.exists()),
             "last_error": str(self._last_error or ""),
             "last_message": str(self._last_message or ""),
             "page_url": settings.page_url,
+            "auth_headers_cached": bool(self._last_auth_headers and self._last_auth_headers.get("x-uskey")),
+            "header_refresh_failures": int(self._header_refresh_failures),
         }
+
+    async def invalidate_cached_headers(self, reason: str, *, mark_logged_out: bool = False) -> None:
+        self._last_auth_headers = None
+        self._last_header_capture_at = 0.0
+        if mark_logged_out:
+            self._is_logged_in = False
+        logger.warning("[Browser] invalidated cached auth headers reason=%s mark_logged_out=%s", reason, mark_logged_out)
+
+    async def _close_runtime_browser(self) -> None:
+        tasks = []
+        self._route_handler = None
+        if self.context:
+            self._detach_request_listener()
+            tasks.append(self.context.close())
+            self.context = None
+        if self.page:
+            tasks.append(self.page.close())
+            self.page = None
+        if self.browser:
+            tasks.append(self.browser.close())
+            self.browser = None
+        if self.playwright:
+            tasks.append(self.playwright.stop())
+            self.playwright = None
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def _close_browser_after_login(self) -> None:
+        async with self._lock:
+            await self._close_runtime_browser()
+            self._last_message = "browser_closed_after_login"
+            logger.info("[Browser] login flow finished, headed browser closed while keeping persisted auth state")
+
+    async def _record_header_refresh_failure(self, reason: str) -> None:
+        self._header_refresh_failures += 1
+        self._header_refresh_attempts += 1
+        logger.warning(
+            "[Browser] passive header refresh failed reason=%s attempts=%s failures=%s",
+            reason,
+            self._header_refresh_attempts,
+            self._header_refresh_failures,
+        )
+        if self._header_refresh_failures >= 2:
+            loop = asyncio.get_running_loop()
+            self._header_refresh_blocked_until = loop.time() + max(30.0, float(settings.request_cooldown_initial_secs or 30.0))
+            logger.warning(
+                "[Browser] passive header refresh blocked until %.2f after repeated failures",
+                self._header_refresh_blocked_until,
+            )
+
+    async def _try_refresh_headers_from_live_page(self) -> Optional[Dict[str, str]]:
+        if not self.page:
+            await self._record_header_refresh_failure("page_missing")
+            return None
+
+        loop = asyncio.get_running_loop()
+        if self._header_refresh_blocked_until > loop.time():
+            logger.warning("[Browser] passive header refresh skipped due to cooldown block")
+            return None
+
+        captured_headers: Optional[Dict[str, str]] = None
+
+        async def handle_route(route, request):
+            nonlocal captured_headers
+            live_headers = self._capture_request_headers(request.url, request.headers)
+            if live_headers is not None and captured_headers is None:
+                captured_headers = dict(live_headers)
+            await route.continue_()
+
+        if self._route_handler:
+            try:
+                await self.page.unroute("**/*", self._route_handler)
+            except Exception:
+                pass
+
+        await self.page.route("**/*", handle_route)
+        self._route_handler = handle_route
+
+        try:
+            start_time = loop.time()
+            while (loop.time() - start_time) < settings.header_timeout:
+                if captured_headers and captured_headers.get("x-uskey"):
+                    break
+                await asyncio.sleep(0.05)
+        except Exception as exc:
+            logger.error("[Browser] passive header refresh failed: %s", exc)
+        finally:
+            if self._route_handler:
+                try:
+                    await self.page.unroute("**/*", self._route_handler)
+                    self._route_handler = None
+                except Exception:
+                    pass
+
+        if captured_headers and captured_headers.get("x-uskey"):
+            self._last_auth_headers = dict(captured_headers)
+            self._last_header_capture_at = loop.time()
+            self._header_refresh_attempts += 1
+            self._header_refresh_failures = 0
+            self._header_refresh_blocked_until = 0.0
+            logger.info("[Browser] passive header refresh succeeded")
+            return dict(captured_headers)
+
+        await self._record_header_refresh_failure("capture_miss")
+        return None
 
     async def _dismiss_blocking_dialogs(self) -> None:
         if not self.page:
@@ -263,7 +464,7 @@ class BrowserManager:
         if not self.page:
             return []
 
-        text_regex = re.compile(r"登录|扫码登录|微信登录|立即登录|去登录|login|sign in|scan", re.I)
+        text_regex = re.compile(r"登录|扫码登录|微信登录|QQ登录|立即登录|去登录|login|sign in|scan|qq", re.I)
         direct_candidates = [
             self.page.locator("a.top_login__link, button.top_login__link, [role='button'].top_login__link").first,
             self.page.get_by_role("button", name=text_regex).first,
@@ -337,7 +538,7 @@ class BrowserManager:
 
         loop = asyncio.get_running_loop()
         deadline = loop.time() + max(0.8, timeout_ms / 1000.0)
-        prompt_regex = re.compile(r"扫码登录|微信登录|二维码|刷新|重新获取|重试|expired|refresh", re.I)
+        prompt_regex = re.compile(r"扫码登录|微信登录|QQ登录|QQ扫码|二维码|刷新|重新获取|重试|expired|refresh|qq", re.I)
 
         while loop.time() < deadline:
             try:
@@ -384,6 +585,51 @@ class BrowserManager:
                 continue
 
         return None
+
+    async def _select_login_provider(self, provider: str) -> bool:
+        if not self.page:
+            return False
+
+        provider_name = _normalize_login_provider(provider)
+        if provider_name == "qq":
+            provider_regex = re.compile(r"(^|\s)QQ(\s|$)|QQ登录|QQ扫码|使用QQ|手机QQ|qq", re.I)
+        else:
+            provider_regex = re.compile(r"微信|微信登录|微信扫码|使用微信|wechat", re.I)
+
+        candidates = [
+            self.page.get_by_role("button", name=provider_regex).first,
+            self.page.get_by_role("link", name=provider_regex).first,
+            self.page.get_by_text(provider_regex).first,
+            self.page.frame_locator("iframe").get_by_role("button", name=provider_regex).first,
+            self.page.frame_locator("iframe").get_by_role("link", name=provider_regex).first,
+            self.page.frame_locator("iframe").get_by_text(provider_regex).first,
+            self.page.locator(
+                "[class*='wechat'], [class*='wx'], [class*='qq'], [data-testid*='wechat'], [data-testid*='qq']"
+            ).first,
+        ]
+
+        self._last_message = "selecting_login_provider"
+        for locator in candidates:
+            try:
+                await locator.wait_for(state="visible", timeout=1000)
+                try:
+                    await locator.scroll_into_view_if_needed()
+                except Exception:
+                    pass
+                try:
+                    await locator.click(timeout=1500)
+                except Exception:
+                    await locator.click(force=True, timeout=1500)
+                self._last_message = "login_provider_selected"
+                logger.info("[Browser] Selected login provider: %s", provider_name)
+                await self.page.wait_for_timeout(500)
+                return True
+            except Exception:
+                continue
+
+        self._last_message = "login_provider_not_found"
+        logger.warning("[Browser] Login provider selector not found: %s", provider_name)
+        return False
 
     async def _choose_best_qrcode_locator(self, group) -> Optional[Locator]:
         best_locator: Optional[Locator] = None
@@ -640,6 +886,20 @@ class BrowserManager:
             logger.debug("[Browser] 持久化登录态失败: %s", exc)
             return False
 
+    async def _prime_auth_headers(self, reason: str = "") -> bool:
+        cached_headers = self._last_auth_headers or {}
+        if cached_headers.get("x-uskey"):
+            return True
+        try:
+            headers = await self.get_headers()
+        except Exception as exc:
+            logger.debug("[Browser] 认证头预热失败%s: %s", f"({reason})" if reason else "", exc)
+            return False
+        if headers and headers.get("x-uskey"):
+            logger.info("[Browser] 认证头预热完成%s", f" ({reason})" if reason else "")
+            return True
+        return False
+
     async def _has_authenticated_session(self) -> bool:
         try:
             cookies = await self.get_cookies()
@@ -719,23 +979,25 @@ class BrowserManager:
         self._last_message = "launching_browser"
         if self.browser is None:
             launch_errors: list[str] = []
-            for headless in (True, False):
-                if self.browser is not None:
-                    break
-                for channel in _preferred_chromium_channels():
-                    try:
-                        self.browser = await self.playwright.chromium.launch(
-                            channel=channel,
-                            headless=headless,
-                        )
-                        logger.info("[Browser] 已启动系统浏览器通道: %s (headless=%s)", channel, headless)
-                        break
-                    except Exception as exc:
-                        launch_errors.append(f"{channel}(headless={headless}): {exc}")
+            local_chromium = _find_local_chromium_executable()
+            if local_chromium is not None:
+                try:
+                    self.browser = await self.playwright.chromium.launch(
+                        executable_path=str(local_chromium),
+                        headless=True,
+                        args=_headless_launch_args(),
+                    )
+                    logger.info("[Browser] 已使用本地 Chromium 资源启动: %s headless=True", local_chromium)
+                except Exception as exc:
+                    launch_errors.append(f"local:{local_chromium}(headless=True): {exc}")
 
             if self.browser is None:
+                searched = " | ".join(str(path) for path in _local_chromium_search_patterns())
                 raise RuntimeError(
-                    "未检测到可用的系统浏览器内核，请确认已安装桌面版 Microsoft Edge 或 Google Chrome: "
+                    "未检测到可用的内置 Chromium 运行时，请先完成离线浏览器安装："
+                    " resc/playwright/browsers/ms-playwright/chromium-*/chrome-win64/chrome.exe | 搜索路径: "
+                    + searched
+                    + " | "
                     + " | ".join(launch_errors)
                 )
 
@@ -747,6 +1009,7 @@ class BrowserManager:
                 context_kwargs["storage_state"] = str(storage_path)
                 logger.info("[Browser] 使用持久化登录态: %s", storage_path)
             self.context = await self.browser.new_context(**context_kwargs)
+            self._attach_request_listener()
             self.page = await self.context.new_page()
             await self._load_page()
         self._last_error = ""
@@ -765,15 +1028,18 @@ class BrowserManager:
             logger.error(f"[Browser] 页面加载失败: {e}")
             raise
 
-    async def login(self, force: bool = False) -> Dict:
+    async def login(self, force: bool = False, provider: str = "wechat") -> Dict:
         """执行登录流程，返回二维码信息。"""
         self._login_in_progress = True
         self._last_error = ""
         self._last_message = "starting_login"
         self._storage_state_saved = False
+        self._active_login_provider = _normalize_login_provider(provider)
 
         try:
-            await self.ensure_browser()
+            async with self._lock:
+                await self._close_runtime_browser()
+                await self._init_browser()
         except Exception as e:
             self._last_error = str(e)
             self._last_message = "browser_init_failed"
@@ -796,6 +1062,7 @@ class BrowserManager:
             try:
                 if await self._has_authenticated_session():
                     self._is_logged_in = True
+                    await self._prime_auth_headers("already_logged_in")
                     self._login_in_progress = False
                     self._last_message = "already_logged_in"
                     return {
@@ -815,6 +1082,7 @@ class BrowserManager:
             login_button = await self._open_login_prompt()
             if login_button is None:
                 raise RuntimeError("login_entry_not_found")
+            await self._select_login_provider(self._active_login_provider)
 
             self._last_message = "waiting_qrcode"
             await self.page.wait_for_timeout(1200)
@@ -837,6 +1105,7 @@ class BrowserManager:
                 self._is_logged_in = True
                 self._login_in_progress = False
                 self._last_message = "login_success"
+                await self._close_browser_after_login()
                 return {
                     "success": True,
                     "message": "login_success",
@@ -871,55 +1140,20 @@ class BrowserManager:
         except Exception as exc:
             logger.debug("[Browser] 现场抓头前确认登录态失败: %s", exc)
 
-        captured_headers: Optional[Dict[str, str]] = None
+        cached_headers = None
+        if self._last_auth_headers and self._last_auth_headers.get("x-uskey"):
+            cached_headers = dict(self._last_auth_headers)
 
-        async def handle_route(route, request):
-            nonlocal captured_headers
-            live_headers = self._capture_request_headers(request.url, request.headers)
-            if live_headers is not None:
-                captured_headers = dict(live_headers)
-            await route.continue_()
+        if cached_headers and self._is_logged_in:
+            logger.info("[Browser] 复用最近一次成功捕获的认证头")
+            return cached_headers
 
-        if self._route_handler:
-            try:
-                await self.page.unroute("**/*", self._route_handler)
-            except Exception:
-                pass
-
-        await self.page.route("**/*", handle_route)
-        self._route_handler = handle_route
-
-        try:
-            loop = asyncio.get_running_loop()
-            reload_task = asyncio.create_task(self.page.reload(timeout=10000))
-
-            start_time = loop.time()
-            while (loop.time() - start_time) < settings.header_timeout:
-                if captured_headers and captured_headers.get("x-uskey"):
-                    break
-                await asyncio.sleep(0.05)
-
-            if not reload_task.done():
-                reload_task.cancel()
-                try:
-                    await reload_task
-                except asyncio.CancelledError:
-                    pass
-                except Exception:
-                    pass
-
-        except Exception as e:
-            logger.error(f"[Browser] 获取请求头失败: {e}")
-        finally:
-            if self._route_handler:
-                try:
-                    await self.page.unroute("**/*", self._route_handler)
-                    self._route_handler = None
-                except Exception:
-                    pass
-
-        if captured_headers and captured_headers.get("x-uskey"):
-            return dict(captured_headers)
+        live_headers = await self._try_refresh_headers_from_live_page()
+        if live_headers and live_headers.get("x-uskey"):
+            return dict(live_headers)
+        if cached_headers and (self._is_logged_in or self._login_confirmed_via_ui):
+            logger.warning("[Browser] 现场抓头失败，回退到最近一次成功捕获的认证头")
+            return cached_headers
         logger.warning("[Browser] 未能从当前浏览器会话现场抓到认证头")
         return None
 
@@ -947,19 +1181,14 @@ class BrowserManager:
             self._login_in_progress = False
             self._login_confirmed_via_ui = False
             self._storage_state_saved = False
+            self._last_auth_headers = None
+            self._last_header_capture_at = 0.0
+            self._header_refresh_attempts = 0
+            self._header_refresh_failures = 0
+            self._header_refresh_blocked_until = 0.0
+            self._active_login_provider = "wechat"
             self._route_handler = None
-            if self.context:
-                tasks.append(self.context.close())
-                self.context = None
-            if self.page:
-                tasks.append(self.page.close())
-                self.page = None
-            if self.browser:
-                tasks.append(self.browser.close())
-                self.browser = None
-            if self.playwright:
-                tasks.append(self.playwright.stop())
-                self.playwright = None
+            await self._close_runtime_browser()
             self._last_message = "browser_closed"
             try:
                 qrcode_file = Path(str(settings.qrcode_path or "")).expanduser()
@@ -967,8 +1196,6 @@ class BrowserManager:
                     qrcode_file.unlink()
             except Exception:
                 pass
-            if tasks:
-                await asyncio.gather(*tasks, return_exceptions=True)
 
 
 browser_manager = BrowserManager()

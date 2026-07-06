@@ -1,9 +1,9 @@
 """网易云音乐管理器 - 使用项目事件驱动架构重写
 
-使用：
-    from lib.script.cloudmusic import get_cloud_music_manager
+运行时入口：
+    from lib.script.music import get_music_service
 
-    mgr = get_cloud_music_manager()
+    mgr = get_music_service().initialize()
     # 左键：置顶播放（插入队列首位，立即切歌）
     # 右键：加入队列末尾
     # 暂停/继续/停止通过命令处理
@@ -56,24 +56,19 @@ _DEFAULT_PROVIDER = "netease"
 _KNOWN_PROVIDERS = ("netease", "qq", "kugou")
 
 
-# ── 全局单例 ─────────────────────────────────────────────────────────────
-_instance: Optional["CloudMusicManager"] = None
-
-
 def get_cloud_music_manager() -> "CloudMusicManager":
-    """获取 CloudMusicManager 全局单例（首次调用时创建）。"""
-    global _instance
-    if _instance is None:
-        _instance = CloudMusicManager()
-    return _instance
+    """兼容入口：音乐运行时单例由 MusicService 持有。"""
+    from lib.script.music import get_music_service
+
+    return get_music_service().initialize()
 
 
 def cleanup_cloud_music_manager():
-    """释放全局单例资源（程序退出时调用）。"""
-    global _instance
-    if _instance is not None:
-        _instance.cleanup()
-        _instance = None
+    """兼容入口：释放 MusicService 持有的音乐运行时。"""
+    from lib.script.music.service import _instance as music_service_instance
+
+    if music_service_instance is not None:
+        music_service_instance.cleanup_backend()
 
 _HISTORY_CLEAR_PROVIDERS = ("netease", "qq", "kugou", "local", "other")
 
@@ -216,10 +211,10 @@ def _clear_music_login_data(runtime_manager=None) -> dict[str, int]:
 
 
 def clear_all_history_and_login_data() -> dict[str, int]:
-    """清空所有平台音乐历史与登录数据，不清理缓存。"""
-    stats = _clear_music_history_data()
-    stats.update(_clear_music_login_data(runtime_manager=_instance))
-    return stats
+    """兼容入口：通过 MusicService 清空所有平台音乐历史与登录数据。"""
+    from lib.script.music import clear_all_history_and_login_data as clear_via_music_service
+
+    return clear_via_music_service()
 
 
 

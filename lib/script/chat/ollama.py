@@ -44,10 +44,6 @@ class OllamaManager(_ApiClientMixin, OllamaBootstrapMixin, OllamaStateMixin, Oll
         self._chat_chunk_callbacks: dict[int, object] = {}
         self._api_rate_lock = threading.Lock()
         self._api_request_timestamps: deque[float] = deque()
-        self._yuanbao_state_lock = threading.Lock()
-        self._yuanbao_context_once_pending: bool = True
-        self._yuanbao_context_consumed: bool = False
-        self._yuanbao_last_logged_in: bool | None = None
 
         # 仅跟踪本进程主动拉起的 ollama serve
         self._started_ollama: bool = False

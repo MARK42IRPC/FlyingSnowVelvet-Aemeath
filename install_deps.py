@@ -14,6 +14,7 @@
 """
 
 import configparser
+import glob
 import json
 import os
 import re
@@ -68,7 +69,7 @@ DEPENDENCIES = [
     ("vosk", "offline speech-to-text engine", ("vosk",)),
 ]
 
-TOTAL_STEPS = 6
+TOTAL_STEPS = 7
 
 YUANBAO_SERVICE_REPO_ZIP = "https://github.com/chenwr727/yuanbao-free-api/archive/refs/heads/main.zip"
 YUANBAO_SERVICE_REPO_ZIP_FALLBACKS = (
@@ -78,6 +79,16 @@ YUANBAO_SERVICE_REPO_ZIP_FALLBACKS = (
 YUANBAO_SERVICE_BUNDLED_ZIP = PROJECT_ROOT / "services" / "bundles" / "yuanbao-free-api-main.zip"
 YUANBAO_SERVICE_DIR = PROJECT_ROOT / "services" / "yuanbao-free-api"
 YUANBAO_SERVICE_REQUIRED_FILES = ("app.py", "requirements.txt")
+PLAYWRIGHT_RUNTIME_ROOT = PROJECT_ROOT / "resc" / "playwright"
+PLAYWRIGHT_BROWSERS_ROOT = PLAYWRIGHT_RUNTIME_ROOT / "browsers"
+PLAYWRIGHT_CHROMIUM_REVISION = "1208"
+PLAYWRIGHT_RUNTIME_ARCHIVE = PROJECT_ROOT / "resc" / "chrome-win64.zip"
+PLAYWRIGHT_RUNTIME_TARGET_DIR = PLAYWRIGHT_BROWSERS_ROOT / "ms-playwright" / f"chromium-{PLAYWRIGHT_CHROMIUM_REVISION}"
+PLAYWRIGHT_LOCAL_BROWSER_MARKERS = (
+    ("ms-playwright", "chromium-*", "chrome-win64", "chrome.exe"),
+    ("ms-playwright", "chromium-*", "chrome-linux", "chrome"),
+    ("ms-playwright", "chromium-*", "chrome-mac", "Chromium.app"),
+)
 
 
 def _enable_ansi_color() -> bool:
@@ -801,6 +812,28 @@ def _service_bundle_ready(service_dir: Path, required_files) -> bool:
     return True
 
 
+def _candidate_playwright_browser_executables() -> list[Path]:
+    candidates: list[Path] = []
+    for marker in PLAYWRIGHT_LOCAL_BROWSER_MARKERS:
+        pattern = PLAYWRIGHT_BROWSERS_ROOT.joinpath(*marker)
+        try:
+            matches = sorted((Path(item) for item in glob.glob(str(pattern))), reverse=True)
+        except Exception:
+            matches = []
+        candidates.extend(matches)
+    return candidates
+
+
+def _find_playwright_browser_runtime() -> Optional[Path]:
+    for candidate in _candidate_playwright_browser_executables():
+        try:
+            if candidate.exists():
+                return candidate
+        except Exception:
+            continue
+    return None
+
+
 def _find_bundle_root(extract_root: Path, required_files) -> Optional[Path]:
     candidates = [extract_root]
     candidates.extend(path for path in extract_root.iterdir() if path.is_dir())
@@ -882,11 +915,59 @@ def _download_yuanbao_service_bundle() -> bool:
 def ensure_yuanbao_service_bundle() -> bool:
     _print_stage(5, "准备 YuanBao-Free-API 本地中转服务...")
     bundle_ok = _download_yuanbao_service_bundle()
-    if not bundle_ok:
+    return bundle_ok
+
+
+def ensure_yuanbao_browser_runtime(python_exe) -> bool:
+    _print_stage(6, "准备 YuanBao 内置浏览器运行时...")
+
+    runtime_path = _find_playwright_browser_runtime()
+    if runtime_path is not None:
+        try:
+            rel_path = runtime_path.relative_to(PROJECT_ROOT)
+        except Exception:
+            rel_path = runtime_path
+        print(f"  已存在内置 Chromium: {rel_path}")
+        return True
+
+    if not PLAYWRIGHT_RUNTIME_ARCHIVE.exists():
+        _print_warn(
+            "  未检测到内置 Chromium，也未找到离线安装包: "
+            f"{PLAYWRIGHT_RUNTIME_ARCHIVE}"
+        )
         return False
 
-    print("  元宝登录将直接复用系统已安装的 Edge / Chrome，不再额外部署内置 Chromium。")
-    return bundle_ok
+    print(f"  使用离线安装包部署内置 Chromium: {PLAYWRIGHT_RUNTIME_ARCHIVE.relative_to(PROJECT_ROOT)}")
+    temp_root = Path(os.environ.get("TEMP", "C:\\Temp")) / "fsv_playwright_runtime"
+    extract_root = temp_root / "extract"
+    _rmtree_if_exists(temp_root, ignore_errors=True)
+    PLAYWRIGHT_RUNTIME_TARGET_DIR.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        extract_root.mkdir(parents=True, exist_ok=True)
+        _extract_zip_with_progress(PLAYWRIGHT_RUNTIME_ARCHIVE, extract_root)
+        extracted_root = extract_root / "chrome-win64"
+        extracted_exe = extracted_root / "chrome.exe"
+        if not extracted_exe.exists():
+            raise FileNotFoundError("离线浏览器包中未找到 chrome-win64/chrome.exe")
+        _rmtree_if_exists(PLAYWRIGHT_RUNTIME_TARGET_DIR, ignore_errors=True)
+        shutil.move(str(extracted_root), str(PLAYWRIGHT_RUNTIME_TARGET_DIR / "chrome-win64"))
+    except Exception as exc:
+        _print_warn(f"  安装内置 Chromium 失败: {exc}")
+        return False
+    finally:
+        _rmtree_if_exists(temp_root, ignore_errors=True)
+
+    runtime_path = _find_playwright_browser_runtime()
+    if runtime_path is None:
+        _print_warn("  离线安装完成，但未在 resc/playwright 中找到 Chromium 可执行文件")
+        return False
+    try:
+        rel_path = runtime_path.relative_to(PROJECT_ROOT)
+    except Exception:
+        rel_path = runtime_path
+    print(f"  内置 Chromium 已安装: {rel_path}")
+    return True
 
 
 def _stream_download_with_progress(url, dest_path, *, label, timeout=30, chunk_size=256 * 1024, use_env_proxy=True):
@@ -1031,7 +1112,7 @@ def ensure_vosk_models():
 
 def launch(python_exe):
     """Launch main script, prefer pythonw if available."""
-    _print_stage(6, "启动飞行雪绒桌宠...")
+    _print_stage(7, "启动飞行雪绒桌宠...")
 
     main_script = PROJECT_ROOT / "lib" / "core" / "qt_desktop_pet.py"
     if not main_script.exists():
@@ -1089,6 +1170,8 @@ def main():
         if not ensure_yuanbao_service_bundle():
             _print_warn("YuanBao-Free-API 本地中转未准备完成，元宝 web 模式可能不可用")
 
+        if not ensure_yuanbao_browser_runtime(python_exe):
+            _print_warn("YuanBao 内置 Chromium 运行时未准备完成，元宝登录将不可用")
 
         if launch(python_exe):
             print("\nLauncher will close in 3 seconds...")

@@ -1899,17 +1899,17 @@ class AISettingsPanel(QWidget):
             field_width=_CONFIG_FIELD_WIDTH,
             spacing=scale_px(8, min_abs=6),
         )
-        self._start_yuanbao_login_btn = QPushButton("登录元宝AI")
-        self._start_yuanbao_login_btn.setFixedWidth(scale_px(126, min_abs=108))
-        self._start_yuanbao_login_btn.clicked.connect(self._on_start_yuanbao_login)
-        yuanbao_login_layout.addWidget(self._start_yuanbao_login_btn, 0)
+        self._start_yuanbao_wechat_login_btn = QPushButton("微信登录元宝")
+        self._start_yuanbao_wechat_login_btn.setFixedWidth(scale_px(126, min_abs=108))
+        self._start_yuanbao_wechat_login_btn.clicked.connect(self._on_start_yuanbao_wechat_login)
+        yuanbao_login_layout.addWidget(self._start_yuanbao_wechat_login_btn, 0)
         self._stop_yuanbao_login_btn = QPushButton("退出元宝登录")
         self._stop_yuanbao_login_btn.setFixedWidth(scale_px(126, min_abs=108))
         self._stop_yuanbao_login_btn.clicked.connect(self._on_stop_yuanbao_login)
         yuanbao_login_layout.addWidget(self._stop_yuanbao_login_btn, 0)
         yuanbao_login_layout.addStretch(1)
         form.addRow("元宝登录", yuanbao_login_row)
-        self._set_widget_description(self._start_yuanbao_login_btn, "启动本地 YuanBao-Free-API 服务；程序会固定使用内置 loopback 地址、占位密钥和默认模型，并弹出二维码面板等待扫码登录。")
+        self._set_widget_description(self._start_yuanbao_wechat_login_btn, "启动本地 YuanBao-Free-API 服务，并使用微信扫码方式登录元宝；程序会固定使用内置 loopback 地址、占位密钥和默认模型。")
         self._set_widget_description(self._stop_yuanbao_login_btn, "停止元宝登录流程并关闭本地元宝服务。")
 
         base_row, base_layout = self._create_fixed_width_row_group(
@@ -2817,7 +2817,19 @@ class AISettingsPanel(QWidget):
             _logger.error("打开 GSV 语音缓存文件夹失败: %s", e)
             self._emit_info(f"打开 GSV 语音缓存文件夹失败: {e}", min_tick=20, max_tick=180)
 
-    def _on_start_yuanbao_login(self) -> None:
+    @staticmethod
+    def _yuanbao_login_provider_label(provider: str) -> str:
+        return "手机QQ" if str(provider).strip().lower() == "qq" else "微信"
+
+    def _on_start_yuanbao_wechat_login(self) -> None:
+        self._on_start_yuanbao_login("wechat")
+
+    def _on_start_yuanbao_qq_login(self) -> None:
+        self._on_start_yuanbao_login("qq")
+
+    def _on_start_yuanbao_login(self, provider: str = "wechat") -> None:
+        provider_name = str(provider or "wechat").strip().lower()
+        provider_label = self._yuanbao_login_provider_label(provider_name)
         import config.ollama_config as oc
         oc.YUANBAO_FREE_API["login_url"] = str(getattr(self, "_yuanbao_login_url_value", _DEFAULT_VALUES.get("yuanbao_login_url", "")) or "")
         oc.YUANBAO_FREE_API["agent_id"] = str(getattr(self, "_yuanbao_agent_id_value", _DEFAULT_VALUES.get("yuanbao_agent_id", "naQivTmsDa")) or "")
@@ -2825,7 +2837,7 @@ class AISettingsPanel(QWidget):
         def worker() -> None:
             try:
                 svc = get_yuanbao_free_api_service()
-                result = svc.begin_login_flow()
+                result = svc.begin_login_flow(provider=provider_name)
                 status = result.get('status') if isinstance(result, dict) else {}
                 status = status if isinstance(status, dict) else {}
                 logged_in = bool(result.get('logged_in') or status.get('logged_in')) if isinstance(result, dict) else False
@@ -2856,7 +2868,7 @@ class AISettingsPanel(QWidget):
                 if logged_in:
                     self._emit_info("元宝已登录，本地服务可直接使用。", min_tick=14, max_tick=120)
                 elif qrcode_ready:
-                    self._emit_info("元宝二维码已生成，请在弹出的二维码窗口中扫码登录。", min_tick=16, max_tick=180)
+                    self._emit_info(f"元宝二维码已生成，请使用{provider_label}扫码登录。", min_tick=16, max_tick=180)
                 elif login_in_progress or (not last_error and stage_in_progress):
                     detail = stage or message or '正在继续初始化元宝登录流程'
                     self._emit_info(f"元宝登录流程已启动：{detail}", min_tick=14, max_tick=180)
@@ -2874,11 +2886,11 @@ class AISettingsPanel(QWidget):
         except Exception as exc:
             _logger.debug("Init YuanBao login dialog failed: %s", exc)
         self._ec.publish(Event(EventType.YUANBAO_LOGIN_QR_SHOW, {
-            'title': '元宝扫码登录',
-            'status': '正在启动元宝服务并等待二维码生成，请稍候...',
+            'title': f'{provider_label}登录元宝',
+            'status': f'正在启动元宝服务并准备{provider_label}登录二维码，请稍候...',
             'qr_png': None,
         }))
-        self._emit_info("正在启动元宝服务并准备登录二维码；本地回环地址、占位密钥与模型名均由程序内部管理。", min_tick=12, max_tick=200)
+        self._emit_info(f"正在启动元宝服务并准备{provider_label}登录二维码；本地回环地址、占位密钥与模型名均由程序内部管理。", min_tick=12, max_tick=200)
         get_compute_hub().submit_io(worker)
 
     def _on_stop_yuanbao_login(self) -> None:
