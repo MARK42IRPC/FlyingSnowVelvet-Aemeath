@@ -9,7 +9,7 @@
    - python_executable
    - pythonw_executable
 5. 下载 Vosk 中/英文模型到 resc/models/vosk-model-small-*/.
-6. 准备 yuanbao-free-api 本地中转服务源码.
+6. 准备本地网页中转服务源码.
 7. 启动主程序.
 """
 
@@ -49,23 +49,23 @@ DEPENDENCIES = [
     # (pip package, description, import checks)
     ("PyQt5", "Qt GUI framework", ("PyQt5",)),
     ("Pillow", "image processing", ("PIL",)),
-    ("fastapi", "YuanBao relay API framework", ("fastapi",)),
-    ("httpx", "async HTTP client for YuanBao relay", ("httpx",)),
+    ("fastapi", "local web relay API framework", ("fastapi",)),
+    ("httpx", "async HTTP client for local web relay", ("httpx",)),
     ("packaging", "version / requirement parsing helpers", ("packaging",)),
-    ("openai", "OpenAI-compatible client for YuanBao relay", ("openai",)),
-    ("opencv-python", "image preprocessing for YuanBao relay", ("cv2",)),
-    ("playwright", "browser automation for YuanBao login capture", ("playwright",)),
-    ("pydantic", "data validation for YuanBao relay", ("pydantic",)),
-    ("pydantic-settings", "settings loader for YuanBao relay", ("pydantic_settings",)),
+    ("openai", "OpenAI-compatible client for local web relay", ("openai",)),
+    ("opencv-python", "image preprocessing for local web relay", ("cv2",)),
+    ("playwright", "browser automation for web login capture", ("playwright",)),
+    ("pydantic", "data validation for local web relay", ("pydantic",)),
+    ("pydantic-settings", "settings loader for local web relay", ("pydantic_settings",)),
     ("requests", "HTTP client", ("requests",)),
     ("qrcode", "QR code generation for music login", ("qrcode",)),
-    ("sse-starlette", "SSE streaming for YuanBao relay", ("sse_starlette",)),
+    ("sse-starlette", "SSE streaming for local web relay", ("sse_starlette",)),
     ("mutagen", "local audio metadata parsing", ("mutagen",)),
     ("pycaw", "Windows audio meter", ("pycaw",)),
     ("comtypes", "COM bindings for pycaw", ("comtypes",)),
     ("pywin32", "Windows COM bridge (win32com/pythoncom)", ("pythoncom", "win32com")),
     ("sounddevice", "microphone capture for speech-to-text", ("sounddevice",)),
-    ("uvicorn", "ASGI server for YuanBao relay", ("uvicorn",)),
+    ("uvicorn", "ASGI server for local web relay", ("uvicorn",)),
     ("vosk", "offline speech-to-text engine", ("vosk",)),
 ]
 
@@ -730,7 +730,7 @@ def _install_one(python_exe, pkg, mirrors):
 
 
 def install_all(python_exe, mirrors):
-    _print_stage(3, "检查并安装桌宠/元宝依赖...")
+    _print_stage(3, "检查并安装桌宠运行依赖...")
     failed = []
 
     for pkg, desc, import_checks in DEPENDENCIES:
@@ -857,7 +857,7 @@ def _download_yuanbao_service_bundle() -> bool:
         _rmtree_if_exists(temp_root, ignore_errors=True)
         temp_root.mkdir(parents=True, exist_ok=True)
         try:
-            print(f"  使用 {source_text} 准备 yuanbao-free-api 服务包...")
+            print(f"  使用 {source_text} 准备本地网页中转服务包...")
             extract_root.mkdir(parents=True, exist_ok=True)
             _extract_zip_with_progress(archive_path, extract_root)
             bundle_root = _find_bundle_root(extract_root, YUANBAO_SERVICE_REQUIRED_FILES)
@@ -869,7 +869,7 @@ def _download_yuanbao_service_bundle() -> bool:
             print(f"  已安装到: {YUANBAO_SERVICE_DIR}")
             return True
         except Exception as exc:
-            _print_warn(f"  安装 yuanbao-free-api 服务包失败 [{source_text}]: {exc}")
+            _print_warn(f"  安装本地网页中转服务包失败 [{source_text}]: {exc}")
             return False
         finally:
             _rmtree_if_exists(temp_root, ignore_errors=True)
@@ -883,12 +883,12 @@ def _download_yuanbao_service_bundle() -> bool:
     _rmtree_if_exists(temp_root, ignore_errors=True)
     temp_root.mkdir(parents=True, exist_ok=True)
     try:
-        print("  下载 yuanbao-free-api 服务包...")
+        print("  下载本地网页中转服务包...")
         last_error = None
         for idx, url in enumerate(YUANBAO_SERVICE_REPO_ZIP_FALLBACKS, start=1):
             _unlink_if_exists(archive_path, ignore_errors=True)
             use_env_proxy = idx == 1
-            source_name = f"yuanbao-free-api#{idx}"
+            source_name = f"local-web-relay#{idx}"
             try:
                 _stream_download_with_progress(
                     url,
@@ -906,20 +906,20 @@ def _download_yuanbao_service_bundle() -> bool:
             raise last_error
         return _install_from_archive(archive_path, '在线下载压缩包')
     except Exception as e:
-        _print_warn(f"  下载/解压 yuanbao-free-api 失败: {e}")
+        _print_warn(f"  下载/解压本地网页中转服务失败: {e}")
         return False
     finally:
         _rmtree_if_exists(temp_root, ignore_errors=True)
 
 
 def ensure_yuanbao_service_bundle() -> bool:
-    _print_stage(5, "准备 YuanBao-Free-API 本地中转服务...")
+    _print_stage(5, "准备本地网页中转服务...")
     bundle_ok = _download_yuanbao_service_bundle()
     return bundle_ok
 
 
 def ensure_yuanbao_browser_runtime(python_exe) -> bool:
-    _print_stage(6, "准备 YuanBao 内置浏览器运行时...")
+    _print_stage(6, "准备浏览器离线运行时...")
 
     runtime_path = _find_playwright_browser_runtime()
     if runtime_path is not None:
@@ -927,17 +927,17 @@ def ensure_yuanbao_browser_runtime(python_exe) -> bool:
             rel_path = runtime_path.relative_to(PROJECT_ROOT)
         except Exception:
             rel_path = runtime_path
-        print(f"  已存在内置 Chromium: {rel_path}")
+        print(f"  已存在浏览器运行时: {rel_path}")
         return True
 
     if not PLAYWRIGHT_RUNTIME_ARCHIVE.exists():
         _print_warn(
-            "  未检测到内置 Chromium，也未找到离线安装包: "
+            "  未检测到浏览器运行时，也未找到离线安装包: "
             f"{PLAYWRIGHT_RUNTIME_ARCHIVE}"
         )
         return False
 
-    print(f"  使用离线安装包部署内置 Chromium: {PLAYWRIGHT_RUNTIME_ARCHIVE.relative_to(PROJECT_ROOT)}")
+    print(f"  使用离线安装包部署浏览器运行时: {PLAYWRIGHT_RUNTIME_ARCHIVE.relative_to(PROJECT_ROOT)}")
     temp_root = Path(os.environ.get("TEMP", "C:\\Temp")) / "fsv_playwright_runtime"
     extract_root = temp_root / "extract"
     _rmtree_if_exists(temp_root, ignore_errors=True)
@@ -953,7 +953,7 @@ def ensure_yuanbao_browser_runtime(python_exe) -> bool:
         _rmtree_if_exists(PLAYWRIGHT_RUNTIME_TARGET_DIR, ignore_errors=True)
         shutil.move(str(extracted_root), str(PLAYWRIGHT_RUNTIME_TARGET_DIR / "chrome-win64"))
     except Exception as exc:
-        _print_warn(f"  安装内置 Chromium 失败: {exc}")
+        _print_warn(f"  安装浏览器运行时失败: {exc}")
         return False
     finally:
         _rmtree_if_exists(temp_root, ignore_errors=True)
@@ -966,7 +966,7 @@ def ensure_yuanbao_browser_runtime(python_exe) -> bool:
         rel_path = runtime_path.relative_to(PROJECT_ROOT)
     except Exception:
         rel_path = runtime_path
-    print(f"  内置 Chromium 已安装: {rel_path}")
+    print(f"  浏览器运行时已安装: {rel_path}")
     return True
 
 
@@ -1168,10 +1168,10 @@ def main():
             _print_stage(4, "跳过 Vosk 模型下载（sounddevice/vosk 未就绪）")
 
         if not ensure_yuanbao_service_bundle():
-            _print_warn("YuanBao-Free-API 本地中转未准备完成，元宝 web 模式可能不可用")
+            _print_warn("本地网页中转服务未准备完成，相关网页模式可能不可用")
 
         if not ensure_yuanbao_browser_runtime(python_exe):
-            _print_warn("YuanBao 内置 Chromium 运行时未准备完成，元宝登录将不可用")
+            _print_warn("浏览器运行时未准备完成，网页登录可能不可用")
 
         if launch(python_exe):
             print("\nLauncher will close in 3 seconds...")
@@ -1193,3 +1193,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

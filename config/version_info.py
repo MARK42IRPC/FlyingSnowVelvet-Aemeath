@@ -1,11 +1,11 @@
-"""版本信息与 Github 仓库声明。"""
+﻿"""版本信息与 Github 仓库声明。"""
 
 from __future__ import annotations
 
 # 当前应用版本（与 README / 发布标签保持一致）
-APP_VERSION = "LTS1.0.6beta6"
+APP_VERSION = "LTS1.0.6beta7"
 # 版本发布日期（ISO 日期字符串，便于比较）
-APP_RELEASE_DATE = "2026-07-02"
+APP_RELEASE_DATE = "2026-07-07"
 
 # 资源包版本：初始与 APP 保持一致，后续若有独立资源包可单独更新
 RESOURCE_VERSION = APP_VERSION
@@ -24,3 +24,4 @@ def as_dict() -> dict[str, str]:
         "resource_release_date": RESOURCE_RELEASE_DATE,
         "repo": GITHUB_REPO,
     }
+

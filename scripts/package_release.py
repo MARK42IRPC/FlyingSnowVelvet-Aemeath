@@ -52,6 +52,7 @@ EXCLUDE_PATH_PREFIXES = {
 EXCLUDE_EXACT_PATHS = {
     Path("config") / "user_scale.json",
     Path("config") / "music" / "volume.json",
+    Path("resc") / "chrome-win64.zip",
     Path("services") / "storage_state.json",
 }
 

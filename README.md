@@ -1,111 +1,99 @@
-# 飞行雪绒 LTS 1.0.6 beta6
+﻿# 飞行雪绒
 
-飞行雪绒是一个以 Windows 10/11 为主要目标平台的桌面宠物项目，围绕 **桌宠展示、AI 伴聊、语音播报、语音识别、音乐播放、可生成场景对象** 这几条主线持续迭代。当前 `beta6` 继续在 `1.0.6` 开发线上推进，重点收敛拉海洛方块技能反馈、日灵方块机制、Qt 音频链路与安装体验。
+飞行雪绒是面向 Windows 10/11 的桌面宠物项目。当前主线以 `LTS1.0.6beta7` 为版本基线，核心能力包括桌宠展示、事件驱动对象系统、AI 伴聊、语音播报、本地语音识别、多源音乐播放、粒子与小游戏扩展。
 
-> 当前版本：`LTS1.0.6beta6`  
-> 发布日期：`2026-07-02`
+- 当前版本：`LTS1.0.6beta7`
+- 发布日期：`2026-07-07`
+- 主要入口：`lib/core/qt_desktop_pet.py`
+- 生命周期编排：`lib/script/main.py`
 
----
+## 当前定位
 
-## 当前状态
+这个仓库不是单一 Demo，而是一套可运行的桌面宠物应用源码。项目目前重点放在三件事上：
 
-- **桌宠主循环稳定可运行**：入口为 `lib/core/qt_desktop_pet.py`，应用编排集中在 `lib/script/main.py`
-- **AI 对话链路完整**：支持 OpenAI 兼容 API、本地 Ollama、YuanBao-Free-API 本地中转，以及规则回复兜底
-- **语音能力已成体系**：
-  - `lib/script/gsvmove/` 负责 GSVmove 文本转语音桥接
-  - `lib/script/microphone_stt/` 负责本地 Vosk 识别与 Push-to-Talk
-  - 控制面板可直接控制 GSV 是否启用、GSV 语音缓存上限，并可打开缓存目录
-- **音乐模块支持多源搜索与路由**：QQ / 网易云 / 酷狗三套 provider 已统一到 `lib/script/music/`
-- **对象与粒子仍是项目特色**：雪豹、雪堆、沙发、摩托、闹钟、音响、雪球，以及 16 个已注册粒子
-- **运行时数据已和源码分离**：`resc/user/`、`logs/`、`config/music/volume.json`、`config/user_scale.json` 等运行时内容默认不进入 Git
-
----
+- **运行稳定**：启动、预热、退出、清理链路集中在主生命周期中，运行时状态尽量不污染源码目录。
+- **能力收敛**：聊天、音乐、本地托管服务等模块逐步统一入口，减少历史兼容层和重复单例。
+- **离线友好**：普通发布包尽量轻量，绿色包可携带模型与浏览器离线包，便于无网络环境部署。
 
 ## 功能概览
 
-### 1. AI 与工具调度
+### 桌宠与对象
 
-- `lib/script/chat/` 统一处理输入、人格、上下文、流式输出、自动陪伴
-- `lib/script/tool_dispatcher/dispatcher.py` 负责把模型输出中的 `###指令###` 解析为桌宠动作
-- 当前常见输入路径：
-  - `/命令`：交给 shell
-  - `#命令`：交给哈希命令注册表
-  - 普通文本：交给聊天系统
+- 主窗口、动作、移动、渲染、粒子、音频等基础设施位于 `lib/core/`。
+- 对象管理器位于 `lib/script/obj-*`，例如音响、雪球、雪豹、沙发、摩托等。
+- 粒子脚本位于 `lib/script/practical/`，发现与注册由 `lib/core/plugin_registry.py` 统一处理。
 
-### 2. 语音
+### AI 对话
 
-- `lib/script/gsvmove/service.py` 会按配置决定是否预拉起 GSV 服务
-- 控制面板中的 **自动启用 GSV 语音模块** 现在是强开关：
-  - 开启：允许预热，也允许 AI 文本转语音
-  - 关闭：既不预热，也不处理 AI 文本语音请求
-- 新生成的 GSV 音频会保存到 `resc/user/temp/gsv_voice/`
-- 控制面板可设置 **GSV 缓存上限**（`1~128`，默认 `20`），超出后会自动清理旧文件
+- 聊天入口位于 `lib/script/chat/`。
+- 支持 OpenAI 兼容 API、本地 Ollama、规则兜底和本地网页中转服务。
+- OpenAI 兼容请求支持流式输出、上下文、人格、图片输入和多种兼容 payload 变体。
+- DashScope/Qwen 系模型带图时会先尝试图片请求，接口实际拒绝后再提示用户关闭图片输入或更换模型。
 
-### 3. 语音识别
+### 语音与识别
 
-- `lib/script/microphone_stt/` 提供本地 Vosk 识别、热键按住说话、状态同步
-- `install_deps.py` 会在依赖满足时准备语音识别运行环境
+- `lib/script/gsvmove/` 负责 GSVmove 文本转语音桥接。
+- `lib/script/microphone_stt/` 负责 Vosk 本地语音识别和 Push-to-Talk。
+- 语音缓存、用户录音缓存等运行数据写入 `resc/user/` 下的忽略目录。
 
-### 4. 音乐
+### 音乐
 
-- `config/config_music.py` 当前默认平台是 `qq`
-- `lib/script/music/service.py` 作为统一入口，内部接三套 provider 和搜索路由
-- `lib/script/cloudmusic/` 保留现有桌宠 UI 与播放编排
-- 本地缓存默认写入 `resc/user/temp/`
+- 对外统一入口是 `lib/script/music/service.py`。
+- 搜索 provider 位于 `lib/script/music/providers/`，当前包括 QQ / 网易云 / 酷狗。
+- `lib/script/cloudmusic/` 已退回内部播放运行时实现，不建议外部直接依赖。
+- UI 入口包括音响对象、搜索框、播放列表、进度面板等。
 
-### 5. 对象与粒子
+### 本地网页中转与浏览器运行时
 
-- 对象管理器位于 `lib/script/obj-*`
-- 粒子脚本位于 `lib/script/practical/*_particle.py`
-- 发现与初始化由 `lib/core/plugin_registry.py` 统一完成
-
----
+- `services/yuanbao-free-api/` 保存本地网页中转服务源码。
+- 登录/授权流程依赖 Playwright 驱动系统浏览器或绿色包提供的离线 Chromium 压缩包。
+- 普通发布包不携带浏览器运行时；绿色包可携带 `resc/chrome-win64.zip` 供离线安装脚本解包。
+- 实际浏览器运行目录 `resc/playwright/` 是运行时产物，始终不应进入 Git 或普通发布包。
 
 ## 目录速览
 
 | 路径 | 说明 |
 | --- | --- |
-| `config/` | 运行配置、共享配置镜像、版本信息 |
-| `lib/core/` | 事件中心、窗口、粒子系统、物理、日志、托盘等基础设施 |
-| `lib/script/main.py` | 应用生命周期编排、组件初始化、退出清理 |
-| `lib/script/chat/` | 聊天、人格、流式呈现、AI 客户端 |
-| `lib/script/gsvmove/` | GSVmove 文本转语音桥接 |
-| `lib/script/microphone_stt/` | 本地语音识别、Push-to-Talk |
-| `lib/script/music/` | 多源音乐服务抽象、provider 与搜索路由 |
-| `lib/script/cloudmusic/` | 音乐 UI 与历史播放逻辑 |
-| `lib/script/ui/` | 控制面板、气泡、命令框、音乐搜索框等 UI |
-| `doc/` | 中文说明文档、开发贡献、赞助名单 |
-| `scripts/` | 文档门户生成、发布打包、资源整理脚本 |
-| `services/` | YuanBao-Free-API 服务源码与离线 bundle |
-| `resc/` | GIF、字体、音效、离线资源和运行时用户目录 |
-
----
+| `config/` | 默认配置、版本信息、共享配置模板 |
+| `doc/` | 中文说明、事件系统、调度系统、粒子与开发指南 |
+| `lib/core/` | 事件中心、主窗口、渲染、音频、托盘、日志等基础设施 |
+| `lib/script/main.py` | 应用启动、预热、退出和组件清理编排 |
+| `lib/script/chat/` | AI 客户端、聊天上下文、流式呈现、自动陪伴 |
+| `lib/script/music/` | 音乐服务统一入口、provider、搜索路由 |
+| `lib/script/cloudmusic/` | 音乐播放内部运行时 |
+| `lib/script/gsvmove/` | 本地 TTS 托管服务桥接 |
+| `lib/script/microphone_stt/` | 本地 STT 与按键说话 |
+| `lib/script/ui/` | 控制面板、气泡、命令框、音乐面板、二维码面板等 UI |
+| `services/` | 本地网页中转服务源码与可选离线 bundle |
+| `resc/` | GIF、字体、音效、模型、绿色包离线资源与用户运行目录 |
+| `scripts/` | 文档门户、普通包、绿色包打包脚本 |
+| `tests/` | unittest 回归测试 |
 
 ## 快速开始
 
-### 面向使用者
+### 使用者
 
-1. 安装 Python 3.7~3.13（推荐 3.10+）
-2. 在项目根目录运行：
+推荐使用 Windows + Python 3.10 及以上版本。
 
 ```powershell
 python install_deps.py
 ```
 
-或直接双击：
+或者双击：
 
 - `安装依赖.bat`
 - `启动程序.bat`
 
 安装脚本会尝试完成：
 
-- 发现可用 Python 并写入 `py.ini`
-- 安装 `requirements.txt`
-- 准备本地语音识别模型与部分运行资源
-- 元宝登录复用系统已安装的 Microsoft Edge / Google Chrome，不再下载内置 Chromium
+- 选择可用 Python 并写入 `py.ini`
+- 安装 `requirements.txt` 中的 Python 包
+- 准备 Vosk 语音识别模型
+- 准备本地网页中转服务源码或内置服务包
+- 如存在 `resc/chrome-win64.zip`，解包为 Playwright 可识别的离线浏览器运行时
 - 启动桌宠主程序
 
-### 面向开发者
+### 开发者
 
 ```powershell
 py -3 -m venv .venv
@@ -116,102 +104,46 @@ python -m compileall config lib scripts install_deps.py
 python lib/core/qt_desktop_pet.py
 ```
 
----
+## 运行时数据边界
 
-## 配置与运行时数据
-
-### 共享配置
-
-- 项目会优先使用 `C:\AemeathDeskPet\config` 中的共享配置
-- 共享配置缺键时会按当前项目模板自动补齐
-- AI 面板保存时会同步写回共享配置
-
-### 运行时数据目录
-
-以下内容默认视为运行时产物，不应提交到 Git：
+以下内容是运行时产物或本机状态，默认不进入 Git：
 
 - `logs/`
-- `resc/user/`
 - `dist/`
-- `config/music/volume.json`
+- `__pycache__/`
+- `resc/user/`
+- `resc/playwright/`
 - `config/user_scale.json`
+- `config/music/volume.json`
 - `services/storage_state.json`
+- `py.ini`
 
-### GSV 语音缓存
+绿色包可以携带 `resc/chrome-win64.zip` 作为离线资源；普通包应排除该文件。
 
-- 路径：`resc/user/temp/gsv_voice/`
-- 默认保留：`20` 条
-- 控制入口：控制面板 → AI 设置 → GSV 缓存上限 / 打开缓存文件夹
-
----
-
-## 文档入口
-
-仓库内主要文档如下：
-
-- `README.md`：仓库总览
-- `CHANGELOG.md`：版本变更
-- `CONTRIBUTING.md`：协作与提交约定
-- `RELEASING.md`：打包与发版步骤
-- `doc/README.txt`：中文文档索引
-- `doc/Script开发指南.txt`：扩展开发说明
-- `doc/事件系统使用说明.txt`：事件总线说明
-- `doc/调度系统使用说明.txt`：定时器与任务调度说明
-- `doc/粒子效果说明.txt`：已注册粒子说明
-- `doc/音乐多源优化方案计划.txt`：音乐多源能力现状与后续计划
-- `doc/贡献名单和主播的狗盆/开发贡献.txt`：项目贡献与外部依赖说明
-- `doc/贡献名单和主播的狗盆/感谢大佬投喂名单.txt`：赞助名单
-
-文档门户可通过以下命令生成：
+## 常用检查
 
 ```powershell
-python scripts/generate_doc_portal.py
+python -m compileall config lib scripts install_deps.py
+python scripts/package_release.py --dry-run
+python scripts/package_green_release.py --dry-run
 ```
 
-生成结果：
-
-- `AA使用必读.html`
-
----
-
-## 打包与发布
-
-普通发布包：
+按改动范围追加运行测试，例如：
 
 ```powershell
-python scripts/package_release.py --version LTS1.0.6beta6
+py -3 -m unittest discover -s tests -p "test_*music*.py"
+py -3 -m unittest tests.test_openai_dashscope_multimodal
 ```
 
-绿色资源包：
+## 发布包边界
 
-```powershell
-python scripts/package_green_release.py --version LTS1.0.6beta6
-```
+- 普通包：源码、默认资源、文档，不带 `resc/playwright/`，不带 `resc/chrome-win64.zip`。
+- 绿色包：在普通包基础上保留离线模型和 `resc/chrome-win64.zip`，仍不带已解包的 `resc/playwright/` 运行目录。
+- 两类包都应脱敏 `config/ollama_config.py` 中的密钥、登录态和会话字段。
 
-两者默认都会排除运行时用户数据；绿色包会额外保留模型等离线资源，适合离线分发。
+## 许可证与声明
 
-更完整的发布步骤请看 `RELEASING.md`。
+- 代码许可见 `LICENSE-CODE`。
+- 素材许可见 `LICENSE-ASSETS`。
+- 第三方服务、音乐平台和网页自动化能力仅用于学习、研究和个人测试；请自行遵守对应平台规则。
 
----
-
-## 版本说明
-
-`beta6` 当前对应最近一轮公开开发快照，主要包含以下方向：
-
-- 项目版本号切换到 `LTS1.0.6beta6`
-- 音频播放链路继续向 Qt 收敛，并清理 `pygame` 相关依赖与调用
-- 拉海洛方块补充闪动文字、技能展示、日灵方块引爆与自动下坠修正
-- 技能 5/6 的颜色统计、引爆逻辑、积分反馈与粒子表现进一步细化
-- 安装脚本继续围绕自动发现 Python 与完整依赖安装做兼容性收敛
-- `B` 键维持音乐暂停/继续事件，不再直接碰队列
-
-详见 `CHANGELOG.md` 与 `AA更新日志.txt`。
-
----
-
-## 许可证
-
-- 源代码遵循 `LICENSE-CODE`
-- 非代码资源遵循 `LICENSE-ASSETS`
-
-请勿将运行时用户数据、登录态、缓存音频或个人密钥打包再分发。

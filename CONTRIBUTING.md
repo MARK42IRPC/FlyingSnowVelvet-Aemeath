@@ -1,115 +1,132 @@
-# Contributing Guide
+﻿# Contributing Guide
 
-感谢你为 **飞行雪绒 LTS** 提交改动。当前仓库处于 `LTS1.0.5pre3` 阶段，核心要求不是“堆功能”，而是 **保证运行稳定、运行时数据边界清晰、文档同步更新**。
+感谢你愿意改进飞行雪绒。这个项目已经包含桌宠 UI、事件系统、AI、语音、音乐、本地服务和发布脚本，多数问题都跨模块发生。提交时请优先保持边界清晰、改动可验证。
 
-## 1. 基础原则
+## 基本原则
 
-- 目标平台以 **Windows 10/11** 为主
-- 推荐 Python 版本：**3.10+**
-- 提交前请确认：
-  - 没有把个人密钥、Cookie、登录态写进仓库
-  - 没有把 `logs/`、`resc/user/`、`dist/`、本地缓存等运行产物带进 Git
-  - 新增功能带有对应清理逻辑和文档更新
+- **小步提交**：一次提交解决一个主题，避免把重构、配置、素材、运行产物混在一起。
+- **先看入口**：应用生命周期看 `lib/script/main.py`，事件协议看 `lib/core/event/center.py`，插件发现看 `lib/core/plugin_registry.py`。
+- **运行时不入库**：不要提交 `logs/`、`dist/`、`resc/user/`、`resc/playwright/`、`py.ini`、`__pycache__/` 等文件。
+- **普通包保持轻量**：普通包不带浏览器运行时压缩包；绿色包才允许保留 `resc/chrome-win64.zip`。
+- **用户配置脱敏**：涉及 API Key、登录态、Cookie、storage state 的改动必须确认不会进入发布包。
 
-特别注意以下文件是运行时配置，不应重新纳入 Git 跟踪：
-
-- `config/music/volume.json`
-- `config/user_scale.json`
-
-## 2. 本地开发
+## 环境准备
 
 ```powershell
 py -3 -m venv .venv
 .venv\Scripts\activate
 python -m pip install --upgrade pip
 pip install -r requirements.txt
-python -m compileall config lib scripts install_deps.py
 ```
 
-常用命令：
+也可以运行：
 
-- 启动桌宠：`python lib/core/qt_desktop_pet.py`
-- 生成资料舱：`python scripts/generate_doc_portal.py`
-- 检查打包清单：`python scripts/package_release.py --dry-run`
+```powershell
+python install_deps.py
+```
 
-## 3. 代码约定
+安装脚本会准备 Python 包、语音识别模型、本地网页中转服务和可选浏览器离线运行时。
 
-### 模块与事件
+## 代码组织约定
 
-- 跨模块通信优先走 `EventCenter`
-- 所有 `subscribe()` 都必须有对称的 `unsubscribe()`
-- 长生命周期组件必须提供 `cleanup()`
+### 生命周期
+
+- 启动、预热、退出清理统一由 `ApplicationState` 编排。
+- 新增长生命周期组件时必须提供 `cleanup()`。
+- 退出链路中不要直接强退 Qt；优先发布事件或接入已有清理阶段。
+
+### 事件系统
+
+- 跨模块通信优先走 `EventCenter`。
+- `subscribe()` 必须有对称 `unsubscribe()`。
+- 事件 payload 要保持向后兼容；无法兼容时同步更新 `doc/已注册的事件.txt` 和 `doc/事件系统使用说明.txt`。
+
+### AI 与聊天
+
+- OpenAI 兼容 API 逻辑集中在 `lib/script/chat/api_client_openai.py`。
+- Ollama 逻辑集中在 `lib/script/chat/api_client_ollama.py`。
+- 图片输入编码走 `lib/script/chat/vision_codec.py`，不要在调用点重复实现 base64/data URL 逻辑。
+- 新增厂商兼容分支时要优先做“尝试请求 + 明确错误”策略，避免只靠模型名猜能力。
+
+### 音乐
+
+- 外部调用只使用 `lib.script.music.get_music_service()`。
+- `lib/script/cloudmusic/` 是内部播放运行时，不再作为新的外部依赖入口。
+- 新增平台 provider 时放入 `lib/script/music/providers/`，并接入 `MusicService` 与搜索路由。
+
+### 本地托管服务
+
+- 本地子进程服务优先复用 `lib/script/local_hosted_service.py` 的生命周期骨架。
+- 进程启动、健康检查、兜底清理要能重复调用且幂等。
+- 浏览器自动化相关运行目录必须写入已忽略路径。
 
 ### UI 与配置
 
-- UI 组件统一放在 `lib/script/ui/`
-- 新增 AI 面板配置项时，至少同步以下位置：
-  - `lib/script/ui/ai_settings_panel.py`
-  - `lib/script/ui/ai_settings_storage.py`
-  - `lib/script/ui/ai_settings_validators.py`
-  - `config/ollama_config.py`
+新增或修改 AI 控制面板配置时，通常需要同步：
 
-### 运行时文件
+- `lib/script/ui/ai_settings_panel.py`
+- `lib/script/ui/ai_settings_storage.py`
+- `lib/script/ui/ai_settings_validators.py`
+- `config/ollama_config.py`
 
-- 用户数据放在 `resc/user/` 或共享配置目录
-- 不要把日志、缓存、语音文件、临时资源写入源码目录中的受跟踪文件
-- 像 `GSV` 语音缓存这类运行数据，应写到 `resc/user/temp/` 这一类已忽略目录
+新增 UI 单例时，也要检查 `lib/script/ui/shutdown.py` 是否需要纳入统一隐藏/清理。
 
-## 4. 提交前自检
+## 提交前检查
 
-请至少执行：
+至少运行：
 
 ```powershell
 python -m compileall config lib scripts install_deps.py
 python scripts/package_release.py --dry-run
 ```
 
-如果改了文档或门户脚本，再执行：
+如果改了绿色包边界，追加：
+
+```powershell
+python scripts/package_green_release.py --dry-run
+```
+
+如果改了文档门户：
 
 ```powershell
 python scripts/generate_doc_portal.py
 ```
 
-如果改了以下链路，建议做一次手动运行验证：
+如果改了测试覆盖范围，运行对应 unittest，例如：
 
-- AI 回复
-- GSV 语音
-- 麦克风识别
-- 音乐搜索 / 播放
-- 对象生成 / 清理
-- 控制面板保存配置
+```powershell
+py -3 -m unittest tests.test_openai_dashscope_multimodal
+py -3 -m unittest discover -s tests -p "test_*music*.py"
+```
 
-## 5. 文档同步
+## 文档同步
 
-以下类型改动必须同步文档：
+以下变更必须同步文档：
 
-- 事件协议变化 → `doc/事件系统使用说明.txt`
-- 调度逻辑变化 → `doc/调度系统使用说明.txt`
-- 粒子变化 → `doc/粒子效果说明.txt`
-- 扩展开发方式变化 → `doc/Script开发指南.txt`
-- 版本行为变化 → `README.md`、`CHANGELOG.md`、`RELEASING.md`
+- 事件协议变化：`doc/事件系统使用说明.txt`、`doc/已注册的事件.txt`
+- 调度系统变化：`doc/调度系统使用说明.txt`
+- 粒子系统变化：`doc/粒子效果说明.txt`
+- 扩展开发方式变化：`doc/Script开发指南.txt`
+- 发布包边界变化：`README.md`、`RELEASING.md`
+- 版本行为变化：`CHANGELOG.md`、`AA更新日志.txt`
 
-## 6. 提交信息建议
+## 提交信息建议
 
-- `feat: ...`
-- `fix: ...`
-- `docs: ...`
-- `chore: ...`
+使用简短中文或 Conventional Commit 均可，重点是说明影响范围：
 
-请尽量让提交信息直接说明影响范围，例如：
+- `fix: 修正普通包浏览器离线包边界`
+- `feat: 增加音乐 provider 路由`
+- `docs: 重写项目说明文档`
+- `refactor: 收敛本地服务生命周期`
 
-- `feat: 增加GSV语音缓存管理`
-- `fix: 修正资料舱脚本目录引用`
-- `docs: 重写pre3版本说明文档`
+## Issue / PR 建议内容
 
-## 7. Issue / PR 建议内容
-
-请尽量带上：
+请尽量提供：
 
 - Windows 版本
 - Python 版本
 - 复现步骤
-- 是否启用 GSV / STT / 音乐模块
-- 对应日志或截图
+- 是否启用 AI、GSV、STT、音乐、本地网页中转
+- 相关日志、截图或控制台输出
 
-欢迎提交小而准、边界清晰的改动。对于会改变运行时目录、配置落地方式或发布包结构的提交，请务必同步说明原因。
+欢迎提交边界清楚、验证充分的小改动。大范围重构请先说明目标、迁移策略和回滚方式。
