@@ -11,6 +11,7 @@ from config.config                import BEHAVIOR, PHYSICS, SNOWBALL as _SNOWBAL
 from lib.core.event.center        import get_event_center, EventType, Event
 from lib.core.clickthrough_state  import is_clickthrough_enabled
 from lib.core.physics             import get_physics_world, PhysicsBody
+from lib.core.unified_draw import Layer, get_layer_manager
 from lib.core.topmost_manager    import get_topmost_manager
 from lib.core.voice.snowball_sound import SnowballSound
 from lib.core.screen_utils        import get_screen_geometry_for_point
@@ -113,7 +114,7 @@ class Snowball(QWidget):
         self.setAttribute(Qt.WA_TransparentForMouseEvents, is_clickthrough_enabled())
         self.setFixedSize(*size)
         self.setCursor(Qt.OpenHandCursor)
-        get_topmost_manager().register(self)
+        get_layer_manager().register(self, Layer.WORLD_OBJECT)
 
         # ── 物理体 ────────────────────────────────────────────────────
         w, h = size

@@ -16,6 +16,7 @@ from config.font_config import get_ui_font, get_digit_font
 from config.scale import scale_px
 from lib.core.anchor_utils import apply_ui_opacity
 from lib.core.event.center import get_event_center, EventType, Event
+from lib.core.unified_draw import Layer, get_layer_manager
 
 
 _TRAY_MENU_STYLE_FLAG = '_fxr_tray_menu_style'
@@ -197,6 +198,8 @@ class TrayContextMenu(QMenu):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._layer_manager = get_layer_manager()
+        self._layer_manager.register(self, Layer.DIALOG, name='TrayContextMenu')
         self._menu_style = None
         self._fading_out = False
         self._allow_hide_once = False
@@ -236,6 +239,7 @@ class TrayContextMenu(QMenu):
         self._allow_hide_once = False
         self.setWindowOpacity(0.0)
         super().popup(p, action)
+        self._layer_manager.enforce_burst()
         self._opacity_anim.setStartValue(0.0)
         self._opacity_anim.setEndValue(apply_ui_opacity(1.0))
         self._opacity_anim.start()

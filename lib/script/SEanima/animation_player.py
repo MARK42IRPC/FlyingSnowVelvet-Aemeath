@@ -24,7 +24,7 @@ from PyQt5.QtGui import QImage, QPixmap, QPainter
 
 # 项目核心模块（路径已在上方注入，可安全导入）
 from lib.core.compute_hub import get_compute_hub
-from lib.core.topmost_manager import get_topmost_manager
+from lib.core.unified_draw import Layer, get_layer_manager
 from lib.core.anchor_utils import apply_ui_opacity
 from lib.script.SEanima.clip import resolve_animation_clip
 from lib.script.SEanima.decoder import build_playback_plan, decode_frame_to_bytes
@@ -246,8 +246,8 @@ class AnimationWindow(QWidget):
         )
         self.setWindowOpacity(apply_ui_opacity(1.0))
         self.show()
-        get_topmost_manager().register(self)
-        self.raise_()
+        get_layer_manager().register(self, Layer.SYSTEM_MODAL)
+        get_layer_manager().bring_to_front(self)
         self.activateWindow()
         _log.info("[AnimationWindow] 窗口显示: %dx%d", tw, th)
 

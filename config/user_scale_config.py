@@ -13,6 +13,8 @@ from typing import Optional
 from lib.core.logger import get_logger
 from config.scale import set_user_scale, get_user_scale, adjust_user_scale
 from config.shared_storage import ensure_shared_config_ready, get_project_root, get_shared_config_path
+from config.user_settings import load_section, migrate_section_once, save_section
+from config.user_storage_paths import get_user_settings_path
 
 _logger = get_logger(__name__)
 
@@ -56,18 +58,20 @@ class UserScaleConfig:
         Args:
             config_dir: 配置目录路径，默认为 config
         """
-        if config_dir is None:
+        self._uses_unified_settings = config_dir is None
+        if self._uses_unified_settings:
             ensure_shared_config_ready()
-            config_dir = get_shared_config_path()
-        
-        self._config_dir = Path(config_dir)
-        self._config_file = self._config_dir / _USER_SCALE_CONFIG_FILE
+            self._config_dir = get_user_settings_path().parent
+            self._config_file = get_user_settings_path()
+        else:
+            self._config_dir = Path(config_dir)
+            self._config_file = self._config_dir / _USER_SCALE_CONFIG_FILE
+        self._shared_legacy_config_file = get_shared_config_path(_USER_SCALE_CONFIG_FILE)
         self._legacy_config_file = get_project_root() / "config" / _USER_SCALE_CONFIG_FILE
         self._scale: float = _DEFAULT_USER_SCALE
         self._data_lock = threading.Lock()
         
         self._config_dir.mkdir(parents=True, exist_ok=True)
-        self._legacy_config_file.parent.mkdir(parents=True, exist_ok=True)
         # 加载配置
         self._load()
         # 同步到 scale.py 的全局变量
@@ -75,6 +79,29 @@ class UserScaleConfig:
 
     def _load(self):
         """从文件加载用户缩放配置"""
+        if self._uses_unified_settings:
+            legacy_data = {}
+            for source in (self._shared_legacy_config_file, self._legacy_config_file):
+                try:
+                    payload = json.loads(source.read_text(encoding="utf-8"))
+                except (OSError, ValueError, TypeError):
+                    continue
+                if isinstance(payload, dict):
+                    legacy_data = {"scale": payload.get("user_scale", _DEFAULT_USER_SCALE)}
+                    break
+            migrate_section_once(
+                "legacy_user_scale_v1",
+                "ui",
+                legacy_data,
+                {"scale": _DEFAULT_USER_SCALE},
+            )
+            data = load_section("ui", {"scale": _DEFAULT_USER_SCALE})
+            scale = max(0.5, min(2.0, float(data["scale"])))
+            with self._data_lock:
+                self._scale = scale
+            _logger.info("[UserScaleConfig] 已加载用户缩放配置: %.1f", self._scale)
+            return
+
         changed = False
         try:
             source = self._config_file
@@ -108,12 +135,16 @@ class UserScaleConfig:
         try:
             with self._data_lock:
                 scale = self._scale
-            
+
+            if self._uses_unified_settings:
+                save_section("ui", {"scale": scale}, {"scale": _DEFAULT_USER_SCALE})
+                _logger.debug("[UserScaleConfig] 已保存稀疏用户缩放配置: %.1f", scale)
+                return
+
             data = {"user_scale": scale}
-            for target in (self._config_file, self._legacy_config_file):
-                target.parent.mkdir(parents=True, exist_ok=True)
-                with open(target, "w", encoding="utf-8") as f:
-                    json.dump(data, f, ensure_ascii=False, indent=2)
+            self._config_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(self._config_file, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
             _logger.debug("[UserScaleConfig] 已保存用户缩放配置: %.1f", scale)
         except OSError as e:
             _logger.error("[UserScaleConfig] 保存用户缩放配置失败: %s", e)

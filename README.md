@@ -1,8 +1,8 @@
 ﻿# 飞行雪绒
 
-飞行雪绒是面向 Windows 10/11 的桌面宠物项目。当前主线以 `LTS1.0.6beta7` 为版本基线，核心能力包括桌宠展示、事件驱动对象系统、AI 伴聊、语音播报、本地语音识别、多源音乐播放、粒子与小游戏扩展。
+飞行雪绒是面向 Windows 10/11 的桌面宠物项目。当前主线以 `LTS1.0.6beta8` 为版本基线，核心能力包括桌宠展示、事件驱动对象系统、AI 伴聊、语音播报、本地语音识别、多源音乐播放、粒子与小游戏扩展。
 
-- 当前版本：`LTS1.0.6beta7`
+- 当前版本：`LTS1.0.6beta8`
 - 发布日期：`2026-07-07`
 - 主要入口：`lib/core/qt_desktop_pet.py`
 - 生命周期编排：`lib/script/main.py`
@@ -34,7 +34,7 @@
 
 - `lib/script/gsvmove/` 负责 GSVmove 文本转语音桥接。
 - `lib/script/microphone_stt/` 负责 Vosk 本地语音识别和 Push-to-Talk。
-- 语音缓存、用户录音缓存等运行数据写入 `resc/user/` 下的忽略目录。
+- 用户设置、状态、密钥与缓存统一写入 `C:\AemeathDeskPet\user`、`cache`、`logs` 分层目录。
 
 ### 音乐
 
@@ -46,15 +46,15 @@
 ### 本地网页中转与浏览器运行时
 
 - `services/yuanbao-free-api/` 保存本地网页中转服务源码。
-- 登录/授权流程依赖 Playwright 驱动系统浏览器或绿色包提供的离线 Chromium 压缩包。
-- 普通发布包不携带浏览器运行时；绿色包可携带 `resc/chrome-win64.zip` 供离线安装脚本解包。
+- 登录/授权流程依赖 Playwright 驱动系统浏览器或安装脚本从 `resc.net.txt` 下载的离线 Chromium 分卷资源。
+- 浏览器运行时、Vosk 模型、启动动画和 Python 安装器均不再内置，缺失时由安装脚本按清单下载。
 - 实际浏览器运行目录 `resc/playwright/` 是运行时产物，始终不应进入 Git 或普通发布包。
 
 ## 目录速览
 
 | 路径 | 说明 |
 | --- | --- |
-| `config/` | 默认配置、版本信息、共享配置模板 |
+| `config/` | 只读默认配置、配置模型、用户稀疏覆盖与迁移逻辑 |
 | `doc/` | 中文说明、事件系统、调度系统、粒子与开发指南 |
 | `lib/core/` | 事件中心、主窗口、渲染、音频、托盘、日志等基础设施 |
 | `lib/script/main.py` | 应用启动、预热、退出和组件清理编排 |
@@ -90,7 +90,7 @@ python install_deps.py
 - 安装 `requirements.txt` 中的 Python 包
 - 准备 Vosk 语音识别模型
 - 准备本地网页中转服务源码或内置服务包
-- 如存在 `resc/chrome-win64.zip`，解包为 Playwright 可识别的离线浏览器运行时
+- 按 `resc.net.txt` 下载缺失的 Vosk、启动动画、Python 和浏览器资源
 - 启动桌宠主程序
 
 ### 开发者
@@ -106,7 +106,7 @@ python lib/core/qt_desktop_pet.py
 
 ## 运行时数据边界
 
-以下内容是运行时产物或本机状态，默认不进入 Git：
+以下内容是运行时产物或旧版本本机状态，默认不进入 Git：
 
 - `logs/`
 - `dist/`
@@ -118,7 +118,17 @@ python lib/core/qt_desktop_pet.py
 - `services/storage_state.json`
 - `py.ini`
 
-绿色包可以携带 `resc/chrome-win64.zip` 作为离线资源；普通包应排除该文件。
+正式用户数据默认位于 `C:\AemeathDeskPet`：
+
+- `user/settings.json`：仅保存偏离默认值的普通设置；
+- `user/secrets/`：API Key、Cookie、登录态；
+- `user/state/`：聊天记忆、音乐历史、游戏统计；
+- `cache/`：音乐、语音等可再生成缓存；
+- `logs/`：外部服务日志。
+
+可使用 `py -3.11 scripts/config_tool.py check|compact|migrate|effective` 检查、压缩、迁移或查看最终生效配置。测试和便携环境可通过 `AEMEATH_DESK_PET_HOME` 覆盖根目录。
+
+`resc.net.txt` 是重型资源的唯一下载清单，发布包不携带清单中对应的资源文件。
 
 ## 常用检查
 
@@ -137,8 +147,8 @@ py -3 -m unittest tests.test_openai_dashscope_multimodal
 
 ## 发布包边界
 
-- 普通包：源码、默认资源、文档，不带 `resc/playwright/`，不带 `resc/chrome-win64.zip`。
-- 绿色包：在普通包基础上保留离线模型和 `resc/chrome-win64.zip`，仍不带已解包的 `resc/playwright/` 运行目录。
+- 普通包和绿色包：源码、默认小型资源、文档，不带 `resc/models/`、`resc/playwright/`、`resc/GIF/SEanima/` 或 Python/浏览器安装包。
+- 安装器依据 `resc.net.txt` 在首次运行时补齐缺失的重型资源。
 - 两类包都应脱敏 `config/ollama_config.py` 中的密钥、登录态和会话字段。
 
 ## 许可证与声明

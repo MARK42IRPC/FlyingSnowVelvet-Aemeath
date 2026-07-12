@@ -1,4 +1,4 @@
-"""Ollama ?????????????"""
+"""Ollama 会话调度与回复回退实现。"""
 
 import json
 import threading
@@ -240,7 +240,29 @@ class OllamaSessionMixin:
             except Exception as e:
                 logger.error("[OllamaManager] OpenAI API 异常: %s", e)
                 last_error = str(e)
-        else:
+        if self._use_api_key and not full_text:
+            fallback_config = self._active_config.get('fallback_config')
+            if isinstance(fallback_config, dict):
+                logger.warning("[OllamaManager] primary API failed; falling back to welfare API")
+                try:
+                    full_text = self._openai_chat_api(
+                        message,
+                        persona,
+                        on_chunk_emit=chunk_fn,
+                        images=images,
+                        history=history,
+                        request_id=request_id,
+                        config_override=fallback_config,
+                    )
+                except requests.HTTPError as e:
+                    fallback_error = self._extract_error(e)
+                    logger.error("[OllamaManager] welfare API error: %s", fallback_error)
+                    last_error = f"{last_error or 'primary API failed'}; welfare API: {fallback_error}"
+                except Exception as e:
+                    logger.error("[OllamaManager] welfare API exception: %s", e)
+                    last_error = f"{last_error or 'primary API failed'}; welfare API: {e}"
+
+        if not self._use_api_key and not full_text:
             models_to_try  = self._get_models_to_try()
             image_attempts = [images]
             if images:

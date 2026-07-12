@@ -6,7 +6,7 @@ from PyQt5.QtWidgets import QWidget, QApplication
 from PyQt5.QtCore    import Qt, QPoint
 from PyQt5.QtGui     import QPainter, QPixmap
 
-from lib.core.topmost_manager import get_topmost_manager
+from lib.core.unified_draw import Layer, get_layer_manager
 from lib.core.event.center    import get_event_center, EventType, Event
 from lib.core.clickthrough_state import is_clickthrough_enabled
 from lib.core.screen_utils    import get_screen_geometry_for_point
@@ -86,7 +86,7 @@ class SnowPile(QWidget):
 
         self.move(position)
         self.show()
-        get_topmost_manager().register(self)
+        get_layer_manager().register(self, Layer.WORLD_OBJECT)
 
         # 订阅穿透模式切换
         self._event_center.subscribe(EventType.UI_CLICKTHROUGH_TOGGLE,

@@ -34,6 +34,11 @@ services/storage_state.json
 # Generated assets & downloads
 resc/models/
 resc/playwright/
+resc/GIF/SEanima/
+resc/GIF/SEanima.zip
+resc/python-*.exe
+resc/chrome-runtime.zip
+resc/chrome-runtime.z[0-9][0-9]
 resc/gsvmove_update/
 resc/user/
 resc/VFX/cache/
@@ -58,3 +63,6 @@ FlyingSnowVelvet-*.zip
 
 # AI tool configurations
 .claude/
+
+# Local repository operation helpers
+oprate/

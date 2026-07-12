@@ -8,6 +8,7 @@
     下一曲       →  播放下一首（无参数）
     暂停         →  播放/暂停切换（无参数）
     回忆 <参数>  →  从 memory.txt 提取历史信息并再次发送给大模型
+    窥屏         →  截取当前主屏幕并发送给大模型分析一次
     雪豹 <数量>  →  在屏幕底部生成指定数量的雪豹
     沙发 <数量>  →  在宠物位置生成指定数量的沙发
     摩托 <数量>  →  在宠物位置生成指定数量的摩托
@@ -59,7 +60,7 @@ except re.error as e:
 _TOOL_MARKER_PATTERN = re.compile(r'###(.*?)###', re.S)
 _PLAY_INDEX = TOOL_DISPATCHER.get('play_index', 0)
 _AUTO_SPAWN_COUNT = TOOL_DISPATCHER.get('auto_spawn_speaker_count', 1)
-_SUPPORTED_COMMANDS = {'音乐', '下一曲', '暂停', '雪豹', '沙发', '摩托', '闹钟', '计时', '音量', '瞬移', '回忆', '浏览器'}
+_SUPPORTED_COMMANDS = {'音乐', '下一曲', '暂停', '雪豹', '沙发', '摩托', '闹钟', '计时', '音量', '瞬移', '回忆', '浏览器', '窥屏'}
 _SUPPORTED_COMMANDS_SORTED = tuple(sorted(_SUPPORTED_COMMANDS, key=len, reverse=True))
 _DEFAULT_MUSIC_CHOICES = ('靛青宇宙', '碎花', '纸飞机', '小小奇迹', '星炬不息')
 _DEFAULT_TIMER_SECONDS = 30
@@ -90,6 +91,10 @@ def _get_memory_recall_recent_count() -> int:
 def _get_memory_recall_range_count() -> int:
     return _get_memory_recall_count() * _MEMORY_RANGE_MAX_RATIO
 _MEMORY_RECALL_REDISPATCH_DELAY_SEC = 5.0
+_SCREEN_PEEK_PROMPT = (
+    '这是“窥屏工具”刚刚截取的当前主屏幕。请结合截图和已有对话上下文，'
+    '直接用自然语言描述你观察到的内容并回应，不要输出任何 ###命令###。'
+)
 _DEFAULT_TOPIC = '日常'
 _DATETIME_RANGE_PATTERN = re.compile(
     r'\d{4}[-/]\d{1,2}[-/]\d{1,2}[ T]\d{1,2}:\d{1,2}:\d{1,2}'
@@ -302,8 +307,11 @@ class ToolDispatcher:
         处理流式消息最终完整文本。
 
         识别格式：###指令### 或 ###指令 参数###
-        当前支持的指令：音乐、下一曲、暂停、回忆、雪豹、沙发、摩托、闹钟、计时、音量、瞬移、浏览器
+        当前支持的指令：音乐、下一曲、暂停、回忆、雪豹、沙发、摩托、闹钟、计时、音量、瞬移、浏览器、窥屏
         """
+        if event.data.get('allow_tool_commands', True) is False:
+            return
+
         text = event.data.get('text', '')
         if not text:
             return
@@ -379,11 +387,24 @@ class ToolDispatcher:
         elif cmd == '回忆':
             self._handle_memory_recall(arg)
 
+        elif cmd == '窥屏':
+            self._handle_screen_peek()
+
         elif cmd == '浏览器':
             self._handle_browser_request(arg)
 
         else:
             logger.warning("[ToolDispatcher] 未知指令: %s", cmd)
+
+    def _handle_screen_peek(self) -> None:
+        """截取当前主屏幕，并仅向模型追加一次多模态请求。"""
+        self._ec.publish(Event(EventType.INPUT_CHAT, {
+            'text': _SCREEN_PEEK_PROMPT,
+            'raw': '###窥屏###',
+            'source': 'tool_screen_peek',
+            'capture_screen': True,
+            'allow_tool_commands': False,
+        }))
 
     def _handle_volume_request(self, arg: str):
         """

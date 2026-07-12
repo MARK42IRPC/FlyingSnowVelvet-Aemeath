@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import math
 import os
+import shutil
 import struct
 import wave
 from pathlib import Path
 
+from config.user_storage_paths import get_user_cache_dir
 from lib.core.event.center import Event, EventType, get_event_center
 
 
@@ -19,7 +21,19 @@ class GameSfx:
 
     def __init__(self) -> None:
         root = Path(__file__).resolve().parents[4]
-        self._dir = root / "resc" / "user" / "temp" / "game_sfx"
+        self._dir = get_user_cache_dir("game_sfx")
+        if not self._dir.exists():
+            for legacy_dir in (
+                get_user_cache_dir("music", "game_sfx"),
+                root / "resc" / "user" / "temp" / "game_sfx",
+            ):
+                if not legacy_dir.exists():
+                    continue
+                try:
+                    shutil.copytree(legacy_dir, self._dir, dirs_exist_ok=True)
+                    break
+                except OSError:
+                    continue
         self._dir.mkdir(parents=True, exist_ok=True)
         self._ec = get_event_center()
         self._files = {
@@ -147,9 +161,9 @@ class GameSfx:
 
     def _build_drop_impact(self) -> bytes:
         return self._mix(
-            self._square_tone(freq_start=1260, freq_end=560, duration=0.060, duty=0.26, volume=0.92),
-            self._square_tone(freq_start=680, freq_end=280, duration=0.085, duty=0.42, volume=0.46),
-            self._noise(duration=0.040, volume=0.72),
+            self._square_tone(freq_start=360, freq_end=82, duration=0.160, duty=0.50, volume=1.00),
+            self._square_tone(freq_start=720, freq_end=180, duration=0.115, duty=0.40, volume=0.52),
+            self._noise(duration=0.075, volume=0.88),
         )
 
     def _build_clear(self) -> bytes:

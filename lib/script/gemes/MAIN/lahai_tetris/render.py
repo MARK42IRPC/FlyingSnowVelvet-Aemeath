@@ -51,12 +51,21 @@ def draw_block(
     size: float | None = None,
     active: bool = False,
 ) -> None:
-    if not active:
-        pixmap = _get_block_pixmap(widget, kind, size)
-        if pixmap is not None and not pixmap.isNull():
-            target = QRectF(x, y, float(pixmap.width()), float(pixmap.height()))
-            painter.drawPixmap(target, pixmap, QRectF(pixmap.rect()))
-            return
+    block = float(widget._block_size if size is None else size)
+    if active and kind == _SUN_KIND:
+        _draw_block_procedural(widget, painter, x, y, kind, size=size, active=True)
+        return
+    if active and kind in _THEME:
+        glow = _get_active_glow_pixmap(widget, kind, block)
+        if glow is not None and not glow.isNull():
+            margin = (float(glow.width()) - block) * 0.5
+            target = QRectF(x - margin, y - margin, float(glow.width()), float(glow.height()))
+            painter.drawPixmap(target, glow, QRectF(glow.rect()))
+    pixmap = _get_block_pixmap(widget, kind, size)
+    if pixmap is not None and not pixmap.isNull():
+        target = QRectF(x, y, float(pixmap.width()), float(pixmap.height()))
+        painter.drawPixmap(target, pixmap, QRectF(pixmap.rect()))
+        return
     _draw_block_procedural(widget, painter, x, y, kind, size=size, active=active)
 
 
@@ -79,6 +88,38 @@ def _get_block_pixmap(widget: "LahaiTetrisWidget", kind: str, size: float | None
     widget._block_pixmap_cache[cache_key] = pixmap
     return pixmap
 
+
+def _get_active_glow_pixmap(widget: "LahaiTetrisWidget", kind: str, block_size: float) -> QPixmap | None:
+    block = int(round(block_size))
+    if block <= 0:
+        return None
+    cache_key = (f"__active_glow__:{kind}", block)
+    cached = widget._block_pixmap_cache.get(cache_key)
+    if cached is not None:
+        return cached
+    extent = max(block, int(math.ceil(block * 1.84)))
+    pixmap = QPixmap(extent, extent)
+    pixmap.fill(Qt.transparent)
+    glow_painter = QPainter(pixmap)
+    glow_painter.setRenderHint(QPainter.Antialiasing, True)
+    base = QColor(_THEME[kind][0])
+    center = QPointF(extent * 0.5, extent * 0.5)
+    gradient = QRadialGradient(center, extent * 0.48)
+    glow_core = QColor(base)
+    glow_mid = QColor(base)
+    glow_edge = QColor(base)
+    glow_core.setAlpha(138)
+    glow_mid.setAlpha(72)
+    glow_edge.setAlpha(0)
+    gradient.setColorAt(0.0, glow_core)
+    gradient.setColorAt(0.58, glow_mid)
+    gradient.setColorAt(1.0, glow_edge)
+    glow_painter.setPen(Qt.NoPen)
+    glow_painter.setBrush(gradient)
+    glow_painter.drawEllipse(QRectF(0.0, 0.0, float(extent), float(extent)))
+    glow_painter.end()
+    widget._block_pixmap_cache[cache_key] = pixmap
+    return pixmap
 
 def _draw_block_procedural(
     widget: "LahaiTetrisWidget",
@@ -298,7 +339,8 @@ def draw_warning_line(widget: "LahaiTetrisWidget", painter: QPainter, inner: QRe
         if widget._settled_stack_height() > _WARNING_LINE_FLASH_STACK_HEIGHT
         else _WARNING_LINE_DEFAULT_HZ
     )
-    pulse = (math.sin(time.monotonic() * math.tau * frequency_hz) + 1.0) * 0.5
+    should_pulse = widget._settled_stack_height() > _WARNING_LINE_FLASH_STACK_HEIGHT
+    pulse = (math.sin(time.monotonic() * math.tau * frequency_hz) + 1.0) * 0.5 if should_pulse else 0.5
     alpha_scale = 0.30 + pulse * 0.70
     y = inner.y() + warning_row * widget._block_size
     glow_h = max(6.0, widget._block_size * 0.45)
@@ -435,8 +477,7 @@ def draw_skill_avatar(
     painter.drawEllipse(rect)
 
 
-def paint_widget(widget: "LahaiTetrisWidget", _event) -> None:
-    painter = QPainter(widget)
+def _paint_static_scene(widget: "LahaiTetrisWidget", painter: QPainter) -> None:
     painter.setRenderHint(QPainter.Antialiasing, True)
     painter.fillRect(widget.rect(), widget._C_BG)
 
@@ -456,10 +497,7 @@ def paint_widget(widget: "LahaiTetrisWidget", _event) -> None:
     bg_glow.setColorAt(0.0, glow_base)
     bg_glow.setColorAt(1.0, glow_clear)
     painter.setPen(Qt.NoPen)
-    painter.fillRect(
-        QRectF(0.0, glow_top, float(widget.width()), float(widget.height()) - glow_top),
-        bg_glow,
-    )
+    painter.fillRect(QRectF(0.0, glow_top, float(widget.width()), float(widget.height()) - glow_top), bg_glow)
 
     title_rect = QRectF(float(widget._PADDING), float(widget._PADDING), float(widget.width() - widget._PADDING * 2), float(widget._HEADER_H))
     painter.setPen(widget._C_TEXT)
@@ -469,13 +507,29 @@ def paint_widget(widget: "LahaiTetrisWidget", _event) -> None:
     painter.setFont(widget._digit_font)
     painter.drawText(title_rect, Qt.AlignRight | Qt.AlignVCenter, "LAHAI ROI BLOCKS")
 
+
+def paint_widget(widget: "LahaiTetrisWidget", _event=None, *, painter: QPainter | None = None) -> None:
+    owns_painter = painter is None
+    if painter is None:
+        painter = QPainter(widget)
+    cache_size = widget.size()
+    static_cache = widget._static_scene_cache
+    if widget._static_scene_cache_dirty or static_cache is None or static_cache.size() != cache_size:
+        static_cache = QPixmap(cache_size)
+        static_cache.fill(Qt.transparent)
+        cache_painter = QPainter(static_cache)
+        _paint_static_scene(widget, cache_painter)
+        cache_painter.end()
+        widget._static_scene_cache = static_cache
+        widget._static_scene_cache_dirty = False
+    painter.drawPixmap(0, 0, static_cache)
+
     board_rect = widget._board_screen_rect()
     inner = widget._board_inner_screen_rect()
     draw_round_panel(widget, painter, board_rect, widget._C_BOARD)
     inner_path = QPainterPath()
     inner_path.addRoundedRect(inner, widget._PANEL_RADIUS * 0.7, widget._PANEL_RADIUS * 0.7)
     painter.fillPath(inner_path, widget._C_BOARD_INNER)
-
     painter.setPen(QPen(QColor(212, 221, 255, 155), max(1, scale_px(1, min_abs=1))))
     painter.drawRoundedRect(inner, widget._PANEL_RADIUS * 0.7, widget._PANEL_RADIUS * 0.7)
 
@@ -492,10 +546,14 @@ def paint_widget(widget: "LahaiTetrisWidget", _event) -> None:
     for row in range(_BOARD_H + 1):
         gy = inner_y + row * widget._block_size
         painter.drawLine(inner_x, gy, inner_x + inner_w, gy)
-
     for row in range(_BOARD_H):
         sy = inner_y + row * widget._block_size + widget._block_size * 0.5
         painter.fillRect(QRectF(inner.x(), sy, inner.width(), 1), widget._C_SCANLINE)
+    painter.restore()
+
+    inner = widget._board_inner_screen_rect()
+    painter.save()
+    painter.setClipRect(inner)
     draw_warning_line(widget, painter, inner)
     painter.restore()
 
@@ -609,6 +667,7 @@ def paint_widget(widget: "LahaiTetrisWidget", _event) -> None:
         "Esc/P 暂停游戏",
         "1~6/鼠标点击 使用角色技能",
         "B 暂停/继续bgm",
+	"F11 全屏/退出全屏",
     ]
     title_h = max(widget._ROW_H(), float(scale_px(26, min_abs=1)))
     best_score_h = widget._ROW_H()
@@ -724,4 +783,5 @@ def paint_widget(widget: "LahaiTetrisWidget", _event) -> None:
             "TO START",
         )
 
-    painter.end()
+    if owns_painter:
+        painter.end()

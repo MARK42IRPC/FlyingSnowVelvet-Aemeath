@@ -194,7 +194,13 @@ class ChatHandlerStreamPresenterMixin:
         dynamic_min = min(char_count * STREAM_FINAL_MIN_PER_CHAR, STREAM_FINAL_MIN_CAP)
         return max(BUBBLE_MIN_TICKS, dynamic_min)
 
-    def _publish_response(self, text: str, user_text: str | None = None, include_history: bool = True):
+    def _publish_response(
+        self,
+        text: str,
+        user_text: str | None = None,
+        include_history: bool = True,
+        allow_tool_commands: bool = True,
+    ):
         """
         最终回调：处理流式请求的完成信号。
         - text 非空：流式块已由 _on_stream_chunk 逐步发布，无需重复
@@ -262,7 +268,10 @@ class ChatHandlerStreamPresenterMixin:
 
         # 非AI状态文本只显示气泡，不进入 AI 最终回复通道
         if not _is_non_ai_status_text(text):
-            self._event_center.publish(Event(EventType.STREAM_FINAL, {"text": text}))
+            self._event_center.publish(Event(EventType.STREAM_FINAL, {
+                "text": text,
+                "allow_tool_commands": allow_tool_commands,
+            }))
 
     def _publish_auto_response(self, text: str, include_history: bool = False, user_text: str | None = None):
         """

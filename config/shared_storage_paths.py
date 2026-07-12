@@ -22,6 +22,9 @@ def get_project_config_path(*parts: str) -> Path:
 
 
 def get_shared_root_dir() -> Path:
+    override = str(os.environ.get('AEMEATH_DESK_PET_HOME', '') or '').strip()
+    if override:
+        return Path(override).expanduser()
     drive = str(os.environ.get('SystemDrive', 'C:') or 'C:').strip()
     if not drive:
         drive = 'C:'

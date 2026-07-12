@@ -75,7 +75,8 @@ class ChatHandlerPersonaMixin:
         if os.path.isfile(persona_file):
             try:
                 # utf-8-sig 自动剔除 Windows BOM（\ufeff），避免发送给 Ollama 时触发 JSON 解析错误
-                content = open(persona_file, "r", encoding="utf-8-sig").read().strip()
+                with open(persona_file, "r", encoding="utf-8-sig") as handle:
+                    content = handle.read().strip()
                 if content:
                     logger.info("[ChatHandler] 已加载人格文件: %s", persona_file)
                     return content

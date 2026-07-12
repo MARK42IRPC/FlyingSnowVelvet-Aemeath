@@ -6,7 +6,7 @@ from PyQt5.QtCore    import Qt, QTimer, QPoint
 from PyQt5.QtGui     import QPainter
 
 from config.config import COLORS, WINDOW, ANIMATION, GIF_FILES, BEHAVIOR, UI, PARTICLES
-from lib.core.topmost_manager import get_topmost_manager
+from lib.core.layer_manager import get_layer_manager
 from lib.core.qt_gif_loader import scale_frame, flip_frame
 from lib.core.qt_particle_system import ParticleOverlay
 from lib.core.input.click import ClickHandler
@@ -26,6 +26,7 @@ from lib.core.entity.base import BaseEntity
 from lib.script.mainpet.state import StateMachine
 from config.user_scale_config import get_user_scale_config
 from lib.core.draw_core import DrawRequest, get_draw_core
+from lib.core.layer import Layer, normalize_layer
 from lib.core.action import Actions
 from lib.core.pet_window_ui_factory import attach_pet_window_ui, iter_pet_window_ui
 from lib.core.pet_window_setup import setup_pet_window, finalize_pet_window_startup
@@ -201,6 +202,8 @@ class PetWindow(BaseEntity):
             alpha = data.get('alpha', 1.0)
             flipped = data.get('flipped', self._movement.flipped)
             scale = data.get('scale', 1.0)
+            layer = data.get('layer', Layer.MAIN_PET)
+            z = data.get('z', 0)
             clear_others = data.get('clear_others', False)
         # 格式2: [资源id, 资源帧[如有], 绘制位置]
         else:
@@ -210,6 +213,8 @@ class PetWindow(BaseEntity):
             alpha = 1.0
             flipped = self._movement.flipped
             scale = 1.0
+            layer = Layer.MAIN_PET
+            z = 0
             clear_others = False
 
         if not resource_id:
@@ -221,7 +226,9 @@ class PetWindow(BaseEntity):
             position=position,
             alpha=alpha,
             flipped=flipped,
-            scale=scale
+            scale=scale,
+            layer=normalize_layer(layer, Layer.MAIN_PET),
+            z=z,
         )
 
         self._draw_core.add_draw_request(request, clear_others=clear_others)
@@ -673,10 +680,9 @@ class PetWindow(BaseEntity):
         if self._movement.is_moving:
             alpha = float((event.data or {}).get('tick_alpha', 1.0) or 0.0)
             self._movement.update_frame(alpha)
-        # 每帧即时置顶（Qt 层）+ 每 0.5s 对全部注册窗口重申 Win32 HWND_TOPMOST
+        # 每 0.5s 通过统一层级管理器重申全部注册窗口层级。
         # 注意：穿透模式下仍需置顶以保证桌宠可见，只是鼠标事件穿透
-        self.raise_()
-        get_topmost_manager().enforce_on_frame()
+        get_layer_manager().enforce_on_frame()
 
     def _handle_tick_event(self, event):
         """处理 TICK 事件 - 用于速度计算。"""

@@ -32,7 +32,7 @@ from config.font_config import get_cmd_font, get_ui_font, get_digit_font
 from config.scale import scale_px, scale_style_px
 from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import get_event_center, EventType, Event
-from lib.core.topmost_manager import get_topmost_manager
+from lib.core.unified_draw import Layer, get_layer_manager
 
 
 # ---------------------------------------------------------------------------
@@ -202,7 +202,7 @@ class CmdWindow(QWidget):
         # 自由缩放：最小尺寸代替固定尺寸
         self.setMinimumSize(scale_px(360), scale_px(260))
         self.resize(scale_px(620), scale_px(420))
-        get_topmost_manager().register(self)
+        get_layer_manager().register(self, Layer.PANEL)
 
         self._event_center = get_event_center()
 

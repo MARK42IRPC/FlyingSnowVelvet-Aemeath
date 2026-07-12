@@ -10,6 +10,7 @@ from typing import Optional
 
 from config.shared_storage import ensure_shared_config_ready
 from config.shared_storage_paths import get_project_root, get_shared_root_dir
+from config.user_storage_paths import get_user_state_dir
 from lib.core.logger import get_logger
 
 _logger = get_logger(__name__)
@@ -44,30 +45,35 @@ class GameUserStats:
         ensure_shared_config_ready()
         project_root = get_project_root()
         shared_root = get_shared_root_dir()
-        self._shared_path = shared_root / "resc" / "user" / "games" / _STATS_FILE_NAME
-        self._legacy_path = project_root / "resc" / "user" / "games" / _STATS_FILE_NAME
+        self._shared_path = get_user_state_dir("games", _STATS_FILE_NAME)
+        self._legacy_paths = (
+            shared_root / "resc" / "user" / "games" / _STATS_FILE_NAME,
+            project_root / "resc" / "user" / "games" / _STATS_FILE_NAME,
+        )
         self._data_lock = threading.Lock()
         self._best_score = 0
 
         self._shared_path.parent.mkdir(parents=True, exist_ok=True)
-        self._legacy_path.parent.mkdir(parents=True, exist_ok=True)
         self._migrate_legacy_file()
         self._load()
 
     def _migrate_legacy_file(self) -> None:
-        if self._shared_path.exists() or not self._legacy_path.exists():
+        if self._shared_path.exists():
             return
-        try:
-            self._legacy_path.replace(self._shared_path)
-        except OSError:
+        for legacy_path in self._legacy_paths:
+            if not legacy_path.exists():
+                continue
             try:
-                shutil.copy2(self._legacy_path, self._shared_path)
+                shutil.copy2(legacy_path, self._shared_path)
+                return
             except OSError:
-                pass
+                continue
 
     def _load(self) -> None:
         try:
-            source = self._shared_path if self._shared_path.exists() else self._legacy_path
+            source = self._shared_path
+            if not source.exists():
+                source = next((path for path in self._legacy_paths if path.exists()), source)
             if source.exists():
                 data = json.loads(source.read_text(encoding="utf-8"))
                 if isinstance(data, dict):
@@ -86,9 +92,8 @@ class GameUserStats:
             with self._data_lock:
                 payload = {"best_score": int(self._best_score)}
             text = json.dumps(payload, ensure_ascii=False, indent=2)
-            for target in (self._shared_path, self._legacy_path):
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_text(text, encoding="utf-8")
+            self._shared_path.parent.mkdir(parents=True, exist_ok=True)
+            self._shared_path.write_text(text, encoding="utf-8")
         except OSError as exc:
             _logger.error("[GameUserStats] 保存拉海洛方块最高分失败: %s", exc)
 

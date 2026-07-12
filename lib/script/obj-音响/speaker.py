@@ -10,7 +10,7 @@ from PyQt5.QtCore    import Qt, QPoint, QTimer
 from PyQt5.QtGui     import QPainter, QPixmap, QTransform
 
 from config.config           import BEHAVIOR, PHYSICS, SPEAKER_AUDIO
-from lib.core.topmost_manager import get_topmost_manager
+from lib.core.unified_draw import Layer, get_layer_manager
 from lib.core.event.center    import get_event_center, EventType, Event
 from lib.core.clickthrough_state import is_clickthrough_enabled
 from lib.core.physics         import get_physics_world, PhysicsBody
@@ -127,7 +127,7 @@ class Speaker(QWidget):
 
         self.move(position)
         self.show()
-        get_topmost_manager().register(self)
+        get_layer_manager().register(self, Layer.WORLD_OBJECT)
 
         self._event_center = get_event_center()
         self._event_center.subscribe(EventType.TICK,                   self._on_tick_click)

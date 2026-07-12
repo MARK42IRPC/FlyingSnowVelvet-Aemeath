@@ -8,7 +8,7 @@ from config.font_config import get_ui_font
 from config.scale import scale_px
 from config.tooltip_config import TOOLTIPS
 from lib.core.event.center import get_event_center, EventType, Event
-from lib.core.topmost_manager import get_topmost_manager
+from lib.core.unified_draw import Layer, get_layer_manager
 from lib.core.screen_utils import clamp_rect_position
 from lib.core.voice.ams_clickthrough_reminder import AmsClickthroughReminderSound
 from lib.core.anchor_utils import (
@@ -43,7 +43,7 @@ class ClickThroughButton(QWidget):
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFixedSize(self.WIDTH, self.HEIGHT)
         self.setCursor(Qt.PointingHandCursor)
-        get_topmost_manager().register(self)
+        get_layer_manager().register(self, Layer.PET_UI)
 
         # 透明度效果
         self._opacity = QGraphicsOpacityEffect(self)

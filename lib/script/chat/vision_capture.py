@@ -1,4 +1,4 @@
-"""???????"""
+"""桌面截图捕获工具。"""
 
 from lib.core.logger import get_logger
 

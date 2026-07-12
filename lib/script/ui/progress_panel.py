@@ -20,7 +20,7 @@ from config.config import COLORS, UI, FONT, UI_THEME
 from config.font_config import get_digit_font, get_ui_font
 from config.scale import scale_px
 from lib.core.event.center import get_event_center, EventType, Event
-from lib.core.topmost_manager import get_topmost_manager
+from lib.core.unified_draw import Layer, get_layer_manager
 from lib.core.screen_utils import clamp_rect_position
 from lib.core.anchor_utils import apply_ui_opacity
 
@@ -62,7 +62,7 @@ class ProgressPanel(QWidget):
         )
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFocusPolicy(Qt.NoFocus)
-        get_topmost_manager().register(self)
+        get_layer_manager().register(self, Layer.PANEL)
 
         # ── 字体 ─────────────────────────────────────────────────────
         self._font = get_ui_font(FONT['ui_size'] - 1)

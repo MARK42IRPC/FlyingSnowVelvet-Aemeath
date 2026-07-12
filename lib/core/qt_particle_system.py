@@ -10,9 +10,11 @@ from PyQt5.QtGui import QPainter, QColor, QPen
 from config.config import PARTICLES, UI_THEME
 from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import get_event_center, EventType, Event
+from lib.core.layer import Layer, normalize_layer
+from lib.core.layer_manager import get_layer_manager
 from lib.core.logger import get_logger
+from lib.core.render_core import order_render_values
 from lib.script.practical.manager import get_particle_script_manager
-from lib.core.topmost_manager import TOPMOST_PRIORITY_OVERLAY, get_topmost_manager
 
 _ASYNC_PARTICLE_UPDATE_THRESHOLD = 1200
 _logger = get_logger(__name__)
@@ -70,9 +72,11 @@ class ParticleOverlay(QWidget):
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_TransparentForMouseEvents)
         self.setStyleSheet("background: transparent;")
-        get_topmost_manager().register(self, priority=TOPMOST_PRIORITY_OVERLAY)
+        self._layer_manager = get_layer_manager()
+        self._layer_manager.register(self, Layer.PARTICLE, name='ParticleOverlay')
 
         self._particles = []
+        self._draw_seq = 0
         self._pending_requests = deque()
         self._pending_future: Future | None = None
         self._pending_snapshot_ids: set[int] = set()
@@ -188,7 +192,6 @@ class ParticleOverlay(QWidget):
             cur_y = float(getattr(particle, 'y', prev_y))
             particle._render_x = prev_x + (cur_x - prev_x) * alpha
             particle._render_y = prev_y + (cur_y - prev_y) * alpha
-        get_topmost_manager().bring_to_front(self)
         self.update()
 
     def _apply_pending_updates(self) -> None:
@@ -263,6 +266,16 @@ class ParticleOverlay(QWidget):
             if self._perf_log_enabled:
                 self._perf_spawned_count += len(new_particles)
             for particle in new_particles:
+                self._draw_seq += 1
+                particle.layer = normalize_layer(
+                    particle_options.get('layer', getattr(particle, 'layer', Layer.PARTICLE)),
+                    Layer.PARTICLE,
+                )
+                try:
+                    particle.z = int(particle_options.get('z', getattr(particle, 'z', 0)))
+                except (TypeError, ValueError):
+                    particle.z = 0
+                particle._draw_order = self._draw_seq
                 particle._tick_prev_x = float(getattr(particle, 'x', 0.0))
                 particle._tick_prev_y = float(getattr(particle, 'y', 0.0))
                 particle._render_x = float(getattr(particle, 'x', 0.0))
@@ -274,8 +287,7 @@ class ParticleOverlay(QWidget):
 
         if not had_particles:
             self.show()
-            self.raise_()
-            get_topmost_manager().enforce_burst()
+            self._layer_manager.enforce_burst()
         self.update()
 
     # ------------------------------------------------------------------
@@ -299,7 +311,14 @@ class ParticleOverlay(QWidget):
             square_stroke_pen = QPen(QColor(UI_THEME['border']))
         painter.setRenderHint(QPainter.Antialiasing, False)
 
-        for p in self._particles:
+        particles = order_render_values(
+            self._particles,
+            layer_getter=lambda item: getattr(item, 'layer', Layer.PARTICLE),
+            z_getter=lambda item: getattr(item, 'z', 0),
+            order_getter=lambda item: getattr(item, '_draw_order', 0),
+            default_layer=Layer.PARTICLE,
+        )
+        for p in particles:
             if not _particle_alive(p):
                 continue
 

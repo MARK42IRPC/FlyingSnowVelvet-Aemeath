@@ -38,9 +38,9 @@ SPEAKER_SEARCH_UI = {
 }
 CLOUD_MUSIC = {
     # 当前音乐平台（抽象层路由入口，后续可扩展 qq / kugou）
-    'provider': 'qq',
+    'provider': 'netease',
     'bitrate_ladder':   (320000, 192000, 128000),  # 音质梯度（bps）
-    'default_volume':   0.3,                     # 默认音量（14%）
+    'default_volume':   0.3,                     # 默认音量（30%）
     'particle_interval': 60,                       # 音符粒子生成间隔（帧数）
     'search_result_limit': 128,                    # 音响搜索结果上限（首）
     # 缓存目录（相对于项目根目录）

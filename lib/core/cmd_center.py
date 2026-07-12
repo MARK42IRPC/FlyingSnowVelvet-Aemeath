@@ -31,6 +31,7 @@ class CmdCenter:
         self._event_center.subscribe(EventType.INPUT_COMMAND, self._on_input_command)
         self._event_center.subscribe(EventType.INPUT_HASH,    self._on_input_hash)
         # INPUT_CHAT 由 ChatHandler 处理，此处不再订阅
+        get_hash_cmd_registry().register('图层', '', '查看当前窗口图层快照')
 
         # 线程安全信号：后台线程完成后通过此信号回到主线程
         self._signal = _ResultSignal()
@@ -82,6 +83,17 @@ class CmdCenter:
 
         # 调试日志
         logger.debug('[CmdCenter] #%s', text)
+
+        if text == '图层':
+            from lib.core.layer_manager import get_layer_manager
+
+            self._event_center.publish(Event(EventType.INFORMATION, {
+                'text': get_layer_manager().describe_snapshot(),
+                'min': 10,
+                'max': 160,
+                'align': 'left',
+            }))
+            return
 
         # 按命令名前缀检查是否匹配已注册命令
         all_cmds = get_hash_cmd_registry().get_all()

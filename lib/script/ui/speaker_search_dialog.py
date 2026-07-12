@@ -24,7 +24,7 @@ from config.scale import scale_px, scale_style_px
 from config.tooltip_config import TOOLTIPS
 from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import get_event_center, EventType, Event
-from lib.core.topmost_manager import get_topmost_manager
+from lib.core.unified_draw import Layer, get_layer_manager
 from lib.core.screen_utils import clamp_rect_position
 from lib.core.anchor_utils import apply_ui_opacity
 from lib.script.music import get_music_service
@@ -84,7 +84,7 @@ class SpeakerSearchDialog(QWidget):
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFixedSize(_TOTAL_W, _HEIGHT)
         self.setMouseTracking(True)
-        get_topmost_manager().register(self)
+        get_layer_manager().register(self, Layer.PANEL)
 
         # ── 输入框 ──────────────────────────────────────────────────
         self._entry = QLineEdit(self)
@@ -315,7 +315,12 @@ class SpeakerSearchDialog(QWidget):
     def _search_worker(self, keyword: str, mode: str, generation: int):
         """后台线程：调用音乐抽象层搜索，结果通过信号投递到主线程。"""
         try:
-            tracks = get_music_service().search(keyword, mode=mode, limit=_MAX_SEARCH_RESULTS)
+            tracks = get_music_service().search(
+                keyword,
+                mode=mode,
+                limit=_MAX_SEARCH_RESULTS,
+                fallback_enabled=False,
+            )
             items = []
             for track in tracks:
                 title = str(track.title or '未知歌曲').strip() or '未知歌曲'

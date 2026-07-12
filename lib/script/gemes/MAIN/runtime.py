@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from PyQt5.QtCore import Qt, QPoint, QRect, QPropertyAnimation, QEasingCurve
+from PyQt5.QtCore import Qt, QPoint, QRect, QPropertyAnimation, QEasingCurve, QTimer
 from PyQt5.QtGui import QColor, QPainter
 from PyQt5.QtWidgets import QWidget
 
@@ -28,7 +28,7 @@ from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.hash_cmd_registry import get_hash_cmd_registry
 from lib.core.logger import get_logger
 from lib.core.screen_utils import get_screen_geometry_for_point
-from lib.core.topmost_manager import get_topmost_manager
+from lib.core.unified_draw import Layer, RenderCore, RenderRequest, get_layer_manager
 from lib.core.voice.ams_open_lahai_tetris import AmsOpenLahaiTetrisSound
 from lib.script.music.service import get_music_service
 from .lahai_tetris import LahaiTetrisWidget
@@ -38,6 +38,51 @@ _logger = get_logger(__name__)
 
 def log(msg: str) -> None:
     _logger.debug("[GameRuntime] %s", msg)
+
+
+def centered_aspect_rect(
+    container: QRect,
+    aspect_width: int,
+    aspect_height: int,
+    inset: int = 0,
+) -> QRect:
+    inner = container.adjusted(inset, inset, -inset, -inset)
+    if inner.width() * aspect_height <= inner.height() * aspect_width:
+        width = max(1, inner.width())
+        height = max(1, width * aspect_height // aspect_width)
+    else:
+        height = max(1, inner.height())
+        width = max(1, height * aspect_width // aspect_height)
+    x = inner.x() + (inner.width() - width) // 2
+    y = inner.y() + (inner.height() - height) // 2
+    return QRect(x, y, width, height)
+
+
+def aspect_resize_geometry(
+    start: QRect,
+    edges: set[str],
+    delta: QPoint,
+    minimum_width: int,
+    aspect_width: int,
+    aspect_height: int,
+) -> QRect:
+    width_delta = 0
+    height_delta = 0
+    if "left" in edges:
+        width_delta = -delta.x()
+    elif "right" in edges:
+        width_delta = delta.x()
+    if "top" in edges:
+        height_delta = -delta.y()
+    elif "bottom" in edges:
+        height_delta = delta.y()
+    width_from_height = round(height_delta * aspect_width / aspect_height)
+    effective_delta = width_delta if abs(width_delta) >= abs(width_from_height) else width_from_height
+    width = max(int(minimum_width), int(start.width() + effective_delta))
+    height = max(1, round(width * aspect_height / aspect_width))
+    x = start.right() - width + 1 if "left" in edges else start.x()
+    y = start.bottom() - height + 1 if "top" in edges else start.y()
+    return QRect(x, y, width, height)
 
 
 @dataclass(frozen=True)
@@ -57,6 +102,12 @@ class GameRuntimePanel(QWidget):
     _LAYER = scale_px(4, min_abs=1)
     _BORDER = _LAYER * 2
     _RESIZE_MARGIN = scale_px(12, min_abs=1)
+    _ASPECT_WIDTH = 10
+    _ASPECT_HEIGHT = 8
+    _DEFAULT_WIDTH = 1000
+    _DEFAULT_HEIGHT = 800
+    _MINIMUM_WIDTH = 600
+    _MINIMUM_HEIGHT = 480
 
     _C_BORDER = QColor(25, 16, 58)
     _C_MID = QColor(145, 122, 232)
@@ -74,7 +125,13 @@ class GameRuntimePanel(QWidget):
         )
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFocusPolicy(Qt.StrongFocus)
-        get_topmost_manager().register(self)
+        get_layer_manager().register(self, Layer.PANEL)
+        self._render_core = RenderCore()
+        self._render_core.register_item(RenderRequest(
+            'game_runtime_panel_shell',
+            self._paint_panel_layer,
+            Layer.PANEL,
+        ))
 
         self._font = get_ui_font()
         self._font.setBold(True)
@@ -82,14 +139,17 @@ class GameRuntimePanel(QWidget):
         self._active_game_name = "拉海洛方块"
         self._game_widget = LahaiTetrisWidget(self)
         self._game_widget.set_close_callback(self._handle_game_close_request)
-        self.setMinimumSize(scale_px(980, min_abs=1), scale_px(620, min_abs=1))
-        self.resize(scale_px(1056, min_abs=1), scale_px(806, min_abs=1))
+        self._game_widget.set_fullscreen_callback(self.toggle_fullscreen)
+        self.setMinimumSize(self._MINIMUM_WIDTH, self._MINIMUM_HEIGHT)
+        self.resize(self._DEFAULT_WIDTH, self._DEFAULT_HEIGHT)
         self._drag_origin: QPoint | None = None
         self._resize_origin: QPoint | None = None
         self._resize_edges: set[str] = set()
         self._resize_start_geometry: QRect | None = None
         self._fading_out = False
         self._allow_hide_once = False
+        self._fullscreen_active = False
+        self._normal_geometry = QRect()
         self._opacity_anim = QPropertyAnimation(self, b'windowOpacity', self)
         self._opacity_anim.setDuration(UI.get('ui_fade_duration', 180))
         self._opacity_anim.setEasingCurve(QEasingCurve.InOutQuad)
@@ -104,12 +164,13 @@ class GameRuntimePanel(QWidget):
         self.update()
 
     def _refresh_size(self) -> None:
-        content_w = self.width() - self._BORDER * 2
-        content_h = self.height() - self._BORDER * 2
-        game_x = self._BORDER
-        game_y = self._BORDER
-        self._game_widget.resize(content_w, content_h)
-        self._game_widget.move(game_x, game_y)
+        inset = 0 if self._fullscreen_active else self._BORDER
+        self._game_widget.setGeometry(centered_aspect_rect(
+            self.rect(),
+            self._ASPECT_WIDTH,
+            self._ASPECT_HEIGHT,
+            inset,
+        ))
 
     def get_game_middle_third_rect_global(self) -> QRect:
         """
@@ -133,6 +194,8 @@ class GameRuntimePanel(QWidget):
         return QRect(top_left, middle_rect.size())
 
     def _hit_test_edges(self, pos) -> set[str]:
+        if self._fullscreen_active:
+            return set()
         edges: set[str] = set()
         if pos.x() <= self._RESIZE_MARGIN:
             edges.add("left")
@@ -157,6 +220,8 @@ class GameRuntimePanel(QWidget):
             self.setCursor(Qt.ArrowCursor)
 
     def move_to_screen_center(self) -> None:
+        if self._fullscreen_active:
+            return
         screen = get_screen_geometry_for_point(fallback_widget=self)
         x = screen.x() + (screen.width() - self.width()) // 2
         y = screen.y() + (screen.height() - self.height()) // 2
@@ -169,15 +234,54 @@ class GameRuntimePanel(QWidget):
     def activate(self) -> None:
         self._game_widget.reset_game(start_running=False)
         self._game_widget.show()
-        self._game_widget.raise_()
+        get_layer_manager().bring_to_front(self)
         self.activateWindow()
         self._game_widget.setFocus(Qt.ActiveWindowFocusReason)
         # 重新激活小游戏后，系统可能在后续几十毫秒内继续调整 z-order，
         # 用短时连续重排把 overlay 稳定保持在 runtime 之上。
-        get_topmost_manager().enforce_burst()
+        get_layer_manager().enforce_burst()
+
+    def toggle_fullscreen(self) -> None:
+        if self._fullscreen_active:
+            self.exit_fullscreen()
+        else:
+            self.enter_fullscreen()
+
+    def enter_fullscreen(self) -> None:
+        if self._fullscreen_active:
+            return
+        self._normal_geometry = QRect(self.geometry())
+        self._fullscreen_active = True
+        self._drag_origin = None
+        self._resize_origin = None
+        self._resize_start_geometry = None
+        self._resize_edges.clear()
+        self.setCursor(Qt.ArrowCursor)
+        self.showFullScreen()
+        self._refresh_size()
+        self.update()
+        self._game_widget.setFocus(Qt.ActiveWindowFocusReason)
+        get_layer_manager().bring_to_front(self)
+
+    def exit_fullscreen(self) -> None:
+        if not self._fullscreen_active:
+            return
+        restore_geometry = QRect(self._normal_geometry)
+        self._fullscreen_active = False
+        self.showNormal()
+        if restore_geometry.isValid():
+            self.setGeometry(restore_geometry)
+        else:
+            self.resize(self._DEFAULT_WIDTH, self._DEFAULT_HEIGHT)
+            self.move_to_screen_center()
+        self._refresh_size()
+        self.update()
+        QTimer.singleShot(0, lambda: self._game_widget.setFocus(Qt.ActiveWindowFocusReason))
+        get_layer_manager().bring_to_front(self)
 
     def deactivate(self) -> None:
         self._game_widget.deactivate()
+        self.exit_fullscreen()
 
     def fade_in(self) -> None:
         self._opacity_anim.stop()
@@ -185,9 +289,9 @@ class GameRuntimePanel(QWidget):
         self._allow_hide_once = False
         self.setWindowOpacity(0.0)
         self.show()
-        self.raise_()
+        get_layer_manager().bring_to_front(self)
         # show()/raise_() 后不仅当前帧会改 z-order，激活链路也可能稍后再次调整。
-        get_topmost_manager().enforce_burst()
+        get_layer_manager().enforce_burst()
         self._opacity_anim.setStartValue(0.0)
         self._opacity_anim.setEndValue(apply_ui_opacity(1.0))
         self._opacity_anim.start()
@@ -224,6 +328,9 @@ class GameRuntimePanel(QWidget):
         runtime.close_panel()
 
     def mousePressEvent(self, event) -> None:
+        if self._fullscreen_active:
+            event.accept()
+            return
         if event.button() != Qt.LeftButton:
             super().mousePressEvent(event)
             return
@@ -236,22 +343,24 @@ class GameRuntimePanel(QWidget):
             self._drag_origin = event.globalPos() - self.frameGeometry().topLeft()
         event.accept()
 
+    def keyPressEvent(self, event) -> None:
+        if event.key() == Qt.Key_F11:
+            self.toggle_fullscreen()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
     def mouseMoveEvent(self, event) -> None:
         if self._resize_origin is not None and self._resize_start_geometry is not None and self._resize_edges:
             delta = event.globalPos() - self._resize_origin
-            geom = QRect(self._resize_start_geometry)
-            min_w = self.minimumWidth()
-            min_h = self.minimumHeight()
-            if "left" in self._resize_edges:
-                new_left = min(geom.right() - min_w, geom.left() + delta.x())
-                geom.setLeft(new_left)
-            if "right" in self._resize_edges:
-                geom.setRight(max(geom.left() + min_w, geom.right() + delta.x()))
-            if "top" in self._resize_edges:
-                new_top = min(geom.bottom() - min_h, geom.top() + delta.y())
-                geom.setTop(new_top)
-            if "bottom" in self._resize_edges:
-                geom.setBottom(max(geom.top() + min_h, geom.bottom() + delta.y()))
+            geom = aspect_resize_geometry(
+                self._resize_start_geometry,
+                self._resize_edges,
+                delta,
+                self._MINIMUM_WIDTH,
+                self._ASPECT_WIDTH,
+                self._ASPECT_HEIGHT,
+            )
             self.setGeometry(geom)
             event.accept()
             return
@@ -277,7 +386,14 @@ class GameRuntimePanel(QWidget):
 
     def paintEvent(self, event) -> None:
         painter = QPainter(self)
+        self._render_core.render(painter, self.rect())
+        painter.end()
+
+    def _paint_panel_layer(self, painter: QPainter, _target_rect) -> None:
         painter.setRenderHint(QPainter.Antialiasing, False)
+        if self._fullscreen_active:
+            painter.fillRect(self.rect(), Qt.black)
+            return
         painter.fillRect(self.rect(), self._C_BORDER)
         painter.fillRect(
             self.rect().adjusted(self._LAYER, self._LAYER, -self._LAYER, -self._LAYER),
@@ -289,7 +405,6 @@ class GameRuntimePanel(QWidget):
             content.adjusted(scale_px(3, min_abs=1), scale_px(3, min_abs=1), -scale_px(3, min_abs=1), -scale_px(3, min_abs=1)),
             QColor(88, 68, 166),
         )
-        painter.end()
 
 class GameRuntime:
     """小游戏 runtime 控制器。"""

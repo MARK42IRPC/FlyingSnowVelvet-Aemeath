@@ -1,0 +1,238 @@
+统一绘制模块改造计划清单
+========================
+
+推进进度
+--------
+更新时间：2026-07-12
+
+已完成：
+1. 新增 lib/core/layer.py，定义统一 Layer 枚举与层级工具函数。
+2. 新增 lib/core/layer_manager.py，集中管理顶层窗口 layer/z/注册顺序与 Win32 置顶重申。
+3. 重构 lib/core/topmost_manager.py 为兼容包装，旧 register()/enforce_*() 调用转发到 LayerManager。
+4. 接入 PetWindow 到 Layer.MAIN_PET。
+5. 接入 ParticleOverlay 到 Layer.PARTICLE，并移除核心路径裸 raise_()。
+6. 接入 EffectOverlay 到 Layer.EFFECT，并移除核心路径裸 raise_()。
+7. 扩展 DrawRequest，支持 layer/z/order。
+8. 扩展 DrawCore.render()，按 (layer, z, order) 稳定排序。
+9. 扩展 DRAW_REQUEST dict 数据格式，支持 layer/z 透传。
+10. 新增 lib/core/unified_draw.py 作为统一绘制模块门面。
+11. 新增 lib/core/render_layer.py 与 lib/core/render_core.py，提供非窗口级绘制项队列基础。
+12. 迁移常用主 UI 到 Layer.PET_UI。
+13. 迁移播放列表、命令窗口、小游戏面板、AI 设置面板等到 Layer.PANEL。
+14. 迁移二维码/更新弹窗到 Layer.DIALOG，启动/退出动画窗口到 Layer.SYSTEM_MODAL。
+15. 迁移沙发、雪豹、雪球、雪堆、闹钟、音响、摩托等独立物件到 Layer.WORLD_OBJECT。
+16. 清理核心顶层窗口路径中的裸 raise_()，改由 LayerManager/TopmostManager 兼容入口调度。
+17. 新增 LayerManager.describe_snapshot()，支持输出当前窗口层级快照。
+18. 新增 #图层 调试命令，运行时可通过信息气泡查看已注册窗口栈。
+19. 业务模块层级注册已统一改走 lib/core/unified_draw.py，topmost_manager.py 保留为旧接口兼容层。
+20. 统一 DrawCore、RenderCore、LayerManager 排序键：先按 layer，再按 z；两者相同时按生成顺序后来居上。
+21. 明确组件接入规范：顶层窗口必须显式注册 Layer，禁止业务代码用裸 raise_() 抢占全局窗口层级。
+22. 新增 config/config_layer.py，支持集中设置全部 Layer 数值，无需挂载控制面板，修改后重启生效。
+23. 重型运行资源改由 resc.net.txt 管理，安装脚本按缺失资源下载，仓库不再内置 Vosk 模型、启动动画、浏览器运行时和 Python 安装器。
+
+进行中：
+1. 评估各类 UI 是否需要进一步拆分 z 值，例如 PET_UI 内按钮、气泡、菜单的细粒度顺序。
+2. 将粒子/特效进一步迁入 RenderCore 或统一 RenderOverlay。
+
+待完成：
+1. 评估 ParticleOverlay 与 EffectOverlay 是否合并为 RenderOverlay。
+2. 进一步整理 PET_UI/PANEL 内部 z 值；未显式拆分 z 时，同级组件按生成顺序后来居上。
+
+组件接入规范
+------------
+1. 新增顶层 QWidget/Overlay 必须通过 lib/core/unified_draw.py 获取 Layer 与 LayerManager，并显式注册所属 Layer。
+2. 业务代码禁止使用裸 raise_() 调整顶层窗口顺序；窗口层级重申统一走 LayerManager。
+3. QWidget 内部子控件可使用 raise_() 调整父窗口内部堆叠，该行为不属于全局窗口层级管理。
+4. 非窗口绘制项优先注册到 RenderCore；主宠物帧资源继续使用 DrawCore。
+5. 全部绘制路径采用统一顺序：layer 数值越大越靠前，z 数值越大越靠前；layer 与 z 相同时，按生成顺序绘制，后来生成者覆盖在上。
+6. 重复更新同一组件保留原生成顺序；组件注销后重新注册视为重新生成，将获得新的顺序并位于同级旧组件上方。
+7. 各层级数值统一在 config/config_layer.py 的 LAYER_VALUES 中配置；配置仅在模块首次导入时读取，运行中修改不会热更新。
+
+目标
+----
+在 lib/core 中建立统一绘制与图层管理模块，收敛主宠物、粒子、特效、独立物件、悬浮 UI、弹窗等所有运行期可视对象的层级控制入口，避免各模块分散调用 show()/raise_()/WindowStaysOnTopHint 导致层级互抢。
+
+当前问题
+--------
+1. DrawCore 只负责主宠物 GIF/帧绘制，没有统一管理粒子、特效、UI 和独立物件窗口。
+2. DrawRequest 没有 layer、z、order 等排序字段，当前渲染依赖 dict 插入顺序，不适合作为层级系统。
+3. ParticleOverlay、EffectOverlay、PetWindow、多个 UI/对象窗口各自 show()/raise_()，没有统一调度。
+4. TopmostManager 只解决“窗口置顶保持”，不是完整的绘制层级系统；priority 粒度过粗。
+5. 特效内部已有 effect.z 排序，但只在 EffectOverlay 内生效，无法与主宠物、粒子、UI 层统一比较。
+6. 新增绘制组件时缺少强约束，容易继续复制 Qt.Tool + WindowStaysOnTopHint + raise_() 的散落写法。
+
+核心原则
+--------
+1. 统一入口：所有运行期可视对象必须经过 lib/core 的统一绘制/层级模块注册。
+2. 分层管理：窗口 z-order 与单窗口内部绘制顺序都使用同一套 layer 语义。
+3. 渐进迁移：先统一顶层窗口层级，再逐步合并绘制队列，避免一次性大重构引发回归。
+4. 兼容旧接口：保留 get_draw_core()、TopmostManager 常用方法的兼容入口，减少脚本层改造成本。
+5. 禁止裸 raise：业务模块不直接调用 raise_() 调整层级，改由统一模块执行。
+
+建议新增模块
+------------
+1. lib/core/layer.py
+   - 定义 Layer 枚举与默认层级常量。
+   - 提供 normalize_layer()、layer_name() 等轻量工具。
+
+2. lib/core/layer_manager.py
+   - 统一注册 QWidget 顶层窗口和 overlay。
+   - 提供 register(widget, layer, z=0, name=None)、unregister(widget)、set_layer(widget, layer, z=0)。
+   - 提供 enforce_now()、enforce_on_frame()、bring_to_front(widget)、raise_layer(layer)。
+   - 内部替代/整合 TopmostManager 的 Win32 SetWindowPos(HWND_TOPMOST) 能力。
+   - 按 (layer, z, register_seq) 稳定排序，低层先设置，高层后设置。
+
+3. lib/core/render_layer.py
+   - 定义 RenderLayer/RenderItem/RenderRequest 数据结构。
+   - 描述单窗口内部绘制项的 layer、z、seq、visible、opacity、paint 回调等属性。
+
+4. lib/core/render_core.py
+   - 新的统一绘制核心，管理可绘制 item 队列。
+   - 提供 register_item()、remove_item()、render(painter, target_rect=None)。
+   - 与现有 DrawCore 兼容，DrawCore 可逐步迁入或作为 RenderCore 的资源型 item 提供者。
+
+5. lib/core/unified_draw.py
+   - 对外门面模块，集中导出 get_layer_manager()、get_render_core()、get_draw_core() 兼容接口。
+   - 后续业务模块优先从这里接入，减少直接依赖具体实现。
+
+建议 Layer 定义
+--------------
+1. BACKGROUND = 0
+   - 预留背景、桌面底部装饰。
+
+2. WORLD_OBJECT = 100
+   - 沙发、雪球、雪堆、雪豹等独立物件窗口。
+
+3. MAIN_PET = 200
+   - 主宠物 PetWindow。
+
+4. PET_EFFECT_BELOW = 250
+   - 需要位于主宠物附近但低于粒子的局部效果。
+
+5. PARTICLE = 300
+   - ParticleOverlay。
+
+6. EFFECT = 400
+   - EffectOverlay，保留 effect.z 作为 EFFECT 层内排序。
+
+7. PET_UI = 500
+   - 关闭按钮、穿透按钮、缩放按钮、气泡、命令提示等宠物附属 UI。
+
+8. PANEL = 600
+   - 播放列表、设置面板、搜索框等常规交互面板。
+
+9. DIALOG = 700
+   - 登录二维码、更新对话框等需要明确压过普通 UI 的弹窗。
+
+10. TOOLTIP = 800
+    - tooltip、临时提示、悬浮说明。
+
+11. SYSTEM_MODAL = 900
+    - 退出确认、严重错误提示等最高业务层。
+
+接入清单
+--------
+第一阶段：窗口层级统一
+1. PetWindow
+   - 文件：lib/core/pet_window.py
+   - 注册到 Layer.MAIN_PET。
+   - 移除每帧直接 self.raise_()，改为 LayerManager.enforce_on_frame()。
+
+2. ParticleOverlay
+   - 文件：lib/core/qt_particle_system.py
+   - 注册到 Layer.PARTICLE。
+   - show() 后不直接 raise_()，改为 LayerManager.bring_to_front(self) 或 enforce_now()。
+
+3. EffectOverlay
+   - 文件：lib/core/qt_effect_system.py
+   - 注册到 Layer.EFFECT。
+   - 保留内部 effect.z 排序，同时纳入全局层级。
+
+4. TopmostManager
+   - 文件：lib/core/topmost_manager.py
+   - 改造成 LayerManager 的兼容包装，或由 LayerManager 复用其 Win32 API 代码。
+   - 保留 register()/enforce_on_frame()/enforce_now()/enforce_burst()，但内部转发到 LayerManager。
+
+第二阶段：主绘制请求排序
+1. DrawRequest
+   - 文件：lib/core/draw_core.py
+   - 增加 layer、z、order 字段。
+   - add_draw_request() 记录稳定 seq。
+   - render() 按 (layer, z, seq) 排序。
+
+2. DRAW_REQUEST 事件
+   - 文件：lib/core/pet_window.py、lib/core/event/center.py
+   - 支持 data 中传入 layer、z。
+   - 旧格式默认 Layer.MAIN_PET。
+
+第三阶段：UI 层级统一
+1. PetWindow 主 UI 工厂
+   - 文件：lib/core/pet_window_ui_factory.py
+   - 创建 UI 后统一注册 Layer.PET_UI / Layer.PANEL。
+
+2. 常用 UI 组件
+   - 文件：lib/script/ui/close_button.py、clickthrough_button.py、scale_button.py、bubble.py、command_dialog.py、command_hint_box.py 等。
+   - 移除分散的裸 raise_()，按组件类型接入 LayerManager。
+
+3. 弹窗类
+   - 文件：lib/script/ui/update_dialog.py、cloudmusic_login_dialog.py、yuanbao_login_dialog.py、ai_settings_panel.py 等。
+   - 注册 Layer.DIALOG 或 Layer.PANEL。
+
+第四阶段：独立物件统一
+1. 沙发
+   - 文件：lib/script/obj-沙发/sofa.py
+   - 注册 Layer.WORLD_OBJECT。
+
+2. 雪豹、雪球、雪堆等对象
+   - 文件：lib/script/obj-雪豹/、lib/script/obj-雪球/、lib/script/obj-雪堆/。
+   - 注册 Layer.WORLD_OBJECT，禁止自行抢占顶层。
+
+第五阶段：统一 Overlay 可选收敛
+1. 新建 RenderOverlay
+   - 将 ParticleOverlay、EffectOverlay 合并为一个透明覆盖层。
+   - 内部按 RenderItem 的 layer/z 统一绘制。
+
+2. 粒子/特效绘制项化
+   - 粒子系统输出 RenderItem 或 paint callback。
+   - 特效系统输出 RenderItem，effect.z 映射为 RenderItem.z。
+
+3. 保留兼容路径
+   - 短期允许旧 Overlay 与新 RenderCore 并存。
+   - 长期目标是全局只有主宠物窗口 + 统一 overlay + 必要弹窗。
+
+验收标准
+--------
+1. lib/core 中存在统一绘制/层级入口，新增可视组件有明确接入方式。
+2. PetWindow、ParticleOverlay、EffectOverlay 已接入统一 layer，不再互相裸 raise。
+3. DrawCore 支持 layer/z 排序，主绘制请求顺序可控。
+4. TopmostManager 不再作为业务层直接依赖的唯一层级入口。
+5. 新增文档说明各 Layer 的职责和适用组件。
+6. 启动、移动、粒子、特效、气泡、弹窗在常规场景下层级稳定。
+
+风险与注意事项
+--------------
+1. Windows 顶层窗口 z-order 与 Qt raise_() 存在异步行为，需要保留 enforce_burst() 兜底。
+2. 穿透模式下需要继续尊重 TopmostManager/LayerManager 的 pause()/resume() 行为，避免干扰全屏应用。
+3. 独立 QWidget 跨窗口无法像单 painter 内部一样精确混排，第一阶段只能做到窗口级 layer。
+4. 合并 Overlay 可能影响粒子/特效清屏、透明背景和性能，需要单独压测。
+5. 大量 UI 组件使用 Qt.Tool，迁移时要避免改变焦点、鼠标穿透、任务栏显示等行为。
+
+建议实施顺序
+------------
+1. 新增 Layer/LayerManager/UnifiedDraw 基础模块。
+2. 用 LayerManager 包装 TopmostManager 能力，保持旧接口可用。
+3. 接入 PetWindow、ParticleOverlay、EffectOverlay 三个核心层。
+4. 扩展 DrawRequest layer/z 排序。
+5. 分批迁移 UI 与独立物件窗口。
+6. 补充文档和最小验证脚本。
+7. 评估是否进入 RenderOverlay 合并阶段。
+
+最小验证清单
+------------
+1. 启动程序后主宠物正常显示。
+2. 主宠物移动时粒子显示在主宠物上方。
+3. 特效显示在粒子或指定层级上方。
+4. 气泡、命令框、按钮显示在主宠物和特效上方。
+5. 登录/更新/设置弹窗显示在普通 UI 上方。
+6. 鼠标穿透模式切换后层级不抖动，鼠标事件行为不变。
+7. 退出清理时所有注册窗口不会残留或触发已销毁对象异常。

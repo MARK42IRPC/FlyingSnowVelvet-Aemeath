@@ -10,6 +10,7 @@ from config.config_entities import SNOW_LEOPARD, SNOW_PILE, SOFA, MORTOR, CLOCK,
 from config.config_music import SOUND, SPEAKER_AUDIO, SPEAKER_SEARCH_UI, CLOUD_MUSIC
 from config.config_voice import CHAT, VOICE
 from config.config_timeouts import TOOL_DISPATCHER, TIMEOUTS
+from config.config_layer import LAYER_VALUES
 
 __all__ = [
     'FONT',
@@ -42,4 +43,5 @@ __all__ = [
     'VOICE',
     'TOOL_DISPATCHER',
     'TIMEOUTS',
+    'LAYER_VALUES',
 ]

@@ -34,9 +34,9 @@ BEHAVIOR = {
     'random_states': ['boring', 'happy', 'wave', 'play', 'jumping'],
     'double_click_ticks': 4,   # 双击判定间隔（tick，1 tick = 50ms，默认 4 tick = 200ms）
     # 移动加速/减速参数
-    'move_min_speed': 3.0,          # 最低速度（起步和结束速度，基础移速 *3）
-    'move_acceleration': 0.3,       # 起步加速度（每帧增加的速度，保持原有手感比例）
-    'move_max_speed': 6.0,          # 最大速度（基础移速 *3）
+    'move_min_speed': 2.5,  # 最低速度（上一版默认值的三分之一）
+    'move_acceleration': 0.25,  # 起步加速度（上一版默认值的三分之一）
+    'move_max_speed': 5.0,  # 最大速度（上一版默认值的三分之一）
     'move_decel_distance': scale_px(100),  # 开始减速的距离（像素）
 }
 PARTICLES = {

@@ -45,6 +45,7 @@ EXCLUDE_PATH_PREFIXES = {
     Path("config") / ".shared_pending",
     Path("resc") / "models",
     Path("resc") / "playwright",
+    Path("resc") / "GIF" / "SEanima",
     Path("resc") / "user",
     Path("resc") / "gsvmove_update",
 }
@@ -52,7 +53,11 @@ EXCLUDE_PATH_PREFIXES = {
 EXCLUDE_EXACT_PATHS = {
     Path("config") / "user_scale.json",
     Path("config") / "music" / "volume.json",
-    Path("resc") / "chrome-win64.zip",
+    Path("resc") / "python-3.11.6-amd64.exe",
+    Path("resc") / "GIF" / "SEanima.zip",
+    Path("resc") / "chrome-runtime.zip",
+    Path("resc") / "chrome-runtime.z01",
+    Path("resc") / "chrome-runtime.z02",
     Path("services") / "storage_state.json",
 }
 

@@ -10,7 +10,7 @@ import time
 from config.config import COLORS, UI
 from config.scale import scale_px
 from lib.core.event.center import get_event_center, EventType, Event
-from lib.core.topmost_manager import get_topmost_manager
+from lib.core.unified_draw import Layer, get_layer_manager
 from lib.core.screen_utils import clamp_rect_position
 from lib.core.anchor_utils import apply_ui_opacity
 
@@ -42,7 +42,7 @@ class MicSttIndicator(QWidget):
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setCursor(Qt.PointingHandCursor)
         self.setFixedSize(self.SIZE, self.SIZE)
-        get_topmost_manager().register(self)
+        get_layer_manager().register(self, Layer.PET_UI)
 
         self._opacity = QGraphicsOpacityEffect(self)
         self._opacity.setOpacity(0.0)

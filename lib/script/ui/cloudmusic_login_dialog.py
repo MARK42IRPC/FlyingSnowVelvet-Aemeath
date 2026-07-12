@@ -8,6 +8,7 @@ from PyQt5.QtGui import QPainter
 from config.config import UI_THEME
 from config.scale import scale_px
 from lib.core.event.center import Event, EventType, get_event_center
+from lib.core.layer_manager import get_layer_manager
 from lib.script.ui.qr_dialog_base import BaseQrDialog
 
 
@@ -69,7 +70,7 @@ class CloudMusicLoginDialog(BaseQrDialog):
             return
         try:
             self.show()
-            self.raise_()
+            get_layer_manager().bring_to_front(self)
         except Exception:
             return
 

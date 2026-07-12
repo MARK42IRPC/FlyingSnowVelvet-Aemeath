@@ -124,14 +124,23 @@ class MusicService:
     def get_provider(self) -> MusicProvider:
         return self._providers[self._provider_name]
 
-    def search(self, keyword: str, mode: str = "song", limit: int = 25) -> list[MusicTrack]:
+    def search(
+        self,
+        keyword: str,
+        mode: str = "song",
+        limit: int = 25,
+        *,
+        fallback_enabled: bool | None = None,
+    ) -> list[MusicTrack]:
+        if fallback_enabled is None:
+            fallback_enabled = self._search_fallback_enabled()
         tracks = self._router.search(
             providers=self._providers,
             primary_provider=self._provider_name,
             keyword=keyword,
             mode=mode,
             limit=limit,
-            fallback_enabled=self._search_fallback_enabled(),
+            fallback_enabled=bool(fallback_enabled),
             fallback_order=self._search_provider_order(),
         )
         if not bool(CLOUD_MUSIC.get("search_append_source_label", True)):
@@ -155,8 +164,15 @@ class MusicService:
             )
         return normalized
 
-    def search_first(self, keyword: str, mode: str = "song", limit: int = 20) -> MusicTrack | None:
-        tracks = self.search(keyword, mode=mode, limit=limit)
+    def search_first(
+        self,
+        keyword: str,
+        mode: str = "song",
+        limit: int = 20,
+        *,
+        fallback_enabled: bool | None = None,
+    ) -> MusicTrack | None:
+        tracks = self.search(keyword, mode=mode, limit=limit, fallback_enabled=fallback_enabled)
         return tracks[0] if tracks else None
 
     def provider_label(self, provider_name: str | None = None) -> str:

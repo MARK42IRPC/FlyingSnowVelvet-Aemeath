@@ -4,6 +4,8 @@ from PyQt5.QtGui import QPainter, QPixmap, QImage, QTransform
 from PyQt5.QtCore import QRect, QPoint, Qt
 from dataclasses import dataclass
 
+from lib.core.layer import Layer, draw_order_key, normalize_layer
+
 
 @dataclass
 class DrawRequest:
@@ -14,6 +16,9 @@ class DrawRequest:
     alpha: float = 1.0    # 透明度
     flipped: bool = False # 是否水平翻转
     scale: float = 1.0    # 缩放比例
+    layer: int = int(Layer.MAIN_PET)  # 绘制层级
+    z: int = 0           # 同层内排序，越大越靠前
+    order: int = 0       # 稳定插入顺序，由 DrawCore 写入
 
 
 class DrawCore:
@@ -32,6 +37,7 @@ class DrawCore:
         
         # 活跃绘制请求
         self._active_requests: Dict[str, DrawRequest] = {}
+        self._request_seq: int = 0
 
         # 基础像素图缓存: (resource_id, frame_index) -> QPixmap
         self._frame_pixmap_cache: Dict[Tuple[str, int], QPixmap] = {}
@@ -140,11 +146,21 @@ class DrawCore:
             # 清除所有其他请求，只保留当前请求
             self._active_requests.clear()
 
-        if request.resource_id in self._active_requests:
+        request.layer = normalize_layer(request.layer, Layer.MAIN_PET)
+        try:
+            request.z = int(request.z)
+        except (TypeError, ValueError):
+            request.z = 0
+
+        existing = self._active_requests.get(request.resource_id)
+        if existing is not None:
             # 更新现有请求
+            request.order = existing.order
             self._active_requests[request.resource_id] = request
         else:
             # 添加新请求
+            self._request_seq += 1
+            request.order = self._request_seq
             self._active_requests[request.resource_id] = request
 
     def remove_draw_request(self, resource_id: str):
@@ -171,7 +187,12 @@ class DrawCore:
         # 关闭高质量抗锯齿可明显降低主线程绘制开销。
         painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
 
-        for request in self._active_requests.values():
+        requests = sorted(
+            self._active_requests.values(),
+            key=lambda item: draw_order_key(item.layer, item.z, item.order, Layer.MAIN_PET),
+        )
+
+        for request in requests:
             # 获取帧
             frame_index = self._resolve_frame_index(request.resource_id, request.frame_index)
             frame = self.get_frame(request.resource_id, frame_index)

@@ -10,7 +10,7 @@ from config.config import COLORS, UI, UI_THEME
 from config.font_config import get_ui_font
 from config.scale import scale_px
 from lib.core.anchor_utils import animate_opacity, apply_ui_opacity
-from lib.core.topmost_manager import get_topmost_manager
+from lib.core.unified_draw import Layer, get_layer_manager
 
 
 def paint_rect_action_button(painter: QPainter, rect, font, text: str, hovered: bool = False) -> None:
@@ -49,7 +49,7 @@ class RectActionButton(QWidget):
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFixedSize(width, height)
         self.setCursor(Qt.PointingHandCursor)
-        get_topmost_manager().register(self)
+        get_layer_manager().register(self, Layer.PET_UI)
 
         self._opacity = QGraphicsOpacityEffect(self)
         self._opacity.setOpacity(0.0)

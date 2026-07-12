@@ -1,6 +1,6 @@
 ﻿# Release Playbook
 
-本文记录飞行雪绒发布流程，适用于 `LTS1.0.6beta7` 及后续版本。发布目标是：版本号一致、文档一致、普通包轻量、绿色包离线友好，并且不把开发机运行状态打进包里。
+本文记录飞行雪绒发布流程，适用于 `LTS1.0.6beta8` 及后续版本。发布目标是：版本号一致、文档一致、普通包轻量、绿色包离线友好，并且不把开发机运行状态打进包里。
 
 ## 1. 发布前版本同步
 
@@ -52,38 +52,39 @@ python scripts/package_green_release.py --dry-run
 ### 普通包
 
 ```powershell
-python scripts/package_release.py --version LTS1.0.6beta7
+python scripts/package_release.py --version LTS1.0.6beta8
 ```
 
 输出示例：
 
-- `dist/FlyingSnowVelvet-LTS1.0.6beta7.zip`
-- `dist/FlyingSnowVelvet-LTS1.0.6beta7-manifest.json`
+- `dist/FlyingSnowVelvet-LTS1.0.6beta8.zip`
+- `dist/FlyingSnowVelvet-LTS1.0.6beta8-manifest.json`
 
-普通包用于联网环境或已有运行资源的用户。它应排除：
+普通包用于联网环境，安装脚本会按 `resc.net.txt` 补齐重型资源。它应排除：
 
+- `resc/models/`
 - `resc/playwright/`
-- `resc/chrome-win64.zip`
+- `resc/GIF/SEanima/`
+- `resc/chrome-runtime.zip`、`resc/chrome-runtime.z01`、`resc/chrome-runtime.z02`
+- `resc/python-3.11.6-amd64.exe`
 - `resc/user/`
 - `logs/`
 - `dist/`
 - 本机配置、缓存、临时文件
+- `C:\AemeathDeskPet\user`、`cache`、`logs` 中的任何本机数据
 
 ### 绿色包
 
 ```powershell
-python scripts/package_green_release.py --version LTS1.0.6beta7
+python scripts/package_green_release.py --version LTS1.0.6beta8
 ```
 
 输出示例：
 
-- `dist/FlyingSnowVelvet-LTS1.0.6beta7-green.zip`
-- `dist/FlyingSnowVelvet-LTS1.0.6beta7-green-manifest.json`
+- `dist/FlyingSnowVelvet-LTS1.0.6beta8-green.zip`
+- `dist/FlyingSnowVelvet-LTS1.0.6beta8-green-manifest.json`
 
-绿色包用于离线或弱网络环境。它可以保留：
-
-- Vosk 等离线模型资源
-- `resc/chrome-win64.zip` 浏览器离线压缩包
+绿色包与普通包保持相同的重型资源边界；离线资源应通过发布渠道单独提供，或在安装前预置到对应 `resc/` 路径。
 
 绿色包仍必须排除：
 
@@ -93,20 +94,20 @@ python scripts/package_green_release.py --version LTS1.0.6beta7
 - `dist/`
 - `__pycache__/`
 - 登录态、Cookie、storage state、API Key
+- `C:\AemeathDeskPet` 下的用户稀疏配置、状态与缓存
 
 ## 4. 发布包内容审查
 
 打包后检查 manifest：
 
 ```powershell
-Get-Content dist\FlyingSnowVelvet-LTS1.0.6beta7-manifest.json | Select-String "playwright|chrome-win64|storage_state|__pycache__"
-Get-Content dist\FlyingSnowVelvet-LTS1.0.6beta7-green-manifest.json | Select-String "playwright|storage_state|__pycache__"
+Get-Content dist\FlyingSnowVelvet-LTS1.0.6beta8-manifest.json | Select-String "playwright|models|SEanima|chrome-runtime|python-3.11|storage_state|__pycache__"
+Get-Content dist\FlyingSnowVelvet-LTS1.0.6beta8-green-manifest.json | Select-String "playwright|models|SEanima|chrome-runtime|python-3.11|storage_state|__pycache__"
 ```
 
 预期：
 
-- 普通包 manifest 不应出现 `resc/chrome-win64.zip` 或 `resc/playwright/`。
-- 绿色包 manifest 可以出现 `resc/chrome-win64.zip`，但不应出现 `resc/playwright/`。
+- 普通包和绿色包 manifest 都不应出现 `resc/models/`、`resc/GIF/SEanima/`、浏览器分卷、Python 安装器或 `resc/playwright/`。
 - 两类包都不应出现运行时登录态或用户缓存。
 
 ## 5. Git 标签与远端发布
@@ -114,9 +115,9 @@ Get-Content dist\FlyingSnowVelvet-LTS1.0.6beta7-green-manifest.json | Select-Str
 示例：
 
 ```powershell
-git tag -a LTS1.0.6beta7 -m "LTS 1.0.6 beta7"
+git tag -a LTS1.0.6beta8 -m "LTS 1.0.6 beta8"
 git push origin main
-git push origin LTS1.0.6beta7
+git push origin LTS1.0.6beta8
 ```
 
 Release 建议上传：

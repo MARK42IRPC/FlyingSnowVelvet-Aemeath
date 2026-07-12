@@ -176,9 +176,14 @@ for /f "delims=" %%I in ('dir /b /a-d "resc\python-3.11*-amd64.exe" 2^>nul') do 
     if not defined BUNDLED_PYTHON_INSTALLER set "BUNDLED_PYTHON_INSTALLER=%CD%\resc\%%I"
 )
 if not defined BUNDLED_PYTHON_INSTALLER (
-    echo [WARN] Bundled Python installer not found under resc\python-3.11*-amd64.exe
-    echo.
-    exit /b 1
+    echo [INFO] Python installer is missing, downloading from resc.net.txt...
+    call :download_manifest_resource "python-3.11.6-amd64.exe" "resc\python-3.11.6-amd64.exe"
+    if errorlevel 1 (
+        echo [WARN] Failed to download Python installer from resc.net.txt
+        echo.
+        exit /b 1
+    )
+    set "BUNDLED_PYTHON_INSTALLER=%CD%\resc\python-3.11.6-amd64.exe"
 )
 echo [INFO] No usable Python detected. Installing bundled Python 3.11...
 echo [INFO] Installer: "%BUNDLED_PYTHON_INSTALLER%"
@@ -194,4 +199,25 @@ if not "%RC%"=="0" (
 echo.
 echo [INFO] Bundled Python install completed, rescanning interpreters...
 echo.
+exit /b 0
+
+:download_manifest_resource
+set "RESOURCE_NAME=%~1"
+set "RESOURCE_TARGET=%~2"
+if not exist "resc.net.txt" (
+    echo [WARN] Resource link file not found: %CD%\resc.net.txt
+    exit /b 1
+)
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$ErrorActionPreference='Stop';" ^
+  "$name=$env:RESOURCE_NAME;" ^
+  "$target=[System.IO.Path]::GetFullPath($env:RESOURCE_TARGET);" ^
+  "$url=Get-Content -LiteralPath 'resc.net.txt' -Encoding UTF8 | ForEach-Object {$_.Trim()} | Where-Object {$_ -and -not $_.StartsWith('#')} | Where-Object {try{[System.Uri]::UnescapeDataString(([System.Uri]$_).Segments[-1]) -eq $name}catch{$false}} | Select-Object -First 1;" ^
+  "if(-not $url){throw ('Resource URL not found: '+$name)};" ^
+  "$parent=[System.IO.Path]::GetDirectoryName($target); if($parent){[System.IO.Directory]::CreateDirectory($parent) | Out-Null};" ^
+  "$part=$target+'.part'; Remove-Item -LiteralPath $part -Force -ErrorAction SilentlyContinue;" ^
+  "Write-Host ('[INFO] Downloading '+$name);" ^
+  "Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $part;" ^
+  "Move-Item -LiteralPath $part -Destination $target -Force"
+if errorlevel 1 exit /b 1
 exit /b 0

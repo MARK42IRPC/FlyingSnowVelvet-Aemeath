@@ -8,7 +8,7 @@
 4. 写入 py.ini:
    - python_executable
    - pythonw_executable
-5. 下载 Vosk 中/英文模型到 resc/models/vosk-model-small-*/.
+5. 按 resc.net.txt 下载缺失的 Vosk、动画和浏览器资源.
 6. 准备本地网页中转服务源码.
 7. 启动主程序.
 """
@@ -20,16 +20,27 @@ import os
 import re
 import shutil
 import socket
+import struct
 import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Optional
 
 PROJECT_ROOT = Path(__file__).parent
+RESOURCE_LINKS_FILE = PROJECT_ROOT / "resc.net.txt"
+RESOURCE_SOURCE_HOSTS = {
+    "gitee.com": "Gitee",
+    "github.com": "GitHub",
+}
+RESOURCE_PING_ATTEMPTS = 3
+RESOURCE_PING_TIMEOUT_SECONDS = 5.0
+_RESOURCE_SOURCE_ORDER: tuple[str, ...] | None = None
 
 # 最低支持 Python 版本
 MIN_VERSION = (3, 7, 0)
@@ -82,7 +93,12 @@ YUANBAO_SERVICE_REQUIRED_FILES = ("app.py", "requirements.txt")
 PLAYWRIGHT_RUNTIME_ROOT = PROJECT_ROOT / "resc" / "playwright"
 PLAYWRIGHT_BROWSERS_ROOT = PLAYWRIGHT_RUNTIME_ROOT / "browsers"
 PLAYWRIGHT_CHROMIUM_REVISION = "1208"
-PLAYWRIGHT_RUNTIME_ARCHIVE = PROJECT_ROOT / "resc" / "chrome-win64.zip"
+PLAYWRIGHT_RUNTIME_RESOURCE_NAMES = (
+    "chrome-runtime.z01",
+    "chrome-runtime.z02",
+    "chrome-runtime.zip",
+)
+PLAYWRIGHT_RUNTIME_ARCHIVE = PROJECT_ROOT / "resc" / PLAYWRIGHT_RUNTIME_RESOURCE_NAMES[-1]
 PLAYWRIGHT_RUNTIME_TARGET_DIR = PLAYWRIGHT_BROWSERS_ROOT / "ms-playwright" / f"chromium-{PLAYWRIGHT_CHROMIUM_REVISION}"
 PLAYWRIGHT_LOCAL_BROWSER_MARKERS = (
     ("ms-playwright", "chromium-*", "chrome-win64", "chrome.exe"),
@@ -186,18 +202,17 @@ VOSK_MODEL_SPECS = (
     {
         "name": "vosk-model-small-cn-0.22",
         "label": "Chinese",
-        "urls": (
-            {"name": "Official", "url": "https://alphacephei.com/vosk/models/vosk-model-small-cn-0.22.zip"},
-        ),
+        "resource_name": "vosk-model-small-cn-0.22.zip",
     },
     {
         "name": "vosk-model-small-en-us-0.15",
         "label": "English",
-        "urls": (
-            {"name": "Official", "url": "https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip"},
-        ),
+        "resource_name": "vosk-model-small-en-us-0.15.zip",
     },
 )
+SEANIMA_TARGET_DIR = PROJECT_ROOT / "resc" / "GIF" / "SEanima"
+SEANIMA_RESOURCE_NAME = "SEanima.zip"
+SEANIMA_ARCHIVE = PROJECT_ROOT / "resc" / "GIF" / SEANIMA_RESOURCE_NAME
 
 _NOT_FOUND_MARKERS = (
     "no matching distribution found",
@@ -755,6 +770,149 @@ def install_all(python_exe, mirrors):
     return ans == "y"
 
 
+def _ping_once_ms(host: str, timeout: float = RESOURCE_PING_TIMEOUT_SECONDS) -> float | None:
+    timeout = max(0.1, float(timeout))
+    if os.name == "nt":
+        command = ["ping", "-n", "1", "-w", str(int(timeout * 1000)), host]
+    else:
+        command = ["ping", "-c", "1", "-W", str(max(1, int(round(timeout)))), host]
+    try:
+        result = subprocess.run(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            errors="ignore",
+            timeout=timeout + 1.0,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    output = result.stdout or ""
+    matches = re.findall(r"(?:time|\u65f6\u95f4)?\s*[=<]\s*(\d+(?:\.\d+)?)\s*ms", output, flags=re.IGNORECASE)
+    if not matches:
+        return None
+    try:
+        latency = float(matches[-1])
+    except (TypeError, ValueError):
+        return None
+    if "<" in output and latency <= 1.0:
+        return 0.5
+    return max(0.0, latency)
+
+
+def _ping_host_average_ms(
+    host: str,
+    *,
+    attempts: int = RESOURCE_PING_ATTEMPTS,
+    timeout: float = RESOURCE_PING_TIMEOUT_SECONDS,
+) -> float | None:
+    attempts = max(1, int(attempts))
+    timeout = max(0.1, float(timeout))
+    samples = [_ping_once_ms(host, timeout=timeout) for _ in range(attempts)]
+    if all(sample is None for sample in samples):
+        return None
+    timeout_penalty_ms = timeout * 1000.0
+    normalized = [timeout_penalty_ms if sample is None else sample for sample in samples]
+    return sum(normalized) / attempts
+
+
+def _benchmark_resource_sources() -> tuple[str, ...]:
+    global _RESOURCE_SOURCE_ORDER
+    if _RESOURCE_SOURCE_ORDER is not None:
+        return _RESOURCE_SOURCE_ORDER
+
+    hosts = tuple(RESOURCE_SOURCE_HOSTS)
+    print("\n  正在测速资源下载源（各 3 次，单次超时 5 秒）...")
+    with ThreadPoolExecutor(max_workers=len(hosts), thread_name_prefix="resource-ping") as executor:
+        futures = {host: executor.submit(_ping_host_average_ms, host) for host in hosts}
+        scores = {host: futures[host].result() for host in hosts}
+
+    for host in hosts:
+        label = RESOURCE_SOURCE_HOSTS[host]
+        latency = scores[host]
+        if latency is None:
+            print(f"    {label:<6} unreachable")
+        else:
+            print(f"    {label:<6} {latency:>7.1f} ms average")
+
+    _RESOURCE_SOURCE_ORDER = tuple(
+        sorted(
+            hosts,
+            key=lambda host: (
+                scores[host] is None,
+                float("inf") if scores[host] is None else scores[host],
+                hosts.index(host),
+            ),
+        )
+    )
+    selected_host = _RESOURCE_SOURCE_ORDER[0]
+    selected_latency = scores[selected_host]
+    if selected_latency is None:
+        _print_warn("  Gitee 与 GitHub 均不可达，将按清单顺序尝试下载")
+        _RESOURCE_SOURCE_ORDER = hosts
+    else:
+        print(f"  资源下载优先源: {RESOURCE_SOURCE_HOSTS[selected_host]}")
+    return _RESOURCE_SOURCE_ORDER
+
+
+def load_resource_links(path: Path = RESOURCE_LINKS_FILE) -> dict[str, tuple[str, ...]]:
+    """读取资源清单，兼容完整 URL 以及“基础 URL + 文件名”格式。"""
+    if not path.exists():
+        return {}
+
+    links: dict[str, list[str]] = {}
+    base_urls: list[str] = []
+    resource_names: list[str] = []
+    try:
+        lines = path.read_text(encoding="utf-8-sig").splitlines()
+    except OSError:
+        return {}
+
+    for raw_line in lines:
+        value = raw_line.strip()
+        if not value or value.startswith("#"):
+            continue
+        parsed = urllib.parse.urlsplit(value)
+        if parsed.scheme in {"http", "https"}:
+            resource_name = urllib.parse.unquote(Path(parsed.path).name)
+            if not resource_name or parsed.path.endswith("/"):
+                base_urls.append(value.rstrip("/") + "/")
+            else:
+                links.setdefault(resource_name, []).append(value)
+            continue
+        if "/" in value or "\\" in value:
+            continue
+        resource_names.append(value)
+
+    for resource_name in resource_names:
+        encoded_name = urllib.parse.quote(resource_name)
+        for base_url in base_urls:
+            links.setdefault(resource_name, []).append(urllib.parse.urljoin(base_url, encoded_name))
+    return {name: tuple(urls) for name, urls in links.items()}
+
+
+def _order_resource_urls(urls: tuple[str, ...]) -> tuple[str, ...]:
+    source_hosts = {
+        (urllib.parse.urlsplit(url).hostname or "").lower()
+        for url in urls
+    }
+    if not all(host in source_hosts for host in RESOURCE_SOURCE_HOSTS):
+        return urls
+    source_order = _benchmark_resource_sources()
+    host_rank = {host: index for index, host in enumerate(source_order)}
+    return tuple(
+        sorted(
+            urls,
+            key=lambda url: host_rank.get((urllib.parse.urlsplit(url).hostname or "").lower(), len(host_rank)),
+        )
+    )
+
+
+def _resource_urls(resource_name: str) -> tuple[str, ...]:
+    urls = load_resource_links().get(resource_name, ())
+    return _order_resource_urls(urls)
+
 def _format_bytes(num_bytes):
     size = float(max(0, int(num_bytes or 0)))
     units = ("B", "KB", "MB", "GB")
@@ -780,6 +938,12 @@ def _render_transfer_progress(prefix, current, total, start_time):
         bar = "#" * filled + "-" * (bar_width - filled)
         return f"{prefix} [{bar}] {percent:6.2f}% {current_text}/{total_text} {speed_text}"
     return f"{prefix} {current_text} {speed_text}"
+
+
+def _write_progress_line(text: str, *, finish: bool = False) -> None:
+    suffix = "\n" if finish else ""
+    sys.stdout.write("\r" + text.ljust(120) + suffix)
+    sys.stdout.flush()
 
 
 def _unlink_if_exists(path, *, ignore_errors=False):
@@ -918,6 +1082,121 @@ def ensure_yuanbao_service_bundle() -> bool:
     return bundle_ok
 
 
+def _browser_runtime_resource_paths() -> tuple[Path, ...]:
+    return tuple(PROJECT_ROOT / "resc" / name for name in PLAYWRIGHT_RUNTIME_RESOURCE_NAMES)
+
+
+def _ensure_browser_runtime_archives() -> bool:
+    total = len(PLAYWRIGHT_RUNTIME_RESOURCE_NAMES)
+    for index, (resource_name, resource_path) in enumerate(
+        zip(PLAYWRIGHT_RUNTIME_RESOURCE_NAMES, _browser_runtime_resource_paths()),
+        start=1,
+    ):
+        if not _download_resource_file(
+            resource_name,
+            resource_path,
+            label="浏览器运行时",
+            display_sequence=(index, total),
+        ):
+            return False
+    return True
+
+
+def _merge_split_zip(archive_paths: tuple[Path, ...], merged_path: Path) -> None:
+    """将标准 ZIP 分卷合并为 Python zipfile 可读取的单卷 ZIP。"""
+    if len(archive_paths) < 2:
+        raise ValueError("ZIP 分卷至少需要两个文件")
+
+    volume_offsets: list[int] = []
+    total_size = 0
+    with open(merged_path, "wb") as output:
+        for path in archive_paths:
+            volume_offsets.append(total_size)
+            with open(path, "rb") as source:
+                shutil.copyfileobj(source, output, length=1024 * 1024)
+            total_size += path.stat().st_size
+
+    final_path = archive_paths[-1]
+    final_size = final_path.stat().st_size
+    with open(final_path, "rb") as source:
+        source.seek(max(0, final_size - 1024 * 1024))
+        final_tail = source.read()
+    eocd_relative = final_tail.rfind(b"PK\x05\x06")
+    if eocd_relative < 0:
+        raise zipfile.BadZipFile("分卷 ZIP 缺少 EOCD")
+    eocd_disk_offset = volume_offsets[-1] + final_size - len(final_tail) + eocd_relative
+
+    with open(merged_path, "r+b") as merged:
+        merged.seek(eocd_disk_offset)
+        eocd = bytearray(merged.read(22))
+        if len(eocd) < 22:
+            raise zipfile.BadZipFile("分卷 ZIP 的 EOCD 不完整")
+        _, disk_number, central_disk, entries_on_disk, total_entries, central_size, central_offset, comment_size = struct.unpack(
+            "<4sHHHHIIH", eocd
+        )
+        if disk_number >= len(volume_offsets) or central_disk >= len(volume_offsets):
+            raise zipfile.BadZipFile("不支持的 ZIP 分卷编号")
+        if total_entries == 0xFFFF or central_size == 0xFFFFFFFF or central_offset == 0xFFFFFFFF:
+            raise zipfile.BadZipFile("暂不支持 ZIP64 分卷")
+
+        central_start = volume_offsets[central_disk] + central_offset
+        merged.seek(central_start)
+        entries = []
+        for _ in range(total_entries):
+            entry_start = merged.tell()
+            header = bytearray(merged.read(46))
+            if len(header) < 46 or header[:4] != b"PK\x01\x02":
+                raise zipfile.BadZipFile("分卷 ZIP 中央目录损坏")
+            name_length, extra_length, comment_length = struct.unpack_from("<HHH", header, 28)
+            disk_start = struct.unpack_from("<H", header, 34)[0]
+            local_offset = struct.unpack_from("<I", header, 42)[0]
+            if disk_start >= len(volume_offsets):
+                raise zipfile.BadZipFile("分卷 ZIP 本地文件编号无效")
+            struct.pack_into("<H", header, 34, 0)
+            struct.pack_into("<I", header, 42, volume_offsets[disk_start] + local_offset)
+            entries.append((entry_start, bytes(header)))
+            merged.seek(name_length + extra_length + comment_length, 1)
+
+        merged.seek(eocd_disk_offset)
+        struct.pack_into("<H", eocd, 4, 0)
+        struct.pack_into("<H", eocd, 6, 0)
+        struct.pack_into("<H", eocd, 8, total_entries)
+        struct.pack_into("<I", eocd, 16, central_start)
+        merged.write(eocd)
+
+        for entry_start, header in entries:
+            merged.seek(entry_start)
+            merged.write(header)
+
+
+def _extract_browser_runtime_archive(extract_root: Path) -> None:
+    archive_paths = _browser_runtime_resource_paths()
+    split_parts = archive_paths[:-1]
+    if not all(path.exists() for path in split_parts):
+        _extract_zip_with_progress(PLAYWRIGHT_RUNTIME_ARCHIVE, extract_root)
+        return
+
+    combined_archive = extract_root.parent / "chrome-runtime-combined.zip"
+    _unlink_if_exists(combined_archive, ignore_errors=True)
+    try:
+        _merge_split_zip(archive_paths, combined_archive)
+        _extract_zip_with_progress(combined_archive, extract_root)
+    except (OSError, zipfile.BadZipFile, ValueError) as exc:
+        raise RuntimeError(f"浏览器分卷包解压失败: {exc}") from exc
+    finally:
+        _unlink_if_exists(combined_archive, ignore_errors=True)
+
+
+def _find_extracted_browser_root(extract_root: Path) -> Optional[Path]:
+    direct_root = extract_root / "chrome-win64"
+    if (direct_root / "chrome.exe").exists():
+        return direct_root
+    for executable in extract_root.rglob("chrome.exe"):
+        if executable.parent.name == "chrome-win64":
+            return executable.parent
+    return None
+
+
 def ensure_yuanbao_browser_runtime(python_exe) -> bool:
     _print_stage(6, "准备浏览器离线运行时...")
 
@@ -930,14 +1209,11 @@ def ensure_yuanbao_browser_runtime(python_exe) -> bool:
         print(f"  已存在浏览器运行时: {rel_path}")
         return True
 
-    if not PLAYWRIGHT_RUNTIME_ARCHIVE.exists():
-        _print_warn(
-            "  未检测到浏览器运行时，也未找到离线安装包: "
-            f"{PLAYWRIGHT_RUNTIME_ARCHIVE}"
-        )
+    if not _ensure_browser_runtime_archives():
+        _print_warn("  浏览器运行时资源下载未完成")
         return False
 
-    print(f"  使用离线安装包部署浏览器运行时: {PLAYWRIGHT_RUNTIME_ARCHIVE.relative_to(PROJECT_ROOT)}")
+    print("  使用 resc.net.txt 外置资源部署浏览器运行时")
     temp_root = Path(os.environ.get("TEMP", "C:\\Temp")) / "fsv_playwright_runtime"
     extract_root = temp_root / "extract"
     _rmtree_if_exists(temp_root, ignore_errors=True)
@@ -945,11 +1221,10 @@ def ensure_yuanbao_browser_runtime(python_exe) -> bool:
 
     try:
         extract_root.mkdir(parents=True, exist_ok=True)
-        _extract_zip_with_progress(PLAYWRIGHT_RUNTIME_ARCHIVE, extract_root)
-        extracted_root = extract_root / "chrome-win64"
-        extracted_exe = extracted_root / "chrome.exe"
-        if not extracted_exe.exists():
-            raise FileNotFoundError("离线浏览器包中未找到 chrome-win64/chrome.exe")
+        _extract_browser_runtime_archive(extract_root)
+        extracted_root = _find_extracted_browser_root(extract_root)
+        if extracted_root is None:
+            raise FileNotFoundError("浏览器资源包中未找到 chrome-win64/chrome.exe")
         _rmtree_if_exists(PLAYWRIGHT_RUNTIME_TARGET_DIR, ignore_errors=True)
         shutil.move(str(extracted_root), str(PLAYWRIGHT_RUNTIME_TARGET_DIR / "chrome-win64"))
     except Exception as exc:
@@ -967,6 +1242,8 @@ def ensure_yuanbao_browser_runtime(python_exe) -> bool:
     except Exception:
         rel_path = runtime_path
     print(f"  浏览器运行时已安装: {rel_path}")
+    for resource_path in _browser_runtime_resource_paths():
+        _unlink_if_exists(resource_path, ignore_errors=True)
     return True
 
 
@@ -999,21 +1276,60 @@ def _stream_download_with_progress(url, dest_path, *, label, timeout=30, chunk_s
             current += len(chunk)
             now = time.perf_counter()
             if now - last_draw >= 0.12:
-                sys.stdout.write("\r" + _render_transfer_progress("    downloading", current, total, start_time))
-                sys.stdout.flush()
+                _write_progress_line(_render_transfer_progress("    downloading", current, total, start_time))
                 last_draw = now
 
-        sys.stdout.write("\r" + _render_transfer_progress("    downloading", current, total, start_time) + "\n")
-        sys.stdout.flush()
+        _write_progress_line(
+            _render_transfer_progress("    downloading", current, total, start_time),
+            finish=True,
+        )
 
     final_size = dest_path.stat().st_size if dest_path.exists() else 0
     if total and final_size != total:
         raise IOError(f"download incomplete: {final_size}/{total} bytes")
 
 
+def _download_resource_file(
+    resource_name: str,
+    dest_path: Path,
+    *,
+    label: str,
+    display_sequence: tuple[int, int] | None = None,
+) -> bool:
+    """资源缺失时按 resc.net.txt 中的同名链接下载。"""
+    if dest_path.exists() and dest_path.stat().st_size > 0:
+        return True
+
+    urls = _resource_urls(resource_name)
+    if not urls:
+        _print_warn(f"  resc.net.txt 中未找到资源链接: {resource_name}")
+        return False
+
+    part_path = dest_path.with_name(dest_path.name + ".part")
+    dest_path.parent.mkdir(parents=True, exist_ok=True)
+    for index, url in enumerate(urls, start=1):
+        try:
+            _unlink_if_exists(part_path, ignore_errors=True)
+            if display_sequence is None:
+                sequence_text = f"[{index}/{len(urls)}]"
+            else:
+                sequence_text = f"[{display_sequence[0]}/{display_sequence[1]}]"
+            print(f"  下载 {label} {sequence_text}: {resource_name}")
+            _stream_download_with_progress(url, part_path, label=label)
+            part_path.replace(dest_path)
+            return True
+        except (urllib.error.URLError, OSError) as exc:
+            _print_warn(f"  下载失败 [{resource_name}]: {exc}")
+        finally:
+            _unlink_if_exists(part_path, ignore_errors=True)
+
+    return False
+
+
 def _extract_zip_with_progress(zip_path, extract_root):
     _rmtree_if_exists(extract_root)
     extract_root.mkdir(parents=True, exist_ok=True)
+    resolved_root = extract_root.resolve()
 
     with zipfile.ZipFile(zip_path, "r") as zf:
         members = zf.infolist()
@@ -1023,17 +1339,73 @@ def _extract_zip_with_progress(zip_path, extract_root):
         last_draw = 0.0
 
         for item in members:
-            zf.extract(item, extract_root)
-            if not item.is_dir():
+            member_name = item.filename.replace("\\", "/")
+            if not item.flag_bits & 0x800:
+                try:
+                    member_name = member_name.encode("cp437").decode("utf-8")
+                except (UnicodeEncodeError, UnicodeDecodeError):
+                    pass
+            relative_path = Path(*[part for part in member_name.split("/") if part not in {"", "."}])
+            if relative_path.is_absolute() or ".." in relative_path.parts:
+                raise ValueError(f"unsafe zip member path: {item.filename}")
+            target_path = (extract_root / relative_path).resolve()
+            if target_path != resolved_root and resolved_root not in target_path.parents:
+                raise ValueError(f"unsafe zip member path: {item.filename}")
+
+            if item.is_dir():
+                target_path.mkdir(parents=True, exist_ok=True)
+            else:
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+                with zf.open(item, "r") as source, open(target_path, "wb") as output:
+                    shutil.copyfileobj(source, output, length=1024 * 1024)
                 current += max(0, item.file_size)
             now = time.perf_counter()
             if now - last_draw >= 0.12:
-                sys.stdout.write("\r" + _render_transfer_progress("    extracting ", current, total, start_time))
-                sys.stdout.flush()
+                _write_progress_line(_render_transfer_progress("    extracting ", current, total, start_time))
                 last_draw = now
 
-        sys.stdout.write("\r" + _render_transfer_progress("    extracting ", current, total, start_time) + "\n")
-        sys.stdout.flush()
+        _write_progress_line(
+            _render_transfer_progress("    extracting ", current, total, start_time),
+            finish=True,
+        )
+
+
+def _seanima_ready() -> bool:
+    return SEANIMA_TARGET_DIR.is_dir() and any(SEANIMA_TARGET_DIR.rglob("*.webp"))
+
+
+def ensure_seanima_assets() -> bool:
+    """确保启动/退出动画序列帧存在。"""
+    if _seanima_ready():
+        print(f"  动画资源已存在: {SEANIMA_TARGET_DIR.relative_to(PROJECT_ROOT)}")
+        return True
+
+    if not _download_resource_file(SEANIMA_RESOURCE_NAME, SEANIMA_ARCHIVE, label="启动动画资源"):
+        return False
+
+    temp_root = Path(os.environ.get("TEMP", "C:\\Temp")) / "fsv_seanima"
+    extract_root = temp_root / "extract"
+    _rmtree_if_exists(temp_root, ignore_errors=True)
+    try:
+        _extract_zip_with_progress(SEANIMA_ARCHIVE, extract_root)
+        source_root = extract_root / "SEanima"
+        if not source_root.is_dir():
+            directories = [path for path in extract_root.iterdir() if path.is_dir()]
+            if len(directories) == 1:
+                source_root = directories[0]
+        if not source_root.is_dir() or not any(source_root.rglob("*.webp")):
+            raise FileNotFoundError("动画资源包中未找到 SEanima 序列帧目录")
+        _rmtree_if_exists(SEANIMA_TARGET_DIR, ignore_errors=True)
+        SEANIMA_TARGET_DIR.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(source_root), str(SEANIMA_TARGET_DIR))
+        print(f"  动画资源已安装: {SEANIMA_TARGET_DIR.relative_to(PROJECT_ROOT)}")
+        return True
+    except (OSError, ValueError, zipfile.BadZipFile) as exc:
+        _print_warn(f"  安装动画资源失败: {exc}")
+        return False
+    finally:
+        _rmtree_if_exists(temp_root, ignore_errors=True)
+        _unlink_if_exists(SEANIMA_ARCHIVE, ignore_errors=True)
 
 
 def _resolve_vosk_model_source_dir(extract_root):
@@ -1060,6 +1432,7 @@ def _microphone_runtime_ready(python_exe):
 
 def _ensure_single_vosk_model(spec: dict) -> bool:
     label = spec.get("label") or spec["name"]
+    resource_name = spec["resource_name"]
     target_dir = VOSK_MODELS_DIR / spec["name"]
     rel_target = target_dir.relative_to(PROJECT_ROOT)
 
@@ -1075,30 +1448,24 @@ def _ensure_single_vosk_model(spec: dict) -> bool:
     for leftover in VOSK_MODELS_DIR.glob("BIT*.tmp"):
         _unlink_if_exists(leftover, ignore_errors=True)
 
-    for source in spec["urls"]:
-        print(f"  - {spec['name']} ({label}, {source['name']})")
-        try:
-            _cleanup_vosk_temp_artifacts(archive_path, part_path, extract_root)
-            _stream_download_with_progress(source["url"], part_path, label=source["name"])
-            part_path.replace(archive_path)
-            _extract_zip_with_progress(archive_path, extract_root)
-            source_dir = _resolve_vosk_model_source_dir(extract_root)
+    try:
+        _cleanup_vosk_temp_artifacts(archive_path, part_path, extract_root)
+        if not _download_resource_file(resource_name, archive_path, label=f"Vosk {label} 模型"):
+            return False
+        _extract_zip_with_progress(archive_path, extract_root)
+        source_dir = _resolve_vosk_model_source_dir(extract_root)
 
-            _rmtree_if_exists(target_dir)
-            shutil.move(str(source_dir), str(target_dir))
-            print(f"    model installed: {rel_target}")
-            return True
-        except (urllib.error.URLError, OSError, zipfile.BadZipFile, FileNotFoundError) as e:
-            print(f"    failed: {e}")
-        finally:
-            _cleanup_vosk_temp_artifacts(archive_path, part_path, extract_root, ignore_errors=True)
-
-    print(f"  warning: {label} model auto download failed")
-    print("  manual download:")
-    for source in spec["urls"]:
-        print(f"    {source['url']}")
-    print(f"  extract target: {rel_target}")
-    return False
+        _rmtree_if_exists(target_dir)
+        shutil.move(str(source_dir), str(target_dir))
+        print(f"    model installed: {rel_target}")
+        return True
+    except (OSError, ValueError, zipfile.BadZipFile, FileNotFoundError) as exc:
+        print(f"    failed: {exc}")
+        print(f"  warning: {label} model auto download failed")
+        print(f"  extract target: {rel_target}")
+        return False
+    finally:
+        _cleanup_vosk_temp_artifacts(archive_path, part_path, extract_root, ignore_errors=True)
 
 
 def ensure_vosk_models():
@@ -1166,6 +1533,9 @@ def main():
                 _print_warn("部分 Vosk 模型缺失，语音识别可能无法正常工作")
         else:
             _print_stage(4, "跳过 Vosk 模型下载（sounddevice/vosk 未就绪）")
+
+        if not ensure_seanima_assets():
+            _print_warn("启动/退出动画资源未准备完成，将按程序兼容逻辑继续启动")
 
         if not ensure_yuanbao_service_bundle():
             _print_warn("本地网页中转服务未准备完成，相关网页模式可能不可用")

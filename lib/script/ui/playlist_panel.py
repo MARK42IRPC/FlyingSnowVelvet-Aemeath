@@ -24,7 +24,7 @@ from config.font_config import get_ui_font, get_digit_font, draw_mixed_text, eli
 from config.scale import scale_px
 from config.tooltip_config import TOOLTIPS
 from lib.core.event.center import get_event_center, EventType, Event
-from lib.core.topmost_manager import get_topmost_manager
+from lib.core.unified_draw import Layer, get_layer_manager
 from lib.core.screen_utils import clamp_rect_position, get_screen_geometry_for_point
 from lib.core.anchor_utils import apply_ui_opacity
 from lib.script.music import get_music_service
@@ -192,7 +192,7 @@ class PlaylistPanel(QWidget):
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFocusPolicy(Qt.StrongFocus)
         self.setMouseTracking(True)
-        get_topmost_manager().register(self)
+        get_layer_manager().register(self, Layer.PANEL)
 
         # ── 字体（粗体，与命令提示框一致）──────────────────────────────
         self._font = get_ui_font()

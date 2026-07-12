@@ -1,4 +1,4 @@
-"""OpenAI ?? API ?????"""
+"""OpenAI 兼容 API 客户端实现。"""
 
 import json
 import threading
@@ -542,7 +542,8 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
     def _openai_chat_api(self, message: str, persona: str,
                          on_chunk_emit=None, images: list[bytes] = None,
                          history: list[dict] | None = None,
-                         request_id: int | None = None) -> str:
+                         request_id: int | None = None,
+                         config_override: dict | None = None) -> str:
         """
         POST /chat/completions（OpenAI 兼容 API 格式）。
 
@@ -599,10 +600,11 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
         raw_thinking_budget = OLLAMA.get('api_thinking_budget', 0)
         api_thinking_budget = int(raw_thinking_budget) if str(raw_thinking_budget).strip() else 0
 
-        base_url  = self._active_config['base_url'].rstrip('/')
-        api_key   = self._active_config['api_key']
-        model     = self._active_config['model']
-        yuanbao_options = self._get_yuanbao_free_api_options(getattr(self, '_active_config', {}))
+        active_config = config_override or self._active_config
+        base_url  = active_config['base_url'].rstrip('/')
+        api_key   = active_config['api_key']
+        model     = active_config['model']
+        yuanbao_options = self._get_yuanbao_free_api_options(active_config)
         use_yuanbao_free_api = bool(yuanbao_options.get('enabled', False))
         is_gemini_target = self._is_gemini_compatible_target(base_url, model)
         is_dashscope_target = self._is_dashscope_compatible_target(base_url, model)

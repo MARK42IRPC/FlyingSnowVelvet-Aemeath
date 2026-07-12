@@ -82,16 +82,20 @@ AI 工具调度位于 `lib/script/tool_dispatcher/dispatcher.py`，会从 `STREA
 - `lib/script/ui/ai_settings_validators.py`
 - `config/ollama_config.py`
 
-如果新增普通配置，优先放到对应的 `config/config_*.py` 或共享配置体系中，不要把运行时状态写死回源码默认值。
+如果新增普通配置，默认值放到对应的 `config/config_*.py`，用户值通过 `config.user_settings` 保存为稀疏覆盖。禁止运行时修改 Python 配置源码，也不要复制整套默认配置到用户目录。
+
+统一优先级：环境变量/命令行 > `user/settings.json` 稀疏覆盖 > `config` 内置默认值。用户恢复默认时应删除覆盖键。
 
 七、运行时数据边界
 以下路径视为运行时目录：
-- `resc/user/`
-- `logs/`
-- `config/music/volume.json`
-- `config/user_scale.json`
+- `C:\AemeathDeskPet\user\settings.json`
+- `C:\AemeathDeskPet\user\secrets\`
+- `C:\AemeathDeskPet\user\state\`
+- `C:\AemeathDeskPet\cache\`
+- `C:\AemeathDeskPet\logs\`
+- 旧版兼容来源：`resc/user/`、`config/music/volume.json`、`config/user_scale.json`
 
-像 GSV 语音缓存这类自动生成文件，应写入 `resc/user/temp/` 这一类已忽略目录，而不是可提交源码目录。
+像 GSV 语音缓存这类自动生成文件，应写入统一 `cache/` 目录，而不是可提交源码目录或 `config/`。
 
 八、最小管理器模板
 ```python

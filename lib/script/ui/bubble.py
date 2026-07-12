@@ -14,7 +14,7 @@ from config.font_config import (
 from config.scale import scale_px
 from config.tooltip_config import TOOLTIPS
 from lib.core.event.center import get_event_center, EventType, Event
-from lib.core.topmost_manager import get_topmost_manager
+from lib.core.unified_draw import Layer, get_layer_manager
 from lib.core.logger import get_logger
 from lib.core.screen_utils import clamp_rect_position, get_screen_geometry_for_point
 from lib.core.anchor_utils import (
@@ -60,7 +60,7 @@ class Bubble(QWidget):
         )
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setCursor(Qt.ArrowCursor)
-        get_topmost_manager().register(self)
+        get_layer_manager().register(self, Layer.PET_UI)
 
         # 透明度效果
         self._opacity = QGraphicsOpacityEffect(self)

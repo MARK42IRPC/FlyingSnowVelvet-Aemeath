@@ -13,7 +13,7 @@ from config.font_config import draw_mixed_text, get_digit_font, get_ui_font, wra
 from config.scale import scale_px, scale_style_px
 from lib.core.anchor_utils import apply_ui_opacity
 from lib.core.screen_utils import clamp_rect_position, get_screen_geometry_for_point
-from lib.core.topmost_manager import TOPMOST_PRIORITY_QR_DIALOG, get_topmost_manager
+from lib.core.unified_draw import Layer, get_layer_manager
 
 _WIDTH = scale_px(320, min_abs=1)
 _HEIGHT = scale_px(430, min_abs=1)
@@ -56,7 +56,7 @@ class BaseQrDialog(QWidget):
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFocusPolicy(Qt.NoFocus)
         self.setFixedSize(_WIDTH, _HEIGHT)
-        get_topmost_manager().register(self, priority=TOPMOST_PRIORITY_QR_DIALOG)
+        get_layer_manager().register(self, Layer.DIALOG)
 
         self._visible = False
         self._title = str(title or "").strip()
@@ -236,7 +236,7 @@ class BaseQrDialog(QWidget):
             self._disconnect_fade_out_done()
             self.show()
             self._animate(1.0)
-        get_topmost_manager().enforce_now()
+        get_layer_manager().enforce_now()
         self.update()
 
     def hide_dialog(self) -> None:

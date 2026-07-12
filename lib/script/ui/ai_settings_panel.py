@@ -39,12 +39,12 @@ from PyQt5.QtWidgets import (
     QSlider,
     QMenu,
 )
-from PyQt5.QtGui import QPainter, QColor, QPolygon, QFontMetrics, QCursor
+from PyQt5.QtGui import QPainter, QColor, QPolygon, QFontMetrics, QCursor, QPixmap
 
 from config.config import UI_THEME, UI
 from config.font_config import get_ui_font, get_digit_font
+from config.general_user_settings import save_general_values
 from config.scale import scale_px
-from config.shared_storage import ensure_shared_config_ready, get_shared_config_path
 from lib.script.ui.ai_settings_validators import validate_ai_values
 from lib.script.ui.ai_settings_storage import load_ai_values, save_ai_values, apply_ai_runtime
 from lib.script.ui.qq_group_dialog import QQGroupDialog
@@ -59,6 +59,8 @@ from lib.script.ui.ai_settings_tabs import (
 from lib.core.anchor_utils import animate_opacity
 from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import get_event_center, EventType, Event
+from lib.core.layer import Layer
+from lib.core.layer_manager import get_layer_manager
 from lib.core.logger import get_logger
 from lib.script.SEanima.clip import (
     DEFAULT_EXIT_ANIMATION_FOLDER,
@@ -77,12 +79,13 @@ _logger = get_logger(__name__)
 _GPU_MODE_CPU = "cpu"
 _GPU_MODE_GPU = "gpu"
 _GPU_MODE_AUTO = "auto"
+_DROPDOWN_POPUP_LAYER = 601
 
 _DEFAULT_VALUES = {
     "api_key": "",
-    "force_reply_mode": "4",
+    "force_reply_mode": "1",
     "api_base_url": "",
-    "api_model": "",
+    "api_model": "gpt-5.4",
     "yuanbao_login_url": "https://yuanbao.tencent.com/chat/naQivTmsDa",
     "yuanbao_hy_source": "web",
     "yuanbao_hy_user": "",
@@ -92,10 +95,10 @@ _DEFAULT_VALUES = {
     "ollama_model": "qwen2.5",
     "num_gpu": -1,
     "num_thread": 0,
-    "api_temperature": 0.8,
+    "api_temperature": 1.35,
     "gsv_auto_start": False,
     "gsv_temperature": 1.35,
-    "gsv_speed_factor": 1.0,
+    "gsv_speed_factor": 1.05,
     "ai_voice_max_chars": 80,
     "gsv_cache_max_files": 20,
     "memory_context_limit": 12,
@@ -120,49 +123,7 @@ _CONFIG_LABEL_WIDTH = scale_px(176, min_abs=152)
 _CONTROL_PANEL_CONTENT_HEIGHT = int(round(scale_px(620, min_abs=540) * 2.0 / 3.0))
 _UPDATE_BUTTON_ROW_GAP = scale_px(10, min_abs=10)
 _QUARK_UPDATE_URL = "https://pan.quark.cn/s/9158e62439e2"
-_CORE_CONFIG_FILES = (
-    "config.py",
-    "config_ui.py",
-    "config_animation.py",
-    "config_entities.py",
-    "config_music.py",
-    "config_voice.py",
-    "config_timeouts.py",
-    "config_runtime.py",
-)
-_SHARED_RESET_FILES = (*_CORE_CONFIG_FILES, "ollama_config.py")
-
-_DICT_TO_CONFIG_FILE = {
-    "COLORS": "config_ui.py",
-    "UI_THEME": "config_ui.py",
-    "WINDOW": "config_ui.py",
-    "UI": "config_ui.py",
-    "BUBBLE_CONFIG": "config_ui.py",
-    "COMMAND_DIALOG": "config_ui.py",
-    "ANIMATION": "config_animation.py",
-    "BEHAVIOR": "config_animation.py",
-    "PARTICLES": "config_animation.py",
-    "PHYSICS": "config_animation.py",
-    "SNOW_LEOPARD": "config_entities.py",
-    "SNOW_PILE": "config_entities.py",
-    "SOFA": "config_entities.py",
-    "MORTOR": "config_entities.py",
-    "CLOCK": "config_entities.py",
-    "SPEAKER": "config_entities.py",
-    "OBJECTS": "config_entities.py",
-    "SNOWBALL": "config_entities.py",
-    "SOUND": "config_music.py",
-    "SPEAKER_AUDIO": "config_music.py",
-    "SPEAKER_SEARCH_UI": "config_music.py",
-    "CLOUD_MUSIC": "config_music.py",
-    "CHAT": "config_voice.py",
-    "VOICE": "config_voice.py",
-    "TOOL_DISPATCHER": "config_timeouts.py",
-    "TIMEOUTS": "config_timeouts.py",
-    "DRAW": "config_runtime.py",
-    "STARTUP": "config_runtime.py",
-}
-
+_SPONSOR_AUTHOR_URL = "https://afdian.com/a/fxxrdeskpet"
 _GENERAL_CONFIG_CATEGORIES = [
     {
         "id": "ui_anim",
@@ -226,6 +187,12 @@ _GENERAL_CONFIG_CATEGORIES = [
         "id": "desktop_pet_update",
         "tab": "桌宠更新",
         "title": "桌宠更新管理",
+        "sections": [],
+    },
+    {
+        "id": "sponsor_author",
+        "tab": "赞助作者",
+        "title": "赞助作者",
         "sections": [],
     },
 ]
@@ -325,7 +292,6 @@ _CATEGORY_KEY_ALLOWLIST = {
             "provider",
             "particle_interval",
             "search_result_limit",
-            "cache_dir",
             "local_music_dir",
         },
     },
@@ -510,9 +476,9 @@ _GENERAL_CONFIG_DEFAULTS: dict[str, dict[str, object]] = {
     "BEHAVIOR": {
         "wander_near_speaker_radius": 150,
         "double_click_ticks": 4,
-        "move_max_speed": 2.0,
-        "move_acceleration": 0.1,
-        "move_min_speed": 1.0,
+        "move_max_speed": 5.0,
+        "move_acceleration": 0.25,
+        "move_min_speed": 2.5,
     },
     "PHYSICS": {
         "max_bounces": 5,
@@ -584,10 +550,9 @@ _GENERAL_CONFIG_DEFAULTS: dict[str, dict[str, object]] = {
     },
     "CLOUD_MUSIC": {
         "provider": "netease",
-        "default_volume": 0.14,
+        "default_volume": 0.3,
         "particle_interval": 60,
         "search_result_limit": 128,
-        "cache_dir": "resc/user/temp",
         "local_music_dir": "",
         "launch_wuwa_path": "",
     },
@@ -945,50 +910,6 @@ def _friendly_range_name(dict_name: str, left_key: str, right_key: str) -> str:
     return f"{left_name} / {right_name}"
 
 
-def _config_rel_path_for_dict(dict_name: str) -> str:
-    rel_name = _DICT_TO_CONFIG_FILE.get(str(dict_name))
-    if not rel_name:
-        raise ValueError(f"未找到配置文件映射: {dict_name}")
-    return rel_name
-
-
-def _config_path_for_dict(dict_name: str) -> Path:
-    return _project_root() / "config" / _config_rel_path_for_dict(dict_name)
-
-
-def _write_text_atomic(path: Path, text: str) -> None:
-    tmp_path = path.with_suffix(path.suffix + ".tmp")
-    tmp_path.write_text(text, encoding="utf-8")
-    tmp_path.replace(path)
-
-
-def _mirror_config_text_to_shared(rel_name: str, text: str) -> None:
-    try:
-        ensure_shared_config_ready()
-        shared_path = get_shared_config_path(rel_name)
-        shared_path.parent.mkdir(parents=True, exist_ok=True)
-        _write_text_atomic(shared_path, text)
-    except Exception as e:
-        _logger.warning("镜像写入外部配置失败(%s): %s", rel_name, e)
-
-
-def _reset_shared_core_configs_from_project() -> None:
-    """将 C 盘共享配置中的核心配置文件重置为项目当前版本。"""
-    try:
-        ensure_shared_config_ready()
-        project_cfg_dir = _project_root() / "config"
-        for rel_name in _SHARED_RESET_FILES:
-            src = project_cfg_dir / rel_name
-            if not src.exists():
-                continue
-            text = src.read_text(encoding="utf-8")
-            dst = get_shared_config_path(rel_name)
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            _write_text_atomic(dst, text)
-    except Exception as e:
-        _logger.warning("重置C盘本地配置失败: %s", e)
-
-
 def _is_supported_config_value(value) -> bool:
     basic_types = (bool, int, float, str)
     if isinstance(value, basic_types):
@@ -1006,54 +927,14 @@ def _format_config_editor_value(value) -> str:
     return repr(value)
 
 
-def _py_literal_any(value) -> str:
-    if isinstance(value, bool):
-        return "True" if value else "False"
-    if isinstance(value, (int, float, str)):
-        return repr(value)
-    if isinstance(value, tuple):
-        inner = ", ".join(_py_literal_any(item) for item in value)
-        if len(value) == 1:
-            inner += ","
-        return f"({inner})"
-    if isinstance(value, list):
-        inner = ", ".join(_py_literal_any(item) for item in value)
-        return f"[{inner}]"
-    return repr(value)
-
-
-def _replace_config_dict_item(text: str, dict_name: str, key: str, py_literal: str) -> str:
-    block_pattern = re.compile(
-        rf"(?ms)^(\s*{re.escape(dict_name)}\s*=\s*\{{)(.*?)(^\s*\}})",
-    )
-    block_match = block_pattern.search(text)
-    if not block_match:
-        raise ValueError(f"未找到配置字典: {dict_name}")
-
-    body = block_match.group(2)
-    item_pattern = re.compile(rf"(?m)^(\s*'{re.escape(key)}'\s*:\s*).*(,\s*(?:#.*)?)$")
-    if not item_pattern.search(body):
-        raise ValueError(f"未找到配置项: {dict_name}.{key}")
-    new_body = item_pattern.sub(lambda m: f"{m.group(1)}{py_literal}{m.group(2)}", body, count=1)
-    return text[:block_match.start(2)] + new_body + text[block_match.end(2):]
-
-
 def _save_general_config(values_by_dict: dict[str, dict]) -> None:
-    file_texts: dict[str, str] = {}
-    for dict_name, items in values_by_dict.items():
-        cfg_path = _config_path_for_dict(dict_name)
-        rel_name = cfg_path.name
-        text = file_texts.get(rel_name)
-        if text is None:
-            text = cfg_path.read_text(encoding="utf-8")
-        for key, value in items.items():
-            text = _replace_config_dict_item(text, dict_name, key, _py_literal_any(value))
-        file_texts[rel_name] = text
+    values_to_save = copy.deepcopy(values_by_dict)
+    cloud_music = values_to_save.get("CLOUD_MUSIC")
+    if isinstance(cloud_music, dict) and "default_volume" in cloud_music:
+        from config.music.volume_config import get_volume_config
 
-    for rel_name, text in file_texts.items():
-        cfg_path = _project_root() / "config" / rel_name
-        _write_text_atomic(cfg_path, text)
-        _mirror_config_text_to_shared(rel_name, text)
+        get_volume_config().set_volume(float(cloud_music.pop("default_volume")))
+    save_general_values(values_to_save)
 
 
 def _apply_general_runtime(values_by_dict: dict[str, dict]) -> None:
@@ -1082,6 +963,16 @@ def _apply_general_runtime(values_by_dict: dict[str, dict]) -> None:
 
 def _project_root() -> Path:
     return Path(__file__).resolve().parents[3]
+
+
+def _sponsor_author_image_path() -> Path:
+    return (
+        _project_root()
+        / "doc"
+        / "贡献名单和主播的狗盆"
+        / "如果想给作者买鸡腿饭的话"
+        / "喵-感谢支持喵-欢迎工单喵.jpg"
+    )
 
 
 def _decode_process_output(raw: bytes) -> str:
@@ -1270,9 +1161,21 @@ class _WatermarkComboBox(QComboBox):
         super().__init__(parent)
         self._before_popup_callback: Callable[[], None] | None = None
         self._popup_refreshing = False
+        self._popup_window_instance = None
 
     def set_before_popup_callback(self, callback: Callable[[], None] | None) -> None:
         self._before_popup_callback = callback
+
+    def _popup_window(self):
+        if self._popup_window_instance is not None:
+            return self._popup_window_instance
+        view = self.view()
+        return view.window() if view is not None else None
+
+    def _unregister_popup_layer(self) -> None:
+        popup = self._popup_window()
+        if popup is not None:
+            get_layer_manager().unregister(popup)
 
     def showPopup(self) -> None:
         callback = self._before_popup_callback
@@ -1287,10 +1190,27 @@ class _WatermarkComboBox(QComboBox):
             return
 
         super().showPopup()
-        popup = self.view().window() if self.view() is not None else None
+        popup = self._popup_window()
         if popup is not None:
+            self._popup_window_instance = popup
+            popup.setWindowFlag(Qt.WindowStaysOnTopHint, True)
+            popup.show()
+            layer_manager = get_layer_manager()
+            layer_manager.register(
+                popup,
+                _DROPDOWN_POPUP_LAYER,
+                name="AISettingsDropdownPopup",
+            )
+            layer_manager.enforce_burst()
             popup.raise_()
             popup.activateWindow()
+
+    def hidePopup(self) -> None:
+        self._unregister_popup_layer()
+        try:
+            super().hidePopup()
+        finally:
+            self._popup_window_instance = None
 
     def paintEvent(self, event) -> None:
         super().paintEvent(event)
@@ -1584,6 +1504,7 @@ class AISettingsPanel(QWidget):
         self.setWindowTitle("控制面板")
         self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
+        get_layer_manager().register(self, Layer.PANEL, name='AISettingsPanel')
         self.setMinimumWidth(int(round(scale_px(520) * _PANEL_SCALE)))
         self._layer = scale_px(2, min_abs=1)
         self._border = self._layer * 2
@@ -1607,7 +1528,6 @@ class AISettingsPanel(QWidget):
         self._config_tab_meta: dict[str, dict] = {}
         self._content_width = scale_px(470, min_abs=420)
         self._content_height = _CONTROL_PANEL_CONTENT_HEIGHT
-        self._reset_shared_on_next_save = False
         self._stable_window_size: tuple[int, int] | None = None
 
         self._build_ui()
@@ -1865,11 +1785,12 @@ class AISettingsPanel(QWidget):
 
         self._force_mode = _WatermarkComboBox()
         self._force_mode.setView(QListView(self._force_mode))
-        self._force_mode.addItem("优先走元宝web(默认)", "4")
-        self._force_mode.addItem("自动选择", "")
-        self._force_mode.addItem("仅使用手动接口密钥", "0")
-        self._force_mode.addItem("仅使用本地 Ollama", "2")
-        self._force_mode.addItem("仅使用规则回复", "3")
+        self._force_mode.addItem('优先使用福利API(默认)', '1')
+        self._force_mode.addItem('优先走元宝web', '4')
+        self._force_mode.addItem('自动选择', '')
+        self._force_mode.addItem('手动接口失败回退福利API', '0')
+        self._force_mode.addItem('仅使用本地 Ollama', '2')
+        self._force_mode.addItem('仅使用规则回复', '3')
         form.addRow("回复模式", self._force_mode)
         self._set_form_row_description(
             form,
@@ -2100,6 +2021,15 @@ class AISettingsPanel(QWidget):
         # 特殊处理：桌宠更新标签页 - 只有按钮，没有配置字段
         if category_id == "desktop_pet_update":
             return self._build_desktop_pet_update_panel(
+                panel,
+                layout,
+                category_title,
+                title_label,
+                hint_label,
+            )
+
+        if category_id == "sponsor_author":
+            return self._build_sponsor_author_panel(
                 panel,
                 layout,
                 category_title,
@@ -2500,6 +2430,139 @@ class AISettingsPanel(QWidget):
         }
 
         return panel
+
+    def _build_sponsor_author_panel(
+        self,
+        panel: QWidget,
+        layout: QVBoxLayout,
+        category_title: str,
+        title_label: QLabel,
+        hint_label: QLabel,
+    ) -> QWidget:
+        def _create_section_title(text: str) -> QLabel:
+            label = QLabel(text)
+            font = get_ui_font(size=max(scale_px(12, min_abs=10), _CONFIG_FONT_SIZE))
+            font.setBold(True)
+            label.setFont(font)
+            label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            return label
+
+        def _create_section_hint(text: str, *, bottom_margin: int = 0) -> QLabel:
+            label = QLabel(text)
+            font = self._build_hint_font()
+            label.setFont(font)
+            label.setWordWrap(True)
+            label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+            if bottom_margin:
+                label.setContentsMargins(0, 0, 0, bottom_margin)
+            return label
+
+        scroll = _SmoothScrollArea(panel)
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll.setViewportMargins(0, 0, _SCROLLBAR_RIGHT_SHIFT, 0)
+        scroll_content = QWidget(scroll)
+        content_layout = QVBoxLayout(scroll_content)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(scale_px(10))
+        scroll.setWidget(scroll_content)
+        layout.addWidget(scroll, 1)
+
+        intro_label = _create_section_hint(
+            "如果这个项目帮到了你，可以在这里请作者吃一份鸡腿饭。图片会展示本地赞助码，下方按钮可直接打开爱发电。",
+            bottom_margin=scale_px(18, min_abs=14),
+        )
+        content_layout.addWidget(intro_label)
+
+        section_title = _create_section_title("支持作者")
+        section_hint = _create_section_hint(
+            "扫描下方图片中的二维码，或点击按钮跳转到爱发电页面。",
+            bottom_margin=scale_px(8, min_abs=6),
+        )
+        content_layout.addWidget(section_title, 0, Qt.AlignLeft)
+        content_layout.addWidget(section_hint, 0, Qt.AlignLeft)
+
+        card = QWidget(scroll_content)
+        card.setObjectName("sponsorAuthorCard")
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(
+            scale_px(16, min_abs=14),
+            scale_px(16, min_abs=14),
+            scale_px(16, min_abs=14),
+            scale_px(16, min_abs=14),
+        )
+        card_layout.setSpacing(scale_px(12, min_abs=10))
+
+        image_frame = QWidget(card)
+        image_frame.setObjectName("sponsorAuthorImageFrame")
+        image_frame_layout = QVBoxLayout(image_frame)
+        image_frame_layout.setContentsMargins(
+            scale_px(10, min_abs=8),
+            scale_px(10, min_abs=8),
+            scale_px(10, min_abs=8),
+            scale_px(10, min_abs=8),
+        )
+        image_frame_layout.setSpacing(0)
+
+        image_label = QLabel(image_frame)
+        image_label.setObjectName("sponsorAuthorImage")
+        image_label.setAlignment(Qt.AlignCenter)
+        image_label.setWordWrap(True)
+        image_frame_layout.addWidget(image_label, 0, Qt.AlignCenter)
+        self._set_sponsor_author_image(image_label)
+
+        card_layout.addWidget(image_frame, 0)
+
+        sponsor_button = QPushButton("前往爱发电给作者买鸡腿饭", card)
+        sponsor_button.setObjectName("sponsorAuthorButton")
+        sponsor_button.setCursor(Qt.PointingHandCursor)
+        sponsor_button.setFixedHeight(scale_px(42, min_abs=36))
+        sponsor_button.clicked.connect(self._open_sponsor_author_link)
+        card_layout.addWidget(sponsor_button)
+
+        content_layout.addWidget(card, 0)
+        content_layout.addStretch(1)
+
+        self._config_tab_meta["sponsor_author"] = {
+            "panel": panel,
+            "fields": [],
+            "defaults": {},
+            "title": category_title,
+            "title_label": title_label,
+            "hint_label": hint_label,
+            "section_title_labels": [section_title],
+            "section_hint_labels": [intro_label, section_hint],
+        }
+
+        return panel
+
+    def _set_sponsor_author_image(self, label: QLabel) -> None:
+        image_path = _sponsor_author_image_path()
+        if not image_path.exists():
+            label.setText(f"未找到赞助图片：\n{image_path}")
+            label.setPixmap(QPixmap())
+            return
+
+        pixmap = QPixmap(str(image_path))
+        if pixmap.isNull():
+            label.setText(f"赞助图片加载失败：\n{image_path.name}")
+            label.setPixmap(QPixmap())
+            return
+
+        max_width = max(scale_px(320, min_abs=280), self._content_width - scale_px(96, min_abs=72))
+        scaled = pixmap.scaledToWidth(max_width, Qt.SmoothTransformation)
+        label.setPixmap(scaled)
+        label.setText("")
+
+    def _open_sponsor_author_link(self) -> None:
+        try:
+            opened = webbrowser.open(_SPONSOR_AUTHOR_URL)
+        except Exception as exc:
+            self._show_info_message(f"打开爱发电链接失败：{exc}")
+            return
+        if not opened:
+            self._show_info_message(f"未能自动打开链接，请手动访问：{_SPONSOR_AUTHOR_URL}")
 
     def _show_info_message(self, message: str):
         """显示信息消息框"""
@@ -3615,6 +3678,23 @@ class AISettingsPanel(QWidget):
                 background: transparent;
                 color: {text};
             }}
+            QWidget#sponsorAuthorCard {{
+                background: rgba(255, 255, 255, 96);
+                border: 2px solid {border};
+            }}
+            QWidget#sponsorAuthorImageFrame {{
+                background: rgba(255, 255, 255, 56);
+                border: 1px solid {border};
+            }}
+            QLabel#sponsorAuthorImage {{
+                background: transparent;
+                color: {text};
+                padding: {scale_px(6, min_abs=4)}px;
+            }}
+            QPushButton#sponsorAuthorButton {{
+                min-height: {scale_px(32, min_abs=28)}px;
+                font-weight: 700;
+            }}
             QScrollArea {{
                 border: 0px;
                 background: transparent;
@@ -3871,8 +3951,14 @@ class AISettingsPanel(QWidget):
         return self._stable_window_size
 
     def load_values(self) -> None:
-        self._reset_shared_on_next_save = False
         self._set_values_to_form(load_ai_values(_DEFAULT_VALUES))
+        try:
+            import config.config as cc
+            from config.music.volume_config import get_volume_config
+
+            cc.CLOUD_MUSIC["default_volume"] = get_volume_config().get_volume()
+        except Exception as exc:
+            _logger.debug("加载音乐音量用户配置失败: %s", exc)
         self._load_config_tab_values()
 
     def show_centered(self) -> None:
@@ -3910,7 +3996,7 @@ class AISettingsPanel(QWidget):
         self.show()
         self._show_floating_tab()
         self._layout_config_panels()
-        self.raise_()
+        get_layer_manager().bring_to_front(self)
         self.activateWindow()
         self._animate(1.0)
 
@@ -4055,7 +4141,7 @@ class AISettingsPanel(QWidget):
 
     def _collect_values(self) -> dict:
         force_mode = str(self._force_mode.currentData() or "").strip()
-        if force_mode not in ("", "0", "2", "3", "4"):
+        if force_mode not in ("", "0", "1", "2", "3", "4"):
             raise ValueError("回复模式值无效")
 
         gpu_mode = str(self._gpu_mode.currentData() or _GPU_MODE_AUTO)
@@ -4290,8 +4376,7 @@ class AISettingsPanel(QWidget):
             if not category_id:
                 continue
             self._on_restore_config_category(category_id, emit_message=False)
-        self._reset_shared_on_next_save = True
-        self._emit_info("已恢复默认配置，点击“保存并退出”后将同时重置C盘本地配置。", min_tick=10, max_tick=90)
+        self._emit_info("已恢复默认配置，保存后会移除对应用户覆盖。", min_tick=10, max_tick=90)
 
     def _on_save(self) -> bool:
         try:
@@ -4299,8 +4384,6 @@ class AISettingsPanel(QWidget):
             general_values = self._collect_all_general_config_values()
             save_ai_values(ai_values, _DEFAULT_VALUES)
             _save_general_config(general_values)
-            if self._reset_shared_on_next_save:
-                _reset_shared_core_configs_from_project()
             apply_ai_runtime(ai_values, _DEFAULT_VALUES)
             _apply_general_runtime(general_values)
             self._apply_all_external_config_fields()
@@ -4310,7 +4393,6 @@ class AISettingsPanel(QWidget):
                 get_gsvmove_service().cleanup_saved_audio_cache()
             except Exception as trim_exc:
                 _logger.warning("应用 GSV 语音缓存上限失败: %s", trim_exc)
-            self._reset_shared_on_next_save = False
             self._emit_info("控制面板设置已保存，重启程序后完整生效。")
             return True
         except Exception as e:

@@ -26,7 +26,7 @@ from config.font_config import (
 )
 from config.scale import scale_px
 from lib.core.event.center import get_event_center, EventType, Event
-from lib.core.topmost_manager import get_topmost_manager
+from lib.core.unified_draw import Layer, get_layer_manager
 from lib.core.screen_utils import clamp_rect_position
 from lib.core.anchor_utils import apply_ui_opacity
 from lib.script.ui.page_turn_buttons import make_page_buttons, update_page_buttons_position
@@ -70,7 +70,7 @@ class SpeakerSearchResultBox(QWidget):
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFocusPolicy(Qt.NoFocus)
         self.setMouseTracking(True)
-        get_topmost_manager().register(self)
+        get_layer_manager().register(self, Layer.PET_UI)
 
         # ── 字体 ────────────────────────────────────────────────────
         self._font = get_ui_font()

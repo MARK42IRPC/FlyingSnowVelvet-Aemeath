@@ -7,6 +7,11 @@
 from pathlib import Path
 
 from config.config import CLOUD_MUSIC, ANIMATION
+from config.user_storage_paths import (
+    ensure_user_storage_layout as ensure_canonical_user_storage_layout,
+    get_user_cache_dir,
+    get_user_secrets_dir,
+)
 
 # ── 播放参数 ──────────────────────────────────────────────────────────────
 _BITRATE_LADDER    = CLOUD_MUSIC.get('bitrate_ladder', (320000, 192000, 128000))
@@ -75,20 +80,38 @@ def local_track_path_from_ref(track_ref) -> Path | None:
     return Path(raw)
 
 
-# ── 用户数据目录：项目根 / resc / user ────────────────────────────────────
+# ── 用户数据目录 ──────────────────────────────────────────────────────────
 _PROJECT_ROOT             = Path(__file__).parent.parent.parent.parent
-_USER_DATA_DIR            = _PROJECT_ROOT / 'resc' / 'user'
-_CACHE_DIR                = _PROJECT_ROOT / CLOUD_MUSIC.get('cache_dir', 'resc/user/temp')
+_USER_DATA_DIR            = get_user_secrets_dir('music')
+_CACHE_DIR                = get_user_cache_dir('music')
 _CACHE_PLATFORM_DIRS      = ("netease", "qq", "kugou", "local", "other")
 _LOGIN_CACHE_FILE         = _USER_DATA_DIR / 'cloudmusic_login_cache.json'
 _QQ_LOGIN_CACHE_FILE      = _USER_DATA_DIR / 'qqmusic_login_cache.json'
 _KUGOU_LOGIN_CACHE_FILE   = _USER_DATA_DIR / 'kugou_login_cache.json'
 _LEGACY_CACHE_DIR         = _PROJECT_ROOT / 'resc' / 'temp'
 _LEGACY_LOGIN_CACHE_FILE  = _PROJECT_ROOT / 'cloudmusic_login_cache.json'
+_LEGACY_USER_DATA_DIR     = _PROJECT_ROOT / 'resc' / 'user'
+_LEGACY_USER_CACHE_DIR    = _PROJECT_ROOT / CLOUD_MUSIC.get('cache_dir', 'resc/user/temp')
+
+
+def _move_children_missing(source_dir: Path, target_dir: Path) -> None:
+    if not source_dir.exists() or not source_dir.is_dir():
+        return
+    target_dir.mkdir(parents=True, exist_ok=True)
+    for old_path in source_dir.iterdir():
+        new_path = target_dir / old_path.name
+        if new_path.exists():
+            continue
+        old_path.replace(new_path)
+    try:
+        source_dir.rmdir()
+    except OSError:
+        pass
 
 
 def ensure_user_storage_layout() -> None:
     """确保 user 数据目录存在，并将旧路径缓存迁移到新路径。"""
+    ensure_canonical_user_storage_layout()
     _USER_DATA_DIR.mkdir(parents=True, exist_ok=True)
     _CACHE_DIR.mkdir(parents=True, exist_ok=True)
     for name in _CACHE_PLATFORM_DIRS:
@@ -97,15 +120,20 @@ def ensure_user_storage_layout() -> None:
     if _LEGACY_LOGIN_CACHE_FILE.exists() and not _LOGIN_CACHE_FILE.exists():
         _LEGACY_LOGIN_CACHE_FILE.replace(_LOGIN_CACHE_FILE)
 
+    for name, target in (
+        ('cloudmusic_login_cache.json', _LOGIN_CACHE_FILE),
+        ('qqmusic_login_cache.json', _QQ_LOGIN_CACHE_FILE),
+        ('kugou_login_cache.json', _KUGOU_LOGIN_CACHE_FILE),
+    ):
+        old_path = _LEGACY_USER_DATA_DIR / name
+        if old_path.exists() and not target.exists():
+            old_path.replace(target)
+
     if _LEGACY_CACHE_DIR.exists() and _LEGACY_CACHE_DIR != _CACHE_DIR:
-        for old_path in _LEGACY_CACHE_DIR.iterdir():
-            new_path = _CACHE_DIR / old_path.name
-            if new_path.exists():
-                continue
-            old_path.replace(new_path)
-        try:
-            _LEGACY_CACHE_DIR.rmdir()
-        except OSError:
-            # 目录非空时保留，避免影响正在使用的文件。
-            pass
+        for name in _CACHE_PLATFORM_DIRS:
+            _move_children_missing(_LEGACY_CACHE_DIR / name, _CACHE_DIR / name)
+
+    if _LEGACY_USER_CACHE_DIR.exists() and _LEGACY_USER_CACHE_DIR != _CACHE_DIR:
+        for name in _CACHE_PLATFORM_DIRS:
+            _move_children_missing(_LEGACY_USER_CACHE_DIR / name, _CACHE_DIR / name)
 

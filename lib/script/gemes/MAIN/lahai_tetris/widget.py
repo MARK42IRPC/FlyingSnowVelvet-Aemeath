@@ -23,6 +23,7 @@ from config.scale import scale_px
 from lib.core.event.center import Event, EventType, get_event_center
 from lib.core.effect_utils import spawn_flash_text_effect, spawn_smooth_image_effect
 from lib.core.particle_utils import spawn_particle_at_point, spawn_particle_in_rect
+from lib.core.unified_draw import Layer, RenderCore, RenderRequest
 from lib.core.voice.ams_lahai_break_ams_record import AmsLahaiBreakAmsRecordSound
 from lib.core.voice.ams_lahai_combo_over_five import AmsLahaiComboOverFiveSound
 from lib.core.voice.ams_lahai_game_over import AmsLahaiGameOverSound
@@ -48,6 +49,7 @@ from .constants import (
     STARLIGHT_SKILL_SLOT as _STARLIGHT_SKILL_SLOT,
     SUN_KIND as _SUN_KIND,
     THEME as _THEME,
+    WARNING_LINE_FLASH_STACK_HEIGHT as _WARNING_LINE_FLASH_STACK_HEIGHT,
 )
 from .model import (
     build_fill_columns_result,
@@ -146,16 +148,22 @@ class LahaiTetrisWidget(QWidget):
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
+        self._render_core = RenderCore()
+        self._render_core.register_item(RenderRequest(
+            'lahai_tetris_content',
+            self._paint_game_layer,
+            Layer.PANEL,
+        ))
         self.setFocusPolicy(Qt.StrongFocus)
         self.setAutoFillBackground(False)
         self.setMouseTracking(True)
-        self.setMinimumSize(scale_px(720, min_abs=1), scale_px(520, min_abs=1))
+        self.setMinimumSize(1, 1)
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
         self._warning_pulse_timer = QTimer(self)
         self._warning_pulse_timer.setInterval(50)
-        self._warning_pulse_timer.timeout.connect(self.update)
+        self._warning_pulse_timer.timeout.connect(self._on_warning_pulse)
 
         self._board: list[list[str | None]] = []
         self._current: Piece | None = None
@@ -203,6 +211,8 @@ class LahaiTetrisWidget(QWidget):
         self._pending_fill_clear_rows: list[int] | None = None
         self._block_pixmap_cache: dict[tuple[str, int], QPixmap] = {}
         self._settled_board_cache: QPixmap | None = None
+        self._static_scene_cache: QPixmap | None = None
+        self._static_scene_cache_dirty = True
         self._settled_board_cache_dirty = True
         self._pending_settled_clear_rows: list[int] | None = None
         self._board_resolution_locked = False
@@ -216,6 +226,7 @@ class LahaiTetrisWidget(QWidget):
         self._paused = False
         self._awaiting_start = True
         self._close_callback = None
+        self._fullscreen_callback = None
         self._score_1000_triggered = False
         self._score_5000_triggered = False
         self._score_10000_triggered = False
@@ -359,7 +370,7 @@ class LahaiTetrisWidget(QWidget):
             self._timer.stop()
             self._idle_chat_timer.stop()
         self._tip_rotate_timer.start()
-        self._warning_pulse_timer.start()
+        self._refresh_warning_timer()
         self._partner_burst_timer.stop()
         self._skill_sequence_freeze_active = False
         self._pending_partner_burst_origins.clear()
@@ -408,12 +419,15 @@ class LahaiTetrisWidget(QWidget):
     def set_close_callback(self, callback) -> None:
         self._close_callback = callback
 
+    def set_fullscreen_callback(self, callback) -> None:
+        self._fullscreen_callback = callback
+
     def start_game(self) -> None:
         if not self._awaiting_start or self._game_over:
             return
         self._awaiting_start = False
         self._paused = False
-        self._warning_pulse_timer.start()
+        self._refresh_warning_timer()
         self._timer.start(self._fall_interval_ms())
         self._idle_chat_timer.start()
         self.update()
@@ -861,8 +875,20 @@ class LahaiTetrisWidget(QWidget):
             self._idle_chat_sound.play()
 
     def resizeEvent(self, event) -> None:
+        self._static_scene_cache_dirty = True
         self._update_layout_metrics()
         super().resizeEvent(event)
+
+    def _on_warning_pulse(self) -> None:
+        if self._settled_stack_height() > _WARNING_LINE_FLASH_STACK_HEIGHT:
+            self.update()
+
+    def _refresh_warning_timer(self) -> None:
+        should_pulse = self._settled_stack_height() > _WARNING_LINE_FLASH_STACK_HEIGHT
+        if should_pulse and not self._warning_pulse_timer.isActive():
+            self._warning_pulse_timer.start()
+        elif not should_pulse and self._warning_pulse_timer.isActive():
+            self._warning_pulse_timer.stop()
 
     def _queue_clear_board_rows_after_settled_animation(self, cleared_rows: list[int]) -> None:
         normalized_rows = sorted({int(row) for row in cleared_rows if 0 <= int(row) < _BOARD_H})
@@ -978,7 +1004,7 @@ class LahaiTetrisWidget(QWidget):
             self._fill_anim.resume()
         if self._board_shake_anim.state() == QVariantAnimation.Paused:
             self._board_shake_anim.resume()
-        self._warning_pulse_timer.start()
+        self._refresh_warning_timer()
         self._idle_chat_timer.start()
         if not self._paused and not self._game_over and not self._awaiting_start:
             self._timer.start(self._fall_interval_ms())
@@ -1125,6 +1151,11 @@ class LahaiTetrisWidget(QWidget):
 
     def keyPressEvent(self, event) -> None:
         key = event.key()
+        if key == Qt.Key_F11:
+            if callable(self._fullscreen_callback):
+                self._fullscreen_callback()
+            event.accept()
+            return
         if self._awaiting_start:
             self.start_game()
             event.accept()
@@ -1337,6 +1368,7 @@ class LahaiTetrisWidget(QWidget):
                 outro_duration=_SKILL_EFFECT_OUTRO_SECS,
                 resource_path=str(showcase_path),
                 scale=0.5,
+                z=10,
                 effect_options={
                     "edge_feather": True,
                     "feather_ratio": 0.16,
@@ -1363,9 +1395,7 @@ class LahaiTetrisWidget(QWidget):
                 font_weight=75,
                 glow=_SKILL_FLASH_GLOW,
                 glow_color=glow_rgb,
-                effect_options={
-                    "z": 14,
-                },
+                z=14,
             )
 
     def _board_screen_rect(self) -> QRectF:
@@ -1844,7 +1874,13 @@ class LahaiTetrisWidget(QWidget):
         self.update()
 
     def paintEvent(self, event) -> None:
-        paint_widget(self, event)
+        self._refresh_warning_timer()
+        painter = QPainter(self)
+        self._render_core.render(painter, self.rect())
+        painter.end()
+
+    def _paint_game_layer(self, painter: QPainter, _target_rect) -> None:
+        paint_widget(self, painter=painter)
 
     def _ROW_H(self) -> float:
         return float(scale_px(24, min_abs=1))

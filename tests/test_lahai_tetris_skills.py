@@ -61,6 +61,7 @@ class LahaiTetrisSkillTests(unittest.TestCase):
                 "color": (255, 255, 255),
                 "font_bold": True,
                 "glow": 10.0,
+                "z": 23,
             },
             request_context={
                 "offset_x": 0.0,
@@ -72,6 +73,7 @@ class LahaiTetrisSkillTests(unittest.TestCase):
         effect = effects[0]
         self.assertEqual(effect.center_pos, (320.0, 180.0))
         self.assertAlmostEqual(effect.total_duration, 1.6)
+        self.assertEqual(effect.z, 23)
         self.assertGreater(effect.pixmap.width(), 0)
         self.assertGreater(effect.pixmap.height(), 0)
 

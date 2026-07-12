@@ -4,8 +4,9 @@ from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QPixmap, QImage, QPainter
 
 from config.config import ANIMATION, OBJECTS
+from lib.core.layer import Layer
 from lib.core.qt_gif_loader import scale_frame
-from lib.core.topmost_manager import get_topmost_manager
+from lib.core.unified_draw import Layer, get_layer_manager
 from lib.core.event.center import get_event_center, EventType
 
 
@@ -48,7 +49,7 @@ class GameObject(QWidget):
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_NoSystemBackground)
         self.setFixedSize(*size)
-        get_topmost_manager().register(self)
+        get_layer_manager().register(self, Layer.WORLD_OBJECT)
 
     # ==================================================================
     # 渲染

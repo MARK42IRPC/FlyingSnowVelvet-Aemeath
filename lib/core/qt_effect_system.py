@@ -17,8 +17,10 @@ from PyQt5.QtGui import QColor, QLinearGradient, QPainter, QPixmap
 from PyQt5.QtWidgets import QWidget
 
 from lib.core.event.center import Event, EventType, get_event_center
+from lib.core.layer import Layer
+from lib.core.layer_manager import get_layer_manager
 from lib.core.logger import get_logger
-from lib.core.topmost_manager import TOPMOST_PRIORITY_OVERLAY, get_topmost_manager
+from lib.core.render_core import order_render_values
 from lib.script.effects.manager import cleanup_effect_script_manager, get_effect_script_manager
 
 
@@ -169,9 +171,11 @@ class EffectOverlay(QWidget):
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_TransparentForMouseEvents)
         self.setStyleSheet("background: transparent;")
-        get_topmost_manager().register(self, priority=TOPMOST_PRIORITY_OVERLAY)
+        self._layer_manager = get_layer_manager()
+        self._layer_manager.register(self, Layer.EFFECT, name='EffectOverlay')
 
         self._effects = []
+        self._draw_seq = 0
         self._pending_requests = deque()
         self._needs_immediate_repaint = False
         self._event_center = get_event_center()
@@ -245,7 +249,6 @@ class EffectOverlay(QWidget):
             effect._render_scale = prev_scale + (cur_scale - prev_scale) * alpha
             effect._render_rotation = prev_rotation + (cur_rotation - prev_rotation) * alpha
 
-        get_topmost_manager().bring_to_front(self)
         self.update()
 
     def _drain_effect_requests(self) -> None:
@@ -311,6 +314,13 @@ class EffectOverlay(QWidget):
 
             self._effects.extend(new_effects)
             for effect in new_effects:
+                self._draw_seq += 1
+                effect.layer = int(Layer.EFFECT)
+                try:
+                    effect.z = int(effect_options.get("z", getattr(effect, "z", 0)))
+                except (TypeError, ValueError):
+                    effect.z = 0
+                effect._draw_order = self._draw_seq
                 effect._tick_prev_age = float(getattr(effect, "age", 0.0))
                 effect._tick_prev_x = float(getattr(effect, "x", 0.0))
                 effect._tick_prev_y = float(getattr(effect, "y", 0.0))
@@ -330,8 +340,7 @@ class EffectOverlay(QWidget):
         if not had_effects:
             self._needs_immediate_repaint = True
             self.show()
-            self.raise_()
-            get_topmost_manager().enforce_burst()
+            self._layer_manager.enforce_burst()
         self.update()
         if self._needs_immediate_repaint:
             self.repaint()
@@ -345,7 +354,14 @@ class EffectOverlay(QWidget):
         painter.setRenderHint(QPainter.Antialiasing, True)
         painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
 
-        for effect in sorted(self._effects, key=lambda item: int(getattr(item, "z", 0))):
+        effects = order_render_values(
+            self._effects,
+            layer_getter=lambda item: getattr(item, "layer", Layer.EFFECT),
+            z_getter=lambda item: getattr(item, "z", 0),
+            order_getter=lambda item: getattr(item, "_draw_order", 0),
+            default_layer=Layer.EFFECT,
+        )
+        for effect in effects:
             if not _effect_alive(effect):
                 continue
 

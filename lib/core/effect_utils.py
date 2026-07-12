@@ -10,13 +10,17 @@ def spawn_effect(
     anchor_type: str = "point",
     anchor_data=None,
     effect_options: dict | None = None,
+    *,
+    z: int = 0,
 ):
     """发布通用特效申请事件。"""
+    options = dict(effect_options or {})
+    options.setdefault("z", int(z))
     event = Event(EventType.EFFECT_REQUEST, {
         "effect_id": effect_id,
         "anchor_type": anchor_type,
         "anchor_data": anchor_data,
-        "effect_options": dict(effect_options or {}),
+        "effect_options": options,
     })
     get_event_center().publish(event)
 
@@ -31,6 +35,7 @@ def spawn_smooth_image_effect(
     resource_path: str,
     scale: float = 1.0,
     *,
+    z: int = 0,
     effect_options: dict | None = None,
 ):
     """
@@ -49,6 +54,7 @@ def spawn_smooth_image_effect(
         "scale": scale,
     }
     options.update(dict(effect_options or {}))
+    options.setdefault("z", int(z))
 
     spawn_effect(
         effect_id="smooth_image_show",
@@ -74,6 +80,7 @@ def spawn_flash_text_effect(
     font_weight: int | None = None,
     glow: float = 0.0,
     glow_color=None,
+    z: int = 12,
     effect_options: dict | None = None,
 ):
     """发射闪动文字特效。坐标使用全局屏幕坐标，按中心点定位。"""
@@ -96,6 +103,7 @@ def spawn_flash_text_effect(
     if font_weight is not None:
         options["font_weight"] = int(font_weight)
     options.update(dict(effect_options or {}))
+    options.setdefault("z", int(z))
 
     spawn_effect(
         effect_id="flash_text",

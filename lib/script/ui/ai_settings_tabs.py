@@ -8,6 +8,7 @@ from PyQt5.QtGui import QPainter, QColor, QBrush
 
 from config.scale import scale_px
 from config.config import UI_THEME
+from lib.core.unified_draw import Layer, get_layer_manager
 
 
 class TabBarWidget(QWidget):
@@ -76,6 +77,12 @@ def attach_ai_settings_tabs(panel, general_categories: list[dict]) -> None:
     )
     panel._tab_floating.setWindowFlags(
         Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.NoDropShadowWindowHint
+    )
+    get_layer_manager().register(
+        panel._tab_floating,
+        Layer.PANEL,
+        z=1,
+        name='AISettingsTabBar',
     )
     panel._tab_floating.setAttribute(Qt.WA_ShowWithoutActivating)
 
@@ -163,7 +170,7 @@ def show_ai_settings_tab_bar(panel) -> None:
         return
     layout_ai_settings_tab_bar(panel)
     panel._tab_floating.show()
-    panel._tab_floating.raise_()
+    get_layer_manager().enforce_burst()
 
 
 def hide_ai_settings_tab_bar(panel) -> None:
@@ -182,7 +189,7 @@ def layout_ai_settings_tab_panels(panel) -> None:
             continue
         page.setGeometry(geometry)
     if panel._tab_floating is not None and panel._tab_floating.isVisible():
-        panel._tab_floating.raise_()
+        get_layer_manager().enforce_burst()
 
 
 def set_active_ai_settings_tab(panel, index: int) -> None:
@@ -198,4 +205,4 @@ def set_active_ai_settings_tab(panel, index: int) -> None:
     if 0 <= target_index < len(panel._tab_pages):
         panel._tab_pages[target_index].raise_()
     if panel._tab_floating is not None and panel._tab_floating.isVisible():
-        panel._tab_floating.raise_()
+        get_layer_manager().enforce_burst()

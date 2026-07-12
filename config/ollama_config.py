@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import ast
 import json
 import os
 from pathlib import Path
 
-from config.shared_storage_paths import get_shared_root_dir
+from config.shared_storage_paths import get_shared_config_path, get_shared_root_dir
+from config.user_settings import load_section, migrate_section_once
+from config.user_storage_paths import get_user_secrets_dir
 
 # Ollama / OpenAI 兼容 API 配置文件
 
@@ -39,23 +42,24 @@ def _local_secret_path() -> Path:
 
 
 def _candidate_secret_paths() -> list[Path]:
-    candidates: list[Path] = []
+    candidates: list[Path] = [get_user_secrets_dir('ai.json')]
 
     local_path = _local_secret_path()
-    candidates.append(local_path)
 
     try:
         shared_path = get_shared_root_dir() / 'resc' / 'user' / 'ai' / 'ollama_secrets.json'
     except Exception:
         shared_path = None
 
-    if shared_path is not None:
+    for candidate in (shared_path, local_path):
+        if candidate is None:
+            continue
         try:
-            if shared_path.resolve() != local_path.resolve():
-                candidates.append(shared_path)
+            if all(candidate.resolve() != existing.resolve() for existing in candidates):
+                candidates.append(candidate)
         except Exception:
-            if shared_path != local_path:
-                candidates.append(shared_path)
+            if candidate not in candidates:
+                candidates.append(candidate)
 
     return candidates
 
@@ -87,16 +91,17 @@ _LOCAL_SECRET_OVERRIDES = _load_local_secret_overrides()
 
 # API Key 配置（优先使用）
 # 如果设置了有效的 API Key，将使用 OpenAI 兼容 API 而非本地 Ollama。
-# 默认保持为空；AI 设置面板会把本地密钥写到 resc/user/ai/ollama_secrets.json，
+# 默认保持为空；AI 设置面板会把本地密钥写到 user/secrets/ai.json，
 # 避免把密钥提交到仓库。
 API_KEY = _LOCAL_SECRET_OVERRIDES.get('api_key', '')
 
-# 回复模式强制开关（留空=默认检索顺序）
-# 0: 强制配置文件 API_KEY
+# 回复模式（留空=默认路由）
+# 1: 优先使用福利 API
+# 0: 优先使用手动 OpenAI 兼容 API，失败回退福利 API
 # 2: 强制本地 Ollama
 # 3: 强制规则回复
 # 4: 强制元宝 Web 本地中转
-FORCE_REPLY_MODE = '0'
+FORCE_REPLY_MODE = '1'
 
 # OpenAI 兼容 API 基础地址（使用 API Key 时生效）
 # 常见兼容服务地址：
@@ -117,6 +122,13 @@ YUANBAO_FREE_API_LOCAL = {
     'base_url': 'http://127.0.0.1:8000/v1',
     'api_key': 'sk-yuanbao-local',
     'model': 'deepseek-v3',
+}
+
+# 福利 API 固定配置：默认优先使用；手动配置为空或不可用时不影响保存。
+WELFARE_API = {
+    'base_url': 'https://apihub.agnes-ai.com/v1',
+    'api_key': 'sk-VKpQS18S751kmeVVJ42aFdZgeY1J1BlOzTI3MyBvu9bbyEEi',
+    'model': 'agnes-2.0-flash',
 }
 
 # YuanBao-Free-API 登录/会话配置（参考 chenwr727/yuanbao-free-api）
@@ -188,6 +200,162 @@ AUTO_COMPANION = {
 # 人格文件路径（空则使用默认 resc/persona.txt）
 PERSONA_FILE = ''
 
+
+_AI_SETTING_DEFAULTS = {
+    'force_reply_mode': FORCE_REPLY_MODE,
+    'api_base_url': '',
+    'api_model': 'gpt-5.4',
+    'yuanbao_login_url': YUANBAO_FREE_API['login_url'],
+    'yuanbao_hy_source': YUANBAO_FREE_API['hy_source'],
+    'yuanbao_agent_id': YUANBAO_FREE_API['agent_id'],
+    'ollama_base_url': OLLAMA['base_url'],
+    'ollama_model': OLLAMA_MODEL,
+    'num_gpu': OLLAMA_OPTIONS['num_gpu'],
+    'num_thread': OLLAMA_OPTIONS['num_thread'],
+    'api_temperature': OLLAMA['api_temperature'],
+    'gsv_auto_start': OLLAMA['gsv_auto_start'],
+    'gsv_temperature': OLLAMA['gsv_temperature'],
+    'gsv_speed_factor': OLLAMA['gsv_speed_factor'],
+    'ai_voice_max_chars': OLLAMA['ai_voice_max_chars'],
+    'gsv_cache_max_files': OLLAMA['gsv_cache_max_files'],
+    'memory_context_limit': OLLAMA['memory_context_limit'],
+    'memory_recall_count': OLLAMA['memory_recall_count'],
+    'api_enable_thinking': OLLAMA['api_enable_thinking'],
+    'auto_companion_enabled': AUTO_COMPANION['enabled'],
+}
+
+
+def get_ai_setting_defaults() -> dict:
+    return dict(_AI_SETTING_DEFAULTS)
+
+
+def _literal_python_config(path: Path) -> dict[str, object]:
+    try:
+        tree = ast.parse(path.read_text(encoding='utf-8'))
+    except (OSError, SyntaxError, UnicodeError):
+        return {}
+    values: dict[str, object] = {}
+    for node in tree.body:
+        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+            continue
+        target = node.targets[0]
+        if not isinstance(target, ast.Name):
+            continue
+        if isinstance(node.value, ast.Dict):
+            partial: dict[object, object] = {}
+            for key_node, value_node in zip(node.value.keys, node.value.values):
+                if key_node is None:
+                    continue
+                try:
+                    key = ast.literal_eval(key_node)
+                    value = ast.literal_eval(value_node)
+                except (ValueError, TypeError):
+                    continue
+                partial[key] = value
+            values[target.id] = partial
+            continue
+        try:
+            values[target.id] = ast.literal_eval(node.value)
+        except (ValueError, TypeError):
+            continue
+    return values
+
+
+def _legacy_ai_setting_values() -> dict:
+    values = {
+        'force_reply_mode': FORCE_REPLY_MODE,
+        'api_base_url': API_BASE_URL,
+        'api_model': API_MODEL,
+        'yuanbao_login_url': YUANBAO_FREE_API['login_url'],
+        'yuanbao_hy_source': YUANBAO_FREE_API['hy_source'],
+        'yuanbao_agent_id': YUANBAO_FREE_API['agent_id'],
+        'ollama_base_url': OLLAMA['base_url'],
+        'ollama_model': OLLAMA_MODEL,
+        'num_gpu': OLLAMA_OPTIONS['num_gpu'],
+        'num_thread': OLLAMA_OPTIONS['num_thread'],
+        'api_temperature': OLLAMA['api_temperature'],
+        'gsv_auto_start': OLLAMA['gsv_auto_start'],
+        'gsv_temperature': OLLAMA['gsv_temperature'],
+        'gsv_speed_factor': OLLAMA['gsv_speed_factor'],
+        'ai_voice_max_chars': OLLAMA['ai_voice_max_chars'],
+        'gsv_cache_max_files': OLLAMA['gsv_cache_max_files'],
+        'memory_context_limit': OLLAMA['memory_context_limit'],
+        'memory_recall_count': OLLAMA['memory_recall_count'],
+        'api_enable_thinking': OLLAMA['api_enable_thinking'],
+        'auto_companion_enabled': AUTO_COMPANION['enabled'],
+    }
+    legacy = _literal_python_config(get_shared_config_path('ollama_config.py'))
+    scalar_map = {
+        'FORCE_REPLY_MODE': 'force_reply_mode',
+        'API_BASE_URL': 'api_base_url',
+        'API_MODEL': 'api_model',
+        'OLLAMA_MODEL': 'ollama_model',
+    }
+    for legacy_key, setting_key in scalar_map.items():
+        if legacy_key in legacy:
+            values[setting_key] = legacy[legacy_key]
+    for source_name, mapping in (
+        ('YUANBAO_FREE_API', {
+            'login_url': 'yuanbao_login_url',
+            'hy_source': 'yuanbao_hy_source',
+            'agent_id': 'yuanbao_agent_id',
+        }),
+        ('OLLAMA', {
+            'base_url': 'ollama_base_url',
+            'api_temperature': 'api_temperature',
+            'gsv_auto_start': 'gsv_auto_start',
+            'gsv_temperature': 'gsv_temperature',
+            'gsv_speed_factor': 'gsv_speed_factor',
+            'ai_voice_max_chars': 'ai_voice_max_chars',
+            'gsv_cache_max_files': 'gsv_cache_max_files',
+            'memory_context_limit': 'memory_context_limit',
+            'memory_recall_count': 'memory_recall_count',
+            'api_enable_thinking': 'api_enable_thinking',
+        }),
+        ('OLLAMA_OPTIONS', {'num_gpu': 'num_gpu', 'num_thread': 'num_thread'}),
+        ('AUTO_COMPANION', {'enabled': 'auto_companion_enabled'}),
+    ):
+        source = legacy.get(source_name)
+        if not isinstance(source, dict):
+            continue
+        for source_key, setting_key in mapping.items():
+            if source_key in source:
+                values[setting_key] = source[source_key]
+    return values
+
+
+def _apply_ai_setting_values(values: dict) -> None:
+    global FORCE_REPLY_MODE, API_BASE_URL, API_MODEL, OLLAMA_MODEL
+    FORCE_REPLY_MODE = values['force_reply_mode']
+    API_BASE_URL = values['api_base_url']
+    API_MODEL = values['api_model']
+    YUANBAO_FREE_API['login_url'] = values['yuanbao_login_url']
+    YUANBAO_FREE_API['hy_source'] = values['yuanbao_hy_source']
+    YUANBAO_FREE_API['agent_id'] = values['yuanbao_agent_id']
+    OLLAMA['base_url'] = values['ollama_base_url']
+    OLLAMA_MODEL = values['ollama_model']
+    OLLAMA_OPTIONS['num_gpu'] = values['num_gpu']
+    OLLAMA_OPTIONS['num_thread'] = values['num_thread']
+    OLLAMA['api_temperature'] = values['api_temperature']
+    OLLAMA['gsv_auto_start'] = values['gsv_auto_start']
+    OLLAMA['gsv_temperature'] = values['gsv_temperature']
+    OLLAMA['gsv_speed_factor'] = values['gsv_speed_factor']
+    OLLAMA['ai_voice_max_chars'] = values['ai_voice_max_chars']
+    OLLAMA['gsv_cache_max_files'] = values['gsv_cache_max_files']
+    OLLAMA['memory_context_limit'] = values['memory_context_limit']
+    OLLAMA['memory_recall_count'] = values['memory_recall_count']
+    OLLAMA['api_enable_thinking'] = values['api_enable_thinking']
+    AUTO_COMPANION['enabled'] = values['auto_companion_enabled']
+
+
+migrate_section_once(
+    'legacy_ai_python_v1',
+    'ai',
+    _legacy_ai_setting_values(),
+    _AI_SETTING_DEFAULTS,
+)
+_apply_ai_setting_values(load_section('ai', _AI_SETTING_DEFAULTS))
+
 # ============================================================
 # 辅助函数
 # ============================================================
@@ -200,7 +368,7 @@ def is_api_key_configured() -> bool:
 def _normalize_force_mode(value) -> str:
     """将强制模式归一化到 '', '0', '2', '3', '4'。"""
     text = '' if value is None else str(value).strip()
-    return text if text in ('', '0', '2', '3', '4') else ''
+    return text if text in ('', '0', '1', '2', '3', '4') else ''
 
 
 def get_yuanbao_local_base_url() -> str:
@@ -238,19 +406,40 @@ def _is_yuanbao_web_ready() -> bool:
     return True
 
 
-def _build_openai_config(api_key: str, key_source: str, force_mode: str, *, provider_options: dict | None = None) -> dict:
+def _build_openai_config(
+    api_key: str,
+    key_source: str,
+    force_mode: str,
+    *,
+    base_url: str | None = None,
+    model: str | None = None,
+    provider_options: dict | None = None,
+    fallback_config: dict | None = None,
+) -> dict:
     """构造 OpenAI 兼容模式配置。"""
     return {
         'api_type': 'openai_compatible',
-        'base_url': API_BASE_URL,
-        'model': API_MODEL,
+        'base_url': API_BASE_URL if base_url is None else base_url,
+        'model': API_MODEL if model is None else model,
         'api_key': api_key,
         'key_source': key_source,
         'force_mode': force_mode,
         'strict_mode': bool(force_mode),
         'error': '',
         'provider_options': provider_options or _build_yuanbao_provider_options(enabled=False),
+        'fallback_config': fallback_config,
     }
+
+
+def _build_welfare_config(force_mode: str) -> dict:
+    """构造固定福利 API 配置。"""
+    return _build_openai_config(
+        WELFARE_API['api_key'],
+        'welfare_api',
+        force_mode,
+        base_url=WELFARE_API['base_url'],
+        model=WELFARE_API['model'],
+    )
 
 
 def _build_yuanbao_web_config(force_mode: str) -> dict:
@@ -315,10 +504,9 @@ def _build_error_config(force_mode: str, error_text: str) -> dict:
 
 def get_active_config() -> dict:
     """
-    获取当前活跃的配置。
+    获取当前活跃配置。
 
-    Returns:
-        包含 api_type, base_url, model 等信息的字典
+    福利 API 是默认首选；手动 OpenAI 兼容配置不完整时仍允许保存，运行时自动回退福利 API。
     """
     config_api_key = (API_KEY or '').strip()
     env_api_key = (_ENV_API_KEY or '').strip()
@@ -326,12 +514,24 @@ def get_active_config() -> dict:
     force_mode = _normalize_force_mode(FORCE_REPLY_MODE)
     preferred_api_key = config_api_key or env_api_key
     preferred_source = 'config_api' if config_api_key else env_source
+    welfare_config = _build_welfare_config(force_mode or '1')
+    manual_ready = bool(
+        preferred_api_key
+        and str(API_BASE_URL or '').strip()
+        and str(API_MODEL or '').strip()
+    )
 
-    # 强制模式优先（失败即报错，不再回退）
+    if force_mode == '1':
+        return welfare_config
     if force_mode == '0':
-        if preferred_api_key:
-            return _build_openai_config(preferred_api_key, preferred_source, force_mode)
-        return _build_error_config(force_mode, '强制模式0失败：接口密钥为空')
+        if manual_ready:
+            return _build_openai_config(
+                preferred_api_key,
+                preferred_source,
+                force_mode,
+                fallback_config=welfare_config,
+            )
+        return welfare_config
     if force_mode == '2':
         return _build_ollama_config(force_mode)
     if force_mode == '3':
@@ -340,13 +540,6 @@ def get_active_config() -> dict:
         if not _is_yuanbao_web_ready():
             return _build_error_config(force_mode, '优先走元宝 web 失败：配置不完整，至少需要 agent_id，并确保本地中转接口可用')
         return _build_yuanbao_web_config(force_mode)
-    # 默认检索顺序：
-    # 1) 配置文件 API_KEY
-    # 2) 环境变量 API Key
-    # 3) 本地 Ollama
-    # 4) 规则回复（由上层在 Ollama 不可用时触发）
-    if config_api_key:
-        return _build_openai_config(config_api_key, 'config_api', '')
-    if env_api_key:
-        return _build_openai_config(env_api_key, env_source, '')
-    return _build_ollama_config('')
+
+    # 未指定模式时也优先福利 API，保持默认行为一致。
+    return welfare_config

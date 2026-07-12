@@ -2,7 +2,7 @@
 
 职责：
 - 订阅 INPUT_CHAT / STREAM_FINAL 事件
-- 将用户输入与模型回复按日期分文件写入 resc/user/memory/ 目录
+- 将用户输入与模型回复按日期分文件写入 user/state/chat/memory/ 目录
 - 写入前移除 ###指令### 标记，并解析 ///主题///
 - 格式：[YYYY-MM-DD HH:MM:SS][主题][user:]内容 / [YYYY-MM-DD HH:MM:SS][主题][you:]内容
 """
@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Optional
 
 from config.shared_storage import ensure_shared_config_ready, get_project_root, get_shared_config_path
+from config.user_storage_paths import get_user_state_dir
 from lib.core.event.center import Event, EventType, get_event_center
 from lib.core.logger import get_logger
 
@@ -32,7 +33,7 @@ _MEMORY_FILE_PREFIX = "memory_"
 def _memory_dir(shared: bool = True) -> Path:
     if shared:
         ensure_shared_config_ready()
-        return get_shared_config_path("chat", "memory")
+        return get_user_state_dir("chat", "memory")
     return get_project_root() / "resc" / "user" / "memory"
 
 
@@ -96,21 +97,30 @@ class StreamMemory:
 
         if memory_dir is None:
             shared_dir = _memory_dir(shared=True)
-            legacy_dir = _memory_dir(shared=False)
             self._memory_dir = shared_dir
-            self._legacy_memory_dir = legacy_dir
+            self._legacy_memory_dirs = (
+                get_shared_config_path("chat", "memory"),
+                _memory_dir(shared=False),
+            )
         else:
             self._memory_dir = Path(memory_dir)
-            self._legacy_memory_dir = None
+            self._legacy_memory_dirs = ()
 
         self._memory_dir.mkdir(parents=True, exist_ok=True)
-        if self._legacy_memory_dir is not None:
-            self._legacy_memory_dir.mkdir(parents=True, exist_ok=True)
+        for legacy_dir in self._legacy_memory_dirs:
+            if not legacy_dir.exists():
+                continue
+            for old_file in self._list_memory_files(legacy_dir):
+                target = self._memory_dir / old_file.name
+                if target.exists():
+                    continue
+                try:
+                    target.write_bytes(old_file.read_bytes())
+                except OSError:
+                    pass
 
         # 迁移旧版单文件 memory.txt
-        for base_dir in (self._memory_dir, self._legacy_memory_dir):
-            if base_dir is None:
-                continue
+        for base_dir in (self._memory_dir, *self._legacy_memory_dirs):
             legacy_single = base_dir.parent / "memory.txt"
             if legacy_single.exists() and legacy_single.is_file():
                 _migrate_legacy_single_file(legacy_single, base_dir)
@@ -164,13 +174,10 @@ class StreamMemory:
 
         try:
             with self._write_lock:
-                for target_dir in (self._memory_dir, self._legacy_memory_dir):
-                    if target_dir is None:
-                        continue
-                    target_dir.mkdir(parents=True, exist_ok=True)
-                    file_path = target_dir / filename
-                    with file_path.open("a", encoding="utf-8") as f:
-                        f.write(payload)
+                self._memory_dir.mkdir(parents=True, exist_ok=True)
+                file_path = self._memory_dir / filename
+                with file_path.open("a", encoding="utf-8") as f:
+                    f.write(payload)
         except OSError as e:
             logger.error("[StreamMemory] 写入失败: %s", e)
 
@@ -219,11 +226,13 @@ class StreamMemory:
     def _read_memory_lines(self) -> list[str]:
         lines: list[str] = []
         primary = self._memory_dir
-        fallback = self._legacy_memory_dir
 
         files = self._list_memory_files(primary)
-        if not files and fallback is not None:
-            files = self._list_memory_files(fallback)
+        if not files:
+            for fallback in self._legacy_memory_dirs:
+                files = self._list_memory_files(fallback)
+                if files:
+                    break
 
         for file_path in files:
             try:

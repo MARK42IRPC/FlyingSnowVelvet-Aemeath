@@ -9,6 +9,7 @@ from PyQt5.QtGui     import QPainter, QPixmap, QColor
 from config.config            import BEHAVIOR, PHYSICS, UI_THEME
 from config.font_config       import get_digit_font
 from config.scale             import scale_px
+from lib.core.unified_draw import Layer, get_layer_manager
 from lib.core.topmost_manager  import get_topmost_manager
 from lib.core.event.center     import get_event_center, EventType, Event
 from lib.core.clickthrough_state import is_clickthrough_enabled
@@ -132,7 +133,7 @@ class Clock(QWidget):
 
         self.move(position)
         self.show()
-        get_topmost_manager().register(self)
+        get_layer_manager().register(self, Layer.WORLD_OBJECT)
 
         # 事件中心
         self._event_center = get_event_center()

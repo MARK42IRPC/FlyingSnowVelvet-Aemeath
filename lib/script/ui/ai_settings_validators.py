@@ -21,9 +21,7 @@ def _hostname(text: str) -> str:
 
 def validate_ai_values(values: dict) -> None:
     force_mode = str(values.get("force_reply_mode", "")).strip()
-    api_key = str(values.get("api_key", "") or "").strip()
     api_base_url = str(values.get("api_base_url", "") or "").strip()
-    api_model = str(values.get("api_model", "") or "").strip()
     yuanbao_login_url = str(values.get("yuanbao_login_url", "") or "").strip()
     yuanbao_free_api_enabled = bool(values.get("yuanbao_free_api_enabled", False))
     yuanbao_hy_source = str(values.get("yuanbao_hy_source", "") or "").strip()
@@ -45,18 +43,11 @@ def validate_ai_values(values: dict) -> None:
     memory_context_limit = values.get("memory_context_limit")
     memory_recall_count = values.get("memory_recall_count")
 
-    if force_mode not in ("", "0", "2", "3", "4"):
+    if force_mode not in ("", "0", "1", "2", "3", "4"):
         raise ValueError("回复模式值无效")
 
-    if force_mode in ("", "0"):
-        if not api_base_url:
-            raise ValueError("接口地址不能为空")
-        if not is_valid_http_url(api_base_url):
-            raise ValueError("接口地址必须是有效的 http/https 地址")
-        if not api_model:
-            raise ValueError("接口模型不能为空")
-        if force_mode == "0" and not api_key:
-            raise ValueError("强制手动接口密钥模式下，接口密钥不能为空")
+    if api_base_url and not is_valid_http_url(api_base_url):
+        raise ValueError("接口地址必须是有效的 http/https 地址")
 
     if yuanbao_login_url and not is_valid_http_url(yuanbao_login_url):
         raise ValueError("元宝登录页地址必须是有效的 http/https 地址")
@@ -67,7 +58,7 @@ def validate_ai_values(values: dict) -> None:
         if yuanbao_x_uskey and any(ch.isspace() for ch in yuanbao_x_uskey):
             raise ValueError("x_uskey 不能包含空白字符")
 
-    if force_mode in ("", "2"):
+    if force_mode == "2":
         if not ollama_base_url:
             raise ValueError("Ollama地址不能为空")
         if not is_valid_http_url(ollama_base_url):

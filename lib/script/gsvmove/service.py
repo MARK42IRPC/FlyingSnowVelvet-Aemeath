@@ -31,6 +31,7 @@ from config.shared_storage import (
     get_shared_config_path,
     get_shared_root_dir,
 )
+from config.user_storage_paths import get_user_cache_dir, get_user_logs_dir
 from lib.core.event.center import Event, EventType
 from lib.core.logger import get_logger
 from lib.script.local_hosted_service import LocalHostedServiceBase
@@ -206,9 +207,9 @@ class GsvmoveService(LocalHostedServiceBase):
         self._project_root = Path(__file__).resolve().parents[3]
         self._root_dir = get_shared_root_dir()
         self._launcher_path = self._root_dir / "start_gsvmove.bat"
-        self._launcher_log_path = get_shared_config_path("gsvmove", "launcher.log")
-        self._output_dir = get_shared_config_path("gsvmove", "cache")
-        self._saved_audio_root = self._project_root / "resc" / "user" / "temp" / "gsv_voice"
+        self._launcher_log_path = get_user_logs_dir("gsvmove", "launcher.log")
+        self._output_dir = get_user_cache_dir("gsvmove", "output")
+        self._saved_audio_root = get_user_cache_dir("gsvmove", "voice")
         self._saved_audio_lock = threading.Lock()
         self._launcher_log_path.parent.mkdir(parents=True, exist_ok=True)
         self._output_dir.mkdir(parents=True, exist_ok=True)

@@ -10,19 +10,26 @@ from pathlib import Path
 from typing import Optional
 
 from lib.core.logger import get_logger
+from config.config_music import CLOUD_MUSIC
 from config.shared_storage import ensure_shared_config_ready, get_project_root, get_shared_config_path
+from config.user_settings import load_section, migrate_section_once, save_section
+from config.user_storage_paths import get_user_settings_path
 
 _logger = get_logger(__name__)
 
 # 配置文件名
 _VOLUME_CONFIG_FILE = "volume.json"
 
-# 默认音量（与 config.py 中的 CLOUD_MUSIC['default_volume'] 保持一致）
-_DEFAULT_VOLUME = 0.14
+# 默认音量（唯一来源：内置 CLOUD_MUSIC 默认配置）
+_DEFAULT_VOLUME = float(CLOUD_MUSIC.get("default_volume", 0.3))
 
 # 单例实例
 _instance: Optional["VolumeConfig"] = None
 _lock = threading.Lock()
+
+
+def get_default_volume() -> float:
+    return _DEFAULT_VOLUME
 
 
 def get_volume_config() -> "VolumeConfig":
@@ -54,25 +61,50 @@ class VolumeConfig:
         Args:
             config_dir: 配置目录路径，默认为 config/music
         """
-        if config_dir is None:
+        self._uses_unified_settings = config_dir is None
+        if self._uses_unified_settings:
             ensure_shared_config_ready()
-            config_dir = get_shared_config_path("music")
-        
-        self._config_dir = Path(config_dir)
-        self._config_file = self._config_dir / _VOLUME_CONFIG_FILE
+            self._config_dir = get_user_settings_path().parent
+            self._config_file = get_user_settings_path()
+        else:
+            self._config_dir = Path(config_dir)
+            self._config_file = self._config_dir / _VOLUME_CONFIG_FILE
+        self._shared_legacy_config_file = get_shared_config_path("music", _VOLUME_CONFIG_FILE)
         self._legacy_config_file = get_project_root() / "config" / "music" / _VOLUME_CONFIG_FILE
         self._volume: float = _DEFAULT_VOLUME
         self._data_lock = threading.Lock()
         
         # 确保目录存在
         self._config_dir.mkdir(parents=True, exist_ok=True)
-        self._legacy_config_file.parent.mkdir(parents=True, exist_ok=True)
         
         # 加载配置
         self._load()
 
     def _load(self):
         """从文件加载音量配置"""
+        if self._uses_unified_settings:
+            legacy_data = {}
+            for source in (self._shared_legacy_config_file, self._legacy_config_file):
+                try:
+                    payload = json.loads(source.read_text(encoding="utf-8"))
+                except (OSError, ValueError, TypeError):
+                    continue
+                if isinstance(payload, dict):
+                    legacy_data = {"volume": payload.get("volume", _DEFAULT_VOLUME)}
+                    break
+            migrate_section_once(
+                "legacy_music_volume_v1",
+                "audio",
+                legacy_data,
+                {"volume": _DEFAULT_VOLUME},
+            )
+            data = load_section("audio", {"volume": _DEFAULT_VOLUME})
+            volume = max(0.0, min(1.0, float(data["volume"])))
+            with self._data_lock:
+                self._volume = volume
+            _logger.info("[VolumeConfig] 已加载音量配置: %.2f (%.0f%%)", volume, volume * 100)
+            return
+
         changed = False
         try:
             source = self._config_file
@@ -106,12 +138,16 @@ class VolumeConfig:
         try:
             with self._data_lock:
                 volume = self._volume
-            
+
+            if self._uses_unified_settings:
+                save_section("audio", {"volume": volume}, {"volume": _DEFAULT_VOLUME})
+                _logger.debug("[VolumeConfig] 已保存稀疏音量配置: %.2f", volume)
+                return
+
             data = {"volume": volume}
-            for target in (self._config_file, self._legacy_config_file):
-                target.parent.mkdir(parents=True, exist_ok=True)
-                with open(target, "w", encoding="utf-8") as f:
-                    json.dump(data, f, ensure_ascii=False, indent=2)
+            self._config_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(self._config_file, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
             _logger.debug("[VolumeConfig] 已保存音量配置: %.2f (%.0f%%)", volume, volume * 100)
         except OSError as e:
             _logger.error("[VolumeConfig] 保存音量配置失败: %s", e)

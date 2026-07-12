@@ -10,7 +10,7 @@ from config.scale import scale_px, scale_style_px
 from config.tooltip_config import TOOLTIPS
 from lib.script.ui.command_dialog_handler import CommandDialogEventHandler
 from lib.core.event.center import get_event_center, EventType, Event
-from lib.core.topmost_manager import get_topmost_manager
+from lib.core.unified_draw import Layer, get_layer_manager
 from lib.core.screen_utils import clamp_rect_position
 from lib.core.anchor_utils import (
     get_anchor_point as resolve_anchor_point,
@@ -40,7 +40,7 @@ class CommandDialog(QWidget):
         )
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFixedSize(UI['cmd_window_width'], UI['cmd_window_height'])
-        get_topmost_manager().register(self)
+        get_layer_manager().register(self, Layer.PET_UI)
 
         self._on_command = on_command
         self._close_button = close_button  # 引用关闭按钮

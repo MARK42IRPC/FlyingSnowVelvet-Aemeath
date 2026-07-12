@@ -1,0 +1,13 @@
+# 重型资源下载清单。安装脚本按 URL 文件名匹配缺失资源
+# HTTP/HTTPS 链接为同名资源配置多个备用地址
+
+https://gitee.com/Mark42IRPC/Aemeath-AIdeskpet/releases/download/RESC/
+https://github.com/MARK42IRPC/FlyingSnowVelvet-Aemeath/releases/download/RESC/
+
+vosk-model-small-cn-0.22.zip
+vosk-model-small-en-us-0.15.zip
+python-3.11.6-amd64.exe
+SEanima.zip
+chrome-runtime.zip
+chrome-runtime.z01
+chrome-runtime.z02

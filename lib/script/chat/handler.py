@@ -1,4 +1,4 @@
-"""?????????"""
+"""聊天输入处理与模型请求调度。"""
 
 from collections import deque
 
@@ -47,8 +47,10 @@ class ChatHandler(ChatHandlerPersonaMixin, ChatHandlerAutoCompanionMixin, ChatHa
             return
 
         source = str(event.data.get("source", "")).strip()
-        include_history = source != 'tool_recall'
+        is_screen_peek = source == 'tool_screen_peek'
+        include_history = source not in ('tool_recall', 'tool_screen_peek')
         is_tool_recall = source == 'tool_recall'
+        allow_tool_commands = bool(event.data.get('allow_tool_commands', True))
         context_history = self._get_recent_context_snapshot()
 
         logger.debug("[ChatHandler] 收到聊天消息: %s", text[:60])
@@ -72,12 +74,21 @@ class ChatHandler(ChatHandlerPersonaMixin, ChatHandlerAutoCompanionMixin, ChatHa
 
         # 检查是否触发视觉请求
         images = None
-        if _should_capture_screen(text):
+        should_capture_screen = bool(event.data.get('capture_screen')) or _should_capture_screen(text)
+        if should_capture_screen:
             logger.info("[ChatHandler] 检测到视觉请求，正在截图...")
             images = capture_screen()
             if images:
                 logger.info("[ChatHandler] 截图成功 (%d bytes)，将发送给模型", len(images[0]))
             else:
+                if is_screen_peek:
+                    logger.warning("[ChatHandler] 窥屏工具截图失败，已取消模型请求")
+                    self._event_center.publish(Event(EventType.INFORMATION, {
+                        "text": "窥屏失败：无法获取屏幕截图",
+                        "min": BUBBLE_MIN_TICKS,
+                        "max": BUBBLE_MAX_TICKS,
+                    }))
+                    return
                 logger.warning("[ChatHandler] 截图失败，仅发送文本")
 
         # 立即发布等待气泡，填补发起请求到收到回复的空白时间
@@ -94,10 +105,11 @@ class ChatHandler(ChatHandlerPersonaMixin, ChatHandlerAutoCompanionMixin, ChatHa
         self._ollama.stream_chat(
             message=text,
             persona=self._build_runtime_persona(skip_memory_block=is_tool_recall),
-            callback=lambda reply_text, user_text=text, keep_history=include_history: self._publish_response(
+            callback=lambda reply_text, user_text=text, keep_history=include_history, allow_tools=allow_tool_commands: self._publish_response(
                 reply_text,
                 user_text=user_text,
                 include_history=keep_history,
+                allow_tool_commands=allow_tools,
             ),
             on_chunk=self._on_stream_chunk,
             images=images,
@@ -128,7 +140,7 @@ _chat_handler: ChatHandler | None = None
 
 
 def get_chat_handler() -> ChatHandler:
-    """???? ChatHandler ???????"""
+    """获取全局 ChatHandler 单例。"""
     global _chat_handler
     if _chat_handler is None:
         _chat_handler = ChatHandler()
@@ -136,7 +148,7 @@ def get_chat_handler() -> ChatHandler:
 
 
 def cleanup_chat_handler():
-    """???? ChatHandler ???"""
+    """清理全局 ChatHandler 实例。"""
     global _chat_handler
     if _chat_handler is not None:
         _chat_handler.cleanup()

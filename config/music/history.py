@@ -11,6 +11,7 @@ from typing import Any, Optional
 
 from config.config import CLOUD_MUSIC
 from config.shared_storage import ensure_shared_config_ready, get_shared_config_path
+from config.user_storage_paths import get_user_state_dir
 from lib.core.logger import get_logger
 
 _logger = get_logger(__name__)
@@ -77,30 +78,29 @@ class MusicHistory:
 
         if history_dir is None:
             ensure_shared_config_ready()
-            history_dir = get_shared_config_path("music", "history")
+            history_dir = get_user_state_dir("music", "history")
 
         self._history_dir = Path(history_dir)
         self._history_file = self._history_dir / f"{_HISTORY_FILE_PREFIX}_{self._provider}.json"
-        self._legacy_history_dir = _project_root() / "resc" / "user" / "history"
-        self._legacy_history_file = self._legacy_history_dir / f"{_HISTORY_FILE_PREFIX}_{self._provider}.json"
+        self._legacy_history_files = (
+            get_shared_config_path("music", "history", f"{_HISTORY_FILE_PREFIX}_{self._provider}.json"),
+            _project_root() / "resc" / "user" / "history" / f"{_HISTORY_FILE_PREFIX}_{self._provider}.json",
+        )
         self._history: list[dict[str, Any]] = []  # [{id, title, artist, duration_ms?}, ...]
         self._id_set: set[Any] = set()
         self._data_lock = threading.Lock()
 
         self._history_dir.mkdir(parents=True, exist_ok=True)
-        self._legacy_history_dir.mkdir(parents=True, exist_ok=True)
         self._migrate_legacy_history_file()
         self._load()
 
     def _migrate_legacy_history_file(self) -> None:
         """迁移旧 history 文件到新路径（仅 netease）。"""
-        if self._provider != "netease":
-            return
         if self._history_file.exists():
             return
 
         candidates = [
-            self._legacy_history_file,
+            *self._legacy_history_files,
             _project_root() / "resc" / "user" / "history.json",
             _project_root() / "config" / "music" / "history.json",
         ]
@@ -234,8 +234,8 @@ class MusicHistory:
         """从文件加载历史记录。"""
         try:
             source = self._history_file
-            if not source.exists() and self._legacy_history_file.exists():
-                source = self._legacy_history_file
+            if not source.exists():
+                source = next((path for path in self._legacy_history_files if path.exists()), source)
             if source.exists():
                 with open(source, "r", encoding="utf-8") as f:
                     data = json.load(f)
@@ -259,10 +259,9 @@ class MusicHistory:
         try:
             with self._data_lock:
                 data = self._history.copy()
-            for target in (self._history_file, self._legacy_history_file):
-                target.parent.mkdir(parents=True, exist_ok=True)
-                with open(target, "w", encoding="utf-8") as f:
-                    json.dump(data, f, ensure_ascii=False, indent=2)
+            self._history_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(self._history_file, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
             _logger.debug("[MusicHistory] [%s] 已保存 %d 条历史记录", self._provider, len(data))
         except OSError as e:
             _logger.error("[MusicHistory] [%s] 保存历史记录失败: %s", self._provider, e)

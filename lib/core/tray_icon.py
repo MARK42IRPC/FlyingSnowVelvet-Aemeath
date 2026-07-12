@@ -18,6 +18,7 @@ from lib.core.event.center import get_event_center, EventType, Event
 from lib.script.ui.tray_menu import TrayContextMenu
 from config.config import CLOUD_MUSIC
 from config.tooltip_config import TOOLTIPS
+from config.user_storage_paths import get_user_cache_dir
 
 _logger = get_logger(__name__)
 
@@ -433,8 +434,7 @@ class TrayIcon(QObject):
 
     def _on_cleanup_cache(self):
         """处理清理缓存动作：仅清理音乐缓存目录，不影响历史与登录数据。"""
-        project_root = Path(__file__).resolve().parents[2]
-        cache_root = project_root / str(CLOUD_MUSIC.get("cache_dir", "resc/user/temp") or "resc/user/temp")
+        cache_root = get_user_cache_dir("music")
         platform_names = ("netease", "qq", "kugou", "local", "other")
         platform_dirs = [cache_root / name for name in platform_names if (cache_root / name).is_dir()]
 

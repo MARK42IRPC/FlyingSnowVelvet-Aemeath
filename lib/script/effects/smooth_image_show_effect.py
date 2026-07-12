@@ -62,6 +62,7 @@ class SmoothImageShowEffect:
         outro_end_pos: tuple[float, float],
         outro_duration: float,
         scale: float,
+        z: int = 0,
     ):
         self.pixmap = pixmap
         self.intro_start_pos = intro_start_pos
@@ -77,7 +78,7 @@ class SmoothImageShowEffect:
         self.life = self.total_duration
         self.scale = max(0.001, float(scale))
         self.rotation = 0.0
-        self.z = 0
+        self.z = int(z)
 
         self.x = 0.0
         self.y = 0.0
@@ -178,5 +179,6 @@ class SmoothImageShowEffectScript(BaseEffectScript):
                 outro_end_pos=outro_end_pos,
                 outro_duration=outro_duration,
                 scale=scale,
+                z=int(options.get("z", 0)),
             )
         ]

@@ -23,7 +23,7 @@ from config.scale import scale_px, scale_style_px
 from lib.core.anchor_utils import apply_ui_opacity
 from lib.core.compute_hub import get_compute_hub
 from lib.core.screen_utils import clamp_rect_position, get_screen_geometry_for_point
-from lib.core.topmost_manager import get_topmost_manager
+from lib.core.unified_draw import Layer, get_layer_manager
 from lib.script.update_manager import (
     GitSyncCheckResult,
     GitSyncManager,
@@ -61,7 +61,7 @@ class DesktopPetUpdateDialog(QWidget):
         self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFixedSize(_WIDTH, _HEIGHT)
-        get_topmost_manager().register(self)
+        get_layer_manager().register(self, Layer.DIALOG)
 
         self._visible = False
         self._busy = False
@@ -235,7 +235,7 @@ class DesktopPetUpdateDialog(QWidget):
         if not self._visible:
             self._visible = True
             self.show()
-        self.raise_()
+        get_layer_manager().bring_to_front(self)
         self.activateWindow()
         self._animate(1.0)
 

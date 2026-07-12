@@ -4,7 +4,8 @@ from PyQt5.QtCore import QPoint, Qt
 from PyQt5.QtWidgets import QApplication
 
 from config.config import ANIMATION
-from lib.core.topmost_manager import TOPMOST_PRIORITY_MAIN_PET, get_topmost_manager
+from lib.core.layer import Layer
+from lib.core.layer_manager import get_layer_manager
 
 
 def setup_pet_window(owner) -> None:
@@ -30,10 +31,12 @@ def setup_pet_window(owner) -> None:
 
 def finalize_pet_window_startup(owner) -> None:
     """显示主窗口并完成启动后的 UI 预热。"""
+    layer_manager = get_layer_manager()
+    layer_manager.register(owner, Layer.MAIN_PET, name='PetWindow')
     owner.show()
+    layer_manager.enforce_burst()
     owner._startup_voice_sound.play()
     owner._move_particle_last_pos = QPoint(owner.frameGeometry().topLeft())
     owner._move_particle_enabled = True
-    get_topmost_manager().register(owner, priority=TOPMOST_PRIORITY_MAIN_PET)
     owner.update()
     owner._preload_ui()

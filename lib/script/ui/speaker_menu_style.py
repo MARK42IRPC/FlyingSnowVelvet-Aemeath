@@ -8,7 +8,7 @@ from PyQt5.QtGui import QPainter, QColor
 from config.config import COLORS, UI_THEME, SPEAKER_SEARCH_UI
 from config.font_config import get_ui_font
 from config.scale import scale_px
-from lib.core.topmost_manager import get_topmost_manager
+from lib.core.unified_draw import Layer, get_layer_manager
 
 _C_BORDER = UI_THEME['border']
 _C_MID = UI_THEME['mid']
@@ -67,7 +67,7 @@ class SpeakerActionButtonMixin:
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFixedSize(width, height)
         self.setCursor(Qt.PointingHandCursor)
-        get_topmost_manager().register(self)
+        get_layer_manager().register(self, Layer.PET_UI)
         self._hovered = False
         self._pressed = False
         self._label_font = get_ui_font()

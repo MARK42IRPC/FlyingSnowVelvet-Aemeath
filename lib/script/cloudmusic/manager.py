@@ -12,7 +12,7 @@
   queue[0]   = 当前正在播放/加载的歌曲（顶部）
   queue[1:]  = 等待播放
 
-缓存目录：{项目根}/resc/user/temp/
+缓存目录：C:\\AemeathDeskPet\\cache\\music\\
   {song_id}.{ext}         音频文件（按真实格式保存，支持 mp3/flac/wav/m4a/aac/ogg/opus/webm）
   {song_id}.meta.json     歌曲元信息（title、artist）
 """
