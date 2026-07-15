@@ -25,6 +25,28 @@ from config.version_info import APP_VERSION
 DEFAULT_VERSION = APP_VERSION
 DIST_DIR = ROOT / "dist"
 
+ALLOWED_TOP_LEVEL_DIRS = {
+    "config",
+    "doc",
+    "lib",
+    "pyncm",
+    "resc",
+    "services",
+}
+
+ALLOWED_TOP_LEVEL_FILES = {
+    "CHANGELOG.md",
+    "LICENSE-ASSETS",
+    "LICENSE-CODE",
+    "README.md",
+    "install_deps.py",
+    "requirements.txt",
+    "resc.net.txt",
+    "启动程序.bat",
+    "安装依赖.bat",
+    "调试模式.bat",
+}
+
 EXCLUDE_PART_NAMES = {
     ".claude",
     ".git",
@@ -48,6 +70,10 @@ EXCLUDE_PATH_PREFIXES = {
     Path("resc") / "GIF" / "SEanima",
     Path("resc") / "user",
     Path("resc") / "gsvmove_update",
+    Path("tests"),
+    Path("scripts"),
+    Path(".oprate"),
+    Path("用户反馈"),
 }
 
 EXCLUDE_EXACT_PATHS = {
@@ -59,6 +85,11 @@ EXCLUDE_EXACT_PATHS = {
     Path("resc") / "chrome-runtime.z01",
     Path("resc") / "chrome-runtime.z02",
     Path("services") / "storage_state.json",
+    Path("ASYNC_COMPUTE_PLAN.txt"),
+    Path("CONTRIBUTING.md"),
+    Path("RELEASING.md"),
+    Path("services") / "yuanbao-free-api" / "Dockerfile",
+    Path("services") / "yuanbao-free-api" / "test.py",
 }
 
 EXCLUDE_SUFFIXES = {
@@ -148,9 +179,22 @@ def _is_under(path: Path, prefix: Path) -> bool:
     return parts[: len(prefix_parts)] == prefix_parts
 
 
+def _is_allowed_top_level(rel: Path) -> bool:
+    if not rel.parts:
+        return False
+    top_level = rel.parts[0]
+    if len(rel.parts) == 1:
+        return top_level in ALLOWED_TOP_LEVEL_FILES
+    return top_level in ALLOWED_TOP_LEVEL_DIRS
+
+
 def _should_exclude(path: Path) -> bool:
     rel = path.relative_to(ROOT)
+    if not _is_allowed_top_level(rel):
+        return True
     if rel in EXCLUDE_EXACT_PATHS:
+        return True
+    if any(part.startswith(".") for part in rel.parts):
         return True
     # directory parts
     for part in rel.parts:

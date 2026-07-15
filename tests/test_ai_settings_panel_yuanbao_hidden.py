@@ -51,6 +51,7 @@ def _build_dummy_panel() -> _DummyPanel:
     panel._gpu_mode = _ComboField(_GPU_MODE_AUTO, "自动")
     panel._num_thread = _TextField("0")
     panel._api_temperature = _TextField("0.8")
+    panel._model_vision = _TextField("0")
     panel._gsv_auto_start = _CheckField(True)
     panel._gsv_temperature = _TextField("1.35")
     panel._gsv_speed_factor = _TextField("1.0")

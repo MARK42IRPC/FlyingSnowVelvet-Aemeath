@@ -66,3 +66,6 @@ FlyingSnowVelvet-*.zip
 
 # Local repository operation helpers
 oprate/
+
+# Local preview pages
+local_pages/

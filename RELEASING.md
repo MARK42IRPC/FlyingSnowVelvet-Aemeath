@@ -1,6 +1,6 @@
 ﻿# Release Playbook
 
-本文记录飞行雪绒发布流程，适用于 `LTS1.0.6beta8` 及后续版本。发布目标是：版本号一致、文档一致、普通包轻量、绿色包离线友好，并且不把开发机运行状态打进包里。
+本文记录飞行雪绒发布流程，适用于 `LTS1.0.6beta9` 及后续版本。发布目标是：版本号一致、文档一致、普通包轻量、绿色包离线友好，并且不把开发机运行状态打进包里。
 
 ## 1. 发布前版本同步
 
@@ -52,13 +52,13 @@ python scripts/package_green_release.py --dry-run
 ### 普通包
 
 ```powershell
-python scripts/package_release.py --version LTS1.0.6beta8
+python scripts/package_release.py --version LTS1.0.6beta9
 ```
 
 输出示例：
 
-- `dist/FlyingSnowVelvet-LTS1.0.6beta8.zip`
-- `dist/FlyingSnowVelvet-LTS1.0.6beta8-manifest.json`
+- `dist/FlyingSnowVelvet-LTS1.0.6beta9.zip`
+- `dist/FlyingSnowVelvet-LTS1.0.6beta9-manifest.json`
 
 普通包用于联网环境，安装脚本会按 `resc.net.txt` 补齐重型资源。它应排除：
 
@@ -70,29 +70,44 @@ python scripts/package_release.py --version LTS1.0.6beta8
 - `resc/user/`
 - `logs/`
 - `dist/`
+- `.git/`、`.gitignore`、`.github/` 等 Git 相关元文件
+- `tests/`、`scripts/`、`.oprate/`、`用户反馈/` 等开发/维护目录
 - 本机配置、缓存、临时文件
 - `C:\AemeathDeskPet\user`、`cache`、`logs` 中的任何本机数据
 
 ### 绿色包
 
 ```powershell
-python scripts/package_green_release.py --version LTS1.0.6beta8
+python scripts/package_green_release.py --version LTS1.0.6beta9
 ```
 
 输出示例：
 
-- `dist/FlyingSnowVelvet-LTS1.0.6beta8-green.zip`
-- `dist/FlyingSnowVelvet-LTS1.0.6beta8-green-manifest.json`
+- `dist/FlyingSnowVelvet-LTS1.0.6beta9-green.zip`
+- `dist/FlyingSnowVelvet-LTS1.0.6beta9-green-manifest.json`
 
-绿色包与普通包保持相同的重型资源边界；离线资源应通过发布渠道单独提供，或在安装前预置到对应 `resc/` 路径。
+绿色包需要额外携带安装脚本会联网下载的离线资源归档，优先覆盖以下路径：
+
+- `resc/models/vosk-model-small-cn-0.22.zip`
+- `resc/models/vosk-model-small-en-us-0.15.zip`
+- `resc/GIF/SEanima.zip`
+- `resc/chrome-runtime.z01`
+- `resc/chrome-runtime.z02`
+- `resc/chrome-runtime.zip`
+
+`scripts/package_green_release.py` 在正式打包时会自动检查这些归档；如果本地缺失，会按 `resc.net.txt` 尝试下载，并在下载阶段与写包阶段显示进度。`--dry-run` 只做检查和清单预览，不会触发下载。
 
 绿色包仍必须排除：
 
 - 已解包的 `resc/playwright/` 运行目录
+- 已解包的 `resc/models/vosk-model-small-*/`
+- 已解包的 `resc/GIF/SEanima/`
 - `resc/user/`
 - `logs/`
 - `dist/`
 - `__pycache__/`
+- `.git/`、`.gitignore`、`.github/` 等 Git 相关元文件
+- `tests/`、`scripts/`、`.oprate/`、`用户反馈/` 等开发/维护目录
 - 登录态、Cookie、storage state、API Key
 - `C:\AemeathDeskPet` 下的用户稀疏配置、状态与缓存
 
@@ -101,23 +116,25 @@ python scripts/package_green_release.py --version LTS1.0.6beta8
 打包后检查 manifest：
 
 ```powershell
-Get-Content dist\FlyingSnowVelvet-LTS1.0.6beta8-manifest.json | Select-String "playwright|models|SEanima|chrome-runtime|python-3.11|storage_state|__pycache__"
-Get-Content dist\FlyingSnowVelvet-LTS1.0.6beta8-green-manifest.json | Select-String "playwright|models|SEanima|chrome-runtime|python-3.11|storage_state|__pycache__"
+Get-Content dist\FlyingSnowVelvet-LTS1.0.6beta9-manifest.json | Select-String "playwright|models|SEanima|chrome-runtime|python-3.11|storage_state|__pycache__|\.git|\.github|tests/|scripts/|\.oprate|用户反馈/"
+Get-Content dist\FlyingSnowVelvet-LTS1.0.6beta9-green-manifest.json | Select-String "vosk-model-small-cn-0.22.zip|vosk-model-small-en-us-0.15.zip|SEanima.zip|chrome-runtime.z01|chrome-runtime.z02|chrome-runtime.zip"
+Get-Content dist\FlyingSnowVelvet-LTS1.0.6beta9-green-manifest.json | Select-String "resc/playwright/|resc/models/vosk-model-small-cn-0.22/|resc/models/vosk-model-small-en-us-0.15/|resc/GIF/SEanima/|python-3.11|storage_state|__pycache__|\.git|\.github|tests/|scripts/|\.oprate|用户反馈/"
 ```
 
 预期：
 
-- 普通包和绿色包 manifest 都不应出现 `resc/models/`、`resc/GIF/SEanima/`、浏览器分卷、Python 安装器或 `resc/playwright/`。
-- 两类包都不应出现运行时登录态或用户缓存。
+- 普通包 manifest 不应出现 `resc/models/`、`resc/GIF/SEanima/`、浏览器分卷、Python 安装器或 `resc/playwright/`。
+- 绿色包 manifest 应出现 Vosk 模型 zip、`SEanima.zip` 与浏览器分卷资源，但不应出现它们已解包后的运行目录。
+- 两类包都不应出现 Git 元文件、测试目录、打包脚本、运维目录、运行时登录态或用户缓存。
 
 ## 5. Git 标签与远端发布
 
 示例：
 
 ```powershell
-git tag -a LTS1.0.6beta8 -m "LTS 1.0.6 beta8"
+git tag -a LTS1.0.6beta9 -m "LTS 1.0.6 beta9"
 git push origin main
-git push origin LTS1.0.6beta8
+git push origin LTS1.0.6beta9
 ```
 
 Release 建议上传：

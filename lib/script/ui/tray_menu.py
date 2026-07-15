@@ -17,6 +17,7 @@ from config.scale import scale_px
 from lib.core.anchor_utils import apply_ui_opacity
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.unified_draw import Layer, get_layer_manager
+from lib.script.ui.tooltip_panel import get_tooltip_panel
 
 
 _TRAY_MENU_STYLE_FLAG = '_fxr_tray_menu_style'
@@ -208,7 +209,10 @@ class TrayContextMenu(QMenu):
         self._opacity_anim.setEasingCurve(QEasingCurve.InOutQuad)
         self._opacity_anim.finished.connect(self._on_opacity_anim_finished)
         self.setContentsMargins(0, 0, 0, 0)
-        self.setToolTipsVisible(True)
+        self.setToolTipsVisible(False)
+        self._description = ''
+        self.hovered.connect(self._on_action_hovered)
+        self.aboutToHide.connect(self._on_about_to_hide)
         self.apply_style()
 
     def apply_style(self):
@@ -237,12 +241,30 @@ class TrayContextMenu(QMenu):
         self._opacity_anim.stop()
         self._fading_out = False
         self._allow_hide_once = False
+        self._description = ''
+        self._hide_project_tooltip()
         self.setWindowOpacity(0.0)
         super().popup(p, action)
         self._layer_manager.enforce_burst()
         self._opacity_anim.setStartValue(0.0)
         self._opacity_anim.setEndValue(apply_ui_opacity(1.0))
         self._opacity_anim.start()
+
+    def _hide_project_tooltip(self) -> None:
+        panel = get_tooltip_panel()
+        if panel is not None:
+            panel.hide_now()
+
+    def _on_action_hovered(self, action) -> None:
+        text = ''
+        if action is not None and not action.isSeparator():
+            text = str(action.toolTip() or action.statusTip() or '').strip()
+        self._description = text
+        self._hide_project_tooltip()
+
+    def _on_about_to_hide(self) -> None:
+        self._description = ''
+        self._hide_project_tooltip()
 
     def hide(self):
         # 统一将菜单隐藏转为淡出动画（包括点空白处关闭、点菜单项后关闭）。

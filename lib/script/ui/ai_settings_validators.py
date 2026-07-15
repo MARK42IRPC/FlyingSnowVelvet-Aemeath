@@ -33,6 +33,7 @@ def validate_ai_values(values: dict) -> None:
     num_gpu = values.get("num_gpu")
     num_thread = values.get("num_thread")
     api_temperature = values.get("api_temperature")
+    model_vision = values.get("model_vision")
     gsv_temperature = values.get("gsv_temperature")
     gsv_speed_factor = values.get("gsv_speed_factor")
     gsv_auto_start = values.get("gsv_auto_start")
@@ -86,6 +87,11 @@ def validate_ai_values(values: dict) -> None:
         raise ValueError("采样温度必须是有限数字")
     if not (0.0 <= temp <= 2.0):
         raise ValueError("采样温度范围应为 0~2")
+
+    if isinstance(model_vision, bool) or not isinstance(model_vision, int):
+        raise ValueError("模型视力必须是整数")
+    if not (0 <= model_vision <= 100):
+        raise ValueError("模型视力范围应为 0~100")
 
     if isinstance(gsv_temperature, bool) or not isinstance(gsv_temperature, (int, float)):
         raise ValueError("GSV服务温度必须是数字")

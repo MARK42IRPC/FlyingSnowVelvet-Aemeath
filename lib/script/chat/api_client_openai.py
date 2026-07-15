@@ -8,7 +8,7 @@ import requests
 
 from lib.core.logger import get_logger
 
-from ._multimodal import image_to_base64, images_to_openai_content
+from ._multimodal import image_to_base64_with_mime, images_to_openai_content
 from .api_client_common import _ApiClientCommonMixin
 from .api_client_error import _ApiClientErrorMixin
 
@@ -222,11 +222,13 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
         for idx, image_bytes in enumerate(images or [], start=1):
             if not image_bytes:
                 continue
+            file_data, mime_type = image_to_base64_with_mime(image_bytes)
+            extension = "jpg" if mime_type == "image/jpeg" else "png"
             payload = {
                 'file': {
                     'file_type': 'image',
-                    'file_name': f'snowrol_{idx}.jpg',
-                    'file_data': image_to_base64(image_bytes),
+                    'file_name': f'snowrol_{idx}.{extension}',
+                    'file_data': file_data,
                 },
             }
             last_error: Exception | None = None
@@ -262,6 +264,7 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
     def _build_openai_payload_variants(model: str, persona: str, message: str,
                                        history: list[dict] | None,
                                        images: list[bytes] | None,
+                                       image_blocks: list[dict] | None = None,
                                        temperature: float | None = None,
                                        enable_thinking: bool | None = None,
                                        thinking_budget: int | None = None,
@@ -347,7 +350,8 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
                 }))
             return _ApiClientOpenAIMixin._dedupe_payload_variants(payloads)
 
-        image_blocks = images_to_openai_content(images)
+        if image_blocks is None:
+            image_blocks = images_to_openai_content(images)
         standard_user_content: list[dict] = [{"type": "text", "text": message}]
         standard_user_content.extend(image_blocks)
 
@@ -656,12 +660,14 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
             )
 
         endpoint_candidates = self._openai_endpoint_candidates(base_url)
+        prepared_image_blocks = images_to_openai_content(payload_images) if payload_images else None
         payload_candidates = self._build_openai_payload_variants(
             model=model,
             persona=effective_persona,
             message=message,
             history=effective_history,
             images=payload_images,
+            image_blocks=prepared_image_blocks,
             temperature=api_temperature,
             enable_thinking=api_enable_thinking,
             thinking_budget=api_thinking_budget if api_thinking_budget > 0 else None,
@@ -680,6 +686,7 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
                 message=message,
                 history=history,
                 images=payload_images,
+                image_blocks=prepared_image_blocks,
                 temperature=api_temperature,
                 enable_thinking=api_enable_thinking,
                 thinking_budget=api_thinking_budget if api_thinking_budget > 0 else None,

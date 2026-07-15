@@ -179,6 +179,16 @@ class TooltipPanel(QWidget):
         self._visible = False
         self._animate(0.0)
 
+    def hide_now(self, *, reset_hover: bool = True) -> None:
+        """立即隐藏提示框，并可选重置悬停计时状态。"""
+        self._anim.stop()
+        self._visible = False
+        self.hide()
+        self._opacity.setOpacity(0.0)
+        if reset_hover:
+            self._stationary_ticks = 0
+            self._last_pos = QCursor.pos()
+
     def _animate(self, target: float) -> None:
         self._anim.stop()
         self._anim.setStartValue(float(self._opacity.opacity()))

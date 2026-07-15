@@ -39,6 +39,7 @@ def load_ai_values(default_values: dict) -> dict:
         "num_gpu": oc.OLLAMA_OPTIONS.get("num_gpu", -1),
         "num_thread": oc.OLLAMA_OPTIONS.get("num_thread", 0),
         "api_temperature": oc.OLLAMA.get("api_temperature", 1.35),
+        "model_vision": oc.OLLAMA.get("model_vision", 0),
         "gsv_auto_start": bool(oc.OLLAMA.get("gsv_auto_start", False)),
         "gsv_temperature": oc.OLLAMA.get("gsv_temperature", 1.35),
         "gsv_speed_factor": oc.OLLAMA.get("gsv_speed_factor", 1.05),
@@ -80,6 +81,7 @@ def apply_ai_runtime(values: dict, default_values: dict) -> None:
     oc.OLLAMA_MODEL = values["ollama_model"]
     oc.OLLAMA["base_url"] = values["ollama_base_url"]
     oc.OLLAMA["api_temperature"] = values["api_temperature"]
+    oc.OLLAMA["model_vision"] = values["model_vision"]
     oc.OLLAMA["gsv_auto_start"] = values["gsv_auto_start"]
     oc.OLLAMA["gsv_temperature"] = values["gsv_temperature"]
     oc.OLLAMA["gsv_speed_factor"] = values["gsv_speed_factor"]

@@ -158,6 +158,7 @@ OLLAMA = {
     'api_retry_backoff':   0.8,     # 外部 API 重试退避基数（秒）
     'api_disable_env_proxy': False, # 默认遵循系统代理配置；设为 True 时优先忽略
     'api_temperature':     1.35,      # 外部 API 采样温度（0~2）
+    'model_vision':        0,         # 模型视力（0~100）；0=压到720p，100=不压缩，线性控制图片分辨率
     'gsv_auto_start':      False,     # 启用 GSV 语音模块；关闭后不预热，也不响应文本语音请求
     'gsv_temperature':     1.35,      # GSV 文本转语音采样温度（0~2）
     'gsv_speed_factor':    1.05,      # GSV 文本转语音语速（0.5~2.0）
@@ -213,6 +214,7 @@ _AI_SETTING_DEFAULTS = {
     'num_gpu': OLLAMA_OPTIONS['num_gpu'],
     'num_thread': OLLAMA_OPTIONS['num_thread'],
     'api_temperature': OLLAMA['api_temperature'],
+    'model_vision': OLLAMA['model_vision'],
     'gsv_auto_start': OLLAMA['gsv_auto_start'],
     'gsv_temperature': OLLAMA['gsv_temperature'],
     'gsv_speed_factor': OLLAMA['gsv_speed_factor'],
@@ -274,6 +276,7 @@ def _legacy_ai_setting_values() -> dict:
         'num_gpu': OLLAMA_OPTIONS['num_gpu'],
         'num_thread': OLLAMA_OPTIONS['num_thread'],
         'api_temperature': OLLAMA['api_temperature'],
+        'model_vision': OLLAMA['model_vision'],
         'gsv_auto_start': OLLAMA['gsv_auto_start'],
         'gsv_temperature': OLLAMA['gsv_temperature'],
         'gsv_speed_factor': OLLAMA['gsv_speed_factor'],
@@ -303,6 +306,7 @@ def _legacy_ai_setting_values() -> dict:
         ('OLLAMA', {
             'base_url': 'ollama_base_url',
             'api_temperature': 'api_temperature',
+            'model_vision': 'model_vision',
             'gsv_auto_start': 'gsv_auto_start',
             'gsv_temperature': 'gsv_temperature',
             'gsv_speed_factor': 'gsv_speed_factor',
@@ -337,6 +341,7 @@ def _apply_ai_setting_values(values: dict) -> None:
     OLLAMA_OPTIONS['num_gpu'] = values['num_gpu']
     OLLAMA_OPTIONS['num_thread'] = values['num_thread']
     OLLAMA['api_temperature'] = values['api_temperature']
+    OLLAMA['model_vision'] = values['model_vision']
     OLLAMA['gsv_auto_start'] = values['gsv_auto_start']
     OLLAMA['gsv_temperature'] = values['gsv_temperature']
     OLLAMA['gsv_speed_factor'] = values['gsv_speed_factor']

@@ -11,6 +11,7 @@ import os
 import random
 import re
 import subprocess
+import sys
 import threading
 import webbrowser
 from pathlib import Path
@@ -96,6 +97,7 @@ _DEFAULT_VALUES = {
     "num_gpu": -1,
     "num_thread": 0,
     "api_temperature": 1.35,
+    "model_vision": 0,
     "gsv_auto_start": False,
     "gsv_temperature": 1.35,
     "gsv_speed_factor": 1.05,
@@ -1814,6 +1816,23 @@ class AISettingsPanel(QWidget):
             "外部接口模型名，例如 qwen3.5-plus；元宝模式会改走程序内置的本地模型标识。",
         )
 
+        persona_row, persona_layout = self._create_fixed_width_row_group(
+            field_width=_CONFIG_FIELD_WIDTH,
+            spacing=scale_px(8, min_abs=6),
+        )
+        self._open_persona_file_btn = QPushButton("设置人格词")
+        self._open_persona_file_btn.setFixedWidth(scale_px(110, min_abs=92))
+        self._open_persona_file_btn.clicked.connect(self._on_open_persona_file)
+        persona_layout.addWidget(self._open_persona_file_btn, 0)
+        persona_layout.addStretch(1)
+        form.addRow("人格配置", persona_row)
+        self._set_form_row_description(
+            form,
+            persona_row,
+            "使用系统默认程序打开当前生效的人格 txt，直接编辑系统 prompt。",
+        )
+        self._set_widget_description(self._open_persona_file_btn, "使用系统默认程序打开当前生效的人格 txt。")
+
         self._set_hidden_yuanbao_values(_DEFAULT_VALUES)
 
         yuanbao_login_row, yuanbao_login_layout = self._create_fixed_width_row_group(
@@ -1891,6 +1910,14 @@ class AISettingsPanel(QWidget):
             form,
             self._api_temperature,
             "大模型采样温度范围 0~2，越高回复越发散。",
+        )
+
+        self._model_vision = _DecimalSliderField(0, 100, 1, value=_DEFAULT_VALUES["model_vision"], decimals=0)
+        form.addRow("模型视力", self._model_vision)
+        self._set_form_row_description(
+            form,
+            self._model_vision,
+            "视力越高，token消耗越高，看图越清晰。100 为不压缩，0 为压缩到 720p。",
         )
 
         self._gsv_auto_start = QCheckBox("自动启用GSV语音模块")
@@ -2783,7 +2810,7 @@ class AISettingsPanel(QWidget):
         open_btn.setFixedWidth(scale_px(52, min_abs=46))
         if self._is_launch_wuwa_path_field(dict_name, key):
             open_btn.clicked.connect(lambda _=False, line=editor: self._browse_launch_wuwa_file(line))
-        else:
+        elif self._is_local_music_path_field(dict_name, key):
             open_btn.clicked.connect(lambda _=False, line=editor: self._browse_local_music_dir(line))
         row.addWidget(open_btn, 0)
         return editor, open_btn, group
@@ -2833,6 +2860,52 @@ class AISettingsPanel(QWidget):
         )
         if selected:
             editor.setText(os.path.normpath(selected))
+
+    @staticmethod
+    def _resolve_config_path(raw_path: str) -> Path:
+        expanded = os.path.expandvars(os.path.expanduser(str(raw_path or "").strip()))
+        candidate = Path(expanded)
+        if not candidate.is_absolute():
+            candidate = _project_root() / candidate
+        return candidate
+
+    def _resolve_persona_file_path(self) -> Path:
+        import config.ollama_config as oc
+        from config.config import BUBBLE_CONFIG, CHAT
+
+        persona_file = str(getattr(oc, "PERSONA_FILE", "") or "").strip()
+        if not persona_file:
+            persona_file = str(CHAT.get("persona_file", "") or "").strip()
+        if not persona_file:
+            persona_file = str(BUBBLE_CONFIG.get("default_persona_file", "resc/persona.txt") or "").strip()
+        return self._resolve_config_path(persona_file or "resc/persona.txt")
+
+    @staticmethod
+    def _open_path_with_system_default(path: Path) -> None:
+        if hasattr(os, "startfile"):
+            os.startfile(str(path))  # type: ignore[attr-defined]
+            return
+        if sys.platform == "darwin":
+            subprocess.Popen(["open", str(path)], shell=False)
+            return
+        if os.name == "posix":
+            subprocess.Popen(["xdg-open", str(path)], shell=False)
+            return
+        subprocess.Popen(["cmd", "/c", "start", "", str(path)], shell=False)
+
+    def _on_open_persona_file(self) -> None:
+        try:
+            candidate = self._resolve_persona_file_path()
+            if candidate.exists() and candidate.is_dir():
+                raise IsADirectoryError(f"人格路径是文件夹，不是 txt 文件：{candidate}")
+            candidate.parent.mkdir(parents=True, exist_ok=True)
+            if not candidate.exists():
+                candidate.write_text("", encoding="utf-8")
+            self._open_path_with_system_default(candidate)
+            self._emit_info(f"已打开人格文件：{candidate.name}", min_tick=10, max_tick=90)
+        except Exception as e:
+            _logger.error("打开人格文件失败: %s", e)
+            self._emit_info(f"打开人格文件失败: {e}", min_tick=20, max_tick=180)
 
     def _on_open_ollama_app(self) -> None:
         candidates: list[Path] = []
@@ -4162,6 +4235,13 @@ class AISettingsPanel(QWidget):
             raise ValueError("采样温度范围应为 0~2")
 
         try:
+            model_vision = int(float(self._model_vision.text().strip() or "0"))
+        except ValueError as e:
+            raise ValueError("模型视力必须是整数") from e
+        if not (0 <= model_vision <= 100):
+            raise ValueError("模型视力范围应为 0~100")
+
+        try:
             gsv_temperature = float(self._gsv_temperature.text().strip() or "1.35")
         except ValueError as e:
             raise ValueError("GSV服务温度必须是数字") from e
@@ -4214,6 +4294,7 @@ class AISettingsPanel(QWidget):
             "num_gpu": num_gpu,
             "num_thread": num_thread,
             "api_temperature": api_temperature,
+            "model_vision": model_vision,
             "gsv_auto_start": bool(self._gsv_auto_start.isChecked()),
             "gsv_temperature": gsv_temperature,
             "gsv_speed_factor": gsv_speed_factor,
@@ -4257,6 +4338,7 @@ class AISettingsPanel(QWidget):
         self._gpu_mode.setCurrentIndex(max(0, gpu_idx))
         self._num_thread.setText(str(values.get("num_thread", 0)))
         self._api_temperature.setText(str(values.get("api_temperature", 0.8)))
+        self._model_vision.setText(str(values.get("model_vision", 0)))
         self._gsv_auto_start.setChecked(bool(values.get("gsv_auto_start", True)))
         self._gsv_temperature.setText(str(values.get("gsv_temperature", 1.35)))
         self._gsv_speed_factor.setText(str(values.get("gsv_speed_factor", 1.0)))

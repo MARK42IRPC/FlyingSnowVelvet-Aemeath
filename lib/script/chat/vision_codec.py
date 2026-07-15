@@ -14,6 +14,7 @@ logger = get_logger(__name__)
 _MAX_WIDTH_720P = 1280
 _MAX_HEIGHT_720P = 720
 _JPEG_QUALITY = 85
+_DEFAULT_MODEL_VISION = 0
 
 try:
     _RESAMPLE_LANCZOS = Image.Resampling.LANCZOS
@@ -39,6 +40,38 @@ def _fit_size_to_720p(width: int, height: int) -> tuple[int, int]:
     new_height = max(1, int(height * ratio))
     return new_width, new_height
 
+def _get_model_vision() -> int:
+    try:
+        import config.ollama_config as oc
+
+        raw = oc.OLLAMA.get("model_vision", _DEFAULT_MODEL_VISION)
+        value = int(float(raw))
+    except Exception:
+        value = _DEFAULT_MODEL_VISION
+    return max(0, min(100, value))
+
+def _fit_size_by_model_vision(width: int, height: int, model_vision: int) -> tuple[int, int]:
+    if width <= 0 or height <= 0:
+        return width, height
+
+    fit_width, fit_height = _fit_size_to_720p(width, height)
+    if (fit_width, fit_height) == (width, height):
+        return width, height
+
+    min_scale = min(fit_width / float(width), fit_height / float(height))
+    vision_ratio = max(0.0, min(1.0, float(model_vision) / 100.0))
+    scale = min_scale + (1.0 - min_scale) * vision_ratio
+    new_width = max(1, min(width, int(round(width * scale))))
+    new_height = max(1, min(height, int(round(height * scale))))
+    return new_width, new_height
+
+def _detect_image_mime(image: Image.Image) -> str:
+    image_format = str(getattr(image, "format", "") or "").upper()
+    mime = Image.MIME.get(image_format)
+    if mime:
+        return mime
+    return "image/png"
+
 def _to_rgb_without_alpha(image: Image.Image) -> Image.Image:
     """统一转为 RGB；透明像素以白底合成，避免 JPEG 丢失 alpha 造成黑底。"""
     if image.mode in ("RGBA", "LA") or (image.mode == "P" and "transparency" in image.info):
@@ -50,12 +83,12 @@ def _to_rgb_without_alpha(image: Image.Image) -> Image.Image:
         return image.convert("RGB")
     return image
 
-def _compress_image_bytes_720p(image_data: bytes) -> bytes | None:
+def _prepare_image_payload(image_data: bytes) -> tuple[bytes, str] | None:
     """
-    将图片压缩到 720p 边界并转为 JPEG。
+    根据模型视力设置处理图片载荷。
 
     返回:
-        压缩后的 JPEG 字节；若输入非可识别图片则返回 None。
+        (图片字节, MIME 类型)；若输入非可识别图片则返回 None。
     """
     if not image_data:
         return None
@@ -65,10 +98,22 @@ def _compress_image_bytes_720p(image_data: bytes) -> bytes | None:
         with Image.open(BytesIO(image_data)) as image:
             image.load()
             src_w, src_h = image.size
-            dst_w, dst_h = _fit_size_to_720p(src_w, src_h)
+            source_mime = _detect_image_mime(image)
+            model_vision = _get_model_vision()
+            dst_w, dst_h = _fit_size_by_model_vision(src_w, src_h, model_vision)
 
             if (dst_w, dst_h) != (src_w, src_h):
                 image = image.resize((dst_w, dst_h), _RESAMPLE_LANCZOS)
+            else:
+                logger.debug(
+                    "[Vision] 模型视力=%d，保持原图发送: %dx%d, %d bytes",
+                    model_vision,
+                    src_w,
+                    src_h,
+                    source_size,
+                )
+                return bytes(image_data), source_mime
+
             rgb_image = _to_rgb_without_alpha(image)
 
             output = BytesIO()
@@ -81,7 +126,8 @@ def _compress_image_bytes_720p(image_data: bytes) -> bytes | None:
             )
             result = output.getvalue()
             logger.debug(
-                "[Vision] 图片压缩完成: %dx%d -> %dx%d, %d -> %d bytes",
+                "[Vision] 图片压缩完成(模型视力=%d): %dx%d -> %dx%d, %d -> %d bytes",
+                model_vision,
                 src_w,
                 src_h,
                 rgb_image.width,
@@ -89,7 +135,7 @@ def _compress_image_bytes_720p(image_data: bytes) -> bytes | None:
                 source_size,
                 len(result),
             )
-            return result
+            return result, "image/jpeg"
     except (UnidentifiedImageError, OSError):
         return None
     except Exception as e:
@@ -118,14 +164,15 @@ def _decode_base64_payload(text: str) -> bytes | None:
             return None
 
 def _compress_base64_payload(text: str) -> str | None:
-    """将 base64 文本对应图片压缩到 720p，成功返回新的 base64。"""
+    """按模型视力处理 base64 图片，成功返回新的 base64。"""
     raw = _decode_base64_payload(text)
     if raw is None:
         return None
 
-    compressed = _compress_image_bytes_720p(raw)
-    if compressed is None:
+    prepared = _prepare_image_payload(raw)
+    if prepared is None:
         return None
+    compressed, _mime = prepared
 
     return base64.b64encode(compressed).decode("utf-8")
 
@@ -163,7 +210,7 @@ def _estimate_image_tokens(width: int, height: int) -> int:
 
 def image_to_base64(image_data: bytes) -> str:
     """
-    将图片字节数据压缩到 720p 后转换为 base64 字符串（用于多模态请求）。
+    按模型视力处理图片字节数据并转换为 base64 字符串（用于多模态请求）。
 
     Args:
         image_data: 图片字节数据
@@ -171,9 +218,21 @@ def image_to_base64(image_data: bytes) -> str:
     Returns:
         base64 编码字符串
     """
-    compressed = _compress_image_bytes_720p(image_data)
-    payload = compressed if compressed is not None else image_data
-    return base64.b64encode(payload).decode("utf-8")
+    encoded, _mime = image_to_base64_with_mime(image_data)
+    return encoded
+
+def image_to_base64_with_mime(image_data: bytes) -> tuple[str, str]:
+    prepared = _prepare_image_payload(image_data)
+    if prepared is None:
+        payload = image_data
+        mime = "image/png"
+    else:
+        payload, mime = prepared
+    return base64.b64encode(payload).decode("utf-8"), mime
+
+def image_to_data_url(image_data: bytes) -> str:
+    encoded, mime = image_to_base64_with_mime(image_data)
+    return f"data:{mime};base64,{encoded}"
 
 def images_to_ollama_payload(images: list | None) -> list[str]:
     """
@@ -270,10 +329,8 @@ def images_to_openai_content(images: list | None) -> list[dict]:
     for item in images:
         encoded_payload_for_stat: str | None = None
         if isinstance(item, (bytes, bytearray)):
-            # bytes 路径统一压缩为 JPEG 数据
-            encoded = image_to_base64(bytes(item))
-            url = f"data:image/jpeg;base64,{encoded}"
-            encoded_payload_for_stat = encoded
+            url = image_to_data_url(bytes(item))
+            encoded_payload_for_stat = _extract_data_url_payload(url)
         elif isinstance(item, str):
             text = item.strip()
             if not text:

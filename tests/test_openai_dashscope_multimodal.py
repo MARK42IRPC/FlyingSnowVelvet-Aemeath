@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 import requests
 
@@ -81,6 +82,22 @@ class DashScopeMultimodalTests(unittest.TestCase):
             )
 
         self.assertTrue(client.requests)
+
+    def test_multimodal_image_blocks_are_prepared_once_per_request(self):
+        client = _Client(response=_FakeStreamResponse())
+
+        with patch(
+            "lib.script.chat.api_client_openai.images_to_openai_content",
+            return_value=[{"type": "image_url", "image_url": {"url": "data:image/png;base64,AA=="}}],
+        ) as mocked:
+            result = client._openai_chat_api(
+                "看图说话",
+                "",
+                images=[b"fake-image"],
+            )
+
+        self.assertEqual(result, "ok")
+        self.assertEqual(mocked.call_count, 1)
 
 
 if __name__ == "__main__":
