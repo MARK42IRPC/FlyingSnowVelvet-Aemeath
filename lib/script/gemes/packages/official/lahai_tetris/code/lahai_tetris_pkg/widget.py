@@ -18,7 +18,6 @@ from PyQt5.QtGui import QColor, QPainter, QPixmap
 from PyQt5.QtWidgets import QWidget
 
 from config.font_config import get_digit_font, get_ui_font
-from config.game_user_stats import get_game_user_stats
 from config.scale import scale_px
 from lib.core.event.center import Event, EventType, get_event_center
 from lib.core.effect_utils import spawn_flash_text_effect, spawn_smooth_image_effect
@@ -33,7 +32,8 @@ from lib.core.voice.ams_lahai_score_10000 import AmsLahaiScore10000Sound
 from lib.core.voice.ams_lahai_score_1000 import AmsLahaiScore1000Sound
 from lib.core.voice.ams_lahai_score_5000 import AmsLahaiScore5000Sound
 from lib.core.voice.lahai_skill_release import LahaiSkillReleaseFailedSound, LahaiSkillReleaseSound
-from ..game_sfx import GameSfx
+from lib.script.gemes.MAIN.game_packages import GameContext
+from lib.script.gemes.MAIN.game_sfx import GameSfx
 from .constants import (
     AMS_RECORD_SCORE as _AMS_RECORD_SCORE,
     AUTHORIZATION_SKILL_SLOT as _AUTHORIZATION_SKILL_SLOT,
@@ -84,6 +84,7 @@ from .render import (
     paint_widget,
 )
 from .skills import AuthorizationSkillSlot, EmptySkillSlot, FillSkillSlot, GravitySkillSlot, LahaiSkillSlot, PartnerSkillSlot, SplendorSkillSlot, StarlightSkillSlot
+from .stats import LahaiTetrisStats
 
 
 _GROUND_LOCK_DELAY_MS = 500
@@ -146,8 +147,9 @@ class LahaiTetrisWidget(QWidget):
     _C_PANEL_LINE = QColor(186, 231, 255, 168)
     _C_PANEL_EDGE = QColor(34, 52, 112, 210)
 
-    def __init__(self, parent=None) -> None:
+    def __init__(self, context: GameContext, parent=None) -> None:
         super().__init__(parent)
+        self._context = context
         self._render_core = RenderCore()
         self._render_core.register_item(RenderRequest(
             'lahai_tetris_content',
@@ -241,7 +243,8 @@ class LahaiTetrisWidget(QWidget):
         self._stat_label_font = get_ui_font(scale_px(16, min_abs=1))
         self._stat_digit_font = get_digit_font(scale_px(28, min_abs=1))
         self._block_font = get_digit_font(scale_px(12, min_abs=1))
-        self._best_score = get_game_user_stats().get_best_score()
+        self._stats = LahaiTetrisStats(self._context.data_root / "state.json")
+        self._best_score = self._stats.get_best_score()
         self._refresh_fonts()
         self._update_layout_metrics()
 
@@ -565,7 +568,7 @@ class LahaiTetrisWidget(QWidget):
         for x, y in cells:
             rect = self._cell_rect(inner, float(x), float(y))
             gx, gy = self._to_global_point(rect.center().x(), rect.center().y())
-            spawn_particle_at_point(gx, gy, "lahai_preview_rise", {
+            spawn_particle_at_point(gx, gy, self._game_particle_id("preview_rise"), {
                 "rgb": gold_rgb,
             })
             spawn_particle_at_point(gx, gy, "burst_line", {
@@ -576,7 +579,7 @@ class LahaiTetrisWidget(QWidget):
         inner = self._board_inner_screen_rect()
         rect = self._cell_rect(inner, float(x), float(y))
         gx, gy = self._to_global_point(rect.center().x(), rect.center().y())
-        spawn_particle_at_point(gx, gy, "lahai_glow_burst", {
+        spawn_particle_at_point(gx, gy, self._game_particle_id("glow_burst"), {
             "rgb": (248, 223, 132),
             "direction": (0.0, -1.0),
         })
@@ -600,7 +603,7 @@ class LahaiTetrisWidget(QWidget):
         previous_score = self._score
         self._score += delta
         self._spawn_stat_delta_text("分数", delta, increased=True)
-        if self._score > self._best_score and get_game_user_stats().update_best_score(self._score):
+        if self._score > self._best_score and self._stats.update_best_score(self._score):
             self._best_score = self._score
         if not self._score_1000_triggered and previous_score < 1000 <= self._score:
             self._score_1000_triggered = True
@@ -896,7 +899,7 @@ class LahaiTetrisWidget(QWidget):
         self._board_resolution_locked = bool(self._pending_settled_clear_rows)
 
     def _load_tips(self) -> list[str]:
-        tips_path = Path(__file__).resolve().parents[5] / "resc" / "tips.txt"
+        tips_path = self._context.asset_path("text", "tips.txt")
         if not tips_path.exists():
             return []
         try:
@@ -1295,20 +1298,20 @@ class LahaiTetrisWidget(QWidget):
     def _draw_skill_avatar(self, painter: QPainter, rect: QRectF, avatar: QPixmap, *, disabled: bool = False) -> None:
         draw_skill_avatar(self, painter, rect, avatar, disabled=disabled)
 
-    @staticmethod
-    def _load_skill_avatar(filename: str) -> QPixmap:
-        path = Path(__file__).resolve().parents[5] / "resc" / "GIF" / "角色头像" / filename
+    def _load_skill_avatar(self, filename: str) -> QPixmap:
+        path = self._context.asset_path("avatars", filename)
         return QPixmap(str(path))
 
-    @staticmethod
-    def _skill_avatar_path(filename: str) -> Path:
-        return Path(__file__).resolve().parents[5] / "resc" / "GIF" / "角色头像" / filename
+    def _skill_avatar_path(self, filename: str) -> Path:
+        return self._context.asset_path("avatars", filename)
 
-    @staticmethod
-    def _skill_showcase_path(filename: str) -> Path:
+    def _skill_showcase_path(self, filename: str) -> Path:
         source = Path(str(filename or ""))
         showcase_name = f"{source.stem}展示.webp"
-        return Path(__file__).resolve().parents[5] / "resc" / "GIF" / "角色头像" / showcase_name
+        return self._context.asset_path("avatars", showcase_name)
+
+    def _game_particle_id(self, local_id: str) -> str:
+        return self._context.qualify_particle_id(local_id)
 
     @staticmethod
     def _skill_voice_name(filename: str) -> str:
@@ -1358,7 +1361,16 @@ class LahaiTetrisWidget(QWidget):
         right_exit_global = self.mapToGlobal(right_exit_local)
 
         showcase_path = self._skill_showcase_path(skill.avatar_filename)
+        effect_pixmap = QPixmap()
+        effect_path = showcase_path
         if showcase_path.exists():
+            effect_pixmap = QPixmap(str(showcase_path))
+        if effect_pixmap.isNull():
+            avatar_path = self._skill_avatar_path(skill.avatar_filename)
+            if avatar_path.exists():
+                effect_pixmap = QPixmap(str(avatar_path))
+                effect_path = avatar_path
+        if not effect_pixmap.isNull():
             spawn_smooth_image_effect(
                 intro_start_pos=(left_entry_global.x(), left_entry_global.y()),
                 intro_duration=_SKILL_EFFECT_INTRO_SECS,
@@ -1366,10 +1378,11 @@ class LahaiTetrisWidget(QWidget):
                 display_duration=_SKILL_EFFECT_DISPLAY_SECS,
                 outro_end_pos=(right_exit_global.x(), right_exit_global.y()),
                 outro_duration=_SKILL_EFFECT_OUTRO_SECS,
-                resource_path=str(showcase_path),
+                resource_path=str(effect_path),
                 scale=0.5,
                 z=10,
                 effect_options={
+                    "pixmap": effect_pixmap,
                     "edge_feather": True,
                     "feather_ratio": 0.16,
                 },
@@ -1420,7 +1433,7 @@ class LahaiTetrisWidget(QWidget):
         if piece is None:
             return
         inner = self._board_inner_screen_rect()
-        particle_id = "lahai_glow_burst"
+        particle_id = self._game_particle_id("glow_burst")
         base, _, _ = _THEME[piece.kind]
         direction = (0.0, -1.0) if soft else self._particle_direction_for_piece()
         for x, y in piece.cells():
@@ -1443,7 +1456,7 @@ class LahaiTetrisWidget(QWidget):
                 continue
             rect = self._cell_rect(inner, float(x), float(y))
             cx, cy = self._to_global_point(rect.center().x(), rect.bottom())
-            spawn_particle_at_point(cx, cy, "lahai_glow_burst", {
+            spawn_particle_at_point(cx, cy, self._game_particle_id("glow_burst"), {
                 "rgb": (base.red(), base.green(), base.blue()),
                 "direction": (0.0, -1.0),
             })
@@ -1473,7 +1486,7 @@ class LahaiTetrisWidget(QWidget):
             cx = origin_x + (px - min_x + 0.5) * block
             cy = origin_y + (py - min_y + 0.5) * block
             gx, gy = self._to_global_point(cx, cy)
-            spawn_particle_at_point(gx, gy, "lahai_preview_rise", {
+            spawn_particle_at_point(gx, gy, self._game_particle_id("preview_rise"), {
                 "rgb": (255, 134, 88),
             })
 
@@ -1492,7 +1505,7 @@ class LahaiTetrisWidget(QWidget):
                 rect = self._cell_rect(inner, float(x), float(y))
                 gx, gy = self._to_global_point(rect.center().x(), rect.center().y())
                 rgb = (196, 54, 120) if cell == _SPECIAL_FILL_KIND else (255, 212, 84)
-                spawn_particle_at_point(gx, gy, "lahai_preview_rise", {
+                spawn_particle_at_point(gx, gy, self._game_particle_id("preview_rise"), {
                     "rgb": rgb,
                 })
 
@@ -1524,7 +1537,7 @@ class LahaiTetrisWidget(QWidget):
                         int(first_rect[1]),
                         int(first_rect[2]),
                         int(first_rect[3]),
-                        "lahai_line_flash",
+                        self._game_particle_id("line_flash"),
                         {"segments": segments},
                     )
 

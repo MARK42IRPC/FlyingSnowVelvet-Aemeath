@@ -31,6 +31,10 @@ class HashCmdRegistry:
         """
         self._cmds[name] = (usage, description)
 
+    def unregister(self, name: str) -> None:
+        """移除一条 # 命令；不存在时静默忽略。"""
+        self._cmds.pop(str(name), None)
+
     def get_all(self) -> List[Tuple[str, str, str]]:
         """返回全部命令列表：[(name, usage, description), ...]"""
         return [(name, usage, desc) for name, (usage, desc) in self._cmds.items()]

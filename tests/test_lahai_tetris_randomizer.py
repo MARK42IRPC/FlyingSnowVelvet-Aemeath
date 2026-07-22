@@ -1,6 +1,6 @@
 import unittest
 
-from lib.script.gemes.MAIN.lahai_tetris import LahaiPieceRandomizer
+from lib.script.gemes.packages.official.lahai_tetris.code.lahai_tetris_pkg import LahaiPieceRandomizer
 
 
 class _FixedRng:

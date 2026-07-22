@@ -3,7 +3,7 @@ import unittest
 from PyQt5.QtWidgets import QApplication
 
 from config.font_config import init_font_config
-from lib.script.gemes.MAIN.lahai_tetris.skills import LahaiSkillSlot
+from lib.script.gemes.packages.official.lahai_tetris.code.lahai_tetris_pkg.skills import LahaiSkillSlot
 from lib.script.effects.flash_text_effect import FlashTextEffectScript
 
 

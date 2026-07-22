@@ -1,6 +1,6 @@
 import unittest
 
-from lib.script.gemes.MAIN.lahai_tetris.model import (
+from lib.script.gemes.packages.official.lahai_tetris.code.lahai_tetris_pkg.model import (
     build_fill_columns_result,
     collapse_empty_rows,
     clear_board_cells,

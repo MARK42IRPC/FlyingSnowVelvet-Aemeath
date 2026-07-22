@@ -6,6 +6,13 @@
 ===如果粉丝们能去B站点点关注的话...
 ===https://space.bilibili.com/486401719
 
+贡献:配音-猫咪
+===千咲，达妮娅，莫宁
+===https://space.bilibili.com/1838261330
+
+贡献:服务器支持-TDSI服务器
+===https://tdsi.top
+
 贡献:debug-所有粉丝
 ===郑重感谢所有参与测试版使用的粉丝们
 ===谢谢你们的喜欢呀!我会努力更新哒!
@@ -36,6 +43,9 @@
 
 贡献:yuanbao-free-api-元宝 OpenAI 兼容中转服务-chenwr727
 ===https://github.com/chenwr727/yuanbao-free-api
+
+贡献:素材/形象来源-鸣潮
+===https://mc.kurogames.com/
 
 ai平台技术支持:
 ===claude-CODE	(核心架构)

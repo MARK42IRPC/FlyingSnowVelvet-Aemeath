@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import io
 import json
 import re
 import sys
@@ -33,6 +34,7 @@ RESOURCE_LINKS_FILE = ROOT / "resc.net.txt"
 ALLOWED_TOP_LEVEL_DIRS = {
     "config",
     "doc",
+    "gamepack",
     "lib",
     "pyncm",
     "resc",
@@ -70,6 +72,7 @@ EXCLUDE_PART_NAMES = {
 
 EXCLUDE_PATH_PREFIXES = {
     Path("config") / ".shared_pending",
+    Path("lib") / "script" / "gemes" / "packages" / "official",
     Path("resc") / "models",
     Path("resc") / "playwright",
     Path("resc") / "GIF" / "SEanima",
@@ -189,6 +192,30 @@ def _build_inline_payloads() -> Dict[Path, bytes]:
             text = _sanitize_ollama_config(text)
             ast.parse(text, filename=str(relative))
         payloads[relative] = text.encode("utf-8")
+    return payloads
+
+
+def _iter_official_package_files(package_dir: Path) -> Iterator[Path]:
+    for path in package_dir.rglob("*"):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(package_dir)
+        if "__pycache__" in rel.parts or path.suffix.lower() in {".pyc", ".pyo"}:
+            continue
+        yield path
+
+
+def _build_official_gamepack_payloads() -> Dict[Path, bytes]:
+    payloads: Dict[Path, bytes] = {}
+    source_root = ROOT / "lib" / "script" / "gemes" / "packages" / "official"
+    if not source_root.exists():
+        return payloads
+    for package_dir in sorted((path for path in source_root.iterdir() if path.is_dir()), key=lambda p: p.name.lower()):
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            for path in sorted(_iter_official_package_files(package_dir), key=lambda item: item.relative_to(package_dir).as_posix()):
+                archive.write(path, arcname=path.relative_to(package_dir).as_posix())
+        payloads[Path("gamepack") / "official" / f"{package_dir.name}.zip"] = buffer.getvalue()
     return payloads
 
 
@@ -415,7 +442,7 @@ def _should_exclude(path: Path) -> bool:
     return False
 
 
-def _iter_files(inline_payloads: Dict[Path, bytes]) -> Iterator[FileEntry]:
+def _iter_files(inline_payloads: Dict[Path, bytes], generated_payloads: Dict[Path, bytes]) -> Iterator[FileEntry]:
     for path in ROOT.rglob("*"):
         try:
             if not path.is_file():
@@ -425,9 +452,13 @@ def _iter_files(inline_payloads: Dict[Path, bytes]) -> Iterator[FileEntry]:
         if _should_exclude(path):
             continue
         rel = path.relative_to(ROOT)
+        if rel in generated_payloads:
+            continue
         payload = inline_payloads.get(rel)
         size = len(payload) if payload is not None else path.stat().st_size
         yield FileEntry(relative=rel, size=size)
+    for rel, payload in sorted(generated_payloads.items(), key=lambda item: item[0].as_posix()):
+        yield FileEntry(relative=rel, size=len(payload))
 
 
 def _write_manifest(manifest_path: Path, files: Iterable[FileEntry]) -> None:
@@ -513,12 +544,18 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
 def main(argv: Optional[List[str]] = None) -> int:
     args = parse_args(argv or sys.argv[1:])
     inline_payloads = _build_inline_payloads()
+    generated_payloads = _build_official_gamepack_payloads()
+    archive_payloads = dict(inline_payloads)
+    archive_payloads.update(generated_payloads)
     bundled_present, bundled_missing = _ensure_bundled_resources(allow_download=not args.dry_run)
-    entries = sorted(_iter_files(inline_payloads), key=lambda e: e.relative.as_posix())
+    entries = sorted(_iter_files(inline_payloads, generated_payloads), key=lambda e: e.relative.as_posix())
     placeholder_entries, placeholder_payloads = _build_placeholder_entries(args.version)
     all_entries = entries + placeholder_entries
     total_size = sum(entry.size for entry in entries)
-    print(f"[green-package] files: {len(entries)} (+{len(placeholder_entries)} placeholders) | size: {_format_size(total_size)}")
+    print(
+        f"[green-package] files: {len(entries)} (+{len(placeholder_entries)} placeholders) | "
+        f"official gamepack zips: {len(generated_payloads)} | size: {_format_size(total_size)}"
+    )
     print(f"[green-package] bundled resource archives: {len(bundled_present)} present, {len(bundled_missing)} missing")
     for relative in bundled_present:
         print(f"  [bundled] {relative.as_posix()}")
@@ -538,7 +575,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     zip_path = args.output / f"FlyingSnowVelvet-{args.version}-green.zip"
     manifest_path = args.output / f"FlyingSnowVelvet-{args.version}-green-manifest.json"
 
-    _write_archive(zip_path, entries, placeholder_entries, placeholder_payloads, inline_payloads)
+    _write_archive(zip_path, entries, placeholder_entries, placeholder_payloads, archive_payloads)
     _write_manifest(manifest_path, all_entries)
 
     print(f"[green-package] wrote {zip_path.relative_to(ROOT)} ({_format_size(zip_path.stat().st_size)})")

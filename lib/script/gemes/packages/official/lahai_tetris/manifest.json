@@ -1,0 +1,47 @@
+{
+  "package_type": "game",
+  "package_format_version": 1,
+  "runtime_api_version": 1,
+  "game_id": "lahai_tetris",
+  "name": "拉海洛方块",
+  "version": "1.0.1",
+  "summary": "与飞行雪绒和大家一起冲击拉海洛方块的最高分吧！",
+  "description": "官方示例包，展示 code/assets/extensions 三段式游戏包结构。",
+  "official": true,
+  "author": "Flying Snow Velvet",
+  "command_aliases": [
+    "拉海洛方块"
+  ],
+  "entry_module": "lahai_tetris_pkg.entry",
+  "entry_class": "LahaiTetrisGame",
+  "bgm_keyword": "星际穿跃",
+  "bgm_artist": "鸣潮先约电台",
+  "window": {
+    "default_width": 1000,
+    "default_height": 800,
+    "minimum_width": 600,
+    "minimum_height": 480,
+    "aspect_width": 10,
+    "aspect_height": 8
+  },
+  "extensions": {
+    "particles": [
+      {
+        "module": "extensions/particles/lahai_glow_burst_particle.py",
+        "class_name": "LahaiGlowBurstParticleScript",
+        "local_id": "glow_burst"
+      },
+      {
+        "module": "extensions/particles/lahai_preview_rise_particle.py",
+        "class_name": "LahaiPreviewRiseParticleScript",
+        "local_id": "preview_rise"
+      },
+      {
+        "module": "extensions/particles/lahai_line_flash_particle.py",
+        "class_name": "LahaiLineFlashParticleScript",
+        "local_id": "line_flash"
+      }
+    ],
+    "effects": []
+  }
+}

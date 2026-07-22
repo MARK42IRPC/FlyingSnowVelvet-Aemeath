@@ -127,6 +127,31 @@ _CONTROL_PANEL_CONTENT_HEIGHT = int(round(scale_px(620, min_abs=540) * 2.0 / 3.0
 _UPDATE_BUTTON_ROW_GAP = scale_px(10, min_abs=10)
 _QUARK_UPDATE_URL = "https://pan.quark.cn/s/9158e62439e2"
 _SPONSOR_AUTHOR_URL = "https://afdian.com/a/fxxrdeskpet"
+_CONTRIBUTION_IGNORED_TITLE_PARTS = {"保留所有权利"}
+_CONTRIBUTION_HIDDEN_ROLES = {"安装教程指引"}
+_MANUAL_CONTRIBUTION_RECORDS = [
+    {
+        "insert_at": 1,
+        "name": "猫咪",
+        "role": "配音（千咲，达妮娅，莫宁）",
+        "url": "https://space.bilibili.com/1838261330",
+    },
+    {
+        "insert_at": 2,
+        "name": "TDSI服务器",
+        "role": "服务器支持",
+        "url": "https://tdsi.top",
+    },
+    {
+        "insert_at": 999,
+        "name": "鸣潮",
+        "role": "素材/形象来源",
+        "url": "https://mc.kurogames.com/",
+    },
+]
+_CONTRIBUTION_ROLE_OVERRIDES = {
+    "https://github.com/chenwr727/yuanbao-free-api": "元宝OpenAI中转集成",
+}
 _GENERAL_CONFIG_CATEGORIES = [
     {
         "id": "ui_anim",
@@ -190,6 +215,12 @@ _GENERAL_CONFIG_CATEGORIES = [
         "id": "desktop_pet_update",
         "tab": "桌宠更新",
         "title": "桌宠更新管理",
+        "sections": [],
+    },
+    {
+        "id": "contribution_list",
+        "tab": "贡献列表",
+        "title": "贡献列表",
         "sections": [],
     },
     {
@@ -982,6 +1013,178 @@ def _sponsor_author_image_path() -> Path:
     )
 
 
+def _contribution_list_path() -> Path:
+    return (
+        _project_root()
+        / "doc"
+        / "贡献名单和主播的狗盆"
+        / "开发贡献.txt"
+    )
+
+
+def _read_text_with_fallback(path: Path) -> str:
+    for encoding in ("utf-8-sig", "utf-8", "gb18030", "cp936"):
+        try:
+            return path.read_text(encoding=encoding)
+        except Exception:
+            pass
+    return path.read_text(encoding="utf-8", errors="ignore")
+
+
+def _extract_first_url(text: str) -> str:
+    match = re.search(r"https?://\S+", str(text or ""))
+    return match.group(0).strip() if match else ""
+
+
+def _normalize_contribution_name(text: str) -> str:
+    value = str(text or "").strip()
+    value = re.sub(r"\s+", " ", value)
+    value = value.strip("-=:： \t")
+    return value
+
+
+def _guess_contribution_fallback_name(text: str) -> str:
+    candidate = _normalize_contribution_name(text)
+    if not candidate:
+        return ""
+    if len(candidate) > 20:
+        return ""
+    blocked_tokens = ("感谢", "谢谢", "喜欢", "更新", "测试版", "版权", "侵权", "删除")
+    if any(token in candidate for token in blocked_tokens):
+        return ""
+    return candidate
+
+
+def _split_contribution_header(header: str) -> tuple[str, str]:
+    text = _normalize_contribution_name(header)
+    parts = [_normalize_contribution_name(part) for part in text.split("-") if _normalize_contribution_name(part)]
+    if len(parts) < 2:
+        return text, ""
+
+    picked_index = -1
+    for index in range(len(parts) - 1, -1, -1):
+        part = parts[index]
+        if part in _CONTRIBUTION_IGNORED_TITLE_PARTS:
+            continue
+        if index == 0:
+            continue
+        picked_index = index
+        break
+
+    if picked_index < 0:
+        return text, ""
+
+    name = parts[picked_index]
+    role_parts = [
+        part
+        for index, part in enumerate(parts)
+        if index != picked_index and part not in _CONTRIBUTION_IGNORED_TITLE_PARTS
+    ]
+    role = "-".join(role_parts).strip("- ") or text
+    return role, name
+
+
+def _parse_contribution_records(text: str) -> list[dict[str, str]]:
+    records: list[dict[str, str]] = []
+    current_role = ""
+    current_default_name = ""
+    current_fallback_name = ""
+    current_has_record = False
+
+    def flush_pending() -> None:
+        nonlocal current_role, current_default_name, current_fallback_name, current_has_record
+        if current_role and not current_has_record:
+            name = current_fallback_name or current_default_name
+            if name:
+                records.append({
+                    "name": name,
+                    "role": current_role,
+                    "url": "",
+                })
+        current_role = ""
+        current_default_name = ""
+        current_fallback_name = ""
+        current_has_record = False
+
+    for raw_line in str(text or "").splitlines():
+        line = str(raw_line or "").strip()
+        if not line:
+            continue
+        if line.startswith("贡献:"):
+            flush_pending()
+            current_role, current_default_name = _split_contribution_header(line[3:].strip())
+            current_fallback_name = current_default_name
+            continue
+        if not current_role or not line.startswith("==="):
+            continue
+
+        detail = _normalize_contribution_name(line[3:].strip())
+        if not detail:
+            continue
+        url = _extract_first_url(detail)
+        if url:
+            prefix = _normalize_contribution_name(detail.split(url, 1)[0])
+            name = prefix or current_default_name or current_fallback_name or "未命名贡献者"
+            records.append({
+                "name": name,
+                "role": current_role,
+                "url": url,
+            })
+            current_has_record = True
+            continue
+
+        fallback_name = _guess_contribution_fallback_name(detail)
+        if fallback_name:
+            current_fallback_name = fallback_name
+
+    flush_pending()
+    return records
+
+
+def _load_contribution_records() -> list[dict[str, str]]:
+    path = _contribution_list_path()
+    if not path.exists():
+        records = []
+    else:
+        try:
+            records = _parse_contribution_records(_read_text_with_fallback(path))
+        except Exception as exc:
+            _logger.warning("读取贡献名单失败: %s", exc)
+            records = []
+    try:
+        filtered_records: list[dict[str, str]] = []
+        for record in records:
+            role = str(record.get("role") or "").strip()
+            if role in _CONTRIBUTION_HIDDEN_ROLES:
+                continue
+            url = str(record.get("url") or "").strip()
+            override_role = _CONTRIBUTION_ROLE_OVERRIDES.get(url)
+            if override_role:
+                record["role"] = override_role
+            filtered_records.append(record)
+
+        for manual in _MANUAL_CONTRIBUTION_RECORDS:
+            manual_url = str(manual.get("url") or "").strip()
+            if not manual_url:
+                continue
+            filtered_records = [
+                record for record in filtered_records
+                if str(record.get("url") or "").strip() != manual_url
+            ]
+            insert_at = int(manual.get("insert_at", len(filtered_records)))
+            insert_at = max(0, min(insert_at, len(filtered_records)))
+            filtered_records.insert(insert_at, {
+                "name": str(manual.get("name") or "未命名贡献者").strip(),
+                "role": str(manual.get("role") or "贡献者").strip(),
+                "url": manual_url,
+            })
+
+        return filtered_records
+    except Exception as exc:
+        _logger.warning("整理贡献名单失败: %s", exc)
+        return []
+
+
 def _decode_process_output(raw: bytes) -> str:
     if not raw:
         return ""
@@ -1492,6 +1695,38 @@ class _DecimalSliderField(QWidget):
 
     def setText(self, text) -> None:
         self.set_value(text)
+
+
+class _ContributionCardButton(QPushButton):
+    """贡献卡片按钮：带右侧拉海洛水印。"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._watermark_label: QLabel | None = None
+        self._watermark_font = get_digit_font(size=max(scale_px(18, min_abs=14), _CONFIG_FONT_SIZE + scale_px(2, min_abs=1)))
+        self._watermark_font.setBold(True)
+
+    def bind_watermark_label(self, label: QLabel) -> None:
+        self._watermark_label = label
+        label.setProperty("preserveCustomFont", True)
+        self._apply_watermark(False)
+
+    def _apply_watermark(self, hovered: bool) -> None:
+        if self._watermark_label is None:
+            return
+        self._watermark_label.setFont(self._watermark_font)
+        self._watermark_label.setText("GOpage" if hovered else "DVLP")
+        self._watermark_label.setStyleSheet(
+            f"color: {UI_THEME['deep_cyan'].name() if hovered else UI_THEME['deep_pink'].name()};"
+        )
+
+    def enterEvent(self, event) -> None:
+        self._apply_watermark(True)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        self._apply_watermark(False)
+        super().leaveEvent(event)
 
 
 class AISettingsPanel(QWidget):
@@ -2073,6 +2308,15 @@ class AISettingsPanel(QWidget):
                 hint_label,
             )
 
+        if category_id == "contribution_list":
+            return self._build_contribution_list_panel(
+                panel,
+                layout,
+                category_title,
+                title_label,
+                hint_label,
+            )
+
         scroll = _SmoothScrollArea(panel)
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -2573,6 +2817,168 @@ class AISettingsPanel(QWidget):
 
         return panel
 
+    def _build_contribution_list_panel(
+        self,
+        panel: QWidget,
+        layout: QVBoxLayout,
+        category_title: str,
+        title_label: QLabel,
+        hint_label: QLabel,
+    ) -> QWidget:
+        def _create_section_title(text: str) -> QLabel:
+            label = QLabel(text)
+            font = get_ui_font(size=max(scale_px(12, min_abs=10), _CONFIG_FONT_SIZE))
+            font.setBold(True)
+            label.setFont(font)
+            label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            return label
+
+        def _create_section_hint(text: str, *, bottom_margin: int = 0) -> QLabel:
+            label = QLabel(text)
+            font = self._build_hint_font()
+            label.setFont(font)
+            label.setWordWrap(True)
+            label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+            if bottom_margin:
+                label.setContentsMargins(0, 0, 0, bottom_margin)
+            return label
+
+        scroll = _SmoothScrollArea(panel)
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll.setViewportMargins(0, 0, _SCROLLBAR_RIGHT_SHIFT, 0)
+        scroll_content = QWidget(scroll)
+        content_layout = QVBoxLayout(scroll_content)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(scale_px(10))
+        scroll.setWidget(scroll_content)
+        layout.addWidget(scroll, 1)
+
+        records = [
+            record
+            for record in _load_contribution_records()
+            if str(record.get("url") or "").strip()
+        ]
+        total_count = len(records)
+
+        intro_label = _create_section_hint(
+            "点击跳转至开发者主页",
+            bottom_margin=scale_px(18, min_abs=14),
+        )
+        section_title = _create_section_title("贡献人物")
+
+        content_layout.addWidget(intro_label)
+        content_layout.addWidget(section_title, 0, Qt.AlignLeft)
+
+        button_style = f"""
+            QPushButton {{
+                background-color: {UI_THEME["bg"].name()};
+                border: 2px solid {UI_THEME["border"].name()};
+                border-radius: 0px;
+                padding: 0px;
+                min-height: {scale_px(74, min_abs=64)}px;
+            }}
+            QPushButton:hover {{
+                background-color: {UI_THEME["mid"].name()};
+                border-color: {UI_THEME["deep_cyan"].name()};
+            }}
+            QPushButton:pressed {{
+                background-color: {UI_THEME["deep_cyan"].name()};
+            }}
+        """
+
+        buttons: list[QPushButton] = []
+        if records:
+            name_font = get_ui_font(size=max(scale_px(16, min_abs=13), _CONFIG_FONT_SIZE + scale_px(2, min_abs=1)))
+            name_font.setBold(True)
+            role_font = get_ui_font(size=max(scale_px(11, min_abs=9), _CONFIG_FONT_SIZE - scale_px(1, min_abs=1)))
+            for record in records:
+                name = str(record.get("name") or "未命名贡献者").strip()
+                role = str(record.get("role") or "贡献者").strip()
+                url = str(record.get("url") or "").strip()
+                button = _ContributionCardButton(scroll_content)
+                button.setCursor(Qt.PointingHandCursor)
+                button.setStyleSheet(button_style)
+                button_layout = QHBoxLayout(button)
+                button_layout.setContentsMargins(
+                    scale_px(14, min_abs=12),
+                    scale_px(12, min_abs=10),
+                    scale_px(14, min_abs=12),
+                    scale_px(12, min_abs=10),
+                )
+                button_layout.setSpacing(scale_px(12, min_abs=10))
+
+                accent = QWidget(button)
+                accent.setFixedWidth(scale_px(6, min_abs=5))
+                accent.setStyleSheet(f"background-color: {UI_THEME['deep_cyan'].name()};")
+                accent.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+                button_layout.addWidget(accent, 0)
+
+                text_wrap = QWidget(button)
+                text_layout = QVBoxLayout(text_wrap)
+                text_layout.setContentsMargins(0, 0, 0, 0)
+                text_layout.setSpacing(scale_px(4, min_abs=2))
+                text_wrap.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+
+                name_label = QLabel(name, text_wrap)
+                name_label.setFont(name_font)
+                name_label.setStyleSheet(f"color: {UI_THEME['text'].name()};")
+                name_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+                name_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+                text_layout.addWidget(name_label, 0, Qt.AlignLeft)
+
+                role_label = QLabel(role, text_wrap)
+                role_label.setFont(role_font)
+                role_label.setStyleSheet(f"color: {UI_THEME['border'].name()};")
+                role_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+                role_label.setWordWrap(True)
+                role_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+                text_layout.addWidget(role_label, 0, Qt.AlignLeft)
+
+                button_layout.addWidget(text_wrap, 1)
+
+                watermark_wrap = QWidget(button)
+                watermark_wrap.setFixedWidth(scale_px(96, min_abs=86))
+                watermark_wrap.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+                watermark_layout = QVBoxLayout(watermark_wrap)
+                watermark_layout.setContentsMargins(0, 0, 0, 0)
+                watermark_layout.setSpacing(0)
+                watermark_layout.addStretch(1)
+
+                watermark_label = QLabel("DVLP", watermark_wrap)
+                watermark_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                watermark_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+                button.bind_watermark_label(watermark_label)
+                watermark_layout.addWidget(watermark_label, 0, Qt.AlignRight | Qt.AlignVCenter)
+                button_layout.addWidget(watermark_wrap, 0)
+
+                content_layout.addWidget(button, 0)
+                buttons.append(button)
+                button.clicked.connect(lambda _checked=False, entry_name=name, entry_url=url: self._open_contribution_link(entry_name, entry_url))
+        else:
+            empty_label = _create_section_hint(
+                f"未读取到贡献名单，请检查文件是否存在：{_contribution_list_path()}",
+                bottom_margin=scale_px(6, min_abs=4),
+            )
+            content_layout.addWidget(empty_label)
+
+        content_layout.addStretch(1)
+
+        self._config_tab_meta["contribution_list"] = {
+            "panel": panel,
+            "fields": [],
+            "defaults": {},
+            "title": category_title,
+            "title_label": title_label,
+            "hint_label": hint_label,
+            "section_title_labels": [section_title],
+            "section_hint_labels": [intro_label],
+            "buttons": buttons,
+        }
+
+        return panel
+
     def _set_sponsor_author_image(self, label: QLabel) -> None:
         image_path = _sponsor_author_image_path()
         if not image_path.exists():
@@ -2599,6 +3005,15 @@ class AISettingsPanel(QWidget):
             return
         if not opened:
             self._show_info_message(f"未能自动打开链接，请手动访问：{_SPONSOR_AUTHOR_URL}")
+
+    def _open_contribution_link(self, name: str, url: str) -> None:
+        try:
+            opened = webbrowser.open(url)
+        except Exception as exc:
+            self._show_info_message(f"打开 {name} 的主页失败：{exc}")
+            return
+        if not opened:
+            self._show_info_message(f"未能自动打开 {name} 的主页，请手动访问：{url}")
 
     def _show_info_message(self, message: str):
         """显示信息消息框"""
@@ -3688,6 +4103,8 @@ class AISettingsPanel(QWidget):
         # 配置项与配置内容：统一粗体并放大 2xp。
         for widget in self.findChildren(QLabel):
             if widget is self._title_label or widget is self._hint_label:
+                continue
+            if widget.property("preserveCustomFont"):
                 continue
             widget.setFont(config_font)
         for widget_type in (QLineEdit, QComboBox, QPushButton, QCheckBox):
