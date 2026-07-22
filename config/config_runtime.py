@@ -98,6 +98,7 @@ set_draw_scale(DRAW['scale'])
 
 STARTUP = {
     'ensure_desktop_shortcut': True,
+    'log_retention_count': 20,
 }
 
 _user_scale_config = get_user_scale_config()

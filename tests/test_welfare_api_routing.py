@@ -30,7 +30,7 @@ class WelfareApiRoutingTests(unittest.TestCase):
         self.assertEqual(active["key_source"], "welfare_api")
         self.assertEqual(active["base_url"], "https://apihub.agnes-ai.com/v1")
         self.assertEqual(active["model"], "agnes-2.0-flash")
-        self.assertTrue(active["api_key"].startswith("sk-"))
+        self.assertEqual(active["api_key"], "sk-welfare-api-not-configured")
 
     def test_manual_mode_without_required_fields_uses_welfare_api(self):
         with patch.object(ollama_config, "FORCE_REPLY_MODE", "0"), patch.object(

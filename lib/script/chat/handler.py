@@ -32,6 +32,7 @@ class ChatHandler(ChatHandlerPersonaMixin, ChatHandlerAutoCompanionMixin, ChatHa
 
         self._event_center.subscribe(EventType.INPUT_CHAT, self._on_input_chat)
         self._event_center.subscribe(EventType.APP_MAIN, self._on_app_main)
+        self._event_center.subscribe(EventType.GAME_MODE_STATUS_CHANGE, self._on_game_mode_status_change)
         self._stream_first_chunk: bool = True   # 每次新请求重置；首个流式 chunk 触发粒子
         self._stream_pending_raw: str = ""
         self._stream_last_display: str = ""
@@ -120,6 +121,7 @@ class ChatHandler(ChatHandlerPersonaMixin, ChatHandlerAutoCompanionMixin, ChatHa
         """取消事件订阅"""
         self._event_center.unsubscribe(EventType.INPUT_CHAT, self._on_input_chat)
         self._event_center.unsubscribe(EventType.APP_MAIN, self._on_app_main)
+        self._event_center.unsubscribe(EventType.GAME_MODE_STATUS_CHANGE, self._on_game_mode_status_change)
         if self._stream_flush_timer is not None:
             self._stream_flush_timer.stop()
             try:

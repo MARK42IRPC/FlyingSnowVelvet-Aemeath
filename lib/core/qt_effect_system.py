@@ -175,6 +175,7 @@ class EffectOverlay(QWidget):
         self._layer_manager.register(self, Layer.EFFECT, name='EffectOverlay')
 
         self._effects = []
+        self._paused = False
         self._draw_seq = 0
         self._pending_requests = deque()
         self._needs_immediate_repaint = False
@@ -190,6 +191,9 @@ class EffectOverlay(QWidget):
         effect_id = data.get("effect_id")
         if not effect_id:
             return
+        if self._paused:
+            event.mark_handled()
+            return
 
         self._pending_requests.append({
             "effect_id": effect_id,
@@ -200,6 +204,8 @@ class EffectOverlay(QWidget):
         event.mark_handled()
 
     def _on_tick(self, event: Event):
+        if self._paused:
+            return
         self._drain_effect_requests()
         if not self._effects:
             return
@@ -220,6 +226,8 @@ class EffectOverlay(QWidget):
             self._clear_and_hide()
 
     def _on_frame(self, event: Event):
+        if self._paused:
+            return
         if not self._effects:
             return
 
@@ -405,6 +413,12 @@ class EffectOverlay(QWidget):
         self._pending_requests.clear()
         self._effects.clear()
         self._clear_and_hide()
+
+    def set_paused(self, paused: bool) -> None:
+        """暂停/恢复特效系统；暂停时立即清空当前可见特效。"""
+        self._paused = bool(paused)
+        if self._paused:
+            self.flush_immediately()
 
     def cleanup(self):
         if self._event_center:

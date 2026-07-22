@@ -76,6 +76,7 @@ class ParticleOverlay(QWidget):
         self._layer_manager.register(self, Layer.PARTICLE, name='ParticleOverlay')
 
         self._particles = []
+        self._paused = False
         self._draw_seq = 0
         self._pending_requests = deque()
         self._pending_future: Future | None = None
@@ -120,6 +121,9 @@ class ParticleOverlay(QWidget):
 
         if not particle_id or not area_data:
             return
+        if self._paused:
+            event.mark_handled()
+            return
 
         self._pending_requests.append({
             'particle_id': particle_id,
@@ -136,6 +140,8 @@ class ParticleOverlay(QWidget):
     # ------------------------------------------------------------------
     def _on_tick(self, event: Event):
         """全局 tick 事件处理 - 应用后台更新结果并提交下一 tick 粒子更新。"""
+        if self._paused:
+            return
         tick_start = perf_counter() if self._perf_log_enabled else 0.0
         drain_before = perf_counter() if self._perf_log_enabled else 0.0
         self._apply_pending_updates()
@@ -181,6 +187,8 @@ class ParticleOverlay(QWidget):
 
     def _on_frame(self, event: Event):
         """全局帧事件处理 - 按 tick alpha 插值并请求重绘。"""
+        if self._paused:
+            return
         if not self._particles:
             return
         alpha = float((event.data or {}).get('tick_alpha', 1.0) or 0.0)
@@ -536,6 +544,12 @@ class ParticleOverlay(QWidget):
         self._pending_snapshot_ids.clear()
         self._particles.clear()
         self._clear_and_hide()
+
+    def set_paused(self, paused: bool) -> None:
+        """暂停/恢复粒子系统；暂停时立即清空现有可见粒子。"""
+        self._paused = bool(paused)
+        if self._paused:
+            self.flush_immediately()
 
     # ------------------------------------------------------------------
     def cleanup(self):

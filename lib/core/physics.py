@@ -254,6 +254,7 @@ class PhysicsWorld:
     def __init__(self) -> None:
         self._bodies: list[PhysicsBody] = []
         self._pending_future = None
+        self._paused = False
 
         # 多屏环境使用虚拟桌面边界
         self._screen_left: int = 0
@@ -287,16 +288,39 @@ class PhysicsWorld:
         self._bodies.clear()
         _log("物理世界已清理")
 
+    def pause(self) -> None:
+        """暂停全局物理步进与插值更新。"""
+        self._paused = True
+        self._pending_future = None
+        for body in list(self._bodies):
+            body.prev_x = body.x
+            body.prev_y = body.y
+            body.render_x = body.x
+            body.render_y = body.y
+
+    def resume(self) -> None:
+        """恢复全局物理步进。"""
+        self._paused = False
+        for body in list(self._bodies):
+            body.prev_x = body.x
+            body.prev_y = body.y
+            body.render_x = body.x
+            body.render_y = body.y
+
     # ── 帧更新 ────────────────────────────────────────────────────
 
     def _on_tick(self, event: Event) -> None:
         """TICK 事件回调：应用上一 tick 结果，并提交下一 tick 批量计算。"""
+        if self._paused:
+            return
         self._refresh_screen_bounds()
         self._apply_pending_updates()
         self._submit_frame_job()
 
     def _on_frame(self, event: Event) -> None:
         """FRAME 事件回调：按 tick alpha 插值显示位置。"""
+        if self._paused:
+            return
         alpha = float((event.data or {}).get("tick_alpha", 1.0) or 0.0)
         alpha = max(0.0, min(1.0, alpha))
         for body in list(self._bodies):

@@ -30,6 +30,11 @@ class CloseButtonEventHandler:
 
     def _on_mouse_press(self, event: Event):
         """处理鼠标按下"""
+        if not getattr(self._button, "_visible", False):
+            return
+        if not getattr(self._button, "_anchor_available", False):
+            return
+
         button = event.data.get('button')
         global_pos = event.data.get('global_pos')
 

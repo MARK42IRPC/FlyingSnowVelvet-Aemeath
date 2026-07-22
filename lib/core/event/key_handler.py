@@ -39,14 +39,8 @@ class KeyEventHandler:
             except Exception:
                 pass
 
-        # ESC 键：关闭程序
-        if key == Qt.Key_Escape:
-            from PyQt5.QtWidgets import QApplication
-            quit_event = Event(EventType.APP_QUIT, {'entity': self._entity})
-            self._event_center.publish(quit_event)
-
         # 空格键：触发随机动作
-        elif key == Qt.Key_Space:
+        if key == Qt.Key_Space:
             if not self._entity.is_moving():
                 state = random.choice(BEHAVIOR['random_states'])
                 self._entity.play_animation(state, duration=random.randint(2000, 4000))

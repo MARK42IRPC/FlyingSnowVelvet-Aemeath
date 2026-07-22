@@ -63,6 +63,7 @@ from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.layer import Layer
 from lib.core.layer_manager import get_layer_manager
 from lib.core.logger import get_logger
+from lib.script.app.startup_probe import load_saved_watermark_payload as _load_saved_watermark_payload
 from lib.script.SEanima.clip import (
     DEFAULT_EXIT_ANIMATION_FOLDER,
     DEFAULT_START_ANIMATION_FOLDER,
@@ -315,6 +316,7 @@ _CATEGORY_KEY_ALLOWLIST = {
         },
         "STARTUP": {
             "ensure_desktop_shortcut",
+            "log_retention_count",
         },
     },
     "desktop_pet_update": {},  # 桌宠更新标签页 - 没有配置字段，只有按钮
@@ -395,6 +397,7 @@ _GENERAL_NUMERIC_RULES: dict[tuple[str, str], tuple[str, float, float]] = {
     ("TIMEOUTS", "cmd_exec"): ("int", 1, 600),
     ("TIMEOUTS", "idle_close_ms"): ("int", 100, 3600000),
     ("DRAW", "scale"): ("number", 0.1, 8.0),
+    ("STARTUP", "log_retention_count"): ("int", 1, 200),
 }
 
 _GENERAL_TUPLE_INT_RULES: dict[tuple[str, str], tuple[int, int]] = {
@@ -571,6 +574,7 @@ _GENERAL_CONFIG_DEFAULTS: dict[str, dict[str, object]] = {
     },
     "STARTUP": {
         "ensure_desktop_shortcut": True,
+        "log_retention_count": 20,
     },
 }
 
@@ -636,6 +640,7 @@ _KEY_FRIENDLY_NAME = {
     },
     "STARTUP": {
         "ensure_desktop_shortcut": "启动时创建快捷方式",
+        "log_retention_count": "日志保留数量",
     },
     "BUBBLE_CONFIG": {
         "default_min_ticks": "默认最小显示tick",
@@ -1514,6 +1519,7 @@ class AISettingsPanel(QWidget):
         self._dragging = False
         self._drag_offset = QPoint()
         self._gpu_watermark_text = "UnKnow GPU 0.00 GB\nRAM 0.00 GB"
+        self._panel_watermark_text = _WATERMARK_TEXT
         self._tick_counter = 0
         self._tick_subscribed = False
         self._subscribe_border_effect_events()
@@ -1541,10 +1547,13 @@ class AISettingsPanel(QWidget):
 
     def _refresh_hardware_watermark_async(self) -> None:
         def worker() -> None:
-            gpu_line1, gpu_line2 = _query_hardware_watermark_lines()
+            payload = _load_saved_watermark_payload()
+            hardware_lines = payload.get("hardware", ("UnKnow GPU 0.00 GB", "RAM 0.00 GB"))
+            panel_lines = payload.get("control_panel", ("Aemeath", "AIsetting"))
 
             def apply_result() -> None:
-                self._gpu_watermark_text = f"{gpu_line1}\n{gpu_line2}"
+                self._gpu_watermark_text = "\n".join(hardware_lines)
+                self._panel_watermark_text = "\n".join(panel_lines)
                 try:
                     self.update()
                 except RuntimeError:
@@ -4532,4 +4541,4 @@ class AISettingsPanel(QWidget):
             -(self.width() - wm_width - self._border - scale_px(8) - wm_shift_right),
             -self._border - scale_px(6),
         )
-        painter.drawText(wm_rect, Qt.AlignLeft | Qt.AlignBottom, _WATERMARK_TEXT)
+        painter.drawText(wm_rect, Qt.AlignLeft | Qt.AlignBottom, self._panel_watermark_text)

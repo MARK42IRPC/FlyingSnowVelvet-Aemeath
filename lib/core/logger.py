@@ -3,19 +3,24 @@
 from __future__ import annotations
 
 import glob
+import json
 import logging
 import os
 import sys
 import threading
+import traceback
 from datetime import datetime
+from pathlib import Path
 
 _FMT = '[%(asctime)s.%(msecs)03d] [%(levelname)-5s] [%(name)-20s] %(message)s'
 _DATEFMT = '%Y-%m-%d %H:%M:%S'
 _ROOT_NAME = 'app'
-MAX_LOG_FILES = 5
+MAX_LOG_FILES = 20
 
 _initialized = False
 _lock = threading.Lock()
+_bug_event_lock = threading.Lock()
+_BUG_TRACKER_EVENT_FILE = 'bug_tracker_events.jsonl'
 
 _ANSI_RESET = '\033[0m'
 _COLOR_MAP = {
@@ -58,16 +63,82 @@ class _ErrorEventHandler(logging.Handler):
         try:
             from lib.core.event.center import Event, EventType, get_event_center
 
-            get_event_center().publish(Event(EventType.LOG_ERROR, {
+            payload = {
                 'logger': record.name,
                 'level': record.levelname,
                 'levelno': record.levelno,
                 'message': record.getMessage(),
-            }))
+                'timestamp': datetime.fromtimestamp(record.created).isoformat(timespec='milliseconds'),
+                'pathname': getattr(record, 'pathname', ''),
+                'lineno': int(getattr(record, 'lineno', 0) or 0),
+                'funcName': getattr(record, 'funcName', ''),
+                'module': getattr(record, 'module', ''),
+                'process': int(getattr(record, 'process', 0) or 0),
+                'thread': int(getattr(record, 'thread', 0) or 0),
+                'threadName': getattr(record, 'threadName', ''),
+            }
+            if record.exc_info:
+                payload['exception'] = ''.join(traceback.format_exception(*record.exc_info)).strip()
+            elif getattr(record, 'exc_text', None):
+                payload['exception'] = str(record.exc_text).strip()
+            if getattr(record, 'stack_info', None):
+                payload['stack_info'] = str(record.stack_info).strip()
+
+            _append_bug_tracker_event(payload)
+            get_event_center().publish(Event(EventType.LOG_ERROR, payload))
         except Exception:
             pass
         finally:
             self._local.emitting = False
+
+
+def _append_bug_tracker_event(payload: dict) -> None:
+    try:
+        path = _bug_tracker_event_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        line = json.dumps(payload, ensure_ascii=False, separators=(',', ':'))
+        with _bug_event_lock:
+            with path.open('a', encoding='utf-8') as fh:
+                fh.write(line)
+                fh.write('\n')
+    except Exception:
+        pass
+
+
+def _bug_tracker_event_path() -> Path:
+    return _user_root_path() / 'state' / _BUG_TRACKER_EVENT_FILE
+
+
+def _user_settings_path() -> Path:
+    return _user_root_path() / 'settings.json'
+
+
+def _user_root_path() -> Path:
+    override = str(os.environ.get('AEMEATH_DESK_PET_HOME', '') or '').strip()
+    if override:
+        root = Path(override).expanduser()
+    else:
+        drive = str(os.environ.get('SystemDrive', 'C:') or 'C:').strip() or 'C:'
+        drive = drive.rstrip('\\/')
+        if not drive.endswith(':'):
+            drive = f'{drive}:'
+        root = Path(f'{drive}\\AemeathDeskPet')
+    return root / 'user'
+
+
+def _resolve_log_retention_count() -> int:
+    try:
+        settings_path = _user_settings_path()
+        if settings_path.exists():
+            payload = json.loads(settings_path.read_text(encoding='utf-8'))
+            overrides = payload.get('overrides', {}) if isinstance(payload, dict) else {}
+            general = overrides.get('general', {}) if isinstance(overrides, dict) else {}
+            startup = general.get('STARTUP', {}) if isinstance(general, dict) else {}
+            value = startup.get('log_retention_count', MAX_LOG_FILES) if isinstance(startup, dict) else MAX_LOG_FILES
+            return max(1, int(value))
+    except Exception:
+        pass
+    return MAX_LOG_FILES
 
 
 def _enable_windows_ansi(stream) -> bool:
@@ -160,7 +231,7 @@ def get_logger(name: str) -> logging.Logger:
 def _cleanup_old_logs(log_dir: str) -> None:
     pattern = os.path.join(log_dir, 'app_*.log')
     log_files = sorted(glob.glob(pattern), key=os.path.getmtime)
-    quota = MAX_LOG_FILES - 1
+    quota = max(0, _resolve_log_retention_count() - 1)
     for file_path in log_files[:max(0, len(log_files) - quota)]:
         try:
             os.remove(file_path)

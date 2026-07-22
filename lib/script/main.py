@@ -21,6 +21,7 @@ from lib.script.chat.memory import get_stream_memory, cleanup_stream_memory
 from lib.script.tool_dispatcher import get_tool_dispatcher, cleanup_tool_dispatcher
 from lib.script.gsvmove import get_gsvmove_service, cleanup_gsvmove_service
 from lib.script.yuanbao_free_api import get_yuanbao_free_api_service, cleanup_yuanbao_free_api_service
+from lib.script.bug_tracker import get_bug_tracker_service, cleanup_bug_tracker_service
 from lib.script.microphone_stt import (
     cleanup_microphone_push_to_talk_manager,
     cleanup_microphone_stt_service,
@@ -29,6 +30,7 @@ from lib.script.microphone_stt import (
 )
 from lib.script.voice.handler import get_voice_request_handler, cleanup_voice_request_handler
 from lib.script.gemes import get_game_runtime, cleanup_game_runtime
+from lib.script.app.game_mode_service import get_game_mode_service, cleanup_game_mode_service
 from lib.core.plugin_registry import (
     discover_all, init_all_managers, cleanup_all_managers, get_manager
 )
@@ -65,6 +67,7 @@ class ApplicationState:
         self._tool_dispatcher = None
         # 小游戏 runtime
         self._game_runtime = None
+        self._game_mode = get_game_mode_service()
         # 工作目录
         self._script_dir = None
         # 初始化完成标志
@@ -88,6 +91,7 @@ class ApplicationState:
         # GSVmove 文本转语音桥接：按配置决定是否在预启动阶段后台拉起本地 TTS 服务
         self._gsvmove = get_gsvmove_service()
         self._yuanbao_free_api = get_yuanbao_free_api_service()
+        self._bug_tracker = get_bug_tracker_service()
         self._microphone_stt = get_microphone_stt_service()
         self._microphone_push_to_talk = get_microphone_push_to_talk_manager()
         # 语音抽象层：接收 VOICE_REQUEST 并路由到底层声音系统
@@ -156,6 +160,7 @@ class ApplicationState:
 
         # ── 初始化小游戏 runtime ───────────────────────────────────────
         self._game_runtime = get_game_runtime()
+        self._game_mode.configure_runtime(self._pet, self._particles, self._effects)
 
         # ── 初始化说明书（鼠标悬停提示面板）────────────────────────────
         from lib.script.ui.tooltip_panel import init_tooltip_panel
@@ -407,11 +412,13 @@ class ApplicationState:
         cleanup_stream_memory()
         cleanup_tool_dispatcher()
         cleanup_game_runtime()
+        cleanup_game_mode_service()
         cleanup_ollama_manager()
         cleanup_cmd_center()
         cleanup_voice_request_handler()
         cleanup_gsvmove_service()
         cleanup_yuanbao_free_api_service()
+        cleanup_bug_tracker_service()
         cleanup_microphone_push_to_talk_manager()
         cleanup_microphone_stt_service()
 

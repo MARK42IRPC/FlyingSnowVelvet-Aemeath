@@ -19,6 +19,7 @@ from lib.script.ui.tray_menu import TrayContextMenu
 from config.config import CLOUD_MUSIC
 from config.tooltip_config import TOOLTIPS
 from config.user_storage_paths import get_user_cache_dir
+from lib.script.app.game_mode_service import get_game_mode_service
 
 _logger = get_logger(__name__)
 
@@ -47,8 +48,11 @@ class TrayIcon(QObject):
         self._menu = None
         self._autostart_action = None
         self._clickthrough_action = None
+        self._game_mode_action = None
         self._clickthrough_enabled = False
+        self._game_mode_enabled = False
         self._clickthrough_status_subscribed = False
+        self._game_mode_status_subscribed = False
         self._ai_settings_panel = None
         self._icon = None
         self._icon_path = None
@@ -69,6 +73,7 @@ class TrayIcon(QObject):
             是否初始化成功
         """
         self._subscribe_clickthrough_events()
+        self._subscribe_game_mode_events()
 
         if self._initialized:
             return True
@@ -243,12 +248,27 @@ class TrayIcon(QObject):
         ai_settings_action.triggered.connect(self._on_ai_settings)
         self._menu.addAction(ai_settings_action)
 
+        bug_tracker_action = QAction('bug跟踪', self._menu)
+        bug_tracker_action.setToolTip(TOOLTIPS['tray_bug_tracker'])
+        bug_tracker_action.setStatusTip(TOOLTIPS['tray_bug_tracker'])
+        bug_tracker_action.triggered.connect(self._on_bug_tracker)
+        self._menu.addAction(bug_tracker_action)
+
         # CMD窗口动作
         cmd_window_action = QAction('CMD终端', self._menu)
         cmd_window_action.setToolTip(TOOLTIPS['tray_cmd_window'])
         cmd_window_action.setStatusTip(TOOLTIPS['tray_cmd_window'])
         cmd_window_action.triggered.connect(self._on_cmd_window)
         self._menu.addAction(cmd_window_action)
+
+        self._game_mode_enabled = bool(get_game_mode_service().is_enabled())
+        self._game_mode_action = QAction('游戏模式', self._menu)
+        self._game_mode_action.setCheckable(True)
+        self._set_game_mode_action_checked(self._game_mode_enabled)
+        self._game_mode_action.setToolTip(TOOLTIPS['tray_game_mode'])
+        self._game_mode_action.setStatusTip(TOOLTIPS['tray_game_mode'])
+        self._game_mode_action.triggered.connect(self._on_toggle_game_mode)
+        self._menu.addAction(self._game_mode_action)
 
         # 鼠标穿透动作（可勾选）
         self._clickthrough_action = QAction('鼠标穿透', self._menu)
@@ -491,6 +511,10 @@ class TrayIcon(QObject):
                 'max': 120,
             }))
 
+    def _on_bug_tracker(self):
+        """处理 bug 跟踪动作：通过事件请求主程序拉起独立进程。"""
+        self._event_center.publish(Event(EventType.BUG_TRACKER_OPEN_REQUEST, {}))
+
     def _on_cmd_window(self):
         """处理CMD窗口动作：打开CMD终端窗口。"""
         try:
@@ -507,6 +531,58 @@ class TrayIcon(QObject):
                 'min': 12,
                 'max': 120,
             }))
+
+    def _on_toggle_game_mode(self, checked: bool):
+        """处理游戏模式切换动作。"""
+        target = bool(checked)
+        self._game_mode_enabled = target
+        self._set_game_mode_action_checked(target)
+        self._event_center.publish(Event(
+            EventType.GAME_MODE_SET if target else EventType.GAME_MODE_EXIT,
+            {
+                'source': 'tray_menu',
+            },
+        ))
+
+    def _subscribe_game_mode_events(self):
+        """订阅游戏模式状态事件，用于同步托盘动作。"""
+        if self._game_mode_status_subscribed:
+            return
+        self._event_center.subscribe(
+            EventType.GAME_MODE_STATUS_CHANGE,
+            self._on_game_mode_status_change,
+        )
+        self._game_mode_status_subscribed = True
+
+    def _unsubscribe_game_mode_events(self):
+        """取消订阅游戏模式状态事件。"""
+        if not self._game_mode_status_subscribed:
+            return
+        self._event_center.unsubscribe(
+            EventType.GAME_MODE_STATUS_CHANGE,
+            self._on_game_mode_status_change,
+        )
+        self._game_mode_status_subscribed = False
+
+    def _on_game_mode_status_change(self, event: Event):
+        """接收游戏模式状态变化并同步托盘动作。"""
+        data = event.data if isinstance(event.data, dict) else {}
+        enabled = bool(data.get('enabled', False))
+        self._game_mode_enabled = enabled
+        self._set_game_mode_action_checked(enabled)
+
+    def _set_game_mode_action_checked(self, enabled: bool):
+        """同步托盘游戏模式动作的勾选状态。"""
+        if self._game_mode_action is None:
+            return
+        target = bool(enabled)
+        if self._game_mode_action.isChecked() == target:
+            return
+        blocked = self._game_mode_action.blockSignals(True)
+        try:
+            self._game_mode_action.setChecked(target)
+        finally:
+            self._game_mode_action.blockSignals(blocked)
 
     def _on_toggle_clickthrough(self, checked: bool):
         """处理鼠标穿透开关动作。"""
@@ -707,6 +783,7 @@ class TrayIcon(QObject):
     def cleanup(self):
         """清理托盘图标资源"""
         self._unsubscribe_clickthrough_events()
+        self._unsubscribe_game_mode_events()
         self._stop_retry()
         self._teardown_tray_icon()
         if self._menu:
@@ -721,7 +798,9 @@ class TrayIcon(QObject):
         self._icon_path = None
         self._autostart_action = None
         self._clickthrough_action = None
+        self._game_mode_action = None
         self._clickthrough_enabled = False
+        self._game_mode_enabled = False
         self._initialized = False
         _logger.info('系统托盘图标已清理')
 

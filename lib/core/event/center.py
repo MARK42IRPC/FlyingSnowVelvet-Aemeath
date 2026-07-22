@@ -77,11 +77,15 @@ class EventType(Enum):
     UI_ANCHOR_RESPONSE = "ui_anchor_response"            # 锚点坐标响应
     UI_HINT_PICK = "ui_hint_pick"                        # 命令提示框条目点击
     AUTOSTART_STATUS_CHANGE = "autostart_status_change"  # 开机启动状态变化
+    GAME_MODE_SET = "game_mode_set"                      # 请求进入游戏模式
+    GAME_MODE_EXIT = "game_mode_exit"                    # 请求退出游戏模式
+    GAME_MODE_STATUS_CHANGE = "game_mode_status_change"  # 游戏模式状态变化
     CONFIG_UPDATED = "config_updated"                    # 运行时配置已更新
 
     # 信息气泡事件
     INFORMATION = "information"                          # 信息气泡事件：text, min, max
     LOG_ERROR = "log_error"                              # ERROR/CRITICAL 日志事件：logger, level, message
+    BUG_TRACKER_OPEN_REQUEST = "bug_tracker_open_request"  # 打开 bug 跟踪器窗口/进程请求
 
     # 粒子事件
     PARTICLE_REQUEST = "particle_request"                # 粒子申请事件

@@ -60,6 +60,25 @@ def _is_auto_companion_enabled() -> bool:
     return bool(AUTO_COMPANION.get('enabled', True))
 
 
+def _get_effective_auto_companion_interval_ms() -> tuple[int, int]:
+    interval = _resolve_auto_companion_interval(AUTO_COMPANION.get('interval_ms'))
+    try:
+        from lib.script.app.game_mode_service import get_game_mode_auto_companion_interval_override
+
+        override = get_game_mode_auto_companion_interval_override()
+    except Exception:
+        override = None
+    if isinstance(override, tuple) and len(override) >= 2:
+        try:
+            low = int(override[0])
+            high = int(override[1])
+            if low > 0 and high > 0:
+                return (min(low, high), max(low, high))
+        except (TypeError, ValueError):
+            pass
+    return interval
+
+
 
 class ChatHandlerAutoCompanionMixin:
     def _on_app_main(self, event: Event):
@@ -77,8 +96,9 @@ class ChatHandlerAutoCompanionMixin:
             self._auto_timer.timeout.connect(self._on_auto_companion_tick)
 
         self._schedule_next_auto_tick()
-        min_s = AUTO_COMPANION_INTERVAL_MS[0] // 1000
-        max_s = AUTO_COMPANION_INTERVAL_MS[1] // 1000
+        interval_ms = _get_effective_auto_companion_interval_ms()
+        min_s = interval_ms[0] // 1000
+        max_s = interval_ms[1] // 1000
         logger.info("[ChatHandler] 自动陪伴轮询已启用（%d~%d秒）", min_s, max_s)
 
     def _schedule_next_auto_tick(self):
@@ -88,11 +108,17 @@ class ChatHandlerAutoCompanionMixin:
         if not _is_auto_companion_enabled():
             self._auto_timer.stop()
             return
-        delay_ms = random.randint(AUTO_COMPANION_INTERVAL_MS[0], AUTO_COMPANION_INTERVAL_MS[1])
+        interval_ms = _get_effective_auto_companion_interval_ms()
+        delay_ms = random.randint(interval_ms[0], interval_ms[1])
         backoff_until = float(getattr(self, '_auto_companion_backoff_until', 0.0) or 0.0)
         if backoff_until > 0:
             delay_ms = max(delay_ms, int(max(0.0, backoff_until - time.monotonic()) * 1000))
         self._auto_timer.start(delay_ms)
+
+    def _on_game_mode_status_change(self, event: Event) -> None:
+        if self._auto_timer is None:
+            return
+        self._schedule_next_auto_tick()
 
     def _is_auto_companion_failure_text(self, text: str) -> bool:
         normalized = str(text or '').strip()

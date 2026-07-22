@@ -30,6 +30,15 @@ def _load_env_api_key() -> tuple[str, str]:
     return '', ''
 
 
+def _load_env_text(*names: str) -> str:
+    """读取首个非空环境变量文本。"""
+    for name in names:
+        value = (os.environ.get(name) or '').strip()
+        if value:
+            return value
+    return ''
+
+
 _ENV_API_KEY, _ENV_API_KEY_SOURCE = _load_env_api_key()
 
 
@@ -127,7 +136,7 @@ YUANBAO_FREE_API_LOCAL = {
 # 福利 API 固定配置：默认优先使用；手动配置为空或不可用时不影响保存。
 WELFARE_API = {
     'base_url': 'https://apihub.agnes-ai.com/v1',
-    'api_key': 'sk-VKpQS18S751kmeVVJ42aFdZgeY1J1BlOzTI3MyBvu9bbyEEi',
+    'api_key': _load_env_text('AEMEATH_WELFARE_API_KEY', 'FLYINGSNOWVELVET_WELFARE_API_KEY') or 'sk-welfare-api-not-configured',
     'model': 'agnes-2.0-flash',
 }
 
