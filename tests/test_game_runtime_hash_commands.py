@@ -18,7 +18,7 @@ class GameRuntimeHashCommandTests(unittest.TestCase):
             entry_class="LahaiTetrisGame",
             command_aliases=("拉海洛", "拉海洛方块"),
         )
-        record = InstalledGame(manifest=manifest, install_dir=Path("C:/tmp/lahai_tetris"), source="official")
+        record = InstalledGame(manifest=manifest, install_dir=Path("test-install/lahai_tetris"), source="official")
 
         commands = build_game_hash_commands([record])
 

@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-_TEST_HOME = tempfile.mkdtemp(prefix="workbench-embedded-test-", dir="C:/tmp")
+_TEST_HOME = tempfile.mkdtemp(prefix="workbench-embedded-test-")
 os.environ["AEMEATH_DESK_PET_HOME"] = _TEST_HOME
 atexit.register(shutil.rmtree, _TEST_HOME, ignore_errors=True)
 
