@@ -10,7 +10,6 @@ from config.config            import BEHAVIOR, PHYSICS, UI_THEME
 from config.font_config       import get_digit_font
 from config.scale             import scale_px
 from lib.core.unified_draw import Layer, get_layer_manager
-from lib.core.topmost_manager  import get_topmost_manager
 from lib.core.event.center     import get_event_center, EventType, Event
 from lib.core.clickthrough_state import is_clickthrough_enabled
 from lib.core.physics          import get_physics_world, PhysicsBody

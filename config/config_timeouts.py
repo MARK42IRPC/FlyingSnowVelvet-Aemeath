@@ -13,6 +13,7 @@ TOOL_DISPATCHER = {
 TIMEOUTS = {
     'api_list':          2,       # 获取 API 模型列表超时
     'api_request':      10,       # API 请求超时
+    'ollama_pull_read': 30,       # Ollama 模型下载单次读取超时
     'login_wait':       30,       # 登录等待超时
     'login_call':       20,       # 单次登录接口调用软超时
     'cmd_exec':         30,       # 命令执行超时

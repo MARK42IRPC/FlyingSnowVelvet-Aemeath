@@ -228,6 +228,8 @@ class CmdWindow(QWidget):
         # 运行中命令控制
         self._running    = False
         self._stop_event = threading.Event()
+        self._process_lock = threading.Lock()
+        self._process: subprocess.Popen | None = None
 
         # Spinner 状态
         self._spinner_idx   = 0
@@ -434,11 +436,14 @@ class CmdWindow(QWidget):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 env=env,
+                creationflags=(subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0),
             )
+            with self._process_lock:
+                self._process = proc
 
             for raw_line in iter(proc.stdout.readline, b''):
                 if self._stop_event.is_set():
-                    proc.kill()
+                    self._terminate_process(proc)
                     break
 
                 # 优先 UTF-8，失败则 GBK，再兜底 replace
@@ -463,6 +468,40 @@ class CmdWindow(QWidget):
             err_msg = f'[执行错误] {e}'
             QApplication.instance().postEvent(self, _StreamLineEvent(err_msg + '\n'))
             QApplication.instance().postEvent(self, _StreamDoneEvent(False, str(e)))
+        finally:
+            with self._process_lock:
+                if self._process is locals().get('proc'):
+                    self._process = None
+
+    @staticmethod
+    def _terminate_process(proc: subprocess.Popen) -> None:
+        if proc.poll() is not None:
+            return
+        try:
+            proc.terminate()
+            proc.wait(timeout=1.0)
+            return
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        if os.name == 'nt':
+            subprocess.run(
+                ['taskkill', '/PID', str(proc.pid), '/T', '/F'],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+        if proc.poll() is None:
+            try:
+                proc.kill()
+            except OSError:
+                pass
+
+    def stop_running_command(self) -> None:
+        self._stop_event.set()
+        with self._process_lock:
+            proc = self._process
+        if proc is not None:
+            self._terminate_process(proc)
 
     def _finish_stream(self, success: bool, msg: str = ''):
         """命令完成后的 UI 清理（主线程）。"""
@@ -758,6 +797,7 @@ def cleanup_cmd_window():
     """清理全局 CmdWindow 实例。"""
     global _cmd_window_instance
     if _cmd_window_instance is not None:
+        _cmd_window_instance.stop_running_command()
         _cmd_window_instance.hide()
         _cmd_window_instance.deleteLater()
         _cmd_window_instance = None

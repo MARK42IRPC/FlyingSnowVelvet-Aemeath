@@ -30,17 +30,14 @@ from PyQt5.QtWidgets import (
     QPushButton,
     QCheckBox,
     QApplication,
-    QStyleOptionComboBox,
-    QStyle,
     QGraphicsOpacityEffect,
-    QTabBar,
     QScrollArea,
     QSizePolicy,
     QFileDialog,
     QSlider,
     QMenu,
 )
-from PyQt5.QtGui import QPainter, QColor, QPolygon, QFontMetrics, QCursor, QPixmap
+from PyQt5.QtGui import QPainter, QColor, QCursor, QPixmap
 
 from config.config import UI_THEME, UI
 from config.font_config import get_ui_font, get_digit_font
@@ -72,6 +69,12 @@ from lib.script.SEanima.clip import (
 from lib.script.chat.ollama_registry import get_available_model_names, get_model_list_error
 from lib.script.microphone_stt.push_to_talk import parse_hotkey_binding
 from lib.script.ui.update_dialog import DesktopPetUpdateDialog
+from lib.script.workbench.settings import (
+    GENERAL_CONFIG_CATEGORIES,
+    SettingsPageScaffold,
+    create_settings_form,
+)
+from lib.script.workbench.theme import COLORS as WORKBENCH_COLORS
 from lib.script.yuanbao_free_api import get_yuanbao_free_api_service
 from lib.script.yuanbao_free_api.service import get_yuanbao_free_api_log_path
 
@@ -111,19 +114,14 @@ _DEFAULT_VALUES = {
 }
 
 _WATERMARK_TEXT = "Aemeath\nAIsetting"
-_TITLE_FONT_SIZE = scale_px(19, min_abs=14)   # 14 + 5xp
-_CONFIG_FONT_SIZE = scale_px(14, min_abs=10)  # 12 + 2xp
+_TITLE_FONT_SIZE = scale_px(23, min_abs=17)
+_CONFIG_FONT_SIZE = scale_px(17, min_abs=12)
 _DROPDOWN_ITEM_FONT_SIZE = max(scale_px(8, min_abs=8), _CONFIG_FONT_SIZE - scale_px(2, min_abs=1))
 _PANEL_SCALE = 1.05
 _LEFT_WM_SCALE = 2.0 / 3.0
 _AI_HINT_TEXT = "保存后会写入本地 AI 配置文件，建议重启程序后完整生效"
 _GENERAL_HINT_TEXT = "保存后会写入本地配置文件，建议重启程序后完整生效"
-_TITLE_ROW_FIXED_HEIGHT = scale_px(34, min_abs=28)
 _HINT_FONT_SIZE = max(scale_px(12, min_abs=9), _CONFIG_FONT_SIZE - scale_px(2, min_abs=1))
-_SCROLLBAR_RIGHT_SHIFT = scale_px(10, min_abs=8)
-_CONFIG_FIELD_WIDTH = scale_px(320, min_abs=280)
-_CONFIG_LABEL_WIDTH = scale_px(176, min_abs=152)
-_CONTROL_PANEL_CONTENT_HEIGHT = int(round(scale_px(620, min_abs=540) * 2.0 / 3.0))
 _UPDATE_BUTTON_ROW_GAP = scale_px(10, min_abs=10)
 _QUARK_UPDATE_URL = "https://pan.quark.cn/s/9158e62439e2"
 _SPONSOR_AUTHOR_URL = "https://afdian.com/a/fxxrdeskpet"
@@ -152,84 +150,7 @@ _MANUAL_CONTRIBUTION_RECORDS = [
 _CONTRIBUTION_ROLE_OVERRIDES = {
     "https://github.com/chenwr727/yuanbao-free-api": "元宝OpenAI中转集成",
 }
-_GENERAL_CONFIG_CATEGORIES = [
-    {
-        "id": "ui_anim",
-        "tab": "界面动画",
-        "title": "界面与动画配置",
-        "sections": [
-            ("ANIMATION", "动画"),
-            ("UI", "界面"),
-            ("COMMAND_DIALOG", "命令框"),
-        ],
-    },
-    {
-        "id": "behavior_physics",
-        "tab": "行为物理",
-        "title": "行为与物理配置",
-        "sections": [
-            ("PARTICLES", "粒子"),
-            ("BEHAVIOR", "行为"),
-            ("PHYSICS", "物理"),
-        ],
-    },
-    {
-        "id": "audio_music",
-        "tab": "音频音乐",
-        "title": "音频与音乐配置",
-        "sections": [
-            ("AUDIO_VOLUMES", "音量控制"),
-            ("VOICE", "语音与麦克风"),
-            ("SPEAKER_AUDIO", "音频可视化"),
-            ("CLOUD_MUSIC", "云音乐"),
-        ],
-    },
-    {
-        "id": "scene_objects",
-        "tab": "场景对象",
-        "title": "场景对象配置",
-        "sections": [
-            ("SNOW_LEOPARD", "雪豹"),
-            ("SNOW_PILE", "雪堆"),
-            ("SOFA", "沙发"),
-            ("MORTOR", "摩托"),
-            ("CLOCK", "闹钟"),
-            ("SPEAKER", "音响"),
-            ("SNOWBALL", "雪球"),
-            ("OBJECTS", "物体"),
-        ],
-    },
-    {
-        "id": "system_dispatch",
-        "tab": "系统调度",
-        "title": "系统与调度配置",
-        "sections": [
-            ("TIMEOUTS", "超时"),
-            ("TOOL_DISPATCHER", "工具调度"),
-            ("CLOUD_MUSIC", "鸣潮设置"),
-            ("DRAW", "绘制"),
-            ("STARTUP", "启动"),
-        ],
-    },
-    {
-        "id": "desktop_pet_update",
-        "tab": "桌宠更新",
-        "title": "桌宠更新管理",
-        "sections": [],
-    },
-    {
-        "id": "contribution_list",
-        "tab": "贡献列表",
-        "title": "贡献列表",
-        "sections": [],
-    },
-    {
-        "id": "sponsor_author",
-        "tab": "赞助作者",
-        "title": "赞助作者",
-        "sections": [],
-    },
-]
+_GENERAL_CONFIG_CATEGORIES = GENERAL_CONFIG_CATEGORIES
 
 _CATEGORY_KEY_ALLOWLIST = {
     "ui_anim": {
@@ -1365,7 +1286,7 @@ def _num_gpu_from_mode(mode: str) -> int:
 
 
 class _WatermarkComboBox(QComboBox):
-    """项目风格下拉框：自绘按钮内三角与 List 水印。"""
+    """Combo box with guarded refresh and workbench popup layering."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1421,55 +1342,6 @@ class _WatermarkComboBox(QComboBox):
             super().hidePopup()
         finally:
             self._popup_window_instance = None
-
-    def paintEvent(self, event) -> None:
-        super().paintEvent(event)
-
-        opt = QStyleOptionComboBox()
-        self.initStyleOption(opt)
-        arrow_rect = self.style().subControlRect(QStyle.CC_ComboBox, opt, QStyle.SC_ComboBoxArrow, self)
-        if not arrow_rect.isValid() or arrow_rect.width() <= 0 or arrow_rect.height() <= 0:
-            return
-
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing, True)
-
-        wm_font = get_digit_font(
-            size=max(scale_px(10, min_abs=8), _CONFIG_FONT_SIZE - scale_px(1, min_abs=1) + scale_px(2, min_abs=2))
-        )
-        wm_font.setBold(True)
-        painter.setFont(wm_font)
-
-        local_pos = self.mapFromGlobal(QCursor.pos())
-        arrow_hovered = self.underMouse() and arrow_rect.contains(local_pos)
-        deep_cyan_color = QColor(UI_THEME.get("deep_cyan", UI_THEME.get("text", QColor(0, 0, 0))))
-        light_cyan_color = QColor(UI_THEME.get("cyan", UI_THEME.get("mid", deep_cyan_color.lighter(120))))
-        wm_color = light_cyan_color if arrow_hovered else deep_cyan_color
-        wm_color.setAlpha(220)
-        painter.setPen(wm_color)
-
-        text_rect = arrow_rect.adjusted(scale_px(2), 0, -scale_px(6, min_abs=4), 0)
-        watermark = "List"
-        painter.drawText(text_rect, Qt.AlignRight | Qt.AlignVCenter, watermark)
-
-        fm = QFontMetrics(wm_font)
-        text_w = fm.horizontalAdvance(watermark)
-        text_right = text_rect.right()
-        text_left = text_right - text_w + 1
-
-        tri_cx = text_left - scale_px(6, min_abs=4) - scale_px(10, min_abs=10)
-        tri_cy = arrow_rect.center().y()
-        tri_half_w = scale_px(4, min_abs=3)
-        tri_h = scale_px(5, min_abs=4)
-        tri = QPolygon([
-            QPoint(tri_cx - tri_half_w, tri_cy - tri_h // 2),
-            QPoint(tri_cx + tri_half_w, tri_cy - tri_h // 2),
-            QPoint(tri_cx, tri_cy + tri_h // 2),
-        ])
-
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(QColor(UI_THEME["text"]))
-        painter.drawPolygon(tri)
 
     def wheelEvent(self, event) -> None:
         # 未展开时屏蔽滚轮，避免滚动页面时误操作；展开后允许滚轮选择。
@@ -1620,7 +1492,6 @@ class _DecimalSliderField(QWidget):
         *,
         value: float,
         decimals: int = 2,
-        field_width: int = _CONFIG_FIELD_WIDTH,
         parent=None,
     ):
         super().__init__(parent)
@@ -1632,7 +1503,6 @@ class _DecimalSliderField(QWidget):
         total_steps = max(1, int(round((self._maximum - self._minimum) / self._step)))
 
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.setFixedWidth(int(field_width))
 
         row = QHBoxLayout(self)
         row.setContentsMargins(0, 0, 0, 0)
@@ -1698,12 +1568,12 @@ class _DecimalSliderField(QWidget):
 
 
 class _ContributionCardButton(QPushButton):
-    """贡献卡片按钮：带右侧拉海洛水印。"""
+    """Contribution entry with a compact action hint."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._watermark_label: QLabel | None = None
-        self._watermark_font = get_digit_font(size=max(scale_px(18, min_abs=14), _CONFIG_FONT_SIZE + scale_px(2, min_abs=1)))
+        self._watermark_font = get_ui_font(size=max(scale_px(11, min_abs=9), _CONFIG_FONT_SIZE - scale_px(1, min_abs=1)))
         self._watermark_font.setBold(True)
 
     def bind_watermark_label(self, label: QLabel) -> None:
@@ -1715,9 +1585,9 @@ class _ContributionCardButton(QPushButton):
         if self._watermark_label is None:
             return
         self._watermark_label.setFont(self._watermark_font)
-        self._watermark_label.setText("GOpage" if hovered else "DVLP")
+        self._watermark_label.setText("打开" if hovered else "主页")
         self._watermark_label.setStyleSheet(
-            f"color: {UI_THEME['deep_cyan'].name() if hovered else UI_THEME['deep_pink'].name()};"
+            f"color: {WORKBENCH_COLORS.cyan if hovered else WORKBENCH_COLORS.text_dim};"
         )
 
     def enterEvent(self, event) -> None:
@@ -1734,8 +1604,10 @@ class AISettingsPanel(QWidget):
 
     _ui_thread_call = pyqtSignal(object)
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *, lazy_workbench_pages: bool = False):
         super().__init__(parent)
+        self._lazy_workbench_pages = bool(lazy_workbench_pages)
+        self._workbench_pages: dict[str, QWidget] = {}
         self._ui_thread_call.connect(self._invoke_ui_callable)
         self._ec = get_event_center()
         self._autostart_checkbox = None
@@ -1751,6 +1623,8 @@ class AISettingsPanel(QWidget):
         self._layer = scale_px(2, min_abs=1)
         self._border = self._layer * 2
         self._visible = False
+        self._external_close_callback = None
+        self._workbench_attached = False
         self._dragging = False
         self._drag_offset = QPoint()
         self._gpu_watermark_text = "UnKnow GPU 0.00 GB\nRAM 0.00 GB"
@@ -1769,8 +1643,6 @@ class AISettingsPanel(QWidget):
         self._tab_floating = None
         self._tab_pages: list[QWidget] = []
         self._config_tab_meta: dict[str, dict] = {}
-        self._content_width = scale_px(470, min_abs=420)
-        self._content_height = _CONTROL_PANEL_CONTENT_HEIGHT
         self._stable_window_size: tuple[int, int] | None = None
 
         self._build_ui()
@@ -1803,28 +1675,6 @@ class AISettingsPanel(QWidget):
         )
         if future is None:
             _logger.debug("硬件水印查询任务仍在运行，跳过重复提交")
-
-    def _add_panel_title_row(self, layout: QVBoxLayout, title_text: str, hint_text: str) -> tuple[QLabel, QLabel]:
-        header_widget = QWidget()
-        header_widget.setFixedHeight(_TITLE_ROW_FIXED_HEIGHT)
-        title_row = QHBoxLayout(header_widget)
-        title_row.setContentsMargins(scale_px(20, min_abs=16), 0, 0, 0)
-        title_row.setSpacing(scale_px(8, min_abs=6))
-
-        title_label = QLabel(title_text)
-        title_label.setFont(self._build_title_font())
-        title_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        title_row.addWidget(title_label, 0, Qt.AlignLeft | Qt.AlignBottom)
-        title_row.addStretch(1)
-
-        hint_label = QLabel(hint_text)
-        hint_label.setWordWrap(False)
-        hint_label.setAlignment(Qt.AlignRight | Qt.AlignBottom)
-        hint_label.setFont(self._build_hint_font())
-        hint_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        title_row.addWidget(hint_label, 1, Qt.AlignRight | Qt.AlignBottom)
-        layout.addWidget(header_widget, 0)
-        return title_label, hint_label
 
     @staticmethod
     def _build_title_font():
@@ -1859,23 +1709,10 @@ class AISettingsPanel(QWidget):
         else:
             self._ui_thread_call.emit(func)
 
-    def _create_action_button_row(self, *button_specs):
-        button_row = QHBoxLayout()
-        button_row.setContentsMargins(0, scale_px(20, min_abs=16), 0, 0)
-        button_row.addStretch(1)
-        buttons = []
-        for label_text, callback in button_specs:
-            button = QPushButton(label_text)
-            button.clicked.connect(callback)
-            button_row.addWidget(button)
-            buttons.append(button)
-        return button_row, buttons
-
     @staticmethod
-    def _create_fixed_width_row_group(field_width: int = _CONFIG_FIELD_WIDTH, spacing: int = 0):
+    def _create_field_row_group(spacing: int = 0):
         group = QWidget()
         group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        group.setFixedWidth(int(field_width))
         row = QHBoxLayout(group)
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(int(spacing))
@@ -1886,7 +1723,6 @@ class AISettingsPanel(QWidget):
         value=...,
         *,
         placeholder_text: str = "",
-        fixed_width: int | None = None,
         expanding: bool = False,
     ) -> QLineEdit:
         editor = QLineEdit()
@@ -1894,17 +1730,15 @@ class AISettingsPanel(QWidget):
             editor.setPlaceholderText(placeholder_text)
         if value is not ...:
             self._set_config_editor_value(editor, value)
-        if fixed_width is not None:
-            editor.setFixedWidth(int(fixed_width))
         if expanding:
             editor.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         return editor
 
     @staticmethod
-    def _create_config_choice_editor(options: list[tuple[str, str]], *, field_width: int = _CONFIG_FIELD_WIDTH) -> QComboBox:
+    def _create_config_choice_editor(options: list[tuple[str, str]]) -> QComboBox:
         editor = _WatermarkComboBox()
         editor.setView(QListView(editor))
-        editor.setFixedWidth(int(field_width))
+        editor.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         for label, value in options:
             editor.addItem(str(label), value)
         return editor
@@ -1968,58 +1802,42 @@ class AISettingsPanel(QWidget):
     def _build_ui(self) -> None:
         root_layout = QVBoxLayout(self)
         root_layout.setContentsMargins(
-            self._border + scale_px(20),
-            self._border + scale_px(16),
-            self._border + scale_px(20),
-            self._border + scale_px(26),
+            self._border + scale_px(10, min_abs=8),
+            self._border + scale_px(8, min_abs=6),
+            self._border + scale_px(10, min_abs=8),
+            self._border + scale_px(10, min_abs=8),
         )
-        root_layout.setSpacing(scale_px(10))
+        root_layout.setSpacing(0)
 
         center_row = QHBoxLayout()
         center_row.setContentsMargins(0, 0, 0, 0)
         center_row.setSpacing(0)
-        center_row.addStretch(1)
-
+        self._center_row = center_row
         content_panel = QWidget(self)
-        content_panel.setMinimumWidth(self._content_width)
-        content_panel.setMaximumWidth(self._content_width)
-        content_panel.setMinimumHeight(self._content_height)
-        content_panel.setMaximumHeight(self._content_height)
-        center_row.addWidget(content_panel, 0, Qt.AlignHCenter)
-        center_row.addStretch(1)
+        content_panel.setMinimumSize(scale_px(600, min_abs=560), scale_px(420, min_abs=380))
+        content_panel.setMaximumSize(16777215, 16777215)
+        content_panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        center_row.addWidget(content_panel, 1)
         root_layout.addLayout(center_row, 1)
         self._ai_panel = content_panel
         self._tab_pages = [self._ai_panel]
 
-        layout = QVBoxLayout(content_panel)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(scale_px(10))
-        layout.addSpacing(scale_px(14, min_abs=10))
-
-        self._title_label, self._hint_label = self._add_panel_title_row(
-            layout,
+        scaffold = SettingsPageScaffold(
+            content_panel,
             "AI设置",
             _AI_HINT_TEXT,
+            scroll_factory=_SmoothScrollArea,
         )
+        self._ai_scaffold = scaffold
+        self._title_label = scaffold.title_label
+        self._hint_label = scaffold.description_label
 
-        scroll = _SmoothScrollArea(content_panel)
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        scroll.setViewportMargins(0, 0, _SCROLLBAR_RIGHT_SHIFT, 0)
-        scroll_content = QWidget(scroll)
-        scroll_layout = QVBoxLayout(scroll_content)
-        scroll_layout.setContentsMargins(0, 0, 0, 0)
-        scroll_layout.setSpacing(scale_px(10))
-        scroll.setWidget(scroll_content)
-        layout.addWidget(scroll, 1)
-
-        form = QFormLayout()
-        form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        form.setFormAlignment(Qt.AlignLeft | Qt.AlignTop)
-        form.setHorizontalSpacing(scale_px(10))
-        form.setVerticalSpacing(scale_px(6))
-        scroll_layout.addLayout(form)
+        interface_section = scaffold.add_section(
+            "接口与回复",
+            "选择回复来源，配置外部接口、人格文件与元宝登录。",
+        )
+        form = create_settings_form()
+        interface_section.body_layout.addLayout(form)
 
         self._api_key = _ApiKeyLineEdit()
         form.addRow("接口密钥", self._api_key)
@@ -2060,10 +1878,7 @@ class AISettingsPanel(QWidget):
             "外部接口模型名，例如 qwen3.5-plus；元宝模式会改走程序内置的本地模型标识。",
         )
 
-        persona_row, persona_layout = self._create_fixed_width_row_group(
-            field_width=_CONFIG_FIELD_WIDTH,
-            spacing=scale_px(8, min_abs=6),
-        )
+        persona_row, persona_layout = self._create_field_row_group(spacing=scale_px(8, min_abs=6))
         self._open_persona_file_btn = QPushButton("设置人格词")
         self._open_persona_file_btn.setFixedWidth(scale_px(110, min_abs=92))
         self._open_persona_file_btn.clicked.connect(self._on_open_persona_file)
@@ -2079,10 +1894,7 @@ class AISettingsPanel(QWidget):
 
         self._set_hidden_yuanbao_values(_DEFAULT_VALUES)
 
-        yuanbao_login_row, yuanbao_login_layout = self._create_fixed_width_row_group(
-            field_width=_CONFIG_FIELD_WIDTH,
-            spacing=scale_px(8, min_abs=6),
-        )
+        yuanbao_login_row, yuanbao_login_layout = self._create_field_row_group(spacing=scale_px(8, min_abs=6))
         self._start_yuanbao_wechat_login_btn = QPushButton("微信登录元宝")
         self._start_yuanbao_wechat_login_btn.setFixedWidth(scale_px(126, min_abs=108))
         self._start_yuanbao_wechat_login_btn.clicked.connect(self._on_start_yuanbao_wechat_login)
@@ -2096,10 +1908,14 @@ class AISettingsPanel(QWidget):
         self._set_widget_description(self._start_yuanbao_wechat_login_btn, "启动本地 YuanBao-Free-API 服务，并使用微信扫码方式登录元宝；程序会固定使用内置 loopback 地址、占位密钥和默认模型。")
         self._set_widget_description(self._stop_yuanbao_login_btn, "停止元宝登录流程并关闭本地元宝服务。")
 
-        base_row, base_layout = self._create_fixed_width_row_group(
-            field_width=_CONFIG_FIELD_WIDTH,
-            spacing=scale_px(8, min_abs=6),
+        local_section = scaffold.add_section(
+            "本地推理",
+            "管理 Ollama 模型、计算设备和生成参数。",
         )
+        form = create_settings_form()
+        local_section.body_layout.addLayout(form)
+
+        base_row, base_layout = self._create_field_row_group(spacing=scale_px(8, min_abs=6))
         self._ollama_base_url = self._create_config_line_edit(expanding=True)
         base_layout.addWidget(self._ollama_base_url, 1)
         self._open_ollama_app_btn = QPushButton("打开Ollama")
@@ -2164,6 +1980,13 @@ class AISettingsPanel(QWidget):
             "视力越高，token消耗越高，看图越清晰。100 为不压缩，0 为压缩到 720p。",
         )
 
+        voice_section = scaffold.add_section(
+            "语音合成",
+            "控制 GSV 服务启动、表达参数和本地缓存。",
+        )
+        form = create_settings_form()
+        voice_section.body_layout.addLayout(form)
+
         self._gsv_auto_start = QCheckBox("自动启用GSV语音模块")
         self._gsv_auto_start.setChecked(_DEFAULT_VALUES["gsv_auto_start"])
         form.addRow("", self._gsv_auto_start)
@@ -2205,10 +2028,7 @@ class AISettingsPanel(QWidget):
             "保留最近生成的 GSV 语音条数，超出后按时间自动删除旧缓存，默认 20，范围 1~128。",
         )
 
-        gsv_cache_row, gsv_cache_layout = self._create_fixed_width_row_group(
-            field_width=_CONFIG_FIELD_WIDTH,
-            spacing=scale_px(8, min_abs=6),
-        )
+        gsv_cache_row, gsv_cache_layout = self._create_field_row_group(spacing=scale_px(8, min_abs=6))
         self._open_gsv_cache_dir_btn = QPushButton("打开缓存文件夹")
         self._open_gsv_cache_dir_btn.setFixedWidth(scale_px(132, min_abs=112))
         self._open_gsv_cache_dir_btn.clicked.connect(self._on_open_gsv_cache_dir)
@@ -2221,6 +2041,13 @@ class AISettingsPanel(QWidget):
             "打开 GSV 语音缓存目录，方便查看并保留最近生成的喜欢音频。",
         )
         self._set_widget_description(self._open_gsv_cache_dir_btn, "打开 GSV 语音缓存目录。")
+
+        memory_section = scaffold.add_section(
+            "记忆与陪伴",
+            "调整会话记忆规模和自动陪伴行为。",
+        )
+        form = create_settings_form()
+        memory_section.body_layout.addLayout(form)
 
         self._memory_context_limit = _DecimalSliderField(0, 48, 1, value=_DEFAULT_VALUES["memory_context_limit"])
         form.addRow("记忆上下文条数", self._memory_context_limit)
@@ -2255,45 +2082,84 @@ class AISettingsPanel(QWidget):
             "开启后会按系统逻辑自动触发陪伴对话。",
         )
 
-        scroll_layout.addStretch(1)
+        scaffold.finish()
+        self._reload_btn = scaffold.add_action("恢复本页默认", self._on_restore_ai_defaults)
+        self._save_exit_btn = scaffold.add_action("保存更改", self._on_save_ai_action, primary=True)
 
-        btn_row, root_buttons = self._create_action_button_row(
-            ("恢复默认", self._on_restore_defaults),
-            ("保存并退出", self._on_save_and_exit),
-        )
-        self._reload_btn, self._save_exit_btn = root_buttons
-        layout.addLayout(btn_row)
-
-        attach_ai_settings_tabs(self, _GENERAL_CONFIG_CATEGORIES)
+        if self._lazy_workbench_pages:
+            self._tab_pages = [self._ai_panel]
+        else:
+            attach_ai_settings_tabs(self, _GENERAL_CONFIG_CATEGORIES)
         self._ensure_config_defaults_integrity()
 
-    def _build_config_category_panel(self, category: dict) -> QWidget:
+    def set_external_close_callback(self, callback) -> None:
+        self._external_close_callback = callback
+
+    def get_workbench_page_specs(self) -> list[tuple[str, str]]:
+        return [('ai', 'AI 设置')] + [
+            (category.page_id, category.tab_title)
+            for category in _GENERAL_CONFIG_CATEGORIES
+        ]
+
+    def create_workbench_page(self, page_id: str) -> QWidget:
+        cached = self._workbench_pages.get(page_id)
+        if cached is not None:
+            return cached
+        if not self._workbench_attached:
+            self._workbench_attached = True
+            self._visible = False
+            self._hide_floating_tab()
+            get_layer_manager().unregister(self)
+            if self._tab_floating is not None:
+                get_layer_manager().unregister(self._tab_floating)
+                self._tab_floating.deleteLater()
+                self._tab_floating = None
+
+        if page_id == 'ai':
+            self._center_row.removeWidget(self._ai_panel)
+            page = self._ai_panel
+        else:
+            spec = next(
+                (item for item in _GENERAL_CONFIG_CATEGORIES if item.page_id == page_id),
+                None,
+            )
+            if spec is None:
+                raise KeyError(f'unknown workbench settings page: {page_id}')
+            page = self._build_config_category_panel(spec)
+            self._load_config_tab_values()
+            self._ensure_config_defaults_integrity()
+
+        page.hide()
+        page.setProperty('workbenchEmbedded', True)
+        page.setMinimumSize(0, 0)
+        page.setMaximumSize(16777215, 16777215)
+        page.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        page_title = page.findChild(QLabel, 'SettingsPageTitle')
+        if page_title is not None:
+            page_title.hide()
+        self._workbench_pages[page_id] = page
+        return page
+
+    def _build_config_category_panel(self, category) -> QWidget:
         import config.config as cc
 
-        category_id = str(category.get("id") or "")
-        category_title = str(category.get("title") or category_id)
+        category_id = category.page_id
+        category_title = category.title
         panel = QWidget(self)
-        panel.setMinimumWidth(self._content_width)
-        panel.setMaximumWidth(self._content_width)
-        panel.setMinimumHeight(self._content_height)
-        panel.setMaximumHeight(self._content_height)
-
-        layout = QVBoxLayout(panel)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(scale_px(10))
-        layout.addSpacing(scale_px(14, min_abs=10))
-
-        title_label, hint_label = self._add_panel_title_row(
-            layout,
+        scaffold = SettingsPageScaffold(
+            panel,
             category_title,
-            _GENERAL_HINT_TEXT,
+            category.description or _GENERAL_HINT_TEXT,
+            scroll_factory=_SmoothScrollArea,
         )
+        title_label = scaffold.title_label
+        hint_label = scaffold.description_label
 
         # 特殊处理：桌宠更新标签页 - 只有按钮，没有配置字段
         if category_id == "desktop_pet_update":
             return self._build_desktop_pet_update_panel(
                 panel,
-                layout,
+                scaffold,
                 category_title,
                 title_label,
                 hint_label,
@@ -2302,7 +2168,7 @@ class AISettingsPanel(QWidget):
         if category_id == "sponsor_author":
             return self._build_sponsor_author_panel(
                 panel,
-                layout,
+                scaffold,
                 category_title,
                 title_label,
                 hint_label,
@@ -2311,52 +2177,30 @@ class AISettingsPanel(QWidget):
         if category_id == "contribution_list":
             return self._build_contribution_list_panel(
                 panel,
-                layout,
+                scaffold,
                 category_title,
                 title_label,
                 hint_label,
             )
 
-        scroll = _SmoothScrollArea(panel)
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        scroll.setViewportMargins(0, 0, _SCROLLBAR_RIGHT_SHIFT, 0)
-        scroll_content = QWidget(scroll)
-        content_layout = QVBoxLayout(scroll_content)
-        content_layout.setContentsMargins(0, 0, 0, 0)
-        content_layout.setSpacing(scale_px(10))
-        scroll.setWidget(scroll_content)
-        layout.addWidget(scroll, 1)
-
         fields: list[dict] = []
         defaults: dict[str, dict] = {}
         category_allow_map = _CATEGORY_KEY_ALLOWLIST.get(category_id, {})
-        category_label_width = self._estimate_category_label_width(category, cc, category_allow_map)
-        category_field_width = self._estimate_category_field_width(category_label_width)
 
-        for dict_name, section_title in category.get("sections", []):
+        for section_spec in category.sections:
+            dict_name, section_title = section_spec.config_key, section_spec.title
             section_entries = _category_section_entries(category_id, str(dict_name), cc, category_allow_map)
             if not section_entries:
                 continue
 
             section_fields_added = False
-            section_label = QLabel(_friendly_section_name(str(dict_name), str(section_title)))
-            section_font = get_ui_font(size=max(scale_px(12, min_abs=10), _CONFIG_FONT_SIZE))
-            section_font.setBold(True)
-            section_label.setFont(section_font)
+            section = scaffold.add_section(_friendly_section_name(str(dict_name), str(section_title)))
+            section_label = section.title_label
             self._set_widget_description(
                 section_label,
                 f"{_friendly_section_name(str(dict_name), str(section_title))} 配置分组",
             )
-            content_layout.addWidget(section_label, 0, Qt.AlignLeft)
-
-            form = QFormLayout()
-            form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            form.setFormAlignment(Qt.AlignLeft | Qt.AlignTop)
-            form.setHorizontalSpacing(scale_px(10))
-            form.setVerticalSpacing(scale_px(6))
-            form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+            form = create_settings_form()
 
             consumed_keys: set[str] = set()
             for entry_dict_name, key, value in section_entries:
@@ -2397,7 +2241,6 @@ class AISettingsPanel(QWidget):
                             right_value,
                             left_hint="最小",
                             right_hint="最大",
-                            field_width=category_field_width,
                         )
                         friendly_name = _friendly_range_name(str(dict_name), left_key, right_key)
                         description = self._build_config_range_description(
@@ -2408,10 +2251,7 @@ class AISettingsPanel(QWidget):
                             right_value,
                             friendly_name,
                         )
-                        label = self._create_form_label(
-                            friendly_name,
-                            category_label_width,
-                        )
+                        label = self._create_form_label(friendly_name)
                         self._set_widget_description(label, description)
                         self._set_widget_description(pair_widget, description)
                         self._set_widget_description(left_editor, description)
@@ -2436,10 +2276,10 @@ class AISettingsPanel(QWidget):
                         continue
 
                 if isinstance(value, (tuple, list)):
-                    editors, group_widget = self._create_sequence_editor(value, field_width=category_field_width)
+                    editors, group_widget = self._create_sequence_editor(value)
                     friendly_name = _friendly_key_name(str(entry_dict_name), key)
                     description = self._build_config_single_description(str(entry_dict_name), key, value, friendly_name)
-                    label = self._create_form_label(friendly_name, category_label_width)
+                    label = self._create_form_label(friendly_name)
                     self._set_widget_description(label, description)
                     self._set_widget_description(group_widget, description)
                     for editor in editors:
@@ -2464,10 +2304,7 @@ class AISettingsPanel(QWidget):
                 slider_spec = self._get_decimal_slider_spec(str(entry_dict_name), key, value)
                 choice_options = self._get_choice_field_options(str(entry_dict_name), key)
                 if self._is_volume_slider_field(str(entry_dict_name), key, value):
-                    editor, percent_label, row_widget = self._create_volume_slider_editor(
-                        value,
-                        field_width=category_field_width,
-                    )
+                    editor, percent_label, row_widget = self._create_volume_slider_editor(value)
                     extra_widgets.append(percent_label)
                 elif slider_spec is not None:
                     minimum, maximum, step, decimals = slider_spec
@@ -2477,29 +2314,27 @@ class AISettingsPanel(QWidget):
                         step,
                         value=float(value),
                         decimals=decimals,
-                        field_width=category_field_width,
                     )
                     row_widget = editor
                 elif choice_options is not None:
-                    editor = self._create_config_choice_editor(choice_options, field_width=category_field_width)
-                    row_widget = self._wrap_fixed_width_field(editor, field_width=category_field_width)
+                    editor = self._create_config_choice_editor(choice_options)
+                    row_widget = self._wrap_field_widget(editor)
                 elif self._is_local_music_path_field(str(entry_dict_name), key) and isinstance(value, str):
                     editor, open_dir_btn, row_widget = self._create_path_editor_with_open_button(
                         str(entry_dict_name),
                         str(key),
                         value,
-                        field_width=category_field_width,
                     )
                 elif isinstance(value, bool):
                     editor = QCheckBox()
-                    row_widget = self._wrap_fixed_width_field(editor, field_width=category_field_width)
+                    row_widget = self._wrap_field_widget(editor)
                 else:
-                    editor = self._create_config_line_edit(fixed_width=category_field_width)
+                    editor = self._create_config_line_edit(expanding=True)
                     row_widget = editor
                 self._set_config_editor_value(editor, value)
                 friendly_name = _friendly_key_name(str(entry_dict_name), key)
                 description = self._build_config_single_description(str(entry_dict_name), key, value, friendly_name)
-                label = self._create_form_label(friendly_name, category_label_width)
+                label = self._create_form_label(friendly_name)
                 self._set_widget_description(label, description)
                 self._set_widget_description(row_widget, description)
                 self._set_widget_description(editor, description)
@@ -2528,27 +2363,24 @@ class AISettingsPanel(QWidget):
                 section_fields_added = True
 
                 if category_id == "system_dispatch" and str(entry_dict_name) == "STARTUP" and key == "ensure_desktop_shortcut":
-                    self._append_autostart_field(
-                        form,
-                        fields,
-                        category_label_width,
-                        category_field_width,
-                    )
+                    self._append_autostart_field(form, fields)
                     section_fields_added = True
 
             if section_fields_added:
-                content_layout.addLayout(form)
+                section.body_layout.addLayout(form)
             else:
-                section_label.hide()
-            content_layout.addSpacing(scale_px(4, min_abs=2))
+                section.hide()
 
-        content_layout.addStretch(1)
-
-        btn_row, _buttons = self._create_action_button_row(
-            ("恢复默认", self._on_restore_defaults),
-            ("保存并退出", self._on_save_and_exit),
+        scaffold.finish()
+        scaffold.add_action(
+            "恢复本页默认",
+            lambda _checked=False, target=category_id: self._on_restore_config_category(target),
         )
-        layout.addLayout(btn_row)
+        scaffold.add_action(
+            "保存更改",
+            lambda _checked=False, target=category_id: self._on_save_config_category(target),
+            primary=True,
+        )
 
         self._config_tab_meta[category_id] = {
             "panel": panel,
@@ -2563,141 +2395,52 @@ class AISettingsPanel(QWidget):
     def _build_desktop_pet_update_panel(
         self,
         panel: QWidget,
-        layout: QVBoxLayout,
+        scaffold: SettingsPageScaffold,
         category_title: str,
         title_label: QLabel,
         hint_label: QLabel,
     ) -> QWidget:
-        """构建桌宠更新标签页 - 只有按钮，没有配置字段"""
-        from PyQt5.QtCore import Qt
-        from PyQt5.QtWidgets import QLabel, QVBoxLayout, QHBoxLayout, QPushButton, QWidget
-
-        def _create_section_title(text: str) -> QLabel:
-            label = QLabel(text)
-            font = get_ui_font(size=max(scale_px(12, min_abs=10), _CONFIG_FONT_SIZE))
-            font.setBold(True)
-            label.setFont(font)
-            label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-            return label
-
-        def _create_section_hint(text: str, *, bottom_margin: int = 0) -> QLabel:
-            label = QLabel(text)
-            font = self._build_hint_font()
-            label.setFont(font)
-            label.setWordWrap(True)
-            label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
-            if bottom_margin:
-                label.setContentsMargins(0, 0, 0, bottom_margin)
-            return label
-
-        intro_label = _create_section_hint(
-            "你可以在这里检查桌宠更新、同步开发版本，或通过网盘和 QQ 群手动获取最新内容。",
-            bottom_margin=scale_px(18, min_abs=14),
+        stable_section = scaffold.add_section(
+            "稳定版本",
+            "检查最新分发包。若有新版本，会打开更新窗口确认下载与替换。",
         )
-        layout.addWidget(intro_label)
-
-        # 创建按钮容器
-        button_container = QWidget()
-        button_layout = QVBoxLayout(button_container)
-        button_layout.setContentsMargins(0, 0, 0, 0)
-        button_layout.setSpacing(scale_px(10, min_abs=8))
-
-        # 创建"检查新版本"按钮
-        check_update_btn = QPushButton("检查新版本")
+        stable_row = QHBoxLayout()
+        stable_row.setContentsMargins(0, 0, 0, 0)
+        stable_row.setSpacing(scale_px(8, min_abs=6))
+        check_update_btn = QPushButton("检查新版本", stable_section)
         check_update_btn.setObjectName("checkUpdateButton")
-        check_update_btn.setFixedHeight(scale_px(36, min_abs=30))
-        # 使用项目主题颜色
-        border_color = UI_THEME["border"].name()
-        bg_color = UI_THEME["bg"].name()
-        mid_color = UI_THEME["mid"].name()
-        highlight_color = UI_THEME["deep_cyan"].name()
-        text_color = UI_THEME["text"].name()
-        check_update_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {bg_color};
-                color: {text_color};
-                border: 2px solid {border_color};
-                border-radius: 0px;
-                font-weight: bold;
-                padding: 4px 10px;
-            }}
-            QPushButton:hover {{
-                background-color: {mid_color};
-            }}
-            QPushButton:pressed {{
-                background-color: {highlight_color};
-            }}
-        """)
+        check_update_btn.setProperty("primary", True)
         check_update_btn.clicked.connect(self._on_check_updates)
+        stable_row.addWidget(check_update_btn, 1)
+        stable_section.body_layout.addLayout(stable_row)
 
-        # 创建"同步开发版"按钮
-        sync_dev_btn = QPushButton("同步开发版")
+        dev_section = scaffold.add_section(
+            "开发版本",
+            "面向需要跟随远端代码的使用场景。同步前请先确认本地改动已妥善保存。",
+        )
+        sync_dev_btn = QPushButton("同步开发版", dev_section)
         sync_dev_btn.setObjectName("syncDevButton")
-        sync_dev_btn.setFixedHeight(scale_px(36, min_abs=30))
-        sync_dev_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {bg_color};
-                color: {text_color};
-                border: 2px solid {border_color};
-                border-radius: 0px;
-                font-weight: bold;
-                padding: 4px 10px;
-            }}
-            QPushButton:hover {{
-                background-color: {mid_color};
-            }}
-            QPushButton:pressed {{
-                background-color: {highlight_color};
-            }}
-        """)
         sync_dev_btn.clicked.connect(self._on_sync_dev_build)
+        dev_section.body_layout.addWidget(sync_dev_btn)
 
-        quark_update_btn = QPushButton("使用夸克手动更新")
+        manual_section = scaffold.add_section(
+            "手动获取",
+            "自动更新不可用时，可通过网盘或 QQ 群获取完整安装包。",
+        )
+        manual_row = QHBoxLayout()
+        manual_row.setContentsMargins(0, 0, 0, 0)
+        manual_row.setSpacing(_UPDATE_BUTTON_ROW_GAP)
+        quark_update_btn = QPushButton("打开夸克网盘", manual_section)
         quark_update_btn.setObjectName("quarkManualUpdateButton")
-        quark_update_btn.setFixedHeight(scale_px(36, min_abs=30))
-        quark_update_btn.setStyleSheet(check_update_btn.styleSheet())
         quark_update_btn.clicked.connect(self._open_quark_manual_update)
-
-        qq_group_btn = QPushButton("进入QQ群获取更新")
+        manual_row.addWidget(quark_update_btn, 1)
+        qq_group_btn = QPushButton("查看 QQ 群", manual_section)
         qq_group_btn.setObjectName("qqGroupUpdateButton")
-        qq_group_btn.setFixedHeight(scale_px(36, min_abs=30))
-        qq_group_btn.setStyleSheet(check_update_btn.styleSheet())
         qq_group_btn.clicked.connect(self._show_qq_group_qrcode)
+        manual_row.addWidget(qq_group_btn, 1)
+        manual_section.body_layout.addLayout(manual_row)
+        scaffold.finish()
 
-        extra_button_row = QHBoxLayout()
-        extra_button_row.setContentsMargins(0, 0, 0, 0)
-        extra_button_row.setSpacing(_UPDATE_BUTTON_ROW_GAP)
-        extra_button_row.addWidget(quark_update_btn, 1)
-        extra_button_row.addWidget(qq_group_btn, 1)
-
-        auto_update_title = _create_section_title("使用github自动更新")
-        auto_update_hint = _create_section_hint(
-            "自动检查最新分发包，或直接与远端开发版同步。",
-            bottom_margin=scale_px(6, min_abs=4),
-        )
-        manual_update_title = _create_section_title("使用以下方式手动更新")
-        manual_update_hint = _create_section_hint(
-            "若自动更新不可用，可使用夸克网盘或 QQ 群获取最新版本。",
-            bottom_margin=scale_px(6, min_abs=4),
-        )
-
-        # 添加按钮到布局
-        button_layout.addWidget(auto_update_title, 0, Qt.AlignLeft)
-        button_layout.addWidget(auto_update_hint, 0, Qt.AlignLeft)
-        button_layout.addWidget(check_update_btn)
-        button_layout.addWidget(sync_dev_btn)
-        button_layout.addSpacing(scale_px(10, min_abs=8))
-        button_layout.addWidget(manual_update_title, 0, Qt.AlignLeft)
-        button_layout.addWidget(manual_update_hint, 0, Qt.AlignLeft)
-        button_layout.addLayout(extra_button_row)
-        button_layout.addStretch(1)
-
-        layout.addWidget(button_container, 1)
-
-        # 添加底部间距
-        layout.addStretch(1)
-
-        # 保存元数据（保持与其他标签页一致）
         self._config_tab_meta["desktop_pet_update"] = {
             "panel": panel,
             "fields": [],
@@ -2705,8 +2448,17 @@ class AISettingsPanel(QWidget):
             "title": category_title,
             "title_label": title_label,
             "hint_label": hint_label,
-            "section_title_labels": [auto_update_title, manual_update_title],
-            "section_hint_labels": [intro_label, auto_update_hint, manual_update_hint],
+            "section_title_labels": [
+                stable_section.title_label,
+                dev_section.title_label,
+                manual_section.title_label,
+            ],
+            "section_hint_labels": [
+                stable_section.description_label,
+                dev_section.description_label,
+                manual_section.description_label,
+            ],
+            "buttons": [check_update_btn, sync_dev_btn, quark_update_btn, qq_group_btn],
         }
 
         return panel
@@ -2714,65 +2466,21 @@ class AISettingsPanel(QWidget):
     def _build_sponsor_author_panel(
         self,
         panel: QWidget,
-        layout: QVBoxLayout,
+        scaffold: SettingsPageScaffold,
         category_title: str,
         title_label: QLabel,
         hint_label: QLabel,
     ) -> QWidget:
-        def _create_section_title(text: str) -> QLabel:
-            label = QLabel(text)
-            font = get_ui_font(size=max(scale_px(12, min_abs=10), _CONFIG_FONT_SIZE))
-            font.setBold(True)
-            label.setFont(font)
-            label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-            return label
-
-        def _create_section_hint(text: str, *, bottom_margin: int = 0) -> QLabel:
-            label = QLabel(text)
-            font = self._build_hint_font()
-            label.setFont(font)
-            label.setWordWrap(True)
-            label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
-            if bottom_margin:
-                label.setContentsMargins(0, 0, 0, bottom_margin)
-            return label
-
-        scroll = _SmoothScrollArea(panel)
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        scroll.setViewportMargins(0, 0, _SCROLLBAR_RIGHT_SHIFT, 0)
-        scroll_content = QWidget(scroll)
-        content_layout = QVBoxLayout(scroll_content)
-        content_layout.setContentsMargins(0, 0, 0, 0)
-        content_layout.setSpacing(scale_px(10))
-        scroll.setWidget(scroll_content)
-        layout.addWidget(scroll, 1)
-
-        intro_label = _create_section_hint(
-            "如果这个项目帮到了你，可以在这里请作者吃一份鸡腿饭。图片会展示本地赞助码，下方按钮可直接打开爱发电。",
-            bottom_margin=scale_px(18, min_abs=14),
+        section = scaffold.add_section(
+            "支持作者",
+            "扫描赞助码，或通过下方按钮前往爱发电。",
         )
-        content_layout.addWidget(intro_label)
 
-        section_title = _create_section_title("支持作者")
-        section_hint = _create_section_hint(
-            "扫描下方图片中的二维码，或点击按钮跳转到爱发电页面。",
-            bottom_margin=scale_px(8, min_abs=6),
-        )
-        content_layout.addWidget(section_title, 0, Qt.AlignLeft)
-        content_layout.addWidget(section_hint, 0, Qt.AlignLeft)
-
-        card = QWidget(scroll_content)
+        card = QWidget(section)
         card.setObjectName("sponsorAuthorCard")
         card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(
-            scale_px(16, min_abs=14),
-            scale_px(16, min_abs=14),
-            scale_px(16, min_abs=14),
-            scale_px(16, min_abs=14),
-        )
-        card_layout.setSpacing(scale_px(12, min_abs=10))
+        card_layout.setContentsMargins(0, 0, 0, 0)
+        card_layout.setSpacing(scale_px(10, min_abs=8))
 
         image_frame = QWidget(card)
         image_frame.setObjectName("sponsorAuthorImageFrame")
@@ -2784,6 +2492,7 @@ class AISettingsPanel(QWidget):
             scale_px(10, min_abs=8),
         )
         image_frame_layout.setSpacing(0)
+        image_frame.setMaximumWidth(scale_px(380, min_abs=320))
 
         image_label = QLabel(image_frame)
         image_label.setObjectName("sponsorAuthorImage")
@@ -2792,17 +2501,18 @@ class AISettingsPanel(QWidget):
         image_frame_layout.addWidget(image_label, 0, Qt.AlignCenter)
         self._set_sponsor_author_image(image_label)
 
-        card_layout.addWidget(image_frame, 0)
+        card_layout.addWidget(image_frame, 0, Qt.AlignHCenter)
 
         sponsor_button = QPushButton("前往爱发电给作者买鸡腿饭", card)
         sponsor_button.setObjectName("sponsorAuthorButton")
         sponsor_button.setCursor(Qt.PointingHandCursor)
-        sponsor_button.setFixedHeight(scale_px(42, min_abs=36))
+        sponsor_button.setFixedHeight(scale_px(36, min_abs=32))
+        sponsor_button.setMaximumWidth(scale_px(380, min_abs=320))
         sponsor_button.clicked.connect(self._open_sponsor_author_link)
-        card_layout.addWidget(sponsor_button)
+        card_layout.addWidget(sponsor_button, 0, Qt.AlignHCenter)
 
-        content_layout.addWidget(card, 0)
-        content_layout.addStretch(1)
+        section.body_layout.addWidget(card)
+        scaffold.finish()
 
         self._config_tab_meta["sponsor_author"] = {
             "panel": panel,
@@ -2811,8 +2521,9 @@ class AISettingsPanel(QWidget):
             "title": category_title,
             "title_label": title_label,
             "hint_label": hint_label,
-            "section_title_labels": [section_title],
-            "section_hint_labels": [intro_label, section_hint],
+            "section_title_labels": [section.title_label],
+            "section_hint_labels": [section.description_label],
+            "buttons": [sponsor_button],
         }
 
         return panel
@@ -2820,86 +2531,36 @@ class AISettingsPanel(QWidget):
     def _build_contribution_list_panel(
         self,
         panel: QWidget,
-        layout: QVBoxLayout,
+        scaffold: SettingsPageScaffold,
         category_title: str,
         title_label: QLabel,
         hint_label: QLabel,
     ) -> QWidget:
-        def _create_section_title(text: str) -> QLabel:
-            label = QLabel(text)
-            font = get_ui_font(size=max(scale_px(12, min_abs=10), _CONFIG_FONT_SIZE))
-            font.setBold(True)
-            label.setFont(font)
-            label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-            return label
-
-        def _create_section_hint(text: str, *, bottom_margin: int = 0) -> QLabel:
-            label = QLabel(text)
-            font = self._build_hint_font()
-            label.setFont(font)
-            label.setWordWrap(True)
-            label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
-            if bottom_margin:
-                label.setContentsMargins(0, 0, 0, bottom_margin)
-            return label
-
-        scroll = _SmoothScrollArea(panel)
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        scroll.setViewportMargins(0, 0, _SCROLLBAR_RIGHT_SHIFT, 0)
-        scroll_content = QWidget(scroll)
-        content_layout = QVBoxLayout(scroll_content)
-        content_layout.setContentsMargins(0, 0, 0, 0)
-        content_layout.setSpacing(scale_px(10))
-        scroll.setWidget(scroll_content)
-        layout.addWidget(scroll, 1)
-
         records = [
             record
             for record in _load_contribution_records()
             if str(record.get("url") or "").strip()
         ]
         total_count = len(records)
-
-        intro_label = _create_section_hint(
-            "点击跳转至开发者主页",
-            bottom_margin=scale_px(18, min_abs=14),
+        section = scaffold.add_section(
+            f"贡献者 ({total_count})",
+            "选择条目可打开对应开发者主页。",
         )
-        section_title = _create_section_title("贡献人物")
-
-        content_layout.addWidget(intro_label)
-        content_layout.addWidget(section_title, 0, Qt.AlignLeft)
-
-        button_style = f"""
-            QPushButton {{
-                background-color: {UI_THEME["bg"].name()};
-                border: 2px solid {UI_THEME["border"].name()};
-                border-radius: 0px;
-                padding: 0px;
-                min-height: {scale_px(74, min_abs=64)}px;
-            }}
-            QPushButton:hover {{
-                background-color: {UI_THEME["mid"].name()};
-                border-color: {UI_THEME["deep_cyan"].name()};
-            }}
-            QPushButton:pressed {{
-                background-color: {UI_THEME["deep_cyan"].name()};
-            }}
-        """
 
         buttons: list[QPushButton] = []
         if records:
-            name_font = get_ui_font(size=max(scale_px(16, min_abs=13), _CONFIG_FONT_SIZE + scale_px(2, min_abs=1)))
+            name_font = get_ui_font(size=max(scale_px(15, min_abs=12), _CONFIG_FONT_SIZE + scale_px(1, min_abs=1)))
             name_font.setBold(True)
-            role_font = get_ui_font(size=max(scale_px(11, min_abs=9), _CONFIG_FONT_SIZE - scale_px(1, min_abs=1)))
+            role_font = get_ui_font(size=max(scale_px(10, min_abs=9), _CONFIG_FONT_SIZE - scale_px(1, min_abs=1)))
             for record in records:
                 name = str(record.get("name") or "未命名贡献者").strip()
                 role = str(record.get("role") or "贡献者").strip()
                 url = str(record.get("url") or "").strip()
-                button = _ContributionCardButton(scroll_content)
+                button = _ContributionCardButton(section)
+                button.setObjectName("ContributionCardButton")
                 button.setCursor(Qt.PointingHandCursor)
-                button.setStyleSheet(button_style)
+                button.setMinimumHeight(scale_px(74, min_abs=66))
+                button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
                 button_layout = QHBoxLayout(button)
                 button_layout.setContentsMargins(
                     scale_px(14, min_abs=12),
@@ -2910,8 +2571,8 @@ class AISettingsPanel(QWidget):
                 button_layout.setSpacing(scale_px(12, min_abs=10))
 
                 accent = QWidget(button)
-                accent.setFixedWidth(scale_px(6, min_abs=5))
-                accent.setStyleSheet(f"background-color: {UI_THEME['deep_cyan'].name()};")
+                accent.setObjectName("ContributionCardAccent")
+                accent.setFixedWidth(scale_px(3, min_abs=2))
                 accent.setAttribute(Qt.WA_TransparentForMouseEvents, True)
                 button_layout.addWidget(accent, 0)
 
@@ -2923,14 +2584,14 @@ class AISettingsPanel(QWidget):
 
                 name_label = QLabel(name, text_wrap)
                 name_label.setFont(name_font)
-                name_label.setStyleSheet(f"color: {UI_THEME['text'].name()};")
+                name_label.setObjectName("ContributionCardName")
                 name_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
                 name_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
                 text_layout.addWidget(name_label, 0, Qt.AlignLeft)
 
                 role_label = QLabel(role, text_wrap)
                 role_label.setFont(role_font)
-                role_label.setStyleSheet(f"color: {UI_THEME['border'].name()};")
+                role_label.setObjectName("ContributionCardRole")
                 role_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
                 role_label.setWordWrap(True)
                 role_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
@@ -2939,31 +2600,29 @@ class AISettingsPanel(QWidget):
                 button_layout.addWidget(text_wrap, 1)
 
                 watermark_wrap = QWidget(button)
-                watermark_wrap.setFixedWidth(scale_px(96, min_abs=86))
+                watermark_wrap.setFixedWidth(scale_px(64, min_abs=56))
                 watermark_wrap.setAttribute(Qt.WA_TransparentForMouseEvents, True)
                 watermark_layout = QVBoxLayout(watermark_wrap)
                 watermark_layout.setContentsMargins(0, 0, 0, 0)
                 watermark_layout.setSpacing(0)
                 watermark_layout.addStretch(1)
 
-                watermark_label = QLabel("DVLP", watermark_wrap)
+                watermark_label = QLabel("主页", watermark_wrap)
                 watermark_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
                 watermark_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
                 button.bind_watermark_label(watermark_label)
                 watermark_layout.addWidget(watermark_label, 0, Qt.AlignRight | Qt.AlignVCenter)
                 button_layout.addWidget(watermark_wrap, 0)
 
-                content_layout.addWidget(button, 0)
+                section.body_layout.addWidget(button)
                 buttons.append(button)
                 button.clicked.connect(lambda _checked=False, entry_name=name, entry_url=url: self._open_contribution_link(entry_name, entry_url))
         else:
-            empty_label = _create_section_hint(
-                f"未读取到贡献名单，请检查文件是否存在：{_contribution_list_path()}",
-                bottom_margin=scale_px(6, min_abs=4),
-            )
-            content_layout.addWidget(empty_label)
+            empty_label = QLabel(f"未读取到贡献名单，请检查文件是否存在：{_contribution_list_path()}", section)
+            empty_label.setWordWrap(True)
+            section.body_layout.addWidget(empty_label)
 
-        content_layout.addStretch(1)
+        scaffold.finish()
 
         self._config_tab_meta["contribution_list"] = {
             "panel": panel,
@@ -2972,8 +2631,8 @@ class AISettingsPanel(QWidget):
             "title": category_title,
             "title_label": title_label,
             "hint_label": hint_label,
-            "section_title_labels": [section_title],
-            "section_hint_labels": [intro_label],
+            "section_title_labels": [section.title_label],
+            "section_hint_labels": [section.description_label],
             "buttons": buttons,
         }
 
@@ -2992,7 +2651,7 @@ class AISettingsPanel(QWidget):
             label.setPixmap(QPixmap())
             return
 
-        max_width = max(scale_px(320, min_abs=280), self._content_width - scale_px(96, min_abs=72))
+        max_width = scale_px(340, min_abs=280)
         scaled = pixmap.scaledToWidth(max_width, Qt.SmoothTransformation)
         label.setPixmap(scaled)
         label.setText("")
@@ -3027,12 +2686,8 @@ class AISettingsPanel(QWidget):
         *,
         left_hint: str = "",
         right_hint: str = "",
-        field_width: int = _CONFIG_FIELD_WIDTH,
     ):
-        group, row = self._create_fixed_width_row_group(
-            field_width=field_width,
-            spacing=scale_px(10),
-        )
+        group, row = self._create_field_row_group(spacing=scale_px(10))
 
         left = self._create_config_line_edit(
             left_value,
@@ -3050,78 +2705,11 @@ class AISettingsPanel(QWidget):
         return left, right, group
 
     @staticmethod
-    def _create_form_label(text: str, label_width: int = _CONFIG_LABEL_WIDTH) -> QLabel:
+    def _create_form_label(text: str) -> QLabel:
         label = QLabel(text)
+        label.setObjectName('ConfigFormLabel')
         label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        label.setFixedWidth(int(label_width))
         return label
-
-    def _estimate_category_label_width(self, category: dict, cc_module, category_allow_map: dict) -> int:
-        font = get_ui_font(size=_CONFIG_FONT_SIZE)
-        font.setBold(True)
-        fm = QFontMetrics(font)
-        min_w = scale_px(108, min_abs=92)
-        max_w = scale_px(188, min_abs=164)
-        measured = min_w
-
-        for dict_name, _section_title in category.get("sections", []):
-            entries = _category_section_entries(str(category.get("id") or ""), str(dict_name), cc_module, category_allow_map)
-            if not entries:
-                continue
-
-            consumed: set[str] = set()
-            for entry_dict_name, key, _value in entries:
-                entry_id = f"{entry_dict_name}.{key}"
-                if entry_id in consumed:
-                    continue
-                signature = _range_pair_signature(key)
-                if signature is not None:
-                    sign_base, sign_type = signature
-                    pair_key = None
-                    pair_dict_name = None
-                    for other_dict_name, other_key, _other_value in entries:
-                        other_entry_id = f"{other_dict_name}.{other_key}"
-                        if other_key == key or other_entry_id in consumed:
-                            continue
-                        if other_dict_name != entry_dict_name:
-                            continue
-                        other_sig = _range_pair_signature(other_key)
-                        if other_sig is None or other_sig[0] != sign_base:
-                            continue
-                        pair_dict_name = other_dict_name
-                        pair_key = other_key
-                        break
-                    if pair_key is not None and pair_dict_name is not None:
-                        if sign_type in ("max", "upper"):
-                            left_key, right_key = pair_key, key
-                        else:
-                            left_key, right_key = key, pair_key
-                        label_text = _friendly_range_name(str(entry_dict_name), left_key, right_key)
-                        consumed.add(f"{entry_dict_name}.{left_key}")
-                        consumed.add(f"{entry_dict_name}.{right_key}")
-                    else:
-                        label_text = _friendly_key_name(str(entry_dict_name), key)
-                        consumed.add(entry_id)
-                else:
-                    label_text = _friendly_key_name(str(entry_dict_name), key)
-                    consumed.add(entry_id)
-                measured = max(measured, fm.horizontalAdvance(label_text) + scale_px(12, min_abs=10))
-
-        return int(max(min_w, min(max_w, measured)))
-
-    def _estimate_category_field_width(self, label_width: int) -> int:
-        # 预留 label-字段间距、滚动条占位与右侧安全边距，避免字段被右侧裁切。
-        reserve = scale_px(10) + _SCROLLBAR_RIGHT_SHIFT + scale_px(24, min_abs=20)
-        available = int(self._content_width - int(label_width) - int(reserve))
-        min_w = scale_px(176, min_abs=148)
-        min_fallback = scale_px(112, min_abs=96)
-        max_w = _CONFIG_FIELD_WIDTH
-        if available <= 0:
-            return int(min_fallback)
-        preferred = min(max_w, available)
-        if preferred < min_w:
-            return int(max(min_fallback, preferred))
-        return int(preferred)
 
     @staticmethod
     def _is_local_music_path_field(dict_name: str, key: str) -> bool:
@@ -3185,10 +2773,9 @@ class AISettingsPanel(QWidget):
         # 步进按 1% 固定，避免浮点误差导致显示与落盘不一致。
         return round(p / 100.0, 2)
 
-    def _create_volume_slider_editor(self, value, *, field_width: int = _CONFIG_FIELD_WIDTH):
+    def _create_volume_slider_editor(self, value):
         group = QWidget()
         group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        group.setFixedWidth(int(field_width))
         row = QHBoxLayout(group)
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(scale_px(8, min_abs=6))
@@ -3219,13 +2806,8 @@ class AISettingsPanel(QWidget):
         dict_name: str,
         key: str,
         value,
-        *,
-        field_width: int = _CONFIG_FIELD_WIDTH,
     ):
-        group, row = self._create_fixed_width_row_group(
-            field_width=field_width,
-            spacing=scale_px(8, min_abs=6),
-        )
+        group, row = self._create_field_row_group(spacing=scale_px(8, min_abs=6))
 
         editor = self._create_config_line_edit(value, expanding=True)
         row.addWidget(editor, 1)
@@ -3498,21 +3080,17 @@ class AISettingsPanel(QWidget):
         return mapping.get(stage, stage)
 
     @staticmethod
-    def _wrap_fixed_width_field(widget: QWidget, field_width: int = _CONFIG_FIELD_WIDTH) -> QWidget:
+    def _wrap_field_widget(widget: QWidget) -> QWidget:
         wrap = QWidget()
-        wrap.setFixedWidth(int(field_width))
+        wrap.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         row = QHBoxLayout(wrap)
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(0)
-        row.addWidget(widget, 0, Qt.AlignLeft | Qt.AlignVCenter)
-        row.addStretch(1)
+        row.addWidget(widget, 1, Qt.AlignVCenter)
         return wrap
 
-    def _create_sequence_editor(self, value, *, field_width: int = _CONFIG_FIELD_WIDTH):
-        group, row = self._create_fixed_width_row_group(
-            field_width=field_width,
-            spacing=scale_px(10),
-        )
+    def _create_sequence_editor(self, value):
+        group, row = self._create_field_row_group(spacing=scale_px(10))
 
         items = list(value) if isinstance(value, (tuple, list)) else [value]
         editors: list[QLineEdit] = []
@@ -3624,15 +3202,13 @@ class AISettingsPanel(QWidget):
         self,
         form: QFormLayout,
         fields: list[dict],
-        label_width: int,
-        field_width: int,
     ) -> None:
         editor = QCheckBox()
         default_enabled = self._get_autostart_enabled()
         editor.setChecked(default_enabled)
         self._autostart_checkbox = editor
-        row_widget = self._wrap_fixed_width_field(editor, field_width=field_width)
-        label = self._create_form_label("开机启动", label_width)
+        row_widget = self._wrap_field_widget(editor)
+        label = self._create_form_label("开机启动")
         description = "桌宠随系统启动；保存时复用系统托盘开机启动逻辑。"
         self._set_widget_description(label, description)
         self._set_widget_description(row_widget, description)
@@ -3928,7 +3504,7 @@ class AISettingsPanel(QWidget):
     def _collect_all_general_config_values(self) -> dict[str, dict]:
         merged: dict[str, dict] = {}
         for category in _GENERAL_CONFIG_CATEGORIES:
-            category_id = str(category.get("id") or "")
+            category_id = category.page_id
             if not category_id or category_id not in self._config_tab_meta:
                 continue
             values = self._collect_config_category_values(category_id)
@@ -3940,7 +3516,7 @@ class AISettingsPanel(QWidget):
 
     def _apply_all_external_config_fields(self) -> None:
         for category in _GENERAL_CONFIG_CATEGORIES:
-            category_id = str(category.get("id") or "")
+            category_id = category.page_id
             if not category_id:
                 continue
             self._apply_external_category_fields(category_id)
@@ -3948,7 +3524,7 @@ class AISettingsPanel(QWidget):
     def _ensure_config_defaults_integrity(self) -> None:
         """兜底检查默认值映射，避免“恢复默认”因缺项而失效。"""
         for category in _GENERAL_CONFIG_CATEGORIES:
-            category_id = str(category.get("id") or "")
+            category_id = category.page_id
             if not category_id:
                 continue
             meta = self._config_tab_meta.get(category_id)
@@ -4157,17 +3733,13 @@ class AISettingsPanel(QWidget):
         bg = UI_THEME["bg"].name()
         text = UI_THEME["text"].name()
         highlight = UI_THEME["deep_cyan"].name()
+        about_c = WORKBENCH_COLORS
         menu_font = get_ui_font(size=_CONFIG_FONT_SIZE)
         menu_font.setBold(True)
         menu_font_family = str(menu_font.family() or "").replace("'", "\\'")
         menu_font_size = max(scale_px(12, min_abs=10), _CONFIG_FONT_SIZE)
-        combo_drop_w = scale_px(72, min_abs=64)
+        combo_drop_w = scale_px(32, min_abs=28)
         combo_right_pad = combo_drop_w + scale_px(8, min_abs=6)
-        tab_min_w = max(scale_px(56, min_abs=52), int(round(scale_px(96, min_abs=82) * 2.0 / 3.0)))
-        tab_pad_y = max(scale_px(3, min_abs=2), int(round(scale_px(5, min_abs=4) * 2.0 / 3.0)))
-        tab_pad_x = max(scale_px(8, min_abs=6), int(round(scale_px(12, min_abs=10) * 2.0 / 3.0)))
-        tab_margin_r = max(scale_px(2, min_abs=1), int(round(scale_px(3, min_abs=2) * 2.0 / 3.0)))
-        tab_min_h = scale_px(24, min_abs=18)
         scroll_w = scale_px(14, min_abs=12)
         scroll_handle_min_h = scale_px(28, min_abs=20)
 
@@ -4177,22 +3749,80 @@ class AISettingsPanel(QWidget):
                 background: transparent;
                 color: {text};
             }}
-            QWidget#sponsorAuthorCard {{
-                background: rgba(255, 255, 255, 96);
+            QLabel#ConfigSectionLabel {{
+                background: {highlight};
+                color: {text};
                 border: 2px solid {border};
+                padding: {scale_px(5, min_abs=4)}px {scale_px(10, min_abs=8)}px;
+                min-height: {scale_px(28, min_abs=24)}px;
+                font-weight: 700;
+            }}
+            QLabel#ConfigFormLabel {{
+                color: {text};
+                padding: 0px {scale_px(4, min_abs=3)}px;
+                font-weight: 700;
+            }}
+            QWidget#sponsorAuthorCard {{
+                background: transparent;
+                border: none;
             }}
             QWidget#sponsorAuthorImageFrame {{
-                background: rgba(255, 255, 255, 56);
-                border: 1px solid {border};
+                background: {about_c.surface_raised};
+                border: 1px solid {about_c.border};
+                border-radius: {scale_px(4, min_abs=3)}px;
             }}
             QLabel#sponsorAuthorImage {{
                 background: transparent;
-                color: {text};
+                color: {about_c.text};
                 padding: {scale_px(6, min_abs=4)}px;
             }}
             QPushButton#sponsorAuthorButton {{
-                min-height: {scale_px(32, min_abs=28)}px;
+                background: {about_c.cyan};
+                color: {about_c.canvas};
+                border: 1px solid {about_c.cyan};
+                border-radius: {scale_px(4, min_abs=3)}px;
+                min-height: {scale_px(34, min_abs=30)}px;
+                padding: 0px {scale_px(12, min_abs=10)}px;
                 font-weight: 700;
+            }}
+            QPushButton#sponsorAuthorButton:hover {{
+                background: {about_c.pink_hover};
+                color: {about_c.canvas};
+                border-color: {about_c.pink_hover};
+            }}
+            QPushButton#sponsorAuthorButton:pressed {{
+                background: {about_c.pink};
+                color: {about_c.canvas};
+                border-color: {about_c.pink};
+            }}
+            QPushButton#ContributionCardButton {{
+                background: {about_c.surface_raised};
+                color: {about_c.text};
+                border: 1px solid {about_c.border};
+                border-radius: {scale_px(4, min_abs=3)}px;
+                padding: 0px;
+                min-height: {scale_px(66, min_abs=58)}px;
+            }}
+            QPushButton#ContributionCardButton:hover {{
+                background: {about_c.surface_hover};
+                border-color: {about_c.cyan};
+            }}
+            QPushButton#ContributionCardButton:pressed {{
+                background: {about_c.surface};
+                border-color: {about_c.pink};
+            }}
+            QWidget#ContributionCardAccent {{
+                background: {about_c.cyan};
+                border: none;
+                border-radius: {scale_px(1, min_abs=1)}px;
+            }}
+            QLabel#ContributionCardName {{
+                background: transparent;
+                color: {about_c.text};
+            }}
+            QLabel#ContributionCardRole {{
+                background: transparent;
+                color: {about_c.text_muted};
             }}
             QScrollArea {{
                 border: 0px;
@@ -4261,17 +3891,21 @@ class AISettingsPanel(QWidget):
                 color: {text};
                 border: 1px solid {border};
                 border-radius: 0px;
-                padding: 2px 6px;
-                min-height: {scale_px(22)}px;
+                padding: {scale_px(4, min_abs=3)}px {scale_px(8, min_abs=6)}px;
+                min-height: {scale_px(28, min_abs=24)}px;
+                font-size: {_CONFIG_FONT_SIZE}px;
+                font-weight: 700;
             }}
             QComboBox {{
                 background: rgba(255, 255, 255, 128);
                 color: {text};
                 border: 1px solid {border};
                 border-radius: 0px;
-                padding: 2px 6px;
+                padding: {scale_px(4, min_abs=3)}px {scale_px(8, min_abs=6)}px;
                 padding-right: {combo_right_pad}px;
-                min-height: {scale_px(22)}px;
+                min-height: {scale_px(28, min_abs=24)}px;
+                font-size: {_CONFIG_FONT_SIZE}px;
+                font-weight: 700;
             }}
             QComboBox::drop-down {{
                 subcontrol-origin: padding;
@@ -4291,9 +3925,9 @@ class AISettingsPanel(QWidget):
                 background: {bg};
             }}
             QComboBox::down-arrow {{
-                image: none;
-                width: 0px;
-                height: 0px;
+                image: url(resc/ui/combo_down_arrow.svg);
+                width: {scale_px(12, min_abs=10)}px;
+                height: {scale_px(8, min_abs=6)}px;
             }}
             QComboBox QAbstractItemView {{
                 background: {bg};
@@ -4335,8 +3969,10 @@ class AISettingsPanel(QWidget):
                 color: {text};
                 border: 2px solid {border};
                 border-radius: 0px;
-                padding: 4px 10px;
-                min-height: {scale_px(24)}px;
+                padding: {scale_px(5, min_abs=4)}px {scale_px(12, min_abs=9)}px;
+                min-height: {scale_px(32, min_abs=28)}px;
+                font-size: {_CONFIG_FONT_SIZE}px;
+                font-weight: 700;
             }}
             QPushButton:hover {{
                 background: {mid};
@@ -4351,8 +3987,8 @@ class AISettingsPanel(QWidget):
                 padding: 1px 0px;
             }}
             QCheckBox::indicator {{
-                width: {scale_px(14, min_abs=12)}px;
-                height: {scale_px(14, min_abs=12)}px;
+                width: {scale_px(18, min_abs=15)}px;
+                height: {scale_px(18, min_abs=15)}px;
                 border: 1px solid {border};
                 border-radius: 0px;
                 background: {bg};
@@ -4371,7 +4007,7 @@ class AISettingsPanel(QWidget):
             QSlider::groove:horizontal {{
                 border: 1px solid {border};
                 background: rgba(255, 255, 255, 128);
-                height: {scale_px(6, min_abs=5)}px;
+                height: {scale_px(8, min_abs=6)}px;
                 border-radius: 0px;
             }}
             QSlider::sub-page:horizontal {{
@@ -4385,8 +4021,8 @@ class AISettingsPanel(QWidget):
             QSlider::handle:horizontal {{
                 background: {bg};
                 border: 2px solid {border};
-                width: {scale_px(10, min_abs=9)}px;
-                margin: -4px 0px;
+                width: {scale_px(13, min_abs=11)}px;
+                margin: -5px 0px;
                 border-radius: 0px;
             }}
             QSlider::handle:horizontal:hover {{
@@ -4394,26 +4030,6 @@ class AISettingsPanel(QWidget):
             }}
             QSlider::handle:horizontal:pressed {{
                 background: {text};
-            }}
-            QTabBar::tab {{
-                background: {bg};
-                color: {text};
-                border: 2px solid {border};
-                border-top-left-radius: 0px;
-                border-top-right-radius: 0px;
-                min-width: {tab_min_w}px;
-                min-height: {tab_min_h}px;
-                padding: {tab_pad_y}px {tab_pad_x}px;
-                margin-right: {tab_margin_r}px;
-            }}
-            QTabBar::tab:selected {{
-                background: {mid};
-            }}
-            QTabBar::tab:hover:!selected {{
-                background: {mid};
-            }}
-            QTabBar::tab:pressed {{
-                background: {highlight};
             }}
             """
         )
@@ -4500,6 +4116,9 @@ class AISettingsPanel(QWidget):
         self._animate(1.0)
 
     def fade_out(self) -> None:
+        if self._external_close_callback is not None:
+            self._external_close_callback()
+            return
         self._visible = False
         self._hide_floating_tab()
         self._animate(0.0)
@@ -4603,7 +4222,7 @@ class AISettingsPanel(QWidget):
                 self._request_border_flicker()
 
     def _is_interactive_widget(self, widget) -> bool:
-        interactive_types = (QLineEdit, QComboBox, QPushButton, QCheckBox, QSlider, QListView, QTabBar, QScrollArea)
+        interactive_types = (QLineEdit, QComboBox, QPushButton, QCheckBox, QSlider, QListView, QScrollArea)
         cur = widget
         while cur is not None and cur is not self:
             if isinstance(cur, interactive_types):
@@ -4880,11 +4499,19 @@ class AISettingsPanel(QWidget):
         self._set_values_to_form(_DEFAULT_VALUES)
         self._ensure_config_defaults_integrity()
         for category in _GENERAL_CONFIG_CATEGORIES:
-            category_id = str(category.get("id") or "")
+            category_id = category.page_id
             if not category_id:
                 continue
             self._on_restore_config_category(category_id, emit_message=False)
         self._emit_info("已恢复默认配置，保存后会移除对应用户覆盖。", min_tick=10, max_tick=90)
+
+    def _on_restore_ai_defaults(self) -> None:
+        self._set_values_to_form(_DEFAULT_VALUES)
+        self._emit_info("AI 设置已恢复默认值，保存后生效。", min_tick=10, max_tick=90)
+
+    def _on_save_ai_action(self) -> None:
+        if self._on_save() and not self._workbench_attached:
+            self.fade_out()
 
     def _on_save(self) -> bool:
         try:

@@ -84,7 +84,7 @@ class NetEaseMusicProvider(MusicProvider):
         track_ref = self._make_track_ref(song.get("id"))
         if track_ref is None:
             return None
-        title = str(song.get("name") or "鏈煡姝屾洸").strip() or "鏈煡姝屾洸"
+        title = str(song.get("name") or "未知歌曲").strip() or "未知歌曲"
         artist = self._extract_first_artist(song)
         duration_ms = song.get("dt") or song.get("duration")
         display = f"{self._format_duration_text(duration_ms)} {title} - {artist}"
@@ -145,7 +145,7 @@ class NetEaseMusicProvider(MusicProvider):
             logger.info("[MusicProvider:NetEase] Search session rebuilt (anonymous)")
             return True
         except Exception as e:
-            logger.warning("[MusicProvider:NetEase] 鎼滅储浼氳瘽閲嶅缓澶辫触: %s", e)
+            logger.warning("[MusicProvider:NetEase] 重建搜索会话失败: %s", e)
             return False
 
     def _search_call(self, apis, keyword: str, stype: int, limit: int, offset: int = 0) -> dict:
@@ -164,7 +164,7 @@ class NetEaseMusicProvider(MusicProvider):
                 )
             except Exception as e:
                 if attempt == 0 and self._is_cookie_conflict_error(e):
-                    logger.warning("[MusicProvider:NetEase] 妫€娴嬪埌 __csrf Cookie 鍐茬獊锛屾竻鐞嗗悗閲嶈瘯")
+                    logger.warning("[MusicProvider:NetEase] 检测到 __csrf Cookie 冲突，清理后重试")
                     self._clear_runtime_login_cookies()
                     continue
                 raise
@@ -174,7 +174,7 @@ class NetEaseMusicProvider(MusicProvider):
             songs = payload.get("songs") or []
             if songs:
                 return last_result
-            # 浠呭棣栧睆绌虹粨鏋滃仛涓€娆′細璇濇仮澶嶏紝閬垮厤鍒嗛〉鍦烘櫙琚敊璇共棰勩€?
+            # Only recover an empty first page once; pagination must not be reset.
             if attempt == 0 and search_offset == 0 and self._recover_search_session():
                 continue
             return last_result
@@ -302,5 +302,5 @@ class NetEaseMusicProvider(MusicProvider):
                     break
             return tracks
         except Exception as e:
-            logger.error("[MusicProvider:NetEase] 鎼滅储澶辫触 mode=%s keyword=%s: %s", normalized_mode, query, e)
+            logger.error("[MusicProvider:NetEase] 搜索失败 mode=%s keyword=%s: %s", normalized_mode, query, e)
             raise

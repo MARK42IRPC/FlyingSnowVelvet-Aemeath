@@ -6,7 +6,7 @@ import html
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PyQt5.QtCore import QEvent, QPoint, Qt
+from PyQt5.QtCore import QEasingCurve, QEvent, QPoint, QPropertyAnimation, Qt
 from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import (
     QAbstractItemView,
@@ -23,39 +23,35 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
+from config.config import UI
 from config.font_config import get_digit_font, get_ui_font
 from config.scale import scale_px
+from lib.core.anchor_utils import apply_ui_opacity
 from lib.script.gemes.MAIN.game_packages import InstalledGame, get_game_package_service
+from lib.script.workbench.theme import COLORS as WORKBENCH_COLORS
 
 if TYPE_CHECKING:
     from .runtime import GameRuntime
 
 
-_BG = QColor(8, 8, 10)
-_HEADER_BG = QColor(14, 14, 18)
-_PANEL = QColor(18, 18, 24)
-_CARD = QColor(18, 18, 24)
-_CARD_ACTIVE = QColor(14, 14, 18)
-_BORDER = QColor(52, 52, 58)
-_SOFT = QColor(72, 72, 80)
-_MID = QColor(255, 173, 204)
-_PINK = QColor(255, 145, 188)
-_PINK_SOFT = QColor(255, 198, 220)
-_CYAN = QColor(140, 210, 255)
-_CYAN_SOFT = QColor(220, 240, 255)
-_TEXT = QColor(248, 248, 252)
-_TEXT_SOFT = QColor(216, 218, 226)
-_TEXT_DIM = QColor(168, 170, 180)
-_BLACK = QColor(0, 0, 0)
-_DANGER = QColor(255, 122, 146)
+_BG = QColor(WORKBENCH_COLORS.canvas)
+_PANEL = QColor(WORKBENCH_COLORS.surface)
+_CARD = QColor(WORKBENCH_COLORS.surface_raised)
+_BORDER = QColor(WORKBENCH_COLORS.border)
+_SOFT = QColor(WORKBENCH_COLORS.border_strong)
+_MID = QColor(WORKBENCH_COLORS.surface_hover)
+_PINK = QColor(WORKBENCH_COLORS.pink)
+_PINK_SOFT = QColor(WORKBENCH_COLORS.pink_hover)
+_CYAN = QColor(WORKBENCH_COLORS.cyan)
+_TEXT = QColor(WORKBENCH_COLORS.text)
+_TEXT_SOFT = QColor(WORKBENCH_COLORS.text_muted)
+_TEXT_DIM = QColor(WORKBENCH_COLORS.text_dim)
+_BLACK = QColor(WORKBENCH_COLORS.canvas)
+_DANGER = QColor(WORKBENCH_COLORS.danger)
 
 
 def _rgb(color: QColor) -> str:
     return f"rgb({color.red()}, {color.green()}, {color.blue()})"
-
-
-def _rgba(color: QColor) -> str:
-    return f"rgba({color.red()}, {color.green()}, {color.blue()}, {color.alpha()})"
 
 
 class _GameCardWidget(QFrame):
@@ -66,13 +62,13 @@ class _GameCardWidget(QFrame):
         self.setProperty("selected", False)
 
         title = QLabel(record.manifest.name, self)
-        title_font = get_ui_font(size=scale_px(16, min_abs=14))
+        title_font = get_ui_font(size=scale_px(14, min_abs=12))
         title_font.setBold(True)
         title.setFont(title_font)
         title.setObjectName("GameCardTitle")
 
         badge = QLabel("官方示例" if record.manifest.official else "开发者包", self)
-        badge_font = get_ui_font(size=scale_px(11, min_abs=10))
+        badge_font = get_ui_font(size=scale_px(10, min_abs=9))
         badge_font.setBold(True)
         badge.setFont(badge_font)
         badge.setAlignment(Qt.AlignCenter)
@@ -81,11 +77,11 @@ class _GameCardWidget(QFrame):
         self._badge = badge
 
         meta = QLabel(f"v{record.manifest.version}   {record.manifest.game_id}", self)
-        meta.setFont(get_ui_font(size=scale_px(13, min_abs=11)))
+        meta.setFont(get_ui_font(size=scale_px(12, min_abs=10)))
         meta.setObjectName("GameCardMeta")
 
         summary = QLabel(record.manifest.summary or "暂无简介", self)
-        summary.setFont(get_ui_font(size=scale_px(13, min_abs=11)))
+        summary.setFont(get_ui_font(size=scale_px(12, min_abs=10)))
         summary.setWordWrap(True)
         summary.setObjectName("GameCardSummary")
 
@@ -93,7 +89,7 @@ class _GameCardWidget(QFrame):
             f"粒子 {len(record.manifest.particle_extensions)}  ·  特效 {len(record.manifest.effect_extensions)}",
             self,
         )
-        ext.setFont(get_ui_font(size=scale_px(12, min_abs=11)))
+        ext.setFont(get_ui_font(size=scale_px(11, min_abs=9)))
         ext.setObjectName("GameCardExt")
 
         top = QHBoxLayout()
@@ -103,8 +99,8 @@ class _GameCardWidget(QFrame):
         top.addWidget(badge, 0, Qt.AlignTop)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(scale_px(14, min_abs=12), scale_px(13, min_abs=11), scale_px(14, min_abs=12), scale_px(13, min_abs=11))
-        layout.setSpacing(scale_px(6, min_abs=5))
+        layout.setContentsMargins(scale_px(12, min_abs=10), scale_px(10, min_abs=8), scale_px(12, min_abs=10), scale_px(10, min_abs=8))
+        layout.setSpacing(scale_px(5, min_abs=4))
         layout.addLayout(top)
         layout.addWidget(meta)
         layout.addWidget(summary)
@@ -121,28 +117,106 @@ class _GameCardWidget(QFrame):
 class GameManagerWindow(QWidget):
     """Manager for installed game packages."""
 
-    def __init__(self, runtime: "GameRuntime") -> None:
+    def __init__(self, runtime: "GameRuntime", embedded: bool = False) -> None:
         super().__init__()
+        self.setObjectName("GameManagerWindow")
         self._runtime = runtime
+        self._embedded = bool(embedded)
+        self._external_close_callback = None
         self._service = get_game_package_service()
         self._games: list[InstalledGame] = []
         self._cards: dict[str, _GameCardWidget] = {}
         self._dragging = False
         self._drag_offset = QPoint()
+        self._fading_out = False
+        self._allow_hide_once = False
+        self._opacity_anim = QPropertyAnimation(self, b'windowOpacity', self)
+        self._opacity_anim.setDuration(UI.get('ui_fade_duration', 180))
+        self._opacity_anim.setEasingCurve(QEasingCurve.InOutQuad)
+        self._opacity_anim.finished.connect(self._on_opacity_anim_finished)
 
         self.setWindowTitle("游戏列表管理器")
-        self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+        if not self._embedded:
+            self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
         self.resize(scale_px(1040, min_abs=920), scale_px(720, min_abs=640))
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setFont(get_ui_font(size=scale_px(13, min_abs=12)))
 
         self._build_ui()
         self._apply_styles()
+        if not self._embedded:
+            self.setWindowOpacity(0.0)
+            self.hide()
         self.refresh_games()
+
+    def set_embedded_mode(self, embedded: bool = True) -> None:
+        self._embedded = bool(embedded)
+        if self._embedded:
+            self.setWindowFlags(Qt.Widget)
+            self.setAttribute(Qt.WA_StyledBackground, True)
+            self.setMinimumSize(0, 0)
+            self.setMaximumSize(16777215, 16777215)
+        if hasattr(self, "_header"):
+            self._header.setVisible(not self._embedded)
+        if hasattr(self, "_root_layout"):
+            margin = scale_px(10, min_abs=8) if self._embedded else scale_px(14, min_abs=12)
+            self._root_layout.setContentsMargins(margin, margin, margin, margin)
+        if hasattr(self, "_fun_watermark"):
+            self._fun_watermark.setVisible(not self._embedded)
+
+    def fade_in(self) -> None:
+        if self._embedded:
+            self.setWindowOpacity(1.0)
+            self.show()
+            return
+        self._opacity_anim.stop()
+        self._fading_out = False
+        self._allow_hide_once = False
+        self.setWindowOpacity(0.0)
+        self.show()
+        self.raise_()
+        self.activateWindow()
+        self._opacity_anim.setStartValue(0.0)
+        self._opacity_anim.setEndValue(apply_ui_opacity(1.0))
+        self._opacity_anim.start()
+
+    def fade_out(self) -> None:
+        if self._external_close_callback is not None:
+            self._external_close_callback()
+            return
+        if self._fading_out or not self.isVisible():
+            return
+        self._fading_out = True
+        self._opacity_anim.stop()
+        current_opacity = self.windowOpacity()
+        self._opacity_anim.setStartValue(max(0.0, min(1.0, float(current_opacity))))
+        self._opacity_anim.setEndValue(0.0)
+        self._opacity_anim.start()
+
+    def hide(self) -> None:
+        if self._external_close_callback is not None:
+            self._external_close_callback()
+            return
+        if self._allow_hide_once or self._fading_out or not self.isVisible():
+            super().hide()
+            return
+        self.fade_out()
+
+    def _on_opacity_anim_finished(self) -> None:
+        if not self._fading_out:
+            return
+        self._fading_out = False
+        self._allow_hide_once = True
+        try:
+            super().hide()
+        finally:
+            self._allow_hide_once = False
+            self.setWindowOpacity(apply_ui_opacity(1.0))
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
-        root.setContentsMargins(scale_px(16, min_abs=14), scale_px(16, min_abs=14), scale_px(16, min_abs=14), scale_px(16, min_abs=14))
+        self._root_layout = root
+        root.setContentsMargins(scale_px(14, min_abs=12), scale_px(14, min_abs=12), scale_px(14, min_abs=12), scale_px(14, min_abs=12))
         root.setSpacing(scale_px(10, min_abs=8))
 
         header = QFrame(self)
@@ -159,13 +233,13 @@ class GameManagerWindow(QWidget):
         title_box.setContentsMargins(0, 0, 0, 0)
         title_box.setSpacing(scale_px(4, min_abs=3))
         self._title = QLabel("游戏列表管理器", header)
-        title_font = get_ui_font(size=scale_px(28, min_abs=24))
+        title_font = get_ui_font(size=scale_px(24, min_abs=21))
         title_font.setBold(True)
         self._title.setFont(title_font)
         self._title.setObjectName("ManagerTitle")
         self._title.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         self._subtitle = QLabel("像整理桌面小玩具一样整理你的游戏包：打开、安装、打包、卸载，都在这里。", header)
-        self._subtitle.setFont(get_ui_font(size=scale_px(14, min_abs=12)))
+        self._subtitle.setFont(get_ui_font(size=scale_px(12, min_abs=10)))
         self._subtitle.setWordWrap(True)
         self._subtitle.setObjectName("ManagerSubtitle")
         self._subtitle.setAttribute(Qt.WA_TransparentForMouseEvents, True)
@@ -180,7 +254,7 @@ class GameManagerWindow(QWidget):
         header_layout.addLayout(title_box, 1)
 
         glance = QLabel("GAME PACKAGE", header)
-        glance_font = get_digit_font(size=scale_px(30, min_abs=26))
+        glance_font = get_digit_font(size=scale_px(24, min_abs=21))
         glance_font.setBold(True)
         glance.setFont(glance_font)
         glance.setObjectName("HeaderGlance")
@@ -188,7 +262,7 @@ class GameManagerWindow(QWidget):
         self._header_glance = glance
         header_layout.addWidget(glance, 0, Qt.AlignRight | Qt.AlignVCenter)
 
-        self._close_btn = self._make_button("×", self.close, "title_close")
+        self._close_btn = self._make_button("×", self._request_close, "title_close")
         self._close_btn.setObjectName("TitleCloseButton")
         self._close_btn.setFixedSize(scale_px(34, min_abs=32), scale_px(30, min_abs=28))
         close_font = get_ui_font(size=scale_px(18, min_abs=16))
@@ -240,6 +314,7 @@ class GameManagerWindow(QWidget):
         self._fun_watermark.setAlignment(Qt.AlignLeft | Qt.AlignBottom)
         self._fun_watermark.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         self._fun_watermark.lower()
+        self._fun_watermark.setVisible(not self._embedded)
 
         detail = QFrame(self)
         detail.setObjectName("DetailPanel")
@@ -253,7 +328,7 @@ class GameManagerWindow(QWidget):
         top.setContentsMargins(0, 0, 0, 0)
         top.setSpacing(scale_px(10, min_abs=8))
         self._detail_title = QLabel("暂无已选游戏", detail)
-        detail_title_font = get_ui_font(size=scale_px(22, min_abs=18))
+        detail_title_font = get_ui_font(size=scale_px(18, min_abs=16))
         detail_title_font.setBold(True)
         self._detail_title.setFont(detail_title_font)
         self._detail_title.setObjectName("DetailTitle")
@@ -263,25 +338,26 @@ class GameManagerWindow(QWidget):
         self._detail_badge.setFont(badge_font)
         self._detail_badge.setAlignment(Qt.AlignCenter)
         self._detail_badge.setObjectName("DetailBadge")
+        self._detail_badge.setProperty("official", False)
         top.addWidget(self._detail_title, 1)
         top.addWidget(self._detail_badge, 0, Qt.AlignTop)
         detail_layout.addLayout(top)
 
         self._detail_summary = QLabel("请选择左侧的游戏卡片。", detail)
-        self._detail_summary.setFont(get_ui_font(size=scale_px(14, min_abs=12)))
+        self._detail_summary.setFont(get_ui_font(size=scale_px(12, min_abs=10)))
         self._detail_summary.setWordWrap(True)
         self._detail_summary.setObjectName("DetailSummary")
         detail_layout.addWidget(self._detail_summary)
 
         self._detail_meta = QLabel(detail)
-        self._detail_meta.setFont(get_ui_font(size=scale_px(14, min_abs=12)))
+        self._detail_meta.setFont(get_ui_font(size=scale_px(12, min_abs=10)))
         self._detail_meta.setWordWrap(True)
         self._detail_meta.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self._detail_meta.setObjectName("DetailMeta")
         detail_layout.addWidget(self._detail_meta)
 
         self._detail_paths = QLabel(detail)
-        self._detail_paths.setFont(get_ui_font(size=scale_px(13, min_abs=11)))
+        self._detail_paths.setFont(get_ui_font(size=scale_px(11, min_abs=9)))
         self._detail_paths.setWordWrap(True)
         self._detail_paths.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self._detail_paths.setObjectName("DetailPaths")
@@ -303,44 +379,53 @@ class GameManagerWindow(QWidget):
         for index, button in enumerate((self._open_btn, self._install_btn, self._scan_btn, self._export_btn, self._uninstall_btn, self._refresh_btn)):
             grid.addWidget(button, index // 2, index % 2)
 
-        detail_layout.addStretch(1)
         self._status = QLabel(detail)
         self._status.setFont(get_ui_font(size=scale_px(13, min_abs=11)))
         self._status.setWordWrap(True)
         self._status.setObjectName("StatusText")
         detail_layout.addWidget(self._status)
+        detail_layout.addStretch(1)
         content.addWidget(detail, 6)
         self._layout_overlays()
 
     def _apply_styles(self) -> None:
         self.setStyleSheet(
             f"""
-            QWidget {{
+            QWidget#GameManagerWindow {{
                 color: {_rgb(_TEXT)};
                 background: {_rgb(_BG)};
             }}
-            QFrame#ManagerHeader, QFrame#ManagerPanel, QFrame#DetailPanel, QFrame#StatCard {{
+            QWidget#GameManagerWindow QWidget {{
+                color: {_rgb(_TEXT)};
                 background: transparent;
-                border: 2px solid {_rgb(_BORDER)};
-                border-radius: 0px;
             }}
-            QLabel#ManagerTitle {{ color: {_rgb(_PINK)}; letter-spacing: 1px; }}
+            QWidget#GameManagerWindow QLabel {{
+                background: transparent;
+            }}
+            QFrame#ManagerHeader, QFrame#ManagerPanel, QFrame#DetailPanel, QFrame#StatCard {{
+                background: {_rgb(_PANEL)};
+                border: 1px solid {_rgb(_BORDER)};
+                border-radius: {scale_px(4, min_abs=3)}px;
+            }}
+            QFrame#ManagerHeader {{
+                background: {_rgb(_CARD)};
+            }}
+            QLabel#ManagerTitle {{ color: {_rgb(_TEXT)}; }}
             QLabel#ManagerSubtitle {{ color: {_rgb(_TEXT_SOFT)}; }}
-            QLabel#InboxHint {{ color: {_rgb(_CYAN_SOFT)}; }}
+            QLabel#InboxHint {{ color: {_rgb(_CYAN)}; }}
             QLabel#HeaderGlance {{
                 color: rgba({_PINK.red()}, {_PINK.green()}, {_PINK.blue()}, 88);
-                letter-spacing: 1px;
             }}
             QLabel#FunWatermark {{
                 color: rgba({_PINK.red()}, {_PINK.green()}, {_PINK.blue()}, 58);
                 background: transparent;
-                letter-spacing: 1px;
             }}
-            QLabel#PanelTitle {{ color: {_rgb(_PINK_SOFT)}; }}
+            QLabel#PanelTitle {{ color: {_rgb(_TEXT)}; }}
             QLabel#PanelSubtitle, QLabel#StatTitle {{ color: {_rgb(_TEXT_DIM)}; }}
             QListWidget#GameList {{
-                background: transparent;
-                border: 1px solid {_rgb(_SOFT)};
+                background: {_rgb(_BG)};
+                border: 1px solid {_rgb(_BORDER)};
+                border-radius: {scale_px(4, min_abs=3)}px;
                 outline: none;
                 padding: 4px;
             }}
@@ -351,73 +436,97 @@ class GameManagerWindow(QWidget):
             }}
             QListWidget#GameList::item:selected {{ background: transparent; }}
             QFrame#GameCard {{
-                background: transparent;
-                border: 1px solid {_rgb(_SOFT)};
-                border-radius: 0px;
+                background: {_rgb(_CARD)};
+                border: 1px solid {_rgb(_BORDER)};
+                border-radius: {scale_px(4, min_abs=3)}px;
             }}
             QFrame#GameCard[selected="true"] {{
-                background: rgba({_PINK.red()}, {_PINK.green()}, {_PINK.blue()}, 18);
-                border: 2px solid {_rgb(_PINK)};
+                background: {_rgb(_MID)};
+                border: 1px solid {_rgb(_PINK)};
             }}
             QLabel#GameCardTitle, QLabel#DetailTitle, QLabel#StatValue {{ color: {_rgb(_TEXT)}; }}
-            QLabel#GameCardMeta {{ color: {_rgb(_CYAN_SOFT)}; }}
+            QLabel#GameCardMeta {{ color: {_rgb(_CYAN)}; }}
             QLabel#GameCardSummary, QLabel#DetailSummary, QLabel#DetailMeta, QLabel#DetailPaths, QLabel#StatusText {{ color: {_rgb(_TEXT_SOFT)}; }}
             QLabel#GameCardExt {{ color: {_rgb(_TEXT_DIM)}; }}
             QLabel#GameCardBadge {{
-                padding: 3px 8px;
-                border-radius: 0px;
+                padding: 2px 7px;
+                border-radius: {scale_px(3, min_abs=2)}px;
                 color: {_rgb(_BLACK)};
-                background: {_rgb(_CYAN_SOFT)};
+                background: {_rgb(_CYAN)};
             }}
             QLabel#GameCardBadge[official="true"] {{ background: {_rgb(_PINK_SOFT)}; }}
             QLabel#DetailBadge {{
-                min-width: {scale_px(90, min_abs=80)}px;
-                padding: 4px 10px;
-                border-radius: 0px;
+                min-width: {scale_px(76, min_abs=68)}px;
+                padding: 3px 9px;
+                border-radius: {scale_px(3, min_abs=2)}px;
                 color: {_rgb(_BLACK)};
-                background: {_rgb(_CYAN_SOFT)};
+                background: {_rgb(_CYAN)};
             }}
+            QLabel#DetailBadge[official="true"] {{ background: {_rgb(_PINK_SOFT)}; }}
             QLabel#DetailSummary, QLabel#DetailMeta, QLabel#DetailPaths {{
                 background: transparent;
-                border-top: 1px solid {_rgb(_SOFT)};
-                border-bottom: 1px solid {_rgb(_SOFT)};
-                border-left: 0px;
-                border-right: 0px;
-                border-radius: 0px;
-                padding: {scale_px(12, min_abs=10)}px;
+                border: 1px solid {_rgb(_BORDER)};
+                border-radius: {scale_px(4, min_abs=3)}px;
+                padding: {scale_px(9, min_abs=7)}px;
+            }}
+            QLabel#StatusText {{
+                background: transparent;
+                border: 1px solid {_rgb(_BORDER)};
+                border-radius: {scale_px(4, min_abs=3)}px;
+                padding: {scale_px(8, min_abs=6)}px {scale_px(10, min_abs=8)}px;
             }}
             QPushButton {{
-                background: transparent;
+                background: {_rgb(_CARD)};
                 color: {_rgb(_TEXT)};
-                border: 1px solid {_rgb(_SOFT)};
-                border-radius: 0px;
-                padding: {scale_px(10, min_abs=8)}px {scale_px(14, min_abs=12)}px;
-                min-height: {scale_px(44, min_abs=40)}px;
+                border: 1px solid {_rgb(_BORDER)};
+                border-radius: {scale_px(4, min_abs=3)}px;
+                padding: 0px {scale_px(12, min_abs=10)}px;
+                min-height: {scale_px(34, min_abs=30)}px;
                 font-weight: bold;
             }}
             QPushButton:hover {{
-                border-color: {_rgb(_PINK)};
                 background: {_rgb(_MID)};
-                color: {_rgb(_BLACK)};
+                border-color: {_rgb(_CYAN)};
+                color: {_rgb(_TEXT)};
             }}
-            QPushButton:pressed {{ color: {_rgb(_BLACK)}; background: {_rgb(_PINK_SOFT)}; }}
+            QPushButton:pressed {{ color: {_rgb(_BLACK)}; background: {_rgb(_CYAN)}; }}
             QPushButton:disabled {{
                 color: rgba({_TEXT_DIM.red()}, {_TEXT_DIM.green()}, {_TEXT_DIM.blue()}, 160);
-                border-color: rgba({_SOFT.red()}, {_SOFT.green()}, {_SOFT.blue()}, 100);
-                background: transparent;
+                border-color: {_rgb(_BORDER)};
+                background: {_rgb(_PANEL)};
             }}
-            QPushButton[accent="pink"]:hover {{ border-color: {_rgb(_PINK)}; background: {_rgb(_MID)}; }}
-            QPushButton[accent="pink"]:pressed {{ background: {_rgb(_PINK_SOFT)}; }}
-            QPushButton[accent="danger"]:hover {{ border-color: {_rgb(_DANGER)}; background: rgb(255, 168, 188); color: {_rgb(_BLACK)}; }}
+            QPushButton[accent="cyan"] {{
+                background: {_rgb(_CYAN)};
+                border-color: {_rgb(_CYAN)};
+                color: {_rgb(_BLACK)};
+            }}
+            QPushButton[accent="pink"] {{
+                background: {_rgb(_PINK)};
+                border-color: {_rgb(_PINK)};
+                color: {_rgb(_BLACK)};
+            }}
+            QPushButton[accent="cyan"]:hover, QPushButton[accent="pink"]:hover {{
+                background: {_rgb(_PINK_SOFT)};
+                border-color: {_rgb(_PINK_SOFT)};
+                color: {_rgb(_BLACK)};
+            }}
+            QPushButton[accent="danger"] {{
+                color: {_rgb(_DANGER)};
+                border-color: {_rgb(_DANGER)};
+            }}
+            QPushButton[accent="danger"]:hover {{
+                background: {_rgb(_DANGER)};
+                color: {_rgb(_BLACK)};
+            }}
             QPushButton#TitleCloseButton {{
                 background: transparent;
-                border: 1px solid {_rgb(_SOFT)};
+                border: 1px solid {_rgb(_BORDER)};
                 padding: 0px;
                 min-height: 0px;
             }}
             QPushButton#TitleCloseButton:hover {{
-                background: {_rgb(_MID)};
-                border-color: {_rgb(_PINK)};
+                background: {_rgb(_DANGER)};
+                border-color: {_rgb(_DANGER)};
                 color: {_rgb(_BLACK)};
             }}
             QPushButton#TitleCloseButton:pressed {{
@@ -429,9 +538,11 @@ class GameManagerWindow(QWidget):
                 margin: 4px 2px 4px 2px;
             }}
             QScrollBar::handle:vertical {{
-                background: {_rgb(_PINK)};
+                background: {_rgb(_SOFT)};
                 min-height: {scale_px(28, min_abs=24)}px;
+                border-radius: {scale_px(3, min_abs=2)}px;
             }}
+            QScrollBar::handle:vertical:hover {{ background: {_rgb(_PINK)}; }}
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0px; }}
             QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: transparent; }}
             """
@@ -443,12 +554,12 @@ class GameManagerWindow(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(scale_px(3, min_abs=2))
         title_label = QLabel(title, box)
-        title_font = get_ui_font(size=scale_px(14, min_abs=12))
+        title_font = get_ui_font(size=scale_px(13, min_abs=11))
         title_font.setBold(True)
         title_label.setFont(title_font)
         title_label.setObjectName("PanelTitle")
         subtitle_label = QLabel(subtitle, box)
-        subtitle_label.setFont(get_ui_font(size=scale_px(12, min_abs=11)))
+        subtitle_label.setFont(get_ui_font(size=scale_px(10, min_abs=9)))
         subtitle_label.setWordWrap(True)
         subtitle_label.setObjectName("PanelSubtitle")
         layout.addWidget(title_label)
@@ -460,13 +571,13 @@ class GameManagerWindow(QWidget):
         frame.setObjectName("StatCard")
         frame.setAttribute(Qt.WA_StyledBackground, True)
         layout = QVBoxLayout(frame)
-        layout.setContentsMargins(scale_px(14, min_abs=12), scale_px(13, min_abs=11), scale_px(14, min_abs=12), scale_px(13, min_abs=11))
-        layout.setSpacing(scale_px(6, min_abs=5))
+        layout.setContentsMargins(scale_px(12, min_abs=10), scale_px(10, min_abs=8), scale_px(12, min_abs=10), scale_px(10, min_abs=8))
+        layout.setSpacing(scale_px(4, min_abs=3))
         title_label = QLabel(title, frame)
         title_label.setFont(get_ui_font(size=scale_px(12, min_abs=11)))
         title_label.setObjectName("StatTitle")
         value_label = QLabel("0", frame)
-        value_font = get_ui_font(size=scale_px(24, min_abs=22))
+        value_font = get_ui_font(size=scale_px(20, min_abs=18))
         value_font.setBold(True)
         value_label.setFont(value_font)
         value_label.setObjectName("StatValue")
@@ -474,10 +585,16 @@ class GameManagerWindow(QWidget):
         layout.addWidget(value_label)
         return frame, value_label
 
+    def set_external_close_callback(self, callback) -> None:
+        self._external_close_callback = callback
+
+    def _request_close(self) -> None:
+        self.fade_out()
+
     def _make_button(self, text: str, callback, accent: str) -> QPushButton:
         button = QPushButton(text, self)
         button.setProperty("accent", accent)
-        font = get_ui_font(size=scale_px(13, min_abs=12))
+        font = get_ui_font(size=scale_px(12, min_abs=10))
         font.setBold(True)
         button.setFont(font)
         button.clicked.connect(callback)
@@ -584,7 +701,7 @@ class GameManagerWindow(QWidget):
         if record is None:
             self._detail_title.setText("暂无已选游戏")
             self._detail_badge.setText("待选择")
-            self._detail_badge.setStyleSheet(f"background: {_rgb(_CYAN_SOFT)}; color: {_rgb(_BLACK)};")
+            self._set_detail_badge_official(False)
             self._detail_summary.setText("请选择左侧的游戏卡片。")
             self._detail_meta.setText("安装后，游戏 ID、版本、扩展数量和来源会显示在这里。")
             self._detail_paths.setText(f"收件箱目录\n{self._service.inbox_dir()}")
@@ -596,8 +713,7 @@ class GameManagerWindow(QWidget):
         source_text = "官方示例包" if manifest.official else "开发者包"
         self._detail_title.setText(manifest.name)
         self._detail_badge.setText(source_text)
-        badge_color = _rgb(_PINK_SOFT if manifest.official else _CYAN_SOFT)
-        self._detail_badge.setStyleSheet(f"background: {badge_color}; color: {_rgb(_BLACK)};")
+        self._set_detail_badge_official(manifest.official)
         self._detail_summary.setText(manifest.summary or "暂无简介")
         self._detail_meta.setText(
             "<b>ID</b>  {game_id}<br>"
@@ -619,6 +735,11 @@ class GameManagerWindow(QWidget):
                 cache=record.cache_root,
             )
         )
+
+    def _set_detail_badge_official(self, official: bool) -> None:
+        self._detail_badge.setProperty("official", bool(official))
+        self._detail_badge.style().unpolish(self._detail_badge)
+        self._detail_badge.style().polish(self._detail_badge)
 
     def _open_selected_game(self) -> None:
         record = self._selected_game()

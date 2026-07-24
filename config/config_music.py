@@ -1,4 +1,4 @@
-"""??????????"""
+"""Music and audio defaults."""
 
 from __future__ import annotations
 

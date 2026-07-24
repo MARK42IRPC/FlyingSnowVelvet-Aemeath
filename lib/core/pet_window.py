@@ -20,7 +20,6 @@ from lib.core.logger import get_logger
 _logger = get_logger(__name__)
 from lib.core.voice.ams_startup import AmsStartupSound
 from lib.core.event.key_handler import KeyEventHandler
-from lib.core.event.app_handler import AppEventHandler
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.entity.base import BaseEntity
 from lib.script.mainpet.state import StateMachine
@@ -82,7 +81,6 @@ class PetWindow(BaseEntity):
         # ── 事件处理器 ───────────────────────────────────────────────
         self._mouse_event_handler = MouseEventHandler(self)
         self._key_event_handler = KeyEventHandler(self)
-        self._app_event_handler = AppEventHandler(self)
         self._startup_voice_sound = AmsStartupSound(interruptible=False)
 
         # ── 计时器管理器 ──────────────────────────────────────────────

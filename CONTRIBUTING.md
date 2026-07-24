@@ -2,6 +2,8 @@
 
 感谢你愿意改进飞行雪绒。这个项目已经包含桌宠 UI、事件系统、AI、语音、音乐、本地服务和发布脚本，多数问题都跨模块发生。提交时请优先保持边界清晰、改动可验证。
 
+开始前先阅读 `doc/README.md` 和 `doc/维护手册.md`。多人或多 AI 并行工作时，必须同时遵循 `doc/AI协作规范.md`。
+
 ## 基本原则
 
 - **小步提交**：一次提交解决一个主题，避免把重构、配置、素材、运行产物混在一起。
@@ -110,7 +112,7 @@ py -3 -m unittest discover -s tests -p "test_*music*.py"
 - 粒子系统变化：`doc/粒子效果说明.txt`
 - 扩展开发方式变化：`doc/Script开发指南.txt`
 - 发布包边界变化：`README.md`、`RELEASING.md`
-- 版本行为变化：`CHANGELOG.md`、`AA更新日志.txt`
+- 版本行为变化：`CHANGELOG.md`
 
 ## 提交信息建议
 

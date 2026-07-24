@@ -6,6 +6,7 @@ import time
 
 import requests
 
+from config.config import TIMEOUTS
 from lib.core.compute_hub import get_compute_hub
 from ._multimodal import is_image_input_error
 from .handler_stream_presenter import _is_non_ai_status_text
@@ -41,14 +42,18 @@ class OllamaSessionMixin:
                 f"{OLLAMA_BASE_URL}/api/pull",
                 json={"model": model_name, "stream": True},
                 stream=True,
-                timeout=(10, None),
+                timeout=(10, TIMEOUTS['ollama_pull_read']),
             )
+            with self._pull_response_lock:
+                self._pull_response = resp
             resp.raise_for_status()
 
             last_emit_time = 0.0
             last_completed = 0
 
             for line in resp.iter_lines():
+                if not self._is_running:
+                    break
                 if not line:
                     continue
                 try:
@@ -88,6 +93,11 @@ class OllamaSessionMixin:
         except Exception as e:
             logger.error("[OllamaManager] 下载模型 %r 异常: %s", model_name, e)
         finally:
+            with self._pull_response_lock:
+                response = self._pull_response
+                self._pull_response = None
+            if response is not None:
+                response.close()
             self._pulling_models.discard(model_name)
 
     @staticmethod

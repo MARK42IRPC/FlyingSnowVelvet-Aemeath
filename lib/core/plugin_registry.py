@@ -68,19 +68,6 @@ class BaseManager(ABC):
         pass
 
 
-class BasePlugin(ABC):
-    """插件基类 - 用于粒子脚本等可扩展组件"""
-
-    # 插件唯一标识符（子类必须定义）
-    PLUGIN_ID: str = None
-
-    @classmethod
-    @abstractmethod
-    def create(cls, **kwargs) -> "BasePlugin":
-        """工厂方法：创建插件实例"""
-        pass
-
-
 # ======================================================================
 # 通用注册表
 # ======================================================================
@@ -156,7 +143,6 @@ particle_registry = Registry("ParticleRegistry")
 effect_registry = Registry("EffectRegistry")
 
 # 命令处理器注册表
-command_handler_registry = Registry("CommandHandlerRegistry")
 
 
 # ======================================================================
@@ -207,21 +193,6 @@ def register_effect(effect_id: str):
     """
     def decorator(cls):
         effect_registry.register(effect_id, cls)
-        return cls
-    return decorator
-
-
-def register_command_handler(handler_id: str):
-    """
-    命令处理器注册装饰器
-
-    Usage:
-        @register_command_handler('chat')
-        class ChatHandler:
-            ...
-    """
-    def decorator(cls):
-        command_handler_registry.register(handler_id, cls)
         return cls
     return decorator
 

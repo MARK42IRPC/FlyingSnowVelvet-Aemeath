@@ -55,7 +55,7 @@
 | 路径 | 说明 |
 | --- | --- |
 | `config/` | 只读默认配置、配置模型、用户稀疏覆盖与迁移逻辑 |
-| `doc/` | 中文说明、事件系统、调度系统、粒子与开发指南 |
+| `doc/` | 维护手册、AI 协作规范及事件、调度、粒子等专项协议 |
 | `lib/core/` | 事件中心、主窗口、渲染、音频、托盘、日志等基础设施 |
 | `lib/script/main.py` | 应用启动、预热、退出和组件清理编排 |
 | `lib/script/chat/` | AI 客户端、聊天上下文、流式呈现、自动陪伴 |
@@ -94,6 +94,8 @@ python install_deps.py
 - 启动桌宠主程序
 
 ### 开发者
+
+开始修改前先阅读 [`doc/README.md`](doc/README.md)；多人或多 AI 并行时同时遵循 [`doc/AI协作规范.md`](doc/AI协作规范.md)。
 
 ```powershell
 py -3 -m venv .venv

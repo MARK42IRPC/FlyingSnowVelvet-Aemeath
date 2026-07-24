@@ -54,6 +54,7 @@ class TrayIcon(QObject):
         self._clickthrough_status_subscribed = False
         self._game_mode_status_subscribed = False
         self._ai_settings_panel = None
+        self._workbench_window = None
         self._icon = None
         self._icon_path = None
         self._initialized = False
@@ -404,6 +405,11 @@ class TrayIcon(QObject):
                 self._ai_settings_panel.hide()
             except Exception:
                 pass
+        if self._workbench_window is not None:
+            try:
+                self._workbench_window.hide_immediately()
+            except Exception:
+                pass
         if self._tray_icon is not None:
             try:
                 self._tray_icon.hide()
@@ -495,14 +501,39 @@ class TrayIcon(QObject):
             'max': 60,
         }))
 
-    def _on_ai_settings(self):
-        """处理控制面板动作：打开面板并居中显示。"""
-        try:
-            from lib.script.ui.ai_settings_panel import AISettingsPanel
+    def preload_ai_settings_panel(self):
+        from lib.script.ui.ai_settings_panel import AISettingsPanel
 
-            if self._ai_settings_panel is None:
-                self._ai_settings_panel = AISettingsPanel()
-            self._ai_settings_panel.show_centered()
+        if self._ai_settings_panel is None:
+            self._ai_settings_panel = AISettingsPanel(lazy_workbench_pages=True)
+        return self._ai_settings_panel
+
+    def preload_workbench(self):
+        from lib.script.ui.workbench_window import WorkbenchWindow
+
+        def create_bug_tracker_page():
+            from lib.script.bug_tracker.window import BugTrackerWindow
+            return BugTrackerWindow(embedded=True)
+
+        def create_game_manager_page():
+            from lib.script.gemes.MAIN.runtime import get_game_runtime
+            return get_game_runtime().get_manager_window()
+
+        if self._workbench_window is None:
+            extra_page_specs = [
+                ('bug_tracker', 'BUG TRACKER', create_bug_tracker_page),
+                ('game_manager', 'GAME PACKAGE', create_game_manager_page),
+            ]
+            self._workbench_window = WorkbenchWindow(
+                self.preload_ai_settings_panel,
+                extra_page_specs=extra_page_specs,
+            )
+        return self._workbench_window
+
+    def _on_ai_settings(self):
+        """处理控制面板动作：打开统一工作台总览。"""
+        try:
+            self.preload_workbench().show_page('overview')
         except Exception as e:
             _logger.error('打开控制面板失败: %s', e)
             self._event_center.publish(Event(EventType.INFORMATION, {
@@ -512,8 +543,15 @@ class TrayIcon(QObject):
             }))
 
     def _on_bug_tracker(self):
-        """处理 bug 跟踪动作：通过事件请求主程序拉起独立进程。"""
-        self._event_center.publish(Event(EventType.BUG_TRACKER_OPEN_REQUEST, {}))
+        try:
+            self.preload_workbench().show_page('bug_tracker')
+        except Exception as exc:
+            _logger.error('打开 bug 跟踪器失败: %s', exc)
+            self._event_center.publish(Event(EventType.INFORMATION, {
+                'text': f'打开 bug 跟踪器失败: {exc}',
+                'min': 12,
+                'max': 120,
+            }))
 
     def _on_cmd_window(self):
         """处理CMD窗口动作：打开CMD终端窗口。"""
@@ -791,6 +829,10 @@ class TrayIcon(QObject):
             self._menu.deleteLater()
             self._menu = None
         if self._ai_settings_panel is not None:
+            if self._workbench_window is not None:
+                self._workbench_window.hide_immediately()
+                self._workbench_window.deleteLater()
+                self._workbench_window = None
             self._ai_settings_panel.hide()
             self._ai_settings_panel.deleteLater()
             self._ai_settings_panel = None

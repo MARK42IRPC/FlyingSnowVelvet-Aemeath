@@ -9,7 +9,6 @@
 - `config/version_info.py`
 - `README.md`
 - `CHANGELOG.md`
-- `AA更新日志.txt`
 
 `config/version_info.py` 是打包脚本读取版本号的来源。更新版本时优先改这里，再同步其它展示文档。
 

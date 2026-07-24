@@ -838,7 +838,7 @@ class KugouClient:
                 encode_album_audio_id=mix_id,
             )
         except Exception as e:
-            logger.debug("[KugouClient] songinfo v2 URL 澶辫触 hash=%s: %s", hash_text or mix_id, e)
+            logger.debug("[KugouClient] songinfo v2 URL 失败 hash=%s: %s", hash_text or mix_id, e)
         url = self._song_url_from_info(info_v2)
         if url:
             return url
@@ -848,7 +848,7 @@ class KugouClient:
         try:
             info = self._fetch_song_info(hash_text)
         except Exception as e:
-            logger.debug("[KugouClient] legacy URL 澶辫触 hash=%s: %s", hash_text, e)
+            logger.debug("[KugouClient] legacy URL 失败 hash=%s: %s", hash_text, e)
             info = {}
         url = self._song_url_from_info(info)
         if url:

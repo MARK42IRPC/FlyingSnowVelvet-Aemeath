@@ -10,7 +10,7 @@ from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
-from PyQt5.QtCore import Qt, QEvent, QPoint, QTimer
+from PyQt5.QtCore import QEasingCurve, Qt, QEvent, QPoint, QPropertyAnimation, QTimer
 from PyQt5.QtGui import QColor, QCursor, QPainter
 from PyQt5.QtWidgets import (
     QApplication,
@@ -26,26 +26,31 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
-from config.config import UI_THEME
+from config.config import UI
 from config.font_config import get_digit_font, get_ui_font
 from config.scale import scale_px
 from lib.core.layer import Layer
+from lib.core.anchor_utils import apply_ui_opacity
 from lib.core.unified_draw import get_layer_manager
 from lib.script.app.startup_probe import load_saved_watermark_payload
 from lib.script.bug_tracker.storage import BugInstanceInfo, BugRecord, BugTrackerLogStore
+from lib.script.workbench.theme import COLORS as WORKBENCH_COLORS
 
-_BG = QColor(8, 8, 10)
-_HEADER_BG = QColor(14, 14, 18)
-_PANEL_BG = QColor(18, 18, 24)
-_BORDER = QColor(52, 52, 58)
-_SOFT_BORDER = QColor(72, 72, 80)
-_MID = QColor(255, 173, 204)
-_PINK = QColor(255, 145, 188)
-_PINK_SOFT = QColor(255, 198, 220)
-_TEXT_MAIN = QColor(248, 248, 252)
-_TEXT_SOFT = QColor(216, 218, 226)
-_TEXT_DIM = QColor(168, 170, 180)
-_BLACK = QColor(0, 0, 0)
+_BG = QColor(WORKBENCH_COLORS.canvas)
+_HEADER_BG = QColor(WORKBENCH_COLORS.surface)
+_PANEL_BG = QColor(WORKBENCH_COLORS.surface_raised)
+_BORDER = QColor(WORKBENCH_COLORS.border)
+_SOFT_BORDER = QColor(WORKBENCH_COLORS.border_strong)
+_MID = QColor(WORKBENCH_COLORS.surface_hover)
+_PINK = QColor(WORKBENCH_COLORS.pink)
+_PINK_SOFT = QColor(WORKBENCH_COLORS.pink_hover)
+_CYAN = QColor(WORKBENCH_COLORS.cyan)
+_WARNING = QColor(WORKBENCH_COLORS.warning)
+_DANGER = QColor(WORKBENCH_COLORS.danger)
+_TEXT_MAIN = QColor(WORKBENCH_COLORS.text)
+_TEXT_SOFT = QColor(WORKBENCH_COLORS.text_muted)
+_TEXT_DIM = QColor(WORKBENCH_COLORS.text_dim)
+_BLACK = QColor(WORKBENCH_COLORS.canvas)
 
 
 class _BugTrackerWatermarkOverlay(QWidget):
@@ -128,14 +133,18 @@ class _BugTrackerWatermarkOverlay(QWidget):
 
 
 class BugTrackerWindow(QWidget):
-    def __init__(self) -> None:
+    def __init__(self, embedded: bool = False) -> None:
         super().__init__()
-        self.setWindowTitle("bug跟踪")
-        self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
-        self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setMinimumSize(scale_px(1040, min_abs=940), scale_px(660, min_abs=580))
-        self.resize(scale_px(1180, min_abs=1020), scale_px(760, min_abs=640))
-        get_layer_manager().register(self, Layer.PANEL, name="BugTrackerWindow")
+        self.setObjectName("BugTrackerWindow")
+        self._embedded = bool(embedded)
+        self._external_close_callback = None
+        self.setWindowTitle("故障跟踪")
+        if not self._embedded:
+            self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+            self.setAttribute(Qt.WA_TranslucentBackground)
+            self.setMinimumSize(scale_px(1040, min_abs=940), scale_px(660, min_abs=580))
+            self.resize(scale_px(1180, min_abs=1020), scale_px(760, min_abs=640))
+            get_layer_manager().register(self, Layer.PANEL, name="BugTrackerWindow")
 
         self._store = BugTrackerLogStore()
         self._records: list[BugRecord] = []
@@ -144,6 +153,12 @@ class BugTrackerWindow(QWidget):
         self._selected_record_key = ""
         self._dragging = False
         self._drag_offset = QPoint()
+        self._fading_out = False
+        self._allow_hide_once = False
+        self._opacity_anim = QPropertyAnimation(self, b'windowOpacity', self)
+        self._opacity_anim.setDuration(UI.get('ui_fade_duration', 180))
+        self._opacity_anim.setEasingCurve(QEasingCurve.InOutQuad)
+        self._opacity_anim.finished.connect(self._on_opacity_anim_finished)
         self._snapshot_token = None
         self._level_filters = {
             "info": True,
@@ -167,13 +182,13 @@ class BugTrackerWindow(QWidget):
         self._header.setFixedHeight(scale_px(58, min_abs=50))
         self._header.installEventFilter(self)
 
-        self._title = QLabel("bug跟踪", self._header)
+        self._title = QLabel("故障跟踪", self._header)
         self._title.setFont(self._title_font)
-        self._title.setStyleSheet(f"color: rgb({_PINK.red()}, {_PINK.green()}, {_PINK.blue()});")
+        self._title.setObjectName("BugTrackerTitle")
 
         self._subtitle = QLabel("自动载入全部 app 日志，按启动实例分类，实时查看并定位 INFO / WARN / ERROR", self._header)
         self._subtitle.setFont(self._subtitle_font)
-        self._subtitle.setStyleSheet(f"color: rgb({_TEXT_SOFT.red()}, {_TEXT_SOFT.green()}, {_TEXT_SOFT.blue()});")
+        self._subtitle.setObjectName("BugTrackerSubtitle")
 
         header_text = QVBoxLayout()
         header_text.setContentsMargins(0, 0, 0, 0)
@@ -184,16 +199,27 @@ class BugTrackerWindow(QWidget):
         header_actions = QHBoxLayout()
         header_actions.setContentsMargins(0, 0, 0, 0)
         header_actions.setSpacing(scale_px(8, min_abs=6))
-        header_actions.addWidget(self._make_button("刷新", self._refresh_now))
-        header_actions.addWidget(self._make_button("打开源码", self._open_selected_source))
-        header_actions.addWidget(self._make_button("复制详情", self._copy_selected_detail))
-        header_actions.addWidget(self._make_button("关闭", self.close))
+        self._header_refresh_button = self._make_button("刷新", self._refresh_now)
+        self._header_source_button = self._make_button("打开源码", self._open_selected_source)
+        self._header_copy_button = self._make_button("复制详情", self._copy_selected_detail)
+        header_actions.addWidget(self._header_refresh_button)
+        header_actions.addWidget(self._header_source_button)
+        header_actions.addWidget(self._header_copy_button)
+        self._header_close_button = self._make_button("关闭", self._request_close)
+        header_actions.addWidget(self._header_close_button)
 
         header_layout = QHBoxLayout(self._header)
         header_layout.setContentsMargins(scale_px(14, min_abs=10), scale_px(10, min_abs=8), scale_px(14, min_abs=10), scale_px(10, min_abs=8))
         header_layout.setSpacing(scale_px(14, min_abs=10))
         header_layout.addLayout(header_text, 1)
         header_layout.addLayout(header_actions, 0)
+        if self._embedded:
+            self._title.hide()
+            self._subtitle.hide()
+            self._header_source_button.hide()
+            self._header_copy_button.hide()
+            self._header_close_button.hide()
+            self._header.setFixedHeight(scale_px(42, min_abs=38))
 
         self._card_total = self._make_stat_card("当前分类日志")
         self._card_today = self._make_stat_card("今日日志")
@@ -213,11 +239,11 @@ class BugTrackerWindow(QWidget):
         filter_layout.setSpacing(scale_px(8, min_abs=6))
         filter_label = QLabel("等级筛选", self._filter_bar)
         filter_label.setFont(self._ui_bold_font)
-        filter_label.setStyleSheet(f"color: rgb({_TEXT_SOFT.red()}, {_TEXT_SOFT.green()}, {_TEXT_SOFT.blue()});")
+        filter_label.setObjectName("BugTrackerFilterLabel")
         filter_layout.addWidget(filter_label)
-        self._filter_info_btn = self._make_filter_button("INFO", "info", QColor(140, 210, 255))
-        self._filter_warn_btn = self._make_filter_button("WARN", "warn", QColor(255, 226, 120))
-        self._filter_error_btn = self._make_filter_button("ERROR", "error", QColor(255, 130, 140))
+        self._filter_info_btn = self._make_filter_button("INFO", "info")
+        self._filter_warn_btn = self._make_filter_button("WARN", "warn")
+        self._filter_error_btn = self._make_filter_button("ERROR", "error")
         filter_layout.addWidget(self._filter_info_btn)
         filter_layout.addWidget(self._filter_warn_btn)
         filter_layout.addWidget(self._filter_error_btn)
@@ -226,17 +252,20 @@ class BugTrackerWindow(QWidget):
         filter_layout.addWidget(self._export_zip_btn)
 
         self._instance_list = QListWidget(self)
+        self._instance_list.setObjectName("BugTrackerList")
         self._instance_list.setFont(self._ui_font)
         self._instance_list.setSelectionMode(QListWidget.SingleSelection)
         self._instance_list.currentItemChanged.connect(self._on_instance_changed)
 
         self._error_list = QListWidget(self)
+        self._error_list.setObjectName("BugTrackerList")
         self._error_list.setFont(self._ui_font)
         self._error_list.setSelectionMode(QListWidget.SingleSelection)
         self._error_list.currentItemChanged.connect(self._on_error_changed)
         self._error_list.itemDoubleClicked.connect(lambda _: self._open_selected_source())
 
         self._detail = QTextEdit(self)
+        self._detail.setObjectName("BugTrackerDetail")
         self._detail.setReadOnly(True)
         self._detail.setFont(self._ui_font)
 
@@ -251,14 +280,22 @@ class BugTrackerWindow(QWidget):
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 2)
         splitter.setStretchFactor(2, 2)
+        splitter.setChildrenCollapsible(False)
+        left_panel.setMinimumWidth(scale_px(150, min_abs=130))
+        center_panel.setMinimumWidth(scale_px(220, min_abs=190))
+        right_panel.setMinimumWidth(scale_px(260, min_abs=220))
+        splitter.setSizes([scale_px(180), scale_px(300), scale_px(340)])
+        self._content_splitter = splitter
 
         self._status = QLabel("就绪", self)
         self._status.setFont(self._ui_font)
-        self._status.setStyleSheet(f"color: rgb({_TEXT_SOFT.red()}, {_TEXT_SOFT.green()}, {_TEXT_SOFT.blue()});")
+        self._status.setObjectName("BugTrackerStatus")
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(scale_px(8, min_abs=6), scale_px(8, min_abs=6), scale_px(8, min_abs=6), scale_px(8, min_abs=6))
-        root.setSpacing(scale_px(0, min_abs=0))
+        self._root_layout = root
+        root_margin = scale_px(10, min_abs=8) if self._embedded else scale_px(12, min_abs=10)
+        root.setContentsMargins(root_margin, root_margin, root_margin, root_margin)
+        root.setSpacing(scale_px(7, min_abs=5))
         root.addWidget(self._header)
         root.addLayout(cards)
         root.addWidget(self._filter_bar)
@@ -267,70 +304,126 @@ class BugTrackerWindow(QWidget):
 
         self._watermark_overlay = _BugTrackerWatermarkOverlay(self)
         self._watermark_overlay.setGeometry(self.rect())
+        self._watermark_overlay.setVisible(not self._embedded)
         self._watermark_overlay.raise_()
 
         self.setStyleSheet(
             f"""
-            QWidget {{
+            QWidget#BugTrackerWindow {{
                 color: rgb({_TEXT_MAIN.red()}, {_TEXT_MAIN.green()}, {_TEXT_MAIN.blue()});
                 background: rgb({_BG.red()}, {_BG.green()}, {_BG.blue()});
             }}
-            #BugTrackerHeader, QFrame#BugTrackerPanel {{
-                background: rgb({_HEADER_BG.red()}, {_HEADER_BG.green()}, {_HEADER_BG.blue()});
-                border: 2px solid rgb({_BORDER.red()}, {_BORDER.green()}, {_BORDER.blue()});
+            QWidget#BugTrackerWindow QWidget {{
+                color: rgb({_TEXT_MAIN.red()}, {_TEXT_MAIN.green()}, {_TEXT_MAIN.blue()});
+                background: transparent;
             }}
-            QListWidget, QTextEdit {{
+            QWidget#BugTrackerWindow QLabel {{
+                background: transparent;
+            }}
+            QFrame#BugTrackerHeader, QFrame#BugTrackerPanel, QFrame#BugTrackerCard {{
+                background: rgb({_HEADER_BG.red()}, {_HEADER_BG.green()}, {_HEADER_BG.blue()});
+                border: 1px solid rgb({_BORDER.red()}, {_BORDER.green()}, {_BORDER.blue()});
+                border-radius: {scale_px(4, min_abs=3)}px;
+            }}
+            QFrame#BugTrackerCard {{
+                background: rgb({_PANEL_BG.red()}, {_PANEL_BG.green()}, {_PANEL_BG.blue()});
+            }}
+            QLabel#BugTrackerTitle, QLabel#BugTrackerStatValue {{
+                color: rgb({_TEXT_MAIN.red()}, {_TEXT_MAIN.green()}, {_TEXT_MAIN.blue()});
+            }}
+            QLabel#BugTrackerSubtitle, QLabel#BugTrackerFilterLabel,
+            QLabel#BugTrackerStatTitle, QLabel#BugTrackerStatus {{
+                color: rgb({_TEXT_SOFT.red()}, {_TEXT_SOFT.green()}, {_TEXT_SOFT.blue()});
+            }}
+            QLabel#BugTrackerPanelTitle {{
+                color: rgb({_TEXT_MAIN.red()}, {_TEXT_MAIN.green()}, {_TEXT_MAIN.blue()});
+                font-weight: 700;
+            }}
+            QLabel#BugTrackerStatus {{
+                background: transparent;
+                border: 1px solid rgb({_BORDER.red()}, {_BORDER.green()}, {_BORDER.blue()});
+                border-radius: {scale_px(4, min_abs=3)}px;
+                padding: {scale_px(7, min_abs=5)}px {scale_px(9, min_abs=7)}px;
+            }}
+            QListWidget#BugTrackerList, QTextEdit#BugTrackerDetail {{
                 background: rgb({_PANEL_BG.red()}, {_PANEL_BG.green()}, {_PANEL_BG.blue()});
                 color: rgb({_TEXT_MAIN.red()}, {_TEXT_MAIN.green()}, {_TEXT_MAIN.blue()});
-                border: 1px solid rgb({_SOFT_BORDER.red()}, {_SOFT_BORDER.green()}, {_SOFT_BORDER.blue()});
+                border: 1px solid rgb({_BORDER.red()}, {_BORDER.green()}, {_BORDER.blue()});
+                border-radius: {scale_px(4, min_abs=3)}px;
                 padding: 4px;
             }}
-            QListWidget::item {{
+            QListWidget#BugTrackerList::item {{
                 background: rgb({_PANEL_BG.red()}, {_PANEL_BG.green()}, {_PANEL_BG.blue()});
-                padding: 6px 4px;
-                border-bottom: 1px solid rgba({_SOFT_BORDER.red()}, {_SOFT_BORDER.green()}, {_SOFT_BORDER.blue()}, 110);
+                padding: {scale_px(7, min_abs=5)}px {scale_px(6, min_abs=4)}px;
+                border-bottom: 1px solid rgb({_BORDER.red()}, {_BORDER.green()}, {_BORDER.blue()});
             }}
-            QListWidget::item:selected {{
-                background: rgb({_HEADER_BG.red()}, {_HEADER_BG.green()}, {_HEADER_BG.blue()});
-                border: 1px solid rgb({_PINK.red()}, {_PINK.green()}, {_PINK.blue()});
-                border-bottom: 1px solid rgb({_PINK.red()}, {_PINK.green()}, {_PINK.blue()});
+            QListWidget#BugTrackerList::item:selected {{
+                background: rgb({_MID.red()}, {_MID.green()}, {_MID.blue()});
+                color: rgb({_PINK.red()}, {_PINK.green()}, {_PINK.blue()});
             }}
             QPushButton {{
                 background: rgb({_PANEL_BG.red()}, {_PANEL_BG.green()}, {_PANEL_BG.blue()});
                 color: rgb({_TEXT_MAIN.red()}, {_TEXT_MAIN.green()}, {_TEXT_MAIN.blue()});
-                border: 1px solid rgb({_SOFT_BORDER.red()}, {_SOFT_BORDER.green()}, {_SOFT_BORDER.blue()});
-                padding: 6px 12px;
-                min-height: 26px;
+                border: 1px solid rgb({_BORDER.red()}, {_BORDER.green()}, {_BORDER.blue()});
+                border-radius: {scale_px(4, min_abs=3)}px;
+                padding: 0px {scale_px(11, min_abs=9)}px;
+                min-height: {scale_px(32, min_abs=28)}px;
                 font-weight: bold;
             }}
             QPushButton:hover {{
                 background: rgb({_MID.red()}, {_MID.green()}, {_MID.blue()});
-                color: rgb({_BLACK.red()}, {_BLACK.green()}, {_BLACK.blue()});
-                border: 1px solid rgb({_PINK.red()}, {_PINK.green()}, {_PINK.blue()});
+                border-color: rgb({_CYAN.red()}, {_CYAN.green()}, {_CYAN.blue()});
             }}
             QPushButton:pressed {{
-                background: rgb({_PINK_SOFT.red()}, {_PINK_SOFT.green()}, {_PINK_SOFT.blue()});
+                background: rgb({_CYAN.red()}, {_CYAN.green()}, {_CYAN.blue()});
                 color: rgb({_BLACK.red()}, {_BLACK.green()}, {_BLACK.blue()});
             }}
-            QFrame#BugTrackerCard {{
-                background: rgb({_PANEL_BG.red()}, {_PANEL_BG.green()}, {_PANEL_BG.blue()});
-                border: 2px solid rgb({_BORDER.red()}, {_BORDER.green()}, {_BORDER.blue()});
-            }}
             QPushButton[filterButton="true"] {{
-                min-width: 72px;
+                min-width: {scale_px(66, min_abs=58)}px;
+            }}
+            QPushButton[filterButton="true"]:checked {{
+                color: rgb({_BLACK.red()}, {_BLACK.green()}, {_BLACK.blue()});
+            }}
+            QPushButton[filterTone="info"]:checked {{
+                background: rgb({_CYAN.red()}, {_CYAN.green()}, {_CYAN.blue()});
+                border-color: rgb({_CYAN.red()}, {_CYAN.green()}, {_CYAN.blue()});
+            }}
+            QPushButton[filterTone="warn"]:checked {{
+                background: rgb({_WARNING.red()}, {_WARNING.green()}, {_WARNING.blue()});
+                border-color: rgb({_WARNING.red()}, {_WARNING.green()}, {_WARNING.blue()});
+            }}
+            QPushButton[filterTone="error"]:checked {{
+                background: rgb({_DANGER.red()}, {_DANGER.green()}, {_DANGER.blue()});
+                border-color: rgb({_DANGER.red()}, {_DANGER.green()}, {_DANGER.blue()});
+            }}
+            QPushButton[primary="true"] {{
+                background: rgb({_CYAN.red()}, {_CYAN.green()}, {_CYAN.blue()});
+                border-color: rgb({_CYAN.red()}, {_CYAN.green()}, {_CYAN.blue()});
+                color: rgb({_BLACK.red()}, {_BLACK.green()}, {_BLACK.blue()});
+            }}
+            QPushButton[primary="true"]:hover {{
+                background: rgb({_PINK_SOFT.red()}, {_PINK_SOFT.green()}, {_PINK_SOFT.blue()});
+                border-color: rgb({_PINK_SOFT.red()}, {_PINK_SOFT.green()}, {_PINK_SOFT.blue()});
             }}
             QSplitter::handle {{
-                background: rgb({_HEADER_BG.red()}, {_HEADER_BG.green()}, {_HEADER_BG.blue()});
-                width: 2px;
+                background: rgb({_BORDER.red()}, {_BORDER.green()}, {_BORDER.blue()});
+                width: {scale_px(4, min_abs=3)}px;
+            }}
+            QSplitter::handle:hover {{
+                background: rgb({_CYAN.red()}, {_CYAN.green()}, {_CYAN.blue()});
             }}
             QScrollBar:vertical {{
                 background: transparent;
-                width: 10px;
+                width: {scale_px(10, min_abs=8)}px;
                 margin: 4px 2px 4px 2px;
             }}
             QScrollBar::handle:vertical {{
+                background: rgb({_SOFT_BORDER.red()}, {_SOFT_BORDER.green()}, {_SOFT_BORDER.blue()});
+                min-height: {scale_px(28, min_abs=22)}px;
+                border-radius: {scale_px(3, min_abs=2)}px;
+            }}
+            QScrollBar::handle:vertical:hover {{
                 background: rgb({_PINK.red()}, {_PINK.green()}, {_PINK.blue()});
-                min-height: 28px;
             }}
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
                 height: 0px;
@@ -340,12 +433,16 @@ class BugTrackerWindow(QWidget):
             }}
             QScrollBar:horizontal {{
                 background: transparent;
-                height: 10px;
+                height: {scale_px(10, min_abs=8)}px;
                 margin: 2px 4px 2px 4px;
             }}
             QScrollBar::handle:horizontal {{
+                background: rgb({_SOFT_BORDER.red()}, {_SOFT_BORDER.green()}, {_SOFT_BORDER.blue()});
+                min-width: {scale_px(28, min_abs=22)}px;
+                border-radius: {scale_px(3, min_abs=2)}px;
+            }}
+            QScrollBar::handle:horizontal:hover {{
                 background: rgb({_PINK.red()}, {_PINK.green()}, {_PINK.blue()});
-                min-width: 28px;
             }}
             QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
                 width: 0px;
@@ -363,37 +460,98 @@ class BugTrackerWindow(QWidget):
         self._reload_watermark_texts()
         self._reload_snapshot()
 
+    def set_embedded_mode(self, embedded: bool = True) -> None:
+        self._embedded = bool(embedded)
+        if self._embedded:
+            self.setWindowFlags(Qt.Widget)
+            self.setMinimumSize(0, 0)
+            self.setMaximumSize(16777215, 16777215)
+        if hasattr(self, "_title"):
+            self._title.setVisible(not self._embedded)
+            self._subtitle.setVisible(not self._embedded)
+            self._header_source_button.setVisible(not self._embedded)
+            self._header_copy_button.setVisible(not self._embedded)
+            self._header_close_button.setVisible(not self._embedded)
+            self._header.setFixedHeight(scale_px(42, min_abs=38) if self._embedded else scale_px(58, min_abs=50))
+        if hasattr(self, "_root_layout"):
+            margin = scale_px(10, min_abs=8) if self._embedded else scale_px(12, min_abs=10)
+            self._root_layout.setContentsMargins(margin, margin, margin, margin)
+        if hasattr(self, "_watermark_overlay"):
+            self._watermark_overlay.setVisible(not self._embedded)
+
+    def fade_in(self) -> None:
+        if self._embedded:
+            self.setWindowOpacity(1.0)
+            self.show()
+            return
+        self._opacity_anim.stop()
+        self._fading_out = False
+        self._allow_hide_once = False
+        get_layer_manager().register(self, Layer.PANEL, name='BugTrackerWindow')
+        self.setWindowOpacity(0.0)
+        self.show()
+        self.raise_()
+        self.activateWindow()
+        self._opacity_anim.setStartValue(0.0)
+        self._opacity_anim.setEndValue(apply_ui_opacity(1.0))
+        self._opacity_anim.start()
+
+    def fade_out(self) -> None:
+        if self._external_close_callback is not None:
+            self._external_close_callback()
+            return
+        if self._fading_out or not self.isVisible():
+            return
+        self._fading_out = True
+        self._opacity_anim.stop()
+        current_opacity = self.windowOpacity()
+        self._opacity_anim.setStartValue(max(0.0, min(1.0, float(current_opacity))))
+        self._opacity_anim.setEndValue(0.0)
+        self._opacity_anim.start()
+
+    def hide(self) -> None:
+        if self._allow_hide_once or self._fading_out or not self.isVisible():
+            super().hide()
+            return
+        self.fade_out()
+
+    def _on_opacity_anim_finished(self) -> None:
+        if not self._fading_out:
+            return
+        self._fading_out = False
+        self._poll_timer.stop()
+        try:
+            get_layer_manager().unregister(self)
+        except Exception:
+            pass
+        self._allow_hide_once = True
+        try:
+            super().hide()
+        finally:
+            self._allow_hide_once = False
+            self.setWindowOpacity(apply_ui_opacity(1.0))
+
+    def set_external_close_callback(self, callback) -> None:
+        self._external_close_callback = callback
+
+    def _request_close(self) -> None:
+        self.fade_out()
+
     def _make_button(self, text: str, slot) -> QPushButton:
         btn = QPushButton(text, self._header)
         btn.setFont(self._ui_bold_font)
         btn.clicked.connect(slot)
         return btn
 
-    def _make_filter_button(self, text: str, level_key: str, active_color: QColor) -> QPushButton:
+    def _make_filter_button(self, text: str, level_key: str) -> QPushButton:
         btn = QPushButton(text, self._filter_bar)
         btn.setFont(self._ui_bold_font)
         btn.setCheckable(True)
         btn.setChecked(bool(self._level_filters.get(level_key, True)))
         btn.setProperty("filterButton", True)
+        btn.setProperty("filterTone", level_key)
         btn.clicked.connect(lambda checked, key=level_key: self._on_toggle_level_filter(key, checked))
-        self._apply_filter_button_style(btn, active_color)
         return btn
-
-    def _apply_filter_button_style(self, button: QPushButton, active_color: QColor) -> None:
-        checked = bool(button.isChecked())
-        bg = active_color if checked else _PANEL_BG
-        fg = _BLACK if checked else _TEXT_MAIN
-        border = active_color if checked else _SOFT_BORDER
-        button.setStyleSheet(
-            "QPushButton {"
-            f"background: rgb({bg.red()}, {bg.green()}, {bg.blue()});"
-            f"color: rgb({fg.red()}, {fg.green()}, {fg.blue()});"
-            f"border: 1px solid rgb({border.red()}, {border.green()}, {border.blue()});"
-            "padding: 6px 12px;"
-            "min-height: 26px;"
-            "font-weight: bold;"
-            "}"
-        )
 
     def _make_stat_card(self, title: str) -> QFrame:
         card = QFrame(self)
@@ -403,10 +561,10 @@ class BugTrackerWindow(QWidget):
         layout.setSpacing(scale_px(4, min_abs=2))
         title_label = QLabel(title, card)
         title_label.setFont(self._ui_font)
-        title_label.setStyleSheet(f"color: rgb({_TEXT_SOFT.red()}, {_TEXT_SOFT.green()}, {_TEXT_SOFT.blue()}); letter-spacing: 0.5px;")
+        title_label.setObjectName("BugTrackerStatTitle")
         value_label = QLabel("-", card)
         value_label.setFont(self._title_font)
-        value_label.setStyleSheet(f"color: rgb({_TEXT_MAIN.red()}, {_TEXT_MAIN.green()}, {_TEXT_MAIN.blue()});")
+        value_label.setObjectName("BugTrackerStatValue")
         layout.addWidget(title_label)
         layout.addWidget(value_label)
         card._value_label = value_label  # type: ignore[attr-defined]
@@ -420,7 +578,7 @@ class BugTrackerWindow(QWidget):
         layout.setSpacing(scale_px(4, min_abs=2))
         label = QLabel(title, frame)
         label.setFont(self._ui_bold_font)
-        label.setStyleSheet(f"color: rgb({_PINK.red()}, {_PINK.green()}, {_PINK.blue()}); letter-spacing: 0.6px;")
+        label.setObjectName("BugTrackerPanelTitle")
         layout.addWidget(label)
         layout.addWidget(widget, 1)
         return frame
@@ -433,7 +591,7 @@ class BugTrackerWindow(QWidget):
         layout.setSpacing(scale_px(4, min_abs=2))
         label = QLabel("详情 / 定位", frame)
         label.setFont(self._ui_bold_font)
-        label.setStyleSheet(f"color: rgb({_PINK.red()}, {_PINK.green()}, {_PINK.blue()}); letter-spacing: 0.6px;")
+        label.setObjectName("BugTrackerPanelTitle")
         layout.addWidget(label)
         layout.addWidget(self._detail, 1)
         button_row = QHBoxLayout()
@@ -454,26 +612,8 @@ class BugTrackerWindow(QWidget):
     def _make_export_button(self, text: str) -> QPushButton:
         btn = QPushButton(text, self._filter_bar)
         btn.setFont(self._ui_bold_font)
+        btn.setProperty("primary", True)
         btn.clicked.connect(self._export_current_filtered_logs)
-        btn.setStyleSheet(
-            "QPushButton {"
-            "background: rgb(170, 220, 180);"
-            "color: rgb(20, 28, 22);"
-            "border: 1px solid rgb(120, 160, 128);"
-            "padding: 6px 12px;"
-            "min-height: 26px;"
-            "font-weight: bold;"
-            "}"
-            "QPushButton:hover {"
-            "background: rgb(195, 235, 200);"
-            "color: rgb(20, 28, 22);"
-            "border: 1px solid rgb(140, 182, 148);"
-            "}"
-            "QPushButton:pressed {"
-            "background: rgb(150, 205, 160);"
-            "color: rgb(20, 28, 22);"
-            "}"
-        )
         return btn
 
     def eventFilter(self, obj, event) -> bool:
@@ -496,9 +636,7 @@ class BugTrackerWindow(QWidget):
         x = geo.x() + (geo.width() - self.width()) // 2
         y = geo.y() + (geo.height() - self.height()) // 2
         self.move(max(geo.left(), x), max(geo.top(), y))
-        self.show()
-        self.raise_()
-        self.activateWindow()
+        self.fade_in()
         self._reload_watermark_texts()
         self._poll_timer.start()
 
@@ -644,13 +782,6 @@ class BugTrackerWindow(QWidget):
 
     def _on_toggle_level_filter(self, level_key: str, checked: bool) -> None:
         self._level_filters[level_key] = bool(checked)
-        button_map = {
-            "info": (self._filter_info_btn, QColor(140, 210, 255)),
-            "warn": (self._filter_warn_btn, QColor(255, 226, 120)),
-            "error": (self._filter_error_btn, QColor(255, 130, 140)),
-        }
-        button, color = button_map[level_key]
-        self._apply_filter_button_style(button, color)
         self._refresh_stats()
         self._refresh_error_list()
         self._update_status_summary()
@@ -735,13 +866,11 @@ class BugTrackerWindow(QWidget):
         return "DEBUG"
 
     def _color_for_level(self, levelno: int) -> QColor:
-        if levelno >= 50:
-            return QColor(255, 120, 140)
         if levelno >= 40:
-            return QColor(255, 120, 140)
+            return QColor(_DANGER)
         if levelno >= 30:
-            return QColor(255, 220, 120)
-        return QColor(140, 210, 255)
+            return QColor(_WARNING)
+        return QColor(_CYAN)
 
     def _render_detail(self, record: BugRecord) -> str:
         parts = [

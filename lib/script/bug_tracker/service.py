@@ -64,23 +64,115 @@ class BugTrackerService:
         self._process: Optional[subprocess.Popen] = None
         self._started_by_app = False
         self._ipc_ready = False
+        self._startup_in_progress = False
+        self._stopping = False
 
     def _on_open_request(self, event: Event) -> None:
         del event
         self.launch_or_focus()
 
     def launch_or_focus(self) -> bool:
-        if self._send_show_to_existing():
-            return True
-        return self._launch_process()
+        with self._proc_lock:
+            if self._stopping:
+                return False
+            if self._startup_in_progress:
+                return True
+            proc = self._process
+            if proc is not None and proc.poll() is None:
+                worker = self._send_show_command
+            else:
+                self._startup_in_progress = True
+                worker = self._ensure_process
 
-    def _send_show_to_existing(self) -> bool:
-        if _send_command("SHOW"):
-            return True
-        proc = self._tracked_process()
-        if proc is not None and proc.poll() is None:
-            return True
-        return False
+        threading.Thread(
+            target=worker,
+            name='bug-tracker-launch',
+            daemon=True,
+        ).start()
+        return True
+
+    def _send_show_command(self) -> None:
+        if _send_command('SHOW'):
+            with self._proc_lock:
+                self._ipc_ready = True
+
+    def _ensure_process(self) -> None:
+        if _send_command('SHOW'):
+            self._mark_startup_finished(ipc_ready=True)
+            return
+
+        with self._proc_lock:
+            if self._stopping:
+                self._startup_in_progress = False
+                return
+            proc = self._process
+            if proc is not None and proc.poll() is None:
+                pass
+            else:
+                proc = None
+
+        if proc is None:
+            env = os.environ.copy()
+            env['BUG_TRACKER_IPC_PORT'] = str(_ipc_port())
+            env['BUG_TRACKER_EVENT_LOG'] = str(get_bug_tracker_event_log_path())
+            env['PYTHONIOENCODING'] = 'utf-8'
+            env.setdefault('PYTHONUNBUFFERED', '1')
+
+            cmd = [sys.executable, '-m', 'lib.script.bug_tracker']
+            try:
+                proc = subprocess.Popen(
+                    cmd,
+                    cwd=str(_project_root()),
+                    env=env,
+                    **_hidden_console_kwargs(),
+                )
+                self._set_tracked_process(proc)
+            except Exception as exc:
+                self._mark_startup_finished()
+                self._publish_startup_failure(f'启动 bug 跟踪器失败: {exc}')
+                return
+
+        self._wait_for_ipc(proc)
+
+    def _wait_for_ipc(self, proc: subprocess.Popen) -> None:
+        deadline = time.monotonic() + _STARTUP_WAIT_SECS
+        while time.monotonic() < deadline:
+            with self._proc_lock:
+                if self._stopping:
+                    self._startup_in_progress = False
+                    return
+            if _send_command('SHOW', timeout=0.4):
+                self._mark_startup_finished(ipc_ready=True)
+                return
+            if proc.poll() is not None:
+                break
+            time.sleep(0.2)
+
+        if proc.poll() is not None:
+            self._clear_tracked_process(proc)
+            self._mark_startup_finished()
+            logger.error('bug tracker exited before IPC became ready: %s', proc.returncode)
+            self._publish_startup_failure('bug 跟踪器启动失败，请检查日志。')
+            return
+
+        self._mark_startup_finished()
+        self._ec.publish(Event(EventType.INFORMATION, {
+            'text': 'bug 跟踪器已启动，但 IPC 尚未就绪。',
+            'min': 8,
+            'max': 160,
+        }))
+
+    def _mark_startup_finished(self, *, ipc_ready: bool = False) -> None:
+        with self._proc_lock:
+            self._startup_in_progress = False
+            self._ipc_ready = ipc_ready
+
+    def _publish_startup_failure(self, text: str) -> None:
+        self._ec.publish(Event(EventType.INFORMATION, {
+            'text': text,
+            'min': 12,
+            'max': 180,
+        }))
 
     def _tracked_process(self) -> Optional[subprocess.Popen]:
         with self._proc_lock:
@@ -90,69 +182,19 @@ class BugTrackerService:
         with self._proc_lock:
             self._process = proc
             self._started_by_app = True
+            self._ipc_ready = False
 
-    def _clear_tracked_process(self) -> None:
+    def _clear_tracked_process(self, expected: Optional[subprocess.Popen] = None) -> None:
         with self._proc_lock:
+            if expected is not None and self._process is not expected:
+                return
             self._process = None
             self._started_by_app = False
-
-    def _launch_process(self) -> bool:
-        with self._proc_lock:
-            proc = self._process
-            if proc is not None and proc.poll() is None:
-                return True
-
-        env = os.environ.copy()
-        env["BUG_TRACKER_IPC_PORT"] = str(_ipc_port())
-        env["BUG_TRACKER_EVENT_LOG"] = str(get_bug_tracker_event_log_path())
-        env["PYTHONIOENCODING"] = "utf-8"
-        env.setdefault("PYTHONUNBUFFERED", "1")
-
-        cmd = [sys.executable, "-m", "lib.script.bug_tracker"]
-        try:
-            proc = subprocess.Popen(
-                cmd,
-                cwd=str(_project_root()),
-                env=env,
-                **_hidden_console_kwargs(),
-            )
-            self._set_tracked_process(proc)
-        except Exception as exc:
-            logger.error("启动 bug 跟踪器失败: %s", exc)
-            self._ec.publish(Event(EventType.INFORMATION, {
-                "text": f"启动 bug 跟踪器失败: {exc}",
-                "min": 12,
-                "max": 180,
-            }))
-            return False
-
-        deadline = time.monotonic() + _STARTUP_WAIT_SECS
-        while time.monotonic() < deadline:
-            if _send_command("SHOW", timeout=0.4):
-                self._ipc_ready = True
-                return True
-            if proc.poll() is not None:
-                break
-            time.sleep(0.2)
-
-        if proc.poll() is not None:
-            self._clear_tracked_process()
-            logger.error("bug 跟踪器进程提前退出: %s", proc.returncode)
-            self._ec.publish(Event(EventType.INFORMATION, {
-                "text": "bug 跟踪器启动失败，请检查日志。",
-                "min": 12,
-                "max": 180,
-            }))
-            return False
-
-        self._ec.publish(Event(EventType.INFORMATION, {
-            "text": "bug 跟踪器已启动，但 IPC 尚未就绪。",
-            "min": 8,
-            "max": 160,
-        }))
-        return True
+            self._ipc_ready = False
 
     def cleanup(self) -> None:
+        with self._proc_lock:
+            self._stopping = True
         self._ec.unsubscribe(EventType.BUG_TRACKER_OPEN_REQUEST, self._on_open_request)
         proc, started = self._take_tracked_process()
         if started and proc is not None:

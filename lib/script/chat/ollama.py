@@ -52,6 +52,8 @@ class OllamaManager(_ApiClientMixin, OllamaBootstrapMixin, OllamaStateMixin, Oll
 
         # 正在后台下载的模型集合（去重保护）
         self._pulling_models: set = set()
+        self._pull_response_lock = threading.Lock()
+        self._pull_response = None
         self._cli_refresh_started: bool = False
 
         # 订阅生命周期事件

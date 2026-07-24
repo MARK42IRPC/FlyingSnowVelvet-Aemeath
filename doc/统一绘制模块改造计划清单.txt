@@ -1,5 +1,11 @@
-统一绘制模块改造计划清单
+统一绘制模块改造计划清单（历史归档）
 ========================
+
+归档说明
+--------
+- 本文件用于追溯统一绘制与层级系统的迁移过程。
+- 当前边界以 `doc/维护手册.md` 及源码为准。
+- 文中的阶段、兼容包装和待办描述不再代表当前实施状态。
 
 推进进度
 --------
@@ -8,7 +14,7 @@
 已完成：
 1. 新增 lib/core/layer.py，定义统一 Layer 枚举与层级工具函数。
 2. 新增 lib/core/layer_manager.py，集中管理顶层窗口 layer/z/注册顺序与 Win32 置顶重申。
-3. 重构 lib/core/topmost_manager.py 为兼容包装，旧 register()/enforce_*() 调用转发到 LayerManager。
+3. 已完成旧调用迁移并删除 lib/core/topmost_manager.py，层级操作统一使用 LayerManager。
 4. 接入 PetWindow 到 Layer.MAIN_PET。
 5. 接入 ParticleOverlay 到 Layer.PARTICLE，并移除核心路径裸 raise_()。
 6. 接入 EffectOverlay 到 Layer.EFFECT，并移除核心路径裸 raise_()。
@@ -24,7 +30,7 @@
 16. 清理核心顶层窗口路径中的裸 raise_()，改由 LayerManager/TopmostManager 兼容入口调度。
 17. 新增 LayerManager.describe_snapshot()，支持输出当前窗口层级快照。
 18. 新增 #图层 调试命令，运行时可通过信息气泡查看已注册窗口栈。
-19. 业务模块层级注册已统一改走 lib/core/unified_draw.py，topmost_manager.py 保留为旧接口兼容层。
+19. 业务模块层级注册已统一改走 lib/core/unified_draw.py，旧 topmost_manager 兼容层已删除。
 20. 统一 DrawCore、RenderCore、LayerManager 排序键：先按 layer，再按 z；两者相同时按生成顺序后来居上。
 21. 明确组件接入规范：顶层窗口必须显式注册 Layer，禁止业务代码用裸 raise_() 抢占全局窗口层级。
 22. 新增 config/config_layer.py，支持集中设置全部 Layer 数值，无需挂载控制面板，修改后重启生效。
@@ -148,10 +154,8 @@
    - 注册到 Layer.EFFECT。
    - 保留内部 effect.z 排序，同时纳入全局层级。
 
-4. TopmostManager
-   - 文件：lib/core/topmost_manager.py
-   - 改造成 LayerManager 的兼容包装，或由 LayerManager 复用其 Win32 API 代码。
-   - 保留 register()/enforce_on_frame()/enforce_now()/enforce_burst()，但内部转发到 LayerManager。
+4. 旧 TopmostManager（已完成）
+   - 所有调用方已迁移到 LayerManager，兼容包装已删除。
 
 第二阶段：主绘制请求排序
 1. DrawRequest

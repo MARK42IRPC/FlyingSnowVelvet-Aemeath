@@ -34,7 +34,9 @@ def _relative_href(path: Path) -> str:
 def _render_cards(paths: list[Path]) -> str:
     cards: list[str] = []
     for path in paths:
-        text = path.read_text(encoding="utf-8")
+        text = "\n".join(
+            line.rstrip() for line in path.read_text(encoding="utf-8").splitlines()
+        )
         safe = html.escape(text)
         mtime = datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
         cards.append(
@@ -54,7 +56,12 @@ def _generate_portal() -> str:
     dev_contrib_files = sorted(CONTRIB_DIR.glob("开发贡献*.txt"))
     sponsor_files = sorted(CONTRIB_DIR.glob("感谢*.txt"))
     excluded_names = {path.name for path in [*dev_contrib_files, *sponsor_files]}
-    doc_files = sorted(path for path in DOC_DIR.glob("*.txt") if path.name not in excluded_names)
+    doc_files = sorted(
+        path
+        for pattern in ("*.md", "*.txt")
+        for path in DOC_DIR.glob(pattern)
+        if path.name not in excluded_names
+    )
 
     doc_cards = _render_cards(doc_files)
     contrib_cards = _render_cards(dev_contrib_files)

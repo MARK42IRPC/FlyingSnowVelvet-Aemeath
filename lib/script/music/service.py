@@ -6,14 +6,14 @@ Callers should avoid importing provider-specific modules directly.
 
 from __future__ import annotations
 
-import re
-from pathlib import Path
 from typing import Optional
 
 from config.config import CLOUD_MUSIC
+from config.general_user_settings import save_general_values
 from lib.core.logger import get_logger
 
 from .provider import MusicProvider
+from .backend import MusicPlaybackBackend
 from .providers import KugouMusicProvider, NetEaseMusicProvider, QQMusicProvider
 from .router import SourceRouter
 from .types import MusicTrack
@@ -22,9 +22,6 @@ logger = get_logger(__name__)
 
 _instance: Optional["MusicService"] = None
 _PROVIDER_ORDER: tuple[str, ...] = ("netease", "qq", "kugou")
-_CONFIG_DICT_FILE_MAP: dict[str, str] = {
-    "CLOUD_MUSIC": "config_music.py",
-}
 _PROVIDER_LABELS: dict[str, str] = {
     "netease": "NetEase Music",
     "qq": "QQ Music",
@@ -45,7 +42,7 @@ class MusicService:
             "qq": QQMusicProvider(),
             "kugou": KugouMusicProvider(),
         }
-        self._backend_manager = None
+        self._backend_manager: MusicPlaybackBackend | None = None
         self._router = SourceRouter()
         default_provider = _PROVIDER_ORDER[0]
         requested = str(CLOUD_MUSIC.get("provider", default_provider) or default_provider).strip().lower()
@@ -80,17 +77,17 @@ class MusicService:
         if normalized == self._provider_name:
             CLOUD_MUSIC["provider"] = normalized
             mgr = self._get_backend_manager()
-            if mgr is not None and hasattr(mgr, "refresh_login_status"):
+            if mgr is not None:
                 try:
                     mgr.refresh_login_status()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("[MusicService] 刷新登录状态失败: %s", exc)
             if persist:
                 self._persist_provider_config(normalized)
             return True
 
-        # netease / qq / kugou 鍏辩敤鍚屼竴涓?cloudmusic backend锛屽垏鎹㈠钩鍙颁笉閿€姣佸悗绔紝
-        # 浠ヤ繚鐣欏悇骞冲彴宸叉仮澶嶇殑鐧诲綍浼氳瘽锛岄伩鍏嶉绻佸垏鎹㈠悗閲嶅鐧诲綍銆?
+        # All built-in providers share one playback backend. Keep it alive when
+        # switching providers so restored login sessions are not discarded.
         old_provider = self._provider_name
         should_keep_backend = {old_provider, normalized}.issubset({"netease", "qq", "kugou"})
         if not should_keep_backend:
@@ -98,11 +95,11 @@ class MusicService:
         self._provider_name = normalized
         CLOUD_MUSIC["provider"] = normalized
         mgr = self.initialize()
-        if mgr is not None and hasattr(mgr, "refresh_login_status"):
+        if mgr is not None:
             try:
                 mgr.refresh_login_status()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("[MusicService] 切换平台后刷新登录状态失败: %s", exc)
         logger.info("[MusicService] Provider switched to %s", normalized)
         if persist:
             self._persist_provider_config(normalized)
@@ -183,7 +180,7 @@ class MusicService:
         return _PROVIDER_LABELS.get(normalized, normalized.upper() or "UNKNOWN")
 
     def format_track_display(self, track: MusicTrack, *, include_provider: bool | None = None) -> str:
-        title = str(track.title or "鏈煡姝屾洸").strip() or "鏈煡姝屾洸"
+        title = str(track.title or "未知歌曲").strip() or "未知歌曲"
         artist = str(track.artist or "").strip()
         display = str(track.display or "").strip()
         if not display:
@@ -244,15 +241,11 @@ class MusicService:
             try:
                 mgr.cleanup()
             except Exception as e:
-                logger.warning("[MusicService] 娓呯悊闊充箰 backend 澶辫触: %s", e)
+                logger.warning("[MusicService] 清理音乐后端失败: %s", e)
 
     def clear_all_history_and_login_data(self) -> dict[str, int]:
         """Clear music history and login data through the single music runtime."""
-        from lib.script.cloudmusic.manager import _clear_music_history_data, _clear_music_login_data
-
-        stats = _clear_music_history_data()
-        stats.update(_clear_music_login_data(runtime_manager=self._backend_manager))
-        return stats
+        return self.initialize().clear_user_data()
 
     def is_logged_in(self) -> bool:
         mgr = self._get_backend_manager()
@@ -269,8 +262,8 @@ class MusicService:
         if mgr is None:
             return 0.0
         try:
-            return float(getattr(mgr, "_volume", 0.0))
-        except Exception:
+            return float(mgr.volume)
+        except (TypeError, ValueError):
             return 0.0
 
     def get_volume_percent(self) -> int:
@@ -288,7 +281,7 @@ class MusicService:
             return -1
         try:
             return int(getattr(mgr, "current_index", -1))
-        except Exception:
+        except (TypeError, ValueError):
             return -1
 
     def is_playing(self) -> bool:
@@ -321,7 +314,8 @@ class MusicService:
             return False
         try:
             return bool(mgr.remove_song_from_history(song_id))
-        except Exception:
+        except (RuntimeError, TypeError, ValueError) as exc:
+            logger.warning("[MusicService] 删除音乐历史失败: %s", exc)
             return False
 
     def next_track(self):
@@ -331,7 +325,7 @@ class MusicService:
 
     def remove_current_queue_item(self) -> bool:
         mgr = self._get_backend_manager()
-        if mgr is None or not hasattr(mgr, "remove_current_queue_item"):
+        if mgr is None:
             return False
         return bool(mgr.remove_current_queue_item())
 
@@ -350,51 +344,12 @@ class MusicService:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _config_path(dict_name: str = "") -> Path:
-        config_root = Path(__file__).resolve().parents[3] / "config"
-        filename = _CONFIG_DICT_FILE_MAP.get(str(dict_name or "").strip(), "config.py")
-        return config_root / filename
-
-    @staticmethod
-    def _py_literal_any(value) -> str:
-        if isinstance(value, bool):
-            return "True" if value else "False"
-        if isinstance(value, (int, float, str)):
-            return repr(value)
-        return repr(value)
-
-    @staticmethod
-    def _replace_config_dict_item(text: str, dict_name: str, key: str, py_literal: str) -> str:
-        block_pattern = re.compile(
-            rf"(?ms)^(\s*{re.escape(dict_name)}\s*=\s*\{{)(.*?)(^\s*\}})",
-        )
-        block_match = block_pattern.search(text)
-        if not block_match:
-            raise ValueError(f"未找到配置字典: {dict_name}")
-
-        body = block_match.group(2)
-        item_pattern = re.compile(rf"(?m)^(\s*'{re.escape(key)}'\s*:\s*).*(,\s*(?:#.*)?)$")
-        if not item_pattern.search(body):
-            raise ValueError(f"未找到配置项: {dict_name}.{key}")
-        new_body = item_pattern.sub(lambda m: f"{m.group(1)}{py_literal}{m.group(2)}", body, count=1)
-        return text[:block_match.start(2)] + new_body + text[block_match.end(2):]
-
-    def _persist_provider_config(self, provider_name: str) -> bool:
+    def _persist_provider_config(provider_name: str) -> bool:
         try:
-            cfg_path = self._config_path("CLOUD_MUSIC")
-            text = cfg_path.read_text(encoding="utf-8")
-            text = self._replace_config_dict_item(
-                text,
-                "CLOUD_MUSIC",
-                "provider",
-                self._py_literal_any(provider_name),
-            )
-            tmp_path = cfg_path.with_suffix(".py.tmp")
-            tmp_path.write_text(text, encoding="utf-8")
-            tmp_path.replace(cfg_path)
+            save_general_values({"CLOUD_MUSIC": {"provider": provider_name}})
             return True
         except Exception as e:
-            logger.warning("[MusicService] 淇濆瓨 provider 鍒伴厤缃け璐? %s", e)
+            logger.warning("[MusicService] 保存音乐平台设置失败: %s", e)
             return False
 
 

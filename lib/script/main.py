@@ -74,6 +74,7 @@ class ApplicationState:
         self._init_ready = False
         # 系统托盘图标
         self._tray_icon = None
+        self._ui_preloader = None
         self._exit_requested = False
         self._exit_in_progress = False
         self._exit_completed = False
@@ -181,6 +182,9 @@ class ApplicationState:
         except (TypeError, RuntimeError):
             pass
         self._tray_icon.quit_requested.connect(self._on_tray_quit)
+
+        from lib.script.ui.preloader import preload_runtime_ui
+        self._ui_preloader = preload_runtime_ui(self._tray_icon)
 
         if self._tray_icon.initialize():
             logger.info('系统托盘图标初始化成功')
@@ -399,6 +403,10 @@ class ApplicationState:
             if not skip_visual_cleanup:
                 self._cleanup_visual_components()
             return
+
+        if self._ui_preloader is not None:
+            self._ui_preloader.stop()
+            self._ui_preloader = None
 
         cleanup_all_managers()
         self._managers.clear()

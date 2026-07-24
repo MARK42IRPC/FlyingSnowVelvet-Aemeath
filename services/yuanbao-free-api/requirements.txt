@@ -1,6 +1,6 @@
 fastapi==0.134.0
 httpx==0.28.1
-openai==2.24.0
+numpy>=2.0.0
 opencv_python==4.13.0.92
 playwright==1.58.0
 pydantic==2.12.5

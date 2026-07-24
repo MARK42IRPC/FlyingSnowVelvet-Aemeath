@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from PyQt5.QtCore import QPoint, Qt, pyqtSignal, QRect
-from PyQt5.QtWidgets import QTabBar, QWidget, QVBoxLayout, QPushButton, QButtonGroup
-from PyQt5.QtGui import QPainter, QColor, QBrush
+from PyQt5.QtCore import QPoint, Qt, QRect
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QButtonGroup
+from PyQt5.QtGui import QPainter
 
 from config.scale import scale_px
 from config.config import UI_THEME
@@ -55,7 +55,7 @@ class TabBarWidget(QWidget):
         painter.fillRect(QRect(border, height - layer, width - border, layer), UI_THEME["border"])
 
 
-def attach_ai_settings_tabs(panel, general_categories: list[dict]) -> None:
+def attach_ai_settings_tabs(panel, general_categories) -> None:
     # 获取主题颜色
     border_color = UI_THEME["border"]
     bg_color = UI_THEME["bg"]
@@ -99,7 +99,7 @@ def attach_ai_settings_tabs(panel, general_categories: list[dict]) -> None:
     panel._tab_button_group.setExclusive(True)
 
     # 创建标签按钮
-    tab_names = ["AI设置"] + [str(category["tab"]) for category in general_categories]
+    tab_names = ["AI设置"] + [category.tab_title for category in general_categories]
     panel._tab_buttons = []
 
     for i, name in enumerate(tab_names):

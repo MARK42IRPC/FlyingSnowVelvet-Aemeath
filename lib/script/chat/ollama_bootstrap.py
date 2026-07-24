@@ -242,6 +242,7 @@ class OllamaBootstrapMixin:
 
     def cleanup(self):
         """停止定时器，取消事件订阅"""
+        self._is_running = False
         if self._ping_timer:
             self._ping_timer.stop()
             self._ping_timer = None
@@ -251,6 +252,15 @@ class OllamaBootstrapMixin:
             self._chat_chunk_callbacks.clear()
         with self._api_rate_lock:
             self._api_request_timestamps.clear()
+
+        with self._pull_response_lock:
+            pull_response = self._pull_response
+            self._pull_response = None
+        if pull_response is not None:
+            try:
+                pull_response.close()
+            except requests.RequestException:
+                pass
 
         self._shutdown_started_ollama()
         self._event_center.unsubscribe(EventType.APP_PRE_START, self._on_app_pre_start)

@@ -1,0 +1,7 @@
+-r requirements.txt
+fastapi>=0.134.0
+httpx>=0.28.1
+pydantic>=2.12.5
+pydantic_settings>=2.13.1
+sse_starlette>=3.3.2
+uvicorn>=0.41.0

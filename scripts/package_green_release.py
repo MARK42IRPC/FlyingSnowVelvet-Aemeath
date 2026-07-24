@@ -7,25 +7,29 @@ but bundles the external resource archives expected by install_deps.py.
 from __future__ import annotations
 
 import argparse
-import ast
-import io
-import json
-import re
 import sys
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, Iterator, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from config.version_info import APP_VERSION
+from scripts.release_common import (
+    FileEntry,
+    build_generated_payloads,
+    build_inline_payloads,
+    build_placeholder_entries,
+    format_size,
+    iter_files,
+    write_manifest,
+)
 
 DEFAULT_VERSION = APP_VERSION
 DIST_DIR = ROOT / "dist"
@@ -48,6 +52,7 @@ ALLOWED_TOP_LEVEL_FILES = {
     "README.md",
     "install_deps.py",
     "requirements.txt",
+    "requirements-service.txt",
     "resc.net.txt",
     "启动程序.bat",
     "安装依赖.bat",
@@ -98,6 +103,7 @@ EXCLUDE_EXACT_PATHS = {
     Path("RELEASING.md"),
     Path("services") / "yuanbao-free-api" / "Dockerfile",
     Path("services") / "yuanbao-free-api" / "test.py",
+    Path("pyncm") / "__main__.py",
 }
 
 EXCLUDE_SUFFIXES = {
@@ -127,10 +133,6 @@ PLACEHOLDER_DIRS = (
     Path("resc") / "user",
 )
 
-SANITIZED_TEXT_FILES = {
-    Path("config") / "ollama_config.py",
-}
-
 GREEN_BUNDLED_RESOURCE_PATHS = {
     Path("resc") / "models" / "vosk-model-small-cn-0.22.zip",
     Path("resc") / "models" / "vosk-model-small-en-us-0.15.zip",
@@ -148,75 +150,6 @@ GREEN_BUNDLED_RESOURCE_LABELS = {
     Path("resc") / "chrome-runtime.z02": "浏览器运行时分卷",
     Path("resc") / "chrome-runtime.zip": "浏览器运行时分卷",
 }
-
-
-@dataclass
-class FileEntry:
-    relative: Path
-    size: int
-
-
-def _replace_assignment(text: str, name: str, value_literal: str) -> str:
-    pattern = rf"(?m)^(\s*{re.escape(name)}\s*=\s*).*$"
-    replacement = rf"\g<1>{value_literal}"
-    return re.sub(pattern, replacement, text)
-
-
-def _replace_named_dict_item(text: str, dict_name: str, key: str, value_literal: str) -> str:
-    pattern = (
-        rf"(?ms)(^\s*{re.escape(dict_name)}\s*=\s*\{{.*?^[ \t]*['\"]{re.escape(key)}['\"]\s*:\s*)"
-        rf"([^\r\n#]*?)"
-        rf"(\s*,\s*(?:#.*)?$|\s*(?:#.*)?$)"
-    )
-    replacement = rf"\g<1>{value_literal}\g<3>"
-    return re.sub(pattern, replacement, text)
-
-
-def _sanitize_ollama_config(text: str) -> str:
-    sanitized = text
-    sanitized = _replace_assignment(sanitized, "API_KEY", "''")
-    sanitized = _replace_named_dict_item(sanitized, "YUANBAO_FREE_API", "hy_user", "''")
-    sanitized = _replace_named_dict_item(sanitized, "YUANBAO_FREE_API", "x_uskey", "''")
-    sanitized = _replace_named_dict_item(sanitized, "YUANBAO_FREE_API", "chat_id", "''")
-    return sanitized
-
-
-def _build_inline_payloads() -> Dict[Path, bytes]:
-    payloads: Dict[Path, bytes] = {}
-    for relative in SANITIZED_TEXT_FILES:
-        src = ROOT / relative
-        if not src.exists():
-            continue
-        text = src.read_text(encoding="utf-8")
-        if relative == Path("config") / "ollama_config.py":
-            text = _sanitize_ollama_config(text)
-            ast.parse(text, filename=str(relative))
-        payloads[relative] = text.encode("utf-8")
-    return payloads
-
-
-def _iter_official_package_files(package_dir: Path) -> Iterator[Path]:
-    for path in package_dir.rglob("*"):
-        if not path.is_file():
-            continue
-        rel = path.relative_to(package_dir)
-        if "__pycache__" in rel.parts or path.suffix.lower() in {".pyc", ".pyo"}:
-            continue
-        yield path
-
-
-def _build_official_gamepack_payloads() -> Dict[Path, bytes]:
-    payloads: Dict[Path, bytes] = {}
-    source_root = ROOT / "lib" / "script" / "gemes" / "packages" / "official"
-    if not source_root.exists():
-        return payloads
-    for package_dir in sorted((path for path in source_root.iterdir() if path.is_dir()), key=lambda p: p.name.lower()):
-        buffer = io.BytesIO()
-        with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-            for path in sorted(_iter_official_package_files(package_dir), key=lambda item: item.relative_to(package_dir).as_posix()):
-                archive.write(path, arcname=path.relative_to(package_dir).as_posix())
-        payloads[Path("gamepack") / "official" / f"{package_dir.name}.zip"] = buffer.getvalue()
-    return payloads
 
 
 def _is_under(path: Path, prefix: Path) -> bool:
@@ -442,36 +375,6 @@ def _should_exclude(path: Path) -> bool:
     return False
 
 
-def _iter_files(inline_payloads: Dict[Path, bytes], generated_payloads: Dict[Path, bytes]) -> Iterator[FileEntry]:
-    for path in ROOT.rglob("*"):
-        try:
-            if not path.is_file():
-                continue
-        except OSError:
-            continue
-        if _should_exclude(path):
-            continue
-        rel = path.relative_to(ROOT)
-        if rel in generated_payloads:
-            continue
-        payload = inline_payloads.get(rel)
-        size = len(payload) if payload is not None else path.stat().st_size
-        yield FileEntry(relative=rel, size=size)
-    for rel, payload in sorted(generated_payloads.items(), key=lambda item: item[0].as_posix()):
-        yield FileEntry(relative=rel, size=len(payload))
-
-
-def _write_manifest(manifest_path: Path, files: Iterable[FileEntry]) -> None:
-    data = [
-        {
-            "path": entry.relative.as_posix(),
-            "size": entry.size,
-        }
-        for entry in files
-    ]
-    manifest_path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-
-
 def _write_archive(
     zip_path: Path,
     file_entries: List[FileEntry],
@@ -512,27 +415,6 @@ def _write_archive(
     )
 
 
-def _build_placeholder_entries(version: str) -> Tuple[List[FileEntry], Dict[Path, str]]:
-    entries: List[FileEntry] = []
-    payloads: Dict[Path, str] = {}
-    for placeholder in PLACEHOLDER_DIRS:
-        arcname = placeholder / ".keep"
-        text = f"{placeholder.as_posix()} is generated at runtime.\nVersion: {version}\n"
-        entries.append(FileEntry(relative=arcname, size=len(text.encode("utf-8"))))
-        payloads[arcname] = text
-    return entries, payloads
-
-
-def _format_size(num_bytes: int) -> str:
-    units = ("B", "KB", "MB", "GB")
-    value = float(num_bytes)
-    for unit in units:
-        if value < 1024.0 or unit == units[-1]:
-            return f"{value:.2f}{unit}"
-        value /= 1024.0
-    return f"{value:.2f}GB"
-
-
 def parse_args(argv: List[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Package Flying Snow Velvet green release bundle.")
     parser.add_argument("--version", default=DEFAULT_VERSION, help="Version tag (default: %(default)s)")
@@ -543,18 +425,21 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
 
 def main(argv: Optional[List[str]] = None) -> int:
     args = parse_args(argv or sys.argv[1:])
-    inline_payloads = _build_inline_payloads()
-    generated_payloads = _build_official_gamepack_payloads()
+    inline_payloads = build_inline_payloads(ROOT)
+    generated_payloads = build_generated_payloads(ROOT)
     archive_payloads = dict(inline_payloads)
     archive_payloads.update(generated_payloads)
     bundled_present, bundled_missing = _ensure_bundled_resources(allow_download=not args.dry_run)
-    entries = sorted(_iter_files(inline_payloads, generated_payloads), key=lambda e: e.relative.as_posix())
-    placeholder_entries, placeholder_payloads = _build_placeholder_entries(args.version)
+    entries = sorted(
+        iter_files(ROOT, _should_exclude, inline_payloads, generated_payloads),
+        key=lambda e: e.relative.as_posix(),
+    )
+    placeholder_entries, placeholder_payloads = build_placeholder_entries(args.version, PLACEHOLDER_DIRS)
     all_entries = entries + placeholder_entries
     total_size = sum(entry.size for entry in entries)
     print(
         f"[green-package] files: {len(entries)} (+{len(placeholder_entries)} placeholders) | "
-        f"official gamepack zips: {len(generated_payloads)} | size: {_format_size(total_size)}"
+        f"generated bundles: {len(generated_payloads)} | size: {format_size(total_size)}"
     )
     print(f"[green-package] bundled resource archives: {len(bundled_present)} present, {len(bundled_missing)} missing")
     for relative in bundled_present:
@@ -566,7 +451,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 1
     for entry in all_entries:
         hint = " [placeholder]" if entry in placeholder_entries else ""
-        print(f"  {entry.relative.as_posix()} ({_format_size(entry.size)}){hint}")
+        print(f"  {entry.relative.as_posix()} ({format_size(entry.size)}){hint}")
     if args.dry_run:
         print("[green-package] dry-run complete; no artifacts produced.")
         return 0
@@ -576,9 +461,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     manifest_path = args.output / f"FlyingSnowVelvet-{args.version}-green-manifest.json"
 
     _write_archive(zip_path, entries, placeholder_entries, placeholder_payloads, archive_payloads)
-    _write_manifest(manifest_path, all_entries)
+    write_manifest(manifest_path, all_entries)
 
-    print(f"[green-package] wrote {zip_path.relative_to(ROOT)} ({_format_size(zip_path.stat().st_size)})")
+    print(f"[green-package] wrote {zip_path.relative_to(ROOT)} ({format_size(zip_path.stat().st_size)})")
     print(f"[green-package] wrote {manifest_path.relative_to(ROOT)}")
     return 0
 

@@ -1,0 +1,2925 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>飞行雪绒资料舱 · LTS1.0.6pre1</title>
+    <style>
+        @font-face {
+            font-family: 'HarmonyOS Sans';
+            src: url('resc/FRONTS/HarmonyOS_Sans_SC_Bold.ttf') format('truetype');
+            font-display: swap;
+        }
+        @font-face {
+            font-family: 'Lahairoi';
+            src: url('resc/FRONTS/WuWa%20Lahai-Roi%20Regular.ttf') format('truetype');
+            font-display: swap;
+        }
+        :root {
+            --pink: #FFB6C1;
+            --cyan: #ADD8E6;
+            --deep-blue: #234C80;
+            --bg-dark: #04070c;
+            --card-bg: rgba(5, 9, 18, 0.85);
+            --border: rgba(173, 216, 230, 0.6);
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            min-height: 100vh;
+            font-family: 'HarmonyOS Sans', 'Segoe UI', 'Microsoft YaHei', Arial, sans-serif;
+            background: radial-gradient(circle at 20% 20%, rgba(255,182,193,0.3), transparent 65%),
+                        radial-gradient(circle at 80% 0%, rgba(173,216,230,0.35), transparent 55%),
+                        var(--bg-dark);
+            color: #f8fbff;
+            overflow-x: hidden;
+        }
+        main {
+            position: relative;
+            padding: 4rem clamp(1rem, 5vw, 4rem) 5rem;
+            z-index: 1;
+        }
+        .hero {
+            text-align: center;
+            margin-bottom: 3rem;
+        }
+        .hero h1 {
+            font-size: clamp(2.6rem, 4vw, 3.6rem);
+            margin: 0;
+            letter-spacing: 0.1em;
+            color: var(--pink);
+            text-shadow: 0 0 18px rgba(255,182,193,0.7);
+        }
+        .hero p {
+            margin: 0.8rem auto 0;
+            font-size: 1.1rem;
+            color: var(--cyan);
+            max-width: 720px;
+            line-height: 1.6;
+        }
+        section {
+            margin-bottom: 3rem;
+        }
+        section > h2 {
+            font-size: 1.8rem;
+            color: var(--cyan);
+            margin-bottom: 1rem;
+            border-left: 4px solid var(--pink);
+            padding-left: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 0.2em;
+        }
+        .cards {
+            display: grid;
+            gap: 1.5rem;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
+        .card {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 18px;
+            padding: 1.5rem;
+            box-shadow: 0 15px 45px rgba(0, 0, 0, 0.45);
+            backdrop-filter: blur(6px);
+            position: relative;
+            overflow: hidden;
+        }
+        .card::before {
+            content: '';
+            position: absolute;
+            inset: 8px;
+            border: 1px solid rgba(255,182,193,0.15);
+            border-radius: 12px;
+            pointer-events: none;
+        }
+        .card header {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: baseline;
+            gap: 0.8rem;
+            margin-bottom: 1rem;
+        }
+        .card h3 {
+            margin: 0;
+            font-size: 1.3rem;
+            color: var(--pink);
+        }
+        .card .eyebrow {
+            text-transform: uppercase;
+            font-size: 0.75rem;
+            letter-spacing: 0.2em;
+            color: rgba(255,255,255,0.7);
+        }
+        .card .download {
+            margin-left: auto;
+            text-decoration: none;
+            color: var(--cyan);
+            font-size: 0.9rem;
+            border-bottom: 1px solid transparent;
+            transition: border 0.2s;
+        }
+        .card .download:hover { border-color: var(--cyan); }
+        pre {
+            margin: 0;
+            font-size: 0.9rem;
+            line-height: 1.5;
+            white-space: pre-wrap;
+            color: #e7ebff;
+        }
+        figure {
+            margin: 1rem auto 0;
+            max-width: 360px;
+            text-align: center;
+        }
+        figure img {
+            width: 100%;
+            border-radius: 12px;
+            border: 1px solid rgba(255,255,255,0.25);
+            box-shadow: 0 12px 30px rgba(0,0,0,0.5);
+        }
+        figure figcaption {
+            margin-top: 0.6rem;
+            font-size: 0.85rem;
+            color: rgba(255,255,255,0.8);
+        }
+        footer {
+            text-align: center;
+            padding: 2rem 1rem 4rem;
+            font-size: 0.85rem;
+            color: rgba(255,255,255,0.65);
+        }
+        .section-desc {
+            color: rgba(255,255,255,0.85);
+            max-width: 720px;
+            margin-bottom: 1rem;
+            line-height: 1.5;
+        }
+        .top-panels {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 1.5rem;
+        }
+        .top-panel {
+            flex: 1 1 320px;
+            min-width: 0;
+        }
+        .trail-container {
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            z-index: 3;
+        }
+        .trail-letter {
+            position: absolute;
+            font-family: 'Lahairoi', 'HarmonyOS Sans', sans-serif;
+            font-weight: 600;
+            font-size: 1.2rem;
+            color: var(--pink);
+            opacity: 0.9;
+            animation: trailBurst 0.9s ease-out forwards;
+            text-shadow: 0 0 12px rgba(255,182,193,0.8), 0 0 24px rgba(173,216,230,0.6);
+        }
+        @keyframes trailBurst {
+            0% { transform: translate3d(0,0,0) scale(1); opacity: 0.95; }
+            100% { transform: translate3d(var(--dx, 0px), var(--dy, -60px), 0) scale(0.3); opacity: 0; }
+        }
+        .particles {
+            position: fixed;
+            inset: 0;
+            overflow: hidden;
+            pointer-events: none;
+            z-index: 0;
+        }
+        .particles span {
+            position: absolute;
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            opacity: 0.8;
+            animation: float 8s linear infinite;
+            left: calc(4% * var(--i));
+            top: calc(3% * var(--i));
+            box-shadow: 0 0 12px currentColor;
+        }
+.particles span:nth-child(1) { background:#ADD8E6; animation-duration:5s; animation-delay:-0.35s; }
+.particles span:nth-child(2) { background:#d1f2ff; animation-duration:6s; animation-delay:-0.70s; }
+.particles span:nth-child(3) { background:#f8cde1; animation-duration:7s; animation-delay:-1.05s; }
+.particles span:nth-child(4) { background:#FFB6C1; animation-duration:8s; animation-delay:-1.40s; }
+.particles span:nth-child(5) { background:#ADD8E6; animation-duration:4s; animation-delay:-1.75s; }
+.particles span:nth-child(6) { background:#d1f2ff; animation-duration:5s; animation-delay:-2.10s; }
+.particles span:nth-child(7) { background:#f8cde1; animation-duration:6s; animation-delay:-2.45s; }
+.particles span:nth-child(8) { background:#FFB6C1; animation-duration:7s; animation-delay:-2.80s; }
+.particles span:nth-child(9) { background:#ADD8E6; animation-duration:8s; animation-delay:-3.15s; }
+.particles span:nth-child(10) { background:#d1f2ff; animation-duration:4s; animation-delay:-3.50s; }
+.particles span:nth-child(11) { background:#f8cde1; animation-duration:5s; animation-delay:-3.85s; }
+.particles span:nth-child(12) { background:#FFB6C1; animation-duration:6s; animation-delay:-4.20s; }
+.particles span:nth-child(13) { background:#ADD8E6; animation-duration:7s; animation-delay:-4.55s; }
+.particles span:nth-child(14) { background:#d1f2ff; animation-duration:8s; animation-delay:-4.90s; }
+.particles span:nth-child(15) { background:#f8cde1; animation-duration:4s; animation-delay:-5.25s; }
+.particles span:nth-child(16) { background:#FFB6C1; animation-duration:5s; animation-delay:-5.60s; }
+.particles span:nth-child(17) { background:#ADD8E6; animation-duration:6s; animation-delay:-5.95s; }
+.particles span:nth-child(18) { background:#d1f2ff; animation-duration:7s; animation-delay:-6.30s; }
+.particles span:nth-child(19) { background:#f8cde1; animation-duration:8s; animation-delay:-6.65s; }
+.particles span:nth-child(20) { background:#FFB6C1; animation-duration:4s; animation-delay:-7.00s; }
+.particles span:nth-child(21) { background:#ADD8E6; animation-duration:5s; animation-delay:-7.35s; }
+.particles span:nth-child(22) { background:#d1f2ff; animation-duration:6s; animation-delay:-7.70s; }
+.particles span:nth-child(23) { background:#f8cde1; animation-duration:7s; animation-delay:-8.05s; }
+.particles span:nth-child(24) { background:#FFB6C1; animation-duration:8s; animation-delay:-8.40s; }
+        @keyframes float {
+            0% { transform: translate3d(0, 0, 0); opacity: 0; }
+            20% { opacity: 0.85; }
+            100% { transform: translate3d(40px, -120px, 0); opacity: 0; }
+        }
+        @media (min-width: 768px) {
+            .cards { grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+        }
+    </style>
+</head>
+<body>
+    <div class="particles">
+            <span style="--i:1;"></span>
+            <span style="--i:2;"></span>
+            <span style="--i:3;"></span>
+            <span style="--i:4;"></span>
+            <span style="--i:5;"></span>
+            <span style="--i:6;"></span>
+            <span style="--i:7;"></span>
+            <span style="--i:8;"></span>
+            <span style="--i:9;"></span>
+            <span style="--i:10;"></span>
+            <span style="--i:11;"></span>
+            <span style="--i:12;"></span>
+            <span style="--i:13;"></span>
+            <span style="--i:14;"></span>
+            <span style="--i:15;"></span>
+            <span style="--i:16;"></span>
+            <span style="--i:17;"></span>
+            <span style="--i:18;"></span>
+            <span style="--i:19;"></span>
+            <span style="--i:20;"></span>
+            <span style="--i:21;"></span>
+            <span style="--i:22;"></span>
+            <span style="--i:23;"></span>
+            <span style="--i:24;"></span>
+    </div>
+    <div class="trail-container" id="trail-root"></div>
+    <main>
+        <div class="hero">
+            <h1>飞行雪绒资料舱</h1>
+            <p>贡献 + 赞助 + 文档 · LTS1.0.6pre1<br>基于项目默认配色 + 粒子灵感打造，方便在浏览器里查阅 doc 与贡献记录。生成时间：2026-07-24 19:14:01</p>
+        </div>
+        <section id="top-panels">
+            <div class="top-panels">
+                <div class="top-panel">
+                    <h2>贡献列表</h2>
+                    <div class="cards">
+        <article class="card">
+            <header>
+                <div class="eyebrow">2026-07-22 23:43</div>
+                <h3>开发贡献</h3>
+                <a class="download" href="doc/贡献名单和主播的狗盆/开发贡献.txt" download>下载原文件</a>
+            </header>
+            <pre>本项目得以完成，离不开以下个人、粉丝与社区的支持：
+
+【支持】
+
+贡献:开发者-Mark42的铁镐（Mark42IRPC）-保留所有权利
+===如果粉丝们能去B站点点关注的话...
+===https://space.bilibili.com/486401719
+
+贡献:配音-猫咪
+===千咲，达妮娅，莫宁
+===https://space.bilibili.com/1838261330
+
+贡献:服务器支持-TDSI服务器
+===https://tdsi.top
+
+贡献:debug-所有粉丝
+===郑重感谢所有参与测试版使用的粉丝们
+===谢谢你们的喜欢呀!我会努力更新哒!
+
+贡献:claude/codex支持-秋秋233丶
+===https://b23.tv/CxdeXfS
+
+贡献:启动动画-K39゜
+===https://space.bilibili.com/419336032
+
+贡献:关闭动画-大yi巴狐狸_
+===https://space.bilibili.com/220895159
+
+贡献:鸣潮字体素材制作
+===言语关系		https://space.bilibili.com/379335206
+===-华氏451	https://space.bilibili.com/51436514
+===野宫meko	https://space.bilibili.com/1829091
+=== 鸟居枫		https://space.bilibili.com/10599
+
+贡献:部分素材收集
+===粉丝群的大家
+
+贡献:安装教程指引-五更流年さま
+===https://space.bilibili.com/904605
+
+贡献:爱弥斯语音模型-Depthscaper
+===https://space.bilibili.com/347135954
+
+贡献:yuanbao-free-api-元宝 OpenAI 兼容中转服务-chenwr727
+===https://github.com/chenwr727/yuanbao-free-api
+
+贡献:素材/形象来源-鸣潮
+===https://mc.kurogames.com/
+
+ai平台技术支持:
+===claude-CODE	(核心架构)
+===IFLOW心流平台	(代码协助)
+===Openai-codeX	(代码协助)
+===deepseek深度求索,豆包	(日常帮助)
+===ollama			(本地部署)
+===GPT-SoVITs		(语音合成模块)
+部分使用到的ai模型:opus/sonnet4.6/4.7,gml5/gml5.1,gml4.7,GPT-5.3/5.4/5.5-codeX,deepseek-v3.2,qwen2.5，deepseekV4flash/pro
+
+音乐模块支持:网易云音乐/QQ音乐/酷狗音乐(非官方,仅供学习交流)
+由于aip官方版权限制,默认模块推荐:网易云音乐
+
+【声明】
+
+严禁使用任何手段使用此程序进行商业化牟利
+
+项目中包含的部分视觉素材及非官方API来源于互联网。
+素材版权归原作者所有；
+如认为内容涉及侵权，请携带权属证明联系作者，核实后将立即删除
+
+默认素材来源：鸣潮-库洛游戏</pre>
+        </article>
+                    </div>
+                </div>
+                <div class="top-panel">
+                    <h2>赞助列表</h2>
+                    <div class="cards">
+        <article class="card">
+            <header>
+                <div class="eyebrow">2026-06-28 22:18</div>
+                <h3>感谢大佬投喂名单</h3>
+                <a class="download" href="doc/贡献名单和主播的狗盆/感谢大佬投喂名单.txt" download>下载原文件</a>
+            </header>
+            <pre>赞助排名不分先后
+
+~~~粉丝群QQ~~~
+
+Natsuki_蒼海
+繁华
+玖汐
+寂漓
+漓烟
+Skadi⭐Sirin
+柒
+[_____]
+飞行弗绒王
+留白.
+琉璃玲珑煞
+超
+指挥官
+1
+总攻局局长
+
+~~~微信赞赏~~~
+
+jl
+ost
+Grunt
+[匿名]
+锦鲤丶🍉
+雪域雄鹰
+云雀
+远航星的告白
+v1
+Thallium Acid
+[匿名]
+鱼虾一碗
+[匿名]
+飞舞贝利亚
+沉默bu语
+Tsuika
+菌
+。。。。
+Jeese
+糖猫现世
+[匿名]
+重生之我成了财神爷的小娇妻
+
+~~~b站充电~~~
+
+盐焗冰柯乐
+赛琳娜鸭
+kailYum
+轻羽洛
+-某盐-
+76713284233-bili
+原神鸣潮崩铁代肝啵哩
+不会取名的橘
+神B丶B神
+初音Miku</pre>
+        </article>
+                    </div>
+                </div>
+            </div>
+        </section>
+        <section id="dog-bowl">
+            <h2>狗盆墙</h2>
+            <figure>
+                <img src="doc/贡献名单和主播的狗盆/如果想给作者买鸡腿饭的话/喵-感谢支持喵-欢迎工单喵.jpg" alt="感谢支持喵">
+                <figcaption>如果想给作者买鸡腿饭的话 · 原图</figcaption>
+            </figure>
+        </section>
+        <section id="documents">
+            <h2>DOC</h2>
+            <div class="cards">
+        <article class="card">
+            <header>
+                <div class="eyebrow">2026-07-24 19:13</div>
+                <h3>AI协作规范</h3>
+                <a class="download" href="doc/AI协作规范.md" download>下载原文件</a>
+            </header>
+            <pre># 多 AI 协作规范
+
+本文档用于多个 AI、开发者或自动化代理同时维护同一工作树。目标是让每个参与者独立定位事实、控制改动边界，并把未完成状态无损交给下一位参与者。
+
+## 1. 开始任务前
+
+每个参与者先执行只读检查：
+
+```powershell
+git status --short
+git diff --stat
+rg --files
+```
+
+然后阅读 `doc/README.md`、`doc/维护手册.md` 以及任务相关的专项文档和测试。
+
+默认所有既有未提交改动都属于其他参与者。不得用 checkout、reset、覆盖写入或批量格式化清除它们。
+
+## 2. 任务拆分原则
+
+并行任务按所有权边界拆分，而不是随意分配文件。
+
+适合并行：
+
+- 独立测试与静态审计
+- 不同业务子系统
+- 文档与代码实现
+- 普通版与绿色版的只读验证
+
+不适合并行：
+
+- 同时修改同一个大型文件
+- 一方修改接口，另一方在不知道新契约时修改调用方
+- 多方同时运行会重写源码或 tracked 文件的工具
+- 未明确所有者的全仓格式化、重命名或删除
+
+每个子任务声明目标、拥有的文件或模块、不可触碰范围、预期接口和验证命令。
+
+## 3. 文件所有权
+
+- 一个文件同一时间只有一个写入所有者。
+- 其他参与者可以只读检查，但不能同时编辑。
+- 跨文件接口由接口所有者先给出最终签名和行为，再由调用方所有者迁移。
+- 发现目标文件已有新改动时，重新读取并融合，不假设它仍与任务开始时相同。
+- 删除文件前扫描静态引用，并检查动态导入、注册表、打包白名单和文档引用。
+
+推荐任务声明：
+
+```text
+任务：收敛音乐设置持久化
+所有权：lib/script/music/**、相关测试
+共享接口：config.general_user_settings.save_general_values
+不触碰：工作台布局、游戏包格式
+验收：音乐测试 + 全量 compileall
+```
+
+## 4. 事实与假设
+
+交接中区分：
+
+- 已验证事实：附路径、符号或命令结果。
+- 实现决策：说明选定方案和兼容边界。
+- 未验证假设：明确标记，不得写成项目事实。
+
+不要依赖聊天上下文保存关键结论。稳定结论写入代码、测试或维护文档，临时状态写入交接记录。
+
+## 5. 改动规则
+
+- 手工修改保持最小范围，不顺手重构无关模块。
+- 不修改用户数据、日志、缓存和大型资源。
+- 不运行会重写 tracked 文件的格式化器，除非任务明确拥有这些文件。
+- 默认配置与用户数据分离，禁止业务代码改写 `config/config_*.py`。
+- 新增兼容层必须有明确调用方、移除条件和测试。
+- 跨模块契约变化必须同步测试与文档。
+
+## 6. 冲突处理
+
+遇到重叠改动时：
+
+1. 停止写入目标文件。
+2. 重新读取当前文件和 `git diff`。
+3. 判断两组改动能否按行为合并。
+4. 能合并则保留双方意图，并运行覆盖两者的测试。
+5. 无法判断产品意图时，将冲突、候选方案和影响交给主协调者。
+
+禁止通过恢复旧版本解决冲突，这会丢失其他参与者的工作。
+
+## 7. 验证分层
+
+每个参与者先运行负责模块的最小测试，主协调者负责最终全量验证。
+
+```text
+参与者：语法检查 -&gt; 模块测试 -&gt; 接口引用扫描
+主协调者：compileall -&gt; 全量 unittest -&gt; 打包 dry-run -&gt; diff 审计
+```
+
+测试失败时记录首个真实失败和根因。不要把授权等待、字体警告或零匹配的 `rg` 退出码误判成代码失败。
+
+## 8. 标准交接格式
+
+```markdown
+## 目标
+一句话说明任务及完成标准。
+
+## 已完成
+- 行为变化及关键文件。
+
+## 接口变化
+- 新增、删除或改变的公开/内部接口。
+
+## 验证
+- `完整命令`：通过/失败，关键结果。
+
+## 当前工作树
+- 本任务修改文件。
+- 开始前已存在、未触碰的改动。
+
+## 剩余事项
+- 尚未完成的具体步骤；没有则写“无”。
+
+## 风险与假设
+- 未验证的外部条件、资源缺失或兼容风险。
+```
+
+交接不得只写“基本完成”“剩下测试”等模糊状态。
+
+## 9. 主协调者收尾
+
+- 汇总所有参与者的文件所有权与接口变化。
+- 检查相互覆盖或重复实现。
+- 搜索旧接口、旧路径和历史文档残留。
+- 运行维护手册中的完整验证矩阵。
+- 检查 `git diff --check` 和最终 `git status --short`。
+- 在结果中区分本轮改动与任务开始前已有改动。
+- 不自动提交，除非用户明确要求。</pre>
+        </article>
+        <article class="card">
+            <header>
+                <div class="eyebrow">2026-07-24 19:13</div>
+                <h3>README</h3>
+                <a class="download" href="doc/README.md" download>下载原文件</a>
+            </header>
+            <pre># 飞行雪绒文档中心
+
+本文档目录以当前源码为准。版本号的唯一来源是 `config/version_info.py`。带有“计划”“清单”字样的旧文件只用于追溯历史，不代表当前待办。
+
+## 首次阅读
+
+| 目标 | 文档 |
+| --- | --- |
+| 理解工程结构、生命周期、配置、测试和发布 | [维护手册](维护手册.md) |
+| 多个 AI 或开发者并行工作 | [AI 协作规范](AI协作规范.md) |
+| 开发对象管理器、粒子和效果 | [Script 开发指南](Script开发指南.txt) |
+| 修改或新增事件 | [事件系统使用说明](事件系统使用说明.txt) 与 [已注册的事件](已注册的事件.txt) |
+| 修改调度、帧循环或延迟任务 | [调度系统使用说明](调度系统使用说明.txt) |
+| 修改粒子效果 | [粒子效果说明](粒子效果说明.txt) |
+| 开发或维护游戏扩展包 | [游戏包格式](游戏包格式.md) 与 [游戏模式说明](游戏模式说明.txt) |
+| 准备发行版 | 根目录 `RELEASING.md` |
+
+## 当前工程入口
+
+- 启动入口：`lib/core/qt_desktop_pet.py`
+- 应用生命周期：`lib/script/main.py` 中的 `ApplicationState`
+- 事件协议：`lib/core/event/center.py`
+- 工作台：`lib/script/ui/workbench_window.py`、`lib/script/workbench/`
+- 用户配置：`config/user_settings.py`、`config/general_user_settings.py`
+- 音乐公开入口：`lib.script.music.get_music_service()`
+- 游戏包服务：`lib/script/gemes/MAIN/game_packages.py`
+- 发布入口：`scripts/package_release.py`、`scripts/package_green_release.py`
+- 共享发布逻辑：`scripts/release_common.py`
+- 自动化测试：`tests/test_*.py`
+
+## 文档分层
+
+### 当前维护文档
+
+`README.md`、`维护手册.md`、`AI协作规范.md` 和各专项协议描述当前实现。代码变化后必须同步。
+
+### 用户与扩展协议
+
+事件、调度、粒子、游戏包等文档属于兼容契约。修改对应接口时，应在同一任务中更新文档和测试。
+
+### 历史归档
+
+以下文件记录已完成重构的背景，不能直接作为实施依据：
+
+- `代码收敛整改清单.txt`
+- `统一绘制模块改造计划清单.txt`
+- `项目全面优化与收敛计划.md`
+
+如历史文档与源码、维护手册冲突，以源码和维护手册为准。
+
+## 文档维护规则
+
+1. 文档描述行为和边界，不复制大段实现代码。
+2. 路径、命令和接口名称必须能在仓库中搜索到。
+3. 不写容易失效的测试总数、文件总数和包体积，由验证命令实时产生。
+4. 新增专项文档时，将其加入本索引并标明权威源码。
+5. 删除或替换接口时，同时清理旧文档引用。
+6. 修改文档后运行 `py -3 scripts/generate_doc_portal.py`。
+
+生成的 `AA使用必读.html` 是浏览入口，不是文档事实源。</pre>
+        </article>
+        <article class="card">
+            <header>
+                <div class="eyebrow">2026-07-24 18:57</div>
+                <h3>README</h3>
+                <a class="download" href="doc/README.txt" download>下载原文件</a>
+            </header>
+            <pre>飞行雪绒文档兼容入口
+
+当前文档索引已经迁移到：doc/README.md
+
+维护者请按顺序阅读：
+1. doc/README.md
+2. doc/维护手册.md
+3. doc/AI协作规范.md
+4. 与任务相关的专项协议文档
+
+本文件只为旧链接和旧工具保留，不再记录项目状态或文档清单。</pre>
+        </article>
+        <article class="card">
+            <header>
+                <div class="eyebrow">2026-07-20 18:45</div>
+                <h3>Script开发指南</h3>
+                <a class="download" href="doc/Script开发指南.txt" download>下载原文件</a>
+            </header>
+            <pre>飞行雪绒 Script 开发指南（LTS1.0.6pre1）
+
+一、总览
+- 主入口：`lib/core/qt_desktop_pet.py`
+- 应用编排：`lib/script/main.py`
+- 动态发现：`lib/core/plugin_registry.py`
+- 管理器目录：`lib/script/obj-*`
+- 粒子目录：`lib/script/practical/*_particle.py`
+- UI 目录：`lib/script/ui/`
+
+二、启动与自动发现
+桌宠启动时，`lib/script/main.py` 会依次完成：
+1. 初始化日志、Qt 运行环境、单实例与快捷方式
+2. 加载 GIF 与粒子覆盖层
+3. 调用 `discover_all()` 自动发现管理器与粒子
+4. 调用 `init_all_managers()` 创建管理器实例
+5. 初始化命令框、气泡、托盘、AI 相关组件
+
+扩展开发默认遵循这个发现链路，不需要手动在主入口硬编码注册。
+
+三、管理器开发
+推荐位置
+- `lib/script/obj-你的模块/manager.py`
+
+基础要求
+- 继承 `BaseManager`
+- 定义 `MANAGER_ID`
+- 定义 `DISPLAY_NAME`
+- 定义 `COMMAND_TRIGGER`
+- 定义 `COMMAND_HELP`
+- 提供 `create()` 工厂方法
+- 提供 `cleanup()` 并完成退订、资源释放
+
+当前内置管理器
+- `snow_leopard`
+- `snow_pile`
+- `sofa`
+- `mortor`
+- `clock`
+- `speaker`
+- `snowball`
+
+推荐做法
+- 需要跨模块通信时，优先发事件，不直接互相引用
+- 管理器响应 `#命令` 时，只处理自己负责的范围
+- 所有窗口、实体、线程、任务都要在 `cleanup()` 中回收
+
+四、粒子开发
+推荐位置
+- `lib/script/practical/xxx_particle.py`
+
+基础要求
+- 继承 `BaseParticleScript`
+- 使用 `@register_particle(&quot;particle_id&quot;)`
+- 定义 `PARTICLE_ID`
+- 实现 `create_particles(area_type, area_data)`
+
+粒子实例约定
+- 需要 `update()`
+- 需要 `alive`
+- 建议提供 `life` / `max_life`
+- 可选使用：
+  - `is_text`
+  - `is_line`
+  - `is_circle`
+  - `no_fade`
+
+五、输入链路
+命令输入框位于 `lib/script/ui/command_dialog.py`
+
+当前输入分流规则：
+- `/xxx` → `EventType.INPUT_COMMAND`
+- `#xxx` → `EventType.INPUT_HASH`
+- 普通文本 → `EventType.INPUT_CHAT`
+
+AI 工具调度位于 `lib/script/tool_dispatcher/dispatcher.py`，会从 `STREAM_FINAL` 中提取 `###指令###`。
+
+六、配置项落地链路
+如果新增 AI 控制面板配置，至少同步以下文件：
+- `lib/script/ui/ai_settings_panel.py`
+- `lib/script/ui/ai_settings_storage.py`
+- `lib/script/ui/ai_settings_validators.py`
+- `config/ollama_config.py`
+
+如果新增普通配置，默认值放到对应的 `config/config_*.py`，用户值通过 `config.user_settings` 保存为稀疏覆盖。禁止运行时修改 Python 配置源码，也不要复制整套默认配置到用户目录。
+
+统一优先级：环境变量/命令行 &gt; `user/settings.json` 稀疏覆盖 &gt; `config` 内置默认值。用户恢复默认时应删除覆盖键。
+
+七、运行时数据边界
+以下路径视为运行时目录：
+- `C:\AemeathDeskPet\user\settings.json`
+- `C:\AemeathDeskPet\user\secrets\`
+- `C:\AemeathDeskPet\user\state\`
+- `C:\AemeathDeskPet\cache\`
+- `C:\AemeathDeskPet\logs\`
+- 旧版兼容来源：`resc/user/`、`config/music/volume.json`、`config/user_scale.json`
+
+像 GSV 语音缓存这类自动生成文件，应写入统一 `cache/` 目录，而不是可提交源码目录或 `config/`。
+
+八、最小管理器模板
+```python
+from lib.core.plugin_registry import BaseManager, manager_registry
+from lib.core.event.center import get_event_center, EventType
+
+
+class DemoManager(BaseManager):
+    MANAGER_ID = &quot;demo&quot;
+    DISPLAY_NAME = &quot;示例管理器&quot;
+    COMMAND_TRIGGER = &quot;示例&quot;
+    COMMAND_HELP = &quot;[数量] - 示例命令&quot;
+
+    def __init__(self, entity=None):
+        self._entity = entity
+        self._ec = get_event_center()
+        self._ec.subscribe(EventType.INPUT_HASH, self._on_hash)
+
+    @classmethod
+    def create(cls, entity=None, **kwargs):
+        return cls(entity)
+
+    def _on_hash(self, event):
+        pass
+
+    def cleanup(self):
+        self._ec.unsubscribe(EventType.INPUT_HASH, self._on_hash)
+
+
+manager_registry.register(DemoManager.MANAGER_ID, DemoManager)
+```
+
+九、交付前自检
+- 是否完成注册
+- 是否实现完整清理
+- 是否补齐事件字段与参数校验
+- 是否更新对应文档
+- 是否确认没有引入新的运行时垃圾文件</pre>
+        </article>
+        <article class="card">
+            <header>
+                <div class="eyebrow">2026-07-20 18:45</div>
+                <h3>事件系统使用说明</h3>
+                <a class="download" href="doc/事件系统使用说明.txt" download>下载原文件</a>
+            </header>
+            <pre>飞行雪绒事件系统使用说明（LTS1.0.6pre1）
+
+一、核心入口
+- 实现：`lib/core/event/center.py`
+- 单例访问：`get_event_center()`
+- 事件对象：`Event`
+- 事件枚举：`EventType`
+
+二、处理模型
+- `publish(Event)` 将事件放入队列
+- 主线程发布时，会尽快在主线程 drain 队列
+- 非主线程发布时，会通过 Qt signal 切回主线程处理
+- 回调可以调用 `event.mark_handled()` 中断同类型事件后续传播
+
+三、基础用法
+```python
+from lib.core.event.center import Event, EventType, get_event_center
+
+ec = get_event_center()
+
+def on_info(event: Event):
+    print(event.data)
+
+ec.subscribe(EventType.INFORMATION, on_info)
+ec.publish(Event(EventType.INFORMATION, {&quot;text&quot;: &quot;hello&quot;}))
+ec.unsubscribe(EventType.INFORMATION, on_info)
+```
+
+四、输入链路
+- 鼠标：`MOUSE_PRESS` / `MOUSE_MOVE` / `MOUSE_ENTER` / `MOUSE_LEAVE` / `MOUSE_CLICK` / `MOUSE_DOUBLE_CLICK`
+- 键盘：`KEY_PRESS` / `KEY_RELEASE`
+- 命令框：
+  - `/xxx` → `INPUT_COMMAND`
+  - `#xxx` → `INPUT_HASH`
+  - 普通文本 → `INPUT_CHAT`
+
+五、应用生命周期
+- `APP_PRE_START`
+- `APP_INIT_READY`
+- `APP_START`
+- `APP_MAIN`
+- `APP_EXIT`
+- `APP_QUIT`
+
+其中：
+- `APP_PRE_START` 适合预热、静态准备和后台服务启动检查
+- `APP_QUIT` 是统一退出请求入口，适合阻止直接粗暴退出
+
+六、当前高频事件协议
+
+INFORMATION
+- 用途：信息气泡
+- 常见字段：
+  - `text`
+  - `min`
+  - `max`
+  - `particle`
+
+PARTICLE_REQUEST
+- 用途：申请粒子
+- 字段：
+  - `particle_id`
+  - `area_type`
+  - `area_data`
+
+SOUND_REQUEST
+- 用途：请求播放音频文件
+- 字段：
+  - `audio_class`
+  - `file_path`
+  - `volume`
+  - `interruptible`
+
+VOICE_REQUEST
+- 用途：语音播放抽象层入口
+- 当前文本类请求会继续分流到 `AI_VOICE_REQUEST`
+
+AI_VOICE_REQUEST
+- 用途：AI 文本转语音申请
+- 当前由 `lib/script/gsvmove/service.py` 消费
+- 当 GSV 模块在控制面板中关闭时，这类事件会被直接忽略
+
+MIC_STT_*
+- `MIC_STT_START`
+- `MIC_STT_STOP`
+- `MIC_STT_PARTIAL`
+- `MIC_STT_FINAL`
+- `MIC_STT_STATE_CHANGE`
+
+MUSIC_*
+- 播放控制、登录状态、进度同步、队列操作都在 `MUSIC_*` 命名空间
+- 统一由音乐服务和 UI 组件解耦协作
+
+MANAGER_SPAWN_REQUEST
+- 用途：请求对象管理器生成实体
+- 常见字段：
+  - `manager_id`
+  - `count`
+  - `spawn_type`
+
+MANAGER_QUERY_REQUEST / MANAGER_QUERY_RESPONSE
+- 用途：跨管理器查询状态、数量、保护范围等
+
+TARGET_POSITION_QUERY / TARGET_POSITION_RESPONSE
+- 用途：统一查询目标位置，减少状态机与具体管理器的直接耦合
+
+PROTECTION_CHECK / PROTECTION_RESPONSE
+- 用途：检测主宠保护半径或实体保护区
+
+七、开发约束
+- 回调应尽量短小，避免阻塞 UI
+- 所有订阅都必须在 `cleanup()` 中退订
+- `mark_handled()` 只用于确实需要阻断传播的场景
+- 公共事件字段一旦公开使用，尽量保持兼容，不要频繁改 key</pre>
+        </article>
+        <article class="card">
+            <header>
+                <div class="eyebrow">2026-07-24 18:47</div>
+                <h3>代码收敛整改清单</h3>
+                <a class="download" href="doc/代码收敛整改清单.txt" download>下载原文件</a>
+            </header>
+            <pre>飞行雪绒代码收敛整改清单（历史归档）
+
+归档说明
+- 本文件记录 2026-07-06 前后的阶段性整改，不是当前待办列表。
+- 当前架构、维护约定和验证命令以 `doc/维护手册.md` 为准。
+- 新的收敛任务必须基于当前源码和测试重新审计，不得直接照此清单执行。
+
+更新时间
+- 2026-07-06
+
+执行规则
+- `已完成`：已改代码并通过本轮最小验证。
+- `进行中`：本轮正在处理，后续继续收敛。
+- `待处理`：已确认问题，尚未进入代码修改。
+- `暂缓`：需要更大范围联动或兼容方案，暂不直接动。
+
+一、本轮先做的低风险清理
+
+1. 删除聊天层死代码 `lib/script/chat/yuanbao_auth.py`
+- 状态：已完成
+- 原因：仓库内无调用，现有元宝登录已由 `lib/script/yuanbao_free_api/service.py` 接管。
+- 处理方式：直接删除文件，避免继续维护两套元宝登录实现。
+
+2. 删除 `MusicService` 中重复定义的方法
+- 状态：已完成
+- 原因：`is_playing()` / `is_paused()` 在同一文件内被定义两次，前一组被后一组覆盖。
+- 处理方式：保留后一组，删除前一组。
+
+3. 删除已退化成常量分支的元宝上下文兼容状态
+- 状态：已完成
+- 原因：`_should_include_yuanbao_context()`、`_get_yuanbao_login_state()`、`_resolve_yuanbao_context_policy()`、`_commit_yuanbao_context_once()` 及其配套状态位已无有效行为。
+- 处理方式：删掉死分支和无读路径状态，保留当前真实生效路径。
+
+4. 删除空转发 shim
+- 状态：已完成
+- 范围：
+- `lib/script/qqmusic/client.py`
+- `lib/script/kugou/client.py`
+- 原因：文件只做一层重导出，仓库内无引用。
+- 处理方式：删除 shim 文件，直接保留包级入口。
+
+5. 删除 `QQMusic = QQmisic` 兼容别名
+- 状态：已完成
+- 原因：仓库内无引用，继续保留只会增加阅读噪音。
+- 处理方式：清理别名和对应导出。
+
+二、后续继续处理的结构项
+
+6. 收敛音乐架构为单一运行时入口
+- 状态：已完成
+- 原因：`lib/script/music/service.py` 对外，`lib/script/cloudmusic/manager.py` 对内，但当前职责仍交叉。
+- 目标：最终只保留一层明确的音乐运行时抽象。
+- 处理方式：`MusicService` 持有唯一音乐播放 backend，清理历史/登录数据也从 `lib.script.music` 入口导出；`cloudmusic` 包退回内部实现包，旧 manager 入口仅保留兼容委托，不再维护独立单例。
+
+7. 抽本地托管服务公共基类
+- 状态：已完成
+- 范围：
+- `lib/script/gsvmove/service.py`
+- `lib/script/yuanbao_free_api/service.py`
+- 原因：预启动、健康检查、拉起进程、清理进程的模板代码高度重复。
+- 处理方式：新增 `lib/script/local_hosted_service.py`，收敛 APP_PRE_START 订阅、预启动任务去重、进程句柄登记/清空等公共生命周期骨架；两个业务服务保留各自健康检查、端口探测和兜底清理逻辑。
+
+8. 梳理退出链路
+- 状态：已完成
+- 原因：主程序退出阶段仍有历史残留步骤和手工拼接 cleanup。
+- 处理方式：主退出阶段恢复统一 `APP_EXIT` 广播，由已有启动/退出动画订阅者处理退出动画；`request_exit()` 只负责立即隐藏运行时 UI，实际 UI 单例释放统一留给视觉清理阶段，避免重复 `cleanup_all_runtime_ui()` / `cleanup_cmd_window()` 调用。
+
+三、本轮验证计划
+
+1. 运行聊天与音乐相关回归测试
+- 状态：已完成
+- 结果：
+- `py -3 -m py_compile` 已通过。
+- `py -3 -m unittest tests.test_musicdl_removed tests.test_ai_settings_panel_yuanbao_hidden tests.test_yuanbao_free_api_service_port_fallback tests.test_yuanbao_free_api_app_lifecycle` 已通过。
+- 2026-07-06 追加验证：`py -3 -m py_compile lib\script\local_hosted_service.py lib\script\gsvmove\service.py lib\script\yuanbao_free_api\service.py` 已通过。
+- 2026-07-06 追加验证：`py -3 -m unittest tests.test_gsvmove_root_resolution tests.test_yuanbao_free_api_service_port_fallback tests.test_yuanbao_free_api_app_lifecycle` 已通过。
+- 2026-07-06 追加验证：`py -3 -m py_compile lib\script\main.py lib\script\ui\shutdown.py lib\script\SEanima\animation.py` 已通过。
+- 2026-07-06 追加验证：`py -3 -m py_compile lib\script\music\service.py lib\script\music\__init__.py lib\script\cloudmusic\manager.py lib\script\cloudmusic\__init__.py lib\core\tray_icon.py lib\core\event\center.py lib\script\ui\playlist_panel.py lib\script\obj-音响\manager.py lib\script\ui\speaker_control_buttons.py lib\script\ui\speaker_search_dialog.py` 已通过。
+- 2026-07-06 追加验证：`py -3 -m unittest discover -s tests -p &quot;test_*music*.py&quot;` 已通过。
+- 说明：环境中未安装 `pytest`，本轮改用 `unittest` 执行现有测试文件。
+- 目标：
+- 死代码清理后不影响现有导入链路。
+- 元宝聊天路径仍可通过现有测试。
+
+2. 回写状态
+- 状态：已完成
+- 本轮通过验证的项已改为 `已完成`。
+- 需要继续扩面的项保留 `待处理` / `暂缓`。</pre>
+        </article>
+        <article class="card">
+            <header>
+                <div class="eyebrow">2026-06-27 16:26</div>
+                <h3>已注册的事件</h3>
+                <a class="download" href="doc/已注册的事件.txt" download>下载原文件</a>
+            </header>
+            <pre>模块事件系统注册汇总
+
+生成范围: 所有 *.py 中的 EventCenter subscribe / unsubscribe / publish(Event(EventType.*)) 静态扫描结果
+仓库根目录: C:\Users\白草净华\Desktop\飞行雪绒项目\飞行雪绒WORKINGSPACE
+已发现订阅事件种类: 65
+已发现发布事件种类: 63
+
+=== 订阅汇总（按事件类型） ===
+
+[AI_VOICE_REQUEST]
+- lib/script/gsvmove/service.py -&gt; self._on_ai_voice_request [has unsubscribe]
+  发布方: lib/script/chat/handler_stream_presenter.py
+
+[APP_EXIT]
+- lib/script/SEanima/animation.py -&gt; self._handle_exit [has unsubscribe]
+
+[APP_INIT_READY]
+- lib/script/main.py -&gt; self._on_init_ready
+
+[APP_MAIN]
+- lib/script/chat/handler.py -&gt; self._on_app_main [has unsubscribe]
+- lib/script/chat/ollama.py -&gt; self._on_app_main
+- lib/script/chat/ollama_bootstrap.py -&gt; self._on_app_main [has unsubscribe]
+
+[APP_PRE_START]
+- lib/core/physics.py -&gt; _on_pre_start [has unsubscribe]
+- lib/core/voice/core.py -&gt; self._on_pre_start [has unsubscribe]
+- lib/script/chat/ollama.py -&gt; self._on_app_pre_start
+- lib/script/chat/ollama_bootstrap.py -&gt; self._on_app_pre_start [has unsubscribe]
+- lib/script/gsvmove/service.py -&gt; self._on_app_pre_start [has unsubscribe]
+- lib/script/main.py -&gt; self._on_pre_start
+- lib/script/SEanima/animation.py -&gt; self._handle_pre_start [has unsubscribe]
+- lib/script/yuanbao_free_api/service.py -&gt; self._on_app_pre_start [has unsubscribe]
+
+[APP_QUIT]
+- lib/core/event/app_handler.py -&gt; self._on_app_quit
+- lib/script/main.py -&gt; self._on_app_quit
+  发布方: lib/core/pet_window.py
+
+[AUTOSTART_STATUS_CHANGE]
+- lib/script/ui/ai_settings_panel.py -&gt; self._on_autostart_status_change [has unsubscribe]
+  发布方: lib/core/tray_icon.py
+
+[DRAW_RENDER]
+- lib/core/pet_window.py -&gt; self._handle_draw_render
+
+[DRAW_REQUEST]
+- lib/core/pet_window.py -&gt; self._handle_draw_request
+
+[ENTITY_POSITION_REQUEST]
+- lib/core/pet_window.py -&gt; self._handle_entity_position_request
+  发布方: lib/core/event/center.py, lib/script/obj-雪豹/manager.py
+
+[ENTITY_POSITION_RESPONSE]
+- lib/script/obj-雪豹/manager.py -&gt; self._handle_entity_position_response [has unsubscribe]
+  发布方: lib/core/pet_window.py
+
+[ENTITY_STATE_QUERY]
+- lib/core/pet_window.py -&gt; self._handle_entity_state_query
+  发布方: lib/core/event/center.py, lib/script/obj-雪豹/manager.py
+
+[ENTITY_STATE_RESPONSE]
+- lib/script/obj-雪豹/manager.py -&gt; self._handle_entity_state_response [has unsubscribe]
+  发布方: lib/core/pet_window.py
+
+[FRAME]
+- lib/core/pet_window.py -&gt; self._handle_frame_event
+- lib/core/physics.py -&gt; self._on_frame [has unsubscribe]
+- lib/core/qt_particle_system.py -&gt; self._on_frame [has unsubscribe]
+- lib/script/obj-摩托/manager.py -&gt; self._on_frame [has unsubscribe]
+- lib/script/obj-摩托/mortor.py -&gt; self._on_frame_move [has unsubscribe]
+- lib/script/obj-音响/speaker.py -&gt; self._on_frame_frequency [has unsubscribe]
+- lib/script/ui/auto_chat_button.py -&gt; self._on_frame [has unsubscribe]
+- lib/script/ui/chat_mode_button.py -&gt; self._on_frame [has unsubscribe]
+- lib/script/ui/clickthrough_button.py -&gt; self._on_frame
+- lib/script/ui/close_button.py -&gt; self._on_frame
+- lib/script/ui/command_dialog.py -&gt; self._on_frame
+- lib/script/ui/command_hint_box.py -&gt; self._on_frame
+- lib/script/ui/launch_wuwa_button.py -&gt; self._on_frame [has unsubscribe]
+- lib/script/ui/mic_stt_indicator.py -&gt; self._on_frame [has unsubscribe]
+- lib/script/ui/more_functions_button.py -&gt; self._on_frame [has unsubscribe]
+- lib/script/ui/playlist_panel.py -&gt; self._on_frame
+- lib/script/ui/progress_panel.py -&gt; self._on_frame
+- lib/script/ui/restore_button.py -&gt; self._on_frame
+- lib/script/ui/scale_button.py -&gt; self._on_frame
+- lib/script/ui/speaker_search_dialog.py -&gt; self._on_frame [has unsubscribe]
+
+[GIF_FRAME]
+- lib/core/pet_window.py -&gt; self._handle_gif_frame_event
+- lib/script/obj-雪豹/snow_leopard.py -&gt; self._on_gif_frame [has unsubscribe]
+
+[GIF_LOOP_COMPLETED]
+- lib/script/mainpet/state.py -&gt; self._on_gif_loop_completed
+
+[INFORMATION]
+- lib/script/ui/bubble.py -&gt; self._on_information
+  发布方: lib/core/cmd_center.py, lib/core/tray_icon.py, lib/script/chat/handler.py, lib/script/chat/handler_stream_presenter.py, lib/script/cloudmusic/_mixin_cache.py, lib/script/cloudmusic/manager.py, lib/script/microphone_stt/service.py, lib/script/obj-摩托/manager.py, lib/script/obj-沙发/manager.py, lib/script/obj-闹钟/manager.py, lib/script/obj-雪堆/manager.py, lib/script/obj-雪球/manager.py, lib/script/obj-雪豹/manager.py, lib/script/obj-音响/manager.py, lib/script/practical/cleanup_handler.py, lib/script/tool_dispatcher/dispatcher.py, lib/script/ui/ai_settings_panel.py, lib/script/ui/launch_wuwa_button.py, lib/script/ui/more_functions_button.py, lib/script/ui/playlist_panel.py, lib/script/ui/speaker_control_buttons.py, lib/script/ui/speaker_search_dialog.py, lib/script/ui/yuanbao_login_dialog.py, lib/script/yuanbao_free_api/service.py
+
+[INPUT_CHAT]
+- lib/script/chat/handler.py -&gt; self._on_input_chat [has unsubscribe]
+- lib/script/chat/memory.py -&gt; self._on_input_chat [has unsubscribe]
+  发布方: lib/script/microphone_stt/service.py, lib/script/tool_dispatcher/dispatcher.py
+
+[INPUT_COMMAND]
+- lib/core/cmd_center.py -&gt; self._on_input_command [has unsubscribe]
+
+[INPUT_HASH]
+- lib/core/cmd_center.py -&gt; self._on_input_hash [has unsubscribe]
+- lib/script/obj-摩托/manager.py -&gt; self._on_hash_command [has unsubscribe]
+- lib/script/obj-沙发/manager.py -&gt; self._on_hash_command [has unsubscribe]
+- lib/script/obj-闹钟/manager.py -&gt; self._on_hash_command [has unsubscribe]
+- lib/script/obj-雪堆/manager.py -&gt; self._on_hash_command [has unsubscribe]
+- lib/script/obj-雪球/manager.py -&gt; self._on_hash_command [has unsubscribe]
+- lib/script/obj-雪豹/manager.py -&gt; self._on_hash_command [has unsubscribe]
+- lib/script/obj-音响/manager.py -&gt; self._on_hash_command [has unsubscribe]
+- lib/script/practical/cleanup_handler.py -&gt; self._on_hash_command [has unsubscribe]
+  发布方: lib/core/tray_icon.py, lib/script/ui/command_hint_box.py
+
+[KEY_PRESS]
+- lib/core/event/key_handler.py -&gt; self._on_key_press
+- lib/script/microphone_stt/push_to_talk.py -&gt; self._on_key_press [has unsubscribe]
+- lib/script/obj-摩托/mortor.py -&gt; self._on_key_press [has unsubscribe]
+
+[KEY_RELEASE]
+- lib/script/microphone_stt/push_to_talk.py -&gt; self._on_key_release [has unsubscribe]
+- lib/script/obj-摩托/mortor.py -&gt; self._on_key_release [has unsubscribe]
+
+[MANAGER_QUERY_REQUEST]
+- lib/script/obj-摩托/manager.py -&gt; self._on_query_request [has unsubscribe]
+- lib/script/obj-沙发/manager.py -&gt; self._on_query_request [has unsubscribe]
+- lib/script/obj-闹钟/manager.py -&gt; self._on_query_request [has unsubscribe]
+- lib/script/obj-雪豹/manager.py -&gt; self._on_query_request [has unsubscribe]
+  发布方: lib/script/obj-雪堆/manager.py
+
+[MANAGER_QUERY_RESPONSE]
+- lib/script/obj-雪堆/manager.py -&gt; self.handle_query_response [has unsubscribe]
+  发布方: lib/script/obj-摩托/manager.py, lib/script/obj-沙发/manager.py, lib/script/obj-闹钟/manager.py, lib/script/obj-雪豹/manager.py
+
+[MANAGER_SPAWN_REQUEST]
+- lib/script/obj-摩托/manager.py -&gt; self._on_spawn_request [has unsubscribe]
+- lib/script/obj-沙发/manager.py -&gt; self._on_spawn_request [has unsubscribe]
+- lib/script/obj-闹钟/manager.py -&gt; self._on_spawn_request [has unsubscribe]
+- lib/script/obj-雪球/manager.py -&gt; self._on_spawn_request [has unsubscribe]
+- lib/script/obj-雪豹/manager.py -&gt; self._on_spawn_request [has unsubscribe]
+- lib/script/obj-音响/manager.py -&gt; self._on_spawn_request [has unsubscribe]
+  发布方: lib/script/obj-雪堆/manager.py, lib/script/tool_dispatcher/dispatcher.py
+
+[MIC_STT_START]
+- lib/script/microphone_stt/service.py -&gt; self._on_start_request [has unsubscribe]
+  发布方: lib/script/microphone_stt/push_to_talk.py, lib/script/ui/auto_chat_button.py, lib/script/ui/chat_mode_button.py
+
+[MIC_STT_STATE_CHANGE]
+- lib/script/microphone_stt/push_to_talk.py -&gt; self._on_stt_state_change [has unsubscribe]
+- lib/script/ui/auto_chat_button.py -&gt; self._on_stt_state_change [has unsubscribe]
+- lib/script/ui/chat_mode_button.py -&gt; self._on_stt_state_change [has unsubscribe]
+- lib/script/ui/mic_stt_indicator.py -&gt; self._on_state_change [has unsubscribe]
+  发布方: lib/script/microphone_stt/service.py
+
+[MIC_STT_STOP]
+- lib/script/microphone_stt/service.py -&gt; self._on_stop_request [has unsubscribe]
+  发布方: lib/script/microphone_stt/push_to_talk.py, lib/script/ui/auto_chat_button.py, lib/script/ui/chat_mode_button.py, lib/script/ui/mic_stt_indicator.py
+
+[MOUSE_ENTER]
+- lib/script/ui/close_button_handler.py -&gt; self._on_mouse_enter
+
+[MOUSE_GET_POSITION]
+- lib/core/input/click.py -&gt; self._handle_get_position
+
+[MOUSE_LEAVE]
+- lib/script/ui/close_button_handler.py -&gt; self._on_mouse_leave
+
+[MOUSE_MOVE]
+- lib/core/event/mouse_handler.py -&gt; self._on_mouse_move
+- lib/script/ui/clickthrough_button.py -&gt; self._reset_idle_timer
+- lib/script/ui/close_button.py -&gt; self._reset_idle_timer
+- lib/script/ui/restore_button.py -&gt; self._on_mouse_move
+- lib/script/ui/scale_button.py -&gt; self._reset_idle_timer
+
+[MOUSE_PRESS]
+- lib/core/event/mouse_handler.py -&gt; self._on_mouse_press
+- lib/script/mainpet/state.py -&gt; self._on_mouse_press
+- lib/script/ui/clickthrough_button.py -&gt; self._reset_idle_timer
+- lib/script/ui/close_button.py -&gt; self._reset_idle_timer
+- lib/script/ui/close_button_handler.py -&gt; self._on_mouse_press
+- lib/script/ui/command_dialog_handler.py -&gt; self._on_mouse_press
+- lib/script/ui/scale_button.py -&gt; self._reset_idle_timer
+
+[MUSIC_LOGIN_QR_HIDE]
+- lib/script/ui/cloudmusic_login_dialog.py -&gt; self._on_qr_hide [has unsubscribe]
+  发布方: lib/script/cloudmusic/_mixin_login.py
+
+[MUSIC_LOGIN_QR_SHOW]
+- lib/script/ui/cloudmusic_login_dialog.py -&gt; self._on_qr_show [has unsubscribe]
+  发布方: lib/script/cloudmusic/_mixin_login.py
+
+[MUSIC_LOGIN_QR_STATUS]
+- lib/script/ui/cloudmusic_login_dialog.py -&gt; self._on_qr_status [has unsubscribe]
+  发布方: lib/script/cloudmusic/_mixin_login.py
+
+[MUSIC_LOGIN_STATUS_CHANGE]
+- lib/script/ui/speaker_control_buttons.py -&gt; self._on_login_status_change
+  发布方: lib/script/cloudmusic/manager.py, lib/script/ui/speaker_control_buttons.py
+
+[MUSIC_PROGRESS]
+- lib/script/ui/progress_panel.py -&gt; self._on_music_progress
+  发布方: lib/script/cloudmusic/_mixin_playback.py
+
+[MUSIC_SONG_END]
+- lib/script/ui/playlist_panel.py -&gt; self._on_song_end
+- lib/script/ui/progress_panel.py -&gt; self._on_song_end
+  发布方: lib/script/cloudmusic/_mixin_playback.py
+
+[MUSIC_STATUS_CHANGE]
+- lib/script/ui/playlist_panel.py -&gt; self._on_music_status
+- lib/script/ui/progress_panel.py -&gt; self._on_music_status
+- lib/script/ui/speaker_control_buttons.py -&gt; self._on_status_change
+  发布方: lib/script/cloudmusic/manager.py
+
+[PARTICLE_REQUEST]
+- lib/core/qt_particle_system.py -&gt; self._on_particle_request [has unsubscribe]
+  发布方: lib/script/cloudmusic/_mixin_events.py, lib/script/obj-雪堆/manager.py, lib/script/obj-雪堆/snow_pile.py, lib/script/obj-雪球/snowball.py, lib/script/obj-雪豹/snow_leopard.py, lib/script/ui/_particle_helper.py, lib/script/ui/ai_settings_panel.py, lib/script/ui/auto_chat_button.py, lib/script/ui/bubble.py, lib/script/ui/chat_mode_button.py, lib/script/ui/command_hint_box.py, lib/script/ui/launch_wuwa_button.py, lib/script/ui/more_functions_button.py, lib/script/ui/playlist_panel.py, lib/script/ui/speaker_search_dialog.py, lib/script/ui/speaker_search_result_box.py, lib/script/ui/tray_menu.py
+
+[PET_TELEPORT]
+- lib/core/pet_window.py -&gt; self._handle_pet_teleport
+  发布方: lib/script/tool_dispatcher/dispatcher.py
+
+[PROTECTION_CHECK]
+- lib/script/obj-摩托/manager.py -&gt; self._on_protection_check [has unsubscribe]
+- lib/script/obj-沙发/manager.py -&gt; self._on_protection_check [has unsubscribe]
+- lib/script/obj-闹钟/manager.py -&gt; self._on_protection_check [has unsubscribe]
+  发布方: lib/script/mainpet/state.py
+
+[PROTECTION_RESPONSE]
+- lib/script/mainpet/state.py -&gt; self._on_protection_response
+  发布方: lib/script/obj-摩托/manager.py, lib/script/obj-沙发/manager.py, lib/script/obj-闹钟/manager.py
+
+[SOUND_REQUEST]
+- lib/core/voice/core.py -&gt; self._on_sound_request [has unsubscribe]
+  发布方: lib/script/gsvmove/service.py, lib/script/voice/handler.py
+
+[SPEAKER_WINDOW_REQUEST]
+- lib/script/obj-音响/manager.py -&gt; self._on_window_request [has unsubscribe]
+  发布方: lib/script/cloudmusic/_mixin_playback.py, lib/script/tool_dispatcher/dispatcher.py
+
+[SPEAKER_WINDOW_RESPONSE]
+- lib/script/tool_dispatcher/dispatcher.py -&gt; _on_response [has unsubscribe]
+  发布方: lib/script/obj-音响/manager.py
+
+[STATE_CHANGE_REQUEST]
+- lib/script/mainpet/state.py -&gt; self._on_state_change_request
+  发布方: lib/core/pet_window.py, lib/script/obj-雪豹/manager.py
+
+[STREAM_FINAL]
+- lib/script/chat/memory.py -&gt; self._on_stream_final [has unsubscribe]
+- lib/script/tool_dispatcher/dispatcher.py -&gt; self._on_stream_final [has unsubscribe]
+  发布方: lib/script/chat/handler_stream_presenter.py
+
+[TARGET_POSITION_QUERY]
+- lib/script/obj-摩托/manager.py -&gt; self._on_target_position_query [has unsubscribe]
+- lib/script/obj-沙发/manager.py -&gt; self._on_target_position_query [has unsubscribe]
+- lib/script/obj-闹钟/manager.py -&gt; self._on_target_position_query [has unsubscribe]
+- lib/script/obj-雪豹/manager.py -&gt; self._on_target_position_query [has unsubscribe]
+
+[TICK]
+- lib/core/input/click.py -&gt; self._on_tick
+- lib/core/object/base.py -&gt; self._tick_fade [has unsubscribe]
+- lib/core/pet_window.py -&gt; self._handle_tick_event
+- lib/script/mainpet/state.py -&gt; self._on_tick_tracking
+- lib/script/obj-摩托/mortor.py -&gt; self._on_tick_click [has unsubscribe]
+- lib/script/obj-摩托/mortor.py -&gt; self._on_tick_motion [has unsubscribe]
+- lib/script/obj-摩托/mortor.py -&gt; self._on_tick_render_jitter [has unsubscribe]
+- lib/script/obj-摩托/mortor.py -&gt; self._tick_fade [has unsubscribe]
+- lib/script/obj-沙发/sofa.py -&gt; self._on_tick_click [has unsubscribe]
+- lib/script/obj-沙发/sofa.py -&gt; self._tick_fade [has unsubscribe]
+- lib/script/obj-闹钟/clock.py -&gt; self._on_tick_click [has unsubscribe]
+- lib/script/obj-闹钟/clock.py -&gt; self._tick_fade [has unsubscribe]
+- lib/script/obj-雪堆/snow_pile.py -&gt; self._on_tick_click [has unsubscribe]
+- lib/script/obj-雪堆/snow_pile.py -&gt; self._tick_fade [has unsubscribe]
+- lib/script/obj-雪球/manager.py -&gt; self._on_tick [has unsubscribe]
+- lib/script/obj-雪球/snowball.py -&gt; self._on_tick [has unsubscribe]
+- lib/script/obj-雪球/snowball.py -&gt; self._tick_fade [has unsubscribe]
+- lib/script/obj-雪豹/manager.py -&gt; self._on_tick [has unsubscribe]
+- lib/script/obj-雪豹/snow_leopard.py -&gt; self._on_tick_click [has unsubscribe]
+- lib/script/obj-雪豹/snow_leopard.py -&gt; self._tick_fade [has unsubscribe]
+- lib/script/obj-音响/speaker.py -&gt; self._on_tick_click [has unsubscribe]
+- lib/script/ui/ai_settings_panel.py -&gt; self._on_tick [has unsubscribe]
+- lib/script/ui/bubble.py -&gt; self._on_tick
+- lib/script/ui/tooltip_panel.py -&gt; self._on_tick
+
+[TIMER]
+- lib/core/pet_window.py -&gt; self._handle_timer_event
+- lib/script/mainpet/state.py -&gt; self._on_timer_event
+- lib/script/obj-雪堆/snow_pile.py -&gt; self._on_timer_event [has unsubscribe]
+- lib/script/obj-雪豹/snow_leopard.py -&gt; self._on_timer_event [has unsubscribe]
+
+[TIMER_PAUSE]
+- lib/core/timing/manager.py -&gt; self._on_timer_pause
+
+[TIMER_RESUME]
+- lib/core/timing/manager.py -&gt; self._on_timer_resume
+
+[UI_ANCHOR_RESPONSE]
+- lib/script/ui/auto_chat_button.py -&gt; self._on_anchor_response [has unsubscribe]
+- lib/script/ui/bubble.py -&gt; self._on_anchor_response
+- lib/script/ui/chat_mode_button.py -&gt; self._on_anchor_response [has unsubscribe]
+- lib/script/ui/clickthrough_button.py -&gt; self._on_anchor_response
+- lib/script/ui/close_button.py -&gt; self._on_anchor_response
+- lib/script/ui/command_dialog.py -&gt; self._on_anchor_response
+- lib/script/ui/command_hint_box.py -&gt; self._on_anchor_response
+- lib/script/ui/launch_wuwa_button.py -&gt; self._on_anchor_response [has unsubscribe]
+- lib/script/ui/more_functions_button.py -&gt; self._on_anchor_response [has unsubscribe]
+- lib/script/ui/restore_button.py -&gt; self._on_anchor_response
+- lib/script/ui/scale_button.py -&gt; self._on_anchor_response
+- lib/script/ui/speaker_control_buttons.py -&gt; self._on_anchor_response [has unsubscribe]
+- lib/script/ui/speaker_search_result_box.py -&gt; self._on_anchor_response
+  发布方: lib/core/anchor_utils.py, lib/core/event/mouse_handler.py, lib/core/pet_window.py, lib/script/ui/speaker_search_dialog.py
+
+[UI_CLICKTHROUGH_TOGGLE]
+- lib/core/pet_window.py -&gt; self._handle_clickthrough_toggle
+- lib/core/tray_icon.py -&gt; self._on_clickthrough_status_change [has unsubscribe]
+- lib/script/obj-摩托/mortor.py -&gt; self._on_clickthrough_toggle [has unsubscribe]
+- lib/script/obj-沙发/sofa.py -&gt; self._on_clickthrough_toggle [has unsubscribe]
+- lib/script/obj-闹钟/clock.py -&gt; self._on_clickthrough_toggle [has unsubscribe]
+- lib/script/obj-雪堆/snow_pile.py -&gt; self._on_clickthrough_toggle
+- lib/script/obj-雪球/snowball.py -&gt; self._on_clickthrough_toggle [has unsubscribe]
+- lib/script/obj-雪豹/snow_leopard.py -&gt; self._on_clickthrough_toggle
+- lib/script/obj-音响/speaker.py -&gt; self._on_clickthrough_toggle [has unsubscribe]
+- lib/script/ui/auto_chat_button.py -&gt; self._on_clickthrough_toggle [has unsubscribe]
+- lib/script/ui/bubble.py -&gt; self._on_clickthrough_toggle
+- lib/script/ui/chat_mode_button.py -&gt; self._on_clickthrough_toggle [has unsubscribe]
+- lib/script/ui/close_button.py -&gt; self._on_clickthrough_toggle
+- lib/script/ui/cloudmusic_login_dialog.py -&gt; self._on_clickthrough_toggle [has unsubscribe]
+- lib/script/ui/command_dialog.py -&gt; self._on_clickthrough_toggle
+- lib/script/ui/command_hint_box.py -&gt; self._on_clickthrough_toggle
+- lib/script/ui/launch_wuwa_button.py -&gt; self._on_clickthrough_toggle [has unsubscribe]
+- lib/script/ui/mic_stt_indicator.py -&gt; self._on_clickthrough_toggle [has unsubscribe]
+- lib/script/ui/more_functions_button.py -&gt; self._on_clickthrough_toggle [has unsubscribe]
+- lib/script/ui/page_turn_buttons.py -&gt; self._on_clickthrough_toggle
+- lib/script/ui/playlist_panel.py -&gt; self._on_clickthrough_toggle
+- lib/script/ui/progress_panel.py -&gt; self._on_clickthrough_toggle
+- lib/script/ui/restore_button.py -&gt; self._on_clickthrough_toggle
+- lib/script/ui/scale_button.py -&gt; self._on_clickthrough_toggle
+- lib/script/ui/speaker_control_buttons.py -&gt; self._on_clickthrough_toggle
+- lib/script/ui/speaker_search_dialog.py -&gt; self._on_clickthrough_toggle [has unsubscribe]
+- lib/script/ui/speaker_search_result_box.py -&gt; self._on_clickthrough_toggle
+- lib/script/ui/yuanbao_login_dialog.py -&gt; self._on_clickthrough_toggle [has unsubscribe]
+  发布方: lib/core/tray_icon.py
+
+[UI_COMMAND_TOGGLE]
+- lib/script/ui/command_dialog.py -&gt; self._on_command_toggle
+  发布方: lib/core/event/mouse_handler.py
+
+[UI_CREATE]
+- lib/core/pet_window.py -&gt; self._handle_ui_create
+- lib/script/ui/bubble.py -&gt; self._on_ui_create
+- lib/script/ui/clickthrough_button.py -&gt; self._on_ui_create
+- lib/script/ui/close_button.py -&gt; self._on_ui_create
+- lib/script/ui/command_dialog.py -&gt; self._on_ui_create
+- lib/script/ui/restore_button.py -&gt; self._on_ui_create
+- lib/script/ui/scale_button.py -&gt; self._on_ui_create
+- lib/script/ui/speaker_control_buttons.py -&gt; self._on_ui_create [has unsubscribe]
+  发布方: lib/script/ui/command_hint_box.py
+
+[UI_HINT_PICK]
+- lib/script/ui/command_dialog.py -&gt; self._on_hint_pick
+  发布方: lib/script/ui/command_hint_box.py
+
+[UI_OPEN_CMD_WINDOW]
+- lib/script/ui/cmd_window.py -&gt; self._on_open_cmd_window
+  发布方: lib/core/tray_icon.py
+
+[UI_OPEN_CMD_WINDOW_WITH_COMMAND]
+- lib/script/ui/cmd_window.py -&gt; self._on_open_cmd_window_with_command
+
+[VOICE_REQUEST]
+- lib/script/voice/handler.py -&gt; self._on_voice_request [has unsubscribe]
+  发布方: lib/core/voice/random_sound.py
+
+[YUANBAO_LOGIN_QR_HIDE]
+- lib/script/ui/yuanbao_login_dialog.py -&gt; self._on_qr_hide [has unsubscribe]
+  发布方: lib/script/ui/yuanbao_login_dialog.py, lib/script/yuanbao_free_api/service.py
+
+[YUANBAO_LOGIN_QR_SHOW]
+- lib/script/ui/yuanbao_login_dialog.py -&gt; self._on_qr_show [has unsubscribe]
+  发布方: lib/script/ui/ai_settings_panel.py, lib/script/yuanbao_free_api/service.py
+
+[YUANBAO_LOGIN_QR_STATUS]
+- lib/script/ui/yuanbao_login_dialog.py -&gt; self._on_qr_status [has unsubscribe]
+  发布方: lib/script/yuanbao_free_api/service.py
+
+=== 仅发布未订阅的事件 ===
+
+[MANAGER_INTERACTION]
+- lib/script/obj-雪豹/manager.py
+
+[MIC_STT_FINAL]
+- lib/script/microphone_stt/service.py
+
+[MIC_STT_PARTIAL]
+- lib/script/microphone_stt/service.py
+
+[MOUSE_CLICK]
+- lib/core/input/click.py
+
+[MOUSE_DOUBLE_CLICK]
+- lib/core/input/click.py
+
+[MUSIC_ENQUEUE]
+- lib/script/ui/speaker_search_result_box.py
+
+[MUSIC_ENQUEUE_HISTORY]
+- lib/script/ui/speaker_control_buttons.py
+
+[MUSIC_ENQUEUE_LIKED]
+- lib/script/ui/speaker_control_buttons.py
+
+[MUSIC_ENQUEUE_LOCAL]
+- lib/script/ui/speaker_control_buttons.py
+
+[MUSIC_LOGIN_CANCEL_REQUEST]
+- lib/script/ui/cloudmusic_login_dialog.py
+
+[MUSIC_LOGIN_REQUEST]
+- lib/script/ui/speaker_control_buttons.py
+
+[MUSIC_LOGOUT_REQUEST]
+- lib/script/obj-音响/manager.py
+
+[MUSIC_NEXT_TRACK]
+- lib/script/tool_dispatcher/dispatcher.py
+- lib/script/ui/speaker_control_buttons.py
+
+[MUSIC_PLAY_MODE_TOGGLE]
+- lib/script/ui/speaker_control_buttons.py
+
+[MUSIC_PLAY_PAUSE]
+- lib/script/practical/cleanup_handler.py
+- lib/script/tool_dispatcher/dispatcher.py
+- lib/script/ui/speaker_control_buttons.py
+
+[MUSIC_PLAY_QUEUE_INDEX]
+- lib/script/ui/playlist_panel.py
+
+[MUSIC_PLAY_TOP]
+- lib/script/obj-摩托/manager.py
+- lib/script/tool_dispatcher/dispatcher.py
+- lib/script/ui/speaker_search_result_box.py
+
+[MUSIC_PROGRESS_REQUEST]
+- lib/script/ui/progress_panel.py
+
+[MUSIC_SEEK]
+- lib/script/ui/progress_panel.py
+
+[MUSIC_VOLUME]
+- lib/script/tool_dispatcher/dispatcher.py
+- lib/script/ui/speaker_control_buttons.py
+
+[TARGET_POSITION_RESPONSE]
+- lib/script/obj-摩托/manager.py
+- lib/script/obj-沙发/manager.py
+- lib/script/obj-闹钟/manager.py
+- lib/script/obj-雪豹/manager.py
+
+=== 仅退订记录（未扫到订阅） ===
+
+=== 发布方索引（按事件类型） ===
+
+[AI_VOICE_REQUEST]
+- lib/script/chat/handler_stream_presenter.py
+
+[APP_QUIT]
+- lib/core/pet_window.py
+
+[AUTOSTART_STATUS_CHANGE]
+- lib/core/tray_icon.py
+
+[ENTITY_POSITION_REQUEST]
+- lib/core/event/center.py
+- lib/script/obj-雪豹/manager.py
+
+[ENTITY_POSITION_RESPONSE]
+- lib/core/pet_window.py
+
+[ENTITY_STATE_QUERY]
+- lib/core/event/center.py
+- lib/script/obj-雪豹/manager.py
+
+[ENTITY_STATE_RESPONSE]
+- lib/core/pet_window.py
+
+[INFORMATION]
+- lib/core/cmd_center.py
+- lib/core/tray_icon.py
+- lib/script/chat/handler.py
+- lib/script/chat/handler_stream_presenter.py
+- lib/script/cloudmusic/_mixin_cache.py
+- lib/script/cloudmusic/manager.py
+- lib/script/microphone_stt/service.py
+- lib/script/obj-摩托/manager.py
+- lib/script/obj-沙发/manager.py
+- lib/script/obj-闹钟/manager.py
+- lib/script/obj-雪堆/manager.py
+- lib/script/obj-雪球/manager.py
+- lib/script/obj-雪豹/manager.py
+- lib/script/obj-音响/manager.py
+- lib/script/practical/cleanup_handler.py
+- lib/script/tool_dispatcher/dispatcher.py
+- lib/script/ui/ai_settings_panel.py
+- lib/script/ui/launch_wuwa_button.py
+- lib/script/ui/more_functions_button.py
+- lib/script/ui/playlist_panel.py
+- lib/script/ui/speaker_control_buttons.py
+- lib/script/ui/speaker_search_dialog.py
+- lib/script/ui/yuanbao_login_dialog.py
+- lib/script/yuanbao_free_api/service.py
+
+[INPUT_CHAT]
+- lib/script/microphone_stt/service.py
+- lib/script/tool_dispatcher/dispatcher.py
+
+[INPUT_HASH]
+- lib/core/tray_icon.py
+- lib/script/ui/command_hint_box.py
+
+[MANAGER_INTERACTION]
+- lib/script/obj-雪豹/manager.py
+
+[MANAGER_QUERY_REQUEST]
+- lib/script/obj-雪堆/manager.py
+
+[MANAGER_QUERY_RESPONSE]
+- lib/script/obj-摩托/manager.py
+- lib/script/obj-沙发/manager.py
+- lib/script/obj-闹钟/manager.py
+- lib/script/obj-雪豹/manager.py
+
+[MANAGER_SPAWN_REQUEST]
+- lib/script/obj-雪堆/manager.py
+- lib/script/tool_dispatcher/dispatcher.py
+
+[MIC_STT_FINAL]
+- lib/script/microphone_stt/service.py
+
+[MIC_STT_PARTIAL]
+- lib/script/microphone_stt/service.py
+
+[MIC_STT_START]
+- lib/script/microphone_stt/push_to_talk.py
+- lib/script/ui/auto_chat_button.py
+- lib/script/ui/chat_mode_button.py
+
+[MIC_STT_STATE_CHANGE]
+- lib/script/microphone_stt/service.py
+
+[MIC_STT_STOP]
+- lib/script/microphone_stt/push_to_talk.py
+- lib/script/ui/auto_chat_button.py
+- lib/script/ui/chat_mode_button.py
+- lib/script/ui/mic_stt_indicator.py
+
+[MOUSE_CLICK]
+- lib/core/input/click.py
+
+[MOUSE_DOUBLE_CLICK]
+- lib/core/input/click.py
+
+[MUSIC_ENQUEUE]
+- lib/script/ui/speaker_search_result_box.py
+
+[MUSIC_ENQUEUE_HISTORY]
+- lib/script/ui/speaker_control_buttons.py
+
+[MUSIC_ENQUEUE_LIKED]
+- lib/script/ui/speaker_control_buttons.py
+
+[MUSIC_ENQUEUE_LOCAL]
+- lib/script/ui/speaker_control_buttons.py
+
+[MUSIC_LOGIN_CANCEL_REQUEST]
+- lib/script/ui/cloudmusic_login_dialog.py
+
+[MUSIC_LOGIN_QR_HIDE]
+- lib/script/cloudmusic/_mixin_login.py
+
+[MUSIC_LOGIN_QR_SHOW]
+- lib/script/cloudmusic/_mixin_login.py
+
+[MUSIC_LOGIN_QR_STATUS]
+- lib/script/cloudmusic/_mixin_login.py
+
+[MUSIC_LOGIN_REQUEST]
+- lib/script/ui/speaker_control_buttons.py
+
+[MUSIC_LOGIN_STATUS_CHANGE]
+- lib/script/cloudmusic/manager.py
+- lib/script/ui/speaker_control_buttons.py
+
+[MUSIC_LOGOUT_REQUEST]
+- lib/script/obj-音响/manager.py
+
+[MUSIC_NEXT_TRACK]
+- lib/script/tool_dispatcher/dispatcher.py
+- lib/script/ui/speaker_control_buttons.py
+
+[MUSIC_PLAY_MODE_TOGGLE]
+- lib/script/ui/speaker_control_buttons.py
+
+[MUSIC_PLAY_PAUSE]
+- lib/script/practical/cleanup_handler.py
+- lib/script/tool_dispatcher/dispatcher.py
+- lib/script/ui/speaker_control_buttons.py
+
+[MUSIC_PLAY_QUEUE_INDEX]
+- lib/script/ui/playlist_panel.py
+
+[MUSIC_PLAY_TOP]
+- lib/script/obj-摩托/manager.py
+- lib/script/tool_dispatcher/dispatcher.py
+- lib/script/ui/speaker_search_result_box.py
+
+[MUSIC_PROGRESS]
+- lib/script/cloudmusic/_mixin_playback.py
+
+[MUSIC_PROGRESS_REQUEST]
+- lib/script/ui/progress_panel.py
+
+[MUSIC_SEEK]
+- lib/script/ui/progress_panel.py
+
+[MUSIC_SONG_END]
+- lib/script/cloudmusic/_mixin_playback.py
+
+[MUSIC_STATUS_CHANGE]
+- lib/script/cloudmusic/manager.py
+
+[MUSIC_VOLUME]
+- lib/script/tool_dispatcher/dispatcher.py
+- lib/script/ui/speaker_control_buttons.py
+
+[PARTICLE_REQUEST]
+- lib/script/cloudmusic/_mixin_events.py
+- lib/script/obj-雪堆/manager.py
+- lib/script/obj-雪堆/snow_pile.py
+- lib/script/obj-雪球/snowball.py
+- lib/script/obj-雪豹/snow_leopard.py
+- lib/script/ui/_particle_helper.py
+- lib/script/ui/ai_settings_panel.py
+- lib/script/ui/auto_chat_button.py
+- lib/script/ui/bubble.py
+- lib/script/ui/chat_mode_button.py
+- lib/script/ui/command_hint_box.py
+- lib/script/ui/launch_wuwa_button.py
+- lib/script/ui/more_functions_button.py
+- lib/script/ui/playlist_panel.py
+- lib/script/ui/speaker_search_dialog.py
+- lib/script/ui/speaker_search_result_box.py
+- lib/script/ui/tray_menu.py
+
+[PET_TELEPORT]
+- lib/script/tool_dispatcher/dispatcher.py
+
+[PROTECTION_CHECK]
+- lib/script/mainpet/state.py
+
+[PROTECTION_RESPONSE]
+- lib/script/obj-摩托/manager.py
+- lib/script/obj-沙发/manager.py
+- lib/script/obj-闹钟/manager.py
+
+[SOUND_REQUEST]
+- lib/script/gsvmove/service.py
+- lib/script/voice/handler.py
+
+[SPEAKER_WINDOW_REQUEST]
+- lib/script/cloudmusic/_mixin_playback.py
+- lib/script/tool_dispatcher/dispatcher.py
+
+[SPEAKER_WINDOW_RESPONSE]
+- lib/script/obj-音响/manager.py
+
+[STATE_CHANGE_REQUEST]
+- lib/core/pet_window.py
+- lib/script/obj-雪豹/manager.py
+
+[STREAM_FINAL]
+- lib/script/chat/handler_stream_presenter.py
+
+[TARGET_POSITION_RESPONSE]
+- lib/script/obj-摩托/manager.py
+- lib/script/obj-沙发/manager.py
+- lib/script/obj-闹钟/manager.py
+- lib/script/obj-雪豹/manager.py
+
+[UI_ANCHOR_RESPONSE]
+- lib/core/anchor_utils.py
+- lib/core/event/mouse_handler.py
+- lib/core/pet_window.py
+- lib/script/ui/speaker_search_dialog.py
+
+[UI_CLICKTHROUGH_TOGGLE]
+- lib/core/tray_icon.py
+
+[UI_COMMAND_TOGGLE]
+- lib/core/event/mouse_handler.py
+
+[UI_CREATE]
+- lib/script/ui/command_hint_box.py
+
+[UI_HINT_PICK]
+- lib/script/ui/command_hint_box.py
+
+[UI_OPEN_CMD_WINDOW]
+- lib/core/tray_icon.py
+
+[VOICE_REQUEST]
+- lib/core/voice/random_sound.py
+
+[YUANBAO_LOGIN_QR_HIDE]
+- lib/script/ui/yuanbao_login_dialog.py
+- lib/script/yuanbao_free_api/service.py
+
+[YUANBAO_LOGIN_QR_SHOW]
+- lib/script/ui/ai_settings_panel.py
+- lib/script/yuanbao_free_api/service.py
+
+[YUANBAO_LOGIN_QR_STATUS]
+- lib/script/yuanbao_free_api/service.py</pre>
+        </article>
+        <article class="card">
+            <header>
+                <div class="eyebrow">2026-05-10 18:37</div>
+                <h3>更新日志</h3>
+                <a class="download" href="doc/更新日志.txt" download>下载原文件</a>
+            </header>
+            <pre>━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  飞行雪绒 Flying Snow Velvet — 更新日志
+  版本 LTS1.0.5  发布日期 2026-05-10
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+【新功能】
+
+  ● 更新面板工作流
+    - 新增 update_dialog.py 与 update_manager.py，支持版本检测、
+      增量/全量更新、进度展示与自动重启
+    - 配置面板集成更新检查入口
+
+  ● 鼠标穿透托盘开关
+    - 托盘右键菜单&quot;鼠标穿透&quot;从固定行为改为可勾选开关
+    - 新增 clickthrough_state.py 全局穿透状态模块
+    - 延迟创建的窗口自动同步当前穿透状态
+
+  ● 元宝附加参数硬编码
+    - chat_id / should_remove_conversation / upload_images 全部内置
+    - AI 设置面板移除对应复选框和输入框，防止误操作覆盖
+    - chat_id 恒空，仅保留 x_uskey / hy_user 为隐藏配置
+
+  ● 记忆系统重构
+    - 单文件 memory.txt → memory/memory_YYYY-MM-DD.txt 按日分片
+    - 启动时自动迁移旧数据到新格式
+    - 跳过 tool_recall 触发的 AI 回复，防止反馈环污染
+    - tool_recall 消息不再附带 [默认记忆] 块，避免双路记忆混淆
+
+  ● 回忆工具加权评分
+    - 匹配逻辑从&quot;取最新 N 条&quot;改为加权评分算法：
+      匹配质量（精确×3 / 子串×2 / 内容×1）× 时间衰减（1.0/0.8/0.5/0.3）
+    - 新增&quot;回忆提取条数&quot; UI 滑块 (5~50)，替换硬编码常量
+
+  ● QR 登录对话框统一重构
+    - 新增 qr_dialog_base.py 基类，网易云 / 元宝 / QQ 登录共用
+    - 减少约 500 行重复代码
+    - 新增 QQ 群展示对话框
+
+  ● YuanBao 认证头持久化缓存
+    - 新增 storage_state_headers.json，持久化存储认证请求头
+    - 页面级 request 监听器被动捕获，降低路由拦截开销
+    - 退出登录时自动清理缓存
+
+  ● 语音提醒模块
+    - 新增 ams_clickthrough_reminder.py 语音提示
+    - 内置音频资源文件
+
+
+【修复】
+
+  ● 退出动画恢复
+    - 修复应用关闭时退出动画被跳过的问题
+
+  ● 元宝二维码登录稳定性
+    - 扩展按钮选择器覆盖范围，提升登录入口识别成功率
+
+  ● pyncm 依赖修复
+    - PyPI 已下架 pyncm，现内置为项目源码 (pyncm/ 目录)
+    - 不再依赖外部 pip 安装，消除 CI 构建失败
+
+  ● GSVmove 服务稳定性
+    - 启动等待从 45s 延长到 90s
+    - 超时时输出最近日志尾部便于诊断
+    - 根目录解析增加空值保护
+
+  ● YuanBao 流式响应增强
+    - SSE 事件协议支持多行 data + event 字段解析
+    - text 类型提取兼容 msg/text/content/value/output_text 多种字段
+    - 控制类 payload ([plugin:/[MSGINDEX:/[TRACEID:) 静默跳过
+
+
+【优化】
+
+  ● HTTP 会话复用
+    - api_client_common 引入 Session 缓存池，减少 TLS 握手开销
+    - 流式读取 chunk_size 从 1 调整为 128，降低 CPU 开销
+
+  ● AI 设置面板简化
+    - 移除元宝相关三个复选框和输入框，降低用户误操作风险
+    - 隐藏配置项改为仅通过 ollama_config.py 管理
+
+
+【开发】
+
+  ● 新增测试用例
+    - test_ai_settings_panel_yuanbao_hidden.py
+    - test_gsvmove_root_resolution.py
+    - test_yuanbao_free_api_stream.py
+
+  ● 本次发版提交范围
+    b978035..aa51c24 共 11 个提交 (2026-04-15 ~ 2026-05-10)</pre>
+        </article>
+        <article class="card">
+            <header>
+                <div class="eyebrow">2026-07-24 18:59</div>
+                <h3>游戏包格式</h3>
+                <a class="download" href="doc/游戏包格式.md" download>下载原文件</a>
+            </header>
+            <pre>﻿# 游戏包格式
+
+本文档定义飞行雪绒当前小游戏包的安装格式、目录约束和运行时行为。
+
+## 目标
+
+- 让外部开发者可以交付一个结构正确的 `zip`，主程序即可安装。
+- 让游戏代码、资源、粒子、特效与桌宠主工程隔离。
+- 让卸载、导出、升级都围绕同一套包目录工作。
+
+## 运行时目录
+
+小游戏安装到共享根目录，而不是项目源码树。
+
+```text
+C:\AemeathDeskPet\
+  games\
+    inbox\        # 待扫描 ZIP
+    archive\      # 已安装 ZIP 归档
+    rejected\     # 安装失败 ZIP
+    installed\    # 已安装游戏
+    data\         # 每个游戏自己的存档
+    cache\        # 安装和运行缓存
+  config\
+    games\
+      registry.json
+```
+
+如果设置了环境变量 `AEMEATH_DESK_PET_HOME`，则以上路径全部改为该目录下。
+
+主程序发布包会额外携带一个内置官方包目录：
+
+```text
+gamepack/
+  official/
+    lahai_tetris.zip
+```
+
+运行时会优先扫描这里的官方 `zip` 并自动安装；源码开发环境下如果这个目录不存在，再回退到仓库内的官方样板目录。
+
+## ZIP 根结构
+
+游戏 `zip` 解压后根目录必须直接包含 `manifest.json`。
+
+```text
+manifest.json
+code/
+assets/
+extensions/
+README.txt
+```
+
+允许额外文件，但安装器只认以上核心布局。
+
+## 目录说明
+
+### `manifest.json`
+
+描述包自身、入口类、窗口参数和扩展模块声明。
+
+### `code/`
+
+游戏运行时代码。
+
+- 入口模块必须位于这里。
+- 游戏代码应该尽量只依赖宿主提供的公共 API。
+- 不要在包代码里写死项目源码根目录。
+
+### `assets/`
+
+包内资源。
+
+推荐子目录：
+
+```text
+assets/
+  avatars/
+  images/
+  sounds/
+  fonts/
+  text/
+```
+
+游戏应通过运行时传入的 `GameContext.assets_root` 或 `GameContext.asset_path(...)` 读取资源。
+
+### `extensions/`
+
+游戏私有粒子/特效模块。
+
+```text
+extensions/
+  particles/
+  effects/
+```
+
+这些模块不会被复制到 `lib/script/practical` 或 `lib/script/effects`。安装后仍然留在游戏自己的安装目录，由运行时按 manifest 注册。
+
+### `README.txt`
+
+可选，写给安装者或开发者的说明。
+
+## manifest 字段
+
+当前版本要求如下：
+
+```json
+{
+  &quot;package_type&quot;: &quot;game&quot;,
+  &quot;package_format_version&quot;: 1,
+  &quot;runtime_api_version&quot;: 1,
+  &quot;game_id&quot;: &quot;lahai_tetris&quot;,
+  &quot;name&quot;: &quot;拉海洛方块&quot;,
+  &quot;version&quot;: &quot;1.0.0&quot;,
+  &quot;summary&quot;: &quot;圆角彩虹字母俄罗斯方块&quot;,
+  &quot;description&quot;: &quot;官方示例包&quot;,
+  &quot;official&quot;: true,
+  &quot;author&quot;: &quot;Flying Snow Velvet&quot;,
+  &quot;command_aliases&quot;: [&quot;拉海洛方块&quot;],
+  &quot;entry_module&quot;: &quot;lahai_tetris_pkg.entry&quot;,
+  &quot;entry_class&quot;: &quot;LahaiTetrisGame&quot;,
+  &quot;bgm_keyword&quot;: &quot;星际穿跃&quot;,
+  &quot;bgm_artist&quot;: &quot;鸣潮先约电台&quot;,
+  &quot;window&quot;: {
+    &quot;default_width&quot;: 1000,
+    &quot;default_height&quot;: 800,
+    &quot;minimum_width&quot;: 600,
+    &quot;minimum_height&quot;: 480,
+    &quot;aspect_width&quot;: 10,
+    &quot;aspect_height&quot;: 8
+  },
+  &quot;extensions&quot;: {
+    &quot;particles&quot;: [
+      {
+        &quot;module&quot;: &quot;extensions/particles/example_particle.py&quot;,
+        &quot;class_name&quot;: &quot;ExampleParticleScript&quot;,
+        &quot;local_id&quot;: &quot;example&quot;
+      }
+    ],
+    &quot;effects&quot;: [
+      {
+        &quot;module&quot;: &quot;extensions/effects/example_effect.py&quot;,
+        &quot;class_name&quot;: &quot;ExampleEffectScript&quot;,
+        &quot;local_id&quot;: &quot;flash&quot;
+      }
+    ]
+  }
+}
+```
+
+## 字段约束
+
+- `package_type` 目前固定为 `game`
+- `package_format_version` 当前固定为 `1`
+- `runtime_api_version` 当前固定为 `1`
+- `game_id` 只允许小写字母、数字、下划线、点、短横线
+- `entry_module` 必须指向 `code/` 下可导入模块
+- `entry_class` 必须是该模块中的入口类
+
+## 入口类约束
+
+入口类当前约定：
+
+```python
+class ExampleGame:
+    def __init__(self, context: GameContext) -&gt; None:
+        ...
+
+    def create_widget(self, parent=None):
+        ...
+```
+
+其中：
+
+- `context.install_dir`: 当前游戏安装目录
+- `context.code_root`: `code/`
+- `context.assets_root`: `assets/`
+- `context.data_root`: 该游戏存档目录
+- `context.cache_root`: 该游戏缓存目录
+
+## 粒子 / 特效扩展规则
+
+这是当前包格式和旧桌宠结构最大的区别。
+
+### 1. 扩展模块留在包内
+
+不要把自定义粒子、特效源码塞进主项目全局目录。
+
+### 2. manifest 负责声明
+
+安装器和运行时只根据 `manifest.extensions` 加载扩展。
+
+### 3. 运行时统一加前缀
+
+每个游戏扩展都会注册成：
+
+```text
+&lt;game_id&gt;.&lt;local_id&gt;
+```
+
+例如：
+
+- `lahai_tetris.glow_burst`
+- `lahai_tetris.preview_rise`
+- `lahai_tetris.line_flash`
+
+这样做有三个目的：
+
+- 避免不同游戏撞粒子名
+- 卸载时可按游戏前缀回收
+- 不污染桌宠原有全局粒子/特效 ID
+
+### 4. 包内扩展不要直接用全局装饰器注册
+
+不推荐这样写：
+
+```python
+@register_particle(&quot;foo&quot;)
+class FooParticleScript(...):
+    ...
+```
+
+原因是这会污染全局 ID。
+
+推荐做法：
+
+- 类本身只实现脚本逻辑
+- 由 `manifest.json` 指定模块路径、类名、`local_id`
+- 宿主运行时用 `&lt;game_id&gt;.&lt;local_id&gt;` 完成最终注册
+
+### 5. 游戏代码应通过 `GameContext` 取前缀 ID
+
+例如：
+
+```python
+particle_id = context.qualify_particle_id(&quot;glow_burst&quot;)
+effect_id = context.qualify_effect_id(&quot;flash&quot;)
+```
+
+## 安装流程
+
+1. 对于随主程序发布的官方包，运行时会先扫描 `gamepack/official/*.zip` 并自动安装
+2. 对于开发者或玩家手动提供的包，用户可通过游戏管理器选择 ZIP，或将 ZIP 放进 `games/inbox`
+3. 安装器解压 ZIP
+4. 校验 `manifest.json`
+5. 校验入口模块和扩展模块路径
+6. 安装到：
+
+```text
+games/installed/&lt;game_id&gt;/&lt;version&gt;/
+```
+
+7. 刷新 `config/games/registry.json`
+8. 动态注册该游戏的粒子和特效扩展
+
+## 卸载流程
+
+1. 关闭正在运行的该游戏窗口
+2. 注销该游戏注册过的粒子/特效 ID
+3. 删除 `games/installed/&lt;game_id&gt;/`
+4. 从 `registry.json` 移除条目
+5. 保留 `games/data/&lt;game_id&gt;/` 存档目录
+
+## 导出流程
+
+已安装游戏可以再次打包导出，导出内容就是安装目录自身的标准结构。
+
+也就是说：
+
+- 一个解压态包
+- 导出成 zip
+- 再重新安装
+
+这三者是同一套 contract。
+
+## 官方示例包
+
+当前官方样板包：
+
+[lahai_tetris](../lib/script/gemes/packages/official/lahai_tetris)
+
+发布包内会将它额外导出为：
+
+```text
+gamepack/official/lahai_tetris.zip
+```
+
+其内容包含：
+
+- `code/lahai_tetris_pkg/`
+- `assets/avatars/`
+- `assets/text/tips.txt`
+- `extensions/particles/`
+- `manifest.json`
+
+它用于展示：
+
+- 包内资源读取
+- 本地存档路径
+- 自定义粒子前缀注册
+- `#游戏` 管理器中的安装、打开、卸载、导出流程</pre>
+        </article>
+        <article class="card">
+            <header>
+                <div class="eyebrow">2026-07-22 21:44</div>
+                <h3>游戏模式说明</h3>
+                <a class="download" href="doc/游戏模式说明.txt" download>下载原文件</a>
+            </header>
+            <pre>游戏模式说明
+
+用途
+用于在游戏运行期间降低桌宠对桌面合成、窗口层级维护和后台动画系统的干扰，优先保证游戏帧时间稳定性。
+
+当前行为
+1. 进入游戏模式后，主宠全局帧率会下调到 30fps。
+2. 主宠 GIF 帧率保持当前运行值，不会因游戏模式被下调。
+3. 粒子系统会暂停，并立即清空当前正在显示的粒子。
+4. 特效系统会暂停，并立即清空当前正在显示的特效。
+5. 物理系统会暂停，雪豹、沙发、音响、雪球、闹钟、摩托等依赖 PhysicsWorld 的对象会冻结在当前位置。
+6. 顶层窗口的周期性层级重申会暂停，不再持续执行层级刷新。
+7. 自动陪伴中的“看屏幕”轮询不会关闭，但会延长为固定 5 分钟一次。
+
+退出游戏模式后
+1. 帧率会恢复到进入游戏模式前的运行值。
+2. GIF 帧率保持原运行值，不需要额外恢复。
+3. 粒子、特效、物理、层级刷新会恢复正常运行。
+
+已知影响
+1. 进入游戏模式时，当前屏幕上的粒子和特效会被直接清空，这是预期行为。
+2. 物理对象暂停期间不会继续下落、弹跳或缓动，退出后从当前停住的位置继续。
+3. 暂停层级刷新后，如果某些外部程序强制改变窗口层级，桌宠相关窗口的置顶关系可能不会立即被重新拉回，退出游戏模式后会恢复。
+4. 游戏模式主要降低的是帧时间干扰，不保证所有机器上的 FPS 数字都明显提升，但通常会更有利于减少窗口化/无边框全屏游戏中的卡顿和 1% low 波动。
+
+触发方式
+1. 当前版本可通过系统托盘菜单中的“游戏模式”手动开关。
+2. 进入、自动进入、退出游戏模式时，程序都会发送一条提示消息。</pre>
+        </article>
+        <article class="card">
+            <header>
+                <div class="eyebrow">2026-07-24 18:57</div>
+                <h3>粒子效果说明</h3>
+                <a class="download" href="doc/粒子效果说明.txt" download>下载原文件</a>
+            </header>
+            <pre>飞行雪绒粒子效果说明（LTS1.0.6pre1）
+
+一、总体说明
+- 事件入口：`EventType.PARTICLE_REQUEST`
+- 渲染层：`lib/core/qt_particle_system.py`
+- 粒子脚本发现：`lib/script/practical/manager.py`
+- 自动扫描目录：`lib/script/practical/*_particle.py`
+- 更新机制：`tick` 推进真实状态，`frame` 仅负责插值绘制
+- 运行语义：practical 粒子已统一切到 `tick/秒` 语义，不再依赖运行时 `frame_fps`
+
+当前已注册粒子：18 个
+
+二、已注册粒子列表
+
+1. `scatter_fall`
+- 文件：`scatter_fall_particle.py`
+- 作用：主宠动作扩散落点粒子
+
+2. `pink_scatter_fall`
+- 文件：`pink_scatter_fall_particle.py`
+- 作用：主宠右键与开心动作的粉色散落粒子
+
+3. `cyan_pink_scatter_fall`
+- 文件：`cyan_pink_scatter_fall_particle.py`
+- 作用：主宠左键触发的青粉混色散落粒子
+
+4. `snow`
+- 文件：`snow_particle.py`
+- 作用：雪豹淡出、雪堆触发等场景使用的白色雪粒
+
+5. `snow_drift`
+- 文件：`snow_drift_particle.py`
+- 作用：雪豹跳跃、雪堆交互时的落雪堆积效果
+
+6. `snowball_burst`
+- 文件：`snowball_burst_particle.py`
+- 作用：雪球淡出或破碎时的轻量爆散效果
+
+7. `snowball_drift`
+- 文件：`snowball_drift_particle.py`
+- 作用：雪球落地后的轻量溅雪效果
+
+8. `burst_line`
+- 文件：`burst_line_particle.py`
+- 作用：瞬移、点击确认等场景的线性爆发效果
+
+9. `right_fade`
+- 文件：`right_fade_particle.py`
+- 作用：多类 UI 关闭或淡出时的右向漂移粒子
+
+10. `up_fade`
+- 文件：`up_fade_particle.py`
+- 作用：气泡替换内容时向上淡出
+
+11. `music_note`
+- 文件：`music_note_particle.py`
+- 作用：音乐播放中的音符粒子
+
+12. `click`
+- 文件：`click_particle.py`
+- 作用：左键点击辅助文字粒子
+
+13. `pink_click`
+- 文件：`pink_click_particle.py`
+- 作用：右键点击辅助文字粒子
+
+14. `white_pink_collision`
+- 文件：`white_pink_collision_particle.py`
+- 作用：音响与闹钟的碰撞粒子
+
+15. `collision`
+- 文件：`collision_particle.py`
+- 作用：沙发等对象的碰撞粒子
+
+16. `flicker_data`
+- 文件：`flicker_data_particle.py`
+- 作用：主宠移动与 AI 设置面板边缘闪烁特效
+
+17. `lahai_glow_burst`
+- 文件：`lahai_glow_burst_particle.py`
+- 作用：拉海洛方块中高亮块、关键命中等场景的发光漂移粒子
+
+18. `lahai_line_flash`
+- 文件：`lahai_line_flash_particle.py`
+- 作用：拉海洛方块消行时的横向爆散闪光粒子
+
+三、统一事件格式
+```python
+Event(EventType.PARTICLE_REQUEST, {
+    &quot;particle_id&quot;: &quot;scatter_fall&quot;,
+    &quot;area_type&quot;: &quot;point&quot;,
+    &quot;area_data&quot;: (x, y),
+})
+```
+
+区域数据格式
+- `point`: `(x, y)`
+- `rect`: `(x1, y1, x2, y2)`
+- `circle`: `(x, y, radius)`
+
+四、维护约定
+- 新增粒子后，必须同步更新本文档
+- 需要说明触发场景时，优先写“业务用途”而不是只写视觉形态
+- 若粒子公开协议发生变化，请检查 `doc/README.md` 是否需要更新入口说明
+- 若修改粒子时序，优先保持 `tick` 更新、`frame` 插值，不再回退到逐帧逻辑</pre>
+        </article>
+        <article class="card">
+            <header>
+                <div class="eyebrow">2026-07-24 18:47</div>
+                <h3>统一绘制模块改造计划清单</h3>
+                <a class="download" href="doc/统一绘制模块改造计划清单.txt" download>下载原文件</a>
+            </header>
+            <pre>统一绘制模块改造计划清单（历史归档）
+========================
+
+归档说明
+--------
+- 本文件用于追溯统一绘制与层级系统的迁移过程。
+- 当前边界以 `doc/维护手册.md` 及源码为准。
+- 文中的阶段、兼容包装和待办描述不再代表当前实施状态。
+
+推进进度
+--------
+更新时间：2026-07-12
+
+已完成：
+1. 新增 lib/core/layer.py，定义统一 Layer 枚举与层级工具函数。
+2. 新增 lib/core/layer_manager.py，集中管理顶层窗口 layer/z/注册顺序与 Win32 置顶重申。
+3. 已完成旧调用迁移并删除 lib/core/topmost_manager.py，层级操作统一使用 LayerManager。
+4. 接入 PetWindow 到 Layer.MAIN_PET。
+5. 接入 ParticleOverlay 到 Layer.PARTICLE，并移除核心路径裸 raise_()。
+6. 接入 EffectOverlay 到 Layer.EFFECT，并移除核心路径裸 raise_()。
+7. 扩展 DrawRequest，支持 layer/z/order。
+8. 扩展 DrawCore.render()，按 (layer, z, order) 稳定排序。
+9. 扩展 DRAW_REQUEST dict 数据格式，支持 layer/z 透传。
+10. 新增 lib/core/unified_draw.py 作为统一绘制模块门面。
+11. 新增 lib/core/render_layer.py 与 lib/core/render_core.py，提供非窗口级绘制项队列基础。
+12. 迁移常用主 UI 到 Layer.PET_UI。
+13. 迁移播放列表、命令窗口、小游戏面板、AI 设置面板等到 Layer.PANEL。
+14. 迁移二维码/更新弹窗到 Layer.DIALOG，启动/退出动画窗口到 Layer.SYSTEM_MODAL。
+15. 迁移沙发、雪豹、雪球、雪堆、闹钟、音响、摩托等独立物件到 Layer.WORLD_OBJECT。
+16. 清理核心顶层窗口路径中的裸 raise_()，改由 LayerManager/TopmostManager 兼容入口调度。
+17. 新增 LayerManager.describe_snapshot()，支持输出当前窗口层级快照。
+18. 新增 #图层 调试命令，运行时可通过信息气泡查看已注册窗口栈。
+19. 业务模块层级注册已统一改走 lib/core/unified_draw.py，旧 topmost_manager 兼容层已删除。
+20. 统一 DrawCore、RenderCore、LayerManager 排序键：先按 layer，再按 z；两者相同时按生成顺序后来居上。
+21. 明确组件接入规范：顶层窗口必须显式注册 Layer，禁止业务代码用裸 raise_() 抢占全局窗口层级。
+22. 新增 config/config_layer.py，支持集中设置全部 Layer 数值，无需挂载控制面板，修改后重启生效。
+23. 重型运行资源改由 resc.net.txt 管理，安装脚本按缺失资源下载，仓库不再内置 Vosk 模型、启动动画、浏览器运行时和 Python 安装器。
+
+进行中：
+1. 评估各类 UI 是否需要进一步拆分 z 值，例如 PET_UI 内按钮、气泡、菜单的细粒度顺序。
+2. 将粒子/特效进一步迁入 RenderCore 或统一 RenderOverlay。
+
+待完成：
+1. 评估 ParticleOverlay 与 EffectOverlay 是否合并为 RenderOverlay。
+2. 进一步整理 PET_UI/PANEL 内部 z 值；未显式拆分 z 时，同级组件按生成顺序后来居上。
+
+组件接入规范
+------------
+1. 新增顶层 QWidget/Overlay 必须通过 lib/core/unified_draw.py 获取 Layer 与 LayerManager，并显式注册所属 Layer。
+2. 业务代码禁止使用裸 raise_() 调整顶层窗口顺序；窗口层级重申统一走 LayerManager。
+3. QWidget 内部子控件可使用 raise_() 调整父窗口内部堆叠，该行为不属于全局窗口层级管理。
+4. 非窗口绘制项优先注册到 RenderCore；主宠物帧资源继续使用 DrawCore。
+5. 全部绘制路径采用统一顺序：layer 数值越大越靠前，z 数值越大越靠前；layer 与 z 相同时，按生成顺序绘制，后来生成者覆盖在上。
+6. 重复更新同一组件保留原生成顺序；组件注销后重新注册视为重新生成，将获得新的顺序并位于同级旧组件上方。
+7. 各层级数值统一在 config/config_layer.py 的 LAYER_VALUES 中配置；配置仅在模块首次导入时读取，运行中修改不会热更新。
+
+目标
+----
+在 lib/core 中建立统一绘制与图层管理模块，收敛主宠物、粒子、特效、独立物件、悬浮 UI、弹窗等所有运行期可视对象的层级控制入口，避免各模块分散调用 show()/raise_()/WindowStaysOnTopHint 导致层级互抢。
+
+当前问题
+--------
+1. DrawCore 只负责主宠物 GIF/帧绘制，没有统一管理粒子、特效、UI 和独立物件窗口。
+2. DrawRequest 没有 layer、z、order 等排序字段，当前渲染依赖 dict 插入顺序，不适合作为层级系统。
+3. ParticleOverlay、EffectOverlay、PetWindow、多个 UI/对象窗口各自 show()/raise_()，没有统一调度。
+4. TopmostManager 只解决“窗口置顶保持”，不是完整的绘制层级系统；priority 粒度过粗。
+5. 特效内部已有 effect.z 排序，但只在 EffectOverlay 内生效，无法与主宠物、粒子、UI 层统一比较。
+6. 新增绘制组件时缺少强约束，容易继续复制 Qt.Tool + WindowStaysOnTopHint + raise_() 的散落写法。
+
+核心原则
+--------
+1. 统一入口：所有运行期可视对象必须经过 lib/core 的统一绘制/层级模块注册。
+2. 分层管理：窗口 z-order 与单窗口内部绘制顺序都使用同一套 layer 语义。
+3. 渐进迁移：先统一顶层窗口层级，再逐步合并绘制队列，避免一次性大重构引发回归。
+4. 兼容旧接口：保留 get_draw_core()、TopmostManager 常用方法的兼容入口，减少脚本层改造成本。
+5. 禁止裸 raise：业务模块不直接调用 raise_() 调整层级，改由统一模块执行。
+
+建议新增模块
+------------
+1. lib/core/layer.py
+   - 定义 Layer 枚举与默认层级常量。
+   - 提供 normalize_layer()、layer_name() 等轻量工具。
+
+2. lib/core/layer_manager.py
+   - 统一注册 QWidget 顶层窗口和 overlay。
+   - 提供 register(widget, layer, z=0, name=None)、unregister(widget)、set_layer(widget, layer, z=0)。
+   - 提供 enforce_now()、enforce_on_frame()、bring_to_front(widget)、raise_layer(layer)。
+   - 内部替代/整合 TopmostManager 的 Win32 SetWindowPos(HWND_TOPMOST) 能力。
+   - 按 (layer, z, register_seq) 稳定排序，低层先设置，高层后设置。
+
+3. lib/core/render_layer.py
+   - 定义 RenderLayer/RenderItem/RenderRequest 数据结构。
+   - 描述单窗口内部绘制项的 layer、z、seq、visible、opacity、paint 回调等属性。
+
+4. lib/core/render_core.py
+   - 新的统一绘制核心，管理可绘制 item 队列。
+   - 提供 register_item()、remove_item()、render(painter, target_rect=None)。
+   - 与现有 DrawCore 兼容，DrawCore 可逐步迁入或作为 RenderCore 的资源型 item 提供者。
+
+5. lib/core/unified_draw.py
+   - 对外门面模块，集中导出 get_layer_manager()、get_render_core()、get_draw_core() 兼容接口。
+   - 后续业务模块优先从这里接入，减少直接依赖具体实现。
+
+建议 Layer 定义
+--------------
+1. BACKGROUND = 0
+   - 预留背景、桌面底部装饰。
+
+2. WORLD_OBJECT = 100
+   - 沙发、雪球、雪堆、雪豹等独立物件窗口。
+
+3. MAIN_PET = 200
+   - 主宠物 PetWindow。
+
+4. PET_EFFECT_BELOW = 250
+   - 需要位于主宠物附近但低于粒子的局部效果。
+
+5. PARTICLE = 300
+   - ParticleOverlay。
+
+6. EFFECT = 400
+   - EffectOverlay，保留 effect.z 作为 EFFECT 层内排序。
+
+7. PET_UI = 500
+   - 关闭按钮、穿透按钮、缩放按钮、气泡、命令提示等宠物附属 UI。
+
+8. PANEL = 600
+   - 播放列表、设置面板、搜索框等常规交互面板。
+
+9. DIALOG = 700
+   - 登录二维码、更新对话框等需要明确压过普通 UI 的弹窗。
+
+10. TOOLTIP = 800
+    - tooltip、临时提示、悬浮说明。
+
+11. SYSTEM_MODAL = 900
+    - 退出确认、严重错误提示等最高业务层。
+
+接入清单
+--------
+第一阶段：窗口层级统一
+1. PetWindow
+   - 文件：lib/core/pet_window.py
+   - 注册到 Layer.MAIN_PET。
+   - 移除每帧直接 self.raise_()，改为 LayerManager.enforce_on_frame()。
+
+2. ParticleOverlay
+   - 文件：lib/core/qt_particle_system.py
+   - 注册到 Layer.PARTICLE。
+   - show() 后不直接 raise_()，改为 LayerManager.bring_to_front(self) 或 enforce_now()。
+
+3. EffectOverlay
+   - 文件：lib/core/qt_effect_system.py
+   - 注册到 Layer.EFFECT。
+   - 保留内部 effect.z 排序，同时纳入全局层级。
+
+4. 旧 TopmostManager（已完成）
+   - 所有调用方已迁移到 LayerManager，兼容包装已删除。
+
+第二阶段：主绘制请求排序
+1. DrawRequest
+   - 文件：lib/core/draw_core.py
+   - 增加 layer、z、order 字段。
+   - add_draw_request() 记录稳定 seq。
+   - render() 按 (layer, z, seq) 排序。
+
+2. DRAW_REQUEST 事件
+   - 文件：lib/core/pet_window.py、lib/core/event/center.py
+   - 支持 data 中传入 layer、z。
+   - 旧格式默认 Layer.MAIN_PET。
+
+第三阶段：UI 层级统一
+1. PetWindow 主 UI 工厂
+   - 文件：lib/core/pet_window_ui_factory.py
+   - 创建 UI 后统一注册 Layer.PET_UI / Layer.PANEL。
+
+2. 常用 UI 组件
+   - 文件：lib/script/ui/close_button.py、clickthrough_button.py、scale_button.py、bubble.py、command_dialog.py、command_hint_box.py 等。
+   - 移除分散的裸 raise_()，按组件类型接入 LayerManager。
+
+3. 弹窗类
+   - 文件：lib/script/ui/update_dialog.py、cloudmusic_login_dialog.py、yuanbao_login_dialog.py、ai_settings_panel.py 等。
+   - 注册 Layer.DIALOG 或 Layer.PANEL。
+
+第四阶段：独立物件统一
+1. 沙发
+   - 文件：lib/script/obj-沙发/sofa.py
+   - 注册 Layer.WORLD_OBJECT。
+
+2. 雪豹、雪球、雪堆等对象
+   - 文件：lib/script/obj-雪豹/、lib/script/obj-雪球/、lib/script/obj-雪堆/。
+   - 注册 Layer.WORLD_OBJECT，禁止自行抢占顶层。
+
+第五阶段：统一 Overlay 可选收敛
+1. 新建 RenderOverlay
+   - 将 ParticleOverlay、EffectOverlay 合并为一个透明覆盖层。
+   - 内部按 RenderItem 的 layer/z 统一绘制。
+
+2. 粒子/特效绘制项化
+   - 粒子系统输出 RenderItem 或 paint callback。
+   - 特效系统输出 RenderItem，effect.z 映射为 RenderItem.z。
+
+3. 保留兼容路径
+   - 短期允许旧 Overlay 与新 RenderCore 并存。
+   - 长期目标是全局只有主宠物窗口 + 统一 overlay + 必要弹窗。
+
+验收标准
+--------
+1. lib/core 中存在统一绘制/层级入口，新增可视组件有明确接入方式。
+2. PetWindow、ParticleOverlay、EffectOverlay 已接入统一 layer，不再互相裸 raise。
+3. DrawCore 支持 layer/z 排序，主绘制请求顺序可控。
+4. TopmostManager 不再作为业务层直接依赖的唯一层级入口。
+5. 新增文档说明各 Layer 的职责和适用组件。
+6. 启动、移动、粒子、特效、气泡、弹窗在常规场景下层级稳定。
+
+风险与注意事项
+--------------
+1. Windows 顶层窗口 z-order 与 Qt raise_() 存在异步行为，需要保留 enforce_burst() 兜底。
+2. 穿透模式下需要继续尊重 TopmostManager/LayerManager 的 pause()/resume() 行为，避免干扰全屏应用。
+3. 独立 QWidget 跨窗口无法像单 painter 内部一样精确混排，第一阶段只能做到窗口级 layer。
+4. 合并 Overlay 可能影响粒子/特效清屏、透明背景和性能，需要单独压测。
+5. 大量 UI 组件使用 Qt.Tool，迁移时要避免改变焦点、鼠标穿透、任务栏显示等行为。
+
+建议实施顺序
+------------
+1. 新增 Layer/LayerManager/UnifiedDraw 基础模块。
+2. 用 LayerManager 包装 TopmostManager 能力，保持旧接口可用。
+3. 接入 PetWindow、ParticleOverlay、EffectOverlay 三个核心层。
+4. 扩展 DrawRequest layer/z 排序。
+5. 分批迁移 UI 与独立物件窗口。
+6. 补充文档和最小验证脚本。
+7. 评估是否进入 RenderOverlay 合并阶段。
+
+最小验证清单
+------------
+1. 启动程序后主宠物正常显示。
+2. 主宠物移动时粒子显示在主宠物上方。
+3. 特效显示在粒子或指定层级上方。
+4. 气泡、命令框、按钮显示在主宠物和特效上方。
+5. 登录/更新/设置弹窗显示在普通 UI 上方。
+6. 鼠标穿透模式切换后层级不抖动，鼠标事件行为不变。
+7. 退出清理时所有注册窗口不会残留或触发已销毁对象异常。</pre>
+        </article>
+        <article class="card">
+            <header>
+                <div class="eyebrow">2026-07-24 19:13</div>
+                <h3>维护手册</h3>
+                <a class="download" href="doc/维护手册.md" download>下载原文件</a>
+            </header>
+            <pre># 飞行雪绒维护手册
+
+更新时间：2026-07-24
+
+本手册面向维护者和代码代理，说明当前工程边界、常见变更路径和验收方式。开始工作前先读 `doc/AI协作规范.md`，再按任务阅读专项文档。
+
+## 1. 事实源与优先级
+
+发生冲突时按以下顺序判断：
+
+1. 可执行源码与测试。
+2. 本手册和 `doc/README.md`。
+3. 事件、游戏包等专项协议文档。
+4. 根目录 README、贡献和发布说明。
+5. 历史计划、整改清单和更新日志。
+
+| 内容 | 权威位置 |
+| --- | --- |
+| 应用版本 | `config/version_info.py` |
+| 默认配置 | `config/config_*.py` |
+| 用户稀疏覆盖 | `config/user_settings.py` |
+| 用户目录布局 | `config/user_storage_paths.py` |
+| 事件类型与派发 | `lib/core/event/center.py` |
+| 工作台页面元数据 | `lib/script/workbench/page_registry.py`、`settings/schema.py` |
+| 音乐公开接口 | `lib/script/music/` |
+| 游戏包契约 | `doc/游戏包格式.md`、`game_packages.py` |
+| 依赖集合 | `requirements*.txt` |
+| 发行文件边界 | `scripts/package_*.py`、`release_common.py` |
+
+## 2. 启动与退出
+
+### 启动链路
+
+```text
+启动程序.bat / 调试模式.bat
+  -&gt; lib/core/qt_desktop_pet.py
+  -&gt; lib/script/main.py::main
+  -&gt; ApplicationState
+  -&gt; APP_PRE_START / APP_INIT_READY / APP_START / APP_MAIN
+```
+
+`ApplicationState` 负责单实例、Qt 应用、主窗口、管理器、托盘、预加载和最终清理。长生命周期组件不得绕过它自行结束应用。
+
+### 退出链路
+
+正常退出由 `ApplicationState.request_exit()` 发起，依次停止主窗口、清理运行时服务、清理视觉组件并退出 Qt 事件循环。`APP_EXIT` 广播退出阶段，`APP_QUIT` 请求主编排器开始退出。
+
+维护约束：
+
+- 新增长生命周期对象必须提供幂等 `cleanup()`。
+- 事件订阅必须有对称 `unsubscribe()`。
+- 网络流设置有限连接/读取超时，并在 cleanup 时关闭活动响应。
+- 子进程保存句柄；先正常终止，超时后结束进程树。
+- 后台任务统一使用 `lib/core/compute_hub.py`，不得新建无所有者线程池。
+- `os._exit()` 只能作为最终超时兜底。
+
+## 3. 模块边界
+
+### 核心层 `lib/core`
+
+核心层包含事件、绘制、层级、输入、物理、调度、日志和主宠窗口。业务模块可以依赖核心层，核心层不得反向依赖具体 provider 或工作台页面。
+
+- 绘制排序：`render_core.py`、`render_layer.py`
+- 业务绘制入口：`draw_core.py`、`unified_draw.py`
+- 窗口层级：`layer_manager.py`
+- 事件中心：`event/center.py`
+- 后台执行：`compute_hub.py`
+
+旧 `core/object`、`core/render` 包和 `topmost_manager.py` 已删除，不得恢复兼容壳。
+
+### 业务层 `lib/script`
+
+- AI/聊天：`chat/`
+- 音乐搜索门面：`music/`
+- 音乐播放内部实现：`cloudmusic/`
+- 本地服务：`yuanbao_free_api/`、`gsvmove/`、`local_hosted_service.py`
+- 桌面对象：`obj-*`
+- 游戏系统：`gemes/MAIN/`
+- UI：`ui/`
+- 工作台元数据与组件：`workbench/`
+
+新增跨模块调用时优先使用明确服务接口；事件只用于需要解耦、广播或跨线程切换的场景。
+
+## 4. 工作台
+
+工作台采用两级懒加载：启动预加载器不创建工作台；打开总览只创建工作台壳；进入设置页或工具页时才调用页面工厂。
+
+相关位置：
+
+- 窗口与宿主：`lib/script/ui/workbench_window.py`
+- 页面注册：`lib/script/workbench/page_registry.py`
+- 设置 schema：`lib/script/workbench/settings/schema.py`
+- 设置布局：`lib/script/workbench/settings/page_layout.py`
+- AI 设置控制器：`lib/script/ui/ai_settings_panel.py`
+
+约束：
+
+- 页面元数据使用 dataclass，不转回 legacy dict。
+- 新工具页提供无参数 factory，首次访问时创建。
+- 页面嵌入后不得保留独立窗口旗标或重复层级注册。
+- 页面关闭时释放信号、定时器和后台任务。
+- 不把新功能继续堆入 `ai_settings_panel.py`，新页面放入 `workbench/` 或专属模块。
+
+## 5. 配置与用户数据
+
+`config/config_*.py` 只存程序默认值，运行时禁止改写 Python 源文件。普通设置通过 `config.user_settings` 保存为版本化稀疏 JSON；密钥和登录态使用独立 secrets/state 路径。
+
+```text
+默认值: config/config_*.py
+用户覆盖: &lt;用户根&gt;/user/settings.json
+状态: &lt;用户根&gt;/user/state/
+密钥: &lt;用户根&gt;/user/secrets/
+缓存: &lt;用户根&gt;/cache/
+```
+
+旧路径只允许一次性迁移读取。迁移必须有唯一 migration id、可重复执行、不覆盖新值，成功后只读写新位置，并提供迁移与幂等测试。
+
+通用配置保存使用 `config.general_user_settings.save_general_values()`；不要在业务模块中自行解析或正则修改配置源码。
+
+## 6. 事件、调度与绘制
+
+事件类型只能定义在 `EventType`。payload 使用字典，新增字段应允许旧订阅者忽略。后台线程发布事件时，由 Qt pump 切回事件中心线程。
+
+修改事件时同步 `事件系统使用说明.txt`、`已注册的事件.txt` 以及生产者和消费者测试。
+
+帧、tick、GIF 帧和延迟任务由 `TimingManager` 负责。不要用散落的永久 `QTimer` 替代共享调度，除非计时器天然属于控件生命周期。
+
+绘制请求统一使用 DrawCore/RenderCore，窗口置顶统一使用 LayerManager。新增窗口必须选择明确 Layer，并在销毁时 unregister。
+
+## 7. 音乐与本地服务
+
+外部音乐调用只使用 `lib.script.music.get_music_service()`。`MusicProvider` 负责搜索结果标准化，`MusicPlaybackBackend` 定义播放运行时契约，`cloudmusic` 是内部实现。
+
+禁止业务模块访问 backend 私有字段、provider 反向导入 MusicService、恢复 cloudmusic 单例兼容入口或运行时改写 `config_music.py`。
+
+本地子进程服务复用 `local_hosted_service.py`。健康检查、端口切换、启动和清理必须可重复调用。
+
+元宝服务源码位于 `services/yuanbao-free-api/`。发行时 `release_common.py` 根据当前源码生成 `services/bundles/yuanbao-free-api-main.zip`，仓库中的旧 zip 不是发行权威源。
+
+## 8. 游戏包兼容边界
+
+游戏包 manifest、目录布局、加载语义和官方包隔离属于稳定契约。内部实现可以收敛，但不得未经迁移修改包格式。
+
+改动前阅读 `doc/游戏包格式.md`，并运行：
+
+```powershell
+py -3 -m unittest tests.test_game_package_service
+py -3 -m unittest tests.test_game_runtime_geometry tests.test_game_runtime_hash_commands
+```
+
+官方源码包位于 `lib/script/gemes/packages/official/`，发布时生成 zip，不直接把源码目录作为安装包分发。
+
+## 9. 依赖与发布
+
+| 文件 | 用途 |
+| --- | --- |
+| `requirements.txt` | 桌宠核心运行依赖 |
+| `requirements-service.txt` | 核心依赖 + 可选本地服务 |
+| `requirements-dev.txt` | 服务依赖 + 测试/开发工具 |
+| `services/yuanbao-free-api/requirements.txt` | 服务独立运行环境 |
+
+普通版和绿色版共享清单、敏感配置清洗、官方游戏包及服务 bundle 生成逻辑。绿色版额外处理 Vosk、动画和 Chromium 归档。
+
+发布脚本只允许白名单顶层路径。新增发行文件时必须检查两个入口。`--dry-run` 不下载资源、不写发行包。
+
+## 10. 验证矩阵
+
+所有代码任务至少运行：
+
+```powershell
+py -3 -m compileall -q config lib scripts install_deps.py
+py -3 -m unittest discover -s tests -p &quot;test_*.py&quot; -q
+py -3 scripts/package_release.py --dry-run --version VERIFY
+```
+
+修改绿色版、资源或安装器时追加：
+
+```powershell
+py -3 scripts/package_green_release.py --dry-run --version VERIFY
+```
+
+修改文档时追加：
+
+```powershell
+py -3 scripts/generate_doc_portal.py
+```
+
+验收记录必须写明实际命令、结果和未执行项，不能只写“测试通过”。
+
+## 11. 常见变更检查表
+
+### 新增长生命周期服务
+
+- 明确所有者和创建入口。
+- 提供幂等 cleanup。
+- 处理活动响应、线程和子进程。
+- 接入主退出链路。
+- 增加启动、重复清理和运行中退出测试。
+
+### 新增工作台页面
+
+- 注册页面元数据与 factory。
+- 保持首次访问前不构造。
+- 实现嵌入模式和关闭释放。
+- 添加路由、懒加载和布局测试。
+
+### 新增配置
+
+- 在默认配置中定义类型和默认值。
+- 接入稀疏用户设置。
+- 必要时提供一次性迁移。
+- 测试默认值、覆盖、错误类型和迁移幂等性。
+
+### 新增音乐 provider
+
+- 实现 `MusicProvider` 并返回标准 `MusicTrack`。
+- 接入路由、标签和能力声明。
+- 测试失败回退、去重和编码边界。</pre>
+        </article>
+        <article class="card">
+            <header>
+                <div class="eyebrow">2026-07-20 18:45</div>
+                <h3>调度系统使用说明</h3>
+                <a class="download" href="doc/调度系统使用说明.txt" download>下载原文件</a>
+            </header>
+            <pre>飞行雪绒调度系统使用说明（LTS1.0.6pre1）
+
+一、核心实现
+- 文件：`lib/core/timing/manager.py`
+- 对外入口：`lib/core/timing/__init__.py`
+- 核心类：`TimingManager`
+
+二、三套周期计时
+调度器内部维护三个独立 QTimer：
+- `TICK`：固定 50ms
+- `FRAME`：按 `frame_fps` 计算
+- `GIF_FRAME`：按 `gif_fps` 计算
+
+默认配置来自 `config/config.py` 中导出的 `ANIMATION`：
+- `frame_fps = 60`
+- `gif_fps = 16`
+
+三、周期事件
+调度器会发布：
+- `EventType.TICK`
+- `EventType.FRAME`
+- `EventType.GIF_FRAME`
+
+对应常见字段：
+- `tick_count`
+- `frame_count`
+
+四、定时任务机制
+底层接口：
+- `add_task(interval_ms, repeat=True)`
+- `remove_task(task_id)`
+- `pause_task(task_id)`
+- `resume_task(task_id)`
+- `clear_all()`
+
+实体侧常用封装：
+```python
+task_id = pet.schedule_task(callback, delay_ms=1000, repeat=False)
+pet.cancel_task(task_id)
+```
+
+执行流程
+1. 业务调用 `schedule_task()`
+2. `TimingManager.add_task()` 记录任务
+3. 到时后发布 `EventType.TIMER`
+4. 实体或管理器在对应回调中执行自己的 callback
+
+五、时间精度
+- 所有任务都按 50ms tick 对齐
+- 小于 50ms 的任务会被提升到 1 tick
+- 非 50ms 整数倍的延时会存在 tick 对齐误差
+
+例子
+- `1000ms -&gt; 20 ticks`
+- `120ms -&gt; 2 ticks`
+- `30ms -&gt; 1 tick`
+
+六、全局暂停
+任务系统支持通过事件做引用计数式暂停：
+- `TIMER_PAUSE`
+- `TIMER_RESUME`
+
+特点
+- 只暂停任务系统，不暂停 `TICK / FRAME / GIF_FRAME`
+- 不同模块可通过 `source` 区分暂停来源
+- 常见场景：打开命令框或模态 UI 时暂停一部分行为任务
+
+七、开发建议
+- 高频业务优先订阅 `TICK` 或 `FRAME`，不要自己再开一套平行 QTimer
+- 在 `cleanup()` 中移除任务并退订事件
+- 对于需要高精度的逻辑，先评估 50ms tick 是否足够
+- 服务类后台逻辑（如语音预热、网络轮询）如果不依赖 UI 节拍，可以使用线程或专用等待逻辑，不必强行接入 `TimingManager`</pre>
+        </article>
+        <article class="card">
+            <header>
+                <div class="eyebrow">2026-07-24 18:47</div>
+                <h3>项目全面优化与收敛计划</h3>
+                <a class="download" href="doc/项目全面优化与收敛计划.md" download>下载原文件</a>
+            </header>
+            <pre># 项目全面优化与收敛计划（历史归档）
+
+&gt; 本计划对应 2026-07-24 的集中收敛工作，已完成主要实施与验证。当前维护入口为 [维护手册](维护手册.md)，后续任务应重新基于源码和测试确认范围。
+
+## 目标
+
+在保留当前未提交工作台改动、游戏包格式和用户数据的前提下，分阶段收敛项目边界、删除已证明无引用的历史代码，并修复退出、配置持久化、编码和发布流程中的高风险问题。
+
+## 阶段
+
+1. 建立测试与 CI 基线，修复计算线程、网络流、命令子进程和应用退出链路。
+2. 将可变音乐设置迁移到稀疏用户配置，修复乱码，拆分核心、服务和开发依赖。
+3. 删除无调用方的进程池、兼容访问器、插件/命令注册代码及旧对象渲染实现。
+4. 继续完成工作台页面工厂、懒加载和 dataclass 数据流，保留当前工作树中的实现。
+5. 收敛音乐后端、绘制、事件、游戏扩展和本地服务边界。
+6. 合并普通版与绿色版发布逻辑，以服务源码生成发行 bundle，并执行完整回归。
+
+## 兼容约束
+
+- 保持游戏包 manifest、目录布局、加载语义和官方包隔离不变。
+- 旧设置、登录状态、音乐历史和游戏统计保留一次性、幂等迁移；迁移后不再双读双写。
+- 仓库内部调用方一次迁移完成，不保留无期限的未文档化内部 API 转发层。
+- 不回退或覆盖实施前已存在的未提交改动。
+
+## 验收
+
+- 全量 `compileall` 和单元测试通过，CI 同时执行两者。
+- 普通版及绿色版发布 dry-run 通过；缺失必需资源时给出精确诊断。
+- 网络响应、子进程或后台任务运行时退出均可在有限时间内结束且无遗留进程。
+- 用户数据迁移保持值不变并可重复执行；源码配置文件在运行期保持只读。
+- 工作台未访问页面不在启动期构造；音乐、绘制、事件和游戏包契约测试通过。</pre>
+        </article>
+            </div>
+        </section>
+    </main>
+    <footer>由飞行雪绒 LTS1.0.6pre1 代码生成 · 粉粉青青也是科技感 (ﾉ◕ヮ◕)ﾉ*:･ﾟ✧</footer>
+    <script>
+    (() => {
+        const letters = "FLYINGSNOWVELVET";
+        const trailRoot = document.getElementById("trail-root");
+        if (!trailRoot) return;
+        document.addEventListener("mousemove", (event) => {
+            const span = document.createElement("span");
+            span.className = "trail-letter";
+            span.textContent = letters[Math.floor(Math.random() * letters.length)];
+            span.style.left = `${event.clientX}px`;
+            span.style.top = `${event.clientY}px`;
+            const dx = (Math.random() * 80) - 40;
+            const dy = -30 - Math.random() * 80;
+            span.style.setProperty("--dx", `${dx}px`);
+            span.style.setProperty("--dy", `${dy}px`);
+            trailRoot.appendChild(span);
+            setTimeout(() => span.remove(), 900);
+        });
+    })();
+    </script>
+</body>
+</html>

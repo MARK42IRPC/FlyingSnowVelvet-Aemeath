@@ -538,15 +538,16 @@ class GameRuntime:
     def open_manager(self) -> None:
         self.refresh_available_games()
         self._manager.refresh_games()
-        self._manager.show()
-        self._manager.raise_()
-        self._manager.activateWindow()
+        self._manager.fade_in()
 
     def close_manager(self) -> None:
         try:
             self._manager.hide()
         except Exception:
             pass
+
+    def get_manager_window(self) -> GameManagerWindow:
+        return self._manager
 
     def open_game(self, game_id: str) -> None:
         self.refresh_available_games()
