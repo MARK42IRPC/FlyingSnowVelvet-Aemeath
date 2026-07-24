@@ -1,3 +1,4 @@
+import importlib
 import sys
 import unittest
 from pathlib import Path
@@ -14,6 +15,8 @@ if str(SERVICE_ROOT) not in sys.path:
 from src.dependencies import auth
 from src.utils import common
 from src.services.browser.browser_manager import BrowserManager
+
+browser_manager_module = importlib.import_module("src.services.browser.browser_manager")
 
 
 class YuanbaoFreeApiAuthTests(unittest.IsolatedAsyncioTestCase):
@@ -94,7 +97,7 @@ class YuanbaoFreeApiAuthTests(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(manager, "ensure_browser", new=AsyncMock()) as ensure_mock, patch.object(
             manager, "_has_authenticated_session", new=AsyncMock(return_value=False)
-        ) as session_mock, patch("src.services.browser.browser_manager.settings.header_timeout", 0.01):
+        ) as session_mock, patch.object(browser_manager_module.settings, "header_timeout", 0.01):
             result = await manager.get_headers()
 
         self.assertEqual(result, {"x-uskey": "cached", "cookie": "hy_user=u; hy_token=t"})
