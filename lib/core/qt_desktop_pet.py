@@ -34,6 +34,31 @@ if project_root not in sys.path:
 
 
 if __name__ == '__main__':
+    if len(sys.argv) >= 3 and sys.argv[1] == '--fsv-update-helper':
+        try:
+            import json
+            from lib.script.app.update_installer import run_update_installer
+
+            payload = json.loads(sys.argv[2])
+            if not isinstance(payload, dict):
+                raise ValueError('invalid update payload')
+            sys.exit(run_update_installer(payload))
+        except Exception as exc:
+            _show_startup_error('更新辅助进程启动失败：\n\n' + str(exc))
+            sys.exit(1)
+    if len(sys.argv) >= 4 and sys.argv[1] == '--fsv-restart-helper':
+        try:
+            import json
+            from lib.script.app.restart import run_restart_helper
+
+            parent_pid = int(sys.argv[2])
+            command = json.loads(sys.argv[3])
+            if not isinstance(command, list) or not all(isinstance(item, str) for item in command):
+                raise ValueError('invalid restart command')
+            sys.exit(run_restart_helper(parent_pid, command))
+        except Exception as exc:
+            _show_startup_error('重启辅助进程启动失败：\n\n' + str(exc))
+            sys.exit(1)
     try:
         from lib.script.main import main
     except ModuleNotFoundError as e:

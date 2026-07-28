@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 
 from PyQt5.QtCore import QSize, Qt
-from PyQt5.QtGui import QPainter
+from PyQt5.QtGui import QColor, QPainter
 from PyQt5.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -17,10 +17,10 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
-from config.config import COLORS
 from config.font_config import get_ui_font
 from config.scale import scale_px
 from lib.script.ui.speaker_menu_style import paint_speaker_action_button
+from lib.script.workbench.theme import get_workbench_colors
 
 
 def create_window_button(
@@ -66,7 +66,7 @@ class WorkbenchPetAboutButton(QToolButton):
             hovered=self._hovered or bool(self.property("active")),
             pressed=self.isDown(),
         )
-        painter.setPen(COLORS["black"])
+        painter.setPen(QColor(get_workbench_colors().text))
         painter.setFont(self._label_font)
         painter.drawText(content_rect, Qt.AlignCenter, self.text())
 

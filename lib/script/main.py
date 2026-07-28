@@ -1,8 +1,10 @@
 """主程序入口模块 - 使用动态发现机制初始化模块"""
 import sys
 import os
+import threading
+import time
 
-from PyQt5.QtCore import QTimer
+from PyQt5.QtCore import QEvent, QTimer
 
 from config.config import GIF_FILES, DRAW, ANIMATION
 from lib.core.qt_gif_loader import GifLoader
@@ -44,9 +46,12 @@ from lib.script.app.single_instance import (
 from lib.script.app.startup_probe import log_startup_hardware_info as _new_log_startup_hardware_info
 from lib.script.app.desktop_shortcut import ensure_desktop_shortcut as _new_ensure_desktop_shortcut
 from lib.script.app.qt_runtime import create_qt_application as _new_create_qt_application
+from lib.script.app.restart import launch_current_application as _launch_current_application
 
 logger = get_logger(__name__)
-_SHUTDOWN_FORCE_TIMEOUT_MS = 4000
+_SHUTDOWN_FORCE_TIMEOUT_MS = 15000
+_SHUTDOWN_QUIT_RETRY_MS = 500
+_SHUTDOWN_THREAD_DRAIN_SECONDS = 2.0
 
 class ApplicationState:
     """应用程序状态管理"""
@@ -76,6 +81,8 @@ class ApplicationState:
         self._tray_icon = None
         self._ui_preloader = None
         self._exit_requested = False
+        self._restart_requested = False
+        self._restart_helper_started = False
         self._exit_in_progress = False
         self._exit_completed = False
         self._components_cleaned = False
@@ -84,6 +91,10 @@ class ApplicationState:
         self._shutdown_steps = []
         self._shutdown_step_index = 0
         self._shutdown_force_quit_armed = False
+        self._shutdown_force_timer = None
+        self._shutdown_clean_exit_confirmed = False
+        self._qt_exit_requested = False
+        self._qt_exit_acknowledged = False
         self._app_exit_event_published = False
 
         # 音频核心在事件中心初始化后立即创建，以便订阅 APP_PRE_START 完成 MCI 预热
@@ -205,7 +216,28 @@ class ApplicationState:
     def _on_app_quit(self, event: Event):
         """统一接管 APP_QUIT，避免组件直接强退 Qt 事件循环。"""
         event.mark_handled()
-        self.request_exit(int((event.data or {}).get('exit_code', 0)))
+        data = event.data or {}
+        if data.get('restart'):
+            self.request_restart()
+            return
+        self.request_exit(int(data.get('exit_code', 0)))
+
+    @property
+    def restart_requested(self) -> bool:
+        return self._restart_requested
+
+    def request_restart(self):
+        """先创建独立重启 helper，再通过正常退出链路完成清理。"""
+        if not self._restart_helper_started:
+            try:
+                _launch_current_application()
+            except Exception as exc:
+                logger.error('创建重启 helper 失败，取消退出: %s', exc)
+                return False
+            self._restart_helper_started = True
+        self._restart_requested = True
+        self.request_exit(0)
+        return True
 
     def start(self):
         """启动状态 - 初始化应用程序"""
@@ -230,6 +262,7 @@ class ApplicationState:
 
         # 创建Qt应用（需要在发布事件前创建，以便 QTimer 工作）
         self._app = _new_create_qt_application(logger, sys.argv)
+        self._app.aboutToQuit.connect(self._on_qt_about_to_quit)
 
         # GSVmove 按配置尽早拉起，以便与后续预启动延时并行完成服务启动/预热。
         if self._gsvmove is not None and self._gsvmove.auto_start_enabled():
@@ -332,12 +365,26 @@ class ApplicationState:
         if self._app is None or self._shutdown_force_quit_armed:
             return
         self._shutdown_force_quit_armed = True
-        QTimer.singleShot(_SHUTDOWN_FORCE_TIMEOUT_MS, self._force_quit_if_still_pending)
+        timer = threading.Timer(
+            _SHUTDOWN_FORCE_TIMEOUT_MS / 1000.0,
+            self._force_quit_if_still_pending,
+        )
+        timer.name = 'application-shutdown-watchdog'
+        timer.daemon = True
+        self._shutdown_force_timer = timer
+        timer.start()
+
+    def _cancel_force_quit_fallback(self):
+        timer = self._shutdown_force_timer
+        self._shutdown_force_timer = None
+        self._shutdown_force_quit_armed = False
+        if timer is not None:
+            timer.cancel()
 
     def _force_quit_if_still_pending(self):
-        if self._exit_completed or not self._exit_in_progress:
+        if self._shutdown_clean_exit_confirmed:
             return
-        logger.warning('优雅退出超过 %d ms，执行强退兜底', _SHUTDOWN_FORCE_TIMEOUT_MS)
+        logger.critical('优雅退出超过 %d ms，执行最终强退兜底', _SHUTDOWN_FORCE_TIMEOUT_MS)
         self._shutdown_force_quit_application()
 
     def _shutdown_stop_primary_windows(self):
@@ -387,16 +434,52 @@ class ApplicationState:
         })
 
     def _shutdown_quit_application(self):
-        if self._app:
-            try:
-                self._app.quit()
-            except Exception:
-                import traceback
-                logger.error('触发 Qt 退出失败:\n%s', traceback.format_exc())
+        if not self._app:
+            return
+        self._qt_exit_requested = True
+        QTimer.singleShot(_SHUTDOWN_QUIT_RETRY_MS, self._retry_qt_exit)
+        try:
+            self._app.sendPostedEvents(None, QEvent.DeferredDelete)
+            self._app.exit(int(self._exit_code))
+        except Exception:
+            import traceback
+            logger.error('触发 Qt 退出失败:\n%s', traceback.format_exc())
+
+    def _retry_qt_exit(self):
+        if self._qt_exit_acknowledged or self._app is None:
+            return
+        logger.warning('Qt 退出请求尚未确认，关闭残留窗口并再次请求退出')
+        try:
+            self._app.closeAllWindows()
+            self._app.sendPostedEvents(None, QEvent.DeferredDelete)
+            self._app.exit(int(self._exit_code))
+        except Exception:
+            import traceback
+            logger.error('重试 Qt 退出失败:\n%s', traceback.format_exc())
+
+    def _on_qt_about_to_quit(self):
+        self._qt_exit_acknowledged = True
+        logger.info('Qt 事件循环已确认退出请求')
 
     def _shutdown_force_quit_application(self):
         self._exit_completed = True
         os._exit(int(self._exit_code))
+
+    @staticmethod
+    def _wait_for_non_daemon_threads(timeout: float) -> list[str]:
+        current = threading.current_thread()
+        deadline = time.monotonic() + max(0.0, float(timeout))
+        threads = [
+            thread
+            for thread in threading.enumerate()
+            if thread is not current and thread.is_alive() and not thread.daemon
+        ]
+        for thread in threads:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            thread.join(timeout=remaining)
+        return [thread.name for thread in threads if thread.is_alive()]
 
     def _perform_component_cleanup(self, skip_visual_cleanup: bool = False):
         if self._components_cleaned:
@@ -474,6 +557,12 @@ class ApplicationState:
     def finalize_after_event_loop(self, exit_code: int) -> int:
         final_exit_code = self._exit_code if self._exit_requested else exit_code
 
+        if self._exit_requested:
+            if self._qt_exit_requested and not self._qt_exit_acknowledged:
+                logger.warning('Qt 事件循环已返回，但未收到 aboutToQuit 确认')
+            else:
+                logger.info('Qt 事件循环已正常返回，开始最终收尾')
+
         if (
             self._exit_requested
             and not self._exit_completed
@@ -491,8 +580,17 @@ class ApplicationState:
 
         self._app = None
         self._exit_completed = True
-        self._shutdown_force_quit_armed = False
+        self._exit_in_progress = False
+        self._shutdown_steps = []
         self._app_exit_event_published = False
+
+        remaining_threads = self._wait_for_non_daemon_threads(_SHUTDOWN_THREAD_DRAIN_SECONDS)
+        if remaining_threads:
+            logger.error('退出收尾后仍有非守护线程存活: %s', ', '.join(remaining_threads))
+        else:
+            self._shutdown_clean_exit_confirmed = True
+            self._cancel_force_quit_fallback()
+            logger.info('优雅退出完成，未发现阻塞进程结束的线程')
 
         if not self._logger_cleaned:
             cleanup_app_logger()
@@ -510,7 +608,6 @@ def main():
         return
 
     app_state = ApplicationState()
-
     try:
         # START 状态 - 发布预启动事件，开始非阻塞初始化
         app_state.start()
@@ -520,8 +617,6 @@ def main():
 
         # EXIT 状态
         exit_code = app_state.finalize_after_event_loop(exit_code)
-
-        sys.exit(exit_code)
     except Exception as e:
         import traceback
         logger.error('程序运行出错:\n%s', traceback.format_exc())
@@ -532,6 +627,8 @@ def main():
         input('按回车键退出...')
     finally:
         _new_release_single_instance_lock()
+
+    sys.exit(exit_code)
 
 if __name__ == '__main__':
     main()

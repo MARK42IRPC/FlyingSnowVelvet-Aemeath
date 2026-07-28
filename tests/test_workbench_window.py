@@ -21,7 +21,8 @@ os.environ.setdefault("QT_PLUGIN_PATH", os.path.join(_QT_ROOT, "Qt5", "plugins")
 
 from PyQt5.QtWidgets import QApplication, QStackedWidget, QWidget
 
-from config.config import COLORS, UI_THEME
+from config.config import COLORS, UI, UI_THEME
+from config.font_config import get_ui_font_family
 from config.scale import scale_px
 from lib.script.ui import workbench_window as workbench_module
 
@@ -149,6 +150,32 @@ class WorkbenchWindowTests(unittest.TestCase):
 
         window.deleteLater()
         self.app.processEvents()
+
+    def test_theme_config_update_repolishes_workbench(self):
+        panel = _FakeControlPanel()
+        original_theme = UI["workbench_light_theme"]
+        with patch.object(workbench_module, "QSettings", _MemorySettings):
+            window = workbench_module.WorkbenchWindow(
+                lambda: panel,
+                control_panel_page_specs=panel.get_workbench_page_specs(),
+            )
+
+        try:
+            UI["workbench_light_theme"] = True
+            window._on_config_updated(
+                workbench_module.Event(
+                    workbench_module.EventType.CONFIG_UPDATED,
+                    {"values": {"UI": {"workbench_light_theme": True}}},
+                )
+            )
+            self.assertIn("#fff8fb", window.styleSheet())
+            self.assertIn("#20344d", window.styleSheet())
+            self.assertEqual(window.font().family(), get_ui_font_family())
+            self.assertEqual(window._search.font().family(), get_ui_font_family())
+        finally:
+            UI["workbench_light_theme"] = original_theme
+            window.deleteLater()
+            self.app.processEvents()
 
 
 if __name__ == "__main__":

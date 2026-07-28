@@ -559,26 +559,13 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
         base_stream_max    = float(OLLAMA.get('stream_max_secs', 30) or 30)
         api_stream_max     = float(OLLAMA.get('api_stream_max_secs', 90) or 90)
         _STREAM_MAX_SECS   = max(base_stream_max, api_stream_max)
-        raw_connect_timeout = OLLAMA.get('api_connect_timeout', 6)
-        raw_read_timeout = OLLAMA.get('api_read_timeout', 15)
-        raw_retry_times = OLLAMA.get('api_retry_times', 2)
+        from .network_policy import API_TIMEOUT_SECS, API_TOTAL_ATTEMPTS
+
         raw_retry_backoff = OLLAMA.get('api_retry_backoff', 0.8)
         raw_disable_env_proxy = OLLAMA.get('api_disable_env_proxy', True)
-        try:
-            api_connect_timeout = float(raw_connect_timeout)
-        except (TypeError, ValueError):
-            api_connect_timeout = 6.0
-        api_connect_timeout = max(1.0, min(30.0, api_connect_timeout))
-        try:
-            api_read_timeout = float(raw_read_timeout)
-        except (TypeError, ValueError):
-            api_read_timeout = 15.0
-        api_read_timeout = max(2.0, min(120.0, api_read_timeout))
-        try:
-            api_retry_times = int(raw_retry_times)
-        except (TypeError, ValueError):
-            api_retry_times = 2
-        api_retry_times = max(1, min(4, api_retry_times))
+        api_connect_timeout = API_TIMEOUT_SECS
+        api_read_timeout = API_TIMEOUT_SECS
+        api_retry_times = API_TOTAL_ATTEMPTS
         try:
             api_retry_backoff = float(raw_retry_backoff)
         except (TypeError, ValueError):
@@ -645,7 +632,7 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
                     yuanbao_options,
                     disable_env_proxy=api_disable_env_proxy,
                     connect_timeout=api_connect_timeout,
-                    read_timeout=max(api_read_timeout, 30.0),
+                    read_timeout=api_read_timeout,
                 )
                 if uploaded_multimedia:
                     payload_images = None

@@ -5,9 +5,17 @@ import zipfile
 from pathlib import Path
 
 from scripts.release_common import build_generated_payloads
+from scripts.package_green_release import _should_exclude as green_should_exclude
+from scripts.package_release import ROOT, _should_exclude as release_should_exclude
 
 
 class ReleaseCommonTests(unittest.TestCase):
+    def test_release_packages_include_the_update_installer(self):
+        installer = ROOT / 'lib' / 'script' / 'app' / 'update_installer.py'
+        self.assertTrue(installer.is_file())
+        self.assertFalse(release_should_exclude(installer))
+        self.assertFalse(green_should_exclude(installer))
+
     def test_service_bundle_is_generated_from_current_source_tree(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

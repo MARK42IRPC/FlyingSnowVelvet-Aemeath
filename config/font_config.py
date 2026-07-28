@@ -44,6 +44,15 @@ def _set_scaled_font_defaults() -> None:
 def init_font_config() -> None:
     """公开接口：初始化字体字号配置。"""
     _set_scaled_font_defaults()
+    try:
+        from PyQt5.QtWidgets import QApplication
+
+        app = QApplication.instance()
+        if app is not None:
+            app.setFont(get_ui_font())
+    except Exception:
+        # 字体初始化不能阻断无 Qt 环境下的配置/测试导入。
+        pass
 
 
 def _build_font(family: str, pixel_size: int):
@@ -99,6 +108,22 @@ def get_ui_font(size: int | None = None):
     """返回 UI 默认字体实例（鸿蒙，像素字号）。"""
     font_size = FONT['ui_size'] if size is None else int(size)
     return _build_font(_ensure_harmony_os(), font_size)
+
+
+def get_ui_font_family() -> str:
+    """返回已注册的鸿蒙 UI 字体族名。"""
+    return _ensure_harmony_os()
+
+
+def apply_ui_font_tree(widget) -> None:
+    """统一控件树字体族，同时保留每个控件已有字号、粗细和样式。"""
+    from PyQt5.QtWidgets import QWidget
+
+    family = get_ui_font_family()
+    for target in (widget, *widget.findChildren(QWidget)):
+        font = target.font()
+        font.setFamily(family)
+        target.setFont(font)
 
 
 def get_cmd_font(size: int | None = None):

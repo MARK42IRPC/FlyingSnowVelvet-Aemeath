@@ -26,7 +26,8 @@
 ### AI 对话
 
 - 聊天入口位于 `lib/script/chat/`。
-- 支持 OpenAI 兼容 API、本地 Ollama、规则兜底和本地网页中转服务。
+- 支持福利 API、手动 OpenAI 兼容 API、本地 Ollama、规则回复和元宝本地网页中转；回复只使用用户选中的来源，不跨来源回退。
+- 福利 API 启用时会并发测速 GitHub/Gitee 发布配置源获取密钥与地址，再通过 `/models` 探测实际模型；默认使用 Agnes 2.0 Flash，开启“智力提升”后使用 Agnes 2.5 Flash。网络请求固定 10 秒超时，失败后额外重试 3 次。
 - OpenAI 兼容请求支持流式输出、上下文、人格、图片输入和多种兼容 payload 变体。
 - DashScope/Qwen 系模型带图时会先尝试图片请求，接口实际拒绝后再提示用户关闭图片输入或更换模型。
 

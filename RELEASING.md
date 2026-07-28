@@ -12,6 +12,13 @@
 
 `config/version_info.py` 是打包脚本读取版本号的来源。更新版本时优先改这里，再同步其它展示文档。
 
+应用版本仍使用 `LTS...` 格式，但桌宠自动更新不再扫描全部版本标签。每次发布后必须同步维护以下两个固定程序发布槽，并让它们指向同一份已验收程序快照：
+
+- GitHub：`MARK42IRPC/FlyingSnowVelvet-Aemeath` 的 `PACK` release。
+- Gitee：`Mark42IRPC/Aemeath-AIdeskpet` 的“最新包” release。
+
+GitHub/Gitee 没有真实打包 ZIP 附件时，更新器使用固定 tag 自动生成的源码 ZIP，供测试版更新；后续上传真实打包版后优先使用附件。更新器按 release 时间选择较新的镜像，时间相同时选择响应更快的镜像；只有 revision 相同才允许下载失败后跨镜像回落。发布时应更新 release 时间/revision，确保客户端能识别固定槽内容变化。`RESC` 只存放 Python、Chromium、Vosk、启动动画和福利 API 配置等安装资源，不得复用为上述程序发布槽。
+
 ## 2. 发布前检查
 
 ### 文档门户
@@ -147,6 +154,7 @@ Release Notes 以 `CHANGELOG.md` 当前版本段为主，必要时补充迁移�
 ## 6. 发布后检查
 
 - 确认 GitHub Release 附件完整
+- 确认 GitHub `PACK` 与 Gitee“最新包”固定发布槽均指向本次程序快照，且 ZIP 可下载
 - 确认普通包与绿色包体积符合预期
 - 抽样下载解压，检查启动脚本和安装依赖脚本可运行
 - 如修改了配置目录、缓存目录、发布包边界，在用户公告中单独说明

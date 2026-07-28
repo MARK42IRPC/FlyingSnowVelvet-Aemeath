@@ -65,7 +65,7 @@ class ChatHandler(ChatHandlerPersonaMixin, ChatHandlerAutoCompanionMixin, ChatHa
                 "min":  BUBBLE_MIN_TICKS,
                 "max":  BUBBLE_MAX_TICKS,
             }))
-            logger.error("[ChatHandler] 强制模式失败，已停止回退: %s", mode_error)
+            logger.error("[ChatHandler] 当前回复模式不可用，未切换其他来源: %s", mode_error)
             return
 
         if not self._ollama.is_running:

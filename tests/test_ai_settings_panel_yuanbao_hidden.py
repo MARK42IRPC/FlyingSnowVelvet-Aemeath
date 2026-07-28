@@ -43,7 +43,8 @@ class _DummyPanel:
 def _build_dummy_panel() -> _DummyPanel:
     panel = _DummyPanel()
     panel._api_key = _RawTextField("local-api-key")
-    panel._force_mode = _ComboField("4", "优先走元宝web(默认)")
+    panel._force_mode = _ComboField("4", "元宝")
+    panel._welfare_intelligence_boost = _CheckField(False)
     panel._api_base_url = _TextField("http://127.0.0.1:8000/v1")
     panel._api_model = _TextField("deepseek-v3")
     panel._ollama_base_url = _TextField("http://localhost:11434")

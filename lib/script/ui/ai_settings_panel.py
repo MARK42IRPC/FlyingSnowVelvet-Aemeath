@@ -74,7 +74,7 @@ from lib.script.workbench.settings import (
     SettingsPageScaffold,
     create_settings_form,
 )
-from lib.script.workbench.theme import COLORS as WORKBENCH_COLORS
+from lib.script.workbench.theme import COLORS as WORKBENCH_COLORS, get_workbench_colors
 from lib.script.yuanbao_free_api import get_yuanbao_free_api_service
 from lib.script.yuanbao_free_api.service import get_yuanbao_free_api_log_path
 
@@ -89,6 +89,7 @@ _DROPDOWN_POPUP_LAYER = 601
 _DEFAULT_VALUES = {
     "api_key": "",
     "force_reply_mode": "1",
+    "welfare_intelligence_boost": False,
     "api_base_url": "",
     "api_model": "gpt-5.4",
     "yuanbao_login_url": "https://yuanbao.tencent.com/chat/naQivTmsDa",
@@ -164,7 +165,14 @@ _CATEGORY_KEY_ALLOWLIST = {
             "exit_shadow_blur_radius",
             "exit_shadow_offset_direction",
         },
-        "UI": {"pet_opacity", "ui_widget_opacity", "tooltip_opacity", "ui_fade_duration", "auto_hide_mouse_distance"},
+        "UI": {
+            "pet_opacity",
+            "ui_widget_opacity",
+            "tooltip_opacity",
+            "ui_fade_duration",
+            "auto_hide_mouse_distance",
+            "workbench_light_theme",
+        },
         "COMMAND_DIALOG": {"idle_timeout_ms"},
     },
     "behavior_physics": {
@@ -276,6 +284,7 @@ _CATEGORY_KEY_ALLOWLIST = {
 
 _GENERAL_BOOL_KEYS: set[tuple[str, str]] = {
     ("ANIMATION", "start_exit_enabled"),
+    ("UI", "workbench_light_theme"),
     ("PARTICLES", "enable_stroke"),
     ("MORTOR", "bgm_enabled"),
     ("STARTUP", "ensure_desktop_shortcut"),
@@ -422,6 +431,7 @@ _GENERAL_CONFIG_DEFAULTS: dict[str, dict[str, object]] = {
         "tooltip_opacity": 0.8,
         "ui_fade_duration": 200,
         "auto_hide_mouse_distance": 300,
+        "workbench_light_theme": False,
     },
     "COMMAND_DIALOG": {
         "idle_timeout_ms": 10000,
@@ -578,6 +588,7 @@ _KEY_FRIENDLY_NAME = {
         "tooltip_opacity": "悬浮说明透明度",
         "ui_fade_duration": "淡入淡出时长(ms)",
         "auto_hide_mouse_distance": "自动关闭阈值",
+        "workbench_light_theme": "工作台亮色主题",
     },
     "ANIMATION": {
         "pet_size": "宠物尺寸",
@@ -1584,10 +1595,11 @@ class _ContributionCardButton(QPushButton):
     def _apply_watermark(self, hovered: bool) -> None:
         if self._watermark_label is None:
             return
+        colors = get_workbench_colors()
         self._watermark_label.setFont(self._watermark_font)
         self._watermark_label.setText("打开" if hovered else "主页")
         self._watermark_label.setStyleSheet(
-            f"color: {WORKBENCH_COLORS.cyan if hovered else WORKBENCH_COLORS.text_dim};"
+            f"color: {colors.cyan if hovered else colors.text_dim};"
         )
 
     def enterEvent(self, event) -> None:
@@ -1833,49 +1845,24 @@ class AISettingsPanel(QWidget):
         self._hint_label = scaffold.description_label
 
         interface_section = scaffold.add_section(
-            "接口与回复",
-            "选择回复来源，配置外部接口、人格文件与元宝登录。",
+            "回复模式",
+            "选择本次保存后固定使用的回复来源。",
         )
         form = create_settings_form()
         interface_section.body_layout.addLayout(form)
 
-        self._api_key = _ApiKeyLineEdit()
-        form.addRow("接口密钥", self._api_key)
-        self._set_form_row_description(
-            form,
-            self._api_key,
-            "外部接口密钥；仅用于手动 OpenAI 兼容接口，不参与元宝本地中转认证。",
-        )
-
         self._force_mode = _WatermarkComboBox()
         self._force_mode.setView(QListView(self._force_mode))
-        self._force_mode.addItem('优先使用福利API(默认)', '1')
-        self._force_mode.addItem('优先走元宝web', '4')
-        self._force_mode.addItem('自动选择', '')
-        self._force_mode.addItem('手动接口失败回退福利API', '0')
-        self._force_mode.addItem('仅使用本地 Ollama', '2')
-        self._force_mode.addItem('仅使用规则回复', '3')
+        self._force_mode.addItem('福利 API', '1')
+        self._force_mode.addItem('手动 API', '0')
+        self._force_mode.addItem('本地 Ollama', '2')
+        self._force_mode.addItem('规则回复', '3')
+        self._force_mode.addItem('元宝', '4')
         form.addRow("回复模式", self._force_mode)
         self._set_form_row_description(
             form,
             self._force_mode,
-            "强制指定回复来源；自动模式会按可用性在多来源间切换。",
-        )
-
-        self._api_base_url = QLineEdit()
-        form.addRow("接口地址", self._api_base_url)
-        self._set_form_row_description(
-            form,
-            self._api_base_url,
-            "外部接口地址，通常填写兼容 OpenAI 的基地址；若直接填写完整的 `/chat/completions` 或 `/v1/chat/completions` 端点也可兼容。",
-        )
-
-        self._api_model = QLineEdit()
-        form.addRow("接口模型", self._api_model)
-        self._set_form_row_description(
-            form,
-            self._api_model,
-            "外部接口模型名，例如 qwen3.5-plus；元宝模式会改走程序内置的本地模型标识。",
+            "回复只走选中的来源，失败时不会切换到其他来源。",
         )
 
         persona_row, persona_layout = self._create_field_row_group(spacing=scale_px(8, min_abs=6))
@@ -1892,8 +1879,59 @@ class AISettingsPanel(QWidget):
         )
         self._set_widget_description(self._open_persona_file_btn, "使用系统默认程序打开当前生效的人格 txt。")
 
+        self._welfare_section = scaffold.add_section(
+            "福利 API 配置",
+            "仅在回复模式选择福利 API 时显示。",
+        )
+        form = create_settings_form()
+        self._welfare_section.body_layout.addLayout(form)
+        self._welfare_intelligence_boost = QCheckBox("智力提升")
+        form.addRow("", self._welfare_intelligence_boost)
+        self._set_form_row_description(
+            form,
+            self._welfare_intelligence_boost,
+            "关闭时使用 Agnes 2.0 Flash；开启后使用 Agnes 2.5 Flash。",
+        )
+
+        self._manual_api_section = scaffold.add_section(
+            "手动 API 配置",
+            "仅在回复模式选择手动 API 时显示。",
+        )
+        form = create_settings_form()
+        self._manual_api_section.body_layout.addLayout(form)
+
+        self._api_key = _ApiKeyLineEdit()
+        form.addRow("接口密钥", self._api_key)
+        self._set_form_row_description(
+            form,
+            self._api_key,
+            "OpenAI 兼容接口密钥，单独保存在用户密钥文件中。",
+        )
+
+        self._api_base_url = QLineEdit()
+        form.addRow("接口地址", self._api_base_url)
+        self._set_form_row_description(
+            form,
+            self._api_base_url,
+            "外部接口地址，通常填写兼容 OpenAI 的基地址；若直接填写完整的 `/chat/completions` 或 `/v1/chat/completions` 端点也可兼容。",
+        )
+
+        self._api_model = QLineEdit()
+        form.addRow("接口模型", self._api_model)
+        self._set_form_row_description(
+            form,
+            self._api_model,
+            "外部接口模型名，例如 qwen3.5-plus。",
+        )
+
         self._set_hidden_yuanbao_values(_DEFAULT_VALUES)
 
+        self._yuanbao_section = scaffold.add_section(
+            "元宝登录",
+            "仅在回复模式选择元宝时显示。",
+        )
+        form = create_settings_form()
+        self._yuanbao_section.body_layout.addLayout(form)
         yuanbao_login_row, yuanbao_login_layout = self._create_field_row_group(spacing=scale_px(8, min_abs=6))
         self._start_yuanbao_wechat_login_btn = QPushButton("微信登录元宝")
         self._start_yuanbao_wechat_login_btn.setFixedWidth(scale_px(126, min_abs=108))
@@ -1908,12 +1946,12 @@ class AISettingsPanel(QWidget):
         self._set_widget_description(self._start_yuanbao_wechat_login_btn, "启动本地 YuanBao-Free-API 服务，并使用微信扫码方式登录元宝；程序会固定使用内置 loopback 地址、占位密钥和默认模型。")
         self._set_widget_description(self._stop_yuanbao_login_btn, "停止元宝登录流程并关闭本地元宝服务。")
 
-        local_section = scaffold.add_section(
-            "本地推理",
-            "管理 Ollama 模型、计算设备和生成参数。",
+        self._ollama_section = scaffold.add_section(
+            "Ollama 配置",
+            "仅在回复模式选择本地 Ollama 时显示。",
         )
         form = create_settings_form()
-        local_section.body_layout.addLayout(form)
+        self._ollama_section.body_layout.addLayout(form)
 
         base_row, base_layout = self._create_field_row_group(spacing=scale_px(8, min_abs=6))
         self._ollama_base_url = self._create_config_line_edit(expanding=True)
@@ -1964,6 +2002,13 @@ class AISettingsPanel(QWidget):
             "CPU 推理线程数，0 表示使用框架默认值。",
         )
 
+        generation_section = scaffold.add_section(
+            "生成参数",
+            "调整大模型输出与图片输入。",
+        )
+        form = create_settings_form()
+        generation_section.body_layout.addLayout(form)
+
         self._api_temperature = _DecimalSliderField(0.0, 2.0, 0.05, value=_DEFAULT_VALUES["api_temperature"])
         form.addRow("大模型温度", self._api_temperature)
         self._set_form_row_description(
@@ -1979,6 +2024,9 @@ class AISettingsPanel(QWidget):
             self._model_vision,
             "视力越高，token消耗越高，看图越清晰。100 为不压缩，0 为压缩到 720p。",
         )
+
+        self._force_mode.currentIndexChanged.connect(self._update_reply_mode_sections)
+        self._update_reply_mode_sections()
 
         voice_section = scaffold.add_section(
             "语音合成",
@@ -2085,6 +2133,9 @@ class AISettingsPanel(QWidget):
         scaffold.finish()
         self._reload_btn = scaffold.add_action("恢复本页默认", self._on_restore_ai_defaults)
         self._save_exit_btn = scaffold.add_action("保存更改", self._on_save_ai_action, primary=True)
+        self._save_restart_btn = scaffold.add_action("保存并重启", self._on_save_and_restart)
+        self._save_restart_btn.setObjectName("SettingsRestartAction")
+        self._save_restart_btn.setProperty("restartAction", True)
 
         if self._lazy_workbench_pages:
             self._tab_pages = [self._ai_panel]
@@ -2402,7 +2453,7 @@ class AISettingsPanel(QWidget):
     ) -> QWidget:
         stable_section = scaffold.add_section(
             "稳定版本",
-            "检查最新分发包。若有新版本，会打开更新窗口确认下载与替换。",
+            "检查最新分发包。下载完成后桌宠会退出，由独立更新进程覆盖安装并重新启动。",
         )
         stable_row = QHBoxLayout()
         stable_row.setContentsMargins(0, 0, 0, 0)
@@ -3733,7 +3784,7 @@ class AISettingsPanel(QWidget):
         bg = UI_THEME["bg"].name()
         text = UI_THEME["text"].name()
         highlight = UI_THEME["deep_cyan"].name()
-        about_c = WORKBENCH_COLORS
+        about_c = get_workbench_colors()
         menu_font = get_ui_font(size=_CONFIG_FONT_SIZE)
         menu_font.setBold(True)
         menu_font_family = str(menu_font.family() or "").replace("'", "\\'")
@@ -4033,6 +4084,12 @@ class AISettingsPanel(QWidget):
             }}
             """
         )
+
+    def refresh_workbench_theme(self) -> None:
+        """重新应用工作台主题到面板自有样式和自定义水印控件。"""
+        self._apply_style()
+        for button in self.findChildren(_ContributionCardButton):
+            button._apply_watermark(button.underMouse())
         # 垂直标签栏样式已在 ai_settings_tabs.py 中通过按钮样式设置
 
     def _layout_top_tab_bar(self) -> None:
@@ -4259,7 +4316,7 @@ class AISettingsPanel(QWidget):
 
     def _collect_values(self) -> dict:
         force_mode = str(self._force_mode.currentData() or "").strip()
-        if force_mode not in ("", "0", "1", "2", "3", "4"):
+        if force_mode not in ("0", "1", "2", "3", "4"):
             raise ValueError("回复模式值无效")
 
         gpu_mode = str(self._gpu_mode.currentData() or _GPU_MODE_AUTO)
@@ -4331,6 +4388,7 @@ class AISettingsPanel(QWidget):
         values = {
             "api_key": self._api_key.raw_text(),
             "force_reply_mode": force_mode,
+            "welfare_intelligence_boost": bool(self._welfare_intelligence_boost.isChecked()),
             "api_base_url": self._api_base_url.text().strip(),
             "api_model": self._api_model.text().strip(),
             "yuanbao_free_api_enabled": force_mode == "4",
@@ -4373,6 +4431,7 @@ class AISettingsPanel(QWidget):
 
     def _set_values_to_form(self, values: dict) -> None:
         self._api_key.set_raw_text(str(values.get("api_key", "")))
+        self._welfare_intelligence_boost.setChecked(bool(values.get("welfare_intelligence_boost", False)))
         self._api_base_url.setText(str(values.get("api_base_url", "")))
         self._api_model.setText(str(values.get("api_model", "")))
         self._set_hidden_yuanbao_values(values)
@@ -4397,6 +4456,14 @@ class AISettingsPanel(QWidget):
         mode_value = str(values.get("force_reply_mode", "") or "").strip()
         idx = self._force_mode.findData(mode_value)
         self._force_mode.setCurrentIndex(max(0, idx))
+        self._update_reply_mode_sections()
+
+    def _update_reply_mode_sections(self, *_args) -> None:
+        mode = str(self._force_mode.currentData() or "1").strip()
+        self._welfare_section.setVisible(mode == "1")
+        self._manual_api_section.setVisible(mode == "0")
+        self._ollama_section.setVisible(mode == "2")
+        self._yuanbao_section.setVisible(mode == "4")
 
     def _ollama_model_placeholder_message(self) -> str:
         error = get_model_list_error()
@@ -4512,6 +4579,14 @@ class AISettingsPanel(QWidget):
     def _on_save_ai_action(self) -> None:
         if self._on_save() and not self._workbench_attached:
             self.fade_out()
+
+    def _on_save_and_restart(self) -> None:
+        if not self._on_save():
+            return
+        self._ec.publish(Event(EventType.APP_QUIT, {
+            "exit_code": 0,
+            "restart": True,
+        }))
 
     def _on_save(self) -> bool:
         try:

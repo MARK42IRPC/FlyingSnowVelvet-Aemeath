@@ -38,6 +38,7 @@ UI = {
     'tooltip_opacity':         0.8,             # 鼠标悬浮说明透明度（0.0-1.0）
     'ui_fade_duration':        200,  # UI淡入/淡出持续时间（毫秒）
     'auto_hide_mouse_distance': 300,  # 右键相关UI自动关闭距离阈值（xp）
+    'workbench_light_theme': False,   # 工作台亮色主题开关
 }
 BUBBLE_CONFIG = {
     'default_min_ticks':  2,      # 默认最小显示 tick 数

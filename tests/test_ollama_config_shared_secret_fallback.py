@@ -32,6 +32,8 @@ class OllamaConfigSharedSecretFallbackTests(unittest.TestCase):
 
             with patch.object(oc, "_local_secret_path", return_value=local_path), patch.object(
                 oc, "get_shared_root_dir", return_value=root / "shared"
+            ), patch.object(
+                oc, "get_user_secrets_dir", return_value=root / "canonical" / "ai.json"
             ):
                 payload = oc._load_local_secret_overrides()
 

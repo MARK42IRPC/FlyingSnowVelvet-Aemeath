@@ -7,7 +7,7 @@ from lib.script.chat.ollama_session import OllamaSessionMixin
 from lib.script.ui.ai_settings_validators import validate_ai_values
 
 
-class _FallbackSession(OllamaSessionMixin):
+class _StrictSession(OllamaSessionMixin):
     def __init__(self):
         self._use_api_key = True
         self._active_config = {
@@ -19,20 +19,46 @@ class _FallbackSession(OllamaSessionMixin):
         }
         self._strict_mode = True
         self._signal = None
-        self._openai_chat_api = Mock(side_effect=[RuntimeError("primary failed"), "fallback reply"])
+        self._openai_chat_api = Mock(side_effect=RuntimeError("manual API failed"))
 
 
 class WelfareApiRoutingTests(unittest.TestCase):
-    def test_welfare_mode_is_default_route(self):
-        with patch.object(ollama_config, "FORCE_REPLY_MODE", "1"):
+    def test_welfare_mode_uses_downloaded_config(self):
+        resolved = {
+            "api_key": "downloaded-key",
+            "base_url": "https://welfare.example/v1",
+            "models": ("agnes-2.0-flash", "agnes-2.5-flash"),
+        }
+        with patch.object(ollama_config, "FORCE_REPLY_MODE", "1"), patch.object(
+            ollama_config, "WELFARE_INTELLIGENCE_BOOST", False
+        ), patch(
+            "lib.script.chat.welfare_api_config.resolve_welfare_api_config",
+            return_value=resolved,
+        ):
             active = ollama_config.get_active_config()
 
         self.assertEqual(active["key_source"], "welfare_api")
-        self.assertEqual(active["base_url"], "https://apihub.agnes-ai.com/v1")
+        self.assertEqual(active["base_url"], resolved["base_url"])
         self.assertEqual(active["model"], "agnes-2.0-flash")
-        self.assertEqual(active["api_key"], "sk-welfare-api-not-configured")
+        self.assertEqual(active["api_key"], resolved["api_key"])
 
-    def test_manual_mode_without_required_fields_uses_welfare_api(self):
+    def test_welfare_intelligence_boost_uses_25_flash(self):
+        resolved = {
+            "api_key": "downloaded-key",
+            "base_url": "https://welfare.example/v1",
+            "models": ("agnes-2.0-flash", "agnes-2.5-flash"),
+        }
+        with patch.object(ollama_config, "FORCE_REPLY_MODE", "1"), patch.object(
+            ollama_config, "WELFARE_INTELLIGENCE_BOOST", True
+        ), patch(
+            "lib.script.chat.welfare_api_config.resolve_welfare_api_config",
+            return_value=resolved,
+        ):
+            active = ollama_config.get_active_config()
+
+        self.assertEqual(active["model"], "agnes-2.5-flash")
+
+    def test_manual_mode_without_required_fields_is_error(self):
         with patch.object(ollama_config, "FORCE_REPLY_MODE", "0"), patch.object(
             ollama_config, "API_KEY", ""
         ), patch.object(ollama_config, "API_BASE_URL", ""), patch.object(
@@ -40,9 +66,10 @@ class WelfareApiRoutingTests(unittest.TestCase):
         ):
             active = ollama_config.get_active_config()
 
-        self.assertEqual(active["key_source"], "welfare_api")
+        self.assertEqual(active["api_type"], "error")
+        self.assertIn("手动 API 配置不完整", active["error"])
 
-    def test_manual_mode_has_welfare_fallback(self):
+    def test_manual_mode_has_no_welfare_fallback(self):
         with patch.object(ollama_config, "FORCE_REPLY_MODE", "0"), patch.object(
             ollama_config, "API_KEY", "manual-key"
         ), patch.object(ollama_config, "API_BASE_URL", "https://manual.example/v1"), patch.object(
@@ -51,15 +78,13 @@ class WelfareApiRoutingTests(unittest.TestCase):
             active = ollama_config.get_active_config()
 
         self.assertEqual(active["key_source"], "config_api")
-        self.assertEqual(active["fallback_config"]["key_source"], "welfare_api")
+        self.assertNotIn("fallback_config", active)
 
-    def test_session_retries_with_welfare_config_after_primary_failure(self):
-        session = _FallbackSession()
+    def test_session_does_not_switch_source_after_failure(self):
+        session = _StrictSession()
         session._run_stream_chat("hello", "persona", 1, False)
 
-        self.assertEqual(session._openai_chat_api.call_count, 2)
-        second_call = session._openai_chat_api.call_args_list[1]
-        self.assertEqual(second_call.kwargs["config_override"], session._active_config["fallback_config"])
+        self.assertEqual(session._openai_chat_api.call_count, 1)
 
     def test_default_pet_movement_speed_is_one_third_of_previous_values(self):
         self.assertEqual(BEHAVIOR["move_min_speed"], 2.5)
@@ -77,7 +102,7 @@ class WelfareApiRoutingTests(unittest.TestCase):
 
         validate_ai_values(values)
 
-    def test_manual_mode_validation_allows_welfare_fallback_without_manual_config(self):
+    def test_manual_mode_validation_requires_complete_config(self):
         values = ollama_config.get_ai_setting_defaults()
         values.update({
             "force_reply_mode": "0",
@@ -86,7 +111,8 @@ class WelfareApiRoutingTests(unittest.TestCase):
             "api_model": "",
         })
 
-        validate_ai_values(values)
+        with self.assertRaisesRegex(ValueError, "接口密钥不能为空"):
+            validate_ai_values(values)
 
 
 if __name__ == "__main__":

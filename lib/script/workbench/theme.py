@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from config.font_config import get_ui_font_family
 from config.scale import scale_px
 
 
@@ -26,11 +27,44 @@ class WorkbenchColors:
     danger: str = "#ff7a92"
 
 
-COLORS = WorkbenchColors()
+DARK_COLORS = WorkbenchColors()
+LIGHT_COLORS = WorkbenchColors(
+    canvas="#fff8fb",
+    navigation="#fff0f5",
+    surface="#ffffff",
+    surface_raised="#fff5f8",
+    surface_hover="#ffe7f0",
+    border="#e7c5d2",
+    border_strong="#c99eb0",
+    text="#20344d",
+    text_muted="#344863",
+    text_dim="#4f627b",
+    pink="#e9689d",
+    pink_hover="#f58db7",
+    cyan="#91bdd8",
+    warning="#a97c36",
+    danger="#d95e78",
+)
+
+# 保留现有导入方对暗色 token 的兼容；样式生成通过 get_workbench_colors() 动态取色。
+COLORS = DARK_COLORS
 
 
-def workbench_stylesheet() -> str:
-    c = COLORS
+def get_workbench_colors(mode: str | None = None) -> WorkbenchColors:
+    """返回当前工作台主题色；显式传入 dark/light 可用于预览和测试。"""
+    if mode is None:
+        try:
+            from config.config import UI
+
+            mode = "light" if bool(UI.get("workbench_light_theme", False)) else "dark"
+        except Exception:
+            mode = "dark"
+    return LIGHT_COLORS if str(mode).strip().lower() == "light" else DARK_COLORS
+
+
+def workbench_stylesheet(mode: str | None = None) -> str:
+    c = get_workbench_colors(mode)
+    font_family = get_ui_font_family().replace("'", "\\'")
     border = scale_px(1, min_abs=1)
     nav_width_padding = scale_px(11, min_abs=9)
     control_height = scale_px(32, min_abs=28)
@@ -39,6 +73,10 @@ def workbench_stylesheet() -> str:
     QWidget#WorkbenchWindow {{
         background: transparent;
         color: {c.text};
+        font-family: '{font_family}';
+    }}
+    QWidget#WorkbenchWindow * {{
+        font-family: '{font_family}';
     }}
     QFrame#WorkbenchShell {{
         background: {c.canvas};
@@ -61,6 +99,7 @@ def workbench_stylesheet() -> str:
     QWidget#WorkbenchPageHost, QWidget#WorkbenchPage {{
         background: transparent;
         border: none;
+        font-family: '{font_family}';
     }}
     QLabel#WorkbenchBrand {{
         color: {c.text};
@@ -372,6 +411,18 @@ def workbench_stylesheet() -> str:
         color: {c.canvas};
         border-color: {c.pink_hover};
     }}
+    QFrame#WorkbenchPageHost QPushButton#SettingsRestartAction,
+    QFrame#WorkbenchPageHost QPushButton[restartAction="true"] {{
+        background: {c.pink};
+        color: {c.canvas};
+        border-color: {c.pink};
+    }}
+    QFrame#WorkbenchPageHost QPushButton#SettingsRestartAction:hover,
+    QFrame#WorkbenchPageHost QPushButton[restartAction="true"]:hover {{
+        background: {c.pink_hover};
+        color: {c.canvas};
+        border-color: {c.pink_hover};
+    }}
     QScrollArea#WorkbenchNavigationScroll {{
         background: transparent;
         border: none;
@@ -405,6 +456,7 @@ def workbench_stylesheet() -> str:
     QMenu {{
         background: {c.surface};
         color: {c.text};
+        font-family: '{font_family}';
         border: {border}px solid {c.border_strong};
         padding: {scale_px(4, min_abs=3)}px;
     }}

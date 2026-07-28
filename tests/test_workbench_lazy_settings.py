@@ -34,6 +34,13 @@ class WorkbenchLazySettingsTests(unittest.TestCase):
         page = panel.create_workbench_page('ui_anim')
         self.assertIs(page, panel._workbench_pages['ui_anim'])
         self.assertEqual(set(panel._config_tab_meta), {'ui_anim'})
+        theme_fields = [
+            field
+            for field in panel._config_tab_meta['ui_anim']['fields']
+            if field.get('dict_name') == 'UI' and field.get('key') == 'workbench_light_theme'
+        ]
+        self.assertEqual(len(theme_fields), 1)
+        self.assertEqual(theme_fields[0]['editor'].isChecked(), False)
 
         page.deleteLater()
         panel.deleteLater()

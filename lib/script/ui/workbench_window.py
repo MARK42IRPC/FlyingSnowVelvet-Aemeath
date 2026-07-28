@@ -26,9 +26,10 @@ from PyQt5.QtWidgets import (
 )
 
 from config.config import UI
-from config.font_config import get_ui_font
+from config.font_config import apply_ui_font_tree, get_ui_font
 from config.scale import scale_px
 from lib.core.anchor_utils import apply_ui_opacity
+from lib.core.event.center import Event, EventType, get_event_center
 from lib.script.workbench.components import (
     WorkbenchOverviewPage,
     WorkbenchPetAboutButton,
@@ -88,6 +89,8 @@ class WorkbenchWindow(QWidget):
         self._geometry_restored = False
         self._settings = QSettings("FlyingSnow", "UnifiedWorkbench")
         self._always_on_top = self._settings.value("always_on_top", False, type=bool)
+        self._event_center = get_event_center()
+        self._event_center.subscribe(EventType.CONFIG_UPDATED, self._on_config_updated)
 
         self.setObjectName("WorkbenchWindow")
         self.setWindowTitle("飞行雪绒工作台")
@@ -108,6 +111,7 @@ class WorkbenchWindow(QWidget):
         self._build_ui()
         self._attach_pages()
         self._build_navigation()
+        apply_ui_font_tree(self)
         self._populate_about_menu()
         self._restore_window_state()
         self._set_current_page("overview")
@@ -267,6 +271,21 @@ class WorkbenchWindow(QWidget):
         self._size_grip = QSizeGrip(self)
         self._size_grip.setFixedSize(scale_px(18, min_abs=15), scale_px(18, min_abs=15))
         self._size_grip.raise_()
+
+    def _on_config_updated(self, event: Event) -> None:
+        values = (event.data or {}).get("values") or {}
+        ui_values = values.get("UI")
+        if not isinstance(ui_values, dict) or "workbench_light_theme" not in ui_values:
+            return
+        self.setStyleSheet(workbench_stylesheet())
+        control_panel = self._control_panel
+        if control_panel is not None:
+            refresh_theme = getattr(control_panel, "refresh_workbench_theme", None)
+            if callable(refresh_theme):
+                refresh_theme()
+        self.style().unpolish(self)
+        self.style().polish(self)
+        self.update()
 
     def _attach_pages(self) -> None:
         overview = WorkbenchOverviewPage(
@@ -451,6 +470,7 @@ class WorkbenchWindow(QWidget):
             return
 
         self._embed_page(host, host_layout, page)
+        apply_ui_font_tree(page)
         self._external_pages[page_id] = page
         if hasattr(page, "refresh_games"):
             page.refresh_games()
@@ -690,3 +710,10 @@ class WorkbenchWindow(QWidget):
     def closeEvent(self, event) -> None:
         event.ignore()
         self.fade_out()
+
+    def deleteLater(self) -> None:
+        try:
+            self._event_center.unsubscribe(EventType.CONFIG_UPDATED, self._on_config_updated)
+        except (AttributeError, RuntimeError):
+            pass
+        super().deleteLater()

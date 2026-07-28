@@ -23,16 +23,18 @@ _SECRET_KEYS = (
 def load_ai_values(default_values: dict) -> dict:
     import config.ollama_config as oc
 
+    disk_secrets = _read_local_ai_secrets()
     values = dict(default_values)
     values.update({
-        "api_key": str(oc.API_KEY or ""),
+        "api_key": str(disk_secrets.get("api_key", oc.API_KEY) or ""),
         "force_reply_mode": str(oc.FORCE_REPLY_MODE or ""),
+        "welfare_intelligence_boost": bool(oc.WELFARE_INTELLIGENCE_BOOST),
         "api_base_url": str(oc.API_BASE_URL or ""),
         "api_model": str(oc.API_MODEL or ""),
         "yuanbao_login_url": str(oc.YUANBAO_FREE_API.get("login_url", "") or ""),
         "yuanbao_hy_source": str(oc.YUANBAO_FREE_API.get("hy_source", "web") or ""),
-        "yuanbao_hy_user": str(oc.YUANBAO_FREE_API.get("hy_user", "") or ""),
-        "yuanbao_x_uskey": str(oc.YUANBAO_FREE_API.get("x_uskey", "") or ""),
+        "yuanbao_hy_user": str(disk_secrets.get("yuanbao_hy_user", oc.YUANBAO_FREE_API.get("hy_user", "")) or ""),
+        "yuanbao_x_uskey": str(disk_secrets.get("yuanbao_x_uskey", oc.YUANBAO_FREE_API.get("x_uskey", "")) or ""),
         "yuanbao_agent_id": str(oc.YUANBAO_FREE_API.get("agent_id", "") or ""),
         "ollama_base_url": str(oc.OLLAMA.get("base_url", "")),
         "ollama_model": str(oc.OLLAMA_MODEL or ""),
@@ -71,6 +73,7 @@ def apply_ai_runtime(values: dict, default_values: dict) -> None:
     memory_context_limit = values.get("memory_context_limit", default_values["memory_context_limit"])
     oc.API_KEY = values["api_key"]
     oc.FORCE_REPLY_MODE = values["force_reply_mode"]
+    oc.WELFARE_INTELLIGENCE_BOOST = values["welfare_intelligence_boost"]
     oc.API_BASE_URL = values["api_base_url"]
     oc.API_MODEL = values["api_model"]
     oc.YUANBAO_FREE_API["login_url"] = values["yuanbao_login_url"]
@@ -138,3 +141,17 @@ def _write_local_ai_secrets(values: dict) -> None:
         _local_ai_secret_path(),
         json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
     )
+
+
+def _read_local_ai_secrets() -> dict[str, str]:
+    try:
+        payload = json.loads(_local_ai_secret_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    return {
+        key: str(payload.get(key, "") or "").strip()
+        for key in _SECRET_KEYS
+        if key in payload
+    }

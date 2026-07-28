@@ -21,6 +21,7 @@ def _hostname(text: str) -> str:
 
 def validate_ai_values(values: dict) -> None:
     force_mode = str(values.get("force_reply_mode", "")).strip()
+    welfare_intelligence_boost = values.get("welfare_intelligence_boost")
     api_base_url = str(values.get("api_base_url", "") or "").strip()
     yuanbao_login_url = str(values.get("yuanbao_login_url", "") or "").strip()
     yuanbao_free_api_enabled = bool(values.get("yuanbao_free_api_enabled", False))
@@ -44,8 +45,18 @@ def validate_ai_values(values: dict) -> None:
     memory_context_limit = values.get("memory_context_limit")
     memory_recall_count = values.get("memory_recall_count")
 
-    if force_mode not in ("", "0", "1", "2", "3", "4"):
+    if force_mode not in ("0", "1", "2", "3", "4"):
         raise ValueError("回复模式值无效")
+    if not isinstance(welfare_intelligence_boost, bool):
+        raise ValueError("福利 API 智力提升开关无效")
+
+    if force_mode == "0":
+        if not str(values.get("api_key", "") or "").strip():
+            raise ValueError("手动 API 模式下接口密钥不能为空")
+        if not api_base_url:
+            raise ValueError("手动 API 模式下接口地址不能为空")
+        if not str(values.get("api_model", "") or "").strip():
+            raise ValueError("手动 API 模式下接口模型不能为空")
 
     if api_base_url and not is_valid_http_url(api_base_url):
         raise ValueError("接口地址必须是有效的 http/https 地址")

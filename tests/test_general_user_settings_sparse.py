@@ -37,6 +37,18 @@ class GeneralUserSettingsSparseTests(unittest.TestCase):
                 (2, 3),
             )
 
+    def test_workbench_theme_is_a_persisted_ui_switch(self):
+        defaults = get_general_setting_defaults()
+        self.assertFalse(defaults["UI"]["workbench_light_theme"])
+        original_theme = config_module.UI["workbench_light_theme"]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            settings_path = Path(tmpdir) / "settings.json"
+            with patch.object(user_settings, "get_user_settings_path", return_value=settings_path):
+                save_general_values({"UI": {"workbench_light_theme": True}})
+            payload = json.loads(settings_path.read_text(encoding="utf-8"))
+            self.assertTrue(payload["overrides"]["general"]["UI"]["workbench_light_theme"])
+        config_module.UI["workbench_light_theme"] = original_theme
+
 
 if __name__ == "__main__":
     unittest.main()

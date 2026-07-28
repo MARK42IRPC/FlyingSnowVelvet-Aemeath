@@ -22,6 +22,7 @@ from config.font_config import get_ui_font
 from config.scale import scale_px, scale_style_px
 from lib.core.anchor_utils import apply_ui_opacity
 from lib.core.compute_hub import get_compute_hub
+from lib.core.event.center import Event, EventType, get_event_center
 from lib.core.screen_utils import clamp_rect_position, get_screen_geometry_for_point
 from lib.core.unified_draw import Layer, get_layer_manager
 from lib.script.update_manager import (
@@ -183,8 +184,8 @@ class DesktopPetUpdateDialog(QWidget):
         self._git_check = None
         self._prepare_dialog(
             title="检查新版本",
-            status="正在通过 GitHub 检查新的分发包",
-            detail="请稍候，正在读取最新发布信息。",
+            status="正在检查新的分发包",
+            detail="请稍候，正在并发探测 GitHub 与 Gitee 更新源。",
         )
         self._set_busy(True)
         self._show_dialog()
@@ -414,13 +415,15 @@ class DesktopPetUpdateDialog(QWidget):
             self._on_worker_error("分发包更新失败：返回结果无效。")
             return
         self._set_busy(False)
-        self._status_label.setText("分发包更新完成")
+        self._status_label.setText("更新包已下载")
         self._detail_label.setText(
-            f"已更新到 {update.release_info.tag}（{self._fmt_dt(update.release_info.published_at)}）\n"
-            "请重启程序以载入最新资源。"
+            f"已准备 {update.release_info.tag}（{self._fmt_dt(update.release_info.published_at)}）\n"
+            "桌宠正在退出，随后将自动覆盖安装并重新启动。"
         )
         self._set_progress_done()
-        self._set_actions(None, ("关闭", self.hide_dialog))
+        self._set_busy(True)
+        self._set_actions(None, None)
+        get_event_center().publish(Event(EventType.APP_QUIT, {"exit_code": 0}))
 
     def _on_git_checked(self, result: object) -> None:
         check = result if isinstance(result, GitSyncCheckResult) else None
@@ -476,7 +479,7 @@ class DesktopPetUpdateDialog(QWidget):
     def _start_release_install(self) -> None:
         if self._busy:
             return
-        self._status_label.setText("正在下载并安装新的分发包")
+        self._status_label.setText("正在下载新的分发包")
         self._detail_label.setText("准备开始下载，请稍候。")
         self._set_progress_busy()
         self._set_busy(True)

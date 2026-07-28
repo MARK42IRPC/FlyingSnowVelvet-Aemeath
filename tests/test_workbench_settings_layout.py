@@ -31,7 +31,7 @@ from lib.script.workbench.settings import (
     SettingsPageScaffold,
     create_settings_form,
 )
-from lib.script.workbench.theme import workbench_stylesheet
+from lib.script.workbench.theme import LIGHT_COLORS, workbench_stylesheet
 
 
 class WorkbenchSettingsLayoutTests(unittest.TestCase):
@@ -135,6 +135,18 @@ class WorkbenchSettingsLayoutTests(unittest.TestCase):
         host.close()
         host.deleteLater()
         self.app.processEvents()
+
+    def test_workbench_theme_stylesheets_have_dark_and_light_palettes(self):
+        dark = workbench_stylesheet("dark")
+        light = workbench_stylesheet("light")
+
+        self.assertIn("#0d0f12", dark)
+        self.assertIn(LIGHT_COLORS.canvas, light)
+        self.assertIn(LIGHT_COLORS.text, light)
+        self.assertIn(LIGHT_COLORS.pink, light)
+        self.assertIn("QWidget#WorkbenchWindow *", light)
+        self.assertIn("font-family:", light)
+        self.assertNotEqual(dark, light)
 
 
 if __name__ == "__main__":

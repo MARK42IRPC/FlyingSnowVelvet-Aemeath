@@ -44,7 +44,7 @@ ec.unsubscribe(EventType.INFORMATION, on_info)
 
 其中：
 - `APP_PRE_START` 适合预热、静态准备和后台服务启动检查
-- `APP_QUIT` 是统一退出请求入口，适合阻止直接粗暴退出
+- `APP_QUIT` 是统一退出请求入口，适合阻止直接粗暴退出；payload 可传 `restart: true`，由主生命周期在清理完成并释放单实例锁后重启
 
 六、当前高频事件协议
 

@@ -21,7 +21,7 @@ VOICE_SENTENCE_SPLIT_PATTERN = re.compile('(?<=[。！？!?…])')
 NON_AI_VOICE_PATTERNS = [
     re.compile(r'^请求失败(?:(?:（|\().*?(?:）|\)))?[:：]'),
     re.compile(r'^外部\s*API请求过于频繁'),
-    re.compile(r'^强制模式\d+失败[:：]'),
+    re.compile(r'^本地 Ollama 模式不可用[:：]'),
     re.compile(r'^当前模式不可用'),
     re.compile(r'^(?:OpenAI|Ollama|API|外部API)\s*(?:兼容)?请求失败[:：]'),
     re.compile(r'^(?:网络超时|连接失败|服务未就绪|登录态抓取超时|抓取失败)[:：]'),

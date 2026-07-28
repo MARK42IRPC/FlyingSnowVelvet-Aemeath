@@ -250,28 +250,6 @@ class OllamaSessionMixin:
             except Exception as e:
                 logger.error("[OllamaManager] OpenAI API 异常: %s", e)
                 last_error = str(e)
-        if self._use_api_key and not full_text:
-            fallback_config = self._active_config.get('fallback_config')
-            if isinstance(fallback_config, dict):
-                logger.warning("[OllamaManager] primary API failed; falling back to welfare API")
-                try:
-                    full_text = self._openai_chat_api(
-                        message,
-                        persona,
-                        on_chunk_emit=chunk_fn,
-                        images=images,
-                        history=history,
-                        request_id=request_id,
-                        config_override=fallback_config,
-                    )
-                except requests.HTTPError as e:
-                    fallback_error = self._extract_error(e)
-                    logger.error("[OllamaManager] welfare API error: %s", fallback_error)
-                    last_error = f"{last_error or 'primary API failed'}; welfare API: {fallback_error}"
-                except Exception as e:
-                    logger.error("[OllamaManager] welfare API exception: %s", e)
-                    last_error = f"{last_error or 'primary API failed'}; welfare API: {e}"
-
         if not self._use_api_key and not full_text:
             models_to_try  = self._get_models_to_try()
             image_attempts = [images]
@@ -333,9 +311,9 @@ class OllamaSessionMixin:
         if not full_text and self._strict_mode:
             err_text = (last_error or "").strip()
             if err_text:
-                full_text = f"请求失败（强制模式）: {err_text[:300]}"
+                full_text = f"当前回复模式请求失败: {err_text[:300]}"
             else:
-                full_text = "请求失败（强制模式）: 当前模式不可用"
+                full_text = "当前回复模式请求失败: 当前模式不可用"
 
         if streaming and full_text and self._signal and len(full_text) != sent_len and not _is_non_ai_status_text(full_text):
             self._signal.chunk_ready.emit(request_id, full_text)

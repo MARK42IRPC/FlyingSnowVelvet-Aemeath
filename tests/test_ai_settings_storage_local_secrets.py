@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -22,6 +25,7 @@ class AISettingsStorageLocalSecretsTests(unittest.TestCase):
             "yuanbao_hy_user": "user-123",
             "yuanbao_x_uskey": "secret-uskey",
             "force_reply_mode": "4",
+            "welfare_intelligence_boost": True,
             "yuanbao_agent_id": "custom-agent",
         }
 
@@ -44,6 +48,7 @@ class AISettingsStorageLocalSecretsTests(unittest.TestCase):
             self.assertEqual(ai["api_base_url"], "http://127.0.0.1:8000/v1")
             self.assertEqual(ai["api_model"], "deepseek-v3")
             self.assertEqual(ai["force_reply_mode"], "4")
+            self.assertTrue(ai["welfare_intelligence_boost"])
             self.assertEqual(ai["yuanbao_agent_id"], "custom-agent")
             self.assertNotIn("ollama_model", ai)
             self.assertNotIn("api_key", ai)
@@ -55,6 +60,64 @@ class AISettingsStorageLocalSecretsTests(unittest.TestCase):
                 "yuanbao_hy_user": "user-123",
                 "yuanbao_x_uskey": "secret-uskey",
             })
+
+    def test_load_ai_values_refreshes_secrets_from_disk(self):
+        defaults = oc.get_ai_setting_defaults()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            secret_path = Path(tmpdir) / "user" / "secrets" / "ai.json"
+            secret_path.parent.mkdir(parents=True)
+            secret_path.write_text(
+                json.dumps({"api_key": "written-by-another-process"}),
+                encoding="utf-8",
+            )
+
+            with patch.object(storage, "_local_ai_secret_path", return_value=secret_path), patch.object(
+                oc, "API_KEY", "stale-import-time-key"
+            ):
+                loaded = storage.load_ai_values(defaults)
+
+        self.assertEqual(loaded["api_key"], "written-by-another-process")
+
+    def test_saved_api_key_is_loaded_by_a_fresh_process(self):
+        project_root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env = os.environ.copy()
+            env["AEMEATH_DESK_PET_HOME"] = tmpdir
+            env["PYTHONPATH"] = str(project_root)
+            save_script = """
+import config.ollama_config as oc
+from lib.script.ui.ai_settings_storage import save_ai_values
+values = oc.get_ai_setting_defaults()
+values.update({
+    'api_key': 'cross-process-key',
+    'api_base_url': 'https://manual.example/v1',
+    'api_model': 'manual-model',
+    'force_reply_mode': '0',
+})
+save_ai_values(values, values)
+"""
+            load_script = "import config.ollama_config as oc; print('KEY=' + oc.API_KEY)"
+
+            saved = subprocess.run(
+                [sys.executable, "-c", save_script],
+                cwd=project_root,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=20,
+            )
+            loaded = subprocess.run(
+                [sys.executable, "-c", load_script],
+                cwd=project_root,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=20,
+            )
+
+        self.assertEqual(saved.returncode, 0, saved.stderr)
+        self.assertEqual(loaded.returncode, 0, loaded.stderr)
+        self.assertIn("KEY=cross-process-key", loaded.stdout)
 
 
 if __name__ == "__main__":

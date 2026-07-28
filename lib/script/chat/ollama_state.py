@@ -113,7 +113,7 @@ class OllamaStateMixin:
 
     @property
     def strict_mode_enabled(self) -> bool:
-        """是否启用了强制模式（失败不回退）。"""
+        """当前回复模式是否禁止切换到其他来源。"""
         return self._strict_mode
 
     @property
@@ -123,9 +123,9 @@ class OllamaStateMixin:
             return self._mode_error
         if self._strict_mode and self._api_type == 'ollama':
             if not self._is_running:
-                return "强制模式2失败：本地 Ollama 服务未就绪"
+                return "本地 Ollama 模式不可用：服务未就绪"
             if not self._available_models:
-                return "强制模式2失败：本地 Ollama 无可用模型"
+                return "本地 Ollama 模式不可用：无可用模型"
         return ""
 
     @property

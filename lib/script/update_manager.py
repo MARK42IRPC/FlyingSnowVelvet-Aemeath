@@ -3,16 +3,17 @@
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import subprocess
 import tempfile
 import time
-import zipfile
-from dataclasses import dataclass
+import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
+from urllib.parse import urljoin
 
 import requests
 
@@ -27,16 +28,31 @@ _logger = get_logger(__name__)
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _STATE_PATH = _PROJECT_ROOT / "resc" / "user" / "update_state.json"
+_STAGING_ROOT = Path(tempfile.gettempdir()) / "FlyingSnowVelvet" / "updates"
+_GITHUB_PACK_API = (
+    "https://api.github.com/repos/MARK42IRPC/"
+    "FlyingSnowVelvet-Aemeath/releases/tags/PACK"
+)
+_GITHUB_PACK_REF_API = (
+    "https://api.github.com/repos/MARK42IRPC/"
+    "FlyingSnowVelvet-Aemeath/git/ref/tags/PACK"
+)
+_GITEE_PACK_API = (
+    "https://gitee.com/api/v5/repos/Mark42IRPC/"
+    "Aemeath-AIdeskpet/releases/tags/%E6%9C%80%E6%96%B0%E5%8C%85"
+)
+_GITEE_PACK_PAGE = (
+    "https://gitee.com/Mark42IRPC/Aemeath-AIdeskpet/"
+    "releases/tag/%E6%9C%80%E6%96%B0%E5%8C%85"
+)
 _API_HEADERS = {
     "Accept": "application/vnd.github+json",
     "User-Agent": "FlyingSnowVelvet-Updater/1.0",
 }
-_ASSET_HEADERS = {
-    "Accept": "application/octet-stream",
+_DOWNLOAD_HEADERS = {
+    "Accept": "*/*",
     "User-Agent": "FlyingSnowVelvet-Updater/1.0",
 }
-_PROTECTED_ROOTS = ("logs", "resc/user", "resc/models")
-_PROTECTED_FILES = ("py.ini",)
 
 InfoCallback = Callable[[str], None]
 ProgressCallback = Callable[[int, int, str], None]
@@ -46,10 +62,20 @@ class UpdateError(RuntimeError):
     """更新流程异常。"""
 
 
+def _is_retryable_request_error(exc: requests.RequestException) -> bool:
+    response = getattr(exc, "response", None)
+    status_code = int(getattr(response, "status_code", 0) or 0)
+    if status_code:
+        return status_code == 429 or status_code >= 500
+    return True
+
+
 @dataclass(frozen=True)
 class InstalledState:
     version: str
     installed_at: datetime
+    revision: str = ""
+    source: str = ""
 
 
 @dataclass(frozen=True)
@@ -58,6 +84,10 @@ class ReleaseInfo:
     published_at: datetime
     asset_name: str
     download_url: str
+    source: str = ""
+    revision: str = ""
+    response_seconds: float = 0.0
+    fallback_download_urls: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -131,24 +161,65 @@ def _isoformat(dt: datetime) -> str:
     return text.replace("+00:00", "Z")
 
 
-def _normalize_relative_path(rel_path: Path) -> str:
-    if rel_path == Path("."):
-        return ""
-    parts = [part for part in rel_path.parts if part not in (".", "")]
-    return "/".join(parts)
+def _select_zip_asset(assets: object, tag: str = "") -> dict | None:
+    if not isinstance(assets, list):
+        return None
+    candidates: list[dict] = []
+    for asset in assets:
+        if not isinstance(asset, dict):
+            continue
+        name = str(asset.get("name") or "").strip()
+        url = str(asset.get("browser_download_url") or "").strip()
+        lower_name = name.lower()
+        if lower_name.endswith(".zip") and not lower_name.endswith("-green.zip") and url:
+            candidates.append(asset)
+    if not candidates:
+        return None
+    generated_name = f"{str(tag or '').strip()}.zip".lower()
+    for asset in candidates:
+        if str(asset.get("name") or "").strip().lower() != generated_name:
+            return asset
+    return candidates[0]
 
 
-def _is_protected_path(rel_path: Path) -> bool:
-    rel = _normalize_relative_path(rel_path)
-    if not rel:
-        return False
-    for file_name in _PROTECTED_FILES:
-        if rel == file_name:
-            return True
-    for root in _PROTECTED_ROOTS:
-        if rel == root or rel.startswith(root + "/"):
-            return True
-    return False
+def _extract_gitee_attachments(page_data: object) -> list[dict]:
+    if not isinstance(page_data, dict):
+        return []
+    release_root = page_data.get("release")
+    release_data = release_root.get("release") if isinstance(release_root, dict) else None
+    attached = release_data.get("attach_files") if isinstance(release_data, dict) else None
+    if not isinstance(attached, list):
+        return []
+    normalized: list[dict] = []
+    for item in attached:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or item.get("file_name") or "").strip()
+        raw_url = str(
+            item.get("browser_download_url")
+            or item.get("download_url")
+            or item.get("url")
+            or item.get("path")
+            or ""
+        ).strip()
+        if name and raw_url:
+            normalized.append({
+                "name": name,
+                "browser_download_url": urljoin("https://gitee.com", raw_url),
+            })
+    return normalized
+
+
+def _select_release_source(releases: list[ReleaseInfo]) -> ReleaseInfo:
+    if not releases:
+        raise UpdateError("没有可用的更新源")
+    return max(
+        releases,
+        key=lambda item: (
+            item.published_at,
+            -max(0.0, float(item.response_seconds)),
+        ),
+    )
 
 
 class _UpdateBase:
@@ -210,7 +281,7 @@ class _UpdateBase:
 
 
 class UpdateManager(_UpdateBase):
-    """负责检测 GitHub 发布并自动更新本地分发包。"""
+    """负责从固定双源检测、下载并交接分发包。"""
 
     def __init__(
         self,
@@ -230,7 +301,10 @@ class UpdateManager(_UpdateBase):
     def check_for_updates(self) -> ReleaseCheckResult:
         installed = self._load_installed_state()
         release = self._fetch_latest_release()
-        update_available = release.published_at > installed.installed_at
+        revision_changed = bool(release.revision) and release.revision != installed.revision
+        update_available = release.published_at > installed.installed_at or (
+            release.published_at == installed.installed_at and revision_changed
+        )
         reason = "update_available" if update_available else "up_to_date"
         if update_available:
             self._info(
@@ -248,17 +322,49 @@ class UpdateManager(_UpdateBase):
         )
 
     def install_release(self, release: ReleaseInfo) -> UpdateResult:
-        self._progress(0, 0, f"开始下载分发包 {release.tag}...")
-        with tempfile.TemporaryDirectory(prefix="fs-update-") as tmp_dir:
-            tmp_path = Path(tmp_dir) / (release.asset_name or "release.zip")
-            self._download_release(release, tmp_path)
-            self._progress(0, 0, "下载完成，正在解压并覆盖文件...")
-            self._extract_and_copy(tmp_path)
+        from lib.script.app.update_installer import (
+            launch_update_installer,
+            validate_update_archive,
+        )
 
-        self._write_installed_state(release)
-        new_state = InstalledState(release.tag, release.published_at)
-        self._progress(1, 1, "分发包更新完成，建议重启程序以载入最新内容。")
-        return UpdateResult(True, new_state, release, reason="updated")
+        self._progress(0, 0, f"开始下载分发包 {release.tag}...")
+        staging_dir = _STAGING_ROOT / uuid.uuid4().hex
+        archive_name = Path(release.asset_name or "release.zip").name
+        if not archive_name.lower().endswith(".zip"):
+            archive_name += ".zip"
+        archive_path = staging_dir / archive_name
+        partial_path = archive_path.with_suffix(archive_path.suffix + ".part")
+        try:
+            self._download_release(release, partial_path)
+            partial_path.replace(archive_path)
+            self._progress(0, 0, "下载完成，正在校验更新包...")
+            validate_update_archive(archive_path)
+            release_payload = {
+                "tag": release.tag,
+                "published_at": _isoformat(release.published_at),
+                "revision": release.revision,
+                "source": release.source,
+            }
+            launch_update_installer(
+                archive_path,
+                _PROJECT_ROOT,
+                self._state_path,
+                release_payload,
+            )
+        except Exception as exc:
+            shutil.rmtree(staging_dir, ignore_errors=True)
+            if isinstance(exc, UpdateError):
+                raise
+            raise UpdateError(f"无法交接更新安装进程：{exc}") from exc
+
+        pending_state = InstalledState(
+            release.tag,
+            release.published_at,
+            release.revision,
+            release.source,
+        )
+        self._progress(1, 1, "更新包已就绪，退出后将自动覆盖安装并重启。")
+        return UpdateResult(True, pending_state, release, reason="install_scheduled")
 
     def check_and_update(self) -> UpdateResult:
         check_result = self.check_for_updates()
@@ -277,7 +383,12 @@ class UpdateManager(_UpdateBase):
                 data = json.loads(self._state_path.read_text(encoding="utf-8"))
                 version = str(data.get("version") or RESOURCE_VERSION)
                 installed_at = _parse_datetime(data.get("installed_at"))
-                return InstalledState(version, installed_at)
+                return InstalledState(
+                    version,
+                    installed_at,
+                    str(data.get("revision") or ""),
+                    str(data.get("source") or ""),
+                )
             except Exception as exc:
                 _logger.warning("failed to parse update state: %s", exc)
         return InstalledState(
@@ -285,140 +396,162 @@ class UpdateManager(_UpdateBase):
             installed_at=_parse_datetime(RESOURCE_RELEASE_DATE),
         )
 
-    def _write_installed_state(self, release: ReleaseInfo) -> None:
-        payload = {
-            "version": release.tag,
-            "installed_at": _isoformat(release.published_at),
-        }
-        self._state_path.parent.mkdir(parents=True, exist_ok=True)
-        self._state_path.write_text(
-            json.dumps(payload, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
-
     def _fetch_latest_release(self) -> ReleaseInfo:
-        url = f"https://api.github.com/repos/{self._repo}/releases/latest"
-        try:
-            resp = requests.get(url, timeout=15, headers=_API_HEADERS)
-            resp.raise_for_status()
-            data = resp.json()
-        except requests.RequestException as exc:
-            raise UpdateError(f"无法访问 GitHub：{exc}") from exc
-        except ValueError as exc:
-            raise UpdateError("GitHub 返回格式异常") from exc
-
-        tag = str(data.get("tag_name") or data.get("name") or "latest").strip()
-        published = _parse_datetime(data.get("published_at") or data.get("created_at"))
-        assets = data.get("assets") or []
-        asset_entry = next(
-            (
-                asset
-                for asset in assets
-                if str(asset.get("name") or "").lower().endswith(".zip")
-            ),
-            None,
+        fetchers = (self._fetch_github_pack_release, self._fetch_gitee_pack_release)
+        releases: list[ReleaseInfo] = []
+        errors: list[str] = []
+        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="release-source") as pool:
+            futures = [pool.submit(fetcher) for fetcher in fetchers]
+            for future in as_completed(futures):
+                try:
+                    releases.append(future.result())
+                except Exception as exc:
+                    errors.append(str(exc))
+        if not releases:
+            detail = "；".join(errors) if errors else "未知网络错误"
+            raise UpdateError(f"GitHub 和 Gitee 更新源均不可用：{detail}")
+        selected = _select_release_source(releases)
+        fallback_urls = tuple(
+            item.download_url
+            for item in releases
+            if item is not selected
+            and item.download_url
+            and item.revision
+            and item.revision == selected.revision
         )
-        download_url = ""
-        asset_name = ""
-        if asset_entry:
-            download_url = str(asset_entry.get("browser_download_url") or "").strip()
-            asset_name = str(asset_entry.get("name") or "").strip()
-        if not download_url:
-            download_url = str(data.get("zipball_url") or "").strip()
-            asset_name = asset_name or f"{tag or 'latest'}.zip"
-        if not download_url:
-            raise UpdateError("GitHub 发布缺少可下载的 zip 资源")
-
-        return ReleaseInfo(
-            tag=tag or "latest",
-            published_at=published,
-            asset_name=asset_name or "release.zip",
-            download_url=download_url,
-        )
-
-    def _download_release(self, release: ReleaseInfo, dest_path: Path) -> None:
-        try:
-            with requests.get(
-                release.download_url,
-                timeout=60,
-                stream=True,
-                headers=_ASSET_HEADERS,
-            ) as resp:
-                resp.raise_for_status()
-                total_text = str(resp.headers.get("Content-Length") or "").strip()
-                total_bytes = int(total_text) if total_text.isdigit() else 0
-                downloaded = 0
-                dest_path.parent.mkdir(parents=True, exist_ok=True)
-                with open(dest_path, "wb") as fp:
-                    for chunk in resp.iter_content(chunk_size=512 * 1024):
-                        if not chunk:
-                            continue
-                        fp.write(chunk)
-                        downloaded += len(chunk)
-                        self._progress(
-                            downloaded,
-                            total_bytes,
-                            "正在下载新的分发包...",
-                        )
-        except requests.RequestException as exc:
-            raise UpdateError(f"下载更新包失败：{exc}") from exc
-
-    def _extract_and_copy(self, archive_path: Path) -> None:
-        if not archive_path.exists():
-            raise UpdateError("更新包不存在或已被清理")
-        with tempfile.TemporaryDirectory(prefix="fs-update-extract-") as extract_dir:
-            try:
-                with zipfile.ZipFile(archive_path, "r") as zf:
-                    zf.extractall(extract_dir)
-            except zipfile.BadZipFile as exc:
-                raise UpdateError(f"更新包损坏：{exc}") from exc
-            content_root = self._resolve_content_root(Path(extract_dir))
-            copy_ops = self._collect_copy_operations(content_root)
-            total_ops = len(copy_ops)
-            for index, (src_file, dest_file, rel_text) in enumerate(copy_ops, start=1):
-                dest_file.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(src_file, dest_file)
-                self._progress(
-                    index,
-                    total_ops,
-                    f"正在覆盖文件：{rel_text}",
-                )
+        if fallback_urls:
+            selected = replace(selected, fallback_download_urls=fallback_urls)
+        self._info(f"已选择 {selected.source} 更新源（探测 {selected.response_seconds:.2f}s）。")
+        return selected
 
     @staticmethod
-    def _resolve_content_root(extracted_root: Path) -> Path:
-        markers = ("install_deps.py", "README.md", "lib")
-        if any((extracted_root / marker).exists() for marker in markers):
-            return extracted_root
-        children = [
-            child for child in extracted_root.iterdir() if child.name != "__MACOSX"
-        ]
-        if len(children) == 1 and children[0].is_dir():
-            return children[0]
-        return extracted_root
+    def _fetch_github_pack_release() -> ReleaseInfo:
+        started = time.monotonic()
+        data = UpdateManager._fetch_release_json(_GITHUB_PACK_API, "GitHub PACK")
+        if not isinstance(data, dict) or bool(data.get("draft")):
+            raise UpdateError("GitHub PACK release 不存在或尚未发布")
+        tag = str(data.get("tag_name") or "PACK")
+        asset = _select_zip_asset(data.get("assets"), tag)
+        download_url = str(
+            (asset or {}).get("browser_download_url") or data.get("zipball_url") or ""
+        ).strip()
+        if not download_url:
+            raise UpdateError("GitHub PACK release 缺少 ZIP 下载地址")
+        asset_name = str((asset or {}).get("name") or "FlyingSnowVelvet-PACK.zip")
+        updated_at = str(data.get("updated_at") or data.get("published_at") or data.get("created_at") or "")
+        ref_data = UpdateManager._fetch_release_json(_GITHUB_PACK_REF_API, "GitHub PACK tag")
+        ref_object = ref_data.get("object") if isinstance(ref_data, dict) else None
+        revision = str(ref_object.get("sha") or "") if isinstance(ref_object, dict) else ""
+        if not revision:
+            revision = f"release:{data.get('id', '')}:{updated_at}"
+        return ReleaseInfo(
+            tag=tag,
+            published_at=_parse_datetime(updated_at),
+            asset_name=asset_name,
+            download_url=download_url,
+            source="GitHub",
+            revision=revision,
+            response_seconds=time.monotonic() - started,
+        )
 
-    def _collect_copy_operations(
-        self,
-        source_root: Path,
-    ) -> list[tuple[Path, Path, str]]:
-        operations: list[tuple[Path, Path, str]] = []
-        for root, dirs, files in os.walk(source_root):
-            rel_dir = Path(root).relative_to(source_root)
-            if rel_dir != Path(".") and _is_protected_path(rel_dir):
-                dirs[:] = []
-                continue
-            target_dir = (
-                _PROJECT_ROOT if rel_dir == Path(".") else _PROJECT_ROOT / rel_dir
+    @staticmethod
+    def _fetch_gitee_pack_release() -> ReleaseInfo:
+        started = time.monotonic()
+        data = UpdateManager._fetch_release_json(_GITEE_PACK_API, "Gitee 最新包")
+        if not isinstance(data, dict) or bool(data.get("prerelease")):
+            raise UpdateError("Gitee 最新包 release 不存在或尚未发布")
+        tag = str(data.get("tag_name") or "最新包")
+        attachments: list[dict] = []
+        try:
+            page_data = UpdateManager._fetch_release_json(
+                _GITEE_PACK_PAGE,
+                "Gitee 最新包页面",
             )
-            for file_name in files:
-                rel_file = (rel_dir / file_name) if rel_dir != Path(".") else Path(file_name)
-                if _is_protected_path(rel_file):
-                    continue
-                src_file = Path(root) / file_name
-                dest_file = target_dir / file_name
-                operations.append(
-                    (src_file, dest_file, _normalize_relative_path(rel_file) or file_name)
-                )
-        return operations
+            attachments = _extract_gitee_attachments(page_data)
+        except UpdateError:
+            pass
+        api_assets = data.get("assets") if isinstance(data.get("assets"), list) else []
+        asset = _select_zip_asset([*attachments, *api_assets], tag)
+        if asset is None:
+            raise UpdateError("Gitee 最新包 release 缺少 ZIP 下载地址")
+        published_text = str(data.get("updated_at") or data.get("created_at") or "")
+        revision = str(data.get("target_commitish") or "")
+        download_url = str(asset.get("browser_download_url") or "")
+        return ReleaseInfo(
+            tag=tag,
+            published_at=_parse_datetime(published_text),
+            asset_name=str(asset.get("name") or "Aemeath-latest.zip"),
+            download_url=download_url,
+            source="Gitee",
+            revision=revision or f"release:{data.get('id', '')}:{published_text}",
+            response_seconds=time.monotonic() - started,
+        )
+
+    @staticmethod
+    def _fetch_release_json(url: str, source_name: str) -> object:
+        last_error: requests.RequestException | None = None
+        for attempt in range(1, 4):
+            try:
+                response = requests.get(url, timeout=10, headers=_API_HEADERS)
+                response.raise_for_status()
+                return response.json()
+            except ValueError as exc:
+                raise UpdateError(f"{source_name} 返回格式异常") from exc
+            except requests.RequestException as exc:
+                last_error = exc
+                if attempt >= 3 or not _is_retryable_request_error(exc):
+                    break
+                time.sleep(0.25 * attempt)
+        raise UpdateError(f"{source_name} 读取失败：{last_error}") from last_error
+
+    def _download_release(self, release: ReleaseInfo, dest_path: Path) -> None:
+        urls = (release.download_url, *release.fallback_download_urls)
+        errors: list[str] = []
+        for index, download_url in enumerate(urls):
+            try:
+                self._download_url(download_url, dest_path)
+                return
+            except UpdateError as exc:
+                errors.append(str(exc))
+                if index + 1 < len(urls):
+                    self._info("当前镜像下载失败，正在切换同 revision 备用源...")
+        raise UpdateError("；".join(errors) or "没有可用的更新包下载地址")
+
+    def _download_url(self, download_url: str, dest_path: Path) -> None:
+        last_error: requests.RequestException | None = None
+        for attempt in range(1, 4):
+            try:
+                with requests.get(
+                    download_url,
+                    timeout=(10, 60),
+                    stream=True,
+                    headers=_DOWNLOAD_HEADERS,
+                ) as resp:
+                    resp.raise_for_status()
+                    total_text = str(resp.headers.get("Content-Length") or "").strip()
+                    total_bytes = int(total_text) if total_text.isdigit() else 0
+                    downloaded = 0
+                    dest_path.parent.mkdir(parents=True, exist_ok=True)
+                    with open(dest_path, "wb") as fp:
+                        for chunk in resp.iter_content(chunk_size=512 * 1024):
+                            if not chunk:
+                                continue
+                            fp.write(chunk)
+                            downloaded += len(chunk)
+                            self._progress(
+                                downloaded,
+                                total_bytes,
+                                "正在下载新的分发包...",
+                            )
+                return
+            except requests.RequestException as exc:
+                last_error = exc
+                dest_path.unlink(missing_ok=True)
+                if attempt >= 3 or not _is_retryable_request_error(exc):
+                    break
+                self._info(f"下载连接中断，正在进行第 {attempt + 1} 次尝试...")
+                time.sleep(0.5 * attempt)
+        raise UpdateError(f"下载更新包失败：{last_error}") from last_error
 
 
 class GitSyncManager(_UpdateBase):

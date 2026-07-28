@@ -30,15 +30,6 @@ def _load_env_api_key() -> tuple[str, str]:
     return '', ''
 
 
-def _load_env_text(*names: str) -> str:
-    """读取首个非空环境变量文本。"""
-    for name in names:
-        value = (os.environ.get(name) or '').strip()
-        if value:
-            return value
-    return ''
-
-
 _ENV_API_KEY, _ENV_API_KEY_SOURCE = _load_env_api_key()
 
 
@@ -104,13 +95,14 @@ _LOCAL_SECRET_OVERRIDES = _load_local_secret_overrides()
 # 避免把密钥提交到仓库。
 API_KEY = _LOCAL_SECRET_OVERRIDES.get('api_key', '')
 
-# 回复模式（留空=默认路由）
-# 1: 优先使用福利 API
-# 0: 优先使用手动 OpenAI 兼容 API，失败回退福利 API
-# 2: 强制本地 Ollama
-# 3: 强制规则回复
-# 4: 强制元宝 Web 本地中转
+# 回复模式：选择哪个来源就只使用哪个来源，不做跨来源回退。
+# 0: 手动 OpenAI 兼容 API
+# 1: 福利 API
+# 2: 本地 Ollama
+# 3: 规则回复
+# 4: 元宝 Web 本地中转
 FORCE_REPLY_MODE = '1'
+WELFARE_INTELLIGENCE_BOOST = False
 
 # OpenAI 兼容 API 基础地址（使用 API Key 时生效）
 # 常见兼容服务地址：
@@ -131,13 +123,6 @@ YUANBAO_FREE_API_LOCAL = {
     'base_url': 'http://127.0.0.1:8000/v1',
     'api_key': 'sk-yuanbao-local',
     'model': 'deepseek-v3',
-}
-
-# 福利 API 固定配置：默认优先使用；手动配置为空或不可用时不影响保存。
-WELFARE_API = {
-    'base_url': 'https://apihub.agnes-ai.com/v1',
-    'api_key': _load_env_text('AEMEATH_WELFARE_API_KEY', 'FLYINGSNOWVELVET_WELFARE_API_KEY') or 'sk-welfare-api-not-configured',
-    'model': 'agnes-2.0-flash',
 }
 
 # YuanBao-Free-API 登录/会话配置（参考 chenwr727/yuanbao-free-api）
@@ -161,9 +146,6 @@ OLLAMA = {
     'ping_interval_ms':    5000,    # Ping 定时器间隔（毫秒）
     'stream_max_secs':     30,      # 单次流式请求最大持续时间（秒）
     'api_stream_max_secs': 90,      # 外部 API 模式流式最大持续时间（秒）
-    'api_connect_timeout': 6,       # 外部 API 连接超时（秒）
-    'api_read_timeout':    15,      # 外部 API 首包/分片读取超时（秒）
-    'api_retry_times':     2,       # 外部 API 失败重试次数（含首次）
     'api_retry_backoff':   0.8,     # 外部 API 重试退避基数（秒）
     'api_disable_env_proxy': False, # 默认遵循系统代理配置；设为 True 时优先忽略
     'api_temperature':     1.35,      # 外部 API 采样温度（0~2）
@@ -213,6 +195,7 @@ PERSONA_FILE = ''
 
 _AI_SETTING_DEFAULTS = {
     'force_reply_mode': FORCE_REPLY_MODE,
+    'welfare_intelligence_boost': WELFARE_INTELLIGENCE_BOOST,
     'api_base_url': '',
     'api_model': 'gpt-5.4',
     'yuanbao_login_url': YUANBAO_FREE_API['login_url'],
@@ -275,6 +258,7 @@ def _literal_python_config(path: Path) -> dict[str, object]:
 def _legacy_ai_setting_values() -> dict:
     values = {
         'force_reply_mode': FORCE_REPLY_MODE,
+        'welfare_intelligence_boost': WELFARE_INTELLIGENCE_BOOST,
         'api_base_url': API_BASE_URL,
         'api_model': API_MODEL,
         'yuanbao_login_url': YUANBAO_FREE_API['login_url'],
@@ -338,8 +322,9 @@ def _legacy_ai_setting_values() -> dict:
 
 
 def _apply_ai_setting_values(values: dict) -> None:
-    global FORCE_REPLY_MODE, API_BASE_URL, API_MODEL, OLLAMA_MODEL
+    global FORCE_REPLY_MODE, WELFARE_INTELLIGENCE_BOOST, API_BASE_URL, API_MODEL, OLLAMA_MODEL
     FORCE_REPLY_MODE = values['force_reply_mode']
+    WELFARE_INTELLIGENCE_BOOST = values['welfare_intelligence_boost']
     API_BASE_URL = values['api_base_url']
     API_MODEL = values['api_model']
     YUANBAO_FREE_API['login_url'] = values['yuanbao_login_url']
@@ -380,9 +365,9 @@ def is_api_key_configured() -> bool:
 
 
 def _normalize_force_mode(value) -> str:
-    """将强制模式归一化到 '', '0', '2', '3', '4'。"""
+    """将回复模式归一化到五个确定来源，旧空值迁移为福利 API。"""
     text = '' if value is None else str(value).strip()
-    return text if text in ('', '0', '1', '2', '3', '4') else ''
+    return text if text in ('0', '1', '2', '3', '4') else '1'
 
 
 def get_yuanbao_local_base_url() -> str:
@@ -428,7 +413,6 @@ def _build_openai_config(
     base_url: str | None = None,
     model: str | None = None,
     provider_options: dict | None = None,
-    fallback_config: dict | None = None,
 ) -> dict:
     """构造 OpenAI 兼容模式配置。"""
     return {
@@ -441,18 +425,24 @@ def _build_openai_config(
         'strict_mode': bool(force_mode),
         'error': '',
         'provider_options': provider_options or _build_yuanbao_provider_options(enabled=False),
-        'fallback_config': fallback_config,
     }
 
 
 def _build_welfare_config(force_mode: str) -> dict:
-    """构造固定福利 API 配置。"""
+    """从测速选出的发布源构造福利 API 配置。"""
+    from lib.script.chat.welfare_api_config import resolve_welfare_api_config, select_welfare_model
+
+    resolved = resolve_welfare_api_config()
+    model = select_welfare_model(
+        resolved['models'],
+        WELFARE_INTELLIGENCE_BOOST,
+    )
     return _build_openai_config(
-        WELFARE_API['api_key'],
+        str(resolved['api_key']),
         'welfare_api',
         force_mode,
-        base_url=WELFARE_API['base_url'],
-        model=WELFARE_API['model'],
+        base_url=str(resolved['base_url']),
+        model=model,
     )
 
 
@@ -502,7 +492,7 @@ def _build_rule_reply_config(force_mode: str) -> dict:
 
 
 def _build_error_config(force_mode: str, error_text: str) -> dict:
-    """构造错误配置（强制模式失败时使用）。"""
+    """构造当前回复模式不可用时的错误配置。"""
     return {
         'api_type': 'error',
         'base_url': '',
@@ -520,7 +510,7 @@ def get_active_config() -> dict:
     """
     获取当前活跃配置。
 
-    福利 API 是默认首选；手动 OpenAI 兼容配置不完整时仍允许保存，运行时自动回退福利 API。
+    每个模式只构造自己的配置；配置不完整或获取失败时返回明确错误。
     """
     config_api_key = (API_KEY or '').strip()
     env_api_key = (_ENV_API_KEY or '').strip()
@@ -528,7 +518,6 @@ def get_active_config() -> dict:
     force_mode = _normalize_force_mode(FORCE_REPLY_MODE)
     preferred_api_key = config_api_key or env_api_key
     preferred_source = 'config_api' if config_api_key else env_source
-    welfare_config = _build_welfare_config(force_mode or '1')
     manual_ready = bool(
         preferred_api_key
         and str(API_BASE_URL or '').strip()
@@ -536,24 +525,25 @@ def get_active_config() -> dict:
     )
 
     if force_mode == '1':
-        return welfare_config
+        try:
+            return _build_welfare_config(force_mode)
+        except Exception as exc:
+            return _build_error_config(force_mode, str(exc))
     if force_mode == '0':
         if manual_ready:
             return _build_openai_config(
                 preferred_api_key,
                 preferred_source,
                 force_mode,
-                fallback_config=welfare_config,
             )
-        return welfare_config
+        return _build_error_config(force_mode, '手动 API 配置不完整，需要接口密钥、接口地址和接口模型')
     if force_mode == '2':
         return _build_ollama_config(force_mode)
     if force_mode == '3':
         return _build_rule_reply_config(force_mode)
     if force_mode == '4':
         if not _is_yuanbao_web_ready():
-            return _build_error_config(force_mode, '优先走元宝 web 失败：配置不完整，至少需要 agent_id，并确保本地中转接口可用')
+            return _build_error_config(force_mode, '元宝模式配置不完整，至少需要 agent_id，并确保本地中转接口可用')
         return _build_yuanbao_web_config(force_mode)
 
-    # 未指定模式时也优先福利 API，保持默认行为一致。
-    return welfare_config
+    return _build_error_config(force_mode, '回复模式无效')
