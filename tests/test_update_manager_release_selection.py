@@ -19,6 +19,7 @@ from lib.script.update_manager import (
     _GITEE_PACK_API,
     _GITEE_PACK_PAGE,
     _extract_gitee_attachments,
+    _extract_gitee_revision,
     _select_release_source,
     _select_zip_asset,
     _is_retryable_request_error,
@@ -120,6 +121,18 @@ class UpdateManagerReleaseSelectionTests(unittest.TestCase):
                 "name": "FlyingSnowVelvet-LTS2.zip",
                 "browser_download_url": "https://gitee.com/downloads/real-package.zip",
             }],
+        )
+
+    def test_gitee_page_revision_overrides_stale_release_api_target(self):
+        self.assertEqual(
+            _extract_gitee_revision({
+                "release": {
+                    "tag": {
+                        "commit": {"id": "current-tag-commit"},
+                    }
+                }
+            }),
+            "current-tag-commit",
         )
 
     def test_newer_release_wins_before_network_latency(self):

@@ -49,6 +49,10 @@ _API_HEADERS = {
     "Accept": "application/vnd.github+json",
     "User-Agent": "FlyingSnowVelvet-Updater/1.0",
 }
+_PAGE_JSON_HEADERS = {
+    "Accept": "application/json",
+    "User-Agent": "FlyingSnowVelvet-Updater/1.0",
+}
 _DOWNLOAD_HEADERS = {
     "Accept": "*/*",
     "User-Agent": "FlyingSnowVelvet-Updater/1.0",
@@ -208,6 +212,17 @@ def _extract_gitee_attachments(page_data: object) -> list[dict]:
                 "browser_download_url": urljoin("https://gitee.com", raw_url),
             })
     return normalized
+
+
+def _extract_gitee_revision(page_data: object) -> str:
+    if not isinstance(page_data, dict):
+        return ""
+    release_root = page_data.get("release")
+    tag_data = release_root.get("tag") if isinstance(release_root, dict) else None
+    commit_data = tag_data.get("commit") if isinstance(tag_data, dict) else None
+    if not isinstance(commit_data, dict):
+        return ""
+    return str(commit_data.get("id") or "").strip()
 
 
 def _select_release_source(releases: list[ReleaseInfo]) -> ReleaseInfo:
@@ -462,12 +477,15 @@ class UpdateManager(_UpdateBase):
             raise UpdateError("Gitee 最新包 release 不存在或尚未发布")
         tag = str(data.get("tag_name") or "最新包")
         attachments: list[dict] = []
+        page_revision = ""
         try:
             page_data = UpdateManager._fetch_release_json(
                 _GITEE_PACK_PAGE,
                 "Gitee 最新包页面",
+                headers=_PAGE_JSON_HEADERS,
             )
             attachments = _extract_gitee_attachments(page_data)
+            page_revision = _extract_gitee_revision(page_data)
         except UpdateError:
             pass
         api_assets = data.get("assets") if isinstance(data.get("assets"), list) else []
@@ -475,7 +493,7 @@ class UpdateManager(_UpdateBase):
         if asset is None:
             raise UpdateError("Gitee 最新包 release 缺少 ZIP 下载地址")
         published_text = str(data.get("updated_at") or data.get("created_at") or "")
-        revision = str(data.get("target_commitish") or "")
+        revision = page_revision or str(data.get("target_commitish") or "")
         download_url = str(asset.get("browser_download_url") or "")
         return ReleaseInfo(
             tag=tag,
@@ -488,11 +506,20 @@ class UpdateManager(_UpdateBase):
         )
 
     @staticmethod
-    def _fetch_release_json(url: str, source_name: str) -> object:
+    def _fetch_release_json(
+        url: str,
+        source_name: str,
+        *,
+        headers: dict[str, str] | None = None,
+    ) -> object:
         last_error: requests.RequestException | None = None
         for attempt in range(1, 4):
             try:
-                response = requests.get(url, timeout=10, headers=_API_HEADERS)
+                response = requests.get(
+                    url,
+                    timeout=10,
+                    headers=headers or _API_HEADERS,
+                )
                 response.raise_for_status()
                 return response.json()
             except ValueError as exc:
