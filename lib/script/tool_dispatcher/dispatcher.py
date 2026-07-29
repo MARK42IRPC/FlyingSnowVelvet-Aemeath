@@ -35,6 +35,7 @@ import webbrowser
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse
 
 from PyQt5.QtCore import QTimer
 
@@ -43,6 +44,7 @@ from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.logger import get_logger
 from lib.script.music import get_music_service
 from config.config import TOOL_DISPATCHER, DRAW, ANIMATION
+from config.user_storage_paths import get_user_state_dir
 
 logger = get_logger(__name__)
 
@@ -65,8 +67,9 @@ _SUPPORTED_COMMANDS_SORTED = tuple(sorted(_SUPPORTED_COMMANDS, key=len, reverse=
 _DEFAULT_MUSIC_CHOICES = ('靛青宇宙', '碎花', '纸飞机', '小小奇迹', '星炬不息')
 _DEFAULT_TIMER_SECONDS = 30
 _MAX_TIMER_SECONDS = 99 * 3600 + 59 * 60 + 59
-_USER_DIR = Path(__file__).resolve().parents[3] / 'resc' / 'user'
-_MEMORY_DIR = _USER_DIR / 'memory'
+_MAX_SPAWN_COUNT = 20
+_LEGACY_USER_DIR = Path(__file__).resolve().parents[3] / 'resc' / 'user'
+_MEMORY_DIR = get_user_state_dir('chat', 'memory')
 _MEMORY_FILE_PREFIX_DISPATCHER = 'memory_'
 _MEMORY_FILE_SUFFIX = '.txt'
 _MEMORY_TIMESTAMP_FORMAT = '%Y-%m-%d %H:%M:%S'
@@ -108,9 +111,6 @@ _MEMORY_LINE_NO_TOPIC_PATTERN = re.compile(
     r'^\[(?P<ts>[^\]]+)\]\[(?P<role>user|you):\](?P<content>.*)$',
     re.IGNORECASE,
 )
-_URL_SCHEME_PATTERN = re.compile(r'^[a-zA-Z][a-zA-Z0-9+\-.]*://')
-
-
 def _parse_timer_seconds(arg: str) -> int:
     """解析计时秒数；支持 时分秒/分秒/秒，缺省或无效时回退默认 30 秒。"""
     def _clamp_seconds(value: int) -> int:
@@ -224,7 +224,7 @@ def _split_recall_arg(arg: str) -> tuple[str, str]:
     time_matches = _TIME_ONLY_PATTERN.findall(text)
     if dt_matches or time_matches:
         return 'range', text
-    return 'invalid', ''
+    return 'recent', text
 
 
 def _normalize_tool_text(text: str) -> str:
@@ -235,14 +235,35 @@ def _normalize_url_arg(raw: str) -> str:
     text = str(raw or '').strip()
     if not text:
         return ""
-    text = text.strip().replace(' ', '')
+    text = re.sub(r'\s+', '', text)
+    explicit_scheme = re.match(r'^([a-zA-Z][a-zA-Z0-9+\-.]*):', text)
+    host_with_port = re.match(r'^[a-zA-Z0-9.-]+:\d+(?:/|$)', text)
+    if explicit_scheme and not host_with_port:
+        scheme = explicit_scheme.group(1).lower()
+        if scheme not in ('http', 'https') or '://' not in text:
+            return ''
     if text.startswith('www.'):
         text = f'https://{text}'
     elif text.startswith('//'):
         text = f'https:{text}'
-    elif not _URL_SCHEME_PATTERN.match(text):
+    elif '://' not in text:
         text = f'https://{text}'
+    try:
+        parsed = urlparse(text)
+        parsed.port
+    except ValueError:
+        return ''
+    if parsed.scheme.lower() not in ('http', 'https') or not parsed.hostname:
+        return ''
     return text
+
+
+def _parse_spawn_count(arg: str) -> int:
+    try:
+        count = int(str(arg or '').strip()) if str(arg or '').strip() else 1
+    except ValueError:
+        count = 1
+    return max(1, min(_MAX_SPAWN_COUNT, count))
 
 
 def _parse_tool_candidate(raw_cmd: str, raw_arg: str = '') -> tuple[str, str] | None:
@@ -337,10 +358,7 @@ class ToolDispatcher:
             self._ec.publish(Event(EventType.MUSIC_PLAY_PAUSE, {}))
 
         elif cmd == '雪豹':
-            try:
-                count = max(1, int(arg)) if arg else 1
-            except ValueError:
-                count = 1
+            count = _parse_spawn_count(arg)
             self._ec.publish(Event(EventType.MANAGER_SPAWN_REQUEST, {
                 'manager_id': 'snow_leopard',
                 'spawn_type': 'command',
@@ -348,10 +366,7 @@ class ToolDispatcher:
             }))
 
         elif cmd == '沙发':
-            try:
-                count = max(1, int(arg)) if arg else 1
-            except ValueError:
-                count = 1
+            count = _parse_spawn_count(arg)
             self._ec.publish(Event(EventType.MANAGER_SPAWN_REQUEST, {
                 'manager_id': 'sofa',
                 'spawn_type': 'command',
@@ -359,10 +374,7 @@ class ToolDispatcher:
             }))
 
         elif cmd == '摩托':
-            try:
-                count = max(1, int(arg)) if arg else 1
-            except ValueError:
-                count = 1
+            count = _parse_spawn_count(arg)
             self._ec.publish(Event(EventType.MANAGER_SPAWN_REQUEST, {
                 'manager_id': 'mortor',
                 'spawn_type': 'command',
@@ -504,6 +516,12 @@ class ToolDispatcher:
                 opened = webbrowser.open(url, new=2, autoraise=True)
                 if not opened:
                     logger.warning("[ToolDispatcher] webbrowser.open 返回 False: %s", url)
+                    self._ec.publish(Event(EventType.INFORMATION, {
+                        'text': f'浏览器未能打开：{url}',
+                        'min': 20,
+                        'max': 100,
+                    }))
+                    return
                 self._ec.publish(Event(EventType.INFORMATION, {
                     'text': f'已在浏览器打开:\n{url}',
                     'min': 10,
@@ -584,8 +602,14 @@ class ToolDispatcher:
                 f for f in _MEMORY_DIR.iterdir()
                 if f.is_file() and f.name.startswith(_MEMORY_FILE_PREFIX_DISPATCHER) and f.name.endswith(_MEMORY_FILE_SUFFIX)
             )
-        elif (_USER_DIR / 'memory.txt').exists():
-            memory_files = [_USER_DIR / 'memory.txt']
+        elif (_LEGACY_USER_DIR / 'memory').exists():
+            legacy_dir = _LEGACY_USER_DIR / 'memory'
+            memory_files = sorted(
+                f for f in legacy_dir.iterdir()
+                if f.is_file() and f.name.startswith(_MEMORY_FILE_PREFIX_DISPATCHER) and f.name.endswith(_MEMORY_FILE_SUFFIX)
+            )
+        elif (_LEGACY_USER_DIR / 'memory.txt').exists():
+            memory_files = [_LEGACY_USER_DIR / 'memory.txt']
         else:
             return entries
 
@@ -809,6 +833,7 @@ class ToolDispatcher:
                 'text': message,
                 'raw': f'###回忆 {arg_text or "刚刚"}###',
                 'source': 'tool_recall',
+                'allow_tool_commands': False,
             }))
 
         QTimer.singleShot(int(_MEMORY_RECALL_REDISPATCH_DELAY_SEC * 1000), _dispatch_recall_message)

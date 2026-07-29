@@ -63,18 +63,31 @@ class WelfareApiRoutingTests(unittest.TestCase):
             ollama_config, "API_KEY", ""
         ), patch.object(ollama_config, "API_BASE_URL", ""), patch.object(
             ollama_config, "API_MODEL", ""
-        ):
+        ), patch.object(ollama_config, "_load_local_secret_overrides", return_value={}):
             active = ollama_config.get_active_config()
 
         self.assertEqual(active["api_type"], "error")
         self.assertIn("手动 API 配置不完整", active["error"])
+
+    def test_manual_mode_refreshes_saved_api_key_when_import_snapshot_is_stale(self):
+        with patch.object(ollama_config, "FORCE_REPLY_MODE", "0"), patch.object(
+            ollama_config, "API_KEY", ""
+        ), patch.object(ollama_config, "API_BASE_URL", "https://manual.example/v1"), patch.object(
+            ollama_config, "API_MODEL", "manual-model"
+        ), patch.object(
+            ollama_config, "_load_local_secret_overrides", return_value={"api_key": "saved-key"}
+        ):
+            active = ollama_config.get_active_config()
+
+        self.assertEqual(active["api_type"], "openai_compatible")
+        self.assertEqual(active["api_key"], "saved-key")
 
     def test_manual_mode_has_no_welfare_fallback(self):
         with patch.object(ollama_config, "FORCE_REPLY_MODE", "0"), patch.object(
             ollama_config, "API_KEY", "manual-key"
         ), patch.object(ollama_config, "API_BASE_URL", "https://manual.example/v1"), patch.object(
             ollama_config, "API_MODEL", "manual-model"
-        ):
+        ), patch.object(ollama_config, "_load_local_secret_overrides", return_value={}):
             active = ollama_config.get_active_config()
 
         self.assertEqual(active["key_source"], "config_api")

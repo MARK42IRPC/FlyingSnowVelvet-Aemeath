@@ -20,6 +20,7 @@ _CACHE_LOCK = threading.Lock()
 _CACHED_CONFIG: dict[str, object] | None = None
 WELFARE_STANDARD_MODEL = "agnes-2.0-flash"
 WELFARE_BOOST_MODEL = "agnes-2.5-flash"
+WELFARE_MODELS = (WELFARE_STANDARD_MODEL, WELFARE_BOOST_MODEL)
 
 
 def _parse_welfare_config(text: str) -> dict[str, object]:
@@ -42,28 +43,6 @@ def _download_source(url: str) -> tuple[float, dict[str, object]]:
         response.encoding = response.apparent_encoding or "utf-8"
         config = _parse_welfare_config(response.text)
     return time.monotonic() - started_at, config
-
-
-def _probe_available_models(base_url: str, api_key: str) -> tuple[str, ...]:
-    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
-    with requests.get(
-        f"{base_url.rstrip('/')}/models",
-        headers=headers,
-        timeout=API_TIMEOUT_SECS,
-    ) as response:
-        response.raise_for_status()
-        payload = response.json()
-    data = payload.get("data") if isinstance(payload, dict) else None
-    if not isinstance(data, list):
-        raise ValueError("福利 API /models 响应格式无效")
-    models = tuple(
-        str(item.get("id", "") or "").strip()
-        for item in data
-        if isinstance(item, dict) and str(item.get("id", "") or "").strip()
-    )
-    if not models:
-        raise ValueError("福利 API /models 未返回可用模型")
-    return models
 
 
 def select_welfare_model(models: tuple[str, ...] | list[str], intelligence_boost: bool) -> str:
@@ -90,10 +69,9 @@ def _resolve_once() -> dict[str, object]:
     if not candidates:
         raise RuntimeError("；".join(errors) or "福利 API 配置源均不可用")
     elapsed, source_url, config = min(candidates, key=lambda item: item[0])
-    models = _probe_available_models(str(config["base_url"]), str(config["api_key"]))
     return {
         **config,
-        "models": models,
+        "models": WELFARE_MODELS,
         "source_url": source_url,
         "latency_ms": int(round(elapsed * 1000)),
     }

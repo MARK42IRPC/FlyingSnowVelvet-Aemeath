@@ -266,7 +266,7 @@
     <main>
         <div class="hero">
             <h1>飞行雪绒资料舱</h1>
-            <p>贡献 + 赞助 + 文档 · LTS1.0.6pre1<br>基于项目默认配色 + 粒子灵感打造，方便在浏览器里查阅 doc 与贡献记录。生成时间：2026-07-29 00:45:50</p>
+            <p>贡献 + 赞助 + 文档 · LTS1.0.6pre1<br>基于项目默认配色 + 粒子灵感打造，方便在浏览器里查阅 doc 与贡献记录。生成时间：2026-07-29 18:43:47</p>
         </div>
         <section id="top-panels">
             <div class="top-panels">
@@ -2557,7 +2557,7 @@ Event(EventType.PARTICLE_REQUEST, {
         </article>
         <article class="card">
             <header>
-                <div class="eyebrow">2026-07-29 00:43</div>
+                <div class="eyebrow">2026-07-29 18:43</div>
                 <h3>维护手册</h3>
                 <a class="download" href="doc/维护手册.md" download>下载原文件</a>
             </header>
@@ -2674,7 +2674,8 @@ Event(EventType.PARTICLE_REQUEST, {
 - 页面关闭时释放信号、定时器和后台任务。
 - 不把新功能继续堆入 `ai_settings_panel.py`，新页面放入 `workbench/` 或专属模块。
 - AI 回复模式是单一路由：福利 API、手动 API、本地 Ollama、规则回复和元宝之间不做失败回退。模式专属配置只在对应模式下显示。
-- 福利 API 配置由 `lib/script/chat/welfare_api_config.py` 从 GitHub/Gitee 发布源并发测速获取密钥与地址，模型只信任认证后的 `/models` 结果。默认模型为 `agnes-2.0-flash`，“智力提升”开启后使用 `agnes-2.5-flash`；接口超时固定 10 秒，首次失败后最多重试 3 次。
+- 福利 API 配置由 `lib/script/chat/welfare_api_config.py` 从 GitHub/Gitee 发布源并发测速获取密钥与地址。模型使用程序内置的固定标识，不依赖服务端实现 `/models`：默认模型为 `agnes-2.0-flash`，“智力提升”开启后使用 `agnes-2.5-flash`；配置下载超时固定 10 秒，首次失败后最多重试 3 次。
+- 手动 API 的模型探测只辅助选择该路由的模型：设置面板以当前未保存的地址和密钥异步请求 OpenAI 兼容 `/models`，失败时保留用户当前输入。模型字段始终允许手工输入；无协议的公网地址按 HTTPS、本机地址按 HTTP 规范化后保存。
 
 ## 5. 配置与用户数据
 

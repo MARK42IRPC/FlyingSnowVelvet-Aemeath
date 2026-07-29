@@ -512,7 +512,8 @@ def get_active_config() -> dict:
 
     每个模式只构造自己的配置；配置不完整或获取失败时返回明确错误。
     """
-    config_api_key = (API_KEY or '').strip()
+    saved_secrets = _load_local_secret_overrides()
+    config_api_key = str(saved_secrets.get('api_key', API_KEY) or '').strip()
     env_api_key = (_ENV_API_KEY or '').strip()
     env_source = f'env:{_ENV_API_KEY_SOURCE or "FLYINGSNOWVELVET_API_KEY"}'
     force_mode = _normalize_force_mode(FORCE_REPLY_MODE)
@@ -536,7 +537,14 @@ def get_active_config() -> dict:
                 preferred_source,
                 force_mode,
             )
-        return _build_error_config(force_mode, '手动 API 配置不完整，需要接口密钥、接口地址和接口模型')
+        missing = []
+        if not preferred_api_key:
+            missing.append('接口密钥')
+        if not str(API_BASE_URL or '').strip():
+            missing.append('接口地址')
+        if not str(API_MODEL or '').strip():
+            missing.append('接口模型')
+        return _build_error_config(force_mode, f"手动 API 配置不完整：缺少{'、'.join(missing)}")
     if force_mode == '2':
         return _build_ollama_config(force_mode)
     if force_mode == '3':

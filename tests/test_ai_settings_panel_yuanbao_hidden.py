@@ -46,7 +46,7 @@ def _build_dummy_panel() -> _DummyPanel:
     panel._force_mode = _ComboField("4", "元宝")
     panel._welfare_intelligence_boost = _CheckField(False)
     panel._api_base_url = _TextField("http://127.0.0.1:8000/v1")
-    panel._api_model = _TextField("deepseek-v3")
+    panel._api_model = _ComboField("deepseek-v3", "deepseek-v3")
     panel._ollama_base_url = _TextField("http://localhost:11434")
     panel._ollama_model = _ComboField("qwen2.5", "qwen2.5")
     panel._gpu_mode = _ComboField(_GPU_MODE_AUTO, "自动")

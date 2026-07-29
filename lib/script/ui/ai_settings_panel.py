@@ -17,6 +17,8 @@ import webbrowser
 from pathlib import Path
 from typing import Callable
 
+import requests
+
 from PyQt5.QtCore import Qt, QPoint, QPropertyAnimation, QEasingCurve, QTimer, pyqtSignal
 from PyQt5.QtWidgets import (
     QWidget,
@@ -67,6 +69,7 @@ from lib.script.SEanima.clip import (
     list_animation_folder_choices,
 )
 from lib.script.chat.ollama_registry import get_available_model_names, get_model_list_error
+from lib.script.chat.network_policy import API_TIMEOUT_SECS
 from lib.script.microphone_stt.push_to_talk import parse_hotkey_binding
 from lib.script.ui.update_dialog import DesktopPetUpdateDialog
 from lib.script.workbench.settings import (
@@ -1909,6 +1912,7 @@ class AISettingsPanel(QWidget):
         )
 
         self._api_base_url = QLineEdit()
+        self._api_base_url.editingFinished.connect(self._normalize_manual_api_base_url_input)
         form.addRow("接口地址", self._api_base_url)
         self._set_form_row_description(
             form,
@@ -1916,13 +1920,26 @@ class AISettingsPanel(QWidget):
             "外部接口地址，通常填写兼容 OpenAI 的基地址；若直接填写完整的 `/chat/completions` 或 `/v1/chat/completions` 端点也可兼容。",
         )
 
-        self._api_model = QLineEdit()
-        form.addRow("接口模型", self._api_model)
+        api_model_row, api_model_layout = self._create_field_row_group(spacing=scale_px(8, min_abs=6))
+        self._api_model = _WatermarkComboBox()
+        self._api_model.setView(QListView(self._api_model))
+        self._api_model.setEditable(True)
+        self._api_model.setInsertPolicy(QComboBox.NoInsert)
+        self._api_model.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        if self._api_model.lineEdit():
+            self._api_model.lineEdit().setPlaceholderText("输入或探测接口模型")
+        api_model_layout.addWidget(self._api_model, 1)
+        self._probe_manual_api_models_btn = QPushButton("探测模型")
+        self._probe_manual_api_models_btn.setFixedWidth(scale_px(100, min_abs=84))
+        self._probe_manual_api_models_btn.clicked.connect(self._on_probe_manual_api_models)
+        api_model_layout.addWidget(self._probe_manual_api_models_btn, 0)
+        form.addRow("接口模型", api_model_row)
         self._set_form_row_description(
             form,
-            self._api_model,
-            "外部接口模型名，例如 qwen3.5-plus。",
+            api_model_row,
+            "外部接口模型名，例如 qwen3.5-plus。可探测 OpenAI 兼容接口的 /models 列表，也可直接手动输入。",
         )
+        self._set_widget_description(self._probe_manual_api_models_btn, "使用当前填写的接口地址和密钥探测可用模型列表。")
 
         self._set_hidden_yuanbao_values(_DEFAULT_VALUES)
 
@@ -4389,8 +4406,8 @@ class AISettingsPanel(QWidget):
             "api_key": self._api_key.raw_text(),
             "force_reply_mode": force_mode,
             "welfare_intelligence_boost": bool(self._welfare_intelligence_boost.isChecked()),
-            "api_base_url": self._api_base_url.text().strip(),
-            "api_model": self._api_model.text().strip(),
+            "api_base_url": AISettingsPanel._normalize_manual_api_base_url(self._api_base_url.text()),
+            "api_model": self._api_model.currentText().strip(),
             "yuanbao_free_api_enabled": force_mode == "4",
             "ollama_base_url": self._ollama_base_url.text().strip(),
             "ollama_model": self._ollama_model.currentText().strip(),
@@ -4433,7 +4450,7 @@ class AISettingsPanel(QWidget):
         self._api_key.set_raw_text(str(values.get("api_key", "")))
         self._welfare_intelligence_boost.setChecked(bool(values.get("welfare_intelligence_boost", False)))
         self._api_base_url.setText(str(values.get("api_base_url", "")))
-        self._api_model.setText(str(values.get("api_model", "")))
+        self._refresh_manual_api_model_choices(str(values.get("api_model", "")))
         self._set_hidden_yuanbao_values(values)
         self._ollama_base_url.setText(str(values.get("ollama_base_url", "")))
         self._refresh_ollama_model_choices(str(values.get("ollama_model", "")))
@@ -4505,6 +4522,137 @@ class AISettingsPanel(QWidget):
             return
         selected_text = self._ollama_model.currentText().strip()
         self._refresh_ollama_model_choices(selected_text)
+
+    @staticmethod
+    def _normalize_manual_api_base_url(raw_url: str) -> str:
+        """补全手动 OpenAI 兼容地址的协议，保留用户填写的路径。"""
+        text = str(raw_url or "").strip()
+        if not text:
+            return ""
+        if re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", text):
+            return text.rstrip("/")
+        if text.startswith("//"):
+            return f"https:{text}".rstrip("/")
+
+        host = text.split("/", 1)[0].lower()
+        is_local = (
+            host == "localhost"
+            or host.startswith("localhost:")
+            or host.startswith("127.")
+            or host.startswith("0.0.0.0")
+            or host.startswith("[::1]")
+            or host == "::1"
+        )
+        scheme = "http" if is_local else "https"
+        return f"{scheme}://{text}".rstrip("/")
+
+    def _normalize_manual_api_base_url_input(self) -> None:
+        normalized = self._normalize_manual_api_base_url(self._api_base_url.text())
+        if normalized != self._api_base_url.text().strip():
+            self._api_base_url.setText(normalized)
+
+    @classmethod
+    def _manual_api_models_url(cls, base_url: str) -> str:
+        root = cls._normalize_manual_api_base_url(base_url)
+        root = root.rstrip("/")
+        for suffix in ("/chat/completions",):
+            if root.lower().endswith(suffix):
+                root = root[:-len(suffix)].rstrip("/")
+                break
+        return f"{root}/models" if root else ""
+
+    @staticmethod
+    def _parse_manual_api_models(payload) -> list[str]:
+        data = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(data, list):
+            raise ValueError("接口没有返回兼容的模型列表")
+        models = {
+            str(item.get("id", "")).strip()
+            for item in data
+            if isinstance(item, dict) and str(item.get("id", "")).strip()
+        }
+        return sorted(models, key=str.casefold)
+
+    @classmethod
+    def _probe_manual_api_models(cls, base_url: str, api_key: str) -> list[str]:
+        models_url = cls._manual_api_models_url(base_url)
+        if not models_url:
+            raise ValueError("请先填写接口地址")
+        key = str(api_key or "").strip()
+        if not key:
+            raise ValueError("请先填写接口密钥")
+        response = requests.get(
+            models_url,
+            headers={"Authorization": f"Bearer {key}"},
+            timeout=API_TIMEOUT_SECS,
+        )
+        response.raise_for_status()
+        models = cls._parse_manual_api_models(response.json())
+        if not models:
+            raise ValueError("接口未返回可用模型")
+        return models
+
+    def _refresh_manual_api_model_choices(self, selected_model: str = "", models: list[str] | None = None) -> None:
+        if not isinstance(self._api_model, QComboBox):
+            return
+        selected_text = str(selected_model or "").strip()
+        choices = list(models or [])
+        self._api_model.blockSignals(True)
+        self._api_model.clear()
+        for model in choices:
+            self._api_model.addItem(model, model)
+        if selected_text:
+            index = self._api_model.findData(selected_text)
+            if index >= 0:
+                self._api_model.setCurrentIndex(index)
+            else:
+                self._api_model.setEditText(selected_text)
+        elif choices:
+            self._api_model.setCurrentIndex(0)
+        self._api_model.blockSignals(False)
+
+    def _on_probe_manual_api_models(self) -> None:
+        base_url = self._normalize_manual_api_base_url(self._api_base_url.text())
+        api_key = self._api_key.raw_text()
+        if not base_url or not api_key:
+            self._emit_info("请先填写接口地址和接口密钥。", min_tick=10, max_tick=100)
+            return
+        self._api_base_url.setText(base_url)
+        selected_model = self._api_model.currentText().strip()
+        self._probe_manual_api_models_btn.setEnabled(False)
+        self._probe_manual_api_models_btn.setText("探测中...")
+
+        def worker() -> None:
+            try:
+                models = self._probe_manual_api_models(base_url, api_key)
+            except Exception as exc:
+                _logger.warning("手动 API 模型探测失败: %s", exc)
+
+                def apply_failure() -> None:
+                    self._probe_manual_api_models_btn.setEnabled(True)
+                    self._probe_manual_api_models_btn.setText("探测模型")
+                    self._emit_info("模型探测失败，请检查接口地址、密钥和服务兼容性。", min_tick=12, max_tick=140)
+
+                self._run_on_ui_thread(apply_failure)
+                return
+
+            def apply_success() -> None:
+                self._refresh_manual_api_model_choices(selected_model, models)
+                self._probe_manual_api_models_btn.setEnabled(True)
+                self._probe_manual_api_models_btn.setText("探测模型")
+                self._emit_info(f"已探测到 {len(models)} 个模型。", min_tick=10, max_tick=100)
+
+            self._run_on_ui_thread(apply_success)
+
+        future = get_compute_hub().submit_latest(
+            "ai_settings_manual_api_model_probe",
+            worker,
+            executor="io",
+        )
+        if future is None:
+            self._probe_manual_api_models_btn.setEnabled(True)
+            self._probe_manual_api_models_btn.setText("探测模型")
+            self._emit_info("模型探测正在进行，请稍候。", min_tick=10, max_tick=100)
 
     def _emit_info(self, text: str, min_tick: int = 12, max_tick: int = 140) -> None:
         self._ec.publish(Event(EventType.INFORMATION, {
@@ -4581,28 +4729,30 @@ class AISettingsPanel(QWidget):
             self.fade_out()
 
     def _on_save_and_restart(self) -> None:
-        if not self._on_save():
+        if not self._on_save(apply_runtime=False):
             return
         self._ec.publish(Event(EventType.APP_QUIT, {
             "exit_code": 0,
             "restart": True,
         }))
 
-    def _on_save(self) -> bool:
+    def _on_save(self, *, apply_runtime: bool = True) -> bool:
         try:
             ai_values = self._collect_values()
             general_values = self._collect_all_general_config_values()
             save_ai_values(ai_values, _DEFAULT_VALUES)
             _save_general_config(general_values)
-            apply_ai_runtime(ai_values, _DEFAULT_VALUES)
-            _apply_general_runtime(general_values)
+            if apply_runtime:
+                apply_ai_runtime(ai_values, _DEFAULT_VALUES)
+                _apply_general_runtime(general_values)
             self._apply_all_external_config_fields()
-            try:
-                from lib.script.gsvmove import get_gsvmove_service
+            if apply_runtime:
+                try:
+                    from lib.script.gsvmove import get_gsvmove_service
 
-                get_gsvmove_service().cleanup_saved_audio_cache()
-            except Exception as trim_exc:
-                _logger.warning("应用 GSV 语音缓存上限失败: %s", trim_exc)
+                    get_gsvmove_service().cleanup_saved_audio_cache()
+                except Exception as trim_exc:
+                    _logger.warning("应用 GSV 语音缓存上限失败: %s", trim_exc)
             self._emit_info("控制面板设置已保存，重启程序后完整生效。")
             return True
         except Exception as e:

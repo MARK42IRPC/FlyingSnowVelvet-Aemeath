@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from lib.script.chat import welfare_api_config as config
 
@@ -32,11 +32,7 @@ class WelfareApiConfigTests(unittest.TestCase):
                 return 0.25, _payload("github")
             return 0.05, _payload("gitee")
 
-        with patch.object(config, "_download_source", side_effect=download), patch.object(
-            config,
-            "_probe_available_models",
-            return_value=(config.WELFARE_STANDARD_MODEL, config.WELFARE_BOOST_MODEL),
-        ):
+        with patch.object(config, "_download_source", side_effect=download):
             resolved = config._resolve_once()
 
         self.assertEqual(resolved["api_key"], "gitee-key")
@@ -47,24 +43,14 @@ class WelfareApiConfigTests(unittest.TestCase):
             (config.WELFARE_STANDARD_MODEL, config.WELFARE_BOOST_MODEL),
         )
 
-    def test_model_probe_uses_models_endpoint_and_ignores_release_model_lines(self):
-        response = MagicMock()
-        response.__enter__.return_value = response
-        response.json.return_value = {
-            "data": [
-                {"id": config.WELFARE_STANDARD_MODEL},
-                {"id": config.WELFARE_BOOST_MODEL},
-            ]
-        }
-        with patch.object(config.requests, "get", return_value=response) as get:
-            models = config._probe_available_models("https://api.example/v1", "secret-key")
+    def test_resolver_uses_fixed_models_without_models_endpoint_probe(self):
+        with patch.object(config, "_download_source", return_value=(0.05, _payload("release"))), patch.object(
+            config.requests, "get"
+        ) as get:
+            resolved = config._resolve_once()
 
-        self.assertEqual(models, (config.WELFARE_STANDARD_MODEL, config.WELFARE_BOOST_MODEL))
-        get.assert_called_once_with(
-            "https://api.example/v1/models",
-            headers={"Authorization": "Bearer secret-key"},
-            timeout=10.0,
-        )
+        self.assertEqual(resolved["models"], config.WELFARE_MODELS)
+        get.assert_not_called()
 
     def test_model_selection_switches_between_standard_and_boost(self):
         models = (config.WELFARE_STANDARD_MODEL, config.WELFARE_BOOST_MODEL)
