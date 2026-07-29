@@ -101,45 +101,10 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
     def _supports_reasoning_extensions(base_url: str, model: str) -> bool:
         """
         判断是否应携带 enable_thinking / thinking_budget 这类厂商扩展字段。
-        这类字段并非 OpenAI 标准，默认仅对 Qwen 生态或 DashScope 放行。
+        这类字段并非 OpenAI 标准，默认仅对 Qwen 生态放行。
         """
         text = f"{base_url or ''} {model or ''}".lower()
-        if "dashscope.aliyuncs.com" in text:
-            return True
         return ("qwen" in text) or ("qwq" in text)
-
-    @staticmethod
-    def _is_dashscope_compatible_target(base_url: str, model: str) -> bool:
-        text = f"{base_url or ''} {model or ''}".lower()
-        return (
-            "dashscope.aliyuncs.com" in text
-            or "aliyuncs.com/compatible-mode" in text
-            or "dashscope" in text and "aliyun" in text
-        )
-
-    @staticmethod
-    def _dashscope_model_supports_multimodal(model: str) -> bool:
-        text = str(model or "").strip().lower()
-        if not text:
-            return False
-        return any(marker in text for marker in ("vl", "vision", "qvq"))
-
-    @staticmethod
-    def _is_image_input_error_text(error_text: str) -> bool:
-        text = str(error_text or "").strip().lower()
-        if not text:
-            return False
-        image_markers = (
-            "image", "images", "image_url", "input_image", "vision",
-            "multimodal", "multi-modal", "multi_modal", "modal",
-            "图片", "图像", "视觉", "多模态",
-        )
-        error_markers = (
-            "unsupported", "not support", "not supported", "does not support",
-            "invalid", "bad request", "content", "message", "messages",
-            "不支持", "不允许", "不合法", "无效", "参数错误", "请求错误",
-        )
-        return any(marker in text for marker in image_markers) and any(marker in text for marker in error_markers)
 
     @staticmethod
     def _dedupe_payload_variants(payloads: list[dict]) -> list[dict]:
@@ -318,7 +283,7 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
             return messages
 
         def with_extra_options(payload: dict) -> dict:
-            # 阿里云百炼等 OpenAI 兼容网关支持的扩展参数：
+            # 部分 OpenAI 兼容网关支持的扩展参数：
             # - temperature: 采样温度，适度调高可提升表达多样性
             # - enable_thinking: 控制是否输出 reasoning_content
             # - thinking_budget: 限制思考 token 上限（可选）
@@ -598,7 +563,6 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
         yuanbao_options = self._get_yuanbao_free_api_options(active_config)
         use_yuanbao_free_api = bool(yuanbao_options.get('enabled', False))
         is_gemini_target = self._is_gemini_compatible_target(base_url, model)
-        is_dashscope_target = self._is_dashscope_compatible_target(base_url, model)
         allow_reasoning_extensions = self._supports_reasoning_extensions(base_url, model)
 
         headers = {
@@ -640,12 +604,6 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
             except Exception as e:
                 logger.warning('[APIClient] YuanBao-Free-API 图片上传失败，回退到内联图片: %s', e)
 
-        if payload_images and is_dashscope_target and not self._dashscope_model_supports_multimodal(model):
-            logger.debug(
-                "[APIClient] DashScope/Qwen 模型名未包含 VL 标识，仍先尝试图片请求: model=%s",
-                model,
-            )
-
         endpoint_candidates = self._openai_endpoint_candidates(base_url)
         prepared_image_blocks = images_to_openai_content(payload_images) if payload_images else None
         payload_candidates = self._build_openai_payload_variants(
@@ -662,8 +620,8 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
             include_reasoning_extensions=allow_reasoning_extensions,
             include_user_field=True,
             include_systemless_fallback=bool(payload_images) and is_gemini_target,
-            include_relaxed_multimodal_variants=not is_dashscope_target,
-            include_input_multimodal_variants=not is_dashscope_target,
+            include_relaxed_multimodal_variants=True,
+            include_input_multimodal_variants=True,
         )
         # 兼容兜底：仅在多模态请求下追加保守变体（禁用扩展字段+禁用 user 字段）。
         if payload_images:
@@ -681,8 +639,8 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
                 include_reasoning_extensions=False,
                 include_user_field=False,
                 include_systemless_fallback=False,
-                include_relaxed_multimodal_variants=not is_dashscope_target,
-                include_input_multimodal_variants=not is_dashscope_target,
+                include_relaxed_multimodal_variants=True,
+                include_input_multimodal_variants=True,
             )
             payload_candidates.extend(conservative_payloads)
         if use_yuanbao_free_api:
@@ -758,12 +716,6 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
                             err = self._extract_error(e)
                         except Exception:
                             err = str(e)
-                        if payload_images and is_dashscope_target and self._is_image_input_error_text(err):
-                            raise RuntimeError(
-                                "阿里云通义接口已尝试携带图片请求，但当前模型或接口返回不支持图片输入。"
-                                "请确认该 qwen 模型是否已开通多模态能力，或关闭截图/图片输入后再试。"
-                                f" 原始错误：{err}"
-                            ) from e
                         logger.debug("[APIClient] OpenAI兼容请求失败 endpoint=%s: %s", endpoint, err)
                         break
                     except (requests.Timeout, requests.ConnectionError) as e:

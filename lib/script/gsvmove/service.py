@@ -54,6 +54,19 @@ _BATCH_FIND_ROOT_PATTERN = re.compile(r'(?im)^\s*call\s+:find_root\s+"(?P<path>[
 _BATCH_EXPAND_ROUNDS = 8
 
 
+def get_gsvmove_launcher_path() -> Path:
+    """返回约定的 GSVmove 启动入口，不触发服务初始化。"""
+    return get_shared_root_dir() / "start_gsvmove.bat"
+
+
+def is_gsvmove_launcher_available() -> bool:
+    """判断启动时是否可提供 GSVmove 启动入口。"""
+    try:
+        return get_gsvmove_launcher_path().is_file()
+    except Exception:
+        return False
+
+
 def _hidden_console_kwargs() -> dict:
     if os.name != "nt":
         return {}
@@ -206,7 +219,7 @@ class GsvmoveService(LocalHostedServiceBase):
         self._port = _DEFAULT_PORT
         self._project_root = Path(__file__).resolve().parents[3]
         self._root_dir = get_shared_root_dir()
-        self._launcher_path = self._root_dir / "start_gsvmove.bat"
+        self._launcher_path = get_gsvmove_launcher_path()
         self._launcher_log_path = get_user_logs_dir("gsvmove", "launcher.log")
         self._output_dir = get_user_cache_dir("gsvmove", "output")
         self._saved_audio_root = get_user_cache_dir("gsvmove", "voice")

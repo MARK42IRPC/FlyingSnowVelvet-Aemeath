@@ -1,8 +1,15 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from lib.script.gsvmove.service import GsvmoveService, _read_text_best_effort
+from lib.script.gsvmove import service as service_module
+from lib.script.gsvmove.service import (
+    GsvmoveService,
+    _read_text_best_effort,
+    get_gsvmove_launcher_path,
+    is_gsvmove_launcher_available,
+)
 
 
 def _create_fake_gsvmove_root(path: Path) -> Path:
@@ -49,6 +56,16 @@ class GsvmoveRootResolutionTests(unittest.TestCase):
             self.assertEqual(resolved_root, external_root)
             self.assertEqual(resolved_root_file, root_file)
             self.assertEqual(_read_text_best_effort(root_file), str(external_root))
+
+    def test_launcher_availability_uses_shared_root_convention(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            shared_root = Path(tmp)
+            launcher_path = shared_root / "start_gsvmove.bat"
+            with patch.object(service_module, "get_shared_root_dir", return_value=shared_root):
+                self.assertEqual(get_gsvmove_launcher_path(), launcher_path)
+                self.assertFalse(is_gsvmove_launcher_available())
+                launcher_path.write_text("@echo off\n", encoding="utf-8")
+                self.assertTrue(is_gsvmove_launcher_available())
 
     def test_resolve_uses_configured_root_when_no_local_root_exists(self):
         with tempfile.TemporaryDirectory() as tmp:

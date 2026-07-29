@@ -27,12 +27,19 @@ class AISettingsReplyModeSectionsTests(unittest.TestCase):
         cls.app = QApplication.instance() or QApplication([])
 
     def setUp(self):
+        self._gsv_launcher_probe = patch.object(
+            panel_module,
+            "is_gsvmove_launcher_available",
+            return_value=False,
+        )
+        self._gsv_launcher_probe.start()
         with patch.object(AISettingsPanel, "_refresh_hardware_watermark_async", lambda self: None):
             self.panel = AISettingsPanel(lazy_workbench_pages=True)
 
     def tearDown(self):
         self.panel.deleteLater()
         self.app.processEvents()
+        self._gsv_launcher_probe.stop()
 
     def _select_mode(self, mode: str) -> None:
         self.panel._force_mode.setCurrentIndex(self.panel._force_mode.findData(mode))
@@ -156,6 +163,15 @@ class AISettingsReplyModeSectionsTests(unittest.TestCase):
             "https://api.example.com/v1/models",
         )
 
+    def test_manual_api_provider_preset_fills_address_and_custom_input_is_retained(self):
+        provider_index = self.panel._manual_api_provider.findText("DeepSeek")
+        self.panel._manual_api_provider.setCurrentIndex(provider_index)
+        self.assertEqual(self.panel._api_base_url.text(), "https://api.deepseek.com/v1")
+
+        self.panel._api_base_url.setText("https://gateway.example/v1")
+        self.assertEqual(self.panel._manual_api_provider.currentIndex(), 0)
+        self.assertEqual(self.panel._api_base_url.text(), "https://gateway.example/v1")
+
     def test_manual_api_model_probe_parses_models(self):
         response = Mock()
         response.json.return_value = {
@@ -171,6 +187,18 @@ class AISettingsReplyModeSectionsTests(unittest.TestCase):
             timeout=10.0,
         )
         response.raise_for_status.assert_called_once()
+
+    def test_gsv_settings_follow_startup_launcher_probe(self):
+        self.assertFalse(self.panel._gsv_launcher_available)
+
+        voice_section = Mock()
+        panel = type("GsvPanel", (), {
+            "_gsv_launcher_available": True,
+            "_voice_section": voice_section,
+        })()
+        AISettingsPanel._update_gsv_settings_visibility(panel)
+
+        voice_section.setVisible.assert_called_once_with(True)
 
 
 if __name__ == "__main__":

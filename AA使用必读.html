@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>飞行雪绒资料舱 · LTS1.0.6pre1</title>
+    <title>飞行雪绒资料舱 · LTS1.0.6pre2</title>
     <style>
         @font-face {
             font-family: 'HarmonyOS Sans';
@@ -266,7 +266,7 @@
     <main>
         <div class="hero">
             <h1>飞行雪绒资料舱</h1>
-            <p>贡献 + 赞助 + 文档 · LTS1.0.6pre1<br>基于项目默认配色 + 粒子灵感打造，方便在浏览器里查阅 doc 与贡献记录。生成时间：2026-07-29 18:43:47</p>
+            <p>贡献 + 赞助 + 文档 · LTS1.0.6pre2<br>基于项目默认配色 + 粒子灵感打造，方便在浏览器里查阅 doc 与贡献记录。生成时间：2026-07-29 20:37:54</p>
         </div>
         <section id="top-panels">
             <div class="top-panels">
@@ -662,11 +662,11 @@ rg --files
         </article>
         <article class="card">
             <header>
-                <div class="eyebrow">2026-07-20 18:45</div>
+                <div class="eyebrow">2026-07-29 18:52</div>
                 <h3>Script开发指南</h3>
                 <a class="download" href="doc/Script开发指南.txt" download>下载原文件</a>
             </header>
-            <pre>飞行雪绒 Script 开发指南（LTS1.0.6pre1）
+            <pre>飞行雪绒 Script 开发指南（LTS1.0.6pre2）
 
 一、总览
 - 主入口：`lib/core/qt_desktop_pet.py`
@@ -805,11 +805,11 @@ manager_registry.register(DemoManager.MANAGER_ID, DemoManager)
         </article>
         <article class="card">
             <header>
-                <div class="eyebrow">2026-07-28 22:49</div>
+                <div class="eyebrow">2026-07-29 18:52</div>
                 <h3>事件系统使用说明</h3>
                 <a class="download" href="doc/事件系统使用说明.txt" download>下载原文件</a>
             </header>
-            <pre>飞行雪绒事件系统使用说明（LTS1.0.6pre1）
+            <pre>飞行雪绒事件系统使用说明（LTS1.0.6pre2）
 
 一、核心入口
 - 实现：`lib/core/event/center.py`
@@ -2196,11 +2196,11 @@ gamepack/official/lahai_tetris.zip
         </article>
         <article class="card">
             <header>
-                <div class="eyebrow">2026-07-24 18:57</div>
+                <div class="eyebrow">2026-07-29 18:52</div>
                 <h3>粒子效果说明</h3>
                 <a class="download" href="doc/粒子效果说明.txt" download>下载原文件</a>
             </header>
-            <pre>飞行雪绒粒子效果说明（LTS1.0.6pre1）
+            <pre>飞行雪绒粒子效果说明（LTS1.0.6pre2）
 
 一、总体说明
 - 事件入口：`EventType.PARTICLE_REQUEST`
@@ -2557,7 +2557,7 @@ Event(EventType.PARTICLE_REQUEST, {
         </article>
         <article class="card">
             <header>
-                <div class="eyebrow">2026-07-29 18:43</div>
+                <div class="eyebrow">2026-07-29 18:52</div>
                 <h3>维护手册</h3>
                 <a class="download" href="doc/维护手册.md" download>下载原文件</a>
             </header>
@@ -2676,6 +2676,7 @@ Event(EventType.PARTICLE_REQUEST, {
 - AI 回复模式是单一路由：福利 API、手动 API、本地 Ollama、规则回复和元宝之间不做失败回退。模式专属配置只在对应模式下显示。
 - 福利 API 配置由 `lib/script/chat/welfare_api_config.py` 从 GitHub/Gitee 发布源并发测速获取密钥与地址。模型使用程序内置的固定标识，不依赖服务端实现 `/models`：默认模型为 `agnes-2.0-flash`，“智力提升”开启后使用 `agnes-2.5-flash`；配置下载超时固定 10 秒，首次失败后最多重试 3 次。
 - 手动 API 的模型探测只辅助选择该路由的模型：设置面板以当前未保存的地址和密钥异步请求 OpenAI 兼容 `/models`，失败时保留用户当前输入。模型字段始终允许手工输入；无协议的公网地址按 HTTPS、本机地址按 HTTP 规范化后保存。
+- GSV 语音合成设置在面板创建时只检查共享根目录约定的 `start_gsvmove.bat` 是否存在；未检测到入口时隐藏整个语音合成区块，不启动服务、不删除既有配置。
 
 ## 5. 配置与用户数据
 
@@ -2803,11 +2804,11 @@ py -3 scripts/generate_doc_portal.py
         </article>
         <article class="card">
             <header>
-                <div class="eyebrow">2026-07-20 18:45</div>
+                <div class="eyebrow">2026-07-29 18:52</div>
                 <h3>调度系统使用说明</h3>
                 <a class="download" href="doc/调度系统使用说明.txt" download>下载原文件</a>
             </header>
-            <pre>飞行雪绒调度系统使用说明（LTS1.0.6pre1）
+            <pre>飞行雪绒调度系统使用说明（LTS1.0.6pre2）
 
 一、核心实现
 - 文件：`lib/core/timing/manager.py`
@@ -2921,7 +2922,7 @@ pet.cancel_task(task_id)
             </div>
         </section>
     </main>
-    <footer>由飞行雪绒 LTS1.0.6pre1 代码生成 · 粉粉青青也是科技感 (ﾉ◕ヮ◕)ﾉ*:･ﾟ✧</footer>
+    <footer>由飞行雪绒 LTS1.0.6pre2 代码生成 · 粉粉青青也是科技感 (ﾉ◕ヮ◕)ﾉ*:･ﾟ✧</footer>
     <script>
     (() => {
         const letters = "FLYINGSNOWVELVET";

@@ -110,7 +110,8 @@ WELFARE_INTELLIGENCE_BOOST = False
 # - DeepSeek:   'https://api.deepseek.com/v1'
 # - Moonshot:   'https://api.moonshot.cn/v1'
 # - 智谱AI:     'https://open.bigmodel.cn/api/paas/v4'
-# - 通义千问:   'https://dashscope.aliyuncs.com/compatible-mode/v1'
+# - 阿里云百炼: 'https://dashscope.aliyuncs.com/compatible-mode/v1'
+# - 硅基流动:   'https://api.siliconflow.cn/v1'
 API_BASE_URL = _LOCAL_SECRET_OVERRIDES.get('api_base_url', '')
 
 # 使用 API Key 时的模型名称

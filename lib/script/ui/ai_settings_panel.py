@@ -80,6 +80,7 @@ from lib.script.workbench.settings import (
 from lib.script.workbench.theme import COLORS as WORKBENCH_COLORS, get_workbench_colors
 from lib.script.yuanbao_free_api import get_yuanbao_free_api_service
 from lib.script.yuanbao_free_api.service import get_yuanbao_free_api_log_path
+from lib.script.gsvmove import is_gsvmove_launcher_available
 
 _logger = get_logger(__name__)
 
@@ -88,6 +89,17 @@ _GPU_MODE_CPU = "cpu"
 _GPU_MODE_GPU = "gpu"
 _GPU_MODE_AUTO = "auto"
 _DROPDOWN_POPUP_LAYER = 601
+
+_MANUAL_API_PROVIDER_PRESETS = (
+    ("自定义地址", ""),
+    ("OpenAI", "https://api.openai.com/v1"),
+    ("DeepSeek", "https://api.deepseek.com/v1"),
+    ("Kimi", "https://api.moonshot.cn/v1"),
+    ("智谱 AI", "https://open.bigmodel.cn/api/paas/v4"),
+    ("阿里云百炼", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+    ("硅基流动", "https://api.siliconflow.cn/v1"),
+    ("OpenRouter", "https://openrouter.ai/api/v1"),
+)
 
 _DEFAULT_VALUES = {
     "api_key": "",
@@ -1911,7 +1923,19 @@ class AISettingsPanel(QWidget):
             "OpenAI 兼容接口密钥，单独保存在用户密钥文件中。",
         )
 
+        self._manual_api_provider = QComboBox()
+        for label, base_url in _MANUAL_API_PROVIDER_PRESETS:
+            self._manual_api_provider.addItem(label, base_url)
+        self._manual_api_provider.currentIndexChanged.connect(self._on_manual_api_provider_changed)
+        form.addRow("常用提供商", self._manual_api_provider)
+        self._set_form_row_description(
+            form,
+            self._manual_api_provider,
+            "选择后自动填入该提供商的 OpenAI 兼容接口地址；自定义地址仍可直接填写。",
+        )
+
         self._api_base_url = QLineEdit()
+        self._api_base_url.textChanged.connect(self._sync_manual_api_provider_selection)
         self._api_base_url.editingFinished.connect(self._normalize_manual_api_base_url_input)
         form.addRow("接口地址", self._api_base_url)
         self._set_form_row_description(
@@ -2045,12 +2069,13 @@ class AISettingsPanel(QWidget):
         self._force_mode.currentIndexChanged.connect(self._update_reply_mode_sections)
         self._update_reply_mode_sections()
 
-        voice_section = scaffold.add_section(
+        self._gsv_launcher_available = is_gsvmove_launcher_available()
+        self._voice_section = scaffold.add_section(
             "语音合成",
             "控制 GSV 服务启动、表达参数和本地缓存。",
         )
         form = create_settings_form()
-        voice_section.body_layout.addLayout(form)
+        self._voice_section.body_layout.addLayout(form)
 
         self._gsv_auto_start = QCheckBox("自动启用GSV语音模块")
         self._gsv_auto_start.setChecked(_DEFAULT_VALUES["gsv_auto_start"])
@@ -2106,6 +2131,7 @@ class AISettingsPanel(QWidget):
             "打开 GSV 语音缓存目录，方便查看并保留最近生成的喜欢音频。",
         )
         self._set_widget_description(self._open_gsv_cache_dir_btn, "打开 GSV 语音缓存目录。")
+        self._update_gsv_settings_visibility()
 
         memory_section = scaffold.add_section(
             "记忆与陪伴",
@@ -4450,6 +4476,7 @@ class AISettingsPanel(QWidget):
         self._api_key.set_raw_text(str(values.get("api_key", "")))
         self._welfare_intelligence_boost.setChecked(bool(values.get("welfare_intelligence_boost", False)))
         self._api_base_url.setText(str(values.get("api_base_url", "")))
+        self._sync_manual_api_provider_selection()
         self._refresh_manual_api_model_choices(str(values.get("api_model", "")))
         self._set_hidden_yuanbao_values(values)
         self._ollama_base_url.setText(str(values.get("ollama_base_url", "")))
@@ -4481,6 +4508,9 @@ class AISettingsPanel(QWidget):
         self._manual_api_section.setVisible(mode == "0")
         self._ollama_section.setVisible(mode == "2")
         self._yuanbao_section.setVisible(mode == "4")
+
+    def _update_gsv_settings_visibility(self) -> None:
+        self._voice_section.setVisible(bool(self._gsv_launcher_available))
 
     def _ollama_model_placeholder_message(self) -> str:
         error = get_model_list_error()
@@ -4550,6 +4580,26 @@ class AISettingsPanel(QWidget):
         normalized = self._normalize_manual_api_base_url(self._api_base_url.text())
         if normalized != self._api_base_url.text().strip():
             self._api_base_url.setText(normalized)
+
+    def _on_manual_api_provider_changed(self, _index: int) -> None:
+        base_url = str(self._manual_api_provider.currentData() or "").strip()
+        if base_url:
+            self._api_base_url.setText(base_url)
+
+    def _sync_manual_api_provider_selection(self, *_args) -> None:
+        current_base_url = self._normalize_manual_api_base_url(self._api_base_url.text())
+        matched_index = 0
+        for index in range(1, self._manual_api_provider.count()):
+            preset_url = self._normalize_manual_api_base_url(
+                str(self._manual_api_provider.itemData(index) or "")
+            )
+            if current_base_url and current_base_url == preset_url:
+                matched_index = index
+                break
+        if self._manual_api_provider.currentIndex() != matched_index:
+            self._manual_api_provider.blockSignals(True)
+            self._manual_api_provider.setCurrentIndex(matched_index)
+            self._manual_api_provider.blockSignals(False)
 
     @classmethod
     def _manual_api_models_url(cls, base_url: str) -> str:

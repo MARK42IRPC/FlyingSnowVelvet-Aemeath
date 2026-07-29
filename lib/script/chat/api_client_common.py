@@ -214,7 +214,7 @@ class _ApiClientCommonMixin:
             if text:
                 return text
 
-        # DashScope / 其他网关常见 output 包装
+        # 其他网关常见 output 包装
         output = chunk.get("output")
         if isinstance(output, dict):
             for key in ("text", "content", "output_text"):
