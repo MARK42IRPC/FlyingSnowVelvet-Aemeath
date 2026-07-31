@@ -22,6 +22,7 @@ from scripts.release_common import (
     build_generated_payloads,
     build_inline_payloads,
     build_placeholder_entries,
+    configure_console_output,
     format_size,
     iter_files,
     write_manifest,
@@ -202,6 +203,7 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
+    configure_console_output()
     args = parse_args(argv or sys.argv[1:])
     inline_payloads = build_inline_payloads(ROOT)
     generated_payloads = build_generated_payloads(ROOT)

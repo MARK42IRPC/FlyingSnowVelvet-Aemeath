@@ -3,13 +3,33 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from unittest.mock import patch
 
-from scripts.release_common import build_generated_payloads
+from scripts.release_common import build_generated_payloads, configure_console_output
 from scripts.package_green_release import _should_exclude as green_should_exclude
 from scripts.package_release import ROOT, _should_exclude as release_should_exclude
 
 
 class ReleaseCommonTests(unittest.TestCase):
+    def test_console_output_uses_utf8_with_safe_error_fallback(self):
+        class ReconfigurableStream:
+            def __init__(self):
+                self.options = None
+
+            def reconfigure(self, **options):
+                self.options = options
+
+        stdout = ReconfigurableStream()
+        stderr = ReconfigurableStream()
+        with patch('scripts.release_common.sys.stdout', stdout), patch(
+            'scripts.release_common.sys.stderr', stderr
+        ):
+            configure_console_output()
+
+        expected = {'encoding': 'utf-8', 'errors': 'backslashreplace'}
+        self.assertEqual(stdout.options, expected)
+        self.assertEqual(stderr.options, expected)
+
     def test_release_packages_include_the_update_installer(self):
         installer = ROOT / 'lib' / 'script' / 'app' / 'update_installer.py'
         self.assertTrue(installer.is_file())

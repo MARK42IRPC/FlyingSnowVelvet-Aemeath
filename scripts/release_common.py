@@ -6,6 +6,7 @@ import ast
 import io
 import json
 import re
+import sys
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,6 +17,18 @@ from typing import Iterable, Iterator
 class FileEntry:
     relative: Path
     size: int
+
+
+def configure_console_output() -> None:
+    """Keep release logs writable when paths exceed the active code page."""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, 'reconfigure', None)
+        if not callable(reconfigure):
+            continue
+        try:
+            reconfigure(encoding='utf-8', errors='backslashreplace')
+        except (OSError, ValueError):
+            continue
 
 
 def _replace_assignment(text: str, name: str, value_literal: str) -> str:
