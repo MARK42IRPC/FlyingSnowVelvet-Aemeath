@@ -20,7 +20,6 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from config.version_info import APP_VERSION
 from scripts.release_common import (
     FileEntry,
     build_generated_payloads,
@@ -29,10 +28,11 @@ from scripts.release_common import (
     configure_console_output,
     format_size,
     iter_files,
+    read_app_version,
     write_manifest,
 )
 
-DEFAULT_VERSION = APP_VERSION
+DEFAULT_VERSION = read_app_version(ROOT)
 DIST_DIR = ROOT / "dist"
 RESOURCE_LINKS_FILE = ROOT / "resc.net.txt"
 

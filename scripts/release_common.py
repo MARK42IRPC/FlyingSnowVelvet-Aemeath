@@ -31,6 +31,22 @@ def configure_console_output() -> None:
             continue
 
 
+def read_app_version(root: Path) -> str:
+    """Read APP_VERSION without importing config package side effects."""
+    version_path = root / 'config' / 'version_info.py'
+    tree = ast.parse(version_path.read_text(encoding='utf-8-sig'), filename=str(version_path))
+    for node in tree.body:
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+            continue
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        if not any(isinstance(target, ast.Name) and target.id == 'APP_VERSION' for target in targets):
+            continue
+        value = node.value
+        if isinstance(value, ast.Constant) and isinstance(value.value, str) and value.value.strip():
+            return value.value.strip()
+    raise ValueError(f'APP_VERSION is missing or invalid: {version_path}')
+
+
 def _replace_assignment(text: str, name: str, value_literal: str) -> str:
     return re.sub(
         rf"(?m)^(\s*{re.escape(name)}\s*=\s*).*$",

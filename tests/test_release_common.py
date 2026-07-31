@@ -5,12 +5,32 @@ import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
-from scripts.release_common import build_generated_payloads, configure_console_output
+from scripts.release_common import (
+    build_generated_payloads,
+    configure_console_output,
+    read_app_version,
+)
 from scripts.package_green_release import _should_exclude as green_should_exclude
 from scripts.package_release import ROOT, _should_exclude as release_should_exclude
 
 
 class ReleaseCommonTests(unittest.TestCase):
+    def test_read_app_version_does_not_import_config_package(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config_root = root / 'config'
+            config_root.mkdir()
+            (config_root / '__init__.py').write_text(
+                "raise RuntimeError('config package must not be imported')\n",
+                encoding='utf-8',
+            )
+            (config_root / 'version_info.py').write_text(
+                "APP_VERSION = 'LTS-test'\n",
+                encoding='utf-8',
+            )
+
+            self.assertEqual(read_app_version(root), 'LTS-test')
+
     def test_console_output_uses_utf8_with_safe_error_fallback(self):
         class ReconfigurableStream:
             def __init__(self):

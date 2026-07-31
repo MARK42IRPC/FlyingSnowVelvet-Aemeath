@@ -32,7 +32,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $version = (& python -c 'from config.version_info import APP_VERSION; print(APP_VERSION)' |
+          $version = (& python -c 'from pathlib import Path; from scripts.release_common import read_app_version; print(read_app_version(Path.cwd()))' |
             Out-String).Trim()
           if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($version)) {
             throw 'Could not read APP_VERSION.'
@@ -69,19 +69,4 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             Write-Host 'No stale PACK diagnostics asset was present.'
           }
-          exit 0
-
-      - name: Publish build failure diagnostics
-        if: failure()
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $version = (& python -c 'from config.version_info import APP_VERSION; print(APP_VERSION)' |
-            Out-String).Trim()
-          $diagnostic = Join-Path $env:RUNNER_TEMP 'pack-build-diagnostic.log'
-          python scripts/package_release.py --version $version *> $diagnostic
-          $diagnosticExitCode = $LASTEXITCODE
-          "diagnostic_exit_code=$diagnosticExitCode" | Add-Content -LiteralPath $diagnostic -Encoding utf8
-          gh release upload PACK $diagnostic --clobber --repo '${{ github.repository }}'
           exit 0
