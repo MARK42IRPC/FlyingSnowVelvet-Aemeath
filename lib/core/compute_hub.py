@@ -18,6 +18,10 @@ class ComputeHub:
             max_workers=min(8, cpu_count * 2),
             thread_name_prefix="compute_io",
         )
+        self._interactive_io_pool = ThreadPoolExecutor(
+            max_workers=2,
+            thread_name_prefix="compute_interactive_io",
+        )
         self._vector_pool = ThreadPoolExecutor(
             max_workers=max(1, min(2, cpu_count - 1)),
             thread_name_prefix="compute_vec",
@@ -30,6 +34,10 @@ class ComputeHub:
 
     def submit_io(self, fn: Callable, *args, **kwargs) -> Future:
         return self._submit(self._io_pool, fn, *args, **kwargs)
+
+    def submit_interactive_io(self, fn: Callable, *args, **kwargs) -> Future:
+        """Run user-triggered I/O without waiting behind shared background work."""
+        return self._submit(self._interactive_io_pool, fn, *args, **kwargs)
 
     def submit_vector(self, fn: Callable, *args, **kwargs) -> Future:
         return self._submit(self._vector_pool, fn, *args, **kwargs)
@@ -85,6 +93,7 @@ class ComputeHub:
         if futures:
             wait(futures, timeout=max(0.0, float(timeout)))
         self._io_pool.shutdown(wait=False, cancel_futures=True)
+        self._interactive_io_pool.shutdown(wait=False, cancel_futures=True)
         self._vector_pool.shutdown(wait=False, cancel_futures=True)
         with self._latest_lock:
             self._latest_futures.clear()

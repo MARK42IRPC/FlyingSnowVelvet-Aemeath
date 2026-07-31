@@ -16,6 +16,17 @@ class ReleaseCommonTests(unittest.TestCase):
         self.assertFalse(release_should_exclude(installer))
         self.assertFalse(green_should_exclude(installer))
 
+    def test_release_packages_include_bundled_unrar_and_license(self):
+        for relative in (
+            Path('lib/script/gsvmove/bin/UnRAR.exe'),
+            Path('lib/script/gsvmove/bin/LICENSE-UnRAR.txt'),
+        ):
+            path = ROOT / relative
+            with self.subTest(path=relative.as_posix()):
+                self.assertTrue(path.is_file())
+                self.assertFalse(release_should_exclude(path))
+                self.assertFalse(green_should_exclude(path))
+
     def test_service_bundle_is_generated_from_current_source_tree(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>飞行雪绒资料舱 · LTS1.0.6pre2</title>
+    <title>飞行雪绒资料舱 · LTS1.0.6pre4</title>
     <style>
         @font-face {
             font-family: 'HarmonyOS Sans';
@@ -266,7 +266,7 @@
     <main>
         <div class="hero">
             <h1>飞行雪绒资料舱</h1>
-            <p>贡献 + 赞助 + 文档 · LTS1.0.6pre2<br>基于项目默认配色 + 粒子灵感打造，方便在浏览器里查阅 doc 与贡献记录。生成时间：2026-07-29 20:37:54</p>
+            <p>贡献 + 赞助 + 文档 · LTS1.0.6pre4<br>基于项目默认配色 + 粒子灵感打造，方便在浏览器里查阅 doc 与贡献记录。生成时间：2026-07-31 10:19:35</p>
         </div>
         <section id="top-panels">
             <div class="top-panels">
@@ -577,7 +577,7 @@ rg --files
         </article>
         <article class="card">
             <header>
-                <div class="eyebrow">2026-07-24 19:13</div>
+                <div class="eyebrow">2026-07-30 04:48</div>
                 <h3>README</h3>
                 <a class="download" href="doc/README.md" download>下载原文件</a>
             </header>
@@ -595,6 +595,7 @@ rg --files
 | 修改或新增事件 | [事件系统使用说明](事件系统使用说明.txt) 与 [已注册的事件](已注册的事件.txt) |
 | 修改调度、帧循环或延迟任务 | [调度系统使用说明](调度系统使用说明.txt) |
 | 修改粒子效果 | [粒子效果说明](粒子效果说明.txt) |
+| 修改 ONNX 语音包、安装器或推理桥接 | [ONNX 语音包协议](语音包协议.md) |
 | 开发或维护游戏扩展包 | [游戏包格式](游戏包格式.md) 与 [游戏模式说明](游戏模式说明.txt) |
 | 准备发行版 | 根目录 `RELEASING.md` |
 
@@ -662,11 +663,11 @@ rg --files
         </article>
         <article class="card">
             <header>
-                <div class="eyebrow">2026-07-29 18:52</div>
+                <div class="eyebrow">2026-07-31 10:15</div>
                 <h3>Script开发指南</h3>
                 <a class="download" href="doc/Script开发指南.txt" download>下载原文件</a>
             </header>
-            <pre>飞行雪绒 Script 开发指南（LTS1.0.6pre2）
+            <pre>飞行雪绒 Script 开发指南（LTS1.0.6pre4）
 
 一、总览
 - 主入口：`lib/core/qt_desktop_pet.py`
@@ -805,11 +806,11 @@ manager_registry.register(DemoManager.MANAGER_ID, DemoManager)
         </article>
         <article class="card">
             <header>
-                <div class="eyebrow">2026-07-29 18:52</div>
+                <div class="eyebrow">2026-07-31 10:15</div>
                 <h3>事件系统使用说明</h3>
                 <a class="download" href="doc/事件系统使用说明.txt" download>下载原文件</a>
             </header>
-            <pre>飞行雪绒事件系统使用说明（LTS1.0.6pre2）
+            <pre>飞行雪绒事件系统使用说明（LTS1.0.6pre4）
 
 一、核心入口
 - 实现：`lib/core/event/center.py`
@@ -888,6 +889,7 @@ VOICE_REQUEST
 
 AI_VOICE_REQUEST
 - 用途：AI 文本转语音申请
+- 字段：`text`（保留中英文原文）、可选 `text_lang`（`zh`、`en` 或 `auto`）、`interruptible`
 - 当前由 `lib/script/gsvmove/service.py` 消费
 - 当 GSV 模块在控制面板中关闭时，这类事件会被直接忽略
 
@@ -2196,11 +2198,11 @@ gamepack/official/lahai_tetris.zip
         </article>
         <article class="card">
             <header>
-                <div class="eyebrow">2026-07-29 18:52</div>
+                <div class="eyebrow">2026-07-31 10:15</div>
                 <h3>粒子效果说明</h3>
                 <a class="download" href="doc/粒子效果说明.txt" download>下载原文件</a>
             </header>
-            <pre>飞行雪绒粒子效果说明（LTS1.0.6pre2）
+            <pre>飞行雪绒粒子效果说明（LTS1.0.6pre4）
 
 一、总体说明
 - 事件入口：`EventType.PARTICLE_REQUEST`
@@ -2557,13 +2559,13 @@ Event(EventType.PARTICLE_REQUEST, {
         </article>
         <article class="card">
             <header>
-                <div class="eyebrow">2026-07-29 18:52</div>
+                <div class="eyebrow">2026-07-31 10:15</div>
                 <h3>维护手册</h3>
                 <a class="download" href="doc/维护手册.md" download>下载原文件</a>
             </header>
             <pre># 飞行雪绒维护手册
 
-更新时间：2026-07-24
+更新时间：2026-07-31
 
 本手册面向维护者和代码代理，说明当前工程边界、常见变更路径和验收方式。开始工作前先读 `doc/AI协作规范.md`，再按任务阅读专项文档。
 
@@ -2604,6 +2606,8 @@ Event(EventType.PARTICLE_REQUEST, {
 
 `ApplicationState` 负责单实例、Qt 应用、主窗口、管理器、托盘、预加载和最终清理。长生命周期组件不得绕过它自行结束应用。
 
+主界面就绪后，`AnnouncementController` 从固定 Gitee `RESC` 发布槽异步下载桌宠公告。公告文件使用按出现顺序解析的 `title`、`subtitle`、`text` 引号块，可重复出现多个 `subtitle` 和 `text`；正文窗口保持紧凑并独立滚动。用户可仅抑制当日自动显示或永久抑制自动显示，状态写入 `&lt;用户根&gt;/user/state/announcement.json`，最近一次成功内容缓存到 `&lt;用户根&gt;/cache/announcement.txt`。“界面与动画”页的“不显示公告”复选框读取并修改同一份永久抑制状态，取消勾选不会清除当日抑制。托盘“桌宠公告”入口不受自动显示偏好限制；每次手动打开都先进入加载态并发起独立的无缓存请求，只接受最后一次请求的结果，网络失败时才回退到本地缓存。
+
 ### 退出链路
 
 正常退出由 `ApplicationState.request_exit()` 发起，依次停止主窗口、清理运行时服务、清理视觉组件并退出 Qt 事件循环。`APP_EXIT` 广播退出阶段，`APP_QUIT` 请求主编排器开始退出。
@@ -2621,6 +2625,7 @@ Event(EventType.PARTICLE_REQUEST, {
 - 网络流设置有限连接/读取超时，并在 cleanup 时关闭活动响应。
 - 子进程保存句柄；先正常终止，超时后结束进程树。
 - 后台任务统一使用 `lib/core/compute_hub.py`，不得新建无所有者线程池。
+- 用户点击后必须立即开始的长耗时 I/O 使用 `ComputeHub.submit_interactive_io()` 的保留执行槽，不能排在登录、音乐下载等共享后台队列之后。
 - `os._exit()` 只能作为最终超时兜底。
 
 ## 3. 模块边界
@@ -2642,7 +2647,8 @@ Event(EventType.PARTICLE_REQUEST, {
 - AI/聊天：`chat/`
 - 音乐搜索门面：`music/`
 - 音乐播放内部实现：`cloudmusic/`
-- 本地服务：`yuanbao_free_api/`、`gsvmove/`、`local_hosted_service.py`
+- 本地子进程服务：`yuanbao_free_api/`、`local_hosted_service.py`
+- ONNX 语音推理与安装：`gsvmove/`
 - 桌面对象：`obj-*`
 - 游戏系统：`gemes/MAIN/`
 - UI：`ui/`
@@ -2654,7 +2660,7 @@ Event(EventType.PARTICLE_REQUEST, {
 
 工作台采用两级懒加载：启动预加载器不创建工作台；打开总览只创建工作台壳；进入设置页或工具页时才调用页面工厂。
 
-“界面与动画”设置页中的“工作台亮色主题”保存到 `UI.workbench_light_theme`，默认关闭为当前暗色主题；开启后使用白色/粉色表面和深灰蓝文字，并通过 `CONFIG_UPDATED` 热重载工作台样式。
+工作台顶栏搜索框左侧的粉青色明暗主题开关保存到 `UI.workbench_light_theme`，默认关闭为当前暗色主题；开启后使用白色/粉色表面和深灰蓝文字，并通过 `CONFIG_UPDATED` 热重载工作台样式。“界面与动画”设置页不再提供重复入口。
 
 工作台及其动态创建的控件统一使用 `config.font_config.get_ui_font()` 注册的 `HarmonyOS Sans SC` 字体族；控件树刷新时只替换字体族，不覆盖字号、粗细和自定义绘制字体。
 
@@ -2676,7 +2682,7 @@ Event(EventType.PARTICLE_REQUEST, {
 - AI 回复模式是单一路由：福利 API、手动 API、本地 Ollama、规则回复和元宝之间不做失败回退。模式专属配置只在对应模式下显示。
 - 福利 API 配置由 `lib/script/chat/welfare_api_config.py` 从 GitHub/Gitee 发布源并发测速获取密钥与地址。模型使用程序内置的固定标识，不依赖服务端实现 `/models`：默认模型为 `agnes-2.0-flash`，“智力提升”开启后使用 `agnes-2.5-flash`；配置下载超时固定 10 秒，首次失败后最多重试 3 次。
 - 手动 API 的模型探测只辅助选择该路由的模型：设置面板以当前未保存的地址和密钥异步请求 OpenAI 兼容 `/models`，失败时保留用户当前输入。模型字段始终允许手工输入；无协议的公网地址按 HTTPS、本机地址按 HTTP 规范化后保存。
-- GSV 语音合成设置在面板创建时只检查共享根目录约定的 `start_gsvmove.bat` 是否存在；未检测到入口时隐藏整个语音合成区块，不启动服务、不删除既有配置。
+- 语音设置在 ONNX 包有效时显示；检测到旧 `start_gsvmove.bat`、缺失包或损坏包时，面板顶部显示“安装最新语音包”。有效包和损坏包同时提供带确认的后台删除入口，删除后立即刷新为可重新安装状态。安装窗口中的“后台安装”只隐藏界面、不取消任务；再次点击安装入口可恢复进度，后台仅在关键阶段以桌宠气泡提醒。面板开放当前 v2Pro 实际消费的采样温度、Top-K、Top-P、重复惩罚、语速、分句、片段停顿、随机种子和最大解码步数；批处理、流式及 v3/v4 专属兼容字段不显示为有效设置。安装与包管理 UI 位于独立的 `voice_package_installer.py`，不得继续堆入设置面板。
 
 ## 5. 配置与用户数据
 
@@ -2716,6 +2722,12 @@ AI 密钥保存到 `&lt;用户根&gt;/user/secrets/ai.json`。设置面板每次
 
 元宝服务源码位于 `services/yuanbao-free-api/`。发行时 `release_common.py` 根据当前源码生成 `services/bundles/yuanbao-free-api-main.zip`，仓库中的旧 zip 不是发行权威源。
 
+元宝本地中转端口被占用时，`YuanbaoFreeApiService` 会切换到随机本地端口；OpenAI 兼容请求在发送前必须读取 `get_yuanbao_local_base_url()` 的运行时地址，不能继续使用管理器初始化期缓存的端口。
+
+设置面板的元宝登录区只显示当前可执行操作：未登录时显示“微信登录元宝”，已登录时显示“退出元宝登录”。面板读取已有服务状态必须使用无副作用的 `peek_service_status()`，不得为检查状态启动服务、切换端口或触发浏览器登录。
+
+GSV 兼容门面不再启动端口 9880 的 HTTP 服务，而是在原语音工作线程中复用单个 ONNX 引擎。格式版本 2 保留 GPT-SoVITS API v2 参数命名；同一格式内影响正确性的模型或推理升级使用独立 `runtime_revision`，客户端必须拒绝低于当前最低修订的旧包并显示更新入口。语速必须使用 VITS 图内 `speed_factor`，禁止恢复改变音高的最终波形重采样。当前 revision 3 包内置中文 RoBERTa，RoBERTa 加载失败必须报错，不能退回零特征；参考 HuBERT 提示语义必须保留原生链路的尾静音。安装器提供完全包、默认中等包和节约包三档，优先 ModelScope、回退 Hugging Face；每档为单个 RAR5 solid archive，使用 64 MiB 字典，大小与空间检查以 `VoicePackageProfile` 的真实发布值为准。语音包格式、单文件下载、安装、用户确认删除、旧运行时清理和随包 UnRAR 边界以 `doc/语音包协议.md` 为准。安装前不得为定位旧运行时递归扫描用户目录；安装成功后只清理路径记录明确指向的旧外部 GSVmove。包删除必须由服务在推理锁内释放引擎后执行，并限定在固定磁盘的受管理目录；仓库内 `lib/script/gsvmove/` 不属于删除目标。
+
 ## 8. 游戏包兼容边界
 
 游戏包 manifest、目录布局、加载语义和官方包隔离属于稳定契约。内部实现可以收敛，但不得未经迁移修改包格式。
@@ -2739,6 +2751,14 @@ py -3 -m unittest tests.test_game_runtime_geometry tests.test_game_runtime_hash_
 | `services/yuanbao-free-api/requirements.txt` | 服务独立运行环境 |
 
 普通版和绿色版共享清单、敏感配置清洗、官方游戏包及服务 bundle 生成逻辑。绿色版额外处理 Vosk、动画和 Chromium 归档。
+
+两类发行包都必须携带 `lib/script/gsvmove/bin/UnRAR.exe` 和 `LICENSE-UnRAR.txt`，但不携带七卷 ONNX 角色模型。解压器固定校验，不允许安装时联网补取。
+
+依赖安装脚本在摘要前以单行动态展示“正在检查依赖”的当前包、检查数、百分比和进度条；随后只保留已有/未安装依赖摘要和两条固定安装进度行。支持 ANSI 的终端使用 pip 风格的青色当前依赖、粉色整体进度与暗色未完成轨道，不支持颜色的终端显示等宽单色回退。进度刷新不得逐包追加日志。
+
+pip 安装调用必须兼容 Python 3.11.6 随附的 pip 23.2.1；单个依赖失败后继续安装后续依赖，并在最终摘要中显示对应 pip 错误原因，不能只列失败包名。`genie-tts` 依赖的 `jieba-fast 0.53` 在 PyPI 没有 Python 3.11 Windows wheel，安装器必须先从 `resc.net.txt` 的 Gitee/GitHub 镜像下载固定的 `cp311-win_amd64` wheel，校验内置 SHA-256 后本地安装，再安装 `genie-tts`，不得回退到用户机器上的 C++ 源码编译。
+
+依赖可用性默认同时检查 pip 元数据和实际导入。`genie-tts` 的顶层导入会访问外部 `GenieData` 并产生输出，因此使用 `spec:genie_tts` 做无副作用的模块规格检查；不得因资源目录尚未安装而反复重装同一个 Python 包。
 
 发布脚本只允许白名单顶层路径。新增发行文件时必须检查两个入口。`--dry-run` 不下载资源、不写发行包。
 
@@ -2804,11 +2824,124 @@ py -3 scripts/generate_doc_portal.py
         </article>
         <article class="card">
             <header>
-                <div class="eyebrow">2026-07-29 18:52</div>
+                <div class="eyebrow">2026-07-31 03:15</div>
+                <h3>语音包协议</h3>
+                <a class="download" href="doc/语音包协议.md" download>下载原文件</a>
+            </header>
+            <pre># ONNX 语音包协议
+
+本文定义桌宠当前接受的独立 ONNX 语音包、安装流程和发布边界。权威实现位于 `lib/script/gsvmove/package_manager.py`、`onnx_runtime.py` 与 `service.py`。
+
+## 1. 包格式
+
+语音包根目录固定为 `ONNX_aimisiV2/`，`manifest.json` 必须包含：
+
+```json
+{
+  &quot;format&quot;: &quot;aemeath-gpt-sovits-onnx&quot;,
+  &quot;format_version&quot;: 2,
+  &quot;runtime_revision&quot;: 3,
+  &quot;precision_profile&quot;: &quot;fp16&quot;,
+  &quot;name&quot;: &quot;aimisiV2&quot;,
+  &quot;sample_rate&quot;: 32000,
+  &quot;languages&quot;: [&quot;zh&quot;, &quot;en&quot;],
+  &quot;reference_audio&quot;: &quot;reference.wav&quot;,
+  &quot;reference_text&quot;: &quot;reference.txt&quot;,
+  &quot;character_dir&quot;: &quot;character&quot;,
+  &quot;common_dir&quot;: &quot;common&quot;
+}
+```
+
+当前运行时要求同时具备中文和英文前端。角色模型放在 `character/`，可复用公共模型和中英文 G2P 资源放在 `common/`。参考音频与对应文案分别为 `reference.wav` 和 `reference.txt`；当前素材来自 `zh_vo_MAIN_YHX_2_7.wav/.lab`。
+
+当前包内置中文 RoBERTa ONNX 与 tokenizer。中文文本必须生成真实 BERT 特征；RoBERTa 不能加载时推理必须失败，不能静默退回零特征。英文继续使用英文 G2P 前端。
+
+必要文件由 `package_manager._REQUIRED_PACKAGE_FILES` 与按 `precision_profile` 分类的文件表共同定义，至少包括推理入口、参考素材、依赖清单、角色模型、CN-HuBERT、说话人编码器、中文 RoBERTa 和中英文 G2P 资源。`format_version` 描述稳定的公开包结构；`runtime_revision` 描述同一结构内必须更新的模型或推理修订。当前最低运行时修订为 3，缺失该字段或小于 3 的旧包必须提示“安装最新语音包”。新增格式版本时不得静默改变版本 1 的含义。
+
+## 2. 完整性与安全
+
+`SHA256SUMS.txt` 使用每行 `64位十六进制哈希 + 空白 + 相对路径` 的格式。所有必要文件都必须进入校验清单；仅 `validation/` 下的离线冒烟输出允许在归档中省略。路径不得为绝对路径、盘符路径或包含 `..`，RAR 不得加密。
+
+桌宠使用 `rarfile` 读取 RAR5 多卷目录并检查路径，实际解压固定调用随程序发布的官方 `lib/script/gsvmove/bin/UnRAR.exe`。该文件必须同时满足固定大小和 SHA-256 校验：
+
+```text
+大小：560848 字节
+SHA-256：0D3715001790F0FD18D3E850F947B540530B2D2DEB9A2E6A9E84F2ED7B234235
+许可：lib/script/gsvmove/bin/LICENSE-UnRAR.txt
+```
+
+安装流程不得从网络下载或替换解压器。普通版和绿色版都必须携带上述二进制与许可证。
+
+## 3. 发布源与档位
+
+每档是一个 RAR5 solid 单文件，使用 64 MiB 字典，不再分卷。客户端优先从 ModelScope 下载，失败后完整切换到 Hugging Face，不能混合不同镜像的内容。两个仓库必须上传文件名、README、`SHA256SUMS.txt` 与 `release-manifest.json` 完全相同的发布物：
+
+| 档位 | 文件 | 压缩包 | 解压后 | 实际精度 |
+| --- | --- | ---: | ---: | --- |
+| 完全包 | `Aemeath_ONNX_GSV_Complete_FP32.rar` | 1,158,190,671 B | 1,438,886,877 B | 非 INT8 高质量链路；上游 RoBERTa 源权重为 FP16 |
+| 中等包 | `Aemeath_ONNX_GSV_Medium_FP16.rar` | 1,096,305,481 B | 1,211,004,205 B | FP16 外置权重，运行时恢复 FP32 |
+| 节约包（强烈推荐） | `Aemeath_ONNX_GSV_Saver_INT8.rar` | 677,423,752 B | 853,957,055 B | RoBERTa QInt8、CN-HuBERT/T2S INT4、VITS/Speaker FP16 |
+
+安装前预留所选 archive、解压目录和额外 512 MiB 暂存空间。下拉档位和进度条必须使用以上真实大小；不得继续展示 600 MB 或旧的分卷数量。内置 UnRAR 校验与单文件下载同时启动。
+
+## 4. 安装与迁移
+
+控制面板在检测到旧 `start_gsvmove.bat`、语音包缺失或语音包损坏时，将“安装最新语音包”置于顶部。用户选择固定磁盘后，目标路径为：
+
+```text
+&lt;磁盘根&gt;\AemeathDeskPet\voice\ONNX_aimisiV2
+```
+
+下载和安装使用独立进度条。RAR 解压期间第二条进度条使用动态状态，不递归扫描正在增长的模型目录，以免与解压器争用磁盘 I/O 并导致界面失去响应；解压完成后，第二条进度按完整 SHA-256 校验、轻量依赖检查、激活与旧运行时清理组成单调递增的总进度。校验阶段按实际读取字节推进，只有激活和清理完成后才到达 100%。安装器先在同一磁盘的临时目录下载单个 archive、审计归档路径、解压并执行完整 SHA-256 校验；必要的轻量 Python 组件安装完成后，才释放当前引擎并原子替换活动包。失败时保留原活动包并清理临时目录。
+
+安装前只执行所选磁盘的容量检查和安装目录创建，不能为查找旧 GSVmove 而递归扫描桌面、下载目录或用户目录。下载应在容量检查通过后立即开始；新包成功激活后，只按已有路径记录解析和清理旧运行时，记录缺失或无效时保留旧目录。
+
+磁盘下拉弹层必须使用桌宠粉青配色并注册到安装浮窗之上的窗口层级。开始安装后，内置 RAR 校验与下载连接分别报告状态；下载首批数据到达前使用动态进度，不能让网络等待持续显示为“准备 RAR 后端”。进行中的安装窗口提供“后台安装”：点击后立即隐藏窗口但不取消下载、解压或激活任务；从控制面板再次打开安装入口可恢复查看原进度。后台模式仅通过桌宠气泡提示转入后台、下载完成并进入解压校验、激活、完成以及失败或取消等关键节点，禁止按进度回调刷屏。应用退出时仍按正常清理流程取消活动安装。
+
+成功状态写入 `&lt;用户根&gt;/user/state/voice_package.json`，同时将 `gsv_auto_start` 持久化为开启并立即预热新包。只有新包激活成功后才允许删除路径记录明确指向且通过安全校验的旧外部 GSVmove 目录、`start_gsvmove.bat` 和旧路径记录；仓库内 `lib/script/gsvmove/` 是公开兼容门面，不属于清理目标。
+
+控制面板对有效包和已检测到的损坏包显示“删除语音包”入口。用户确认后，服务必须在同一推理锁内释放当前 ONNX 引擎并完成后台删除，随后清理匹配的安装状态并立即切回安装提示。删除 API 只接受固定磁盘下 `&lt;磁盘根&gt;\AemeathDeskPet\voice\ONNX_aimisiV2` 的普通目录，拒绝任意状态路径和符号链接；不会删除语音缓存或仓库内兼容门面。删除中断形成的不完整目录仍应被识别为损坏包，允许再次删除或直接重新安装。
+
+## 5. 推理契约
+
+`GsvmoveService` 保留既有事件和公开函数，但不再启动端口 9880 或请求 HTTP `/tts`。单个常驻 `AimisiOnnx` 引擎在原语音工作线程中处理请求，自动识别中文或英文，并输出 PCM 16-bit WAV 到用户缓存。
+
+格式版本 2 采用 GPT-SoVITS API v2 的参数命名。参考音频固定为包内 `reference.wav`，不开放 `ref_audio_path` 和 `aux_ref_audio_paths`；`prompt_text`、`prompt_lang` 可以为固定参考音频提供动态文案与语言。
+
+实际参与当前 v2Pro 推理的参数为：
+
+- `text`、`text_lang`：合成文本与 `zh`、`en`、`auto` 语言选择。桌宠聊天会保留中英文原文，并按内容携带对应语言提示；混合文本使用 `auto`。
+- `prompt_text`、`prompt_lang`：固定参考音频的提示文案与语言；省略时使用包内 `reference.txt` 和中文。
+- `top_k`、`top_p`、`temperature`、`repetition_penalty`、`seed`：直接进入 ONNX T2S 采样图。
+- `speed_factor`：范围 0.5 至 2.0，默认 1.0；在 VITS 内部调整语义时间轴，不对最终波形重采样，因此不会随语速整体升降调。动态长度严格复刻原生 `speed == 1` 分支和 `floor(length / speed) + 1` 规则，固定种子噪声在图内裁到同一长度。
+- `text_split_method`、`fragment_interval`：按 `cut0` 至 `cut5` 切分长文本并控制片段间停顿。
+- `max_steps`：ONNX 语义解码保护上限，范围 64 至 1200。
+
+控制面板开放上述实际生效的 `temperature`、`top_k`、`top_p`、`repetition_penalty`、`speed_factor`、`text_split_method`、`fragment_interval`、`seed` 和 `max_steps`。面板值作为每次桌宠语音请求的默认值，事件请求显式提供同名参数时仍以请求值优先。
+
+参考 HuBERT 提示语义复刻 9872/API 当前链路：在 16 kHz 参考音频尾部追加 `32000 * 0.3` 个零样本，再提取提示 token；说话人编码和 VITS 参考频谱仍使用未追加静音的参考音频。Genie 中文 G2P 对当前参考文案及回归句生成的标准化文本、音素 ID 与 `word2ph` 已与 9872 原生 `chinese2` 链路逐项核对一致。
+
+请求层还接受 `batch_size`、`batch_threshold`、`split_bucket`、`parallel_infer`、`streaming_mode`、`overlap_length`、`min_chunk_length`、`sample_steps`、`super_sampling` 和 `media_type`。当前图固定 batch 1，桌宠需要完整 WAV 后再播放，所以批处理、并行和流式参数不改变执行策略；`sample_steps` 与 `super_sampling` 是 v3/v4 参数，对 v2Pro 不适用。新增调用方应区分“兼容接收”和“当前模型实际消费”，不得把不适用字段描述为已生效。
+
+## 6. 发布验收
+
+更新语音包时至少验证：
+
+```powershell
+py -3 -m unittest tests.test_voice_package_manager tests.test_onnx_voice_runtime tests.test_voice_package_installer_ui
+py -3 scripts/package_release.py --dry-run --version VERIFY
+py -3 scripts/package_green_release.py --dry-run --version VERIFY
+```
+
+普通版和绿色版都必须包含 `UnRAR.exe` 和 `LICENSE-UnRAR.txt`。发布仓库不得包含旧七分卷；上传后应分别从 ModelScope 与 Hugging Face 的公开 resolve 链接抽样下载，校验 archive SHA-256、执行完整包校验和一次中英文 CPU 推理。</pre>
+        </article>
+        <article class="card">
+            <header>
+                <div class="eyebrow">2026-07-31 10:15</div>
                 <h3>调度系统使用说明</h3>
                 <a class="download" href="doc/调度系统使用说明.txt" download>下载原文件</a>
             </header>
-            <pre>飞行雪绒调度系统使用说明（LTS1.0.6pre2）
+            <pre>飞行雪绒调度系统使用说明（LTS1.0.6pre4）
 
 一、核心实现
 - 文件：`lib/core/timing/manager.py`
@@ -2922,7 +3055,7 @@ pet.cancel_task(task_id)
             </div>
         </section>
     </main>
-    <footer>由飞行雪绒 LTS1.0.6pre2 代码生成 · 粉粉青青也是科技感 (ﾉ◕ヮ◕)ﾉ*:･ﾟ✧</footer>
+    <footer>由飞行雪绒 LTS1.0.6pre4 代码生成 · 粉粉青青也是科技感 (ﾉ◕ヮ◕)ﾉ*:･ﾟ✧</footer>
     <script>
     (() => {
         const letters = "FLYINGSNOWVELVET";

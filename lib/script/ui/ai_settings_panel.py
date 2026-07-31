@@ -47,6 +47,10 @@ from config.general_user_settings import save_general_values
 from config.scale import scale_px
 from lib.script.ui.ai_settings_validators import validate_ai_values
 from lib.script.ui.ai_settings_storage import load_ai_values, save_ai_values, apply_ai_runtime
+from lib.script.ui.announcement_dialog import (
+    load_announcement_preferences,
+    set_announcement_forever_suppressed,
+)
 from lib.script.ui.qq_group_dialog import QQGroupDialog
 from lib.script.ui.ai_settings_tabs import (
     attach_ai_settings_tabs,
@@ -72,6 +76,11 @@ from lib.script.chat.ollama_registry import get_available_model_names, get_model
 from lib.script.chat.network_policy import API_TIMEOUT_SECS
 from lib.script.microphone_stt.push_to_talk import parse_hotkey_binding
 from lib.script.ui.update_dialog import DesktopPetUpdateDialog
+from lib.script.ui.voice_package_installer import (
+    VoicePackageInstallBanner,
+    VoicePackageInstallerDialog,
+    VoicePackageManagementBar,
+)
 from lib.script.workbench.settings import (
     GENERAL_CONFIG_CATEGORIES,
     SettingsPageScaffold,
@@ -80,7 +89,7 @@ from lib.script.workbench.settings import (
 from lib.script.workbench.theme import COLORS as WORKBENCH_COLORS, get_workbench_colors
 from lib.script.yuanbao_free_api import get_yuanbao_free_api_service
 from lib.script.yuanbao_free_api.service import get_yuanbao_free_api_log_path
-from lib.script.gsvmove import is_gsvmove_launcher_available
+from lib.script.gsvmove import get_voice_package_status
 
 _logger = get_logger(__name__)
 
@@ -89,6 +98,10 @@ _GPU_MODE_CPU = "cpu"
 _GPU_MODE_GPU = "gpu"
 _GPU_MODE_AUTO = "auto"
 _DROPDOWN_POPUP_LAYER = 601
+_EXTERNAL_CONFIG_FIELD_KINDS = {
+    "external_autostart",
+    "external_announcement_suppression",
+}
 
 _MANUAL_API_PROVIDER_PRESETS = (
     ("自定义地址", ""),
@@ -119,8 +132,15 @@ _DEFAULT_VALUES = {
     "api_temperature": 1.35,
     "model_vision": 0,
     "gsv_auto_start": False,
-    "gsv_temperature": 1.35,
-    "gsv_speed_factor": 1.05,
+    "gsv_temperature": 1.0,
+    "gsv_top_k": 15,
+    "gsv_top_p": 1.0,
+    "gsv_repetition_penalty": 1.35,
+    "gsv_speed_factor": 1.0,
+    "gsv_text_split_method": "cut5",
+    "gsv_fragment_interval": 0.3,
+    "gsv_seed": -1,
+    "gsv_max_steps": 500,
     "ai_voice_max_chars": 80,
     "gsv_cache_max_files": 20,
     "memory_context_limit": 12,
@@ -186,7 +206,6 @@ _CATEGORY_KEY_ALLOWLIST = {
             "tooltip_opacity",
             "ui_fade_duration",
             "auto_hide_mouse_distance",
-            "workbench_light_theme",
         },
         "COMMAND_DIALOG": {"idle_timeout_ms"},
     },
@@ -299,7 +318,6 @@ _CATEGORY_KEY_ALLOWLIST = {
 
 _GENERAL_BOOL_KEYS: set[tuple[str, str]] = {
     ("ANIMATION", "start_exit_enabled"),
-    ("UI", "workbench_light_theme"),
     ("PARTICLES", "enable_stroke"),
     ("MORTOR", "bgm_enabled"),
     ("STARTUP", "ensure_desktop_shortcut"),
@@ -603,7 +621,6 @@ _KEY_FRIENDLY_NAME = {
         "tooltip_opacity": "悬浮说明透明度",
         "ui_fade_duration": "淡入淡出时长(ms)",
         "auto_hide_mouse_distance": "自动关闭阈值",
-        "workbench_light_theme": "工作台亮色主题",
     },
     "ANIMATION": {
         "pet_size": "宠物尺寸",
@@ -1637,9 +1654,14 @@ class AISettingsPanel(QWidget):
         self._workbench_pages: dict[str, QWidget] = {}
         self._ui_thread_call.connect(self._invoke_ui_callable)
         self._ec = get_event_center()
+        self._yuanbao_login_status_generation = 0
+        self._yuanbao_login_status_subscribed = False
+        self._subscribe_yuanbao_login_events()
         self._autostart_checkbox = None
+        self._announcement_suppression_checkbox = None
         self._autostart_status_subscribed = False
         self._update_dialog: DesktopPetUpdateDialog | None = None
+        self._voice_installer_dialog: VoicePackageInstallerDialog | None = None
         self._qq_group_dialog: QQGroupDialog | None = None
         self._subscribe_autostart_events()
         self.setWindowTitle("控制面板")
@@ -1859,6 +1881,17 @@ class AISettingsPanel(QWidget):
         self._title_label = scaffold.title_label
         self._hint_label = scaffold.description_label
 
+        self._voice_package_status = get_voice_package_status()
+        self._voice_package_banner = VoicePackageInstallBanner(scaffold.content)
+        self._voice_package_banner.install_requested.connect(self._on_install_voice_package)
+        self._voice_package_banner.set_package_status(self._voice_package_status)
+        scaffold.content_layout.addWidget(self._voice_package_banner)
+        self._voice_package_management = VoicePackageManagementBar(scaffold.content)
+        self._voice_package_management.package_removed.connect(self._on_voice_package_removed)
+        self._voice_package_management.removal_failed.connect(self._on_voice_package_removal_failed)
+        self._voice_package_management.set_package_status(self._voice_package_status)
+        scaffold.content_layout.addWidget(self._voice_package_management)
+
         interface_section = scaffold.add_section(
             "回复模式",
             "选择本次保存后固定使用的回复来源。",
@@ -1986,6 +2019,7 @@ class AISettingsPanel(QWidget):
         form.addRow("元宝登录", yuanbao_login_row)
         self._set_widget_description(self._start_yuanbao_wechat_login_btn, "启动本地 YuanBao-Free-API 服务，并使用微信扫码方式登录元宝；程序会固定使用内置 loopback 地址、占位密钥和默认模型。")
         self._set_widget_description(self._stop_yuanbao_login_btn, "停止元宝登录流程并关闭本地元宝服务。")
+        self._set_yuanbao_login_actions(logged_in=False)
 
         self._ollama_section = scaffold.add_section(
             "Ollama 配置",
@@ -2069,53 +2103,102 @@ class AISettingsPanel(QWidget):
         self._force_mode.currentIndexChanged.connect(self._update_reply_mode_sections)
         self._update_reply_mode_sections()
 
-        self._gsv_launcher_available = is_gsvmove_launcher_available()
+        self._gsv_launcher_available = not self._voice_package_status.install_required
         self._voice_section = scaffold.add_section(
             "语音合成",
-            "控制 GSV 服务启动、表达参数和本地缓存。",
+            "控制 ONNX 语音模型、采样、节奏和本地缓存。",
         )
         form = create_settings_form()
         self._voice_section.body_layout.addLayout(form)
 
-        self._gsv_auto_start = QCheckBox("自动启用GSV语音模块")
+        self._gsv_auto_start = QCheckBox("自动启用ONNX语音模块")
         self._gsv_auto_start.setChecked(_DEFAULT_VALUES["gsv_auto_start"])
         form.addRow("", self._gsv_auto_start)
         self._set_form_row_description(
             form,
             self._gsv_auto_start,
-            "开启后，桌宠启动时会在后台预拉起并预热 GSV 服务；关闭后不自动拉起，也不处理 AI 文本语音。",
+            "开启后，桌宠启动时会在后台加载并预热 ONNX 语音模型。",
         )
 
-        self._gsv_temperature = _DecimalSliderField(0.0, 2.0, 0.05, value=_DEFAULT_VALUES["gsv_temperature"])
-        form.addRow("GSV服务温度", self._gsv_temperature)
+        self._gsv_temperature = _DecimalSliderField(0.01, 2.0, 0.01, value=_DEFAULT_VALUES["gsv_temperature"])
+        form.addRow("采样温度", self._gsv_temperature)
         self._set_form_row_description(
             form,
             self._gsv_temperature,
-            "GSV 文本转语音温度范围 0~2，越高表达越活跃。",
+            "T2S 采样温度；越高变化越多，过高可能使语调不稳定。",
         )
 
+        self._gsv_top_k = _DecimalSliderField(1, 1025, 1, value=_DEFAULT_VALUES["gsv_top_k"], decimals=0)
+        form.addRow("Top-K", self._gsv_top_k)
+        self._set_form_row_description(form, self._gsv_top_k, "每一步保留概率最高的候选数量，默认 15。")
+
+        self._gsv_top_p = _DecimalSliderField(0.01, 1.0, 0.01, value=_DEFAULT_VALUES["gsv_top_p"])
+        form.addRow("Top-P", self._gsv_top_p)
+        self._set_form_row_description(form, self._gsv_top_p, "限制累计概率候选范围，1.0 表示不额外截断。")
+
+        self._gsv_repetition_penalty = _DecimalSliderField(
+            0.1,
+            2.0,
+            0.01,
+            value=_DEFAULT_VALUES["gsv_repetition_penalty"],
+        )
+        form.addRow("重复惩罚", self._gsv_repetition_penalty)
+        self._set_form_row_description(form, self._gsv_repetition_penalty, "抑制语义 token 重复，默认 1.35。")
+
         self._gsv_speed_factor = _DecimalSliderField(0.5, 2.0, 0.05, value=_DEFAULT_VALUES["gsv_speed_factor"])
-        form.addRow("GSV语速", self._gsv_speed_factor)
+        form.addRow("ONNX语速", self._gsv_speed_factor)
         self._set_form_row_description(
             form,
             self._gsv_speed_factor,
-            "GSV 文本转语音语速，1.0 为默认语速，越大越快。",
+            "模型内部语速，1.0 为原速；不会通过重采样改变音高。",
         )
 
+        self._gsv_text_split_method = _WatermarkComboBox()
+        self._gsv_text_split_method.setView(QListView(self._gsv_text_split_method))
+        for label, value in (
+            ("按全部标点分句", "cut5"),
+            ("不自动分句", "cut0"),
+            ("每四句一段", "cut1"),
+            ("每约 50 字一段", "cut2"),
+            ("按中文句号分句", "cut3"),
+            ("按英文句号分句", "cut4"),
+        ):
+            self._gsv_text_split_method.addItem(label, value)
+        form.addRow("长文本分句", self._gsv_text_split_method)
+        self._set_form_row_description(form, self._gsv_text_split_method, "控制长回复如何拆成多个独立语音片段。")
+
+        self._gsv_fragment_interval = _DecimalSliderField(
+            0.0,
+            5.0,
+            0.05,
+            value=_DEFAULT_VALUES["gsv_fragment_interval"],
+        )
+        form.addRow("片段停顿(秒)", self._gsv_fragment_interval)
+        self._set_form_row_description(form, self._gsv_fragment_interval, "分句片段之间插入的静音时长，默认 0.3 秒。")
+
+        self._gsv_seed = QLineEdit(str(_DEFAULT_VALUES["gsv_seed"]))
+        self._gsv_seed.setPlaceholderText("-1 表示每次随机")
+        form.addRow("随机种子", self._gsv_seed)
+        self._set_form_row_description(form, self._gsv_seed, "-1 为随机；固定非负整数可复现 T2S 采样结果。")
+
+        self._gsv_max_steps = _DecimalSliderField(64, 1200, 1, value=_DEFAULT_VALUES["gsv_max_steps"], decimals=0)
+        form.addRow("最大解码步数", self._gsv_max_steps)
+        self._set_form_row_description(form, self._gsv_max_steps, "语义解码保护上限；过低可能截断，默认 500。")
+
         self._ai_voice_max_chars = _DecimalSliderField(20, 80, 1, value=_DEFAULT_VALUES["ai_voice_max_chars"])
-        form.addRow("GSV语音字数限制", self._ai_voice_max_chars)
+        form.addRow("语音字数限制", self._ai_voice_max_chars)
         self._set_form_row_description(
             form,
             self._ai_voice_max_chars,
-            "GSV 语音合成最大文本长度，超过此长度的回复不会转为语音。",
+            "ONNX 语音合成最大文本长度，超过此长度的回复不会转为语音。",
         )
 
         self._gsv_cache_max_files = _DecimalSliderField(1, 128, 1, value=_DEFAULT_VALUES["gsv_cache_max_files"], decimals=0)
-        form.addRow("GSV缓存上限", self._gsv_cache_max_files)
+        form.addRow("语音缓存上限", self._gsv_cache_max_files)
         self._set_form_row_description(
             form,
             self._gsv_cache_max_files,
-            "保留最近生成的 GSV 语音条数，超出后按时间自动删除旧缓存，默认 20，范围 1~128。",
+            "保留最近生成的 ONNX 语音条数，超出后按时间自动删除旧缓存。",
         )
 
         gsv_cache_row, gsv_cache_layout = self._create_field_row_group(spacing=scale_px(8, min_abs=6))
@@ -2128,9 +2211,9 @@ class AISettingsPanel(QWidget):
         self._set_form_row_description(
             form,
             gsv_cache_row,
-            "打开 GSV 语音缓存目录，方便查看并保留最近生成的喜欢音频。",
+            "打开 ONNX 语音缓存目录。",
         )
-        self._set_widget_description(self._open_gsv_cache_dir_btn, "打开 GSV 语音缓存目录。")
+        self._set_widget_description(self._open_gsv_cache_dir_btn, "打开 ONNX 语音缓存目录。")
         self._update_gsv_settings_visibility()
 
         memory_section = scaffold.add_section(
@@ -2459,6 +2542,10 @@ class AISettingsPanel(QWidget):
                 if category_id == "system_dispatch" and str(entry_dict_name) == "STARTUP" and key == "ensure_desktop_shortcut":
                     self._append_autostart_field(form, fields)
                     section_fields_added = True
+
+            if category_id == "ui_anim" and str(dict_name) == "UI":
+                self._append_announcement_suppression_field(form, fields)
+                section_fields_added = True
 
             if section_fields_added:
                 section.body_layout.addLayout(form)
@@ -3048,14 +3135,91 @@ class AISettingsPanel(QWidget):
                 os.startfile(str(cache_dir))  # type: ignore[attr-defined]
             else:
                 subprocess.Popen(["explorer", str(cache_dir)], shell=False)
-            self._emit_info("已打开 GSV 语音缓存文件夹。", min_tick=10, max_tick=90)
+            self._emit_info("已打开 ONNX 语音缓存文件夹。", min_tick=10, max_tick=90)
         except Exception as e:
-            _logger.error("打开 GSV 语音缓存文件夹失败: %s", e)
-            self._emit_info(f"打开 GSV 语音缓存文件夹失败: {e}", min_tick=20, max_tick=180)
+            _logger.error("打开 ONNX 语音缓存文件夹失败: %s", e)
+            self._emit_info(f"打开 ONNX 语音缓存文件夹失败: {e}", min_tick=20, max_tick=180)
+
+    def _ensure_voice_installer_dialog(self) -> VoicePackageInstallerDialog:
+        if self._voice_installer_dialog is None:
+            dialog = VoicePackageInstallerDialog()
+            dialog.install_succeeded.connect(self._on_voice_package_installed)
+            self._voice_installer_dialog = dialog
+        return self._voice_installer_dialog
+
+    def _on_install_voice_package(self) -> None:
+        dialog = self._ensure_voice_installer_dialog()
+        if dialog.is_busy():
+            self.fade_out()
+            delay_ms = max(80, int(UI.get("ui_fade_duration", 180)))
+            QTimer.singleShot(delay_ms, dialog.show_dialog)
+            return
+        self.fade_out()
+        delay_ms = max(80, int(UI.get("ui_fade_duration", 180)))
+        QTimer.singleShot(delay_ms, dialog.show_dialog)
+
+    def _on_voice_package_installed(self, _result=None) -> None:
+        values = load_ai_values(_DEFAULT_VALUES)
+        values["gsv_auto_start"] = True
+        save_ai_values(values, _DEFAULT_VALUES)
+        apply_ai_runtime(values, _DEFAULT_VALUES)
+        self._gsv_auto_start.setChecked(True)
+        self._refresh_voice_package_ui()
+        try:
+            from lib.script.gsvmove import get_gsvmove_service
+
+            get_gsvmove_service().reload_voice_package()
+        except Exception as exc:
+            _logger.warning("安装后预热 ONNX 语音包失败: %s", exc)
+
+    def _on_voice_package_removed(self, _package_root=None) -> None:
+        self._refresh_voice_package_ui()
+        self._emit_info("ONNX 语音包已删除，可通过安装入口重新安装。", min_tick=12, max_tick=120)
+
+    def _on_voice_package_removal_failed(self, message: str) -> None:
+        self._refresh_voice_package_ui()
+        if self._voice_package_status.kind == "installed":
+            try:
+                from lib.script.gsvmove import get_gsvmove_service
+
+                get_gsvmove_service().reload_voice_package()
+            except Exception as exc:
+                _logger.warning("删除失败后恢复 ONNX 语音包失败: %s", exc)
+        self._emit_info(f"删除 ONNX 语音包失败：{message}", min_tick=20, max_tick=180)
 
     @staticmethod
     def _yuanbao_login_provider_label(provider: str) -> str:
         return "手机QQ" if str(provider).strip().lower() == "qq" else "微信"
+
+    def _set_yuanbao_login_actions(self, *, logged_in: bool) -> None:
+        """登录按钮保持单一可执行动作，避免未登录时出现无效的退出入口。"""
+        self._start_yuanbao_wechat_login_btn.setVisible(not logged_in)
+        self._stop_yuanbao_login_btn.setVisible(logged_in)
+
+    def _refresh_yuanbao_login_actions(self) -> None:
+        """后台读取已运行服务的登录态；不启动服务、不触发浏览器登录。"""
+        self._yuanbao_login_status_generation += 1
+        generation = self._yuanbao_login_status_generation
+
+        def worker() -> None:
+            try:
+                status = get_yuanbao_free_api_service().peek_service_status()
+                logged_in = bool((status or {}).get("logged_in"))
+            except Exception as exc:
+                _logger.debug("读取元宝登录状态失败: %s", exc)
+                logged_in = False
+
+            def apply_result() -> None:
+                if generation != self._yuanbao_login_status_generation:
+                    return
+                self._set_yuanbao_login_actions(logged_in=logged_in)
+
+            self._run_on_ui_thread(apply_result)
+
+        try:
+            get_compute_hub().submit_io(worker)
+        except RuntimeError as exc:
+            _logger.debug("提交元宝登录状态读取任务失败: %s", exc)
 
     def _on_start_yuanbao_wechat_login(self) -> None:
         self._on_start_yuanbao_login("wechat")
@@ -3102,18 +3266,29 @@ class AISettingsPanel(QWidget):
                 }
 
                 if logged_in:
+                    self._run_on_ui_thread(
+                        lambda: self._set_yuanbao_login_actions(logged_in=True)
+                    )
                     self._emit_info("元宝已登录，本地服务可直接使用。", min_tick=14, max_tick=120)
                 elif qrcode_ready:
+                    self._run_on_ui_thread(
+                        lambda: self._set_yuanbao_login_actions(logged_in=False)
+                    )
                     self._emit_info(f"元宝二维码已生成，请使用{provider_label}扫码登录。", min_tick=16, max_tick=180)
                 elif login_in_progress or (not last_error and stage_in_progress):
+                    self._run_on_ui_thread(
+                        lambda: self._set_yuanbao_login_actions(logged_in=False)
+                    )
                     detail = stage or message or '正在继续初始化元宝登录流程'
                     self._emit_info(f"元宝登录流程已启动：{detail}", min_tick=14, max_tick=180)
                 else:
+                    self._run_on_ui_thread(self._refresh_yuanbao_login_actions)
                     log_path = get_yuanbao_free_api_log_path()
                     detail = last_error or stage or message or f'请查看 {log_path.name}'
                     self._emit_info(f"元宝登录未能启动：{detail}", min_tick=18, max_tick=260)
             except Exception as exc:
                 _logger.error("Start YuanBao login failed: %s", exc)
+                self._run_on_ui_thread(self._refresh_yuanbao_login_actions)
                 self._emit_info(f"启动元宝登录失败: {exc}", min_tick=18, max_tick=220)
 
         try:
@@ -3127,20 +3302,24 @@ class AISettingsPanel(QWidget):
             'qr_png': None,
         }))
         self._emit_info(f"正在启动元宝服务并准备{provider_label}登录二维码；本地回环地址、占位密钥与模型名均由程序内部管理。", min_tick=12, max_tick=200)
-        get_compute_hub().submit_io(worker)
+        get_compute_hub().submit_interactive_io(worker)
 
     def _on_stop_yuanbao_login(self) -> None:
         def worker() -> None:
             try:
                 svc = get_yuanbao_free_api_service()
                 svc.stop_login_flow()
+                self._run_on_ui_thread(
+                    lambda: self._set_yuanbao_login_actions(logged_in=False)
+                )
                 self._emit_info("已退出元宝登录，并关闭本地元宝服务。", min_tick=12, max_tick=140)
             except Exception as exc:
                 _logger.error("Stop YuanBao login failed: %s", exc)
+                self._run_on_ui_thread(self._refresh_yuanbao_login_actions)
                 self._emit_info(f"退出元宝登录失败: {exc}", min_tick=18, max_tick=220)
 
         self._emit_info("正在退出元宝登录并关闭本地元宝服务...", min_tick=10, max_tick=120)
-        get_compute_hub().submit_io(worker)
+        get_compute_hub().submit_interactive_io(worker)
 
     @staticmethod
     def _describe_yuanbao_stage(stage: str) -> str:
@@ -3317,9 +3496,45 @@ class AISettingsPanel(QWidget):
             "default": bool(default_enabled),
         })
 
+    @staticmethod
+    def _get_announcement_forever_suppressed() -> bool:
+        return bool(load_announcement_preferences().suppress_forever)
+
+    @staticmethod
+    def _set_announcement_forever_suppressed(enabled: bool) -> None:
+        set_announcement_forever_suppressed(bool(enabled))
+
+    def _append_announcement_suppression_field(
+        self,
+        form: QFormLayout,
+        fields: list[dict],
+    ) -> None:
+        editor = QCheckBox()
+        editor.setObjectName("AnnouncementSuppressionCheckbox")
+        editor.setChecked(self._get_announcement_forever_suppressed())
+        self._announcement_suppression_checkbox = editor
+        row_widget = self._wrap_field_widget(editor)
+        label = self._create_form_label("不显示公告")
+        description = (
+            "控制启动时是否自动显示公告；托盘“桌宠公告”仍可手动打开。"
+            "取消勾选只解除永久抑制，不清除当日抑制状态。"
+        )
+        self._set_widget_description(label, description)
+        self._set_widget_description(row_widget, description)
+        self._set_widget_description(editor, description)
+        form.addRow(label, row_widget)
+        fields.append({
+            "kind": "external_announcement_suppression",
+            "dict_name": "UI",
+            "key": "announcement_suppress_forever",
+            "editor": editor,
+            "template": False,
+            "default": False,
+        })
+
     def _parse_editor_value(self, field: dict) -> dict[str, object]:
         kind = str(field.get("kind") or "single")
-        if kind == "external_autostart":
+        if kind in _EXTERNAL_CONFIG_FIELD_KINDS:
             return {}
         if kind == "range_pair":
             keys = field.get("keys") or []
@@ -3553,6 +3768,11 @@ class AISettingsPanel(QWidget):
                     if isinstance(editor, QCheckBox):
                         editor.setChecked(self._get_autostart_enabled())
                     continue
+                if kind == "external_announcement_suppression":
+                    editor = field.get("editor")
+                    if isinstance(editor, QCheckBox):
+                        editor.setChecked(self._get_announcement_forever_suppressed())
+                    continue
 
                 dict_name = str(field.get("dict_name") or "")
                 section = getattr(cc, dict_name, None)
@@ -3633,6 +3853,9 @@ class AISettingsPanel(QWidget):
                     if "default" not in field:
                         field["default"] = bool(self._get_autostart_enabled())
                     continue
+                if kind == "external_announcement_suppression":
+                    field.setdefault("default", False)
+                    continue
                 if not dict_name:
                     continue
                 bucket = defaults.setdefault(dict_name, {})
@@ -3666,6 +3889,11 @@ class AISettingsPanel(QWidget):
                 if isinstance(editor, QCheckBox):
                     editor.setChecked(bool(field.get("default", self._get_autostart_enabled())))
                 continue
+            if kind == "external_announcement_suppression":
+                editor = field.get("editor")
+                if isinstance(editor, QCheckBox):
+                    editor.setChecked(bool(field.get("default", False)))
+                continue
 
             dict_name = str(field.get("dict_name") or "")
             defaults = meta.get("defaults", {})
@@ -3697,12 +3925,13 @@ class AISettingsPanel(QWidget):
             return
         for field in meta.get("fields", []):
             kind = str(field.get("kind") or "single")
-            if kind != "external_autostart":
-                continue
             editor = field.get("editor")
             if not isinstance(editor, QCheckBox):
                 continue
-            self._set_autostart_enabled(bool(editor.isChecked()))
+            if kind == "external_autostart":
+                self._set_autostart_enabled(bool(editor.isChecked()))
+            elif kind == "external_announcement_suppression":
+                self._set_announcement_forever_suppressed(bool(editor.isChecked()))
 
     def _on_save_config_category(self, category_id: str) -> bool:
         meta = self._config_tab_meta.get(category_id)
@@ -4178,6 +4407,7 @@ class AISettingsPanel(QWidget):
 
     def show_centered(self) -> None:
         self.load_values()
+        self._refresh_voice_package_ui()
         current_index = 0
         # 获取当前选中的标签索引（从按钮组或按钮列表）
         if hasattr(self, '_tab_button_group') and self._tab_button_group is not None:
@@ -4260,8 +4490,28 @@ class AISettingsPanel(QWidget):
             self._ec.unsubscribe(EventType.TICK, self._on_tick)
             self._tick_subscribed = False
 
+    def _subscribe_yuanbao_login_events(self) -> None:
+        if not self._yuanbao_login_status_subscribed:
+            self._ec.subscribe(EventType.YUANBAO_LOGIN_QR_STATUS, self._on_yuanbao_login_status_event)
+            self._yuanbao_login_status_subscribed = True
+
+    def _unsubscribe_yuanbao_login_events(self) -> None:
+        if self._yuanbao_login_status_subscribed:
+            self._ec.unsubscribe(EventType.YUANBAO_LOGIN_QR_STATUS, self._on_yuanbao_login_status_event)
+            self._yuanbao_login_status_subscribed = False
+
+    def _on_yuanbao_login_status_event(self, event: Event) -> None:
+        payload = event.data or {}
+        if "logged_in" not in payload:
+            return
+        logged_in = bool(payload.get("logged_in"))
+        self._run_on_ui_thread(
+            lambda: self._set_yuanbao_login_actions(logged_in=logged_in)
+        )
+
     def deleteLater(self) -> None:
         self._unsubscribe_border_effect_events()
+        self._unsubscribe_yuanbao_login_events()
         self._unsubscribe_autostart_events()
         self._hide_floating_tab()
         if self._tab_floating is not None:
@@ -4387,11 +4637,15 @@ class AISettingsPanel(QWidget):
             raise ValueError("模型视力范围应为 0~100")
 
         try:
-            gsv_temperature = float(self._gsv_temperature.text().strip() or "1.35")
+            gsv_temperature = float(self._gsv_temperature.text().strip() or "1.0")
         except ValueError as e:
             raise ValueError("GSV服务温度必须是数字") from e
-        if not (0.0 <= gsv_temperature <= 2.0):
-            raise ValueError("GSV服务温度范围应为 0~2")
+        if not (0.01 <= gsv_temperature <= 2.0):
+            raise ValueError("GSV服务温度范围应为 0.01~2")
+
+        gsv_top_k = int(float(self._gsv_top_k.text().strip() or "15"))
+        gsv_top_p = float(self._gsv_top_p.text().strip() or "1.0")
+        gsv_repetition_penalty = float(self._gsv_repetition_penalty.text().strip() or "1.35")
 
         try:
             gsv_speed_factor = float(self._gsv_speed_factor.text().strip() or "1.0")
@@ -4399,6 +4653,14 @@ class AISettingsPanel(QWidget):
             raise ValueError("GSV语速必须是数字") from e
         if not (0.5 <= gsv_speed_factor <= 2.0):
             raise ValueError("GSV语速范围应为 0.5~2.0")
+
+        gsv_text_split_method = str(self._gsv_text_split_method.currentData() or "cut5")
+        gsv_fragment_interval = float(self._gsv_fragment_interval.text().strip() or "0.3")
+        try:
+            gsv_seed = int(self._gsv_seed.text().strip() or "-1")
+        except ValueError as e:
+            raise ValueError("GSV随机种子必须是整数") from e
+        gsv_max_steps = int(float(self._gsv_max_steps.text().strip() or "500"))
 
         try:
             ai_voice_max_chars = int(float(self._ai_voice_max_chars.text().strip() or "40"))
@@ -4443,7 +4705,14 @@ class AISettingsPanel(QWidget):
             "model_vision": model_vision,
             "gsv_auto_start": bool(self._gsv_auto_start.isChecked()),
             "gsv_temperature": gsv_temperature,
+            "gsv_top_k": gsv_top_k,
+            "gsv_top_p": gsv_top_p,
+            "gsv_repetition_penalty": gsv_repetition_penalty,
             "gsv_speed_factor": gsv_speed_factor,
+            "gsv_text_split_method": gsv_text_split_method,
+            "gsv_fragment_interval": gsv_fragment_interval,
+            "gsv_seed": gsv_seed,
+            "gsv_max_steps": gsv_max_steps,
             "ai_voice_max_chars": ai_voice_max_chars,
             "gsv_cache_max_files": gsv_cache_max_files,
             "memory_context_limit": memory_context_limit,
@@ -4488,8 +4757,17 @@ class AISettingsPanel(QWidget):
         self._api_temperature.setText(str(values.get("api_temperature", 0.8)))
         self._model_vision.setText(str(values.get("model_vision", 0)))
         self._gsv_auto_start.setChecked(bool(values.get("gsv_auto_start", True)))
-        self._gsv_temperature.setText(str(values.get("gsv_temperature", 1.35)))
+        self._gsv_temperature.setText(str(values.get("gsv_temperature", 1.0)))
+        self._gsv_top_k.setText(str(values.get("gsv_top_k", 15)))
+        self._gsv_top_p.setText(str(values.get("gsv_top_p", 1.0)))
+        self._gsv_repetition_penalty.setText(str(values.get("gsv_repetition_penalty", 1.35)))
         self._gsv_speed_factor.setText(str(values.get("gsv_speed_factor", 1.0)))
+        split_method = str(values.get("gsv_text_split_method", "cut5"))
+        split_index = self._gsv_text_split_method.findData(split_method)
+        self._gsv_text_split_method.setCurrentIndex(max(0, split_index))
+        self._gsv_fragment_interval.setText(str(values.get("gsv_fragment_interval", 0.3)))
+        self._gsv_seed.setText(str(values.get("gsv_seed", -1)))
+        self._gsv_max_steps.setText(str(values.get("gsv_max_steps", 500)))
         self._ai_voice_max_chars.setText(str(values.get("ai_voice_max_chars", 40)))
         self._gsv_cache_max_files.setText(str(values.get("gsv_cache_max_files", 20)))
         self._memory_context_limit.setText(str(values.get("memory_context_limit", 12)))
@@ -4508,9 +4786,19 @@ class AISettingsPanel(QWidget):
         self._manual_api_section.setVisible(mode == "0")
         self._ollama_section.setVisible(mode == "2")
         self._yuanbao_section.setVisible(mode == "4")
+        if mode == "4":
+            self._refresh_yuanbao_login_actions()
 
     def _update_gsv_settings_visibility(self) -> None:
         self._voice_section.setVisible(bool(self._gsv_launcher_available))
+
+    def _refresh_voice_package_ui(self) -> None:
+        status = get_voice_package_status()
+        self._voice_package_status = status
+        self._gsv_launcher_available = not status.install_required
+        self._voice_package_banner.set_package_status(status)
+        self._voice_package_management.set_package_status(status)
+        self._update_gsv_settings_visibility()
 
     def _ollama_model_placeholder_message(self) -> str:
         error = get_model_list_error()

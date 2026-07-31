@@ -4,6 +4,14 @@ import os
 import threading
 import time
 
+# On Windows, loading Qt first can make ONNX Runtime bind incompatible native
+# DLLs. Preload the optional runtime before importing PyQt; voice errors remain
+# isolated when the dependency is absent or damaged.
+try:
+    import onnxruntime as _onnxruntime_preload  # noqa: F401
+except Exception:
+    _onnxruntime_preload = None
+
 from PyQt5.QtCore import QEvent, QTimer
 
 from config.config import GIF_FILES, DRAW, ANIMATION
@@ -79,6 +87,7 @@ class ApplicationState:
         self._init_ready = False
         # 系统托盘图标
         self._tray_icon = None
+        self._announcement_controller = None
         self._ui_preloader = None
         self._exit_requested = False
         self._restart_requested = False
@@ -100,7 +109,7 @@ class ApplicationState:
         # 音频核心在事件中心初始化后立即创建，以便订阅 APP_PRE_START 完成 MCI 预热
         from lib.core.voice.core import get_voice_core
         self._voice = get_voice_core()
-        # GSVmove 文本转语音桥接：按配置决定是否在预启动阶段后台拉起本地 TTS 服务
+        # ONNX 文本转语音桥接：按配置决定是否在预启动阶段后台加载本地模型。
         self._gsvmove = get_gsvmove_service()
         self._yuanbao_free_api = get_yuanbao_free_api_service()
         self._bug_tracker = get_bug_tracker_service()
@@ -193,6 +202,14 @@ class ApplicationState:
         except (TypeError, RuntimeError):
             pass
         self._tray_icon.quit_requested.connect(self._on_tray_quit)
+        try:
+            self._tray_icon.announcement_requested.disconnect(self._on_tray_announcement)
+        except (TypeError, RuntimeError):
+            pass
+        self._tray_icon.announcement_requested.connect(self._on_tray_announcement)
+
+        from lib.script.ui.announcement_dialog import AnnouncementController
+        self._announcement_controller = AnnouncementController(self._app)
 
         from lib.script.ui.preloader import preload_runtime_ui
         self._ui_preloader = preload_runtime_ui(self._tray_icon)
@@ -201,6 +218,8 @@ class ApplicationState:
             logger.info('系统托盘图标初始化成功')
         else:
             logger.warning('系统托盘图标初始化未立即成功，已转入后台重试')
+
+        self._announcement_controller.start()
 
         logger.info('桌面宠物启动成功！')
         logger.info('  左键点击 → 随机动作 + 粒子特效')
@@ -212,6 +231,11 @@ class ApplicationState:
         """托盘菜单退出回调"""
         # 调用 exit 方法进行正常退出流程
         self.request_exit(0)
+
+    def _on_tray_announcement(self):
+        """托盘菜单公告回调。"""
+        if self._announcement_controller is not None:
+            self._announcement_controller.open_from_tray()
 
     def _on_app_quit(self, event: Event):
         """统一接管 APP_QUIT，避免组件直接强退 Qt 事件循环。"""
@@ -264,7 +288,7 @@ class ApplicationState:
         self._app = _new_create_qt_application(logger, sys.argv)
         self._app.aboutToQuit.connect(self._on_qt_about_to_quit)
 
-        # GSVmove 按配置尽早拉起，以便与后续预启动延时并行完成服务启动/预热。
+        # ONNX 模型按配置尽早预热，与后续启动步骤并行执行。
         if self._gsvmove is not None and self._gsvmove.auto_start_enabled():
             self._gsvmove.kickoff_prestart()
 
@@ -393,6 +417,15 @@ class ApplicationState:
                 self._tray_icon.quit_requested.disconnect(self._on_tray_quit)
             except (TypeError, RuntimeError):
                 pass
+            try:
+                self._tray_icon.announcement_requested.disconnect(self._on_tray_announcement)
+            except (TypeError, RuntimeError):
+                pass
+
+        announcement_controller = getattr(self, '_announcement_controller', None)
+        if announcement_controller is not None:
+            announcement_controller.cleanup()
+            self._announcement_controller = None
 
         if self._pet:
             timing_manager = getattr(self._pet, '_timing_manager', None)
@@ -522,6 +555,11 @@ class ApplicationState:
         from lib.core.draw_core import cleanup_draw_core
         from lib.core.audio_meter import cleanup_audio_meter
         from lib.core.voice.core import cleanup_voice_core
+
+        announcement_controller = getattr(self, '_announcement_controller', None)
+        if announcement_controller is not None:
+            announcement_controller.cleanup()
+            self._announcement_controller = None
 
         cleanup_all_runtime_ui()
 

@@ -52,6 +52,7 @@ TOOLTIPS: dict[str, str] = {
     'tray_cleanup_cache':       '清理 temp 中音乐缓存，不清理历史与登录数据',
     'tray_cleanup_history':     '清空所有平台音乐历史与登录数据，不清理缓存',
     'tray_ai_settings':         '打开控制面板（含 AI 设置）',
+    'tray_announcement':        '打开桌宠公告',
     'tray_bug_tracker':         '打开独立 bug 跟踪窗口，实时查看 error 与定位源码',
     'tray_cmd_window':          '打开CMD终端窗口',
     'tray_game_mode':           '切换游戏模式：暂停粒子/特效/物理/层级刷新，并将桌宠帧率降至 30fps',

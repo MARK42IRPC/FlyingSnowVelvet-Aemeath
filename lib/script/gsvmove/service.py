@@ -1,97 +1,56 @@
-"""GSVmove TTS service bridge.
+"""Compatibility facade that routes AI voice requests to the ONNX package."""
 
-职责：
-- APP_PRE_START 阶段后台隐藏拉起 `C:\\AemeathDeskPet\\start_gsvmove.bat`
-- 监听 `AI_VOICE_REQUEST` 中的文本 TTS 请求
-- 调用本地 GSVmove HTTP API 生成音频，并回灌为 `SOUND_REQUEST`
-"""
+from __future__ import annotations
 
-import locale
+import random
 import shutil
-import subprocess
 import threading
 import time
 import uuid
-import random
-import os
-import re
-from queue import Empty, Queue
 from pathlib import Path
-
-import requests
-
-try:
-    from packaging.requirements import Requirement
-except Exception:
-    Requirement = None
+from queue import Empty, Queue
 
 import config.ollama_config as oc
-from config.shared_storage import (
-    ensure_shared_config_ready,
-    get_shared_config_path,
-    get_shared_root_dir,
-)
-from config.user_storage_paths import get_user_cache_dir, get_user_logs_dir
-from lib.core.event.center import Event, EventType
+from config.shared_storage import ensure_shared_config_ready, get_shared_root_dir
+from config.user_storage_paths import get_user_cache_dir
+from lib.core.compute_hub import get_compute_hub
+from lib.core.event.center import Event, EventType, get_event_center
 from lib.core.logger import get_logger
-from lib.script.local_hosted_service import LocalHostedServiceBase
+from lib.script.gsvmove.onnx_runtime import OnnxVoiceRuntime
+from lib.script.gsvmove.package_manager import (
+    _read_text_best_effort,
+    get_voice_package_status,
+    is_valid_legacy_gsvmove_root,
+    remove_voice_package as remove_voice_package_files,
+    resolve_legacy_gsvmove_root,
+)
+
 
 logger = get_logger(__name__)
 
-_DEFAULT_HOST = "127.0.0.1"
-_DEFAULT_PORT = 9880
-_DEFAULT_TIMEOUT = (3.0, 120.0)
 _DEFAULT_AUDIO_TYPE = "voice"
 _DEFAULT_MEDIA_TYPE = "wav"
-_STARTUP_WAIT_SECS = 90.0
-_HEALTH_POLL_INTERVAL = 0.5
-_SHORT_TEXT_SPLIT_METHOD = "cut0"
-_LAUNCHER_LOG_TAIL_LINES = 12
-_CMUDICT_MISSING_PATTERN = re.compile(r"Resource 'cmudict' not found", re.I)
-_ASCII_TOKEN_PATTERN = re.compile(r"[A-Za-z]+(?:[A-Za-z0-9_./:+-]*[A-Za-z0-9])?")
-_BATCH_SET_PATTERN = re.compile(r'(?im)^\s*set\s+"?(?P<name>[A-Za-z_]\w*)=(?P<value>[^\r\n"]*)"?\s*$')
-_BATCH_FIND_ROOT_PATTERN = re.compile(r'(?im)^\s*call\s+:find_root\s+"(?P<path>[^"\r\n]+)"')
-_BATCH_EXPAND_ROUNDS = 8
 
 
 def get_gsvmove_launcher_path() -> Path:
-    """返回约定的 GSVmove 启动入口，不触发服务初始化。"""
+    """Compatibility path for the legacy launcher."""
     return get_shared_root_dir() / "start_gsvmove.bat"
 
 
 def is_gsvmove_launcher_available() -> bool:
-    """判断启动时是否可提供 GSVmove 启动入口。"""
     try:
         return get_gsvmove_launcher_path().is_file()
     except Exception:
         return False
 
 
-def _hidden_console_kwargs() -> dict:
-    if os.name != "nt":
-        return {}
-    kwargs = {}
-    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    if creationflags:
-        kwargs["creationflags"] = creationflags
-    startupinfo_cls = getattr(subprocess, "STARTUPINFO", None)
-    if startupinfo_cls is not None:
-        startupinfo = startupinfo_cls()
-        startupinfo.dwFlags |= getattr(subprocess, "STARTF_USESHOWWINDOW", 0)
-        startupinfo.wShowWindow = getattr(subprocess, "SW_HIDE", 0)
-        kwargs["startupinfo"] = startupinfo
-    return kwargs
-
-
-
-
 def _get_gsv_temperature() -> float:
-    raw_value = oc.OLLAMA.get("gsv_temperature", 1.35)
+    raw_value = oc.OLLAMA.get("gsv_temperature", 1.0)
     try:
         temperature = float(raw_value)
     except (TypeError, ValueError):
-        temperature = 1.35
-    return max(0.0, min(2.0, temperature))
+        temperature = 1.0
+    return max(0.01, min(2.0, temperature))
 
 
 def _get_gsv_speed_factor() -> float:
@@ -101,6 +60,39 @@ def _get_gsv_speed_factor() -> float:
     except (TypeError, ValueError):
         speed_factor = 1.0
     return max(0.5, min(2.0, speed_factor))
+
+
+def _get_gsv_float(key: str, default: float, minimum: float, maximum: float) -> float:
+    try:
+        value = float(oc.OLLAMA.get(key, default))
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, min(maximum, value))
+
+
+def _get_gsv_int(key: str, default: int, minimum: int, maximum: int) -> int:
+    try:
+        value = int(oc.OLLAMA.get(key, default))
+    except (TypeError, ValueError, OverflowError):
+        value = default
+    return max(minimum, min(maximum, value))
+
+
+def _get_gsv_inference_defaults() -> dict:
+    split_method = str(oc.OLLAMA.get("gsv_text_split_method", "cut5") or "cut5").strip().lower()
+    if split_method not in {"cut0", "cut1", "cut2", "cut3", "cut4", "cut5"}:
+        split_method = "cut5"
+    return {
+        "temperature": _get_gsv_temperature(),
+        "top_k": _get_gsv_int("gsv_top_k", 15, 1, 1025),
+        "top_p": _get_gsv_float("gsv_top_p", 1.0, 0.01, 1.0),
+        "repetition_penalty": _get_gsv_float("gsv_repetition_penalty", 1.35, 0.1, 2.0),
+        "speed_factor": _get_gsv_speed_factor(),
+        "text_split_method": split_method,
+        "fragment_interval": _get_gsv_float("gsv_fragment_interval", 0.3, 0.0, 5.0),
+        "seed": _get_gsv_int("gsv_seed", -1, -1, 2**32 - 1),
+        "max_steps": _get_gsv_int("gsv_max_steps", 500, 64, 1200),
+    }
 
 
 def _get_gsv_cache_max_files() -> int:
@@ -115,215 +107,147 @@ def _get_gsv_cache_max_files() -> int:
 def _is_gsv_auto_start_enabled() -> bool:
     raw_value = oc.OLLAMA.get("gsv_auto_start", True)
     if isinstance(raw_value, str):
-        normalized = raw_value.strip().lower()
-        return normalized not in {"", "0", "false", "off", "no"}
+        return raw_value.strip().lower() not in {"", "0", "false", "off", "no"}
     return bool(raw_value)
 
 
-def _extract_response_detail(resp: requests.Response) -> str:
-    try:
-        return str(resp.json())
-    except Exception:
-        return (resp.text or "").strip()
+def is_voice_package_available() -> bool:
+    return not get_voice_package_status().install_required
 
 
-def _build_ascii_safe_tts_text(text: str) -> str:
-    cleaned = str(text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
-    if not cleaned:
-        return ""
+class GsvmoveService:
+    """Keep the historical service API while using a local ONNX engine."""
 
-    cleaned = re.sub(r"https?://\S+", "", cleaned)
-    cleaned = re.sub(r"`[^`]+`", "", cleaned)
-    cleaned = _ASCII_TOKEN_PATTERN.sub("", cleaned)
-    cleaned = re.sub(r"\s+", " ", cleaned)
-    cleaned = re.sub(r"\s*([，。！？、,.!?；;：:])\s*", r"\1", cleaned)
-    cleaned = re.sub(r"([，。！？、,.!?；;：:]){2,}", lambda m: m.group(0)[0], cleaned)
-    return cleaned.strip(" \t\n\r，。！？、,.!?；;：:")
-
-
-def _read_text_best_effort(path: Path) -> str:
-    data = path.read_bytes()
-    encodings: list[str] = []
-    preferred = locale.getpreferredencoding(False)
-    for encoding in ('utf-8', 'utf-8-sig', preferred, 'mbcs', 'gbk'):
-        if encoding and encoding not in encodings:
-            encodings.append(encoding)
-    for encoding in encodings:
-        try:
-            return data.decode(encoding)
-        except Exception:
-            continue
-    return data.decode(errors='ignore')
-
-
-def _write_text_best_effort(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    encodings: list[str] = []
-    preferred = locale.getpreferredencoding(False)
-    for encoding in (preferred, 'mbcs', 'utf-8'):
-        if encoding and encoding not in encodings:
-            encodings.append(encoding)
-    last_error: Exception | None = None
-    for encoding in encodings:
-        try:
-            path.write_text(text, encoding=encoding)
-            return
-        except Exception as exc:
-            last_error = exc
-    if last_error is not None:
-        raise last_error
-
-
-def _expand_batch_value(value: str, variables: dict[str, str], script_dir: Path) -> str:
-    expanded = str(value or '').replace('%~dp0', f'{script_dir}{os.sep}')
-    for _ in range(_BATCH_EXPAND_ROUNDS):
-        def _replace(match: re.Match[str]) -> str:
-            key = match.group(1).strip().upper()
-            if key in variables:
-                return variables[key]
-            env_value = os.environ.get(key)
-            if env_value is not None:
-                return env_value
-            return match.group(0)
-
-        updated = re.sub(r'%([^%]+)%', _replace, expanded)
-        if updated == expanded:
-            break
-        expanded = updated
-    return expanded.strip().strip('"')
-
-
-def _parse_batch_variables(text: str, script_dir: Path) -> dict[str, str]:
-    variables = {'SCRIPT_DIR': f'{script_dir}{os.sep}'}
-    for match in _BATCH_SET_PATTERN.finditer(text):
-        name = match.group('name').upper()
-        value = _expand_batch_value(match.group('value'), variables, script_dir)
-        variables[name] = value
-    return variables
-
-
-
-
-class GsvmoveService(LocalHostedServiceBase):
-    """GSVmove 文本转语音桥接服务。"""
-
-    def __init__(self):
-        super().__init__("GsvmoveService", "gsvmove_prestart")
-        self._session = requests.Session()
-        self._infer_lock = threading.Lock()
+    def __init__(self) -> None:
+        self._ec = get_event_center()
+        self._infer_lock = threading.RLock()
+        self._engine_lock = threading.RLock()
+        self._engine: OnnxVoiceRuntime | None = None
+        self._engine_package_root: Path | None = None
         self._request_queue: Queue[dict | None] = Queue()
         self._worker_stop = threading.Event()
         self._warmup_lock = threading.Lock()
         self._warmup_done = False
-        self._host = _DEFAULT_HOST
-        self._port = _DEFAULT_PORT
+        self._prestart_lock = threading.Lock()
+        self._prestart_started = False
         self._project_root = Path(__file__).resolve().parents[3]
-        self._root_dir = get_shared_root_dir()
         self._launcher_path = get_gsvmove_launcher_path()
-        self._launcher_log_path = get_user_logs_dir("gsvmove", "launcher.log")
         self._output_dir = get_user_cache_dir("gsvmove", "output")
         self._saved_audio_root = get_user_cache_dir("gsvmove", "voice")
         self._saved_audio_lock = threading.Lock()
-        self._launcher_log_path.parent.mkdir(parents=True, exist_ok=True)
         self._output_dir.mkdir(parents=True, exist_ok=True)
         self._saved_audio_root.mkdir(parents=True, exist_ok=True)
         self.cleanup_saved_audio_cache()
 
-        self._subscribe_app_pre_start()
+        self._ec.subscribe(EventType.APP_PRE_START, self._on_app_pre_start)
         self._ec.subscribe(EventType.AI_VOICE_REQUEST, self._on_ai_voice_request)
-        self._worker = threading.Thread(target=self._worker_loop, daemon=True, name="gsvmove-worker")
+        self._worker = threading.Thread(
+            target=self._worker_loop,
+            daemon=True,
+            name="gsvmove-worker",
+        )
         self._worker.start()
-        logger.info("[GsvmoveService] 已初始化")
-
-    @property
-    def _base_url(self) -> str:
-        return f"http://{self._host}:{self._port}"
+        logger.info("[GsvmoveService] ONNX 语音桥接已初始化")
 
     def _is_valid_gsvmove_root(self, root: Path | None) -> bool:
-        if root is None:
-            return False
-        candidate = Path(root)
-        return (
-            candidate.exists()
-            and (candidate / 'start.bat').exists()
-            and (candidate / 'api.py').exists()
-            and (candidate / 'configs' / 'tts_infer.yaml').exists()
-            and (candidate / '.venv' / 'Scripts' / 'python.exe').exists()
-        )
-
-    def _resolve_launcher_root_file(self, launcher_text: str) -> Path:
-        variables = _parse_batch_variables(launcher_text, self._launcher_path.parent)
-        root_file = variables.get('ROOT_FILE', '')
-        if root_file:
-            return Path(root_file)
-        return self._launcher_path.parent / 'config' / 'gsvmove_root.txt'
-
-    def _resolve_search_bases_from_launcher(self, launcher_text: str) -> list[Path]:
-        variables = _parse_batch_variables(launcher_text, self._launcher_path.parent)
-        bases: list[Path] = []
-        seen: set[str] = set()
-        for match in _BATCH_FIND_ROOT_PATTERN.finditer(launcher_text):
-            raw_path = _expand_batch_value(match.group('path'), variables, self._launcher_path.parent)
-            if not raw_path:
-                continue
-            candidate = Path(raw_path)
-            key = str(candidate).lower()
-            if key in seen:
-                continue
-            seen.add(key)
-            bases.append(candidate)
-        return bases
-
-    def _find_gsvmove_root_in_base(self, base: Path) -> Path | None:
-        if not base.exists():
-            return None
-        skip_dirs = {'.git', '.hg', '.svn', '.venv', '__pycache__', 'node_modules'}
-        for current_root, dirnames, filenames in os.walk(base):
-            dirnames[:] = [item for item in dirnames if item not in skip_dirs]
-            if 'start.bat' not in filenames:
-                continue
-            candidate = Path(current_root)
-            if self._is_valid_gsvmove_root(candidate):
-                return candidate
-        return None
+        return is_valid_legacy_gsvmove_root(root)
 
     def _resolve_gsvmove_root(self) -> tuple[Path | None, Path | None]:
-        if not self._launcher_path.exists():
-            return None, None
-        try:
-            launcher_text = _read_text_best_effort(self._launcher_path)
-        except Exception as e:
-            logger.warning('[GsvmoveService] 读取启动脚本失败: %s', e)
-            return None, None
-
-        root_file = self._resolve_launcher_root_file(launcher_text)
-
-        if root_file.exists():
-            try:
-                configured_root_text = _read_text_best_effort(root_file).strip().strip('"')
-                configured_root = Path(configured_root_text) if configured_root_text else None
-            except Exception:
-                configured_root = None
-            if self._is_valid_gsvmove_root(configured_root):
-                return configured_root, root_file
-
-        for base in self._resolve_search_bases_from_launcher(launcher_text):
-            candidate = self._find_gsvmove_root_in_base(base)
-            if candidate is None:
-                continue
-            try:
-                _write_text_best_effort(root_file, str(candidate))
-            except Exception as e:
-                logger.debug('[GsvmoveService] 回写 gsvmove_root.txt 失败: %s', e)
-            return candidate, root_file
-        return None, root_file
-
+        return resolve_legacy_gsvmove_root(self._launcher_path)
 
     def resolve_install_root(self) -> Path | None:
         root, _ = self._resolve_gsvmove_root()
-        if root is None or not self._is_valid_gsvmove_root(root):
-            return None
-        return root
+        return root if self._is_valid_gsvmove_root(root) else None
+
+    def auto_start_enabled(self) -> bool:
+        return _is_gsv_auto_start_enabled()
+
+    def _on_app_pre_start(self, _event: Event) -> None:
+        self.kickoff_prestart()
+
+    def kickoff_prestart(self) -> None:
+        if not self.auto_start_enabled() or not is_voice_package_available():
+            return
+        with self._prestart_lock:
+            if self._prestart_started:
+                return
+            self._prestart_started = True
+        try:
+            future = get_compute_hub().submit_latest(
+                "gsvmove_prestart",
+                self._prestart_worker,
+                executor="vector",
+            )
+            if future is None:
+                logger.debug("[GsvmoveService] ONNX 预加载任务仍在运行")
+        except Exception:
+            with self._prestart_lock:
+                self._prestart_started = False
+            raise
+
+    def _prestart_worker(self) -> None:
+        with self._infer_lock:
+            if self._ensure_runtime_ready():
+                self._warmup_service_once()
+
+    def _ensure_runtime_ready(self) -> bool:
+        status = get_voice_package_status()
+        package_root = status.package_root
+        if status.install_required or package_root is None:
+            logger.warning("[GsvmoveService] ONNX 语音包不可用: %s", status.reason)
+            return False
+
+        with self._engine_lock:
+            if self._engine is not None and self._engine_package_root == package_root:
+                return True
+            self._close_engine_locked()
+            try:
+                started_at = time.monotonic()
+                self._engine = OnnxVoiceRuntime(package_root, provider="cpu")
+                self._engine_package_root = package_root
+                logger.info(
+                    "[GsvmoveService] ONNX 语音模型已就绪 dt=%.1fs",
+                    time.monotonic() - started_at,
+                )
+                return True
+            except Exception as exc:
+                self._engine = None
+                self._engine_package_root = None
+                logger.error("[GsvmoveService] ONNX 语音模型加载失败: %s", exc)
+                return False
+
+    def prepare_voice_package_install(self) -> None:
+        """Release active model files before a package is atomically replaced."""
+        with self._infer_lock:
+            with self._engine_lock:
+                self._close_engine_locked()
+            self._warmup_done = False
+            with self._prestart_lock:
+                self._prestart_started = False
+
+    def reload_voice_package(self) -> None:
+        self.prepare_voice_package_install()
+        self.kickoff_prestart()
+
+    def remove_voice_package(self, package_root: Path) -> Path:
+        """Release the active engine and remove a managed package without an inference race."""
+        with self._infer_lock:
+            self.prepare_voice_package_install()
+            return remove_voice_package_files(package_root)
+
+    def shutdown_service_process(self) -> bool:
+        self.prepare_voice_package_install()
+        return True
+
+    def _close_engine_locked(self) -> None:
+        engine = self._engine
+        self._engine = None
+        self._engine_package_root = None
+        if engine is not None:
+            try:
+                engine.close()
+            except Exception as exc:
+                logger.debug("[GsvmoveService] 释放 ONNX 运行时失败: %s", exc)
 
     def get_saved_audio_cache_root(self) -> Path:
         self._saved_audio_root.mkdir(parents=True, exist_ok=True)
@@ -342,11 +266,9 @@ class GsvmoveService(LocalHostedServiceBase):
             except OSError:
                 mtime = 0.0
             entries.append((mtime, child))
-
         max_files = _get_gsv_cache_max_files()
         if len(entries) <= max_files:
             return
-
         entries.sort(key=lambda item: item[0])
         for _, old_path in entries[:-max_files]:
             try:
@@ -354,48 +276,37 @@ class GsvmoveService(LocalHostedServiceBase):
                     shutil.rmtree(old_path)
                 else:
                     old_path.unlink(missing_ok=True)
-                logger.info("[GsvmoveService] 已清理旧语音缓存: %s", old_path)
             except FileNotFoundError:
                 continue
-            except Exception as e:
-                logger.warning("[GsvmoveService] 清理旧语音缓存失败 %s: %s", old_path, e)
+            except Exception as exc:
+                logger.warning("[GsvmoveService] 清理旧语音缓存失败 %s: %s", old_path, exc)
 
     def _create_saved_audio_path(self, suffix: str) -> Path:
         cache_root = self.get_saved_audio_cache_root()
         while True:
             millis = int((time.time() % 1) * 1000)
-            file_name = f"voice_{time.strftime('%Y%m%d_%H%M%S')}_{millis:03d}_{uuid.uuid4().hex[:8]}{suffix}"
-            candidate = cache_root / file_name
-            if candidate.exists():
-                continue
-            return candidate
+            name = (
+                f"voice_{time.strftime('%Y%m%d_%H%M%S')}_{millis:03d}_"
+                f"{uuid.uuid4().hex[:8]}{suffix}"
+            )
+            candidate = cache_root / name
+            if not candidate.exists():
+                return candidate
 
     def _persist_generated_audio(self, temp_path: Path) -> Path:
-        suffix = temp_path.suffix or ".wav"
         with self._saved_audio_lock:
-            target_path = self._create_saved_audio_path(suffix)
-            temp_path.replace(target_path)
+            target = self._create_saved_audio_path(temp_path.suffix or ".wav")
+            temp_path.replace(target)
             self._cleanup_saved_audio_cache_locked()
-            return target_path
-
-    def auto_start_enabled(self) -> bool:
-        return _is_gsv_auto_start_enabled()
-
-    def _should_prestart(self) -> bool:
-        return self.auto_start_enabled()
-
-    def _prestart_worker(self) -> None:
-        if not self._ensure_service_ready():
-            return
-        self._warmup_service_once()
+            return target
 
     @staticmethod
     def _load_launch_hello_lines() -> list[str]:
-        hello_path = Path(__file__).resolve().parents[3] / 'resc' / 'launch_hello.txt'
+        hello_path = Path(__file__).resolve().parents[3] / "resc" / "launch_hello.txt"
         try:
-            lines = [line.strip() for line in hello_path.read_text(encoding='utf-8').splitlines()]
-        except Exception as e:
-            logger.warning('[GsvmoveService] 读取预热文案失败: %s', e)
+            lines = [line.strip() for line in hello_path.read_text(encoding="utf-8").splitlines()]
+        except Exception as exc:
+            logger.warning("[GsvmoveService] 读取预热文案失败: %s", exc)
             return []
         return [line for line in lines if line]
 
@@ -405,46 +316,35 @@ class GsvmoveService(LocalHostedServiceBase):
                 return
             lines = self._load_launch_hello_lines()
             if not lines:
-                logger.warning('[GsvmoveService] 预热文案为空，跳过 GSV 预热')
                 return
             warmup_text = random.choice(lines)
             try:
                 with self._infer_lock:
                     warmup_file = self._synthesize_to_file({
-                        'text': warmup_text,
-                        'interruptible': True,
-                        'save_audio_cache': False,
+                        "text": warmup_text,
+                        "interruptible": True,
+                        "save_audio_cache": False,
                     })
                 if warmup_file is None:
-                    logger.warning('[GsvmoveService] GSV 预热失败：未生成音频')
                     return
-                try:
-                    warmup_file.unlink(missing_ok=True)
-                except Exception:
-                    pass
+                warmup_file.unlink(missing_ok=True)
                 self._warmup_done = True
-                logger.info('[GsvmoveService] 已完成 GSV 预热: %s', warmup_text[:40])
-            except Exception as e:
-                logger.warning('[GsvmoveService] GSV 预热失败: %s', e)
+                logger.info("[GsvmoveService] 已完成 ONNX 语音预热: %s", warmup_text[:40])
+            except Exception as exc:
+                logger.warning("[GsvmoveService] ONNX 语音预热失败: %s", exc)
 
-    def _on_ai_voice_request(self, event: Event):
+    def _on_ai_voice_request(self, event: Event) -> None:
         data = event.data or {}
-        text = str(data.get("text") or "").strip()
-        if not text:
+        if not str(data.get("text") or "").strip() or event.handled:
             return
-
-        if event.handled:
-            return
-
         if not self.auto_start_enabled():
-            logger.info("[GsvmoveService] GSV 语音模块已关闭，忽略文本语音申请")
+            logger.info("[GsvmoveService] 语音模块已关闭，忽略文本语音申请")
             event.mark_handled()
             return
-
         self._request_queue.put(dict(data))
         event.mark_handled()
 
-    def _worker_loop(self):
+    def _worker_loop(self) -> None:
         while not self._worker_stop.is_set():
             try:
                 data = self._request_queue.get(timeout=0.5)
@@ -454,285 +354,67 @@ class GsvmoveService(LocalHostedServiceBase):
                 break
             try:
                 self._process_ai_voice_request(data)
-            except Exception as e:
-                logger.error("[GsvmoveService] 后台处理 AI 语音申请失败: %s", e)
+            except Exception as exc:
+                logger.error("[GsvmoveService] 后台处理 AI 语音申请失败: %s", exc)
             finally:
                 self._request_queue.task_done()
 
-    def _process_ai_voice_request(self, data: dict):
+    def _process_ai_voice_request(self, data: dict) -> None:
         if not self.auto_start_enabled():
-            logger.info("[GsvmoveService] GSV 语音模块已关闭，跳过文本语音处理")
             return
-
-        if not self._ensure_service_ready():
-            logger.warning("[GsvmoveService] GSVmove 服务未就绪，忽略文本语音申请")
-            return
-
         with self._infer_lock:
             audio_file = self._synthesize_to_file(data)
         if audio_file is None:
             return
-
         self._ec.publish(Event(EventType.SOUND_REQUEST, {
             "audio_type": _DEFAULT_AUDIO_TYPE,
             "source": str(audio_file),
-            # 这里固定事件增益为 1.0，实际语音响度由配置侧统一套用。
             "volume_gain": 1.0,
             "interruptible": bool(data.get("interruptible", True)),
         }))
 
-    def _health_check(self, timeout: float = 2.0) -> bool:
-        try:
-            resp = self._session.get(f"{self._base_url}/health", timeout=timeout)
-            if not resp.ok:
-                return False
-            payload = resp.json()
-            return str(payload.get("status") or "").lower() == "ok"
-        except Exception:
-            return False
-
-    def _ensure_service_ready(self) -> bool:
-        started_at = time.monotonic()
-        if self._health_check():
-            return True
-
-        self._start_service_process()
-        deadline = time.monotonic() + _STARTUP_WAIT_SECS
-        while time.monotonic() < deadline:
-            if self._health_check():
-                logger.info("[GsvmoveService] GSVmove 服务已就绪 dt=%.1fs", time.monotonic() - started_at)
-                return True
-            proc = self._tracked_process()
-            if proc is not None:
-                exit_code = proc.poll()
-                if exit_code is not None:
-                    self._clear_tracked_process_if(proc)
-                    log_tail = self._read_launcher_log_tail()
-                    if log_tail:
-                        logger.error(
-                            "[GsvmoveService] GSVmove 启动器提前退出 exit_code=%s，最近输出:\n%s",
-                            exit_code,
-                            log_tail,
-                        )
-                    else:
-                        logger.error("[GsvmoveService] GSVmove 启动器提前退出 exit_code=%s", exit_code)
-                    return False
-            time.sleep(_HEALTH_POLL_INTERVAL)
-        log_tail = self._read_launcher_log_tail()
-        if log_tail:
-            logger.warning(
-                "[GsvmoveService] GSVmove 服务启动超时 %.1fs，最近输出:\n%s",
-                time.monotonic() - started_at,
-                log_tail,
-            )
-        else:
-            logger.warning("[GsvmoveService] GSVmove 服务启动超时 %.1fs", time.monotonic() - started_at)
-        return False
-
-    def _start_service_process(self):
-        with self._proc_lock:
-            if self._has_running_tracked_process():
-                return
-            if not self._launcher_path.exists():
-                logger.warning("[GsvmoveService] 未找到启动脚本: %s", self._launcher_path)
-                return
-            launcher_log = None
-            try:
-                launcher_log = self._launcher_log_path.open("ab")
-                launcher_log.write(
-                    f"\n===== {time.strftime('%Y-%m-%d %H:%M:%S')} start_gsvmove =====\n".encode("utf-8")
-                )
-                launcher_log.flush()
-                creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-                proc = subprocess.Popen(
-                    ["cmd", "/c", str(self._launcher_path)],
-                    cwd=str(self._root_dir),
-                    stdin=subprocess.DEVNULL,
-                    stdout=launcher_log,
-                    stderr=subprocess.STDOUT,
-                    creationflags=creationflags,
-                )
-                self._set_started_process(proc)
-                logger.info("[GsvmoveService] 已在后台启动 GSVmove")
-            except Exception as e:
-                self._mark_process_start_failed()
-                logger.error("[GsvmoveService] 启动 GSVmove 失败: %s", e)
-            finally:
-                if launcher_log is not None:
-                    try:
-                        launcher_log.close()
-                    except Exception:
-                        pass
-
-    def _read_launcher_log_tail(self, max_lines: int = _LAUNCHER_LOG_TAIL_LINES) -> str:
-        try:
-            if not self._launcher_log_path.exists():
-                return ""
-            text = self._launcher_log_path.read_bytes().decode(errors="ignore")
-            lines = [line.rstrip() for line in text.splitlines() if line.strip()]
-            if not lines:
-                return ""
-            return "\n".join(lines[-max_lines:])
-        except Exception as e:
-            logger.debug("[GsvmoveService] 读取启动器日志失败: %s", e)
-            return ""
-
     def _synthesize_to_file(self, data: dict) -> Path | None:
-        text = str(data.get("text") or "").strip()
-        payload = {
-            "text": text,
-            "text_lang": str(data.get("text_lang") or "zh").strip() or "zh",
-            "prompt_lang": str(data.get("prompt_lang") or "zh").strip() or "zh",
-            "prompt_text": data.get("prompt_text"),
-            "ref_audio_path": data.get("ref_audio_path"),
-            "aux_ref_audio_paths": data.get("aux_ref_audio_paths"),
-            "top_k": int(data.get("top_k", 15) or 15),
-            "top_p": float(data.get("top_p", 1.0) or 1.0),
-            "temperature": max(0.0, min(2.0, float(data.get("temperature", _get_gsv_temperature()) or _get_gsv_temperature()))),
-            # Short dialogue should not be split by punctuation, otherwise each chunk may reintroduce prompt leakage.
-            "text_split_method": str(data.get("text_split_method") or _SHORT_TEXT_SPLIT_METHOD),
-            "batch_size": int(data.get("batch_size", 1) or 1),
-            "batch_threshold": float(data.get("batch_threshold", 0.75) or 0.75),
-            "split_bucket": bool(data.get("split_bucket", False)),
-            "speed_factor": max(0.5, min(2.0, float(data.get("speed_factor", _get_gsv_speed_factor()) or _get_gsv_speed_factor()))),
-            "fragment_interval": float(data.get("fragment_interval", 0.0) or 0.0),
-            "seed": int(data.get("seed", -1) or -1),
-            "media_type": str(data.get("media_type") or _DEFAULT_MEDIA_TYPE).strip() or _DEFAULT_MEDIA_TYPE,
-            "streaming_mode": False,
-            "parallel_infer": bool(data.get("parallel_infer", False)),
-            "repetition_penalty": float(data.get("repetition_penalty", 1.35) or 1.35),
-            "sample_steps": int(data.get("sample_steps", 32) or 32),
-            "super_sampling": bool(data.get("super_sampling", False)),
-            "overlap_length": int(data.get("overlap_length", 2) or 2),
-            "min_chunk_length": int(data.get("min_chunk_length", 16) or 16),
-        }
-        payload = {k: v for k, v in payload.items() if v is not None}
-
+        if not self._ensure_runtime_ready():
+            return None
+        payload = dict(data)
+        for key, value in _get_gsv_inference_defaults().items():
+            payload.setdefault(key, value)
+        temp_path = self._output_dir / f"onnx_{uuid.uuid4().hex}.{_DEFAULT_MEDIA_TYPE}"
         try:
-            resp = self._session.post(f"{self._base_url}/tts", json=payload, timeout=_DEFAULT_TIMEOUT)
-            if not resp.ok:
-                detail = _extract_response_detail(resp)
-                if _CMUDICT_MISSING_PATTERN.search(detail):
-                    fallback_text = _build_ascii_safe_tts_text(text)
-                    if fallback_text and fallback_text != text:
-                        fallback_payload = dict(payload)
-                        fallback_payload["text"] = fallback_text
-                        logger.warning(
-                            "[GsvmoveService] 检测到 cmudict 缺失，已改用清洗后的文本重试 TTS: %s -> %s",
-                            text[:80],
-                            fallback_text[:80],
-                        )
-                        resp = self._session.post(f"{self._base_url}/tts", json=fallback_payload, timeout=_DEFAULT_TIMEOUT)
-                        if resp.ok:
-                            payload = fallback_payload
-                        else:
-                            detail = _extract_response_detail(resp)
-                if not resp.ok:
-                    logger.warning("[GsvmoveService] TTS 请求失败 status=%s detail=%s", resp.status_code, detail[:300])
+            with self._engine_lock:
+                engine = self._engine
+                if engine is None:
                     return None
-            media_type = str(payload.get("media_type") or _DEFAULT_MEDIA_TYPE).lower()
-            suffix = f".{media_type if media_type in ('wav', 'ogg', 'aac', 'raw') else 'wav'}"
-            temp_path = self._output_dir / f"gsv_{uuid.uuid4().hex}{suffix}"
-            temp_path.write_bytes(resp.content)
+                engine.synthesize_to_file(payload, temp_path)
             output_path = temp_path
             if bool(data.get("save_audio_cache", True)):
                 try:
                     output_path = self._persist_generated_audio(temp_path)
-                except Exception as e:
-                    logger.warning("[GsvmoveService] 归档语音缓存失败，继续使用临时文件: %s", e)
-                    output_path = temp_path
-            logger.info("[GsvmoveService] 已生成语音文件: %s", output_path)
+                except Exception as exc:
+                    logger.warning("[GsvmoveService] 归档语音缓存失败: %s", exc)
+            logger.info("[GsvmoveService] 已生成 ONNX 语音文件: %s", output_path)
             return output_path
-        except Exception as e:
-            logger.error("[GsvmoveService] TTS 推理失败: %s", e)
+        except Exception as exc:
+            temp_path.unlink(missing_ok=True)
+            logger.error("[GsvmoveService] ONNX 语音推理失败: %s", exc)
             return None
 
-    def cleanup(self):
-        self._unsubscribe_app_pre_start()
-        self._ec.unsubscribe(EventType.AI_VOICE_REQUEST, self._on_ai_voice_request)
-        self._worker_stop.set()
-        self._request_queue.put(None)
+    def cleanup(self) -> None:
         try:
-            self._session.close()
+            self._ec.unsubscribe(EventType.APP_PRE_START, self._on_app_pre_start)
         except Exception:
             pass
-
-        proc, _started = self._take_tracked_process()
-
-        if self._shutdown_started_service(proc):
-            return
-        logger.warning("[GsvmoveService] 结束 GSVmove 进程失败：常规终止与兜底清理均未成功")
-
-    def shutdown_service_process(self) -> bool:
-        proc, _started = self._take_tracked_process()
-        stopped = self._shutdown_started_service(proc)
-        return stopped
-
-    def _shutdown_started_service(self, proc: subprocess.Popen | None) -> bool:
-        if proc is not None and proc.poll() is None:
-            if self._terminate_process_tree(proc.pid, force=False):
-                logger.info("[GsvmoveService] 已结束 GSVmove 后台进程")
-            elif self._terminate_process_tree(proc.pid, force=True):
-                logger.info("[GsvmoveService] 已强制结束 GSVmove 后台进程")
-
-        fallback_pids = self._find_gsvmove_service_pids()
-        if proc is not None and getattr(proc, "pid", None):
-            fallback_pids.discard(int(proc.pid))
-
-        for pid in sorted(fallback_pids):
-            if self._terminate_process_tree(pid, force=True):
-                logger.info("[GsvmoveService] 已强制结束残留 GSVmove 服务进程 pid=%s", pid)
-        if proc is not None or fallback_pids:
-            time.sleep(0.8)
-
-        proc_alive = bool(proc is not None and proc.poll() is None)
-        remaining_pids = self._find_gsvmove_service_pids()
-        if proc is not None and getattr(proc, "pid", None):
-            remaining_pids.discard(int(proc.pid))
-        return (not proc_alive) and (not remaining_pids)
-
-    def _terminate_process_tree(self, pid: int, force: bool) -> bool:
         try:
-            if os.name == "nt":
-                cmd = ["taskkill", "/PID", str(pid), "/T"]
-                if force:
-                    cmd.append("/F")
-                result = subprocess.run(
-                    cmd,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    timeout=8,
-                    check=False,
-                    **_hidden_console_kwargs(),
-                )
-                return result.returncode == 0
-        except Exception as e:
-            logger.debug("[GsvmoveService] taskkill 结束进程树失败 pid=%s force=%s err=%s", pid, force, e)
-        return False
-
-    def _find_gsvmove_service_pids(self) -> set[int]:
-        candidates: set[int] = set()
-        command = (
-            "Get-CimInstance Win32_Process | "
-            "Where-Object { $_.CommandLine -match 'GSVmove.+api\\.py' -and $_.CommandLine -match '--port\\s+9880' } | "
-            "Select-Object -ExpandProperty ProcessId"
-        )
-        try:
-            result = subprocess.run(
-                ["powershell", "-NoProfile", "-Command", command],
-                capture_output=True,
-                text=True,
-                timeout=10,
-                check=False,
-                **_hidden_console_kwargs(),
-            )
-            for line in (result.stdout or "").splitlines():
-                line = line.strip()
-                if line.isdigit():
-                    candidates.add(int(line))
-        except Exception as e:
-            logger.debug("[GsvmoveService] 枚举 GSVmove 进程失败: %s", e)
-        return candidates
+            self._ec.unsubscribe(EventType.AI_VOICE_REQUEST, self._on_ai_voice_request)
+        except Exception:
+            pass
+        self._worker_stop.set()
+        self._request_queue.put(None)
+        if self._worker is not threading.current_thread():
+            self._worker.join(timeout=2.0)
+        with self._infer_lock:
+            with self._engine_lock:
+                self._close_engine_locked()
 
 
 _instance: GsvmoveService | None = None
@@ -746,7 +428,7 @@ def get_gsvmove_service() -> GsvmoveService:
     return _instance
 
 
-def cleanup_gsvmove_service():
+def cleanup_gsvmove_service() -> None:
     global _instance
     if _instance is not None:
         _instance.cleanup()

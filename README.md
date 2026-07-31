@@ -1,9 +1,9 @@
 ﻿# 飞行雪绒
 
-飞行雪绒是面向 Windows 10/11 的桌面宠物项目。当前主线以 `LTS1.0.6pre2` 为版本基线，核心能力包括桌宠展示、事件驱动对象系统、AI 伴聊、语音播报、本地语音识别、多源音乐播放、粒子与小游戏扩展。
+飞行雪绒是面向 Windows 10/11 的桌面宠物项目。当前主线以 `LTS1.0.6pre4` 为版本基线，核心能力包括桌宠展示、事件驱动对象系统、AI 伴聊、语音播报、本地语音识别、多源音乐播放、粒子与小游戏扩展。
 
-- 当前版本：`LTS1.0.6pre2`
-- 发布日期：`2026-07-29`
+- 当前版本：`LTS1.0.6pre4`
+- 发布日期：`2026-07-31`
 - 主要入口：`lib/core/qt_desktop_pet.py`
 - 生命周期编排：`lib/script/main.py`
 
@@ -34,7 +34,7 @@
 
 ### 语音与识别
 
-- `lib/script/gsvmove/` 负责 GSVmove 文本转语音桥接。
+- `lib/script/gsvmove/` 负责 ONNX 语音包安装、旧 GSVmove 迁移和本地文本转语音推理，不再依赖端口 9880 的外部服务。
 - `lib/script/microphone_stt/` 负责 Vosk 本地语音识别和 Push-to-Talk。
 - 用户设置、状态、密钥与缓存统一写入 `C:\AemeathDeskPet\user`、`cache`、`logs` 分层目录。
 
@@ -63,7 +63,7 @@
 | `lib/script/chat/` | AI 客户端、聊天上下文、流式呈现、自动陪伴 |
 | `lib/script/music/` | 音乐服务统一入口、provider、搜索路由 |
 | `lib/script/cloudmusic/` | 音乐播放内部运行时 |
-| `lib/script/gsvmove/` | 本地 TTS 托管服务桥接 |
+| `lib/script/gsvmove/` | ONNX 语音包安装与本地 TTS 推理兼容门面 |
 | `lib/script/microphone_stt/` | 本地 STT 与按键说话 |
 | `lib/script/ui/` | 控制面板、气泡、命令框、音乐面板、二维码面板等 UI |
 | `services/` | 本地网页中转服务源码与可选离线 bundle |
@@ -93,6 +93,7 @@ python install_deps.py
 - 准备 Vosk 语音识别模型
 - 准备本地网页中转服务源码或内置服务包
 - 按 `resc.net.txt` 下载缺失的 Vosk、启动动画、Python 和浏览器资源
+- 校验随程序提供的官方 UnRAR 解压后端；ONNX 语音包由控制面板按需安装
 - 启动桌宠主程序
 
 ### 开发者
@@ -154,6 +155,7 @@ py -3 -m unittest tests.test_openai_dashscope_multimodal
 - 普通包和绿色包：源码、默认小型资源、文档，不带 `resc/models/`、`resc/playwright/`、`resc/GIF/SEanima/` 或 Python/浏览器安装包。
 - 安装器依据 `resc.net.txt` 在首次运行时补齐缺失的重型资源。
 - 两类包都应脱敏 `config/ollama_config.py` 中的密钥、登录态和会话字段。
+- 两类包都携带约 548 KiB 的官方 UnRAR 与许可证，用于桌宠内安装七分卷 ONNX 语音包；模型分卷不进入程序发行包。
 
 ## 许可证与声明
 

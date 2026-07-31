@@ -18,6 +18,7 @@ from PyQt5.QtWidgets import QApplication, QComboBox
 from lib.core.event.center import EventType
 from lib.script.ui import ai_settings_panel as panel_module
 from lib.script.ui.ai_settings_panel import AISettingsPanel
+from lib.script.gsvmove.package_manager import VoicePackageStatus
 from lib.script.workbench.theme import COLORS as WORKBENCH_COLORS, workbench_stylesheet
 
 
@@ -27,19 +28,19 @@ class AISettingsReplyModeSectionsTests(unittest.TestCase):
         cls.app = QApplication.instance() or QApplication([])
 
     def setUp(self):
-        self._gsv_launcher_probe = patch.object(
+        self._voice_package_probe = patch.object(
             panel_module,
-            "is_gsvmove_launcher_available",
-            return_value=False,
+            "get_voice_package_status",
+            return_value=VoicePackageStatus("missing", "not installed"),
         )
-        self._gsv_launcher_probe.start()
+        self._voice_package_probe.start()
         with patch.object(AISettingsPanel, "_refresh_hardware_watermark_async", lambda self: None):
             self.panel = AISettingsPanel(lazy_workbench_pages=True)
 
     def tearDown(self):
         self.panel.deleteLater()
         self.app.processEvents()
-        self._gsv_launcher_probe.stop()
+        self._voice_package_probe.stop()
 
     def _select_mode(self, mode: str) -> None:
         self.panel._force_mode.setCurrentIndex(self.panel._force_mode.findData(mode))
@@ -82,6 +83,21 @@ class AISettingsReplyModeSectionsTests(unittest.TestCase):
         self.assertTrue(self.panel._manual_api_section.isHidden())
         self.assertTrue(self.panel._ollama_section.isHidden())
         self.assertFalse(self.panel._yuanbao_section.isHidden())
+
+    def test_yuanbao_login_actions_are_mutually_exclusive(self):
+        self.panel._set_yuanbao_login_actions(logged_in=False)
+        self.assertFalse(self.panel._start_yuanbao_wechat_login_btn.isHidden())
+        self.assertTrue(self.panel._stop_yuanbao_login_btn.isHidden())
+
+        self.panel._on_yuanbao_login_status_event(
+            panel_module.Event(
+                panel_module.EventType.YUANBAO_LOGIN_QR_STATUS,
+                {"logged_in": True},
+            )
+        )
+
+        self.assertTrue(self.panel._start_yuanbao_wechat_login_btn.isHidden())
+        self.assertFalse(self.panel._stop_yuanbao_login_btn.isHidden())
 
     def test_save_and_restart_button_is_to_the_right_and_pink(self):
         layout = self.panel._ai_scaffold.action_bar.button_layout
@@ -188,8 +204,14 @@ class AISettingsReplyModeSectionsTests(unittest.TestCase):
         )
         response.raise_for_status.assert_called_once()
 
-    def test_gsv_settings_follow_startup_launcher_probe(self):
+    def test_voice_settings_follow_package_probe(self):
         self.assertFalse(self.panel._gsv_launcher_available)
+        self.assertFalse(self.panel._voice_package_banner.isHidden())
+        self.assertTrue(self.panel._voice_package_management.isHidden())
+        self.assertTrue(self.panel._voice_section.isHidden())
+        first_widget = self.panel._ai_scaffold.content_layout.itemAt(0).widget()
+        self.assertIs(first_widget, self.panel._voice_package_banner)
+        self.assertEqual(self.panel._voice_package_banner.install_button.text(), "安装最新语音包")
 
         voice_section = Mock()
         panel = type("GsvPanel", (), {
@@ -199,6 +221,31 @@ class AISettingsReplyModeSectionsTests(unittest.TestCase):
         AISettingsPanel._update_gsv_settings_visibility(panel)
 
         voice_section.setVisible.assert_called_once_with(True)
+
+    def test_voice_package_install_enables_and_persists_runtime(self):
+        saved_values = dict(panel_module._DEFAULT_VALUES)
+        saved_values["gsv_auto_start"] = False
+        service = Mock()
+        self.panel._gsv_auto_start.setChecked(False)
+
+        with patch.object(
+            panel_module, "load_ai_values", return_value=saved_values
+        ), patch.object(panel_module, "save_ai_values") as save_values, patch.object(
+            panel_module, "apply_ai_runtime"
+        ) as apply_runtime, patch.object(
+            panel_module,
+            "get_voice_package_status",
+            return_value=VoicePackageStatus("installed", "ok"),
+        ), patch(
+            "lib.script.gsvmove.get_gsvmove_service", return_value=service
+        ):
+            self.panel._on_voice_package_installed()
+
+        persisted = save_values.call_args.args[0]
+        self.assertTrue(persisted["gsv_auto_start"])
+        apply_runtime.assert_called_once_with(persisted, panel_module._DEFAULT_VALUES)
+        self.assertTrue(self.panel._gsv_auto_start.isChecked())
+        service.reload_voice_package.assert_called_once_with()
 
 
 if __name__ == "__main__":

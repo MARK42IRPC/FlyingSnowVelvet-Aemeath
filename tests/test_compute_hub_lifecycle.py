@@ -38,6 +38,31 @@ class ComputeHubLifecycleTests(unittest.TestCase):
         finally:
             hub.cleanup(timeout=0)
 
+    def test_interactive_io_starts_when_shared_io_pool_is_saturated(self):
+        hub = ComputeHub()
+        release = threading.Event()
+        interactive_started = threading.Event()
+
+        def blocking_task():
+            release.wait(2)
+
+        try:
+            blockers = [
+                hub.submit_io(blocking_task)
+                for _ in range(hub._io_pool._max_workers + 4)
+            ]
+            interactive = hub.submit_interactive_io(interactive_started.set)
+            self.assertTrue(interactive_started.wait(1))
+            interactive.result(timeout=1)
+        finally:
+            release.set()
+            for future in blockers:
+                try:
+                    future.result(timeout=1)
+                except Exception:
+                    pass
+            hub.cleanup(timeout=0)
+
 
 if __name__ == '__main__':
     unittest.main()

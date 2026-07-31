@@ -1,6 +1,6 @@
 ﻿# Release Playbook
 
-本文记录飞行雪绒发布流程，适用于 `LTS1.0.6pre2` 及后续版本。发布目标是：版本号一致、文档一致、普通包轻量、绿色包离线友好，并且不把开发机运行状态打进包里。
+本文记录飞行雪绒发布流程，适用于 `LTS1.0.6pre4` 及后续版本。发布目标是：版本号一致、文档一致、普通包轻量、绿色包离线友好，并且不把开发机运行状态打进包里。
 
 ## 1. 发布前版本同步
 
@@ -17,7 +17,7 @@
 - GitHub：`MARK42IRPC/FlyingSnowVelvet-Aemeath` 的 `PACK` release。
 - Gitee：`Mark42IRPC/Aemeath-AIdeskpet` 的“最新包” release。
 
-GitHub/Gitee 没有真实打包 ZIP 附件时，更新器使用固定 tag 自动生成的源码 ZIP，供测试版更新；后续上传真实打包版后优先使用附件。更新器按 release 时间选择较新的镜像，时间相同时选择响应更快的镜像；只有 revision 相同才允许下载失败后跨镜像回落。发布时应更新 release 时间/revision，确保客户端能识别固定槽内容变化。`RESC` 只存放 Python、Chromium、Vosk、启动动画和福利 API 配置等安装资源，不得复用为上述程序发布槽。
+GitHub/Gitee 没有真实打包 ZIP 附件时，更新器使用固定 tag 自动生成的源码 ZIP，供测试版更新；后续上传真实打包版后优先使用附件。更新器按 release 时间选择较新的镜像，时间相同时选择响应更快的镜像；只有 revision 相同才允许下载失败后跨镜像回落。发布时应更新 release 时间/revision，确保客户端能识别固定槽内容变化。`RESC` 只存放 Python、Chromium、Vosk、启动动画、公告和福利 API 配置等安装资源，不得复用为上述程序发布槽；七分卷 ONNX 模型使用独立的“语音包”发布槽。
 
 ## 2. 发布前检查
 
@@ -49,7 +49,8 @@ python scripts/package_green_release.py --dry-run
 - 控制面板能打开、保存、重新加载配置
 - AI 回复与流式输出可用
 - 图片输入路径不会因模型名误判提前失败
-- GSV / STT 开关不阻塞启动或退出
+- ONNX 语音 / STT 开关不阻塞启动或退出
+- 缺失或旧版语音包时安装提示位于控制面板顶部，磁盘选择、取消、下载与解压进度可用
 - 音乐搜索、播放、暂停、下一首不回归
 - 本地网页中转登录流程可以打开浏览器并关闭运行时浏览器
 
@@ -58,13 +59,13 @@ python scripts/package_green_release.py --dry-run
 ### 普通包
 
 ```powershell
-python scripts/package_release.py --version LTS1.0.6pre2
+python scripts/package_release.py --version LTS1.0.6pre4
 ```
 
 输出示例：
 
-- `dist/FlyingSnowVelvet-LTS1.0.6pre2.zip`
-- `dist/FlyingSnowVelvet-LTS1.0.6pre2-manifest.json`
+- `dist/FlyingSnowVelvet-LTS1.0.6pre4.zip`
+- `dist/FlyingSnowVelvet-LTS1.0.6pre4-manifest.json`
 
 普通包用于联网环境，安装脚本会按 `resc.net.txt` 补齐重型资源。它应排除：
 
@@ -81,16 +82,18 @@ python scripts/package_release.py --version LTS1.0.6pre2
 - 本机配置、缓存、临时文件
 - `C:\AemeathDeskPet\user`、`cache`、`logs` 中的任何本机数据
 
+普通包必须保留 `lib/script/gsvmove/bin/UnRAR.exe` 与 `LICENSE-UnRAR.txt`；语音模型七个分卷不进入程序包。
+
 ### 绿色包
 
 ```powershell
-python scripts/package_green_release.py --version LTS1.0.6pre2
+python scripts/package_green_release.py --version LTS1.0.6pre4
 ```
 
 输出示例：
 
-- `dist/FlyingSnowVelvet-LTS1.0.6pre2-green.zip`
-- `dist/FlyingSnowVelvet-LTS1.0.6pre2-green-manifest.json`
+- `dist/FlyingSnowVelvet-LTS1.0.6pre4-green.zip`
+- `dist/FlyingSnowVelvet-LTS1.0.6pre4-green-manifest.json`
 
 绿色包需要额外携带安装脚本会联网下载的离线资源归档，优先覆盖以下路径：
 
@@ -117,14 +120,17 @@ python scripts/package_green_release.py --version LTS1.0.6pre2
 - 登录态、Cookie、storage state、API Key
 - `C:\AemeathDeskPet` 下的用户稀疏配置、状态与缓存
 
+绿色包同样只携带固定 UnRAR 后端，不携带 ONNX 语音模型分卷。
+
 ## 4. 发布包内容审查
 
 打包后检查 manifest：
 
 ```powershell
-Get-Content dist\FlyingSnowVelvet-LTS1.0.6pre2-manifest.json | Select-String "playwright|models|SEanima|chrome-runtime|python-3.11|storage_state|__pycache__|\.git|\.github|tests/|scripts/|\.oprate|用户反馈/"
-Get-Content dist\FlyingSnowVelvet-LTS1.0.6pre2-green-manifest.json | Select-String "vosk-model-small-cn-0.22.zip|vosk-model-small-en-us-0.15.zip|SEanima.zip|chrome-runtime.z01|chrome-runtime.z02|chrome-runtime.zip"
-Get-Content dist\FlyingSnowVelvet-LTS1.0.6pre2-green-manifest.json | Select-String "resc/playwright/|resc/models/vosk-model-small-cn-0.22/|resc/models/vosk-model-small-en-us-0.15/|resc/GIF/SEanima/|python-3.11|storage_state|__pycache__|\.git|\.github|tests/|scripts/|\.oprate|用户反馈/"
+Get-Content dist\FlyingSnowVelvet-LTS1.0.6pre4-manifest.json | Select-String "playwright|models|SEanima|chrome-runtime|python-3.11|storage_state|__pycache__|\.git|\.github|tests/|scripts/|\.oprate|用户反馈/"
+Get-Content dist\FlyingSnowVelvet-LTS1.0.6pre4-green-manifest.json | Select-String "vosk-model-small-cn-0.22.zip|vosk-model-small-en-us-0.15.zip|SEanima.zip|chrome-runtime.z01|chrome-runtime.z02|chrome-runtime.zip"
+Get-Content dist\FlyingSnowVelvet-LTS1.0.6pre4-green-manifest.json | Select-String "resc/playwright/|resc/models/vosk-model-small-cn-0.22/|resc/models/vosk-model-small-en-us-0.15/|resc/GIF/SEanima/|python-3.11|storage_state|__pycache__|\.git|\.github|tests/|scripts/|\.oprate|用户反馈/"
+Get-Content dist\FlyingSnowVelvet-LTS1.0.6pre4-manifest.json, dist\FlyingSnowVelvet-LTS1.0.6pre4-green-manifest.json | Select-String "lib/script/gsvmove/bin/UnRAR.exe|lib/script/gsvmove/bin/LICENSE-UnRAR.txt"
 ```
 
 预期：
@@ -132,15 +138,22 @@ Get-Content dist\FlyingSnowVelvet-LTS1.0.6pre2-green-manifest.json | Select-Stri
 - 普通包 manifest 不应出现 `resc/models/`、`resc/GIF/SEanima/`、浏览器分卷、Python 安装器或 `resc/playwright/`。
 - 绿色包 manifest 应出现 Vosk 模型 zip、`SEanima.zip` 与浏览器分卷资源，但不应出现它们已解包后的运行目录。
 - 两类包都不应出现 Git 元文件、测试目录、打包脚本、运维目录、运行时登录态或用户缓存。
+- 两类包都应同时出现固定的 `UnRAR.exe` 与其许可证，且不应出现 `ONNX_aimisiV2语音包.part*.rar`。
 
-## 5. Git 标签与远端发布
+## 5. ONNX 语音包发布
+
+语音包独立于程序 ZIP 发布。Gitee 与 GitHub 的“语音包”槽必须各自上传完整七卷，文件名严格为 `ONNX_aimisiV2语音包.part01.rar` 至 `part07.rar`；客户端不会跨镜像拼接分卷。
+
+上传前按 `doc/语音包协议.md` 校验包根目录、manifest、中英文前端、参考素材和 `SHA256SUMS.txt`。上传后从每个镜像至少下载第一卷并确认 RAR5 可读，随后用完整七卷执行一次安装校验和中英文 CPU 推理。程序发行包只提供经哈希锁定的官方 UnRAR，不允许在用户安装阶段联网下载解压器。
+
+## 6. Git 标签与远端发布
 
 示例：
 
 ```powershell
-git tag -a LTS1.0.6pre2 -m "LTS 1.0.6 pre2"
+git tag -a LTS1.0.6pre4 -m "LTS 1.0.6 pre4"
 git push origin main
-git push origin LTS1.0.6pre2
+git push origin LTS1.0.6pre4
 ```
 
 Release 建议上传：
@@ -151,7 +164,7 @@ Release 建议上传：
 
 Release Notes 以 `CHANGELOG.md` 当前版本段为主，必要时补充迁移说明。
 
-## 6. 发布后检查
+## 7. 发布后检查
 
 - 确认 GitHub Release 附件完整
 - 确认 GitHub `PACK` 与 Gitee“最新包”固定发布槽均指向本次程序快照，且 ZIP 可下载

@@ -129,6 +129,42 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
         return dict(options) if isinstance(options, dict) else {}
 
     @staticmethod
+    def _refresh_yuanbao_runtime_config(active_config: dict) -> dict:
+        """Use the local relay port selected by the running Yuanbao service."""
+        if not isinstance(active_config, dict):
+            return active_config
+        yuanbao_options = _ApiClientOpenAIMixin._get_yuanbao_free_api_options(active_config)
+        if (
+            active_config.get('key_source') != 'yuanbao_local'
+            and not bool(yuanbao_options.get('enabled', False))
+        ):
+            return active_config
+
+        from config.ollama_config import get_yuanbao_local_base_url
+
+        runtime_base_url = str(get_yuanbao_local_base_url() or '').strip().rstrip('/')
+        configured_base_url = str(active_config.get('base_url') or '').strip().rstrip('/')
+        option_base_url = str(yuanbao_options.get('base_url') or '').strip().rstrip('/')
+        if not runtime_base_url or (
+            runtime_base_url == configured_base_url
+            and runtime_base_url == option_base_url
+        ):
+            return active_config
+
+        refreshed = dict(active_config)
+        refreshed['base_url'] = runtime_base_url
+        provider_options = dict(active_config.get('provider_options') or {})
+        yuanbao_options['base_url'] = runtime_base_url
+        provider_options['yuanbao_free_api'] = yuanbao_options
+        refreshed['provider_options'] = provider_options
+        logger.info(
+            '[APIClient] 元宝本地中转地址已同步到运行时端口: %s -> %s',
+            configured_base_url or '<empty>',
+            runtime_base_url,
+        )
+        return refreshed
+
+    @staticmethod
     def _merge_payload_extra_fields(payloads: list[dict], extra_fields: dict | None) -> list[dict]:
         if not extra_fields:
             return payloads
@@ -556,7 +592,10 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
         raw_thinking_budget = OLLAMA.get('api_thinking_budget', 0)
         api_thinking_budget = int(raw_thinking_budget) if str(raw_thinking_budget).strip() else 0
 
-        active_config = config_override or self._active_config
+        configured = config_override or self._active_config
+        active_config = self._refresh_yuanbao_runtime_config(configured)
+        if config_override is None and active_config is not configured:
+            self._active_config = active_config
         base_url  = active_config['base_url'].rstrip('/')
         api_key   = active_config['api_key']
         model     = active_config['model']

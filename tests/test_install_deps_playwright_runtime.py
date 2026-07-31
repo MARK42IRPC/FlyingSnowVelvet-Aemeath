@@ -28,6 +28,15 @@ class InstallDepsPlaywrightRuntimeTests(unittest.TestCase):
             {install_deps.urllib.parse.urlsplit(url).hostname for url in links["SEanima.zip"]},
             {"gitee.com", "github.com"},
         )
+        self.assertEqual(
+            links[install_deps.JIEBA_FAST_WHEEL_NAME],
+            (
+                "https://gitee.com/Mark42IRPC/Aemeath-AIdeskpet/releases/download/RESC/"
+                + install_deps.JIEBA_FAST_WHEEL_NAME,
+                "https://github.com/MARK42IRPC/FlyingSnowVelvet-Aemeath/releases/download/RESC/"
+                + install_deps.JIEBA_FAST_WHEEL_NAME,
+            ),
+        )
 
     def test_ping_host_average_uses_three_attempts_and_timeout_penalty(self):
         with patch.object(install_deps, "_ping_once_ms", side_effect=[10.0, None, 20.0]) as ping_mock:

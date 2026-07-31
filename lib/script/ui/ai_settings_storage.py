@@ -43,8 +43,15 @@ def load_ai_values(default_values: dict) -> dict:
         "api_temperature": oc.OLLAMA.get("api_temperature", 1.35),
         "model_vision": oc.OLLAMA.get("model_vision", 0),
         "gsv_auto_start": bool(oc.OLLAMA.get("gsv_auto_start", False)),
-        "gsv_temperature": oc.OLLAMA.get("gsv_temperature", 1.35),
-        "gsv_speed_factor": oc.OLLAMA.get("gsv_speed_factor", 1.05),
+        "gsv_temperature": oc.OLLAMA.get("gsv_temperature", 1.0),
+        "gsv_top_k": oc.OLLAMA.get("gsv_top_k", 15),
+        "gsv_top_p": oc.OLLAMA.get("gsv_top_p", 1.0),
+        "gsv_repetition_penalty": oc.OLLAMA.get("gsv_repetition_penalty", 1.35),
+        "gsv_speed_factor": oc.OLLAMA.get("gsv_speed_factor", 1.0),
+        "gsv_text_split_method": oc.OLLAMA.get("gsv_text_split_method", "cut5"),
+        "gsv_fragment_interval": oc.OLLAMA.get("gsv_fragment_interval", 0.3),
+        "gsv_seed": oc.OLLAMA.get("gsv_seed", -1),
+        "gsv_max_steps": oc.OLLAMA.get("gsv_max_steps", 500),
         "ai_voice_max_chars": oc.OLLAMA.get("ai_voice_max_chars", 80),
         "gsv_cache_max_files": oc.OLLAMA.get("gsv_cache_max_files", 20),
         "memory_context_limit": oc.OLLAMA.get("memory_context_limit", 12),
@@ -87,7 +94,14 @@ def apply_ai_runtime(values: dict, default_values: dict) -> None:
     oc.OLLAMA["model_vision"] = values["model_vision"]
     oc.OLLAMA["gsv_auto_start"] = values["gsv_auto_start"]
     oc.OLLAMA["gsv_temperature"] = values["gsv_temperature"]
+    oc.OLLAMA["gsv_top_k"] = values["gsv_top_k"]
+    oc.OLLAMA["gsv_top_p"] = values["gsv_top_p"]
+    oc.OLLAMA["gsv_repetition_penalty"] = values["gsv_repetition_penalty"]
     oc.OLLAMA["gsv_speed_factor"] = values["gsv_speed_factor"]
+    oc.OLLAMA["gsv_text_split_method"] = values["gsv_text_split_method"]
+    oc.OLLAMA["gsv_fragment_interval"] = values["gsv_fragment_interval"]
+    oc.OLLAMA["gsv_seed"] = values["gsv_seed"]
+    oc.OLLAMA["gsv_max_steps"] = values["gsv_max_steps"]
     oc.OLLAMA["ai_voice_max_chars"] = values["ai_voice_max_chars"]
     oc.OLLAMA["gsv_cache_max_files"] = values["gsv_cache_max_files"]
     oc.OLLAMA["memory_context_limit"] = memory_context_limit

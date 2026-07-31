@@ -1,6 +1,10 @@
 comtypes>=1.1.11
+genie-tts==2.0.2
+jieba-fast==0.53
 mutagen>=1.47.0
-numpy>=2.0.0
+numpy>=2.0.0,<3
+onnx>=1.17
+onnxruntime>=1.22,<2
 opencv_python>=4.13.0.92
 packaging>=23.2
 Pillow>=10.2.0
@@ -9,6 +13,9 @@ pycaw>=20181226
 PyQt5>=5.15.10
 pywin32>=306
 qrcode>=7.4.2
+rarfile>=4.4,<5
 requests>=2.31.0
 sounddevice>=0.4.6
+soundfile>=0.12
+soxr>=0.5
 vosk>=0.3.45

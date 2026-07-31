@@ -11,3 +11,4 @@ SEanima.zip
 chrome-runtime.zip
 chrome-runtime.z01
 chrome-runtime.z02
+jieba_fast-0.53-cp311-cp311-win_amd64.whl

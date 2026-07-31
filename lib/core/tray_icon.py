@@ -40,6 +40,7 @@ class TrayIcon(QObject):
 
     # 退出信号
     quit_requested = pyqtSignal()
+    announcement_requested = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -248,6 +249,14 @@ class TrayIcon(QObject):
         ai_settings_action.setStatusTip(TOOLTIPS['tray_ai_settings'])
         ai_settings_action.triggered.connect(self._on_ai_settings)
         self._menu.addAction(ai_settings_action)
+
+        announcement_action = QAction('桌宠公告', self._menu)
+        announcement_action.setToolTip(TOOLTIPS['tray_announcement'])
+        announcement_action.setStatusTip(TOOLTIPS['tray_announcement'])
+        announcement_action.triggered.connect(
+            lambda _checked=False: self.announcement_requested.emit()
+        )
+        self._menu.addAction(announcement_action)
 
         bug_tracker_action = QAction('bug跟踪', self._menu)
         bug_tracker_action.setToolTip(TOOLTIPS['tray_bug_tracker'])

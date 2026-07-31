@@ -50,6 +50,8 @@ class AISettingsStorageLocalSecretsTests(unittest.TestCase):
             self.assertEqual(ai["force_reply_mode"], "4")
             self.assertTrue(ai["welfare_intelligence_boost"])
             self.assertEqual(ai["yuanbao_agent_id"], "custom-agent")
+            self.assertNotIn("gsv_top_k", ai)
+            self.assertNotIn("gsv_fragment_interval", ai)
             self.assertNotIn("ollama_model", ai)
             self.assertNotIn("api_key", ai)
             self.assertNotIn("yuanbao_hy_user", ai)
@@ -77,6 +79,24 @@ class AISettingsStorageLocalSecretsTests(unittest.TestCase):
                 loaded = storage.load_ai_values(defaults)
 
         self.assertEqual(loaded["api_key"], "written-by-another-process")
+
+    def test_load_ai_values_includes_effective_onnx_parameters(self):
+        defaults = oc.get_ai_setting_defaults()
+        loaded = storage.load_ai_values(defaults)
+
+        for key in (
+            "gsv_temperature",
+            "gsv_top_k",
+            "gsv_top_p",
+            "gsv_repetition_penalty",
+            "gsv_speed_factor",
+            "gsv_text_split_method",
+            "gsv_fragment_interval",
+            "gsv_seed",
+            "gsv_max_steps",
+        ):
+            with self.subTest(key=key):
+                self.assertIn(key, loaded)
 
     def test_saved_api_key_is_loaded_by_a_fresh_process(self):
         project_root = Path(__file__).resolve().parents[1]

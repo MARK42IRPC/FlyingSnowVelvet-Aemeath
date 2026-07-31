@@ -36,7 +36,14 @@ def validate_ai_values(values: dict) -> None:
     api_temperature = values.get("api_temperature")
     model_vision = values.get("model_vision")
     gsv_temperature = values.get("gsv_temperature")
+    gsv_top_k = values.get("gsv_top_k")
+    gsv_top_p = values.get("gsv_top_p")
+    gsv_repetition_penalty = values.get("gsv_repetition_penalty")
     gsv_speed_factor = values.get("gsv_speed_factor")
+    gsv_text_split_method = values.get("gsv_text_split_method")
+    gsv_fragment_interval = values.get("gsv_fragment_interval")
+    gsv_seed = values.get("gsv_seed")
+    gsv_max_steps = values.get("gsv_max_steps")
     gsv_auto_start = values.get("gsv_auto_start")
     api_enable_thinking = values.get("api_enable_thinking")
     auto_companion_enabled = values.get("auto_companion_enabled")
@@ -112,8 +119,23 @@ def validate_ai_values(values: dict) -> None:
         raise ValueError("GSV服务温度必须是数字") from e
     if not math.isfinite(gsv_temp):
         raise ValueError("GSV服务温度必须是有限数字")
-    if not (0.0 <= gsv_temp <= 2.0):
-        raise ValueError("GSV服务温度范围应为 0~2")
+    if not (0.01 <= gsv_temp <= 2.0):
+        raise ValueError("GSV服务温度范围应为 0.01~2")
+
+    if isinstance(gsv_top_k, bool) or not isinstance(gsv_top_k, int):
+        raise ValueError("GSV Top-K 必须是整数")
+    if not (1 <= gsv_top_k <= 1025):
+        raise ValueError("GSV Top-K 范围应为 1~1025")
+
+    if isinstance(gsv_top_p, bool) or not isinstance(gsv_top_p, (int, float)):
+        raise ValueError("GSV Top-P 必须是数字")
+    if not math.isfinite(float(gsv_top_p)) or not (0.01 <= float(gsv_top_p) <= 1.0):
+        raise ValueError("GSV Top-P 范围应为 0.01~1")
+
+    if isinstance(gsv_repetition_penalty, bool) or not isinstance(gsv_repetition_penalty, (int, float)):
+        raise ValueError("GSV重复惩罚必须是数字")
+    if not math.isfinite(float(gsv_repetition_penalty)) or not (0.1 <= float(gsv_repetition_penalty) <= 2.0):
+        raise ValueError("GSV重复惩罚范围应为 0.1~2")
 
     if isinstance(gsv_speed_factor, bool) or not isinstance(gsv_speed_factor, (int, float)):
         raise ValueError("GSV语速必须是数字")
@@ -125,6 +147,24 @@ def validate_ai_values(values: dict) -> None:
         raise ValueError("GSV语速必须是有限数字")
     if not (0.5 <= speed <= 2.0):
         raise ValueError("GSV语速范围应为 0.5~2.0")
+
+    if gsv_text_split_method not in {"cut0", "cut1", "cut2", "cut3", "cut4", "cut5"}:
+        raise ValueError("GSV分句方式无效")
+
+    if isinstance(gsv_fragment_interval, bool) or not isinstance(gsv_fragment_interval, (int, float)):
+        raise ValueError("GSV片段停顿必须是数字")
+    if not math.isfinite(float(gsv_fragment_interval)) or not (0.0 <= float(gsv_fragment_interval) <= 5.0):
+        raise ValueError("GSV片段停顿范围应为 0~5 秒")
+
+    if isinstance(gsv_seed, bool) or not isinstance(gsv_seed, int):
+        raise ValueError("GSV随机种子必须是整数")
+    if not (-1 <= gsv_seed <= 2**32 - 1):
+        raise ValueError("GSV随机种子范围应为 -1~4294967295")
+
+    if isinstance(gsv_max_steps, bool) or not isinstance(gsv_max_steps, int):
+        raise ValueError("GSV最大解码步数必须是整数")
+    if not (64 <= gsv_max_steps <= 1200):
+        raise ValueError("GSV最大解码步数范围应为 64~1200")
 
     if not isinstance(gsv_auto_start, bool):
         raise ValueError("GSV自动启用开关无效")

@@ -183,6 +183,11 @@ def workbench_stylesheet(mode: str | None = None) -> str:
         background: {c.cyan};
         border-color: {c.cyan};
     }}
+    QCheckBox#WorkbenchThemeToggle {{
+        background: transparent;
+        border: none;
+        padding: 0px;
+    }}
     QLineEdit#WorkbenchSearch {{
         background: {c.canvas};
         color: {c.text};

@@ -1,4 +1,4 @@
-飞行雪绒事件系统使用说明（LTS1.0.6pre2）
+飞行雪绒事件系统使用说明（LTS1.0.6pre4）
 
 一、核心入口
 - 实现：`lib/core/event/center.py`
@@ -77,6 +77,7 @@ VOICE_REQUEST
 
 AI_VOICE_REQUEST
 - 用途：AI 文本转语音申请
+- 字段：`text`（保留中英文原文）、可选 `text_lang`（`zh`、`en` 或 `auto`）、`interruptible`
 - 当前由 `lib/script/gsvmove/service.py` 消费
 - 当 GSV 模块在控制面板中关闭时，这类事件会被直接忽略
 

@@ -17,13 +17,17 @@ STREAM_FINAL_MIN_PER_CHAR = 3
 STREAM_FINAL_MIN_CAP = 300
 TOOL_MARKER_PATTERN = re.compile(r'###.*?###', re.S)
 TOPIC_MARKER_PATTERN = re.compile(r'^\s*///\s*([^/\r\n]{1,32}?)\s*//(?:/)?\s*', re.S)
-VOICE_SENTENCE_SPLIT_PATTERN = re.compile('(?<=[。！？!?…])')
+VOICE_SENTENCE_SPLIT_PATTERN = re.compile(r'(?<=[。！？!?…；;.!?])')
+_VOICE_CJK_PATTERN = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
+_VOICE_LATIN_PATTERN = re.compile(r"[A-Za-z]")
 NON_AI_VOICE_PATTERNS = [
     re.compile(r'^请求失败(?:(?:（|\().*?(?:）|\)))?[:：]'),
+    re.compile(r'^当前(?:回复|选择的)?模式请求失败[:：]', re.I),
     re.compile(r'^外部\s*API请求过于频繁'),
     re.compile(r'^本地 Ollama 模式不可用[:：]'),
     re.compile(r'^当前模式不可用'),
     re.compile(r'^(?:OpenAI|Ollama|API|外部API)\s*(?:兼容)?请求失败[:：]'),
+    re.compile(r'^(?:OpenAI|Ollama|API|外部API).*?(?:错误|异常|error|failed|failure)\s*[:：]', re.I),
     re.compile(r'^(?:网络超时|连接失败|服务未就绪|登录态抓取超时|抓取失败)[:：]'),
 ]
 VISION_PATTERNS = [
@@ -114,6 +118,18 @@ def _build_ai_voice_text(text: str) -> str:
     if truncated:
         logger.debug("[ChatHandler] AI 语音超长，已截断到最大长度（%d -> %d 字）", len(cleaned), len(truncated))
     return truncated
+
+
+def _detect_ai_voice_language(text: str) -> str:
+    """Return the language hint consumed by the multilingual ONNX front end."""
+    normalized = str(text or "")
+    has_cjk = bool(_VOICE_CJK_PATTERN.search(normalized))
+    has_latin = bool(_VOICE_LATIN_PATTERN.search(normalized))
+    if has_cjk and has_latin:
+        return "auto"
+    if has_latin:
+        return "en"
+    return "zh"
 
 
 def _is_non_ai_status_text(text: str) -> bool:
@@ -257,6 +273,7 @@ class ChatHandlerStreamPresenterMixin:
             if voice_text:
                 self._event_center.publish(Event(EventType.AI_VOICE_REQUEST, {
                     "text": voice_text,
+                    "text_lang": _detect_ai_voice_language(voice_text),
                     "interruptible": True,
                 }))
 
@@ -283,6 +300,7 @@ class ChatHandlerStreamPresenterMixin:
         if not raw_text:
             raw_text = bot_reply.get_reply(AUTO_COMPANION_PROMPT)
         display_text = _strip_tool_commands_for_display(raw_text)
+        is_status_text = _is_non_ai_status_text(display_text)
         
         # 使用与流式回复结束相同的 min_ticks 计算逻辑
         final_min_ticks = self._calc_stream_final_min_ticks(display_text)
@@ -293,13 +311,18 @@ class ChatHandlerStreamPresenterMixin:
             "min":  final_min_ticks,
             "max":  final_max_ticks,
         }))
-        voice_text = _build_ai_voice_text(display_text) if from_ai else ""
+        voice_text = (
+            _build_ai_voice_text(display_text)
+            if from_ai and not is_status_text
+            else ""
+        )
         if voice_text:
             self._event_center.publish(Event(EventType.AI_VOICE_REQUEST, {
                 "text": voice_text,
+                "text_lang": _detect_ai_voice_language(voice_text),
                 "interruptible": True,
             }))
-        if include_history and from_ai:
+        if include_history and from_ai and not is_status_text:
             effective_user = str(user_text or AUTO_COMPANION_PROMPT or '').strip()
             if effective_user:
                 self._append_recent_context('user', effective_user)
@@ -309,7 +332,8 @@ class ChatHandlerStreamPresenterMixin:
                 except Exception as exc:
                     logger.debug("[ChatHandler] 自动陪伴写入用户侧记忆失败: %s", exc)
             self._append_recent_context('assistant', raw_text)
-        self._event_center.publish(Event(EventType.STREAM_FINAL, {"text": raw_text}))
+        if not is_status_text:
+            self._event_center.publish(Event(EventType.STREAM_FINAL, {"text": raw_text}))
         logger.debug("[ChatHandler] 自动陪伴回复（%d 字，min=%d）: %s",
                      len(display_text), final_min_ticks, display_text[:60])
 

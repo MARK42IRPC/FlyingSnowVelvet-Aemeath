@@ -528,6 +528,14 @@ class YuanbaoFreeApiService(LocalHostedServiceBase):
         status, _host, _port = self._ensure_status_endpoint(host, port)
         return status
 
+    def peek_service_status(self) -> Optional[Dict[str, object]]:
+        """读取已有本地服务状态，不启动服务、也不改变端口或登录流程。"""
+        target = _parse_local_target()
+        if target is None:
+            return None
+        host, port = target
+        return _fetch_service_status(host, port, timeout=1.0)
+
     def ensure_service_process_ready(self) -> bool:
         """仅确保 YuanBao-Free-API 本地服务可访问，不触发登录或二维码获取。"""
         target = _parse_local_target()

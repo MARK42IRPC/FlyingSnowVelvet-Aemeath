@@ -15,14 +15,18 @@
 
 import configparser
 import glob
+import hashlib
 import json
 import os
 import re
+import queue
 import shutil
 import socket
 import struct
 import subprocess
 import sys
+import tempfile
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -72,6 +76,14 @@ DEPENDENCIES = [
     ("qrcode", "QR code generation for music login", ("qrcode",)),
     ("sse-starlette", "SSE streaming for local web relay", ("sse_starlette",)),
     ("mutagen", "local audio metadata parsing", ("mutagen",)),
+    ("jieba-fast", "compiled Chinese tokenizer for genie-tts", ("jieba_fast",)),
+    ("genie-tts", "bilingual ONNX text frontend", ("spec:genie_tts",)),
+    ("numpy", "numerical runtime for ONNX voice synthesis", ("numpy",)),
+    ("onnx", "ONNX model loader for voice synthesis", ("onnx",)),
+    ("onnxruntime", "lightweight ONNX voice inference runtime", ("onnxruntime",)),
+    ("rarfile", "safe multi-volume RAR parser", ("rarfile",)),
+    ("soundfile", "ONNX voice audio writer", ("soundfile",)),
+    ("soxr", "ONNX voice audio resampler", ("soxr",)),
     ("pycaw", "Windows audio meter", ("pycaw",)),
     ("comtypes", "COM bindings for pycaw", ("comtypes",)),
     ("pywin32", "Windows COM bridge (win32com/pythoncom)", ("pythoncom", "win32com")),
@@ -138,6 +150,10 @@ _COLOR_MAP = {
     "ok": "\033[92m",
     "warn": "\033[93m",
     "error": "\033[91m",
+    "progress_current": "\033[96m",
+    "progress_overall": "\033[95m",
+    "progress_track": "\033[90m",
+    "progress_value": "\033[97m",
 }
 _LABELS = {
     "info": "[信息] ",
@@ -213,6 +229,9 @@ VOSK_MODEL_SPECS = (
 SEANIMA_TARGET_DIR = PROJECT_ROOT / "resc" / "GIF" / "SEanima"
 SEANIMA_RESOURCE_NAME = "SEanima.zip"
 SEANIMA_ARCHIVE = PROJECT_ROOT / "resc" / "GIF" / SEANIMA_RESOURCE_NAME
+JIEBA_FAST_PACKAGE = "jieba-fast"
+JIEBA_FAST_WHEEL_NAME = "jieba_fast-0.53-cp311-cp311-win_amd64.whl"
+JIEBA_FAST_WHEEL_SHA256 = "a5d9cf41d6817963a73f672a429dbfe5b03a4ff327cedf490d5f2b21be8c00d0"
 
 _NOT_FOUND_MARKERS = (
     "no matching distribution found",
@@ -433,7 +452,7 @@ def _fmt_ver(ver):
 
 
 def _sort_key(item):
-    """Match batch-file selection: current interpreter first, then prefer Python 3.11."""
+    """Prefer Python 3.11 for the published native dependency wheels."""
     ver, exe = item
     current_exe = _current_runtime_executable()
     current = 0 if os.path.normcase(os.path.abspath(exe)) == os.path.normcase(os.path.abspath(current_exe)) else 1
@@ -441,7 +460,7 @@ def _sort_key(item):
     exact_target = 0 if (ver[0], ver[1]) == TARGET_PYTHON else 1
     distance = abs(ver[1] - target_minor) if ver[0] == target_major else 99
     non_py3 = 0 if ver[0] == target_major else 1
-    return (current, exact_target, distance, non_py3, -ver[0], -ver[1], -ver[2], exe.lower())
+    return (exact_target, current, distance, non_py3, -ver[0], -ver[1], -ver[2], exe.lower())
 
 
 def _fallback_python_selection(message="  No Python found via scan, fallback to current interpreter"):
@@ -694,6 +713,9 @@ def benchmark_mirrors():
     return reachable + unreachable
 
 
+_SPEC_ONLY_IMPORT_PREFIX = "spec:"
+
+
 def _pkg_installed(python_exe, pkg, import_checks=()):
     """
     Check package availability by:
@@ -704,68 +726,438 @@ def _pkg_installed(python_exe, pkg, import_checks=()):
     if not (r is not None and r.returncode == 0):
         return False
 
-    modules = [m for m in import_checks if str(m or "").strip()]
-    if not modules:
+    checks = [str(item or "").strip() for item in import_checks if str(item or "").strip()]
+    if not checks:
         return True
 
-    code = "; ".join(f"import {m}" for m in modules)
+    spec_modules = [
+        item[len(_SPEC_ONLY_IMPORT_PREFIX):]
+        for item in checks
+        if item.startswith(_SPEC_ONLY_IMPORT_PREFIX)
+    ]
+    import_modules = [
+        item
+        for item in checks
+        if not item.startswith(_SPEC_ONLY_IMPORT_PREFIX)
+    ]
+    statements = ["import importlib.util"] if spec_modules else []
+    statements.extend(
+        f"assert importlib.util.find_spec({module!r}) is not None"
+        for module in spec_modules
+    )
+    statements.extend(f"import {module}" for module in import_modules)
+    code = "; ".join(statements)
     ir = _run([python_exe, "-c", code])
     return ir is not None and ir.returncode == 0
 
 
-def _install_one(python_exe, pkg, mirrors):
-    """Install one package with mirror fallback."""
-    for i, mirror in enumerate(mirrors):
-        label = "primary" if i == 0 else f"backup{i}"
-        print(f"    [{label}] {mirror['name']} ...", end=" ", flush=True)
+_ANSI_ESCAPE_PATTERN = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 
-        r = _run_pip(
+
+def _render_dependency_bar(current, total, width=26, *, color_kind=None):
+    if total <= 0:
+        percent = 100
+    else:
+        percent = max(0, min(100, int(round((current / total) * 100))))
+    filled = int(round((percent / 100) * width))
+    complete = "━" * filled
+    remaining = "─" * (width - filled)
+    if not _COLOR_ENABLED or not color_kind:
+        return f"[{complete}{remaining}]"
+    complete_color = _COLOR_MAP.get(color_kind, _COLOR_MAP["info"])
+    track_color = _COLOR_MAP["progress_track"]
+    return (
+        f"[{complete_color}{complete}{_COLOR_RESET}"
+        f"{track_color}{remaining}{_COLOR_RESET}]"
+    )
+
+
+class _DependencyCheckProgressDisplay:
+    """One in-place line for the potentially slow dependency availability scan."""
+
+    def __init__(self):
+        self._drawn = False
+        self._last_payload = None
+        self._line_width = 0
+
+    def update(self, package, current, total, *, force=False):
+        checked = max(0, min(int(current), max(0, int(total))))
+        total = max(0, int(total))
+        payload = (str(package), checked, total)
+        if payload == self._last_payload and not force:
+            return
+        self._last_payload = payload
+        percent = 100 if total <= 0 else int(round((checked / total) * 100))
+        label = _fmt_color("正在检查依赖", "info")
+        bar = _render_dependency_bar(
+            checked,
+            total,
+            color_kind="progress_current",
+        )
+        value = _fmt_color(f"{percent:>3}%", "progress_value")
+        count = _fmt_color(f"{checked}/{total}", "progress_value")
+        package_name = _fmt_color(str(package), "progress_current")
+        line = f"  {label} {bar} {value}  {count}  {package_name}"
+        self._line_width = max(self._line_width, len(line))
+        if _COLOR_ENABLED:
+            sys.stdout.write(f"\r\033[2K{line}")
+        else:
+            sys.stdout.write("\r" + line)
+        sys.stdout.flush()
+        self._drawn = True
+
+    def clear(self):
+        if not self._drawn:
+            return
+        if _COLOR_ENABLED:
+            sys.stdout.write("\r\033[2K")
+        else:
+            sys.stdout.write("\r" + " " * self._line_width + "\r")
+        sys.stdout.flush()
+        self._drawn = False
+
+
+class _DependencyProgressDisplay:
+    def __init__(self):
+        self._drawn = False
+        self._last_payload = None
+
+    def update(self, package, package_percent, overall_current, overall_total, *, force=False):
+        percent = max(0, min(100, int(package_percent)))
+        payload = (str(package), percent, int(overall_current), int(overall_total))
+        if payload == self._last_payload and not force:
+            return
+        self._last_payload = payload
+        package_bar = _render_dependency_bar(
+            percent,
+            100,
+            color_kind="progress_current",
+        )
+        overall_bar = _render_dependency_bar(
+            overall_current,
+            overall_total,
+            color_kind="progress_overall",
+        )
+        current_label = _fmt_color("当前依赖", "info")
+        overall_label = _fmt_color("整体进度", "stage")
+        package_value = _fmt_color(f"{percent:>3}%", "progress_value")
+        overall_value = _fmt_color(
+            f"{overall_current}/{overall_total}",
+            "progress_value",
+        )
+        package_name = _fmt_color(str(package), "progress_current")
+        first = f"  {current_label} {package_bar} {package_value}  {package_name}"
+        second = f"  {overall_label} {overall_bar} {overall_value}"
+
+        if _COLOR_ENABLED:
+            if self._drawn:
+                sys.stdout.write("\033[2F")
+            sys.stdout.write(f"\033[2K{first}\n\033[2K{second}\n")
+            sys.stdout.flush()
+            self._drawn = True
+            return
+
+        if not self._drawn or force:
+            print(first)
+            print(second)
+            self._drawn = True
+
+
+def _run_pip_requirement_with_progress(
+    python_exe,
+    requirement,
+    progress_callback,
+    *,
+    mirror=None,
+):
+    command = _python_module_cmd(
+        python_exe,
+        "pip",
+        "install",
+        str(requirement),
+        "--no-warn-script-location",
+        "--disable-pip-version-check",
+        "--progress-bar",
+        "off",
+    )
+    if mirror is not None:
+        command.extend(
+            (
+                "-i",
+                mirror["url"],
+                "--trusted-host",
+                mirror["host"],
+            )
+        )
+    try:
+        proc = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+        )
+    except OSError as exc:
+        return 127, f"无法启动 pip：{exc}"
+    output_queue = queue.Queue()
+
+    def read_output():
+        stream = proc.stdout
+        if stream is None:
+            output_queue.put(None)
+            return
+        try:
+            for line in stream:
+                output_queue.put(line)
+        finally:
+            output_queue.put(None)
+
+    reader = threading.Thread(target=read_output, daemon=True, name="pip-progress-reader")
+    reader.start()
+    output_tail = []
+    started_at = time.monotonic()
+    percent = 1
+    reader_done = False
+    while proc.poll() is None or not reader_done:
+        try:
+            line = output_queue.get(timeout=0.12)
+        except queue.Empty:
+            line = ""
+        if line is None:
+            reader_done = True
+        elif line:
+            output_tail.append(line)
+            if len(output_tail) > 160:
+                del output_tail[:-160]
+
+        elapsed = time.monotonic() - started_at
+        estimated = min(90, 2 + int(elapsed * 3))
+        percent = max(percent, estimated)
+        progress_callback(percent)
+
+    reader.join(timeout=1.0)
+    return proc.returncode, "".join(output_tail)
+
+
+def _run_pip_install_with_progress(python_exe, pkg, mirror, progress_callback):
+    return _run_pip_requirement_with_progress(
+        python_exe,
+        pkg,
+        progress_callback,
+        mirror=mirror,
+    )
+
+
+def _summarize_pip_failure(output):
+    lines = []
+    for raw_line in str(output or "").splitlines():
+        line = _ANSI_ESCAPE_PATTERN.sub("", raw_line).strip()
+        if line:
+            lines.append(line)
+    if not lines:
+        return "pip 未返回错误详情"
+
+    preferred = [
+        line
+        for line in lines
+        if line.lower().startswith(("error:", "option "))
+        or "subprocess-exited-with-error" in line.lower()
+        or "failed building wheel" in line.lower()
+    ]
+    selected = preferred[-3:] if preferred else lines[-3:]
+    summary = " | ".join(dict.fromkeys(selected))
+    return summary if len(summary) <= 900 else summary[:897] + "..."
+
+
+def _install_jieba_fast_wheel(python_exe, progress_callback):
+    version = _get_version(python_exe)
+    architecture = _run(
+        [
             python_exe,
-            "install",
-            pkg,
-            "-i",
-            mirror["url"],
-            "--trusted-host",
-            mirror["host"],
-            "--no-warn-script-location",
-            timeout=240,
+            "-c",
+            "import struct; print(struct.calcsize('P') * 8)",
+        ]
+    )
+    is_64_bit = (
+        architecture is not None
+        and architecture.returncode == 0
+        and (architecture.stdout or "").strip() == "64"
+    )
+    if version[:2] != TARGET_PYTHON or not is_64_bit:
+        detected = _fmt_ver(version) if version != (0, 0, 0) else "未知版本"
+        return (
+            False,
+            f"预编译 wheel 仅支持 64 位 Python 3.11，当前解释器为 {detected}",
         )
 
-        if r and r.returncode == 0:
-            print("ok")
-            return True
+    urls = _resource_urls(JIEBA_FAST_WHEEL_NAME)
+    if not urls:
+        return False, f"resc.net.txt 中未找到 {JIEBA_FAST_WHEEL_NAME}"
 
-        combined = ((r.stderr or "") + (r.stdout or "")).lower() if r else ""
+    with tempfile.TemporaryDirectory(prefix="aemeath-jieba-fast-") as temp_dir:
+        wheel_path = Path(temp_dir) / JIEBA_FAST_WHEEL_NAME
+        part_path = wheel_path.with_name(wheel_path.name + ".part")
+        last_failure = "wheel 下载失败"
+        for index, url in enumerate(urls, start=1):
+            source_name = RESOURCE_SOURCE_HOSTS.get(
+                (urllib.parse.urlsplit(url).hostname or "").lower(),
+                f"镜像 {index}",
+            )
+            try:
+                _unlink_if_exists(part_path, ignore_errors=True)
+                print(
+                    f"  下载预编译依赖 [{index}/{len(urls)}]: "
+                    f"{JIEBA_FAST_WHEEL_NAME} ({source_name})"
+                )
+                _stream_download_with_progress(
+                    url,
+                    part_path,
+                    label=JIEBA_FAST_PACKAGE,
+                )
+                digest = hashlib.sha256(part_path.read_bytes()).hexdigest()
+                if digest.lower() != JIEBA_FAST_WHEEL_SHA256:
+                    raise ValueError(
+                        f"SHA-256 不匹配，期望 {JIEBA_FAST_WHEEL_SHA256}，实际 {digest}"
+                    )
+                part_path.replace(wheel_path)
+                return_code, output = _run_pip_requirement_with_progress(
+                    python_exe,
+                    wheel_path,
+                    progress_callback,
+                )
+                if return_code == 0:
+                    progress_callback(100)
+                    return True, ""
+                last_failure = f"{source_name}：{_summarize_pip_failure(output)}"
+            except (urllib.error.URLError, OSError, ValueError) as exc:
+                last_failure = f"{source_name}：{exc}"
+            finally:
+                _unlink_if_exists(part_path, ignore_errors=True)
+                _unlink_if_exists(wheel_path, ignore_errors=True)
+
+        return False, last_failure
+
+
+def _install_one(python_exe, pkg, mirrors, progress_callback):
+    """Install one package with mirror fallback and return a concise failure."""
+    if pkg == JIEBA_FAST_PACKAGE:
+        return _install_jieba_fast_wheel(python_exe, progress_callback)
+    if not mirrors:
+        return False, "没有可用的 pip 镜像"
+
+    last_failure = "pip 安装失败"
+    for mirror in mirrors:
+        return_code, output = _run_pip_install_with_progress(
+            python_exe,
+            pkg,
+            mirror,
+            progress_callback,
+        )
+        if return_code == 0:
+            progress_callback(100)
+            return True, ""
+
+        last_failure = f"{mirror['name']}：{_summarize_pip_failure(output)}"
+        combined = output.lower()
         if any(marker in combined for marker in _NOT_FOUND_MARKERS):
-            print("not found on this mirror, switching")
-        else:
-            print("failed, switching")
-
-    return False
+            continue
+    return False, last_failure
 
 
 def install_all(python_exe, mirrors):
     _print_stage(3, "检查并安装桌宠运行依赖...")
-    failed = []
-
-    for pkg, desc, import_checks in DEPENDENCIES:
-        print(f"\n  - {pkg} ({desc})")
+    existing = []
+    missing = []
+    total_checks = len(DEPENDENCIES)
+    check_display = _DependencyCheckProgressDisplay()
+    check_display.update("准备检查", 0, total_checks, force=True)
+    for index, (pkg, desc, import_checks) in enumerate(DEPENDENCIES, start=1):
+        check_display.update(pkg, index - 1, total_checks)
         if _pkg_installed(python_exe, pkg, import_checks=import_checks):
-            print("    已安装")
-            continue
+            existing.append(pkg)
+        else:
+            missing.append((pkg, desc, import_checks))
+        check_display.update(pkg, index, total_checks)
 
-        print("    缺失，正在安装...")
-        if not _install_one(python_exe, pkg, mirrors):
-            print(f"    安装失败: {pkg}")
+    try:
+        from lib.script.gsvmove.rar_backend import is_bundled_unrar_ready
+
+        unrar_ready = is_bundled_unrar_ready()
+    except Exception:
+        unrar_ready = False
+    if unrar_ready:
+        existing.append("UnRAR后端")
+
+    check_display.clear()
+    missing_names = [item[0] for item in missing]
+    if not unrar_ready:
+        missing_names.append("UnRAR后端")
+    print("  已有依赖：" + (", ".join(existing) if existing else "无"))
+    print("  未安装依赖：" + (", ".join(missing_names) if missing_names else "无"))
+
+    total_jobs = len(missing_names)
+    display = _DependencyProgressDisplay()
+    if total_jobs == 0:
+        display.update("无需安装", 100, 0, 0, force=True)
+        _print_kind("\n  所有依赖已安装", "ok", prefix=False)
+        return True
+
+    failed = []
+    failure_details = {}
+    current_job = 0
+    for pkg, _desc, _import_checks in missing:
+        current_job += 1
+        display.update(pkg, 1, current_job, total_jobs)
+
+        def report(percent, package=pkg, index=current_job):
+            display.update(package, percent, index, total_jobs)
+
+        installed, failure_detail = _install_one(
+            python_exe,
+            pkg,
+            mirrors,
+            report,
+        )
+        if not installed:
             failed.append(pkg)
+            failure_details[pkg] = failure_detail
+        display.update(pkg, 100 if pkg not in failed else 0, current_job, total_jobs, force=True)
+
+    if not unrar_ready:
+        current_job += 1
+        display.update("UnRAR后端", 1, current_job, total_jobs)
+        try:
+            from lib.script.gsvmove.rar_backend import ensure_bundled_unrar
+
+            def report_unrar(current, total):
+                percent = 0 if total <= 0 else int((current / total) * 100)
+                display.update("UnRAR后端", percent, current_job, total_jobs)
+
+            ensure_bundled_unrar(report_unrar)
+            display.update("UnRAR后端", 100, current_job, total_jobs, force=True)
+        except Exception:
+            failed.append("UnRAR后端")
+            display.update("UnRAR后端", 0, current_job, total_jobs, force=True)
 
     if not failed:
         _print_kind("\n  所有依赖已安装", "ok", prefix=False)
         return True
 
     _print_warn(f"\n  以下依赖安装失败: {', '.join(failed)}")
-    print("  可手动执行以下命令：")
-    print("    " + " ".join(_python_module_cmd(python_exe, "pip", "install", *failed)))
+    if failure_details:
+        print("  失败原因：")
+        for name in failed:
+            detail = failure_details.get(name)
+            if detail:
+                print(f"    - {name}: {detail}")
+    pip_failed = [name for name in failed if name != "UnRAR后端"]
+    if pip_failed:
+        print("  可手动执行以下命令：")
+        print("    " + " ".join(_python_module_cmd(python_exe, "pip", "install", *pip_failed)))
+    if "UnRAR后端" in failed:
+        print("  随程序提供的 UnRAR 后端缺失，请重新解压完整桌宠程序包。")
     ans = input("\n仍要继续启动吗? (y/n): ").strip().lower()
     return ans == "y"
 

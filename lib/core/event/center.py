@@ -95,7 +95,7 @@ class EventType(Enum):
     # 音频事件
     SOUND_REQUEST = "sound_request"                      # 音频播放申请: [audio_type, source, volume_gain, interruptible]
     VOICE_REQUEST = "voice_request"                      # 语音播放申请（script抽象层入口）
-    AI_VOICE_REQUEST = "ai_voice_request"                # AI文本转语音申请（清洗后的短文本）
+    AI_VOICE_REQUEST = "ai_voice_request"                # AI文本转语音申请（text、可选 text_lang=zh/en/auto）
     MIC_STT_START = "mic_stt_start"                     # 麦克风语音识别启动请求
     MIC_STT_STOP = "mic_stt_stop"                       # 麦克风语音识别停止请求
     MIC_STT_PARTIAL = "mic_stt_partial"                 # 麦克风语音识别中间结果

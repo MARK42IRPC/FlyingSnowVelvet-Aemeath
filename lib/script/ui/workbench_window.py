@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from PyQt5.QtCore import QEasingCurve, QEvent, QPoint, QPropertyAnimation, QSettings, Qt
+from PyQt5.QtGui import QColor, QPainter
 from PyQt5.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -27,6 +28,7 @@ from PyQt5.QtWidgets import (
 
 from config.config import UI
 from config.font_config import apply_ui_font_tree, get_ui_font
+from config.general_user_settings import save_general_values
 from config.scale import scale_px
 from lib.core.anchor_utils import apply_ui_opacity
 from lib.core.event.center import Event, EventType, get_event_center
@@ -40,7 +42,7 @@ from lib.script.workbench.page_registry import (
     WorkbenchPageSpec,
     default_page_spec,
 )
-from lib.script.workbench.theme import workbench_stylesheet
+from lib.script.workbench.theme import get_workbench_colors, workbench_stylesheet
 
 
 _GROUP_ORDER = (
@@ -53,6 +55,55 @@ _GROUP_ORDER = (
     "其他",
 )
 _NAV_FONT_SCALE = 1.25
+
+
+class _WorkbenchThemeToggle(QCheckBox):
+    """紧凑的粉青色明暗主题开关。"""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setObjectName("WorkbenchThemeToggle")
+        self.setText("")
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFixedSize(scale_px(52, min_abs=46), scale_px(28, min_abs=25))
+        self.setAccessibleName("工作台明暗主题")
+
+    def hitButton(self, pos: QPoint) -> bool:
+        """让自绘轨道的整个区域都能响应点击。"""
+        return self.rect().contains(pos)
+
+    def paintEvent(self, _event) -> None:
+        colors = get_workbench_colors()
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        track = self.rect().adjusted(
+            scale_px(1, min_abs=1),
+            scale_px(4, min_abs=3),
+            -scale_px(1, min_abs=1),
+            -scale_px(4, min_abs=3),
+        )
+        radius = track.height() / 2.0
+        active = self.isChecked()
+        painter.setPen(QColor(colors.cyan if active else colors.border_strong))
+        painter.setBrush(QColor(colors.pink if active else colors.surface_raised))
+        painter.drawRoundedRect(track, radius, radius)
+
+        knob_diameter = max(scale_px(16, min_abs=14), track.height() - scale_px(4, min_abs=3))
+        knob_x = (
+            track.right() - knob_diameter - scale_px(2, min_abs=1)
+            if active
+            else track.left() + scale_px(2, min_abs=1)
+        )
+        knob_y = track.center().y() - knob_diameter / 2.0
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(colors.cyan if active else colors.pink))
+        painter.drawEllipse(int(knob_x), int(knob_y), knob_diameter, knob_diameter)
+
+        if self.hasFocus():
+            painter.setPen(QColor(colors.text))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRoundedRect(self.rect().adjusted(0, 0, -1, -1), radius, radius)
 
 
 class WorkbenchWindow(QWidget):
@@ -161,6 +212,11 @@ class WorkbenchWindow(QWidget):
         title_box.addWidget(self._page_title_label)
         title_box.addWidget(self._page_group_label)
         header_layout.addLayout(title_box, 1)
+
+        self._theme_toggle = _WorkbenchThemeToggle(self._header)
+        self._sync_theme_toggle()
+        self._theme_toggle.toggled.connect(self._on_theme_toggle)
+        header_layout.addWidget(self._theme_toggle)
 
         self._search = QLineEdit(self._header)
         self._search.setObjectName("WorkbenchSearch")
@@ -277,6 +333,7 @@ class WorkbenchWindow(QWidget):
         ui_values = values.get("UI")
         if not isinstance(ui_values, dict) or "workbench_light_theme" not in ui_values:
             return
+        self._sync_theme_toggle()
         self.setStyleSheet(workbench_stylesheet())
         control_panel = self._control_panel
         if control_panel is not None:
@@ -286,6 +343,35 @@ class WorkbenchWindow(QWidget):
         self.style().unpolish(self)
         self.style().polish(self)
         self.update()
+
+    def _sync_theme_toggle(self) -> None:
+        toggle = getattr(self, "_theme_toggle", None)
+        if toggle is None:
+            return
+        light_theme = bool(UI.get("workbench_light_theme", False))
+        signals_were_blocked = toggle.blockSignals(True)
+        try:
+            toggle.setChecked(light_theme)
+        finally:
+            toggle.blockSignals(signals_were_blocked)
+        toggle.setToolTip(
+            "当前为浅色主题，切换为深色主题"
+            if light_theme
+            else "当前为深色主题，切换为浅色主题"
+        )
+        toggle.update()
+
+    def _on_theme_toggle(self, light_theme: bool) -> None:
+        target = bool(light_theme)
+        try:
+            save_general_values({"UI": {"workbench_light_theme": target}})
+        except Exception:
+            self._sync_theme_toggle()
+            return
+        self._event_center.publish(Event(EventType.CONFIG_UPDATED, {
+            "source": "workbench_theme_toggle",
+            "values": {"UI": {"workbench_light_theme": target}},
+        }))
 
     def _attach_pages(self) -> None:
         overview = WorkbenchOverviewPage(

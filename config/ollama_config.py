@@ -151,9 +151,16 @@ OLLAMA = {
     'api_disable_env_proxy': False, # 默认遵循系统代理配置；设为 True 时优先忽略
     'api_temperature':     1.35,      # 外部 API 采样温度（0~2）
     'model_vision':        0,         # 模型视力（0~100）；0=压到720p，100=不压缩，线性控制图片分辨率
-    'gsv_auto_start':      False,     # 启用 GSV 语音模块；关闭后不预热，也不响应文本语音请求
-    'gsv_temperature':     1.35,      # GSV 文本转语音采样温度（0~2）
-    'gsv_speed_factor':    1.05,      # GSV 文本转语音语速（0.5~2.0）
+    'gsv_auto_start':      False,     # 启用本地 ONNX 语音；关闭后不预热，也不响应文本语音请求
+    'gsv_temperature':     1.0,       # ONNX T2S 采样温度（0.01~2.0）
+    'gsv_top_k':           15,        # ONNX T2S Top-K（1~1025）
+    'gsv_top_p':           1.0,       # ONNX T2S Top-P（0.01~1.0）
+    'gsv_repetition_penalty': 1.35,   # ONNX T2S 重复惩罚（0.1~2.0）
+    'gsv_speed_factor':    1.0,       # ONNX 模型原生语速（0.5~2.0，1.0=原速）
+    'gsv_text_split_method': 'cut5',  # 长文本分句方式（cut0~cut5）
+    'gsv_fragment_interval': 0.3,     # 分句片段之间的停顿秒数（0~5）
+    'gsv_seed':            -1,        # ONNX 采样种子（-1=随机）
+    'gsv_max_steps':       500,       # ONNX 语义解码保护上限（64~1200）
     'ai_voice_max_chars':  80,       # GSV 语音合成最大文本长度（20~80）
     'gsv_cache_max_files': 20,       # GSV 语音缓存最大保存条数（1~128）
     'memory_context_limit': 12,      # 发送给 AI 时附带的 recent memory 条数（0~48，0 = 不附带）
@@ -210,7 +217,14 @@ _AI_SETTING_DEFAULTS = {
     'model_vision': OLLAMA['model_vision'],
     'gsv_auto_start': OLLAMA['gsv_auto_start'],
     'gsv_temperature': OLLAMA['gsv_temperature'],
+    'gsv_top_k': OLLAMA['gsv_top_k'],
+    'gsv_top_p': OLLAMA['gsv_top_p'],
+    'gsv_repetition_penalty': OLLAMA['gsv_repetition_penalty'],
     'gsv_speed_factor': OLLAMA['gsv_speed_factor'],
+    'gsv_text_split_method': OLLAMA['gsv_text_split_method'],
+    'gsv_fragment_interval': OLLAMA['gsv_fragment_interval'],
+    'gsv_seed': OLLAMA['gsv_seed'],
+    'gsv_max_steps': OLLAMA['gsv_max_steps'],
     'ai_voice_max_chars': OLLAMA['ai_voice_max_chars'],
     'gsv_cache_max_files': OLLAMA['gsv_cache_max_files'],
     'memory_context_limit': OLLAMA['memory_context_limit'],
@@ -273,7 +287,14 @@ def _legacy_ai_setting_values() -> dict:
         'model_vision': OLLAMA['model_vision'],
         'gsv_auto_start': OLLAMA['gsv_auto_start'],
         'gsv_temperature': OLLAMA['gsv_temperature'],
+        'gsv_top_k': OLLAMA['gsv_top_k'],
+        'gsv_top_p': OLLAMA['gsv_top_p'],
+        'gsv_repetition_penalty': OLLAMA['gsv_repetition_penalty'],
         'gsv_speed_factor': OLLAMA['gsv_speed_factor'],
+        'gsv_text_split_method': OLLAMA['gsv_text_split_method'],
+        'gsv_fragment_interval': OLLAMA['gsv_fragment_interval'],
+        'gsv_seed': OLLAMA['gsv_seed'],
+        'gsv_max_steps': OLLAMA['gsv_max_steps'],
         'ai_voice_max_chars': OLLAMA['ai_voice_max_chars'],
         'gsv_cache_max_files': OLLAMA['gsv_cache_max_files'],
         'memory_context_limit': OLLAMA['memory_context_limit'],
@@ -303,7 +324,14 @@ def _legacy_ai_setting_values() -> dict:
             'model_vision': 'model_vision',
             'gsv_auto_start': 'gsv_auto_start',
             'gsv_temperature': 'gsv_temperature',
+            'gsv_top_k': 'gsv_top_k',
+            'gsv_top_p': 'gsv_top_p',
+            'gsv_repetition_penalty': 'gsv_repetition_penalty',
             'gsv_speed_factor': 'gsv_speed_factor',
+            'gsv_text_split_method': 'gsv_text_split_method',
+            'gsv_fragment_interval': 'gsv_fragment_interval',
+            'gsv_seed': 'gsv_seed',
+            'gsv_max_steps': 'gsv_max_steps',
             'ai_voice_max_chars': 'ai_voice_max_chars',
             'gsv_cache_max_files': 'gsv_cache_max_files',
             'memory_context_limit': 'memory_context_limit',
@@ -339,7 +367,14 @@ def _apply_ai_setting_values(values: dict) -> None:
     OLLAMA['model_vision'] = values['model_vision']
     OLLAMA['gsv_auto_start'] = values['gsv_auto_start']
     OLLAMA['gsv_temperature'] = values['gsv_temperature']
+    OLLAMA['gsv_top_k'] = values['gsv_top_k']
+    OLLAMA['gsv_top_p'] = values['gsv_top_p']
+    OLLAMA['gsv_repetition_penalty'] = values['gsv_repetition_penalty']
     OLLAMA['gsv_speed_factor'] = values['gsv_speed_factor']
+    OLLAMA['gsv_text_split_method'] = values['gsv_text_split_method']
+    OLLAMA['gsv_fragment_interval'] = values['gsv_fragment_interval']
+    OLLAMA['gsv_seed'] = values['gsv_seed']
+    OLLAMA['gsv_max_steps'] = values['gsv_max_steps']
     OLLAMA['ai_voice_max_chars'] = values['ai_voice_max_chars']
     OLLAMA['gsv_cache_max_files'] = values['gsv_cache_max_files']
     OLLAMA['memory_context_limit'] = values['memory_context_limit']
