@@ -162,6 +162,12 @@ Release 建议上传：
 - 绿色包 zip 与 manifest（如本次提供）
 - `AA使用必读.html`
 
+GitHub `PACK` 的普通包附件由 `.github/workflows/publish-pack.yml` 发布。将固定
+`PACK` tag 推送到已验收提交后，Windows runner 会从该 tag 重新生成普通包，并使用
+仓库内置 `GITHUB_TOKEN` 将 ZIP 与 manifest 覆盖上传到现有 `PACK` release；无需在
+开发机保存 GitHub API 令牌。发布完成后仍需从公开附件地址回读校验，并将 Gitee
+`最新包` tag 同步到同一提交。
+
 Release Notes 以 `CHANGELOG.md` 当前版本段为主，必要时补充迁移说明。
 
 ## 7. 发布后检查

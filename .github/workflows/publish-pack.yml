@@ -1,0 +1,52 @@
+name: Publish PACK release
+
+on:
+  push:
+    tags:
+      - PACK
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-pack
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    steps:
+      - name: Check out tagged snapshot
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build normal package
+        id: package
+        shell: pwsh
+        run: |
+          python scripts/package_release.py
+          $zip = @(Get-ChildItem -LiteralPath dist -Filter 'FlyingSnowVelvet-*.zip' |
+            Where-Object { $_.Name -notlike '*-green.zip' })
+          $manifest = @(Get-ChildItem -LiteralPath dist -Filter 'FlyingSnowVelvet-*-manifest.json' |
+            Where-Object { $_.Name -notlike '*-green-manifest.json' })
+          if ($zip.Count -ne 1 -or $manifest.Count -ne 1) {
+            throw 'Expected exactly one normal ZIP and one normal manifest.'
+          }
+          "zip_path=$($zip[0].FullName)" >> $env:GITHUB_OUTPUT
+          "manifest_path=$($manifest[0].FullName)" >> $env:GITHUB_OUTPUT
+          Get-FileHash -Algorithm SHA256 -LiteralPath $zip[0].FullName, $manifest[0].FullName
+
+      - name: Upload PACK release assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload PACK `
+            '${{ steps.package.outputs.zip_path }}' `
+            '${{ steps.package.outputs.manifest_path }}' `
+            --clobber `
+            --repo '${{ github.repository }}'
