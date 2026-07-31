@@ -70,3 +70,18 @@ jobs:
             Write-Host 'No stale PACK diagnostics asset was present.'
           }
           exit 0
+
+      - name: Publish build failure diagnostics
+        if: failure()
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = (& python -c 'from config.version_info import APP_VERSION; print(APP_VERSION)' |
+            Out-String).Trim()
+          $diagnostic = Join-Path $env:RUNNER_TEMP 'pack-build-diagnostic.log'
+          python scripts/package_release.py --version $version *> $diagnostic
+          $diagnosticExitCode = $LASTEXITCODE
+          "diagnostic_exit_code=$diagnosticExitCode" | Add-Content -LiteralPath $diagnostic -Encoding utf8
+          gh release upload PACK $diagnostic --clobber --repo '${{ github.repository }}'
+          exit 0
