@@ -37,21 +37,9 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($version)) {
             throw 'Could not read APP_VERSION.'
           }
-          $buildLog = Join-Path $env:RUNNER_TEMP 'pack-build-output.log'
-          $buildErrorLog = Join-Path $env:RUNNER_TEMP 'pack-build-error.log'
-          $pythonPath = (Get-Command python).Source
-          $process = Start-Process -FilePath $pythonPath `
-            -ArgumentList @('scripts/package_release.py', '--version', $version) `
-            -Wait -PassThru -NoNewWindow `
-            -RedirectStandardOutput $buildLog `
-            -RedirectStandardError $buildErrorLog
-          Get-Content -LiteralPath $buildLog, $buildErrorLog | Write-Host
-          $buildExitCode = $process.ExitCode
-          if ($buildExitCode -ne 0) {
-            $tail = (Get-Content -LiteralPath $buildLog | Select-Object -Last 30) -join "`n"
-            $encodedTail = $tail.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
-            Write-Output "::error file=.github/workflows/publish-pack.yml,line=52::$encodedTail"
-            throw "Normal package build failed with exit code $buildExitCode.`n$tail"
+          python scripts/package_release.py --version $version
+          if ($LASTEXITCODE -ne 0) {
+            throw "Normal package build failed with exit code $LASTEXITCODE."
           }
           $zipPath = (Resolve-Path -LiteralPath "dist/FlyingSnowVelvet-$version.zip").Path
           $manifestPath = (Resolve-Path -LiteralPath "dist/FlyingSnowVelvet-$version-manifest.json").Path
@@ -70,17 +58,15 @@ jobs:
             --clobber `
             --repo '${{ github.repository }}'
 
-      - name: Publish temporary build diagnostics
-        if: failure()
+      - name: Remove stale build diagnostics
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $diagnostic = Join-Path $env:RUNNER_TEMP 'pack-build-diagnostic.log'
-          '--- stdout ---' | Set-Content -LiteralPath $diagnostic -Encoding utf8
-          $stdout = Join-Path $env:RUNNER_TEMP 'pack-build-output.log'
-          $stderr = Join-Path $env:RUNNER_TEMP 'pack-build-error.log'
-          if (Test-Path -LiteralPath $stdout) { Get-Content -LiteralPath $stdout | Add-Content -LiteralPath $diagnostic -Encoding utf8 }
-          '--- stderr ---' | Add-Content -LiteralPath $diagnostic -Encoding utf8
-          if (Test-Path -LiteralPath $stderr) { Get-Content -LiteralPath $stderr | Add-Content -LiteralPath $diagnostic -Encoding utf8 }
-          gh release upload PACK $diagnostic --clobber --repo '${{ github.repository }}'
+          gh release delete-asset PACK pack-build-diagnostic.log `
+            --yes `
+            --repo '${{ github.repository }}'
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host 'No stale PACK diagnostics asset was present.'
+          }
+          exit 0
