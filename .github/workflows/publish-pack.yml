@@ -49,6 +49,8 @@ jobs:
           $buildExitCode = $process.ExitCode
           if ($buildExitCode -ne 0) {
             $tail = (Get-Content -LiteralPath $buildLog | Select-Object -Last 30) -join "`n"
+            $encodedTail = $tail.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Output "::error file=.github/workflows/publish-pack.yml,line=52::$encodedTail"
             throw "Normal package build failed with exit code $buildExitCode.`n$tail"
           }
           $zipPath = (Resolve-Path -LiteralPath "dist/FlyingSnowVelvet-$version.zip").Path
