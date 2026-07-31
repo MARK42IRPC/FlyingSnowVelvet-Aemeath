@@ -27,6 +27,43 @@ class OnnxVoiceRuntimeError(RuntimeError):
     pass
 
 
+_HYBRID_CPU_MODEL_NAMES = {"t2s_stage_decoder_fp32.onnx"}
+
+
+def _configure_hybrid_provider(module) -> list[str]:
+    """Use DirectML for throughput graphs and CPU for iterative T2S decoding."""
+    available = set(module.ort.get_available_providers())
+    if "DmlExecutionProvider" not in available:
+        raise OnnxVoiceRuntimeError(
+            f"DirectML Provider 不可用，当前 Provider：{sorted(available)}"
+        )
+    if "CPUExecutionProvider" not in available:
+        raise OnnxVoiceRuntimeError("CPU fallback Provider 不可用")
+
+    def make_session_options():
+        options = module.ort.SessionOptions()
+        options.graph_optimization_level = module.ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        options.execution_mode = module.ort.ExecutionMode.ORT_SEQUENTIAL
+        options.enable_mem_pattern = False
+        options.intra_op_num_threads = max(1, min(module.os.cpu_count() or 1, 8))
+        return options
+
+    original_loader = module.load_optional_external_session
+
+    def load_hybrid_session(model_path, weights_path, _providers):
+        model_name = Path(model_path).name
+        providers = (
+            ["CPUExecutionProvider"]
+            if model_name in _HYBRID_CPU_MODEL_NAMES
+            else ["DmlExecutionProvider", "CPUExecutionProvider"]
+        )
+        return original_loader(model_path, weights_path, providers)
+
+    module.make_session_options = make_session_options
+    module.load_optional_external_session = load_hybrid_session
+    return ["DmlExecutionProvider", "CPUExecutionProvider"]
+
+
 @dataclass(frozen=True)
 class OnnxInferenceRequest:
     text: str
@@ -205,6 +242,47 @@ def _split_auto_language_text(text: str) -> tuple[tuple[str, str], ...]:
     return ((source, "zh"),)
 
 
+def _configure_mixed_language_frontend(module) -> bool:
+    """Keep mixed-language phonemes in one semantic inference request."""
+    engine_class = getattr(module, "AimisiOnnx", None)
+    original_normalize = getattr(module, "normalize_language", None)
+    original_phones = getattr(engine_class, "_phones", None)
+    module_np = getattr(module, "np", None)
+    if (
+        engine_class is None
+        or not callable(original_normalize)
+        or not callable(original_phones)
+        or module_np is None
+    ):
+        return False
+
+    def normalize_mixed_language(value, text):
+        normalized = str(value or "auto").strip().lower().replace("_", "-")
+        if normalized in {"", "auto", "auto-yue"}:
+            return normalize_language("auto", str(text or ""))
+        return original_normalize(value, text)
+
+    def mixed_phones(engine, text, language):
+        if language != "auto":
+            return original_phones(engine, text, language)
+        phone_parts = []
+        bert_parts = []
+        for segment_text, segment_language in _split_auto_language_text(text):
+            phones, bert = original_phones(engine, segment_text, segment_language)
+            phone_parts.append(phones)
+            bert_parts.append(bert)
+        if not phone_parts:
+            return original_phones(engine, text, "zh")
+        return (
+            module_np.concatenate(phone_parts, axis=1),
+            module_np.concatenate(bert_parts, axis=0),
+        )
+
+    module.normalize_language = normalize_mixed_language
+    engine_class._phones = mixed_phones
+    return True
+
+
 class OnnxVoiceRuntime:
     """Load one package engine and reuse it for all synthesis requests."""
 
@@ -223,14 +301,22 @@ class OnnxVoiceRuntime:
         sys.modules[module_name] = module
         try:
             spec.loader.exec_module(module)
-            providers = module.select_providers(provider)
+            providers = (
+                _configure_hybrid_provider(module)
+                if provider == "hybrid"
+                else module.select_providers(provider)
+            )
+            native_mixed_frontend = _configure_mixed_language_frontend(module)
             engine = module.AimisiOnnx(root, providers)
         except Exception as exc:
             sys.modules.pop(module_name, None)
-            raise OnnxVoiceRuntimeError(f"ONNX 语音模型加载失败：{exc}") from exc
+            detail = str(exc).strip() or repr(exc)
+            raise OnnxVoiceRuntimeError(f"ONNX 语音模型加载失败：{detail}") from exc
 
         self.package_root = root
         self.sample_rate = int(validation.manifest.get("sample_rate") or 32000)
+        self.provider = provider
+        self._native_mixed_frontend = native_mixed_frontend
         self._module_name = module_name
         self._module = module
         self._engine = engine
@@ -261,9 +347,9 @@ class OnnxVoiceRuntime:
             raise OnnxVoiceRuntimeError("ONNX 语音引擎未就绪")
 
         segments = (
-            _split_auto_language_text(request.text)
-            if request.language == "auto"
-            else ((request.text, request.language),)
+            ((request.text, request.language),)
+            if request.language != "auto" or self._native_mixed_frontend
+            else _split_auto_language_text(request.text)
         )
         chunks: list[np.ndarray] = []
         silence = np.zeros(

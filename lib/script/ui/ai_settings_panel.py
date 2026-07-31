@@ -132,6 +132,7 @@ _DEFAULT_VALUES = {
     "api_temperature": 1.35,
     "model_vision": 0,
     "gsv_auto_start": False,
+    "gsv_gpu_hybrid": False,
     "gsv_temperature": 1.0,
     "gsv_top_k": 15,
     "gsv_top_p": 1.0,
@@ -2119,6 +2120,10 @@ class AISettingsPanel(QWidget):
             self._gsv_auto_start,
             "开启后，桌宠启动时会在后台加载并预热 ONNX 语音模型。",
         )
+
+        self._gsv_gpu_hybrid = QCheckBox("使用gpu混合推理（可能会提高显存占用）")
+        self._gsv_gpu_hybrid.setChecked(_DEFAULT_VALUES["gsv_gpu_hybrid"])
+        form.addRow("", self._gsv_gpu_hybrid)
 
         self._gsv_temperature = _DecimalSliderField(0.01, 2.0, 0.01, value=_DEFAULT_VALUES["gsv_temperature"])
         form.addRow("采样温度", self._gsv_temperature)
@@ -4704,6 +4709,7 @@ class AISettingsPanel(QWidget):
             "api_temperature": api_temperature,
             "model_vision": model_vision,
             "gsv_auto_start": bool(self._gsv_auto_start.isChecked()),
+            "gsv_gpu_hybrid": bool(self._gsv_gpu_hybrid.isChecked()),
             "gsv_temperature": gsv_temperature,
             "gsv_top_k": gsv_top_k,
             "gsv_top_p": gsv_top_p,
@@ -4757,6 +4763,7 @@ class AISettingsPanel(QWidget):
         self._api_temperature.setText(str(values.get("api_temperature", 0.8)))
         self._model_vision.setText(str(values.get("model_vision", 0)))
         self._gsv_auto_start.setChecked(bool(values.get("gsv_auto_start", True)))
+        self._gsv_gpu_hybrid.setChecked(bool(values.get("gsv_gpu_hybrid", False)))
         self._gsv_temperature.setText(str(values.get("gsv_temperature", 1.0)))
         self._gsv_top_k.setText(str(values.get("gsv_top_k", 15)))
         self._gsv_top_p.setText(str(values.get("gsv_top_p", 1.0)))

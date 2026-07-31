@@ -16,7 +16,11 @@ from config.user_storage_paths import get_user_cache_dir
 from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import Event, EventType, get_event_center
 from lib.core.logger import get_logger
-from lib.script.gsvmove.onnx_runtime import OnnxVoiceRuntime
+from lib.script.gsvmove.hybrid_worker import (
+    CpuVoiceWorkerRuntime,
+    HybridVoiceWorkerRuntime,
+    VoiceWorkerRuntime,
+)
 from lib.script.gsvmove.package_manager import (
     _read_text_best_effort,
     get_voice_package_status,
@@ -111,6 +115,13 @@ def _is_gsv_auto_start_enabled() -> bool:
     return bool(raw_value)
 
 
+def _is_gsv_gpu_hybrid_enabled() -> bool:
+    raw_value = oc.OLLAMA.get("gsv_gpu_hybrid", False)
+    if isinstance(raw_value, str):
+        return raw_value.strip().lower() not in {"", "0", "false", "off", "no"}
+    return bool(raw_value)
+
+
 def is_voice_package_available() -> bool:
     return not get_voice_package_status().install_required
 
@@ -122,8 +133,10 @@ class GsvmoveService:
         self._ec = get_event_center()
         self._infer_lock = threading.RLock()
         self._engine_lock = threading.RLock()
-        self._engine: OnnxVoiceRuntime | None = None
+        self._engine: VoiceWorkerRuntime | None = None
         self._engine_package_root: Path | None = None
+        self._engine_backend: str | None = None
+        self._engine_requested_backend: str | None = None
         self._request_queue: Queue[dict | None] = Queue()
         self._worker_stop = threading.Event()
         self._warmup_lock = threading.Lock()
@@ -139,8 +152,9 @@ class GsvmoveService:
         self._saved_audio_root.mkdir(parents=True, exist_ok=True)
         self.cleanup_saved_audio_cache()
 
-        self._ec.subscribe(EventType.APP_PRE_START, self._on_app_pre_start)
+        self._ec.subscribe(EventType.APP_MAIN, self._on_app_main)
         self._ec.subscribe(EventType.AI_VOICE_REQUEST, self._on_ai_voice_request)
+        self._ec.subscribe(EventType.CONFIG_UPDATED, self._on_config_updated)
         self._worker = threading.Thread(
             target=self._worker_loop,
             daemon=True,
@@ -162,8 +176,35 @@ class GsvmoveService:
     def auto_start_enabled(self) -> bool:
         return _is_gsv_auto_start_enabled()
 
-    def _on_app_pre_start(self, _event: Event) -> None:
+    def _on_app_main(self, _event: Event) -> None:
         self.kickoff_prestart()
+
+    def _on_config_updated(self, event: Event) -> None:
+        data = event.data or {}
+        if data.get("source") != "ai":
+            return
+        values = data.get("values")
+        if not isinstance(values, dict) or "gsv_gpu_hybrid" not in values:
+            return
+        desired_backend = "hybrid" if bool(values.get("gsv_gpu_hybrid")) else "cpu"
+        with self._engine_lock:
+            if self._engine is None or self._engine_requested_backend == desired_backend:
+                return
+        get_compute_hub().submit_latest(
+            "gsvmove_backend_switch",
+            self._switch_backend_after_config,
+            executor="vector",
+        )
+
+    def _switch_backend_after_config(self) -> None:
+        with self._infer_lock:
+            with self._engine_lock:
+                self._close_engine_locked()
+            self._warmup_done = False
+            with self._prestart_lock:
+                self._prestart_started = False
+        if self.auto_start_enabled():
+            self.kickoff_prestart()
 
     def kickoff_prestart(self) -> None:
         if not self.auto_start_enabled() or not is_voice_package_available():
@@ -197,24 +238,58 @@ class GsvmoveService:
             logger.warning("[GsvmoveService] ONNX 语音包不可用: %s", status.reason)
             return False
 
+        desired_backend = "hybrid" if _is_gsv_gpu_hybrid_enabled() else "cpu"
         with self._engine_lock:
-            if self._engine is not None and self._engine_package_root == package_root:
+            if (
+                self._engine is not None
+                and self._engine_package_root == package_root
+                and self._engine_requested_backend == desired_backend
+            ):
                 return True
             self._close_engine_locked()
+            self._engine_requested_backend = desired_backend
             try:
                 started_at = time.monotonic()
-                self._engine = OnnxVoiceRuntime(package_root, provider="cpu")
+                if desired_backend == "hybrid":
+                    self._engine = HybridVoiceWorkerRuntime(package_root, self._output_dir)
+                    self._engine_backend = "hybrid"
+                else:
+                    self._engine = CpuVoiceWorkerRuntime(package_root, self._output_dir)
+                    self._engine_backend = "cpu"
                 self._engine_package_root = package_root
                 logger.info(
-                    "[GsvmoveService] ONNX 语音模型已就绪 dt=%.1fs",
+                    "[GsvmoveService] ONNX 语音模型已就绪 backend=%s dt=%.1fs",
+                    self._engine_backend,
                     time.monotonic() - started_at,
                 )
                 return True
             except Exception as exc:
-                self._engine = None
-                self._engine_package_root = None
-                logger.error("[GsvmoveService] ONNX 语音模型加载失败: %s", exc)
-                return False
+                if desired_backend != "hybrid":
+                    self._engine = None
+                    self._engine_package_root = None
+                    self._engine_backend = None
+                    logger.error("[GsvmoveService] ONNX 语音模型加载失败: %s", exc)
+                    return False
+                logger.warning(
+                    "[GsvmoveService] DirectML 混合推理加载失败，回退 CPU: %s",
+                    exc,
+                )
+                return self._activate_cpu_fallback_locked(package_root)
+
+    def _activate_cpu_fallback_locked(self, package_root: Path) -> bool:
+        self._close_engine_locked(reset_requested_backend=False)
+        try:
+            self._engine = CpuVoiceWorkerRuntime(package_root, self._output_dir)
+            self._engine_package_root = package_root
+            self._engine_backend = "cpu-fallback"
+            self._engine_requested_backend = "hybrid"
+            return True
+        except Exception as exc:
+            self._engine = None
+            self._engine_package_root = None
+            self._engine_backend = None
+            logger.error("[GsvmoveService] CPU 回退模型加载失败: %s", exc)
+            return False
 
     def prepare_voice_package_install(self) -> None:
         """Release active model files before a package is atomically replaced."""
@@ -239,10 +314,13 @@ class GsvmoveService:
         self.prepare_voice_package_install()
         return True
 
-    def _close_engine_locked(self) -> None:
+    def _close_engine_locked(self, *, reset_requested_backend: bool = True) -> None:
         engine = self._engine
         self._engine = None
         self._engine_package_root = None
+        self._engine_backend = None
+        if reset_requested_backend:
+            self._engine_requested_backend = None
         if engine is not None:
             try:
                 engine.close()
@@ -385,7 +463,23 @@ class GsvmoveService:
                 engine = self._engine
                 if engine is None:
                     return None
-                engine.synthesize_to_file(payload, temp_path)
+                try:
+                    engine.synthesize_to_file(payload, temp_path)
+                except Exception as exc:
+                    if self._engine_backend != "hybrid" or self._engine_package_root is None:
+                        raise
+                    package_root = self._engine_package_root
+                    temp_path.unlink(missing_ok=True)
+                    logger.warning(
+                        "[GsvmoveService] DirectML 推理失败，当前请求回退 CPU: %s",
+                        exc,
+                    )
+                    if not self._activate_cpu_fallback_locked(package_root):
+                        raise
+                    fallback = self._engine
+                    if fallback is None:
+                        raise
+                    fallback.synthesize_to_file(payload, temp_path)
             output_path = temp_path
             if bool(data.get("save_audio_cache", True)):
                 try:
@@ -401,11 +495,15 @@ class GsvmoveService:
 
     def cleanup(self) -> None:
         try:
-            self._ec.unsubscribe(EventType.APP_PRE_START, self._on_app_pre_start)
+            self._ec.unsubscribe(EventType.APP_MAIN, self._on_app_main)
         except Exception:
             pass
         try:
             self._ec.unsubscribe(EventType.AI_VOICE_REQUEST, self._on_ai_voice_request)
+        except Exception:
+            pass
+        try:
+            self._ec.unsubscribe(EventType.CONFIG_UPDATED, self._on_config_updated)
         except Exception:
             pass
         self._worker_stop.set()

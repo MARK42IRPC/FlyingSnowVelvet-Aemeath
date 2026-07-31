@@ -266,7 +266,7 @@
     <main>
         <div class="hero">
             <h1>飞行雪绒资料舱</h1>
-            <p>贡献 + 赞助 + 文档 · LTS1.0.6pre4<br>基于项目默认配色 + 粒子灵感打造，方便在浏览器里查阅 doc 与贡献记录。生成时间：2026-07-31 10:19:35</p>
+            <p>贡献 + 赞助 + 文档 · LTS1.0.6pre4<br>基于项目默认配色 + 粒子灵感打造，方便在浏览器里查阅 doc 与贡献记录。生成时间：2026-07-31 13:58:51</p>
         </div>
         <section id="top-panels">
             <div class="top-panels">
@@ -663,7 +663,7 @@ rg --files
         </article>
         <article class="card">
             <header>
-                <div class="eyebrow">2026-07-31 10:15</div>
+                <div class="eyebrow">2026-07-31 12:22</div>
                 <h3>Script开发指南</h3>
                 <a class="download" href="doc/Script开发指南.txt" download>下载原文件</a>
             </header>
@@ -742,7 +742,7 @@ rg --files
 - `#xxx` → `EventType.INPUT_HASH`
 - 普通文本 → `EventType.INPUT_CHAT`
 
-AI 工具调度位于 `lib/script/tool_dispatcher/dispatcher.py`，会从 `STREAM_FINAL` 中提取 `###指令###`。
+AI 工具调度位于 `lib/script/tool_dispatcher/dispatcher.py`。`STREAM_FINAL.tool_call` 携带已校验的原生 Function Calling 调用时优先执行；没有结构化调用时，才从 `text` 中提取兼容格式 `###指令###`。工具 schema 与映射统一定义在 `lib/script/chat/native_tools.py`。
 
 六、配置项落地链路
 如果新增 AI 控制面板配置，至少同步以下文件：
@@ -806,7 +806,7 @@ manager_registry.register(DemoManager.MANAGER_ID, DemoManager)
         </article>
         <article class="card">
             <header>
-                <div class="eyebrow">2026-07-31 10:15</div>
+                <div class="eyebrow">2026-07-31 12:23</div>
                 <h3>事件系统使用说明</h3>
                 <a class="download" href="doc/事件系统使用说明.txt" download>下载原文件</a>
             </header>
@@ -892,6 +892,12 @@ AI_VOICE_REQUEST
 - 字段：`text`（保留中英文原文）、可选 `text_lang`（`zh`、`en` 或 `auto`）、`interruptible`
 - 当前由 `lib/script/gsvmove/service.py` 消费
 - 当 GSV 模块在控制面板中关闭时，这类事件会被直接忽略
+
+STREAM_FINAL
+- 用途：发布 AI 最终回复，供记忆和工具调度消费
+- 字段：`text`、可选 `allow_tool_commands`、可选 `tool_call`
+- `tool_call` 为通过 `lib/script/chat/native_tools.py` 白名单校验的原生 Function Calling 调用；存在时工具调度器优先使用它，不再解析正文里的兼容标记
+- `allow_tool_commands=false` 时，结构化调用和 `###指令###` 均不得执行
 
 MIC_STT_*
 - `MIC_STT_START`
@@ -2559,7 +2565,7 @@ Event(EventType.PARTICLE_REQUEST, {
         </article>
         <article class="card">
             <header>
-                <div class="eyebrow">2026-07-31 10:15</div>
+                <div class="eyebrow">2026-07-31 12:22</div>
                 <h3>维护手册</h3>
                 <a class="download" href="doc/维护手册.md" download>下载原文件</a>
             </header>
@@ -2680,6 +2686,7 @@ Event(EventType.PARTICLE_REQUEST, {
 - 页面关闭时释放信号、定时器和后台任务。
 - 不把新功能继续堆入 `ai_settings_panel.py`，新页面放入 `workbench/` 或专属模块。
 - AI 回复模式是单一路由：福利 API、手动 API、本地 Ollama、规则回复和元宝之间不做失败回退。模式专属配置只在对应模式下显示。
+- AI 工具调用优先使用 `lib/script/chat/native_tools.py` 定义的原生 Function Calling schema。OpenAI 兼容接口与 Ollama `/api/chat` 将结构化调用放入 `STREAM_FINAL.tool_call`，调度器不得再从显示文本反推参数；模型或网关拒绝 `tools` 字段时按目标缓存该能力并回退到既有 `###指令###` 文本协议。递归回忆、窥屏等设置 `allow_tool_commands=false` 的请求不得携带原生 tools。
 - 福利 API 配置由 `lib/script/chat/welfare_api_config.py` 从 GitHub/Gitee 发布源并发测速获取密钥与地址。模型使用程序内置的固定标识，不依赖服务端实现 `/models`：默认模型为 `agnes-2.0-flash`，“智力提升”开启后使用 `agnes-2.5-flash`；配置下载超时固定 10 秒，首次失败后最多重试 3 次。
 - 手动 API 的模型探测只辅助选择该路由的模型：设置面板以当前未保存的地址和密钥异步请求 OpenAI 兼容 `/models`，失败时保留用户当前输入。模型字段始终允许手工输入；无协议的公网地址按 HTTPS、本机地址按 HTTP 规范化后保存。
 - 语音设置在 ONNX 包有效时显示；检测到旧 `start_gsvmove.bat`、缺失包或损坏包时，面板顶部显示“安装最新语音包”。有效包和损坏包同时提供带确认的后台删除入口，删除后立即刷新为可重新安装状态。安装窗口中的“后台安装”只隐藏界面、不取消任务；再次点击安装入口可恢复进度，后台仅在关键阶段以桌宠气泡提醒。面板开放当前 v2Pro 实际消费的采样温度、Top-K、Top-P、重复惩罚、语速、分句、片段停顿、随机种子和最大解码步数；批处理、流式及 v3/v4 专属兼容字段不显示为有效设置。安装与包管理 UI 位于独立的 `voice_package_installer.py`，不得继续堆入设置面板。
@@ -2728,6 +2735,8 @@ AI 密钥保存到 `&lt;用户根&gt;/user/secrets/ai.json`。设置面板每次
 
 GSV 兼容门面不再启动端口 9880 的 HTTP 服务，而是在原语音工作线程中复用单个 ONNX 引擎。格式版本 2 保留 GPT-SoVITS API v2 参数命名；同一格式内影响正确性的模型或推理升级使用独立 `runtime_revision`，客户端必须拒绝低于当前最低修订的旧包并显示更新入口。语速必须使用 VITS 图内 `speed_factor`，禁止恢复改变音高的最终波形重采样。当前 revision 3 包内置中文 RoBERTa，RoBERTa 加载失败必须报错，不能退回零特征；参考 HuBERT 提示语义必须保留原生链路的尾静音。安装器提供完全包、默认中等包和节约包三档，优先 ModelScope、回退 Hugging Face；每档为单个 RAR5 solid archive，使用 64 MiB 字典，大小与空间检查以 `VoicePackageProfile` 的真实发布值为准。语音包格式、单文件下载、安装、用户确认删除、旧运行时清理和随包 UnRAR 边界以 `doc/语音包协议.md` 为准。安装前不得为定位旧运行时递归扫描用户目录；安装成功后只清理路径记录明确指向的旧外部 GSVmove。包删除必须由服务在推理锁内释放引擎后执行，并限定在固定磁盘的受管理目录；仓库内 `lib/script/gsvmove/` 不属于删除目标。
 
+ONNX 语音的 CPU 与 GPU 后端都必须在低优先级隔离 Worker 中加载和推理，主进程不得创建模型 Session。自动预热只能在 `APP_MAIN` 后提交，避免模型导入、Session 创建和预热推理与 Qt 首屏初始化争用 GIL 和 CPU。可选 GPU 混合推理使用共享根 `voice/runtimes/onnx-directml/&lt;版本-ABI&gt;` 下的隔离 venv。依赖安装阶段固定安装并探测 `onnxruntime-directml==1.22.0`，不得覆盖主 Python 的 CPU ORT。混合 Worker 中 `t2s_stage` 走 CPU，其余五个模型图优先 DirectML；设置关闭必须终止 Worker 而非只切换 Provider，失败时对当前请求回退 CPU Worker。Worker在任何 PyQt 导入前预加载 ONNX Runtime，并清除继承环境中的 Qt DLL 路径。运行库安装失败属于可降级能力，不阻断 CPU 语音和应用启动。
+
 ## 8. 游戏包兼容边界
 
 游戏包 manifest、目录布局、加载语义和官方包隔离属于稳定契约。内部实现可以收敛，但不得未经迁移修改包格式。
@@ -2757,6 +2766,8 @@ py -3 -m unittest tests.test_game_runtime_geometry tests.test_game_runtime_hash_
 依赖安装脚本在摘要前以单行动态展示“正在检查依赖”的当前包、检查数、百分比和进度条；随后只保留已有/未安装依赖摘要和两条固定安装进度行。支持 ANSI 的终端使用 pip 风格的青色当前依赖、粉色整体进度与暗色未完成轨道，不支持颜色的终端显示等宽单色回退。进度刷新不得逐包追加日志。
 
 pip 安装调用必须兼容 Python 3.11.6 随附的 pip 23.2.1；单个依赖失败后继续安装后续依赖，并在最终摘要中显示对应 pip 错误原因，不能只列失败包名。`genie-tts` 依赖的 `jieba-fast 0.53` 在 PyPI 没有 Python 3.11 Windows wheel，安装器必须先从 `resc.net.txt` 的 Gitee/GitHub 镜像下载固定的 `cp311-win_amd64` wheel，校验内置 SHA-256 后本地安装，再安装 `genie-tts`，不得回退到用户机器上的 C++ 源码编译。
+
+主依赖安装后单独创建 DirectML venv，路径和版本由 `config/voice_runtime.py` 统一定义。安装使用同一镜像排序，但必须带 `--no-deps`，避免 `genie-tts` 对 CPU `onnxruntime==1.22.1` 的固定依赖覆盖 DirectML 模块；完成后必须验证 64 位 Python 3.11、ORT 版本和 `DmlExecutionProvider`，再写入 `runtime.json`。
 
 依赖可用性默认同时检查 pip 元数据和实际导入。`genie-tts` 的顶层导入会访问外部 `GenieData` 并产生输出，因此使用 `spec:genie_tts` 做无副作用的模块规格检查；不得因资源目录尚未安装而反复重装同一个 Python 包。
 
@@ -2824,7 +2835,7 @@ py -3 scripts/generate_doc_portal.py
         </article>
         <article class="card">
             <header>
-                <div class="eyebrow">2026-07-31 03:15</div>
+                <div class="eyebrow">2026-07-31 11:50</div>
                 <h3>语音包协议</h3>
                 <a class="download" href="doc/语音包协议.md" download>下载原文件</a>
             </header>
@@ -2900,17 +2911,29 @@ SHA-256：0D3715001790F0FD18D3E850F947B540530B2D2DEB9A2E6A9E84F2ED7B234235
 
 成功状态写入 `&lt;用户根&gt;/user/state/voice_package.json`，同时将 `gsv_auto_start` 持久化为开启并立即预热新包。只有新包激活成功后才允许删除路径记录明确指向且通过安全校验的旧外部 GSVmove 目录、`start_gsvmove.bat` 和旧路径记录；仓库内 `lib/script/gsvmove/` 是公开兼容门面，不属于清理目标。
 
+安装依赖脚本使用选中的 64 位 Python 3.11，在共享根创建版本化 DirectML 环境：
+
+```text
+&lt;共享根&gt;\voice\runtimes\onnx-directml\1.22.0-cp311-win_amd64
+```
+
+该环境使用 `--system-site-packages` 复用主环境的文本前端和数值依赖，只在 venv 内安装 `onnxruntime-directml==1.22.0 --no-deps`，不得把 CPU `onnxruntime` 与 DirectML wheel 安装到同一 site-packages。安装必须先在同级临时目录完成 Provider 探测和标记写入，再原子替换目标；失败只关闭 GPU 混合能力，不得阻止 CPU 语音或桌宠启动。运行库独立于角色模型，删除或更新 `ONNX_aimisiV2` 时保留。
+
 控制面板对有效包和已检测到的损坏包显示“删除语音包”入口。用户确认后，服务必须在同一推理锁内释放当前 ONNX 引擎并完成后台删除，随后清理匹配的安装状态并立即切回安装提示。删除 API 只接受固定磁盘下 `&lt;磁盘根&gt;\AemeathDeskPet\voice\ONNX_aimisiV2` 的普通目录，拒绝任意状态路径和符号链接；不会删除语音缓存或仓库内兼容门面。删除中断形成的不完整目录仍应被识别为损坏包，允许再次删除或直接重新安装。
 
 ## 5. 推理契约
 
-`GsvmoveService` 保留既有事件和公开函数，但不再启动端口 9880 或请求 HTTP `/tts`。单个常驻 `AimisiOnnx` 引擎在原语音工作线程中处理请求，自动识别中文或英文，并输出 PCM 16-bit WAV 到用户缓存。
+`GsvmoveService` 保留既有事件和公开函数，但不再启动端口 9880 或请求 HTTP `/tts`。CPU 与混合模式都复用各自的低优先级隔离 Worker，桌宠主进程不加载 `AimisiOnnx`。自动预热在 `APP_MAIN` 后开始，避免模型导入、Session 创建和预热推理阻塞 Qt 首屏。Worker 自动识别中文或英文，并输出 PCM 16-bit WAV 到用户缓存。
+
+混合后端固定将 `t2s_stage_decoder_fp32.onnx` 放在 `CPUExecutionProvider`，HuBERT、speaker encoder、T2S encoder、first-stage decoder 与 VITS 使用 `DmlExecutionProvider` 并允许 CPU fallback。DirectML Session 必须使用顺序执行、关闭 memory pattern 并开启完整图优化。Worker必须在导入任何项目配置或 PyQt 前预加载自身 venv 的 ONNX Runtime，且启动环境移除继承的 `PyQt5\Qt5\bin`，避免 Qt DLL 覆盖 DirectML 依赖。
+
+设置面板开关默认关闭。开启时按需启动混合 Worker，不同时保留 CPU Worker；关闭时必须终止 Worker 进程以确定释放 D3D 资源。Worker启动、退出、超时、设备移除或单次推理失败时，服务释放失败实例，并对当前请求自动重试 CPU Worker。CPU fallback 在本次启用周期内保持，不得每条请求反复启动已失败的 GPU 环境。
 
 格式版本 2 采用 GPT-SoVITS API v2 的参数命名。参考音频固定为包内 `reference.wav`，不开放 `ref_audio_path` 和 `aux_ref_audio_paths`；`prompt_text`、`prompt_lang` 可以为固定参考音频提供动态文案与语言。
 
 实际参与当前 v2Pro 推理的参数为：
 
-- `text`、`text_lang`：合成文本与 `zh`、`en`、`auto` 语言选择。桌宠聊天会保留中英文原文，并按内容携带对应语言提示；混合文本使用 `auto`。
+- `text`、`text_lang`：合成文本与 `zh`、`en`、`auto` 语言选择。桌宠聊天会保留中英文原文，并按内容携带对应语言提示；混合文本使用 `auto`。运行时在同一次语义推理内按文字边界分别生成中文 BERT/音素与英文音素，再拼接统一前端序列；不得把 `nice`、`D盘` 等混合句拆成多个独立 T2S 音频后拼接。
 - `prompt_text`、`prompt_lang`：固定参考音频的提示文案与语言；省略时使用包内 `reference.txt` 和中文。
 - `top_k`、`top_p`、`temperature`、`repetition_penalty`、`seed`：直接进入 ONNX T2S 采样图。
 - `speed_factor`：范围 0.5 至 2.0，默认 1.0；在 VITS 内部调整语义时间轴，不对最终波形重采样，因此不会随语速整体升降调。动态长度严格复刻原生 `speed == 1` 分支和 `floor(length / speed) + 1` 规则，固定种子噪声在图内裁到同一长度。
@@ -2928,7 +2951,7 @@ SHA-256：0D3715001790F0FD18D3E850F947B540530B2D2DEB9A2E6A9E84F2ED7B234235
 更新语音包时至少验证：
 
 ```powershell
-py -3 -m unittest tests.test_voice_package_manager tests.test_onnx_voice_runtime tests.test_voice_package_installer_ui
+py -3 -m unittest tests.test_voice_package_manager tests.test_onnx_voice_runtime tests.test_directml_hybrid_worker tests.test_voice_package_installer_ui
 py -3 scripts/package_release.py --dry-run --version VERIFY
 py -3 scripts/package_green_release.py --dry-run --version VERIFY
 ```

@@ -94,6 +94,7 @@ class AISettingsStorageLocalSecretsTests(unittest.TestCase):
             "gsv_fragment_interval",
             "gsv_seed",
             "gsv_max_steps",
+            "gsv_gpu_hybrid",
         ):
             with self.subTest(key=key):
                 self.assertIn(key, loaded)

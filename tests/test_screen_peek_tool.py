@@ -61,6 +61,7 @@ class ScreenPeekToolTests(unittest.TestCase):
 
         self.assertEqual(len(fake_ollama.calls), 1)
         self.assertEqual(fake_ollama.calls[0]["images"], [b"png-bytes"])
+        self.assertFalse(fake_ollama.calls[0]["allow_tools"])
         self.assertIn("当前主屏幕", fake_ollama.calls[0]["message"])
         fake_ollama.calls[0]["callback"]("ok")
         stream_events = [event for event in fake_center.published if event.type == EventType.STREAM_FINAL]

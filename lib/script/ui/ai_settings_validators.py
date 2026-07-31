@@ -45,6 +45,7 @@ def validate_ai_values(values: dict) -> None:
     gsv_seed = values.get("gsv_seed")
     gsv_max_steps = values.get("gsv_max_steps")
     gsv_auto_start = values.get("gsv_auto_start")
+    gsv_gpu_hybrid = values.get("gsv_gpu_hybrid")
     api_enable_thinking = values.get("api_enable_thinking")
     auto_companion_enabled = values.get("auto_companion_enabled")
     ai_voice_max_chars = values.get("ai_voice_max_chars")
@@ -168,6 +169,8 @@ def validate_ai_values(values: dict) -> None:
 
     if not isinstance(gsv_auto_start, bool):
         raise ValueError("GSV自动启用开关无效")
+    if not isinstance(gsv_gpu_hybrid, bool):
+        raise ValueError("GPU混合推理开关无效")
 
     if isinstance(ai_voice_max_chars, bool) or not isinstance(ai_voice_max_chars, int):
         raise ValueError("GSV语音字数限制必须是整数")

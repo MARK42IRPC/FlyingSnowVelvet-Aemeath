@@ -8,9 +8,10 @@
 4. 写入 py.ini:
    - python_executable
    - pythonw_executable
-5. 按 resc.net.txt 下载缺失的 Vosk、动画和浏览器资源.
-6. 准备本地网页中转服务源码.
-7. 启动主程序.
+5. 创建隔离的 DirectML 混合推理环境.
+6. 按 resc.net.txt 下载缺失的 Vosk、动画和浏览器资源.
+7. 准备本地网页中转服务源码.
+8. 启动主程序.
 """
 
 import configparser
@@ -35,6 +36,8 @@ import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Optional
+
+from config import voice_runtime as directml_config
 
 PROJECT_ROOT = Path(__file__).parent
 RESOURCE_LINKS_FILE = PROJECT_ROOT / "resc.net.txt"
@@ -92,7 +95,7 @@ DEPENDENCIES = [
     ("vosk", "offline speech-to-text engine", ("vosk",)),
 ]
 
-TOTAL_STEPS = 7
+TOTAL_STEPS = 8
 
 YUANBAO_SERVICE_REPO_ZIP = "https://github.com/chenwr727/yuanbao-free-api/archive/refs/heads/main.zip"
 YUANBAO_SERVICE_REPO_ZIP_FALLBACKS = (
@@ -1162,6 +1165,122 @@ def install_all(python_exe, mirrors):
     return ans == "y"
 
 
+def _directml_runtime_probe(runtime_python: Path) -> tuple[bool, str]:
+    code = (
+        "import json, struct, sys, onnxruntime as ort; "
+        "payload={'python': list(sys.version_info[:2]), "
+        "'bits': struct.calcsize('P') * 8, 'version': ort.__version__, "
+        "'providers': ort.get_available_providers()}; "
+        "print(json.dumps(payload))"
+    )
+    result = _run([str(runtime_python), "-c", code], timeout=60)
+    if result is None or result.returncode != 0:
+        detail = _summarize_pip_failure(result.stdout if result is not None else "")
+        return False, detail
+    try:
+        payload = json.loads((result.stdout or "").strip())
+    except (TypeError, ValueError):
+        return False, "DirectML 环境探测结果无法解析"
+    if payload.get("python") != [3, 11] or payload.get("bits") != 64:
+        return False, "DirectML Worker 仅支持 64 位 Python 3.11"
+    if payload.get("version") != directml_config.DIRECTML_RUNTIME_VERSION:
+        return False, f"DirectML 运行库版本不匹配：{payload.get('version')}"
+    if "DmlExecutionProvider" not in set(payload.get("providers") or ()):
+        return False, f"DmlExecutionProvider 不可用：{payload.get('providers')}"
+    return True, ""
+
+
+def ensure_directml_hybrid_runtime(python_exe, mirrors) -> bool:
+    _print_stage(4, "准备 DirectML GPU 混合推理环境...")
+    version = _get_version(python_exe)
+    architecture = _run(
+        [python_exe, "-c", "import struct; print(struct.calcsize('P') * 8)"],
+        timeout=30,
+    )
+    if (
+        version[:2] != TARGET_PYTHON
+        or architecture is None
+        or architecture.returncode != 0
+        or (architecture.stdout or "").strip() != "64"
+    ):
+        _print_warn("  DirectML Worker 仅支持 64 位 Python 3.11，已跳过")
+        return False
+
+    target_root = directml_config.get_directml_runtime_root()
+    runtime_python = directml_config.get_directml_python_path()
+    if directml_config.is_directml_runtime_ready():
+        ready, detail = _directml_runtime_probe(runtime_python)
+        if ready:
+            print(f"  DirectML 混合推理环境已存在: {target_root}")
+            return True
+        _print_warn(f"  现有 DirectML 环境无效，将重新安装：{detail}")
+
+    staging_root = target_root.with_name(f".{target_root.name}.installing")
+    _rmtree_if_exists(staging_root, ignore_errors=True)
+    target_root.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        created = _run(
+            [python_exe, "-m", "venv", "--system-site-packages", str(staging_root)],
+            timeout=180,
+        )
+        if created is None or created.returncode != 0:
+            detail = _summarize_pip_failure(created.stdout if created is not None else "")
+            raise RuntimeError(f"创建隔离环境失败：{detail}")
+
+        staging_python = staging_root / "Scripts" / "python.exe"
+        sources = list(mirrors or ()) or [PYPI_MIRRORS[-1]]
+        last_detail = "没有可用的 pip 镜像"
+        installed = False
+        for mirror in sources:
+            command = [
+                str(staging_python),
+                "-m",
+                "pip",
+                "install",
+                directml_config.DIRECTML_RUNTIME_REQUIREMENT,
+                "--no-deps",
+                "--disable-pip-version-check",
+                "--progress-bar",
+                "off",
+                "-i",
+                mirror["url"],
+                "--trusted-host",
+                mirror["host"],
+            ]
+            result = _run(command, timeout=600)
+            if result is not None and result.returncode == 0:
+                installed = True
+                break
+            last_detail = f"{mirror['name']}：{_summarize_pip_failure(result.stdout if result is not None else '')}"
+        if not installed:
+            raise RuntimeError(f"安装 {directml_config.DIRECTML_RUNTIME_REQUIREMENT} 失败：{last_detail}")
+
+        ready, detail = _directml_runtime_probe(staging_python)
+        if not ready:
+            raise RuntimeError(detail)
+        marker = {
+            "runtime": "onnxruntime-directml",
+            "version": directml_config.DIRECTML_RUNTIME_VERSION,
+            "abi": directml_config.DIRECTML_RUNTIME_ABI,
+            "python_executable": str(python_exe),
+        }
+        (staging_root / directml_config.DIRECTML_RUNTIME_MARKER_NAME).write_text(
+            json.dumps(marker, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        _rmtree_if_exists(target_root, ignore_errors=True)
+        os.replace(staging_root, target_root)
+        if not directml_config.is_directml_runtime_ready():
+            raise RuntimeError("DirectML 环境安装后完整性检查失败")
+        print(f"  DirectML 混合推理环境已安装: {target_root}")
+        return True
+    except Exception as exc:
+        _print_warn(f"  DirectML 混合推理环境安装失败: {exc}")
+        return False
+    finally:
+        _rmtree_if_exists(staging_root, ignore_errors=True)
+
+
 def _ping_once_ms(host: str, timeout: float = RESOURCE_PING_TIMEOUT_SECONDS) -> float | None:
     timeout = max(0.1, float(timeout))
     if os.name == "nt":
@@ -1469,7 +1588,7 @@ def _download_yuanbao_service_bundle() -> bool:
 
 
 def ensure_yuanbao_service_bundle() -> bool:
-    _print_stage(5, "准备本地网页中转服务...")
+    _print_stage(6, "准备本地网页中转服务...")
     bundle_ok = _download_yuanbao_service_bundle()
     return bundle_ok
 
@@ -1590,7 +1709,7 @@ def _find_extracted_browser_root(extract_root: Path) -> Optional[Path]:
 
 
 def ensure_yuanbao_browser_runtime(python_exe) -> bool:
-    _print_stage(6, "准备浏览器离线运行时...")
+    _print_stage(7, "准备浏览器离线运行时...")
 
     runtime_path = _find_playwright_browser_runtime()
     if runtime_path is not None:
@@ -1861,7 +1980,7 @@ def _ensure_single_vosk_model(spec: dict) -> bool:
 
 
 def ensure_vosk_models():
-    _print_stage(4, "准备 Vosk 语音模型...")
+    _print_stage(5, "准备 Vosk 语音模型...")
     all_ok = True
     for spec in VOSK_MODEL_SPECS:
         if not _ensure_single_vosk_model(spec):
@@ -1871,7 +1990,7 @@ def ensure_vosk_models():
 
 def launch(python_exe):
     """Launch main script, prefer pythonw if available."""
-    _print_stage(7, "启动飞行雪绒桌宠...")
+    _print_stage(8, "启动飞行雪绒桌宠...")
 
     main_script = PROJECT_ROOT / "lib" / "core" / "qt_desktop_pet.py"
     if not main_script.exists():
@@ -1920,11 +2039,14 @@ def main():
         if not install_all(python_exe, mirrors):
             _print_warn("依赖未全部安装，可能影响部分功能")
 
+        if not ensure_directml_hybrid_runtime(python_exe, mirrors):
+            _print_warn("DirectML 混合推理环境未准备完成，ONNX 语音将使用 CPU")
+
         if _microphone_runtime_ready(python_exe):
             if not ensure_vosk_models():
                 _print_warn("部分 Vosk 模型缺失，语音识别可能无法正常工作")
         else:
-            _print_stage(4, "跳过 Vosk 模型下载（sounddevice/vosk 未就绪）")
+            _print_stage(5, "跳过 Vosk 模型下载（sounddevice/vosk 未就绪）")
 
         if not ensure_seanima_assets():
             _print_warn("启动/退出动画资源未准备完成，将按程序兼容逻辑继续启动")

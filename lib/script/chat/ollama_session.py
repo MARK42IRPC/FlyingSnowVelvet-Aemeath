@@ -1,6 +1,7 @@
 """Ollama 会话调度与回复回退实现。"""
 
 import json
+import inspect
 import threading
 import time
 
@@ -135,7 +136,8 @@ class OllamaSessionMixin:
 
     def stream_chat(self, message: str, persona: str, callback, on_chunk=None,
                     images: list[bytes] = None, quiet_throttled: bool = False,
-                    history: list[dict] | None = None):
+                    history: list[dict] | None = None,
+                    allow_tools: bool = True):
         """
         发起流式聊天请求（后台线程），收集完整回复后通过 callback 传回主线程。
 
@@ -184,11 +186,13 @@ class OllamaSessionMixin:
             on_chunk is not None,
             images,
             history,
+            allow_tools,
         )
 
     def _run_stream_chat(self, message: str, persona: str, request_id: int,
                          streaming: bool, images: list[bytes] = None,
-                         history: list[dict] | None = None):
+                         history: list[dict] | None = None,
+                         allow_tools: bool = True):
         """
         后台线程：根据 API 类型选择不同的流式调用方式。
         """
@@ -196,6 +200,12 @@ class OllamaSessionMixin:
         last_error = ""
         sent_len = 0
         last_emit_ts = 0.0
+        native_tool_call = None
+
+        def capture_tool_call(tool_call: dict) -> None:
+            nonlocal native_tool_call
+            if native_tool_call is None:
+                native_tool_call = tool_call
 
         def emit_chunk(text: str) -> None:
             nonlocal sent_len, last_emit_ts
@@ -221,6 +231,8 @@ class OllamaSessionMixin:
                     images=images,
                     history=history,
                     request_id=request_id,
+                    allow_tools=allow_tools,
+                    on_tool_call=capture_tool_call,
                 )
             except requests.HTTPError as e:
                 err    = self._extract_error(e)
@@ -235,6 +247,8 @@ class OllamaSessionMixin:
                             images=None,
                             history=history,
                             request_id=request_id,
+                            allow_tools=allow_tools,
+                            on_tool_call=capture_tool_call,
                         )
                     except requests.HTTPError as e2:
                         err2    = self._extract_error(e2)
@@ -266,6 +280,7 @@ class OllamaSessionMixin:
                         full_text = self._chat_api(
                             message, persona, model,
                             on_chunk_emit=chunk_fn, images=current_images, history=history,
+                            allow_tools=allow_tools, on_tool_call=capture_tool_call,
                         )
                         if model != self._selected_model:
                             logger.info("[OllamaManager] 使用备用模型成功: %s (/api/chat)", model)
@@ -305,10 +320,10 @@ class OllamaSessionMixin:
                         logger.error("[OllamaManager] /api/generate (%s) 异常: %s", model, e)
                         last_error = str(e)
 
-                if full_text:
+                if full_text or native_tool_call is not None:
                     break
 
-        if not full_text and self._strict_mode:
+        if not full_text and native_tool_call is None and self._strict_mode:
             err_text = (last_error or "").strip()
             if err_text:
                 full_text = f"当前回复模式请求失败: {err_text[:300]}"
@@ -319,7 +334,7 @@ class OllamaSessionMixin:
             self._signal.chunk_ready.emit(request_id, full_text)
 
         if self._signal:
-            self._signal.chat_ready.emit(request_id, full_text)
+            self._signal.chat_ready.emit(request_id, full_text, native_tool_call)
 
     def _get_models_to_try(self) -> list[str]:
         """
@@ -343,13 +358,19 @@ class OllamaSessionMixin:
         if chunk_cb:
             chunk_cb(text)
 
-    def _on_chat_ready(self, request_id: int, text: str):
+    def _on_chat_ready(self, request_id: int, text: str, native_tool_call=None):
         """Qt 主线程：回复就绪；按 request_id 路由并清理该请求回调。"""
         with self._chat_state_lock:
             self._chat_chunk_callbacks.pop(request_id, None)
             callback = self._chat_callbacks.pop(request_id, None)
         if callback:
-            callback(text)
+            try:
+                signature = inspect.signature(callback)
+                signature.bind(text, native_tool_call)
+            except (TypeError, ValueError):
+                callback(text)
+            else:
+                callback(text, native_tool_call)
 
     @property
     def is_chat_busy(self) -> bool:

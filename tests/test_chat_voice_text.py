@@ -101,6 +101,24 @@ class ChatVoiceTextTests(unittest.TestCase):
         )
         self.assertEqual(voice_events[0].data["text_lang"], "auto")
 
+    def test_native_tool_without_text_gets_reply_and_structured_final_event(self):
+        events = []
+        presenter = SimpleNamespace(
+            _event_center=SimpleNamespace(publish=events.append),
+            _calc_stream_final_min_ticks=lambda _text: 2,
+        )
+        tool_call = {"name": "start_timer", "arguments": {"seconds": 45}}
+
+        ChatHandlerStreamPresenterMixin._publish_auto_response(
+            presenter,
+            "",
+            native_tool_call=tool_call,
+        )
+
+        final_event = next(event for event in events if event.type is EventType.STREAM_FINAL)
+        self.assertEqual(final_event.data["tool_call"], tool_call)
+        self.assertIn("倒计时", final_event.data["text"])
+
 
 if __name__ == "__main__":
     unittest.main()

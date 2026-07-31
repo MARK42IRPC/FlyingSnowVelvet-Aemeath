@@ -106,15 +106,17 @@ class ChatHandler(ChatHandlerPersonaMixin, ChatHandlerAutoCompanionMixin, ChatHa
         self._ollama.stream_chat(
             message=text,
             persona=self._build_runtime_persona(skip_memory_block=is_tool_recall),
-            callback=lambda reply_text, user_text=text, keep_history=include_history, allow_tools=allow_tool_commands: self._publish_response(
+            callback=lambda reply_text, native_tool_call=None, user_text=text, keep_history=include_history, allow_tools=allow_tool_commands: self._publish_response(
                 reply_text,
                 user_text=user_text,
                 include_history=keep_history,
                 allow_tool_commands=allow_tools,
+                native_tool_call=native_tool_call,
             ),
             on_chunk=self._on_stream_chunk,
             images=images,
             history=context_history,
+            allow_tools=allow_tool_commands,
         )
 
     def cleanup(self):

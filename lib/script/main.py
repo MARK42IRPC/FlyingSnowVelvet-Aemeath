@@ -109,7 +109,7 @@ class ApplicationState:
         # 音频核心在事件中心初始化后立即创建，以便订阅 APP_PRE_START 完成 MCI 预热
         from lib.core.voice.core import get_voice_core
         self._voice = get_voice_core()
-        # ONNX 文本转语音桥接：按配置决定是否在预启动阶段后台加载本地模型。
+        # ONNX 文本转语音桥接：主界面就绪后在隔离 Worker 中加载本地模型。
         self._gsvmove = get_gsvmove_service()
         self._yuanbao_free_api = get_yuanbao_free_api_service()
         self._bug_tracker = get_bug_tracker_service()
@@ -287,10 +287,6 @@ class ApplicationState:
         # 创建Qt应用（需要在发布事件前创建，以便 QTimer 工作）
         self._app = _new_create_qt_application(logger, sys.argv)
         self._app.aboutToQuit.connect(self._on_qt_about_to_quit)
-
-        # ONNX 模型按配置尽早预热，与后续启动步骤并行执行。
-        if self._gsvmove is not None and self._gsvmove.auto_start_enabled():
-            self._gsvmove.kickoff_prestart()
 
         # 初始化字体配置（DPI 缩放，需在 QApplication 创建后调用）
         from config.font_config import init_font_config

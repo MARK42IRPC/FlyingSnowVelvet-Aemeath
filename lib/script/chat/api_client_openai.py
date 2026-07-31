@@ -11,6 +11,11 @@ from lib.core.logger import get_logger
 from ._multimodal import image_to_base64_with_mime, images_to_openai_content
 from .api_client_common import _ApiClientCommonMixin
 from .api_client_error import _ApiClientErrorMixin
+from .native_tools import (
+    NativeToolCallAccumulator,
+    add_native_tool_instruction,
+    get_native_tool_definitions,
+)
 
 logger = get_logger(__name__)
 
@@ -174,6 +179,19 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
             cloned.update(extra_fields)
             merged_payloads.append(cloned)
         return merged_payloads
+
+    @staticmethod
+    def _prepend_native_tool_payloads(payloads: list[dict]) -> list[dict]:
+        """Try native tools first while retaining plain payloads for incompatible gateways."""
+        tools = get_native_tool_definitions()
+        native_payloads: list[dict] = []
+        for payload in payloads:
+            cloned = dict(payload)
+            cloned["messages"] = add_native_tool_instruction(payload.get("messages") or [])
+            cloned["tools"] = tools
+            cloned["tool_choice"] = "auto"
+            native_payloads.append(cloned)
+        return _ApiClientOpenAIMixin._dedupe_payload_variants(native_payloads + payloads)
 
     @staticmethod
     def _yuanbao_api_root(base_url: str) -> str:
@@ -435,6 +453,7 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
         deadline: float,
         request_started_at: float | None = None,
         endpoint: str = "",
+        on_tool_call=None,
     ) -> str:
         """消费 OpenAI 兼容流，兼容 SSE / NDJSON / 非标准 chunk 内容。"""
         full_text = ""
@@ -443,11 +462,13 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
         pending_data = ""
         last_data_sample = ""
         first_piece_at: float | None = None
+        tool_calls = NativeToolCallAccumulator()
 
         def consume_chunk(chunk: dict) -> bool:
             """处理单个已解析 JSON chunk，返回是否应结束流。"""
             nonlocal full_text, piece_count
 
+            tool_calls.consume_openai_chunk(chunk)
             piece = self._extract_openai_chunk_text(chunk)
             if piece:
                 nonlocal first_piece_at
@@ -530,7 +551,14 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
             except json.JSONDecodeError:
                 pass
 
-        if piece_count == 0:
+        native_tool_call = tool_calls.first()
+        if native_tool_call is not None and on_tool_call is not None:
+            try:
+                on_tool_call(native_tool_call)
+            except Exception as cb_err:
+                logger.warning("[APIClient] on_tool_call 回调异常，已忽略: %s", cb_err)
+
+        if piece_count == 0 and native_tool_call is None:
             logger.warning("[APIClient] 流式结束但未解析到文本: lines=%d chars=%d sample=%r",
                            line_count, len(full_text), last_data_sample[:120])
         elif request_started_at is not None and first_piece_at is not None:
@@ -548,7 +576,9 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
                          on_chunk_emit=None, images: list[bytes] = None,
                          history: list[dict] | None = None,
                          request_id: int | None = None,
-                         config_override: dict | None = None) -> str:
+                         config_override: dict | None = None,
+                         allow_tools: bool = True,
+                         on_tool_call=None) -> str:
         """
         POST /chat/completions（OpenAI 兼容 API 格式）。
 
@@ -687,6 +717,9 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
                 payload_candidates,
                 self._build_yuanbao_extra_fields(yuanbao_options, uploaded_multimedia),
             )
+        native_tools_enabled = allow_tools and self._native_tools_available(base_url, model)
+        if native_tools_enabled:
+            payload_candidates = self._prepend_native_tool_payloads(payload_candidates)
         payload_candidates = self._dedupe_payload_variants(payload_candidates)
         if not endpoint_candidates:
             raise RuntimeError('OpenAI 兼容请求失败：未生成可用端点，请检查 API_BASE_URL')
@@ -704,6 +737,8 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
 
         for endpoint in endpoint_candidates:
             for payload in payload_candidates:
+                if "tools" in payload and not self._native_tools_available(base_url, model):
+                    continue
                 for attempt in range(1, api_retry_times + 1):
                     resp = None
                     try:
@@ -734,11 +769,27 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
                             deadline,
                             request_started_at=request_started_at,
                             endpoint=endpoint,
+                            on_tool_call=on_tool_call,
                         )
                         return result
                     except requests.HTTPError as e:
                         last_http_error = e
                         status = e.response.status_code if e.response is not None else 0
+                        try:
+                            error_detail = self._extract_error(e).lower()
+                        except Exception:
+                            error_detail = str(e).lower()
+                        rejected_tools = any(
+                            token in error_detail
+                            for token in ("tools", "tool_choice", "function calling", "function_call")
+                        )
+                        if "tools" in payload and status in (400, 422) and rejected_tools:
+                            if self._mark_native_tools_unsupported(base_url, model):
+                                logger.info(
+                                    "[APIClient] 当前 OpenAI 兼容目标不接受原生 tools，后续使用文本协议: %s %s",
+                                    base_url,
+                                    model,
+                                )
                         should_retry = status in (408, 425, 429) or status >= 500
                         if should_retry and attempt < api_retry_times:
                             logger.warning(

@@ -152,6 +152,7 @@ OLLAMA = {
     'api_temperature':     1.35,      # 外部 API 采样温度（0~2）
     'model_vision':        0,         # 模型视力（0~100）；0=压到720p，100=不压缩，线性控制图片分辨率
     'gsv_auto_start':      False,     # 启用本地 ONNX 语音；关闭后不预热，也不响应文本语音请求
+    'gsv_gpu_hybrid':      False,     # 使用隔离 DirectML Worker；关闭时立即释放 GPU 运行时
     'gsv_temperature':     1.0,       # ONNX T2S 采样温度（0.01~2.0）
     'gsv_top_k':           15,        # ONNX T2S Top-K（1~1025）
     'gsv_top_p':           1.0,       # ONNX T2S Top-P（0.01~1.0）
@@ -216,6 +217,7 @@ _AI_SETTING_DEFAULTS = {
     'api_temperature': OLLAMA['api_temperature'],
     'model_vision': OLLAMA['model_vision'],
     'gsv_auto_start': OLLAMA['gsv_auto_start'],
+    'gsv_gpu_hybrid': OLLAMA['gsv_gpu_hybrid'],
     'gsv_temperature': OLLAMA['gsv_temperature'],
     'gsv_top_k': OLLAMA['gsv_top_k'],
     'gsv_top_p': OLLAMA['gsv_top_p'],
@@ -286,6 +288,7 @@ def _legacy_ai_setting_values() -> dict:
         'api_temperature': OLLAMA['api_temperature'],
         'model_vision': OLLAMA['model_vision'],
         'gsv_auto_start': OLLAMA['gsv_auto_start'],
+        'gsv_gpu_hybrid': OLLAMA['gsv_gpu_hybrid'],
         'gsv_temperature': OLLAMA['gsv_temperature'],
         'gsv_top_k': OLLAMA['gsv_top_k'],
         'gsv_top_p': OLLAMA['gsv_top_p'],
@@ -323,6 +326,7 @@ def _legacy_ai_setting_values() -> dict:
             'api_temperature': 'api_temperature',
             'model_vision': 'model_vision',
             'gsv_auto_start': 'gsv_auto_start',
+            'gsv_gpu_hybrid': 'gsv_gpu_hybrid',
             'gsv_temperature': 'gsv_temperature',
             'gsv_top_k': 'gsv_top_k',
             'gsv_top_p': 'gsv_top_p',
@@ -366,6 +370,7 @@ def _apply_ai_setting_values(values: dict) -> None:
     OLLAMA['api_temperature'] = values['api_temperature']
     OLLAMA['model_vision'] = values['model_vision']
     OLLAMA['gsv_auto_start'] = values['gsv_auto_start']
+    OLLAMA['gsv_gpu_hybrid'] = values['gsv_gpu_hybrid']
     OLLAMA['gsv_temperature'] = values['gsv_temperature']
     OLLAMA['gsv_top_k'] = values['gsv_top_k']
     OLLAMA['gsv_top_p'] = values['gsv_top_p']

@@ -91,6 +91,7 @@ python install_deps.py
 - 选择可用 Python 并写入 `py.ini`
 - 安装 `requirements.txt` 中的 Python 包
 - 准备 Vosk 语音识别模型
+- 在共享语音运行目录创建可选的 DirectML GPU 混合推理 venv
 - 准备本地网页中转服务源码或内置服务包
 - 按 `resc.net.txt` 下载缺失的 Vosk、启动动画、Python 和浏览器资源
 - 校验随程序提供的官方 UnRAR 解压后端；ONNX 语音包由控制面板按需安装

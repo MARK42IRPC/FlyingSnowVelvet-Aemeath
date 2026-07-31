@@ -7,6 +7,7 @@ from config.ollama_config import OLLAMA
 from lib.core.event.center import Event, EventType
 from lib.core.logger import get_logger
 from lib.script.chat import bot_reply
+from .native_tools import default_native_tool_reply
 from .handler_auto_companion import AUTO_COMPANION_PROMPT
 
 logger = get_logger(__name__)
@@ -216,6 +217,7 @@ class ChatHandlerStreamPresenterMixin:
         user_text: str | None = None,
         include_history: bool = True,
         allow_tool_commands: bool = True,
+        native_tool_call: dict | None = None,
     ):
         """
         最终回调：处理流式请求的完成信号。
@@ -226,6 +228,9 @@ class ChatHandlerStreamPresenterMixin:
             self._stream_flush_timer.stop()
         if self._stream_pending_raw:
             self._flush_stream_chunk()
+
+        if not text and native_tool_call is not None:
+            text = default_native_tool_reply(native_tool_call)
 
         if not text:
             # 所有模型失败或服务不可用：用关键词匹配原始消息，退回角色内预设回复
@@ -288,14 +293,17 @@ class ChatHandlerStreamPresenterMixin:
             self._event_center.publish(Event(EventType.STREAM_FINAL, {
                 "text": text,
                 "allow_tool_commands": allow_tool_commands,
+                "tool_call": native_tool_call,
             }))
 
-    def _publish_auto_response(self, text: str, include_history: bool = False, user_text: str | None = None):
+    def _publish_auto_response(self, text: str, include_history: bool = False,
+                               user_text: str | None = None,
+                               native_tool_call: dict | None = None):
         """
         自动陪伴回调：显示气泡，并复用 STREAM_FINAL 管道识别 ###工具指令###。
         使用与流式回复结束相同的 min_ticks 计算逻辑（按字数计算，防顶出保护）。
         """
-        raw_text = text
+        raw_text = text or default_native_tool_reply(native_tool_call)
         from_ai = bool(raw_text)
         if not raw_text:
             raw_text = bot_reply.get_reply(AUTO_COMPANION_PROMPT)
@@ -333,7 +341,10 @@ class ChatHandlerStreamPresenterMixin:
                     logger.debug("[ChatHandler] 自动陪伴写入用户侧记忆失败: %s", exc)
             self._append_recent_context('assistant', raw_text)
         if not is_status_text:
-            self._event_center.publish(Event(EventType.STREAM_FINAL, {"text": raw_text}))
+            self._event_center.publish(Event(EventType.STREAM_FINAL, {
+                "text": raw_text,
+                "tool_call": native_tool_call,
+            }))
         logger.debug("[ChatHandler] 自动陪伴回复（%d 字，min=%d）: %s",
                      len(display_text), final_min_ticks, display_text[:60])
 

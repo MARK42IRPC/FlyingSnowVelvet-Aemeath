@@ -160,7 +160,7 @@ class EventType(Enum):
     MANAGER_QUERY_RESPONSE = "manager_query_response"  # 管理器查询响应
 
     # 流式消息事件
-    STREAM_FINAL = "stream_final"  # 流式消息最终完整文本（text: str）
+    STREAM_FINAL = "stream_final"  # 最终文本；可选 tool_call 为已校验的原生函数调用
 
     # 音响管理器初始化事件（用于解耦 UI 和云音乐初始化）
     SPEAKER_MANAGER_READY = "speaker_manager_ready"  # 音响管理器就绪

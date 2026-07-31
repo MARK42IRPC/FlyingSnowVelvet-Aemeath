@@ -73,7 +73,7 @@
 - `#xxx` → `EventType.INPUT_HASH`
 - 普通文本 → `EventType.INPUT_CHAT`
 
-AI 工具调度位于 `lib/script/tool_dispatcher/dispatcher.py`，会从 `STREAM_FINAL` 中提取 `###指令###`。
+AI 工具调度位于 `lib/script/tool_dispatcher/dispatcher.py`。`STREAM_FINAL.tool_call` 携带已校验的原生 Function Calling 调用时优先执行；没有结构化调用时，才从 `text` 中提取兼容格式 `###指令###`。工具 schema 与映射统一定义在 `lib/script/chat/native_tools.py`。
 
 六、配置项落地链路
 如果新增 AI 控制面板配置，至少同步以下文件：

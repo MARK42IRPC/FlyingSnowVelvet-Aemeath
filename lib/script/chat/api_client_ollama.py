@@ -6,9 +6,14 @@ import time
 
 import requests
 
+from lib.core.logger import get_logger
+
 from ._multimodal import images_to_ollama_payload
 from .api_client_common import _ApiClientCommonMixin
 from .api_client_error import _ApiClientErrorMixin
+from .native_tools import NATIVE_TOOL_SYSTEM_NOTE, NativeToolCallAccumulator, get_native_tool_definitions
+
+logger = get_logger(__name__)
 
 
 class _ApiClientOllamaMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
@@ -44,7 +49,8 @@ class _ApiClientOllamaMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
 
     def _chat_api(self, message: str, persona: str, model: str,
                   on_chunk_emit=None, images: list[bytes] = None,
-                  history: list[dict] | None = None) -> str:
+                  history: list[dict] | None = None,
+                  allow_tools: bool = True, on_tool_call=None) -> str:
         """
         POST /api/chat（messages 格式，支持 system role）。
 
@@ -69,6 +75,10 @@ class _ApiClientOllamaMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
             "stream":  True,
             "options": self._build_options(),
         }
+        native_tools_enabled = allow_tools and self._native_tools_available(OLLAMA_BASE_URL, model)
+        if native_tools_enabled:
+            payload["messages"][0]["content"] = f"{persona.rstrip()}\n\n{NATIVE_TOOL_SYSTEM_NOTE}"
+            payload["tools"] = get_native_tool_definitions()
         resp = requests.post(
             f"{OLLAMA_BASE_URL}/api/chat",
             json=payload,
@@ -78,15 +88,36 @@ class _ApiClientOllamaMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
         try:
             if not resp.ok:
                 resp.content
-            resp.raise_for_status()
+            try:
+                resp.raise_for_status()
+            except requests.HTTPError as exc:
+                status = exc.response.status_code if exc.response is not None else 0
+                try:
+                    error_detail = self._extract_error(exc).lower()
+                except Exception:
+                    error_detail = str(exc).lower()
+                rejected_tools = any(
+                    token in error_detail
+                    for token in ("tools", "tool_choice", "function calling", "function_call")
+                )
+                if native_tools_enabled and status in (400, 422) and rejected_tools:
+                    if self._mark_native_tools_unsupported(OLLAMA_BASE_URL, model):
+                        logger.info(
+                            "[OllamaManager] 当前 Ollama 模型不接受原生 tools，后续使用文本协议: %s",
+                            model,
+                        )
+                raise
             full_text = ""
+            tool_calls = NativeToolCallAccumulator()
             deadline  = time.monotonic() + _STREAM_MAX_SECS
             for line in self._iter_stream_lines(resp):
                 if time.monotonic() > deadline:
                     break
                 try:
                     chunk   = json.loads(line)
-                    content = chunk.get("message", {}).get("content", "")
+                    response_message = chunk.get("message", {})
+                    tool_calls.consume_ollama_message(response_message)
+                    content = response_message.get("content", "")
                     if content:
                         full_text += content
                         if on_chunk_emit:
@@ -95,6 +126,12 @@ class _ApiClientOllamaMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
                         break
                 except json.JSONDecodeError:
                     continue
+            native_tool_call = tool_calls.first()
+            if native_tool_call is not None and on_tool_call is not None:
+                try:
+                    on_tool_call(native_tool_call)
+                except Exception as cb_err:
+                    logger.warning("[OllamaManager] on_tool_call 回调异常，已忽略: %s", cb_err)
             return full_text
         finally:
             resp.close()

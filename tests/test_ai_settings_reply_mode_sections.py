@@ -212,6 +212,10 @@ class AISettingsReplyModeSectionsTests(unittest.TestCase):
         first_widget = self.panel._ai_scaffold.content_layout.itemAt(0).widget()
         self.assertIs(first_widget, self.panel._voice_package_banner)
         self.assertEqual(self.panel._voice_package_banner.install_button.text(), "安装最新语音包")
+        self.assertEqual(
+            self.panel._gsv_gpu_hybrid.text(),
+            "使用gpu混合推理（可能会提高显存占用）",
+        )
 
         voice_section = Mock()
         panel = type("GsvPanel", (), {

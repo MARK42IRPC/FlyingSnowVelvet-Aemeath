@@ -54,6 +54,16 @@ class ToolDispatcherTests(unittest.TestCase):
         self.assertEqual(_extract_tool_invocation('＃＃＃ 计时\n1 02 03 ＃＃＃'), ('计时', '1 02 03'))
         self.assertEqual(_extract_tool_invocation('###下一曲###'), ('下一曲', ''))
 
+    def test_native_call_takes_priority_over_legacy_marker(self):
+        self.center.published.clear()
+        self.dispatcher._on_stream_final(Event(EventType.STREAM_FINAL, {
+            'text': '###下一曲###',
+            'tool_call': {'name': 'toggle_play_pause', 'arguments': {}},
+        }))
+
+        self.assertEqual(len(self.center.published), 1)
+        self.assertEqual(self.center.published[0].type, EventType.MUSIC_PLAY_PAUSE)
+
     def test_direct_commands_publish_expected_events(self):
         cases = (
             ('###下一曲###', EventType.MUSIC_NEXT_TRACK, {}),

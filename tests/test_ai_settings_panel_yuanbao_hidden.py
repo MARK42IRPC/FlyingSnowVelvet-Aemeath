@@ -54,6 +54,7 @@ def _build_dummy_panel() -> _DummyPanel:
     panel._api_temperature = _TextField("0.8")
     panel._model_vision = _TextField("0")
     panel._gsv_auto_start = _CheckField(True)
+    panel._gsv_gpu_hybrid = _CheckField(True)
     panel._gsv_temperature = _TextField("1.35")
     panel._gsv_top_k = _TextField("15")
     panel._gsv_top_p = _TextField("1.0")
@@ -90,6 +91,7 @@ class AISettingsPanelYuanbaoHiddenValuesTests(unittest.TestCase):
 
         for key, expected in loaded_hidden.items():
             self.assertEqual(values[key], expected)
+        self.assertTrue(values["gsv_gpu_hybrid"])
 
     def test_collect_hidden_yuanbao_values_falls_back_to_defaults(self):
         panel = _build_dummy_panel()

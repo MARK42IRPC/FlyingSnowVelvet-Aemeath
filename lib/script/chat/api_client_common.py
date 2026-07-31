@@ -9,6 +9,8 @@ import requests
 _STREAM_LINE_CHUNK_SIZE = 128
 _SESSION_LOCK = threading.Lock()
 _SESSION_CACHE: dict[bool, requests.Session] = {}
+_NATIVE_TOOL_CAPABILITY_LOCK = threading.Lock()
+_NATIVE_TOOL_UNSUPPORTED_TARGETS: set[tuple[str, str]] = set()
 
 
 def _close_cached_sessions() -> None:
@@ -26,6 +28,21 @@ atexit.register(_close_cached_sessions)
 
 
 class _ApiClientCommonMixin:
+    @staticmethod
+    def _native_tools_available(target: str, model: str) -> bool:
+        key = (str(target or "").strip().lower(), str(model or "").strip().lower())
+        with _NATIVE_TOOL_CAPABILITY_LOCK:
+            return key not in _NATIVE_TOOL_UNSUPPORTED_TARGETS
+
+    @staticmethod
+    def _mark_native_tools_unsupported(target: str, model: str) -> bool:
+        """Remember a provider rejection; return True only for the first observation."""
+        key = (str(target or "").strip().lower(), str(model or "").strip().lower())
+        with _NATIVE_TOOL_CAPABILITY_LOCK:
+            was_new = key not in _NATIVE_TOOL_UNSUPPORTED_TARGETS
+            _NATIVE_TOOL_UNSUPPORTED_TARGETS.add(key)
+        return was_new
+
     @staticmethod
     def _normalize_history_items(history: list[dict] | None) -> list[dict[str, str]]:
         normalized: list[dict[str, str]] = []

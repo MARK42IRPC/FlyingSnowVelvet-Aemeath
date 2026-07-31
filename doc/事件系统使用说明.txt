@@ -81,6 +81,12 @@ AI_VOICE_REQUEST
 - 当前由 `lib/script/gsvmove/service.py` 消费
 - 当 GSV 模块在控制面板中关闭时，这类事件会被直接忽略
 
+STREAM_FINAL
+- 用途：发布 AI 最终回复，供记忆和工具调度消费
+- 字段：`text`、可选 `allow_tool_commands`、可选 `tool_call`
+- `tool_call` 为通过 `lib/script/chat/native_tools.py` 白名单校验的原生 Function Calling 调用；存在时工具调度器优先使用它，不再解析正文里的兼容标记
+- `allow_tool_commands=false` 时，结构化调用和 `###指令###` 均不得执行
+
 MIC_STT_*
 - `MIC_STT_START`
 - `MIC_STT_STOP`

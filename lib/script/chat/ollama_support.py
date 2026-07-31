@@ -19,4 +19,4 @@ class _OllamaSignal(QObject):
 
     status_ready = pyqtSignal(bool, list)  # (is_running, models)
     chunk_ready  = pyqtSignal(int, str)    # (request_id, accumulated_text) - 流式块
-    chat_ready   = pyqtSignal(int, str)    # (request_id, full_response_text) - 完成信号
+    chat_ready   = pyqtSignal(int, str, object)  # (request_id, text, native_tool_call)

@@ -1,5 +1,7 @@
 import hashlib
 import json
+import os
+import subprocess
 import tempfile
 import threading
 import unittest
@@ -164,6 +166,44 @@ class VoicePackageManagerTests(unittest.TestCase):
                 removed = remove_voice_package(package_root)
 
             self.assertEqual(removed, package_root)
+            self.assertFalse(package_root.exists())
+            self.assertFalse(state_path.exists())
+
+    @unittest.skipUnless(os.name == "nt", "Windows junction/symlink path behavior")
+    def test_remove_voice_package_clears_state_saved_through_resolved_parent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            physical_root = base / "physical"
+            physical_root.mkdir()
+            logical_root = base / "logical"
+            try:
+                logical_root.symlink_to(physical_root, target_is_directory=True)
+            except OSError:
+                junction = subprocess.run(
+                    ["cmd", "/c", "mklink", "/J", str(logical_root), str(physical_root)],
+                    capture_output=True,
+                    check=False,
+                )
+                if junction.returncode != 0:
+                    detail = junction.stderr.decode(errors="replace").strip()
+                    self.skipTest(f"directory link unavailable: {detail}")
+
+            drive = logical_root / "drive"
+            drive.mkdir()
+            package_root = _create_fake_package(
+                drive / "AemeathDeskPet" / "voice" / manager.VOICE_PACKAGE_DIR_NAME
+            )
+            state_path = base / "state" / "voice_package.json"
+            manifest = json.loads((package_root / "manifest.json").read_text(encoding="utf-8"))
+
+            with patch.object(manager, "list_fixed_drive_roots", return_value=(drive,)), patch.object(
+                manager, "get_voice_package_state_path", return_value=state_path
+            ):
+                manager._write_install_state(package_root, manifest)
+                stored_root = json.loads(state_path.read_text(encoding="utf-8"))["package_root"]
+                self.assertEqual(manager._path_key(Path(stored_root)), manager._path_key(package_root.resolve()))
+                remove_voice_package(package_root)
+
             self.assertFalse(package_root.exists())
             self.assertFalse(state_path.exists())
 

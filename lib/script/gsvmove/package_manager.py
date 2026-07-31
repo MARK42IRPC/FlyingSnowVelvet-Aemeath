@@ -560,6 +560,16 @@ def _path_key(path: Path) -> str:
     return os.path.normcase(os.path.abspath(os.fspath(path)))
 
 
+def _same_path(left: Path, right: Path) -> bool:
+    """Compare logical and resolved forms while both path parents still exist."""
+    if _path_key(left) == _path_key(right):
+        return True
+    try:
+        return _path_key(left.resolve(strict=False)) == _path_key(right.resolve(strict=False))
+    except (OSError, RuntimeError):
+        return False
+
+
 def get_voice_package_status() -> VoicePackageStatus:
     invalid_reason = ""
     invalid_root: Path | None = None
@@ -595,6 +605,12 @@ def remove_voice_package(package_root: Path) -> Path:
     if not target.is_dir():
         raise VoicePackageError("语音包目录不存在")
 
+    # State records the resolved install path. Capture the match before removing
+    # the directory so Windows junctions in CI/user storage can still resolve.
+    state_path = get_voice_package_state_path()
+    state_root = str(_load_install_state().get("package_root") or "").strip()
+    state_matches_target = bool(state_root) and _same_path(Path(state_root), target)
+
     try:
         shutil.rmtree(target)
     except Exception as exc:
@@ -602,9 +618,7 @@ def remove_voice_package(package_root: Path) -> Path:
     if target.exists():
         raise VoicePackageError("删除语音包后目录仍然存在")
 
-    state_path = get_voice_package_state_path()
-    state_root = str(_load_install_state().get("package_root") or "").strip()
-    if state_root and _path_key(Path(state_root)) == _path_key(target):
+    if state_matches_target:
         try:
             state_path.unlink(missing_ok=True)
         except OSError as exc:

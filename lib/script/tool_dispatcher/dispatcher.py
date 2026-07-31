@@ -42,6 +42,7 @@ from PyQt5.QtCore import QTimer
 from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.logger import get_logger
+from lib.script.chat.native_tools import native_tool_to_dispatch
 from lib.script.music import get_music_service
 from config.config import TOOL_DISPATCHER, DRAW, ANIMATION
 from config.user_storage_paths import get_user_state_dir
@@ -333,17 +334,24 @@ class ToolDispatcher:
         if event.data.get('allow_tool_commands', True) is False:
             return
 
-        text = event.data.get('text', '')
-        if not text:
-            return
-
-        parsed = _extract_tool_invocation(text)
+        native_tool_call = event.data.get('tool_call')
+        if native_tool_call is not None:
+            parsed = native_tool_to_dispatch(native_tool_call)
+            if parsed is None:
+                logger.warning("[ToolDispatcher] 忽略无效原生工具调用: %r", native_tool_call)
+                return
+        else:
+            text = event.data.get('text', '')
+            if not text:
+                return
+            parsed = _extract_tool_invocation(text)
         if parsed is None:
             return
 
         cmd, arg = parsed
 
-        logger.info("[ToolDispatcher] 工具调用: cmd=%s arg=%s", cmd, arg or '<无>')
+        source = "native" if native_tool_call is not None else "legacy"
+        logger.info("[ToolDispatcher] 工具调用: source=%s cmd=%s arg=%s", source, cmd, arg or '<无>')
 
         if cmd == '音乐':
             if not arg:

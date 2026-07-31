@@ -1,9 +1,12 @@
 import contextlib
 import hashlib
 import io
+import json
 import re
 import subprocess
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 import install_deps
@@ -11,6 +14,46 @@ from lib.script.gsvmove import rar_backend
 
 
 class InstallDependenciesProgressTests(unittest.TestCase):
+    def test_directml_runtime_is_installed_in_versioned_venv(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = Path(tmpdir) / "voice" / "runtimes" / "onnx-directml" / "runtime"
+            target_python = target / "Scripts" / "python.exe"
+
+            def run(command, timeout=12):
+                if command[1:3] == ["-c", "import struct; print(struct.calcsize('P') * 8)"]:
+                    return subprocess.CompletedProcess(command, 0, stdout="64\n")
+                if "venv" in command:
+                    staging = Path(command[-1])
+                    (staging / "Scripts").mkdir(parents=True)
+                    (staging / "Scripts" / "python.exe").write_bytes(b"python")
+                    return subprocess.CompletedProcess(command, 0, stdout="")
+                if "pip" in command:
+                    return subprocess.CompletedProcess(command, 0, stdout="installed")
+                raise AssertionError(command)
+
+            with patch.object(install_deps, "_get_version", return_value=(3, 11, 6)), patch.object(
+                install_deps, "_run", side_effect=run
+            ), patch.object(
+                install_deps.directml_config, "get_directml_runtime_root", return_value=target
+            ), patch.object(
+                install_deps.directml_config, "get_directml_python_path", return_value=target_python
+            ), patch.object(
+                install_deps.directml_config, "is_directml_runtime_ready", side_effect=[False, True]
+            ), patch.object(
+                install_deps, "_directml_runtime_probe", return_value=(True, "")
+            ):
+                installed = install_deps.ensure_directml_hybrid_runtime(
+                    "python.exe",
+                    [{"name": "PyPI", "url": "https://pypi.org/simple", "host": "pypi.org"}],
+                )
+
+            self.assertTrue(installed)
+            marker = json.loads(
+                (target / install_deps.directml_config.DIRECTML_RUNTIME_MARKER_NAME).read_text(encoding="utf-8")
+            )
+            self.assertEqual(marker["version"], install_deps.directml_config.DIRECTML_RUNTIME_VERSION)
+            self.assertEqual(marker["abi"], "cp311-win_amd64")
+
     def test_python_311_is_preferred_over_current_non_target_runtime(self):
         with patch.object(install_deps, "_current_runtime_executable", return_value="C:\\Python312\\python.exe"):
             target = install_deps._sort_key(((3, 11, 6), "C:\\Python311\\python.exe"))
