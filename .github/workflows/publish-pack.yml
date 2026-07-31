@@ -17,6 +17,7 @@ jobs:
     runs-on: windows-latest
     env:
       PYTHONIOENCODING: utf-8
+      PYTHONUTF8: "1"
     steps:
       - name: Check out tagged snapshot
         uses: actions/checkout@v5
@@ -37,9 +38,15 @@ jobs:
             throw 'Could not read APP_VERSION.'
           }
           $buildLog = Join-Path $env:RUNNER_TEMP 'pack-build-output.log'
-          & python scripts/package_release.py --version $version 2>&1 |
-            Tee-Object -FilePath $buildLog
-          $buildExitCode = $LASTEXITCODE
+          $buildErrorLog = Join-Path $env:RUNNER_TEMP 'pack-build-error.log'
+          $pythonPath = (Get-Command python).Source
+          $process = Start-Process -FilePath $pythonPath `
+            -ArgumentList @('scripts/package_release.py', '--version', $version) `
+            -Wait -PassThru -NoNewWindow `
+            -RedirectStandardOutput $buildLog `
+            -RedirectStandardError $buildErrorLog
+          Get-Content -LiteralPath $buildLog, $buildErrorLog | Write-Host
+          $buildExitCode = $process.ExitCode
           if ($buildExitCode -ne 0) {
             $tail = (Get-Content -LiteralPath $buildLog | Select-Object -Last 30) -join "`n"
             throw "Normal package build failed with exit code $buildExitCode.`n$tail"
