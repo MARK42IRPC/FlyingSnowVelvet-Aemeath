@@ -84,12 +84,3 @@ jobs:
           '--- stderr ---' | Add-Content -LiteralPath $diagnostic -Encoding utf8
           if (Test-Path -LiteralPath $stderr) { Get-Content -LiteralPath $stderr | Add-Content -LiteralPath $diagnostic -Encoding utf8 }
           gh release upload PACK $diagnostic --clobber --repo '${{ github.repository }}'
-
-      - name: Remove temporary build diagnostics
-        if: failure()
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          Start-Sleep -Seconds 90
-          gh release delete-asset PACK pack-build-diagnostic.log --yes --repo '${{ github.repository }}'
