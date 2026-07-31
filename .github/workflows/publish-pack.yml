@@ -17,10 +17,10 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Check out tagged snapshot
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
@@ -28,17 +28,21 @@ jobs:
         id: package
         shell: pwsh
         run: |
-          python scripts/package_release.py
-          $zip = @(Get-ChildItem -LiteralPath dist -Filter 'FlyingSnowVelvet-*.zip' |
-            Where-Object { $_.Name -notlike '*-green.zip' })
-          $manifest = @(Get-ChildItem -LiteralPath dist -Filter 'FlyingSnowVelvet-*-manifest.json' |
-            Where-Object { $_.Name -notlike '*-green-manifest.json' })
-          if ($zip.Count -ne 1 -or $manifest.Count -ne 1) {
-            throw 'Expected exactly one normal ZIP and one normal manifest.'
+          $ErrorActionPreference = 'Stop'
+          $version = (& python -c 'from config.version_info import APP_VERSION; print(APP_VERSION)' |
+            Out-String).Trim()
+          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($version)) {
+            throw 'Could not read APP_VERSION.'
           }
-          "zip_path=$($zip[0].FullName)" >> $env:GITHUB_OUTPUT
-          "manifest_path=$($manifest[0].FullName)" >> $env:GITHUB_OUTPUT
-          Get-FileHash -Algorithm SHA256 -LiteralPath $zip[0].FullName, $manifest[0].FullName
+          python scripts/package_release.py --version $version
+          if ($LASTEXITCODE -ne 0) {
+            throw "Normal package build failed with exit code $LASTEXITCODE."
+          }
+          $zipPath = (Resolve-Path -LiteralPath "dist/FlyingSnowVelvet-$version.zip").Path
+          $manifestPath = (Resolve-Path -LiteralPath "dist/FlyingSnowVelvet-$version-manifest.json").Path
+          "zip_path=$zipPath" >> $env:GITHUB_OUTPUT
+          "manifest_path=$manifestPath" >> $env:GITHUB_OUTPUT
+          Get-FileHash -Algorithm SHA256 -LiteralPath $zipPath, $manifestPath
 
       - name: Upload PACK release assets
         shell: pwsh
