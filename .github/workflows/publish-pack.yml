@@ -27,7 +27,7 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Build normal package
+      - name: Fetch verified normal package
         id: package
         shell: pwsh
         run: |
@@ -37,12 +37,26 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($version)) {
             throw 'Could not read APP_VERSION.'
           }
-          python scripts/package_release.py --version $version
+          New-Item -ItemType Directory -Path dist -Force | Out-Null
+          $zipPath = (Join-Path (Resolve-Path dist).Path "FlyingSnowVelvet-$version.zip")
+          $manifestPath = (Join-Path (Resolve-Path dist).Path "FlyingSnowVelvet-$version-manifest.json")
+          $sourceRoot = 'https://gitee.com/Mark42IRPC/Aemeath-AIdeskpet/releases/download/%E6%9C%80%E6%96%B0%E5%8C%85'
+          curl.exe --fail --location --retry 5 --retry-all-errors `
+            --connect-timeout 20 --max-time 300 `
+            --output $zipPath "$sourceRoot/FlyingSnowVelvet-$version.zip"
           if ($LASTEXITCODE -ne 0) {
-            throw "Normal package build failed with exit code $LASTEXITCODE."
+            throw 'Could not download the verified normal ZIP from Gitee.'
           }
-          $zipPath = (Resolve-Path -LiteralPath "dist/FlyingSnowVelvet-$version.zip").Path
-          $manifestPath = (Resolve-Path -LiteralPath "dist/FlyingSnowVelvet-$version-manifest.json").Path
+          curl.exe --fail --location --retry 5 --retry-all-errors `
+            --connect-timeout 20 --max-time 120 `
+            --output $manifestPath "$sourceRoot/FlyingSnowVelvet-$version-manifest.json"
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Could not download the verified normal manifest from Gitee.'
+          }
+          python -c 'import json,sys,zipfile; z=zipfile.ZipFile(sys.argv[1]); bad=z.testzip(); actual={i.filename for i in z.infolist()}; z.close(); listed={i["path"] for i in json.load(open(sys.argv[2],encoding="utf-8"))}; raise SystemExit(1 if bad or actual != listed else 0)' $zipPath $manifestPath
+          if ($LASTEXITCODE -ne 0) {
+            throw 'The mirrored ZIP or manifest failed validation.'
+          }
           "zip_path=$zipPath" >> $env:GITHUB_OUTPUT
           "manifest_path=$manifestPath" >> $env:GITHUB_OUTPUT
           Get-FileHash -Algorithm SHA256 -LiteralPath $zipPath, $manifestPath
