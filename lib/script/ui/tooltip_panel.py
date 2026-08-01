@@ -9,7 +9,7 @@
 from __future__ import annotations
 
 from PyQt5.QtWidgets import QWidget, QApplication, QGraphicsOpacityEffect
-from PyQt5.QtCore import Qt, QPoint, QPropertyAnimation, QEasingCurve
+from PyQt5.QtCore import Qt, QPoint, QPropertyAnimation, QEasingCurve, QTimer
 from PyQt5.QtGui import QPainter, QFontMetrics, QCursor
 
 from config.config import COLORS, UI, UI_THEME
@@ -34,6 +34,7 @@ _PAD_Y       = scale_px(3, min_abs=1)   # 文字垂直内边距
 _MAX_TEXT_W  = scale_px(220, min_abs=1)  # 文字区最大宽度（px），超出自动换行
 _CURSOR_GAP  = scale_px(10, min_abs=1)   # 面板左边与光标的间距（px）
 _HOVER_TICKS = 20    # 静止多少 tick 后显示（20 tick = 1s @20tick/s）
+_AUTO_HIDE_MS = 5000
 
 
 def _tooltip_target_opacity() -> float:
@@ -68,6 +69,10 @@ class TooltipPanel(QWidget):
         self._anim.setDuration(UI['ui_fade_duration'])
         self._anim.setEasingCurve(QEasingCurve.InOutQuad)
         self._anim.finished.connect(self._on_anim_finished)
+        self._hide_timer = QTimer(self)
+        self._hide_timer.setSingleShot(True)
+        self._hide_timer.setInterval(_AUTO_HIDE_MS)
+        self._hide_timer.timeout.connect(self._hide)
 
         # ── 字体 ─────────────────────────────────────────────────────
         self._font = get_ui_font()
@@ -139,6 +144,10 @@ class TooltipPanel(QWidget):
         if widget is None:
             return ''
 
+        top = widget.window()
+        if self._is_restricted_panel_window(top) and not self._is_active_panel_window(top):
+            return ''
+
         # 先尝试 parent() 链（widget 本身 → 父级 → 祖父级 …）
         cur = widget
         while cur is not None:
@@ -163,6 +172,24 @@ class TooltipPanel(QWidget):
 
         return ''
 
+    @staticmethod
+    def _is_restricted_panel_window(window) -> bool:
+        if window is None:
+            return False
+        class_name = window.__class__.__name__
+        object_name = str(window.objectName() or '')
+        return class_name in {"AISettingsPanel", "WorkbenchWindow"} or object_name in {
+            "AISettingsPanel",
+            "WorkbenchWindow",
+        }
+
+    @staticmethod
+    def _is_active_panel_window(window) -> bool:
+        if window is None or not window.isVisible():
+            return False
+        active = QApplication.activeWindow()
+        return bool(window.isActiveWindow() or active is window)
+
     # ==================================================================
     # 显示 / 隐藏
     # ==================================================================
@@ -173,15 +200,18 @@ class TooltipPanel(QWidget):
         self._reposition(cursor_pos)
         self.show()
         self._visible = True
+        self._hide_timer.start(_AUTO_HIDE_MS)
         self._animate(1.0)
 
     def _hide(self) -> None:
+        self._hide_timer.stop()
         self._visible = False
         self._animate(0.0)
 
     def hide_now(self, *, reset_hover: bool = True) -> None:
         """立即隐藏提示框，并可选重置悬停计时状态。"""
         self._anim.stop()
+        self._hide_timer.stop()
         self._visible = False
         self.hide()
         self._opacity.setOpacity(0.0)
@@ -309,6 +339,9 @@ def cleanup_tooltip_panel() -> None:
     global _instance
     if _instance is not None:
         try:
+            _instance._hide_timer.stop()
+            _instance._ec.unsubscribe(EventType.TICK, _instance._on_tick)
+            get_layer_manager().unregister(_instance)
             _instance.close()
         except Exception:
             pass

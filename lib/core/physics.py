@@ -313,8 +313,10 @@ class PhysicsWorld:
         """TICK 事件回调：应用上一 tick 结果，并提交下一 tick 批量计算。"""
         if self._paused:
             return
-        self._refresh_screen_bounds()
         self._apply_pending_updates()
+        if not any(body.active for body in self._bodies):
+            return
+        self._refresh_screen_bounds()
         self._submit_frame_job()
 
     def _on_frame(self, event: Event) -> None:
@@ -329,8 +331,6 @@ class PhysicsWorld:
                 body.prev_y = body.y
                 body.render_x = body.x
                 body.render_y = body.y
-                if body.on_position_change:
-                    body.on_position_change(body)
                 continue
             body.render_x = body.prev_x + (body.x - body.prev_x) * alpha
             body.render_y = body.prev_y + (body.y - body.prev_y) * alpha

@@ -1,4 +1,4 @@
-飞行雪绒事件系统使用说明（LTS1.0.6pre4）
+飞行雪绒事件系统使用说明（LTS1.0.6pre5）
 
 一、核心入口
 - 实现：`lib/core/event/center.py`
@@ -45,6 +45,7 @@ ec.unsubscribe(EventType.INFORMATION, on_info)
 其中：
 - `APP_PRE_START` 适合预热、静态准备和后台服务启动检查
 - `APP_QUIT` 是统一退出请求入口，适合阻止直接粗暴退出；payload 可传 `restart: true`，由主生命周期在清理完成并释放单实例锁后重启
+- 更新 helper 完成覆盖安装后才通过现有启动入口拉起新进程；普通重启调用“启动程序.bat”，环境重启调用“安装依赖.bat”，界面层不直接覆盖程序文件。
 
 六、当前高频事件协议
 
@@ -116,6 +117,7 @@ PROTECTION_CHECK / PROTECTION_RESPONSE
 
 七、开发约束
 - 回调应尽量短小，避免阻塞 UI
+- 配置保存、更新下载、语音安装和麦克风初始化等 I/O 必须交给 `ComputeHub.submit_interactive_io()` 或所属后台 Worker；事件回调只负责提交任务和更新状态。
 - 所有订阅都必须在 `cleanup()` 中退订
 - `mark_handled()` 只用于确实需要阻断传播的场景
 - 公共事件字段一旦公开使用，尽量保持兼容，不要频繁改 key

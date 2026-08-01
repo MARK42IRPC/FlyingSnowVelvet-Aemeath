@@ -74,6 +74,14 @@ class _FakeControlPanel:
         self.load_count += 1
 
 
+class _FakeTimingManager:
+    def __init__(self):
+        self.limits = []
+
+    def set_frame_fps_limit(self, source, fps):
+        self.limits.append((source, fps))
+
+
 class WorkbenchWindowTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -113,19 +121,24 @@ class WorkbenchWindowTests(unittest.TestCase):
             {button.font().pixelSize() for button in window._page_buttons},
             {scale_px(11 * workbench_module._NAV_FONT_SCALE)},
         )
-        self.assertEqual(window._about_button.text(), "关于")
+        self.assertEqual(window._about_button.text(), "贡献列表")
+        self.assertEqual(window._sponsor_button.text(), "赞助按钮")
         self.assertEqual(window._about_menu.objectName(), "WorkbenchAboutMenu")
         self.assertTrue(window._about_button.icon().isNull())
-        self.assertEqual(window._about_button.width(), scale_px(70))
+        self.assertEqual(window._about_button.width(), scale_px(88, min_abs=78))
         self.assertEqual(window._about_button.height(), scale_px(34))
         self.assertFalse(bool(window._about_button.property("active")))
+        window._about_button.click()
+        self.assertEqual(window._page_title_label.text(), "贡献者")
+        window._sponsor_button.click()
+        self.assertEqual(window._page_title_label.text(), "赞助作者")
         about_image = window._about_button.grab().toImage()
         middle_y = about_image.height() // 2
         layer = scale_px(2, min_abs=1)
         self.assertEqual(about_image.pixelColor(0, middle_y).rgb(), COLORS["black"].rgb())
         self.assertEqual(about_image.pixelColor(layer, middle_y).rgb(), COLORS["cyan"].rgb())
         self.assertEqual(about_image.pixelColor(layer * 2, middle_y).rgb(), COLORS["pink"].rgb())
-        self.assertIs(window._stack.currentWidget(), window._page_hosts["overview"])
+        self.assertIs(window._stack.currentWidget(), window._page_hosts["sponsor_author"])
         self.assertTrue(all(window._stack.indexOf(host) >= 0 for host in window._page_hosts.values()))
         self.assertEqual(factory_calls, [])
 
@@ -181,6 +194,31 @@ class WorkbenchWindowTests(unittest.TestCase):
             UI["workbench_light_theme"] = original_theme
             window.deleteLater()
             self.app.processEvents()
+
+    def test_visible_workbench_limits_runtime_frame_rate_until_hidden(self):
+        panel = _FakeControlPanel()
+        timing = _FakeTimingManager()
+        with patch.object(workbench_module, "QSettings", _MemorySettings), patch.object(
+            workbench_module, "get_timing_manager", return_value=timing
+        ):
+            window = workbench_module.WorkbenchWindow(
+                lambda: panel,
+                control_panel_page_specs=panel.get_workbench_page_specs(),
+            )
+            window.show_page("overview")
+            self.app.processEvents()
+            window.hide_immediately()
+            self.app.processEvents()
+
+        self.assertEqual(
+            timing.limits,
+            [
+                (workbench_module._WORKBENCH_FRAME_LIMIT_SOURCE, 30),
+                (workbench_module._WORKBENCH_FRAME_LIMIT_SOURCE, None),
+            ],
+        )
+        window.deleteLater()
+        self.app.processEvents()
 
     def test_theme_toggle_is_left_of_search_and_persists_choice(self):
         panel = _FakeControlPanel()

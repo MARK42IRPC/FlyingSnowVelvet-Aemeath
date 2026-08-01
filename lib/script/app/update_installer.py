@@ -216,9 +216,11 @@ def launch_update_installer(
     project_root: Path,
     state_path: Path,
     release: dict,
+    *,
+    restart_command: Sequence[str] | None = None,
 ) -> subprocess.Popen:
     """创建脱离当前进程树的更新 helper。"""
-    restart_command = build_restart_command()
+    restart_command = list(restart_command or build_restart_command())
     payload = {
         "parent_pid": os.getpid(),
         "project_root": str(Path(project_root).resolve()),
@@ -245,3 +247,13 @@ def launch_update_installer(
             helper_command,
             **_detached_kwargs(include_breakaway=False),
         )
+
+
+def build_bat_restart_command(project_root: Path, mode: str = "normal") -> list[str]:
+    """构造更新后通过现有批处理入口启动桌宠的命令。"""
+    bat_name = "安装依赖.bat" if str(mode).strip().lower() in {"environment", "env"} else "启动程序.bat"
+    bat_path = Path(project_root).resolve() / bat_name
+    if not bat_path.is_file():
+        raise FileNotFoundError(f"启动入口不存在：{bat_path}")
+    command_shell = os.environ.get("COMSPEC") or "cmd.exe"
+    return [command_shell, "/d", "/c", str(bat_path)]

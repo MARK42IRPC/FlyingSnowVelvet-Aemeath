@@ -108,6 +108,7 @@ class UpdateResult:
     installed_state: InstalledState
     release_info: ReleaseInfo
     reason: str = ""
+    archive_path: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -323,7 +324,7 @@ class UpdateManager(_UpdateBase):
         reason = "update_available" if update_available else "up_to_date"
         if update_available:
             self._info(
-                f"检测到新的分发包 {release.tag}（{release.published_at.date()}），当前版本为 {installed.version}（{installed.installed_at.date()}）。"
+                f"检测到新的桌宠包 {release.asset_name}（{release.published_at.date()}），当前版本为 {installed.version}（{installed.installed_at.date()}）。"
             )
         else:
             self._info(
@@ -336,13 +337,19 @@ class UpdateManager(_UpdateBase):
             reason=reason,
         )
 
-    def install_release(self, release: ReleaseInfo) -> UpdateResult:
+    def install_release(
+        self,
+        release: ReleaseInfo,
+        *,
+        launch_installer: bool = True,
+        restart_command: list[str] | None = None,
+    ) -> UpdateResult:
         from lib.script.app.update_installer import (
             launch_update_installer,
             validate_update_archive,
         )
 
-        self._progress(0, 0, f"开始下载分发包 {release.tag}...")
+        self._progress(0, 0, f"开始下载桌宠包 {release.asset_name}...")
         staging_dir = _STAGING_ROOT / uuid.uuid4().hex
         archive_name = Path(release.asset_name or "release.zip").name
         if not archive_name.lower().endswith(".zip"):
@@ -360,12 +367,14 @@ class UpdateManager(_UpdateBase):
                 "revision": release.revision,
                 "source": release.source,
             }
-            launch_update_installer(
-                archive_path,
-                _PROJECT_ROOT,
-                self._state_path,
-                release_payload,
-            )
+            if launch_installer:
+                launch_update_installer(
+                    archive_path,
+                    _PROJECT_ROOT,
+                    self._state_path,
+                    release_payload,
+                    restart_command=restart_command,
+                )
         except Exception as exc:
             shutil.rmtree(staging_dir, ignore_errors=True)
             if isinstance(exc, UpdateError):
@@ -378,8 +387,48 @@ class UpdateManager(_UpdateBase):
             release.revision,
             release.source,
         )
-        self._progress(1, 1, "更新包已就绪，退出后将自动覆盖安装并重启。")
-        return UpdateResult(True, pending_state, release, reason="install_scheduled")
+        reason = "install_scheduled" if launch_installer else "download_ready"
+        message = (
+            "更新包已就绪，退出后将自动覆盖安装并重启。"
+            if launch_installer
+            else "更新包已下载并通过校验，请选择重启模式。"
+        )
+        self._progress(1, 1, message)
+        return UpdateResult(
+            True,
+            pending_state,
+            release,
+            reason=reason,
+            archive_path=archive_path,
+        )
+
+    def launch_pending_update(
+        self,
+        update: UpdateResult,
+        *,
+        restart_command: list[str] | None = None,
+    ) -> UpdateResult:
+        """将已下载的更新包交给 helper，供 UI 在选择重启模式后调用。"""
+        from lib.script.app.update_installer import launch_update_installer
+
+        archive_path = update.archive_path
+        if archive_path is None or not Path(archive_path).is_file():
+            raise UpdateError("待安装更新包不存在，请重新下载。")
+        release = update.release_info
+        release_payload = {
+            "tag": release.tag,
+            "published_at": _isoformat(release.published_at),
+            "revision": release.revision,
+            "source": release.source,
+        }
+        launch_update_installer(
+            archive_path,
+            _PROJECT_ROOT,
+            self._state_path,
+            release_payload,
+            restart_command=restart_command,
+        )
+        return replace(update, reason="install_scheduled")
 
     def check_and_update(self) -> UpdateResult:
         check_result = self.check_for_updates()

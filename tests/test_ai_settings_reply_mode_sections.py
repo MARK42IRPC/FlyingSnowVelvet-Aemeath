@@ -1,5 +1,6 @@
 import os
 import unittest
+from concurrent.futures import Future
 from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -134,6 +135,9 @@ class AISettingsReplyModeSectionsTests(unittest.TestCase):
     def test_restart_save_skips_runtime_hot_reload(self):
         ai_values = {"force_reply_mode": "1"}
         general_values = {"UI": {"workbench_light_theme": False}}
+        future = Future()
+        hub = Mock()
+        hub.submit_interactive_io.return_value = future
         self.panel._collect_values = Mock(return_value=ai_values)
         self.panel._collect_all_general_config_values = Mock(return_value=general_values)
         self.panel._apply_all_external_config_fields = Mock()
@@ -143,14 +147,85 @@ class AISettingsReplyModeSectionsTests(unittest.TestCase):
             panel_module, "_save_general_config"
         ) as save_general, patch.object(panel_module, "apply_ai_runtime") as apply_ai, patch.object(
             panel_module, "_apply_general_runtime"
-        ) as apply_general:
+        ) as apply_general, patch.object(panel_module, "get_compute_hub", return_value=hub):
             saved = self.panel._on_save(apply_runtime=False)
+            self.assertTrue(saved)
+            self.assertTrue(self.panel._save_task_pending)
+            save_ai.assert_not_called()
+            save_general.assert_not_called()
 
-        self.assertTrue(saved)
-        save_ai.assert_called_once()
-        save_general.assert_called_once_with(general_values)
+            persist = hub.submit_interactive_io.call_args.args[0]
+            persist()
+            save_ai.assert_called_once()
+            save_general.assert_called_once_with(general_values)
+            apply_ai.assert_not_called()
+            apply_general.assert_not_called()
+            future.set_result(None)
+
+        self.assertFalse(self.panel._save_task_pending)
         apply_ai.assert_not_called()
         apply_general.assert_not_called()
+
+    def test_async_save_runs_completion_action_only_after_future_finishes(self):
+        future = Future()
+        hub = Mock()
+        hub.submit_interactive_io.return_value = future
+        completion_action = Mock()
+        completion = Mock()
+        self.panel._save_completion_action = completion_action
+
+        with patch.object(panel_module, "get_compute_hub", return_value=hub):
+            self.assertTrue(self.panel._submit_save_task(lambda: None, completion))
+            self.assertTrue(self.panel._save_task_pending)
+            completion_action.assert_not_called()
+            completion.assert_not_called()
+
+            future.set_result(None)
+
+        self.assertFalse(self.panel._save_task_pending)
+        completion.assert_called_once_with()
+        completion_action.assert_called_once_with()
+        self.assertIsNone(self.panel._save_completion_action)
+
+    def test_async_save_failure_keeps_panel_open_and_clears_pending_action(self):
+        future = Future()
+        hub = Mock()
+        hub.submit_interactive_io.return_value = future
+        completion_action = Mock()
+        self.panel._save_completion_action = completion_action
+
+        with patch.object(panel_module, "get_compute_hub", return_value=hub):
+            self.assertTrue(self.panel._submit_save_task(lambda: None, Mock()))
+            future.set_exception(RuntimeError("disk unavailable"))
+
+        self.assertFalse(self.panel._save_task_pending)
+        completion_action.assert_not_called()
+        self.assertIsNone(self.panel._save_completion_action)
+
+    def test_save_and_exit_does_not_fade_while_save_is_pending(self):
+        self.panel.fade_out = Mock()
+
+        def pending_save(*, apply_runtime=True):
+            del apply_runtime
+            self.panel._save_task_pending = True
+            return True
+
+        self.panel._on_save = Mock(side_effect=pending_save)
+        self.panel._on_save_and_exit()
+
+        self.panel.fade_out.assert_not_called()
+        self.assertTrue(callable(self.panel._save_completion_action))
+
+    def test_repeated_save_while_pending_does_not_replace_completion_action(self):
+        original_action = Mock()
+        self.panel._save_task_pending = True
+        self.panel._save_completion_action = original_action
+        self.panel._emit_info = Mock()
+
+        self.panel._on_save_and_exit()
+
+        self.assertIs(self.panel._save_completion_action, original_action)
+        self.panel._emit_info.assert_called_once()
 
     def test_manual_api_model_is_editable_dropdown_with_probe_button(self):
         self.assertIsInstance(self.panel._api_model, QComboBox)

@@ -1,4 +1,4 @@
-飞行雪绒 Script 开发指南（LTS1.0.6pre4）
+飞行雪绒 Script 开发指南（LTS1.0.6pre5）
 
 一、总览
 - 主入口：`lib/core/qt_desktop_pet.py`
@@ -86,6 +86,15 @@ AI 工具调度位于 `lib/script/tool_dispatcher/dispatcher.py`。`STREAM_FINAL
 
 统一优先级：环境变量/命令行 > `user/settings.json` 稀疏覆盖 > `config` 内置默认值。用户恢复默认时应删除覆盖键。
 
+配置保存边界
+- 用户点击保存后，文件写入必须提交到 `ComputeHub.submit_interactive_io()`，不能在 Qt 主线程执行磁盘 I/O。
+- 只有后台保存成功，才能继续关闭面板、请求重启或发布 `CONFIG_UPDATED`；保存失败时保留当前界面并显示错误。
+- 同一面板的重复点击不能覆盖先提交任务的完成动作，也不能在旧任务完成前启动多次关闭/重启。
+
+麦克风识别
+- `VOICE.microphone_denoise_enabled` 控制轻量 PCM16 自适应降噪；`microphone_denoise_strength` 控制低于噪声门的衰减强度，`microphone_noise_gate_threshold` 控制噪声门起点。
+- 降噪在识别 Worker 中进行，自动语聊的 RMS 说话判定使用处理后的 PCM；算法不引入大型音频依赖。
+
 七、运行时数据边界
 以下路径视为运行时目录：
 - `C:\AemeathDeskPet\user\settings.json`
@@ -96,6 +105,8 @@ AI 工具调度位于 `lib/script/tool_dispatcher/dispatcher.py`。`STREAM_FINAL
 - 旧版兼容来源：`resc/user/`、`config/music/volume.json`、`config/user_scale.json`
 
 像 GSV 语音缓存这类自动生成文件，应写入统一 `cache/` 目录，而不是可提交源码目录或 `config/`。
+
+更新后的程序由独立 helper 等待旧进程退出后覆盖安装。更新窗口完成下载后显示“更新依赖并重启桌宠”，普通重启使用 `启动程序.bat`，环境重启使用 `安装依赖.bat`；两个入口都在 helper 成功完成覆盖后执行。
 
 八、最小管理器模板
 ```python

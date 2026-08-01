@@ -5,7 +5,7 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from PyQt5.QtCore import QEasingCurve, Qt, QPropertyAnimation, pyqtSignal
+from PyQt5.QtCore import QEvent, QEasingCurve, QPoint, Qt, QPropertyAnimation, pyqtSignal
 from PyQt5.QtGui import QCursor, QPainter
 from PyQt5.QtWidgets import (
     QComboBox,
@@ -99,6 +99,10 @@ class _VoiceDriveComboBox(QComboBox):
         if popup is not None:
             get_layer_manager().unregister(popup)
         super().hidePopup()
+
+    def wheelEvent(self, event) -> None:
+        # 页面滚动时不改变安装档位或磁盘选择。
+        event.ignore()
 
 
 class VoicePackageInstallBanner(QFrame):
@@ -398,6 +402,8 @@ class VoicePackageInstallerDialog(QWidget):
         self._background_notified_stages: set[str] = set()
         self._installer: VoicePackageInstaller | None = None
         self._install_future = None
+        self._dragging = False
+        self._drag_offset = QPoint()
 
         self._opacity = QGraphicsOpacityEffect(self)
         self._opacity.setOpacity(0.0)
@@ -408,6 +414,8 @@ class VoicePackageInstallerDialog(QWidget):
         self._animation.finished.connect(self._on_animation_finished)
 
         self._title = QLabel("安装最新语音包", self)
+        self._title.installEventFilter(self)
+        self._title.setCursor(Qt.OpenHandCursor)
         title_font = get_ui_font(size=scale_px(16, min_abs=13))
         title_font.setBold(True)
         self._title.setFont(title_font)
@@ -509,9 +517,17 @@ class VoicePackageInstallerDialog(QWidget):
             self._backgrounded = False
             self._background.setEnabled(True)
         self._center_on_screen()
+        # The dialog is removed from LayerManager when it is closed. Re-add
+        # it before every subsequent display, including a backgrounded task.
+        get_layer_manager().register(
+            self,
+            Layer.DIALOG,
+            name="VoicePackageInstallerDialog",
+        )
         self._visible = True
         self.show()
         get_layer_manager().bring_to_front(self)
+        get_layer_manager().enforce_burst()
         self.activateWindow()
         self._animate(1.0)
 
@@ -820,7 +836,27 @@ class VoicePackageInstallerDialog(QWidget):
             event.ignore()
             return
         self._visible = False
+        get_layer_manager().unregister(self)
         super().closeEvent(event)
+
+    def eventFilter(self, watched, event) -> bool:
+        if watched is self._title:
+            if event.type() == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
+                self._dragging = True
+                self._drag_offset = event.globalPos() - self.frameGeometry().topLeft()
+                self._title.setCursor(Qt.ClosedHandCursor)
+                event.accept()
+                return True
+            if event.type() == QEvent.MouseMove and self._dragging and event.buttons() & Qt.LeftButton:
+                self.move(event.globalPos() - self._drag_offset)
+                event.accept()
+                return True
+            if event.type() == QEvent.MouseButtonRelease and event.button() == Qt.LeftButton:
+                self._dragging = False
+                self._title.setCursor(Qt.OpenHandCursor)
+                event.accept()
+                return True
+        return super().eventFilter(watched, event)
 
     def paintEvent(self, event) -> None:
         painter = QPainter(self)

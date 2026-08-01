@@ -53,6 +53,63 @@ def _can_use_async_updates() -> bool:
     return bool(PARTICLES.get('async_update_enabled', False))
 
 
+def _particle_bounds(particle) -> QRectF:
+    """返回粒子在当前 overlay 本地坐标中的保守绘制包围盒。
+
+    该函数不依赖 QWidget，既用于缩小透明覆盖层，也便于纯单元测试。
+    """
+    positions = [(
+        float(getattr(particle, '_render_x', getattr(particle, 'x', 0.0))),
+        float(getattr(particle, '_render_y', getattr(particle, 'y', 0.0))),
+    )]
+    for x_name, y_name in (("_tick_prev_x", "_tick_prev_y"), ("x", "y")):
+        if hasattr(particle, x_name) and hasattr(particle, y_name):
+            positions.append((float(getattr(particle, x_name)), float(getattr(particle, y_name))))
+
+    bounds: QRectF | None = None
+
+    def include(rect: QRectF) -> None:
+        nonlocal bounds
+        bounds = QRectF(rect) if bounds is None else bounds.united(rect)
+
+    if getattr(particle, 'is_text', False):
+        half_width = max(1.0, float(getattr(particle, '_text_w', 0.0)) / 2.0)
+        line_height = max(12.0, float(getattr(particle, '_text_h', 0.0) or 12.0))
+        baseline = float(getattr(particle, '_baseline_offset', 0.0))
+        bloom = max(0.0, float(getattr(particle, 'bloom', 0.0) or 0.0))
+        for x, y in positions:
+            include(QRectF(
+                x - half_width - bloom,
+                y + baseline - line_height - bloom,
+                half_width * 2.0 + bloom * 2.0,
+                line_height + bloom * 2.0,
+            ))
+    elif getattr(particle, 'is_line', False):
+        length = max(0.0, float(getattr(particle, 'length', 0.0)))
+        dx = float(getattr(particle, 'line_dx', 0.0)) * length
+        dy = float(getattr(particle, 'line_dy', 0.0)) * length
+        margin = max(1.0, float(getattr(particle, 'pen_width', 1.0)))
+        for x, y in positions:
+            include(QRectF(
+                min(x, x + dx) - margin,
+                min(y, y + dy) - margin,
+                abs(dx) + margin * 2.0,
+                abs(dy) + margin * 2.0,
+            ))
+    elif hasattr(particle, 'width') and hasattr(particle, 'height'):
+        width = max(0.0, float(getattr(particle, 'width', 0.0)))
+        height = max(0.0, float(getattr(particle, 'height', 0.0)))
+        for x, y in positions:
+            include(QRectF(x, y - height / 2.0, width, height))
+    else:
+        size = max(0.0, float(getattr(particle, 'size', 0.0)))
+        radius = size if getattr(particle, 'is_circle', False) else size / 2.0
+        for x, y in positions:
+            include(QRectF(x - radius, y - radius, radius * 2.0, radius * 2.0))
+
+    return bounds or QRectF()
+
+
 class ParticleOverlay(QWidget):
     """
     全屏透明覆盖层，仅用于绘制粒子。
@@ -102,6 +159,46 @@ class ParticleOverlay(QWidget):
         # TICK 推进状态，FRAME 只负责插值与重绘
         self._event_center.subscribe(EventType.TICK, self._on_tick)
         self._event_center.subscribe(EventType.FRAME, self._on_frame)
+
+    def _reframe_overlay(self) -> None:
+        """将透明覆盖层压缩到当前粒子的包围盒，并同步本地坐标。"""
+        if not self._particles:
+            return
+        bounds: QRectF | None = None
+        for particle in self._particles:
+            if not _particle_alive(particle):
+                continue
+            particle_bounds = _particle_bounds(particle)
+            bounds = particle_bounds if bounds is None else bounds.united(particle_bounds)
+        if bounds is None or bounds.isEmpty():
+            return
+
+        margin = 8.0
+        current_geometry = self.geometry()
+        target_left = int(current_geometry.x() + bounds.left() - margin)
+        target_top = int(current_geometry.y() + bounds.top() - margin)
+        target_right = int(current_geometry.x() + bounds.right() + margin + 1.0)
+        target_bottom = int(current_geometry.y() + bounds.bottom() + margin + 1.0)
+        target_width = max(1, target_right - target_left)
+        target_height = max(1, target_bottom - target_top)
+        delta_x = current_geometry.x() - target_left
+        delta_y = current_geometry.y() - target_top
+        if (
+            target_left == current_geometry.x()
+            and target_top == current_geometry.y()
+            and target_width == current_geometry.width()
+            and target_height == current_geometry.height()
+        ):
+            return
+
+        for particle in self._particles:
+            for x_name in ("x", "_tick_prev_x", "_render_x"):
+                if hasattr(particle, x_name):
+                    setattr(particle, x_name, float(getattr(particle, x_name)) + delta_x)
+            for y_name in ("y", "_tick_prev_y", "_render_y"):
+                if hasattr(particle, y_name):
+                    setattr(particle, y_name, float(getattr(particle, y_name)) + delta_y)
+        self.setGeometry(target_left, target_top, target_width, target_height)
 
     # ------------------------------------------------------------------
     def _on_particle_request(self, event: Event):
@@ -164,6 +261,8 @@ class ParticleOverlay(QWidget):
             self._pending_future = None
             if not self._particles:
                 self.hide()
+            else:
+                self._reframe_overlay()
             if self._perf_log_enabled:
                 self._perf_tick_count += 1
                 self._perf_max_particles = max(self._perf_max_particles, len(self._particles))
@@ -225,6 +324,7 @@ class ParticleOverlay(QWidget):
         if not self._particles:
             self.hide()
             return
+        self._reframe_overlay()
 
     def _drain_particle_requests(self) -> None:
         """在帧边界批量创建粒子，减少主线程事件风暴。"""
@@ -293,6 +393,7 @@ class ParticleOverlay(QWidget):
         if not appended:
             return
 
+        self._reframe_overlay()
         if not had_particles:
             self.show()
             self._layer_manager.enforce_burst()
@@ -302,6 +403,7 @@ class ParticleOverlay(QWidget):
     def paintEvent(self, event):
         paint_start = perf_counter() if self._perf_log_enabled else 0.0
         painter = QPainter(self)
+        painter.setClipRegion(event.region())
         # 透明覆盖层每帧先清屏，避免上一帧像素残留
         painter.setCompositionMode(QPainter.CompositionMode_Source)
         painter.fillRect(self.rect(), Qt.transparent)
@@ -326,8 +428,11 @@ class ParticleOverlay(QWidget):
             order_getter=lambda item: getattr(item, '_draw_order', 0),
             default_layer=Layer.PARTICLE,
         )
+        clip_rect = event.region().boundingRect()
         for p in particles:
             if not _particle_alive(p):
+                continue
+            if not _particle_bounds(p).adjusted(-2, -2, 2, 2).intersects(QRectF(clip_rect)):
                 continue
 
             life = max(0.0, float(getattr(p, 'life', 0.0)))
@@ -559,6 +664,7 @@ class ParticleOverlay(QWidget):
             self._event_center.unsubscribe(EventType.TICK, self._on_tick)
             self._event_center.unsubscribe(EventType.FRAME, self._on_frame)
         self.flush_immediately()
+        self._layer_manager.unregister(self)
 
 
 def _make_text_bloom_color(base: QColor) -> QColor:

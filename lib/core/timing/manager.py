@@ -51,7 +51,10 @@ class TimingManager(QObject):
         # Frame定时器：每16.67ms触发一次（60fps）
         self._frame_timer = QTimer(self)
         self._frame_timer.timeout.connect(self._on_frame)
-        self._frame_interval_ms = 1000 // frame_fps
+        self._base_frame_fps = max(1, min(120, int(frame_fps)))
+        self._frame_fps_limits: dict[str, int] = {}
+        self._effective_frame_fps = self._base_frame_fps
+        self._frame_interval_ms = 1000 // self._base_frame_fps
         self._frame_count = 0
         self._last_frame_monotonic = time.monotonic()
 
@@ -222,14 +225,52 @@ class TimingManager(QObject):
         Args:
             fps: 每秒帧数（默认60）
         """
-        self._frame_interval_ms = 1000 // max(1, min(120, fps))
-        if self._running:
-            self._frame_timer.setInterval(self._frame_interval_ms)
-        logger.debug("[TimingManager] Frame fps set to %s (%sms)", fps, self._frame_interval_ms)
+        self._base_frame_fps = max(1, min(120, int(fps)))
+        self._apply_effective_frame_fps()
+        logger.debug(
+            "[TimingManager] Base frame fps set to %s (effective=%s)",
+            self._base_frame_fps,
+            self.get_frame_fps(),
+        )
+
+    def set_frame_fps_limit(self, source: str, fps: int | None) -> None:
+        """设置来源独立的临时帧率上限；传入 None 撤销该来源。"""
+        source = str(source).strip()
+        if not source:
+            raise ValueError("frame fps limit source cannot be empty")
+        if fps is None:
+            self._frame_fps_limits.pop(source, None)
+        else:
+            self._frame_fps_limits[source] = max(1, min(120, int(fps)))
+        self._apply_effective_frame_fps()
+
+    def _apply_effective_frame_fps(self) -> None:
+        effective_fps = min(
+            (self._base_frame_fps, *self._frame_fps_limits.values())
+        )
+        interval_ms = 1000 // effective_fps
+        if (
+            effective_fps == self._effective_frame_fps
+            and interval_ms == self._frame_interval_ms
+        ):
+            return
+        self._effective_frame_fps = effective_fps
+        self._frame_interval_ms = interval_ms
+        self._frame_timer.setInterval(interval_ms)
+        logger.debug(
+            "[TimingManager] Effective frame fps=%s (%sms, limits=%s)",
+            effective_fps,
+            interval_ms,
+            self._frame_fps_limits,
+        )
 
     def get_frame_fps(self) -> int:
         """获取当前帧率"""
-        return 1000 // self._frame_interval_ms
+        return self._effective_frame_fps
+
+    def get_configured_frame_fps(self) -> int:
+        """获取不含临时运行限制的用户配置帧率。"""
+        return self._base_frame_fps
 
     def _on_timer_pause(self, event: Event):
         """处理计时器暂停事件（仅暂停任务，不暂停全局 tick）。"""

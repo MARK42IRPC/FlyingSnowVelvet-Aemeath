@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 from typing import Callable
 
-from PyQt5.QtCore import Qt, QPropertyAnimation, QEasingCurve, pyqtSignal
+from PyQt5.QtCore import QEvent, QPoint, Qt, QPropertyAnimation, QEasingCurve, pyqtSignal
 from PyQt5.QtGui import QCursor, QPainter
 from PyQt5.QtWidgets import (
     QGraphicsOpacityEffect,
@@ -34,6 +35,7 @@ from lib.script.update_manager import (
     UpdateManager,
     UpdateResult,
 )
+from lib.script.app.update_installer import build_bat_restart_command
 
 _WIDTH = scale_px(360, min_abs=320)
 _HEIGHT = scale_px(248, min_abs=220)
@@ -55,6 +57,7 @@ class DesktopPetUpdateDialog(QWidget):
     _release_done_signal = pyqtSignal(object)
     _git_check_signal = pyqtSignal(object)
     _git_done_signal = pyqtSignal(object)
+    _restart_done_signal = pyqtSignal(object)
     _error_signal = pyqtSignal(str)
 
     def __init__(self) -> None:
@@ -69,12 +72,17 @@ class DesktopPetUpdateDialog(QWidget):
         self._mode = ""
         self._release_check: ReleaseCheckResult | None = None
         self._git_check: GitSyncCheckResult | None = None
+        self._pending_update: UpdateResult | None = None
         self._primary_handler: Callable[[], None] | None = None
         self._secondary_handler: Callable[[], None] | None = None
+        self._dragging = False
+        self._drag_offset = QPoint()
 
         self._title_label = QLabel(self)
         self._title_label.setFont(self._build_title_font())
         self._title_label.setAlignment(Qt.AlignCenter)
+        self._title_label.installEventFilter(self)
+        self._title_label.setCursor(Qt.OpenHandCursor)
 
         self._status_label = QLabel(self)
         self._status_label.setFont(get_ui_font(size=scale_px(13, min_abs=10)))
@@ -174,6 +182,7 @@ class DesktopPetUpdateDialog(QWidget):
         self._release_done_signal.connect(self._on_release_done)
         self._git_check_signal.connect(self._on_git_checked)
         self._git_done_signal.connect(self._on_git_done)
+        self._restart_done_signal.connect(self._on_restart_done)
         self._error_signal.connect(self._on_worker_error)
 
     def begin_release_check(self) -> bool:
@@ -233,10 +242,14 @@ class DesktopPetUpdateDialog(QWidget):
 
     def _show_dialog(self) -> None:
         self._center_on_screen()
+        # closeEvent unregisters hidden dialogs; restore the record before
+        # showing so a later update check is included in the z-order chain.
+        get_layer_manager().register(self, Layer.DIALOG)
         if not self._visible:
             self._visible = True
             self.show()
         get_layer_manager().bring_to_front(self)
+        get_layer_manager().enforce_burst()
         self.activateWindow()
         self._animate(1.0)
 
@@ -312,7 +325,8 @@ class DesktopPetUpdateDialog(QWidget):
         self._progress_bar.setFormat("完成")
 
     def _start_worker(self, func: Callable[[], None], name: str) -> None:
-        get_compute_hub().submit_io(func)
+        del name
+        get_compute_hub().submit_interactive_io(func)
 
     def _run_release_check(self) -> None:
         manager = UpdateManager(
@@ -339,7 +353,7 @@ class DesktopPetUpdateDialog(QWidget):
             progress_callback=self._progress_signal.emit,
         )
         try:
-            result = manager.install_release(check.release_info)
+            result = manager.install_release(check.release_info, launch_installer=False)
         except UpdateError as exc:
             self._error_signal.emit(str(exc))
             return
@@ -347,6 +361,24 @@ class DesktopPetUpdateDialog(QWidget):
             self._error_signal.emit(f"分发包更新失败：{exc}")
             return
         self._release_done_signal.emit(result)
+
+    def _run_release_restart(self, mode: str) -> None:
+        update = self._pending_update
+        if update is None:
+            self._error_signal.emit("缺少待安装的更新包，请重新下载。")
+            return
+        manager = UpdateManager()
+        try:
+            project_root = Path(__file__).resolve().parents[3]
+            command = build_bat_restart_command(project_root, mode)
+            result = manager.launch_pending_update(update, restart_command=command)
+        except UpdateError as exc:
+            self._error_signal.emit(str(exc))
+            return
+        except Exception as exc:
+            self._error_signal.emit(f"准备重启失败：{exc}")
+            return
+        self._restart_done_signal.emit(result)
 
     def _run_git_check(self) -> None:
         manager = GitSyncManager(
@@ -388,12 +420,13 @@ class DesktopPetUpdateDialog(QWidget):
             self._on_worker_error("检查新版本失败：返回结果无效。")
             return
         self._release_check = check
+        self._pending_update = None
         self._set_busy(False)
         if check.update_available:
             self._status_label.setText("检测到新的分发包")
             self._detail_label.setText(
                 f"当前：{check.installed_state.version}（{self._fmt_dt(check.installed_state.installed_at)}）\n"
-                f"最新：{check.release_info.tag}（{self._fmt_dt(check.release_info.published_at)}）"
+                f"最新：{check.release_info.asset_name}（{self._fmt_dt(check.release_info.published_at)}）"
             )
             self._progress_bar.hide()
             self._set_actions(
@@ -415,15 +448,19 @@ class DesktopPetUpdateDialog(QWidget):
             self._on_worker_error("分发包更新失败：返回结果无效。")
             return
         self._set_busy(False)
-        self._status_label.setText("更新包已下载")
+        self._pending_update = update
+        self._status_label.setText("更新依赖并重启桌宠")
         self._detail_label.setText(
-            f"已准备 {update.release_info.tag}（{self._fmt_dt(update.release_info.published_at)}）\n"
-            "桌宠正在退出，随后将自动覆盖安装并重新启动。"
+            f"已准备 {update.release_info.asset_name}（{self._fmt_dt(update.release_info.published_at)}）\n"
+            "需要重启以检查依赖项。请选择普通重启或环境重启。"
         )
         self._set_progress_done()
-        self._set_busy(True)
-        self._set_actions(None, None)
-        get_event_center().publish(Event(EventType.APP_QUIT, {"exit_code": 0}))
+        normal_handler = getattr(self, "_start_normal_restart", lambda: None)
+        environment_handler = getattr(self, "_start_environment_restart", lambda: None)
+        self._set_actions(
+            ("普通重启", normal_handler),
+            ("环境重启", environment_handler),
+        )
 
     def _on_git_checked(self, result: object) -> None:
         check = result if isinstance(result, GitSyncCheckResult) else None
@@ -486,6 +523,33 @@ class DesktopPetUpdateDialog(QWidget):
         self._set_actions(None, None)
         self._start_worker(self._run_release_install, "release-update-install")
 
+    def _start_normal_restart(self) -> None:
+        self._start_update_restart("normal")
+
+    def _start_environment_restart(self) -> None:
+        self._start_update_restart("environment")
+
+    def _start_update_restart(self, mode: str) -> None:
+        if self._busy or self._pending_update is None:
+            return
+        label = "环境重启" if mode == "environment" else "普通重启"
+        self._status_label.setText(f"正在准备{label}")
+        self._detail_label.setText("更新 helper 将在桌宠退出后覆盖文件并启动指定入口。")
+        self._set_busy(True)
+        self._set_actions(None, None)
+        self._start_worker(
+            lambda: self._run_release_restart(mode),
+            "release-update-restart",
+        )
+
+    def _on_restart_done(self, result: object) -> None:
+        if not isinstance(result, UpdateResult):
+            self._on_worker_error("准备重启失败：返回结果无效。")
+            return
+        self._set_busy(True)
+        self._set_actions(None, None)
+        get_event_center().publish(Event(EventType.APP_QUIT, {"exit_code": 0}))
+
     def _start_git_sync(self) -> None:
         if self._busy:
             return
@@ -521,12 +585,39 @@ class DesktopPetUpdateDialog(QWidget):
         if callable(self._primary_handler):
             self._primary_handler()
 
+    def eventFilter(self, watched, event) -> bool:
+        if watched is self._title_label:
+            if event.type() == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
+                self._dragging = True
+                self._drag_offset = event.globalPos() - self.frameGeometry().topLeft()
+                self._title_label.setCursor(Qt.ClosedHandCursor)
+                event.accept()
+                return True
+            if event.type() == QEvent.MouseMove and self._dragging and event.buttons() & Qt.LeftButton:
+                self.move(event.globalPos() - self._drag_offset)
+                event.accept()
+                return True
+            if event.type() == QEvent.MouseButtonRelease and event.button() == Qt.LeftButton:
+                self._dragging = False
+                self._title_label.setCursor(Qt.OpenHandCursor)
+                event.accept()
+                return True
+        return super().eventFilter(watched, event)
+
     def closeEvent(self, event) -> None:
         if self._busy:
             event.ignore()
             return
         self._visible = False
+        get_layer_manager().unregister(self)
         super().closeEvent(event)
+
+    def deleteLater(self) -> None:
+        try:
+            get_layer_manager().unregister(self)
+        except (AttributeError, RuntimeError):
+            pass
+        super().deleteLater()
 
     def paintEvent(self, event) -> None:
         painter = QPainter(self)

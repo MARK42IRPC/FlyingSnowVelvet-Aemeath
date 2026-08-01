@@ -11,6 +11,7 @@ from PyQt5.QtWidgets import (
     QButtonGroup,
     QCheckBox,
     QFrame,
+    QGraphicsOpacityEffect,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -32,6 +33,9 @@ from config.general_user_settings import save_general_values
 from config.scale import scale_px
 from lib.core.anchor_utils import apply_ui_opacity
 from lib.core.event.center import Event, EventType, get_event_center
+from lib.core.layer import Layer
+from lib.core.layer_manager import get_layer_manager
+from lib.core.timing import get_timing_manager
 from lib.script.workbench.components import (
     WorkbenchOverviewPage,
     WorkbenchPetAboutButton,
@@ -55,6 +59,8 @@ _GROUP_ORDER = (
     "其他",
 )
 _NAV_FONT_SCALE = 1.25
+_WORKBENCH_FRAME_LIMIT_FPS = 30
+_WORKBENCH_FRAME_LIMIT_SOURCE = "workbench"
 
 
 class _WorkbenchThemeToggle(QCheckBox):
@@ -65,6 +71,7 @@ class _WorkbenchThemeToggle(QCheckBox):
         self.setObjectName("WorkbenchThemeToggle")
         self.setText("")
         self.setCursor(Qt.PointingHandCursor)
+        self.setFocusPolicy(Qt.NoFocus)
         self.setFixedSize(scale_px(52, min_abs=46), scale_px(28, min_abs=25))
         self.setAccessibleName("工作台明暗主题")
 
@@ -100,10 +107,8 @@ class _WorkbenchThemeToggle(QCheckBox):
         painter.setBrush(QColor(colors.cyan if active else colors.pink))
         painter.drawEllipse(int(knob_x), int(knob_y), knob_diameter, knob_diameter)
 
-        if self.hasFocus():
-            painter.setPen(QColor(colors.text))
-            painter.setBrush(Qt.NoBrush)
-            painter.drawRoundedRect(self.rect().adjusted(0, 0, -1, -1), radius, radius)
+        # The switch is self-painted; a Qt focus frame would look like an
+        # extra border and flash during rapid toggles.
 
 
 class WorkbenchWindow(QWidget):
@@ -138,6 +143,12 @@ class WorkbenchWindow(QWidget):
         self._fading_out = False
         self._allow_hide_once = False
         self._geometry_restored = False
+        self._runtime_frame_limit_active = False
+        self._page_transition_generation = 0
+        self._page_transition_effects: dict[QWidget, QGraphicsOpacityEffect] = {}
+        self._page_transition_anims: list[QPropertyAnimation] = []
+        self._theme_transition_effect: QGraphicsOpacityEffect | None = None
+        self._theme_transition_anims: list[QPropertyAnimation] = []
         self._settings = QSettings("FlyingSnow", "UnifiedWorkbench")
         self._always_on_top = self._settings.value("always_on_top", False, type=bool)
         self._event_center = get_event_center()
@@ -150,6 +161,7 @@ class WorkbenchWindow(QWidget):
             window_flags |= Qt.WindowStaysOnTopHint
         self.setWindowFlags(window_flags)
         self.setAttribute(Qt.WA_StyledBackground, True)
+        get_layer_manager().register(self, Layer.PANEL, name="WorkbenchWindow")
         self.setMinimumSize(scale_px(1060, min_abs=980), scale_px(680, min_abs=620))
         self.resize(scale_px(1280, min_abs=1120), scale_px(820, min_abs=720))
         self.setFont(get_ui_font(size=scale_px(12, min_abs=10)))
@@ -177,6 +189,7 @@ class WorkbenchWindow(QWidget):
         self.setStyleSheet(workbench_stylesheet())
 
         shell = QFrame(self)
+        self._shell = shell
         shell.setObjectName("WorkbenchShell")
         shell_layout = QVBoxLayout(shell)
         shell_layout.setContentsMargins(0, 0, 0, 0)
@@ -239,10 +252,23 @@ class WorkbenchWindow(QWidget):
         self._about_menu = QMenu(self)
         self._about_menu.setObjectName("WorkbenchAboutMenu")
         self._about_button = WorkbenchPetAboutButton(self._header)
-        self._about_button.setToolTip("关于")
-        self._about_button.setMenu(self._about_menu)
-        self._about_button.setPopupMode(QToolButton.InstantPopup)
+        self._about_button.setText("贡献列表")
+        self._about_button.setFixedWidth(scale_px(88, min_abs=78))
+        self._about_button.setToolTip("查看项目贡献者")
+        self._about_button.clicked.connect(
+            lambda: self._set_current_page("contribution_list")
+        )
         header_layout.addWidget(self._about_button)
+
+        self._sponsor_button = WorkbenchPetAboutButton(self._header)
+        self._sponsor_button.setText("赞助按钮")
+        self._sponsor_button.setProperty("active", False)
+        self._sponsor_button.setFixedWidth(scale_px(88, min_abs=78))
+        self._sponsor_button.setToolTip("支持项目维护")
+        self._sponsor_button.clicked.connect(
+            lambda: self._set_current_page("sponsor_author")
+        )
+        header_layout.addWidget(self._sponsor_button)
 
         self._minimize_button = create_window_button(
             self._header, QStyle.SP_TitleBarMinButton, "最小化", self.showMinimized
@@ -343,6 +369,48 @@ class WorkbenchWindow(QWidget):
         self.style().unpolish(self)
         self.style().polish(self)
         self.update()
+        self._animate_theme_transition()
+
+    def _animate_theme_transition(self) -> None:
+        """让主题热切换先淡出再淡入，连续点击时只保留最后一段动画。"""
+        shell = getattr(self, "_shell", None)
+        if shell is None:
+            return
+        effect = self._theme_transition_effect
+        if effect is None:
+            effect = QGraphicsOpacityEffect(shell)
+            shell.setGraphicsEffect(effect)
+            self._theme_transition_effect = effect
+        for animation in self._theme_transition_anims:
+            animation.stop()
+        self._theme_transition_anims.clear()
+        effect.setOpacity(0.0)
+        animation = QPropertyAnimation(effect, b"opacity", self)
+        animation.setDuration(max(80, int(UI.get("ui_fade_duration", 180))))
+        animation.setEasingCurve(QEasingCurve.InOutQuad)
+        animation.setStartValue(0.0)
+        animation.setEndValue(1.0)
+        animation.finished.connect(lambda: effect.setOpacity(1.0))
+        self._theme_transition_anims.append(animation)
+        animation.start()
+
+    def _stop_transition_animations(self) -> None:
+        """销毁工作台前停止所有动画，避免完成信号触碰已释放的 Qt 对象。"""
+        self._page_transition_generation += 1
+        for animation in tuple(self._page_transition_anims):
+            try:
+                animation.stop()
+                animation.deleteLater()
+            except (RuntimeError, AttributeError):
+                pass
+        self._page_transition_anims.clear()
+        for animation in tuple(self._theme_transition_anims):
+            try:
+                animation.stop()
+                animation.deleteLater()
+            except (RuntimeError, AttributeError):
+                pass
+        self._theme_transition_anims.clear()
 
     def _sync_theme_toggle(self) -> None:
         toggle = getattr(self, "_theme_toggle", None)
@@ -569,17 +637,53 @@ class WorkbenchWindow(QWidget):
             return
 
         self._ensure_external_page(spec.page_id)
-        self._stack.setCurrentWidget(self._page_hosts[spec.page_id])
+        target_host = self._page_hosts[spec.page_id]
+        previous_host = self._stack.currentWidget()
+        self._stack.setCurrentWidget(target_host)
+        if previous_host is not target_host and self.isVisible():
+            effect = self._page_transition_effects.get(target_host)
+            if effect is None:
+                effect = QGraphicsOpacityEffect(target_host)
+                target_host.setGraphicsEffect(effect)
+                self._page_transition_effects[target_host] = effect
+            self._page_transition_generation += 1
+            generation = self._page_transition_generation
+            for animation in self._page_transition_anims:
+                animation.stop()
+            self._page_transition_anims.clear()
+            effect.setOpacity(0.0)
+            animation = QPropertyAnimation(effect, b"opacity", self)
+            animation.setDuration(max(100, int(UI.get("ui_fade_duration", 180))))
+            animation.setEasingCurve(QEasingCurve.InOutQuad)
+            animation.setStartValue(0.0)
+            animation.setEndValue(1.0)
+            animation.finished.connect(
+                lambda: self._finish_page_transition(generation, effect)
+            )
+            self._page_transition_anims.append(animation)
+            animation.start()
+        else:
+            effect = self._page_transition_effects.get(target_host)
+            if effect is not None:
+                effect.setOpacity(1.0)
         self._page_title_label.setText(spec.title)
         self._page_group_label.setText(spec.group)
-        self._about_button.setProperty("active", spec.group == "关于")
+        self._about_button.setProperty("active", spec.page_id == "contribution_list")
+        self._sponsor_button.setProperty("active", spec.page_id == "sponsor_author")
         self._about_button.update()
+        self._sponsor_button.update()
 
         button = self._page_buttons_by_id.get(spec.page_id)
         if button is not None:
             button.setChecked(True)
         else:
             self._clear_navigation_selection()
+
+    def _finish_page_transition(
+        self, generation: int, effect: QGraphicsOpacityEffect
+    ) -> None:
+        if generation == self._page_transition_generation:
+            effect.setOpacity(1.0)
 
     def _clear_navigation_selection(self) -> None:
         self._button_group.setExclusive(False)
@@ -620,6 +724,7 @@ class WorkbenchWindow(QWidget):
         if self.isMinimized():
             self.showNormal()
         if self.isVisible():
+            self._set_runtime_frame_limit(True)
             self.raise_()
             self.activateWindow()
             return
@@ -687,6 +792,7 @@ class WorkbenchWindow(QWidget):
         self._fading_out = False
         self._allow_hide_once = False
         self.setWindowOpacity(0.0)
+        self._set_runtime_frame_limit(True)
         self.show()
         self.raise_()
         self.activateWindow()
@@ -721,6 +827,7 @@ class WorkbenchWindow(QWidget):
             super().hide()
         finally:
             self._allow_hide_once = False
+            self._set_runtime_frame_limit(False)
 
     def _on_opacity_anim_finished(self) -> None:
         if not self._fading_out:
@@ -731,7 +838,25 @@ class WorkbenchWindow(QWidget):
             super().hide()
         finally:
             self._allow_hide_once = False
+            self._set_runtime_frame_limit(False)
             self.setWindowOpacity(apply_ui_opacity(1.0))
+
+    def _set_runtime_frame_limit(self, active: bool) -> None:
+        active = bool(active)
+        if active == self._runtime_frame_limit_active:
+            return
+        timing_manager = get_timing_manager()
+        setter = getattr(timing_manager, "set_frame_fps_limit", None)
+        if not callable(setter):
+            return
+        try:
+            setter(
+                _WORKBENCH_FRAME_LIMIT_SOURCE,
+                _WORKBENCH_FRAME_LIMIT_FPS if active else None,
+            )
+        except (AttributeError, RuntimeError, ValueError):
+            return
+        self._runtime_frame_limit_active = active
 
     def _install_drag_target(self, widget: QWidget) -> None:
         widget.installEventFilter(self)
@@ -785,6 +910,15 @@ class WorkbenchWindow(QWidget):
         ):
             self._refresh_window_state_controls()
 
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._set_runtime_frame_limit(True)
+        get_layer_manager().enforce_burst()
+
+    def hideEvent(self, event) -> None:
+        self._set_runtime_frame_limit(False)
+        super().hideEvent(event)
+
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         if hasattr(self, "_size_grip"):
@@ -798,6 +932,12 @@ class WorkbenchWindow(QWidget):
         self.fade_out()
 
     def deleteLater(self) -> None:
+        self._stop_transition_animations()
+        self._set_runtime_frame_limit(False)
+        try:
+            get_layer_manager().unregister(self)
+        except (AttributeError, RuntimeError):
+            pass
         try:
             self._event_center.unsubscribe(EventType.CONFIG_UPDATED, self._on_config_updated)
         except (AttributeError, RuntimeError):

@@ -94,7 +94,12 @@ class GameModeService:
         if timing is None:
             return
         try:
-            self._restore_frame_fps = int(timing.get_frame_fps())
+            configured_getter = getattr(
+                timing,
+                "get_configured_frame_fps",
+                timing.get_frame_fps,
+            )
+            self._restore_frame_fps = int(configured_getter())
         except Exception:
             self._restore_frame_fps = None
         try:

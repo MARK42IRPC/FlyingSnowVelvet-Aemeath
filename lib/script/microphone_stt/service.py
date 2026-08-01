@@ -28,6 +28,8 @@ _DEFAULT_DTYPE = "int16"
 _DEFAULT_QUEUE_SIZE = 32
 _DEFAULT_SILENCE_TIMEOUT_SECS = 3.0
 _DEFAULT_SPEECH_RMS_THRESHOLD = 550
+_DEFAULT_DENOISE_STRENGTH = 0.65
+_DEFAULT_NOISE_GATE_THRESHOLD = 180
 _MODEL_ENV_KEYS = ("VOSK_MODEL_PATH", "VOSK_MODEL_DIR")
 _MODEL_DIR_CANDIDATES = (
     "resc/models/vosk-model-small-cn-0.22",
@@ -48,6 +50,50 @@ _MODEL_DYNAMIC_SEARCH_ROOTS: tuple[Path, ...] = (
 
 def _project_root() -> Path:
     return Path(__file__).resolve().parents[3]
+
+
+def denoise_pcm16(
+    chunk: bytes,
+    *,
+    strength: float = _DEFAULT_DENOISE_STRENGTH,
+    gate_threshold: int = _DEFAULT_NOISE_GATE_THRESHOLD,
+    noise_floor: float | None = None,
+) -> tuple[bytes, float]:
+    """对单声道 PCM16 应用轻量自适应噪声门。
+
+    低于噪声门的样本按强度衰减，高于噪声门的语音样本保持原幅度；
+    返回处理后的 PCM 和用于下一块音频的噪声底估计。
+    """
+    if not chunk:
+        return chunk, max(0.0, float(noise_floor or 0.0))
+    try:
+        samples = array.array('h')
+        samples.frombytes(chunk)
+        if not samples:
+            return chunk, max(0.0, float(noise_floor or 0.0))
+    except Exception:
+        return chunk, max(0.0, float(noise_floor or 0.0))
+
+    strength_value = max(0.0, min(1.0, float(strength)))
+    gate = max(0, min(32767, int(gate_threshold)))
+    rms = math.sqrt(sum(int(sample) * int(sample) for sample in samples) / len(samples))
+    floor = max(0.0, float(noise_floor or gate))
+    if rms <= max(float(gate) * 2.0, floor * 2.0):
+        floor = floor * 0.96 + rms * 0.04
+    effective_gate = max(float(gate), floor * 1.35)
+    if effective_gate <= 0.0 or strength_value <= 0.0:
+        return chunk, floor
+
+    for index, sample in enumerate(samples):
+        magnitude = abs(int(sample))
+        if magnitude >= effective_gate:
+            continue
+        ratio = max(0.0, min(1.0, magnitude / effective_gate))
+        # The exponent makes quiet background sound fall away quickly while
+        # leaving samples close to the speech boundary mostly intact.
+        gain = ratio ** (1.0 + 4.0 * strength_value)
+        samples[index] = max(-32768, min(32767, int(round(sample * gain))))
+    return samples.tobytes(), floor
 
 
 def _is_ascii_path_text(value: str) -> bool:
@@ -338,6 +384,9 @@ class MicrophoneSttOptions:
     auto_mode: bool = False
     silence_timeout_secs: float = _DEFAULT_SILENCE_TIMEOUT_SECS
     speech_rms_threshold: int = _DEFAULT_SPEECH_RMS_THRESHOLD
+    denoise_enabled: bool = True
+    denoise_strength: float = _DEFAULT_DENOISE_STRENGTH
+    noise_gate_threshold: int = _DEFAULT_NOISE_GATE_THRESHOLD
 
 
 class MicrophoneSttService:
@@ -510,6 +559,9 @@ class MicrophoneSttService:
         default_model_path = str(_BUNDLED_MODEL_RELATIVE_PATH)
         default_silence_timeout = VOICE.get("microphone_silence_timeout_secs", _DEFAULT_SILENCE_TIMEOUT_SECS)
         default_speech_threshold = VOICE.get("microphone_speech_rms_threshold", _DEFAULT_SPEECH_RMS_THRESHOLD)
+        default_denoise_enabled = VOICE.get("microphone_denoise_enabled", True)
+        default_denoise_strength = VOICE.get("microphone_denoise_strength", _DEFAULT_DENOISE_STRENGTH)
+        default_noise_gate = VOICE.get("microphone_noise_gate_threshold", _DEFAULT_NOISE_GATE_THRESHOLD)
 
         def _normalize_model_paths(value):
             if not value:
@@ -546,6 +598,9 @@ class MicrophoneSttService:
             auto_mode=bool(data.get("auto_mode", False)),
             silence_timeout_secs=_coerce_float(data.get("silence_timeout_secs", default_silence_timeout), _DEFAULT_SILENCE_TIMEOUT_SECS, 0.5, 10.0),
             speech_rms_threshold=_coerce_int(data.get("speech_rms_threshold", default_speech_threshold), _DEFAULT_SPEECH_RMS_THRESHOLD, 50, 8000),
+            denoise_enabled=bool(data.get("denoise_enabled", default_denoise_enabled)),
+            denoise_strength=_coerce_float(data.get("denoise_strength", default_denoise_strength), _DEFAULT_DENOISE_STRENGTH, 0.0, 1.0),
+            noise_gate_threshold=_coerce_int(data.get("noise_gate_threshold", default_noise_gate), _DEFAULT_NOISE_GATE_THRESHOLD, 0, 8000),
         )
 
     def _is_start_cancelled(self, start_generation: int, cancel_event: threading.Event | None = None) -> bool:
@@ -571,7 +626,7 @@ class MicrophoneSttService:
             self._current_options = options
             self._last_partial_text = ""
             self._auto_speech_active = False
-            self._bootstrap_thread = get_compute_hub().submit_io(
+            self._bootstrap_thread = get_compute_hub().submit_interactive_io(
                 self._bootstrap_startup,
                 start_generation,
                 options,
@@ -807,6 +862,7 @@ class MicrophoneSttService:
         recognizer = None if options.auto_mode else recognizer_factory()
         auto_segments: list[str] = []
         last_voice_time = 0.0
+        noise_floor: float | None = None
 
         try:
             while True:
@@ -829,6 +885,14 @@ class MicrophoneSttService:
 
                 if chunk is None:
                     break
+
+                if options.denoise_enabled:
+                    chunk, noise_floor = denoise_pcm16(
+                        chunk,
+                        strength=options.denoise_strength,
+                        gate_threshold=options.noise_gate_threshold,
+                        noise_floor=noise_floor,
+                    )
 
                 if options.auto_mode:
                     recognizer, auto_segments, last_voice_time = self._handle_auto_mode_chunk(

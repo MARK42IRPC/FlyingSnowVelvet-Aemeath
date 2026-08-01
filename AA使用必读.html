@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>飞行雪绒资料舱 · LTS1.0.6pre4</title>
+    <title>飞行雪绒资料舱 · LTS1.0.6pre5</title>
     <style>
         @font-face {
             font-family: 'HarmonyOS Sans';
@@ -266,7 +266,7 @@
     <main>
         <div class="hero">
             <h1>飞行雪绒资料舱</h1>
-            <p>贡献 + 赞助 + 文档 · LTS1.0.6pre4<br>基于项目默认配色 + 粒子灵感打造，方便在浏览器里查阅 doc 与贡献记录。生成时间：2026-07-31 13:58:51</p>
+            <p>贡献 + 赞助 + 文档 · LTS1.0.6pre5<br>基于项目默认配色 + 粒子灵感打造，方便在浏览器里查阅 doc 与贡献记录。生成时间：2026-08-02 04:59:01</p>
         </div>
         <section id="top-panels">
             <div class="top-panels">
@@ -663,11 +663,11 @@ rg --files
         </article>
         <article class="card">
             <header>
-                <div class="eyebrow">2026-07-31 12:22</div>
+                <div class="eyebrow">2026-08-02 04:58</div>
                 <h3>Script开发指南</h3>
                 <a class="download" href="doc/Script开发指南.txt" download>下载原文件</a>
             </header>
-            <pre>飞行雪绒 Script 开发指南（LTS1.0.6pre4）
+            <pre>飞行雪绒 Script 开发指南（LTS1.0.6pre5）
 
 一、总览
 - 主入口：`lib/core/qt_desktop_pet.py`
@@ -755,6 +755,15 @@ AI 工具调度位于 `lib/script/tool_dispatcher/dispatcher.py`。`STREAM_FINAL
 
 统一优先级：环境变量/命令行 &gt; `user/settings.json` 稀疏覆盖 &gt; `config` 内置默认值。用户恢复默认时应删除覆盖键。
 
+配置保存边界
+- 用户点击保存后，文件写入必须提交到 `ComputeHub.submit_interactive_io()`，不能在 Qt 主线程执行磁盘 I/O。
+- 只有后台保存成功，才能继续关闭面板、请求重启或发布 `CONFIG_UPDATED`；保存失败时保留当前界面并显示错误。
+- 同一面板的重复点击不能覆盖先提交任务的完成动作，也不能在旧任务完成前启动多次关闭/重启。
+
+麦克风识别
+- `VOICE.microphone_denoise_enabled` 控制轻量 PCM16 自适应降噪；`microphone_denoise_strength` 控制低于噪声门的衰减强度，`microphone_noise_gate_threshold` 控制噪声门起点。
+- 降噪在识别 Worker 中进行，自动语聊的 RMS 说话判定使用处理后的 PCM；算法不引入大型音频依赖。
+
 七、运行时数据边界
 以下路径视为运行时目录：
 - `C:\AemeathDeskPet\user\settings.json`
@@ -765,6 +774,8 @@ AI 工具调度位于 `lib/script/tool_dispatcher/dispatcher.py`。`STREAM_FINAL
 - 旧版兼容来源：`resc/user/`、`config/music/volume.json`、`config/user_scale.json`
 
 像 GSV 语音缓存这类自动生成文件，应写入统一 `cache/` 目录，而不是可提交源码目录或 `config/`。
+
+更新后的程序由独立 helper 等待旧进程退出后覆盖安装。更新窗口完成下载后显示“更新依赖并重启桌宠”，普通重启使用 `启动程序.bat`，环境重启使用 `安装依赖.bat`；两个入口都在 helper 成功完成覆盖后执行。
 
 八、最小管理器模板
 ```python
@@ -806,11 +817,11 @@ manager_registry.register(DemoManager.MANAGER_ID, DemoManager)
         </article>
         <article class="card">
             <header>
-                <div class="eyebrow">2026-07-31 12:23</div>
+                <div class="eyebrow">2026-08-02 04:58</div>
                 <h3>事件系统使用说明</h3>
                 <a class="download" href="doc/事件系统使用说明.txt" download>下载原文件</a>
             </header>
-            <pre>飞行雪绒事件系统使用说明（LTS1.0.6pre4）
+            <pre>飞行雪绒事件系统使用说明（LTS1.0.6pre5）
 
 一、核心入口
 - 实现：`lib/core/event/center.py`
@@ -857,6 +868,7 @@ ec.unsubscribe(EventType.INFORMATION, on_info)
 其中：
 - `APP_PRE_START` 适合预热、静态准备和后台服务启动检查
 - `APP_QUIT` 是统一退出请求入口，适合阻止直接粗暴退出；payload 可传 `restart: true`，由主生命周期在清理完成并释放单实例锁后重启
+- 更新 helper 完成覆盖安装后才通过现有启动入口拉起新进程；普通重启调用“启动程序.bat”，环境重启调用“安装依赖.bat”，界面层不直接覆盖程序文件。
 
 六、当前高频事件协议
 
@@ -928,6 +940,7 @@ PROTECTION_CHECK / PROTECTION_RESPONSE
 
 七、开发约束
 - 回调应尽量短小，避免阻塞 UI
+- 配置保存、更新下载、语音安装和麦克风初始化等 I/O 必须交给 `ComputeHub.submit_interactive_io()` 或所属后台 Worker；事件回调只负责提交任务和更新状态。
 - 所有订阅都必须在 `cleanup()` 中退订
 - `mark_handled()` 只用于确实需要阻断传播的场景
 - 公共事件字段一旦公开使用，尽量保持兼容，不要频繁改 key</pre>
@@ -2204,11 +2217,11 @@ gamepack/official/lahai_tetris.zip
         </article>
         <article class="card">
             <header>
-                <div class="eyebrow">2026-07-31 10:15</div>
+                <div class="eyebrow">2026-08-02 04:58</div>
                 <h3>粒子效果说明</h3>
                 <a class="download" href="doc/粒子效果说明.txt" download>下载原文件</a>
             </header>
-            <pre>飞行雪绒粒子效果说明（LTS1.0.6pre4）
+            <pre>飞行雪绒粒子效果说明（LTS1.0.6pre5）
 
 一、总体说明
 - 事件入口：`EventType.PARTICLE_REQUEST`
@@ -2308,7 +2321,13 @@ Event(EventType.PARTICLE_REQUEST, {
 - `rect`: `(x1, y1, x2, y2)`
 - `circle`: `(x, y, radius)`
 
-四、维护约定
+四、覆盖层与绘制性能
+- 粒子覆盖层根据当前存活粒子的绘制包围盒收缩窗口，不再默认按整屏区域参与重绘。
+- `paintEvent()` 使用 Qt 脏区域，并跳过与裁剪区域不相交的粒子；文本、线段、圆形和图片粒子都通过统一包围盒参与裁剪。
+- 覆盖层重定位时同步粒子的 `x/y`、`_tick_prev_x/y` 和 `_render_x/y`，避免窗口移动后插值回弹或短暂闪烁。
+- 粒子数量较少或无存活粒子时应尽早跳过屏幕查询、计算提交和无效重绘；效果脚本继续使用 `tick` 更新、`frame` 插值。
+
+五、维护约定
 - 新增粒子后，必须同步更新本文档
 - 需要说明触发场景时，优先写“业务用途”而不是只写视觉形态
 - 若粒子公开协议发生变化，请检查 `doc/README.md` 是否需要更新入口说明
@@ -2565,7 +2584,7 @@ Event(EventType.PARTICLE_REQUEST, {
         </article>
         <article class="card">
             <header>
-                <div class="eyebrow">2026-07-31 12:22</div>
+                <div class="eyebrow">2026-08-02 04:58</div>
                 <h3>维护手册</h3>
                 <a class="download" href="doc/维护手册.md" download>下载原文件</a>
             </header>
@@ -2622,7 +2641,7 @@ Event(EventType.PARTICLE_REQUEST, {
 
 需要重启时向 `APP_QUIT` 传入 `restart: true`。主编排器必须先成功拉起脱离当前进程树的重启 helper，再走完整退出流程并释放单实例锁；helper 等待旧 PID 真正退出后启动新实例。helper 创建失败时不得退出当前实例。重启 helper 不属于本地托管服务，服务清理不得结束它；界面组件也不得自行拉起副本。启动阶段诊断写入 `logs/restart.log`。
 
-分发包更新使用独立的更新 helper：主进程只并发检测固定 GitHub/Gitee 发布槽、下载并校验 ZIP，成功创建 helper 后通过普通 `APP_QUIT` 优雅退出，不再由主进程覆盖文件，也不再创建普通重启 helper。更新 helper 必须确认旧 PID 已退出，随后保护 `logs/`、`resc/user/`、`resc/models/` 和 `py.ini`，覆盖程序文件、写入更新状态并启动新实例。等待超时或覆盖失败时不得启动半更新实例，诊断写入 `logs/update.log`。
+分发包更新使用独立的更新 helper：主进程只并发检测固定 GitHub/Gitee 发布槽、下载并校验 ZIP，成功创建 helper 后通过普通 `APP_QUIT` 优雅退出，不再由主进程覆盖文件，也不再创建普通重启 helper。更新窗口完成下载后显示“更新依赖并重启桌宠”，由用户选择普通重启或环境重启；前者调用“启动程序.bat”，后者调用“安装依赖.bat”。更新 helper 必须确认旧 PID 已退出，随后保护 `logs/`、`resc/user/`、`resc/models/` 和 `py.ini`，覆盖程序文件、写入更新状态并启动所选入口。等待超时或覆盖失败时不得启动半更新实例，诊断写入 `logs/update.log`。
 
 维护约束：
 
@@ -2632,6 +2651,7 @@ Event(EventType.PARTICLE_REQUEST, {
 - 子进程保存句柄；先正常终止，超时后结束进程树。
 - 后台任务统一使用 `lib/core/compute_hub.py`，不得新建无所有者线程池。
 - 用户点击后必须立即开始的长耗时 I/O 使用 `ComputeHub.submit_interactive_io()` 的保留执行槽，不能排在登录、音乐下载等共享后台队列之后。
+- 设置面板保存配置必须先完成 `ComputeHub.submit_interactive_io()` 写盘并确认成功，再执行关闭或重启；失败时保留面板，重复点击不得覆盖原保存任务的完成动作。
 - `os._exit()` 只能作为最终超时兜底。
 
 ## 3. 模块边界
@@ -2666,6 +2686,8 @@ Event(EventType.PARTICLE_REQUEST, {
 
 工作台采用两级懒加载：启动预加载器不创建工作台；打开总览只创建工作台壳；进入设置页或工具页时才调用页面工厂。
 
+工作台可见期间通过 `TimingManager.set_frame_fps_limit(&quot;workbench&quot;, 30)` 临时限制桌宠全局 FRAME 频率，隐藏或销毁时撤销；限制按来源组合，不覆盖用户帧率或其它运行模式。设置面板的装饰性 TICK 订阅只在独立面板真正可见时存在，嵌入工作台或隐藏后不得空转。
+
 工作台顶栏搜索框左侧的粉青色明暗主题开关保存到 `UI.workbench_light_theme`，默认关闭为当前暗色主题；开启后使用白色/粉色表面和深灰蓝文字，并通过 `CONFIG_UPDATED` 热重载工作台样式。“界面与动画”设置页不再提供重复入口。
 
 工作台及其动态创建的控件统一使用 `config.font_config.get_ui_font()` 注册的 `HarmonyOS Sans SC` 字体族；控件树刷新时只替换字体族，不覆盖字号、粗细和自定义绘制字体。
@@ -2693,7 +2715,7 @@ Event(EventType.PARTICLE_REQUEST, {
 
 ## 5. 配置与用户数据
 
-`config/config_*.py` 只存程序默认值，运行时禁止改写 Python 源文件。普通设置通过 `config.user_settings` 保存为版本化稀疏 JSON；密钥和登录态使用独立 secrets/state 路径。
+`config/config_*.py` 只存程序默认值，运行时禁止改写 Python 源文件。普通设置通过 `config.user_settings` 保存为版本化稀疏 JSON；密钥和登录态使用独立 secrets/state 路径。麦克风识别提供轻量 PCM16 自适应降噪：`microphone_denoise_enabled` 控制开关，`microphone_denoise_strength` 控制衰减强度，`microphone_noise_gate_threshold` 控制噪声门阈值；降噪在识别 Worker 内执行，自动语聊 RMS 判定使用处理后的音频。
 
 ```text
 默认值: config/config_*.py
@@ -2718,6 +2740,8 @@ AI 密钥保存到 `&lt;用户根&gt;/user/secrets/ai.json`。设置面板每次
 帧、tick、GIF 帧和延迟任务由 `TimingManager` 负责。不要用散落的永久 `QTimer` 替代共享调度，除非计时器天然属于控件生命周期。
 
 绘制请求统一使用 DrawCore/RenderCore，窗口置顶统一使用 LayerManager。新增窗口必须选择明确 Layer，并在销毁时 unregister。
+
+粒子覆盖层按存活粒子的包围盒收缩窗口，并在 `paintEvent()` 根据脏区域跳过不相交粒子。覆盖层移动时必须同步当前坐标、tick 前一帧坐标和渲染插值坐标，避免重定位后回弹；无存活粒子时跳过屏幕查询和计算提交。
 
 ## 7. 音乐与本地服务
 
@@ -2960,11 +2984,11 @@ py -3 scripts/package_green_release.py --dry-run --version VERIFY
         </article>
         <article class="card">
             <header>
-                <div class="eyebrow">2026-07-31 10:15</div>
+                <div class="eyebrow">2026-08-02 04:58</div>
                 <h3>调度系统使用说明</h3>
                 <a class="download" href="doc/调度系统使用说明.txt" download>下载原文件</a>
             </header>
-            <pre>飞行雪绒调度系统使用说明（LTS1.0.6pre4）
+            <pre>飞行雪绒调度系统使用说明（LTS1.0.6pre5）
 
 一、核心实现
 - 文件：`lib/core/timing/manager.py`
@@ -2978,8 +3002,14 @@ py -3 scripts/package_green_release.py --dry-run --version VERIFY
 - `GIF_FRAME`：按 `gif_fps` 计算
 
 默认配置来自 `config/config.py` 中导出的 `ANIMATION`：
-- `frame_fps = 60`
+- `frame_fps = 120`
 - `gif_fps = 16`
+
+运行时可以通过 `TimingManager.set_frame_fps_limit(source, fps)` 注册来源独立的临时上限，
+传入 `fps=None` 撤销对应来源。实际 FRAME 频率取用户配置帧率和全部临时上限中的最低值，
+因此多个运行模式不会互相覆盖。工作台可见期间使用 `workbench` 来源限制为 30 FPS，隐藏后撤销。
+`get_frame_fps()` 返回当前有效帧率；需要保存和恢复用户配置时使用 `get_configured_frame_fps()`。
+工作台的 30 FPS 是临时来源限制，不会写回用户配置；工作台隐藏或销毁时撤销该来源，游戏模式等其它来源仍独立计算。
 
 三、周期事件
 调度器会发布：
@@ -3034,6 +3064,8 @@ pet.cancel_task(task_id)
 七、开发建议
 - 高频业务优先订阅 `TICK` 或 `FRAME`，不要自己再开一套平行 QTimer
 - 在 `cleanup()` 中移除任务并退订事件
+- 静止对象不得在 `FRAME` 中重复移动窗口或触发重绘；临时降频应使用来源独立的帧率上限
+- 物理对象空闲时应跳过屏幕查询和计算提交，重新获得速度或外部目标变化后再恢复计算。
 - 对于需要高精度的逻辑，先评估 50ms tick 是否足够
 - 服务类后台逻辑（如语音预热、网络轮询）如果不依赖 UI 节拍，可以使用线程或专用等待逻辑，不必强行接入 `TimingManager`</pre>
         </article>
@@ -3078,7 +3110,7 @@ pet.cancel_task(task_id)
             </div>
         </section>
     </main>
-    <footer>由飞行雪绒 LTS1.0.6pre4 代码生成 · 粉粉青青也是科技感 (ﾉ◕ヮ◕)ﾉ*:･ﾟ✧</footer>
+    <footer>由飞行雪绒 LTS1.0.6pre5 代码生成 · 粉粉青青也是科技感 (ﾉ◕ヮ◕)ﾉ*:･ﾟ✧</footer>
     <script>
     (() => {
         const letters = "FLYINGSNOWVELVET";

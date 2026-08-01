@@ -47,6 +47,23 @@ class WorkbenchLazySettingsTests(unittest.TestCase):
         panel.deleteLater()
         self.app.processEvents()
 
+    def test_border_tick_subscription_follows_standalone_visibility(self):
+        with patch.object(AISettingsPanel, '_refresh_hardware_watermark_async', lambda self: None):
+            panel = AISettingsPanel(lazy_workbench_pages=True)
+
+        self.assertFalse(panel._tick_subscribed)
+        panel._visible = True
+        panel.show()
+        self.app.processEvents()
+        self.assertTrue(panel._tick_subscribed)
+
+        panel.hide()
+        self.app.processEvents()
+        self.assertFalse(panel._tick_subscribed)
+
+        panel.deleteLater()
+        self.app.processEvents()
+
     def test_ui_page_announcement_checkbox_reflects_and_saves_forever_state(self):
         with patch.object(
             panel_module,

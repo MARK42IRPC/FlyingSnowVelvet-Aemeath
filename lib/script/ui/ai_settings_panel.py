@@ -284,6 +284,9 @@ _CATEGORY_KEY_ALLOWLIST = {
             "microphone_push_to_talk_key",
             "microphone_silence_timeout_secs",
             "microphone_speech_rms_threshold",
+            "microphone_denoise_enabled",
+            "microphone_denoise_strength",
+            "microphone_noise_gate_threshold",
         },
         "SPEAKER_AUDIO": set(),
         "CLOUD_MUSIC": {
@@ -382,6 +385,7 @@ _GENERAL_NUMERIC_RULES: dict[tuple[str, str], tuple[str, float, float]] = {
     ("VOICE", "lahai_skill_release_volume"): ("number", 0.0, 1.0),
     ("VOICE", "microphone_silence_timeout_secs"): ("number", 0.5, 10.0),
     ("VOICE", "microphone_speech_rms_threshold"): ("int", 50, 8000),
+    ("VOICE", "microphone_noise_gate_threshold"): ("int", 0, 4000),
     ("CLOUD_MUSIC", "default_volume"): ("number", 0.0, 1.0),
     ("CLOUD_MUSIC", "particle_interval"): ("int", 1, 1000),
     ("CLOUD_MUSIC", "search_result_limit"): ("int", 1, 128),
@@ -432,6 +436,7 @@ _GENERAL_DECIMAL_SLIDER_SPECS: dict[tuple[str, str], tuple[float, float, float, 
     ("OBJECTS", "object_opacity"): (0.0, 1.0, 0.05, 2),
     ("ANIMATION", "exit_shadow_strength"): (0.0, 255.0, 1.0, 0),
     ("ANIMATION", "exit_shadow_blur_radius"): (0.0, 128.0, 1.0, 0),
+    ("VOICE", "microphone_denoise_strength"): (0.0, 1.0, 0.05, 2),
 }
 
 _GENERAL_CHOICE_FIELD_OPTIONS: dict[tuple[str, str], list[tuple[str, str]]] = {
@@ -548,6 +553,9 @@ _GENERAL_CONFIG_DEFAULTS: dict[str, dict[str, object]] = {
         "microphone_push_to_talk_key": "V",
         "microphone_silence_timeout_secs": 3.0,
         "microphone_speech_rms_threshold": 550,
+        "microphone_denoise_enabled": True,
+        "microphone_denoise_strength": 0.65,
+        "microphone_noise_gate_threshold": 180,
     },
     "CLOUD_MUSIC": {
         "provider": "netease",
@@ -691,6 +699,9 @@ _KEY_FRIENDLY_NAME = {
         "microphone_push_to_talk_key": "语聊快捷键(留空禁用)",
         "microphone_silence_timeout_secs": "静音停止时长(s)",
         "microphone_speech_rms_threshold": "说话判定阈值",
+        "microphone_denoise_enabled": "启用语音降噪",
+        "microphone_denoise_strength": "降噪强度",
+        "microphone_noise_gate_threshold": "噪声门阈值",
     },
     "SPEAKER_AUDIO": {
         "scale_range": "缩放范围",
@@ -1388,12 +1399,8 @@ class _WatermarkComboBox(QComboBox):
             self._popup_window_instance = None
 
     def wheelEvent(self, event) -> None:
-        # 未展开时屏蔽滚轮，避免滚动页面时误操作；展开后允许滚轮选择。
-        view = self.view() if hasattr(self, "view") else None
-        if view is not None and view.isVisible():
-            super().wheelEvent(event)
-        else:
-            event.ignore()
+        # 下拉框不消费滚轮，让外层设置页面独占滚动手势。
+        event.ignore()
 
 
 class _NoWheelSlider(QSlider):
@@ -1681,7 +1688,6 @@ class AISettingsPanel(QWidget):
         self._panel_watermark_text = _WATERMARK_TEXT
         self._tick_counter = 0
         self._tick_subscribed = False
-        self._subscribe_border_effect_events()
 
         self._opacity = QGraphicsOpacityEffect(self)
         self._opacity.setOpacity(0.0)
@@ -1694,6 +1700,8 @@ class AISettingsPanel(QWidget):
         self._tab_pages: list[QWidget] = []
         self._config_tab_meta: dict[str, dict] = {}
         self._stable_window_size: tuple[int, int] | None = None
+        self._save_task_pending = False
+        self._save_completion_action: Callable[[], None] | None = None
 
         self._build_ui()
         self._apply_project_fonts()
@@ -1957,7 +1965,8 @@ class AISettingsPanel(QWidget):
             "OpenAI 兼容接口密钥，单独保存在用户密钥文件中。",
         )
 
-        self._manual_api_provider = QComboBox()
+        self._manual_api_provider = _WatermarkComboBox()
+        self._manual_api_provider.setView(QListView(self._manual_api_provider))
         for label, base_url in _MANUAL_API_PROVIDER_PRESETS:
             self._manual_api_provider.addItem(label, base_url)
         self._manual_api_provider.currentIndexChanged.connect(self._on_manual_api_provider_changed)
@@ -3938,25 +3947,90 @@ class AISettingsPanel(QWidget):
             elif kind == "external_announcement_suppression":
                 self._set_announcement_forever_suppressed(bool(editor.isChecked()))
 
+    def _submit_save_task(
+        self,
+        worker: Callable[[], None],
+        completion: Callable[[], None],
+    ) -> bool:
+        """把配置文件写入和缓存清理移出 Qt 主线程。"""
+        if self._save_task_pending:
+            return False
+        self._save_task_pending = True
+
+        def finish(error: Exception | None = None) -> None:
+            self._save_task_pending = False
+            if error is not None:
+                _logger.error("后台保存控制面板设置失败: %s", error)
+                self._emit_info(f"保存失败: {error}", min_tick=20, max_tick=180)
+                self._save_completion_action = None
+                return
+            try:
+                completion()
+            except Exception as exc:
+                _logger.error("应用已保存控制面板设置失败: %s", exc)
+                self._emit_info(f"应用保存结果失败: {exc}", min_tick=20, max_tick=180)
+                self._save_completion_action = None
+                return
+            action = self._save_completion_action
+            self._save_completion_action = None
+            if callable(action):
+                action()
+
+        def on_done(future) -> None:
+            try:
+                future.result()
+            except Exception as exc:
+                self._run_on_ui_thread(lambda error=exc: finish(error))
+            else:
+                self._run_on_ui_thread(finish)
+
+        try:
+            future = get_compute_hub().submit_interactive_io(worker)
+            future.add_done_callback(on_done)
+        except Exception as exc:
+            self._save_task_pending = False
+            self._save_completion_action = None
+            _logger.error("提交后台保存任务失败: %s", exc)
+            self._emit_info(f"保存失败: {exc}", min_tick=20, max_tick=180)
+            return False
+        return True
+
     def _on_save_config_category(self, category_id: str) -> bool:
         meta = self._config_tab_meta.get(category_id)
         if not meta:
             return False
         try:
             values = self._collect_config_category_values(category_id)
-            _save_general_config(values)
-            _apply_general_runtime(values)
-            self._apply_external_category_fields(category_id)
-            self._emit_info(f"{meta.get('title', '配置')}已保存。")
-            return True
+            if self._save_task_pending:
+                self._emit_info("已有配置保存任务正在进行，请稍候。", min_tick=10, max_tick=60)
+                return False
+
+            def persist() -> None:
+                _save_general_config(copy.deepcopy(values))
+
+            def completed() -> None:
+                _apply_general_runtime(values)
+                self._apply_external_category_fields(category_id)
+                self._emit_info(f"{meta.get('title', '配置')}已保存。")
+
+            return self._submit_save_task(persist, completed)
         except Exception as e:
             _logger.error("保存配置分类失败(%s): %s", category_id, e)
             self._emit_info(f"保存失败: {e}", min_tick=20, max_tick=180)
             return False
 
     def _on_save_config_category_and_exit(self, category_id: str) -> None:
-        if self._on_save_config_category(category_id):
-            self.fade_out()
+        if self._save_task_pending:
+            self._emit_info("已有配置保存任务正在进行，请稍候。", min_tick=10, max_tick=60)
+            return
+        self._save_completion_action = self.fade_out
+        saved = self._on_save_config_category(category_id)
+        if not saved:
+            self._save_completion_action = None
+        elif not self._save_task_pending and callable(self._save_completion_action):
+            action = self._save_completion_action
+            self._save_completion_action = None
+            action()
 
     def _install_line_edit_context_menus(self) -> None:
         for edit in self.findChildren(QLineEdit):
@@ -4479,9 +4553,12 @@ class AISettingsPanel(QWidget):
     def showEvent(self, event) -> None:
         super().showEvent(event)
         if self._visible:
+            self._subscribe_border_effect_events()
             self._show_floating_tab()
+            get_layer_manager().enforce_burst()
 
     def hideEvent(self, event) -> None:
+        self._unsubscribe_border_effect_events()
         self._hide_floating_tab()
         super().hideEvent(event)
 
@@ -4522,6 +4599,10 @@ class AISettingsPanel(QWidget):
         if self._tab_floating is not None:
             self._tab_floating.deleteLater()
             self._tab_floating = None
+        try:
+            get_layer_manager().unregister(self)
+        except (AttributeError, RuntimeError):
+            pass
         super().deleteLater()
 
     def _random_border_spawn_point(self) -> tuple[int, int] | None:
@@ -5070,44 +5151,81 @@ class AISettingsPanel(QWidget):
         self._emit_info("AI 设置已恢复默认值，保存后生效。", min_tick=10, max_tick=90)
 
     def _on_save_ai_action(self) -> None:
-        if self._on_save() and not self._workbench_attached:
-            self.fade_out()
+        if self._save_task_pending:
+            self._emit_info("已有配置保存任务正在进行，请稍候。", min_tick=10, max_tick=60)
+            return
+        self._save_completion_action = None if self._workbench_attached else self.fade_out
+        if not self._on_save():
+            self._save_completion_action = None
+        elif not self._save_task_pending and callable(self._save_completion_action):
+            action = self._save_completion_action
+            self._save_completion_action = None
+            action()
 
     def _on_save_and_restart(self) -> None:
-        if not self._on_save(apply_runtime=False):
+        if self._save_task_pending:
+            self._emit_info("已有配置保存任务正在进行，请稍候。", min_tick=10, max_tick=60)
             return
-        self._ec.publish(Event(EventType.APP_QUIT, {
-            "exit_code": 0,
-            "restart": True,
-        }))
+        restart_action = lambda: self._ec.publish(Event(
+            EventType.APP_QUIT,
+            {"exit_code": 0, "restart": True},
+        ))
+        self._save_completion_action = restart_action
+        if not self._on_save(apply_runtime=False):
+            self._save_completion_action = None
+            return
+        # Keep compatibility with lightweight test doubles and integrations
+        # that replace _on_save with a synchronous implementation.
+        if not self._save_task_pending:
+            action = self._save_completion_action
+            self._save_completion_action = None
+            if callable(action):
+                action()
 
     def _on_save(self, *, apply_runtime: bool = True) -> bool:
         try:
             ai_values = self._collect_values()
             general_values = self._collect_all_general_config_values()
-            save_ai_values(ai_values, _DEFAULT_VALUES)
-            _save_general_config(general_values)
-            if apply_runtime:
-                apply_ai_runtime(ai_values, _DEFAULT_VALUES)
-                _apply_general_runtime(general_values)
-            self._apply_all_external_config_fields()
-            if apply_runtime:
-                try:
-                    from lib.script.gsvmove import get_gsvmove_service
+            if self._save_task_pending:
+                self._emit_info("已有配置保存任务正在进行，请稍候。", min_tick=10, max_tick=60)
+                return False
 
-                    get_gsvmove_service().cleanup_saved_audio_cache()
-                except Exception as trim_exc:
-                    _logger.warning("应用 GSV 语音缓存上限失败: %s", trim_exc)
-            self._emit_info("控制面板设置已保存，重启程序后完整生效。")
-            return True
+            def persist() -> None:
+                save_ai_values(copy.deepcopy(ai_values), _DEFAULT_VALUES)
+                _save_general_config(copy.deepcopy(general_values))
+                if apply_runtime:
+                    try:
+                        from lib.script.gsvmove import get_gsvmove_service
+
+                        get_gsvmove_service().cleanup_saved_audio_cache()
+                    except Exception as trim_exc:
+                        _logger.warning("应用 GSV 语音缓存上限失败: %s", trim_exc)
+
+            def completed() -> None:
+                if apply_runtime:
+                    apply_ai_runtime(ai_values, _DEFAULT_VALUES)
+                    _apply_general_runtime(general_values)
+                self._apply_all_external_config_fields()
+                self._emit_info("控制面板设置已保存，重启程序后完整生效。")
+
+            return self._submit_save_task(persist, completed)
         except Exception as e:
             _logger.error("保存控制面板设置失败: %s", e)
             self._emit_info(f"保存失败: {e}", min_tick=20, max_tick=180)
             return False
 
     def _on_save_and_exit(self) -> None:
+        if self._save_task_pending:
+            self._emit_info("已有配置保存任务正在进行，请稍候。", min_tick=10, max_tick=60)
+            return
+        self._save_completion_action = self.fade_out
         if self._on_save():
-            self.fade_out()
+            if not self._save_task_pending and callable(self._save_completion_action):
+                action = self._save_completion_action
+                self._save_completion_action = None
+                action()
+            return
+        self._save_completion_action = None
 
     def paintEvent(self, event) -> None:
         painter = QPainter(self)

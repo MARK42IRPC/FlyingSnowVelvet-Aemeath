@@ -132,11 +132,18 @@ def test_layer_manager_builds_explicit_topmost_chain_from_high_to_low():
     manager.register(pet, Layer.MAIN_PET)
     manager.enforce_now()
 
-    assert calls == [
-        (303, manager._HWND_TOPMOST),
-        (202, 303),
-        (101, 202),
-    ]
+    expected_windows = sorted(
+        ((Layer.PARTICLE, 101), (Layer.PANEL, 202), (Layer.MAIN_PET, 303)),
+        key=lambda item: int(item[0]),
+        reverse=True,
+    )
+    expected = []
+    insert_after = manager._HWND_TOPMOST
+    for _, hwnd in expected_windows:
+        expected.append((hwnd, insert_after))
+        insert_after = hwnd
+
+    assert calls == expected
 
 
 def test_bring_to_front_preserves_higher_layer_windows():
@@ -150,7 +157,15 @@ def test_bring_to_front_preserves_higher_layer_windows():
     manager.register(pet, Layer.MAIN_PET)
     manager.bring_to_front(game)
 
-    assert calls == [
-        (303, manager._HWND_TOPMOST),
-        (202, 303),
-    ]
+    expected_windows = sorted(
+        ((Layer.PANEL, 202), (Layer.MAIN_PET, 303)),
+        key=lambda item: int(item[0]),
+        reverse=True,
+    )
+    expected = []
+    insert_after = manager._HWND_TOPMOST
+    for _, hwnd in expected_windows:
+        expected.append((hwnd, insert_after))
+        insert_after = hwnd
+
+    assert calls == expected

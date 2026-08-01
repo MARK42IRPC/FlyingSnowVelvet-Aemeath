@@ -11,6 +11,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from lib.script.app.update_installer import (
+    build_bat_restart_command,
     install_update_archive,
     launch_update_installer,
     run_update_installer,
@@ -33,6 +34,21 @@ def _write_archive(path: Path, entries: dict[str, str]) -> None:
 
 
 class UpdateInstallerTests(unittest.TestCase):
+    def test_bat_restart_command_selects_normal_and_environment_entries(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            normal = root / "启动程序.bat"
+            environment = root / "安装依赖.bat"
+            normal.write_text("@echo off\n", encoding="utf-8")
+            environment.write_text("@echo off\n", encoding="utf-8")
+
+            normal_command = build_bat_restart_command(root, "normal")
+            environment_command = build_bat_restart_command(root, "environment")
+
+            self.assertIn("/c", normal_command)
+            self.assertEqual(normal_command[-1], str(normal.resolve()))
+            self.assertEqual(environment_command[-1], str(environment.resolve()))
+
     def test_install_overwrites_application_but_preserves_user_data(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -170,7 +186,7 @@ class UpdateInstallerTests(unittest.TestCase):
             self.assertFalse(state_path.exists())
             launch.assert_called_once()
 
-    def test_dialog_requests_plain_exit_after_installer_handoff(self):
+    def test_dialog_offers_restart_modes_after_download(self):
         from lib.script.ui.update_dialog import DesktopPetUpdateDialog
 
         published = datetime(2026, 7, 29, tzinfo=timezone.utc)
@@ -188,15 +204,18 @@ class UpdateInstallerTests(unittest.TestCase):
             _set_progress_done=Mock(),
             _set_actions=Mock(),
             _fmt_dt=lambda value: value.isoformat(),
+            _start_normal_restart=Mock(),
+            _start_environment_restart=Mock(),
         )
         center = Mock()
         with patch("lib.script.ui.update_dialog.get_event_center", return_value=center):
             DesktopPetUpdateDialog._on_release_done(dialog, result)
 
-        event = center.publish.call_args.args[0]
-        self.assertEqual(event.type, EventType.APP_QUIT)
-        self.assertEqual(event.data, {"exit_code": 0})
-        self.assertNotIn("restart", event.data)
+        center.publish.assert_not_called()
+        self.assertEqual(dialog._status_label.setText.call_args.args[0], "更新依赖并重启桌宠")
+        actions = dialog._set_actions.call_args.args
+        self.assertEqual(actions[0], ("普通重启", dialog._start_normal_restart))
+        self.assertEqual(actions[1], ("环境重启", dialog._start_environment_restart))
 
 
 if __name__ == "__main__":

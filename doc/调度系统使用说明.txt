@@ -1,4 +1,4 @@
-飞行雪绒调度系统使用说明（LTS1.0.6pre4）
+飞行雪绒调度系统使用说明（LTS1.0.6pre5）
 
 一、核心实现
 - 文件：`lib/core/timing/manager.py`
@@ -12,8 +12,14 @@
 - `GIF_FRAME`：按 `gif_fps` 计算
 
 默认配置来自 `config/config.py` 中导出的 `ANIMATION`：
-- `frame_fps = 60`
+- `frame_fps = 120`
 - `gif_fps = 16`
+
+运行时可以通过 `TimingManager.set_frame_fps_limit(source, fps)` 注册来源独立的临时上限，
+传入 `fps=None` 撤销对应来源。实际 FRAME 频率取用户配置帧率和全部临时上限中的最低值，
+因此多个运行模式不会互相覆盖。工作台可见期间使用 `workbench` 来源限制为 30 FPS，隐藏后撤销。
+`get_frame_fps()` 返回当前有效帧率；需要保存和恢复用户配置时使用 `get_configured_frame_fps()`。
+工作台的 30 FPS 是临时来源限制，不会写回用户配置；工作台隐藏或销毁时撤销该来源，游戏模式等其它来源仍独立计算。
 
 三、周期事件
 调度器会发布：
@@ -68,5 +74,7 @@ pet.cancel_task(task_id)
 七、开发建议
 - 高频业务优先订阅 `TICK` 或 `FRAME`，不要自己再开一套平行 QTimer
 - 在 `cleanup()` 中移除任务并退订事件
+- 静止对象不得在 `FRAME` 中重复移动窗口或触发重绘；临时降频应使用来源独立的帧率上限
+- 物理对象空闲时应跳过屏幕查询和计算提交，重新获得速度或外部目标变化后再恢复计算。
 - 对于需要高精度的逻辑，先评估 50ms tick 是否足够
 - 服务类后台逻辑（如语音预热、网络轮询）如果不依赖 UI 节拍，可以使用线程或专用等待逻辑，不必强行接入 `TimingManager`
