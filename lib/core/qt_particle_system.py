@@ -2,11 +2,12 @@
 from concurrent.futures import Future
 from copy import copy, deepcopy
 from collections import deque
+from math import floor
 from time import perf_counter
 
 from PyQt5.QtWidgets import QWidget
-from PyQt5.QtCore import Qt, QRectF, QLineF, QPointF
-from PyQt5.QtGui import QPainter, QColor, QPen
+from PyQt5.QtCore import Qt, QRect, QRectF, QLineF, QPointF
+from PyQt5.QtGui import QPainter, QColor, QPen, QRegion
 
 from config.config import PARTICLES, UI_THEME
 from lib.core.compute_hub import get_compute_hub
@@ -15,12 +16,11 @@ from lib.core.layer import Layer, normalize_layer
 from lib.core.layer_manager import get_layer_manager
 from lib.core.logger import get_logger
 from lib.core.render_core import order_render_values
+from lib.core.screen_utils import get_virtual_screen_geometry
 from lib.script.practical.manager import get_particle_script_manager
 
 _ASYNC_PARTICLE_UPDATE_THRESHOLD = 1200
-_OVERLAY_REFRAME_MARGIN = 48.0
-_OVERLAY_EDGE_GUARD = 12.0
-_OVERLAY_SHRINK_SLACK = 160
+_PARTICLE_TILE_SIZE = 128
 _logger = get_logger(__name__)
 
 
@@ -69,26 +69,6 @@ def _prepare_particles_for_inplace_update(particles: list) -> None:
     for particle in particles:
         particle._tick_prev_x = float(getattr(particle, 'x', 0.0))
         particle._tick_prev_y = float(getattr(particle, 'y', 0.0))
-
-
-def _translate_particle_coordinates(particle, delta_x: float, delta_y: float) -> None:
-    """平移粒子及其内部坐标锚点，保持重定位前后的全局位置不变。"""
-    for name in (
-        'x', '_tick_prev_x', '_render_x',
-        'cx', '_start_x', '_target_x', '_screen_w',
-    ):
-        if hasattr(particle, name):
-            setattr(particle, name, float(getattr(particle, name)) + delta_x)
-    for name in (
-        'y', '_tick_prev_y', '_render_y',
-        'cy', '_start_y', '_target_y', '_ground_y', '_screen_h',
-    ):
-        if hasattr(particle, name):
-            setattr(particle, name, float(getattr(particle, name)) + delta_y)
-
-    callback = getattr(particle, 'on_overlay_reframe', None)
-    if callable(callback):
-        callback(float(delta_x), float(delta_y))
 
 
 def _can_use_async_updates() -> bool:
@@ -152,6 +132,71 @@ def _particle_bounds(particle) -> QRectF:
     return bounds or QRectF()
 
 
+def _tile_keys_for_bounds(bounds: QRectF) -> set[tuple[int, int]]:
+    """返回矩形覆盖的固定网格块；坐标允许位于虚拟桌面负半轴。"""
+    if bounds.isEmpty():
+        return set()
+    left = floor(bounds.left() / _PARTICLE_TILE_SIZE)
+    top = floor(bounds.top() / _PARTICLE_TILE_SIZE)
+    right = floor((bounds.right() - 1e-6) / _PARTICLE_TILE_SIZE)
+    bottom = floor((bounds.bottom() - 1e-6) / _PARTICLE_TILE_SIZE)
+    return {
+        (tile_x, tile_y)
+        for tile_y in range(top, bottom + 1)
+        for tile_x in range(left, right + 1)
+    }
+
+
+def _tile_rect(key: tuple[int, int]) -> QRect:
+    tile_x, tile_y = key
+    return QRect(
+        tile_x * _PARTICLE_TILE_SIZE,
+        tile_y * _PARTICLE_TILE_SIZE,
+        _PARTICLE_TILE_SIZE,
+        _PARTICLE_TILE_SIZE,
+    )
+
+
+def _build_particle_grid(particles: list) -> tuple[dict[tuple[int, int], list], set[tuple[int, int]]]:
+    """按绘制包围盒建立二维固定分块索引。"""
+    grid: dict[tuple[int, int], list] = {}
+    occupied: set[tuple[int, int]] = set()
+    for particle in particles:
+        if not _particle_alive(particle):
+            continue
+        bounds = _particle_bounds(particle).adjusted(-2.0, -2.0, 2.0, 2.0)
+        for key in _tile_keys_for_bounds(bounds):
+            grid.setdefault(key, []).append(particle)
+            occupied.add(key)
+    return grid, occupied
+
+
+def _region_for_tiles(keys: set[tuple[int, int]]) -> QRegion:
+    region = QRegion()
+    for key in keys:
+        region = region.united(QRegion(_tile_rect(key)))
+    return region
+
+
+def _particles_for_region(grid: dict[tuple[int, int], list], region: QRegion) -> list:
+    """查询脏矩形命中的粒子，并对跨块粒子去重。"""
+    if region.isEmpty():
+        return []
+    particles = []
+    seen: set[int] = set()
+    for key, bucket in grid.items():
+        if not region.intersects(_tile_rect(key)):
+            continue
+        for particle in bucket:
+            particle_id = id(particle)
+            if particle_id in seen:
+                continue
+            if region.intersects(_particle_bounds(particle).adjusted(-2.0, -2.0, 2.0, 2.0).toAlignedRect()):
+                seen.add(particle_id)
+                particles.append(particle)
+    return particles
+
+
 class ParticleOverlay(QWidget):
     """
     全屏透明覆盖层，仅用于绘制粒子。
@@ -175,6 +220,8 @@ class ParticleOverlay(QWidget):
         self._layer_manager.register(self, Layer.PARTICLE, name='ParticleOverlay')
 
         self._particles = []
+        self._spatial_grid: dict[tuple[int, int], list] = {}
+        self._occupied_tiles: set[tuple[int, int]] = set()
         self._paused = False
         self._draw_seq = 0
         self._pending_requests = deque()
@@ -202,53 +249,15 @@ class ParticleOverlay(QWidget):
         self._event_center.subscribe(EventType.TICK, self._on_tick)
         self._event_center.subscribe(EventType.FRAME, self._on_frame)
 
-    def _reframe_overlay(self) -> None:
-        """按带缓冲的粒子包围盒调整覆盖层，并同步本地坐标。"""
-        if not self._particles:
-            return
-        bounds: QRectF | None = None
-        for particle in self._particles:
-            if not _particle_alive(particle):
-                continue
-            particle_bounds = _particle_bounds(particle)
-            bounds = particle_bounds if bounds is None else bounds.united(particle_bounds)
-        if bounds is None or bounds.isEmpty():
-            return
-
-        margin = _OVERLAY_REFRAME_MARGIN
-        current_geometry = self.geometry()
-        target_left = int(current_geometry.x() + bounds.left() - margin)
-        target_top = int(current_geometry.y() + bounds.top() - margin)
-        target_right = int(current_geometry.x() + bounds.right() + margin + 1.0)
-        target_bottom = int(current_geometry.y() + bounds.bottom() + margin + 1.0)
-        target_width = max(1, target_right - target_left)
-        target_height = max(1, target_bottom - target_top)
-        delta_x = current_geometry.x() - target_left
-        delta_y = current_geometry.y() - target_top
-
-        escaped_guard = (
-            bounds.left() < _OVERLAY_EDGE_GUARD
-            or bounds.top() < _OVERLAY_EDGE_GUARD
-            or bounds.right() > current_geometry.width() - _OVERLAY_EDGE_GUARD
-            or bounds.bottom() > current_geometry.height() - _OVERLAY_EDGE_GUARD
-        )
-        oversized = (
-            current_geometry.width() - target_width > _OVERLAY_SHRINK_SLACK
-            or current_geometry.height() - target_height > _OVERLAY_SHRINK_SLACK
-        )
-        if not escaped_guard and not oversized:
-            return
-        if (
-            target_left == current_geometry.x()
-            and target_top == current_geometry.y()
-            and target_width == current_geometry.width()
-            and target_height == current_geometry.height()
-        ):
-            return
-
-        for particle in self._particles:
-            _translate_particle_coordinates(particle, delta_x, delta_y)
-        self.setGeometry(target_left, target_top, target_width, target_height)
+    def _refresh_spatial_grid(self) -> None:
+        """重建分块索引，并仅刷新上一帧和当前帧占用的矩形块。"""
+        old_tiles = self._occupied_tiles
+        self._spatial_grid, self._occupied_tiles = _build_particle_grid(self._particles)
+        dirty_tiles = old_tiles | self._occupied_tiles
+        if dirty_tiles:
+            dirty_region = _region_for_tiles(dirty_tiles).intersected(QRegion(self.rect()))
+            if not dirty_region.isEmpty():
+                self.update(dirty_region)
 
     # ------------------------------------------------------------------
     def _on_particle_request(self, event: Event):
@@ -310,9 +319,8 @@ class ParticleOverlay(QWidget):
                 self._perf_update_ms_total += (perf_counter() - update_before) * 1000.0
             self._pending_future = None
             if not self._particles:
+                self._refresh_spatial_grid()
                 self.hide()
-            else:
-                self._reframe_overlay()
             if self._perf_log_enabled:
                 self._perf_tick_count += 1
                 self._perf_max_particles = max(self._perf_max_particles, len(self._particles))
@@ -328,9 +336,8 @@ class ParticleOverlay(QWidget):
             _prepare_particles_for_inplace_update(self._particles)
             self._particles = _update_particles_batch(self._particles)
             if not self._particles:
+                self._refresh_spatial_grid()
                 self.hide()
-            else:
-                self._reframe_overlay()
             return
 
         future = get_compute_hub().submit_latest(
@@ -363,7 +370,7 @@ class ParticleOverlay(QWidget):
             cur_y = float(getattr(particle, 'y', prev_y))
             particle._render_x = prev_x + (cur_x - prev_x) * alpha
             particle._render_y = prev_y + (cur_y - prev_y) * alpha
-        self.update()
+        self._refresh_spatial_grid()
 
     def _apply_pending_updates(self) -> None:
         future = self._pending_future
@@ -396,9 +403,9 @@ class ParticleOverlay(QWidget):
             particle._render_y = float(getattr(particle, '_tick_prev_y', getattr(particle, 'y', 0.0)))
 
         if not self._particles:
+            self._refresh_spatial_grid()
             self.hide()
             return
-        self._reframe_overlay()
 
     def _drain_particle_requests(self) -> None:
         """在帧边界批量创建粒子，减少主线程事件风暴。"""
@@ -406,8 +413,9 @@ class ParticleOverlay(QWidget):
             return
 
         if not self._particles:
-            screen = self.screen().geometry() if self.screen() else self.geometry()
-            self.setGeometry(screen)
+            virtual_geometry = get_virtual_screen_geometry()
+            if self.geometry() != virtual_geometry:
+                self.setGeometry(virtual_geometry)
 
         offset_x = self.geometry().x()
         offset_y = self.geometry().y()
@@ -467,12 +475,10 @@ class ParticleOverlay(QWidget):
         if not appended:
             return
 
-        if self._pending_future is None:
-            self._reframe_overlay()
         if not had_particles:
             self.show()
             self._layer_manager.enforce_burst()
-        self.update()
+        self._refresh_spatial_grid()
 
     # ------------------------------------------------------------------
     def paintEvent(self, event):
@@ -481,7 +487,7 @@ class ParticleOverlay(QWidget):
         painter.setClipRegion(event.region())
         # 透明覆盖层每帧先清屏，避免上一帧像素残留
         painter.setCompositionMode(QPainter.CompositionMode_Source)
-        painter.fillRect(self.rect(), Qt.transparent)
+        painter.fillRect(event.region().boundingRect(), Qt.transparent)
         painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
 
         if not self._particles:
@@ -497,7 +503,7 @@ class ParticleOverlay(QWidget):
         painter.setRenderHint(QPainter.Antialiasing, False)
 
         particles = order_render_values(
-            self._particles,
+            _particles_for_region(self._spatial_grid, event.region()),
             layer_getter=lambda item: getattr(item, 'layer', Layer.PARTICLE),
             z_getter=lambda item: getattr(item, 'z', 0),
             order_getter=lambda item: getattr(item, '_draw_order', 0),
@@ -723,6 +729,8 @@ class ParticleOverlay(QWidget):
         self._pending_requests.clear()
         self._pending_snapshot_ids.clear()
         self._particles.clear()
+        self._spatial_grid.clear()
+        self._occupied_tiles.clear()
         self._clear_and_hide()
 
     def set_paused(self, paused: bool) -> None:
