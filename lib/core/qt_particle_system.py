@@ -1,5 +1,6 @@
 """粒子效果系统 (PyQt5版) - 事件驱动重构版"""
 from concurrent.futures import Future
+from copy import copy, deepcopy
 from collections import deque
 from time import perf_counter
 
@@ -17,6 +18,9 @@ from lib.core.render_core import order_render_values
 from lib.script.practical.manager import get_particle_script_manager
 
 _ASYNC_PARTICLE_UPDATE_THRESHOLD = 1200
+_OVERLAY_REFRAME_MARGIN = 48.0
+_OVERLAY_EDGE_GUARD = 12.0
+_OVERLAY_SHRINK_SLACK = 160
 _logger = get_logger(__name__)
 
 
@@ -42,11 +46,49 @@ def _update_particles_batch(particles: list) -> list:
     return alive_particles
 
 
+def _clone_particle_for_update(particle):
+    """复制粒子供异步 tick 使用，避免后台线程修改正在绘制的对象。"""
+    try:
+        clone = deepcopy(particle)
+    except Exception:
+        clone = copy(particle)
+    if clone is particle:
+        raise TypeError('Particle snapshot must be an independent object')
+    clone._tick_prev_x = float(getattr(particle, 'x', 0.0))
+    clone._tick_prev_y = float(getattr(particle, 'y', 0.0))
+    return clone
+
+
+def _snapshot_particles_for_update(particles: list) -> list:
+    """构建隔离的异步更新快照。"""
+    return [_clone_particle_for_update(particle) for particle in particles]
+
+
 def _prepare_particles_for_inplace_update(particles: list) -> None:
-    """在原地更新前保存插值起点。"""
+    """在原地更新前保存逻辑坐标，作为本次 tick 的插值起点。"""
     for particle in particles:
-        particle._tick_prev_x = float(getattr(particle, '_render_x', getattr(particle, 'x', 0.0)))
-        particle._tick_prev_y = float(getattr(particle, '_render_y', getattr(particle, 'y', 0.0)))
+        particle._tick_prev_x = float(getattr(particle, 'x', 0.0))
+        particle._tick_prev_y = float(getattr(particle, 'y', 0.0))
+
+
+def _translate_particle_coordinates(particle, delta_x: float, delta_y: float) -> None:
+    """平移粒子及其内部坐标锚点，保持重定位前后的全局位置不变。"""
+    for name in (
+        'x', '_tick_prev_x', '_render_x',
+        'cx', '_start_x', '_target_x', '_screen_w',
+    ):
+        if hasattr(particle, name):
+            setattr(particle, name, float(getattr(particle, name)) + delta_x)
+    for name in (
+        'y', '_tick_prev_y', '_render_y',
+        'cy', '_start_y', '_target_y', '_ground_y', '_screen_h',
+    ):
+        if hasattr(particle, name):
+            setattr(particle, name, float(getattr(particle, name)) + delta_y)
+
+    callback = getattr(particle, 'on_overlay_reframe', None)
+    if callable(callback):
+        callback(float(delta_x), float(delta_y))
 
 
 def _can_use_async_updates() -> bool:
@@ -161,7 +203,7 @@ class ParticleOverlay(QWidget):
         self._event_center.subscribe(EventType.FRAME, self._on_frame)
 
     def _reframe_overlay(self) -> None:
-        """将透明覆盖层压缩到当前粒子的包围盒，并同步本地坐标。"""
+        """按带缓冲的粒子包围盒调整覆盖层，并同步本地坐标。"""
         if not self._particles:
             return
         bounds: QRectF | None = None
@@ -173,7 +215,7 @@ class ParticleOverlay(QWidget):
         if bounds is None or bounds.isEmpty():
             return
 
-        margin = 8.0
+        margin = _OVERLAY_REFRAME_MARGIN
         current_geometry = self.geometry()
         target_left = int(current_geometry.x() + bounds.left() - margin)
         target_top = int(current_geometry.y() + bounds.top() - margin)
@@ -183,6 +225,19 @@ class ParticleOverlay(QWidget):
         target_height = max(1, target_bottom - target_top)
         delta_x = current_geometry.x() - target_left
         delta_y = current_geometry.y() - target_top
+
+        escaped_guard = (
+            bounds.left() < _OVERLAY_EDGE_GUARD
+            or bounds.top() < _OVERLAY_EDGE_GUARD
+            or bounds.right() > current_geometry.width() - _OVERLAY_EDGE_GUARD
+            or bounds.bottom() > current_geometry.height() - _OVERLAY_EDGE_GUARD
+        )
+        oversized = (
+            current_geometry.width() - target_width > _OVERLAY_SHRINK_SLACK
+            or current_geometry.height() - target_height > _OVERLAY_SHRINK_SLACK
+        )
+        if not escaped_guard and not oversized:
+            return
         if (
             target_left == current_geometry.x()
             and target_top == current_geometry.y()
@@ -192,12 +247,7 @@ class ParticleOverlay(QWidget):
             return
 
         for particle in self._particles:
-            for x_name in ("x", "_tick_prev_x", "_render_x"):
-                if hasattr(particle, x_name):
-                    setattr(particle, x_name, float(getattr(particle, x_name)) + delta_x)
-            for y_name in ("y", "_tick_prev_y", "_render_y"):
-                if hasattr(particle, y_name):
-                    setattr(particle, y_name, float(getattr(particle, y_name)) + delta_y)
+            _translate_particle_coordinates(particle, delta_x, delta_y)
         self.setGeometry(target_left, target_top, target_width, target_height)
 
     # ------------------------------------------------------------------
@@ -269,15 +319,29 @@ class ParticleOverlay(QWidget):
                 self._maybe_log_perf()
             return
 
+        if self._pending_future is not None:
+            return
+
+        try:
+            snapshot = _snapshot_particles_for_update(self._particles)
+        except Exception:
+            _prepare_particles_for_inplace_update(self._particles)
+            self._particles = _update_particles_batch(self._particles)
+            if not self._particles:
+                self.hide()
+            else:
+                self._reframe_overlay()
+            return
+
         future = get_compute_hub().submit_latest(
             "particle_overlay_update",
             _update_particles_batch,
-            self._particles,
+            snapshot,
             executor="vector",
         )
         if future is not None:
             self._pending_future = future
-            self._pending_snapshot_ids = set()
+            self._pending_snapshot_ids = {id(particle) for particle in self._particles}
         if self._perf_log_enabled:
             self._perf_tick_count += 1
             self._perf_update_ms_total += (perf_counter() - tick_start) * 1000.0
@@ -306,20 +370,30 @@ class ParticleOverlay(QWidget):
         if future is None or not future.done():
             return
         self._pending_future = None
+        snapshot_ids = self._pending_snapshot_ids
         try:
             updated_particles = future.result()
         except Exception:
-            updated_particles = []
+            updated_particles = [
+                particle
+                for particle in self._particles
+                if id(particle) in snapshot_ids and _particle_alive(particle)
+            ]
 
+        extra_particles = [
+            particle
+            for particle in self._particles
+            if id(particle) not in snapshot_ids and _particle_alive(particle)
+        ]
         self._pending_snapshot_ids = set()
-        self._particles = updated_particles
+        self._particles = updated_particles + extra_particles
         for particle in self._particles:
             if not hasattr(particle, '_tick_prev_x'):
                 particle._tick_prev_x = float(getattr(particle, 'x', 0.0))
             if not hasattr(particle, '_tick_prev_y'):
                 particle._tick_prev_y = float(getattr(particle, 'y', 0.0))
-            particle._render_x = float(getattr(particle, 'x', 0.0))
-            particle._render_y = float(getattr(particle, 'y', 0.0))
+            particle._render_x = float(getattr(particle, '_tick_prev_x', getattr(particle, 'x', 0.0)))
+            particle._render_y = float(getattr(particle, '_tick_prev_y', getattr(particle, 'y', 0.0)))
 
         if not self._particles:
             self.hide()
@@ -393,7 +467,8 @@ class ParticleOverlay(QWidget):
         if not appended:
             return
 
-        self._reframe_overlay()
+        if self._pending_future is None:
+            self._reframe_overlay()
         if not had_particles:
             self.show()
             self._layer_manager.enforce_burst()
