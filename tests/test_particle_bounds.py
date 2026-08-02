@@ -8,14 +8,15 @@ from PyQt5.QtGui import QRegion
 
 from lib.core.event.center import Event, EventType
 from lib.core.qt_particle_system import (
+    _ParticleSpatialIndex,
     ParticleOverlay,
-    _build_particle_grid,
     _particle_bounds,
-    _particles_for_region,
     _prepare_particles_for_inplace_update,
+    _merged_tile_rects,
     _region_for_tiles,
     _snapshot_particles_for_update,
     _tile_keys_for_bounds,
+    _tile_keys_for_region,
     _update_particles_batch,
 )
 
@@ -42,27 +43,34 @@ class ParticleBoundsTests(unittest.TestCase):
 
     def test_grid_indexes_particle_in_each_intersected_tile(self):
         particle = SimpleNamespace(x=128.0, y=64.0, size=20.0, life=1.0)
+        index = _ParticleSpatialIndex()
 
-        grid, occupied = _build_particle_grid([particle])
+        index.sync([particle])
 
-        self.assertEqual(occupied, {(0, 0), (1, 0)})
-        self.assertIs(grid[(0, 0)][0], particle)
-        self.assertIs(grid[(1, 0)][0], particle)
+        self.assertEqual(index.occupied_tiles, {(0, 0), (1, 0)})
+        self.assertIs(index._buckets[(0, 0)][id(particle)], particle)
+        self.assertIs(index._buckets[(1, 0)][id(particle)], particle)
 
     def test_region_query_deduplicates_particle_spanning_tiles(self):
         particle = SimpleNamespace(x=128.0, y=64.0, size=20.0, life=1.0)
-        grid, occupied = _build_particle_grid([particle])
+        index = _ParticleSpatialIndex()
+        occupied = index.sync([particle])
 
-        particles = _particles_for_region(grid, _region_for_tiles(occupied))
+        particles = index.particles_for_tiles(
+            _tile_keys_for_region(_region_for_tiles(occupied)),
+            _region_for_tiles(occupied),
+        )
 
         self.assertEqual(particles, [particle])
 
     def test_region_query_skips_distant_occupied_tiles(self):
         near = SimpleNamespace(x=20.0, y=20.0, size=8.0, life=1.0)
         far = SimpleNamespace(x=4000.0, y=20.0, size=8.0, life=1.0)
-        grid, _occupied = _build_particle_grid([near, far])
+        index = _ParticleSpatialIndex()
+        index.sync([near, far])
+        region = QRegion(QRect(0, 0, 128, 128))
 
-        particles = _particles_for_region(grid, QRegion(QRect(0, 0, 128, 128)))
+        particles = index.particles_for_tiles(_tile_keys_for_region(region), region)
 
         self.assertEqual(particles, [near])
 
@@ -71,19 +79,76 @@ class ParticleBoundsTests(unittest.TestCase):
         updates = []
         overlay = SimpleNamespace(
             _particles=[particle],
-            _spatial_grid={},
-            _occupied_tiles={(0, 0)},
+            _spatial_index=_ParticleSpatialIndex(),
             rect=lambda: QRect(0, 0, 512, 256),
             update=lambda region: updates.append(region),
         )
+        overlay._spatial_index.sync(overlay._particles)
         particle.x = 300.0
 
         ParticleOverlay._refresh_spatial_grid(overlay)
 
-        self.assertEqual(overlay._occupied_tiles, {(2, 0)})
+        self.assertEqual(overlay._spatial_index.occupied_tiles, {(2, 0)})
         self.assertEqual(len(updates), 1)
         self.assertTrue(updates[0].contains(QRect(0, 0, 128, 128)))
         self.assertTrue(updates[0].contains(QRect(256, 0, 128, 128)))
+
+    def test_contiguous_tiles_are_merged_per_row(self):
+        rects = _merged_tile_rects({(0, 0), (1, 0), (2, 0), (4, 0), (1, 1)})
+
+        self.assertEqual(
+            {(rect.x(), rect.y(), rect.width(), rect.height()) for rect in rects},
+            {(0, 0, 384, 128), (512, 0, 128, 128), (128, 128, 128, 128)},
+        )
+
+    def test_sync_marks_old_and_new_tiles_when_particle_moves(self):
+        particle = SimpleNamespace(x=20.0, y=20.0, size=8.0, life=1.0)
+        index = _ParticleSpatialIndex()
+        index.sync([particle])
+
+        particle.x = 300.0
+        dirty = index.sync([particle])
+
+        self.assertEqual(dirty, {(0, 0), (2, 0)})
+
+    def test_sync_removes_dead_particles_and_invalidates_old_tiles(self):
+        particle = SimpleNamespace(x=20.0, y=20.0, size=8.0, life=1.0, alive=True)
+        index = _ParticleSpatialIndex()
+        index.sync([particle])
+        particle.alive = False
+
+        dirty = index.sync([particle])
+
+        self.assertEqual(dirty, {(0, 0)})
+        self.assertEqual(index.occupied_tiles, set())
+
+    def test_sync_caches_render_order(self):
+        back = SimpleNamespace(x=20.0, y=20.0, size=8.0, life=1.0, z=0, _draw_order=2)
+        front = SimpleNamespace(x=30.0, y=20.0, size=8.0, life=1.0, z=1, _draw_order=1)
+        index = _ParticleSpatialIndex()
+
+        index.sync([back, front])
+        ordered_particles = index._ordered_particles
+        index.sync([back, front])
+
+        self.assertEqual(index._ordered_particles, [back, front])
+        self.assertIs(index._ordered_particles, ordered_particles)
+
+    def test_frame_refresh_reuses_cached_bounds(self):
+        particle = SimpleNamespace(x=20.0, y=20.0, size=8.0, life=1.0)
+        index = _ParticleSpatialIndex()
+        index.sync([particle])
+        overlay = SimpleNamespace(
+            _particles=[particle],
+            _spatial_index=index,
+            rect=lambda: QRect(0, 0, 128, 128),
+            update=lambda region: None,
+        )
+
+        with patch('lib.core.qt_particle_system._particle_bounds') as bounds:
+            ParticleOverlay._refresh_spatial_grid(overlay, reindex=False)
+
+        bounds.assert_not_called()
 
     def test_async_snapshot_update_does_not_mutate_rendered_particle(self):
         class MovingParticle:
@@ -157,7 +222,7 @@ class ParticleBoundsTests(unittest.TestCase):
         self.assertEqual(overlay._particles, [updated, extra])
         self.assertEqual((updated._render_x, updated._render_y), (10.0, 20.0))
         self.assertEqual((extra._render_x, extra._render_y), (50.0, 60.0))
-        self.assertEqual(refresh_calls, [])
+        self.assertEqual(refresh_calls, [True])
 
     def test_async_tick_does_not_recopy_while_update_is_pending(self):
         pending = Future()

@@ -15,7 +15,6 @@ from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.layer import Layer, normalize_layer
 from lib.core.layer_manager import get_layer_manager
 from lib.core.logger import get_logger
-from lib.core.render_core import order_render_values
 from lib.core.screen_utils import get_virtual_screen_geometry
 from lib.script.practical.manager import get_particle_script_manager
 
@@ -78,7 +77,7 @@ def _can_use_async_updates() -> bool:
 def _particle_bounds(particle) -> QRectF:
     """返回粒子在当前 overlay 本地坐标中的保守绘制包围盒。
 
-    该函数不依赖 QWidget，既用于缩小透明覆盖层，也便于纯单元测试。
+    该函数不依赖 QWidget，用于空间索引、脏区裁剪和纯单元测试。
     """
     positions = [(
         float(getattr(particle, '_render_x', getattr(particle, 'x', 0.0))),
@@ -157,44 +156,147 @@ def _tile_rect(key: tuple[int, int]) -> QRect:
     )
 
 
-def _build_particle_grid(particles: list) -> tuple[dict[tuple[int, int], list], set[tuple[int, int]]]:
-    """按绘制包围盒建立二维固定分块索引。"""
-    grid: dict[tuple[int, int], list] = {}
-    occupied: set[tuple[int, int]] = set()
-    for particle in particles:
-        if not _particle_alive(particle):
-            continue
-        bounds = _particle_bounds(particle).adjusted(-2.0, -2.0, 2.0, 2.0)
-        for key in _tile_keys_for_bounds(bounds):
-            grid.setdefault(key, []).append(particle)
-            occupied.add(key)
-    return grid, occupied
+def _merged_tile_rects(keys: set[tuple[int, int]]) -> list[QRect]:
+    """按行合并连续分块，减少 QRegion 的矩形节点数量。"""
+    rows: dict[int, list[int]] = {}
+    for tile_x, tile_y in keys:
+        rows.setdefault(tile_y, []).append(tile_x)
+
+    rects = []
+    for tile_y, tile_x_values in rows.items():
+        values = sorted(tile_x_values)
+        run_start = run_end = values[0]
+        for tile_x in values[1:]:
+            if tile_x == run_end + 1:
+                run_end = tile_x
+                continue
+            rects.append(QRect(
+                run_start * _PARTICLE_TILE_SIZE,
+                tile_y * _PARTICLE_TILE_SIZE,
+                (run_end - run_start + 1) * _PARTICLE_TILE_SIZE,
+                _PARTICLE_TILE_SIZE,
+            ))
+            run_start = run_end = tile_x
+        rects.append(QRect(
+            run_start * _PARTICLE_TILE_SIZE,
+            tile_y * _PARTICLE_TILE_SIZE,
+            (run_end - run_start + 1) * _PARTICLE_TILE_SIZE,
+            _PARTICLE_TILE_SIZE,
+        ))
+    return rects
 
 
 def _region_for_tiles(keys: set[tuple[int, int]]) -> QRegion:
     region = QRegion()
-    for key in keys:
-        region = region.united(QRegion(_tile_rect(key)))
+    for rect in _merged_tile_rects(keys):
+        region = region.united(QRegion(rect))
     return region
 
 
-def _particles_for_region(grid: dict[tuple[int, int], list], region: QRegion) -> list:
-    """查询脏矩形命中的粒子，并对跨块粒子去重。"""
-    if region.isEmpty():
-        return []
-    particles = []
-    seen: set[int] = set()
-    for key, bucket in grid.items():
-        if not region.intersects(_tile_rect(key)):
-            continue
-        for particle in bucket:
-            particle_id = id(particle)
-            if particle_id in seen:
+def _tile_keys_for_region(region: QRegion) -> set[tuple[int, int]]:
+    keys: set[tuple[int, int]] = set()
+    for rect in region.rects():
+        keys.update(_tile_keys_for_bounds(QRectF(rect)))
+    return keys
+
+
+def _render_order_key(particle) -> tuple[int, int, int]:
+    return (
+        int(getattr(particle, 'layer', Layer.PARTICLE)),
+        int(getattr(particle, 'z', 0)),
+        int(getattr(particle, '_draw_order', 0)),
+    )
+
+
+class _ParticleSpatialIndex:
+    """缓存粒子包围盒、块归属和绘制顺序的增量二维索引。"""
+
+    def __init__(self) -> None:
+        self._buckets: dict[tuple[int, int], dict[int, object]] = {}
+        self._tile_keys_by_id: dict[int, set[tuple[int, int]]] = {}
+        self._bounds_by_id: dict[int, QRectF] = {}
+        self._particles_by_id: dict[int, object] = {}
+        self._ordered_particles: list = []
+        self._order_signature: tuple = ()
+
+    @property
+    def occupied_tiles(self) -> set[tuple[int, int]]:
+        return set(self._buckets)
+
+    def sync(self, particles: list) -> set[tuple[int, int]]:
+        """同步逻辑状态；只有跨块或增删粒子时修改桶成员。"""
+        dirty_tiles: set[tuple[int, int]] = set()
+        live_particles = []
+        live_ids: set[int] = set()
+
+        for particle in particles:
+            if not _particle_alive(particle):
                 continue
-            if region.intersects(_particle_bounds(particle).adjusted(-2.0, -2.0, 2.0, 2.0).toAlignedRect()):
-                seen.add(particle_id)
-                particles.append(particle)
-    return particles
+            particle_id = id(particle)
+            live_ids.add(particle_id)
+            live_particles.append(particle)
+            bounds = _particle_bounds(particle).adjusted(-2.0, -2.0, 2.0, 2.0)
+            new_keys = _tile_keys_for_bounds(bounds)
+            old_keys = self._tile_keys_by_id.get(particle_id, set())
+            dirty_tiles.update(old_keys)
+            dirty_tiles.update(new_keys)
+
+            for key in old_keys - new_keys:
+                bucket = self._buckets.get(key)
+                if bucket is None:
+                    continue
+                bucket.pop(particle_id, None)
+                if not bucket:
+                    self._buckets.pop(key, None)
+            for key in new_keys - old_keys:
+                self._buckets.setdefault(key, {})[particle_id] = particle
+
+            self._tile_keys_by_id[particle_id] = new_keys
+            self._bounds_by_id[particle_id] = bounds
+            self._particles_by_id[particle_id] = particle
+
+        for particle_id in set(self._particles_by_id) - live_ids:
+            old_keys = self._tile_keys_by_id.pop(particle_id, set())
+            dirty_tiles.update(old_keys)
+            for key in old_keys:
+                bucket = self._buckets.get(key)
+                if bucket is None:
+                    continue
+                bucket.pop(particle_id, None)
+                if not bucket:
+                    self._buckets.pop(key, None)
+            self._bounds_by_id.pop(particle_id, None)
+            self._particles_by_id.pop(particle_id, None)
+
+        signature = tuple((id(particle), *_render_order_key(particle)) for particle in live_particles)
+        if signature != self._order_signature:
+            self._ordered_particles = sorted(live_particles, key=_render_order_key)
+            self._order_signature = signature
+        return dirty_tiles
+
+    def particles_for_tiles(self, keys: set[tuple[int, int]], region: QRegion) -> list:
+        candidate_ids: set[int] = set()
+        for key in keys:
+            candidate_ids.update(self._buckets.get(key, ()))
+        if not candidate_ids:
+            return []
+        return [
+            particle
+            for particle in self._ordered_particles
+            if id(particle) in candidate_ids
+            and region.intersects(self._bounds_by_id[id(particle)].toAlignedRect())
+        ]
+
+    def bounds_for(self, particle) -> QRectF:
+        return self._bounds_by_id.get(id(particle), QRectF())
+
+    def clear(self) -> None:
+        self._buckets.clear()
+        self._tile_keys_by_id.clear()
+        self._bounds_by_id.clear()
+        self._particles_by_id.clear()
+        self._ordered_particles.clear()
+        self._order_signature = ()
 
 
 class ParticleOverlay(QWidget):
@@ -220,8 +322,7 @@ class ParticleOverlay(QWidget):
         self._layer_manager.register(self, Layer.PARTICLE, name='ParticleOverlay')
 
         self._particles = []
-        self._spatial_grid: dict[tuple[int, int], list] = {}
-        self._occupied_tiles: set[tuple[int, int]] = set()
+        self._spatial_index = _ParticleSpatialIndex()
         self._paused = False
         self._draw_seq = 0
         self._pending_requests = deque()
@@ -249,11 +350,12 @@ class ParticleOverlay(QWidget):
         self._event_center.subscribe(EventType.TICK, self._on_tick)
         self._event_center.subscribe(EventType.FRAME, self._on_frame)
 
-    def _refresh_spatial_grid(self) -> None:
-        """重建分块索引，并仅刷新上一帧和当前帧占用的矩形块。"""
-        old_tiles = self._occupied_tiles
-        self._spatial_grid, self._occupied_tiles = _build_particle_grid(self._particles)
-        dirty_tiles = old_tiles | self._occupied_tiles
+    def _refresh_spatial_grid(self, *, reindex: bool = True) -> None:
+        """同步索引或复用缓存，并仅刷新粒子实际占用的矩形块。"""
+        if reindex:
+            dirty_tiles = self._spatial_index.sync(self._particles)
+        else:
+            dirty_tiles = self._spatial_index.occupied_tiles
         if dirty_tiles:
             dirty_region = _region_for_tiles(dirty_tiles).intersected(QRegion(self.rect()))
             if not dirty_region.isEmpty():
@@ -321,6 +423,8 @@ class ParticleOverlay(QWidget):
             if not self._particles:
                 self._refresh_spatial_grid()
                 self.hide()
+            else:
+                self._refresh_spatial_grid()
             if self._perf_log_enabled:
                 self._perf_tick_count += 1
                 self._perf_max_particles = max(self._perf_max_particles, len(self._particles))
@@ -338,6 +442,8 @@ class ParticleOverlay(QWidget):
             if not self._particles:
                 self._refresh_spatial_grid()
                 self.hide()
+            else:
+                self._refresh_spatial_grid()
             return
 
         future = get_compute_hub().submit_latest(
@@ -370,7 +476,7 @@ class ParticleOverlay(QWidget):
             cur_y = float(getattr(particle, 'y', prev_y))
             particle._render_x = prev_x + (cur_x - prev_x) * alpha
             particle._render_y = prev_y + (cur_y - prev_y) * alpha
-        self._refresh_spatial_grid()
+        self._refresh_spatial_grid(reindex=False)
 
     def _apply_pending_updates(self) -> None:
         future = self._pending_future
@@ -406,6 +512,7 @@ class ParticleOverlay(QWidget):
             self._refresh_spatial_grid()
             self.hide()
             return
+        self._refresh_spatial_grid()
 
     def _drain_particle_requests(self) -> None:
         """在帧边界批量创建粒子，减少主线程事件风暴。"""
@@ -502,18 +609,15 @@ class ParticleOverlay(QWidget):
             square_stroke_pen = QPen(QColor(UI_THEME['border']))
         painter.setRenderHint(QPainter.Antialiasing, False)
 
-        particles = order_render_values(
-            _particles_for_region(self._spatial_grid, event.region()),
-            layer_getter=lambda item: getattr(item, 'layer', Layer.PARTICLE),
-            z_getter=lambda item: getattr(item, 'z', 0),
-            order_getter=lambda item: getattr(item, '_draw_order', 0),
-            default_layer=Layer.PARTICLE,
+        particles = self._spatial_index.particles_for_tiles(
+            _tile_keys_for_region(event.region()),
+            event.region(),
         )
         clip_rect = event.region().boundingRect()
         for p in particles:
             if not _particle_alive(p):
                 continue
-            if not _particle_bounds(p).adjusted(-2, -2, 2, 2).intersects(QRectF(clip_rect)):
+            if not self._spatial_index.bounds_for(p).intersects(QRectF(clip_rect)):
                 continue
 
             life = max(0.0, float(getattr(p, 'life', 0.0)))
@@ -729,8 +833,7 @@ class ParticleOverlay(QWidget):
         self._pending_requests.clear()
         self._pending_snapshot_ids.clear()
         self._particles.clear()
-        self._spatial_grid.clear()
-        self._occupied_tiles.clear()
+        self._spatial_index.clear()
         self._clear_and_hide()
 
     def set_paused(self, paused: bool) -> None:
