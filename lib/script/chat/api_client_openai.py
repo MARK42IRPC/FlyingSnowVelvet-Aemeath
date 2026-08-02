@@ -9,7 +9,7 @@ import requests
 from lib.core.logger import get_logger
 
 from ._multimodal import image_to_base64_with_mime, images_to_openai_content
-from .api_client_common import _ApiClientCommonMixin
+from .api_client_common import _ApiClientCommonMixin, multimodal_cooldown
 from .api_client_error import _ApiClientErrorMixin
 from .native_tools import (
     NativeToolCallAccumulator,
@@ -572,6 +572,7 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
                      line_count, piece_count, len(full_text))
         return full_text
 
+    @multimodal_cooldown
     def _openai_chat_api(self, message: str, persona: str,
                          on_chunk_emit=None, images: list[bytes] = None,
                          history: list[dict] | None = None,

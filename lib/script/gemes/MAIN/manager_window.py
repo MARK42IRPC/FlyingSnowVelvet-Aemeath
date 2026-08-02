@@ -28,26 +28,33 @@ from config.font_config import get_digit_font, get_ui_font
 from config.scale import scale_px
 from lib.core.anchor_utils import apply_ui_opacity
 from lib.script.gemes.MAIN.game_packages import InstalledGame, get_game_package_service
-from lib.script.workbench.theme import COLORS as WORKBENCH_COLORS
+from lib.script.workbench.theme import get_workbench_colors
 
 if TYPE_CHECKING:
     from .runtime import GameRuntime
 
 
-_BG = QColor(WORKBENCH_COLORS.canvas)
-_PANEL = QColor(WORKBENCH_COLORS.surface)
-_CARD = QColor(WORKBENCH_COLORS.surface_raised)
-_BORDER = QColor(WORKBENCH_COLORS.border)
-_SOFT = QColor(WORKBENCH_COLORS.border_strong)
-_MID = QColor(WORKBENCH_COLORS.surface_hover)
-_PINK = QColor(WORKBENCH_COLORS.pink)
-_PINK_SOFT = QColor(WORKBENCH_COLORS.pink_hover)
-_CYAN = QColor(WORKBENCH_COLORS.cyan)
-_TEXT = QColor(WORKBENCH_COLORS.text)
-_TEXT_SOFT = QColor(WORKBENCH_COLORS.text_muted)
-_TEXT_DIM = QColor(WORKBENCH_COLORS.text_dim)
-_BLACK = QColor(WORKBENCH_COLORS.canvas)
-_DANGER = QColor(WORKBENCH_COLORS.danger)
+def _set_theme_colors() -> None:
+    colors = get_workbench_colors()
+    globals().update({
+        "_BG": QColor(colors.canvas),
+        "_PANEL": QColor(colors.surface),
+        "_CARD": QColor(colors.surface_raised),
+        "_BORDER": QColor(colors.border),
+        "_SOFT": QColor(colors.border_strong),
+        "_MID": QColor(colors.surface_hover),
+        "_PINK": QColor(colors.pink),
+        "_PINK_SOFT": QColor(colors.pink_hover),
+        "_CYAN": QColor(colors.cyan),
+        "_TEXT": QColor(colors.text),
+        "_TEXT_SOFT": QColor(colors.text_muted),
+        "_TEXT_DIM": QColor(colors.text_dim),
+        "_BLACK": QColor(colors.canvas),
+        "_DANGER": QColor(colors.danger),
+    })
+
+
+_set_theme_colors()
 
 
 def _rgb(color: QColor) -> str:
@@ -547,6 +554,12 @@ class GameManagerWindow(QWidget):
             QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: transparent; }}
             """
         )
+
+    def refresh_workbench_theme(self) -> None:
+        """Rebuild page styles after a workbench theme change."""
+        _set_theme_colors()
+        self._apply_styles()
+        self.update()
 
     def _make_panel_title(self, title: str, subtitle: str) -> QWidget:
         box = QWidget(self)

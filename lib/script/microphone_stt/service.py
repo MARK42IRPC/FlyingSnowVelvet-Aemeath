@@ -30,6 +30,7 @@ _DEFAULT_SILENCE_TIMEOUT_SECS = 3.0
 _DEFAULT_SPEECH_RMS_THRESHOLD = 550
 _DEFAULT_DENOISE_STRENGTH = 0.65
 _DEFAULT_NOISE_GATE_THRESHOLD = 180
+_DENOISE_FRAME_SAMPLES = 160  # 10 ms at the default 16 kHz sample rate
 _MODEL_ENV_KEYS = ("VOSK_MODEL_PATH", "VOSK_MODEL_DIR")
 _MODEL_DIR_CANDIDATES = (
     "resc/models/vosk-model-small-cn-0.22",
@@ -76,22 +77,41 @@ def denoise_pcm16(
 
     strength_value = max(0.0, min(1.0, float(strength)))
     gate = max(0, min(32767, int(gate_threshold)))
-    rms = math.sqrt(sum(int(sample) * int(sample) for sample in samples) / len(samples))
+    # Estimate the noise from the quieter short frames. A whole-chunk RMS is
+    # easily contaminated by speech and then raises the gate while someone is
+    # talking, which causes the end of words to be clipped.
+    frame_rms: list[float] = []
+    for start in range(0, len(samples), _DENOISE_FRAME_SAMPLES):
+        frame = samples[start:start + _DENOISE_FRAME_SAMPLES]
+        if frame:
+            frame_rms.append(math.sqrt(sum(int(sample) * int(sample) for sample in frame) / len(frame)))
+    frame_rms.sort()
+    quiet_index = max(0, int(len(frame_rms) * 0.25) - 1)
+    observed_floor = frame_rms[quiet_index] if frame_rms else 0.0
+
     floor = max(0.0, float(noise_floor or gate))
-    if rms <= max(float(gate) * 2.0, floor * 2.0):
-        floor = floor * 0.96 + rms * 0.04
-    effective_gate = max(float(gate), floor * 1.35)
+    if observed_floor <= max(float(gate) * 2.0, floor * 2.0):
+        # Adapt quickly enough to follow a changed microphone, but slowly
+        # enough that a short quiet gap does not collapse the noise profile.
+        floor = floor * 0.88 + observed_floor * 0.12
+    effective_gate = max(float(gate), floor * 1.45)
     if effective_gate <= 0.0 or strength_value <= 0.0:
         return chunk, floor
 
+    knee_start = max(floor * 1.05, effective_gate * 0.45)
+    minimum_gain = max(0.08, 1.0 - 0.82 * strength_value)
     for index, sample in enumerate(samples):
         magnitude = abs(int(sample))
         if magnitude >= effective_gate:
             continue
-        ratio = max(0.0, min(1.0, magnitude / effective_gate))
-        # The exponent makes quiet background sound fall away quickly while
-        # leaving samples close to the speech boundary mostly intact.
-        gain = ratio ** (1.0 + 4.0 * strength_value)
+        if magnitude <= knee_start:
+            gain = minimum_gain
+        else:
+            ratio = (magnitude - knee_start) / max(1.0, effective_gate - knee_start)
+            ratio = max(0.0, min(1.0, ratio))
+            # Smoothstep avoids the hard gain corner of a conventional gate.
+            curve = ratio * ratio * (3.0 - 2.0 * ratio)
+            gain = minimum_gain + (1.0 - minimum_gain) * curve
         samples[index] = max(-32768, min(32767, int(round(sample * gain))))
     return samples.tobytes(), floor
 

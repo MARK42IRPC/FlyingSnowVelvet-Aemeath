@@ -82,6 +82,15 @@ class _FakeTimingManager:
         self.limits.append((source, fps))
 
 
+class _ThemeAwarePage(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.theme_refreshes = 0
+
+    def refresh_workbench_theme(self):
+        self.theme_refreshes += 1
+
+
 class WorkbenchWindowTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -190,6 +199,51 @@ class WorkbenchWindowTests(unittest.TestCase):
             self.assertEqual(window.font().family(), get_ui_font_family())
             self.assertEqual(window._search.font().family(), get_ui_font_family())
             self.assertTrue(window._theme_toggle.isChecked())
+        finally:
+            UI["workbench_light_theme"] = original_theme
+            window.deleteLater()
+            self.app.processEvents()
+
+    def test_external_theme_refresh_is_deferred_and_visible_page_only(self):
+        panel = _FakeControlPanel()
+        pages = {}
+
+        def make_page(page_id):
+            page = _ThemeAwarePage()
+            pages[page_id] = page
+            return page
+
+        extras = [
+            ("bug_tracker", "Bug tracker", lambda: make_page("bug_tracker")),
+            ("game_manager", "Game manager", lambda: make_page("game_manager")),
+        ]
+        original_theme = UI["workbench_light_theme"]
+        with patch.object(workbench_module, "QSettings", _MemorySettings):
+            window = workbench_module.WorkbenchWindow(
+                lambda: panel,
+                control_panel_page_specs=panel.get_workbench_page_specs(),
+                extra_page_specs=extras,
+            )
+
+        try:
+            window._set_current_page("bug_tracker")
+            window._set_current_page("game_manager")
+            UI["workbench_light_theme"] = not bool(original_theme)
+            window._on_config_updated(
+                workbench_module.Event(
+                    workbench_module.EventType.CONFIG_UPDATED,
+                    {"values": {"UI": {"workbench_light_theme": UI["workbench_light_theme"]}}},
+                )
+            )
+            self.assertEqual(pages["bug_tracker"].theme_refreshes, 0)
+            self.assertEqual(pages["game_manager"].theme_refreshes, 0)
+            self.app.processEvents()
+            self.assertEqual(pages["bug_tracker"].theme_refreshes, 0)
+            self.assertEqual(pages["game_manager"].theme_refreshes, 1)
+
+            window._set_current_page("bug_tracker")
+            self.app.processEvents()
+            self.assertEqual(pages["bug_tracker"].theme_refreshes, 1)
         finally:
             UI["workbench_light_theme"] = original_theme
             window.deleteLater()

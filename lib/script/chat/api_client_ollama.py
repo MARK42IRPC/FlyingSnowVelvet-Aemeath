@@ -9,7 +9,7 @@ import requests
 from lib.core.logger import get_logger
 
 from ._multimodal import images_to_ollama_payload
-from .api_client_common import _ApiClientCommonMixin
+from .api_client_common import _ApiClientCommonMixin, multimodal_cooldown
 from .api_client_error import _ApiClientErrorMixin
 from .native_tools import NATIVE_TOOL_SYSTEM_NOTE, NativeToolCallAccumulator, get_native_tool_definitions
 
@@ -47,6 +47,7 @@ class _ApiClientOllamaMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
             result[k] = v
         return result
 
+    @multimodal_cooldown
     def _chat_api(self, message: str, persona: str, model: str,
                   on_chunk_emit=None, images: list[bytes] = None,
                   history: list[dict] | None = None,
@@ -136,6 +137,7 @@ class _ApiClientOllamaMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
         finally:
             resp.close()
 
+    @multimodal_cooldown
     def _generate_api(self, message: str, persona: str, model: str,
                       on_chunk_emit=None, images: list[bytes] = None,
                       history: list[dict] | None = None) -> str:

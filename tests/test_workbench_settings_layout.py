@@ -26,11 +26,13 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
+from config.scale import scale_px
 from lib.script.workbench.settings import (
     GENERAL_CONFIG_CATEGORIES,
     SettingsPageScaffold,
     create_settings_form,
 )
+from lib.script.workbench.settings.page_layout import SETTINGS_FONT_SIZE
 from lib.script.workbench.theme import LIGHT_COLORS, workbench_stylesheet
 
 
@@ -147,6 +149,22 @@ class WorkbenchSettingsLayoutTests(unittest.TestCase):
         self.assertIn("QWidget#WorkbenchWindow *", light)
         self.assertIn("font-family:", light)
         self.assertNotEqual(dark, light)
+
+    def test_settings_scaffold_uses_readable_ai_scale_for_generated_controls(self):
+        page = QWidget()
+        scaffold = SettingsPageScaffold(page, "测试设置", "说明")
+        section = scaffold.add_section("基础")
+        form = create_settings_form()
+        field = QLineEdit()
+        form.addRow("字段", field)
+        section.body_layout.addLayout(form)
+        scaffold.finish()
+
+        self.assertEqual(field.font().pixelSize(), SETTINGS_FONT_SIZE)
+        self.assertGreaterEqual(field.sizeHint().height(), field.fontMetrics().height())
+
+        page.deleteLater()
+        self.app.processEvents()
 
 
 if __name__ == "__main__":

@@ -34,7 +34,7 @@ logger = get_logger(__name__)
 
 VOICE_PACKAGE_FORMAT = "aemeath-gpt-sovits-onnx"
 VOICE_PACKAGE_FORMAT_VERSION = 2
-VOICE_PACKAGE_RUNTIME_REVISION = 3
+VOICE_PACKAGE_RUNTIME_REVISION = 4
 VOICE_PACKAGE_DIR_NAME = "ONNX_aimisiV2"
 
 _MODELSCOPE_ARCHIVE_BASE = (
@@ -84,6 +84,13 @@ _REQUIRED_PACKAGE_FILES = (
     "common/RoBERTa/RoBERTa.onnx",
     "common/RoBERTa/roberta_tokenizer/tokenizer.json",
     "common/G2P/ChineseG2P/polyphonic.pickle",
+    "common/G2P/G2PW/g2pw_frontend.py",
+    "common/G2P/G2PW/g2pW_int4_fp16mix.onnx",
+    "common/G2P/G2PW/bopomofo_to_pinyin_wo_tune_dict.json",
+    "common/G2P/G2PW/char_bopomofo_dict.json",
+    "common/G2P/G2PW/POLYPHONIC_CHARS.txt",
+    "common/G2P/G2PW/MONOPHONIC_CHARS.txt",
+    "common/G2P/G2PW/config.py",
     "common/G2P/EnglishG2P/checkpoint20.npz",
 )
 
@@ -167,26 +174,26 @@ VOICE_PACKAGE_PROFILES = {
     "fp32": VoicePackageProfile(
         "fp32",
         "完全包",
-        "最高质量 · 下载 1.08 GiB",
+        "最高质量 · G2PW 混合前端 · 下载 1.25 GiB",
         "Aemeath_ONNX_GSV_Complete_FP32.rar",
-        1_158_190_671,
-        1_438_886_877,
+        1_340_211_292,
+        1_636_546_624,
     ),
     "fp16": VoicePackageProfile(
         "fp16",
         "中等包",
-        "均衡体积 · 下载 1.02 GiB",
+        "均衡体积 · G2PW 混合前端 · 下载 1.19 GiB",
         "Aemeath_ONNX_GSV_Medium_FP16.rar",
-        1_096_305_481,
-        1_211_004_205,
+        1_278_327_111,
+        1_408_663_952,
     ),
     "int8": VoicePackageProfile(
         "int8",
         "节约包",
-        "强烈推荐 · 节省空间 · 下载 0.63 GiB",
+        "强烈推荐 · G2PW 混合前端 · 下载 1.04 GiB",
         "Aemeath_ONNX_GSV_Saver_INT8.rar",
-        677_423_752,
-        853_957_055,
+        1_114_131_493,
+        1_282_211_358,
     ),
 }
 DEFAULT_VOICE_PACKAGE_PROFILE = "fp16"

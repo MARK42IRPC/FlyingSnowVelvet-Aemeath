@@ -10,6 +10,7 @@ from PyQt5.QtCore import (
     QPoint,
     QPropertyAnimation,
     QSettings,
+    QTimer,
     Qt,
     QVariantAnimation,
 )
@@ -165,6 +166,9 @@ class WorkbenchWindow(QWidget):
         self._group_labels: dict[str, QLabel] = {}
         self._external_page_slots: dict[str, tuple[QFrame, QVBoxLayout, Callable[[], object]]] = {}
         self._external_pages: dict[str, QWidget] = {}
+        self._stale_external_theme_pages: set[str] = set()
+        self._theme_refresh_scheduled = False
+        self._active_page_id = "overview"
         self._page_buttons: list[QPushButton] = []
         self._drag_targets: set[QWidget] = set()
         self._dragging = False
@@ -406,8 +410,8 @@ class WorkbenchWindow(QWidget):
             refresh_theme = getattr(control_panel, "refresh_workbench_theme", None)
             if callable(refresh_theme):
                 refresh_theme()
-        self.style().unpolish(self)
-        self.style().polish(self)
+        self._stale_external_theme_pages.update(self._external_pages)
+        self._schedule_external_theme_refresh()
         self.update()
         self._shell.update()
         self._stack.update()
@@ -700,12 +704,35 @@ class WorkbenchWindow(QWidget):
         elif hasattr(page, "_refresh_now"):
             page._refresh_now()
 
+    def _schedule_external_theme_refresh(self) -> None:
+        """Defer expensive page polish until the theme event has returned."""
+        if self._theme_refresh_scheduled:
+            return
+        self._theme_refresh_scheduled = True
+        QTimer.singleShot(0, self._refresh_visible_external_theme)
+
+    def _refresh_visible_external_theme(self) -> None:
+        self._theme_refresh_scheduled = False
+        page_id = self._active_page_id
+        if page_id not in self._stale_external_theme_pages:
+            return
+        page = self._external_pages.get(page_id)
+        if page is None:
+            return
+        refresh_theme = getattr(page, "refresh_workbench_theme", None)
+        if callable(refresh_theme):
+            refresh_theme()
+        self._stale_external_theme_pages.discard(page_id)
+
     def _set_current_page(self, page_id: str) -> None:
         spec = self._registry.get(page_id) or self._registry.get("overview")
         if spec is None:
             return
 
         self._ensure_external_page(spec.page_id)
+        self._active_page_id = spec.page_id
+        if spec.page_id in self._stale_external_theme_pages:
+            self._schedule_external_theme_refresh()
         target_host = self._page_hosts[spec.page_id]
         previous_host = self._stack.currentWidget()
         transition = previous_host is not target_host and self.isVisible()

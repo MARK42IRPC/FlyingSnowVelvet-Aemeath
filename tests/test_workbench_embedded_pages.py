@@ -23,6 +23,7 @@ os.environ.setdefault("QT_PLUGIN_PATH", os.path.join(_QT_ROOT, "Qt5", "plugins")
 from PyQt5.QtWidgets import QApplication
 
 from config.scale import scale_px
+from config.config import UI
 from lib.script.bug_tracker import window as bug_tracker_module
 from lib.script.gemes.MAIN import manager_window as game_manager_module
 
@@ -67,6 +68,25 @@ class WorkbenchEmbeddedPageTests(unittest.TestCase):
         page.deleteLater()
         self.app.processEvents()
 
+    def test_game_manager_refreshes_theme_styles(self):
+        original_theme = UI["workbench_light_theme"]
+        try:
+            UI["workbench_light_theme"] = False
+            with patch.object(
+                game_manager_module,
+                "get_game_package_service",
+                return_value=_FakeGameService(),
+            ):
+                page = game_manager_module.GameManagerWindow(_FakeGameRuntime())
+            UI["workbench_light_theme"] = True
+            page.refresh_workbench_theme()
+            self.assertIn("rgb(255, 248, 251)", page.styleSheet())
+            self.assertIn("rgb(32, 52, 77)", page.styleSheet())
+        finally:
+            UI["workbench_light_theme"] = original_theme
+            page.deleteLater()
+            self.app.processEvents()
+
     def test_bug_tracker_uses_compact_toolbar_when_embedded(self):
         with patch.object(bug_tracker_module.BugTrackerWindow, "_reload_snapshot", lambda self, force=False: None), patch.object(
             bug_tracker_module.BugTrackerWindow,
@@ -93,6 +113,25 @@ class WorkbenchEmbeddedPageTests(unittest.TestCase):
 
         page.deleteLater()
         self.app.processEvents()
+
+    def test_bug_tracker_refreshes_theme_styles(self):
+        original_theme = UI["workbench_light_theme"]
+        try:
+            UI["workbench_light_theme"] = False
+            with patch.object(bug_tracker_module.BugTrackerWindow, "_reload_snapshot", lambda self, force=False: None), patch.object(
+                bug_tracker_module.BugTrackerWindow,
+                "_reload_watermark_texts",
+                lambda self: None,
+            ):
+                page = bug_tracker_module.BugTrackerWindow(embedded=True)
+            UI["workbench_light_theme"] = True
+            page.refresh_workbench_theme()
+            self.assertIn("rgb(255, 248, 251)", page.styleSheet())
+            self.assertIn("rgb(32, 52, 77)", page.styleSheet())
+        finally:
+            UI["workbench_light_theme"] = original_theme
+            page.deleteLater()
+            self.app.processEvents()
 
 
 if __name__ == "__main__":

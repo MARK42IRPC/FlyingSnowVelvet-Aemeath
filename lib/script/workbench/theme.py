@@ -297,6 +297,19 @@ def workbench_stylesheet(mode: str | None = None) -> str:
         selection-background-color: {c.cyan};
         selection-color: {c.canvas};
     }}
+    QFrame#WorkbenchPageHost QWidget#SettingsPage QLineEdit,
+    QFrame#WorkbenchPageHost QWidget#SettingsPage QComboBox,
+    QFrame#WorkbenchPageHost QWidget#SettingsPage QSpinBox,
+    QFrame#WorkbenchPageHost QWidget#SettingsPage QDoubleSpinBox,
+    QFrame#WorkbenchPageHost QWidget#SettingsPage QTextEdit,
+    QFrame#WorkbenchPageHost QWidget#SettingsPage QPlainTextEdit,
+    QFrame#WorkbenchPageHost QWidget#SettingsPage QPushButton {{
+        min-height: {scale_px(38, min_abs=34)}px;
+        font-size: {scale_px(17, min_abs=12)}px;
+    }}
+    QFrame#WorkbenchPageHost QWidget#SettingsPage QCheckBox {{
+        font-size: {scale_px(17, min_abs=12)}px;
+    }}
     QFrame#WorkbenchPageHost QLineEdit:focus,
     QFrame#WorkbenchPageHost QComboBox:focus,
     QFrame#WorkbenchPageHost QSpinBox:focus,

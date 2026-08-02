@@ -2,6 +2,11 @@
 
 import atexit
 import threading
+import time
+from collections import deque
+from dataclasses import dataclass
+from functools import wraps
+from typing import Callable, Generic, TypeVar
 from typing import Any
 
 import requests
@@ -11,6 +16,90 @@ _SESSION_LOCK = threading.Lock()
 _SESSION_CACHE: dict[bool, requests.Session] = {}
 _NATIVE_TOOL_CAPABILITY_LOCK = threading.Lock()
 _NATIVE_TOOL_UNSUPPORTED_TARGETS: set[tuple[str, str]] = set()
+
+
+UPLOAD_COOLDOWN_SECONDS = 5.0
+_UploadResult = TypeVar("_UploadResult")
+
+
+@dataclass
+class _QueuedUpload(Generic[_UploadResult]):
+    operation: Callable[[], _UploadResult]
+    completed: threading.Event
+    result: _UploadResult | None = None
+    error: BaseException | None = None
+
+
+class _UploadCooldownQueue(Generic[_UploadResult]):
+    """Serialize multimodal request starts and enforce a post-start cooldown."""
+
+    def __init__(self, cooldown_seconds: float = UPLOAD_COOLDOWN_SECONDS) -> None:
+        self._cooldown_seconds = max(0.0, float(cooldown_seconds))
+        self._condition = threading.Condition()
+        self._queue: deque[_QueuedUpload[_UploadResult]] = deque()
+        self._last_started_at: float | None = None
+
+    def submit(self, operation: Callable[[], _UploadResult]) -> _UploadResult:
+        item = _QueuedUpload(operation=operation, completed=threading.Event())
+        with self._condition:
+            self._queue.append(item)
+            self._condition.notify_all()
+
+        while not item.completed.is_set():
+            should_run = False
+            with self._condition:
+                if self._queue and self._queue[0] is item:
+                    remaining = self._remaining_cooldown_locked()
+                    if remaining > 0:
+                        self._condition.wait(timeout=remaining)
+                        continue
+                    self._queue.popleft()
+                    self._last_started_at = time.monotonic()
+                    should_run = True
+                else:
+                    self._condition.wait()
+            if not should_run:
+                continue
+            try:
+                item.result = operation()
+            except BaseException as exc:
+                item.error = exc
+            finally:
+                with self._condition:
+                    item.completed.set()
+                    self._condition.notify_all()
+            break
+
+        if item.error is not None:
+            raise item.error
+        return item.result  # type: ignore[return-value]
+
+    def _remaining_cooldown_locked(self) -> float:
+        if self._last_started_at is None:
+            return 0.0
+        return max(
+            0.0,
+            self._cooldown_seconds - (time.monotonic() - self._last_started_at),
+        )
+
+
+_MULTIMODAL_REQUEST_QUEUE: _UploadCooldownQueue[Any] = _UploadCooldownQueue()
+
+
+def multimodal_cooldown(method):
+    """Apply the shared upload CD only when a model request carries images."""
+    @wraps(method)
+    def wrapped(self, *args, **kwargs):
+        images = kwargs.get("images")
+        if images is None and len(args) > 3:
+            images = args[3]
+        if not images:
+            return method(self, *args, **kwargs)
+        return _MULTIMODAL_REQUEST_QUEUE.submit(
+            lambda: method(self, *args, **kwargs)
+        )
+
+    return wrapped
 
 
 def _close_cached_sessions() -> None:

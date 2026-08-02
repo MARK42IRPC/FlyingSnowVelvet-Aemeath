@@ -34,23 +34,31 @@ from lib.core.anchor_utils import apply_ui_opacity
 from lib.core.unified_draw import get_layer_manager
 from lib.script.app.startup_probe import load_saved_watermark_payload
 from lib.script.bug_tracker.storage import BugInstanceInfo, BugRecord, BugTrackerLogStore
-from lib.script.workbench.theme import COLORS as WORKBENCH_COLORS
+from lib.script.workbench.theme import get_workbench_colors
 
-_BG = QColor(WORKBENCH_COLORS.canvas)
-_HEADER_BG = QColor(WORKBENCH_COLORS.surface)
-_PANEL_BG = QColor(WORKBENCH_COLORS.surface_raised)
-_BORDER = QColor(WORKBENCH_COLORS.border)
-_SOFT_BORDER = QColor(WORKBENCH_COLORS.border_strong)
-_MID = QColor(WORKBENCH_COLORS.surface_hover)
-_PINK = QColor(WORKBENCH_COLORS.pink)
-_PINK_SOFT = QColor(WORKBENCH_COLORS.pink_hover)
-_CYAN = QColor(WORKBENCH_COLORS.cyan)
-_WARNING = QColor(WORKBENCH_COLORS.warning)
-_DANGER = QColor(WORKBENCH_COLORS.danger)
-_TEXT_MAIN = QColor(WORKBENCH_COLORS.text)
-_TEXT_SOFT = QColor(WORKBENCH_COLORS.text_muted)
-_TEXT_DIM = QColor(WORKBENCH_COLORS.text_dim)
-_BLACK = QColor(WORKBENCH_COLORS.canvas)
+
+def _set_theme_colors() -> None:
+    colors = get_workbench_colors()
+    globals().update({
+        "_BG": QColor(colors.canvas),
+        "_HEADER_BG": QColor(colors.surface),
+        "_PANEL_BG": QColor(colors.surface_raised),
+        "_BORDER": QColor(colors.border),
+        "_SOFT_BORDER": QColor(colors.border_strong),
+        "_MID": QColor(colors.surface_hover),
+        "_PINK": QColor(colors.pink),
+        "_PINK_SOFT": QColor(colors.pink_hover),
+        "_CYAN": QColor(colors.cyan),
+        "_WARNING": QColor(colors.warning),
+        "_DANGER": QColor(colors.danger),
+        "_TEXT_MAIN": QColor(colors.text),
+        "_TEXT_SOFT": QColor(colors.text_muted),
+        "_TEXT_DIM": QColor(colors.text_dim),
+        "_BLACK": QColor(colors.canvas),
+    })
+
+
+_set_theme_colors()
 
 
 class _BugTrackerWatermarkOverlay(QWidget):
@@ -459,6 +467,31 @@ class BugTrackerWindow(QWidget):
 
         self._reload_watermark_texts()
         self._reload_snapshot()
+
+    def refresh_workbench_theme(self) -> None:
+        """Recolor the already-built page after a workbench theme change."""
+        old_values = {
+            name: globals()[name].getRgb() for name in (
+                "_BG", "_HEADER_BG", "_PANEL_BG", "_BORDER", "_SOFT_BORDER",
+                "_MID", "_PINK", "_PINK_SOFT", "_CYAN", "_WARNING", "_DANGER",
+                "_TEXT_MAIN", "_TEXT_SOFT", "_TEXT_DIM", "_BLACK",
+            )
+        }
+        _set_theme_colors()
+        new_values = {name: globals()[name].getRgb() for name in old_values}
+        stylesheet = self.styleSheet()
+        replacements = []
+        for index, name in enumerate(old_values):
+            old_rgb = ", ".join(str(value) for value in old_values[name][:3])
+            new_rgb = ", ".join(str(value) for value in new_values[name][:3])
+            marker = f"__WORKBENCH_THEME_{index}__"
+            replacements.append((old_rgb, marker, new_rgb))
+        for old_rgb, marker, _new_rgb in replacements:
+            stylesheet = stylesheet.replace(old_rgb, marker)
+        for _old_rgb, marker, new_rgb in replacements:
+            stylesheet = stylesheet.replace(marker, new_rgb)
+        self.setStyleSheet(stylesheet)
+        self.update()
 
     def set_embedded_mode(self, embedded: bool = True) -> None:
         self._embedded = bool(embedded)
