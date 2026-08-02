@@ -119,6 +119,14 @@ class GameModeServiceTests(unittest.TestCase):
         self.assertEqual(_get_effective_auto_companion_interval_ms(), (300000, 300000))
         service.cleanup()
 
+    def test_auto_companion_interval_accepts_configured_minute_limits(self) -> None:
+        from config.ollama_config import AUTO_COMPANION
+
+        with patch.dict(AUTO_COMPANION, {"interval_ms": (60000, 60000)}):
+            self.assertEqual(_get_effective_auto_companion_interval_ms(), (60000, 60000))
+        with patch.dict(AUTO_COMPANION, {"interval_ms": (1200000, 1200000)}):
+            self.assertEqual(_get_effective_auto_companion_interval_ms(), (1200000, 1200000))
+
     def test_restore_uses_configured_fps_when_runtime_is_temporarily_limited(self) -> None:
         timing = _FakeTimingManager()
         timing.frame_fps = 30

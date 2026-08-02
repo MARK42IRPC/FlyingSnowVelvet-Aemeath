@@ -48,6 +48,7 @@ def validate_ai_values(values: dict) -> None:
     gsv_gpu_hybrid = values.get("gsv_gpu_hybrid")
     api_enable_thinking = values.get("api_enable_thinking")
     auto_companion_enabled = values.get("auto_companion_enabled")
+    auto_companion_interval_minutes = values.get("auto_companion_interval_minutes")
     ai_voice_max_chars = values.get("ai_voice_max_chars")
     gsv_cache_max_files = values.get("gsv_cache_max_files")
     memory_context_limit = values.get("memory_context_limit")
@@ -196,3 +197,7 @@ def validate_ai_values(values: dict) -> None:
         raise ValueError("思考模式配置无效")
     if not isinstance(auto_companion_enabled, bool):
         raise ValueError("自动陪伴配置无效")
+    if isinstance(auto_companion_interval_minutes, bool) or not isinstance(auto_companion_interval_minutes, int):
+        raise ValueError("自动陪伴间隔必须是整数")
+    if not (1 <= auto_companion_interval_minutes <= 20):
+        raise ValueError("自动陪伴间隔范围应为 1~20 分钟")

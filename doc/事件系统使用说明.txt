@@ -88,6 +88,10 @@ STREAM_FINAL
 - `tool_call` 为通过 `lib/script/chat/native_tools.py` 白名单校验的原生 Function Calling 调用；存在时工具调度器优先使用它，不再解析正文里的兼容标记
 - `allow_tool_commands=false` 时，结构化调用和 `###指令###` 均不得执行
 
+CONFIG_UPDATED
+- 用途：通知运行时配置已完成热更新
+- AI 设置保存时 payload 的 `source` 为 `ai`；聊天处理器会据此立即重排自动陪伴定时器
+
 MIC_STT_*
 - `MIC_STT_START`
 - `MIC_STT_STOP`

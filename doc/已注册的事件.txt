@@ -32,6 +32,12 @@
 - lib/script/SEanima/animation.py -> self._handle_pre_start [has unsubscribe]
 - lib/script/yuanbao_free_api/service.py -> self._on_app_pre_start [has unsubscribe]
 
+[CONFIG_UPDATED]
+- lib/script/chat/handler.py -> self._on_auto_companion_config_updated [has unsubscribe]
+- lib/script/gsvmove/service.py -> self._on_config_updated [has unsubscribe]
+- lib/script/ui/workbench_window.py -> self._on_config_updated [has unsubscribe]
+  发布方: lib/script/ui/ai_settings_panel.py, lib/script/ui/ai_settings_storage.py, lib/script/ui/workbench_window.py
+
 [APP_QUIT]
 - lib/core/event/app_handler.py -> self._on_app_quit
 - lib/script/main.py -> self._on_app_quit

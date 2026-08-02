@@ -59,6 +59,7 @@ def load_ai_values(default_values: dict) -> dict:
         "memory_recall_count": oc.OLLAMA.get("memory_recall_count", 30),
         "api_enable_thinking": bool(oc.OLLAMA.get("api_enable_thinking", False)),
         "auto_companion_enabled": bool(oc.AUTO_COMPANION.get("enabled", True)),
+        "auto_companion_interval_minutes": int(oc.AUTO_COMPANION.get("interval_minutes", 2)),
     })
     return values
 
@@ -110,6 +111,9 @@ def apply_ai_runtime(values: dict, default_values: dict) -> None:
     oc.OLLAMA["memory_recall_count"] = values["memory_recall_count"]
     oc.OLLAMA["api_enable_thinking"] = values["api_enable_thinking"]
     oc.AUTO_COMPANION["enabled"] = values["auto_companion_enabled"]
+    interval_minutes = int(values["auto_companion_interval_minutes"])
+    oc.AUTO_COMPANION["interval_minutes"] = interval_minutes
+    oc.AUTO_COMPANION["interval_ms"] = (interval_minutes * 60000, interval_minutes * 60000)
     oc.OLLAMA_OPTIONS["num_gpu"] = values["num_gpu"]
     oc.OLLAMA_OPTIONS["num_thread"] = values["num_thread"]
 

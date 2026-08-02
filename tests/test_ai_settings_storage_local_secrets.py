@@ -99,6 +99,24 @@ class AISettingsStorageLocalSecretsTests(unittest.TestCase):
             with self.subTest(key=key):
                 self.assertIn(key, loaded)
 
+    def test_apply_runtime_converts_auto_companion_minutes_to_milliseconds(self):
+        defaults = oc.get_ai_setting_defaults()
+        values = storage.load_ai_values(defaults)
+        values["auto_companion_interval_minutes"] = 13
+
+        original = dict(oc.AUTO_COMPANION)
+        with patch("lib.script.chat.ollama.get_ollama_manager") as manager, patch(
+            "lib.core.event.center.get_event_center"
+        ):
+            try:
+                storage.apply_ai_runtime(values, defaults)
+                self.assertEqual(oc.AUTO_COMPANION["interval_minutes"], 13)
+                self.assertEqual(oc.AUTO_COMPANION["interval_ms"], (780000, 780000))
+            finally:
+                oc.AUTO_COMPANION.clear()
+                oc.AUTO_COMPANION.update(original)
+        manager.return_value.reload_config.assert_called_once_with()
+
     def test_saved_api_key_is_loaded_by_a_fresh_process(self):
         project_root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -60,6 +60,28 @@ class AISettingsReplyModeSectionsTests(unittest.TestCase):
             ("元宝", "4"),
         ])
 
+    def test_auto_companion_interval_slider_uses_minute_limits(self):
+        field = self.panel._auto_companion_interval_minutes
+
+        field.set_value(1)
+        self.assertEqual(field.value(), 1)
+        self.assertEqual(field._value_label.text(), "1 分钟")
+        field.set_value(20)
+        self.assertEqual(field.value(), 20)
+        self.assertEqual(field._value_label.text(), "20 分钟")
+
+        self.panel._auto_companion_enabled.setChecked(False)
+        self.assertFalse(field.isEnabled())
+        self.panel._auto_companion_enabled.setChecked(True)
+        self.assertTrue(field.isEnabled())
+
+    def test_collect_values_includes_auto_companion_interval(self):
+        self.panel._auto_companion_interval_minutes.set_value(13)
+
+        values = self.panel._collect_values()
+
+        self.assertEqual(values["auto_companion_interval_minutes"], 13)
+
     def test_mode_specific_sections_are_hidden_until_selected(self):
         self._select_mode("1")
         self.assertFalse(self.panel._welfare_section.isHidden())

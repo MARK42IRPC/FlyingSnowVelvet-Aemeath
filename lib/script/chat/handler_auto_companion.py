@@ -12,15 +12,15 @@ from .vision_capture import capture_screen
 
 logger = get_logger(__name__)
 
-AUTO_COMPANION_BASELINE_INTERVAL_MS = (120000, 360000)
+AUTO_COMPANION_BASELINE_INTERVAL_MS = (120000, 120000)
+AUTO_COMPANION_MIN_INTERVAL_MS = 60000
+AUTO_COMPANION_MAX_INTERVAL_MS = 1200000
 AUTO_COMPANION_PROMPT = '(仔细观察屏幕,然后简要分析漂泊者现在在做什么呢?)'
 
 
 def _resolve_auto_companion_interval(interval_value) -> tuple[int, int]:
     """
-    自动陪伴间隔兜底：
-    - 以当前默认配置作为硬编码基线
-    - 仅允许上调，不允许下调
+    自动陪伴间隔兜底并限制在设置面板允许的 1~20 分钟范围内。
     """
     base_min, base_max = AUTO_COMPANION_BASELINE_INTERVAL_MS
     resolved_min, resolved_max = base_min, base_max
@@ -29,8 +29,8 @@ def _resolve_auto_companion_interval(interval_value) -> tuple[int, int]:
         try:
             cfg_min = int(interval_value[0])
             cfg_max = int(interval_value[1])
-            resolved_min = max(cfg_min, base_min)
-            resolved_max = max(cfg_max, base_max)
+            resolved_min = max(AUTO_COMPANION_MIN_INTERVAL_MS, min(AUTO_COMPANION_MAX_INTERVAL_MS, cfg_min))
+            resolved_max = max(AUTO_COMPANION_MIN_INTERVAL_MS, min(AUTO_COMPANION_MAX_INTERVAL_MS, cfg_max))
             if resolved_max < resolved_min:
                 resolved_max = resolved_min
         except (TypeError, ValueError):
@@ -38,7 +38,7 @@ def _resolve_auto_companion_interval(interval_value) -> tuple[int, int]:
 
     if (resolved_min, resolved_max) != (base_min, base_max):
         logger.info(
-            "[ChatHandler] 自动陪伴间隔已应用上调配置（基线 %d~%d ms -> 生效 %d~%d ms）",
+            "[ChatHandler] 自动陪伴间隔已应用配置（默认 %d~%d ms -> 生效 %d~%d ms）",
             base_min,
             base_max,
             resolved_min,
@@ -84,9 +84,13 @@ class ChatHandlerAutoCompanionMixin:
     def _on_app_main(self, event: Event):
         """应用主循环就绪后，启动自动陪伴轮询（仅外部 API 模式）。"""
         if not self._ollama.use_api_key_mode:
+            if self._auto_timer is not None:
+                self._auto_timer.stop()
             logger.info("[ChatHandler] 当前非外部API模式，自动陪伴轮询未启用")
             return
         if not _is_auto_companion_enabled():
+            if self._auto_timer is not None:
+                self._auto_timer.stop()
             logger.info("[ChatHandler] 自动陪伴已关闭，轮询未启用")
             return
 
@@ -100,6 +104,12 @@ class ChatHandlerAutoCompanionMixin:
         min_s = interval_ms[0] // 1000
         max_s = interval_ms[1] // 1000
         logger.info("[ChatHandler] 自动陪伴轮询已启用（%d~%d秒）", min_s, max_s)
+
+    def _on_auto_companion_config_updated(self, event: Event) -> None:
+        data = event.data or {}
+        if str(data.get("source", "")).strip() != "ai":
+            return
+        self._on_app_main(event)
 
     def _schedule_next_auto_tick(self):
         """按随机间隔调度下一次自动陪伴请求。"""

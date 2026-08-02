@@ -148,6 +148,7 @@ _DEFAULT_VALUES = {
     "memory_recall_count": 30,
     "api_enable_thinking": False,
     "auto_companion_enabled": True,
+    "auto_companion_interval_minutes": 2,
 }
 
 _WATERMARK_TEXT = "Aemeath\nAIsetting"
@@ -1543,6 +1544,7 @@ class _DecimalSliderField(QWidget):
         *,
         value: float,
         decimals: int = 2,
+        suffix: str = "",
         parent=None,
     ):
         super().__init__(parent)
@@ -1550,6 +1552,7 @@ class _DecimalSliderField(QWidget):
         self._maximum = float(maximum)
         self._step = max(float(step), 0.0001)
         self._decimals = max(0, int(decimals))
+        self._suffix = str(suffix or "")
 
         total_steps = max(1, int(round((self._maximum - self._minimum) / self._step)))
 
@@ -1593,7 +1596,8 @@ class _DecimalSliderField(QWidget):
 
     def _format_value(self, raw_value: float) -> str:
         text = f"{self._clamp(raw_value):.{self._decimals}f}"
-        return text.rstrip("0").rstrip(".") if "." in text else text
+        formatted = text.rstrip("0").rstrip(".") if "." in text else text
+        return f"{formatted}{self._suffix}"
 
     def _sync_value_label(self, _slider_value: int) -> None:
         self._value_label.setText(self.text())
@@ -1921,6 +1925,31 @@ class AISettingsPanel(QWidget):
             self._force_mode,
             "回复只走选中的来源，失败时不会切换到其他来源。",
         )
+
+        self._auto_companion_enabled = QCheckBox("启用自动陪伴")
+        self._auto_companion_enabled.setChecked(True)
+        form.addRow("", self._auto_companion_enabled)
+        self._set_form_row_description(
+            form,
+            self._auto_companion_enabled,
+            "开启后会按设定间隔自动触发陪伴对话。",
+        )
+
+        self._auto_companion_interval_minutes = _DecimalSliderField(
+            1,
+            20,
+            1,
+            value=_DEFAULT_VALUES["auto_companion_interval_minutes"],
+            decimals=0,
+            suffix=" 分钟",
+        )
+        form.addRow("陪伴间隔", self._auto_companion_interval_minutes)
+        self._set_form_row_description(
+            form,
+            self._auto_companion_interval_minutes,
+            "自动陪伴两次观察之间的时间，范围 1~20 分钟。",
+        )
+        self._auto_companion_enabled.toggled.connect(self._auto_companion_interval_minutes.setEnabled)
 
         persona_row, persona_layout = self._create_field_row_group(spacing=scale_px(8, min_abs=6))
         self._open_persona_file_btn = QPushButton("设置人格词")
@@ -2259,15 +2288,6 @@ class AISettingsPanel(QWidget):
             form,
             self._api_enable_thinking,
             "开启后，支持思考模式的外部接口将返回推理链路。",
-        )
-
-        self._auto_companion_enabled = QCheckBox("启用自动陪伴")
-        self._auto_companion_enabled.setChecked(True)
-        form.addRow("", self._auto_companion_enabled)
-        self._set_form_row_description(
-            form,
-            self._auto_companion_enabled,
-            "开启后会按系统逻辑自动触发陪伴对话。",
         )
 
         scaffold.finish()
@@ -4808,6 +4828,7 @@ class AISettingsPanel(QWidget):
             "memory_recall_count": memory_recall_count,
             "api_enable_thinking": bool(self._api_enable_thinking.isChecked()),
             "auto_companion_enabled": bool(self._auto_companion_enabled.isChecked()),
+            "auto_companion_interval_minutes": int(self._auto_companion_interval_minutes.value()),
         }
         values.update(self._collect_hidden_yuanbao_values())
         self._validate_ai_values(values)
@@ -4864,6 +4885,8 @@ class AISettingsPanel(QWidget):
         self._memory_recall_count.setText(str(values.get("memory_recall_count", 5)))
         self._api_enable_thinking.setChecked(bool(values.get("api_enable_thinking", False)))
         self._auto_companion_enabled.setChecked(bool(values.get("auto_companion_enabled", True)))
+        self._auto_companion_interval_minutes.set_value(values.get("auto_companion_interval_minutes", 2))
+        self._auto_companion_interval_minutes.setEnabled(self._auto_companion_enabled.isChecked())
 
         mode_value = str(values.get("force_reply_mode", "") or "").strip()
         idx = self._force_mode.findData(mode_value)

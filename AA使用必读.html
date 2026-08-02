@@ -266,7 +266,7 @@
     <main>
         <div class="hero">
             <h1>飞行雪绒资料舱</h1>
-            <p>贡献 + 赞助 + 文档 · LTS1.0.6pre5<br>基于项目默认配色 + 粒子灵感打造，方便在浏览器里查阅 doc 与贡献记录。生成时间：2026-08-02 14:51:31</p>
+            <p>贡献 + 赞助 + 文档 · LTS1.0.6pre5<br>基于项目默认配色 + 粒子灵感打造，方便在浏览器里查阅 doc 与贡献记录。生成时间：2026-08-02 15:59:14</p>
         </div>
         <section id="top-panels">
             <div class="top-panels">
@@ -817,7 +817,7 @@ manager_registry.register(DemoManager.MANAGER_ID, DemoManager)
         </article>
         <article class="card">
             <header>
-                <div class="eyebrow">2026-08-02 04:58</div>
+                <div class="eyebrow">2026-08-02 15:56</div>
                 <h3>事件系统使用说明</h3>
                 <a class="download" href="doc/事件系统使用说明.txt" download>下载原文件</a>
             </header>
@@ -910,6 +910,10 @@ STREAM_FINAL
 - 字段：`text`、可选 `allow_tool_commands`、可选 `tool_call`
 - `tool_call` 为通过 `lib/script/chat/native_tools.py` 白名单校验的原生 Function Calling 调用；存在时工具调度器优先使用它，不再解析正文里的兼容标记
 - `allow_tool_commands=false` 时，结构化调用和 `###指令###` 均不得执行
+
+CONFIG_UPDATED
+- 用途：通知运行时配置已完成热更新
+- AI 设置保存时 payload 的 `source` 为 `ai`；聊天处理器会据此立即重排自动陪伴定时器
 
 MIC_STT_*
 - `MIC_STT_START`
@@ -1042,7 +1046,7 @@ PROTECTION_CHECK / PROTECTION_RESPONSE
         </article>
         <article class="card">
             <header>
-                <div class="eyebrow">2026-06-27 16:26</div>
+                <div class="eyebrow">2026-08-02 15:56</div>
                 <h3>已注册的事件</h3>
                 <a class="download" href="doc/已注册的事件.txt" download>下载原文件</a>
             </header>
@@ -1079,6 +1083,12 @@ PROTECTION_CHECK / PROTECTION_RESPONSE
 - lib/script/main.py -&gt; self._on_pre_start
 - lib/script/SEanima/animation.py -&gt; self._handle_pre_start [has unsubscribe]
 - lib/script/yuanbao_free_api/service.py -&gt; self._on_app_pre_start [has unsubscribe]
+
+[CONFIG_UPDATED]
+- lib/script/chat/handler.py -&gt; self._on_auto_companion_config_updated [has unsubscribe]
+- lib/script/gsvmove/service.py -&gt; self._on_config_updated [has unsubscribe]
+- lib/script/ui/workbench_window.py -&gt; self._on_config_updated [has unsubscribe]
+  发布方: lib/script/ui/ai_settings_panel.py, lib/script/ui/ai_settings_storage.py, lib/script/ui/workbench_window.py
 
 [APP_QUIT]
 - lib/core/event/app_handler.py -&gt; self._on_app_quit
@@ -2587,7 +2597,7 @@ Event(EventType.PARTICLE_REQUEST, {
         </article>
         <article class="card">
             <header>
-                <div class="eyebrow">2026-08-02 14:45</div>
+                <div class="eyebrow">2026-08-02 15:23</div>
                 <h3>维护手册</h3>
                 <a class="download" href="doc/维护手册.md" download>下载原文件</a>
             </header>
@@ -2710,7 +2720,7 @@ Event(EventType.PARTICLE_REQUEST, {
 - 页面嵌入后不得保留独立窗口旗标或重复层级注册。
 - 页面关闭时释放信号、定时器和后台任务。
 - 不把新功能继续堆入 `ai_settings_panel.py`，新页面放入 `workbench/` 或专属模块。
-- AI 回复模式是单一路由：福利 API、手动 API、本地 Ollama、规则回复和元宝之间不做失败回退。模式专属配置只在对应模式下显示。
+- AI 回复模式是单一路由：福利 API、手动 API、本地 Ollama、规则回复和元宝之间不做失败回退。模式专属配置只在对应模式下显示。回复模式区同时提供自动陪伴开关和 1~20 分钟的固定间隔滑块；保存值写入 AI 用户配置，运行时转换为毫秒定时，游戏模式启用时仍优先使用固定 5 分钟覆盖。
 - AI 工具调用优先使用 `lib/script/chat/native_tools.py` 定义的原生 Function Calling schema。OpenAI 兼容接口与 Ollama `/api/chat` 将结构化调用放入 `STREAM_FINAL.tool_call`，调度器不得再从显示文本反推参数；模型或网关拒绝 `tools` 字段时按目标缓存该能力并回退到既有 `###指令###` 文本协议。递归回忆、窥屏等设置 `allow_tool_commands=false` 的请求不得携带原生 tools。
 - 福利 API 配置由 `lib/script/chat/welfare_api_config.py` 从 GitHub/Gitee 发布源并发测速获取密钥与地址。模型使用程序内置的固定标识，不依赖服务端实现 `/models`：默认模型为 `agnes-2.0-flash`，“智力提升”开启后使用 `agnes-2.5-flash`；配置下载超时固定 10 秒，首次失败后最多重试 3 次。
 - 手动 API 的模型探测只辅助选择该路由的模型：设置面板以当前未保存的地址和密钥异步请求 OpenAI 兼容 `/models`，失败时保留用户当前输入。模型字段始终允许手工输入；无协议的公网地址按 HTTPS、本机地址按 HTTP 规范化后保存。

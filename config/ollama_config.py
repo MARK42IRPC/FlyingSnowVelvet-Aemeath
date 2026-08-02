@@ -191,7 +191,8 @@ OLLAMA_OPTIONS = {
 # 自动陪伴配置（外部 API 模式）
 AUTO_COMPANION = {
     'enabled': True,                 # 是否开启自动陪伴
-    'interval_ms': (120000, 360000), # 自动陪伴间隔（毫秒），2~6 分钟
+    'interval_minutes': 2,           # 自动陪伴间隔（分钟），1~20 分钟
+    'interval_ms': (120000, 120000), # 运行时毫秒间隔（由 interval_minutes 同步）
 }
 
 # ============================================================
@@ -233,6 +234,7 @@ _AI_SETTING_DEFAULTS = {
     'memory_recall_count': OLLAMA['memory_recall_count'],
     'api_enable_thinking': OLLAMA['api_enable_thinking'],
     'auto_companion_enabled': AUTO_COMPANION['enabled'],
+    'auto_companion_interval_minutes': AUTO_COMPANION['interval_minutes'],
 }
 
 
@@ -304,6 +306,7 @@ def _legacy_ai_setting_values() -> dict:
         'memory_recall_count': OLLAMA['memory_recall_count'],
         'api_enable_thinking': OLLAMA['api_enable_thinking'],
         'auto_companion_enabled': AUTO_COMPANION['enabled'],
+        'auto_companion_interval_minutes': AUTO_COMPANION['interval_minutes'],
     }
     legacy = _literal_python_config(get_shared_config_path('ollama_config.py'))
     scalar_map = {
@@ -343,7 +346,10 @@ def _legacy_ai_setting_values() -> dict:
             'api_enable_thinking': 'api_enable_thinking',
         }),
         ('OLLAMA_OPTIONS', {'num_gpu': 'num_gpu', 'num_thread': 'num_thread'}),
-        ('AUTO_COMPANION', {'enabled': 'auto_companion_enabled'}),
+        ('AUTO_COMPANION', {
+            'enabled': 'auto_companion_enabled',
+            'interval_minutes': 'auto_companion_interval_minutes',
+        }),
     ):
         source = legacy.get(source_name)
         if not isinstance(source, dict):
@@ -386,6 +392,9 @@ def _apply_ai_setting_values(values: dict) -> None:
     OLLAMA['memory_recall_count'] = values['memory_recall_count']
     OLLAMA['api_enable_thinking'] = values['api_enable_thinking']
     AUTO_COMPANION['enabled'] = values['auto_companion_enabled']
+    interval_minutes = int(values['auto_companion_interval_minutes'])
+    AUTO_COMPANION['interval_minutes'] = interval_minutes
+    AUTO_COMPANION['interval_ms'] = (interval_minutes * 60000, interval_minutes * 60000)
 
 
 migrate_section_once(

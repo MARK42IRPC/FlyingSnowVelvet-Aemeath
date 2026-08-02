@@ -24,6 +24,14 @@ class _CheckField:
         return self._checked
 
 
+class _ValueField:
+    def __init__(self, value: int):
+        self._value = value
+
+    def value(self) -> int:
+        return self._value
+
+
 class _ComboField:
     def __init__(self, data, text: str = ""):
         self._data = data
@@ -70,6 +78,7 @@ def _build_dummy_panel() -> _DummyPanel:
     panel._memory_recall_count = _TextField("5")
     panel._api_enable_thinking = _CheckField(False)
     panel._auto_companion_enabled = _CheckField(True)
+    panel._auto_companion_interval_minutes = _ValueField(2)
     panel._validate_ai_values = lambda values: None
     panel._collect_hidden_yuanbao_values = lambda: AISettingsPanel._collect_hidden_yuanbao_values(panel)
     return panel
