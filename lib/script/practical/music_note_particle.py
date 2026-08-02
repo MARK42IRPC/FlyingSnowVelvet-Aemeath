@@ -1,9 +1,7 @@
 """音乐音符粒子效果脚本 - 向上移动、轻微布朗运动、无重力的随机颜色音符形状粒子"""
 import random
 
-from PyQt5.QtGui import QColor, QPolygonF
-from PyQt5.QtCore import QPointF, QRectF, Qt
-
+from lib.core.graphics.types import Color
 from lib.script.practical.base_particle import BaseParticleScript, per_second_delta, tick_seconds
 from lib.core.plugin_registry import register_particle
 
@@ -24,11 +22,11 @@ class MusicNoteParticleScript(BaseParticleScript):
             'max_speed':   30.0,             # 水平最大漂移 px/s
             'life_range':  (1.1, 1.65),      # 寿命 1.1x
             'colors': [                        # 随机颜色
-                QColor(255, 182, 193),  # 粉色
-                QColor(173, 216, 230),  # 青色
-                QColor(255, 255, 255),  # 白色
-                QColor(255, 200, 100),  # 金色
-                QColor(200, 150, 255),  # 紫色
+                Color(255, 182, 193),  # 粉色
+                Color(173, 216, 230),  # 青色
+                Color(255, 255, 255),  # 白色
+                Color(255, 200, 100),  # 金色
+                Color(200, 150, 255),  # 紫色
             ]
         }
 
@@ -95,18 +93,3 @@ class MusicNoteParticle:
     def get_alpha(self) -> float:
         """获取透明度（0.0-1.0）"""
         return max(0, self.life / self.max_life)
-
-    def draw(self, painter):
-        """绘制彩色方块"""
-        alpha = int(255 * self.get_alpha())
-        color = QColor(self.color)
-        color.setAlpha(alpha)
-        painter.setBrush(color)
-        painter.setPen(Qt.NoPen)
-
-        # 绘制正方形
-        rect_x = int(self.x - self.size / 2)
-        rect_y = int(self.y - self.size / 2)
-        rect_w = self.size
-        rect_h = self.size
-        painter.drawRect(rect_x, rect_y, rect_w, rect_h)

@@ -2,13 +2,13 @@
 
 一、总体说明
 - 事件入口：`EventType.PARTICLE_REQUEST`
-- 渲染层：`lib/core/qt_particle_system.py`
+- 渲染层：`lib/core/qt_bridge/particle_system.py`（旧 `qt_particle_system.py` 仅为兼容导出）
 - 粒子脚本发现：`lib/script/practical/manager.py`
 - 自动扫描目录：`lib/script/practical/*_particle.py`
 - 更新机制：`tick` 推进真实状态，`frame` 仅负责插值绘制
 - 运行语义：practical 粒子已统一切到 `tick/秒` 语义，不再依赖运行时 `frame_fps`
 
-当前已注册粒子：18 个
+当前已注册粒子：20 个
 
 二、已注册粒子列表
 
@@ -84,6 +84,14 @@
 - 文件：`lahai_line_flash_particle.py`
 - 作用：拉海洛方块消行时的横向爆散闪光粒子
 
+19. `lahai_preview_rise`
+- 文件：`lahai_preview_rise_particle.py`
+- 作用：拉海洛方块下一块预览替换时的竖向上升粒子
+
+20. `floating_text`
+- 文件：`floating_text_particle.py`
+- 作用：游戏分数、连击和技能反馈的浮动文字粒子
+
 三、统一事件格式
 ```python
 Event(EventType.PARTICLE_REQUEST, {
@@ -99,6 +107,7 @@ Event(EventType.PARTICLE_REQUEST, {
 - `circle`: `(x, y, radius)`
 
 四、覆盖层与绘制性能
+- 粒子实例的 `color`、`font` 使用 `lib.core.graphics.types.Color`、`FontSpec`；脚本不得保存 `QColor`、`QFont`、`QPixmap`、`QPainter` 等 Qt 对象，也不得实现接收 painter 的自定义绘制方法。Qt 后端创建并缓存字体，计算文字宽高和基线；新增视觉形状通过纯数据属性表达，由 Qt 或未来其他后端负责绘制。
 - 粒子覆盖层在一轮粒子开始前固定到虚拟桌面几何；粒子存活期间不再根据联合包围盒移动或缩放顶层透明窗口，因此最外侧粒子变化不会带动整层抽动。
 - 渲染空间使用 128px 二维固定矩形分块。tick、生成和异步回填时增量同步粒子保守绘制包围盒与分块归属，刷新旧块与新块的并集；FRAME 只复用缓存索引和当前占用块，不重新计算包围盒。连续脏块按行合并，保证旧像素被清除，同时避免整屏重绘。
 - `paintEvent()` 只查询 Qt 脏区域命中的分块，并对横跨多个块的粒子去重；文本、线段、圆形和图片粒子都通过统一包围盒参与索引与精确裁剪。

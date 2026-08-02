@@ -32,6 +32,7 @@ from lib.core.hash_cmd_registry import get_hash_cmd_registry
 from lib.core.unified_draw import Layer, get_layer_manager
 from lib.core.screen_utils import clamp_rect_position
 from lib.core.anchor_utils import apply_ui_opacity
+from lib.core.qt_bridge.window import coerce_qpoint
 from lib.script.ui.page_turn_buttons import make_page_buttons, update_page_buttons_position
 
 
@@ -378,14 +379,18 @@ class CommandHintBox(QWidget):
 
         if ui_id == 'command_hint_box':
             # CommandDialog 对 bottom_left 请求的直接响应
-            new_pt = event.data.get('anchor_point')
+            new_pt = coerce_qpoint(event.data.get('anchor_point'))
+            if new_pt is None:
+                return
             if self._anchor_point != new_pt:
                 self._anchor_point = new_pt
                 self._update_position()
 
         elif ui_id == 'all' and window_id == 'command_dialog' and anchor_id == 'all':
             # CommandDialog 移动时的全局广播（anchor_point = 其左上角坐标）
-            cmd_pos = event.data.get('anchor_point')
+            cmd_pos = coerce_qpoint(event.data.get('anchor_point'))
+            if cmd_pos is None:
+                return
             cmd_h   = UI['cmd_window_height']
             new_pt  = QPoint(cmd_pos.x(), cmd_pos.y() + cmd_h)
             if self._anchor_point != new_pt:

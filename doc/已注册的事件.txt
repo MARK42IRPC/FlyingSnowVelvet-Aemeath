@@ -58,6 +58,7 @@
   发布方: lib/core/event/center.py, lib/script/obj-雪豹/manager.py
 
 [ENTITY_POSITION_RESPONSE]
+- payload: position=`lib.core.graphics.types.Point`、size=`(width, height)`、entity_id、request_id
 - lib/script/obj-雪豹/manager.py -> self._handle_entity_position_response [has unsubscribe]
   发布方: lib/core/pet_window.py
 
@@ -66,6 +67,7 @@
   发布方: lib/core/event/center.py, lib/script/obj-雪豹/manager.py
 
 [ENTITY_STATE_RESPONSE]
+- payload: position/target 存在时为 `lib.core.graphics.types.Point`
 - lib/script/obj-雪豹/manager.py -> self._handle_entity_state_response [has unsubscribe]
   发布方: lib/core/pet_window.py
 
@@ -123,11 +125,13 @@
   发布方: lib/core/tray_icon.py, lib/script/ui/command_hint_box.py
 
 [KEY_PRESS]
+- payload: key=`lib.core.input.types.Key`（未知键可为兼容整数）、modifiers=`KeyModifier`、text、is_auto_repeat、pet
 - lib/core/event/key_handler.py -> self._on_key_press
 - lib/script/microphone_stt/push_to_talk.py -> self._on_key_press [has unsubscribe]
 - lib/script/obj-摩托/mortor.py -> self._on_key_press [has unsubscribe]
 
 [KEY_RELEASE]
+- payload: key=`lib.core.input.types.Key`（未知键可为兼容整数）、modifiers=`KeyModifier`、text、is_auto_repeat、pet
 - lib/script/microphone_stt/push_to_talk.py -> self._on_key_release [has unsubscribe]
 - lib/script/obj-摩托/mortor.py -> self._on_key_release [has unsubscribe]
 
@@ -223,7 +227,7 @@
   发布方: lib/script/cloudmusic/manager.py
 
 [PARTICLE_REQUEST]
-- lib/core/qt_particle_system.py -> self._on_particle_request [has unsubscribe]
+- lib/core/qt_bridge/particle_system.py -> self._on_particle_request [has unsubscribe]
   发布方: lib/script/cloudmusic/_mixin_events.py, lib/script/obj-雪堆/manager.py, lib/script/obj-雪堆/snow_pile.py, lib/script/obj-雪球/snowball.py, lib/script/obj-雪豹/snow_leopard.py, lib/script/ui/_particle_helper.py, lib/script/ui/ai_settings_panel.py, lib/script/ui/auto_chat_button.py, lib/script/ui/bubble.py, lib/script/ui/chat_mode_button.py, lib/script/ui/command_hint_box.py, lib/script/ui/launch_wuwa_button.py, lib/script/ui/more_functions_button.py, lib/script/ui/playlist_panel.py, lib/script/ui/speaker_search_dialog.py, lib/script/ui/speaker_search_result_box.py, lib/script/ui/tray_menu.py
 
 [PET_TELEPORT]
@@ -231,6 +235,7 @@
   发布方: lib/script/tool_dispatcher/dispatcher.py
 
 [PROTECTION_CHECK]
+- payload: pet_position=`lib.core.graphics.types.Point`、current_in_protection、request_id
 - lib/script/obj-摩托/manager.py -> self._on_protection_check [has unsubscribe]
 - lib/script/obj-沙发/manager.py -> self._on_protection_check [has unsubscribe]
 - lib/script/obj-闹钟/manager.py -> self._on_protection_check [has unsubscribe]
@@ -306,6 +311,7 @@
 - lib/core/timing/manager.py -> self._on_timer_resume
 
 [UI_ANCHOR_RESPONSE]
+- payload: anchor_point=`lib.core.graphics.types.Point`、window_id、anchor_id、ui_id
 - lib/script/ui/auto_chat_button.py -> self._on_anchor_response [has unsubscribe]
 - lib/script/ui/bubble.py -> self._on_anchor_response
 - lib/script/ui/chat_mode_button.py -> self._on_anchor_response [has unsubscribe]
@@ -319,7 +325,7 @@
 - lib/script/ui/scale_button.py -> self._on_anchor_response
 - lib/script/ui/speaker_control_buttons.py -> self._on_anchor_response [has unsubscribe]
 - lib/script/ui/speaker_search_result_box.py -> self._on_anchor_response
-  发布方: lib/core/anchor_utils.py, lib/core/event/mouse_handler.py, lib/core/pet_window.py, lib/script/ui/speaker_search_dialog.py
+  发布方: lib/core/pet_window.py, lib/core/qt_bridge/widget_anchors.py, lib/script/ui/clickthrough_button.py, lib/script/ui/command_dialog.py, lib/script/ui/scale_button.py, lib/script/ui/speaker_search_dialog.py
 
 [UI_CLICKTHROUGH_TOGGLE]
 - lib/core/pet_window.py -> self._handle_clickthrough_toggle
@@ -699,9 +705,11 @@
 - lib/script/obj-雪豹/manager.py
 
 [UI_ANCHOR_RESPONSE]
-- lib/core/anchor_utils.py
-- lib/core/event/mouse_handler.py
 - lib/core/pet_window.py
+- lib/core/qt_bridge/widget_anchors.py
+- lib/script/ui/clickthrough_button.py
+- lib/script/ui/command_dialog.py
+- lib/script/ui/scale_button.py
 - lib/script/ui/speaker_search_dialog.py
 
 [UI_CLICKTHROUGH_TOGGLE]

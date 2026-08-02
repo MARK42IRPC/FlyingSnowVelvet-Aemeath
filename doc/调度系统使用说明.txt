@@ -2,14 +2,21 @@
 
 一、核心实现
 - 文件：`lib/core/timing/manager.py`
+- 后端协议：`lib/core/timing/scheduler.py`
+- Qt 实现：`lib/core/qt_bridge/scheduler.py`
 - 对外入口：`lib/core/timing/__init__.py`
 - 核心类：`TimingManager`
+- 其他使用者：`ChatHandler` 的流式刷新/自动陪伴、`OllamaManager` 的周期探测
 
 二、三套周期计时
-调度器内部维护三个独立 QTimer：
+调度核心维护三个独立的周期计时器句柄：
 - `TICK`：固定 50ms
 - `FRAME`：按 `frame_fps` 计算
 - `GIF_FRAME`：按 `gif_fps` 计算
+
+`TimingManager` 本身不依赖 Qt。桌面运行时由 `PetWindow` 注入 `QtScheduler`，无 Qt 的测试或未来自研运行时可注入同一 `Scheduler` 协议的其他实现。调度后端由单个 `TimingManager` 独占，退出时调用幂等 `cleanup()`，统一停止计时器、退订暂停事件并释放后端资源。
+
+聊天与 Ollama 使用各自独占的 `Scheduler`，由 `ApplicationState` 在 Qt 桌面组合边界注入。聊天的 40ms 流式刷新和自动陪伴是 single-shot 业务语义：协议仍使用 `PeriodicTimer`，但回调入口先 `stop()`，完成后仅在需要时重新 `start()`。业务模块不得导入 Qt 调度实现作为缺省后备。
 
 默认配置来自 `config/config.py` 中导出的 `ANIMATION`：
 - `frame_fps = 120`
@@ -74,6 +81,7 @@ pet.cancel_task(task_id)
 七、开发建议
 - 高频业务优先订阅 `TICK` 或 `FRAME`，不要自己再开一套平行 QTimer
 - 在 `cleanup()` 中移除任务并退订事件
+- 构造 `TimingManager` 时必须在应用组合边界显式注入 `Scheduler`；业务模块不得直接创建 `QTimer`
 - 静止对象不得在 `FRAME` 中重复移动窗口或触发重绘；临时降频应使用来源独立的帧率上限
 - 物理对象空闲时应跳过屏幕查询和计算提交，重新获得速度或外部目标变化后再恢复计算。
 - 对于需要高精度的逻辑，先评估 50ms tick 是否足够

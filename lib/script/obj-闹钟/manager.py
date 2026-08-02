@@ -5,9 +5,9 @@ import re
 
 from PyQt5.QtCore    import Qt, QPoint
 from PyQt5.QtGui     import QPixmap
-from PyQt5.QtWidgets import QApplication
 
 from lib.core.event.center      import get_event_center, EventType, Event
+from lib.core.graphics.types import Point, coerce_point
 from lib.core.hash_cmd_registry import get_hash_cmd_registry
 from lib.core.plugin_registry   import manager_registry, BaseManager
 from lib.core.screen_utils      import get_screen_geometry_for_point
@@ -356,13 +356,11 @@ class ClockManager(BaseManager):
 
         # 获取宠物当前位置（中心锚点）
         pet_center = None
-        if self._entity and hasattr(self._entity, 'get_anchor_point'):
-            pet_center = self._entity.get_anchor_point('center')
-            # 转换为全局坐标
-            pet_pos = self._entity.get_position()
+        if self._entity and hasattr(self._entity, 'get_core_geometry'):
+            pet_geometry = self._entity.get_core_geometry()
             pet_center = QPoint(
-                pet_pos.x() + pet_center.x(),
-                pet_pos.y() + pet_center.y()
+                int(round(pet_geometry.x + pet_geometry.width / 2)),
+                int(round(pet_geometry.y + pet_geometry.height / 2)),
             )
             screen = get_screen_geometry_for_point(pet_center)
 
@@ -438,7 +436,7 @@ class ClockManager(BaseManager):
         )
         return nearest.get_center()
 
-    def is_pet_in_clock_protection(self, pet_center: QPoint, in_protection: bool = False) -> bool:
+    def is_pet_in_clock_protection(self, pet_center: Point | object, in_protection: bool = False) -> bool:
         """
         检测宠物中心是否在任意闹钟的保护半径内。
         使用滞回机制防止边缘抖动。
@@ -455,11 +453,16 @@ class ClockManager(BaseManager):
             return False
 
         # 找到距离最近的闹钟
+        pet_point = coerce_point(pet_center)
+        if pet_point is None:
+            return False
         min_dist_sq = float('inf')
         for clock in alive:
-            sc = clock.get_center()
-            dx = pet_center.x() - sc.x()
-            dy = pet_center.y() - sc.y()
+            sc = coerce_point(clock.get_center())
+            if sc is None:
+                continue
+            dx = pet_point.x - sc.x
+            dy = pet_point.y - sc.y
             dist_sq = dx * dx + dy * dy
             if dist_sq < min_dist_sq:
                 min_dist_sq = dist_sq

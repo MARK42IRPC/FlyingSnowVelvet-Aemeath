@@ -1,9 +1,9 @@
 """键盘事件处理器 - 处理键盘相关的具体逻辑"""
 import random
-from PyQt5.QtCore import Qt
 
 from config.config import BEHAVIOR
 from lib.core.event.center import get_event_center, EventType, Event
+from lib.core.input.types import Key
 
 
 class KeyEventHandler:
@@ -27,12 +27,12 @@ class KeyEventHandler:
         key = event.data.get('key')
 
         # 播放列表打开时，左右键优先用于移动队列项（不再驱动主宠移动）
-        if key in (Qt.Key_Left, Qt.Key_Right):
+        if key in (Key.LEFT, Key.RIGHT):
             try:
                 from lib.script.ui.playlist_panel import get_playlist_panel
                 panel = get_playlist_panel()
                 if panel is not None and panel.is_visible:
-                    direction = -1 if key == Qt.Key_Left else 1
+                    direction = -1 if key == Key.LEFT else 1
                     if panel.move_selected_by_key(direction):
                         event.mark_handled()
                         return
@@ -40,7 +40,7 @@ class KeyEventHandler:
                 pass
 
         # 空格键：触发随机动作
-        if key == Qt.Key_Space:
+        if key == Key.SPACE:
             if not self._entity.is_moving():
                 state = random.choice(BEHAVIOR['random_states'])
                 self._entity.play_animation(state, duration=random.randint(2000, 4000))

@@ -10,7 +10,7 @@ from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
-from PyQt5.QtCore import QEasingCurve, Qt, QEvent, QPoint, QPropertyAnimation, QTimer
+from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QColor, QCursor, QPainter
 from PyQt5.QtWidgets import (
     QApplication,
@@ -26,11 +26,10 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
-from config.config import UI
 from config.font_config import get_digit_font, get_ui_font
 from config.scale import scale_px
 from lib.core.layer import Layer
-from lib.core.anchor_utils import apply_ui_opacity
+from lib.core.qt_bridge.workbench_page import QtWorkbenchToolPage
 from lib.core.unified_draw import get_layer_manager
 from lib.script.app.startup_probe import load_saved_watermark_payload
 from lib.script.bug_tracker.storage import BugInstanceInfo, BugRecord, BugTrackerLogStore
@@ -140,12 +139,10 @@ class _BugTrackerWatermarkOverlay(QWidget):
             painter.restore()
 
 
-class BugTrackerWindow(QWidget):
+class BugTrackerWindow(QtWorkbenchToolPage):
     def __init__(self, embedded: bool = False) -> None:
-        super().__init__()
+        super().__init__(embedded=embedded)
         self.setObjectName("BugTrackerWindow")
-        self._embedded = bool(embedded)
-        self._external_close_callback = None
         self.setWindowTitle("故障跟踪")
         if not self._embedded:
             self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
@@ -159,14 +156,6 @@ class BugTrackerWindow(QWidget):
         self._instances: list[BugInstanceInfo] = []
         self._instance_filter = ""
         self._selected_record_key = ""
-        self._dragging = False
-        self._drag_offset = QPoint()
-        self._fading_out = False
-        self._allow_hide_once = False
-        self._opacity_anim = QPropertyAnimation(self, b'windowOpacity', self)
-        self._opacity_anim.setDuration(UI.get('ui_fade_duration', 180))
-        self._opacity_anim.setEasingCurve(QEasingCurve.InOutQuad)
-        self._opacity_anim.finished.connect(self._on_opacity_anim_finished)
         self._snapshot_token = None
         self._level_filters = {
             "info": True,
@@ -188,7 +177,7 @@ class BugTrackerWindow(QWidget):
         self._header = QFrame(self)
         self._header.setObjectName("BugTrackerHeader")
         self._header.setFixedHeight(scale_px(58, min_abs=50))
-        self._header.installEventFilter(self)
+        self.set_drag_handle(self._header)
 
         self._title = QLabel("故障跟踪", self._header)
         self._title.setFont(self._title_font)
@@ -221,13 +210,6 @@ class BugTrackerWindow(QWidget):
         header_layout.setSpacing(scale_px(14, min_abs=10))
         header_layout.addLayout(header_text, 1)
         header_layout.addLayout(header_actions, 0)
-        if self._embedded:
-            self._title.hide()
-            self._subtitle.hide()
-            self._header_source_button.hide()
-            self._header_copy_button.hide()
-            self._header_close_button.hide()
-            self._header.setFixedHeight(scale_px(42, min_abs=38))
 
         self._card_total = self._make_stat_card("当前分类日志")
         self._card_today = self._make_stat_card("今日日志")
@@ -465,6 +447,7 @@ class BugTrackerWindow(QWidget):
         self._poll_timer.setInterval(1000)
         self._poll_timer.timeout.connect(self._reload_snapshot)
 
+        self.set_embedded_mode(embedded)
         self._reload_watermark_texts()
         self._reload_snapshot()
 
@@ -493,12 +476,7 @@ class BugTrackerWindow(QWidget):
         self.setStyleSheet(stylesheet)
         self.update()
 
-    def set_embedded_mode(self, embedded: bool = True) -> None:
-        self._embedded = bool(embedded)
-        if self._embedded:
-            self.setWindowFlags(Qt.Widget)
-            self.setMinimumSize(0, 0)
-            self.setMaximumSize(16777215, 16777215)
+    def _sync_embedded_presentation(self) -> None:
         if hasattr(self, "_title"):
             self._title.setVisible(not self._embedded)
             self._subtitle.setVisible(not self._embedded)
@@ -512,63 +490,18 @@ class BugTrackerWindow(QWidget):
         if hasattr(self, "_watermark_overlay"):
             self._watermark_overlay.setVisible(not self._embedded)
 
-    def fade_in(self) -> None:
-        if self._embedded:
-            self.setWindowOpacity(1.0)
-            self.show()
-            return
-        self._opacity_anim.stop()
-        self._fading_out = False
-        self._allow_hide_once = False
+    def _before_standalone_show(self) -> None:
         get_layer_manager().register(self, Layer.PANEL, name='BugTrackerWindow')
-        self.setWindowOpacity(0.0)
-        self.show()
-        self.raise_()
-        self.activateWindow()
-        self._opacity_anim.setStartValue(0.0)
-        self._opacity_anim.setEndValue(apply_ui_opacity(1.0))
-        self._opacity_anim.start()
 
-    def fade_out(self) -> None:
-        if self._external_close_callback is not None:
-            self._external_close_callback()
-            return
-        if self._fading_out or not self.isVisible():
-            return
-        self._fading_out = True
-        self._opacity_anim.stop()
-        current_opacity = self.windowOpacity()
-        self._opacity_anim.setStartValue(max(0.0, min(1.0, float(current_opacity))))
-        self._opacity_anim.setEndValue(0.0)
-        self._opacity_anim.start()
-
-    def hide(self) -> None:
-        if self._allow_hide_once or self._fading_out or not self.isVisible():
-            super().hide()
-            return
-        self.fade_out()
-
-    def _on_opacity_anim_finished(self) -> None:
-        if not self._fading_out:
-            return
-        self._fading_out = False
+    def _after_standalone_hide(self) -> None:
         self._poll_timer.stop()
         try:
             get_layer_manager().unregister(self)
         except Exception:
             pass
-        self._allow_hide_once = True
-        try:
-            super().hide()
-        finally:
-            self._allow_hide_once = False
-            self.setWindowOpacity(apply_ui_opacity(1.0))
 
-    def set_external_close_callback(self, callback) -> None:
-        self._external_close_callback = callback
-
-    def _request_close(self) -> None:
-        self.fade_out()
+    def refresh_workbench_page(self) -> None:
+        self._refresh_now()
 
     def _make_button(self, text: str, slot) -> QPushButton:
         btn = QPushButton(text, self._header)
@@ -648,20 +581,6 @@ class BugTrackerWindow(QWidget):
         btn.setProperty("primary", True)
         btn.clicked.connect(self._export_current_filtered_logs)
         return btn
-
-    def eventFilter(self, obj, event) -> bool:
-        if obj is self._header:
-            if event.type() == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
-                self._dragging = True
-                self._drag_offset = event.globalPos() - self.frameGeometry().topLeft()
-                return True
-            if event.type() == QEvent.MouseMove and self._dragging and (event.buttons() & Qt.LeftButton):
-                self.move(event.globalPos() - self._drag_offset)
-                return True
-            if event.type() == QEvent.MouseButtonRelease:
-                self._dragging = False
-                return True
-        return super().eventFilter(obj, event)
 
     def show_centered(self) -> None:
         screen = QApplication.screenAt(QCursor.pos()) or QApplication.primaryScreen()

@@ -11,9 +11,8 @@
 import random
 from typing import Tuple
 
-from PyQt5.QtWidgets import QApplication
-from PyQt5.QtGui     import QColor
-
+from lib.core.graphics.types import Color
+from lib.core.screen_utils import get_virtual_screen_rect
 from lib.script.practical.base_particle import BaseParticleScript, per_second_delta
 from lib.core.plugin_registry import register_particle
 
@@ -39,7 +38,7 @@ class SnowballDriftParticleScript(BaseParticleScript):
             'gravity':            3.6,               # 与 snow_drift 相同，px/s per tick
             'drag':               0.970299,          # 与 snow_drift 相同，每 tick 阻力
             'life_decay_settled': 0.018,             # snow_drift 的两倍：0.009 → 0.018（寿命减半）
-            'color':              QColor(255, 255, 255),
+            'color':              Color(255, 255, 255),
             'ground_margin':      6,                 # 与 snow_drift 相同
         }
 
@@ -53,8 +52,8 @@ class SnowballDriftParticleScript(BaseParticleScript):
         else:
             cx, cy = area_data[0], area_data[1]
 
-        screen_h = QApplication.primaryScreen().geometry().height()
-        ground_y = float(screen_h - self._config['ground_margin'])
+        screen = get_virtual_screen_rect()
+        ground_y = float(screen.height - self._config['ground_margin'])
 
         count = random.randint(*self._config['count_range'])
         return [

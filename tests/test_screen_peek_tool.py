@@ -5,6 +5,7 @@ from lib.core.event.center import Event, EventType
 from lib.script.chat.handler import ChatHandler
 from lib.script.tool_dispatcher.dispatcher import _SCREEN_PEEK_PROMPT
 from lib.script.tool_dispatcher.dispatcher import ToolDispatcher
+from tests.timing_fakes import FakeScheduler
 
 
 class _FakeEventCenter:
@@ -31,6 +32,11 @@ class _FakeOllama:
         self.calls.append(kwargs)
 
 
+class _FakeScreenCapture:
+    def capture_primary_png(self):
+        return b"png-bytes"
+
+
 class ScreenPeekToolTests(unittest.TestCase):
     def test_screen_peek_dispatches_one_input_chat(self):
         fake_center = _FakeEventCenter()
@@ -50,8 +56,12 @@ class ScreenPeekToolTests(unittest.TestCase):
         fake_ollama = _FakeOllama()
         with patch("lib.script.chat.handler.get_event_center", return_value=fake_center), patch(
             "lib.script.chat.handler.get_ollama_manager", return_value=fake_ollama
-        ), patch("lib.script.chat.handler.capture_screen", return_value=[b"png-bytes"]):
-            handler = ChatHandler()
+        ):
+            handler = ChatHandler(
+                scheduler=FakeScheduler(),
+                screen_capture=_FakeScreenCapture(),
+            )
+            self.addCleanup(handler.cleanup)
             handler._on_input_chat(Event(EventType.INPUT_CHAT, {
                 "text": _SCREEN_PEEK_PROMPT,
                 "source": "tool_screen_peek",

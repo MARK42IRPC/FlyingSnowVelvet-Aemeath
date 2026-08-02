@@ -1,22 +1,14 @@
 """实体基类模块 - 定义统一的调度接口"""
-from abc import ABCMeta, abstractmethod
-from PyQt5.QtWidgets import QWidget
-from PyQt5.QtCore import QPoint
+from abc import ABC, abstractmethod
+
+from lib.core.graphics.types import Point, Rect, coerce_point, coerce_rect
 
 
-# 创建混合元类,解决QWidget和ABC的元类冲突
-class QWidgetABCMeta(type(QWidget), ABCMeta):
-    pass
-
-
-class BaseEntity(QWidget, metaclass=QWidgetABCMeta):
+class BaseEntity(ABC):
     """
     实体基类 - 所有游戏对象的抽象父类
     定义统一的调度接口,消除越级调用
     """
-
-    def __init__(self):
-        super().__init__()
 
     # ==================================================================
     # 状态管理接口 - 子类必须实现
@@ -37,7 +29,7 @@ class BaseEntity(QWidget, metaclass=QWidgetABCMeta):
     # ==================================================================
 
     @abstractmethod
-    def start_move(self, target: QPoint):
+    def start_move(self, target: Point):
         """开始移动到目标位置"""
         pass
 
@@ -47,9 +39,13 @@ class BaseEntity(QWidget, metaclass=QWidgetABCMeta):
         pass
 
     @abstractmethod
-    def get_position(self) -> QPoint:
-        """获取当前位置"""
+    def get_position(self):
+        """获取后端兼容位置；核心逻辑优先使用 get_core_position。"""
         pass
+
+    def get_core_position(self) -> Point:
+        """获取与后端无关的当前位置；Qt 兼容层可继续覆盖 get_position。"""
+        return coerce_point(self.get_position()) or Point()
 
     # ==================================================================
     # 动画接口 - 子类必须实现
@@ -156,6 +152,10 @@ class BaseEntity(QWidget, metaclass=QWidgetABCMeta):
     def get_geometry(self):
         """获取窗口几何信息"""
         pass
+
+    def get_core_geometry(self) -> Rect:
+        """获取与后端无关的窗口矩形。"""
+        return coerce_rect(self.get_geometry()) or Rect()
 
     @abstractmethod
     def is_moving(self) -> bool:

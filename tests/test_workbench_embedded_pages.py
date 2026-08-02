@@ -20,12 +20,15 @@ os.environ.setdefault(
 )
 os.environ.setdefault("QT_PLUGIN_PATH", os.path.join(_QT_ROOT, "Qt5", "plugins"))
 
-from PyQt5.QtWidgets import QApplication
+from PyQt5.QtCore import Qt
+from PyQt5.QtWidgets import QApplication, QWidget
 
 from config.scale import scale_px
 from config.config import UI
+from lib.core.qt_bridge.workbench_page import QtWorkbenchToolPage
 from lib.script.bug_tracker import window as bug_tracker_module
 from lib.script.gemes.MAIN import manager_window as game_manager_module
+from lib.script.workbench.builtin_pages import builtin_tool_page_specs
 
 
 class _FakeGameRuntime:
@@ -55,8 +58,11 @@ class WorkbenchEmbeddedPageTests(unittest.TestCase):
             page = game_manager_module.GameManagerWindow(_FakeGameRuntime())
         page.set_embedded_mode(True)
 
+        self.assertIsInstance(page, QtWorkbenchToolPage)
+        self.assertTrue(page.is_embedded)
         self.assertTrue(page._header.isHidden())
         self.assertTrue(page._fun_watermark.isHidden())
+        self.assertEqual(page._header.cursor().shape(), Qt.ArrowCursor)
         self.assertEqual(page.minimumWidth(), 0)
         self.assertEqual(page._root_layout.contentsMargins().left(), scale_px(10))
         self.assertEqual(page._open_btn.property("accent"), "cyan")
@@ -95,11 +101,14 @@ class WorkbenchEmbeddedPageTests(unittest.TestCase):
         ):
             page = bug_tracker_module.BugTrackerWindow(embedded=True)
 
+        self.assertIsInstance(page, QtWorkbenchToolPage)
+        self.assertTrue(page.is_embedded)
         self.assertTrue(page._title.isHidden())
         self.assertTrue(page._header_source_button.isHidden())
         self.assertTrue(page._header_copy_button.isHidden())
         self.assertFalse(page._header_refresh_button.isHidden())
         self.assertTrue(page._watermark_overlay.isHidden())
+        self.assertEqual(page._header.cursor().shape(), Qt.ArrowCursor)
         self.assertFalse(page._content_splitter.childrenCollapsible())
         self.assertEqual(page._root_layout.contentsMargins().left(), scale_px(10))
         self.assertEqual(page._filter_info_btn.property("filterTone"), "info")
@@ -132,6 +141,27 @@ class WorkbenchEmbeddedPageTests(unittest.TestCase):
             UI["workbench_light_theme"] = original_theme
             page.deleteLater()
             self.app.processEvents()
+
+    def test_builtin_game_page_factory_creates_a_dedicated_embedded_page(self):
+        runtime = _FakeGameRuntime()
+        embedded_page = QWidget()
+        game_spec = next(
+            spec for spec in builtin_tool_page_specs() if spec.page_id == "game_manager"
+        )
+
+        with patch(
+            "lib.script.gemes.MAIN.runtime.get_game_runtime",
+            return_value=runtime,
+        ), patch(
+            "lib.script.gemes.MAIN.manager_window.GameManagerWindow",
+            return_value=embedded_page,
+        ) as manager_window:
+            page = game_spec.factory()
+
+        self.assertIs(page, embedded_page)
+        manager_window.assert_called_once_with(runtime, embedded=True)
+        embedded_page.deleteLater()
+        self.app.processEvents()
 
 
 if __name__ == "__main__":

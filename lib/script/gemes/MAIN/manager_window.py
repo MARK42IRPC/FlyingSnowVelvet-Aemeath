@@ -6,7 +6,7 @@ import html
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PyQt5.QtCore import QEasingCurve, QEvent, QPoint, QPropertyAnimation, Qt
+from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import (
     QAbstractItemView,
@@ -23,10 +23,9 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
-from config.config import UI
 from config.font_config import get_digit_font, get_ui_font
 from config.scale import scale_px
-from lib.core.anchor_utils import apply_ui_opacity
+from lib.core.qt_bridge.workbench_page import QtWorkbenchToolPage
 from lib.script.gemes.MAIN.game_packages import InstalledGame, get_game_package_service
 from lib.script.workbench.theme import get_workbench_colors
 
@@ -121,26 +120,16 @@ class _GameCardWidget(QFrame):
         self.style().polish(self._badge)
 
 
-class GameManagerWindow(QWidget):
+class GameManagerWindow(QtWorkbenchToolPage):
     """Manager for installed game packages."""
 
     def __init__(self, runtime: "GameRuntime", embedded: bool = False) -> None:
-        super().__init__()
+        super().__init__(embedded=embedded)
         self.setObjectName("GameManagerWindow")
         self._runtime = runtime
-        self._embedded = bool(embedded)
-        self._external_close_callback = None
         self._service = get_game_package_service()
         self._games: list[InstalledGame] = []
         self._cards: dict[str, _GameCardWidget] = {}
-        self._dragging = False
-        self._drag_offset = QPoint()
-        self._fading_out = False
-        self._allow_hide_once = False
-        self._opacity_anim = QPropertyAnimation(self, b'windowOpacity', self)
-        self._opacity_anim.setDuration(UI.get('ui_fade_duration', 180))
-        self._opacity_anim.setEasingCurve(QEasingCurve.InOutQuad)
-        self._opacity_anim.finished.connect(self._on_opacity_anim_finished)
 
         self.setWindowTitle("游戏列表管理器")
         if not self._embedded:
@@ -151,18 +140,13 @@ class GameManagerWindow(QWidget):
 
         self._build_ui()
         self._apply_styles()
+        self.set_embedded_mode(embedded)
         if not self._embedded:
             self.setWindowOpacity(0.0)
             self.hide()
-        self.refresh_games()
+        self.refresh_workbench_page()
 
-    def set_embedded_mode(self, embedded: bool = True) -> None:
-        self._embedded = bool(embedded)
-        if self._embedded:
-            self.setWindowFlags(Qt.Widget)
-            self.setAttribute(Qt.WA_StyledBackground, True)
-            self.setMinimumSize(0, 0)
-            self.setMaximumSize(16777215, 16777215)
+    def _sync_embedded_presentation(self) -> None:
         if hasattr(self, "_header"):
             self._header.setVisible(not self._embedded)
         if hasattr(self, "_root_layout"):
@@ -171,54 +155,8 @@ class GameManagerWindow(QWidget):
         if hasattr(self, "_fun_watermark"):
             self._fun_watermark.setVisible(not self._embedded)
 
-    def fade_in(self) -> None:
-        if self._embedded:
-            self.setWindowOpacity(1.0)
-            self.show()
-            return
-        self._opacity_anim.stop()
-        self._fading_out = False
-        self._allow_hide_once = False
-        self.setWindowOpacity(0.0)
-        self.show()
-        self.raise_()
-        self.activateWindow()
-        self._opacity_anim.setStartValue(0.0)
-        self._opacity_anim.setEndValue(apply_ui_opacity(1.0))
-        self._opacity_anim.start()
-
-    def fade_out(self) -> None:
-        if self._external_close_callback is not None:
-            self._external_close_callback()
-            return
-        if self._fading_out or not self.isVisible():
-            return
-        self._fading_out = True
-        self._opacity_anim.stop()
-        current_opacity = self.windowOpacity()
-        self._opacity_anim.setStartValue(max(0.0, min(1.0, float(current_opacity))))
-        self._opacity_anim.setEndValue(0.0)
-        self._opacity_anim.start()
-
-    def hide(self) -> None:
-        if self._external_close_callback is not None:
-            self._external_close_callback()
-            return
-        if self._allow_hide_once or self._fading_out or not self.isVisible():
-            super().hide()
-            return
-        self.fade_out()
-
-    def _on_opacity_anim_finished(self) -> None:
-        if not self._fading_out:
-            return
-        self._fading_out = False
-        self._allow_hide_once = True
-        try:
-            super().hide()
-        finally:
-            self._allow_hide_once = False
-            self.setWindowOpacity(apply_ui_opacity(1.0))
+    def refresh_workbench_page(self) -> None:
+        self.refresh_games()
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
@@ -229,9 +167,8 @@ class GameManagerWindow(QWidget):
         header = QFrame(self)
         header.setObjectName("ManagerHeader")
         header.setAttribute(Qt.WA_StyledBackground, True)
-        header.setCursor(Qt.OpenHandCursor)
-        header.installEventFilter(self)
         self._header = header
+        self.set_drag_handle(header)
         header_layout = QHBoxLayout(header)
         header_layout.setContentsMargins(scale_px(18, min_abs=14), scale_px(15, min_abs=12), scale_px(18, min_abs=14), scale_px(15, min_abs=12))
         header_layout.setSpacing(scale_px(14, min_abs=12))
@@ -598,12 +535,6 @@ class GameManagerWindow(QWidget):
         layout.addWidget(value_label)
         return frame, value_label
 
-    def set_external_close_callback(self, callback) -> None:
-        self._external_close_callback = callback
-
-    def _request_close(self) -> None:
-        self.fade_out()
-
     def _make_button(self, text: str, callback, accent: str) -> QPushButton:
         button = QPushButton(text, self)
         button.setProperty("accent", accent)
@@ -627,25 +558,6 @@ class GameManagerWindow(QWidget):
         options = QFileDialog.Options()
         options |= QFileDialog.DontUseNativeDialog
         return options
-
-    def eventFilter(self, watched, event) -> bool:
-        if watched is self._header:
-            if event.type() == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
-                self._dragging = True
-                self._drag_offset = event.globalPos() - self.frameGeometry().topLeft()
-                self._header.setCursor(Qt.ClosedHandCursor)
-                event.accept()
-                return True
-            if event.type() == QEvent.MouseMove and self._dragging and (event.buttons() & Qt.LeftButton):
-                self.move(event.globalPos() - self._drag_offset)
-                event.accept()
-                return True
-            if event.type() == QEvent.MouseButtonRelease and event.button() == Qt.LeftButton:
-                self._dragging = False
-                self._header.setCursor(Qt.OpenHandCursor)
-                event.accept()
-                return True
-        return super().eventFilter(watched, event)
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)

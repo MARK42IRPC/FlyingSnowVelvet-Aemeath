@@ -1,10 +1,15 @@
 import array
 import unittest
 
-from lib.script.microphone_stt.service import denoise_pcm16
+from lib.script.microphone_stt.service import _is_spurious_auto_text, denoise_pcm16
 
 
 class MicrophoneDenoiseTests(unittest.TestCase):
+    def test_common_auto_mode_noise_words_are_suppressed(self):
+        self.assertTrue(_is_spurious_auto_text("huh"))
+        self.assertTrue(_is_spurious_auto_text(" huh! "))
+        self.assertFalse(_is_spurious_auto_text("hello"))
+
     def test_quiet_samples_are_attenuated_and_speech_samples_are_retained(self):
         samples = array.array("h", [40, -120, 180, 900, -1400, 40])
 
@@ -50,6 +55,17 @@ class MicrophoneDenoiseTests(unittest.TestCase):
 
         self.assertGreaterEqual(updated_floor, 0.0)
         self.assertLessEqual(updated_floor, initial_floor)
+
+    def test_noise_floor_learns_steady_louder_room_noise(self):
+        samples = array.array("h", [500] * 160)
+
+        _, floor = denoise_pcm16(
+            samples.tobytes(),
+            strength=0.65,
+            gate_threshold=180,
+        )
+
+        self.assertGreater(floor, 180.0)
 
     def test_speech_contamination_does_not_raise_noise_floor(self):
         quiet = array.array("h", [80] * 160)

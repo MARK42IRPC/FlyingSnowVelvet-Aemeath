@@ -4,17 +4,10 @@ import subprocess
 from lib.core.logger import get_logger
 logger = get_logger(__name__)
 
-from PyQt5.QtCore import QObject, pyqtSignal
-
 from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.hash_cmd_registry import get_hash_cmd_registry
 from config.config import TIMEOUTS
-
-
-class _ResultSignal(QObject):
-    """线程安全信号：后台线程通过此信号将命令结果传回主线程"""
-    ready = pyqtSignal(str)
 
 
 class CmdCenter:
@@ -26,16 +19,14 @@ class CmdCenter:
     - INPUT_CHAT  （无前缀）：由 ChatHandler 处理，此处不再重复处理
     """
 
-    def __init__(self):
-        self._event_center = get_event_center()
+    def __init__(self, *, event_center=None, compute_hub=None):
+        self._event_center = event_center or get_event_center()
+        self._compute_hub = compute_hub
+        self._cleaned = False
         self._event_center.subscribe(EventType.INPUT_COMMAND, self._on_input_command)
         self._event_center.subscribe(EventType.INPUT_HASH,    self._on_input_hash)
         # INPUT_CHAT 由 ChatHandler 处理，此处不再订阅
         get_hash_cmd_registry().register('图层', '', '查看当前窗口图层快照')
-
-        # 线程安全信号：后台线程完成后通过此信号回到主线程
-        self._signal = _ResultSignal()
-        self._signal.ready.connect(self._on_result_ready)
 
     # ------------------------------------------------------------------
     # 处理器
@@ -46,7 +37,8 @@ class CmdCenter:
         cmd = event.data.get('text', '').strip()
         if not cmd:
             return
-        get_compute_hub().submit_io(self._run_command, cmd)
+        compute_hub = self._compute_hub or get_compute_hub()
+        compute_hub.submit_io(self._run_command, cmd)
 
     def _run_command(self, cmd: str):
         """在后台线程中执行命令（超时配置化，不阻塞 Qt 主线程）"""
@@ -63,11 +55,11 @@ class CmdCenter:
             output = f'错误: {e}'
 
         logger.debug('[CmdCenter] /%s  →  %s', cmd, output[:80])
-        # 通过 Qt 信号安全传回主线程（PyQt5 跨线程自动使用队列连接）
-        self._signal.ready.emit(output)
+        # EventCenter 会通过注入的 EventPump 把后台发布切回所属线程。
+        self._on_result_ready(output)
 
     def _on_result_ready(self, output: str):
-        """在主线程中处理命令结果"""
+        """发布命令结果；线程切换由 EventCenter 负责。"""
         self._event_center.publish(Event(EventType.INFORMATION, {
             'text': output,
             'min':  10,
@@ -119,10 +111,12 @@ class CmdCenter:
     # ------------------------------------------------------------------
 
     def cleanup(self):
-        """取消所有事件订阅，断开信号"""
+        """取消所有事件订阅，可重复调用。"""
+        if self._cleaned:
+            return
+        self._cleaned = True
         self._event_center.unsubscribe(EventType.INPUT_COMMAND, self._on_input_command)
         self._event_center.unsubscribe(EventType.INPUT_HASH,    self._on_input_hash)
-        self._signal.ready.disconnect(self._on_result_ready)
 
 
 # ----------------------------------------------------------------------

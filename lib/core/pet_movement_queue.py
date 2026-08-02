@@ -5,9 +5,8 @@ import time
 from dataclasses import dataclass, replace
 from typing import Callable, Optional
 
-from PyQt5.QtCore import QPoint
-
 from lib.core.event.center import get_event_center, EventType, Event
+from lib.core.graphics.types import Point, coerce_point
 
 
 @dataclass
@@ -25,8 +24,8 @@ class MoveStep:
     started_at_ms: float | None = None
 
     @property
-    def target(self) -> QPoint:
-        return QPoint(int(self.x), int(self.y))
+    def target(self) -> Point:
+        return Point(self.x, self.y)
 
 
 class PetMoveQueueManager:
@@ -40,8 +39,9 @@ class PetMoveQueueManager:
         on_step_cancelled: Callable[[], None],
         on_queue_idle: Callable[[], None],
         can_accept_step: Callable[[], bool] | None = None,
+        event_center=None,
     ) -> None:
-        self._event_center = get_event_center()
+        self._event_center = event_center or get_event_center()
         self._on_step_activated = on_step_activated
         self._on_step_updated = on_step_updated
         self._on_step_cancelled = on_step_cancelled
@@ -50,6 +50,7 @@ class PetMoveQueueManager:
 
         self._queue: list[MoveStep] = []
         self._current: MoveStep | None = None
+        self._cleaned = False
 
         self._event_center.subscribe(EventType.PET_MOVE_ENQUEUE, self._on_enqueue)
         self._event_center.subscribe(EventType.PET_MOVE_PASS, self._on_pass)
@@ -60,6 +61,9 @@ class PetMoveQueueManager:
         return self._current
 
     def cleanup(self) -> None:
+        if self._cleaned:
+            return
+        self._cleaned = True
         self._event_center.unsubscribe(EventType.PET_MOVE_ENQUEUE, self._on_enqueue)
         self._event_center.unsubscribe(EventType.PET_MOVE_PASS, self._on_pass)
         self._event_center.unsubscribe(EventType.TICK, self._on_tick)
@@ -200,13 +204,12 @@ class PetMoveQueueManager:
 
     def _build_step(self, data: dict) -> Optional[MoveStep]:
         pos = data.get("position")
-        if isinstance(pos, QPoint):
-            tx, ty = pos.x(), pos.y()
-        elif isinstance(pos, (list, tuple)) and len(pos) >= 2:
-            tx, ty = pos[0], pos[1]
-        else:
-            tx = data.get("x")
-            ty = data.get("y")
+        point = coerce_point(pos)
+        if point is None:
+            point = coerce_point((data.get("x"), data.get("y")))
+        if point is None:
+            return None
+        tx, ty = point.x, point.y
 
         try:
             x = int(round(float(tx)))
@@ -266,7 +269,7 @@ class PetMoveQueueManager:
             "event_id": step.event_id,
             "source": step.source,
             "type": step.step_type,
-            "position": QPoint(step.x, step.y),
+            "position": step.target,
             "radius": step.radius,
             "timeout_ms": step.timeout_ms,
             "result": result,

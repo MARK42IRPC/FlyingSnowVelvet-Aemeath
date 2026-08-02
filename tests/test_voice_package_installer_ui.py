@@ -19,7 +19,11 @@ os.environ.setdefault("QT_PLUGIN_PATH", os.path.join(_QT_ROOT, "Qt5", "plugins")
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QApplication
 
-from lib.script.gsvmove.package_manager import VoicePackageStatus
+from lib.script.gsvmove.package_manager import (
+    VoicePackageRemoteSize,
+    VoicePackageStatus,
+    get_voice_package_profile,
+)
 from lib.script.ui.voice_package_installer import (
     VoicePackageInstallBanner,
     VoicePackageInstallerDialog,
@@ -139,8 +143,15 @@ class VoicePackageInstallerUiTests(unittest.TestCase):
                 self.assertEqual(dialog._drive_combo.count(), 1)
                 self.assertIn("AemeathDeskPet", dialog._drive_detail.text())
                 self.assertIn("安装过程需要", dialog._drive_detail.text())
-                self.assertIn("下载包大小为 1.0 GiB", dialog._drive_detail.text())
-                self.assertIn("安装后占用硬盘空间 1.1 GiB", dialog._drive_detail.text())
+                profile = get_voice_package_profile("fp16")
+                self.assertIn(
+                    f"下载包大小为 {installer_ui._format_bytes(profile.archive_bytes)}",
+                    dialog._drive_detail.text(),
+                )
+                self.assertIn(
+                    f"安装后占用硬盘空间 {installer_ui._format_bytes(profile.extracted_bytes)}",
+                    dialog._drive_detail.text(),
+                )
                 style = dialog.styleSheet()
                 self.assertIn("QComboBox::down-arrow", style)
                 self.assertIn("QPushButton#VoiceInstallerPrimary", style)
@@ -177,6 +188,32 @@ class VoicePackageInstallerUiTests(unittest.TestCase):
                 dialog.cleanup()
                 self.app.processEvents()
 
+    def test_remote_sizes_replace_offline_estimates_in_profile_and_drive_details(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(
+            installer_ui, "list_fixed_drive_roots", return_value=(Path(tmp),)
+        ):
+            dialog = VoicePackageInstallerDialog()
+            try:
+                dialog._reset()
+                remote = VoicePackageRemoteSize(
+                    "fp16",
+                    2 * 1024 ** 3,
+                    "ModelScope",
+                    "https://example.test/fp16.rar",
+                )
+                dialog._apply_remote_sizes(
+                    dialog._remote_size_generation,
+                    {"fp16": remote},
+                )
+
+                index = dialog._profile_combo.findData("fp16")
+                self.assertIn("2.0 GiB", dialog._profile_combo.itemText(index))
+                self.assertIn("2.0 GiB", dialog._drive_detail.text())
+                self.assertIn("ModelScope", dialog._drive_detail.text())
+            finally:
+                dialog.cleanup()
+                self.app.processEvents()
+
     def test_install_uses_interactive_io_and_enters_busy_progress(self):
         submitted = threading.Event()
 
@@ -200,6 +237,48 @@ class VoicePackageInstallerUiTests(unittest.TestCase):
                 self.assertEqual(dialog._background.text(), "后台安装")
                 self.assertFalse(dialog._background.isHidden())
                 self.assertTrue(dialog._primary.isHidden())
+            finally:
+                dialog.cleanup()
+                self.app.processEvents()
+
+    def test_install_reprobes_selected_profile_before_offline_space_check(self):
+        class ImmediateHub:
+            def submit_interactive_io(self, func):
+                func()
+                return Mock()
+
+        remote = VoicePackageRemoteSize(
+            "fp16",
+            2 * 1024 ** 3,
+            "ModelScope",
+            "https://example.test/fp16.rar",
+        )
+        installer = Mock()
+        installer.install.return_value = Mock()
+        service = Mock()
+
+        with tempfile.TemporaryDirectory() as tmp, patch.object(
+            installer_ui, "list_fixed_drive_roots", return_value=(Path(tmp),)
+        ), patch.object(
+            installer_ui, "get_compute_hub", return_value=ImmediateHub()
+        ), patch.object(
+            installer_ui, "fetch_voice_package_size", return_value=remote
+        ) as fetch_size, patch.object(
+            installer_ui, "VoicePackageInstaller", return_value=installer
+        ), patch(
+            "lib.script.gsvmove.get_gsvmove_service", return_value=service
+        ):
+            dialog = VoicePackageInstallerDialog()
+            try:
+                dialog._reset()
+                dialog._on_primary()
+
+                fetch_size.assert_called_once_with("fp16")
+                installer.install.assert_called_once()
+                self.assertEqual(
+                    installer.install.call_args.kwargs["archive_bytes"],
+                    remote.archive_bytes,
+                )
             finally:
                 dialog.cleanup()
                 self.app.processEvents()

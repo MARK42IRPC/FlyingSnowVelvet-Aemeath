@@ -11,6 +11,10 @@ from config.user_storage_paths import get_user_secrets_dir
 
 # Ollama / OpenAI 兼容 API 配置文件
 
+AI_VOICE_MAX_CHARS_MIN = 20
+AI_VOICE_MAX_CHARS_MAX = 256
+AI_VOICE_MAX_CHARS_DEFAULT = 256
+
 # ============================================================
 # API 配置-需要设置apikey,api服务器,api使用模型
 # ============================================================
@@ -162,7 +166,7 @@ OLLAMA = {
     'gsv_fragment_interval': 0.3,     # 分句片段之间的停顿秒数（0~5）
     'gsv_seed':            -1,        # ONNX 采样种子（-1=随机）
     'gsv_max_steps':       500,       # ONNX 语义解码保护上限（64~1200）
-    'ai_voice_max_chars':  80,       # GSV 语音合成最大文本长度（20~80）
+    'ai_voice_max_chars':  AI_VOICE_MAX_CHARS_DEFAULT,  # GSV 语音合成最大文本长度（20~256）
     'gsv_cache_max_files': 20,       # GSV 语音缓存最大保存条数（1~128）
     'memory_context_limit': 12,      # 发送给 AI 时附带的 recent memory 条数（0~48，0 = 不附带）
     'memory_recall_count': 30,        # 回忆工具单次提取条数（5~50）

@@ -7,7 +7,7 @@ from PyQt5.QtCore import QRect, QRectF
 from PyQt5.QtGui import QRegion
 
 from lib.core.event.center import Event, EventType
-from lib.core.qt_particle_system import (
+from lib.core.qt_bridge.particle_system import (
     _ParticleSpatialIndex,
     ParticleOverlay,
     _particle_bounds,
@@ -145,7 +145,7 @@ class ParticleBoundsTests(unittest.TestCase):
             update=lambda region: None,
         )
 
-        with patch('lib.core.qt_particle_system._particle_bounds') as bounds:
+        with patch('lib.core.qt_bridge.particle_system._particle_bounds') as bounds:
             ParticleOverlay._refresh_spatial_grid(overlay, reindex=False)
 
         bounds.assert_not_called()
@@ -235,8 +235,8 @@ class ParticleBoundsTests(unittest.TestCase):
             _drain_particle_requests=Mock(),
         )
 
-        with patch('lib.core.qt_particle_system._can_use_async_updates', return_value=True), patch(
-            'lib.core.qt_particle_system._snapshot_particles_for_update'
+        with patch('lib.core.qt_bridge.particle_system._can_use_async_updates', return_value=True), patch(
+            'lib.core.qt_bridge.particle_system._snapshot_particles_for_update'
         ) as snapshot:
             ParticleOverlay._on_tick(overlay, Event(EventType.TICK))
 

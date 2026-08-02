@@ -3,27 +3,26 @@ import random
 import math
 from typing import Tuple
 
-from PyQt5.QtGui import QColor
-from PyQt5.QtWidgets import QApplication
-
+from lib.core.graphics.types import Color
+from lib.core.screen_utils import get_virtual_screen_rect
 from lib.script.practical.base_particle import BaseParticleScript, per_second_delta, tick_seconds
 from lib.core.plugin_registry import register_particle
 
 
 # 淡棕色调色板
 _LIGHT_BROWNS = [
-    QColor(205, 175, 149),  # 浅棕褐
-    QColor(210, 180, 140),  # 棕褐（tan）
-    QColor(196, 164, 132),  # 中棕
-    QColor(188, 158, 120),  # 深棕
+    Color(205, 175, 149),  # 浅棕褐
+    Color(210, 180, 140),  # 棕褐（tan）
+    Color(196, 164, 132),  # 中棕
+    Color(188, 158, 120),  # 深棕
 ]
 
 # 灰色调色板
 _GRAYS = [
-    QColor(192, 192, 192),  # 银灰
-    QColor(176, 176, 176),  # 浅灰
-    QColor(160, 160, 160),  # 中灰
-    QColor(144, 144, 144),  # 深灰
+    Color(192, 192, 192),  # 银灰
+    Color(176, 176, 176),  # 浅灰
+    Color(160, 160, 160),  # 中灰
+    Color(144, 144, 144),  # 深灰
 ]
 
 _ALL_COLORS = _LIGHT_BROWNS + _GRAYS
@@ -59,10 +58,9 @@ class CollisionParticleScript(BaseParticleScript):
         else:
             cx, cy = float(area_data[0]), float(area_data[1])
 
-        # 获取屏幕尺寸（覆盖层与主屏幕等尺寸）
-        geo = QApplication.primaryScreen().geometry()
-        screen_w = float(geo.width())
-        screen_h = float(geo.height())
+        screen = get_virtual_screen_rect()
+        screen_w = float(screen.width)
+        screen_h = float(screen.height)
 
         count = random.randint(*self._config['count_range'])
         return [

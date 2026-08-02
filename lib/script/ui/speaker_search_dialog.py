@@ -24,6 +24,7 @@ from config.scale import scale_px, scale_style_px
 from config.tooltip_config import TOOLTIPS
 from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import get_event_center, EventType, Event
+from lib.core.graphics.types import Point
 from lib.core.unified_draw import Layer, get_layer_manager
 from lib.core.screen_utils import clamp_rect_position
 from lib.core.anchor_utils import apply_ui_opacity
@@ -410,7 +411,7 @@ class SpeakerSearchDialog(QWidget):
         self._event_center.publish(Event(EventType.UI_ANCHOR_RESPONSE, {
             'window_id':   'speaker_search_dialog',
             'anchor_id':   'all',
-            'anchor_point': QPoint(x, y),
+            'anchor_point': Point(x, y),
             'ui_id':       'all',
         }))
 

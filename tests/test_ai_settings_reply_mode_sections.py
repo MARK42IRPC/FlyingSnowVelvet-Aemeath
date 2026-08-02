@@ -20,7 +20,7 @@ from lib.core.event.center import EventType
 from lib.script.ui import ai_settings_panel as panel_module
 from lib.script.ui.ai_settings_panel import AISettingsPanel
 from lib.script.gsvmove.package_manager import VoicePackageStatus
-from lib.script.workbench.theme import COLORS as WORKBENCH_COLORS, workbench_stylesheet
+from lib.script.workbench.theme import get_workbench_colors, workbench_stylesheet
 
 
 class AISettingsReplyModeSectionsTests(unittest.TestCase):
@@ -133,7 +133,7 @@ class AISettingsReplyModeSectionsTests(unittest.TestCase):
         self.assertTrue(self.panel._save_restart_btn.property("restartAction"))
         stylesheet = workbench_stylesheet()
         self.assertIn("QPushButton#SettingsRestartAction", stylesheet)
-        self.assertIn(f"background: {WORKBENCH_COLORS.pink}", stylesheet)
+        self.assertIn(f"background: {get_workbench_colors().pink}", stylesheet)
 
     def test_save_failure_does_not_request_restart(self):
         self.panel._on_save = Mock(return_value=False)

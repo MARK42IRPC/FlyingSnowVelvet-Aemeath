@@ -3,12 +3,9 @@
 import random
 import time
 
-from PyQt5.QtCore import QTimer
-
 from config.ollama_config import AUTO_COMPANION
 from lib.core.event.center import Event
 from lib.core.logger import get_logger
-from .vision_capture import capture_screen
 
 logger = get_logger(__name__)
 
@@ -94,11 +91,6 @@ class ChatHandlerAutoCompanionMixin:
             logger.info("[ChatHandler] 自动陪伴已关闭，轮询未启用")
             return
 
-        if self._auto_timer is None:
-            self._auto_timer = QTimer()
-            self._auto_timer.setSingleShot(True)
-            self._auto_timer.timeout.connect(self._on_auto_companion_tick)
-
         self._schedule_next_auto_tick()
         interval_ms = _get_effective_auto_companion_interval_ms()
         min_s = interval_ms[0] // 1000
@@ -165,6 +157,9 @@ class ChatHandlerAutoCompanionMixin:
 
     def _on_auto_companion_tick(self):
         """定时自动向模型发起陪伴观察请求，并尽量附带截图。"""
+        if getattr(self, '_cleaned', False):
+            return
+        self._auto_timer.stop()
         try:
             if not _is_auto_companion_enabled():
                 return
@@ -181,7 +176,8 @@ class ChatHandlerAutoCompanionMixin:
                 logger.debug("[ChatHandler] 自动陪伴跳过：接口失败退避中")
                 return
 
-            images = capture_screen()
+            image_data = self._screen_capture.capture_primary_png()
+            images = [image_data] if image_data else None
             if images:
                 logger.debug("[ChatHandler] 自动陪伴请求附带截图（%d bytes）", len(images[0]))
             else:

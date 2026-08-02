@@ -15,17 +15,16 @@ import math
 import random
 from typing import List
 
-from PyQt5.QtGui import QColor
-
+from lib.core.graphics.types import Color
 from lib.script.practical.base_particle import BaseParticleScript, per_second_delta
 from lib.core.plugin_registry import register_particle
 
 
 # ── 调色板（白色 / 亮粉色 #FECBE5 / 亮蓝色 #BFF3FE）─────────────────────────────────────
-_COLORS: List[QColor] = [
-    QColor(255, 255, 255),   # 白色
-    QColor(254, 203, 229),   # 亮粉色 #FECBE5
-    QColor(191, 243, 254),   # 亮蓝色 #BFF3FE
+_COLORS: List[Color] = [
+    Color(255, 255, 255),   # 白色
+    Color(254, 203, 229),   # 亮粉色 #FECBE5
+    Color(191, 243, 254),   # 亮蓝色 #BFF3FE
 ]
 
 
@@ -76,7 +75,7 @@ class BurstLineParticle:
         # 线条外观
         self.max_length: int   = random.randint(*config['length_range'])
         self.pen_width: int    = random.randint(*config['width_range'])
-        self.color: QColor     = random.choice(config['colors'])
+        self.color: Color      = random.choice(config['colors'])
 
         # 减速系数
         self._drag: float = float(config['drag'])
@@ -151,7 +150,7 @@ class BurstLineParticleScript(BaseParticleScript):
         config = dict(self._config)
         palette_override = self._request_options.get("rgb")
         if palette_override is not None:
-            custom = QColor(*(max(0, min(255, int(v))) for v in palette_override))
+            custom = Color(*(max(0, min(255, int(v))) for v in palette_override))
             config['colors'] = [
                 custom.lighter(145),
                 custom.lighter(120),

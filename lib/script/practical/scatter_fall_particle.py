@@ -2,8 +2,8 @@
 import random
 import math
 from typing import Tuple
-from PyQt5.QtGui import QColor
 
+from lib.core.graphics.types import Color
 from lib.script.practical.base_particle import BaseParticleScript, per_second_delta
 from lib.core.plugin_registry import register_particle
 
@@ -23,7 +23,7 @@ class ScatterFallParticleScript(BaseParticleScript):
             'gravity': 10.5,            # px/s per tick
             'drag': 0.941192,           # per tick，约等于旧 0.98^3
             'life_decay': 0.15,         # per tick，约等于旧 0.05*3
-            'color': QColor(173, 216, 230),  # 浅青色
+            'color': Color(173, 216, 230),  # 浅青色
         }
 
     def create_particles(self, area_type: str, area_data: Tuple) -> list:

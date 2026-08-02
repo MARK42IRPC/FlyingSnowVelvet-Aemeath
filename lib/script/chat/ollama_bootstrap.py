@@ -6,14 +6,13 @@ import threading
 import time
 
 import requests
-from PyQt5.QtCore import QTimer
 
 from config.config import TIMEOUTS
 from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import EventType, Event
 
 from .ollama_registry import record_model_error, update_models_from_names
-from .ollama_support import logger, OLLAMA_BASE_URL, PING_INTERVAL_MS, _OllamaSignal
+from .ollama_support import logger, OLLAMA_BASE_URL, PING_INTERVAL_MS
 
 
 class OllamaBootstrapMixin:
@@ -47,12 +46,7 @@ class OllamaBootstrapMixin:
             logger.debug("[OllamaManager] ollama 预启动任务仍在运行，跳过重复提交")
 
     def _on_app_main(self, event: Event):
-        """Qt 就绪阶段：创建信号对象、定时器等"""
-        self._signal = _OllamaSignal()
-        self._signal.status_ready.connect(self._on_status_ready)
-        self._signal.chunk_ready.connect(self._on_chunk_ready)
-        self._signal.chat_ready.connect(self._on_chat_ready)
-
+        """应用主阶段：启动后台状态探测与周期调度。"""
         if self._api_type != 'ollama':
             logger.info("[OllamaManager] 当前模式(%s)：跳过 ping 定时器", self._api_type)
         else:
@@ -64,8 +58,9 @@ class OllamaBootstrapMixin:
             if future is None:
                 logger.debug("[OllamaManager] 初始 ping 任务仍在运行，跳过重复提交")
 
-            self._ping_timer = QTimer()
-            self._ping_timer.timeout.connect(self._on_ping_tick)
+            if self._scheduler is None:
+                raise RuntimeError("OllamaManager 在本地模式下需要注入 Scheduler")
+            self._ping_timer = self._scheduler.create_periodic_timer(self._on_ping_tick)
             self._ping_timer.start(PING_INTERVAL_MS)
             logger.info("[OllamaManager] Ping 定时器已启动（间隔 %ds）", PING_INTERVAL_MS // 1000)
 
@@ -226,19 +221,17 @@ class OllamaBootstrapMixin:
             logger.debug("[OllamaManager] ping 任务仍在运行，跳过本轮探测")
 
     def _ping(self):
-        """后台线程：GET /api/tags，结果通过信号传回主线程"""
+        """后台线程：GET /api/tags，结果派发回管理器所属线程。"""
         try:
             resp = requests.get(f"{OLLAMA_BASE_URL}/api/tags", timeout=TIMEOUTS['api_list'])
             if resp.ok:
                 models = resp.json().get("models", [])
-                if self._signal:
-                    self._signal.status_ready.emit(True, models)
+                self._callback_dispatcher.dispatch(self._on_status_ready, True, models)
                 return
         except Exception:
             pass
 
-        if self._signal:
-            self._signal.status_ready.emit(False, [])
+        self._callback_dispatcher.dispatch(self._on_status_ready, False, [])
 
     def cleanup(self):
         """停止定时器，取消事件订阅"""
@@ -246,6 +239,10 @@ class OllamaBootstrapMixin:
         if self._ping_timer:
             self._ping_timer.stop()
             self._ping_timer = None
+        if self._scheduler is not None:
+            self._scheduler.cleanup()
+            self._scheduler = None
+        self._callback_dispatcher.cleanup()
 
         with self._chat_state_lock:
             self._chat_callbacks.clear()

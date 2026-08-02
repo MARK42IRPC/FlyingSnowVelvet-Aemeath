@@ -2,9 +2,8 @@
 import random
 import math
 from typing import Tuple
-from PyQt5.QtCore import QPointF
-from PyQt5.QtGui import QColor
 
+from lib.core.graphics.types import Color
 from lib.script.practical.base_particle import BaseParticleScript, per_second_delta, tick_seconds
 from lib.core.plugin_registry import register_particle
 
@@ -23,7 +22,7 @@ class RightFadeParticleScript(BaseParticleScript):
             'base_speed': 60,  # 基础速度 60px/秒
             'speed_variation': 20,  # 速度随机变化 ±20px/秒
             'life_range': (0.3, 0.6),  # 寿命 0.3~0.6秒
-            'color': QColor(173, 216, 230),  # 浅青色
+            'color': Color(173, 216, 230),  # 浅青色
         }
 
     def create_particles(self, area_type: str, area_data: Tuple) -> list:

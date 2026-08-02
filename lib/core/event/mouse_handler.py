@@ -1,8 +1,9 @@
-"""鼠标事件处理器 - 处理鼠标相关的具体逻辑"""
-from PyQt5.QtCore import Qt
+"""鼠标事件处理器 - 处理核心鼠标输入。"""
 
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.voice.ams_enh import AmsEnhSound
+from lib.core.graphics.types import coerce_point
+from lib.core.input.types import MouseButton, MouseButtons, MouseInput
 
 
 class MouseEventHandler:
@@ -33,21 +34,21 @@ class MouseEventHandler:
         global_pos = event.data.get('global_pos')
         pos = event.data.get('pos')
 
-        if button == Qt.LeftButton:
+        if button == MouseButton.LEFT:
             # 粒子特效（使用全局坐标）
-            gpos = self._entity.mapToGlobal(pos)
-            self._entity.spawn_particles(gpos.x(), gpos.y(), particle_id='cyan_pink_scatter_fall')
+            self._entity.spawn_particles(global_pos.x, global_pos.y, particle_id='cyan_pink_scatter_fall')
 
             # 记录拖拽偏移
-            self._drag_offset = global_pos - self._entity.get_position()
+            get_position = getattr(self._entity, "get_core_position", self._entity.get_position)
+            entity_pos = coerce_point(get_position())
+            self._drag_offset = global_pos - entity_pos if entity_pos is not None else None
 
             # ams-enh 音效（CD 由 AmsEnhSound 内部控制，直接调用即可）
             self._ams_enh.play()
 
-        elif button == Qt.RightButton:
+        elif button == MouseButton.RIGHT:
             # 粒子特效（使用全局坐标）
-            gpos = self._entity.mapToGlobal(pos)
-            self._entity.spawn_particles(gpos.x(), gpos.y(), particle_id='pink_scatter_fall')
+            self._entity.spawn_particles(global_pos.x, global_pos.y, particle_id='pink_scatter_fall')
 
             # 发布切换命令框事件（打开/关闭右键UI）
             self._event_center.publish(Event(EventType.UI_COMMAND_TOGGLE, {
@@ -59,13 +60,13 @@ class MouseEventHandler:
         buttons = event.data.get('buttons')
         global_pos = event.data.get('global_pos')
 
-        if buttons & Qt.LeftButton and self._drag_offset:
+        if buttons & MouseButtons.LEFT and self._drag_offset:
             new_pos = global_pos - self._drag_offset
             self._entity.begin_user_drag()
             self._entity.update_user_drag_position(new_pos)
 
-    def handle_release(self, event) -> None:
-        """处理 Qt 原始鼠标释放事件。"""
-        if event.button() == Qt.LeftButton:
+    def handle_release(self, button: MouseButton) -> None:
+        """处理已经转换为核心枚举的鼠标释放事件。"""
+        if button == MouseButton.LEFT:
             self._drag_offset = None
             self._entity.end_user_drag()

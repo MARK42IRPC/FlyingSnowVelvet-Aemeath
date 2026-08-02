@@ -12,12 +12,14 @@ try:
 except Exception:
     _onnxruntime_preload = None
 
-from PyQt5.QtCore import QEvent, QTimer
-
 from config.config import GIF_FILES, DRAW, ANIMATION
-from lib.core.qt_gif_loader import GifLoader
-from lib.core.qt_effect_system import EffectOverlay
-from lib.core.qt_particle_system import ParticleOverlay
+from lib.core.application_runtime import ApplicationRuntime
+from lib.core.qt_bridge.application_runtime import QtApplicationRuntime
+from lib.core.qt_bridge.gif_loader import GifLoader
+from lib.core.qt_bridge.effect_system import EffectOverlay
+from lib.core.qt_bridge.particle_system import ParticleOverlay
+from lib.core.qt_bridge.scheduler import QtScheduler
+from lib.core.qt_bridge.screen_capture import QtScreenCapture
 from lib.core.pet_window import PetWindow
 from lib.core.event.center import get_event_center, EventType, Event, cleanup_event_center
 from lib.script.SEanima.animation import get_start_exit_animation, cleanup_start_exit_animation
@@ -44,7 +46,7 @@ from lib.script.app.game_mode_service import get_game_mode_service, cleanup_game
 from lib.core.plugin_registry import (
     discover_all, init_all_managers, cleanup_all_managers, get_manager
 )
-from lib.core.tray_icon import get_tray_icon, cleanup_tray_icon
+from lib.core.qt_bridge.tray_icon import get_tray_icon, cleanup_tray_icon
 from lib.script.ui.shutdown import hide_all_runtime_ui, cleanup_all_runtime_ui
 from lib.script.app.single_instance import (
     acquire_single_instance_lock as _new_acquire_single_instance_lock,
@@ -53,7 +55,6 @@ from lib.script.app.single_instance import (
 )
 from lib.script.app.startup_probe import log_startup_hardware_info as _new_log_startup_hardware_info
 from lib.script.app.desktop_shortcut import ensure_desktop_shortcut as _new_ensure_desktop_shortcut
-from lib.script.app.qt_runtime import create_qt_application as _new_create_qt_application
 from lib.script.app.restart import launch_current_application as _launch_current_application
 
 logger = get_logger(__name__)
@@ -64,7 +65,8 @@ _SHUTDOWN_THREAD_DRAIN_SECONDS = 2.0
 class ApplicationState:
     """应用程序状态管理"""
 
-    def __init__(self):
+    def __init__(self, application_runtime: ApplicationRuntime | None = None):
+        self._application_runtime = application_runtime or QtApplicationRuntime()
         self._event_center = get_event_center()
         self._app = None
         self._pet = None
@@ -102,8 +104,8 @@ class ApplicationState:
         self._shutdown_force_quit_armed = False
         self._shutdown_force_timer = None
         self._shutdown_clean_exit_confirmed = False
-        self._qt_exit_requested = False
-        self._qt_exit_acknowledged = False
+        self._runtime_exit_requested = False
+        self._runtime_exit_acknowledged = False
         self._app_exit_event_published = False
 
         # 音频核心在事件中心初始化后立即创建，以便订阅 APP_PRE_START 完成 MCI 预热
@@ -120,9 +122,13 @@ class ApplicationState:
         # CmdCenter 在事件中心初始化后立即注册，确保捕获所有输入事件
         self._cmd_center = get_cmd_center()
 
-        # OllamaManager 需在 APP_PRE_START 前注册（订阅该事件以尝试启动服务）
-        # ChatHandler 在其内部初始化 OllamaManager，顺序在 CmdCenter 之后即可
-        self._chat_handler = get_chat_handler()
+        # OllamaManager 需在 APP_PRE_START 前注册（订阅该事件以尝试启动服务）。
+        # Qt 调度器只在桌面组合边界创建，聊天业务模块仅依赖 Scheduler 协议。
+        get_ollama_manager(scheduler=QtScheduler())
+        self._chat_handler = get_chat_handler(
+            scheduler=QtScheduler(),
+            screen_capture=QtScreenCapture(),
+        )
         self._stream_memory = get_stream_memory()
 
         # 订阅事件
@@ -148,7 +154,7 @@ class ApplicationState:
             logger.info('等待 3 秒初始化...')
         else:
             logger.info('启动/退出动画已关闭，跳过启动延时，立即初始化')
-        QTimer.singleShot(startup_delay_ms, self._on_init_timer)
+        self._application_runtime.schedule_once(startup_delay_ms, self._on_init_timer)
 
     def _on_init_timer(self):
         """3秒定时器回调 - 发布初始化就绪事件"""
@@ -284,11 +290,14 @@ class ApplicationState:
 
         logger.info('工作目录: %s', script_dir)
 
-        # 创建Qt应用（需要在发布事件前创建，以便 QTimer 工作）
-        self._app = _new_create_qt_application(logger, sys.argv)
-        self._app.aboutToQuit.connect(self._on_qt_about_to_quit)
+        # 创建桌面应用（需要在发布事件前创建，以便运行时调度工作）
+        self._app = self._application_runtime.create_application(logger, sys.argv)
+        self._application_runtime.connect_exit_acknowledged(
+            self._app,
+            self._on_runtime_exit_acknowledged,
+        )
 
-        # 初始化字体配置（DPI 缩放，需在 QApplication 创建后调用）
+        # 初始化字体配置（DPI 缩放，需在桌面应用实例创建后调用）
         from config.font_config import init_font_config
         init_font_config()
 
@@ -306,8 +315,8 @@ class ApplicationState:
         })
 
     def run_event_loop(self):
-        """运行 Qt 事件循环"""
-        return self._app.exec_()
+        """运行桌面后端事件循环。"""
+        return self._application_runtime.run_event_loop(self._app)
 
     def request_exit(self, exit_code: int = 0):
         self._exit_requested = True
@@ -353,7 +362,7 @@ class ApplicationState:
             ('quit_application', self._shutdown_quit_application, 0),
         ]
         self._shutdown_step_index = 0
-        QTimer.singleShot(0, self._run_next_shutdown_step)
+        self._application_runtime.schedule_once(0, self._run_next_shutdown_step)
 
     def _run_next_shutdown_step(self):
         if self._exit_completed or self._shutdown_step_index >= len(self._shutdown_steps):
@@ -371,13 +380,13 @@ class ApplicationState:
             logger.error('退出阶段 %s 执行失败:\n%s', step_name, traceback.format_exc())
 
         if not self._exit_completed and self._shutdown_step_index < len(self._shutdown_steps):
-            QTimer.singleShot(delay_ms, self._run_next_shutdown_step)
+            self._application_runtime.schedule_once(delay_ms, self._run_next_shutdown_step)
 
     def _process_pending_events(self):
         if self._app is None:
             return
         try:
-            self._app.processEvents()
+            self._application_runtime.process_events(self._app)
         except Exception:
             pass
 
@@ -426,8 +435,7 @@ class ApplicationState:
         if self._pet:
             timing_manager = getattr(self._pet, '_timing_manager', None)
             if timing_manager:
-                timing_manager.stop()
-                timing_manager.clear_all()
+                timing_manager.cleanup()
 
             try:
                 self._pet.close()
@@ -465,30 +473,31 @@ class ApplicationState:
     def _shutdown_quit_application(self):
         if not self._app:
             return
-        self._qt_exit_requested = True
-        QTimer.singleShot(_SHUTDOWN_QUIT_RETRY_MS, self._retry_qt_exit)
+        self._runtime_exit_requested = True
+        self._application_runtime.schedule_once(
+            _SHUTDOWN_QUIT_RETRY_MS,
+            self._retry_runtime_exit,
+        )
         try:
-            self._app.sendPostedEvents(None, QEvent.DeferredDelete)
-            self._app.exit(int(self._exit_code))
+            self._application_runtime.request_exit(self._app, self._exit_code)
         except Exception:
             import traceback
-            logger.error('触发 Qt 退出失败:\n%s', traceback.format_exc())
+            logger.error('触发应用运行时退出失败:\n%s', traceback.format_exc())
 
-    def _retry_qt_exit(self):
-        if self._qt_exit_acknowledged or self._app is None:
+    def _retry_runtime_exit(self):
+        if self._runtime_exit_acknowledged or self._app is None:
             return
-        logger.warning('Qt 退出请求尚未确认，关闭残留窗口并再次请求退出')
+        logger.warning('应用退出请求尚未确认，关闭残留窗口并再次请求退出')
         try:
-            self._app.closeAllWindows()
-            self._app.sendPostedEvents(None, QEvent.DeferredDelete)
-            self._app.exit(int(self._exit_code))
+            self._application_runtime.close_all_windows(self._app)
+            self._application_runtime.request_exit(self._app, self._exit_code)
         except Exception:
             import traceback
-            logger.error('重试 Qt 退出失败:\n%s', traceback.format_exc())
+            logger.error('重试应用运行时退出失败:\n%s', traceback.format_exc())
 
-    def _on_qt_about_to_quit(self):
-        self._qt_exit_acknowledged = True
-        logger.info('Qt 事件循环已确认退出请求')
+    def _on_runtime_exit_acknowledged(self):
+        self._runtime_exit_acknowledged = True
+        logger.info('应用事件循环已确认退出请求')
 
     def _shutdown_force_quit_application(self):
         self._exit_completed = True
@@ -592,10 +601,10 @@ class ApplicationState:
         final_exit_code = self._exit_code if self._exit_requested else exit_code
 
         if self._exit_requested:
-            if self._qt_exit_requested and not self._qt_exit_acknowledged:
-                logger.warning('Qt 事件循环已返回，但未收到 aboutToQuit 确认')
+            if self._runtime_exit_requested and not self._runtime_exit_acknowledged:
+                logger.warning('应用事件循环已返回，但未收到退出确认')
             else:
-                logger.info('Qt 事件循环已正常返回，开始最终收尾')
+                logger.info('应用事件循环已正常返回，开始最终收尾')
 
         if (
             self._exit_requested
@@ -606,7 +615,7 @@ class ApplicationState:
             self._publish_app_exit_once()
 
         if not self._components_cleaned:
-            logger.warning('Qt 事件循环已经结束，但组件仍未完全清理，开始兜底收尾')
+            logger.warning('应用事件循环已经结束，但组件仍未完全清理，开始兜底收尾')
             self._perform_component_cleanup()
 
         cleanup_start_exit_animation()
@@ -646,7 +655,7 @@ def main():
         # START 状态 - 发布预启动事件，开始非阻塞初始化
         app_state.start()
 
-        # 运行 Qt 事件循环（初始化在事件回调中完成）
+        # 运行桌面后端事件循环（初始化在事件回调中完成）
         exit_code = app_state.run_event_loop()
 
         # EXIT 状态

@@ -91,6 +91,22 @@ class _ThemeAwarePage(QWidget):
         self.theme_refreshes += 1
 
 
+class _RefreshContractPage(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.shared_refreshes = 0
+        self.legacy_refreshes = 0
+
+    def refresh_workbench_page(self):
+        self.shared_refreshes += 1
+
+    def refresh_games(self):
+        self.legacy_refreshes += 1
+
+    def _refresh_now(self):
+        self.legacy_refreshes += 1
+
+
 class WorkbenchWindowTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -203,6 +219,24 @@ class WorkbenchWindowTests(unittest.TestCase):
             UI["workbench_light_theme"] = original_theme
             window.deleteLater()
             self.app.processEvents()
+
+    def test_external_page_uses_shared_refresh_contract(self):
+        panel = _FakeControlPanel()
+        page = _RefreshContractPage()
+        extras = (("bug_tracker", "Bug tracker", lambda: page),)
+        with patch.object(workbench_module, "QSettings", _MemorySettings):
+            window = workbench_module.WorkbenchWindow(
+                lambda: panel,
+                control_panel_page_specs=panel.get_workbench_page_specs(),
+                extra_page_specs=list(extras),
+            )
+
+        window._set_current_page("bug_tracker")
+
+        self.assertEqual(page.shared_refreshes, 1)
+        self.assertEqual(page.legacy_refreshes, 0)
+        window.deleteLater()
+        self.app.processEvents()
 
     def test_external_theme_refresh_is_deferred_and_visible_page_only(self):
         panel = _FakeControlPanel()

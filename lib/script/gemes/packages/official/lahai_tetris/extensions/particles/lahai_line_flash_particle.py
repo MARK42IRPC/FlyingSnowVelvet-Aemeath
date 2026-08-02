@@ -6,8 +6,7 @@ import math
 import random
 from typing import Tuple
 
-from PyQt5.QtGui import QColor
-
+from lib.core.graphics.types import Color
 from lib.script.practical.base_particle import BaseParticleScript, per_second_delta
 
 
@@ -133,7 +132,7 @@ class LahaiLineFlashParticle:
         self.vx = per_second_delta(random.uniform(*config["speed_x"]))
         self.vy = per_second_delta(random.uniform(*config["speed_y"]))
         base_rgb = fixed_rgb if fixed_rgb is not None else options.get("rgb", (255, 255, 255))
-        self.color = QColor(*base_rgb) if fixed_rgb is not None else _vary_color(base_rgb)
+        self.color = Color(*base_rgb) if fixed_rgb is not None else _vary_color(base_rgb)
         self.gravity = per_second_delta(float(config["gravity"]))
         self.drag = float(config["drag"])
         self._brownian = per_second_delta(float(config["brownian"]))
@@ -156,11 +155,11 @@ class LahaiLineFlashParticle:
         return self.life > 0.0
 
 
-def _vary_color(rgb: tuple[int, int, int] | list[int]) -> QColor:
+def _vary_color(rgb: tuple[int, int, int] | list[int]) -> Color:
     r, g, b = [max(0, min(255, int(v))) for v in rgb]
     luma = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255.0
     jitter = 20 if luma < 0.65 else 14
-    return QColor(
+    return Color(
         max(0, min(255, r + random.randint(-jitter, jitter))),
         max(0, min(255, g + random.randint(-jitter, jitter))),
         max(0, min(255, b + random.randint(-jitter, jitter))),

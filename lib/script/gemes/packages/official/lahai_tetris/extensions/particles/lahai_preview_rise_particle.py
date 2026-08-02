@@ -5,8 +5,7 @@ from __future__ import annotations
 import random
 from typing import Tuple
 
-from PyQt5.QtGui import QColor
-
+from lib.core.graphics.types import Color
 from lib.script.practical.base_particle import BaseParticleScript, per_second_delta, tick_seconds
 
 
@@ -60,7 +59,7 @@ class LahaiPreviewRiseParticle:
         varied_speed = base_speed * random.uniform(1.0 - speed_random_scale, 1.0 + speed_random_scale)
         self.vy = -per_second_delta(varied_speed)
         self._base_color = _vary_color(options.get("rgb", (255, 134, 88)))
-        self.color = QColor(self._base_color)
+        self.color = self._base_color
         self.max_life = random.uniform(*config["life_range"])
         self.life = self.max_life
         self._flash_toggle = random.choice((True, False))
@@ -68,7 +67,7 @@ class LahaiPreviewRiseParticle:
     def update(self) -> None:
         self.y += self.vy
         self._flash_toggle = not self._flash_toggle
-        self.color = QColor(self._base_color.lighter(132 if self._flash_toggle else 92))
+        self.color = self._base_color.lighter(132 if self._flash_toggle else 92)
         self.life -= tick_seconds()
 
     @property
@@ -76,9 +75,9 @@ class LahaiPreviewRiseParticle:
         return self.life > 0.0
 
 
-def _vary_color(rgb: tuple[int, int, int] | list[int]) -> QColor:
+def _vary_color(rgb: tuple[int, int, int] | list[int]) -> Color:
     r, g, b = [max(0, min(255, int(v))) for v in rgb]
-    return QColor(
+    return Color(
         max(0, min(255, r + random.randint(-10, 16))),
         max(0, min(255, g + random.randint(-14, 10))),
         max(0, min(255, b + random.randint(-10, 8))),

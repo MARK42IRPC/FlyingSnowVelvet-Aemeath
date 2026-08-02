@@ -266,7 +266,7 @@
     <main>
         <div class="hero">
             <h1>飞行雪绒资料舱</h1>
-            <p>贡献 + 赞助 + 文档 · LTS1.0.6pre5<br>基于项目默认配色 + 粒子灵感打造，方便在浏览器里查阅 doc 与贡献记录。生成时间：2026-08-02 15:59:14</p>
+            <p>贡献 + 赞助 + 文档 · LTS1.0.6pre5<br>基于项目默认配色 + 粒子灵感打造，方便在浏览器里查阅 doc 与贡献记录。生成时间：2026-08-03 02:45:35</p>
         </div>
         <section id="top-panels">
             <div class="top-panels">
@@ -577,7 +577,166 @@ rg --files
         </article>
         <article class="card">
             <header>
-                <div class="eyebrow">2026-07-30 04:48</div>
+                <div class="eyebrow">2026-08-03 02:44</div>
+                <h3>Qt收敛方案</h3>
+                <a class="download" href="doc/Qt收敛方案.md" download>下载原文件</a>
+            </header>
+            <pre># Qt 依赖收敛方案
+
+更新时间：2026-08-03
+
+本文档是 Qt 收敛工作的当前实施依据。目标是让业务模块和核心算法不再显式依赖 PyQt5，同时保留现有 Qt 界面作为第一个后端，未来可以替换为自研窗口和绘制后端。
+
+## 1. 目标与边界
+
+最终依赖方向：
+
+```text
+lib/script 与业务对象
+        ↓
+lib/core 的纯数据、算法和协议
+        ↓
+lib/core/qt_bridge
+        ↓
+PyQt5 / Windows
+```
+
+“不显式依赖 Qt”指业务模块和纯核心模块不能导入 `PyQt5`，也不能在公开数据、事件 payload、类型标注中暴露 `QPoint`、`QRect`、`QImage`、`QPixmap`、`QPainter`、`QTimer` 等 Qt 类型。Qt 后端内部可以使用这些对象。
+
+工作台和复杂 QWidget 控件属于 UI toolkit 适配范围，不在第一轮复制一套控件抽象。第一轮优先处理桌宠运行时、几何、绘制、输入、调度和窗口宿主。
+
+## 2. 目录职责
+
+```text
+lib/core/graphics/
+  types.py       # Point、Size、Rect、Color、FontSpec 等值类型
+  commands.py    # DrawRequest、RenderRequest、RenderItem
+  scene.py       # 资源帧、当前帧、活跃请求和排序状态
+  backend.py     # 绘制后端协议
+  capture.py     # 屏幕截图后端协议
+
+lib/core/timing/
+  scheduler.py   # 周期计时器与调度后端协议
+
+lib/core/application_runtime.py # 应用事件循环、退出和一次性调度协议
+lib/core/pet_host.py            # 主宠窗口后端回调协议
+lib/core/pet_movement_runtime.py # 主宠移动队列、插值、拖拽和状态协作
+
+lib/core/qt_bridge/
+  application_runtime.py # QApplication/QEvent/QTimer 生命周期适配
+  draw_backend.py  # QImage/QPixmap/QPainter 缓存和绘制
+  gif_loader.py    # GIF 帧到 QImage 的加载、缩放和翻转
+  particle_system.py # Qt 粒子覆盖窗口和空间索引
+  effect_system.py # Qt 特效覆盖窗口和图片缓存
+  entity_widget.py # BaseEntity 的 QWidget 宿主与混合元类
+  pet_widget.py    # 主宠 QWidget 原生事件与核心输入转换
+  window_setup.py  # PetWindow 的 QWidget 初始化与首屏定位
+  tray_icon.py     # QSystemTrayIcon 与托盘菜单宿主
+  scheduler.py     # QTimer 调度适配
+  event_pump.py    # Qt 跨线程事件泵适配
+  screen_capture.py # 主屏幕截图与 PNG 编码
+  widget_anchors.py # QWidget/QPoint 锚点兼容适配
+  workbench_page.py # 可独立显示或嵌入工作台的 Qt 工具页共享宿主
+```
+
+`lib/core/graphics` 不得导入 Qt。`lib/core/qt_bridge` 是唯一允许集中导入 Qt 的核心适配包。旧模块可以短期保留兼容门面，但新增代码必须从 `graphics` 或明确的适配接口获取能力。
+
+## 3. 稳定接口
+
+### 3.1 几何值
+
+使用不可变的 `Point`、`Size`、`Rect`、`Color` 和 `FontSpec`。坐标采用桌面坐标约定：x 向右为正，y 向下为正；颜色使用 8-bit RGBA；文字绘制只声明字体族、像素字号和粗体状态。边界转换和字体度量只发生在后端适配器中。
+
+### 3.2 绘制场景
+
+`DrawScene` 只管理：
+
+- 资源 ID 到帧序列的映射；
+- 当前帧和循环切换；
+- 活跃 `DrawRequest`；
+- layer、z、生成顺序；
+- 请求的透明度、位置、缩放和翻转状态。
+
+`DrawScene` 不负责图片格式转换、缩放、翻转或实际绘制。
+
+### 3.3 绘制后端
+
+`DrawBackend.render(scene, target, target_rect)` 消费场景，不反向修改业务状态。后端可以拥有资源转换缓存，但必须提供幂等 `cleanup()`。
+
+Qt 后端负责：
+
+- `QImage -&gt; QPixmap` 转换；
+- 缩放和水平翻转；
+- `QPainter` 状态保存/恢复；
+- Qt 几何对象转换。
+
+未来自研后端只需实现同一协议，不应修改 `DrawScene` 或业务对象。
+
+### 3.4 应用与主宠宿主
+
+`ApplicationRuntime` 定义桌面应用创建、一次性调度、事件处理、退出请求、退出确认和事件循环；应用编排不得直接调用具体 toolkit 的静态计时器或事件类型。
+
+`PetHostCallbacks` 定义主宠后端向业务控制层提交的渲染准备、鼠标、键盘、窗口移动和关闭回调。Qt 后端由 `QtPetWidget` 实现 QWidget 原生事件方法并转换为 `MouseInput`、`KeyboardInput` 和 `Point`；未来自研窗口后端应调用同一组回调，不在业务控制器中模拟 Qt 事件对象。
+
+## 4. 分阶段计划
+
+### 阶段一：数据契约
+
+已完成。新增 `graphics/types.py` 和 `graphics/commands.py`，`RenderCore` 已不再导入 Qt，`render_layer.py` 只保留兼容导入。
+
+### 阶段二：绘制状态与 Qt 后端拆分
+
+已完成。新增 `DrawScene`、`DrawBackend` 和 `qt_bridge.draw_backend`。`DrawCore` 保留原公开方法，改为纯场景门面并懒加载 Qt 后端，确保既有调用方不需要一次性迁移。
+
+验收：`draw_core.py`、`graphics/` 和业务请求模块不显式导入 Qt；现有 GIF 帧切换、排序、缩放、翻转和透明度行为不变。
+
+### 阶段三：几何和输入
+
+进行中。`movement_controller.py`、`pet_movement_queue.py`、物理边界提供器、锚点纯计算、鼠标/键盘核心事件、屏幕裁剪与线段碰撞算法、实体核心位置接口和主宠状态机已迁移到 `Point/Rect` 与纯输入载荷；键盘事件使用核心 `Key/KeyModifier`，Qt 原生键值只在 `qt_bridge.input` 转换，麦克风快捷键解析不再导入 Qt。命令框和关闭按钮的事件处理器也已改用核心 `MouseButton/Point`，不再直接导入 PyQt；需要保留 QPoint 状态的 QWidget 在事件接收边界统一调用 `qt_bridge.window.coerce_qpoint()`。鼠标穿透的共享状态也改为纯进程布尔状态，不再借用 `QApplication.property`。QWidget/QPoint 锚点方法已搬到 `qt_bridge.widget_anchors`，QApplication 屏幕查询已搬到 `qt_bridge.screen`；`anchor_utils` 和 `screen_utils` 只保留旧调用方的懒加载兼容门面。旧的 QPoint-like 输入仍由 `graphics.types.coerce_point()` 兼容解析。原 `get_position()/get_geometry()` Qt 兼容接口暂时保留，剩余 UI/对象调用将在下一步收敛到 `qt_bridge`。
+
+验收：移动、拖拽、锚点、碰撞和游戏运行时几何测试覆盖纯数据路径。
+
+### 阶段四：调度和事件泵
+
+已完成。`EventPump` 已从 `EventCenter` 中抽出，Qt `QObject/pyqtSignal` 位于 `qt_bridge.event_pump`，事件中心支持注入 FakePump。事件处理器异常会记录事件类型、回调模块和限定名及完整堆栈，便于定位跨后端载荷边界错误。后台命令结果直接发布到线程安全的 `EventCenter`，Ollama 状态与流式回调通过纯 `CallbackDispatcher` 复用同一 EventPump 契约，不再自建 Qt 信号。`CallbackDispatcher` 必须在创建者线程绑定 EventPump，不得由首个后台任务延迟创建；否则 Qt 对象会归属无事件循环的 worker，导致后续完成回调丢失和请求状态永久 busy。`TimingManager`、Ollama 周期 ping、聊天流式刷新和自动陪伴不再直接依赖 `QTimer`，只依赖 `timing.scheduler.Scheduler` 创建可取消周期计时器；`ApplicationState` 和桌宠窗口在 Qt 桌面组合边界注入独占的 `qt_bridge.scheduler.QtScheduler`。聊天侧的 40ms 流式刷新与自动陪伴计时器在回调入口先停止，以保持 single-shot 语义。`LayerManager`、主宠保护检查和工具回忆重派发使用可注入的一次性调度函数，默认 Qt 实现同样位于 `qt_bridge.scheduler`。停止退出时通过幂等 `cleanup()` 退订事件并释放调度后端。
+
+验收：FakeScheduler 覆盖启动、停止、改频、任务触发和暂停引用计数；独立子进程阻断 PyQt 导入后仍可导入并运行核心调度，Qt 后端另有真实事件循环行为测试。
+
+### 阶段五：窗口和 UI
+
+进行中。`BaseEntity` 已改为无 Qt 的纯 ABC，Qt QWidget 与 ABC 的混合宿主位于 `qt_bridge.entity_widget`；托盘、窗口初始化、粒子、特效和 GIF 后端也已搬入 `qt_bridge` 并保留旧路径兼容导出。粒子脚本及官方拉海洛粒子扩展已无显式 PyQt 导入：颜色和文字字体分别使用纯 `graphics.types.Color/FontSpec`，屏幕边界读取返回核心 `Rect`；`qt_bridge.particle_system` 在绘制入口转换 `QColor/QFont`、计算文字数值度量，粒子数据不再持有 Qt 颜色、字体或自定义 `QPainter` 回调。`PetWindow` 源码不再直接导入 PyQt，QPoint 转换、窗口移动、穿透旗标和 QPainter 绘制均委托给 `qt_bridge.window`，内部移动轨迹使用核心 `Point`。聊天截图改为注入纯 `graphics.capture.ScreenCapture`，Qt 主屏幕抓取和 PNG 编码位于 `qt_bridge.screen_capture`，业务事件与模型请求只传递 `bytes`。应用生命周期新增纯 `ApplicationRuntime` 协议，`ApplicationState` 的应用创建、single-shot、事件处理、退出确认、残留窗口关闭和事件循环均通过该协议调用；`QApplication/QEvent/QTimer` 实现集中在 `qt_bridge.application_runtime`，旧 `script.app.qt_runtime` 仅保留兼容导出。主宠 QWidget 原生 `paint/mouse/key/move/close` 事件已搬到 `qt_bridge.pet_widget.QtPetWidget`，`PetWindow` 只实现 `PetHostCallbacks` 的核心输入和渲染准备回调，Qt 几何兼容接口也由宿主提供。主宠移动队列、插值、拖拽和 moving/idle 状态协作已搬到可独立实例化的 `PetMovementRuntime`，事件中心和宿主副作用均通过注入提供；`MovementController` 使用纯 `MovementSettings`，阻断 PyQt 后仍可运行。`UI_ANCHOR_RESPONSE`、`ENTITY_POSITION_RESPONSE` 和实体状态响应中的几何字段已统一为核心 `Point`，Qt UI 只在消费边界转回 `QPoint`；对象管理器和主宠 UI 的生产调用已改用 `get_core_position()/get_core_geometry()`。故障跟踪与游戏包页面的独立窗口/工作台嵌入生命周期已收敛到 `qt_bridge.workbench_page.QtWorkbenchToolPage`，页面注册由 `script.workbench.builtin_pages` 单点维护，工作台只调用统一的 `refresh_workbench_page()`；嵌入页不再重新挂载其它入口持有的独立窗口。下一步继续拆分主宠状态机与绘制状态副作用，并将对象管理器中的图片加载、屏幕查询和 QWidget 创建迁到后端工厂。工作台和对话框仍保留 Qt UI toolkit 作为可替换边界内的一个实现。
+
+验收：启动、退出、层级、透明窗口、托盘、工作台懒加载和设置保存行为保持不变。
+
+## 5. 约束与禁止事项
+
+- 不在 `graphics` 中增加 Qt 兼容类型或 Qt 条件导入。
+- 不通过 `Any` 把 Qt 对象藏进公开协议；后端边界使用 `object` 或明确的协议类型。
+- 不让纯核心模块调用 `QApplication.instance()`、`QTimer.singleShot()` 或 QWidget 方法。
+- 不一次性迁移复杂 UI 控件；每个阶段都保留可运行的 Qt 后端。
+- 旧兼容模块必须记录用途，调用方迁移完成后删除兼容导出。
+- 新增接口必须有纯数据测试和至少一个 Qt 后端行为测试。
+
+## 6. 验证与交接
+
+每阶段至少运行：
+
+```powershell
+py -3 -m compileall -q lib tests
+git diff --check
+```
+
+绘制阶段还需运行统一绘制排序、图形契约和桌宠窗口相关测试，并扫描：
+
+```powershell
+rg -n &quot;PyQt5|QPoint|QRect|QImage|QPixmap|QPainter|QTimer|pyqtSignal&quot; lib/core/graphics lib/core/draw_core.py lib/core/render_core.py
+```
+
+交接时说明：已完成阶段、稳定接口、验证命令、未迁移 Qt 边界、未提交的其他工作树改动。</pre>
+        </article>
+        <article class="card">
+            <header>
+                <div class="eyebrow">2026-08-02 21:14</div>
                 <h3>README</h3>
                 <a class="download" href="doc/README.md" download>下载原文件</a>
             </header>
@@ -595,6 +754,7 @@ rg --files
 | 修改或新增事件 | [事件系统使用说明](事件系统使用说明.txt) 与 [已注册的事件](已注册的事件.txt) |
 | 修改调度、帧循环或延迟任务 | [调度系统使用说明](调度系统使用说明.txt) |
 | 修改粒子效果 | [粒子效果说明](粒子效果说明.txt) |
+| Qt 收敛与绘制后端 | [Qt 收敛方案](Qt收敛方案.md) |
 | 修改 ONNX 语音包、安装器或推理桥接 | [ONNX 语音包协议](语音包协议.md) |
 | 开发或维护游戏扩展包 | [游戏包格式](游戏包格式.md) 与 [游戏模式说明](游戏模式说明.txt) |
 | 准备发行版 | 根目录 `RELEASING.md` |
@@ -663,7 +823,7 @@ rg --files
         </article>
         <article class="card">
             <header>
-                <div class="eyebrow">2026-08-02 04:58</div>
+                <div class="eyebrow">2026-08-03 00:04</div>
                 <h3>Script开发指南</h3>
                 <a class="download" href="doc/Script开发指南.txt" download>下载原文件</a>
             </header>
@@ -728,6 +888,8 @@ rg --files
 - 需要 `update()`
 - 需要 `alive`
 - 建议提供 `life` / `max_life`
+- `color`、`font` 使用 `lib.core.graphics.types.Color`、`FontSpec`，不得把 `QColor`、`QFont`、`QPixmap` 或 `QPainter` 放入粒子数据
+- 自定义形状通过纯数据字段声明，由 `lib/core/qt_bridge/particle_system.py` 等绘制后端消费
 - 可选使用：
   - `is_text`
   - `is_line`
@@ -817,7 +979,7 @@ manager_registry.register(DemoManager.MANAGER_ID, DemoManager)
         </article>
         <article class="card">
             <header>
-                <div class="eyebrow">2026-08-02 15:56</div>
+                <div class="eyebrow">2026-08-03 02:29</div>
                 <h3>事件系统使用说明</h3>
                 <a class="download" href="doc/事件系统使用说明.txt" download>下载原文件</a>
             </header>
@@ -832,8 +994,9 @@ manager_registry.register(DemoManager.MANAGER_ID, DemoManager)
 二、处理模型
 - `publish(Event)` 将事件放入队列
 - 主线程发布时，会尽快在主线程 drain 队列
-- 非主线程发布时，会通过 Qt signal 切回主线程处理
+- 非主线程发布时，会通过注入的 `EventPump` 切回事件中心所属线程处理；当前 Qt 后端使用 signal 实现
 - 回调可以调用 `event.mark_handled()` 中断同类型事件后续传播
+- 回调异常日志会记录事件类型、回调模块和限定名，并保留异常堆栈
 
 三、基础用法
 ```python
@@ -851,6 +1014,9 @@ ec.unsubscribe(EventType.INFORMATION, on_info)
 
 四、输入链路
 - 鼠标：`MOUSE_PRESS` / `MOUSE_MOVE` / `MOUSE_ENTER` / `MOUSE_LEAVE` / `MOUSE_CLICK` / `MOUSE_DOUBLE_CLICK`
+- `MOUSE_PRESS` / `MOUSE_CLICK` / `MOUSE_DOUBLE_CLICK` 的 `button` 使用 `input.types.MouseButton`，`global_pos` 与 `pos` 使用 `graphics.types.Point`
+- `MOUSE_MOVE` 的 `buttons` 使用 `input.types.MouseButtons`，`global_pos` 与 `pos` 使用 `graphics.types.Point`
+- Qt UI 消费核心坐标时，可直接读取 `Point.x/Point.y`，或在 QWidget 边界通过 `qt_bridge.window.coerce_qpoint()` 转换；不得对核心坐标调用 `x()/y()`
 - 键盘：`KEY_PRESS` / `KEY_RELEASE`
 - 命令框：
   - `/xxx` → `INPUT_COMMAND`
@@ -942,12 +1108,23 @@ TARGET_POSITION_QUERY / TARGET_POSITION_RESPONSE
 PROTECTION_CHECK / PROTECTION_RESPONSE
 - 用途：检测主宠保护半径或实体保护区
 
+UI_ANCHOR_RESPONSE
+- 用途：发布窗口或 UI 锚点的全局桌面坐标
+- 字段：`window_id`、`anchor_id`、`ui_id`、`anchor_point`
+- `anchor_point` 固定使用 `lib.core.graphics.types.Point`；Qt 控件只在事件消费边界转换为 `QPoint`
+
+ENTITY_POSITION_RESPONSE / ENTITY_STATE_RESPONSE
+- `ENTITY_POSITION_RESPONSE.position` 固定使用 `Point`，`size` 为 `(width, height)` 数值元组
+- `ENTITY_STATE_RESPONSE.position` 与 `target` 存在时同样使用 `Point`
+- 事件 payload 禁止放入 `QPoint/QRect/QWidget` 等 toolkit 对象
+
 七、开发约束
 - 回调应尽量短小，避免阻塞 UI
 - 配置保存、更新下载、语音安装和麦克风初始化等 I/O 必须交给 `ComputeHub.submit_interactive_io()` 或所属后台 Worker；事件回调只负责提交任务和更新状态。
 - 所有订阅都必须在 `cleanup()` 中退订
 - `mark_handled()` 只用于确实需要阻断传播的场景
-- 公共事件字段一旦公开使用，尽量保持兼容，不要频繁改 key</pre>
+- 公共事件字段一旦公开使用，尽量保持兼容，不要频繁改 key
+- 几何字段统一使用 `lib.core.graphics` 值类型，不得从 Qt UI 反向泄漏原生对象</pre>
         </article>
         <article class="card">
             <header>
@@ -1046,7 +1223,7 @@ PROTECTION_CHECK / PROTECTION_RESPONSE
         </article>
         <article class="card">
             <header>
-                <div class="eyebrow">2026-08-02 15:56</div>
+                <div class="eyebrow">2026-08-03 02:01</div>
                 <h3>已注册的事件</h3>
                 <a class="download" href="doc/已注册的事件.txt" download>下载原文件</a>
             </header>
@@ -1110,6 +1287,7 @@ PROTECTION_CHECK / PROTECTION_RESPONSE
   发布方: lib/core/event/center.py, lib/script/obj-雪豹/manager.py
 
 [ENTITY_POSITION_RESPONSE]
+- payload: position=`lib.core.graphics.types.Point`、size=`(width, height)`、entity_id、request_id
 - lib/script/obj-雪豹/manager.py -&gt; self._handle_entity_position_response [has unsubscribe]
   发布方: lib/core/pet_window.py
 
@@ -1118,6 +1296,7 @@ PROTECTION_CHECK / PROTECTION_RESPONSE
   发布方: lib/core/event/center.py, lib/script/obj-雪豹/manager.py
 
 [ENTITY_STATE_RESPONSE]
+- payload: position/target 存在时为 `lib.core.graphics.types.Point`
 - lib/script/obj-雪豹/manager.py -&gt; self._handle_entity_state_response [has unsubscribe]
   发布方: lib/core/pet_window.py
 
@@ -1175,11 +1354,13 @@ PROTECTION_CHECK / PROTECTION_RESPONSE
   发布方: lib/core/tray_icon.py, lib/script/ui/command_hint_box.py
 
 [KEY_PRESS]
+- payload: key=`lib.core.input.types.Key`（未知键可为兼容整数）、modifiers=`KeyModifier`、text、is_auto_repeat、pet
 - lib/core/event/key_handler.py -&gt; self._on_key_press
 - lib/script/microphone_stt/push_to_talk.py -&gt; self._on_key_press [has unsubscribe]
 - lib/script/obj-摩托/mortor.py -&gt; self._on_key_press [has unsubscribe]
 
 [KEY_RELEASE]
+- payload: key=`lib.core.input.types.Key`（未知键可为兼容整数）、modifiers=`KeyModifier`、text、is_auto_repeat、pet
 - lib/script/microphone_stt/push_to_talk.py -&gt; self._on_key_release [has unsubscribe]
 - lib/script/obj-摩托/mortor.py -&gt; self._on_key_release [has unsubscribe]
 
@@ -1275,7 +1456,7 @@ PROTECTION_CHECK / PROTECTION_RESPONSE
   发布方: lib/script/cloudmusic/manager.py
 
 [PARTICLE_REQUEST]
-- lib/core/qt_particle_system.py -&gt; self._on_particle_request [has unsubscribe]
+- lib/core/qt_bridge/particle_system.py -&gt; self._on_particle_request [has unsubscribe]
   发布方: lib/script/cloudmusic/_mixin_events.py, lib/script/obj-雪堆/manager.py, lib/script/obj-雪堆/snow_pile.py, lib/script/obj-雪球/snowball.py, lib/script/obj-雪豹/snow_leopard.py, lib/script/ui/_particle_helper.py, lib/script/ui/ai_settings_panel.py, lib/script/ui/auto_chat_button.py, lib/script/ui/bubble.py, lib/script/ui/chat_mode_button.py, lib/script/ui/command_hint_box.py, lib/script/ui/launch_wuwa_button.py, lib/script/ui/more_functions_button.py, lib/script/ui/playlist_panel.py, lib/script/ui/speaker_search_dialog.py, lib/script/ui/speaker_search_result_box.py, lib/script/ui/tray_menu.py
 
 [PET_TELEPORT]
@@ -1283,6 +1464,7 @@ PROTECTION_CHECK / PROTECTION_RESPONSE
   发布方: lib/script/tool_dispatcher/dispatcher.py
 
 [PROTECTION_CHECK]
+- payload: pet_position=`lib.core.graphics.types.Point`、current_in_protection、request_id
 - lib/script/obj-摩托/manager.py -&gt; self._on_protection_check [has unsubscribe]
 - lib/script/obj-沙发/manager.py -&gt; self._on_protection_check [has unsubscribe]
 - lib/script/obj-闹钟/manager.py -&gt; self._on_protection_check [has unsubscribe]
@@ -1358,6 +1540,7 @@ PROTECTION_CHECK / PROTECTION_RESPONSE
 - lib/core/timing/manager.py -&gt; self._on_timer_resume
 
 [UI_ANCHOR_RESPONSE]
+- payload: anchor_point=`lib.core.graphics.types.Point`、window_id、anchor_id、ui_id
 - lib/script/ui/auto_chat_button.py -&gt; self._on_anchor_response [has unsubscribe]
 - lib/script/ui/bubble.py -&gt; self._on_anchor_response
 - lib/script/ui/chat_mode_button.py -&gt; self._on_anchor_response [has unsubscribe]
@@ -1371,7 +1554,7 @@ PROTECTION_CHECK / PROTECTION_RESPONSE
 - lib/script/ui/scale_button.py -&gt; self._on_anchor_response
 - lib/script/ui/speaker_control_buttons.py -&gt; self._on_anchor_response [has unsubscribe]
 - lib/script/ui/speaker_search_result_box.py -&gt; self._on_anchor_response
-  发布方: lib/core/anchor_utils.py, lib/core/event/mouse_handler.py, lib/core/pet_window.py, lib/script/ui/speaker_search_dialog.py
+  发布方: lib/core/pet_window.py, lib/core/qt_bridge/widget_anchors.py, lib/script/ui/clickthrough_button.py, lib/script/ui/command_dialog.py, lib/script/ui/scale_button.py, lib/script/ui/speaker_search_dialog.py
 
 [UI_CLICKTHROUGH_TOGGLE]
 - lib/core/pet_window.py -&gt; self._handle_clickthrough_toggle
@@ -1751,9 +1934,11 @@ PROTECTION_CHECK / PROTECTION_RESPONSE
 - lib/script/obj-雪豹/manager.py
 
 [UI_ANCHOR_RESPONSE]
-- lib/core/anchor_utils.py
-- lib/core/event/mouse_handler.py
 - lib/core/pet_window.py
+- lib/core/qt_bridge/widget_anchors.py
+- lib/script/ui/clickthrough_button.py
+- lib/script/ui/command_dialog.py
+- lib/script/ui/scale_button.py
 - lib/script/ui/speaker_search_dialog.py
 
 [UI_CLICKTHROUGH_TOGGLE]
@@ -2227,7 +2412,7 @@ gamepack/official/lahai_tetris.zip
         </article>
         <article class="card">
             <header>
-                <div class="eyebrow">2026-08-02 14:45</div>
+                <div class="eyebrow">2026-08-03 00:04</div>
                 <h3>粒子效果说明</h3>
                 <a class="download" href="doc/粒子效果说明.txt" download>下载原文件</a>
             </header>
@@ -2235,13 +2420,13 @@ gamepack/official/lahai_tetris.zip
 
 一、总体说明
 - 事件入口：`EventType.PARTICLE_REQUEST`
-- 渲染层：`lib/core/qt_particle_system.py`
+- 渲染层：`lib/core/qt_bridge/particle_system.py`（旧 `qt_particle_system.py` 仅为兼容导出）
 - 粒子脚本发现：`lib/script/practical/manager.py`
 - 自动扫描目录：`lib/script/practical/*_particle.py`
 - 更新机制：`tick` 推进真实状态，`frame` 仅负责插值绘制
 - 运行语义：practical 粒子已统一切到 `tick/秒` 语义，不再依赖运行时 `frame_fps`
 
-当前已注册粒子：18 个
+当前已注册粒子：20 个
 
 二、已注册粒子列表
 
@@ -2317,6 +2502,14 @@ gamepack/official/lahai_tetris.zip
 - 文件：`lahai_line_flash_particle.py`
 - 作用：拉海洛方块消行时的横向爆散闪光粒子
 
+19. `lahai_preview_rise`
+- 文件：`lahai_preview_rise_particle.py`
+- 作用：拉海洛方块下一块预览替换时的竖向上升粒子
+
+20. `floating_text`
+- 文件：`floating_text_particle.py`
+- 作用：游戏分数、连击和技能反馈的浮动文字粒子
+
 三、统一事件格式
 ```python
 Event(EventType.PARTICLE_REQUEST, {
@@ -2332,6 +2525,7 @@ Event(EventType.PARTICLE_REQUEST, {
 - `circle`: `(x, y, radius)`
 
 四、覆盖层与绘制性能
+- 粒子实例的 `color`、`font` 使用 `lib.core.graphics.types.Color`、`FontSpec`；脚本不得保存 `QColor`、`QFont`、`QPixmap`、`QPainter` 等 Qt 对象，也不得实现接收 painter 的自定义绘制方法。Qt 后端创建并缓存字体，计算文字宽高和基线；新增视觉形状通过纯数据属性表达，由 Qt 或未来其他后端负责绘制。
 - 粒子覆盖层在一轮粒子开始前固定到虚拟桌面几何；粒子存活期间不再根据联合包围盒移动或缩放顶层透明窗口，因此最外侧粒子变化不会带动整层抽动。
 - 渲染空间使用 128px 二维固定矩形分块。tick、生成和异步回填时增量同步粒子保守绘制包围盒与分块归属，刷新旧块与新块的并集；FRAME 只复用缓存索引和当前占用块，不重新计算包围盒。连续脏块按行合并，保证旧像素被清除，同时避免整屏重绘。
 - `paintEvent()` 只查询 Qt 脏区域命中的分块，并对横跨多个块的粒子去重；文本、线段、圆形和图片粒子都通过统一包围盒参与索引与精确裁剪。
@@ -2597,13 +2791,13 @@ Event(EventType.PARTICLE_REQUEST, {
         </article>
         <article class="card">
             <header>
-                <div class="eyebrow">2026-08-02 15:23</div>
+                <div class="eyebrow">2026-08-03 02:01</div>
                 <h3>维护手册</h3>
                 <a class="download" href="doc/维护手册.md" download>下载原文件</a>
             </header>
             <pre># 飞行雪绒维护手册
 
-更新时间：2026-07-31
+更新时间：2026-08-03
 
 本手册面向维护者和代码代理，说明当前工程边界、常见变更路径和验收方式。开始工作前先读 `doc/AI协作规范.md`，再按任务阅读专项文档。
 
@@ -2648,7 +2842,7 @@ Event(EventType.PARTICLE_REQUEST, {
 
 ### 退出链路
 
-正常退出由 `ApplicationState.request_exit()` 发起，依次停止主窗口、清理运行时服务、清理视觉组件并退出 Qt 事件循环。`APP_EXIT` 广播退出阶段，`APP_QUIT` 请求主编排器开始退出。
+正常退出由 `ApplicationState.request_exit()` 发起，依次停止主窗口、清理运行时服务、清理视觉组件并退出桌面后端事件循环。`ApplicationState` 只依赖 `lib/core/application_runtime.py` 的 `ApplicationRuntime` 协议；当前 `QApplication/QEvent/QTimer` 实现位于 `lib/core/qt_bridge/application_runtime.py`。`APP_EXIT` 广播退出阶段，`APP_QUIT` 请求主编排器开始退出。
 
 最后一个退出阶段使用带退出码的 `QApplication.exit()`，处理 `DeferredDelete` 后等待 `aboutToQuit` 确认；未确认时会关闭残留顶层窗口并再次请求正常退出。事件循环返回后还要短暂等待非守护线程结束。15 秒进程级 watchdog 只作为整个退出链路卡死时的最终兜底，正常收尾确认后必须取消。
 
@@ -2675,8 +2869,14 @@ Event(EventType.PARTICLE_REQUEST, {
 
 - 绘制排序：`render_core.py`、`render_layer.py`
 - 业务绘制入口：`draw_core.py`、`unified_draw.py`
+- Qt 无关图形契约：`graphics/types.py`、`graphics/commands.py`、`graphics/scene.py`、`graphics/anchors.py`、`graphics/capture.py`
 - 窗口层级：`layer_manager.py`
 - 事件中心：`event/center.py`
+- 调度核心与后端协议：`timing/manager.py`、`timing/scheduler.py`
+- 应用事件循环协议：`application_runtime.py`
+- 主宠窗口宿主回调：`pet_host.py`
+- 主宠移动业务运行时：`pet_movement_runtime.py`
+- Qt 适配实现：`qt_bridge/`
 - 后台执行：`compute_hub.py`
 
 旧 `core/object`、`core/render` 包和 `topmost_manager.py` 已删除，不得恢复兼容壳。
@@ -2709,6 +2909,8 @@ Event(EventType.PARTICLE_REQUEST, {
 
 - 窗口与宿主：`lib/script/ui/workbench_window.py`
 - 页面注册：`lib/script/workbench/page_registry.py`
+- 内置工具页注册：`lib/script/workbench/builtin_pages.py`
+- Qt 工具页共享宿主：`lib/core/qt_bridge/workbench_page.py`
 - 设置 schema：`lib/script/workbench/settings/schema.py`
 - 设置布局：`lib/script/workbench/settings/page_layout.py`
 - AI 设置控制器：`lib/script/ui/ai_settings_panel.py`
@@ -2717,10 +2919,13 @@ Event(EventType.PARTICLE_REQUEST, {
 
 - 页面元数据使用 dataclass，不转回 legacy dict。
 - 新工具页提供无参数 factory，首次访问时创建。
+- 故障跟踪与游戏包等内置工具页的元数据和 factory 统一由 `builtin_tool_page_specs()` 提供，不得在托盘或工作台入口重复维护页面 ID、标题和构造逻辑。
+- 同时支持独立窗口与工作台嵌入的 Qt 工具页继承 `QtWorkbenchToolPage`，通过 `refresh_workbench_page()` 刷新数据；工作台不得识别页面私有的 `refresh_games()`、`_refresh_now()` 等方法。嵌入页使用独立实例，不得把其它入口持有的独立窗口重新设置父对象后复用。
 - 页面嵌入后不得保留独立窗口旗标或重复层级注册。
 - 页面关闭时释放信号、定时器和后台任务。
 - 不把新功能继续堆入 `ai_settings_panel.py`，新页面放入 `workbench/` 或专属模块。
 - AI 回复模式是单一路由：福利 API、手动 API、本地 Ollama、规则回复和元宝之间不做失败回退。模式专属配置只在对应模式下显示。回复模式区同时提供自动陪伴开关和 1~20 分钟的固定间隔滑块；保存值写入 AI 用户配置，运行时转换为毫秒定时，游戏模式启用时仍优先使用固定 5 分钟覆盖。
+- AI 回复语音朗读的文本长度范围为 20~256 字，默认上限为 256；超长回复优先保留不超过上限的首句，否则按上限截断后送入 ONNX 语音。
 - AI 工具调用优先使用 `lib/script/chat/native_tools.py` 定义的原生 Function Calling schema。OpenAI 兼容接口与 Ollama `/api/chat` 将结构化调用放入 `STREAM_FINAL.tool_call`，调度器不得再从显示文本反推参数；模型或网关拒绝 `tools` 字段时按目标缓存该能力并回退到既有 `###指令###` 文本协议。递归回忆、窥屏等设置 `allow_tool_commands=false` 的请求不得携带原生 tools。
 - 福利 API 配置由 `lib/script/chat/welfare_api_config.py` 从 GitHub/Gitee 发布源并发测速获取密钥与地址。模型使用程序内置的固定标识，不依赖服务端实现 `/models`：默认模型为 `agnes-2.0-flash`，“智力提升”开启后使用 `agnes-2.5-flash`；配置下载超时固定 10 秒，首次失败后最多重试 3 次。
 - 手动 API 的模型探测只辅助选择该路由的模型：设置面板以当前未保存的地址和密钥异步请求 OpenAI 兼容 `/models`，失败时保留用户当前输入。模型字段始终允许手工输入；无协议的公网地址按 HTTPS、本机地址按 HTTP 规范化后保存。
@@ -2746,15 +2951,31 @@ AI 密钥保存到 `&lt;用户根&gt;/user/secrets/ai.json`。设置面板每次
 
 ## 6. 事件、调度与绘制
 
-事件类型只能定义在 `EventType`。payload 使用字典，新增字段应允许旧订阅者忽略。后台线程发布事件时，由 Qt pump 切回事件中心线程。
+事件类型只能定义在 `EventType`。payload 使用字典，新增字段应允许旧订阅者忽略。后台线程发布事件时，由 `EventPump` 切回事件中心线程；Qt pump 仅是 `qt_bridge` 的一个实现。
+
+已有后台组件应直接通过线程安全的 `EventCenter.publish()` 发布结果，不得为线程切换再创建私有 `QObject/pyqtSignal`；非 Qt 后端通过注入其他 `EventPump` 保持同一语义。
 
 修改事件时同步 `事件系统使用说明.txt`、`已注册的事件.txt` 以及生产者和消费者测试。
 
 帧、tick、GIF 帧和延迟任务由 `TimingManager` 负责。不要用散落的永久 `QTimer` 替代共享调度，除非计时器天然属于控件生命周期。
 
+`TimingManager` 仅依赖 `timing.scheduler.Scheduler`，Qt 桌面宿主在组合边界注入 `qt_bridge.scheduler.QtScheduler`。新增非 UI 定时核心应复用该协议或共享调度，不得重新把 `QObject/QTimer` 引入 `timing/manager.py`；组件退出时调用 `TimingManager.cleanup()` 释放事件订阅和后端计时器。
+
+聊天流式刷新、自动陪伴和 Ollama 周期探测同样使用独占 `Scheduler`，由 `ApplicationState` 注入 Qt 后端。业务模块不得自行导入 `QTimer` 或创建 `QtScheduler`；需要 single-shot 行为时，周期计时器回调必须先停止，再按需要重新排程。聊天截图依赖 `graphics.capture.ScreenCapture`，Qt 主屏幕抓取只允许位于 `qt_bridge.screen_capture`，模型侧只接收 PNG `bytes`。
+
 绘制请求统一使用 DrawCore/RenderCore，窗口置顶统一使用 LayerManager。新增窗口必须选择明确 Layer，并在销毁时 unregister。
 
+`lib/core/graphics/` 保存与后端无关的 Point、Rect、Color、FontSpec、DrawRequest、RenderRequest 和 RenderItem。业务状态、排序和绘制请求不得新增 Qt 类型；Qt 绘制对象、图片缓存和窗口适配应逐步收敛到专用适配层。`render_layer.py` 当前仅保留兼容导入，新增代码直接从 `graphics` 获取绘制契约。
+
+主宠窗口后端通过 `pet_host.PetHostCallbacks` 向业务层提交 `MouseInput`、`KeyboardInput`、`Point` 和渲染准备请求。当前 QWidget 原生事件、Qt 输入转换及兼容几何接口位于 `qt_bridge.pet_widget.QtPetWidget`；`PetWindow` 不得重新实现 `paintEvent`、鼠标/键盘原生事件或直接解析 Qt event。
+
+主宠移动队列、插值、拖拽接管和 moving/idle 状态协作由无 Qt 的 `PetMovementRuntime` 统一管理；窗口宿主只通过位置、状态和方向回调承接副作用。移动参数使用纯 `MovementSettings`，由桌面组合边界从现有配置注入，不得让移动算法通过配置聚合模块间接加载 Qt。
+
+实体位置迁移期间优先使用 `get_core_position()` 和 `get_core_geometry()` 获取 `Point/Rect`；`get_position()`、`get_geometry()` 只保留为 Qt UI 兼容接口。主宠与对象管理器的生产调用已迁移到核心接口，新增逻辑不得继续依赖旧接口。`UI_ANCHOR_RESPONSE.anchor_point`、`ENTITY_POSITION_RESPONSE.position` 以及实体状态响应中的位置和移动目标统一使用 `graphics.types.Point`；Qt UI 消费者只可在接收边界转换为 `QPoint`。
+
 粒子覆盖层在一轮粒子开始前固定到虚拟桌面，存活期间禁止按联合包围盒移动或缩放顶层窗口。渲染使用 128px 二维固定矩形分块：tick、生成和异步回填时增量同步粒子包围盒与分块归属，刷新旧块和新块的并集；FRAME 只复用缓存索引和当前占用块，不重新计算包围盒。连续脏块按行合并后提交刷新，`paintEvent()` 直接查询脏区域命中的块并对跨块粒子去重，同时复用绘制顺序和包围盒缓存。tick 插值起点使用更新前的逻辑坐标；大批量异步更新使用隔离快照，禁止后台线程修改正在绘制的对象。无存活粒子时跳过屏幕查询和计算提交。
+
+粒子脚本的 `color` 和 `font` 分别使用 `graphics.types.Color`、`FontSpec`，不得保存 `QColor/QFont` 或接收 `QPainter` 进行自定义绘制。Qt 粒子后端负责在绘制入口转换颜色和字体，并将文字宽高、基线保存为数值度量；新增形状应扩展纯粒子属性和后端渲染分支。
 
 ## 7. 音乐与本地服务
 
@@ -2770,7 +2991,7 @@ AI 密钥保存到 `&lt;用户根&gt;/user/secrets/ai.json`。设置面板每次
 
 设置面板的元宝登录区只显示当前可执行操作：未登录时显示“微信登录元宝”，已登录时显示“退出元宝登录”。面板读取已有服务状态必须使用无副作用的 `peek_service_status()`，不得为检查状态启动服务、切换端口或触发浏览器登录。
 
-GSV 兼容门面不再启动端口 9880 的 HTTP 服务，而是在原语音工作线程中复用单个 ONNX 引擎。格式版本 2 保留 GPT-SoVITS API v2 参数命名；同一格式内影响正确性的模型或推理升级使用独立 `runtime_revision`，客户端必须拒绝低于当前最低修订的旧包并显示更新入口。语速必须使用 VITS 图内 `speed_factor`，禁止恢复改变音高的最终波形重采样。当前 revision 3 包内置中文 RoBERTa，RoBERTa 加载失败必须报错，不能退回零特征；参考 HuBERT 提示语义必须保留原生链路的尾静音。安装器提供完全包、默认中等包和节约包三档，优先 ModelScope、回退 Hugging Face；每档为单个 RAR5 solid archive，使用 64 MiB 字典，大小与空间检查以 `VoicePackageProfile` 的真实发布值为准。语音包格式、单文件下载、安装、用户确认删除、旧运行时清理和随包 UnRAR 边界以 `doc/语音包协议.md` 为准。安装前不得为定位旧运行时递归扫描用户目录；安装成功后只清理路径记录明确指向的旧外部 GSVmove。包删除必须由服务在推理锁内释放引擎后执行，并限定在固定磁盘的受管理目录；仓库内 `lib/script/gsvmove/` 不属于删除目标。
+GSV 兼容门面不再启动端口 9880 的 HTTP 服务，而是在原语音工作线程中复用单个 ONNX 引擎。格式版本 2 保留 GPT-SoVITS API v2 参数命名；同一格式内影响正确性的模型或推理升级使用独立 `runtime_revision`，客户端必须拒绝低于当前最低修订的旧包并显示更新入口。语速必须使用 VITS 图内 `speed_factor`，禁止恢复改变音高的最终波形重采样。当前 revision 4 包内置中文 RoBERTa，RoBERTa 加载失败必须报错，不能退回零特征；参考 HuBERT 提示语义必须保留原生链路的尾静音。G2PW 校验只要求 `common/G2P/G2PW/` 中存在非空的 `g2pW*.onnx` 并纳入 SHA-256 清单，不把 `g2pW_int4_fp16mix.onnx` 或任何量化精度文件名作为固定格式。安装器提供完全包、默认中等包和节约包三档，优先 ModelScope、回退 Hugging Face；每档为单个 RAR5 solid archive，使用 64 MiB 字典，安装器优先读取两个公开 resolve URL 的 `Content-Length` 或 `Content-Range`，大小与空间检查使用远端真实值；若用户在列表探测完成前开始安装，安装 Worker 会先对当前档位再次探测，网络不可达时才回退 `VoicePackageProfile` 的离线估算。语音包格式、单文件下载、安装、用户确认删除、旧运行时清理和随包 UnRAR 边界以 `doc/语音包协议.md` 为准。安装前不得为定位旧运行时递归扫描用户目录；安装成功后只清理路径记录明确指向的旧外部 GSVmove。包删除必须由服务在推理锁内释放引擎后执行，并限定在固定磁盘的受管理目录；仓库内 `lib/script/gsvmove/` 不属于删除目标。
 
 ONNX 语音的 CPU 与 GPU 后端都必须在低优先级隔离 Worker 中加载和推理，主进程不得创建模型 Session。自动预热只能在 `APP_MAIN` 后提交，避免模型导入、Session 创建和预热推理与 Qt 首屏初始化争用 GIL 和 CPU。可选 GPU 混合推理使用共享根 `voice/runtimes/onnx-directml/&lt;版本-ABI&gt;` 下的隔离 venv。依赖安装阶段固定安装并探测 `onnxruntime-directml==1.22.0`，不得覆盖主 Python 的 CPU ORT。混合 Worker 中 `t2s_stage` 走 CPU，其余五个模型图优先 DirectML；设置关闭必须终止 Worker 而非只切换 Provider，失败时对当前请求回退 CPU Worker。Worker在任何 PyQt 导入前预加载 ONNX Runtime，并清除继承环境中的 Qt DLL 路径。运行库安装失败属于可降级能力，不阻断 CPU 语音和应用启动。
 
@@ -2798,7 +3019,7 @@ py -3 -m unittest tests.test_game_runtime_geometry tests.test_game_runtime_hash_
 
 普通版和绿色版共享清单、敏感配置清洗、官方游戏包及服务 bundle 生成逻辑。绿色版额外处理 Vosk、动画和 Chromium 归档。
 
-两类发行包都必须携带 `lib/script/gsvmove/bin/UnRAR.exe` 和 `LICENSE-UnRAR.txt`，但不携带七卷 ONNX 角色模型。解压器固定校验，不允许安装时联网补取。
+两类发行包都必须携带 `lib/script/gsvmove/bin/UnRAR.exe` 和 `LICENSE-UnRAR.txt`，但不携带独立 ONNX 角色语音包归档。解压器固定校验，不允许安装时联网补取。
 
 依赖安装脚本在摘要前以单行动态展示“正在检查依赖”的当前包、检查数、百分比和进度条；随后只保留已有/未安装依赖摘要和两条固定安装进度行。支持 ANSI 的终端使用 pip 风格的青色当前依赖、粉色整体进度与暗色未完成轨道，不支持颜色的终端显示等宽单色回退。进度刷新不得逐包追加日志。
 
@@ -2872,7 +3093,7 @@ py -3 scripts/generate_doc_portal.py
         </article>
         <article class="card">
             <header>
-                <div class="eyebrow">2026-07-31 11:50</div>
+                <div class="eyebrow">2026-08-03 01:08</div>
                 <h3>语音包协议</h3>
                 <a class="download" href="doc/语音包协议.md" download>下载原文件</a>
             </header>
@@ -2888,7 +3109,7 @@ py -3 scripts/generate_doc_portal.py
 {
   &quot;format&quot;: &quot;aemeath-gpt-sovits-onnx&quot;,
   &quot;format_version&quot;: 2,
-  &quot;runtime_revision&quot;: 3,
+  &quot;runtime_revision&quot;: 4,
   &quot;precision_profile&quot;: &quot;fp16&quot;,
   &quot;name&quot;: &quot;aimisiV2&quot;,
   &quot;sample_rate&quot;: 32000,
@@ -2904,7 +3125,7 @@ py -3 scripts/generate_doc_portal.py
 
 当前包内置中文 RoBERTa ONNX 与 tokenizer。中文文本必须生成真实 BERT 特征；RoBERTa 不能加载时推理必须失败，不能静默退回零特征。英文继续使用英文 G2P 前端。
 
-必要文件由 `package_manager._REQUIRED_PACKAGE_FILES` 与按 `precision_profile` 分类的文件表共同定义，至少包括推理入口、参考素材、依赖清单、角色模型、CN-HuBERT、说话人编码器、中文 RoBERTa 和中英文 G2P 资源。`format_version` 描述稳定的公开包结构；`runtime_revision` 描述同一结构内必须更新的模型或推理修订。当前最低运行时修订为 3，缺失该字段或小于 3 的旧包必须提示“安装最新语音包”。新增格式版本时不得静默改变版本 1 的含义。
+必要文件由 `package_manager._REQUIRED_PACKAGE_FILES`、按 `precision_profile` 分类的文件表以及动态发现的 G2PW ONNX 模型共同定义，至少包括推理入口、参考素材、依赖清单、角色模型、CN-HuBERT、说话人编码器、中文 RoBERTa 和中英文 G2P 资源。G2PW 只要求 `common/G2P/G2PW/` 下存在至少一个非空的 `g2pW*.onnx`，不得把 `g2pW_int4_fp16mix.onnx` 或其它量化文件名视为格式标准；全精度、FP16 或量化实现均由发布包自身决定，实际模型文件必须进入 `SHA256SUMS.txt`。`format_version` 描述稳定的公开包结构；`runtime_revision` 描述同一结构内必须更新的模型或推理修订。当前最低运行时修订为 4，缺失该字段或小于 4 的旧包必须提示“安装最新语音包”。新增格式版本时不得静默改变版本 1 的含义。
 
 ## 2. 完整性与安全
 
@@ -2922,15 +3143,15 @@ SHA-256：0D3715001790F0FD18D3E850F947B540530B2D2DEB9A2E6A9E84F2ED7B234235
 
 ## 3. 发布源与档位
 
-每档是一个 RAR5 solid 单文件，使用 64 MiB 字典，不再分卷。客户端优先从 ModelScope 下载，失败后完整切换到 Hugging Face，不能混合不同镜像的内容。两个仓库必须上传文件名、README、`SHA256SUMS.txt` 与 `release-manifest.json` 完全相同的发布物：
+每档是一个 RAR5 solid 单文件，使用 64 MiB 字典，不再分卷。客户端优先从 ModelScope 下载，失败后完整切换到 Hugging Face，不能混合不同镜像的内容。两个仓库必须上传文件名、README、`SHA256SUMS.txt` 与 `release-manifest.json` 完全相同的发布物。安装器打开时对两个公开 resolve URL 读取 `Content-Length`；服务器不支持 HEAD 或使用 chunked 响应时，改用 `Range: bytes=0-0` 读取 `Content-Range`，只把首个有效镜像的大小用于界面和空间预检：
 
-| 档位 | 文件 | 压缩包 | 解压后 | 实际精度 |
+| 档位 | 文件 | 远端压缩包大小 | 解压后估算 | 实际精度 |
 | --- | --- | ---: | ---: | --- |
-| 完全包 | `Aemeath_ONNX_GSV_Complete_FP32.rar` | 1,158,190,671 B | 1,438,886,877 B | 非 INT8 高质量链路；上游 RoBERTa 源权重为 FP16 |
-| 中等包 | `Aemeath_ONNX_GSV_Medium_FP16.rar` | 1,096,305,481 B | 1,211,004,205 B | FP16 外置权重，运行时恢复 FP32 |
-| 节约包（强烈推荐） | `Aemeath_ONNX_GSV_Saver_INT8.rar` | 677,423,752 B | 853,957,055 B | RoBERTa QInt8、CN-HuBERT/T2S INT4、VITS/Speaker FP16 |
+| 完全包 | `Aemeath_ONNX_GSV_Complete_FP32.rar` | 读取 `Content-Length`（离线估算约 1.25 GiB） | 1,636,546,624 B | 非 INT8 高质量链路；上游 RoBERTa 源权重为 FP16 |
+| 中等包 | `Aemeath_ONNX_GSV_Medium_FP16.rar` | 读取 `Content-Length`（离线估算约 1.19 GiB） | 1,408,663,952 B | FP16 外置权重，运行时恢复 FP32 |
+| 节约包（强烈推荐） | `Aemeath_ONNX_GSV_Saver_INT8.rar` | 读取 `Content-Length`（离线估算约 1.04 GiB） | 1,282,211,358 B | RoBERTa QInt8、CN-HuBERT/T2S INT4、VITS/Speaker FP16 |
 
-安装前预留所选 archive、解压目录和额外 512 MiB 暂存空间。下拉档位和进度条必须使用以上真实大小；不得继续展示 600 MB 或旧的分卷数量。内置 UnRAR 校验与单文件下载同时启动。
+安装前预留所选 archive、解压目录和额外 512 MiB 暂存空间。下拉档位、空间预检和进度条优先使用远端真实大小；用户在列表异步探测完成前开始安装时，安装 Worker 会先对当前档位再次探测，远端暂时不可达时才使用 profile 中的离线估算。下载响应的 `Content-Length` 会再次校正进度总量。不得继续展示 600 MB 或旧的分卷数量。内置 UnRAR 校验与单文件下载同时启动。
 
 ## 4. 安装与迁移
 
@@ -2997,7 +3218,7 @@ py -3 scripts/package_green_release.py --dry-run --version VERIFY
         </article>
         <article class="card">
             <header>
-                <div class="eyebrow">2026-08-02 04:58</div>
+                <div class="eyebrow">2026-08-02 23:44</div>
                 <h3>调度系统使用说明</h3>
                 <a class="download" href="doc/调度系统使用说明.txt" download>下载原文件</a>
             </header>
@@ -3005,14 +3226,21 @@ py -3 scripts/package_green_release.py --dry-run --version VERIFY
 
 一、核心实现
 - 文件：`lib/core/timing/manager.py`
+- 后端协议：`lib/core/timing/scheduler.py`
+- Qt 实现：`lib/core/qt_bridge/scheduler.py`
 - 对外入口：`lib/core/timing/__init__.py`
 - 核心类：`TimingManager`
+- 其他使用者：`ChatHandler` 的流式刷新/自动陪伴、`OllamaManager` 的周期探测
 
 二、三套周期计时
-调度器内部维护三个独立 QTimer：
+调度核心维护三个独立的周期计时器句柄：
 - `TICK`：固定 50ms
 - `FRAME`：按 `frame_fps` 计算
 - `GIF_FRAME`：按 `gif_fps` 计算
+
+`TimingManager` 本身不依赖 Qt。桌面运行时由 `PetWindow` 注入 `QtScheduler`，无 Qt 的测试或未来自研运行时可注入同一 `Scheduler` 协议的其他实现。调度后端由单个 `TimingManager` 独占，退出时调用幂等 `cleanup()`，统一停止计时器、退订暂停事件并释放后端资源。
+
+聊天与 Ollama 使用各自独占的 `Scheduler`，由 `ApplicationState` 在 Qt 桌面组合边界注入。聊天的 40ms 流式刷新和自动陪伴是 single-shot 业务语义：协议仍使用 `PeriodicTimer`，但回调入口先 `stop()`，完成后仅在需要时重新 `start()`。业务模块不得导入 Qt 调度实现作为缺省后备。
 
 默认配置来自 `config/config.py` 中导出的 `ANIMATION`：
 - `frame_fps = 120`
@@ -3077,6 +3305,7 @@ pet.cancel_task(task_id)
 七、开发建议
 - 高频业务优先订阅 `TICK` 或 `FRAME`，不要自己再开一套平行 QTimer
 - 在 `cleanup()` 中移除任务并退订事件
+- 构造 `TimingManager` 时必须在应用组合边界显式注入 `Scheduler`；业务模块不得直接创建 `QTimer`
 - 静止对象不得在 `FRAME` 中重复移动窗口或触发重绘；临时降频应使用来源独立的帧率上限
 - 物理对象空闲时应跳过屏幕查询和计算提交，重新获得速度或外部目标变化后再恢复计算。
 - 对于需要高精度的逻辑，先评估 50ms tick 是否足够

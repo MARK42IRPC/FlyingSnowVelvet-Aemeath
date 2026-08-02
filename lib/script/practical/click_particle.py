@@ -9,15 +9,14 @@ import math
 import random
 from typing import Tuple
 
-from PyQt5.QtGui import QColor, QFont, QFontMetrics
-
 from config.font_config import _ensure_lahai_roi
 from config.scale import scale_px
+from lib.core.graphics.types import Color, FontSpec
 from lib.script.practical.base_particle import BaseParticleScript, per_second_delta, tick_seconds
 from lib.core.plugin_registry import register_particle
 
 # ── 配色 ──────────────────────────────────────────────────────────────
-_COLOR_CYAN = QColor(173, 216, 230)   # 浅青色
+_COLOR_CYAN = Color(173, 216, 230)   # 浅青色
 
 
 @register_particle("click")
@@ -64,13 +63,7 @@ class ClickParticle:
 
         # 字体：随机像素字号，避免不同设备 DPI 下尺寸异常
         px = random.randint(*config['font_px_range'])
-        self.font = QFont(font_family)
-        self.font.setPixelSize(px)
-
-        # 预计算文字度量（避免 paintEvent 逐帧创建 QFontMetrics）
-        fm = QFontMetrics(self.font)
-        self._text_w         = fm.horizontalAdvance(self.text)
-        self._baseline_offset = (fm.ascent() - fm.descent()) // 2
+        self.font = FontSpec(font_family, px)
 
         # 初始速度向量（存为 vx0/vy0，update 按剩余生命比例缩放）
         angle = random.uniform(0.0, math.tau)

@@ -2,11 +2,10 @@
 
 from collections import deque
 
-from PyQt5.QtCore import QTimer
-
 from lib.core.event.center import get_event_center, EventType, Event
+from lib.core.graphics.capture import ScreenCapture
+from lib.core.timing.scheduler import PeriodicTimer, Scheduler
 from lib.script.chat.ollama import get_ollama_manager
-from .vision_capture import capture_screen
 from lib.core.logger import get_logger
 
 from .handler_auto_companion import ChatHandlerAutoCompanionMixin
@@ -22,13 +21,21 @@ logger = get_logger(__name__)
 
 
 class ChatHandler(ChatHandlerPersonaMixin, ChatHandlerAutoCompanionMixin, ChatHandlerStreamPresenterMixin):
-    def __init__(self):
+    def __init__(self, *, scheduler: Scheduler, screen_capture: ScreenCapture):
         self._event_center  = get_event_center()
         self._ollama        = get_ollama_manager()
+        self._scheduler     = scheduler
+        self._screen_capture = screen_capture
+        self._cleaned       = False
         self._persona       = self._load_persona()
         self._last_message  = ""   # 保存最近一条用户消息，供降级回复时关键词匹配使用
-        self._auto_timer: QTimer | None = None
         self._recent_context: deque[dict[str, str]] = deque(maxlen=RECENT_CONTEXT_MESSAGES)
+        self._stream_flush_timer: PeriodicTimer = self._scheduler.create_periodic_timer(
+            self._flush_stream_chunk
+        )
+        self._auto_timer: PeriodicTimer = self._scheduler.create_periodic_timer(
+            self._on_auto_companion_tick
+        )
 
         self._event_center.subscribe(EventType.INPUT_CHAT, self._on_input_chat)
         self._event_center.subscribe(EventType.APP_MAIN, self._on_app_main)
@@ -37,9 +44,6 @@ class ChatHandler(ChatHandlerPersonaMixin, ChatHandlerAutoCompanionMixin, ChatHa
         self._stream_first_chunk: bool = True   # 每次新请求重置；首个流式 chunk 触发粒子
         self._stream_pending_raw: str = ""
         self._stream_last_display: str = ""
-        self._stream_flush_timer = QTimer()
-        self._stream_flush_timer.setSingleShot(True)
-        self._stream_flush_timer.timeout.connect(self._flush_stream_chunk)
         logger.info("[ChatHandler] 聊天处理器已初始化")
 
     def _on_input_chat(self, event: Event):
@@ -79,7 +83,8 @@ class ChatHandler(ChatHandlerPersonaMixin, ChatHandlerAutoCompanionMixin, ChatHa
         should_capture_screen = bool(event.data.get('capture_screen')) or _should_capture_screen(text)
         if should_capture_screen:
             logger.info("[ChatHandler] 检测到视觉请求，正在截图...")
-            images = capture_screen()
+            image_data = self._screen_capture.capture_primary_png()
+            images = [image_data] if image_data else None
             if images:
                 logger.info("[ChatHandler] 截图成功 (%d bytes)，将发送给模型", len(images[0]))
             else:
@@ -121,35 +126,36 @@ class ChatHandler(ChatHandlerPersonaMixin, ChatHandlerAutoCompanionMixin, ChatHa
         )
 
     def cleanup(self):
-        """取消事件订阅"""
+        """取消事件订阅并释放独占调度器。"""
+        if self._cleaned:
+            return
+        self._cleaned = True
         self._event_center.unsubscribe(EventType.INPUT_CHAT, self._on_input_chat)
         self._event_center.unsubscribe(EventType.APP_MAIN, self._on_app_main)
         self._event_center.unsubscribe(EventType.GAME_MODE_STATUS_CHANGE, self._on_game_mode_status_change)
         self._event_center.unsubscribe(EventType.CONFIG_UPDATED, self._on_auto_companion_config_updated)
-        if self._stream_flush_timer is not None:
-            self._stream_flush_timer.stop()
-            try:
-                self._stream_flush_timer.timeout.disconnect(self._flush_stream_chunk)
-            except Exception:
-                pass
-        if self._auto_timer is not None:
-            self._auto_timer.stop()
-            try:
-                self._auto_timer.timeout.disconnect(self._on_auto_companion_tick)
-            except Exception:
-                pass
-            self._auto_timer = None
+        self._stream_pending_raw = ""
+        self._scheduler.cleanup()
 
 
 
 _chat_handler: ChatHandler | None = None
 
 
-def get_chat_handler() -> ChatHandler:
+def get_chat_handler(
+    *,
+    scheduler: Scheduler | None = None,
+    screen_capture: ScreenCapture | None = None,
+) -> ChatHandler:
     """获取全局 ChatHandler 单例。"""
     global _chat_handler
     if _chat_handler is None:
-        _chat_handler = ChatHandler()
+        if scheduler is None or screen_capture is None:
+            raise RuntimeError("首次创建 ChatHandler 时必须注入 Scheduler 和 ScreenCapture")
+        _chat_handler = ChatHandler(
+            scheduler=scheduler,
+            screen_capture=screen_capture,
+        )
     return _chat_handler
 
 

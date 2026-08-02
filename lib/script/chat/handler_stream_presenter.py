@@ -3,7 +3,7 @@
 import re
 
 from config.config import BUBBLE_CONFIG
-from config.ollama_config import OLLAMA
+from config.ollama_config import AI_VOICE_MAX_CHARS_DEFAULT, OLLAMA
 from lib.core.event.center import Event, EventType
 from lib.core.logger import get_logger
 from lib.script.chat import bot_reply
@@ -103,7 +103,7 @@ def _strip_tool_commands_for_display(text: str) -> str:
     return cleaned.strip()
 
 def _build_ai_voice_text(text: str) -> str:
-    max_chars = int(OLLAMA.get("ai_voice_max_chars", 40))
+    max_chars = int(OLLAMA.get("ai_voice_max_chars", AI_VOICE_MAX_CHARS_DEFAULT))
     cleaned = _strip_tool_commands_for_display(str(text or ""))
     if not cleaned:
         return ""
@@ -162,6 +162,9 @@ class ChatHandlerStreamPresenterMixin:
         particle 策略：首个 chunk 替换"..."等待气泡时触发上淡出粒子；
                        后续 chunk 静默更新文本，不重复产生粒子。
         """
+        if getattr(self, '_cleaned', False):
+            return
+
         display_text = _strip_tool_commands_for_display(accumulated_text)
         is_status_text = _is_non_ai_status_text(display_text)
 
@@ -182,10 +185,13 @@ class ChatHandlerStreamPresenterMixin:
             return
 
         self._stream_pending_raw = accumulated_text
-        if not self._stream_flush_timer.isActive():
+        if not self._stream_flush_timer.active:
             self._stream_flush_timer.start(40)
 
     def _flush_stream_chunk(self):
+        if getattr(self, '_cleaned', False):
+            return
+        self._stream_flush_timer.stop()
         if not self._stream_pending_raw:
             return
         display_text = _strip_tool_commands_for_display(self._stream_pending_raw)
@@ -224,7 +230,9 @@ class ChatHandlerStreamPresenterMixin:
         - text 非空：流式块已由 _on_stream_chunk 逐步发布，无需重复
         - text 为空：所有模型均失败（或 Ollama 未启动），使用 bot_reply 预设回复兜底
         """
-        if self._stream_flush_timer.isActive():
+        if getattr(self, '_cleaned', False):
+            return
+        if self._stream_flush_timer.active:
             self._stream_flush_timer.stop()
         if self._stream_pending_raw:
             self._flush_stream_chunk()

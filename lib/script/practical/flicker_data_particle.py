@@ -16,17 +16,16 @@ from __future__ import annotations
 import random
 from typing import Tuple
 
-from PyQt5.QtGui import QColor
-
+from lib.core.graphics.types import Color
 from lib.script.practical.base_particle import BaseParticleScript, per_second_delta, tick_seconds
 from lib.core.plugin_registry import register_particle
 
 
-_COLOR_WHITE = QColor(255, 255, 255)
-_COLOR_LIGHT_PINK = QColor(255, 182, 193)
-_COLOR_LIGHT_CYAN = QColor(173, 216, 230)
-_COLOR_DEEP_PINK = QColor(255, 149, 164)
-_COLOR_DEEP_BLUE = QColor(58, 92, 176)
+_COLOR_WHITE = Color(255, 255, 255)
+_COLOR_LIGHT_PINK = Color(255, 182, 193)
+_COLOR_LIGHT_CYAN = Color(173, 216, 230)
+_COLOR_DEEP_PINK = Color(255, 149, 164)
+_COLOR_DEEP_BLUE = Color(58, 92, 176)
 
 
 @register_particle("flicker_data")
@@ -73,7 +72,7 @@ class FlickerDataParticleScript(BaseParticleScript):
         palette_override = self._request_options.get("rgb")
         config = dict(self._config)
         if palette_override is not None:
-            custom = QColor(*(max(0, min(255, int(v))) for v in palette_override))
+            custom = Color(*(max(0, min(255, int(v))) for v in palette_override))
             config["colors"] = [
                 custom.lighter(150),
                 custom.lighter(125),

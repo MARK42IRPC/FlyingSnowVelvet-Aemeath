@@ -29,6 +29,7 @@ from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.unified_draw import Layer, get_layer_manager
 from lib.core.screen_utils import clamp_rect_position
 from lib.core.anchor_utils import apply_ui_opacity
+from lib.core.qt_bridge.window import coerce_qpoint
 from lib.script.ui.page_turn_buttons import make_page_buttons, update_page_buttons_position
 from lib.script.ui.speaker_menu_style import (
     _C_BORDER,
@@ -298,7 +299,9 @@ class SpeakerSearchResultBox(QWidget):
 
         if ui_id == 'all' and window_id == 'speaker_search_dialog' and anchor_id == 'all':
             # anchor_point = dialog 左上角坐标
-            dialog_pos = event.data.get('anchor_point')
+            dialog_pos = coerce_qpoint(event.data.get('anchor_point'))
+            if dialog_pos is None:
+                return
             # 结果框跟随 dialog 底部
             new_pt = QPoint(dialog_pos.x(), dialog_pos.y() + _DIALOG_H)
             if self._anchor_point != new_pt:

@@ -2,6 +2,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from config import ollama_config
 from config.ollama_config import OLLAMA
 from lib.core.event.center import EventType
 from lib.script.chat.handler_stream_presenter import (
@@ -11,9 +12,22 @@ from lib.script.chat.handler_stream_presenter import (
     _is_non_ai_status_text,
     _should_emit_ai_voice,
 )
+from lib.script.ui.ai_settings_validators import validate_ai_values
 
 
 class ChatVoiceTextTests(unittest.TestCase):
+    def test_voice_reading_limit_accepts_256_and_rejects_larger_values(self):
+        values = ollama_config.get_ai_setting_defaults()
+        values["ai_voice_max_chars"] = 256
+        validate_ai_values(values)
+
+        values["ai_voice_max_chars"] = 257
+        with self.assertRaisesRegex(ValueError, "20~256"):
+            validate_ai_values(values)
+
+        self.assertEqual(ollama_config.AI_VOICE_MAX_CHARS_DEFAULT, 256)
+        self.assertEqual(ollama_config.AI_VOICE_MAX_CHARS_MAX, 256)
+
     def test_english_voice_text_is_kept_and_split_on_english_period(self):
         with patch.dict(OLLAMA, {"ai_voice_max_chars": 80}, clear=False):
             self.assertEqual(

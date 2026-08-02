@@ -37,8 +37,6 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
 
-from PyQt5.QtCore import QTimer
-
 from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.logger import get_logger
@@ -315,8 +313,9 @@ class ToolDispatcher:
     订阅 STREAM_FINAL 事件 → 解析工具调用标记 → 执行对应操作
     """
 
-    def __init__(self):
+    def __init__(self, *, defer=None):
         self._ec = get_event_center()
+        self._defer = defer
         self._ec.subscribe(EventType.STREAM_FINAL, self._on_stream_final)
         logger.info("[ToolDispatcher] 工具调度器已初始化")
 
@@ -844,7 +843,17 @@ class ToolDispatcher:
                 'allow_tool_commands': False,
             }))
 
-        QTimer.singleShot(int(_MEMORY_RECALL_REDISPATCH_DELAY_SEC * 1000), _dispatch_recall_message)
+        self._defer_call(
+            int(_MEMORY_RECALL_REDISPATCH_DELAY_SEC * 1000),
+            _dispatch_recall_message,
+        )
+
+    def _defer_call(self, delay_ms: int, callback) -> None:
+        if self._defer is None:
+            from lib.core.qt_bridge.scheduler import call_later
+
+            self._defer = call_later
+        self._defer(delay_ms, callback)
 
     def _parse_teleport_position(self, arg: str) -> tuple[int, int] | None:
         """

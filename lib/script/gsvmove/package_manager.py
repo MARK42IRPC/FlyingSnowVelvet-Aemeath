@@ -17,7 +17,7 @@ import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Callable
@@ -56,8 +56,11 @@ _INSTALL_CLEANUP_END = 999
 
 _STATE_FILE_NAME = "voice_package.json"
 _DOWNLOAD_TIMEOUT = (10.0, 90.0)
+_METADATA_TIMEOUT = (3.0, 8.0)
+_METADATA_HEADERS = {"Accept-Encoding": "identity"}
 _DOWNLOAD_CHUNK_SIZE = 1024 * 1024
 _OPTIONAL_CHECKSUM_PREFIXES = ("validation/",)
+_G2PW_MODEL_DIR = "common/G2P/G2PW"
 _RUNTIME_MODULES = (
     "genie_tts",
     "numpy",
@@ -85,7 +88,6 @@ _REQUIRED_PACKAGE_FILES = (
     "common/RoBERTa/roberta_tokenizer/tokenizer.json",
     "common/G2P/ChineseG2P/polyphonic.pickle",
     "common/G2P/G2PW/g2pw_frontend.py",
-    "common/G2P/G2PW/g2pW_int4_fp16mix.onnx",
     "common/G2P/G2PW/bopomofo_to_pinyin_wo_tune_dict.json",
     "common/G2P/G2PW/char_bopomofo_dict.json",
     "common/G2P/G2PW/POLYPHONIC_CHARS.txt",
@@ -155,12 +157,19 @@ class VoicePackageProfile:
     title: str
     detail: str
     archive_name: str
-    archive_bytes: int
+    archive_bytes: int  # Offline estimate; online UI/install prefers mirror metadata.
     extracted_bytes: int
+
+    def required_free_bytes_for(self, archive_bytes: int | None = None) -> int:
+        """Return the space estimate using a remote size when available."""
+        size = self.archive_bytes if archive_bytes is None else int(archive_bytes)
+        if size <= 0:
+            size = self.archive_bytes
+        return size + self.extracted_bytes + _INSTALL_STAGING_OVERHEAD_BYTES
 
     @property
     def required_free_bytes(self) -> int:
-        return self.archive_bytes + self.extracted_bytes + _INSTALL_STAGING_OVERHEAD_BYTES
+        return self.required_free_bytes_for()
 
     @property
     def mirrors(self) -> tuple[tuple[str, str], ...]:
@@ -170,11 +179,21 @@ class VoicePackageProfile:
         )
 
 
+@dataclass(frozen=True)
+class VoicePackageRemoteSize:
+    """Archive size read from a public package mirror response."""
+
+    profile_key: str
+    archive_bytes: int
+    source_name: str
+    url: str
+
+
 VOICE_PACKAGE_PROFILES = {
     "fp32": VoicePackageProfile(
         "fp32",
         "完全包",
-        "最高质量 · G2PW 混合前端 · 下载 1.25 GiB",
+        "最高质量 · G2PW 混合前端",
         "Aemeath_ONNX_GSV_Complete_FP32.rar",
         1_340_211_292,
         1_636_546_624,
@@ -182,7 +201,7 @@ VOICE_PACKAGE_PROFILES = {
     "fp16": VoicePackageProfile(
         "fp16",
         "中等包",
-        "均衡体积 · G2PW 混合前端 · 下载 1.19 GiB",
+        "均衡体积 · G2PW 混合前端",
         "Aemeath_ONNX_GSV_Medium_FP16.rar",
         1_278_327_111,
         1_408_663_952,
@@ -190,7 +209,7 @@ VOICE_PACKAGE_PROFILES = {
     "int8": VoicePackageProfile(
         "int8",
         "节约包",
-        "强烈推荐 · G2PW 混合前端 · 下载 1.04 GiB",
+        "强烈推荐 · G2PW 混合前端",
         "Aemeath_ONNX_GSV_Saver_INT8.rar",
         1_114_131_493,
         1_282_211_358,
@@ -242,6 +261,148 @@ def get_voice_package_urls(
     profile: str | VoicePackageProfile | None = None,
 ) -> tuple[str, ...]:
     return tuple(url for _source, url in get_voice_package_profile(profile).mirrors)
+
+
+def _response_header(response: object, name: str) -> str:
+    headers = getattr(response, "headers", None)
+    if headers is None:
+        return ""
+    try:
+        return str(headers.get(name) or headers.get(name.lower()) or "").strip()
+    except Exception:
+        return ""
+
+
+def _response_archive_bytes(response: object) -> int | None:
+    """Read a full archive size from Content-Range or Content-Length."""
+    content_range = _response_header(response, "Content-Range")
+    if content_range:
+        match = re.search(r"/\s*(\d+)\s*$", content_range)
+        if match:
+            total = int(match.group(1))
+            if total > 0:
+                return total
+
+    content_length = _response_header(response, "Content-Length")
+    try:
+        total = int(content_length)
+    except (TypeError, ValueError):
+        return None
+    return total if total > 0 else None
+
+
+def _close_http_response(response: object | None) -> None:
+    if response is None:
+        return
+    try:
+        response.close()
+    except Exception:
+        pass
+
+
+def _probe_archive_size(session: requests.Session, url: str) -> int | None:
+    """Probe one mirror without downloading the archive body."""
+    head_error: Exception | None = None
+    head_response_received = False
+    response = None
+    try:
+        response = session.head(
+            url,
+            headers=_METADATA_HEADERS,
+            allow_redirects=True,
+            timeout=_METADATA_TIMEOUT,
+        )
+        head_response_received = True
+        response.raise_for_status()
+        size = _response_archive_bytes(response)
+        if size is not None:
+            return size
+    except Exception as exc:
+        head_error = exc
+    finally:
+        _close_http_response(response)
+
+    if head_error is not None and not head_response_received:
+        raise head_error
+
+    # Some package hosts reject HEAD or use chunked responses. A one-byte
+    # range still returns the complete size in Content-Range without pulling
+    # the archive into memory.
+    response = None
+    range_headers = dict(_METADATA_HEADERS)
+    range_headers["Range"] = "bytes=0-0"
+    try:
+        response = session.get(
+            url,
+            headers=range_headers,
+            stream=True,
+            allow_redirects=True,
+            timeout=_METADATA_TIMEOUT,
+        )
+        response.raise_for_status()
+        if _response_header(response, "Content-Range"):
+            return _response_archive_bytes(response)
+        if getattr(response, "status_code", None) == 206:
+            return None
+        return _response_archive_bytes(response)
+    except Exception as exc:
+        if head_error is not None:
+            raise exc from head_error
+        raise
+    finally:
+        _close_http_response(response)
+
+
+def _fetch_remote_archive_size(
+    session: requests.Session,
+    profile: VoicePackageProfile,
+) -> VoicePackageRemoteSize | None:
+    errors: list[str] = []
+    for source_name, url in profile.mirrors:
+        try:
+            archive_bytes = _probe_archive_size(session, url)
+            if archive_bytes is not None:
+                return VoicePackageRemoteSize(
+                    profile.key,
+                    archive_bytes,
+                    source_name,
+                    url,
+                )
+            errors.append(f"{source_name}: response did not include archive size")
+        except Exception as exc:
+            errors.append(f"{source_name}: {exc}")
+            logger.debug("语音包大小探测失败 [%s]: %s", source_name, exc)
+    logger.debug("无法读取语音包远端大小 [%s]: %s", profile.key, "；".join(errors))
+    return None
+
+
+def fetch_voice_package_size(
+    profile: str | VoicePackageProfile | None = None,
+) -> VoicePackageRemoteSize | None:
+    """Read one profile's archive size from ModelScope or Hugging Face."""
+    resolved = get_voice_package_profile(profile)
+    session = requests.Session()
+    try:
+        return _fetch_remote_archive_size(session, resolved)
+    finally:
+        session.close()
+
+
+def fetch_voice_package_sizes(
+    profiles: tuple[VoicePackageProfile, ...] | None = None,
+) -> dict[str, VoicePackageRemoteSize]:
+    """Read all profile sizes while reusing one short-lived HTTP session."""
+    selected = profiles or tuple(VOICE_PACKAGE_PROFILES.values())
+    session = requests.Session()
+    try:
+        result: dict[str, VoicePackageRemoteSize] = {}
+        for profile in selected:
+            remote = _fetch_remote_archive_size(session, profile)
+            if remote is not None:
+                result[profile.key] = remote
+        return result
+    finally:
+        session.close()
 
 
 def _read_text_best_effort(path: Path) -> str:
@@ -403,6 +564,23 @@ def _safe_relative_path(raw_path: str) -> Path:
     return Path(*pure.parts)
 
 
+def _find_g2pw_model_files(package_root: Path) -> tuple[str, ...]:
+    """Return package-relative G2PW ONNX models without assuming precision."""
+    model_dir = Path(package_root).joinpath(*_G2PW_MODEL_DIR.split("/"))
+    try:
+        candidates = tuple(model_dir.iterdir())
+    except OSError:
+        return ()
+
+    return tuple(
+        path.relative_to(package_root).as_posix()
+        for path in sorted(candidates, key=lambda item: item.name.lower())
+        if path.is_file()
+        and path.suffix.lower() == ".onnx"
+        and path.stem.lower().startswith("g2pw")
+    )
+
+
 def validate_voice_package(
     package_root: Path,
     *,
@@ -438,7 +616,14 @@ def validate_voice_package(
         ]
     except KeyError:
         return VoicePackageValidation(False, "语音包精度档位不受支持，请安装最新语音包", manifest)
-    required_files = _REQUIRED_PACKAGE_FILES + profile_required
+    g2pw_models = _find_g2pw_model_files(root)
+    if not g2pw_models:
+        return VoicePackageValidation(
+            False,
+            f"语音包缺少 G2PW ONNX 模型：{_G2PW_MODEL_DIR}/g2pW*.onnx",
+            manifest,
+        )
+    required_files = _REQUIRED_PACKAGE_FILES + profile_required + g2pw_models
 
     for relative in required_files:
         try:
@@ -672,12 +857,12 @@ def _list_archive_members(archive: Path, unrar_path: Path) -> tuple[str, ...]:
         rarfile.UNRAR_TOOL = str(unrar_path)
         with rarfile.RarFile(archive) as rar:
             if rar.needs_password():
-                raise VoicePackageError("语音包分卷不应包含密码")
+                raise VoicePackageError("语音包归档不应包含密码")
             members = tuple(info.filename for info in rar.infolist())
     except VoicePackageError:
         raise
     except Exception as exc:
-        raise VoicePackageError(f"无法读取语音包分卷：{exc}") from exc
+        raise VoicePackageError(f"无法读取语音包归档：{exc}") from exc
     if not members:
         raise VoicePackageError("语音包中没有可解压文件")
     for member in members:
@@ -757,7 +942,7 @@ def remove_legacy_gsvmove_runtime(
 
 
 class VoicePackageInstaller:
-    """Transactional installer for the seven-volume ONNX voice package."""
+    """Transactional installer for one ONNX voice-package archive."""
 
     def __init__(
         self,
@@ -857,6 +1042,10 @@ class VoicePackageInstaller:
             self._check_cancelled()
             with session.get(url, stream=True, timeout=_DOWNLOAD_TIMEOUT) as response:
                 response.raise_for_status()
+                response_bytes = _response_archive_bytes(response)
+                progress_total = response_bytes or profile.archive_bytes
+                if response_bytes is not None:
+                    self._profile = replace(self._profile, archive_bytes=response_bytes)
                 with partial_path.open("wb") as output:
                     for chunk in response.iter_content(chunk_size=_DOWNLOAD_CHUNK_SIZE):
                         self._check_cancelled()
@@ -866,7 +1055,7 @@ class VoicePackageInstaller:
                         self._report(
                             "download",
                             output.tell(),
-                            profile.archive_bytes,
+                            progress_total,
                             message,
                         )
             with partial_path.open("rb") as stream:
@@ -1086,9 +1275,18 @@ class VoicePackageInstaller:
         drive_root: Path,
         *,
         profile: str | VoicePackageProfile | None = None,
+        archive_bytes: int | None = None,
         before_activate: Callable[[], None] | None = None,
     ) -> VoiceInstallResult:
-        self._profile = get_voice_package_profile(profile)
+        selected_profile = get_voice_package_profile(profile)
+        if archive_bytes is not None:
+            try:
+                remote_size = int(archive_bytes)
+            except (TypeError, ValueError):
+                remote_size = 0
+            if remote_size > 0:
+                selected_profile = replace(selected_profile, archive_bytes=remote_size)
+        self._profile = selected_profile
         drive = Path(drive_root)
         if not drive.is_dir():
             raise VoicePackageError(f"所选磁盘不可用：{drive}")

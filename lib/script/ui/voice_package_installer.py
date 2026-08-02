@@ -33,8 +33,11 @@ from lib.script.gsvmove.package_manager import (
     VoiceInstallResult,
     VoicePackageCancelled,
     VoicePackageInstaller,
+    VoicePackageRemoteSize,
     VOICE_PACKAGE_PROFILES,
     VoicePackageStatus,
+    fetch_voice_package_size,
+    fetch_voice_package_sizes,
     get_voice_package_profile,
     get_voice_package_status,
     list_fixed_drive_roots,
@@ -388,6 +391,7 @@ class VoicePackageInstallerDialog(QWidget):
     _success_signal = pyqtSignal(object)
     _error_signal = pyqtSignal(str)
     _cancelled_signal = pyqtSignal()
+    _remote_sizes_signal = pyqtSignal(int, object)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -402,6 +406,10 @@ class VoicePackageInstallerDialog(QWidget):
         self._background_notified_stages: set[str] = set()
         self._installer: VoicePackageInstaller | None = None
         self._install_future = None
+        self._remote_sizes: dict[str, VoicePackageRemoteSize] = {}
+        self._remote_size_generation = 0
+        self._remote_size_future = None
+        self._cleaned_up = False
         self._dragging = False
         self._drag_offset = QPoint()
 
@@ -508,6 +516,7 @@ class VoicePackageInstallerDialog(QWidget):
         self._success_signal.connect(self._on_install_success, queued)
         self._error_signal.connect(self._on_install_error, queued)
         self._cancelled_signal.connect(self._on_install_cancelled, queued)
+        self._remote_sizes_signal.connect(self._apply_remote_sizes, queued)
         self._apply_style()
 
     def show_dialog(self) -> None:
@@ -530,6 +539,8 @@ class VoicePackageInstallerDialog(QWidget):
         get_layer_manager().enforce_burst()
         self.activateWindow()
         self._animate(1.0)
+        if not self._busy:
+            self._start_remote_size_probe()
 
     def is_busy(self) -> bool:
         return self._busy
@@ -538,6 +549,7 @@ class VoicePackageInstallerDialog(QWidget):
         self._completed = False
         self._backgrounded = False
         self._background_notified_stages.clear()
+        self._remote_sizes = {}
         self._status.setText("选择安装磁盘")
         self._download_bar.setValue(0)
         self._download_bar.setFormat("等待开始")
@@ -562,8 +574,10 @@ class VoicePackageInstallerDialog(QWidget):
         self._profile_combo.clear()
         for profile in VOICE_PACKAGE_PROFILES.values():
             recommendation = " · 强烈推荐" if profile.key == "int8" else ""
+            archive_bytes = self._archive_bytes_for(profile)
+            source_suffix = "" if profile.key in self._remote_sizes else " · 离线估算"
             self._profile_combo.addItem(
-                f"{profile.title}{recommendation} · {_format_bytes(profile.archive_bytes)}",
+                f"{profile.title}{recommendation} · {_format_bytes(archive_bytes)}{source_suffix}",
                 profile.key,
             )
         index = self._profile_combo.findData(current or "fp16")
@@ -588,6 +602,50 @@ class VoicePackageInstallerDialog(QWidget):
         self._primary.setEnabled(self._drive_combo.count() > 0)
         self._update_drive_detail()
 
+    def _archive_bytes_for(self, profile) -> int:
+        remote = self._remote_sizes.get(profile.key)
+        if remote is not None and remote.archive_bytes > 0:
+            return remote.archive_bytes
+        return profile.archive_bytes
+
+    def _start_remote_size_probe(self) -> None:
+        future = self._remote_size_future
+        if future is not None:
+            try:
+                if not future.done():
+                    return
+            except Exception:
+                pass
+
+        self._remote_size_generation += 1
+        generation = self._remote_size_generation
+
+        def worker() -> None:
+            try:
+                sizes = fetch_voice_package_sizes()
+            except Exception:
+                sizes = {}
+            if not self._cleaned_up:
+                self._remote_sizes_signal.emit(generation, sizes)
+
+        try:
+            self._remote_size_future = get_compute_hub().submit_interactive_io(worker)
+        except Exception:
+            self._remote_size_future = None
+
+    def _apply_remote_sizes(self, generation: int, sizes: object) -> None:
+        if int(generation) != self._remote_size_generation:
+            return
+        if isinstance(sizes, dict):
+            self._remote_sizes = {
+                str(key): value
+                for key, value in sizes.items()
+                if isinstance(value, VoicePackageRemoteSize) and value.archive_bytes > 0
+            }
+        if not self._busy:
+            self._refresh_profiles()
+            self._update_drive_detail()
+
     def _update_drive_detail(self, *_args) -> None:
         path_text = str(self._drive_combo.currentData() or "")
         if not path_text:
@@ -595,9 +653,12 @@ class VoicePackageInstallerDialog(QWidget):
             return
         target = Path(path_text) / "AemeathDeskPet" / "voice"
         profile = get_voice_package_profile(self._profile_combo.currentData())
+        archive_bytes = self._archive_bytes_for(profile)
+        remote = self._remote_sizes.get(profile.key)
+        source_detail = f"（{remote.source_name}）" if remote is not None else "（离线估算）"
         self._drive_detail.setText(
-            f"{profile.title}：安装过程需要 {_format_bytes(profile.required_free_bytes)}，"
-            f"下载包大小为 {_format_bytes(profile.archive_bytes)}，"
+            f"{profile.title}：安装过程需要 {_format_bytes(profile.required_free_bytes_for(archive_bytes))}，"
+            f"下载包大小为 {_format_bytes(archive_bytes)}{source_detail}，"
             f"安装后占用硬盘空间 {_format_bytes(profile.extracted_bytes)}\n"
             f"安装到 {target}"
         )
@@ -624,6 +685,8 @@ class VoicePackageInstallerDialog(QWidget):
         self._background.show()
         self._profile_combo.setEnabled(False)
         self._drive_combo.setEnabled(False)
+        remote = self._remote_sizes.get(profile_key)
+        archive_bytes = remote.archive_bytes if remote is not None else None
         installer = VoicePackageInstaller(
             progress_callback=self._progress_signal.emit,
             info_callback=self._info_signal.emit,
@@ -632,12 +695,22 @@ class VoicePackageInstallerDialog(QWidget):
 
         def run_install() -> None:
             try:
+                resolved_archive_bytes = archive_bytes
+                if resolved_archive_bytes is None:
+                    self._info_signal.emit("正在读取当前语音包的远端大小")
+                    try:
+                        remote_size = fetch_voice_package_size(profile_key)
+                    except Exception:
+                        remote_size = None
+                    if remote_size is not None and remote_size.archive_bytes > 0:
+                        resolved_archive_bytes = remote_size.archive_bytes
                 self._info_signal.emit("安装任务已启动，正在检查磁盘空间")
                 from lib.script.gsvmove import get_gsvmove_service
 
                 result = installer.install(
                     Path(drive_text),
                     profile=profile_key,
+                    archive_bytes=resolved_archive_bytes,
                     before_activate=get_gsvmove_service().prepare_voice_package_install,
                 )
                 self._success_signal.emit(result)
@@ -819,6 +892,8 @@ class VoicePackageInstallerDialog(QWidget):
         self.move(x, y)
 
     def cleanup(self) -> None:
+        self._cleaned_up = True
+        self._remote_size_generation += 1
         if self._installer is not None:
             self._installer.cancel()
             self._installer = None

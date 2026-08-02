@@ -9,8 +9,9 @@
 二、处理模型
 - `publish(Event)` 将事件放入队列
 - 主线程发布时，会尽快在主线程 drain 队列
-- 非主线程发布时，会通过 Qt signal 切回主线程处理
+- 非主线程发布时，会通过注入的 `EventPump` 切回事件中心所属线程处理；当前 Qt 后端使用 signal 实现
 - 回调可以调用 `event.mark_handled()` 中断同类型事件后续传播
+- 回调异常日志会记录事件类型、回调模块和限定名，并保留异常堆栈
 
 三、基础用法
 ```python
@@ -28,6 +29,9 @@ ec.unsubscribe(EventType.INFORMATION, on_info)
 
 四、输入链路
 - 鼠标：`MOUSE_PRESS` / `MOUSE_MOVE` / `MOUSE_ENTER` / `MOUSE_LEAVE` / `MOUSE_CLICK` / `MOUSE_DOUBLE_CLICK`
+- `MOUSE_PRESS` / `MOUSE_CLICK` / `MOUSE_DOUBLE_CLICK` 的 `button` 使用 `input.types.MouseButton`，`global_pos` 与 `pos` 使用 `graphics.types.Point`
+- `MOUSE_MOVE` 的 `buttons` 使用 `input.types.MouseButtons`，`global_pos` 与 `pos` 使用 `graphics.types.Point`
+- Qt UI 消费核心坐标时，可直接读取 `Point.x/Point.y`，或在 QWidget 边界通过 `qt_bridge.window.coerce_qpoint()` 转换；不得对核心坐标调用 `x()/y()`
 - 键盘：`KEY_PRESS` / `KEY_RELEASE`
 - 命令框：
   - `/xxx` → `INPUT_COMMAND`
@@ -119,9 +123,20 @@ TARGET_POSITION_QUERY / TARGET_POSITION_RESPONSE
 PROTECTION_CHECK / PROTECTION_RESPONSE
 - 用途：检测主宠保护半径或实体保护区
 
+UI_ANCHOR_RESPONSE
+- 用途：发布窗口或 UI 锚点的全局桌面坐标
+- 字段：`window_id`、`anchor_id`、`ui_id`、`anchor_point`
+- `anchor_point` 固定使用 `lib.core.graphics.types.Point`；Qt 控件只在事件消费边界转换为 `QPoint`
+
+ENTITY_POSITION_RESPONSE / ENTITY_STATE_RESPONSE
+- `ENTITY_POSITION_RESPONSE.position` 固定使用 `Point`，`size` 为 `(width, height)` 数值元组
+- `ENTITY_STATE_RESPONSE.position` 与 `target` 存在时同样使用 `Point`
+- 事件 payload 禁止放入 `QPoint/QRect/QWidget` 等 toolkit 对象
+
 七、开发约束
 - 回调应尽量短小，避免阻塞 UI
 - 配置保存、更新下载、语音安装和麦克风初始化等 I/O 必须交给 `ComputeHub.submit_interactive_io()` 或所属后台 Worker；事件回调只负责提交任务和更新状态。
 - 所有订阅都必须在 `cleanup()` 中退订
 - `mark_handled()` 只用于确实需要阻断传播的场景
 - 公共事件字段一旦公开使用，尽量保持兼容，不要频繁改 key
+- 几何字段统一使用 `lib.core.graphics` 值类型，不得从 Qt UI 反向泄漏原生对象

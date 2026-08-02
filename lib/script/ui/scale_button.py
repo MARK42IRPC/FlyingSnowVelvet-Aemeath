@@ -8,14 +8,17 @@ from config.font_config import get_ui_font
 from config.scale import scale_px
 from config.tooltip_config import TOOLTIPS
 from lib.core.event.center import get_event_center, EventType, Event
+from lib.core.graphics.types import Point
 from lib.core.unified_draw import Layer, get_layer_manager
 from lib.core.screen_utils import clamp_rect_position
 from config.user_scale_config import get_user_scale_config
 from lib.core.anchor_utils import (
-    get_anchor_point as resolve_anchor_point,
-    publish_widget_anchor_response,
     animate_opacity,
     refresh_last_activity,
+)
+from lib.core.qt_bridge.widget_anchors import (
+    get_anchor_point as resolve_anchor_point,
+    publish_widget_anchor_response,
 )
 from lib.script.ui.rect_action_button_style import paint_rect_action_button
 
@@ -172,7 +175,7 @@ class ScaleUpButton(QWidget):
             anchor_update_event = Event(EventType.UI_ANCHOR_RESPONSE, {
                 'window_id': self._ui_id,
                 'anchor_id': 'all',
-                'anchor_point': QPoint(x, y),
+                'anchor_point': Point(x, y),
                 'ui_id': 'all'
             })
             self._event_center.publish(anchor_update_event)

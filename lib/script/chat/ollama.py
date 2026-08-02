@@ -4,21 +4,26 @@ import subprocess
 import threading
 from collections import deque
 
-from PyQt5.QtCore import QTimer
-
+from lib.core.event.callbacks import CallbackDispatcher
 from lib.core.event.center import get_event_center, EventType
+from lib.core.timing.scheduler import Scheduler
 from config.ollama_config import get_active_config
 
 from ._api_client import _ApiClientMixin
 from .ollama_bootstrap import OllamaBootstrapMixin
 from .ollama_state import OllamaStateMixin
 from .ollama_session import OllamaSessionMixin
-from .ollama_support import logger, OLLAMA_BASE_URL, _OllamaSignal
+from .ollama_support import logger, OLLAMA_BASE_URL
 
 
 class OllamaManager(_ApiClientMixin, OllamaBootstrapMixin, OllamaStateMixin, OllamaSessionMixin):
     """Ollama / OpenAI ?? API ????????????"""
-    def __init__(self):
+    def __init__(
+        self,
+        *,
+        scheduler: Scheduler | None = None,
+        callback_dispatcher: CallbackDispatcher | None = None,
+    ):
         self._event_center = get_event_center()
 
         self._active_config = get_active_config()
@@ -33,9 +38,9 @@ class OllamaManager(_ApiClientMixin, OllamaBootstrapMixin, OllamaStateMixin, Oll
         self._selected_model:    str | None = None
         self._available_models:  list       = []
 
-        # Qt 资源（APP_MAIN 触发后才可安全创建）
-        self._signal:     _OllamaSignal | None = None
-        self._ping_timer: QTimer | None        = None
+        self._scheduler = scheduler
+        self._callback_dispatcher = callback_dispatcher or CallbackDispatcher()
+        self._ping_timer = None
 
         # 请求 ID + 回调
         self._chat_request_id:   int = 0
@@ -108,11 +113,11 @@ class OllamaManager(_ApiClientMixin, OllamaBootstrapMixin, OllamaStateMixin, Oll
 _ollama_manager: OllamaManager | None = None
 
 
-def get_ollama_manager() -> OllamaManager:
+def get_ollama_manager(*, scheduler: Scheduler | None = None) -> OllamaManager:
     """???? OllamaManager ???????"""
     global _ollama_manager
     if _ollama_manager is None:
-        _ollama_manager = OllamaManager()
+        _ollama_manager = OllamaManager(scheduler=scheduler)
     return _ollama_manager
 
 

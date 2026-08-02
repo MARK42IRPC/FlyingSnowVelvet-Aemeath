@@ -4,11 +4,11 @@ import random
 
 from PyQt5.QtCore    import Qt, QPoint
 from PyQt5.QtGui     import QPixmap, QTransform
-from PyQt5.QtWidgets import QApplication
 
 from lib.core.event.center      import get_event_center, EventType, Event
 from lib.core.hash_cmd_registry import get_hash_cmd_registry
 from lib.core.plugin_registry   import manager_registry, BaseManager
+from lib.core.screen_utils      import get_screen_geometry_for_point
 from lib.script.music import get_music_service, cleanup_music_service
 from .speaker                   import Speaker
 from lib.core.logger import get_logger
@@ -222,20 +222,19 @@ class SpeakerManager(BaseManager):
             log("无可用图片，跳过生成")
             return
 
-        screen = QApplication.primaryScreen().geometry()
+        screen = get_screen_geometry_for_point()
         size   = self._actual_size   # 使用按比例缩放后的真实尺寸
         w, h   = size
 
         # 获取宠物当前位置（中心锚点）
         pet_center = None
-        if self._entity and hasattr(self._entity, 'get_anchor_point'):
-            pet_center = self._entity.get_anchor_point('center')
-            # 转换为全局坐标
-            pet_pos = self._entity.get_position()
+        if self._entity and hasattr(self._entity, 'get_core_geometry'):
+            pet_geometry = self._entity.get_core_geometry()
             pet_center = QPoint(
-                pet_pos.x() + pet_center.x(),
-                pet_pos.y() + pet_center.y()
+                int(round(pet_geometry.x + pet_geometry.width / 2)),
+                int(round(pet_geometry.y + pet_geometry.height / 2)),
             )
+            screen = get_screen_geometry_for_point(pet_center)
 
         for _ in range(count):
             if pet_center:

@@ -59,6 +59,8 @@
 - 需要 `update()`
 - 需要 `alive`
 - 建议提供 `life` / `max_life`
+- `color`、`font` 使用 `lib.core.graphics.types.Color`、`FontSpec`，不得把 `QColor`、`QFont`、`QPixmap` 或 `QPainter` 放入粒子数据
+- 自定义形状通过纯数据字段声明，由 `lib/core/qt_bridge/particle_system.py` 等绘制后端消费
 - 可选使用：
   - `is_text`
   - `is_line`

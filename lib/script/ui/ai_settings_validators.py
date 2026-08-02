@@ -3,6 +3,8 @@
 import math
 from urllib.parse import urlparse
 
+from config.ollama_config import AI_VOICE_MAX_CHARS_MAX, AI_VOICE_MAX_CHARS_MIN
+
 
 def is_valid_http_url(text: str) -> bool:
     try:
@@ -175,8 +177,11 @@ def validate_ai_values(values: dict) -> None:
 
     if isinstance(ai_voice_max_chars, bool) or not isinstance(ai_voice_max_chars, int):
         raise ValueError("GSV语音字数限制必须是整数")
-    if not (20 <= ai_voice_max_chars <= 80):
-        raise ValueError("GSV语音字数限制范围应为 20~80")
+    if not (AI_VOICE_MAX_CHARS_MIN <= ai_voice_max_chars <= AI_VOICE_MAX_CHARS_MAX):
+        raise ValueError(
+            f"GSV语音字数限制范围应为 "
+            f"{AI_VOICE_MAX_CHARS_MIN}~{AI_VOICE_MAX_CHARS_MAX}"
+        )
 
     if isinstance(gsv_cache_max_files, bool) or not isinstance(gsv_cache_max_files, int):
         raise ValueError("GSV缓存上限必须是整数")

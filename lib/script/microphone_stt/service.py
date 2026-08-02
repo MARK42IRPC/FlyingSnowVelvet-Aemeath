@@ -30,6 +30,8 @@ _DEFAULT_SILENCE_TIMEOUT_SECS = 3.0
 _DEFAULT_SPEECH_RMS_THRESHOLD = 550
 _DEFAULT_DENOISE_STRENGTH = 0.65
 _DEFAULT_NOISE_GATE_THRESHOLD = 180
+_AUTO_VOICE_START_CONFIRM_CHUNKS = 2
+_AUTO_NOISE_WORDS = frozenset({"huh", "uh", "um", "嗯", "啊", "呃"})
 _DENOISE_FRAME_SAMPLES = 160  # 10 ms at the default 16 kHz sample rate
 _MODEL_ENV_KEYS = ("VOSK_MODEL_PATH", "VOSK_MODEL_DIR")
 _MODEL_DIR_CANDIDATES = (
@@ -90,7 +92,11 @@ def denoise_pcm16(
     observed_floor = frame_rms[quiet_index] if frame_rms else 0.0
 
     floor = max(0.0, float(noise_floor or gate))
-    if observed_floor <= max(float(gate) * 2.0, floor * 2.0):
+    # Allow the floor to learn a louder steady microphone/room noise. The
+    # quiet-quartile estimate keeps normal speech from contaminating it, while
+    # the wider bound prevents a fan or air conditioner from pinning VAD to
+    # the low default gate forever.
+    if observed_floor <= max(float(gate) * 4.0, floor * 2.0):
         # Adapt quickly enough to follow a changed microphone, but slowly
         # enough that a short quiet gap does not collapse the noise profile.
         floor = floor * 0.88 + observed_floor * 0.12
@@ -208,6 +214,12 @@ def _discover_bundled_model_dirs(root_dir: Path) -> list[Path]:
 
 def _normalize_text(text) -> str:
     return re.sub(r"\s+", " ", str(text or "")).strip()
+
+
+def _is_spurious_auto_text(text: str) -> bool:
+    """Reject common one-word recognizer hallucinations from silent audio."""
+    normalized = _normalize_text(text).lower().strip(".,!?;:，。！？；：")
+    return normalized in _AUTO_NOISE_WORDS
 
 
 def _coerce_int(value, default: int, minimum: int, maximum: int) -> int:
@@ -422,6 +434,8 @@ class MicrophoneSttService:
         self._current_options = MicrophoneSttOptions()
         self._last_partial_text = ""
         self._auto_speech_active = False
+        self._auto_voice_candidate_chunks = 0
+        self._auto_voice_candidate_chunks = 0
         self._bootstrap_thread: Future | None = None
         self._bootstrap_cancel_event: threading.Event | None = None
         self._start_generation = 0
@@ -866,9 +880,13 @@ class MicrophoneSttService:
         except Exception:
             return 0
 
-    def _publish_partial_text(self, text: str) -> None:
+    def _publish_partial_text(self, text: str, *, suppress_spurious: bool = False) -> None:
         normalized = _normalize_text(text)
-        if not normalized or normalized == self._last_partial_text:
+        if (
+            not normalized
+            or (suppress_spurious and _is_spurious_auto_text(normalized))
+            or normalized == self._last_partial_text
+        ):
             return
         self._last_partial_text = normalized
         logger.debug("[MicrophoneSttService] Partial text: %s", normalized)
@@ -901,6 +919,7 @@ class MicrophoneSttService:
                             self._finalize_auto_session(recognizer, auto_segments, options)
                             recognizer = None
                             auto_segments = []
+                            self._auto_voice_candidate_chunks = 0
                     continue
 
                 if chunk is None:
@@ -921,6 +940,7 @@ class MicrophoneSttService:
                         auto_segments,
                         chunk,
                         last_voice_time,
+                        noise_floor,
                         options,
                     )
                     continue
@@ -957,14 +977,26 @@ class MicrophoneSttService:
         auto_segments: list[str],
         chunk: bytes,
         last_voice_time: float,
+        noise_floor: float | None,
         options: MicrophoneSttOptions,
     ):
         now = time.monotonic()
         chunk_rms = self._chunk_rms(chunk)
-        is_speaking = chunk_rms >= options.speech_rms_threshold
+        adaptive_threshold = max(
+            int(options.speech_rms_threshold),
+            int(max(0.0, float(noise_floor or 0.0)) * 2.2),
+        )
+        is_speaking = chunk_rms >= adaptive_threshold
 
         if recognizer is None and not is_speaking:
+            self._auto_voice_candidate_chunks = 0
             return None, auto_segments, last_voice_time
+
+        if recognizer is None:
+            self._auto_voice_candidate_chunks += 1
+            if self._auto_voice_candidate_chunks < _AUTO_VOICE_START_CONFIRM_CHUNKS:
+                return None, auto_segments, last_voice_time
+            self._auto_voice_candidate_chunks = 0
 
         if recognizer is None:
             recognizer = recognizer_factory()
@@ -981,10 +1013,14 @@ class MicrophoneSttService:
         if accepted:
             text = _extract_text(recognizer.Result(), "text")
             if text:
-                auto_segments.append(text)
+                if not _is_spurious_auto_text(text):
+                    auto_segments.append(text)
                 self._last_partial_text = ""
         elif options.emit_partial:
-            self._publish_partial_text(_extract_text(recognizer.PartialResult(), "partial"))
+            self._publish_partial_text(
+                _extract_text(recognizer.PartialResult(), "partial"),
+                suppress_spurious=True,
+            )
 
         if last_voice_time > 0.0 and now - last_voice_time >= options.silence_timeout_secs:
             self._finalize_auto_session(recognizer, auto_segments, options)
@@ -994,6 +1030,7 @@ class MicrophoneSttService:
 
     def _finalize_auto_session(self, recognizer, auto_segments: list[str], options: MicrophoneSttOptions) -> None:
         if recognizer is None:
+            self._auto_voice_candidate_chunks = 0
             if self._auto_speech_active:
                 self._auto_speech_active = False
                 self._last_partial_text = ""
@@ -1011,12 +1048,16 @@ class MicrophoneSttService:
             self._emit_final_text(merged_text, options)
 
         self._auto_speech_active = False
+        self._auto_voice_candidate_chunks = 0
         if self.is_listening and options.auto_mode:
             self._publish_state("monitoring", message="自动语聊监听中", speech_active=False)
 
     def _emit_final_text(self, text: str, options: MicrophoneSttOptions) -> None:
         normalized = _normalize_text(text)
         if not normalized:
+            return
+        if options.auto_mode and _is_spurious_auto_text(normalized):
+            logger.debug("[MicrophoneSttService] Ignoring auto-mode noise result: %s", normalized)
             return
 
         self._last_partial_text = ""

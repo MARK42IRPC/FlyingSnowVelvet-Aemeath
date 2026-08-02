@@ -53,7 +53,10 @@ def load_ai_values(default_values: dict) -> dict:
         "gsv_fragment_interval": oc.OLLAMA.get("gsv_fragment_interval", 0.3),
         "gsv_seed": oc.OLLAMA.get("gsv_seed", -1),
         "gsv_max_steps": oc.OLLAMA.get("gsv_max_steps", 500),
-        "ai_voice_max_chars": oc.OLLAMA.get("ai_voice_max_chars", 80),
+        "ai_voice_max_chars": oc.OLLAMA.get(
+            "ai_voice_max_chars",
+            oc.AI_VOICE_MAX_CHARS_DEFAULT,
+        ),
         "gsv_cache_max_files": oc.OLLAMA.get("gsv_cache_max_files", 20),
         "memory_context_limit": oc.OLLAMA.get("memory_context_limit", 12),
         "memory_recall_count": oc.OLLAMA.get("memory_recall_count", 30),

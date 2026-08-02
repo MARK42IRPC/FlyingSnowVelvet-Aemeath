@@ -1,7 +1,8 @@
-"""关闭按钮事件处理器"""
-from PyQt5.QtCore import Qt
+"""关闭按钮事件处理器。"""
 
 from lib.core.event.center import get_event_center, EventType, Event
+from lib.core.graphics.types import coerce_point
+from lib.core.input.types import MouseButton
 
 
 class CloseButtonEventHandler:
@@ -36,16 +37,16 @@ class CloseButtonEventHandler:
             return
 
         button = event.data.get('button')
-        global_pos = event.data.get('global_pos')
+        global_pos = coerce_point(event.data.get('global_pos'))
 
         # 只处理左键点击
-        if button == Qt.LeftButton:
+        if button == MouseButton.LEFT and global_pos is not None:
             # 检查点击是否在按钮上
             button_rect = self._button.geometry()
             button_global_pos = self._button.mapToGlobal(self._button.rect().topLeft())
 
-            if (button_global_pos.x() <= global_pos.x() <= button_global_pos.x() + button_rect.width() and
-                button_global_pos.y() <= global_pos.y() <= button_global_pos.y() + button_rect.height()):
+            if (button_global_pos.x() <= global_pos.x <= button_global_pos.x() + button_rect.width() and
+                button_global_pos.y() <= global_pos.y <= button_global_pos.y() + button_rect.height()):
                 # 点击在按钮上，执行点击操作
                 self._button.click()
 

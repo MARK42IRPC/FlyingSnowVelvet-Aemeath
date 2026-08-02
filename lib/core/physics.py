@@ -16,13 +16,11 @@ from __future__ import annotations
 import math
 from typing import Callable, Optional
 
-from PyQt5.QtWidgets import QApplication
-
 from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import get_event_center, EventType, Event
 from config.config import PHYSICS
 from lib.core.logger import get_logger
-from lib.core.screen_utils import get_virtual_screen_geometry
+from lib.core.graphics.types import Rect
 
 _logger = get_logger(__name__)
 
@@ -251,10 +249,11 @@ class PhysicsWorld:
     MIN_VELOCITY: float     = PHYSICS.get('min_velocity', 0.1)      # 静止速度阈值
     TICK_SUBSTEPS: int      = max(1, round(60 / 20))
 
-    def __init__(self) -> None:
+    def __init__(self, screen_bounds_provider: Callable[[], Rect] | None = None) -> None:
         self._bodies: list[PhysicsBody] = []
         self._pending_future = None
         self._paused = False
+        self._screen_bounds_provider = screen_bounds_provider
 
         # 多屏环境使用虚拟桌面边界
         self._screen_left: int = 0
@@ -421,11 +420,15 @@ class PhysicsWorld:
 
     def _refresh_screen_bounds(self) -> None:
         """刷新当前虚拟桌面边界。"""
-        geom = get_virtual_screen_geometry()
-        self._screen_left = geom.x()
-        self._screen_top = geom.y()
-        self._screen_right = geom.x() + geom.width()
-        self._screen_bottom = geom.y() + geom.height()
+        if self._screen_bounds_provider is None:
+            from lib.core.qt_bridge.screen import get_virtual_screen_rect
+            geom = get_virtual_screen_rect()
+        else:
+            geom = self._screen_bounds_provider()
+        self._screen_left = int(geom.x)
+        self._screen_top = int(geom.y)
+        self._screen_right = int(geom.x + geom.width)
+        self._screen_bottom = int(geom.y + geom.height)
 
 # ══════════════════════════════════════════════════════════════════════
 # 全局单例

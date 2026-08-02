@@ -138,6 +138,11 @@ def get_digit_font(size: int | None = None):
     return _build_font(_ensure_lahai_roi(), font_size)
 
 
+def get_digit_font_family() -> str:
+    """返回已注册的数字字体族名。"""
+    return _ensure_lahai_roi()
+
+
 def _split_digit_segments(text: str) -> list[tuple[str, bool]]:
     """按数字/非数字切分文本，返回 [(segment, is_digit), ...]。"""
     segments: list[tuple[str, bool]] = []

@@ -6,7 +6,6 @@ from concurrent.futures import Future
 import numpy as np
 from PyQt5.QtCore    import QPoint
 from PyQt5.QtGui     import QPixmap
-from PyQt5.QtWidgets import QApplication
 
 from lib.core.event.center        import get_event_center, EventType, Event
 from lib.core.compute_hub         import get_compute_hub
@@ -370,9 +369,9 @@ class SnowballManager(BaseManager):
             return
 
         anchor = None
-        if self._entity and hasattr(self._entity, 'get_position'):
+        if self._entity and hasattr(self._entity, 'get_core_position'):
             try:
-                anchor = self._entity.get_position()
+                anchor = self._entity.get_core_position()
             except Exception:
                 anchor = None
         screen = get_screen_geometry_for_point(anchor)

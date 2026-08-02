@@ -1,19 +1,15 @@
 """宠物窗口模块"""
 import math
 import random
-from PyQt5.QtWidgets import QWidget
-from PyQt5.QtCore    import Qt, QTimer, QPoint
-from PyQt5.QtGui     import QPainter
 
-from config.config import COLORS, WINDOW, ANIMATION, GIF_FILES, BEHAVIOR, UI, PARTICLES
+from config.config import ANIMATION, BEHAVIOR, UI
 from lib.core.layer_manager import get_layer_manager
-from lib.core.qt_gif_loader import scale_frame, flip_frame
-from lib.core.qt_particle_system import ParticleOverlay
 from lib.core.input.click import ClickHandler
 from lib.core.input.key import KeyHandler
+from lib.core.input.types import KeyboardInput, MouseButton, MouseInput
 from lib.core.timing.manager import TimingManager
-from lib.core.movement_controller import MovementController
-from lib.core.pet_movement_queue import PetMoveQueueManager, MoveStep
+from lib.core.movement_controller import MovementSettings
+from lib.core.pet_movement_runtime import PetMovementRuntime
 from lib.core.event.mouse_handler import MouseEventHandler
 from lib.core.logger import get_logger
 
@@ -21,19 +17,22 @@ _logger = get_logger(__name__)
 from lib.core.voice.ams_startup import AmsStartupSound
 from lib.core.event.key_handler import KeyEventHandler
 from lib.core.event.center import get_event_center, EventType, Event
-from lib.core.entity.base import BaseEntity
+from lib.core.qt_bridge.pet_widget import QtPetWidget
 from lib.script.mainpet.state import StateMachine
 from config.user_scale_config import get_user_scale_config
 from lib.core.draw_core import DrawRequest, get_draw_core
 from lib.core.layer import Layer, normalize_layer
+from lib.core.graphics.types import Point, coerce_point
 from lib.core.action import Actions
 from lib.core.pet_window_ui_factory import attach_pet_window_ui, iter_pet_window_ui
-from lib.core.pet_window_setup import setup_pet_window, finalize_pet_window_startup
+from lib.core.qt_bridge.window_setup import setup_pet_window, finalize_pet_window_startup
 from lib.core.timing import register_timing_manager
 from lib.core.clickthrough_state import set_clickthrough_enabled
-from lib.core.anchor_utils import (
-    get_anchor_point as resolve_anchor_point,
-    publish_widget_anchor_response,
+from lib.core.qt_bridge.widget_anchors import publish_widget_anchor_response
+from lib.core.qt_bridge.scheduler import QtScheduler
+from lib.core.qt_bridge.window import (
+    move_widget,
+    set_pet_window_clickthrough,
 )
 from config.scale import scale_px
 from lib.script.ui.shutdown import hide_all_runtime_ui
@@ -48,13 +47,13 @@ def _get_main_pet_opacity() -> float:
     return max(0.0, min(1.0, opacity))
 
 
-class PetWindow(BaseEntity):
+class PetWindow(QtPetWidget):
     """
     主宠物窗口：无边框、置顶、透明背景。
     所有渲染通过 paintEvent 完成，不依赖 transparentcolor hack。
     """
 
-    def __init__(self, gifs: dict, particle_overlay: ParticleOverlay):
+    def __init__(self, gifs: dict, particle_overlay: object):
         super().__init__()
 
         self._gifs    = gifs
@@ -63,11 +62,24 @@ class PetWindow(BaseEntity):
         # ── 绘制核心 ───────────────────────────────────────────────────
         self._draw_core = get_draw_core()
 
-        # ── 移动控制器 ──────────────────────────────────────────────────
-        self._movement = MovementController(
+        # ── 核心运行状态 ──────────────────────────────────────────────
+        self._event_center = get_event_center()
+        self._state = 'idle'
+
+        # ── 移动运行时 ──────────────────────────────────────────────────
+        self._movement = PetMovementRuntime(
+            event_center=self._event_center,
+            get_position=self.get_core_position,
             on_position_update=self._on_movement_position_update,
-            on_move_complete=self._on_movement_complete,
-            on_direction_change=self._on_direction_change
+            get_state=lambda: self._state,
+            request_state=self._publish_state_change_request,
+            on_direction_change=self._on_direction_change,
+            movement_settings=MovementSettings(
+                min_speed=float(BEHAVIOR['move_min_speed']),
+                acceleration=float(BEHAVIOR['move_acceleration']),
+                max_speed=float(BEHAVIOR['move_max_speed']),
+                decel_distance=float(BEHAVIOR['move_decel_distance']),
+            ),
         )
 
         # 鼠标穿透状态
@@ -86,24 +98,13 @@ class PetWindow(BaseEntity):
         # ── 计时器管理器 ──────────────────────────────────────────────
         self._timing_manager = TimingManager(
             frame_fps=ANIMATION['frame_fps'],
-            gif_fps=ANIMATION['gif_fps']
+            gif_fps=ANIMATION['gif_fps'],
+            scheduler=QtScheduler(parent=self),
         )
         self._timing_manager.start()
 
         # 注册全局访问器，供子对象（雪豹、雪堆等）使用 add_task
         register_timing_manager(self._timing_manager)
-
-        # ── 事件中心 ─────────────────────────────────────────────────
-        self._event_center = get_event_center()
-        self._move_queue = PetMoveQueueManager(
-            on_step_activated=self._activate_move_step,
-            on_step_updated=self._update_move_step,
-            on_step_cancelled=self._cancel_active_move_step,
-            on_queue_idle=self._handle_move_queue_idle,
-            can_accept_step=self._can_accept_move_step,
-        )
-        self._legacy_move_event_id = "pet_window_api_move"
-        self._user_dragging = False
 
         # 订阅帧事件（用于窗口移动）
         self._event_center.subscribe(EventType.FRAME, self._handle_frame_event)
@@ -138,9 +139,6 @@ class PetWindow(BaseEntity):
 
         # ── 状态机 ────────────────────────────────────────────────────
         self._state_machine = StateMachine(self, self._timing_manager)
-
-        # ── 状态 ──────────────────────────────────────────────────────
-        self._state = 'idle'
 
         # ── 移动任务ID ──────────────────────────────────────────────
         self._move_task_id = None
@@ -261,29 +259,7 @@ class PetWindow(BaseEntity):
         self._clickthrough = enabled
         set_clickthrough_enabled(enabled)
 
-        # 保存基础窗口标志
-        base_flags = Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool
-
-        if enabled:
-            # 启用鼠标穿透
-            # 先隐藏窗口
-            self.hide()
-            # 设置穿透属性
-            self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-            # 移除 WindowSystemMenuHint 标志，因为它可能与穿透属性冲突
-            self.setWindowFlags(base_flags)
-            # 显示窗口
-            self.show()
-        else:
-            # 禁用鼠标穿透
-            # 先隐藏窗口
-            self.hide()
-            # 设置非穿透属性
-            self.setAttribute(Qt.WA_TransparentForMouseEvents, False)
-            # 恢复 WindowSystemMenuHint 标志（确保 mouseMoveEvent 能够正确触发）
-            self.setWindowFlags(base_flags | Qt.WindowSystemMenuHint)
-            # 显示窗口
-            self.show()
+        set_pet_window_clickthrough(self, enabled)
 
     def _change_state(self, new_state: str):
         """切换状态"""
@@ -321,43 +297,22 @@ class PetWindow(BaseEntity):
         """获取当前状态"""
         return self._state
 
-    def start_move(self, target: QPoint):
+    def start_move(self, target: Point):
         """开始移动到目标位置"""
-        self._event_center.publish(Event(EventType.PET_MOVE_ENQUEUE, {
-            'event_id': self._legacy_move_event_id,
-            'source': 'pet_window_api',
-            'type': 'move',
-            'position': QPoint(target),
-            'radius': 12,
-            'timeout_ms': 0,
-        }))
+        self._movement.start_move(target)
 
-    def update_move_target(self, target: QPoint) -> None:
+    def update_move_target(self, target: Point) -> None:
         """
         动态更新移动目标点（仅在移动中生效，不触发状态机切换）。
 
         供状态机在追踪动态目标（如跳跃中的雪豹）时每 TICK 调用，
         通过持续刷新 _target 实现平滑跟随，无需重新发起移动流程。
         """
-        self._event_center.publish(Event(EventType.PET_MOVE_ENQUEUE, {
-            'event_id': self._legacy_move_event_id,
-            'source': 'pet_window_api',
-            'type': 'move',
-            'position': QPoint(target),
-            'radius': 12,
-            'timeout_ms': 0,
-        }))
+        self._movement.update_move_target(target)
 
     def stop_move(self):
         """停止移动"""
-        self._event_center.publish(Event(EventType.PET_MOVE_PASS, {
-            'scope': 'current',
-            'result': 'cancelled',
-        }))
-
-    def get_position(self) -> QPoint:
-        """获取当前位置"""
-        return self.frameGeometry().topLeft()
+        self._movement.stop_move()
 
     def play_animation(self, state: str, duration: int = 0):
         """播放指定动画,可选持续时间"""
@@ -435,48 +390,34 @@ class PetWindow(BaseEntity):
         self._timing_manager.remove_task(task_id)
         self._task_callbacks.pop(task_id, None)
 
-    def get_geometry(self):
-        """获取窗口几何信息"""
-        return self.frameGeometry()
-
     def is_moving(self) -> bool:
         """返回当前是否处于移动中。"""
         return self._movement.is_moving
 
     def is_user_dragging(self) -> bool:
         """返回主宠当前是否正被鼠标左键拖拽。"""
-        return self._user_dragging
+        return self._movement.is_user_dragging
 
     def begin_user_drag(self) -> None:
         """进入用户拖拽状态，并立即清空当前移动队列。"""
-        if self._user_dragging:
+        current_pos = self._movement.begin_user_drag()
+        if current_pos is None:
             return
-        self._user_dragging = True
-        self._move_queue.clear_all(result='cancelled')
-        current_pos = QPoint(self.frameGeometry().topLeft())
-        self._movement.sync_position(current_pos)
-        self._move_particle_last_pos = QPoint(current_pos)
+        self._move_particle_last_pos = current_pos
         self._move_particle_distance_accum = 0.0
 
-    def update_user_drag_position(self, new_pos: QPoint) -> None:
+    def update_user_drag_position(self, new_pos: Point) -> None:
         """由鼠标拖拽直接接管主宠位置。"""
-        self.move(new_pos)
-        self._movement.sync_position(QPoint(new_pos))
-        self._event_center.publish(Event(EventType.UI_ANCHOR_RESPONSE, {
-            'window_id': 'pet_window',
-            'anchor_id': 'all',
-            'anchor_point': QPoint(new_pos),
-            'ui_id': 'all'
-        }))
+        point = self._movement.update_user_drag_position(new_pos)
+        if point is None:
+            return
 
     def end_user_drag(self) -> None:
         """结束用户拖拽状态。"""
-        if not self._user_dragging:
+        current_pos = self._movement.end_user_drag()
+        if current_pos is None:
             return
-        self._user_dragging = False
-        current_pos = QPoint(self.frameGeometry().topLeft())
-        self._movement.sync_position(current_pos)
-        self._move_particle_last_pos = QPoint(current_pos)
+        self._move_particle_last_pos = current_pos
         self._move_particle_distance_accum = 0.0
 
     def set_direction(self, flipped: bool):
@@ -487,114 +428,42 @@ class PetWindow(BaseEntity):
         """返回当前朝向（是否翻转）。"""
         return self._movement.flipped
 
-    def get_anchor_point(self, anchor_id: str) -> QPoint:
-        """
-        获取指定锚点的位置
-
-        Args:
-            anchor_id: 锚点 ID ('top', 'bottom', 'left', 'right', 
-                        'top_left', 'top_right', 'bottom_left', 'bottom_right', 'center')
-
-        Returns:
-            锚点位置（相对于窗口的坐标）
-        """
-        return resolve_anchor_point(self, anchor_id)
-
-    def paintEvent(self, event):
-        """绘制事件 - 使用 DrawCore 统一绘制"""
-        painter = QPainter(self)
+    def prepare_render(self):
+        """更新绘制状态并将 DrawCore 交给窗口后端。"""
         self._draw_core.set_request_alpha(self._state, _get_main_pet_opacity())
-        self._draw_core.render(painter, self.rect())
+        return self._draw_core
 
-    # ==================================================================
-    # 鼠标事件
-    # ==================================================================
+    def handle_pointer_enter(self) -> None:
+        self._click_handler.handle_enter()
 
-    def enterEvent(self, event):
-        self._click_handler.handle_enter(event)
+    def handle_pointer_leave(self) -> None:
+        self._click_handler.handle_leave()
 
-    def leaveEvent(self, event):
-        self._click_handler.handle_leave(event)
-
-    def mousePressEvent(self, event):
+    def handle_pointer_press(self, event: MouseInput) -> None:
         self._click_handler.handle_press(event)
 
-    def mouseMoveEvent(self, event):
+    def handle_pointer_move(self, event: MouseInput) -> None:
         self._click_handler.handle_move(event)
 
-    def mouseReleaseEvent(self, event):
-        self._mouse_event_handler.handle_release(event)
+    def handle_pointer_release(self, button: MouseButton) -> None:
+        self._mouse_event_handler.handle_release(button)
 
-    def moveEvent(self, event):
-        """窗口移动事件：累计位移并按阈值触发移动粒子。"""
-        super().moveEvent(event)
-        self._track_move_particles(QPoint(event.pos()))
+    def handle_window_moved(self, position: Point) -> None:
+        self._track_move_particles(position)
 
-    # ==================================================================
-    # 键盘事件
-    # ==================================================================
-
-    def keyPressEvent(self, event):
+    def handle_key_press(self, event: KeyboardInput) -> None:
         self._key_handler.handle_key_press(event)
 
-    def keyReleaseEvent(self, event):
+    def handle_key_release(self, event: KeyboardInput) -> None:
         self._key_handler.handle_key_release(event)
 
     # ==================================================================
-    # 移动系统 - 委托给 MovementController
+    # 移动系统 - 宿主副作用回调
     # ==================================================================
 
-    def _publish_moving_state_request(self) -> None:
-        """请求切换到 moving 状态。"""
-        event = Event(EventType.STATE_CHANGE_REQUEST, {
-            'new_state': 'moving',
-            'by_event': False
-        })
-        self._event_center.publish(event)
-
-    def _publish_idle_state_request(self) -> None:
-        """请求切换到 idle 状态。"""
-        event = Event(EventType.STATE_CHANGE_REQUEST, {
-            'new_state': 'idle',
-            'by_event': False
-        })
-        self._event_center.publish(event)
-
-    def _activate_move_step(self, step: MoveStep) -> None:
-        """激活新的移动步骤。"""
-        if self._user_dragging:
-            return
-        self._movement.sync_position(self.frameGeometry().topLeft())
-        self._movement.start_move(step.target, arrival_radius=step.radius)
-        if self._state != 'moving':
-            self._publish_moving_state_request()
-
-    def _update_move_step(self, step: MoveStep) -> None:
-        """更新当前移动步骤目标。"""
-        if self._user_dragging:
-            return
-        if not self._movement.is_moving:
-            self._activate_move_step(step)
-            return
-        self._movement.update_target(step.target, arrival_radius=step.radius)
-
-    def _cancel_active_move_step(self) -> None:
-        """立即取消当前活动移动步骤。"""
-        self._movement.sync_position(self.frameGeometry().topLeft())
-        self._movement.stop_move()
-
-    def _can_accept_move_step(self) -> bool:
-        """拖拽期间拒绝任何新的 move 入队/更新。"""
-        return not self._user_dragging
-
-    def _handle_move_queue_idle(self) -> None:
-        """移动队列空闲时回到 idle。"""
-        if self._state == 'moving':
-            self._publish_idle_state_request()
-
-    def _on_movement_position_update(self, new_pos: QPoint):
+    def _on_movement_position_update(self, new_pos: Point):
         """移动控制器位置更新回调"""
-        self.move(new_pos)
+        move_widget(self, new_pos)
         # 发布锚点更新事件，通知 UI 组件更新位置
         anchor_update_event = Event(EventType.UI_ANCHOR_RESPONSE, {
             'window_id': 'pet_window',
@@ -604,31 +473,23 @@ class PetWindow(BaseEntity):
         })
         self._event_center.publish(anchor_update_event)
 
-    def _on_movement_complete(self):
-        """移动完成回调"""
-        if self._move_queue.handle_movement_complete():
-            return
-        if self._state == 'moving':
-            self._event_center.publish(Event(EventType.STATE_CHANGE_REQUEST, {
-                'new_state': 'idle',
-                'by_event': True
-            }))
-
     def _on_direction_change(self, flipped: bool):
         """方向改变回调"""
         # 同步更新 DrawCore 的翻转状态
         self._draw_core.set_request_flipped(self._state, flipped)
 
-    def _track_move_particles(self, new_pos: QPoint) -> None:
+    def _track_move_particles(self, new_pos: Point) -> None:
         """累计主宠物移动距离，每 30px 触发一次 flicker_data 粒子。"""
-        if self._move_particle_last_pos is None:
-            self._move_particle_last_pos = QPoint(new_pos)
+        point = coerce_point(new_pos) or Point()
+        last_pos = coerce_point(self._move_particle_last_pos)
+        if last_pos is None:
+            self._move_particle_last_pos = point
             return
 
-        dx = float(new_pos.x() - self._move_particle_last_pos.x())
-        dy = float(new_pos.y() - self._move_particle_last_pos.y())
+        dx = float(point.x - last_pos.x)
+        dy = float(point.y - last_pos.y)
         step = math.hypot(dx, dy)
-        self._move_particle_last_pos = QPoint(new_pos)
+        self._move_particle_last_pos = point
 
         if step <= 0.0:
             return
@@ -640,16 +501,16 @@ class PetWindow(BaseEntity):
         self._move_particle_distance_accum += step
         while self._move_particle_distance_accum >= self._move_particle_step_px:
             self._move_particle_distance_accum -= self._move_particle_step_px
-            cx = int(new_pos.x() + self.width() / 2)
-            cy = int(new_pos.y() + self.height() / 2)
+            cx = int(point.x + self.width() / 2)
+            cy = int(point.y + self.height() / 2)
             self.spawn_particles(cx, cy, particle_id='flicker_data', area_type='point')
 
-    def _spawn_teleport_burst_particles(self, origin_pos: QPoint) -> None:
+    def _spawn_teleport_burst_particles(self, origin_pos: Point) -> None:
         """在瞬移原地半径 30xp 内生成 5~8 个爆发线条粒子。"""
         radius_px = max(1, int(scale_px(30, min_abs=1)))
         burst_count = random.randint(5, 8)
-        cx = int(origin_pos.x() + self.width() / 2)
-        cy = int(origin_pos.y() + self.height() / 2)
+        cx = int(origin_pos.x + self.width() / 2)
+        cy = int(origin_pos.y + self.height() / 2)
 
         for _ in range(burst_count):
             angle = random.uniform(0.0, 2.0 * math.pi)
@@ -658,11 +519,11 @@ class PetWindow(BaseEntity):
             py = int(round(cy + math.sin(angle) * dist))
             self.spawn_particles(px, py, particle_id='burst_line', area_type='point')
 
-    def _schedule_teleport_burst(self, origin_pos: QPoint) -> None:
+    def _schedule_teleport_burst(self, origin_pos: Point) -> None:
         """按 1~5 tick 延迟触发瞬移爆发线条粒子。"""
         delay_ticks = random.randint(1, 5)
         delay_ms = delay_ticks * TimingManager.TICK_INTERVAL_MS
-        origin_copy = QPoint(origin_pos)
+        origin_copy = coerce_point(origin_pos) or Point()
         self.schedule_task(
             callback=lambda pos=origin_copy: self._spawn_teleport_burst_particles(pos),
             delay_ms=delay_ms,
@@ -675,17 +536,15 @@ class PetWindow(BaseEntity):
 
     def _handle_frame_event(self, event):
         """处理帧事件 - 用于窗口位置更新"""
-        if self._movement.is_moving:
-            alpha = float((event.data or {}).get('tick_alpha', 1.0) or 0.0)
-            self._movement.update_frame(alpha)
+        alpha = float((event.data or {}).get('tick_alpha', 1.0) or 0.0)
+        self._movement.update_frame(alpha)
         # 每 0.5s 通过统一层级管理器重申全部注册窗口层级。
         # 注意：穿透模式下仍需置顶以保证桌宠可见，只是鼠标事件穿透
         get_layer_manager().enforce_on_frame()
 
     def _handle_tick_event(self, event):
         """处理 TICK 事件 - 用于速度计算。"""
-        if self._movement.is_moving:
-            self._movement.update_tick()
+        self._movement.update_tick()
 
     def _handle_entity_position_request(self, event):
         """
@@ -699,14 +558,14 @@ class PetWindow(BaseEntity):
         if entity_id != 'pet_window':
             return
 
-        pos = self.get_position()
-        geom = self.get_geometry()
+        pos = self.get_core_position()
+        geom = self.get_core_geometry()
 
         self._event_center.publish(Event(EventType.ENTITY_POSITION_RESPONSE, {
             'entity_id': 'pet_window',
             'request_id': request_id,
             'position': pos,
-            'size': (geom.width(), geom.height()),
+            'size': (geom.width, geom.height),
         }))
 
     def _handle_entity_state_query(self, event):
@@ -747,7 +606,7 @@ class PetWindow(BaseEntity):
                 'is_moving': self._movement.is_moving,
                 'current_state': self._state,
                 'flipped': self._movement.flipped,
-                'position': self.get_position(),
+                'position': self.get_core_position(),
             }))
 
     def _handle_pet_teleport(self, event: Event):
@@ -756,7 +615,7 @@ class PetWindow(BaseEntity):
 
         支持数据格式：
         - {'x': int/float, 'y': int/float}
-        - {'position': QPoint}
+        - {'position': Point 或其它 point-like 值}
         - {'position': (x, y)}
         - 可选 {'entity_id': 'pet_window'}（其它 entity_id 将忽略）
         """
@@ -767,10 +626,9 @@ class PetWindow(BaseEntity):
         target = event.data.get('position')
         tx = ty = None
 
-        if isinstance(target, QPoint):
-            tx, ty = target.x(), target.y()
-        elif isinstance(target, (list, tuple)) and len(target) >= 2:
-            tx, ty = target[0], target[1]
+        point = coerce_point(target)
+        if point is not None:
+            tx, ty = point.x, point.y
         else:
             tx = event.data.get('x')
             ty = event.data.get('y')
@@ -782,23 +640,14 @@ class PetWindow(BaseEntity):
             _logger.warning("收到无效瞬移坐标: %r", event.data)
             return
 
-        old_pos = QPoint(self.frameGeometry().topLeft())
+        old_pos = self.get_core_position()
         self._schedule_teleport_burst(old_pos)
 
-        self._move_queue.clear_all(result='cancelled')
-
-        self.move(x, y)
-        self._movement.sync_position(QPoint(x, y))
+        new_pos = self._movement.teleport(Point(x, y))
+        if new_pos is None:
+            return
         self._move_particle_distance_accum = 0.0
-        self._move_particle_last_pos = QPoint(self.frameGeometry().topLeft())
-
-        # 立即同步锚点，避免附属 UI 等待下一次位置回调。
-        self._event_center.publish(Event(EventType.UI_ANCHOR_RESPONSE, {
-            'window_id': 'pet_window',
-            'anchor_id': 'all',
-            'anchor_point': QPoint(x, y),
-            'ui_id': 'all'
-        }))
+        self._move_particle_last_pos = new_pos
 
         event.mark_handled()
 
@@ -881,16 +730,15 @@ class PetWindow(BaseEntity):
 
         self._shutdown_ui_widgets()
         hide_all_runtime_ui()
-        self._move_queue.cleanup()
+        self._movement.cleanup()
         self._event_center.publish(Event(EventType.APP_QUIT, {
             'entity': self,
             'exit_code': 0,
         }))
 
-    def closeEvent(self, event):
-        self._move_queue.cleanup()
+    def handle_host_close(self) -> None:
+        self._movement.cleanup()
         self._shutdown_ui_widgets()
-        super().closeEvent(event)
 
 
 # ======================================================================

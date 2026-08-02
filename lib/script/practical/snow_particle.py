@@ -3,8 +3,7 @@ import random
 import math
 from typing import Tuple
 
-from PyQt5.QtGui import QColor
-
+from lib.core.graphics.types import Color
 from lib.script.practical.base_particle import BaseParticleScript, per_second_delta
 from lib.core.plugin_registry import register_particle
 
@@ -24,7 +23,7 @@ class SnowParticleScript(BaseParticleScript):
             'gravity':      12.0,       # 重力加速度（每 tick 累加到 vy）
             'drag':         0.912673,   # 每 tick 空气阻力系数（约等于旧 0.97^3）
             'life_decay':   0.09,       # 每 tick 生命衰减（约等于旧 0.03*3）
-            'color':        QColor(255, 255, 255),  # 纯白色
+            'color':        Color(255, 255, 255),  # 纯白色
         }
 
     def create_particles(self, area_type: str, area_data: Tuple) -> list:
@@ -45,7 +44,7 @@ class SnowParticleScript(BaseParticleScript):
 class SnowParticle:
     """单个雪花球形粒子"""
 
-    # 标记为球形，qt_particle_system 的 paintEvent 据此使用 drawEllipse
+    # 标记为球形，Qt particle backend 的 paintEvent 据此使用 drawEllipse
     is_circle = True
 
     def __init__(self, x: float, y: float, config: dict):

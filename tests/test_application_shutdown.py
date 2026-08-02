@@ -14,9 +14,9 @@ os.environ.setdefault(
 )
 os.environ.setdefault("QT_PLUGIN_PATH", os.path.join(_QT_ROOT, "Qt5", "plugins"))
 
-from PyQt5.QtCore import QEvent, QTimer
 from PyQt5.QtWidgets import QApplication
 
+from lib.core.qt_bridge.application_runtime import QtApplicationRuntime
 from lib.script.main import (
     ApplicationState,
     _SHUTDOWN_FORCE_TIMEOUT_MS,
@@ -24,58 +24,92 @@ from lib.script.main import (
 )
 
 
+class _RuntimeProbe:
+    def __init__(self):
+        self.scheduled = []
+        self.processed = []
+        self.exit_requests = []
+        self.closed = []
+
+    def schedule_once(self, delay_ms, callback):
+        self.scheduled.append((delay_ms, callback))
+
+    def process_events(self, application):
+        self.processed.append(application)
+
+    def request_exit(self, application, exit_code):
+        self.exit_requests.append((application, exit_code))
+
+    def close_all_windows(self, application):
+        self.closed.append(application)
+
+
 class ApplicationShutdownTests(unittest.TestCase):
     @staticmethod
-    def _state_with_app():
+    def _state_with_app(runtime=None):
         state = ApplicationState.__new__(ApplicationState)
+        state._application_runtime = runtime or _RuntimeProbe()
         state._app = Mock()
         state._exit_code = 7
-        state._qt_exit_requested = False
-        state._qt_exit_acknowledged = False
+        state._runtime_exit_requested = False
+        state._runtime_exit_acknowledged = False
         return state
 
     def test_quit_step_flushes_deferred_deletes_and_exits_event_loop(self):
         state = self._state_with_app()
 
-        with patch("lib.script.main.QTimer.singleShot") as single_shot:
-            state._shutdown_quit_application()
+        state._shutdown_quit_application()
 
-        self.assertTrue(state._qt_exit_requested)
-        single_shot.assert_called_once_with(_SHUTDOWN_QUIT_RETRY_MS, state._retry_qt_exit)
-        state._app.sendPostedEvents.assert_called_once_with(None, QEvent.DeferredDelete)
-        state._app.exit.assert_called_once_with(7)
-        state._app.quit.assert_not_called()
+        self.assertTrue(state._runtime_exit_requested)
+        self.assertEqual(
+            state._application_runtime.scheduled,
+            [(_SHUTDOWN_QUIT_RETRY_MS, state._retry_runtime_exit)],
+        )
+        self.assertEqual(
+            state._application_runtime.exit_requests,
+            [(state._app, 7)],
+        )
 
     def test_real_qt_event_loop_returns_requested_exit_code(self):
         app = QApplication.instance() or QApplication([])
-        state = self._state_with_app()
+        runtime = QtApplicationRuntime()
+        state = self._state_with_app(runtime)
         state._app = app
-        callback = state._on_qt_about_to_quit
+        callback = state._on_runtime_exit_acknowledged
         app.aboutToQuit.connect(callback)
         try:
-            QTimer.singleShot(0, state._shutdown_quit_application)
-            returned = app.exec_()
+            runtime.schedule_once(0, state._shutdown_quit_application)
+            returned = runtime.run_event_loop(app)
         finally:
             app.aboutToQuit.disconnect(callback)
 
         self.assertEqual(returned, 7)
-        self.assertTrue(state._qt_exit_acknowledged)
+        self.assertTrue(state._runtime_exit_acknowledged)
 
     def test_retry_closes_residual_windows_and_exits_again(self):
         state = self._state_with_app()
 
-        state._retry_qt_exit()
+        state._retry_runtime_exit()
 
-        state._app.closeAllWindows.assert_called_once_with()
-        state._app.sendPostedEvents.assert_called_once_with(None, QEvent.DeferredDelete)
-        state._app.exit.assert_called_once_with(7)
+        self.assertEqual(state._application_runtime.closed, [state._app])
+        self.assertEqual(
+            state._application_runtime.exit_requests,
+            [(state._app, 7)],
+        )
 
-    def test_about_to_quit_acknowledges_qt_exit(self):
+    def test_runtime_exit_acknowledgement_is_recorded(self):
         state = self._state_with_app()
 
-        state._on_qt_about_to_quit()
+        state._on_runtime_exit_acknowledged()
 
-        self.assertTrue(state._qt_exit_acknowledged)
+        self.assertTrue(state._runtime_exit_acknowledged)
+
+    def test_pending_events_are_delegated_to_runtime(self):
+        state = self._state_with_app()
+
+        state._process_pending_events()
+
+        self.assertEqual(state._application_runtime.processed, [state._app])
 
     def test_process_watchdog_is_owned_and_cancellable(self):
         state = self._state_with_app()

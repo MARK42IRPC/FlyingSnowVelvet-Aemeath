@@ -4,7 +4,6 @@ import random
 
 from PyQt5.QtCore    import Qt, QPoint
 from PyQt5.QtGui     import QPixmap
-from PyQt5.QtWidgets import QApplication
 
 from config.config              import SNOW_LEOPARD
 from lib.core.event.center      import get_event_center, EventType, Event
@@ -136,9 +135,9 @@ class SnowPileManager(BaseManager):
         self._piles = [p for p in self._piles if p.is_alive()]
 
         anchor = None
-        if self._entity and hasattr(self._entity, 'get_position'):
+        if self._entity and hasattr(self._entity, 'get_core_position'):
             try:
-                anchor = self._entity.get_position()
+                anchor = self._entity.get_core_position()
             except Exception:
                 anchor = None
         screen = get_screen_geometry_for_point(anchor)

@@ -153,11 +153,13 @@ class OllamaSessionMixin:
             images:   可选，图片字节数组列表（多模态支持）
             quiet_throttled: 超限时是否静默丢弃（True=不回调；False=回调提示文本）
         """
-        if self._api_type in ('rule_reply', 'error'):
-            return
-        if not self._is_running:
-            return
-        if self._api_type == 'ollama' and not self._available_models:
+        if (
+            self._api_type in ('rule_reply', 'error')
+            or not self._is_running
+            or (self._api_type == 'ollama' and not self._available_models)
+        ):
+            if callback is not None:
+                self._dispatch_callback(callback, "")
             return
 
         allowed, retry_after = self._try_consume_api_rate_quota()
@@ -168,7 +170,10 @@ class OllamaSessionMixin:
                 retry_after,
             )
             if callback is not None and not quiet_throttled:
-                callback(f"外部API请求过于频繁：每分钟最多{API_RATE_LIMIT_MAX_REQUESTS}次，请约{retry_after}秒后再试。")
+                self._dispatch_callback(
+                    callback,
+                    f"外部API请求过于频繁：每分钟最多{API_RATE_LIMIT_MAX_REQUESTS}次，请约{retry_after}秒后再试。",
+                )
             return
 
         with self._chat_state_lock:
@@ -178,16 +183,28 @@ class OllamaSessionMixin:
             if on_chunk is not None:
                 self._chat_chunk_callbacks[request_id] = on_chunk
 
-        get_compute_hub().submit_io(
-            self._run_stream_chat,
-            message,
-            persona,
-            request_id,
-            on_chunk is not None,
-            images,
-            history,
-            allow_tools,
-        )
+        try:
+            future = get_compute_hub().submit_io(
+                self._run_stream_chat,
+                message,
+                persona,
+                request_id,
+                on_chunk is not None,
+                images,
+                history,
+                allow_tools,
+            )
+        except Exception as exc:
+            logger.error("[OllamaManager] 聊天后台任务提交失败: %s", exc)
+            future = None
+
+        if future is None:
+            self._dispatch_callback(
+                self._on_chat_ready,
+                request_id,
+                "当前回复模式请求失败: 后台任务调度不可用",
+                None,
+            )
 
     def _run_stream_chat(self, message: str, persona: str, request_id: int,
                          streaming: bool, images: list[bytes] = None,
@@ -209,7 +226,7 @@ class OllamaSessionMixin:
 
         def emit_chunk(text: str) -> None:
             nonlocal sent_len, last_emit_ts
-            if not self._signal or not text:
+            if not text:
                 return
             now = time.monotonic()
             cur_len = len(text)
@@ -218,7 +235,7 @@ class OllamaSessionMixin:
                 return
             sent_len = cur_len
             last_emit_ts = now
-            self._signal.chunk_ready.emit(request_id, text)
+            self._dispatch_callback(self._on_chunk_ready, request_id, text)
 
         chunk_fn = emit_chunk if streaming else None
 
@@ -330,11 +347,21 @@ class OllamaSessionMixin:
             else:
                 full_text = "当前回复模式请求失败: 当前模式不可用"
 
-        if streaming and full_text and self._signal and len(full_text) != sent_len and not _is_non_ai_status_text(full_text):
-            self._signal.chunk_ready.emit(request_id, full_text)
+        if streaming and full_text and len(full_text) != sent_len and not _is_non_ai_status_text(full_text):
+            self._dispatch_callback(self._on_chunk_ready, request_id, full_text)
 
-        if self._signal:
-            self._signal.chat_ready.emit(request_id, full_text, native_tool_call)
+        self._dispatch_callback(
+            self._on_chat_ready,
+            request_id,
+            full_text,
+            native_tool_call,
+        )
+
+    def _dispatch_callback(self, callback, *args) -> None:
+        dispatcher = getattr(self, "_callback_dispatcher", None)
+        if dispatcher is None:
+            return
+        dispatcher.dispatch(callback, *args)
 
     def _get_models_to_try(self) -> list[str]:
         """

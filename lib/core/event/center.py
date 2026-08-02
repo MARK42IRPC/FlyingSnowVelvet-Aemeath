@@ -5,7 +5,14 @@ from collections import deque
 import threading
 
 from lib.core.logger import get_logger
+from lib.core.event.pump import EventPump, EventPumpFactory
 logger = get_logger(__name__)
+
+
+def _callback_label(callback: Callable) -> str:
+    module = getattr(callback, "__module__", callback.__class__.__module__)
+    qualname = getattr(callback, "__qualname__", callback.__class__.__qualname__)
+    return f"{module}.{qualname}"
 
 
 class EventType(Enum):
@@ -181,22 +188,6 @@ class Event:
         self.handled = True
 
 
-try:
-    from PyQt5.QtCore import QObject, pyqtSignal
-except ImportError:
-    QObject = None
-    pyqtSignal = None
-
-
-if QObject is not None and pyqtSignal is not None:
-    class _QtEventPump(QObject):
-        """跨线程调度器：在拥有该对象线程的事件循环中处理队列。"""
-
-        trigger = pyqtSignal()
-else:
-    _QtEventPump = None
-
-
 # ======================================================================
 # 便捷事件发布函数
 # ======================================================================
@@ -228,14 +219,15 @@ class EventCenter:
     事件中心 - 使用观察者模式管理所有事件
     """
 
-    def __init__(self):
+    def __init__(self, pump_factory: EventPumpFactory | None = None):
         self._listeners: Dict[EventType, List[Callable]] = {}
         self._event_queue = deque()  # 事件队列
         self._processing = False  # 是否正在处理事件
         self._queue_lock = threading.Lock()
         self._drain_scheduled = False
-        self._qt_pump = None
-        self._ensure_qt_pump()
+        self._event_pump: EventPump | None = None
+        self._pump_factory = pump_factory
+        self._ensure_event_pump()
 
     def subscribe(self, event_type: EventType, callback: Callable):
         """
@@ -284,23 +276,26 @@ class EventCenter:
         elif should_schedule:
             self._schedule_process_events()
 
-    def _ensure_qt_pump(self):
-        """按需创建 Qt 调度器。"""
-        if _QtEventPump is None or self._qt_pump is not None:
+    def _ensure_event_pump(self) -> None:
+        """按需创建当前平台的事件泵。"""
+        if self._event_pump is not None:
             return
         try:
-            self._qt_pump = _QtEventPump()
-            self._qt_pump.trigger.connect(self._process_events)
+            factory = self._pump_factory
+            if factory is None:
+                from lib.core.qt_bridge.event_pump import create_event_pump
+                factory = create_event_pump
+            self._event_pump = factory(self._process_events)
         except Exception as e:
-            logger.debug("Qt event pump 初始化失败: %s", e)
-            self._qt_pump = None
+            logger.debug("事件泵初始化失败: %s", e)
+            self._event_pump = None
 
     def _schedule_process_events(self):
         """请求在 Qt 事件循环中处理事件队列。"""
-        self._ensure_qt_pump()
-        if self._qt_pump is not None:
+        self._ensure_event_pump()
+        if self._event_pump is not None:
             try:
-                self._qt_pump.trigger.emit()
+                self._event_pump.emit()
                 return
             except Exception as e:
                 logger.debug("Qt event pump 触发失败: %s", e)
@@ -343,8 +338,13 @@ class EventCenter:
                     callback(event)
                     if event.handled:
                         break
-                except Exception as e:
-                    logger.error("Event handler error: %s", e)
+                except Exception:
+                    event_name = getattr(event.type, "value", str(event.type))
+                    logger.exception(
+                        "Event handler error: event=%s callback=%s",
+                        event_name,
+                        _callback_label(callback),
+                    )
 
         with self._queue_lock:
             self._processing = False
@@ -367,12 +367,12 @@ class EventCenter:
             self._event_queue.clear()
             self._processing = False
             self._drain_scheduled = False
-        if self._qt_pump is not None:
+        if self._event_pump is not None:
             try:
-                self._qt_pump.trigger.disconnect(self._process_events)
+                self._event_pump.disconnect()
             except Exception:
                 pass
-            self._qt_pump = None
+            self._event_pump = None
 
 
 # 全局事件中心实例

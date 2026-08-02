@@ -7,7 +7,11 @@ from .service import (
     is_gsvmove_launcher_available,
     is_voice_package_available,
 )
-from .package_manager import get_voice_package_status
+from .package_manager import (
+    fetch_voice_package_size,
+    fetch_voice_package_sizes,
+    get_voice_package_status,
+)
 
 
 def remove_voice_package(package_root):
@@ -21,5 +25,7 @@ __all__ = [
     "is_gsvmove_launcher_available",
     "is_voice_package_available",
     "get_voice_package_status",
+    "fetch_voice_package_size",
+    "fetch_voice_package_sizes",
     "remove_voice_package",
 ]

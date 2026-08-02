@@ -44,6 +44,11 @@ from PyQt5.QtGui import QPainter, QColor, QCursor, QPixmap
 from config.config import UI_THEME, UI
 from config.font_config import get_ui_font, get_digit_font
 from config.general_user_settings import save_general_values
+from config.ollama_config import (
+    AI_VOICE_MAX_CHARS_DEFAULT,
+    AI_VOICE_MAX_CHARS_MAX,
+    AI_VOICE_MAX_CHARS_MIN,
+)
 from config.scale import scale_px
 from lib.script.ui.ai_settings_validators import validate_ai_values
 from lib.script.ui.ai_settings_storage import load_ai_values, save_ai_values, apply_ai_runtime
@@ -142,7 +147,7 @@ _DEFAULT_VALUES = {
     "gsv_fragment_interval": 0.3,
     "gsv_seed": -1,
     "gsv_max_steps": 500,
-    "ai_voice_max_chars": 80,
+    "ai_voice_max_chars": AI_VOICE_MAX_CHARS_DEFAULT,
     "gsv_cache_max_files": 20,
     "memory_context_limit": 12,
     "memory_recall_count": 30,
@@ -2228,7 +2233,12 @@ class AISettingsPanel(QWidget):
         form.addRow("最大解码步数", self._gsv_max_steps)
         self._set_form_row_description(form, self._gsv_max_steps, "语义解码保护上限；过低可能截断，默认 500。")
 
-        self._ai_voice_max_chars = _DecimalSliderField(20, 80, 1, value=_DEFAULT_VALUES["ai_voice_max_chars"])
+        self._ai_voice_max_chars = _DecimalSliderField(
+            AI_VOICE_MAX_CHARS_MIN,
+            AI_VOICE_MAX_CHARS_MAX,
+            1,
+            value=_DEFAULT_VALUES["ai_voice_max_chars"],
+        )
         form.addRow("语音字数限制", self._ai_voice_max_chars)
         self._set_form_row_description(
             form,
@@ -3457,7 +3467,7 @@ class AISettingsPanel(QWidget):
     @staticmethod
     def _get_autostart_enabled() -> bool:
         try:
-            from lib.core.tray_icon import get_tray_icon
+            from lib.core.qt_bridge.tray_icon import get_tray_icon
             tray = get_tray_icon()
             return bool(tray._is_autostart_enabled())
         except Exception:
@@ -3465,7 +3475,7 @@ class AISettingsPanel(QWidget):
 
     def _set_autostart_enabled(self, enabled: bool) -> None:
         try:
-            from lib.core.tray_icon import get_tray_icon
+            from lib.core.qt_bridge.tray_icon import get_tray_icon
             tray = get_tray_icon()
             target = bool(enabled)
             tray._on_toggle_autostart(target, source="panel")
@@ -4771,11 +4781,21 @@ class AISettingsPanel(QWidget):
         gsv_max_steps = int(float(self._gsv_max_steps.text().strip() or "500"))
 
         try:
-            ai_voice_max_chars = int(float(self._ai_voice_max_chars.text().strip() or "40"))
+            ai_voice_max_chars = int(float(
+                self._ai_voice_max_chars.text().strip()
+                or str(AI_VOICE_MAX_CHARS_DEFAULT)
+            ))
         except ValueError as e:
             raise ValueError("GSV语音字数限制必须是整数") from e
-        if not (20 <= ai_voice_max_chars <= 80):
-            raise ValueError("GSV语音字数限制范围应为 20~80")
+        if not (
+            AI_VOICE_MAX_CHARS_MIN
+            <= ai_voice_max_chars
+            <= AI_VOICE_MAX_CHARS_MAX
+        ):
+            raise ValueError(
+                f"GSV语音字数限制范围应为 "
+                f"{AI_VOICE_MAX_CHARS_MIN}~{AI_VOICE_MAX_CHARS_MAX}"
+            )
 
         try:
             gsv_cache_max_files = int(float(self._gsv_cache_max_files.text().strip() or "20"))
@@ -4879,7 +4899,10 @@ class AISettingsPanel(QWidget):
         self._gsv_fragment_interval.setText(str(values.get("gsv_fragment_interval", 0.3)))
         self._gsv_seed.setText(str(values.get("gsv_seed", -1)))
         self._gsv_max_steps.setText(str(values.get("gsv_max_steps", 500)))
-        self._ai_voice_max_chars.setText(str(values.get("ai_voice_max_chars", 40)))
+        self._ai_voice_max_chars.setText(str(values.get(
+            "ai_voice_max_chars",
+            AI_VOICE_MAX_CHARS_DEFAULT,
+        )))
         self._gsv_cache_max_files.setText(str(values.get("gsv_cache_max_files", 20)))
         self._memory_context_limit.setText(str(values.get("memory_context_limit", 12)))
         self._memory_recall_count.setText(str(values.get("memory_recall_count", 5)))

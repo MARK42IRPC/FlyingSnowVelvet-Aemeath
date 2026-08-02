@@ -20,7 +20,7 @@ os.environ.setdefault("QT_PLUGIN_PATH", os.path.join(_QT_ROOT, "Qt5", "plugins")
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QApplication, QMenu
 
-from lib.core.tray_icon import TrayIcon
+from lib.core.qt_bridge.tray_icon import TrayIcon
 from lib.script.ui.announcement_dialog import (
     AnnouncementBlock,
     AnnouncementController,
@@ -294,10 +294,10 @@ class AnnouncementQtTests(unittest.TestCase):
         received = []
         tray.announcement_requested.connect(lambda: received.append(True))
         try:
-            with patch("lib.core.tray_icon.TrayContextMenu", QMenu), patch.object(
+            with patch("lib.core.qt_bridge.tray_icon.TrayContextMenu", QMenu), patch.object(
                 tray, "_is_autostart_enabled", return_value=False
             ), patch(
-                "lib.core.tray_icon.get_game_mode_service"
+                "lib.core.qt_bridge.tray_icon.get_game_mode_service"
             ) as game_mode_service:
                 game_mode_service.return_value.is_enabled.return_value = False
                 tray._create_menu()

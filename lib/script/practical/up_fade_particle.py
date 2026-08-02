@@ -2,8 +2,8 @@
 import random
 import math
 from typing import Tuple
-from PyQt5.QtGui import QColor
 
+from lib.core.graphics.types import Color
 from lib.script.practical.base_particle import BaseParticleScript, per_second_delta, tick_seconds
 from lib.core.plugin_registry import register_particle
 
@@ -21,7 +21,7 @@ class UpFadeParticleScript(BaseParticleScript):
             'base_speed': 60,                  # 基础速度 60px/秒（向上）
             'speed_variation': 20,             # 速度随机变化 ±20px/秒
             'life_range': (0.3, 0.6),          # 寿命 0.3~0.6秒
-            'color': QColor(255, 182, 193),    # 淡粉色
+            'color': Color(255, 182, 193),    # 淡粉色
         }
 
     def create_particles(self, area_type: str, area_data: Tuple) -> list:
@@ -79,7 +79,7 @@ class UpFadeParticle:
         # 外观 - 正方形（使用 size 走渲染器的正方形分支）
         self.size = random.randint(*config['size_range'])
         # 30% 概率变异为黑色
-        self.color = QColor(0, 0, 0) if random.random() < 0.3 else config['color']
+        self.color = Color(0, 0, 0) if random.random() < 0.3 else config['color']
 
         # 寿命 0.3~0.6秒，alpha = life * 255（与 right_fade 一致）
         self.max_life = random.uniform(*config['life_range'])

@@ -3,9 +3,8 @@ from __future__ import annotations
 
 import sys
 import weakref
+from collections.abc import Callable
 from dataclasses import dataclass
-
-from PyQt5.QtCore import QTimer
 
 from lib.core.layer import Layer, draw_order_key, layer_name, normalize_layer
 
@@ -28,11 +27,16 @@ class LayerManager:
     _SWP_FLAGS: int = 0x0213
     _HWND_TOPMOST: int = -1
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        defer: Callable[[int, Callable[[], None]], None] | None = None,
+    ) -> None:
         self._windows: list[LayerWindow] = []
         self._register_seq: int = 0
         self._counter: int = 0
         self._paused: bool = False
+        self._defer = defer
 
         self._set_window_pos_api = None
         if sys.platform == 'win32':
@@ -147,7 +151,14 @@ class LayerManager:
             if delay == 0:
                 self._enforce_all()
             else:
-                QTimer.singleShot(delay, self._enforce_all)
+                self._defer_call(delay, self._enforce_all)
+
+    def _defer_call(self, delay_ms: int, callback: Callable[[], None]) -> None:
+        if self._defer is None:
+            from lib.core.qt_bridge.scheduler import call_later
+
+            self._defer = call_later
+        self._defer(delay_ms, callback)
 
     def bring_to_front(self, widget) -> None:
         """立即重申完整窗口链，避免单个窗口越过更高 layer。"""

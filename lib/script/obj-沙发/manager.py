@@ -4,9 +4,9 @@ import random
 
 from PyQt5.QtCore    import Qt, QPoint
 from PyQt5.QtGui     import QPixmap, QTransform
-from PyQt5.QtWidgets import QApplication
 
 from lib.core.event.center      import get_event_center, EventType, Event
+from lib.core.graphics.types import Point, coerce_point
 from lib.core.hash_cmd_registry import get_hash_cmd_registry
 from lib.core.plugin_registry   import manager_registry, BaseManager
 from lib.core.screen_utils      import get_screen_geometry_for_point
@@ -276,13 +276,11 @@ class SofaManager(BaseManager):
 
         # 获取宠物当前位置（中心锚点）
         pet_center = None
-        if self._entity and hasattr(self._entity, 'get_anchor_point'):
-            pet_center = self._entity.get_anchor_point('center')
-            # 转换为全局坐标
-            pet_pos = self._entity.get_position()
+        if self._entity and hasattr(self._entity, 'get_core_geometry'):
+            pet_geometry = self._entity.get_core_geometry()
             pet_center = QPoint(
-                pet_pos.x() + pet_center.x(),
-                pet_pos.y() + pet_center.y()
+                int(round(pet_geometry.x + pet_geometry.width / 2)),
+                int(round(pet_geometry.y + pet_geometry.height / 2)),
             )
             screen = get_screen_geometry_for_point(pet_center)
 
@@ -334,7 +332,7 @@ class SofaManager(BaseManager):
     # 供状态机查询
     # ==================================================================
 
-    def get_nearest_sofa_pos(self, from_pos: QPoint) -> QPoint | None:
+    def get_nearest_sofa_pos(self, from_pos: Point | object) -> Point | None:
         """
         返回距离 from_pos 最近的存活沙发的中心坐标。
 
@@ -346,16 +344,22 @@ class SofaManager(BaseManager):
         if not self._sofas:
             return None
 
-        nearest = min(
-            self._sofas,
-            key=lambda s: (
-                (s.get_center().x() - from_pos.x()) ** 2
-                + (s.get_center().y() - from_pos.y()) ** 2
-            )
-        )
-        return nearest.get_center()
+        origin = coerce_point(from_pos)
+        if origin is None:
+            return None
+        centers = [(sofa, coerce_point(sofa.get_center())) for sofa in self._sofas]
+        centers = [(sofa, center) for sofa, center in centers if center is not None]
+        if not centers:
+            return None
+        return min(
+            centers,
+            key=lambda item: (
+                (item[1].x - origin.x) ** 2
+                + (item[1].y - origin.y) ** 2
+            ),
+        )[1]
 
-    def is_pet_in_sofa_protection(self, pet_center: QPoint, in_protection: bool = False) -> bool:
+    def is_pet_in_sofa_protection(self, pet_center: Point | object, in_protection: bool = False) -> bool:
         """
         检测宠物中心是否在任意沙发的保护半径内。
         使用滞回机制防止边缘抖动。
@@ -372,11 +376,16 @@ class SofaManager(BaseManager):
             return False
 
         # 找到距离最近的沙发
+        pet_point = coerce_point(pet_center)
+        if pet_point is None:
+            return False
         min_dist_sq = float('inf')
         for sofa in alive:
-            sc = sofa.get_center()
-            dx = pet_center.x() - sc.x()
-            dy = pet_center.y() - sc.y()
+            sc = coerce_point(sofa.get_center())
+            if sc is None:
+                continue
+            dx = pet_point.x - sc.x
+            dy = pet_point.y - sc.y
             dist_sq = dx * dx + dy * dy
             if dist_sq < min_dist_sq:
                 min_dist_sq = dist_sq

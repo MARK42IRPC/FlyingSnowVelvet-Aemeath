@@ -10,13 +10,17 @@ from config.scale import scale_px, scale_style_px
 from config.tooltip_config import TOOLTIPS
 from lib.script.ui.command_dialog_handler import CommandDialogEventHandler
 from lib.core.event.center import get_event_center, EventType, Event
+from lib.core.graphics.types import Point
 from lib.core.unified_draw import Layer, get_layer_manager
 from lib.core.screen_utils import clamp_rect_position
 from lib.core.anchor_utils import (
-    get_anchor_point as resolve_anchor_point,
-    publish_widget_anchor_response,
     animate_opacity,
 )
+from lib.core.qt_bridge.widget_anchors import (
+    get_anchor_point as resolve_anchor_point,
+    publish_widget_anchor_response,
+)
+from lib.core.qt_bridge.window import coerce_qpoint
 
 
 def _hex(color: QColor) -> str:
@@ -308,8 +312,8 @@ class CommandDialog(QWidget):
             else:
                 # 正常的显示逻辑
                 # 直接计算锚点位置，避免等待事件响应
-                pet_pos = pet_widget.get_position()
-                self._pet_top_left = QPoint(pet_pos.x(), pet_pos.y())
+                pet_pos = pet_widget.get_core_position()
+                self._pet_top_left = QPoint(int(pet_pos.x), int(pet_pos.y))
                 self._placement_side = 'right'
                 self._anchor_point = self._build_pet_anchor(
                     self._pet_top_left,
@@ -414,7 +418,7 @@ class CommandDialog(QWidget):
         if ui_id == self._ui_id:
             # 专门针对此 UI 组件的锚点响应
             # event.data.get('anchor_point') 是 PetWindow 某锚点的全局坐标
-            new_anchor_point = event.data.get('anchor_point')
+            new_anchor_point = coerce_qpoint(event.data.get('anchor_point'))
             if new_anchor_point:
                 self._pet_top_left = self._anchor_to_pet_top_left(new_anchor_point, anchor_id)
                 self._anchor_point = self._build_pet_anchor(self._pet_top_left, self._placement_side)
@@ -424,7 +428,7 @@ class CommandDialog(QWidget):
             # 需要根据当前锚点 ID 计算新的锚点位置
             if anchor_id == 'all':
                 # PetWindow 的新位置（左上角坐标）
-                pet_pos = event.data.get('anchor_point')
+                pet_pos = coerce_qpoint(event.data.get('anchor_point'))
                 if pet_pos:
                     self._pet_top_left = QPoint(pet_pos.x(), pet_pos.y())
                     self._anchor_point = self._build_pet_anchor(self._pet_top_left, self._placement_side)
@@ -492,7 +496,7 @@ class CommandDialog(QWidget):
         anchor_update_event = Event(EventType.UI_ANCHOR_RESPONSE, {
             'window_id': self._ui_id,
             'anchor_id': 'all',
-            'anchor_point': QPoint(x, y),
+            'anchor_point': Point(x, y),
             'ui_id': 'all'
         })
         self._event_center.publish(anchor_update_event)

@@ -1,5 +1,6 @@
 import unittest
 
+from lib.script.workbench.builtin_pages import builtin_tool_page_specs
 from lib.script.workbench.page_registry import (
     WorkbenchPageRegistry,
     WorkbenchPageSpec,
@@ -65,6 +66,19 @@ class WorkbenchPageRegistryTests(unittest.TestCase):
             WorkbenchPageSpec("page", "", "Group")
         with self.assertRaises(ValueError):
             WorkbenchPageSpec("page", "Page", "")
+
+    def test_builtin_tool_pages_use_one_metadata_and_factory_registry(self):
+        specs = builtin_tool_page_specs()
+
+        self.assertEqual(
+            tuple(spec.page_id for spec in specs),
+            ("game_manager", "bug_tracker"),
+        )
+        self.assertEqual(
+            tuple(spec.title for spec in specs),
+            ("游戏包", "故障跟踪"),
+        )
+        self.assertTrue(all(callable(spec.factory) for spec in specs))
 
 
 if __name__ == "__main__":

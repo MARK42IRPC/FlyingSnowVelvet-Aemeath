@@ -18,10 +18,13 @@ from lib.core.unified_draw import Layer, get_layer_manager
 from lib.core.logger import get_logger
 from lib.core.screen_utils import clamp_rect_position, get_screen_geometry_for_point
 from lib.core.anchor_utils import (
-    get_anchor_point as resolve_anchor_point,
-    publish_widget_anchor_response,
     apply_ui_opacity,
 )
+from lib.core.qt_bridge.widget_anchors import (
+    get_anchor_point as resolve_anchor_point,
+    publish_widget_anchor_response,
+)
+from lib.core.qt_bridge.window import coerce_qpoint
 from lib.core.voice.ams_bug import AmsBugSound
 
 _logger = get_logger(__name__)
@@ -221,7 +224,9 @@ class Bubble(QWidget):
         # 2. pet_window 移动时的全局锚点更新（ui_id='all'）
         if ui_id == self._ui_id:
             # 专门针对此 UI 组件的锚点响应
-            new_anchor_point = event.data.get('anchor_point')
+            new_anchor_point = coerce_qpoint(event.data.get('anchor_point'))
+            if new_anchor_point is None:
+                return
             if self._anchor_point != new_anchor_point:
                 self._anchor_point = new_anchor_point
                 self._update_position()
@@ -229,7 +234,9 @@ class Bubble(QWidget):
             # pet_window 移动时的全局锚点更新
             if anchor_id == 'all':
                 # pet_window 的新位置（左上角坐标）
-                pet_pos = event.data.get('anchor_point')
+                pet_pos = coerce_qpoint(event.data.get('anchor_point'))
+                if pet_pos is None:
+                    return
                 # 获取 pet_window 的尺寸来计算 top 锚点
                 from config.config import ANIMATION
                 pet_width = ANIMATION['pet_size'][0]
@@ -544,7 +551,7 @@ class Bubble(QWidget):
         # 如果有锚点响应事件队列，先等待响应；否则使用默认位置
         if self._anchor_point is None:
             # pet_window 的初始位置是屏幕中心（左上角坐标）
-            # 参考 command_dialog.py 的逻辑：pet_widget.get_position() 返回的是左上角坐标
+            # 参考 command_dialog.py 的逻辑：主宠核心位置是窗口左上角坐标
             # 所以我们需要计算 pet_window 的左上角位置，然后基于此计算 top 锚点
             screen_geom = get_screen_geometry_for_point(
                 point=QCursor.pos(),

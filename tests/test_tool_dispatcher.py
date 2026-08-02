@@ -42,7 +42,7 @@ class ToolDispatcherTests(unittest.TestCase):
     def setUp(self):
         self.center = _FakeEventCenter()
         with patch.object(dispatcher_module, 'get_event_center', return_value=self.center):
-            self.dispatcher = ToolDispatcher()
+            self.dispatcher = ToolDispatcher(defer=lambda _delay, callback: callback())
 
     def _dispatch(self, text: str):
         self.center.published.clear()
@@ -119,9 +119,7 @@ class ToolDispatcherTests(unittest.TestCase):
                 '[2026-07-29 12:00:00][游戏][user:]今天玩了拉海洛方块\n',
                 encoding='utf-8',
             )
-            with patch.object(dispatcher_module, '_MEMORY_DIR', memory_dir), patch.object(
-                dispatcher_module.QTimer, 'singleShot', side_effect=lambda _delay, callback: callback()
-            ):
+            with patch.object(dispatcher_module, '_MEMORY_DIR', memory_dir):
                 events = self._dispatch('###回忆 游戏###')
 
         input_event = next(event for event in events if event.type == EventType.INPUT_CHAT)

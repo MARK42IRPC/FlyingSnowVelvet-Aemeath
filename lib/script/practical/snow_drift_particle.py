@@ -8,9 +8,8 @@
 
 import random
 
-from PyQt5.QtWidgets import QApplication
-from PyQt5.QtGui     import QColor
-
+from lib.core.graphics.types import Color
+from lib.core.screen_utils import get_virtual_screen_rect
 from lib.script.practical.base_particle import BaseParticleScript, per_second_delta
 from lib.core.plugin_registry import register_particle
 
@@ -37,7 +36,7 @@ class SnowDriftParticleScript(BaseParticleScript):
             'gravity':            3.6,           # 轻微重力加速度（px/s per tick）
             'drag':               0.970299,      # 每 tick 空气阻力系数（约等于旧 0.99^3）
             'life_decay_settled': 0.009,         # 落地后每 tick 生命衰减（约等于旧 0.003*3）
-            'color':              QColor(255, 255, 255),  # 纯白色
+            'color':              Color(255, 255, 255),  # 纯白色
             'ground_margin':      6,             # 距屏幕底部边缘的落地安全距离（像素）
         }
 
@@ -53,8 +52,8 @@ class SnowDriftParticleScript(BaseParticleScript):
             cx, cy = area_data[0], area_data[1]
 
         # 地面 Y 坐标（覆盖层本地坐标与屏幕坐标一致）
-        screen_h = QApplication.primaryScreen().geometry().height()
-        ground_y = float(screen_h - self._config['ground_margin'])
+        screen = get_virtual_screen_rect()
+        ground_y = float(screen.height - self._config['ground_margin'])
 
         count = random.randint(*self._config['count_range'])
         return [

@@ -1,6 +1,5 @@
 """粒子基类脚本"""
 from typing import Tuple, Dict, Any
-from PyQt5.QtCore import QPointF
 
 
 _LEGACY_PARTICLE_FPS = 60.0

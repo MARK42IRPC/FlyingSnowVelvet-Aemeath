@@ -6,9 +6,8 @@ import math
 import random
 from typing import Tuple
 
-from PyQt5.QtGui import QColor, QFont, QFontMetrics
-
-from config.font_config import get_digit_font, get_ui_font
+from config.font_config import get_digit_font_family, get_ui_font_family
+from lib.core.graphics.types import Color, FontSpec
 from lib.core.plugin_registry import register_particle
 from lib.script.practical.base_particle import BaseParticleScript, per_second_delta, tick_seconds
 
@@ -53,15 +52,12 @@ class FloatingTextParticle:
         self.is_text = True
         self.text = str(options.get("text", ""))
         rgb = options.get("rgb", (255, 255, 255))
-        self.color = QColor(*(max(0, min(255, int(v))) for v in rgb))
+        self.color = Color(*(max(0, min(255, int(v))) for v in rgb))
         self.font = _build_font(
             str(options.get("font_type", "digit")),
             int(options.get("size", 18)),
             bold=bool(options.get("font_bold", options.get("bold", False))),
         )
-        fm = QFontMetrics(self.font)
-        self._text_w = fm.horizontalAdvance(self.text)
-        self._baseline_offset = (fm.ascent() - fm.descent()) // 2
         self.max_life = _TOTAL_SECS
         self.life = self.max_life
         self.alpha_override = 0
@@ -99,11 +95,10 @@ class FloatingTextParticle:
         return self.life > 0.0
 
 
-def _build_font(font_type: str, size: int, *, bold: bool = False) -> QFont:
+def _build_font(font_type: str, size: int, *, bold: bool = False) -> FontSpec:
     pixel_size = max(1, int(size))
     if font_type.lower() in {"digit", "number", "lahai"}:
-        font = get_digit_font(pixel_size)
+        family = get_digit_font_family()
     else:
-        font = get_ui_font(pixel_size)
-    font.setBold(bool(bold))
-    return font
+        family = get_ui_font_family()
+    return FontSpec(family, pixel_size, bold=bold)

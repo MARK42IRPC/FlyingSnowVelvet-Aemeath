@@ -1,21 +1,22 @@
 import unittest
-from unittest.mock import patch
 
 from lib.core.event.center import EventCenter
 from lib.core.timing.manager import TimingManager
+from tests.timing_fakes import FakePump, FakeScheduler
 
 
 class TimingFrameLimitTests(unittest.TestCase):
     def _manager(self, fps=120):
-        event_center = EventCenter()
-        patcher = patch(
-            "lib.core.timing.manager.get_event_center",
-            return_value=event_center,
+        event_center = EventCenter(
+            pump_factory=lambda callback: FakePump(callback),
         )
-        self.addCleanup(patcher.stop)
-        patcher.start()
-        manager = TimingManager(frame_fps=fps)
-        self.addCleanup(manager.stop)
+        scheduler = FakeScheduler()
+        manager = TimingManager(
+            frame_fps=fps,
+            scheduler=scheduler,
+            event_center=event_center,
+        )
+        self.addCleanup(manager.cleanup)
         return manager
 
     def test_limits_compose_and_restore_configured_frame_rate(self):
@@ -24,7 +25,7 @@ class TimingFrameLimitTests(unittest.TestCase):
         self.assertEqual(manager.get_frame_fps(), 120)
         manager.set_frame_fps_limit("workbench", 30)
         self.assertEqual(manager.get_frame_fps(), 30)
-        self.assertEqual(manager._frame_timer.interval(), 33)
+        self.assertEqual(manager._frame_timer.interval_ms, 33)
 
         manager.set_frame_fps_limit("power_saver", 20)
         self.assertEqual(manager.get_frame_fps(), 20)
@@ -32,7 +33,7 @@ class TimingFrameLimitTests(unittest.TestCase):
         self.assertEqual(manager.get_frame_fps(), 20)
         manager.set_frame_fps_limit("power_saver", None)
         self.assertEqual(manager.get_frame_fps(), 120)
-        self.assertEqual(manager._frame_timer.interval(), 8)
+        self.assertEqual(manager._frame_timer.interval_ms, 8)
 
     def test_base_frame_rate_changes_under_limit_without_losing_limit(self):
         manager = self._manager(120)

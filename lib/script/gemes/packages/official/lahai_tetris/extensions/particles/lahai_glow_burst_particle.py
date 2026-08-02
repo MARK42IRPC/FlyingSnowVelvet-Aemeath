@@ -5,8 +5,7 @@ from __future__ import annotations
 import random
 from typing import Tuple
 
-from PyQt5.QtGui import QColor
-
+from lib.core.graphics.types import Color
 from lib.script.practical.base_particle import BaseParticleScript, per_second_delta
 
 class LahaiGlowBurstParticleScript(BaseParticleScript):
@@ -76,11 +75,11 @@ class LahaiGlowBurstParticle:
         return self.life > 0.0
 
 
-def _vary_color(rgb: tuple[int, int, int] | list[int]) -> QColor:
+def _vary_color(rgb: tuple[int, int, int] | list[int]) -> Color:
     r, g, b = [max(0, min(255, int(v))) for v in rgb]
     luma = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255.0
     jitter = 18 if luma < 0.65 else 12
-    return QColor(
+    return Color(
         max(0, min(255, r + random.randint(-jitter, jitter))),
         max(0, min(255, g + random.randint(-jitter, jitter))),
         max(0, min(255, b + random.randint(-jitter, jitter))),

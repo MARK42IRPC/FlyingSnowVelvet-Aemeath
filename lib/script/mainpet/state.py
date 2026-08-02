@@ -1,5 +1,4 @@
 """状态机模块 - 管理宠物动画状态与行为。"""
-from PyQt5.QtCore import QTimer, QPoint, Qt, QRect, QLineF
 import math
 import random
 
@@ -7,7 +6,14 @@ from config.config import BEHAVIOR
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.action import Actions
 from lib.core.logger import get_logger
-from lib.core.screen_utils import get_virtual_screen_geometry, get_screen_geometry_for_point
+from lib.core.graphics.collision import (
+    adjust_rect,
+    rects_intersect,
+    segment_intersects_rect,
+)
+from lib.core.graphics.types import Point, Rect, coerce_point, coerce_rect
+from lib.core.input.types import MouseButton
+from lib.core.screen_utils import get_screen_rect_for_point, get_virtual_screen_rect
 
 _logger = get_logger(__name__)
 _MOVE_MAX_DURATION_MS = 5000
@@ -30,7 +36,7 @@ def log(msg):
 class StateMachine:
     """宠物状态机（基于事件驱动）。"""
 
-    def __init__(self, entity, timing_manager=None):
+    def __init__(self, entity, timing_manager=None, *, defer=None):
         """
         初始化状态机。
 
@@ -41,6 +47,7 @@ class StateMachine:
         self._entity = entity
         self._current_state = 'idle'
         self._timing_manager = timing_manager
+        self._defer = defer
         self._event_center = get_event_center()
 
         # 当前动作已播放循环次数
@@ -118,7 +125,7 @@ class StateMachine:
                 self._publish_state_change_request(action.name, by_event=False)
             return
 
-        if button == Qt.LeftButton:
+        if button == MouseButton.LEFT:
             # 左键点击：随机触发 action1 组动作
             if not self._entity.is_moving():
                 action = Actions.get_random_action_from_group("action1")
@@ -221,23 +228,23 @@ class StateMachine:
         area_type = particle_config.get('area_type', 'point')
 
         # 获取实体位置作为粒子生成位置
-        pos = self._entity.get_position()
-        rect = self._entity.get_geometry()
+        pos = self._entity.get_core_position()
+        rect = self._entity.get_core_geometry()
 
         # 鏍规嵁鍖哄煙绫诲瀷鐢熸垚绮掑瓙
         if area_type == 'point':
             # 使用实体中心点
-            center_x = pos.x() + rect.width() // 2
-            center_y = pos.y() + rect.height() // 2
+            center_x = pos.x + rect.width // 2
+            center_y = pos.y + rect.height // 2
             area_data = (center_x, center_y)
         elif area_type == 'rect':
             # 使用实体边界
-            area_data = (pos.x(), pos.y(), pos.x() + rect.width(), pos.y() + rect.height())
+            area_data = (pos.x, pos.y, pos.x + rect.width, pos.y + rect.height)
         elif area_type == 'circle':
             # 使用实体中心点和半径
-            center_x = pos.x() + rect.width() // 2
-            center_y = pos.y() + rect.height() // 2
-            radius = min(rect.width(), rect.height()) // 2
+            center_x = pos.x + rect.width // 2
+            center_y = pos.y + rect.height // 2
+            radius = min(rect.width, rect.height) // 2
             area_data = (center_x, center_y, radius)
         else:
             return
@@ -304,7 +311,7 @@ class StateMachine:
             target = self._get_nearest_leopard_pos()
             if target is not None:
                 self._is_tracking_leopard = True
-                log(f"Leopard tracking target: ({target.x()}, {target.y()})")
+                log(f"Leopard tracking target: ({target.x}, {target.y})")
                 self._enqueue_move(
                     target,
                     event_id=_MOVE_TRACK_LEOPARD_ID,
@@ -317,7 +324,7 @@ class StateMachine:
                 # 2) nearest sofa
                 target = self._get_nearest_sofa_pos()
                 if target is not None:
-                    log(f"Sofa target: ({target.x()}, {target.y()})")
+                    log(f"Sofa target: ({target.x}, {target.y})")
                     self._enqueue_move(
                         target,
                         event_id=_MOVE_LOCK_SOFA_ID,
@@ -329,7 +336,7 @@ class StateMachine:
                     # 3) random point around speaker
                     target = self._get_random_pos_near_speaker()
                     if target is not None:
-                        log(f"Speaker-near target: ({target.x()}, {target.y()})")
+                        log(f"Speaker-near target: ({target.x}, {target.y})")
                         self._enqueue_move(
                             target,
                             event_id=_MOVE_NEAR_SPEAKER_ID,
@@ -339,23 +346,23 @@ class StateMachine:
                         )
                     else:
                         # 4) random point on screen
-                        screen = get_virtual_screen_geometry()
-                        min_x = screen.x() + 100
-                        max_x = screen.x() + screen.width() - 200
-                        min_y = screen.y() + 100
-                        max_y = screen.y() + screen.height() - 200
+                        screen = get_virtual_screen_rect()
+                        min_x = int(screen.x + 100)
+                        max_x = int(screen.x + screen.width - 200)
+                        min_y = int(screen.y + 100)
+                        max_y = int(screen.y + screen.height - 200)
                         if max_x < min_x:
-                            min_x = max_x = screen.x()
+                            min_x = max_x = int(screen.x)
                         if max_y < min_y:
-                            min_y = max_y = screen.y()
-                        target = QPoint(
+                            min_y = max_y = int(screen.y)
+                        target = Point(
                             random.randint(min_x, max_x),
                             random.randint(min_y, max_y),
                         )
                         if self._is_wander_target_blocked_by_lahai(target):
                             log(
                                 f"Wander target skipped by Lahai game area filter: "
-                                f"({target.x()}, {target.y()})"
+                                f"({target.x}, {target.y})"
                             )
                             return
                         self._enqueue_move(
@@ -414,7 +421,7 @@ class StateMachine:
         if action:
             self._publish_state_change_request(action.name, by_event=False)
 
-    def _get_nearest_leopard_pos(self) -> "QPoint | None":
+    def _get_nearest_leopard_pos(self) -> Point | None:
         """
         查询最近活动雪豹中心坐标，并转换为宠物窗口左上角目标坐标。
         管理器不存在或无活动雪豹时返回 None。
@@ -425,22 +432,23 @@ class StateMachine:
         if manager is None:
             return None
         
-        pet_pos = self._entity.get_position()
+        pet_pos = self._entity.get_core_position()
         nearest = manager.get_nearest_leopard_pos(pet_pos)
+        nearest = coerce_point(nearest)
         if nearest is None:
             return None
         
         # 将目标中心转换为宠物左上角移动目标
-        pet_geom = self._entity.get_geometry()
+        pet_geom = self._entity.get_core_geometry()
         if pet_geom is None:
             return None
         
-        return QPoint(
-            nearest.x() - pet_geom.width() // 2,
-            nearest.y() - pet_geom.height() // 2,
+        return Point(
+            nearest.x - pet_geom.width // 2,
+            nearest.y - pet_geom.height // 2,
         )
 
-    def _get_nearest_sofa_pos(self) -> "QPoint | None":
+    def _get_nearest_sofa_pos(self) -> Point | None:
         """
         查询最近存活沙发中心坐标，并转换为宠物窗口左上角目标坐标。
         管理器不存在或无存活沙发时返回 None。
@@ -451,22 +459,23 @@ class StateMachine:
         if manager is None:
             return None
         
-        pet_pos = self._entity.get_position()
+        pet_pos = self._entity.get_core_position()
         nearest = manager.get_nearest_sofa_pos(pet_pos)
+        nearest = coerce_point(nearest)
         if nearest is None:
             return None
         
         # 将目标中心转换为宠物左上角移动目标
-        pet_geom = self._entity.get_geometry()
+        pet_geom = self._entity.get_core_geometry()
         if pet_geom is None:
             return None
         
-        return QPoint(
-            nearest.x() - pet_geom.width() // 2,
-            nearest.y() - pet_geom.height() // 2,
+        return Point(
+            nearest.x - pet_geom.width // 2,
+            nearest.y - pet_geom.height // 2,
         )
 
-    def _get_random_pos_near_speaker(self) -> "QPoint | None":
+    def _get_random_pos_near_speaker(self) -> Point | None:
         """
         If speakers exist, return a random target near the nearest speaker.
         Returns the pet window top-left target position; None when unavailable.
@@ -481,15 +490,19 @@ class StateMachine:
         if not speakers:
             return None
 
-        pet_pos = self._entity.get_position()
+        pet_pos = self._entity.get_core_position()
+        speaker_points = [(speaker, coerce_point(speaker.get_center())) for speaker in speakers]
+        speaker_points = [(speaker, point) for speaker, point in speaker_points if point is not None]
+        if not speaker_points:
+            return None
         nearest = min(
-            speakers,
+            speaker_points,
             key=lambda s: (
-                (s.get_center().x() - pet_pos.x()) ** 2
-                + (s.get_center().y() - pet_pos.y()) ** 2
+                (s[1].x - pet_pos.x) ** 2
+                + (s[1].y - pet_pos.y) ** 2
             )
         )
-        speaker_center = nearest.get_center()
+        speaker_center = nearest[1]
 
         raw_radius = BEHAVIOR.get('wander_near_speaker_radius', 300)
         try:
@@ -500,22 +513,22 @@ class StateMachine:
         # Uniform sample in a disk.
         angle = random.uniform(0.0, 2.0 * math.pi)
         distance = int(radius * (random.random() ** 0.5))
-        target_center_x = speaker_center.x() + int(math.cos(angle) * distance)
-        target_center_y = speaker_center.y() + int(math.sin(angle) * distance)
+        target_center_x = speaker_center.x + int(math.cos(angle) * distance)
+        target_center_y = speaker_center.y + int(math.sin(angle) * distance)
 
-        pet_geom = self._entity.get_geometry()
+        pet_geom = self._entity.get_core_geometry()
         if pet_geom is None:
             return None
 
-        screen_geom = get_screen_geometry_for_point(speaker_center)
+        screen_geom = get_screen_rect_for_point(speaker_center)
 
-        target_x = target_center_x - pet_geom.width() // 2
-        target_y = target_center_y - pet_geom.height() // 2
+        target_x = target_center_x - pet_geom.width // 2
+        target_y = target_center_y - pet_geom.height // 2
 
-        min_x = screen_geom.x()
-        min_y = screen_geom.y()
-        max_x = screen_geom.x() + screen_geom.width() - pet_geom.width()
-        max_y = screen_geom.y() + screen_geom.height() - pet_geom.height()
+        min_x = screen_geom.x
+        min_y = screen_geom.y
+        max_x = screen_geom.x + screen_geom.width - pet_geom.width
+        max_y = screen_geom.y + screen_geom.height - pet_geom.height
         if max_x < min_x:
             max_x = min_x
         if max_y < min_y:
@@ -523,7 +536,7 @@ class StateMachine:
         target_x = max(min_x, min(target_x, max_x))
         target_y = max(min_y, min(target_y, max_y))
 
-        return QPoint(target_x, target_y)
+        return Point(target_x, target_y)
 
     def _check_sofa_protection(self):
         """
@@ -531,10 +544,10 @@ class StateMachine:
         将多个管理器响应聚合后，再统一更新保护状态，避免同一 tick 内抖动。
         """
         # 计算宠物中心坐标
-        pet_pos = self._entity.get_position()
-        pet_geom = self._entity.get_geometry()
-        pet_cx = pet_pos.x() + pet_geom.width() // 2
-        pet_cy = pet_pos.y() + pet_geom.height() // 2
+        pet_pos = self._entity.get_core_position()
+        pet_geom = self._entity.get_core_geometry()
+        pet_cx = pet_pos.x + pet_geom.width // 2
+        pet_cy = pet_pos.y + pet_geom.height // 2
 
         self._protection_check_seq += 1
         request_id = f"protection-{self._protection_check_seq}"
@@ -543,11 +556,18 @@ class StateMachine:
 
         # 发布保护半径检测请求（携带 request_id 用于聚合）
         self._event_center.publish(Event(EventType.PROTECTION_CHECK, {
-            'pet_position': QPoint(pet_cx, pet_cy),
+            'pet_position': Point(pet_cx, pet_cy),
             'current_in_protection': self._paused_by_sofa,
             'request_id': request_id,
         }))
-        QTimer.singleShot(0, lambda rid=request_id: self._finalize_protection_check(rid))
+        self._defer_call(0, lambda rid=request_id: self._finalize_protection_check(rid))
+
+    def _defer_call(self, delay_ms: int, callback) -> None:
+        if self._defer is None:
+            from lib.core.qt_bridge.scheduler import call_later
+
+            self._defer = call_later
+        self._defer(delay_ms, callback)
 
     def _on_protection_response(self, event: Event):
         """处理保护半径检测响应（先聚合，不立即切状态）。"""
@@ -580,7 +600,7 @@ class StateMachine:
                 self._timing_manager.resume_task(self._wander_task_id)
             log("主宠物离开保护半径，漫游计时器已恢复")
 
-    def _is_wander_target_blocked_by_lahai(self, target: QPoint) -> bool:
+    def _is_wander_target_blocked_by_lahai(self, target: Point) -> bool:
         """
         当默认漫游目标会遮挡拉海洛方块游戏区域的横向中间三分之一时，返回 True。
 
@@ -593,7 +613,7 @@ class StateMachine:
         except Exception:
             return False
 
-        pet_geom = self._entity.get_geometry()
+        pet_geom = self._entity.get_core_geometry()
         if pet_geom is None:
             return False
 
@@ -602,54 +622,39 @@ class StateMachine:
         except Exception:
             return False
 
-        if blocked_rect.isNull() or blocked_rect.isEmpty():
+        blocked_rect = coerce_rect(blocked_rect)
+        if blocked_rect is None or blocked_rect.width <= 0 or blocked_rect.height <= 0:
             return False
 
-        target_rect = QRect(
-            int(target.x()),
-            int(target.y()),
-            int(pet_geom.width()),
-            int(pet_geom.height()),
+        target_rect = Rect(
+            target.x,
+            target.y,
+            pet_geom.width,
+            pet_geom.height,
         )
-        if target_rect.intersects(blocked_rect):
+        if rects_intersect(target_rect, blocked_rect):
             return True
 
-        current_pos = self._entity.get_position()
-        current_center = QPoint(
-            current_pos.x() + pet_geom.width() // 2,
-            current_pos.y() + pet_geom.height() // 2,
+        current_pos = self._entity.get_core_position()
+        current_center = Point(
+            current_pos.x + pet_geom.width // 2,
+            current_pos.y + pet_geom.height // 2,
         )
-        target_center = QPoint(
-            target.x() + pet_geom.width() // 2,
-            target.y() + pet_geom.height() // 2,
+        target_center = Point(
+            target.x + pet_geom.width // 2,
+            target.y + pet_geom.height // 2,
         )
 
         # 将游戏危险区按桌宠半尺寸向外扩一圈。
         # 这样即使仅移动轨迹中心线擦过，桌宠实体本身也不会横跨遮挡到下落区。
-        expanded_blocked = blocked_rect.adjusted(
-            -pet_geom.width() // 2,
-            -pet_geom.height() // 2,
-            pet_geom.width() // 2,
-            pet_geom.height() // 2,
+        expanded_blocked = adjust_rect(
+            blocked_rect,
+            -int(pet_geom.width) // 2,
+            -int(pet_geom.height) // 2,
+            int(pet_geom.width) // 2,
+            int(pet_geom.height) // 2,
         )
-        if expanded_blocked.contains(current_center) or expanded_blocked.contains(target_center):
-            return True
-
-        move_line = QLineF(current_center, target_center)
-        top_left = expanded_blocked.topLeft()
-        top_right = expanded_blocked.topRight()
-        bottom_left = expanded_blocked.bottomLeft()
-        bottom_right = expanded_blocked.bottomRight()
-        edges = (
-            QLineF(top_left, top_right),
-            QLineF(top_right, bottom_right),
-            QLineF(bottom_right, bottom_left),
-            QLineF(bottom_left, top_left),
-        )
-        for edge in edges:
-            if move_line.intersects(edge)[0] == QLineF.BoundedIntersection:
-                return True
-        return False
+        return segment_intersects_rect(current_center, target_center, expanded_blocked)
 
     def _default_move_radius(self) -> int:
         raw_value = BEHAVIOR.get('move_arrival_radius', 12)
@@ -660,7 +665,7 @@ class StateMachine:
 
     def _enqueue_move(
         self,
-        target: QPoint,
+        target: Point,
         *,
         event_id: str,
         move_type: str,
@@ -671,7 +676,7 @@ class StateMachine:
             'event_id': event_id,
             'source': _MOVE_SOURCE,
             'type': move_type,
-            'position': QPoint(target),
+            'position': Point(round(target.x), round(target.y)),
             'radius': radius,
             'timeout_ms': timeout_ms,
         }))

@@ -4,13 +4,12 @@
 """
 from __future__ import annotations
 
-from PyQt5.QtGui import QColor
-
+from lib.core.graphics.types import Color
 from lib.script.practical.click_particle import ClickParticleScript
 from lib.core.plugin_registry import register_particle
 
 # ── 配色 ──────────────────────────────────────────────────────────────
-_COLOR_PINK = QColor(255, 182, 193)   # 浅粉色
+_COLOR_PINK = Color(255, 182, 193)   # 浅粉色
 
 
 @register_particle("pink_click")

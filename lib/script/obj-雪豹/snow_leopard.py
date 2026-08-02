@@ -6,7 +6,7 @@ from PyQt5.QtCore    import Qt, QPoint
 from PyQt5.QtGui     import QPainter, QPixmap
 
 from config.config                import ANIMATION, SNOW_LEOPARD, BEHAVIOR, PHYSICS
-from lib.core.qt_gif_loader       import scale_frame
+from lib.core.qt_bridge.gif_loader import scale_frame
 from lib.core.event.center        import get_event_center, EventType, Event
 from lib.core.clickthrough_state  import is_clickthrough_enabled
 from lib.core.physics             import get_physics_world, PhysicsBody

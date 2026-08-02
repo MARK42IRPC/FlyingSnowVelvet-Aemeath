@@ -25,7 +25,11 @@ from lib.script.gsvmove.package_manager import (
 from lib.script.gsvmove.rar_backend import ensure_bundled_unrar
 
 
-def _create_fake_package(root: Path) -> Path:
+def _create_fake_package(
+    root: Path,
+    *,
+    g2pw_model_name: str | None = "g2pW_full_precision.onnx",
+) -> Path:
     manifest = {
         "format": VOICE_PACKAGE_FORMAT,
         "format_version": VOICE_PACKAGE_FORMAT_VERSION,
@@ -36,6 +40,8 @@ def _create_fake_package(root: Path) -> Path:
         "precision_profile": "fp16",
     }
     required_files = manager._REQUIRED_PACKAGE_FILES + manager._PROFILE_REQUIRED_PACKAGE_FILES["fp16"]
+    if g2pw_model_name:
+        required_files += (f"{manager._G2PW_MODEL_DIR}/{g2pw_model_name}",)
     for relative in required_files:
         path = root.joinpath(*relative.split("/"))
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -85,6 +91,42 @@ class VoicePackageManagerTests(unittest.TestCase):
 
         self.assertTrue(validation.valid, validation.reason)
         self.assertEqual(validation.manifest["name"], "aimisiV2")
+
+    def test_package_validation_accepts_full_precision_g2pw_model(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            package_root = _create_fake_package(
+                Path(tmp) / "ONNX_aimisiV2",
+                g2pw_model_name="g2pW.onnx",
+            )
+            validation = validate_voice_package(package_root, verify_hashes=True)
+
+        self.assertTrue(validation.valid, validation.reason)
+
+    def test_package_validation_rejects_missing_g2pw_model(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            package_root = _create_fake_package(
+                Path(tmp) / "ONNX_aimisiV2",
+                g2pw_model_name=None,
+            )
+            validation = validate_voice_package(package_root)
+
+        self.assertFalse(validation.valid)
+        self.assertIn("G2PW ONNX 模型", validation.reason)
+
+    def test_g2pw_model_must_be_covered_by_checksum_manifest(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            package_root = _create_fake_package(Path(tmp) / "ONNX_aimisiV2")
+            checksum_path = package_root / "SHA256SUMS.txt"
+            checksum_lines = [
+                line
+                for line in checksum_path.read_text(encoding="utf-8").splitlines()
+                if "g2pW_full_precision.onnx" not in line
+            ]
+            checksum_path.write_text("\n".join(checksum_lines) + "\n", encoding="utf-8")
+            validation = validate_voice_package(package_root, verify_hashes=True)
+
+        self.assertFalse(validation.valid)
+        self.assertIn("g2pW_full_precision.onnx", validation.reason)
 
     def test_package_hash_validation_rejects_changed_required_file(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -352,6 +394,135 @@ class VoicePackageManagerTests(unittest.TestCase):
 
         self.assertEqual(archive.name, profile.archive_name)
         self.assertEqual(progress[-1][2], profile.archive_bytes)
+
+    def test_remote_archive_size_prefers_modelscope_head_response(self):
+        calls = []
+
+        class FakeResponse:
+            headers = {"Content-Length": str(2 * 1024 ** 3)}
+
+            def raise_for_status(self):
+                return None
+
+            def close(self):
+                return None
+
+        class FakeSession:
+            def head(self, url, **_kwargs):
+                calls.append(url)
+                return FakeResponse()
+
+            def close(self):
+                return None
+
+        with patch.object(manager.requests, "Session", return_value=FakeSession()):
+            remote = manager.fetch_voice_package_size("fp16")
+
+        self.assertIsNotNone(remote)
+        self.assertEqual(remote.archive_bytes, 2 * 1024 ** 3)
+        self.assertEqual(remote.source_name, "ModelScope")
+        self.assertEqual(len(calls), 1)
+        self.assertIn("modelscope.cn", calls[0])
+
+    def test_remote_archive_size_uses_range_when_head_has_no_length(self):
+        calls = []
+
+        class FakeResponse:
+            def __init__(self, headers):
+                self.headers = headers
+
+            def raise_for_status(self):
+                return None
+
+            def close(self):
+                return None
+
+        class FakeSession:
+            def head(self, url, **_kwargs):
+                calls.append(("head", url))
+                return FakeResponse({})
+
+            def get(self, url, **kwargs):
+                calls.append(("get", url, kwargs.get("headers", {})))
+                return FakeResponse({"Content-Range": "bytes 0-0/123456789"})
+
+            def close(self):
+                return None
+
+        with patch.object(manager.requests, "Session", return_value=FakeSession()):
+            remote = manager.fetch_voice_package_size("fp16")
+
+        self.assertIsNotNone(remote)
+        self.assertEqual(remote.archive_bytes, 123456789)
+        self.assertEqual(calls[0][0], "head")
+        self.assertEqual(calls[1][0], "get")
+        self.assertEqual(calls[1][2]["Range"], "bytes=0-0")
+
+    def test_remote_archive_size_falls_back_to_huggingface(self):
+        calls = []
+
+        class FakeResponse:
+            headers = {"Content-Length": "987654321"}
+
+            def raise_for_status(self):
+                return None
+
+            def close(self):
+                return None
+
+        class FakeSession:
+            def head(self, url, **_kwargs):
+                calls.append(url)
+                if "modelscope.cn" in url:
+                    raise RuntimeError("ModelScope unavailable")
+                return FakeResponse()
+
+            def close(self):
+                return None
+
+        with patch.object(manager.requests, "Session", return_value=FakeSession()):
+            remote = manager.fetch_voice_package_size("fp16")
+
+        self.assertIsNotNone(remote)
+        self.assertEqual(remote.archive_bytes, 987654321)
+        self.assertEqual(remote.source_name, "Hugging Face")
+        self.assertEqual(len(calls), 2)
+
+    def test_download_progress_uses_response_content_length(self):
+        progress = []
+        installer = VoicePackageInstaller(progress_callback=lambda *values: progress.append(values))
+        profile = manager.get_voice_package_profile("int8")
+
+        class FakeResponse:
+            headers = {"Content-Length": "123456"}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def raise_for_status(self):
+                return None
+
+            def iter_content(self, chunk_size):
+                yield b"Rar!\x1a\x07\x01\x00fixture"
+
+        class FakeSession:
+            def get(self, *_args, **_kwargs):
+                return FakeResponse()
+
+            def close(self):
+                return None
+
+        with tempfile.TemporaryDirectory() as tmp, patch.object(
+            manager.requests, "Session", side_effect=FakeSession
+        ):
+            installer._download_mirror(
+                "Test", "https://example.test/archive.rar", profile, Path(tmp)
+            )
+
+        self.assertEqual(progress[-1][2], 123456)
 
     def test_backend_preparation_overlaps_parallel_download_start(self):
         installer = VoicePackageInstaller()

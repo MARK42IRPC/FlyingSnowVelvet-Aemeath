@@ -9,10 +9,13 @@ from lib.script.ui.close_button_handler import CloseButtonEventHandler
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.screen_utils import clamp_rect_position
 from lib.core.anchor_utils import (
-    get_anchor_point as resolve_anchor_point,
-    publish_widget_anchor_response,
     refresh_last_activity,
 )
+from lib.core.qt_bridge.widget_anchors import (
+    get_anchor_point as resolve_anchor_point,
+    publish_widget_anchor_response,
+)
+from lib.core.qt_bridge.window import coerce_qpoint
 from lib.script.ui.rect_action_button_style import RectActionButton
 
 
@@ -115,7 +118,9 @@ class CloseButton(RectActionButton):
             # 专门针对此 UI 组件的锚点响应
             # event.data.get('anchor_point') 已经是 command_dialog top_right 锚点的全局坐标
             # 直接使用，不需要再计算
-            new_anchor_point = event.data.get('anchor_point')
+            new_anchor_point = coerce_qpoint(event.data.get('anchor_point'))
+            if new_anchor_point is None:
+                return
             # 只在锚点位置改变时更新
             if self._anchor_point != new_anchor_point:
                 self._anchor_point = new_anchor_point
@@ -125,7 +130,9 @@ class CloseButton(RectActionButton):
             # 需要根据当前锚点 ID 计算新的锚点位置
             if anchor_id == 'all':
                 # command_dialog 的新位置（左上角坐标）
-                cmd_pos = event.data.get('anchor_point')
+                cmd_pos = coerce_qpoint(event.data.get('anchor_point'))
+                if cmd_pos is None:
+                    return
                 # 获取 command_dialog 的尺寸来计算 top_right 锚点
                 from config.config import UI
                 cmd_width = UI['cmd_window_width']

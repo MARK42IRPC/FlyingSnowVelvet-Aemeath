@@ -71,6 +71,11 @@ _WORKBENCH_FRAME_LIMIT_FPS = 30
 _WORKBENCH_FRAME_LIMIT_SOURCE = "workbench"
 
 
+def _overview_page_link(page_id: str) -> tuple[str, str]:
+    spec = default_page_spec(page_id)
+    return spec.page_id, spec.title
+
+
 class _WorkbenchFadeOverlay(QWidget):
     """Paint-only fade cover that does not alter child widget composition."""
 
@@ -490,9 +495,9 @@ class WorkbenchWindow(QWidget):
                 (
                     "运行与维护",
                     (
-                        ("game_manager", "游戏包"),
-                        ("desktop_pet_update", "桌宠更新"),
-                        ("bug_tracker", "故障跟踪"),
+                        _overview_page_link("game_manager"),
+                        _overview_page_link("desktop_pet_update"),
+                        _overview_page_link("bug_tracker"),
                     ),
                 ),
             ),
@@ -699,10 +704,9 @@ class WorkbenchWindow(QWidget):
         self._embed_page(host, host_layout, page)
         apply_ui_font_tree(page)
         self._external_pages[page_id] = page
-        if hasattr(page, "refresh_games"):
-            page.refresh_games()
-        elif hasattr(page, "_refresh_now"):
-            page._refresh_now()
+        refresh_page = getattr(page, "refresh_workbench_page", None)
+        if callable(refresh_page):
+            refresh_page()
 
     def _schedule_external_theme_refresh(self) -> None:
         """Defer expensive page polish until the theme event has returned."""

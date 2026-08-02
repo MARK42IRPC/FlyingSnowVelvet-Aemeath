@@ -4,10 +4,10 @@ import random
 from PIL             import Image, ImageSequence
 from PyQt5.QtCore    import QPoint
 from PyQt5.QtGui     import QImage
-from PyQt5.QtWidgets import QApplication
 
 from lib.core.event.center    import get_event_center, EventType, Event
-from lib.core.qt_gif_loader   import flip_frame
+from lib.core.graphics.types import Point, coerce_point
+from lib.core.qt_bridge.gif_loader import flip_frame
 from lib.core.hash_cmd_registry import get_hash_cmd_registry
 from lib.core.plugin_registry import manager_registry, BaseManager
 from lib.core.screen_utils import get_screen_geometry_for_point
@@ -217,14 +217,14 @@ class SnowLeopardManager(BaseManager):
         if event.data.get('request_id') != 'snow_leopard_interaction':
             return
 
-        pet_pos = event.data.get('position')
+        pet_pos = coerce_point(event.data.get('position'))
         pet_size = event.data.get('size')
 
-        if not pet_pos or not pet_size:
+        if pet_pos is None or not pet_size:
             return
 
-        pet_cx = pet_pos.x() + pet_size[0] // 2
-        pet_cy = pet_pos.y() + pet_size[1] // 2
+        pet_cx = pet_pos.x + pet_size[0] // 2
+        pet_cy = pet_pos.y + pet_size[1] // 2
 
         radius = self._cfg.get('interact_radius', 50)
         r2     = radius * radius  # 使用距离平方避免 sqrt
@@ -373,9 +373,9 @@ class SnowLeopardManager(BaseManager):
             return
 
         anchor = None
-        if self._entity and hasattr(self._entity, 'get_position'):
+        if self._entity and hasattr(self._entity, 'get_core_position'):
             try:
-                anchor = self._entity.get_position()
+                anchor = self._entity.get_core_position()
             except Exception:
                 anchor = None
         screen = get_screen_geometry_for_point(anchor)
@@ -422,7 +422,7 @@ class SnowLeopardManager(BaseManager):
     # 供状态机查询
     # ==================================================================
 
-    def get_nearest_leopard_pos(self, from_pos: QPoint) -> QPoint | None:
+    def get_nearest_leopard_pos(self, from_pos: Point | object) -> Point | None:
         """
         返回距离 from_pos 最近的活跃（未淡出）雪豹的中心坐标。
 
@@ -433,14 +433,23 @@ class SnowLeopardManager(BaseManager):
         if not alive:
             return None
 
-        nearest = min(
-            alive,
-            key=lambda l: (
-                (l.get_center().x() - from_pos.x()) ** 2
-                + (l.get_center().y() - from_pos.y()) ** 2
-            )
-        )
-        return nearest.get_center()
+        origin = coerce_point(from_pos)
+        if origin is None:
+            return None
+        centers = [
+            (leopard, coerce_point(leopard.get_center()))
+            for leopard in alive
+        ]
+        centers = [(leopard, center) for leopard, center in centers if center is not None]
+        if not centers:
+            return None
+        return min(
+            centers,
+            key=lambda item: (
+                (item[1].x - origin.x) ** 2
+                + (item[1].y - origin.y) ** 2
+            ),
+        )[1]
 
     def clear_all_leopards(self, fadeout: bool = True) -> int:
         """批量清理所有存活雪豹，返回清理数量。"""

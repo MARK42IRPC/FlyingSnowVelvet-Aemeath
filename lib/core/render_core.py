@@ -2,13 +2,10 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
-from typing import Optional, TypeVar
-
-from PyQt5.QtCore import QRect
-from PyQt5.QtGui import QPainter
+from typing import TypeVar
 
 from lib.core.layer import Layer, draw_order_key
-from lib.core.render_layer import RenderItem, RenderRequest
+from lib.core.graphics.commands import RenderItem, RenderRequest
 
 
 _RenderValue = TypeVar('_RenderValue')
@@ -68,7 +65,7 @@ class RenderCore:
         """清空绘制队列。"""
         self._items.clear()
 
-    def render(self, painter: QPainter, target_rect: Optional[QRect] = None) -> None:
+    def render(self, painter: object, target_rect: object | None = None) -> None:
         """按 layer/z/生成顺序渲染，顺序更晚的同级绘制项覆盖在上。"""
         if not self._items:
             return

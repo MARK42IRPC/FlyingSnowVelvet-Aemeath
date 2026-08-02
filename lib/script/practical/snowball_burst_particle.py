@@ -11,8 +11,7 @@ import random
 import math
 from typing import Tuple
 
-from PyQt5.QtGui import QColor
-
+from lib.core.graphics.types import Color
 from lib.script.practical.base_particle import BaseParticleScript, per_second_delta
 from lib.core.plugin_registry import register_particle
 
@@ -32,7 +31,7 @@ class SnowballBurstParticleScript(BaseParticleScript):
             'gravity':      12.0,              # 与 snow 相同，每 tick 累加
             'drag':         0.912673,          # 与 snow 相同，每 tick 阻力
             'life_decay':   0.18,              # snow 的两倍：0.09 → 0.18（寿命减半）
-            'color':        QColor(255, 255, 255),
+            'color':        Color(255, 255, 255),
         }
 
     def create_particles(self, area_type: str, area_data: Tuple) -> list:

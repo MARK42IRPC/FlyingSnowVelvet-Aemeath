@@ -1,11 +1,10 @@
 """计时器管理模块 - 统一管理所有定时任务，通过事件系统发布事件"""
-from PyQt5.QtCore import QTimer, QObject
-from typing import Optional
 import time
 import uuid
 
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.logger import get_logger
+from lib.core.timing.scheduler import Scheduler
 logger = get_logger(__name__)
 
 
@@ -20,7 +19,7 @@ class Task:
         self.active = True
 
 
-class TimingManager(QObject):
+class TimingManager:
     """
     统一计时器管理器
     
@@ -36,21 +35,27 @@ class TimingManager(QObject):
     TICKS_PER_SECOND = 20
     TICK_INTERVAL_MS = 50
 
-    def __init__(self, frame_fps: int = 60, gif_fps: int = 10):
-        super().__init__()
+    def __init__(
+        self,
+        frame_fps: int = 60,
+        gif_fps: int = 10,
+        *,
+        scheduler: Scheduler,
+        event_center=None,
+    ):
+        self._scheduler = scheduler
+        self._cleaned = False
 
         # ── 三个独立的定时器 ────────────────────────────────────────
         
         # Tick定时器：每50ms触发一次（20tick/秒）
-        self._tick_timer = QTimer(self)
-        self._tick_timer.timeout.connect(self._on_tick)
+        self._tick_timer = scheduler.create_periodic_timer(self._on_tick)
         self._tick_interval_ms = self.TICK_INTERVAL_MS
         self._tick_count = 0
         self._last_tick_monotonic = time.monotonic()
 
         # Frame定时器：每16.67ms触发一次（60fps）
-        self._frame_timer = QTimer(self)
-        self._frame_timer.timeout.connect(self._on_frame)
+        self._frame_timer = scheduler.create_periodic_timer(self._on_frame)
         self._base_frame_fps = max(1, min(120, int(frame_fps)))
         self._frame_fps_limits: dict[str, int] = {}
         self._effective_frame_fps = self._base_frame_fps
@@ -59,8 +64,7 @@ class TimingManager(QObject):
         self._last_frame_monotonic = time.monotonic()
 
         # GIF帧定时器：每100ms触发一次（10fps）
-        self._gif_timer = QTimer(self)
-        self._gif_timer.timeout.connect(self._on_gif_frame)
+        self._gif_timer = scheduler.create_periodic_timer(self._on_gif_frame)
         self._gif_interval_ms = 1000 // gif_fps
         self._gif_frame_count = 0
 
@@ -71,7 +75,7 @@ class TimingManager(QObject):
         self._running = False
 
         # 事件中心
-        self._event_center = get_event_center()
+        self._event_center = event_center or get_event_center()
 
         # 订阅计时器暂停/恢复事件
         self._event_center.subscribe(EventType.TIMER_PAUSE, self._on_timer_pause)
@@ -79,6 +83,8 @@ class TimingManager(QObject):
 
     def start(self):
         """启动所有定时器"""
+        if self._cleaned:
+            raise RuntimeError("TimingManager has been cleaned up")
         if not self._running:
             self._running = True
             self._tick_timer.start(self._tick_interval_ms)
@@ -94,6 +100,17 @@ class TimingManager(QObject):
             self._tick_timer.stop()
             self._frame_timer.stop()
             self._gif_timer.stop()
+
+    def cleanup(self):
+        """停止调度并释放事件订阅和后端资源，可重复调用。"""
+        if self._cleaned:
+            return
+        self.stop()
+        self.clear_all()
+        self._event_center.unsubscribe(EventType.TIMER_PAUSE, self._on_timer_pause)
+        self._event_center.unsubscribe(EventType.TIMER_RESUME, self._on_timer_resume)
+        self._scheduler.cleanup()
+        self._cleaned = True
 
     def _on_tick(self):
         """Tick定时器回调：发布tick事件，更新所有任务"""
@@ -211,7 +228,7 @@ class TimingManager(QObject):
         """
         self._gif_interval_ms = 1000 // max(1, min(60, fps))
         if self._running:
-            self._gif_timer.setInterval(self._gif_interval_ms)
+            self._gif_timer.set_interval(self._gif_interval_ms)
         logger.debug("[TimingManager] GIF fps set to %s (%sms)", fps, self._gif_interval_ms)
 
     def get_gif_fps(self) -> int:
@@ -256,7 +273,7 @@ class TimingManager(QObject):
             return
         self._effective_frame_fps = effective_fps
         self._frame_interval_ms = interval_ms
-        self._frame_timer.setInterval(interval_ms)
+        self._frame_timer.set_interval(interval_ms)
         logger.debug(
             "[TimingManager] Effective frame fps=%s (%sms, limits=%s)",
             effective_fps,

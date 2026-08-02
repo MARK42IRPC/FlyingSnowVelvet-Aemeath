@@ -5,10 +5,19 @@
 支持速度插值、方向翻转、目标追踪等功能。
 """
 
+from dataclasses import dataclass
 from typing import Optional, Callable
-from PyQt5.QtCore import QPoint
+from lib.core.graphics.types import Point, coerce_point
 
-from config.config import BEHAVIOR
+
+@dataclass(frozen=True, slots=True)
+class MovementSettings:
+    """Numeric movement tuning independent from the application config package."""
+
+    min_speed: float = 2.5
+    acceleration: float = 0.25
+    max_speed: float = 5.0
+    decel_distance: float = 100.0
 
 
 class MovementController:
@@ -27,9 +36,10 @@ class MovementController:
     """
 
     def __init__(self,
-                 on_position_update: Optional[Callable[[QPoint], None]] = None,
+                 on_position_update: Optional[Callable[[Point], None]] = None,
                  on_move_complete: Optional[Callable[[], None]] = None,
-                 on_direction_change: Optional[Callable[[bool], None]] = None):
+                 on_direction_change: Optional[Callable[[bool], None]] = None,
+                 settings: MovementSettings | None = None):
         """
         初始化移动控制器
         
@@ -38,10 +48,12 @@ class MovementController:
             on_move_complete: 移动完成回调
             on_direction_change: 方向改变回调，参数为是否翻转
         """
+        self._settings = settings or MovementSettings()
+
         # 移动状态
         self._moving = False
-        self._target = QPoint(0, 0)
-        self._current_speed = BEHAVIOR['move_min_speed']
+        self._target = Point()
+        self._current_speed = self._settings.min_speed
         self._arrival_radius = 1.0
         self._prev_x = 0.0
         self._prev_y = 0.0
@@ -68,7 +80,7 @@ class MovementController:
         return self._moving
 
     @property
-    def target(self) -> QPoint:
+    def target(self) -> Point:
         """当前目标位置"""
         return self._target
 
@@ -89,23 +101,23 @@ class MovementController:
     # 移动控制
     # ==================================================================
 
-    def start_move(self, target: QPoint, arrival_radius: float = 1.0) -> None:
+    def start_move(self, target: Point, arrival_radius: float = 1.0) -> None:
         """
         开始移动到目标位置
         
         Args:
             target: 目标位置（全局坐标）
         """
-        self._target = target
+        self._target = coerce_point(target) or Point()
         self._moving = True
         # 速度从最低开始
-        self._current_speed = BEHAVIOR['move_min_speed']
+        self._current_speed = self._settings.min_speed
         try:
             self._arrival_radius = max(1.0, float(arrival_radius))
         except (TypeError, ValueError):
             self._arrival_radius = 1.0
 
-    def update_target(self, target: QPoint, arrival_radius: float | None = None) -> None:
+    def update_target(self, target: Point, arrival_radius: float | None = None) -> None:
         """
         动态更新移动目标点（仅在移动中生效）
         
@@ -115,7 +127,7 @@ class MovementController:
             target: 新的目标位置
         """
         if self._moving:
-            self._target = target
+            self._target = coerce_point(target) or self._target
             if arrival_radius is not None:
                 try:
                     self._arrival_radius = max(1.0, float(arrival_radius))
@@ -126,21 +138,22 @@ class MovementController:
         """停止移动"""
         self._moving = False
         self._flipped = False
-        self._current_speed = BEHAVIOR['move_min_speed']
+        self._current_speed = self._settings.min_speed
         self._arrival_radius = 1.0
         self._prev_x = self._current_x
         self._prev_y = self._current_y
         self._render_x = self._current_x
         self._render_y = self._current_y
 
-    def sync_position(self, pos: QPoint) -> None:
+    def sync_position(self, pos: Point) -> None:
         """将真实位置与渲染位置同步到指定坐标。"""
-        self._prev_x = float(pos.x())
-        self._prev_y = float(pos.y())
-        self._current_x = float(pos.x())
-        self._current_y = float(pos.y())
-        self._render_x = float(pos.x())
-        self._render_y = float(pos.y())
+        point = coerce_point(pos) or Point()
+        self._prev_x = point.x
+        self._prev_y = point.y
+        self._current_x = point.x
+        self._current_y = point.y
+        self._render_x = point.x
+        self._render_y = point.y
 
     # ==================================================================
     # 帧更新
@@ -153,8 +166,8 @@ class MovementController:
         if not self._moving:
             return
 
-        dx = self._target.x() - self._current_x
-        dy = self._target.y() - self._current_y
+        dx = self._target.x - self._current_x
+        dy = self._target.y - self._current_y
         dist = (dx**2 + dy**2) ** 0.5
 
         self._prev_x = self._current_x
@@ -164,7 +177,7 @@ class MovementController:
         if dist <= self._arrival_radius:
             self._moving = False
             self._flipped = False
-            self._current_speed = BEHAVIOR['move_min_speed']
+            self._current_speed = self._settings.min_speed
             self._arrival_radius = 1.0
             self._render_x = self._current_x
             self._render_y = self._current_y
@@ -182,12 +195,12 @@ class MovementController:
         # 速度插值逻辑
         self._update_speed(dist)
 
-        speed = max(self._current_speed, BEHAVIOR['move_min_speed'])
+        speed = max(self._current_speed, self._settings.min_speed)
         move_distance = min(speed, dist)
         self._current_x += dx / dist * move_distance
         self._current_y += dy / dist * move_distance
 
-    def update_frame(self, alpha: float) -> Optional[QPoint]:
+    def update_frame(self, alpha: float) -> Optional[Point]:
         """
         FRAME 事件更新 - 按 tick alpha 插值渲染位置。
         """
@@ -196,7 +209,7 @@ class MovementController:
         self._render_y = self._prev_y + (self._current_y - self._prev_y) * alpha
         nx = round(self._render_x)
         ny = round(self._render_y)
-        new_pos = QPoint(nx, ny)
+        new_pos = Point(nx, ny)
 
         if self._on_position_update:
             self._on_position_update(new_pos)
@@ -214,10 +227,10 @@ class MovementController:
         Args:
             dist: 当前距离目标的距离
         """
-        decel_distance = BEHAVIOR['move_decel_distance']
-        min_speed = BEHAVIOR['move_min_speed']
-        max_speed = BEHAVIOR['move_max_speed']
-        acceleration = BEHAVIOR['move_acceleration']
+        decel_distance = self._settings.decel_distance
+        min_speed = self._settings.min_speed
+        max_speed = self._settings.max_speed
+        acceleration = self._settings.acceleration
 
         if dist <= decel_distance:
             # 在减速范围内
@@ -246,9 +259,9 @@ class MovementController:
         """重置移动状态"""
         self._moving = False
         self._flipped = False
-        self._current_speed = BEHAVIOR['move_min_speed']
+        self._current_speed = self._settings.min_speed
         self._arrival_radius = 1.0
-        self._target = QPoint(0, 0)
+        self._target = Point()
         self._prev_x = 0.0
         self._prev_y = 0.0
         self._current_x = 0.0

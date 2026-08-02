@@ -6,45 +6,44 @@ import re
 from dataclasses import dataclass
 from typing import Optional
 
-from PyQt5.QtCore import Qt
-
 from config.config import VOICE
 from lib.core.event.center import Event, EventType, get_event_center
+from lib.core.input.types import Key, KeyModifier
 from lib.core.logger import get_logger
 
-_MODIFIER_MASK = int(Qt.ShiftModifier | Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier)
-_MODIFIER_TOKENS: dict[str, int] = {
-    "CTRL": int(Qt.ControlModifier),
-    "CONTROL": int(Qt.ControlModifier),
-    "SHIFT": int(Qt.ShiftModifier),
-    "ALT": int(Qt.AltModifier),
-    "OPTION": int(Qt.AltModifier),
-    "WIN": int(Qt.MetaModifier),
-    "CMD": int(Qt.MetaModifier),
-    "META": int(Qt.MetaModifier),
-    "SUPER": int(Qt.MetaModifier),
+_MODIFIER_MASK = KeyModifier.SHIFT | KeyModifier.CONTROL | KeyModifier.ALT | KeyModifier.META
+_MODIFIER_TOKENS: dict[str, KeyModifier] = {
+    "CTRL": KeyModifier.CONTROL,
+    "CONTROL": KeyModifier.CONTROL,
+    "SHIFT": KeyModifier.SHIFT,
+    "ALT": KeyModifier.ALT,
+    "OPTION": KeyModifier.ALT,
+    "WIN": KeyModifier.META,
+    "CMD": KeyModifier.META,
+    "META": KeyModifier.META,
+    "SUPER": KeyModifier.META,
 }
-_SPECIAL_KEYS: dict[str, int] = {
-    "SPACE": Qt.Key_Space,
-    "TAB": Qt.Key_Tab,
-    "ENTER": Qt.Key_Return,
-    "RETURN": Qt.Key_Return,
-    "ESC": Qt.Key_Escape,
-    "ESCAPE": Qt.Key_Escape,
-    "BACKSPACE": Qt.Key_Backspace,
-    "DELETE": Qt.Key_Delete,
-    "INS": Qt.Key_Insert,
-    "INSERT": Qt.Key_Insert,
-    "HOME": Qt.Key_Home,
-    "END": Qt.Key_End,
-    "PGUP": Qt.Key_PageUp,
-    "PAGEUP": Qt.Key_PageUp,
-    "PGDN": Qt.Key_PageDown,
-    "PAGEDOWN": Qt.Key_PageDown,
-    "UP": Qt.Key_Up,
-    "DOWN": Qt.Key_Down,
-    "LEFT": Qt.Key_Left,
-    "RIGHT": Qt.Key_Right,
+_SPECIAL_KEYS: dict[str, Key] = {
+    "SPACE": Key.SPACE,
+    "TAB": Key.TAB,
+    "ENTER": Key.RETURN,
+    "RETURN": Key.RETURN,
+    "ESC": Key.ESCAPE,
+    "ESCAPE": Key.ESCAPE,
+    "BACKSPACE": Key.BACKSPACE,
+    "DELETE": Key.DELETE,
+    "INS": Key.INSERT,
+    "INSERT": Key.INSERT,
+    "HOME": Key.HOME,
+    "END": Key.END,
+    "PGUP": Key.PAGE_UP,
+    "PAGEUP": Key.PAGE_UP,
+    "PGDN": Key.PAGE_DOWN,
+    "PAGEDOWN": Key.PAGE_DOWN,
+    "UP": Key.UP,
+    "DOWN": Key.DOWN,
+    "LEFT": Key.LEFT,
+    "RIGHT": Key.RIGHT,
 }
 
 
@@ -52,35 +51,35 @@ _SPECIAL_KEYS: dict[str, int] = {
 class HotkeyBinding:
     """Parsed push-to-talk hotkey information."""
 
-    key: int
-    modifiers: int
+    key: Key
+    modifiers: KeyModifier
     display: str
 
-    def matches(self, key_code: int, modifiers) -> bool:
+    def matches(self, key_code: Key | int, modifiers) -> bool:
         if key_code != self.key:
             return False
         return _normalize_modifiers(modifiers) == self.modifiers
 
 
-def _normalize_modifiers(modifiers) -> int:
+def _normalize_modifiers(modifiers) -> KeyModifier:
     try:
         value = int(modifiers)
     except Exception:
         value = 0
-    return value & _MODIFIER_MASK
+    return KeyModifier(value & int(_MODIFIER_MASK))
 
 
-def _resolve_letter_or_digit(token: str) -> Optional[int]:
+def _resolve_letter_or_digit(token: str) -> Optional[Key]:
     if len(token) != 1:
         return None
     if "A" <= token <= "Z":
-        return int(getattr(Qt, f"Key_{token}"))
+        return Key[token]
     if "0" <= token <= "9":
-        return int(getattr(Qt, f"Key_{token}"))
+        return Key[f"DIGIT_{token}"]
     return None
 
 
-def _resolve_function_key(token: str) -> Optional[int]:
+def _resolve_function_key(token: str) -> Optional[Key]:
     if not token.startswith("F"):
         return None
     suffix = token[1:]
@@ -89,21 +88,21 @@ def _resolve_function_key(token: str) -> Optional[int]:
     index = int(suffix)
     if not 1 <= index <= 24:
         return None
-    return getattr(Qt, f"Key_F{index}")
+    return Key[f"F{index}"]
 
 
-def _resolve_key_code(token: str) -> Optional[int]:
+def _resolve_key_code(token: str) -> Optional[Key]:
     letter_or_digit = _resolve_letter_or_digit(token)
     if letter_or_digit is not None:
         return letter_or_digit
 
     special = _SPECIAL_KEYS.get(token)
     if special is not None:
-        return int(special)
+        return special
 
     function_key = _resolve_function_key(token)
     if function_key is not None:
-        return int(function_key)
+        return function_key
     return None
 
 
@@ -120,7 +119,7 @@ def parse_hotkey_binding(text: str) -> Optional[HotkeyBinding]:
     key_token = tokens[-1].upper()
     modifier_tokens = [tok.upper() for tok in tokens[:-1]]
 
-    modifiers = 0
+    modifiers = KeyModifier.NONE
     for modifier in modifier_tokens:
         mapped = _MODIFIER_TOKENS.get(modifier)
         if mapped is None:
@@ -186,7 +185,7 @@ class MicrophonePushToTalkHotkey:
             return
 
         key_code = int(event.data.get("key", 0))
-        modifiers = event.data.get("modifiers", Qt.NoModifier)
+        modifiers = event.data.get("modifiers", KeyModifier.NONE)
         if not self._binding.matches(key_code, modifiers):
             return
 
@@ -204,7 +203,7 @@ class MicrophonePushToTalkHotkey:
             return
 
         key_code = int(event.data.get("key", 0))
-        modifiers = event.data.get("modifiers", Qt.NoModifier)
+        modifiers = event.data.get("modifiers", KeyModifier.NONE)
         if not self._binding.matches(key_code, modifiers):
             return
 
