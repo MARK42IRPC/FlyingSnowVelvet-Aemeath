@@ -195,6 +195,65 @@ class WorkbenchWindowTests(unittest.TestCase):
             window.deleteLater()
             self.app.processEvents()
 
+    def test_page_transition_keeps_page_visible_without_graphics_effect(self):
+        panel = _FakeControlPanel()
+        with patch.object(workbench_module, "QSettings", _MemorySettings):
+            window = workbench_module.WorkbenchWindow(
+                lambda: panel,
+                control_panel_page_specs=panel.get_workbench_page_specs(),
+            )
+
+        try:
+            window.show_page("overview")
+            self.app.processEvents()
+            window._set_current_page("ui_anim")
+            self.app.processEvents()
+
+            host = window._page_hosts["ui_anim"]
+            page = panel.pages["ui_anim"]
+            self.assertIsNone(host.graphicsEffect())
+            self.assertTrue(host.isVisible())
+            self.assertTrue(page.isVisible())
+            self.assertEqual(page.windowOpacity(), 1.0)
+            self.assertFalse(window._page_transition_overlay.isHidden())
+        finally:
+            window.deleteLater()
+            self.app.processEvents()
+
+    def test_theme_transition_does_not_shift_shell_or_page_geometry(self):
+        panel = _FakeControlPanel()
+        original_theme = UI["workbench_light_theme"]
+        with patch.object(workbench_module, "QSettings", _MemorySettings):
+            window = workbench_module.WorkbenchWindow(
+                lambda: panel,
+                control_panel_page_specs=panel.get_workbench_page_specs(),
+            )
+
+        try:
+            window.show_page("ui_anim")
+            self.app.processEvents()
+            shell_geometry = window._shell.geometry()
+            host_geometry = window._page_hosts["ui_anim"].geometry()
+            page_geometry = panel.pages["ui_anim"].geometry()
+
+            UI["workbench_light_theme"] = not bool(original_theme)
+            window._on_config_updated(
+                workbench_module.Event(
+                    workbench_module.EventType.CONFIG_UPDATED,
+                    {"values": {"UI": {"workbench_light_theme": UI["workbench_light_theme"]}}},
+                )
+            )
+            self.app.processEvents()
+
+            self.assertIsNone(window._shell.graphicsEffect())
+            self.assertEqual(window._shell.geometry(), shell_geometry)
+            self.assertEqual(window._page_hosts["ui_anim"].geometry(), host_geometry)
+            self.assertEqual(panel.pages["ui_anim"].geometry(), page_geometry)
+        finally:
+            UI["workbench_light_theme"] = original_theme
+            window.deleteLater()
+            self.app.processEvents()
+
     def test_visible_workbench_limits_runtime_frame_rate_until_hidden(self):
         panel = _FakeControlPanel()
         timing = _FakeTimingManager()

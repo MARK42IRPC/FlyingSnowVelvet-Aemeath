@@ -2299,6 +2299,8 @@ class AISettingsPanel(QWidget):
         if not self._workbench_attached:
             self._workbench_attached = True
             self._visible = False
+            self._anim.stop()
+            self._opacity.setOpacity(1.0)
             self._hide_floating_tab()
             get_layer_manager().unregister(self)
             if self._tab_floating is not None:

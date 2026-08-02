@@ -4,14 +4,21 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from PyQt5.QtCore import QEasingCurve, QEvent, QPoint, QPropertyAnimation, QSettings, Qt
+from PyQt5.QtCore import (
+    QEasingCurve,
+    QEvent,
+    QPoint,
+    QPropertyAnimation,
+    QSettings,
+    Qt,
+    QVariantAnimation,
+)
 from PyQt5.QtGui import QColor, QPainter
 from PyQt5.QtWidgets import (
     QApplication,
     QButtonGroup,
     QCheckBox,
     QFrame,
-    QGraphicsOpacityEffect,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -61,6 +68,28 @@ _GROUP_ORDER = (
 _NAV_FONT_SCALE = 1.25
 _WORKBENCH_FRAME_LIMIT_FPS = 30
 _WORKBENCH_FRAME_LIMIT_SOURCE = "workbench"
+
+
+class _WorkbenchFadeOverlay(QWidget):
+    """Paint-only fade cover that does not alter child widget composition."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._opacity = 0.0
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.hide()
+
+    def set_opacity(self, value: float) -> None:
+        self._opacity = max(0.0, min(1.0, float(value)))
+        self.update()
+
+    def paintEvent(self, _event) -> None:
+        if self._opacity <= 0.0:
+            return
+        painter = QPainter(self)
+        color = QColor(get_workbench_colors().canvas)
+        color.setAlphaF(self._opacity)
+        painter.fillRect(self.rect(), color)
 
 
 class _WorkbenchThemeToggle(QCheckBox):
@@ -144,11 +173,8 @@ class WorkbenchWindow(QWidget):
         self._allow_hide_once = False
         self._geometry_restored = False
         self._runtime_frame_limit_active = False
-        self._page_transition_generation = 0
-        self._page_transition_effects: dict[QWidget, QGraphicsOpacityEffect] = {}
-        self._page_transition_anims: list[QPropertyAnimation] = []
-        self._theme_transition_effect: QGraphicsOpacityEffect | None = None
-        self._theme_transition_anims: list[QPropertyAnimation] = []
+        self._page_transition_anim: QVariantAnimation | None = None
+        self._theme_transition_anim: QVariantAnimation | None = None
         self._settings = QSettings("FlyingSnow", "UnifiedWorkbench")
         self._always_on_top = self._settings.value("always_on_top", False, type=bool)
         self._event_center = get_event_center()
@@ -172,6 +198,16 @@ class WorkbenchWindow(QWidget):
         self._opacity_anim.finished.connect(self._on_opacity_anim_finished)
 
         self._build_ui()
+        self._page_transition_anim = QVariantAnimation(self)
+        self._page_transition_anim.valueChanged.connect(
+            lambda value: self._page_transition_overlay.set_opacity(float(value))
+        )
+        self._page_transition_anim.finished.connect(self._finish_page_transition)
+        self._theme_transition_anim = QVariantAnimation(self)
+        self._theme_transition_anim.valueChanged.connect(
+            lambda value: self._theme_transition_overlay.set_opacity(float(value))
+        )
+        self._theme_transition_anim.finished.connect(self._finish_theme_transition)
         self._attach_pages()
         self._build_navigation()
         apply_ui_font_tree(self)
@@ -348,6 +384,10 @@ class WorkbenchWindow(QWidget):
         outer_layout.setContentsMargins(0, 0, 0, 0)
         outer_layout.addWidget(shell)
 
+        self._theme_transition_overlay = _WorkbenchFadeOverlay(shell)
+        self._page_transition_overlay = _WorkbenchFadeOverlay(self._stack)
+        self._sync_transition_overlay_geometry()
+
         self._button_group = QButtonGroup(navigation)
         self._button_group.setExclusive(True)
         self._size_grip = QSizeGrip(self)
@@ -369,48 +409,45 @@ class WorkbenchWindow(QWidget):
         self.style().unpolish(self)
         self.style().polish(self)
         self.update()
+        self._shell.update()
+        self._stack.update()
         self._animate_theme_transition()
 
     def _animate_theme_transition(self) -> None:
-        """让主题热切换先淡出再淡入，连续点击时只保留最后一段动画。"""
-        shell = getattr(self, "_shell", None)
-        if shell is None:
+        """让主题热切换淡入，不参与 shell 子控件的图形合成。"""
+        overlay = getattr(self, "_theme_transition_overlay", None)
+        animation = self._theme_transition_anim
+        if overlay is None or animation is None:
             return
-        effect = self._theme_transition_effect
-        if effect is None:
-            effect = QGraphicsOpacityEffect(shell)
-            shell.setGraphicsEffect(effect)
-            self._theme_transition_effect = effect
-        for animation in self._theme_transition_anims:
-            animation.stop()
-        self._theme_transition_anims.clear()
-        effect.setOpacity(0.0)
-        animation = QPropertyAnimation(effect, b"opacity", self)
+        self._sync_transition_overlay_geometry()
+        animation.stop()
+        overlay.set_opacity(1.0)
+        overlay.show()
+        overlay.raise_()
+        overlay.repaint()
         animation.setDuration(max(80, int(UI.get("ui_fade_duration", 180))))
         animation.setEasingCurve(QEasingCurve.InOutQuad)
-        animation.setStartValue(0.0)
-        animation.setEndValue(1.0)
-        animation.finished.connect(lambda: effect.setOpacity(1.0))
-        self._theme_transition_anims.append(animation)
+        animation.setStartValue(1.0)
+        animation.setEndValue(0.0)
         animation.start()
 
     def _stop_transition_animations(self) -> None:
         """销毁工作台前停止所有动画，避免完成信号触碰已释放的 Qt 对象。"""
-        self._page_transition_generation += 1
-        for animation in tuple(self._page_transition_anims):
+        for animation in (self._page_transition_anim, self._theme_transition_anim):
+            if animation is None:
+                continue
             try:
                 animation.stop()
                 animation.deleteLater()
             except (RuntimeError, AttributeError):
                 pass
-        self._page_transition_anims.clear()
-        for animation in tuple(self._theme_transition_anims):
-            try:
-                animation.stop()
-                animation.deleteLater()
-            except (RuntimeError, AttributeError):
-                pass
-        self._theme_transition_anims.clear()
+        for overlay_name in ("_page_transition_overlay", "_theme_transition_overlay"):
+            overlay = getattr(self, overlay_name, None)
+            if overlay is not None:
+                try:
+                    overlay.hide()
+                except RuntimeError:
+                    pass
 
     def _sync_theme_toggle(self) -> None:
         toggle = getattr(self, "_theme_toggle", None)
@@ -537,12 +574,44 @@ class WorkbenchWindow(QWidget):
         page.setParent(host)
         page.setWindowFlags(Qt.Widget)
         page.setWindowOpacity(1.0)
+        effect = page.graphicsEffect()
+        if effect is not None and hasattr(effect, "setOpacity"):
+            effect.setOpacity(1.0)
         page.setObjectName(page.objectName() or "WorkbenchPage")
         page.setMinimumSize(0, 0)
         page.setMaximumSize(16777215, 16777215)
         page.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         host_layout.addWidget(page, 1)
         page.show()
+        page.update()
+
+    @staticmethod
+    def _ensure_page_content_visible(host: QWidget) -> None:
+        """Restore page visibility after a previous stacked-widget transition."""
+        host.show()
+        layout = host.layout()
+        if layout is None:
+            host.update()
+            return
+        for index in range(layout.count()):
+            widget = layout.itemAt(index).widget()
+            if widget is None:
+                continue
+            widget.show()
+            effect = widget.graphicsEffect()
+            if effect is not None and hasattr(effect, "setOpacity"):
+                effect.setOpacity(1.0)
+            widget.setWindowOpacity(1.0)
+            widget.update()
+        host.update()
+
+    def _sync_transition_overlay_geometry(self) -> None:
+        page_overlay = getattr(self, "_page_transition_overlay", None)
+        if page_overlay is not None and hasattr(self, "_stack"):
+            page_overlay.setGeometry(self._stack.rect())
+        theme_overlay = getattr(self, "_theme_transition_overlay", None)
+        if theme_overlay is not None and hasattr(self, "_shell"):
+            theme_overlay.setGeometry(self._shell.rect())
 
     def _build_navigation(self) -> None:
         grouped: dict[str, list[WorkbenchPageSpec]] = {}
@@ -639,33 +708,26 @@ class WorkbenchWindow(QWidget):
         self._ensure_external_page(spec.page_id)
         target_host = self._page_hosts[spec.page_id]
         previous_host = self._stack.currentWidget()
+        transition = previous_host is not target_host and self.isVisible()
+        if transition:
+            overlay = self._page_transition_overlay
+            self._sync_transition_overlay_geometry()
+            self._page_transition_anim.stop()
+            overlay.set_opacity(1.0)
+            overlay.show()
+            overlay.raise_()
+            overlay.repaint()
         self._stack.setCurrentWidget(target_host)
-        if previous_host is not target_host and self.isVisible():
-            effect = self._page_transition_effects.get(target_host)
-            if effect is None:
-                effect = QGraphicsOpacityEffect(target_host)
-                target_host.setGraphicsEffect(effect)
-                self._page_transition_effects[target_host] = effect
-            self._page_transition_generation += 1
-            generation = self._page_transition_generation
-            for animation in self._page_transition_anims:
-                animation.stop()
-            self._page_transition_anims.clear()
-            effect.setOpacity(0.0)
-            animation = QPropertyAnimation(effect, b"opacity", self)
+        self._ensure_page_content_visible(target_host)
+        if transition:
+            animation = self._page_transition_anim
             animation.setDuration(max(100, int(UI.get("ui_fade_duration", 180))))
             animation.setEasingCurve(QEasingCurve.InOutQuad)
-            animation.setStartValue(0.0)
-            animation.setEndValue(1.0)
-            animation.finished.connect(
-                lambda: self._finish_page_transition(generation, effect)
-            )
-            self._page_transition_anims.append(animation)
+            animation.setStartValue(1.0)
+            animation.setEndValue(0.0)
             animation.start()
         else:
-            effect = self._page_transition_effects.get(target_host)
-            if effect is not None:
-                effect.setOpacity(1.0)
+            self._finish_page_transition()
         self._page_title_label.setText(spec.title)
         self._page_group_label.setText(spec.group)
         self._about_button.setProperty("active", spec.page_id == "contribution_list")
@@ -679,11 +741,19 @@ class WorkbenchWindow(QWidget):
         else:
             self._clear_navigation_selection()
 
-    def _finish_page_transition(
-        self, generation: int, effect: QGraphicsOpacityEffect
-    ) -> None:
-        if generation == self._page_transition_generation:
-            effect.setOpacity(1.0)
+    def _finish_page_transition(self) -> None:
+        overlay = getattr(self, "_page_transition_overlay", None)
+        if overlay is None:
+            return
+        overlay.set_opacity(0.0)
+        overlay.hide()
+
+    def _finish_theme_transition(self) -> None:
+        overlay = getattr(self, "_theme_transition_overlay", None)
+        if overlay is None:
+            return
+        overlay.set_opacity(0.0)
+        overlay.hide()
 
     def _clear_navigation_selection(self) -> None:
         self._button_group.setExclusive(False)
@@ -921,6 +991,7 @@ class WorkbenchWindow(QWidget):
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
+        self._sync_transition_overlay_geometry()
         if hasattr(self, "_size_grip"):
             self._size_grip.move(
                 self.width() - self._size_grip.width(),

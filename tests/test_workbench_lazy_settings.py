@@ -35,6 +35,7 @@ class WorkbenchLazySettingsTests(unittest.TestCase):
         self.assertEqual(panel._config_tab_meta, {})
         page = panel.create_workbench_page('ui_anim')
         self.assertIs(page, panel._workbench_pages['ui_anim'])
+        self.assertEqual(panel._opacity.opacity(), 1.0)
         self.assertEqual(set(panel._config_tab_meta), {'ui_anim'})
         theme_fields = [
             field
