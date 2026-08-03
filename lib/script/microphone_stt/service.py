@@ -31,8 +31,12 @@ _DEFAULT_SPEECH_RMS_THRESHOLD = 550
 _DEFAULT_DENOISE_STRENGTH = 0.65
 _DEFAULT_NOISE_GATE_THRESHOLD = 180
 _AUTO_VOICE_START_CONFIRM_CHUNKS = 2
+_AUTO_STABLE_LOUDNESS_RATIO = 1.6
 _AUTO_NOISE_WORDS = frozenset({"huh", "uh", "um", "嗯", "啊", "呃"})
 _DENOISE_FRAME_SAMPLES = 160  # 10 ms at the default 16 kHz sample rate
+_DENOISE_CHANGE_RATE_THRESHOLD = 0.08
+_DENOISE_STABLE_GATE_MULTIPLIER = 1.6
+_DENOISE_SPEECH_HOLD_FRAMES = 12  # Keep a detected onset for roughly 120 ms.
 _MODEL_ENV_KEYS = ("VOSK_MODEL_PATH", "VOSK_MODEL_DIR")
 _MODEL_DIR_CANDIDATES = (
     "resc/models/vosk-model-small-cn-0.22",
@@ -61,11 +65,14 @@ def denoise_pcm16(
     strength: float = _DEFAULT_DENOISE_STRENGTH,
     gate_threshold: int = _DEFAULT_NOISE_GATE_THRESHOLD,
     noise_floor: float | None = None,
+    state: dict[str, float] | None = None,
 ) -> tuple[bytes, float]:
     """对单声道 PCM16 应用轻量自适应噪声门。
 
     低于噪声门的样本按强度衰减，高于噪声门的语音样本保持原幅度；
-    返回处理后的 PCM 和用于下一块音频的噪声底估计。
+    帧间响度变化明显时暂时保护语音起始和辅音，持续稳定的高响度则按
+    噪声处理。返回处理后的 PCM 和用于下一块音频的噪声底估计；若传入
+    ``state``，还会保存跨块的上一帧响度与语音保持状态。
     """
     if not chunk:
         return chunk, max(0.0, float(noise_floor or 0.0))
@@ -87,11 +94,36 @@ def denoise_pcm16(
         frame = samples[start:start + _DENOISE_FRAME_SAMPLES]
         if frame:
             frame_rms.append(math.sqrt(sum(int(sample) * int(sample) for sample in frame) / len(frame)))
-    frame_rms.sort()
-    quiet_index = max(0, int(len(frame_rms) * 0.25) - 1)
-    observed_floor = frame_rms[quiet_index] if frame_rms else 0.0
+    sorted_frame_rms = sorted(frame_rms)
+    quiet_index = max(0, int(len(sorted_frame_rms) * 0.25) - 1)
+    observed_floor = sorted_frame_rms[quiet_index] if sorted_frame_rms else 0.0
 
     floor = max(0.0, float(noise_floor or gate))
+    denoise_state = state if state is not None else {}
+    previous_rms_value = denoise_state.get("previous_rms")
+    previous_rms = (
+        max(0.0, float(previous_rms_value))
+        if previous_rms_value is not None
+        else None
+    )
+    change_rates: list[float] = []
+    dynamic_frames: list[bool] = []
+    rate_previous = previous_rms
+    for current_rms in frame_rms:
+        if rate_previous is None:
+            change_rate = 0.0
+        else:
+            reference = max(rate_previous, current_rms, float(gate), 1.0)
+            change_rate = abs(current_rms - rate_previous) / reference
+        change_rates.append(change_rate)
+        dynamic_frames.append(
+            change_rate >= _DENOISE_CHANGE_RATE_THRESHOLD
+            and max(current_rms, rate_previous or 0.0)
+            >= max(float(gate), floor * 1.1)
+        )
+        rate_previous = current_rms
+    denoise_state["last_change_rate"] = max(change_rates, default=0.0)
+
     # Allow the floor to learn a louder steady microphone/room noise. The
     # quiet-quartile estimate keeps normal speech from contaminating it, while
     # the wider bound prevents a fan or air conditioner from pinning VAD to
@@ -100,20 +132,59 @@ def denoise_pcm16(
         # Adapt quickly enough to follow a changed microphone, but slowly
         # enough that a short quiet gap does not collapse the noise profile.
         floor = floor * 0.88 + observed_floor * 0.12
+    stable_chunk = (
+        len(frame_rms) >= 2
+        and not any(dynamic_frames)
+        and max(change_rates, default=0.0) < _DENOISE_CHANGE_RATE_THRESHOLD
+    )
+    if stable_chunk and observed_floor > floor:
+        # A stable loud source is more likely fan/electrical noise than speech.
+        # Learn it faster so the same noise is not handed to Vosk unchanged.
+        floor = floor * 0.65 + observed_floor * 0.35
+
     effective_gate = max(float(gate), floor * 1.45)
     if effective_gate <= 0.0 or strength_value <= 0.0:
         return chunk, floor
 
-    knee_start = max(floor * 1.05, effective_gate * 0.45)
     minimum_gain = max(0.08, 1.0 - 0.82 * strength_value)
+    frame_gates = [effective_gate] * len(frame_rms)
+    speech_hold_frames = max(
+        0,
+        int(float(denoise_state.get("speech_hold_frames", 0.0) or 0.0)),
+    )
+    for frame_index, current_rms in enumerate(frame_rms):
+        is_dynamic = dynamic_frames[frame_index]
+        protected = is_dynamic or speech_hold_frames > 0
+        if is_dynamic:
+            speech_hold_frames = _DENOISE_SPEECH_HOLD_FRAMES
+        elif speech_hold_frames > 0:
+            speech_hold_frames -= 1
+
+        if (
+            len(frame_rms) >= 2
+            and not protected
+            and change_rates[frame_index] < _DENOISE_CHANGE_RATE_THRESHOLD
+            and current_rms >= max(float(gate), floor * 1.15)
+        ):
+            frame_gates[frame_index] = max(
+                effective_gate,
+                current_rms * _DENOISE_STABLE_GATE_MULTIPLIER,
+            )
+
+    denoise_state["previous_rms"] = frame_rms[-1]
+    denoise_state["speech_hold_frames"] = float(speech_hold_frames)
+
     for index, sample in enumerate(samples):
         magnitude = abs(int(sample))
-        if magnitude >= effective_gate:
+        frame_index = min(index // _DENOISE_FRAME_SAMPLES, len(frame_gates) - 1)
+        frame_gate = frame_gates[frame_index]
+        if magnitude >= frame_gate:
             continue
+        knee_start = max(floor * 1.05, frame_gate * 0.45)
         if magnitude <= knee_start:
             gain = minimum_gain
         else:
-            ratio = (magnitude - knee_start) / max(1.0, effective_gate - knee_start)
+            ratio = (magnitude - knee_start) / max(1.0, frame_gate - knee_start)
             ratio = max(0.0, min(1.0, ratio))
             # Smoothstep avoids the hard gain corner of a conventional gate.
             curve = ratio * ratio * (3.0 - 2.0 * ratio)
@@ -219,7 +290,10 @@ def _normalize_text(text) -> str:
 def _is_spurious_auto_text(text: str) -> bool:
     """Reject common one-word recognizer hallucinations from silent audio."""
     normalized = _normalize_text(text).lower().strip(".,!?;:，。！？；：")
-    return normalized in _AUTO_NOISE_WORDS
+    if normalized in _AUTO_NOISE_WORDS:
+        return True
+    tokens = re.findall(r"[a-z]+|[\u4e00-\u9fff]", normalized)
+    return len(tokens) > 1 and all(token in _AUTO_NOISE_WORDS for token in tokens)
 
 
 def _coerce_int(value, default: int, minimum: int, maximum: int) -> int:
@@ -901,6 +975,7 @@ class MicrophoneSttService:
         auto_segments: list[str] = []
         last_voice_time = 0.0
         noise_floor: float | None = None
+        denoise_state: dict[str, float] = {}
 
         try:
             while True:
@@ -925,12 +1000,16 @@ class MicrophoneSttService:
                 if chunk is None:
                     break
 
+                loudness_has_history = (
+                    options.denoise_enabled and "previous_rms" in denoise_state
+                )
                 if options.denoise_enabled:
                     chunk, noise_floor = denoise_pcm16(
                         chunk,
                         strength=options.denoise_strength,
                         gate_threshold=options.noise_gate_threshold,
                         noise_floor=noise_floor,
+                        state=denoise_state,
                     )
 
                 if options.auto_mode:
@@ -942,6 +1021,12 @@ class MicrophoneSttService:
                         last_voice_time,
                         noise_floor,
                         options,
+                        loudness_change_rate=(
+                            float(denoise_state.get("last_change_rate", 0.0))
+                            if options.denoise_enabled
+                            else None
+                        ),
+                        loudness_has_history=loudness_has_history,
                     )
                     continue
 
@@ -979,6 +1064,9 @@ class MicrophoneSttService:
         last_voice_time: float,
         noise_floor: float | None,
         options: MicrophoneSttOptions,
+        *,
+        loudness_change_rate: float | None = None,
+        loudness_has_history: bool = False,
     ):
         now = time.monotonic()
         chunk_rms = self._chunk_rms(chunk)
@@ -987,6 +1075,16 @@ class MicrophoneSttService:
             int(max(0.0, float(noise_floor or 0.0)) * 2.2),
         )
         is_speaking = chunk_rms >= adaptive_threshold
+        if (
+            recognizer is None
+            and loudness_has_history
+            and loudness_change_rate is not None
+            and loudness_change_rate < _DENOISE_CHANGE_RATE_THRESHOLD
+            and chunk_rms < adaptive_threshold * _AUTO_STABLE_LOUDNESS_RATIO
+        ):
+            # Once a session has ended, a stable background source must not
+            # re-arm Vosk merely because its level is above the base threshold.
+            is_speaking = False
 
         if recognizer is None and not is_speaking:
             self._auto_voice_candidate_chunks = 0

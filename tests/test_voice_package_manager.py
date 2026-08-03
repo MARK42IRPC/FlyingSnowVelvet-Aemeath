@@ -113,6 +113,15 @@ class VoicePackageManagerTests(unittest.TestCase):
         self.assertFalse(validation.valid)
         self.assertIn("G2PW ONNX 模型", validation.reason)
 
+    def test_package_validation_requires_gpt_sovits_pronunciation_rules(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            package_root = _create_fake_package(Path(tmp) / "ONNX_aimisiV2")
+            (package_root / "common" / "G2P" / "G2PW" / "polyphonic-fix.rep").unlink()
+            validation = validate_voice_package(package_root)
+
+        self.assertFalse(validation.valid)
+        self.assertIn("polyphonic-fix.rep", validation.reason)
+
     def test_g2pw_model_must_be_covered_by_checksum_manifest(self):
         with tempfile.TemporaryDirectory() as tmp:
             package_root = _create_fake_package(Path(tmp) / "ONNX_aimisiV2")

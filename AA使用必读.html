@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>飞行雪绒资料舱 · LTS1.0.6pre5</title>
+    <title>飞行雪绒资料舱 · LTS1.0.6pre6</title>
     <style>
         @font-face {
             font-family: 'HarmonyOS Sans';
@@ -266,7 +266,7 @@
     <main>
         <div class="hero">
             <h1>飞行雪绒资料舱</h1>
-            <p>贡献 + 赞助 + 文档 · LTS1.0.6pre5<br>基于项目默认配色 + 粒子灵感打造，方便在浏览器里查阅 doc 与贡献记录。生成时间：2026-08-03 02:45:35</p>
+            <p>贡献 + 赞助 + 文档 · LTS1.0.6pre6<br>基于项目默认配色 + 粒子灵感打造，方便在浏览器里查阅 doc 与贡献记录。生成时间：2026-08-03 22:10:40</p>
         </div>
         <section id="top-panels">
             <div class="top-panels">
@@ -823,11 +823,11 @@ rg -n &quot;PyQt5|QPoint|QRect|QImage|QPixmap|QPainter|QTimer|pyqtSignal&quot; l
         </article>
         <article class="card">
             <header>
-                <div class="eyebrow">2026-08-03 00:04</div>
+                <div class="eyebrow">2026-08-03 19:59</div>
                 <h3>Script开发指南</h3>
                 <a class="download" href="doc/Script开发指南.txt" download>下载原文件</a>
             </header>
-            <pre>飞行雪绒 Script 开发指南（LTS1.0.6pre5）
+            <pre>飞行雪绒 Script 开发指南（LTS1.0.6pre6）
 
 一、总览
 - 主入口：`lib/core/qt_desktop_pet.py`
@@ -979,11 +979,11 @@ manager_registry.register(DemoManager.MANAGER_ID, DemoManager)
         </article>
         <article class="card">
             <header>
-                <div class="eyebrow">2026-08-03 02:29</div>
+                <div class="eyebrow">2026-08-03 19:59</div>
                 <h3>事件系统使用说明</h3>
                 <a class="download" href="doc/事件系统使用说明.txt" download>下载原文件</a>
             </header>
-            <pre>飞行雪绒事件系统使用说明（LTS1.0.6pre5）
+            <pre>飞行雪绒事件系统使用说明（LTS1.0.6pre6）
 
 一、核心入口
 - 实现：`lib/core/event/center.py`
@@ -2412,11 +2412,11 @@ gamepack/official/lahai_tetris.zip
         </article>
         <article class="card">
             <header>
-                <div class="eyebrow">2026-08-03 00:04</div>
+                <div class="eyebrow">2026-08-03 19:59</div>
                 <h3>粒子效果说明</h3>
                 <a class="download" href="doc/粒子效果说明.txt" download>下载原文件</a>
             </header>
-            <pre>飞行雪绒粒子效果说明（LTS1.0.6pre5）
+            <pre>飞行雪绒粒子效果说明（LTS1.0.6pre6）
 
 一、总体说明
 - 事件入口：`EventType.PARTICLE_REQUEST`
@@ -2791,7 +2791,7 @@ Event(EventType.PARTICLE_REQUEST, {
         </article>
         <article class="card">
             <header>
-                <div class="eyebrow">2026-08-03 02:01</div>
+                <div class="eyebrow">2026-08-03 20:11</div>
                 <h3>维护手册</h3>
                 <a class="download" href="doc/维护手册.md" download>下载原文件</a>
             </header>
@@ -2933,7 +2933,7 @@ Event(EventType.PARTICLE_REQUEST, {
 
 ## 5. 配置与用户数据
 
-`config/config_*.py` 只存程序默认值，运行时禁止改写 Python 源文件。普通设置通过 `config.user_settings` 保存为版本化稀疏 JSON；密钥和登录态使用独立 secrets/state 路径。麦克风识别提供轻量 PCM16 自适应降噪：`microphone_denoise_enabled` 控制开关，`microphone_denoise_strength` 控制衰减强度，`microphone_noise_gate_threshold` 控制噪声门阈值；降噪在识别 Worker 内执行，自动语聊 RMS 判定使用处理后的音频。
+`config/config_*.py` 只存程序默认值，运行时禁止改写 Python 源文件。普通设置通过 `config.user_settings` 保存为版本化稀疏 JSON；密钥和登录态使用独立 secrets/state 路径。麦克风识别提供轻量 PCM16 自适应降噪：`microphone_denoise_enabled` 控制开关，`microphone_denoise_strength` 控制衰减强度，`microphone_noise_gate_threshold` 控制噪声门阈值；降噪在识别 Worker 内按 10ms 帧估计噪声底和响度变化率，稳定高响度按噪声衰减，突发变化保留短暂语音保持，自动语聊 RMS 判定使用处理后的音频。
 
 ```text
 默认值: config/config_*.py
@@ -2991,7 +2991,7 @@ AI 密钥保存到 `&lt;用户根&gt;/user/secrets/ai.json`。设置面板每次
 
 设置面板的元宝登录区只显示当前可执行操作：未登录时显示“微信登录元宝”，已登录时显示“退出元宝登录”。面板读取已有服务状态必须使用无副作用的 `peek_service_status()`，不得为检查状态启动服务、切换端口或触发浏览器登录。
 
-GSV 兼容门面不再启动端口 9880 的 HTTP 服务，而是在原语音工作线程中复用单个 ONNX 引擎。格式版本 2 保留 GPT-SoVITS API v2 参数命名；同一格式内影响正确性的模型或推理升级使用独立 `runtime_revision`，客户端必须拒绝低于当前最低修订的旧包并显示更新入口。语速必须使用 VITS 图内 `speed_factor`，禁止恢复改变音高的最终波形重采样。当前 revision 4 包内置中文 RoBERTa，RoBERTa 加载失败必须报错，不能退回零特征；参考 HuBERT 提示语义必须保留原生链路的尾静音。G2PW 校验只要求 `common/G2P/G2PW/` 中存在非空的 `g2pW*.onnx` 并纳入 SHA-256 清单，不把 `g2pW_int4_fp16mix.onnx` 或任何量化精度文件名作为固定格式。安装器提供完全包、默认中等包和节约包三档，优先 ModelScope、回退 Hugging Face；每档为单个 RAR5 solid archive，使用 64 MiB 字典，安装器优先读取两个公开 resolve URL 的 `Content-Length` 或 `Content-Range`，大小与空间检查使用远端真实值；若用户在列表探测完成前开始安装，安装 Worker 会先对当前档位再次探测，网络不可达时才回退 `VoicePackageProfile` 的离线估算。语音包格式、单文件下载、安装、用户确认删除、旧运行时清理和随包 UnRAR 边界以 `doc/语音包协议.md` 为准。安装前不得为定位旧运行时递归扫描用户目录；安装成功后只清理路径记录明确指向的旧外部 GSVmove。包删除必须由服务在推理锁内释放引擎后执行，并限定在固定磁盘的受管理目录；仓库内 `lib/script/gsvmove/` 不属于删除目标。
+GSV 兼容门面不再启动端口 9880 的 HTTP 服务，而是在原语音工作线程中复用单个 ONNX 引擎。格式版本 2 保留 GPT-SoVITS API v2 参数命名；同一格式内影响正确性的模型或推理升级使用独立 `runtime_revision`，客户端必须拒绝低于当前最低修订的旧包并显示更新入口。语速必须使用 VITS 图内 `speed_factor`，禁止恢复改变音高的最终波形重采样。当前 revision 6 包内置中文 RoBERTa，RoBERTa 加载失败必须报错，不能退回零特征；参考 HuBERT 提示语义必须保留原生链路的尾静音。G2PW 校验只要求 `common/G2P/G2PW/` 中存在非空的 `g2pW*.onnx` 并纳入 SHA-256 清单，不把 `g2pW_int4_fp16mix.onnx` 或任何量化精度文件名作为固定格式；同目录还必须包含原 GPT-SoVITS 的 `polyphonic.rep` 与 `polyphonic-fix.rep`，在整句 G2PW 后按词优先应用。安装器提供完全包、默认中等包和节约包三档，优先 ModelScope、回退 Hugging Face；每档为单个 RAR5 solid archive，使用 64 MiB 字典，安装器优先读取两个公开 resolve URL 的 `Content-Length` 或 `Content-Range`，大小与空间检查使用远端真实值；若用户在列表探测完成前开始安装，安装 Worker 会先对当前档位再次探测，网络不可达时才回退 `VoicePackageProfile` 的离线估算。语音包格式、单文件下载、安装、用户确认删除、旧运行时清理和随包 UnRAR 边界以 `doc/语音包协议.md` 为准。安装前不得为定位旧运行时递归扫描用户目录；安装成功后只清理路径记录明确指向的旧外部 GSVmove。包删除必须由服务在推理锁内释放引擎后执行，并限定在固定磁盘的受管理目录；仓库内 `lib/script/gsvmove/` 不属于删除目标。
 
 ONNX 语音的 CPU 与 GPU 后端都必须在低优先级隔离 Worker 中加载和推理，主进程不得创建模型 Session。自动预热只能在 `APP_MAIN` 后提交，避免模型导入、Session 创建和预热推理与 Qt 首屏初始化争用 GIL 和 CPU。可选 GPU 混合推理使用共享根 `voice/runtimes/onnx-directml/&lt;版本-ABI&gt;` 下的隔离 venv。依赖安装阶段固定安装并探测 `onnxruntime-directml==1.22.0`，不得覆盖主 Python 的 CPU ORT。混合 Worker 中 `t2s_stage` 走 CPU，其余五个模型图优先 DirectML；设置关闭必须终止 Worker 而非只切换 Provider，失败时对当前请求回退 CPU Worker。Worker在任何 PyQt 导入前预加载 ONNX Runtime，并清除继承环境中的 Qt DLL 路径。运行库安装失败属于可降级能力，不阻断 CPU 语音和应用启动。
 
@@ -3093,7 +3093,7 @@ py -3 scripts/generate_doc_portal.py
         </article>
         <article class="card">
             <header>
-                <div class="eyebrow">2026-08-03 01:08</div>
+                <div class="eyebrow">2026-08-03 22:10</div>
                 <h3>语音包协议</h3>
                 <a class="download" href="doc/语音包协议.md" download>下载原文件</a>
             </header>
@@ -3109,7 +3109,7 @@ py -3 scripts/generate_doc_portal.py
 {
   &quot;format&quot;: &quot;aemeath-gpt-sovits-onnx&quot;,
   &quot;format_version&quot;: 2,
-  &quot;runtime_revision&quot;: 4,
+  &quot;runtime_revision&quot;: 6,
   &quot;precision_profile&quot;: &quot;fp16&quot;,
   &quot;name&quot;: &quot;aimisiV2&quot;,
   &quot;sample_rate&quot;: 32000,
@@ -3125,7 +3125,7 @@ py -3 scripts/generate_doc_portal.py
 
 当前包内置中文 RoBERTa ONNX 与 tokenizer。中文文本必须生成真实 BERT 特征；RoBERTa 不能加载时推理必须失败，不能静默退回零特征。英文继续使用英文 G2P 前端。
 
-必要文件由 `package_manager._REQUIRED_PACKAGE_FILES`、按 `precision_profile` 分类的文件表以及动态发现的 G2PW ONNX 模型共同定义，至少包括推理入口、参考素材、依赖清单、角色模型、CN-HuBERT、说话人编码器、中文 RoBERTa 和中英文 G2P 资源。G2PW 只要求 `common/G2P/G2PW/` 下存在至少一个非空的 `g2pW*.onnx`，不得把 `g2pW_int4_fp16mix.onnx` 或其它量化文件名视为格式标准；全精度、FP16 或量化实现均由发布包自身决定，实际模型文件必须进入 `SHA256SUMS.txt`。`format_version` 描述稳定的公开包结构；`runtime_revision` 描述同一结构内必须更新的模型或推理修订。当前最低运行时修订为 4，缺失该字段或小于 4 的旧包必须提示“安装最新语音包”。新增格式版本时不得静默改变版本 1 的含义。
+必要文件由 `package_manager._REQUIRED_PACKAGE_FILES`、按 `precision_profile` 分类的文件表以及动态发现的 G2PW ONNX 模型共同定义，至少包括推理入口、参考素材、依赖清单、角色模型、CN-HuBERT、说话人编码器、中文 RoBERTa 和中英文 G2P 资源。G2PW 只要求 `common/G2P/G2PW/` 下存在至少一个非空的 `g2pW*.onnx`，不得把 `g2pW_int4_fp16mix.onnx` 或其它量化文件名视为格式标准；全精度、FP16 或量化实现均由发布包自身决定，实际模型文件必须进入 `SHA256SUMS.txt`。中文前端先执行整句 G2PW 上下文推理，再按 Genie 与原 GPT-SoVITS 共用的 jieba 分词结果应用 `polyphonic.rep` 和 `polyphonic-fix.rep`：整词规则优先，未命中时才使用单字规则。两份 `.rep` 规则是运行时修订 6 的必需资源并必须进入 `SHA256SUMS.txt`；旧版 Genie `polyphonic.pickle` 不参与该链路，也不再作为包必需文件。G2PW 对非多音字使用自身基础拼音 fallback 以生成完整音素序列。`format_version` 描述稳定的公开包结构；`runtime_revision` 描述同一结构内必须更新的模型或推理修订。当前最低运行时修订为 6，缺失该字段或小于 6 的旧包必须提示“安装最新语音包”。新增格式版本时不得静默改变版本 1 的含义。
 
 ## 2. 完整性与安全
 
@@ -3147,9 +3147,9 @@ SHA-256：0D3715001790F0FD18D3E850F947B540530B2D2DEB9A2E6A9E84F2ED7B234235
 
 | 档位 | 文件 | 远端压缩包大小 | 解压后估算 | 实际精度 |
 | --- | --- | ---: | ---: | --- |
-| 完全包 | `Aemeath_ONNX_GSV_Complete_FP32.rar` | 读取 `Content-Length`（离线估算约 1.25 GiB） | 1,636,546,624 B | 非 INT8 高质量链路；上游 RoBERTa 源权重为 FP16 |
-| 中等包 | `Aemeath_ONNX_GSV_Medium_FP16.rar` | 读取 `Content-Length`（离线估算约 1.19 GiB） | 1,408,663,952 B | FP16 外置权重，运行时恢复 FP32 |
-| 节约包（强烈推荐） | `Aemeath_ONNX_GSV_Saver_INT8.rar` | 读取 `Content-Length`（离线估算约 1.04 GiB） | 1,282,211,358 B | RoBERTa QInt8、CN-HuBERT/T2S INT4、VITS/Speaker FP16 |
+| 完全包 | `Aemeath_ONNX_GSV_Complete_FP32.rar` | 读取 `Content-Length`（离线估算约 1.63 GiB） | 2,077,867,114 B | 原始 FP32 G2PW；非 INT8 高质量链路；上游 RoBERTa 源权重为 FP16 |
+| 中等包 | `Aemeath_ONNX_GSV_Medium_FP16.rar` | 读取 `Content-Length`（离线估算约 1.30 GiB） | 1,532,429,768 B | G2PW 与声学模型使用 FP16 外置权重，运行时恢复 FP32 |
+| 节约包（强烈推荐） | `Aemeath_ONNX_GSV_Saver_INT8.rar` | 读取 `Content-Length`（离线估算约 1.04 GiB） | 1,283,891,403 B | G2PW INT4+FP16、RoBERTa QInt8、CN-HuBERT/T2S INT4、VITS/Speaker FP16 |
 
 安装前预留所选 archive、解压目录和额外 512 MiB 暂存空间。下拉档位、空间预检和进度条优先使用远端真实大小；用户在列表异步探测完成前开始安装时，安装 Worker 会先对当前档位再次探测，远端暂时不可达时才使用 profile 中的离线估算。下载响应的 `Content-Length` 会再次校正进度总量。不得继续展示 600 MB 或旧的分卷数量。内置 UnRAR 校验与单文件下载同时启动。
 
@@ -3218,11 +3218,11 @@ py -3 scripts/package_green_release.py --dry-run --version VERIFY
         </article>
         <article class="card">
             <header>
-                <div class="eyebrow">2026-08-02 23:44</div>
+                <div class="eyebrow">2026-08-03 19:59</div>
                 <h3>调度系统使用说明</h3>
                 <a class="download" href="doc/调度系统使用说明.txt" download>下载原文件</a>
             </header>
-            <pre>飞行雪绒调度系统使用说明（LTS1.0.6pre5）
+            <pre>飞行雪绒调度系统使用说明（LTS1.0.6pre6）
 
 一、核心实现
 - 文件：`lib/core/timing/manager.py`
@@ -3352,7 +3352,7 @@ pet.cancel_task(task_id)
             </div>
         </section>
     </main>
-    <footer>由飞行雪绒 LTS1.0.6pre5 代码生成 · 粉粉青青也是科技感 (ﾉ◕ヮ◕)ﾉ*:･ﾟ✧</footer>
+    <footer>由飞行雪绒 LTS1.0.6pre6 代码生成 · 粉粉青青也是科技感 (ﾉ◕ヮ◕)ﾉ*:･ﾟ✧</footer>
     <script>
     (() => {
         const letters = "FLYINGSNOWVELVET";
