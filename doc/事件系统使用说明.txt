@@ -1,4 +1,4 @@
-飞行雪绒事件系统使用说明（LTS1.0.6pre6）
+飞行雪绒事件系统使用说明（LTS1.0.6pre7）
 
 一、核心入口
 - 实现：`lib/core/event/center.py`
@@ -99,8 +99,8 @@ CONFIG_UPDATED
 MIC_STT_*
 - `MIC_STT_START`
 - `MIC_STT_STOP`
-- `MIC_STT_PARTIAL`
-- `MIC_STT_FINAL`
+- `MIC_STT_PARTIAL`（保留兼容事件；当前整句识别路径不发布实时增量文本）
+- `MIC_STT_FINAL`（完成端点检测、整句降噪和 Vosk 识别后发布）
 - `MIC_STT_STATE_CHANGE`
 
 MUSIC_*

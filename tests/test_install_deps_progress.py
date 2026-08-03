@@ -65,6 +65,29 @@ class InstallDependenciesProgressTests(unittest.TestCase):
         names = [package for package, _description, _checks in install_deps.DEPENDENCIES]
         self.assertLess(names.index("jieba-fast"), names.index("genie-tts"))
 
+    def test_webrtcvad_wheels_dependency_checks_webrtcvad_module(self):
+        entry = next(
+            item for item in install_deps.DEPENDENCIES if item[0] == "webrtcvad-wheels"
+        )
+        self.assertEqual(entry[2], ("webrtcvad",))
+
+    def test_microphone_runtime_requires_webrtcvad(self):
+        checks = []
+
+        def installed(_python, package, import_checks=()):
+            checks.append((package, import_checks))
+            return True
+
+        with patch.object(install_deps, "_pkg_installed", side_effect=installed):
+            ready = install_deps._microphone_runtime_ready("python.exe")
+
+        self.assertTrue(ready)
+        self.assertEqual(checks, [
+            ("sounddevice", ("sounddevice",)),
+            ("vosk", ("vosk",)),
+            ("webrtcvad-wheels", ("webrtcvad",)),
+        ])
+
     def test_jieba_fast_wheel_uses_resource_mirror_and_hash(self):
         wheel_bytes = b"verified wheel"
         expected_hash = hashlib.sha256(wheel_bytes).hexdigest()

@@ -1,4 +1,4 @@
-飞行雪绒 Script 开发指南（LTS1.0.6pre6）
+飞行雪绒 Script 开发指南（LTS1.0.6pre7）
 
 一、总览
 - 主入口：`lib/core/qt_desktop_pet.py`
@@ -94,8 +94,10 @@ AI 工具调度位于 `lib/script/tool_dispatcher/dispatcher.py`。`STREAM_FINAL
 - 同一面板的重复点击不能覆盖先提交任务的完成动作，也不能在旧任务完成前启动多次关闭/重启。
 
 麦克风识别
-- `VOICE.microphone_denoise_enabled` 控制轻量 PCM16 自适应降噪；`microphone_denoise_strength` 控制低于噪声门的衰减强度，`microphone_noise_gate_threshold` 控制噪声门起点。
-- 降噪在识别 Worker 中进行，自动语聊的 RMS 说话判定使用处理后的 PCM；算法不引入大型音频依赖。
+- `lib/script/microphone_stt/` 使用 `webrtcvad-wheels` 按 20ms PCM16 帧判断语音起止；识别模型仍为现有 Vosk，不在录音过程中逐块解码。
+- 一句语音收集完成后，Worker 使用 NumPy 频谱软掩蔽降噪，再将完整 PCM 送入 Vosk；`microphone_denoise_enabled` 控制开关，`microphone_denoise_strength` 控制衰减强度，`microphone_noise_gate_threshold` 仅用于无静音参考时选择低响度噪声帧。
+- 手动语聊检测到说话后约 0.6 秒静音即结算整句，显式停止也会立即结算；自动语聊保留约 300ms 起始预录和配置的句尾静音保持。
+- 降噪后的 Vosk 结果为空时使用原始 PCM 重试；`MIC_STT_FINAL` 仍是聊天提交边界，`MIC_STT_PARTIAL` 不再作为实时识别依赖。
 
 七、运行时数据边界
 以下路径视为运行时目录：

@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>飞行雪绒资料舱 · LTS1.0.6pre6</title>
+    <title>飞行雪绒资料舱 · LTS1.0.6pre7</title>
     <style>
         @font-face {
             font-family: 'HarmonyOS Sans';
@@ -266,7 +266,7 @@
     <main>
         <div class="hero">
             <h1>飞行雪绒资料舱</h1>
-            <p>贡献 + 赞助 + 文档 · LTS1.0.6pre6<br>基于项目默认配色 + 粒子灵感打造，方便在浏览器里查阅 doc 与贡献记录。生成时间：2026-08-03 22:10:40</p>
+            <p>贡献 + 赞助 + 文档 · LTS1.0.6pre7<br>基于项目默认配色 + 粒子灵感打造，方便在浏览器里查阅 doc 与贡献记录。生成时间：2026-08-03 23:51:20</p>
         </div>
         <section id="top-panels">
             <div class="top-panels">
@@ -823,11 +823,11 @@ rg -n &quot;PyQt5|QPoint|QRect|QImage|QPixmap|QPainter|QTimer|pyqtSignal&quot; l
         </article>
         <article class="card">
             <header>
-                <div class="eyebrow">2026-08-03 19:59</div>
+                <div class="eyebrow">2026-08-03 23:51</div>
                 <h3>Script开发指南</h3>
                 <a class="download" href="doc/Script开发指南.txt" download>下载原文件</a>
             </header>
-            <pre>飞行雪绒 Script 开发指南（LTS1.0.6pre6）
+            <pre>飞行雪绒 Script 开发指南（LTS1.0.6pre7）
 
 一、总览
 - 主入口：`lib/core/qt_desktop_pet.py`
@@ -923,8 +923,10 @@ AI 工具调度位于 `lib/script/tool_dispatcher/dispatcher.py`。`STREAM_FINAL
 - 同一面板的重复点击不能覆盖先提交任务的完成动作，也不能在旧任务完成前启动多次关闭/重启。
 
 麦克风识别
-- `VOICE.microphone_denoise_enabled` 控制轻量 PCM16 自适应降噪；`microphone_denoise_strength` 控制低于噪声门的衰减强度，`microphone_noise_gate_threshold` 控制噪声门起点。
-- 降噪在识别 Worker 中进行，自动语聊的 RMS 说话判定使用处理后的 PCM；算法不引入大型音频依赖。
+- `lib/script/microphone_stt/` 使用 `webrtcvad-wheels` 按 20ms PCM16 帧判断语音起止；识别模型仍为现有 Vosk，不在录音过程中逐块解码。
+- 一句语音收集完成后，Worker 使用 NumPy 频谱软掩蔽降噪，再将完整 PCM 送入 Vosk；`microphone_denoise_enabled` 控制开关，`microphone_denoise_strength` 控制衰减强度，`microphone_noise_gate_threshold` 仅用于无静音参考时选择低响度噪声帧。
+- 手动语聊检测到说话后约 0.6 秒静音即结算整句，显式停止也会立即结算；自动语聊保留约 300ms 起始预录和配置的句尾静音保持。
+- 降噪后的 Vosk 结果为空时使用原始 PCM 重试；`MIC_STT_FINAL` 仍是聊天提交边界，`MIC_STT_PARTIAL` 不再作为实时识别依赖。
 
 七、运行时数据边界
 以下路径视为运行时目录：
@@ -979,11 +981,11 @@ manager_registry.register(DemoManager.MANAGER_ID, DemoManager)
         </article>
         <article class="card">
             <header>
-                <div class="eyebrow">2026-08-03 19:59</div>
+                <div class="eyebrow">2026-08-03 23:20</div>
                 <h3>事件系统使用说明</h3>
                 <a class="download" href="doc/事件系统使用说明.txt" download>下载原文件</a>
             </header>
-            <pre>飞行雪绒事件系统使用说明（LTS1.0.6pre6）
+            <pre>飞行雪绒事件系统使用说明（LTS1.0.6pre7）
 
 一、核心入口
 - 实现：`lib/core/event/center.py`
@@ -1084,8 +1086,8 @@ CONFIG_UPDATED
 MIC_STT_*
 - `MIC_STT_START`
 - `MIC_STT_STOP`
-- `MIC_STT_PARTIAL`
-- `MIC_STT_FINAL`
+- `MIC_STT_PARTIAL`（保留兼容事件；当前整句识别路径不发布实时增量文本）
+- `MIC_STT_FINAL`（完成端点检测、整句降噪和 Vosk 识别后发布）
 - `MIC_STT_STATE_CHANGE`
 
 MUSIC_*
@@ -1223,7 +1225,7 @@ ENTITY_POSITION_RESPONSE / ENTITY_STATE_RESPONSE
         </article>
         <article class="card">
             <header>
-                <div class="eyebrow">2026-08-03 02:01</div>
+                <div class="eyebrow">2026-08-03 23:20</div>
                 <h3>已注册的事件</h3>
                 <a class="download" href="doc/已注册的事件.txt" download>下载原文件</a>
             </header>
@@ -1638,7 +1640,7 @@ ENTITY_POSITION_RESPONSE / ENTITY_STATE_RESPONSE
 - lib/script/microphone_stt/service.py
 
 [MIC_STT_PARTIAL]
-- lib/script/microphone_stt/service.py
+- 兼容事件：当前整句识别路径不发布实时增量文本
 
 [MOUSE_CLICK]
 - lib/core/input/click.py
@@ -1784,7 +1786,7 @@ ENTITY_POSITION_RESPONSE / ENTITY_STATE_RESPONSE
 - lib/script/microphone_stt/service.py
 
 [MIC_STT_PARTIAL]
-- lib/script/microphone_stt/service.py
+- 兼容事件：当前整句识别路径不发布实时增量文本
 
 [MIC_STT_START]
 - lib/script/microphone_stt/push_to_talk.py
@@ -2412,11 +2414,11 @@ gamepack/official/lahai_tetris.zip
         </article>
         <article class="card">
             <header>
-                <div class="eyebrow">2026-08-03 19:59</div>
+                <div class="eyebrow">2026-08-03 22:53</div>
                 <h3>粒子效果说明</h3>
                 <a class="download" href="doc/粒子效果说明.txt" download>下载原文件</a>
             </header>
-            <pre>飞行雪绒粒子效果说明（LTS1.0.6pre6）
+            <pre>飞行雪绒粒子效果说明（LTS1.0.6pre7）
 
 一、总体说明
 - 事件入口：`EventType.PARTICLE_REQUEST`
@@ -2791,7 +2793,7 @@ Event(EventType.PARTICLE_REQUEST, {
         </article>
         <article class="card">
             <header>
-                <div class="eyebrow">2026-08-03 20:11</div>
+                <div class="eyebrow">2026-08-03 23:51</div>
                 <h3>维护手册</h3>
                 <a class="download" href="doc/维护手册.md" download>下载原文件</a>
             </header>
@@ -2933,7 +2935,7 @@ Event(EventType.PARTICLE_REQUEST, {
 
 ## 5. 配置与用户数据
 
-`config/config_*.py` 只存程序默认值，运行时禁止改写 Python 源文件。普通设置通过 `config.user_settings` 保存为版本化稀疏 JSON；密钥和登录态使用独立 secrets/state 路径。麦克风识别提供轻量 PCM16 自适应降噪：`microphone_denoise_enabled` 控制开关，`microphone_denoise_strength` 控制衰减强度，`microphone_noise_gate_threshold` 控制噪声门阈值；降噪在识别 Worker 内按 10ms 帧估计噪声底和响度变化率，稳定高响度按噪声衰减，突发变化保留短暂语音保持，自动语聊 RMS 判定使用处理后的音频。
+`config/config_*.py` 只存程序默认值，运行时禁止改写 Python 源文件。普通设置通过 `config.user_settings` 保存为版本化稀疏 JSON；密钥和登录态使用独立 secrets/state 路径。麦克风识别使用 `webrtcvad-wheels` 按 20ms PCM16 帧做语音端点检测；`microphone_denoise_enabled` 控制整句 NumPy 频谱软降噪，`microphone_denoise_strength` 控制软掩蔽强度，`microphone_noise_gate_threshold` 仅在缺少静音参考时参与噪声帧选择。手动语聊检测到说话后约 0.6 秒静音即结算，显式停止会立即结算；自动语聊保留起始预录和配置的句尾静音保持。整句收集完成后才创建 Vosk 识别器，降噪结果为空时使用原始 PCM 重试，最终只发布整句文本。
 
 ```text
 默认值: config/config_*.py
@@ -3218,11 +3220,11 @@ py -3 scripts/package_green_release.py --dry-run --version VERIFY
         </article>
         <article class="card">
             <header>
-                <div class="eyebrow">2026-08-03 19:59</div>
+                <div class="eyebrow">2026-08-03 22:53</div>
                 <h3>调度系统使用说明</h3>
                 <a class="download" href="doc/调度系统使用说明.txt" download>下载原文件</a>
             </header>
-            <pre>飞行雪绒调度系统使用说明（LTS1.0.6pre6）
+            <pre>飞行雪绒调度系统使用说明（LTS1.0.6pre7）
 
 一、核心实现
 - 文件：`lib/core/timing/manager.py`
@@ -3352,7 +3354,7 @@ pet.cancel_task(task_id)
             </div>
         </section>
     </main>
-    <footer>由飞行雪绒 LTS1.0.6pre6 代码生成 · 粉粉青青也是科技感 (ﾉ◕ヮ◕)ﾉ*:･ﾟ✧</footer>
+    <footer>由飞行雪绒 LTS1.0.6pre7 代码生成 · 粉粉青青也是科技感 (ﾉ◕ヮ◕)ﾉ*:･ﾟ✧</footer>
     <script>
     (() => {
         const letters = "FLYINGSNOWVELVET";

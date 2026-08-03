@@ -1,184 +1,234 @@
-import array
+import math
+import queue
+import threading
 import unittest
+
+import numpy as np
 
 from lib.script.microphone_stt.service import (
     MicrophoneSttOptions,
     MicrophoneSttService,
     _is_spurious_auto_text,
+    _split_pcm16_frames,
     denoise_pcm16,
 )
 
 
 class MicrophoneDenoiseTests(unittest.TestCase):
     @staticmethod
+    def _tone(level: float, frequency: float, seconds: float = 0.4, sample_rate: int = 16000) -> bytes:
+        count = int(seconds * sample_rate)
+        time_axis = np.arange(count, dtype=np.float32) / sample_rate
+        samples = np.rint(level * np.sin(2.0 * math.pi * frequency * time_axis))
+        return np.clip(samples, -32768, 32767).astype("<i2").tobytes()
+
+    @staticmethod
     def _rms(chunk: bytes) -> float:
-        samples = array.array("h")
-        samples.frombytes(chunk)
-        return (
-            sum(int(sample) * int(sample) for sample in samples) / len(samples)
-        ) ** 0.5
+        samples = np.frombuffer(chunk, dtype="<i2").astype(np.float32)
+        return float(np.sqrt(np.mean(np.square(samples)))) if samples.size else 0.0
 
     def test_common_auto_mode_noise_words_are_suppressed(self):
         self.assertTrue(_is_spurious_auto_text("huh"))
-        self.assertTrue(_is_spurious_auto_text(" huh! "))
-        self.assertTrue(_is_spurious_auto_text("huh huh"))
         self.assertTrue(_is_spurious_auto_text("嗯、啊"))
         self.assertFalse(_is_spurious_auto_text("hello"))
 
-    def test_quiet_samples_are_attenuated_and_speech_samples_are_retained(self):
-        samples = array.array("h", [40, -120, 180, 900, -1400, 40])
+    def test_vad_frame_split_uses_complete_pcm16_frames(self):
+        payload = bytes(range(20))
+        frames = _split_pcm16_frames(payload, 4)
+        self.assertEqual(frames, [payload[:8], payload[8:16]])
+
+    def test_disabled_denoise_keeps_pcm_bytes_unchanged(self):
+        speech = self._tone(2200, 440)
+        filtered, noise_floor = denoise_pcm16(speech, strength=0.0)
+        self.assertEqual(filtered, speech)
+        self.assertGreater(noise_floor, 0.0)
+
+    def test_spectral_soft_mask_reduces_stationary_noise_without_zeroing_speech(self):
+        noise = self._tone(700, 220)
+        speech = self._tone(2600, 700)
+        noise_samples = np.frombuffer(noise, dtype="<i2").astype(np.int32)
+        speech_samples = np.frombuffer(speech, dtype="<i2").astype(np.int32)
+        mixed = np.clip(noise_samples + speech_samples, -32768, 32767).astype("<i2").tobytes()
 
         filtered, noise_floor = denoise_pcm16(
-            samples.tobytes(),
-            strength=1.0,
-            gate_threshold=180,
+            mixed,
+            strength=0.8,
+            noise_reference=noise,
         )
 
-        result = array.array("h")
-        result.frombytes(filtered)
-        self.assertLess(abs(result[0]), abs(samples[0]))
-        self.assertLess(abs(result[1]), abs(samples[1]))
-        self.assertEqual(result[3], samples[3])
-        self.assertEqual(result[4], samples[4])
-        self.assertGreaterEqual(noise_floor, 0.0)
+        self.assertGreater(noise_floor, 0.0)
+        self.assertLess(self._rms(filtered), self._rms(mixed))
+        self.assertGreater(self._rms(filtered), self._rms(noise) * 1.2)
 
-    def test_disabled_strength_keeps_pcm_bytes_unchanged(self):
-        samples = array.array("h", [1, -20, 300, -900])
+    def test_quietest_frames_are_used_when_noise_reference_is_missing(self):
+        quiet = self._tone(300, 180)
+        speech = self._tone(2400, 650)
+        quiet_samples = np.frombuffer(quiet, dtype="<i2").astype(np.int32)
+        speech_samples = np.frombuffer(speech, dtype="<i2").astype(np.int32)
+        mixed = np.clip(quiet_samples + speech_samples, -32768, 32767).astype("<i2").tobytes()
 
-        filtered, _ = denoise_pcm16(
-            samples.tobytes(),
-            strength=0.0,
-            gate_threshold=180,
-        )
+        filtered, noise_floor = denoise_pcm16(mixed, strength=0.6)
 
-        self.assertEqual(filtered, samples.tobytes())
+        self.assertGreater(noise_floor, 0.0)
+        self.assertGreater(self._rms(filtered), 0.0)
 
-    def test_noise_floor_adapts_only_for_quiet_chunks(self):
-        samples = array.array("h", [80] * 8)
+    def test_default_capture_is_vad_sized_and_options_keep_compatibility(self):
+        options = MicrophoneSttOptions()
+        self.assertEqual(options.block_size, 320)
+        self.assertEqual(options.vad_mode, 2)
+        self.assertEqual(options.pre_roll_ms, 300)
 
-        _, initial_floor = denoise_pcm16(
-            samples.tobytes(),
-            strength=0.5,
-            gate_threshold=180,
-        )
-        _, updated_floor = denoise_pcm16(
-            samples.tobytes(),
-            strength=0.5,
-            gate_threshold=180,
-            noise_floor=initial_floor,
-        )
+    def test_offline_recognition_collects_final_text_only(self):
+        class FakeRecognizer:
+            def __init__(self):
+                self.chunks = 0
 
-        self.assertGreaterEqual(updated_floor, 0.0)
-        self.assertLessEqual(updated_floor, initial_floor)
+            def AcceptWaveform(self, chunk):
+                self.chunks += 1
+                return False
 
-    def test_noise_floor_learns_steady_louder_room_noise(self):
-        samples = array.array("h", [500] * 160)
+            def FinalResult(self):
+                return '{"text": "hello world"}'
 
-        _, floor = denoise_pcm16(
-            samples.tobytes(),
-            strength=0.65,
-            gate_threshold=180,
-        )
-
-        self.assertGreater(floor, 180.0)
-
-    def test_speech_contamination_does_not_raise_noise_floor(self):
-        quiet = array.array("h", [80] * 160)
-        speech = array.array("h", [2400] * 160)
-        mixed = (quiet + speech).tobytes()
-
-        _, floor = denoise_pcm16(mixed, strength=0.65, gate_threshold=180)
-
-        self.assertLess(floor, 500.0)
-
-    def test_soft_knee_keeps_samples_above_gate_unchanged(self):
-        samples = array.array("h", [170, 220, 900, -1400])
-
-        filtered, _ = denoise_pcm16(
-            samples.tobytes(),
-            strength=0.65,
-            gate_threshold=180,
-        )
-
-        result = array.array("h")
-        result.frombytes(filtered)
-        self.assertLess(abs(result[0]), abs(samples[0]))
-        self.assertLess(abs(result[1]), abs(samples[1]))
-        self.assertEqual(result[2:], samples[2:])
-
-    def test_stable_loud_noise_is_attenuated_by_change_rate_gate(self):
-        samples = array.array("h", [500] * 320)
-
-        filtered, floor = denoise_pcm16(
-            samples.tobytes(),
-            strength=0.65,
-            gate_threshold=180,
-        )
-
-        self.assertGreater(floor, 180.0)
-        self.assertLess(self._rms(filtered), 420.0)
-
-    def test_loudness_rise_preserves_dynamic_speech(self):
-        samples = array.array("h")
-        for level in (120, 900, 1400, 700, 1200, 800):
-            samples.extend([level] * 160)
-
-        filtered, _ = denoise_pcm16(
-            samples.tobytes(),
-            strength=0.65,
-            gate_threshold=180,
-        )
-        result = array.array("h")
-        result.frombytes(filtered)
-
-        self.assertEqual(result[160], 900)
-        self.assertEqual(result[320], 1400)
-
-    def test_loudness_state_protects_onset_across_chunks(self):
-        state: dict[str, float] = {}
-        noise = array.array("h", [500] * 320).tobytes()
-        _, floor = denoise_pcm16(
-            noise,
-            strength=0.65,
-            gate_threshold=180,
-            state=state,
-        )
-
-        speech = array.array("h", [900] * 320)
-        filtered, _ = denoise_pcm16(
-            speech.tobytes(),
-            strength=0.65,
-            gate_threshold=180,
-            noise_floor=floor,
-            state=state,
-        )
-
-        result = array.array("h")
-        result.frombytes(filtered)
-        self.assertEqual(result[0], 900)
-
-    def test_auto_mode_does_not_rearm_on_stable_background_level(self):
         service = object.__new__(MicrophoneSttService)
-        service._auto_voice_candidate_chunks = 0
-        options = MicrophoneSttOptions(auto_mode=True, speech_rms_threshold=550)
-        background = array.array("h", [600] * 320).tobytes()
-
-        recognizer, segments, last_voice_time = service._handle_auto_mode_chunk(
-            lambda: object(),
-            None,
-            [],
-            background,
-            0.0,
-            None,
+        options = MicrophoneSttOptions(denoise_enabled=False)
+        text = service._recognize_utterance(
+            FakeRecognizer,
+            self._tone(1800, 440, seconds=0.1),
+            b"",
             options,
-            loudness_change_rate=0.0,
-            loudness_has_history=True,
+        )
+        self.assertEqual(text, "hello world")
+
+    def test_offline_recognition_keeps_short_tail_frame(self):
+        recognizer = None
+
+        class FakeRecognizer:
+            def __init__(self):
+                nonlocal recognizer
+                recognizer = self
+                self.chunk_sizes = []
+
+            def AcceptWaveform(self, chunk):
+                self.chunk_sizes.append(len(chunk))
+                return False
+
+            def FinalResult(self):
+                return '{"text": "tail kept"}'
+
+        service = object.__new__(MicrophoneSttService)
+        options = MicrophoneSttOptions(denoise_enabled=False)
+        text = service._recognize_utterance(
+            FakeRecognizer,
+            b"\x00\x00" * 321,
+            b"",
+            options,
         )
 
-        self.assertIsNone(recognizer)
-        self.assertEqual(segments, [])
-        self.assertEqual(last_voice_time, 0.0)
-        self.assertEqual(service._auto_voice_candidate_chunks, 0)
+        self.assertEqual(text, "tail kept")
+        self.assertIsNotNone(recognizer)
+        self.assertEqual(recognizer.chunk_sizes, [640, 2])
+
+    def test_empty_denoised_result_retries_original_pcm(self):
+        created = []
+
+        class FakeRecognizer:
+            def __init__(self):
+                self.index = len(created)
+                created.append(self)
+
+            def AcceptWaveform(self, chunk):
+                return False
+
+            def FinalResult(self):
+                text = "" if self.index == 0 else "raw recovered"
+                return '{"text": "%s"}' % text
+
+        service = object.__new__(MicrophoneSttService)
+        text = service._recognize_utterance(
+            FakeRecognizer,
+            self._tone(1800, 440, seconds=0.1),
+            self._tone(200, 120, seconds=0.1),
+            MicrophoneSttOptions(denoise_enabled=True),
+        )
+
+        self.assertEqual(text, "raw recovered")
+        self.assertEqual(len(created), 2)
+
+    def test_manual_worker_collects_audio_frames_until_stop(self):
+        class FakeVadModule:
+            class Vad:
+                def __init__(self, mode):
+                    self.mode = mode
+
+                def is_speech(self, frame, sample_rate):
+                    return True
+
+        finalized = []
+        audio_queue = queue.Queue()
+        audio_queue.put(b"\x01\x00" * 320)
+        audio_queue.put(None)
+
+        service = object.__new__(MicrophoneSttService)
+        service._auto_speech_active = False
+        service._publish_state = lambda *args, **kwargs: None
+        service._finalize_utterance = lambda _factory, frames, noise, _options, **kwargs: finalized.append(
+            (list(frames), list(noise), kwargs)
+        )
+
+        service._worker_loop(
+            lambda: None,
+            MicrophoneSttOptions(auto_mode=False, denoise_enabled=False),
+            audio_queue,
+            threading.Event(),
+            FakeVadModule,
+        )
+
+        self.assertEqual(len(finalized), 1)
+        self.assertEqual(finalized[0][0], [b"\x01\x00" * 320])
+        self.assertEqual(finalized[0][1], [])
+
+    def test_manual_worker_finalizes_after_sentence_silence(self):
+        class FakeVadModule:
+            class Vad:
+                def __init__(self, mode):
+                    self.mode = mode
+
+                def is_speech(self, frame, sample_rate):
+                    return frame[:2] != b"\x00\x00"
+
+        finalized = []
+        audio_queue = queue.Queue()
+        speech_frame = b"\x10\x00" * 320
+        silence_frame = b"\x00\x00" * 320
+        audio_queue.put(speech_frame)
+        audio_queue.put(speech_frame)
+        for _ in range(30):
+            audio_queue.put(silence_frame)
+        audio_queue.put(None)
+
+        service = object.__new__(MicrophoneSttService)
+        service._auto_speech_active = False
+        service._publish_state = lambda *args, **kwargs: None
+        service._finalize_utterance = lambda _factory, frames, noise, _options, **kwargs: finalized.append(
+            (list(frames), list(noise), kwargs)
+        )
+
+        service._worker_loop(
+            lambda: None,
+            MicrophoneSttOptions(
+                auto_mode=False,
+                denoise_enabled=False,
+            ),
+            audio_queue,
+            threading.Event(),
+            FakeVadModule,
+        )
+
+        self.assertEqual(len(finalized), 1)
+        self.assertEqual(finalized[0][0], [speech_frame, speech_frame] + [silence_frame] * 30)
+        self.assertEqual(finalized[0][1], [silence_frame] * 30)
+        self.assertEqual(finalized[0][2]["reason"], "silence")
 
 
 if __name__ == "__main__":

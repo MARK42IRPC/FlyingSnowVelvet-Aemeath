@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 # 当前应用版本（与 README / 发布标签保持一致）
-APP_VERSION = "LTS1.0.6pre6"
+APP_VERSION = "LTS1.0.6pre7"
 # 版本发布日期（ISO 日期字符串，便于比较）
 APP_RELEASE_DATE = "2026-08-03"
 

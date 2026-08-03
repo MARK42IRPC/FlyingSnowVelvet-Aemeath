@@ -1,6 +1,5 @@
 """麦克风语音转文本服务。"""
 
-import array
 import json
 import math
 import os
@@ -10,8 +9,11 @@ import shutil
 import threading
 import time
 from concurrent.futures import Future
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
+
+import numpy as np
 
 from config.config import VOICE
 from config.shared_storage import get_shared_root_dir
@@ -22,21 +24,22 @@ from lib.core.logger import get_logger
 logger = get_logger(__name__)
 
 _DEFAULT_SAMPLE_RATE = 16000
-_DEFAULT_BLOCK_SIZE = 8000
+_DEFAULT_BLOCK_SIZE = 320  # 20 ms at 16 kHz; VAD still splits custom blocks.
 _DEFAULT_CHANNELS = 1
 _DEFAULT_DTYPE = "int16"
-_DEFAULT_QUEUE_SIZE = 32
+_DEFAULT_QUEUE_SIZE = 256
 _DEFAULT_SILENCE_TIMEOUT_SECS = 3.0
+_DEFAULT_MANUAL_SILENCE_TIMEOUT_SECS = 0.6
 _DEFAULT_SPEECH_RMS_THRESHOLD = 550
 _DEFAULT_DENOISE_STRENGTH = 0.65
 _DEFAULT_NOISE_GATE_THRESHOLD = 180
-_AUTO_VOICE_START_CONFIRM_CHUNKS = 2
-_AUTO_STABLE_LOUDNESS_RATIO = 1.6
+_DEFAULT_VAD_MODE = 2
+_DEFAULT_VAD_FRAME_MS = 20
+_DEFAULT_PRE_ROLL_MS = 300
+_DEFAULT_MAX_UTTERANCE_SECS = 30.0
+_DEFAULT_MIN_DENOISE_GAIN = 0.25
 _AUTO_NOISE_WORDS = frozenset({"huh", "uh", "um", "嗯", "啊", "呃"})
-_DENOISE_FRAME_SAMPLES = 160  # 10 ms at the default 16 kHz sample rate
-_DENOISE_CHANGE_RATE_THRESHOLD = 0.08
-_DENOISE_STABLE_GATE_MULTIPLIER = 1.6
-_DENOISE_SPEECH_HOLD_FRAMES = 12  # Keep a detected onset for roughly 120 ms.
+_VAD_SAMPLE_RATES = frozenset({8000, 16000, 32000, 48000})
 _MODEL_ENV_KEYS = ("VOSK_MODEL_PATH", "VOSK_MODEL_DIR")
 _MODEL_DIR_CANDIDATES = (
     "resc/models/vosk-model-small-cn-0.22",
@@ -59,138 +62,142 @@ def _project_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
 
+def _pcm16_samples(payload: bytes) -> np.ndarray:
+    """Decode little-endian mono PCM16 without changing the input buffer."""
+    if not payload:
+        return np.empty(0, dtype=np.float32)
+    usable = payload[: len(payload) - (len(payload) % 2)]
+    if not usable:
+        return np.empty(0, dtype=np.float32)
+    return np.frombuffer(usable, dtype="<i2").astype(np.float32)
+
+
+def _pcm16_rms(payload: bytes) -> float:
+    samples = _pcm16_samples(payload)
+    if samples.size == 0:
+        return 0.0
+    return float(np.sqrt(np.mean(np.square(samples), dtype=np.float64)))
+
+
+def _split_pcm16_frames(payload: bytes, frame_samples: int) -> list[bytes]:
+    frame_bytes = max(1, int(frame_samples)) * 2
+    return [
+        payload[start:start + frame_bytes]
+        for start in range(0, len(payload) - frame_bytes + 1, frame_bytes)
+    ]
+
+
+def _select_noise_reference(
+    payload: bytes,
+    explicit_noise: bytes,
+    *,
+    frame_samples: int,
+    gate_threshold: int,
+) -> bytes:
+    if explicit_noise:
+        return explicit_noise
+    frames = _split_pcm16_frames(payload, frame_samples)
+    if not frames:
+        return payload
+    ranked = sorted(frames, key=_pcm16_rms)
+    quiet_count = max(1, int(len(ranked) * 0.2))
+    quiet = ranked[:quiet_count]
+    below_gate = [frame for frame in quiet if _pcm16_rms(frame) <= max(0, gate_threshold) * 4]
+    return b"".join(below_gate or quiet)
+
+
 def denoise_pcm16(
     chunk: bytes,
     *,
     strength: float = _DEFAULT_DENOISE_STRENGTH,
     gate_threshold: int = _DEFAULT_NOISE_GATE_THRESHOLD,
+    noise_reference: bytes = b"",
+    sample_rate: int = _DEFAULT_SAMPLE_RATE,
     noise_floor: float | None = None,
     state: dict[str, float] | None = None,
 ) -> tuple[bytes, float]:
-    """对单声道 PCM16 应用轻量自适应噪声门。
+    """Apply utterance-level spectral soft masking to PCM16.
 
-    低于噪声门的样本按强度衰减，高于噪声门的语音样本保持原幅度；
-    帧间响度变化明显时暂时保护语音起始和辅音，持续稳定的高响度则按
-    噪声处理。返回处理后的 PCM 和用于下一块音频的噪声底估计；若传入
-    ``state``，还会保存跨块的上一帧响度与语音保持状态。
+    The VAD supplies non-speech frames as ``noise_reference`` whenever
+    possible.  A quietest-frame fallback keeps this helper useful for manual
+    push-to-talk sessions without a leading calibration period.  ``noise_floor``
+    and ``state`` remain accepted for compatibility with older callers.
     """
-    if not chunk:
-        return chunk, max(0.0, float(noise_floor or 0.0))
-    try:
-        samples = array.array('h')
-        samples.frombytes(chunk)
-        if not samples:
-            return chunk, max(0.0, float(noise_floor or 0.0))
-    except Exception:
-        return chunk, max(0.0, float(noise_floor or 0.0))
-
+    del noise_floor, state
+    samples = _pcm16_samples(chunk)
+    if samples.size == 0:
+        return chunk, 0.0
     strength_value = max(0.0, min(1.0, float(strength)))
-    gate = max(0, min(32767, int(gate_threshold)))
-    # Estimate the noise from the quieter short frames. A whole-chunk RMS is
-    # easily contaminated by speech and then raises the gate while someone is
-    # talking, which causes the end of words to be clipped.
-    frame_rms: list[float] = []
-    for start in range(0, len(samples), _DENOISE_FRAME_SAMPLES):
-        frame = samples[start:start + _DENOISE_FRAME_SAMPLES]
-        if frame:
-            frame_rms.append(math.sqrt(sum(int(sample) * int(sample) for sample in frame) / len(frame)))
-    sorted_frame_rms = sorted(frame_rms)
-    quiet_index = max(0, int(len(sorted_frame_rms) * 0.25) - 1)
-    observed_floor = sorted_frame_rms[quiet_index] if sorted_frame_rms else 0.0
+    if strength_value <= 0.0:
+        return chunk, _pcm16_rms(chunk)
 
-    floor = max(0.0, float(noise_floor or gate))
-    denoise_state = state if state is not None else {}
-    previous_rms_value = denoise_state.get("previous_rms")
-    previous_rms = (
-        max(0.0, float(previous_rms_value))
-        if previous_rms_value is not None
-        else None
+    frame_samples = max(160, int(round(float(sample_rate) * 0.02)))
+    reference = _select_noise_reference(
+        chunk,
+        noise_reference,
+        frame_samples=frame_samples,
+        gate_threshold=gate_threshold,
     )
-    change_rates: list[float] = []
-    dynamic_frames: list[bool] = []
-    rate_previous = previous_rms
-    for current_rms in frame_rms:
-        if rate_previous is None:
-            change_rate = 0.0
-        else:
-            reference = max(rate_previous, current_rms, float(gate), 1.0)
-            change_rate = abs(current_rms - rate_previous) / reference
-        change_rates.append(change_rate)
-        dynamic_frames.append(
-            change_rate >= _DENOISE_CHANGE_RATE_THRESHOLD
-            and max(current_rms, rate_previous or 0.0)
-            >= max(float(gate), floor * 1.1)
+    noise = _pcm16_samples(reference)
+    if noise.size == 0:
+        return chunk, 0.0
+
+    frame_length = frame_samples
+    hop = max(1, frame_length // 2)
+    fft_size = 1
+    while fft_size < frame_length * 2:
+        fft_size <<= 1
+    window = np.hanning(frame_length).astype(np.float32)
+    if frame_length <= 1:
+        return chunk, _pcm16_rms(reference)
+
+    def _pad(values: np.ndarray, right: int) -> np.ndarray:
+        mode = "reflect" if values.size > 1 else "edge"
+        return np.pad(values, (frame_length // 2, right), mode=mode)
+
+    right_pad = max(frame_length, frame_length - (samples.size % hop))
+    padded = _pad(samples, right_pad)
+    noise_padded = _pad(noise, max(frame_length, frame_length - (noise.size % hop)))
+
+    def _frame_count(values: np.ndarray) -> int:
+        return max(1, int(math.ceil((values.size - frame_length) / hop)) + 1)
+
+    noise_magnitudes = []
+    for index in range(_frame_count(noise_padded)):
+        start = index * hop
+        frame = noise_padded[start:start + frame_length]
+        if frame.size < frame_length:
+            frame = np.pad(frame, (0, frame_length - frame.size), mode="edge")
+        noise_magnitudes.append(np.abs(np.fft.rfft(frame * window, n=fft_size)))
+    noise_magnitude = np.median(np.asarray(noise_magnitudes), axis=0)
+
+    output = np.zeros(padded.size, dtype=np.float32)
+    weights = np.zeros(padded.size, dtype=np.float32)
+    minimum_gain = max(_DEFAULT_MIN_DENOISE_GAIN, 1.0 - 0.75 * strength_value)
+    for index in range(_frame_count(padded)):
+        start = index * hop
+        frame = padded[start:start + frame_length]
+        if frame.size < frame_length:
+            frame = np.pad(frame, (0, frame_length - frame.size), mode="edge")
+        spectrum = np.fft.rfft(frame * window, n=fft_size)
+        magnitude = np.abs(spectrum)
+        clean_magnitude = np.maximum(
+            magnitude - strength_value * noise_magnitude,
+            magnitude * minimum_gain,
         )
-        rate_previous = current_rms
-    denoise_state["last_change_rate"] = max(change_rates, default=0.0)
+        gain = clean_magnitude / np.maximum(magnitude, 1e-6)
+        # Frequency smoothing reduces isolated musical-noise bins.
+        if gain.size >= 3:
+            gain[1:-1] = (gain[:-2] + gain[1:-1] + gain[2:]) / 3.0
+        restored = np.fft.irfft(spectrum * gain, n=fft_size)[:frame_length]
+        output[start:start + frame_length] += restored * window
+        weights[start:start + frame_length] += window * window
 
-    # Allow the floor to learn a louder steady microphone/room noise. The
-    # quiet-quartile estimate keeps normal speech from contaminating it, while
-    # the wider bound prevents a fan or air conditioner from pinning VAD to
-    # the low default gate forever.
-    if observed_floor <= max(float(gate) * 4.0, floor * 2.0):
-        # Adapt quickly enough to follow a changed microphone, but slowly
-        # enough that a short quiet gap does not collapse the noise profile.
-        floor = floor * 0.88 + observed_floor * 0.12
-    stable_chunk = (
-        len(frame_rms) >= 2
-        and not any(dynamic_frames)
-        and max(change_rates, default=0.0) < _DENOISE_CHANGE_RATE_THRESHOLD
-    )
-    if stable_chunk and observed_floor > floor:
-        # A stable loud source is more likely fan/electrical noise than speech.
-        # Learn it faster so the same noise is not handed to Vosk unchanged.
-        floor = floor * 0.65 + observed_floor * 0.35
-
-    effective_gate = max(float(gate), floor * 1.45)
-    if effective_gate <= 0.0 or strength_value <= 0.0:
-        return chunk, floor
-
-    minimum_gain = max(0.08, 1.0 - 0.82 * strength_value)
-    frame_gates = [effective_gate] * len(frame_rms)
-    speech_hold_frames = max(
-        0,
-        int(float(denoise_state.get("speech_hold_frames", 0.0) or 0.0)),
-    )
-    for frame_index, current_rms in enumerate(frame_rms):
-        is_dynamic = dynamic_frames[frame_index]
-        protected = is_dynamic or speech_hold_frames > 0
-        if is_dynamic:
-            speech_hold_frames = _DENOISE_SPEECH_HOLD_FRAMES
-        elif speech_hold_frames > 0:
-            speech_hold_frames -= 1
-
-        if (
-            len(frame_rms) >= 2
-            and not protected
-            and change_rates[frame_index] < _DENOISE_CHANGE_RATE_THRESHOLD
-            and current_rms >= max(float(gate), floor * 1.15)
-        ):
-            frame_gates[frame_index] = max(
-                effective_gate,
-                current_rms * _DENOISE_STABLE_GATE_MULTIPLIER,
-            )
-
-    denoise_state["previous_rms"] = frame_rms[-1]
-    denoise_state["speech_hold_frames"] = float(speech_hold_frames)
-
-    for index, sample in enumerate(samples):
-        magnitude = abs(int(sample))
-        frame_index = min(index // _DENOISE_FRAME_SAMPLES, len(frame_gates) - 1)
-        frame_gate = frame_gates[frame_index]
-        if magnitude >= frame_gate:
-            continue
-        knee_start = max(floor * 1.05, frame_gate * 0.45)
-        if magnitude <= knee_start:
-            gain = minimum_gain
-        else:
-            ratio = (magnitude - knee_start) / max(1.0, frame_gate - knee_start)
-            ratio = max(0.0, min(1.0, ratio))
-            # Smoothstep avoids the hard gain corner of a conventional gate.
-            curve = ratio * ratio * (3.0 - 2.0 * ratio)
-            gain = minimum_gain + (1.0 - minimum_gain) * curve
-        samples[index] = max(-32768, min(32767, int(round(sample * gain))))
-    return samples.tobytes(), floor
+    start = frame_length // 2
+    end = start + samples.size
+    cleaned = output[start:end] / np.maximum(weights[start:end], 1e-3)
+    cleaned = np.clip(np.rint(cleaned), -32768, 32767).astype("<i2")
+    return cleaned.tobytes(), _pcm16_rms(reference)
 
 
 def _is_ascii_path_text(value: str) -> bool:
@@ -493,6 +500,9 @@ class MicrophoneSttOptions:
     denoise_enabled: bool = True
     denoise_strength: float = _DEFAULT_DENOISE_STRENGTH
     noise_gate_threshold: int = _DEFAULT_NOISE_GATE_THRESHOLD
+    vad_mode: int = _DEFAULT_VAD_MODE
+    pre_roll_ms: int = _DEFAULT_PRE_ROLL_MS
+    max_utterance_secs: float = _DEFAULT_MAX_UTTERANCE_SECS
 
 
 class MicrophoneSttService:
@@ -508,7 +518,6 @@ class MicrophoneSttService:
         self._current_options = MicrophoneSttOptions()
         self._last_partial_text = ""
         self._auto_speech_active = False
-        self._auto_voice_candidate_chunks = 0
         self._auto_voice_candidate_chunks = 0
         self._bootstrap_thread: Future | None = None
         self._bootstrap_cancel_event: threading.Event | None = None
@@ -616,7 +625,12 @@ class MicrophoneSttService:
         except ImportError as e:
             return None, None, f"缺少依赖 vosk: {e}"
 
-        return sd, (Model, KaldiRecognizer, SetLogLevel), ""
+        try:
+            import webrtcvad  # type: ignore
+        except ImportError as e:
+            return None, None, f"缺少依赖 webrtcvad-wheels: {e}"
+
+        return sd, (Model, KaldiRecognizer, SetLogLevel, webrtcvad), ""
 
     def _resolve_model_path(self, raw_path: str) -> Path | None:
         candidates: list[Path] = []
@@ -695,11 +709,15 @@ class MicrophoneSttService:
         if not configured_paths:
             configured_paths = [default_model_path]
 
+        sample_rate = _coerce_int(data.get("sample_rate"), _DEFAULT_SAMPLE_RATE, 8000, 48000)
+        if sample_rate not in _VAD_SAMPLE_RATES:
+            sample_rate = _DEFAULT_SAMPLE_RATE
+
         return MicrophoneSttOptions(
             model_path=str(configured_paths[0]),
             model_paths=tuple(configured_paths),
-            sample_rate=_coerce_int(data.get("sample_rate"), _DEFAULT_SAMPLE_RATE, 8000, 48000),
-            block_size=_coerce_int(data.get("block_size"), _DEFAULT_BLOCK_SIZE, 800, 32000),
+            sample_rate=sample_rate,
+            block_size=_coerce_int(data.get("block_size"), _DEFAULT_BLOCK_SIZE, 160, 32000),
             device=raw_device,
             emit_partial=bool(data.get("emit_partial", True)),
             auto_submit=bool(data.get("auto_submit", False)),
@@ -709,6 +727,9 @@ class MicrophoneSttService:
             denoise_enabled=bool(data.get("denoise_enabled", default_denoise_enabled)),
             denoise_strength=_coerce_float(data.get("denoise_strength", default_denoise_strength), _DEFAULT_DENOISE_STRENGTH, 0.0, 1.0),
             noise_gate_threshold=_coerce_int(data.get("noise_gate_threshold", default_noise_gate), _DEFAULT_NOISE_GATE_THRESHOLD, 0, 8000),
+            vad_mode=_coerce_int(data.get("vad_mode"), _DEFAULT_VAD_MODE, 0, 3),
+            pre_roll_ms=_coerce_int(data.get("pre_roll_ms"), _DEFAULT_PRE_ROLL_MS, 0, 2000),
+            max_utterance_secs=_coerce_float(data.get("max_utterance_secs"), _DEFAULT_MAX_UTTERANCE_SECS, 2.0, 120.0),
         )
 
     def _is_start_cancelled(self, start_generation: int, cancel_event: threading.Event | None = None) -> bool:
@@ -786,7 +807,7 @@ class MicrophoneSttService:
                 self._publish_start_error(message, "未能加载任何 Vosk 模型，请确认模型目录是否存在")
                 return
 
-            Model, KaldiRecognizer, SetLogLevel = backend
+            Model, KaldiRecognizer, SetLogLevel, webrtcvad = backend
             try:
                 SetLogLevel(-1)
             except Exception:
@@ -836,9 +857,22 @@ class MicrophoneSttService:
                     return recognizers[0]
                 return _HybridKaldiRecognizer(recognizers)
 
+            audio_queue = queue.Queue(maxsize=_DEFAULT_QUEUE_SIZE)
+            stop_event = threading.Event()
+
+            def audio_callback(indata, frames, time_info, status):
+                self._on_audio_chunk(
+                    indata,
+                    frames,
+                    time_info,
+                    status,
+                    target_queue=audio_queue,
+                    target_stop_event=stop_event,
+                )
+
             worker = threading.Thread(
                 target=self._worker_loop,
-                args=(build_recognizer, options),
+                args=(build_recognizer, options, audio_queue, stop_event, webrtcvad),
                 daemon=True,
                 name="microphone-stt-worker",
             )
@@ -850,7 +884,7 @@ class MicrophoneSttService:
                     device=options.device,
                     dtype=_DEFAULT_DTYPE,
                     channels=_DEFAULT_CHANNELS,
-                    callback=self._on_audio_chunk,
+                    callback=audio_callback,
                 )
             except Exception as e:
                 if self._is_start_cancelled(start_generation, cancel_event):
@@ -866,8 +900,8 @@ class MicrophoneSttService:
                     return
 
                 self._stop_locked(join_worker=True, emit_state=False)
-                self._audio_queue = queue.Queue(maxsize=_DEFAULT_QUEUE_SIZE)
-                self._stop_event = threading.Event()
+                self._audio_queue = audio_queue
+                self._stop_event = stop_event
                 self._last_partial_text = ""
                 self._auto_speech_active = False
                 self._current_options = options
@@ -925,34 +959,27 @@ class MicrophoneSttService:
         finally:
             self._clear_bootstrap_thread(start_generation, cancel_event)
 
-    def _on_audio_chunk(self, indata, frames, time_info, status) -> None:
+    def _on_audio_chunk(
+        self,
+        indata,
+        frames,
+        time_info,
+        status,
+        *,
+        target_queue: queue.Queue[bytes | None] | None = None,
+        target_stop_event: threading.Event | None = None,
+    ) -> None:
         del frames, time_info
         if status:
             logger.debug("[MicrophoneSttService] 输入流状态: %s", status)
 
-        audio_queue = self._audio_queue
-        stop_event = self._stop_event
+        audio_queue = target_queue if target_queue is not None else self._audio_queue
+        stop_event = target_stop_event if target_stop_event is not None else self._stop_event
         if audio_queue is None or stop_event is None or stop_event.is_set():
             return
 
         chunk = bytes(indata)
         self._queue_replace_nowait(audio_queue, chunk)
-
-    @staticmethod
-    def _chunk_rms(chunk: bytes) -> int:
-        if not chunk:
-            return 0
-        try:
-            samples = array.array('h')
-            samples.frombytes(chunk)
-            if not samples:
-                return 0
-            square_sum = 0
-            for sample in samples:
-                square_sum += int(sample) * int(sample)
-            return int(math.sqrt(square_sum / len(samples)))
-        except Exception:
-            return 0
 
     def _publish_partial_text(self, text: str, *, suppress_spurious: bool = False) -> None:
         normalized = _normalize_text(text)
@@ -969,186 +996,257 @@ class MicrophoneSttService:
             "source": "microphone_stt",
         }))
 
-    def _worker_loop(self, recognizer_factory, options: MicrophoneSttOptions) -> None:
-        logger.info("[MicrophoneSttService] 后台识别线程已启动")
-        recognizer = None if options.auto_mode else recognizer_factory()
-        auto_segments: list[str] = []
-        last_voice_time = 0.0
-        noise_floor: float | None = None
-        denoise_state: dict[str, float] = {}
+    @staticmethod
+    def _recognize_utterance(recognizer_factory, pcm: bytes, noise_reference: bytes, options: MicrophoneSttOptions) -> str:
+        if not pcm:
+            return ""
+        raw_pcm = pcm
+        if options.denoise_enabled:
+            pcm, noise_floor = denoise_pcm16(
+                pcm,
+                strength=options.denoise_strength,
+                gate_threshold=options.noise_gate_threshold,
+                noise_reference=noise_reference,
+                sample_rate=options.sample_rate,
+            )
+            logger.debug("[MicrophoneSttService] 整句频谱降噪完成 noise_floor=%.1f", noise_floor)
+
+        def recognize_payload(payload: bytes) -> str:
+            recognizer = recognizer_factory()
+            segments: list[str] = []
+            frame_bytes = max(1, int(round(options.sample_rate * 0.02))) * 2
+            for start in range(0, len(payload), frame_bytes):
+                frame = payload[start:start + frame_bytes]
+                if not frame:
+                    continue
+                try:
+                    accepted = recognizer.AcceptWaveform(frame)
+                except Exception:
+                    continue
+                if accepted:
+                    text = _extract_text(recognizer.Result(), "text")
+                    if text:
+                        segments.append(text)
+            try:
+                final_text = _extract_text(recognizer.FinalResult(), "text")
+            except Exception:
+                final_text = ""
+            return _merge_text_segments(*(segments + [final_text]))
+
+        text = recognize_payload(pcm)
+        if not text and options.denoise_enabled:
+            logger.info("[MicrophoneSttService] 降噪后未识别到文本，使用原始音频重试")
+            text = recognize_payload(raw_pcm)
+        return text
+
+    def _finalize_utterance(
+        self,
+        recognizer_factory,
+        utterance_frames: list[bytes],
+        noise_frames: list[bytes],
+        options: MicrophoneSttOptions,
+        *,
+        publish_monitoring: bool,
+        reason: str = "stop",
+    ) -> None:
+        pcm = b"".join(utterance_frames)
+        noise_reference = b"".join(noise_frames)
+        duration_secs = len(pcm) / max(1, options.sample_rate * 2)
+        logger.info(
+            "[MicrophoneSttService] 整句收集完成 reason=%s duration=%.2fs frames=%d noise_frames=%d rms=%.1f",
+            reason,
+            duration_secs,
+            len(utterance_frames),
+            len(noise_frames),
+            _pcm16_rms(pcm),
+        )
+        try:
+            text = self._recognize_utterance(recognizer_factory, pcm, noise_reference, options)
+        except Exception as exc:
+            logger.error("[MicrophoneSttService] 整句识别失败: %s", exc)
+            text = ""
+        if text:
+            self._emit_final_text(text, options)
+        else:
+            logger.info(
+                "[MicrophoneSttService] 整句识别未产生文本 reason=%s duration=%.2fs rms=%.1f",
+                reason,
+                duration_secs,
+                _pcm16_rms(pcm),
+            )
+        self._auto_speech_active = False
+        self._auto_voice_candidate_chunks = 0
+        self._last_partial_text = ""
+        if publish_monitoring and self.is_listening:
+            if options.auto_mode:
+                self._publish_state("monitoring", message="自动语聊监听中", speech_active=False)
+            else:
+                self._publish_state("running", message="等待下一句语音", speech_active=False)
+
+    def _worker_loop(
+        self,
+        recognizer_factory,
+        options: MicrophoneSttOptions,
+        audio_queue: queue.Queue[bytes | None],
+        stop_event: threading.Event,
+        vad_module,
+    ) -> None:
+        logger.info("[MicrophoneSttService] 后台整句识别线程已启动")
+        frame_samples = max(1, int(round(options.sample_rate * _DEFAULT_VAD_FRAME_MS / 1000)))
+        frame_bytes = frame_samples * 2
+        pre_roll_limit = max(0, int(options.pre_roll_ms * options.sample_rate / 1000 / frame_samples))
+        pre_roll: deque[tuple[bytes, bool]] = deque(maxlen=max(1, pre_roll_limit))
+        vad = vad_module.Vad(options.vad_mode)
+        pending = bytearray()
+        utterance_frames: list[bytes] = []
+        noise_frames: list[bytes] = []
+        speech_active = not options.auto_mode
+        speech_candidates = 0
+        manual_speech_seen = False
+        manual_silence_frames = 0
+        manual_silence_limit = max(
+            1,
+            int(math.ceil(
+                min(options.silence_timeout_secs, _DEFAULT_MANUAL_SILENCE_TIMEOUT_SECS)
+                * options.sample_rate
+                / frame_samples
+            )),
+        )
+        max_utterance_frames = max(
+            1,
+            int(math.ceil(options.max_utterance_secs * options.sample_rate / frame_samples)),
+        )
+        last_speech_time = 0.0
+        utterance_started = time.monotonic() if speech_active else 0.0
+
+        def reset_auto_session() -> None:
+            nonlocal utterance_frames, noise_frames, speech_active
+            nonlocal speech_candidates, last_speech_time, utterance_started
+            utterance_frames = []
+            noise_frames = []
+            speech_active = False
+            speech_candidates = 0
+            last_speech_time = 0.0
+            utterance_started = 0.0
+
+        def handle_frame(frame: bytes) -> None:
+            nonlocal utterance_frames, noise_frames, speech_active
+            nonlocal speech_candidates, last_speech_time, utterance_started
+            nonlocal manual_speech_seen, manual_silence_frames
+            frame_rms = _pcm16_rms(frame)
+            try:
+                is_speech = bool(vad.is_speech(frame, options.sample_rate))
+            except Exception:
+                is_speech = frame_rms >= options.speech_rms_threshold
+            if not options.auto_mode and not is_speech:
+                is_speech = frame_rms >= options.speech_rms_threshold
+            now = time.monotonic()
+
+            if not options.auto_mode:
+                utterance_frames.append(frame)
+                if is_speech:
+                    if not manual_speech_seen:
+                        self._auto_speech_active = True
+                        self._publish_state("capturing", message="检测到说话，收集语音中", speech_active=True)
+                    manual_speech_seen = True
+                    manual_silence_frames = 0
+                else:
+                    noise_frames.append(frame)
+                    if manual_speech_seen:
+                        manual_silence_frames += 1
+                    elif len(utterance_frames) > max(1, pre_roll_limit):
+                        utterance_frames = utterance_frames[-max(1, pre_roll_limit):]
+                        noise_frames = list(utterance_frames)
+
+                timed_out = manual_speech_seen and manual_silence_frames >= manual_silence_limit
+                over_limit = manual_speech_seen and len(utterance_frames) >= max_utterance_frames
+                if timed_out or over_limit:
+                    self._finalize_utterance(
+                        recognizer_factory,
+                        utterance_frames,
+                        noise_frames,
+                        options,
+                        publish_monitoring=True,
+                        reason="silence" if timed_out else "max_duration",
+                    )
+                    utterance_frames = []
+                    noise_frames = []
+                    manual_speech_seen = False
+                    manual_silence_frames = 0
+                return
+
+            if not speech_active:
+                pre_roll.append((frame, is_speech))
+                speech_candidates = speech_candidates + 1 if is_speech else 0
+                if speech_candidates < 2:
+                    return
+                speech_active = True
+                utterance_started = now
+                utterance_frames = [item[0] for item in pre_roll]
+                noise_frames = [item[0] for item in pre_roll if not item[1]]
+                last_speech_time = now
+                speech_candidates = 0
+                self._auto_speech_active = True
+                self._publish_state("capturing", message="检测到说话，收集语音中", speech_active=True)
+                return
+
+            utterance_frames.append(frame)
+            if is_speech:
+                last_speech_time = now
+            else:
+                noise_frames.append(frame)
+
+            timed_out = (
+                last_speech_time > 0.0
+                and now - last_speech_time >= options.silence_timeout_secs
+            )
+            over_limit = (
+                utterance_started > 0.0
+                and now - utterance_started >= options.max_utterance_secs
+            )
+            if timed_out or over_limit:
+                self._finalize_utterance(
+                    recognizer_factory,
+                    utterance_frames,
+                    noise_frames,
+                    options,
+                    publish_monitoring=True,
+                    reason="silence" if timed_out else "max_duration",
+                )
+                reset_auto_session()
 
         try:
             while True:
-                audio_queue = self._audio_queue
-                stop_event = self._stop_event
-                if audio_queue is None or stop_event is None:
-                    break
-
                 try:
                     chunk = audio_queue.get(timeout=0.2)
                 except queue.Empty:
                     if stop_event.is_set():
                         break
-                    if options.auto_mode and self._auto_speech_active and last_voice_time > 0.0:
-                        if time.monotonic() - last_voice_time >= options.silence_timeout_secs:
-                            self._finalize_auto_session(recognizer, auto_segments, options)
-                            recognizer = None
-                            auto_segments = []
-                            self._auto_voice_candidate_chunks = 0
                     continue
-
                 if chunk is None:
                     break
-
-                loudness_has_history = (
-                    options.denoise_enabled and "previous_rms" in denoise_state
-                )
-                if options.denoise_enabled:
-                    chunk, noise_floor = denoise_pcm16(
-                        chunk,
-                        strength=options.denoise_strength,
-                        gate_threshold=options.noise_gate_threshold,
-                        noise_floor=noise_floor,
-                        state=denoise_state,
-                    )
-
-                if options.auto_mode:
-                    recognizer, auto_segments, last_voice_time = self._handle_auto_mode_chunk(
-                        recognizer_factory,
-                        recognizer,
-                        auto_segments,
-                        chunk,
-                        last_voice_time,
-                        noise_floor,
-                        options,
-                        loudness_change_rate=(
-                            float(denoise_state.get("last_change_rate", 0.0))
-                            if options.denoise_enabled
-                            else None
-                        ),
-                        loudness_has_history=loudness_has_history,
-                    )
-                    continue
-
-                if recognizer is None:
-                    recognizer = recognizer_factory()
-                accepted = recognizer.AcceptWaveform(chunk)
-                if accepted:
-                    final_text = _extract_text(recognizer.Result(), "text")
-                    if final_text:
-                        self._emit_final_text(final_text, options)
-                elif options.emit_partial:
-                    self._publish_partial_text(_extract_text(recognizer.PartialResult(), "partial"))
-        except Exception as e:
-            logger.error("[MicrophoneSttService] 后台识别线程异常: %s", e)
-            self._publish_state("error", message=f"后台识别线程异常: {e}")
+                pending.extend(chunk)
+                while len(pending) >= frame_bytes:
+                    frame = bytes(pending[:frame_bytes])
+                    del pending[:frame_bytes]
+                    handle_frame(frame)
+        except Exception as exc:
+            logger.error("[MicrophoneSttService] 后台识别线程异常: %s", exc)
+            self._publish_state("error", message=f"后台识别线程异常: {exc}")
         finally:
-            if options.auto_mode:
-                self._finalize_auto_session(recognizer, auto_segments, options)
-            else:
-                try:
-                    final_text = _extract_text(recognizer.FinalResult(), "text") if recognizer is not None else ""
-                except Exception:
-                    final_text = ""
-                if final_text:
-                    self._emit_final_text(final_text, options)
+            if pending and not options.auto_mode:
+                handle_frame(bytes(pending).ljust(frame_bytes, b"\x00"))
+            if utterance_frames:
+                self._finalize_utterance(
+                    recognizer_factory,
+                    utterance_frames,
+                    noise_frames,
+                    options,
+                    publish_monitoring=False,
+                    reason="stop",
+                )
             self._auto_speech_active = False
-            logger.info("[MicrophoneSttService] 后台识别线程已结束")
-
-    def _handle_auto_mode_chunk(
-        self,
-        recognizer_factory,
-        recognizer,
-        auto_segments: list[str],
-        chunk: bytes,
-        last_voice_time: float,
-        noise_floor: float | None,
-        options: MicrophoneSttOptions,
-        *,
-        loudness_change_rate: float | None = None,
-        loudness_has_history: bool = False,
-    ):
-        now = time.monotonic()
-        chunk_rms = self._chunk_rms(chunk)
-        adaptive_threshold = max(
-            int(options.speech_rms_threshold),
-            int(max(0.0, float(noise_floor or 0.0)) * 2.2),
-        )
-        is_speaking = chunk_rms >= adaptive_threshold
-        if (
-            recognizer is None
-            and loudness_has_history
-            and loudness_change_rate is not None
-            and loudness_change_rate < _DENOISE_CHANGE_RATE_THRESHOLD
-            and chunk_rms < adaptive_threshold * _AUTO_STABLE_LOUDNESS_RATIO
-        ):
-            # Once a session has ended, a stable background source must not
-            # re-arm Vosk merely because its level is above the base threshold.
-            is_speaking = False
-
-        if recognizer is None and not is_speaking:
-            self._auto_voice_candidate_chunks = 0
-            return None, auto_segments, last_voice_time
-
-        if recognizer is None:
-            self._auto_voice_candidate_chunks += 1
-            if self._auto_voice_candidate_chunks < _AUTO_VOICE_START_CONFIRM_CHUNKS:
-                return None, auto_segments, last_voice_time
-            self._auto_voice_candidate_chunks = 0
-
-        if recognizer is None:
-            recognizer = recognizer_factory()
-            auto_segments = []
-            self._last_partial_text = ""
-            self._auto_speech_active = True
-            last_voice_time = now
-            self._publish_state("capturing", message="检测到说话，开始语音转文字", speech_active=True)
-
-        if is_speaking:
-            last_voice_time = now
-
-        accepted = recognizer.AcceptWaveform(chunk)
-        if accepted:
-            text = _extract_text(recognizer.Result(), "text")
-            if text:
-                if not _is_spurious_auto_text(text):
-                    auto_segments.append(text)
-                self._last_partial_text = ""
-        elif options.emit_partial:
-            self._publish_partial_text(
-                _extract_text(recognizer.PartialResult(), "partial"),
-                suppress_spurious=True,
-            )
-
-        if last_voice_time > 0.0 and now - last_voice_time >= options.silence_timeout_secs:
-            self._finalize_auto_session(recognizer, auto_segments, options)
-            return None, [], 0.0
-
-        return recognizer, auto_segments, last_voice_time
-
-    def _finalize_auto_session(self, recognizer, auto_segments: list[str], options: MicrophoneSttOptions) -> None:
-        if recognizer is None:
-            self._auto_voice_candidate_chunks = 0
-            if self._auto_speech_active:
-                self._auto_speech_active = False
-                self._last_partial_text = ""
-                self._publish_state("monitoring", message="自动语聊监听中", speech_active=False)
-            return
-
-        try:
-            final_text = _extract_text(recognizer.FinalResult(), "text")
-        except Exception:
-            final_text = ""
-
-        merged_text = _merge_text_segments(*(auto_segments + [final_text]))
-        self._last_partial_text = ""
-        if merged_text:
-            self._emit_final_text(merged_text, options)
-
-        self._auto_speech_active = False
-        self._auto_voice_candidate_chunks = 0
-        if self.is_listening and options.auto_mode:
-            self._publish_state("monitoring", message="自动语聊监听中", speech_active=False)
+            logger.info("[MicrophoneSttService] 后台整句识别线程已结束")
 
     def _emit_final_text(self, text: str, options: MicrophoneSttOptions) -> None:
         normalized = _normalize_text(text)

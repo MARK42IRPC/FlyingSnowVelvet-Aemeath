@@ -16,6 +16,7 @@ qrcode>=7.4.2
 rarfile>=4.4,<5
 requests>=2.31.0
 sounddevice>=0.4.6
+webrtcvad-wheels>=2.0.14
 soundfile>=0.12
 soxr>=0.5
 vosk>=0.3.45

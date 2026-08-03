@@ -91,6 +91,7 @@ DEPENDENCIES = [
     ("comtypes", "COM bindings for pycaw", ("comtypes",)),
     ("pywin32", "Windows COM bridge (win32com/pythoncom)", ("pythoncom", "win32com")),
     ("sounddevice", "microphone capture for speech-to-text", ("sounddevice",)),
+    ("webrtcvad-wheels", "lightweight speech endpoint detection", ("webrtcvad",)),
     ("uvicorn", "ASGI server for local web relay", ("uvicorn",)),
     ("vosk", "offline speech-to-text engine", ("vosk",)),
 ]
@@ -1938,6 +1939,7 @@ def _microphone_runtime_ready(python_exe):
     return (
         _pkg_installed(python_exe, "sounddevice", import_checks=("sounddevice",))
         and _pkg_installed(python_exe, "vosk", import_checks=("vosk",))
+        and _pkg_installed(python_exe, "webrtcvad-wheels", import_checks=("webrtcvad",))
     )
 
 

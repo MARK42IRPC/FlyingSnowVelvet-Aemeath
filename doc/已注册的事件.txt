@@ -409,7 +409,7 @@
 - lib/script/microphone_stt/service.py
 
 [MIC_STT_PARTIAL]
-- lib/script/microphone_stt/service.py
+- 兼容事件：当前整句识别路径不发布实时增量文本
 
 [MOUSE_CLICK]
 - lib/core/input/click.py
@@ -555,7 +555,7 @@
 - lib/script/microphone_stt/service.py
 
 [MIC_STT_PARTIAL]
-- lib/script/microphone_stt/service.py
+- 兼容事件：当前整句识别路径不发布实时增量文本
 
 [MIC_STT_START]
 - lib/script/microphone_stt/push_to_talk.py
