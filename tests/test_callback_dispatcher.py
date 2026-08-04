@@ -168,9 +168,10 @@ class CallbackDispatcherTests(unittest.TestCase):
             from PyQt5.QtCore import QCoreApplication, QTimer
 
             from lib.core.event.callbacks import CallbackDispatcher
+            from lib.core.qt_bridge.event_pump import create_event_pump
 
             owner_thread_id = threading.get_ident()
-            dispatcher = CallbackDispatcher()
+            dispatcher = CallbackDispatcher(pump_factory=create_event_pump)
             app = QCoreApplication.instance() or QCoreApplication([])
             received = []
             first_dispatched = threading.Event()

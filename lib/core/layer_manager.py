@@ -6,6 +6,7 @@ import weakref
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from lib.core.desktop_backend import get_deferred_call
 from lib.core.layer import Layer, draw_order_key, layer_name, normalize_layer
 
 
@@ -23,7 +24,6 @@ class LayerWindow:
 class LayerManager:
     """集中管理项目全部顶层窗口的 z-order。"""
 
-    ENFORCE_INTERVAL: int = 30
     _SWP_FLAGS: int = 0x0213
     _HWND_TOPMOST: int = -1
 
@@ -34,7 +34,7 @@ class LayerManager:
     ) -> None:
         self._windows: list[LayerWindow] = []
         self._register_seq: int = 0
-        self._counter: int = 0
+        self._dirty: bool = False
         self._paused: bool = False
         self._defer = defer
 
@@ -102,15 +102,19 @@ class LayerManager:
             ))
 
         self._windows = alive
+        self._dirty = True
 
     def unregister(self, widget) -> None:
         """注销窗口记录。"""
         if widget is None:
             return
-        self._windows = [
+        remaining = [
             record for record in self._windows
             if (current := record.ref()) is not None and current is not widget
         ]
+        if len(remaining) != len(self._windows):
+            self._dirty = True
+        self._windows = remaining
 
     def set_layer(self, widget, layer, *, z: int = 0, name: str | None = None) -> None:
         """更新窗口层级，未注册时自动注册。"""
@@ -126,18 +130,17 @@ class LayerManager:
         self.enforce_now()
 
     def enforce_on_frame(self) -> None:
-        """由 FRAME 事件驱动，按间隔重申全部窗口层级。"""
-        if self._paused:
+        """在下一帧提交待处理的窗口层级变化。"""
+        if self._paused or not self._dirty:
             return
-        self._counter += 1
-        if self._counter % self.ENFORCE_INTERVAL == 0:
-            self.enforce_now()
+        self.enforce_now()
 
     def enforce_now(self) -> None:
         """立即按 layer/z/生成顺序重申窗口，后生成的同级窗口位于上方。"""
         if self._paused:
             return
         self._enforce_all()
+        self._dirty = False
 
     def enforce_burst(self, delays_ms: tuple[int, ...] = (0, 16, 48, 96, 180)) -> None:
         """短时间内多次重申层级，抵消 Qt/Win32 异步 z-order 抖动。"""
@@ -149,29 +152,29 @@ class LayerManager:
             except (TypeError, ValueError):
                 delay = 0
             if delay == 0:
-                self._enforce_all()
+                self.enforce_now()
             else:
-                self._defer_call(delay, self._enforce_all)
+                self._defer_call(delay, self.enforce_now)
 
     def _defer_call(self, delay_ms: int, callback: Callable[[], None]) -> None:
-        if self._defer is None:
-            from lib.core.qt_bridge.scheduler import call_later
-
-            self._defer = call_later
-        self._defer(delay_ms, callback)
+        defer = self._defer or get_deferred_call()
+        if defer is None:
+            callback()
+            return
+        defer(delay_ms, callback)
 
     def bring_to_front(self, widget) -> None:
         """立即重申完整窗口链，避免单个窗口越过更高 layer。"""
         if widget is None or not widget.isVisible():
             return
-        self._enforce_all()
+        self.enforce_now()
 
     def raise_layer(self, layer) -> None:
         """重申完整窗口链，保证指定 layer 操作不会破坏全局顺序。"""
         if self._paused:
             return
         normalize_layer(layer)
-        self._enforce_all()
+        self.enforce_now()
 
     def snapshot(self) -> list[tuple[int, int, int, str, bool]]:
         """返回当前层级快照，便于调试。"""

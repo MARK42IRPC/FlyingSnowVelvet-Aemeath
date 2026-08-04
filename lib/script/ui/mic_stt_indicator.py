@@ -7,11 +7,12 @@ from PyQt5.QtCore import Qt, QPropertyAnimation, QEasingCurve, QRect
 from PyQt5.QtGui import QPainter, QColor, QCursor
 import time
 
-from config.config import COLORS, UI
+from config.config import UI
+from lib.core.qt_bridge.colors import COLORS
 from config.scale import scale_px
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.unified_draw import Layer, get_layer_manager
-from lib.core.screen_utils import clamp_rect_position
+from lib.core.qt_bridge.screen import clamp_rect_position
 from lib.core.anchor_utils import apply_ui_opacity
 
 

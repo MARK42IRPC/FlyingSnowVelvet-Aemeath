@@ -1,6 +1,7 @@
-"""Backend-neutral draw facade with a lazily selected Qt default backend."""
+"""Backend-neutral draw facade configured by the desktop composition root."""
 from __future__ import annotations
 
+from lib.core.desktop_backend import get_draw_backend_factory
 from lib.core.graphics.backend import DrawBackend
 from lib.core.graphics.commands import DrawRequest
 from lib.core.graphics.scene import DrawScene
@@ -75,8 +76,18 @@ class DrawCore:
 
     @staticmethod
     def _create_default_backend() -> DrawBackend:
-        from lib.core.qt_bridge.draw_backend import QtDrawBackend
-        return QtDrawBackend()
+        factory = get_draw_backend_factory()
+        return factory() if factory is not None else _NullDrawBackend()
+
+
+class _NullDrawBackend:
+    """No-op backend used when core code runs without a desktop host."""
+
+    def render(self, scene: DrawScene, painter: object, target_rect: object | None = None) -> None:
+        return None
+
+    def cleanup(self) -> None:
+        return None
 
 
 _draw_core: DrawCore | None = None

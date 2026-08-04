@@ -7,7 +7,7 @@ from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QButtonGroup
 from PyQt5.QtGui import QPainter
 
 from config.scale import scale_px
-from config.config import UI_THEME
+from lib.core.qt_bridge.colors import UI_THEME
 from lib.core.unified_draw import Layer, get_layer_manager
 
 

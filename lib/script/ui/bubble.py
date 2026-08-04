@@ -3,8 +3,9 @@ from PyQt5.QtWidgets import QWidget, QGraphicsOpacityEffect, QApplication
 from PyQt5.QtCore import Qt, QPropertyAnimation, QEasingCurve, QPoint, QRect
 from PyQt5.QtGui import QPainter, QFontMetrics, QCursor
 
-from config.config import COLORS, UI, BUBBLE_CONFIG
-from config.font_config import (
+from config.config import UI, BUBBLE_CONFIG
+from lib.core.qt_bridge.colors import COLORS
+from lib.core.qt_bridge.font import (
     get_ui_font,
     get_digit_font,
     draw_mixed_text,
@@ -16,7 +17,7 @@ from config.tooltip_config import TOOLTIPS
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.unified_draw import Layer, get_layer_manager
 from lib.core.logger import get_logger
-from lib.core.screen_utils import clamp_rect_position, get_screen_geometry_for_point
+from lib.core.qt_bridge.screen import clamp_rect_position, get_screen_geometry_for_point
 from lib.core.anchor_utils import (
     apply_ui_opacity,
 )

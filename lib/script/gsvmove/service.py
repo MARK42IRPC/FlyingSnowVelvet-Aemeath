@@ -207,7 +207,7 @@ class GsvmoveService:
             self.kickoff_prestart()
 
     def kickoff_prestart(self) -> None:
-        if not self.auto_start_enabled() or not is_voice_package_available():
+        if not self.auto_start_enabled():
             return
         with self._prestart_lock:
             if self._prestart_started:
@@ -227,9 +227,16 @@ class GsvmoveService:
             raise
 
     def _prestart_worker(self) -> None:
-        with self._infer_lock:
-            if self._ensure_runtime_ready():
-                self._warmup_service_once()
+        try:
+            if not self.auto_start_enabled():
+                return
+            with self._infer_lock:
+                if self._ensure_runtime_ready():
+                    self._warmup_service_once()
+        finally:
+            if not self._warmup_done:
+                with self._prestart_lock:
+                    self._prestart_started = False
 
     def _ensure_runtime_ready(self) -> bool:
         status = get_voice_package_status()

@@ -17,9 +17,10 @@ from PyQt5.QtWidgets import QWidget, QApplication, QGraphicsOpacityEffect
 from PyQt5.QtCore import Qt, QPoint, QRect, QPropertyAnimation, QEasingCurve
 from PyQt5.QtGui import QFontMetrics, QPainter
 
-from config.config import COLORS, UI, UI_THEME
+from config.config import UI
+from lib.core.qt_bridge.colors import COLORS, UI_THEME
 from config.tooltip_config import TOOLTIPS
-from config.font_config import (
+from lib.core.qt_bridge.font import (
     get_digit_font,
     draw_mixed_text,
     get_ui_font,
@@ -30,7 +31,7 @@ from config.scale import scale_px
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.hash_cmd_registry import get_hash_cmd_registry
 from lib.core.unified_draw import Layer, get_layer_manager
-from lib.core.screen_utils import clamp_rect_position
+from lib.core.qt_bridge.screen import clamp_rect_position
 from lib.core.anchor_utils import apply_ui_opacity
 from lib.core.qt_bridge.window import coerce_qpoint
 from lib.script.ui.page_turn_buttons import make_page_buttons, update_page_buttons_position

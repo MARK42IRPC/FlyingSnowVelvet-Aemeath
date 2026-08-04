@@ -11,7 +11,7 @@ from lib.core.graphics.collision import (
     rects_intersect,
     segment_intersects_rect,
 )
-from lib.core.graphics.types import Point, Rect, coerce_point, coerce_rect
+from lib.core.graphics.types import Point, Rect, coerce_point
 from lib.core.input.types import MouseButton
 from lib.core.screen_utils import get_screen_rect_for_point, get_virtual_screen_rect
 
@@ -486,23 +486,19 @@ class StateMachine:
         if manager is None:
             return None
 
-        speakers = manager.get_alive_speakers()
-        if not speakers:
+        speaker_points = manager.get_speaker_centers()
+        if not speaker_points:
             return None
 
         pet_pos = self._entity.get_core_position()
-        speaker_points = [(speaker, coerce_point(speaker.get_center())) for speaker in speakers]
-        speaker_points = [(speaker, point) for speaker, point in speaker_points if point is not None]
-        if not speaker_points:
-            return None
         nearest = min(
             speaker_points,
-            key=lambda s: (
-                (s[1].x - pet_pos.x) ** 2
-                + (s[1].y - pet_pos.y) ** 2
+            key=lambda point: (
+                (point.x - pet_pos.x) ** 2
+                + (point.y - pet_pos.y) ** 2
             )
         )
-        speaker_center = nearest[1]
+        speaker_center = nearest
 
         raw_radius = BEHAVIOR.get('wander_near_speaker_radius', 300)
         try:
@@ -563,11 +559,16 @@ class StateMachine:
         self._defer_call(0, lambda rid=request_id: self._finalize_protection_check(rid))
 
     def _defer_call(self, delay_ms: int, callback) -> None:
-        if self._defer is None:
-            from lib.core.qt_bridge.scheduler import call_later
+        if self._defer is not None:
+            self._defer(delay_ms, callback)
+            return
+        from lib.core.desktop_backend import get_deferred_call
 
-            self._defer = call_later
-        self._defer(delay_ms, callback)
+        deferred_call = get_deferred_call()
+        if deferred_call is not None:
+            deferred_call(delay_ms, callback)
+        else:
+            callback()
 
     def _on_protection_response(self, event: Event):
         """处理保护半径检测响应（先聚合，不立即切状态）。"""
@@ -622,8 +623,7 @@ class StateMachine:
         except Exception:
             return False
 
-        blocked_rect = coerce_rect(blocked_rect)
-        if blocked_rect is None or blocked_rect.width <= 0 or blocked_rect.height <= 0:
+        if not isinstance(blocked_rect, Rect) or blocked_rect.width <= 0 or blocked_rect.height <= 0:
             return False
 
         target_rect = Rect(

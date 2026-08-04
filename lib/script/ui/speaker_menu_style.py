@@ -5,8 +5,9 @@ from __future__ import annotations
 from PyQt5.QtCore import QRect, Qt
 from PyQt5.QtGui import QPainter, QColor
 
-from config.config import COLORS, UI_THEME, SPEAKER_SEARCH_UI
-from config.font_config import get_ui_font
+from config.config import SPEAKER_SEARCH_UI
+from lib.core.qt_bridge.colors import COLORS, UI_THEME
+from lib.core.qt_bridge.font import get_ui_font
 from config.scale import scale_px
 from lib.core.unified_draw import Layer, get_layer_manager
 

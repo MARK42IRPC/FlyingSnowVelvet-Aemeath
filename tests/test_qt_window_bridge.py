@@ -4,7 +4,7 @@ from unittest.mock import Mock, patch
 from PyQt5.QtCore import QPoint, Qt
 from PyQt5.QtGui import QImage
 
-from lib.core.graphics.types import Point
+from lib.core.graphics.types import Point, Rect
 from lib.core.layer import Layer
 from lib.core.pet_window import PetWindow
 from lib.core.qt_bridge.window import (
@@ -58,11 +58,8 @@ class _MoveParticleProbe:
         self._move_particle_step_px = 30.0
         self.spawned = []
 
-    def width(self):
-        return 100
-
-    def height(self):
-        return 80
+    def get_core_geometry(self):
+        return Rect(40, 20, 100, 80)
 
     def spawn_particles(self, *args, **kwargs):
         self.spawned.append((args, kwargs))

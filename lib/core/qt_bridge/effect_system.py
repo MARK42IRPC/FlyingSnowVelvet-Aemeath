@@ -10,16 +10,18 @@
 from __future__ import annotations
 
 from collections import deque
+import math
 from pathlib import Path
 
-from PyQt5.QtCore import QRectF, Qt
-from PyQt5.QtGui import QColor, QLinearGradient, QPainter, QPixmap
+from PyQt5.QtCore import QPointF, QRectF, Qt
+from PyQt5.QtGui import QColor, QFontMetrics, QImage, QLinearGradient, QPainter, QPixmap
 from PyQt5.QtWidgets import QWidget
 
 from lib.core.event.center import Event, EventType, get_event_center
 from lib.core.layer import Layer
 from lib.core.layer_manager import get_layer_manager
 from lib.core.logger import get_logger
+from lib.core.qt_bridge.font import get_digit_font, get_ui_font
 from lib.core.render_core import order_render_values
 from lib.script.effects.manager import cleanup_effect_script_manager, get_effect_script_manager
 
@@ -157,6 +159,83 @@ def _get_cached_pixmap(resource_path: str, effect_options: dict | None = None) -
     return pixmap
 
 
+def _effect_color(value, default: tuple[int, int, int] = (255, 255, 255)) -> QColor:
+    if isinstance(value, (list, tuple)) and len(value) >= 3:
+        try:
+            return QColor(
+                max(0, min(255, int(value[0]))),
+                max(0, min(255, int(value[1]))),
+                max(0, min(255, int(value[2]))),
+            )
+        except (TypeError, ValueError):
+            pass
+    return QColor(*default)
+
+
+def _render_text_effect_pixmap(effect) -> QPixmap | None:
+    text = str(getattr(effect, "text", "") or "").strip()
+    if not text:
+        return None
+
+    pixel_size = max(1, int(getattr(effect, "font_size", 32)))
+    font_type = str(getattr(effect, "font_type", "ui") or "ui").lower()
+    if font_type in {"digit", "number", "lahai"}:
+        font = get_digit_font(pixel_size)
+    else:
+        font = get_ui_font(pixel_size)
+    font.setBold(bool(getattr(effect, "font_bold", False)))
+    font_weight = getattr(effect, "font_weight", None)
+    if font_weight is not None:
+        try:
+            font.setWeight(max(0, min(99, int(font_weight))))
+        except (TypeError, ValueError):
+            pass
+
+    color = _effect_color(getattr(effect, "color", (255, 255, 255)))
+    glow_radius = max(0.0, float(getattr(effect, "glow", 0.0) or 0.0))
+    glow_color = _effect_color(getattr(effect, "glow_color", color.getRgb()[:3]))
+    metrics = QFontMetrics(font)
+    text_width = max(1, metrics.horizontalAdvance(text))
+    text_height = max(1, metrics.height())
+    padding = int(math.ceil(glow_radius + max(4.0, text_height * 0.18)))
+    image = QImage(
+        text_width + padding * 2,
+        text_height + padding * 2,
+        QImage.Format_ARGB32_Premultiplied,
+    )
+    image.fill(Qt.transparent)
+
+    painter = QPainter(image)
+    painter.setRenderHint(QPainter.Antialiasing, True)
+    painter.setRenderHint(QPainter.TextAntialiasing, True)
+    painter.setFont(font)
+    baseline_x = float(padding)
+    baseline_y = float(padding + metrics.ascent())
+    if glow_radius > 0.0:
+        glow_tint = QColor(glow_color)
+        for radius_scale, alpha_scale in ((1.0, 0.22), (0.72, 0.16), (0.45, 0.10)):
+            radius = glow_radius * radius_scale
+            glow_tint.setAlpha(max(0, min(255, int(255 * alpha_scale))))
+            painter.setPen(glow_tint)
+            for dx, dy in (
+                (radius, 0.0),
+                (-radius, 0.0),
+                (0.0, radius),
+                (0.0, -radius),
+                (radius * 0.7, radius * 0.7),
+                (-radius * 0.7, radius * 0.7),
+                (radius * 0.7, -radius * 0.7),
+                (-radius * 0.7, -radius * 0.7),
+            ):
+                painter.drawText(QPointF(baseline_x + dx, baseline_y + dy), text)
+
+    painter.setPen(color)
+    painter.drawText(QPointF(baseline_x, baseline_y), text)
+    painter.end()
+    pixmap = QPixmap.fromImage(image)
+    return None if pixmap.isNull() else pixmap
+
+
 class EffectOverlay(QWidget):
     """全屏透明覆盖层，仅用于绘制特效。"""
 
@@ -195,11 +274,13 @@ class EffectOverlay(QWidget):
             event.mark_handled()
             return
 
+        effect_options = dict(data.get("effect_options") or {})
+        effect_options.pop("pixmap", None)
         self._pending_requests.append({
             "effect_id": effect_id,
             "anchor_type": data.get("anchor_type", "point"),
             "anchor_data": data.get("anchor_data"),
-            "effect_options": dict(data.get("effect_options") or {}),
+            "effect_options": effect_options,
         })
         event.mark_handled()
 
@@ -283,12 +364,12 @@ class EffectOverlay(QWidget):
             if script is None:
                 continue
 
+            backend_pixmap = None
             resource_path = effect_options.get("resource_path")
-            if resource_path and "pixmap" not in effect_options:
-                pixmap = _get_cached_pixmap(str(resource_path), effect_options)
-                if pixmap is None:
+            if resource_path:
+                backend_pixmap = _get_cached_pixmap(str(resource_path), effect_options)
+                if backend_pixmap is None:
                     continue
-                effect_options["pixmap"] = pixmap
                 effect_options["resolved_resource_path"] = _resolve_resource_path(str(resource_path))
 
             if anchor_type == "rect" and isinstance(anchor_data, (list, tuple)) and len(anchor_data) >= 4:
@@ -317,6 +398,21 @@ class EffectOverlay(QWidget):
             except Exception:
                 continue
 
+            if not new_effects:
+                continue
+
+            renderable_effects = []
+            for effect in new_effects:
+                pixmap = (
+                    backend_pixmap
+                    if backend_pixmap is not None
+                    else _render_text_effect_pixmap(effect)
+                )
+                if not isinstance(pixmap, QPixmap) or pixmap.isNull():
+                    continue
+                effect.pixmap = pixmap
+                renderable_effects.append(effect)
+            new_effects = renderable_effects
             if not new_effects:
                 continue
 

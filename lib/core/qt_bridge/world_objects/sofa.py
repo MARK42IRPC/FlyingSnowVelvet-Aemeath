@@ -1,4 +1,4 @@
-"""单个沙发对象 - 可拖拽投掷、双击淡出、带物理弹跳的沙发小窗口"""
+"""Qt host for the draggable sofa world object."""
 import time
 from collections import deque
 
@@ -12,7 +12,7 @@ from lib.core.event.center     import get_event_center, EventType, Event
 from lib.core.clickthrough_state import is_clickthrough_enabled
 from lib.core.physics          import get_physics_world, PhysicsBody
 from lib.core.particle_utils   import spawn_particle_at_point
-from lib.core.screen_utils     import get_screen_geometry_for_point
+from lib.core.qt_bridge.screen import get_screen_geometry_for_point
 from lib.core.voice.sofa       import SofaSound
 
 

@@ -5,6 +5,7 @@ from collections import deque
 import threading
 
 from lib.core.logger import get_logger
+from lib.core.desktop_backend import get_event_pump_factory
 from lib.core.event.pump import EventPump, EventPumpFactory
 logger = get_logger(__name__)
 
@@ -68,7 +69,6 @@ class EventType(Enum):
     DRAW_REQUEST = "draw_request"          # 绘制请求: [资源id, 资源帧[如有], 绘制位置]
     DRAW_FRAME_CHANGE = "draw_frame_change"  # 绘制帧变化
     DRAW_LOOP_COMPLETED = "draw_loop_completed"  # 绘制循环完成
-    DRAW_RENDER = "draw_render"           # 执行绘制
     DRAW_CLEAR = "draw_clear"             # 清除绘制请求
 
     # UI 事件
@@ -281,10 +281,9 @@ class EventCenter:
         if self._event_pump is not None:
             return
         try:
-            factory = self._pump_factory
+            factory = self._pump_factory or get_event_pump_factory()
             if factory is None:
-                from lib.core.qt_bridge.event_pump import create_event_pump
-                factory = create_event_pump
+                return
             self._event_pump = factory(self._process_events)
         except Exception as e:
             logger.debug("事件泵初始化失败: %s", e)

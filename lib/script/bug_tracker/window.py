@@ -26,7 +26,7 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
-from config.font_config import get_digit_font, get_ui_font
+from lib.core.qt_bridge.font import get_digit_font, get_ui_font
 from config.scale import scale_px
 from lib.core.layer import Layer
 from lib.core.qt_bridge.workbench_page import QtWorkbenchToolPage

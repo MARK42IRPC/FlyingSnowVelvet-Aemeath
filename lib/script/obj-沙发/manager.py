@@ -1,16 +1,16 @@
 """沙发管理器 - 使用动态注册机制，通过事件系统通信"""
-import os
 import random
-
-from PyQt5.QtCore    import Qt, QPoint
-from PyQt5.QtGui     import QPixmap, QTransform
 
 from lib.core.event.center      import get_event_center, EventType, Event
 from lib.core.graphics.types import Point, coerce_point
 from lib.core.hash_cmd_registry import get_hash_cmd_registry
 from lib.core.plugin_registry   import manager_registry, BaseManager
-from lib.core.screen_utils      import get_screen_geometry_for_point
-from .sofa                      import Sofa
+from lib.core.screen_utils import get_screen_rect_for_point
+from lib.core.world_objects import (
+    create_world_object,
+    get_world_object_center,
+    load_stretched_image_pair,
+)
 from lib.core.logger import get_logger
 
 _logger = get_logger(__name__)
@@ -30,7 +30,7 @@ class SofaManager(BaseManager):
 
     职责：
     - 订阅 INPUT_HASH 事件，解析 "#沙发 数量" 命令
-    - 加载并缓存 sofa.png 正向 / 翻转 QPixmap
+    - 加载并缓存 sofa.png 正向 / 翻转图片句柄
     - 在屏幕底部区域随机生成 Sofa 窗口
     - 响应 MANAGER_QUERY_REQUEST 事件提供最近沙发位置
     """
@@ -46,11 +46,11 @@ class SofaManager(BaseManager):
             entity: 主宠物实体（PetWindow），用于获取位置信息
         """
         self._entity = entity
-        self._sofas: list[Sofa] = []
+        self._sofas: list[object] = []
 
-        # QPixmap 缓存（正向 + 翻转）
-        self._pixmap:         QPixmap | None = None
-        self._flipped_pixmap: QPixmap | None = None
+        # 绘制后端图片缓存（正向 + 翻转）
+        self._image:         object | None = None
+        self._flipped_image: object | None = None
 
         # 重力开关状态（True = 重力开启）
         self._gravity_enabled = True
@@ -90,30 +90,17 @@ class SofaManager(BaseManager):
     # ==================================================================
 
     def _load_png(self):
-        """加载沙发 PNG，生成正向和翻转 QPixmap 缓存。"""
+        """加载沙发 PNG，生成正向和翻转图片缓存。"""
         png_path = self._cfg.get('png_file', 'resc/GIF/sofa.png')
-        if not os.path.exists(png_path):
-            log(f"警告：找不到沙发 PNG 文件: {png_path}")
-            return
-
         size = self._cfg.get('size', (120, 120))
-        w, h  = size
-
-        pixmap = QPixmap(png_path)
-        if pixmap.isNull():
+        pair = load_stretched_image_pair(png_path, size)
+        if pair is None:
             log(f"加载 PNG 失败: {png_path}")
             return
 
-        # 缩放到目标尺寸（忽略原始宽高比，因为沙发图本身是方形的）
-        pixmap = pixmap.scaled(w, h, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
-
-        # 水平翻转版本
-        transform        = QTransform().scale(-1, 1)
-        flipped_pixmap   = pixmap.transformed(transform, Qt.SmoothTransformation)
-
-        self._pixmap         = pixmap
-        self._flipped_pixmap = flipped_pixmap
-        log(f"PNG 已加载：{png_path}，缩放至 {w}x{h}")
+        self._image         = pair.image
+        self._flipped_image = pair.flipped_image
+        log(f"PNG 已加载：{png_path}，缩放至 {pair.size[0]}x{pair.size[1]}")
 
     # ==================================================================
     # 事件处理
@@ -266,11 +253,11 @@ class SofaManager(BaseManager):
 
     def _spawn_sofas(self, count: int):
         """在宠物当前位置生成 count 个沙发，中心锚点对齐。"""
-        if self._pixmap is None:
+        if self._image is None:
             log("无可用图片，跳过生成")
             return
 
-        screen = get_screen_geometry_for_point()
+        screen = get_screen_rect_for_point()
         size   = self._cfg.get('size', (120, 120))
         w, h   = size
 
@@ -278,37 +265,37 @@ class SofaManager(BaseManager):
         pet_center = None
         if self._entity and hasattr(self._entity, 'get_core_geometry'):
             pet_geometry = self._entity.get_core_geometry()
-            pet_center = QPoint(
-                int(round(pet_geometry.x + pet_geometry.width / 2)),
-                int(round(pet_geometry.y + pet_geometry.height / 2)),
+            pet_center = Point(
+                round(pet_geometry.x + pet_geometry.width / 2),
+                round(pet_geometry.y + pet_geometry.height / 2),
             )
-            screen = get_screen_geometry_for_point(pet_center)
+            screen = get_screen_rect_for_point(pet_center)
 
         for _ in range(count):
             if pet_center:
                 # 以宠物中心为基准生成，添加随机偏移
                 offset_x = random.randint(-50, 50)
                 offset_y = random.randint(-50, 50)
-                x = pet_center.x() - w // 2 + offset_x
-                y = pet_center.y() - h // 2 + offset_y
+                x = int(pet_center.x) - w // 2 + offset_x
+                y = int(pet_center.y) - h // 2 + offset_y
             else:
                 # 兜底：屏幕底部随机生成
-                sx = screen.x()
-                sy = screen.y()
-                sw = screen.width()
-                sh = screen.height()
+                sx = int(screen.x)
+                sy = int(screen.y)
+                sw = int(screen.width)
+                sh = int(screen.height)
                 y_min_pct = self._cfg.get('spawn_y_min', 0.80)
                 y_max_pct = self._cfg.get('spawn_y_max', 0.90)
-                qt_y_top = sy + int(sh * y_min_pct)
-                qt_y_bottom = max(qt_y_top, sy + int(sh * y_max_pct) - h)
+                y_top = sy + int(sh * y_min_pct)
+                y_bottom = max(y_top, sy + int(sh * y_max_pct) - h)
                 x = random.randint(sx, max(sx, sx + sw - w))
-                y = random.randint(qt_y_top, max(qt_y_top, qt_y_bottom))
+                y = random.randint(y_top, max(y_top, y_bottom))
 
             # 边界检查
-            min_x = screen.x()
-            min_y = screen.y()
-            max_x = screen.x() + screen.width() - w
-            max_y = screen.y() + screen.height() - h
+            min_x = int(screen.x)
+            min_y = int(screen.y)
+            max_x = int(screen.x + screen.width - w)
+            max_y = int(screen.y + screen.height - h)
             if max_x < min_x:
                 max_x = min_x
             if max_y < min_y:
@@ -316,10 +303,11 @@ class SofaManager(BaseManager):
             x = max(min_x, min(x, max_x))
             y = max(min_y, min(y, max_y))
 
-            sofa = Sofa(
-                pixmap         = self._pixmap,
-                flipped_pixmap = self._flipped_pixmap,
-                position       = QPoint(x, y),
+            sofa = create_world_object(
+                "sofa",
+                image          = self._image,
+                flipped_image  = self._flipped_image,
+                position       = Point(x, y),
                 size           = size,
             )
             # 继承管理器的重力状态
@@ -347,7 +335,7 @@ class SofaManager(BaseManager):
         origin = coerce_point(from_pos)
         if origin is None:
             return None
-        centers = [(sofa, coerce_point(sofa.get_center())) for sofa in self._sofas]
+        centers = [(sofa, get_world_object_center(sofa)) for sofa in self._sofas]
         centers = [(sofa, center) for sofa, center in centers if center is not None]
         if not centers:
             return None
@@ -381,9 +369,7 @@ class SofaManager(BaseManager):
             return False
         min_dist_sq = float('inf')
         for sofa in alive:
-            sc = coerce_point(sofa.get_center())
-            if sc is None:
-                continue
+            sc = get_world_object_center(sofa)
             dx = pet_point.x - sc.x
             dy = pet_point.y - sc.y
             dist_sq = dx * dx + dy * dy

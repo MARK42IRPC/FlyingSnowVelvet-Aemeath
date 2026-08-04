@@ -21,18 +21,6 @@ GitHub/Gitee 没有真实打包 ZIP 附件时，更新器使用固定 tag 自动
 
 ## 2. 发布前检查
 
-### 文档门户
-
-```powershell
-python scripts/generate_doc_portal.py
-```
-
-检查：
-
-- `AA使用必读.html` 可正常生成
-- 门户版本号与当前版本一致
-- 文档卡片、贡献名单、赞助名单路径正确
-
 ### 静态检查
 
 ```powershell
@@ -160,7 +148,6 @@ Release 建议上传：
 
 - 普通包 zip 与 manifest
 - 绿色包 zip 与 manifest（如本次提供）
-- `AA使用必读.html`
 
 GitHub `PACK` 的普通包附件由 `.github/workflows/publish-pack.yml` 发布。先将本地
 验收通过的 ZIP 与 manifest 上传到 Gitee `最新包`，再把两个固定 tag 推送到同一提交；

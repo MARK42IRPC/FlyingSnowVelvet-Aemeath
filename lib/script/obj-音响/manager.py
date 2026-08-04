@@ -1,16 +1,18 @@
 """音响管理器 - 使用动态注册机制，通过事件系统通信"""
-import os
 import random
 
-from PyQt5.QtCore    import Qt, QPoint
-from PyQt5.QtGui     import QPixmap, QTransform
-
 from lib.core.event.center      import get_event_center, EventType, Event
+from lib.core.graphics.types import Point
 from lib.core.hash_cmd_registry import get_hash_cmd_registry
 from lib.core.plugin_registry   import manager_registry, BaseManager
-from lib.core.screen_utils      import get_screen_geometry_for_point
+from lib.core.screen_utils import get_screen_rect_for_point
+from lib.core.world_objects import (
+    create_world_object,
+    get_world_object_center,
+    get_world_object_geometry,
+    load_height_scaled_image_pair,
+)
 from lib.script.music import get_music_service, cleanup_music_service
-from .speaker                   import Speaker
 from lib.core.logger import get_logger
 
 _logger = get_logger(__name__)
@@ -30,7 +32,7 @@ class SpeakerManager(BaseManager):
 
     职责：
     - 订阅 INPUT_HASH 事件，解析 "#音响 数量" 命令
-    - 加载并缓存 music.png 正向 / 翻转 QPixmap
+    - 加载并缓存 music.png 正向 / 翻转图片句柄
     - 在屏幕底部区域随机生成 Speaker 窗口
     """
 
@@ -45,10 +47,10 @@ class SpeakerManager(BaseManager):
             entity: 主宠物实体（PetWindow），用于后续功能扩展
         """
         self._entity = entity
-        self._speakers: list[Speaker] = []
+        self._speakers: list[object] = []
 
-        self._pixmap:         QPixmap | None = None
-        self._flipped_pixmap: QPixmap | None = None
+        self._image:         object | None = None
+        self._flipped_image: object | None = None
         self._actual_size:    tuple         = (120, 120)  # 缩放后的真实尺寸
 
         # 重力开关状态（True = 重力开启）
@@ -68,13 +70,6 @@ class SpeakerManager(BaseManager):
         get_hash_cmd_registry().register('音响重力', '', '开关音响重力影响')
         get_hash_cmd_registry().register('退出音乐登录', '', '退出当前音乐平台账号并删除登录缓存')
 
-        # 初始化音响搜索对话框（必须在 Qt 主线程中调用）
-        from lib.script.ui.speaker_search_dialog import init_speaker_search_dialog
-        init_speaker_search_dialog()
-        # 初始化音乐平台扫码登录对话框（由抽象层分发）
-        from lib.script.ui.cloudmusic_login_dialog import init_cloudmusic_login_dialog
-        init_cloudmusic_login_dialog()
-
         # 初始化音乐抽象层（当前默认接管网易云后端）
         get_music_service().initialize()
 
@@ -87,11 +82,16 @@ class SpeakerManager(BaseManager):
 
     def _on_window_request(self, event: Event):
         """处理音响窗口范围请求事件，返回所有音响的窗口范围"""
-        speakers = self.get_alive_speakers()
+        speakers = self._get_alive_speakers()
         rects = []
         for speaker in speakers:
-            rect = speaker.geometry()
-            rects.append((rect.x(), rect.y(), rect.x() + rect.width(), rect.y() + rect.height()))
+            rect = get_world_object_geometry(speaker)
+            rects.append((
+                rect.x,
+                rect.y,
+                rect.x + rect.width,
+                rect.y + rect.height,
+            ))
 
         # 发布响应事件
         self._event_center.publish(Event(EventType.SPEAKER_WINDOW_RESPONSE, {
@@ -103,31 +103,20 @@ class SpeakerManager(BaseManager):
     # ==================================================================
 
     def _load_png(self):
-        """加载音响 PNG，生成正向和翻转 QPixmap 缓存。"""
+        """加载音响 PNG，生成正向和翻转图片缓存。"""
         png_path = self._cfg.get('png_file', 'resc/GIF/music.png')
-        if not os.path.exists(png_path):
-            log(f"警告：找不到音响 PNG 文件: {png_path}")
-            return
-
         size = self._cfg.get('size', (120, 120))
         h    = size[1]   # 仅取配置高度，宽度由图片原始比例决定
 
-        pixmap = QPixmap(png_path)
-        if pixmap.isNull():
+        pair = load_height_scaled_image_pair(png_path, h)
+        if pair is None:
             log(f"加载 PNG 失败: {png_path}")
             return
 
-        # 按高度缩放，保持原始宽高比
-        pixmap        = pixmap.scaledToHeight(h, Qt.SmoothTransformation)
-        actual_w      = pixmap.width()
-        self._actual_size = (actual_w, h)
-
-        transform      = QTransform().scale(-1, 1)
-        flipped_pixmap = pixmap.transformed(transform, Qt.SmoothTransformation)
-
-        self._pixmap         = pixmap
-        self._flipped_pixmap = flipped_pixmap
-        log(f"PNG 已加载：{png_path}，缩放至 {actual_w}x{h}")
+        self._actual_size = pair.size
+        self._image         = pair.image
+        self._flipped_image = pair.flipped_image
+        log(f"PNG 已加载：{png_path}，缩放至 {pair.size[0]}x{pair.size[1]}")
 
     # ==================================================================
     # 事件处理
@@ -218,11 +207,11 @@ class SpeakerManager(BaseManager):
 
     def _spawn_speakers(self, count: int):
         """在宠物当前位置生成 count 个音响，中心锚点对齐。"""
-        if self._pixmap is None:
+        if self._image is None:
             log("无可用图片，跳过生成")
             return
 
-        screen = get_screen_geometry_for_point()
+        screen = get_screen_rect_for_point()
         size   = self._actual_size   # 使用按比例缩放后的真实尺寸
         w, h   = size
 
@@ -230,38 +219,45 @@ class SpeakerManager(BaseManager):
         pet_center = None
         if self._entity and hasattr(self._entity, 'get_core_geometry'):
             pet_geometry = self._entity.get_core_geometry()
-            pet_center = QPoint(
-                int(round(pet_geometry.x + pet_geometry.width / 2)),
-                int(round(pet_geometry.y + pet_geometry.height / 2)),
+            pet_center = Point(
+                round(pet_geometry.x + pet_geometry.width / 2),
+                round(pet_geometry.y + pet_geometry.height / 2),
             )
-            screen = get_screen_geometry_for_point(pet_center)
+            screen = get_screen_rect_for_point(pet_center)
 
         for _ in range(count):
             if pet_center:
                 # 以宠物中心为基准生成，添加随机偏移
                 offset_x = random.randint(-50, 50)
                 offset_y = random.randint(-50, 50)
-                x = pet_center.x() - w // 2 + offset_x
-                y = pet_center.y() - h // 2 + offset_y
+                x = int(pet_center.x) - w // 2 + offset_x
+                y = int(pet_center.y) - h // 2 + offset_y
             else:
                 # 兜底：屏幕底部随机生成
-                sw = screen.width()
-                sh = screen.height()
+                sx = int(screen.x)
+                sy = int(screen.y)
+                sw = int(screen.width)
+                sh = int(screen.height)
                 y_min_pct = self._cfg.get('spawn_y_min', 0.80)
                 y_max_pct = self._cfg.get('spawn_y_max', 0.90)
-                qt_y_top    = int(sh * y_min_pct)
-                qt_y_bottom = max(qt_y_top, int(sh * y_max_pct) - h)
-                x = random.randint(0, max(0, sw - w))
-                y = random.randint(qt_y_top, max(qt_y_top, qt_y_bottom))
+                y_top = sy + int(sh * y_min_pct)
+                y_bottom = max(y_top, sy + int(sh * y_max_pct) - h)
+                x = random.randint(sx, max(sx, sx + sw - w))
+                y = random.randint(y_top, max(y_top, y_bottom))
 
             # 边界检查
-            x = max(0, min(x, screen.width() - w))
-            y = max(0, min(y, screen.height() - h))
+            min_x = int(screen.x)
+            min_y = int(screen.y)
+            max_x = max(min_x, int(screen.x + screen.width - w))
+            max_y = max(min_y, int(screen.y + screen.height - h))
+            x = max(min_x, min(x, max_x))
+            y = max(min_y, min(y, max_y))
 
-            speaker = Speaker(
-                pixmap         = self._pixmap,
-                flipped_pixmap = self._flipped_pixmap,
-                position       = QPoint(x, y),
+            speaker = create_world_object(
+                "speaker",
+                image          = self._image,
+                flipped_image  = self._flipped_image,
+                position       = Point(x, y),
                 size           = size,
             )
             # 继承管理器的重力状态
@@ -274,10 +270,17 @@ class SpeakerManager(BaseManager):
     # 供外部查询（预留接口，供后续功能扩展）
     # ==================================================================
 
-    def get_alive_speakers(self) -> list[Speaker]:
+    def _get_alive_speakers(self) -> list[object]:
         """返回当前所有存活的音响实例列表。"""
         self._speakers = [s for s in self._speakers if s.is_alive()]
         return list(self._speakers)
+
+    def get_speaker_centers(self) -> list[Point]:
+        """返回当前存活音响的后端无关中心坐标。"""
+        return [
+            get_world_object_center(speaker)
+            for speaker in self._get_alive_speakers()
+        ]
 
     def set_gravity_enabled(self, enabled: bool):
         """
@@ -313,7 +316,7 @@ class SpeakerManager(BaseManager):
     # ==================================================================
 
     def cleanup(self):
-        """取消事件订阅，关闭所有音响窗口及搜索 UI。"""
+        """取消事件订阅并关闭所有音响对象。"""
         self._event_center.unsubscribe(EventType.INPUT_HASH, self._on_hash_command)
         self._event_center.unsubscribe(EventType.SPEAKER_WINDOW_REQUEST, self._on_window_request)
         self._event_center.unsubscribe(EventType.MANAGER_SPAWN_REQUEST, self._on_spawn_request)
@@ -324,18 +327,6 @@ class SpeakerManager(BaseManager):
                 except Exception:
                     pass
         self._speakers.clear()
-
-        from lib.script.ui.speaker_search_dialog import cleanup_speaker_search_dialog
-        cleanup_speaker_search_dialog()
-
-        from lib.script.ui.playlist_panel import cleanup_playlist_panel
-        cleanup_playlist_panel()
-
-        from lib.script.ui.progress_panel import cleanup_progress_panel
-        cleanup_progress_panel()
-
-        from lib.script.ui.cloudmusic_login_dialog import cleanup_cloudmusic_login_dialog
-        cleanup_cloudmusic_login_dialog()
 
         cleanup_music_service()
 

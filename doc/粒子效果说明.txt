@@ -2,7 +2,7 @@
 
 一、总体说明
 - 事件入口：`EventType.PARTICLE_REQUEST`
-- 渲染层：`lib/core/qt_bridge/particle_system.py`（旧 `qt_particle_system.py` 仅为兼容导出）
+- 渲染层：`lib/core/qt_bridge/particle_system.py`
 - 粒子脚本发现：`lib/script/practical/manager.py`
 - 自动扫描目录：`lib/script/practical/*_particle.py`
 - 更新机制：`tick` 推进真实状态，`frame` 仅负责插值绘制

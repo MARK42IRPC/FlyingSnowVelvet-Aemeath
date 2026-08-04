@@ -31,6 +31,10 @@ AUTOSTART_KEY_NAME = 'FlyingSnowflake'
 TRAY_ICON_GUID = uuid.UUID('{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}')
 
 
+def _default_tray_icon_path() -> Path:
+    return Path(__file__).resolve().parents[3] / 'resc' / 'icon.ico'
+
+
 class TrayIcon(QObject):
     """系统托盘图标管理器"""
 
@@ -97,8 +101,7 @@ class TrayIcon(QObject):
 
     def _resolve_default_icon_path(self) -> str:
         """获取默认托盘图标路径"""
-        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        return os.path.join(project_root, 'resc', 'icon.ico')
+        return str(_default_tray_icon_path())
 
     def _start_retry(self):
         """开始后台重试创建托盘图标"""

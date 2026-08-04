@@ -8,11 +8,12 @@ from PyQt5.QtCore import Qt, QRect, QPropertyAnimation, QEasingCurve
 from PyQt5.QtGui import QCursor, QFontMetrics, QPainter, QPixmap
 from PyQt5.QtWidgets import QGraphicsOpacityEffect, QPushButton, QWidget
 
-from config.config import UI, UI_THEME
-from config.font_config import draw_mixed_text, get_digit_font, get_ui_font, wrap_mixed_text
+from config.config import UI
+from lib.core.qt_bridge.colors import UI_THEME
+from lib.core.qt_bridge.font import draw_mixed_text, get_digit_font, get_ui_font, wrap_mixed_text
 from config.scale import scale_px, scale_style_px
 from lib.core.anchor_utils import apply_ui_opacity
-from lib.core.screen_utils import clamp_rect_position, get_screen_geometry_for_point
+from lib.core.qt_bridge.screen import clamp_rect_position, get_screen_geometry_for_point
 from lib.core.unified_draw import Layer, get_layer_manager
 
 _WIDTH = scale_px(320, min_abs=1)

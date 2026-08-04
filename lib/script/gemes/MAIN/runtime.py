@@ -9,14 +9,15 @@ from PyQt5.QtGui import QColor, QPainter
 from PyQt5.QtWidgets import QWidget
 
 from config.config import UI
-from config.font_config import get_ui_font
+from lib.core.qt_bridge.font import get_ui_font
 from config.scale import scale_px
 from lib.core.anchor_utils import apply_ui_opacity
 from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import Event, EventType, get_event_center
+from lib.core.graphics.types import Rect
 from lib.core.hash_cmd_registry import get_hash_cmd_registry
 from lib.core.logger import get_logger
-from lib.core.screen_utils import get_screen_geometry_for_point
+from lib.core.qt_bridge.screen import get_screen_geometry_for_point
 from lib.core.unified_draw import Layer, RenderCore, RenderRequest, get_layer_manager
 from lib.core.voice.ams_open_lahai_tetris import AmsOpenLahaiTetrisSound
 from lib.script.gemes.MAIN.game_packages import (
@@ -603,8 +604,9 @@ class GameRuntime:
             "max": 80,
         }))
 
-    def get_lahai_game_middle_third_rect_global(self) -> QRect:
-        return self._panel.get_game_middle_third_rect_global()
+    def get_lahai_game_middle_third_rect_global(self) -> Rect:
+        rect = self._panel.get_game_middle_third_rect_global()
+        return Rect(rect.x(), rect.y(), rect.width(), rect.height())
 
     def report_games(self) -> None:
         games = self._package_service.list_installed_games()

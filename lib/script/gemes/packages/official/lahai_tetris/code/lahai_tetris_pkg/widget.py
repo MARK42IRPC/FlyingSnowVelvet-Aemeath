@@ -17,7 +17,7 @@ from PyQt5.QtCore import QEasingCurve, QPoint, Qt, QRectF, QTimer, QVariantAnima
 from PyQt5.QtGui import QColor, QPainter, QPixmap
 from PyQt5.QtWidgets import QWidget
 
-from config.font_config import get_digit_font, get_ui_font
+from lib.core.qt_bridge.font import get_digit_font, get_ui_font
 from config.scale import scale_px
 from lib.core.event.center import Event, EventType, get_event_center
 from lib.core.effect_utils import spawn_flash_text_effect, spawn_smooth_image_effect
@@ -202,8 +202,7 @@ class LahaiTetrisWidget(QWidget):
             _SPLENDOR_SKILL_SLOT: SplendorSkillSlot(),
             _PARTNER_SKILL_SLOT: PartnerSkillSlot(),
         }
-        for skill in self._skills.values():
-            skill.load_assets(self)
+        self._skill_avatar_cache: dict[str, QPixmap] = {}
         self._anim_from_cells: list[tuple[float, float]] = []
         self._anim_to_cells: list[tuple[float, float]] = []
         self._anim_progress = 1.0
@@ -1299,8 +1298,14 @@ class LahaiTetrisWidget(QWidget):
         draw_skill_avatar(self, painter, rect, avatar, disabled=disabled)
 
     def _load_skill_avatar(self, filename: str) -> QPixmap:
-        path = self._context.asset_path("avatars", filename)
-        return QPixmap(str(path))
+        key = str(filename or "")
+        cached = self._skill_avatar_cache.get(key)
+        if cached is not None:
+            return cached
+        path = self._context.asset_path("avatars", key)
+        pixmap = QPixmap(str(path))
+        self._skill_avatar_cache[key] = pixmap
+        return pixmap
 
     def _skill_avatar_path(self, filename: str) -> Path:
         return self._context.asset_path("avatars", filename)
@@ -1361,16 +1366,9 @@ class LahaiTetrisWidget(QWidget):
         right_exit_global = self.mapToGlobal(right_exit_local)
 
         showcase_path = self._skill_showcase_path(skill.avatar_filename)
-        effect_pixmap = QPixmap()
-        effect_path = showcase_path
-        if showcase_path.exists():
-            effect_pixmap = QPixmap(str(showcase_path))
-        if effect_pixmap.isNull():
-            avatar_path = self._skill_avatar_path(skill.avatar_filename)
-            if avatar_path.exists():
-                effect_pixmap = QPixmap(str(avatar_path))
-                effect_path = avatar_path
-        if not effect_pixmap.isNull():
+        avatar_path = self._skill_avatar_path(skill.avatar_filename)
+        effect_path = showcase_path if showcase_path.exists() else avatar_path
+        if effect_path.exists():
             spawn_smooth_image_effect(
                 intro_start_pos=(left_entry_global.x(), left_entry_global.y()),
                 intro_duration=_SKILL_EFFECT_INTRO_SECS,
@@ -1382,7 +1380,6 @@ class LahaiTetrisWidget(QWidget):
                 scale=0.5,
                 z=10,
                 effect_options={
-                    "pixmap": effect_pixmap,
                     "edge_feather": True,
                     "feather_ratio": 0.16,
                 },

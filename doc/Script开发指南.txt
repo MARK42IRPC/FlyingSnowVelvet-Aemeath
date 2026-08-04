@@ -6,6 +6,7 @@
 - 动态发现：`lib/core/plugin_registry.py`
 - 管理器目录：`lib/script/obj-*`
 - 粒子目录：`lib/script/practical/*_particle.py`
+- 特效目录：`lib/script/effects/*_effect.py`
 - UI 目录：`lib/script/ui/`
 
 二、启动与自动发现
@@ -44,6 +45,7 @@
 - 需要跨模块通信时，优先发事件，不直接互相引用
 - 管理器响应 `#命令` 时，只处理自己负责的范围
 - 所有窗口、实体、线程、任务都要在 `cleanup()` 中回收
+- 桌面对象资源、创建和几何查询统一通过 `lib.core.world_objects`；管理器只持有不透明图片句柄，并使用核心 `Point/Rect`，不得调用 QWidget 或图片后端的 `geometry()/get_center()/width()/height()`
 
 四、粒子开发
 推荐位置
@@ -67,7 +69,18 @@
   - `is_circle`
   - `no_fade`
 
-五、输入链路
+五、特效开发
+推荐位置
+- `lib/script/effects/xxx_effect.py`
+
+基础要求
+- 继承 `BaseEffectScript`，使用 `@register_effect("effect_id")` 注册，并实现 `create_effects()`
+- `lib/core/plugin_registry.py::discover_effects()` 会自动发现 `*_effect.py`，无需在主入口硬编码
+- 特效脚本只保存文本、资源路径、坐标、颜色、字体参数、时间和动画进度等纯数据状态，不导入 PyQt5 或 `lib.core.qt_bridge`
+- 通过 `lib.core.effect_utils.spawn_effect()` 发布 `EFFECT_REQUEST`；图片使用 `resource_path`，不得把 `QPixmap/QImage/QColor/QFont/QPainter` 放入选项或事件 payload
+- 图片加载、文字栅格化和实际绘制由当前绘制后端负责
+
+六、输入链路
 命令输入框位于 `lib/script/ui/command_dialog.py`
 
 当前输入分流规则：
@@ -77,7 +90,7 @@
 
 AI 工具调度位于 `lib/script/tool_dispatcher/dispatcher.py`。`STREAM_FINAL.tool_call` 携带已校验的原生 Function Calling 调用时优先执行；没有结构化调用时，才从 `text` 中提取兼容格式 `###指令###`。工具 schema 与映射统一定义在 `lib/script/chat/native_tools.py`。
 
-六、配置项落地链路
+七、配置项落地链路
 如果新增 AI 控制面板配置，至少同步以下文件：
 - `lib/script/ui/ai_settings_panel.py`
 - `lib/script/ui/ai_settings_storage.py`
@@ -99,7 +112,7 @@ AI 工具调度位于 `lib/script/tool_dispatcher/dispatcher.py`。`STREAM_FINAL
 - 手动语聊检测到说话后约 0.6 秒静音即结算整句，显式停止也会立即结算；自动语聊保留约 300ms 起始预录和配置的句尾静音保持。
 - 降噪后的 Vosk 结果为空时使用原始 PCM 重试；`MIC_STT_FINAL` 仍是聊天提交边界，`MIC_STT_PARTIAL` 不再作为实时识别依赖。
 
-七、运行时数据边界
+八、运行时数据边界
 以下路径视为运行时目录：
 - `C:\AemeathDeskPet\user\settings.json`
 - `C:\AemeathDeskPet\user\secrets\`
@@ -112,7 +125,7 @@ AI 工具调度位于 `lib/script/tool_dispatcher/dispatcher.py`。`STREAM_FINAL
 
 更新后的程序由独立 helper 等待旧进程退出后覆盖安装。更新窗口完成下载后显示“更新依赖并重启桌宠”，普通重启使用 `启动程序.bat`，环境重启使用 `安装依赖.bat`；两个入口都在 helper 成功完成覆盖后执行。
 
-八、最小管理器模板
+九、最小管理器模板
 ```python
 from lib.core.plugin_registry import BaseManager, manager_registry
 from lib.core.event.center import get_event_center, EventType
@@ -143,7 +156,7 @@ class DemoManager(BaseManager):
 manager_registry.register(DemoManager.MANAGER_ID, DemoManager)
 ```
 
-九、交付前自检
+十、交付前自检
 - 是否完成注册
 - 是否实现完整清理
 - 是否补齐事件字段与参数校验

@@ -1,17 +1,17 @@
 """闹钟管理器 - 使用动态注册机制，通过事件系统通信"""
-import os
 import random
 import re
-
-from PyQt5.QtCore    import Qt, QPoint
-from PyQt5.QtGui     import QPixmap
 
 from lib.core.event.center      import get_event_center, EventType, Event
 from lib.core.graphics.types import Point, coerce_point
 from lib.core.hash_cmd_registry import get_hash_cmd_registry
 from lib.core.plugin_registry   import manager_registry, BaseManager
-from lib.core.screen_utils      import get_screen_geometry_for_point
-from .clock                      import Clock
+from lib.core.screen_utils import get_screen_rect_for_point
+from lib.core.world_objects import (
+    create_world_object,
+    get_world_object_center,
+    load_width_scaled_image_pair,
+)
 from lib.core.logger import get_logger
 
 _logger = get_logger(__name__)
@@ -31,7 +31,7 @@ class ClockManager(BaseManager):
 
     职责：
     - 订阅 INPUT_HASH 事件，解析 "#闹钟 数量" 命令
-    - 加载并缓存 clock.png QPixmap
+    - 加载并缓存 clock.png 图片句柄
     - 在屏幕底部区域随机生成 Clock 窗口
     - 响应 MANAGER_QUERY_REQUEST 事件提供最近闹钟位置
     """
@@ -47,10 +47,10 @@ class ClockManager(BaseManager):
             entity: 主宠物实体（PetWindow），用于获取位置信息
         """
         self._entity = entity
-        self._clocks: list[Clock] = []
+        self._clocks: list[object] = []
 
-        # QPixmap 缓存
-        self._pixmap:         QPixmap | None = None
+        # 绘制后端图片缓存
+        self._image:          object | None = None
         self._actual_size:    tuple[int, int] = (120, 120)
 
         # 重力开关状态（True = 重力开启）
@@ -98,25 +98,17 @@ class ClockManager(BaseManager):
     # ==================================================================
 
     def _load_png(self):
-        """加载闹钟 PNG，生成 QPixmap 缓存。"""
+        """加载闹钟 PNG，生成图片缓存。"""
         png_path = self._cfg.get('png_file', 'resc/GIF/clock.png')
-        if not os.path.exists(png_path):
-            log(f"警告：找不到闹钟 PNG 文件: {png_path}")
-            return
-
-        pixmap = QPixmap(png_path)
-        if pixmap.isNull():
+        target_w = int(self._cfg.get('target_width', 150))
+        pair = load_width_scaled_image_pair(png_path, target_w)
+        if pair is None:
             log(f"加载 PNG 失败: {png_path}")
             return
 
-        # 按目标宽度等比缩放
-        target_w = int(self._cfg.get('target_width', 150))
-        pixmap = pixmap.scaledToWidth(target_w, Qt.SmoothTransformation)
-        actual_w, actual_h = pixmap.width(), pixmap.height()
-        self._actual_size = (actual_w, actual_h)
-
-        self._pixmap         = pixmap
-        log(f"PNG 已加载：{png_path}，缩放至 {actual_w}x{actual_h}")
+        self._actual_size = pair.size
+        self._image = pair.image
+        log(f"PNG 已加载：{png_path}，缩放至 {pair.size[0]}x{pair.size[1]}")
 
     # ==================================================================
     # 事件处理
@@ -344,11 +336,11 @@ class ClockManager(BaseManager):
 
     def _spawn_clocks(self, count: int, countdown_seconds: int):
         """在宠物当前位置生成 count 个闹钟，中心锚点对齐。"""
-        if self._pixmap is None:
+        if self._image is None:
             log("无可用图片，跳过生成")
             return
 
-        screen = get_screen_geometry_for_point()
+        screen = get_screen_rect_for_point()
         size   = self._actual_size
         w, h   = size
         countdown_hh, countdown_mm, countdown_ss = self._seconds_to_hh_mm_ss(countdown_seconds)
@@ -358,37 +350,37 @@ class ClockManager(BaseManager):
         pet_center = None
         if self._entity and hasattr(self._entity, 'get_core_geometry'):
             pet_geometry = self._entity.get_core_geometry()
-            pet_center = QPoint(
-                int(round(pet_geometry.x + pet_geometry.width / 2)),
-                int(round(pet_geometry.y + pet_geometry.height / 2)),
+            pet_center = Point(
+                round(pet_geometry.x + pet_geometry.width / 2),
+                round(pet_geometry.y + pet_geometry.height / 2),
             )
-            screen = get_screen_geometry_for_point(pet_center)
+            screen = get_screen_rect_for_point(pet_center)
 
         for _ in range(count):
             if pet_center:
                 # 以宠物中心为基准生成，添加随机偏移
                 offset_x = random.randint(-50, 50)
                 offset_y = random.randint(-50, 50)
-                x = pet_center.x() - w // 2 + offset_x
-                y = pet_center.y() - h // 2 + offset_y
+                x = int(pet_center.x) - w // 2 + offset_x
+                y = int(pet_center.y) - h // 2 + offset_y
             else:
                 # 兜底：屏幕底部随机生成
-                sx = screen.x()
-                sy = screen.y()
-                sw = screen.width()
-                sh = screen.height()
+                sx = int(screen.x)
+                sy = int(screen.y)
+                sw = int(screen.width)
+                sh = int(screen.height)
                 y_min_pct = self._cfg.get('spawn_y_min', 0.80)
                 y_max_pct = self._cfg.get('spawn_y_max', 0.90)
-                qt_y_top = sy + int(sh * y_min_pct)
-                qt_y_bottom = max(qt_y_top, sy + int(sh * y_max_pct) - h)
+                y_top = sy + int(sh * y_min_pct)
+                y_bottom = max(y_top, sy + int(sh * y_max_pct) - h)
                 x = random.randint(sx, max(sx, sx + sw - w))
-                y = random.randint(qt_y_top, max(qt_y_top, qt_y_bottom))
+                y = random.randint(y_top, max(y_top, y_bottom))
 
             # 边界检查
-            min_x = screen.x()
-            min_y = screen.y()
-            max_x = screen.x() + screen.width() - w
-            max_y = screen.y() + screen.height() - h
+            min_x = int(screen.x)
+            min_y = int(screen.y)
+            max_x = int(screen.x + screen.width - w)
+            max_y = int(screen.y + screen.height - h)
             if max_x < min_x:
                 max_x = min_x
             if max_y < min_y:
@@ -396,9 +388,10 @@ class ClockManager(BaseManager):
             x = max(min_x, min(x, max_x))
             y = max(min_y, min(y, max_y))
 
-            clock = Clock(
-                pixmap         = self._pixmap,
-                position       = QPoint(x, y),
+            clock = create_world_object(
+                "clock",
+                image          = self._image,
+                position       = Point(x, y),
                 size           = size,
                 countdown_hh   = countdown_hh,
                 countdown_mm   = countdown_mm,
@@ -415,7 +408,7 @@ class ClockManager(BaseManager):
     # 供状态机查询
     # ==================================================================
 
-    def get_nearest_clock_pos(self, from_pos: QPoint) -> QPoint | None:
+    def get_nearest_clock_pos(self, from_pos: Point | object) -> Point | None:
         """
         返回距离 from_pos 最近的存活闹钟的中心坐标。
 
@@ -427,14 +420,23 @@ class ClockManager(BaseManager):
         if not self._clocks:
             return None
 
-        nearest = min(
-            self._clocks,
-            key=lambda s: (
-                (s.get_center().x() - from_pos.x()) ** 2
-                + (s.get_center().y() - from_pos.y()) ** 2
-            )
-        )
-        return nearest.get_center()
+        origin = coerce_point(from_pos)
+        if origin is None:
+            return None
+        centers = [
+            (clock, get_world_object_center(clock))
+            for clock in self._clocks
+        ]
+        centers = [(clock, center) for clock, center in centers if center is not None]
+        if not centers:
+            return None
+        return min(
+            centers,
+            key=lambda item: (
+                (item[1].x - origin.x) ** 2
+                + (item[1].y - origin.y) ** 2
+            ),
+        )[1]
 
     def is_pet_in_clock_protection(self, pet_center: Point | object, in_protection: bool = False) -> bool:
         """
@@ -458,9 +460,7 @@ class ClockManager(BaseManager):
             return False
         min_dist_sq = float('inf')
         for clock in alive:
-            sc = coerce_point(clock.get_center())
-            if sc is None:
-                continue
+            sc = get_world_object_center(clock)
             dx = pet_point.x - sc.x
             dy = pet_point.y - sc.y
             dist_sq = dx * dx + dy * dy

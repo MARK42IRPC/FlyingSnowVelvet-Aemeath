@@ -5,7 +5,7 @@ from __future__ import annotations
 from PyQt5.QtCore import Qt, QRect, QTimer
 from PyQt5.QtGui import QPainter
 
-from config.config import UI_THEME
+from lib.core.qt_bridge.colors import UI_THEME
 from config.scale import scale_px
 from lib.core.event.center import Event, EventType, get_event_center
 from lib.core.layer_manager import get_layer_manager

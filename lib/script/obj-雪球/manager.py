@@ -4,16 +4,15 @@ import random
 from concurrent.futures import Future
 
 import numpy as np
-from PyQt5.QtCore    import QPoint
-from PyQt5.QtGui     import QPixmap
 
 from lib.core.event.center        import get_event_center, EventType, Event
 from lib.core.compute_hub         import get_compute_hub
+from lib.core.graphics.types      import Point, coerce_point
 from lib.core.hash_cmd_registry   import get_hash_cmd_registry
 from lib.core.plugin_registry     import manager_registry, BaseManager
-from lib.core.screen_utils        import get_screen_geometry_for_point
+from lib.core.screen_utils import get_screen_rect_for_point
+from lib.core.world_objects import create_world_object, load_image, scale_image
 from lib.core.logger              import get_logger
-from .snowball                    import Snowball
 
 _logger = get_logger(__name__)
 
@@ -23,7 +22,7 @@ def log(msg: str):
 
 
 # ──────────────────────────────────────────────────────────────────────
-# 后台碰撞计算（纯数据，无 Qt 操作）
+# 后台碰撞计算（纯数据，不接触绘制后端对象）
 # ──────────────────────────────────────────────────────────────────────
 
 def _compute_collision_results(snapshot: list, elasticity: float,
@@ -126,15 +125,15 @@ class SnowballManager(BaseManager):
 
     def __init__(self, entity=None):
         self._entity = entity
-        self._balls: list[Snowball] = []
+        self._balls: list[object] = []
 
         # 读取配置
         from config.config import SNOWBALL
         self._cfg = SNOWBALL
 
         # 加载 PNG
-        self._pixmap_cache: dict[int, QPixmap] = {}  # diameter -> QPixmap
-        self._source_pixmap: QPixmap | None = None
+        self._image_cache: dict[int, object] = {}  # diameter -> backend image handle
+        self._source_image: object | None = None
         self._load_png()
 
         # 事件订阅
@@ -163,29 +162,21 @@ class SnowballManager(BaseManager):
     # ==================================================================
 
     def _load_png(self):
-        import os
         png_path = self._cfg.get('png_file', 'resc/GIF/snowball.png')
-        if not os.path.exists(png_path):
-            log(f"警告：找不到雪球 PNG 文件: {png_path}")
+        image = load_image(png_path)
+        if image is None:
+            log(f"警告：图片加载失败: {png_path}")
             return
-        pix = QPixmap(png_path)
-        if pix.isNull():
-            log(f"警告：QPixmap 加载失败: {png_path}")
-            return
-        self._source_pixmap = pix
+        self._source_image = image
         log(f"PNG 已加载: {png_path}")
 
-    def _get_pixmap(self, diameter: int) -> QPixmap | None:
-        """按直径获取缩放后的 QPixmap（缓存）。"""
-        if self._source_pixmap is None:
+    def _get_image(self, diameter: int) -> object | None:
+        """按直径获取缩放后的图片句柄（缓存）。"""
+        if self._source_image is None:
             return None
-        if diameter not in self._pixmap_cache:
-            self._pixmap_cache[diameter] = self._source_pixmap.scaled(
-                diameter, diameter,
-                1,  # Qt.KeepAspectRatio
-                1,  # Qt.SmoothTransformation
-            )
-        return self._pixmap_cache[diameter]
+        if diameter not in self._image_cache:
+            self._image_cache[diameter] = scale_image(self._source_image, (diameter, diameter))
+        return self._image_cache[diameter]
 
     # ==================================================================
     # 事件处理
@@ -253,7 +244,7 @@ class SnowballManager(BaseManager):
         elasticity   = self._cfg.get('collision_elasticity', 0.60)
         ball_friction = self._cfg.get('ball_friction', 0.45)
 
-        # 采集快照（纯 Python float，不含 Qt 对象引用给后台线程）
+        # 采集快照（纯 Python float，不把后端对象传给后台线程）
         snapshot = []
         for ball in self._balls:
             if ball._fading or ball._drag_offset is not None:
@@ -286,7 +277,7 @@ class SnowballManager(BaseManager):
         self._collision_future = future
 
     def _apply_collision_results(self) -> None:
-        """将后台计算结果应用到主线程的物理体和 Qt 窗口（幂等，未完成则跳过）。"""
+        """将后台计算结果应用到主线程的物理体和对象宿主（幂等）。"""
         if self._collision_future is None or not self._collision_future.done():
             return
 
@@ -301,8 +292,8 @@ class SnowballManager(BaseManager):
             return
 
         for res in results:
-            ball_a: Snowball = res['ball_a']
-            ball_b: Snowball = res['ball_b']
+            ball_a = res['ball_a']
+            ball_b = res['ball_b']
 
             # apply 时再次校验：对象仍然存活且未进入拖拽/淡出
             if not ball_a.is_alive() or ball_a._fading or ball_a._drag_offset is not None:
@@ -325,7 +316,7 @@ class SnowballManager(BaseManager):
             body_b.x += nx * half
             body_b.y += ny * half
 
-            # 通知 Qt 窗口跟进位置
+            # 通知对象宿主跟进位置
             if body_a.on_position_change:
                 body_a.on_position_change(body_a)
             if body_b.on_position_change:
@@ -364,7 +355,7 @@ class SnowballManager(BaseManager):
 
     def _spawn_snowballs(self, count: int):
         """在屏幕底部随机生成 count 个雪球（带 FIFO 上限控制）。"""
-        if self._source_pixmap is None:
+        if self._source_image is None:
             log("无可用 PNG，跳过生成")
             return
 
@@ -374,8 +365,13 @@ class SnowballManager(BaseManager):
                 anchor = self._entity.get_core_position()
             except Exception:
                 anchor = None
-        screen = get_screen_geometry_for_point(anchor)
-        sx, sy, sw, sh = screen.x(), screen.y(), screen.width(), screen.height()
+        screen = get_screen_rect_for_point(anchor)
+        sx, sy, sw, sh = (
+            int(screen.x),
+            int(screen.y),
+            int(screen.width),
+            int(screen.height),
+        )
 
         y_min_pct = self._cfg.get('spawn_y_min', 0.85)
         y_max_pct = self._cfg.get('spawn_y_max', 0.95)
@@ -384,15 +380,18 @@ class SnowballManager(BaseManager):
 
         for _ in range(count):
             diameter = random.randint(size_min, size_max)
-            qt_y_top    = sy + int(sh * y_min_pct)
-            qt_y_bottom = max(qt_y_top, sy + int(sh * y_max_pct) - diameter)
+            y_top = sy + int(sh * y_min_pct)
+            y_bottom = max(y_top, sy + int(sh * y_max_pct) - diameter)
             x = random.randint(sx, max(sx, sx + sw - diameter))
-            y = random.randint(qt_y_top, max(qt_y_top, qt_y_bottom))
-            self._spawn_one(QPoint(x, y), diameter)
+            y = random.randint(y_top, max(y_top, y_bottom))
+            self._spawn_one(Point(x, y), diameter)
 
-    def _spawn_one(self, position: QPoint, diameter: int = None):
+    def _spawn_one(self, position: Point | object, diameter: int = None):
         """在指定位置生成一个雪球，执行 FIFO 控制。"""
-        if self._source_pixmap is None:
+        if self._source_image is None:
+            return
+        point = coerce_point(position)
+        if point is None:
             return
 
         if diameter is None:
@@ -412,18 +411,19 @@ class SnowballManager(BaseManager):
             self._balls.pop(0)
             log(f"FIFO：淡出最早雪球（上限 {max_count}）")
 
-        pix = self._get_pixmap(diameter)
-        if pix is None:
+        image = self._get_image(diameter)
+        if image is None:
             return
         size = (diameter, diameter)
 
-        ball = Snowball(
-            pixmap   = pix,
-            position = position,
+        ball = create_world_object(
+            "snowball",
+            image    = image,
+            position = point,
             size     = size,
         )
         self._balls.append(ball)
-        log(f"生成雪球 @ ({position.x()}, {position.y()})，直径={diameter}")
+        log(f"生成雪球 @ ({point.x}, {point.y})，直径={diameter}")
 
     # ==================================================================
     # 公开查询
@@ -461,7 +461,7 @@ class SnowballManager(BaseManager):
                 except Exception:
                     pass
         self._balls.clear()
-        self._pixmap_cache.clear()
+        self._image_cache.clear()
         log("已清理")
 
 

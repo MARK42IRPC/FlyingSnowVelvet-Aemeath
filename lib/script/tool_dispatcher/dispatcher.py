@@ -849,11 +849,16 @@ class ToolDispatcher:
         )
 
     def _defer_call(self, delay_ms: int, callback) -> None:
-        if self._defer is None:
-            from lib.core.qt_bridge.scheduler import call_later
+        if self._defer is not None:
+            self._defer(delay_ms, callback)
+            return
+        from lib.core.desktop_backend import get_deferred_call
 
-            self._defer = call_later
-        self._defer(delay_ms, callback)
+        deferred_call = get_deferred_call()
+        if deferred_call is not None:
+            deferred_call(delay_ms, callback)
+        else:
+            callback()
 
     def _parse_teleport_position(self, arg: str) -> tuple[int, int] | None:
         """

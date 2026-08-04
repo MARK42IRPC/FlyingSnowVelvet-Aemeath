@@ -1,4 +1,4 @@
-"""单个雪球对象 - 可拖拽投掷、双击淡出、带寿命倒计时的雪球小窗口"""
+"""Qt host for the throwable snowball world object."""
 import random
 import time
 from collections import deque
@@ -13,7 +13,7 @@ from lib.core.clickthrough_state  import is_clickthrough_enabled
 from lib.core.physics             import get_physics_world, PhysicsBody
 from lib.core.unified_draw import Layer, get_layer_manager
 from lib.core.voice.snowball_sound import SnowballSound
-from lib.core.screen_utils        import get_screen_geometry_for_point
+from lib.core.qt_bridge.screen import get_screen_geometry_for_point
 
 
 # ── 物理参数（从 PHYSICS 读取，与沙发保持一致）────────────────────────

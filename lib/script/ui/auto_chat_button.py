@@ -7,7 +7,7 @@ from PyQt5.QtCore import Qt, QPoint
 from config.scale import scale_px
 from config.tooltip_config import TOOLTIPS
 from lib.core.event.center import get_event_center, EventType, Event
-from lib.core.screen_utils import clamp_rect_position
+from lib.core.qt_bridge.screen import clamp_rect_position
 from lib.script.ui.rect_action_button_style import RectActionButton
 
 

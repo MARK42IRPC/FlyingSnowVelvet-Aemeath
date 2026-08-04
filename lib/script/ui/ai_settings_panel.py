@@ -41,8 +41,10 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtGui import QPainter, QColor, QCursor, QPixmap
 
-from config.config import UI_THEME, UI
-from config.font_config import get_ui_font, get_digit_font
+from config.config import UI
+from lib.core.qt_bridge.colors import UI_THEME
+from lib.core.qt_bridge.font import get_ui_font, get_digit_font
+from lib.core.backend_router import get_backend_descriptors
 from config.general_user_settings import save_general_values
 from config.ollama_config import (
     AI_VOICE_MAX_CHARS_DEFAULT,
@@ -213,6 +215,7 @@ _CATEGORY_KEY_ALLOWLIST = {
             "tooltip_opacity",
             "ui_fade_duration",
             "auto_hide_mouse_distance",
+            "render_backend",
         },
         "COMMAND_DIALOG": {"idle_timeout_ms"},
     },
@@ -457,6 +460,13 @@ _GENERAL_CHOICE_FIELD_OPTIONS: dict[tuple[str, str], list[tuple[str, str]]] = {
         ("左上", "up_left"),
         ("不偏移", "center"),
     ],
+    ("UI", "render_backend"): [
+        (
+            f"{descriptor.display_name}（{'当前可用' if descriptor.available else '尚未接入'}）",
+            descriptor.backend_id,
+        )
+        for descriptor in get_backend_descriptors()
+    ],
 }
 
 _GENERAL_CONFIG_DEFAULTS: dict[str, dict[str, object]] = {
@@ -477,6 +487,7 @@ _GENERAL_CONFIG_DEFAULTS: dict[str, dict[str, object]] = {
         "ui_fade_duration": 200,
         "auto_hide_mouse_distance": 300,
         "workbench_light_theme": False,
+        "render_backend": "qt",
     },
     "COMMAND_DIALOG": {
         "idle_timeout_ms": 10000,
@@ -636,6 +647,7 @@ _KEY_FRIENDLY_NAME = {
         "tooltip_opacity": "悬浮说明透明度",
         "ui_fade_duration": "淡入淡出时长(ms)",
         "auto_hide_mouse_distance": "自动关闭阈值",
+        "render_backend": "渲染后端",
     },
     "ANIMATION": {
         "pet_size": "宠物尺寸",
@@ -4043,7 +4055,10 @@ class AISettingsPanel(QWidget):
             def completed() -> None:
                 _apply_general_runtime(values)
                 self._apply_external_category_fields(category_id)
-                self._emit_info(f"{meta.get('title', '配置')}已保存。")
+                message = f"{meta.get('title', '配置')}已保存。"
+                if "render_backend" in values.get("UI", {}):
+                    message += " 渲染后端将在重启后生效。"
+                self._emit_info(message)
 
             return self._submit_save_task(persist, completed)
         except Exception as e:

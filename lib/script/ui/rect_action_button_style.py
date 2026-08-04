@@ -6,8 +6,9 @@ from PyQt5.QtWidgets import QWidget, QGraphicsOpacityEffect
 from PyQt5.QtCore import Qt, QPropertyAnimation, QEasingCurve
 from PyQt5.QtGui import QPainter
 
-from config.config import COLORS, UI, UI_THEME
-from config.font_config import get_ui_font
+from config.config import UI
+from lib.core.qt_bridge.colors import COLORS, UI_THEME
+from lib.core.qt_bridge.font import get_ui_font
 from config.scale import scale_px
 from lib.core.anchor_utils import animate_opacity, apply_ui_opacity
 from lib.core.unified_draw import Layer, get_layer_manager

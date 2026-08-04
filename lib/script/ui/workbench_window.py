@@ -36,7 +36,7 @@ from PyQt5.QtWidgets import (
 )
 
 from config.config import UI
-from config.font_config import apply_ui_font_tree, get_ui_font
+from lib.core.qt_bridge.font import apply_ui_font_tree, get_ui_font
 from config.general_user_settings import save_general_values
 from config.scale import scale_px
 from lib.core.anchor_utils import apply_ui_opacity

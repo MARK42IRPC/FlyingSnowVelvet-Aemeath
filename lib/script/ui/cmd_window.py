@@ -27,8 +27,9 @@ from PyQt5.QtWidgets import (
     QGraphicsOpacityEffect, QLabel, QHBoxLayout, QPushButton,
 )
 
-from config.config import COLORS, UI, UI_THEME
-from config.font_config import get_cmd_font, get_ui_font, get_digit_font
+from config.config import UI
+from lib.core.qt_bridge.colors import COLORS, UI_THEME
+from lib.core.qt_bridge.font import get_cmd_font, get_ui_font, get_digit_font
 from config.scale import scale_px, scale_style_px
 from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import get_event_center, EventType, Event

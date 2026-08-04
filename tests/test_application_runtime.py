@@ -57,6 +57,37 @@ class ApplicationRuntimeContractTests(unittest.TestCase):
         self.assertNotIn("QTimer", source)
         self.assertNotIn("QEvent", source)
 
+    def test_qt_runtime_sets_resource_window_icon(self):
+        repo_root = Path(__file__).resolve().parents[1]
+        script = textwrap.dedent(
+            """
+            import os
+
+            os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+            from lib.core.qt_bridge.application_runtime import QtApplicationRuntime
+
+            class Logger:
+                def info(self, *args, **kwargs): pass
+                def warning(self, *args, **kwargs): pass
+
+            app = QtApplicationRuntime().create_application(Logger(), [])
+            icon = app.windowIcon()
+            assert not icon.isNull()
+            assert not icon.pixmap(16, 16).isNull()
+            app.quit()
+            """
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from PyQt5.QtCore import Qt, QPointF, QRect, QRectF, QVariantAnimation
 from PyQt5.QtGui import QBrush, QColor, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap, QRadialGradient
 
-from config.font_config import get_digit_font, get_ui_font
+from lib.core.qt_bridge.font import get_digit_font, get_ui_font
 from config.scale import scale_px
 
 from .constants import (
@@ -373,7 +373,7 @@ def draw_skill_slots(widget: "LahaiTetrisWidget", painter: QPainter) -> None:
                 painter,
                 rect,
                 index,
-                skill.avatar,
+                widget._load_skill_avatar(skill.avatar_filename),
                 skill.cooldown_remaining(),
                 highlighted=(widget._hovered_skill_slot_index == index and skill.cooldown_remaining() <= 0.0),
             )

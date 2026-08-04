@@ -7,8 +7,6 @@ import time
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
-from PyQt5.QtGui import QPixmap
-
 from .model import apply_board_gravity, lowest_fill_columns, rows_with_more_than_four_colors
 from .constants import (
     AUTHORIZATION_COOLDOWN_SECS,
@@ -54,11 +52,6 @@ class LahaiSkillSlot(ABC):
         self.cooldown_secs = self.base_cooldown_secs
         self.cooldown_until = 0.0
         self._paused_remaining = 0.0
-        self.avatar = QPixmap()
-
-    def load_assets(self, owner: "LahaiTetrisWidget") -> None:
-        if self.avatar_filename:
-            self.avatar = owner._load_skill_avatar(self.avatar_filename)
 
     def reset(self) -> None:
         self.cooldown_secs = self.base_cooldown_secs

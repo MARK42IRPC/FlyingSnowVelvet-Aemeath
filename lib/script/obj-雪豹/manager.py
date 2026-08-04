@@ -1,18 +1,17 @@
 """雪豹管理器 - 使用动态注册机制，通过事件系统通信"""
 import random
 
-from PIL             import Image, ImageSequence
-from PyQt5.QtCore    import QPoint
-from PyQt5.QtGui     import QImage
-
 from lib.core.event.center    import get_event_center, EventType, Event
 from lib.core.graphics.types import Point, coerce_point
-from lib.core.qt_bridge.gif_loader import flip_frame
+from lib.core.screen_utils import get_screen_rect_for_point
+from lib.core.world_objects import (
+    create_world_object,
+    get_world_object_center,
+    load_gif_frame_pair,
+)
 from lib.core.hash_cmd_registry import get_hash_cmd_registry
 from lib.core.plugin_registry import manager_registry, BaseManager
-from lib.core.screen_utils import get_screen_geometry_for_point
 from lib.core.voice.ams_enh   import AmsEnhSound
-from .snow_leopard            import SnowLeopard
 from lib.core.logger import get_logger
 
 _logger = get_logger(__name__)
@@ -49,12 +48,12 @@ class SnowLeopardManager(BaseManager):
             entity: 主宠物实体（PetWindow），用于获取位置信息
         """
         self._entity   = entity
-        self._leopards: list[SnowLeopard] = []
+        self._leopards: list[object] = []
         self._pending_play = False  # 碰撞已发生，等待 move 完全结束后进入 play
 
         # GIF 帧缓存（正向 + 翻转，在此统一预计算）
-        self._frames:         list[QImage] = []
-        self._flipped_frames: list[QImage] = []
+        self._frames:         list[object] = []
+        self._flipped_frames: list[object] = []
 
         # 读取配置
         from config.config import SNOW_LEOPARD
@@ -97,41 +96,15 @@ class SnowLeopardManager(BaseManager):
 
     def _load_gif(self):
         """加载雪豹 GIF，生成正向帧和翻转帧缓存。"""
-        import os
         gif_path = self._cfg.get('gif_file', 'resc/GIF/snow_leopard.gif')
-        if not os.path.exists(gif_path):
-            log(f"警告：找不到雪豹 GIF 文件: {gif_path}")
-            return
-
-        frames: list[QImage] = []
         try:
-            img    = Image.open(gif_path)
-            size   = img.size
-            canvas = Image.new('RGBA', size, (0, 0, 0, 0))
-
-            for frame in ImageSequence.Iterator(img):
-                disposal   = frame.info.get('disposal', 2)
-                offset     = frame.info.get('offset', (0, 0))
-                frame_rgba = frame.convert('RGBA')
-
-                if disposal == 2:
-                    canvas = Image.new('RGBA', size, (0, 0, 0, 0))
-                # disposal 0/1/3：保留累积内容
-
-                canvas.paste(frame_rgba, offset, frame_rgba)
-
-                w, h  = canvas.size
-                data  = canvas.tobytes('raw', 'RGBA')
-                qimg  = QImage(data, w, h, QImage.Format_RGBA8888).copy()
-                frames.append(qimg)
-
+            frames, flipped_frames = load_gif_frame_pair(gif_path)
         except Exception as exc:
             log(f"加载 GIF 出错: {exc}")
             return
 
         self._frames         = frames
-        # 翻转帧统一在此预计算，避免每只雪豹重复计算
-        self._flipped_frames = [flip_frame(f) for f in frames]
+        self._flipped_frames = flipped_frames
         log(f"GIF 已加载：{len(frames)} 帧，文件：{gif_path}")
 
     # ==================================================================
@@ -177,7 +150,7 @@ class SnowLeopardManager(BaseManager):
         {
             'manager_id': 'snow_leopard',  # 目标管理器ID
             'spawn_type': 'natural',       # 生成类型：'natural' 或 'command'
-            'position': QPoint(x, y),      # 生成位置（仅 natural 类型）
+            'position': Point(x, y),       # 生成位置（仅 natural 类型）
         }
         """
         if event.data.get('manager_id') != self.MANAGER_ID:
@@ -232,9 +205,9 @@ class SnowLeopardManager(BaseManager):
         for leopard in self._leopards:
             if leopard._fading:
                 continue
-            lc = leopard.get_center()
-            dx = pet_cx - lc.x()
-            dy = pet_cy - lc.y()
+            lc = get_world_object_center(leopard)
+            dx = pet_cx - lc.x
+            dy = pet_cy - lc.y
             if dx * dx + dy * dy <= r2:
                 log("雪豹进入交互范围，触发淡出；等待移动结束后进入 play")
                 leopard.start_fadeout()
@@ -314,7 +287,7 @@ class SnowLeopardManager(BaseManager):
         self._leopards = [l for l in self._leopards if l.is_alive()]
         return len(self._leopards)
 
-    def spawn_natural(self, position: QPoint, power_min: float = None, power_max: float = None) -> None:
+    def spawn_natural(self, position: Point | object, power_min: float = None, power_max: float = None) -> None:
         """
         在指定位置生成一只雪豹（供雪堆调用，不检查上限，由调用方控制）。
 
@@ -326,27 +299,31 @@ class SnowLeopardManager(BaseManager):
         if not self._frames:
             log("无可用帧，跳过生成")
             return
+        point = coerce_point(position)
+        if point is None:
+            return
 
         size = self._cfg.get('size', (80, 80))
         w, h = size
 
-        screen = get_screen_geometry_for_point(position)
+        screen = get_screen_rect_for_point(point)
         # 以 position 为中心放置，确保不超出屏幕边界
-        min_x = screen.x()
-        min_y = screen.y()
-        max_x = screen.x() + screen.width() - w
-        max_y = screen.y() + screen.height() - h
+        min_x = int(screen.x)
+        min_y = int(screen.y)
+        max_x = int(screen.x + screen.width - w)
+        max_y = int(screen.y + screen.height - h)
         if max_x < min_x:
             max_x = min_x
         if max_y < min_y:
             max_y = min_y
-        x = max(min_x, min(position.x() - w // 2, max_x))
-        y = max(min_y, min(position.y() - h // 2, max_y))
+        x = max(min_x, min(int(point.x) - w // 2, max_x))
+        y = max(min_y, min(int(point.y) - h // 2, max_y))
 
-        leopard = SnowLeopard(
+        leopard = create_world_object(
+            "snow_leopard",
             frames         = self._frames,
             flipped_frames = self._flipped_frames,
-            position       = QPoint(x, y),
+            position       = Point(x, y),
             size           = size,
         )
         self._leopards.append(leopard)
@@ -378,24 +355,24 @@ class SnowLeopardManager(BaseManager):
                 anchor = self._entity.get_core_position()
             except Exception:
                 anchor = None
-        screen = get_screen_geometry_for_point(anchor)
-        sx = screen.x()
-        sy = screen.y()
-        sw = screen.width()
-        sh = screen.height()
+        screen = get_screen_rect_for_point(anchor)
+        sx = int(screen.x)
+        sy = int(screen.y)
+        sw = int(screen.width)
+        sh = int(screen.height)
         size   = self._cfg.get('size', (80, 80))
         w, h   = size
 
         # 生成区域配置：
         #   spawn_y_min / spawn_y_max 为屏幕高度占比，
-        #   0.0 = 屏幕顶部 (Qt y=0)，1.0 = 屏幕底部 (Qt y=sh)。
+        #   0.0 = 屏幕顶部，1.0 = 屏幕底部。
         #   默认 0.85~0.95，即屏幕高度 85%~95% 处（接近底部）。
         y_min_pct = self._cfg.get('spawn_y_min', 0.85)
         y_max_pct = self._cfg.get('spawn_y_max', 0.95)
 
-        # 转换为 Qt 像素坐标（左上角），确保雪豹不超出屏幕边界
-        qt_y_top = sy + int(sh * y_min_pct)  # 生成区域上沿
-        qt_y_bottom = max(qt_y_top, sy + int(sh * y_max_pct) - h)  # 生成区域下沿（减去自身高度）
+        # 转换为桌面像素坐标（左上角），确保雪豹不超出屏幕边界
+        y_top = sy + int(sh * y_min_pct)  # 生成区域上沿
+        y_bottom = max(y_top, sy + int(sh * y_max_pct) - h)  # 生成区域下沿（减去自身高度）
 
         # 从 SNOW_PILE 配置读取生成时力度参数
         from config.config import SNOW_PILE
@@ -406,12 +383,13 @@ class SnowLeopardManager(BaseManager):
             min_x = sx
             max_x = max(sx, sx + sw - w)
             x = random.randint(min_x, max_x)
-            y = random.randint(qt_y_top, max(qt_y_top, qt_y_bottom))
+            y = random.randint(y_top, max(y_top, y_bottom))
 
-            leopard = SnowLeopard(
+            leopard = create_world_object(
+                "snow_leopard",
                 frames         = self._frames,
                 flipped_frames = self._flipped_frames,
-                position       = QPoint(x, y),
+                position       = Point(x, y),
                 size           = size,
             )
             self._leopards.append(leopard)
@@ -437,7 +415,7 @@ class SnowLeopardManager(BaseManager):
         if origin is None:
             return None
         centers = [
-            (leopard, coerce_point(leopard.get_center()))
+            (leopard, get_world_object_center(leopard))
             for leopard in alive
         ]
         centers = [(leopard, center) for leopard, center in centers if center is not None]

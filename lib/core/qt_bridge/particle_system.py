@@ -9,14 +9,15 @@ from PyQt5.QtWidgets import QWidget
 from PyQt5.QtCore import Qt, QRect, QRectF, QLineF, QPointF
 from PyQt5.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen, QRegion
 
-from config.config import PARTICLES, UI_THEME
+from config.config import PARTICLES
+from lib.core.qt_bridge.colors import UI_THEME
 from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.graphics.types import Color, FontSpec
 from lib.core.layer import Layer, normalize_layer
 from lib.core.layer_manager import get_layer_manager
 from lib.core.logger import get_logger
-from lib.core.screen_utils import get_virtual_screen_geometry
+from lib.core.qt_bridge.screen import get_virtual_screen_geometry
 from lib.script.practical.manager import get_particle_script_manager
 
 _ASYNC_PARTICLE_UPDATE_THRESHOLD = 1200

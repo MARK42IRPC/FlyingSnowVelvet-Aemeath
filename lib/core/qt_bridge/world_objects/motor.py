@@ -1,4 +1,4 @@
-"""单个摩托对象 - 可拖拽投掷、双击淡出、带物理弹跳的摩托小窗口"""
+"""Qt host for the interactive motor world object."""
 import random
 import time
 from collections import deque
@@ -12,7 +12,7 @@ from lib.core.unified_draw import Layer, get_layer_manager
 from lib.core.event.center     import get_event_center, EventType, Event
 from lib.core.clickthrough_state import is_clickthrough_enabled
 from lib.core.physics          import get_physics_world, PhysicsBody
-from lib.core.screen_utils     import get_screen_geometry_for_point
+from lib.core.qt_bridge.screen import get_screen_geometry_for_point
 from lib.core.voice.chrack     import ChrackSound
 
 

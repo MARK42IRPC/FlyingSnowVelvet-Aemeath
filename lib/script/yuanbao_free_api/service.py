@@ -13,7 +13,7 @@ import time
 import zipfile
 from concurrent.futures import Future
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Callable, Dict, Optional, Tuple
 from urllib.parse import urlparse
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -443,7 +443,15 @@ class YuanbaoFreeApiService(LocalHostedServiceBase):
         self._login_monitor_lock = threading.RLock()
         self._login_monitor_thread: Optional[Future] = None
         self._active_login_provider = 'wechat'
+        self._login_dialog_initializer: Optional[Callable[[], object]] = None
         self._subscribe_app_pre_start()
+
+    def configure_login_dialog_initializer(
+        self,
+        initializer: Optional[Callable[[], object]],
+    ) -> None:
+        """Inject the desktop UI initializer at the application boundary."""
+        self._login_dialog_initializer = initializer
 
     def _should_prestart(self) -> bool:
         return _should_manage_local_service()
@@ -455,9 +463,11 @@ class YuanbaoFreeApiService(LocalHostedServiceBase):
         if threading.current_thread() is not threading.main_thread():
             logger.debug('[YuanbaoFreeApiService] Skip login dialog init in background thread; wait for main thread to create it')
             return
+        initializer = self._login_dialog_initializer
+        if initializer is None:
+            return
         try:
-            from lib.script.ui.yuanbao_login_dialog import init_yuanbao_login_dialog
-            init_yuanbao_login_dialog()
+            initializer()
         except Exception as exc:
             logger.debug('[YuanbaoFreeApiService] ???????????: %s', exc)
 

@@ -1,4 +1,4 @@
-"""单个雪堆对象 - 只能水平拖动、支持批次生成雪豹、双击淡出的雪堆小窗口"""
+"""Qt host for the snow-pile world object."""
 import random
 from typing import Callable, Optional
 
@@ -9,7 +9,7 @@ from PyQt5.QtGui     import QPainter, QPixmap
 from lib.core.unified_draw import Layer, get_layer_manager
 from lib.core.event.center    import get_event_center, EventType, Event
 from lib.core.clickthrough_state import is_clickthrough_enabled
-from lib.core.screen_utils    import get_screen_geometry_for_point
+from lib.core.qt_bridge.screen import get_screen_geometry_for_point
 from lib.core.voice.snow      import SnowSound
 from config.config            import PHYSICS, BEHAVIOR
 

@@ -314,14 +314,23 @@ class VoicePackageManagerTests(unittest.TestCase):
 
         service = service_module.GsvmoveService.__new__(service_module.GsvmoveService)
         service._infer_lock = RecordingLock()
+        service._prestart_lock = threading.Lock()
+        service._prestart_started = True
+        service._warmup_done = False
+        service.auto_start_enabled = Mock(return_value=True)
         service._ensure_runtime_ready = Mock(
             side_effect=lambda: events.append("load") or True
         )
-        service._warmup_service_once = Mock(side_effect=lambda: events.append("warmup"))
+        def warmup():
+            events.append("warmup")
+            service._warmup_done = True
+
+        service._warmup_service_once = Mock(side_effect=warmup)
 
         service._prestart_worker()
 
         self.assertEqual(events, ["lock-enter", "load", "warmup", "lock-exit"])
+        self.assertTrue(service._prestart_started)
 
     def test_legacy_cleanup_deletes_only_valid_isolated_runtime(self):
         with tempfile.TemporaryDirectory() as tmp:

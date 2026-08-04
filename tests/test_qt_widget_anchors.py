@@ -2,7 +2,6 @@ import unittest
 
 from PyQt5.QtCore import QPoint
 
-from lib.core import anchor_utils
 from lib.core.event.center import EventType
 from lib.core.graphics.types import Point
 from lib.core.qt_bridge.widget_anchors import (
@@ -56,7 +55,7 @@ class QtWidgetAnchorTests(unittest.TestCase):
 
         self.assertEqual(get_anchor_point(widget, "center"), QPoint(50, 30))
         self.assertEqual(
-            anchor_utils.get_anchor_point(widget, "bottom_right"),
+            get_anchor_point(widget, "bottom_right"),
             QPoint(100, 60),
         )
 

@@ -68,6 +68,13 @@ PARTICLE_REQUEST
   - `area_type`
   - `area_data`
 
+EFFECT_REQUEST
+- 用途：申请覆盖层特效
+- 字段：`effect_id`、`anchor_type`、`anchor_data`、`effect_options`
+- `anchor_data` 与 `effect_options` 只能包含 `None`、字符串、数值、布尔值、列表、元组和字符串键字典；发布工具会递归复制载荷并拒绝不透明后端对象
+- 图片特效通过 `effect_options.resource_path` 传递资源路径，文字特效传递文本、颜色数组和字体参数；不得传入 `QPixmap/QImage/QColor/QFont/QPainter` 等 toolkit 对象
+- 当前由 `lib/core/qt_bridge/effect_system.py` 消费；资源加载、文字栅格化和后端图片缓存只发生在适配层
+
 SOUND_REQUEST
 - 用途：请求播放音频文件
 - 字段：

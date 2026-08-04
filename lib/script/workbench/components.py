@@ -17,7 +17,7 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
-from config.font_config import get_ui_font
+from lib.core.qt_bridge.font import get_ui_font
 from config.scale import scale_px
 from lib.script.ui.speaker_menu_style import paint_speaker_action_button
 from lib.script.workbench.theme import get_workbench_colors

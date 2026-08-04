@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
 
 from PyQt5.QtCore import QPoint, QRect
 
+from lib.core.graphics.types import Rect
 from lib.script.gemes.MAIN.runtime import (
+    GameRuntime,
     GameRuntimePanel,
     aspect_resize_geometry,
     centered_aspect_rect,
@@ -40,6 +43,17 @@ class GameRuntimeGeometryTests(unittest.TestCase):
         start = QRect(100, 100, 1000, 800)
         resized = aspect_resize_geometry(start, {"left", "top"}, QPoint(900, 900), 600, 10, 8)
         self.assertEqual(resized, QRect(500, 420, 600, 480))
+
+    def test_runtime_exposes_middle_third_as_core_rect(self):
+        runtime = GameRuntime.__new__(GameRuntime)
+        runtime._panel = SimpleNamespace(
+            get_game_middle_third_rect_global=lambda: QRect(40, 50, 300, 600),
+        )
+
+        result = runtime.get_lahai_game_middle_third_rect_global()
+
+        self.assertIsInstance(result, Rect)
+        self.assertEqual(result, Rect(40, 50, 300, 600))
 
 
 if __name__ == "__main__":

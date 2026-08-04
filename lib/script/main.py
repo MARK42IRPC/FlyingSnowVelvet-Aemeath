@@ -12,15 +12,21 @@ try:
 except Exception:
     _onnxruntime_preload = None
 
-from config.config import GIF_FILES, DRAW, ANIMATION
+from config.config import GIF_FILES, DRAW, ANIMATION, UI
 from lib.core.application_runtime import ApplicationRuntime
+from lib.core.backend_router import configure_selected_backend, register_backend
 from lib.core.qt_bridge.application_runtime import QtApplicationRuntime
 from lib.core.qt_bridge.gif_loader import GifLoader
 from lib.core.qt_bridge.effect_system import EffectOverlay
 from lib.core.qt_bridge.particle_system import ParticleOverlay
 from lib.core.qt_bridge.scheduler import QtScheduler
 from lib.core.qt_bridge.screen_capture import QtScreenCapture
-from lib.core.pet_window import PetWindow
+from lib.core.qt_bridge.pet_window import QtPetWindow
+from lib.core.qt_bridge.desktop_backend import configure_qt_desktop_backend
+
+register_backend("qt", configure_qt_desktop_backend)
+_BACKEND_SELECTION = configure_selected_backend(UI.get("render_backend", "qt"))
+
 from lib.core.event.center import get_event_center, EventType, Event, cleanup_event_center
 from lib.script.SEanima.animation import get_start_exit_animation, cleanup_start_exit_animation
 from lib.core.logger import initialize as initialize_app_logger, cleanup as cleanup_app_logger, get_logger
@@ -114,6 +120,8 @@ class ApplicationState:
         # ONNX 文本转语音桥接：主界面就绪后在隔离 Worker 中加载本地模型。
         self._gsvmove = get_gsvmove_service()
         self._yuanbao_free_api = get_yuanbao_free_api_service()
+        from lib.script.ui.yuanbao_login_dialog import init_yuanbao_login_dialog
+        self._yuanbao_free_api.configure_login_dialog_initializer(init_yuanbao_login_dialog)
         self._bug_tracker = get_bug_tracker_service()
         self._microphone_stt = get_microphone_stt_service()
         self._microphone_push_to_talk = get_microphone_push_to_talk_manager()
@@ -172,7 +180,7 @@ class ApplicationState:
         })
 
         # 宠物窗口
-        self._pet = PetWindow(self._gifs, self._particles)
+        self._pet = QtPetWindow(self._gifs, self._particles)
 
         # ── 使用动态发现机制初始化所有管理器 ────────────────────────────
         # 管理器会在模块加载时自动注册，这里统一初始化
@@ -283,6 +291,15 @@ class ApplicationState:
         # ── 初始化日志系统（最早执行，确保捕获全部输出）──────────────
         # initialize 内部会自动清理旧日志，只保留最新 5 个
         initialize_app_logger(script_dir)
+        if _BACKEND_SELECTION.fallback_used:
+            logger.warning(
+                "请求的渲染后端 %s 不可用，已回退到 %s: %s",
+                _BACKEND_SELECTION.requested_backend or "<empty>",
+                _BACKEND_SELECTION.active_backend,
+                _BACKEND_SELECTION.reason,
+            )
+        else:
+            logger.info("渲染后端已启用: %s", _BACKEND_SELECTION.active_backend)
         _new_log_startup_hardware_info(logger, DRAW)
 
         # ── 检查并创建桌面快捷方式（日志初始化后执行，便于记录错误）────
@@ -298,7 +315,7 @@ class ApplicationState:
         )
 
         # 初始化字体配置（DPI 缩放，需在桌面应用实例创建后调用）
-        from config.font_config import init_font_config
+        from lib.core.qt_bridge.font import init_font_config
         init_font_config()
 
         # 加载 GIF

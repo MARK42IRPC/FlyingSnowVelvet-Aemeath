@@ -1,4 +1,5 @@
 """宠物窗口模块"""
+from abc import abstractmethod
 import math
 import random
 
@@ -10,6 +11,7 @@ from lib.core.input.types import KeyboardInput, MouseButton, MouseInput
 from lib.core.timing.manager import TimingManager
 from lib.core.movement_controller import MovementSettings
 from lib.core.pet_movement_runtime import PetMovementRuntime
+from lib.core.entity.base import BaseEntity
 from lib.core.event.mouse_handler import MouseEventHandler
 from lib.core.logger import get_logger
 
@@ -17,25 +19,15 @@ _logger = get_logger(__name__)
 from lib.core.voice.ams_startup import AmsStartupSound
 from lib.core.event.key_handler import KeyEventHandler
 from lib.core.event.center import get_event_center, EventType, Event
-from lib.core.qt_bridge.pet_widget import QtPetWidget
 from lib.script.mainpet.state import StateMachine
 from config.user_scale_config import get_user_scale_config
 from lib.core.draw_core import DrawRequest, get_draw_core
 from lib.core.layer import Layer, normalize_layer
 from lib.core.graphics.types import Point, coerce_point
 from lib.core.action import Actions
-from lib.core.pet_window_ui_factory import attach_pet_window_ui, iter_pet_window_ui
-from lib.core.qt_bridge.window_setup import setup_pet_window, finalize_pet_window_startup
 from lib.core.timing import register_timing_manager
 from lib.core.clickthrough_state import set_clickthrough_enabled
-from lib.core.qt_bridge.widget_anchors import publish_widget_anchor_response
-from lib.core.qt_bridge.scheduler import QtScheduler
-from lib.core.qt_bridge.window import (
-    move_widget,
-    set_pet_window_clickthrough,
-)
 from config.scale import scale_px
-from lib.script.ui.shutdown import hide_all_runtime_ui
 
 
 def _get_main_pet_opacity() -> float:
@@ -47,11 +39,53 @@ def _get_main_pet_opacity() -> float:
     return max(0.0, min(1.0, opacity))
 
 
-class PetWindow(QtPetWidget):
+class PetWindow(BaseEntity):
     """
-    主宠物窗口：无边框、置顶、透明背景。
-    所有渲染通过 paintEvent 完成，不依赖 transparentcolor hack。
+    与桌面后端无关的主宠控制器。
+
+    具体窗口宿主通过受保护的 ``_host_*`` 方法承接窗口、输入和 UI
+    副作用；当前 Qt 组合实现位于 ``qt_bridge.pet_window``。
     """
+
+    @abstractmethod
+    def _host_create_scheduler(self):
+        """Create the scheduler owned by the concrete desktop host."""
+
+    @abstractmethod
+    def _host_cursor_position(self) -> Point:
+        """Return the current cursor position in desktop coordinates."""
+
+    @abstractmethod
+    def _host_setup(self, on_close) -> None:
+        """Initialize the native window and toolkit UI components."""
+
+    @abstractmethod
+    def _host_finalize_startup(self) -> None:
+        """Show the native window and complete toolkit-side preloading."""
+
+    @abstractmethod
+    def _host_publish_anchor_response(self, **kwargs) -> None:
+        """Publish a native-window anchor response at the backend boundary."""
+
+    @abstractmethod
+    def _host_set_clickthrough(self, enabled: bool) -> None:
+        """Apply click-through behavior to the native window."""
+
+    @abstractmethod
+    def _host_toggle_command_dialog(self) -> None:
+        """Toggle the toolkit command dialog."""
+
+    @abstractmethod
+    def _host_move(self, position: Point) -> None:
+        """Move the native window."""
+
+    @abstractmethod
+    def _host_request_repaint(self) -> None:
+        """Request a native-window repaint."""
+
+    @abstractmethod
+    def _host_shutdown_ui(self) -> None:
+        """Close toolkit UI owned by the pet host."""
 
     def __init__(self, gifs: dict, particle_overlay: object):
         super().__init__()
@@ -87,7 +121,10 @@ class PetWindow(QtPetWidget):
         set_clickthrough_enabled(False)
 
         # ── 输入处理器 ────────────────────────────────────────────────
-        self._click_handler = ClickHandler(self)
+        self._click_handler = ClickHandler(
+            self,
+            cursor_position_provider=self._host_cursor_position,
+        )
         self._key_handler = KeyHandler(self)
 
         # ── 事件处理器 ───────────────────────────────────────────────
@@ -99,7 +136,7 @@ class PetWindow(QtPetWidget):
         self._timing_manager = TimingManager(
             frame_fps=ANIMATION['frame_fps'],
             gif_fps=ANIMATION['gif_fps'],
-            scheduler=QtScheduler(parent=self),
+            scheduler=self._host_create_scheduler(),
         )
         self._timing_manager.start()
 
@@ -120,7 +157,6 @@ class PetWindow(QtPetWidget):
 
         # ── 订阅绘制事件 ───────────────────────────────────────────────
         self._event_center.subscribe(EventType.DRAW_REQUEST, self._handle_draw_request)
-        self._event_center.subscribe(EventType.DRAW_RENDER, self._handle_draw_render)
 
         # ── 订阅 UI 事件 ─────────────────────────────────────────────
         self._event_center.subscribe(EventType.UI_CREATE, self._handle_ui_create)
@@ -150,8 +186,7 @@ class PetWindow(QtPetWidget):
         self._move_particle_enabled = False
 
         # 鈹€鈹€ 鍒濆浣嶇疆 / UI / 绐楀彛灞炴€?鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
-        setup_pet_window(self)
-        attach_pet_window_ui(self, on_close=self._request_app_quit)
+        self._host_setup(on_close=self._request_app_quit)
 
 
         # ── 定时器 ────────────────────────────────────────────────────
@@ -171,7 +206,7 @@ class PetWindow(QtPetWidget):
             self._event_center.publish(event)
         else:
             self._change_state('idle')
-        finalize_pet_window_startup(self)
+        self._host_finalize_startup()
 
     def _register_all_resources(self):
         """将所有 GIF 资源注册到 DrawCore"""
@@ -229,13 +264,6 @@ class PetWindow(QtPetWidget):
 
         self._draw_core.add_draw_request(request, clear_others=clear_others)
 
-    def _handle_draw_render(self, event):
-        """处理绘制渲染事件"""
-        painter = event.data.get('painter')
-        target_rect = event.data.get('target_rect')
-        if painter:
-            self._draw_core.render(painter, target_rect)
-
     def _handle_ui_create(self, event):
         """?? UI ??????"""
         window_id = event.data.get('window_id')
@@ -243,9 +271,7 @@ class PetWindow(QtPetWidget):
         ui_id = event.data.get('ui_id')
 
         if window_id == 'pet_window':
-            publish_widget_anchor_response(
-                self._event_center,
-                self,
+            self._host_publish_anchor_response(
                 window_id=window_id,
                 anchor_id=anchor_id,
                 ui_id=ui_id,
@@ -259,7 +285,7 @@ class PetWindow(QtPetWidget):
         self._clickthrough = enabled
         set_clickthrough_enabled(enabled)
 
-        set_pet_window_clickthrough(self, enabled)
+        self._host_set_clickthrough(enabled)
 
     def _change_state(self, new_state: str):
         """切换状态"""
@@ -367,7 +393,7 @@ class PetWindow(QtPetWidget):
 
     def toggle_command_dialog(self):
         """切换命令对话框显示状态"""
-        self._cmd.toggle(self)
+        self._host_toggle_command_dialog()
 
     def schedule_task(self, callback, delay_ms: int, repeat: bool = False):
         """
@@ -463,7 +489,7 @@ class PetWindow(QtPetWidget):
 
     def _on_movement_position_update(self, new_pos: Point):
         """移动控制器位置更新回调"""
-        move_widget(self, new_pos)
+        self._host_move(new_pos)
         # 发布锚点更新事件，通知 UI 组件更新位置
         anchor_update_event = Event(EventType.UI_ANCHOR_RESPONSE, {
             'window_id': 'pet_window',
@@ -501,16 +527,18 @@ class PetWindow(QtPetWidget):
         self._move_particle_distance_accum += step
         while self._move_particle_distance_accum >= self._move_particle_step_px:
             self._move_particle_distance_accum -= self._move_particle_step_px
-            cx = int(point.x + self.width() / 2)
-            cy = int(point.y + self.height() / 2)
+            geometry = self.get_core_geometry()
+            cx = int(point.x + geometry.width / 2)
+            cy = int(point.y + geometry.height / 2)
             self.spawn_particles(cx, cy, particle_id='flicker_data', area_type='point')
 
     def _spawn_teleport_burst_particles(self, origin_pos: Point) -> None:
         """在瞬移原地半径 30xp 内生成 5~8 个爆发线条粒子。"""
         radius_px = max(1, int(scale_px(30, min_abs=1)))
         burst_count = random.randint(5, 8)
-        cx = int(origin_pos.x + self.width() / 2)
-        cy = int(origin_pos.y + self.height() / 2)
+        geometry = self.get_core_geometry()
+        cx = int(origin_pos.x + geometry.width / 2)
+        cy = int(origin_pos.y + geometry.height / 2)
 
         for _ in range(burst_count):
             angle = random.uniform(0.0, 2.0 * math.pi)
@@ -538,8 +566,7 @@ class PetWindow(QtPetWidget):
         """处理帧事件 - 用于窗口位置更新"""
         alpha = float((event.data or {}).get('tick_alpha', 1.0) or 0.0)
         self._movement.update_frame(alpha)
-        # 每 0.5s 通过统一层级管理器重申全部注册窗口层级。
-        # 注意：穿透模式下仍需置顶以保证桌宠可见，只是鼠标事件穿透
+        # 仅在窗口注册、注销或改层级后，于下一帧提交一次层级变化。
         get_layer_manager().enforce_on_frame()
 
     def _handle_tick_event(self, event):
@@ -667,7 +694,7 @@ class PetWindow(QtPetWidget):
                 self._event_center.publish(loop_event)
 
         # 触发重绘
-        self.update()
+        self._host_request_repaint()
 
     def _handle_timer_event(self, event):
         """处理定时器事件"""
@@ -683,43 +710,6 @@ class PetWindow(QtPetWidget):
             if not event.data.get('repeat', True):
                 self._task_callbacks.pop(task_id, None)
 
-    def _preload_ui(self):
-        """预加载 UI 组件 - 触发一次 UI 显示和隐藏以初始化动画和资源"""
-        # 延迟 500ms 后开始预加载，确保宠物窗口已经完全初始化
-        preload_task_id = self.schedule_task(self._do_preload_ui, 500, repeat=False)
-
-    def _do_preload_ui(self):
-        """执行 UI 预加载 - 触发淡入动画后立即淡出，仅用于预热，不持续占据显示"""
-        # 显示命令对话框（触发淡入动画）
-        self._cmd.toggle(self)
-        # 在淡入动画结束后立即隐藏（fade_duration + 50ms 缓冲），避免预加载窗口
-        # 长期可见导致用户首次右键点击时反向关闭对话框
-        hide_delay = UI['ui_fade_duration'] + 50
-        self.schedule_task(self._do_preload_hide, hide_delay, repeat=False)
-
-    def _do_preload_hide(self):
-        """预加载完成后隐藏命令框"""
-        if self._cmd._visible:
-            self._cmd.toggle(None)
-
-    def _shutdown_ui_widgets(self):
-        for attr_name, widget in iter_pet_window_ui(self):
-            if widget is None:
-                continue
-            try:
-                widget.hide()
-            except Exception:
-                pass
-            try:
-                widget.close()
-            except Exception:
-                pass
-
-        try:
-            self.hide()
-        except Exception:
-            pass
-
     def _request_app_quit(self):
         timing_manager = getattr(self, '_timing_manager', None)
         if timing_manager is not None:
@@ -728,8 +718,7 @@ class PetWindow(QtPetWidget):
             except Exception:
                 pass
 
-        self._shutdown_ui_widgets()
-        hide_all_runtime_ui()
+        self._host_shutdown_ui()
         self._movement.cleanup()
         self._event_center.publish(Event(EventType.APP_QUIT, {
             'entity': self,
@@ -738,7 +727,7 @@ class PetWindow(QtPetWidget):
 
     def handle_host_close(self) -> None:
         self._movement.cleanup()
-        self._shutdown_ui_widgets()
+        self._host_shutdown_ui()
 
 
 # ======================================================================

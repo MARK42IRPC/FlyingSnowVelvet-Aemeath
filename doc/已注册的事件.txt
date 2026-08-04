@@ -3,7 +3,7 @@
 生成范围: 所有 *.py 中的 EventCenter subscribe / unsubscribe / publish(Event(EventType.*)) 静态扫描结果
 仓库根目录: C:\Users\白草净华\Desktop\飞行雪绒项目\飞行雪绒WORKINGSPACE
 已发现订阅事件种类: 65
-已发现发布事件种类: 63
+已发现发布事件种类: 64
 
 === 订阅汇总（按事件类型） ===
 
@@ -45,13 +45,15 @@
 
 [AUTOSTART_STATUS_CHANGE]
 - lib/script/ui/ai_settings_panel.py -> self._on_autostart_status_change [has unsubscribe]
-  发布方: lib/core/tray_icon.py
-
-[DRAW_RENDER]
-- lib/core/pet_window.py -> self._handle_draw_render
+  发布方: lib/core/qt_bridge/tray_icon.py
 
 [DRAW_REQUEST]
 - lib/core/pet_window.py -> self._handle_draw_request
+
+[EFFECT_REQUEST]
+- payload: `effect_id`、`anchor_type`、`anchor_data`、`effect_options`；只允许嵌套纯数据，不允许 toolkit 对象
+- lib/core/qt_bridge/effect_system.py -> self._on_effect_request [has unsubscribe]
+  发布方: lib/core/effect_utils.py
 
 [ENTITY_POSITION_REQUEST]
 - lib/core/pet_window.py -> self._handle_entity_position_request
@@ -74,10 +76,10 @@
 [FRAME]
 - lib/core/pet_window.py -> self._handle_frame_event
 - lib/core/physics.py -> self._on_frame [has unsubscribe]
-- lib/core/qt_particle_system.py -> self._on_frame [has unsubscribe]
+- lib/core/qt_bridge/particle_system.py -> self._on_frame [has unsubscribe]
 - lib/script/obj-摩托/manager.py -> self._on_frame [has unsubscribe]
-- lib/script/obj-摩托/mortor.py -> self._on_frame_move [has unsubscribe]
-- lib/script/obj-音响/speaker.py -> self._on_frame_frequency [has unsubscribe]
+- lib/core/qt_bridge/world_objects/motor.py -> self._on_frame_move [has unsubscribe]
+- lib/core/qt_bridge/world_objects/speaker.py -> self._on_frame_frequency [has unsubscribe]
 - lib/script/ui/auto_chat_button.py -> self._on_frame [has unsubscribe]
 - lib/script/ui/chat_mode_button.py -> self._on_frame [has unsubscribe]
 - lib/script/ui/clickthrough_button.py -> self._on_frame
@@ -95,14 +97,14 @@
 
 [GIF_FRAME]
 - lib/core/pet_window.py -> self._handle_gif_frame_event
-- lib/script/obj-雪豹/snow_leopard.py -> self._on_gif_frame [has unsubscribe]
+- lib/core/qt_bridge/world_objects/snow_leopard.py -> self._on_gif_frame [has unsubscribe]
 
 [GIF_LOOP_COMPLETED]
 - lib/script/mainpet/state.py -> self._on_gif_loop_completed
 
 [INFORMATION]
 - lib/script/ui/bubble.py -> self._on_information
-  发布方: lib/core/cmd_center.py, lib/core/tray_icon.py, lib/script/chat/handler.py, lib/script/chat/handler_stream_presenter.py, lib/script/cloudmusic/_mixin_cache.py, lib/script/cloudmusic/manager.py, lib/script/microphone_stt/service.py, lib/script/obj-摩托/manager.py, lib/script/obj-沙发/manager.py, lib/script/obj-闹钟/manager.py, lib/script/obj-雪堆/manager.py, lib/script/obj-雪球/manager.py, lib/script/obj-雪豹/manager.py, lib/script/obj-音响/manager.py, lib/script/practical/cleanup_handler.py, lib/script/tool_dispatcher/dispatcher.py, lib/script/ui/ai_settings_panel.py, lib/script/ui/launch_wuwa_button.py, lib/script/ui/more_functions_button.py, lib/script/ui/playlist_panel.py, lib/script/ui/speaker_control_buttons.py, lib/script/ui/speaker_search_dialog.py, lib/script/ui/yuanbao_login_dialog.py, lib/script/yuanbao_free_api/service.py
+  发布方: lib/core/cmd_center.py, lib/core/qt_bridge/tray_icon.py, lib/script/chat/handler.py, lib/script/chat/handler_stream_presenter.py, lib/script/cloudmusic/_mixin_cache.py, lib/script/cloudmusic/manager.py, lib/script/microphone_stt/service.py, lib/script/obj-摩托/manager.py, lib/script/obj-沙发/manager.py, lib/script/obj-闹钟/manager.py, lib/script/obj-雪堆/manager.py, lib/script/obj-雪球/manager.py, lib/script/obj-雪豹/manager.py, lib/script/obj-音响/manager.py, lib/script/practical/cleanup_handler.py, lib/script/tool_dispatcher/dispatcher.py, lib/script/ui/ai_settings_panel.py, lib/script/ui/launch_wuwa_button.py, lib/script/ui/more_functions_button.py, lib/script/ui/playlist_panel.py, lib/script/ui/speaker_control_buttons.py, lib/script/ui/speaker_search_dialog.py, lib/script/ui/yuanbao_login_dialog.py, lib/script/yuanbao_free_api/service.py
 
 [INPUT_CHAT]
 - lib/script/chat/handler.py -> self._on_input_chat [has unsubscribe]
@@ -122,18 +124,18 @@
 - lib/script/obj-雪豹/manager.py -> self._on_hash_command [has unsubscribe]
 - lib/script/obj-音响/manager.py -> self._on_hash_command [has unsubscribe]
 - lib/script/practical/cleanup_handler.py -> self._on_hash_command [has unsubscribe]
-  发布方: lib/core/tray_icon.py, lib/script/ui/command_hint_box.py
+  发布方: lib/core/qt_bridge/tray_icon.py, lib/script/ui/command_hint_box.py
 
 [KEY_PRESS]
 - payload: key=`lib.core.input.types.Key`（未知键可为兼容整数）、modifiers=`KeyModifier`、text、is_auto_repeat、pet
 - lib/core/event/key_handler.py -> self._on_key_press
 - lib/script/microphone_stt/push_to_talk.py -> self._on_key_press [has unsubscribe]
-- lib/script/obj-摩托/mortor.py -> self._on_key_press [has unsubscribe]
+- lib/core/qt_bridge/world_objects/motor.py -> self._on_key_press [has unsubscribe]
 
 [KEY_RELEASE]
 - payload: key=`lib.core.input.types.Key`（未知键可为兼容整数）、modifiers=`KeyModifier`、text、is_auto_repeat、pet
 - lib/script/microphone_stt/push_to_talk.py -> self._on_key_release [has unsubscribe]
-- lib/script/obj-摩托/mortor.py -> self._on_key_release [has unsubscribe]
+- lib/core/qt_bridge/world_objects/motor.py -> self._on_key_release [has unsubscribe]
 
 [MANAGER_QUERY_REQUEST]
 - lib/script/obj-摩托/manager.py -> self._on_query_request [has unsubscribe]
@@ -228,7 +230,7 @@
 
 [PARTICLE_REQUEST]
 - lib/core/qt_bridge/particle_system.py -> self._on_particle_request [has unsubscribe]
-  发布方: lib/script/cloudmusic/_mixin_events.py, lib/script/obj-雪堆/manager.py, lib/script/obj-雪堆/snow_pile.py, lib/script/obj-雪球/snowball.py, lib/script/obj-雪豹/snow_leopard.py, lib/script/ui/_particle_helper.py, lib/script/ui/ai_settings_panel.py, lib/script/ui/auto_chat_button.py, lib/script/ui/bubble.py, lib/script/ui/chat_mode_button.py, lib/script/ui/command_hint_box.py, lib/script/ui/launch_wuwa_button.py, lib/script/ui/more_functions_button.py, lib/script/ui/playlist_panel.py, lib/script/ui/speaker_search_dialog.py, lib/script/ui/speaker_search_result_box.py, lib/script/ui/tray_menu.py
+  发布方: lib/core/qt_bridge/world_objects/snow_leopard.py, lib/core/qt_bridge/world_objects/snow_pile.py, lib/core/qt_bridge/world_objects/snowball.py, lib/script/cloudmusic/_mixin_events.py, lib/script/obj-雪堆/manager.py, lib/script/ui/_particle_helper.py, lib/script/ui/ai_settings_panel.py, lib/script/ui/auto_chat_button.py, lib/script/ui/bubble.py, lib/script/ui/chat_mode_button.py, lib/script/ui/command_hint_box.py, lib/script/ui/launch_wuwa_button.py, lib/script/ui/more_functions_button.py, lib/script/ui/playlist_panel.py, lib/script/ui/speaker_search_dialog.py, lib/script/ui/speaker_search_result_box.py, lib/script/ui/tray_menu.py
 
 [PET_TELEPORT]
 - lib/core/pet_window.py -> self._handle_pet_teleport
@@ -274,26 +276,25 @@
 
 [TICK]
 - lib/core/input/click.py -> self._on_tick
-- lib/core/object/base.py -> self._tick_fade [has unsubscribe]
 - lib/core/pet_window.py -> self._handle_tick_event
 - lib/script/mainpet/state.py -> self._on_tick_tracking
-- lib/script/obj-摩托/mortor.py -> self._on_tick_click [has unsubscribe]
-- lib/script/obj-摩托/mortor.py -> self._on_tick_motion [has unsubscribe]
-- lib/script/obj-摩托/mortor.py -> self._on_tick_render_jitter [has unsubscribe]
-- lib/script/obj-摩托/mortor.py -> self._tick_fade [has unsubscribe]
-- lib/script/obj-沙发/sofa.py -> self._on_tick_click [has unsubscribe]
-- lib/script/obj-沙发/sofa.py -> self._tick_fade [has unsubscribe]
-- lib/script/obj-闹钟/clock.py -> self._on_tick_click [has unsubscribe]
-- lib/script/obj-闹钟/clock.py -> self._tick_fade [has unsubscribe]
-- lib/script/obj-雪堆/snow_pile.py -> self._on_tick_click [has unsubscribe]
-- lib/script/obj-雪堆/snow_pile.py -> self._tick_fade [has unsubscribe]
+- lib/core/qt_bridge/world_objects/motor.py -> self._on_tick_click [has unsubscribe]
+- lib/core/qt_bridge/world_objects/motor.py -> self._on_tick_motion [has unsubscribe]
+- lib/core/qt_bridge/world_objects/motor.py -> self._on_tick_render_jitter [has unsubscribe]
+- lib/core/qt_bridge/world_objects/motor.py -> self._tick_fade [has unsubscribe]
+- lib/core/qt_bridge/world_objects/sofa.py -> self._on_tick_click [has unsubscribe]
+- lib/core/qt_bridge/world_objects/sofa.py -> self._tick_fade [has unsubscribe]
+- lib/core/qt_bridge/world_objects/clock.py -> self._on_tick_click [has unsubscribe]
+- lib/core/qt_bridge/world_objects/clock.py -> self._tick_fade [has unsubscribe]
+- lib/core/qt_bridge/world_objects/snow_pile.py -> self._on_tick_click [has unsubscribe]
+- lib/core/qt_bridge/world_objects/snow_pile.py -> self._tick_fade [has unsubscribe]
 - lib/script/obj-雪球/manager.py -> self._on_tick [has unsubscribe]
-- lib/script/obj-雪球/snowball.py -> self._on_tick [has unsubscribe]
-- lib/script/obj-雪球/snowball.py -> self._tick_fade [has unsubscribe]
+- lib/core/qt_bridge/world_objects/snowball.py -> self._on_tick [has unsubscribe]
+- lib/core/qt_bridge/world_objects/snowball.py -> self._tick_fade [has unsubscribe]
 - lib/script/obj-雪豹/manager.py -> self._on_tick [has unsubscribe]
-- lib/script/obj-雪豹/snow_leopard.py -> self._on_tick_click [has unsubscribe]
-- lib/script/obj-雪豹/snow_leopard.py -> self._tick_fade [has unsubscribe]
-- lib/script/obj-音响/speaker.py -> self._on_tick_click [has unsubscribe]
+- lib/core/qt_bridge/world_objects/snow_leopard.py -> self._on_tick_click [has unsubscribe]
+- lib/core/qt_bridge/world_objects/snow_leopard.py -> self._tick_fade [has unsubscribe]
+- lib/core/qt_bridge/world_objects/speaker.py -> self._on_tick_click [has unsubscribe]
 - lib/script/ui/ai_settings_panel.py -> self._on_tick [has unsubscribe]
 - lib/script/ui/bubble.py -> self._on_tick
 - lib/script/ui/tooltip_panel.py -> self._on_tick
@@ -301,8 +302,8 @@
 [TIMER]
 - lib/core/pet_window.py -> self._handle_timer_event
 - lib/script/mainpet/state.py -> self._on_timer_event
-- lib/script/obj-雪堆/snow_pile.py -> self._on_timer_event [has unsubscribe]
-- lib/script/obj-雪豹/snow_leopard.py -> self._on_timer_event [has unsubscribe]
+- lib/core/qt_bridge/world_objects/snow_pile.py -> self._on_timer_event [has unsubscribe]
+- lib/core/qt_bridge/world_objects/snow_leopard.py -> self._on_timer_event [has unsubscribe]
 
 [TIMER_PAUSE]
 - lib/core/timing/manager.py -> self._on_timer_pause
@@ -329,14 +330,14 @@
 
 [UI_CLICKTHROUGH_TOGGLE]
 - lib/core/pet_window.py -> self._handle_clickthrough_toggle
-- lib/core/tray_icon.py -> self._on_clickthrough_status_change [has unsubscribe]
-- lib/script/obj-摩托/mortor.py -> self._on_clickthrough_toggle [has unsubscribe]
-- lib/script/obj-沙发/sofa.py -> self._on_clickthrough_toggle [has unsubscribe]
-- lib/script/obj-闹钟/clock.py -> self._on_clickthrough_toggle [has unsubscribe]
-- lib/script/obj-雪堆/snow_pile.py -> self._on_clickthrough_toggle
-- lib/script/obj-雪球/snowball.py -> self._on_clickthrough_toggle [has unsubscribe]
-- lib/script/obj-雪豹/snow_leopard.py -> self._on_clickthrough_toggle
-- lib/script/obj-音响/speaker.py -> self._on_clickthrough_toggle [has unsubscribe]
+- lib/core/qt_bridge/tray_icon.py -> self._on_clickthrough_status_change [has unsubscribe]
+- lib/core/qt_bridge/world_objects/motor.py -> self._on_clickthrough_toggle [has unsubscribe]
+- lib/core/qt_bridge/world_objects/sofa.py -> self._on_clickthrough_toggle [has unsubscribe]
+- lib/core/qt_bridge/world_objects/clock.py -> self._on_clickthrough_toggle [has unsubscribe]
+- lib/core/qt_bridge/world_objects/snow_pile.py -> self._on_clickthrough_toggle
+- lib/core/qt_bridge/world_objects/snowball.py -> self._on_clickthrough_toggle [has unsubscribe]
+- lib/core/qt_bridge/world_objects/snow_leopard.py -> self._on_clickthrough_toggle
+- lib/core/qt_bridge/world_objects/speaker.py -> self._on_clickthrough_toggle [has unsubscribe]
 - lib/script/ui/auto_chat_button.py -> self._on_clickthrough_toggle [has unsubscribe]
 - lib/script/ui/bubble.py -> self._on_clickthrough_toggle
 - lib/script/ui/chat_mode_button.py -> self._on_clickthrough_toggle [has unsubscribe]
@@ -356,7 +357,7 @@
 - lib/script/ui/speaker_search_dialog.py -> self._on_clickthrough_toggle [has unsubscribe]
 - lib/script/ui/speaker_search_result_box.py -> self._on_clickthrough_toggle
 - lib/script/ui/yuanbao_login_dialog.py -> self._on_clickthrough_toggle [has unsubscribe]
-  发布方: lib/core/tray_icon.py
+  发布方: lib/core/qt_bridge/tray_icon.py
 
 [UI_COMMAND_TOGGLE]
 - lib/script/ui/command_dialog.py -> self._on_command_toggle
@@ -379,7 +380,7 @@
 
 [UI_OPEN_CMD_WINDOW]
 - lib/script/ui/cmd_window.py -> self._on_open_cmd_window
-  发布方: lib/core/tray_icon.py
+  发布方: lib/core/qt_bridge/tray_icon.py
 
 [UI_OPEN_CMD_WINDOW_WITH_COMMAND]
 - lib/script/ui/cmd_window.py -> self._on_open_cmd_window_with_command
@@ -485,7 +486,7 @@
 - lib/core/pet_window.py
 
 [AUTOSTART_STATUS_CHANGE]
-- lib/core/tray_icon.py
+- lib/core/qt_bridge/tray_icon.py
 
 [ENTITY_POSITION_REQUEST]
 - lib/core/event/center.py
@@ -501,9 +502,12 @@
 [ENTITY_STATE_RESPONSE]
 - lib/core/pet_window.py
 
+[EFFECT_REQUEST]
+- lib/core/effect_utils.py
+
 [INFORMATION]
 - lib/core/cmd_center.py
-- lib/core/tray_icon.py
+- lib/core/qt_bridge/tray_icon.py
 - lib/script/chat/handler.py
 - lib/script/chat/handler_stream_presenter.py
 - lib/script/cloudmusic/_mixin_cache.py
@@ -532,7 +536,7 @@
 - lib/script/tool_dispatcher/dispatcher.py
 
 [INPUT_HASH]
-- lib/core/tray_icon.py
+- lib/core/qt_bridge/tray_icon.py
 - lib/script/ui/command_hint_box.py
 
 [MANAGER_INTERACTION]
@@ -653,9 +657,9 @@
 [PARTICLE_REQUEST]
 - lib/script/cloudmusic/_mixin_events.py
 - lib/script/obj-雪堆/manager.py
-- lib/script/obj-雪堆/snow_pile.py
-- lib/script/obj-雪球/snowball.py
-- lib/script/obj-雪豹/snow_leopard.py
+- lib/core/qt_bridge/world_objects/snow_pile.py
+- lib/core/qt_bridge/world_objects/snowball.py
+- lib/core/qt_bridge/world_objects/snow_leopard.py
 - lib/script/ui/_particle_helper.py
 - lib/script/ui/ai_settings_panel.py
 - lib/script/ui/auto_chat_button.py
@@ -713,7 +717,7 @@
 - lib/script/ui/speaker_search_dialog.py
 
 [UI_CLICKTHROUGH_TOGGLE]
-- lib/core/tray_icon.py
+- lib/core/qt_bridge/tray_icon.py
 
 [UI_COMMAND_TOGGLE]
 - lib/core/event/mouse_handler.py
@@ -725,7 +729,7 @@
 - lib/script/ui/command_hint_box.py
 
 [UI_OPEN_CMD_WINDOW]
-- lib/core/tray_icon.py
+- lib/core/qt_bridge/tray_icon.py
 
 [VOICE_REQUEST]
 - lib/core/voice/random_sound.py

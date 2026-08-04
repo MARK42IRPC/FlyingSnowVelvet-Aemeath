@@ -420,11 +420,12 @@ class PhysicsWorld:
 
     def _refresh_screen_bounds(self) -> None:
         """刷新当前虚拟桌面边界。"""
-        if self._screen_bounds_provider is None:
-            from lib.core.qt_bridge.screen import get_virtual_screen_rect
-            geom = get_virtual_screen_rect()
-        else:
-            geom = self._screen_bounds_provider()
+        provider = self._screen_bounds_provider
+        if provider is None:
+            from lib.core.desktop_backend import get_virtual_screen_provider
+
+            provider = get_virtual_screen_provider()
+        geom = provider() if provider is not None else Rect(0, 0, 1920, 1080)
         self._screen_left = int(geom.x)
         self._screen_top = int(geom.y)
         self._screen_right = int(geom.x + geom.width)

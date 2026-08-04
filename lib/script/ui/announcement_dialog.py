@@ -25,15 +25,16 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
-from config.config import UI, UI_THEME
-from config.font_config import get_ui_font, get_ui_font_family
+from config.config import UI
+from lib.core.qt_bridge.colors import UI_THEME
+from lib.core.qt_bridge.font import get_ui_font, get_ui_font_family
 from config.scale import scale_px, scale_style_px
 from config.shared_storage_io import write_bytes_atomic
 from config.user_storage_paths import get_user_cache_dir, get_user_state_dir
 from lib.core.anchor_utils import apply_ui_opacity
 from lib.core.compute_hub import get_compute_hub
 from lib.core.logger import get_logger
-from lib.core.screen_utils import clamp_rect_position, get_screen_geometry_for_point
+from lib.core.qt_bridge.screen import clamp_rect_position, get_screen_geometry_for_point
 from lib.core.unified_draw import Layer, get_layer_manager
 
 

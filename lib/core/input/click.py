@@ -126,10 +126,9 @@ class ClickHandler:
         request_id = event.data.get('request_id', '')
 
         provider = self._cursor_position_provider
-        if provider is None:
-            from lib.core.qt_bridge.input import get_cursor_position
-            provider = get_cursor_position
-        mouse_pos = provider()
+        mouse_pos = provider() if provider is not None else self._current_mouse_pos
+        if mouse_pos is None:
+            mouse_pos = Point()
 
         # 返回鼠标位置
         response_event = Event(EventType.MOUSE_POSITION_RESPONSE, {

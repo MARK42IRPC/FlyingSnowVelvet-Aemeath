@@ -1,14 +1,10 @@
-"""Flashing text effect rendered as a glow text pixmap on the global overlay."""
+"""Backend-neutral state for flashing text effects."""
 
 from __future__ import annotations
 
 import math
 from typing import Any, Dict
 
-from PyQt5.QtCore import QPointF, Qt
-from PyQt5.QtGui import QColor, QFont, QFontMetrics, QImage, QPainter, QPixmap
-
-from config.font_config import get_digit_font, get_ui_font
 from lib.core.plugin_registry import register_effect
 from lib.script.effects.base_effect import BaseEffectScript, clamp01, tick_seconds
 
@@ -27,96 +23,44 @@ def _to_frequency(value: Any) -> float:
         return 0.0
 
 
+def _to_int(value: Any, default: int, *, minimum: int | None = None, maximum: int | None = None) -> int:
+    try:
+        result = int(value)
+    except (TypeError, ValueError):
+        result = int(default)
+    if minimum is not None:
+        result = max(int(minimum), result)
+    if maximum is not None:
+        result = min(int(maximum), result)
+    return result
+
+
+def _to_optional_weight(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return max(0, min(99, int(value)))
+    except (TypeError, ValueError):
+        return None
+
+
 def _to_local_point(value, offset_x: float, offset_y: float) -> tuple[float, float]:
     if not isinstance(value, (list, tuple)) or len(value) < 2:
         raise ValueError(f"invalid point: {value!r}")
     return float(value[0]) - offset_x, float(value[1]) - offset_y
 
 
-def _to_color(value: Any, default: tuple[int, int, int] = (255, 255, 255)) -> QColor:
-    if isinstance(value, QColor):
-        return QColor(value)
+def _to_color(value: Any, default: tuple[int, int, int] = (255, 255, 255)) -> tuple[int, int, int]:
     if isinstance(value, (list, tuple)) and len(value) >= 3:
         try:
-            return QColor(
+            return (
                 max(0, min(255, int(value[0]))),
                 max(0, min(255, int(value[1]))),
                 max(0, min(255, int(value[2]))),
             )
         except (TypeError, ValueError):
             pass
-    return QColor(*default)
-
-
-def _build_font(font_type: str, size: int, *, bold: bool = False, weight: int | None = None) -> QFont:
-    pixel_size = max(1, int(size))
-    if str(font_type or "").lower() in {"digit", "number", "lahai"}:
-        font = get_digit_font(pixel_size)
-    else:
-        font = get_ui_font(pixel_size)
-    font.setBold(bool(bold))
-    if weight is not None:
-        try:
-            font.setWeight(max(0, min(99, int(weight))))
-        except (TypeError, ValueError):
-            pass
-    return font
-
-
-def _render_text_pixmap(
-    text: str,
-    *,
-    font: QFont,
-    color: QColor,
-    glow: float,
-    glow_color: QColor | None = None,
-) -> QPixmap:
-    metrics = QFontMetrics(font)
-    text_width = max(1, metrics.horizontalAdvance(text))
-    text_height = max(1, metrics.height())
-    glow_radius = max(0.0, float(glow))
-    padding = int(math.ceil(glow_radius + max(4.0, text_height * 0.18)))
-    image = QImage(
-        text_width + padding * 2,
-        text_height + padding * 2,
-        QImage.Format_ARGB32_Premultiplied,
-    )
-    image.fill(Qt.transparent)
-
-    painter = QPainter(image)
-    painter.setRenderHint(QPainter.Antialiasing, True)
-    painter.setRenderHint(QPainter.TextAntialiasing, True)
-    painter.setFont(font)
-
-    baseline_x = float(padding)
-    baseline_y = float(padding + metrics.ascent())
-    if glow_radius > 0.0:
-        glow_tint = QColor(glow_color or color)
-        glow_steps = (
-            (1.0, 0.22),
-            (0.72, 0.16),
-            (0.45, 0.10),
-        )
-        for radius_scale, alpha_scale in glow_steps:
-            radius = glow_radius * radius_scale
-            glow_tint.setAlpha(max(0, min(255, int(255 * alpha_scale))))
-            painter.setPen(glow_tint)
-            for dx, dy in (
-                (radius, 0.0),
-                (-radius, 0.0),
-                (0.0, radius),
-                (0.0, -radius),
-                (radius * 0.7, radius * 0.7),
-                (-radius * 0.7, radius * 0.7),
-                (radius * 0.7, -radius * 0.7),
-                (-radius * 0.7, -radius * 0.7),
-            ):
-                painter.drawText(QPointF(baseline_x + dx, baseline_y + dy), text)
-
-    painter.setPen(color)
-    painter.drawText(QPointF(baseline_x, baseline_y), text)
-    painter.end()
-    return QPixmap.fromImage(image)
+    return default
 
 
 def _flash_gate(elapsed: float, frequency: float, *, floor: float = 0.20) -> float:
@@ -132,7 +76,7 @@ class FlashTextEffect:
 
     def __init__(
         self,
-        pixmap: QPixmap,
+        text: str,
         center_pos: tuple[float, float],
         fade_in_duration: float,
         fade_in_frequency: float,
@@ -140,15 +84,29 @@ class FlashTextEffect:
         fade_out_duration: float,
         fade_out_frequency: float,
         *,
+        font_type: str = "ui",
+        font_size: int = 32,
+        font_bold: bool = False,
+        font_weight: int | None = None,
+        color: tuple[int, int, int] = (255, 255, 255),
+        glow: float = 0.0,
+        glow_color: tuple[int, int, int] = (255, 255, 255),
         z: int = 10,
     ) -> None:
-        self.pixmap = pixmap
+        self.text = str(text)
         self.center_pos = (float(center_pos[0]), float(center_pos[1]))
         self.fade_in_duration = max(0.0, float(fade_in_duration))
         self.fade_in_frequency = max(0.0, float(fade_in_frequency))
         self.hold_duration = max(0.0, float(hold_duration))
         self.fade_out_duration = max(0.0, float(fade_out_duration))
         self.fade_out_frequency = max(0.0, float(fade_out_frequency))
+        self.font_type = str(font_type or "ui")
+        self.font_size = max(1, int(font_size))
+        self.font_bold = bool(font_bold)
+        self.font_weight = _to_optional_weight(font_weight)
+        self.color = tuple(color)
+        self.glow = max(0.0, float(glow))
+        self.glow_color = tuple(glow_color)
         self.total_duration = self.fade_in_duration + self.hold_duration + self.fade_out_duration
         self.max_life = self.total_duration
         self.life = self.total_duration
@@ -240,34 +198,26 @@ class FlashTextEffectScript(BaseEffectScript):
         if (fade_in_duration + hold_duration + fade_out_duration) <= 0.0:
             return []
 
-        font = _build_font(
-            str(options.get("font_type", "ui")),
-            int(options.get("font_size", options.get("size", 32))),
-            bold=bool(options.get("font_bold", options.get("bold", False))),
-            weight=options.get("font_weight"),
-        )
         color = _to_color(options.get("color", options.get("rgb", (255, 255, 255))))
         glow = max(0.0, float(options.get("glow", options.get("bloom", 0.0)) or 0.0))
         glow_color = _to_color(options.get("glow_color", options.get("glow_rgb", color)))
-        pixmap = _render_text_pixmap(
-            text,
-            font=font,
-            color=color,
-            glow=glow,
-            glow_color=glow_color,
-        )
-        if pixmap.isNull():
-            return []
 
         return [
             FlashTextEffect(
-                pixmap=pixmap,
+                text=text,
                 center_pos=center_pos,
                 fade_in_duration=fade_in_duration,
                 fade_in_frequency=fade_in_frequency,
                 hold_duration=hold_duration,
                 fade_out_duration=fade_out_duration,
                 fade_out_frequency=fade_out_frequency,
-                z=int(options.get("z", 12)),
+                font_type=str(options.get("font_type", "ui")),
+                font_size=_to_int(options.get("font_size", options.get("size", 32)), 32, minimum=1),
+                font_bold=bool(options.get("font_bold", options.get("bold", False))),
+                font_weight=_to_optional_weight(options.get("font_weight")),
+                color=color,
+                glow=glow,
+                glow_color=glow_color,
+                z=_to_int(options.get("z", 12), 12),
             )
         ]

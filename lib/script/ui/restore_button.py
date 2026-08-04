@@ -6,7 +6,7 @@ from config.config import UI
 from config.scale import scale_px
 from config.tooltip_config import TOOLTIPS
 from lib.core.event.center import get_event_center, EventType, Event
-from lib.core.screen_utils import clamp_rect_position
+from lib.core.qt_bridge.screen import clamp_rect_position
 from lib.core.qt_bridge.widget_anchors import (
     get_anchor_point as resolve_anchor_point,
     publish_widget_anchor_response,

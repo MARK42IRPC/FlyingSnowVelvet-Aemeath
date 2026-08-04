@@ -19,14 +19,14 @@ from PyQt5.QtGui import QColor, QPainter, QCursor
 from PyQt5.QtCore import pyqtSignal
 
 from config.config import UI, SPEAKER_SEARCH_UI, CLOUD_MUSIC
-from config.font_config import get_ui_font
+from lib.core.qt_bridge.font import get_ui_font
 from config.scale import scale_px, scale_style_px
 from config.tooltip_config import TOOLTIPS
 from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.graphics.types import Point
 from lib.core.unified_draw import Layer, get_layer_manager
-from lib.core.screen_utils import clamp_rect_position
+from lib.core.qt_bridge.screen import clamp_rect_position
 from lib.core.anchor_utils import apply_ui_opacity
 from lib.script.music import get_music_service
 from lib.script.ui.speaker_menu_style import (

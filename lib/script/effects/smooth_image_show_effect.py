@@ -10,8 +10,6 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from PyQt5.QtGui import QPixmap
-
 from lib.core.plugin_registry import register_effect
 from lib.script.effects.base_effect import (
     BaseEffectScript,
@@ -54,7 +52,7 @@ class SmoothImageShowEffect:
 
     def __init__(
         self,
-        pixmap: QPixmap,
+        resource_path: str,
         intro_start_pos: tuple[float, float],
         intro_duration: float,
         display_pos: tuple[float, float],
@@ -64,7 +62,7 @@ class SmoothImageShowEffect:
         scale: float,
         z: int = 0,
     ):
-        self.pixmap = pixmap
+        self.resource_path = str(resource_path)
         self.intro_start_pos = intro_start_pos
         self.intro_duration = max(0.0, float(intro_duration))
         self.display_pos = display_pos
@@ -147,8 +145,12 @@ class SmoothImageShowEffectScript(BaseEffectScript):
     ) -> list:
         options = dict(effect_options or {})
         context = dict(request_context or {})
-        pixmap = options.get("pixmap")
-        if not isinstance(pixmap, QPixmap) or pixmap.isNull():
+        resource_path = str(
+            options.get("resolved_resource_path")
+            or options.get("resource_path")
+            or ""
+        ).strip()
+        if not resource_path:
             return []
 
         offset_x = float(context.get("offset_x", 0.0))
@@ -171,7 +173,7 @@ class SmoothImageShowEffectScript(BaseEffectScript):
 
         return [
             SmoothImageShowEffect(
-                pixmap=pixmap,
+                resource_path=resource_path,
                 intro_start_pos=intro_start_pos,
                 intro_duration=intro_duration,
                 display_pos=display_pos,

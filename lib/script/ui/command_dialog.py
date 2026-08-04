@@ -4,15 +4,16 @@ from PyQt5.QtWidgets import QWidget, QLineEdit, QHBoxLayout, QApplication, QGrap
 from PyQt5.QtCore import Qt, QPoint, QPropertyAnimation, QEasingCurve, QEvent
 from PyQt5.QtGui import QColor, QPainter, QCursor
 
-from config.config import COLORS, UI, COMMAND_DIALOG, ANIMATION
-from config.font_config import get_cmd_font
+from config.config import UI, COMMAND_DIALOG, ANIMATION
+from lib.core.qt_bridge.colors import COLORS
+from lib.core.qt_bridge.font import get_cmd_font
 from config.scale import scale_px, scale_style_px
 from config.tooltip_config import TOOLTIPS
 from lib.script.ui.command_dialog_handler import CommandDialogEventHandler
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.graphics.types import Point
 from lib.core.unified_draw import Layer, get_layer_manager
-from lib.core.screen_utils import clamp_rect_position
+from lib.core.qt_bridge.screen import clamp_rect_position
 from lib.core.anchor_utils import (
     animate_opacity,
 )

@@ -140,6 +140,25 @@ class DirectMLHybridWorkerTests(unittest.TestCase):
 
         service.kickoff_prestart.assert_called_once_with()
 
+    def test_prestart_submission_does_not_probe_package_on_main_thread(self):
+        service = object.__new__(service_module.GsvmoveService)
+        service._prestart_lock = threading.Lock()
+        service._prestart_started = False
+        service.auto_start_enabled = Mock(return_value=True)
+        compute_hub = Mock()
+
+        with patch.object(service_module, "get_compute_hub", return_value=compute_hub), patch.object(
+            service_module, "get_voice_package_status"
+        ) as status:
+            service.kickoff_prestart()
+
+        status.assert_not_called()
+        compute_hub.submit_latest.assert_called_once_with(
+            "gsvmove_prestart",
+            service._prestart_worker,
+            executor="vector",
+        )
+
     def test_backend_switch_closes_active_worker(self):
         service = object.__new__(service_module.GsvmoveService)
         service._infer_lock = threading.RLock()

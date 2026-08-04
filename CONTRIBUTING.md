@@ -90,12 +90,6 @@ python scripts/package_release.py --dry-run
 python scripts/package_green_release.py --dry-run
 ```
 
-如果改了文档门户：
-
-```powershell
-python scripts/generate_doc_portal.py
-```
-
 如果改了测试覆盖范围，运行对应 unittest，例如：
 
 ```powershell

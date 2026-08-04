@@ -312,6 +312,16 @@ class AnnouncementQtTests(unittest.TestCase):
             tray.cleanup()
             self.app.processEvents()
 
+    def test_default_tray_icon_path_points_to_resource_icon(self):
+        tray = TrayIcon()
+        try:
+            icon_path = Path(tray._resolve_default_icon_path())
+            self.assertEqual(icon_path, Path(__file__).resolve().parents[1] / "resc" / "icon.ico")
+            self.assertTrue(icon_path.is_file())
+        finally:
+            tray.cleanup()
+            self.app.processEvents()
+
 
 if __name__ == "__main__":
     unittest.main()

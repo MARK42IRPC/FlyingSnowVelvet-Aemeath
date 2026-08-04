@@ -9,7 +9,7 @@ import math
 import random
 from typing import Tuple
 
-from config.font_config import _ensure_lahai_roi
+from config.font_config import get_digit_font_family
 from config.scale import scale_px
 from lib.core.graphics.types import Color, FontSpec
 from lib.script.practical.base_particle import BaseParticleScript, per_second_delta, tick_seconds
@@ -46,7 +46,7 @@ class ClickParticleScript(BaseParticleScript):
         else:  # point
             cx, cy = area_data
 
-        family = _ensure_lahai_roi()
+        family = get_digit_font_family()
         cfg = self._config
         return [ClickParticle(cx, cy, cfg, family) for _ in range(cfg['count'])]
 

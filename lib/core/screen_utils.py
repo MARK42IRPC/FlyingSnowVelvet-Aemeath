@@ -1,49 +1,22 @@
-"""Legacy imports for Qt screen helpers now owned by ``qt_bridge``."""
+"""Backend-neutral screen queries configured by the desktop host."""
 
 from __future__ import annotations
 
-def get_virtual_screen_geometry():
-    from lib.core.qt_bridge.screen import get_virtual_screen_geometry as qt_geometry
-
-    return qt_geometry()
-
-
-def get_virtual_screen_rect():
-    from lib.core.qt_bridge.screen import get_virtual_screen_rect as core_rect
-
-    return core_rect()
+from lib.core.desktop_backend import (
+    get_screen_for_point_provider,
+    get_virtual_screen_provider,
+)
+from lib.core.graphics.types import Point, Rect, coerce_point
 
 
-def get_screen_geometry_for_point(
-    point=None,
-    fallback_widget=None,
-):
-    from lib.core.qt_bridge.screen import get_screen_geometry_for_point as qt_geometry
-
-    return qt_geometry(point=point, fallback_widget=fallback_widget)
+_DEFAULT_SCREEN = Rect(0, 0, 1920, 1080)
 
 
-def get_screen_rect_for_point(point=None, fallback_widget=None):
-    from lib.core.qt_bridge.screen import get_screen_rect_for_point as core_rect
+def get_virtual_screen_rect() -> Rect:
+    provider = get_virtual_screen_provider()
+    return provider() if provider is not None else _DEFAULT_SCREEN
 
-    return core_rect(point=point, fallback_widget=fallback_widget)
-
-
-def clamp_rect_position(
-    x: int,
-    y: int,
-    width: int,
-    height: int,
-    point=None,
-    fallback_widget=None,
-):
-    from lib.core.qt_bridge.screen import clamp_rect_position as qt_clamp_rect_position
-
-    return qt_clamp_rect_position(
-        x,
-        y,
-        width,
-        height,
-        point=point,
-        fallback_widget=fallback_widget,
-    )
+def get_screen_rect_for_point(point: Point | object | None = None) -> Rect:
+    provider = get_screen_for_point_provider()
+    core_point = coerce_point(point)
+    return provider(core_point) if provider is not None else get_virtual_screen_rect()

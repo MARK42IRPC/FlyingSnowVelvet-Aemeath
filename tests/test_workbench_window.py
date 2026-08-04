@@ -24,7 +24,8 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtTest import QTest
 from PyQt5.QtWidgets import QApplication, QStackedWidget, QWidget
 
-from config.config import COLORS, UI, UI_THEME
+from config.config import UI
+from lib.core.qt_bridge.colors import COLORS, UI_THEME
 import config.user_settings as user_settings
 from config.font_config import get_ui_font_family
 from config.scale import scale_px

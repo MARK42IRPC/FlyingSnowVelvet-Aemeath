@@ -8,7 +8,8 @@ def capture_screen() -> list[bytes] | None:
     Returns:
         包含单个图片字节数据的列表，失败时返回 None
     """
-    from lib.core.qt_bridge.screen_capture import capture_primary_screen_png
+    from lib.core.desktop_backend import get_screen_capture_provider
 
-    image_data = capture_primary_screen_png()
+    provider = get_screen_capture_provider()
+    image_data = provider() if provider is not None else None
     return [image_data] if image_data else None

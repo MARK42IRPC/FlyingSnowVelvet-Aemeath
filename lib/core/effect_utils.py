@@ -5,6 +5,30 @@ from __future__ import annotations
 from lib.core.event.center import Event, EventType, get_event_center
 
 
+def _copy_effect_payload(value, *, field: str):
+    """Copy backend-neutral effect data and reject opaque toolkit objects."""
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, tuple):
+        return tuple(
+            _copy_effect_payload(item, field=f"{field}[{index}]")
+            for index, item in enumerate(value)
+        )
+    if isinstance(value, list):
+        return [
+            _copy_effect_payload(item, field=f"{field}[{index}]")
+            for index, item in enumerate(value)
+        ]
+    if isinstance(value, dict):
+        copied = {}
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise TypeError(f"{field} keys must be strings")
+            copied[key] = _copy_effect_payload(item, field=f"{field}.{key}")
+        return copied
+    raise TypeError(f"{field} contains unsupported value: {type(value).__name__}")
+
+
 def spawn_effect(
     effect_id: str,
     anchor_type: str = "point",
@@ -14,12 +38,12 @@ def spawn_effect(
     z: int = 0,
 ):
     """发布通用特效申请事件。"""
-    options = dict(effect_options or {})
+    options = _copy_effect_payload(dict(effect_options or {}), field="effect_options")
     options.setdefault("z", int(z))
     event = Event(EventType.EFFECT_REQUEST, {
         "effect_id": effect_id,
         "anchor_type": anchor_type,
-        "anchor_data": anchor_data,
+        "anchor_data": _copy_effect_payload(anchor_data, field="anchor_data"),
         "effect_options": options,
     })
     get_event_center().publish(event)

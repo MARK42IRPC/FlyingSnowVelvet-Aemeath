@@ -1,8 +1,5 @@
 import unittest
 
-from PyQt5.QtWidgets import QApplication
-
-from config.font_config import init_font_config
 from lib.script.gemes.packages.official.lahai_tetris.code.lahai_tetris_pkg.skills import LahaiSkillSlot
 from lib.script.effects.flash_text_effect import FlashTextEffectScript
 
@@ -16,18 +13,12 @@ class _DummySkill(LahaiSkillSlot):
         self.cooldown_secs = float(cooldown_secs)
         self.cooldown_until = 0.0
         self._paused_remaining = 0.0
-        self.avatar = None
 
     def apply(self, owner):
         return False
 
 
 class LahaiTetrisSkillTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls._app = QApplication.instance() or QApplication([])
-        init_font_config()
-
     def test_skill_cooldown_curve_advances_by_one_point_one_and_rounds_up(self):
         skill = _DummySkill(30.0)
 
@@ -43,7 +34,7 @@ class LahaiTetrisSkillTests(unittest.TestCase):
         skill.advance_cooldown_curve(0.0)
         self.assertEqual(skill.cooldown_secs, 0.0)
 
-    def test_flash_text_effect_builds_effect_instance(self):
+    def test_flash_text_effect_builds_pure_state(self):
         script = FlashTextEffectScript()
 
         effects = script.create_effects(
@@ -74,8 +65,7 @@ class LahaiTetrisSkillTests(unittest.TestCase):
         self.assertEqual(effect.center_pos, (320.0, 180.0))
         self.assertAlmostEqual(effect.total_duration, 1.6)
         self.assertEqual(effect.z, 23)
-        self.assertGreater(effect.pixmap.width(), 0)
-        self.assertGreater(effect.pixmap.height(), 0)
+        self.assertFalse(hasattr(effect, "pixmap"))
 
 
 if __name__ == "__main__":

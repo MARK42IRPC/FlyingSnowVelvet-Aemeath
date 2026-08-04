@@ -48,6 +48,34 @@ class WorkbenchLazySettingsTests(unittest.TestCase):
         panel.deleteLater()
         self.app.processEvents()
 
+    def test_ui_page_exposes_render_backend_choices(self):
+        with patch.object(AISettingsPanel, '_refresh_hardware_watermark_async', lambda self: None):
+            panel = AISettingsPanel(lazy_workbench_pages=True)
+            page = panel.create_workbench_page('ui_anim')
+
+        fields = [
+            field
+            for field in panel._config_tab_meta['ui_anim']['fields']
+            if field.get('dict_name') == 'UI' and field.get('key') == 'render_backend'
+        ]
+        self.assertEqual(len(fields), 1)
+        combo = fields[0]['editor']
+        self.assertIsInstance(combo, panel_module.QComboBox)
+        self.assertEqual(
+            [combo.itemData(index) for index in range(combo.count())],
+            ['qt', 'directx', 'opengl', 'vulkan'],
+        )
+        self.assertIn('当前可用', combo.itemText(combo.findData('qt')))
+        self.assertIn('尚未接入', combo.itemText(combo.findData('directx')))
+
+        combo.setCurrentIndex(combo.findData('vulkan'))
+        values = panel._collect_config_category_values('ui_anim')
+        self.assertEqual(values['UI']['render_backend'], 'vulkan')
+
+        page.deleteLater()
+        panel.deleteLater()
+        self.app.processEvents()
+
     def test_border_tick_subscription_follows_standalone_visibility(self):
         with patch.object(AISettingsPanel, '_refresh_hardware_watermark_async', lambda self: None):
             panel = AISettingsPanel(lazy_workbench_pages=True)

@@ -6,6 +6,7 @@ import threading
 from collections import deque
 from collections.abc import Callable
 
+from lib.core.desktop_backend import get_event_pump_factory
 from lib.core.event.pump import EventPump, EventPumpFactory
 
 logger = logging.getLogger(__name__)
@@ -58,11 +59,9 @@ class CallbackDispatcher:
         if threading.get_ident() != self._owner_thread_id:
             return None
         try:
-            factory = self._pump_factory
+            factory = self._pump_factory or get_event_pump_factory()
             if factory is None:
-                from lib.core.qt_bridge.event_pump import create_event_pump
-
-                factory = create_event_pump
+                return None
             self._pump = factory(self._drain)
         except Exception as exc:
             logger.debug("callback pump initialization failed: %s", exc)

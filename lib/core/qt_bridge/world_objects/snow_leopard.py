@@ -1,4 +1,4 @@
-"""单个雪豹对象 - 屏幕上的一只可淡出的雪豹小窗口"""
+"""Qt host for the animated snow-leopard world object."""
 import random
 
 from PyQt5.QtWidgets import QWidget

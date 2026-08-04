@@ -1,5 +1,5 @@
 from lib.core.graphics.types import Point, Rect
-from lib.core.pet_window import PetWindow
+from lib.core.qt_bridge.pet_widget import QtPetWidget
 from lib.core.qt_bridge.window import to_qpoint
 
 
@@ -39,8 +39,8 @@ class _WindowGeometryProbe:
 
 def test_pet_window_core_geometry_methods_return_backend_neutral_values():
     probe = _WindowGeometryProbe()
-    assert PetWindow.get_core_position(probe) == Point(10, 20)
-    assert PetWindow.get_core_geometry(probe) == Rect(10, 20, 300, 180)
+    assert QtPetWidget.get_core_position(probe) == Point(10, 20)
+    assert QtPetWidget.get_core_geometry(probe) == Rect(10, 20, 300, 180)
 
 
 def test_qt_boundary_converter_accepts_core_point():
