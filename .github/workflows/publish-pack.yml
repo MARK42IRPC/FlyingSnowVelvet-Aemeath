@@ -66,6 +66,23 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          $ErrorActionPreference = 'Stop'
+          $currentZip = [IO.Path]::GetFileName('${{ steps.package.outputs.zip_path }}')
+          $currentManifest = [IO.Path]::GetFileName('${{ steps.package.outputs.manifest_path }}')
+          $assetNames = @(gh release view PACK --json assets --jq '.assets[].name' --repo '${{ github.repository }}')
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Could not list existing PACK release assets.'
+          }
+          foreach ($assetName in $assetNames) {
+            $isPackage = $assetName -like 'FlyingSnowVelvet-*.zip' -or $assetName -like 'FlyingSnowVelvet-*-manifest.json'
+            $isCurrent = $assetName -eq $currentZip -or $assetName -eq $currentManifest
+            if ($isPackage -and -not $isCurrent) {
+              gh release delete-asset PACK $assetName --yes --repo '${{ github.repository }}'
+              if ($LASTEXITCODE -ne 0) {
+                throw "Could not delete stale PACK asset: $assetName"
+              }
+            }
+          }
           gh release upload PACK `
             '${{ steps.package.outputs.zip_path }}' `
             '${{ steps.package.outputs.manifest_path }}' `
