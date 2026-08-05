@@ -1,8 +1,21 @@
 import unittest
 
-from lib.core.graphics.commands import DrawBatch, DrawRequest, SpriteCommand
+from lib.core.graphics.commands import (
+    ClipPop,
+    ClipPush,
+    DrawBatch,
+    DrawRequest,
+    EllipseCommand,
+    LineCommand,
+    RectCommand,
+    SpriteCommand,
+    TextAlignment,
+    TextCommand,
+    TransformPop,
+    TransformPush,
+)
 from lib.core.graphics.resources import ImageResource, RasterFrame
-from lib.core.graphics.types import Color, Point, Rect, Size, coerce_color, coerce_rect
+from lib.core.graphics.types import Color, FontSpec, Point, Rect, Size, coerce_color, coerce_rect
 
 
 def test_graphics_contracts_are_backend_neutral():
@@ -56,3 +69,29 @@ def test_coerce_rect_accepts_core_tuple_and_qt_like_values():
     assert coerce_rect(Rect(1, 2, 30, 40)) == Rect(1, 2, 30, 40)
     assert coerce_rect((1, 2, 30, 40)) == Rect(1, 2, 30, 40)
     assert coerce_rect(QtLikeRect()) == Rect(1, 2, 30, 40)
+
+
+class GraphicsCommandTests(unittest.TestCase):
+    def test_draw_batch_accepts_all_declarative_command_kinds(self):
+        commands = (
+            TextCommand(
+                "hello",
+                FontSpec("Arial", 12),
+                Color(255, 255, 255),
+                Rect(0, 0, 30, 12),
+                alignment=int(TextAlignment.HCENTER | TextAlignment.VCENTER),
+            ),
+            LineCommand(Point(0, 0), Point(2, 2), Color(255, 0, 0)),
+            RectCommand(Rect(0, 0, 2, 2), fill=Color(0, 255, 0)),
+            EllipseCommand(Rect(0, 0, 2, 2), stroke=Color(0, 0, 255)),
+            ClipPush(Rect(0, 0, 10, 10)),
+            ClipPop(),
+            TransformPush(),
+            TransformPop(),
+        )
+        batch = DrawBatch(commands)
+        self.assertEqual(batch.commands, commands)
+
+    def test_draw_batch_rejects_non_command_values(self):
+        with self.assertRaisesRegex(TypeError, "unsupported command"):
+            DrawBatch((object(),))

@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import IntFlag
 
 from lib.core.layer import Layer, normalize_layer
 from .resources import RasterFrame
-from .types import Point, coerce_point
+from .types import Color, FontSpec, Point, Rect, coerce_color, coerce_point, coerce_rect
 
 
 @dataclass
@@ -90,6 +91,200 @@ class SpriteCommand:
         object.__setattr__(self, "order", int(self.order))
 
 
+class TextAlignment(IntFlag):
+    """Backend-neutral text alignment flags.
+
+    Values intentionally match the corresponding Qt flags at the adapter
+    boundary, while callers only need to depend on this core enum.
+    """
+
+    LEFT = 0x0001
+    RIGHT = 0x0002
+    HCENTER = 0x0004
+    JUSTIFY = 0x0008
+    TOP = 0x0020
+    BOTTOM = 0x0040
+    VCENTER = 0x0080
+    WORD_WRAP = 0x1000
+
+
+def _normalize_order_fields(instance: object, layer: object, z: object, order: object) -> None:
+    object.__setattr__(instance, "layer", normalize_layer(layer, Layer.MAIN_PET))
+    try:
+        object.__setattr__(instance, "z", int(z))
+    except (TypeError, ValueError):
+        object.__setattr__(instance, "z", 0)
+    try:
+        object.__setattr__(instance, "order", int(order))
+    except (TypeError, ValueError):
+        object.__setattr__(instance, "order", 0)
+
+
+def _normalize_alpha(value: object) -> float:
+    try:
+        return max(0.0, min(1.0, float(value)))
+    except (TypeError, ValueError):
+        return 1.0
+
+
+@dataclass(frozen=True, slots=True)
+class TextCommand:
+    """One backend-neutral text draw operation."""
+
+    text: str
+    font: FontSpec
+    color: Color
+    rect: Rect
+    alignment: int = int(TextAlignment.LEFT | TextAlignment.VCENTER)
+    alpha: float = 1.0
+    layer: int = int(Layer.MAIN_PET)
+    z: int = 0
+    order: int = 0
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "text", str(self.text or ""))
+        if not isinstance(self.font, FontSpec):
+            raise TypeError("text command font must be a FontSpec")
+        color = coerce_color(self.color)
+        if color is None:
+            raise TypeError("text command color must be a Color")
+        rect = coerce_rect(self.rect)
+        if rect is None:
+            raise TypeError("text command rect must be a Rect")
+        object.__setattr__(self, "color", color)
+        object.__setattr__(self, "rect", rect)
+        object.__setattr__(self, "alignment", int(self.alignment))
+        object.__setattr__(self, "alpha", _normalize_alpha(self.alpha))
+        _normalize_order_fields(self, self.layer, self.z, self.order)
+
+
+@dataclass(frozen=True, slots=True)
+class LineCommand:
+    """One backend-neutral line draw operation."""
+
+    start: Point
+    end: Point
+    color: Color
+    width: float = 1.0
+    alpha: float = 1.0
+    layer: int = int(Layer.MAIN_PET)
+    z: int = 0
+    order: int = 0
+
+    def __post_init__(self) -> None:
+        start = coerce_point(self.start)
+        end = coerce_point(self.end)
+        color = coerce_color(self.color)
+        if start is None or end is None:
+            raise TypeError("line command endpoints must be Point values")
+        if color is None:
+            raise TypeError("line command color must be a Color")
+        object.__setattr__(self, "start", start)
+        object.__setattr__(self, "end", end)
+        object.__setattr__(self, "color", color)
+        try:
+            width = float(self.width)
+        except (TypeError, ValueError):
+            width = 1.0
+        object.__setattr__(self, "width", max(0.0, width))
+        object.__setattr__(self, "alpha", _normalize_alpha(self.alpha))
+        _normalize_order_fields(self, self.layer, self.z, self.order)
+
+
+@dataclass(frozen=True, slots=True)
+class RectCommand:
+    """One backend-neutral rectangle draw operation."""
+
+    rect: Rect
+    fill: Color | None = None
+    stroke: Color | None = None
+    stroke_width: float = 1.0
+    alpha: float = 1.0
+    layer: int = int(Layer.MAIN_PET)
+    z: int = 0
+    order: int = 0
+
+    def __post_init__(self) -> None:
+        rect = coerce_rect(self.rect)
+        fill = coerce_color(self.fill) if self.fill is not None else None
+        stroke = coerce_color(self.stroke) if self.stroke is not None else None
+        if rect is None:
+            raise TypeError("rect command rect must be a Rect")
+        if self.fill is not None and fill is None:
+            raise TypeError("rect command fill must be a Color")
+        if self.stroke is not None and stroke is None:
+            raise TypeError("rect command stroke must be a Color")
+        object.__setattr__(self, "rect", rect)
+        object.__setattr__(self, "fill", fill)
+        object.__setattr__(self, "stroke", stroke)
+        try:
+            stroke_width = float(self.stroke_width)
+        except (TypeError, ValueError):
+            stroke_width = 1.0
+        object.__setattr__(self, "stroke_width", max(0.0, stroke_width))
+        object.__setattr__(self, "alpha", _normalize_alpha(self.alpha))
+        _normalize_order_fields(self, self.layer, self.z, self.order)
+
+
+@dataclass(frozen=True, slots=True)
+class EllipseCommand(RectCommand):
+    """One backend-neutral ellipse draw operation."""
+
+
+@dataclass(frozen=True, slots=True)
+class ClipPush:
+    """Save painter state and intersect it with ``rect``."""
+
+    rect: Rect
+
+    def __post_init__(self) -> None:
+        rect = coerce_rect(self.rect)
+        if rect is None:
+            raise TypeError("clip rect must be a Rect")
+        object.__setattr__(self, "rect", rect)
+
+
+@dataclass(frozen=True, slots=True)
+class ClipPop:
+    """Restore the state saved by the corresponding :class:`ClipPush`."""
+
+
+def _normalize_transform(value: object) -> tuple[float, float, float, float, float, float]:
+    if value is None:
+        return (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
+    if not isinstance(value, (tuple, list)) or len(value) != 6:
+        raise TypeError("transform matrix must contain six numeric values")
+    try:
+        return tuple(float(item) for item in value)  # type: ignore[return-value]
+    except (TypeError, ValueError) as exc:
+        raise TypeError("transform matrix must contain six numeric values") from exc
+
+
+@dataclass(frozen=True, slots=True)
+class TransformPush:
+    """Save painter state and concatenate a 2D affine transform.
+
+    The matrix uses Qt/Direct2D order ``(m11, m12, m21, m22, dx, dy)``.
+    """
+
+    matrix: tuple[float, float, float, float, float, float] = (
+        1.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+    )
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "matrix", _normalize_transform(self.matrix))
+
+
+@dataclass(frozen=True, slots=True)
+class TransformPop:
+    """Restore the state saved by the corresponding :class:`TransformPush`."""
+
+
 @dataclass(frozen=True, slots=True)
 class ResourceRevision:
     """The current revision of one resource registered in a scene."""
@@ -109,14 +304,36 @@ class ResourceRevision:
 class DrawBatch:
     """An immutable, ordered set of commands for one paint pass."""
 
-    commands: tuple[SpriteCommand, ...] = ()
+    commands: tuple[
+        SpriteCommand
+        | TextCommand
+        | LineCommand
+        | RectCommand
+        | EllipseCommand
+        | ClipPush
+        | ClipPop
+        | TransformPush
+        | TransformPop,
+        ...
+    ] = ()
     resource_revisions: tuple[ResourceRevision, ...] = ()
 
     def __post_init__(self) -> None:
         commands = tuple(self.commands)
         resource_revisions = tuple(self.resource_revisions)
-        if any(not isinstance(command, SpriteCommand) for command in commands):
-            raise TypeError("draw batch commands must be SpriteCommand values")
+        command_types = (
+            SpriteCommand,
+            TextCommand,
+            LineCommand,
+            RectCommand,
+            EllipseCommand,
+            ClipPush,
+            ClipPop,
+            TransformPush,
+            TransformPop,
+        )
+        if any(not isinstance(command, command_types) for command in commands):
+            raise TypeError("draw batch contains an unsupported command value")
         if any(
             not isinstance(resource, ResourceRevision)
             for resource in resource_revisions

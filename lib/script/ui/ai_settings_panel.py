@@ -3494,7 +3494,7 @@ class AISettingsPanel(QWidget):
             actual = bool(tray._is_autostart_enabled())
             self._set_autostart_checkbox_checked(actual)
             if actual != target:
-                raise ValueError("开机启动设置未生效，请检查“启动程序.bat”是否存在")
+                raise ValueError("开机启动设置未生效，请检查用户 Startup 文件夹和日志")
         except ValueError:
             raise
         except Exception as e:

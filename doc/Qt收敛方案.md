@@ -24,7 +24,7 @@ Qt UI 实现         -> lib/core/qt_bridge + lib/core 公共契约
 lib/core/graphics/
   types.py       # Point、Size、Rect、Color、FontSpec 等值类型
   resources.py   # RasterFrame、ImageResource 纯 RGBA 资源
-  commands.py    # DrawRequest、SpriteCommand、ResourceRevision、DrawBatch
+  commands.py    # sprite、文字、形状、裁剪/变换命令与 DrawBatch
   scene.py       # 资源 revision、当前帧、活跃请求和批次生成
   ordering.py    # layer、z、生成顺序排序
   backend.py     # 绘制后端协议
@@ -39,7 +39,7 @@ lib/core/application_runtime.py # 应用事件循环、退出和一次性调度�
 lib/core/application_ui.py      # 应用级 UI 生命周期协议
 lib/core/backend_router.py      # 后端目录、注册、启动选择与回退结果
 lib/core/desktop_backend.py     # 当前桌面服务的不可变 bundle 与注册
-lib/core/window_host.py         # 后端无关层级窗口宿主协议
+lib/core/window_host.py         # 后端无关 WindowHost v1 与层级窗口宿主协议
 lib/core/pet_host.py            # 主宠窗口后端回调与清理协议
 lib/core/tray_host.py           # 后端无关托盘生命周期协议
 lib/core/overlay_host.py        # 粒子/特效覆盖层生命周期协议
@@ -98,6 +98,8 @@ lib/core/qt_bridge/
 
 `RasterFrame` 固定使用紧密排列的 RGBA8888 `bytes`，不保存 `QImage/QPixmap`。`DrawScene` 不负责 toolkit 图片转换、缩放、翻转或实际绘制。
 
+`DrawBatch` 还可携带 `TextCommand`、`LineCommand`、`RectCommand`、`EllipseCommand`、`ClipPush/ClipPop` 和 `TransformPush/TransformPop`；这些命令只使用核心颜色、字体、矩形、点和六元素二维变换数据。
+
 ### 3.3 绘制后端
 
 `DrawBackend.render(batch, target, viewport)` 消费不可变 `DrawBatch`，不读取或修改活动场景。`viewport` 使用核心 `Rect`，target 由具体后端宿主持有。后端可以按资源 ID、revision、帧号、尺寸和翻转状态缓存转换结果，但必须在 revision 变化时淘汰旧资源，并提供幂等 `cleanup()`。
@@ -106,7 +108,7 @@ Qt 后端负责：
 
 - `QImage -> QPixmap` 转换；
 - 缩放和水平翻转；
-- `QPainter` 状态保存/恢复；
+- `QPainter` 绘制 sprite、文字、线段、矩形和椭圆，并保存/恢复裁剪与变换状态；
 - Qt 几何对象转换。
 
 未来自研后端只需实现同一批次协议，不应读取 `DrawScene` 私有状态或修改业务对象。
@@ -125,9 +127,9 @@ Qt 后端负责：
 
 `backend_router.py` 保存稳定后端 ID `qt`、`directx`、`opengl`、`vulkan`，并以纯数据 `BackendSelection` 返回请求后端、实际后端、是否回退和原因。路由只调用组合入口注册的配置器，不导入任何具体后端。未注册、未实现或初始化失败的候选后端必须回退 Qt；Qt 自身初始化失败时直接终止启动，不能伪装成功或重复重试同一个配置器。
 
-`desktop_backend.py` 通过不可变 `DesktopBackendBundle` 原子注册绘制后端、`ApplicationRuntime`、`ApplicationUiHost`、`Scheduler`、`ScreenCapture`、主宠窗口、`OverlayHost` 工厂、`TrayHostFactory`、事件泵、一次性延迟、虚拟屏幕、按点屏幕、截图和 `LayerWindowHostFactory`。核心调用方只读取当前 bundle 的服务，不导入具体后端；完整窗口创建、几何、输入和重绘服务仍待并入该 bundle。
+`desktop_backend.py` 通过不可变 `DesktopBackendBundle` 原子注册绘制后端、`ApplicationRuntime`、`ApplicationUiHost`、`Scheduler`、`ScreenCapture`、主宠窗口、`OverlayHost` 工厂、`TrayHostFactory`、事件泵、一次性延迟、虚拟屏幕、按点屏幕、截图、`LayerWindowHostFactory` 和可选的 `WindowHostFactory`。核心调用方只读取当前 bundle 的服务，不导入具体后端；主宠接入和完整场景提交仍待继续迁移。
 
-`window_host.LayerWindowHost` 是窗口排序所需的最小协议，稳定 identity 只用于注册和注销，原生堆叠 token 由 `stack_window()` 单独返回。`LayerManager` 只处理 `layer/z/order`、存活过滤和调度，不调用 QWidget 或 Win32 API。Qt 的弱引用、可见性、`raise_()`、`winId()` 和 `SetWindowPos` 均封装在 `qt_bridge.window_host.QtLayerWindowHost`；桌面后端未配置时使用不执行窗口副作用的被动宿主。
+`window_host.LayerWindowHost` 是窗口排序所需的最小协议，稳定 identity 只用于注册和注销，原生堆叠 token 由 `stack_window()` 单独返回。`WindowHost` v1 在此基础上补齐显示、隐藏、关闭、`Point/Rect` 几何、DPI、屏幕、点击穿透、激活、鼠标捕获、重绘和幂等清理。`LayerManager` 只处理 `layer/z/order`、存活过滤和调度，不调用 QWidget 或 Win32 API。Qt 的弱引用、可见性、`raise_()`、`winId()` 和 `SetWindowPos` 均封装在 `qt_bridge.window_host`；桌面后端未配置时使用不执行窗口副作用的被动宿主。
 
 `graphics.image_loader` 将静态图和 GIF 解码为 `ImageResource`，缩放也在后端无关层完成。`world_objects.py` 使用不可变 `WorldObjectRequest`、整数实例 ID 和 `WorldObjectInstance` 包装承接对象创建、状态、动作与核心几何查询；对象管理器只提交 `ImageResource`、`Point`、尺寸和纯构造选项。Qt 后端负责将 `motor`、`clock`、`sofa`、`snow_pile`、`snowball`、`snow_leopard`、`speaker` 解析为具体 QWidget 类型，以及在适配边界转换图片和窗口原生状态。
 
@@ -177,9 +179,9 @@ Qt 后端负责：
 
 1. 已完成：以单个 `ApplicationUiHost` 移除 `ApplicationState` 对 Qt/UI 模块的直接依赖，并用阻断 PyQt 的 Fake UI host 测试保护。
 2. 已完成：将 Qt 配置器注册移出 `main.py`，由 `lib/script/app/qt_backend_bootstrap.py` 按用户选择惰性导入后端。
-3. 当前阶段：补齐 `WindowHost v1` 的显示、隐藏、销毁、`Point/Rect`、重绘、穿透、激活/IME 策略和输入回调；复杂工作台不进入第一版。
-4. 扩展 `DrawBatch` 的文字、线段、矩形、椭圆、裁剪与变换命令，并先由 Qt 后端建立行为基准。
-5. 通过 WARP/D3D11 + Direct2D 开始 DX 离屏原型，像素和资源释放测试稳定后再实现可见窗口。
+3. 已完成：落地 `WindowHost v1` 协议、passive 实现、Qt 适配器和 `DesktopBackendBundle.window_host_factory`；主宠接入、IME 策略和 DX 原生实现仍待继续。
+4. 已完成：扩展 `DrawBatch` 的文字、线段、矩形、椭圆、裁剪与变换命令，并由 Qt 后端建立行为基准；`DrawScene` 仍只从业务请求生成 sprite，迁移业务绘制时再提交其它命令。
+5. 当前阶段：把声明式命令映射到 DX/WARP 离屏原型，补齐命令 ABI 和像素基线后再实现可见窗口。
 
 不得跳过前三项直接编写 DX 透明窗口，否则会把现有 Qt UI 和 painter 假设复制进新后端。
 

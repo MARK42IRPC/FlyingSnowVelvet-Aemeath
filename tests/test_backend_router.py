@@ -130,6 +130,7 @@ class BackendRouterTests(unittest.TestCase):
             get_tray_host_factory,
             get_screen_for_point_provider,
             get_virtual_screen_provider,
+            get_window_host_factory,
         )
         from lib.core.qt_bridge.desktop_backend import configure_qt_desktop_backend
         from lib.core.world_objects import get_world_object_backend
@@ -155,6 +156,7 @@ class BackendRouterTests(unittest.TestCase):
         self.assertIsNotNone(get_screen_for_point_provider())
         self.assertIsNotNone(get_screen_capture_provider())
         self.assertIsNotNone(get_layer_window_host_factory())
+        self.assertIsNotNone(get_window_host_factory())
         self.assertIsNotNone(get_desktop_backend_bundle())
         self.assertEqual(get_world_object_backend().__class__.__name__, "QtWorldObjectBackend")
 

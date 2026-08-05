@@ -37,7 +37,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Optional
 
-from config import voice_runtime as directml_config
+from lib.core import voice_runtime_contract as directml_config
 
 PROJECT_ROOT = Path(__file__).parent
 RESOURCE_LINKS_FILE = PROJECT_ROOT / "resc.net.txt"

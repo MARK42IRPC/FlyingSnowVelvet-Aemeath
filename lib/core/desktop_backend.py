@@ -14,7 +14,7 @@ from lib.core.overlay_host import OverlayHost
 from lib.core.pet_host import PetWindowHost
 from lib.core.tray_host import TrayHostFactory
 from lib.core.timing.scheduler import Scheduler
-from lib.core.window_host import LayerWindowHostFactory
+from lib.core.window_host import LayerWindowHostFactory, WindowHostFactory
 
 
 DrawBackendFactory = Callable[[], DrawBackend]
@@ -48,6 +48,7 @@ class DesktopBackendBundle:
     screen_for_point_provider: ScreenForPointProvider
     layer_window_host_factory: LayerWindowHostFactory
     screen_capture_provider: ScreenCaptureProvider | None = None
+    window_host_factory: WindowHostFactory | None = None
 
 
 _bundle: DesktopBackendBundle | None = None
@@ -70,6 +71,7 @@ def configure_desktop_backend(
     screen_for_point_provider: ScreenForPointProvider,
     layer_window_host_factory: LayerWindowHostFactory,
     screen_capture_provider: ScreenCaptureProvider | None = None,
+    window_host_factory: WindowHostFactory | None = None,
 ) -> None:
     """Install one complete desktop backend before runtime services are created."""
     global _bundle
@@ -89,6 +91,7 @@ def configure_desktop_backend(
         screen_for_point_provider=screen_for_point_provider,
         layer_window_host_factory=layer_window_host_factory,
         screen_capture_provider=screen_capture_provider,
+        window_host_factory=window_host_factory,
     )
 
 
@@ -154,6 +157,10 @@ def get_layer_window_host_factory() -> LayerWindowHostFactory | None:
 
 def get_screen_capture_provider() -> ScreenCaptureProvider | None:
     return None if _bundle is None else _bundle.screen_capture_provider
+
+
+def get_window_host_factory() -> WindowHostFactory | None:
+    return None if _bundle is None else _bundle.window_host_factory
 
 
 def reset_desktop_backend() -> None:

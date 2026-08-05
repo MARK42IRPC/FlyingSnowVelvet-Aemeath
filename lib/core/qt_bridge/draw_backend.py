@@ -1,11 +1,22 @@
-"""PyQt5 implementation of immutable sprite command batches."""
+"""PyQt5 implementation of immutable declarative draw command batches."""
 from __future__ import annotations
 
-from PyQt5.QtCore import QPoint, QRect, Qt
-from PyQt5.QtGui import QPainter, QPixmap, QTransform
+from PyQt5.QtCore import QPoint, QPointF, QRect, QRectF, Qt
+from PyQt5.QtGui import QColor, QFont, QPainter, QPen, QPixmap, QTransform
 
-from lib.core.graphics.commands import DrawBatch, SpriteCommand
-from lib.core.graphics.types import Rect
+from lib.core.graphics.commands import (
+    ClipPop,
+    ClipPush,
+    DrawBatch,
+    EllipseCommand,
+    LineCommand,
+    RectCommand,
+    SpriteCommand,
+    TextCommand,
+    TransformPop,
+    TransformPush,
+)
+from lib.core.graphics.types import Color, Rect
 from lib.core.qt_bridge.gif_loader import qimage_from_raster_frame
 
 
@@ -30,37 +41,108 @@ class QtDrawBackend:
         qt_painter = target
         qt_painter.save()
         qt_painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+        state_stack: list[type] = []
         try:
             for command in batch.commands:
-                self._discard_stale_resource_cache(command)
-                base_pixmap = self._get_base_pixmap(command)
-                if base_pixmap.isNull():
-                    continue
-
-                if viewport is not None:
-                    draw_w = max(1, int(round(viewport.width)))
-                    draw_h = max(1, int(round(viewport.height)))
-                else:
-                    draw_w = max(1, int(round(base_pixmap.width() * command.scale)))
-                    draw_h = max(1, int(round(base_pixmap.height() * command.scale)))
-
-                pixmap = self._get_render_pixmap(
-                    command,
-                    draw_w,
-                    draw_h,
-                    base_pixmap,
-                )
-                draw_rect = self._resolve_draw_rect(command, pixmap, viewport)
-
-                if abs(command.alpha - 1.0) > 1e-4:
+                if isinstance(command, SpriteCommand):
+                    self._draw_sprite(qt_painter, command, viewport)
+                elif isinstance(command, TextCommand):
+                    self._draw_text(qt_painter, command)
+                elif isinstance(command, LineCommand):
+                    self._draw_line(qt_painter, command)
+                elif isinstance(command, EllipseCommand):
+                    self._draw_shape(qt_painter, command, ellipse=True)
+                elif isinstance(command, RectCommand):
+                    self._draw_shape(qt_painter, command, ellipse=False)
+                elif isinstance(command, (ClipPush, TransformPush)):
                     qt_painter.save()
-                    qt_painter.setOpacity(command.alpha)
-                    qt_painter.drawPixmap(draw_rect, pixmap)
+                    state_stack.append(type(command))
+                    if isinstance(command, ClipPush):
+                        qt_painter.setClipRect(self._rectf(command.rect), Qt.IntersectClip)
+                    else:
+                        qt_painter.setTransform(QTransform(*command.matrix), True)
+                elif isinstance(command, (ClipPop, TransformPop)):
+                    expected_push = ClipPush if isinstance(command, ClipPop) else TransformPush
+                    if not state_stack or state_stack[-1] is not expected_push:
+                        raise ValueError("draw batch pop command has no matching push")
                     qt_painter.restore()
-                else:
-                    qt_painter.drawPixmap(draw_rect, pixmap)
+                    state_stack.pop()
         finally:
+            while state_stack:
+                qt_painter.restore()
+                state_stack.pop()
             qt_painter.restore()
+
+    def _draw_sprite(self, painter, command: SpriteCommand, viewport: Rect | None) -> None:
+        self._discard_stale_resource_cache(command)
+        base_pixmap = self._get_base_pixmap(command)
+        if base_pixmap.isNull():
+            return
+
+        if viewport is not None:
+            draw_w = max(1, int(round(viewport.width)))
+            draw_h = max(1, int(round(viewport.height)))
+        else:
+            draw_w = max(1, int(round(base_pixmap.width() * command.scale)))
+            draw_h = max(1, int(round(base_pixmap.height() * command.scale)))
+
+        pixmap = self._get_render_pixmap(command, draw_w, draw_h, base_pixmap)
+        draw_rect = self._resolve_draw_rect(command, pixmap, viewport)
+        painter.save()
+        painter.setOpacity(command.alpha)
+        painter.drawPixmap(draw_rect, pixmap)
+        painter.restore()
+
+    @staticmethod
+    def _color(value: Color, alpha: float = 1.0) -> QColor:
+        return QColor(value.red, value.green, value.blue, round(value.alpha * alpha))
+
+    @staticmethod
+    def _rectf(rect: Rect) -> QRectF:
+        return QRectF(float(rect.x), float(rect.y), float(rect.width), float(rect.height))
+
+    def _draw_text(self, painter, command: TextCommand) -> None:
+        font = QFont(command.font.family)
+        font.setPixelSize(command.font.pixel_size)
+        font.setBold(command.font.bold)
+        painter.save()
+        painter.setOpacity(command.alpha)
+        painter.setFont(font)
+        painter.setPen(self._color(command.color))
+        painter.drawText(self._rectf(command.rect), int(command.alignment), command.text)
+        painter.restore()
+
+    def _draw_line(self, painter, command: LineCommand) -> None:
+        painter.save()
+        painter.setOpacity(command.alpha)
+        pen = QPen(self._color(command.color))
+        pen.setWidthF(command.width)
+        painter.setPen(pen)
+        painter.drawLine(
+            QPointF(command.start.x, command.start.y),
+            QPointF(command.end.x, command.end.y),
+        )
+        painter.restore()
+
+    def _draw_shape(self, painter, command: RectCommand, *, ellipse: bool) -> None:
+        painter.save()
+        painter.setOpacity(command.alpha)
+        if command.fill is None:
+            painter.setBrush(Qt.NoBrush)
+        else:
+            painter.setBrush(self._color(command.fill))
+        if command.stroke is None or command.stroke_width <= 0.0:
+            painter.setPen(Qt.NoPen)
+        else:
+            pen = QPen(self._color(command.stroke))
+            pen.setWidthF(command.stroke_width)
+            painter.setPen(pen)
+        rect = self._rectf(command.rect)
+        if ellipse:
+            painter.drawEllipse(rect)
+        else:
+            painter.drawRect(rect)
+        painter.restore()
 
     def cleanup(self) -> None:
         self._frame_pixmap_cache.clear()

@@ -14,7 +14,10 @@ from lib.core.qt_bridge.screen import (
     get_screen_rect_for_point,
     get_virtual_screen_rect,
 )
-from lib.core.qt_bridge.window_host import create_qt_layer_window_host
+from lib.core.qt_bridge.window_host import (
+    create_qt_layer_window_host,
+    create_qt_window_host,
+)
 from lib.core.qt_bridge.world_object_backend import QtWorldObjectBackend
 from lib.core.qt_bridge.tray_host import get_tray_host
 from lib.core.world_objects import configure_world_object_backend
@@ -38,5 +41,6 @@ def configure_qt_desktop_backend() -> None:
         screen_for_point_provider=lambda point: get_screen_rect_for_point(point),
         layer_window_host_factory=create_qt_layer_window_host,
         screen_capture_provider=capture_primary_screen_png,
+        window_host_factory=create_qt_window_host,
     )
     configure_world_object_backend(QtWorldObjectBackend())

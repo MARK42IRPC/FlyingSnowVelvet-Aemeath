@@ -23,10 +23,6 @@ from lib.script.app.game_mode_service import get_game_mode_service
 
 _logger = get_logger(__name__)
 
-# 开机启动注册表路径
-AUTOSTART_REG_PATH = r'Software\Microsoft\Windows\CurrentVersion\Run'
-AUTOSTART_KEY_NAME = 'FlyingSnowflake'
-
 # 托盘图标唯一标识符（用于 Windows 持久化设置）
 TRAY_ICON_GUID = uuid.UUID('{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}')
 
@@ -88,6 +84,13 @@ class TrayIcon(QObject):
         if app is None:
             _logger.error('QApplication 实例不存在，无法创建托盘图标')
             return False
+
+        try:
+            from lib.script.app.autostart import migrate_legacy_autostart
+
+            migrate_legacy_autostart()
+        except Exception as exc:
+            _logger.warning('迁移旧开机启动项失败: %s', exc)
 
         if icon_path is None:
             icon_path = self._resolve_default_icon_path()
@@ -698,14 +701,9 @@ class TrayIcon(QObject):
     def _is_autostart_enabled(self) -> bool:
         """检查开机启动是否已启用"""
         try:
-            import winreg
-            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, AUTOSTART_REG_PATH, 0,
-                               winreg.KEY_READ) as key:
-                try:
-                    value, _ = winreg.QueryValueEx(key, AUTOSTART_KEY_NAME)
-                    return True
-                except FileNotFoundError:
-                    return False
+            from lib.script.app.autostart import is_autostart_enabled
+
+            return bool(is_autostart_enabled())
         except Exception as e:
             _logger.warning('检查开机启动状态失败: %s', e)
             return False
@@ -733,53 +731,41 @@ class TrayIcon(QObject):
     def _on_toggle_autostart(self, checked: bool, source: str = 'tray_menu'):
         """切换开机启动状态"""
         target = bool(checked)
+        success = False
+        detail = ''
         try:
-            import winreg
+            from lib.script.app.autostart import (
+                disable_autostart,
+                enable_autostart,
+            )
+
             if target:
-                # 启用开机启动
-                if getattr(sys, 'frozen', False):
-                    script_dir = os.path.dirname(sys.executable)
-                else:
-                    script_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-                bat_path = os.path.join(script_dir, '启动程序.bat')
-
-                if not os.path.exists(bat_path):
-                    _logger.warning('启动脚本不存在: %s', bat_path)
-                    self._set_autostart_action_checked(False)
-                    self._publish_autostart_status(False, source=source)
-                    return
-
-                with winreg.OpenKey(winreg.HKEY_CURRENT_USER, AUTOSTART_REG_PATH, 0,
-                                   winreg.KEY_SET_VALUE) as key:
-                    winreg.SetValueEx(key, AUTOSTART_KEY_NAME, 0, winreg.REG_SZ, f'"{bat_path}"')
-
-                _logger.info('开机启动已启用')
-                self._event_center.publish(Event(EventType.INFORMATION, {
-                    'text': '开机启动已启用',
-                    'min': 0,
-                    'max': 60,
-                }))
+                success, detail = enable_autostart()
             else:
-                # 禁用开机启动
-                with winreg.OpenKey(winreg.HKEY_CURRENT_USER, AUTOSTART_REG_PATH, 0,
-                                   winreg.KEY_SET_VALUE) as key:
-                    try:
-                        winreg.DeleteValue(key, AUTOSTART_KEY_NAME)
-                    except FileNotFoundError:
-                        pass  # 键不存在，无需删除
-
-                _logger.info('开机启动已禁用')
-                self._event_center.publish(Event(EventType.INFORMATION, {
-                    'text': '开机启动已禁用',
-                    'min': 0,
-                    'max': 60,
-                }))
+                success, detail = disable_autostart()
         except Exception as e:
+            detail = f'{type(e).__name__}: {e}'
             _logger.error('切换开机启动失败: %s', e)
-        actual = bool(self._is_autostart_enabled())
+
+        actual = bool(self._is_autostart_enabled()) if success else False
+        if success and actual == target:
+            _logger.info('开机启动已%s', '启用' if target else '禁用')
+            self._event_center.publish(Event(EventType.INFORMATION, {
+                'text': f'开机启动已{"启用" if target else "禁用"}',
+                'min': 0,
+                'max': 60,
+            }))
+        else:
+            _logger.error('开机启动%s失败: %s', '启用' if target else '禁用', detail or '状态校验失败')
+            self._event_center.publish(Event(EventType.INFORMATION, {
+                'text': f'开机启动{"设置" if target else "取消"}失败，请查看日志',
+                'min': 0,
+                'max': 60,
+            }))
+            actual = False
         self._set_autostart_action_checked(actual)
         self._publish_autostart_status(actual, source=source)
+        return bool(success and actual == target)
 
     def show_message(self, title: str, message: str,
                      icon: QSystemTrayIcon.MessageIcon = QSystemTrayIcon.Information,

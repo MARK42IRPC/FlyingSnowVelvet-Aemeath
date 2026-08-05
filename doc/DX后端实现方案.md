@@ -1,10 +1,10 @@
 # DirectX 后端实现方案
 
-更新时间：2026-08-04
+更新时间：2026-08-05
 
 本文档定义 Windows DirectX 桌面后端的技术路线、迁移边界和验收条件。目标不是只实现一个 DX 绘制器，而是让普通桌宠运行进程最终不导入 PyQt5、不加载 Qt DLL，同时保留现有 Qt 后端作为迁移期回退和独立工作台实现。
 
-当前 Qt 边界和后端无关契约以 `doc/Qt收敛方案.md`、`lib/core/backend_router.py`、`lib/core/desktop_backend.py` 及源码测试为准。本文档中的目录和接口草案属于后续实施约束，尚未落地的内容不得当作现有能力。
+当前 Qt 边界和后端无关契约以 `doc/Qt收敛方案.md`、`lib/core/backend_router.py`、`lib/core/desktop_backend.py` 及源码测试为准。阶段 B 的 WARP 离屏原型已落地到 `native/dx_backend/`、`lib/core/dx_bridge/` 和 `tests/dx/`；窗口、完整桌面 bundle 和其余命令仍属于未完成能力，不得当作现有能力。
 
 ## 1. 目标与非目标
 
@@ -31,11 +31,11 @@
 核心算法和多数业务载荷已经改用 `Point`、`Rect`、`Color`、`FontSpec`、`MouseInput` 和 `KeyboardInput` 等纯数据类型。主宠绘制链已经使用纯 RGBA 资源和不可变命令批，但以下边界仍阻止普通运行进程移除 Qt：
 
 - `lib/script/main.py` 已只从 `DesktopBackendBundle` 获取应用运行时、调度、截图、主宠、覆盖层和托盘工厂；这些工厂返回的对象仍暴露部分 Qt 生命周期行为，尚未收敛为完整后端无关宿主协议。
-- `DrawScene` 已只保存 `ImageResource/RasterFrame`，并生成不可变 `DrawBatch/SpriteCommand`；当前命令集只覆盖主宠 sprite，尚未覆盖文字、形状、粒子和特效。
+- `DrawScene` 已只保存 `ImageResource/RasterFrame`，并生成不可变 `DrawBatch/SpriteCommand`；`DrawBatch` 契约已扩展文字、线段、矩形、椭圆、裁剪和变换命令，DX/WARP 原型尚未消费这些命令。
 - `DrawBackend.render(batch, target, viewport)` 的 target 仍由后端宿主持有；当前唯一实现使用 `QPainter`，DX target 尚未实现。
 - 跨后端 `RenderRequest/RenderItem/PaintCallback` 已删除；两个明确的 Qt 游戏控件使用 `qt_bridge.render_core.QtRenderCore` 本地回调，尚未迁移为声明式命令。
 - `WorldObjectBackend` 使用不透明图片和实例句柄，当前唯一实现仍创建 QWidget 世界对象。
-- `LayerManager` 已只依赖最小 `LayerWindowHost`，Qt 可见性、前置、原生句柄和 `SetWindowPos` 已迁入 `qt_bridge.window_host`；窗口创建、几何、输入和场景提交等完整宿主能力仍待抽象。
+- `LayerManager` 已只依赖最小 `LayerWindowHost`，Qt 可见性、前置、原生句柄和 `SetWindowPos` 已迁入 `qt_bridge.window_host`；后端无关 `WindowHost v1` 协议、passive 实现和 Qt factory 已落地，主宠接入、输入回调和场景提交仍待迁移。
 - 工作台、设置对话框、游戏窗口和媒体播放器仍是 Qt UI。
 
 因此实施顺序必须先补齐跨后端契约，再接 DX 窗口和运行时。只新增一个 `DxDrawBackend` 无法实现“摆脱 Qt”。
@@ -107,10 +107,10 @@ GIF 帧时长和逻辑尺寸已经进入纯帧数据；循环方式和缩放策�
 
 ### 5.2 声明式绘制命令
 
-跨后端 `PaintCallback` 已删除，Qt 独占控件回调已移入 `qt_bridge`。当前 `SpriteCommand/DrawBatch` 已提供已解析资源帧、透明度、翻转、缩放和 `layer/z/order`；后续按同一批次扩展：
+跨后端 `PaintCallback` 已删除，Qt 独占控件回调已移入 `qt_bridge`。当前 `SpriteCommand/DrawBatch` 已提供已解析资源帧、透明度、翻转、缩放和 `layer/z/order`；声明式批次还提供以下命令，Qt 已建立行为基准，DX/WARP 仍待映射：
 
 - `SpriteCommand`：资源、源帧、目标矩形、透明度、翻转和插值模式；
-- `TextCommand`：文本、`FontSpec`、颜色、布局矩形、对齐和裁剪；
+- `TextCommand`：文本、`FontSpec`、颜色、布局矩形和对齐；
 - `RectCommand/EllipseCommand`：填充、描边和线宽；
 - `ClipPush/ClipPop` 与 `TransformPush/TransformPop`；
 - 粒子和特效使用上述基础命令或专用批命令。
@@ -123,7 +123,7 @@ GIF 帧时长和逻辑尺寸已经进入纯帧数据；循环方式和缩放策�
 
 第一步已落地后端无关 `LayerWindowHost`：稳定 identity 用于注册和注销，`is_alive/is_visible` 用于过滤窗口，`stack_window` 返回后端原生整数 token，原生堆叠不可用时通过 `raise_window` 回退。`LayerManager` 只负责 `layer/z/order` 排序和触发时机，不再识别 QWidget、HWND 或 `SetWindowPos`。Qt 适配器弱持有 QWidget，桌面后端通过工厂注册；未配置后端时使用无副作用宿主保证核心可独立运行。
 
-后续在该最小协议之上补齐后端无关 `WindowHost`/`WindowManager`，至少覆盖：
+后端无关 `WindowHost v1` 已在 `lib/core/window_host.py` 定义并由 `DesktopBackendBundle.window_host_factory` 暴露，至少覆盖：
 
 - 创建、显示、隐藏、关闭透明无边框窗口；
 - 读取和设置 `Point/Rect`、DPI 和所属屏幕；
@@ -148,11 +148,11 @@ DX 组合入口必须一次性注册一组完整服务：
 - 托盘图标、菜单命令和资源图标加载；
 - 绘制资源仓库和 DX 场景提交。
 
-`desktop_backend.py` 已把当前绘制、`ApplicationRuntime`、`ApplicationUiHost`、`Scheduler`、`ScreenCapture`、主宠窗口、`OverlayHost` 工厂、`TrayHostFactory`、事件泵、延迟、屏幕、截图和层级窗口宿主工厂收进单个不可变 `DesktopBackendBundle`，但仍只覆盖上述完整能力的一部分。新增能力应继续扩展明确协议和组合对象，不能恢复彼此无关的模块全局变量，也不能让 `lib/script/main.py` 为每个后端分别导入一串具体实现。
+`desktop_backend.py` 已把当前绘制、`ApplicationRuntime`、`ApplicationUiHost`、`Scheduler`、`ScreenCapture`、主宠窗口、`OverlayHost` 工厂、`TrayHostFactory`、`WindowHost` factory、事件泵、延迟、屏幕、截图和层级窗口宿主工厂收进单个不可变 `DesktopBackendBundle`，但仍只覆盖上述完整能力的一部分。新增能力应继续扩展明确协议和组合对象，不能恢复彼此无关的模块全局变量，也不能让 `lib/script/main.py` 为每个后端分别导入一串具体实现。
 
 最终组合入口只负责：读取配置、注册可用后端配置器、执行路由、创建所选 `DesktopBackendBundle`。`ApplicationState` 已从 bundle 获取运行时、调度、截图、主宠、覆盖层和托盘服务，并只通过 `PetWindowHost.shutdown_host()`、`OverlayHost.cleanup()` 和 `TrayHost.cleanup()` 执行退出；完整窗口创建、几何、输入和重绘服务仍需继续迁移，最终不得直接导入 `qt_bridge` 或 `dx_bridge`。
 
-两个启动组合边界已经完成：`ApplicationUiHost` 统一承接字体、公告、预加载、CMD、提示面板、登录 UI 和退出动画；启动入口按后端选择惰性导入配置器，`main.py` 不注册或导入 Qt。当前实施 `WindowHost v1`，随后扩展声明式绘制命令。DX 第一份可执行成果必须是 WARP 离屏渲染与像素测试，不是用户可见透明窗口。
+两个启动组合边界已经完成：`ApplicationUiHost` 统一承接字体、公告、预加载、CMD、提示面板、登录 UI 和退出动画；启动入口按后端选择惰性导入配置器，`main.py` 不注册或导入 Qt。`WindowHost v1` 协议和 Qt factory 已落地，随后扩展声明式绘制命令。DX 第一份可执行成果必须是 WARP 离屏渲染与像素测试，不是用户可见透明窗口。
 
 ## 6. C ABI 与事件模型
 
@@ -171,6 +171,8 @@ fsdx_poll_events
 fsdx_request_exit
 fsdx_get_last_error
 ```
+
+当前离屏原型已实现 `fsdx_get_abi_version`、runtime 创建/销毁、RGBA 资源注册/释放、连续 sprite 批次提交和 RGBA readback。资源和命令在 C ABI 调用期间被 native 层复制或完整消费；Python 只持有整数句柄。WARP 通过 `FSDX_RUNTIME_FLAG_WARP` 显式选择，默认硬件路径尚未接入桌面路由。readback 返回紧密排列的预乘 RGBA8888。
 
 原生层不得从窗口过程、渲染线程或 worker 任意回调 Python。窗口输入、设备状态和托盘命令写入有界事件队列，Python 在事件泵边界批量 `poll`。队列必须合并可丢弃的高频移动/重绘事件，但不得丢弃按键、按钮、关闭、设备丢失和资源错误事件。
 
@@ -204,8 +206,8 @@ fsdx_get_last_error
 ### 阶段 A：契约补齐
 
 - 已完成主宠和世界对象统一资源描述、纯 RGBA 帧、缩放、不可变 sprite 批次、Qt 后端 revision 缓存及整数世界对象实例句柄。
-- 已从跨后端契约删除 `PaintCallback` 并保留 Qt 本地适配；文字、形状、粒子和特效命令仍待补齐。
-- 已新增最小 `LayerWindowHost` 和 Qt 层级适配器，移除 `LayerManager` 对 QWidget/Win32 方法的直接调用；完整窗口生命周期协议仍待补齐。
+- 已从跨后端契约删除 `PaintCallback` 并保留 Qt 本地适配；文字、形状、裁剪和变换命令已补齐，粒子和特效仍需转换为这些基础命令或专用批命令。
+- 已新增最小 `LayerWindowHost`、`WindowHost v1` 和 Qt 窗口适配器，移除 `LayerManager` 对 QWidget/Win32 方法的直接调用；主宠接入、DX 原生窗口生命周期和场景提交仍待迁移。
 - 已将应用运行时、调度器、截图服务以及主宠、覆盖层、托盘工厂和当前桌面能力收进 `DesktopBackendBundle`；主宠、覆盖层和托盘对象行为已收敛为 `PetWindowHost`、`OverlayHost` 和 `TrayHost`，Qt signal、QWidget 销毁及托盘单例释放不再泄漏到 `ApplicationState`。完整窗口创建、几何、输入和重绘契约仍待迁移。
 - 已完成 `ApplicationUiHost` 和启动组合入口拆分：`ApplicationState` 不再导入 Qt/UI 模块或注册后端，Qt 配置器由惰性 bootstrap 安装；当前进入 `WindowHost v1`，随后扩展文字/形状/裁剪命令。
 
@@ -213,9 +215,9 @@ fsdx_get_last_error
 
 ### 阶段 B：DX 离屏绘制原型
 
-- 建立 CMake/MSVC 构建和 C ABI 版本检查。
-- 在 WARP 和硬件设备上渲染 sprite、文字、透明度、翻转、裁剪和排序。
-- 输出 PNG 供自动化比较，不创建用户可见窗口。
+- 已建立 CMake/MSVC 工程、版本化 C ABI 和 `ctypes` bridge。
+- 当前已在 WARP 上验证 sprite、透明度、翻转、缩放、排序、资源 revision 缓存和 RGBA readback；声明式文字/形状命令、裁剪、硬件路径和 PNG 诊断仍待补齐。
+- 原型只创建离屏 target，不创建用户可见窗口，也未注册为 `directx` 后端。
 
 退出条件：像素基线、透明边缘、资源释放、错误码和 ABI 不匹配测试通过。此阶段 `directx.available` 仍为 `False`。
 
@@ -296,5 +298,7 @@ fsdx_get_last_error
 ## 11. 交付边界
 
 每阶段提交必须同时包含契约测试、对应后端测试和文档更新。不得在一个提交中同时改变 C ABI 又不更新 ABI 版本；不得提交本地生成的 DLL、PDB、Release ZIP 或公告文件到源码仓库。
+
+原生 C/C++ 源码属于源码仓库和开发者源码包；普通用户包不携带 `native/dx_backend` 源码，只在 DirectX 完整可用并通过发布验收后携带对应架构的 `flying_snow_dx.dll` 及版本/ABI 元数据。当前离屏原型 DLL 仅用于本地测试，不进入用户包。
 
 第一阶段的成功标准是完成后端无关契约，而不是减少 `requirements.txt` 一行。最终完成标准是 DX 普通桌宠在没有 PyQt5 的干净环境中通过完整启动和退出验收，并且 Qt 工作台作为可选组件不反向污染主进程。

@@ -6,8 +6,10 @@ import weakref
 from collections.abc import Callable
 
 from PyQt5 import sip
+from PyQt5.QtCore import QRect, Qt
 
-from lib.core.window_host import LayerWindowHost
+from lib.core.graphics.types import Rect
+from lib.core.window_host import LayerWindowHost, WindowHost
 
 
 SetWindowPosApi = Callable[[int, int, int, int, int, int, int], object]
@@ -121,3 +123,205 @@ class QtLayerWindowHost:
 
 def create_qt_layer_window_host(window: object) -> LayerWindowHost:
     return QtLayerWindowHost(window)
+
+
+class QtWindowHost(QtLayerWindowHost):
+    """Qt QWidget adapter for the backend-neutral WindowHost v1 surface."""
+
+    def __init__(self, widget: object, *, set_window_pos_api: SetWindowPosApi | None = None) -> None:
+        super().__init__(widget, set_window_pos_api=set_window_pos_api)
+        self._clickthrough = False
+        self._mouse_capture = False
+        self._cleaned = False
+
+    def _get_native_handle(self) -> int | None:
+        widget = self._widget()
+        if widget is None:
+            return None
+        try:
+            return int(widget.winId())
+        except (RuntimeError, TypeError, ValueError):
+            return None
+
+    @property
+    def native_handle(self) -> int | None:
+        return self._get_native_handle()
+
+    def show(self) -> None:
+        widget = self._widget()
+        if widget is None:
+            return
+        try:
+            widget.show()
+        except RuntimeError:
+            return
+
+    def hide(self) -> None:
+        widget = self._widget()
+        if widget is None:
+            return
+        try:
+            widget.hide()
+        except RuntimeError:
+            return
+
+    def close(self) -> None:
+        widget = self._widget()
+        if widget is None:
+            return
+        try:
+            widget.close()
+        except RuntimeError:
+            return
+
+    @staticmethod
+    def _rect_from_qt(rectangle: object) -> Rect:
+        return Rect(
+            float(rectangle.x()),
+            float(rectangle.y()),
+            float(rectangle.width()),
+            float(rectangle.height()),
+        )
+
+    def get_geometry(self) -> Rect:
+        widget = self._widget()
+        if widget is None:
+            return Rect()
+        try:
+            geometry_getter = getattr(widget, "frameGeometry", None)
+            rectangle = geometry_getter() if callable(geometry_getter) else widget.geometry()
+            return self._rect_from_qt(rectangle)
+        except (RuntimeError, AttributeError, TypeError):
+            return Rect()
+
+    def set_geometry(self, geometry: Rect) -> None:
+        if not isinstance(geometry, Rect):
+            raise TypeError("geometry must be a Rect")
+        widget = self._widget()
+        if widget is None:
+            return
+        try:
+            widget.setGeometry(
+                int(round(geometry.x)),
+                int(round(geometry.y)),
+                max(1, int(round(geometry.width))),
+                max(1, int(round(geometry.height))),
+            )
+        except (RuntimeError, AttributeError, TypeError, ValueError):
+            return
+
+    def get_dpi(self) -> int:
+        widget = self._widget()
+        if widget is None:
+            return 96
+        try:
+            screen = widget.screen()
+            dpi_getter = getattr(screen, "logicalDotsPerInchX", None)
+            if callable(dpi_getter):
+                return max(1, int(round(float(dpi_getter()))))
+        except (RuntimeError, AttributeError, TypeError, ValueError):
+            pass
+        return 96
+
+    def get_screen_geometry(self) -> Rect | None:
+        widget = self._widget()
+        if widget is None:
+            return None
+        try:
+            screen = widget.screen()
+            if screen is None:
+                return None
+            return self._rect_from_qt(screen.geometry())
+        except (RuntimeError, AttributeError, TypeError, ValueError):
+            return None
+
+    def set_clickthrough(self, enabled: bool) -> None:
+        widget = self._widget()
+        if widget is None:
+            return
+        try:
+            widget.setAttribute(Qt.WA_TransparentForMouseEvents, bool(enabled))
+            self._clickthrough = bool(enabled)
+        except (RuntimeError, AttributeError, TypeError):
+            return
+
+    def is_clickthrough_enabled(self) -> bool:
+        return self._clickthrough
+
+    def is_active(self) -> bool:
+        widget = self._widget()
+        if widget is None:
+            return False
+        try:
+            return bool(widget.isActiveWindow())
+        except (RuntimeError, AttributeError):
+            return False
+
+    def activate(self) -> None:
+        widget = self._widget()
+        if widget is None or self._clickthrough:
+            return
+        try:
+            widget.activateWindow()
+        except (RuntimeError, AttributeError):
+            return
+
+    def capture_mouse(self) -> None:
+        widget = self._widget()
+        if widget is None:
+            return
+        try:
+            widget.grabMouse()
+            self._mouse_capture = True
+        except (RuntimeError, AttributeError):
+            return
+
+    def release_mouse(self) -> None:
+        widget = self._widget()
+        if widget is not None:
+            try:
+                widget.releaseMouse()
+            except (RuntimeError, AttributeError):
+                pass
+        self._mouse_capture = False
+
+    def has_mouse_capture(self) -> bool:
+        return self.is_alive() and self._mouse_capture
+
+    def request_repaint(self, viewport: Rect | None = None) -> None:
+        widget = self._widget()
+        if widget is None:
+            return
+        if viewport is not None and not isinstance(viewport, Rect):
+            raise TypeError("viewport must be a Rect or None")
+        try:
+            if viewport is None:
+                widget.update()
+            else:
+                widget.update(QRect(
+                    int(round(viewport.x)),
+                    int(round(viewport.y)),
+                    max(1, int(round(viewport.width))),
+                    max(1, int(round(viewport.height))),
+                ))
+        except (RuntimeError, AttributeError, TypeError, ValueError):
+            return
+
+    def cleanup(self) -> None:
+        if self._cleaned:
+            return
+        self._cleaned = True
+        self.release_mouse()
+        self.close()
+
+
+def create_qt_window_host(window: object) -> WindowHost:
+    return QtWindowHost(window)
+
+
+__all__ = [
+    "QtLayerWindowHost",
+    "QtWindowHost",
+    "create_qt_layer_window_host",
+    "create_qt_window_host",
+]

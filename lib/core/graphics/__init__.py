@@ -3,7 +3,21 @@
 from .backend import DrawBackend
 from .anchors import get_anchor_point
 from .capture import ScreenCapture
-from .commands import DrawBatch, DrawRequest, ResourceRevision, SpriteCommand
+from .commands import (
+    ClipPop,
+    ClipPush,
+    DrawBatch,
+    DrawRequest,
+    EllipseCommand,
+    LineCommand,
+    RectCommand,
+    ResourceRevision,
+    SpriteCommand,
+    TextAlignment,
+    TextCommand,
+    TransformPop,
+    TransformPush,
+)
 from .collision import adjust_rect, point_in_rect, rects_intersect, segment_intersects_rect
 from .image_loader import (
     decode_image_frames,
@@ -22,6 +36,15 @@ __all__ = [
     "DrawRequest",
     "DrawBatch",
     "DrawBackend",
+    "TextCommand",
+    "TextAlignment",
+    "LineCommand",
+    "RectCommand",
+    "EllipseCommand",
+    "ClipPush",
+    "ClipPop",
+    "TransformPush",
+    "TransformPop",
     "Color",
     "FontSpec",
     "get_anchor_point",

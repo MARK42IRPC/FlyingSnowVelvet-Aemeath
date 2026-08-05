@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import Mock, patch
 
-from PyQt5.QtCore import QPoint, Qt
+from PyQt5.QtCore import QPoint, QRect, Qt
 from PyQt5.QtGui import QImage
 
 from lib.core.graphics.types import Point, Rect
@@ -14,7 +14,7 @@ from lib.core.qt_bridge.window import (
     set_pet_window_clickthrough,
     to_qpoint,
 )
-from lib.core.qt_bridge.window_host import QtLayerWindowHost
+from lib.core.qt_bridge.window_host import QtLayerWindowHost, QtWindowHost
 from lib.core.qt_bridge.window_setup import finalize_pet_window_startup
 
 
@@ -59,6 +59,65 @@ class _LayerWindowProbe:
         self.raised += 1
 
 
+class _ScreenProbe:
+    def geometry(self):
+        return QRect(-100, 20, 800, 600)
+
+    def logicalDotsPerInchX(self):
+        return 144.0
+
+
+class _FullWindowHostProbe:
+    def __init__(self):
+        self.geometry = QRect(10, 20, 30, 40)
+        self.visible = False
+        self.active = False
+        self.attributes = []
+        self.updates = []
+        self.mouse_grabbed = False
+        self.closed = False
+
+    def winId(self):
+        return 123
+
+    def frameGeometry(self):
+        return self.geometry
+
+    def setGeometry(self, x, y, width, height):
+        self.geometry = QRect(x, y, width, height)
+
+    def screen(self):
+        return _ScreenProbe()
+
+    def show(self):
+        self.visible = True
+
+    def hide(self):
+        self.visible = False
+
+    def close(self):
+        self.closed = True
+        self.visible = False
+
+    def setAttribute(self, attribute, enabled):
+        self.attributes.append((attribute, enabled))
+
+    def isActiveWindow(self):
+        return self.active
+
+    def activateWindow(self):
+        self.active = True
+
+    def grabMouse(self):
+        self.mouse_grabbed = True
+
+    def releaseMouse(self):
+        self.mouse_grabbed = False
+
+    def update(self, *args):
+        self.updates.append(args)
+
+
 class _DrawCoreProbe:
     def __init__(self):
         self.calls = []
@@ -83,6 +142,32 @@ class _MoveParticleProbe:
 
 
 class QtWindowBridgeTests(unittest.TestCase):
+    def test_window_host_v1_converts_geometry_dpi_input_and_repaint(self):
+        probe = _FullWindowHostProbe()
+        host = QtWindowHost(probe)
+
+        self.assertEqual(host.native_handle, 123)
+        self.assertEqual(host.get_geometry(), Rect(10, 20, 30, 40))
+        self.assertEqual(host.get_dpi(), 144)
+        self.assertEqual(host.get_screen_geometry(), Rect(-100, 20, 800, 600))
+
+        host.set_geometry(Rect(1.2, 2.4, 30.6, 40.8))
+        self.assertEqual(probe.geometry, QRect(1, 2, 31, 41))
+        host.show()
+        self.assertTrue(probe.visible)
+        host.set_clickthrough(True)
+        self.assertTrue(host.is_clickthrough_enabled())
+        host.activate()
+        self.assertFalse(probe.active)
+        host.capture_mouse()
+        self.assertTrue(host.has_mouse_capture())
+        host.request_repaint(Rect(1, 2, 3, 4))
+        self.assertEqual(probe.updates[-1], (QRect(1, 2, 3, 4),))
+        host.cleanup()
+        host.cleanup()
+        self.assertTrue(probe.closed)
+        self.assertFalse(host.has_mouse_capture())
+
     def test_layer_window_host_confines_qwidget_and_win32_operations(self):
         probe = _LayerWindowProbe()
         calls = []
