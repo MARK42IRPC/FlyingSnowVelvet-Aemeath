@@ -1,6 +1,6 @@
 """Qt host for the snow-pile world object."""
 import random
-from typing import Callable, Optional
+from typing import Optional
 
 from PyQt5.QtWidgets import QWidget, QApplication
 from PyQt5.QtCore    import Qt, QPoint
@@ -8,6 +8,7 @@ from PyQt5.QtGui     import QPainter, QPixmap
 
 from lib.core.unified_draw import Layer, get_layer_manager
 from lib.core.event.center    import get_event_center, EventType, Event
+from lib.core.graphics.types import Point
 from lib.core.clickthrough_state import is_clickthrough_enabled
 from lib.core.qt_bridge.screen import get_screen_geometry_for_point
 from lib.core.voice.snow      import SnowSound
@@ -37,22 +38,25 @@ class SnowPile(QWidget):
                  pixmap: QPixmap,
                  position: QPoint,
                  size: tuple,
-                 spawn_callback: Callable,
-                 config: dict):
+                 batch_interval: tuple[int, int],
+                 batch_size: tuple[int, int],
+                 batch_item_interval: tuple[int, int]):
         """
         Args:
             pixmap:          已随机缩放至目标尺寸的 QPixmap
             position:        屏幕全局坐标（左上角）
             size:            窗口尺寸 (width, height)
-            spawn_callback:  callable(pile: SnowPile) -> None，请求在此位置生成一只雪豹
-            config:          SNOW_PILE 配置字典（用于批次参数读取）
+            batch_interval:  批次间隔范围（毫秒）
+            batch_size:      每批生成数量范围
+            batch_item_interval: 批次内生成间隔范围（毫秒）
         """
         super().__init__()
 
         self._pixmap   = pixmap
         self._size     = size
-        self._spawn_cb = spawn_callback
-        self._cfg      = config
+        self._batch_interval = batch_interval
+        self._batch_size = batch_size
+        self._batch_item_interval = batch_item_interval
         self._alive    = True
         self._fading   = False
         self._alpha    = 1.0
@@ -189,14 +193,14 @@ class SnowPile(QWidget):
         tm = get_timing_manager()
         if not tm:
             return
-        lo, hi = self._cfg.get('batch_interval', (10000, 20000))
+        lo, hi = self._batch_interval
         self._batch_task_id = tm.add_task(random.randint(lo, hi), repeat=False)
 
     def _start_batch(self):
         """批次开始：确定本批数量，立即生成第一只。"""
         if self._fading:
             return
-        lo, hi = self._cfg.get('batch_size', (1, 2))
+        lo, hi = self._batch_size
         self._batch_remaining = random.randint(lo, hi)
         self._spawn_next_in_batch()
 
@@ -209,14 +213,19 @@ class SnowPile(QWidget):
             return
 
         self._batch_remaining -= 1
-        self._spawn_cb(self)  # 通知 Manager 在此雪堆位置生成一只雪豹
+        center = self.get_center()
+        self._event_center.publish(Event(EventType.MANAGER_INTERACTION, {
+            'manager_id': 'snow_pile',
+            'action': 'spawn_leopard',
+            'position': Point(float(center.x()), float(center.y())),
+        }))
 
         if self._batch_remaining > 0:
             from lib.core.timing import get_timing_manager
             tm = get_timing_manager()
             if not tm:
                 return
-            lo, hi = self._cfg.get('batch_item_interval', (3000, 5000))
+            lo, hi = self._batch_item_interval
             self._batch_item_task_id = tm.add_task(random.randint(lo, hi), repeat=False)
         else:
             self._schedule_next_batch()

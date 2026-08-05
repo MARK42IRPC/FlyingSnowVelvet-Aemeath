@@ -111,6 +111,25 @@ class ApplicationShutdownTests(unittest.TestCase):
 
         self.assertEqual(state._application_runtime.processed, [state._app])
 
+    def test_primary_window_shutdown_uses_host_lifecycle_contract(self):
+        state = ApplicationState.__new__(ApplicationState)
+        state._tray_host = Mock()
+        state._announcement_controller = None
+        state._pet = Mock()
+        state._process_pending_events = Mock()
+        tray_host = state._tray_host
+        pet_host = state._pet
+
+        state._shutdown_stop_primary_windows()
+
+        tray_host.disconnect_quit_requested.assert_called_once_with(state._on_tray_quit)
+        tray_host.disconnect_announcement_requested.assert_called_once_with(
+            state._on_tray_announcement
+        )
+        pet_host.shutdown_host.assert_called_once_with()
+        self.assertIsNone(state._pet)
+        state._process_pending_events.assert_called_once_with()
+
     def test_process_watchdog_is_owned_and_cancellable(self):
         state = self._state_with_app()
         state._shutdown_force_quit_armed = False

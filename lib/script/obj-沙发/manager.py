@@ -2,6 +2,7 @@
 import random
 
 from lib.core.event.center      import get_event_center, EventType, Event
+from lib.core.graphics.image_loader import load_image_resource, resize_image_resource
 from lib.core.graphics.types import Point, coerce_point
 from lib.core.hash_cmd_registry import get_hash_cmd_registry
 from lib.core.plugin_registry   import manager_registry, BaseManager
@@ -9,7 +10,7 @@ from lib.core.screen_utils import get_screen_rect_for_point
 from lib.core.world_objects import (
     create_world_object,
     get_world_object_center,
-    load_stretched_image_pair,
+    WorldObjectInstance,
 )
 from lib.core.logger import get_logger
 
@@ -46,11 +47,9 @@ class SofaManager(BaseManager):
             entity: 主宠物实体（PetWindow），用于获取位置信息
         """
         self._entity = entity
-        self._sofas: list[object] = []
+        self._sofas: list[WorldObjectInstance] = []
 
-        # 绘制后端图片缓存（正向 + 翻转）
-        self._image:         object | None = None
-        self._flipped_image: object | None = None
+        self._resource = None
 
         # 重力开关状态（True = 重力开启）
         self._gravity_enabled = True
@@ -93,14 +92,13 @@ class SofaManager(BaseManager):
         """加载沙发 PNG，生成正向和翻转图片缓存。"""
         png_path = self._cfg.get('png_file', 'resc/GIF/sofa.png')
         size = self._cfg.get('size', (120, 120))
-        pair = load_stretched_image_pair(png_path, size)
-        if pair is None:
+        resource = load_image_resource(png_path)
+        if resource is None:
             log(f"加载 PNG 失败: {png_path}")
             return
 
-        self._image         = pair.image
-        self._flipped_image = pair.flipped_image
-        log(f"PNG 已加载：{png_path}，缩放至 {pair.size[0]}x{pair.size[1]}")
+        self._resource = resize_image_resource(resource, size)
+        log(f"PNG 已加载：{png_path}，缩放至 {self._resource.size[0]}x{self._resource.size[1]}")
 
     # ==================================================================
     # 事件处理
@@ -253,7 +251,7 @@ class SofaManager(BaseManager):
 
     def _spawn_sofas(self, count: int):
         """在宠物当前位置生成 count 个沙发，中心锚点对齐。"""
-        if self._image is None:
+        if self._resource is None:
             log("无可用图片，跳过生成")
             return
 
@@ -305,8 +303,7 @@ class SofaManager(BaseManager):
 
             sofa = create_world_object(
                 "sofa",
-                image          = self._image,
-                flipped_image  = self._flipped_image,
+                resource       = self._resource,
                 position       = Point(x, y),
                 size           = size,
             )

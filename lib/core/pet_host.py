@@ -39,3 +39,10 @@ class PetHostCallbacks(Protocol):
 
     def handle_host_close(self) -> None:
         """Release business resources before the native host closes."""
+
+
+class PetWindowHost(Protocol):
+    """Native-host lifecycle surface used by the application coordinator."""
+
+    def shutdown_host(self) -> None:
+        """Release core state and destroy the native pet window."""

@@ -14,6 +14,7 @@ from lib.core.qt_bridge.window import (
     set_pet_window_clickthrough,
     to_qpoint,
 )
+from lib.core.qt_bridge.window_host import QtLayerWindowHost
 from lib.core.qt_bridge.window_setup import finalize_pet_window_startup
 
 
@@ -42,12 +43,28 @@ class _WindowProbe:
         self.actions.append(("flags", flags))
 
 
+class _LayerWindowProbe:
+    def __init__(self, handle=77):
+        self.handle = handle
+        self.visible = True
+        self.raised = 0
+
+    def isVisible(self):
+        return self.visible
+
+    def winId(self):
+        return self.handle
+
+    def raise_(self):
+        self.raised += 1
+
+
 class _DrawCoreProbe:
     def __init__(self):
         self.calls = []
 
-    def render(self, painter, target_rect):
-        self.calls.append((painter.isActive(), target_rect))
+    def render(self, painter, viewport):
+        self.calls.append((painter.isActive(), viewport))
 
 
 class _MoveParticleProbe:
@@ -66,6 +83,37 @@ class _MoveParticleProbe:
 
 
 class QtWindowBridgeTests(unittest.TestCase):
+    def test_layer_window_host_confines_qwidget_and_win32_operations(self):
+        probe = _LayerWindowProbe()
+        calls = []
+
+        def set_window_pos(*args):
+            calls.append(args)
+            return True
+
+        host = QtLayerWindowHost(probe, set_window_pos_api=set_window_pos)
+
+        self.assertEqual(host.identity, id(probe))
+        self.assertTrue(host.is_alive())
+        self.assertTrue(host.is_visible())
+        self.assertEqual(host.stack_window(None), 77)
+        self.assertEqual(host.stack_window(88), 77)
+        self.assertEqual(calls[0][0:2], (77, -1))
+        self.assertEqual(calls[1][0:2], (77, 88))
+        self.assertEqual(calls[0][-1], 0x0213)
+
+        host.raise_window()
+        self.assertEqual(probe.raised, 1)
+
+    def test_layer_window_host_reports_failed_native_stacking(self):
+        probe = _LayerWindowProbe()
+        host = QtLayerWindowHost(
+            probe,
+            set_window_pos_api=lambda *_: False,
+        )
+
+        self.assertIsNone(host.stack_window(None))
+
     def test_point_conversion_and_widget_move_are_confined_to_bridge(self):
         probe = _MoveProbe()
 
@@ -95,9 +143,9 @@ class QtWindowBridgeTests(unittest.TestCase):
         render_draw_core(image, draw_core)
 
         self.assertEqual(len(draw_core.calls), 1)
-        active, target_rect = draw_core.calls[0]
+        active, viewport = draw_core.calls[0]
         self.assertTrue(active)
-        self.assertEqual((target_rect.width(), target_rect.height()), (8, 6))
+        self.assertEqual(viewport, Rect(0, 0, 8, 6))
 
     def test_startup_stores_backend_neutral_move_particle_position(self):
         owner = Mock()

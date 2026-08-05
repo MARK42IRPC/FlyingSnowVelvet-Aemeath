@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import os
 import subprocess
-import tempfile
 
 from config.config import STARTUP
 from lib.core.logger import get_logger
+from lib.script.app.windows_command import build_encoded_powershell_command
 
 logger = get_logger(__name__)
 
@@ -36,17 +36,22 @@ def _decode_process_output(raw: bytes | None) -> str:
     return raw.decode('utf-8', errors='ignore')
 
 
-def _run_capture_text(cmd: list[str], timeout: int) -> tuple[int, str, str]:
-    result = subprocess.run(cmd, capture_output=True, text=False, timeout=timeout)
+def _run_capture_text(
+    cmd: list[str],
+    timeout: int,
+    *,
+    env: dict[str, str] | None = None,
+) -> tuple[int, str, str]:
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=False,
+        timeout=timeout,
+        env=env,
+    )
     stdout = _decode_process_output(result.stdout or b'')
     stderr = _decode_process_output(result.stderr or b'')
     return result.returncode, stdout, stderr
-
-
-def _get_powershell_executable() -> str:
-    system_root = os.environ.get('SystemRoot', r'C:\Windows')
-    ps_exe = os.path.join(system_root, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
-    return ps_exe if os.path.exists(ps_exe) else 'powershell'
 
 
 def _normalize_existing_dir(path: str) -> str | None:
@@ -78,14 +83,10 @@ def _collect_desktop_paths() -> list[str]:
         candidates.append(norm)
 
     try:
-        cmd = [
-            _get_powershell_executable(),
-            '-NoProfile',
-            '-ExecutionPolicy',
-            'Bypass',
-            '-Command',
-            "[Environment]::GetFolderPath('Desktop');[Environment]::GetFolderPath('CommonDesktopDirectory')",
-        ]
+        cmd = build_encoded_powershell_command(
+            "[Environment]::GetFolderPath('Desktop')\n"
+            "[Environment]::GetFolderPath('CommonDesktopDirectory')\n"
+        )
         rc, stdout, _stderr = _run_capture_text(cmd, timeout=6)
         if rc == 0:
             for line in (stdout or '').splitlines():
@@ -129,14 +130,12 @@ def _create_shortcut_via_powershell(
     icon_path: str,
 ) -> tuple[bool, str]:
     ps_script = (
-        "param(\n"
-        "  [string]$ShortcutPath,\n"
-        "  [string]$TargetPath,\n"
-        "  [string]$WorkingDir,\n"
-        "  [string]$Description,\n"
-        "  [string]$IconPath\n"
-        ")\n"
         "$ErrorActionPreference = 'Stop'\n"
+        "$ShortcutPath = [Environment]::GetEnvironmentVariable('FSV_SHORTCUT_PATH', 'Process')\n"
+        "$TargetPath = [Environment]::GetEnvironmentVariable('FSV_SHORTCUT_TARGET', 'Process')\n"
+        "$WorkingDir = [Environment]::GetEnvironmentVariable('FSV_SHORTCUT_WORKING_DIR', 'Process')\n"
+        "$Description = [Environment]::GetEnvironmentVariable('FSV_SHORTCUT_DESCRIPTION', 'Process')\n"
+        "$IconPath = [Environment]::GetEnvironmentVariable('FSV_SHORTCUT_ICON', 'Process')\n"
         "$shell = New-Object -ComObject WScript.Shell\n"
         "$lnk = $shell.CreateShortcut($ShortcutPath)\n"
         "$lnk.TargetPath = $TargetPath\n"
@@ -146,49 +145,25 @@ def _create_shortcut_via_powershell(
         "$lnk.Save()\n"
     )
 
-    script_file = None
     try:
-        with tempfile.NamedTemporaryFile(
-            mode='w',
-            suffix='.ps1',
-            delete=False,
-            encoding='utf-8',
-            newline='\n',
-        ) as f:
-            f.write(ps_script)
-            script_file = f.name
-
-        cmd = [
-            _get_powershell_executable(),
-            '-NoProfile',
-            '-ExecutionPolicy',
-            'Bypass',
-            '-File',
-            script_file,
-            '-ShortcutPath',
-            shortcut_path,
-            '-TargetPath',
-            target_path,
-            '-WorkingDir',
-            working_dir,
-            '-Description',
-            description,
-            '-IconPath',
-            icon_path or '',
-        ]
-        rc, stdout, stderr = _run_capture_text(cmd, timeout=20)
+        env = os.environ.copy()
+        env.update(
+            {
+                'FSV_SHORTCUT_PATH': shortcut_path,
+                'FSV_SHORTCUT_TARGET': target_path,
+                'FSV_SHORTCUT_WORKING_DIR': working_dir,
+                'FSV_SHORTCUT_DESCRIPTION': description,
+                'FSV_SHORTCUT_ICON': icon_path or '',
+            }
+        )
+        cmd = build_encoded_powershell_command(ps_script)
+        rc, stdout, stderr = _run_capture_text(cmd, timeout=20, env=env)
         if rc == 0 and os.path.exists(shortcut_path):
             return True, ''
         detail = (stderr or stdout or '').strip()
         return False, detail or f'return_code={rc}'
     except Exception as e:
         return False, f'{type(e).__name__}: {e}'
-    finally:
-        if script_file:
-            try:
-                os.remove(script_file)
-            except OSError:
-                pass
 
 
 def _create_shortcut_via_pywin32(
@@ -234,48 +209,24 @@ def _paths_refer_same_file(path_a: str, path_b: str) -> bool:
 
 def _get_shortcut_target_via_powershell(shortcut_path: str) -> tuple[str | None, str]:
     ps_script = (
-        "param([string]$ShortcutPath)\n"
         "$ErrorActionPreference = 'Stop'\n"
+        "$ShortcutPath = [Environment]::GetEnvironmentVariable('FSV_SHORTCUT_PATH', 'Process')\n"
         "$shell = New-Object -ComObject WScript.Shell\n"
         "$lnk = $shell.CreateShortcut($ShortcutPath)\n"
         "$lnk.TargetPath\n"
     )
 
-    script_file = None
     try:
-        with tempfile.NamedTemporaryFile(
-            mode='w',
-            suffix='.ps1',
-            delete=False,
-            encoding='utf-8',
-            newline='\n',
-        ) as f:
-            f.write(ps_script)
-            script_file = f.name
-
-        cmd = [
-            _get_powershell_executable(),
-            '-NoProfile',
-            '-ExecutionPolicy',
-            'Bypass',
-            '-File',
-            script_file,
-            '-ShortcutPath',
-            shortcut_path,
-        ]
-        rc, stdout, stderr = _run_capture_text(cmd, timeout=10)
+        env = os.environ.copy()
+        env['FSV_SHORTCUT_PATH'] = shortcut_path
+        cmd = build_encoded_powershell_command(ps_script)
+        rc, stdout, stderr = _run_capture_text(cmd, timeout=10, env=env)
         if rc != 0:
             return None, (stderr or stdout or '').strip() or f'return_code={rc}'
         target = (stdout or '').strip()
         return (target or None), ''
     except Exception as e:
         return None, f'{type(e).__name__}: {e}'
-    finally:
-        if script_file:
-            try:
-                os.remove(script_file)
-            except OSError:
-                pass
 
 
 def _get_shortcut_target_via_pywin32(shortcut_path: str) -> tuple[str | None, str]:

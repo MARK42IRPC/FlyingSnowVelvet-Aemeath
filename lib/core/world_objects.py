@@ -1,62 +1,192 @@
-"""Backend-neutral world-object asset and construction facade."""
+"""Backend-neutral world-object resources, instances, and host protocol."""
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Protocol
 
-from lib.core.graphics.types import Point, Rect
+from lib.core.graphics.resources import ImageResource
+from lib.core.graphics.types import Point, Rect, coerce_point
 
 
-@dataclass(frozen=True)
-class WorldObjectImagePair:
-    """Normal and mirrored backend image handles with their rendered size."""
+def _is_world_object_option(value: object) -> bool:
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return True
+    return isinstance(value, tuple) and all(
+        _is_world_object_option(item) for item in value
+    )
 
-    image: object
-    flipped_image: object
+
+@dataclass(frozen=True, slots=True)
+class WorldObjectRequest:
+    """Immutable construction data submitted to a desktop backend."""
+
+    object_type: str
+    resource: ImageResource
+    position: Point
     size: tuple[int, int]
+    options: tuple[tuple[str, object], ...] = ()
+
+    def __post_init__(self) -> None:
+        object_type = str(self.object_type or "").strip()
+        if not object_type:
+            raise ValueError("world-object type must not be empty")
+        if not isinstance(self.resource, ImageResource):
+            raise TypeError("world-object resource must be an ImageResource")
+        position = coerce_point(self.position)
+        if position is None:
+            raise TypeError("world-object position must be a Point")
+        size = (int(self.size[0]), int(self.size[1]))
+        if size[0] <= 0 or size[1] <= 0:
+            raise ValueError("world-object dimensions must be positive")
+        options = tuple((str(key), value) for key, value in self.options)
+        option_names = [key for key, _value in options]
+        if any(not key for key in option_names):
+            raise ValueError("world-object option names must not be empty")
+        if len(set(option_names)) != len(option_names):
+            raise ValueError("world-object option names must be unique")
+        invalid_options = [
+            key for key, value in options if not _is_world_object_option(value)
+        ]
+        if invalid_options:
+            raise TypeError(
+                "world-object options must contain only scalar or tuple values: "
+                + ", ".join(invalid_options)
+            )
+        object.__setattr__(self, "object_type", object_type)
+        object.__setattr__(self, "position", position)
+        object.__setattr__(self, "size", size)
+        object.__setattr__(self, "options", options)
+
+    def option_dict(self) -> dict[str, object]:
+        return dict(self.options)
+
+
+@dataclass(frozen=True, slots=True)
+class WorldObjectState:
+    """Backend-neutral lifecycle and interaction state for one instance."""
+
+    alive: bool
+    fading: bool = False
+    flipped: bool = False
+    dragging: bool = False
+    frozen: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class WorldObjectMotion:
+    """Physics state needed by backend-neutral world-object interactions."""
+
+    position: Point
+    velocity: Point
+    radius: float
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.position, Point) or not isinstance(self.velocity, Point):
+            raise TypeError("world-object motion requires Point values")
+        if float(self.radius) <= 0:
+            raise ValueError("world-object motion radius must be positive")
+        object.__setattr__(self, "radius", float(self.radius))
+
+
+@dataclass(frozen=True, slots=True)
+class WorldObjectInstance:
+    """Stable instance handle that never exposes a native window object."""
+
+    backend_id: str
+    instance_id: int
+    object_type: str
+
+    def __post_init__(self) -> None:
+        backend_id = str(self.backend_id or "").strip()
+        object_type = str(self.object_type or "").strip()
+        instance_id = int(self.instance_id)
+        if not backend_id:
+            raise ValueError("world-object backend id must not be empty")
+        if not object_type:
+            raise ValueError("world-object type must not be empty")
+        if instance_id <= 0:
+            raise ValueError("world-object instance id must be positive")
+        object.__setattr__(self, "backend_id", backend_id)
+        object.__setattr__(self, "instance_id", instance_id)
+        object.__setattr__(self, "object_type", object_type)
+
+    def get_state(self) -> WorldObjectState:
+        return _require_instance_backend(self).get_state(self.instance_id)
+
+    def get_motion(self) -> WorldObjectMotion | None:
+        return _require_instance_backend(self).get_motion(self.instance_id)
+
+    def is_alive(self) -> bool:
+        return self.get_state().alive
+
+    def set_gravity_enabled(self, enabled: bool) -> None:
+        _require_instance_backend(self).set_gravity_enabled(
+            self.instance_id,
+            bool(enabled),
+        )
+
+    def start_fadeout(self) -> None:
+        _require_instance_backend(self).start_fadeout(self.instance_id)
+
+    def spawn_jump(self, power_min: float, power_max: float) -> None:
+        _require_instance_backend(self).spawn_jump(
+            self.instance_id,
+            float(power_min),
+            float(power_max),
+        )
+
+    def apply_motion_delta(
+        self,
+        *,
+        position: Point,
+        velocity: Point | None = None,
+        wake: bool = False,
+    ) -> None:
+        _require_instance_backend(self).apply_motion_delta(
+            self.instance_id,
+            position=position,
+            velocity=velocity,
+            wake=bool(wake),
+        )
+
+    def close(self) -> None:
+        _require_instance_backend(self).close(self.instance_id)
 
 
 class WorldObjectBackend(Protocol):
-    def load_image(self, path: str | Path) -> object | None: ...
+    backend_id: str
 
-    def scale_image(self, image: object, size: tuple[int, int]) -> object: ...
+    def create(self, request: WorldObjectRequest) -> int: ...
 
-    def scale_image_keep_aspect(self, image: object, size: tuple[int, int]) -> object: ...
+    def get_state(self, instance_id: int) -> WorldObjectState: ...
 
-    def image_size(self, image: object) -> tuple[int, int]: ...
+    def get_motion(self, instance_id: int) -> WorldObjectMotion | None: ...
 
-    def load_stretched_image_pair(
+    def apply_motion_delta(
         self,
-        path: str | Path,
-        size: tuple[int, int],
-    ) -> WorldObjectImagePair | None: ...
-
-    def load_height_scaled_image_pair(
-        self,
-        path: str | Path,
-        height: int,
-    ) -> WorldObjectImagePair | None: ...
-
-    def load_width_scaled_image_pair(
-        self,
-        path: str | Path,
-        width: int,
-    ) -> WorldObjectImagePair | None: ...
-
-    def load_gif_frame_pair(self, path: str | Path) -> tuple[list[object], list[object]]: ...
-
-    def create(
-        self,
-        object_type: str,
+        instance_id: int,
         *,
         position: Point,
-        **kwargs,
-    ) -> object: ...
+        velocity: Point | None,
+        wake: bool,
+    ) -> None: ...
 
-    def get_center(self, instance: object) -> Point: ...
+    def set_gravity_enabled(self, instance_id: int, enabled: bool) -> None: ...
 
-    def get_geometry(self, instance: object) -> Rect: ...
+    def start_fadeout(self, instance_id: int) -> None: ...
+
+    def spawn_jump(
+        self,
+        instance_id: int,
+        power_min: float,
+        power_max: float,
+    ) -> None: ...
+
+    def close(self, instance_id: int) -> None: ...
+
+    def get_center(self, instance_id: int) -> Point: ...
+
+    def get_geometry(self, instance_id: int) -> Rect: ...
 
 
 _backend: WorldObjectBackend | None = None
@@ -82,63 +212,43 @@ def _require_backend() -> WorldObjectBackend:
     return _backend
 
 
-def load_image(path: str | Path) -> object | None:
-    return _require_backend().load_image(path)
-
-
-def scale_image(image: object, size: tuple[int, int]) -> object:
-    return _require_backend().scale_image(image, size)
-
-
-def scale_image_keep_aspect(image: object, size: tuple[int, int]) -> object:
-    return _require_backend().scale_image_keep_aspect(image, size)
-
-
-def get_image_size(image: object) -> tuple[int, int]:
-    return _require_backend().image_size(image)
-
-
-def load_stretched_image_pair(
-    path: str | Path,
-    size: tuple[int, int],
-) -> WorldObjectImagePair | None:
-    return _require_backend().load_stretched_image_pair(path, size)
-
-
-def load_height_scaled_image_pair(
-    path: str | Path,
-    height: int,
-) -> WorldObjectImagePair | None:
-    return _require_backend().load_height_scaled_image_pair(path, height)
-
-
-def load_width_scaled_image_pair(
-    path: str | Path,
-    width: int,
-) -> WorldObjectImagePair | None:
-    return _require_backend().load_width_scaled_image_pair(path, width)
-
-
-def load_gif_frame_pair(path: str | Path) -> tuple[list[object], list[object]]:
-    return _require_backend().load_gif_frame_pair(path)
+def _require_instance_backend(instance: WorldObjectInstance) -> WorldObjectBackend:
+    backend = _require_backend()
+    if backend.backend_id != instance.backend_id:
+        raise RuntimeError(
+            f"world-object instance belongs to backend '{instance.backend_id}', "
+            f"not '{backend.backend_id}'"
+        )
+    return backend
 
 
 def create_world_object(
     object_type: str,
     *,
+    resource: ImageResource,
     position: Point,
-    **kwargs,
-) -> object:
-    return _require_backend().create(
-        object_type,
+    size: tuple[int, int],
+    **options: object,
+) -> WorldObjectInstance:
+    request = WorldObjectRequest(
+        object_type=object_type,
+        resource=resource,
         position=position,
-        **kwargs,
+        size=size,
+        options=tuple(options.items()),
     )
+    backend = _require_backend()
+    instance_id = backend.create(request)
+    return WorldObjectInstance(backend.backend_id, instance_id, request.object_type)
 
 
-def get_world_object_center(instance: object) -> Point:
-    return _require_backend().get_center(instance)
+def get_world_object_center(instance: WorldObjectInstance) -> Point:
+    if not isinstance(instance, WorldObjectInstance):
+        raise TypeError("world-object center requires a WorldObjectInstance")
+    return _require_instance_backend(instance).get_center(instance.instance_id)
 
 
-def get_world_object_geometry(instance: object) -> Rect:
-    return _require_backend().get_geometry(instance)
+def get_world_object_geometry(instance: WorldObjectInstance) -> Rect:
+    if not isinstance(instance, WorldObjectInstance):
+        raise TypeError("world-object geometry requires a WorldObjectInstance")
+    return _require_instance_backend(instance).get_geometry(instance.instance_id)

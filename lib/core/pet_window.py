@@ -92,6 +92,7 @@ class PetWindow(BaseEntity):
 
         self._gifs    = gifs
         self._particles = particle_overlay
+        self._core_cleanup_done = False
 
         # ── 绘制核心 ───────────────────────────────────────────────────
         self._draw_core = get_draw_core()
@@ -210,8 +211,8 @@ class PetWindow(BaseEntity):
 
     def _register_all_resources(self):
         """将所有 GIF 资源注册到 DrawCore"""
-        for resource_id, frames in self._gifs.items():
-            self._draw_core.register_resource(resource_id, frames)
+        for resource in self._gifs.values():
+            self._draw_core.register_resource(resource)
 
     # ==================================================================
     # 绘制事件处理
@@ -711,23 +712,43 @@ class PetWindow(BaseEntity):
                 self._task_callbacks.pop(task_id, None)
 
     def _request_app_quit(self):
-        timing_manager = getattr(self, '_timing_manager', None)
-        if timing_manager is not None:
-            try:
-                timing_manager.stop()
-            except Exception:
-                pass
-
-        self._host_shutdown_ui()
-        self._movement.cleanup()
+        self.cleanup_core_state()
         self._event_center.publish(Event(EventType.APP_QUIT, {
             'entity': self,
             'exit_code': 0,
         }))
 
-    def handle_host_close(self) -> None:
+    def cleanup_core_state(self) -> None:
+        """Stop backend-neutral pet state before the native host is destroyed."""
+        if self._core_cleanup_done:
+            return
+        self._core_cleanup_done = True
+
+        timing_manager = getattr(self, '_timing_manager', None)
+        if timing_manager is not None:
+            try:
+                timing_manager.cleanup()
+            except Exception:
+                pass
+
         self._movement.cleanup()
+        for event_type, callback in (
+            (EventType.FRAME, self._handle_frame_event),
+            (EventType.TICK, self._handle_tick_event),
+            (EventType.GIF_FRAME, self._handle_gif_frame_event),
+            (EventType.TIMER, self._handle_timer_event),
+            (EventType.DRAW_REQUEST, self._handle_draw_request),
+            (EventType.UI_CREATE, self._handle_ui_create),
+            (EventType.UI_CLICKTHROUGH_TOGGLE, self._handle_clickthrough_toggle),
+            (EventType.ENTITY_POSITION_REQUEST, self._handle_entity_position_request),
+            (EventType.ENTITY_STATE_QUERY, self._handle_entity_state_query),
+            (EventType.PET_TELEPORT, self._handle_pet_teleport),
+        ):
+            self._event_center.unsubscribe(event_type, callback)
         self._host_shutdown_ui()
+
+    def handle_host_close(self) -> None:
+        self.cleanup_core_state()
 
 
 # ======================================================================

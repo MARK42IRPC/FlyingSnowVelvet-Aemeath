@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import shutil
@@ -18,6 +19,7 @@ from lib.script.app.restart import (
     _is_process_running,
     build_restart_command,
 )
+from lib.script.app.windows_command import build_encoded_powershell_command
 
 
 _PROTECTED_ROOTS = ("logs", "resc/user", "resc/models")
@@ -255,5 +257,12 @@ def build_bat_restart_command(project_root: Path, mode: str = "normal") -> list[
     bat_path = Path(project_root).resolve() / bat_name
     if not bat_path.is_file():
         raise FileNotFoundError(f"启动入口不存在：{bat_path}")
-    command_shell = os.environ.get("COMSPEC") or "cmd.exe"
-    return [command_shell, "/d", "/c", str(bat_path)]
+    encoded_path = base64.b64encode(str(bat_path).encode("utf-8")).decode("ascii")
+    script = (
+        "$ErrorActionPreference = 'Stop'\n"
+        f"$batBytes = [Convert]::FromBase64String('{encoded_path}')\n"
+        "$batPath = [Text.Encoding]::UTF8.GetString($batBytes)\n"
+        "& $batPath\n"
+        "exit $LASTEXITCODE\n"
+    )
+    return build_encoded_powershell_command(script)

@@ -1,45 +1,67 @@
 import unittest
-from importlib import import_module
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from lib.core.graphics.resources import ImageResource, RasterFrame
 from lib.core.graphics.types import Point, Rect
 from lib.core.qt_bridge.world_object_backend import QtWorldObjectBackend, _WORLD_OBJECT_TYPES
 from lib.core.world_objects import (
-    WorldObjectImagePair,
+    WorldObjectInstance,
+    WorldObjectMotion,
+    WorldObjectRequest,
+    WorldObjectState,
     configure_world_object_backend,
     create_world_object,
-    get_image_size,
     get_world_object_backend,
     get_world_object_center,
     get_world_object_geometry,
-    load_stretched_image_pair,
     reset_world_object_backend,
 )
 
 
+def _resource() -> ImageResource:
+    return ImageResource("test-resource", (RasterFrame(1, 1, bytes((255, 0, 0, 255))),))
+
+
 class _Backend:
+    backend_id = "fake"
+
     def __init__(self):
         self.calls = []
 
-    def load_stretched_image_pair(self, path, size):
-        self.calls.append(("load", path, size))
-        return WorldObjectImagePair("normal", "flipped", size)
+    def create(self, request):
+        self.calls.append(("create", request))
+        return 7
 
-    def image_size(self, image):
-        self.calls.append(("image_size", image))
-        return (80, 40)
+    def get_state(self, instance_id):
+        self.calls.append(("state", instance_id))
+        return WorldObjectState(alive=True)
 
-    def create(self, object_type, *, position, **kwargs):
-        self.calls.append(("create", object_type, position, kwargs))
-        return {"position": position, **kwargs}
+    def get_motion(self, instance_id):
+        self.calls.append(("motion", instance_id))
+        return WorldObjectMotion(Point(1, 2), Point(3, 4), 5)
 
-    def get_center(self, instance):
-        self.calls.append(("center", instance))
+    def apply_motion_delta(self, instance_id, *, position, velocity, wake):
+        self.calls.append(("motion_delta", instance_id, position, velocity, wake))
+
+    def set_gravity_enabled(self, instance_id, enabled):
+        self.calls.append(("gravity", instance_id, enabled))
+
+    def start_fadeout(self, instance_id):
+        self.calls.append(("fade", instance_id))
+
+    def spawn_jump(self, instance_id, power_min, power_max):
+        self.calls.append(("jump", instance_id, power_min, power_max))
+
+    def close(self, instance_id):
+        self.calls.append(("close", instance_id))
+
+    def get_center(self, instance_id):
+        self.calls.append(("center", instance_id))
         return Point(20, 30)
 
-    def get_geometry(self, instance):
-        self.calls.append(("geometry", instance))
+    def get_geometry(self, instance_id):
+        self.calls.append(("geometry", instance_id))
         return Rect(10, 15, 20, 30)
 
 
@@ -55,43 +77,80 @@ class WorldObjectBackendTests(unittest.TestCase):
         else:
             reset_world_object_backend()
 
-    def test_business_facade_keeps_backend_handles_opaque(self):
-        pair = load_stretched_image_pair("asset.png", (80, 40))
-        created = create_world_object(
+    def test_business_facade_submits_immutable_request_and_opaque_handle(self):
+        instance = create_world_object(
             "example",
+            resource=_resource(),
             position=Point(12, 34),
-            image=pair.image,
+            size=(80, 40),
+            answer=42,
         )
 
-        self.assertEqual(pair.flipped_image, "flipped")
-        self.assertEqual(created["position"], Point(12, 34))
         self.assertEqual(
-            self.backend.calls,
-            [
-                ("load", "asset.png", (80, 40)),
-                (
-                    "create",
-                    "example",
-                    Point(12, 34),
-                    {"image": "normal"},
-                ),
-            ],
+            instance,
+            WorldObjectInstance("fake", 7, "example"),
+        )
+        request = self.backend.calls[0][1]
+        self.assertIsInstance(request, WorldObjectRequest)
+        self.assertEqual(request.position, Point(12, 34))
+        self.assertEqual(request.size, (80, 40))
+        self.assertEqual(request.option_dict(), {"answer": 42})
+        with self.assertRaises(TypeError):
+            request.options[0] = ("changed", None)
+
+    def test_instance_operations_are_translated_to_backend_ids(self):
+        instance = create_world_object(
+            "example",
+            resource=_resource(),
+            position=Point(),
+            size=(1, 1),
+        )
+
+        self.assertTrue(instance.is_alive())
+        self.assertEqual(instance.get_motion().position, Point(1, 2))
+        instance.set_gravity_enabled(False)
+        instance.start_fadeout()
+        instance.spawn_jump(0.8, 1.8)
+        instance.apply_motion_delta(
+            position=Point(1, -2),
+            velocity=Point(3, 4),
+            wake=True,
+        )
+        instance.close()
+        self.assertEqual(
+            [call[0] for call in self.backend.calls],
+            ["create", "state", "motion", "gravity", "fade", "jump", "motion_delta", "close"],
         )
 
     def test_business_geometry_queries_return_core_values(self):
-        instance = SimpleNamespace(name="speaker")
+        instance = create_world_object(
+            "example",
+            resource=_resource(),
+            position=Point(),
+            size=(1, 1),
+        )
 
-        self.assertEqual(get_image_size("normal"), (80, 40))
         self.assertEqual(get_world_object_center(instance), Point(20, 30))
         self.assertEqual(get_world_object_geometry(instance), Rect(10, 15, 20, 30))
-        self.assertEqual(
-            self.backend.calls,
-            [
-                ("image_size", "normal"),
-                ("center", instance),
-                ("geometry", instance),
-            ],
-        )
+        self.assertEqual(self.backend.calls[-2:], [("center", 7), ("geometry", 7)])
+
+    def test_request_rejects_callbacks_and_mutable_backend_values(self):
+        with self.assertRaises(TypeError):
+            WorldObjectRequest(
+                "example",
+                _resource(),
+                Point(),
+                (1, 1),
+                (("callback", lambda: None),),
+            )
+        with self.assertRaises(TypeError):
+            WorldObjectRequest(
+                "example",
+                _resource(),
+                Point(),
+                (1, 1),
+                (("config", {"interval": 1}),),
+            )
 
     def test_qt_widget_types_stay_inside_the_adapter_package(self):
         self.assertEqual(
@@ -112,31 +171,35 @@ class WorldObjectBackendTests(unittest.TestCase):
                 module_name,
             )
 
-    def test_qt_backend_translates_generic_image_handles_at_construction(self):
+    def test_qt_backend_translates_resource_at_construction_and_returns_id(self):
         backend = QtWorldObjectBackend()
+        resource = _resource()
+        pair = SimpleNamespace(pixmap="normal", flipped_pixmap="flipped", size=(1, 1))
         with patch(
+            "lib.core.qt_bridge.world_object_backend.world_object_assets.pixmap_pair_from_resource",
+            return_value=pair,
+        ), patch(
             "lib.core.qt_bridge.world_object_backend.create_world_object",
             return_value="created",
         ) as factory:
-            created = backend.create(
+            instance_id = backend.create(WorldObjectRequest(
                 "speaker",
-                position=Point(12, 34),
-                image="normal",
-                flipped_image="flipped",
-                size=(80, 40),
-            )
+                resource,
+                Point(12, 34),
+                (80, 40),
+            ))
 
-        self.assertEqual(created, "created")
+        self.assertEqual(instance_id, 1)
         factory.assert_called_once_with(
             "lib.core.qt_bridge.world_objects.speaker",
             "Speaker",
             position=Point(12, 34),
+            size=(80, 40),
             pixmap="normal",
             flipped_pixmap="flipped",
-            size=(80, 40),
         )
 
-    def test_qt_backend_converts_widget_geometry_at_adapter_boundary(self):
+    def test_qt_backend_converts_widget_state_and_geometry_at_adapter_boundary(self):
         backend = QtWorldObjectBackend()
         point = SimpleNamespace(x=lambda: 20, y=lambda: 30)
         geometry = SimpleNamespace(
@@ -145,17 +208,34 @@ class WorldObjectBackendTests(unittest.TestCase):
             width=lambda: 80,
             height=lambda: 40,
         )
-        instance = SimpleNamespace(
+        body = SimpleNamespace(
+            x=1.0,
+            y=2.0,
+            vx=3.0,
+            vy=4.0,
+            on_position_change=None,
+        )
+        native = SimpleNamespace(
+            is_alive=lambda: True,
             get_center=lambda: point,
             geometry=lambda: geometry,
+            physics_body=body,
+            radius=5,
+            _fading=True,
+            _flipped=True,
+            _drag_offset=None,
+            _frozen=False,
         )
+        backend._instances[9] = native
 
-        self.assertEqual(backend.get_center(instance), Point(20, 30))
-        self.assertEqual(backend.get_geometry(instance), Rect(10, 15, 80, 40))
+        self.assertEqual(backend.get_state(9), WorldObjectState(True, True, True))
+        self.assertEqual(backend.get_motion(9), WorldObjectMotion(Point(1, 2), Point(3, 4), 5))
+        self.assertEqual(backend.get_center(9), Point(20, 30))
+        self.assertEqual(backend.get_geometry(9), Rect(10, 15, 80, 40))
 
     def test_registered_qt_widget_types_are_importable(self):
         for module_name, class_name in _WORLD_OBJECT_TYPES.values():
-            object_type = getattr(import_module(module_name), class_name)
+            object_type = getattr(__import__(module_name, fromlist=[class_name]), class_name)
             self.assertTrue(callable(object_type), f"{module_name}.{class_name}")
 
 

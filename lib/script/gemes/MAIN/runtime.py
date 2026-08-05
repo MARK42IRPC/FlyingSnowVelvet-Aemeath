@@ -18,7 +18,8 @@ from lib.core.graphics.types import Rect
 from lib.core.hash_cmd_registry import get_hash_cmd_registry
 from lib.core.logger import get_logger
 from lib.core.qt_bridge.screen import get_screen_geometry_for_point
-from lib.core.unified_draw import Layer, RenderCore, RenderRequest, get_layer_manager
+from lib.core.unified_draw import Layer, get_layer_manager
+from lib.core.qt_bridge.render_core import QtRenderCore, QtRenderRequest
 from lib.core.voice.ams_open_lahai_tetris import AmsOpenLahaiTetrisSound
 from lib.script.gemes.MAIN.game_packages import (
     GamePackageError,
@@ -128,8 +129,8 @@ class GameRuntimePanel(QWidget):
         self.setFocusPolicy(Qt.StrongFocus)
         get_layer_manager().register(self, Layer.PANEL)
 
-        self._render_core = RenderCore()
-        self._render_core.register_item(RenderRequest("game_runtime_panel_shell", self._paint_panel_layer, Layer.PANEL))
+        self._render_core = QtRenderCore()
+        self._render_core.register_item(QtRenderRequest("game_runtime_panel_shell", self._paint_panel_layer, Layer.PANEL))
 
         self._font = get_ui_font()
         self._font.setBold(True)

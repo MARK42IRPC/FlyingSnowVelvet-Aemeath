@@ -1,9 +1,8 @@
 from config.config_layer import LAYER_VALUES
-from lib.core.draw_core import DrawCore, DrawRequest
+from lib.core.graphics.ordering import order_render_values
 from lib.core.layer import Layer, draw_order_key
 from lib.core.layer_manager import LayerManager
-from lib.core.render_core import RenderCore, order_render_values
-from lib.core.render_layer import RenderRequest
+from lib.core.qt_bridge.render_core import QtRenderCore, QtRenderRequest
 
 
 class _Painter:
@@ -14,19 +13,41 @@ class _Painter:
         pass
 
 
-class _Widget:
+class _Window:
     def __init__(self, name, handle=1):
         self.name = name
         self.handle = handle
+        self.visible = True
+        self.alive = True
+        self.native_stacking = True
+        self.stack_calls = []
+        self.raise_calls = 0
 
-    def isVisible(self):
-        return True
 
-    def winId(self):
-        return self.handle
+class _LayerHost:
+    def __init__(self, window):
+        self.window = window
 
-    def raise_(self):
-        pass
+    @property
+    def identity(self):
+        return id(self.window)
+
+    def is_alive(self):
+        return self.window.alive
+
+    def is_visible(self):
+        return self.window.visible
+
+    def raise_window(self):
+        self.window.raise_calls += 1
+
+    def stack_window(self, insert_after):
+        self.window.stack_calls.append((self.window.handle, insert_after))
+        return self.window.handle if self.window.native_stacking else None
+
+
+def _host_factory(window):
+    return _LayerHost(window)
 
 
 def test_draw_order_key_uses_generation_order_for_same_layer_and_z():
@@ -41,45 +62,26 @@ def test_layer_enum_uses_configured_values():
         assert int(Layer[name]) == int(configured_value)
 
 
-def test_draw_core_assigns_later_request_a_higher_generation_order():
-    core = DrawCore()
-
-    core.add_draw_request(DrawRequest('earlier', layer=Layer.MAIN_PET, z=0))
-    core.add_draw_request(DrawRequest('later', layer=Layer.MAIN_PET, z=0))
-
-    assert core._active_requests['earlier'].order < core._active_requests['later'].order
-
-
-def test_draw_core_update_preserves_original_generation_order():
-    core = DrawCore()
-
-    core.add_draw_request(DrawRequest('earlier', layer=Layer.MAIN_PET, z=0))
-    core.add_draw_request(DrawRequest('later', layer=Layer.MAIN_PET, z=0))
-    core.add_draw_request(DrawRequest('earlier', layer=Layer.MAIN_PET, z=0))
-
-    assert core._active_requests['earlier'].order < core._active_requests['later'].order
-
-
-def test_render_core_draws_later_generated_item_last():
+def test_qt_render_core_draws_later_generated_item_last():
     rendered = []
-    core = RenderCore()
+    core = QtRenderCore()
     painter = _Painter()
 
-    core.register_item(RenderRequest('earlier', lambda *_: rendered.append('earlier'), Layer.EFFECT, 0))
-    core.register_item(RenderRequest('later', lambda *_: rendered.append('later'), Layer.EFFECT, 0))
+    core.register_item(QtRenderRequest('earlier', lambda *_: rendered.append('earlier'), Layer.EFFECT, 0))
+    core.register_item(QtRenderRequest('later', lambda *_: rendered.append('later'), Layer.EFFECT, 0))
     core.render(painter)
 
     assert rendered == ['earlier', 'later']
 
 
-def test_render_core_update_preserves_original_generation_order():
+def test_qt_render_core_update_preserves_original_generation_order():
     rendered = []
-    core = RenderCore()
+    core = QtRenderCore()
     painter = _Painter()
 
-    core.register_item(RenderRequest('earlier', lambda *_: None, Layer.EFFECT, 0))
-    core.register_item(RenderRequest('later', lambda *_: rendered.append('later'), Layer.EFFECT, 0))
-    core.register_item(RenderRequest('earlier', lambda *_: rendered.append('earlier'), Layer.EFFECT, 0))
+    core.register_item(QtRenderRequest('earlier', lambda *_: None, Layer.EFFECT, 0))
+    core.register_item(QtRenderRequest('later', lambda *_: rendered.append('later'), Layer.EFFECT, 0))
+    core.register_item(QtRenderRequest('earlier', lambda *_: rendered.append('earlier'), Layer.EFFECT, 0))
     core.render(painter)
 
     assert rendered == ['earlier', 'later']
@@ -109,9 +111,9 @@ def test_order_render_values_uses_layer_then_z_then_generation_order():
 
 
 def test_layer_manager_snapshot_orders_later_generated_window_last():
-    manager = LayerManager()
-    earlier = _Widget('earlier')
-    later = _Widget('later')
+    manager = LayerManager(host_factory=_host_factory)
+    earlier = _Window('earlier')
+    later = _Window('later')
 
     manager.register(earlier, Layer.PANEL, name='earlier')
     manager.register(later, Layer.PANEL, name='later')
@@ -120,12 +122,10 @@ def test_layer_manager_snapshot_orders_later_generated_window_last():
 
 
 def test_layer_manager_builds_explicit_topmost_chain_from_high_to_low():
-    manager = LayerManager()
-    calls = []
-    manager._set_window_pos_api = lambda hwnd, insert_after, *_: calls.append((hwnd, insert_after))
-    particle = _Widget('particle', 101)
-    game = _Widget('game', 202)
-    pet = _Widget('pet', 303)
+    manager = LayerManager(host_factory=_host_factory)
+    particle = _Window('particle', 101)
+    game = _Window('game', 202)
+    pet = _Window('pet', 303)
 
     manager.register(particle, Layer.PARTICLE)
     manager.register(game, Layer.PANEL)
@@ -138,20 +138,24 @@ def test_layer_manager_builds_explicit_topmost_chain_from_high_to_low():
         reverse=True,
     )
     expected = []
-    insert_after = manager._HWND_TOPMOST
+    insert_after = None
     for _, hwnd in expected_windows:
         expected.append((hwnd, insert_after))
         insert_after = hwnd
 
+    windows = {window.handle: window for window in (particle, game, pet)}
+    calls = [
+        call
+        for _, hwnd in expected_windows
+        for call in windows[hwnd].stack_calls
+    ]
     assert calls == expected
 
 
 def test_bring_to_front_preserves_higher_layer_windows():
-    manager = LayerManager()
-    calls = []
-    manager._set_window_pos_api = lambda hwnd, insert_after, *_: calls.append((hwnd, insert_after))
-    game = _Widget('game', 202)
-    pet = _Widget('pet', 303)
+    manager = LayerManager(host_factory=_host_factory)
+    game = _Window('game', 202)
+    pet = _Window('pet', 303)
 
     manager.register(game, Layer.PANEL)
     manager.register(pet, Layer.MAIN_PET)
@@ -163,9 +167,50 @@ def test_bring_to_front_preserves_higher_layer_windows():
         reverse=True,
     )
     expected = []
-    insert_after = manager._HWND_TOPMOST
+    insert_after = None
     for _, hwnd in expected_windows:
         expected.append((hwnd, insert_after))
         insert_after = hwnd
 
+    windows = {window.handle: window for window in (game, pet)}
+    calls = [
+        call
+        for _, hwnd in expected_windows
+        for call in windows[hwnd].stack_calls
+    ]
     assert calls == expected
+
+
+def test_layer_manager_prunes_dead_hosts_and_skips_hidden_hosts():
+    manager = LayerManager(host_factory=_host_factory)
+    dead = _Window('dead', 101)
+    hidden = _Window('hidden', 202)
+    visible = _Window('visible', 303)
+    dead.alive = False
+    hidden.visible = False
+
+    manager.register(dead, Layer.PANEL, name='dead')
+    manager.register(hidden, Layer.PANEL, name='hidden')
+    manager.register(visible, Layer.PANEL, name='visible')
+    manager.enforce_now()
+
+    assert dead.stack_calls == []
+    assert hidden.stack_calls == []
+    assert visible.stack_calls == [(303, None)]
+    assert [row[3] for row in manager.snapshot()] == ['hidden', 'visible']
+
+
+def test_layer_manager_falls_back_to_ordered_raise_when_native_stacking_fails():
+    manager = LayerManager(host_factory=_host_factory)
+    lower = _Window('lower', 101)
+    higher = _Window('higher', 202)
+    higher.native_stacking = False
+
+    manager.register(lower, Layer.PANEL)
+    manager.register(higher, Layer.DIALOG)
+    manager.enforce_now()
+
+    assert higher.stack_calls == [(202, None)]
+    assert lower.stack_calls == []
+    assert lower.raise_calls == 1
+    assert higher.raise_calls == 1

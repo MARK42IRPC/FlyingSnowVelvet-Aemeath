@@ -2,6 +2,7 @@
 import random
 
 from lib.core.event.center      import get_event_center, EventType, Event
+from lib.core.graphics.image_loader import load_image_resource, resize_image_resource_to_height
 from lib.core.graphics.types import Point
 from lib.core.hash_cmd_registry import get_hash_cmd_registry
 from lib.core.plugin_registry   import manager_registry, BaseManager
@@ -10,7 +11,7 @@ from lib.core.world_objects import (
     create_world_object,
     get_world_object_center,
     get_world_object_geometry,
-    load_height_scaled_image_pair,
+    WorldObjectInstance,
 )
 from lib.script.music import get_music_service, cleanup_music_service
 from lib.core.logger import get_logger
@@ -47,11 +48,10 @@ class SpeakerManager(BaseManager):
             entity: 主宠物实体（PetWindow），用于后续功能扩展
         """
         self._entity = entity
-        self._speakers: list[object] = []
+        self._speakers: list[WorldObjectInstance] = []
 
-        self._image:         object | None = None
-        self._flipped_image: object | None = None
-        self._actual_size:    tuple         = (120, 120)  # 缩放后的真实尺寸
+        self._resource = None
+        self._actual_size: tuple[int, int] = (120, 120)
 
         # 重力开关状态（True = 重力开启）
         self._gravity_enabled = True
@@ -108,15 +108,14 @@ class SpeakerManager(BaseManager):
         size = self._cfg.get('size', (120, 120))
         h    = size[1]   # 仅取配置高度，宽度由图片原始比例决定
 
-        pair = load_height_scaled_image_pair(png_path, h)
-        if pair is None:
+        resource = load_image_resource(png_path)
+        if resource is None:
             log(f"加载 PNG 失败: {png_path}")
             return
 
-        self._actual_size = pair.size
-        self._image         = pair.image
-        self._flipped_image = pair.flipped_image
-        log(f"PNG 已加载：{png_path}，缩放至 {pair.size[0]}x{pair.size[1]}")
+        self._resource = resize_image_resource_to_height(resource, h)
+        self._actual_size = self._resource.size
+        log(f"PNG 已加载：{png_path}，缩放至 {self._resource.size[0]}x{self._resource.size[1]}")
 
     # ==================================================================
     # 事件处理
@@ -207,7 +206,7 @@ class SpeakerManager(BaseManager):
 
     def _spawn_speakers(self, count: int):
         """在宠物当前位置生成 count 个音响，中心锚点对齐。"""
-        if self._image is None:
+        if self._resource is None:
             log("无可用图片，跳过生成")
             return
 
@@ -255,8 +254,7 @@ class SpeakerManager(BaseManager):
 
             speaker = create_world_object(
                 "speaker",
-                image          = self._image,
-                flipped_image  = self._flipped_image,
+                resource       = self._resource,
                 position       = Point(x, y),
                 size           = size,
             )
@@ -270,7 +268,7 @@ class SpeakerManager(BaseManager):
     # 供外部查询（预留接口，供后续功能扩展）
     # ==================================================================
 
-    def _get_alive_speakers(self) -> list[object]:
+    def _get_alive_speakers(self) -> list[WorldObjectInstance]:
         """返回当前所有存活的音响实例列表。"""
         self._speakers = [s for s in self._speakers if s.is_alive()]
         return list(self._speakers)

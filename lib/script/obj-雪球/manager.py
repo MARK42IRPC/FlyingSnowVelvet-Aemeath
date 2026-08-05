@@ -7,11 +7,13 @@ import numpy as np
 
 from lib.core.event.center        import get_event_center, EventType, Event
 from lib.core.compute_hub         import get_compute_hub
+from lib.core.graphics.image_loader import load_image_resource, resize_image_resource
+from lib.core.graphics.resources import ImageResource
 from lib.core.graphics.types      import Point, coerce_point
 from lib.core.hash_cmd_registry   import get_hash_cmd_registry
 from lib.core.plugin_registry     import manager_registry, BaseManager
 from lib.core.screen_utils import get_screen_rect_for_point
-from lib.core.world_objects import create_world_object, load_image, scale_image
+from lib.core.world_objects import create_world_object, WorldObjectInstance
 from lib.core.logger              import get_logger
 
 _logger = get_logger(__name__)
@@ -125,15 +127,15 @@ class SnowballManager(BaseManager):
 
     def __init__(self, entity=None):
         self._entity = entity
-        self._balls: list[object] = []
+        self._balls: list[WorldObjectInstance] = []
 
         # 读取配置
         from config.config import SNOWBALL
         self._cfg = SNOWBALL
 
         # 加载 PNG
-        self._image_cache: dict[int, object] = {}  # diameter -> backend image handle
-        self._source_image: object | None = None
+        self._image_cache: dict[int, ImageResource] = {}
+        self._source_resource: ImageResource | None = None
         self._load_png()
 
         # 事件订阅
@@ -163,19 +165,22 @@ class SnowballManager(BaseManager):
 
     def _load_png(self):
         png_path = self._cfg.get('png_file', 'resc/GIF/snowball.png')
-        image = load_image(png_path)
-        if image is None:
+        resource = load_image_resource(png_path)
+        if resource is None:
             log(f"警告：图片加载失败: {png_path}")
             return
-        self._source_image = image
+        self._source_resource = resource
         log(f"PNG 已加载: {png_path}")
 
-    def _get_image(self, diameter: int) -> object | None:
-        """按直径获取缩放后的图片句柄（缓存）。"""
-        if self._source_image is None:
+    def _get_image(self, diameter: int) -> ImageResource | None:
+        """按直径获取缩放后的资源（缓存）。"""
+        if self._source_resource is None:
             return None
         if diameter not in self._image_cache:
-            self._image_cache[diameter] = scale_image(self._source_image, (diameter, diameter))
+            self._image_cache[diameter] = resize_image_resource(
+                self._source_resource,
+                (diameter, diameter),
+            )
         return self._image_cache[diameter]
 
     # ==================================================================
@@ -247,17 +252,18 @@ class SnowballManager(BaseManager):
         # 采集快照（纯 Python float，不把后端对象传给后台线程）
         snapshot = []
         for ball in self._balls:
-            if ball._fading or ball._drag_offset is not None:
+            state = ball.get_state()
+            motion = ball.get_motion()
+            if motion is None or state.fading or state.dragging:
                 continue
-            body = ball.physics_body
             snapshot.append({
                 'ball':   ball,          # 仅用于 apply 时查找，不会在后台线程中调用其方法
-                'cx':     body.x + ball.radius,
-                'cy':     body.y + ball.radius,
-                'radius': ball.radius,
-                'vx':     body.vx,
-                'vy':     body.vy,
-                'frozen': ball._frozen,
+                'cx':     motion.position.x + motion.radius,
+                'cy':     motion.position.y + motion.radius,
+                'radius': motion.radius,
+                'vx':     motion.velocity.x,
+                'vy':     motion.velocity.y,
+                'frozen': state.frozen,
             })
 
         if len(snapshot) < 2:
@@ -296,13 +302,12 @@ class SnowballManager(BaseManager):
             ball_b = res['ball_b']
 
             # apply 时再次校验：对象仍然存活且未进入拖拽/淡出
-            if not ball_a.is_alive() or ball_a._fading or ball_a._drag_offset is not None:
+            state_a = ball_a.get_state()
+            state_b = ball_b.get_state()
+            if not state_a.alive or state_a.fading or state_a.dragging:
                 continue
-            if not ball_b.is_alive() or ball_b._fading or ball_b._drag_offset is not None:
+            if not state_b.alive or state_b.fading or state_b.dragging:
                 continue
-
-            body_a = ball_a.physics_body
-            body_b = ball_b.physics_body
 
             nx   = res['nx'];  ny   = res['ny']
             half = res['half']
@@ -311,43 +316,38 @@ class SnowballManager(BaseManager):
             fi   = res['friction_impulse']
 
             # ── 去穿透：沿法线各推开一半重叠量 ──────────────────────
-            body_a.x -= nx * half
-            body_a.y -= ny * half
-            body_b.x += nx * half
-            body_b.y += ny * half
-
-            # 通知对象宿主跟进位置
-            if body_a.on_position_change:
-                body_a.on_position_change(body_a)
-            if body_b.on_position_change:
-                body_b.on_position_change(body_b)
+            position_a = Point(-nx * half, -ny * half)
+            position_b = Point(nx * half, ny * half)
 
             if ni > 0:
                 freeze_threshold = self._cfg.get('freeze_impulse_threshold', 2.5)
 
                 # 判断各球是否因冻结而"抵挡"本次冲量
                 # 冲量低于阈值 → 冻结球视为固定墙，本帧不解冻、不改变速度
-                a_blocked = ball_a._frozen and ni < freeze_threshold
-                b_blocked = ball_b._frozen and ni < freeze_threshold
+                a_blocked = state_a.frozen and ni < freeze_threshold
+                b_blocked = state_b.frozen and ni < freeze_threshold
 
                 # ── 法向弹性冲量 + 切向摩擦冲量（按冻结状态分别施加）──
                 if not a_blocked:
-                    body_a.vx -= ni * nx + fi * tx
-                    body_a.vy -= ni * ny + fi * ty
-                    if ball_a._frozen:
-                        ball_a.unfreeze()      # unfreeze 内部已设 active=True, bounce_count=0
-                    else:
-                        body_a.active = True
-                        body_a.bounce_count = 0
+                    ball_a.apply_motion_delta(
+                        position=position_a,
+                        velocity=Point(-ni * nx - fi * tx, -ni * ny - fi * ty),
+                        wake=True,
+                    )
+                else:
+                    ball_a.apply_motion_delta(position=position_a)
 
                 if not b_blocked:
-                    body_b.vx += ni * nx + fi * tx
-                    body_b.vy += ni * ny + fi * ty
-                    if ball_b._frozen:
-                        ball_b.unfreeze()
-                    else:
-                        body_b.active = True
-                        body_b.bounce_count = 0
+                    ball_b.apply_motion_delta(
+                        position=position_b,
+                        velocity=Point(ni * nx + fi * tx, ni * ny + fi * ty),
+                        wake=True,
+                    )
+                else:
+                    ball_b.apply_motion_delta(position=position_b)
+            else:
+                ball_a.apply_motion_delta(position=position_a)
+                ball_b.apply_motion_delta(position=position_b)
 
     # ==================================================================
     # 生成逻辑
@@ -355,7 +355,7 @@ class SnowballManager(BaseManager):
 
     def _spawn_snowballs(self, count: int):
         """在屏幕底部随机生成 count 个雪球（带 FIFO 上限控制）。"""
-        if self._source_image is None:
+        if self._source_resource is None:
             log("无可用 PNG，跳过生成")
             return
 
@@ -388,7 +388,7 @@ class SnowballManager(BaseManager):
 
     def _spawn_one(self, position: Point | object, diameter: int = None):
         """在指定位置生成一个雪球，执行 FIFO 控制。"""
-        if self._source_image is None:
+        if self._source_resource is None:
             return
         point = coerce_point(position)
         if point is None:
@@ -418,7 +418,7 @@ class SnowballManager(BaseManager):
 
         ball = create_world_object(
             "snowball",
-            image    = image,
+            resource = image,
             position = point,
             size     = size,
         )

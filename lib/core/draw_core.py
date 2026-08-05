@@ -3,24 +3,21 @@ from __future__ import annotations
 
 from lib.core.desktop_backend import get_draw_backend_factory
 from lib.core.graphics.backend import DrawBackend
-from lib.core.graphics.commands import DrawRequest
+from lib.core.graphics.commands import DrawBatch, DrawRequest
+from lib.core.graphics.resources import ImageResource, RasterFrame
 from lib.core.graphics.scene import DrawScene
+from lib.core.graphics.types import Rect
 
 
 class DrawCore:
-    """Compatibility facade over a backend-neutral draw scene."""
+    """Facade over a backend-neutral draw scene and selected backend."""
 
     def __init__(self, backend: DrawBackend | None = None) -> None:
         self._scene = DrawScene()
         self._backend = backend if backend is not None else self._create_default_backend()
 
-    @property
-    def _active_requests(self) -> dict[str, DrawRequest]:
-        """Compatibility view used by existing ordering tests."""
-        return self._scene._active_requests
-
-    def register_resource(self, resource_id: str, frames: list[object]) -> None:
-        self._scene.register_resource(resource_id, frames)
+    def register_resource(self, resource: ImageResource) -> None:
+        self._scene.register_resource(resource)
 
     def unregister_resource(self, resource_id: str) -> None:
         self._scene.unregister_resource(resource_id)
@@ -34,10 +31,10 @@ class DrawCore:
     def get_current_frame_index(self, resource_id: str) -> int:
         return self._scene.get_current_frame_index(resource_id)
 
-    def next_frame(self, resource_id: str) -> tuple[object, bool] | None:
+    def next_frame(self, resource_id: str) -> tuple[RasterFrame, bool] | None:
         return self._scene.next_frame(resource_id)
 
-    def get_frame(self, resource_id: str, frame_index: int = -1) -> object | None:
+    def get_frame(self, resource_id: str, frame_index: int = -1) -> RasterFrame | None:
         return self._scene.get_frame(resource_id, frame_index)
 
     def reset_frame(self, resource_id: str) -> None:
@@ -52,8 +49,11 @@ class DrawCore:
     def clear_all_requests(self) -> None:
         self._scene.clear_all_requests()
 
-    def render(self, painter: object, target_rect: object | None = None) -> None:
-        self._backend.render(self._scene, painter, target_rect)
+    def build_batch(self) -> DrawBatch:
+        return self._scene.build_batch()
+
+    def render(self, target: object, viewport: Rect | None = None) -> None:
+        self._backend.render(self.build_batch(), target, viewport)
 
     def get_active_resource_ids(self) -> list[str]:
         return self._scene.get_active_resource_ids()
@@ -83,7 +83,12 @@ class DrawCore:
 class _NullDrawBackend:
     """No-op backend used when core code runs without a desktop host."""
 
-    def render(self, scene: DrawScene, painter: object, target_rect: object | None = None) -> None:
+    def render(
+        self,
+        batch: DrawBatch,
+        target: object,
+        viewport: Rect | None = None,
+    ) -> None:
         return None
 
     def cleanup(self) -> None:

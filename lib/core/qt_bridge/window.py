@@ -4,7 +4,7 @@ from __future__ import annotations
 from PyQt5.QtCore import QPoint, Qt
 from PyQt5.QtGui import QPainter
 
-from lib.core.graphics.types import Point, coerce_point
+from lib.core.graphics.types import Point, Rect, coerce_point
 
 
 def coerce_qpoint(value: object) -> QPoint | None:
@@ -44,7 +44,10 @@ def render_draw_core(widget, draw_core) -> None:
     """Render DrawCore into a QWidget paint event."""
     painter = QPainter(widget)
     try:
-        draw_core.render(painter, widget.rect())
+        draw_core.render(
+            painter,
+            Rect(0, 0, widget.width(), widget.height()),
+        )
     finally:
         if painter.isActive():
             painter.end()

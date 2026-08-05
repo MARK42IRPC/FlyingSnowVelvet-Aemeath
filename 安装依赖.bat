@@ -1,7 +1,7 @@
 @echo off
 chcp 65001 >nul 2>&1
-setlocal EnableDelayedExpansion
-cd /d "%~dp0"
+setlocal DisableDelayedExpansion
+cd /d "%~dp0" || exit /b 1
 
 echo ========================================
 echo  Flying Snow Velvet LTS - Install and Launch
@@ -116,24 +116,21 @@ for %%Z in ("%CANDIDATE_FILE%") do if %%~zZ equ 0 goto :no_python
 
 echo [INFO] Python candidates found:
 for /f "usebackq tokens=1,2 delims=|" %%A in ("%CANDIDATE_FILE%") do (
-    echo   [%%B] %%A
+    echo   [%%B] "%%A"
 )
 echo.
 
 for /f "usebackq tokens=1,2 delims=|" %%A in ("%CANDIDATE_FILE%") do (
     set "PYTHON_FOUND=1"
-    set "CURRENT_PY=%%~A"
-    set "CURRENT_VER=%%~B"
-    echo [INFO] Trying Python !CURRENT_VER!: !CURRENT_PY!
+    echo [INFO] Trying Python "%%~B": "%%~A"
     echo.
     "%%~A" install_deps.py
-    set "RC=!errorlevel!"
-    if !RC! equ 0 (
+    if not errorlevel 1 (
         set "INSTALL_OK=1"
         goto :cleanup
     )
     echo.
-    echo [WARN] Python !CURRENT_VER! failed with exit code !RC!, switching to next candidate...
+    echo [WARN] Python "%%~B" failed, switching to next candidate...
     echo.
 )
 
@@ -205,7 +202,7 @@ exit /b 0
 set "RESOURCE_NAME=%~1"
 set "RESOURCE_TARGET=%~2"
 if not exist "resc.net.txt" (
-    echo [WARN] Resource link file not found: %CD%\resc.net.txt
+    echo [WARN] Resource link file not found: "%CD%\resc.net.txt"
     exit /b 1
 )
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^

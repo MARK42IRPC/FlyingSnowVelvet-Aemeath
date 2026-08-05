@@ -22,7 +22,7 @@ from lib.core.layer import Layer
 from lib.core.layer_manager import get_layer_manager
 from lib.core.logger import get_logger
 from lib.core.qt_bridge.font import get_digit_font, get_ui_font
-from lib.core.render_core import order_render_values
+from lib.core.graphics.ordering import order_render_values
 from lib.script.effects.manager import cleanup_effect_script_manager, get_effect_script_manager
 
 
@@ -258,6 +258,7 @@ class EffectOverlay(QWidget):
         self._draw_seq = 0
         self._pending_requests = deque()
         self._needs_immediate_repaint = False
+        self._cleanup_done = False
         self._event_center = get_event_center()
         self._effect_manager = get_effect_script_manager()
 
@@ -517,9 +518,21 @@ class EffectOverlay(QWidget):
             self.flush_immediately()
 
     def cleanup(self):
+        if self._cleanup_done:
+            return
+        self._cleanup_done = True
         if self._event_center:
             self._event_center.unsubscribe(EventType.EFFECT_REQUEST, self._on_effect_request)
             self._event_center.unsubscribe(EventType.TICK, self._on_tick)
             self._event_center.unsubscribe(EventType.FRAME, self._on_frame)
         self.flush_immediately()
         cleanup_effect_script_manager()
+        self._layer_manager.unregister(self)
+        try:
+            self.close()
+        except Exception:
+            pass
+        try:
+            self.deleteLater()
+        except Exception:
+            pass

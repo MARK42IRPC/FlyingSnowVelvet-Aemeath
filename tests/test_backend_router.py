@@ -114,10 +114,20 @@ class BackendRouterTests(unittest.TestCase):
 
     def test_qt_configurer_installs_complete_core_services(self):
         from lib.core.desktop_backend import (
+            get_application_runtime_factory,
+            get_application_ui_host_factory,
             get_deferred_call,
+            get_desktop_backend_bundle,
             get_draw_backend_factory,
+            get_effect_overlay_factory,
             get_event_pump_factory,
+            get_layer_window_host_factory,
+            get_particle_overlay_factory,
+            get_pet_window_factory,
+            get_scheduler_factory,
             get_screen_capture_provider,
+            get_screen_capture_factory,
+            get_tray_host_factory,
             get_screen_for_point_provider,
             get_virtual_screen_provider,
         )
@@ -131,11 +141,21 @@ class BackendRouterTests(unittest.TestCase):
 
         self.assertEqual(selection.active_backend, "qt")
         self.assertIsNotNone(get_draw_backend_factory())
+        self.assertIsNotNone(get_application_runtime_factory())
+        self.assertIsNotNone(get_application_ui_host_factory())
+        self.assertIsNotNone(get_scheduler_factory())
+        self.assertIsNotNone(get_screen_capture_factory())
+        self.assertIsNotNone(get_pet_window_factory())
+        self.assertIsNotNone(get_particle_overlay_factory())
+        self.assertIsNotNone(get_effect_overlay_factory())
+        self.assertIsNotNone(get_tray_host_factory())
         self.assertIsNotNone(get_event_pump_factory())
         self.assertIsNotNone(get_deferred_call())
         self.assertIsNotNone(get_virtual_screen_provider())
         self.assertIsNotNone(get_screen_for_point_provider())
         self.assertIsNotNone(get_screen_capture_provider())
+        self.assertIsNotNone(get_layer_window_host_factory())
+        self.assertIsNotNone(get_desktop_backend_bundle())
         self.assertEqual(get_world_object_backend().__class__.__name__, "QtWorldObjectBackend")
 
 

@@ -4,35 +4,20 @@ import os
 import threading
 import time
 
-# On Windows, loading Qt first can make ONNX Runtime bind incompatible native
-# DLLs. Preload the optional runtime before importing PyQt; voice errors remain
-# isolated when the dependency is absent or damaged.
-try:
-    import onnxruntime as _onnxruntime_preload  # noqa: F401
-except Exception:
-    _onnxruntime_preload = None
-
-from config.config import GIF_FILES, DRAW, ANIMATION, UI
+from config.config import GIF_FILES, DRAW, ANIMATION
 from lib.core.application_runtime import ApplicationRuntime
-from lib.core.backend_router import configure_selected_backend, register_backend
-from lib.core.qt_bridge.application_runtime import QtApplicationRuntime
-from lib.core.qt_bridge.gif_loader import GifLoader
-from lib.core.qt_bridge.effect_system import EffectOverlay
-from lib.core.qt_bridge.particle_system import ParticleOverlay
-from lib.core.qt_bridge.scheduler import QtScheduler
-from lib.core.qt_bridge.screen_capture import QtScreenCapture
-from lib.core.qt_bridge.pet_window import QtPetWindow
-from lib.core.qt_bridge.desktop_backend import configure_qt_desktop_backend
-
-register_backend("qt", configure_qt_desktop_backend)
-_BACKEND_SELECTION = configure_selected_backend(UI.get("render_backend", "qt"))
+from lib.core.application_ui import ApplicationUiHost
+from lib.core.backend_router import BackendSelection, get_active_backend_selection
+from lib.core.desktop_backend import (
+    DesktopBackendBundle,
+    get_desktop_backend_bundle,
+)
+from lib.core.graphics.gif_loader import GifLoader
 
 from lib.core.event.center import get_event_center, EventType, Event, cleanup_event_center
-from lib.script.SEanima.animation import get_start_exit_animation, cleanup_start_exit_animation
 from lib.core.logger import initialize as initialize_app_logger, cleanup as cleanup_app_logger, get_logger
 from lib.core.cmd_center import get_cmd_center, cleanup_cmd_center
 from lib.core.compute_hub import cleanup_compute_hub
-from lib.script.ui.cmd_window import get_cmd_window
 from lib.script.chat.ollama import get_ollama_manager, cleanup_ollama_manager
 from lib.script.chat.handler import get_chat_handler, cleanup_chat_handler
 from lib.script.chat.memory import get_stream_memory, cleanup_stream_memory
@@ -47,13 +32,10 @@ from lib.script.microphone_stt import (
     get_microphone_stt_service,
 )
 from lib.script.voice.handler import get_voice_request_handler, cleanup_voice_request_handler
-from lib.script.gemes import get_game_runtime, cleanup_game_runtime
 from lib.script.app.game_mode_service import get_game_mode_service, cleanup_game_mode_service
 from lib.core.plugin_registry import (
     discover_all, init_all_managers, cleanup_all_managers, get_manager
 )
-from lib.core.qt_bridge.tray_icon import get_tray_icon, cleanup_tray_icon
-from lib.script.ui.shutdown import hide_all_runtime_ui, cleanup_all_runtime_ui
 from lib.script.app.single_instance import (
     acquire_single_instance_lock as _new_acquire_single_instance_lock,
     notify_already_running as _new_notify_already_running,
@@ -71,32 +53,48 @@ _SHUTDOWN_THREAD_DRAIN_SECONDS = 2.0
 class ApplicationState:
     """应用程序状态管理"""
 
-    def __init__(self, application_runtime: ApplicationRuntime | None = None):
-        self._application_runtime = application_runtime or QtApplicationRuntime()
+    def __init__(
+        self,
+        application_runtime: ApplicationRuntime | None = None,
+        application_ui_host: ApplicationUiHost | None = None,
+        backend_bundle: DesktopBackendBundle | None = None,
+        backend_selection: BackendSelection | None = None,
+    ):
+        bundle = backend_bundle or get_desktop_backend_bundle()
+        if bundle is None:
+            raise RuntimeError("desktop backend is not configured")
+        selection = backend_selection or get_active_backend_selection()
+        if selection is None:
+            raise RuntimeError("desktop backend selection is not configured")
+
+        scheduler_factory = bundle.scheduler_factory
+        screen_capture_factory = bundle.screen_capture_factory
+        self._backend_selection = selection
+        self._pet_window_factory = bundle.pet_window_factory
+        self._particle_overlay_factory = bundle.particle_overlay_factory
+        self._effect_overlay_factory = bundle.effect_overlay_factory
+        self._tray_host_factory = bundle.tray_host_factory
+        self._application_runtime = application_runtime or bundle.application_runtime_factory()
+        self._application_ui = application_ui_host or bundle.application_ui_host_factory()
         self._event_center = get_event_center()
         self._app = None
         self._pet = None
         self._gifs = None
         self._particles = None
         self._effects = None
-        self._animation = get_start_exit_animation()
         # 管理器实例字典（由动态发现机制填充）
         self._managers = {}
         # 清理命令处理器
         self._cleanup_handler = None
         # 工具调度器
         self._tool_dispatcher = None
-        # 小游戏 runtime
-        self._game_runtime = None
         self._game_mode = get_game_mode_service()
         # 工作目录
         self._script_dir = None
         # 初始化完成标志
         self._init_ready = False
         # 系统托盘图标
-        self._tray_icon = None
-        self._announcement_controller = None
-        self._ui_preloader = None
+        self._tray_host = None
         self._exit_requested = False
         self._restart_requested = False
         self._restart_helper_started = False
@@ -120,8 +118,7 @@ class ApplicationState:
         # ONNX 文本转语音桥接：主界面就绪后在隔离 Worker 中加载本地模型。
         self._gsvmove = get_gsvmove_service()
         self._yuanbao_free_api = get_yuanbao_free_api_service()
-        from lib.script.ui.yuanbao_login_dialog import init_yuanbao_login_dialog
-        self._yuanbao_free_api.configure_login_dialog_initializer(init_yuanbao_login_dialog)
+        self._application_ui.configure_services(self._yuanbao_free_api)
         self._bug_tracker = get_bug_tracker_service()
         self._microphone_stt = get_microphone_stt_service()
         self._microphone_push_to_talk = get_microphone_push_to_talk_manager()
@@ -131,11 +128,11 @@ class ApplicationState:
         self._cmd_center = get_cmd_center()
 
         # OllamaManager 需在 APP_PRE_START 前注册（订阅该事件以尝试启动服务）。
-        # Qt 调度器只在桌面组合边界创建，聊天业务模块仅依赖 Scheduler 协议。
-        get_ollama_manager(scheduler=QtScheduler())
+        # 调度器和截图服务只在桌面组合边界创建，聊天业务模块仅依赖核心协议。
+        get_ollama_manager(scheduler=scheduler_factory())
         self._chat_handler = get_chat_handler(
-            scheduler=QtScheduler(),
-            screen_capture=QtScreenCapture(),
+            scheduler=scheduler_factory(),
+            screen_capture=screen_capture_factory(),
         )
         self._stream_memory = get_stream_memory()
 
@@ -180,7 +177,7 @@ class ApplicationState:
         })
 
         # 宠物窗口
-        self._pet = QtPetWindow(self._gifs, self._particles)
+        self._pet = self._pet_window_factory(self._gifs, self._particles)
 
         # ── 使用动态发现机制初始化所有管理器 ────────────────────────────
         # 管理器会在模块加载时自动注册，这里统一初始化
@@ -193,16 +190,8 @@ class ApplicationState:
         # ── 初始化工具调度器 ────────────────────────────────────────────
         self._tool_dispatcher = get_tool_dispatcher()
 
-        # ── 初始化小游戏 runtime ───────────────────────────────────────
-        self._game_runtime = get_game_runtime()
         self._game_mode.configure_runtime(self._pet, self._particles, self._effects)
-
-        # ── 初始化说明书（鼠标悬停提示面板）────────────────────────────
-        from lib.script.ui.tooltip_panel import init_tooltip_panel
-        init_tooltip_panel()
-
-        # ── 初始化CMD窗口 ──────────────────────────────────────────────
-        get_cmd_window()
+        self._application_ui.prepare_runtime()
 
         # 发布main事件，进入main状态
         self._publish_event(EventType.APP_MAIN, {
@@ -210,30 +199,18 @@ class ApplicationState:
         })
 
         # 初始化系统托盘图标
-        self._tray_icon = get_tray_icon()
-        try:
-            self._tray_icon.quit_requested.disconnect(self._on_tray_quit)
-        except (TypeError, RuntimeError):
-            pass
-        self._tray_icon.quit_requested.connect(self._on_tray_quit)
-        try:
-            self._tray_icon.announcement_requested.disconnect(self._on_tray_announcement)
-        except (TypeError, RuntimeError):
-            pass
-        self._tray_icon.announcement_requested.connect(self._on_tray_announcement)
+        self._tray_host = self._tray_host_factory()
+        self._tray_host.disconnect_quit_requested(self._on_tray_quit)
+        self._tray_host.connect_quit_requested(self._on_tray_quit)
+        self._tray_host.disconnect_announcement_requested(self._on_tray_announcement)
+        self._tray_host.connect_announcement_requested(self._on_tray_announcement)
 
-        from lib.script.ui.announcement_dialog import AnnouncementController
-        self._announcement_controller = AnnouncementController(self._app)
-
-        from lib.script.ui.preloader import preload_runtime_ui
-        self._ui_preloader = preload_runtime_ui(self._tray_icon)
-
-        if self._tray_icon.initialize():
+        if self._tray_host.initialize():
             logger.info('系统托盘图标初始化成功')
         else:
             logger.warning('系统托盘图标初始化未立即成功，已转入后台重试')
 
-        self._announcement_controller.start()
+        self._application_ui.start_runtime(self._app)
 
         logger.info('桌面宠物启动成功！')
         logger.info('  左键点击 → 随机动作 + 粒子特效')
@@ -248,8 +225,7 @@ class ApplicationState:
 
     def _on_tray_announcement(self):
         """托盘菜单公告回调。"""
-        if self._announcement_controller is not None:
-            self._announcement_controller.open_from_tray()
+        self._application_ui.open_announcement()
 
     def _on_app_quit(self, event: Event):
         """统一接管 APP_QUIT，避免组件直接强退 Qt 事件循环。"""
@@ -291,15 +267,15 @@ class ApplicationState:
         # ── 初始化日志系统（最早执行，确保捕获全部输出）──────────────
         # initialize 内部会自动清理旧日志，只保留最新 5 个
         initialize_app_logger(script_dir)
-        if _BACKEND_SELECTION.fallback_used:
+        if self._backend_selection.fallback_used:
             logger.warning(
                 "请求的渲染后端 %s 不可用，已回退到 %s: %s",
-                _BACKEND_SELECTION.requested_backend or "<empty>",
-                _BACKEND_SELECTION.active_backend,
-                _BACKEND_SELECTION.reason,
+                self._backend_selection.requested_backend or "<empty>",
+                self._backend_selection.active_backend,
+                self._backend_selection.reason,
             )
         else:
-            logger.info("渲染后端已启用: %s", _BACKEND_SELECTION.active_backend)
+            logger.info("渲染后端已启用: %s", self._backend_selection.active_backend)
         _new_log_startup_hardware_info(logger, DRAW)
 
         # ── 检查并创建桌面快捷方式（日志初始化后执行，便于记录错误）────
@@ -314,17 +290,15 @@ class ApplicationState:
             self._on_runtime_exit_acknowledged,
         )
 
-        # 初始化字体配置（DPI 缩放，需在桌面应用实例创建后调用）
-        from lib.core.qt_bridge.font import init_font_config
-        init_font_config()
+        self._application_ui.prepare_application(self._app)
 
         # 加载 GIF
         loader = GifLoader(GIF_FILES)
         self._gifs = loader.load_all()
 
         # 粒子覆盖层（全局单例）
-        self._particles = ParticleOverlay()
-        self._effects = EffectOverlay()
+        self._particles = self._particle_overlay_factory()
+        self._effects = self._effect_overlay_factory()
 
         # 发布预启动事件，触发初始化流程
         self._publish_event(EventType.APP_PRE_START, {
@@ -346,7 +320,7 @@ class ApplicationState:
         self._exit_code = exit_code
         self._exit_in_progress = True
         logger.info('收到退出请求，开始分阶段关闭组件')
-        hide_all_runtime_ui()
+        self._application_ui.begin_shutdown()
         if self._particles is not None:
             try:
                 self._particles.flush_immediately()
@@ -358,9 +332,9 @@ class ApplicationState:
             except Exception:
                 pass
         self._process_pending_events()
-        if self._tray_icon is not None:
+        if self._tray_host is not None:
             try:
-                self._tray_icon.begin_shutdown()
+                self._tray_host.begin_shutdown()
             except Exception:
                 pass
 
@@ -434,33 +408,13 @@ class ApplicationState:
         self._shutdown_force_quit_application()
 
     def _shutdown_stop_primary_windows(self):
-        if self._tray_icon:
-            try:
-                self._tray_icon.quit_requested.disconnect(self._on_tray_quit)
-            except (TypeError, RuntimeError):
-                pass
-            try:
-                self._tray_icon.announcement_requested.disconnect(self._on_tray_announcement)
-            except (TypeError, RuntimeError):
-                pass
-
-        announcement_controller = getattr(self, '_announcement_controller', None)
-        if announcement_controller is not None:
-            announcement_controller.cleanup()
-            self._announcement_controller = None
+        if self._tray_host:
+            self._tray_host.disconnect_quit_requested(self._on_tray_quit)
+            self._tray_host.disconnect_announcement_requested(self._on_tray_announcement)
 
         if self._pet:
-            timing_manager = getattr(self._pet, '_timing_manager', None)
-            if timing_manager:
-                timing_manager.cleanup()
-
             try:
-                self._pet.close()
-            except Exception:
-                pass
-
-            try:
-                self._pet.deleteLater()
+                self._pet.shutdown_host()
             except Exception:
                 pass
 
@@ -542,9 +496,7 @@ class ApplicationState:
                 self._cleanup_visual_components()
             return
 
-        if self._ui_preloader is not None:
-            self._ui_preloader.stop()
-            self._ui_preloader = None
+        self._application_ui.stop_runtime()
 
         cleanup_all_managers()
         self._managers.clear()
@@ -557,7 +509,6 @@ class ApplicationState:
         cleanup_chat_handler()
         cleanup_stream_memory()
         cleanup_tool_dispatcher()
-        cleanup_game_runtime()
         cleanup_game_mode_service()
         cleanup_ollama_manager()
         cleanup_cmd_center()
@@ -578,15 +529,11 @@ class ApplicationState:
         from lib.core.audio_meter import cleanup_audio_meter
         from lib.core.voice.core import cleanup_voice_core
 
-        announcement_controller = getattr(self, '_announcement_controller', None)
-        if announcement_controller is not None:
-            announcement_controller.cleanup()
-            self._announcement_controller = None
+        self._application_ui.cleanup()
 
-        cleanup_all_runtime_ui()
-
-        cleanup_tray_icon()
-        self._tray_icon = None
+        if self._tray_host is not None:
+            self._tray_host.cleanup()
+        self._tray_host = None
 
         cleanup_audio_meter()
         cleanup_voice_core()
@@ -597,8 +544,6 @@ class ApplicationState:
         if self._particles:
             try:
                 self._particles.cleanup()
-                self._particles.close()
-                self._particles.deleteLater()
             except Exception:
                 pass
             self._particles = None
@@ -606,8 +551,6 @@ class ApplicationState:
         if self._effects:
             try:
                 self._effects.cleanup()
-                self._effects.close()
-                self._effects.deleteLater()
             except Exception:
                 pass
             self._effects = None
@@ -627,7 +570,7 @@ class ApplicationState:
             self._exit_requested
             and not self._exit_completed
             and not self._app_exit_event_published
-            and self._animation is not None
+            and self._application_ui.has_exit_animation()
         ):
             self._publish_app_exit_once()
 
@@ -635,7 +578,7 @@ class ApplicationState:
             logger.warning('应用事件循环已经结束，但组件仍未完全清理，开始兜底收尾')
             self._perform_component_cleanup()
 
-        cleanup_start_exit_animation()
+        self._application_ui.finalize()
         cleanup_event_center()
 
         self._app = None
@@ -661,13 +604,19 @@ class ApplicationState:
     def exit(self, exit_code: int = 0):
         self.request_exit(exit_code)
 
-def main():
+def main(
+    backend_selection: BackendSelection | None = None,
+    backend_bundle: DesktopBackendBundle | None = None,
+):
     """主函数"""
     if not _new_acquire_single_instance_lock():
         _new_notify_already_running()
         return
 
-    app_state = ApplicationState()
+    app_state = ApplicationState(
+        backend_selection=backend_selection,
+        backend_bundle=backend_bundle,
+    )
     try:
         # START 状态 - 发布预启动事件，开始非阻塞初始化
         app_state.start()

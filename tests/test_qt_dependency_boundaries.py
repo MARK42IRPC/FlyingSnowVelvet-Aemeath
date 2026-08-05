@@ -89,6 +89,7 @@ class QtDependencyBoundaryTests(unittest.TestCase):
             "lib/script/gemes/packages/official/lahai_tetris/code/lahai_tetris_pkg/render.py",
             "lib/script/gemes/packages/official/lahai_tetris/code/lahai_tetris_pkg/widget.py",
             "lib/script/main.py",
+            "lib/script/app/qt_backend_bootstrap.py",
             "lib/script/workbench/components.py",
             "lib/script/workbench/settings/page_layout.py",
         }
@@ -188,14 +189,91 @@ class QtDependencyBoundaryTests(unittest.TestCase):
             ".y()",
             "pixmap",
             "lib.script.ui",
+            "PhysicsBody",
+            "physics_body",
+            "_fading",
+            "_drag_offset",
+            "_frozen",
+            "_flipped",
+            "list[object]",
         )
         for path in manager_paths:
             source = path.read_text(encoding="utf-8-sig")
             for token in forbidden_tokens:
                 self.assertNotIn(token, source, f"{path.relative_to(repo_root)}: {token}")
+            self.assertIn("load_image_resource", source)
+            self.assertIn("WorldObjectInstance", source)
+            self.assertIn("create_world_object", source)
+
+    def test_world_object_contract_has_no_native_asset_or_instance_types(self):
+        repo_root = Path(__file__).resolve().parents[1]
+        path = repo_root / "lib" / "core" / "world_objects.py"
+        source = path.read_text(encoding="utf-8-sig")
+        for token in (
+            "QImage",
+            "QPixmap",
+            "QWidget",
+            "PhysicsBody",
+            "WorldObjectImagePair",
+            "flipped_image",
+        ):
+            self.assertNotIn(token, source, token)
+        self.assertIn("class WorldObjectRequest", source)
+        self.assertIn("class WorldObjectInstance", source)
+        self.assertIn("class WorldObjectMotion", source)
 
     def test_core_event_protocol_has_no_toolkit_render_callback(self):
         self.assertFalse(hasattr(EventType, "DRAW_RENDER"))
+
+    def test_core_graphics_contract_has_no_toolkit_images_or_painter_callbacks(self):
+        repo_root = Path(__file__).resolve().parents[1]
+        graphics_root = repo_root / "lib" / "core" / "graphics"
+        contract_paths = (
+            graphics_root / "backend.py",
+            graphics_root / "commands.py",
+            graphics_root / "resources.py",
+            graphics_root / "scene.py",
+        )
+        forbidden_tokens = (
+            "QImage",
+            "QPixmap",
+            "QPainter",
+            "QRect",
+            "PaintCallback",
+            "RenderItem",
+            "RenderRequest",
+        )
+
+        for path in contract_paths:
+            source = path.read_text(encoding="utf-8-sig")
+            for token in forbidden_tokens:
+                self.assertNotIn(token, source, f"{path.relative_to(repo_root)}: {token}")
+
+        self.assertFalse((repo_root / "lib" / "core" / "render_core.py").exists())
+        self.assertFalse((repo_root / "lib" / "core" / "render_layer.py").exists())
+
+    def test_layer_manager_only_uses_backend_neutral_window_hosts(self):
+        repo_root = Path(__file__).resolve().parents[1]
+        contract_paths = (
+            repo_root / "lib" / "core" / "layer_manager.py",
+            repo_root / "lib" / "core" / "window_host.py",
+        )
+        forbidden_tokens = (
+            "QWidget",
+            "SetWindowPos",
+            "HWND_TOPMOST",
+            ".isVisible()",
+            ".raise_()",
+            ".winId()",
+        )
+
+        for path in contract_paths:
+            source = path.read_text(encoding="utf-8-sig")
+            for token in forbidden_tokens:
+                self.assertNotIn(token, source, f"{path.relative_to(repo_root)}: {token}")
+
+        source = contract_paths[1].read_text(encoding="utf-8-sig")
+        self.assertIn("class LayerWindowHost(Protocol)", source)
 
     def test_core_runtime_imports_when_pyqt_is_unavailable(self):
         repo_root = Path(__file__).resolve().parents[1]
@@ -216,15 +294,30 @@ class QtDependencyBoundaryTests(unittest.TestCase):
             from lib.core.backend_router import BackendRouter
             from lib.core.draw_core import DrawCore
             from lib.core.event.center import EventCenter
+            from lib.core.graphics.commands import DrawRequest
+            from lib.core.graphics.gif_loader import GifLoader
+            from lib.core.graphics.resources import ImageResource, RasterFrame
+            from lib.core.layer_manager import LayerManager
             from lib.core.pet_window import PetWindow
             from lib.core.physics import PhysicsWorld
             from lib.core.screen_utils import get_virtual_screen_rect
 
-            assert DrawCore()._backend.__class__.__name__ == "_NullDrawBackend"
+            draw_core = DrawCore()
+            frame = RasterFrame(1, 1, bytes((255, 0, 0, 255)))
+            draw_core.register_resource(ImageResource("pet", (frame,)))
+            draw_core.add_draw_request(DrawRequest("pet"))
+            assert draw_core.build_batch().commands[0].frame is frame
+            assert draw_core._backend.__class__.__name__ == "_NullDrawBackend"
+            assert GifLoader([]).load_all() == {}
             assert [item.backend_id for item in BackendRouter().descriptors()] == [
                 "qt", "directx", "opengl", "vulkan"
             ]
             assert get_virtual_screen_rect().width > 0
+            layer_manager = LayerManager()
+            layer_window = object()
+            layer_manager.register(layer_window, "PANEL", name="probe")
+            layer_manager.enforce_now()
+            assert layer_manager.snapshot()[0][3:] == ("probe", True)
             assert PetWindow.__name__ == "PetWindow"
             """
         )

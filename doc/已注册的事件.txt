@@ -2,7 +2,7 @@
 
 生成范围: 所有 *.py 中的 EventCenter subscribe / unsubscribe / publish(Event(EventType.*)) 静态扫描结果
 仓库根目录: C:\Users\白草净华\Desktop\飞行雪绒项目\飞行雪绒WORKINGSPACE
-已发现订阅事件种类: 65
+已发现订阅事件种类: 66
 已发现发布事件种类: 64
 
 === 订阅汇总（按事件类型） ===
@@ -147,6 +147,11 @@
 [MANAGER_QUERY_RESPONSE]
 - lib/script/obj-雪堆/manager.py -> self.handle_query_response [has unsubscribe]
   发布方: lib/script/obj-摩托/manager.py, lib/script/obj-沙发/manager.py, lib/script/obj-闹钟/manager.py, lib/script/obj-雪豹/manager.py
+
+[MANAGER_INTERACTION]
+- lib/script/obj-雪堆/manager.py -> self._on_manager_interaction [has unsubscribe]
+  payload: `manager_id`、`action`，雪堆生成请求另含核心 `Point` 类型的 `position`
+  发布方: lib/core/qt_bridge/world_objects/snow_pile.py, lib/script/obj-雪豹/manager.py
 
 [MANAGER_SPAWN_REQUEST]
 - lib/script/obj-摩托/manager.py -> self._on_spawn_request [has unsubscribe]
@@ -403,9 +408,6 @@
 
 === 仅发布未订阅的事件 ===
 
-[MANAGER_INTERACTION]
-- lib/script/obj-雪豹/manager.py
-
 [MIC_STT_FINAL]
 - lib/script/microphone_stt/service.py
 
@@ -540,7 +542,7 @@
 - lib/script/ui/command_hint_box.py
 
 [MANAGER_INTERACTION]
-- lib/script/obj-雪豹/manager.py
+- lib/core/qt_bridge/world_objects/snow_pile.py, lib/script/obj-雪豹/manager.py
 
 [MANAGER_QUERY_REQUEST]
 - lib/script/obj-雪堆/manager.py

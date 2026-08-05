@@ -351,6 +351,7 @@ class ParticleOverlay(QWidget):
         self._pending_requests = deque()
         self._pending_future: Future | None = None
         self._pending_snapshot_ids: set[int] = set()
+        self._cleanup_done = False
         self._perf_log_enabled = bool(PARTICLES.get('perf_log_enabled', False))
         self._perf_log_interval_ticks = max(1, int(PARTICLES.get('perf_log_interval_ticks', 60) or 60))
         self._perf_tick_count = 0
@@ -888,6 +889,9 @@ class ParticleOverlay(QWidget):
     # ------------------------------------------------------------------
     def cleanup(self):
         """清理资源"""
+        if self._cleanup_done:
+            return
+        self._cleanup_done = True
         if self._event_center:
             self._event_center.unsubscribe(EventType.PARTICLE_REQUEST, self._on_particle_request)
             self._event_center.unsubscribe(EventType.TICK, self._on_tick)
@@ -895,6 +899,14 @@ class ParticleOverlay(QWidget):
         self.flush_immediately()
         self._font_cache.clear()
         self._layer_manager.unregister(self)
+        try:
+            self.close()
+        except Exception:
+            pass
+        try:
+            self.deleteLater()
+        except Exception:
+            pass
 
 
 def _make_text_bloom_color(base: QColor) -> QColor:

@@ -3,16 +3,14 @@ import random
 
 from config.config              import SNOW_LEOPARD
 from lib.core.event.center      import get_event_center, EventType, Event
-from lib.core.graphics.types    import Point
+from lib.core.graphics.image_loader import load_image_resource, resize_image_resource
+from lib.core.graphics.types    import Point, coerce_point
 from lib.core.hash_cmd_registry import get_hash_cmd_registry
 from lib.core.plugin_registry   import manager_registry, BaseManager
 from lib.core.screen_utils import get_screen_rect_for_point
 from lib.core.world_objects import (
     create_world_object,
-    get_image_size,
-    get_world_object_center,
-    load_image,
-    scale_image_keep_aspect,
+    WorldObjectInstance,
 )
 from lib.core.voice.snow        import SnowSound
 from lib.core.logger import get_logger
@@ -45,8 +43,8 @@ class SnowPileManager(BaseManager):
 
     def __init__(self, entity=None):
         self._entity = entity
-        self._piles: list[object] = []
-        self._image: object | None = None
+        self._piles: list[WorldObjectInstance] = []
+        self._resource = None
 
         from config.config import SNOW_PILE
         self._cfg = SNOW_PILE
@@ -58,6 +56,7 @@ class SnowPileManager(BaseManager):
 
         self._event_center = get_event_center()
         self._event_center.subscribe(EventType.INPUT_HASH, self._on_hash_command)
+        self._event_center.subscribe(EventType.MANAGER_INTERACTION, self._on_manager_interaction)
         # 订阅管理器查询响应事件（用于雪豹数量检查）
         self._event_center.subscribe(EventType.MANAGER_QUERY_RESPONSE, self.handle_query_response)
 
@@ -77,14 +76,18 @@ class SnowPileManager(BaseManager):
     def _load_png(self):
         """加载雪堆 PNG，缓存基础尺寸图片（供后续随机缩放使用）。"""
         png_path = self._cfg.get('png_file', 'resc/GIF/snow.png')
-        image = load_image(png_path)
-        if image is None:
+        resource = load_image_resource(png_path)
+        if resource is None:
             log(f"加载 PNG 失败: {png_path}")
             return
 
         base_w, base_h = self._cfg.get('size', (80, 80))
-        self._image = scale_image_keep_aspect(image, (base_w, base_h))
-        actual_w, actual_h = get_image_size(self._image)
+        self._resource = resize_image_resource(
+            resource,
+            (base_w, base_h),
+            keep_aspect=True,
+        )
+        actual_w, actual_h = self._resource.size
         log(f"PNG 已加载：{png_path}，基础尺寸 {actual_w}x{actual_h}")
 
     # ==================================================================
@@ -125,7 +128,7 @@ class SnowPileManager(BaseManager):
 
     def _spawn_piles(self, count: int):
         """在屏幕底部生成 count 个随机缩放（120%~150%）的雪堆。"""
-        if self._image is None:
+        if self._resource is None:
             log("无可用图片，跳过生成")
             return
 
@@ -144,7 +147,7 @@ class SnowPileManager(BaseManager):
         sw = int(screen.width)
         sh = int(screen.height)
 
-        base_w, base_h = get_image_size(self._image)
+        base_w, base_h = self._resource.size
         y_min_pct = self._cfg.get('spawn_y_min', 0.82)
         y_max_pct = self._cfg.get('spawn_y_max', 0.93)
         scale_min = self._cfg.get('scale_min',   1.2)
@@ -155,8 +158,12 @@ class SnowPileManager(BaseManager):
             scale      = random.uniform(scale_min, scale_max)
             scaled_w   = int(base_w * scale)
             scaled_h   = int(base_h * scale)
-            pile_image = scale_image_keep_aspect(self._image, (scaled_w, scaled_h))
-            actual_w, actual_h = get_image_size(pile_image)
+            pile_resource = resize_image_resource(
+                self._resource,
+                (scaled_w, scaled_h),
+                keep_aspect=True,
+            )
+            actual_w, actual_h = pile_resource.size
 
             y_top = sy + int(sh * y_min_pct)
             y_bottom = max(y_top, sy + int(sh * y_max_pct) - actual_h)
@@ -166,11 +173,14 @@ class SnowPileManager(BaseManager):
 
             pile = create_world_object(
                 "snow_pile",
-                image          = pile_image,
+                resource       = pile_resource,
                 position       = Point(x, y),
                 size           = (actual_w, actual_h),
-                spawn_callback = self._spawn_leopard_from_pile,
-                config         = self._cfg,
+                batch_interval = tuple(self._cfg.get('batch_interval', (10000, 20000))),
+                batch_size = tuple(self._cfg.get('batch_size', (1, 2))),
+                batch_item_interval = tuple(
+                    self._cfg.get('batch_item_interval', (3000, 5000))
+                ),
             )
             self._piles.append(pile)
             log(f"生成雪堆 @ ({x}, {y})，缩放比例 {scale:.2f}x，尺寸 {actual_w}x{actual_h}")
@@ -179,15 +189,22 @@ class SnowPileManager(BaseManager):
     # 雪豹生成（通过事件系统，解耦通信）
     # ==================================================================
 
-    def _spawn_leopard_from_pile(self, pile: object) -> None:
+    def _on_manager_interaction(self, event: Event) -> None:
         """
         雪堆请求生成一只雪豹（批次自动生成 / 右键触发）。
 
         通过事件系统请求雪豹管理器生成，实现解耦通信。
         上限来自 SNOW_LEOPARD['natural_spawn_limit']，默认 12 只。
         """
+        if event.data.get('manager_id') != self.MANAGER_ID:
+            return
+        if event.data.get('action') != 'spawn_leopard':
+            return
+        pile_center = coerce_point(event.data.get('position'))
+        if pile_center is None:
+            return
+
         # 先查询当前雪豹数量
-        pile_center = get_world_object_center(pile)
         self._event_center.publish(Event(EventType.MANAGER_QUERY_REQUEST, {
             'manager_id': 'snow_leopard',
             'query_type': 'alive_count',
@@ -248,6 +265,7 @@ class SnowPileManager(BaseManager):
     def cleanup(self):
         """取消事件订阅，关闭所有雪堆窗口。"""
         self._event_center.unsubscribe(EventType.INPUT_HASH, self._on_hash_command)
+        self._event_center.unsubscribe(EventType.MANAGER_INTERACTION, self._on_manager_interaction)
         self._event_center.unsubscribe(EventType.MANAGER_QUERY_RESPONSE, self.handle_query_response)
         for pile in self._piles:
             if pile.is_alive():

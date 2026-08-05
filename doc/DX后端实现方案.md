@@ -28,14 +28,14 @@
 
 现有路由已经提供 `qt`、`directx`、`opengl`、`vulkan` 稳定 ID，控制面板通过 `UI.render_backend` 保存选择。当前只有 `qt` 的 `BackendDescriptor.available=True`，未实现后端会记录原因并回退 Qt。
 
-核心算法和多数业务载荷已经改用 `Point`、`Rect`、`Color`、`FontSpec`、`MouseInput` 和 `KeyboardInput` 等纯数据类型，但以下边界仍阻止普通运行进程移除 Qt：
+核心算法和多数业务载荷已经改用 `Point`、`Rect`、`Color`、`FontSpec`、`MouseInput` 和 `KeyboardInput` 等纯数据类型。主宠绘制链已经使用纯 RGBA 资源和不可变命令批，但以下边界仍阻止普通运行进程移除 Qt：
 
-- `lib/script/main.py` 仍直接组合 `QtApplicationRuntime`、`GifLoader`、`EffectOverlay`、`ParticleOverlay`、`QtScheduler`、`QtScreenCapture`、`QtPetWindow` 和 Qt 托盘。
-- `DrawScene` 的资源帧类型仍是 `list[object]`，当前实际帧由 Qt `GifLoader` 生成 `QImage`。
-- `DrawBackend.render(scene, painter, target_rect)` 的目标是后端对象；当前 Qt 实现要求 `QPainter/QRect`。
-- `RenderRequest/RenderItem` 仍保存 `PaintCallback(painter, rect)`，游戏面板等调用方仍通过回调直接绘制。
+- `lib/script/main.py` 已只从 `DesktopBackendBundle` 获取应用运行时、调度、截图、主宠、覆盖层和托盘工厂；这些工厂返回的对象仍暴露部分 Qt 生命周期行为，尚未收敛为完整后端无关宿主协议。
+- `DrawScene` 已只保存 `ImageResource/RasterFrame`，并生成不可变 `DrawBatch/SpriteCommand`；当前命令集只覆盖主宠 sprite，尚未覆盖文字、形状、粒子和特效。
+- `DrawBackend.render(batch, target, viewport)` 的 target 仍由后端宿主持有；当前唯一实现使用 `QPainter`，DX target 尚未实现。
+- 跨后端 `RenderRequest/RenderItem/PaintCallback` 已删除；两个明确的 Qt 游戏控件使用 `qt_bridge.render_core.QtRenderCore` 本地回调，尚未迁移为声明式命令。
 - `WorldObjectBackend` 使用不透明图片和实例句柄，当前唯一实现仍创建 QWidget 世界对象。
-- `LayerManager` 虽已取消每帧强制置顶，但仍调用 `isVisible()`、`winId()` 和 `raise_()` 等 QWidget 接口。
+- `LayerManager` 已只依赖最小 `LayerWindowHost`，Qt 可见性、前置、原生句柄和 `SetWindowPos` 已迁入 `qt_bridge.window_host`；窗口创建、几何、输入和场景提交等完整宿主能力仍待抽象。
 - 工作台、设置对话框、游戏窗口和媒体播放器仍是 Qt UI。
 
 因此实施顺序必须先补齐跨后端契约，再接 DX 窗口和运行时。只新增一个 `DxDrawBackend` 无法实现“摆脱 Qt”。
@@ -93,19 +93,21 @@ tests/dx/                   # Windows/DX 集成与像素基线测试
 
 ### 5.1 资源描述
 
-将 `DrawScene.register_resource(resource_id, frames: Iterable[object])` 收敛为后端无关资源描述。资源来源只允许：
+主宠绘制已将 `DrawScene.register_resource(resource: ImageResource)` 收敛为后端无关资源描述。当前 `RasterFrame` 使用紧密排列的 RGBA8888 `bytes`，包含尺寸和帧时长；Qt 后端只在渲染边界复制成 `QImage/QPixmap`。
+
+后续统一资源仓库允许的资源来源只包括：
 
 - 规范化文件路径；
 - 拥有明确格式和尺寸的不可变 `bytes`；
 - 已由后端资源仓库返回的稳定整数资源 ID。
 
-GIF 帧时长、循环方式、逻辑尺寸和缩放策略必须是显式元数据。Qt 与 DX 后端各自解码并缓存资源，`DrawScene` 不再保存 `QImage/QPixmap` 或其他 toolkit 对象。缓存键至少包含资源版本、帧号、目标尺寸和翻转状态，资源注销后能够确定性释放。
+GIF 帧时长和逻辑尺寸已经进入纯帧数据；循环方式和缩放策略仍需补齐为显式元数据。当前由 Python/Pillow 解码，DX 原型可以直接上传 RGBA 帧；后续再按内存与启动性能决定是否让 WIC 接管路径/编码字节解码。缓存键至少包含资源 revision、帧号、目标尺寸和翻转状态，资源注销后能够确定性释放。
 
-`WorldObjectImagePair` 也要从不透明 Python 图片对象迁移到同一资源 ID 和尺寸契约。业务管理器只描述对象类型、资源、位置和状态，不再要求后端预先返回两份翻转图片。
+世界对象已迁移到同一资源契约：manager 使用 `ImageResource`，由 `WorldObjectRequest` 提交对象类型、资源、位置、尺寸和纯构造选项；后端只返回稳定整数实例 ID，业务持有 `WorldObjectInstance`。翻转不再作为资源副本返回，而是由后端在渲染边界从 `RasterFrame` 派生。状态、核心几何和雪球运动快照通过 `WorldObjectState`、`WorldObjectMotion` 交接，不能泄露 QWidget、QPixmap 或 PhysicsBody。
 
 ### 5.2 声明式绘制命令
 
-删除跨后端 `PaintCallback`。将需要跨后端渲染的内容表示为可排序、可批量序列化的命令，例如：
+跨后端 `PaintCallback` 已删除，Qt 独占控件回调已移入 `qt_bridge`。当前 `SpriteCommand/DrawBatch` 已提供已解析资源帧、透明度、翻转、缩放和 `layer/z/order`；后续按同一批次扩展：
 
 - `SpriteCommand`：资源、源帧、目标矩形、透明度、翻转和插值模式；
 - `TextCommand`：文本、`FontSpec`、颜色、布局矩形、对齐和裁剪；
@@ -115,11 +117,13 @@ GIF 帧时长、循环方式、逻辑尺寸和缩放策略必须是显式元数�
 
 每帧由 Python 生成一份连续命令批，一次跨 C ABI 提交。禁止每个 sprite、粒子或文字进行一次 Python 到 DLL 调用。命令结构包含 `abi_version`、结构体大小和帧序号，未知命令必须返回可诊断错误，不能越界解析。
 
-现有 `RenderCore` 排序语义继续使用 `layer/z/order`，但渲染项最终产出命令而不是接收 painter。仅 Qt 独占 UI 可暂时保留本地 painter 回调，不能把该兼容路径注册为 DX 场景内容。
+跨后端排序继续使用 `layer/z/order`。仅 Qt 独占 UI 可暂时使用 `QtRenderCore` 本地 painter 回调，不能把该路径注册为 DX 场景内容；需要迁移到 DX 的视觉内容必须产出命令。
 
 ### 5.3 窗口宿主
 
-新增后端无关 `WindowHost`/`WindowManager` 协议，至少覆盖：
+第一步已落地后端无关 `LayerWindowHost`：稳定 identity 用于注册和注销，`is_alive/is_visible` 用于过滤窗口，`stack_window` 返回后端原生整数 token，原生堆叠不可用时通过 `raise_window` 回退。`LayerManager` 只负责 `layer/z/order` 排序和触发时机，不再识别 QWidget、HWND 或 `SetWindowPos`。Qt 适配器弱持有 QWidget，桌面后端通过工厂注册；未配置后端时使用无副作用宿主保证核心可独立运行。
+
+后续在该最小协议之上补齐后端无关 `WindowHost`/`WindowManager`，至少覆盖：
 
 - 创建、显示、隐藏、关闭透明无边框窗口；
 - 读取和设置 `Point/Rect`、DPI 和所属屏幕；
@@ -128,7 +132,7 @@ GIF 帧时长、循环方式、逻辑尺寸和缩放策略必须是显式元数�
 - 请求重绘及提交场景；
 - 幂等 `cleanup()`。
 
-`LayerManager` 只依赖该协议，不能再识别 QWidget。DX 实现直接使用 HWND；Qt 实现用适配对象包装 QWidget。窗口层级只在注册、显示、交互或层级变化时重申，不持续抢占前台或按帧强制 `HWND_TOPMOST`。需要第三方输入法的可编辑窗口必须允许正常激活和 IME z-order，装饰窗口才使用 `WS_EX_NOACTIVATE`。
+DX 层级实现直接使用 HWND；完整 Qt 窗口实现继续用适配对象包装 QWidget。窗口层级只在注册、显示、交互或层级变化时重申，不持续抢占前台或按帧强制 `HWND_TOPMOST`。需要第三方输入法的可编辑窗口必须允许正常激活和 IME z-order，装饰窗口才使用 `WS_EX_NOACTIVATE`。
 
 主宠 Win32 窗口将 `WM_MOUSE*`、`WM_POINTER*`、键盘、移动、DPI 和关闭消息转换为现有 `PetHostCallbacks` 纯数据调用。拖拽期间使用鼠标捕获，点击穿透通过窗口扩展样式和 `WM_NCHITTEST` 切换，不模拟 Qt 事件。
 
@@ -144,9 +148,11 @@ DX 组合入口必须一次性注册一组完整服务：
 - 托盘图标、菜单命令和资源图标加载；
 - 绘制资源仓库和 DX 场景提交。
 
-`desktop_backend.py` 当前只注册其中一部分。新增能力应使用明确协议或组合对象扩展，不能继续增加彼此无关的模块全局变量，也不能让 `lib/script/main.py` 为每个后端分别导入一串具体实现。
+`desktop_backend.py` 已把当前绘制、`ApplicationRuntime`、`ApplicationUiHost`、`Scheduler`、`ScreenCapture`、主宠窗口、`OverlayHost` 工厂、`TrayHostFactory`、事件泵、延迟、屏幕、截图和层级窗口宿主工厂收进单个不可变 `DesktopBackendBundle`，但仍只覆盖上述完整能力的一部分。新增能力应继续扩展明确协议和组合对象，不能恢复彼此无关的模块全局变量，也不能让 `lib/script/main.py` 为每个后端分别导入一串具体实现。
 
-最终组合入口只负责：读取配置、注册可用后端配置器、执行路由、创建所选 `DesktopBackendBundle`。`ApplicationState` 从 bundle 获取运行时和窗口服务，不直接导入 `qt_bridge` 或 `dx_bridge`。
+最终组合入口只负责：读取配置、注册可用后端配置器、执行路由、创建所选 `DesktopBackendBundle`。`ApplicationState` 已从 bundle 获取运行时、调度、截图、主宠、覆盖层和托盘服务，并只通过 `PetWindowHost.shutdown_host()`、`OverlayHost.cleanup()` 和 `TrayHost.cleanup()` 执行退出；完整窗口创建、几何、输入和重绘服务仍需继续迁移，最终不得直接导入 `qt_bridge` 或 `dx_bridge`。
+
+两个启动组合边界已经完成：`ApplicationUiHost` 统一承接字体、公告、预加载、CMD、提示面板、登录 UI 和退出动画；启动入口按后端选择惰性导入配置器，`main.py` 不注册或导入 Qt。当前实施 `WindowHost v1`，随后扩展声明式绘制命令。DX 第一份可执行成果必须是 WARP 离屏渲染与像素测试，不是用户可见透明窗口。
 
 ## 6. C ABI 与事件模型
 
@@ -197,10 +203,11 @@ fsdx_get_last_error
 
 ### 阶段 A：契约补齐
 
-- 新增资源描述和资源仓库协议，迁移 `DrawScene` 与世界对象图片句柄。
-- 用声明式命令替代 `PaintCallback`，保留 Qt 后端行为和排序测试。
-- 新增窗口宿主和层级适配协议，移除 `LayerManager` 对 QWidget 方法的直接调用。
-- 将桌面服务收敛为完整 bundle，`ApplicationState` 仅依赖协议。
+- 已完成主宠和世界对象统一资源描述、纯 RGBA 帧、缩放、不可变 sprite 批次、Qt 后端 revision 缓存及整数世界对象实例句柄。
+- 已从跨后端契约删除 `PaintCallback` 并保留 Qt 本地适配；文字、形状、粒子和特效命令仍待补齐。
+- 已新增最小 `LayerWindowHost` 和 Qt 层级适配器，移除 `LayerManager` 对 QWidget/Win32 方法的直接调用；完整窗口生命周期协议仍待补齐。
+- 已将应用运行时、调度器、截图服务以及主宠、覆盖层、托盘工厂和当前桌面能力收进 `DesktopBackendBundle`；主宠、覆盖层和托盘对象行为已收敛为 `PetWindowHost`、`OverlayHost` 和 `TrayHost`，Qt signal、QWidget 销毁及托盘单例释放不再泄漏到 `ApplicationState`。完整窗口创建、几何、输入和重绘契约仍待迁移。
+- 已完成 `ApplicationUiHost` 和启动组合入口拆分：`ApplicationState` 不再导入 Qt/UI 模块或注册后端，Qt 配置器由惰性 bootstrap 安装；当前进入 `WindowHost v1`，随后扩展文字/形状/裁剪命令。
 
 退出条件：核心和跨后端业务数据中不存在 QImage/QPixmap/QPainter/QWidget；阻断 PyQt 导入的子进程测试可实例化核心场景、层级和应用编排。
 

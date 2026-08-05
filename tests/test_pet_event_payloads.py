@@ -6,6 +6,7 @@ from unittest.mock import patch
 from lib.core.event.center import Event, EventType
 from lib.core.graphics.types import Point, Rect
 from lib.core.pet_window import PetWindow
+from lib.core.world_objects import WorldObjectState
 
 SnowLeopardManager = importlib.import_module(
     "lib.script.obj-雪豹.manager"
@@ -43,11 +44,10 @@ class _CenterPoint:
 
 class _Leopard:
     def __init__(self):
-        self._fading = False
         self.fade_started = False
 
-    def get_center(self):
-        return _CenterPoint()
+    def get_state(self):
+        return WorldObjectState(alive=True)
 
     def start_fadeout(self):
         self.fade_started = True

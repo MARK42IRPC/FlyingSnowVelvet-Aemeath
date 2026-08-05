@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import subprocess
 import tempfile
@@ -45,9 +46,17 @@ class UpdateInstallerTests(unittest.TestCase):
             normal_command = build_bat_restart_command(root, "normal")
             environment_command = build_bat_restart_command(root, "environment")
 
-            self.assertIn("/c", normal_command)
-            self.assertEqual(normal_command[-1], str(normal.resolve()))
-            self.assertEqual(environment_command[-1], str(environment.resolve()))
+            self.assertIn("-EncodedCommand", normal_command)
+            normal_script = base64.b64decode(normal_command[-1]).decode("utf-16-le")
+            environment_script = base64.b64decode(environment_command[-1]).decode("utf-16-le")
+            self.assertIn(
+                base64.b64encode(str(normal.resolve()).encode("utf-8")).decode("ascii"),
+                normal_script,
+            )
+            self.assertIn(
+                base64.b64encode(str(environment.resolve()).encode("utf-8")).decode("ascii"),
+                environment_script,
+            )
 
     def test_install_overwrites_application_but_preserves_user_data(self):
         with tempfile.TemporaryDirectory() as temp_dir:

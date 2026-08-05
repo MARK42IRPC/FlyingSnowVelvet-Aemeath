@@ -22,7 +22,8 @@ from config.scale import scale_px
 from lib.core.event.center import Event, EventType, get_event_center
 from lib.core.effect_utils import spawn_flash_text_effect, spawn_smooth_image_effect
 from lib.core.particle_utils import spawn_particle_at_point, spawn_particle_in_rect
-from lib.core.unified_draw import Layer, RenderCore, RenderRequest
+from lib.core.unified_draw import Layer
+from lib.core.qt_bridge.render_core import QtRenderCore, QtRenderRequest
 from lib.core.voice.ams_lahai_break_ams_record import AmsLahaiBreakAmsRecordSound
 from lib.core.voice.ams_lahai_combo_over_five import AmsLahaiComboOverFiveSound
 from lib.core.voice.ams_lahai_game_over import AmsLahaiGameOverSound
@@ -150,8 +151,8 @@ class LahaiTetrisWidget(QWidget):
     def __init__(self, context: GameContext, parent=None) -> None:
         super().__init__(parent)
         self._context = context
-        self._render_core = RenderCore()
-        self._render_core.register_item(RenderRequest(
+        self._render_core = QtRenderCore()
+        self._render_core.register_item(QtRenderRequest(
             'lahai_tetris_content',
             self._paint_game_layer,
             Layer.PANEL,

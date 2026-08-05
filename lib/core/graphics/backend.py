@@ -3,12 +3,18 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from .scene import DrawScene
+from .commands import DrawBatch
+from .types import Rect
 
 
 class DrawBackend(Protocol):
-    def render(self, scene: DrawScene, painter: object, target_rect: object | None = None) -> None:
-        """Render the scene into a backend-owned target."""
+    def render(
+        self,
+        batch: DrawBatch,
+        target: object,
+        viewport: Rect | None = None,
+    ) -> None:
+        """Render one immutable command batch into a backend-owned target."""
 
     def cleanup(self) -> None:
         """Release backend caches and resources."""

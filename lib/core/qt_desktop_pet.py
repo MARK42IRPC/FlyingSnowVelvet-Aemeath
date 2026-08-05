@@ -27,6 +27,14 @@ def _build_missing_dependency_message(missing_module: str, install_bat: str) -> 
     )
 
 
+def _preload_optional_onnx_runtime() -> None:
+    """Load ONNX native DLLs before Qt can bind conflicting dependencies."""
+    try:
+        import onnxruntime  # noqa: F401
+    except Exception:
+        pass
+
+
 # 添加项目根目录到 Python 路径（向上三级，从 lib/core 到根目录）
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if project_root not in sys.path:
@@ -60,6 +68,11 @@ if __name__ == '__main__':
             _show_startup_error('重启辅助进程启动失败：\n\n' + str(exc))
             sys.exit(1)
     try:
+        _preload_optional_onnx_runtime()
+        from lib.script.app.qt_backend_bootstrap import configure_selected_desktop_backend
+
+        backend_selection = configure_selected_desktop_backend()
+        from lib.core.desktop_backend import get_desktop_backend_bundle
         from lib.script.main import main
     except ModuleNotFoundError as e:
         missing = getattr(e, "name", None) or "unknown"
@@ -70,4 +83,7 @@ if __name__ == '__main__':
         _show_startup_error("程序启动失败：\n\n" + traceback.format_exc())
         sys.exit(1)
 
-    main()
+    main(
+        backend_selection=backend_selection,
+        backend_bundle=get_desktop_backend_bundle(),
+    )

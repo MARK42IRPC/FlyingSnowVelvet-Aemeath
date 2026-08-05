@@ -121,6 +121,11 @@ MANAGER_SPAWN_REQUEST
   - `count`
   - `spawn_type`
 
+MANAGER_INTERACTION
+- 用途：报告世界对象宿主产生的后端无关交互
+- 雪堆请求雪豹时使用 `manager_id=snow_pile`、`action=spawn_leopard` 和核心 `Point` 类型的 `position`
+- 雪豹与主宠交互时使用 `manager_id=snow_leopard`、`entity_id=pet_window`
+
 MANAGER_QUERY_REQUEST / MANAGER_QUERY_RESPONSE
 - 用途：跨管理器查询状态、数量、保护范围等
 

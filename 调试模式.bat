@@ -1,31 +1,14 @@
 @echo off
 chcp 65001 >nul 2>&1
-setlocal EnableDelayedExpansion
-cd /d "%~sdp0"
+setlocal DisableDelayedExpansion
+cd /d "%~dp0" || exit /b 1
 
-set "PYTHONPATH=.;config;lib"
+set "POWERSHELL_EXE=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
+if not exist "%POWERSHELL_EXE%" set "POWERSHELL_EXE=powershell.exe"
 
-if not exist "py.ini" (
-    echo py.ini not found. Please run install_deps.py first.
+"%POWERSHELL_EXE%" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "%~dp0lib\script\app\windows_launcher.ps1" -Mode debug
+set "RC=%errorlevel%"
+if not "%RC%"=="0" (
     pause
-    exit /b 1
 )
-
-set "PYTHON_EXE="
-for /f "usebackq tokens=1,* delims==" %%A in ("py.ini") do (
-    set "KEY=%%A"
-    set "VAL=%%B"
-    set "KEY=!KEY: =!"
-    for /f "tokens=* delims= " %%I in ("!VAL!") do set "VAL=%%I"
-    if /I "!KEY!"=="python_executable" set "PYTHON_EXE=!VAL!"
-)
-
-if not defined PYTHON_EXE (
-    echo python_executable not found in py.ini
-    pause
-    exit /b 1
-)
-
-for /f "delims=" %%I in ('cmd /c echo !PYTHON_EXE!') do set "PYTHON_EXE=%%I"
-
-"!PYTHON_EXE!" "lib\core\qt_desktop_pet.py"
+exit /b %RC%

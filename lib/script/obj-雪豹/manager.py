@@ -2,12 +2,13 @@
 import random
 
 from lib.core.event.center    import get_event_center, EventType, Event
+from lib.core.graphics.image_loader import load_image_resource
 from lib.core.graphics.types import Point, coerce_point
 from lib.core.screen_utils import get_screen_rect_for_point
 from lib.core.world_objects import (
     create_world_object,
     get_world_object_center,
-    load_gif_frame_pair,
+    WorldObjectInstance,
 )
 from lib.core.hash_cmd_registry import get_hash_cmd_registry
 from lib.core.plugin_registry import manager_registry, BaseManager
@@ -48,12 +49,11 @@ class SnowLeopardManager(BaseManager):
             entity: 主宠物实体（PetWindow），用于获取位置信息
         """
         self._entity   = entity
-        self._leopards: list[object] = []
+        self._leopards: list[WorldObjectInstance] = []
         self._pending_play = False  # 碰撞已发生，等待 move 完全结束后进入 play
 
         # GIF 帧缓存（正向 + 翻转，在此统一预计算）
-        self._frames:         list[object] = []
-        self._flipped_frames: list[object] = []
+        self._resource = None
 
         # 读取配置
         from config.config import SNOW_LEOPARD
@@ -98,14 +98,16 @@ class SnowLeopardManager(BaseManager):
         """加载雪豹 GIF，生成正向帧和翻转帧缓存。"""
         gif_path = self._cfg.get('gif_file', 'resc/GIF/snow_leopard.gif')
         try:
-            frames, flipped_frames = load_gif_frame_pair(gif_path)
+            resource = load_image_resource(gif_path)
         except Exception as exc:
             log(f"加载 GIF 出错: {exc}")
             return
 
-        self._frames         = frames
-        self._flipped_frames = flipped_frames
-        log(f"GIF 已加载：{len(frames)} 帧，文件：{gif_path}")
+        if resource is None:
+            log(f"加载 GIF 失败：{gif_path}")
+            return
+        self._resource = resource
+        log(f"GIF 已加载：{len(resource.frames)} 帧，文件：{gif_path}")
 
     # ==================================================================
     # 事件处理
@@ -203,7 +205,7 @@ class SnowLeopardManager(BaseManager):
         r2     = radius * radius  # 使用距离平方避免 sqrt
 
         for leopard in self._leopards:
-            if leopard._fading:
+            if leopard.get_state().fading:
                 continue
             lc = get_world_object_center(leopard)
             dx = pet_cx - lc.x
@@ -296,7 +298,7 @@ class SnowLeopardManager(BaseManager):
             power_min:  弹跳力度最小倍率（None 时使用 SNOW_PILE 配置）
             power_max:  弹跳力度最大倍率（None 时使用 SNOW_PILE 配置）
         """
-        if not self._frames:
+        if self._resource is None:
             log("无可用帧，跳过生成")
             return
         point = coerce_point(position)
@@ -321,8 +323,7 @@ class SnowLeopardManager(BaseManager):
 
         leopard = create_world_object(
             "snow_leopard",
-            frames         = self._frames,
-            flipped_frames = self._flipped_frames,
+            resource       = self._resource,
             position       = Point(x, y),
             size           = size,
         )
@@ -345,7 +346,7 @@ class SnowLeopardManager(BaseManager):
 
     def _spawn_leopards(self, count: int):
         """在屏幕底部指定高度范围内随机生成 count 只雪豹。"""
-        if not self._frames:
+        if self._resource is None:
             log("无可用帧，跳过生成")
             return
 
@@ -387,14 +388,13 @@ class SnowLeopardManager(BaseManager):
 
             leopard = create_world_object(
                 "snow_leopard",
-                frames         = self._frames,
-                flipped_frames = self._flipped_frames,
+                resource       = self._resource,
                 position       = Point(x, y),
                 size           = size,
             )
             self._leopards.append(leopard)
             leopard.spawn_jump(power_min, power_max)
-            log(f"生成雪豹 @ ({x}, {y})，翻转={leopard._flipped}")
+            log(f"生成雪豹 @ ({x}, {y})，翻转={leopard.get_state().flipped}")
 
     # ==================================================================
     # 供状态机查询
@@ -407,7 +407,11 @@ class SnowLeopardManager(BaseManager):
         若无活跃雪豹则返回 None。
         供 StateMachine._trigger_wander() 使用。
         """
-        alive = [l for l in self._leopards if l.is_alive() and not l._fading]
+        alive = [
+            leopard
+            for leopard in self._leopards
+            if leopard.is_alive() and not leopard.get_state().fading
+        ]
         if not alive:
             return None
 

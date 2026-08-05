@@ -14,9 +14,8 @@ _logger = get_logger(__name__)
 
 
 class UiPreloader(QObject):
-    def __init__(self, tray_icon=None, parent=None) -> None:
+    def __init__(self, parent=None) -> None:
         super().__init__(parent or QApplication.instance())
-        self._tray_icon = tray_icon
         self._started = False
         self._steps: tuple[tuple[str, Callable[[], None]], ...] = (
             ('playlist_panel', self._preload_playlist_panel),
@@ -86,7 +85,7 @@ class UiPreloader(QObject):
 
         init_yuanbao_login_dialog()
 
-def preload_runtime_ui(tray_icon=None) -> UiPreloader:
-    preloader = UiPreloader(tray_icon=tray_icon)
+def preload_runtime_ui() -> UiPreloader:
+    preloader = UiPreloader()
     preloader.start()
     return preloader

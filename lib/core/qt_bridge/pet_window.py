@@ -54,3 +54,15 @@ class QtPetWindow(PetWindow, QtPetWidget):
 
     def _host_shutdown_ui(self) -> None:
         shutdown_pet_window_ui(self)
+
+    def shutdown_host(self) -> None:
+        """Stop core state and destroy the QWidget at the Qt boundary."""
+        self.cleanup_core_state()
+        try:
+            self.close()
+        except Exception:
+            pass
+        try:
+            self.deleteLater()
+        except Exception:
+            pass

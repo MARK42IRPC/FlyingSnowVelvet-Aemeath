@@ -3,6 +3,7 @@ import random
 import re
 
 from lib.core.event.center      import get_event_center, EventType, Event
+from lib.core.graphics.image_loader import load_image_resource, resize_image_resource_to_width
 from lib.core.graphics.types import Point, coerce_point
 from lib.core.hash_cmd_registry import get_hash_cmd_registry
 from lib.core.plugin_registry   import manager_registry, BaseManager
@@ -10,7 +11,7 @@ from lib.core.screen_utils import get_screen_rect_for_point
 from lib.core.world_objects import (
     create_world_object,
     get_world_object_center,
-    load_width_scaled_image_pair,
+    WorldObjectInstance,
 )
 from lib.core.logger import get_logger
 
@@ -47,10 +48,9 @@ class ClockManager(BaseManager):
             entity: 主宠物实体（PetWindow），用于获取位置信息
         """
         self._entity = entity
-        self._clocks: list[object] = []
+        self._clocks: list[WorldObjectInstance] = []
 
-        # 绘制后端图片缓存
-        self._image:          object | None = None
+        self._resource = None
         self._actual_size:    tuple[int, int] = (120, 120)
 
         # 重力开关状态（True = 重力开启）
@@ -101,14 +101,14 @@ class ClockManager(BaseManager):
         """加载闹钟 PNG，生成图片缓存。"""
         png_path = self._cfg.get('png_file', 'resc/GIF/clock.png')
         target_w = int(self._cfg.get('target_width', 150))
-        pair = load_width_scaled_image_pair(png_path, target_w)
-        if pair is None:
+        resource = load_image_resource(png_path)
+        if resource is None:
             log(f"加载 PNG 失败: {png_path}")
             return
 
-        self._actual_size = pair.size
-        self._image = pair.image
-        log(f"PNG 已加载：{png_path}，缩放至 {pair.size[0]}x{pair.size[1]}")
+        self._resource = resize_image_resource_to_width(resource, target_w)
+        self._actual_size = self._resource.size
+        log(f"PNG 已加载：{png_path}，缩放至 {self._resource.size[0]}x{self._resource.size[1]}")
 
     # ==================================================================
     # 事件处理
@@ -336,7 +336,7 @@ class ClockManager(BaseManager):
 
     def _spawn_clocks(self, count: int, countdown_seconds: int):
         """在宠物当前位置生成 count 个闹钟，中心锚点对齐。"""
-        if self._image is None:
+        if self._resource is None:
             log("无可用图片，跳过生成")
             return
 
@@ -390,7 +390,7 @@ class ClockManager(BaseManager):
 
             clock = create_world_object(
                 "clock",
-                image          = self._image,
+                resource       = self._resource,
                 position       = Point(x, y),
                 size           = size,
                 countdown_hh   = countdown_hh,
