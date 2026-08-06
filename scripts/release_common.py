@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+from fnmatch import fnmatch
 import io
 import json
 import re
@@ -76,20 +77,38 @@ def build_inline_payloads(root: Path) -> dict[Path, bytes]:
     return {relative: text.encode('utf-8')}
 
 
-def _iter_payload_files(source_root: Path) -> Iterator[Path]:
+def _iter_payload_files(
+    source_root: Path,
+    *,
+    excluded_names: frozenset[str] = frozenset(),
+    excluded_patterns: tuple[str, ...] = (),
+) -> Iterator[Path]:
     for path in source_root.rglob('*'):
         if not path.is_file():
             continue
         rel = path.relative_to(source_root)
         if '__pycache__' in rel.parts or path.suffix.lower() in {'.pyc', '.pyo'}:
             continue
+        lower_name = path.name.lower()
+        if lower_name in excluded_names or any(fnmatch(lower_name, pattern) for pattern in excluded_patterns):
+            continue
         yield path
 
 
-def _zip_tree(source_root: Path) -> bytes:
+def _zip_tree(
+    source_root: Path,
+    *,
+    excluded_names: frozenset[str] = frozenset(),
+    excluded_patterns: tuple[str, ...] = (),
+) -> bytes:
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
-        for path in sorted(_iter_payload_files(source_root), key=lambda item: item.relative_to(source_root).as_posix()):
+        files = _iter_payload_files(
+            source_root,
+            excluded_names=excluded_names,
+            excluded_patterns=excluded_patterns,
+        )
+        for path in sorted(files, key=lambda item: item.relative_to(source_root).as_posix()):
             archive.write(path, arcname=path.relative_to(source_root).as_posix())
     return buffer.getvalue()
 
@@ -103,7 +122,14 @@ def build_generated_payloads(root: Path) -> dict[Path, bytes]:
 
     service_root = root / 'services' / 'yuanbao-free-api'
     if service_root.exists():
-        payloads[Path('services') / 'bundles' / 'yuanbao-free-api-main.zip'] = _zip_tree(service_root)
+        service_runtime_names = frozenset({
+            '.env',
+        })
+        payloads[Path('services') / 'bundles' / 'yuanbao-free-api-main.zip'] = _zip_tree(
+            service_root,
+            excluded_names=service_runtime_names,
+            excluded_patterns=('.env.*', 'qrcode*.png', 'storage_state*.json'),
+        )
     return payloads
 
 

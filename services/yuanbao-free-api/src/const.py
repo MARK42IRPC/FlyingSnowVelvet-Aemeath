@@ -1,5 +1,8 @@
 """模型映射常量"""
 
+SERVICE_ID = "fsv-yuanbao-free-api"
+SERVICE_PROTOCOL_VERSION = 1
+
 MODEL_MAPPING = {
     "deepseek-v3": {"model": "deep_seek_v3", "support_functions": None},
     "deepseek-r1": {"model": "deep_seek", "support_functions": None},

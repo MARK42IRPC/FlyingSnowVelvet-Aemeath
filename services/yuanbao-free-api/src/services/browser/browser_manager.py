@@ -31,12 +31,18 @@ def _local_chromium_search_patterns() -> tuple[Path, ...]:
 
 def _candidate_local_chromium_executables() -> list[Path]:
     candidates: list[Path] = []
+    seen: set[str] = set()
     for pattern in _local_chromium_search_patterns():
         try:
             matched = sorted((Path(item) for item in glob(str(pattern))), reverse=True)
         except Exception:
             matched = []
-        candidates.extend(matched)
+        for candidate in matched:
+            key = str(candidate).lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            candidates.append(candidate)
     return candidates
 
 
@@ -979,8 +985,22 @@ class BrowserManager:
         self._last_message = "launching_browser"
         if self.browser is None:
             launch_errors: list[str] = []
-            local_chromium = _find_local_chromium_executable()
-            if local_chromium is not None:
+            chromium_candidates = _candidate_local_chromium_executables()
+            try:
+                default_chromium = Path(str(self.playwright.chromium.executable_path or ""))
+            except Exception:
+                default_chromium = None
+            if default_chromium is not None:
+                existing = {str(path).lower() for path in chromium_candidates}
+                if str(default_chromium).lower() not in existing:
+                    chromium_candidates.append(default_chromium)
+
+            for local_chromium in chromium_candidates:
+                try:
+                    if not local_chromium.exists() or not local_chromium.is_file():
+                        continue
+                except Exception:
+                    continue
                 try:
                     self.browser = await self.playwright.chromium.launch(
                         executable_path=str(local_chromium),
@@ -988,13 +1008,15 @@ class BrowserManager:
                         args=_headless_launch_args(),
                     )
                     logger.info("[Browser] 已使用本地 Chromium 资源启动: %s headless=True", local_chromium)
+                    break
                 except Exception as exc:
                     launch_errors.append(f"local:{local_chromium}(headless=True): {exc}")
+                    logger.warning("[Browser] Chromium 候选启动失败，继续尝试下一个: %s (%s)", local_chromium, exc)
 
             if self.browser is None:
                 searched = " | ".join(str(path) for path in _local_chromium_search_patterns())
                 raise RuntimeError(
-                    "未检测到可用的内置 Chromium 运行时，请先完成离线浏览器安装："
+                    "未检测到可用的 Chromium 运行时，请先完成浏览器安装："
                     " resc/playwright/browsers/ms-playwright/chromium-*/chrome-win64/chrome.exe | 搜索路径: "
                     + searched
                     + " | "
@@ -1018,15 +1040,29 @@ class BrowserManager:
     async def _load_page(self):
         """预加载页面"""
         logger.info("[Browser] 预加载 Yuanbao 页面...")
-        try:
+        last_error: Optional[Exception] = None
+        for attempt in range(1, 4):
             self._last_message = "page_loading"
-            await self.page.goto(settings.page_url, timeout=settings.page_timeout)
-            await self.page.wait_for_timeout(3000)
-            self._last_message = "page_loaded"
-            logger.info("[Browser] 页面加载完成")
-        except Exception as e:
-            logger.error(f"[Browser] 页面加载失败: {e}")
-            raise
+            try:
+                await self.page.goto(
+                    settings.page_url,
+                    timeout=settings.page_timeout,
+                    wait_until="domcontentloaded",
+                )
+                await self.page.wait_for_timeout(3000)
+                self._last_message = "page_loaded"
+                logger.info("[Browser] 页面加载完成 attempt=%s", attempt)
+                return
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                last_error = exc
+                logger.warning("[Browser] 页面加载失败 attempt=%s/3: %s", attempt, exc)
+                if attempt < 3:
+                    await asyncio.sleep(float(attempt))
+
+        logger.error("[Browser] 页面连续加载失败: %s", last_error)
+        raise RuntimeError(f"page_load_failed: {last_error}")
 
     async def login(self, force: bool = False, provider: str = "wechat") -> Dict:
         """执行登录流程，返回二维码信息。"""

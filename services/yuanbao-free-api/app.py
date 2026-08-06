@@ -2,12 +2,14 @@
 
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
 from pydantic import BaseModel
 
+from src.const import SERVICE_ID, SERVICE_PROTOCOL_VERSION
 from src.routers import chat, upload
 from src.services.browser import browser_manager
 from src.services.runtime import request_gate
@@ -20,6 +22,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 _login_task: asyncio.Task | None = None
+_login_task_lock = asyncio.Lock()
 
 
 class LoginRequest(BaseModel):
@@ -28,23 +31,25 @@ class LoginRequest(BaseModel):
 
 async def _ensure_login_task(*, force: bool = False, provider: str = "wechat") -> tuple[asyncio.Task, bool]:
     global _login_task
-    if _login_task is not None and not _login_task.done():
-        if not force:
-            return _login_task, False
-        _login_task.cancel()
-        await asyncio.gather(_login_task, return_exceptions=True)
-        _login_task = None
-        await browser_manager.close()
-    _login_task = asyncio.create_task(browser_manager.login(force=force, provider=provider))
-    return _login_task, True
+    async with _login_task_lock:
+        if _login_task is not None and not _login_task.done():
+            if not force:
+                return _login_task, False
+            _login_task.cancel()
+            await asyncio.gather(_login_task, return_exceptions=True)
+            _login_task = None
+            await browser_manager.close()
+        _login_task = asyncio.create_task(browser_manager.login(force=force, provider=provider))
+        return _login_task, True
 
 
 async def _cancel_login_task() -> None:
     global _login_task
-    if _login_task is not None and not _login_task.done():
-        _login_task.cancel()
-        await asyncio.gather(_login_task, return_exceptions=True)
-    _login_task = None
+    async with _login_task_lock:
+        if _login_task is not None and not _login_task.done():
+            _login_task.cancel()
+            await asyncio.gather(_login_task, return_exceptions=True)
+        _login_task = None
 
 
 @asynccontextmanager
@@ -56,11 +61,7 @@ async def lifespan(_: FastAPI):
 
     logger.info("[Shutdown] 正在关闭浏览器..")
     try:
-        global _login_task
-        if _login_task is not None and not _login_task.done():
-            _login_task.cancel()
-            await asyncio.gather(_login_task, return_exceptions=True)
-        _login_task = None
+        await _cancel_login_task()
         await browser_manager.close()
         logger.info("[Shutdown] 浏览器已关闭")
     except Exception as e:
@@ -80,6 +81,9 @@ async def fsv_status():
     status["qrcode_exists"] = bool(qrcode_path and qrcode_path.exists())
     status["login_task_running"] = bool(_login_task is not None and not _login_task.done())
     status["gate"] = request_gate.snapshot()
+    status["service_id"] = SERVICE_ID
+    status["protocol_version"] = SERVICE_PROTOCOL_VERSION
+    status["instance_id"] = str(os.environ.get("FSV_YUANBAO_INSTANCE_ID") or "")
     return status
 
 
@@ -112,11 +116,12 @@ async def fsv_login(payload: LoginRequest):
 @app.post("/fsv/logout")
 async def fsv_logout():
     global _login_task
-    if _login_task is not None and not _login_task.done():
-        _login_task.cancel()
-        await asyncio.gather(_login_task, return_exceptions=True)
-    _login_task = None
-    await browser_manager.logout()
+    async with _login_task_lock:
+        if _login_task is not None and not _login_task.done():
+            _login_task.cancel()
+            await asyncio.gather(_login_task, return_exceptions=True)
+        _login_task = None
+        await browser_manager.logout()
     status = dict(browser_manager.status())
     status["success"] = True
     status["message"] = "logged_out"
@@ -126,4 +131,6 @@ async def fsv_logout():
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)
+    host = str(os.environ.get("FSV_YUANBAO_HOST") or "127.0.0.1")
+    port = int(os.environ.get("FSV_YUANBAO_PORT") or "8000")
+    uvicorn.run("app:app", host=host, port=port, reload=False)

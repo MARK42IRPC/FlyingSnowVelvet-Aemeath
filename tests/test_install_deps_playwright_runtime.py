@@ -128,6 +128,39 @@ class InstallDepsPlaywrightRuntimeTests(unittest.TestCase):
 
         self.assertTrue(result)
 
+    def test_browser_runtime_completeness_rejects_partial_chromium(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            executable = Path(temp_dir) / "chrome-win64" / "chrome.exe"
+            executable.parent.mkdir(parents=True)
+            executable.write_bytes(b"browser")
+
+            self.assertFalse(install_deps._is_playwright_browser_runtime_complete(executable))
+
+            executable.with_name("chrome.dll").write_bytes(b"dll")
+            executable.with_name("icudtl.dat").write_bytes(b"data")
+            self.assertTrue(install_deps._is_playwright_browser_runtime_complete(executable))
+
+    def test_find_browser_runtime_skips_partial_candidate(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            partial = root / "chromium-1209" / "chrome-win64" / "chrome.exe"
+            complete = root / "chromium-1208" / "chrome-win64" / "chrome.exe"
+            partial.parent.mkdir(parents=True)
+            complete.parent.mkdir(parents=True)
+            partial.write_bytes(b"partial")
+            complete.write_bytes(b"browser")
+            complete.with_name("chrome.dll").write_bytes(b"dll")
+            complete.with_name("icudtl.dat").write_bytes(b"data")
+
+            with patch.object(
+                install_deps,
+                "_candidate_playwright_browser_executables",
+                return_value=[partial, complete],
+            ):
+                result = install_deps._find_playwright_browser_runtime()
+
+        self.assertEqual(result, complete)
+
     def test_ensure_browser_runtime_fails_without_local_archive(self):
         with patch.object(install_deps, "_find_playwright_browser_runtime", return_value=None), patch.object(
             install_deps, "_ensure_browser_runtime_archives", return_value=False

@@ -1500,13 +1500,24 @@ def _candidate_playwright_browser_executables() -> list[Path]:
     return candidates
 
 
+def _is_playwright_browser_runtime_complete(executable: Path) -> bool:
+    try:
+        if not executable.is_file() or executable.stat().st_size <= 0:
+            return False
+        if executable.name.lower() == "chrome.exe":
+            for sibling_name in ("chrome.dll", "icudtl.dat"):
+                sibling = executable.with_name(sibling_name)
+                if not sibling.is_file() or sibling.stat().st_size <= 0:
+                    return False
+        return True
+    except OSError:
+        return False
+
+
 def _find_playwright_browser_runtime() -> Optional[Path]:
     for candidate in _candidate_playwright_browser_executables():
-        try:
-            if candidate.exists():
-                return candidate
-        except Exception:
-            continue
+        if _is_playwright_browser_runtime_complete(candidate):
+            return candidate
     return None
 
 

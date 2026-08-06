@@ -1,10 +1,10 @@
 # DirectX 后端实现方案
 
-更新时间：2026-08-05
+更新时间：2026-08-06
 
 本文档定义 Windows DirectX 桌面后端的技术路线、迁移边界和验收条件。目标不是只实现一个 DX 绘制器，而是让普通桌宠运行进程最终不导入 PyQt5、不加载 Qt DLL，同时保留现有 Qt 后端作为迁移期回退和独立工作台实现。
 
-当前 Qt 边界和后端无关契约以 `doc/Qt收敛方案.md`、`lib/core/backend_router.py`、`lib/core/desktop_backend.py` 及源码测试为准。阶段 B 的 WARP 离屏原型已落地到 `native/dx_backend/`、`lib/core/dx_bridge/` 和 `tests/dx/`；窗口、完整桌面 bundle 和其余命令仍属于未完成能力，不得当作现有能力。
+当前 Qt 边界和后端无关契约以 `doc/Qt收敛方案.md`、`lib/core/backend_router.py`、`lib/core/desktop_backend.py` 及源码测试为准。阶段 B 的 WARP 离屏原型已落地到 `native/dx_backend/`、`lib/core/dx_bridge/` 和 `tests/dx/`；窗口、完整桌面 bundle 以及文字、裁剪和变换命令仍属于未完成能力，不得当作现有能力。
 
 ## 1. 目标与非目标
 
@@ -31,7 +31,7 @@
 核心算法和多数业务载荷已经改用 `Point`、`Rect`、`Color`、`FontSpec`、`MouseInput` 和 `KeyboardInput` 等纯数据类型。主宠绘制链已经使用纯 RGBA 资源和不可变命令批，但以下边界仍阻止普通运行进程移除 Qt：
 
 - `lib/script/main.py` 已只从 `DesktopBackendBundle` 获取应用运行时、调度、截图、主宠、覆盖层和托盘工厂；这些工厂返回的对象仍暴露部分 Qt 生命周期行为，尚未收敛为完整后端无关宿主协议。
-- `DrawScene` 已只保存 `ImageResource/RasterFrame`，并生成不可变 `DrawBatch/SpriteCommand`；`DrawBatch` 契约已扩展文字、线段、矩形、椭圆、裁剪和变换命令，DX/WARP 原型尚未消费这些命令。
+- `DrawScene` 已只保存 `ImageResource/RasterFrame`，并生成不可变 `DrawBatch/SpriteCommand`；`DrawBatch` 契约已扩展文字、线段、矩形、椭圆、裁剪和变换命令，DX/WARP 原型已消费 sprite、线段、矩形和椭圆，文字、裁剪和变换仍待实现。
 - `DrawBackend.render(batch, target, viewport)` 的 target 仍由后端宿主持有；当前唯一实现使用 `QPainter`，DX target 尚未实现。
 - 跨后端 `RenderRequest/RenderItem/PaintCallback` 已删除；两个明确的 Qt 游戏控件使用 `qt_bridge.render_core.QtRenderCore` 本地回调，尚未迁移为声明式命令。
 - `WorldObjectBackend` 使用不透明图片和实例句柄，当前唯一实现仍创建 QWidget 世界对象。
@@ -107,7 +107,7 @@ GIF 帧时长和逻辑尺寸已经进入纯帧数据；循环方式和缩放策�
 
 ### 5.2 声明式绘制命令
 
-跨后端 `PaintCallback` 已删除，Qt 独占控件回调已移入 `qt_bridge`。当前 `SpriteCommand/DrawBatch` 已提供已解析资源帧、透明度、翻转、缩放和 `layer/z/order`；声明式批次还提供以下命令，Qt 已建立行为基准，DX/WARP 仍待映射：
+跨后端 `PaintCallback` 已删除，Qt 独占控件回调已移入 `qt_bridge`。当前 `SpriteCommand/DrawBatch` 已提供已解析资源帧、透明度、翻转、缩放和 `layer/z/order`；Qt 已为下列声明式命令建立行为基准，DX/WARP 的 ABI v2 已映射 sprite、线段、矩形和椭圆：
 
 - `SpriteCommand`：资源、源帧、目标矩形、透明度、翻转和插值模式；
 - `TextCommand`：文本、`FontSpec`、颜色、布局矩形和对齐；
@@ -115,7 +115,7 @@ GIF 帧时长和逻辑尺寸已经进入纯帧数据；循环方式和缩放策�
 - `ClipPush/ClipPop` 与 `TransformPush/TransformPop`；
 - 粒子和特效使用上述基础命令或专用批命令。
 
-每帧由 Python 生成一份连续命令批，一次跨 C ABI 提交。禁止每个 sprite、粒子或文字进行一次 Python 到 DLL 调用。命令结构包含 `abi_version`、结构体大小和帧序号，未知命令必须返回可诊断错误，不能越界解析。
+每帧由 Python 生成一份连续命令批，一次跨 C ABI 提交。禁止每个 sprite、粒子或文字进行一次 Python 到 DLL 调用。ABI v2 使用固定 72 字节的异构命令结构，包含 `abi_version`、结构体大小、命令类型、flags、`layer/z/order`、资源句柄、几何参数、透明度、线宽和 RGBA 颜色；未知命令必须返回可诊断错误，不能越界解析。
 
 跨后端排序继续使用 `layer/z/order`。仅 Qt 独占 UI 可暂时使用 `QtRenderCore` 本地 painter 回调，不能把该路径注册为 DX 场景内容；需要迁移到 DX 的视觉内容必须产出命令。
 
@@ -172,7 +172,7 @@ fsdx_request_exit
 fsdx_get_last_error
 ```
 
-当前离屏原型已实现 `fsdx_get_abi_version`、runtime 创建/销毁、RGBA 资源注册/释放、连续 sprite 批次提交和 RGBA readback。资源和命令在 C ABI 调用期间被 native 层复制或完整消费；Python 只持有整数句柄。WARP 通过 `FSDX_RUNTIME_FLAG_WARP` 显式选择，默认硬件路径尚未接入桌面路由。readback 返回紧密排列的预乘 RGBA8888。
+当前离屏原型已实现 `fsdx_get_abi_version`、runtime 创建/销毁、RGBA 资源注册/释放、ABI v2 异构绘制批次提交和 RGBA readback。批次支持 sprite、线段、矩形和椭圆，并在原生层按 `layer/z/order` 稳定排序。资源和命令在 C ABI 调用期间被 native 层复制或完整消费；Python 只持有整数句柄。WARP 通过 `FSDX_RUNTIME_FLAG_WARP` 显式选择，默认硬件路径尚未接入桌面路由。readback 返回紧密排列的预乘 RGBA8888。
 
 原生层不得从窗口过程、渲染线程或 worker 任意回调 Python。窗口输入、设备状态和托盘命令写入有界事件队列，Python 在事件泵边界批量 `poll`。队列必须合并可丢弃的高频移动/重绘事件，但不得丢弃按键、按钮、关闭、设备丢失和资源错误事件。
 
@@ -209,14 +209,14 @@ fsdx_get_last_error
 - 已从跨后端契约删除 `PaintCallback` 并保留 Qt 本地适配；文字、形状、裁剪和变换命令已补齐，粒子和特效仍需转换为这些基础命令或专用批命令。
 - 已新增最小 `LayerWindowHost`、`WindowHost v1` 和 Qt 窗口适配器，移除 `LayerManager` 对 QWidget/Win32 方法的直接调用；主宠接入、DX 原生窗口生命周期和场景提交仍待迁移。
 - 已将应用运行时、调度器、截图服务以及主宠、覆盖层、托盘工厂和当前桌面能力收进 `DesktopBackendBundle`；主宠、覆盖层和托盘对象行为已收敛为 `PetWindowHost`、`OverlayHost` 和 `TrayHost`，Qt signal、QWidget 销毁及托盘单例释放不再泄漏到 `ApplicationState`。完整窗口创建、几何、输入和重绘契约仍待迁移。
-- 已完成 `ApplicationUiHost` 和启动组合入口拆分：`ApplicationState` 不再导入 Qt/UI 模块或注册后端，Qt 配置器由惰性 bootstrap 安装；当前进入 `WindowHost v1`，随后扩展文字/形状/裁剪命令。
+- 已完成 `ApplicationUiHost` 和启动组合入口拆分：`ApplicationState` 不再导入 Qt/UI 模块或注册后端，Qt 配置器由惰性 bootstrap 安装；`WindowHost v1` 和基础形状命令已落地，文字、裁剪和变换仍待扩展。
 
 退出条件：核心和跨后端业务数据中不存在 QImage/QPixmap/QPainter/QWidget；阻断 PyQt 导入的子进程测试可实例化核心场景、层级和应用编排。
 
 ### 阶段 B：DX 离屏绘制原型
 
-- 已建立 CMake/MSVC 工程、版本化 C ABI 和 `ctypes` bridge。
-- 当前已在 WARP 上验证 sprite、透明度、翻转、缩放、排序、资源 revision 缓存和 RGBA readback；声明式文字/形状命令、裁剪、硬件路径和 PNG 诊断仍待补齐。
+- 已建立 CMake/MSVC 工程、ABI v2 和 `ctypes` bridge；统一的 72 字节命令可在单次调用中提交异构绘制批次。
+- 当前已在 WARP 上验证 sprite、线段、矩形、椭圆、透明度、翻转、缩放、异构排序、资源 revision 缓存、未知命令错误和预乘 RGBA readback；文字、裁剪、变换、硬件路径和 PNG 诊断仍待补齐。
 - 原型只创建离屏 target，不创建用户可见窗口，也未注册为 `directx` 后端。
 
 退出条件：像素基线、透明边缘、资源释放、错误码和 ABI 不匹配测试通过。此阶段 `directx.available` 仍为 `False`。

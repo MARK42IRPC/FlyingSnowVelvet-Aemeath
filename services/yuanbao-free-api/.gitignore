@@ -38,6 +38,7 @@ Thumbs.db
 
 # QR Code
 qrcode.png
+storage_state*.json
 
 # Logs
 *.log

@@ -74,6 +74,12 @@ class ReleaseCommonTests(unittest.TestCase):
             service.mkdir(parents=True)
             (service / 'app.py').write_text("VERSION = 'current'\n", encoding='utf-8')
             (service / 'requirements.txt').write_text('fastapi\n', encoding='utf-8')
+            (service / 'storage_state.json').write_text('{"cookies": []}\n', encoding='utf-8')
+            (service / 'storage_state_backup.json').write_text('{"cookies": []}\n', encoding='utf-8')
+            (service / '.env').write_text('API_KEYS=secret\n', encoding='utf-8')
+            (service / '.env.local').write_text('API_KEYS=local-secret\n', encoding='utf-8')
+            (service / 'qrcode.png').write_bytes(b'sensitive-qr')
+            (service / 'qrcode_dialog_tmp.png').write_bytes(b'sensitive-temp-qr')
             (service / '__pycache__').mkdir()
             (service / '__pycache__' / 'app.pyc').write_bytes(b'stale')
 
@@ -85,6 +91,12 @@ class ReleaseCommonTests(unittest.TestCase):
                     ["VERSION = 'current'"],
                 )
                 self.assertNotIn('__pycache__/app.pyc', archive.namelist())
+                self.assertNotIn('storage_state.json', archive.namelist())
+                self.assertNotIn('storage_state_backup.json', archive.namelist())
+                self.assertNotIn('.env', archive.namelist())
+                self.assertNotIn('.env.local', archive.namelist())
+                self.assertNotIn('qrcode.png', archive.namelist())
+                self.assertNotIn('qrcode_dialog_tmp.png', archive.namelist())
 
 
 if __name__ == '__main__':

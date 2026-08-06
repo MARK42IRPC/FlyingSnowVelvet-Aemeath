@@ -15,12 +15,18 @@
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <new>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
 using Microsoft::WRL::ComPtr;
+
+static_assert(
+    sizeof(fsdx_draw_command) == FSDX_DRAW_COMMAND_V2_SIZE,
+    "fsdx_draw_command ABI size changed"
+);
 
 namespace {
 
@@ -64,6 +70,7 @@ struct Runtime {
     ComPtr<ID2D1Device> d2d_device;
     ComPtr<ID2D1DeviceContext> d2d_context;
     ComPtr<ID2D1Bitmap1> target_bitmap;
+    ComPtr<ID2D1SolidColorBrush> solid_brush;
     std::unordered_map<fsdx_handle, Resource> resources;
     std::unordered_set<fsdx_handle> released_resources;
     fsdx_handle next_resource = 1;
@@ -88,6 +95,56 @@ bool checked_rgba_size(uint32_t width, uint32_t height, uint64_t* size_out) {
     }
     *size_out = pixels * bytes_per_pixel;
     return true;
+}
+
+bool finite_geometry(const fsdx_draw_command* command) {
+    return std::isfinite(command->x0) && std::isfinite(command->y0) &&
+        std::isfinite(command->x1) && std::isfinite(command->y1);
+}
+
+D2D1_COLOR_F unpack_color(uint32_t rgba, float command_alpha) {
+    constexpr float channel_scale = 1.0f / 255.0f;
+    const float red = static_cast<float>(rgba & 0xffu) * channel_scale;
+    const float green = static_cast<float>((rgba >> 8u) & 0xffu) * channel_scale;
+    const float blue = static_cast<float>((rgba >> 16u) & 0xffu) * channel_scale;
+    const float alpha = static_cast<float>((rgba >> 24u) & 0xffu) * channel_scale * command_alpha;
+    return D2D1::ColorF(red, green, blue, alpha);
+}
+
+fsdx_status validate_draw_command(const fsdx_draw_command* command) {
+    if (command->abi_version != FSDX_ABI_VERSION || command->struct_size < sizeof(fsdx_draw_command)) {
+        return fail(FSDX_STATUS_ABI_MISMATCH, "draw command ABI version or size mismatch");
+    }
+    if (!finite_geometry(command) || !std::isfinite(command->alpha) ||
+        command->alpha < 0.0f || command->alpha > 1.0f ||
+        !std::isfinite(command->stroke_width) || command->stroke_width < 0.0f) {
+        return fail(FSDX_STATUS_INVALID_ARGUMENT, "draw command contains invalid numeric values");
+    }
+
+    switch (command->type) {
+    case FSDX_COMMAND_SPRITE:
+        if (command->resource == 0 || command->x1 <= 0.0f || command->y1 <= 0.0f ||
+            (command->flags & ~FSDX_DRAW_FLAG_FLIPPED) != 0) {
+            return fail(FSDX_STATUS_INVALID_ARGUMENT, "invalid sprite draw command");
+        }
+        return FSDX_STATUS_OK;
+    case FSDX_COMMAND_LINE:
+        if (command->resource != 0 || command->flags != 0) {
+            return fail(FSDX_STATUS_INVALID_ARGUMENT, "invalid line draw command");
+        }
+        return FSDX_STATUS_OK;
+    case FSDX_COMMAND_RECT:
+    case FSDX_COMMAND_ELLIPSE: {
+        constexpr uint32_t shape_flags = FSDX_DRAW_FLAG_HAS_FILL | FSDX_DRAW_FLAG_HAS_STROKE;
+        if (command->resource != 0 || (command->flags & ~shape_flags) != 0 ||
+            ((command->flags & FSDX_DRAW_FLAG_HAS_STROKE) != 0 && command->stroke_width <= 0.0f)) {
+            return fail(FSDX_STATUS_INVALID_ARGUMENT, "invalid shape draw command");
+        }
+        return FSDX_STATUS_OK;
+    }
+    default:
+        return fail(FSDX_STATUS_UNSUPPORTED, "unsupported draw command type");
+    }
 }
 
 fsdx_status create_d2d_resources(const std::shared_ptr<Runtime>& runtime, uint32_t flags) {
@@ -140,6 +197,13 @@ fsdx_status create_d2d_resources(const std::shared_ptr<Runtime>& runtime, uint32
     );
     if (FAILED(hr)) {
         return fail_hr(FSDX_STATUS_DEVICE_INIT_FAILED, "ID2D1Device::CreateDeviceContext", hr);
+    }
+    hr = runtime->d2d_context->CreateSolidColorBrush(
+        D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f),
+        &runtime->solid_brush
+    );
+    if (FAILED(hr)) {
+        return fail_hr(FSDX_STATUS_DEVICE_INIT_FAILED, "CreateSolidColorBrush", hr);
     }
 
     D3D11_TEXTURE2D_DESC texture_desc{};
@@ -248,7 +312,7 @@ FSDX_API fsdx_status fsdx_create_runtime(const fsdx_runtime_desc* desc, fsdx_han
         return fail(FSDX_STATUS_ABI_MISMATCH, "runtime descriptor ABI version mismatch");
     }
     if (desc->struct_size < sizeof(fsdx_runtime_desc)) {
-        return fail(FSDX_STATUS_ABI_MISMATCH, "runtime descriptor is smaller than ABI v1");
+        return fail(FSDX_STATUS_ABI_MISMATCH, "runtime descriptor is smaller than the current ABI");
     }
     if (desc->width == 0 || desc->height == 0 || desc->width > 16384 || desc->height > 16384) {
         return fail(FSDX_STATUS_INVALID_ARGUMENT, "runtime dimensions are outside the supported range");
@@ -331,7 +395,7 @@ FSDX_API fsdx_status fsdx_release_resource(fsdx_handle runtime_handle, fsdx_hand
 
 FSDX_API fsdx_status fsdx_submit_frame(
     fsdx_handle runtime_handle,
-    const fsdx_sprite_command* commands,
+    const fsdx_draw_command* commands,
     uint32_t command_count
 ) {
     clear_error();
@@ -342,50 +406,123 @@ FSDX_API fsdx_status fsdx_submit_frame(
     if (!runtime) {
         return fail(FSDX_STATUS_INVALID_HANDLE, "runtime handle is invalid");
     }
-    std::vector<const fsdx_sprite_command*> ordered;
-    ordered.reserve(command_count);
-    for (uint32_t index = 0; index < command_count; ++index) {
-        const auto* command = &commands[index];
-        if (!valid_header(command->abi_version, command->struct_size, sizeof(fsdx_sprite_command)) ||
-            command->resource == 0 || command->width <= 0 || command->height <= 0 ||
-            !std::isfinite(command->alpha) || command->alpha < 0.0f || command->alpha > 1.0f) {
-            return fail(FSDX_STATUS_INVALID_ARGUMENT, "invalid sprite command");
+    std::vector<const fsdx_draw_command*> ordered;
+    try {
+        ordered.reserve(command_count);
+        for (uint32_t index = 0; index < command_count; ++index) {
+            const auto* command = &commands[index];
+            const fsdx_status status = validate_draw_command(command);
+            if (status != FSDX_STATUS_OK) {
+                return status;
+            }
+            ordered.push_back(command);
         }
-        ordered.push_back(command);
+        std::stable_sort(ordered.begin(), ordered.end(), [](const auto* left, const auto* right) {
+            if (left->layer != right->layer) return left->layer < right->layer;
+            if (left->z != right->z) return left->z < right->z;
+            return left->order < right->order;
+        });
     }
-    std::stable_sort(ordered.begin(), ordered.end(), [](const auto* left, const auto* right) {
-        if (left->layer != right->layer) return left->layer < right->layer;
-        if (left->z != right->z) return left->z < right->z;
-        return left->order < right->order;
-    });
+    catch (const std::bad_alloc&) {
+        return fail(FSDX_STATUS_ALLOCATION_FAILED, "draw command ordering allocation failed");
+    }
+    catch (...) {
+        return fail(FSDX_STATUS_RENDER_FAILED, "unexpected draw command ordering failure");
+    }
 
     std::lock_guard<std::mutex> lock(runtime->mutex);
+    for (const auto* command : ordered) {
+        if (command->type == FSDX_COMMAND_SPRITE &&
+            runtime->resources.find(command->resource) == runtime->resources.end()) {
+            return fail(FSDX_STATUS_INVALID_HANDLE, "sprite resource handle is invalid");
+        }
+    }
     runtime->d2d_context->SetTarget(runtime->target_bitmap.Get());
     runtime->d2d_context->BeginDraw();
     runtime->d2d_context->SetTransform(D2D1::Matrix3x2F::Identity());
     runtime->d2d_context->Clear(D2D1::ColorF(0, 0));
     for (const auto* command : ordered) {
-        auto resource_it = runtime->resources.find(command->resource);
-        if (resource_it == runtime->resources.end()) {
-            runtime->d2d_context->EndDraw();
-            return fail(FSDX_STATUS_INVALID_HANDLE, "sprite resource handle is invalid");
+        switch (command->type) {
+        case FSDX_COMMAND_SPRITE: {
+            const auto resource_it = runtime->resources.find(command->resource);
+            const auto destination = D2D1::RectF(
+                command->x0,
+                command->y0,
+                command->x0 + command->x1,
+                command->y0 + command->y1
+            );
+            if ((command->flags & FSDX_DRAW_FLAG_FLIPPED) != 0) {
+                const auto center = D2D1::Point2F(
+                    command->x0 + command->x1 / 2.0f,
+                    command->y0 + command->y1 / 2.0f
+                );
+                runtime->d2d_context->SetTransform(D2D1::Matrix3x2F::Scale(-1.0f, 1.0f, center));
+            }
+            runtime->d2d_context->DrawBitmap(
+                resource_it->second.bitmap.Get(),
+                destination,
+                command->alpha,
+                D2D1_INTERPOLATION_MODE_LINEAR
+            );
+            runtime->d2d_context->SetTransform(D2D1::Matrix3x2F::Identity());
+            break;
         }
-        const float x = static_cast<float>(command->x);
-        const float y = static_cast<float>(command->y);
-        const float width = static_cast<float>(command->width);
-        const float height = static_cast<float>(command->height);
-        const auto destination = D2D1::RectF(x, y, x + width, y + height);
-        if ((command->flags & FSDX_SPRITE_FLAG_FLIPPED) != 0) {
-            const auto center = D2D1::Point2F(x + width / 2.0f, y + height / 2.0f);
-            runtime->d2d_context->SetTransform(D2D1::Matrix3x2F::Scale(-1.0f, 1.0f, center));
+        case FSDX_COMMAND_LINE:
+            runtime->solid_brush->SetColor(unpack_color(command->stroke_rgba, command->alpha));
+            runtime->d2d_context->DrawLine(
+                D2D1::Point2F(command->x0, command->y0),
+                D2D1::Point2F(command->x1, command->y1),
+                runtime->solid_brush.Get(),
+                command->stroke_width > 0.0f ? command->stroke_width : 1.0f
+            );
+            break;
+        case FSDX_COMMAND_RECT:
+        case FSDX_COMMAND_ELLIPSE: {
+            if (command->x1 <= 0.0f || command->y1 <= 0.0f) {
+                break;
+            }
+            const auto rect = D2D1::RectF(
+                command->x0,
+                command->y0,
+                command->x0 + command->x1,
+                command->y0 + command->y1
+            );
+            const auto ellipse = D2D1::Ellipse(
+                D2D1::Point2F(command->x0 + command->x1 / 2.0f, command->y0 + command->y1 / 2.0f),
+                command->x1 / 2.0f,
+                command->y1 / 2.0f
+            );
+            if ((command->flags & FSDX_DRAW_FLAG_HAS_FILL) != 0) {
+                runtime->solid_brush->SetColor(unpack_color(command->fill_rgba, command->alpha));
+                if (command->type == FSDX_COMMAND_ELLIPSE) {
+                    runtime->d2d_context->FillEllipse(ellipse, runtime->solid_brush.Get());
+                }
+                else {
+                    runtime->d2d_context->FillRectangle(rect, runtime->solid_brush.Get());
+                }
+            }
+            if ((command->flags & FSDX_DRAW_FLAG_HAS_STROKE) != 0) {
+                runtime->solid_brush->SetColor(unpack_color(command->stroke_rgba, command->alpha));
+                if (command->type == FSDX_COMMAND_ELLIPSE) {
+                    runtime->d2d_context->DrawEllipse(
+                        ellipse,
+                        runtime->solid_brush.Get(),
+                        command->stroke_width
+                    );
+                }
+                else {
+                    runtime->d2d_context->DrawRectangle(
+                        rect,
+                        runtime->solid_brush.Get(),
+                        command->stroke_width
+                    );
+                }
+            }
+            break;
         }
-        runtime->d2d_context->DrawBitmap(
-            resource_it->second.bitmap.Get(),
-            destination,
-            command->alpha,
-            D2D1_INTERPOLATION_MODE_LINEAR
-        );
-        runtime->d2d_context->SetTransform(D2D1::Matrix3x2F::Identity());
+        default:
+            break;
+        }
     }
     const HRESULT hr = runtime->d2d_context->EndDraw();
     if (FAILED(hr)) {

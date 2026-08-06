@@ -17,9 +17,12 @@
 extern "C" {
 #endif
 
-#define FSDX_ABI_VERSION 1u
+#define FSDX_ABI_VERSION 2u
 #define FSDX_RUNTIME_FLAG_WARP 0x00000001u
-#define FSDX_SPRITE_FLAG_FLIPPED 0x00000001u
+#define FSDX_DRAW_FLAG_FLIPPED 0x00000001u
+#define FSDX_DRAW_FLAG_HAS_FILL 0x00000002u
+#define FSDX_DRAW_FLAG_HAS_STROKE 0x00000004u
+#define FSDX_DRAW_COMMAND_V2_SIZE 72u
 
 typedef uint64_t fsdx_handle;
 
@@ -34,6 +37,13 @@ typedef enum fsdx_status {
     FSDX_STATUS_BUFFER_TOO_SMALL = 7,
     FSDX_STATUS_UNSUPPORTED = 8,
 } fsdx_status;
+
+typedef enum fsdx_command_type {
+    FSDX_COMMAND_SPRITE = 1,
+    FSDX_COMMAND_LINE = 2,
+    FSDX_COMMAND_RECT = 3,
+    FSDX_COMMAND_ELLIPSE = 4,
+} fsdx_command_type;
 
 typedef struct fsdx_runtime_desc {
     uint32_t abi_version;
@@ -52,20 +62,25 @@ typedef struct fsdx_resource_desc {
     uint64_t rgba_size;
 } fsdx_resource_desc;
 
-typedef struct fsdx_sprite_command {
+typedef struct fsdx_draw_command {
     uint32_t abi_version;
     uint32_t struct_size;
-    fsdx_handle resource;
-    int32_t x;
-    int32_t y;
-    int32_t width;
-    int32_t height;
-    float alpha;
+    uint32_t type;
+    uint32_t flags;
     int32_t layer;
     int32_t z;
     int32_t order;
-    uint32_t flags;
-} fsdx_sprite_command;
+    int32_t reserved;
+    fsdx_handle resource;
+    float x0;
+    float y0;
+    float x1;
+    float y1;
+    float alpha;
+    float stroke_width;
+    uint32_t fill_rgba;
+    uint32_t stroke_rgba;
+} fsdx_draw_command;
 
 FSDX_API uint32_t fsdx_get_abi_version(void);
 
@@ -89,7 +104,7 @@ FSDX_API fsdx_status fsdx_release_resource(
 
 FSDX_API fsdx_status fsdx_submit_frame(
     fsdx_handle runtime,
-    const fsdx_sprite_command* commands,
+    const fsdx_draw_command* commands,
     uint32_t command_count
 );
 

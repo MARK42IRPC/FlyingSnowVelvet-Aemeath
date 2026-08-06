@@ -10,6 +10,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 import zipfile
 from concurrent.futures import Future
 from pathlib import Path
@@ -26,9 +27,12 @@ from lib.script.local_hosted_service import LocalHostedServiceBase
 
 logger = get_logger(__name__)
 
-_STARTUP_WAIT_SECS = 165.0
+_STARTUP_WAIT_SECS = 30.0
 _POLL_INTERVAL_SECS = 0.5
 _LOGIN_MONITOR_SECS = 300.0
+_SERVICE_START_ATTEMPTS = 2
+_SERVICE_ID = 'fsv-yuanbao-free-api'
+_SERVICE_PROTOCOL_VERSION = 1
 _SERVICE_REQUIRED_FILES = ('app.py', 'requirements.txt')
 _BUNDLED_ARCHIVE_NAME = 'yuanbao-free-api-main.zip'
 _STATUS_ENDPOINT = '/fsv/status'
@@ -37,7 +41,6 @@ _LOGOUT_ENDPOINT = '/fsv/logout'
 _REQUIRED_MODULES = (
     'fastapi',
     'uvicorn',
-    'openai',
     'httpx',
     'pydantic_settings',
     'sse_starlette',
@@ -157,7 +160,7 @@ def _build_page_url(agent_id: str, login_url: str) -> str:
     return f'https://yuanbao.tencent.com/chat/{agent_id}'
 
 
-def _build_service_env() -> Dict[str, str]:
+def _build_service_env(instance_id: str = '') -> Dict[str, str]:
     options = getattr(oc, 'YUANBAO_FREE_API', {}) or {}
     api_key = str(oc.get_yuanbao_local_api_key() if hasattr(oc, 'get_yuanbao_local_api_key') else 'sk-yuanbao-local').strip()
     agent_id = str(options.get('agent_id', '') or 'naQivTmsDa').strip() or 'naQivTmsDa'
@@ -170,6 +173,7 @@ def _build_service_env() -> Dict[str, str]:
     env['AGENT_ID'] = agent_id
     env['PAGE_URL'] = page_url
     env['QRCODE_PATH'] = str(_qrcode_path())
+    env['FSV_YUANBAO_INSTANCE_ID'] = str(instance_id or '')
     return env
 
 
@@ -270,7 +274,13 @@ def _http_json(
         return None
 
 
-def _probe_status_endpoint(host: str, port: int, timeout: float = 3.0) -> Tuple[str, Optional[Dict[str, object]]]:
+def _probe_status_endpoint(
+    host: str,
+    port: int,
+    timeout: float = 3.0,
+    *,
+    expected_instance_id: str = '',
+) -> Tuple[str, Optional[Dict[str, object]]]:
     if not _can_connect(host, port, timeout=min(timeout, 1.0)):
         return 'offline', None
 
@@ -280,15 +290,25 @@ def _probe_status_endpoint(host: str, port: int, timeout: float = 3.0) -> Tuple[
             charset = response.headers.get_content_charset() or 'utf-8'
             payload = response.read().decode(charset, errors='ignore').strip()
             if not payload:
-                return 'ok', {}
+                return 'foreign', None
             data = json.loads(payload)
             if isinstance(data, dict):
+                if str(data.get('service_id') or '') != _SERVICE_ID:
+                    return 'foreign', None
+                try:
+                    protocol_version = int(data.get('protocol_version') or 0)
+                except (TypeError, ValueError):
+                    protocol_version = 0
+                if protocol_version != _SERVICE_PROTOCOL_VERSION:
+                    return 'foreign', None
+                if expected_instance_id and str(data.get('instance_id') or '') != expected_instance_id:
+                    return 'foreign', None
                 return 'ok', data
             return 'invalid', {'value': data}
     except HTTPError as exc:
         logger.debug('[YuanbaoFreeApiService] HTTP GET %s failed: %s', _status_url(host, port), exc)
         if exc.code == 404:
-            return 'missing', None
+            return 'foreign', None
         return 'http_error', None
     except (OSError, URLError, ValueError) as exc:
         logger.debug('[YuanbaoFreeApiService] HTTP GET %s failed: %s', _status_url(host, port), exc)
@@ -383,65 +403,17 @@ def _missing_runtime_modules() -> list[str]:
     return missing
 
 
-def _find_listener_pids(host: str, port: int) -> list[int]:
-    target_suffixes = {f'{host}:{port}', f'127.0.0.1:{port}', f'localhost:{port}', f'0.0.0.0:{port}'}
-    try:
-        result = subprocess.run(
-            ['netstat', '-ano', '-p', 'tcp'],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            text=True,
-            encoding='utf-8',
-            errors='ignore',
-            timeout=8,
-            check=False,
-            **_hidden_console_kwargs(),
-        )
-    except Exception as exc:
-        logger.debug('[YuanbaoFreeApiService] 查询监听端口失败: %s', exc)
-        return []
-
-    pids: list[int] = []
-    for raw_line in result.stdout.splitlines():
-        line = raw_line.strip()
-        if 'LISTENING' not in line.upper():
-            continue
-        parts = line.split()
-        if len(parts) < 5:
-            continue
-        local_addr = parts[1].strip().lower()
-        if not any(local_addr.endswith(suffix.lower()) for suffix in target_suffixes):
-            continue
-        try:
-            pid = int(parts[-1])
-        except ValueError:
-            continue
-        if pid > 0 and pid not in pids:
-            pids.append(pid)
-    return pids
-
-
-def _kill_process_by_pid(pid: int) -> bool:
-    try:
-        result = subprocess.run(
-            ['taskkill', '/PID', str(pid), '/T', '/F'],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=8,
-            check=False,
-            **_hidden_console_kwargs(),
-        )
-        return result.returncode == 0
-    except Exception as exc:
-        logger.debug('[YuanbaoFreeApiService] 结束进程失败 pid=%s err=%s', pid, exc)
-        return False
-
-
 class YuanbaoFreeApiService(LocalHostedServiceBase):
     def __init__(self):
         super().__init__('YuanbaoFreeApiService', 'yuanbao_prestart_ready')
+        self._lifecycle_lock = threading.RLock()
         self._login_monitor_lock = threading.RLock()
         self._login_monitor_thread: Optional[Future] = None
+        self._login_monitor_cancel: Optional[threading.Event] = None
+        self._login_monitor_generation = 0
+        self._login_monitor_target: Optional[Tuple[str, int]] = None
+        self._process_target: Optional[Tuple[str, int]] = None
+        self._process_instance_id = ''
         self._active_login_provider = 'wechat'
         self._login_dialog_initializer: Optional[Callable[[], object]] = None
         self._subscribe_app_pre_start()
@@ -452,6 +424,47 @@ class YuanbaoFreeApiService(LocalHostedServiceBase):
     ) -> None:
         """Inject the desktop UI initializer at the application boundary."""
         self._login_dialog_initializer = initializer
+
+    def _managed_process_snapshot(
+        self,
+    ) -> tuple[Optional[subprocess.Popen], bool, Optional[Tuple[str, int]], str]:
+        with self._proc_lock:
+            return (
+                self._process,
+                self._started_by_app,
+                self._process_target,
+                self._process_instance_id,
+            )
+
+    def _set_managed_process(
+        self,
+        proc: subprocess.Popen,
+        target: Tuple[str, int],
+        instance_id: str,
+    ) -> None:
+        with self._proc_lock:
+            self._set_started_process(proc)
+            self._process_target = target
+            self._process_instance_id = instance_id
+
+    def _take_managed_process(
+        self,
+    ) -> tuple[Optional[subprocess.Popen], bool, Optional[Tuple[str, int]], str]:
+        with self._proc_lock:
+            proc, started = self._take_tracked_process()
+            target = self._process_target
+            instance_id = self._process_instance_id
+            self._process_target = None
+            self._process_instance_id = ''
+            return proc, started, target, instance_id
+
+    def _clear_managed_process_if(self, proc: subprocess.Popen) -> None:
+        with self._proc_lock:
+            if self._process is not proc:
+                return
+            self._clear_tracked_process_if(proc)
+            self._process_target = None
+            self._process_instance_id = ''
 
     def _should_prestart(self) -> bool:
         return _should_manage_local_service()
@@ -495,27 +508,63 @@ class YuanbaoFreeApiService(LocalHostedServiceBase):
     def _publish_login_dialog_hide(self) -> None:
         self._ec.publish(Event(EventType.YUANBAO_LOGIN_QR_HIDE, {}))
 
+    def _cancel_login_monitor(self) -> None:
+        with self._login_monitor_lock:
+            self._login_monitor_generation += 1
+            cancel_event = self._login_monitor_cancel
+            future = self._login_monitor_thread
+            self._login_monitor_cancel = None
+            self._login_monitor_thread = None
+            self._login_monitor_target = None
+        if cancel_event is not None:
+            cancel_event.set()
+        if future is not None:
+            future.cancel()
+
     def _start_login_monitor(self, host: str, port: int) -> None:
+        target = (host, int(port))
         with self._login_monitor_lock:
             future = self._login_monitor_thread
-            if future is not None and not future.done():
+            if (
+                future is not None
+                and not future.done()
+                and self._login_monitor_target == target
+            ):
                 return
-            future = get_compute_hub().submit_latest(
-                "yuanbao_login_monitor",
+            previous_cancel = self._login_monitor_cancel
+            if previous_cancel is not None:
+                previous_cancel.set()
+            if future is not None:
+                future.cancel()
+
+            self._login_monitor_generation += 1
+            generation = self._login_monitor_generation
+            cancel_event = threading.Event()
+            self._login_monitor_cancel = cancel_event
+            self._login_monitor_target = target
+            future = get_compute_hub().submit_io(
                 self._run_login_monitor,
                 host,
                 port,
-                executor="io",
+                cancel_event,
+                generation,
             )
-            if future is not None:
-                self._login_monitor_thread = future
+            self._login_monitor_thread = future
 
-    def _run_login_monitor(self, host: str, port: int) -> None:
+    def _run_login_monitor(
+        self,
+        host: str,
+        port: int,
+        cancel_event: threading.Event,
+        generation: int,
+    ) -> None:
         deadline = time.monotonic() + _LOGIN_MONITOR_SECS
         last_status: Optional[Dict[str, object]] = None
         try:
-            while time.monotonic() < deadline:
+            while not cancel_event.is_set() and time.monotonic() < deadline:
                 status = _fetch_service_status(host, port, timeout=2.0)
+                if cancel_event.is_set():
+                    break
                 if status is not None:
                     last_status = status
                     self._publish_login_dialog_status(status)
@@ -523,11 +572,15 @@ class YuanbaoFreeApiService(LocalHostedServiceBase):
                         self._publish_status_hint(status)
                         self._publish_login_dialog_hide()
                         return
-                time.sleep(_POLL_INTERVAL_SECS)
+                if cancel_event.wait(_POLL_INTERVAL_SECS):
+                    break
         finally:
             with self._login_monitor_lock:
-                self._login_monitor_thread = None
-        if last_status is not None:
+                if generation == self._login_monitor_generation:
+                    self._login_monitor_thread = None
+                    self._login_monitor_cancel = None
+                    self._login_monitor_target = None
+        if not cancel_event.is_set() and last_status is not None:
             self._publish_login_dialog_status(last_status)
 
     def get_service_status(self) -> Optional[Dict[str, object]]:
@@ -580,31 +633,25 @@ class YuanbaoFreeApiService(LocalHostedServiceBase):
         return _status_bool(status, 'logged_in')
 
     def stop_login_flow(self) -> Dict[str, object]:
+        self._cancel_login_monitor()
         self._publish_login_dialog_hide()
-        target = _parse_local_target()
         result: Dict[str, object] = {'success': True, 'message': 'stopped'}
-        if target is not None:
-            host, port = target
-            logout_result = _request_service_logout(host, port, timeout=8.0)
-            if isinstance(logout_result, dict):
-                result.update(logout_result)
-        with self._login_monitor_lock:
-            self._login_monitor_thread = None
-        proc, started = self._take_tracked_process()
-        if started and proc is not None:
-            self._terminate_process_tree(proc)
-        if target is not None:
-            host, port = target
-            for pid in _find_listener_pids(host, port):
-                if proc is not None and pid == proc.pid:
-                    continue
-                if pid == os.getpid():
-                    continue
-                _kill_process_by_pid(pid)
+        with self._lifecycle_lock:
+            target = _parse_local_target()
+            proc, started, process_target, _instance_id = self._take_managed_process()
+            logout_target = target or process_target
+            if logout_target is not None:
+                host, port = logout_target
+                logout_result = _request_service_logout(host, port, timeout=8.0)
+                if isinstance(logout_result, dict):
+                    result.update(logout_result)
+            if started and proc is not None:
+                self._terminate_process_tree(proc)
         return result
 
     def begin_login_flow(self, provider: str = 'wechat') -> Dict[str, object]:
         self._active_login_provider = _normalize_login_provider(provider)
+        self._cancel_login_monitor()
         _remove_qrcode_if_exists()
         self._publish_login_dialog_show({
             'last_message': 'starting_login',
@@ -715,32 +762,84 @@ class YuanbaoFreeApiService(LocalHostedServiceBase):
             'provider': self._active_login_provider,
         }
 
+    def _update_runtime_target(self, host: str, port: int) -> bool:
+        try:
+            oc.YUANBAO_FREE_API_LOCAL['base_url'] = _build_local_base_url_for_port(port)
+            return True
+        except Exception:
+            logger.error('[YuanbaoFreeApiService] 更新运行时元宝 base_url 失败: %s:%s', host, port)
+            return False
+
     def _ensure_status_endpoint(self, host: str, port: int) -> Tuple[Optional[Dict[str, object]], str, int]:
+        with self._lifecycle_lock:
+            return self._ensure_status_endpoint_locked(host, port)
+
+    def _ensure_status_endpoint_locked(
+        self,
+        host: str,
+        port: int,
+    ) -> Tuple[Optional[Dict[str, object]], str, int]:
         state, status = _probe_status_endpoint(host, port)
         if state == 'ok' and status is not None:
             logger.info('[YuanbaoFreeApiService] 检测到元宝服务已在运行: %s:%s status=%s', host, port, status)
             return status, host, port
+
+        proc, started, process_target, instance_id = self._managed_process_snapshot()
+        if started and proc is not None and proc.poll() is None and process_target is not None:
+            managed_host, managed_port = process_target
+            managed_status = self._wait_for_status_endpoint(
+                managed_host,
+                managed_port,
+                expected_instance_id=instance_id,
+            )
+            if managed_status is not None:
+                if process_target != (host, port):
+                    self._update_runtime_target(managed_host, managed_port)
+                    logger.warning(
+                        '[YuanbaoFreeApiService] 运行时地址已恢复到受管服务端口: %s:%s',
+                        managed_host,
+                        managed_port,
+                    )
+                return managed_status, managed_host, managed_port
+
         if state != 'offline':
             logger.warning(
-                '[YuanbaoFreeApiService] %s:%s 已被其他服务占用或响应异常（state=%s），准备切换元宝本地中转端口',
+                '[YuanbaoFreeApiService] %s:%s 不是可复用的元宝服务（state=%s），改用独立随机端口',
                 host,
                 port,
                 state,
             )
-        if state == 'missing':
-            if self._terminate_conflicting_listener(host, port):
-                time.sleep(1.0)
-            else:
-                switched = self._switch_to_random_local_port(host, port)
-                if switched is not None:
-                    host, port = switched
-        elif state != 'offline':
             switched = self._switch_to_random_local_port(host, port)
-            if switched is not None:
-                host, port = switched
-        if not self._start_service_process(host, port):
-            return None, host, port
-        return self._wait_for_status_endpoint(host, port), host, port
+            if switched is None:
+                return None, host, port
+            host, port = switched
+
+        for attempt in range(1, _SERVICE_START_ATTEMPTS + 1):
+            if not self._start_service_process(host, port):
+                break
+            _proc, _started, process_target, instance_id = self._managed_process_snapshot()
+            status = self._wait_for_status_endpoint(
+                host,
+                port,
+                expected_instance_id=instance_id,
+            )
+            if status is not None:
+                return status, host, port
+            if attempt >= _SERVICE_START_ATTEMPTS:
+                break
+            switched = self._switch_to_random_local_port(host, port)
+            if switched is None:
+                break
+            host, port = switched
+
+        logger.error('[YuanbaoFreeApiService] 元宝服务状态接口启动失败，目标=%s:%s 日志=%s', host, port, _log_path())
+        self._ec.publish(Event(EventType.INFORMATION, {
+            'text': '元宝服务未能正常启动，请检查 logs/yuanbao_free_api_launcher.log。',
+            'min': 18,
+            'max': 220,
+            'particle': False,
+        }))
+        return None, host, port
 
     def _switch_to_random_local_port(self, host: str, port: int) -> Optional[Tuple[str, int]]:
         try:
@@ -751,11 +850,7 @@ class YuanbaoFreeApiService(LocalHostedServiceBase):
         if new_port == port:
             return host, port
 
-        new_base_url = _build_local_base_url_for_port(new_port)
-        try:
-            oc.YUANBAO_FREE_API_LOCAL['base_url'] = new_base_url
-        except Exception:
-            logger.error('[YuanbaoFreeApiService] 更新运行时元宝 base_url 失败，无法切换到随机端口')
+        if not self._update_runtime_target('127.0.0.1', new_port):
             return None
 
         logger.warning(
@@ -772,55 +867,38 @@ class YuanbaoFreeApiService(LocalHostedServiceBase):
         }))
         return '127.0.0.1', new_port
 
-    def _terminate_conflicting_listener(self, host: str, port: int) -> bool:
-        pids = _find_listener_pids(host, port)
-        if not pids:
-            return False
-
-        current_pid = os.getpid()
-        killed = False
-        for pid in pids:
-            if pid == current_pid:
-                continue
-            if _kill_process_by_pid(pid):
-                killed = True
-                logger.warning('[YuanbaoFreeApiService] 已结束占用 %s:%s 的旧进程 pid=%s', host, port, pid)
-
-        if killed:
-            self._ec.publish(Event(EventType.INFORMATION, {
-                'text': f'检测到旧版元宝服务占用 {port} 端口，已自动清理并准备重启。',
-                'min': 18,
-                'max': 200,
-                'particle': False,
-            }))
-        return killed
-
-    def _wait_for_status_endpoint(self, host: str, port: int) -> Optional[Dict[str, object]]:
+    def _wait_for_status_endpoint(
+        self,
+        host: str,
+        port: int,
+        *,
+        expected_instance_id: str = '',
+    ) -> Optional[Dict[str, object]]:
         deadline = time.monotonic() + _STARTUP_WAIT_SECS
-        restarted_conflict = False
         while time.monotonic() < deadline:
-            state, status = _probe_status_endpoint(host, port, timeout=2.0)
+            state, status = _probe_status_endpoint(
+                host,
+                port,
+                timeout=2.0,
+                expected_instance_id=expected_instance_id,
+            )
             if state == 'ok' and status is not None:
                 logger.info('[YuanbaoFreeApiService] 元宝服务状态接口已就绪: %s', status)
                 return status
-            if state == 'missing' and not restarted_conflict:
-                restarted_conflict = True
-                if self._terminate_conflicting_listener(host, port):
-                    if not self._start_service_process(host, port):
-                        break
-                    time.sleep(1.0)
-                    continue
-            proc = self._tracked_process()
-            if proc is not None and proc.poll() is not None:
+            if state in {'foreign', 'invalid'}:
+                break
+            proc, started, process_target, _instance_id = self._managed_process_snapshot()
+            if started and process_target == (host, port) and proc is not None and proc.poll() is not None:
+                self._clear_managed_process_if(proc)
                 break
             time.sleep(_POLL_INTERVAL_SECS)
-        logger.error('[YuanbaoFreeApiService] 元宝服务状态接口启动失败，目标=%s:%s 日志=%s', host, port, _log_path())
-        self._ec.publish(Event(EventType.INFORMATION, {
-            'text': '元宝服务未能正常启动，请检查 logs/yuanbao_free_api_launcher.log。',
-            'min': 18,
-            'max': 220,
-            'particle': False,
-        }))
+
+        proc, started, process_target, _instance_id = self._managed_process_snapshot()
+        if started and process_target == (host, port) and proc is not None:
+            taken_proc, taken_started, _target, _instance = self._take_managed_process()
+            if taken_started and taken_proc is not None:
+                self._terminate_process_tree(taken_proc)
+        logger.warning('[YuanbaoFreeApiService] 等待受管服务就绪失败，目标=%s:%s', host, port)
         return None
 
     def _wait_for_login_state(self, host: str, port: int, *, allow_logged_out: bool = False) -> Optional[Dict[str, object]]:
@@ -871,6 +949,17 @@ class YuanbaoFreeApiService(LocalHostedServiceBase):
 
     def _start_service_process(self, host: str, port: int) -> bool:
         _remove_qrcode_if_exists()
+        existing_proc, started, process_target, _instance_id = self._managed_process_snapshot()
+        if started and existing_proc is not None and existing_proc.poll() is None:
+            if process_target == (host, port):
+                return True
+            logger.error(
+                '[YuanbaoFreeApiService] 拒绝复用端口不匹配的受管进程: existing=%s requested=%s',
+                process_target,
+                (host, port),
+            )
+            return False
+
         missing_modules = _missing_runtime_modules()
         if missing_modules:
             text = '元宝本地中转缺少依赖：' + ', '.join(missing_modules) + '；请先运行“安装依赖.bat”或重新执行 install_deps.py。'
@@ -897,10 +986,9 @@ class YuanbaoFreeApiService(LocalHostedServiceBase):
             return False
 
         with self._proc_lock:
-            if self._has_running_tracked_process():
-                return True
             log_handle = _log_path().open('a', encoding='utf-8', errors='ignore')
-            env = _build_service_env()
+            instance_id = uuid.uuid4().hex
+            env = _build_service_env(instance_id)
             create_no_window = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
             try:
                 proc = subprocess.Popen(
@@ -912,7 +1000,7 @@ class YuanbaoFreeApiService(LocalHostedServiceBase):
                     stderr=subprocess.STDOUT,
                     creationflags=create_no_window,
                 )
-                self._set_started_process(proc)
+                self._set_managed_process(proc, (host, int(port)), instance_id)
                 log_handle.close()
             except Exception as exc:
                 log_handle.close()
@@ -924,60 +1012,44 @@ class YuanbaoFreeApiService(LocalHostedServiceBase):
                     'particle': False,
                 }))
                 self._mark_process_start_failed()
+                self._process_target = None
+                self._process_instance_id = ''
                 return False
 
-        deadline = time.monotonic() + _STARTUP_WAIT_SECS
-        while time.monotonic() < deadline:
-            if _can_connect(host, port):
-                logger.info('[YuanbaoFreeApiService] 元宝服务端口已启动: %s:%s', host, port)
-                return True
-            proc = self._tracked_process()
-            if proc is not None and proc.poll() is not None:
-                break
-            time.sleep(_POLL_INTERVAL_SECS)
-
-        logger.error('[YuanbaoFreeApiService] 元宝服务启动超时或已退出，目标=%s:%s 日志=%s', host, port, _log_path())
-        self._ec.publish(Event(EventType.INFORMATION, {
-            'text': '元宝服务未能成功启动，请检查 logs/yuanbao_free_api_launcher.log。',
-            'min': 18,
-            'max': 220,
-            'particle': False,
-        }))
-        return False
+        logger.info(
+            '[YuanbaoFreeApiService] 已创建受管服务进程 pid=%s target=%s:%s instance=%s',
+            proc.pid,
+            host,
+            port,
+            instance_id,
+        )
+        return True
 
     def cleanup(self):
         self._unsubscribe_app_pre_start()
+        self._cancel_login_monitor()
         self._publish_login_dialog_hide()
-
-        with self._login_monitor_lock:
-            self._login_monitor_thread = None
-
-        proc, started = self._take_tracked_process()
-
-        if started and proc is not None:
-            self._terminate_process_tree(proc)
-
-        target = _parse_local_target()
-        if target is None:
-            return
-
-        host, port = target
-        state, status = _probe_status_endpoint(host, port, timeout=2.0)
-        if state != 'ok' or status is None:
-            return
-
-        for pid in _find_listener_pids(host, port):
-            if proc is not None and pid == proc.pid:
-                continue
-            if pid == os.getpid():
-                continue
-            if _kill_process_by_pid(pid):
-                logger.info('[YuanbaoFreeApiService] ???????????? pid=%s', pid)
+        with self._lifecycle_lock:
+            proc, started, _target, _instance_id = self._take_managed_process()
+            if started and proc is not None:
+                self._terminate_process_tree(proc)
 
     @staticmethod
     def _terminate_process_tree(proc: subprocess.Popen) -> bool:
         if proc.poll() is not None:
             return True
+        if os.name != 'nt':
+            try:
+                proc.terminate()
+                proc.wait(timeout=5)
+                return True
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=3)
+                return True
+            except Exception as exc:
+                logger.debug('[YuanbaoFreeApiService] 结束本地中转进程失败: %s', exc)
+                return False
         try:
             result = subprocess.run(
                 ['taskkill', '/PID', str(proc.pid), '/T', '/F'],

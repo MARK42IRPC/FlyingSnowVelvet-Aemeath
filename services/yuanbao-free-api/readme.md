@@ -29,7 +29,8 @@ cd yuanbao-free-api
 # 安装依赖
 pip install -r requirements.txt
 
-# 确认系统已安装 Microsoft Edge 或 Google Chrome
+# 独立运行时安装 Playwright Chromium；桌宠集成环境由 install_deps.py 管理
+python -m playwright install chromium
 ```
 
 ### 配置环境变量
@@ -48,7 +49,7 @@ cp .env.example .env
 ### 本地运行
 
 ```bash
-# 启动服务（首次启动会自动打开浏览器进行扫码登录）
+# 启动本地服务；扫码登录由 /fsv/login 显式触发
 python app.py
 
 # 服务地址：http://localhost:8000
@@ -101,12 +102,12 @@ API_KEYS=sk-your-api-key-here,sk-another-api-key
 
 本项目使用浏览器自动化方式自动获取认证参数：
 
-- 服务启动时自动调用系统已安装的 Edge，失败后回退到 Chrome
-- 自动打开腾讯元宝登录页面
+- 桌宠集成环境按候选顺序启动受管理的 Chromium，损坏候选会自动跳过
+- 调用 `/fsv/login` 后打开腾讯元宝登录页面
 - 通过二维码扫码登录
 - 自动拦截认证请求头（x-uskey 等）
 
-**注意**：首次启动时需要在终端显示的二维码上完成扫码登录。
+**注意**：首次登录时需要在桌宠二维码窗口或终端显示的二维码上完成扫码。
 
 ## 🌟 应用案例
 
