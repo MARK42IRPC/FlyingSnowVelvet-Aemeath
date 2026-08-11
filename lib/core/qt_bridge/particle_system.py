@@ -6,18 +6,19 @@ from math import floor
 from time import perf_counter
 
 from PyQt5.QtWidgets import QWidget
-from PyQt5.QtCore import Qt, QRect, QRectF, QLineF, QPointF
-from PyQt5.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen, QRegion
+from PyQt5.QtCore import Qt, QRect, QRectF
+from PyQt5.QtGui import QColor, QFont, QFontMetrics, QPainter, QRegion
 
 from config.config import PARTICLES
-from lib.core.qt_bridge.colors import UI_THEME
 from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.graphics.types import Color, FontSpec
+from lib.core.graphics.visuals import build_particle_batch
 from lib.core.layer import Layer, normalize_layer
 from lib.core.layer_manager import get_layer_manager
 from lib.core.logger import get_logger
 from lib.core.qt_bridge.screen import get_virtual_screen_geometry
+from lib.core.qt_bridge.draw_backend import QtDrawBackend
 from lib.script.practical.manager import get_particle_script_manager
 
 _ASYNC_PARTICLE_UPDATE_THRESHOLD = 1200
@@ -346,6 +347,7 @@ class ParticleOverlay(QWidget):
         self._particles = []
         self._spatial_index = _ParticleSpatialIndex()
         self._font_cache: dict[FontSpec, QFont] = {}
+        self._draw_backend = QtDrawBackend()
         self._paused = False
         self._draw_seq = 0
         self._pending_requests = deque()
@@ -645,190 +647,17 @@ class ParticleOverlay(QWidget):
             painter.end()
             return
 
-        # 从配置中读取描边开关
-        enable_stroke = PARTICLES.get('enable_stroke', True)
-        fade_threshold = PARTICLES.get('fade_threshold', 0.75)
-        square_stroke_pen = None
-        if enable_stroke:
-            square_stroke_pen = QPen(QColor(UI_THEME['border']))
-        painter.setRenderHint(QPainter.Antialiasing, False)
-
         particles = self._spatial_index.particles_for_tiles(
             _tile_keys_for_region(event.region()),
             event.region(),
         )
         clip_rect = event.region().boundingRect()
-        for p in particles:
-            if not _particle_alive(p):
-                continue
-            if not self._spatial_index.bounds_for(p).intersects(QRectF(clip_rect)):
-                continue
-
-            life = max(0.0, float(getattr(p, 'life', 0.0)))
-            max_life = max(1e-6, float(getattr(p, 'max_life', 1.0)))
-
-            # ── alpha（no_fade 粒子跳过淡出逻辑）────────────────────────
-            if getattr(p, 'no_fade', False):
-                alpha = 255
-            else:
-                # 剩余生命低于 fade_threshold 比例时才开始淡出
-                fade_start = max_life * fade_threshold
-                if life >= fade_start:
-                    alpha = 255
-                else:
-                    alpha = max(0, int(life / fade_start * 255))
-            if alpha <= 0:
-                continue
-            painter.setRenderHint(QPainter.Antialiasing, False)
-
-            # ── 文字粒子（is_text=True）──────────────────────────────────
-            if getattr(p, 'is_text', False):
-                color = _to_qcolor(p.color)
-                alpha_value = int(getattr(p, 'alpha_override', alpha))
-                color.setAlpha(max(0, min(255, alpha_value)))
-                bloom = getattr(p, 'bloom', None)
-                painter.setFont(self._font_for(p.font))
-                painter.setRenderHint(QPainter.Antialiasing, True)
-                if isinstance(bloom, (int, float)) and bloom > 0:
-                    glow_color = _make_text_bloom_color(color)
-                    bloom_radius = float(bloom)
-                    center_x = float(getattr(p, '_render_x', p.x) - p._text_w / 2)
-                    center_y = float(getattr(p, '_render_y', p.y) + p._baseline_offset)
-                    bloom_steps = (
-                        (0.45, 0.10),
-                        (0.75, 0.07),
-                        (1.0, 0.04),
-                    )
-                    bloom_alpha_budget = alpha_value * 0.30
-                    for distance_scale, alpha_scale in bloom_steps:
-                        glow_alpha = max(0, min(255, int(bloom_alpha_budget * alpha_scale)))
-                        if glow_alpha <= 0:
-                            continue
-                        glow_color.setAlpha(glow_alpha)
-                        painter.setPen(glow_color)
-                        radius = bloom_radius * distance_scale
-                        for dx, dy in (
-                            (radius, 0.0),
-                            (-radius, 0.0),
-                            (0.0, radius),
-                            (0.0, -radius),
-                            (radius * 0.7, radius * 0.7),
-                            (-radius * 0.7, radius * 0.7),
-                            (radius * 0.7, -radius * 0.7),
-                            (-radius * 0.7, -radius * 0.7),
-                        ):
-                            painter.drawText(QPointF(center_x + dx, center_y + dy), p.text)
-                painter.setPen(color)
-                painter.drawText(
-                    QPointF(
-                        float(getattr(p, '_render_x', p.x) - p._text_w / 2),
-                        float(getattr(p, '_render_y', p.y) + p._baseline_offset),
-                    ),
-                    p.text,
-                )
-                continue
-
-            # ── 线条粒子（is_line=True）──────────────────────────────────
-            if getattr(p, 'is_line', False):
-                ln = p.length
-                if ln > 0.5:   # 极短时跳过，避免绘制噪点
-                    px = float(getattr(p, '_render_x', p.x))
-                    py = float(getattr(p, '_render_y', p.y))
-                    x2 = px + p.line_dx * ln
-                    y2 = py + p.line_dy * ln
-                    color = _to_qcolor(p.color)
-                    color.setAlpha(alpha)
-                    pen = QPen(color, p.pen_width, Qt.SolidLine, Qt.RoundCap)
-                    painter.setPen(pen)
-                    painter.setBrush(Qt.NoBrush)
-                    painter.setRenderHint(QPainter.Antialiasing, True)
-                    painter.drawLine(QLineF(px, py, x2, y2))
-                continue
-
-            # ── 检测粒子形状并计算绘制矩形 ──────────────────────────
-            is_circle = getattr(p, 'is_circle', False)
-
-            if hasattr(p, 'width') and hasattr(p, 'height'):
-                # 矩形粒子（right_fade）
-                px = float(getattr(p, '_render_x', p.x))
-                py = float(getattr(p, '_render_y', p.y))
-                rect = QRectF(
-                    px,
-                    py - (p.height / 2.0),
-                    float(p.width),
-                    float(p.height),
-                )
-                if enable_stroke:
-                    pen_color = QColor(UI_THEME['border'])
-                    pen_color.setAlpha(alpha)
-                    painter.setPen(QPen(pen_color))
-                    painter.setBrush(Qt.NoBrush)
-                    painter.drawRect(rect)
-                color = _to_qcolor(p.color)
-                color.setAlpha(alpha)
-                painter.setPen(Qt.NoPen)
-                painter.setBrush(color)
-                painter.drawRect(rect)
-                continue
-            elif is_circle:
-                # 圆形粒子（snow）：p.size 为半径
-                r = p.size
-                px = float(getattr(p, '_render_x', p.x))
-                py = float(getattr(p, '_render_y', p.y))
-                rect = QRectF(
-                    px - float(r),
-                    py - float(r),
-                    float(r * 2),
-                    float(r * 2),
-                )
-            else:
-                # 正方形粒子（热路径）
-                px = float(getattr(p, '_render_x', p.x))
-                py = float(getattr(p, '_render_y', p.y))
-                half = p.size / 2.0
-                rect = QRectF(
-                    px - half,
-                    py - half,
-                    float(p.size),
-                    float(p.size),
-                )
-                if enable_stroke and square_stroke_pen is not None:
-                    pen_color = square_stroke_pen.color()
-                    pen_color.setAlpha(alpha)
-                    square_stroke_pen.setColor(pen_color)
-                    painter.setPen(square_stroke_pen)
-                    painter.setBrush(Qt.NoBrush)
-                    painter.drawRect(rect)
-                color = _to_qcolor(p.color)
-                color.setAlpha(alpha)
-                painter.setPen(Qt.NoPen)
-                painter.setBrush(color)
-                painter.drawRect(rect)
-                continue
-
-            painter.setRenderHint(QPainter.Antialiasing, True)
-
-            # ── 描边（可选）──────────────────────────────────────────
-            if enable_stroke:
-                pen_color = QColor(UI_THEME['border'])
-                pen_color.setAlpha(alpha)
-                painter.setPen(pen_color)
-                painter.setBrush(Qt.NoBrush)
-                if is_circle:
-                    painter.drawEllipse(rect)
-                else:
-                    painter.drawRect(rect)
-
-            # ── 粒子本体 ──────────────────────────────────────────────
-            color = _to_qcolor(p.color)
-            color.setAlpha(alpha)
-            painter.setPen(Qt.NoPen)
-            painter.setBrush(color)
-            if is_circle:
-                painter.drawEllipse(rect)
-            else:
-                painter.drawRect(rect)
-            painter.setRenderHint(QPainter.Antialiasing, False)
+        visible_particles = [
+            particle
+            for particle in particles
+            if self._spatial_index.bounds_for(particle).intersects(QRectF(clip_rect))
+        ]
+        self._draw_backend.render(build_particle_batch(visible_particles), painter)
 
         painter.end()
         if self._perf_log_enabled:
@@ -898,6 +727,7 @@ class ParticleOverlay(QWidget):
             self._event_center.unsubscribe(EventType.FRAME, self._on_frame)
         self.flush_immediately()
         self._font_cache.clear()
+        self._draw_backend.cleanup()
         self._layer_manager.unregister(self)
         try:
             self.close()
@@ -907,11 +737,3 @@ class ParticleOverlay(QWidget):
             self.deleteLater()
         except Exception:
             pass
-
-
-def _make_text_bloom_color(base: QColor) -> QColor:
-    white_mix = 0.62
-    r = int(base.red() * (1.0 - white_mix) + 255 * white_mix)
-    g = int(base.green() * (1.0 - white_mix) + 255 * white_mix)
-    b = int(base.blue() * (1.0 - white_mix) + 255 * white_mix)
-    return QColor(max(0, min(255, r)), max(0, min(255, g)), max(0, min(255, b)))

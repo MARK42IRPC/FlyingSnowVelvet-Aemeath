@@ -3,15 +3,17 @@ import random
 
 from PyQt5.QtWidgets import QWidget
 from PyQt5.QtCore    import Qt, QPoint
-from PyQt5.QtGui     import QPainter, QPixmap
+from PyQt5.QtGui     import QPainter
 
 from config.config                import ANIMATION, SNOW_LEOPARD, BEHAVIOR, PHYSICS
-from lib.core.qt_bridge.gif_loader import scale_frame
 from lib.core.event.center        import get_event_center, EventType, Event
 from lib.core.clickthrough_state  import is_clickthrough_enabled
 from lib.core.physics             import get_physics_world, PhysicsBody
 from lib.core.unified_draw import Layer, get_layer_manager
 from lib.core.voice.snow          import SnowSound
+from lib.core.graphics.resources import ImageResource
+from lib.core.graphics.visuals import build_world_object_batch
+from lib.core.qt_bridge.draw_backend import QtDrawBackend
 
 
 # ── 从配置文件读取物理参数 ─────────────────────────────────────────────
@@ -43,34 +45,31 @@ class SnowLeopard(QWidget):
     # 使用模块级配置变量（已从 PHYSICS 配置读取）
 
     def __init__(self,
-                 frames: list,
-                 flipped_frames: list,
                  position: QPoint,
-                 size: tuple):
+                 size: tuple,
+                 visual_resource: ImageResource | None = None):
         """
         Args:
-            frames:         正向 QImage 帧列表
-            flipped_frames: 水平翻转 QImage 帧列表
             position:       屏幕全局坐标（左上角）
             size:           窗口尺寸 (width, height)
         """
         super().__init__()
 
-        self._frames         = frames
-        self._flipped_frames = flipped_frames
+        if not isinstance(visual_resource, ImageResource):
+            raise TypeError("snow leopard visual_resource must be an ImageResource")
+        self._visual_resource = visual_resource
+        self._draw_backend = QtDrawBackend()
         self._size           = size
         self._alpha          = 1.0
         self._alive          = True
         self._fading         = False
         self._frame_idx      = 0
+        self._current_frame_idx = 0
         self._fade_tick_stride = max(1, int(round(_FADE_INTERVAL_MS / 50.0)))
         self._fade_tick_count = 0
 
         # 默认朝向向左（False=正向/向左）
         self._flipped = False
-
-        # 当前待绘制的 QPixmap
-        self._current_pixmap: QPixmap | None = None
 
         # 事件中心（用于申请粒子）
         self._event_center = get_event_center()
@@ -371,14 +370,11 @@ class SnowLeopard(QWidget):
     # ==================================================================
 
     def _advance_frame(self):
-        """切换到下一帧，更新 _current_pixmap。"""
-        src = self._flipped_frames if self._flipped else self._frames
-        if not src:
+        """Select the next shared raster frame."""
+        if not self._visual_resource.frames:
             return
-        raw = src[self._frame_idx % len(src)]
+        self._current_frame_idx = self._frame_idx % len(self._visual_resource.frames)
         self._frame_idx += 1
-        scaled = scale_frame(raw, self._size)
-        self._current_pixmap = QPixmap.fromImage(scaled)
 
     def _on_gif_frame(self, event: Event):
         """GIF_FRAME 事件回调：推进帧并重绘（替代独立 _anim_timer）。"""
@@ -456,12 +452,16 @@ class SnowLeopard(QWidget):
         self._snow_sound.play()
 
     def paintEvent(self, event):
-        """自定义绘制：直接画到透明背景上。"""
-        if self._current_pixmap is None:
-            return
+        """Execute the shared animated sprite batch."""
         painter = QPainter(self)
-        painter.setOpacity(self._alpha)
-        painter.drawPixmap(0, 0, self._current_pixmap)
+        self._draw_backend.render(build_world_object_batch(
+            self._visual_resource,
+            self._current_frame_idx,
+            alpha=self._alpha,
+            flipped=self._flipped,
+            object_type="snow_leopard",
+        ), painter)
+        painter.end()
 
     def closeEvent(self, event):
         """窗口关闭时确保所有事件订阅和物理资源已释放（兜底清理）。"""
@@ -472,4 +472,5 @@ class SnowLeopard(QWidget):
         self._event_center.unsubscribe(EventType.TIMER, self._on_timer_event)
         self._cancel_flip_task()
         self._cleanup_physics()
+        self._draw_backend.cleanup()
         super().closeEvent(event)

@@ -8,6 +8,73 @@ from lib.core.graphics.resources import ImageResource
 from lib.core.graphics.types import Point, Rect, coerce_point
 
 
+_CLOCK_MAX_COUNTDOWN_CENTIS = ((99 * 60 + 59) * 60 + 59) * 100 + 99
+_CLOCK_CENTIS_PER_TICK = 5
+
+
+def normalize_clock_countdown(hh: object = 0, mm: object = 0, ss: object = 0, ms: object = 0) -> int:
+    """Normalize the shared clock countdown representation to centiseconds."""
+    try:
+        hours = max(0, min(99, int(hh)))
+    except (TypeError, ValueError):
+        hours = 0
+    try:
+        minutes = max(0, min(59, int(mm)))
+    except (TypeError, ValueError):
+        minutes = 0
+    try:
+        seconds = max(0, min(59, int(ss)))
+    except (TypeError, ValueError):
+        seconds = 0
+    try:
+        centis = max(0, min(99, int(ms)))
+    except (TypeError, ValueError):
+        centis = 0
+    return min(_CLOCK_MAX_COUNTDOWN_CENTIS, ((hours * 60 + minutes) * 60 + seconds) * 100 + centis)
+
+
+def tick_clock_countdown(centis: object, *, step: int = _CLOCK_CENTIS_PER_TICK) -> tuple[int, bool]:
+    """Advance a countdown and report whether its displayed text changed."""
+    try:
+        previous = max(0, int(centis))
+    except (TypeError, ValueError):
+        previous = 0
+    current = max(0, previous - max(1, int(step)))
+    return current, format_clock_countdown(previous) != format_clock_countdown(current)
+
+
+def clock_countdown_parts(centis: object) -> tuple[int, int, int, int]:
+    try:
+        total = max(0, int(centis))
+    except (TypeError, ValueError):
+        total = 0
+    hours = total // 360000
+    total %= 360000
+    minutes = total // 6000
+    total %= 6000
+    seconds = total // 100
+    return hours, minutes, seconds, total % 100
+
+
+def whole_clock_seconds(centis: object) -> int:
+    try:
+        value = max(0, int(centis))
+    except (TypeError, ValueError):
+        value = 0
+    return 0 if value == 0 else (value + 99) // 100
+
+
+def format_clock_countdown(centis: object) -> str:
+    hours, minutes, seconds, millis = clock_countdown_parts(centis)
+    if hours > 0:
+        left, right = hours, minutes
+    elif minutes > 0:
+        left, right = minutes, seconds
+    else:
+        left, right = seconds, millis
+    return f"{left:02d}:{right:02d}"
+
+
 def _is_world_object_option(value: object) -> bool:
     if value is None or isinstance(value, (bool, int, float, str)):
         return True

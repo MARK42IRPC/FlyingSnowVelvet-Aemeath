@@ -65,6 +65,25 @@ class InstallDependenciesProgressTests(unittest.TestCase):
         names = [package for package, _description, _checks in install_deps.DEPENDENCIES]
         self.assertLess(names.index("jieba-fast"), names.index("genie-tts"))
 
+    def test_opencc_dependency_is_available_before_genie_tts(self):
+        names = [package for package, _description, _checks in install_deps.DEPENDENCIES]
+        self.assertLess(
+            names.index("opencc-python-reimplemented"),
+            names.index("genie-tts"),
+        )
+        entry = next(
+            item
+            for item in install_deps.DEPENDENCIES
+            if item[0] == "opencc-python-reimplemented"
+        )
+        self.assertEqual(entry[2], ("opencc",))
+
+        requirements = (Path(install_deps.__file__).parent / "requirements.txt").read_text(
+            encoding="utf-8"
+        ).splitlines()
+        self.assertIn("--only-binary=opencc-python-reimplemented", requirements)
+        self.assertIn("opencc-python-reimplemented>=0.1.7,<1", requirements)
+
     def test_webrtcvad_wheels_dependency_checks_webrtcvad_module(self):
         entry = next(
             item for item in install_deps.DEPENDENCIES if item[0] == "webrtcvad-wheels"
@@ -253,6 +272,36 @@ class InstallDependenciesProgressTests(unittest.TestCase):
         self.assertEqual(command[option_index + 1], "off")
         self.assertNotIn("raw", command)
 
+    def test_opencc_install_requires_a_prebuilt_wheel(self):
+        class FakeProcess:
+            returncode = 0
+            stdout = iter(())
+
+            @staticmethod
+            def poll():
+                return 0
+
+        with patch.object(
+            install_deps.subprocess,
+            "Popen",
+            return_value=FakeProcess(),
+        ) as popen:
+            return_code, _output = install_deps._run_pip_install_with_progress(
+                "python.exe",
+                "opencc-python-reimplemented",
+                {"url": "https://example.invalid/simple", "host": "example.invalid"},
+                lambda _percent: None,
+            )
+
+        self.assertEqual(return_code, 0)
+        command = popen.call_args.args[0]
+        self.assertIn("opencc-python-reimplemented>=0.1.7,<1", command)
+        option_index = command.index("--only-binary")
+        self.assertEqual(
+            command[option_index + 1],
+            "opencc-python-reimplemented",
+        )
+
     def test_failed_package_reason_is_shown_and_later_packages_continue(self):
         dependencies = [
             ("BrokenPkg", "broken", ()),
@@ -280,6 +329,36 @@ class InstallDependenciesProgressTests(unittest.TestCase):
         self.assertEqual(attempts, ["BrokenPkg", "LaterPkg"])
         self.assertIn("失败原因", output.getvalue())
         self.assertIn("BrokenPkg: PyPI: ERROR: compiler unavailable", output.getvalue())
+
+    def test_opencc_manual_install_command_keeps_wheel_and_version_constraints(self):
+        dependencies = [
+            (
+                "opencc-python-reimplemented",
+                "Chinese script conversion",
+                ("opencc",),
+            ),
+        ]
+        output = io.StringIO()
+
+        with patch.object(install_deps, "DEPENDENCIES", dependencies), patch.object(
+            install_deps, "_pkg_installed", return_value=False
+        ), patch.object(
+            install_deps,
+            "_install_one",
+            return_value=(False, "PyPI: wheel unavailable"),
+        ), patch.object(
+            install_deps, "_COLOR_ENABLED", False
+        ), patch.object(
+            rar_backend, "is_bundled_unrar_ready", return_value=True
+        ), patch("builtins.input", return_value="n"), contextlib.redirect_stdout(output):
+            result = install_deps.install_all("python.exe", [{"name": "PyPI"}])
+
+        self.assertFalse(result)
+        self.assertIn(
+            "python.exe -m pip install --only-binary opencc-python-reimplemented "
+            "opencc-python-reimplemented>=0.1.7,<1",
+            output.getvalue(),
+        )
 
     def test_pip_failure_summary_prefers_actionable_error_lines(self):
         output = """Looking in indexes: https://example.invalid/simple

@@ -4,12 +4,12 @@ from collections import deque
 
 from PyQt5.QtWidgets import QApplication, QWidget
 from PyQt5.QtCore    import Qt, QPoint
-from PyQt5.QtGui     import QPainter, QPixmap, QColor
+from PyQt5.QtGui     import QPainter
 
 from config.config            import BEHAVIOR, PHYSICS
-from lib.core.qt_bridge.colors import UI_THEME
-from lib.core.qt_bridge.font import get_digit_font
-from config.scale             import scale_px
+from lib.core.graphics.resources import ImageResource
+from lib.core.graphics.visuals import build_world_object_batch
+from lib.core.qt_bridge.draw_backend import QtDrawBackend
 from lib.core.unified_draw import Layer, get_layer_manager
 from lib.core.event.center     import get_event_center, EventType, Event
 from lib.core.clickthrough_state import is_clickthrough_enabled
@@ -18,6 +18,13 @@ from lib.core.particle_utils   import spawn_particle_at_point
 from lib.core.qt_bridge.screen import get_screen_geometry_for_point
 from lib.core.voice.gear       import GearSound
 from lib.core.voice.ring       import RingSound
+from lib.core.world_objects import (
+    clock_countdown_parts,
+    format_clock_countdown,
+    normalize_clock_countdown,
+    tick_clock_countdown,
+    whole_clock_seconds,
+)
 
 
 # 从配置文件读取物理参数
@@ -31,16 +38,11 @@ _MAX_BOUNCES: int = PHYSICS.get('max_bounces', 5)
 _DRAG_TRAIL_WINDOW_SEC: float = 0.10
 _RELEASE_SAMPLE_MIN_DT_SEC: float = 1.0 / 60.0
 _TICK_INTERVAL_MS: int = 50
-_CENTIS_PER_TICK: int = max(1, _TICK_INTERVAL_MS // 10)
-_MAX_COUNTDOWN_CENTIS: int = ((99 * 60 + 59) * 60 + 59) * 100 + 99
 _FINAL_RING_SECONDS: int = 10
 _END_UP_FORCE_INTERVAL_MS: int = 3000
 _END_UP_FORCE_INTERVAL_TICKS: int = max(1, int(round(_END_UP_FORCE_INTERVAL_MS / _TICK_INTERVAL_MS)))
 _END_UP_FORCE_VY: float = float(PHYSICS.get('clock_end_up_force_vy', PHYSICS.get('snow_leopard_jump_vy', -13.0)))
 _END_UP_FORCE_MULTIPLIER: float = 2.0
-_COUNTDOWN_TEXT_COLOR = UI_THEME.get('deep_blue', QColor(35, 76, 128))
-
-
 class Clock(QWidget):
     """
     单个闹钟窗口。
@@ -54,22 +56,24 @@ class Clock(QWidget):
     # 使用模块级配置变量（已从 PHYSICS 配置读取）
 
     def __init__(self,
-                 pixmap: QPixmap,
                  position: QPoint,
                  size: tuple,
                  countdown_hh: int = 0,
                  countdown_mm: int = 0,
                  countdown_ss: int = 0,
-                 countdown_ms: int = 0):
+                 countdown_ms: int = 0,
+                 visual_resource: ImageResource | None = None):
         """
         Args:
-            pixmap:         QPixmap（已缩放至目标尺寸）
             position:       屏幕全局坐标（左上角）
             size:           窗口尺寸 (width, height)
         """
         super().__init__()
 
-        self._pixmap         = pixmap
+        if not isinstance(visual_resource, ImageResource):
+            raise TypeError("clock visual_resource must be an ImageResource")
+        self._visual_resource = visual_resource
+        self._draw_backend = QtDrawBackend()
         self._size           = size
         self._alive          = True
         self._alpha          = 1.0
@@ -190,13 +194,7 @@ class Clock(QWidget):
         - ss: 0-59
         - ms: 0-99（厘秒，1/100 秒）
         """
-        h = max(0, min(99, int(hh)))
-        m = max(0, min(59, int(mm)))
-        s = max(0, min(59, int(ss)))
-        c = max(0, min(99, int(ms)))
-        self._countdown_centis = ((h * 60 + m) * 60 + s) * 100 + c
-        if self._countdown_centis > _MAX_COUNTDOWN_CENTIS:
-            self._countdown_centis = _MAX_COUNTDOWN_CENTIS
+        self._countdown_centis = normalize_clock_countdown(hh, mm, ss, ms)
         self._post_countdown_ticks = 0
         self._sync_countdown_parts_from_total()
         self.update()
@@ -304,17 +302,12 @@ class Clock(QWidget):
     # 内部辅助
     # ==================================================================
 
-    def _get_current_pixmap(self) -> QPixmap:
-        """返回当前 QPixmap。"""
-        return self._pixmap
-
     def _tick_countdown(self) -> bool:
         """按全局 TICK（50ms）推进倒计时；返回值表示显示是否发生变化。"""
         if self._countdown_centis <= 0:
             return False
         prev_whole_secs = self._whole_seconds_from_centis(self._countdown_centis)
-        prev_text = self._format_countdown_text()
-        self._countdown_centis = max(0, self._countdown_centis - _CENTIS_PER_TICK)
+        self._countdown_centis, text_changed = tick_clock_countdown(self._countdown_centis)
         self._sync_countdown_parts_from_total()
         curr_whole_secs = self._whole_seconds_from_centis(self._countdown_centis)
         if curr_whole_secs != prev_whole_secs and 1 <= curr_whole_secs <= _FINAL_RING_SECONDS:
@@ -323,7 +316,7 @@ class Clock(QWidget):
             # 倒计时结束瞬间，立即给予一次向上冲量
             self._apply_post_countdown_up_force()
             self._post_countdown_ticks = 0
-        return prev_text != self._format_countdown_text()
+        return text_changed
 
     def _tick_post_countdown_up_force(self) -> None:
         """倒计时结束后，每 3 秒给予一次向上冲量。"""
@@ -343,10 +336,7 @@ class Clock(QWidget):
     @staticmethod
     def _whole_seconds_from_centis(centis: int) -> int:
         """厘秒 -> 剩余整秒（向上取整）。"""
-        value = max(0, int(centis))
-        if value == 0:
-            return 0
-        return (value + 99) // 100
+        return whole_clock_seconds(centis)
 
     def _apply_post_countdown_up_force(self) -> None:
         """施加结束后向上冲量（弹跳力翻倍）。"""
@@ -375,14 +365,7 @@ class Clock(QWidget):
 
     def _countdown_parts(self) -> tuple[int, int, int, int]:
         """将当前总厘秒拆分为 hh.mm.ss.ms 四段。"""
-        total = max(0, int(self._countdown_centis))
-        hh = total // 360000
-        total %= 360000
-        mm = total // 6000
-        total %= 6000
-        ss = total // 100
-        ms = total % 100
-        return hh, mm, ss, ms
+        return clock_countdown_parts(self._countdown_centis)
 
     def _format_countdown_text(self) -> str:
         """
@@ -390,14 +373,7 @@ class Clock(QWidget):
 
         从高位开始显示，若高位为 0 则后移一位，最低显示到 ss:ms。
         """
-        hh, mm, ss, ms = self._countdown_parts()
-        if hh > 0:
-            left, right = hh, mm
-        elif mm > 0:
-            left, right = mm, ss
-        else:
-            left, right = ss, ms
-        return f"{left:02d}:{right:02d}"
+        return format_clock_countdown(self._countdown_centis)
 
     def _compute_release_velocity(self, release_pos: QPoint) -> tuple[float, float]:
         """按松手瞬时采样计算投掷速度。"""
@@ -596,24 +572,16 @@ class Clock(QWidget):
             super().mouseReleaseEvent(event)
 
     def paintEvent(self, event):
-        """绘制当前 QPixmap 到透明背景（支持透明度淡出）。"""
-        pixmap = self._get_current_pixmap()
-        if pixmap is None or pixmap.isNull():
-            return
+        """Execute the shared clock visual batch through QPainter."""
         painter = QPainter(self)
-        painter.setOpacity(self._alpha)
-        painter.setRenderHint(QPainter.TextAntialiasing, True)
-        painter.drawPixmap(0, 0, pixmap)
-        # 闹钟中心倒计时文本：配置 deep_blue、粗体拉海洛，始终居中
-        text = self._format_countdown_text()
-        font_size = max(10, int(min(self._size[0], self._size[1]) * 0.14))
-        text_font = get_digit_font(font_size)
-        text_font.setBold(True)
-        painter.setFont(text_font)
-        painter.setPen(_COUNTDOWN_TEXT_COLOR)
-        text_rect = self.rect()
-        text_rect.translate(0, -scale_px(10))
-        painter.drawText(text_rect, Qt.AlignCenter, text)
+        self._draw_backend.render(build_world_object_batch(
+            self._visual_resource,
+            0,
+            alpha=self._alpha,
+            object_type="clock",
+            countdown_centis=self._countdown_centis,
+        ), painter)
+        painter.end()
 
     def closeEvent(self, event):
         """关闭时确保所有事件订阅和物理资源已释放（兜底清理）。"""
@@ -621,6 +589,7 @@ class Clock(QWidget):
         self._event_center.unsubscribe(EventType.TICK,                   self._tick_fade)
         self._event_center.unsubscribe(EventType.UI_CLICKTHROUGH_TOGGLE, self._on_clickthrough_toggle)
         self._cleanup_physics()
+        self._draw_backend.cleanup()
         self._alive = False
         super().closeEvent(event)
 

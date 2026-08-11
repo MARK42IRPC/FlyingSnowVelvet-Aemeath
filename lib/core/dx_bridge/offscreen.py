@@ -9,32 +9,43 @@ from __future__ import annotations
 import ctypes
 import os
 from pathlib import Path
-from typing import Iterable
-
 from lib.core.graphics.commands import (
+    ClipPop,
+    ClipPush,
     DrawBatch,
     EllipseCommand,
     LineCommand,
     RectCommand,
     SpriteCommand,
+    TextCommand,
+    TransformPop,
+    TransformPush,
 )
 from lib.core.graphics.resources import RasterFrame
 from lib.core.graphics.types import Color, Rect
 
 
-FSDX_ABI_VERSION = 2
+FSDX_ABI_VERSION = 7
 FSDX_RUNTIME_FLAG_WARP = 0x00000001
 FSDX_DRAW_FLAG_FLIPPED = 0x00000001
 FSDX_DRAW_FLAG_HAS_FILL = 0x00000002
 FSDX_DRAW_FLAG_HAS_STROKE = 0x00000004
+FSDX_DRAW_FLAG_TEXT_BOLD = 0x00000008
 FSDX_COMMAND_SPRITE = 1
 FSDX_COMMAND_LINE = 2
 FSDX_COMMAND_RECT = 3
 FSDX_COMMAND_ELLIPSE = 4
+FSDX_COMMAND_TEXT = 5
+FSDX_COMMAND_CLIP_PUSH = 6
+FSDX_COMMAND_CLIP_POP = 7
+FSDX_COMMAND_TRANSFORM_PUSH = 8
+FSDX_COMMAND_TRANSFORM_POP = 9
 FSDX_STATUS_OK = 0
+FSDX_STATUS_INVALID_ARGUMENT = 1
 FSDX_STATUS_ABI_MISMATCH = 2
 FSDX_STATUS_BUFFER_TOO_SMALL = 7
 FSDX_STATUS_UNSUPPORTED = 8
+FSDX_STATUS_DEVICE_LOST = 9
 
 
 class _RuntimeDesc(ctypes.Structure):
@@ -67,7 +78,7 @@ class _DrawCommand(ctypes.Structure):
         ("layer", ctypes.c_int32),
         ("z", ctypes.c_int32),
         ("order", ctypes.c_int32),
-        ("reserved", ctypes.c_int32),
+        ("text_length", ctypes.c_uint32),
         ("resource", ctypes.c_uint64),
         ("x0", ctypes.c_float),
         ("y0", ctypes.c_float),
@@ -77,6 +88,14 @@ class _DrawCommand(ctypes.Structure):
         ("stroke_width", ctypes.c_float),
         ("fill_rgba", ctypes.c_uint32),
         ("stroke_rgba", ctypes.c_uint32),
+        ("m11", ctypes.c_float),
+        ("m12", ctypes.c_float),
+        ("m21", ctypes.c_float),
+        ("m22", ctypes.c_float),
+        ("dx", ctypes.c_float),
+        ("dy", ctypes.c_float),
+        ("payload_offset", ctypes.c_uint32),
+        ("payload_size", ctypes.c_uint32),
     ]
 
 
@@ -125,6 +144,13 @@ def _load_library(path: Path | None = None):
     library.fsdx_create_runtime.restype = ctypes.c_int
     library.fsdx_destroy_runtime.argtypes = [ctypes.c_uint64]
     library.fsdx_destroy_runtime.restype = ctypes.c_int
+    library.fsdx_recover_device.argtypes = [ctypes.c_uint64]
+    library.fsdx_recover_device.restype = ctypes.c_int
+    library.fsdx_get_device_generation.argtypes = [
+        ctypes.c_uint64,
+        ctypes.POINTER(ctypes.c_uint64),
+    ]
+    library.fsdx_get_device_generation.restype = ctypes.c_int
     library.fsdx_register_resource.argtypes = [
         ctypes.c_uint64,
         ctypes.POINTER(_ResourceDesc),
@@ -137,6 +163,8 @@ def _load_library(path: Path | None = None):
         ctypes.c_uint64,
         ctypes.POINTER(_DrawCommand),
         ctypes.c_uint32,
+        ctypes.POINTER(ctypes.c_uint8),
+        ctypes.c_uint64,
     ]
     library.fsdx_submit_frame.restype = ctypes.c_int
     library.fsdx_readback_rgba.argtypes = [
@@ -188,6 +216,27 @@ class DxOffscreenTarget:
         if status != FSDX_STATUS_OK:
             raise DxBridgeError(f"DX call failed ({status}): {self._error_text()}")
 
+    def _call_render_with_recovery(self, function, *args) -> None:
+        status = int(function(*args))
+        if status == FSDX_STATUS_DEVICE_LOST:
+            self.recover_device()
+            status = int(function(*args))
+        if status != FSDX_STATUS_OK:
+            raise DxBridgeError(f"DX call failed ({status}): {self._error_text()}")
+
+    @property
+    def device_generation(self) -> int:
+        generation = ctypes.c_uint64()
+        self._call(
+            self._library.fsdx_get_device_generation,
+            self._runtime,
+            ctypes.byref(generation),
+        )
+        return int(generation.value)
+
+    def recover_device(self) -> None:
+        self._call(self._library.fsdx_recover_device, self._runtime)
+
     def _register_frame(self, command: SpriteCommand) -> int:
         key = (command.resource_id, command.resource_revision, command.frame_index)
         cached = self._resource_handles.get(key)
@@ -203,7 +252,7 @@ class DxOffscreenTarget:
             len(command.frame.pixels),
         )
         handle = ctypes.c_uint64()
-        self._call(
+        self._call_render_with_recovery(
             self._library.fsdx_register_resource,
             self._runtime,
             ctypes.byref(desc),
@@ -227,14 +276,12 @@ class DxOffscreenTarget:
 
     @staticmethod
     def _target_rect(command: SpriteCommand, viewport: Rect | None) -> tuple[int, int, int, int]:
-        if viewport is not None:
-            width = max(1, int(round(viewport.width)))
-            height = max(1, int(round(viewport.height)))
-            x = int(round(viewport.x + (viewport.width - width) / 2.0))
-            y = int(round(viewport.y + (viewport.height - height) / 2.0))
-            return x, y, width, height
-        width = max(1, int(round(command.frame.width * command.scale)))
-        height = max(1, int(round(command.frame.height * command.scale)))
+        if command.target_size is not None:
+            width = max(1, int(round(command.target_size.width)))
+            height = max(1, int(round(command.target_size.height)))
+        else:
+            width = max(1, int(round(command.frame.width * command.scale)))
+            height = max(1, int(round(command.frame.height * command.scale)))
         position = command.position
         x = 0 if position is None else int(round(position.x))
         y = 0 if position is None else int(round(position.y))
@@ -253,18 +300,29 @@ class DxOffscreenTarget:
 
     def _native_command(
         self,
-        command: SpriteCommand | LineCommand | RectCommand | EllipseCommand,
+        command: (
+            SpriteCommand
+            | TextCommand
+            | LineCommand
+            | RectCommand
+            | EllipseCommand
+            | ClipPush
+            | ClipPop
+            | TransformPush
+            | TransformPop
+        ),
         viewport: Rect | None,
+        payload: bytearray,
     ) -> _DrawCommand:
         native = _DrawCommand()
         native.abi_version = FSDX_ABI_VERSION
         native.struct_size = ctypes.sizeof(_DrawCommand)
-        native.layer = int(command.layer)
-        native.z = int(command.z)
-        native.order = int(command.order)
-        native.alpha = float(command.alpha)
 
         if isinstance(command, SpriteCommand):
+            native.layer = int(command.layer)
+            native.z = int(command.z)
+            native.order = int(command.order)
+            native.alpha = float(command.alpha)
             x, y, width, height = self._target_rect(command, viewport)
             native.type = FSDX_COMMAND_SPRITE
             native.flags = FSDX_DRAW_FLAG_FLIPPED if command.flipped else 0
@@ -276,6 +334,10 @@ class DxOffscreenTarget:
             return native
 
         if isinstance(command, LineCommand):
+            native.layer = int(command.layer)
+            native.z = int(command.z)
+            native.order = int(command.order)
+            native.alpha = float(command.alpha)
             native.type = FSDX_COMMAND_LINE
             native.x0 = float(command.start.x)
             native.y0 = float(command.start.y)
@@ -285,49 +347,117 @@ class DxOffscreenTarget:
             native.stroke_rgba = self._pack_color(command.color)
             return native
 
-        native.type = (
-            FSDX_COMMAND_ELLIPSE
-            if isinstance(command, EllipseCommand)
-            else FSDX_COMMAND_RECT
-        )
-        native.x0 = float(command.rect.x)
-        native.y0 = float(command.rect.y)
-        native.x1 = float(command.rect.width)
-        native.y1 = float(command.rect.height)
-        native.stroke_width = float(command.stroke_width)
-        if command.fill is not None:
-            native.flags |= FSDX_DRAW_FLAG_HAS_FILL
-            native.fill_rgba = self._pack_color(command.fill)
-        if command.stroke is not None and command.stroke_width > 0.0:
-            native.flags |= FSDX_DRAW_FLAG_HAS_STROKE
-            native.stroke_rgba = self._pack_color(command.stroke)
-        return native
+        if isinstance(command, TextCommand):
+            try:
+                text_bytes = command.text.encode("utf-8")
+                family_bytes = command.font.family.encode("utf-8")
+            except UnicodeEncodeError as exc:
+                raise DxBridgeError(f"text command contains invalid Unicode: {exc}") from exc
+            command_payload_size = len(text_bytes) + len(family_bytes)
+            if len(text_bytes) > 0x7FFFFFFF or command_payload_size > 0xFFFFFFFF:
+                raise DxBridgeError("text command payload exceeds the DX ABI limit")
+            if len(payload) + command_payload_size > 0xFFFFFFFF:
+                raise DxBridgeError("frame text payload exceeds the DX ABI limit")
+            native.type = FSDX_COMMAND_TEXT
+            native.layer = int(command.layer)
+            native.z = int(command.z)
+            native.order = int(command.order)
+            native.alpha = float(command.alpha)
+            native.flags = FSDX_DRAW_FLAG_TEXT_BOLD if command.font.bold else 0
+            native.x0 = float(command.rect.x)
+            native.y0 = float(command.rect.y)
+            native.x1 = float(command.rect.width)
+            native.y1 = float(command.rect.height)
+            native.stroke_width = float(command.font.pixel_size)
+            native.fill_rgba = self._pack_color(command.color)
+            native.stroke_rgba = int(command.alignment)
+            native.text_length = len(text_bytes)
+            native.payload_offset = len(payload)
+            native.payload_size = command_payload_size
+            payload.extend(text_bytes)
+            payload.extend(family_bytes)
+            return native
+
+        if isinstance(command, (EllipseCommand, RectCommand)):
+            native.type = (
+                FSDX_COMMAND_ELLIPSE
+                if isinstance(command, EllipseCommand)
+                else FSDX_COMMAND_RECT
+            )
+            native.layer = int(command.layer)
+            native.z = int(command.z)
+            native.order = int(command.order)
+            native.alpha = float(command.alpha)
+            native.x0 = float(command.rect.x)
+            native.y0 = float(command.rect.y)
+            native.x1 = float(command.rect.width)
+            native.y1 = float(command.rect.height)
+            native.stroke_width = float(command.stroke_width)
+            if command.fill is not None:
+                native.flags |= FSDX_DRAW_FLAG_HAS_FILL
+                native.fill_rgba = self._pack_color(command.fill)
+            if command.stroke is not None and command.stroke_width > 0.0:
+                native.flags |= FSDX_DRAW_FLAG_HAS_STROKE
+                native.stroke_rgba = self._pack_color(command.stroke)
+            return native
+
+        if isinstance(command, ClipPush):
+            native.type = FSDX_COMMAND_CLIP_PUSH
+            native.x0 = float(command.rect.x)
+            native.y0 = float(command.rect.y)
+            native.x1 = float(command.rect.width)
+            native.y1 = float(command.rect.height)
+            return native
+
+        if isinstance(command, ClipPop):
+            native.type = FSDX_COMMAND_CLIP_POP
+            return native
+
+        if isinstance(command, TransformPush):
+            native.type = FSDX_COMMAND_TRANSFORM_PUSH
+            (
+                native.m11,
+                native.m12,
+                native.m21,
+                native.m22,
+                native.dx,
+                native.dy,
+            ) = command.matrix
+            return native
+
+        if isinstance(command, TransformPop):
+            native.type = FSDX_COMMAND_TRANSFORM_POP
+            return native
+
+        raise DxBridgeError(f"unsupported DX draw command: {type(command).__name__}")
 
     def render_batch(self, batch: DrawBatch, viewport: Rect | None = None) -> None:
         commands = list(batch.commands)
-        supported_types = (SpriteCommand, LineCommand, RectCommand, EllipseCommand)
-        if any(not isinstance(command, supported_types) for command in commands):
-            raise DxBridgeError(
-                "DX offscreen prototype supports sprite, line, rectangle, and ellipse commands; "
-                "text, clip, and transform commands are not implemented"
-            )
         self._release_stale_resources(batch)
         native_commands = (_DrawCommand * len(commands))()
+        payload = bytearray()
         for index, command in enumerate(commands):
-            native_commands[index] = self._native_command(command, viewport)
+            native_commands[index] = self._native_command(command, viewport, payload)
         command_pointer = native_commands if commands else None
-        self._call(
+        native_payload = (
+            (ctypes.c_uint8 * len(payload)).from_buffer_copy(payload)
+            if payload
+            else None
+        )
+        self._call_render_with_recovery(
             self._library.fsdx_submit_frame,
             self._runtime,
             command_pointer,
             len(commands),
+            native_payload,
+            len(payload),
         )
 
     def readback_rgba(self) -> bytes:
         size = self.width * self.height * 4
         output = (ctypes.c_uint8 * size)()
         written = ctypes.c_uint64()
-        self._call(
+        self._call_render_with_recovery(
             self._library.fsdx_readback_rgba,
             self._runtime,
             output,

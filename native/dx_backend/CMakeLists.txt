@@ -28,7 +28,11 @@ endif()
 target_link_libraries(flying_snow_dx PRIVATE
     d3d11.lib
     d2d1.lib
+    dwrite.lib
     dxgi.lib
+    dcomp.lib
+    imm32.lib
+    shell32.lib
 )
 
 set_target_properties(flying_snow_dx PROPERTIES

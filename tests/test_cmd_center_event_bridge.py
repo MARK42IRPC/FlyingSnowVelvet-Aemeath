@@ -1,5 +1,6 @@
 import subprocess
 import unittest
+from concurrent.futures import Future
 from unittest.mock import patch
 
 from lib.core.cmd_center import CmdCenter
@@ -13,6 +14,15 @@ class _FakeComputeHub:
 
     def submit_io(self, callback, *args):
         self.calls.append((callback, args))
+
+    def submit_interactive_io(self, callback, *args):
+        self.calls.append((callback, args))
+        future = Future()
+        try:
+            future.set_result(callback(*args))
+        except Exception as exc:
+            future.set_exception(exc)
+        return future
 
 
 class CmdCenterEventBridgeTests(unittest.TestCase):
@@ -66,6 +76,115 @@ class CmdCenterEventBridgeTests(unittest.TestCase):
         }))
 
         self.assertEqual(self.compute_hub.calls, [])
+
+    def test_backend_hash_command_persists_directx_and_requests_restart(self):
+        saved = []
+        self.center._backend_saver = saved.append
+        information = []
+        quits = []
+        self.event_center.subscribe(
+            EventType.INFORMATION,
+            lambda event: information.append(event.data),
+        )
+        self.event_center.subscribe(
+            EventType.APP_QUIT,
+            lambda event: quits.append(event.data),
+        )
+
+        with patch.dict('config.config.UI', {'render_backend': 'qt'}):
+            self.event_center.publish(Event(EventType.INPUT_HASH, {
+                'text': '后端 dx',
+            }))
+
+        self.assertEqual(saved, ['directx'])
+        self.assertEqual(quits, [{
+            'restart': True,
+            'source': 'hash_backend_command',
+            'render_backend': 'directx',
+        }])
+        self.assertIn('DX', information[-1]['text'])
+
+    def test_backend_hash_command_rejects_invalid_target_without_restart(self):
+        information = []
+        quits = []
+        self.event_center.subscribe(
+            EventType.INFORMATION,
+            lambda event: information.append(event.data),
+        )
+        self.event_center.subscribe(
+            EventType.APP_QUIT,
+            lambda event: quits.append(event.data),
+        )
+
+        self.event_center.publish(Event(EventType.INPUT_HASH, {
+            'text': '后端 vulkan',
+        }))
+
+        self.assertEqual(quits, [])
+        self.assertEqual(self.compute_hub.calls, [])
+        self.assertEqual(information[-1]['text'], '用法：#后端 dx 或 #后端 qt')
+
+    def test_backend_hash_command_does_not_restart_when_already_selected(self):
+        information = []
+        quits = []
+        self.event_center.subscribe(
+            EventType.INFORMATION,
+            lambda event: information.append(event.data),
+        )
+        self.event_center.subscribe(
+            EventType.APP_QUIT,
+            lambda event: quits.append(event.data),
+        )
+
+        with patch.dict('config.config.UI', {'render_backend': 'directx'}):
+            self.event_center.publish(Event(EventType.INPUT_HASH, {
+                'text': '后端 dx',
+            }))
+
+        self.assertEqual(quits, [])
+        self.assertEqual(self.compute_hub.calls, [])
+        self.assertEqual(information[-1]['text'], '当前已是 DX 后端')
+
+    def test_backend_hash_command_accepts_directx_alias_and_whitespace(self):
+        saved = []
+        self.center._backend_saver = saved.append
+        quits = []
+        self.event_center.subscribe(
+            EventType.APP_QUIT,
+            lambda event: quits.append(event.data),
+        )
+
+        with patch.dict('config.config.UI', {'render_backend': 'qt'}):
+            self.event_center.publish(Event(EventType.INPUT_HASH, {
+                'text': '后端\t directx',
+            }))
+
+        self.assertEqual(saved, ['directx'])
+        self.assertEqual(quits[-1]['render_backend'], 'directx')
+
+    def test_backend_hash_command_keeps_instance_on_save_failure(self):
+        def fail_save(_backend_id):
+            raise OSError('disk full')
+
+        self.center._backend_saver = fail_save
+        information = []
+        quits = []
+        self.event_center.subscribe(
+            EventType.INFORMATION,
+            lambda event: information.append(event.data),
+        )
+        self.event_center.subscribe(
+            EventType.APP_QUIT,
+            lambda event: quits.append(event.data),
+        )
+
+        with patch.dict('config.config.UI', {'render_backend': 'qt'}):
+            self.event_center.publish(Event(EventType.INPUT_HASH, {
+                'text': '后端 dx',
+            }))
+
+        self.assertEqual(quits, [])
+        self.assertIn('切换绘制后端失败', information[-1]['text'])
 
 
 if __name__ == "__main__":

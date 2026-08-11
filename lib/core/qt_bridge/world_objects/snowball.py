@@ -5,7 +5,7 @@ from collections import deque
 
 from PyQt5.QtWidgets import QWidget
 from PyQt5.QtCore    import Qt, QPoint
-from PyQt5.QtGui     import QPainter, QPixmap
+from PyQt5.QtGui     import QPainter
 
 from config.config                import BEHAVIOR, PHYSICS, SNOWBALL as _SNOWBALL_CFG
 from lib.core.event.center        import get_event_center, EventType, Event
@@ -14,6 +14,9 @@ from lib.core.physics             import get_physics_world, PhysicsBody
 from lib.core.unified_draw import Layer, get_layer_manager
 from lib.core.voice.snowball_sound import SnowballSound
 from lib.core.qt_bridge.screen import get_screen_geometry_for_point
+from lib.core.graphics.resources import ImageResource
+from lib.core.graphics.visuals import build_world_object_batch
+from lib.core.qt_bridge.draw_backend import QtDrawBackend
 
 
 # ── 物理参数（从 PHYSICS 读取，与沙发保持一致）────────────────────────
@@ -47,18 +50,20 @@ class Snowball(QWidget):
     """
 
     def __init__(self,
-                 pixmap: QPixmap,
                  position: QPoint,
-                 size: tuple):
+                 size: tuple,
+                 visual_resource: ImageResource | None = None):
         """
         Args:
-            pixmap:   已缩放好的静态 QPixmap
             position: 屏幕全局坐标（左上角）
             size:     窗口尺寸 (width, height)，width == height == diameter
         """
         super().__init__()
 
-        self._pixmap  = pixmap
+        if not isinstance(visual_resource, ImageResource):
+            raise TypeError("snowball visual_resource must be an ImageResource")
+        self._visual_resource = visual_resource
+        self._draw_backend = QtDrawBackend()
         self._size    = size
         self._alpha   = 1.0
         self._alive   = True
@@ -473,11 +478,15 @@ class Snowball(QWidget):
     # ==================================================================
 
     def paintEvent(self, event):
-        if self._pixmap is None:
-            return
+        """Execute the shared world-object sprite batch."""
         painter = QPainter(self)
-        painter.setOpacity(self._alpha)
-        painter.drawPixmap(0, 0, self._pixmap)
+        self._draw_backend.render(build_world_object_batch(
+            self._visual_resource,
+            0,
+            alpha=self._alpha,
+            object_type="snowball",
+        ), painter)
+        painter.end()
 
     # ==================================================================
     # 关闭兜底
@@ -488,5 +497,6 @@ class Snowball(QWidget):
         self._event_center.unsubscribe(EventType.TICK, self._tick_fade)
         self._event_center.unsubscribe(EventType.UI_CLICKTHROUGH_TOGGLE, self._on_clickthrough_toggle)
         self._cleanup_physics()
+        self._draw_backend.cleanup()
         self._alive = False
         super().closeEvent(event)

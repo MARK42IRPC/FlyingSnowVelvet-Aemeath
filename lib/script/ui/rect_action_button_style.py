@@ -7,34 +7,27 @@ from PyQt5.QtCore import Qt, QPropertyAnimation, QEasingCurve
 from PyQt5.QtGui import QPainter
 
 from config.config import UI
-from lib.core.qt_bridge.colors import COLORS, UI_THEME
 from lib.core.qt_bridge.font import get_ui_font
-from config.scale import scale_px
 from lib.core.anchor_utils import animate_opacity, apply_ui_opacity
+from lib.core.graphics.application_visuals import build_rect_action_button_visual
+from lib.core.graphics.types import FontSpec
+from lib.core.qt_bridge.draw_backend import QtDrawBackend
 from lib.core.unified_draw import Layer, get_layer_manager
 
 
+_DRAW_BACKEND = QtDrawBackend()
+
+
 def paint_rect_action_button(painter: QPainter, rect, font, text: str, hovered: bool = False) -> None:
-    """绘制右键 UI 中统一样式的矩形功能按钮。"""
-    painter.setRenderHint(QPainter.Antialiasing, False)
-    layer = scale_px(2, min_abs=1)
-
-    painter.fillRect(rect, COLORS['black'])
-
-    cyan_rect = rect.adjusted(layer, layer, -layer, -layer)
-    painter.fillRect(cyan_rect, COLORS['cyan'])
-
-    if hovered:
-        pink_border_rect = cyan_rect.adjusted(layer, layer, -layer, -layer)
-        painter.fillRect(pink_border_rect, UI_THEME['deep_pink'])
-        content_rect = pink_border_rect.adjusted(layer, layer, -layer, -layer)
-    else:
-        content_rect = rect.adjusted(layer * 2, layer * 2, -layer * 2, -layer * 2)
-
-    painter.fillRect(content_rect, COLORS['pink'])
-    painter.setPen(COLORS['black'])
-    painter.setFont(font)
-    painter.drawText(content_rect, 0x84, text)  # Qt.AlignCenter
+    """Execute the shared pet action-button visual through Qt."""
+    visual = build_rect_action_button_visual(
+        rect.width(),
+        rect.height(),
+        text,
+        FontSpec(font.family(), font.pixelSize(), font.bold()),
+        hovered=hovered,
+    )
+    _DRAW_BACKEND.render(visual.batch, painter)
 
 
 class RectActionButton(QWidget):

@@ -14,6 +14,10 @@ from config.scale import scale_px
 from lib.core.anchor_utils import apply_ui_opacity
 from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import Event, EventType, get_event_center
+from lib.core.game_obstacles import (
+    configure_game_obstacle_provider,
+    reset_game_obstacle_provider,
+)
 from lib.core.graphics.types import Rect
 from lib.core.hash_cmd_registry import get_hash_cmd_registry
 from lib.core.logger import get_logger
@@ -457,12 +461,14 @@ class GameRuntime:
         self._bgm_keyword = ""
         self._bgm_artist = ""
         self._open_generation = 0
+        self._obstacle_provider = self.get_lahai_game_middle_third_rect_global
 
         self._event_center.subscribe(EventType.INPUT_HASH, self._on_hash_command)
         self._event_center.subscribe(EventType.UI_CLICKTHROUGH_TOGGLE, self._on_clickthrough_toggle)
 
         get_hash_cmd_registry().register("游戏", "[打开/关闭/列表]", "打开游戏列表管理器")
         self.refresh_available_games()
+        configure_game_obstacle_provider(self._obstacle_provider)
         log("已初始化")
 
     def refresh_available_games(self) -> None:
@@ -690,6 +696,7 @@ class GameRuntime:
         self._bgm_started_by_game = True
 
     def cleanup(self) -> None:
+        reset_game_obstacle_provider(self._obstacle_provider)
         self._event_center.unsubscribe(EventType.INPUT_HASH, self._on_hash_command)
         self._event_center.unsubscribe(EventType.UI_CLICKTHROUGH_TOGGLE, self._on_clickthrough_toggle)
         try:

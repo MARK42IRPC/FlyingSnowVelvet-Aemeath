@@ -27,7 +27,7 @@ from lib.core.graphics.commands import (
     TransformPush,
 )
 from lib.core.graphics.resources import RasterFrame
-from lib.core.graphics.types import Color, Point, Rect
+from lib.core.graphics.types import Color, Point, Rect, Size
 from lib.core.layer import Layer
 from lib.core.qt_bridge.draw_backend import QtDrawBackend
 
@@ -45,6 +45,7 @@ def _batch(frame: RasterFrame, *, revision: int, flipped: bool = False) -> DrawB
         layer=int(Layer.MAIN_PET),
         z=0,
         order=1,
+        target_size=Size(4, 2),
     ),))
 
 
@@ -66,7 +67,7 @@ class QtDrawBackendTests(unittest.TestCase):
             painter.end()
         return target
 
-    def test_sprite_batch_scales_and_flips_at_qt_boundary(self):
+    def test_sprite_batch_uses_explicit_target_size_and_flips_at_qt_boundary(self):
         frame = RasterFrame(
             2,
             1,

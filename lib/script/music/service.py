@@ -6,6 +6,7 @@ Callers should avoid importing provider-specific modules directly.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Optional
 
 from config.config import CLOUD_MUSIC
@@ -21,6 +22,7 @@ from .types import MusicTrack
 logger = get_logger(__name__)
 
 _instance: Optional["MusicService"] = None
+_player_factory: Callable[[], object] | None = None
 _PROVIDER_ORDER: tuple[str, ...] = ("netease", "qq", "kugou")
 _PROVIDER_LABELS: dict[str, str] = {
     "netease": "NetEase Music",
@@ -43,6 +45,7 @@ class MusicService:
             "kugou": KugouMusicProvider(),
         }
         self._backend_manager: MusicPlaybackBackend | None = None
+        self._player_factory = _player_factory
         self._router = SourceRouter()
         default_provider = _PROVIDER_ORDER[0]
         requested = str(CLOUD_MUSIC.get("provider", default_provider) or default_provider).strip().lower()
@@ -226,7 +229,9 @@ class MusicService:
             if self._backend_manager is None:
                 from lib.script.cloudmusic.manager import CloudMusicManager
 
-                self._backend_manager = CloudMusicManager()
+                self._backend_manager = CloudMusicManager(
+                    music_player_factory=self._player_factory,
+                )
             return self._backend_manager
         return None
 
@@ -244,8 +249,10 @@ class MusicService:
                 logger.warning("[MusicService] 清理音乐后端失败: %s", e)
 
     def clear_all_history_and_login_data(self) -> dict[str, int]:
-        """Clear music history and login data through the single music runtime."""
-        return self.initialize().clear_user_data()
+        """Clear music data without creating a playback/login runtime."""
+        from lib.script.cloudmusic.user_data import clear_music_user_data
+
+        return clear_music_user_data(runtime_manager=self._backend_manager)
 
     def is_logged_in(self) -> bool:
         mgr = self._get_backend_manager()
@@ -358,6 +365,18 @@ def get_music_service() -> MusicService:
     if _instance is None:
         _instance = MusicService()
     return _instance
+
+
+def configure_music_player_factory(factory: Callable[[], object] | None) -> None:
+    """Install the active desktop composition's optional media player."""
+    global _player_factory
+    if factory is not None and not callable(factory):
+        raise TypeError("music player factory must be callable or None")
+    if _instance is not None and _instance._backend_manager is not None:
+        raise RuntimeError("music player factory cannot change after initialization")
+    _player_factory = factory
+    if _instance is not None:
+        _instance._player_factory = factory
 
 
 def cleanup_music_service():

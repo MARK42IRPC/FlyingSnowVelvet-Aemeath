@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from config.scale import scale_px
+from lib.core.graphics.application_visuals import qr_panel_action_text
 from lib.script.ui.qr_dialog_base import BaseQrDialog
 
 
@@ -16,7 +17,7 @@ class QQGroupDialog(BaseQrDialog):
         super().__init__(
             title="进入QQ群获取更新",
             status="使用手机QQ扫码进群",
-            action_text="关闭窗口",
+            action_text=qr_panel_action_text("qq-group"),
             placeholder_text="QQqrc.png 未找到",
             qr_background=False,
             status_font_size=scale_px(11, min_abs=9),

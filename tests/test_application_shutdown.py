@@ -1,6 +1,7 @@
 import os
 import threading
 import unittest
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -167,6 +168,51 @@ class ApplicationShutdownTests(unittest.TestCase):
         finally:
             release.set()
             worker.join(timeout=1)
+
+    def test_backend_cleanup_runs_once_after_event_loop(self):
+        state = ApplicationState.__new__(ApplicationState)
+        state._backend_cleanup = Mock()
+        state._backend_cleaned = False
+
+        state._cleanup_backend()
+        state._cleanup_backend()
+
+        state._backend_cleanup.assert_called_once_with()
+
+    def test_main_releases_lock_and_cleans_backend_when_state_creation_fails(self):
+        backend_cleanup = Mock()
+        bundle = SimpleNamespace(cleanup=backend_cleanup)
+
+        with patch("lib.script.main._new_acquire_single_instance_lock", return_value=True), patch(
+            "lib.script.main._new_release_single_instance_lock"
+        ) as release_lock, patch(
+            "lib.script.main.ApplicationState",
+            side_effect=RuntimeError("state init failed"),
+        ), patch("lib.script.main.cleanup_event_center") as cleanup_events:
+            with self.assertRaises(SystemExit) as raised:
+                from lib.script.main import main
+
+                main(backend_bundle=bundle)
+
+        self.assertEqual(raised.exception.code, -1)
+        backend_cleanup.assert_called_once_with()
+        cleanup_events.assert_called_once_with()
+        release_lock.assert_called_once_with()
+
+    def test_second_instance_notification_cleans_preconfigured_backend(self):
+        backend_cleanup = Mock()
+        bundle = SimpleNamespace(cleanup=backend_cleanup)
+
+        with patch("lib.script.main._new_acquire_single_instance_lock", return_value=False), patch(
+            "lib.script.main._new_notify_already_running"
+        ) as notify:
+            from lib.script.main import main
+
+            result = main(backend_bundle=bundle)
+
+        self.assertIsNone(result)
+        notify.assert_called_once_with()
+        backend_cleanup.assert_called_once_with()
 
 
 if __name__ == "__main__":

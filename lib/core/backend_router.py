@@ -16,6 +16,7 @@ class BackendDescriptor:
     display_name: str
     available: bool
     requires_restart: bool = True
+    experimental: bool = False
 
 
 @dataclass(frozen=True)
@@ -24,6 +25,7 @@ class BackendSelection:
     active_backend: str
     fallback_used: bool
     reason: str | None = None
+    experimental: bool = False
 
 
 class BackendConfigurationError(RuntimeError):
@@ -32,7 +34,7 @@ class BackendConfigurationError(RuntimeError):
 
 BACKEND_DESCRIPTORS = (
     BackendDescriptor("qt", "Qt", True),
-    BackendDescriptor("directx", "DirectX", False),
+    BackendDescriptor("directx", "DirectX", True, experimental=True),
     BackendDescriptor("opengl", "OpenGL", False),
     BackendDescriptor("vulkan", "Vulkan", False),
 )
@@ -59,6 +61,7 @@ class BackendRouter:
                 descriptor.display_name,
                 bool(descriptor.available),
                 bool(descriptor.requires_restart),
+                bool(descriptor.experimental),
             )
 
         fallback_id = self._normalize_backend_id(fallback_backend)
@@ -112,7 +115,12 @@ class BackendRouter:
                 if requested_id == self._fallback_backend:
                     raise BackendConfigurationError(reason) from exc
             else:
-                selection = BackendSelection(requested_id, requested_id, False)
+                selection = BackendSelection(
+                    requested_id,
+                    requested_id,
+                    False,
+                    experimental=descriptor.experimental,
+                )
                 self._active_selection = selection
                 return selection
         elif descriptor is None:

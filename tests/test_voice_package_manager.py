@@ -753,6 +753,24 @@ class VoicePackageManagerTests(unittest.TestCase):
         self.assertTrue(process_started.is_set())
         self.assertIsNone(installer._active_process)
 
+    def test_dependency_install_requires_opencc_wheel(self):
+        installer = VoicePackageInstaller()
+        process = Mock(returncode=0)
+        process.poll.return_value = 0
+
+        with tempfile.TemporaryDirectory() as tmp, patch.object(
+            manager, "missing_runtime_modules", side_effect=[("opencc",), ()]
+        ), patch.object(manager.subprocess, "Popen", return_value=process) as popen:
+            installer._ensure_runtime_dependencies(Path(tmp))
+
+        command = popen.call_args.args[0]
+        option_index = command.index("--only-binary")
+        self.assertEqual(
+            command[option_index + 1],
+            "opencc-python-reimplemented",
+        )
+        self.assertIn("opencc", manager._RUNTIME_MODULES)
+
 
 if __name__ == "__main__":
     unittest.main()

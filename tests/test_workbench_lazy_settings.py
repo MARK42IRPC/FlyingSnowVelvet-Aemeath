@@ -66,7 +66,8 @@ class WorkbenchLazySettingsTests(unittest.TestCase):
             ['qt', 'directx', 'opengl', 'vulkan'],
         )
         self.assertIn('当前可用', combo.itemText(combo.findData('qt')))
-        self.assertIn('尚未接入', combo.itemText(combo.findData('directx')))
+        self.assertIn('实验性功能', combo.itemText(combo.findData('directx')))
+        self.assertIn('尚未接入', combo.itemText(combo.findData('opengl')))
 
         combo.setCurrentIndex(combo.findData('vulkan'))
         values = panel._collect_config_category_values('ui_anim')

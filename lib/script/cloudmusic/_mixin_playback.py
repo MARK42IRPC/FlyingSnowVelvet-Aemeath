@@ -524,7 +524,7 @@ class _PlaybackMixin:
             return
 
         try:
-            if self._use_qt_player:
+            if self._use_native_player:
                 if not self._music_player.is_busy():
                     return
                 duration_ms = self._music_player.duration_ms_value() or self._current_duration_ms
@@ -1049,7 +1049,7 @@ class _PlaybackMixin:
         if self._queue and 0 <= self._current_index < len(self._queue):
             song_id, _ = self._queue[self._current_index]
             self._schedule_duration_probe(song_id, path)
-        if self._use_qt_player:
+        if self._use_native_player:
             self._music_player.play_requested.emit(str(path), get_effective_music_volume(self._volume), gen)
             return
 
@@ -1072,7 +1072,7 @@ class _PlaybackMixin:
                 return
             self._is_playing = True
             self._is_paused = False
-        if self._use_qt_player:
+        if self._use_native_player:
             self._current_duration_ms = self._music_player.duration_ms_value() or self._current_duration_ms
         display = self._pending_play_display
         self._show_info(f"正在播放: {display}")
@@ -1107,9 +1107,9 @@ class _PlaybackMixin:
             self._cache_duration_probe_result(song_id, self._current_duration_ms)
 
     def _on_player_error(self, gen: int, message: str) -> None:
-        if self._use_qt_player:
+        if self._use_native_player:
             logger.warning("[CloudMusic] Qt 播放失败，切换到 MCI fallback: %s", message)
-            self._use_qt_player = False
+            self._use_native_player = False
             pending_path = str(self._pending_play_path or "").strip()
             pending_display = str(self._pending_play_display or "").strip()
             if pending_path:
@@ -1172,7 +1172,7 @@ class _PlaybackMixin:
         if self._download_thread and not self._download_thread.done():
             self._download_cancel.set()
 
-        if self._use_qt_player:
+        if self._use_native_player:
             self._music_player.stop_requested.emit()
         else:
             self._fallback_player.stop()
@@ -1200,7 +1200,7 @@ class _PlaybackMixin:
         if self._download_thread and not self._download_thread.done():
             self._download_cancel.set()
 
-        if self._use_qt_player:
+        if self._use_native_player:
             self._music_player.stop_requested.emit()
         else:
             self._fallback_player.stop()

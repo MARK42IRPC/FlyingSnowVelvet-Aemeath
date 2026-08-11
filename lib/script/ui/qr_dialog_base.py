@@ -4,35 +4,23 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt5.QtCore import Qt, QRect, QPropertyAnimation, QEasingCurve
-from PyQt5.QtGui import QCursor, QFontMetrics, QPainter, QPixmap
+from PyQt5.QtCore import Qt, QRect, QPropertyAnimation, QEasingCurve, QEvent
+from PyQt5.QtGui import QCursor, QPainter
 from PyQt5.QtWidgets import QGraphicsOpacityEffect, QPushButton, QWidget
 
 from config.config import UI
-from lib.core.qt_bridge.colors import UI_THEME
-from lib.core.qt_bridge.font import draw_mixed_text, get_digit_font, get_ui_font, wrap_mixed_text
-from config.scale import scale_px, scale_style_px
 from lib.core.anchor_utils import apply_ui_opacity
+from lib.core.graphics.application_visuals import (
+    build_qr_panel_visual,
+    decode_panel_image,
+    qr_panel_size,
+    resolve_qr_panel_layout,
+)
+from lib.core.graphics.image_loader import load_image_resource
+from lib.core.graphics.resources import ImageResource
+from lib.core.qt_bridge.draw_backend import QtDrawBackend
 from lib.core.qt_bridge.screen import clamp_rect_position, get_screen_geometry_for_point
 from lib.core.unified_draw import Layer, get_layer_manager
-
-_WIDTH = scale_px(320, min_abs=1)
-_HEIGHT = scale_px(430, min_abs=1)
-_LAYER = scale_px(2, min_abs=1)
-_BORDER = _LAYER * 2
-_TITLE_H = scale_px(36, min_abs=1)
-_STATUS_H = scale_px(80, min_abs=1)
-_QR_SIZE = scale_px(240, min_abs=1)
-_STATUS_GAP = scale_px(8, min_abs=1)
-_BTN_W = scale_px(132, min_abs=1)
-_BTN_H = scale_px(30, min_abs=1)
-_BTN_BOTTOM = scale_px(12, min_abs=1)
-
-_C_BORDER = UI_THEME["border"]
-_C_MID = UI_THEME["mid"]
-_C_BG = UI_THEME["bg"]
-_C_TEXT = UI_THEME["text"]
-
 
 class BaseQrDialog(QWidget):
     """标准二维码浮窗基类。"""
@@ -56,42 +44,32 @@ class BaseQrDialog(QWidget):
         self.setWindowFlags(flags)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFocusPolicy(Qt.NoFocus)
-        self.setFixedSize(_WIDTH, _HEIGHT)
+        self.setFixedSize(*qr_panel_size())
         get_layer_manager().register(self, Layer.DIALOG)
 
         self._visible = False
         self._title = str(title or "").strip()
         self._status = str(status or "").strip()
+        self._action_text = str(action_text or "").strip()
         self._placeholder_text = str(placeholder_text or "").strip()
         self._qr_background = bool(qr_background)
-        self._qr_pixmap: QPixmap | None = None
+        self._status_bold = bool(status_bold)
+        self._status_font_size = status_font_size
+        self._qr_resource: ImageResource | None = None
+        self._draw_backend = QtDrawBackend()
 
-        self._title_font = get_ui_font()
-        self._title_font.setBold(True)
-        self._status_font = (
-            get_ui_font(size=status_font_size)
-            if status_font_size is not None
-            else get_ui_font()
-        )
-        self._status_font.setBold(bool(status_bold))
-        self._digit_font = get_digit_font()
-
-        self._action_btn = QPushButton(str(action_text or "").strip(), self)
+        self._action_btn = QPushButton(self._action_text, self)
         self._action_btn.setFocusPolicy(Qt.NoFocus)
         self._action_btn.setCursor(Qt.PointingHandCursor)
-        self._action_btn.setFont(get_ui_font())
+        self._action_btn.setAttribute(Qt.WA_Hover, True)
+        self._action_btn.installEventFilter(self)
         self._action_btn.clicked.connect(self._on_action_clicked)
-        self._action_btn.setStyleSheet(scale_style_px(
-            "QPushButton {"
-            f"background: rgb({_C_BG.red()}, {_C_BG.green()}, {_C_BG.blue()});"
-            f"border: 2px solid rgb({_C_BORDER.red()}, {_C_BORDER.green()}, {_C_BORDER.blue()});"
-            f"color: rgb({_C_TEXT.red()}, {_C_TEXT.green()}, {_C_TEXT.blue()});"
-            "font-weight: bold;"
-            "padding: 2px 6px;"
-            "}"
-            "QPushButton:hover {background: rgb(255, 200, 210);}"
-            "QPushButton:pressed {background: rgb(255, 170, 190);}"
-        ))
+        # The child remains the native input adapter; product pixels come from
+        # build_qr_panel_visual() in the parent paint pass.
+        self._action_btn.setStyleSheet(
+            "QPushButton { background: transparent; border: 0px; "
+            "color: transparent; padding: 0px; }"
+        )
 
         self._opacity = QGraphicsOpacityEffect(self)
         self._opacity.setOpacity(0.0)
@@ -103,72 +81,27 @@ class BaseQrDialog(QWidget):
         self._layout_controls()
 
     def _content_rects(self) -> tuple[QRect, QRect, QRect, QRect, QRect]:
-        inner = self.rect().adjusted(_BORDER, _BORDER, -_BORDER, -_BORDER)
-        title_rect = QRect(inner.x(), inner.y(), inner.width(), _TITLE_H)
+        layout = resolve_qr_panel_layout((self.width(), self.height()))
 
-        qr_x = inner.x() + (inner.width() - _QR_SIZE) // 2
-        qr_y = title_rect.bottom() + scale_px(10, min_abs=1)
-        qr_rect = QRect(qr_x, qr_y, _QR_SIZE, _QR_SIZE)
+        def _qrect(rect) -> QRect:
+            return QRect(
+                int(round(rect.x)),
+                int(round(rect.y)),
+                int(round(rect.width)),
+                int(round(rect.height)),
+            )
 
-        btn_rect = QRect(
-            inner.x() + (inner.width() - _BTN_W) // 2,
-            inner.bottom() - _BTN_BOTTOM - _BTN_H + 1,
-            _BTN_W,
-            _BTN_H,
-        )
-
-        status_top = qr_rect.bottom() + scale_px(10, min_abs=1)
-        status_bottom = btn_rect.y() - _STATUS_GAP
-        status_h = max(scale_px(24, min_abs=1), min(_STATUS_H, status_bottom - status_top))
-        status_rect = QRect(
-            inner.x() + scale_px(10, min_abs=1),
-            status_top,
-            inner.width() - scale_px(20, min_abs=1),
-            status_h,
-        )
-        return inner, title_rect, qr_rect, status_rect, btn_rect
+        return tuple(_qrect(rect) for rect in (
+            layout.inner_rect,
+            layout.title_rect,
+            layout.qr_rect,
+            layout.status_rect,
+            layout.action_rect,
+        ))
 
     def _layout_controls(self) -> None:
         *_, btn_rect = self._content_rects()
         self._action_btn.setGeometry(btn_rect)
-
-    def _draw_wrapped_mixed_text(
-        self,
-        painter: QPainter,
-        rect: QRect,
-        text: str,
-        align: int,
-        *,
-        font=None,
-        digit_font=None,
-    ) -> None:
-        draw_font = font or self._status_font
-        draw_digit_font = digit_font or self._digit_font
-        lines = wrap_mixed_text(text, rect.width(), draw_font, draw_digit_font)
-        if not lines:
-            return
-
-        fm_def = QFontMetrics(draw_font)
-        fm_dig = QFontMetrics(draw_digit_font)
-        line_h = max(fm_def.height(), fm_dig.height())
-        total_h = line_h * len(lines)
-        y = rect.y() + (rect.height() - total_h) // 2
-
-        h_align = align & int(Qt.AlignLeft | Qt.AlignHCenter | Qt.AlignRight)
-        if not h_align:
-            h_align = int(Qt.AlignHCenter)
-
-        for line in lines:
-            line_rect = QRect(rect.x(), y, rect.width(), line_h)
-            draw_mixed_text(
-                painter,
-                line_rect,
-                line,
-                draw_font,
-                draw_digit_font,
-                h_align | int(Qt.AlignVCenter),
-            )
-            y += line_h
 
     def _set_dialog_title(self, title: str | None) -> None:
         if title:
@@ -178,30 +111,24 @@ class BaseQrDialog(QWidget):
         if status:
             self._status = str(status).strip()
 
-    def _set_qr_pixmap(self, pixmap: QPixmap | None) -> None:
-        if pixmap is None or pixmap.isNull():
-            self._qr_pixmap = None
-            return
-        self._qr_pixmap = pixmap
-
     def _set_qr_pixmap_from_bytes(self, qr_png: bytes | None, *, clear_when_none: bool) -> None:
         if qr_png:
-            pix = QPixmap()
-            if pix.loadFromData(qr_png, "PNG") or pix.loadFromData(qr_png):
-                self._qr_pixmap = pix
+            resource = decode_panel_image(qr_png, resource_prefix="application-qr")
+            if resource is not None:
+                self._qr_resource = resource
                 return
         if clear_when_none:
-            self._qr_pixmap = None
+            self._qr_resource = None
 
     def _set_qr_pixmap_from_path(self, image_path: str | Path, *, clear_when_missing: bool = True) -> None:
         candidate = Path(image_path)
         if candidate.exists():
-            pixmap = QPixmap(str(candidate))
-            if not pixmap.isNull():
-                self._qr_pixmap = pixmap
+            resource = load_image_resource(candidate)
+            if resource is not None:
+                self._qr_resource = resource
                 return
         if clear_when_missing:
-            self._qr_pixmap = None
+            self._qr_resource = None
 
     def _center_on_screen(self) -> None:
         cursor_pos = QCursor.pos()
@@ -260,16 +187,43 @@ class BaseQrDialog(QWidget):
     def _on_action_clicked(self) -> None:
         self.hide_dialog()
 
-    def _paint_status(self, painter: QPainter, status_rect: QRect) -> None:
-        if not self._status:
-            return
-        painter.setPen(_C_TEXT)
-        painter.setFont(self._status_font)
-        self._draw_wrapped_mixed_text(
-            painter,
-            status_rect,
-            self._status,
-            Qt.AlignCenter | Qt.TextWordWrap,
+    def _action_visual_state(self) -> str:
+        if not self._action_btn.isEnabled():
+            return "disabled"
+        if self._action_btn.isDown():
+            return "pressed"
+        if self._action_btn.underMouse():
+            return "hover"
+        return "normal"
+
+    def eventFilter(self, watched, event) -> bool:
+        if watched is self._action_btn and event.type() in {
+            QEvent.Enter,
+            QEvent.Leave,
+            QEvent.MouseButtonPress,
+            QEvent.MouseButtonRelease,
+            QEvent.EnabledChange,
+        }:
+            self.update()
+        return super().eventFilter(watched, event)
+
+    def _visual_status_text(self) -> str:
+        return self._status
+
+    def _build_panel_visual(self):
+        return build_qr_panel_visual(
+            self._title,
+            self._visual_status_text(),
+            self._placeholder_text,
+            self._qr_resource,
+            size=(self.width(), self.height()),
+            layer=int(Layer.DIALOG),
+            status_bold=self._status_bold,
+            qr_background=self._qr_background,
+            status_font_size=self._status_font_size,
+            action_text=self._action_text,
+            action_state=self._action_visual_state(),
+            action_enabled=self._action_btn.isEnabled(),
         )
 
     def resizeEvent(self, event) -> None:
@@ -279,31 +233,6 @@ class BaseQrDialog(QWidget):
     def paintEvent(self, event) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, False)
-
-        painter.fillRect(self.rect(), _C_BORDER)
-        painter.fillRect(self.rect().adjusted(_LAYER, _LAYER, -_LAYER, -_LAYER), _C_MID)
-        painter.fillRect(self.rect().adjusted(_BORDER, _BORDER, -_BORDER, -_BORDER), _C_BG)
-
-        _, title_rect, qr_rect, status_rect, _ = self._content_rects()
-        painter.setPen(_C_TEXT)
-        painter.setFont(self._title_font)
-        painter.drawText(title_rect, Qt.AlignCenter, self._title)
-
-        if self._qr_background:
-            painter.fillRect(qr_rect, Qt.white)
-        if self._qr_pixmap is not None and not self._qr_pixmap.isNull():
-            scaled = self._qr_pixmap.scaled(
-                qr_rect.width(),
-                qr_rect.height(),
-                Qt.KeepAspectRatio,
-                Qt.SmoothTransformation,
-            )
-            px = qr_rect.x() + (qr_rect.width() - scaled.width()) // 2
-            py = qr_rect.y() + (qr_rect.height() - scaled.height()) // 2
-            painter.drawPixmap(px, py, scaled)
-        else:
-            painter.setPen(_C_TEXT)
-            painter.drawText(qr_rect, Qt.AlignCenter, self._placeholder_text)
-
-        self._paint_status(painter, status_rect)
+        visual = self._build_panel_visual()
+        self._draw_backend.render(visual.batch, painter)
         painter.end()

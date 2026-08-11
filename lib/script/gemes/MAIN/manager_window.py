@@ -553,12 +553,6 @@ class GameManagerWindow(QtWorkbenchToolPage):
         target_y = self._list_panel.height() - self._fun_watermark.height() - margin_y
         self._fun_watermark.move(margin_x, max(scale_px(52, min_abs=44), target_y))
 
-    @staticmethod
-    def _dialog_options() -> QFileDialog.Options:
-        options = QFileDialog.Options()
-        options |= QFileDialog.DontUseNativeDialog
-        return options
-
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self._layout_overlays()
@@ -684,7 +678,6 @@ class GameManagerWindow(QtWorkbenchToolPage):
             "选择游戏 ZIP",
             str(Path.home()),
             "Game Packages (*.zip)",
-            options=self._dialog_options(),
         )
         if not zip_path:
             return
@@ -716,7 +709,6 @@ class GameManagerWindow(QtWorkbenchToolPage):
             "导出游戏包",
             str(Path.home() / "Desktop" / default_name),
             "Game Packages (*.zip)",
-            options=self._dialog_options(),
         )
         if not output_path:
             return

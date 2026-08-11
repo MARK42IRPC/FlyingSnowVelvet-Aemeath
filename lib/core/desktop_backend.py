@@ -27,6 +27,7 @@ DeferredCall = Callable[[int, Callable[[], None]], None]
 VirtualScreenProvider = Callable[[], Rect]
 ScreenForPointProvider = Callable[[Point | None], Rect]
 ScreenCaptureProvider = Callable[[], bytes | None]
+BackendCleanup = Callable[[], None]
 
 
 @dataclass(frozen=True)
@@ -49,6 +50,7 @@ class DesktopBackendBundle:
     layer_window_host_factory: LayerWindowHostFactory
     screen_capture_provider: ScreenCaptureProvider | None = None
     window_host_factory: WindowHostFactory | None = None
+    cleanup: BackendCleanup | None = None
 
 
 _bundle: DesktopBackendBundle | None = None
@@ -72,6 +74,7 @@ def configure_desktop_backend(
     layer_window_host_factory: LayerWindowHostFactory,
     screen_capture_provider: ScreenCaptureProvider | None = None,
     window_host_factory: WindowHostFactory | None = None,
+    cleanup: BackendCleanup | None = None,
 ) -> None:
     """Install one complete desktop backend before runtime services are created."""
     global _bundle
@@ -92,6 +95,7 @@ def configure_desktop_backend(
         layer_window_host_factory=layer_window_host_factory,
         screen_capture_provider=screen_capture_provider,
         window_host_factory=window_host_factory,
+        cleanup=cleanup,
     )
 
 

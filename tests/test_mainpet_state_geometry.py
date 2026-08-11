@@ -1,9 +1,11 @@
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import patch
 
 from lib.core.event.center import EventType
+from lib.core.game_obstacles import (
+    configure_game_obstacle_provider,
+    reset_game_obstacle_provider,
+)
 from lib.core.graphics.types import Point, Rect
 from lib.script.mainpet.state import StateMachine
 
@@ -32,6 +34,9 @@ class _EventSink:
 
 
 class MainPetStateGeometryTests(unittest.TestCase):
+    def tearDown(self):
+        reset_game_obstacle_provider()
+
     def test_state_module_has_no_explicit_pyqt_dependency(self):
         source = (
             Path(__file__).resolve().parents[1]
@@ -42,17 +47,21 @@ class MainPetStateGeometryTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
 
         self.assertNotIn("PyQt5", source)
+        self.assertNotIn("lib.script.gemes", source)
 
     def test_lahai_filter_uses_core_rect_and_segment_collision(self):
         state = StateMachine.__new__(StateMachine)
         state._entity = _Entity(position=Point(0, 40), geometry=Rect(0, 0, 20, 20))
-        runtime = SimpleNamespace(
-            get_lahai_game_middle_third_rect_global=lambda: Rect(40, 40, 20, 40),
-        )
+        configure_game_obstacle_provider(lambda: Rect(40, 40, 20, 40))
 
-        with patch("lib.script.gemes.get_game_runtime", return_value=runtime):
-            self.assertTrue(state._is_wander_target_blocked_by_lahai(Point(80, 40)))
-            self.assertFalse(state._is_wander_target_blocked_by_lahai(Point(0, 100)))
+        self.assertTrue(state._is_wander_target_blocked_by_lahai(Point(80, 40)))
+        self.assertFalse(state._is_wander_target_blocked_by_lahai(Point(0, 100)))
+
+    def test_lahai_filter_is_inactive_without_a_desktop_game_host(self):
+        state = StateMachine.__new__(StateMachine)
+        state._entity = _Entity(position=Point(0, 40), geometry=Rect(0, 0, 20, 20))
+
+        self.assertFalse(state._is_wander_target_blocked_by_lahai(Point(80, 40)))
 
     def test_protection_request_and_move_queue_payloads_use_core_points(self):
         state = StateMachine.__new__(StateMachine)

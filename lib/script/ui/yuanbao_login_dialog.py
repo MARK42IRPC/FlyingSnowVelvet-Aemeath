@@ -5,6 +5,7 @@ from __future__ import annotations
 from PyQt5.QtCore import Qt, QTimer
 
 from lib.core.event.center import Event, EventType, get_event_center
+from lib.core.graphics.application_visuals import qr_panel_action_text
 from lib.script.ui.qr_dialog_base import BaseQrDialog
 
 
@@ -15,7 +16,7 @@ class YuanbaoLoginDialog(BaseQrDialog):
         super().__init__(
             title="元宝扫码登录",
             status="请使用扫码登录元宝",
-            action_text="关闭窗口",
+            action_text=qr_panel_action_text("yuanbao-login"),
             placeholder_text="二维码准备中...",
             qr_background=True,
         )

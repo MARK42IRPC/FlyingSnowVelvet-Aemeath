@@ -79,15 +79,15 @@ class QtDrawBackend:
         if base_pixmap.isNull():
             return
 
-        if viewport is not None:
-            draw_w = max(1, int(round(viewport.width)))
-            draw_h = max(1, int(round(viewport.height)))
+        if command.target_size is not None:
+            draw_w = max(1, int(round(command.target_size.width)))
+            draw_h = max(1, int(round(command.target_size.height)))
         else:
             draw_w = max(1, int(round(base_pixmap.width() * command.scale)))
             draw_h = max(1, int(round(base_pixmap.height() * command.scale)))
 
         pixmap = self._get_render_pixmap(command, draw_w, draw_h, base_pixmap)
-        draw_rect = self._resolve_draw_rect(command, pixmap, viewport)
+        draw_rect = self._resolve_draw_rect(command, pixmap)
         painter.save()
         painter.setOpacity(command.alpha)
         painter.drawPixmap(draw_rect, pixmap)
@@ -220,19 +220,7 @@ class QtDrawBackend:
         self,
         command: SpriteCommand,
         pixmap: QPixmap,
-        viewport: Rect | None,
     ) -> QRect:
-        if viewport is not None:
-            draw_rect = QRect(QPoint(0, 0), pixmap.size())
-            target = QRect(
-                int(round(viewport.x)),
-                int(round(viewport.y)),
-                int(round(viewport.width)),
-                int(round(viewport.height)),
-            )
-            draw_rect.moveCenter(target.center())
-            return draw_rect
-
         position = command.position
         if position is not None:
             return QRect(QPoint(int(position.x), int(position.y)), pixmap.size())

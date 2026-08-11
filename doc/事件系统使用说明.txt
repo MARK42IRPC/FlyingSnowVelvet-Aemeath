@@ -1,4 +1,4 @@
-飞行雪绒事件系统使用说明（LTS1.0.6pre7v2）
+飞行雪绒事件系统使用说明（LTS1.0.6pre8）
 
 一、核心入口
 - 实现：`lib/core/event/center.py`
@@ -37,6 +37,8 @@ ec.unsubscribe(EventType.INFORMATION, on_info)
   - `/xxx` → `INPUT_COMMAND`
   - `#xxx` → `INPUT_HASH`
   - 普通文本 → `INPUT_CHAT`
+- 内置 `#后端 dx` / `#后端 qt` 用于控制面板不可用时切换持久化绘制后端；配置保存成功后发布 `APP_QUIT {restart: true}`，保存失败不得退出当前实例。
+- 托盘“控制面板”使用 `TrayCommand.OPEN_SETTINGS`，由 `ApplicationUiHost.open_settings()` 承接；DX 主进程通过隔离 Qt workbench helper 打开，不能在 DX 进程内构造 `QWidget`。
 
 五、应用生命周期
 - `APP_PRE_START`
@@ -73,7 +75,7 @@ EFFECT_REQUEST
 - 字段：`effect_id`、`anchor_type`、`anchor_data`、`effect_options`
 - `anchor_data` 与 `effect_options` 只能包含 `None`、字符串、数值、布尔值、列表、元组和字符串键字典；发布工具会递归复制载荷并拒绝不透明后端对象
 - 图片特效通过 `effect_options.resource_path` 传递资源路径，文字特效传递文本、颜色数组和字体参数；不得传入 `QPixmap/QImage/QColor/QFont/QPainter` 等 toolkit 对象
-- 当前由 `lib/core/qt_bridge/effect_system.py` 消费；资源加载、文字栅格化和后端图片缓存只发生在适配层
+- 当前由所选桌面后端的特效宿主消费；共享视觉层负责资源解码/缩放/羽化和文字效果命令，后端只负责资源上传缓存、字形栅格化与 `DrawBatch` 执行
 
 SOUND_REQUEST
 - 用途：请求播放音频文件

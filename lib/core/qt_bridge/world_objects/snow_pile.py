@@ -4,7 +4,7 @@ from typing import Optional
 
 from PyQt5.QtWidgets import QWidget, QApplication
 from PyQt5.QtCore    import Qt, QPoint
-from PyQt5.QtGui     import QPainter, QPixmap
+from PyQt5.QtGui     import QPainter
 
 from lib.core.unified_draw import Layer, get_layer_manager
 from lib.core.event.center    import get_event_center, EventType, Event
@@ -13,6 +13,9 @@ from lib.core.clickthrough_state import is_clickthrough_enabled
 from lib.core.qt_bridge.screen import get_screen_geometry_for_point
 from lib.core.voice.snow      import SnowSound
 from config.config            import PHYSICS, BEHAVIOR
+from lib.core.graphics.resources import ImageResource
+from lib.core.graphics.visuals import build_world_object_batch
+from lib.core.qt_bridge.draw_backend import QtDrawBackend
 
 
 # 从配置文件读取物理参数
@@ -35,15 +38,14 @@ class SnowPile(QWidget):
     # 使用模块级配置变量（已从 PHYSICS 配置读取）
 
     def __init__(self,
-                 pixmap: QPixmap,
                  position: QPoint,
                  size: tuple,
                  batch_interval: tuple[int, int],
                  batch_size: tuple[int, int],
-                 batch_item_interval: tuple[int, int]):
+                 batch_item_interval: tuple[int, int],
+                 visual_resource: ImageResource | None = None):
         """
         Args:
-            pixmap:          已随机缩放至目标尺寸的 QPixmap
             position:        屏幕全局坐标（左上角）
             size:            窗口尺寸 (width, height)
             batch_interval:  批次间隔范围（毫秒）
@@ -52,7 +54,10 @@ class SnowPile(QWidget):
         """
         super().__init__()
 
-        self._pixmap   = pixmap
+        if not isinstance(visual_resource, ImageResource):
+            raise TypeError("snow pile visual_resource must be an ImageResource")
+        self._visual_resource = visual_resource
+        self._draw_backend = QtDrawBackend()
         self._size     = size
         self._batch_interval = batch_interval
         self._batch_size = batch_size
@@ -329,12 +334,15 @@ class SnowPile(QWidget):
             super().mouseReleaseEvent(event)
 
     def paintEvent(self, event):
-        """绘制 QPixmap 到透明背景（带透明度支持）。"""
-        if self._pixmap is None or self._pixmap.isNull():
-            return
+        """Execute the shared world-object sprite batch."""
         painter = QPainter(self)
-        painter.setOpacity(self._alpha)
-        painter.drawPixmap(0, 0, self._pixmap)
+        self._draw_backend.render(build_world_object_batch(
+            self._visual_resource,
+            0,
+            alpha=self._alpha,
+            object_type="snow_pile",
+        ), painter)
+        painter.end()
 
     def closeEvent(self, event):
         """窗口关闭时确保所有事件订阅和任务已清理（兜底）。"""
@@ -342,5 +350,6 @@ class SnowPile(QWidget):
         self._event_center.unsubscribe(EventType.TICK, self._on_tick_click)
         self._event_center.unsubscribe(EventType.TIMER, self._on_timer_event)
         self._event_center.unsubscribe(EventType.TICK, self._tick_fade)
+        self._draw_backend.cleanup()
         self._alive = False
         super().closeEvent(event)

@@ -1,16 +1,14 @@
 """ChatHandler ???????????"""
 
-import os
 from datetime import datetime
 
-from config.config import BUBBLE_CONFIG
 from lib.core.logger import get_logger
 
 from .handler_stream_presenter import _strip_tool_commands_for_display
+from .persona_storage import resolve_persona_file_path
 
 logger = get_logger(__name__)
 
-DEFAULT_PERSONA_FILE = BUBBLE_CONFIG.get('default_persona_file', 'resc/persona.txt')
 RECENT_CONTEXT_MESSAGES = 12
 DEFAULT_MEMORY_CONTEXT_LIMIT = 12
 
@@ -64,18 +62,12 @@ class ChatHandlerPersonaMixin:
         """
         仅从人格文件加载 system prompt，不注入任何硬编码人设文案。
         """
-        from config.ollama_config import PERSONA_FILE
-        from config.config import CHAT
+        persona_file = resolve_persona_file_path()
 
-        # 优先使用 ollama_config.PERSONA_FILE；为空时兼容旧配置 CHAT['persona_file']。
-        persona_file = (PERSONA_FILE or "").strip()
-        if not persona_file:
-            persona_file = CHAT.get("persona_file", "").strip() or DEFAULT_PERSONA_FILE
-
-        if os.path.isfile(persona_file):
+        if persona_file.is_file():
             try:
                 # utf-8-sig 自动剔除 Windows BOM（\ufeff），避免发送给 Ollama 时触发 JSON 解析错误
-                with open(persona_file, "r", encoding="utf-8-sig") as handle:
+                with persona_file.open("r", encoding="utf-8-sig") as handle:
                     content = handle.read().strip()
                 if content:
                     logger.info("[ChatHandler] 已加载人格文件: %s", persona_file)

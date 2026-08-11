@@ -1,23 +1,19 @@
 """气泡框类"""
 from PyQt5.QtWidgets import QWidget, QGraphicsOpacityEffect, QApplication
-from PyQt5.QtCore import Qt, QPropertyAnimation, QEasingCurve, QPoint, QRect
+from PyQt5.QtCore import Qt, QPropertyAnimation, QEasingCurve, QPoint
 from PyQt5.QtGui import QPainter, QFontMetrics, QCursor
 
 from config.config import UI, BUBBLE_CONFIG
-from lib.core.qt_bridge.colors import COLORS
 from lib.core.qt_bridge.font import (
     get_ui_font,
     get_digit_font,
-    draw_mixed_text,
-    wrap_mixed_text,
-    measure_mixed_text,
 )
 from config.scale import scale_px
 from config.tooltip_config import TOOLTIPS
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.unified_draw import Layer, get_layer_manager
 from lib.core.logger import get_logger
-from lib.core.qt_bridge.screen import clamp_rect_position, get_screen_geometry_for_point
+from lib.core.qt_bridge.screen import get_screen_geometry_for_point
 from lib.core.anchor_utils import (
     apply_ui_opacity,
 )
@@ -26,9 +22,44 @@ from lib.core.qt_bridge.widget_anchors import (
     publish_widget_anchor_response,
 )
 from lib.core.qt_bridge.window import coerce_qpoint
+from lib.core.qt_bridge.draw_backend import QtDrawBackend
+from lib.core.graphics.application_visuals import (
+    BubbleVisualDescription,
+    build_bubble_visual,
+    resolve_bubble_geometry,
+)
+from lib.core.graphics.types import FontSpec, Point, Rect, Size
 from lib.core.voice.ams_bug import AmsBugSound
 
 _logger = get_logger(__name__)
+
+
+class _QtBubbleTextMetrics:
+    """Expose Qt's low-level font metrics to the shared bubble presenter."""
+
+    def __init__(self, default_font, digit_font):
+        self._default_metrics = QFontMetrics(default_font)
+        self._digit_metrics = QFontMetrics(digit_font)
+        self.default_font = FontSpec(
+            default_font.family(),
+            default_font.pixelSize(),
+            default_font.bold(),
+        )
+        self.digit_font = FontSpec(
+            digit_font.family(),
+            digit_font.pixelSize(),
+            digit_font.bold(),
+        )
+        self.default_line_height = float(self._default_metrics.height())
+        self.digit_line_height = float(self._digit_metrics.height())
+        self.default_ascent = float(self._default_metrics.ascent())
+        self.default_descent = float(self._default_metrics.descent())
+        self.digit_ascent = float(self._digit_metrics.ascent())
+        self.digit_descent = float(self._digit_metrics.descent())
+
+    def measure(self, text: str, *, digit: bool = False) -> float:
+        metrics = self._digit_metrics if digit else self._default_metrics
+        return float(metrics.horizontalAdvance(str(text or "")))
 
 
 class BubbleInfo:
@@ -94,6 +125,9 @@ class Bubble(QWidget):
         self._font = get_ui_font()
         self._font.setBold(True)
         self._digit_font = get_digit_font()
+        self._text_metrics = _QtBubbleTextMetrics(self._font, self._digit_font)
+        self._draw_backend = QtDrawBackend()
+        self._visual: BubbleVisualDescription | None = None
         self._bug_sound = AmsBugSound()
 
         # 从配置文件读取气泡参数
@@ -126,28 +160,27 @@ class Bubble(QWidget):
         # 锚点是否可用
         self._anchor_available = False
 
-        # 文本换行缓存（避免 paintEvent 频繁重算）
-        self._line_cache_text = None
-        self._line_cache_width = None
-        self._line_cache_result = None
-
     def _wrap_text_into_lines(self, text: str, max_width: int) -> list:
-        """
-        将文本按宽度换行，返回行字符串列表。
-        支持 \\n 硬换行，CJK/拉丁混合文本。
-        """
-        # 缓存命中：避免 paintEvent 频繁重建 QTextLayout
-        if (self._line_cache_text == text and
-                self._line_cache_width == max_width and
-                self._line_cache_result is not None):
-            return self._line_cache_result
+        """Resolve lines through the shared bubble layout policy."""
+        visual = build_bubble_visual(
+            text,
+            self._text_metrics,
+            max_width=max_width + self._border_width * 4,
+            padding=self._padding,
+            border_width=self._border_width,
+        )
+        return list(visual.lines)
 
-        result = wrap_mixed_text(text, max_width, self._font, self._digit_font)
-
-        self._line_cache_text = text
-        self._line_cache_width = max_width
-        self._line_cache_result = result
-        return result
+    def _build_visual(self, text: str, align: str = "center") -> BubbleVisualDescription:
+        return build_bubble_visual(
+            text,
+            self._text_metrics,
+            max_width=UI['bubble_max_width'],
+            padding=self._padding,
+            border_width=self._border_width,
+            align=align,
+            layer=int(Layer.PET_UI),
+        )
 
     def get_text_size(self, text: str) -> tuple:
         """
@@ -159,32 +192,14 @@ class Bubble(QWidget):
         Returns:
             (width, height)
         """
-        fm_def = QFontMetrics(self._font)
-        fm_dig = QFontMetrics(self._digit_font)
-        max_width = UI['bubble_max_width']
-        # 内容绘制宽度 = 窗口宽度 − 左右边框各占 border_width*2 px
-        content_draw_w = max_width - self._border_width * 4
-
-        lines = self._wrap_text_into_lines(text, content_draw_w)
-        n_lines = len(lines)
-        line_h = max(fm_def.height(), fm_dig.height())
-        content_h = n_lines * line_h
-
-        if n_lines == 1:
-            # 单行：使用实际文字宽度（不超过 max_width）
-            text_w = min(
-                measure_mixed_text(lines[0], self._font, self._digit_font),
-                content_draw_w,
-            )
-            return text_w + self._padding * 2, content_h + self._padding * 2
-        else:
-            # 多行：宽度固定为 max_width
-            return max_width, content_h + self._padding * 2
+        visual = self._build_visual(text)
+        return int(visual.size.width), int(visual.size.height)
 
     def adjust_size_to_text(self, text: str):
         """根据文本调整窗口大小"""
-        width, height = self.get_text_size(text)
-        self.setFixedSize(width, height)
+        align = self._current_bubble.align if self._current_bubble else "center"
+        self._visual = self._build_visual(text, align)
+        self.setFixedSize(int(self._visual.size.width), int(self._visual.size.height))
 
     def get_anchor_point(self, anchor_id: str) -> QPoint:
         """
@@ -266,76 +281,35 @@ class Bubble(QWidget):
         width = self.width() if self._current_bubble else scale_px(100, min_abs=1)
         height = self.height() if self._current_bubble else scale_px(40, min_abs=1)
 
-        # X 轴：pet_window 上锚点 X 坐标 - 气泡宽度的一半 + 偏移量
-        new_x = self._anchor_point.x() - width // 2 + self._offset_x
-
-        # Y 轴：pet_window 上锚点 Y 坐标 - 气泡高度 + 偏移量
-        new_y = self._anchor_point.y() - height + self._offset_y
-
-        # 边界检查（多屏：按锚点所在屏幕裁剪）
-        x, y, _ = clamp_rect_position(
-            new_x,
-            new_y,
-            width,
-            height,
+        screen = get_screen_geometry_for_point(
             point=self._anchor_point,
             fallback_widget=self,
         )
-
-        self.move(x, y)
+        geometry = resolve_bubble_geometry(
+            Point(self._anchor_point.x(), self._anchor_point.y()),
+            Size(width, height),
+            Rect(screen.x(), screen.y(), screen.width(), screen.height()),
+            offset_x=self._offset_x,
+            offset_y=self._offset_y,
+        )
+        self.move(int(geometry.x), int(geometry.y))
 
     def paintEvent(self, event):
         """绘制气泡框 - 参考关闭按钮的样式"""
         if not self._current_bubble:
             return
 
+        visual = self._visual or self._build_visual(
+            self._current_bubble.text,
+            self._current_bubble.align,
+        )
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, False)
-
-        # 绘制2px黑色边框（最外层）
-        painter.fillRect(self.rect(), COLORS['black'])
-
-        # 绘制2px青色边框（中间层）
-        cyan_rect = self.rect().adjusted(
-            self._border_width, self._border_width,
-            -self._border_width, -self._border_width
+        self._draw_backend.render(
+            visual.batch,
+            painter,
+            Rect(0, 0, self.width(), self.height()),
         )
-        painter.fillRect(cyan_rect, COLORS['cyan'])
-
-        # 绘制粉色背景（最内层）
-        content_rect = self.rect().adjusted(
-            self._border_width * 2, self._border_width * 2,
-            -self._border_width * 2, -self._border_width * 2
-        )
-        painter.fillRect(content_rect, COLORS['pink'])
-
-        # 根据气泡对齐方式选择水平对齐标志
-        h_align = Qt.AlignLeft if self._current_bubble.align == 'left' else Qt.AlignHCenter
-        # 绘制文本（逐行渲染，紧凑行距 = fm.height()，无 leading 间距）
-        painter.setPen(COLORS['black'])
-        painter.setFont(self._font)
-        line_h = max(
-            QFontMetrics(self._font).height(),
-            QFontMetrics(self._digit_font).height(),
-        )
-        draw_lines = self._wrap_text_into_lines(self._current_bubble.text, content_rect.width())
-        total_h = len(draw_lines) * line_h
-        y_start = content_rect.top() + (content_rect.height() - total_h) // 2
-        for idx, ln_text in enumerate(draw_lines):
-            line_rect = QRect(
-                content_rect.left(),
-                y_start + idx * line_h,
-                content_rect.width(),
-                line_h,
-            )
-            draw_mixed_text(
-                painter,
-                line_rect,
-                ln_text,
-                self._font,
-                self._digit_font,
-                h_align | Qt.AlignVCenter,
-            )
 
     def _on_information(self, event: Event):
         """处理 INFORMATION 事件 - 添加气泡到队列"""

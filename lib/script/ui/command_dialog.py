@@ -11,9 +11,14 @@ from config.scale import scale_px, scale_style_px
 from config.tooltip_config import TOOLTIPS
 from lib.script.ui.command_dialog_handler import CommandDialogEventHandler
 from lib.core.event.center import get_event_center, EventType, Event
-from lib.core.graphics.types import Point
+from lib.core.graphics.types import Point, Rect
+from lib.core.graphics.visuals import (
+    build_command_shell_batch,
+    resolve_command_panel_geometry,
+)
 from lib.core.unified_draw import Layer, get_layer_manager
-from lib.core.qt_bridge.screen import clamp_rect_position
+from lib.core.qt_bridge.screen import get_screen_geometry_for_point
+from lib.core.qt_bridge.draw_backend import QtDrawBackend
 from lib.core.anchor_utils import (
     animate_opacity,
 )
@@ -94,6 +99,7 @@ class CommandDialog(QWidget):
 
         # 事件中心
         self._event_center = get_event_center()
+        self._draw_backend = QtDrawBackend()
 
         # UI 组件 ID
         self._ui_id = 'command_dialog'
@@ -206,21 +212,16 @@ class CommandDialog(QWidget):
         """绘制2px黑色边框、2px青色边框和粉色背景"""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, False)
-        layer = scale_px(2, min_abs=1)
-        content_inset = layer * 2
-
-        # 绘制2px黑色边框（最外层）
-        painter.fillRect(self.rect(), COLORS['black'])
-
-        # 绘制2px青色边框（中间层）
-        cyan_rect = self.rect().adjusted(layer, layer, -layer, -layer)
-        painter.fillRect(cyan_rect, COLORS['cyan'])
-
-        # 绘制粉色背景（最内层）
-        content_rect = self.rect().adjusted(
-            content_inset, content_inset, -content_inset, -content_inset
+        self._draw_backend.render(
+            build_command_shell_batch(
+                self.width(),
+                self.height(),
+                layer=int(Layer.PET_UI),
+                border_layer=scale_px(2, min_abs=1),
+            ),
+            painter,
         )
-        painter.fillRect(content_rect, COLORS['pink'])
+        painter.end()
 
     def _on_command_toggle(self, event: Event):
         """处理命令框切换事件（异步）"""
@@ -445,46 +446,16 @@ class CommandDialog(QWidget):
         pet_w, pet_h = self._get_pet_size()
         pet_pos = self._pet_top_left
         pet_center = QPoint(pet_pos.x() + pet_w // 2, pet_pos.y() + pet_h // 2)
-
-        # Y 轴始终与主宠物垂直居中
-        new_y = pet_center.y() - self.height() // 2 + self._offset_y
-
-        def _candidate_x(side: str) -> int:
-            if side == 'left':
-                # 对话框放在主宠物左侧，保持同样间距
-                return pet_pos.x() - self.width() - self._offset_x
-            # 对话框放在主宠物右侧
-            return pet_pos.x() + pet_w + self._offset_x
-
-        # 始终优先尝试右侧；右侧被边缘阻挡时才回退到左侧
-        current_side = 'right'
-        candidate_x = _candidate_x(current_side)
-
-        # 先尝试当前侧；如果被边缘裁剪，再尝试翻转到另一侧
-        x, y, _ = clamp_rect_position(
-            candidate_x,
-            new_y,
-            self.width(),
-            self.height(),
-            point=pet_center,
-            fallback_widget=self,
+        screen = get_screen_geometry_for_point(point=pet_center, fallback_widget=self)
+        resolved = resolve_command_panel_geometry(
+            Rect(pet_pos.x(), pet_pos.y(), pet_w, pet_h),
+            (self.width(), self.height()),
+            Rect(screen.x(), screen.y(), screen.width(), screen.height()),
+            offset_x=self._offset_x,
+            offset_y=self._offset_y,
         )
-
-        if x != candidate_x:
-            flipped_side = 'left' if current_side == 'right' else 'right'
-            flipped_x = _candidate_x(flipped_side)
-            fx, fy, _ = clamp_rect_position(
-                flipped_x,
-                new_y,
-                self.width(),
-                self.height(),
-                point=pet_center,
-                fallback_widget=self,
-            )
-            # 翻转后更贴近原始目标（或无需裁剪）时，采用翻转侧
-            if fx == flipped_x or abs(fx - flipped_x) < abs(x - candidate_x):
-                current_side = flipped_side
-                x, y = fx, fy
+        x, y = int(resolved.x), int(resolved.y)
+        current_side = 'left' if x + self.width() <= pet_pos.x() else 'right'
 
         self._placement_side = current_side
         self._anchor_id = current_side

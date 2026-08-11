@@ -26,19 +26,6 @@ class KeyEventHandler:
         """处理键盘按下"""
         key = event.data.get('key')
 
-        # 播放列表打开时，左右键优先用于移动队列项（不再驱动主宠移动）
-        if key in (Key.LEFT, Key.RIGHT):
-            try:
-                from lib.script.ui.playlist_panel import get_playlist_panel
-                panel = get_playlist_panel()
-                if panel is not None and panel.is_visible:
-                    direction = -1 if key == Key.LEFT else 1
-                    if panel.move_selected_by_key(direction):
-                        event.mark_handled()
-                        return
-            except Exception:
-                pass
-
         # 空格键：触发随机动作
         if key == Key.SPACE:
             if not self._entity.is_moving():

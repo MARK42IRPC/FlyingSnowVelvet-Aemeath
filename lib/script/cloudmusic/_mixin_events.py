@@ -760,7 +760,7 @@ class _EventsMixin:
         if pos_sec < 0:
             return
         try:
-            if self._use_qt_player:
+            if self._use_native_player:
                 self._music_player.seek_requested.emit(int(pos_sec * 1000))
             else:
                 self._fallback_player.seek(int(pos_sec * 1000))

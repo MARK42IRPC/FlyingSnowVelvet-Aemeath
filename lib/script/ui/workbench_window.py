@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 
 from PyQt5.QtCore import (
     QEasingCurve,
@@ -14,7 +15,7 @@ from PyQt5.QtCore import (
     Qt,
     QVariantAnimation,
 )
-from PyQt5.QtGui import QColor, QPainter
+from PyQt5.QtGui import QColor, QIcon, QPainter
 from PyQt5.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -41,9 +42,6 @@ from config.general_user_settings import save_general_values
 from config.scale import scale_px
 from lib.core.anchor_utils import apply_ui_opacity
 from lib.core.event.center import Event, EventType, get_event_center
-from lib.core.layer import Layer
-from lib.core.layer_manager import get_layer_manager
-from lib.core.timing import get_timing_manager
 from lib.script.workbench.components import (
     WorkbenchOverviewPage,
     WorkbenchPetAboutButton,
@@ -67,8 +65,7 @@ _GROUP_ORDER = (
     "其他",
 )
 _NAV_FONT_SCALE = 1.25
-_WORKBENCH_FRAME_LIMIT_FPS = 30
-_WORKBENCH_FRAME_LIMIT_SOURCE = "workbench"
+_WORKBENCH_ICON_PATH = Path(__file__).resolve().parents[3] / "resc" / "icon.ico"
 
 
 def _overview_page_link(page_id: str) -> tuple[str, str]:
@@ -181,22 +178,19 @@ class WorkbenchWindow(QWidget):
         self._fading_out = False
         self._allow_hide_once = False
         self._geometry_restored = False
-        self._runtime_frame_limit_active = False
         self._page_transition_anim: QVariantAnimation | None = None
         self._theme_transition_anim: QVariantAnimation | None = None
         self._settings = QSettings("FlyingSnow", "UnifiedWorkbench")
-        self._always_on_top = self._settings.value("always_on_top", False, type=bool)
         self._event_center = get_event_center()
         self._event_center.subscribe(EventType.CONFIG_UPDATED, self._on_config_updated)
 
         self.setObjectName("WorkbenchWindow")
         self.setWindowTitle("飞行雪绒工作台")
-        window_flags = Qt.Window | Qt.FramelessWindowHint
-        if self._always_on_top:
-            window_flags |= Qt.WindowStaysOnTopHint
-        self.setWindowFlags(window_flags)
+        self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint)
+        window_icon = QIcon(str(_WORKBENCH_ICON_PATH))
+        if not window_icon.isNull():
+            self.setWindowIcon(window_icon)
         self.setAttribute(Qt.WA_StyledBackground, True)
-        get_layer_manager().register(self, Layer.PANEL, name="WorkbenchWindow")
         self.setMinimumSize(scale_px(1060, min_abs=980), scale_px(680, min_abs=620))
         self.resize(scale_px(1280, min_abs=1120), scale_px(820, min_abs=720))
         self.setFont(get_ui_font(size=scale_px(12, min_abs=10)))
@@ -286,13 +280,6 @@ class WorkbenchWindow(QWidget):
         self._search.textChanged.connect(self._on_search_text_changed)
         self._search.returnPressed.connect(self._activate_search_result)
         header_layout.addWidget(self._search)
-
-        self._pin_toggle = QCheckBox("置顶", self._header)
-        self._pin_toggle.setObjectName("WorkbenchPinToggle")
-        self._pin_toggle.setChecked(self._always_on_top)
-        self._pin_toggle.setToolTip("让工作台保持在其他窗口上方")
-        self._pin_toggle.toggled.connect(self._toggle_always_on_top)
-        header_layout.addWidget(self._pin_toggle)
 
         self._about_menu = QMenu(self)
         self._about_menu.setObjectName("WorkbenchAboutMenu")
@@ -825,7 +812,6 @@ class WorkbenchWindow(QWidget):
         if self.isMinimized():
             self.showNormal()
         if self.isVisible():
-            self._set_runtime_frame_limit(True)
             self.raise_()
             self.activateWindow()
             return
@@ -841,7 +827,6 @@ class WorkbenchWindow(QWidget):
 
     def _save_window_state(self) -> None:
         self._settings.setValue("geometry", self.saveGeometry())
-        self._settings.setValue("always_on_top", self._always_on_top)
 
     def _ensure_window_on_screen(self) -> None:
         screens = QApplication.screens()
@@ -858,21 +843,6 @@ class WorkbenchWindow(QWidget):
             geometry.y() + (geometry.height() - self.height()) // 2,
         )
         self._geometry_restored = True
-
-    def _toggle_always_on_top(self, checked: bool) -> None:
-        checked = bool(checked)
-        if checked == self._always_on_top:
-            return
-        was_visible = self.isVisible()
-        geometry = self.geometry()
-        self._always_on_top = checked
-        self.setWindowFlag(Qt.WindowStaysOnTopHint, checked)
-        self.setGeometry(geometry)
-        if was_visible:
-            self.show()
-            self.raise_()
-            self.activateWindow()
-        self._settings.setValue("always_on_top", checked)
 
     def _toggle_maximized(self) -> None:
         if self.isMaximized():
@@ -893,7 +863,6 @@ class WorkbenchWindow(QWidget):
         self._fading_out = False
         self._allow_hide_once = False
         self.setWindowOpacity(0.0)
-        self._set_runtime_frame_limit(True)
         self.show()
         self.raise_()
         self.activateWindow()
@@ -928,7 +897,6 @@ class WorkbenchWindow(QWidget):
             super().hide()
         finally:
             self._allow_hide_once = False
-            self._set_runtime_frame_limit(False)
 
     def _on_opacity_anim_finished(self) -> None:
         if not self._fading_out:
@@ -939,25 +907,7 @@ class WorkbenchWindow(QWidget):
             super().hide()
         finally:
             self._allow_hide_once = False
-            self._set_runtime_frame_limit(False)
             self.setWindowOpacity(apply_ui_opacity(1.0))
-
-    def _set_runtime_frame_limit(self, active: bool) -> None:
-        active = bool(active)
-        if active == self._runtime_frame_limit_active:
-            return
-        timing_manager = get_timing_manager()
-        setter = getattr(timing_manager, "set_frame_fps_limit", None)
-        if not callable(setter):
-            return
-        try:
-            setter(
-                _WORKBENCH_FRAME_LIMIT_SOURCE,
-                _WORKBENCH_FRAME_LIMIT_FPS if active else None,
-            )
-        except (AttributeError, RuntimeError, ValueError):
-            return
-        self._runtime_frame_limit_active = active
 
     def _install_drag_target(self, widget: QWidget) -> None:
         widget.installEventFilter(self)
@@ -1011,15 +961,6 @@ class WorkbenchWindow(QWidget):
         ):
             self._refresh_window_state_controls()
 
-    def showEvent(self, event) -> None:
-        super().showEvent(event)
-        self._set_runtime_frame_limit(True)
-        get_layer_manager().enforce_burst()
-
-    def hideEvent(self, event) -> None:
-        self._set_runtime_frame_limit(False)
-        super().hideEvent(event)
-
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self._sync_transition_overlay_geometry()
@@ -1035,11 +976,6 @@ class WorkbenchWindow(QWidget):
 
     def deleteLater(self) -> None:
         self._stop_transition_animations()
-        self._set_runtime_frame_limit(False)
-        try:
-            get_layer_manager().unregister(self)
-        except (AttributeError, RuntimeError):
-            pass
         try:
             self._event_center.unsubscribe(EventType.CONFIG_UPDATED, self._on_config_updated)
         except (AttributeError, RuntimeError):

@@ -75,14 +75,6 @@ class _FakeControlPanel:
         self.load_count += 1
 
 
-class _FakeTimingManager:
-    def __init__(self):
-        self.limits = []
-
-    def set_frame_fps_limit(self, source, fps):
-        self.limits.append((source, fps))
-
-
 class _ThemeAwarePage(QWidget):
     def __init__(self):
         super().__init__()
@@ -343,12 +335,9 @@ class WorkbenchWindowTests(unittest.TestCase):
             window.deleteLater()
             self.app.processEvents()
 
-    def test_visible_workbench_limits_runtime_frame_rate_until_hidden(self):
+    def test_workbench_is_normal_window_without_frame_limit_or_pin_control(self):
         panel = _FakeControlPanel()
-        timing = _FakeTimingManager()
-        with patch.object(workbench_module, "QSettings", _MemorySettings), patch.object(
-            workbench_module, "get_timing_manager", return_value=timing
-        ):
+        with patch.object(workbench_module, "QSettings", _MemorySettings):
             window = workbench_module.WorkbenchWindow(
                 lambda: panel,
                 control_panel_page_specs=panel.get_workbench_page_specs(),
@@ -358,13 +347,28 @@ class WorkbenchWindowTests(unittest.TestCase):
             window.hide_immediately()
             self.app.processEvents()
 
-        self.assertEqual(
-            timing.limits,
-            [
-                (workbench_module._WORKBENCH_FRAME_LIMIT_SOURCE, 30),
-                (workbench_module._WORKBENCH_FRAME_LIMIT_SOURCE, None),
-            ],
-        )
+        source = Path(workbench_module.__file__).read_text(encoding="utf-8")
+        self.assertFalse(bool(window.windowFlags() & Qt.WindowStaysOnTopHint))
+        self.assertFalse(hasattr(window, "_pin_toggle"))
+        self.assertNotIn("get_timing_manager", source)
+        self.assertNotIn("set_frame_fps_limit", source)
+        self.assertNotIn("get_layer_manager", source)
+        self.assertNotIn("WorkbenchPinToggle", window.styleSheet())
+        window.deleteLater()
+        self.app.processEvents()
+
+    def test_workbench_uses_project_icon(self):
+        panel = _FakeControlPanel()
+        with patch.object(workbench_module, "QSettings", _MemorySettings):
+            window = workbench_module.WorkbenchWindow(
+                lambda: panel,
+                control_panel_page_specs=panel.get_workbench_page_specs(),
+            )
+
+        self.assertEqual(workbench_module._WORKBENCH_ICON_PATH.name, "icon.ico")
+        self.assertTrue(workbench_module._WORKBENCH_ICON_PATH.is_file())
+        self.assertFalse(window.windowIcon().isNull())
+        self.assertFalse(window.windowIcon().pixmap(32, 32).isNull())
         window.deleteLater()
         self.app.processEvents()
 

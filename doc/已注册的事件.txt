@@ -115,7 +115,7 @@
 - lib/core/cmd_center.py -> self._on_input_command [has unsubscribe]
 
 [INPUT_HASH]
-- lib/core/cmd_center.py -> self._on_input_hash [has unsubscribe]
+- lib/core/cmd_center.py -> self._on_input_hash [has unsubscribe; 内置 #图层、#后端 dx/qt]
 - lib/script/obj-摩托/manager.py -> self._on_hash_command [has unsubscribe]
 - lib/script/obj-沙发/manager.py -> self._on_hash_command [has unsubscribe]
 - lib/script/obj-闹钟/manager.py -> self._on_hash_command [has unsubscribe]

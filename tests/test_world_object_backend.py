@@ -174,10 +174,9 @@ class WorldObjectBackendTests(unittest.TestCase):
     def test_qt_backend_translates_resource_at_construction_and_returns_id(self):
         backend = QtWorldObjectBackend()
         resource = _resource()
-        pair = SimpleNamespace(pixmap="normal", flipped_pixmap="flipped", size=(1, 1))
         with patch(
-            "lib.core.qt_bridge.world_object_backend.world_object_assets.pixmap_pair_from_resource",
-            return_value=pair,
+            "lib.core.qt_bridge.world_object_backend.resize_image_resource",
+            return_value=resource,
         ), patch(
             "lib.core.qt_bridge.world_object_backend.create_world_object",
             return_value="created",
@@ -195,8 +194,7 @@ class WorldObjectBackendTests(unittest.TestCase):
             "Speaker",
             position=Point(12, 34),
             size=(80, 40),
-            pixmap="normal",
-            flipped_pixmap="flipped",
+            visual_resource=resource,
         )
 
     def test_qt_backend_converts_widget_state_and_geometry_at_adapter_boundary(self):

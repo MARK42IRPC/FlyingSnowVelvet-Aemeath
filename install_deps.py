@@ -80,6 +80,7 @@ DEPENDENCIES = [
     ("sse-starlette", "SSE streaming for local web relay", ("sse_starlette",)),
     ("mutagen", "local audio metadata parsing", ("mutagen",)),
     ("jieba-fast", "compiled Chinese tokenizer for genie-tts", ("jieba_fast",)),
+    ("opencc-python-reimplemented", "Chinese script conversion for the ONNX text frontend", ("opencc",)),
     ("genie-tts", "bilingual ONNX text frontend", ("spec:genie_tts",)),
     ("numpy", "numerical runtime for ONNX voice synthesis", ("numpy",)),
     ("onnx", "ONNX model loader for voice synthesis", ("onnx",)),
@@ -236,6 +237,10 @@ SEANIMA_ARCHIVE = PROJECT_ROOT / "resc" / "GIF" / SEANIMA_RESOURCE_NAME
 JIEBA_FAST_PACKAGE = "jieba-fast"
 JIEBA_FAST_WHEEL_NAME = "jieba_fast-0.53-cp311-cp311-win_amd64.whl"
 JIEBA_FAST_WHEEL_SHA256 = "a5d9cf41d6817963a73f672a429dbfe5b03a4ff327cedf490d5f2b21be8c00d0"
+BINARY_ONLY_PACKAGES = frozenset({"opencc-python-reimplemented"})
+PACKAGE_REQUIREMENTS = {
+    "opencc-python-reimplemented": "opencc-python-reimplemented>=0.1.7,<1",
+}
 
 _NOT_FOUND_MARKERS = (
     "no matching distribution found",
@@ -873,6 +878,7 @@ def _run_pip_requirement_with_progress(
     progress_callback,
     *,
     mirror=None,
+    only_binary=None,
 ):
     command = _python_module_cmd(
         python_exe,
@@ -884,6 +890,8 @@ def _run_pip_requirement_with_progress(
         "--progress-bar",
         "off",
     )
+    if only_binary:
+        command.extend(("--only-binary", str(only_binary)))
     if mirror is not None:
         command.extend(
             (
@@ -948,9 +956,10 @@ def _run_pip_requirement_with_progress(
 def _run_pip_install_with_progress(python_exe, pkg, mirror, progress_callback):
     return _run_pip_requirement_with_progress(
         python_exe,
-        pkg,
+        PACKAGE_REQUIREMENTS.get(pkg, pkg),
         progress_callback,
         mirror=mirror,
+        only_binary=pkg if pkg in BINARY_ONLY_PACKAGES else None,
     )
 
 
@@ -1158,8 +1167,13 @@ def install_all(python_exe, mirrors):
                 print(f"    - {name}: {detail}")
     pip_failed = [name for name in failed if name != "UnRAR后端"]
     if pip_failed:
+        binary_only = [name for name in pip_failed if name in BINARY_ONLY_PACKAGES]
+        manual_args = ["install"]
+        if binary_only:
+            manual_args.extend(("--only-binary", ",".join(binary_only)))
+        manual_args.extend(PACKAGE_REQUIREMENTS.get(name, name) for name in pip_failed)
         print("  可手动执行以下命令：")
-        print("    " + " ".join(_python_module_cmd(python_exe, "pip", "install", *pip_failed)))
+        print("    " + " ".join(_python_module_cmd(python_exe, "pip", *manual_args)))
     if "UnRAR后端" in failed:
         print("  随程序提供的 UnRAR 后端缺失，请重新解压完整桌宠程序包。")
     ans = input("\n仍要继续启动吗? (y/n): ").strip().lower()

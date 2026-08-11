@@ -19,7 +19,7 @@ from typing import Callable
 
 import requests
 
-from PyQt5.QtCore import Qt, QPoint, QPropertyAnimation, QEasingCurve, QTimer, pyqtSignal
+from PyQt5.QtCore import Qt, QPoint, QSize, QPropertyAnimation, QEasingCurve, QTimer, pyqtSignal
 from PyQt5.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -81,6 +81,7 @@ from lib.script.SEanima.clip import (
 )
 from lib.script.chat.ollama_registry import get_available_model_names, get_model_list_error
 from lib.script.chat.network_policy import API_TIMEOUT_SECS
+from lib.script.chat.persona_storage import ensure_user_persona_file
 from lib.script.microphone_stt.push_to_talk import parse_hotkey_binding
 from lib.script.ui.update_dialog import DesktopPetUpdateDialog
 from lib.script.ui.voice_package_installer import (
@@ -462,7 +463,7 @@ _GENERAL_CHOICE_FIELD_OPTIONS: dict[tuple[str, str], list[tuple[str, str]]] = {
     ],
     ("UI", "render_backend"): [
         (
-            f"{descriptor.display_name}（{'当前可用' if descriptor.available else '尚未接入'}）",
+            f"{descriptor.display_name}（{('实验性功能' if descriptor.experimental else '当前可用') if descriptor.available else '尚未接入'}）",
             descriptor.backend_id,
         )
         for descriptor in get_backend_descriptors()
@@ -1653,6 +1654,18 @@ class _ContributionCardButton(QPushButton):
         label.setProperty("preserveCustomFont", True)
         self._apply_watermark(False)
 
+    def _layout_aware_size_hint(self, hint: QSize) -> QSize:
+        card_layout = self.layout()
+        if card_layout is not None:
+            hint.setHeight(max(hint.height(), card_layout.minimumSize().height()))
+        return hint
+
+    def sizeHint(self) -> QSize:
+        return self._layout_aware_size_hint(super().sizeHint())
+
+    def minimumSizeHint(self) -> QSize:
+        return self._layout_aware_size_hint(super().minimumSizeHint())
+
     def _apply_watermark(self, hovered: bool) -> None:
         if self._watermark_label is None:
             return
@@ -2824,6 +2837,7 @@ class AISettingsPanel(QWidget):
                 name_label = QLabel(name, text_wrap)
                 name_label.setFont(name_font)
                 name_label.setObjectName("ContributionCardName")
+                name_label.setProperty("preserveCustomFont", True)
                 name_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
                 name_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
                 text_layout.addWidget(name_label, 0, Qt.AlignLeft)
@@ -2831,6 +2845,7 @@ class AISettingsPanel(QWidget):
                 role_label = QLabel(role, text_wrap)
                 role_label.setFont(role_font)
                 role_label.setObjectName("ContributionCardRole")
+                role_label.setProperty("preserveCustomFont", True)
                 role_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
                 role_label.setWordWrap(True)
                 role_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
@@ -3107,25 +3122,6 @@ class AISettingsPanel(QWidget):
             editor.setText(os.path.normpath(selected))
 
     @staticmethod
-    def _resolve_config_path(raw_path: str) -> Path:
-        expanded = os.path.expandvars(os.path.expanduser(str(raw_path or "").strip()))
-        candidate = Path(expanded)
-        if not candidate.is_absolute():
-            candidate = _project_root() / candidate
-        return candidate
-
-    def _resolve_persona_file_path(self) -> Path:
-        import config.ollama_config as oc
-        from config.config import BUBBLE_CONFIG, CHAT
-
-        persona_file = str(getattr(oc, "PERSONA_FILE", "") or "").strip()
-        if not persona_file:
-            persona_file = str(CHAT.get("persona_file", "") or "").strip()
-        if not persona_file:
-            persona_file = str(BUBBLE_CONFIG.get("default_persona_file", "resc/persona.txt") or "").strip()
-        return self._resolve_config_path(persona_file or "resc/persona.txt")
-
-    @staticmethod
     def _open_path_with_system_default(path: Path) -> None:
         if hasattr(os, "startfile"):
             os.startfile(str(path))  # type: ignore[attr-defined]
@@ -3140,12 +3136,7 @@ class AISettingsPanel(QWidget):
 
     def _on_open_persona_file(self) -> None:
         try:
-            candidate = self._resolve_persona_file_path()
-            if candidate.exists() and candidate.is_dir():
-                raise IsADirectoryError(f"人格路径是文件夹，不是 txt 文件：{candidate}")
-            candidate.parent.mkdir(parents=True, exist_ok=True)
-            if not candidate.exists():
-                candidate.write_text("", encoding="utf-8")
+            candidate = ensure_user_persona_file()
             self._open_path_with_system_default(candidate)
             self._emit_info(f"已打开人格文件：{candidate.name}", min_tick=10, max_tick=90)
         except Exception as e:

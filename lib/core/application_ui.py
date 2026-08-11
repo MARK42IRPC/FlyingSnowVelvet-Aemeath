@@ -23,6 +23,9 @@ class ApplicationUiHost(Protocol):
     def open_announcement(self) -> None:
         """Open the announcement through the active UI implementation."""
 
+    def open_settings(self) -> None:
+        """Open the settings/workbench surface through the active UI implementation."""
+
     def begin_shutdown(self) -> None:
         """Hide interactive UI at the start of application shutdown."""
 

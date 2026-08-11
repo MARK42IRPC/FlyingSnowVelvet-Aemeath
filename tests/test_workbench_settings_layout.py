@@ -17,11 +17,8 @@ from PyQt5.QtWidgets import (
     QComboBox,
     QFormLayout,
     QFrame,
-    QHBoxLayout,
     QLabel,
     QLineEdit,
-    QPushButton,
-    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -34,6 +31,7 @@ from lib.script.workbench.settings import (
 )
 from lib.script.workbench.settings.page_layout import SETTINGS_FONT_SIZE
 from lib.script.workbench.theme import LIGHT_COLORS, workbench_stylesheet
+from lib.script.ui.ai_settings_panel import AISettingsPanel, _ContributionCardButton
 
 
 class WorkbenchSettingsLayoutTests(unittest.TestCase):
@@ -107,34 +105,30 @@ class WorkbenchSettingsLayoutTests(unittest.TestCase):
         host.setObjectName("WorkbenchPageHost")
         host.setStyleSheet(workbench_stylesheet())
         host_layout = QVBoxLayout(host)
+        panel = AISettingsPanel(lazy_workbench_pages=True)
+        page = panel.create_workbench_page("contribution_list")
+        host_layout.addWidget(page)
 
-        card = QPushButton(host)
-        card.setObjectName("ContributionCardButton")
-        card.setMinimumHeight(74)
-        card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        card_layout = QHBoxLayout(card)
-        text_wrap = QWidget(card)
-        text_layout = QVBoxLayout(text_wrap)
-        text_layout.setContentsMargins(0, 0, 0, 0)
-        name = QLabel("贡献者姓名", text_wrap)
-        name.setObjectName("ContributionCardName")
-        role = QLabel("负责模块与贡献领域", text_wrap)
-        role.setObjectName("ContributionCardRole")
-        text_layout.addWidget(name)
-        text_layout.addWidget(role)
-        card_layout.addWidget(text_wrap)
-        host_layout.addWidget(card)
-
-        host.resize(900, 180)
+        host.resize(1000, 760)
         host.show()
+        page.show()
         self.app.processEvents()
 
-        self.assertGreaterEqual(card.height(), 74)
-        self.assertGreaterEqual(name.height(), name.sizeHint().height())
-        self.assertGreaterEqual(role.height(), role.sizeHint().height())
+        cards = page.findChildren(_ContributionCardButton)
+        self.assertGreater(len(cards), 0)
+        for card in cards:
+            for object_name in ("ContributionCardName", "ContributionCardRole"):
+                label = card.findChild(QLabel, object_name)
+                self.assertIsNotNone(label)
+                assert label is not None
+                label_top = label.mapTo(card, PyQt5.QtCore.QPoint(0, 0)).y()
+                self.assertGreaterEqual(label_top, 0)
+                self.assertGreaterEqual(label.height(), label.sizeHint().height())
+                self.assertLessEqual(label_top + label.height(), card.height())
         self.assertIn("ContributionCardButton", host.styleSheet())
 
         host.close()
+        panel.deleteLater()
         host.deleteLater()
         self.app.processEvents()
 

@@ -25,6 +25,7 @@ from lib.core.qt_bridge.font import get_ui_font, get_digit_font, draw_mixed_text
 from config.scale import scale_px
 from config.tooltip_config import TOOLTIPS
 from lib.core.event.center import get_event_center, EventType, Event
+from lib.core.input.types import Key
 from lib.core.unified_draw import Layer, get_layer_manager
 from lib.core.qt_bridge.screen import clamp_rect_position, get_screen_geometry_for_point
 from lib.core.anchor_utils import apply_ui_opacity
@@ -235,6 +236,7 @@ class PlaylistPanel(QWidget):
         self._event_center.subscribe(EventType.MUSIC_STATUS_CHANGE,    self._on_music_status)
         self._event_center.subscribe(EventType.MUSIC_SONG_END,         self._on_song_end)
         self._event_center.subscribe(EventType.UI_CLICKTHROUGH_TOGGLE, self._on_clickthrough_toggle)
+        self._event_center.subscribe(EventType.KEY_PRESS,              self._on_global_key_press)
 
         # ── 控制按钮（暂停/播放 + 下一曲 + 音量加/减 + 播放模式）────────
         self._play_pause_btn  = PlayPauseButton()
@@ -370,6 +372,16 @@ class PlaylistPanel(QWidget):
             event.accept()
             return
         super().keyPressEvent(event)
+
+    def _on_global_key_press(self, event: Event) -> None:
+        if not self._visible:
+            return
+        key = event.data.get('key')
+        if key not in (Key.LEFT, Key.RIGHT):
+            return
+        direction = -1 if key == Key.LEFT else 1
+        if self.move_selected_by_key(direction):
+            event.mark_handled()
 
     def move_selected_by_key(self, direction: int) -> bool:
         """
@@ -938,6 +950,10 @@ class PlaylistPanel(QWidget):
             pass
         try:
             self._event_center.unsubscribe(EventType.UI_CLICKTHROUGH_TOGGLE, self._on_clickthrough_toggle)
+        except Exception:
+            pass
+        try:
+            self._event_center.unsubscribe(EventType.KEY_PRESS, self._on_global_key_press)
         except Exception:
             pass
         try:

@@ -21,6 +21,7 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QApplication, QMenu
 
 from lib.core.qt_bridge.tray_icon import TrayIcon
+from lib.core.tray_host import TrayCommand
 from lib.script.ui.announcement_dialog import (
     AnnouncementBlock,
     AnnouncementController,
@@ -318,6 +319,24 @@ class AnnouncementQtTests(unittest.TestCase):
             icon_path = Path(tray._resolve_default_icon_path())
             self.assertEqual(icon_path, Path(__file__).resolve().parents[1] / "resc" / "icon.ico")
             self.assertTrue(icon_path.is_file())
+        finally:
+            tray.cleanup()
+            self.app.processEvents()
+
+    def test_qt_tray_daily_actions_emit_shared_command(self):
+        tray = TrayIcon()
+        received = []
+        tray.command_requested.connect(lambda command, checked: received.append((command, checked)))
+        try:
+            tray._on_cleanup_cache()
+            tray._on_toggle_game_mode(True)
+            self.assertEqual(
+                received,
+                [
+                    (TrayCommand.CLEANUP_CACHE, None),
+                    (TrayCommand.TOGGLE_GAME_MODE, True),
+                ],
+            )
         finally:
             tray.cleanup()
             self.app.processEvents()

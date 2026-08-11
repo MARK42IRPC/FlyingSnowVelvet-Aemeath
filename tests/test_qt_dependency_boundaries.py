@@ -61,6 +61,32 @@ class QtDependencyBoundaryTests(unittest.TestCase):
 
         self.assertEqual(violations, [])
 
+    def test_backend_neutral_core_does_not_import_qt_ui_implementations(self):
+        repo_root = Path(__file__).resolve().parents[1]
+        core_root = repo_root / "lib" / "core"
+        excluded = core_root / "qt_bridge"
+        violations = []
+
+        for path in core_root.rglob("*.py"):
+            if excluded in path.parents:
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    names = [alias.name for alias in node.names]
+                elif isinstance(node, ast.ImportFrom):
+                    names = [node.module or ""]
+                else:
+                    continue
+                if any(
+                    name == "lib.script.ui" or name.startswith("lib.script.ui.")
+                    for name in names
+                ):
+                    violations.append(str(path.relative_to(repo_root)))
+                    break
+
+        self.assertEqual(violations, [])
+
     def test_repository_qt_imports_stay_in_explicit_toolkit_boundaries(self):
         repo_root = Path(__file__).resolve().parents[1]
         scan_roots = (
@@ -319,6 +345,58 @@ class QtDependencyBoundaryTests(unittest.TestCase):
             layer_manager.enforce_now()
             assert layer_manager.snapshot()[0][3:] == ("probe", True)
             assert PetWindow.__name__ == "PetWindow"
+            """
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+
+    def test_dx_interaction_queries_and_ui_package_import_do_not_load_pyqt(self):
+        repo_root = Path(__file__).resolve().parents[1]
+        script = textwrap.dedent(
+            """
+            import builtins
+            import sys
+
+            original_import = builtins.__import__
+
+            def blocked_import(name, *args, **kwargs):
+                if name == "PyQt5" or name.startswith("PyQt5."):
+                    raise AssertionError(f"DX imported Qt: {name}")
+                return original_import(name, *args, **kwargs)
+
+            builtins.__import__ = blocked_import
+
+            import lib.script.ui
+            from lib.core.event.center import Event, EventType
+            from lib.core.event.key_handler import KeyEventHandler
+            from lib.core.game_obstacles import get_game_obstacle_rect
+            from lib.core.graphics.types import Point, Rect
+            from lib.core.input.types import Key
+            from lib.script.mainpet.state import StateMachine
+
+            class Entity:
+                def get_core_geometry(self): return Rect(0, 0, 20, 20)
+                def get_core_position(self): return Point(0, 0)
+                def is_moving(self): return False
+                def play_animation(self, *_args, **_kwargs): pass
+
+            entity = Entity()
+            state = StateMachine.__new__(StateMachine)
+            state._entity = entity
+            assert get_game_obstacle_rect() is None
+            assert state._is_wander_target_blocked_by_lahai(Point(80, 40)) is False
+
+            handler = KeyEventHandler.__new__(KeyEventHandler)
+            handler._entity = entity
+            handler._on_key_press(Event(EventType.KEY_PRESS, {"key": Key.LEFT}))
+            assert not [name for name in sys.modules if name.startswith("PyQt5")]
             """
         )
         result = subprocess.run(

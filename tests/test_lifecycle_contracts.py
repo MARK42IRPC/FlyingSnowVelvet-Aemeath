@@ -50,6 +50,9 @@ class LifecycleContractTests(unittest.TestCase):
                 def disconnect_quit_requested(self, callback): pass
                 def connect_announcement_requested(self, callback): pass
                 def disconnect_announcement_requested(self, callback): pass
+                def connect_command_requested(self, callback): pass
+                def disconnect_command_requested(self, callback): pass
+                def set_menu_state(self, state): pass
                 def initialize(self): return True
                 def begin_shutdown(self): pass
                 def cleanup(self): pass
@@ -99,6 +102,8 @@ class LifecycleContractTests(unittest.TestCase):
         self.assertIn("shutdown_host()", source)
         self.assertIn("disconnect_quit_requested", source)
         self.assertIn("disconnect_announcement_requested", source)
+        self.assertIn("disconnect_command_requested", source)
+        self.assertIn("set_menu_state", source)
         self.assertIn("self._application_ui", source)
 
 

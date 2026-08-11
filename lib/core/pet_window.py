@@ -23,7 +23,7 @@ from lib.script.mainpet.state import StateMachine
 from config.user_scale_config import get_user_scale_config
 from lib.core.draw_core import DrawRequest, get_draw_core
 from lib.core.layer import Layer, normalize_layer
-from lib.core.graphics.types import Point, coerce_point
+from lib.core.graphics.types import Point, Size, coerce_point
 from lib.core.action import Actions
 from lib.core.timing import register_timing_manager
 from lib.core.clickthrough_state import set_clickthrough_enabled
@@ -252,6 +252,7 @@ class PetWindow(BaseEntity):
         if not resource_id:
             return
 
+        resolved_layer = normalize_layer(layer, Layer.MAIN_PET)
         request = DrawRequest(
             resource_id=resource_id,
             frame_index=frame_index,
@@ -259,7 +260,12 @@ class PetWindow(BaseEntity):
             alpha=alpha,
             flipped=flipped,
             scale=scale,
-            layer=normalize_layer(layer, Layer.MAIN_PET),
+            target_size=(
+                Size(*ANIMATION['pet_size'])
+                if resolved_layer == int(Layer.MAIN_PET)
+                else None
+            ),
+            layer=resolved_layer,
             z=z,
         )
 

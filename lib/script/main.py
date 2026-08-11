@@ -3,6 +3,7 @@ import sys
 import os
 import threading
 import time
+from dataclasses import replace
 
 from config.config import GIF_FILES, DRAW, ANIMATION
 from lib.core.application_runtime import ApplicationRuntime
@@ -18,6 +19,9 @@ from lib.core.event.center import get_event_center, EventType, Event, cleanup_ev
 from lib.core.logger import initialize as initialize_app_logger, cleanup as cleanup_app_logger, get_logger
 from lib.core.cmd_center import get_cmd_center, cleanup_cmd_center
 from lib.core.compute_hub import cleanup_compute_hub
+from lib.core.compute_hub import get_compute_hub
+from lib.core.clickthrough_state import is_clickthrough_enabled
+from lib.core.tray_host import TrayCommand, TrayMenuState
 from lib.script.chat.ollama import get_ollama_manager, cleanup_ollama_manager
 from lib.script.chat.handler import get_chat_handler, cleanup_chat_handler
 from lib.script.chat.memory import get_stream_memory, cleanup_stream_memory
@@ -33,6 +37,14 @@ from lib.script.microphone_stt import (
 )
 from lib.script.voice.handler import get_voice_request_handler, cleanup_voice_request_handler
 from lib.script.app.game_mode_service import get_game_mode_service, cleanup_game_mode_service
+from lib.script.app.tray_actions import (
+    TrayActionResult,
+    cleanup_music_cache,
+    cleanup_music_history,
+    open_author_page,
+    prepare_autostart_state,
+    set_autostart_enabled,
+)
 from lib.core.plugin_registry import (
     discover_all, init_all_managers, cleanup_all_managers, get_manager
 )
@@ -74,6 +86,8 @@ class ApplicationState:
         self._particle_overlay_factory = bundle.particle_overlay_factory
         self._effect_overlay_factory = bundle.effect_overlay_factory
         self._tray_host_factory = bundle.tray_host_factory
+        self._backend_cleanup = bundle.cleanup
+        self._backend_cleaned = False
         self._application_runtime = application_runtime or bundle.application_runtime_factory()
         self._application_ui = application_ui_host or bundle.application_ui_host_factory()
         self._event_center = get_event_center()
@@ -89,6 +103,12 @@ class ApplicationState:
         # 工具调度器
         self._tool_dispatcher = None
         self._game_mode = get_game_mode_service()
+        self._tray_menu_state = TrayMenuState(
+            game_mode_enabled=bool(getattr(self._game_mode, 'is_enabled', lambda: False)()),
+            clickthrough_enabled=bool(is_clickthrough_enabled()),
+        )
+        self._tray_action_lock = threading.Lock()
+        self._pending_tray_actions: set[TrayCommand] = set()
         # 工作目录
         self._script_dir = None
         # 初始化完成标志
@@ -140,6 +160,10 @@ class ApplicationState:
         self._event_center.subscribe(EventType.APP_PRE_START, self._on_pre_start)
         self._event_center.subscribe(EventType.APP_INIT_READY, self._on_init_ready)
         self._event_center.subscribe(EventType.APP_QUIT, self._on_app_quit)
+        self._event_center.subscribe(EventType.GAME_MODE_STATUS_CHANGE, self._on_game_mode_status_change)
+        self._event_center.subscribe(EventType.UI_CLICKTHROUGH_TOGGLE, self._on_clickthrough_status_change)
+        self._event_center.subscribe(EventType.AUTOSTART_STATUS_CHANGE, self._on_autostart_status_change)
+        self._events_subscribed = True
 
     def _publish_event(self, event_type: EventType, data: dict = None):
         """发布事件"""
@@ -200,10 +224,21 @@ class ApplicationState:
 
         # 初始化系统托盘图标
         self._tray_host = self._tray_host_factory()
+        self._tray_menu_state = replace(
+            self._tray_menu_state,
+            autostart_enabled=prepare_autostart_state(),
+        )
+        self._tray_host.set_menu_state(self._tray_menu_state)
         self._tray_host.disconnect_quit_requested(self._on_tray_quit)
         self._tray_host.connect_quit_requested(self._on_tray_quit)
         self._tray_host.disconnect_announcement_requested(self._on_tray_announcement)
         self._tray_host.connect_announcement_requested(self._on_tray_announcement)
+        self._tray_host.disconnect_command_requested(self._on_tray_command)
+        self._tray_host.connect_command_requested(self._on_tray_command)
+        self._publish_event(EventType.AUTOSTART_STATUS_CHANGE, {
+            'enabled': self._tray_menu_state.autostart_enabled,
+            'source': 'tray_init',
+        })
 
         if self._tray_host.initialize():
             logger.info('系统托盘图标初始化成功')
@@ -226,6 +261,105 @@ class ApplicationState:
     def _on_tray_announcement(self):
         """托盘菜单公告回调。"""
         self._application_ui.open_announcement()
+
+    def _publish_information(self, text: str) -> None:
+        self._publish_event(EventType.INFORMATION, {
+            'text': str(text),
+            'min': 0,
+            'max': 60,
+        })
+
+    def _set_tray_menu_state(self, **changes) -> None:
+        self._tray_menu_state = replace(self._tray_menu_state, **changes)
+        tray = self._tray_host
+        if tray is not None:
+            try:
+                tray.set_menu_state(self._tray_menu_state)
+            except Exception:
+                logger.exception('同步托盘菜单状态失败')
+
+    def _on_game_mode_status_change(self, event: Event) -> None:
+        data = event.data if isinstance(event.data, dict) else {}
+        self._set_tray_menu_state(game_mode_enabled=bool(data.get('enabled', False)))
+
+    def _on_clickthrough_status_change(self, event: Event) -> None:
+        data = event.data if isinstance(event.data, dict) else {}
+        self._set_tray_menu_state(clickthrough_enabled=bool(data.get('enabled', False)))
+
+    def _on_autostart_status_change(self, event: Event) -> None:
+        data = event.data if isinstance(event.data, dict) else {}
+        self._set_tray_menu_state(autostart_enabled=bool(data.get('enabled', False)))
+
+    def _submit_tray_action(self, command: TrayCommand, worker) -> None:
+        with self._tray_action_lock:
+            if command in self._pending_tray_actions:
+                return
+            self._pending_tray_actions.add(command)
+        try:
+            future = get_compute_hub().submit_interactive_io(worker)
+        except Exception as exc:
+            with self._tray_action_lock:
+                self._pending_tray_actions.discard(command)
+            logger.error('提交托盘操作失败 command=%s: %s', command.name, exc)
+            self._publish_information('操作暂不可用，请稍后重试')
+            return
+
+        def complete(done_future) -> None:
+            with self._tray_action_lock:
+                self._pending_tray_actions.discard(command)
+            if self._exit_in_progress or self._exit_completed:
+                return
+            try:
+                result = done_future.result()
+            except Exception as exc:
+                logger.exception('托盘操作失败 command=%s', command.name)
+                self._publish_information(f'托盘操作失败：{exc}')
+                return
+            if isinstance(result, TrayActionResult):
+                self._publish_information(result.message)
+                if command == TrayCommand.TOGGLE_AUTOSTART:
+                    self._publish_event(EventType.AUTOSTART_STATUS_CHANGE, {
+                        'enabled': bool(result.enabled),
+                        'source': 'tray_menu',
+                    })
+
+        future.add_done_callback(complete)
+
+    def _on_tray_command(self, command: TrayCommand, checked: bool | None = None) -> None:
+        try:
+            command = TrayCommand(command)
+        except (TypeError, ValueError):
+            logger.warning('忽略未知托盘命令: %r', command)
+            return
+        if command == TrayCommand.OPEN_CMD:
+            self._publish_event(EventType.UI_OPEN_CMD_WINDOW, {'entity': None})
+        elif command == TrayCommand.OPEN_SETTINGS:
+            try:
+                self._application_ui.open_settings()
+            except Exception as exc:
+                logger.exception('打开控制面板失败')
+                self._publish_information(f'打开控制面板失败：{exc}')
+        elif command == TrayCommand.TOGGLE_GAME_MODE:
+            target = bool(checked) if checked is not None else not self._tray_menu_state.game_mode_enabled
+            self._publish_event(
+                EventType.GAME_MODE_SET if target else EventType.GAME_MODE_EXIT,
+                {'source': 'tray_menu'},
+            )
+        elif command == TrayCommand.TOGGLE_CLICKTHROUGH:
+            target = bool(checked) if checked is not None else not self._tray_menu_state.clickthrough_enabled
+            self._publish_event(EventType.UI_CLICKTHROUGH_TOGGLE, {'enabled': target})
+            self._publish_information('鼠标穿透已开启' if target else '鼠标穿透已关闭')
+        elif command == TrayCommand.TOGGLE_AUTOSTART:
+            target = bool(checked) if checked is not None else not self._tray_menu_state.autostart_enabled
+            self._submit_tray_action(command, lambda: set_autostart_enabled(target))
+        elif command == TrayCommand.CLEANUP_DESKTOP:
+            self._publish_event(EventType.INPUT_HASH, {'text': '清理'})
+        elif command == TrayCommand.CLEANUP_CACHE:
+            self._submit_tray_action(command, cleanup_music_cache)
+        elif command == TrayCommand.CLEANUP_HISTORY:
+            self._submit_tray_action(command, cleanup_music_history)
+        elif command == TrayCommand.OPEN_AUTHOR_PAGE:
+            self._submit_tray_action(command, open_author_page)
 
     def _on_app_quit(self, event: Event):
         """统一接管 APP_QUIT，避免组件直接强退 Qt 事件循环。"""
@@ -273,6 +407,11 @@ class ApplicationState:
                 self._backend_selection.requested_backend or "<empty>",
                 self._backend_selection.active_backend,
                 self._backend_selection.reason,
+            )
+        elif self._backend_selection.experimental:
+            logger.warning(
+                "实验性渲染后端已启用: %s；可能存在兼容性、性能或设备相关问题",
+                self._backend_selection.active_backend,
             )
         else:
             logger.info("渲染后端已启用: %s", self._backend_selection.active_backend)
@@ -411,6 +550,7 @@ class ApplicationState:
         if self._tray_host:
             self._tray_host.disconnect_quit_requested(self._on_tray_quit)
             self._tray_host.disconnect_announcement_requested(self._on_tray_announcement)
+            self._tray_host.disconnect_command_requested(self._on_tray_command)
 
         if self._pet:
             try:
@@ -579,6 +719,8 @@ class ApplicationState:
             self._perform_component_cleanup()
 
         self._application_ui.finalize()
+        self._cleanup_backend()
+        self._unsubscribe_lifecycle_events()
         cleanup_event_center()
 
         self._app = None
@@ -601,6 +743,34 @@ class ApplicationState:
 
         return final_exit_code
 
+    def _unsubscribe_lifecycle_events(self) -> None:
+        if not getattr(self, '_events_subscribed', False):
+            return
+        subscriptions = (
+            (EventType.APP_PRE_START, self._on_pre_start),
+            (EventType.APP_INIT_READY, self._on_init_ready),
+            (EventType.APP_QUIT, self._on_app_quit),
+            (EventType.GAME_MODE_STATUS_CHANGE, self._on_game_mode_status_change),
+            (EventType.UI_CLICKTHROUGH_TOGGLE, self._on_clickthrough_status_change),
+            (EventType.AUTOSTART_STATUS_CHANGE, self._on_autostart_status_change),
+        )
+        for event_type, callback in subscriptions:
+            self._event_center.unsubscribe(event_type, callback)
+        self._events_subscribed = False
+
+    def _cleanup_backend(self) -> None:
+        if self._backend_cleaned:
+            return
+        self._backend_cleaned = True
+        cleanup = self._backend_cleanup
+        if cleanup is None:
+            return
+        try:
+            cleanup()
+        except Exception:
+            import traceback
+            logger.error('桌面后端最终清理失败:\n%s', traceback.format_exc())
+
     def exit(self, exit_code: int = 0):
         self.request_exit(exit_code)
 
@@ -610,14 +780,22 @@ def main(
 ):
     """主函数"""
     if not _new_acquire_single_instance_lock():
-        _new_notify_already_running()
+        try:
+            _new_notify_already_running()
+        finally:
+            bundle = backend_bundle or get_desktop_backend_bundle()
+            cleanup = None if bundle is None else bundle.cleanup
+            if cleanup is not None:
+                cleanup()
         return
 
-    app_state = ApplicationState(
-        backend_selection=backend_selection,
-        backend_bundle=backend_bundle,
-    )
+    app_state = None
+    exit_code = -1
     try:
+        app_state = ApplicationState(
+            backend_selection=backend_selection,
+            backend_bundle=backend_bundle,
+        )
         # START 状态 - 发布预启动事件，开始非阻塞初始化
         app_state.start()
 
@@ -626,15 +804,29 @@ def main(
 
         # EXIT 状态
         exit_code = app_state.finalize_after_event_loop(exit_code)
-    except Exception as e:
+    except Exception:
         import traceback
         logger.error('程序运行出错:\n%s', traceback.format_exc())
 
-        # 即使出错也要发布退出事件
-        app_state.request_exit(-1)
-        app_state.finalize_after_event_loop(-1)
-        input('按回车键退出...')
+        if app_state is not None:
+            try:
+                app_state.request_exit(-1)
+                exit_code = app_state.finalize_after_event_loop(-1)
+            except Exception:
+                logger.error('异常启动后的收尾失败:\n%s', traceback.format_exc())
+                exit_code = -1
+        else:
+            bundle = backend_bundle or get_desktop_backend_bundle()
+            cleanup = None if bundle is None else bundle.cleanup
+            if cleanup is not None:
+                try:
+                    cleanup()
+                except Exception:
+                    logger.error('应用状态创建失败后的后端清理失败:\n%s', traceback.format_exc())
+            cleanup_event_center()
     finally:
+        if app_state is not None:
+            app_state._cleanup_backend()
         _new_release_single_instance_lock()
 
     sys.exit(exit_code)

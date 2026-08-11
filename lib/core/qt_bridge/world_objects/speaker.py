@@ -7,9 +7,9 @@ from collections import deque
 
 from PyQt5.QtWidgets import QApplication, QWidget
 from PyQt5.QtCore    import Qt, QPoint, QTimer
-from PyQt5.QtGui     import QPainter, QPixmap, QTransform
+from PyQt5.QtGui     import QPainter
 
-from config.config           import BEHAVIOR, PHYSICS, SPEAKER_AUDIO
+from config.config           import BEHAVIOR, PHYSICS
 from lib.core.unified_draw import Layer, get_layer_manager
 from lib.core.event.center    import get_event_center, EventType, Event
 from lib.core.clickthrough_state import is_clickthrough_enabled
@@ -17,6 +17,13 @@ from lib.core.physics         import get_physics_world, PhysicsBody
 from lib.core.particle_utils  import spawn_particle_at_point
 from lib.core.qt_bridge.screen import get_screen_geometry_for_point
 from lib.core.voice.sofa      import SofaSound
+from lib.core.graphics.resources import ImageResource
+from lib.core.graphics.visuals import (
+    build_world_object_batch,
+    resolve_speaker_scale,
+    update_speaker_intensity,
+)
+from lib.core.qt_bridge.draw_backend import QtDrawBackend
 
 
 # 从配置文件读取物理参数
@@ -29,15 +36,6 @@ _FADE_INTERVAL_MS: int = PHYSICS.get('fade_interval_ms', 50)
 _MAX_BOUNCES: int = PHYSICS.get('max_bounces', 5)
 _DRAG_TRAIL_WINDOW_SEC: float = 0.10
 _RELEASE_SAMPLE_MIN_DT_SEC: float = 1.0 / 60.0
-
-# 从配置文件读取音频可视化参数
-_SCALE_RANGE: float = SPEAKER_AUDIO.get('scale_range', 0.1)
-_SCALE_EXP: float = SPEAKER_AUDIO.get('scale_exp', 2.0)
-_EMA_ATTACK: float = SPEAKER_AUDIO.get('ema_attack', 0.35)
-_EMA_DECAY: float = SPEAKER_AUDIO.get('ema_decay', 0.08)
-_FREQ_MIN: float = SPEAKER_AUDIO.get('freq_min', 200.0)
-_FREQ_MAX: float = SPEAKER_AUDIO.get('freq_max', 2000.0)
-
 
 class Speaker(QWidget):
     """
@@ -53,21 +51,20 @@ class Speaker(QWidget):
     # 使用模块级配置变量（已从 PHYSICS 配置读取）
 
     def __init__(self,
-                 pixmap: QPixmap,
-                 flipped_pixmap: QPixmap,
                  position: QPoint,
-                 size: tuple):
+                 size: tuple,
+                 visual_resource: ImageResource | None = None):
         """
         Args:
-            pixmap:         正向 QPixmap（已缩放至目标尺寸）
-            flipped_pixmap: 水平翻转 QPixmap
             position:       屏幕全局坐标（左上角）
             size:           窗口尺寸 (width, height)
         """
         super().__init__()
 
-        self._pixmap         = pixmap
-        self._flipped_pixmap = flipped_pixmap
+        if not isinstance(visual_resource, ImageResource):
+            raise TypeError("speaker visual_resource must be an ImageResource")
+        self._visual_resource = visual_resource
+        self._draw_backend = QtDrawBackend()
         self._size           = size
         self._flipped        = False
         self._alive          = True
@@ -260,8 +257,10 @@ class Speaker(QWidget):
         if freq_intensity is None:
             freq_intensity = 0.0
         # 非对称 EMA：上升快（attack），下降慢（decay）
-        alpha = _EMA_ATTACK if freq_intensity > self._freq_intensity else _EMA_DECAY
-        self._freq_intensity = alpha * freq_intensity + (1.0 - alpha) * self._freq_intensity
+        self._freq_intensity = update_speaker_intensity(
+            self._freq_intensity,
+            freq_intensity,
+        )
         self.update()
 
     def _on_clickthrough_toggle(self, event: Event) -> None:
@@ -271,9 +270,6 @@ class Speaker(QWidget):
     # ==================================================================
     # 内部辅助
     # ==================================================================
-
-    def _get_current_pixmap(self) -> QPixmap:
-        return self._flipped_pixmap if self._flipped else self._pixmap
 
     def _update_flip(self) -> None:
         """根据当前位置更新翻转状态：中心点在屏幕右半侧时翻转，左半侧不翻转。"""
@@ -446,25 +442,19 @@ class Speaker(QWidget):
             super().mouseReleaseEvent(event)
 
     def paintEvent(self, event):
-        pixmap = self._get_current_pixmap()
-        if pixmap is None or pixmap.isNull():
-            return
+        """Execute shared sprite and frequency-scale declarations."""
+        sx, sy = resolve_speaker_scale(self._freq_intensity)
         painter = QPainter(self)
-        painter.setOpacity(self._alpha)
-
-        # 以窗口中心为轴：水平正缩放，垂直负缩放（压扁效果随频率响应变化）
-        amp = self._freq_intensity ** _SCALE_EXP      # 指数映射，低频抑制，高频放大
-        sx = 1.0 + amp * _SCALE_RANGE   # 水平：1.0 → 1.05
-        sy = 1.0 - amp * _SCALE_RANGE   # 垂直：1.0 → 0.95
-        if abs(sx - 1.0) > 1e-4 or abs(sy - 1.0) > 1e-4:
-            cx, cy = self._size[0] / 2.0, self._size[1] / 2.0
-            transform = QTransform()
-            transform.translate(cx, cy)
-            transform.scale(sx, sy)
-            transform.translate(-cx, -cy)
-            painter.setTransform(transform)
-
-        painter.drawPixmap(0, 0, pixmap)
+        self._draw_backend.render(build_world_object_batch(
+            self._visual_resource,
+            0,
+            alpha=self._alpha,
+            flipped=self._flipped,
+            object_type="speaker",
+            scale_x=sx,
+            scale_y=sy,
+        ), painter)
+        painter.end()
 
     def closeEvent(self, event):
         self._event_center.unsubscribe(EventType.TICK,                   self._on_tick_click)
@@ -472,5 +462,6 @@ class Speaker(QWidget):
         self._event_center.unsubscribe(EventType.UI_CLICKTHROUGH_TOGGLE, self._on_clickthrough_toggle)
         self._fade_timer.stop()
         self._cleanup_physics()
+        self._draw_backend.cleanup()
         self._alive = False
         super().closeEvent(event)

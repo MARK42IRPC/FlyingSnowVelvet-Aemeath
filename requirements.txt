@@ -1,3 +1,5 @@
+--only-binary=opencc-python-reimplemented
+
 comtypes>=1.1.11
 genie-tts==2.0.2
 jieba-fast==0.53
@@ -5,6 +7,7 @@ mutagen>=1.47.0
 numpy>=2.0.0,<3
 onnx>=1.17
 onnxruntime>=1.22,<2
+opencc-python-reimplemented>=0.1.7,<1
 opencv_python>=4.13.0.92
 packaging>=23.2
 Pillow>=10.2.0

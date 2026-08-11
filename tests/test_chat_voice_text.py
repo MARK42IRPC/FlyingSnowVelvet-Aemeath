@@ -11,6 +11,7 @@ from lib.script.chat.handler_stream_presenter import (
     _detect_ai_voice_language,
     _is_non_ai_status_text,
     _should_emit_ai_voice,
+    _voice_waits_for_tool_result,
 )
 from lib.script.ui.ai_settings_validators import validate_ai_values
 
@@ -132,6 +133,70 @@ class ChatVoiceTextTests(unittest.TestCase):
         final_event = next(event for event in events if event.type is EventType.STREAM_FINAL)
         self.assertEqual(final_event.data["tool_call"], tool_call)
         self.assertIn("倒计时", final_event.data["text"])
+
+    def test_followup_tools_wait_for_final_result_before_voice(self):
+        self.assertTrue(
+            _voice_waits_for_tool_result(
+                "我先看看。",
+                {"name": "inspect_screen", "arguments": {}},
+            )
+        )
+        self.assertTrue(_voice_waits_for_tool_result("让我想想。###回忆 刚刚###"))
+        self.assertFalse(
+            _voice_waits_for_tool_result(
+                "打开计时器。",
+                {"name": "start_timer", "arguments": {"seconds": 45}},
+            )
+        )
+
+    def test_auto_response_with_screen_peek_tool_does_not_queue_intermediate_voice(self):
+        events = []
+        presenter = SimpleNamespace(
+            _event_center=SimpleNamespace(publish=events.append),
+            _calc_stream_final_min_ticks=lambda _text: 2,
+        )
+        tool_call = {"name": "inspect_screen", "arguments": {}}
+
+        ChatHandlerStreamPresenterMixin._publish_auto_response(
+            presenter,
+            "我先看看屏幕。",
+            native_tool_call=tool_call,
+        )
+
+        self.assertFalse(
+            any(event.type is EventType.AI_VOICE_REQUEST for event in events)
+        )
+        final_event = next(event for event in events if event.type is EventType.STREAM_FINAL)
+        self.assertEqual(final_event.data["tool_call"], tool_call)
+
+    def test_chat_response_with_recall_tool_does_not_queue_intermediate_voice(self):
+        events = []
+        presenter = SimpleNamespace(
+            _cleaned=False,
+            _event_center=SimpleNamespace(publish=events.append),
+            _stream_flush_timer=SimpleNamespace(active=False),
+            _stream_pending_raw="",
+            _stream_first_chunk=True,
+            _last_message="刚才说了什么",
+            _calc_stream_final_min_ticks=lambda _text: 2,
+        )
+        tool_call = {
+            "name": "recall_memory",
+            "arguments": {"topic": "项目进度"},
+        }
+
+        ChatHandlerStreamPresenterMixin._publish_response(
+            presenter,
+            "我先回忆一下。",
+            include_history=False,
+            native_tool_call=tool_call,
+        )
+
+        self.assertFalse(
+            any(event.type is EventType.AI_VOICE_REQUEST for event in events)
+        )
+        final_event = next(event for event in events if event.type is EventType.STREAM_FINAL)
+        self.assertEqual(final_event.data["tool_call"], tool_call)
 
 
 if __name__ == "__main__":

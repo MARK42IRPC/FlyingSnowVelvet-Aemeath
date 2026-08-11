@@ -164,25 +164,6 @@ def workbench_stylesheet(mode: str | None = None) -> str:
     QToolButton#WorkbenchWindowButton[danger="true"]:hover {{
         background: {c.danger};
     }}
-    QCheckBox#WorkbenchPinToggle {{
-        color: {c.text_muted};
-        spacing: {scale_px(6, min_abs=4)}px;
-        padding: 0px {scale_px(4, min_abs=3)}px;
-    }}
-    QCheckBox#WorkbenchPinToggle:hover {{
-        color: {c.text};
-    }}
-    QCheckBox#WorkbenchPinToggle::indicator {{
-        width: {scale_px(14, min_abs=12)}px;
-        height: {scale_px(14, min_abs=12)}px;
-        border: {border}px solid {c.border_strong};
-        border-radius: {scale_px(2, min_abs=2)}px;
-        background: {c.surface};
-    }}
-    QCheckBox#WorkbenchPinToggle::indicator:checked {{
-        background: {c.cyan};
-        border-color: {c.cyan};
-    }}
     QCheckBox#WorkbenchThemeToggle {{
         background: transparent;
         border: none;

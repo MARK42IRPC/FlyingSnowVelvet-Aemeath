@@ -1,8 +1,44 @@
 # Changelog
 
-本文件记录飞行雪绒 LTS 系列的公开版本变更。版本标签与发布包名称保持一致，例如 `LTS1.0.6pre7v2`。
+本文件记录飞行雪绒 LTS 系列的公开版本变更。版本标签与发布包名称保持一致，例如 `LTS1.0.6pre8`。
+
+## [LTS1.0.6pre8] - 2026-08-11
+
+### Fixed
+- 修复赞助列表开发者卡片尺寸计算不完整导致内容被裁切的问题。
+- 修复窥屏、回忆等工具调用先播报中间答复、随后又播报最终答复造成的重复语音。
+- 修复游戏包管理器文件选择窗口强制使用非原生样式的问题，恢复 Windows 默认文件对话框。
+- 修复人格词在程序更新后被默认模板覆盖的问题；用户编辑后保存到用户目录并优先读取。
+
+### Changed
+- 工作台打开不再锁定 30 FPS，不再强制置顶或注册全局层级，改为普通任务栏窗口，并使用项目图标显示任务栏图标。
+- 更新公告草稿，覆盖最近的工作台、语音、游戏包和人格词变更；本版本只推送源码，不发布程序包或公告。
 
 ## [LTS1.0.6pre7v2] - 2026-08-06
+
+### Changed
+- 新增实验性故障恢复命令 `#后端 dx` / `#后端 qt`：无需控制面板即可持久化切换绘制后端，写盘成功后通过统一退出链重启，失败时保留当前实例。
+- DX 托盘新增“控制面板”命令，并将托盘双击行为对齐 Qt；设置由隔离 Qt workbench helper 承载，DX 主进程保持 Qt-free。
+- DX 运行时补齐音乐边界：托盘清理历史/登录数据不再创建播放管理器，播放器 factory 改由桌面组合入口注入，DX 组合不再导入或实例化 `QtMusicPlayer`/QtMultimedia，并使用 MCI fallback；未修改现有登录态处理逻辑。
+- DirectX 原生托盘升级到 ABI v7：菜单覆盖 CMD、游戏模式、鼠标穿透、开机启动、桌面/缓存/历史清理、作者主页和退出，命令通过统一 `FSDX_EVENT_TRAY_COMMAND` 事件交接，勾选状态由 `fsdx_set_tray_menu_state` 同步；Qt 与 DX 共用无 Qt 托盘动作路由，DirectX 现以实验性后端开放验证。
+- DirectX/WARP 离屏原型升级到 ABI v3，单批支持 DirectWrite 文字、嵌套裁剪和二维变换，并通过同帧 UTF-8 payload 保持明确的跨语言内存所有权。
+- DirectX 原型升级到 ABI v4，新增 Win32 + DirectComposition 透明窗口、窗口状态与生命周期、可见帧提交和有界事件轮询；`DxWindowHost` 已接入 `WindowHost v1` 与 `PetHostCallbacks` 纯数据转换，完整稳定性验收前保持实验性后端。
+- DirectX 原型升级到 ABI v5，CPU 侧保留可重建的预乘资源数据，设备恢复时保持资源句柄和 HWND 稳定并重建 D3D/D2D/DComp 对象；提交路径仅对设备丢失执行一次恢复重试，并公开 generation 与恢复事件用于诊断。
+- DirectX 输入边界升级到 ABI v6，物理按键与 Unicode 文本提交分离，原生窗口支持 `WM_POINTER*`、`WM_CHAR`/`WM_UNICHAR`、IME 预编辑/提交/结束和候选窗定位；DX 命令输入可显示中文组合文本且不会因 `ToUnicode` 重复写入字符。
+- DirectX 诊断层新增 Qt-free owner-thread 循环、合并式周期调度和跨线程事件泵，并由 `DxApplicationRuntime` 统一驱动一次性任务、原生窗口轮询、退出确认及残留窗口关闭；完整稳定性验收前保持实验性后端。
+- DX 诊断组合新增动态 Win32 显示器查询、GDI 主屏 PNG 截图、`DxPetWindow` 纯控制器宿主和层级窗口适配；资源句柄、窗口/context 注销及主宠关闭路径均有注入测试保护，现允许以实验性后端实际验证。
+- DX 诊断组合新增原生 `Shell_NotifyIconW` 托盘宿主，公告/退出命令通过同一有界事件队列派发，并覆盖任务栏重建恢复、有限初始化重试、隐藏与幂等销毁；完整稳定性验收前仍保持实验性状态。
+- DX 诊断组合新增 Qt-free 粒子和特效覆盖层，将文字、线段、矩形、圆形、图片缩放/旋转/羽化统一转换为不可变 `DrawBatch`；七类世界对象也已具备原生窗口、GIF、核心几何、拖拽、翻转、物理运动、点击穿透和淡出基础能力。
+- Qt 与 DX 命令输入框收敛到共享视觉 composer：统一黑/青/粉外壳、白色输入区、`240x36` 配置尺寸、字体/占位文本和 IME 几何，并通过 Qt/DX-WARP 像素基线验证。
+- 主宠 sprite 新增显式目标尺寸，Qt paint viewport 与 DX 重绘区域不再决定资源缩放；命令框相对主宠的锚点、屏幕边缘翻转和夹取也迁入共享纯几何解析器，避免窗口裁切和后端位置分歧。
+- 二维码主体、action button 状态、DX 基础通知和七类世界对象视觉迁入共享 presenter；世界对象的 sprite、动画帧、透明度、翻转、中心缩放、闹钟倒计时、摩托抖动和音响 EMA/指数缩放由 Qt/DX 共用，Qt 世界对象只执行共享批次；Qt `BaseQrDialog` 与 DX application UI 共用 Qt 基准主题、布局、资源尺寸、按钮命中矩形和命令批次，Qt 原生按钮仅保留透明输入适配，整个 DX bridge 不再导入 PyQt 或构造产品颜色、字体和绘制命令。
+- Qt 聊天气泡迁入共享 `BubbleVisualDescription`：换行、自适应尺寸、三层背景、混合字体分段、主宠锚点和屏幕夹取不再由 QWidget 绘制路径决定；Qt 只提供低级字体度量并执行共享批次，单行、多行、左对齐和硬换行保持迁移前逐像素一致。
+- Qt 命令提示框迁入共享 `CommandHintVisualDescription`：三层背景、自适应尺寸、默认/哈希行、选中态、分隔线、混合字体、页码、默认文案和行命中矩形不再由 QWidget 私有 painter 路径决定；Qt 只提供低级字体度量并执行共享批次。DX 新增原生命令提示宿主，消费同一描述并支持跟随、筛选、导航、补全、翻页和点击执行，不导入或构造 Qt 控件。
+- `INFORMATION` 气泡已接入 DX 原生 `_DxBubbleWindow`，与 Qt `Bubble` 共用 `BubbleVisualDescription` 的换行、尺寸、锚点和批次；DX 仍使用 Qt-free portable metrics。右键七个附属按钮已由共享两行布局和批次驱动，并由一个 DX 原生窗口承载完整控件组；DirectWrite 度量、完整动作分发和音响搜索 UI 宿主继续作为后续迁移项。
+- 关闭、自动聊天、恢复、穿透、放大/缩小、启动鸣潮、聊天模式和更多功能八类矩形按钮迁入共享 presenter，Qt 控件不再私有维护背景层、内容区、字体和居中文字画法。
+- 修复 DirectX 运行约十秒后主宠首次漫游可能通过游戏几何查询隐式构造 `GameRuntimePanel(QWidget)` 并触发“必须先构造 QApplication”的致命错误；游戏避让改用核心 `Rect` provider，核心键盘处理器也不再直接导入 Qt 播放列表，UI 包入口改为惰性兼容导出。
+- 新增共享单个 `DxLoopContext` 的完整 DX `DesktopBackendBundle` 和 `DxApplicationUiHost`，原生命令输入、信息提示及元宝/音乐二维码不再依赖 Qt；阻断 PyQt 的 `ApplicationState` 启动、`APP_MAIN`、分阶段退出和 backend owner 最终清理组合已通过。DirectX 现以实验性后端开放，完整托盘菜单、自动公告、工作台隔离、共享设备资源和硬件验收完成后再转为稳定状态。
+- `DesktopBackendBundle.cleanup` 成为后端级幂等收尾边界；应用事件循环结束后统一清理残留 scheduler、event pump、世界对象和 native host，应用状态构造失败也会释放单实例锁并执行后端清理。
 
 ### Fixed
 - 修复全新 Python 环境运行安装器时，安装器提前导入应用配置和 Pillow，导致依赖尚未安装就退出的问题。

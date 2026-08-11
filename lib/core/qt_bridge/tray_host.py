@@ -4,7 +4,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from lib.core.qt_bridge.tray_icon import cleanup_tray_icon, get_tray_icon
-from lib.core.tray_host import TrayHost
+from lib.core.tray_host import TrayCommandCallback, TrayHost, TrayMenuState
 
 
 class QtTrayHost:
@@ -30,6 +30,18 @@ class QtTrayHost:
             self._tray_icon.announcement_requested.disconnect(callback)
         except (TypeError, RuntimeError):
             pass
+
+    def connect_command_requested(self, callback: TrayCommandCallback) -> None:
+        self._tray_icon.command_requested.connect(callback)
+
+    def disconnect_command_requested(self, callback: TrayCommandCallback) -> None:
+        try:
+            self._tray_icon.command_requested.disconnect(callback)
+        except (TypeError, RuntimeError):
+            pass
+
+    def set_menu_state(self, state: TrayMenuState) -> None:
+        self._tray_icon.set_menu_state(state)
 
     def initialize(self) -> bool:
         return bool(self._tray_icon.initialize())

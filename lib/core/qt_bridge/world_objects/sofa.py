@@ -4,7 +4,7 @@ from collections import deque
 
 from PyQt5.QtWidgets import QApplication, QWidget
 from PyQt5.QtCore    import Qt, QPoint
-from PyQt5.QtGui     import QPainter, QPixmap
+from PyQt5.QtGui     import QPainter
 
 from config.config            import BEHAVIOR, PHYSICS
 from lib.core.unified_draw import Layer, get_layer_manager
@@ -14,6 +14,9 @@ from lib.core.physics          import get_physics_world, PhysicsBody
 from lib.core.particle_utils   import spawn_particle_at_point
 from lib.core.qt_bridge.screen import get_screen_geometry_for_point
 from lib.core.voice.sofa       import SofaSound
+from lib.core.graphics.resources import ImageResource
+from lib.core.graphics.visuals import build_world_object_batch
+from lib.core.qt_bridge.draw_backend import QtDrawBackend
 
 
 # 从配置文件读取物理参数
@@ -42,21 +45,20 @@ class Sofa(QWidget):
     # 使用模块级配置变量（已从 PHYSICS 配置读取）
 
     def __init__(self,
-                 pixmap: QPixmap,
-                 flipped_pixmap: QPixmap,
                  position: QPoint,
-                 size: tuple):
+                 size: tuple,
+                 visual_resource: ImageResource | None = None):
         """
         Args:
-            pixmap:         正向 QPixmap（已缩放至目标尺寸）
-            flipped_pixmap: 水平翻转 QPixmap
             position:       屏幕全局坐标（左上角）
             size:           窗口尺寸 (width, height)
         """
         super().__init__()
 
-        self._pixmap         = pixmap
-        self._flipped_pixmap = flipped_pixmap
+        if not isinstance(visual_resource, ImageResource):
+            raise TypeError("sofa visual_resource must be an ImageResource")
+        self._visual_resource = visual_resource
+        self._draw_backend = QtDrawBackend()
         self._size           = size
         self._flipped        = False
         self._alive          = True
@@ -268,10 +270,6 @@ class Sofa(QWidget):
     # 内部辅助
     # ==================================================================
 
-    def _get_current_pixmap(self) -> QPixmap:
-        """根据翻转状态返回当前 QPixmap。"""
-        return self._flipped_pixmap if self._flipped else self._pixmap
-
     def _compute_release_velocity(self, release_pos: QPoint) -> tuple[float, float]:
         """
         计算松手瞬时速度：
@@ -478,13 +476,16 @@ class Sofa(QWidget):
             super().mouseReleaseEvent(event)
 
     def paintEvent(self, event):
-        """绘制当前 QPixmap 到透明背景（支持透明度淡出）。"""
-        pixmap = self._get_current_pixmap()
-        if pixmap is None or pixmap.isNull():
-            return
+        """Execute the shared world-object sprite batch."""
         painter = QPainter(self)
-        painter.setOpacity(self._alpha)
-        painter.drawPixmap(0, 0, pixmap)
+        self._draw_backend.render(build_world_object_batch(
+            self._visual_resource,
+            0,
+            alpha=self._alpha,
+            flipped=self._flipped,
+            object_type="sofa",
+        ), painter)
+        painter.end()
 
     def closeEvent(self, event):
         """关闭时确保所有事件订阅和物理资源已释放（兜底清理）。"""
@@ -492,5 +493,6 @@ class Sofa(QWidget):
         self._event_center.unsubscribe(EventType.TICK,                   self._tick_fade)
         self._event_center.unsubscribe(EventType.UI_CLICKTHROUGH_TOGGLE, self._on_clickthrough_toggle)
         self._cleanup_physics()
+        self._draw_backend.cleanup()
         self._alive = False
         super().closeEvent(event)

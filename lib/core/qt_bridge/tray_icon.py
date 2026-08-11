@@ -2,7 +2,6 @@
 import os
 import sys
 import uuid
-import webbrowser
 from pathlib import Path
 from PyQt5.QtWidgets import (
     QSystemTrayIcon,
@@ -15,10 +14,9 @@ from PyQt5.QtCore import QObject, pyqtSignal, QTimer, QPoint
 
 from lib.core.logger import get_logger
 from lib.core.event.center import get_event_center, EventType, Event
+from lib.core.tray_host import TrayCommand, TrayMenuState
 from lib.script.ui.tray_menu import TrayContextMenu
-from config.config import CLOUD_MUSIC
 from config.tooltip_config import TOOLTIPS
-from config.user_storage_paths import get_user_cache_dir
 from lib.script.app.game_mode_service import get_game_mode_service
 
 _logger = get_logger(__name__)
@@ -41,6 +39,7 @@ class TrayIcon(QObject):
     # 退出信号
     quit_requested = pyqtSignal()
     announcement_requested = pyqtSignal()
+    command_requested = pyqtSignal(object, object)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -52,6 +51,8 @@ class TrayIcon(QObject):
         self._game_mode_action = None
         self._clickthrough_enabled = False
         self._game_mode_enabled = False
+        self._autostart_enabled = False
+        self._menu_state_initialized = False
         self._clickthrough_status_subscribed = False
         self._game_mode_status_subscribed = False
         self._ai_settings_panel = None
@@ -85,12 +86,15 @@ class TrayIcon(QObject):
             _logger.error('QApplication 实例不存在，无法创建托盘图标')
             return False
 
-        try:
-            from lib.script.app.autostart import migrate_legacy_autostart
+        if not self._menu_state_initialized:
+            try:
+                from lib.script.app.tray_actions import prepare_autostart_state
 
-            migrate_legacy_autostart()
-        except Exception as exc:
-            _logger.warning('迁移旧开机启动项失败: %s', exc)
+                self._autostart_enabled = prepare_autostart_state()
+            except Exception:
+                self._autostart_enabled = False
+            self._game_mode_enabled = bool(get_game_mode_service().is_enabled())
+            self._menu_state_initialized = True
 
         if icon_path is None:
             icon_path = self._resolve_default_icon_path()
@@ -253,7 +257,9 @@ class TrayIcon(QObject):
         ai_settings_action = QAction('控制面板', self._menu)
         ai_settings_action.setToolTip(TOOLTIPS['tray_ai_settings'])
         ai_settings_action.setStatusTip(TOOLTIPS['tray_ai_settings'])
-        ai_settings_action.triggered.connect(self._on_ai_settings)
+        ai_settings_action.triggered.connect(
+            lambda _checked=False: self._emit_command(TrayCommand.OPEN_SETTINGS)
+        )
         self._menu.addAction(ai_settings_action)
 
         announcement_action = QAction('桌宠公告', self._menu)
@@ -277,7 +283,6 @@ class TrayIcon(QObject):
         cmd_window_action.triggered.connect(self._on_cmd_window)
         self._menu.addAction(cmd_window_action)
 
-        self._game_mode_enabled = bool(get_game_mode_service().is_enabled())
         self._game_mode_action = QAction('游戏模式', self._menu)
         self._game_mode_action.setCheckable(True)
         self._set_game_mode_action_checked(self._game_mode_enabled)
@@ -301,13 +306,12 @@ class TrayIcon(QObject):
         # 开机启动动作
         self._autostart_action = QAction('开机启动', self._menu)
         self._autostart_action.setCheckable(True)
-        autostart_enabled = self._is_autostart_enabled()
-        self._set_autostart_action_checked(autostart_enabled)
+        self._set_autostart_action_checked(self._autostart_enabled)
         self._autostart_action.setToolTip(TOOLTIPS['tray_autostart'])
         self._autostart_action.setStatusTip(TOOLTIPS['tray_autostart'])
         self._autostart_action.triggered.connect(self._on_toggle_autostart)
         self._menu.addAction(self._autostart_action)
-        self._publish_autostart_status(autostart_enabled, source='tray_init')
+        self._publish_autostart_status(self._autostart_enabled, source='tray_init')
 
         self._menu.addSeparator()
 
@@ -433,88 +437,15 @@ class TrayIcon(QObject):
 
     def _on_cleanup_desktop(self):
         """处理清理桌面动作"""
-        self._event_center.publish(Event(EventType.INPUT_HASH, {
-            'text': '清理',
-        }))
+        self._emit_command(TrayCommand.CLEANUP_DESKTOP)
 
     def _on_cleanup_history(self):
         """处理清理历史动作：清空所有平台历史与登录数据，不清理缓存。"""
-        try:
-            from lib.script.music import clear_all_history_and_login_data
-
-            result = clear_all_history_and_login_data()
-            history_items = int(result.get('history_items') or 0)
-            deleted_login_files = int(result.get('deleted_login_files') or 0)
-            logged_in_providers = int(result.get('logged_in_providers') or 0)
-            total_failed = (
-                int(result.get('history_failures') or 0)
-                + int(result.get('failed_login_files') or 0)
-                + int(result.get('login_provider_failures') or 0)
-            )
-            cleared_login = deleted_login_files > 0 or logged_in_providers > 0
-            if history_items == 0 and not cleared_login and total_failed == 0:
-                message = '暂无音乐历史或登录数据需要清理'
-            else:
-                parts: list[str] = []
-                if history_items > 0:
-                    parts.append(f'已清空 {history_items} 条音乐历史')
-                if cleared_login:
-                    parts.append('已清除登录数据')
-                message = '，'.join(parts) if parts else '音乐历史与登录数据已清理'
-                if total_failed > 0:
-                    message += f'（{total_failed} 项清理失败）'
-        except Exception as e:
-            _logger.error('清理音乐历史与登录数据失败: %s', e)
-            message = '清理历史失败，请查看日志'
-
-        self._event_center.publish(Event(EventType.INFORMATION, {
-            'text': message,
-            'min': 0,
-            'max': 60,
-        }))
+        self._emit_command(TrayCommand.CLEANUP_HISTORY)
 
     def _on_cleanup_cache(self):
         """处理清理缓存动作：仅清理音乐缓存目录，不影响历史与登录数据。"""
-        cache_root = get_user_cache_dir("music")
-        platform_names = ("netease", "qq", "kugou", "local", "other")
-        platform_dirs = [cache_root / name for name in platform_names if (cache_root / name).is_dir()]
-
-        deleted_files = 0
-        failed_files = 0
-        deleted_bytes = 0
-
-        for platform_dir in platform_dirs:
-            for file_path in platform_dir.rglob('*'):
-                if not file_path.is_file():
-                    continue
-                try:
-                    file_size = file_path.stat().st_size
-                except OSError:
-                    file_size = 0
-
-                try:
-                    file_path.unlink()
-                    deleted_files += 1
-                    deleted_bytes += max(0, file_size)
-                except OSError as e:
-                    failed_files += 1
-                    _logger.warning('清理缓存失败: %s (%s)', file_path, e)
-
-        if deleted_files == 0 and failed_files == 0:
-            message = '现在很干净，无需清理缓存'
-        elif deleted_files > 0:
-            cleaned_mb = deleted_bytes / (1024 * 1024)
-            message = f'已清理 {cleaned_mb:.2f} MB 缓存'
-            if failed_files > 0:
-                message += f'（{failed_files} 项清理失败）'
-        else:
-            message = f'缓存清理失败，{failed_files} 项被占用'
-
-        self._event_center.publish(Event(EventType.INFORMATION, {
-            'text': message,
-            'min': 0,
-            'max': 60,
-        }))
+        self._emit_command(TrayCommand.CLEANUP_CACHE)
 
     def preload_ai_settings_panel(self):
         from lib.script.ui.ai_settings_panel import AISettingsPanel
@@ -546,6 +477,9 @@ class TrayIcon(QObject):
                 'max': 120,
             }))
 
+    def open_settings(self):
+        self._on_ai_settings()
+
     def _on_bug_tracker(self):
         try:
             self.preload_workbench().show_page('bug_tracker')
@@ -559,32 +493,14 @@ class TrayIcon(QObject):
 
     def _on_cmd_window(self):
         """处理CMD窗口动作：打开CMD终端窗口。"""
-        try:
-            from lib.script.ui.cmd_window import get_cmd_window
-            cmd_window = get_cmd_window()
-            # 发布打开CMD窗口事件，由事件处理器处理显示逻辑
-            self._event_center.publish(Event(EventType.UI_OPEN_CMD_WINDOW, {
-                'entity': None  # 从托盘打开，没有实体引用
-            }))
-        except Exception as e:
-            _logger.error('打开CMD窗口失败: %s', e)
-            self._event_center.publish(Event(EventType.INFORMATION, {
-                'text': f'打开CMD窗口失败: {e}',
-                'min': 12,
-                'max': 120,
-            }))
+        self._emit_command(TrayCommand.OPEN_CMD)
 
     def _on_toggle_game_mode(self, checked: bool):
         """处理游戏模式切换动作。"""
         target = bool(checked)
         self._game_mode_enabled = target
         self._set_game_mode_action_checked(target)
-        self._event_center.publish(Event(
-            EventType.GAME_MODE_SET if target else EventType.GAME_MODE_EXIT,
-            {
-                'source': 'tray_menu',
-            },
-        ))
+        self._emit_command(TrayCommand.TOGGLE_GAME_MODE, target)
 
     def _subscribe_game_mode_events(self):
         """订阅游戏模式状态事件，用于同步托盘动作。"""
@@ -631,15 +547,7 @@ class TrayIcon(QObject):
         target = bool(checked)
         self._clickthrough_enabled = target
         self._set_clickthrough_action_checked(target)
-
-        self._event_center.publish(Event(EventType.UI_CLICKTHROUGH_TOGGLE, {
-            'enabled': target,
-        }))
-        self._event_center.publish(Event(EventType.INFORMATION, {
-            'text': '鼠标穿透已开启' if target else '鼠标穿透已关闭',
-            'min': 0,
-            'max': 60,
-        }))
+        self._emit_command(TrayCommand.TOGGLE_CLICKTHROUGH, target)
 
     def _subscribe_clickthrough_events(self):
         """订阅鼠标穿透状态事件，用于同步托盘勾选状态。"""
@@ -683,20 +591,7 @@ class TrayIcon(QObject):
 
     def _on_follow_author(self):
         """处理关注作者动作"""
-        try:
-            webbrowser.open('https://space.bilibili.com/486401719')
-            self._event_center.publish(Event(EventType.INFORMATION, {
-                'text': '已打开作者主页',
-                'min': 0,
-                'max': 60,
-            }))
-        except Exception as e:
-            _logger.warning('打开作者主页失败: %s', e)
-            self._event_center.publish(Event(EventType.INFORMATION, {
-                'text': '打开作者主页失败',
-                'min': 0,
-                'max': 60,
-            }))
+        self._emit_command(TrayCommand.OPEN_AUTHOR_PAGE)
 
     def _is_autostart_enabled(self) -> bool:
         """检查开机启动是否已启用"""
@@ -731,41 +626,24 @@ class TrayIcon(QObject):
     def _on_toggle_autostart(self, checked: bool, source: str = 'tray_menu'):
         """切换开机启动状态"""
         target = bool(checked)
-        success = False
-        detail = ''
-        try:
-            from lib.script.app.autostart import (
-                disable_autostart,
-                enable_autostart,
-            )
+        self._autostart_enabled = target
+        self._set_autostart_action_checked(target)
+        self._emit_command(TrayCommand.TOGGLE_AUTOSTART, target)
 
-            if target:
-                success, detail = enable_autostart()
-            else:
-                success, detail = disable_autostart()
-        except Exception as e:
-            detail = f'{type(e).__name__}: {e}'
-            _logger.error('切换开机启动失败: %s', e)
+    def _emit_command(self, command: TrayCommand, checked: bool | None = None) -> None:
+        self.command_requested.emit(command, checked)
 
-        actual = bool(self._is_autostart_enabled()) if success else False
-        if success and actual == target:
-            _logger.info('开机启动已%s', '启用' if target else '禁用')
-            self._event_center.publish(Event(EventType.INFORMATION, {
-                'text': f'开机启动已{"启用" if target else "禁用"}',
-                'min': 0,
-                'max': 60,
-            }))
-        else:
-            _logger.error('开机启动%s失败: %s', '启用' if target else '禁用', detail or '状态校验失败')
-            self._event_center.publish(Event(EventType.INFORMATION, {
-                'text': f'开机启动{"设置" if target else "取消"}失败，请查看日志',
-                'min': 0,
-                'max': 60,
-            }))
-            actual = False
-        self._set_autostart_action_checked(actual)
-        self._publish_autostart_status(actual, source=source)
-        return bool(success and actual == target)
+    def set_menu_state(self, state: TrayMenuState) -> None:
+        """Apply coordinator-owned check states to an existing or future menu."""
+        if not isinstance(state, TrayMenuState):
+            raise TypeError('tray menu state must be TrayMenuState')
+        self._game_mode_enabled = bool(state.game_mode_enabled)
+        self._clickthrough_enabled = bool(state.clickthrough_enabled)
+        self._autostart_enabled = bool(state.autostart_enabled)
+        self._menu_state_initialized = True
+        self._set_game_mode_action_checked(self._game_mode_enabled)
+        self._set_clickthrough_action_checked(self._clickthrough_enabled)
+        self._set_autostart_action_checked(self._autostart_enabled)
 
     def show_message(self, title: str, message: str,
                      icon: QSystemTrayIcon.MessageIcon = QSystemTrayIcon.Information,
@@ -830,6 +708,8 @@ class TrayIcon(QObject):
         self._game_mode_action = None
         self._clickthrough_enabled = False
         self._game_mode_enabled = False
+        self._autostart_enabled = False
+        self._menu_state_initialized = False
         self._initialized = False
         _logger.info('系统托盘图标已清理')
 

@@ -18,6 +18,7 @@
 """
 
 import threading
+from collections.abc import Callable
 from concurrent.futures import Future
 from typing import Optional
 
@@ -28,21 +29,16 @@ from config.config import CLOUD_MUSIC
 from config.audio import get_effective_music_volume
 from config.music import get_music_history, get_volume_config
 
-from ._constants import (
-    _CACHE_DIR,
-    _KUGOU_LOGIN_CACHE_FILE,
-    _LEGACY_LOGIN_CACHE_FILE,
-    _LOGIN_CACHE_FILE,
-    _QQ_LOGIN_CACHE_FILE,
-    ensure_user_storage_layout,
+from ._constants import _CACHE_DIR, ensure_user_storage_layout
+from .user_data import (
+    clear_music_history_data as _clear_music_history_data,
+    clear_music_login_data as _clear_music_login_data,
 )
-from ._provider_clients import get_kugou_provider_client, get_qqmusic_provider_client
 from ._mixin_login import _LoginMixin
 from ._mixin_cache import _CacheMixin
 from ._mixin_playback import _PlaybackMixin
 from ._mixin_events import _EventsMixin
 from ._player import MciMusicPlayer
-from ._qt_player import QtMusicPlayer
 
 logger = get_logger(__name__)
 
@@ -56,146 +52,6 @@ _DEFAULT_PROVIDER = "netease"
 _KNOWN_PROVIDERS = ("netease", "qq", "kugou")
 
 
-_HISTORY_CLEAR_PROVIDERS = ("netease", "qq", "kugou", "local", "other")
-
-
-def _iter_login_cache_files():
-    files = [
-        _LOGIN_CACHE_FILE,
-        _QQ_LOGIN_CACHE_FILE,
-        _KUGOU_LOGIN_CACHE_FILE,
-        _LEGACY_LOGIN_CACHE_FILE,
-    ]
-    try:
-        from config.shared_storage import get_shared_config_path
-
-        files.extend([
-            get_shared_config_path("music", "cloudmusic_login_cache.json"),
-            get_shared_config_path("music", "qqmusic_login_cache.json"),
-            get_shared_config_path("music", "kugou_login_cache.json"),
-        ])
-    except Exception:
-        pass
-
-    unique_files = []
-    seen: set[str] = set()
-    for file_path in files:
-        try:
-            key = str(file_path.resolve())
-        except Exception:
-            key = str(file_path)
-        if key in seen:
-            continue
-        seen.add(key)
-        unique_files.append(file_path)
-    return unique_files
-
-
-def _clear_runtime_netease_login_cookies() -> bool:
-    try:
-        from pyncm.apis.login import GetCurrentSession
-    except Exception:
-        return False
-
-    try:
-        session = GetCurrentSession()
-    except Exception as e:
-        logger.debug("[CloudMusic] 获取当前会话失败，无法清理网易 Cookie: %s", e)
-        return False
-
-    jar = getattr(session, "cookies", None)
-    if jar is None:
-        return False
-
-    try:
-        jar.clear()
-        return True
-    except Exception:
-        pass
-
-    cleared = False
-    try:
-        for cookie in list(jar):
-            try:
-                jar.clear(domain=cookie.domain, path=cookie.path, name=cookie.name)
-                cleared = True
-            except Exception:
-                continue
-    except Exception as e:
-        logger.debug("[CloudMusic] 网易 Cookie 逐项清理失败: %s", e)
-    return cleared
-
-
-def _clear_music_history_data() -> dict[str, int]:
-    stats = {
-        "history_items": 0,
-        "history_platforms": 0,
-        "history_failures": 0,
-    }
-    for provider in _HISTORY_CLEAR_PROVIDERS:
-        try:
-            history = get_music_history(provider)
-            stats["history_items"] += len(history.get_all())
-            history.clear()
-            stats["history_platforms"] += 1
-        except Exception as e:
-            stats["history_failures"] += 1
-            logger.warning("[CloudMusic] 清理历史失败 provider=%s: %s", provider, e)
-    return stats
-
-
-def _clear_music_login_data(runtime_manager=None) -> dict[str, int]:
-    stats = {
-        "logged_in_providers": 0,
-        "deleted_login_files": 0,
-        "failed_login_files": 0,
-        "login_provider_failures": 0,
-    }
-
-    if runtime_manager is not None:
-        stats["logged_in_providers"] = sum(
-            1 for provider in _KNOWN_PROVIDERS if runtime_manager.provider_logged_in(provider)
-        )
-        runtime_manager._qr_login_cancel.set()
-        runtime_manager._publish_qr_hide()
-
-    _clear_runtime_netease_login_cookies()
-
-    for provider_name, getter in (("qq", get_qqmusic_provider_client), ("kugou", get_kugou_provider_client)):
-        try:
-            getter().set_cookies({})
-        except Exception as e:
-            stats["login_provider_failures"] += 1
-            logger.warning("[CloudMusic] 清理 %s 登录态失败: %s", provider_name, e)
-
-    for cache_file in _iter_login_cache_files():
-        if not cache_file.exists():
-            continue
-        try:
-            cache_file.unlink()
-            stats["deleted_login_files"] += 1
-        except OSError as e:
-            stats["failed_login_files"] += 1
-            logger.warning("[CloudMusic] 清理登录缓存失败: %s (%s)", cache_file, e)
-
-    if runtime_manager is not None:
-        try:
-            runtime_manager._anonymous_login()
-        except ImportError:
-            runtime_manager._set_login_state(False, {}, provider="netease")
-        except Exception as e:
-            logger.warning("[CloudMusic] 清理后回退匿名登录失败: %s", e)
-            runtime_manager._set_login_state(False, {}, provider="netease")
-
-        with runtime_manager._state_lock:
-            for provider in _KNOWN_PROVIDERS:
-                runtime_manager._login_states[provider] = {"logged_in": False, "profile": {}}
-            runtime_manager._sync_current_login_state_locked()
-        runtime_manager._publish_login_status()
-
-    return stats
-
-
 # ── 管理器主类 ────────────────────────────────────────────────────────────
 class CloudMusicManager(_LoginMixin, _CacheMixin, _PlaybackMixin, _EventsMixin):
     """
@@ -207,7 +63,7 @@ class CloudMusicManager(_LoginMixin, _CacheMixin, _PlaybackMixin, _EventsMixin):
     - 使用后台线程处理下载，避免阻塞主线程
     """
 
-    def __init__(self):
+    def __init__(self, *, music_player_factory: Callable[[], object] | None = None):
         ensure_user_storage_layout()
         _CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -247,12 +103,19 @@ class CloudMusicManager(_LoginMixin, _CacheMixin, _PlaybackMixin, _EventsMixin):
         self._login_ready = threading.Event()
         get_compute_hub().submit_io(self._login)
 
-        self._music_player = QtMusicPlayer()
-        self._connect_music_player()
+        self._music_player = None
+        self._use_native_player = False
+        if music_player_factory is not None:
+            try:
+                self._music_player = music_player_factory()
+                self._connect_music_player()
+                self._use_native_player = True
+            except Exception as exc:
+                self._music_player = None
+                logger.warning("[CloudMusic] 原生播放器初始化失败，使用 MCI fallback: %s", exc)
         self._pending_play_display = ""
         self._pending_play_path = ""
         self._fallback_player = MciMusicPlayer()
-        self._use_qt_player = True
 
         # 音符粒子控制
         self._particle_timer = 0   # 粒子生成计时器（帧数）
@@ -344,6 +207,8 @@ class CloudMusicManager(_LoginMixin, _CacheMixin, _PlaybackMixin, _EventsMixin):
         }))
 
     def _connect_music_player(self) -> None:
+        if self._music_player is None:
+            return
         self._disconnect_music_player()
         self._music_player.playback_started.connect(self._on_player_started)
         self._music_player.playback_finished.connect(self._on_player_finished)
@@ -446,7 +311,7 @@ class CloudMusicManager(_LoginMixin, _CacheMixin, _PlaybackMixin, _EventsMixin):
             if not self._is_playing or self._is_paused:
                 return
         try:
-            if self._use_qt_player:
+            if self._use_native_player:
                 self._music_player.pause_requested.emit()
             else:
                 self._fallback_player.pause()
@@ -463,7 +328,7 @@ class CloudMusicManager(_LoginMixin, _CacheMixin, _PlaybackMixin, _EventsMixin):
             if not self._is_paused:
                 return
         try:
-            if self._use_qt_player:
+            if self._use_native_player:
                 self._music_player.resume_requested.emit()
             else:
                 self._fallback_player.resume()
@@ -492,7 +357,7 @@ class CloudMusicManager(_LoginMixin, _CacheMixin, _PlaybackMixin, _EventsMixin):
         self._volume = max(0.0, min(1.0, volume))
         try:
             effective = get_effective_music_volume(self._volume)
-            if self._use_qt_player:
+            if self._use_native_player:
                 self._music_player.volume_requested.emit(effective)
             else:
                 self._fallback_player.set_volume(effective)
@@ -683,7 +548,8 @@ class CloudMusicManager(_LoginMixin, _CacheMixin, _PlaybackMixin, _EventsMixin):
         self._duration_cache.clear()
         self._current_duration_ms = 0
         try:
-            self._music_player.deleteLater()
+            if self._music_player is not None:
+                self._music_player.deleteLater()
         except Exception:
             pass
 

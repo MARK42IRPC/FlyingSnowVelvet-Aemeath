@@ -1,10 +1,10 @@
 # DirectX 后端实现方案
 
-更新时间：2026-08-06
+更新时间：2026-08-07
 
 本文档定义 Windows DirectX 桌面后端的技术路线、迁移边界和验收条件。目标不是只实现一个 DX 绘制器，而是让普通桌宠运行进程最终不导入 PyQt5、不加载 Qt DLL，同时保留现有 Qt 后端作为迁移期回退和独立工作台实现。
 
-当前 Qt 边界和后端无关契约以 `doc/Qt收敛方案.md`、`lib/core/backend_router.py`、`lib/core/desktop_backend.py` 及源码测试为准。阶段 B 的 WARP 离屏原型已落地到 `native/dx_backend/`、`lib/core/dx_bridge/` 和 `tests/dx/`；窗口、完整桌面 bundle 以及文字、裁剪和变换命令仍属于未完成能力，不得当作现有能力。
+当前 Qt 边界和后端无关契约以 `doc/Qt收敛方案.md`、`doc/视觉表现契约.md`、`lib/core/backend_router.py`、`lib/core/desktop_backend.py` 及源码测试为准。阶段 B 至阶段 E 的诊断链已落地到 `native/dx_backend/`、`lib/core/dx_bridge/` 和 `tests/dx/`：ABI v7 覆盖完整声明式命令批、Win32 + DirectComposition 窗口、尺寸/DPI 目标重建、事件轮询、保持句柄稳定的设备恢复、`WM_POINTER*`/Unicode/IME 输入以及通用托盘命令；`DxDesktopBackend` 使用一个共享 loop 组合运行时、调度、事件泵、屏幕、截图、主宠、托盘、粒子/特效、七类世界对象和原生命令/提示/二维码 UI，阻断 PyQt 的 `ApplicationState` 启停链已经通过。应用二维码主体及 action button、命令提示、DX 基础通知、七按钮附属面板、气泡和七类世界对象视觉已迁入共享 presenter，相关 bridge 只负责窗口、输入、低级音频采样、生命周期和批次执行；DX 音乐组合不再导入或实例化 QtMultimedia，主宠漫游也只读取核心游戏障碍 `Rect` provider，不再为查询几何构造 Qt 游戏窗口。DirectX 已开放为实验性可选后端；附属按钮的缩放/启动鸣潮/更多功能动作分发、音响搜索 UI 宿主、DirectWrite 度量、世界对象专属音效与部分独有交互、自动公告、共享设备资源和真实硬件/多屏验收仍未完成。控制面板入口已通过 `TrayCommand.OPEN_SETTINGS` 启动隔离 Qt workbench helper；helper 的版本化 IPC、重复启动和退出协调仍待完成，稳定后端标记继续受闸门约束。
 
 ## 1. 目标与非目标
 
@@ -14,7 +14,8 @@
 - 使用 `directx` 稳定后端 ID 接入现有 `BackendRouter`，配置入口和回退语义保持不变。
 - 以 Direct3D 11 和 Windows 系统图形组件完成透明桌面窗口、2D 图片、文字、粒子和特效绘制。
 - Python 继续承载业务状态和编排；高频绘制、窗口消息和 GPU 资源生命周期放入原生模块。
-- Qt 后端在迁移期间始终可运行，用户选择未完成的 DX 后端时继续明确回退 Qt。
+- 当前 Qt 输出作为视觉迁移基准；同一业务状态由共享视觉层生成一份描述，DX 只负责等价绘制。
+- Qt 后端在迁移期间始终可运行；用户选择 DirectX 时允许进入实验性验证，初始化失败仍明确回退 Qt。
 
 ### 1.2 非目标
 
@@ -22,20 +23,22 @@
 - 不在首版重写工作台、设置页、游戏窗口等全部复杂 QWidget 控件。
 - 不同时实现 DirectX、OpenGL 和 Vulkan；先用 DirectX 验证后端契约是否完整。
 - 不在 Python 中逐条调用 COM API，也不让渲染线程持有或回调 Python 对象。
-- 不因 DX 原型可显示一张图片就移除 Qt 依赖或将后端标记为可用。
+- 不因 DX 原型可显示一张图片就移除 Qt 依赖或将后端标记为稳定可用；实验性状态与稳定性闸门分开维护。
 
 ## 2. 当前基线与阻塞点
 
-现有路由已经提供 `qt`、`directx`、`opengl`、`vulkan` 稳定 ID，控制面板通过 `UI.render_backend` 保存选择。当前只有 `qt` 的 `BackendDescriptor.available=True`，未实现后端会记录原因并回退 Qt。
+现有路由已经提供 `qt`、`directx`、`opengl`、`vulkan` 稳定 ID，控制面板通过 `UI.render_backend` 保存选择。Qt 与 DirectX 的 `BackendDescriptor.available=True`，其中 DirectX 另标记 `experimental=True`；OpenGL/Vulkan 仍未接入。未注册、未实现或初始化失败的后端会记录原因并回退 Qt。
 
 核心算法和多数业务载荷已经改用 `Point`、`Rect`、`Color`、`FontSpec`、`MouseInput` 和 `KeyboardInput` 等纯数据类型。主宠绘制链已经使用纯 RGBA 资源和不可变命令批，但以下边界仍阻止普通运行进程移除 Qt：
 
-- `lib/script/main.py` 已只从 `DesktopBackendBundle` 获取应用运行时、调度、截图、主宠、覆盖层和托盘工厂；这些工厂返回的对象仍暴露部分 Qt 生命周期行为，尚未收敛为完整后端无关宿主协议。
-- `DrawScene` 已只保存 `ImageResource/RasterFrame`，并生成不可变 `DrawBatch/SpriteCommand`；`DrawBatch` 契约已扩展文字、线段、矩形、椭圆、裁剪和变换命令，DX/WARP 原型已消费 sprite、线段、矩形和椭圆，文字、裁剪和变换仍待实现。
-- `DrawBackend.render(batch, target, viewport)` 的 target 仍由后端宿主持有；当前唯一实现使用 `QPainter`，DX target 尚未实现。
+- `lib/script/main.py` 已只从 `DesktopBackendBundle` 获取应用运行时、调度、截图、主宠、覆盖层和托盘工厂；普通运行时的宿主生命周期已由明确协议承接，工作台、设置对话框、游戏窗口和媒体播放器仍是 Qt UI/helper 边界。
+- `DrawScene` 已只保存 `ImageResource/RasterFrame`，并生成不可变 `DrawBatch/SpriteCommand`；`DrawBatch` 契约已扩展文字、线段、矩形、椭圆、裁剪和变换命令，DX/WARP ABI v7 已消费全部命令类型并可提交到诊断窗口。
+- `DrawBackend.render(batch, target, viewport)` 的 target 由后端宿主持有；Qt 使用 `QPainter`，DX `DxWindowHost` 持有 DComp 交换链并消费同一 `DrawBatch`。产品尺寸必须来自命令的显式 `target_size`，不能由 viewport 或 swap-chain 反推。
 - 跨后端 `RenderRequest/RenderItem/PaintCallback` 已删除；两个明确的 Qt 游戏控件使用 `qt_bridge.render_core.QtRenderCore` 本地回调，尚未迁移为声明式命令。
-- `WorldObjectBackend` 使用不透明图片和实例句柄，当前唯一实现仍创建 QWidget 世界对象。
-- `LayerManager` 已只依赖最小 `LayerWindowHost`，Qt 可见性、前置、原生句柄和 `SetWindowPos` 已迁入 `qt_bridge.window_host`；后端无关 `WindowHost v1` 协议、passive 实现和 Qt factory 已落地，主宠接入、输入回调和场景提交仍待迁移。
+- `WorldObjectBackend` 使用纯 `ImageResource` 和整数实例句柄；Qt 与 DX 均已实现七类世界对象，sprite、动画帧、透明度、翻转、中心缩放、闹钟倒计时、摩托抖动和音响 EMA/指数缩放均由 `graphics.visuals` 与 `world_objects` 的共享函数决定，专属音效和部分独有交互仍需继续收敛。
+- `LayerManager` 已只依赖最小 `LayerWindowHost`，Qt 可见性、前置、原生句柄和 `SetWindowPos` 已迁入 `qt_bridge.window_host`；后端无关 `WindowHost v1` 协议、passive/Qt/DX 实现、`DxPetWindow` 组合和 DX factory 注册均已落地。
+- `DxLoopContext`、`DxScheduler`、`DxEventPump` 和 `DxApplicationRuntime` 已在完整 DX bundle 中由 owner 线程驱动定时任务、后台事件投递、注册窗口轮询和退出确认；当前使用 `threading.Event` 唤醒加短间隔原生轮询，尚未替代完整 Win32 消息等待。
+- `DxScreenProvider` 每次查询重新枚举 Win32 monitors，虚拟桌面和按点选屏不缓存旧拓扑；`DxScreenCapture` 用 GDI 读取主屏 BGRA 并只向业务返回 PNG bytes。`DxPetWindow` 已把 `PetWindow` 纯控制器接到 DX host，覆盖初始几何、锚点、移动、穿透、重绘和关闭清理，但仍是诊断组合。
 - 工作台、设置对话框、游戏窗口和媒体播放器仍是 Qt UI。
 
 因此实施顺序必须先补齐跨后端契约，再接 DX 窗口和运行时。只新增一个 `DxDrawBackend` 无法实现“摆脱 Qt”。
@@ -52,7 +55,7 @@
 | 显示与交换链 | DXGI 1.2+ | `CreateSwapChainForComposition`、帧提交 |
 | 透明桌面合成 | DirectComposition | 每像素透明、多窗口视觉树和提交 |
 | 2D 绘制 | Direct2D 1.1 | 位图、变换、裁剪、透明度和基础形状 |
-| 文字 | DirectWrite | 字体回退、度量、抗锯齿和布局 |
+| 文字 | DirectWrite | 低级度量、字形栅格化和抗锯齿 |
 | 图片解码 | WIC | PNG、静态图片和 GIF 帧解码 |
 | 窗口与输入 | Win32 | HWND、消息循环、鼠标、键盘、DPI、多屏和托盘 |
 
@@ -105,19 +108,23 @@ GIF 帧时长和逻辑尺寸已经进入纯帧数据；循环方式和缩放策�
 
 世界对象已迁移到同一资源契约：manager 使用 `ImageResource`，由 `WorldObjectRequest` 提交对象类型、资源、位置、尺寸和纯构造选项；后端只返回稳定整数实例 ID，业务持有 `WorldObjectInstance`。翻转不再作为资源副本返回，而是由后端在渲染边界从 `RasterFrame` 派生。状态、核心几何和雪球运动快照通过 `WorldObjectState`、`WorldObjectMotion` 交接，不能泄露 QWidget、QPixmap 或 PhysicsBody。
 
-### 5.2 声明式绘制命令
+### 5.2 共享视觉描述与声明式绘制命令
 
-跨后端 `PaintCallback` 已删除，Qt 独占控件回调已移入 `qt_bridge`。当前 `SpriteCommand/DrawBatch` 已提供已解析资源帧、透明度、翻转、缩放和 `layer/z/order`；Qt 已为下列声明式命令建立行为基准，DX/WARP 的 ABI v2 已映射 sprite、线段、矩形和椭圆：
+跨后端 `PaintCallback` 已删除，Qt 独占控件回调已移入 `qt_bridge`。当前 `SpriteCommand/DrawBatch` 已提供已解析资源帧、透明度、翻转、缩放和 `layer/z/order`；Qt 已为下列声明式命令建立行为基准，DX/WARP 的 ABI v7 已完成对应映射：
 
-- `SpriteCommand`：资源、源帧、目标矩形、透明度、翻转和插值模式；
+- `SpriteCommand`：资源、源帧、目标矩形、透明度和翻转；缩放采样模式仍需补为显式字段；
 - `TextCommand`：文本、`FontSpec`、颜色、布局矩形和对齐；
 - `RectCommand/EllipseCommand`：填充、描边和线宽；
 - `ClipPush/ClipPop` 与 `TransformPush/TransformPop`；
 - 粒子和特效使用上述基础命令或专用批命令。
 
-每帧由 Python 生成一份连续命令批，一次跨 C ABI 提交。禁止每个 sprite、粒子或文字进行一次 Python 到 DLL 调用。ABI v2 使用固定 72 字节的异构命令结构，包含 `abi_version`、结构体大小、命令类型、flags、`layer/z/order`、资源句柄、几何参数、透明度、线宽和 RGBA 颜色；未知命令必须返回可诊断错误，不能越界解析。
+每帧由 Python 生成一份连续命令批，一次跨 C ABI 提交。禁止每个 sprite、粒子或文字进行一次 Python 到 DLL 调用。ABI v7 保留 v3 的固定 104 字节异构命令结构，包含 `abi_version`、结构体大小、命令类型、flags、`layer/z/order`、资源句柄、几何参数、透明度、线宽、RGBA 颜色、六元素变换和帧 payload 区间。文字正文与字体族通过同一次 `fsdx_submit_frame` 或 `fsdx_submit_window_frame` 调用携带的只读 UTF-8 payload 交接，原生层只在调用期间消费。绘制命令在相邻状态边界内按 `layer/z/order` 稳定排序，裁剪/变换 push-pop 保持原始批次顺序并校验类型配对；未知命令、越界 payload 和不平衡状态栈必须返回可诊断错误。
 
 跨后端排序继续使用 `layer/z/order`。仅 Qt 独占 UI 可暂时使用 `QtRenderCore` 本地 painter 回调，不能把该路径注册为 DX 场景内容；需要迁移到 DX 的视觉内容必须产出命令。
+
+颜色、字号、布局、状态样式、文字换行与基线、资源选择、采样、混合、动画、粒子和特效算法必须在后端无关视觉层中解析。DX native 和 `dx_bridge` 只消费已确定的窗口描述、资源和 `DrawBatch`；不能读取主题配置、识别业务组件或用 Direct2D/DirectWrite 默认值补全视觉选择。粒子、特效、命令输入框外壳和七类世界对象视觉批次由 `lib/core/graphics/visuals.py` 生成；二维码主体、action button 状态及 DX 基础通知由 `lib/core/graphics/application_visuals.py` 生成，Qt `BaseQrDialog` 与 DX application UI 消费同一 `ApplicationPanelVisual`。整个 `dx_bridge` 不得导入 PyQt，也不得构造产品颜色、字体或具体绘制命令。
+
+现有命令无法唯一复现 Qt 基准时，先扩展共享纯数据契约，再同时更新 Qt 和 DX 执行器。sprite 采样、线帽/连接、文字排版、渐变、阴影、混合和羽化等语义不得在 C++ 层硬编码为产品效果。原生层可以保留透明清屏色、像素格式、缓存和设备恢复等技术参数。
 
 ### 5.3 窗口宿主
 
@@ -136,6 +143,8 @@ DX 层级实现直接使用 HWND；完整 Qt 窗口实现继续用适配对象�
 
 主宠 Win32 窗口将 `WM_MOUSE*`、`WM_POINTER*`、键盘、移动、DPI 和关闭消息转换为现有 `PetHostCallbacks` 纯数据调用。拖拽期间使用鼠标捕获，点击穿透通过窗口扩展样式和 `WM_NCHITTEST` 切换，不模拟 Qt 事件。
 
+ABI v7 和 `dx_bridge.window_host.DxWindowHost` 已实现这一边界的诊断版本：每个 runtime 拥有一个 HWND、DComp visual 和预乘 alpha composition swap chain，覆盖显示/隐藏、物理几何、屏幕/DPI 快照、穿透、激活、捕获、层级、重绘、可见帧提交、尺寸/DPI 目标重建、设备恢复和幂等销毁。native 只写事件队列，Python 轮询后转换为 `MouseInput`、`KeyboardInput`、Unicode 文本、IME 预编辑和 `Point`，并在重绘事件上提交 `DrawBatch`。`WM_POINTER*` 会过滤触控/笔提升的重复鼠标消息；物理按键不再调用 `ToUnicode`，`WM_CHAR`/`WM_UNICHAR` 与 `WM_IME_COMPOSITION` 分别交付最终文本和预编辑文本，候选窗位置由 `fsdx_set_window_ime_position` 设到输入区域；托盘命令通过 `FSDX_EVENT_TRAY_COMMAND` 传递整数命令 ID 和勾选标志。当前仍限制一个 runtime 一个窗口；屏幕拓扑变化后的窗口重排属于 Stage C 后续工作。
+
 ### 5.4 桌面运行时能力
 
 DX 组合入口必须一次性注册一组完整服务：
@@ -148,7 +157,9 @@ DX 组合入口必须一次性注册一组完整服务：
 - 托盘图标、菜单命令和资源图标加载；
 - 绘制资源仓库和 DX 场景提交。
 
-`desktop_backend.py` 已把当前绘制、`ApplicationRuntime`、`ApplicationUiHost`、`Scheduler`、`ScreenCapture`、主宠窗口、`OverlayHost` 工厂、`TrayHostFactory`、`WindowHost` factory、事件泵、延迟、屏幕、截图和层级窗口宿主工厂收进单个不可变 `DesktopBackendBundle`，但仍只覆盖上述完整能力的一部分。新增能力应继续扩展明确协议和组合对象，不能恢复彼此无关的模块全局变量，也不能让 `lib/script/main.py` 为每个后端分别导入一串具体实现。
+`dx_bridge.desktop_backend.DxDesktopBackend` 已把绘制、`ApplicationRuntime`、`ApplicationUiHost`、`Scheduler`、`ScreenCapture`、主宠窗口、`OverlayHost` 工厂、`TrayHostFactory`、`WindowHost` factory、事件泵、延迟、屏幕、截图、层级窗口宿主和世界对象收进一个共享上下文，并通过不可变 `DesktopBackendBundle` 原子注册。bundle 的 backend cleanup 在事件循环返回后兜底释放 scheduler、event pump、世界对象及残留 native host；新增能力应继续扩展明确协议和组合对象，不能恢复彼此无关的模块全局变量，也不能让 `lib/script/main.py` 为每个后端分别导入一串具体实现。
+
+诊断实现已用一个 `DxLoopContext` 统一承载线程安全回调队列、单调时钟任务和已注册宿主的 `poll_events()`。`DxScheduler` 的迟到周期只合并触发一次并从回调完成时重新计时；`DxEventPump.emit()` 可由 worker 调用，重复唤醒合并后只在 owner 线程执行；`DxApplicationRuntime` 提供一次性任务、事件处理、带退出码的退出确认和残留窗口关闭。`DxScreenProvider` 不保留显示器缓存，显示器热插拔后的下一次查询即可得到新拓扑；`DxScreenCapture` 将 GDI 资源正确解除选入后才调用 `GetDIBits`，避免截图句柄状态泄漏。`DxTrayHost` 使用 `Shell_NotifyIconW` 创建通知区图标，将 `TrayCommand` 命令写入 ABI v7 的 `FSDX_EVENT_TRAY_COMMAND` 事件，并通过 `fsdx_set_tray_menu_state` 同步游戏模式、鼠标穿透和开机启动勾选；菜单还提供 CMD、清理桌面/缓存/历史和作者主页入口。初始化失败可由共享循环有限重试，隐藏、销毁和 cleanup 保持幂等。Qt 和 DX 均由 `ApplicationState` 路由到 `lib/script/app/tray_actions.py`，文件与系统 I/O 使用 `ComputeHub.submit_interactive_io()`。`DxApplicationUiHost` 原生承接命令输入、信息提示及元宝/音乐二维码，手动公告入口通过系统浏览器打开固定发布地址。单个业务回调异常会交给循环异常处理器且不丢弃同轮后续回调。当前仍以 `threading.Event` 和默认 8ms 有界轮询驱动 native 队列；后续应评估 `MsgWaitForMultipleObjectsEx` 或原生 wake handle，避免空闲轮询成为最终架构。
 
 最终组合入口只负责：读取配置、注册可用后端配置器、执行路由、创建所选 `DesktopBackendBundle`。`ApplicationState` 已从 bundle 获取运行时、调度、截图、主宠、覆盖层和托盘服务，并只通过 `PetWindowHost.shutdown_host()`、`OverlayHost.cleanup()` 和 `TrayHost.cleanup()` 执行退出；完整窗口创建、几何、输入和重绘服务仍需继续迁移，最终不得直接导入 `qt_bridge` 或 `dx_bridge`。
 
@@ -163,6 +174,7 @@ ABI 只传固定宽度整数、浮点数、UTF-8 字节块、带长度数组和�
 ```text
 fsdx_get_abi_version
 fsdx_create_runtime / fsdx_destroy_runtime
+fsdx_recover_device / fsdx_get_device_generation
 fsdx_create_window / fsdx_destroy_window
 fsdx_set_window_state
 fsdx_register_resource / fsdx_release_resource
@@ -172,7 +184,7 @@ fsdx_request_exit
 fsdx_get_last_error
 ```
 
-当前离屏原型已实现 `fsdx_get_abi_version`、runtime 创建/销毁、RGBA 资源注册/释放、ABI v2 异构绘制批次提交和 RGBA readback。批次支持 sprite、线段、矩形和椭圆，并在原生层按 `layer/z/order` 稳定排序。资源和命令在 C ABI 调用期间被 native 层复制或完整消费；Python 只持有整数句柄。WARP 通过 `FSDX_RUNTIME_FLAG_WARP` 显式选择，默认硬件路径尚未接入桌面路由。readback 返回紧密排列的预乘 RGBA8888。
+当前 ABI v7 已实现 `fsdx_get_abi_version`、runtime 创建/销毁、RGBA 资源注册/释放、异构绘制批次提交和 RGBA readback，并覆盖窗口创建/销毁、状态读取、显示、几何、穿透、捕获、激活、IME 候选窗定位、层级、重绘、窗口帧提交及 `fsdx_poll_events`。事件队列将物理按键、最终 Unicode 文本、IME 预编辑/结束和通用托盘命令分成独立事件；托盘菜单状态通过 `fsdx_set_tray_menu_state` 交接，托盘 HWND、HICON 和通知区注册均由 native 层拥有。`fsdx_recover_device` 在窗口 owner 线程原地重建设备，`fsdx_get_device_generation` 提供单调 generation；恢复成功产生 `DEVICE_RECOVERED` 事件。批次支持 sprite、DirectWrite 文字、线段、矩形、椭圆、嵌套裁剪和二维仿射变换。资源、命令和文字 payload 在 C ABI 调用期间被 native 层复制或完整消费；Python 只持有整数句柄。WARP 通过 `FSDX_RUNTIME_FLAG_WARP` 显式选择，默认硬件路径尚未接入桌面路由。readback 返回紧密排列的预乘 RGBA8888。
 
 原生层不得从窗口过程、渲染线程或 worker 任意回调 Python。窗口输入、设备状态和托盘命令写入有界事件队列，Python 在事件泵边界批量 `poll`。队列必须合并可丢弃的高频移动/重绘事件，但不得丢弃按键、按钮、关闭、设备丢失和资源错误事件。
 
@@ -199,49 +211,64 @@ fsdx_get_last_error
 4. 完整重绘所有可见窗口。
 5. 连续重建失败时请求受控退出并提示下次启动回退 Qt，不在损坏设备上死循环。
 
-坐标统一使用物理桌面像素；Win32 边界负责 logical/physical 转换。进程声明 Per-Monitor V2 DPI awareness，处理 `WM_DPICHANGED` 推荐矩形，并覆盖负坐标、多屏不同缩放和屏幕热插拔。
+ABI v7 保留 ABI v5 已落实的第 1 至第 4 项：资源注册时保留预乘 CPU 像素，恢复时保持资源整数句柄和 HWND 不变，重建 D3D11、D2D、DWrite、DComp、交换链、窗口 visual 及全部位图；ctypes 对单次 GPU 操作最多恢复并重试一次。第二次仍失败会直接返回诊断错误，不在 bridge 内循环；正式应用运行时接入后再把该错误转换为受控退出和下次启动回退。
+
+目标坐标契约中，桌面窗口位置、显示器边界和 Win32 输入几何使用物理桌面像素，窗口内容、字号和 `DrawBatch` 使用 96 DPI 逻辑像素。DX 目标边界按 `dpi / 96` 换算一次，DirectWrite 字号、D2D 几何、资源目标尺寸和 readback 必须遵守同一缩放，禁止多阶段重复换算。当前诊断路径尚未全部完成该分层，属于视觉一致性迁移项。进程声明 Per-Monitor V2 DPI awareness，处理 `WM_DPICHANGED` 推荐矩形，并覆盖负坐标、多屏不同缩放和屏幕热插拔。
 
 ## 8. 分阶段实施
 
 ### 阶段 A：契约补齐
 
 - 已完成主宠和世界对象统一资源描述、纯 RGBA 帧、缩放、不可变 sprite 批次、Qt 后端 revision 缓存及整数世界对象实例句柄。
-- 已从跨后端契约删除 `PaintCallback` 并保留 Qt 本地适配；文字、形状、裁剪和变换命令已补齐，粒子和特效仍需转换为这些基础命令或专用批命令。
-- 已新增最小 `LayerWindowHost`、`WindowHost v1` 和 Qt 窗口适配器，移除 `LayerManager` 对 QWidget/Win32 方法的直接调用；主宠接入、DX 原生窗口生命周期和场景提交仍待迁移。
-- 已将应用运行时、调度器、截图服务以及主宠、覆盖层、托盘工厂和当前桌面能力收进 `DesktopBackendBundle`；主宠、覆盖层和托盘对象行为已收敛为 `PetWindowHost`、`OverlayHost` 和 `TrayHost`，Qt signal、QWidget 销毁及托盘单例释放不再泄漏到 `ApplicationState`。完整窗口创建、几何、输入和重绘契约仍待迁移。
-- 已完成 `ApplicationUiHost` 和启动组合入口拆分：`ApplicationState` 不再导入 Qt/UI 模块或注册后端，Qt 配置器由惰性 bootstrap 安装；`WindowHost v1` 和基础形状命令已落地，文字、裁剪和变换仍待扩展。
+- 已从跨后端契约删除 `PaintCallback` 并保留 Qt 本地适配；文字、形状、裁剪和变换命令已补齐并完成 DX/WARP 映射，粒子和特效已转换为基础命令和 sprite 批次。
+- 已新增最小 `LayerWindowHost`、`WindowHost v1` 和 Qt/DX 窗口适配器，移除 `LayerManager` 对 QWidget/Win32 方法的直接调用；`DxPetWindow` 已通过同一宿主协议接入主宠控制器。
+- 已将应用运行时、调度器、截图服务以及主宠、覆盖层、托盘工厂和当前桌面能力收进 `DesktopBackendBundle`；DX bundle 共享单个 loop 并提供后端级 cleanup，主宠、覆盖层和托盘对象行为已收敛为 `PetWindowHost`、`OverlayHost` 和 `TrayHost`。
+- 已完成 `ApplicationUiHost` 和启动组合入口拆分：`ApplicationState` 不再导入 Qt/UI 模块或注册后端，Qt/DX 配置器由 bootstrap 惰性安装；`WindowHost v1`、完整声明式命令批、DX 原生窗口和主宠组合已落地。
 
 退出条件：核心和跨后端业务数据中不存在 QImage/QPixmap/QPainter/QWidget；阻断 PyQt 导入的子进程测试可实例化核心场景、层级和应用编排。
 
 ### 阶段 B：DX 离屏绘制原型
 
-- 已建立 CMake/MSVC 工程、ABI v2 和 `ctypes` bridge；统一的 72 字节命令可在单次调用中提交异构绘制批次。
-- 当前已在 WARP 上验证 sprite、线段、矩形、椭圆、透明度、翻转、缩放、异构排序、资源 revision 缓存、未知命令错误和预乘 RGBA readback；文字、裁剪、变换、硬件路径和 PNG 诊断仍待补齐。
-- 原型只创建离屏 target，不创建用户可见窗口，也未注册为 `directx` 后端。
+- 已建立 CMake/MSVC 工程和 `ctypes` bridge；ABI v3 完成统一的 104 字节命令与只读 UTF-8 帧 payload，当前 ABI v7 保持该布局并扩展窗口、设备恢复、原生输入和托盘命令契约。
+- 当前已在 WARP 上验证 sprite、DirectWrite 文字、线段、矩形、椭圆、裁剪、变换、透明度、翻转、缩放、状态边界内异构排序、资源 revision 缓存、未知命令错误、不平衡状态栈和预乘 RGBA readback；硬件路径接入桌面路由和 PNG 诊断仍待后续完成。
+- 阶段 B 原型只创建离屏 target；后续阶段已补齐用户可见窗口和完整 bundle，当前由路由以实验性 `directx` 后端提供尝试入口。
 
-退出条件：像素基线、透明边缘、资源释放、错误码和 ABI 不匹配测试通过。此阶段 `directx.available` 仍为 `False`。
+退出条件：像素基线、透明边缘、资源释放、错误码和 ABI 不匹配测试通过；阶段 B 单独的离屏原型不代表稳定后端，最终成熟度由第 9 节闸门控制。
 
 ### 阶段 C：主宠透明窗口
 
-- 实现 Win32 + DirectComposition 主宠窗口和帧提交。
-- 接入 `PetHostCallbacks`、拖拽、点击穿透、DPI、多屏和窗口层级。
-- 覆盖窗口显示/隐藏、输入捕获、屏幕热插拔和设备丢失恢复。
+- 已完成第一条诊断链路：Win32 + DirectComposition 透明窗口、可见帧提交、`WindowHost v1` 操作、`PetHostCallbacks` 事件转换、负坐标/屏幕/DPI 快照、点击穿透、捕获和窗口层级。
+- 窗口几何和 `WM_DPICHANGED` 路径已同步重建交换链、离屏 render target 与 readback staging texture；设备恢复已保持 CPU 资源、整数句柄、HWND 与可见性，并对每次提交设置一次重试上限。
+- 已新增 Qt-free 诊断运行时：共享 owner-thread 循环驱动 `DxScheduler`、合并式 `DxEventPump`、一次性任务、注册窗口事件轮询、退出确认和残留窗口关闭；阻断 PyQt 导入的独立进程测试已覆盖该链路。
+- 已新增屏幕与主宠诊断组合：动态 Win32 monitor provider、GDI 主屏 PNG capture、`DxPetWindow` 纯控制器宿主和 DX 层级适配器均有独立注入测试；主宠关闭会先清理核心状态，再发布 `APP_QUIT`，native host/context 注销保持幂等。
+- 已新增完整 DX 原生日常托盘菜单：`Shell_NotifyIconW`、任务栏重建恢复、公告、控制面板、CMD、游戏模式、鼠标穿透、开机启动、桌面/缓存/历史清理、作者主页和退出均通过统一命令事件交给 `ApplicationState`；菜单勾选状态由 ABI v7 状态接口同步，控制面板通过隔离 Qt workbench helper 打开。
+- `WM_POINTER*`、`WM_CHAR`/`WM_UNICHAR`、IME 预编辑/提交/结束、候选窗定位和命令面板组合文本显示已经接通；当前下一步补齐屏幕热插拔和可注入的真实 device-removed 失败测试。
+- 无 Qt 粒子、特效、应用 UI 宿主和 DX bundle 已接入诊断组合；当前继续补齐真实第三方输入法、设备丢失和多屏验收矩阵。
 
-退出条件：主宠可独立运行，但粒子、特效、托盘或退出链任一能力仍依赖 Qt 时，不得标记 DX 可用。
+退出条件：主宠可独立运行，但粒子、特效、托盘或退出链任一能力仍依赖 Qt 时，DirectX 只能保持实验性状态，不得标记为稳定后端。
 
 ### 阶段 D：视觉与世界对象
 
-- 将 GIF、粒子、特效、气泡及七类世界对象迁移到统一资源和 scene/window 协议。
+- 已将 GIF、粒子、特效、基础信息提示及七类世界对象迁移到统一资源和 scene/window 协议。
+- 粒子和特效运行时已由 `lib/core/graphics/visuals.py` 共享 presenter 生成同一 `DrawBatch`；Qt 与 DX 覆盖层均只执行批次，图片缩放和边缘羽化也使用同一纯 RGBA 资源处理。Qt 基准的 `no_fade`、文字 alpha override 和八方向 bloom 预算已固化为结构测试。
+- 命令输入框的黑/青/粉三层外壳已由 Qt 与 DX 共用 composer；DX 使用 Qt 配置的 `240x36` 逻辑尺寸、白色输入区、字体、占位文本和紧凑 IME 坐标，并有 Qt/DX-WARP 像素对比及真实窗口 readback 测试。
+- 主宠 sprite 的目标尺寸已由共享 `SpriteCommand.target_size` 显式传递，Qt paint viewport 与 DX 重绘区域不再各自决定缩放；命令输入框相对主宠的右侧锚点、边缘翻转和屏幕夹取也由 Qt/DX 共用纯几何解析器。
+- 二维码主体及底部 action button 已迁入 `graphics/application_visuals.py`：Qt `BaseQrDialog` 与 DX application UI 共用 `320x430` Qt 基准尺寸、主题、布局、PNG 解码、资源目标尺寸、状态文字和 action button 状态批次；Qt `QPushButton` 仅作为透明输入适配器，DX 根据同一 `action_rect` 处理 hover、pressed、release 和登录面板关闭/取消事件。
+- DX 基础通知面板已由共享 notice presenter 生成。Qt 聊天气泡的换行、自适应尺寸、三层背景、混合字体分段、锚点和屏幕夹取抽成 `BubbleVisualDescription`，DX `_DxBubbleWindow` 已消费同一描述并接入 `INFORMATION`/`TICK`/`UI_BUBBLE_HIDE`；当前使用 portable 低级度量，后续必须增加 DirectWrite `BubbleTextMetrics` 适配，不得从固定通知面板另建画法。
+- 七类世界对象的 sprite、动画帧、透明度、翻转、中心缩放、闹钟倒计时、摩托抖动和音响 EMA/指数缩放已由 `graphics.visuals` 与 `world_objects` 共享函数统一生成，DX world object backend 只管理对象状态、低级音频采样、原生窗口和批次提交。
+- 命令提示框的背景、尺寸、默认/哈希行、选中态、分隔线、混合字体、页码、默认文案和命中矩形已迁入 `CommandHintVisualDescription`，Qt 与 DX 均只执行该描述；`DxCommandHintWindow` 已接入命令框跟随、筛选、导航、补全、翻页和点击执行。当前 `PortableCommandHintTextMetrics` 是无 Qt 的低级度量适配，仍需用 DirectWrite 测量接口收紧字体宽度误差。关闭、穿透、缩放、启动、聊天模式、更多功能等七个附属按钮已由 `build_command_action_panel_visual()` 生成共享两行布局与状态批次，并由 DX 单窗口宿主执行；动作分发仍待完整收敛。音响本体视觉已共享，但音响搜索框、结果列表、播放/队列/音量控制仍是 Qt-only UI，DX 不得通过构造 Qt 控件补齐。
+- 补齐采样、文字排版、混合、羽化和 DPI 等显式命令语义；DX 后端只执行批次，不保存产品色值、布局或效果算法。
+- 世界对象已支持原生窗口、GIF、几何、物理运动、拖拽、翻转、点击穿透、淡出、共享倒计时和共享视觉状态算法；雪堆定时批次、对象专属音效及部分独有交互仍待补齐。
 - 合并能共享交换链的覆盖窗口，保留确需独立输入区域的窗口。
 - 迁移文字栅格化、字体回退和动画帧时序。
 
-退出条件：普通桌宠视觉能力不创建 QWidget，不把 Qt 图片对象传回业务层。
+退出条件：普通桌宠视觉能力不创建 QWidget，不把 Qt 图片对象传回业务层；同一状态只产生一份后端无关视觉描述，Qt 与 DX 不再维护重复主题、布局或效果算法。
 
 ### 阶段 E：完整桌面运行时
 
-- 实现 Win32 `ApplicationRuntime`、EventPump、Scheduler、屏幕截图和托盘。
-- 将 `main.py` 的具体 Qt 导入移入 Qt 组合模块，按路由惰性导入后端。
-- 验证语音、聊天、更新、重启、单实例和优雅退出不依赖 Qt 事件循环。
+- 已实现不依赖 Qt 的 `ApplicationRuntime`、EventPump、Scheduler、动态屏幕 provider、GDI PNG 截图、主宠、基础托盘、粒子/特效、世界对象、应用 UI 和完整 bundle；配置器在启动入口惰性注册。
+- 阻断 PyQt 的独立子进程已覆盖 `ApplicationState.start()`、`APP_MAIN`、分阶段退出、运行时确认、backend cleanup 和初始化失败释放单实例锁。
+- 仍需验证真实语音、聊天、更新、重启和单实例全链不依赖 Qt，并接入正式 Win32 消息等待及 workbench helper 的版本化 IPC。DX 主进程只负责拉起 helper，不在自身进程构造 Qt 控件；音乐托盘清理已走 `cloudmusic.user_data` 无 Qt 数据路径；播放器 factory 由桌面组合入口注入，DX 明确注入 `None` 并使用 MCI，不导入或实例化 Qt 播放器。
 
 退出条件：选择 DX 时，从进程启动到退出均不导入 `PyQt5`，自动化检查 `sys.modules` 和已加载 DLL 均无 Qt。
 
@@ -254,30 +281,40 @@ fsdx_get_last_error
 
 退出条件：不安装 PyQt5 时 DX 普通版可以安装、启动、运行、更新和退出；打开未安装的 Qt 工作台时给出明确可恢复提示。
 
-## 9. 后端可用性闸门
+## 9. 后端稳定性闸门
 
-只有同时满足以下条件，才允许把 `BACKEND_DESCRIPTORS` 中 `directx.available` 改为 `True`：
+DirectX 已通过 `available=True, experimental=True` 开放给用户验证。只有同时满足以下条件，才允许把 `BACKEND_DESCRIPTORS` 中 `directx.experimental` 改为 `False`，将其视为稳定后端：
 
 - 配置器注册完整 bundle，不依赖先执行 Qt 配置器产生的全局状态。
 - 主宠、GIF、粒子、特效、世界对象、输入、屏幕、托盘和退出链均可运行。
 - DX 进程启动期间未导入 PyQt5，也未加载 Qt DLL。
+- 代表性 Qt 基准场景已迁入共享视觉层；同一状态生成相同命令，Qt 与 DX 在规定像素容差内一致。
 - 硬件设备初始化、首帧提交和透明窗口验收成功。
 - 设备丢失、部分初始化失败和重复 cleanup 不泄漏窗口、线程或 COM 资源。
 - 自动回退只发生在进入 DX 主运行时之前；运行中失败走受控退出/下次回退，不在同一进程混装 Qt 和 DX 事件循环。
 - 全量核心测试、DX 集成测试和至少一轮真实多屏/DPI 手工验证通过。
 
-后端配置器失败时继续沿用现有 `BackendSelection` 语义。日志必须同时记录请求后端、实际后端、失败阶段、HRESULT 和适配器信息，不向用户伪装为已启用 DirectX。
+后端配置器失败时继续沿用现有 `BackendSelection` 语义。日志必须同时记录请求后端、实际后端、失败阶段、HRESULT 和适配器信息；实验性后端成功启动还要记录兼容性警告，失败时不得阻止 Qt 回退。
 
 ## 10. 验证矩阵
 
 ### 10.1 自动化
 
+共享应用视觉和 bridge 边界的当前可执行入口为：
+
+```powershell
+$env:FLYING_SNOW_DX_DLL = (Resolve-Path 'native/dx_backend/build/cmake/Release/flying_snow_dx.dll')
+py -3 -m unittest tests.test_visual_presenters tests.test_bubble_visual tests.test_qr_panel_visual tests.test_visual_backend_parity
+```
+
 - C ABI 版本、结构体大小、非法参数、重复释放和错误文本测试。
 - 离屏截图像素测试：透明、alpha 预乘、排序、缩放、翻转、裁剪和字体。
+- 视觉描述结构测试：选择 Qt、DX 或 Fake 后端时，同一状态和主题快照产生完全相同的布局与命令。
+- Qt 基准保持测试和 Qt/DX-WARP 跨后端截图对比；几何、颜色、alpha 和资源必须一致，文字只允许有限的栅格边缘差异。
 - 透明窗口像素与窗口样式测试，确认画面非空且背景透明。
 - 鼠标点击穿透、捕获拖拽、键盘焦点和第三方输入法前景关系测试。
 - 多屏负坐标、100%/125%/150% 混合 DPI 和 `WM_DPICHANGED` 测试。
-- 模拟 device removed，验证资源重建和失败上限。
+- 强制设备重建已验证资源/窗口句柄、像素、可见性、generation、owner 线程和单次重试；仍需在专用 runner 注入真实 device removed，覆盖驱动返回路径。
 - 阻断 PyQt 导入的独立子进程启动、事件、调度、截图和退出测试。
 - 反复创建/销毁窗口和后端，检查线程、句柄、显存及 COM 引用泄漏。
 
@@ -291,6 +328,7 @@ fsdx_get_last_error
 ### 10.3 手工验收
 
 - 主宠闲置、拖拽、穿透、聊天输入、托盘、气泡、粒子、特效和世界对象。
+- Qt 与 DX 在同机、同字体、同资源、同状态及 100%/125%/150% DPI 下并排对比视觉表现。
 - 第三方输入法候选窗不被桌宠持续置顶遮挡，普通桌宠装饰窗口不抢输入焦点。
 - 睡眠唤醒、锁屏解锁、显示器拔插、显卡驱动重启和远程桌面切换。
 - 普通退出、异常退出、更新后重启及连续多次启动无残留进程。

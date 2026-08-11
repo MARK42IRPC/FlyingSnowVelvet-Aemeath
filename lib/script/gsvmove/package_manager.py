@@ -66,6 +66,7 @@ _RUNTIME_MODULES = (
     "numpy",
     "onnx",
     "onnxruntime",
+    "opencc",
     "rarfile",
     "soundfile",
     "soxr",
@@ -1208,6 +1209,7 @@ class VoicePackageInstaller:
                 python_executable = console_python
         command = [
             str(python_executable), "-m", "pip", "install",
+            "--only-binary", "opencc-python-reimplemented",
             "-r", str(package_root / "requirements.txt"),
         ]
         started_at = time.monotonic()

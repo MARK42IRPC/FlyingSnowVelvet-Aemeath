@@ -30,7 +30,17 @@ from .ordering import order_render_values
 from .resources import ImageResource, RasterFrame
 from .scene import DrawScene
 from .screen import clamp_rect_position, screen_for_point, virtual_screen_rect
-from .types import Color, FontSpec, Point, Rect, Size, coerce_color, coerce_point, coerce_rect
+from .types import (
+    Color,
+    FontSpec,
+    Point,
+    Rect,
+    Size,
+    coerce_color,
+    coerce_point,
+    coerce_rect,
+    coerce_size,
+)
 
 __all__ = [
     "DrawRequest",
@@ -73,4 +83,5 @@ __all__ = [
     "coerce_color",
     "coerce_point",
     "coerce_rect",
+    "coerce_size",
 ]

@@ -6,7 +6,10 @@ from enum import IntFlag
 
 from lib.core.layer import Layer, normalize_layer
 from .resources import RasterFrame
-from .types import Color, FontSpec, Point, Rect, coerce_color, coerce_point, coerce_rect
+from .types import (
+    Color, FontSpec, Point, Rect, Size, coerce_color, coerce_point,
+    coerce_rect, coerce_size,
+)
 
 
 @dataclass
@@ -22,6 +25,7 @@ class DrawRequest:
     layer: int = int(Layer.MAIN_PET)
     z: int = 0
     order: int = 0
+    target_size: Size | None = None
 
     def __post_init__(self) -> None:
         self.resource_id = str(self.resource_id or "").strip()
@@ -45,6 +49,11 @@ class DrawRequest:
             self.scale = max(0.0, float(self.scale))
         except (TypeError, ValueError):
             self.scale = 1.0
+        if self.target_size is not None:
+            size = coerce_size(self.target_size)
+            if size is None:
+                raise TypeError(f"invalid draw request target size: {self.target_size!r}")
+            self.target_size = Size(max(0.0, size.width), max(0.0, size.height))
         self.layer = normalize_layer(self.layer, Layer.MAIN_PET)
         try:
             self.z = int(self.z)
@@ -71,6 +80,7 @@ class SpriteCommand:
     layer: int
     z: int
     order: int
+    target_size: Size | None = None
 
     def __post_init__(self) -> None:
         resource_id = str(self.resource_id or "").strip()
@@ -86,6 +96,11 @@ class SpriteCommand:
         object.__setattr__(self, "alpha", max(0.0, min(1.0, float(self.alpha))))
         object.__setattr__(self, "flipped", bool(self.flipped))
         object.__setattr__(self, "scale", max(0.0, float(self.scale)))
+        if self.target_size is not None:
+            size = coerce_size(self.target_size)
+            if size is None:
+                raise TypeError("sprite command target size must be a Size or None")
+            object.__setattr__(self, "target_size", Size(max(0.0, size.width), max(0.0, size.height)))
         object.__setattr__(self, "layer", normalize_layer(self.layer, Layer.MAIN_PET))
         object.__setattr__(self, "z", int(self.z))
         object.__setattr__(self, "order", int(self.order))

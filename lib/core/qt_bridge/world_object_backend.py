@@ -3,8 +3,8 @@ from __future__ import annotations
 
 from itertools import count
 
+from lib.core.graphics.image_loader import resize_image_resource
 from lib.core.graphics.types import Point, Rect
-from lib.core.qt_bridge import world_object_assets
 from lib.core.qt_bridge.world_object_factory import create_world_object
 from lib.core.world_objects import (
     WorldObjectBackend,
@@ -23,9 +23,6 @@ _WORLD_OBJECT_TYPES = {
     "snow_leopard": ("lib.core.qt_bridge.world_objects.snow_leopard", "SnowLeopard"),
     "speaker": ("lib.core.qt_bridge.world_objects.speaker", "Speaker"),
 }
-
-_MIRRORED_OBJECT_TYPES = {"motor", "sofa", "speaker"}
-
 
 class QtWorldObjectBackend(WorldObjectBackend):
     """Own native QWidget instances behind integer process-local handles."""
@@ -47,17 +44,10 @@ class QtWorldObjectBackend(WorldObjectBackend):
 
         instance_id = next(self._next_id)
         options = request.option_dict()
-        if request.object_type == "snow_leopard":
-            frames, flipped_frames = world_object_assets.image_frame_pair_from_resource(
-                request.resource
-            )
-            options["frames"] = frames
-            options["flipped_frames"] = flipped_frames
-        else:
-            pair = world_object_assets.pixmap_pair_from_resource(request.resource)
-            options["pixmap"] = pair.pixmap
-            if request.object_type in _MIRRORED_OBJECT_TYPES:
-                options["flipped_pixmap"] = pair.flipped_pixmap
+        options["visual_resource"] = resize_image_resource(
+            request.resource,
+            request.size,
+        )
 
         native = create_world_object(
             module_name,

@@ -14,19 +14,21 @@
 from __future__ import annotations
 
 from PyQt5.QtWidgets import QWidget, QApplication, QGraphicsOpacityEffect
-from PyQt5.QtCore import Qt, QPoint, QRect, QPropertyAnimation, QEasingCurve
+from PyQt5.QtCore import Qt, QPoint, QPropertyAnimation, QEasingCurve
 from PyQt5.QtGui import QFontMetrics, QPainter
 
 from config.config import UI
-from lib.core.qt_bridge.colors import COLORS, UI_THEME
 from config.tooltip_config import TOOLTIPS
-from lib.core.qt_bridge.font import (
-    get_digit_font,
-    draw_mixed_text,
-    get_ui_font,
-    measure_mixed_text,
-    elide_mixed_text,
+from lib.core.qt_bridge.font import get_digit_font, get_ui_font
+from lib.core.graphics.application_visuals import (
+    COMMAND_HINT_DEFAULT_ITEMS,
+    COMMAND_HINT_PAGE_SIZE,
+    CommandHintVisualDescription,
+    build_command_hint_visual,
+    command_hint_side_font_size,
 )
+from lib.core.graphics.types import FontSpec, Rect
+from lib.core.qt_bridge.draw_backend import QtDrawBackend
 from config.scale import scale_px
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.hash_cmd_registry import get_hash_cmd_registry
@@ -37,31 +39,50 @@ from lib.core.qt_bridge.window import coerce_qpoint
 from lib.script.ui.page_turn_buttons import make_page_buttons, update_page_buttons_position
 
 
-# ── 布局常量 ──────────────────────────────────────────────────────────
-_MAX_WIDTH   = scale_px(360, min_abs=1)  # 最大宽度（px）
-_MIN_WIDTH   = scale_px(240, min_abs=1)  # 最小宽度（px）
-_PAGE_SIZE   = 5     # 每页最大条目数
-_ROW_H       = scale_px(20, min_abs=1)  # 每行高度（px）
-_LAYER       = scale_px(2, min_abs=1)
-_BORDER      = _LAYER * 2  # 单侧边框总厚度（2px 黑 + 2px 青）
-_PAD_X       = scale_px(6, min_abs=1)   # 文字水平内边距（px）
 _GAP_Y       = scale_px(2, min_abs=1)   # 与 CommandDialog 的垂直间距（px）
-# 默认模式行间分隔线（仅在三条提示行之间绘制）
-_SEP_CYAN_H  = scale_px(5, min_abs=1)  # 浅青色分隔段高度（px）
-_SEP_BLACK_H = scale_px(1, min_abs=1)  # 黑色分隔段高度（px）
-_SEP_H       = _SEP_CYAN_H                 # 分隔线总占高 = 5px（黑线浮于青色带中心，不额外占高）
 
 # ── 无输入时显示的默认提示行 ──────────────────────────────────────────
-_DEFAULT_HINTS: list[str] = [
-    '/-在CMD窗口中执行命令',
-    '#-执行玩法命令',
-    '聊天-与爱弥斯聊天',
-]
-_DEFAULT_SIDE_LABEL = 'Aemeath'
-_DEFAULT_SIDE_LABEL_HIGHLIGHT = 'RUNcmd'
-_SIDE_LABEL_GAP_X = scale_px(8, min_abs=1)
-_SIDE_LABEL_PAD_R = scale_px(6, min_abs=1)
-_SIDE_LABEL_FONT_BOOST = scale_px(3, min_abs=1)
+_DEFAULT_HINTS: list[str] = list(COMMAND_HINT_DEFAULT_ITEMS)
+
+
+class _QtCommandHintTextMetrics:
+    """Expose only low-level Qt glyph metrics to the shared presenter."""
+
+    def __init__(self, default_font, digit_font, side_font) -> None:
+        self._default_metrics = QFontMetrics(default_font)
+        self._digit_metrics = QFontMetrics(digit_font)
+        self._side_metrics = QFontMetrics(side_font)
+        self.default_font = FontSpec(
+            default_font.family(),
+            default_font.pixelSize(),
+            default_font.bold(),
+        )
+        self.digit_font = FontSpec(
+            digit_font.family(),
+            digit_font.pixelSize(),
+            digit_font.bold(),
+        )
+        self.side_font = FontSpec(
+            side_font.family(),
+            side_font.pixelSize(),
+            side_font.bold(),
+        )
+        self.default_ascent = float(self._default_metrics.ascent())
+        self.default_descent = float(self._default_metrics.descent())
+        self.digit_ascent = float(self._digit_metrics.ascent())
+        self.digit_descent = float(self._digit_metrics.descent())
+
+    def measure(
+        self,
+        text: str,
+        *,
+        digit: bool = False,
+        side: bool = False,
+    ) -> float:
+        metrics = self._side_metrics if side else (
+            self._digit_metrics if digit else self._default_metrics
+        )
+        return float(metrics.horizontalAdvance(str(text or "")))
 
 
 class CommandHintBox(QWidget):
@@ -96,10 +117,15 @@ class CommandHintBox(QWidget):
         self._font.setBold(True)
         self._digit_font = get_digit_font()
         self._side_label_font = get_digit_font(
-            size=max(self._font.pixelSize() + _SIDE_LABEL_FONT_BOOST, scale_px(14, min_abs=1))
+            size=command_hint_side_font_size(self._font.pixelSize())
         )
-        self._side_label_color = UI_THEME['deep_pink']
-        self._side_label_highlight_color = UI_THEME['deep_cyan']
+        self._text_metrics = _QtCommandHintTextMetrics(
+            self._font,
+            self._digit_font,
+            self._side_label_font,
+        )
+        self._draw_backend = QtDrawBackend()
+        self._visual: CommandHintVisualDescription | None = None
 
         # ── 状态 ──────────────────────────────────────────────────────
         self._mode: str       = 'default'  # 'default' | 'hash'
@@ -176,13 +202,14 @@ class CommandHintBox(QWidget):
         new_sel = self._selected + direction
         if 0 <= new_sel < len(items):
             self._selected = new_sel
+            self._refresh_size()
             self.update()
 
     def turn_page(self, direction: int) -> None:
         """翻页：direction = -1（上一页）/ +1（下一页），支持循环翻页。"""
         if self._mode != 'hash' or not self._all_items:
             return
-        max_page = max(0, (len(self._all_items) - 1) // _PAGE_SIZE)
+        max_page = max(0, (len(self._all_items) - 1) // COMMAND_HINT_PAGE_SIZE)
         if max_page == 0:
             return  # 只有一页，不需要翻页
 
@@ -257,69 +284,29 @@ class CommandHintBox(QWidget):
         self._page      = 0
 
     def _page_items(self) -> list:
-        start = self._page * _PAGE_SIZE
-        return self._all_items[start: start + _PAGE_SIZE]
+        start = self._page * COMMAND_HINT_PAGE_SIZE
+        return self._all_items[start: start + COMMAND_HINT_PAGE_SIZE]
 
     def _has_pages(self) -> bool:
-        return len(self._all_items) > _PAGE_SIZE
+        return len(self._all_items) > COMMAND_HINT_PAGE_SIZE
 
     # ==================================================================
     # 私有：格式化与尺寸
     # ==================================================================
 
-    @staticmethod
-    def _fmt_hash(item: tuple) -> str:
-        """将 (name, usage, desc) 格式化为显示字符串。"""
-        name, usage, desc = item
-        text = f'#{name}'
-        if usage:
-            text += f' {usage}'
-        if desc:
-            text += f'  {desc}'
-        return text
-
-    def _default_side_label_width(self) -> int:
-        fm = QFontMetrics(self._side_label_font)
-        return max(
-            fm.horizontalAdvance(_DEFAULT_SIDE_LABEL),
-            fm.horizontalAdvance(_DEFAULT_SIDE_LABEL_HIGHLIGHT),
-        )
-
-    def _default_side_label_reserve_width(self) -> int:
-        return int(self._default_side_label_width() + _SIDE_LABEL_GAP_X + _SIDE_LABEL_PAD_R)
-
     def _refresh_size(self) -> None:
-        """根据当前内容自适应窗口宽高。"""
-        items = self._page_items()
-
-        if self._mode == 'default':
-            measure_texts = list(self._all_items)
-            n_rows        = len(self._all_items)
-        else:
-            if items:
-                measure_texts = [self._fmt_hash(it) for it in items]
-                n_rows        = len(items)
-            else:
-                measure_texts = ['(无匹配命令)']
-                n_rows        = 1
-            if self._has_pages():
-                max_page = (len(self._all_items) - 1) // _PAGE_SIZE
-                measure_texts.append(f'◀ {self._page + 1}/{max_page + 1} ▶')
-                n_rows += 1
-
-        max_text_w = max(
-            (measure_mixed_text(t, self._font, self._digit_font) for t in measure_texts),
-            default=scale_px(60, min_abs=1),
+        """Rebuild the shared visual and apply its resolved window size."""
+        self._visual = build_command_hint_visual(
+            self._mode,
+            self._all_items,
+            self._selected,
+            self._page,
+            self._text_metrics,
         )
-        if self._mode == 'default':
-            max_text_w += self._default_side_label_reserve_width()
-        w = int(max(_MIN_WIDTH, min(_MAX_WIDTH, max_text_w + _BORDER * 2 + _PAD_X * 2)))
-        if self._mode == 'default':
-            n_items = len(self._all_items)
-            h = int(_BORDER * 2 + n_items * _ROW_H + max(0, n_items - 1) * _SEP_H)
-        else:
-            h = int(_BORDER * 2 + n_rows * _ROW_H)
-        self.setFixedSize(w, h)
+        self.setFixedSize(
+            int(self._visual.size.width),
+            int(self._visual.size.height),
+        )
 
     def _update_position(self) -> None:
         """将自身左上角对齐到 CommandDialog bottom_left + _GAP_Y 偏移。"""
@@ -404,20 +391,18 @@ class CommandHintBox(QWidget):
 
     def mouseMoveEvent(self, event) -> None:
         """鼠标悬停时实时更新高亮行，便于直观点击。"""
+        row = self._row_from_y(event.pos().y())
         if self._mode == 'default':
-            y_in = event.pos().y() - _BORDER
-            row = self._default_row_from_y(y_in)
             if row != self._selected:
                 self._selected = row
+                self._refresh_size()
                 self.update()
         elif self._mode == 'hash':
             items = self._page_items()
-            y_in_content = event.pos().y() - _BORDER
-            if y_in_content >= 0:
-                row_index = y_in_content // _ROW_H
-                if 0 <= row_index < len(items) and row_index != self._selected:
-                    self._selected = row_index
-                    self.update()
+            if 0 <= row < len(items) and row != self._selected:
+                self._selected = row
+                self._refresh_size()
+                self.update()
         super().mouseMoveEvent(event)
 
     def mousePressEvent(self, event) -> None:
@@ -431,8 +416,7 @@ class CommandHintBox(QWidget):
         publish_click_particle(self, event)
         if self._mode == 'default':
             if event.button() == Qt.LeftButton:
-                y_in = event.pos().y() - _BORDER
-                row = self._default_row_from_y(y_in)
+                row = self._row_from_y(event.pos().y())
                 if row == 0:
                     self._event_center.publish(Event(EventType.UI_HINT_PICK, {'text': '/'}))
                 elif row == 1:
@@ -447,19 +431,11 @@ class CommandHintBox(QWidget):
             return
 
         items = self._page_items()
-        y_in = event.pos().y() - _BORDER
-        if y_in < 0:
-            super().mousePressEvent(event)
-            return
-
-        row_index = y_in // _ROW_H
-        if row_index >= len(items):
-            # 点击翻页指示器行：左半区上一页，右半区下一页
-            if self._has_pages() and row_index == len(items):
-                if event.pos().x() < self.width() // 2:
-                    self.turn_page(-1)
-                else:
-                    self.turn_page(1)
+        row_index = self._row_from_y(event.pos().y())
+        page_rect = None if self._visual is None else self._visual.page_indicator_rect
+        if row_index < 0 or row_index >= len(items):
+            if page_rect is not None and self._rect_contains_y(page_rect, event.pos().y()):
+                self.turn_page(-1 if event.pos().x() < self.width() // 2 else 1)
             super().mousePressEvent(event)
             return
 
@@ -474,19 +450,16 @@ class CommandHintBox(QWidget):
         super().mousePressEvent(event)
 
     @staticmethod
-    def _default_row_from_y(y_in: int) -> int:
-        """默认模式下根据 y 坐标定位提示行索引。"""
-        if y_in < 0:
+    def _rect_contains_y(rect: Rect, y: int) -> bool:
+        return rect.y <= y < rect.y + rect.height
+
+    def _row_from_y(self, y: int) -> int:
+        visual = self._visual
+        if visual is None:
             return -1
-        cursor = 0
-        for i in range(len(_DEFAULT_HINTS)):
-            if cursor <= y_in < cursor + _ROW_H:
-                return i
-            cursor += _ROW_H
-            if i < len(_DEFAULT_HINTS) - 1:
-                if cursor <= y_in < cursor + _SEP_H:
-                    return -1
-                cursor += _SEP_H
+        for index, rect in enumerate(visual.row_rects):
+            if self._rect_contains_y(rect, y):
+                return index
         return -1
 
     # ==================================================================
@@ -494,91 +467,19 @@ class CommandHintBox(QWidget):
     # ==================================================================
 
     def paintEvent(self, event) -> None:
+        if self._visual is None:
+            self._refresh_size()
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing, False)
-        painter.setFont(self._font)
-        fm = painter.fontMetrics()
-
-        # ── 三层边框（与 CommandDialog 风格一致）──────────────────────
-        painter.fillRect(self.rect(), COLORS['black'])
-        painter.fillRect(self.rect().adjusted(_LAYER, _LAYER, -_LAYER, -_LAYER), COLORS['cyan'])
-        painter.fillRect(self.rect().adjusted(_BORDER, _BORDER, -_BORDER, -_BORDER), COLORS['pink'])
-
-        # ── 绘制行内容 ────────────────────────────────────────────────
-        items     = self._page_items()
-        content_x = _BORDER
-        content_w = self.width() - _BORDER * 2
-        y         = _BORDER
-
-        if self._mode == 'default':
-            side_label_w = self._default_side_label_width()
-            side_reserve_w = self._default_side_label_reserve_width()
-            for i, hint in enumerate(self._all_items):
-                row_rect = QRect(content_x, y, content_w, _ROW_H)
-                side_rect = QRect(
-                    content_x + content_w - _SIDE_LABEL_PAD_R - side_label_w,
-                    y,
-                    side_label_w,
-                    _ROW_H,
-                )
-                text_rect = QRect(
-                    content_x + _PAD_X,
-                    y,
-                    max(0, content_w - _PAD_X * 2 - side_reserve_w),
-                    _ROW_H,
-                )
-                if i == self._selected:
-                    painter.fillRect(row_rect, COLORS['cyan'])
-                painter.setFont(self._font)
-                painter.setPen(COLORS['text'])
-                painter.drawText(
-                    text_rect,
-                    Qt.AlignLeft | Qt.AlignVCenter,
-                    fm.elidedText(hint, Qt.ElideRight, text_rect.width()),
-                )
-                painter.setFont(self._side_label_font)
-                painter.setPen(self._side_label_highlight_color if i == self._selected else self._side_label_color)
-                painter.drawText(
-                    side_rect,
-                    Qt.AlignRight | Qt.AlignVCenter,
-                    _DEFAULT_SIDE_LABEL_HIGHLIGHT if i == self._selected else _DEFAULT_SIDE_LABEL,
-                )
-                y += _ROW_H
-                # 行间分隔线（最后一行后不绘制）
-                if i < len(self._all_items) - 1:
-                    painter.fillRect(QRect(content_x, y, content_w, _SEP_CYAN_H), COLORS['cyan'])
-                    # 黑色细线居中于青色带，横跨全宽与最外层黑框相连
-                    black_y = y + (_SEP_CYAN_H - _SEP_BLACK_H) // 2
-                    painter.fillRect(QRect(0, black_y, self.width(), _SEP_BLACK_H), COLORS['black'])
-                    y += _SEP_H
-        else:
-            if not items:
-                text_rect = QRect(content_x + _PAD_X, y, content_w - _PAD_X * 2, _ROW_H)
-                painter.setPen(COLORS['text'])
-                painter.drawText(text_rect, Qt.AlignLeft | Qt.AlignVCenter, '(无匹配命令)')
-                y += _ROW_H
-            else:
-                for i, item in enumerate(items):
-                    row_rect  = QRect(content_x, y, content_w, _ROW_H)
-                    text_rect = QRect(content_x + _PAD_X, y, content_w - _PAD_X * 2, _ROW_H)
-                    # 选中行：青色背景高亮
-                    if i == self._selected:
-                        painter.fillRect(row_rect, COLORS['cyan'])
-                    text = self._fmt_hash(item)
-                    painter.setPen(COLORS['text'])
-                    draw_mixed_text(
-                        painter, text_rect,
-                        elide_mixed_text(text, text_rect.width(), self._font, self._digit_font),
-                        self._font, self._digit_font,
-                    )
-                    y += _ROW_H
-
-            # ── 翻页指示器 ────────────────────────────────────────────
-            if self._has_pages():
-                max_page  = (len(self._all_items) - 1) // _PAGE_SIZE
-                page_text = f'{self._page + 1}/{max_page + 1}'
-                text_rect = QRect(content_x + _PAD_X, y, content_w - _PAD_X * 2, _ROW_H)
-                painter.setPen(COLORS['text'])
-                draw_mixed_text(painter, text_rect, page_text, self._font, self._digit_font, Qt.AlignCenter)
-
+        self._draw_backend.render(self._visual.batch, painter)
         painter.end()
+
+    def closeEvent(self, event) -> None:
+        for event_type, callback in (
+            (EventType.FRAME, self._on_frame),
+            (EventType.UI_ANCHOR_RESPONSE, self._on_anchor_response),
+            (EventType.UI_CLICKTHROUGH_TOGGLE, self._on_clickthrough_toggle),
+        ):
+            self._event_center.unsubscribe(event_type, callback)
+        self._draw_backend.cleanup()
+        get_layer_manager().unregister(self)
+        super().closeEvent(event)

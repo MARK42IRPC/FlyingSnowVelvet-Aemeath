@@ -144,6 +144,27 @@ class Size:
     height: float = 0.0
 
 
+def coerce_size(value: object) -> Size | None:
+    """Convert a size-like value without depending on a GUI toolkit."""
+    if isinstance(value, Size):
+        return value
+    if isinstance(value, (tuple, list)) and len(value) >= 2:
+        try:
+            return Size(float(value[0]), float(value[1]))
+        except (TypeError, ValueError):
+            return None
+    width = getattr(value, "width", None)
+    height = getattr(value, "height", None)
+    if callable(width):
+        width = width()
+    if callable(height):
+        height = height()
+    try:
+        return Size(float(width), float(height))
+    except (TypeError, ValueError):
+        return None
+
+
 @dataclass(frozen=True, slots=True)
 class Rect:
     """A rectangle represented by its top-left point and size."""

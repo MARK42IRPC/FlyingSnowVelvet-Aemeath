@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-from PyQt5.QtCore import Qt, QRect, QTimer
-from PyQt5.QtGui import QPainter
+from PyQt5.QtCore import Qt, QTimer
 
-from lib.core.qt_bridge.colors import UI_THEME
-from config.scale import scale_px
 from lib.core.event.center import Event, EventType, get_event_center
+from lib.core.graphics.application_visuals import qr_panel_action_text
 from lib.core.layer_manager import get_layer_manager
 from lib.script.ui.qr_dialog_base import BaseQrDialog
 
@@ -22,7 +20,7 @@ class CloudMusicLoginDialog(BaseQrDialog):
         super().__init__(
             title="音乐扫码登录",
             status="请使用音乐App扫码登录",
-            action_text="退出扫码",
+            action_text=qr_panel_action_text("music-login"),
             placeholder_text="二维码加载中...",
             qr_background=True,
             window_flags=flags,
@@ -103,36 +101,10 @@ class CloudMusicLoginDialog(BaseQrDialog):
     def _on_action_clicked(self) -> None:
         self._event_center.publish(Event(EventType.MUSIC_LOGIN_CANCEL_REQUEST, {}))
 
-    def _paint_status(self, painter: QPainter, status_rect: QRect) -> None:
-        painter.setPen(UI_THEME["text"])
+    def _visual_status_text(self) -> str:
         if self._refresh_left is not None and "等待扫码" in self._status:
-            top_h = max(scale_px(24, min_abs=1), status_rect.height() - scale_px(24, min_abs=1))
-            status_main_rect = QRect(
-                status_rect.x(),
-                status_rect.y(),
-                status_rect.width(),
-                top_h,
-            )
-            countdown_rect = QRect(
-                status_rect.x(),
-                status_main_rect.bottom() + scale_px(1, min_abs=1),
-                status_rect.width(),
-                max(scale_px(20, min_abs=1), status_rect.height() - top_h),
-            )
-            self._draw_wrapped_mixed_text(
-                painter,
-                status_main_rect,
-                self._status,
-                Qt.AlignCenter | Qt.TextWordWrap,
-            )
-            self._draw_wrapped_mixed_text(
-                painter,
-                countdown_rect,
-                f"二维码将于 {self._refresh_left}s 后刷新",
-                Qt.AlignCenter,
-            )
-            return
-        super()._paint_status(painter, status_rect)
+            return f"{self._status}\n二维码将于 {self._refresh_left}s 后刷新"
+        return self._status
 
     def cleanup(self) -> None:
         self._event_center.unsubscribe(EventType.MUSIC_LOGIN_QR_SHOW, self._on_qr_show)

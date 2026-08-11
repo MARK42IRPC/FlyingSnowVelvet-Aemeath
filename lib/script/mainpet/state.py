@@ -11,6 +11,7 @@ from lib.core.graphics.collision import (
     rects_intersect,
     segment_intersects_rect,
 )
+from lib.core.game_obstacles import get_game_obstacle_rect
 from lib.core.graphics.types import Point, Rect, coerce_point
 from lib.core.input.types import MouseButton
 from lib.core.screen_utils import get_screen_rect_for_point, get_virtual_screen_rect
@@ -609,17 +610,12 @@ class StateMachine:
         1. 目标矩形本身会压到游戏区
         2. 从当前位置到目标位置的移动线段会横跨游戏区
         """
-        try:
-            from lib.script.gemes import get_game_runtime
-        except Exception:
-            return False
-
         pet_geom = self._entity.get_core_geometry()
         if pet_geom is None:
             return False
 
         try:
-            blocked_rect = get_game_runtime().get_lahai_game_middle_third_rect_global()
+            blocked_rect = get_game_obstacle_rect()
         except Exception:
             return False
 

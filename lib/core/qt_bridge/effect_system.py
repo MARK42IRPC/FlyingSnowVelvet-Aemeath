@@ -13,22 +13,23 @@ from collections import deque
 import math
 from pathlib import Path
 
-from PyQt5.QtCore import QPointF, QRectF, Qt
-from PyQt5.QtGui import QColor, QFontMetrics, QImage, QLinearGradient, QPainter, QPixmap
+from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QPainter
 from PyQt5.QtWidgets import QWidget
 
 from lib.core.event.center import Event, EventType, get_event_center
 from lib.core.layer import Layer
 from lib.core.layer_manager import get_layer_manager
 from lib.core.logger import get_logger
-from lib.core.qt_bridge.font import get_digit_font, get_ui_font
-from lib.core.graphics.ordering import order_render_values
+from lib.core.graphics.resources import ImageResource
+from lib.core.graphics.visuals import build_effect_batch, load_effect_resource
+from lib.core.qt_bridge.draw_backend import QtDrawBackend
 from lib.script.effects.manager import cleanup_effect_script_manager, get_effect_script_manager
 
 
 _logger = get_logger(__name__)
-_PROJECT_ROOT = Path(__file__).resolve().parents[2]
-_PIXMAP_CACHE: dict[tuple, QPixmap] = {}
+_PROJECT_ROOT = Path(__file__).resolve().parents[3]
+_RESOURCE_CACHE: dict[tuple, ImageResource] = {}
 
 
 def _effect_alive(effect) -> bool:
@@ -56,186 +57,6 @@ def _resolve_resource_path(resource_path: str) -> str:
     return str(candidate.resolve())
 
 
-def _make_edge_feather_pixmap(
-    source: QPixmap,
-    feather_ratio: float,
-    output_size: tuple[int, int] | None = None,
-) -> QPixmap:
-    src_w = max(1, source.width())
-    src_h = max(1, source.height())
-    if output_size is None:
-        final_w = src_w
-        final_h = src_h
-    else:
-        final_w = max(1, int(output_size[0]))
-        final_h = max(1, int(output_size[1]))
-
-    pixmap = source
-    if pixmap.width() != final_w or pixmap.height() != final_h:
-        pixmap = pixmap.scaled(
-            final_w,
-            final_h,
-            Qt.KeepAspectRatio,
-            Qt.SmoothTransformation,
-        )
-
-    result = QPixmap(pixmap.width(), pixmap.height())
-    result.fill(Qt.transparent)
-
-    painter = QPainter(result)
-    painter.setRenderHint(QPainter.Antialiasing, True)
-    painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
-    painter.drawPixmap(0, 0, pixmap)
-
-    feather_ratio = max(0.0, min(0.45, float(feather_ratio)))
-    if feather_ratio > 0.0:
-        width = max(1, result.width())
-        height = max(1, result.height())
-        feather_px_x = max(1.0, width * feather_ratio)
-        feather_px_y = max(1.0, height * feather_ratio)
-        # 四边分别做一次 destination-in 线性梯度，让原图保持比例，仅边缘软化。
-        painter.setCompositionMode(QPainter.CompositionMode_DestinationIn)
-
-        left_gradient = QLinearGradient(0.0, 0.0, feather_px_x, 0.0)
-        left_gradient.setColorAt(0.0, QColor(0, 0, 0, 0))
-        left_gradient.setColorAt(1.0, QColor(0, 0, 0, 255))
-        painter.fillRect(QRectF(0.0, 0.0, feather_px_x, float(height)), left_gradient)
-
-        right_gradient = QLinearGradient(float(width) - feather_px_x, 0.0, float(width), 0.0)
-        right_gradient.setColorAt(0.0, QColor(0, 0, 0, 255))
-        right_gradient.setColorAt(1.0, QColor(0, 0, 0, 0))
-        painter.fillRect(QRectF(float(width) - feather_px_x, 0.0, feather_px_x, float(height)), right_gradient)
-
-        top_gradient = QLinearGradient(0.0, 0.0, 0.0, feather_px_y)
-        top_gradient.setColorAt(0.0, QColor(0, 0, 0, 0))
-        top_gradient.setColorAt(1.0, QColor(0, 0, 0, 255))
-        painter.fillRect(QRectF(0.0, 0.0, float(width), feather_px_y), top_gradient)
-
-        bottom_gradient = QLinearGradient(0.0, float(height) - feather_px_y, 0.0, float(height))
-        bottom_gradient.setColorAt(0.0, QColor(0, 0, 0, 255))
-        bottom_gradient.setColorAt(1.0, QColor(0, 0, 0, 0))
-        painter.fillRect(QRectF(0.0, float(height) - feather_px_y, float(width), feather_px_y), bottom_gradient)
-
-    painter.end()
-    return result
-
-
-def _get_cached_pixmap(resource_path: str, effect_options: dict | None = None) -> QPixmap | None:
-    resolved_path = _resolve_resource_path(resource_path)
-    options = dict(effect_options or {})
-    edge_feather = bool(options.get("edge_feather", False))
-    feather_ratio = float(options.get("feather_ratio", 0.12) or 0.12)
-    output_size = options.get("masked_output_size")
-    try:
-        if isinstance(output_size, (list, tuple)) and len(output_size) >= 2:
-            masked_output_size = (max(1, int(output_size[0])), max(1, int(output_size[1])))
-        elif output_size is not None:
-            size = max(1, int(output_size))
-            masked_output_size = (size, size)
-        else:
-            masked_output_size = None
-    except (TypeError, ValueError):
-        masked_output_size = None
-
-    cache_key = (resolved_path, edge_feather, round(feather_ratio, 4), masked_output_size)
-    cached = _PIXMAP_CACHE.get(cache_key)
-    if cached is not None and not cached.isNull():
-        return cached
-
-    base_pixmap = QPixmap(resolved_path)
-    if base_pixmap.isNull():
-        _logger.warning("特效资源加载失败: %s", resolved_path)
-        return None
-
-    pixmap = base_pixmap
-    if edge_feather:
-        pixmap = _make_edge_feather_pixmap(
-            base_pixmap,
-            feather_ratio=feather_ratio,
-            output_size=masked_output_size,
-        )
-
-    _PIXMAP_CACHE[cache_key] = pixmap
-    return pixmap
-
-
-def _effect_color(value, default: tuple[int, int, int] = (255, 255, 255)) -> QColor:
-    if isinstance(value, (list, tuple)) and len(value) >= 3:
-        try:
-            return QColor(
-                max(0, min(255, int(value[0]))),
-                max(0, min(255, int(value[1]))),
-                max(0, min(255, int(value[2]))),
-            )
-        except (TypeError, ValueError):
-            pass
-    return QColor(*default)
-
-
-def _render_text_effect_pixmap(effect) -> QPixmap | None:
-    text = str(getattr(effect, "text", "") or "").strip()
-    if not text:
-        return None
-
-    pixel_size = max(1, int(getattr(effect, "font_size", 32)))
-    font_type = str(getattr(effect, "font_type", "ui") or "ui").lower()
-    if font_type in {"digit", "number", "lahai"}:
-        font = get_digit_font(pixel_size)
-    else:
-        font = get_ui_font(pixel_size)
-    font.setBold(bool(getattr(effect, "font_bold", False)))
-    font_weight = getattr(effect, "font_weight", None)
-    if font_weight is not None:
-        try:
-            font.setWeight(max(0, min(99, int(font_weight))))
-        except (TypeError, ValueError):
-            pass
-
-    color = _effect_color(getattr(effect, "color", (255, 255, 255)))
-    glow_radius = max(0.0, float(getattr(effect, "glow", 0.0) or 0.0))
-    glow_color = _effect_color(getattr(effect, "glow_color", color.getRgb()[:3]))
-    metrics = QFontMetrics(font)
-    text_width = max(1, metrics.horizontalAdvance(text))
-    text_height = max(1, metrics.height())
-    padding = int(math.ceil(glow_radius + max(4.0, text_height * 0.18)))
-    image = QImage(
-        text_width + padding * 2,
-        text_height + padding * 2,
-        QImage.Format_ARGB32_Premultiplied,
-    )
-    image.fill(Qt.transparent)
-
-    painter = QPainter(image)
-    painter.setRenderHint(QPainter.Antialiasing, True)
-    painter.setRenderHint(QPainter.TextAntialiasing, True)
-    painter.setFont(font)
-    baseline_x = float(padding)
-    baseline_y = float(padding + metrics.ascent())
-    if glow_radius > 0.0:
-        glow_tint = QColor(glow_color)
-        for radius_scale, alpha_scale in ((1.0, 0.22), (0.72, 0.16), (0.45, 0.10)):
-            radius = glow_radius * radius_scale
-            glow_tint.setAlpha(max(0, min(255, int(255 * alpha_scale))))
-            painter.setPen(glow_tint)
-            for dx, dy in (
-                (radius, 0.0),
-                (-radius, 0.0),
-                (0.0, radius),
-                (0.0, -radius),
-                (radius * 0.7, radius * 0.7),
-                (-radius * 0.7, radius * 0.7),
-                (radius * 0.7, -radius * 0.7),
-                (-radius * 0.7, -radius * 0.7),
-            ):
-                painter.drawText(QPointF(baseline_x + dx, baseline_y + dy), text)
-
-    painter.setPen(color)
-    painter.drawText(QPointF(baseline_x, baseline_y), text)
-    painter.end()
-    pixmap = QPixmap.fromImage(image)
-    return None if pixmap.isNull() else pixmap
-
-
 class EffectOverlay(QWidget):
     """全屏透明覆盖层，仅用于绘制特效。"""
 
@@ -259,6 +80,7 @@ class EffectOverlay(QWidget):
         self._pending_requests = deque()
         self._needs_immediate_repaint = False
         self._cleanup_done = False
+        self._draw_backend = QtDrawBackend()
         self._event_center = get_event_center()
         self._effect_manager = get_effect_script_manager()
 
@@ -365,13 +187,27 @@ class EffectOverlay(QWidget):
             if script is None:
                 continue
 
-            backend_pixmap = None
+            visual_resource = None
             resource_path = effect_options.get("resource_path")
             if resource_path:
-                backend_pixmap = _get_cached_pixmap(str(resource_path), effect_options)
-                if backend_pixmap is None:
+                resolved_path = _resolve_resource_path(str(resource_path))
+                output_size = effect_options.get("masked_output_size")
+                if isinstance(output_size, list):
+                    output_size = tuple(output_size)
+                cache_key = (
+                    resolved_path,
+                    output_size,
+                    bool(effect_options.get("edge_feather", False)),
+                    effect_options.get("feather_ratio", 0.12),
+                )
+                visual_resource = _RESOURCE_CACHE.get(cache_key)
+                if visual_resource is None:
+                    visual_resource = load_effect_resource(resolved_path, effect_options)
+                    if visual_resource is not None:
+                        _RESOURCE_CACHE[cache_key] = visual_resource
+                if visual_resource is None:
                     continue
-                effect_options["resolved_resource_path"] = _resolve_resource_path(str(resource_path))
+                effect_options["resolved_resource_path"] = resolved_path
 
             if anchor_type == "rect" and isinstance(anchor_data, (list, tuple)) and len(anchor_data) >= 4:
                 x1, y1, x2, y2 = anchor_data
@@ -404,14 +240,10 @@ class EffectOverlay(QWidget):
 
             renderable_effects = []
             for effect in new_effects:
-                pixmap = (
-                    backend_pixmap
-                    if backend_pixmap is not None
-                    else _render_text_effect_pixmap(effect)
-                )
-                if not isinstance(pixmap, QPixmap) or pixmap.isNull():
+                if visual_resource is not None:
+                    effect._visual_resource = visual_resource
+                elif not str(getattr(effect, "text", "") or ""):
                     continue
-                effect.pixmap = pixmap
                 renderable_effects.append(effect)
             new_effects = renderable_effects
             if not new_effects:
@@ -456,44 +288,7 @@ class EffectOverlay(QWidget):
         painter.setCompositionMode(QPainter.CompositionMode_Source)
         painter.fillRect(self.rect(), Qt.transparent)
         painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
-        painter.setRenderHint(QPainter.Antialiasing, True)
-        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
-
-        effects = order_render_values(
-            self._effects,
-            layer_getter=lambda item: getattr(item, "layer", Layer.EFFECT),
-            z_getter=lambda item: getattr(item, "z", 0),
-            order_getter=lambda item: getattr(item, "_draw_order", 0),
-            default_layer=Layer.EFFECT,
-        )
-        for effect in effects:
-            if not _effect_alive(effect):
-                continue
-
-            pixmap = getattr(effect, "pixmap", None)
-            if not isinstance(pixmap, QPixmap) or pixmap.isNull():
-                continue
-
-            opacity = max(0.0, min(1.0, float(getattr(effect, "_render_opacity", getattr(effect, "opacity", 1.0)))))
-            if opacity <= 0.0:
-                continue
-
-            scale = max(0.001, float(getattr(effect, "_render_scale", getattr(effect, "scale", 1.0))))
-            rotation = float(getattr(effect, "_render_rotation", getattr(effect, "rotation", 0.0)))
-            x = float(getattr(effect, "_render_x", getattr(effect, "x", 0.0)))
-            y = float(getattr(effect, "_render_y", getattr(effect, "y", 0.0)))
-
-            painter.save()
-            painter.setOpacity(opacity)
-            painter.translate(x, y)
-            if rotation:
-                painter.rotate(rotation)
-            if scale != 1.0:
-                painter.scale(scale, scale)
-            half_w = pixmap.width() / 2.0
-            half_h = pixmap.height() / 2.0
-            painter.drawPixmap(int(-half_w), int(-half_h), pixmap)
-            painter.restore()
+        self._draw_backend.render(build_effect_batch(self._effects), painter)
 
         painter.end()
 
@@ -526,6 +321,7 @@ class EffectOverlay(QWidget):
             self._event_center.unsubscribe(EventType.TICK, self._on_tick)
             self._event_center.unsubscribe(EventType.FRAME, self._on_frame)
         self.flush_immediately()
+        self._draw_backend.cleanup()
         cleanup_effect_script_manager()
         self._layer_manager.unregister(self)
         try:

@@ -18,6 +18,10 @@ class BackendRouterTests(unittest.TestCase):
             ["qt", "directx", "opengl", "vulkan"],
         )
         self.assertTrue(router.descriptors()[0].available)
+        directx = next(item for item in router.descriptors() if item.backend_id == "directx")
+        self.assertTrue(directx.available)
+        self.assertTrue(directx.experimental)
+        self.assertFalse(next(item for item in router.descriptors() if item.backend_id == "opengl").available)
         self.assertTrue(all(item.requires_restart for item in router.descriptors()))
 
     def test_registered_backend_is_selected_without_fallback(self):
@@ -38,22 +42,23 @@ class BackendRouterTests(unittest.TestCase):
         calls: list[str] = []
         router = BackendRouter()
         router.register_backend("qt", lambda: calls.append("qt"))
-        router.register_backend("directx", lambda: calls.append("directx"))
+        router.register_backend("opengl", lambda: calls.append("opengl"))
 
-        selection = router.configure_selected_backend("directx")
+        selection = router.configure_selected_backend("opengl")
 
         self.assertEqual(calls, ["qt"])
-        self.assertEqual(selection.requested_backend, "directx")
+        self.assertEqual(selection.requested_backend, "opengl")
         self.assertEqual(selection.active_backend, "qt")
         self.assertTrue(selection.fallback_used)
         self.assertIn("not implemented", selection.reason or "")
+        self.assertFalse(selection.experimental)
 
     def test_dx_alias_routes_to_registered_directx_backend(self):
         calls: list[str] = []
         router = BackendRouter(
             (
                 BackendDescriptor("qt", "Qt", True),
-                BackendDescriptor("directx", "DirectX", True),
+                BackendDescriptor("directx", "DirectX", True, experimental=True),
             )
         )
         router.register_backend("qt", lambda: calls.append("qt"))
@@ -64,6 +69,26 @@ class BackendRouterTests(unittest.TestCase):
         self.assertEqual(calls, ["directx"])
         self.assertEqual(selection.active_backend, "directx")
         self.assertFalse(selection.fallback_used)
+        self.assertTrue(selection.experimental)
+
+    def test_experimental_directx_failure_falls_back_to_qt(self):
+        calls: list[str] = []
+        router = BackendRouter()
+
+        def fail_directx() -> None:
+            calls.append("directx")
+            raise RuntimeError("device unavailable")
+
+        router.register_backend("qt", lambda: calls.append("qt"))
+        router.register_backend("directx", fail_directx)
+
+        selection = router.configure_selected_backend("directx")
+
+        self.assertEqual(calls, ["directx", "qt"])
+        self.assertTrue(selection.fallback_used)
+        self.assertEqual(selection.active_backend, "qt")
+        self.assertIn("device unavailable", selection.reason or "")
+        self.assertFalse(selection.experimental)
 
     def test_backend_initialization_error_falls_back_to_qt(self):
         calls: list[str] = []

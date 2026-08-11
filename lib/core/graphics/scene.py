@@ -130,6 +130,7 @@ class DrawScene:
                 alpha=request.alpha,
                 flipped=request.flipped,
                 scale=request.scale,
+                target_size=request.target_size,
                 layer=request.layer,
                 z=request.z,
                 order=request.order,

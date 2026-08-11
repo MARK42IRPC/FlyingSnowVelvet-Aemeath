@@ -15,6 +15,10 @@ def get_user_settings_path() -> Path:
     return get_user_root_dir() / "settings.json"
 
 
+def get_user_persona_path() -> Path:
+    return get_user_root_dir() / "persona.txt"
+
+
 def get_user_secrets_dir(*parts: str) -> Path:
     return get_user_root_dir().joinpath("secrets", *parts)
 

@@ -7,7 +7,7 @@ from config.ollama_config import AI_VOICE_MAX_CHARS_DEFAULT, OLLAMA
 from lib.core.event.center import Event, EventType
 from lib.core.logger import get_logger
 from lib.script.chat import bot_reply
-from .native_tools import default_native_tool_reply
+from .native_tools import default_native_tool_reply, native_tool_to_dispatch
 from .handler_auto_companion import AUTO_COMPANION_PROMPT
 
 logger = get_logger(__name__)
@@ -17,6 +17,10 @@ BUBBLE_MAX_TICKS = BUBBLE_CONFIG.get('default_max_ticks', 100)
 STREAM_FINAL_MIN_PER_CHAR = 3
 STREAM_FINAL_MIN_CAP = 300
 TOOL_MARKER_PATTERN = re.compile(r'###.*?###', re.S)
+FOLLOWUP_TOOL_MARKER_PATTERN = re.compile(
+    r'###\s*(?:回忆|窥屏)(?:[\s：:][^#]*)?###',
+    re.S,
+)
 TOPIC_MARKER_PATTERN = re.compile(r'^\s*///\s*([^/\r\n]{1,32}?)\s*//(?:/)?\s*', re.S)
 VOICE_SENTENCE_SPLIT_PATTERN = re.compile(r'(?<=[。！？!?…；;.!?])')
 _VOICE_CJK_PATTERN = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
@@ -150,6 +154,23 @@ def _should_emit_ai_voice(text: str) -> bool:
         return False
     return True
 
+
+def _voice_waits_for_tool_result(
+    text: str,
+    native_tool_call: dict | None = None,
+    *,
+    allow_tool_commands: bool = True,
+) -> bool:
+    """Return whether a tool will produce the response that should be spoken."""
+    if not allow_tool_commands:
+        return False
+    if native_tool_call is not None:
+        parsed = native_tool_to_dispatch(native_tool_call)
+        return parsed is not None and parsed[0] in {"回忆", "窥屏"}
+    normalized = str(text or '').replace('＃', '#')
+    return bool(FOLLOWUP_TOOL_MARKER_PATTERN.search(normalized))
+
+
 class ChatHandlerStreamPresenterMixin:
     def _on_stream_chunk(self, accumulated_text: str):
         """
@@ -282,7 +303,16 @@ class ChatHandlerStreamPresenterMixin:
                 logger.debug("[ChatHandler] 流式响应完毕（共 %d 字，final_min=%d）",
                              len(display_text), final_min_ticks)
 
-            voice_text = _build_ai_voice_text(display_text) if _should_emit_ai_voice(display_text) else ""
+            waits_for_tool_result = _voice_waits_for_tool_result(
+                text,
+                native_tool_call,
+                allow_tool_commands=allow_tool_commands,
+            )
+            voice_text = (
+                _build_ai_voice_text(display_text)
+                if not waits_for_tool_result and _should_emit_ai_voice(display_text)
+                else ""
+            )
             if voice_text:
                 self._event_center.publish(Event(EventType.AI_VOICE_REQUEST, {
                     "text": voice_text,
@@ -332,7 +362,7 @@ class ChatHandlerStreamPresenterMixin:
             if from_ai and not is_status_text
             else ""
         )
-        if voice_text:
+        if voice_text and not _voice_waits_for_tool_result(raw_text, native_tool_call):
             self._event_center.publish(Event(EventType.AI_VOICE_REQUEST, {
                 "text": voice_text,
                 "text_lang": _detect_ai_voice_language(voice_text),

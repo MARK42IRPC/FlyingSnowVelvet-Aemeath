@@ -42,6 +42,15 @@ if project_root not in sys.path:
 
 
 if __name__ == '__main__':
+    if len(sys.argv) >= 2 and sys.argv[1] == '--fsv-workbench-helper':
+        try:
+            import importlib
+
+            helper = importlib.import_module('lib.core.qt_bridge.workbench_helper')
+            sys.exit(helper.run_workbench_helper())
+        except Exception:
+            _show_startup_error('控制面板 helper 启动失败：\n\n' + traceback.format_exc())
+            sys.exit(1)
     if len(sys.argv) >= 3 and sys.argv[1] == '--fsv-update-helper':
         try:
             import json
