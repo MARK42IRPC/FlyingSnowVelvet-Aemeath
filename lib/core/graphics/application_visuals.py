@@ -22,6 +22,7 @@ from .commands import (
     TextCommand,
 )
 from .resources import ImageResource, RasterFrame
+from .rich_text_parser import TextSegment, parse_rich_text
 from .screen import clamp_rect_position
 from .types import Color, FontSpec, Point, Rect, Size
 
@@ -50,6 +51,7 @@ COMMAND_ACTION_BUTTONS = (
     ("close", "关闭桌宠", 80, 32),
     ("launch_wuwa", "启动鸣潮", 80, 32),
     ("chat_mode", "文字模式", 80, 32),
+    ("interaction_mode", "陪伴模式", 80, 32),
     ("more_functions", "更多功能", 80, 32),
 )
 
@@ -84,6 +86,11 @@ class BubbleTextMetrics(Protocol):
 
     def measure(self, text: str, *, digit: bool = False) -> float:
         ...
+
+    def measure_segment(self, segment: TextSegment) -> float:
+        """Measure a rich text segment with style and scale."""
+        base_width = self.measure(segment.text, digit=False)
+        return base_width * segment.scale
 
 
 class CommandHintTextMetrics(Protocol):
@@ -201,6 +208,54 @@ def _split_digit_segments(text: str) -> tuple[tuple[str, bool], ...]:
     return tuple(segments)
 
 
+def _contains_markdown(text: str) -> bool:
+    """检测文本是否包含 Markdown 或富文本标记."""
+    if not text:
+        return False
+    # 检测常见 Markdown 标记
+    markdown_patterns = ['**', '*', '`', '\\scale{']
+    return any(pattern in text for pattern in markdown_patterns)
+
+
+def _wrap_rich_text_lines(
+    segments_by_line: list[list[TextSegment]],
+    max_width: float,
+    metrics: BubbleTextMetrics,
+) -> tuple[tuple[TextSegment, ...], ...]:
+    """Wrap rich text segments into lines that fit within max_width."""
+    if max_width <= 0:
+        return ((),)
+
+    wrapped_lines: list[tuple[TextSegment, ...]] = []
+
+    for line_segments in segments_by_line:
+        if not line_segments:
+            wrapped_lines.append(())
+            continue
+
+        current_line: list[TextSegment] = []
+        current_width = 0.0
+
+        for segment in line_segments:
+            segment_width = metrics.measure_segment(segment)
+
+            # 如果当前段落可以放进当前行
+            if not current_line or current_width + segment_width <= max_width:
+                current_line.append(segment)
+                current_width += segment_width
+            else:
+                # 需要换行
+                if current_line:
+                    wrapped_lines.append(tuple(current_line))
+                current_line = [segment]
+                current_width = segment_width
+
+        if current_line:
+            wrapped_lines.append(tuple(current_line))
+
+    return tuple(wrapped_lines or ((),))
+
+
 def _wrap_bubble_lines(text: str, max_width: float, metrics: BubbleTextMetrics) -> tuple[str, ...]:
     if max_width <= 0:
         return ("",)
@@ -230,8 +285,127 @@ class BubbleVisualDescription:
 
     size: Size
     content_rect: Rect
-    lines: tuple[str, ...]
+    lines: tuple[str, ...] | tuple[tuple[TextSegment, ...], ...]
     batch: DrawBatch
+
+
+def _get_font_for_segment(segment: TextSegment, metrics: BubbleTextMetrics) -> FontSpec:
+    """根据 TextSegment 的样式返回对应的 FontSpec."""
+    base_font = metrics.default_font
+    font_size = int(base_font.size * segment.scale)
+
+    if segment.style == "bold":
+        return FontSpec(base_font.family, font_size, bold=True)
+    elif segment.style == "italic":
+        return FontSpec(base_font.family, font_size, italic=True)
+    elif segment.style == "bold_italic":
+        return FontSpec(base_font.family, font_size, bold=True, italic=True)
+    elif segment.style == "code":
+        # 代码使用等宽字体
+        return FontSpec("Consolas", font_size, bold=False)
+    else:
+        return FontSpec(base_font.family, font_size)
+
+
+def build_bubble_visual_rich(
+    text: str,
+    metrics: BubbleTextMetrics,
+    *,
+    max_width: float,
+    padding: float,
+    border_width: float,
+    align: str = "center",
+    layer: int = int(Layer.PET_UI),
+) -> BubbleVisualDescription:
+    """构建支持富文本的气泡视觉描述."""
+    max_width = max(1, int(round(float(max_width))))
+    padding = max(0, int(round(float(padding))))
+    border_width = max(1, int(round(float(border_width))))
+    content_width = max(1, max_width - border_width * 4)
+
+    # 解析富文本
+    parsed_lines = parse_rich_text(text)
+    lines = _wrap_rich_text_lines(parsed_lines, content_width, metrics)
+
+    line_height = max(
+        1.0,
+        float(metrics.default_line_height),
+        float(metrics.digit_line_height),
+    )
+
+    # 计算最大文本宽度
+    text_width = max(
+        (sum(metrics.measure_segment(seg) for seg in line) for line in lines),
+        default=0.0,
+    )
+
+    width = (
+        max_width
+        if len(lines) > 1
+        else max(1, int(round(min(text_width, content_width) + padding * 2)))
+    )
+    height = max(1, int(round(len(lines) * line_height + padding * 2)))
+    content = Rect(
+        border_width * 2,
+        border_width * 2,
+        max(0, width - border_width * 4),
+        max(0, height - border_width * 4),
+    )
+
+    border = _theme_color("border", Color(0, 0, 0))
+    middle = _theme_color("mid", Color(173, 216, 230))
+    background = _theme_color("bg", Color(255, 182, 193))
+    text_color = _theme_color("text", Color(0, 0, 0))
+    commands: list[object] = [
+        RectCommand(Rect(0, 0, width, height), fill=border, layer=layer),
+        RectCommand(
+            Rect(border_width, border_width, width - border_width * 2, height - border_width * 2),
+            fill=middle,
+            layer=layer,
+            z=1,
+        ),
+        RectCommand(content, fill=background, layer=layer, z=2),
+    ]
+
+    total_height = len(lines) * line_height
+    line_top = content.y + (content.height - total_height) / 2.0
+    max_ascent = max(float(metrics.default_ascent), float(metrics.digit_ascent))
+    max_descent = max(float(metrics.default_descent), float(metrics.digit_descent))
+    align_left = str(align or "center").lower() == "left"
+
+    for index, line in enumerate(lines):
+        line_width = sum(metrics.measure_segment(seg) for seg in line)
+        x = content.x if align_left else content.x + (content.width - line_width) / 2.0
+        line_y = line_top + index * line_height
+        target_baseline = line_y + (line_height + max_ascent - max_descent) / 2.0
+
+        for segment in line:
+            font = _get_font_for_segment(segment, metrics)
+            ascent = float(metrics.default_ascent) * segment.scale
+            descent = float(metrics.default_descent) * segment.scale
+            seg_width = metrics.measure_segment(segment)
+            seg_top = target_baseline - (line_height + ascent - descent) / 2.0
+
+            # 使用段落自定义颜色或默认文本颜色
+            seg_color = Color(*segment.color) if segment.color else text_color
+
+            commands.append(TextCommand(
+                segment.text,
+                font,
+                seg_color,
+                Rect(round(x), seg_top, seg_width, line_height * segment.scale),
+                alignment=int(TextAlignment.LEFT | TextAlignment.VCENTER),
+                layer=layer,
+                z=3,
+            ))
+            x += seg_width
+
+    return BubbleVisualDescription(
+        Size(width, height),
+        content,
+        lines,
+        DrawBatch(tuple(commands)),
+    )
 
 
 def build_bubble_visual(
@@ -243,8 +417,22 @@ def build_bubble_visual(
     border_width: float,
     align: str = "center",
     layer: int = int(Layer.PET_UI),
+    enable_rich_text: bool = True,
 ) -> BubbleVisualDescription:
     """Resolve Qt-baseline bubble layout into a backend-neutral batch."""
+    # 如果启用富文本且文本包含 Markdown 标记，使用富文本渲染
+    if enable_rich_text and _contains_markdown(text):
+        return build_bubble_visual_rich(
+            text,
+            metrics,
+            max_width=max_width,
+            padding=padding,
+            border_width=border_width,
+            align=align,
+            layer=layer,
+        )
+
+    # 否则使用原有的纯文本渲染
     max_width = max(1, int(round(float(max_width))))
     padding = max(0, int(round(float(padding))))
     border_width = max(1, int(round(float(border_width))))
@@ -611,6 +799,11 @@ class PortableBubbleTextMetrics:
                 factor = 1.0
             width += font.pixel_size * factor
         return width
+
+    def measure_segment(self, segment: TextSegment) -> float:
+        """Measure a rich text segment with style and scale."""
+        base_width = self.measure(segment.text, digit=False)
+        return base_width * segment.scale
 
 
 def create_portable_bubble_text_metrics() -> PortableBubbleTextMetrics:
@@ -1012,18 +1205,19 @@ def build_rect_action_button_visual(
 
 
 def resolve_command_action_panel_layout(command_rect: Rect) -> CommandActionPanelLayout:
-    """Resolve the Qt-baseline two-row action panel around the command box."""
+    """Resolve the Qt-baseline three-row action panel around the command box."""
     x = float(command_rect.x)
     y = float(command_rect.y)
     top = y - 34
     upper = (("clickthrough", 0, 80), ("scale_up", 80, 40),
              ("scale_down", 120, 40), ("close", 160, 80))
-    lower = (("launch_wuwa", 0, 80), ("chat_mode", 80, 80),
-             ("more_functions", 160, 80))
+    middle = (("launch_wuwa", 0, 80), ("chat_mode", 80, 80),
+              ("interaction_mode", 160, 80))
     rects = [(name, Rect(x + offset, top, width, 32)) for name, offset, width in upper]
-    rects.extend((name, Rect(x + offset, y - 66, width, 32)) for name, offset, width in lower)
+    rects.extend((name, Rect(x + offset, y - 66, width, 32)) for name, offset, width in middle)
+    rects.append(("more_functions", Rect(x, y - 98, 80, 32)))
     width = max((rect.x + rect.width for _, rect in rects), default=x) - x
-    return CommandActionPanelLayout(Size(width, 64), tuple(rects))
+    return CommandActionPanelLayout(Size(width, 96), tuple(rects))
 
 
 def build_command_action_panel_visual(
@@ -1031,12 +1225,16 @@ def build_command_action_panel_visual(
     *,
     hovered: str = "",
     pressed: str = "",
+    interaction_mode: str = "companion",
     layer: int = int(Layer.PET_UI),
 ) -> CommandActionPanelVisual:
     layout = resolve_command_action_panel_layout(command_rect)
     origin_x = min((rect.x for _name, rect in layout.rects), default=0.0)
     origin_y = min((rect.y for _name, rect in layout.rects), default=0.0)
     labels = {name: text for name, text, _w, _h in COMMAND_ACTION_BUTTONS}
+    labels["interaction_mode"] = (
+        "办公模式" if str(interaction_mode).lower() == "office" else "陪伴模式"
+    )
     sizes = {name: (w, h) for name, _text, w, h in COMMAND_ACTION_BUTTONS}
     commands: list[object] = []
     for name, rect in layout.rects:

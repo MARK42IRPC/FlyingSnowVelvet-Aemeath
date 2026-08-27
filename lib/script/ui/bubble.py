@@ -29,6 +29,7 @@ from lib.core.graphics.application_visuals import (
     resolve_bubble_geometry,
 )
 from lib.core.graphics.types import FontSpec, Point, Rect, Size
+from lib.core.graphics.rich_text_parser import TextSegment
 from lib.core.voice.ams_bug import AmsBugSound
 
 _logger = get_logger(__name__)
@@ -40,6 +41,7 @@ class _QtBubbleTextMetrics:
     def __init__(self, default_font, digit_font):
         self._default_metrics = QFontMetrics(default_font)
         self._digit_metrics = QFontMetrics(digit_font)
+        self._default_font_qt = default_font
         self.default_font = FontSpec(
             default_font.family(),
             default_font.pixelSize(),
@@ -61,15 +63,48 @@ class _QtBubbleTextMetrics:
         metrics = self._digit_metrics if digit else self._default_metrics
         return float(metrics.horizontalAdvance(str(text or "")))
 
+    def measure_segment(self, segment: TextSegment) -> float:
+        """Measure a rich text segment with style and scale."""
+        from PyQt5.QtGui import QFont
+
+        # 创建带样式的字体
+        font = QFont(self._default_font_qt)
+        font.setPixelSize(int(font.pixelSize() * segment.scale))
+
+        if segment.style == "bold":
+            font.setBold(True)
+        elif segment.style == "italic":
+            font.setItalic(True)
+        elif segment.style == "bold_italic":
+            font.setBold(True)
+            font.setItalic(True)
+        elif segment.style == "code":
+            font.setFamily("Consolas")
+
+        metrics = QFontMetrics(font)
+        return float(metrics.horizontalAdvance(segment.text))
+
 
 class BubbleInfo:
     """气泡信息"""
-    def __init__(self, text: str, min_ticks: int, max_ticks: int, align: str = 'center'):
+    def __init__(
+        self,
+        text: str,
+        min_ticks: int,
+        max_ticks: int,
+        align: str = 'center',
+        source: str = '',
+        task_id: str = '',
+        kind: str = '',
+    ):
         self.text = text
         self.min_ticks = min_ticks
         self.max_ticks = max_ticks
         self.elapsed_ticks = 0
         self.align = align  # 'left' | 'center'
+        self.source = str(source or '')
+        self.task_id = str(task_id or '')
+        self.kind = str(kind or '')
 
 
 class Bubble(QWidget):
@@ -137,6 +172,8 @@ class Bubble(QWidget):
         # 订阅事件
         self._event_center.subscribe(EventType.TICK, self._on_tick)
         self._event_center.subscribe(EventType.INFORMATION, self._on_information)
+        self._event_center.subscribe(EventType.UI_BUBBLE_HIDE, self._on_bubble_hide)
+        self._event_center.subscribe(EventType.UI_BUBBLE_REMOVE, self._on_bubble_remove)
         self._event_center.subscribe(EventType.LOG_ERROR, self._on_log_error)
         self._event_center.subscribe(EventType.UI_CREATE, self._on_ui_create)
         self._event_center.subscribe(EventType.UI_ANCHOR_RESPONSE, self._on_anchor_response)
@@ -319,9 +356,34 @@ class Bubble(QWidget):
         align     = event.data.get('align', 'center')
         particle  = event.data.get('particle', True)  # 默认 True：替换气泡时触发上淡出粒子
         force_replace = bool(event.data.get('force_replace', False))
+        source = event.data.get('source', '')
+        task_id = event.data.get('task_id', '')
+        kind = event.data.get('kind', '')
 
         if text:
-            self.add_bubble(text, min_ticks, max_ticks, align, particle, force_replace)
+            self.add_bubble(
+                text,
+                min_ticks,
+                max_ticks,
+                align,
+                particle,
+                force_replace,
+                source=source,
+                task_id=task_id,
+                kind=kind,
+            )
+
+    def _on_bubble_remove(self, event: Event) -> None:
+        data = event.data if isinstance(event.data, dict) else {}
+        self.remove_bubbles(
+            source=data.get('source', ''),
+            task_id=data.get('task_id', ''),
+            kind=data.get('kind', ''),
+        )
+
+    def _on_bubble_hide(self, event: Event) -> None:
+        del event
+        self.clear_queue()
 
     def _on_log_error(self, event: Event):
         """ERROR/CRITICAL 日志触发报错语音。"""
@@ -360,7 +422,8 @@ class Bubble(QWidget):
 
     def add_bubble(self, text: str, min_ticks: int, max_ticks: int,
                    align: str = 'center', particle: bool = True,
-                   force_replace: bool = False):
+                   force_replace: bool = False, *, source: str = '',
+                   task_id: str = '', kind: str = ''):
         """
         添加气泡到队列
 
@@ -376,21 +439,33 @@ class Bubble(QWidget):
         if force_replace:
             # 清空待显示队列，立即显示此气泡（高优先级）
             self._pending_queue.clear()
-            self._replace_bubble(text, min_ticks, max_ticks, align, particle)
+            self._replace_bubble(
+                text, min_ticks, max_ticks, align, particle,
+                source=source, task_id=task_id, kind=kind,
+            )
             return
 
         # 如果当前没有气泡，直接显示
         if not self._current_bubble:
-            self._replace_bubble(text, min_ticks, max_ticks, align, particle)
+            self._replace_bubble(
+                text, min_ticks, max_ticks, align, particle,
+                source=source, task_id=task_id, kind=kind,
+            )
             return
 
         # 检查是否达到最小显示时间
         if self._current_bubble.elapsed_ticks >= self._current_bubble.min_ticks:
             # 达到最小显示时间，可以替换
-            self._replace_bubble(text, min_ticks, max_ticks, align, particle)
+            self._replace_bubble(
+                text, min_ticks, max_ticks, align, particle,
+                source=source, task_id=task_id, kind=kind,
+            )
         else:
             # 未达到最小显示时间，将新气泡加入队列
-            self._pending_queue.append((text, min_ticks, max_ticks, align, particle))
+            self._pending_queue.append((
+                text, min_ticks, max_ticks, align, particle,
+                str(source or ''), str(task_id or ''), str(kind or ''),
+            ))
 
     def _show_next_bubble_from_queue(self):
         """从队列中取出下一个气泡并显示（当前气泡已达 min_ticks）"""
@@ -398,17 +473,26 @@ class Bubble(QWidget):
             return
 
         # 取出队列中的第一个气泡
-        text, min_ticks, max_ticks, align, particle = self._pending_queue.pop(0)
-        self._replace_bubble(text, min_ticks, max_ticks, align, particle)
+        item = self._pending_queue.pop(0)
+        text, min_ticks, max_ticks, align, particle, source, task_id, kind = item
+        self._replace_bubble(
+            text, min_ticks, max_ticks, align, particle,
+            source=source, task_id=task_id, kind=kind,
+        )
 
     def _try_show_next_in_queue(self):
         """当前没有气泡时，尝试显示队列中的下一个"""
         if self._pending_queue and not self._current_bubble:
-            text, min_ticks, max_ticks, align, particle = self._pending_queue.pop(0)
-            self._replace_bubble(text, min_ticks, max_ticks, align, particle)
+            item = self._pending_queue.pop(0)
+            text, min_ticks, max_ticks, align, particle, source, task_id, kind = item
+            self._replace_bubble(
+                text, min_ticks, max_ticks, align, particle,
+                source=source, task_id=task_id, kind=kind,
+            )
 
     def _replace_bubble(self, text: str, min_ticks: int, max_ticks: int,
-                        align: str = 'center', particle: bool = True):
+                        align: str = 'center', particle: bool = True, *,
+                        source: str = '', task_id: str = '', kind: str = ''):
         """
         替换当前气泡的文字和计时参数
 
@@ -439,7 +523,10 @@ class Bubble(QWidget):
             }))
 
         # 创建新的气泡信息
-        self._current_bubble = BubbleInfo(text, min_ticks, max_ticks, align)
+        self._current_bubble = BubbleInfo(
+            text, min_ticks, max_ticks, align,
+            source=source, task_id=task_id, kind=kind,
+        )
 
         # 调整窗口大小
         self.adjust_size_to_text(text)
@@ -604,6 +691,51 @@ class Bubble(QWidget):
         self._pending_queue.clear()
         if self._visible:
             self.hide_bubble()
+
+    @staticmethod
+    def _metadata_matches(
+        source: str,
+        task_id: str,
+        kind: str,
+        *,
+        item_source: str,
+        item_task_id: str,
+        item_kind: str,
+    ) -> bool:
+        return (
+            (not source or item_source == str(source))
+            and (not task_id or item_task_id == str(task_id))
+            and (not kind or item_kind == str(kind))
+        )
+
+    def remove_bubbles(self, *, source: str = '', task_id: str = '', kind: str = '') -> None:
+        """按元数据撤销气泡，不影响其它来源的消息。"""
+        self._pending_queue = [
+            item for item in self._pending_queue
+            if not self._metadata_matches(
+                source,
+                task_id,
+                kind,
+                item_source=item[5],
+                item_task_id=item[6],
+                item_kind=item[7],
+            )
+        ]
+        current = self._current_bubble
+        if current is None or not self._metadata_matches(
+            source,
+            task_id,
+            kind,
+            item_source=current.source,
+            item_task_id=current.task_id,
+            item_kind=current.kind,
+        ):
+            return
+        if self._visible:
+            self.hide_bubble()
+        else:
+            self._current_bubble = None
+            self._try_show_next_in_queue()
 
     def mousePressEvent(self, event):
         """鼠标点击事件 - 左键关闭，右键复制并关闭"""

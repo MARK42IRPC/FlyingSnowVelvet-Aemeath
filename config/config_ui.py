@@ -42,8 +42,8 @@ UI = {
     'render_backend': 'qt',           # 渲染后端（重启后生效）
 }
 BUBBLE_CONFIG = {
-    'default_min_ticks':  2,      # 默认最小显示 tick 数
-    'default_max_ticks': 100,     # 默认最大显示 tick 数
+    'default_min_ticks':  4,      # 默认最小显示 tick 数
+    'default_max_ticks': 200,     # 默认最大显示 tick 数
     'padding':            scale_px(12),  # 气泡内边距（像素）
     'border_width':       scale_px(2),   # 边框宽度（像素）
     # 默认人格文件路径
