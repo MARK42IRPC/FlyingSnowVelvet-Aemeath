@@ -193,7 +193,6 @@ _MANUAL_CONTRIBUTION_RECORDS = [
         "url": "https://mc.kurogames.com/",
     },
 ]
-_CONTRIBUTION_ROLE_OVERRIDES = {}
 _GENERAL_CONFIG_CATEGORIES = GENERAL_CONFIG_CATEGORIES
 
 _CATEGORY_KEY_ALLOWLIST = {
@@ -1151,10 +1150,6 @@ def _load_contribution_records() -> list[dict[str, str]]:
             role = str(record.get("role") or "").strip()
             if role in _CONTRIBUTION_HIDDEN_ROLES:
                 continue
-            url = str(record.get("url") or "").strip()
-            override_role = _CONTRIBUTION_ROLE_OVERRIDES.get(url)
-            if override_role:
-                record["role"] = override_role
             filtered_records.append(record)
 
         for manual in _MANUAL_CONTRIBUTION_RECORDS:

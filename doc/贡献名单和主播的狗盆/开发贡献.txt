@@ -41,9 +41,6 @@
 贡献:爱弥斯语音模型-Depthscaper
 ===https://space.bilibili.com/347135954
 
-贡献:yuanbao-free-api-元宝 OpenAI 兼容中转服务-chenwr727
-===https://github.com/chenwr727/yuanbao-free-api
-
 贡献:素材/形象来源-鸣潮
 ===https://mc.kurogames.com/
 
