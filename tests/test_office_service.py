@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from lib.core.event.center import Event, EventType, cleanup_event_center
+from lib.core.event.center import Event, EventType, cleanup_event_center, get_event_center
 from lib.core.hash_cmd_registry import get_hash_cmd_registry
 from lib.script.office.contracts import InteractionMode, OfficeTaskStatus
 from lib.script.office.ipc import OfficeFileIpc
@@ -106,6 +106,19 @@ class OfficeServiceLifecycleTests(unittest.TestCase):
                 "new",
                 [name for name, _usage, _description in get_hash_cmd_registry().get_all()],
             )
+
+    def test_ipc_polling_starts_after_backend_application_exists(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            service, scheduler, _store, _ipc = self._service(Path(tmpdir))
+            self.addCleanup(service.cleanup)
+
+            ipc_timer = service._ipc_timer
+            self.assertFalse(ipc_timer.active)
+
+            get_event_center().publish(Event(EventType.APP_PRE_START, {}))
+
+            self.assertTrue(ipc_timer.active)
+            self.assertEqual(ipc_timer.interval_ms, 250)
 
     def test_completed_task_releases_stream_buffer_and_clears_stream_text(self):
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -7,8 +7,6 @@ import re
 import threading
 from pathlib import Path
 
-from PyQt5.QtCore import QTimer
-
 from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import Event, EventType, get_event_center
 from lib.core.hash_cmd_registry import get_hash_cmd_registry
@@ -126,22 +124,24 @@ class OfficeService:
         self._event_center.subscribe(EventType.INPUT_HASH, self._on_hash_command)
         self._event_center.subscribe(EventType.OFFICE_RUNTIME_EVENT, self._on_runtime_event)
         self._event_center.subscribe(EventType.INTERACTION_MODE_CHANGED, self._on_mode_changed)
+        self._event_center.subscribe(EventType.APP_PRE_START, self._on_app_pre_start)
         get_hash_cmd_registry().register(
             _OFFICE_NEW_COMMAND,
             "",
             "创建新的办公对话",
         )
-        # QTimer 必须在 QApplication 存在后 start，否则事件循环启动后也不会触发。
-        # 桌面进程在 ApplicationState.__init__ 里创建本服务时 QApplication 尚未建立，
-        # 因此延迟到事件循环第一拍再启动 IPC 轮询。
-        QTimer.singleShot(0, self._start_ipc_polling)
         self._flush_state()
+
+    def _on_app_pre_start(self, _event: Event) -> None:
+        # The backend application exists at APP_PRE_START, so toolkit-backed
+        # schedulers can safely arm their timers here.
+        self._start_ipc_polling()
 
     def _start_ipc_polling(self) -> None:
         with self._lock:
-            if self._cleaned:
+            if self._cleaned or self._ipc_timer.active:
                 return
-        self._ipc_timer.start(250)
+            self._ipc_timer.start(250)
 
     @property
     def workspace(self) -> Path:
@@ -862,6 +862,7 @@ class OfficeService:
         self._event_center.unsubscribe(EventType.INPUT_HASH, self._on_hash_command)
         self._event_center.unsubscribe(EventType.OFFICE_RUNTIME_EVENT, self._on_runtime_event)
         self._event_center.unsubscribe(EventType.INTERACTION_MODE_CHANGED, self._on_mode_changed)
+        self._event_center.unsubscribe(EventType.APP_PRE_START, self._on_app_pre_start)
         get_hash_cmd_registry().unregister(_OFFICE_NEW_COMMAND)
         self._ipc_timer.stop()
         self._state_timer.stop()

@@ -2906,6 +2906,7 @@ class AISettingsPanel(QWidget):
                 role_label.setProperty("preserveCustomFont", True)
                 role_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
                 role_label.setWordWrap(True)
+                role_label.setMinimumHeight(role_label.sizeHint().height())
                 role_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
                 text_layout.addWidget(role_label, 0, Qt.AlignLeft)
 
