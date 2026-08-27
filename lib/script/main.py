@@ -25,6 +25,12 @@ from lib.core.tray_host import TrayCommand, TrayMenuState
 from lib.script.chat.ollama import get_ollama_manager, cleanup_ollama_manager
 from lib.script.chat.handler import get_chat_handler, cleanup_chat_handler
 from lib.script.chat.memory import get_stream_memory, cleanup_stream_memory
+from lib.script.office import (
+    cleanup_interaction_mode_service,
+    cleanup_office_service,
+    get_interaction_mode_service,
+    get_office_service,
+)
 from lib.script.tool_dispatcher import get_tool_dispatcher, cleanup_tool_dispatcher
 from lib.script.gsvmove import get_gsvmove_service, cleanup_gsvmove_service
 from lib.script.yuanbao_free_api import get_yuanbao_free_api_service, cleanup_yuanbao_free_api_service
@@ -147,14 +153,19 @@ class ApplicationState:
         # CmdCenter 在事件中心初始化后立即注册，确保捕获所有输入事件
         self._cmd_center = get_cmd_center()
 
+        # 普通文本先经过交互模式路由；办公服务与聊天服务各自持有独立调度器。
+        self._interaction_mode = get_interaction_mode_service()
+        self._office = get_office_service(scheduler=scheduler_factory())
+
         # OllamaManager 需在 APP_PRE_START 前注册（订阅该事件以尝试启动服务）。
         # 调度器和截图服务只在桌面组合边界创建，聊天业务模块仅依赖核心协议。
         get_ollama_manager(scheduler=scheduler_factory())
         self._chat_handler = get_chat_handler(
             scheduler=scheduler_factory(),
             screen_capture=screen_capture_factory(),
+            mode_service=self._interaction_mode,
         )
-        self._stream_memory = get_stream_memory()
+        self._stream_memory = get_stream_memory(mode_service=self._interaction_mode)
 
         # 订阅事件
         self._event_center.subscribe(EventType.APP_PRE_START, self._on_pre_start)
@@ -212,7 +223,7 @@ class ApplicationState:
         self._cleanup_handler = get_cleanup_handler()
 
         # ── 初始化工具调度器 ────────────────────────────────────────────
-        self._tool_dispatcher = get_tool_dispatcher()
+        self._tool_dispatcher = get_tool_dispatcher(mode_service=self._interaction_mode)
 
         self._game_mode.configure_runtime(self._pet, self._particles, self._effects)
         self._application_ui.prepare_runtime()
@@ -252,6 +263,20 @@ class ApplicationState:
         logger.info('  右键点击 → 打开/关闭 CMD 输入框')
         logger.info('  鼠标悬停 → 显示关闭按钮（右上角）')
         logger.info('  系统托盘 → 右键菜单退出')
+
+        # 办公模式启动预热
+        self._warmup_office_runtime_if_enabled()
+
+    def _warmup_office_runtime_if_enabled(self) -> None:
+        """如果启用了办公模式启动预热，则在桌宠启动时预热运行时。"""
+        try:
+            import config.ollama_config as oc
+            if not oc.OFFICE_MODE.get("warmup_on_startup", True):
+                return
+            logger.info("[Office] 启动预热已启用，开始预热办公运行时")
+            self._office.warmup_runtime()
+        except Exception as exc:
+            logger.debug("[Office] 启动预热失败: %s", exc)
 
     def _on_tray_quit(self):
         """托盘菜单退出回调"""
@@ -649,6 +674,8 @@ class ApplicationState:
         cleanup_chat_handler()
         cleanup_stream_memory()
         cleanup_tool_dispatcher()
+        cleanup_office_service()
+        cleanup_interaction_mode_service()
         cleanup_game_mode_service()
         cleanup_ollama_manager()
         cleanup_cmd_center()

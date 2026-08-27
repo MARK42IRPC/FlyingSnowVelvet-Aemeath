@@ -71,6 +71,7 @@ def load_ai_values(default_values: dict) -> dict:
         "office_api_key": str(disk_secrets.get("office_api_key", oc.OFFICE_MODE.get("api_key", "")) or ""),
         "office_api_base_url": str(oc.OFFICE_MODE.get("api_base_url", "") or ""),
         "office_api_model": str(oc.OFFICE_MODE.get("api_model", "gpt-5.4") or ""),
+        "office_warmup_on_startup": bool(oc.OFFICE_MODE.get("warmup_on_startup", True)),
     })
     return values
 
@@ -134,6 +135,7 @@ def apply_ai_runtime(values: dict, default_values: dict) -> None:
     oc.OFFICE_MODE["api_key"] = values["office_api_key"]
     oc.OFFICE_MODE["api_base_url"] = values["office_api_base_url"]
     oc.OFFICE_MODE["api_model"] = values["office_api_model"]
+    oc.OFFICE_MODE["warmup_on_startup"] = values["office_warmup_on_startup"]
 
     try:
         from lib.script.chat.ollama import get_ollama_manager

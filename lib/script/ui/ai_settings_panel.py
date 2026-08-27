@@ -163,6 +163,7 @@ _DEFAULT_VALUES = {
     "office_api_key": "",
     "office_api_base_url": "",
     "office_api_model": "gpt-5.4",
+    "office_warmup_on_startup": True,
 }
 
 _WATERMARK_TEXT = "Aemeath\nAIsetting"
@@ -2139,6 +2140,14 @@ class AISettingsPanel(QWidget):
             "办公模式独立使用的外部接口模型名，例如 gpt-5.4。可探测 OpenAI 兼容接口的 /models 列表，也可直接手动输入。",
         )
         self._set_widget_description(self._probe_office_api_models_btn, "使用当前填写的办公接口地址和密钥探测可用模型列表。")
+
+        self._office_warmup_on_startup = QCheckBox("启动时预热")
+        form.addRow("", self._office_warmup_on_startup)
+        self._set_form_row_description(
+            form,
+            self._office_warmup_on_startup,
+            "启用后，桌宠启动时自动预热办公运行时，减少首次任务的等待时间。",
+        )
 
         self._office_use_independent_api.toggled.connect(self._update_office_mode_fields_visibility)
         self._update_office_mode_fields_visibility()
@@ -4947,6 +4956,7 @@ class AISettingsPanel(QWidget):
             "office_api_key": str(self._office_api_key.raw_text()).strip(),
             "office_api_base_url": str(self._office_api_base_url.text()).strip(),
             "office_api_model": str(self._office_api_model.currentText()).strip(),
+            "office_warmup_on_startup": bool(self._office_warmup_on_startup.isChecked()),
         }
         values.update(self._collect_hidden_yuanbao_values())
         self._validate_ai_values(values)
@@ -5017,6 +5027,7 @@ class AISettingsPanel(QWidget):
         self._office_api_base_url.setText(str(values.get("office_api_base_url", "")))
         self._sync_office_api_provider_selection()
         self._office_api_model.setCurrentText(str(values.get("office_api_model", "gpt-5.4")))
+        self._office_warmup_on_startup.setChecked(bool(values.get("office_warmup_on_startup", True)))
 
         mode_value = str(values.get("force_reply_mode", "") or "").strip()
         idx = self._force_mode.findData(mode_value)

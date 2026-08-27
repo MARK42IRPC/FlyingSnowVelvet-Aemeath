@@ -206,6 +206,7 @@ OFFICE_MODE = {
     'api_key': '',                   # 办公模式独立接口密钥
     'api_base_url': '',              # 办公模式独立接口地址
     'api_model': 'gpt-5.4',          # 办公模式独立接口模型
+    'warmup_on_startup': True,       # 启动时预热运行时
 }
 
 # ============================================================
@@ -253,6 +254,7 @@ _AI_SETTING_DEFAULTS = {
     'office_api_key': OFFICE_MODE['api_key'],
     'office_api_base_url': OFFICE_MODE['api_base_url'],
     'office_api_model': OFFICE_MODE['api_model'],
+    'office_warmup_on_startup': OFFICE_MODE['warmup_on_startup'],
 }
 
 
@@ -416,6 +418,11 @@ def _apply_ai_setting_values(values: dict) -> None:
     interval_minutes = int(values['auto_companion_interval_minutes'])
     AUTO_COMPANION['interval_minutes'] = interval_minutes
     AUTO_COMPANION['interval_ms'] = (interval_minutes * 60000, interval_minutes * 60000)
+    OFFICE_MODE['use_independent_api'] = values.get('office_use_independent_api', False)
+    OFFICE_MODE['api_key'] = values.get('office_api_key', '')
+    OFFICE_MODE['api_base_url'] = values.get('office_api_base_url', '')
+    OFFICE_MODE['api_model'] = values.get('office_api_model', 'gpt-5.4')
+    OFFICE_MODE['warmup_on_startup'] = values.get('office_warmup_on_startup', True)
 
 
 migrate_section_once(
