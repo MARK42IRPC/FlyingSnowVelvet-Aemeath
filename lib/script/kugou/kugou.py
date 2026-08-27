@@ -18,7 +18,7 @@ from typing import Any
 import requests
 
 from lib.core.logger import get_logger
-from lib.script.browser_auth import launch_playwright_chromium
+from lib.script.browser_auth import launch_playwright_edge
 
 logger = get_logger(__name__)
 
@@ -324,7 +324,7 @@ class KugouClient:
         playwright = None
         try:
             playwright = sync_playwright().start()
-            browser = launch_playwright_chromium(playwright, headless=True)
+            browser = launch_playwright_edge(playwright, headless=True)
             context = browser.new_context(locale="zh-CN", viewport={"width": 1280, "height": 900})
             cookie_items = self._build_browser_cookie_items()
             if cookie_items:

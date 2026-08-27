@@ -19,6 +19,33 @@ class VoiceWorkerError(RuntimeError):
     pass
 
 
+def _get_cuda_nvidia_bin_dirs(python_path: Path) -> tuple[Path, ...]:
+    """Return pip-installed NVIDIA DLL directories for an isolated venv."""
+    site_packages = Path(python_path).resolve().parent.parent / "Lib" / "site-packages"
+    nvidia_root = site_packages / "nvidia"
+    try:
+        return tuple(
+            sorted(
+                path
+                for path in nvidia_root.glob("*/bin")
+                if path.is_dir()
+            )
+        )
+    except OSError:
+        return ()
+
+
+def _preload_onnxruntime_dlls(provider: str, runtime_module=None) -> None:
+    """Load CUDA DLLs before importing the project or creating model sessions."""
+    if provider != "cuda":
+        return
+    if runtime_module is None:
+        import onnxruntime as runtime_module
+    preload = getattr(runtime_module, "preload_dlls", None)
+    if callable(preload):
+        preload()
+
+
 def _terminate_worker_process_tree(process: subprocess.Popen) -> None:
     if process.poll() is not None:
         return
@@ -61,7 +88,7 @@ class VoiceWorkerRuntime:
         python_path: Path,
         isolate_user_site: bool = False,
     ) -> None:
-        if provider not in {"cpu", "hybrid"}:
+        if provider not in {"cpu", "hybrid", "cuda"}:
             raise ValueError(f"不支持的 ONNX Worker Provider：{provider}")
         self.provider = provider
         self.package_root = Path(package_root).resolve()
@@ -80,11 +107,17 @@ class VoiceWorkerRuntime:
         env["PYTHONIOENCODING"] = "utf-8"
         if isolate_user_site:
             env["PYTHONNOUSERSITE"] = "1"
-        env["PATH"] = os.pathsep.join(
+        path_entries = [
             entry
             for entry in str(env.get("PATH") or "").split(os.pathsep)
             if "pyqt5\\qt5\\bin" not in entry.replace("/", "\\").lower()
-        )
+        ]
+        if provider == "cuda":
+            path_entries = [
+                str(path)
+                for path in _get_cuda_nvidia_bin_dirs(Path(python_path))
+            ] + path_entries
+        env["PATH"] = os.pathsep.join(path_entries)
         creationflags = (
             getattr(subprocess, "CREATE_NO_WINDOW", 0)
             | getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0)
@@ -271,6 +304,24 @@ class HybridVoiceWorkerRuntime(VoiceWorkerRuntime):
         )
 
 
+class CudaVoiceWorkerRuntime(VoiceWorkerRuntime):
+    def __init__(self, package_root: Path, output_root: Path) -> None:
+        from config.voice_runtime import (
+            get_cuda_python_path,
+            is_cuda_runtime_ready,
+        )
+
+        if not is_cuda_runtime_ready():
+            raise VoiceWorkerError("NVIDIA CUDA 语音运行时未安装，请重新运行安装依赖")
+        super().__init__(
+            package_root,
+            output_root,
+            provider="cuda",
+            python_path=get_cuda_python_path(),
+            isolate_user_site=True,
+        )
+
+
 def _write_protocol(stream, payload: dict) -> None:
     stream.write(json.dumps(payload, ensure_ascii=False) + "\n")
     stream.flush()
@@ -293,7 +344,8 @@ def _run_worker(package_root: Path, output_root: Path, provider: str) -> int:
         with contextlib.redirect_stdout(sys.stderr):
             # Load ORT before project configuration so Qt's bundled DLLs cannot
             # shadow the execution provider's native dependencies.
-            import onnxruntime as _onnxruntime_preload  # noqa: F401
+            import onnxruntime as _onnxruntime_preload
+            _preload_onnxruntime_dlls(provider, _onnxruntime_preload)
 
             from lib.script.gsvmove.onnx_runtime import OnnxVoiceRuntime
 
@@ -336,7 +388,7 @@ def _run_worker(package_root: Path, output_root: Path, provider: str) -> int:
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--worker", action="store_true")
-    parser.add_argument("--provider", choices=("cpu", "hybrid"))
+    parser.add_argument("--provider", choices=("cpu", "hybrid", "cuda"))
     parser.add_argument("--package-root", type=Path)
     parser.add_argument("--output-root", type=Path)
     return parser.parse_args()

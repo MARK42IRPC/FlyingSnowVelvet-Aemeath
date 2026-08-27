@@ -2,6 +2,7 @@ import math
 import queue
 import threading
 import unittest
+from unittest.mock import Mock
 
 import numpy as np
 
@@ -12,6 +13,7 @@ from lib.script.microphone_stt.service import (
     _split_pcm16_frames,
     denoise_pcm16,
 )
+from lib.core.event.center import Event, EventType
 
 
 class MicrophoneDenoiseTests(unittest.TestCase):
@@ -77,6 +79,30 @@ class MicrophoneDenoiseTests(unittest.TestCase):
         self.assertEqual(options.block_size, 320)
         self.assertEqual(options.vad_mode, 2)
         self.assertEqual(options.pre_roll_ms, 300)
+
+    def test_auto_only_stop_does_not_interrupt_manual_listening(self):
+        service = object.__new__(MicrophoneSttService)
+        service._lock = threading.RLock()
+        service._current_options = MicrophoneSttOptions(auto_mode=False)
+        service.stop_listening = Mock()
+
+        event = Event(EventType.MIC_STT_STOP, {"auto_only": True})
+        service._on_stop_request(event)
+
+        service.stop_listening.assert_not_called()
+        self.assertTrue(event.handled)
+
+    def test_auto_only_stop_interrupts_auto_listening_or_startup(self):
+        service = object.__new__(MicrophoneSttService)
+        service._lock = threading.RLock()
+        service._current_options = MicrophoneSttOptions(auto_mode=True)
+        service.stop_listening = Mock()
+
+        event = Event(EventType.MIC_STT_STOP, {"auto_only": True})
+        service._on_stop_request(event)
+
+        service.stop_listening.assert_called_once_with()
+        self.assertTrue(event.handled)
 
     def test_offline_recognition_collects_final_text_only(self):
         class FakeRecognizer:

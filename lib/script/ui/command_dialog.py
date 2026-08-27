@@ -41,7 +41,7 @@ class CommandDialog(QWidget):
     使用事件系统获取锚点位置，由全局帧事件驱动位置刷新。
     """
 
-    def __init__(self, on_command, bubble=None, close_button=None, clickthrough_button=None, hint_box=None, scale_up_button=None, scale_down_button=None, launch_wuwa_button=None, chat_mode_button=None, more_functions_button=None):
+    def __init__(self, on_command, bubble=None, close_button=None, clickthrough_button=None, hint_box=None, scale_up_button=None, scale_down_button=None, launch_wuwa_button=None, chat_mode_button=None, interaction_mode_button=None, more_functions_button=None):
         super().__init__()
         self.setWindowFlags(
             Qt.Tool
@@ -60,6 +60,7 @@ class CommandDialog(QWidget):
         self._scale_down_button = scale_down_button  # 引用缩小按钮
         self._launch_wuwa_button = launch_wuwa_button  # 引用启动鸣潮按钮
         self._chat_mode_button = chat_mode_button  # 语音/文字模式切换按钮
+        self._interaction_mode_button = interaction_mode_button  # 陪伴/办公路由切换按钮
         self._more_functions_button = more_functions_button  # 更多功能按钮
 
         # 输入框
@@ -257,6 +258,8 @@ class CommandDialog(QWidget):
                 self._launch_wuwa_button.fade_out()
             if self._chat_mode_button:
                 self._chat_mode_button.fade_out()
+            if self._interaction_mode_button:
+                self._interaction_mode_button.fade_out()
             if self._more_functions_button:
                 self._more_functions_button.fade_out()
             # 同时隐藏命令提示框
@@ -298,6 +301,8 @@ class CommandDialog(QWidget):
                     self._launch_wuwa_button.fade_in()
                 if self._chat_mode_button:
                     self._chat_mode_button.fade_in()
+                if self._interaction_mode_button:
+                    self._interaction_mode_button.fade_in()
                 if self._more_functions_button:
                     self._more_functions_button.fade_in()
                 if self._hint_box:
@@ -344,6 +349,8 @@ class CommandDialog(QWidget):
                     self._launch_wuwa_button.fade_in()
                 if self._chat_mode_button:
                     self._chat_mode_button.fade_in()
+                if self._interaction_mode_button:
+                    self._interaction_mode_button.fade_in()
                 if self._more_functions_button:
                     self._more_functions_button.fade_in()
                 if self._hint_box:
@@ -547,7 +554,7 @@ class CommandDialog(QWidget):
                 return  # 无命令名且提示框无选中项，忽略
             event = Event(EventType.INPUT_HASH, {'text': text, 'raw': raw})
         else:
-            event = Event(EventType.INPUT_CHAT, {'text': raw, 'raw': raw})
+            event = Event(EventType.INPUT_TEXT, {'text': raw, 'raw': raw})
 
         self._event_center.publish(event)
 
@@ -569,7 +576,7 @@ class CommandDialog(QWidget):
             text = raw[1:].strip()
             event = Event(EventType.INPUT_HASH, {'text': text, 'raw': raw})
         else:
-            event = Event(EventType.INPUT_CHAT, {'text': raw, 'raw': raw})
+            event = Event(EventType.INPUT_TEXT, {'text': raw, 'raw': raw})
 
         self._event_center.publish(event)
 
@@ -600,6 +607,7 @@ class CommandDialog(QWidget):
             self._scale_down_button,
             self._launch_wuwa_button,
             self._chat_mode_button,
+            self._interaction_mode_button,
             self._more_functions_button,
         ]
         if self._hint_box is not None:

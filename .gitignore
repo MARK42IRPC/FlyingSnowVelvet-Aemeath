@@ -30,6 +30,7 @@ config/music/volume.json
 config/user_scale.json
 AA更新日志.txt.bak
 services/storage_state.json
+services/dsh-office-runtime/node_modules/
 
 # Generated assets & downloads
 resc/models/
@@ -37,6 +38,7 @@ resc/playwright/
 resc/GIF/SEanima/
 resc/GIF/SEanima.zip
 resc/python-*.exe
+resc/node-*-win-x64/
 resc/chrome-runtime.zip
 resc/chrome-runtime.z[0-9][0-9]
 resc/gsvmove_update/

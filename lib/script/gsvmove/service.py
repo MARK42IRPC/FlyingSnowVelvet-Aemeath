@@ -17,6 +17,7 @@ from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import Event, EventType, get_event_center
 from lib.core.logger import get_logger
 from lib.script.gsvmove.hybrid_worker import (
+    CudaVoiceWorkerRuntime,
     CpuVoiceWorkerRuntime,
     HybridVoiceWorkerRuntime,
     VoiceWorkerRuntime,
@@ -115,7 +116,15 @@ def _is_gsv_auto_start_enabled() -> bool:
     return bool(raw_value)
 
 
+def _is_gsv_nvidia_cuda_acceleration_enabled() -> bool:
+    raw_value = oc.OLLAMA.get("gsv_nvidia_cuda_acceleration", False)
+    if isinstance(raw_value, str):
+        return raw_value.strip().lower() not in {"", "0", "false", "off", "no"}
+    return bool(raw_value)
+
+
 def _is_gsv_gpu_hybrid_enabled() -> bool:
+    """Compatibility switch for the existing DirectML fallback."""
     raw_value = oc.OLLAMA.get("gsv_gpu_hybrid", False)
     if isinstance(raw_value, str):
         return raw_value.strip().lower() not in {"", "0", "false", "off", "no"}
@@ -184,9 +193,17 @@ class GsvmoveService:
         if data.get("source") != "ai":
             return
         values = data.get("values")
-        if not isinstance(values, dict) or "gsv_gpu_hybrid" not in values:
+        if not isinstance(values, dict) or not {
+            "gsv_nvidia_cuda_acceleration",
+            "gsv_gpu_hybrid",
+        }.intersection(values):
             return
-        desired_backend = "hybrid" if bool(values.get("gsv_gpu_hybrid")) else "cpu"
+        if bool(values.get("gsv_nvidia_cuda_acceleration")):
+            desired_backend = "cuda"
+        elif bool(values.get("gsv_gpu_hybrid")):
+            desired_backend = "hybrid"
+        else:
+            desired_backend = "cpu"
         with self._engine_lock:
             if self._engine is None or self._engine_requested_backend == desired_backend:
                 return
@@ -245,7 +262,12 @@ class GsvmoveService:
             logger.warning("[GsvmoveService] ONNX 语音包不可用: %s", status.reason)
             return False
 
-        desired_backend = "hybrid" if _is_gsv_gpu_hybrid_enabled() else "cpu"
+        if _is_gsv_nvidia_cuda_acceleration_enabled():
+            desired_backend = "cuda"
+        elif _is_gsv_gpu_hybrid_enabled():
+            desired_backend = "hybrid"
+        else:
+            desired_backend = "cpu"
         with self._engine_lock:
             if (
                 self._engine is not None
@@ -257,7 +279,10 @@ class GsvmoveService:
             self._engine_requested_backend = desired_backend
             try:
                 started_at = time.monotonic()
-                if desired_backend == "hybrid":
+                if desired_backend == "cuda":
+                    self._engine = CudaVoiceWorkerRuntime(package_root, self._output_dir)
+                    self._engine_backend = "cuda"
+                elif desired_backend == "hybrid":
                     self._engine = HybridVoiceWorkerRuntime(package_root, self._output_dir)
                     self._engine_backend = "hybrid"
                 else:
@@ -271,25 +296,52 @@ class GsvmoveService:
                 )
                 return True
             except Exception as exc:
-                if desired_backend != "hybrid":
+                if desired_backend == "hybrid":
+                    logger.warning(
+                        "[GsvmoveService] DirectML 混合推理加载失败，回退 CPU: %s",
+                        exc,
+                    )
+                    return self._activate_cpu_fallback_locked(package_root)
+                if desired_backend != "cuda":
                     self._engine = None
                     self._engine_package_root = None
                     self._engine_backend = None
                     logger.error("[GsvmoveService] ONNX 语音模型加载失败: %s", exc)
                     return False
                 logger.warning(
-                    "[GsvmoveService] DirectML 混合推理加载失败，回退 CPU: %s",
+                    "[GsvmoveService] CUDA 推理加载失败，尝试 DirectML 后备: %s",
                     exc,
                 )
-                return self._activate_cpu_fallback_locked(package_root)
+                return self._activate_directml_fallback_locked(package_root)
 
-    def _activate_cpu_fallback_locked(self, package_root: Path) -> bool:
+    def _activate_directml_fallback_locked(self, package_root: Path) -> bool:
+        self._close_engine_locked(reset_requested_backend=False)
+        try:
+            self._engine = HybridVoiceWorkerRuntime(package_root, self._output_dir)
+            self._engine_package_root = package_root
+            self._engine_backend = "directml-fallback"
+            self._engine_requested_backend = "cuda"
+            logger.info("[GsvmoveService] CUDA 不可用，已切换 DirectML 后备")
+            return True
+        except Exception as exc:
+            logger.warning("[GsvmoveService] DirectML 后备不可用，回退 CPU: %s", exc)
+            return self._activate_cpu_fallback_locked(
+                package_root,
+                requested_backend="cuda",
+            )
+
+    def _activate_cpu_fallback_locked(
+        self,
+        package_root: Path,
+        *,
+        requested_backend: str = "hybrid",
+    ) -> bool:
         self._close_engine_locked(reset_requested_backend=False)
         try:
             self._engine = CpuVoiceWorkerRuntime(package_root, self._output_dir)
             self._engine_package_root = package_root
             self._engine_backend = "cpu-fallback"
-            self._engine_requested_backend = "hybrid"
+            self._engine_requested_backend = requested_backend
             return True
         except Exception as exc:
             self._engine = None
@@ -422,6 +474,9 @@ class GsvmoveService:
         data = event.data or {}
         if not str(data.get("text") or "").strip() or event.handled:
             return
+        if not self._accepts_companion_generation(data):
+            event.mark_handled()
+            return
         if not self.auto_start_enabled():
             logger.info("[GsvmoveService] 语音模块已关闭，忽略文本语音申请")
             event.mark_handled()
@@ -445,11 +500,14 @@ class GsvmoveService:
                 self._request_queue.task_done()
 
     def _process_ai_voice_request(self, data: dict) -> None:
-        if not self.auto_start_enabled():
+        if not self.auto_start_enabled() or not self._accepts_companion_generation(data):
             return
         with self._infer_lock:
             audio_file = self._synthesize_to_file(data)
         if audio_file is None:
+            return
+        if not self._accepts_companion_generation(data):
+            audio_file.unlink(missing_ok=True)
             return
         self._ec.publish(Event(EventType.SOUND_REQUEST, {
             "audio_type": _DEFAULT_AUDIO_TYPE,
@@ -457,6 +515,22 @@ class GsvmoveService:
             "volume_gain": 1.0,
             "interruptible": bool(data.get("interruptible", True)),
         }))
+
+    @staticmethod
+    def _accepts_companion_generation(data: dict) -> bool:
+        raw_generation = data.get("mode_generation")
+        if raw_generation is None:
+            return True
+        try:
+            generation = int(raw_generation)
+        except (TypeError, ValueError):
+            return False
+        try:
+            from lib.script.office.mode import get_interaction_mode_service
+
+            return get_interaction_mode_service().accepts_companion_generation(generation)
+        except Exception:
+            return False
 
     def _synthesize_to_file(self, data: dict) -> Path | None:
         if not self._ensure_runtime_ready():
@@ -473,15 +547,27 @@ class GsvmoveService:
                 try:
                     engine.synthesize_to_file(payload, temp_path)
                 except Exception as exc:
-                    if self._engine_backend != "hybrid" or self._engine_package_root is None:
+                    if self._engine_backend not in {
+                        "hybrid",
+                        "cuda",
+                        "directml-fallback",
+                    } or self._engine_package_root is None:
                         raise
                     package_root = self._engine_package_root
                     temp_path.unlink(missing_ok=True)
                     logger.warning(
-                        "[GsvmoveService] DirectML 推理失败，当前请求回退 CPU: %s",
+                        "[GsvmoveService] GPU 推理失败，当前请求回退 CPU: %s",
                         exc,
                     )
-                    if not self._activate_cpu_fallback_locked(package_root):
+                    requested_backend = self._engine_requested_backend or "hybrid"
+                    if requested_backend == "hybrid":
+                        fallback_ready = self._activate_cpu_fallback_locked(package_root)
+                    else:
+                        fallback_ready = self._activate_cpu_fallback_locked(
+                            package_root,
+                            requested_backend=requested_backend,
+                        )
+                    if not fallback_ready:
                         raise
                     fallback = self._engine
                     if fallback is None:

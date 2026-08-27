@@ -5,6 +5,7 @@ import re
 from config.config import BUBBLE_CONFIG
 from config.ollama_config import AI_VOICE_MAX_CHARS_DEFAULT, OLLAMA
 from lib.core.event.center import Event, EventType
+from lib.core.graphics.rich_text_parser import rich_text_to_plain_text
 from lib.core.logger import get_logger
 from lib.script.chat import bot_reply
 from .native_tools import default_native_tool_reply, native_tool_to_dispatch
@@ -81,7 +82,14 @@ def _strip_tool_commands_for_display(text: str) -> str:
     if not text:
         return ""
 
-    normalized = text.replace('＃', '#').replace('／', '/')
+    # 规范化双反斜杠：某些模型会输出转义的 LaTeX 命令（\\command 而不是 \command）
+    normalized = text.replace('\\\\', '\\')
+
+    # 移除 LaTeX 数学模式分隔符（直接字符串替换）
+    normalized = normalized.replace('\\(', '').replace('\\)', '')
+    normalized = normalized.replace('\\[', '').replace('\\]', '')
+
+    normalized = normalized.replace('＃', '#').replace('／', '/')
     cleaned = TOOL_MARKER_PATTERN.sub('', normalized)
 
     # 流式场景下可能出现未闭合命令片段（尾部 "###..."），直接截断尾部。
@@ -106,9 +114,17 @@ def _strip_tool_commands_for_display(text: str) -> str:
     cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
     return cleaned.strip()
 
+def _strip_latex_commands(text: str) -> str:
+    """Flatten bubble rich text for speech while preserving its content."""
+    if not text:
+        return ""
+    return rich_text_to_plain_text(text)
+
+
 def _build_ai_voice_text(text: str) -> str:
     max_chars = int(OLLAMA.get("ai_voice_max_chars", AI_VOICE_MAX_CHARS_DEFAULT))
     cleaned = _strip_tool_commands_for_display(str(text or ""))
+    cleaned = _strip_latex_commands(cleaned)
     if not cleaned:
         return ""
     if len(cleaned) <= max_chars:
@@ -171,8 +187,20 @@ def _voice_waits_for_tool_result(
     return bool(FOLLOWUP_TOOL_MARKER_PATTERN.search(normalized))
 
 
+def _companion_generation_is_current(owner, mode_generation: int | None) -> bool:
+    checker = getattr(owner, "_accepts_companion_generation", None)
+    if callable(checker):
+        return bool(checker(mode_generation))
+    return not bool(getattr(owner, "_cleaned", False))
+
+
 class ChatHandlerStreamPresenterMixin:
-    def _on_stream_chunk(self, accumulated_text: str):
+    def _on_stream_chunk(
+        self,
+        accumulated_text: str,
+        *,
+        mode_generation: int | None = None,
+    ):
         """
         流式块回调：将逐步累积的回复文本更新到气泡框。
 
@@ -183,8 +211,10 @@ class ChatHandlerStreamPresenterMixin:
         particle 策略：首个 chunk 替换"..."等待气泡时触发上淡出粒子；
                        后续 chunk 静默更新文本，不重复产生粒子。
         """
-        if getattr(self, '_cleaned', False):
+        if not _companion_generation_is_current(self, mode_generation):
             return
+
+        self._stream_mode_generation = mode_generation
 
         display_text = _strip_tool_commands_for_display(accumulated_text)
         is_status_text = _is_non_ai_status_text(display_text)
@@ -202,6 +232,7 @@ class ChatHandlerStreamPresenterMixin:
                 "max":      100,
                 "particle": not is_status_text,
                 "force_replace": True,
+                "mode_generation": mode_generation,
             }))
             return
 
@@ -209,8 +240,12 @@ class ChatHandlerStreamPresenterMixin:
         if not self._stream_flush_timer.active:
             self._stream_flush_timer.start(40)
 
-    def _flush_stream_chunk(self):
-        if getattr(self, '_cleaned', False):
+    def _flush_stream_chunk(self, mode_generation: int | None = None):
+        if mode_generation is None:
+            mode_generation = getattr(self, "_stream_mode_generation", None)
+        if not _companion_generation_is_current(self, mode_generation):
+            self._stream_flush_timer.stop()
+            self._stream_pending_raw = ""
             return
         self._stream_flush_timer.stop()
         if not self._stream_pending_raw:
@@ -227,6 +262,7 @@ class ChatHandlerStreamPresenterMixin:
             "max":      100,
             "particle": False,
             "force_replace": True,
+            "mode_generation": mode_generation,
         }))
         if is_status_text:
             logger.debug("[ChatHandler] 状态文本流已更新气泡，不进入 AI 打字表现: %s", display_text[:80])
@@ -245,18 +281,19 @@ class ChatHandlerStreamPresenterMixin:
         include_history: bool = True,
         allow_tool_commands: bool = True,
         native_tool_call: dict | None = None,
+        mode_generation: int | None = None,
     ):
         """
         最终回调：处理流式请求的完成信号。
         - text 非空：流式块已由 _on_stream_chunk 逐步发布，无需重复
         - text 为空：所有模型均失败（或 Ollama 未启动），使用 bot_reply 预设回复兜底
         """
-        if getattr(self, '_cleaned', False):
+        if not _companion_generation_is_current(self, mode_generation):
             return
         if self._stream_flush_timer.active:
             self._stream_flush_timer.stop()
         if self._stream_pending_raw:
-            self._flush_stream_chunk()
+            self._flush_stream_chunk(mode_generation)
 
         if not text and native_tool_call is not None:
             text = default_native_tool_reply(native_tool_call)
@@ -269,6 +306,7 @@ class ChatHandlerStreamPresenterMixin:
                 "text": display_text,
                 "min":  BUBBLE_MIN_TICKS,
                 "max":  BUBBLE_MAX_TICKS,
+                "mode_generation": mode_generation,
             }))
             logger.info("[ChatHandler] 降级回复: %s", text[:60])
         else:
@@ -286,6 +324,7 @@ class ChatHandlerStreamPresenterMixin:
                     "min":  final_min_ticks,
                     "max":  final_max_ticks,
                     "particle": False,
+                    "mode_generation": mode_generation,
                 }))
                 if is_status_text:
                     logger.info("[ChatHandler] 系统状态文本仅显示气泡，不走AI回复通道: %s", display_text[:80])
@@ -299,6 +338,7 @@ class ChatHandlerStreamPresenterMixin:
                     "min":  final_min_ticks,
                     "max":  final_max_ticks,
                     "particle": False,
+                    "mode_generation": mode_generation,
                 }))
                 logger.debug("[ChatHandler] 流式响应完毕（共 %d 字，final_min=%d）",
                              len(display_text), final_min_ticks)
@@ -318,6 +358,7 @@ class ChatHandlerStreamPresenterMixin:
                     "text": voice_text,
                     "text_lang": _detect_ai_voice_language(voice_text),
                     "interruptible": True,
+                    "mode_generation": mode_generation,
                 }))
 
         if include_history and not _is_non_ai_status_text(text):
@@ -332,15 +373,19 @@ class ChatHandlerStreamPresenterMixin:
                 "text": text,
                 "allow_tool_commands": allow_tool_commands,
                 "tool_call": native_tool_call,
+                "mode_generation": mode_generation,
             }))
 
     def _publish_auto_response(self, text: str, include_history: bool = False,
                                user_text: str | None = None,
-                               native_tool_call: dict | None = None):
+                               native_tool_call: dict | None = None,
+                               mode_generation: int | None = None):
         """
         自动陪伴回调：显示气泡，并复用 STREAM_FINAL 管道识别 ###工具指令###。
         使用与流式回复结束相同的 min_ticks 计算逻辑（按字数计算，防顶出保护）。
         """
+        if not _companion_generation_is_current(self, mode_generation):
+            return
         raw_text = text or default_native_tool_reply(native_tool_call)
         from_ai = bool(raw_text)
         if not raw_text:
@@ -356,6 +401,7 @@ class ChatHandlerStreamPresenterMixin:
             "text": display_text,
             "min":  final_min_ticks,
             "max":  final_max_ticks,
+            "mode_generation": mode_generation,
         }))
         voice_text = (
             _build_ai_voice_text(display_text)
@@ -367,6 +413,7 @@ class ChatHandlerStreamPresenterMixin:
                 "text": voice_text,
                 "text_lang": _detect_ai_voice_language(voice_text),
                 "interruptible": True,
+                "mode_generation": mode_generation,
             }))
         if include_history and from_ai and not is_status_text:
             effective_user = str(user_text or AUTO_COMPANION_PROMPT or '').strip()
@@ -382,6 +429,7 @@ class ChatHandlerStreamPresenterMixin:
             self._event_center.publish(Event(EventType.STREAM_FINAL, {
                 "text": raw_text,
                 "tool_call": native_tool_call,
+                "mode_generation": mode_generation,
             }))
         logger.debug("[ChatHandler] 自动陪伴回复（%d 字，min=%d）: %s",
                      len(display_text), final_min_ticks, display_text[:60])

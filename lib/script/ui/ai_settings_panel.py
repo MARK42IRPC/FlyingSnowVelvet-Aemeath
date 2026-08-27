@@ -95,8 +95,6 @@ from lib.script.workbench.settings import (
     create_settings_form,
 )
 from lib.script.workbench.theme import COLORS as WORKBENCH_COLORS, get_workbench_colors
-from lib.script.yuanbao_free_api import get_yuanbao_free_api_service
-from lib.script.yuanbao_free_api.service import get_yuanbao_free_api_log_path
 from lib.script.gsvmove import get_voice_package_status
 from config.voice_runtime import is_cuda_runtime_ready
 
@@ -129,11 +127,6 @@ _DEFAULT_VALUES = {
     "welfare_intelligence_boost": False,
     "api_base_url": "",
     "api_model": "gpt-5.4",
-    "yuanbao_login_url": "https://yuanbao.tencent.com/chat/naQivTmsDa",
-    "yuanbao_hy_source": "web",
-    "yuanbao_hy_user": "",
-    "yuanbao_x_uskey": "",
-    "yuanbao_agent_id": "naQivTmsDa",
     "ollama_base_url": "http://localhost:11434",
     "ollama_model": "qwen2.5",
     "num_gpu": -1,
@@ -200,9 +193,7 @@ _MANUAL_CONTRIBUTION_RECORDS = [
         "url": "https://mc.kurogames.com/",
     },
 ]
-_CONTRIBUTION_ROLE_OVERRIDES = {
-    "https://github.com/chenwr727/yuanbao-free-api": "元宝OpenAI中转集成",
-}
+_CONTRIBUTION_ROLE_OVERRIDES = {}
 _GENERAL_CONFIG_CATEGORIES = GENERAL_CONFIG_CATEGORIES
 
 _CATEGORY_KEY_ALLOWLIST = {
@@ -732,6 +723,7 @@ _KEY_FRIENDLY_NAME = {
     "SPEAKER_AUDIO": {
         "scale_range": "缩放范围",
         "scale_exp": "缩放指数",
+        "response_gain": "响应增益",
         "ema_attack": "EMA攻击系数",
         "ema_decay": "EMA衰减系数",
         "freq_min": "最低频率(Hz)",
@@ -1703,9 +1695,6 @@ class AISettingsPanel(QWidget):
         self._workbench_pages: dict[str, QWidget] = {}
         self._ui_thread_call.connect(self._invoke_ui_callable)
         self._ec = get_event_center()
-        self._yuanbao_login_status_generation = 0
-        self._yuanbao_login_status_subscribed = False
-        self._subscribe_yuanbao_login_events()
         self._autostart_checkbox = None
         self._announcement_suppression_checkbox = None
         self._autostart_status_subscribed = False
@@ -1955,7 +1944,6 @@ class AISettingsPanel(QWidget):
         self._force_mode.addItem('手动 API', '0')
         self._force_mode.addItem('本地 Ollama', '2')
         self._force_mode.addItem('规则回复', '3')
-        self._force_mode.addItem('元宝', '4')
         form.addRow("回复模式", self._force_mode)
         self._set_form_row_description(
             form,
@@ -2151,29 +2139,6 @@ class AISettingsPanel(QWidget):
 
         self._office_use_independent_api.toggled.connect(self._update_office_mode_fields_visibility)
         self._update_office_mode_fields_visibility()
-
-        self._set_hidden_yuanbao_values(_DEFAULT_VALUES)
-
-        self._yuanbao_section = scaffold.add_section(
-            "元宝登录",
-            "仅在回复模式选择元宝时显示。",
-        )
-        form = create_settings_form()
-        self._yuanbao_section.body_layout.addLayout(form)
-        yuanbao_login_row, yuanbao_login_layout = self._create_field_row_group(spacing=scale_px(8, min_abs=6))
-        self._start_yuanbao_wechat_login_btn = QPushButton("微信登录元宝")
-        self._start_yuanbao_wechat_login_btn.setFixedWidth(scale_px(126, min_abs=108))
-        self._start_yuanbao_wechat_login_btn.clicked.connect(self._on_start_yuanbao_wechat_login)
-        yuanbao_login_layout.addWidget(self._start_yuanbao_wechat_login_btn, 0)
-        self._stop_yuanbao_login_btn = QPushButton("退出元宝登录")
-        self._stop_yuanbao_login_btn.setFixedWidth(scale_px(126, min_abs=108))
-        self._stop_yuanbao_login_btn.clicked.connect(self._on_stop_yuanbao_login)
-        yuanbao_login_layout.addWidget(self._stop_yuanbao_login_btn, 0)
-        yuanbao_login_layout.addStretch(1)
-        form.addRow("元宝登录", yuanbao_login_row)
-        self._set_widget_description(self._start_yuanbao_wechat_login_btn, "启动本地 YuanBao-Free-API 服务，并使用微信扫码方式登录元宝；程序会固定使用内置 loopback 地址、占位密钥和默认模型。")
-        self._set_widget_description(self._stop_yuanbao_login_btn, "停止元宝登录流程并关闭本地元宝服务。")
-        self._set_yuanbao_login_actions(logged_in=False)
 
         self._ollama_section = scaffold.add_section(
             "Ollama 配置",
@@ -3330,170 +3295,7 @@ class AISettingsPanel(QWidget):
         self._emit_info(f"删除 ONNX 语音包失败：{message}", min_tick=20, max_tick=180)
 
     @staticmethod
-    def _yuanbao_login_provider_label(provider: str) -> str:
-        return "手机QQ" if str(provider).strip().lower() == "qq" else "微信"
-
-    def _set_yuanbao_login_actions(self, *, logged_in: bool) -> None:
-        """登录按钮保持单一可执行动作，避免未登录时出现无效的退出入口。"""
-        self._start_yuanbao_wechat_login_btn.setVisible(not logged_in)
-        self._stop_yuanbao_login_btn.setVisible(logged_in)
-
-    def _refresh_yuanbao_login_actions(self) -> None:
-        """后台读取已运行服务的登录态；不启动服务、不触发浏览器登录。"""
-        self._yuanbao_login_status_generation += 1
-        generation = self._yuanbao_login_status_generation
-
-        def worker() -> None:
-            try:
-                status = get_yuanbao_free_api_service().peek_service_status()
-                logged_in = bool((status or {}).get("logged_in"))
-            except Exception as exc:
-                _logger.debug("读取元宝登录状态失败: %s", exc)
-                logged_in = False
-
-            def apply_result() -> None:
-                if generation != self._yuanbao_login_status_generation:
-                    return
-                self._set_yuanbao_login_actions(logged_in=logged_in)
-
-            self._run_on_ui_thread(apply_result)
-
-        try:
-            get_compute_hub().submit_io(worker)
-        except RuntimeError as exc:
-            _logger.debug("提交元宝登录状态读取任务失败: %s", exc)
-
-    def _on_start_yuanbao_wechat_login(self) -> None:
-        self._on_start_yuanbao_login("wechat")
-
-    def _on_start_yuanbao_qq_login(self) -> None:
-        self._on_start_yuanbao_login("qq")
-
-    def _on_start_yuanbao_login(self, provider: str = "wechat") -> None:
-        provider_name = str(provider or "wechat").strip().lower()
-        provider_label = self._yuanbao_login_provider_label(provider_name)
-        import config.ollama_config as oc
-        oc.YUANBAO_FREE_API["login_url"] = str(getattr(self, "_yuanbao_login_url_value", _DEFAULT_VALUES.get("yuanbao_login_url", "")) or "")
-        oc.YUANBAO_FREE_API["agent_id"] = str(getattr(self, "_yuanbao_agent_id_value", _DEFAULT_VALUES.get("yuanbao_agent_id", "naQivTmsDa")) or "")
-
-        def worker() -> None:
-            try:
-                svc = get_yuanbao_free_api_service()
-                result = svc.begin_login_flow(provider=provider_name)
-                status = result.get('status') if isinstance(result, dict) else {}
-                status = status if isinstance(status, dict) else {}
-                logged_in = bool(result.get('logged_in') or status.get('logged_in')) if isinstance(result, dict) else False
-                qrcode_ready = bool(result.get('qrcode_exists') or status.get('qrcode_exists')) if isinstance(result, dict) else False
-                login_in_progress = bool(result.get('login_in_progress') or status.get('login_in_progress')) if isinstance(result, dict) else False
-                message = str((result or {}).get('message') or '').strip() if isinstance(result, dict) else ''
-                last_error = str(status.get('last_error') or '').strip()
-                raw_stage = str(status.get('last_message') or '').strip()
-                stage = self._describe_yuanbao_stage(raw_stage)
-                stage_in_progress = raw_stage in {
-                    'starting_login',
-                    'starting_playwright',
-                    'launching_browser',
-                    'creating_page',
-                    'page_loading',
-                    'page_loaded',
-                    'browser_initialized',
-                    'dismissing_dialog',
-                    'resolving_login_button',
-                    'waiting_login_button',
-                    'clicking_login_button',
-                    'login_button_clicked',
-                    'waiting_qrcode',
-                    'refreshing_qrcode',
-                    'waiting_scan_confirm',
-                }
-
-                if logged_in:
-                    self._run_on_ui_thread(
-                        lambda: self._set_yuanbao_login_actions(logged_in=True)
-                    )
-                    self._emit_info("元宝已登录，本地服务可直接使用。", min_tick=14, max_tick=120)
-                elif qrcode_ready:
-                    self._run_on_ui_thread(
-                        lambda: self._set_yuanbao_login_actions(logged_in=False)
-                    )
-                    self._emit_info(f"元宝二维码已生成，请使用{provider_label}扫码登录。", min_tick=16, max_tick=180)
-                elif login_in_progress or (not last_error and stage_in_progress):
-                    self._run_on_ui_thread(
-                        lambda: self._set_yuanbao_login_actions(logged_in=False)
-                    )
-                    detail = stage or message or '正在继续初始化元宝登录流程'
-                    self._emit_info(f"元宝登录流程已启动：{detail}", min_tick=14, max_tick=180)
-                else:
-                    self._run_on_ui_thread(self._refresh_yuanbao_login_actions)
-                    log_path = get_yuanbao_free_api_log_path()
-                    detail = last_error or stage or message or f'请查看 {log_path.name}'
-                    self._emit_info(f"元宝登录未能启动：{detail}", min_tick=18, max_tick=260)
-            except Exception as exc:
-                _logger.error("Start YuanBao login failed: %s", exc)
-                self._run_on_ui_thread(self._refresh_yuanbao_login_actions)
-                self._emit_info(f"启动元宝登录失败: {exc}", min_tick=18, max_tick=220)
-
-        try:
-            from lib.script.ui.yuanbao_login_dialog import init_yuanbao_login_dialog
-            init_yuanbao_login_dialog()
-        except Exception as exc:
-            _logger.debug("Init YuanBao login dialog failed: %s", exc)
-        self._ec.publish(Event(EventType.YUANBAO_LOGIN_QR_SHOW, {
-            'title': f'{provider_label}登录元宝',
-            'status': f'正在启动元宝服务并准备{provider_label}登录二维码，请稍候...',
-            'qr_png': None,
-        }))
-        self._emit_info(f"正在启动元宝服务并准备{provider_label}登录二维码；本地回环地址、占位密钥与模型名均由程序内部管理。", min_tick=12, max_tick=200)
-        get_compute_hub().submit_interactive_io(worker)
-
-    def _on_stop_yuanbao_login(self) -> None:
-        def worker() -> None:
-            try:
-                svc = get_yuanbao_free_api_service()
-                svc.stop_login_flow()
-                self._run_on_ui_thread(
-                    lambda: self._set_yuanbao_login_actions(logged_in=False)
-                )
-                self._emit_info("已退出元宝登录，并关闭本地元宝服务。", min_tick=12, max_tick=140)
-            except Exception as exc:
-                _logger.error("Stop YuanBao login failed: %s", exc)
-                self._run_on_ui_thread(self._refresh_yuanbao_login_actions)
-                self._emit_info(f"退出元宝登录失败: {exc}", min_tick=18, max_tick=220)
-
-        self._emit_info("正在退出元宝登录并关闭本地元宝服务...", min_tick=10, max_tick=120)
-        get_compute_hub().submit_interactive_io(worker)
-
     @staticmethod
-    def _describe_yuanbao_stage(stage: str) -> str:
-        mapping = {
-            'starting_login': '正在初始化登录流程',
-            'starting_playwright': '正在启动浏览器驱动',
-            'launching_browser': '正在启动浏览器',
-            'creating_page': '正在创建页面',
-            'page_loading': '正在打开元宝页面',
-            'page_loaded': '元宝页面已打开，正在继续登录',
-            'browser_initialized': '浏览器已就绪，正在继续登录',
-            'dismissing_dialog': '正在关闭页面弹窗',
-            'resolving_login_button': '正在定位登录入口',
-            'waiting_login_button': '正在等待登录入口出现',
-            'clicking_login_button': '正在点击登录入口',
-            'login_button_clicked': '登录入口已点击，正在等待二维码',
-            'login_button_not_found': '未找到登录入口',
-            'waiting_qrcode': '正在等待二维码出现',
-            'qrcode_ready': '二维码已生成',
-            'waiting_scan_confirm': '二维码已生成，正在等待扫码确认',
-            'refreshing_qrcode': '二维码已过期，正在尝试刷新',
-            'qrcode_container_not_found': '未找到二维码容器',
-            'login_success': '登录成功',
-            'login_timeout': '扫码超时',
-            'browser_init_failed': '浏览器初始化失败',
-            'login_failed': '登录失败',
-            'login_button_not_found_assume_logged_in': '未找到登录入口，疑似已登录',
-            'already_logged_in': '已登录',
-            'browser_closed': '浏览器已关闭',
-        }
-        return mapping.get(stage, stage)
-
     @staticmethod
     def _wrap_field_widget(widget: QWidget) -> QWidget:
         wrap = QWidget()
@@ -4703,28 +4505,8 @@ class AISettingsPanel(QWidget):
             self._ec.unsubscribe(EventType.TICK, self._on_tick)
             self._tick_subscribed = False
 
-    def _subscribe_yuanbao_login_events(self) -> None:
-        if not self._yuanbao_login_status_subscribed:
-            self._ec.subscribe(EventType.YUANBAO_LOGIN_QR_STATUS, self._on_yuanbao_login_status_event)
-            self._yuanbao_login_status_subscribed = True
-
-    def _unsubscribe_yuanbao_login_events(self) -> None:
-        if self._yuanbao_login_status_subscribed:
-            self._ec.unsubscribe(EventType.YUANBAO_LOGIN_QR_STATUS, self._on_yuanbao_login_status_event)
-            self._yuanbao_login_status_subscribed = False
-
-    def _on_yuanbao_login_status_event(self, event: Event) -> None:
-        payload = event.data or {}
-        if "logged_in" not in payload:
-            return
-        logged_in = bool(payload.get("logged_in"))
-        self._run_on_ui_thread(
-            lambda: self._set_yuanbao_login_actions(logged_in=logged_in)
-        )
-
     def deleteLater(self) -> None:
         self._unsubscribe_border_effect_events()
-        self._unsubscribe_yuanbao_login_events()
         self._unsubscribe_autostart_events()
         self._hide_floating_tab()
         if self._tab_floating is not None:
@@ -4923,7 +4705,6 @@ class AISettingsPanel(QWidget):
             "welfare_intelligence_boost": bool(self._welfare_intelligence_boost.isChecked()),
             "api_base_url": AISettingsPanel._normalize_manual_api_base_url(self._api_base_url.text()),
             "api_model": self._api_model.currentText().strip(),
-            "yuanbao_free_api_enabled": force_mode == "4",
             "ollama_base_url": self._ollama_base_url.text().strip(),
             "ollama_model": self._ollama_model.currentText().strip(),
             "num_gpu": num_gpu,
@@ -4958,26 +4739,8 @@ class AISettingsPanel(QWidget):
             "office_api_model": str(self._office_api_model.currentText()).strip(),
             "office_warmup_on_startup": bool(self._office_warmup_on_startup.isChecked()),
         }
-        values.update(self._collect_hidden_yuanbao_values())
         self._validate_ai_values(values)
         return values
-
-    def _set_hidden_yuanbao_values(self, values: dict | None) -> None:
-        source = values or {}
-        self._yuanbao_login_url_value = str(source.get("yuanbao_login_url", _DEFAULT_VALUES.get("yuanbao_login_url", "")) or "")
-        self._yuanbao_hy_source_value = str(source.get("yuanbao_hy_source", _DEFAULT_VALUES.get("yuanbao_hy_source", "web")) or "")
-        self._yuanbao_hy_user_value = str(source.get("yuanbao_hy_user", _DEFAULT_VALUES.get("yuanbao_hy_user", "")) or "")
-        self._yuanbao_x_uskey_value = str(source.get("yuanbao_x_uskey", _DEFAULT_VALUES.get("yuanbao_x_uskey", "")) or "")
-        self._yuanbao_agent_id_value = str(source.get("yuanbao_agent_id", _DEFAULT_VALUES.get("yuanbao_agent_id", "naQivTmsDa")) or "")
-
-    def _collect_hidden_yuanbao_values(self) -> dict:
-        return {
-            "yuanbao_login_url": str(getattr(self, "_yuanbao_login_url_value", _DEFAULT_VALUES.get("yuanbao_login_url", "")) or "").strip(),
-            "yuanbao_hy_source": str(getattr(self, "_yuanbao_hy_source_value", _DEFAULT_VALUES.get("yuanbao_hy_source", "web")) or "").strip(),
-            "yuanbao_hy_user": str(getattr(self, "_yuanbao_hy_user_value", _DEFAULT_VALUES.get("yuanbao_hy_user", "")) or "").strip(),
-            "yuanbao_x_uskey": str(getattr(self, "_yuanbao_x_uskey_value", _DEFAULT_VALUES.get("yuanbao_x_uskey", "")) or "").strip(),
-            "yuanbao_agent_id": str(getattr(self, "_yuanbao_agent_id_value", _DEFAULT_VALUES.get("yuanbao_agent_id", "naQivTmsDa")) or "").strip(),
-        }
 
     def _set_values_to_form(self, values: dict) -> None:
         self._api_key.set_raw_text(str(values.get("api_key", "")))
@@ -4985,7 +4748,6 @@ class AISettingsPanel(QWidget):
         self._api_base_url.setText(str(values.get("api_base_url", "")))
         self._sync_manual_api_provider_selection()
         self._refresh_manual_api_model_choices(str(values.get("api_model", "")))
-        self._set_hidden_yuanbao_values(values)
         self._ollama_base_url.setText(str(values.get("ollama_base_url", "")))
         self._refresh_ollama_model_choices(str(values.get("ollama_model", "")))
         gpu_mode = _gpu_mode_from_num_gpu(values.get("num_gpu", -1))
@@ -5039,9 +4801,6 @@ class AISettingsPanel(QWidget):
         self._welfare_section.setVisible(mode == "1")
         self._manual_api_section.setVisible(mode == "0")
         self._ollama_section.setVisible(mode == "2")
-        self._yuanbao_section.setVisible(mode == "4")
-        if mode == "4":
-            self._refresh_yuanbao_login_actions()
 
     def _update_gsv_settings_visibility(self) -> None:
         self._voice_section.setVisible(bool(self._gsv_launcher_available))

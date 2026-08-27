@@ -1,6 +1,6 @@
 ﻿# Release Playbook
 
-本文记录飞行雪绒发布流程，适用于 `LTS1.0.6pre8` 及后续版本。发布目标是：版本号一致、文档一致、普通包轻量、绿色包离线友好，并且不把开发机运行状态打进包里。
+本文记录飞行雪绒发布流程，适用于 `LTS1.0.7test0823` 及后续版本。发布目标是：版本号一致、文档一致、普通包轻量、绿色包离线友好，并且不把开发机运行状态打进包里。
 
 ## 1. 发布前版本同步
 
@@ -36,6 +36,8 @@ python scripts/package_green_release.py --dry-run
 - 桌宠能启动、显示、正常退出
 - 控制面板能打开、保存、重新加载配置
 - AI 回复与流式输出可用
+- 陪伴/办公切换只路由普通文本，`/`、`#` 命令不变；办公页可新建、恢复、取消任务并显示实时状态
+- 办公权限窗的允许、任务内始终允许和拒绝可用；退出后没有残留 DSH/Node 侧车
 - 图片输入路径不会因模型名误判提前失败
 - ONNX 语音 / STT 开关不阻塞启动或退出
 - 缺失或旧版语音包时安装提示位于控制面板顶部，磁盘选择、取消、下载与解压进度可用
@@ -47,13 +49,13 @@ python scripts/package_green_release.py --dry-run
 ### 普通包
 
 ```powershell
-python scripts/package_release.py --version LTS1.0.6pre8
+python scripts/package_release.py --version LTS1.0.7test0823
 ```
 
 输出示例：
 
-- `dist/FlyingSnowVelvet-LTS1.0.6pre8.zip`
-- `dist/FlyingSnowVelvet-LTS1.0.6pre8-manifest.json`
+- `dist/FlyingSnowVelvet-LTS1.0.7test0823.zip`
+- `dist/FlyingSnowVelvet-LTS1.0.7test0823-manifest.json`
 
 普通包用于联网环境，安装脚本会按 `resc.net.txt` 补齐重型资源。它应排除：
 
@@ -62,6 +64,8 @@ python scripts/package_release.py --version LTS1.0.6pre8
 - `resc/GIF/SEanima/`
 - `resc/chrome-runtime.zip`、`resc/chrome-runtime.z01`、`resc/chrome-runtime.z02`
 - `resc/python-3.11.6-amd64.exe`
+- `resc/node-24.13.0-win-x64/`
+- `services/dsh-office-runtime/node_modules/`
 - `resc/user/`
 - `logs/`
 - `dist/`
@@ -70,18 +74,18 @@ python scripts/package_release.py --version LTS1.0.6pre8
 - 本机配置、缓存、临时文件
 - `C:\AemeathDeskPet\user`、`cache`、`logs` 中的任何本机数据
 
-普通包必须保留 `lib/script/gsvmove/bin/UnRAR.exe` 与 `LICENSE-UnRAR.txt`；语音模型七个分卷不进入程序包。
+普通包必须保留 `lib/script/gsvmove/bin/UnRAR.exe` 与 `LICENSE-UnRAR.txt`，并保留 `services/dsh-office-runtime/` 下的 package manifest、lockfile、profile、bridge 源码以及 `resc/agent/` 下的办公系统提示词和十个 `SKILL.md`；语音模型七个分卷、Node 运行目录和已安装 npm 依赖不进入程序包。
 
 ### 绿色包
 
 ```powershell
-python scripts/package_green_release.py --version LTS1.0.6pre8
+python scripts/package_green_release.py --version LTS1.0.7test0823
 ```
 
 输出示例：
 
-- `dist/FlyingSnowVelvet-LTS1.0.6pre8-green.zip`
-- `dist/FlyingSnowVelvet-LTS1.0.6pre8-green-manifest.json`
+- `dist/FlyingSnowVelvet-LTS1.0.7test0823-green.zip`
+- `dist/FlyingSnowVelvet-LTS1.0.7test0823-green-manifest.json`
 
 绿色包需要额外携带安装脚本会联网下载的离线资源归档，优先覆盖以下路径：
 
@@ -97,6 +101,7 @@ python scripts/package_green_release.py --version LTS1.0.6pre8
 绿色包仍必须排除：
 
 - 已解包的 `resc/playwright/` 运行目录
+- 已解包的 `resc/node-24.13.0-win-x64/` 与 `services/dsh-office-runtime/node_modules/`
 - 已解包的 `resc/models/vosk-model-small-*/`
 - 已解包的 `resc/GIF/SEanima/`
 - `resc/user/`
@@ -115,10 +120,10 @@ python scripts/package_green_release.py --version LTS1.0.6pre8
 打包后检查 manifest：
 
 ```powershell
-Get-Content dist\FlyingSnowVelvet-LTS1.0.6pre8-manifest.json | Select-String "playwright|models|SEanima|chrome-runtime|python-3.11|storage_state|__pycache__|\.git|\.github|tests/|scripts/|\.oprate|用户反馈/"
-Get-Content dist\FlyingSnowVelvet-LTS1.0.6pre8-green-manifest.json | Select-String "vosk-model-small-cn-0.22.zip|vosk-model-small-en-us-0.15.zip|SEanima.zip|chrome-runtime.z01|chrome-runtime.z02|chrome-runtime.zip"
-Get-Content dist\FlyingSnowVelvet-LTS1.0.6pre8-green-manifest.json | Select-String "resc/playwright/|resc/models/vosk-model-small-cn-0.22/|python-3.11|storage_state|__pycache__|\.git|\.github|tests/|scripts/|\.oprate|用户反馈/"
-Get-Content dist\FlyingSnowVelvet-LTS1.0.6pre8-manifest.json, dist\FlyingSnowVelvet-LTS1.0.6pre8-green-manifest.json | Select-String "lib/script/gsvmove/bin/UnRAR.exe|lib/script/gsvmove/bin/LICENSE-UnRAR.txt"
+Get-Content dist\FlyingSnowVelvet-LTS1.0.7test0823-manifest.json | Select-String "playwright|models|SEanima|chrome-runtime|python-3.11|storage_state|__pycache__|\.git|\.github|tests/|scripts/|\.oprate|用户反馈/"
+Get-Content dist\FlyingSnowVelvet-LTS1.0.7test0823-green-manifest.json | Select-String "vosk-model-small-cn-0.22.zip|vosk-model-small-en-us-0.15.zip|SEanima.zip|chrome-runtime.z01|chrome-runtime.z02|chrome-runtime.zip"
+Get-Content dist\FlyingSnowVelvet-LTS1.0.7test0823-green-manifest.json | Select-String "resc/playwright/|resc/models/vosk-model-small-cn-0.22/|python-3.11|storage_state|__pycache__|\.git|\.github|tests/|scripts/|\.oprate|用户反馈/"
+Get-Content dist\FlyingSnowVelvet-LTS1.0.7test0823-manifest.json, dist\FlyingSnowVelvet-LTS1.0.7test0823-green-manifest.json | Select-String "lib/script/gsvmove/bin/UnRAR.exe|lib/script/gsvmove/bin/LICENSE-UnRAR.txt"
 ```
 
 预期：
@@ -139,9 +144,9 @@ Get-Content dist\FlyingSnowVelvet-LTS1.0.6pre8-manifest.json, dist\FlyingSnowVel
 示例：
 
 ```powershell
-git tag -a LTS1.0.6pre8 -m "LTS 1.0.6 pre8"
+git tag -a LTS1.0.7test0823 -m "LTS 1.0.7 test0823"
 git push origin main
-git push origin LTS1.0.6pre8
+git push origin LTS1.0.7test0823
 ```
 
 Release 建议上传：

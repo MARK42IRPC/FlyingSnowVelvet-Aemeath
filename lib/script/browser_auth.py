@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from glob import glob
-from pathlib import Path
 from typing import Any
 
 
@@ -52,34 +50,10 @@ def parse_set_cookie_headers(headers: Any) -> dict[str, str]:
     return cookie_map
 
 
-def _project_root() -> Path:
-    return Path(__file__).resolve().parents[2]
-
-def _candidate_local_chromium_executables() -> list[Path]:
-    root = _project_root()
-    pattern = root / "resc" / "playwright" / "browsers" / "ms-playwright" / "chromium-*" / "chrome-win64" / "chrome.exe"
+def launch_playwright_edge(playwright, *, headless: bool):
     try:
-        return sorted((Path(item) for item in glob(str(pattern))), reverse=True)
-    except Exception:
-        return []
-
-
-def find_local_playwright_chromium() -> Path | None:
-    for candidate in _candidate_local_chromium_executables():
-        try:
-            if candidate.exists() and candidate.is_file():
-                return candidate
-        except Exception:
-            continue
-    return None
-
-
-def launch_playwright_chromium(playwright, *, headless: bool, allow_visible_fallback: bool = True):
-    local_chromium = find_local_playwright_chromium()
-    if local_chromium is None:
+        return playwright.chromium.launch(channel="msedge", headless=headless)
+    except Exception as exc:
         raise RuntimeError(
-            "未检测到内置 Chromium 运行时，请先执行安装脚本完成离线浏览器安装："
-            " resc/playwright/browsers/ms-playwright/chromium-*/chrome-win64/chrome.exe"
-        )
-    launch_args = {"executable_path": str(local_chromium), "headless": headless}
-    return playwright.chromium.launch(**launch_args)
+            f"无法启动系统 Microsoft Edge，请确认 Edge 已安装且可正常运行：{exc}"
+        ) from exc

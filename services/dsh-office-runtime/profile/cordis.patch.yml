@@ -1,0 +1,105 @@
+# Flying Snow Velvet's long-lived DSH office profile.
+
+- id: hmr
+  disabled: true
+
+- id: settings
+  disabled: true
+
+- id: credentials
+  disabled: true
+
+- id: session-persistence-jsonl
+  config:
+    root: !!js process.env.FSV_OFFICE_SESSION_ROOT
+
+- id: session-telemetry-otel
+  disabled: true
+
+- id: session-title-llm
+  disabled: true
+
+- id: agent-default-model
+  config:
+    provider: fsv-office
+    model: !!js process.env.FSV_OFFICE_MODEL
+
+- id: llm-deepseek
+  disabled: true
+
+- id: llm-pi-ai
+  config:
+    providers:
+      fsv-office:
+        displayName: Flying Snow Velvet Office API
+        apiKeyEnv: FSV_OFFICE_API_KEY
+        api: openai-completions
+        baseURL: !!js process.env.FSV_OFFICE_BASE_URL
+        models:
+          - id: !!js process.env.FSV_OFFICE_MODEL
+            name: !!js process.env.FSV_OFFICE_MODEL
+            # Unknown OpenAI-compatible gateways must not receive vendor-only
+            # thinking or reasoning_effort fields.
+            reasoningEfforts: false
+
+- id: sandbox-policy
+  config:
+    mode: workspace-write
+    workspaceRoot: !!js process.cwd()
+
+- id: approval
+  config:
+    policy: ask
+
+- id: system-prompt
+  config:
+    persona: !!js process.env.FSV_OFFICE_SYSTEM_PROMPT
+
+- id: subagent
+  disabled: true
+
+- id: subagent-spawn-in-process
+  disabled: true
+
+- id: subagent-fork-in-process
+  disabled: true
+
+- id: tool-subagent-control
+  disabled: true
+
+- id: tool-subagent-list-agents
+  disabled: true
+
+- id: tool-subagent
+  disabled: true
+
+- id: tool-subagent-fork
+  disabled: true
+
+- id: tool-subagent-report
+  disabled: true
+
+- id: workflow-worker-thread
+  disabled: true
+
+- id: tool-workflow
+  disabled: true
+
+- id: tool-ralph
+  disabled: true
+
+- id: web
+  disabled: true
+
+- id: web-search-deepseek
+  disabled: true
+
+- id: tool-web
+  disabled: true
+
+- insert:
+    - id: fsv-memory-credentials
+      name: '@fsv/dsh-office-bridge/credentials'
+
+    - id: fsv-office-bridge
+      name: '@fsv/dsh-office-bridge'

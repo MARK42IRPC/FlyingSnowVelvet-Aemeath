@@ -12,19 +12,13 @@ class QtApplicationUiHost:
 
         self._animation = get_start_exit_animation()
         self._announcement_controller = None
+        self._office_approval_controller = None
         self._preloader = None
         self._runtime_prepared = False
         self._runtime_started = False
         self._runtime_stopped = False
         self._runtime_cleaned = False
         self._finalized = False
-
-    def configure_services(self, yuanbao_service: object) -> None:
-        from lib.script.ui.yuanbao_login_dialog import init_yuanbao_login_dialog
-
-        configure = getattr(yuanbao_service, "configure_login_dialog_initializer", None)
-        if configure is not None:
-            configure(init_yuanbao_login_dialog)
 
     def prepare_application(self, application: object) -> None:
         from lib.core.qt_bridge.font import init_font_config
@@ -52,7 +46,12 @@ class QtApplicationUiHost:
 
         from lib.script.ui.announcement_dialog import AnnouncementController
         from lib.script.ui.preloader import preload_runtime_ui
+        from lib.script.ui.office_approval_controller import (
+            OfficeApprovalController,
+        )
 
+        self._office_approval_controller = OfficeApprovalController()
+        self._office_approval_controller.start()
         self._announcement_controller = AnnouncementController(application)
         self._preloader = preload_runtime_ui()
         self._announcement_controller.start()
@@ -79,6 +78,9 @@ class QtApplicationUiHost:
             return
         self._runtime_stopped = True
 
+        if self._office_approval_controller is not None:
+            self._office_approval_controller.cleanup()
+            self._office_approval_controller = None
         if self._preloader is not None:
             self._preloader.stop()
             self._preloader = None

@@ -26,6 +26,7 @@ class QQmisic:
     _LIKED_DIRID = 201
     _LIKED_NAME_HINTS = ("我喜欢的音乐", "喜欢的音乐", "我喜欢", "喜欢", "默认收藏", "收藏", "favorite", "fav", "myfav")
     _LIKED_DIRID_CANDIDATES = (201, 1)
+    _SONG_TITLE_KEYS = ("title", "name", "songname", "songName", "song_title", "songTitle")
 
     def __init__(self, timeout: tuple[float, float] = (8.0, 20.0)) -> None:
         self._timeout = timeout
@@ -69,6 +70,24 @@ class QQmisic:
     @classmethod
     def _clean_text(cls, raw: Any) -> str:
         return re.sub(r"\s+", " ", cls._repair_mojibake(raw).strip())
+
+    @classmethod
+    def _extract_song_title(cls, song: dict[str, Any]) -> str:
+        for key in cls._SONG_TITLE_KEYS:
+            title = cls._clean_text(song.get(key))
+            if title:
+                return title
+        return ""
+
+    @classmethod
+    def _has_meaningful_song_title(cls, title: Any, mid: Any) -> bool:
+        title_text = cls._clean_text(title)
+        mid_text = cls._clean_text(mid)
+        return bool(
+            title_text
+            and title_text not in {"未知歌曲", "Unknown Song"}
+            and title_text.casefold() != mid_text.casefold()
+        )
 
     @staticmethod
     def _hash33(text: str) -> int:
@@ -282,21 +301,42 @@ class QQmisic:
     def _normalize_song(self, song: dict[str, Any]) -> dict[str, Any] | None:
         if not isinstance(song, dict):
             return None
-        mid = self._clean_text(song.get("mid") or song.get("songmid") or song.get("songMid"))
+        raw_song = song
+        metadata = dict(song)
+        for key in ("songInfo", "songinfo", "track_info", "trackInfo"):
+            nested = song.get(key)
+            if isinstance(nested, dict):
+                metadata.update(nested)
+                break
+
+        mid = self._clean_text(metadata.get("mid") or metadata.get("songmid") or metadata.get("songMid"))
         if not mid:
             return None
-        file_info = song.get("file") if isinstance(song.get("file"), dict) else {}
-        interval = self._safe_int(song.get("interval") or song.get("duration"), 0)
+        file_info = metadata.get("file") if isinstance(metadata.get("file"), dict) else {}
+        interval = self._safe_int(metadata.get("interval") or metadata.get("duration"), 0)
+        title = self._extract_song_title(metadata)
         normalized = {
-            "id": self._safe_int(song.get("id") or song.get("songid"), 0),
+            "id": self._safe_int(metadata.get("id") or metadata.get("songid"), 0),
             "mid": mid,
-            "media_mid": self._clean_text(file_info.get("media_mid") or song.get("media_mid") or mid) or mid,
-            "title": self._clean_text(song.get("title") or song.get("name")) or mid,
-            "artist": self._extract_artist(song),
+            "media_mid": self._clean_text(
+                file_info.get("media_mid")
+                or metadata.get("media_mid")
+                or metadata.get("strMediaMid")
+                or mid
+            ) or mid,
+            "title": title or mid,
+            "artist": self._extract_artist(metadata),
             "duration_ms": interval * 1000 if 0 < interval < 100000 else interval or None,
-            "raw": song,
+            "raw": raw_song,
         }
-        self._song_cache[mid] = dict(normalized)
+
+        cached = self._song_cache.get(mid)
+        if not self._has_meaningful_song_title(normalized["title"], mid) and cached:
+            cached_title = cached.get("title")
+            if self._has_meaningful_song_title(cached_title, mid):
+                normalized["title"] = cached_title
+        if self._has_meaningful_song_title(normalized["title"], mid):
+            self._song_cache[mid] = dict(normalized)
         return normalized
 
     def _search_score(self, query: str, song: dict[str, Any]) -> tuple[int, int, int, int]:
@@ -354,7 +394,7 @@ class QQmisic:
         if not mid:
             return None
         cached = self._song_cache.get(mid)
-        if cached:
+        if cached and self._has_meaningful_song_title(cached.get("title"), mid):
             return dict(cached)
         try:
             data = self._post_musicu(

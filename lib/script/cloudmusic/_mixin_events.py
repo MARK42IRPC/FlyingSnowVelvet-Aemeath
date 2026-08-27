@@ -608,11 +608,36 @@ class _EventsMixin:
             if not mid or mid in seen:
                 continue
             seen.add(mid)
-            title = str(song.get("title") or song.get("name") or "未知歌曲").strip() or "未知歌曲"
+            title = str(
+                song.get("title")
+                or song.get("name")
+                or song.get("songname")
+                or song.get("songName")
+                or ""
+            ).strip()
+            detail = {}
+            if not title or title.casefold() == mid.casefold() or title in {"未知歌曲", "Unknown Song"}:
+                try:
+                    detail = client.get_song_detail(mid) or {}
+                except Exception as exc:
+                    logger.debug("[CloudMusic] QQ title detail fallback failed mid=%s: %s", mid, exc)
+                detail_title = str(detail.get("title") or detail.get("name") or "").strip()
+                if detail_title and detail_title.casefold() != mid.casefold():
+                    title = detail_title
+            title = title or "未知歌曲"
             artist = str(song.get("artist") or "").strip()
             if not artist:
                 artist = self._first_artist_name(song.get("singer") or song.get("singers") or [])
-            duration_ms = song.get("duration_ms") or song.get("duration") or song.get("interval")
+            if (not artist or artist == "未知作者") and detail:
+                artist = str(detail.get("artist") or "").strip() or artist
+            duration_ms = (
+                song.get("duration_ms")
+                or song.get("duration")
+                or song.get("interval")
+                or detail.get("duration_ms")
+                or detail.get("duration")
+                or detail.get("interval")
+            )
             try:
                 duration_ms = int(duration_ms) if duration_ms is not None else None
                 if duration_ms is not None and duration_ms > 0 and duration_ms < 1000:
@@ -620,11 +645,18 @@ class _EventsMixin:
             except (TypeError, ValueError):
                 duration_ms = None
             media_mid = str(song.get("media_mid") or "").strip()
+            if not media_mid and detail:
+                media_mid = str(detail.get("media_mid") or "").strip()
             if not media_mid:
                 raw_song = song.get("raw")
                 if isinstance(raw_song, dict):
                     file_info = raw_song.get("file") if isinstance(raw_song.get("file"), dict) else {}
-                    media_mid = str(file_info.get("media_mid") or "").strip()
+                    media_mid = str(
+                        file_info.get("media_mid")
+                        or raw_song.get("media_mid")
+                        or raw_song.get("strMediaMid")
+                        or ""
+                    ).strip()
             display = self._build_song_display(title, artist, duration_ms)
             track_ref = f"qq:{mid}:{media_mid}" if media_mid and media_mid != mid else f"qq:{mid}"
             items.append((track_ref, display))

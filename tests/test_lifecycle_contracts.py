@@ -31,7 +31,6 @@ class LifecycleContractTests(unittest.TestCase):
                 def cleanup(self): pass
 
             class ApplicationUi:
-                def configure_services(self, yuanbao_service): pass
                 def prepare_application(self, application): pass
                 def prepare_runtime(self): pass
                 def start_runtime(self, application): pass

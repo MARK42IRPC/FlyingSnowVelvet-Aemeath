@@ -542,6 +542,12 @@ class MicrophoneSttService:
         event.mark_handled()
 
     def _on_stop_request(self, event: Event):
+        data = event.data if isinstance(event.data, dict) else {}
+        if bool(data.get("auto_only", False)):
+            with self._lock:
+                if not self._current_options.auto_mode:
+                    event.mark_handled()
+                    return
         self.stop_listening()
         event.mark_handled()
 
@@ -1265,7 +1271,7 @@ class MicrophoneSttService:
         }
         self._ec.publish(Event(EventType.MIC_STT_FINAL, payload))
         if options.auto_submit:
-            self._ec.publish(Event(EventType.INPUT_CHAT, {
+            self._ec.publish(Event(EventType.INPUT_TEXT, {
                 "text": normalized,
                 "raw": normalized,
                 "source": "microphone_stt",

@@ -34,7 +34,7 @@ import threading
 import webbrowser
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 from urllib.parse import urlparse
 
 from lib.core.compute_hub import get_compute_hub
@@ -46,6 +46,9 @@ from config.config import TOOL_DISPATCHER, DRAW, ANIMATION
 from config.user_storage_paths import get_user_state_dir
 
 logger = get_logger(__name__)
+
+if TYPE_CHECKING:
+    from lib.script.office.mode import InteractionModeService
 
 # 从配置读取参数
 # 格式：###指令###、###指令 参数###，并兼容 ### 指令 参数 ### / ###指令：参数### 等常见变体。
@@ -313,11 +316,35 @@ class ToolDispatcher:
     订阅 STREAM_FINAL 事件 → 解析工具调用标记 → 执行对应操作
     """
 
-    def __init__(self, *, defer=None):
+    def __init__(
+        self,
+        *,
+        defer=None,
+        mode_service: "InteractionModeService | None" = None,
+    ):
         self._ec = get_event_center()
         self._defer = defer
+        self._mode_service = mode_service
         self._ec.subscribe(EventType.STREAM_FINAL, self._on_stream_final)
         logger.info("[ToolDispatcher] 工具调度器已初始化")
+
+    def _accepts_mode_generation(self, mode_generation: int | None) -> bool:
+        if self._mode_service is None:
+            return True
+        if mode_generation is None:
+            return False
+        return self._mode_service.accepts_companion_generation(mode_generation)
+
+    def _event_mode_generation(self, event: Event) -> tuple[bool, int | None]:
+        if self._mode_service is None:
+            return True, None
+        data = event.data if isinstance(event.data, dict) else {}
+        _, current_generation = self._mode_service.snapshot()
+        try:
+            generation = int(data.get("mode_generation", current_generation))
+        except (TypeError, ValueError):
+            return False, None
+        return self._accepts_mode_generation(generation), generation
 
     # ------------------------------------------------------------------
     # 事件处理
@@ -330,6 +357,9 @@ class ToolDispatcher:
         识别格式：###指令### 或 ###指令 参数###
         当前支持的指令：音乐、下一曲、暂停、回忆、雪豹、沙发、摩托、闹钟、计时、音量、瞬移、浏览器、窥屏
         """
+        accepted, mode_generation = self._event_mode_generation(event)
+        if not accepted:
+            return
         if event.data.get('allow_tool_commands', True) is False:
             return
 
@@ -356,7 +386,7 @@ class ToolDispatcher:
             if not arg:
                 arg = random.choice(_DEFAULT_MUSIC_CHOICES)
                 logger.info("[ToolDispatcher] 音乐指令缺少歌名，已改为随机播放: %s", arg)
-            get_compute_hub().submit_io(self._handle_music_request, arg)
+            get_compute_hub().submit_io(self._handle_music_request, arg, mode_generation)
 
         elif cmd == '下一曲':
             self._ec.publish(Event(EventType.MUSIC_NEXT_TRACK, {}))
@@ -404,25 +434,28 @@ class ToolDispatcher:
             self._handle_teleport_request(arg)
 
         elif cmd == '回忆':
-            self._handle_memory_recall(arg)
+            self._handle_memory_recall(arg, mode_generation=mode_generation)
 
         elif cmd == '窥屏':
-            self._handle_screen_peek()
+            self._handle_screen_peek(mode_generation=mode_generation)
 
         elif cmd == '浏览器':
-            self._handle_browser_request(arg)
+            self._handle_browser_request(arg, mode_generation=mode_generation)
 
         else:
             logger.warning("[ToolDispatcher] 未知指令: %s", cmd)
 
-    def _handle_screen_peek(self) -> None:
+    def _handle_screen_peek(self, *, mode_generation: int | None = None) -> None:
         """截取当前主屏幕，并仅向模型追加一次多模态请求。"""
+        if not self._accepts_mode_generation(mode_generation):
+            return
         self._ec.publish(Event(EventType.INPUT_CHAT, {
             'text': _SCREEN_PEEK_PROMPT,
             'raw': '###窥屏###',
             'source': 'tool_screen_peek',
             'capture_screen': True,
             'allow_tool_commands': False,
+            'mode_generation': mode_generation,
         }))
 
     def _handle_volume_request(self, arg: str):
@@ -449,7 +482,7 @@ class ToolDispatcher:
             # 绝对值：百分比转小数，限制在 0.0-1.0 范围内
             self._ec.publish(Event(EventType.MUSIC_VOLUME, {'volume': max(0.0, min(1.0, value / 100))}))
 
-    def _handle_music_request(self, keyword: str):
+    def _handle_music_request(self, keyword: str, mode_generation: int | None = None):
         """
         后台线程：搜索音乐并播放。
 
@@ -458,7 +491,12 @@ class ToolDispatcher:
         3. 搜索关键词，取第一首结果
         4. 发布 MUSIC_PLAY_TOP 事件播放
         """
+        if not self._accepts_mode_generation(mode_generation):
+            return
         has_speaker = self._check_has_speaker()
+
+        if not self._accepts_mode_generation(mode_generation):
+            return
 
         if not has_speaker:
             logger.info("[ToolDispatcher] 场上无音响，自动生成 %d 个", _AUTO_SPAWN_COUNT)
@@ -469,7 +507,12 @@ class ToolDispatcher:
             # 等待音响窗口初始化
             threading.Event().wait(timeout=0.5)
 
+        if not self._accepts_mode_generation(mode_generation):
+            return
+
         track_ref, display = self._search_music(keyword)
+        if not self._accepts_mode_generation(mode_generation):
+            return
         if track_ref is None:
             logger.warning("[ToolDispatcher] 搜索 '%s' 无结果", keyword)
             self._ec.publish(Event(EventType.INFORMATION, {
@@ -507,7 +550,12 @@ class ToolDispatcher:
 
         return has_speaker[0]
 
-    def _handle_browser_request(self, arg: str) -> None:
+    def _handle_browser_request(
+        self,
+        arg: str,
+        *,
+        mode_generation: int | None = None,
+    ) -> None:
         url = _normalize_url_arg(arg)
         if not url:
             logger.warning("[ToolDispatcher] 浏览器指令缺少有效网址: %r", arg)
@@ -519,8 +567,12 @@ class ToolDispatcher:
             return
 
         def _open():
+            if not self._accepts_mode_generation(mode_generation):
+                return
             try:
                 opened = webbrowser.open(url, new=2, autoraise=True)
+                if not self._accepts_mode_generation(mode_generation):
+                    return
                 if not opened:
                     logger.warning("[ToolDispatcher] webbrowser.open 返回 False: %s", url)
                     self._ec.publish(Event(EventType.INFORMATION, {
@@ -755,7 +807,12 @@ class ToolDispatcher:
             "请直接输出自然语言，不要输出任何 ###命令###。"
         )
 
-    def _handle_memory_recall(self, arg: str):
+    def _handle_memory_recall(
+        self,
+        arg: str,
+        *,
+        mode_generation: int | None = None,
+    ):
         """
         回忆工具：
         - ###回忆 刚刚 主题###
@@ -836,11 +893,14 @@ class ToolDispatcher:
         }))
 
         def _dispatch_recall_message():
+            if not self._accepts_mode_generation(mode_generation):
+                return
             self._ec.publish(Event(EventType.INPUT_CHAT, {
                 'text': message,
                 'raw': f'###回忆 {arg_text or "刚刚"}###',
                 'source': 'tool_recall',
                 'allow_tool_commands': False,
+                'mode_generation': mode_generation,
             }))
 
         self._defer_call(
@@ -928,11 +988,18 @@ class ToolDispatcher:
 _instance: Optional[ToolDispatcher] = None
 
 
-def get_tool_dispatcher() -> ToolDispatcher:
+def get_tool_dispatcher(
+    *,
+    mode_service: "InteractionModeService | None" = None,
+) -> ToolDispatcher:
     """获取全局 ToolDispatcher 实例（单例）"""
     global _instance
     if _instance is None:
-        _instance = ToolDispatcher()
+        if mode_service is None:
+            from lib.script.office.mode import get_interaction_mode_service
+
+            mode_service = get_interaction_mode_service()
+        _instance = ToolDispatcher(mode_service=mode_service)
     return _instance
 
 

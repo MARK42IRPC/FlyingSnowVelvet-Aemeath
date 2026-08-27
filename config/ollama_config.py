@@ -104,7 +104,6 @@ API_KEY = _LOCAL_SECRET_OVERRIDES.get('api_key', '')
 # 1: 福利 API
 # 2: 本地 Ollama
 # 3: 规则回复
-# 4: 元宝 Web 本地中转
 FORCE_REPLY_MODE = '1'
 WELFARE_INTELLIGENCE_BOOST = False
 
@@ -121,26 +120,6 @@ API_BASE_URL = _LOCAL_SECRET_OVERRIDES.get('api_base_url', '')
 # 使用 API Key 时的模型名称
 # 例如: 'gpt-4o-mini', 'deepseek-chat', 'moonshot-v1-8k'
 API_MODEL = _LOCAL_SECRET_OVERRIDES.get('api_model', 'gpt-5.4')
-
-# YuanBao-Free-API 固定本地回环配置。
-# 这套地址 / 占位密钥 / 默认模型由程序内部管理，不再从控制面板复用手动 OpenAI 配置。
-YUANBAO_FREE_API_LOCAL = {
-    'base_url': 'http://127.0.0.1:8000/v1',
-    'api_key': 'sk-yuanbao-local',
-    'model': 'deepseek-v3',
-}
-
-# YuanBao-Free-API 登录/会话配置（参考 chenwr727/yuanbao-free-api）
-# 当前集成的是仓库内置的本地中转服务：
-# - 启动后会自动生成登录二维码图片并等待扫码
-# - chat_id / 图片上传等能力仍沿用 OpenAI 兼容接口
-YUANBAO_FREE_API = {
-    'login_url': 'https://yuanbao.tencent.com/chat/naQivTmsDa',
-    'hy_source': 'web',
-    'hy_user': _LOCAL_SECRET_OVERRIDES.get('yuanbao_hy_user', ''),
-    'x_uskey': _LOCAL_SECRET_OVERRIDES.get('yuanbao_x_uskey', ''),
-    'agent_id': 'naQivTmsDa',
-}
 
 # ============================================================
 # Ollama 本地服务配置（API Key 为空或无效时使用）
@@ -222,9 +201,6 @@ _AI_SETTING_DEFAULTS = {
     'welfare_intelligence_boost': WELFARE_INTELLIGENCE_BOOST,
     'api_base_url': '',
     'api_model': 'gpt-5.4',
-    'yuanbao_login_url': YUANBAO_FREE_API['login_url'],
-    'yuanbao_hy_source': YUANBAO_FREE_API['hy_source'],
-    'yuanbao_agent_id': YUANBAO_FREE_API['agent_id'],
     'ollama_base_url': OLLAMA['base_url'],
     'ollama_model': OLLAMA_MODEL,
     'num_gpu': OLLAMA_OPTIONS['num_gpu'],
@@ -300,9 +276,6 @@ def _legacy_ai_setting_values() -> dict:
         'welfare_intelligence_boost': WELFARE_INTELLIGENCE_BOOST,
         'api_base_url': API_BASE_URL,
         'api_model': API_MODEL,
-        'yuanbao_login_url': YUANBAO_FREE_API['login_url'],
-        'yuanbao_hy_source': YUANBAO_FREE_API['hy_source'],
-        'yuanbao_agent_id': YUANBAO_FREE_API['agent_id'],
         'ollama_base_url': OLLAMA['base_url'],
         'ollama_model': OLLAMA_MODEL,
         'num_gpu': OLLAMA_OPTIONS['num_gpu'],
@@ -340,11 +313,6 @@ def _legacy_ai_setting_values() -> dict:
         if legacy_key in legacy:
             values[setting_key] = legacy[legacy_key]
     for source_name, mapping in (
-        ('YUANBAO_FREE_API', {
-            'login_url': 'yuanbao_login_url',
-            'hy_source': 'yuanbao_hy_source',
-            'agent_id': 'yuanbao_agent_id',
-        }),
         ('OLLAMA', {
             'base_url': 'ollama_base_url',
             'api_temperature': 'api_temperature',
@@ -388,9 +356,6 @@ def _apply_ai_setting_values(values: dict) -> None:
     WELFARE_INTELLIGENCE_BOOST = values['welfare_intelligence_boost']
     API_BASE_URL = values['api_base_url']
     API_MODEL = values['api_model']
-    YUANBAO_FREE_API['login_url'] = values['yuanbao_login_url']
-    YUANBAO_FREE_API['hy_source'] = values['yuanbao_hy_source']
-    YUANBAO_FREE_API['agent_id'] = values['yuanbao_agent_id']
     OLLAMA['base_url'] = values['ollama_base_url']
     OLLAMA_MODEL = values['ollama_model']
     OLLAMA_OPTIONS['num_gpu'] = values['num_gpu']
@@ -443,44 +408,9 @@ def is_api_key_configured() -> bool:
 
 
 def _normalize_force_mode(value) -> str:
-    """将回复模式归一化到五个确定来源，旧空值迁移为福利 API。"""
+    """将回复模式归一化到五个确定来源。"""
     text = '' if value is None else str(value).strip()
     return text if text in ('0', '1', '2', '3', '4') else '1'
-
-
-def get_yuanbao_local_base_url() -> str:
-    return str((YUANBAO_FREE_API_LOCAL or {}).get('base_url', '') or '').strip() or 'http://127.0.0.1:8000/v1'
-
-
-def get_yuanbao_local_api_key() -> str:
-    return str((YUANBAO_FREE_API_LOCAL or {}).get('api_key', '') or '').strip() or 'sk-yuanbao-local'
-
-
-def get_yuanbao_local_model() -> str:
-    return str((YUANBAO_FREE_API_LOCAL or {}).get('model', '') or '').strip() or 'deepseek-v3'
-
-
-def _build_yuanbao_provider_options(*, enabled: bool) -> dict:
-    options = dict(YUANBAO_FREE_API)
-    options['enabled'] = bool(enabled)
-    options['base_url'] = get_yuanbao_local_base_url()
-    options['model'] = get_yuanbao_local_model()
-    return {
-        'yuanbao_free_api': options,
-    }
-
-
-def _is_yuanbao_web_ready() -> bool:
-    """判断当前 YuanBao-Free-API 配置是否足以优先发起请求。"""
-    if not get_yuanbao_local_base_url():
-        return False
-    if not get_yuanbao_local_model():
-        return False
-    if not get_yuanbao_local_api_key():
-        return False
-    if not str((YUANBAO_FREE_API or {}).get('agent_id', '') or '').strip():
-        return False
-    return True
 
 
 def _build_openai_config(
@@ -490,7 +420,6 @@ def _build_openai_config(
     *,
     base_url: str | None = None,
     model: str | None = None,
-    provider_options: dict | None = None,
 ) -> dict:
     """构造 OpenAI 兼容模式配置。"""
     return {
@@ -502,7 +431,6 @@ def _build_openai_config(
         'force_mode': force_mode,
         'strict_mode': bool(force_mode),
         'error': '',
-        'provider_options': provider_options or _build_yuanbao_provider_options(enabled=False),
     }
 
 
@@ -522,21 +450,6 @@ def _build_welfare_config(force_mode: str) -> dict:
         base_url=str(resolved['base_url']),
         model=model,
     )
-
-
-def _build_yuanbao_web_config(force_mode: str) -> dict:
-    """构造 YuanBao-Free-API 本地中转配置。"""
-    return {
-        'api_type': 'openai_compatible',
-        'base_url': get_yuanbao_local_base_url(),
-        'model': get_yuanbao_local_model(),
-        'api_key': get_yuanbao_local_api_key(),
-        'key_source': 'yuanbao_local',
-        'force_mode': force_mode,
-        'strict_mode': bool(force_mode),
-        'error': '',
-        'provider_options': _build_yuanbao_provider_options(enabled=True),
-    }
 
 
 def _build_ollama_config(force_mode: str) -> dict:
@@ -627,9 +540,5 @@ def get_active_config() -> dict:
         return _build_ollama_config(force_mode)
     if force_mode == '3':
         return _build_rule_reply_config(force_mode)
-    if force_mode == '4':
-        if not _is_yuanbao_web_ready():
-            return _build_error_config(force_mode, '元宝模式配置不完整，至少需要 agent_id，并确保本地中转接口可用')
-        return _build_yuanbao_web_config(force_mode)
 
     return _build_error_config(force_mode, '回复模式无效')

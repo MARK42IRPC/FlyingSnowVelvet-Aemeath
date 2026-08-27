@@ -2,14 +2,14 @@
 
 生成范围: 所有 *.py 中的 EventCenter subscribe / unsubscribe / publish(Event(EventType.*)) 静态扫描结果
 仓库根目录: C:\Users\白草净华\Desktop\飞行雪绒项目\飞行雪绒WORKINGSPACE
-已发现订阅事件种类: 66
-已发现发布事件种类: 64
+已发现订阅事件种类: 72
+已发现发布事件种类: 71
 
 === 订阅汇总（按事件类型） ===
 
 [AI_VOICE_REQUEST]
 - lib/script/gsvmove/service.py -> self._on_ai_voice_request [has unsubscribe]
-  发布方: lib/script/chat/handler_stream_presenter.py
+  发布方: lib/script/chat/handler_stream_presenter.py, lib/script/office/service.py
 
 [APP_EXIT]
 - lib/script/SEanima/animation.py -> self._handle_exit [has unsubscribe]
@@ -104,12 +104,21 @@
 
 [INFORMATION]
 - lib/script/ui/bubble.py -> self._on_information
-  发布方: lib/core/cmd_center.py, lib/core/qt_bridge/tray_icon.py, lib/script/chat/handler.py, lib/script/chat/handler_stream_presenter.py, lib/script/cloudmusic/_mixin_cache.py, lib/script/cloudmusic/manager.py, lib/script/microphone_stt/service.py, lib/script/obj-摩托/manager.py, lib/script/obj-沙发/manager.py, lib/script/obj-闹钟/manager.py, lib/script/obj-雪堆/manager.py, lib/script/obj-雪球/manager.py, lib/script/obj-雪豹/manager.py, lib/script/obj-音响/manager.py, lib/script/practical/cleanup_handler.py, lib/script/tool_dispatcher/dispatcher.py, lib/script/ui/ai_settings_panel.py, lib/script/ui/launch_wuwa_button.py, lib/script/ui/more_functions_button.py, lib/script/ui/playlist_panel.py, lib/script/ui/speaker_control_buttons.py, lib/script/ui/speaker_search_dialog.py, lib/script/ui/yuanbao_login_dialog.py, lib/script/yuanbao_free_api/service.py
+  发布方: lib/core/cmd_center.py, lib/core/qt_bridge/tray_icon.py, lib/script/chat/handler.py, lib/script/chat/handler_stream_presenter.py, lib/script/cloudmusic/_mixin_cache.py, lib/script/cloudmusic/manager.py, lib/script/microphone_stt/service.py, lib/script/obj-摩托/manager.py, lib/script/obj-沙发/manager.py, lib/script/obj-闹钟/manager.py, lib/script/obj-雪堆/manager.py, lib/script/obj-雪球/manager.py, lib/script/obj-雪豹/manager.py, lib/script/obj-音响/manager.py, lib/script/office/service.py, lib/script/practical/cleanup_handler.py, lib/script/tool_dispatcher/dispatcher.py, lib/script/ui/ai_settings_panel.py, lib/script/ui/launch_wuwa_button.py, lib/script/ui/more_functions_button.py, lib/script/ui/playlist_panel.py, lib/script/ui/speaker_control_buttons.py, lib/script/ui/speaker_search_dialog.py, lib/script/ui/yuanbao_login_dialog.py, lib/script/yuanbao_free_api/service.py
+
+[UI_BUBBLE_REMOVE]
+- lib/script/ui/bubble.py -> self._on_bubble_remove
+- lib/core/dx_bridge/application_ui.py -> self._on_bubble_remove
+
+[INPUT_TEXT]
+- payload: text、可选 raw/source；由模式服务补充 interaction_mode/mode_generation 后路由
+- lib/script/office/mode.py -> self._on_input_text [has unsubscribe]
+  发布方: lib/core/dx_bridge/application_ui.py, lib/script/microphone_stt/service.py, lib/script/ui/command_dialog.py
 
 [INPUT_CHAT]
 - lib/script/chat/handler.py -> self._on_input_chat [has unsubscribe]
 - lib/script/chat/memory.py -> self._on_input_chat [has unsubscribe]
-  发布方: lib/script/microphone_stt/service.py, lib/script/tool_dispatcher/dispatcher.py
+  发布方: lib/script/office/mode.py, lib/script/tool_dispatcher/dispatcher.py
 
 [INPUT_COMMAND]
 - lib/core/cmd_center.py -> self._on_input_command [has unsubscribe]
@@ -125,6 +134,19 @@
 - lib/script/obj-音响/manager.py -> self._on_hash_command [has unsubscribe]
 - lib/script/practical/cleanup_handler.py -> self._on_hash_command [has unsubscribe]
   发布方: lib/core/qt_bridge/tray_icon.py, lib/script/ui/command_hint_box.py
+
+[INTERACTION_MODE_SET]
+- payload: mode=companion|office，或 toggle=true；可选 source
+- lib/script/office/mode.py -> self._on_mode_set [has unsubscribe]
+  发布方: lib/core/dx_bridge/application_ui.py, lib/script/office/service.py, lib/script/ui/interaction_mode_button.py
+
+[INTERACTION_MODE_CHANGED]
+- payload: mode、generation、source
+- lib/core/dx_bridge/application_ui.py -> self._on_interaction_mode_changed [has unsubscribe]
+- lib/script/chat/handler.py -> self._on_interaction_mode_changed [has unsubscribe]
+- lib/script/office/service.py -> self._on_mode_changed [has unsubscribe]
+- lib/script/ui/interaction_mode_button.py -> self._on_mode_changed [has unsubscribe]
+  发布方: lib/script/office/mode.py
 
 [KEY_PRESS]
 - payload: key=`lib.core.input.types.Key`（未知键可为兼容整数）、modifiers=`KeyModifier`、text、is_auto_repeat、pet
@@ -201,6 +223,20 @@
 - lib/script/ui/close_button_handler.py -> self._on_mouse_press
 - lib/script/ui/command_dialog_handler.py -> self._on_mouse_press
 - lib/script/ui/scale_button.py -> self._reset_idle_timer
+
+[OFFICE_APPROVAL_REQUEST]
+- payload: task_id、approval_id、tool_name、reason、可选 command
+- lib/core/dx_bridge/application_ui.py -> self._on_office_approval_request [has unsubscribe]
+  发布方: lib/script/office/service.py
+
+[OFFICE_INPUT]
+- lib/script/office/service.py -> self._on_office_input [has unsubscribe]
+  发布方: lib/script/office/mode.py
+
+[OFFICE_RUNTIME_EVENT]
+- DSH JSONL 侧车内部事件
+- lib/script/office/service.py -> self._on_runtime_event [has unsubscribe]
+  发布方: lib/script/office/service.py
 
 [MUSIC_LOGIN_QR_HIDE]
 - lib/script/ui/cloudmusic_login_dialog.py -> self._on_qr_hide [has unsubscribe]
@@ -408,6 +444,9 @@
 
 === 仅发布未订阅的事件 ===
 
+[OFFICE_STATE_CHANGED]
+- lib/script/office/service.py
+
 [MIC_STT_FINAL]
 - lib/script/microphone_stt/service.py
 
@@ -483,6 +522,7 @@
 
 [AI_VOICE_REQUEST]
 - lib/script/chat/handler_stream_presenter.py
+- lib/script/office/service.py
 
 [APP_QUIT]
 - lib/core/pet_window.py
@@ -522,6 +562,7 @@
 - lib/script/obj-雪球/manager.py
 - lib/script/obj-雪豹/manager.py
 - lib/script/obj-音响/manager.py
+- lib/script/office/service.py
 - lib/script/practical/cleanup_handler.py
 - lib/script/tool_dispatcher/dispatcher.py
 - lib/script/ui/ai_settings_panel.py
@@ -533,13 +574,26 @@
 - lib/script/ui/yuanbao_login_dialog.py
 - lib/script/yuanbao_free_api/service.py
 
-[INPUT_CHAT]
+[INPUT_TEXT]
+- lib/core/dx_bridge/application_ui.py
 - lib/script/microphone_stt/service.py
+- lib/script/ui/command_dialog.py
+
+[INPUT_CHAT]
+- lib/script/office/mode.py
 - lib/script/tool_dispatcher/dispatcher.py
 
 [INPUT_HASH]
 - lib/core/qt_bridge/tray_icon.py
 - lib/script/ui/command_hint_box.py
+
+[INTERACTION_MODE_CHANGED]
+- lib/script/office/mode.py
+
+[INTERACTION_MODE_SET]
+- lib/core/dx_bridge/application_ui.py
+- lib/script/office/service.py
+- lib/script/ui/interaction_mode_button.py
 
 [MANAGER_INTERACTION]
 - lib/core/qt_bridge/world_objects/snow_pile.py, lib/script/obj-雪豹/manager.py
@@ -655,6 +709,18 @@
 [MUSIC_VOLUME]
 - lib/script/tool_dispatcher/dispatcher.py
 - lib/script/ui/speaker_control_buttons.py
+
+[OFFICE_APPROVAL_REQUEST]
+- lib/script/office/service.py
+
+[OFFICE_INPUT]
+- lib/script/office/mode.py
+
+[OFFICE_RUNTIME_EVENT]
+- lib/script/office/service.py
+
+[OFFICE_STATE_CHANGED]
+- lib/script/office/service.py
 
 [PARTICLE_REQUEST]
 - lib/script/cloudmusic/_mixin_events.py

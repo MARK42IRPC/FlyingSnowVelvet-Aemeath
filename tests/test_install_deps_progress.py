@@ -10,10 +10,170 @@ from pathlib import Path
 from unittest.mock import patch
 
 import install_deps
+from lib.core import dsh_runtime_contract as dsh_config
 from lib.script.gsvmove import rar_backend
 
 
 class InstallDependenciesProgressTests(unittest.TestCase):
+    def test_uv_managed_base_python_is_excluded(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "uv" / "python" / "cpython-3.11"
+            (root / "Lib").mkdir(parents=True)
+            python_exe = root / "python.exe"
+            python_exe.write_bytes(b"python")
+            (root / "Lib" / "EXTERNALLY-MANAGED").write_text(
+                "[externally-managed]\n"
+                "Error=This Python installation is managed by uv and should not be modified.\n",
+                encoding="utf-8",
+            )
+
+            self.assertTrue(install_deps._is_uv_managed_python(python_exe))
+
+    def test_uv_created_virtual_environment_is_excluded(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / ".venv"
+            scripts = root / "Scripts"
+            scripts.mkdir(parents=True)
+            python_exe = scripts / "python.exe"
+            python_exe.write_bytes(b"python")
+            (root / "pyvenv.cfg").write_text(
+                "home = C:\\Python311\nuv = 0.11.6\n",
+                encoding="utf-8",
+            )
+
+            self.assertTrue(install_deps._is_uv_managed_python(python_exe))
+
+    def test_non_uv_python_is_not_excluded_by_external_management_alone(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "python"
+            (root / "Lib").mkdir(parents=True)
+            python_exe = root / "python.exe"
+            python_exe.write_bytes(b"python")
+            (root / "Lib" / "EXTERNALLY-MANAGED").write_text(
+                "[externally-managed]\nError=Managed by the system package manager.\n",
+                encoding="utf-8",
+            )
+
+            self.assertFalse(install_deps._is_uv_managed_python(python_exe))
+
+    def test_python_selection_skips_uv_candidate_before_probe(self):
+        uv_python = r"C:\Users\test\AppData\Roaming\uv\python\cpython-3.11\python.exe"
+        regular_python = r"C:\Python311\python.exe"
+
+        def is_uv_managed(path):
+            return str(path) == uv_python
+
+        with patch.object(
+            install_deps,
+            "_discover_all_pythons",
+            return_value=[uv_python, regular_python],
+        ), patch.object(
+            install_deps,
+            "_is_uv_managed_python",
+            side_effect=is_uv_managed,
+        ), patch.object(
+            install_deps,
+            "_probe_python_info",
+            return_value=(regular_python, (3, 11, 6)),
+        ) as probe, patch.object(
+            install_deps,
+            "_has_pip",
+            return_value=True,
+        ), patch.object(
+            install_deps,
+            "_current_runtime_executable",
+            return_value=regular_python,
+        ):
+            selected = install_deps.select_best_python()
+
+        self.assertEqual(selected, (regular_python, True))
+        probe.assert_called_once_with(regular_python)
+
+    def test_batch_bootstrap_filters_uv_python_before_launch_probe(self):
+        content = (Path(install_deps.__file__).parent / "安装依赖.bat").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("function Test-UvManagedPython", content)
+        uv_filter = content.index("if(Test-UvManagedPython $resolved){return}")
+        launch_probe = content.index("$info=Get-PythonInfo $resolved;")
+        self.assertLess(uv_filter, launch_probe)
+        self.assertIn("if(Test-UvManagedPython $info.Executable){return}", content)
+
+    def test_dsh_npm_install_uses_fixed_production_lockfile_command(self):
+        with patch.object(
+            install_deps,
+            "_run_command_with_progress",
+            return_value=(0, ""),
+        ) as run:
+            installed, detail = install_deps._run_dsh_npm_ci()
+
+        self.assertTrue(installed)
+        self.assertEqual(detail, "")
+        command = run.call_args.args[0]
+        self.assertEqual(command[2:], [
+            "ci",
+            "--omit=dev",
+            "--ignore-scripts",
+            "--no-audit",
+            "--no-fund",
+        ])
+        self.assertEqual(
+            run.call_args.kwargs["cwd"],
+            install_deps.dsh_config.dsh_runtime_root(install_deps.PROJECT_ROOT),
+        )
+        self.assertEqual(run.call_args.kwargs["kind"], "npm")
+        self.assertEqual(run.call_args.kwargs["timeout"], install_deps.DSH_RUNTIME_INSTALL_TIMEOUT)
+
+    def test_dsh_install_repairs_node_modules_without_downloading_node_again(self):
+        with patch.object(
+            install_deps,
+            "_dsh_runtime_ready",
+            side_effect=[(False, "DSH 依赖不完整"), (True, "")],
+        ), patch.object(
+            install_deps.dsh_config,
+            "runtime_source_error",
+            return_value="",
+        ), patch.object(
+            install_deps,
+            "_node_tree_ready",
+            return_value=(True, ""),
+        ), patch.object(
+            install_deps,
+            "_run_dsh_npm_ci",
+            return_value=(True, ""),
+        ) as npm_ci, patch.object(install_deps, "_dsh_node_urls") as node_urls:
+            installed = install_deps.ensure_dsh_office_runtime()
+
+        self.assertTrue(installed)
+        npm_ci.assert_called_once_with()
+        node_urls.assert_not_called()
+
+    def test_dsh_install_stops_when_release_source_bundle_is_incomplete(self):
+        with patch.object(
+            install_deps,
+            "_dsh_runtime_ready",
+            return_value=(False, "源码不完整"),
+        ), patch.object(
+            install_deps.dsh_config,
+            "runtime_source_error",
+            return_value="DSH 办公运行时源码不完整：缺少 bridge/index.mjs",
+        ), patch.object(install_deps, "_run_dsh_npm_ci") as npm_ci, patch.object(
+            install_deps,
+            "_dsh_node_urls",
+        ) as node_urls:
+            installed = install_deps.ensure_dsh_office_runtime()
+
+        self.assertFalse(installed)
+        npm_ci.assert_not_called()
+        node_urls.assert_not_called()
+
+    def test_node_archive_hash_matches_the_official_release_manifest(self):
+        self.assertEqual(
+            dsh_config.NODE_ARCHIVE_SHA256,
+            "ca2742695be8de44027d71b3f53a4bdb36009b95575fe1ae6f7f0b5ce091cb88",
+        )
+
     def test_directml_runtime_is_installed_in_versioned_venv(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             target = Path(tmpdir) / "voice" / "runtimes" / "onnx-directml" / "runtime"
@@ -53,6 +213,107 @@ class InstallDependenciesProgressTests(unittest.TestCase):
             )
             self.assertEqual(marker["version"], install_deps.directml_config.DIRECTML_RUNTIME_VERSION)
             self.assertEqual(marker["abi"], "cp311-win_amd64")
+
+    def test_cuda_runtime_is_installed_from_ranked_mirror_in_versioned_venv(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = Path(tmpdir) / "voice" / "runtimes" / "onnx-cuda" / "runtime"
+            target_python = target / "Scripts" / "python.exe"
+            pip_commands = []
+
+            def run(command, timeout=12):
+                if command[1:3] == ["-c", "import struct; print(struct.calcsize('P') * 8)"]:
+                    return subprocess.CompletedProcess(command, 0, stdout="64\n")
+                if "venv" in command:
+                    staging = Path(command[-1])
+                    (staging / "Scripts").mkdir(parents=True)
+                    (staging / "Scripts" / "python.exe").write_bytes(b"python")
+                    return subprocess.CompletedProcess(command, 0, stdout="")
+                if "pip" in command:
+                    pip_commands.append(command)
+                    return subprocess.CompletedProcess(command, 0, stdout="installed")
+                raise AssertionError(command)
+
+            def run_progress(command, **kwargs):
+                pip_commands.append(command)
+                self.assertEqual(kwargs["kind"], "pip")
+                self.assertEqual(kwargs["timeout"], install_deps.DSH_RUNTIME_INSTALL_TIMEOUT)
+                return 0, "installed"
+
+            mirror = {"name": "Tsinghua", "url": "https://mirror.example/simple", "host": "mirror.example"}
+            with patch.object(install_deps, "_get_version", return_value=(3, 11, 6)), patch.object(
+                install_deps, "_run", side_effect=run
+            ), patch.object(
+                install_deps, "_run_command_with_progress", side_effect=run_progress
+            ), patch.object(
+                install_deps.directml_config, "get_cuda_runtime_root", return_value=target
+            ), patch.object(
+                install_deps.directml_config, "get_cuda_python_path", return_value=target_python
+            ), patch.object(
+                install_deps.directml_config, "is_cuda_runtime_ready", side_effect=[False, True]
+            ), patch.object(
+                install_deps, "_cuda_runtime_probe", return_value=(True, "")
+            ):
+                installed = install_deps.ensure_cuda_voice_runtime("python.exe", [mirror])
+
+            self.assertTrue(installed)
+            self.assertEqual(pip_commands[0][pip_commands[0].index("-i") + 1], mirror["url"])
+            self.assertIn(install_deps.directml_config.CUDA_RUNTIME_REQUIREMENT, pip_commands[0])
+            self.assertIn("nvidia-cuda-nvrtc-cu12", pip_commands[0])
+            self.assertIn("nvidia-cudnn-cu12", pip_commands[0])
+            marker = json.loads(
+                (target / install_deps.directml_config.CUDA_RUNTIME_MARKER_NAME).read_text(encoding="utf-8")
+            )
+            self.assertEqual(marker["provider"], "CUDAExecutionProvider")
+
+    def test_cuda_probe_preloads_dlls_and_reports_provider_loader_diagnostics(self):
+        payload = {
+            "python": [3, 11],
+            "bits": 64,
+            "version": install_deps.directml_config.CUDA_RUNTIME_VERSION,
+            "providers": ["CPUExecutionProvider"],
+        }
+        result = subprocess.CompletedProcess(
+            [],
+            0,
+            stdout=json.dumps(payload),
+            stderr="Failed to load onnxruntime_providers_cuda.dll: DLL load failed",
+        )
+        with patch.object(install_deps, "_run", return_value=result) as run:
+            ready, detail = install_deps._cuda_runtime_probe(Path("python.exe"))
+
+        self.assertFalse(ready)
+        self.assertIn("Failed to load onnxruntime_providers_cuda.dll", detail)
+        self.assertIn("preload", run.call_args.args[0][-1])
+
+    def test_gpu_runtime_choice_defaults_to_directml_without_nvidia_gpu(self):
+        output = io.StringIO()
+        with patch.object(install_deps, "_has_nvidia_gpu", return_value=False), patch(
+            "builtins.input", side_effect=lambda prompt: (output.write(prompt), "")[1]
+        ), patch.object(install_deps, "_COLOR_ENABLED", True), contextlib.redirect_stdout(output):
+            self.assertEqual(install_deps.choose_voice_gpu_runtimes(), (False, True))
+        text = output.getvalue()
+        self.assertIn("\033[92m[推荐]\033[0m", text)
+        self.assertIn("请选择 [1-2，默认 2]", text)
+        self.assertNotIn("NVIDIA CUDA", text)
+
+    def test_gpu_runtime_choice_ignores_hidden_cuda_selection_without_nvidia_gpu(self):
+        output = io.StringIO()
+        with patch.object(install_deps, "_has_nvidia_gpu", return_value=False), patch(
+            "builtins.input", return_value="4"
+        ), contextlib.redirect_stdout(output):
+            self.assertEqual(install_deps.choose_voice_gpu_runtimes(), (False, True))
+        self.assertNotIn("NVIDIA CUDA", output.getvalue())
+
+    def test_gpu_runtime_choice_recommends_cuda_with_directml_fallback_for_nvidia_gpu(self):
+        output = io.StringIO()
+        with patch.object(install_deps, "_has_nvidia_gpu", return_value=True), patch(
+            "builtins.input", side_effect=lambda prompt: (output.write(prompt), "")[1]
+        ), contextlib.redirect_stdout(output):
+            self.assertEqual(install_deps.choose_voice_gpu_runtimes(), (True, True))
+        self.assertIn("NVIDIA CUDA", output.getvalue())
+        self.assertIn("请选择 [1-4，默认 4]", output.getvalue())
+        with patch("builtins.input", return_value="4"):
+            self.assertEqual(install_deps.choose_voice_gpu_runtimes(), (True, True))
 
     def test_python_311_is_preferred_over_current_non_target_runtime(self):
         with patch.object(install_deps, "_current_runtime_executable", return_value="C:\\Python312\\python.exe"):
@@ -245,6 +506,35 @@ class InstallDependenciesProgressTests(unittest.TestCase):
         self.assertIn("整体进度", text)
         self.assertNotIn("- ExistingPkg (existing)", text)
 
+    def test_overall_progress_counts_completed_modules_only(self):
+        dependencies = [
+            ("FirstPkg", "first", ()),
+            ("SecondPkg", "second", ()),
+        ]
+
+        def install_one(_python, _package, _mirrors, progress_callback):
+            progress_callback(40)
+            progress_callback(10)
+            return True, ""
+
+        output = io.StringIO()
+        with patch.object(install_deps, "DEPENDENCIES", dependencies), patch.object(
+            install_deps, "_pkg_installed", return_value=False
+        ), patch.object(
+            install_deps, "_install_one", side_effect=install_one
+        ), patch.object(
+            install_deps, "_COLOR_ENABLED", False
+        ), patch.object(
+            rar_backend, "is_bundled_unrar_ready", return_value=True
+        ), contextlib.redirect_stdout(output):
+            result = install_deps.install_all("python.exe", [{"name": "test"}])
+
+        text = output.getvalue()
+        self.assertTrue(result)
+        self.assertIn("0/2", text)
+        self.assertIn("1/2", text)
+        self.assertIn("2/2", text)
+
     def test_pip_23_compatible_progress_option_is_used(self):
         class FakeProcess:
             returncode = 0
@@ -271,6 +561,90 @@ class InstallDependenciesProgressTests(unittest.TestCase):
         option_index = command.index("--progress-bar")
         self.assertEqual(command[option_index + 1], "off")
         self.assertNotIn("raw", command)
+
+    def test_pip_progress_uses_monotonic_output_stages(self):
+        values = [
+            install_deps._pip_progress_from_output("", 5),
+            install_deps._pip_progress_from_output("Collecting example", 5),
+            install_deps._pip_progress_from_output("Downloading example", 22),
+            install_deps._pip_progress_from_output(
+                "Installing collected packages: example",
+                48,
+            ),
+            install_deps._pip_progress_from_output(
+                "Successfully installed example",
+                78,
+            ),
+        ]
+
+        self.assertEqual(values, [5, 22, 48, 78, 95])
+        self.assertEqual(install_deps._pip_progress_from_output("", 78), 78)
+        self.assertEqual(values, sorted(values))
+
+    def test_runtime_install_stages_have_monotonic_bar_values(self):
+        self.assertEqual(
+            install_deps._runtime_install_stage("Collecting example", kind="pip"),
+            (22, "解析 CUDA 依赖"),
+        )
+        self.assertEqual(
+            install_deps._runtime_install_stage("Downloading example", kind="pip"),
+            (48, "下载 CUDA 依赖"),
+        )
+        self.assertEqual(
+            install_deps._runtime_install_stage("npm http fetch GET 200", kind="npm"),
+            (48, "下载依赖"),
+        )
+        self.assertIsNone(install_deps._runtime_install_stage("warning", kind="pip"))
+
+    def test_runtime_and_transfer_progress_use_the_shared_bar_style(self):
+        output = io.StringIO()
+        with patch.object(install_deps, "_COLOR_ENABLED", False), contextlib.redirect_stdout(output):
+            display = install_deps._RuntimeInstallProgress("CUDA pip")
+            display.update(48, "下载 CUDA 依赖", force=True)
+            display.finish("完成", success=True)
+
+        text = output.getvalue()
+        self.assertIn("[━━━━━━━━━━━━━", text)
+        self.assertIn("100%", text)
+        self.assertIn("[━━━━━━━━━━━━━", install_deps._render_transfer_progress(
+            "downloading", 50, 100, 0.0
+        ))
+        self.assertNotIn("#", install_deps._render_transfer_progress(
+            "downloading", 50, 100, 0.0
+        ))
+
+    def test_monotonic_progress_reporter_ignores_mirror_retry_regression(self):
+        values = []
+        reporter = install_deps._MonotonicProgressReporter(values.append)
+
+        for value in (5, 60, 10, 78, 100):
+            reporter(value)
+
+        self.assertEqual(values, [5, 60, 78, 100])
+
+    def test_pip_without_output_does_not_fabricate_time_progress(self):
+        class FakeProcess:
+            returncode = 0
+            stdout = iter(())
+
+            @staticmethod
+            def poll():
+                return 0
+
+        values = []
+        with patch.object(
+            install_deps.subprocess,
+            "Popen",
+            return_value=FakeProcess(),
+        ):
+            return_code, _output = install_deps._run_pip_requirement_with_progress(
+                "python.exe",
+                "ExamplePkg",
+                values.append,
+            )
+
+        self.assertEqual(return_code, 0)
+        self.assertEqual(values, [5, 95])
 
     def test_opencc_install_requires_a_prebuilt_wheel(self):
         class FakeProcess:

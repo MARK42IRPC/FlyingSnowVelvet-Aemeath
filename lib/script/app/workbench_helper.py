@@ -1,15 +1,89 @@
 """Launch the optional Qt workbench in a separate process."""
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
+import threading
+import uuid
 from pathlib import Path
 
+from config.user_storage_paths import get_user_state_dir
 
-def launch_workbench_helper() -> bool:
+
+_HELPER_REQUEST_VERSION = 1
+_HELPER_LOCK = threading.RLock()
+_helper_process: subprocess.Popen | None = None
+
+
+def normalize_workbench_page(page_id: object) -> str:
+    value = str(page_id or "").strip()
+    if not value or len(value) > 64:
+        return "overview"
+    if not all(character.isalnum() or character in {"_", "-"} for character in value):
+        return "overview"
+    return value
+
+
+def _helper_request_path() -> Path:
+    return get_user_state_dir("workbench-helper", "request.json")
+
+
+def _publish_helper_request(page_id: str) -> dict:
+    path = _helper_request_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "version": _HELPER_REQUEST_VERSION,
+        "request_id": uuid.uuid4().hex,
+        "page_id": normalize_workbench_page(page_id),
+    }
+    temporary = path.with_name(
+        f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp"
+    )
+    try:
+        temporary.write_text(
+            json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n",
+            encoding="utf-8",
+        )
+        os.replace(temporary, path)
+    finally:
+        try:
+            temporary.unlink()
+        except OSError:
+            pass
+    return payload
+
+
+def read_workbench_helper_request() -> dict:
+    try:
+        payload = json.loads(_helper_request_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return {}
+    if not isinstance(payload, dict) or payload.get("version") != _HELPER_REQUEST_VERSION:
+        return {}
+    request_id = str(payload.get("request_id") or "")
+    if not request_id:
+        return {}
+    return {
+        "version": _HELPER_REQUEST_VERSION,
+        "request_id": request_id,
+        "page_id": normalize_workbench_page(payload.get("page_id")),
+    }
+
+
+def launch_workbench_helper(initial_page: str = "overview") -> bool:
+    global _helper_process
+
+    page_id = normalize_workbench_page(initial_page)
     entry = Path(__file__).resolve().parents[2] / 'core' / 'qt_desktop_pet.py'
-    command = [sys.executable, str(entry), '--fsv-workbench-helper']
+    command = [
+        sys.executable,
+        str(entry),
+        '--fsv-workbench-helper',
+        '--initial-page',
+        page_id,
+    ]
     kwargs = {
         'cwd': str(entry.parents[2]),
         'stdin': subprocess.DEVNULL,
@@ -24,8 +98,17 @@ def launch_workbench_helper() -> bool:
         )
     else:
         kwargs['start_new_session'] = True
-    try:
-        subprocess.Popen(command, **kwargs)
-    except (OSError, subprocess.SubprocessError):
-        return False
-    return True
+    with _HELPER_LOCK:
+        try:
+            _publish_helper_request(page_id)
+        except OSError:
+            return False
+        process = _helper_process
+        if process is not None and process.poll() is None:
+            return True
+        try:
+            _helper_process = subprocess.Popen(command, **kwargs)
+        except (OSError, subprocess.SubprocessError):
+            _helper_process = None
+            return False
+        return True

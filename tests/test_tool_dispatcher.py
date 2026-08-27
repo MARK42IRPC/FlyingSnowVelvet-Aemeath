@@ -38,6 +38,18 @@ class _ImmediateComputeHub:
         return Mock()
 
 
+class _FakeModeService:
+    def __init__(self, mode="companion", generation=0):
+        self.mode = mode
+        self.generation = generation
+
+    def snapshot(self):
+        return SimpleNamespace(value=self.mode), self.generation
+
+    def accepts_companion_generation(self, generation):
+        return self.mode == "companion" and generation == self.generation
+
+
 class ToolDispatcherTests(unittest.TestCase):
     def setUp(self):
         self.center = _FakeEventCenter()
@@ -63,6 +75,19 @@ class ToolDispatcherTests(unittest.TestCase):
 
         self.assertEqual(len(self.center.published), 1)
         self.assertEqual(self.center.published[0].type, EventType.MUSIC_PLAY_PAUSE)
+
+    def test_stale_generation_cannot_execute_tool_side_effects(self):
+        mode = _FakeModeService(mode="office", generation=1)
+        with patch.object(dispatcher_module, 'get_event_center', return_value=self.center):
+            dispatcher = ToolDispatcher(mode_service=mode)
+        self.addCleanup(dispatcher.cleanup)
+
+        dispatcher._on_stream_final(Event(EventType.STREAM_FINAL, {
+            "text": "###下一曲###",
+            "mode_generation": 0,
+        }))
+
+        self.assertEqual(self.center.published, [])
 
     def test_direct_commands_publish_expected_events(self):
         cases = (

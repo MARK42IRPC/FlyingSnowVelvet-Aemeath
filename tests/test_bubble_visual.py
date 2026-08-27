@@ -14,12 +14,13 @@ os.environ.setdefault(
 os.environ.setdefault("QT_PLUGIN_PATH", os.path.join(_QT_ROOT, "Qt5", "plugins"))
 
 from PyQt5.QtCore import QRect, Qt
-from PyQt5.QtGui import QFontMetrics, QImage, QPainter
+from PyQt5.QtGui import QFont, QFontMetrics, QImage, QPainter
 from PyQt5.QtWidgets import QApplication
 
 from config.config import UI
 from lib.core.event.center import cleanup_event_center
 from lib.core.graphics.application_visuals import BubbleVisualDescription
+from lib.core.graphics.commands import TextCommand
 from lib.core.graphics.types import Rect
 from lib.core.layer_manager import get_layer_manager
 from lib.core.qt_bridge.colors import COLORS
@@ -152,6 +153,31 @@ class BubbleVisualTests(unittest.TestCase):
                 int(bubble._visual.size.width),
                 int(bubble._visual.size.height),
             ))
+        finally:
+            get_layer_manager().unregister(bubble)
+            bubble.close()
+
+    def test_scaled_rich_text_rect_covers_rendered_glyph_advance(self):
+        bubble = Bubble()
+        try:
+            for text in (
+                r"\scalebox{1.23}{\text{雪羽绒的末端文字}}",
+                r"\textcolor{purple}{\Huge \text{月光所及皆是你}}",
+            ):
+                with self.subTest(text=text):
+                    visual = bubble._build_visual(text)
+                    commands = [
+                        command
+                        for command in visual.batch.commands
+                        if isinstance(command, TextCommand)
+                    ]
+                    self.assertTrue(commands)
+                    for command in commands:
+                        font = QFont(command.font.family)
+                        font.setPixelSize(command.font.pixel_size)
+                        font.setBold(command.font.bold)
+                        rendered_width = QFontMetrics(font).horizontalAdvance(command.text)
+                        self.assertGreaterEqual(command.rect.width, rendered_width)
         finally:
             get_layer_manager().unregister(bubble)
             bubble.close()

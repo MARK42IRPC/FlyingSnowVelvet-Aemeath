@@ -93,9 +93,6 @@ class ApplicationRuntimeContractTests(unittest.TestCase):
                 def subscribe(self, event_type, callback): pass
 
             class ApplicationUi:
-                def __init__(self): self.configured = None
-                def configure_services(self, yuanbao_service):
-                    self.configured = yuanbao_service
                 def prepare_application(self, application): pass
                 def prepare_runtime(self): pass
                 def start_runtime(self, application): pass
@@ -112,7 +109,6 @@ class ApplicationRuntimeContractTests(unittest.TestCase):
             class Service: pass
 
             ui = ApplicationUi()
-            yuanbao = Service()
             bundle = DesktopBackendBundle(
                 draw_backend_factory=lambda: object(),
                 application_runtime_factory=lambda: object(),
@@ -133,15 +129,16 @@ class ApplicationRuntimeContractTests(unittest.TestCase):
                 "get_event_center": lambda: EventCenter(),
                 "get_game_mode_service": lambda: GameMode(),
                 "get_gsvmove_service": lambda: Service(),
-                "get_yuanbao_free_api_service": lambda: yuanbao,
                 "get_bug_tracker_service": lambda: Service(),
                 "get_microphone_stt_service": lambda: Service(),
                 "get_microphone_push_to_talk_manager": lambda: Service(),
                 "get_voice_request_handler": lambda: Service(),
                 "get_cmd_center": lambda: Service(),
+                "get_interaction_mode_service": lambda: Service(),
+                "get_office_service": lambda **kwargs: Service(),
                 "get_ollama_manager": lambda **kwargs: Service(),
                 "get_chat_handler": lambda **kwargs: Service(),
-                "get_stream_memory": lambda: Service(),
+                "get_stream_memory": lambda **kwargs: Service(),
             }
             with patch.multiple(app_main, **replacements), patch(
                 "lib.core.voice.core.get_voice_core",
@@ -155,7 +152,6 @@ class ApplicationRuntimeContractTests(unittest.TestCase):
                 )
 
             assert state._application_ui is ui
-            assert ui.configured is yuanbao
             """
         )
         result = subprocess.run(

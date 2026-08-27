@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -12,6 +13,8 @@ from lib.script.gsvmove import service as service_module
 from lib.script.gsvmove.hybrid_worker import (
     CpuVoiceWorkerRuntime,
     VoiceWorkerRuntime,
+    _get_cuda_nvidia_bin_dirs,
+    _preload_onnxruntime_dlls,
     _resolve_worker_output,
     _terminate_worker_process_tree,
 )
@@ -20,6 +23,32 @@ from lib.core.event.center import Event, EventType
 
 
 class DirectMLHybridWorkerTests(unittest.TestCase):
+    def test_cuda_preload_calls_onnxruntime_dll_loader(self):
+        runtime_module = Mock()
+
+        _preload_onnxruntime_dlls("cuda", runtime_module)
+
+        runtime_module.preload_dlls.assert_called_once_with()
+
+    def test_cuda_worker_discovers_nvidia_bin_directories(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            python_path = root / "Scripts" / "python.exe"
+            for name in ("cublas", "cudnn"):
+                (root / "Lib" / "site-packages" / "nvidia" / name / "bin").mkdir(
+                    parents=True
+                )
+
+            directories = _get_cuda_nvidia_bin_dirs(python_path)
+
+        self.assertEqual(
+            directories,
+            (
+                root / "Lib" / "site-packages" / "nvidia" / "cublas" / "bin",
+                root / "Lib" / "site-packages" / "nvidia" / "cudnn" / "bin",
+            ),
+        )
+
     def test_windows_timeout_terminates_full_worker_process_tree(self):
         process = Mock(pid=321)
         process.poll.return_value = None
@@ -58,6 +87,40 @@ class DirectMLHybridWorkerTests(unittest.TestCase):
             flags & getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0),
             getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0),
         )
+
+    def test_cuda_runtime_prepends_nvidia_dll_directories_to_worker_path(self):
+        process = Mock()
+        process.poll.return_value = 0
+        process.stdin = Mock()
+        process.stdout = Mock()
+        process.stderr = Mock()
+        worker_thread = Mock()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            python_path = root / "Scripts" / "python.exe"
+            dll_dir = root / "Lib" / "site-packages" / "nvidia" / "cudnn" / "bin"
+            dll_dir.mkdir(parents=True)
+            with patch.object(
+                VoiceWorkerRuntime,
+                "_next_message",
+                return_value={"type": "ready", "provider": "cuda"},
+            ), patch(
+                "lib.script.gsvmove.hybrid_worker.subprocess.Popen",
+                return_value=process,
+            ) as popen, patch(
+                "lib.script.gsvmove.hybrid_worker.threading.Thread",
+                return_value=worker_thread,
+            ):
+                runtime = VoiceWorkerRuntime(
+                    root / "package",
+                    root / "output",
+                    provider="cuda",
+                    python_path=python_path,
+                )
+                runtime.close()
+
+        path_value = popen.call_args.kwargs["env"]["PATH"]
+        self.assertEqual(path_value.split(os.pathsep)[0], str(dll_dir))
 
     def test_runtime_path_is_versioned_under_shared_voice_root(self):
         with tempfile.TemporaryDirectory() as tmpdir, patch.dict(
@@ -99,6 +162,8 @@ class DirectMLHybridWorkerTests(unittest.TestCase):
             with patch.object(service_module, "get_voice_package_status", return_value=status), patch.object(
                 service_module, "_is_gsv_gpu_hybrid_enabled", return_value=True
             ), patch.object(
+                service_module, "_is_gsv_nvidia_cuda_acceleration_enabled", return_value=False
+            ), patch.object(
                 service_module, "HybridVoiceWorkerRuntime", side_effect=RuntimeError("DML unavailable")
             ) as hybrid, patch.object(
                 service_module, "CpuVoiceWorkerRuntime", return_value=cpu_runtime
@@ -112,6 +177,36 @@ class DirectMLHybridWorkerTests(unittest.TestCase):
         cpu.assert_called_once_with(root, root / "output")
         self.assertEqual(service._engine_backend, "cpu-fallback")
         self.assertEqual(service._engine_requested_backend, "hybrid")
+
+    def test_cuda_start_failure_uses_directml_fallback(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            status = VoicePackageStatus("installed", "ok", root)
+            directml_runtime = Mock()
+            service = object.__new__(service_module.GsvmoveService)
+            service._engine_lock = threading.RLock()
+            service._engine = None
+            service._engine_package_root = None
+            service._engine_backend = None
+            service._engine_requested_backend = None
+            service._output_dir = root / "output"
+
+            with patch.object(service_module, "get_voice_package_status", return_value=status), patch.object(
+                service_module, "_is_gsv_nvidia_cuda_acceleration_enabled", return_value=True
+            ), patch.object(
+                service_module, "CudaVoiceWorkerRuntime", side_effect=RuntimeError("CUDA unavailable")
+            ) as cuda, patch.object(
+                service_module, "HybridVoiceWorkerRuntime", return_value=directml_runtime
+            ) as directml:
+                ready = service._ensure_runtime_ready()
+                ready_again = service._ensure_runtime_ready()
+
+        self.assertTrue(ready)
+        self.assertTrue(ready_again)
+        cuda.assert_called_once_with(root, root / "output")
+        directml.assert_called_once_with(root, root / "output")
+        self.assertEqual(service._engine_backend, "directml-fallback")
+        self.assertEqual(service._engine_requested_backend, "cuda")
 
     def test_config_switch_schedules_active_hybrid_worker_release(self):
         service = object.__new__(service_module.GsvmoveService)

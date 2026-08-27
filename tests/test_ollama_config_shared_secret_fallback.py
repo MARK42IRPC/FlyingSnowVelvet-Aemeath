@@ -20,8 +20,7 @@ class OllamaConfigSharedSecretFallbackTests(unittest.TestCase):
                 json.dumps(
                     {
                         "api_key": "shared-api-key",
-                        "yuanbao_hy_user": "shared-user",
-                        "yuanbao_x_uskey": "shared-uskey",
+                        "office_api_key": "shared-office-key",
                     },
                     ensure_ascii=False,
                     indent=2,
@@ -38,8 +37,7 @@ class OllamaConfigSharedSecretFallbackTests(unittest.TestCase):
                 payload = oc._load_local_secret_overrides()
 
             self.assertEqual(payload["api_key"], "shared-api-key")
-            self.assertEqual(payload["yuanbao_hy_user"], "shared-user")
-            self.assertEqual(payload["yuanbao_x_uskey"], "shared-uskey")
+            self.assertEqual(payload["office_api_key"], "shared-office-key")
 
 
 if __name__ == "__main__":

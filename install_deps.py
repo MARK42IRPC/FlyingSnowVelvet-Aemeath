@@ -37,6 +37,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Optional
 
+from lib.core import dsh_runtime_contract as dsh_config
 from lib.core import voice_runtime_contract as directml_config
 
 PROJECT_ROOT = Path(__file__).parent
@@ -97,16 +98,8 @@ DEPENDENCIES = [
     ("vosk", "offline speech-to-text engine", ("vosk",)),
 ]
 
-TOTAL_STEPS = 8
+TOTAL_STEPS = 10
 
-YUANBAO_SERVICE_REPO_ZIP = "https://github.com/chenwr727/yuanbao-free-api/archive/refs/heads/main.zip"
-YUANBAO_SERVICE_REPO_ZIP_FALLBACKS = (
-    YUANBAO_SERVICE_REPO_ZIP,
-    "https://codeload.github.com/chenwr727/yuanbao-free-api/zip/refs/heads/main",
-)
-YUANBAO_SERVICE_BUNDLED_ZIP = PROJECT_ROOT / "services" / "bundles" / "yuanbao-free-api-main.zip"
-YUANBAO_SERVICE_DIR = PROJECT_ROOT / "services" / "yuanbao-free-api"
-YUANBAO_SERVICE_REQUIRED_FILES = ("app.py", "requirements.txt")
 PLAYWRIGHT_RUNTIME_ROOT = PROJECT_ROOT / "resc" / "playwright"
 PLAYWRIGHT_BROWSERS_ROOT = PLAYWRIGHT_RUNTIME_ROOT / "browsers"
 PLAYWRIGHT_CHROMIUM_REVISION = "1208"
@@ -238,6 +231,8 @@ JIEBA_FAST_PACKAGE = "jieba-fast"
 JIEBA_FAST_WHEEL_NAME = "jieba_fast-0.53-cp311-cp311-win_amd64.whl"
 JIEBA_FAST_WHEEL_SHA256 = "a5d9cf41d6817963a73f672a429dbfe5b03a4ff327cedf490d5f2b21be8c00d0"
 BINARY_ONLY_PACKAGES = frozenset({"opencc-python-reimplemented"})
+
+DSH_RUNTIME_INSTALL_TIMEOUT = 30 * 60
 PACKAGE_REQUIREMENTS = {
     "opencc-python-reimplemented": "opencc-python-reimplemented>=0.1.7,<1",
 }
@@ -249,16 +244,21 @@ _NOT_FOUND_MARKERS = (
 )
 
 
-def _run(cmd, timeout=12):
+def _run(cmd, timeout=12, *, cwd=None):
     """Run command quietly. Return CompletedProcess or None."""
     try:
+        options = {
+            "capture_output": True,
+            "text": True,
+            "encoding": "utf-8",
+            "errors": "ignore",
+            "timeout": timeout,
+        }
+        if cwd is not None:
+            options["cwd"] = str(cwd)
         return subprocess.run(
             cmd,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="ignore",
-            timeout=timeout,
+            **options,
         )
     except Exception:
         return None
@@ -274,6 +274,68 @@ def _run_python_module(python_exe, module, *args, timeout=12):
 
 def _run_pip(python_exe, *args, timeout=12):
     return _run_python_module(python_exe, "pip", *args, timeout=timeout)
+
+
+_UV_PYVENV_PATTERN = re.compile(r"(?im)^\s*uv\s*=")
+_UV_MANAGED_TEXT_PATTERN = re.compile(
+    r"(?i)(?:managed\s+by\s+uv|\buv[- ]managed\b)"
+)
+
+
+def _read_environment_marker(path: Path, limit=16 * 1024) -> str:
+    try:
+        with path.open("r", encoding="utf-8", errors="ignore") as stream:
+            return stream.read(limit)
+    except OSError:
+        return ""
+
+
+def _python_environment_roots(python_exe) -> tuple[Path, ...]:
+    value = str(python_exe or "").strip().strip('"')
+    if not value:
+        return ()
+
+    try:
+        lexical_path = Path(os.path.abspath(os.path.expandvars(os.path.expanduser(value))))
+    except (OSError, TypeError, ValueError):
+        return ()
+
+    executable_paths = [lexical_path]
+    try:
+        resolved_path = lexical_path.resolve(strict=False)
+    except OSError:
+        resolved_path = lexical_path
+    if os.path.normcase(str(resolved_path)) != os.path.normcase(str(lexical_path)):
+        executable_paths.append(resolved_path)
+
+    roots = []
+    seen = set()
+    for executable_path in executable_paths:
+        parent = executable_path.parent
+        root = parent.parent if parent.name.casefold() in {"scripts", "bin"} else parent
+        key = os.path.normcase(os.path.abspath(str(root)))
+        if key not in seen:
+            seen.add(key)
+            roots.append(root)
+    return tuple(roots)
+
+
+def _is_uv_managed_python(python_exe) -> bool:
+    """Return whether an interpreter belongs to a locked uv-managed environment."""
+    for root in _python_environment_roots(python_exe):
+        pyvenv_text = _read_environment_marker(root / "pyvenv.cfg")
+        if pyvenv_text and _UV_PYVENV_PATTERN.search(pyvenv_text):
+            return True
+
+        managed_markers = [root / "Lib" / "EXTERNALLY-MANAGED"]
+        lib_root = root / "lib"
+        if lib_root.is_dir():
+            managed_markers.extend(lib_root.glob("python*/EXTERNALLY-MANAGED"))
+        for marker in managed_markers:
+            marker_text = _read_environment_marker(marker)
+            if marker_text and _UV_MANAGED_TEXT_PATTERN.search(marker_text):
+                return True
+    return False
 
 
 def _discover_all_pythons():
@@ -397,7 +459,7 @@ def _discover_all_pythons():
     unique = []
     for exe in candidates:
         key = os.path.normcase(os.path.abspath(exe))
-        if key not in seen:
+        if key not in seen and not _is_uv_managed_python(exe):
             seen.add(key)
             unique.append(exe)
     return unique
@@ -473,6 +535,10 @@ def _sort_key(item):
 
 
 def _fallback_python_selection(message="  No Python found via scan, fallback to current interpreter"):
+    if _is_uv_managed_python(sys.executable):
+        raise RuntimeError(
+            "未找到可用的非 uv 管理 Python；请安装独立的 64 位 Python 3.11"
+        )
     print(message)
     return sys.executable, _has_pip(sys.executable)
 
@@ -499,12 +565,18 @@ def select_best_python():
     without_pip = []
 
     for exe in all_exes:
+        if _is_uv_managed_python(exe):
+            print(f"  [skip] uv-managed Python: {_console_safe(exe)}")
+            continue
         probed = _probe_python_info(exe)
         if not probed:
             print(f"  [skip] Python probe failed: {_console_safe(exe)}")
             continue
 
         resolved_exe, ver = probed
+        if _is_uv_managed_python(resolved_exe):
+            print(f"  [skip] uv-managed Python: {_console_safe(resolved_exe)}")
+            continue
         if ver < MIN_VERSION:
             print(f"  [skip] Python {_fmt_ver(ver)} below minimum {_fmt_ver(MIN_VERSION)}: {_console_safe(resolved_exe)}")
             continue
@@ -830,10 +902,36 @@ class _DependencyProgressDisplay:
     def __init__(self):
         self._drawn = False
         self._last_payload = None
+        self._active_package = None
+        self._active_percent = 0
+        self._overall_total = None
+        self._overall_current = 0
 
-    def update(self, package, package_percent, overall_current, overall_total, *, force=False):
+    def update(
+        self,
+        package,
+        package_percent,
+        overall_current,
+        overall_total,
+        *,
+        force=False,
+        reset=False,
+    ):
+        package = str(package)
         percent = max(0, min(100, int(package_percent)))
-        payload = (str(package), percent, int(overall_current), int(overall_total))
+        total = max(0, int(overall_total))
+        if reset or package != self._active_package:
+            self._active_package = package
+            self._active_percent = 0
+        percent = max(self._active_percent, percent)
+        self._active_percent = percent
+        if self._overall_total != total:
+            self._overall_total = total
+            self._overall_current = 0
+        current = max(0, min(total, int(overall_current)))
+        current = max(self._overall_current, current)
+        self._overall_current = current
+        payload = (package, percent, current, total)
         if payload == self._last_payload and not force:
             return
         self._last_payload = payload
@@ -843,18 +941,18 @@ class _DependencyProgressDisplay:
             color_kind="progress_current",
         )
         overall_bar = _render_dependency_bar(
-            overall_current,
-            overall_total,
+            current,
+            total,
             color_kind="progress_overall",
         )
         current_label = _fmt_color("当前依赖", "info")
         overall_label = _fmt_color("整体进度", "stage")
         package_value = _fmt_color(f"{percent:>3}%", "progress_value")
         overall_value = _fmt_color(
-            f"{overall_current}/{overall_total}",
+            f"{current}/{total}",
             "progress_value",
         )
-        package_name = _fmt_color(str(package), "progress_current")
+        package_name = _fmt_color(package, "progress_current")
         first = f"  {current_label} {package_bar} {package_value}  {package_name}"
         second = f"  {overall_label} {overall_bar} {overall_value}"
 
@@ -870,6 +968,58 @@ class _DependencyProgressDisplay:
             print(first)
             print(second)
             self._drawn = True
+
+
+_PIP_PROGRESS_STAGES = (
+    (95, ("successfully installed", "already satisfied")),
+    (78, (
+        "installing collected",
+        "installing build dependencies",
+        "building wheel",
+        "running setup.py",
+        "running bdist_wheel",
+    )),
+    (48, ("downloading", "using cached", "using cache", "fetching")),
+    (22, (
+        "collecting",
+        "preparing metadata",
+        "getting requirements to build wheel",
+        "checking if the build backend supports a build_editable",
+    )),
+)
+
+
+def _pip_progress_from_output(line, current):
+    """Map pip's coarse log phases to a monotonic, honest progress value."""
+    text = _ANSI_ESCAPE_PATTERN.sub("", str(line or "")).replace("\r", " ").strip().lower()
+    current = max(0, min(100, int(current)))
+    if not text:
+        return current
+    for value, markers in _PIP_PROGRESS_STAGES:
+        if any(marker in text for marker in markers):
+            return max(current, value)
+    return max(current, 5)
+
+
+class _MonotonicProgressReporter:
+    """Keep retries and noisy callbacks from making one job appear to regress."""
+
+    def __init__(self, callback):
+        self._callback = callback
+        self._value = 0
+
+    @property
+    def value(self):
+        return self._value
+
+    def __call__(self, value):
+        value = max(0, min(100, int(value)))
+        if value < self._value:
+            value = self._value
+        if value == self._value:
+            return
+        self._value = value
+        self._callback(value)
 
 
 def _run_pip_requirement_with_progress(
@@ -929,9 +1079,9 @@ def _run_pip_requirement_with_progress(
     reader = threading.Thread(target=read_output, daemon=True, name="pip-progress-reader")
     reader.start()
     output_tail = []
-    started_at = time.monotonic()
-    percent = 1
+    percent = 5
     reader_done = False
+    progress_callback(percent)
     while proc.poll() is None or not reader_done:
         try:
             line = output_queue.get(timeout=0.12)
@@ -943,14 +1093,185 @@ def _run_pip_requirement_with_progress(
             output_tail.append(line)
             if len(output_tail) > 160:
                 del output_tail[:-160]
+            next_percent = _pip_progress_from_output(line, percent)
+            if next_percent != percent:
+                percent = next_percent
+                progress_callback(percent)
 
-        elapsed = time.monotonic() - started_at
-        estimated = min(90, 2 + int(elapsed * 3))
-        percent = max(percent, estimated)
-        progress_callback(percent)
+    if proc.returncode == 0 and percent < 95:
+        progress_callback(95)
 
     reader.join(timeout=1.0)
     return proc.returncode, "".join(output_tail)
+
+
+class _RuntimeInstallProgress:
+    """Render live stage progress using the same bar as dependency installs."""
+
+    def __init__(self, label, *, width=26):
+        self._label = str(label)
+        self._width = max(10, int(width))
+        self._started = time.monotonic()
+        self._percent = 0
+        self._last_detail = ""
+        self._last_percent = -1
+        self._last_draw = 0.0
+        self._drawn = False
+        self._line_width = 0
+
+    @property
+    def percent(self):
+        return self._percent
+
+    def update(self, percent=None, detail="", *, force=False):
+        now = time.monotonic()
+        if percent is not None:
+            self._percent = max(self._percent, min(100, int(percent)))
+        detail = " ".join(str(detail or "").split())
+        if not detail:
+            detail = "处理中"
+        if (
+            not force
+            and detail == self._last_detail
+            and self._percent == self._last_percent
+            and now - self._last_draw < 1.0
+        ):
+            return
+        self._last_detail = detail
+        self._last_percent = self._percent
+        self._last_draw = now
+        elapsed = int(max(0, now - self._started))
+        minutes, seconds = divmod(elapsed, 60)
+        bar = _render_dependency_bar(
+            self._percent,
+            100,
+            width=self._width,
+            color_kind="progress_current",
+        )
+        value = _fmt_color(f"{self._percent:>3}%", "progress_value")
+        label = _fmt_color(self._label, "info")
+        line = f"  {label} {bar} {value}  {detail}  [{minutes:02d}:{seconds:02d}]"
+        self._line_width = max(self._line_width, len(line))
+        if _COLOR_ENABLED:
+            sys.stdout.write(f"\r\033[2K{line}")
+        else:
+            sys.stdout.write("\r" + line)
+        sys.stdout.flush()
+        self._drawn = True
+
+    def finish(self, detail, *, success=False):
+        if success:
+            self._percent = 100
+        if not self._drawn:
+            self.update(self._percent, detail, force=True)
+            sys.stdout.write("\n")
+            sys.stdout.flush()
+            self._drawn = False
+            return
+        self.update(self._percent, detail, force=True)
+        sys.stdout.write("\n")
+        sys.stdout.flush()
+        self._drawn = False
+
+
+def _runtime_install_stage(line, *, kind):
+    """Translate npm/pip output into monotonic stage percentages and labels."""
+    text = _ANSI_ESCAPE_PATTERN.sub("", str(line or ""))
+    lowered = text.replace("\r", " ").strip().lower()
+    if not lowered:
+        return None
+    if kind == "npm":
+        markers = (
+            (12, "准备 lockfile", ("ideal tree", "loadideal", "sill ideal")),
+            (28, "解析依赖树", ("reify", "place")),
+            (48, "下载依赖", ("http fetch", "fetch manifest", "fetch metadata")),
+            (72, "安装依赖", ("extract", "tarball", "unpack")),
+            (90, "整理 node_modules", ("reify:load", "reify:save")),
+            (96, "依赖安装完成", ("added ", "up to date", "audited ")),
+        )
+    else:
+        markers = (
+            (96, "依赖安装完成", ("successfully installed", "already satisfied")),
+            (76, "构建/安装依赖", ("installing collected", "building wheel", "running setup.py")),
+            (48, "下载 CUDA 依赖", ("downloading", "using cached", "using cache", "fetching")),
+            (22, "解析 CUDA 依赖", ("collecting", "preparing metadata", "getting requirements")),
+        )
+    for percent, label, candidates in markers:
+        if any(candidate in lowered for candidate in candidates):
+            return percent, label
+    return None
+
+
+def _run_command_with_progress(command, *, label, kind, timeout, cwd=None):
+    """Run a long installer command while forwarding useful live status."""
+    try:
+        proc = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+            cwd=str(cwd) if cwd is not None else None,
+        )
+    except OSError as exc:
+        return 127, f"无法启动安装命令：{exc}"
+
+    output_queue = queue.Queue()
+
+    def read_output():
+        stream = proc.stdout
+        if stream is None:
+            output_queue.put(None)
+            return
+        try:
+            for line in stream:
+                output_queue.put(line)
+        finally:
+            output_queue.put(None)
+
+    reader = threading.Thread(
+        target=read_output,
+        daemon=True,
+        name="runtime-install-progress-reader",
+    )
+    reader.start()
+    display = _RuntimeInstallProgress(label)
+    display.update(5, "启动安装", force=True)
+    output_tail = []
+    reader_done = False
+    deadline = time.monotonic() + max(1, int(timeout))
+    while proc.poll() is None or not reader_done:
+        if proc.poll() is None and time.monotonic() >= deadline:
+            try:
+                proc.kill()
+            except OSError:
+                pass
+            display.finish("超时")
+            reader_done = True
+            return 124, "安装命令超时"
+        try:
+            line = output_queue.get(timeout=0.25)
+        except queue.Empty:
+            display.update(detail="处理中")
+            continue
+        if line is None:
+            reader_done = True
+            continue
+        output_tail.append(line)
+        if len(output_tail) > 160:
+            del output_tail[:-160]
+        stage = _runtime_install_stage(line, kind=kind)
+        if stage is not None:
+            percent, detail = stage
+            display.update(percent, detail)
+        else:
+            display.update(detail="处理中")
+    reader.join(timeout=1.0)
+    return_code = proc.returncode
+    display.finish("完成" if return_code == 0 else "失败", success=return_code == 0)
+    return return_code, "".join(output_tail)
 
 
 def _run_pip_install_with_progress(python_exe, pkg, mirror, progress_callback):
@@ -985,6 +1306,7 @@ def _summarize_pip_failure(output):
 
 
 def _install_jieba_fast_wheel(python_exe, progress_callback):
+    progress_callback = _MonotonicProgressReporter(progress_callback)
     version = _get_version(python_exe)
     architecture = _run(
         [
@@ -1060,6 +1382,7 @@ def _install_one(python_exe, pkg, mirrors, progress_callback):
     if not mirrors:
         return False, "没有可用的 pip 镜像"
 
+    progress_callback = _MonotonicProgressReporter(progress_callback)
     last_failure = "pip 安装失败"
     for mirror in mirrors:
         return_code, output = _run_pip_install_with_progress(
@@ -1119,13 +1442,20 @@ def install_all(python_exe, mirrors):
 
     failed = []
     failure_details = {}
-    current_job = 0
+    completed_jobs = 0
     for pkg, _desc, _import_checks in missing:
-        current_job += 1
-        display.update(pkg, 1, current_job, total_jobs)
+        job_completed = completed_jobs
+        display.update(
+            pkg,
+            5,
+            job_completed,
+            total_jobs,
+            force=True,
+            reset=True,
+        )
 
-        def report(percent, package=pkg, index=current_job):
-            display.update(package, percent, index, total_jobs)
+        def report(percent, package=pkg, overall=job_completed):
+            display.update(package, percent, overall, total_jobs)
 
         installed, failure_detail = _install_one(
             python_exe,
@@ -1136,23 +1466,53 @@ def install_all(python_exe, mirrors):
         if not installed:
             failed.append(pkg)
             failure_details[pkg] = failure_detail
-        display.update(pkg, 100 if pkg not in failed else 0, current_job, total_jobs, force=True)
+        completed_jobs += 1
+        display.update(
+            pkg,
+            100 if installed else 0,
+            completed_jobs,
+            total_jobs,
+            force=True,
+        )
 
     if not unrar_ready:
-        current_job += 1
-        display.update("UnRAR后端", 1, current_job, total_jobs)
+        job_completed = completed_jobs
+        display.update(
+            "UnRAR后端",
+            5,
+            job_completed,
+            total_jobs,
+            force=True,
+            reset=True,
+        )
+        unrar_progress = _MonotonicProgressReporter(
+            lambda percent: display.update(
+                "UnRAR后端",
+                percent,
+                job_completed,
+                total_jobs,
+            )
+        )
         try:
             from lib.script.gsvmove.rar_backend import ensure_bundled_unrar
 
             def report_unrar(current, total):
                 percent = 0 if total <= 0 else int((current / total) * 100)
-                display.update("UnRAR后端", percent, current_job, total_jobs)
+                unrar_progress(max(5, percent))
 
             ensure_bundled_unrar(report_unrar)
-            display.update("UnRAR后端", 100, current_job, total_jobs, force=True)
+            completed_jobs += 1
+            display.update("UnRAR后端", 100, completed_jobs, total_jobs, force=True)
         except Exception:
             failed.append("UnRAR后端")
-            display.update("UnRAR后端", 0, current_job, total_jobs, force=True)
+            completed_jobs += 1
+            display.update(
+                "UnRAR后端",
+                0,
+                completed_jobs,
+                total_jobs,
+                force=True,
+            )
 
     if not failed:
         _print_kind("\n  所有依赖已安装", "ok", prefix=False)
@@ -1206,7 +1566,7 @@ def _directml_runtime_probe(runtime_python: Path) -> tuple[bool, str]:
 
 
 def ensure_directml_hybrid_runtime(python_exe, mirrors) -> bool:
-    _print_stage(4, "准备 DirectML GPU 混合推理环境...")
+    print("\n  准备 DirectML GPU 混合推理环境...")
     version = _get_version(python_exe)
     architecture = _run(
         [python_exe, "-c", "import struct; print(struct.calcsize('P') * 8)"],
@@ -1294,6 +1654,206 @@ def ensure_directml_hybrid_runtime(python_exe, mirrors) -> bool:
         return False
     finally:
         _rmtree_if_exists(staging_root, ignore_errors=True)
+
+
+def _cuda_runtime_probe(runtime_python: Path) -> tuple[bool, str]:
+    code = (
+        "import json, struct, sys, numpy as np, onnx, onnxruntime as ort; "
+        "preload=getattr(ort, 'preload_dlls', None); "
+        "preload() if preload else None; "
+        "from onnx import helper, TensorProto; "
+        "node=helper.make_node('Identity', ['x'], ['y']); "
+        "graph=helper.make_graph([node], 'cuda_probe', "
+        "[helper.make_tensor_value_info('x', TensorProto.FLOAT, [1])], "
+        "[helper.make_tensor_value_info('y', TensorProto.FLOAT, [1])]); "
+        "model=helper.make_model(graph, opset_imports=[helper.make_opsetid('', 13)]); "
+        "model.ir_version=10; "
+        "session=ort.InferenceSession(model.SerializeToString(), "
+        "providers=['CUDAExecutionProvider', 'CPUExecutionProvider']); "
+        "session.run(None, {'x': np.ones((1,), dtype=np.float32)}); "
+        "payload={'python': list(sys.version_info[:2]), "
+        "'bits': struct.calcsize('P') * 8, 'version': ort.__version__, "
+        "'providers': session.get_providers()}; "
+        "print(json.dumps(payload))"
+    )
+    result = _run([str(runtime_python), "-c", code], timeout=60)
+    if result is None or result.returncode != 0:
+        detail = _summarize_pip_failure(
+            "\n".join(
+                value
+                for value in (
+                    result.stdout if result is not None else "",
+                    result.stderr if result is not None else "",
+                )
+                if value
+            )
+        )
+        return False, detail
+    try:
+        payload = json.loads((result.stdout or "").strip())
+    except (TypeError, ValueError):
+        return False, "CUDA 环境探测结果无法解析"
+    if payload.get("python") != [3, 11] or payload.get("bits") != 64:
+        return False, "CUDA Worker 仅支持 64 位 Python 3.11"
+    if payload.get("version") != directml_config.CUDA_RUNTIME_VERSION:
+        return False, f"CUDA 运行库版本不匹配：{payload.get('version')}"
+    if "CUDAExecutionProvider" not in set(payload.get("providers") or ()):
+        diagnostic = _summarize_pip_failure(result.stderr or "")
+        suffix = f"；诊断：{diagnostic}" if diagnostic != "pip 未返回错误详情" else ""
+        return False, f"CUDAExecutionProvider 不可用：{payload.get('providers')}{suffix}"
+    return True, ""
+
+
+def ensure_cuda_voice_runtime(python_exe, mirrors) -> bool:
+    """Install a self-contained CUDA ONNX worker with mirror fallback."""
+    print("\n  准备 NVIDIA CUDA ONNX 语音运行时...")
+    version = _get_version(python_exe)
+    architecture = _run(
+        [python_exe, "-c", "import struct; print(struct.calcsize('P') * 8)"],
+        timeout=30,
+    )
+    if (
+        version[:2] != TARGET_PYTHON
+        or architecture is None
+        or architecture.returncode != 0
+        or (architecture.stdout or "").strip() != "64"
+    ):
+        _print_warn("  CUDA Worker 仅支持 64 位 Python 3.11，已跳过")
+        return False
+
+    target_root = directml_config.get_cuda_runtime_root()
+    runtime_python = directml_config.get_cuda_python_path()
+    if directml_config.is_cuda_runtime_ready():
+        ready, detail = _cuda_runtime_probe(runtime_python)
+        if ready:
+            print(f"  NVIDIA CUDA 语音运行时已存在: {target_root}")
+            return True
+        _print_warn(f"  现有 CUDA 环境无效，将重新安装：{detail}")
+
+    staging_root = target_root.with_name(f".{target_root.name}.installing")
+    _rmtree_if_exists(staging_root, ignore_errors=True)
+    target_root.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        created = _run(
+            [python_exe, "-m", "venv", "--system-site-packages", str(staging_root)],
+            timeout=180,
+        )
+        if created is None or created.returncode != 0:
+            detail = _summarize_pip_failure(created.stdout if created is not None else "")
+            raise RuntimeError(f"创建隔离环境失败：{detail}")
+
+        staging_python = staging_root / "Scripts" / "python.exe"
+        sources = list(mirrors or ()) or [PYPI_MIRRORS[-1]]
+        last_detail = "没有可用的 pip 镜像"
+        installed = False
+        for mirror in sources:
+            command = [
+                str(staging_python),
+                "-m",
+                "pip",
+                "install",
+                *directml_config.CUDA_RUNTIME_DEPENDENCIES,
+                "--disable-pip-version-check",
+                "--progress-bar",
+                "off",
+                "-i",
+                mirror["url"],
+                "--trusted-host",
+                mirror["host"],
+            ]
+            return_code, output = _run_command_with_progress(
+                command,
+                label=f"CUDA pip（{mirror['name']}）",
+                kind="pip",
+                timeout=DSH_RUNTIME_INSTALL_TIMEOUT,
+            )
+            if return_code == 0:
+                installed = True
+                break
+            last_detail = (
+                f"{mirror['name']}："
+                f"{_summarize_pip_failure(output)}"
+            )
+        if not installed:
+            raise RuntimeError(
+                f"安装 {directml_config.CUDA_RUNTIME_REQUIREMENT} 及 CUDA 依赖失败：{last_detail}"
+            )
+
+        ready, detail = _cuda_runtime_probe(staging_python)
+        if not ready:
+            raise RuntimeError(detail)
+        marker = {
+            "runtime": "onnxruntime-gpu",
+            "version": directml_config.CUDA_RUNTIME_VERSION,
+            "abi": directml_config.CUDA_RUNTIME_ABI,
+            "provider": "CUDAExecutionProvider",
+            "python_executable": str(python_exe),
+        }
+        (staging_root / directml_config.CUDA_RUNTIME_MARKER_NAME).write_text(
+            json.dumps(marker, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        _rmtree_if_exists(target_root, ignore_errors=True)
+        os.replace(staging_root, target_root)
+        if not directml_config.is_cuda_runtime_ready():
+            raise RuntimeError("CUDA 环境安装后完整性检查失败")
+        print(f"  NVIDIA CUDA 语音运行时已安装: {target_root}")
+        return True
+    except Exception as exc:
+        _print_warn(f"  NVIDIA CUDA 语音运行时安装失败: {exc}")
+        return False
+    finally:
+        _rmtree_if_exists(staging_root, ignore_errors=True)
+
+
+def _has_nvidia_gpu() -> bool:
+    """Return whether the local NVIDIA driver exposes at least one GPU."""
+    try:
+        executable = shutil.which("nvidia-smi")
+        if not executable:
+            return False
+        result = subprocess.run(
+            [executable, "-L"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="ignore",
+            timeout=3,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0 and "gpu" in str(result.stdout or "").lower()
+
+
+def choose_voice_gpu_runtimes() -> tuple[bool, bool]:
+    """Return whether the optional CUDA and DirectML workers should be prepared."""
+    has_nvidia = _has_nvidia_gpu()
+    recommended = 4 if has_nvidia else 2
+    recommended_label = _fmt_color("[推荐]", "ok")
+    print("\n  可选 ONNX 语音加速运行时：")
+    print("    1. 仅 CPU（不额外下载）")
+    print(f"    2. {recommended_label if recommended == 2 else '      '} 通用 GPU DirectML（AMD / Intel / NVIDIA）")
+    if has_nvidia:
+        print("    3. NVIDIA CUDA（N卡加速）")
+        print(f"    4. {recommended_label} NVIDIA CUDA + DirectML 后备")
+    try:
+        choice_range = "1-4" if has_nvidia else "1-2"
+        selected = input(f"  请选择 [{choice_range}，默认 {recommended}]: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        selected = ""
+    if not selected:
+        selected = str(recommended)
+    if not has_nvidia and selected not in {"1", "2"}:
+        selected = str(recommended)
+    if selected == "2":
+        return False, True
+    if selected == "3":
+        return True, False
+    if selected == "4":
+        return True, True
+    return False, False
 
 
 def _ping_once_ms(host: str, timeout: float = RESOURCE_PING_TIMEOUT_SECONDS) -> float | None:
@@ -1459,10 +2019,14 @@ def _render_transfer_progress(prefix, current, total, start_time):
     if total:
         percent = min(100.0, (current * 100.0) / total)
         total_text = _format_bytes(total)
-        bar_width = 24
-        filled = max(0, min(bar_width, int(percent / 100.0 * bar_width)))
-        bar = "#" * filled + "-" * (bar_width - filled)
-        return f"{prefix} [{bar}] {percent:6.2f}% {current_text}/{total_text} {speed_text}"
+        bar = _render_dependency_bar(
+            current,
+            total,
+            width=26,
+            color_kind="progress_current",
+        )
+        value = _fmt_color(f"{percent:>6.2f}%", "progress_value")
+        return f"{prefix} {bar} {value} {current_text}/{total_text} {speed_text}"
     return f"{prefix} {current_text} {speed_text}"
 
 
@@ -1545,78 +2109,6 @@ def _find_bundle_root(extract_root: Path, required_files) -> Optional[Path]:
         if candidate.is_dir() and all((candidate / name).exists() for name in required_files):
             return candidate
     return None
-
-
-def _download_yuanbao_service_bundle() -> bool:
-    if _service_bundle_ready(YUANBAO_SERVICE_DIR, YUANBAO_SERVICE_REQUIRED_FILES):
-        print(f"  已存在服务目录: {YUANBAO_SERVICE_DIR}")
-        return True
-
-    def _install_from_archive(archive_path: Path, source_text: str) -> bool:
-        temp_root = Path(os.environ.get("TEMP", "C:\\Temp")) / "fsv_yuanbao_bundle"
-        extract_root = temp_root / "extract"
-        _rmtree_if_exists(temp_root, ignore_errors=True)
-        temp_root.mkdir(parents=True, exist_ok=True)
-        try:
-            print(f"  使用 {source_text} 准备本地网页中转服务包...")
-            extract_root.mkdir(parents=True, exist_ok=True)
-            _extract_zip_with_progress(archive_path, extract_root)
-            bundle_root = _find_bundle_root(extract_root, YUANBAO_SERVICE_REQUIRED_FILES)
-            if bundle_root is None:
-                raise RuntimeError('服务包中未找到 app.py / requirements.txt')
-            _rmtree_if_exists(YUANBAO_SERVICE_DIR, ignore_errors=True)
-            YUANBAO_SERVICE_DIR.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(bundle_root), str(YUANBAO_SERVICE_DIR))
-            print(f"  已安装到: {YUANBAO_SERVICE_DIR}")
-            return True
-        except Exception as exc:
-            _print_warn(f"  安装本地网页中转服务包失败 [{source_text}]: {exc}")
-            return False
-        finally:
-            _rmtree_if_exists(temp_root, ignore_errors=True)
-
-    if YUANBAO_SERVICE_BUNDLED_ZIP.exists():
-        if _install_from_archive(YUANBAO_SERVICE_BUNDLED_ZIP, "仓库内置压缩包"):
-            return True
-
-    temp_root = Path(os.environ.get("TEMP", "C:\\Temp")) / "fsv_yuanbao_bundle"
-    archive_path = temp_root / "yuanbao-free-api-main.zip"
-    _rmtree_if_exists(temp_root, ignore_errors=True)
-    temp_root.mkdir(parents=True, exist_ok=True)
-    try:
-        print("  下载本地网页中转服务包...")
-        last_error = None
-        for idx, url in enumerate(YUANBAO_SERVICE_REPO_ZIP_FALLBACKS, start=1):
-            _unlink_if_exists(archive_path, ignore_errors=True)
-            use_env_proxy = idx == 1
-            source_name = f"local-web-relay#{idx}"
-            try:
-                _stream_download_with_progress(
-                    url,
-                    archive_path,
-                    label=source_name,
-                    use_env_proxy=use_env_proxy,
-                )
-                last_error = None
-                break
-            except Exception as exc:
-                last_error = exc
-                proxy_mode = "系统代理" if use_env_proxy else "直连(禁用代理)"
-                _print_warn(f"  下载源失败 [{proxy_mode}] {url}: {exc}")
-        if last_error is not None:
-            raise last_error
-        return _install_from_archive(archive_path, '在线下载压缩包')
-    except Exception as e:
-        _print_warn(f"  下载/解压本地网页中转服务失败: {e}")
-        return False
-    finally:
-        _rmtree_if_exists(temp_root, ignore_errors=True)
-
-
-def ensure_yuanbao_service_bundle() -> bool:
-    _print_stage(6, "准备本地网页中转服务...")
-    bundle_ok = _download_yuanbao_service_bundle()
-    return bundle_ok
 
 
 def _browser_runtime_resource_paths() -> tuple[Path, ...]:
@@ -1732,56 +2224,6 @@ def _find_extracted_browser_root(extract_root: Path) -> Optional[Path]:
         if executable.parent.name == "chrome-win64":
             return executable.parent
     return None
-
-
-def ensure_yuanbao_browser_runtime(python_exe) -> bool:
-    _print_stage(7, "准备浏览器离线运行时...")
-
-    runtime_path = _find_playwright_browser_runtime()
-    if runtime_path is not None:
-        try:
-            rel_path = runtime_path.relative_to(PROJECT_ROOT)
-        except Exception:
-            rel_path = runtime_path
-        print(f"  已存在浏览器运行时: {rel_path}")
-        return True
-
-    if not _ensure_browser_runtime_archives():
-        _print_warn("  浏览器运行时资源下载未完成")
-        return False
-
-    print("  使用 resc.net.txt 外置资源部署浏览器运行时")
-    temp_root = Path(os.environ.get("TEMP", "C:\\Temp")) / "fsv_playwright_runtime"
-    extract_root = temp_root / "extract"
-    _rmtree_if_exists(temp_root, ignore_errors=True)
-    PLAYWRIGHT_RUNTIME_TARGET_DIR.parent.mkdir(parents=True, exist_ok=True)
-
-    try:
-        extract_root.mkdir(parents=True, exist_ok=True)
-        _extract_browser_runtime_archive(extract_root)
-        extracted_root = _find_extracted_browser_root(extract_root)
-        if extracted_root is None:
-            raise FileNotFoundError("浏览器资源包中未找到 chrome-win64/chrome.exe")
-        _rmtree_if_exists(PLAYWRIGHT_RUNTIME_TARGET_DIR, ignore_errors=True)
-        shutil.move(str(extracted_root), str(PLAYWRIGHT_RUNTIME_TARGET_DIR / "chrome-win64"))
-    except Exception as exc:
-        _print_warn(f"  安装浏览器运行时失败: {exc}")
-        return False
-    finally:
-        _rmtree_if_exists(temp_root, ignore_errors=True)
-
-    runtime_path = _find_playwright_browser_runtime()
-    if runtime_path is None:
-        _print_warn("  离线安装完成，但未在 resc/playwright 中找到 Chromium 可执行文件")
-        return False
-    try:
-        rel_path = runtime_path.relative_to(PROJECT_ROOT)
-    except Exception:
-        rel_path = runtime_path
-    print(f"  浏览器运行时已安装: {rel_path}")
-    for resource_path in _browser_runtime_resource_paths():
-        _unlink_if_exists(resource_path, ignore_errors=True)
-    return True
 
 
 def _stream_download_with_progress(url, dest_path, *, label, timeout=30, chunk_size=256 * 1024, use_env_proxy=True):
@@ -1907,12 +2349,211 @@ def _extract_zip_with_progress(zip_path, extract_root):
         )
 
 
+def _node_version_from_result(result) -> str:
+    if result is None or result.returncode != 0:
+        return ""
+    lines = [line.strip() for line in str(result.stdout or "").splitlines() if line.strip()]
+    return lines[-1] if lines else ""
+
+
+def _node_tree_ready(root: Path) -> tuple[bool, str]:
+    """Validate the generated Node tree without invoking npm from the app."""
+    root = Path(root)
+    node = root / "node.exe"
+    npm_cli = root / "node_modules" / "npm" / "bin" / "npm-cli.js"
+    if not node.is_file() or not npm_cli.is_file():
+        return False, "Node/npm 文件不完整"
+
+    node_result = _run([str(node), "--version"], timeout=30)
+    if _node_version_from_result(node_result) != dsh_config.NODE_VERSION_TEXT:
+        return False, f"Node 版本不匹配（需要 {dsh_config.NODE_VERSION_TEXT}）"
+
+    npm_result = _run([str(node), str(npm_cli), "--version"], timeout=30)
+    if _node_version_from_result(npm_result) != dsh_config.NPM_VERSION:
+        return False, f"npm 版本不匹配（需要 {dsh_config.NPM_VERSION}）"
+    return True, ""
+
+
+def _dsh_runtime_ready() -> tuple[bool, str]:
+    """Return whether the installed Node and locked DSH tree are usable."""
+    source_error = dsh_config.runtime_source_error(PROJECT_ROOT)
+    if source_error:
+        return False, source_error
+    node_root = dsh_config.node_root(PROJECT_ROOT)
+    ready, detail = _node_tree_ready(node_root)
+    if not ready:
+        return False, detail
+    installed_error = dsh_config.installed_runtime_error(PROJECT_ROOT)
+    return (False, installed_error) if installed_error else (True, "")
+
+
+def _dsh_node_urls() -> tuple[str, ...]:
+    """Use the resource manifest first, then keep official URLs as a fallback."""
+    manifest_urls = ()
+    try:
+        manifest_urls = tuple(_resource_urls(dsh_config.NODE_ARCHIVE_NAME))
+    except Exception:
+        manifest_urls = ()
+    return tuple(dict.fromkeys((*manifest_urls, *dsh_config.NODE_DOWNLOAD_URLS)))
+
+
+def _run_dsh_npm_ci() -> tuple[bool, str]:
+    node_root = dsh_config.node_root(PROJECT_ROOT)
+    node = dsh_config.node_executable(PROJECT_ROOT)
+    npm_cli = dsh_config.npm_cli_path(PROJECT_ROOT)
+    runtime_root = dsh_config.dsh_runtime_root(PROJECT_ROOT)
+    command = [
+        str(node),
+        str(npm_cli),
+        "ci",
+        "--omit=dev",
+        "--ignore-scripts",
+        "--no-audit",
+        "--no-fund",
+    ]
+    print("  使用随包 npm 安装 DSH lockfile 依赖（不执行生命周期脚本）")
+    return_code, output = _run_command_with_progress(
+        command,
+        label="DSH npm ci",
+        kind="npm",
+        timeout=DSH_RUNTIME_INSTALL_TIMEOUT,
+        cwd=runtime_root,
+    )
+    if return_code == 0:
+        return True, ""
+    return False, _summarize_pip_failure(output or "npm 未返回错误详情")
+
+
+def ensure_dsh_office_runtime() -> bool:
+    """Install the fixed Node/DSH runtime; runtime startup never installs it."""
+    _print_stage(4, "准备 DSH 办公运行时依赖...")
+    ready, detail = _dsh_runtime_ready()
+    if ready:
+        print(
+            f"  DSH 办公运行时已就绪: Node {dsh_config.NODE_VERSION_TEXT}, "
+            f"npm {dsh_config.NPM_VERSION}, DSH {dsh_config.DSH_VERSION}"
+        )
+        return True
+    if detail:
+        print(f"  需要准备 DSH 运行时：{detail}")
+
+    node_root = dsh_config.node_root(PROJECT_ROOT)
+    source_error = dsh_config.runtime_source_error(PROJECT_ROOT)
+    if source_error:
+        _print_warn(f"  无法安装 DSH 办公运行时：{source_error}")
+        return False
+
+    node_ready, node_detail = _node_tree_ready(node_root)
+    if node_ready:
+        installed, install_detail = _run_dsh_npm_ci()
+        if not installed:
+            _print_warn(f"  DSH lockfile 依赖安装失败：{install_detail}")
+            return False
+        ready, ready_detail = _dsh_runtime_ready()
+        if not ready:
+            _print_warn(f"  DSH 安装后完整性检查失败：{ready_detail}")
+            return False
+        print(
+            f"  DSH 办公运行时已修复: Node {dsh_config.NODE_VERSION_TEXT}, "
+            f"npm {dsh_config.NPM_VERSION}, DSH {dsh_config.DSH_VERSION}"
+        )
+        return True
+
+    if node_detail:
+        print(f"  需要重新准备 Node 运行时：{node_detail}")
+    archive_name = dsh_config.NODE_ARCHIVE_NAME
+    urls = _dsh_node_urls()
+    if not urls:
+        _print_warn(f"  没有可用的 Node 下载地址: {archive_name}")
+        return False
+
+    node_root.parent.mkdir(parents=True, exist_ok=True)
+    staging_root = node_root.with_name(f".{node_root.name}.installing")
+    _rmtree_if_exists(staging_root, ignore_errors=True)
+    last_detail = "Node ZIP 下载失败"
+    try:
+        with tempfile.TemporaryDirectory(prefix="aemeath-dsh-node-") as temp_dir:
+            archive_path = Path(temp_dir) / archive_name
+            part_path = archive_path.with_name(archive_path.name + ".part")
+            for index, url in enumerate(urls, start=1):
+                try:
+                    source_name = RESOURCE_SOURCE_HOSTS.get(
+                        (urllib.parse.urlsplit(url).hostname or "").lower(),
+                        f"镜像 {index}",
+                    )
+                    print(f"  下载 Node 运行时 [{index}/{len(urls)}] ({source_name})")
+                    _unlink_if_exists(part_path, ignore_errors=True)
+                    _stream_download_with_progress(
+                        url,
+                        part_path,
+                        label=f"Node {dsh_config.NODE_VERSION_TEXT}",
+                    )
+                    digest = hashlib.sha256(part_path.read_bytes()).hexdigest()
+                    if digest.lower() != dsh_config.NODE_ARCHIVE_SHA256.lower():
+                        raise ValueError(
+                            "Node ZIP SHA-256 不匹配，"
+                            f"期望 {dsh_config.NODE_ARCHIVE_SHA256}，实际 {digest}"
+                        )
+                    part_path.replace(archive_path)
+                    break
+                except (urllib.error.URLError, OSError, ValueError, zipfile.BadZipFile) as exc:
+                    last_detail = f"{source_name}：{exc}"
+                    _print_warn(f"  Node 下载/校验失败：{last_detail}")
+                    _unlink_if_exists(part_path, ignore_errors=True)
+            else:
+                _print_warn(f"  Node 运行时准备失败：{last_detail}")
+                return False
+
+            extract_root = Path(temp_dir) / "extract"
+            _extract_zip_with_progress(archive_path, extract_root)
+            source_root = extract_root / f"node-v{dsh_config.NODE_VERSION}-win-x64"
+            if not source_root.is_dir():
+                raise ValueError(f"Node ZIP 缺少目录 {source_root.name}")
+            shutil.move(str(source_root), str(staging_root))
+
+        ready, detail = _node_tree_ready(staging_root)
+        if not ready:
+            raise RuntimeError(f"解压后的 Node 运行时无效：{detail}")
+
+        old_root = node_root.with_name(f".{node_root.name}.previous")
+        _rmtree_if_exists(old_root, ignore_errors=True)
+        if node_root.exists():
+            node_root.rename(old_root)
+        try:
+            staging_root.rename(node_root)
+        except Exception:
+            if old_root.exists() and not node_root.exists():
+                old_root.rename(node_root)
+            raise
+        _rmtree_if_exists(old_root, ignore_errors=True)
+
+        installed, detail = _node_tree_ready(node_root)
+        if not installed:
+            raise RuntimeError(detail)
+        installed, detail = _run_dsh_npm_ci()
+        if not installed:
+            raise RuntimeError(detail)
+        ready, detail = _dsh_runtime_ready()
+        if not ready:
+            raise RuntimeError(f"DSH 安装后完整性检查失败：{detail}")
+        print(
+            f"  DSH 办公运行时已安装: Node {dsh_config.NODE_VERSION_TEXT}, "
+            f"npm {dsh_config.NPM_VERSION}, DSH {dsh_config.DSH_VERSION}"
+        )
+        return True
+    except Exception as exc:
+        _print_warn(f"  DSH 办公运行时安装失败：{exc}")
+        _rmtree_if_exists(staging_root, ignore_errors=True)
+        return False
+
+
 def _seanima_ready() -> bool:
     return SEANIMA_TARGET_DIR.is_dir() and any(SEANIMA_TARGET_DIR.rglob("*.webp"))
 
 
 def ensure_seanima_assets() -> bool:
     """确保启动/退出动画序列帧存在。"""
+    _print_stage(7, "准备启动/退出动画资源...")
     if _seanima_ready():
         print(f"  动画资源已存在: {SEANIMA_TARGET_DIR.relative_to(PROJECT_ROOT)}")
         return True
@@ -2007,7 +2648,7 @@ def _ensure_single_vosk_model(spec: dict) -> bool:
 
 
 def ensure_vosk_models():
-    _print_stage(5, "准备 Vosk 语音模型...")
+    _print_stage(6, "准备 Vosk 语音模型...")
     all_ok = True
     for spec in VOSK_MODEL_SPECS:
         if not _ensure_single_vosk_model(spec):
@@ -2017,7 +2658,7 @@ def ensure_vosk_models():
 
 def launch(python_exe):
     """Launch main script, prefer pythonw if available."""
-    _print_stage(8, "启动飞行雪绒桌宠...")
+    _print_stage(10, "启动飞行雪绒桌宠...")
 
     main_script = PROJECT_ROOT / "lib" / "core" / "qt_desktop_pet.py"
     if not main_script.exists():
@@ -2066,23 +2707,24 @@ def main():
         if not install_all(python_exe, mirrors):
             _print_warn("依赖未全部安装，可能影响部分功能")
 
-        if not ensure_directml_hybrid_runtime(python_exe, mirrors):
+        if not ensure_dsh_office_runtime():
+            _print_warn("DSH 办公运行时未准备完成，办公模式将提示重新运行安装依赖")
+
+        _print_stage(5, "选择并准备可选 ONNX 语音 GPU 运行时...")
+        use_cuda, use_directml = choose_voice_gpu_runtimes()
+        if use_cuda and not ensure_cuda_voice_runtime(python_exe, mirrors):
+            _print_warn("NVIDIA CUDA 运行时未准备完成，设置页不会显示 N 卡加速")
+        if use_directml and not ensure_directml_hybrid_runtime(python_exe, mirrors):
             _print_warn("DirectML 混合推理环境未准备完成，ONNX 语音将使用 CPU")
 
         if _microphone_runtime_ready(python_exe):
             if not ensure_vosk_models():
                 _print_warn("部分 Vosk 模型缺失，语音识别可能无法正常工作")
         else:
-            _print_stage(5, "跳过 Vosk 模型下载（sounddevice/vosk 未就绪）")
+            _print_stage(6, "跳过 Vosk 模型下载（sounddevice/vosk 未就绪）")
 
         if not ensure_seanima_assets():
             _print_warn("启动/退出动画资源未准备完成，将按程序兼容逻辑继续启动")
-
-        if not ensure_yuanbao_service_bundle():
-            _print_warn("本地网页中转服务未准备完成，相关网页模式可能不可用")
-
-        if not ensure_yuanbao_browser_runtime(python_exe):
-            _print_warn("浏览器运行时未准备完成，网页登录可能不可用")
 
         if launch(python_exe):
             print("\nLauncher will close in 3 seconds...")

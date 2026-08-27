@@ -18,12 +18,12 @@ from lib.script.ui.rect_action_button_style import paint_rect_action_button
 
 
 class MoreFunctionsButton(QWidget):
-    """更多功能按钮，左锚点对齐到“文字模式”按钮的右锚点。"""
+    """更多功能按钮，位于启动鸣潮按钮正上方。"""
 
     WIDTH = scale_px(80, min_abs=80)
     HEIGHT = scale_px(32, min_abs=1)
 
-    def __init__(self, chat_mode_button=None):
+    def __init__(self, launch_wuwa_button=None):
         super().__init__()
         self.setWindowFlags(
             Qt.Tool
@@ -35,7 +35,7 @@ class MoreFunctionsButton(QWidget):
         self.setCursor(Qt.PointingHandCursor)
         get_layer_manager().register(self, Layer.PET_UI)
 
-        self._chat_mode_button = chat_mode_button
+        self._launch_wuwa_button = launch_wuwa_button
         self._visible = False
         self._hovered = False
         self._description = TOOLTIPS.get('more_functions_button', '打开系统托盘更多功能菜单')
@@ -64,29 +64,25 @@ class MoreFunctionsButton(QWidget):
         if not self._visible:
             return
         ui_id = event.data.get('ui_id')
-        if ui_id in ('all', 'chat_mode_button'):
+        if ui_id in ('all', 'launch_wuwa_button'):
             self._update_position()
 
     def _on_clickthrough_toggle(self, event: Event) -> None:
         self.setAttribute(Qt.WA_TransparentForMouseEvents, event.data.get('enabled', False))
 
     def _update_position(self) -> None:
-        if not self._chat_mode_button or not self._chat_mode_button.isVisible():
+        if not self._launch_wuwa_button or not self._launch_wuwa_button.isVisible():
             return
-        btn_x = self._chat_mode_button.x()
-        btn_y = self._chat_mode_button.y()
-        btn_width = self._chat_mode_button.width()
-        btn_height = self._chat_mode_button.height()
-        target_right_x = btn_x + btn_width
-        target_right_y = btn_y + btn_height // 2
-        new_x = target_right_x
-        new_y = target_right_y - self.HEIGHT // 2
+        btn_x = self._launch_wuwa_button.x()
+        btn_y = self._launch_wuwa_button.y()
+        new_x = btn_x
+        new_y = btn_y - self.HEIGHT
         x, y, _ = clamp_rect_position(
             new_x,
             new_y,
             self.WIDTH,
             self.HEIGHT,
-            point=QPoint(target_right_x, target_right_y),
+            point=QPoint(btn_x, btn_y),
             fallback_widget=self,
         )
         if self.x() != x or self.y() != y:

@@ -60,8 +60,8 @@ class _DxBubbleWindow:
         self._metrics = create_portable_bubble_text_metrics()
         self._host = None
         self._description: BubbleVisualDescription | None = None
-        self._current: tuple[str, int, int, str] | None = None
-        self._queue: list[tuple[str, int, int, str]] = []
+        self._current: tuple[str, int, int, str, str, str, str] | None = None
+        self._queue: list[tuple[str, int, int, str, str, str, str]] = []
         self._elapsed = 0
         self._hide_call = None
         self._cleanup_done = False
@@ -113,7 +113,7 @@ class _DxBubbleWindow:
     def _show_current(self):
         if self._current is None:
             return
-        text, _min_ticks, max_ticks, align = self._current
+        text, _min_ticks, max_ticks, align, _source, _task_id, _kind = self._current
         self._description = self._build(text, align)
         host = self._ensure_host(self._description)
         anchor = self._pet_anchor()
@@ -125,11 +125,34 @@ class _DxBubbleWindow:
         self._cancel_hide()
         self._hide_call = self._context.call_later(max(1, int(max_ticks)) * 50, self.hide)
 
-    def show(self, text: str, min_ticks: int = 40, max_ticks: int = 100, align: str = "center"):
-        item = (str(text or ""), max(0, int(min_ticks)), max(1, int(max_ticks)), str(align or "center"))
+    def show(
+        self,
+        text: str,
+        min_ticks: int = 40,
+        max_ticks: int = 100,
+        align: str = "center",
+        *,
+        force_replace: bool = False,
+        source: str = "",
+        task_id: str = "",
+        kind: str = "",
+    ):
+        item = (
+            str(text or ""),
+            max(0, int(min_ticks)),
+            max(1, int(max_ticks)),
+            str(align or "center"),
+            str(source or ""),
+            str(task_id or ""),
+            str(kind or ""),
+        )
         if not item[0]:
             return
-        if self._current is None:
+        if force_replace:
+            self._queue.clear()
+            self._current = item
+            self._show_current()
+        elif self._current is None:
             self._current = item
             self._show_current()
         elif self._elapsed >= self._current[1]:
@@ -137,6 +160,38 @@ class _DxBubbleWindow:
             self._show_current()
         else:
             self._queue.append(item)
+
+    @staticmethod
+    def _metadata_matches(
+        item,
+        *,
+        source: str,
+        task_id: str,
+        kind: str,
+    ) -> bool:
+        return (
+            (not source or item[4] == str(source))
+            and (not task_id or item[5] == str(task_id))
+            and (not kind or item[6] == str(kind))
+        )
+
+    def remove_bubbles(self, *, source: str = "", task_id: str = "", kind: str = "") -> None:
+        self._queue = [
+            item for item in self._queue
+            if not self._metadata_matches(
+                item,
+                source=source,
+                task_id=task_id,
+                kind=kind,
+            )
+        ]
+        if self._current is not None and self._metadata_matches(
+            self._current,
+            source=source,
+            task_id=task_id,
+            kind=kind,
+        ):
+            self.hide()
 
     def hide(self):
         self._cancel_hide()
@@ -148,6 +203,10 @@ class _DxBubbleWindow:
             item = self._queue.pop(0)
             self._current = item
             self._show_current()
+
+    def clear(self):
+        self._queue.clear()
+        self.hide()
 
     def tick(self):
         if self._current is not None:
@@ -206,7 +265,7 @@ class _DxBubbleWindow:
 
 
 class _DxCommandActionPanel:
-    """One native window executing the shared seven-button action batch."""
+    """One native window executing the shared eight-button action batch."""
 
     def __init__(self, context, screen_provider, *, window_host_factory, warp, on_action):
         self._context = context
@@ -218,6 +277,7 @@ class _DxCommandActionPanel:
         self._command_rect: Rect | None = None
         self._hovered = ""
         self._pressed = ""
+        self._interaction_mode = "companion"
         self._batch = DrawBatch()
         self._cleanup_done = False
 
@@ -236,6 +296,7 @@ class _DxCommandActionPanel:
             self._command_rect,
             hovered=self._hovered,
             pressed=self._pressed,
+            interaction_mode=self._interaction_mode,
         )
         self._batch = visual.batch
 
@@ -267,6 +328,15 @@ class _DxCommandActionPanel:
             origin_x = min(item.x for _name, item in layout.rects)
             origin_y = min(item.y for _name, item in layout.rects)
             self._host.set_geometry(Rect(origin_x, origin_y, layout.size.width, layout.size.height))
+            self._host.request_repaint()
+
+    def set_interaction_mode(self, mode: str) -> None:
+        normalized = "office" if str(mode).lower() == "office" else "companion"
+        if normalized == self._interaction_mode:
+            return
+        self._interaction_mode = normalized
+        self._rebuild()
+        if self._host is not None:
             self._host.request_repaint()
 
     def show(self):
@@ -813,12 +883,7 @@ class DxApplicationUiHost:
         self._last_pet_geometry: Rect | None = None
         self._clickthrough_enabled = False
         self._chat_listening = False
-
-    def configure_services(self, yuanbao_service: object) -> None:
-        self._yuanbao_service = yuanbao_service
-        configure = getattr(yuanbao_service, "configure_login_dialog_initializer", None)
-        if callable(configure):
-            configure(self.prepare_runtime)
+        self._interaction_mode = "companion"
 
     def prepare_application(self, application: object) -> None:
         self._context.assert_owner_thread()
@@ -835,7 +900,10 @@ class DxApplicationUiHost:
         self._subscribe(EventType.INFORMATION, self._on_information)
         self._subscribe(EventType.TICK, self._on_tick)
         self._subscribe(EventType.UI_BUBBLE_HIDE, self._on_bubble_hide)
+        self._subscribe(EventType.UI_BUBBLE_REMOVE, self._on_bubble_remove)
         self._subscribe(EventType.UI_CLICKTHROUGH_TOGGLE, self._on_clickthrough_state)
+        self._subscribe(EventType.INTERACTION_MODE_CHANGED, self._on_interaction_mode_changed)
+        self._subscribe(EventType.OFFICE_APPROVAL_REQUEST, self._on_office_approval_request)
         self._subscribe(EventType.LOG_ERROR, self._on_log_error)
         self._subscribe(EventType.UI_COMMAND_TOGGLE, self._on_command_toggle)
         self._subscribe(EventType.UI_ANCHOR_RESPONSE, self._on_anchor_response)
@@ -874,6 +942,7 @@ class DxApplicationUiHost:
                 warp=self._warp,
                 on_action=self._on_command_action,
             )
+            panel.set_interaction_mode(self._interaction_mode)
             self._action_panel = panel
         return panel
 
@@ -900,6 +969,12 @@ class DxApplicationUiHost:
                 },
             ))
             return
+        if action == "interaction_mode":
+            self._event_center.publish(Event(EventType.INTERACTION_MODE_SET, {
+                "toggle": True,
+                "source": "dx_command_action",
+            }))
+            return
         event_type = event_map.get(action)
         if event_type is None:
             return
@@ -913,6 +988,22 @@ class DxApplicationUiHost:
             setter = getattr(self._action_panel.host, "set_clickthrough", None)
             if callable(setter):
                 setter(enabled)
+
+    def _on_interaction_mode_changed(self, event: Event) -> None:
+        mode = str((event.data or {}).get("mode", ""))
+        if mode not in {"companion", "office"}:
+            return
+        self._interaction_mode = mode
+        if self._action_panel is not None:
+            self._action_panel.set_interaction_mode(mode)
+
+    def _on_office_approval_request(self, event: Event) -> None:
+        del event
+        if not self._open_workbench_helper("office"):
+            self._notice_panel().show_notice(
+                "办公权限窗口启动失败，请重新运行安装依赖后重试。",
+                title="办公权限许可",
+            )
 
     def _on_tick(self, event: Event) -> None:
         if self._bubble is not None:
@@ -1057,11 +1148,23 @@ class DxApplicationUiHost:
                 int(data.get("min", 40) or 40),
                 int(data.get("max", 100) or 100),
                 str(data.get("align", "center") or "center"),
+                force_replace=bool(data.get("force_replace", False)),
+                source=str(data.get("source", "") or ""),
+                task_id=str(data.get("task_id", "") or ""),
+                kind=str(data.get("kind", "") or ""),
             )
+
+    def _on_bubble_remove(self, event: Event) -> None:
+        data = event.data if isinstance(event.data, dict) else {}
+        self._bubble_window().remove_bubbles(
+            source=str(data.get("source", "") or ""),
+            task_id=str(data.get("task_id", "") or ""),
+            kind=str(data.get("kind", "") or ""),
+        )
 
     def _on_bubble_hide(self, event: Event) -> None:
         if self._bubble is not None:
-            self._bubble.hide()
+            self._bubble.clear()
         if self._action_panel is not None:
             self._action_panel.hide()
 
@@ -1130,7 +1233,7 @@ class DxApplicationUiHost:
             event_type = EventType.INPUT_HASH
             text = raw[1:].strip()
         else:
-            event_type = EventType.INPUT_CHAT
+            event_type = EventType.INPUT_TEXT
             text = raw
         if text:
             self._event_center.publish(Event(event_type, {"text": text, "raw": raw}))
@@ -1175,10 +1278,14 @@ class DxApplicationUiHost:
             )
 
     def open_settings(self) -> None:
+        if not self._open_workbench_helper("overview"):
+            raise RuntimeError('Qt 工作台 helper 启动失败')
+
+    @staticmethod
+    def _open_workbench_helper(initial_page: str) -> bool:
         from lib.script.app.workbench_helper import launch_workbench_helper
 
-        if not launch_workbench_helper():
-            raise RuntimeError('Qt 工作台 helper 启动失败')
+        return launch_workbench_helper(initial_page=initial_page)
 
     def begin_shutdown(self) -> None:
         for panel in tuple(self._panels.values()):

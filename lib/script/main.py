@@ -33,7 +33,6 @@ from lib.script.office import (
 )
 from lib.script.tool_dispatcher import get_tool_dispatcher, cleanup_tool_dispatcher
 from lib.script.gsvmove import get_gsvmove_service, cleanup_gsvmove_service
-from lib.script.yuanbao_free_api import get_yuanbao_free_api_service, cleanup_yuanbao_free_api_service
 from lib.script.bug_tracker import get_bug_tracker_service, cleanup_bug_tracker_service
 from lib.script.microphone_stt import (
     cleanup_microphone_push_to_talk_manager,
@@ -143,8 +142,6 @@ class ApplicationState:
         self._voice = get_voice_core()
         # ONNX 文本转语音桥接：主界面就绪后在隔离 Worker 中加载本地模型。
         self._gsvmove = get_gsvmove_service()
-        self._yuanbao_free_api = get_yuanbao_free_api_service()
-        self._application_ui.configure_services(self._yuanbao_free_api)
         self._bug_tracker = get_bug_tracker_service()
         self._microphone_stt = get_microphone_stt_service()
         self._microphone_push_to_talk = get_microphone_push_to_talk_manager()
@@ -184,7 +181,7 @@ class ApplicationState:
     def _on_pre_start(self, event: Event):
         """预启动事件回调 - 执行初始化并启动3秒非阻塞等待"""
         self._script_dir = event.data.get('working_dir', '')
-        
+
         # ── 动态发现模块（扫描管理器和粒子脚本）──────────────────────
         discover_all()
 
@@ -681,7 +678,6 @@ class ApplicationState:
         cleanup_cmd_center()
         cleanup_voice_request_handler()
         cleanup_gsvmove_service()
-        cleanup_yuanbao_free_api_service()
         cleanup_bug_tracker_service()
         cleanup_microphone_push_to_talk_manager()
         cleanup_microphone_stt_service()

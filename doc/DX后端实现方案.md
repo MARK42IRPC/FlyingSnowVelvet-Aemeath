@@ -1,10 +1,10 @@
 # DirectX 后端实现方案
 
-更新时间：2026-08-07
+更新时间：2026-08-17
 
 本文档定义 Windows DirectX 桌面后端的技术路线、迁移边界和验收条件。目标不是只实现一个 DX 绘制器，而是让普通桌宠运行进程最终不导入 PyQt5、不加载 Qt DLL，同时保留现有 Qt 后端作为迁移期回退和独立工作台实现。
 
-当前 Qt 边界和后端无关契约以 `doc/Qt收敛方案.md`、`doc/视觉表现契约.md`、`lib/core/backend_router.py`、`lib/core/desktop_backend.py` 及源码测试为准。阶段 B 至阶段 E 的诊断链已落地到 `native/dx_backend/`、`lib/core/dx_bridge/` 和 `tests/dx/`：ABI v7 覆盖完整声明式命令批、Win32 + DirectComposition 窗口、尺寸/DPI 目标重建、事件轮询、保持句柄稳定的设备恢复、`WM_POINTER*`/Unicode/IME 输入以及通用托盘命令；`DxDesktopBackend` 使用一个共享 loop 组合运行时、调度、事件泵、屏幕、截图、主宠、托盘、粒子/特效、七类世界对象和原生命令/提示/二维码 UI，阻断 PyQt 的 `ApplicationState` 启停链已经通过。应用二维码主体及 action button、命令提示、DX 基础通知、七按钮附属面板、气泡和七类世界对象视觉已迁入共享 presenter，相关 bridge 只负责窗口、输入、低级音频采样、生命周期和批次执行；DX 音乐组合不再导入或实例化 QtMultimedia，主宠漫游也只读取核心游戏障碍 `Rect` provider，不再为查询几何构造 Qt 游戏窗口。DirectX 已开放为实验性可选后端；附属按钮的缩放/启动鸣潮/更多功能动作分发、音响搜索 UI 宿主、DirectWrite 度量、世界对象专属音效与部分独有交互、自动公告、共享设备资源和真实硬件/多屏验收仍未完成。控制面板入口已通过 `TrayCommand.OPEN_SETTINGS` 启动隔离 Qt workbench helper；helper 的版本化 IPC、重复启动和退出协调仍待完成，稳定后端标记继续受闸门约束。
+当前 Qt 边界和后端无关契约以 `doc/Qt收敛方案.md`、`doc/视觉表现契约.md`、`lib/core/backend_router.py`、`lib/core/desktop_backend.py` 及源码测试为准。阶段 B 至阶段 E 的诊断链已落地到 `native/dx_backend/`、`lib/core/dx_bridge/` 和 `tests/dx/`：ABI v7 覆盖完整声明式命令批、Win32 + DirectComposition 窗口、尺寸/DPI 目标重建、事件轮询、保持句柄稳定的设备恢复、`WM_POINTER*`/Unicode/IME 输入以及通用托盘命令；`DxDesktopBackend` 使用一个共享 loop 组合运行时、调度、事件泵、屏幕、截图、主宠、托盘、粒子/特效、七类世界对象和原生命令/提示/二维码 UI，阻断 PyQt 的 `ApplicationState` 启停链已经通过。应用二维码主体及 action button、命令提示、DX 基础通知、八按钮附属面板、气泡和七类世界对象视觉已迁入共享 presenter，相关 bridge 只负责窗口、输入、低级音频采样、生命周期和批次执行；交互模式按钮已切换普通文本路由并同步“陪伴模式/办公模式”文案。DX 音乐组合不再导入或实例化 QtMultimedia，主宠漫游也只读取核心游戏障碍 `Rect` provider，不再为查询几何构造 Qt 游戏窗口。DirectX 已开放为实验性可选后端；附属按钮的缩放/启动鸣潮/更多功能动作分发、音响搜索 UI 宿主、DirectWrite 度量、世界对象专属音效与部分独有交互、自动公告、共享设备资源和真实硬件/多屏验收仍未完成。控制面板入口已通过 `TrayCommand.OPEN_SETTINGS` 启动隔离 Qt workbench helper；helper 已使用版本 1 原子页面请求并复用存活进程，办公任务和权限请求通过独立版本 1 文件 IPC 直达 `office` 页，稳定后端标记继续受闸门约束。
 
 ## 1. 目标与非目标
 
@@ -241,7 +241,7 @@ ABI v7 保留 ABI v5 已落实的第 1 至第 4 项：资源注册时保留预�
 - 窗口几何和 `WM_DPICHANGED` 路径已同步重建交换链、离屏 render target 与 readback staging texture；设备恢复已保持 CPU 资源、整数句柄、HWND 与可见性，并对每次提交设置一次重试上限。
 - 已新增 Qt-free 诊断运行时：共享 owner-thread 循环驱动 `DxScheduler`、合并式 `DxEventPump`、一次性任务、注册窗口事件轮询、退出确认和残留窗口关闭；阻断 PyQt 导入的独立进程测试已覆盖该链路。
 - 已新增屏幕与主宠诊断组合：动态 Win32 monitor provider、GDI 主屏 PNG capture、`DxPetWindow` 纯控制器宿主和 DX 层级适配器均有独立注入测试；主宠关闭会先清理核心状态，再发布 `APP_QUIT`，native host/context 注销保持幂等。
-- 已新增完整 DX 原生日常托盘菜单：`Shell_NotifyIconW`、任务栏重建恢复、公告、控制面板、CMD、游戏模式、鼠标穿透、开机启动、桌面/缓存/历史清理、作者主页和退出均通过统一命令事件交给 `ApplicationState`；菜单勾选状态由 ABI v7 状态接口同步，控制面板通过隔离 Qt workbench helper 打开。
+- 已新增完整 DX 原生日常托盘菜单：`Shell_NotifyIconW`、任务栏重建恢复、公告、控制面板、CMD、游戏模式、鼠标穿透、开机启动、桌面/缓存/历史清理、作者主页和退出均通过统一命令事件交给 `ApplicationState`；菜单勾选状态由 ABI v7 状态接口同步，控制面板通过隔离 Qt workbench helper 打开。helper 复用存活进程并消费版本 1 原子页面请求，办公权限请求会直达 `office` 页。
 - `WM_POINTER*`、`WM_CHAR`/`WM_UNICHAR`、IME 预编辑/提交/结束、候选窗定位和命令面板组合文本显示已经接通；当前下一步补齐屏幕热插拔和可注入的真实 device-removed 失败测试。
 - 无 Qt 粒子、特效、应用 UI 宿主和 DX bundle 已接入诊断组合；当前继续补齐真实第三方输入法、设备丢失和多屏验收矩阵。
 
@@ -256,7 +256,7 @@ ABI v7 保留 ABI v5 已落实的第 1 至第 4 项：资源注册时保留预�
 - 二维码主体及底部 action button 已迁入 `graphics/application_visuals.py`：Qt `BaseQrDialog` 与 DX application UI 共用 `320x430` Qt 基准尺寸、主题、布局、PNG 解码、资源目标尺寸、状态文字和 action button 状态批次；Qt `QPushButton` 仅作为透明输入适配器，DX 根据同一 `action_rect` 处理 hover、pressed、release 和登录面板关闭/取消事件。
 - DX 基础通知面板已由共享 notice presenter 生成。Qt 聊天气泡的换行、自适应尺寸、三层背景、混合字体分段、锚点和屏幕夹取抽成 `BubbleVisualDescription`，DX `_DxBubbleWindow` 已消费同一描述并接入 `INFORMATION`/`TICK`/`UI_BUBBLE_HIDE`；当前使用 portable 低级度量，后续必须增加 DirectWrite `BubbleTextMetrics` 适配，不得从固定通知面板另建画法。
 - 七类世界对象的 sprite、动画帧、透明度、翻转、中心缩放、闹钟倒计时、摩托抖动和音响 EMA/指数缩放已由 `graphics.visuals` 与 `world_objects` 共享函数统一生成，DX world object backend 只管理对象状态、低级音频采样、原生窗口和批次提交。
-- 命令提示框的背景、尺寸、默认/哈希行、选中态、分隔线、混合字体、页码、默认文案和命中矩形已迁入 `CommandHintVisualDescription`，Qt 与 DX 均只执行该描述；`DxCommandHintWindow` 已接入命令框跟随、筛选、导航、补全、翻页和点击执行。当前 `PortableCommandHintTextMetrics` 是无 Qt 的低级度量适配，仍需用 DirectWrite 测量接口收紧字体宽度误差。关闭、穿透、缩放、启动、聊天模式、更多功能等七个附属按钮已由 `build_command_action_panel_visual()` 生成共享两行布局与状态批次，并由 DX 单窗口宿主执行；动作分发仍待完整收敛。音响本体视觉已共享，但音响搜索框、结果列表、播放/队列/音量控制仍是 Qt-only UI，DX 不得通过构造 Qt 控件补齐。
+- 命令提示框的背景、尺寸、默认/哈希行、选中态、分隔线、混合字体、页码、默认文案和命中矩形已迁入 `CommandHintVisualDescription`，Qt 与 DX 均只执行该描述；`DxCommandHintWindow` 已接入命令框跟随、筛选、导航、补全、翻页和点击执行。当前 `PortableCommandHintTextMetrics` 是无 Qt 的低级度量适配，仍需用 DirectWrite 测量接口收紧字体宽度误差。鼠标穿透、放大、缩小、关闭、启动鸣潮、聊天模式、交互模式和更多功能八个附属按钮已由 `build_command_action_panel_visual()` 生成共享三行布局与状态批次，“更多功能”位于“启动鸣潮”正上方，并由 DX 单窗口宿主执行；交互模式动作已接入，其他动作分发仍待完整收敛。音响本体视觉已共享，但音响搜索框、结果列表、播放/队列/音量控制仍是 Qt-only UI，DX 不得通过构造 Qt 控件补齐。
 - 补齐采样、文字排版、混合、羽化和 DPI 等显式命令语义；DX 后端只执行批次，不保存产品色值、布局或效果算法。
 - 世界对象已支持原生窗口、GIF、几何、物理运动、拖拽、翻转、点击穿透、淡出、共享倒计时和共享视觉状态算法；雪堆定时批次、对象专属音效及部分独有交互仍待补齐。
 - 合并能共享交换链的覆盖窗口，保留确需独立输入区域的窗口。
@@ -268,14 +268,14 @@ ABI v7 保留 ABI v5 已落实的第 1 至第 4 项：资源注册时保留预�
 
 - 已实现不依赖 Qt 的 `ApplicationRuntime`、EventPump、Scheduler、动态屏幕 provider、GDI PNG 截图、主宠、基础托盘、粒子/特效、世界对象、应用 UI 和完整 bundle；配置器在启动入口惰性注册。
 - 阻断 PyQt 的独立子进程已覆盖 `ApplicationState.start()`、`APP_MAIN`、分阶段退出、运行时确认、backend cleanup 和初始化失败释放单实例锁。
-- 仍需验证真实语音、聊天、更新、重启和单实例全链不依赖 Qt，并接入正式 Win32 消息等待及 workbench helper 的版本化 IPC。DX 主进程只负责拉起 helper，不在自身进程构造 Qt 控件；音乐托盘清理已走 `cloudmusic.user_data` 无 Qt 数据路径；播放器 factory 由桌面组合入口注入，DX 明确注入 `None` 并使用 MCI，不导入或实例化 Qt 播放器。
+- 仍需验证真实语音、聊天、更新、重启和单实例全链不依赖 Qt，并接入正式 Win32 消息等待。workbench helper 已使用版本 1 页面请求、进程复用和办公文件 IPC；DX 主进程只负责拉起 helper，不在自身进程构造 Qt 控件。音乐托盘清理已走 `cloudmusic.user_data` 无 Qt 数据路径；播放器 factory 由桌面组合入口注入，DX 明确注入 `None` 并使用 MCI，不导入或实例化 Qt 播放器。
 
 退出条件：选择 DX 时，从进程启动到退出均不导入 `PyQt5`，自动化检查 `sys.modules` 和已加载 DLL 均无 Qt。
 
 ### 阶段 F：Qt 工作台隔离与依赖拆分
 
-- 将工作台和暂未迁移的复杂 Qt 工具页作为可选独立 helper 进程启动。
-- 主进程与 helper 只通过版本化 IPC 交换设置快照和命令，不共享 QWidget 或业务单例。
+- 工作台和暂未迁移的复杂 Qt 工具页可作为独立 helper 进程启动；helper 已复用存活进程，并可按版本 1 请求切换目标页面。
+- 办公页已通过版本 1 原子文件 IPC 交换任务快照、命令与权限决定，不共享 QWidget 或业务单例；其它设置页继续按阶段迁移到同一边界。
 - 把 PyQt5 从普通桌宠核心依赖移到可选 Qt 后端/工作台依赖和对应发行包。
 - 保留含 Qt 的兼容发行方式，直到 DX 后端经过稳定发布周期。
 

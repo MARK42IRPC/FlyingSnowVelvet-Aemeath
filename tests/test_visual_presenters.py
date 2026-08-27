@@ -256,10 +256,13 @@ class VisualPresenterTests(unittest.TestCase):
         layout = resolve_command_action_panel_layout(command_rect)
         self.assertEqual(tuple(name for name, _rect in layout.rects), (
             "clickthrough", "scale_up", "scale_down", "close",
-            "launch_wuwa", "chat_mode", "more_functions",
+            "launch_wuwa", "chat_mode", "interaction_mode", "more_functions",
         ))
         self.assertEqual(layout.rects[0][1], Rect(100, 166, 80, 32))
-        self.assertEqual(layout.rects[-1][1], Rect(260, 134, 80, 32))
+        rects = dict(layout.rects)
+        self.assertEqual(rects["launch_wuwa"], Rect(100, 134, 80, 32))
+        self.assertEqual(rects["more_functions"], Rect(100, 102, 80, 32))
+        self.assertEqual(layout.size, Size(240, 96))
         normal = build_command_action_panel_visual(command_rect)
         hovered = build_command_action_panel_visual(command_rect, hovered="close")
         self.assertGreater(len(hovered.batch.commands), len(normal.batch.commands))
@@ -282,13 +285,20 @@ class VisualPresenterTests(unittest.TestCase):
 
         with patch.dict(
             "lib.core.graphics.visuals.SPEAKER_AUDIO",
-            {"ema_attack": 0.35, "ema_decay": 0.08, "scale_exp": 2.0, "scale_range": 0.1},
+            {
+                "ema_attack": 0.35,
+                "ema_decay": 0.08,
+                "scale_exp": 2.0,
+                "scale_range": 0.1,
+                "response_gain": 4.0,
+            },
             clear=True,
         ):
             self.assertAlmostEqual(update_speaker_intensity(0.2, 0.8), 0.41)
             self.assertAlmostEqual(update_speaker_intensity(0.8, 0.2), 0.752)
             self.assertEqual(update_speaker_intensity(-1.0, None), 0.0)
             self.assertEqual(resolve_speaker_scale(-1.0), (1.0, 1.0))
+            self.assertEqual(resolve_speaker_scale(0.25), (1.025, 0.975))
             self.assertEqual(resolve_speaker_scale(2.0), (1.1, 0.9))
 
     def test_dx_bridge_does_not_construct_product_draw_commands_or_import_qt(self):

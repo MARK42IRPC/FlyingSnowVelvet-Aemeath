@@ -80,6 +80,12 @@ def _get_effective_auto_companion_interval_ms() -> tuple[int, int]:
 class ChatHandlerAutoCompanionMixin:
     def _on_app_main(self, event: Event):
         """应用主循环就绪后，启动自动陪伴轮询（仅外部 API 模式）。"""
+        self._app_main_ready = True
+        generation = self._current_companion_generation()
+        if generation is None:
+            if self._auto_timer is not None:
+                self._auto_timer.stop()
+            return
         if not self._ollama.use_api_key_mode:
             if self._auto_timer is not None:
                 self._auto_timer.stop()
@@ -106,6 +112,9 @@ class ChatHandlerAutoCompanionMixin:
     def _schedule_next_auto_tick(self):
         """按随机间隔调度下一次自动陪伴请求。"""
         if self._auto_timer is None:
+            return
+        if self._current_companion_generation() is None:
+            self._auto_timer.stop()
             return
         if not _is_auto_companion_enabled():
             self._auto_timer.stop()
@@ -143,7 +152,15 @@ class ChatHandlerAutoCompanionMixin:
         self._auto_companion_failures = 0
         self._auto_companion_backoff_until = 0.0
 
-    def _handle_auto_companion_reply(self, reply_text: str, native_tool_call=None) -> None:
+    def _handle_auto_companion_reply(
+        self,
+        reply_text: str,
+        native_tool_call=None,
+        *,
+        mode_generation: int | None = None,
+    ) -> None:
+        if not self._accepts_companion_generation(mode_generation):
+            return
         if not native_tool_call and self._is_auto_companion_failure_text(reply_text):
             self._record_auto_companion_failure(reply_text)
             return
@@ -153,6 +170,7 @@ class ChatHandlerAutoCompanionMixin:
             include_history=True,
             user_text=AUTO_COMPANION_PROMPT,
             native_tool_call=native_tool_call,
+            mode_generation=mode_generation,
         )
 
     def _on_auto_companion_tick(self):
@@ -161,6 +179,9 @@ class ChatHandlerAutoCompanionMixin:
             return
         self._auto_timer.stop()
         try:
+            generation = self._current_companion_generation()
+            if generation is None:
+                return
             if not _is_auto_companion_enabled():
                 return
             if not self._ollama.use_api_key_mode:
@@ -183,10 +204,17 @@ class ChatHandlerAutoCompanionMixin:
             else:
                 logger.debug("[ChatHandler] 自动陪伴请求未附带截图（截图失败）")
 
+            if not self._accepts_companion_generation(generation):
+                return
+
             self._ollama.stream_chat(
                 message=AUTO_COMPANION_PROMPT,
                 persona=self._build_runtime_persona(),
-                callback=self._handle_auto_companion_reply,
+                callback=lambda reply_text, native_tool_call=None, request_generation=generation: self._handle_auto_companion_reply(
+                    reply_text,
+                    native_tool_call,
+                    mode_generation=request_generation,
+                ),
                 on_chunk=None,
                 images=images,
                 quiet_throttled=True,

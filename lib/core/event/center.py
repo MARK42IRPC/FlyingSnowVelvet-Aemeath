@@ -77,6 +77,7 @@ class EventType(Enum):
     UI_COMMAND_ENTER = "ui_command_enter"                # 命令输入确认
     UI_BUBBLE_SHOW = "ui_bubble_show"                    # 显示气泡
     UI_BUBBLE_HIDE = "ui_bubble_hide"                    # 隐藏气泡
+    UI_BUBBLE_REMOVE = "ui_bubble_remove"                # 按来源/任务/类别撤销气泡
     UI_COMMAND_TOGGLE = "ui_command_toggle"              # 切换命令框
     UI_OPEN_CMD_WINDOW = "ui_open_cmd_window"            # 打开CMD窗口
     UI_OPEN_CMD_WINDOW_WITH_COMMAND = "ui_open_cmd_window_with_command"  # 打开CMD窗口并执行命令
@@ -112,7 +113,16 @@ class EventType(Enum):
     # 输入事件
     INPUT_COMMAND = "input_command"   # / 开头：shell 命令
     INPUT_HASH    = "input_hash"      # # 开头：扩展命令（由各管理器订阅处理）
+    INPUT_TEXT    = "input_text"      # 无前缀普通文本，由交互模式服务统一路由
     INPUT_CHAT    = "input_chat"      # 无前缀：聊天消息（由 ChatHandler 处理）
+
+    # 交互模式与办公任务事件
+    INTERACTION_MODE_SET = "interaction_mode_set"          # 请求切换 companion / office
+    INTERACTION_MODE_CHANGED = "interaction_mode_changed"  # 模式和 generation 已更新
+    OFFICE_INPUT = "office_input"                          # 办公模式普通文本输入
+    OFFICE_RUNTIME_EVENT = "office_runtime_event"          # DSH 侧车 JSONL 事件（内部）
+    OFFICE_STATE_CHANGED = "office_state_changed"          # 办公任务状态快照已更新
+    OFFICE_APPROVAL_REQUEST = "office_approval_request"    # 办公任务等待权限决定
 
     # 音乐播放事件（由 SpeakerSearchResultBox 发布，音乐运行时订阅）
     MUSIC_PLAY_TOP = "music_play_top"  # 左键：立即播放，中断当前曲目

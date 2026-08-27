@@ -15,8 +15,6 @@ _logger = get_logger(__name__)
 
 _SECRET_KEYS = (
     "api_key",
-    "yuanbao_hy_user",
-    "yuanbao_x_uskey",
     "office_api_key",
 )
 
@@ -32,11 +30,6 @@ def load_ai_values(default_values: dict) -> dict:
         "welfare_intelligence_boost": bool(oc.WELFARE_INTELLIGENCE_BOOST),
         "api_base_url": str(oc.API_BASE_URL or ""),
         "api_model": str(oc.API_MODEL or ""),
-        "yuanbao_login_url": str(oc.YUANBAO_FREE_API.get("login_url", "") or ""),
-        "yuanbao_hy_source": str(oc.YUANBAO_FREE_API.get("hy_source", "web") or ""),
-        "yuanbao_hy_user": str(disk_secrets.get("yuanbao_hy_user", oc.YUANBAO_FREE_API.get("hy_user", "")) or ""),
-        "yuanbao_x_uskey": str(disk_secrets.get("yuanbao_x_uskey", oc.YUANBAO_FREE_API.get("x_uskey", "")) or ""),
-        "yuanbao_agent_id": str(oc.YUANBAO_FREE_API.get("agent_id", "") or ""),
         "ollama_base_url": str(oc.OLLAMA.get("base_url", "")),
         "ollama_model": str(oc.OLLAMA_MODEL or ""),
         "num_gpu": oc.OLLAMA_OPTIONS.get("num_gpu", -1),
@@ -97,11 +90,6 @@ def apply_ai_runtime(values: dict, default_values: dict) -> None:
     oc.WELFARE_INTELLIGENCE_BOOST = values["welfare_intelligence_boost"]
     oc.API_BASE_URL = values["api_base_url"]
     oc.API_MODEL = values["api_model"]
-    oc.YUANBAO_FREE_API["login_url"] = values["yuanbao_login_url"]
-    oc.YUANBAO_FREE_API["hy_source"] = values["yuanbao_hy_source"]
-    oc.YUANBAO_FREE_API["hy_user"] = values["yuanbao_hy_user"]
-    oc.YUANBAO_FREE_API["x_uskey"] = values["yuanbao_x_uskey"]
-    oc.YUANBAO_FREE_API["agent_id"] = values["yuanbao_agent_id"]
     oc.OLLAMA_MODEL = values["ollama_model"]
     oc.OLLAMA["base_url"] = values["ollama_base_url"]
     oc.OLLAMA["api_temperature"] = values["api_temperature"]

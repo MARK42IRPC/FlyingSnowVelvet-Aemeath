@@ -106,14 +106,6 @@ class _Host:
         self.cleanup_count += 1
 
 
-class _Service:
-    def __init__(self):
-        self.initializer = "unset"
-
-    def configure_login_dialog_initializer(self, initializer):
-        self.initializer = initializer
-
-
 class DxDesktopBackendTests(unittest.TestCase):
     def setUp(self):
         cleanup_event_center()
@@ -258,8 +250,8 @@ class DxDesktopBackendTests(unittest.TestCase):
                 tray_host_factory=lambda: tray,
             )
             services = {name: Service() for name in (
-                "voice", "gsv", "yuanbao", "bug", "microphone", "push_to_talk",
-                "voice_handler", "cmd", "ollama", "chat", "memory", "tool",
+                "voice", "gsv", "bug", "microphone", "push_to_talk",
+                "voice_handler", "cmd", "mode", "office", "ollama", "chat", "memory", "tool",
             )}
             replacements = {
                 "initialize_app_logger": lambda *args, **kwargs: None,
@@ -273,8 +265,6 @@ class DxDesktopBackendTests(unittest.TestCase):
                 "cleanup_game_mode_service": lambda: None,
                 "get_gsvmove_service": lambda: services["gsv"],
                 "cleanup_gsvmove_service": lambda: None,
-                "get_yuanbao_free_api_service": lambda: services["yuanbao"],
-                "cleanup_yuanbao_free_api_service": lambda: None,
                 "get_bug_tracker_service": lambda: services["bug"],
                 "cleanup_bug_tracker_service": lambda: None,
                 "get_microphone_stt_service": lambda: services["microphone"],
@@ -285,13 +275,17 @@ class DxDesktopBackendTests(unittest.TestCase):
                 "cleanup_voice_request_handler": lambda: None,
                 "get_cmd_center": lambda: services["cmd"],
                 "cleanup_cmd_center": lambda: None,
+                "get_interaction_mode_service": lambda: services["mode"],
+                "cleanup_interaction_mode_service": lambda: None,
+                "get_office_service": lambda **kwargs: services["office"],
+                "cleanup_office_service": lambda: None,
                 "get_ollama_manager": lambda **kwargs: services["ollama"],
                 "cleanup_ollama_manager": lambda: None,
                 "get_chat_handler": lambda **kwargs: services["chat"],
                 "cleanup_chat_handler": lambda: None,
-                "get_stream_memory": lambda: services["memory"],
+                "get_stream_memory": lambda **kwargs: services["memory"],
                 "cleanup_stream_memory": lambda: None,
-                "get_tool_dispatcher": lambda: services["tool"],
+                "get_tool_dispatcher": lambda **kwargs: services["tool"],
                 "cleanup_tool_dispatcher": lambda: None,
                 "cleanup_compute_hub": lambda: None,
                 "ANIMATION": {"start_exit_enabled": False},
@@ -421,11 +415,8 @@ class DxApplicationUiHostTests(unittest.TestCase):
         Image.new("RGB", (12, 12), "white").save(output, format="PNG")
         return output.getvalue()
 
-    def test_command_information_and_login_ui_are_native_and_cleanup(self):
-        service = _Service()
-        self.ui.configure_services(service)
+    def test_command_information_and_music_login_ui_are_native_and_cleanup(self):
         self.ui.prepare_runtime()
-        self.assertTrue(callable(service.initializer))
 
         inputs = []
         center = get_event_center()
@@ -452,21 +443,76 @@ class DxApplicationUiHostTests(unittest.TestCase):
         self.assertTrue(bubble.host.visible)
         self.assertTrue(bubble.prepare_render().commands)
 
-        center.publish(Event(EventType.YUANBAO_LOGIN_QR_SHOW, {
-            "title": "元宝扫码登录",
+        center.publish(Event(EventType.MUSIC_LOGIN_QR_SHOW, {
+            "title": "音乐扫码登录",
             "status": "等待扫码",
             "qr_png": self._qr_png(),
         }))
-        login = self.ui._panels["yuanbao-login"]
+        login = self.ui._panels["music-login"]
         self.assertEqual(login._size, qr_panel_size())
         self.assertTrue(login.host.visible)
         self.assertTrue(login.prepare_render().resource_revisions)
 
         self.ui.cleanup()
         self.ui.cleanup()
-        self.assertIsNone(service.initializer)
         self.assertEqual(self.context.registered_pollers(), ())
         self.assertTrue(all(host.cleanup_count == 1 for host in self.hosts))
+
+    def test_information_force_replace_and_hide_clear_bubble_queue(self):
+        self.ui.prepare_runtime()
+        center = get_event_center()
+        center.publish(Event(EventType.INFORMATION, {
+            "text": "旧回复",
+            "min": 100,
+            "max": 200,
+        }))
+        center.publish(Event(EventType.INFORMATION, {
+            "text": "等待中的回复",
+            "min": 100,
+            "max": 200,
+            "source": "companion",
+        }))
+        bubble = self.ui._bubble
+        self.assertEqual(bubble._current[0], "旧回复")
+        self.assertEqual([item[0] for item in bubble._queue], ["等待中的回复"])
+
+        center.publish(Event(EventType.INFORMATION, {
+            "text": "办公思考",
+            "min": 100,
+            "max": 200,
+            "source": "office",
+            "task_id": "task-1",
+            "kind": "thinking",
+        }))
+        self.assertEqual(
+            [item[0] for item in bubble._queue],
+            ["等待中的回复", "办公思考"],
+        )
+        center.publish(Event(EventType.UI_BUBBLE_REMOVE, {
+            "source": "office",
+            "task_id": "task-1",
+            "kind": "thinking",
+        }))
+        self.assertEqual([item[0] for item in bubble._queue], ["等待中的回复"])
+
+        center.publish(Event(EventType.INFORMATION, {
+            "text": "办公流式回复",
+            "min": 0,
+            "max": 100,
+            "force_replace": True,
+        }))
+        self.assertEqual(bubble._current[0], "办公流式回复")
+        self.assertEqual(bubble._queue, [])
+
+        center.publish(Event(EventType.INFORMATION, {
+            "text": "不应在清空后出现",
+            "min": 100,
+            "max": 200,
+        }))
+        center.publish(Event(EventType.UI_BUBBLE_HIDE, {}))
+        self.assertIsNone(bubble._current)
+        self.assertEqual(bubble._queue, [])
+        self.assertFalse(bubble.host.visible)
 
     def test_command_toggle_uses_pet_anchor_instead_of_screen_center(self):
         self.ui.prepare_runtime()
@@ -529,12 +575,12 @@ class DxApplicationUiHostTests(unittest.TestCase):
 
     def test_qr_action_button_uses_shared_batch_and_hides_on_click(self):
         self.ui.prepare_runtime()
-        get_event_center().publish(Event(EventType.YUANBAO_LOGIN_QR_SHOW, {
-            "title": "元宝扫码登录",
+        get_event_center().publish(Event(EventType.MUSIC_LOGIN_QR_SHOW, {
+            "title": "音乐扫码登录",
             "status": "等待扫码",
             "qr_png": self._qr_png(),
         }))
-        panel = self.ui._panels["yuanbao-login"]
+        panel = self.ui._panels["music-login"]
         layout = resolve_qr_panel_layout(panel._size)
         action_point = Point(
             layout.action_rect.x + layout.action_rect.width / 2,
@@ -558,11 +604,17 @@ class DxApplicationUiHostTests(unittest.TestCase):
         actions = self.ui._action_panel
         self.assertIsNotNone(actions)
         self.assertTrue(actions.host.visible)
-        self.assertEqual(actions._layout().size, Size(240, 64))
+        self.assertEqual(actions._layout().size, Size(240, 96))
         self.assertEqual(tuple(name for name, _rect in actions._layout().rects), (
             "clickthrough", "scale_up", "scale_down", "close",
-            "launch_wuwa", "chat_mode", "more_functions",
+            "launch_wuwa", "chat_mode", "interaction_mode", "more_functions",
         ))
+        action_rects = dict(actions._layout().rects)
+        self.assertEqual(action_rects["more_functions"].x, action_rects["launch_wuwa"].x)
+        self.assertEqual(
+            action_rects["more_functions"].y + action_rects["more_functions"].height,
+            action_rects["launch_wuwa"].y,
+        )
         self.assertGreater(len(actions.prepare_render().commands), 20)
         close_rect = next(rect for name, rect in actions._layout().rects if name == "close")
         point = Point(close_rect.x + 4, close_rect.y + 4)
@@ -587,6 +639,22 @@ class DxApplicationUiHostTests(unittest.TestCase):
         center.subscribe(EventType.UI_CLICKTHROUGH_TOGGLE, lambda event: received.append(event.data["enabled"]))
         actions._on_action("clickthrough")
         self.assertTrue(received[-1])
+        center.subscribe(EventType.INTERACTION_MODE_SET, lambda event: received.append(event.data["toggle"]))
+        actions._on_action("interaction_mode")
+        self.assertTrue(received[-1])
+
+    def test_office_approval_opens_reusable_helper_on_office_page(self):
+        self.ui.prepare_runtime()
+        with patch(
+            "lib.script.app.workbench_helper.launch_workbench_helper",
+            return_value=True,
+        ) as launch:
+            get_event_center().publish(Event(EventType.OFFICE_APPROVAL_REQUEST, {
+                "task_id": "task-1",
+                "approval_id": "approval-1",
+            }))
+
+        launch.assert_called_once_with(initial_page="office")
 
 
 @unittest.skipUnless(

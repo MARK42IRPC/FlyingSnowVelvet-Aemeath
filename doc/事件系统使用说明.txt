@@ -1,4 +1,4 @@
-飞行雪绒事件系统使用说明（LTS1.0.6pre8）
+飞行雪绒事件系统使用说明（LTS1.0.7test0823）
 
 一、核心入口
 - 实现：`lib/core/event/center.py`
@@ -36,7 +36,9 @@ ec.unsubscribe(EventType.INFORMATION, on_info)
 - 命令框：
   - `/xxx` → `INPUT_COMMAND`
   - `#xxx` → `INPUT_HASH`
-  - 普通文本 → `INPUT_CHAT`
+  - 普通文本 → `INPUT_TEXT`，再由 `InteractionModeService` 路由；陪伴模式发布 `INPUT_CHAT`，办公模式发布 `OFFICE_INPUT`
+- `/`、`#` 协议不经过交互模式路由，切换办公模式不会改变命令语义。
+- 交互模式每次启动固定为 `companion`，不保存上次选择；`INTERACTION_MODE_CHANGED.generation` 用于拒绝切换后迟到的陪伴回复、气泡、语音和工具调用。
 - 内置 `#后端 dx` / `#后端 qt` 用于控制面板不可用时切换持久化绘制后端；配置保存成功后发布 `APP_QUIT {restart: true}`，保存失败不得退出当前实例。
 - 托盘“控制面板”使用 `TrayCommand.OPEN_SETTINGS`，由 `ApplicationUiHost.open_settings()` 承接；DX 主进程通过隔离 Qt workbench helper 打开，不能在 DX 进程内构造 `QWidget`。
 
@@ -62,6 +64,13 @@ INFORMATION
   - `min`
   - `max`
   - `particle`
+  - `force_replace`：为真时清空等待队列并立即替换当前气泡，Qt 与 DX 语义一致
+  - 可选 `source`、`task_id`
+
+UI_BUBBLE_REMOVE
+- 用途：按来源、任务和类别撤销气泡，保留其它气泡及其最短停留时间
+- 可选字段：`source`、`task_id`、`kind`；只匹配非空字段
+- Qt 与 DX 气泡实现同时过滤当前气泡和待显示队列
 
 PARTICLE_REQUEST
 - 用途：申请粒子
@@ -91,7 +100,7 @@ VOICE_REQUEST
 
 AI_VOICE_REQUEST
 - 用途：AI 文本转语音申请
-- 字段：`text`（保留中英文原文）、可选 `text_lang`（`zh`、`en` 或 `auto`）、`interruptible`
+- 字段：`text`（保留中英文原文）、可选 `text_lang`（`zh`、`en` 或 `auto`）、`interruptible`、可选 `source`、`task_id`
 - 当前由 `lib/script/gsvmove/service.py` 消费
 - 当 GSV 模块在控制面板中关闭时，这类事件会被直接忽略
 
@@ -104,6 +113,20 @@ STREAM_FINAL
 CONFIG_UPDATED
 - 用途：通知运行时配置已完成热更新
 - AI 设置保存时 payload 的 `source` 为 `ai`；聊天处理器会据此立即重排自动陪伴定时器
+
+INPUT_TEXT / INTERACTION_MODE_*
+- `INPUT_TEXT` 字段：`text`、可选 `raw`/`source`；模式服务补充 `interaction_mode` 和 `mode_generation` 后再路由。
+- `INTERACTION_MODE_SET` 字段：`mode=companion|office`，或 `toggle=true`；可选 `source`。
+- `INTERACTION_MODE_CHANGED` 字段：`mode`、单调递增的 `generation`、`source`。
+- 进入办公模式时停止自动语聊、自动陪伴和现有陪伴流展示；迟到结果必须按 generation 丢弃。
+
+OFFICE_*
+- `OFFICE_INPUT`：办公模式普通文本，字段沿用 `INPUT_TEXT` 路由结果。
+- `OFFICE_RUNTIME_EVENT`：DSH JSONL 侧车内部事件，只供 `OfficeService` 编排，不是扩展 API。
+- `OFFICE_STATE_CHANGED`：当前模式、运行时状态、活动任务、权限请求与任务列表快照。
+- `OFFICE_APPROVAL_REQUEST`：字段为 `task_id`、`approval_id`、`tool_name`、`reason`、可选 `command`；Qt 主进程直接显示许可窗，DX 请求隔离 helper 打开 `office` 页。
+- 默认办公输入续接 `updated_at` 最新且具有会话的任务；工作台“新建任务”不走该默认规则。任务开始或新一轮推理时通过普通 `INFORMATION` 将带 `kind=thinking` 的“思考中”加入气泡队列；首个 `assistant/chunk` 文本分片通过 `UI_BUBBLE_REMOVE` 撤销该任务的思考气泡，再静默替换为流式文本，稳定的 `assistant/message` 最终替换并发布一次 `AI_VOICE_REQUEST`，思考气泡不播报语音。
+- 权限决定通过办公文件 IPC 返回；“始终允许”只在当前任务存活期间自动允许后续提权，任务结束、失败、取消或应用退出即清除。
 
 MIC_STT_*
 - `MIC_STT_START`

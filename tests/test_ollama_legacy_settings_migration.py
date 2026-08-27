@@ -12,20 +12,19 @@ class OllamaLegacySettingsMigrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "ollama_config.py"
             path.write_text(
-                """YUANBAO_FREE_API = {
-    'login_url': 'https://example.test/chat/custom',
-    'hy_user': _LOCAL_SECRET_OVERRIDES.get('yuanbao_hy_user', ''),
-    'x_uskey': _LOCAL_SECRET_OVERRIDES.get('yuanbao_x_uskey', ''),
-    'agent_id': 'custom-agent',
+                """OLLAMA = {
+    'base_url': 'http://localhost:11434',
+    'api_key': _LOCAL_SECRET_OVERRIDES.get('api_key', ''),
+    'api_temperature': 0.8,
 }
 """,
                 encoding="utf-8",
             )
             payload = oc._literal_python_config(path)
 
-        self.assertEqual(payload["YUANBAO_FREE_API"], {
-            "login_url": "https://example.test/chat/custom",
-            "agent_id": "custom-agent",
+        self.assertEqual(payload["OLLAMA"], {
+            "base_url": "http://localhost:11434",
+            "api_temperature": 0.8,
         })
 
 

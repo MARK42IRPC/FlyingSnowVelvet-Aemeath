@@ -7,6 +7,9 @@ from lib.script.gsvmove import onnx_runtime as runtime_module
 from lib.script.gsvmove.onnx_runtime import (
     OnnxInferenceRequest,
     OnnxVoiceRuntime,
+    OnnxVoiceRuntimeError,
+    _configure_cuda_provider,
+    _run_cuda_session,
     _configure_hybrid_provider,
     _configure_mixed_language_frontend,
     _split_auto_language_text,
@@ -56,6 +59,55 @@ class AimisiOnnx:
 
 
 class OnnxVoiceRuntimeTests(unittest.TestCase):
+    def test_cuda_iobinding_keeps_device_outputs_and_cpu_stop_flag(self):
+        class FakeBinding:
+            def __init__(self):
+                self.inputs = []
+                self.outputs = []
+
+            def bind_ortvalue_input(self, name, value):
+                self.inputs.append((name, "ort", value))
+
+            def bind_cpu_input(self, name, value):
+                self.inputs.append((name, "cpu", value))
+
+            def bind_output(self, name, device):
+                self.outputs.append((name, device))
+
+            def get_outputs(self):
+                return self.outputs
+
+        class FakeSession:
+            def __init__(self):
+                self.binding = FakeBinding()
+
+            def io_binding(self):
+                return self.binding
+
+            def get_outputs(self):
+                return [
+                    type("Output", (), {"name": "y"})(),
+                    type("Output", (), {"name": "stop"})(),
+                ]
+
+            def run_with_iobinding(self, binding):
+                self.ran_binding = binding
+
+        class FakeOrtValue:
+            def device_name(self):
+                return "cuda"
+
+        session = FakeSession()
+        _run_cuda_session(
+            session,
+            {"state": FakeOrtValue(), "sample_noise": object()},
+            cpu_output_indexes=(1,),
+        )
+
+        self.assertEqual(session.binding.inputs[0][1], "ort")
+        self.assertEqual(session.binding.inputs[1][1], "cpu")
+        self.assertEqual(session.binding.outputs, [("y", "cuda"), ("stop", "cpu")])
+
     def test_hybrid_provider_keeps_iterative_stage_on_cpu(self):
         class FakeOptions:
             pass
@@ -97,6 +149,91 @@ class OnnxVoiceRuntimeTests(unittest.TestCase):
             ("t2s_stage_decoder_fp32.onnx", ("CPUExecutionProvider",)),
             ("vits_v2pro.onnx", ("DmlExecutionProvider", "CPUExecutionProvider")),
         ])
+
+    def test_cuda_provider_uses_cuda_for_iterative_stage(self):
+        class FakeOptions:
+            pass
+
+        class FakeOrt:
+            class GraphOptimizationLevel:
+                ORT_ENABLE_ALL = "all"
+
+            class ExecutionMode:
+                ORT_SEQUENTIAL = "sequential"
+
+            SessionOptions = FakeOptions
+
+            @staticmethod
+            def get_available_providers():
+                return ["CUDAExecutionProvider", "CPUExecutionProvider"]
+
+        calls = []
+
+        class FakeModule:
+            ort = FakeOrt()
+            os = type("FakeOs", (), {"cpu_count": staticmethod(lambda: 12)})
+
+            @staticmethod
+            def load_optional_external_session(model_path, weights_path, providers):
+                calls.append((Path(model_path).name, tuple(providers)))
+                return providers
+
+        module = FakeModule()
+        providers = _configure_cuda_provider(module)
+        options = module.make_session_options()
+        module.load_optional_external_session(Path("t2s_stage_decoder_fp32.onnx"), Path("a.bin"), providers)
+        module.load_optional_external_session(Path("vits_v2pro.onnx"), Path("b.bin"), providers)
+
+        self.assertEqual(providers, ["CUDAExecutionProvider", "CPUExecutionProvider"])
+        self.assertFalse(options.enable_mem_pattern)
+        self.assertEqual(options.execution_mode, "sequential")
+        self.assertEqual(calls, [
+            ("t2s_stage_decoder_fp32.onnx", ("CUDAExecutionProvider", "CPUExecutionProvider")),
+            ("vits_v2pro.onnx", ("CUDAExecutionProvider", "CPUExecutionProvider")),
+        ])
+
+    def test_cuda_provider_rejects_session_that_falls_back_to_cpu(self):
+        class FakeOptions:
+            pass
+
+        class FakeOrt:
+            class GraphOptimizationLevel:
+                ORT_ENABLE_ALL = "all"
+
+            class ExecutionMode:
+                ORT_SEQUENTIAL = "sequential"
+
+            SessionOptions = FakeOptions
+
+            @staticmethod
+            def get_available_providers():
+                return ["CUDAExecutionProvider", "CPUExecutionProvider"]
+
+        class FakeSession:
+            @staticmethod
+            def get_providers():
+                return ["CPUExecutionProvider"]
+
+        class FakeModule:
+            ort = FakeOrt()
+            os = type("FakeOs", (), {"cpu_count": staticmethod(lambda: 12)})
+
+            @staticmethod
+            def load_optional_external_session(_model_path, _weights_path, _providers):
+                return FakeSession()
+
+        module = FakeModule()
+        _configure_cuda_provider(module)
+
+        with self.assertRaisesRegex(
+            OnnxVoiceRuntimeError,
+            "未启用 CUDAExecutionProvider",
+        ):
+            module.load_optional_external_session(
+                Path("vits_v2pro.onnx"),
+                Path("weights.bin"),
+                ["CUDAExecutionProvider", "CPUExecutionProvider"],
+            )
     def test_language_detection_preserves_auto_for_mixed_text(self):
         self.assertEqual(normalize_language(None, "你好 Aemeath"), "auto")
         self.assertEqual(normalize_language("auto", "你好 Aemeath"), "auto")

@@ -47,7 +47,13 @@ if __name__ == '__main__':
             import importlib
 
             helper = importlib.import_module('lib.core.qt_bridge.workbench_helper')
-            sys.exit(helper.run_workbench_helper())
+            initial_page = 'overview'
+            helper_args = sys.argv[2:]
+            if '--initial-page' in helper_args:
+                index = helper_args.index('--initial-page')
+                if index + 1 < len(helper_args):
+                    initial_page = helper_args[index + 1]
+            sys.exit(helper.run_workbench_helper(initial_page=initial_page))
         except Exception:
             _show_startup_error('控制面板 helper 启动失败：\n\n' + traceback.format_exc())
             sys.exit(1)

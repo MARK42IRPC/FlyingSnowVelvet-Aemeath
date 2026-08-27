@@ -20,11 +20,12 @@ class AISettingsStorageLocalSecretsTests(unittest.TestCase):
         values = {
             **defaults,
             "api_key": "new-api-key",
+            "office_api_key": "office-api-key",
             "api_base_url": "http://127.0.0.1:8000/v1",
             "api_model": "deepseek-v3",
             "yuanbao_hy_user": "user-123",
             "yuanbao_x_uskey": "secret-uskey",
-            "force_reply_mode": "4",
+            "force_reply_mode": "0",
             "welfare_intelligence_boost": True,
             "yuanbao_agent_id": "custom-agent",
         }
@@ -47,9 +48,9 @@ class AISettingsStorageLocalSecretsTests(unittest.TestCase):
             ai = settings["overrides"]["ai"]
             self.assertEqual(ai["api_base_url"], "http://127.0.0.1:8000/v1")
             self.assertEqual(ai["api_model"], "deepseek-v3")
-            self.assertEqual(ai["force_reply_mode"], "4")
+            self.assertEqual(ai["force_reply_mode"], "0")
             self.assertTrue(ai["welfare_intelligence_boost"])
-            self.assertEqual(ai["yuanbao_agent_id"], "custom-agent")
+            self.assertNotIn("yuanbao_agent_id", ai)
             self.assertNotIn("gsv_top_k", ai)
             self.assertNotIn("gsv_fragment_interval", ai)
             self.assertNotIn("ollama_model", ai)
@@ -59,8 +60,7 @@ class AISettingsStorageLocalSecretsTests(unittest.TestCase):
             secrets = json.loads(secret_path.read_text(encoding="utf-8"))
             self.assertEqual(secrets, {
                 "api_key": "new-api-key",
-                "yuanbao_hy_user": "user-123",
-                "yuanbao_x_uskey": "secret-uskey",
+                "office_api_key": "office-api-key",
             })
 
     def test_load_ai_values_refreshes_secrets_from_disk(self):

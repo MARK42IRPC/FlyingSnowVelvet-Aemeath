@@ -15,7 +15,7 @@ import requests
 from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import EventType, Event
 from lib.core.logger import get_logger
-from lib.script.browser_auth import launch_playwright_chromium, parse_cookie_header, parse_set_cookie_headers
+from lib.script.browser_auth import launch_playwright_edge, parse_cookie_header, parse_set_cookie_headers
 from config.config import TIMEOUTS, CLOUD_MUSIC
 
 from ._provider_clients import get_kugou_provider_client, get_qqmusic_provider_client
@@ -230,18 +230,20 @@ class _LoginMixin:
 
         urls = [
             redirect_url,
-            self._QQ_LOGIN_S_URL,
             'https://y.qq.com/m/login/redirect.html?is_qq_connect=1&login_type=1&surl=https%3A%2F%2Fy.qq.com%2Fn%2Fryqq%2Findex.html',
             'https://y.qq.com/n/ryqq/index.html',
             'https://y.qq.com/portal/profile.html',
         ]
+        visited: set[str] = set()
         for url in urls:
-            if not url:
+            target = str(url or '').strip()
+            if not target or target in visited:
                 continue
+            visited.add(target)
             try:
-                page.goto(str(url), wait_until='domcontentloaded', timeout=15000)
+                page.goto(target, wait_until='domcontentloaded', timeout=15000)
             except Exception:
-                continue
+                pass
             try:
                 page.wait_for_timeout(500)
             except Exception:
@@ -385,6 +387,21 @@ class _LoginMixin:
             or str(data.get('qm_keyst') or '').strip()
             or str(data.get('pt4_token') or '').strip()
         )
+
+    @classmethod
+    def _qq_cookie_map_login_access(
+        cls,
+        cookie_map: dict[str, str] | None,
+        *,
+        official_login_confirmed: bool,
+    ) -> str:
+        if not cls._qq_cookie_map_has_uin(cookie_map):
+            return ''
+        if cls._qq_cookie_map_has_music_auth(cookie_map):
+            return 'full'
+        if official_login_confirmed and cls._qq_cookie_map_has_auth(cookie_map):
+            return 'basic'
+        return ''
 
     @staticmethod
     def _qq_collect_browser_cookie_map(raw_cookies) -> dict[str, str]:
@@ -1634,7 +1651,6 @@ class _LoginMixin:
         captured_cookie_map: dict[str, str] = {}
         promoted = False
         should_hide_qr = False
-        basic_auth_since: float | None = None
         last_qr_refresh_at: float | None = None
         last_qr_signature = ''
         last_qr_snapshot_at: float | None = None
@@ -1654,11 +1670,7 @@ class _LoginMixin:
             self._show_info('正在启动QQ音乐官方网页登录流程，请在二维码窗口中扫码或确认登录')
 
             playwright = sync_playwright().start()
-            browser = launch_playwright_chromium(
-                playwright,
-                headless=True,
-                allow_visible_fallback=False,
-            )
+            browser = launch_playwright_edge(playwright, headless=True)
 
             context = browser.new_context(locale='zh-CN', viewport={'width': 1280, 'height': 960})
             page = context.new_page()
@@ -1770,10 +1782,15 @@ class _LoginMixin:
                     _merge_cookie_candidates(self._qq_collect_document_cookie_map(page))
                     _merge_cookie_candidates(self._qq_collect_storage_state_map(page, context))
                     logger.info(
-                        '[CloudMusic] QQ登录态同步结果 uin=%s auth=%s music_auth=%s',
+                        '[CloudMusic] QQ登录态同步结果 uin=%s auth=%s music_auth=%s auth_keys=%s',
                         self._qq_cookie_map_has_uin(last_cookie_map),
                         self._qq_cookie_map_has_auth(last_cookie_map),
                         self._qq_cookie_map_has_music_auth(last_cookie_map),
+                        ','.join(
+                            key
+                            for key in ('uin', 'p_uin', 'skey', 'p_skey', 'pt4_token', 'qqmusic_key', 'music_key', 'qm_keyst')
+                            if str(last_cookie_map.get(key) or '').strip()
+                        ) or 'none',
                         )
 
                 frame_state = self._qq_login_frame_state(page)
@@ -1793,18 +1810,23 @@ class _LoginMixin:
                 _merge_cookie_candidates(storage_state_map)
 
                 has_uin = self._qq_cookie_map_has_uin(last_cookie_map)
-                has_auth = self._qq_cookie_map_has_auth(last_cookie_map)
                 has_music_auth = self._qq_cookie_map_has_music_auth(last_cookie_map)
-                if has_uin and has_auth:
-                    if basic_auth_since is None:
-                        basic_auth_since = time.monotonic()
-
-                if has_uin and has_music_auth:
+                login_access = self._qq_cookie_map_login_access(
+                    last_cookie_map,
+                    official_login_confirmed=official_login_confirmed,
+                )
+                if login_access:
                     nickname = official_nickname or self._qq_nickname_hint(client.get_session())
                     self._set_login_state(True, {'nickname': nickname}, provider='qq')
                     self._save_qq_login_cache()
                     should_hide_qr = True
-                    self._publish_qr_status('QQ音乐登录成功，已同步完整权限')
+                    if login_access == 'full':
+                        self._publish_qr_status('QQ音乐登录成功，已同步完整权限')
+                    else:
+                        logger.warning(
+                            '[CloudMusic] QQ音乐未返回专用 Cookie，按已确认的基础 QQ 授权态完成登录；喜欢歌单可能受限'
+                        )
+                        self._publish_qr_status('QQ音乐登录成功，已同步基础登录态')
                     self._show_info(self._login_success_message('QQ平台', nickname))
                     return
 

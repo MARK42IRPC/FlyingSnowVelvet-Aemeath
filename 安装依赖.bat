@@ -47,16 +47,34 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "    return [pscustomobject]@{Version=$lines[0].Trim();Executable=$lines[1].Trim()};" ^
   "  }catch{return $null}" ^
   "}" ^
+  "function Test-UvManagedPython([string]$exe){" ^
+  "  try{" ^
+  "    $resolved=[System.IO.Path]::GetFullPath($exe);" ^
+  "    $parent=[System.IO.Path]::GetDirectoryName($resolved);" ^
+  "    $roots=New-Object System.Collections.Generic.List[string];" ^
+  "    $roots.Add($parent) | Out-Null;" ^
+  "    if([System.IO.Path]::GetFileName($parent) -in @('Scripts','bin')){$roots.Add([System.IO.Directory]::GetParent($parent).FullName) | Out-Null}" ^
+  "    foreach($root in $roots){" ^
+  "      $venvConfig=Join-Path $root 'pyvenv.cfg';" ^
+  "      if((Test-Path -LiteralPath $venvConfig -PathType Leaf) -and ([System.IO.File]::ReadAllText($venvConfig) -match '(?im)^\s*uv\s*=')){return $true}" ^
+  "      $managedMarker=Join-Path $root 'Lib\EXTERNALLY-MANAGED';" ^
+  "      if((Test-Path -LiteralPath $managedMarker -PathType Leaf) -and ([System.IO.File]::ReadAllText($managedMarker) -match '(?i)(managed\s+by\s+uv|\buv[- ]managed\b)')){return $true}" ^
+  "    }" ^
+  "  }catch{}" ^
+  "  return $false" ^
+  "}" ^
   "function Add-Candidate([string]$path){" ^
   "  if([string]::IsNullOrWhiteSpace($path)){return}" ^
   "  try{$resolved=[System.IO.Path]::GetFullPath($path)}catch{return}" ^
   "  if(-not (Test-Path -LiteralPath $resolved -PathType Leaf)){return}" ^
   "  if($resolved -match 'WindowsApps'){return}" ^
+  "  if(Test-UvManagedPython $resolved){return}" ^
   "  $key=$resolved.ToLowerInvariant();" ^
   "  if($seen.ContainsKey($key)){return}" ^
   "  $info=Get-PythonInfo $resolved;" ^
   "  if(-not $info){return}" ^
   "  if($info.Executable -match 'WindowsApps'){return}" ^
+  "  if(Test-UvManagedPython $info.Executable){return}" ^
   "  $versionText=$info.Version;" ^
   "  if(-not $versionText){return}" ^
   "  $parts=$versionText.Split('.');" ^

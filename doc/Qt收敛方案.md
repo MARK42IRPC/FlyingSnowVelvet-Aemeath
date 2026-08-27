@@ -1,6 +1,6 @@
 # Qt 依赖收敛方案
 
-更新时间：2026-08-07
+更新时间：2026-08-17
 
 本文档是 Qt 收敛工作的当前实施依据。目标是让业务模块和核心算法不再显式依赖 PyQt5，同时保留现有 Qt 界面作为第一个后端，未来可以替换为自研窗口和绘制后端。视觉表现的权威边界见 `doc/视觉表现契约.md`：当前 Qt 输出是迁移基准，但 Qt 后端最终只负责执行共享视觉描述，不拥有产品样式。
 
@@ -182,7 +182,7 @@ Qt 后端负责：
 - 无生产者的 `DRAW_RENDER` 事件及其 painter/target_rect 载荷已删除，主宠 Qt 宿主直接从核心绘制场景渲染。
 - 原 `RenderCore` painter 回调不再属于跨后端契约；两个明确的 Qt 游戏控件改用 `QtRenderCore` 本地队列，不能向 DX 场景注册该回调。
 - `LayerManager` 只持有 `LayerWindowHost`，不再识别 QWidget 或调用 Win32；它只在注册、注销或改层级后提交一次待处理排序，不再每帧强制调用 `SetWindowPos(HWND_TOPMOST)`。
-- 工作台、对话框、游戏窗口和 Qt 媒体播放器仍是明确的 toolkit 实现；它们可以导入 Qt，但不得把 Qt 类型泄漏回核心协议和业务事件。
+- 工作台、对话框、游戏窗口和 Qt 媒体播放器仍是明确的 toolkit 实现；它们可以导入 Qt，但不得把 Qt 类型泄漏回核心协议和业务事件。办公任务页与权限许可窗通过 `lib/script/ui/office_style.py` 共享同一工作台主题和桌宠粉青视觉，不在两个 QWidget 中复制样式常量。
 - 后端路由基础已完成；控制面板的 `UI.render_backend` 提供 Qt、DirectX、OpenGL 和 Vulkan 选择，设置仅在下次启动时生效。Qt 标记为当前可用，DirectX 标记为实验性功能并允许实际启动验证，OpenGL/Vulkan 仍显示尚未接入；未注册或初始化失败时记录原因并回退 Qt。
 
 后续顺序固定为：
@@ -192,10 +192,10 @@ Qt 后端负责：
 3. 已完成：落地 `WindowHost v1` 协议、passive/Qt 适配器和 `DesktopBackendBundle.window_host_factory`；ABI v7 的诊断 `DxWindowHost` 已接通 `WM_POINTER*`、Unicode 文本、IME 预编辑/提交/结束和候选窗定位。
 4. 已完成：扩展 `DrawBatch` 的文字、线段、矩形、椭圆、裁剪与变换命令，并由 Qt 后端建立行为基准；`DrawScene` 仍只从业务请求生成 sprite，迁移业务绘制时再提交其它命令。
 5. 已完成：DX/WARP ABI v3 已映射 sprite、文字、线段、矩形、椭圆、裁剪与变换；ABI v7 保持固定 104 字节命令和同帧 UTF-8 payload，并由真实 WARP 像素测试保护透明度、排序及状态栈。
-6. 当前阶段：ABI v7 的 `DxWindowHost`、共享 `DxLoopContext`、调度、事件泵、应用运行时、动态屏幕、PNG capture、主宠、完整原生日常托盘菜单、粒子/特效、世界对象和原生命令/提示/二维码 UI 已由 `DxDesktopBackend` 组成完整 bundle；阻断 PyQt 的 `ApplicationState` 启动、`APP_MAIN`、分阶段退出及 backend cleanup 组合已通过。DirectX 现以实验性功能开放实际启动验证；控制面板入口已由 `ApplicationUiHost.open_settings()` 启动隔离 Qt workbench helper，下一步补 helper 的版本化 IPC、重复启动/退出协调、自动公告、共享设备资源和真实硬件/多屏/第三方输入法验收，完成后再移除实验性标记。
+6. 当前阶段：ABI v7 的 `DxWindowHost`、共享 `DxLoopContext`、调度、事件泵、应用运行时、动态屏幕、PNG capture、主宠、完整原生日常托盘菜单、粒子/特效、世界对象和原生命令/提示/二维码 UI 已由 `DxDesktopBackend` 组成完整 bundle；阻断 PyQt 的 `ApplicationState` 启动、`APP_MAIN`、分阶段退出及 backend cleanup 组合已通过。DirectX 现以实验性功能开放实际启动验证；控制面板入口由 `ApplicationUiHost.open_settings()` 启动隔离 Qt workbench helper，helper 已使用版本 1 原子页面请求、复用存活进程并支持直达办公页，办公任务另用版本 1 文件 IPC 交换状态和命令。下一步补自动公告、共享设备资源和真实硬件/多屏/第三方输入法验收，完成后再移除实验性标记。
 7. 当前视觉收敛：`graphics/visuals.py` 已承接粒子、特效、命令输入框外壳、主宠/命令框几何以及七类世界对象的 sprite、动画帧、透明度、翻转、中心缩放、闹钟倒计时、摩托抖动和音响 EMA/指数缩放；`graphics/application_visuals.py` 已承接二维码主体、action button 状态和 DX 基础通知。Qt 世界对象只执行共享 `DrawBatch`；Qt `BaseQrDialog` 与 DX application UI 共用 `ApplicationPanelVisual`，Qt/DX-WARP 二维码像素采样和整个 DX bridge 的 AST 边界已有测试保护。二维码按钮的 Qt 原生控件只负责输入和点击适配，不再通过 stylesheet 绘制产品像素。
 8. 当前气泡收敛：Qt `Bubble` 的换行、自适应尺寸、三层背景、混合字体分段位置、相对主宠锚点和屏幕夹取已迁入 `BubbleVisualDescription`；Qt 只提供 `QFontMetrics` 低级度量并通过 `QtDrawBackend` 执行，迁移前后单行、多行、左对齐和硬换行像素完全一致。DX `_DxBubbleWindow` 已接入同一描述并承接 `INFORMATION` 队列、`TICK` 生命周期和主宠锚点；DirectWrite 度量适配仍待接入。
-9. 后续视觉收敛：命令提示框视觉和命中矩形已统一为 `CommandHintVisualDescription` 并接入 DX 原生交互宿主，八类矩形附属按钮已统一为 `build_rect_action_button_visual()`，二维码 action button 已统一为 `build_qr_panel_visual()` 的共享状态批次并接入 DX 命中交互；DX 已增加单个原生窗口承载七个附属按钮的共享批次和 hover/pressed 命中，但 toolkit-neutral 动作分发仍待补齐。下一步补齐 DirectWrite 低级文字度量、缩放/启动/聊天/更多功能动作和音响搜索 UI 宿主，并统一世界对象专属音效和部分独有交互。每项都先让 Qt 消费共享结果并保持基准，再接 DX 执行器。
+9. 后续视觉收敛：命令提示框视觉和命中矩形已统一为 `CommandHintVisualDescription` 并接入 DX 原生交互宿主，鼠标穿透、放大、缩小、关闭、启动鸣潮、聊天模式、交互模式和更多功能八个矩形附属按钮已统一为 `build_rect_action_button_visual()`，二维码 action button 已统一为 `build_qr_panel_visual()` 的共享状态批次并接入 DX 命中交互；DX 单个原生窗口承载同一三行批次和 hover/pressed 命中，“更多功能”位于“启动鸣潮”正上方，交互模式动作已接入 `INTERACTION_MODE_SET`，其余 toolkit-neutral 动作仍待补齐。下一步补齐 DirectWrite 低级文字度量、缩放/启动/更多功能动作和音响搜索 UI 宿主，并统一世界对象专属音效和部分独有交互。每项都先让 Qt 消费共享结果并保持基准，再接 DX 执行器。
 10. 视觉验收：继续补 100%、125%、150% DPI 下的跨后端截图、明确文字边界/基线/换行语义；达到代表性场景基准后才可移除 DX 实验性标记。
 
 后续迁移不得在 DX bridge 中先仿制 Qt 画法；共享命令无法表达 Qt 基准时，先扩展纯数据契约并让 Qt 执行器消费，再接 DX。

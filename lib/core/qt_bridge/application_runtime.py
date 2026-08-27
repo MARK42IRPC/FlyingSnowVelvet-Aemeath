@@ -64,6 +64,9 @@ class QtApplicationRuntime(ApplicationRuntime):
 
         app = QApplication(sys.argv if argv is None else argv)
         app.setQuitOnLastWindowClosed(False)
+        from lib.core.qt_bridge.windows_app_id import set_windows_app_user_model_id
+
+        set_windows_app_user_model_id()
         _set_application_icon(app, logger)
         return app
 

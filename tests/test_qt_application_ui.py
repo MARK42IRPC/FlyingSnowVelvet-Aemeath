@@ -28,6 +28,16 @@ class QtApplicationUiHostTests(unittest.TestCase):
             def stop(self):
                 calls.append("preloader_stop")
 
+        class ApprovalController:
+            def __init__(self):
+                calls.append("approval_init")
+
+            def start(self):
+                calls.append("approval_start")
+
+            def cleanup(self):
+                calls.append("approval_cleanup")
+
         modules = {
             "lib.script.SEanima.animation": types.SimpleNamespace(
                 get_start_exit_animation=lambda: Animation(),
@@ -38,6 +48,9 @@ class QtApplicationUiHostTests(unittest.TestCase):
             ),
             "lib.script.ui.preloader": types.SimpleNamespace(
                 preload_runtime_ui=lambda: Preloader(),
+            ),
+            "lib.script.ui.office_approval_controller": types.SimpleNamespace(
+                OfficeApprovalController=ApprovalController,
             ),
             "lib.script.ui.shutdown": types.SimpleNamespace(
                 hide_all_runtime_ui=lambda: calls.append("ui_hide"),
@@ -65,6 +78,8 @@ class QtApplicationUiHostTests(unittest.TestCase):
 
         self.assertEqual(calls.count("preloader_stop"), 1)
         self.assertEqual(calls.count("announcement_cleanup"), 1)
+        self.assertEqual(calls.count("approval_start"), 1)
+        self.assertEqual(calls.count("approval_cleanup"), 1)
         self.assertEqual(calls.count("game_cleanup"), 1)
         self.assertEqual(calls.count("ui_cleanup"), 1)
         self.assertEqual(calls.count("animation_cleanup"), 1)

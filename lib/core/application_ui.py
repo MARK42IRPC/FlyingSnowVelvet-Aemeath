@@ -8,9 +8,6 @@ from typing import Protocol
 class ApplicationUiHost(Protocol):
     """Own application-level UI without exposing toolkit objects."""
 
-    def configure_services(self, yuanbao_service: object) -> None:
-        """Inject UI initializers required by long-lived services."""
-
     def prepare_application(self, application: object) -> None:
         """Initialize toolkit resources after the application exists."""
 

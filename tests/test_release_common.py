@@ -1,17 +1,15 @@
-import io
 import tempfile
 import unittest
-import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
 from scripts.release_common import (
-    build_generated_payloads,
     configure_console_output,
     read_app_version,
 )
 from scripts.package_green_release import _should_exclude as green_should_exclude
 from scripts.package_release import ROOT, _should_exclude as release_should_exclude
+from lib.core.dsh_runtime_contract import RUNTIME_SOURCE_FILES
 
 
 class ReleaseCommonTests(unittest.TestCase):
@@ -67,37 +65,49 @@ class ReleaseCommonTests(unittest.TestCase):
                 self.assertFalse(release_should_exclude(path))
                 self.assertFalse(green_should_exclude(path))
 
-    def test_service_bundle_is_generated_from_current_source_tree(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            service = root / 'services' / 'yuanbao-free-api'
-            service.mkdir(parents=True)
-            (service / 'app.py').write_text("VERSION = 'current'\n", encoding='utf-8')
-            (service / 'requirements.txt').write_text('fastapi\n', encoding='utf-8')
-            (service / 'storage_state.json').write_text('{"cookies": []}\n', encoding='utf-8')
-            (service / 'storage_state_backup.json').write_text('{"cookies": []}\n', encoding='utf-8')
-            (service / '.env').write_text('API_KEYS=secret\n', encoding='utf-8')
-            (service / '.env.local').write_text('API_KEYS=local-secret\n', encoding='utf-8')
-            (service / 'qrcode.png').write_bytes(b'sensitive-qr')
-            (service / 'qrcode_dialog_tmp.png').write_bytes(b'sensitive-temp-qr')
-            (service / '__pycache__').mkdir()
-            (service / '__pycache__' / 'app.pyc').write_bytes(b'stale')
+    def test_release_packages_include_dsh_sources_but_not_installed_runtimes(self):
+        for relative in RUNTIME_SOURCE_FILES:
+            path = ROOT / "services" / "dsh-office-runtime" / relative
+            with self.subTest(path=relative):
+                self.assertTrue(path.is_file())
+                self.assertFalse(release_should_exclude(path))
+                self.assertFalse(green_should_exclude(path))
 
-            payloads = build_generated_payloads(root)
-            payload = payloads[Path('services/bundles/yuanbao-free-api-main.zip')]
-            with zipfile.ZipFile(io.BytesIO(payload)) as archive:
-                self.assertEqual(
-                    archive.read('app.py').decode('utf-8').splitlines(),
-                    ["VERSION = 'current'"],
-                )
-                self.assertNotIn('__pycache__/app.pyc', archive.namelist())
-                self.assertNotIn('storage_state.json', archive.namelist())
-                self.assertNotIn('storage_state_backup.json', archive.namelist())
-                self.assertNotIn('.env', archive.namelist())
-                self.assertNotIn('.env.local', archive.namelist())
-                self.assertNotIn('qrcode.png', archive.namelist())
-                self.assertNotIn('qrcode_dialog_tmp.png', archive.namelist())
+        excluded = (
+            ROOT / "services" / "dsh-office-runtime" / "node_modules" / "package.json",
+            ROOT / "resc" / "node-24.13.0-win-x64" / "node.exe",
+        )
+        for path in excluded:
+            with self.subTest(path=path):
+                self.assertTrue(release_should_exclude(path))
+                self.assertTrue(green_should_exclude(path))
 
+    def test_release_packages_include_managed_office_system_prompt(self):
+        prompt = ROOT / "resc" / "agent" / "office_system_prompt.txt"
+
+        self.assertTrue(prompt.is_file())
+        self.assertFalse(release_should_exclude(prompt))
+        self.assertFalse(green_should_exclude(prompt))
+
+    def test_release_packages_include_bundled_office_skills(self):
+        skill_names = (
+            "fsv-office-workflow",
+            "fsv-desktop-pet-architecture",
+            "fsv-safe-editing",
+            "fsv-test-verification",
+            "fsv-windows-powershell",
+            "fsv-workbench-ui",
+            "fsv-browser-ui-check",
+            "fsv-browser-research",
+            "fsv-dependency-maintenance",
+            "fsv-release-validation",
+        )
+        for name in skill_names:
+            path = ROOT / "resc" / "agent" / name / "SKILL.md"
+            with self.subTest(path=path):
+                self.assertTrue(path.is_file())
+                self.assertFalse(release_should_exclude(path))
+                self.assertFalse(green_should_exclude(path))
 
 if __name__ == '__main__':
     unittest.main()

@@ -140,7 +140,6 @@ class QtDependencyBoundaryTests(unittest.TestCase):
             "microphone_stt",
             "music",
             "tool_dispatcher",
-            "yuanbao_free_api",
         )
         paths = []
         for name in directory_names:

@@ -57,7 +57,6 @@ class AISettingsReplyModeSectionsTests(unittest.TestCase):
             ("手动 API", "0"),
             ("本地 Ollama", "2"),
             ("规则回复", "3"),
-            ("元宝", "4"),
         ])
 
     def test_auto_companion_interval_slider_uses_minute_limits(self):
@@ -87,40 +86,16 @@ class AISettingsReplyModeSectionsTests(unittest.TestCase):
         self.assertFalse(self.panel._welfare_section.isHidden())
         self.assertTrue(self.panel._manual_api_section.isHidden())
         self.assertTrue(self.panel._ollama_section.isHidden())
-        self.assertTrue(self.panel._yuanbao_section.isHidden())
 
         self._select_mode("0")
         self.assertTrue(self.panel._welfare_section.isHidden())
         self.assertFalse(self.panel._manual_api_section.isHidden())
         self.assertTrue(self.panel._ollama_section.isHidden())
-        self.assertTrue(self.panel._yuanbao_section.isHidden())
 
         self._select_mode("2")
         self.assertTrue(self.panel._welfare_section.isHidden())
         self.assertTrue(self.panel._manual_api_section.isHidden())
         self.assertFalse(self.panel._ollama_section.isHidden())
-        self.assertTrue(self.panel._yuanbao_section.isHidden())
-
-        self._select_mode("4")
-        self.assertTrue(self.panel._welfare_section.isHidden())
-        self.assertTrue(self.panel._manual_api_section.isHidden())
-        self.assertTrue(self.panel._ollama_section.isHidden())
-        self.assertFalse(self.panel._yuanbao_section.isHidden())
-
-    def test_yuanbao_login_actions_are_mutually_exclusive(self):
-        self.panel._set_yuanbao_login_actions(logged_in=False)
-        self.assertFalse(self.panel._start_yuanbao_wechat_login_btn.isHidden())
-        self.assertTrue(self.panel._stop_yuanbao_login_btn.isHidden())
-
-        self.panel._on_yuanbao_login_status_event(
-            panel_module.Event(
-                panel_module.EventType.YUANBAO_LOGIN_QR_STATUS,
-                {"logged_in": True},
-            )
-        )
-
-        self.assertTrue(self.panel._start_yuanbao_wechat_login_btn.isHidden())
-        self.assertFalse(self.panel._stop_yuanbao_login_btn.isHidden())
 
     def test_save_and_restart_button_is_to_the_right_and_pink(self):
         layout = self.panel._ai_scaffold.action_bar.button_layout
@@ -311,7 +286,7 @@ class AISettingsReplyModeSectionsTests(unittest.TestCase):
         self.assertEqual(self.panel._voice_package_banner.install_button.text(), "安装最新语音包")
         self.assertEqual(
             self.panel._gsv_gpu_hybrid.text(),
-            "使用gpu混合推理（可能会提高显存占用）",
+            "通用 GPU 加速（DirectML）",
         )
 
         voice_section = Mock()
@@ -322,6 +297,24 @@ class AISettingsReplyModeSectionsTests(unittest.TestCase):
         AISettingsPanel._update_gsv_settings_visibility(panel)
 
         voice_section.setVisible.assert_called_once_with(True)
+
+    def test_nvidia_acceleration_visibility_requires_cuda_runtime(self):
+        voice_section = Mock()
+        checkbox = Mock()
+        panel = type("GsvPanel", (), {
+            "_gsv_launcher_available": True,
+            "_voice_section": voice_section,
+            "_gsv_nvidia_cuda_acceleration": checkbox,
+        })()
+
+        with patch.object(panel_module, "is_cuda_runtime_ready", return_value=False):
+            AISettingsPanel._update_gsv_settings_visibility(panel)
+        checkbox.setVisible.assert_called_once_with(False)
+
+        checkbox.reset_mock()
+        with patch.object(panel_module, "is_cuda_runtime_ready", return_value=True):
+            AISettingsPanel._update_gsv_settings_visibility(panel)
+        checkbox.setVisible.assert_called_once_with(True)
 
     def test_voice_package_install_enables_and_persists_runtime(self):
         saved_values = dict(panel_module._DEFAULT_VALUES)

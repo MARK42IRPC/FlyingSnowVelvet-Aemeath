@@ -18,6 +18,7 @@ SOUND = {
 SPEAKER_AUDIO = {
     'scale_range':   0.1,    # 缩放范围：[1.0 - scale_range, 1.0 + scale_range]
     'scale_exp':     2.0,    # 指数映射：freq_intensity^scale_exp
+    'response_gain': 4.0,    # 常用系统音量下的视觉响应增益，最大形变仍受 scale_range 限制
     'ema_attack':    0.35,   # EMA 攻击系数（峰值上升）
     'ema_decay':     0.08,   # EMA 衰减系数（峰值下降）
     'freq_min':    200.0,    # 关注频率范围下限（Hz）

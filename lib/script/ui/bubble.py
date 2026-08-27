@@ -67,17 +67,14 @@ class _QtBubbleTextMetrics:
         """Measure a rich text segment with style and scale."""
         from PyQt5.QtGui import QFont
 
-        # 创建带样式的字体
+        # Keep measurement identical to the FontSpec resolved by the presenter.
         font = QFont(self._default_font_qt)
-        font.setPixelSize(int(font.pixelSize() * segment.scale))
+        font.setPixelSize(max(1, int(round(font.pixelSize() * segment.scale))))
 
         if segment.style == "bold":
             font.setBold(True)
-        elif segment.style == "italic":
-            font.setItalic(True)
         elif segment.style == "bold_italic":
             font.setBold(True)
-            font.setItalic(True)
         elif segment.style == "code":
             font.setFamily("Consolas")
 

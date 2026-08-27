@@ -1,0 +1,15 @@
+{
+  "name": "@fsv/dsh-office-profile",
+  "version": "0.1.0",
+  "private": true,
+  "dsh": {
+    "profile": {
+      "bundles": [
+        "@deepseek-ai/dsh-base"
+      ]
+    }
+  },
+  "dependencies": {
+    "@fsv/dsh-office-bridge": "0.1.0"
+  }
+}

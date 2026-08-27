@@ -1,6 +1,7 @@
 import ast
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from lib.core.event.center import Event, EventType
@@ -53,8 +54,24 @@ class _FakeScreenCapture:
         return self.image_data
 
 
+class _FakeModeService:
+    def __init__(self):
+        self.mode = "companion"
+        self.generation = 0
+
+    def snapshot(self):
+        return SimpleNamespace(value=self.mode), self.generation
+
+    def accepts_companion_generation(self, generation):
+        return self.mode == "companion" and self.generation == generation
+
+    def switch(self, mode: str):
+        self.mode = mode
+        self.generation += 1
+
+
 class ChatSchedulerTests(unittest.TestCase):
-    def _create_handler(self):
+    def _create_handler(self, mode_service=None):
         center = _FakeEventCenter()
         ollama = _FakeOllama()
         scheduler = FakeScheduler()
@@ -70,6 +87,7 @@ class ChatSchedulerTests(unittest.TestCase):
         handler = ChatHandler(
             scheduler=scheduler,
             screen_capture=screen_capture,
+            mode_service=mode_service,
         )
         ollama.handler = handler
         self.addCleanup(handler.cleanup)
@@ -117,6 +135,32 @@ class ChatSchedulerTests(unittest.TestCase):
         self.assertEqual(center.subscriptions, [])
         self.assertTrue(scheduler.cleaned)
         self.assertTrue(all(timer.cleaned for timer in scheduler.timers))
+
+    def test_mode_generation_drops_stale_stream_and_final_callbacks(self):
+        mode = _FakeModeService()
+        handler, center, ollama, scheduler, _ = self._create_handler(mode)
+
+        handler._on_input_chat(Event(EventType.INPUT_CHAT, {
+            "text": "hello",
+            "mode_generation": 0,
+        }))
+        request = ollama.calls[-1]
+        scheduler.timers[1].start(1000)
+
+        mode.switch("office")
+        handler._on_interaction_mode_changed(Event(EventType.INTERACTION_MODE_CHANGED, {
+            "mode": "office",
+            "generation": mode.generation,
+        }))
+        self.assertFalse(scheduler.timers[1].active)
+        self.assertEqual(center.published[-1].type, EventType.UI_BUBBLE_HIDE)
+
+        center.published.clear()
+        request["on_chunk"]("stale chunk")
+        request["callback"]("stale final")
+
+        self.assertEqual(center.published, [])
+        self.assertEqual(list(handler._recent_context), [])
 
     def test_chat_scheduler_modules_do_not_declare_qt_imports(self):
         repo_root = Path(__file__).resolve().parents[1]

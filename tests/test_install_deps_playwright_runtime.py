@@ -1,5 +1,4 @@
 import importlib.util
-import os
 import struct
 import tempfile
 import unittest
@@ -121,13 +120,6 @@ class InstallDepsPlaywrightRuntimeTests(unittest.TestCase):
             with zipfile.ZipFile(merged) as archive:
                 self.assertEqual(archive.read("chrome-win64/chrome.exe"), b"browser-runtime")
 
-    def test_ensure_browser_runtime_skips_install_when_runtime_exists(self):
-        fake_runtime = PROJECT_ROOT / "resc" / "playwright" / "browsers" / "ms-playwright" / "chromium-1208" / "chrome-win64" / "chrome.exe"
-        with patch.object(install_deps, "_find_playwright_browser_runtime", return_value=fake_runtime):
-            result = install_deps.ensure_yuanbao_browser_runtime("py")
-
-        self.assertTrue(result)
-
     def test_browser_runtime_completeness_rejects_partial_chromium(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             executable = Path(temp_dir) / "chrome-win64" / "chrome.exe"
@@ -160,39 +152,6 @@ class InstallDepsPlaywrightRuntimeTests(unittest.TestCase):
                 result = install_deps._find_playwright_browser_runtime()
 
         self.assertEqual(result, complete)
-
-    def test_ensure_browser_runtime_fails_without_local_archive(self):
-        with patch.object(install_deps, "_find_playwright_browser_runtime", return_value=None), patch.object(
-            install_deps, "_ensure_browser_runtime_archives", return_value=False
-        ):
-            result = install_deps.ensure_yuanbao_browser_runtime("py")
-
-        self.assertFalse(result)
-
-    def test_ensure_browser_runtime_extracts_local_archive_into_repo_runtime_dir(self):
-        fake_runtime = PROJECT_ROOT / "resc" / "playwright" / "browsers" / "ms-playwright" / "chromium-1208" / "chrome-win64" / "chrome.exe"
-        temp_root = Path(os.environ.get("TEMP", "C:\\Temp")) / "fsv_playwright_runtime"
-
-        with patch.object(
-            install_deps,
-            "_find_playwright_browser_runtime",
-            side_effect=[None, fake_runtime],
-        ), patch.object(
-            install_deps, "_ensure_browser_runtime_archives", return_value=True
-        ), patch.object(install_deps, "_extract_browser_runtime_archive") as extract_mock, patch.object(
-            install_deps, "_find_extracted_browser_root", return_value=temp_root / "extract" / "chrome-win64"
-        ), patch.object(install_deps.shutil, "move") as move_mock, patch.object(
-            install_deps, "_rmtree_if_exists"
-        ):
-            result = install_deps.ensure_yuanbao_browser_runtime("C:\\Python311\\python.exe")
-
-        self.assertTrue(result)
-        extract_mock.assert_called_once_with(temp_root / "extract")
-        move_mock.assert_called_once_with(
-            str(temp_root / "extract" / "chrome-win64"),
-            str(install_deps.PLAYWRIGHT_RUNTIME_TARGET_DIR / "chrome-win64"),
-        )
-
 
 if __name__ == "__main__":
     unittest.main()

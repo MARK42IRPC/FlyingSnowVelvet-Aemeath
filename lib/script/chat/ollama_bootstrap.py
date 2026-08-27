@@ -1,4 +1,4 @@
-"""Ollama ??????????????"""
+"""Ollama 启动和状态管理 Mixin"""
 
 import json
 import subprocess
@@ -263,7 +263,7 @@ class OllamaBootstrapMixin:
         self._event_center.unsubscribe(EventType.APP_PRE_START, self._on_app_pre_start)
         self._event_center.unsubscribe(EventType.APP_MAIN,      self._on_app_main)
 
-    def _shutdown_started_ollama(self):
+
         """应用退出时结束本实例启动的 ollama 进程。"""
         if self._use_api_key:
             return

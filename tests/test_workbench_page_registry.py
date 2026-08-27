@@ -11,6 +11,7 @@ from lib.script.workbench.page_registry import (
 class WorkbenchPageRegistryTests(unittest.TestCase):
     def test_default_metadata_groups_existing_pages(self):
         self.assertEqual(default_page_spec("ai").group, "智能交互")
+        self.assertEqual(default_page_spec("office").group, "智能交互")
         self.assertEqual(default_page_spec("scene_objects").group, "桌宠与场景")
         self.assertEqual(default_page_spec("audio_music").group, "声音与媒体")
         self.assertEqual(default_page_spec("game_manager").group, "扩展与游戏")
@@ -72,11 +73,11 @@ class WorkbenchPageRegistryTests(unittest.TestCase):
 
         self.assertEqual(
             tuple(spec.page_id for spec in specs),
-            ("game_manager", "bug_tracker"),
+            ("office", "game_manager", "bug_tracker"),
         )
         self.assertEqual(
             tuple(spec.title for spec in specs),
-            ("游戏包", "故障跟踪"),
+            ("办公模式", "游戏包", "故障跟踪"),
         )
         self.assertTrue(all(callable(spec.factory) for spec in specs))
 

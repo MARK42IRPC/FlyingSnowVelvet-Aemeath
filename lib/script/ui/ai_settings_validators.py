@@ -25,12 +25,6 @@ def validate_ai_values(values: dict) -> None:
     force_mode = str(values.get("force_reply_mode", "")).strip()
     welfare_intelligence_boost = values.get("welfare_intelligence_boost")
     api_base_url = str(values.get("api_base_url", "") or "").strip()
-    yuanbao_login_url = str(values.get("yuanbao_login_url", "") or "").strip()
-    yuanbao_free_api_enabled = bool(values.get("yuanbao_free_api_enabled", False))
-    yuanbao_hy_source = str(values.get("yuanbao_hy_source", "") or "").strip()
-    yuanbao_hy_user = str(values.get("yuanbao_hy_user", "") or "").strip()
-    yuanbao_x_uskey = str(values.get("yuanbao_x_uskey", "") or "").strip()
-    yuanbao_agent_id = str(values.get("yuanbao_agent_id", "") or "").strip()
     ollama_base_url = str(values.get("ollama_base_url", "") or "").strip()
     ollama_model = str(values.get("ollama_model", "") or "").strip()
     num_gpu = values.get("num_gpu")
@@ -48,6 +42,7 @@ def validate_ai_values(values: dict) -> None:
     gsv_max_steps = values.get("gsv_max_steps")
     gsv_auto_start = values.get("gsv_auto_start")
     gsv_gpu_hybrid = values.get("gsv_gpu_hybrid")
+    gsv_nvidia_cuda_acceleration = values.get("gsv_nvidia_cuda_acceleration", False)
     api_enable_thinking = values.get("api_enable_thinking")
     auto_companion_enabled = values.get("auto_companion_enabled")
     auto_companion_interval_minutes = values.get("auto_companion_interval_minutes")
@@ -71,15 +66,6 @@ def validate_ai_values(values: dict) -> None:
 
     if api_base_url and not is_valid_http_url(api_base_url):
         raise ValueError("接口地址必须是有效的 http/https 地址")
-
-    if yuanbao_login_url and not is_valid_http_url(yuanbao_login_url):
-        raise ValueError("元宝登录页地址必须是有效的 http/https 地址")
-
-    if yuanbao_free_api_enabled:
-        if not yuanbao_agent_id:
-            raise ValueError("启用 YuanBao-Free-API 时，agent_id 不能为空")
-        if yuanbao_x_uskey and any(ch.isspace() for ch in yuanbao_x_uskey):
-            raise ValueError("x_uskey 不能包含空白字符")
 
     if force_mode == "2":
         if not ollama_base_url:
@@ -174,6 +160,8 @@ def validate_ai_values(values: dict) -> None:
         raise ValueError("GSV自动启用开关无效")
     if not isinstance(gsv_gpu_hybrid, bool):
         raise ValueError("GPU混合推理开关无效")
+    if not isinstance(gsv_nvidia_cuda_acceleration, bool):
+        raise ValueError("N卡加速开关无效")
 
     if isinstance(ai_voice_max_chars, bool) or not isinstance(ai_voice_max_chars, int):
         raise ValueError("GSV语音字数限制必须是整数")

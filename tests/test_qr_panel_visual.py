@@ -87,7 +87,7 @@ class QrPanelVisualTests(unittest.TestCase):
         self.assertNotEqual(normal.batch.commands[-2].fill, hover.batch.commands[-2].fill)
         self.assertEqual(disabled.batch.commands[-1].alpha, 0.55)
         self.assertIsInstance(normal.batch.commands[-1], TextCommand)
-        self.assertEqual(qr_panel_action_text("yuanbao-login"), "关闭窗口")
+        self.assertEqual(qr_panel_action_text("generic-login"), "关闭窗口")
         self.assertEqual(qr_panel_action_text("music-login"), "退出扫码")
 
 

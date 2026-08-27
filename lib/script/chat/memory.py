@@ -11,7 +11,7 @@ import re
 import threading
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 from config.shared_storage import ensure_shared_config_ready, get_project_root, get_shared_config_path
 from config.user_storage_paths import get_user_state_dir
@@ -19,6 +19,9 @@ from lib.core.event.center import Event, EventType, get_event_center
 from lib.core.logger import get_logger
 
 logger = get_logger(__name__)
+
+if TYPE_CHECKING:
+    from lib.script.office.mode import InteractionModeService
 
 _TOOL_MARKER_PATTERN = re.compile(r"###.*?###", re.S)
 _TOPIC_MARKER_PATTERN = re.compile(r"^\s*///\s*([^/\r\n]{1,32}?)\s*///\s*", re.S)
@@ -91,8 +94,14 @@ def _migrate_legacy_single_file(legacy_path: Path, target_dir: Path) -> None:
 class StreamMemory:
     """记录用户输入与模型最终回复到本地按日期分片的 memory 文件。"""
 
-    def __init__(self, memory_dir: Path | None = None):
+    def __init__(
+        self,
+        memory_dir: Path | None = None,
+        *,
+        mode_service: "InteractionModeService | None" = None,
+    ):
         self._ec = get_event_center()
+        self._mode_service = mode_service
         self._write_lock = threading.Lock()
 
         if memory_dir is None:
@@ -129,6 +138,17 @@ class StreamMemory:
         self._ec.subscribe(EventType.STREAM_FINAL, self._on_stream_final)
         self._suppress_next_response = False
         logger.info("[StreamMemory] 已初始化: %s", self._memory_dir)
+
+    def _accepts_event_generation(self, event: Event) -> bool:
+        if self._mode_service is None:
+            return True
+        data = event.data if isinstance(event.data, dict) else {}
+        _, current_generation = self._mode_service.snapshot()
+        try:
+            generation = int(data.get("mode_generation", current_generation))
+        except (TypeError, ValueError):
+            return False
+        return self._mode_service.accepts_companion_generation(generation)
 
     @staticmethod
     def _extract_topic_and_lines(text: str) -> tuple[str, list[str]]:
@@ -182,6 +202,8 @@ class StreamMemory:
             logger.error("[StreamMemory] 写入失败: %s", e)
 
     def _on_input_chat(self, event: Event) -> None:
+        if not self._accepts_event_generation(event):
+            return
         if str(event.data.get("source", "")).strip() == "tool_recall":
             self._suppress_next_response = True
             return
@@ -192,6 +214,8 @@ class StreamMemory:
         self._append_lines("user", topic, lines)
 
     def _on_stream_final(self, event: Event) -> None:
+        if not self._accepts_event_generation(event):
+            return
         if self._suppress_next_response:
             self._suppress_next_response = False
             return
@@ -287,11 +311,18 @@ class StreamMemory:
 _instance: Optional[StreamMemory] = None
 
 
-def get_stream_memory() -> StreamMemory:
+def get_stream_memory(
+    *,
+    mode_service: "InteractionModeService | None" = None,
+) -> StreamMemory:
     """获取全局 StreamMemory 实例（单例）。"""
     global _instance
     if _instance is None:
-        _instance = StreamMemory()
+        if mode_service is None:
+            from lib.script.office.mode import get_interaction_mode_service
+
+            mode_service = get_interaction_mode_service()
+        _instance = StreamMemory(mode_service=mode_service)
     return _instance
 
 

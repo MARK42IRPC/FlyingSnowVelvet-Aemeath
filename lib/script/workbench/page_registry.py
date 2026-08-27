@@ -99,6 +99,12 @@ _PAGE_PRESENTATION: dict[str, dict] = {
         "description": "模型、接口、记忆、自动陪伴与语音生成",
         "keywords": ("模型", "API", "元宝", "记忆", "语音"),
     },
+    "office": {
+        "title": "办公模式",
+        "group": "智能交互",
+        "description": "任务历史、实时执行状态、推理和权限管理",
+        "keywords": ("vibe coding", "编码", "任务", "DSH", "办公"),
+    },
     "ui_anim": {
         "title": "界面与动画",
         "group": "桌宠与场景",

@@ -141,7 +141,8 @@ def resolve_speaker_scale(intensity: float) -> tuple[float, float]:
     value = max(0.0, min(1.0, float(intensity)))
     exponent = float(SPEAKER_AUDIO.get("scale_exp", 2.0))
     scale_range = float(SPEAKER_AUDIO.get("scale_range", 0.1))
-    amplitude = value ** exponent
+    response_gain = max(0.0, float(SPEAKER_AUDIO.get("response_gain", 4.0)))
+    amplitude = min(1.0, (value ** exponent) * response_gain)
     return 1.0 + amplitude * scale_range, 1.0 - amplitude * scale_range
 
 
