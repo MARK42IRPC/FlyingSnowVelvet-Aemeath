@@ -292,19 +292,21 @@ class BubbleVisualDescription:
 def _get_font_for_segment(segment: TextSegment, metrics: BubbleTextMetrics) -> FontSpec:
     """根据 TextSegment 的样式返回对应的 FontSpec."""
     base_font = metrics.default_font
-    font_size = int(base_font.size * segment.scale)
+    font_size = int(base_font.pixel_size * segment.scale)
 
     if segment.style == "bold":
         return FontSpec(base_font.family, font_size, bold=True)
     elif segment.style == "italic":
-        return FontSpec(base_font.family, font_size, italic=True)
+        # FontSpec 暂不支持 italic，使用普通字体
+        return FontSpec(base_font.family, font_size, bold=False)
     elif segment.style == "bold_italic":
-        return FontSpec(base_font.family, font_size, bold=True, italic=True)
+        # 粗斜体暂时只能用粗体实现
+        return FontSpec(base_font.family, font_size, bold=True)
     elif segment.style == "code":
         # 代码使用等宽字体
         return FontSpec("Consolas", font_size, bold=False)
     else:
-        return FontSpec(base_font.family, font_size)
+        return FontSpec(base_font.family, font_size, bold=False)
 
 
 def build_bubble_visual_rich(
