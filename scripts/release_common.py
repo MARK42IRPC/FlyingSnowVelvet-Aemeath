@@ -120,16 +120,6 @@ def build_generated_payloads(root: Path) -> dict[Path, bytes]:
         for package_dir in sorted((path for path in official_root.iterdir() if path.is_dir()), key=lambda path: path.name.lower()):
             payloads[Path('gamepack') / 'official' / f'{package_dir.name}.zip'] = _zip_tree(package_dir)
 
-    service_root = root / 'services' / 'yuanbao-free-api'
-    if service_root.exists():
-        service_runtime_names = frozenset({
-            '.env',
-        })
-        payloads[Path('services') / 'bundles' / 'yuanbao-free-api-main.zip'] = _zip_tree(
-            service_root,
-            excluded_names=service_runtime_names,
-            excluded_patterns=('.env.*', 'qrcode*.png', 'storage_state*.json'),
-        )
     return payloads
 
 

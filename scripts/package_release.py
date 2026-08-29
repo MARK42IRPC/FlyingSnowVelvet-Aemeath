@@ -81,6 +81,7 @@ EXCLUDE_PATH_PREFIXES = {
     Path("resc") / "GIF" / "SEanima",
     Path("resc") / "user",
     Path("resc") / "gsvmove_update",
+    Path("services") / "bundles",
     Path("tests"),
     Path("scripts"),
     Path(".oprate"),
@@ -92,15 +93,10 @@ EXCLUDE_EXACT_PATHS = {
     Path("config") / "music" / "volume.json",
     Path("resc") / "python-3.11.6-amd64.exe",
     Path("resc") / "GIF" / "SEanima.zip",
-    Path("resc") / "chrome-runtime.zip",
-    Path("resc") / "chrome-runtime.z01",
-    Path("resc") / "chrome-runtime.z02",
     Path("services") / "storage_state.json",
     Path("ASYNC_COMPUTE_PLAN.txt"),
     Path("CONTRIBUTING.md"),
     Path("RELEASING.md"),
-    Path("services") / "yuanbao-free-api" / "Dockerfile",
-    Path("services") / "yuanbao-free-api" / "test.py",
     Path("pyncm") / "__main__.py",
 }
 

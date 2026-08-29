@@ -8,7 +8,7 @@ import requests
 
 from lib.core.logger import get_logger
 
-from ._multimodal import image_to_base64_with_mime, images_to_openai_content
+from ._multimodal import images_to_openai_content
 from .api_client_common import _ApiClientCommonMixin, multimodal_cooldown
 from .api_client_error import _ApiClientErrorMixin
 from .native_tools import (
@@ -128,59 +128,6 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
         return unique
 
     @staticmethod
-    def _get_yuanbao_free_api_options(active_config: dict | None) -> dict:
-        provider_options = (active_config or {}).get('provider_options') or {}
-        options = provider_options.get('yuanbao_free_api') or {}
-        return dict(options) if isinstance(options, dict) else {}
-
-    @staticmethod
-    def _refresh_yuanbao_runtime_config(active_config: dict) -> dict:
-        """Use the local relay port selected by the running Yuanbao service."""
-        if not isinstance(active_config, dict):
-            return active_config
-        yuanbao_options = _ApiClientOpenAIMixin._get_yuanbao_free_api_options(active_config)
-        if (
-            active_config.get('key_source') != 'yuanbao_local'
-            and not bool(yuanbao_options.get('enabled', False))
-        ):
-            return active_config
-
-        from config.ollama_config import get_yuanbao_local_base_url
-
-        runtime_base_url = str(get_yuanbao_local_base_url() or '').strip().rstrip('/')
-        configured_base_url = str(active_config.get('base_url') or '').strip().rstrip('/')
-        option_base_url = str(yuanbao_options.get('base_url') or '').strip().rstrip('/')
-        if not runtime_base_url or (
-            runtime_base_url == configured_base_url
-            and runtime_base_url == option_base_url
-        ):
-            return active_config
-
-        refreshed = dict(active_config)
-        refreshed['base_url'] = runtime_base_url
-        provider_options = dict(active_config.get('provider_options') or {})
-        yuanbao_options['base_url'] = runtime_base_url
-        provider_options['yuanbao_free_api'] = yuanbao_options
-        refreshed['provider_options'] = provider_options
-        logger.info(
-            '[APIClient] 元宝本地中转地址已同步到运行时端口: %s -> %s',
-            configured_base_url or '<empty>',
-            runtime_base_url,
-        )
-        return refreshed
-
-    @staticmethod
-    def _merge_payload_extra_fields(payloads: list[dict], extra_fields: dict | None) -> list[dict]:
-        if not extra_fields:
-            return payloads
-        merged_payloads: list[dict] = []
-        for payload in payloads:
-            cloned = dict(payload)
-            cloned.update(extra_fields)
-            merged_payloads.append(cloned)
-        return merged_payloads
-
-    @staticmethod
     def _prepend_native_tool_payloads(payloads: list[dict]) -> list[dict]:
         """Try native tools first while retaining plain payloads for incompatible gateways."""
         tools = get_native_tool_definitions()
@@ -192,92 +139,6 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
             cloned["tool_choice"] = "auto"
             native_payloads.append(cloned)
         return _ApiClientOpenAIMixin._dedupe_payload_variants(native_payloads + payloads)
-
-    @staticmethod
-    def _yuanbao_api_root(base_url: str) -> str:
-        base = _ApiClientOpenAIMixin._strip_openai_endpoint_suffix(base_url)
-        if base.lower().endswith('/v1'):
-            return base[:-3].rstrip('/')
-        return base
-
-    @staticmethod
-    def _build_yuanbao_extra_fields(options: dict, multimedia: list[dict] | None = None) -> dict:
-        fields = {
-            'should_remove_conversation': True,
-        }
-        if multimedia:
-            fields['multimedia'] = multimedia
-        return fields
-
-
-    def _upload_yuanbao_multimedia(
-        self,
-        base_url: str,
-        api_key: str,
-        images: list[bytes],
-        options: dict,
-        *,
-        disable_env_proxy: bool,
-        connect_timeout: float,
-        read_timeout: float,
-    ) -> list[dict]:
-        api_root = self._yuanbao_api_root(base_url)
-        if not api_root:
-            return []
-        upload_candidates: list[str] = []
-        base = (base_url or '').rstrip('/')
-        for candidate in (f'{api_root}/upload', f'{api_root}/v1/upload', f'{base}/upload'):
-            if candidate and candidate not in upload_candidates:
-                upload_candidates.append(candidate)
-        headers = {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-        }
-        if api_key:
-            headers['Authorization'] = f'Bearer {api_key}'
-
-        uploaded: list[dict] = []
-
-        for idx, image_bytes in enumerate(images or [], start=1):
-            if not image_bytes:
-                continue
-            file_data, mime_type = image_to_base64_with_mime(image_bytes)
-            extension = "jpg" if mime_type == "image/jpeg" else "png"
-            payload = {
-                'file': {
-                    'file_type': 'image',
-                    'file_name': f'snowrol_{idx}.{extension}',
-                    'file_data': file_data,
-                },
-            }
-            last_error: Exception | None = None
-            for upload_url in upload_candidates:
-                resp = None
-                try:
-                    resp = self._request_with_proxy_fallback(
-                        'POST',
-                        upload_url,
-                        disable_env_proxy=disable_env_proxy,
-                        headers=headers,
-                        json=payload,
-                        timeout=(connect_timeout, read_timeout),
-                    )
-                    if not resp.ok:
-                        resp.content
-                    resp.raise_for_status()
-                    data = resp.json()
-                    if isinstance(data, dict) and data:
-                        uploaded.append(data)
-                        last_error = None
-                        break
-                    logger.warning('[APIClient] YuanBao-Free-API 上传返回格式异常: %s', type(data).__name__)
-                except Exception as exc:
-                    last_error = exc
-                finally:
-                    self._close_response(resp)
-            if last_error is not None:
-                raise last_error
-        return uploaded
 
     @staticmethod
     def _build_openai_payload_variants(model: str, persona: str, message: str,
@@ -623,15 +484,10 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
         raw_thinking_budget = OLLAMA.get('api_thinking_budget', 0)
         api_thinking_budget = int(raw_thinking_budget) if str(raw_thinking_budget).strip() else 0
 
-        configured = config_override or self._active_config
-        active_config = self._refresh_yuanbao_runtime_config(configured)
-        if config_override is None and active_config is not configured:
-            self._active_config = active_config
+        active_config = config_override or self._active_config
         base_url  = active_config['base_url'].rstrip('/')
         api_key   = active_config['api_key']
         model     = active_config['model']
-        yuanbao_options = self._get_yuanbao_free_api_options(active_config)
-        use_yuanbao_free_api = bool(yuanbao_options.get('enabled', False))
         is_gemini_target = self._is_gemini_compatible_target(base_url, model)
         allow_reasoning_extensions = self._supports_reasoning_extensions(base_url, model)
 
@@ -649,38 +505,15 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
         else:
             request_user = f"snowrol-{threading.get_ident()}-{int(time.time() * 1000)}"
 
-        uploaded_multimedia: list[dict] = []
         payload_images = images
-        effective_persona = persona
-        effective_history = history
-        if use_yuanbao_free_api:
-            logger.debug(
-                '[APIClient] YuanBao-Free-API 已启用 remove_conversation=True，沿用当前 persona/history 发送策略'
-            )
-        if images and use_yuanbao_free_api:
-            try:
-                uploaded_multimedia = self._upload_yuanbao_multimedia(
-                    base_url,
-                    api_key,
-                    images,
-                    yuanbao_options,
-                    disable_env_proxy=api_disable_env_proxy,
-                    connect_timeout=api_connect_timeout,
-                    read_timeout=api_read_timeout,
-                )
-                if uploaded_multimedia:
-                    payload_images = None
-                    logger.info('[APIClient] YuanBao-Free-API 图片上传成功: %d 张', len(uploaded_multimedia))
-            except Exception as e:
-                logger.warning('[APIClient] YuanBao-Free-API 图片上传失败，回退到内联图片: %s', e)
 
         endpoint_candidates = self._openai_endpoint_candidates(base_url)
         prepared_image_blocks = images_to_openai_content(payload_images) if payload_images else None
         payload_candidates = self._build_openai_payload_variants(
             model=model,
-            persona=effective_persona,
+            persona=persona,
             message=message,
-            history=effective_history,
+            history=history,
             images=payload_images,
             image_blocks=prepared_image_blocks,
             temperature=api_temperature,
@@ -713,11 +546,6 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
                 include_input_multimodal_variants=True,
             )
             payload_candidates.extend(conservative_payloads)
-        if use_yuanbao_free_api:
-            payload_candidates = self._merge_payload_extra_fields(
-                payload_candidates,
-                self._build_yuanbao_extra_fields(yuanbao_options, uploaded_multimedia),
-            )
         native_tools_enabled = allow_tools and self._native_tools_available(base_url, model)
         if native_tools_enabled:
             payload_candidates = self._prepend_native_tool_payloads(payload_candidates)
@@ -725,7 +553,7 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
         if not endpoint_candidates:
             raise RuntimeError('OpenAI 兼容请求失败：未生成可用端点，请检查 API_BASE_URL')
         if not payload_candidates:
-            raise RuntimeError('OpenAI 兼容请求失败：未生成可用请求体，请检查模型与元宝配置')
+            raise RuntimeError('OpenAI 兼容请求失败：未生成可用请求体，请检查模型配置')
         if payload_images and is_gemini_target:
             logger.debug("[APIClient] 检测到 Gemini 兼容目标，启用多模态兼容变体（%d 个payload）",
                          len(payload_candidates))

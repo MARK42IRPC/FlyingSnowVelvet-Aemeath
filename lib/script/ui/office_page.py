@@ -11,6 +11,7 @@ from PyQt5.QtCore import QSignalBlocker, QSize, Qt, QTimer
 from PyQt5.QtWidgets import (
     QButtonGroup,
     QComboBox,
+    QApplication,
     QFileDialog,
     QHBoxLayout,
     QLabel,
@@ -18,6 +19,7 @@ from PyQt5.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMessageBox,
+    QMenu,
     QPlainTextEdit,
     QPushButton,
     QSizePolicy,
@@ -216,6 +218,7 @@ class OfficeWorkbenchPage(QtWorkbenchToolPage):
         self._workspace_edit.setObjectName("OfficeWorkspace")
         self._workspace_edit.setClearButtonEnabled(True)
         self._workspace_edit.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self._install_text_context_menu(self._workspace_edit)
         controls.addWidget(self._workspace_edit, 1)
         self._browse_button = QToolButton(content_card)
         self._browse_button.setObjectName("OfficeBrowseButton")
@@ -257,6 +260,7 @@ class OfficeWorkbenchPage(QtWorkbenchToolPage):
         self._prompt_edit.setPlaceholderText("输入任务或继续要求")
         self._prompt_edit.setMinimumHeight(scale_px(74, min_abs=66))
         self._prompt_edit.setMaximumHeight(scale_px(116, min_abs=104))
+        self._install_text_context_menu(self._prompt_edit)
         content_layout.addWidget(self._prompt_edit)
 
         submit_row = QHBoxLayout()
@@ -281,7 +285,40 @@ class OfficeWorkbenchPage(QtWorkbenchToolPage):
         view.setObjectName(object_name)
         view.setReadOnly(True)
         view.setLineWrapMode(QPlainTextEdit.WidgetWidth)
+        self._install_text_context_menu(view)
         return view
+
+    def _install_text_context_menu(self, edit: QLineEdit | QPlainTextEdit) -> None:
+        edit.setContextMenuPolicy(Qt.CustomContextMenu)
+        edit.customContextMenuRequested.connect(
+            lambda pos, target=edit: self._show_text_context_menu(target, pos)
+        )
+
+    @staticmethod
+    def _show_text_context_menu(edit: QLineEdit | QPlainTextEdit, pos) -> None:
+        menu = QMenu(edit)
+        action_copy = menu.addAction("复制")
+        action_paste = menu.addAction("粘贴")
+        action_cut = menu.addAction("剪切")
+
+        can_edit = not bool(edit.isReadOnly())
+        has_selection = (
+            bool(edit.textCursor().hasSelection())
+            if isinstance(edit, QPlainTextEdit)
+            else bool(edit.hasSelectedText())
+        )
+        can_paste = can_edit and bool(QApplication.clipboard().text())
+        action_copy.setEnabled(has_selection)
+        action_paste.setEnabled(can_paste)
+        action_cut.setEnabled(can_edit and has_selection)
+
+        chosen = menu.exec_(edit.mapToGlobal(pos))
+        if chosen is action_copy:
+            edit.copy()
+        elif chosen is action_paste:
+            edit.paste()
+        elif chosen is action_cut:
+            edit.cut()
 
     def refresh_workbench_page(self) -> None:
         self._poll_state(force=True)

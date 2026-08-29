@@ -1,9 +1,9 @@
 ﻿# 飞行雪绒
 
-飞行雪绒是面向 Windows 10/11 的桌面宠物项目。当前主线以 `LTS1.0.7test0823` 为版本基线，核心能力包括桌宠展示、事件驱动对象系统、AI 伴聊、语音播报、本地语音识别、多源音乐播放、粒子与小游戏扩展。
+飞行雪绒是面向 Windows 10/11 的桌面宠物项目。当前主线以 `LTS1.0.7beta1` 为版本基线，核心能力包括桌宠展示、事件驱动对象系统、AI 伴聊、语音播报、本地语音识别、多源音乐播放、粒子与小游戏扩展。
 
-- 当前版本：`LTS1.0.7test0823`
-- 发布日期：`2026-08-11`
+- 当前版本：`LTS1.0.7beta1`
+- 发布日期：`2026-08-29`
 - 主要入口：`lib/core/qt_desktop_pet.py`
 - 生命周期编排：`lib/script/main.py`
 
@@ -13,7 +13,7 @@
 
 - **运行稳定**：启动、预热、退出、清理链路集中在主生命周期中，运行时状态尽量不污染源码目录。
 - **能力收敛**：聊天、音乐、本地托管服务等模块逐步统一入口，减少历史兼容层和重复单例。
-- **离线友好**：普通发布包尽量轻量，绿色包可携带模型与浏览器离线包，便于无网络环境部署。
+- **离线友好**：普通发布包尽量轻量，绿色包可携带语音模型和启动动画资源，便于无网络环境部署。
 
 ## 功能概览
 
@@ -26,7 +26,7 @@
 ### AI 对话
 
 - 聊天入口位于 `lib/script/chat/`。
-- 支持福利 API、手动 OpenAI 兼容 API、本地 Ollama、规则回复和元宝本地网页中转；回复只使用用户选中的来源，不跨来源回退。
+- 支持福利 API、手动 OpenAI 兼容 API、本地 Ollama 和规则回复；回复只使用用户选中的来源，不跨来源回退。
 - 福利 API 启用时会并发测速 GitHub/Gitee 发布配置源获取密钥与地址，并使用程序内置的固定 Agnes 模型标识，不依赖服务端实现 `/models`；默认使用 Agnes 2.0 Flash，开启“智力提升”后使用 Agnes 2.5 Flash。配置下载固定 10 秒超时，失败后额外重试 3 次。
 - 手动 API 的模型框支持直接输入或按当前地址、密钥探测 OpenAI 兼容的 `/models` 列表；未填写协议的公网地址会补全为 `https://`，本机地址补全为 `http://`。
 - OpenAI 兼容请求支持流式输出、上下文、人格、图片输入和多种兼容 payload 变体。
@@ -51,12 +51,10 @@
 - `lib/script/cloudmusic/` 已退回内部播放运行时实现，不建议外部直接依赖。
 - UI 入口包括音响对象、搜索框、播放列表、进度面板等。
 
-### 本地网页中转与浏览器运行时
+### 系统浏览器登录
 
-- `services/yuanbao-free-api/` 保存本地网页中转服务源码。
-- 登录/授权流程依赖 Playwright 驱动系统浏览器或安装脚本从 `resc.net.txt` 下载的离线 Chromium 分卷资源。
-- 浏览器运行时、Vosk 模型、启动动画和 Python 安装器均不再内置，缺失时由安装脚本按清单下载。
-- 实际浏览器运行目录 `resc/playwright/` 是运行时产物，始终不应进入 Git 或普通发布包。
+- 音乐登录/授权流程使用 Playwright 驱动系统 Microsoft Edge，不下载或内置 Chromium。
+- Vosk 模型、启动动画和 Python 安装器均不再内置，缺失时由安装脚本按清单下载。
 
 ## 目录速览
 
@@ -72,7 +70,7 @@
 | `lib/script/gsvmove/` | ONNX 语音包安装与本地 TTS 推理兼容门面 |
 | `lib/script/microphone_stt/` | 本地 STT 与按键说话 |
 | `lib/script/ui/` | 控制面板、气泡、命令框、音乐面板、二维码面板等 UI |
-| `services/` | 本地网页中转服务源码与可选离线 bundle |
+| `services/` | 办公 DSH 侧车源码与固定依赖 |
 | `resc/` | GIF、字体、音效、模型、绿色包离线资源与用户运行目录 |
 | `scripts/` | 普通包、绿色包和其他维护脚本 |
 | `tests/` | unittest 回归测试 |
@@ -98,8 +96,8 @@ python install_deps.py
 - 安装 `requirements.txt` 中的 Python 包
 - 准备 Vosk 语音识别模型
 - 在共享语音运行目录创建可选的 DirectML GPU 混合推理 venv
-- 准备本地网页中转服务源码或内置服务包
-- 按 `resc.net.txt` 下载缺失的 Vosk、启动动画、Python 和浏览器资源
+- 准备办公 DSH 侧车源码和固定依赖
+- 按 `resc.net.txt` 下载缺失的 Vosk、启动动画和 Python 资源
 - 校验随程序提供的官方 UnRAR 解压后端；ONNX 语音包由控制面板按需安装
 - 启动桌宠主程序
 
@@ -124,7 +122,6 @@ python lib/core/qt_desktop_pet.py
 - `dist/`
 - `__pycache__/`
 - `resc/user/`
-- `resc/playwright/`
 - `config/user_scale.json`
 - `config/music/volume.json`
 - `services/storage_state.json`
@@ -159,7 +156,7 @@ py -3 -m unittest tests.test_openai_dashscope_multimodal
 
 ## 发布包边界
 
-- 普通包和绿色包：源码、默认小型资源、文档，不带 `resc/models/`、`resc/playwright/`、`resc/GIF/SEanima/` 或 Python/浏览器安装包。
+- 普通包和绿色包：源码、默认小型资源、文档，不带 `resc/models/`、`resc/GIF/SEanima/` 或 Python 安装包。
 - 安装器依据 `resc.net.txt` 在首次运行时补齐缺失的重型资源。
 - 两类包都应脱敏 `config/ollama_config.py` 中的密钥、登录态和会话字段。
 - 两类包都携带约 548 KiB 的官方 UnRAR 与许可证，用于桌宠内安装七分卷 ONNX 语音包；模型分卷不进入程序发行包。
@@ -169,4 +166,3 @@ py -3 -m unittest tests.test_openai_dashscope_multimodal
 - 代码许可见 `LICENSE-CODE`。
 - 素材许可见 `LICENSE-ASSETS`。
 - 第三方服务、音乐平台和网页自动化能力仅用于学习、研究和个人测试；请自行遵守对应平台规则。
-

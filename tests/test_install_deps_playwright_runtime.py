@@ -1,8 +1,6 @@
 import importlib.util
-import struct
 import tempfile
 import unittest
-import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -15,12 +13,12 @@ assert SPEC.loader is not None
 SPEC.loader.exec_module(install_deps)
 
 
-class InstallDepsPlaywrightRuntimeTests(unittest.TestCase):
+class InstallDepsResourceTests(unittest.TestCase):
     def test_load_resource_links_indexes_urls_by_filename(self):
         links = install_deps.load_resource_links(PROJECT_ROOT / "resc.net.txt")
 
         self.assertIn("vosk-model-small-cn-0.22.zip", links)
-        self.assertIn("chrome-runtime.z01", links)
+        self.assertNotIn("chrome-runtime.zip", links)
         self.assertEqual(len(links["SEanima.zip"]), 2)
         self.assertTrue(all(url.endswith("/SEanima.zip") for url in links["SEanima.zip"]))
         self.assertEqual(
@@ -79,79 +77,6 @@ class InstallDepsPlaywrightRuntimeTests(unittest.TestCase):
 
             self.assertTrue(result)
             self.assertEqual(destination.read_bytes(), b"resource-data")
-
-    def test_browser_runtime_downloads_show_resource_sequence(self):
-        with patch.object(install_deps, "_download_resource_file", return_value=True) as download_mock:
-            result = install_deps._ensure_browser_runtime_archives()
-
-        self.assertTrue(result)
-        self.assertEqual(
-            [call.kwargs["display_sequence"] for call in download_mock.call_args_list],
-            [(1, 3), (2, 3), (3, 3)],
-        )
-
-    def test_merge_split_zip_creates_zipfile_compatible_archive(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            root = Path(temp_dir)
-            original = root / "original.zip"
-            with zipfile.ZipFile(original, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-                archive.writestr("chrome-win64/chrome.exe", b"browser-runtime")
-
-            payload = bytearray(original.read_bytes())
-            eocd_offset = payload.rfind(b"PK\x05\x06")
-            self.assertGreaterEqual(eocd_offset, 0)
-            total_entries = struct.unpack_from("<H", payload, eocd_offset + 10)[0]
-            central_offset = struct.unpack_from("<I", payload, eocd_offset + 16)[0]
-            final_volume = bytearray(payload[central_offset:])
-            final_eocd = eocd_offset - central_offset
-            struct.pack_into("<H", final_volume, final_eocd + 4, 2)
-            struct.pack_into("<H", final_volume, final_eocd + 6, 2)
-            struct.pack_into("<H", final_volume, final_eocd + 8, total_entries)
-            struct.pack_into("<I", final_volume, final_eocd + 16, 0)
-
-            parts = (root / "runtime.z01", root / "runtime.z02", root / "runtime.zip")
-            parts[0].write_bytes(payload[:central_offset])
-            parts[1].write_bytes(b"")
-            parts[2].write_bytes(final_volume)
-            merged = root / "merged.zip"
-
-            install_deps._merge_split_zip(parts, merged)
-
-            with zipfile.ZipFile(merged) as archive:
-                self.assertEqual(archive.read("chrome-win64/chrome.exe"), b"browser-runtime")
-
-    def test_browser_runtime_completeness_rejects_partial_chromium(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            executable = Path(temp_dir) / "chrome-win64" / "chrome.exe"
-            executable.parent.mkdir(parents=True)
-            executable.write_bytes(b"browser")
-
-            self.assertFalse(install_deps._is_playwright_browser_runtime_complete(executable))
-
-            executable.with_name("chrome.dll").write_bytes(b"dll")
-            executable.with_name("icudtl.dat").write_bytes(b"data")
-            self.assertTrue(install_deps._is_playwright_browser_runtime_complete(executable))
-
-    def test_find_browser_runtime_skips_partial_candidate(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            root = Path(temp_dir)
-            partial = root / "chromium-1209" / "chrome-win64" / "chrome.exe"
-            complete = root / "chromium-1208" / "chrome-win64" / "chrome.exe"
-            partial.parent.mkdir(parents=True)
-            complete.parent.mkdir(parents=True)
-            partial.write_bytes(b"partial")
-            complete.write_bytes(b"browser")
-            complete.with_name("chrome.dll").write_bytes(b"dll")
-            complete.with_name("icudtl.dat").write_bytes(b"data")
-
-            with patch.object(
-                install_deps,
-                "_candidate_playwright_browser_executables",
-                return_value=[partial, complete],
-            ):
-                result = install_deps._find_playwright_browser_runtime()
-
-        self.assertEqual(result, complete)
 
 if __name__ == "__main__":
     unittest.main()

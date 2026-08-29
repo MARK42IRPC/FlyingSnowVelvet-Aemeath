@@ -33,6 +33,10 @@ class _StreamResponse:
 
 
 class NativeToolCallingTests(unittest.TestCase):
+    def test_openai_client_has_no_retired_yuanbao_runtime_dependency(self):
+        self.assertFalse(hasattr(_ApiClientOpenAIMixin, "_refresh_yuanbao_runtime_config"))
+        self.assertFalse(hasattr(_ApiClientOpenAIMixin, "_upload_yuanbao_multimedia"))
+
     def test_native_schema_uses_unique_ascii_function_names(self):
         tools = get_native_tool_definitions()
         names = [item["function"]["name"] for item in tools]

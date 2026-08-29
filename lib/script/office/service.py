@@ -472,7 +472,7 @@ class OfficeService:
 
                 active_config = office_config.get_active_config()
                 if active_config.get("api_type") != "openai_compatible":
-                    raise RuntimeError("办公模式当前支持福利 API、手动 API 或元宝接口，请先在工作台切换")
+                    raise RuntimeError("办公模式当前支持福利 API 或手动 API，请先在工作台切换")
                 api_key = str(active_config.get("api_key") or "").strip()
                 base_url = str(active_config.get("base_url") or "").strip()
                 model = str(active_config.get("model") or "").strip()

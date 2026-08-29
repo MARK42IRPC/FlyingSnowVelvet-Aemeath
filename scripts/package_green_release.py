@@ -86,6 +86,7 @@ EXCLUDE_PATH_PREFIXES = {
     Path("resc") / "GIF" / "SEanima",
     Path("resc") / "user",
     Path("resc") / "gsvmove_update",
+    Path("services") / "bundles",
     Path("tests"),
     Path("scripts"),
     Path(".oprate"),
@@ -97,15 +98,10 @@ EXCLUDE_EXACT_PATHS = {
     Path("config") / "music" / "volume.json",
     Path("resc") / "python-3.11.6-amd64.exe",
     Path("resc") / "GIF" / "SEanima.zip",
-    Path("resc") / "chrome-runtime.zip",
-    Path("resc") / "chrome-runtime.z01",
-    Path("resc") / "chrome-runtime.z02",
     Path("services") / "storage_state.json",
     Path("ASYNC_COMPUTE_PLAN.txt"),
     Path("CONTRIBUTING.md"),
     Path("RELEASING.md"),
-    Path("services") / "yuanbao-free-api" / "Dockerfile",
-    Path("services") / "yuanbao-free-api" / "test.py",
     Path("pyncm") / "__main__.py",
 }
 
@@ -140,18 +136,12 @@ GREEN_BUNDLED_RESOURCE_PATHS = {
     Path("resc") / "models" / "vosk-model-small-cn-0.22.zip",
     Path("resc") / "models" / "vosk-model-small-en-us-0.15.zip",
     Path("resc") / "GIF" / "SEanima.zip",
-    Path("resc") / "chrome-runtime.z01",
-    Path("resc") / "chrome-runtime.z02",
-    Path("resc") / "chrome-runtime.zip",
 }
 
 GREEN_BUNDLED_RESOURCE_LABELS = {
     Path("resc") / "models" / "vosk-model-small-cn-0.22.zip": "Vosk Chinese 模型",
     Path("resc") / "models" / "vosk-model-small-en-us-0.15.zip": "Vosk English 模型",
     Path("resc") / "GIF" / "SEanima.zip": "启动动画资源",
-    Path("resc") / "chrome-runtime.z01": "浏览器运行时分卷",
-    Path("resc") / "chrome-runtime.z02": "浏览器运行时分卷",
-    Path("resc") / "chrome-runtime.zip": "浏览器运行时分卷",
 }
 
 

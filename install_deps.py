@@ -9,8 +9,8 @@
    - python_executable
    - pythonw_executable
 5. 创建隔离的 DirectML 混合推理环境.
-6. 按 resc.net.txt 下载缺失的 Vosk、动画和浏览器资源.
-7. 准备本地网页中转服务源码.
+6. 按 resc.net.txt 下载缺失的 Vosk 和动画资源.
+7. 准备办公 DSH 侧车源码和固定依赖.
 8. 启动主程序.
 """
 
@@ -99,23 +99,6 @@ DEPENDENCIES = [
 ]
 
 TOTAL_STEPS = 10
-
-PLAYWRIGHT_RUNTIME_ROOT = PROJECT_ROOT / "resc" / "playwright"
-PLAYWRIGHT_BROWSERS_ROOT = PLAYWRIGHT_RUNTIME_ROOT / "browsers"
-PLAYWRIGHT_CHROMIUM_REVISION = "1208"
-PLAYWRIGHT_RUNTIME_RESOURCE_NAMES = (
-    "chrome-runtime.z01",
-    "chrome-runtime.z02",
-    "chrome-runtime.zip",
-)
-PLAYWRIGHT_RUNTIME_ARCHIVE = PROJECT_ROOT / "resc" / PLAYWRIGHT_RUNTIME_RESOURCE_NAMES[-1]
-PLAYWRIGHT_RUNTIME_TARGET_DIR = PLAYWRIGHT_BROWSERS_ROOT / "ms-playwright" / f"chromium-{PLAYWRIGHT_CHROMIUM_REVISION}"
-PLAYWRIGHT_LOCAL_BROWSER_MARKERS = (
-    ("ms-playwright", "chromium-*", "chrome-win64", "chrome.exe"),
-    ("ms-playwright", "chromium-*", "chrome-linux", "chrome"),
-    ("ms-playwright", "chromium-*", "chrome-mac", "Chromium.app"),
-)
-
 
 def _enable_ansi_color() -> bool:
     if not sys.stdout.isatty():
@@ -770,11 +753,14 @@ def _tcp_ms(host, port=443, timeout=4.0):
 
 
 def benchmark_mirrors():
-    _print_stage(2, "测试依赖镜像延迟...")
+    _print_stage(2, "并发测试依赖镜像延迟...")
     scored = []
+    # Probe all mirrors at once so one unavailable host cannot add its timeout
+    # to every other mirror. Ordering is restored below for deterministic logs.
+    with ThreadPoolExecutor(max_workers=min(8, len(PYPI_MIRRORS))) as executor:
+        latencies = list(executor.map(lambda mirror: _tcp_ms(mirror["host"], timeout=2.0), PYPI_MIRRORS))
 
-    for mirror in PYPI_MIRRORS:
-        lat = _tcp_ms(mirror["host"])
+    for mirror, lat in zip(PYPI_MIRRORS, latencies):
         if lat == float("inf"):
             print(f"  {mirror['name']:<10} unreachable")
         else:
@@ -955,6 +941,15 @@ class _DependencyProgressDisplay:
         package_name = _fmt_color(package, "progress_current")
         first = f"  {current_label} {package_bar} {package_value}  {package_name}"
         second = f"  {overall_label} {overall_bar} {overall_value}"
+
+        # The GUI installer consumes explicit UTF-8 progress records. Keep the
+        # regular non-interactive console output compact, while allowing the
+        # installer to receive every monotonic update instead of only 5%.
+        if os.environ.get("FLYING_SNOW_INSTALLER") == "1":
+            print(first, flush=True)
+            print(second, flush=True)
+            self._drawn = True
+            return
 
         if _COLOR_ENABLED:
             if self._drawn:
@@ -1152,6 +1147,13 @@ class _RuntimeInstallProgress:
         label = _fmt_color(self._label, "info")
         line = f"  {label} {bar} {value}  {detail}  [{minutes:02d}:{seconds:02d}]"
         self._line_width = max(self._line_width, len(line))
+        # The GUI installer consumes a pipe rather than a terminal. Emit one
+        # complete UTF-8 record per update so DSH/npm progress is observable
+        # immediately instead of being hidden behind carriage-return redraws.
+        if os.environ.get("FLYING_SNOW_INSTALLER") == "1":
+            print(line, flush=True)
+            self._drawn = True
+            return
         if _COLOR_ENABLED:
             sys.stdout.write(f"\r\033[2K{line}")
         else:
@@ -1536,6 +1538,9 @@ def install_all(python_exe, mirrors):
         print("    " + " ".join(_python_module_cmd(python_exe, "pip", *manual_args)))
     if "UnRAR后端" in failed:
         print("  随程序提供的 UnRAR 后端缺失，请重新解压完整桌宠程序包。")
+    if os.environ.get("FLYING_SNOW_INSTALLER") == "1":
+        print("  安装器模式：依赖存在失败项，继续准备 DSH、语音和资源阶段", flush=True)
+        return True
     ans = input("\n仍要继续启动吗? (y/n): ").strip().lower()
     return ans == "y"
 
@@ -1838,11 +1843,13 @@ def choose_voice_gpu_runtimes() -> tuple[bool, bool]:
     if has_nvidia:
         print("    3. NVIDIA CUDA（N卡加速）")
         print(f"    4. {recommended_label} NVIDIA CUDA + DirectML 后备")
-    try:
-        choice_range = "1-4" if has_nvidia else "1-2"
-        selected = input(f"  请选择 [{choice_range}，默认 {recommended}]: ").strip()
-    except (EOFError, KeyboardInterrupt):
-        selected = ""
+    selected = os.environ.get("FSV_VOICE_RUNTIME_CHOICE", "").strip()
+    if selected not in {"1", "2", "3", "4"}:
+        try:
+            choice_range = "1-4" if has_nvidia else "1-2"
+            selected = input(f"  请选择 [{choice_range}，默认 {recommended}]: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            selected = ""
     if not selected:
         selected = str(recommended)
     if not has_nvidia and selected not in {"1", "2"}:
@@ -2031,6 +2038,11 @@ def _render_transfer_progress(prefix, current, total, start_time):
 
 
 def _write_progress_line(text: str, *, finish: bool = False) -> None:
+    if os.environ.get("FLYING_SNOW_INSTALLER") == "1":
+        # Pipe consumers cannot render carriage-return updates reliably.
+        # Preserve every transfer sample as a flushed record for the GUI.
+        print(text.strip(), flush=True)
+        return
     suffix = "\n" if finish else ""
     sys.stdout.write("\r" + text.ljust(120) + suffix)
     sys.stdout.flush()
@@ -2064,166 +2076,6 @@ def _service_bundle_ready(service_dir: Path, required_files) -> bool:
         if not (service_dir / name).exists():
             return False
     return True
-
-
-def _candidate_playwright_browser_executables() -> list[Path]:
-    candidates: list[Path] = []
-    for marker in PLAYWRIGHT_LOCAL_BROWSER_MARKERS:
-        pattern = PLAYWRIGHT_BROWSERS_ROOT.joinpath(*marker)
-        try:
-            matches = sorted((Path(item) for item in glob.glob(str(pattern))), reverse=True)
-        except Exception:
-            matches = []
-        candidates.extend(matches)
-    return candidates
-
-
-def _is_playwright_browser_runtime_complete(executable: Path) -> bool:
-    try:
-        if not executable.is_file() or executable.stat().st_size <= 0:
-            return False
-        if executable.name.lower() == "chrome.exe":
-            for sibling_name in ("chrome.dll", "icudtl.dat"):
-                sibling = executable.with_name(sibling_name)
-                if not sibling.is_file() or sibling.stat().st_size <= 0:
-                    return False
-        return True
-    except OSError:
-        return False
-
-
-def _find_playwright_browser_runtime() -> Optional[Path]:
-    for candidate in _candidate_playwright_browser_executables():
-        if _is_playwright_browser_runtime_complete(candidate):
-            return candidate
-    return None
-
-
-def _find_bundle_root(extract_root: Path, required_files) -> Optional[Path]:
-    candidates = [extract_root]
-    candidates.extend(path for path in extract_root.iterdir() if path.is_dir())
-    for candidate in candidates:
-        if all((candidate / name).exists() for name in required_files):
-            return candidate
-    for candidate in extract_root.rglob('*'):
-        if candidate.is_dir() and all((candidate / name).exists() for name in required_files):
-            return candidate
-    return None
-
-
-def _browser_runtime_resource_paths() -> tuple[Path, ...]:
-    return tuple(PROJECT_ROOT / "resc" / name for name in PLAYWRIGHT_RUNTIME_RESOURCE_NAMES)
-
-
-def _ensure_browser_runtime_archives() -> bool:
-    total = len(PLAYWRIGHT_RUNTIME_RESOURCE_NAMES)
-    for index, (resource_name, resource_path) in enumerate(
-        zip(PLAYWRIGHT_RUNTIME_RESOURCE_NAMES, _browser_runtime_resource_paths()),
-        start=1,
-    ):
-        if not _download_resource_file(
-            resource_name,
-            resource_path,
-            label="浏览器运行时",
-            display_sequence=(index, total),
-        ):
-            return False
-    return True
-
-
-def _merge_split_zip(archive_paths: tuple[Path, ...], merged_path: Path) -> None:
-    """将标准 ZIP 分卷合并为 Python zipfile 可读取的单卷 ZIP。"""
-    if len(archive_paths) < 2:
-        raise ValueError("ZIP 分卷至少需要两个文件")
-
-    volume_offsets: list[int] = []
-    total_size = 0
-    with open(merged_path, "wb") as output:
-        for path in archive_paths:
-            volume_offsets.append(total_size)
-            with open(path, "rb") as source:
-                shutil.copyfileobj(source, output, length=1024 * 1024)
-            total_size += path.stat().st_size
-
-    final_path = archive_paths[-1]
-    final_size = final_path.stat().st_size
-    with open(final_path, "rb") as source:
-        source.seek(max(0, final_size - 1024 * 1024))
-        final_tail = source.read()
-    eocd_relative = final_tail.rfind(b"PK\x05\x06")
-    if eocd_relative < 0:
-        raise zipfile.BadZipFile("分卷 ZIP 缺少 EOCD")
-    eocd_disk_offset = volume_offsets[-1] + final_size - len(final_tail) + eocd_relative
-
-    with open(merged_path, "r+b") as merged:
-        merged.seek(eocd_disk_offset)
-        eocd = bytearray(merged.read(22))
-        if len(eocd) < 22:
-            raise zipfile.BadZipFile("分卷 ZIP 的 EOCD 不完整")
-        _, disk_number, central_disk, entries_on_disk, total_entries, central_size, central_offset, comment_size = struct.unpack(
-            "<4sHHHHIIH", eocd
-        )
-        if disk_number >= len(volume_offsets) or central_disk >= len(volume_offsets):
-            raise zipfile.BadZipFile("不支持的 ZIP 分卷编号")
-        if total_entries == 0xFFFF or central_size == 0xFFFFFFFF or central_offset == 0xFFFFFFFF:
-            raise zipfile.BadZipFile("暂不支持 ZIP64 分卷")
-
-        central_start = volume_offsets[central_disk] + central_offset
-        merged.seek(central_start)
-        entries = []
-        for _ in range(total_entries):
-            entry_start = merged.tell()
-            header = bytearray(merged.read(46))
-            if len(header) < 46 or header[:4] != b"PK\x01\x02":
-                raise zipfile.BadZipFile("分卷 ZIP 中央目录损坏")
-            name_length, extra_length, comment_length = struct.unpack_from("<HHH", header, 28)
-            disk_start = struct.unpack_from("<H", header, 34)[0]
-            local_offset = struct.unpack_from("<I", header, 42)[0]
-            if disk_start >= len(volume_offsets):
-                raise zipfile.BadZipFile("分卷 ZIP 本地文件编号无效")
-            struct.pack_into("<H", header, 34, 0)
-            struct.pack_into("<I", header, 42, volume_offsets[disk_start] + local_offset)
-            entries.append((entry_start, bytes(header)))
-            merged.seek(name_length + extra_length + comment_length, 1)
-
-        merged.seek(eocd_disk_offset)
-        struct.pack_into("<H", eocd, 4, 0)
-        struct.pack_into("<H", eocd, 6, 0)
-        struct.pack_into("<H", eocd, 8, total_entries)
-        struct.pack_into("<I", eocd, 16, central_start)
-        merged.write(eocd)
-
-        for entry_start, header in entries:
-            merged.seek(entry_start)
-            merged.write(header)
-
-
-def _extract_browser_runtime_archive(extract_root: Path) -> None:
-    archive_paths = _browser_runtime_resource_paths()
-    split_parts = archive_paths[:-1]
-    if not all(path.exists() for path in split_parts):
-        _extract_zip_with_progress(PLAYWRIGHT_RUNTIME_ARCHIVE, extract_root)
-        return
-
-    combined_archive = extract_root.parent / "chrome-runtime-combined.zip"
-    _unlink_if_exists(combined_archive, ignore_errors=True)
-    try:
-        _merge_split_zip(archive_paths, combined_archive)
-        _extract_zip_with_progress(combined_archive, extract_root)
-    except (OSError, zipfile.BadZipFile, ValueError) as exc:
-        raise RuntimeError(f"浏览器分卷包解压失败: {exc}") from exc
-    finally:
-        _unlink_if_exists(combined_archive, ignore_errors=True)
-
-
-def _find_extracted_browser_root(extract_root: Path) -> Optional[Path]:
-    direct_root = extract_root / "chrome-win64"
-    if (direct_root / "chrome.exe").exists():
-        return direct_root
-    for executable in extract_root.rglob("chrome.exe"):
-        if executable.parent.name == "chrome-win64":
-            return executable.parent
-    return None
 
 
 def _stream_download_with_progress(url, dest_path, *, label, timeout=30, chunk_size=256 * 1024, use_env_proxy=True):
@@ -2726,6 +2578,9 @@ def main():
         if not ensure_seanima_assets():
             _print_warn("启动/退出动画资源未准备完成，将按程序兼容逻辑继续启动")
 
+        if os.environ.get("FLYING_SNOW_INSTALLER") == "1":
+            print("\n安装器模式：依赖与资源准备完成，交由安装器启动桌宠。", flush=True)
+            return
         if launch(python_exe):
             print("\nLauncher will close in 3 seconds...")
             time.sleep(3)

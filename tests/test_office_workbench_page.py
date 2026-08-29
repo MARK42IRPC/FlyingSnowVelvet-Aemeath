@@ -14,6 +14,7 @@ os.environ["AEMEATH_DESK_PET_HOME"] = _TEST_HOME
 atexit.register(shutil.rmtree, _TEST_HOME, ignore_errors=True)
 
 import PyQt5.QtCore
+from PyQt5.QtCore import QPoint
 
 _QT_ROOT = os.path.dirname(PyQt5.QtCore.__file__)
 os.environ.setdefault(
@@ -22,7 +23,7 @@ os.environ.setdefault(
 )
 os.environ.setdefault("QT_PLUGIN_PATH", os.path.join(_QT_ROOT, "Qt5", "plugins"))
 
-from PyQt5.QtWidgets import QApplication, QFrame, QLabel, QMessageBox, QWidget
+from PyQt5.QtWidgets import QApplication, QFrame, QLabel, QMessageBox, QMenu, QWidget
 
 from lib.script.office.ipc import OfficeFileIpc
 from lib.script.ui.office_page import OfficeWorkbenchPage
@@ -130,6 +131,46 @@ class OfficeWorkbenchPageTests(unittest.TestCase):
                 "companion",
             )
             self.assertEqual(page._mode_buttons["office"].property("officeMode"), "office")
+
+    def test_text_context_menu_is_chinese_and_limited_to_clipboard_actions(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            page, _ipc = self._page(Path(tmpdir) / "ipc")
+            page._prompt_edit.setPlainText("任务")
+            page._prompt_edit.selectAll()
+            self.app.clipboard().setText("粘贴内容")
+            captured = {}
+
+            def capture_menu(menu, *_args):
+                captured["menu"] = menu
+                return None
+
+            with patch.object(QMenu, "exec_", capture_menu):
+                page._show_text_context_menu(page._prompt_edit, QPoint(0, 0))
+
+            actions = captured["menu"].actions()
+            self.assertEqual([action.text() for action in actions], ["复制", "粘贴", "剪切"])
+            self.assertTrue(all(action.isEnabled() for action in actions))
+
+    def test_read_only_text_context_menu_disables_editing_actions(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            page, _ipc = self._page(Path(tmpdir) / "ipc")
+            page._reasoning_view.setPlainText("推理")
+            page._reasoning_view.selectAll()
+            self.app.clipboard().setText("粘贴内容")
+            captured = {}
+
+            def capture_menu(menu, *_args):
+                captured["menu"] = menu
+                return None
+
+            with patch.object(QMenu, "exec_", capture_menu):
+                page._show_text_context_menu(page._reasoning_view, QPoint(0, 0))
+
+            actions = captured["menu"].actions()
+            self.assertEqual([action.text() for action in actions], ["复制", "粘贴", "剪切"])
+            self.assertTrue(actions[0].isEnabled())
+            self.assertFalse(actions[1].isEnabled())
+            self.assertFalse(actions[2].isEnabled())
 
     def test_new_revision_switches_page_to_a_blank_draft(self):
         with tempfile.TemporaryDirectory() as tmpdir:

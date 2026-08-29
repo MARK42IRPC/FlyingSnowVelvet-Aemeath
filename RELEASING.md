@@ -1,6 +1,6 @@
 ﻿# Release Playbook
 
-本文记录飞行雪绒发布流程，适用于 `LTS1.0.7test0823` 及后续版本。发布目标是：版本号一致、文档一致、普通包轻量、绿色包离线友好，并且不把开发机运行状态打进包里。
+本文记录飞行雪绒发布流程，适用于 `LTS1.0.7beta1` 及后续版本。发布目标是：版本号一致、文档一致、普通包轻量、绿色包离线友好，并且不把开发机运行状态打进包里。
 
 ## 1. 发布前版本同步
 
@@ -17,7 +17,7 @@
 - GitHub：`MARK42IRPC/FlyingSnowVelvet-Aemeath` 的 `PACK` release。
 - Gitee：`Mark42IRPC/Aemeath-AIdeskpet` 的“最新包” release。
 
-GitHub/Gitee 没有真实打包 ZIP 附件时，更新器使用固定 tag 自动生成的源码 ZIP，供测试版更新；后续上传真实打包版后优先使用附件。更新器按 release 时间选择较新的镜像，时间相同时选择响应更快的镜像；只有 revision 相同才允许下载失败后跨镜像回落。发布时应更新 release 时间/revision，确保客户端能识别固定槽内容变化。`RESC` 只存放 Python、Chromium、Vosk、启动动画、公告和福利 API 配置等安装资源，不得复用为上述程序发布槽；七分卷 ONNX 模型使用独立的“语音包”发布槽。
+GitHub/Gitee 没有真实打包 ZIP 附件时，更新器使用固定 tag 自动生成的源码 ZIP，供测试版更新；后续上传真实打包版后优先使用附件。更新器按 release 时间选择较新的镜像，时间相同时选择响应更快的镜像；只有 revision 相同才允许下载失败后跨镜像回落。发布时应更新 release 时间/revision，确保客户端能识别固定槽内容变化。`RESC` 只存放 Python、Vosk、启动动画、公告和福利 API 配置等安装资源，不得复用为上述程序发布槽；七分卷 ONNX 模型使用独立的“语音包”发布槽。
 
 ## 2. 发布前检查
 
@@ -42,27 +42,25 @@ python scripts/package_green_release.py --dry-run
 - ONNX 语音 / STT 开关不阻塞启动或退出
 - 缺失或旧版语音包时安装提示位于控制面板顶部，磁盘选择、取消、下载与解压进度可用
 - 音乐搜索、播放、暂停、下一首不回归
-- 本地网页中转登录流程可以打开浏览器并关闭运行时浏览器
+- 音乐登录流程可以打开系统 Edge 并关闭浏览器
 
 ## 3. 发布包类型
 
 ### 普通包
 
 ```powershell
-python scripts/package_release.py --version LTS1.0.7test0823
+python scripts/package_release.py --version LTS1.0.7beta1
 ```
 
 输出示例：
 
-- `dist/FlyingSnowVelvet-LTS1.0.7test0823.zip`
-- `dist/FlyingSnowVelvet-LTS1.0.7test0823-manifest.json`
+- `dist/FlyingSnowVelvet-LTS1.0.7beta1.zip`
+- `dist/FlyingSnowVelvet-LTS1.0.7beta1-manifest.json`
 
 普通包用于联网环境，安装脚本会按 `resc.net.txt` 补齐重型资源。它应排除：
 
 - `resc/models/`
-- `resc/playwright/`
 - `resc/GIF/SEanima/`
-- `resc/chrome-runtime.zip`、`resc/chrome-runtime.z01`、`resc/chrome-runtime.z02`
 - `resc/python-3.11.6-amd64.exe`
 - `resc/node-24.13.0-win-x64/`
 - `services/dsh-office-runtime/node_modules/`
@@ -79,28 +77,24 @@ python scripts/package_release.py --version LTS1.0.7test0823
 ### 绿色包
 
 ```powershell
-python scripts/package_green_release.py --version LTS1.0.7test0823
+python scripts/package_green_release.py --version LTS1.0.7beta1
 ```
 
 输出示例：
 
-- `dist/FlyingSnowVelvet-LTS1.0.7test0823-green.zip`
-- `dist/FlyingSnowVelvet-LTS1.0.7test0823-green-manifest.json`
+- `dist/FlyingSnowVelvet-LTS1.0.7beta1-green.zip`
+- `dist/FlyingSnowVelvet-LTS1.0.7beta1-green-manifest.json`
 
 绿色包需要额外携带安装脚本会联网下载的离线资源归档，优先覆盖以下路径：
 
 - `resc/models/vosk-model-small-cn-0.22.zip`
 - `resc/models/vosk-model-small-en-us-0.15.zip`
 - `resc/GIF/SEanima.zip`
-- `resc/chrome-runtime.z01`
-- `resc/chrome-runtime.z02`
-- `resc/chrome-runtime.zip`
 
 `scripts/package_green_release.py` 在正式打包时会自动检查这些归档；如果本地缺失，会按 `resc.net.txt` 尝试下载，并在下载阶段与写包阶段显示进度。`--dry-run` 只做检查和清单预览，不会触发下载。
 
 绿色包仍必须排除：
 
-- 已解包的 `resc/playwright/` 运行目录
 - 已解包的 `resc/node-24.13.0-win-x64/` 与 `services/dsh-office-runtime/node_modules/`
 - 已解包的 `resc/models/vosk-model-small-*/`
 - 已解包的 `resc/GIF/SEanima/`
@@ -120,16 +114,16 @@ python scripts/package_green_release.py --version LTS1.0.7test0823
 打包后检查 manifest：
 
 ```powershell
-Get-Content dist\FlyingSnowVelvet-LTS1.0.7test0823-manifest.json | Select-String "playwright|models|SEanima|chrome-runtime|python-3.11|storage_state|__pycache__|\.git|\.github|tests/|scripts/|\.oprate|用户反馈/"
-Get-Content dist\FlyingSnowVelvet-LTS1.0.7test0823-green-manifest.json | Select-String "vosk-model-small-cn-0.22.zip|vosk-model-small-en-us-0.15.zip|SEanima.zip|chrome-runtime.z01|chrome-runtime.z02|chrome-runtime.zip"
-Get-Content dist\FlyingSnowVelvet-LTS1.0.7test0823-green-manifest.json | Select-String "resc/playwright/|resc/models/vosk-model-small-cn-0.22/|python-3.11|storage_state|__pycache__|\.git|\.github|tests/|scripts/|\.oprate|用户反馈/"
-Get-Content dist\FlyingSnowVelvet-LTS1.0.7test0823-manifest.json, dist\FlyingSnowVelvet-LTS1.0.7test0823-green-manifest.json | Select-String "lib/script/gsvmove/bin/UnRAR.exe|lib/script/gsvmove/bin/LICENSE-UnRAR.txt"
+Get-Content dist\FlyingSnowVelvet-LTS1.0.7beta1-manifest.json | Select-String "models|SEanima|python-3.11|storage_state|__pycache__|\.git|\.github|tests/|scripts/|\.oprate|用户反馈/"
+Get-Content dist\FlyingSnowVelvet-LTS1.0.7beta1-green-manifest.json | Select-String "vosk-model-small-cn-0.22.zip|vosk-model-small-en-us-0.15.zip|SEanima.zip"
+Get-Content dist\FlyingSnowVelvet-LTS1.0.7beta1-green-manifest.json | Select-String "resc/models/vosk-model-small-cn-0.22/|python-3.11|storage_state|__pycache__|\.git|\.github|tests/|scripts/|\.oprate|用户反馈/"
+Get-Content dist\FlyingSnowVelvet-LTS1.0.7beta1-manifest.json, dist\FlyingSnowVelvet-LTS1.0.7beta1-green-manifest.json | Select-String "lib/script/gsvmove/bin/UnRAR.exe|lib/script/gsvmove/bin/LICENSE-UnRAR.txt"
 ```
 
 预期：
 
-- 普通包 manifest 不应出现 `resc/models/`、`resc/GIF/SEanima/`、浏览器分卷、Python 安装器或 `resc/playwright/`。
-- 绿色包 manifest 应出现 Vosk 模型 zip、`SEanima.zip` 与浏览器分卷资源，但不应出现它们已解包后的运行目录。
+- 普通包 manifest 不应出现 `resc/models/`、`resc/GIF/SEanima/` 或 Python 安装器。
+- 绿色包 manifest 应出现 Vosk 模型 zip、`SEanima.zip`，但不应出现它们已解包后的运行目录。
 - 两类包都不应出现 Git 元文件、测试目录、打包脚本、运维目录、运行时登录态或用户缓存。
 - 两类包都应同时出现固定的 `UnRAR.exe` 与其许可证，且不应出现 `ONNX_aimisiV2语音包.part*.rar`。
 
@@ -144,9 +138,9 @@ Get-Content dist\FlyingSnowVelvet-LTS1.0.7test0823-manifest.json, dist\FlyingSno
 示例：
 
 ```powershell
-git tag -a LTS1.0.7test0823 -m "LTS 1.0.7 test0823"
+git tag -a LTS1.0.7beta1 -m "LTS 1.0.7 beta1"
 git push origin main
-git push origin LTS1.0.7test0823
+git push origin LTS1.0.7beta1
 ```
 
 Release 建议上传：
@@ -171,4 +165,3 @@ Release Notes 以 `CHANGELOG.md` 当前版本段为主，必要时补充迁移�
 - 如修改了配置目录、缓存目录、发布包边界，在用户公告中单独说明
 
 发布不是复制开发目录，而是冻结一个可复现、可解释、无本机隐私状态的运行快照。
-

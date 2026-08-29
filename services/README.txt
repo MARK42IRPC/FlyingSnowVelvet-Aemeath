@@ -1,7 +1,5 @@
-本目录用于存放桌宠自动准备的本地辅助服务。
+本目录用于存放桌宠随发行包提供的本地辅助服务源码。
 
-- `bundles/yuanbao-free-api-main.zip`：内置集成的 `chenwr727/yuanbao-free-api` 源码压缩包。
-- `yuanbao-free-api/`：由 `install_deps.py` 或桌宠启动流程自动解压出来的元宝 Web 本地中转服务目录。
-- 当 AI 配置启用 `YuanBao-Free-API` 且接口地址指向本地 `127.0.0.1:8000` 时，桌宠启动时会自动尝试拉起该服务。
-- 首次启动成功后，会在 `logs/yuanbao_free_api_qrcode.png` 生成登录二维码图片。
-- 若启动失败，请查看 `logs/yuanbao_free_api_launcher.log`。
+- `dsh-office-runtime/`：办公模式使用的 DSH 侧车源码，包含 package manifest、lockfile、profile、bridge 和入口脚本。
+- DSH 的 Node 运行目录与 `node_modules` 由根目录 `install_deps.py` 按固定版本准备，不直接提交到仓库或发行包。
+- 其他历史服务目录已退役；请勿在此恢复自动下载、解压或启动旧的第三方本地中转服务。

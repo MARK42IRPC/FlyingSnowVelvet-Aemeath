@@ -393,6 +393,23 @@ def office_stylesheet(mode: str | None = None) -> str:
             font-family: 'Consolas', '{font_family}';
         }}
 
+        QWidget#OfficeWorkbenchPage QMenu {{
+            background: {c.surface_raised};
+            color: {c.text};
+            border: {border}px solid {c.border};
+            border-radius: {radius}px;
+            padding: {scale_px(3, min_abs=2)}px 0px;
+        }}
+        QWidget#OfficeWorkbenchPage QMenu::item {{
+            padding: {scale_px(5, min_abs=4)}px {scale_px(18, min_abs=12)}px;
+        }}
+        QWidget#OfficeWorkbenchPage QMenu::item:selected {{
+            background: {c.surface_hover};
+        }}
+        QWidget#OfficeWorkbenchPage QMenu::item:disabled {{
+            color: {c.text_dim};
+        }}
+
         QScrollBar:vertical {{
             background: {c.canvas};
             width: {scale_px(10, min_abs=8)}px;
