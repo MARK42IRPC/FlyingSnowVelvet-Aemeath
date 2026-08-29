@@ -181,6 +181,7 @@ AUTO_COMPANION = {
 
 # 办公模式配置
 OFFICE_MODE = {
+    'backend': 'dsh',               # 办公运行后端：dsh / open_interpreter（待接入）
     'use_independent_api': False,    # 是否使用独立的 API 配置
     'api_key': '',                   # 办公模式独立接口密钥
     'api_base_url': '',              # 办公模式独立接口地址
@@ -227,6 +228,7 @@ _AI_SETTING_DEFAULTS = {
     'auto_companion_enabled': AUTO_COMPANION['enabled'],
     'auto_companion_interval_minutes': AUTO_COMPANION['interval_minutes'],
     'office_use_independent_api': OFFICE_MODE['use_independent_api'],
+    'office_backend': OFFICE_MODE['backend'],
     'office_api_key': OFFICE_MODE['api_key'],
     'office_api_base_url': OFFICE_MODE['api_base_url'],
     'office_api_model': OFFICE_MODE['api_model'],
@@ -301,6 +303,7 @@ def _legacy_ai_setting_values() -> dict:
         'api_enable_thinking': OLLAMA['api_enable_thinking'],
         'auto_companion_enabled': AUTO_COMPANION['enabled'],
         'auto_companion_interval_minutes': AUTO_COMPANION['interval_minutes'],
+        'office_backend': OFFICE_MODE['backend'],
     }
     legacy = _literal_python_config(get_shared_config_path('ollama_config.py'))
     scalar_map = {
@@ -384,6 +387,7 @@ def _apply_ai_setting_values(values: dict) -> None:
     AUTO_COMPANION['interval_minutes'] = interval_minutes
     AUTO_COMPANION['interval_ms'] = (interval_minutes * 60000, interval_minutes * 60000)
     OFFICE_MODE['use_independent_api'] = values.get('office_use_independent_api', False)
+    OFFICE_MODE['backend'] = values.get('office_backend', 'dsh')
     OFFICE_MODE['api_key'] = values.get('office_api_key', '')
     OFFICE_MODE['api_base_url'] = values.get('office_api_base_url', '')
     OFFICE_MODE['api_model'] = values.get('office_api_model', 'gpt-5.4')

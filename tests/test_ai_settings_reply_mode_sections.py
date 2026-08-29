@@ -59,6 +59,18 @@ class AISettingsReplyModeSectionsTests(unittest.TestCase):
             ("规则回复", "3"),
         ])
 
+    def test_office_backend_selector_exposes_only_dsh_as_available(self):
+        field = self.panel._office_backend
+        self.assertEqual(
+            [(field.itemText(i), field.itemData(i)) for i in range(field.count())],
+            [
+                ("DSH（推荐）", "dsh"),
+                ("Open Interpreter（待接入）", "open_interpreter"),
+            ],
+        )
+        self.assertTrue(field.model().item(field.findData("dsh")).isEnabled())
+        self.assertFalse(field.model().item(field.findData("open_interpreter")).isEnabled())
+
     def test_auto_companion_interval_slider_uses_minute_limits(self):
         field = self.panel._auto_companion_interval_minutes
 

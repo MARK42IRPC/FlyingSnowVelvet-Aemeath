@@ -2449,6 +2449,20 @@ def ensure_dsh_office_runtime() -> bool:
         return False
 
 
+def _should_install_dsh() -> bool:
+    """Ask before downloading the optional DSH office sidecar."""
+    override = str(os.environ.get("FLYING_SNOW_INSTALL_DSH", "") or "").strip().lower()
+    if override in {"1", "y", "yes", "true", "on"}:
+        return True
+    if override in {"0", "n", "no", "false", "off"}:
+        return False
+    try:
+        answer = input("\n是否安装办公模式 DSH 运行时？(Y/n): ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return False
+    return answer not in {"n", "no"}
+
+
 def _seanima_ready() -> bool:
     return SEANIMA_TARGET_DIR.is_dir() and any(SEANIMA_TARGET_DIR.rglob("*.webp"))
 
@@ -2609,8 +2623,11 @@ def main():
         if not install_all(python_exe, mirrors):
             _print_warn("依赖未全部安装，可能影响部分功能")
 
-        if not ensure_dsh_office_runtime():
-            _print_warn("DSH 办公运行时未准备完成，办公模式将提示重新运行安装依赖")
+        if _should_install_dsh():
+            if not ensure_dsh_office_runtime():
+                _print_warn("DSH 办公运行时未准备完成，办公模式将提示重新运行安装依赖")
+        else:
+            print("\n已跳过 DSH 办公运行时安装；办公模式需改用已接入的其它后端。", flush=True)
 
         _print_stage(5, "选择并准备可选 ONNX 语音 GPU 运行时...")
         use_cuda, use_directml = choose_voice_gpu_runtimes()

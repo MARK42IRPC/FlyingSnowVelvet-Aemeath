@@ -96,6 +96,13 @@ def normalize_openai_base_url(value: object) -> str:
 
 
 def runtime_readiness_error() -> str:
+    try:
+        from config.ollama_config import OFFICE_MODE
+        backend = str(OFFICE_MODE.get("backend", "dsh") or "dsh").strip().lower()
+    except Exception:
+        backend = "dsh"
+    if backend != "dsh":
+        return "当前办公后端尚未接入 Open Interpreter，请在 AI 设置中选择 DSH"
     source_error = dsh_config.runtime_source_error(project_root())
     if source_error:
         return f"{source_error}，请重新解压程序包"

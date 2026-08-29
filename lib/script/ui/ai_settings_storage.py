@@ -60,6 +60,7 @@ def load_ai_values(default_values: dict) -> dict:
         "api_enable_thinking": bool(oc.OLLAMA.get("api_enable_thinking", False)),
         "auto_companion_enabled": bool(oc.AUTO_COMPANION.get("enabled", True)),
         "auto_companion_interval_minutes": int(oc.AUTO_COMPANION.get("interval_minutes", 2)),
+        "office_backend": str(oc.OFFICE_MODE.get("backend", "dsh") or "dsh"),
         "office_use_independent_api": bool(oc.OFFICE_MODE.get("use_independent_api", False)),
         "office_api_key": str(disk_secrets.get("office_api_key", oc.OFFICE_MODE.get("api_key", "")) or ""),
         "office_api_base_url": str(oc.OFFICE_MODE.get("api_base_url", "") or ""),
@@ -120,6 +121,7 @@ def apply_ai_runtime(values: dict, default_values: dict) -> None:
     oc.OLLAMA_OPTIONS["num_gpu"] = values["num_gpu"]
     oc.OLLAMA_OPTIONS["num_thread"] = values["num_thread"]
     oc.OFFICE_MODE["use_independent_api"] = values["office_use_independent_api"]
+    oc.OFFICE_MODE["backend"] = str(values.get("office_backend", "dsh") or "dsh")
     oc.OFFICE_MODE["api_key"] = values["office_api_key"]
     oc.OFFICE_MODE["api_base_url"] = values["office_api_base_url"]
     oc.OFFICE_MODE["api_model"] = values["office_api_model"]

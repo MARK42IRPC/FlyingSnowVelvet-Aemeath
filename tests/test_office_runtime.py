@@ -90,6 +90,13 @@ class DshOfficeRuntimeLifecycleTests(unittest.TestCase):
 
         self.assertIn("办公系统提示词资源无法读取", error)
 
+    def test_readiness_rejects_unimplemented_office_backend(self):
+        with patch.dict("config.ollama_config.OFFICE_MODE", {"backend": "open_interpreter"}, clear=False):
+            error = office_runtime.runtime_readiness_error()
+
+        self.assertIn("Open Interpreter", error)
+        self.assertIn("选择 DSH", error)
+
 
 if __name__ == "__main__":
     unittest.main()

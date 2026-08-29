@@ -2064,6 +2064,22 @@ class AISettingsPanel(QWidget):
         form = create_settings_form()
         self._office_mode_section.body_layout.addLayout(form)
 
+        self._office_backend = _WatermarkComboBox()
+        self._office_backend.setView(QListView(self._office_backend))
+        self._office_backend.addItem("DSH（推荐）", "dsh")
+        self._office_backend.addItem("Open Interpreter（待接入）", "open_interpreter")
+        open_interpreter_index = self._office_backend.findData("open_interpreter")
+        if open_interpreter_index >= 0:
+            item = self._office_backend.model().item(open_interpreter_index)
+            if item is not None:
+                item.setEnabled(False)
+        form.addRow("办公后端", self._office_backend)
+        self._set_form_row_description(
+            form,
+            self._office_backend,
+            "当前使用 DSH 办公侧车；Open Interpreter 的 skill、审批和会话桥接仍在适配中。",
+        )
+
         self._office_use_independent_api = QCheckBox("办公模式独立api")
         self._office_use_independent_api.setChecked(False)
         form.addRow("", self._office_use_independent_api)
@@ -4730,6 +4746,7 @@ class AISettingsPanel(QWidget):
             "auto_companion_enabled": bool(self._auto_companion_enabled.isChecked()),
             "auto_companion_interval_minutes": int(self._auto_companion_interval_minutes.value()),
             "office_use_independent_api": bool(self._office_use_independent_api.isChecked()),
+            "office_backend": str(self._office_backend.currentData() or "dsh"),
             "office_api_key": str(self._office_api_key.raw_text()).strip(),
             "office_api_base_url": str(self._office_api_base_url.text()).strip(),
             "office_api_model": str(self._office_api_model.currentText()).strip(),
@@ -4781,6 +4798,8 @@ class AISettingsPanel(QWidget):
         self._auto_companion_interval_minutes.setEnabled(self._auto_companion_enabled.isChecked())
 
         self._office_use_independent_api.setChecked(bool(values.get("office_use_independent_api", False)))
+        backend_index = self._office_backend.findData(str(values.get("office_backend", "dsh") or "dsh"))
+        self._office_backend.setCurrentIndex(backend_index if backend_index >= 0 else 0)
         self._office_api_key.set_raw_text(str(values.get("office_api_key", "")))
         self._office_api_base_url.setText(str(values.get("office_api_base_url", "")))
         self._sync_office_api_provider_selection()

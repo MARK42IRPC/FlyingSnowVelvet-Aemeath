@@ -15,6 +15,24 @@ from lib.script.gsvmove import rar_backend
 
 
 class InstallDependenciesProgressTests(unittest.TestCase):
+    def test_dsh_install_prompt_supports_noninteractive_override(self):
+        with patch.dict(install_deps.os.environ, {"FLYING_SNOW_INSTALL_DSH": "0"}, clear=False):
+            self.assertFalse(install_deps._should_install_dsh())
+        with patch.dict(install_deps.os.environ, {"FLYING_SNOW_INSTALL_DSH": "yes"}, clear=False):
+            self.assertTrue(install_deps._should_install_dsh())
+
+    def test_dsh_install_prompt_defaults_to_yes(self):
+        with patch.dict(install_deps.os.environ, {}, clear=True), patch(
+            "builtins.input", return_value=""
+        ):
+            self.assertTrue(install_deps._should_install_dsh())
+
+    def test_dsh_install_prompt_accepts_explicit_no(self):
+        with patch.dict(install_deps.os.environ, {}, clear=True), patch(
+            "builtins.input", return_value="n"
+        ):
+            self.assertFalse(install_deps._should_install_dsh())
+
     def test_node_urls_are_ordered_by_concurrent_ping_latency(self):
         install_deps._NODE_SOURCE_ORDER = None
         urls = (
