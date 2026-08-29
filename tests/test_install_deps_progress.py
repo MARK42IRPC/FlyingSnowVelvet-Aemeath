@@ -15,6 +15,24 @@ from lib.script.gsvmove import rar_backend
 
 
 class InstallDependenciesProgressTests(unittest.TestCase):
+    def test_node_urls_are_ordered_by_concurrent_ping_latency(self):
+        install_deps._NODE_SOURCE_ORDER = None
+        urls = (
+            "https://slow.example/node.zip",
+            "https://fast.example/node.zip",
+            "https://unreachable.example/node.zip",
+        )
+
+        def ping(host, **_kwargs):
+            return {"slow.example": 80.0, "fast.example": 12.0, "unreachable.example": None}[host]
+
+        try:
+            with patch.object(install_deps, "_ping_host_average_ms", side_effect=ping):
+                ordered = install_deps._order_node_urls(urls)
+            self.assertEqual(ordered, (urls[1], urls[0], urls[2]))
+        finally:
+            install_deps._NODE_SOURCE_ORDER = None
+
     def test_uv_managed_base_python_is_excluded(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir) / "uv" / "python" / "cpython-3.11"

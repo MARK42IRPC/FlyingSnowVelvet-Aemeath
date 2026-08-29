@@ -4,8 +4,11 @@
 https://gitee.com/Mark42IRPC/Aemeath-AIdeskpet/releases/download/RESC/
 https://github.com/MARK42IRPC/FlyingSnowVelvet-Aemeath/releases/download/RESC/
 
-https://nodejs.org/dist/v24.13.0/node-v24.13.0-win-x64.zip
 https://npmmirror.com/mirrors/node/v24.13.0/node-v24.13.0-win-x64.zip
+https://mirrors.cloud.tencent.com/nodejs-release/v24.13.0/node-v24.13.0-win-x64.zip
+https://mirrors.aliyun.com/nodejs-release/v24.13.0/node-v24.13.0-win-x64.zip
+https://repo.huaweicloud.com/nodejs/v24.13.0/node-v24.13.0-win-x64.zip
+https://nodejs.org/dist/v24.13.0/node-v24.13.0-win-x64.zip
 
 vosk-model-small-cn-0.22.zip
 vosk-model-small-en-us-0.15.zip

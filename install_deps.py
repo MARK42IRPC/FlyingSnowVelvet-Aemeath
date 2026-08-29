@@ -49,6 +49,7 @@ RESOURCE_SOURCE_HOSTS = {
 RESOURCE_PING_ATTEMPTS = 3
 RESOURCE_PING_TIMEOUT_SECONDS = 5.0
 _RESOURCE_SOURCE_ORDER: tuple[str, ...] | None = None
+_NODE_SOURCE_ORDER: tuple[str, ...] | None = None
 
 # 最低支持 Python 版本
 MIN_VERSION = (3, 7, 0)
@@ -2006,6 +2007,54 @@ def _resource_urls(resource_name: str) -> tuple[str, ...]:
     urls = load_resource_links().get(resource_name, ())
     return _order_resource_urls(urls)
 
+
+def _order_node_urls(urls: tuple[str, ...]) -> tuple[str, ...]:
+    """Ping Node mirrors concurrently and prefer the lowest-latency host."""
+    global _NODE_SOURCE_ORDER
+    if not urls:
+        return urls
+    hosts = tuple(dict.fromkeys(
+        (urllib.parse.urlsplit(url).hostname or "").lower()
+        for url in urls
+        if urllib.parse.urlsplit(url).hostname
+    ))
+    if len(hosts) <= 1:
+        return urls
+    if _NODE_SOURCE_ORDER is None:
+        print("\n  正在并发测速 Node 下载镜像（各 3 次，单次超时 5 秒）...")
+        with ThreadPoolExecutor(max_workers=len(hosts), thread_name_prefix="node-ping") as executor:
+            futures = {host: executor.submit(_ping_host_average_ms, host) for host in hosts}
+            scores = {host: futures[host].result() for host in hosts}
+        for host in hosts:
+            latency = scores[host]
+            label = host
+            if latency is None:
+                print(f"    {label:<36} unreachable")
+            else:
+                print(f"    {label:<36} {latency:>7.1f} ms average")
+        _NODE_SOURCE_ORDER = tuple(sorted(
+            hosts,
+            key=lambda host: (
+                scores[host] is None,
+                float("inf") if scores[host] is None else scores[host],
+                hosts.index(host),
+            ),
+        ))
+        selected = _NODE_SOURCE_ORDER[0]
+        if scores[selected] is not None:
+            print(f"  Node 下载优先源: {selected}")
+        else:
+            _NODE_SOURCE_ORDER = hosts
+            _print_warn("  Node 镜像均不可达，将按清单顺序尝试下载")
+    host_rank = {host: index for index, host in enumerate(_NODE_SOURCE_ORDER)}
+    return tuple(sorted(
+        urls,
+        key=lambda url: host_rank.get(
+            (urllib.parse.urlsplit(url).hostname or "").lower(),
+            len(host_rank),
+        ),
+    ))
+
 def _format_bytes(num_bytes):
     size = float(max(0, int(num_bytes or 0)))
     units = ("B", "KB", "MB", "GB")
@@ -2246,7 +2295,8 @@ def _dsh_node_urls() -> tuple[str, ...]:
         manifest_urls = tuple(_resource_urls(dsh_config.NODE_ARCHIVE_NAME))
     except Exception:
         manifest_urls = ()
-    return tuple(dict.fromkeys((*manifest_urls, *dsh_config.NODE_DOWNLOAD_URLS)))
+    urls = tuple(dict.fromkeys((*manifest_urls, *dsh_config.NODE_DOWNLOAD_URLS)))
+    return _order_node_urls(urls)
 
 
 def _run_dsh_npm_ci() -> tuple[bool, str]:

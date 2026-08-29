@@ -21,8 +21,11 @@ NODE_DIRECTORY_NAME = f"node-{NODE_VERSION}-win-x64"
 NODE_ARCHIVE_SHA256 = "ca2742695be8de44027d71b3f53a4bdb36009b95575fe1ae6f7f0b5ce091cb88"
 
 NODE_DOWNLOAD_URLS = (
-    f"https://nodejs.org/dist/v{NODE_VERSION}/{NODE_ARCHIVE_NAME}",
     f"https://npmmirror.com/mirrors/node/v{NODE_VERSION}/{NODE_ARCHIVE_NAME}",
+    f"https://mirrors.cloud.tencent.com/nodejs-release/v{NODE_VERSION}/{NODE_ARCHIVE_NAME}",
+    f"https://mirrors.aliyun.com/nodejs-release/v{NODE_VERSION}/{NODE_ARCHIVE_NAME}",
+    f"https://repo.huaweicloud.com/nodejs/v{NODE_VERSION}/{NODE_ARCHIVE_NAME}",
+    f"https://nodejs.org/dist/v{NODE_VERSION}/{NODE_ARCHIVE_NAME}",
 )
 
 RUNTIME_SOURCE_FILES = (

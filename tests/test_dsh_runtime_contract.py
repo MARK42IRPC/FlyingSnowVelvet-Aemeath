@@ -48,6 +48,11 @@ def _write_source_bundle(root: Path) -> None:
 
 
 class DshRuntimeContractTests(unittest.TestCase):
+    def test_node_download_urls_prefer_domestic_mirrors(self):
+        urls = dsh_config.NODE_DOWNLOAD_URLS
+        self.assertIn("npmmirror.com", urls[0])
+        self.assertIn("nodejs.org", urls[-1])
+
     def test_repository_source_bundle_matches_fixed_contract(self):
         self.assertEqual(dsh_config.runtime_source_error(office_runtime.project_root()), "")
 
