@@ -64,7 +64,7 @@ class AISettingsReplyModeSectionsTests(unittest.TestCase):
         self.assertEqual(
             [(field.itemText(i), field.itemData(i)) for i in range(field.count())],
             [
-                ("DSH（推荐）", "dsh"),
+                ("DeepSeek Harness（推荐）", "dsh"),
                 ("Open Interpreter（待接入）", "open_interpreter"),
             ],
         )

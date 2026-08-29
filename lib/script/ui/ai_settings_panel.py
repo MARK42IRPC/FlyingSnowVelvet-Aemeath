@@ -2066,7 +2066,7 @@ class AISettingsPanel(QWidget):
 
         self._office_backend = _WatermarkComboBox()
         self._office_backend.setView(QListView(self._office_backend))
-        self._office_backend.addItem("DSH（推荐）", "dsh")
+        self._office_backend.addItem("DeepSeek Harness（推荐）", "dsh")
         self._office_backend.addItem("Open Interpreter（待接入）", "open_interpreter")
         open_interpreter_index = self._office_backend.findData("open_interpreter")
         if open_interpreter_index >= 0:
@@ -2077,7 +2077,7 @@ class AISettingsPanel(QWidget):
         self._set_form_row_description(
             form,
             self._office_backend,
-            "当前使用 DSH 办公侧车；Open Interpreter 的 skill、审批和会话桥接仍在适配中。",
+            "当前使用 DeepSeek Harness 办公侧车；Open Interpreter 的 skill、审批和会话桥接仍在适配中。",
         )
 
         self._office_use_independent_api = QCheckBox("办公模式独立api")
