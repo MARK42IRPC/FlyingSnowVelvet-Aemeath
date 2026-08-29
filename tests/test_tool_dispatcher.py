@@ -66,6 +66,17 @@ class ToolDispatcherTests(unittest.TestCase):
         self.assertEqual(_extract_tool_invocation('＃＃＃ 计时\n1 02 03 ＃＃＃'), ('计时', '1 02 03'))
         self.assertEqual(_extract_tool_invocation('###下一曲###'), ('下一曲', ''))
 
+    def test_parser_accepts_common_tool_name_aliases(self):
+        cases = (
+            ('###播放音乐 电子朋克低沉###', ('音乐', '电子朋克低沉')),
+            ('###播放 黎那汐塔###', ('音乐', '黎那汐塔')),
+            ('###play_music L!!!ght###', ('音乐', 'L!!!ght')),
+            ('###下一首###', ('下一曲', '')),
+        )
+        for marker, expected in cases:
+            with self.subTest(marker=marker):
+                self.assertEqual(_extract_tool_invocation(marker), expected)
+
     def test_native_call_takes_priority_over_legacy_marker(self):
         self.center.published.clear()
         self.dispatcher._on_stream_final(Event(EventType.STREAM_FINAL, {

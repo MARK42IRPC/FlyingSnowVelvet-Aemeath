@@ -68,7 +68,7 @@ class OfficeWorkbenchPageTests(unittest.TestCase):
             self.assertEqual(commands[0]["data"]["workspace"], str(workspace))
             self.assertEqual(commands[0]["data"]["reasoning_effort"], "max")
 
-    def test_active_task_disables_new_task_and_submits_followup(self):
+    def test_active_task_disables_new_task_and_submit(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             task = {
@@ -102,11 +102,41 @@ class OfficeWorkbenchPageTests(unittest.TestCase):
             self.assertEqual(page._reasoning_view.toPlainText(), "分析中")
 
             page._prompt_edit.setPlainText("继续")
+            self.assertFalse(page._submit_button.isEnabled())
             page._submit_prompt()
             commands = ipc.consume()
 
-            self.assertEqual(commands[0]["command"], "followup")
-            self.assertEqual(commands[0]["data"]["task_id"], "task-1")
+            self.assertEqual(commands, [])
+
+    def test_streaming_message_updates_existing_bubble(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            task = {
+                "id": "task-1",
+                "session_id": "session-1",
+                "title": "流式任务",
+                "workspace": str(root / "workspace"),
+                "status": "running",
+                "reasoning_effort": "high",
+                "updated_at": "2026-08-17T12:00:00+00:00",
+                "messages": [{"role": "assistant", "text": "第一段", "time": ""}],
+                "events": [],
+                "todos": [],
+                "stream_text": "正在生成",
+                "reasoning_text": "",
+                "error": "",
+            }
+            page, ipc = self._page(root / "ipc")
+            ipc.publish({"mode": "office", "active_task_id": "task-1"}, [task])
+            page.refresh_workbench_page()
+            row = page._conversation_view._rows[-1]
+
+            task["stream_text"] = "正在生成更多内容"
+            ipc.publish({"mode": "office", "active_task_id": "task-1"}, [task])
+            page.refresh_workbench_page()
+
+            self.assertIs(page._conversation_view._rows[-1], row)
+            self.assertIn("正在生成更多内容", page._conversation_view.toPlainText())
 
     def test_page_uses_shared_pet_office_visual_language(self):
         with tempfile.TemporaryDirectory() as tmpdir:

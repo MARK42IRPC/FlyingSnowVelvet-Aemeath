@@ -145,6 +145,9 @@ class OfficeConversationView(QScrollArea):
         self._rows: list[QWidget] = []
         self._bubbles: list[QFrame] = []
         self._bubble_naturals: list[int] = []
+        self._message_text_labels: list[QLabel] = []
+        self._message_headers: list[QLabel | None] = []
+        self._message_bubble_refs: list[QFrame | None] = []
         self._bubble_max_width = scale_px(420, min_abs=380)
 
         self._container = QWidget(self)
@@ -179,9 +182,40 @@ class OfficeConversationView(QScrollArea):
         key = tuple(normalized)
         if key == self._message_key:
             return
-        self._message_key = key
-        self._messages = list(normalized)
-        self._sync_rows()
+        old_messages = self._messages
+        old_structure = tuple(role for role, _text, _streaming, _time in old_messages)
+        new_structure = tuple(role for role, _text, _streaming, _time in normalized)
+        can_update = (
+            bool(self._message_key is not None)
+            and len(normalized) >= len(old_messages)
+            and new_structure[: len(old_structure)] == old_structure
+        )
+        if not can_update:
+            self._message_key = key
+            self._messages = list(normalized)
+            self._sync_rows()
+            return
+
+        scrollbar = self.verticalScrollBar()
+        was_at_bottom = scrollbar.maximum() == 0 or scrollbar.value() >= scrollbar.maximum() - 4
+        self.setUpdatesEnabled(False)
+        try:
+            for index, message in enumerate(normalized[: len(old_messages)]):
+                if message != old_messages[index]:
+                    self._update_message(index, *message)
+            if len(normalized) > len(old_messages):
+                trailing = self._layout.takeAt(self._layout.count() - 1)
+                if trailing is not None and trailing.widget() is not None:
+                    self._layout.addItem(trailing)
+                for message in normalized[len(old_messages) :]:
+                    self._add_message(*message)
+                self._layout.addStretch(1)
+            self._messages = list(normalized)
+            self._message_key = key
+        finally:
+            self.setUpdatesEnabled(True)
+        if was_at_bottom:
+            scrollbar.setValue(scrollbar.maximum())
 
     def refresh(self) -> None:
         colors = get_workbench_colors()
@@ -216,6 +250,9 @@ class OfficeConversationView(QScrollArea):
             self._rows = []
             self._bubbles = []
             self._bubble_naturals = []
+            self._message_text_labels = []
+            self._message_headers = []
+            self._message_bubble_refs = []
             for message in self._messages:
                 self._add_message(*message)
             self._layout.addStretch(1)
@@ -244,6 +281,9 @@ class OfficeConversationView(QScrollArea):
             label.setAlignment(Qt.AlignHCenter)
             self._layout.addWidget(label)
             self._rows.append(label)
+            self._message_text_labels.append(label)
+            self._message_headers.append(None)
+            self._message_bubble_refs.append(None)
             return
 
         row = QWidget(self._container)
@@ -301,6 +341,37 @@ class OfficeConversationView(QScrollArea):
         self._layout.addWidget(row)
         self._rows.append(row)
         self._bubbles.append(bubble)
+        self._message_text_labels.append(text_label)
+        self._message_headers.append(header)
+        self._message_bubble_refs.append(bubble)
+
+    def _update_message(
+        self,
+        index: int,
+        role: str,
+        text: str,
+        is_streaming: bool,
+        timestamp: str,
+    ) -> None:
+        del timestamp
+        label = self._message_text_labels[index]
+        label.setText(self._md(text))
+        header = self._message_headers[index]
+        bubble = self._message_bubble_refs[index]
+        if header is None or bubble is None:
+            return
+        sender = _SENDER_LABELS.get(role, role)
+        if is_streaming:
+            sender = f"{sender}（生成中）"
+        header.setText(sender)
+        natural = self._natural_width(text, label) + _BUBBLE_PAD_H_TOTAL + _RICH_TEXT_SLACK
+        bubble.setMaximumWidth(self._bubble_max_width)
+        bubble.setMinimumWidth(
+            max(scale_px(48, min_abs=40), min(natural, self._bubble_max_width))
+        )
+        bubble_index = sum(ref is not None for ref in self._message_bubble_refs[: index + 1]) - 1
+        if 0 <= bubble_index < len(self._bubble_naturals):
+            self._bubble_naturals[bubble_index] = natural
 
     @staticmethod
     def _natural_width(text: str, label: QLabel) -> int:

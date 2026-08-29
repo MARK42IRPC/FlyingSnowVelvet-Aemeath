@@ -33,6 +33,7 @@ import random
 import threading
 import webbrowser
 from datetime import datetime
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Optional, TYPE_CHECKING
 from urllib.parse import urlparse
@@ -66,6 +67,26 @@ _PLAY_INDEX = TOOL_DISPATCHER.get('play_index', 0)
 _AUTO_SPAWN_COUNT = TOOL_DISPATCHER.get('auto_spawn_speaker_count', 1)
 _SUPPORTED_COMMANDS = {'音乐', '下一曲', '暂停', '雪豹', '沙发', '摩托', '闹钟', '计时', '音量', '瞬移', '回忆', '浏览器', '窥屏'}
 _SUPPORTED_COMMANDS_SORTED = tuple(sorted(_SUPPORTED_COMMANDS, key=len, reverse=True))
+_COMMAND_ALIASES = {
+    '音乐': ('播放音乐', '播放', 'play_music', 'music', 'play', '音乐'),
+    '下一曲': ('下一首', 'next_track', 'next', '下一曲'),
+    '暂停': ('暂停播放', 'pause', 'toggle_play_pause', '暂停'),
+    '回忆': ('记忆', 'recall_memory', 'recall', '回忆'),
+    '窥屏': ('查看屏幕', '屏幕截图', 'inspect_screen', 'screen', '窥屏'),
+    '计时': ('倒计时', '闹钟', 'start_timer', 'timer', '计时'),
+    '音量': ('声音', '音量', 'set_volume', 'change_volume', 'volume'),
+    '浏览器': ('打开网页', '打开浏览器', 'open_browser', 'browser', '浏览器'),
+    '雪豹': ('生成雪豹', 'spawn_snow_leopard', '雪豹'),
+    '沙发': ('生成沙发', 'spawn_sofa', '沙发'),
+    '摩托': ('生成摩托', 'spawn_motorcycle', '摩托'),
+    '瞬移': ('传送', 'teleport_pet', 'teleport', '瞬移'),
+}
+_ALIAS_TO_COMMAND = {
+    alias.casefold().replace(' ', ''): command
+    for command, aliases in _COMMAND_ALIASES.items()
+    for alias in aliases
+}
+_FUZZY_ALIASES = tuple(_ALIAS_TO_COMMAND.items())
 _DEFAULT_MUSIC_CHOICES = ('靛青宇宙', '碎花', '纸飞机', '小小奇迹', '星炬不息')
 _DEFAULT_TIMER_SECONDS = 30
 _MAX_TIMER_SECONDS = 99 * 3600 + 59 * 60 + 59
@@ -277,6 +298,35 @@ def _parse_tool_candidate(raw_cmd: str, raw_arg: str = '') -> tuple[str, str] | 
     merged = f'{cmd_text} {arg_text}'.strip()
     if not merged:
         return None
+
+    # 模型有时会输出英文函数名、口语别名或把命令和参数塞进同一字段。
+    # 先按最长别名匹配，避免“播放音乐”被截成“播放”；再对短命令做高阈值纠错。
+    for alias, command in sorted(_ALIAS_TO_COMMAND.items(), key=lambda item: len(item[0]), reverse=True):
+        if not merged.casefold().replace(' ', '').startswith(alias):
+            continue
+        remainder = merged[len(alias):]
+        if remainder and not re.match(r'^[\s：:，,;；]', remainder):
+            continue
+        arg = re.sub(r'^[：:，,;；\s]+', '', remainder).strip()
+        return command, arg
+
+    candidate = cmd_text
+    if not arg_text:
+        split = re.split(r'[\s：:，,;；]+', cmd_text, maxsplit=1)
+        candidate = split[0]
+        if len(split) == 2:
+            arg_text = split[1].strip()
+    normalized_candidate = candidate.casefold().replace(' ', '')
+    best_command = None
+    best_score = 0.0
+    for alias, command in _FUZZY_ALIASES:
+        if len(normalized_candidate) < 2 or len(alias) < 2:
+            continue
+        score = SequenceMatcher(None, normalized_candidate, alias).ratio()
+        if score > best_score:
+            best_command, best_score = command, score
+    if best_command is not None and best_score >= (0.82 if len(normalized_candidate) <= 3 else 0.72):
+        return best_command, arg_text
 
     for command in _SUPPORTED_COMMANDS_SORTED:
         if not merged.startswith(command):

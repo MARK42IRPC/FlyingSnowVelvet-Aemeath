@@ -475,11 +475,8 @@ class OfficeWorkbenchPage(QtWorkbenchToolPage):
                 self._browse_button.setEnabled(False)
                 self._set_effort(str(task.get("reasoning_effort") or "high"))
                 self._render_task(task)
-                selected_is_active = (
-                    active is not None and str(active.get("id")) == str(task.get("id"))
-                )
                 can_resume = bool(str(task.get("session_id") or ""))
-                can_submit = selected_is_active or (active is None and can_resume)
+                can_submit = active is None and can_resume
                 self._submit_button.setText("继续任务")
                 self._selection_hint.setText(
                     _STATUS_TEXT.get(status, status) + "  " + _display_time(task.get("updated_at"))
@@ -588,6 +585,8 @@ class OfficeWorkbenchPage(QtWorkbenchToolPage):
         )
 
     def _submit_prompt(self) -> None:
+        if self._active_task() is not None:
+            return
         text = self._prompt_edit.toPlainText().strip()
         if not text or self._submission_pending:
             return
