@@ -232,9 +232,17 @@ def _rmtree_if_exists(path, *, ignore_errors=True):
     if path.exists():
         shutil.rmtree(path, ignore_errors=ignore_errors)
 
-def _cleanup_vosk_temp_artifacts(archive_path, part_path, extract_root, *, ignore_errors=False):
+def _cleanup_vosk_temp_artifacts(
+    archive_path,
+    part_path,
+    extract_root,
+    *,
+    ignore_errors=False,
+    preserve_part=False,
+):
     _rmtree_if_exists(extract_root, ignore_errors=ignore_errors)
-    _unlink_if_exists(part_path, ignore_errors=ignore_errors)
+    if not preserve_part:
+        _unlink_if_exists(part_path, ignore_errors=ignore_errors)
     _unlink_if_exists(archive_path, ignore_errors=ignore_errors)
 
 def _service_bundle_ready(service_dir: Path, required_files) -> bool:
@@ -247,14 +255,17 @@ def _service_bundle_ready(service_dir: Path, required_files) -> bool:
 
 def _stream_download_with_progress(url, dest_path, *, label, timeout=30, chunk_size=256 * 1024, use_env_proxy=True):
     dest_path.parent.mkdir(parents=True, exist_ok=True)
-    _unlink_if_exists(dest_path)
+    existing_size = dest_path.stat().st_size if dest_path.exists() else 0
 
+    headers = {
+        "User-Agent": "FlyingSnowVelvetInstaller/1.0",
+        "Accept": "application/zip, application/octet-stream, */*",
+    }
+    if existing_size > 0:
+        headers["Range"] = f"bytes={existing_size}-"
     request = urllib.request.Request(
         url,
-        headers={
-            "User-Agent": "FlyingSnowVelvetInstaller/1.0",
-            "Accept": "application/zip, application/octet-stream, */*",
-        },
+        headers=headers,
     )
     proxy_text = "env-proxy" if use_env_proxy else "direct"
     print(f"    source: {label} ({proxy_text})")
@@ -262,29 +273,51 @@ def _stream_download_with_progress(url, dest_path, *, label, timeout=30, chunk_s
     start_time = time.perf_counter()
     last_draw = 0.0
     opener = urllib.request.build_opener() if use_env_proxy else urllib.request.build_opener(urllib.request.ProxyHandler({}))
-    with opener.open(request, timeout=timeout) as response, open(dest_path, "wb") as fp:
-        total_header = response.headers.get("Content-Length")
-        total = int(total_header) if total_header and total_header.isdigit() else 0
-        current = 0
-        while True:
-            chunk = response.read(chunk_size)
-            if not chunk:
-                break
-            fp.write(chunk)
-            current += len(chunk)
-            now = time.perf_counter()
-            if now - last_draw >= 0.12:
-                _write_progress_line(_render_transfer_progress("    downloading", current, total, start_time))
-                last_draw = now
+    try:
+        response = opener.open(request, timeout=timeout)
+    except urllib.error.HTTPError as exc:
+        content_range = exc.headers.get("Content-Range", "") if exc.headers else ""
+        if exc.code == 416 and existing_size > 0 and content_range.endswith(f"/{existing_size}"):
+            return
+        raise
 
-        _write_progress_line(
-            _render_transfer_progress("    downloading", current, total, start_time),
-            finish=True,
-        )
+    with response:
+        status = getattr(response, "status", response.getcode())
+        append = existing_size > 0 and status == 206
+        total_header = response.headers.get("Content-Length")
+        response_size = int(total_header) if total_header and total_header.isdigit() else 0
+        total = existing_size + response_size if append and response_size else response_size
+        current = existing_size if append else 0
+        mode = "ab" if append else "wb"
+        with open(dest_path, mode) as fp:
+            while True:
+                chunk = response.read(chunk_size)
+                if not chunk:
+                    break
+                fp.write(chunk)
+                current += len(chunk)
+                now = time.perf_counter()
+                if now - last_draw >= 0.12:
+                    _write_progress_line(_render_transfer_progress("    downloading", current, total, start_time))
+                    last_draw = now
+
+            _write_progress_line(
+                _render_transfer_progress("    downloading", current, total, start_time),
+                finish=True,
+            )
 
     final_size = dest_path.stat().st_size if dest_path.exists() else 0
     if total and final_size != total:
         raise IOError(f"download incomplete: {final_size}/{total} bytes")
+
+def _validate_downloaded_archive(path: Path, resource_name: str) -> None:
+    suffix = Path(resource_name).suffix.lower()
+    if suffix not in {".zip", ".whl"}:
+        return
+    with zipfile.ZipFile(path, "r") as archive:
+        bad_member = archive.testzip()
+    if bad_member is not None:
+        raise zipfile.BadZipFile(f"archive contains a damaged member: {bad_member}")
 
 def _download_resource_file(
     resource_name: str,
@@ -295,7 +328,12 @@ def _download_resource_file(
 ) -> bool:
     """资源缺失时按 resc.net.txt 中的同名链接下载。"""
     if dest_path.exists() and dest_path.stat().st_size > 0:
-        return True
+        try:
+            _validate_downloaded_archive(dest_path, resource_name)
+            return True
+        except (OSError, zipfile.BadZipFile):
+            _print_warn(f"  已有资源损坏，将重新下载: {resource_name}")
+            _unlink_if_exists(dest_path, ignore_errors=True)
 
     urls = _resource_urls(resource_name)
     if not urls:
@@ -306,19 +344,20 @@ def _download_resource_file(
     dest_path.parent.mkdir(parents=True, exist_ok=True)
     for index, url in enumerate(urls, start=1):
         try:
-            _unlink_if_exists(part_path, ignore_errors=True)
             if display_sequence is None:
                 sequence_text = f"[{index}/{len(urls)}]"
             else:
                 sequence_text = f"[{display_sequence[0]}/{display_sequence[1]}]"
             print(f"  下载 {label} {sequence_text}: {resource_name}")
             _stream_download_with_progress(url, part_path, label=label)
+            _validate_downloaded_archive(part_path, resource_name)
             part_path.replace(dest_path)
             return True
+        except zipfile.BadZipFile as exc:
+            _print_warn(f"  下载内容损坏 [{resource_name}]: {exc}")
+            _unlink_if_exists(part_path, ignore_errors=True)
         except (urllib.error.URLError, OSError) as exc:
             _print_warn(f"  下载失败 [{resource_name}]: {exc}")
-        finally:
-            _unlink_if_exists(part_path, ignore_errors=True)
 
     return False
 
@@ -442,7 +481,12 @@ def _ensure_single_vosk_model(spec: dict) -> bool:
         _unlink_if_exists(leftover, ignore_errors=True)
 
     try:
-        _cleanup_vosk_temp_artifacts(archive_path, part_path, extract_root)
+        _cleanup_vosk_temp_artifacts(
+            archive_path,
+            part_path,
+            extract_root,
+            preserve_part=True,
+        )
         if not _download_resource_file(resource_name, archive_path, label=f"Vosk {label} 模型"):
             return False
         _extract_zip_with_progress(archive_path, extract_root)
@@ -458,7 +502,13 @@ def _ensure_single_vosk_model(spec: dict) -> bool:
         print(f"  extract target: {rel_target}")
         return False
     finally:
-        _cleanup_vosk_temp_artifacts(archive_path, part_path, extract_root, ignore_errors=True)
+        _cleanup_vosk_temp_artifacts(
+            archive_path,
+            part_path,
+            extract_root,
+            ignore_errors=True,
+            preserve_part=True,
+        )
 
 def ensure_vosk_models():
     _print_stage(6, "准备 Vosk 语音模型...")
@@ -484,6 +534,7 @@ __all__ = (
     '_cleanup_vosk_temp_artifacts',
     '_service_bundle_ready',
     '_stream_download_with_progress',
+    '_validate_downloaded_archive',
     '_download_resource_file',
     '_extract_zip_with_progress',
     '_seanima_ready',

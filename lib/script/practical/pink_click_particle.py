@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from lib.core.graphics.types import Color
 from lib.script.practical.click_particle import ClickParticleScript
-from lib.core.plugin_registry import register_particle
+from lib.script.plugin_registry import register_particle
 
 # ── 配色 ──────────────────────────────────────────────────────────────
 _COLOR_PINK = Color(255, 182, 193)   # 浅粉色

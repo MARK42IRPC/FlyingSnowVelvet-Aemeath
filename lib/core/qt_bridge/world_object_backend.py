@@ -14,22 +14,15 @@ from lib.core.world_objects import (
 )
 
 
-_WORLD_OBJECT_TYPES = {
-    "motor": ("lib.core.qt_bridge.world_objects.motor", "Mortor"),
-    "clock": ("lib.core.qt_bridge.world_objects.clock", "Clock"),
-    "sofa": ("lib.core.qt_bridge.world_objects.sofa", "Sofa"),
-    "snow_pile": ("lib.core.qt_bridge.world_objects.snow_pile", "SnowPile"),
-    "snowball": ("lib.core.qt_bridge.world_objects.snowball", "Snowball"),
-    "snow_leopard": ("lib.core.qt_bridge.world_objects.snow_leopard", "SnowLeopard"),
-    "speaker": ("lib.core.qt_bridge.world_objects.speaker", "Speaker"),
-}
-
 class QtWorldObjectBackend(WorldObjectBackend):
     """Own native QWidget instances behind integer process-local handles."""
 
     backend_id = "qt"
 
-    def __init__(self) -> None:
+    def __init__(self, object_types: dict[str, tuple[str, str]]) -> None:
+        if not object_types:
+            raise ValueError("Qt world-object type registry is required")
+        self._object_types = dict(object_types)
         self._next_id = count(1)
         self._instances: dict[int, object] = {}
 
@@ -38,7 +31,7 @@ class QtWorldObjectBackend(WorldObjectBackend):
 
     def create(self, request: WorldObjectRequest) -> int:
         try:
-            module_name, class_name = _WORLD_OBJECT_TYPES[request.object_type]
+            module_name, class_name = self._object_types[request.object_type]
         except KeyError as exc:
             raise ValueError(f"unknown world-object type: {request.object_type}") from exc
 

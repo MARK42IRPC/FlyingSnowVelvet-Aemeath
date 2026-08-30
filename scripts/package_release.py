@@ -98,7 +98,6 @@ EXCLUDE_EXACT_PATHS = {
     Path("ASYNC_COMPUTE_PLAN.txt"),
     Path("CONTRIBUTING.md"),
     Path("RELEASING.md"),
-    Path("pyncm") / "__main__.py",
 }
 
 EXCLUDE_SUFFIXES = {

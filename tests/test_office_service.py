@@ -33,6 +33,7 @@ class _Runtime:
         self.callback = callback
         self.cleanup_count = 0
         self.sent = []
+        self.running = False
 
     def start(self, **kwargs) -> None:
         del kwargs
@@ -106,6 +107,29 @@ class OfficeServiceLifecycleTests(unittest.TestCase):
                 "new",
                 [name for name, _usage, _description in get_hash_cmd_registry().get_all()],
             )
+
+    def test_warmup_uses_deduplicated_io_slot(self):
+        class _Hub:
+            def __init__(self):
+                self.calls = []
+
+            def submit_latest(self, slot, callback, **kwargs):
+                self.calls.append((slot, callback, kwargs))
+                return object()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            service, _scheduler, _store, _ipc = self._service(Path(tmpdir))
+            self.addCleanup(service.cleanup)
+            hub = _Hub()
+
+            with patch("lib.script.office.service.get_compute_hub", return_value=hub):
+                service.warmup_runtime()
+
+            self.assertEqual(len(hub.calls), 1)
+            slot, callback, kwargs = hub.calls[0]
+            self.assertEqual(slot, "office_runtime_warmup")
+            self.assertTrue(callable(callback))
+            self.assertEqual(kwargs, {"executor": "io"})
 
     def test_ipc_polling_starts_after_backend_application_exists(self):
         with tempfile.TemporaryDirectory() as tmpdir:

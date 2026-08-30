@@ -13,7 +13,7 @@ from config.font_config import get_digit_font_family
 from config.scale import scale_px
 from lib.core.graphics.types import Color, FontSpec
 from lib.script.practical.base_particle import BaseParticleScript, per_second_delta, tick_seconds
-from lib.core.plugin_registry import register_particle
+from lib.script.plugin_registry import register_particle
 
 # ── 配色 ──────────────────────────────────────────────────────────────
 _COLOR_CYAN = Color(173, 216, 230)   # 浅青色

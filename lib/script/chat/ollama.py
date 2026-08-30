@@ -54,6 +54,7 @@ class OllamaManager(_ApiClientMixin, OllamaBootstrapMixin, OllamaStateMixin, Oll
         self._started_ollama: bool = False
         self._ollama_process: subprocess.Popen | None = None
         self._ollama_proc_lock = threading.Lock()
+        self._shutdown_requested = threading.Event()
 
         # 正在后台下载的模型集合（去重保护）
         self._pulling_models: set = set()

@@ -11,8 +11,8 @@ from lib.core.world_objects import (
     WorldObjectInstance,
 )
 from lib.core.hash_cmd_registry import get_hash_cmd_registry
-from lib.core.plugin_registry import manager_registry, BaseManager
-from lib.core.voice.ams_enh   import AmsEnhSound
+from lib.script.plugin_registry import manager_registry, BaseManager
+from lib.script.voice.ams_enh   import AmsEnhSound
 from lib.core.logger import get_logger
 
 _logger = get_logger(__name__)

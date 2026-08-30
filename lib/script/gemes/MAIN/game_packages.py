@@ -18,7 +18,7 @@ from typing import Any
 from config.shared_storage import ensure_shared_config_ready
 from config.shared_storage_paths import get_shared_config_path, get_shared_root_dir
 from lib.core.logger import get_logger
-from lib.core.plugin_registry import effect_registry, particle_registry
+from lib.script.plugin_registry import effect_registry, particle_registry
 
 _logger = get_logger(__name__)
 

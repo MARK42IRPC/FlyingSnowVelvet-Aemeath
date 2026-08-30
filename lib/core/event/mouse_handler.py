@@ -1,7 +1,6 @@
 """鼠标事件处理器 - 处理核心鼠标输入。"""
 
 from lib.core.event.center import get_event_center, EventType, Event
-from lib.core.voice.ams_enh import AmsEnhSound
 from lib.core.graphics.types import coerce_point
 from lib.core.input.types import MouseButton, MouseButtons, MouseInput
 
@@ -9,7 +8,7 @@ from lib.core.input.types import MouseButton, MouseButtons, MouseInput
 class MouseEventHandler:
     """处理鼠标事件的具体逻辑"""
 
-    def __init__(self, entity):
+    def __init__(self, entity, interaction_sound_factory):
         """
         初始化鼠标事件处理器
 
@@ -22,7 +21,7 @@ class MouseEventHandler:
 
         # ams-enh 音效（interruptible=False：不被其他音效打断）
         # CD 由 AmsEnhSound 内部 TICK 计数管理（20 tick = 1000ms）
-        self._ams_enh = AmsEnhSound(interruptible=False)
+        self._ams_enh = interaction_sound_factory(interruptible=False)
 
         # 订阅鼠标事件
         self._event_center.subscribe(EventType.MOUSE_PRESS, self._on_mouse_press)

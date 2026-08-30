@@ -1,6 +1,6 @@
 ﻿# Release Playbook
 
-本文记录飞行雪绒发布流程，适用于 `LTS1.0.7beta1` 及后续版本。发布目标是：版本号一致、文档一致、普通包轻量、绿色包离线友好，并且不把开发机运行状态打进包里。
+本文记录飞行雪绒发布流程，适用于 `LTS1.0.7beta2` 及后续版本。发布目标是：版本号一致、文档一致、普通包轻量、绿色包离线友好，并且不把开发机运行状态打进包里。
 
 ## 1. 发布前版本同步
 
@@ -49,13 +49,13 @@ python scripts/package_green_release.py --dry-run
 ### 普通包
 
 ```powershell
-python scripts/package_release.py --version LTS1.0.7beta1
+python scripts/package_release.py --version LTS1.0.7beta2
 ```
 
 输出示例：
 
-- `dist/FlyingSnowVelvet-LTS1.0.7beta1.zip`
-- `dist/FlyingSnowVelvet-LTS1.0.7beta1-manifest.json`
+- `dist/FlyingSnowVelvet-LTS1.0.7beta2.zip`
+- `dist/FlyingSnowVelvet-LTS1.0.7beta2-manifest.json`
 
 普通包用于联网环境，安装脚本会按 `resc.net.txt` 补齐重型资源。它应排除：
 
@@ -77,13 +77,13 @@ python scripts/package_release.py --version LTS1.0.7beta1
 ### 绿色包
 
 ```powershell
-python scripts/package_green_release.py --version LTS1.0.7beta1
+python scripts/package_green_release.py --version LTS1.0.7beta2
 ```
 
 输出示例：
 
-- `dist/FlyingSnowVelvet-LTS1.0.7beta1-green.zip`
-- `dist/FlyingSnowVelvet-LTS1.0.7beta1-green-manifest.json`
+- `dist/FlyingSnowVelvet-LTS1.0.7beta2-green.zip`
+- `dist/FlyingSnowVelvet-LTS1.0.7beta2-green-manifest.json`
 
 绿色包需要额外携带安装脚本会联网下载的离线资源归档，优先覆盖以下路径：
 
@@ -114,10 +114,10 @@ python scripts/package_green_release.py --version LTS1.0.7beta1
 打包后检查 manifest：
 
 ```powershell
-Get-Content dist\FlyingSnowVelvet-LTS1.0.7beta1-manifest.json | Select-String "models|SEanima|python-3.11|storage_state|__pycache__|\.git|\.github|tests/|scripts/|\.oprate|用户反馈/"
-Get-Content dist\FlyingSnowVelvet-LTS1.0.7beta1-green-manifest.json | Select-String "vosk-model-small-cn-0.22.zip|vosk-model-small-en-us-0.15.zip|SEanima.zip"
-Get-Content dist\FlyingSnowVelvet-LTS1.0.7beta1-green-manifest.json | Select-String "resc/models/vosk-model-small-cn-0.22/|python-3.11|storage_state|__pycache__|\.git|\.github|tests/|scripts/|\.oprate|用户反馈/"
-Get-Content dist\FlyingSnowVelvet-LTS1.0.7beta1-manifest.json, dist\FlyingSnowVelvet-LTS1.0.7beta1-green-manifest.json | Select-String "lib/script/gsvmove/bin/UnRAR.exe|lib/script/gsvmove/bin/LICENSE-UnRAR.txt"
+Get-Content dist\FlyingSnowVelvet-LTS1.0.7beta2-manifest.json | Select-String "models|SEanima|python-3.11|storage_state|__pycache__|\.git|\.github|tests/|scripts/|\.oprate|用户反馈/"
+Get-Content dist\FlyingSnowVelvet-LTS1.0.7beta2-green-manifest.json | Select-String "vosk-model-small-cn-0.22.zip|vosk-model-small-en-us-0.15.zip|SEanima.zip"
+Get-Content dist\FlyingSnowVelvet-LTS1.0.7beta2-green-manifest.json | Select-String "resc/models/vosk-model-small-cn-0.22/|python-3.11|storage_state|__pycache__|\.git|\.github|tests/|scripts/|\.oprate|用户反馈/"
+Get-Content dist\FlyingSnowVelvet-LTS1.0.7beta2-manifest.json, dist\FlyingSnowVelvet-LTS1.0.7beta2-green-manifest.json | Select-String "lib/script/gsvmove/bin/UnRAR.exe|lib/script/gsvmove/bin/LICENSE-UnRAR.txt"
 ```
 
 预期：
@@ -138,9 +138,9 @@ Get-Content dist\FlyingSnowVelvet-LTS1.0.7beta1-manifest.json, dist\FlyingSnowVe
 示例：
 
 ```powershell
-git tag -a LTS1.0.7beta1 -m "LTS 1.0.7 beta1"
+git tag -a LTS1.0.7beta2 -m "LTS 1.0.7 beta2"
 git push origin main
-git push origin LTS1.0.7beta1
+git push origin LTS1.0.7beta2
 ```
 
 Release 建议上传：

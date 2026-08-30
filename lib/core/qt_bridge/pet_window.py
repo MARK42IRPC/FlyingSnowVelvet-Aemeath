@@ -4,11 +4,6 @@ from lib.core.graphics.types import Point
 from lib.core.pet_window import PetWindow
 from lib.core.qt_bridge.input import get_cursor_position
 from lib.core.qt_bridge.pet_widget import QtPetWidget
-from lib.core.qt_bridge.pet_window_ui import (
-    attach_pet_window_ui,
-    preload_pet_window_ui,
-    shutdown_pet_window_ui,
-)
 from lib.core.qt_bridge.scheduler import QtScheduler
 from lib.core.qt_bridge.widget_anchors import publish_widget_anchor_response
 from lib.core.qt_bridge.window import move_widget, set_pet_window_clickthrough
@@ -21,6 +16,29 @@ from lib.core.qt_bridge.window_setup import (
 class QtPetWindow(PetWindow, QtPetWidget):
     """Combine the pure pet controller with the QWidget event host."""
 
+    def __init__(
+        self,
+        gifs: dict,
+        particle_overlay: object,
+        *,
+        state_machine_factory,
+        startup_sound_factory,
+        interaction_sound_factory,
+        attach_ui,
+        preload_ui,
+        shutdown_ui,
+    ) -> None:
+        self._attach_ui = attach_ui
+        self._preload_product_ui = preload_ui
+        self._shutdown_product_ui = shutdown_ui
+        super().__init__(
+            gifs,
+            particle_overlay,
+            state_machine_factory=state_machine_factory,
+            startup_sound_factory=startup_sound_factory,
+            interaction_sound_factory=interaction_sound_factory,
+        )
+
     def _host_create_scheduler(self):
         return QtScheduler(parent=self)
 
@@ -29,13 +47,13 @@ class QtPetWindow(PetWindow, QtPetWidget):
 
     def _host_setup(self, on_close) -> None:
         setup_pet_window(self)
-        attach_pet_window_ui(self, on_close=on_close)
+        self._attach_ui(self, on_close=on_close)
 
     def _host_finalize_startup(self) -> None:
         finalize_pet_window_startup(self)
 
     def _preload_ui(self) -> None:
-        preload_pet_window_ui(self)
+        self._preload_product_ui(self)
 
     def _host_publish_anchor_response(self, **kwargs) -> None:
         publish_widget_anchor_response(self._event_center, self, **kwargs)
@@ -53,7 +71,7 @@ class QtPetWindow(PetWindow, QtPetWidget):
         self.update()
 
     def _host_shutdown_ui(self) -> None:
-        shutdown_pet_window_ui(self)
+        self._shutdown_product_ui(self)
 
     def shutdown_host(self) -> None:
         """Stop core state and destroy the QWidget at the Qt boundary."""
@@ -66,3 +84,29 @@ class QtPetWindow(PetWindow, QtPetWidget):
             self.deleteLater()
         except Exception:
             pass
+
+
+def create_qt_pet_window_factory(
+    *,
+    state_machine_factory,
+    startup_sound_factory,
+    interaction_sound_factory,
+    attach_ui,
+    preload_ui,
+    shutdown_ui,
+):
+    """Bind product services to the two-argument desktop backend factory."""
+
+    def create(gifs: dict, particle_overlay: object) -> QtPetWindow:
+        return QtPetWindow(
+            gifs,
+            particle_overlay,
+            state_machine_factory=state_machine_factory,
+            startup_sound_factory=startup_sound_factory,
+            interaction_sound_factory=interaction_sound_factory,
+            attach_ui=attach_ui,
+            preload_ui=preload_ui,
+            shutdown_ui=shutdown_ui,
+        )
+
+    return create

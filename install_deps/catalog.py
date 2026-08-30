@@ -27,6 +27,12 @@ PYPI_MIRRORS = [
     {"name": "PyPI", "url": "https://pypi.org/simple", "host": "pypi.org"},
 ]
 
+NPM_REGISTRIES = [
+    {"name": "npmmirror", "url": "https://registry.npmmirror.com", "host": "registry.npmmirror.com"},
+    {"name": "Tencent", "url": "https://mirrors.cloud.tencent.com/npm", "host": "mirrors.cloud.tencent.com"},
+    {"name": "npmjs", "url": "https://registry.npmjs.org", "host": "registry.npmjs.org"},
+]
+
 DEPENDENCIES = [
     ("PyQt5", "Qt GUI framework", ("PyQt5",)),
     ("Pillow", "image processing", ("PIL",)),
@@ -83,6 +89,14 @@ JIEBA_FAST_WHEEL_NAME = "jieba_fast-0.53-cp311-cp311-win_amd64.whl"
 JIEBA_FAST_WHEEL_SHA256 = "a5d9cf41d6817963a73f672a429dbfe5b03a4ff327cedf490d5f2b21be8c00d0"
 BINARY_ONLY_PACKAGES = frozenset({"opencc-python-reimplemented"})
 DSH_RUNTIME_INSTALL_TIMEOUT = 30 * 60
+PIP_INSTALL_TIMEOUT = 10 * 60
+PIP_NETWORK_TIMEOUT = 30
+PIP_NETWORK_RETRIES = 2
+GET_PIP_URLS = (
+    "https://mirrors.aliyun.com/pypi/get-pip.py",
+    "https://bootstrap.pypa.io/get-pip.py",
+)
+GET_PIP_DOWNLOAD_TIMEOUT = 30
 PACKAGE_REQUIREMENTS = {
     "opencc-python-reimplemented": "opencc-python-reimplemented>=0.1.7,<1",
 }

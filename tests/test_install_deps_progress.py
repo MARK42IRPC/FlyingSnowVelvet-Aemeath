@@ -137,7 +137,7 @@ class InstallDependenciesProgressTests(unittest.TestCase):
         self.assertIn("if(Test-UvManagedPython $info.Executable){return}", content)
 
     def test_dsh_npm_install_uses_fixed_production_lockfile_command(self):
-        with patch.object(
+        with patch.object(install_deps, "_tcp_ms", return_value=10.0), patch.object(
             install_deps,
             "_run_command_with_progress",
             return_value=(0, ""),
@@ -153,6 +153,10 @@ class InstallDependenciesProgressTests(unittest.TestCase):
             "--ignore-scripts",
             "--no-audit",
             "--no-fund",
+            "--registry=https://registry.npmmirror.com",
+            "--replace-registry-host=always",
+            "--fetch-retries=2",
+            "--fetch-timeout=60000",
         ])
         self.assertEqual(
             run.call_args.kwargs["cwd"],
@@ -160,6 +164,29 @@ class InstallDependenciesProgressTests(unittest.TestCase):
         )
         self.assertEqual(run.call_args.kwargs["kind"], "npm")
         self.assertEqual(run.call_args.kwargs["timeout"], install_deps.DSH_RUNTIME_INSTALL_TIMEOUT)
+
+    def test_dsh_npm_install_falls_back_to_next_registry(self):
+        with patch.object(
+            install_deps,
+            "NPM_REGISTRIES",
+            [
+                {"name": "first", "url": "https://first.invalid", "host": "first.invalid"},
+                {"name": "second", "url": "https://second.invalid", "host": "second.invalid"},
+            ],
+        ), patch.object(
+            install_deps, "_tcp_ms", side_effect=lambda host, **_kwargs: 1.0 if host.startswith("first") else 2.0
+        ), patch.object(
+            install_deps,
+            "_run_command_with_progress",
+            side_effect=[(1, "network failed"), (0, "")],
+        ) as run:
+            installed, detail = install_deps._run_dsh_npm_ci()
+
+        self.assertTrue(installed)
+        self.assertEqual(detail, "")
+        self.assertEqual(run.call_count, 2)
+        self.assertIn("--registry=https://first.invalid", run.call_args_list[0].args[0])
+        self.assertIn("--registry=https://second.invalid", run.call_args_list[1].args[0])
 
     def test_dsh_install_repairs_node_modules_without_downloading_node_again(self):
         with patch.object(
@@ -597,6 +624,35 @@ class InstallDependenciesProgressTests(unittest.TestCase):
         option_index = command.index("--progress-bar")
         self.assertEqual(command[option_index + 1], "off")
         self.assertNotIn("raw", command)
+        self.assertEqual(command[command.index("--timeout") + 1], "30")
+        self.assertEqual(command[command.index("--retries") + 1], "2")
+
+    def test_pip_install_has_a_total_deadline(self):
+        class FakeProcess:
+            returncode = None
+            stdout = iter(())
+
+            def poll(self):
+                return self.returncode
+
+            def kill(self):
+                self.returncode = 1
+
+            def wait(self, timeout=None):
+                return self.returncode
+
+        process = FakeProcess()
+        with patch.object(install_deps.subprocess, "Popen", return_value=process), patch.object(
+            install_deps.progress.time,
+            "monotonic",
+            side_effect=[100.0, 100.0 + install_deps.PIP_INSTALL_TIMEOUT],
+        ):
+            return_code, output = install_deps._run_pip_requirement_with_progress(
+                "python.exe", "ExamplePkg", lambda _percent: None
+            )
+
+        self.assertEqual(return_code, 124)
+        self.assertEqual(output, "pip 安装超时")
 
     def test_pip_progress_uses_monotonic_output_stages(self):
         values = [

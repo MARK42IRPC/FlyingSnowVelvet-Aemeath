@@ -62,7 +62,7 @@ class QtApplicationUiHostTests(unittest.TestCase):
         }
 
         with patch.dict(sys.modules, modules):
-            from lib.core.qt_bridge.application_ui import QtApplicationUiHost
+            from lib.script.app.qt_application_ui import QtApplicationUiHost
 
             host = QtApplicationUiHost()
             application = object()

@@ -46,7 +46,7 @@ if __name__ == '__main__':
         try:
             import importlib
 
-            helper = importlib.import_module('lib.core.qt_bridge.workbench_helper')
+            helper = importlib.import_module('lib.script.app.workbench_helper_entry')
             initial_page = 'overview'
             helper_args = sys.argv[2:]
             if '--initial-page' in helper_args:

@@ -1,9 +1,9 @@
 ﻿# 飞行雪绒
 
-飞行雪绒是面向 Windows 10/11 的桌面宠物项目。当前主线以 `LTS1.0.7beta1` 为版本基线，核心能力包括桌宠展示、事件驱动对象系统、AI 伴聊、语音播报、本地语音识别、多源音乐播放、粒子与小游戏扩展。
+飞行雪绒是面向 Windows 10/11 的桌面宠物项目。当前主线以 `LTS1.0.7beta2` 为版本基线，核心能力包括桌宠展示、事件驱动对象系统、AI 伴聊、语音播报、本地语音识别、多源音乐播放、粒子与小游戏扩展。
 
-- 当前版本：`LTS1.0.7beta1`
-- 发布日期：`2026-08-29`
+- 当前版本：`LTS1.0.7beta2`
+- 发布日期：`2026-08-30`
 - 主要入口：`lib/core/qt_desktop_pet.py`
 - 生命周期编排：`lib/script/main.py`
 
@@ -21,7 +21,7 @@
 
 - 主窗口、动作、移动、渲染、粒子、音频等基础设施位于 `lib/core/`。
 - 对象管理器位于 `lib/script/obj-*`，例如音响、雪球、雪豹、沙发、摩托等。
-- 粒子脚本位于 `lib/script/practical/`，发现与注册由 `lib/core/plugin_registry.py` 统一处理。
+- 粒子脚本位于 `lib/script/practical/`，发现与注册由 `lib/script/plugin_registry.py` 统一处理。
 
 ### AI 对话
 
@@ -92,12 +92,12 @@ python install_deps.py
 
 安装脚本会尝试完成：
 
-- 选择可用 Python 并写入 `py.ini`
+- 无可用 Python 时通过 PowerShell 从 Gitee/GitHub 自动下载、校验并安装固定的 Python 3.11；随后选择解释器并写入 `py.ini`
 - 安装 `requirements.txt` 中的 Python 包
 - 准备 Vosk 语音识别模型
 - 在共享语音运行目录创建可选的 DirectML GPU 混合推理 venv
-- 准备办公 DSH 侧车源码和固定依赖
-- 按 `resc.net.txt` 下载缺失的 Vosk、启动动画和 Python 资源
+- 按用户选择准备可选的 DeepSeek Harness 办公侧车和固定依赖
+- 按 `resc.net.txt` 多源、可续传地下载缺失的 Vosk、启动动画和 Python 资源，并在解压前校验归档
 - 校验随程序提供的官方 UnRAR 解压后端；ONNX 语音包由控制面板按需安装
 - 启动桌宠主程序
 

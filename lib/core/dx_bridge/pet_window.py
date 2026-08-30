@@ -30,6 +30,9 @@ class DxPetWindow(PetWindow):
         window_host_factory: Callable[..., DxWindowHost] | None = None,
         cursor_position_provider: Callable[[], Point] | None = None,
         shutdown_ui: Callable[[], None] | None = None,
+        state_machine_factory=None,
+        startup_sound_factory=None,
+        interaction_sound_factory=None,
     ) -> None:
         self._dx_context = context
         self._dx_screen_provider = screen_provider or DxScreenProvider()
@@ -41,7 +44,19 @@ class DxPetWindow(PetWindow):
         self._dx_close_requested = False
         self._dx_shutdown_done = False
         try:
-            super().__init__(gifs, particle_overlay)
+            if (
+                state_machine_factory is None
+                or startup_sound_factory is None
+                or interaction_sound_factory is None
+            ):
+                raise ValueError("DX pet product factories are required")
+            super().__init__(
+                gifs,
+                particle_overlay,
+                state_machine_factory=state_machine_factory,
+                startup_sound_factory=startup_sound_factory,
+                interaction_sound_factory=interaction_sound_factory,
+            )
         except Exception:
             if hasattr(self, "_movement"):
                 try:
@@ -209,6 +224,9 @@ def create_pet_window_factory(
     *,
     screen_provider: DxScreenProvider | None = None,
     window_host_factory: Callable[..., DxWindowHost] | None = None,
+    state_machine_factory=None,
+    startup_sound_factory=None,
+    interaction_sound_factory=None,
 ) -> Callable[[dict, object], DxPetWindow]:
     """Bind shared DX services to the two-argument desktop bundle factory."""
 
@@ -219,6 +237,9 @@ def create_pet_window_factory(
             context=context,
             screen_provider=screen_provider,
             window_host_factory=window_host_factory,
+            state_machine_factory=state_machine_factory,
+            startup_sound_factory=startup_sound_factory,
+            interaction_sound_factory=interaction_sound_factory,
         )
 
     return create

@@ -50,7 +50,7 @@ from lib.script.app.tray_actions import (
     prepare_autostart_state,
     set_autostart_enabled,
 )
-from lib.core.plugin_registry import (
+from lib.script.plugin_registry import (
     discover_all, init_all_managers, cleanup_all_managers, get_manager
 )
 from lib.script.app.single_instance import (
@@ -126,6 +126,7 @@ class ApplicationState:
         self._exit_in_progress = False
         self._exit_completed = False
         self._components_cleaned = False
+        self._component_cleanup_steps_completed: set[str] = set()
         self._logger_cleaned = False
         self._exit_code = 0
         self._shutdown_steps = []
@@ -658,34 +659,60 @@ class ApplicationState:
                 self._cleanup_visual_components()
             return
 
-        self._application_ui.stop_runtime()
+        completed = getattr(self, "_component_cleanup_steps_completed", None)
+        if completed is None:
+            completed = set()
+            self._component_cleanup_steps_completed = completed
 
-        cleanup_all_managers()
-        self._managers.clear()
+        cleanup_steps = (
+            ("application_ui", self._application_ui.stop_runtime),
+            ("plugin_managers", self._cleanup_plugin_managers),
+            ("cleanup_handler", self._cleanup_registered_handler),
+            ("chat_handler", cleanup_chat_handler),
+            ("stream_memory", cleanup_stream_memory),
+            ("tool_dispatcher", cleanup_tool_dispatcher),
+            ("office_service", cleanup_office_service),
+            ("interaction_mode_service", cleanup_interaction_mode_service),
+            ("game_mode_service", cleanup_game_mode_service),
+            ("ollama_manager", cleanup_ollama_manager),
+            ("cmd_center", cleanup_cmd_center),
+            ("voice_request_handler", cleanup_voice_request_handler),
+            ("gsvmove_service", cleanup_gsvmove_service),
+            ("bug_tracker_service", cleanup_bug_tracker_service),
+            ("microphone_push_to_talk", cleanup_microphone_push_to_talk_manager),
+            ("microphone_stt", cleanup_microphone_stt_service),
+        )
 
-        if self._cleanup_handler:
-            from lib.script.practical.cleanup_handler import cleanup_cleanup_handler
-            cleanup_cleanup_handler()
-            self._cleanup_handler = None
+        for step_name, cleanup in cleanup_steps:
+            if step_name in completed:
+                continue
+            try:
+                cleanup()
+            except Exception:
+                import traceback
+                logger.error(
+                    "运行时组件 %s 清理失败:\n%s",
+                    step_name,
+                    traceback.format_exc(),
+                )
+            else:
+                completed.add(step_name)
 
-        cleanup_chat_handler()
-        cleanup_stream_memory()
-        cleanup_tool_dispatcher()
-        cleanup_office_service()
-        cleanup_interaction_mode_service()
-        cleanup_game_mode_service()
-        cleanup_ollama_manager()
-        cleanup_cmd_center()
-        cleanup_voice_request_handler()
-        cleanup_gsvmove_service()
-        cleanup_bug_tracker_service()
-        cleanup_microphone_push_to_talk_manager()
-        cleanup_microphone_stt_service()
-
-        self._components_cleaned = True
+        self._components_cleaned = len(completed) == len(cleanup_steps)
 
         if not skip_visual_cleanup:
             self._cleanup_visual_components()
+
+    def _cleanup_plugin_managers(self):
+        cleanup_all_managers()
+        self._managers.clear()
+
+    def _cleanup_registered_handler(self):
+        if not self._cleanup_handler:
+            return
+        from lib.script.practical.cleanup_handler import cleanup_cleanup_handler
+        cleanup_cleanup_handler()
+        self._cleanup_handler = None
 
     def _cleanup_visual_components(self):
         from lib.core.draw_core import cleanup_draw_core

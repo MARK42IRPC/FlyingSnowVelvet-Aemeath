@@ -18,8 +18,6 @@ TOOLTIPS: dict[str, str] = {
     'scale_down_button':   '缩小桌宠（重启生效）',
     'launch_wuwa_button':  '检测并启动鸣潮',
     'more_functions_button':'打开系统托盘右键菜单',
-    'auto_chat_button':    '开启或关闭自动语聊：检测到说话时自动转文字，停顿3秒后自动发送',
-
     # ── 气泡 ─────────────────────────────────────────────────────
     'bubble':              '左键关闭,右键复制并关闭',
 

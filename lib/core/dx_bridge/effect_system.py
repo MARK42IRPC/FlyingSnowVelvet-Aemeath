@@ -11,7 +11,6 @@ from lib.core.graphics.resources import ImageResource
 from lib.core.graphics.visuals import build_effect_batch as _build_effect_batch, load_effect_resource
 from lib.core.layer import Layer
 from lib.core.logger import get_logger
-from lib.script.effects.manager import get_effect_script_manager
 
 from .loop import DxLoopContext
 from .overlay_window import DxOverlayWindow
@@ -52,9 +51,12 @@ class DxEffectOverlay:
         screen_provider: DxScreenProvider | None = None,
         window: DxOverlayWindow | None = None,
         warp: bool = False,
+        effect_manager=None,
     ) -> None:
         self._event_center = get_event_center()
-        self._effect_manager = get_effect_script_manager()
+        if effect_manager is None:
+            raise ValueError("DX effect manager is required")
+        self._effect_manager = effect_manager
         self._window = window or DxOverlayWindow(
             context,
             Layer.EFFECT,
@@ -243,9 +245,17 @@ def create_effect_overlay_factory(
     *,
     screen_provider: DxScreenProvider | None = None,
     warp: bool = False,
+    effect_manager_provider=None,
 ) -> Callable[[], DxEffectOverlay]:
     def create() -> DxEffectOverlay:
-        return DxEffectOverlay(context, screen_provider=screen_provider, warp=warp)
+        if effect_manager_provider is None:
+            raise ValueError("DX effect manager provider is required")
+        return DxEffectOverlay(
+            context,
+            screen_provider=screen_provider,
+            warp=warp,
+            effect_manager=effect_manager_provider(),
+        )
 
     return create
 

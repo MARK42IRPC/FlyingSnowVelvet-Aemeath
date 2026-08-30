@@ -3,7 +3,6 @@
 import json
 import subprocess
 import threading
-import time
 
 import requests
 
@@ -168,9 +167,14 @@ class OllamaBootstrapMixin:
         3. 轮询等待服务就绪（最多 ~16 秒）→ 应用模型状态
         4. 超时 → 记录警告，由后续定时 ping 接管
         """
+        if self._shutdown_requested.is_set():
+            return
+
         try:
             resp = requests.get(f"{OLLAMA_BASE_URL}/api/tags", timeout=TIMEOUTS['api_list'])
             if resp.ok:
+                if self._shutdown_requested.is_set():
+                    return
                 logger.info("[OllamaManager] ollama 服务已在运行，跳过启动")
                 self._apply_status_direct(resp)
                 return
@@ -186,8 +190,13 @@ class OllamaBootstrapMixin:
                 creationflags=creationflags,
             )
             with self._ollama_proc_lock:
-                self._started_ollama = True
-                self._ollama_process = proc
+                shutdown_requested = self._shutdown_requested.is_set()
+                if not shutdown_requested:
+                    self._started_ollama = True
+                    self._ollama_process = proc
+            if shutdown_requested:
+                self._terminate_ollama_process(proc)
+                return
             logger.info("[OllamaManager] 已启动 ollama serve，等待服务就绪...")
         except FileNotFoundError:
             logger.warning("[OllamaManager] 警告：未找到 ollama 命令，请先安装 ollama")
@@ -197,10 +206,13 @@ class OllamaBootstrapMixin:
             return
 
         for attempt in range(1, 9):
-            time.sleep(2)
+            if self._shutdown_requested.wait(2):
+                return
             try:
                 resp = requests.get(f"{OLLAMA_BASE_URL}/api/tags", timeout=TIMEOUTS['api_request'])
                 if resp.ok:
+                    if self._shutdown_requested.is_set():
+                        return
                     logger.info("[OllamaManager] ollama 服务就绪（第 %d 次检测）", attempt)
                     self._apply_status_direct(resp)
                     return
@@ -235,6 +247,7 @@ class OllamaBootstrapMixin:
 
     def cleanup(self):
         """停止定时器，取消事件订阅"""
+        self._shutdown_requested.set()
         self._is_running = False
         if self._ping_timer:
             self._ping_timer.stop()
@@ -263,11 +276,8 @@ class OllamaBootstrapMixin:
         self._event_center.unsubscribe(EventType.APP_PRE_START, self._on_app_pre_start)
         self._event_center.unsubscribe(EventType.APP_MAIN,      self._on_app_main)
 
-
+    def _shutdown_started_ollama(self):
         """应用退出时结束本实例启动的 ollama 进程。"""
-        if self._use_api_key:
-            return
-
         with self._ollama_proc_lock:
             proc = self._ollama_process
             started = self._started_ollama
@@ -280,6 +290,11 @@ class OllamaBootstrapMixin:
         if proc.poll() is not None:
             return
 
+        self._terminate_ollama_process(proc)
+
+    @staticmethod
+    def _terminate_ollama_process(proc):
+        """结束由当前实例明确持有的 Ollama 子进程。"""
         try:
             proc.terminate()
             proc.wait(timeout=3)

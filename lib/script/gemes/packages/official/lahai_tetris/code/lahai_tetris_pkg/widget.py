@@ -24,15 +24,15 @@ from lib.core.effect_utils import spawn_flash_text_effect, spawn_smooth_image_ef
 from lib.core.particle_utils import spawn_particle_at_point, spawn_particle_in_rect
 from lib.core.unified_draw import Layer
 from lib.core.qt_bridge.render_core import QtRenderCore, QtRenderRequest
-from lib.core.voice.ams_lahai_break_ams_record import AmsLahaiBreakAmsRecordSound
-from lib.core.voice.ams_lahai_combo_over_five import AmsLahaiComboOverFiveSound
-from lib.core.voice.ams_lahai_game_over import AmsLahaiGameOverSound
-from lib.core.voice.ams_lahai_idle_chat import AmsLahaiIdleChatSound
-from lib.core.voice.ams_lahai_level_up import AmsLahaiLevelUpSound
-from lib.core.voice.ams_lahai_score_10000 import AmsLahaiScore10000Sound
-from lib.core.voice.ams_lahai_score_1000 import AmsLahaiScore1000Sound
-from lib.core.voice.ams_lahai_score_5000 import AmsLahaiScore5000Sound
-from lib.core.voice.lahai_skill_release import LahaiSkillReleaseFailedSound, LahaiSkillReleaseSound
+from lib.script.voice.ams_lahai_break_ams_record import AmsLahaiBreakAmsRecordSound
+from lib.script.voice.ams_lahai_combo_over_five import AmsLahaiComboOverFiveSound
+from lib.script.voice.ams_lahai_game_over import AmsLahaiGameOverSound
+from lib.script.voice.ams_lahai_idle_chat import AmsLahaiIdleChatSound
+from lib.script.voice.ams_lahai_level_up import AmsLahaiLevelUpSound
+from lib.script.voice.ams_lahai_score_10000 import AmsLahaiScore10000Sound
+from lib.script.voice.ams_lahai_score_1000 import AmsLahaiScore1000Sound
+from lib.script.voice.ams_lahai_score_5000 import AmsLahaiScore5000Sound
+from lib.script.voice.lahai_skill_release import LahaiSkillReleaseFailedSound, LahaiSkillReleaseSound
 from lib.script.gemes.MAIN.game_packages import GameContext
 from lib.script.gemes.MAIN.game_sfx import GameSfx
 from .constants import (

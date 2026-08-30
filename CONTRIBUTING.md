@@ -7,7 +7,7 @@
 ## 基本原则
 
 - **小步提交**：一次提交解决一个主题，避免把重构、配置、素材、运行产物混在一起。
-- **先看入口**：应用生命周期看 `lib/script/main.py`，事件协议看 `lib/core/event/center.py`，插件发现看 `lib/core/plugin_registry.py`。
+- **先看入口**：应用生命周期看 `lib/script/main.py`，事件协议看 `lib/core/event/center.py`，插件发现看 `lib/script/plugin_registry.py`。
 - **运行时不入库**：不要提交 `logs/`、`dist/`、`resc/user/`、`resc/models/`、`resc/playwright/`、`resc/GIF/SEanima/`、`py.ini`、`__pycache__/` 等文件。
 - **重型资源外置**：`resc.net.txt` 是 Vosk、启动动画、浏览器运行时和 Python 安装器的唯一下载清单，发布包不携带这些资源。
 - **用户配置脱敏**：涉及 API Key、登录态、Cookie、storage state 的改动必须确认不会进入发布包。
@@ -60,7 +60,7 @@ python install_deps.py
 
 ### 本地托管服务
 
-- 本地子进程服务优先复用 `lib/script/local_hosted_service.py` 的生命周期骨架。
+- 本地子进程服务必须在所属服务内封装进程所有权、健康检查和幂等清理。
 - 进程启动、健康检查、兜底清理要能重复调用且幂等。
 - 浏览器自动化相关运行目录必须写入已忽略路径。
 

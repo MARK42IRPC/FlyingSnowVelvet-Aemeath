@@ -2,7 +2,7 @@
 from typing import Dict, Type, List, Optional
 
 from lib.script.practical.base_particle import BaseParticleScript
-from lib.core.plugin_registry import particle_registry, discover_particles
+from lib.script.plugin_registry import particle_registry, discover_particles
 
 
 class ParticleScriptManager:

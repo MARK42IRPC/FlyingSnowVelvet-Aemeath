@@ -24,7 +24,6 @@ from lib.core.logger import get_logger
 from lib.core.graphics.resources import ImageResource
 from lib.core.graphics.visuals import build_effect_batch, load_effect_resource
 from lib.core.qt_bridge.draw_backend import QtDrawBackend
-from lib.script.effects.manager import cleanup_effect_script_manager, get_effect_script_manager
 
 
 _logger = get_logger(__name__)
@@ -60,7 +59,7 @@ def _resolve_resource_path(resource_path: str) -> str:
 class EffectOverlay(QWidget):
     """全屏透明覆盖层，仅用于绘制特效。"""
 
-    def __init__(self, parent=None):
+    def __init__(self, effect_manager, *, manager_cleanup=None, parent=None):
         super().__init__(parent)
         self.setWindowFlags(
             Qt.Tool
@@ -82,7 +81,8 @@ class EffectOverlay(QWidget):
         self._cleanup_done = False
         self._draw_backend = QtDrawBackend()
         self._event_center = get_event_center()
-        self._effect_manager = get_effect_script_manager()
+        self._effect_manager = effect_manager
+        self._manager_cleanup = manager_cleanup
 
         self._event_center.subscribe(EventType.EFFECT_REQUEST, self._on_effect_request)
         self._event_center.subscribe(EventType.TICK, self._on_tick)
@@ -322,7 +322,8 @@ class EffectOverlay(QWidget):
             self._event_center.unsubscribe(EventType.FRAME, self._on_frame)
         self.flush_immediately()
         self._draw_backend.cleanup()
-        cleanup_effect_script_manager()
+        if self._manager_cleanup is not None:
+            self._manager_cleanup()
         self._layer_manager.unregister(self)
         try:
             self.close()
@@ -332,3 +333,15 @@ class EffectOverlay(QWidget):
             self.deleteLater()
         except Exception:
             pass
+
+
+def create_effect_overlay_factory(effect_manager_provider, manager_cleanup=None):
+    """Bind the script effect registry to the Qt renderer."""
+
+    def create() -> EffectOverlay:
+        return EffectOverlay(
+            effect_manager_provider(),
+            manager_cleanup=manager_cleanup,
+        )
+
+    return create

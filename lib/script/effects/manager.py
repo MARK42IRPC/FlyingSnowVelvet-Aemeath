@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional, Type
 
-from lib.core.plugin_registry import discover_effects, effect_registry
+from lib.script.plugin_registry import discover_effects, effect_registry
 from lib.script.effects.base_effect import BaseEffectScript
 
 

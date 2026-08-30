@@ -12,7 +12,7 @@ from lib.core.event.center        import get_event_center, EventType, Event
 from lib.core.clickthrough_state  import is_clickthrough_enabled
 from lib.core.physics             import get_physics_world, PhysicsBody
 from lib.core.unified_draw import Layer, get_layer_manager
-from lib.core.voice.snowball_sound import SnowballSound
+from lib.script.voice.snowball_sound import SnowballSound
 from lib.core.qt_bridge.screen import get_screen_geometry_for_point
 from lib.core.graphics.resources import ImageResource
 from lib.core.graphics.visuals import build_world_object_batch

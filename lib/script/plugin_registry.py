@@ -14,7 +14,7 @@
    manager_registry.register('snow_leopard', SnowLeopardManager)
 
 3. 主程序启动时扫描并初始化：
-   from lib.core.plugin_registry import discover_all, init_all_managers
+   from lib.script.plugin_registry import discover_all, init_all_managers
    discover_all()
    init_all_managers(entity)
 """

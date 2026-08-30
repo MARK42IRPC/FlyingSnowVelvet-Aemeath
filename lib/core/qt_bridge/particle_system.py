@@ -19,7 +19,6 @@ from lib.core.layer_manager import get_layer_manager
 from lib.core.logger import get_logger
 from lib.core.qt_bridge.screen import get_virtual_screen_geometry
 from lib.core.qt_bridge.draw_backend import QtDrawBackend
-from lib.script.practical.manager import get_particle_script_manager
 
 _ASYNC_PARTICLE_UPDATE_THRESHOLD = 1200
 _PARTICLE_TILE_SIZE = 128
@@ -330,7 +329,7 @@ class ParticleOverlay(QWidget):
     现在支持事件驱动的粒子创建。
     """
 
-    def __init__(self, parent=None):
+    def __init__(self, particle_manager, *, parent=None):
         super().__init__(parent)
         self.setWindowFlags(
             Qt.Tool
@@ -367,7 +366,7 @@ class ParticleOverlay(QWidget):
 
         # 获取事件中心和粒子脚本管理器
         self._event_center = get_event_center()
-        self._particle_manager = get_particle_script_manager()
+        self._particle_manager = particle_manager
 
         # 订阅粒子申请事件
         self._event_center.subscribe(EventType.PARTICLE_REQUEST, self._on_particle_request)
@@ -737,3 +736,12 @@ class ParticleOverlay(QWidget):
             self.deleteLater()
         except Exception:
             pass
+
+
+def create_particle_overlay_factory(particle_manager_provider):
+    """Bind the script particle registry to the Qt renderer."""
+
+    def create() -> ParticleOverlay:
+        return ParticleOverlay(particle_manager_provider())
+
+    return create

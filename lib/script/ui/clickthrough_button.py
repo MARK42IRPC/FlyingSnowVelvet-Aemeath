@@ -12,7 +12,7 @@ from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.graphics.types import Point
 from lib.core.unified_draw import Layer, get_layer_manager
 from lib.core.qt_bridge.screen import clamp_rect_position
-from lib.core.voice.ams_clickthrough_reminder import AmsClickthroughReminderSound
+from lib.script.voice.ams_clickthrough_reminder import AmsClickthroughReminderSound
 from lib.core.anchor_utils import (
     animate_opacity,
     refresh_last_activity,

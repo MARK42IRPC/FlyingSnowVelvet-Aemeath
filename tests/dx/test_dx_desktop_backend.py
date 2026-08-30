@@ -8,7 +8,7 @@ import textwrap
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from PIL import Image
 
@@ -645,16 +645,14 @@ class DxApplicationUiHostTests(unittest.TestCase):
 
     def test_office_approval_opens_reusable_helper_on_office_page(self):
         self.ui.prepare_runtime()
-        with patch(
-            "lib.script.app.workbench_helper.launch_workbench_helper",
-            return_value=True,
-        ) as launch:
-            get_event_center().publish(Event(EventType.OFFICE_APPROVAL_REQUEST, {
-                "task_id": "task-1",
-                "approval_id": "approval-1",
-            }))
+        launch = Mock(return_value=True)
+        self.ui._workbench_opener = launch
+        get_event_center().publish(Event(EventType.OFFICE_APPROVAL_REQUEST, {
+            "task_id": "task-1",
+            "approval_id": "approval-1",
+        }))
 
-        launch.assert_called_once_with(initial_page="office")
+        launch.assert_called_once_with("office")
 
 
 @unittest.skipUnless(

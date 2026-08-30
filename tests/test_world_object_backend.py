@@ -4,7 +4,8 @@ from unittest.mock import patch
 
 from lib.core.graphics.resources import ImageResource, RasterFrame
 from lib.core.graphics.types import Point, Rect
-from lib.core.qt_bridge.world_object_backend import QtWorldObjectBackend, _WORLD_OBJECT_TYPES
+from lib.core.qt_bridge.world_object_backend import QtWorldObjectBackend
+from lib.script.app.qt_backend_bootstrap import _QT_WORLD_OBJECT_TYPES
 from lib.core.world_objects import (
     WorldObjectInstance,
     WorldObjectMotion,
@@ -154,7 +155,7 @@ class WorldObjectBackendTests(unittest.TestCase):
 
     def test_qt_widget_types_stay_inside_the_adapter_package(self):
         self.assertEqual(
-            set(_WORLD_OBJECT_TYPES),
+            set(_QT_WORLD_OBJECT_TYPES),
             {
                 "motor",
                 "clock",
@@ -165,14 +166,14 @@ class WorldObjectBackendTests(unittest.TestCase):
                 "speaker",
             },
         )
-        for module_name, _class_name in _WORLD_OBJECT_TYPES.values():
+        for module_name, _class_name in _QT_WORLD_OBJECT_TYPES.values():
             self.assertTrue(
-                module_name.startswith("lib.core.qt_bridge.world_objects."),
+                module_name.startswith("lib.script.ui.world_objects."),
                 module_name,
             )
 
     def test_qt_backend_translates_resource_at_construction_and_returns_id(self):
-        backend = QtWorldObjectBackend()
+        backend = QtWorldObjectBackend(_QT_WORLD_OBJECT_TYPES)
         resource = _resource()
         with patch(
             "lib.core.qt_bridge.world_object_backend.resize_image_resource",
@@ -190,7 +191,7 @@ class WorldObjectBackendTests(unittest.TestCase):
 
         self.assertEqual(instance_id, 1)
         factory.assert_called_once_with(
-            "lib.core.qt_bridge.world_objects.speaker",
+            "lib.script.ui.world_objects.speaker",
             "Speaker",
             position=Point(12, 34),
             size=(80, 40),
@@ -198,7 +199,7 @@ class WorldObjectBackendTests(unittest.TestCase):
         )
 
     def test_qt_backend_converts_widget_state_and_geometry_at_adapter_boundary(self):
-        backend = QtWorldObjectBackend()
+        backend = QtWorldObjectBackend(_QT_WORLD_OBJECT_TYPES)
         point = SimpleNamespace(x=lambda: 20, y=lambda: 30)
         geometry = SimpleNamespace(
             x=lambda: 10,
@@ -232,7 +233,7 @@ class WorldObjectBackendTests(unittest.TestCase):
         self.assertEqual(backend.get_geometry(9), Rect(10, 15, 80, 40))
 
     def test_registered_qt_widget_types_are_importable(self):
-        for module_name, class_name in _WORLD_OBJECT_TYPES.values():
+        for module_name, class_name in _QT_WORLD_OBJECT_TYPES.values():
             object_type = getattr(__import__(module_name, fromlist=[class_name]), class_name)
             self.assertTrue(callable(object_type), f"{module_name}.{class_name}")
 

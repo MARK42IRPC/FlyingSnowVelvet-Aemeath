@@ -4,12 +4,19 @@ import configparser
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import urllib.request
 from pathlib import Path
 
-from .catalog import MIN_VERSION, PROJECT_ROOT, TARGET_PYTHON
+from .catalog import (
+    GET_PIP_DOWNLOAD_TIMEOUT,
+    GET_PIP_URLS,
+    MIN_VERSION,
+    PROJECT_ROOT,
+    TARGET_PYTHON,
+)
 from .console import _print_info, _print_kind, _print_stage
 
 
@@ -298,6 +305,32 @@ def _has_pip(python_exe):
 def _fmt_ver(ver):
     return ".".join(str(v) for v in ver)
 
+def _download_get_pip(destination: Path) -> str:
+    part_path = destination.with_name(destination.name + ".part")
+    last_error = "没有可用下载源"
+    for url in GET_PIP_URLS:
+        try:
+            request = urllib.request.Request(
+                url,
+                headers={"User-Agent": "FlyingSnowVelvetInstaller/1.0"},
+            )
+            with urllib.request.urlopen(
+                request,
+                timeout=GET_PIP_DOWNLOAD_TIMEOUT,
+            ) as response, part_path.open("wb") as output:
+                shutil.copyfileobj(response, output, length=256 * 1024)
+            if part_path.stat().st_size <= 0:
+                raise OSError("下载结果为空")
+            part_path.replace(destination)
+            return url
+        except Exception as exc:
+            last_error = f"{url}: {exc}"
+            try:
+                part_path.unlink()
+            except OSError:
+                pass
+    raise OSError(last_error)
+
 def _sort_key(item):
     """Prefer Python 3.11 for the published native dependency wheels."""
     ver, exe = item
@@ -391,7 +424,8 @@ def ensure_pip(python_exe):
 
     tmp = Path(os.environ.get("TEMP", "C:\\Temp")) / "get-pip.py"
     try:
-        urllib.request.urlretrieve("https://bootstrap.pypa.io/get-pip.py", str(tmp))
+        source = _download_get_pip(tmp)
+        print(f"  get-pip.py 下载源: {source}")
         r = _run([python_exe, str(tmp)], timeout=240)
         if r and r.returncode == 0 and _has_pip(python_exe):
             _print_kind("  已通过 get-pip.py 安装 pip", "ok", prefix=False)
@@ -581,6 +615,7 @@ __all__ = (
     '_get_version',
     '_has_pip',
     '_fmt_ver',
+    '_download_get_pip',
     '_sort_key',
     '_fallback_python_selection',
     '_select_ranked_python',

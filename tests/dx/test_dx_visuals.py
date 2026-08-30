@@ -173,8 +173,11 @@ class DxVisualDeclarationTests(unittest.TestCase):
         script = Script()
         manager = type("Manager", (), {"get_script": lambda _self, _id: script})()
         window = _FakeOverlayWindow()
-        overlay = DxParticleOverlay(DxLoopContext(), window=window)
-        overlay._particle_manager = manager
+        overlay = DxParticleOverlay(
+            DxLoopContext(),
+            window=window,
+            particle_manager=manager,
+        )
         try:
             request = Event(EventType.PARTICLE_REQUEST, {
                 "particle_id": "test",
@@ -200,8 +203,11 @@ class DxVisualDeclarationTests(unittest.TestCase):
         script = Script()
         manager = type("Manager", (), {"get_script": lambda _self, _id: script})()
         window = _FakeOverlayWindow()
-        overlay = DxEffectOverlay(DxLoopContext(), window=window)
-        overlay._effect_manager = manager
+        overlay = DxEffectOverlay(
+            DxLoopContext(),
+            window=window,
+            effect_manager=manager,
+        )
         try:
             overlay._on_effect_request(Event(EventType.EFFECT_REQUEST, {
                 "effect_id": "test",

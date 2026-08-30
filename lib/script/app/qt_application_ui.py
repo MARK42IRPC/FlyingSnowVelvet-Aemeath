@@ -61,7 +61,7 @@ class QtApplicationUiHost:
             self._announcement_controller.open_from_tray()
 
     def open_settings(self) -> None:
-        from lib.core.qt_bridge.tray_icon import get_tray_icon
+        from lib.script.ui.tray_icon import get_tray_icon
 
         tray = get_tray_icon()
         if tray is None or not tray.initialize():

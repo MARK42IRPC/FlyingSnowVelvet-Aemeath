@@ -10,7 +10,7 @@ from lib.core.event.center        import get_event_center, EventType, Event
 from lib.core.clickthrough_state  import is_clickthrough_enabled
 from lib.core.physics             import get_physics_world, PhysicsBody
 from lib.core.unified_draw import Layer, get_layer_manager
-from lib.core.voice.snow          import SnowSound
+from lib.script.voice.snow          import SnowSound
 from lib.core.graphics.resources import ImageResource
 from lib.core.graphics.visuals import build_world_object_batch
 from lib.core.qt_bridge.draw_backend import QtDrawBackend

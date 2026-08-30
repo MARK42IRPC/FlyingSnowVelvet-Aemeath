@@ -14,7 +14,7 @@ from typing import Tuple
 from lib.core.graphics.types import Color
 from lib.core.screen_utils import get_virtual_screen_rect
 from lib.script.practical.base_particle import BaseParticleScript, per_second_delta
-from lib.core.plugin_registry import register_particle
+from lib.script.plugin_registry import register_particle
 
 
 @register_particle("snowball_drift")

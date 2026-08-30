@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from lib.core.plugin_registry import register_effect
+from lib.script.plugin_registry import register_effect
 from lib.script.effects.base_effect import (
     BaseEffectScript,
     clamp01,

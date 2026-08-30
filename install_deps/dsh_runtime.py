@@ -10,6 +10,7 @@ import time
 import urllib.error
 import urllib.parse
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Protocol
 
@@ -17,6 +18,8 @@ from typing import Protocol
 class InstallerApi(Protocol):
     PROJECT_ROOT: Path
     RESOURCE_SOURCE_HOSTS: dict[str, str]
+    NPM_REGISTRIES: list[dict[str, str]]
+    DSH_RUNTIME_INSTALL_TIMEOUT: int
     dsh_config: object
 
     def _print_stage(self, step: int, text: str) -> None: ...
@@ -24,6 +27,9 @@ class InstallerApi(Protocol):
     def _dsh_runtime_ready(self) -> tuple[bool, str]: ...
     def _node_tree_ready(self, root: Path) -> tuple[bool, str]: ...
     def _run_dsh_npm_ci(self) -> tuple[bool, str]: ...
+    def _run_command_with_progress(self, command, **kwargs) -> tuple[int, str]: ...
+    def _summarize_pip_failure(self, output: str) -> str: ...
+    def _tcp_ms(self, host: str, port: int = 443, timeout: float = 4.0) -> float: ...
     def _dsh_node_urls(self) -> tuple[str, ...]: ...
     def _rmtree_if_exists(self, path: Path, *, ignore_errors: bool = True) -> None: ...
     def _unlink_if_exists(self, path: Path, *, ignore_errors: bool = False) -> None: ...
@@ -33,6 +39,67 @@ class InstallerApi(Protocol):
 
 _REPLACE_RETRY_DELAYS = (0.15, 0.3, 0.6, 1.0, 1.5)
 _RETRYABLE_WINDOWS_ERRORS = {5, 32}
+
+
+def _ordered_npm_registries(api: InstallerApi) -> tuple[dict[str, str], ...]:
+    registries = tuple(api.NPM_REGISTRIES)
+    if len(registries) <= 1:
+        return registries
+
+    print("\n  正在并发测速 npm 依赖镜像...")
+    with ThreadPoolExecutor(max_workers=len(registries), thread_name_prefix="npm-registry") as executor:
+        latencies = list(
+            executor.map(lambda source: api._tcp_ms(source["host"], timeout=2.0), registries)
+        )
+    scored = list(zip(latencies, registries))
+    for latency, source in scored:
+        if latency == float("inf"):
+            print(f"    {source['name']:<12} unreachable")
+        else:
+            print(f"    {source['name']:<12} {latency:>7.0f} ms")
+    scored.sort(key=lambda item: (item[0], registries.index(item[1])))
+    ordered = tuple(source for _latency, source in scored)
+    if scored[0][0] == float("inf"):
+        api._print_warn("  npm 镜像均不可达，将按清单顺序逐一尝试")
+        return registries
+    print(f"  npm 依赖优先源: {ordered[0]['name']}")
+    return ordered
+
+
+def run_npm_ci(api: InstallerApi) -> tuple[bool, str]:
+    config = api.dsh_config
+    project_root = api.PROJECT_ROOT
+    node = config.node_executable(project_root)
+    npm_cli = config.npm_cli_path(project_root)
+    runtime_root = config.dsh_runtime_root(project_root)
+    last_detail = "npm 未返回错误详情"
+    for source in _ordered_npm_registries(api):
+        command = [
+            str(node),
+            str(npm_cli),
+            "ci",
+            "--omit=dev",
+            "--ignore-scripts",
+            "--no-audit",
+            "--no-fund",
+            f"--registry={source['url']}",
+            "--replace-registry-host=always",
+            "--fetch-retries=2",
+            "--fetch-timeout=60000",
+        ]
+        print(f"  使用 {source['name']} 安装 DSH lockfile 依赖（不执行生命周期脚本）")
+        return_code, output = api._run_command_with_progress(
+            command,
+            label=f"DSH npm ci ({source['name']})",
+            kind="npm",
+            timeout=api.DSH_RUNTIME_INSTALL_TIMEOUT,
+            cwd=runtime_root,
+        )
+        if return_code == 0:
+            return True, ""
+        last_detail = f"{source['name']}：{api._summarize_pip_failure(output or last_detail)}"
+        api._print_warn(f"  npm 镜像安装失败，准备切换：{last_detail}")
+    return False, last_detail
 
 
 def _rename_with_retry(source: Path, target: Path) -> None:
@@ -109,7 +176,6 @@ def ensure_runtime(api: InstallerApi) -> bool:
                 )
                 try:
                     print(f"  下载 Node 运行时 [{index}/{len(urls)}] ({source_name})")
-                    api._unlink_if_exists(part_path, ignore_errors=True)
                     api._stream_download_with_progress(
                         url,
                         part_path,
@@ -117,16 +183,21 @@ def ensure_runtime(api: InstallerApi) -> bool:
                     )
                     digest = hashlib.sha256(part_path.read_bytes()).hexdigest()
                     if digest.lower() != config.NODE_ARCHIVE_SHA256.lower():
+                        api._unlink_if_exists(part_path, ignore_errors=True)
                         raise ValueError(
                             "Node ZIP SHA-256 不匹配，"
                             f"期望 {config.NODE_ARCHIVE_SHA256}，实际 {digest}"
                         )
+                    with zipfile.ZipFile(part_path, "r") as archive:
+                        bad_member = archive.testzip()
+                    if bad_member is not None:
+                        api._unlink_if_exists(part_path, ignore_errors=True)
+                        raise zipfile.BadZipFile(f"Node ZIP 损坏成员: {bad_member}")
                     part_path.replace(archive_path)
                     break
                 except (urllib.error.URLError, OSError, ValueError, zipfile.BadZipFile) as exc:
                     last_detail = f"{source_name}：{exc}"
                     api._print_warn(f"  Node 下载/校验失败：{last_detail}")
-                    api._unlink_if_exists(part_path, ignore_errors=True)
             else:
                 api._print_warn(f"  Node 运行时准备失败：{last_detail}")
                 return False

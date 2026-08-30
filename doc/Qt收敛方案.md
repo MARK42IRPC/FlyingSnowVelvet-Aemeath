@@ -72,7 +72,6 @@ lib/core/qt_bridge/
   screen_capture.py # 主屏幕截图与 PNG 编码
   widget_anchors.py # QWidget/QPoint 锚点兼容适配
   workbench_page.py # 可独立显示或嵌入工作台的 Qt 工具页共享宿主
-  world_object_assets.py # ImageResource 到 Qt 图片的边界转换
   world_object_backend.py # 稳定对象 ID 到 Qt 窗口类型的注册
   world_object_factory.py # 世界对象 QWidget 类型解析、坐标转换和实例化
   world_objects/   # 摩托、闹钟、沙发、雪堆、雪球、雪豹和音响窗口
@@ -174,7 +173,7 @@ Qt 后端负责：
 - `BaseEntity` 和 `PetWindow` 是无 Qt 控制器；`QtPetWindow`、`QtPetWidget`、主宠控件创建、窗口移动、穿透和绘制位于 `qt_bridge`。
 - 托盘、粒子、特效、GIF、屏幕截图、颜色和字体实现均位于 `qt_bridge`，旧核心兼容壳和 `script.app.qt_runtime` 已删除。
 - 主宠、托盘和覆盖层生命周期已收敛到 `PetWindowHost`、`TrayHost` 和 `OverlayHost`；`ApplicationState` 不再连接 pyqtSignal、读取主宠私有 timing manager 或直接关闭/延迟销毁 QWidget。
-- 世界对象管理器只依赖 `world_objects` 和核心几何，使用稳定 ID 创建对象；七个 QWidget 窗口已移入 `qt_bridge/world_objects/`。
+- 世界对象管理器只依赖 `world_objects` 和核心几何，使用稳定 ID 创建对象；七个产品 QWidget 窗口位于 `lib/script/ui/world_objects/`，由 Qt 组合根注入后端。
 - 世界对象 manager 只持有 `ImageResource` 和 `WorldObjectInstance`，不保存 QWidget、QPixmap 或 PhysicsBody；中心、矩形、状态和雪球运动快照在 Qt 适配层转换为核心 `Point/Rect`/纯数据。音响管理器不再拥有搜索和登录对话框生命周期。
 - Qt `BaseQrDialog` 与 DX application UI 已消费同一个 `ApplicationPanelVisual`，二维码主体的 Qt 基准尺寸、主题、布局、PNG 解码和资源目标尺寸不再由两个后端分别维护。
 - DX 基础通知和七类世界对象视觉批次已迁到共享 presenter；相关 DX bridge 只管理窗口、事件、低级音频采样、对象状态和批次提交。

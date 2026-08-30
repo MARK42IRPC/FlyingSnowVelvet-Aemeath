@@ -3377,22 +3377,26 @@ class AISettingsPanel(QWidget):
     @staticmethod
     def _get_autostart_enabled() -> bool:
         try:
-            from lib.core.qt_bridge.tray_icon import get_tray_icon
-            tray = get_tray_icon()
-            return bool(tray._is_autostart_enabled())
+            from lib.script.app.autostart import is_autostart_enabled
+
+            return bool(is_autostart_enabled())
         except Exception:
             return False
 
     def _set_autostart_enabled(self, enabled: bool) -> None:
         try:
-            from lib.core.qt_bridge.tray_icon import get_tray_icon
-            tray = get_tray_icon()
+            from lib.script.app.tray_actions import set_autostart_enabled
+
             target = bool(enabled)
-            tray._on_toggle_autostart(target, source="panel")
-            actual = bool(tray._is_autostart_enabled())
+            result = set_autostart_enabled(target)
+            actual = bool(result.enabled)
+            self._ec.publish(Event(EventType.AUTOSTART_STATUS_CHANGE, {
+                "enabled": actual,
+                "source": "panel",
+            }))
             self._set_autostart_checkbox_checked(actual)
-            if actual != target:
-                raise ValueError("开机启动设置未生效，请检查用户 Startup 文件夹和日志")
+            if not result.success or actual != target:
+                raise ValueError(result.message)
         except ValueError:
             raise
         except Exception as e:

@@ -74,8 +74,7 @@ class QtEffectBackendTests(unittest.TestCase):
             def get_script(self, _effect_id):
                 return Script()
 
-        overlay = EffectOverlay()
-        overlay._effect_manager = Manager()
+        overlay = EffectOverlay(Manager())
         try:
             overlay._on_effect_request(Event(EventType.EFFECT_REQUEST, {
                 "effect_id": "shared",

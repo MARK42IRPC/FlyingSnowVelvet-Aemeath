@@ -418,7 +418,7 @@ class VisualPresenterTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         forbidden = {"drawPixmap", "drawText", "setTransform", "Color", "FontSpec", "TextCommand", "SpriteCommand"}
         violations = []
-        for path in (root / "lib/core/qt_bridge/world_objects").glob("*.py"):
+        for path in (root / "lib/script/ui/world_objects").glob("*.py"):
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
             for node in ast.walk(tree):
                 if not isinstance(node, ast.Call):

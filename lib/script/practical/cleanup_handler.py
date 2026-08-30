@@ -1,7 +1,7 @@
 """清理命令处理器 - 清除场上的雪豹、沙发、摩托、闹钟、音响、雪堆等 obj 类物体"""
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.hash_cmd_registry import get_hash_cmd_registry
-from lib.core.plugin_registry import get_manager
+from lib.script.plugin_registry import get_manager
 from lib.core.logger import get_logger
 
 _logger = get_logger(__name__)

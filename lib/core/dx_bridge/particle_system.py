@@ -10,7 +10,6 @@ from lib.core.graphics.types import Rect
 from lib.core.graphics.visuals import build_particle_batch as _build_particle_batch
 from lib.core.layer import Layer, normalize_layer
 from lib.core.logger import get_logger
-from lib.script.practical.manager import get_particle_script_manager
 
 from .loop import DxLoopContext
 from .overlay_window import DxOverlayWindow
@@ -43,9 +42,12 @@ class DxParticleOverlay:
         screen_provider: DxScreenProvider | None = None,
         window: DxOverlayWindow | None = None,
         warp: bool = False,
+        particle_manager=None,
     ) -> None:
         self._event_center = get_event_center()
-        self._particle_manager = get_particle_script_manager()
+        if particle_manager is None:
+            raise ValueError("DX particle manager is required")
+        self._particle_manager = particle_manager
         self._window = window or DxOverlayWindow(
             context,
             Layer.PARTICLE,
@@ -182,9 +184,17 @@ def create_particle_overlay_factory(
     *,
     screen_provider: DxScreenProvider | None = None,
     warp: bool = False,
+    particle_manager_provider=None,
 ) -> Callable[[], DxParticleOverlay]:
     def create() -> DxParticleOverlay:
-        return DxParticleOverlay(context, screen_provider=screen_provider, warp=warp)
+        if particle_manager_provider is None:
+            raise ValueError("DX particle manager provider is required")
+        return DxParticleOverlay(
+            context,
+            screen_provider=screen_provider,
+            warp=warp,
+            particle_manager=particle_manager_provider(),
+        )
 
     return create
 

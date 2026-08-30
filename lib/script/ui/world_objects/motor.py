@@ -1,4 +1,4 @@
-"""Qt host for the draggable sofa world object."""
+"""Qt host for the interactive motor world object."""
 import time
 from collections import deque
 
@@ -6,16 +6,16 @@ from PyQt5.QtWidgets import QApplication, QWidget
 from PyQt5.QtCore    import Qt, QPoint
 from PyQt5.QtGui     import QPainter
 
-from config.config            import BEHAVIOR, PHYSICS
+from config.config            import BEHAVIOR, PHYSICS, MORTOR
 from lib.core.unified_draw import Layer, get_layer_manager
 from lib.core.event.center     import get_event_center, EventType, Event
 from lib.core.clickthrough_state import is_clickthrough_enabled
 from lib.core.physics          import get_physics_world, PhysicsBody
-from lib.core.particle_utils   import spawn_particle_at_point
 from lib.core.qt_bridge.screen import get_screen_geometry_for_point
-from lib.core.voice.sofa       import SofaSound
+from lib.script.voice.chrack     import ChrackSound
 from lib.core.graphics.resources import ImageResource
-from lib.core.graphics.visuals import build_world_object_batch
+from lib.core.graphics.types import Point
+from lib.core.graphics.visuals import build_world_object_batch, sample_motor_jitter
 from lib.core.qt_bridge.draw_backend import QtDrawBackend
 
 
@@ -29,15 +29,23 @@ _FADE_INTERVAL_MS: int = PHYSICS.get('fade_interval_ms', 50)
 _MAX_BOUNCES: int = PHYSICS.get('max_bounces', 5)
 _DRAG_TRAIL_WINDOW_SEC: float = 0.10
 _RELEASE_SAMPLE_MIN_DT_SEC: float = 1.0 / 60.0
-
-
-class Sofa(QWidget):
+_BASE_MOVE_SPEED: float = float(MORTOR.get('move_speed_px_per_frame', 2.0))
+_ACCEL_PER_TICK: float = float(MORTOR.get('move_accel_per_tick', 1.0))
+_DECEL_PER_TICK: float = float(MORTOR.get('move_decel_per_tick', 2.0))
+_MAX_MOVE_SPEED: float = float(MORTOR.get('move_speed_max', 10.0))
+_JUMP_VY: float = float(MORTOR.get('jump_vy', PHYSICS.get('snow_leopard_jump_vy', -13.0)))
+_JUMP_COOLDOWN_SEC: float = float(MORTOR.get('jump_cooldown_sec', 2.0))
+_JUMP_MAX_CHARGES: int = int(MORTOR.get('jump_max_charges', 2))
+_GROUND_EPSILON: float = 1.0
+class Mortor(QWidget):
     """
-    单个沙发窗口。
+    单个摩托窗口。
 
-    - 左键按住拖拽：移动沙发到任意位置，松开时继承拖拽速度（可"丢出"）
+    - 左键按住拖拽：移动摩托到任意位置，松开时继承拖拽速度（可"丢出"）
     - 左键双击：淡出消失
-    - 右键单击：水平镜像翻转
+    - 方向键控制：左/右键切换朝向并驱动物理水平速度（按住加速，松开减速）
+    - ↑ 键跳跃：2 秒冷却充能，最多 2 层，可空中跳跃
+    - 渲染抖动：相对原先幅度减半（静止约 ±0.5px，移动约 ±1.5px）
     - 物理弹跳：地面为屏幕高度 90%，最多弹跳 5 次，会与左右屏幕边界碰撞
     - 重新拖拽：中断物理、重置弹跳计数
     """
@@ -56,11 +64,19 @@ class Sofa(QWidget):
         super().__init__()
 
         if not isinstance(visual_resource, ImageResource):
-            raise TypeError("sofa visual_resource must be an ImageResource")
+            raise TypeError("motor visual_resource must be an ImageResource")
         self._visual_resource = visual_resource
         self._draw_backend = QtDrawBackend()
         self._size           = size
-        self._flipped        = False
+        self._flipped        = False  # 默认朝右（右方向）
+        self._move_dir       = 1      # 1=右，-1=左
+        self._move_speed     = 0.0
+        self._left_pressed   = False
+        self._right_pressed  = False
+        self._up_pressed     = False
+        self._jump_charges   = max(1, _JUMP_MAX_CHARGES)
+        self._next_jump_charge_time: float | None = None
+        self._render_jitter  = QPoint(0, 0)
         self._alive          = True
         self._alpha          = 1.0
         self._fading         = False
@@ -85,6 +101,7 @@ class Sofa(QWidget):
         self.setAttribute(Qt.WA_TransparentForMouseEvents, is_clickthrough_enabled())
         self.setFixedSize(*size)
         self.setCursor(Qt.OpenHandCursor)
+        self.setFocusPolicy(Qt.StrongFocus)
 
         # ── 物理体 ────────────────────────────────────────────────
         w, h     = size
@@ -118,14 +135,20 @@ class Sofa(QWidget):
         self.move(position)
         self.show()
         get_layer_manager().register(self, Layer.WORLD_OBJECT)
+        self.activateWindow()
+        self.setFocus(Qt.ActiveWindowFocusReason)
 
         # 事件中心
         self._event_center = get_event_center()
         self._event_center.subscribe(EventType.TICK,                   self._on_tick_click)
+        self._event_center.subscribe(EventType.TICK,                   self._on_tick_motion)
+        self._event_center.subscribe(EventType.TICK,                   self._on_tick_render_jitter)
+        self._event_center.subscribe(EventType.KEY_PRESS,              self._on_key_press)
+        self._event_center.subscribe(EventType.KEY_RELEASE,            self._on_key_release)
         self._event_center.subscribe(EventType.UI_CLICKTHROUGH_TOGGLE, self._on_clickthrough_toggle)
 
         # 弹跳音效
-        self._sofa_sound = SofaSound()
+        self._chrack_sound = ChrackSound()
 
         # 召唤时立即激活物理体，使其下落
         self._physics_body.active = True
@@ -135,7 +158,7 @@ class Sofa(QWidget):
     # ==================================================================
 
     def get_center(self) -> QPoint:
-        """返回沙发锚点的全局屏幕坐标（几何中心向上偏移 30px）。"""
+        """返回摩托锚点的全局屏幕坐标（几何中心向上偏移 30px）。"""
         return QPoint(
             self.x() + self._size[0] // 2,
             self.y() + self._size[1] // 2 - 30,
@@ -177,6 +200,8 @@ class Sofa(QWidget):
         self._pending_click_ticks = 0
         self._fade_tick_count = 0
         self._event_center.unsubscribe(EventType.TICK, self._on_tick_click)
+        self._event_center.unsubscribe(EventType.TICK, self._on_tick_motion)
+        self._event_center.unsubscribe(EventType.TICK, self._on_tick_render_jitter)
         self._cleanup_physics()
         self._event_center.subscribe(EventType.TICK, self._tick_fade)
 
@@ -217,27 +242,12 @@ class Sofa(QWidget):
             self.move(QPoint(int(body.render_x), int(body.render_y)))
 
     def _on_physics_wall_hit(self, body: PhysicsBody, side: str) -> None:
-        """
-        碰到屏幕左/右边界时翻转沙发朝向。
-
-        物理世界已将水平速度反向，此处同步图片朝向：
-          - 碰左边界 → 速度变为向右 → 翻转（_flipped=True）
-          - 碰右边界 → 速度变为向左 → 正向（_flipped=False）
-        """
-        self._flipped = (side == 'left')
-        self.update()
-        # 在碰墙接触边的中点生成碰撞粒子
-        cx = int(body.x) if side == 'left' else int(body.x + body.width)
-        cy = int(body.y + body.height / 2)
-        spawn_particle_at_point(cx, cy, 'collision')
-        self._sofa_sound.play()
+        """碰墙时仅播放弹跳音效（不触发翻转和粒子）。"""
+        self._chrack_sound.play()
 
     def _on_physics_ground_bounce(self, body: PhysicsBody, stopped: bool) -> None:
-        """触地时在沙发底部中心生成碰撞粒子并播放弹跳音效。"""
-        cx = int(body.x + body.width  / 2)
-        cy = int(body.y + body.height)
-        spawn_particle_at_point(cx, cy, 'collision')
-        self._sofa_sound.play()
+        """触地时仅播放弹跳音效（不触发粒子）。"""
+        self._chrack_sound.play()
 
     # ==================================================================
     # 双击判定（与 ClickHandler 相同的 TICK 计数机制）
@@ -261,6 +271,83 @@ class Sofa(QWidget):
     # 事件响应
     # ==================================================================
 
+    def _on_key_press(self, event: Event) -> None:
+        """响应方向键：切换朝向与移动方向。"""
+        if event.handled or self._fading:
+            return
+        if event.data.get('is_auto_repeat', False):
+            return
+        key = event.data.get('key')
+        if key == Qt.Key_Left:
+            self._left_pressed = True
+            self._move_dir = -1
+            self._flipped = True
+            self.update()
+        elif key == Qt.Key_Right:
+            self._right_pressed = True
+            self._move_dir = 1
+            self._flipped = False
+            self.update()
+        elif key == Qt.Key_Up:
+            if not self._up_pressed:
+                self._up_pressed = True
+                self._request_jump()
+
+    def _on_key_release(self, event: Event) -> None:
+        """响应方向键释放：停止对应方向的持续移动。"""
+        if event.data.get('is_auto_repeat', False):
+            return
+        key = event.data.get('key')
+        if key == Qt.Key_Left:
+            self._left_pressed = False
+        elif key == Qt.Key_Right:
+            self._right_pressed = False
+        elif key == Qt.Key_Up:
+            self._up_pressed = False
+
+    def _on_tick_motion(self, event: Event) -> None:
+        """按 tick 更新方向键目标速度（按住加速，松开减速）。"""
+        if self._fading or not self._alive:
+            return
+        self._recharge_jump_charges()
+        if self._drag_offset is not None:
+            return
+
+        input_dir = 0
+        if self._left_pressed and not self._right_pressed:
+            input_dir = -1
+        elif self._right_pressed and not self._left_pressed:
+            input_dir = 1
+
+        if input_dir != 0:
+            self._move_dir = input_dir
+            self._flipped = (input_dir < 0)
+            if self._move_speed <= 0.0:
+                self._move_speed = _BASE_MOVE_SPEED
+            else:
+                self._move_speed = min(_MAX_MOVE_SPEED, self._move_speed + _ACCEL_PER_TICK)
+        else:
+            self._move_speed = max(0.0, self._move_speed - _DECEL_PER_TICK)
+
+        self._apply_keyboard_physics()
+
+    def _on_tick_render_jitter(self, event: Event) -> None:
+        """按 tick 更新渲染抖动偏移（相对原先幅度减半）。"""
+        if self._fading or not self._alive:
+            return
+
+        is_moving = (
+            self._move_speed > 0.0
+            or self._drag_offset is not None
+            or (self._physics_body.active and (
+                abs(self._physics_body.vx) > 0.01
+                or abs(self._physics_body.vy) > 0.01
+            ))
+        )
+        jitter = sample_motor_jitter(is_moving)
+        self._render_jitter = QPoint(int(jitter.x), int(jitter.y))
+        self.update()
+
     def _on_clickthrough_toggle(self, event: Event) -> None:
         """穿透模式开启/关闭时同步自身鼠标透传状态。"""
         self.setAttribute(Qt.WA_TransparentForMouseEvents,
@@ -270,13 +357,89 @@ class Sofa(QWidget):
     # 内部辅助
     # ==================================================================
 
+    def _is_airborne(self) -> bool:
+        """是否离地（含上升/下降过程）。"""
+        body = self._physics_body
+        return (body.y < body.ground_y - _GROUND_EPSILON) or (abs(body.vy) > 1.0)
+
+    def _request_jump(self) -> None:
+        """消耗一层跳跃充能并触发跳跃（允许空中跳）。"""
+        if self._drag_offset is not None:
+            return
+        if self._jump_charges <= 0:
+            return
+
+        self._jump_charges -= 1
+        if self._jump_charges < _JUMP_MAX_CHARGES and self._next_jump_charge_time is None:
+            self._next_jump_charge_time = time.monotonic() + _JUMP_COOLDOWN_SEC
+
+        body = self._physics_body
+        body.x = float(self.x())
+        body.y = float(self.y())
+        body.prev_x = body.x
+        body.prev_y = body.y
+        body.render_x = body.x
+        body.render_y = body.y
+        body.bounce_count = 0
+        body.gravity_enabled = True
+        body.active = True
+        body.vy = _JUMP_VY
+        if self._move_speed > 0.0:
+            body.vx = self._move_dir * self._move_speed
+    
+    def _recharge_jump_charges(self) -> None:
+        """按冷却时间恢复跳跃充能。"""
+        if self._jump_charges >= _JUMP_MAX_CHARGES:
+            self._next_jump_charge_time = None
+            return
+
+        now = time.monotonic()
+        if self._next_jump_charge_time is None:
+            self._next_jump_charge_time = now + _JUMP_COOLDOWN_SEC
+            return
+
+        while self._jump_charges < _JUMP_MAX_CHARGES and now >= self._next_jump_charge_time:
+            self._jump_charges += 1
+            if self._jump_charges < _JUMP_MAX_CHARGES:
+                self._next_jump_charge_time += _JUMP_COOLDOWN_SEC
+            else:
+                self._next_jump_charge_time = None
+
+    def _apply_keyboard_physics(self) -> None:
+        """将方向键速度写入物理体，由 PhysicsWorld 统一推进位置。"""
+        body = self._physics_body
+        # 同步当前位置，避免长时间 idle 后首次加速出现位移跳变
+        body.x = float(self.x())
+        body.y = float(self.y())
+        body.prev_x = body.x
+        body.prev_y = body.y
+        body.render_x = body.x
+        body.render_y = body.y
+
+        if self._is_airborne():
+            # 空中阶段始终受重力；可保留水平控制
+            body.gravity_enabled = True
+            if self._move_speed > 0.0:
+                body.vx = self._move_dir * self._move_speed
+            body.active = True
+            return
+
+        if self._move_speed > 0.0:
+            # 地面行驶：关闭重力，仅用 vx 驱动，避免地面微弹跳
+            body.gravity_enabled = False
+            body.vy = 0.0
+            body.vx = self._move_dir * self._move_speed
+            body.active = True
+            return
+
+        # 无输入且已接地：停稳
+        body.gravity_enabled = True
+        body.vx = 0.0
+        body.vy = 0.0
+        body.active = False
+
     def _compute_release_velocity(self, release_pos: QPoint) -> tuple[float, float]:
-        """
-        计算松手瞬时速度：
-        1. 在松手时补一帧采样；
-        2. 以松手时刻为基准裁剪轨迹窗口；
-        3. 使用末段有效采样计算速度。
-        """
+        """按松手瞬时采样计算投掷速度。"""
         now = time.monotonic()
         self._drag_trail.append((now, release_pos))
 
@@ -349,8 +512,11 @@ class Sofa(QWidget):
 
         拖拽提交延迟到 mouseMoveEvent：移动 ≥ _DRAG_THRESHOLD 像素才正式进入拖拽，
         避免点击/双击被拖拽逻辑拦截。
-        右键单击 → 翻转图片朝向。
         """
+        if not self._fading:
+            self.activateWindow()
+            self.setFocus(Qt.MouseFocusReason)
+
         if event.button() == Qt.LeftButton and not self._fading:
             if self._pending_click:
                 # 双击间隔内二次按下 → 双击确认 → 淡出
@@ -371,11 +537,53 @@ class Sofa(QWidget):
             self._press_pos   = event.globalPos()
             self._drag_offset = None
             self._drag_trail.clear()
-        elif event.button() == Qt.RightButton and not self._fading:
-            self._flipped = not self._flipped
-            self.update()
         else:
             super().mousePressEvent(event)
+
+    def keyPressEvent(self, event):
+        """直接接收方向键（焦点在摩托窗口时生效）。"""
+        key = event.key()
+        if key == Qt.Key_Left:
+            self._left_pressed = True
+            self._move_dir = -1
+            self._flipped = True
+            self.update()
+            event.accept()
+            return
+        if key == Qt.Key_Right:
+            self._right_pressed = True
+            self._move_dir = 1
+            self._flipped = False
+            self.update()
+            event.accept()
+            return
+        if key == Qt.Key_Up:
+            if not event.isAutoRepeat() and not self._up_pressed:
+                self._up_pressed = True
+                self._request_jump()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def keyReleaseEvent(self, event):
+        """直接接收方向键释放（焦点在摩托窗口时生效）。"""
+        if event.isAutoRepeat():
+            event.accept()
+            return
+        key = event.key()
+        if key == Qt.Key_Left:
+            self._left_pressed = False
+            event.accept()
+            return
+        if key == Qt.Key_Right:
+            self._right_pressed = False
+            event.accept()
+            return
+        if key == Qt.Key_Up:
+            self._up_pressed = False
+            event.accept()
+            return
+        super().keyReleaseEvent(event)
 
     def mouseMoveEvent(self, event):
         """
@@ -476,14 +684,15 @@ class Sofa(QWidget):
             super().mouseReleaseEvent(event)
 
     def paintEvent(self, event):
-        """Execute the shared world-object sprite batch."""
+        """Execute the shared sprite batch with explicit jitter state."""
         painter = QPainter(self)
         self._draw_backend.render(build_world_object_batch(
             self._visual_resource,
             0,
             alpha=self._alpha,
             flipped=self._flipped,
-            object_type="sofa",
+            object_type="motor",
+            position=Point(self._render_jitter.x(), self._render_jitter.y()),
         ), painter)
         painter.end()
 
@@ -491,8 +700,13 @@ class Sofa(QWidget):
         """关闭时确保所有事件订阅和物理资源已释放（兜底清理）。"""
         self._event_center.unsubscribe(EventType.TICK,                   self._on_tick_click)
         self._event_center.unsubscribe(EventType.TICK,                   self._tick_fade)
+        self._event_center.unsubscribe(EventType.TICK,                   self._on_tick_motion)
+        self._event_center.unsubscribe(EventType.TICK,                   self._on_tick_render_jitter)
+        self._event_center.unsubscribe(EventType.KEY_PRESS,              self._on_key_press)
+        self._event_center.unsubscribe(EventType.KEY_RELEASE,            self._on_key_release)
         self._event_center.unsubscribe(EventType.UI_CLICKTHROUGH_TOGGLE, self._on_clickthrough_toggle)
         self._cleanup_physics()
         self._draw_backend.cleanup()
         self._alive = False
         super().closeEvent(event)
+

@@ -389,7 +389,11 @@ class OfficeService:
             except Exception as exc:
                 logger.debug("[OfficeService] 运行时预热失败: %s", exc)
 
-        get_compute_hub().submit(warmup_worker)
+        get_compute_hub().submit_latest(
+            "office_runtime_warmup",
+            warmup_worker,
+            executor="io",
+        )
 
     def submit_text(
         self,

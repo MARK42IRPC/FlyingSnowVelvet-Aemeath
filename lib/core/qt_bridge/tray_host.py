@@ -3,15 +3,15 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from lib.core.qt_bridge.tray_icon import cleanup_tray_icon, get_tray_icon
 from lib.core.tray_host import TrayCommandCallback, TrayHost, TrayMenuState
 
 
 class QtTrayHost:
     """Hide Qt signals and singleton teardown behind ``TrayHost``."""
 
-    def __init__(self, tray_icon=None) -> None:
-        self._tray_icon = tray_icon if tray_icon is not None else get_tray_icon()
+    def __init__(self, tray_icon, cleanup_callback: Callable[[], None]) -> None:
+        self._tray_icon = tray_icon
+        self._cleanup_callback = cleanup_callback
 
     def connect_quit_requested(self, callback: Callable[[], None]) -> None:
         self._tray_icon.quit_requested.connect(callback)
@@ -50,8 +50,16 @@ class QtTrayHost:
         self._tray_icon.begin_shutdown()
 
     def cleanup(self) -> None:
-        cleanup_tray_icon()
+        self._cleanup_callback()
 
 
-def get_tray_host() -> TrayHost:
-    return QtTrayHost()
+def create_tray_host_factory(
+    tray_icon_provider: Callable[[], object],
+    cleanup_callback: Callable[[], None],
+):
+    """Bind the product tray implementation to the core host protocol."""
+
+    def create() -> TrayHost:
+        return QtTrayHost(tray_icon_provider(), cleanup_callback)
+
+    return create

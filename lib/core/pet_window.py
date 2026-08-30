@@ -16,10 +16,8 @@ from lib.core.event.mouse_handler import MouseEventHandler
 from lib.core.logger import get_logger
 
 _logger = get_logger(__name__)
-from lib.core.voice.ams_startup import AmsStartupSound
 from lib.core.event.key_handler import KeyEventHandler
 from lib.core.event.center import get_event_center, EventType, Event
-from lib.script.mainpet.state import StateMachine
 from config.user_scale_config import get_user_scale_config
 from lib.core.draw_core import DrawRequest, get_draw_core
 from lib.core.layer import Layer, normalize_layer
@@ -87,7 +85,15 @@ class PetWindow(BaseEntity):
     def _host_shutdown_ui(self) -> None:
         """Close toolkit UI owned by the pet host."""
 
-    def __init__(self, gifs: dict, particle_overlay: object):
+    def __init__(
+        self,
+        gifs: dict,
+        particle_overlay: object,
+        *,
+        state_machine_factory,
+        startup_sound_factory,
+        interaction_sound_factory,
+    ):
         super().__init__()
 
         self._gifs    = gifs
@@ -129,9 +135,9 @@ class PetWindow(BaseEntity):
         self._key_handler = KeyHandler(self)
 
         # ── 事件处理器 ───────────────────────────────────────────────
-        self._mouse_event_handler = MouseEventHandler(self)
+        self._mouse_event_handler = MouseEventHandler(self, interaction_sound_factory)
         self._key_event_handler = KeyEventHandler(self)
-        self._startup_voice_sound = AmsStartupSound(interruptible=False)
+        self._startup_voice_sound = startup_sound_factory(interruptible=False)
 
         # ── 计时器管理器 ──────────────────────────────────────────────
         self._timing_manager = TimingManager(
@@ -175,7 +181,7 @@ class PetWindow(BaseEntity):
         self._register_all_resources()
 
         # ── 状态机 ────────────────────────────────────────────────────
-        self._state_machine = StateMachine(self, self._timing_manager)
+        self._state_machine = state_machine_factory(self, self._timing_manager)
 
         # ── 移动任务ID ──────────────────────────────────────────────
         self._move_task_id = None

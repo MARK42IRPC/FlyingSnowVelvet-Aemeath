@@ -157,11 +157,11 @@ class BackendRouterTests(unittest.TestCase):
             get_virtual_screen_provider,
             get_window_host_factory,
         )
-        from lib.core.qt_bridge.desktop_backend import configure_qt_desktop_backend
+        from lib.script.app.qt_backend_bootstrap import _configure_qt_backend
         from lib.core.world_objects import get_world_object_backend
 
         router = BackendRouter()
-        router.register_backend("qt", configure_qt_desktop_backend)
+        router.register_backend("qt", _configure_qt_backend)
 
         selection = router.configure_selected_backend("qt")
 

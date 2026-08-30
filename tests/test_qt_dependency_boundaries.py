@@ -116,6 +116,8 @@ class QtDependencyBoundaryTests(unittest.TestCase):
             "lib/script/gemes/packages/official/lahai_tetris/code/lahai_tetris_pkg/widget.py",
             "lib/script/main.py",
             "lib/script/app/qt_backend_bootstrap.py",
+            "lib/script/app/qt_application_ui.py",
+            "lib/script/app/workbench_helper_entry.py",
             "lib/script/workbench/components.py",
             "lib/script/workbench/settings/page_layout.py",
         }
@@ -168,6 +170,9 @@ class QtDependencyBoundaryTests(unittest.TestCase):
         script_root = repo_root / "lib" / "script"
         allowed_files = {
             script_root / "main.py",
+            script_root / "app" / "qt_application_ui.py",
+            script_root / "app" / "qt_backend_bootstrap.py",
+            script_root / "app" / "workbench_helper_entry.py",
             script_root / "workbench" / "components.py",
             script_root / "workbench" / "settings" / "page_layout.py",
         }

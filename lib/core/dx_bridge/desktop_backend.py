@@ -36,11 +36,23 @@ class DxDesktopBackend:
         warp: bool = False,
         context: DxLoopContext | None = None,
         screen_provider: DxScreenProvider | None = None,
+        state_machine_factory=None,
+        startup_sound_factory=None,
+        interaction_sound_factory=None,
+        particle_manager_provider=None,
+        effect_manager_provider=None,
+        workbench_opener=None,
     ) -> None:
         self.context = context or DxLoopContext()
         self.screen_provider = screen_provider or DxScreenProvider()
         self.screen_capture = DxScreenCapture(self.screen_provider)
         self.warp = bool(warp)
+        self._state_machine_factory = state_machine_factory
+        self._startup_sound_factory = startup_sound_factory
+        self._interaction_sound_factory = interaction_sound_factory
+        self._particle_manager_provider = particle_manager_provider
+        self._effect_manager_provider = effect_manager_provider
+        self._workbench_opener = workbench_opener
         self.world_object_backend = DxWorldObjectBackend(
             self.context,
             screen_provider=self.screen_provider,
@@ -70,6 +82,7 @@ class DxDesktopBackend:
             self.context,
             screen_provider=self.screen_provider,
             warp=self.warp,
+            workbench_opener=self._workbench_opener,
         )
 
     def create_scheduler(self) -> DxScheduler:
@@ -106,16 +119,21 @@ class DxDesktopBackend:
             pet_window_factory=create_pet_window_factory(
                 self.context,
                 screen_provider=self.screen_provider,
+                state_machine_factory=self._state_machine_factory,
+                startup_sound_factory=self._startup_sound_factory,
+                interaction_sound_factory=self._interaction_sound_factory,
             ),
             particle_overlay_factory=create_particle_overlay_factory(
                 self.context,
                 screen_provider=self.screen_provider,
                 warp=self.warp,
+                particle_manager_provider=self._particle_manager_provider,
             ),
             effect_overlay_factory=create_effect_overlay_factory(
                 self.context,
                 screen_provider=self.screen_provider,
                 warp=self.warp,
+                effect_manager_provider=self._effect_manager_provider,
             ),
             tray_host_factory=create_tray_host_factory(
                 self.context,
@@ -182,7 +200,16 @@ _active_owner: DxDesktopBackend | None = None
 _active_lock = threading.RLock()
 
 
-def configure_dx_desktop_backend(*, warp: bool = False) -> None:
+def configure_dx_desktop_backend(
+    *,
+    warp: bool = False,
+    state_machine_factory=None,
+    startup_sound_factory=None,
+    interaction_sound_factory=None,
+    particle_manager_provider=None,
+    effect_manager_provider=None,
+    workbench_opener=None,
+) -> None:
     """Install one complete Qt-free DirectX desktop composition."""
     global _active_owner
     with _active_lock:
@@ -194,7 +221,15 @@ def configure_dx_desktop_backend(*, warp: bool = False) -> None:
             configure_world_object_backend(_active_owner.world_object_backend)
             return
 
-        owner = DxDesktopBackend(warp=warp)
+        owner = DxDesktopBackend(
+            warp=warp,
+            state_machine_factory=state_machine_factory,
+            startup_sound_factory=startup_sound_factory,
+            interaction_sound_factory=interaction_sound_factory,
+            particle_manager_provider=particle_manager_provider,
+            effect_manager_provider=effect_manager_provider,
+            workbench_opener=workbench_opener,
+        )
         try:
             bundle = owner.bundle()
             configure_desktop_backend(**bundle.__dict__)

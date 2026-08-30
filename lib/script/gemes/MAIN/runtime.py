@@ -24,7 +24,7 @@ from lib.core.logger import get_logger
 from lib.core.qt_bridge.screen import get_screen_geometry_for_point
 from lib.core.unified_draw import Layer, get_layer_manager
 from lib.core.qt_bridge.render_core import QtRenderCore, QtRenderRequest
-from lib.core.voice.ams_open_lahai_tetris import AmsOpenLahaiTetrisSound
+from lib.script.voice.ams_open_lahai_tetris import AmsOpenLahaiTetrisSound
 from lib.script.gemes.MAIN.game_packages import (
     GamePackageError,
     GamePackageManifest,

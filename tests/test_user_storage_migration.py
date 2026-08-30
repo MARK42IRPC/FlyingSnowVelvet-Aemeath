@@ -6,7 +6,6 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import config.game_user_stats as game_stats_module
 import config.user_scale_config as scale_module
 import config.user_settings as user_settings
 from config.music import volume_config as volume_module
@@ -53,28 +52,6 @@ class UserStorageMigrationTests(unittest.TestCase):
             payload = json.loads(settings_path.read_text(encoding="utf-8"))
             self.assertEqual(payload["overrides"]["audio"]["volume"], 0.14)
             self.assertEqual(volume_module.get_default_volume(), 0.3)
-
-    def test_game_stats_writes_only_canonical_state_file(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            canonical = root / "user" / "state" / "games" / "lahai_tetris.json"
-            shared_root = root / "shared"
-            legacy = shared_root / "resc" / "user" / "games" / "lahai_tetris.json"
-            legacy.parent.mkdir(parents=True)
-            legacy.write_text('{"best_score": 10}', encoding="utf-8")
-
-            with patch.object(game_stats_module, "get_user_state_dir", return_value=canonical), patch.object(
-                game_stats_module, "get_shared_root_dir", return_value=shared_root
-            ), patch.object(game_stats_module, "get_project_root", return_value=root / "project"), patch.object(
-                game_stats_module, "ensure_shared_config_ready"
-            ):
-                manager = game_stats_module.GameUserStats()
-                self.assertEqual(manager.get_best_score(), 10)
-                manager.update_best_score(20)
-
-            self.assertEqual(json.loads(canonical.read_text(encoding="utf-8"))["best_score"], 20)
-            self.assertEqual(json.loads(legacy.read_text(encoding="utf-8"))["best_score"], 10)
-
 
 if __name__ == "__main__":
     unittest.main()

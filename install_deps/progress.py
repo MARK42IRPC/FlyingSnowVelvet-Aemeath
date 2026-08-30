@@ -212,6 +212,8 @@ def _run_pip_requirement_with_progress(
     mirror=None,
     only_binary=None,
 ):
+    from .catalog import PIP_INSTALL_TIMEOUT, PIP_NETWORK_RETRIES, PIP_NETWORK_TIMEOUT
+
     command = _python_module_cmd(
         python_exe,
         "pip",
@@ -221,6 +223,10 @@ def _run_pip_requirement_with_progress(
         "--disable-pip-version-check",
         "--progress-bar",
         "off",
+        "--timeout",
+        str(PIP_NETWORK_TIMEOUT),
+        "--retries",
+        str(PIP_NETWORK_RETRIES),
     )
     if only_binary:
         command.extend(("--only-binary", str(only_binary)))
@@ -263,8 +269,20 @@ def _run_pip_requirement_with_progress(
     output_tail = []
     percent = 5
     reader_done = False
+    deadline = time.monotonic() + PIP_INSTALL_TIMEOUT
     progress_callback(percent)
     while proc.poll() is None or not reader_done:
+        if proc.poll() is None and time.monotonic() >= deadline:
+            try:
+                proc.kill()
+            except OSError:
+                pass
+            try:
+                proc.wait(timeout=5)
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+            reader.join(timeout=1.0)
+            return 124, "pip 安装超时"
         try:
             line = output_queue.get(timeout=0.12)
         except queue.Empty:

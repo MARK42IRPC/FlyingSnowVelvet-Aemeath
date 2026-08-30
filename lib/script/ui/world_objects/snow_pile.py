@@ -11,7 +11,7 @@ from lib.core.event.center    import get_event_center, EventType, Event
 from lib.core.graphics.types import Point
 from lib.core.clickthrough_state import is_clickthrough_enabled
 from lib.core.qt_bridge.screen import get_screen_geometry_for_point
-from lib.core.voice.snow      import SnowSound
+from lib.script.voice.snow      import SnowSound
 from config.config            import PHYSICS, BEHAVIOR
 from lib.core.graphics.resources import ImageResource
 from lib.core.graphics.visuals import build_world_object_batch

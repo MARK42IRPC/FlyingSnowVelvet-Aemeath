@@ -179,6 +179,48 @@ class ApplicationShutdownTests(unittest.TestCase):
 
         state._backend_cleanup.assert_called_once_with()
 
+    def test_component_cleanup_continues_and_only_retries_failed_steps(self):
+        state = ApplicationState.__new__(ApplicationState)
+        state._components_cleaned = False
+        state._component_cleanup_steps_completed = set()
+        state._application_ui = SimpleNamespace(stop_runtime=Mock())
+        state._managers = {}
+        state._cleanup_handler = None
+        failing_cleanup = Mock(side_effect=(RuntimeError("cleanup failed"), None))
+        other_names = (
+            "cleanup_all_managers",
+            "cleanup_stream_memory",
+            "cleanup_tool_dispatcher",
+            "cleanup_office_service",
+            "cleanup_interaction_mode_service",
+            "cleanup_game_mode_service",
+            "cleanup_ollama_manager",
+            "cleanup_cmd_center",
+            "cleanup_voice_request_handler",
+            "cleanup_gsvmove_service",
+            "cleanup_bug_tracker_service",
+            "cleanup_microphone_push_to_talk_manager",
+            "cleanup_microphone_stt_service",
+        )
+        other_cleanups = {name: Mock() for name in other_names}
+
+        with patch.multiple(
+            "lib.script.main",
+            cleanup_chat_handler=failing_cleanup,
+            **other_cleanups,
+        ):
+            state._perform_component_cleanup(skip_visual_cleanup=True)
+            self.assertFalse(state._components_cleaned)
+            self.assertEqual(failing_cleanup.call_count, 1)
+            self.assertTrue(all(cleanup.call_count == 1 for cleanup in other_cleanups.values()))
+
+            state._perform_component_cleanup(skip_visual_cleanup=True)
+
+        self.assertTrue(state._components_cleaned)
+        self.assertEqual(failing_cleanup.call_count, 2)
+        self.assertTrue(all(cleanup.call_count == 1 for cleanup in other_cleanups.values()))
+        state._application_ui.stop_runtime.assert_called_once_with()
+
     def test_main_releases_lock_and_cleans_backend_when_state_creation_fails(self):
         backend_cleanup = Mock()
         bundle = SimpleNamespace(cleanup=backend_cleanup)

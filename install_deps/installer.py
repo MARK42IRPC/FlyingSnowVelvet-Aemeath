@@ -131,29 +131,7 @@ def _dsh_node_urls() -> tuple[str, ...]:
     return _order_node_urls(urls)
 
 def _run_dsh_npm_ci() -> tuple[bool, str]:
-    node = dsh_config.node_executable(PROJECT_ROOT)
-    npm_cli = dsh_config.npm_cli_path(PROJECT_ROOT)
-    runtime_root = dsh_config.dsh_runtime_root(PROJECT_ROOT)
-    command = [
-        str(node),
-        str(npm_cli),
-        "ci",
-        "--omit=dev",
-        "--ignore-scripts",
-        "--no-audit",
-        "--no-fund",
-    ]
-    print("  使用随包 npm 安装 DSH lockfile 依赖（不执行生命周期脚本）")
-    return_code, output = _run_command_with_progress(
-        command,
-        label="DSH npm ci",
-        kind="npm",
-        timeout=DSH_RUNTIME_INSTALL_TIMEOUT,
-        cwd=runtime_root,
-    )
-    if return_code == 0:
-        return True, ""
-    return False, _summarize_pip_failure(output or "npm 未返回错误详情")
+    return _dsh_runtime_installer.run_npm_ci(sys.modules[__name__])
 
 def ensure_dsh_office_runtime() -> bool:
     return _dsh_runtime_installer.ensure_runtime(sys.modules[__name__])

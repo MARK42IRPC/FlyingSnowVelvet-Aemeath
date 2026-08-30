@@ -58,7 +58,7 @@
 - `lib/script/gsvmove/service.py`
 - `lib/script/yuanbao_free_api/service.py`
 - 原因：预启动、健康检查、拉起进程、清理进程的模板代码高度重复。
-- 处理方式：新增 `lib/script/local_hosted_service.py`，收敛 APP_PRE_START 订阅、预启动任务去重、进程句柄登记/清空等公共生命周期骨架；两个业务服务保留各自健康检查、端口探测和兜底清理逻辑。
+- 处理方式：当时新增共享生命周期骨架，收敛 APP_PRE_START 订阅、预启动任务去重、进程句柄登记/清空等公共逻辑；相关服务退役后，该骨架已一并删除。
 
 8. 梳理退出链路
 - 状态：已完成
@@ -72,7 +72,7 @@
 - 结果：
 - `py -3 -m py_compile` 已通过。
 - `py -3 -m unittest tests.test_musicdl_removed tests.test_ai_settings_panel_yuanbao_hidden tests.test_yuanbao_free_api_service_port_fallback tests.test_yuanbao_free_api_app_lifecycle` 已通过。
-- 2026-07-06 追加验证：`py -3 -m py_compile lib\script\local_hosted_service.py lib\script\gsvmove\service.py lib\script\yuanbao_free_api\service.py` 已通过。
+- 2026-07-06 追加验证：当时的本地服务生命周期相关模块已通过 `py_compile`。
 - 2026-07-06 追加验证：`py -3 -m unittest tests.test_gsvmove_root_resolution tests.test_yuanbao_free_api_service_port_fallback tests.test_yuanbao_free_api_app_lifecycle` 已通过。
 - 2026-07-06 追加验证：`py -3 -m py_compile lib\script\main.py lib\script\ui\shutdown.py lib\script\SEanima\animation.py` 已通过。
 - 2026-07-06 追加验证：`py -3 -m py_compile lib\script\music\service.py lib\script\music\__init__.py lib\script\cloudmusic\manager.py lib\script\cloudmusic\__init__.py lib\core\tray_icon.py lib\core\event\center.py lib\script\ui\playlist_panel.py lib\script\obj-音响\manager.py lib\script\ui\speaker_control_buttons.py lib\script\ui\speaker_search_dialog.py` 已通过。

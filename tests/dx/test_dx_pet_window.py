@@ -140,8 +140,6 @@ class DxPetWindowTests(unittest.TestCase):
             return host
 
         patches = (
-            patch("lib.core.pet_window.AmsStartupSound", _StartupSound),
-            patch("lib.core.pet_window.StateMachine", _StateMachine),
             patch("lib.core.pet_window.Actions.get_random_action_from_group", return_value=None),
             patch("lib.core.dx_bridge.pet_window.get_layer_manager", return_value=layer_manager),
         )
@@ -152,6 +150,9 @@ class DxPetWindowTests(unittest.TestCase):
             context,
             screen_provider=screen_provider,
             window_host_factory=create_host,
+            state_machine_factory=_StateMachine,
+            startup_sound_factory=_StartupSound,
+            interaction_sound_factory=_StartupSound,
         )
         pet = factory({"idle": _idle_resource()}, object())
         pet._dx_shutdown_ui = shutdown_ui

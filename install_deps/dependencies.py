@@ -151,7 +151,6 @@ def _install_jieba_fast_wheel(python_exe, progress_callback):
                 f"镜像 {index}",
             )
             try:
-                _unlink_if_exists(part_path, ignore_errors=True)
                 print(
                     f"  下载预编译依赖 [{index}/{len(urls)}]: "
                     f"{JIEBA_FAST_WHEEL_NAME} ({source_name})"
@@ -163,6 +162,7 @@ def _install_jieba_fast_wheel(python_exe, progress_callback):
                 )
                 digest = hashlib.sha256(part_path.read_bytes()).hexdigest()
                 if digest.lower() != JIEBA_FAST_WHEEL_SHA256:
+                    _unlink_if_exists(part_path, ignore_errors=True)
                     raise ValueError(
                         f"SHA-256 不匹配，期望 {JIEBA_FAST_WHEEL_SHA256}，实际 {digest}"
                     )
@@ -179,7 +179,6 @@ def _install_jieba_fast_wheel(python_exe, progress_callback):
             except (urllib.error.URLError, OSError, ValueError) as exc:
                 last_failure = f"{source_name}：{exc}"
             finally:
-                _unlink_if_exists(part_path, ignore_errors=True)
                 _unlink_if_exists(wheel_path, ignore_errors=True)
 
         return False, last_failure

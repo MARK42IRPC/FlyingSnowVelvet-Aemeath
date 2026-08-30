@@ -3,7 +3,7 @@
 一、总览
 - 主入口：`lib/core/qt_desktop_pet.py`
 - 应用编排：`lib/script/main.py`
-- 动态发现：`lib/core/plugin_registry.py`
+- 动态发现：`lib/script/plugin_registry.py`
 - 管理器目录：`lib/script/obj-*`
 - 粒子目录：`lib/script/practical/*_particle.py`
 - 特效目录：`lib/script/effects/*_effect.py`
@@ -75,7 +75,7 @@
 
 基础要求
 - 继承 `BaseEffectScript`，使用 `@register_effect("effect_id")` 注册，并实现 `create_effects()`
-- `lib/core/plugin_registry.py::discover_effects()` 会自动发现 `*_effect.py`，无需在主入口硬编码
+- `lib/script/plugin_registry.py::discover_effects()` 会自动发现 `*_effect.py`，无需在主入口硬编码
 - 特效脚本只保存文本、资源路径、坐标、颜色、字体参数、时间和动画进度等纯数据状态，不导入 PyQt5 或 `lib.core.qt_bridge`
 - 通过 `lib.core.effect_utils.spawn_effect()` 发布 `EFFECT_REQUEST`；图片使用 `resource_path`，不得把 `QPixmap/QImage/QColor/QFont/QPainter` 放入选项或事件 payload
 - 图片解码、缩放、羽化和文字效果命令由共享视觉 presenter 负责；后端只负责资源上传、字形栅格化和命令执行
@@ -132,7 +132,7 @@ AI 工具调度位于 `lib/script/tool_dispatcher/dispatcher.py`。`STREAM_FINAL
 
 九、最小管理器模板
 ```python
-from lib.core.plugin_registry import BaseManager, manager_registry
+from lib.script.plugin_registry import BaseManager, manager_registry
 from lib.core.event.center import get_event_center, EventType
 
 

@@ -134,7 +134,6 @@ P2.5：时序模型收敛（tick 更新 / frame 表现）
    - 目标文件：
      - lib/script/cloudmusic/manager.py
      - lib/script/obj-摩托/manager.py
-     - lib/script/ui/auto_chat_button.py
      - lib/script/ui/chat_mode_button.py
      - lib/script/ui/clickthrough_button.py
      - lib/script/ui/close_button.py

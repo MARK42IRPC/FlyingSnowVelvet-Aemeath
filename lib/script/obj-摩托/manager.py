@@ -5,7 +5,7 @@ from lib.core.event.center      import get_event_center, EventType, Event
 from lib.core.graphics.image_loader import load_image_resource, resize_image_resource_to_width
 from lib.core.graphics.types import Point, coerce_point
 from lib.core.hash_cmd_registry import get_hash_cmd_registry
-from lib.core.plugin_registry   import manager_registry, BaseManager
+from lib.script.plugin_registry   import manager_registry, BaseManager
 from lib.core.screen_utils import get_screen_rect_for_point
 from lib.core.world_objects import (
     create_world_object,

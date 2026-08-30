@@ -427,7 +427,7 @@ class StateMachine:
         查询最近活动雪豹中心坐标，并转换为宠物窗口左上角目标坐标。
         管理器不存在或无活动雪豹时返回 None。
         """
-        from lib.core.plugin_registry import get_manager
+        from lib.script.plugin_registry import get_manager
         
         manager = get_manager('snow_leopard')
         if manager is None:
@@ -454,7 +454,7 @@ class StateMachine:
         查询最近存活沙发中心坐标，并转换为宠物窗口左上角目标坐标。
         管理器不存在或无存活沙发时返回 None。
         """
-        from lib.core.plugin_registry import get_manager
+        from lib.script.plugin_registry import get_manager
         
         manager = get_manager('sofa')
         if manager is None:
@@ -481,7 +481,7 @@ class StateMachine:
         If speakers exist, return a random target near the nearest speaker.
         Returns the pet window top-left target position; None when unavailable.
         """
-        from lib.core.plugin_registry import get_manager
+        from lib.script.plugin_registry import get_manager
 
         manager = get_manager('speaker')
         if manager is None:

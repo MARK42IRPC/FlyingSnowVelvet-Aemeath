@@ -859,6 +859,7 @@ class DxApplicationUiHost:
         window_host_factory: Callable[..., DxWindowHost] | None = None,
         warp: bool = False,
         announcement_opener: Callable[[str], object] | None = None,
+        workbench_opener: Callable[[str], bool] | None = None,
     ) -> None:
         self._context = context
         self._screen_provider = screen_provider or DxScreenProvider()
@@ -867,6 +868,7 @@ class DxApplicationUiHost:
         self._announcement_opener = announcement_opener or (
             lambda url: webbrowser.open(url, new=2)
         )
+        self._workbench_opener = workbench_opener
         self._event_center = get_event_center()
         self._yuanbao_service: object | None = None
         self._panels: dict[str, _DxPanelWindow] = {}
@@ -1281,11 +1283,10 @@ class DxApplicationUiHost:
         if not self._open_workbench_helper("overview"):
             raise RuntimeError('Qt 工作台 helper 启动失败')
 
-    @staticmethod
-    def _open_workbench_helper(initial_page: str) -> bool:
-        from lib.script.app.workbench_helper import launch_workbench_helper
-
-        return launch_workbench_helper(initial_page=initial_page)
+    def _open_workbench_helper(self, initial_page: str) -> bool:
+        if self._workbench_opener is None:
+            return False
+        return bool(self._workbench_opener(initial_page))
 
     def begin_shutdown(self) -> None:
         for panel in tuple(self._panels.values()):

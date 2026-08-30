@@ -3,7 +3,7 @@ import random
 
 from lib.core.graphics.types import Color
 from lib.script.practical.base_particle import BaseParticleScript, per_second_delta, tick_seconds
-from lib.core.plugin_registry import register_particle
+from lib.script.plugin_registry import register_particle
 
 
 @register_particle("music_note")

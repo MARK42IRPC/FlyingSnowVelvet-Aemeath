@@ -30,7 +30,7 @@ from lib.core.graphics.application_visuals import (
 )
 from lib.core.graphics.types import FontSpec, Point, Rect, Size
 from lib.core.graphics.rich_text_parser import TextSegment
-from lib.core.voice.ams_bug import AmsBugSound
+from lib.script.voice.ams_bug import AmsBugSound
 
 _logger = get_logger(__name__)
 

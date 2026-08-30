@@ -162,7 +162,7 @@ if not defined PYTHON_AUTO_INSTALL_ATTEMPTED (
 echo [ERROR] No usable Python environment found!
 echo.
 echo Please download and install Python 3.11 from:
-echo   https://www.python.org/downloads/release/python-3119/
+echo   https://www.python.org/downloads/release/python-3116/
 echo.
 echo If you install another version, make sure it is Python 3.7+ and can run from command line.
 echo.
@@ -173,7 +173,7 @@ echo [ERROR] All scanned Python candidates failed to start install_deps.py succe
 echo.
 echo Recommendation:
 echo   Install Python 3.11 and retry.
-echo   https://www.python.org/downloads/release/python-3119/
+echo   https://www.python.org/downloads/release/python-3116/
 echo.
 
 :cleanup
@@ -186,26 +186,20 @@ exit /b 1
 
 :install_bundled_python
 set "PYTHON_AUTO_INSTALL_ATTEMPTED=1"
-set "BUNDLED_PYTHON_INSTALLER="
-for /f "delims=" %%I in ('dir /b /a-d "resc\python-3.11*-amd64.exe" 2^>nul') do (
-    if not defined BUNDLED_PYTHON_INSTALLER set "BUNDLED_PYTHON_INSTALLER=%CD%\resc\%%I"
-)
-if not defined BUNDLED_PYTHON_INSTALLER (
-    echo [INFO] Python installer is missing, downloading from resc.net.txt...
-    call :download_manifest_resource "python-3.11.6-amd64.exe" "resc\python-3.11.6-amd64.exe"
-    if errorlevel 1 (
-        echo [WARN] Failed to download Python installer from resc.net.txt
-        echo.
-        exit /b 1
-    )
-    set "BUNDLED_PYTHON_INSTALLER=%CD%\resc\python-3.11.6-amd64.exe"
+set "BUNDLED_PYTHON_INSTALLER=%CD%\resc\python-3.11.6-amd64.exe"
+echo [INFO] Checking the bundled Python installer; missing files will be downloaded...
+call :download_manifest_resource "python-3.11.6-amd64.exe" "resc\python-3.11.6-amd64.exe" "8d0fd1c7bab34dd26fb89327cf7b7c2c7dc57c4d2a7bea58eae198aa9dd5b4ef"
+if errorlevel 1 (
+    echo [WARN] Failed to obtain a verified Python installer from resc.net.txt
+    echo.
+    exit /b 1
 )
 echo [INFO] No usable Python detected. Installing bundled Python 3.11...
 echo [INFO] Installer: "%BUNDLED_PYTHON_INSTALLER%"
 echo.
 "%BUNDLED_PYTHON_INSTALLER%" /passive InstallAllUsers=0 Include_pip=1 Include_launcher=1 InstallLauncherAllUsers=0 PrependPath=0 Include_test=0 SimpleInstall=1
 set "RC=%errorlevel%"
-if not "%RC%"=="0" (
+if not "%RC%"=="0" if not "%RC%"=="3010" (
     echo.
     echo [WARN] Bundled Python installer exited with code %RC%.
     echo.
@@ -219,20 +213,15 @@ exit /b 0
 :download_manifest_resource
 set "RESOURCE_NAME=%~1"
 set "RESOURCE_TARGET=%~2"
+set "RESOURCE_SHA256=%~3"
 if not exist "resc.net.txt" (
     echo [WARN] Resource link file not found: "%CD%\resc.net.txt"
     exit /b 1
 )
-powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$ErrorActionPreference='Stop';" ^
-  "$name=$env:RESOURCE_NAME;" ^
-  "$target=[System.IO.Path]::GetFullPath($env:RESOURCE_TARGET);" ^
-  "$url=Get-Content -LiteralPath 'resc.net.txt' -Encoding UTF8 | ForEach-Object {$_.Trim()} | Where-Object {$_ -and -not $_.StartsWith('#')} | Where-Object {try{[System.Uri]::UnescapeDataString(([System.Uri]$_).Segments[-1]) -eq $name}catch{$false}} | Select-Object -First 1;" ^
-  "if(-not $url){throw ('Resource URL not found: '+$name)};" ^
-  "$parent=[System.IO.Path]::GetDirectoryName($target); if($parent){[System.IO.Directory]::CreateDirectory($parent) | Out-Null};" ^
-  "$part=$target+'.part'; Remove-Item -LiteralPath $part -Force -ErrorAction SilentlyContinue;" ^
-  "Write-Host ('[INFO] Downloading '+$name);" ^
-  "Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $part;" ^
-  "Move-Item -LiteralPath $part -Destination $target -Force"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%CD%\install_deps\python_bootstrap.ps1" ^
+  -ManifestPath "%CD%\resc.net.txt" ^
+  -ResourceName "%RESOURCE_NAME%" ^
+  -TargetPath "%CD%\%RESOURCE_TARGET%" ^
+  -ExpectedSha256 "%RESOURCE_SHA256%"
 if errorlevel 1 exit /b 1
 exit /b 0
