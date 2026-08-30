@@ -126,7 +126,7 @@ class InstallDependenciesProgressTests(unittest.TestCase):
         probe.assert_called_once_with(regular_python)
 
     def test_batch_bootstrap_filters_uv_python_before_launch_probe(self):
-        content = (Path(install_deps.__file__).parent / "安装依赖.bat").read_text(
+        content = (install_deps.PROJECT_ROOT / "安装依赖.bat").read_text(
             encoding="utf-8"
         )
 
@@ -375,7 +375,7 @@ class InstallDependenciesProgressTests(unittest.TestCase):
         )
         self.assertEqual(entry[2], ("opencc",))
 
-        requirements = (Path(install_deps.__file__).parent / "requirements.txt").read_text(
+        requirements = (install_deps.PROJECT_ROOT / "requirements.txt").read_text(
             encoding="utf-8"
         ).splitlines()
         self.assertIn("--only-binary=opencc-python-reimplemented", requirements)

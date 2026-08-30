@@ -1,16 +1,11 @@
-import importlib.util
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import install_deps
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-MODULE_PATH = PROJECT_ROOT / "install_deps.py"
-SPEC = importlib.util.spec_from_file_location("install_deps_under_test", MODULE_PATH)
-install_deps = importlib.util.module_from_spec(SPEC)
-assert SPEC.loader is not None
-SPEC.loader.exec_module(install_deps)
 
 
 class InstallDepsResourceTests(unittest.TestCase):

@@ -40,6 +40,7 @@ ALLOWED_TOP_LEVEL_DIRS = {
     "config",
     "doc",
     "gamepack",
+    "install_deps",
     "lib",
     "pyncm",
     "resc",

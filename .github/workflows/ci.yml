@@ -26,7 +26,7 @@ jobs:
           pip install --upgrade -r requirements-dev.txt
 
       - name: Syntax check
-        run: python -m compileall config lib install_deps.py scripts
+        run: python -m compileall config lib install_deps.py install_deps scripts
 
       - name: Unit tests
         run: python -m unittest discover -s tests -p "test_*.py" -v

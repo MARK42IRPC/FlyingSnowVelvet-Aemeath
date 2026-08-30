@@ -110,7 +110,7 @@ py -3 -m venv .venv
 .venv\Scripts\activate
 python -m pip install --upgrade pip
 pip install -r requirements.txt
-python -m compileall config lib scripts install_deps.py
+python -m compileall config lib scripts install_deps.py install_deps
 python lib/core/qt_desktop_pet.py
 ```
 
@@ -142,7 +142,7 @@ python lib/core/qt_desktop_pet.py
 ## 常用检查
 
 ```powershell
-python -m compileall config lib scripts install_deps.py
+python -m compileall config lib scripts install_deps.py install_deps
 python scripts/package_release.py --dry-run
 python scripts/package_green_release.py --dry-run
 ```

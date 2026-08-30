@@ -24,7 +24,7 @@ GitHub/Gitee 没有真实打包 ZIP 附件时，更新器使用固定 tag 自动
 ### 静态检查
 
 ```powershell
-python -m compileall config lib scripts install_deps.py
+python -m compileall config lib scripts install_deps.py install_deps
 python scripts/package_release.py --dry-run
 python scripts/package_green_release.py --dry-run
 ```
