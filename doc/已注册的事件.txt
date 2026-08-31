@@ -805,3 +805,5 @@
 
 [YUANBAO_LOGIN_QR_STATUS]
 - lib/script/yuanbao_free_api/service.py
+UI_TRAY_MENU_REQUEST
+  请求当前桌面后端在指针位置显示托盘菜单；载荷仅包含可选 source。

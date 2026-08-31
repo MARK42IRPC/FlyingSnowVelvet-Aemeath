@@ -36,6 +36,7 @@ TOOLTIPS: dict[str, str] = {
     'speaker_playlist_toggle':  '播放队列面板',
     'speaker_search_priority':  '切换搜索优先级（单曲/歌手/专辑/歌单）',
     'speaker_history_queue':    '将历史记录追加到播放队列',
+    'speaker_clear_queue':      '清空播放队列',
     'speaker_local_queue':      '加载本地音乐文件夹到播放队列',
     'speaker_like_queue':       '随机载入喜欢的音乐（最多32首）',
     'playlist_panel':           '左键上移,右键下移',

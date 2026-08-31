@@ -7,7 +7,7 @@ from collections import deque
 from collections.abc import Callable
 from itertools import count
 
-from config.config import BEHAVIOR, PHYSICS, SNOWBALL
+from config.config import BEHAVIOR, MORTOR, PHYSICS, SNOWBALL, SNOW_LEOPARD
 from lib.core.clickthrough_state import is_clickthrough_enabled
 from lib.core.event.center import Event, EventType, get_event_center
 from lib.core.graphics.image_loader import resize_image_resource
@@ -18,7 +18,7 @@ from lib.core.graphics.visuals import (
     sample_motor_jitter,
     update_speaker_intensity,
 )
-from lib.core.input.types import MouseButton, MouseButtons
+from lib.core.input.types import Key, KeyboardInput, MouseButton, MouseButtons
 from lib.core.layer import Layer
 from lib.core.layer_manager import get_layer_manager
 from lib.core.physics import PhysicsBody, get_physics_world
@@ -29,6 +29,7 @@ from lib.core.world_objects import (
     WorldObjectState,
     normalize_clock_countdown,
     tick_clock_countdown,
+    whole_clock_seconds,
 )
 
 from .loop import DxLoopContext
@@ -37,14 +38,36 @@ from .window_host import DxWindowHost
 
 
 _PHYSICS_TYPES = {"motor", "clock", "sofa", "snowball", "snow_leopard", "speaker"}
-_FLIPPABLE_TYPES = {"motor", "sofa", "snow_leopard", "speaker"}
+_RIGHT_CLICK_FLIPPABLE_TYPES = {"motor", "sofa", "snow_leopard", "speaker"}
+_WALL_FLIPPABLE_TYPES = {"sofa", "snow_leopard", "speaker"}
 _MAX_THROW_VX = float(PHYSICS.get("max_throw_vx", 25.0))
 _MAX_THROW_VY = float(PHYSICS.get("max_throw_vy", 25.0))
 _DRAG_THRESHOLD = float(PHYSICS.get("drag_threshold", 5))
 _MAX_BOUNCES = int(PHYSICS.get("max_bounces", 5))
 _GROUND_Y_PCT = float(PHYSICS.get("ground_y_pct", 0.90))
 _FADE_STEP = float(PHYSICS.get("fade_step", 0.05))
+_FADE_TICK_STRIDE = max(
+    1,
+    int(round(float(PHYSICS.get("fade_interval_ms", 50)) / 50.0)),
+)
 _DRAG_TRAIL_WINDOW_SECONDS = 0.10
+_SNOWBALL_PARTICLE_CHANCE = 0.60
+_SNOWBALL_PARTICLE_MAX = 6
+_FINAL_RING_SECONDS = 10
+_CLOCK_UP_FORCE_INTERVAL_TICKS = 60
+_CLOCK_UP_FORCE_VY = float(PHYSICS.get("clock_end_up_force_vy", PHYSICS.get("snow_leopard_jump_vy", -13.0))) * 2.0
+_MOTOR_BASE_SPEED = float(MORTOR.get("move_speed_px_per_frame", 2.0))
+_MOTOR_ACCEL_PER_TICK = float(MORTOR.get("move_accel_per_tick", 1.0))
+_MOTOR_DECEL_PER_TICK = float(MORTOR.get("move_decel_per_tick", 2.0))
+_MOTOR_MAX_SPEED = float(MORTOR.get("move_speed_max", 10.0))
+_MOTOR_JUMP_VY = float(MORTOR.get("jump_vy", PHYSICS.get("snow_leopard_jump_vy", -13.0)))
+_MOTOR_JUMP_COOLDOWN_SECONDS = float(MORTOR.get("jump_cooldown_sec", 2.0))
+_MOTOR_JUMP_MAX_CHARGES = max(1, int(MORTOR.get("jump_max_charges", 2)))
+_GROUND_EPSILON = 1.0
+_SNOW_LEOPARD_FLIP_INTERVAL_SECONDS = (
+    float(PHYSICS.get("flip_interval_min", 5000)) / 1000.0,
+    float(PHYSICS.get("flip_interval_max", 8000)) / 1000.0,
+)
 
 
 class _DxWorldObject:
@@ -58,6 +81,8 @@ class _DxWorldObject:
         physics_world: object,
         window_host_factory: Callable[..., DxWindowHost],
         cursor_position_provider: Callable[[], Point],
+        sound_factory: Callable[[str], object] | None,
+        monotonic_provider: Callable[[], float],
         warp: bool,
     ) -> None:
         self.instance_id = int(instance_id)
@@ -68,11 +93,13 @@ class _DxWorldObject:
         self._screen_provider = screen_provider
         self._physics_world = physics_world
         self._cursor_position_provider = cursor_position_provider
+        self._monotonic = monotonic_provider
         self._alive = True
         self._fading = False
         self._flipped = False
         self._frozen = False
         self._alpha = 1.0
+        self._fade_tick_count = 0
         self._frame_index = 0
         self._pending_click = False
         self._pending_click_ticks = 0
@@ -85,8 +112,22 @@ class _DxWorldObject:
         self._physics_cleaned = False
         self._lifetime_ticks_left: int | None = None
         self._countdown_centis: int | None = None
+        self._post_countdown_ticks = 0
         self._render_offset = Point()
         self._speaker_intensity = 0.0
+        self._motor_move_dir = 1
+        self._motor_move_speed = 0.0
+        self._motor_left_pressed = False
+        self._motor_right_pressed = False
+        self._motor_up_pressed = False
+        self._motor_jump_charges = _MOTOR_JUMP_MAX_CHARGES
+        self._motor_next_jump_charge_time: float | None = None
+        self._snow_leopard_next_flip_time: float | None = None
+        self._snowball_particle_count = 0
+        self._snow_pile_batch_call = None
+        self._snow_pile_batch_remaining = 0
+        sounds = sound_factory(self.object_type) if callable(sound_factory) else {}
+        self._sounds = sounds if isinstance(sounds, dict) else {}
         if self.object_type == "clock":
             self._countdown_centis = normalize_clock_countdown(
                 self.options.get("countdown_hh", 0),
@@ -107,6 +148,7 @@ class _DxWorldObject:
             tool_window=True,
             no_activate=False,
             clickthrough=is_clickthrough_enabled(),
+            logical_content=True,
         )
         try:
             self._context.register_poller(self.host)
@@ -115,7 +157,18 @@ class _DxWorldObject:
                 Layer.WORLD_OBJECT,
                 name=f"DxWorldObject:{self.object_type}:{self.instance_id}",
             )
-            self._create_physics_body(request.position, width, height)
+            host_geometry = self.host.get_geometry()
+            self._create_physics_body(
+                request.position,
+                host_geometry.width,
+                host_geometry.height,
+            )
+            if self.object_type == "speaker":
+                self._update_speaker_flip()
+            if self.object_type == "snow_leopard":
+                self._schedule_snow_leopard_flip()
+            if self.object_type == "snow_pile":
+                self._schedule_snow_pile_batch()
             if self.object_type == "snowball":
                 lifetime = random.uniform(
                     float(SNOWBALL.get("lifetime_min", 10)),
@@ -139,10 +192,15 @@ class _DxWorldObject:
             position.x + width / 2.0,
             position.y + height / 2.0,
         ))
+        ground_y = (
+            float(position.y)
+            if self.object_type == "snow_leopard"
+            else screen.y + screen.height * _GROUND_Y_PCT - height
+        )
         body = PhysicsBody(
             float(position.x),
             float(position.y),
-            screen.y + screen.height * _GROUND_Y_PCT - height,
+            ground_y,
             width,
             height,
             _MAX_BOUNCES,
@@ -154,7 +212,7 @@ class _DxWorldObject:
         body.on_ground_bounce = self._on_physics_ground_bounce
         self._physics_body = body
         self._physics_world.add_body(body)
-        body.active = True
+        body.active = self.object_type != "snow_leopard"
 
     def prepare_render(self):
         scale_x, scale_y = resolve_speaker_scale(self._speaker_intensity)
@@ -175,6 +233,10 @@ class _DxWorldObject:
         if not self._alive:
             return
         if self._fading:
+            self._fade_tick_count += 1
+            if self._fade_tick_count < _FADE_TICK_STRIDE:
+                return
+            self._fade_tick_count = 0
             self._alpha = max(0.0, self._alpha - _FADE_STEP)
             if self._alpha <= 0.0:
                 self.cleanup()
@@ -186,13 +248,25 @@ class _DxWorldObject:
             if self._pending_click_ticks >= self._double_click_ticks:
                 self._pending_click = False
                 self._pending_click_ticks = 0
+                if self.object_type == "snow_leopard":
+                    self._jump_snow_leopard()
         if self._countdown_centis is not None and self._countdown_centis > 0:
+            previous_seconds = whole_clock_seconds(self._countdown_centis)
             self._countdown_centis, text_changed = tick_clock_countdown(
                 self._countdown_centis,
             )
+            current_seconds = whole_clock_seconds(self._countdown_centis)
+            if current_seconds != previous_seconds and 1 <= current_seconds <= _FINAL_RING_SECONDS:
+                self._play_sound("countdown")
+            if previous_seconds > 0 and current_seconds == 0:
+                self._apply_clock_end_force()
+                self._post_countdown_ticks = 0
             if text_changed:
                 self.host.request_repaint()
+        if self.object_type == "clock":
+            self._tick_clock_post_countdown_force()
         if self.object_type == "motor":
+            self._tick_motor_motion()
             body = self._physics_body
             moving = self._drag_offset is not None or (
                 body is not None
@@ -201,6 +275,8 @@ class _DxWorldObject:
             )
             self._render_offset = sample_motor_jitter(moving)
             self.host.request_repaint()
+        elif self.object_type == "snow_leopard":
+            self._tick_snow_leopard_auto_flip()
         elif self.object_type == "speaker":
             from lib.core.audio_meter import get_audio_meter
 
@@ -223,21 +299,283 @@ class _DxWorldObject:
         if not self._alive or self._fading or self._drag_offset is not None:
             return
         geometry = self.host.get_geometry()
-        self.host.set_geometry(Rect(
-            body.render_x,
-            body.render_y,
-            geometry.width,
-            geometry.height,
-        ))
+        move = getattr(self.host, "set_position", None)
+        if callable(move):
+            move(Point(body.render_x, body.render_y))
+        else:
+            self.host.set_geometry(Rect(
+                body.render_x,
+                body.render_y,
+                geometry.width,
+                geometry.height,
+            ))
+        if self.object_type == "speaker":
+            self._update_speaker_flip()
 
     def _on_physics_wall_hit(self, body: PhysicsBody, side: str) -> None:
-        if self.object_type in _FLIPPABLE_TYPES:
+        if self.object_type in _WALL_FLIPPABLE_TYPES - {"speaker"}:
             self._flipped = side == "left"
             self.host.request_repaint()
+        if self.object_type == "speaker":
+            self._update_speaker_flip()
+        if self.object_type in {"clock", "sofa", "speaker"}:
+            x = body.x if side == "left" else body.x + body.width
+            particle = "collision" if self.object_type == "sofa" else "white_pink_collision"
+            self._spawn_particle(particle, Point(x, body.y + body.height / 2.0))
+        if self.object_type != "snow_leopard":
+            self._play_sound("impact")
 
     def _on_physics_ground_bounce(self, body: PhysicsBody, stopped: bool) -> None:
         if self.object_type == "snowball" and stopped:
             self._frozen = True
+        if self.object_type in {"clock", "sofa", "speaker"}:
+            self._spawn_particle(
+                "collision" if self.object_type == "sofa" else "white_pink_collision",
+                Point(body.x + body.width / 2.0, body.y + body.height),
+            )
+        elif self.object_type in {"snowball", "snow_leopard"}:
+            if self.object_type == "snowball":
+                self._spawn_snowball_particle("snowball_drift")
+            else:
+                self._spawn_particle("snow_drift", self.center())
+        if self.object_type == "snow_leopard" and stopped:
+            self._schedule_snow_leopard_flip()
+        self._play_sound("impact")
+
+    def _play_sound(self, name: str) -> None:
+        sound = self._sounds.get(name)
+        play = getattr(sound, "play", None)
+        if callable(play):
+            play()
+
+    def _spawn_particle(self, particle_id: str, position: Point) -> None:
+        get_event_center().publish(Event(EventType.PARTICLE_REQUEST, {
+            "particle_id": particle_id,
+            "area_type": "point",
+            "area_data": (position.x, position.y),
+        }))
+
+    def _spawn_snowball_particle(self, particle_id: str) -> bool:
+        if self._snowball_particle_count >= _SNOWBALL_PARTICLE_MAX:
+            return False
+        if random.random() >= _SNOWBALL_PARTICLE_CHANCE:
+            return False
+        self._snowball_particle_count += 1
+        self._spawn_particle(particle_id, self.center())
+        return True
+
+    @staticmethod
+    def _option_range(value: object, default: tuple[int, int]) -> tuple[int, int]:
+        try:
+            low, high = value
+            low, high = int(low), int(high)
+        except (TypeError, ValueError):
+            low, high = default
+        return tuple(sorted((max(0, low), max(0, high))))
+
+    def _schedule_snow_pile_batch(self) -> None:
+        if not self._alive or self._fading:
+            return
+        low, high = self._option_range(
+            self.options.get("batch_interval"),
+            (10000, 20000),
+        )
+        self._snow_pile_batch_call = self._context.call_later(
+            random.randint(low, high),
+            self._start_snow_pile_batch,
+        )
+
+    def _start_snow_pile_batch(self) -> None:
+        self._snow_pile_batch_call = None
+        if not self._alive or self._fading:
+            return
+        low, high = self._option_range(self.options.get("batch_size"), (1, 2))
+        self._snow_pile_batch_remaining = random.randint(max(1, low), max(1, high))
+        self._spawn_next_snow_pile_item()
+
+    def _spawn_next_snow_pile_item(self) -> None:
+        self._snow_pile_batch_call = None
+        if not self._alive or self._fading:
+            return
+        if self._snow_pile_batch_remaining <= 0:
+            self._schedule_snow_pile_batch()
+            return
+        self._snow_pile_batch_remaining -= 1
+        get_event_center().publish(Event(EventType.MANAGER_INTERACTION, {
+            "manager_id": "snow_pile",
+            "action": "spawn_leopard",
+            "position": self.center(),
+        }))
+        if self._snow_pile_batch_remaining <= 0:
+            self._schedule_snow_pile_batch()
+            return
+        low, high = self._option_range(
+            self.options.get("batch_item_interval"),
+            (3000, 5000),
+        )
+        self._snow_pile_batch_call = self._context.call_later(
+            random.randint(low, high),
+            self._spawn_next_snow_pile_item,
+        )
+
+    def _cancel_snow_pile_batch(self) -> None:
+        call, self._snow_pile_batch_call = self._snow_pile_batch_call, None
+        self._snow_pile_batch_remaining = 0
+        if call is not None:
+            call.cancel()
+
+    def _update_speaker_flip(self) -> None:
+        geometry = self.host.get_geometry()
+        screen = self._screen_provider.get_primary_screen_rect()
+        flipped = geometry.x + geometry.width / 2.0 >= screen.x + screen.width / 2.0
+        if flipped != self._flipped:
+            self._flipped = flipped
+            self.host.request_repaint()
+
+    def _jump_snow_leopard(self) -> None:
+        body = self._physics_body
+        if body is None or self._fading:
+            return
+        power = random.uniform(
+            float(SNOW_LEOPARD.get("jump_power_min", 0.8)),
+            float(SNOW_LEOPARD.get("jump_power_max", 1.2)),
+        )
+        body.invalidate_pending_updates()
+        body.bounce_count = 0
+        body.vx = (5.0 if self._flipped else -5.0) * power
+        body.vy = float(PHYSICS.get("snow_leopard_jump_vy", -13.0)) * power
+        body.active = True
+        self._snow_leopard_next_flip_time = None
+        self._spawn_particle("snow_drift", self.center())
+        self._spawn_particle("burst_line", self.center())
+        self._play_sound("action")
+        self.host.request_repaint()
+
+    def _apply_clock_end_force(self) -> None:
+        body = self._physics_body
+        if body is None:
+            return
+        body.invalidate_pending_updates()
+        body.bounce_count = 0
+        body.gravity_enabled = True
+        body.active = True
+        body.vy = min(body.vy, _CLOCK_UP_FORCE_VY)
+
+    def _tick_clock_post_countdown_force(self) -> None:
+        if self._countdown_centis is None or self._countdown_centis > 0 or self._fading:
+            self._post_countdown_ticks = 0
+            return
+        if self._drag_offset is not None:
+            return
+        self._post_countdown_ticks += 1
+        if self._post_countdown_ticks >= _CLOCK_UP_FORCE_INTERVAL_TICKS:
+            self._post_countdown_ticks = 0
+            self._apply_clock_end_force()
+
+    def _schedule_snow_leopard_flip(self) -> None:
+        body = self._physics_body
+        if self._fading or body is None or body.active:
+            self._snow_leopard_next_flip_time = None
+            return
+        low, high = sorted(_SNOW_LEOPARD_FLIP_INTERVAL_SECONDS)
+        self._snow_leopard_next_flip_time = self._monotonic() + random.uniform(low, high)
+
+    def _tick_snow_leopard_auto_flip(self) -> None:
+        deadline = self._snow_leopard_next_flip_time
+        body = self._physics_body
+        if deadline is None or body is None or body.active or self._fading:
+            return
+        if self._monotonic() < deadline:
+            return
+        self._flipped = not self._flipped
+        self.host.request_repaint()
+        self._schedule_snow_leopard_flip()
+
+    def _motor_is_airborne(self) -> bool:
+        body = self._physics_body
+        return bool(
+            body is not None
+            and (body.y < body.ground_y - _GROUND_EPSILON or abs(body.vy) > 1.0)
+        )
+
+    def _request_motor_jump(self) -> None:
+        body = self._physics_body
+        if body is None or self._drag_offset is not None or self._motor_jump_charges <= 0:
+            return
+        self._motor_jump_charges -= 1
+        if (
+            self._motor_jump_charges < _MOTOR_JUMP_MAX_CHARGES
+            and self._motor_next_jump_charge_time is None
+        ):
+            self._motor_next_jump_charge_time = self._monotonic() + _MOTOR_JUMP_COOLDOWN_SECONDS
+        self._sync_body_to_host(active=True)
+        body.bounce_count = 0
+        body.gravity_enabled = True
+        body.vy = _MOTOR_JUMP_VY
+        if self._motor_move_speed > 0.0:
+            body.vx = self._motor_move_dir * self._motor_move_speed
+
+    def _recharge_motor_jump_charges(self) -> None:
+        if self._motor_jump_charges >= _MOTOR_JUMP_MAX_CHARGES:
+            self._motor_next_jump_charge_time = None
+            return
+        now = self._monotonic()
+        if self._motor_next_jump_charge_time is None:
+            self._motor_next_jump_charge_time = now + _MOTOR_JUMP_COOLDOWN_SECONDS
+            return
+        while (
+            self._motor_jump_charges < _MOTOR_JUMP_MAX_CHARGES
+            and now >= self._motor_next_jump_charge_time
+        ):
+            self._motor_jump_charges += 1
+            if self._motor_jump_charges < _MOTOR_JUMP_MAX_CHARGES:
+                self._motor_next_jump_charge_time += _MOTOR_JUMP_COOLDOWN_SECONDS
+            else:
+                self._motor_next_jump_charge_time = None
+
+    def _tick_motor_motion(self) -> None:
+        body = self._physics_body
+        if body is None:
+            return
+        self._recharge_motor_jump_charges()
+        if self._drag_offset is not None:
+            return
+        input_dir = 0
+        if self._motor_left_pressed and not self._motor_right_pressed:
+            input_dir = -1
+        elif self._motor_right_pressed and not self._motor_left_pressed:
+            input_dir = 1
+        if input_dir:
+            self._motor_move_dir = input_dir
+            self._flipped = input_dir < 0
+            if self._motor_move_speed <= 0.0:
+                self._motor_move_speed = _MOTOR_BASE_SPEED
+            else:
+                self._motor_move_speed = min(
+                    _MOTOR_MAX_SPEED,
+                    self._motor_move_speed + _MOTOR_ACCEL_PER_TICK,
+                )
+        else:
+            self._motor_move_speed = max(
+                0.0,
+                self._motor_move_speed - _MOTOR_DECEL_PER_TICK,
+            )
+        self._sync_body_to_host()
+        if self._motor_is_airborne():
+            body.gravity_enabled = True
+            if self._motor_move_speed > 0.0:
+                body.vx = self._motor_move_dir * self._motor_move_speed
+            body.active = True
+        elif self._motor_move_speed > 0.0:
+            body.gravity_enabled = False
+            body.vy = 0.0
+            body.vx = self._motor_move_dir * self._motor_move_speed
+            body.active = True
+        else:
+            body.gravity_enabled = True
+            body.vx = 0.0
+            body.vy = 0.0
+            body.active = False
 
     def _update_ground(self) -> None:
         body = self._physics_body
@@ -298,6 +636,9 @@ class _DxWorldObject:
         if self._pending_click:
             self._pending_click = False
             self._pending_click_ticks = 0
+            if self.object_type == "snow_pile":
+                self._play_sound("action")
+                self._spawn_particle("snow_drift", self.center())
             self.start_fadeout()
             return
         self._pending_click = True
@@ -313,11 +654,15 @@ class _DxWorldObject:
             self._physics_body.invalidate_pending_updates()
             self._physics_body.active = False
             self._physics_body.bounce_count = 0
+        if self.object_type == "snow_pile":
+            self._play_sound("action")
+            self._spawn_particle("snow_drift", self.center())
 
     def _handle_right_click(self) -> None:
         if self.object_type == "snow_pile":
             center = self.center()
             event_center = get_event_center()
+            self._play_sound("action")
             event_center.publish(Event(EventType.PARTICLE_REQUEST, {
                 "particle_id": "snow_drift",
                 "area_type": "point",
@@ -328,8 +673,20 @@ class _DxWorldObject:
                 "action": "spawn_leopard",
                 "position": center,
             }))
-        elif self.object_type in _FLIPPABLE_TYPES:
+        elif self.object_type in _RIGHT_CLICK_FLIPPABLE_TYPES:
+            if self.object_type == "speaker":
+                get_event_center().publish(Event(EventType.SPEAKER_SEARCH_TOGGLE_REQUEST, {
+                    "backend_id": "directx",
+                    "instance_id": self.instance_id,
+                }))
+                return
+            body = self._physics_body
+            if self.object_type == "snow_leopard" and body is not None and body.active:
+                return
             self._flipped = not self._flipped
+            if self.object_type == "snow_leopard":
+                self._schedule_snow_leopard_flip()
+                self._play_sound("action")
             self.host.request_repaint()
 
     def handle_pointer_move(self, event: object) -> None:
@@ -352,8 +709,14 @@ class _DxWorldObject:
             screen = self._screen_provider.get_screen_rect_for_point(global_pos)
             x = max(screen.x, min(x, screen.x + screen.width - geometry.width))
             y = geometry.y
-        self.host.set_geometry(Rect(x, y, geometry.width, geometry.height))
+        move = getattr(self.host, "set_position", None)
+        if callable(move):
+            move(Point(x, y))
+        else:
+            self.host.set_geometry(Rect(x, y, geometry.width, geometry.height))
         self._sync_body_to_host(active=False)
+        if self.object_type == "speaker":
+            self._update_speaker_flip()
         self._drag_trail.append((time.monotonic(), global_pos))
 
     def handle_pointer_release(self, button: MouseButton) -> None:
@@ -367,13 +730,49 @@ class _DxWorldObject:
         self._sync_body_to_host(velocity=velocity, active=self._physics_body is not None)
 
     def handle_window_moved(self, position: Point) -> None:
-        return None
+        body = self._physics_body
+        if body is None:
+            return
+        geometry = self.host.get_geometry()
+        body.width = max(1, int(round(geometry.width)))
+        body.height = max(1, int(round(geometry.height)))
+        if not body.active or self._dragging:
+            body.x = float(position.x)
+            body.y = float(position.y)
+            body.prev_x = body.x
+            body.prev_y = body.y
+            body.render_x = body.x
+            body.render_y = body.y
 
     def handle_key_press(self, event: object) -> None:
-        return None
+        if self.object_type != "motor" or self._physics_body is None:
+            return
+        if bool(getattr(event, "is_auto_repeat", False)):
+            return
+        key = getattr(event, "key", Key.UNKNOWN)
+        if key == Key.LEFT:
+            self._motor_left_pressed = True
+            self._motor_move_dir = -1
+            self._flipped = True
+        elif key == Key.RIGHT:
+            self._motor_right_pressed = True
+            self._motor_move_dir = 1
+            self._flipped = False
+        elif key == Key.UP and not self._motor_up_pressed:
+            self._motor_up_pressed = True
+            self._request_motor_jump()
+        self.host.request_repaint()
 
     def handle_key_release(self, event: object) -> None:
-        return None
+        if self.object_type != "motor" or bool(getattr(event, "is_auto_repeat", False)):
+            return
+        key = getattr(event, "key", Key.UNKNOWN)
+        if key == Key.LEFT:
+            self._motor_left_pressed = False
+        elif key == Key.RIGHT:
+            self._motor_right_pressed = False
+        elif key == Key.UP:
+            self._motor_up_pressed = False
 
     def handle_host_close(self) -> None:
         self.cleanup()
@@ -391,10 +790,18 @@ class _DxWorldObject:
         if not self._alive or self._fading:
             return
         self._fading = True
+        self._fade_tick_count = 0
         self._drag_offset = None
         self._press_global = None
         self._dragging = False
         self._cleanup_physics()
+        self._cancel_snow_pile_batch()
+        if self.object_type == "snowball":
+            self._spawn_snowball_particle("snowball_burst")
+            self._play_sound("action")
+        elif self.object_type == "snow_leopard":
+            self._spawn_particle("snow", self.center())
+            self._play_sound("action")
 
     def spawn_jump(self, power_min: float, power_max: float) -> None:
         body = self._physics_body
@@ -408,6 +815,8 @@ class _DxWorldObject:
         body.vy = -13.0 * power
         body.bounce_count = 0
         body.active = True
+        if self.object_type == "snow_leopard":
+            self._snow_leopard_next_flip_time = None
         self._frozen = False
         self.host.request_repaint()
 
@@ -435,9 +844,14 @@ class _DxWorldObject:
 
     def center(self) -> Point:
         geometry = self.geometry()
+        offset_y = 0.0
+        if self.object_type == "motor":
+            offset_y = -30.0
+        elif self.object_type in {"snow_leopard", "speaker"}:
+            offset_y = float(SNOW_LEOPARD.get("anchor_offset_y", -30))
         return Point(
             geometry.x + geometry.width / 2.0,
-            geometry.y + geometry.height / 2.0,
+            geometry.y + geometry.height / 2.0 + offset_y,
         )
 
     def apply_motion_delta(self, position: Point, velocity: Point | None, wake: bool) -> None:
@@ -471,6 +885,7 @@ class _DxWorldObject:
         if not self._alive:
             return
         self._alive = False
+        self._cancel_snow_pile_batch()
         self._cleanup_physics()
         try:
             get_layer_manager().unregister(self.host)
@@ -492,6 +907,8 @@ class DxWorldObjectBackend(WorldObjectBackend):
         physics_world: object | None = None,
         window_host_factory: Callable[..., DxWindowHost] | None = None,
         cursor_position_provider: Callable[[], Point] | None = None,
+        sound_factory: Callable[[str], object] | None = None,
+        monotonic_provider: Callable[[], float] | None = None,
         warp: bool = False,
     ) -> None:
         self._context = context
@@ -499,6 +916,8 @@ class DxWorldObjectBackend(WorldObjectBackend):
         self._physics_world = physics_world or get_physics_world()
         self._window_host_factory = window_host_factory or DxWindowHost
         self._cursor_position_provider = cursor_position_provider or get_cursor_position
+        self._sound_factory = sound_factory
+        self._monotonic_provider = monotonic_provider or time.monotonic
         self._warp = bool(warp)
         self._next_id = count(1)
         self._instances: dict[int, _DxWorldObject] = {}
@@ -506,6 +925,8 @@ class DxWorldObjectBackend(WorldObjectBackend):
         self._cleanup_done = False
         self._event_center.subscribe(EventType.TICK, self._on_tick)
         self._event_center.subscribe(EventType.GIF_FRAME, self._on_gif_frame)
+        self._event_center.subscribe(EventType.KEY_PRESS, self._on_key_press)
+        self._event_center.subscribe(EventType.KEY_RELEASE, self._on_key_release)
         self._event_center.subscribe(EventType.UI_CLICKTHROUGH_TOGGLE, self._on_clickthrough_toggle)
 
     def _get(self, instance_id: int) -> _DxWorldObject | None:
@@ -527,6 +948,8 @@ class DxWorldObjectBackend(WorldObjectBackend):
             physics_world=self._physics_world,
             window_host_factory=self._window_host_factory,
             cursor_position_provider=self._cursor_position_provider,
+            sound_factory=self._sound_factory,
+            monotonic_provider=self._monotonic_provider,
             warp=self._warp,
         )
         self._instances[instance_id] = instance
@@ -541,6 +964,26 @@ class DxWorldObjectBackend(WorldObjectBackend):
     def _on_gif_frame(self, event: Event) -> None:
         for instance in tuple(self._instances.values()):
             instance.advance_animation()
+
+    def _on_key_press(self, event: Event) -> None:
+        if event.handled:
+            return
+        data = event.data if isinstance(event.data, dict) else {}
+        keyboard = KeyboardInput(
+            key=data.get("key", Key.UNKNOWN),
+            is_auto_repeat=bool(data.get("is_auto_repeat", False)),
+        )
+        for instance in tuple(self._instances.values()):
+            instance.handle_key_press(keyboard)
+
+    def _on_key_release(self, event: Event) -> None:
+        data = event.data if isinstance(event.data, dict) else {}
+        keyboard = KeyboardInput(
+            key=data.get("key", Key.UNKNOWN),
+            is_auto_repeat=bool(data.get("is_auto_repeat", False)),
+        )
+        for instance in tuple(self._instances.values()):
+            instance.handle_key_release(keyboard)
 
     def _on_clickthrough_toggle(self, event: Event) -> None:
         data = event.data if isinstance(event.data, dict) else {}
@@ -602,6 +1045,8 @@ class DxWorldObjectBackend(WorldObjectBackend):
         self._cleanup_done = True
         self._event_center.unsubscribe(EventType.TICK, self._on_tick)
         self._event_center.unsubscribe(EventType.GIF_FRAME, self._on_gif_frame)
+        self._event_center.unsubscribe(EventType.KEY_PRESS, self._on_key_press)
+        self._event_center.unsubscribe(EventType.KEY_RELEASE, self._on_key_release)
         self._event_center.unsubscribe(EventType.UI_CLICKTHROUGH_TOGGLE, self._on_clickthrough_toggle)
         for instance in tuple(self._instances.values()):
             instance.cleanup()

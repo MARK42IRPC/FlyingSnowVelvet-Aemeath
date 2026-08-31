@@ -26,12 +26,19 @@ from PyQt5.QtWidgets import (
 from config.scale import scale_px
 from lib.script.workbench.settings import (
     GENERAL_CONFIG_CATEGORIES,
+)
+from lib.script.ui.workbench_settings_layout import (
     SettingsPageScaffold,
     create_settings_form,
 )
-from lib.script.workbench.settings.page_layout import SETTINGS_FONT_SIZE
+from lib.script.ui.workbench_settings_layout import SETTINGS_FONT_SIZE
 from lib.script.workbench.theme import LIGHT_COLORS, workbench_stylesheet
-from lib.script.ui.ai_settings_panel import AISettingsPanel, _ContributionCardButton
+from lib.script.ui.ai_settings_panel import (
+    AISettingsPanel,
+    _AnimationDurationSliderField,
+    _ContributionCardButton,
+    _GENERAL_DECIMAL_SLIDER_SPECS,
+)
 
 
 class WorkbenchSettingsLayoutTests(unittest.TestCase):
@@ -158,6 +165,48 @@ class WorkbenchSettingsLayoutTests(unittest.TestCase):
         self.assertGreaterEqual(field.sizeHint().height(), field.fontMetrics().height())
 
         page.deleteLater()
+        self.app.processEvents()
+
+    def test_animation_duration_sliders_use_shared_half_to_two_second_range(self):
+        self.assertEqual(
+            _GENERAL_DECIMAL_SLIDER_SPECS[("ANIMATION", "start_animation_duration")],
+            (0.5, 2.0, 0.1, 1),
+        )
+        self.assertEqual(
+            _GENERAL_DECIMAL_SLIDER_SPECS[("ANIMATION", "exit_animation_duration")],
+            (0.5, 2.0, 0.1, 1),
+        )
+
+        field = _AnimationDurationSliderField(
+            0.5,
+            2.0,
+            0.1,
+            value=1.0,
+            decimals=1,
+            frame_count=120,
+            fps=120,
+        )
+        self.assertEqual(field.text(), "1")
+        self.assertEqual(field._value_label.text(), "1.0x/1.0s")
+        self.assertGreaterEqual(field._value_label.width(), scale_px(84, min_abs=84))
+        field.set_value(0.5)
+        self.assertEqual(field._value_label.text(), "0.5x/2.0s")
+        field.set_value(2.0)
+        self.assertEqual(field._value_label.text(), "2.0x/0.5s")
+        field.deleteLater()
+        self.app.processEvents()
+
+    def test_animation_speed_descriptions_use_requested_defaults_and_recommendations(self):
+        panel = AISettingsPanel(lazy_workbench_pages=True)
+        start = panel._build_config_single_description(
+            "ANIMATION", "start_animation_duration", 0.5, "启动动画倍速"
+        )
+        exit_text = panel._build_config_single_description(
+            "ANIMATION", "exit_animation_duration", 0.5, "退出动画倍速"
+        )
+        self.assertIn("默认值: 0.5x，推荐3.0s", start)
+        self.assertIn("默认值: 0.5x，推荐默认", exit_text)
+        panel.deleteLater()
         self.app.processEvents()
 
 

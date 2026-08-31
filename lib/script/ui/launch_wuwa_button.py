@@ -20,6 +20,7 @@ from lib.core.unified_draw import Layer, get_layer_manager
 from lib.core.qt_bridge.screen import clamp_rect_position
 from lib.core.anchor_utils import apply_ui_opacity
 from lib.script.ui.rect_action_button_style import paint_rect_action_button
+from lib.script.app.wuwa_launcher import get_wuthering_waves_launcher
 
 
 class LaunchWutheringWavesButton(QWidget):
@@ -179,7 +180,7 @@ class LaunchWutheringWavesButton(QWidget):
         from lib.script.ui._particle_helper import publish_click_particle
         publish_click_particle(self, event)
         if event.button() == Qt.LeftButton:
-            self._launch_wuthering_waves()
+            get_wuthering_waves_launcher().launch()
 
     def enterEvent(self, event):
         self._hovered = True

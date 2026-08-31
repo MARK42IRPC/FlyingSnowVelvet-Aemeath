@@ -14,7 +14,7 @@ from PyQt5.QtCore import QObject, pyqtSignal
 
 from config.user_storage_paths import get_user_logs_dir
 from lib.script.bug_tracker.service import get_bug_tracker_ipc_host, get_bug_tracker_ipc_port
-from lib.script.bug_tracker.window import BugTrackerWindow
+from lib.script.ui.bug_tracker_window import BugTrackerWindow
 
 
 def _setup_logging() -> None:

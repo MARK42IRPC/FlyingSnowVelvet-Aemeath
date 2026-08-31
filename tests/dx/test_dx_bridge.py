@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ctypes
+from pathlib import Path
 import unittest
 
 from lib.core.dx_bridge import DxBridgeError, DxOffscreenTarget, find_dx_library
@@ -29,6 +30,7 @@ from lib.core.graphics.commands import (
 from lib.core.graphics.resources import RasterFrame
 from lib.core.graphics.types import Color, FontSpec, Point, Rect
 from lib.core.layer import Layer
+from config import font_config
 
 
 def _batch(frame: RasterFrame, *, alpha: float = 1.0, flipped: bool = False) -> DrawBatch:
@@ -66,6 +68,11 @@ def _revision_batch(frame: RasterFrame, revision: int) -> DrawBatch:
 
 @unittest.skipUnless(find_dx_library() is not None, "build flying_snow_dx.dll to run DX integration tests")
 class DxBridgeTests(unittest.TestCase):
+    @staticmethod
+    def _utf8_buffer(value: str):
+        encoded = value.encode("utf-8")
+        return (ctypes.c_uint8 * len(encoded)).from_buffer_copy(encoded), len(encoded)
+
     def test_warp_renders_and_reads_back_rgba(self):
         frame = RasterFrame(2, 1, bytes((255, 0, 0, 255, 0, 0, 255, 255)))
         with DxOffscreenTarget(2, 1, warp=True) as target:
@@ -106,6 +113,45 @@ class DxBridgeTests(unittest.TestCase):
             self.assertEqual(target.device_generation, generation + 1)
             self.assertEqual(target._resource_handles, resource_handles)
             self.assertEqual(target.readback_rgba(), bytes((24, 47, 71, 200)))
+
+    def test_private_fonts_measure_and_survive_device_recovery(self):
+        font = type("Font", (), {
+            "family": "HarmonyOS Sans SC",
+            "pixel_size": 13,
+            "bold": True,
+        })()
+        with DxOffscreenTarget(8, 8, warp=True) as target:
+            before = target.measure_text("桌宠公告", font)
+            self.assertGreater(before[0], 0.0)
+            self.assertGreater(before[1], 0.0)
+
+            path_buffer, path_size = self._utf8_buffer(font_config._HARMONY_PATH)
+            status = int(target._library.fsdx_register_font_file(
+                target._runtime, path_buffer, path_size,
+            ))
+            self.assertEqual(status, 0)
+
+            target.recover_device()
+            after = target.measure_text("桌宠公告", font)
+            self.assertAlmostEqual(after[0], before[0], delta=0.1)
+            self.assertAlmostEqual(after[1], before[1], delta=0.1)
+
+    def test_private_font_registration_rejects_missing_and_invalid_paths(self):
+        with DxOffscreenTarget(4, 4, warp=True) as target:
+            missing, missing_size = self._utf8_buffer(
+                str(Path(font_config._HARMONY_PATH).with_name("missing-font.ttf")),
+            )
+            status = int(target._library.fsdx_register_font_file(
+                target._runtime, missing, missing_size,
+            ))
+            self.assertEqual(status, FSDX_STATUS_INVALID_ARGUMENT)
+            self.assertIn(b"does not exist", target._library.fsdx_get_last_error())
+
+            invalid = (ctypes.c_uint8 * 2)(0xFF, 0xFE)
+            status = int(target._library.fsdx_register_font_file(
+                target._runtime, invalid, 2,
+            ))
+            self.assertEqual(status, FSDX_STATUS_INVALID_ARGUMENT)
 
     def test_render_submission_recovers_and_retries_device_loss_once(self):
         target = object.__new__(DxOffscreenTarget)
@@ -312,6 +358,27 @@ class DxBridgeTests(unittest.TestCase):
         self.assertTrue(visible)
         self.assertTrue(all(pixel[0] == pixel[1] == pixel[2] for pixel in visible))
         self.assertTrue(all(pixel[0] <= pixel[3] for pixel in visible))
+
+    def test_directwrite_measurement_uses_real_glyph_widths(self):
+        with DxOffscreenTarget(1, 1, warp=True) as target:
+            latin_width, latin_height = target.measure_text(
+                "iiii",
+                FontSpec("Segoe UI", 18),
+            )
+            wide_width, wide_height = target.measure_text(
+                "WWWW",
+                FontSpec("Segoe UI", 18),
+            )
+            chinese_width, _ = target.measure_text(
+                "雪绒",
+                FontSpec("Microsoft YaHei UI", 18, bold=True),
+            )
+
+        self.assertGreater(latin_width, 0.0)
+        self.assertGreater(wide_width, latin_width)
+        self.assertGreater(chinese_width, 0.0)
+        self.assertGreater(latin_height, 0.0)
+        self.assertGreater(wide_height, 0.0)
 
     def test_unbalanced_draw_state_is_rejected(self):
         with DxOffscreenTarget(2, 2, warp=True) as target:

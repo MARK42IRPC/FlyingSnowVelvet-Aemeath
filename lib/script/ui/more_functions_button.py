@@ -11,6 +11,7 @@ from lib.core.qt_bridge.font import get_ui_font
 from config.scale import scale_px
 from config.tooltip_config import TOOLTIPS
 from lib.core.event.center import get_event_center, EventType, Event
+from lib.core.desktop_actions import request_tray_menu
 from lib.core.unified_draw import Layer, get_layer_manager
 from lib.core.qt_bridge.screen import clamp_rect_position
 from lib.core.anchor_utils import apply_ui_opacity
@@ -138,19 +139,7 @@ class MoreFunctionsButton(QWidget):
         if event.button() != Qt.LeftButton:
             return
 
-        try:
-            from lib.script.ui.tray_icon import get_tray_icon
-
-            tray = get_tray_icon()
-            if tray is None or not tray.initialize():
-                raise RuntimeError('系统托盘不可用')
-            tray.show_context_menu()
-        except Exception as e:
-            self._event_center.publish(Event(EventType.INFORMATION, {
-                'text': f'打开更多功能失败: {e}',
-                'min': 12,
-                'max': 120,
-            }))
+        request_tray_menu()
 
     def enterEvent(self, event):
         self._hovered = True

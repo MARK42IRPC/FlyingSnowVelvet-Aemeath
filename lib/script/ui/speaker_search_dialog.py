@@ -25,6 +25,7 @@ from config.tooltip_config import TOOLTIPS
 from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.graphics.types import Point
+from lib.core.world_objects import WorldObjectInstance
 from lib.core.unified_draw import Layer, get_layer_manager
 from lib.core.qt_bridge.screen import clamp_rect_position
 from lib.core.anchor_utils import apply_ui_opacity
@@ -149,6 +150,10 @@ class SpeakerSearchDialog(QWidget):
         self._event_center.subscribe(EventType.FRAME, self._on_frame)
         self._event_center.subscribe(EventType.UI_CLICKTHROUGH_TOGGLE,
                                      self._on_clickthrough_toggle)
+        self._event_center.subscribe(
+            EventType.SPEAKER_SEARCH_TOGGLE_REQUEST,
+            self._on_search_toggle_request,
+        )
 
         # ── 输入框信号 ───────────────────────────────────────────────
         self._entry.returnPressed.connect(self._trigger_search)
@@ -184,7 +189,7 @@ class SpeakerSearchDialog(QWidget):
             speaker: 触发右键的 Speaker 实例；None = 强制关闭。
         """
         if self._visible:
-            if speaker is None or speaker is self._focused_speaker:
+            if speaker is None or speaker == self._focused_speaker:
                 # 同一音响再次右键 或 外部强制关闭 → 关闭
                 self._hide()
             else:
@@ -198,6 +203,17 @@ class SpeakerSearchDialog(QWidget):
             self._focused_speaker = speaker
             self._update_anchor()
             self._show()
+
+    def _on_search_toggle_request(self, event: Event) -> None:
+        data = event.data if isinstance(event.data, dict) else {}
+        backend_id = str(data.get("backend_id") or "").strip()
+        try:
+            instance_id = int(data.get("instance_id", 0))
+        except (TypeError, ValueError):
+            return
+        if backend_id != "qt" or instance_id <= 0:
+            return
+        self.toggle(WorldObjectInstance(backend_id, instance_id, "speaker"))
 
     # ==================================================================
     # 显示 / 隐藏
@@ -361,10 +377,10 @@ class SpeakerSearchDialog(QWidget):
         """计算当前锚定音响的中心点（用于跨屏定位）。"""
         if self._focused_speaker is None:
             return
-        s = self._focused_speaker
+        geometry = self._focused_speaker.get_geometry()
         self._anchor_point = QPoint(
-            s.x() + s.width() // 2,
-            s.y() + s.height() // 2,
+            int(round(geometry.x + geometry.width / 2.0)),
+            int(round(geometry.y + geometry.height / 2.0)),
         )
 
     def _update_position(self):
@@ -372,15 +388,18 @@ class SpeakerSearchDialog(QWidget):
         if self._focused_speaker is None:
             return
 
-        s = self._focused_speaker
+        geometry = self._focused_speaker.get_geometry()
         if not self._anchor_point:
             self._update_anchor()
-        anchor_point = self._anchor_point if self._anchor_point else s.geometry().center()
+        anchor_point = self._anchor_point or QPoint(
+            int(round(geometry.x + geometry.width / 2.0)),
+            int(round(geometry.y + geometry.height / 2.0)),
+        )
 
-        center_y = s.y() + s.height() // 2
+        center_y = int(round(geometry.y + geometry.height / 2.0))
         new_y = center_y - _HEIGHT // 2 - scale_px(30, min_abs=1)  # 上移 30px
-        right_x = s.x() + s.width() + _GAP
-        left_x = s.x() - _TOTAL_W - _GAP
+        right_x = int(round(geometry.x + geometry.width)) + _GAP
+        left_x = int(round(geometry.x)) - _TOTAL_W - _GAP
 
         # 先尝试右侧
         x, y, _ = clamp_rect_position(
@@ -569,6 +588,10 @@ class SpeakerSearchDialog(QWidget):
         self._event_center.unsubscribe(EventType.FRAME, self._on_frame)
         self._event_center.unsubscribe(EventType.UI_CLICKTHROUGH_TOGGLE,
                                        self._on_clickthrough_toggle)
+        self._event_center.unsubscribe(
+            EventType.SPEAKER_SEARCH_TOGGLE_REQUEST,
+            self._on_search_toggle_request,
+        )
         self._control_buttons.cleanup()
         super().closeEvent(event)
 

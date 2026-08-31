@@ -49,6 +49,11 @@ class QtWorldObjectBackend(WorldObjectBackend):
             size=request.size,
             **options,
         )
+        try:
+            setattr(native, "_world_object_backend_id", self.backend_id)
+            setattr(native, "_world_object_instance_id", instance_id)
+        except (AttributeError, TypeError):
+            pass
         self._instances[instance_id] = native
         return instance_id
 

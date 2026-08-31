@@ -26,8 +26,8 @@ from PyQt5.QtWidgets import QApplication, QWidget
 from config.scale import scale_px
 from config.config import UI
 from lib.core.qt_bridge.workbench_page import QtWorkbenchToolPage
-from lib.script.bug_tracker import window as bug_tracker_module
-from lib.script.gemes.MAIN import manager_window as game_manager_module
+from lib.script.ui import bug_tracker_window as bug_tracker_module
+from lib.script.ui import game_manager_window as game_manager_module
 from lib.script.workbench.builtin_pages import builtin_tool_page_specs
 
 
@@ -153,7 +153,7 @@ class WorkbenchEmbeddedPageTests(unittest.TestCase):
             "lib.script.gemes.MAIN.runtime.get_game_runtime",
             return_value=runtime,
         ), patch(
-            "lib.script.gemes.MAIN.manager_window.GameManagerWindow",
+            "lib.script.ui.game_manager_window.GameManagerWindow",
             return_value=embedded_page,
         ) as manager_window:
             page = game_spec.factory()

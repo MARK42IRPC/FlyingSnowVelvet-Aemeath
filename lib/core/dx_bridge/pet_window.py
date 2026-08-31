@@ -85,8 +85,10 @@ class DxPetWindow(PetWindow):
     def _host_setup(self, on_close) -> None:
         width, height = ANIMATION["pet_size"]
         screen = self._dx_screen_provider.get_primary_screen_rect()
-        x = int(round(screen.x + (screen.width - width) / 2))
-        y = int(round(screen.y + (screen.height - height) / 2))
+        center = Point(screen.x + screen.width / 2.0, screen.y + screen.height / 2.0)
+        scale = self._dx_screen_provider.get_scale_for_point(center)
+        x = int(round(screen.x + (screen.width - width * scale) / 2))
+        y = int(round(screen.y + (screen.height - height * scale) / 2))
         host = self._dx_window_host_factory(
             width,
             height,
@@ -97,6 +99,7 @@ class DxPetWindow(PetWindow):
             tool_window=True,
             no_activate=False,
             clickthrough=False,
+            logical_content=True,
         )
         self._dx_window_host = host
         self._dx_on_close = on_close
@@ -136,9 +139,21 @@ class DxPetWindow(PetWindow):
         return host.get_geometry() if host is not None else Rect()
 
     def get_anchor_point(self, anchor_id: str) -> Point:
-        geometry = self.get_core_geometry()
+        # Anchors are expressed in content (96-DPI logical) coordinates,
+        # matching QWidget.rect() on the Qt side.  The native DX frame is
+        # physical, so do not derive the local anchor from its scaled size.
+        host = self._dx_window_host
+        if host is not None:
+            logical_size = getattr(host, "get_logical_size", None)
+            if callable(logical_size):
+                width, height = logical_size()
+            else:
+                geometry = host.get_geometry()
+                width, height = geometry.width, geometry.height
+        else:
+            width, height = ANIMATION["pet_size"]
         return get_rect_anchor_point(
-            Rect(0, 0, geometry.width, geometry.height),
+            Rect(0, 0, width, height),
             anchor_id,
         )
 
@@ -146,6 +161,12 @@ class DxPetWindow(PetWindow):
         geometry = self.get_core_geometry()
         anchor_id = str(kwargs.get("anchor_id") or "center")
         local_anchor = self.get_anchor_point(anchor_id)
+        host = self._dx_window_host
+        scale = getattr(host, "content_scale", 1.0) if host is not None else 1.0
+        try:
+            scale = max(0.01, float(scale))
+        except (TypeError, ValueError):
+            scale = 1.0
         self._event_center.publish(
             Event(
                 EventType.UI_ANCHOR_RESPONSE,
@@ -153,8 +174,8 @@ class DxPetWindow(PetWindow):
                     "window_id": kwargs.get("window_id"),
                     "anchor_id": anchor_id,
                     "anchor_point": Point(
-                        geometry.x + local_anchor.x,
-                        geometry.y + local_anchor.y,
+                        geometry.x + local_anchor.x * scale,
+                        geometry.y + local_anchor.y * scale,
                     ),
                     "ui_id": kwargs.get("ui_id"),
                 },
@@ -176,9 +197,13 @@ class DxPetWindow(PetWindow):
         if host is None or not host.is_alive():
             return
         geometry = host.get_geometry()
-        host.set_geometry(
-            Rect(position.x, position.y, geometry.width, geometry.height)
-        )
+        move = getattr(host, "set_position", None)
+        if callable(move):
+            move(position)
+        else:
+            host.set_geometry(
+                Rect(position.x, position.y, geometry.width, geometry.height)
+            )
 
     def _host_request_repaint(self) -> None:
         host = self._dx_window_host

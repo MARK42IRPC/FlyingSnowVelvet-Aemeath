@@ -25,10 +25,12 @@ from lib.core.qt_bridge.font import get_ui_font, get_digit_font, draw_mixed_text
 from config.scale import scale_px
 from config.tooltip_config import TOOLTIPS
 from lib.core.event.center import get_event_center, EventType, Event
+from lib.core.graphics.types import Point
 from lib.core.input.types import Key
 from lib.core.unified_draw import Layer, get_layer_manager
 from lib.core.qt_bridge.screen import clamp_rect_position, get_screen_geometry_for_point
 from lib.core.anchor_utils import apply_ui_opacity
+from lib.core.world_objects import WorldObjectInstance
 from lib.script.music import get_music_service
 from lib.script.ui.speaker_control_buttons import (
     PlayPauseButton,
@@ -277,6 +279,8 @@ class PlaylistPanel(QWidget):
 
     def show_for(self, speaker) -> None:
         """打开面板并锚定到指定音响。若已对同一音响显示则仅刷新。"""
+        if not isinstance(speaker, WorldObjectInstance):
+            raise TypeError("playlist panel requires a WorldObjectInstance")
         self._focused_speaker = speaker
         self._refresh_content()
         self._refresh_size()
@@ -564,10 +568,14 @@ class PlaylistPanel(QWidget):
         """始终优先放在音响右侧；右侧受阻时翻到左侧。"""
         if not self._focused_speaker:
             return
-        s        = self._focused_speaker
-        anchor_y = s.y() + s.height() // 2 - self.height() // 2
-        right_x = s.x() + s.width() + _GAP
-        left_x = s.x() - _WIDTH - _GAP
+        geometry = self._focused_speaker.get_geometry()
+        anchor = Point(
+            geometry.x + geometry.width / 2.0,
+            geometry.y + geometry.height / 2.0,
+        )
+        anchor_y = int(round(anchor.y - self.height() / 2.0))
+        right_x = int(round(geometry.x + geometry.width)) + _GAP
+        left_x = int(round(geometry.x)) - _WIDTH - _GAP
         reserve_w = _WIDTH + _REMOVE_BTN_W * 2
 
         # 先尝试右侧
@@ -576,7 +584,7 @@ class PlaylistPanel(QWidget):
             anchor_y,
             reserve_w,
             self.height(),
-            point=s.geometry().center(),
+            point=anchor,
             fallback_widget=self,
         )
 
@@ -587,7 +595,7 @@ class PlaylistPanel(QWidget):
                 anchor_y,
                 reserve_w,
                 self.height(),
-                point=s.geometry().center(),
+                point=anchor,
                 fallback_widget=self,
             )
             if fx == left_x or abs(fx - left_x) < abs(x - right_x):

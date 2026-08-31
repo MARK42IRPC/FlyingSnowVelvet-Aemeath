@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from PyQt5.QtCore import QPoint, QRect
 
 from lib.core.graphics.types import Rect
-from lib.script.gemes.MAIN.runtime import (
+from lib.script.ui.game_runtime import (
     GameRuntime,
     GameRuntimePanel,
     aspect_resize_geometry,

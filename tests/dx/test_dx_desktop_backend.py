@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 import textwrap
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -63,6 +64,7 @@ class _Host:
         self.active = False
         self.repaint_count = 0
         self.cleanup_count = 0
+        self.clickthrough = bool(kwargs.get("clickthrough", False))
 
     @property
     def native_handle(self):
@@ -88,6 +90,12 @@ class _Host:
 
     def request_repaint(self, viewport=None):
         self.repaint_count += 1
+
+    def set_clickthrough(self, enabled):
+        self.clickthrough = bool(enabled)
+
+    def get_geometry(self):
+        return self.geometry
 
     def poll_events(self):
         return ()
@@ -514,6 +522,75 @@ class DxApplicationUiHostTests(unittest.TestCase):
         self.assertEqual(bubble._queue, [])
         self.assertFalse(bubble.host.visible)
 
+    def test_bubble_right_click_copies_and_emits_qt_baseline_particles(self):
+        copied = []
+        particles = []
+        self.ui._clipboard_writer = lambda text: copied.append(text) or True
+        self.ui.prepare_runtime()
+        center = get_event_center()
+        center.subscribe(
+            EventType.PARTICLE_REQUEST,
+            lambda event: particles.append(event.data),
+        )
+        center.publish(Event(EventType.INFORMATION, {
+            "text": "需要复制的内容",
+            "min": 1,
+            "max": 100,
+        }))
+        bubble = self.ui._bubble
+
+        bubble.handle_pointer_press(SimpleNamespace(
+            button=MouseButton.RIGHT,
+            pos=Point(3, 4),
+            screen_pos=Point(123, 234),
+        ))
+
+        self.assertEqual(copied, ["需要复制的内容"])
+        self.assertEqual(
+            [item["particle_id"] for item in particles],
+            ["pink_click", "right_fade"],
+        )
+        self.assertFalse(bubble.host.visible)
+
+    def test_mic_stt_indicator_tracks_state_clickthrough_and_stop_action(self):
+        self.ui.prepare_runtime()
+        center = get_event_center()
+        stop_requests = []
+        center.subscribe(
+            EventType.MIC_STT_STOP,
+            lambda event: stop_requests.append(event.data),
+        )
+        center.publish(Event(EventType.UI_ANCHOR_RESPONSE, {
+            "window_id": "pet_window",
+            "ui_id": "all",
+            "anchor_id": "all",
+            "anchor_point": Point(100, 200),
+        }))
+        center.publish(Event(EventType.MIC_STT_STATE_CHANGE, {
+            "is_listening": True,
+            "speech_active": True,
+            "status": "识别中",
+        }))
+        indicator = self.ui._mic_indicator
+        self.assertIsNotNone(indicator)
+        self.assertTrue(indicator.host.visible)
+        self.assertTrue(indicator.prepare_render().commands)
+
+        center.publish(Event(EventType.UI_CLICKTHROUGH_TOGGLE, {"enabled": True}))
+        self.assertTrue(indicator.host.clickthrough)
+        center.publish(Event(EventType.UI_CLICKTHROUGH_TOGGLE, {"enabled": False}))
+        indicator.handle_pointer_press(SimpleNamespace(
+            button=MouseButton.LEFT,
+            screen_pos=Point(110, 210),
+        ))
+        self.assertEqual(stop_requests, [{"source": "mic_stt_indicator"}])
+
+        center.publish(Event(EventType.MIC_STT_STATE_CHANGE, {
+            "is_listening": False,
+            "speech_active": False,
+        }))
+        self.assertFalse(indicator.host.visible)
+
     def test_command_toggle_uses_pet_anchor_instead_of_screen_center(self):
         self.ui.prepare_runtime()
         entity = SimpleNamespace(get_core_geometry=lambda: Rect(100, 200, 150, 150))
@@ -540,6 +617,31 @@ class DxApplicationUiHostTests(unittest.TestCase):
             hint.host.geometry.y,
             panel.host.geometry.y + panel.host.geometry.height + 2,
         )
+
+    def test_command_family_pauses_timers_and_auto_hides_with_particle(self):
+        lifecycle = []
+        particles = []
+        center = get_event_center()
+        center.subscribe(EventType.TIMER_PAUSE, lambda event: lifecycle.append(event.type))
+        center.subscribe(EventType.TIMER_RESUME, lambda event: lifecycle.append(event.type))
+        center.subscribe(
+            EventType.PARTICLE_REQUEST,
+            lambda event: particles.append(event.data),
+        )
+        self.ui.prepare_runtime()
+        center.publish(Event(EventType.UI_COMMAND_TOGGLE, {}))
+        command = self.ui._panels["command"]
+        self.assertTrue(command.is_visible())
+
+        with patch(
+            "lib.core.dx_bridge.application_ui.get_cursor_position",
+            return_value=Point(10000, 10000),
+        ):
+            self.ui._on_tick(Event(EventType.TICK))
+
+        self.assertFalse(command.is_visible())
+        self.assertEqual(lifecycle, [EventType.TIMER_PAUSE, EventType.TIMER_RESUME])
+        self.assertEqual(particles[-1]["particle_id"], "right_fade")
 
     def test_command_hint_is_native_interactive_and_tracks_input(self):
         registry = get_hash_cmd_registry()
@@ -626,6 +728,28 @@ class DxApplicationUiHostTests(unittest.TestCase):
         actions.handle_pointer_release(MouseButton.LEFT)
         self.assertEqual(actions._pressed, "")
 
+    def test_action_hover_uses_delayed_native_project_tooltip(self):
+        self.ui.prepare_runtime()
+        entity = SimpleNamespace(get_core_geometry=lambda: Rect(100, 200, 150, 150))
+        get_event_center().publish(Event(EventType.UI_COMMAND_TOGGLE, {"entity": entity}))
+        actions = self.ui._action_panel
+        clickthrough_rect = dict(actions._layout().rects)["clickthrough"]
+        point = Point(
+            clickthrough_rect.x + clickthrough_rect.width / 2,
+            clickthrough_rect.y + clickthrough_rect.height / 2,
+        )
+
+        actions.handle_pointer_move(SimpleNamespace(global_pos=point, screen_pos=point))
+        tooltip = self.ui._tooltip
+        self.assertIsNotNone(tooltip)
+        self.assertTrue(tooltip._show_call.pending)
+        tooltip._show_call._invoke()
+
+        self.assertTrue(tooltip.host.visible)
+        self.assertTrue(tooltip.prepare_render().commands)
+        actions.handle_pointer_leave()
+        self.assertFalse(tooltip.host.visible)
+
     def test_command_actions_use_core_events_without_qt(self):
         self.ui.prepare_runtime()
         entity = SimpleNamespace(get_core_geometry=lambda: Rect(100, 200, 150, 150))
@@ -654,12 +778,61 @@ class DxApplicationUiHostTests(unittest.TestCase):
 
         launch.assert_called_once_with("office")
 
+    def test_game_command_runtime_follows_ui_lifecycle(self):
+        runtimes = []
+
+        class Runtime:
+            def __init__(self):
+                self.cleanup_count = 0
+
+            def cleanup(self):
+                self.cleanup_count += 1
+
+        def create_runtime():
+            runtime = Runtime()
+            runtimes.append(runtime)
+            return runtime
+
+        ui = DxApplicationUiHost(
+            self.context,
+            screen_provider=self.provider,
+            window_host_factory=lambda width, height, **kwargs: _Host(
+                width, height, **kwargs
+            ),
+            warp=True,
+            game_command_runtime_factory=create_runtime,
+        )
+        try:
+            ui.prepare_runtime()
+            ui.prepare_runtime()
+            self.assertEqual(len(runtimes), 1)
+
+            ui.stop_runtime()
+            ui.stop_runtime()
+            self.assertEqual(runtimes[0].cleanup_count, 1)
+
+            ui.prepare_runtime()
+            self.assertEqual(len(runtimes), 2)
+        finally:
+            ui.cleanup()
+
+        self.assertEqual(runtimes[1].cleanup_count, 1)
+
 
 @unittest.skipUnless(
     os.name == "nt" and find_dx_library() is not None,
     "DX application UI integration requires Windows and a built DX DLL",
 )
 class DxApplicationUiIntegrationTests(unittest.TestCase):
+    @staticmethod
+    def _finish_fade(context, animator):
+        deadline = time.monotonic() + 1.0
+        while animator.running and time.monotonic() < deadline:
+            time.sleep(0.01)
+            context.run_once()
+        context.run_once()
+        assert not animator.running
+
     def test_command_window_uses_qt_reference_geometry_and_colors(self):
         cleanup_event_center()
         context = DxLoopContext()
@@ -678,6 +851,7 @@ class DxApplicationUiIntegrationTests(unittest.TestCase):
                 int(UI["cmd_window_width"]),
                 int(UI["cmd_window_height"]),
             ))
+            self._finish_fade(context, command._opacity)
             pixels = command.host.readback_rgba()
 
             def pixel(x, y):
@@ -709,12 +883,13 @@ class DxApplicationUiIntegrationTests(unittest.TestCase):
             get_event_center().publish(Event(EventType.INFORMATION, {
                 "text": "DX application UI ready",
                 "min": 1,
-                "max": 2,
+                "max": 20,
             }))
             context.run_once()
             bubble = ui._bubble
             self.assertIsNotNone(bubble)
             self.assertTrue(bubble.host.is_visible())
+            self._finish_fade(context, bubble._opacity)
             pixels = bubble.host.readback_rgba()
             width, height = int(bubble.host.width), int(bubble.host.height)
             self.assertEqual(len(pixels), width * height * 4)

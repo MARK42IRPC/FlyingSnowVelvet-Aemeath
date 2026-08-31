@@ -22,12 +22,13 @@ from PyQt5.QtWidgets import QWidget, QApplication
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QImage, QPixmap, QPainter
 
+from config.config import ANIMATION
 # 项目核心模块（路径已在上方注入，可安全导入）
 from lib.core.compute_hub import get_compute_hub
 from lib.core.unified_draw import Layer, get_layer_manager
 from lib.core.anchor_utils import apply_ui_opacity
 from lib.script.SEanima.clip import resolve_animation_clip
-from lib.script.SEanima.decoder import build_playback_plan, decode_frame_to_bytes
+from lib.script.SEanima.decoder import build_playback_plan, decode_frame_to_bytes, select_playback_files
 from lib.script.SEanima.effects import _build_exit_shadow_metrics, _normalize_exit_shadow_direction
 
 _log = logging.getLogger(__name__)
@@ -74,6 +75,7 @@ class AnimationWindow(QWidget):
         # 播放定时器 ~60fps
         self._timer = QTimer()
         self._timer.timeout.connect(self._on_frame)
+        self._playback_interval_ms = 16
 
         _log.debug("[AnimationWindow] 创建: %s", animation_type)
 
@@ -105,7 +107,21 @@ class AnimationWindow(QWidget):
             self._staging.put(None)
             return
 
-        total = len(plan.files)
+        speed_multiplier = max(
+            0.5,
+            min(2.0, float(ANIMATION.get(f"{clip.animation_type}_animation_duration", 1.0) or 1.0)),
+        )
+        files = select_playback_files(
+            plan.files,
+            speed_multiplier=speed_multiplier,
+            fps=clip.fps,
+        )
+        base_interval = 1000.0 / max(1, clip.fps)
+        self._playback_interval_ms = max(
+            1,
+            int(round(base_interval / speed_multiplier)) if speed_multiplier < 1.0 else int(round(base_interval)),
+        )
+        total = len(files)
         _log.info(
             "[AnimationWindow] 开始解码 %d 帧 (%s -> %s)",
             total,
@@ -138,7 +154,7 @@ class AnimationWindow(QWidget):
             )
 
         def decode_one(idx: int):
-            path = os.path.join(folder, plan.files[idx])
+            path = os.path.join(folder, files[idx])
             try:
                 return decode_frame_to_bytes(path, plan)
             except Exception as e:
@@ -195,6 +211,8 @@ class AnimationWindow(QWidget):
     def _on_frame(self):
         """定时器回调：drain 暂存区 → 推进帧 → 触发重绘"""
         self._drain_staging()
+        if self._timer.interval() != self._playback_interval_ms:
+            self._timer.setInterval(self._playback_interval_ms)
 
         # 第一帧就绪时才显示窗口
         if not self._is_showing and self._frame_buffer:

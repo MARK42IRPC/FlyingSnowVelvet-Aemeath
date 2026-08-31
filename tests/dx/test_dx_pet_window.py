@@ -234,6 +234,31 @@ class DxPetWindowTests(unittest.TestCase):
         self.assertFalse(host.alive)
         self.assertEqual(context.registered_pollers(), ())
 
+    def test_anchor_uses_logical_content_and_physical_global_offset(self):
+        pet, host, _context, _layer_manager = self._create_pet()
+        try:
+            width, height = ANIMATION["pet_size"]
+            # Simulate a 150% per-monitor-DPI host: frame geometry is
+            # physical while content and anchors remain logical.
+            host.content_scale = 1.5
+            host.get_logical_size = lambda: (width, height)
+            host.geometry = Rect(10, 20, int(width * 1.5), int(height * 1.5))
+            responses = []
+            get_event_center().subscribe(
+                EventType.UI_ANCHOR_RESPONSE,
+                lambda event: responses.append(event.data),
+            )
+            self.assertEqual(pet.get_anchor_point("bottom_right"), Point(width, height))
+            pet._host_publish_anchor_response(
+                window_id="pet_window", anchor_id="bottom_right", ui_id="probe",
+            )
+            self.assertEqual(
+                responses[-1]["anchor_point"],
+                Point(10 + width * 1.5, 20 + height * 1.5),
+            )
+        finally:
+            pet.shutdown_host()
+
     def test_dx_pet_composition_imports_with_pyqt_blocked(self):
         repo_root = Path(__file__).resolve().parents[2]
         script = textwrap.dedent(

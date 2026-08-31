@@ -39,6 +39,7 @@ class DxMonitor:
     geometry: Rect
     work_area: Rect
     primary: bool = False
+    dpi: int = 96
 
 
 def _rect_from_win32(rect: wintypes.RECT) -> Rect:
@@ -66,6 +67,19 @@ def _enumerate_win32_monitors() -> tuple[DxMonitor, ...]:
         ctypes.POINTER(_MonitorInfo),
     ]
     user32.GetMonitorInfoW.restype = wintypes.BOOL
+    get_monitor_dpi = None
+    try:
+        shcore = ctypes.WinDLL("shcore", use_last_error=True)
+        get_monitor_dpi = shcore.GetDpiForMonitor
+        get_monitor_dpi.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_int,
+            ctypes.POINTER(wintypes.UINT),
+            ctypes.POINTER(wintypes.UINT),
+        ]
+        get_monitor_dpi.restype = ctypes.c_long
+    except (AttributeError, OSError):
+        get_monitor_dpi = None
 
     monitors: list[DxMonitor] = []
 
@@ -74,11 +88,17 @@ def _enumerate_win32_monitors() -> tuple[DxMonitor, ...]:
         info = _MonitorInfo()
         info.cbSize = ctypes.sizeof(_MonitorInfo)
         if user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
+            dpi_x = wintypes.UINT(96)
+            dpi_y = wintypes.UINT(96)
+            if get_monitor_dpi is not None:
+                if get_monitor_dpi(monitor, 0, ctypes.byref(dpi_x), ctypes.byref(dpi_y)) != 0:
+                    dpi_x.value = 96
             monitors.append(
                 DxMonitor(
                     geometry=_rect_from_win32(info.rcMonitor),
                     work_area=_rect_from_win32(info.rcWork),
                     primary=bool(info.dwFlags & MONITORINFOF_PRIMARY),
+                    dpi=max(1, int(dpi_x.value)),
                 )
             )
         return True
@@ -131,6 +151,24 @@ class DxScreenProvider:
             (monitor.geometry for monitor in monitors),
             fallback,
         )
+
+    def get_dpi_for_point(self, point: Point | None = None) -> int:
+        monitors = self.monitors()
+        if not monitors:
+            return 96
+        geometry = screen_for_point(
+            point,
+            (monitor.geometry for monitor in monitors),
+            next(
+                (monitor.geometry for monitor in monitors if monitor.primary),
+                monitors[0].geometry,
+            ),
+        )
+        monitor = next((item for item in monitors if item.geometry == geometry), monitors[0])
+        return max(1, int(monitor.dpi))
+
+    def get_scale_for_point(self, point: Point | None = None) -> float:
+        return self.get_dpi_for_point(point) / 96.0
 
 
 def get_cursor_position() -> Point:

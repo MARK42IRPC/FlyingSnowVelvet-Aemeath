@@ -323,6 +323,8 @@ class InstallDependenciesProgressTests(unittest.TestCase):
             self.assertIn(install_deps.directml_config.CUDA_RUNTIME_REQUIREMENT, pip_commands[0])
             self.assertIn("nvidia-cuda-nvrtc-cu12", pip_commands[0])
             self.assertIn("nvidia-cudnn-cu12", pip_commands[0])
+            progress_option = pip_commands[0].index("--progress-bar")
+            self.assertEqual(pip_commands[0][progress_option + 1], "on")
             marker = json.loads(
                 (target / install_deps.directml_config.CUDA_RUNTIME_MARKER_NAME).read_text(encoding="utf-8")
             )
@@ -672,6 +674,31 @@ class InstallDependenciesProgressTests(unittest.TestCase):
         self.assertEqual(values, [5, 22, 48, 78, 95])
         self.assertEqual(install_deps._pip_progress_from_output("", 78), 78)
         self.assertEqual(values, sorted(values))
+
+    def test_pip_download_progress_reports_package_bytes_percent_and_speed(self):
+        package, detail = install_deps._pip_download_progress(
+            "Downloading nvidia_cublas-12.6.whl (100 MiB)",
+        )
+        self.assertEqual(package, "nvidia_cublas-12.6.whl")
+        self.assertIsNone(detail)
+
+        package, detail = install_deps._pip_download_progress(
+            "━━━━━━━━━━━━ 42.0/100 MiB 12.5 MiB/s",
+            package,
+        )
+        self.assertEqual(package, "nvidia_cublas-12.6.whl")
+        self.assertIn("nvidia_cublas-12.6.whl", detail)
+        self.assertIn("42.0MB/100.0MB", detail)
+        self.assertIn("42.0%", detail)
+        self.assertIn("12.5MB/s", detail)
+
+    def test_pip_download_progress_without_total_does_not_fabricate_percent(self):
+        _package, detail = install_deps._pip_download_progress(
+            "Downloading package.whl 8.0 MiB/s",
+        )
+        self.assertIn("8.0MB/s", detail)
+        self.assertIn("总大小未知", detail)
+        self.assertNotIn("%", detail)
 
     def test_runtime_install_stages_have_monotonic_bar_values(self):
         self.assertEqual(

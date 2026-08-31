@@ -9,6 +9,7 @@ from lib.core.qt_bridge.font import get_ui_font
 from config.scale import scale_px
 from config.tooltip_config import TOOLTIPS
 from lib.core.event.center import get_event_center, EventType, Event
+from lib.core.desktop_actions import adjust_desktop_scale
 from lib.core.graphics.types import Point
 from lib.core.unified_draw import Layer, get_layer_manager
 from lib.core.qt_bridge.screen import clamp_rect_position
@@ -233,15 +234,7 @@ class ScaleUpButton(QWidget):
 
     def click(self):
         """处理点击事件 - 放大桌宠"""
-        new_scale = self._scale_config.adjust_scale(self.SCALE_DELTA)
-
-        # 发布信息气泡事件
-        info_event = Event(EventType.INFORMATION, {
-            'text': f'缩放: {new_scale:.1f}（重启生效）',
-            'min': 0,
-            'max': 60
-        })
-        self._event_center.publish(info_event)
+        adjust_desktop_scale(self.SCALE_DELTA)
 
         self.update()
 
@@ -459,15 +452,7 @@ class ScaleDownButton(QWidget):
 
     def click(self):
         """处理点击事件 - 缩小桌宠"""
-        new_scale = self._scale_config.adjust_scale(self.SCALE_DELTA)
-
-        # 发布信息气泡事件
-        info_event = Event(EventType.INFORMATION, {
-            'text': f'缩放: {new_scale:.1f}（重启生效）',
-            'min': 0,
-            'max': 60
-        })
-        self._event_center.publish(info_event)
+        adjust_desktop_scale(self.SCALE_DELTA)
 
         self.update()
 

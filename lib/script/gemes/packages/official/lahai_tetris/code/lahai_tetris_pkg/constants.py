@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from PyQt5.QtGui import QColor
-
 BOARD_W = 10
 BOARD_H = 20
 PREVIEW_GRID = 4
@@ -41,12 +39,12 @@ SHAPES: dict[str, list[tuple[int, int]]] = {
     "G": [(-1, 0), (0, 0), (1, 0), (1, 1)],
 }
 
-THEME: dict[str, tuple[QColor, QColor, QColor]] = {
-    "A": (QColor(255, 120, 126), QColor(112, 33, 58), QColor(255, 221, 224)),
-    "B": (QColor(255, 174, 90), QColor(126, 68, 18), QColor(255, 233, 186)),
-    "C": (QColor(255, 221, 96), QColor(120, 100, 20), QColor(255, 243, 181)),
-    "D": (QColor(153, 229, 118), QColor(49, 104, 45), QColor(216, 255, 206)),
-    "E": (QColor(100, 216, 196), QColor(21, 100, 91), QColor(204, 253, 245)),
-    "F": (QColor(108, 164, 255), QColor(28, 63, 126), QColor(211, 227, 255)),
-    "G": (QColor(191, 127, 255), QColor(79, 42, 126), QColor(239, 220, 255)),
+THEME: dict[str, tuple[tuple[int, int, int], tuple[int, int, int], tuple[int, int, int]]] = {
+    "A": ((255, 120, 126), (112, 33, 58), (255, 221, 224)),
+    "B": ((255, 174, 90), (126, 68, 18), (255, 233, 186)),
+    "C": ((255, 221, 96), (120, 100, 20), (255, 243, 181)),
+    "D": ((153, 229, 118), (49, 104, 45), (216, 255, 206)),
+    "E": ((100, 216, 196), (21, 100, 91), (204, 253, 245)),
+    "F": ((108, 164, 255), (28, 63, 126), (211, 227, 255)),
+    "G": ((191, 127, 255), (79, 42, 126), (239, 220, 255)),
 }

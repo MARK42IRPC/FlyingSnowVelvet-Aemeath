@@ -62,6 +62,9 @@ class TrayHost(Protocol):
     def initialize(self) -> bool:
         """Create or restore the native tray representation."""
 
+    def show_context_menu(self) -> None:
+        """Show the backend tray menu at the current pointer position."""
+
     def begin_shutdown(self) -> None:
         """Hide interactive tray UI before the rest of the app stops."""
 

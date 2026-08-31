@@ -41,7 +41,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtGui import QPainter, QColor, QCursor, QPixmap
 
-from config.config import UI
+from config.config import ANIMATION, UI
 from lib.core.qt_bridge.colors import UI_THEME
 from lib.core.qt_bridge.font import get_ui_font, get_digit_font
 from lib.core.backend_router import get_backend_descriptors
@@ -78,7 +78,9 @@ from lib.script.SEanima.clip import (
     DEFAULT_EXIT_ANIMATION_FOLDER,
     DEFAULT_START_ANIMATION_FOLDER,
     list_animation_folder_choices,
+    resolve_animation_folder_path,
 )
+from lib.script.SEanima.decoder import playback_duration_seconds, scan_animation_frame_files
 from lib.script.chat.ollama_registry import get_available_model_names, get_model_list_error
 from lib.script.chat.network_policy import API_TIMEOUT_SECS
 from lib.script.chat.persona_storage import ensure_user_persona_file
@@ -91,6 +93,8 @@ from lib.script.ui.voice_package_installer import (
 )
 from lib.script.workbench.settings import (
     GENERAL_CONFIG_CATEGORIES,
+)
+from lib.script.ui.workbench_settings_layout import (
     SettingsPageScaffold,
     create_settings_form,
 )
@@ -202,7 +206,9 @@ _CATEGORY_KEY_ALLOWLIST = {
             "gif_fps",
             "start_exit_enabled",
             "start_animation_folder",
+            "start_animation_duration",
             "exit_animation_folder",
+            "exit_animation_duration",
             "exit_shadow_strength",
             "exit_shadow_blur_radius",
             "exit_shadow_offset_direction",
@@ -335,6 +341,8 @@ _GENERAL_BOOL_KEYS: set[tuple[str, str]] = {
 }
 
 _GENERAL_NUMERIC_RULES: dict[tuple[str, str], tuple[str, float, float]] = {
+    ("ANIMATION", "start_animation_duration"): ("number", 0.5, 2.0),
+    ("ANIMATION", "exit_animation_duration"): ("number", 0.5, 2.0),
     ("ANIMATION", "frame_fps"): ("int", 1, 120),
     ("ANIMATION", "gif_fps"): ("int", 1, 60),
     ("ANIMATION", "exit_shadow_strength"): ("int", 0, 255),
@@ -437,6 +445,8 @@ _VOLUME_SLIDER_FIELDS: set[tuple[str, str]] = {
 }
 
 _GENERAL_DECIMAL_SLIDER_SPECS: dict[tuple[str, str], tuple[float, float, float, int]] = {
+    ("ANIMATION", "start_animation_duration"): (0.5, 2.0, 0.1, 1),
+    ("ANIMATION", "exit_animation_duration"): (0.5, 2.0, 0.1, 1),
     ("UI", "pet_opacity"): (0.0, 1.0, 0.05, 2),
     ("UI", "ui_widget_opacity"): (0.0, 1.0, 0.05, 2),
     ("UI", "tooltip_opacity"): (0.0, 1.0, 0.05, 2),
@@ -473,7 +483,9 @@ _GENERAL_CONFIG_DEFAULTS: dict[str, dict[str, object]] = {
         "gif_fps": 16,
         "start_exit_enabled": True,
         "start_animation_folder": DEFAULT_START_ANIMATION_FOLDER,
+        "start_animation_duration": 0.5,
         "exit_animation_folder": DEFAULT_EXIT_ANIMATION_FOLDER,
+        "exit_animation_duration": 0.5,
         "exit_shadow_strength": 230,
         "exit_shadow_blur_radius": 10,
         "exit_shadow_offset_direction": "down_right",
@@ -652,6 +664,8 @@ _KEY_FRIENDLY_NAME = {
         "gif_fps": "GIF帧率",
         "frame_fps": "帧率",
         "start_exit_enabled": "启动/退出动画",
+        "start_animation_duration": "启动动画倍速",
+        "exit_animation_duration": "退出动画倍速",
         "start_animation_folder": "启动序列帧目录",
         "exit_animation_folder": "退出序列帧目录",
         "exit_shadow_strength": "退出阴影强度",
@@ -1634,6 +1648,33 @@ class _DecimalSliderField(QWidget):
         self.set_value(text)
 
 
+class _AnimationDurationSliderField(_DecimalSliderField):
+    """动画目标时长滑块，同时显示按帧数计算出的实际播放时长。"""
+
+    def __init__(self, *args, frame_count: int, fps: int, **kwargs):
+        self._frame_count = max(0, int(frame_count))
+        self._fps = max(1, int(fps))
+        super().__init__(*args, **kwargs)
+        self._value_label.setFixedWidth(scale_px(92, min_abs=84))
+        self._sync_value_label(self._slider.value())
+
+    def _sync_value_label(self, _slider_value: int) -> None:
+        target = self.value()
+        if self._frame_count <= 0:
+            self._value_label.setText("暂无帧数据")
+            return
+        actual = playback_duration_seconds(
+            self._frame_count,
+            speed_multiplier=target,
+            fps=self._fps,
+        )
+        self._value_label.setText(f"{target:.1f}x/{actual:.1f}s")
+
+    def set_frame_count(self, frame_count: int) -> None:
+        self._frame_count = max(0, int(frame_count))
+        self._sync_value_label(self._slider.value())
+
+
 class _ContributionCardButton(QPushButton):
     """Contribution entry with a compact action hint."""
 
@@ -1856,11 +1897,25 @@ class AISettingsPanel(QWidget):
         choice_label = _choice_label_for_value(dict_name, key, value)
         if choice_label and choice_label != preview:
             preview = f"{choice_label} ({preview})"
+        recommendation = ""
+        if (dict_name, key) in {
+            ("ANIMATION", "start_animation_duration"),
+            ("ANIMATION", "exit_animation_duration"),
+        }:
+            try:
+                preview = f"{float(value):.1f}x"
+            except (TypeError, ValueError):
+                preview = "1.0x"
+            recommendation = (
+                "，推荐3.0s"
+                if key == "start_animation_duration"
+                else "，推荐默认"
+            )
         return (
             f"{section_name} · {friendly_name}\n"
             f"配置键: {dict_name}.{key}\n"
             f"类型: {value_type}\n"
-            f"默认值: {preview}"
+            f"默认值: {preview}{recommendation}"
         )
 
     def _build_config_range_description(
@@ -2525,6 +2580,68 @@ class AISettingsPanel(QWidget):
                 if entry_id in consumed_keys:
                     continue
 
+                if str(entry_dict_name) == "ANIMATION" and key in {
+                    "start_animation_folder",
+                    "exit_animation_folder",
+                }:
+                    animation_type = "start" if key.startswith("start_") else "exit"
+                    duration_key = f"{animation_type}_animation_duration"
+                    duration_entry = next(
+                        (
+                            (other_key, other_value)
+                            for other_dict_name, other_key, other_value in section_entries
+                            if other_dict_name == entry_dict_name and other_key == duration_key
+                        ),
+                        None,
+                    )
+                    if duration_entry is not None:
+                        _duration_key, duration_value = duration_entry
+                        folder_editor, duration_editor, group_widget = self._create_animation_folder_duration_editor(
+                            animation_type,
+                            str(value),
+                            float(duration_value),
+                        )
+                        self._set_config_editor_value(folder_editor, value)
+                        self._set_config_editor_value(duration_editor, duration_value)
+                        folder_description = self._build_config_single_description(
+                            str(entry_dict_name), key, value, _friendly_key_name(str(entry_dict_name), key)
+                        )
+                        label = self._create_form_label(_friendly_key_name(str(entry_dict_name), key))
+                        self._set_widget_description(label, folder_description)
+                        self._set_widget_description(group_widget, folder_description)
+                        self._set_widget_description(folder_editor, folder_description)
+                        self._set_widget_description(duration_editor, self._build_config_single_description(
+                            str(entry_dict_name), duration_key, duration_value,
+                            _friendly_key_name(str(entry_dict_name), duration_key),
+                        ))
+                        form.addRow(label, group_widget)
+                        fields.extend((
+                            {
+                                "kind": "single",
+                                "dict_name": str(entry_dict_name),
+                                "key": key,
+                                "editor": folder_editor,
+                                "template": copy.deepcopy(value),
+                            },
+                            {
+                                "kind": "decimal_slider",
+                                "dict_name": str(entry_dict_name),
+                                "key": duration_key,
+                                "editor": duration_editor,
+                                "template": copy.deepcopy(duration_value),
+                            },
+                        ))
+                        defaults.setdefault(str(entry_dict_name), {})[key] = _hardcoded_general_default(
+                            str(entry_dict_name), key, value
+                        )
+                        defaults.setdefault(str(entry_dict_name), {})[duration_key] = _hardcoded_general_default(
+                            str(entry_dict_name), duration_key, duration_value
+                        )
+                        consumed_keys.add(entry_id)
+                        consumed_keys.add(f"{entry_dict_name}.{duration_key}")
+                        section_fields_added = True
+                        continue
+
                 signature = _range_pair_signature(key)
                 if signature is not None:
                     pair_key = None
@@ -2625,13 +2742,31 @@ class AISettingsPanel(QWidget):
                     extra_widgets.append(percent_label)
                 elif slider_spec is not None:
                     minimum, maximum, step, decimals = slider_spec
-                    editor = _DecimalSliderField(
-                        minimum,
-                        maximum,
-                        step,
-                        value=float(value),
-                        decimals=decimals,
-                    )
+                    if str(entry_dict_name) == "ANIMATION" and key in {
+                        "start_animation_duration",
+                        "exit_animation_duration",
+                    }:
+                        animation_type = "start" if key.startswith("start_") else "exit"
+                        folder_key = f"{animation_type}_animation_folder"
+                        folder_name = str(ANIMATION.get(folder_key, ""))
+                        frame_count = len(scan_animation_frame_files(resolve_animation_folder_path(folder_name)))
+                        editor = _AnimationDurationSliderField(
+                            minimum,
+                            maximum,
+                            step,
+                            value=float(value),
+                            decimals=decimals,
+                            frame_count=frame_count,
+                            fps=int(ANIMATION.get("frame_fps", 60) or 60),
+                        )
+                    else:
+                        editor = _DecimalSliderField(
+                            minimum,
+                            maximum,
+                            step,
+                            value=float(value),
+                            decimals=decimals,
+                        )
                     row_widget = editor
                 elif choice_options is not None:
                     editor = self._create_config_choice_editor(choice_options)
@@ -3124,6 +3259,45 @@ class AISettingsPanel(QWidget):
         row.addWidget(slider, 1)
         row.addWidget(label, 0)
         return slider, label, group
+
+    def _create_animation_folder_duration_editor(
+        self,
+        animation_type: str,
+        folder_value: str,
+        duration_value: float,
+    ):
+        """Keep each animation's folder and timing controls in one editor group."""
+        folder_key = f"{animation_type}_animation_folder"
+        duration_key = f"{animation_type}_animation_duration"
+        options = self._get_choice_field_options("ANIMATION", folder_key) or []
+        folder_editor = self._create_config_choice_editor(options)
+        duration_spec = self._get_decimal_slider_spec("ANIMATION", duration_key, duration_value)
+        if duration_spec is None:
+            raise ValueError(f"缺少动画时长滑块规格: {duration_key}")
+        minimum, maximum, step, decimals = duration_spec
+        frame_count = len(scan_animation_frame_files(resolve_animation_folder_path(str(folder_value))))
+        duration_editor = _AnimationDurationSliderField(
+            minimum,
+            maximum,
+            step,
+            value=float(duration_value),
+            decimals=decimals,
+            frame_count=frame_count,
+            fps=int(ANIMATION.get("frame_fps", 60) or 60),
+        )
+        folder_editor.currentIndexChanged.connect(
+            lambda _index, combo=folder_editor, timing=duration_editor: timing.set_frame_count(
+                len(scan_animation_frame_files(resolve_animation_folder_path(str(combo.currentData() or ""))))
+            )
+        )
+        group = QWidget()
+        group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        layout = QVBoxLayout(group)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(scale_px(5, min_abs=3))
+        layout.addWidget(folder_editor)
+        layout.addWidget(duration_editor)
+        return folder_editor, duration_editor, group
 
     def _create_path_editor_with_open_button(
         self,

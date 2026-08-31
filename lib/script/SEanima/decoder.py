@@ -32,6 +32,46 @@ class AnimationPlaybackPlan:
     shadow_metrics: dict | None
 
 
+def select_playback_files(
+    files: list[str], *, target_seconds: float | None = None, fps: int, speed_multiplier: float | None = None
+) -> list[str]:
+    """按目标时长或倍速均匀抽帧；减速时保留完整帧序列。"""
+    source = list(files)
+    if speed_multiplier is not None:
+        speed = max(0.5, min(2.0, float(speed_multiplier)))
+        if speed <= 1.0:
+            return source
+        target_seconds = len(source) / max(1, int(fps)) / speed
+    if len(source) <= 1 or target_seconds is None or float(target_seconds) <= 0:
+        return source
+    target_count = min(len(source), max(1, int(round(float(target_seconds) * max(1, int(fps))))))
+    if target_count >= len(source):
+        return source
+    if target_count == 1:
+        return [source[0]]
+    return [source[int(round(index * (len(source) - 1) / (target_count - 1)))] for index in range(target_count)]
+
+
+def playback_duration_seconds(
+    frame_count: int,
+    *,
+    fps: int,
+    target_seconds: float | None = None,
+    speed_multiplier: float | None = None,
+) -> float:
+    """Return the actual duration after applying the same speed rule."""
+    count = max(0, int(frame_count))
+    rate = max(1, int(fps))
+    if count <= 0:
+        return 0.0
+    if speed_multiplier is not None:
+        speed = max(0.5, min(2.0, float(speed_multiplier)))
+        return (count / rate) / speed
+    if target_seconds is not None and float(target_seconds) > 0:
+        count = min(count, max(1, int(round(float(target_seconds) * rate))))
+    return count / float(rate)
+
+
 def scan_animation_frame_files(folder_path: str) -> list[str]:
     if not os.path.isdir(folder_path):
         return []

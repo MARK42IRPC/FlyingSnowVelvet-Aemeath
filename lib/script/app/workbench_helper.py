@@ -12,7 +12,7 @@ from pathlib import Path
 from config.user_storage_paths import get_user_state_dir
 
 
-_HELPER_REQUEST_VERSION = 1
+_HELPER_REQUEST_VERSION = 2
 _HELPER_LOCK = threading.RLock()
 _helper_process: subprocess.Popen | None = None
 
@@ -26,17 +26,43 @@ def normalize_workbench_page(page_id: object) -> str:
     return value
 
 
+def normalize_game_id(game_id: object) -> str:
+    value = str(game_id or "").strip()
+    if not value or len(value) > 64:
+        return ""
+    if not all(character.isalnum() or character in {"_", "-", "."} for character in value):
+        return ""
+    return value
+
+
+def normalize_game_action(action: object) -> str:
+    value = str(action or "").strip().lower()
+    return value if value in {
+        "open_manager",
+        "close_manager",
+        "open",
+        "close",
+    } else ""
+
+
 def _helper_request_path() -> Path:
     return get_user_state_dir("workbench-helper", "request.json")
 
 
-def _publish_helper_request(page_id: str) -> dict:
+def _publish_helper_request(
+    page_id: str,
+    *,
+    game_id: str = "",
+    game_action: str = "",
+) -> dict:
     path = _helper_request_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "version": _HELPER_REQUEST_VERSION,
         "request_id": uuid.uuid4().hex,
         "page_id": normalize_workbench_page(page_id),
+        "game_id": normalize_game_id(game_id),
+        "game_action": normalize_game_action(game_action),
     }
     temporary = path.with_name(
         f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp"
@@ -69,10 +95,17 @@ def read_workbench_helper_request() -> dict:
         "version": _HELPER_REQUEST_VERSION,
         "request_id": request_id,
         "page_id": normalize_workbench_page(payload.get("page_id")),
+        "game_id": normalize_game_id(payload.get("game_id")),
+        "game_action": normalize_game_action(payload.get("game_action")),
     }
 
 
-def launch_workbench_helper(initial_page: str = "overview") -> bool:
+def launch_workbench_helper(
+    initial_page: str = "overview",
+    *,
+    game_id: str = "",
+    game_action: str = "",
+) -> bool:
     global _helper_process
 
     page_id = normalize_workbench_page(initial_page)
@@ -100,7 +133,11 @@ def launch_workbench_helper(initial_page: str = "overview") -> bool:
         kwargs['start_new_session'] = True
     with _HELPER_LOCK:
         try:
-            _publish_helper_request(page_id)
+            _publish_helper_request(
+                page_id,
+                game_id=game_id,
+                game_action=game_action,
+            )
         except OSError:
             return False
         process = _helper_process

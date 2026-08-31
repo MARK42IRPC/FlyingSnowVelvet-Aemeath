@@ -42,8 +42,14 @@ class CodeStructureBoundaryTests(unittest.TestCase):
             _SCRIPT / "app" / "qt_application_ui.py",
             _SCRIPT / "app" / "workbench_helper_entry.py",
             _SCRIPT / "plugin_registry.py",
+            _SCRIPT / "ui" / "animation_player.py",
+            _SCRIPT / "ui" / "bug_tracker_window.py",
+            _SCRIPT / "ui" / "game_manager_window.py",
+            _SCRIPT / "ui" / "game_runtime.py",
             _SCRIPT / "ui" / "pet_window_ui.py",
             _SCRIPT / "ui" / "tray_icon.py",
+            _SCRIPT / "ui" / "workbench_components.py",
+            _SCRIPT / "ui" / "workbench_settings_layout.py",
             _SCRIPT / "ui" / "world_objects" / "speaker.py",
         )
         self.assertTrue(all(path.is_file() for path in expected))

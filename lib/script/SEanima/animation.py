@@ -51,7 +51,7 @@ class StartExitAnimation:
         # 创建动画播放脚本
         player_script = os.path.join(
             os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))),
-            'lib', 'script', 'SEanima', 'animation_player.py'
+            'lib', 'script', 'ui', 'animation_player.py'
         )
 
         # 启动子进程播放动画（流式加载）

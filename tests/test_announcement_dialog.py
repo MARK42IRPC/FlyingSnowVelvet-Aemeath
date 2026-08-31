@@ -2,6 +2,7 @@ import gc
 import os
 import tempfile
 import unittest
+from concurrent.futures import Future
 from datetime import date
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -39,8 +40,12 @@ from lib.script.ui.announcement_dialog import (
 
 class _ImmediateComputeHub:
     def submit_io(self, func, *args, **kwargs):
-        func(*args, **kwargs)
-        return Mock()
+        future = Future()
+        try:
+            future.set_result(func(*args, **kwargs))
+        except Exception as exc:
+            future.set_exception(exc)
+        return future
 
 
 class AnnouncementFormatTests(unittest.TestCase):
@@ -286,6 +291,23 @@ class AnnouncementQtTests(unittest.TestCase):
             self.assertGreater(dialog._body.verticalScrollBar().maximum(), 0)
             self.assertEqual(dialog._today_button.text(), "今日不再显示")
             self.assertEqual(dialog._forever_button.text(), "永远不再显示")
+        finally:
+            dialog.cleanup()
+            self.app.processEvents()
+
+    def test_dialog_renders_title_once_in_header(self):
+        dialog = DesktopPetAnnouncementDialog()
+        try:
+            dialog.show_document(
+                AnnouncementDocument(
+                    title="唯一标题",
+                    blocks=(AnnouncementBlock("text", "正文"),),
+                )
+            )
+            self.app.processEvents()
+            self.assertEqual(dialog._header_label.text(), "唯一标题")
+            self.assertNotIn("唯一标题", dialog._body.toPlainText())
+            self.assertIn("正文", dialog._body.toPlainText())
         finally:
             dialog.cleanup()
             self.app.processEvents()

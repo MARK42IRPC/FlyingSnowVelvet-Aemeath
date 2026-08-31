@@ -15,6 +15,7 @@ from lib.core.layer import Layer
 
 from .commands import (
     DrawBatch,
+    EllipseCommand,
     RectCommand,
     ResourceRevision,
     SpriteCommand,
@@ -44,6 +45,77 @@ class ApplicationPanelVisual:
     action_rect: Rect | None = None
 
 
+def build_mic_stt_indicator_visual(
+    *,
+    speech_active: bool = False,
+    size: int | None = None,
+    layer: int = int(Layer.PET_UI),
+) -> ApplicationPanelVisual:
+    """Build the Qt-baseline microphone listening indicator."""
+    side = max(18, int(size or scale_px(24, min_abs=18)))
+    border = max(1, scale_px(2, min_abs=1))
+    cyan_rect = Rect(border, border, side - border * 2, side - border * 2)
+    content = Rect(
+        border * 2,
+        border * 2,
+        side - border * 4,
+        side - border * 4,
+    )
+    mic_width = max(4, int(content.width) // 3)
+    mic_height = max(6, int(content.height) - scale_px(4, min_abs=2))
+    mic_x = content.x + (content.width - mic_width) // 2
+    mic_y = content.y + scale_px(1, min_abs=1)
+    radius = min(2, max(1, mic_width // 2))
+    body_color = COLORS.get("deep_blue", COLORS["black"])
+    stem_height = max(2, scale_px(3, min_abs=2))
+    stem_width = max(2, mic_width // 2)
+    stem_x = mic_x + (mic_width - stem_width) // 2
+    stem_y = mic_y + mic_height - stem_height
+    base_height = max(1, scale_px(1, min_abs=1))
+    base_width = stem_width * 2
+    commands = (
+        RectCommand(Rect(0, 0, side, side), fill=COLORS["black"], layer=layer, order=0),
+        RectCommand(cyan_rect, fill=COLORS["cyan"], layer=layer, order=1),
+        RectCommand(
+            content,
+            fill=Color(255, 230, 240) if speech_active else COLORS["pink"],
+            layer=layer,
+            order=2,
+        ),
+        RectCommand(
+            Rect(mic_x, mic_y + radius, mic_width, mic_height - radius * 2),
+            fill=body_color,
+            layer=layer,
+            order=3,
+        ),
+        EllipseCommand(
+            Rect(mic_x, mic_y, mic_width, radius * 2),
+            fill=body_color,
+            layer=layer,
+            order=4,
+        ),
+        EllipseCommand(
+            Rect(mic_x, mic_y + mic_height - radius * 2, mic_width, radius * 2),
+            fill=body_color,
+            layer=layer,
+            order=5,
+        ),
+        RectCommand(
+            Rect(stem_x, stem_y, stem_width, stem_height),
+            fill=body_color,
+            layer=layer,
+            order=6,
+        ),
+        RectCommand(
+            Rect(mic_x + (mic_width - base_width) // 2, stem_y + stem_height, base_width, base_height),
+            fill=body_color,
+            layer=layer,
+            order=7,
+        ),
+    )
+    return ApplicationPanelVisual(Size(side, side), DrawBatch(commands))
+
+
 COMMAND_ACTION_BUTTONS = (
     ("clickthrough", "鼠标穿透", 80, 32),
     ("scale_up", "+", 40, 32),
@@ -54,6 +126,25 @@ COMMAND_ACTION_BUTTONS = (
     ("interaction_mode", "陪伴模式", 80, 32),
     ("more_functions", "更多功能", 80, 32),
 )
+
+_APPLICATION_TOOLTIP_TEXT = {
+    "bubble": "左键关闭,右键复制并关闭",
+    "command": "输入命令",
+    "command_hint": "左键点击快捷执行",
+    "mic_stt": "语音识别中，点击可停止",
+    "clickthrough": "启用后,点击将达下方窗口",
+    "scale_up": "放大桌宠（重启生效）",
+    "scale_down": "缩小桌宠（重启生效）",
+    "close": "关闭并退出桌宠程序",
+    "launch_wuwa": "检测并启动鸣潮",
+    "chat_mode": "点击切换语音/文字模式",
+    "interaction_mode": "切换陪伴模式与办公模式",
+    "more_functions": "打开系统托盘右键菜单",
+}
+
+
+def application_tooltip_text(control_id: str) -> str:
+    return _APPLICATION_TOOLTIP_TEXT.get(str(control_id or "").strip(), "")
 
 
 @dataclass(frozen=True, slots=True)
@@ -293,6 +384,105 @@ class BubbleVisualDescription:
     content_rect: Rect
     lines: tuple[str, ...] | tuple[tuple[TextSegment, ...], ...]
     batch: DrawBatch
+
+
+def build_tooltip_visual(
+    text: str,
+    metrics: BubbleTextMetrics,
+    *,
+    max_text_width: float = 220,
+    padding_x: float = 6,
+    padding_y: float = 3,
+    border_width: float = 1,
+    opacity: float = 0.8,
+    layer: int = int(Layer.TOOLTIP),
+) -> BubbleVisualDescription:
+    """Resolve the project tooltip style without a GUI toolkit dependency."""
+    max_text_width = max(1, int(round(max_text_width)))
+    padding_x = max(0, int(round(padding_x)))
+    padding_y = max(0, int(round(padding_y)))
+    border_width = max(1, int(round(border_width)))
+    alpha = max(0.0, min(1.0, float(opacity)))
+    lines = _wrap_bubble_lines(text, max_text_width, metrics)
+    line_height = max(
+        1.0,
+        float(metrics.default_line_height),
+        float(metrics.digit_line_height),
+    )
+    text_width = max(
+        (
+            sum(
+                metrics.measure(part, digit=is_digit)
+                for part, is_digit in _split_digit_segments(line)
+            )
+            for line in lines
+        ),
+        default=0.0,
+    )
+    width = max(1, int(round(text_width + padding_x * 2 + border_width * 4)))
+    height = max(1, int(round(len(lines) * line_height + padding_y * 2 + border_width * 4)))
+    inner = Rect(
+        border_width * 2,
+        border_width * 2,
+        width - border_width * 4,
+        height - border_width * 4,
+    )
+    content = Rect(
+        inner.x + padding_x,
+        inner.y + padding_y,
+        max(0, inner.width - padding_x * 2),
+        max(0, inner.height - padding_y * 2),
+    )
+    commands: list[object] = [
+        RectCommand(
+            Rect(0, 0, width, height),
+            fill=COLORS["black"],
+            alpha=alpha,
+            layer=layer,
+        ),
+        RectCommand(
+            Rect(
+                border_width,
+                border_width,
+                width - border_width * 2,
+                height - border_width * 2,
+            ),
+            fill=_theme_color("deep_cyan", Color(129, 198, 221)),
+            alpha=alpha,
+            layer=layer,
+            z=1,
+        ),
+        RectCommand(inner, fill=COLORS["pink"], alpha=alpha, layer=layer, z=2),
+    ]
+    max_ascent = max(float(metrics.default_ascent), float(metrics.digit_ascent))
+    max_descent = max(float(metrics.default_descent), float(metrics.digit_descent))
+    for index, line in enumerate(lines):
+        x = content.x
+        line_y = content.y + index * line_height
+        baseline = line_y + (line_height + max_ascent - max_descent) / 2.0
+        for part, is_digit in _split_digit_segments(line):
+            font = metrics.digit_font if is_digit else metrics.default_font
+            ascent = float(metrics.digit_ascent if is_digit else metrics.default_ascent)
+            descent = float(metrics.digit_descent if is_digit else metrics.default_descent)
+            segment_width = metrics.measure(part, digit=is_digit)
+            top = baseline - (line_height + ascent - descent) / 2.0
+            commands.append(TextCommand(
+                part,
+                font,
+                COLORS["black"],
+                Rect(x, top, segment_width, line_height),
+                alignment=int(TextAlignment.LEFT | TextAlignment.VCENTER),
+                alpha=alpha,
+                layer=layer,
+                z=3,
+            ))
+            x += segment_width
+    return BubbleVisualDescription(
+        Size(width, height),
+        content,
+        lines,
+        DrawBatch(tuple(commands)),
+    )
 
 
 def _get_font_for_segment(segment: TextSegment, metrics: BubbleTextMetrics) -> FontSpec:

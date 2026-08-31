@@ -100,7 +100,6 @@ EXCLUDE_EXACT_PATHS = {
     Path("resc") / "python-3.11.6-amd64.exe",
     Path("resc") / "GIF" / "SEanima.zip",
     Path("services") / "storage_state.json",
-    Path("ASYNC_COMPUTE_PLAN.txt"),
     Path("CONTRIBUTING.md"),
     Path("RELEASING.md"),
 }

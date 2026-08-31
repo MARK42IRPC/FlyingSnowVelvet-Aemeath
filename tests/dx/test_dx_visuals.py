@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ctypes
 import os
 import subprocess
 import sys
@@ -243,9 +244,14 @@ class DxOverlayWindowTests(unittest.TestCase):
             warp=True,
         )
         try:
+            self.assertTrue(overlay.window_host.is_clickthrough_enabled())
+            self.assertFalse(bool(ctypes.windll.user32.IsWindowEnabled(
+                ctypes.c_void_p(overlay.window_host.native_handle)
+            )))
             overlay.submit(DrawBatch((RectCommand(Rect(0, 0, 12, 10), fill=Color(20, 30, 40)),)))
             context.run_once()
             self.assertTrue(overlay.window_host.is_visible())
+            self.assertTrue(overlay.window_host.is_clickthrough_enabled())
             self.assertEqual(overlay.window_host.readback_rgba()[:4], bytes((20, 30, 40, 255)))
             overlay.flush_immediately()
             self.assertFalse(overlay.window_host.is_visible())

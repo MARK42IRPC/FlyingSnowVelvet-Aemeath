@@ -13,7 +13,9 @@ ANIMATION = {
     'frame_fps': 120,          # 全局帧率（每秒帧数）
     'start_exit_enabled': True,  # 启用启动/退出动画（同时控制启动延时）
     'start_animation_folder': '耶比_anima',  # 启动动画序列帧目录（兼容旧目录 start-anim-compressed）
+    'start_animation_duration': 0.5,  # 启动动画倍速（0.5x~2.0x）
     'exit_animation_folder': '星炬学院_anima',  # 退出动画序列帧目录（兼容旧目录 exit-anim-compressed）
+    'exit_animation_duration': 0.5,  # 退出动画倍速（0.5x~2.0x）
     'exit_shadow_strength': 255,  # 退出动画阴影强度（0~255，0=关闭）
     'exit_shadow_blur_radius': 30,  # 退出动画阴影模糊半径（像素）
     'exit_shadow_offset_direction': 'center',  # 退出动画阴影偏移方向（如 down / up / left / right / center）

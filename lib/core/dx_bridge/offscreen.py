@@ -25,7 +25,7 @@ from lib.core.graphics.resources import RasterFrame
 from lib.core.graphics.types import Color, Rect
 
 
-FSDX_ABI_VERSION = 7
+FSDX_ABI_VERSION = 9
 FSDX_RUNTIME_FLAG_WARP = 0x00000001
 FSDX_DRAW_FLAG_FLIPPED = 0x00000001
 FSDX_DRAW_FLAG_HAS_FILL = 0x00000002
@@ -151,6 +151,24 @@ def _load_library(path: Path | None = None):
         ctypes.POINTER(ctypes.c_uint64),
     ]
     library.fsdx_get_device_generation.restype = ctypes.c_int
+    library.fsdx_measure_text.argtypes = [
+        ctypes.c_uint64,
+        ctypes.POINTER(ctypes.c_uint8),
+        ctypes.c_uint64,
+        ctypes.POINTER(ctypes.c_uint8),
+        ctypes.c_uint64,
+        ctypes.c_float,
+        ctypes.c_uint32,
+        ctypes.POINTER(ctypes.c_float),
+        ctypes.POINTER(ctypes.c_float),
+    ]
+    library.fsdx_measure_text.restype = ctypes.c_int
+    library.fsdx_register_font_file.argtypes = [
+        ctypes.c_uint64,
+        ctypes.POINTER(ctypes.c_uint8),
+        ctypes.c_uint64,
+    ]
+    library.fsdx_register_font_file.restype = ctypes.c_int
     library.fsdx_register_resource.argtypes = [
         ctypes.c_uint64,
         ctypes.POINTER(_ResourceDesc),
@@ -206,6 +224,30 @@ class DxOffscreenTarget:
         self._resource_handles: dict[tuple[str, int, int], int] = {}
         self._resource_revisions: dict[str, int] = {}
         self._closed = False
+        try:
+            self._register_default_fonts()
+        except Exception:
+            # Font registration is part of runtime initialization.  Do not
+            # leave a native runtime alive when the visual contract cannot be
+            # established.
+            self._library.fsdx_destroy_runtime(self._runtime)
+            self._runtime = ctypes.c_uint64()
+            raise
+
+    def _register_default_fonts(self) -> None:
+        from config import font_config
+
+        for path in (font_config._HARMONY_PATH, font_config._LAHAI_ROI_PATH):
+            if not os.path.isfile(path):
+                raise DxBridgeError(f"required DX font file is missing: {path}")
+            encoded = os.fspath(path).encode("utf-8")
+            buffer = (ctypes.c_uint8 * len(encoded)).from_buffer_copy(encoded)
+            self._call(
+                self._library.fsdx_register_font_file,
+                self._runtime,
+                buffer,
+                len(encoded),
+            )
 
     def _error_text(self) -> str:
         raw = self._library.fsdx_get_last_error()
@@ -233,6 +275,37 @@ class DxOffscreenTarget:
             ctypes.byref(generation),
         )
         return int(generation.value)
+
+    def measure_text(self, text: str, font) -> tuple[float, float]:
+        """Measure one unwrapped string through this runtime's DirectWrite factory."""
+        value = str(text or "")
+        family = str(getattr(font, "family", "") or "Segoe UI")
+        text_bytes = value.encode("utf-8")
+        family_bytes = family.encode("utf-8")
+        text_buffer = (
+            (ctypes.c_uint8 * len(text_bytes)).from_buffer_copy(text_bytes)
+            if text_bytes else None
+        )
+        family_buffer = (
+            (ctypes.c_uint8 * len(family_bytes)).from_buffer_copy(family_bytes)
+            if family_bytes else None
+        )
+        width = ctypes.c_float()
+        height = ctypes.c_float()
+        flags = FSDX_DRAW_FLAG_TEXT_BOLD if bool(getattr(font, "bold", False)) else 0
+        self._call(
+            self._library.fsdx_measure_text,
+            self._runtime,
+            text_buffer,
+            len(text_bytes),
+            family_buffer,
+            len(family_bytes),
+            float(getattr(font, "pixel_size", 12)),
+            flags,
+            ctypes.byref(width),
+            ctypes.byref(height),
+        )
+        return float(width.value), float(height.value)
 
     def recover_device(self) -> None:
         self._call(self._library.fsdx_recover_device, self._runtime)

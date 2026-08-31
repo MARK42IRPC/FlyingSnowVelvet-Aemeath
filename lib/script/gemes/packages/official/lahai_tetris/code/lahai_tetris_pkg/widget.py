@@ -1440,7 +1440,7 @@ class LahaiTetrisWidget(QWidget):
             rect = self._cell_rect(inner, float(x), float(y))
             cx, cy = self._to_global_point(rect.center().x(), rect.center().y())
             spawn_particle_at_point(cx, cy, particle_id, {
-                "rgb": (base.red(), base.green(), base.blue()),
+                "rgb": base,
                 "direction": direction,
             })
             if soft:
@@ -1455,7 +1455,7 @@ class LahaiTetrisWidget(QWidget):
             rect = self._cell_rect(inner, float(x), float(y))
             cx, cy = self._to_global_point(rect.center().x(), rect.bottom())
             spawn_particle_at_point(cx, cy, self._game_particle_id("glow_burst"), {
-                "rgb": (base.red(), base.green(), base.blue()),
+                "rgb": base,
                 "direction": (0.0, -1.0),
             })
 
@@ -1515,9 +1515,9 @@ class LahaiTetrisWidget(QWidget):
                 if cell is None:
                     continue
                 if cell == _SPECIAL_FILL_KIND:
-                    base = QColor(196, 54, 120)
+                    base = (196, 54, 120)
                 elif cell == _SUN_KIND:
-                    base = QColor(255, 212, 84)
+                    base = (255, 212, 84)
                 else:
                     base, _, _ = _THEME[cell]
                 cell_rect = self._cell_rect(inner, float(col), float(row))
@@ -1525,7 +1525,7 @@ class LahaiTetrisWidget(QWidget):
                 gx2, gy2 = self._to_global_point(cell_rect.right(), cell_rect.bottom())
                 segments.append({
                     "rect": (gx1, gy1, gx2, gy2),
-                    "rgb": (base.red(), base.green(), base.blue()),
+                    "rgb": base,
                 })
             if segments:
                 first_rect = segments[0]["rect"]

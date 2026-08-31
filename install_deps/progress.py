@@ -1,5 +1,6 @@
 """Monotonic terminal progress rendering for installer commands."""
 
+import codecs
 import os
 import queue
 import re
@@ -13,6 +14,17 @@ from .console import _COLOR_ENABLED, _COLOR_MAP, _COLOR_RESET, _fmt_color
 
 
 _ANSI_ESCAPE_PATTERN = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+_PIP_SIZE_PATTERN = re.compile(
+    r"(?P<current>\d+(?:\.\d+)?)\s*(?P<current_unit>B|KB|MB|GB|KiB|MiB|GiB)?\s*/\s*"
+    r"(?P<total>\d+(?:\.\d+)?)\s*(?P<total_unit>B|KB|MB|GB|KiB|MiB|GiB)",
+    re.IGNORECASE,
+)
+_PIP_SPEED_PATTERN = re.compile(
+    r"(?P<speed>\d+(?:\.\d+)?)\s*(?P<unit>B|KB|MB|GB|KiB|MiB|GiB)\s*/\s*s",
+    re.IGNORECASE,
+)
+_PIP_PERCENT_PATTERN = re.compile(r"(?P<percent>\d{1,3}(?:\.\d+)?)\s*%")
+_PIP_DOWNLOADING_PATTERN = re.compile(r"\bDownloading\s+(?P<name>[^\s(]+)", re.IGNORECASE)
 
 def _render_dependency_bar(current, total, width=26, *, color_kind=None):
     if total <= 0:
@@ -183,6 +195,59 @@ def _pip_progress_from_output(line, current):
         if any(marker in text for marker in markers):
             return max(current, value)
     return max(current, 5)
+
+
+def _parse_pip_size(value, unit):
+    """Convert pip's human-readable transfer amount to bytes."""
+    multipliers = {
+        "b": 1,
+        "kb": 1024,
+        "mb": 1024 ** 2,
+        "gb": 1024 ** 3,
+        "kib": 1024,
+        "mib": 1024 ** 2,
+        "gib": 1024 ** 3,
+    }
+    return float(value) * multipliers.get(str(unit).lower(), 1)
+
+
+def _pip_download_progress(line, active_package=""):
+    """Extract an honest transfer sample from pip's carriage-return output.
+
+    Returns ``(active_package, detail)``.  ``detail`` is ``None`` when the
+    line is a normal pip message or does not contain a measurable transfer.
+    """
+    text = _ANSI_ESCAPE_PATTERN.sub("", str(line or "")).replace("\r", " ").strip()
+    if not text:
+        return active_package, None
+    package_match = _PIP_DOWNLOADING_PATTERN.search(text)
+    if package_match:
+        active_package = package_match.group("name")
+
+    size_match = _PIP_SIZE_PATTERN.search(text)
+    percent_match = _PIP_PERCENT_PATTERN.search(text)
+    speed_match = _PIP_SPEED_PATTERN.search(text)
+    if not size_match and not percent_match and not speed_match:
+        return active_package, None
+
+    parts = [f"下载 {active_package}" if active_package else "下载 CUDA 依赖"]
+    if size_match:
+        current_unit = size_match.group("current_unit") or size_match.group("total_unit")
+        current = _parse_pip_size(size_match.group("current"), current_unit)
+        total = _parse_pip_size(size_match.group("total"), size_match.group("total_unit"))
+        parts.append(f"{_format_bytes(current)}/{_format_bytes(total)}")
+        if total > 0 and not percent_match:
+            parts.append(f"({min(100.0, current * 100.0 / total):.1f}%)")
+    elif percent_match:
+        parts.append(f"{min(100.0, float(percent_match.group('percent'))):.1f}%")
+    else:
+        parts.append("总大小未知")
+    if speed_match:
+        speed = _parse_pip_size(speed_match.group("speed"), speed_match.group("unit"))
+        parts.append(f"{_format_bytes(speed)}/s")
+    else:
+        parts.append("速度计算中")
+    return active_package, " ".join(parts)
 
 class _MonotonicProgressReporter:
     """Keep retries and noisy callbacks from making one job appear to regress."""
@@ -406,6 +471,60 @@ def _runtime_install_stage(line, *, kind):
             return percent, label
     return None
 
+
+def _queue_output_records(stream, output_queue):
+    """Forward newline and carriage-return terminated subprocess records."""
+    if stream is None:
+        output_queue.put(None)
+        return
+    read_buffer = getattr(getattr(stream, "buffer", None), "read1", None)
+    read = getattr(stream, "read", None)
+    if callable(read_buffer):
+        decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+        pending = ""
+        try:
+            while True:
+                chunk = read_buffer(4096)
+                if not chunk:
+                    break
+                pending += decoder.decode(chunk)
+                records = re.split(r"[\r\n]+", pending)
+                pending = records.pop()
+                for record in records:
+                    if record:
+                        output_queue.put(record + "\n")
+            pending += decoder.decode(b"", final=True)
+            if pending:
+                output_queue.put(pending + "\n")
+        finally:
+            output_queue.put(None)
+        return
+    if callable(read):
+        pending = ""
+        try:
+            while True:
+                chunk = read(4096)
+                if not chunk:
+                    break
+                pending += chunk
+                records = re.split(r"[\r\n]+", pending)
+                pending = records.pop()
+                for record in records:
+                    if record:
+                        output_queue.put(record + "\n")
+            if pending:
+                output_queue.put(pending + "\n")
+        finally:
+            output_queue.put(None)
+        return
+    try:
+        for line in stream:
+            for record in re.split(r"[\r\n]+", str(line)):
+                if record:
+                    output_queue.put(record + "\n")
+    finally:
+        output_queue.put(None)
+
 def _run_command_with_progress(command, *, label, kind, timeout, cwd=None):
     """Run a long installer command while forwarding useful live status."""
     try:
@@ -425,15 +544,7 @@ def _run_command_with_progress(command, *, label, kind, timeout, cwd=None):
     output_queue = queue.Queue()
 
     def read_output():
-        stream = proc.stdout
-        if stream is None:
-            output_queue.put(None)
-            return
-        try:
-            for line in stream:
-                output_queue.put(line)
-        finally:
-            output_queue.put(None)
+        _queue_output_records(proc.stdout, output_queue)
 
     reader = threading.Thread(
         target=read_output,
@@ -445,6 +556,7 @@ def _run_command_with_progress(command, *, label, kind, timeout, cwd=None):
     display.update(5, "启动安装", force=True)
     output_tail = []
     reader_done = False
+    active_download = ""
     deadline = time.monotonic() + max(1, int(timeout))
     while proc.poll() is None or not reader_done:
         if proc.poll() is None and time.monotonic() >= deadline:
@@ -466,10 +578,18 @@ def _run_command_with_progress(command, *, label, kind, timeout, cwd=None):
         output_tail.append(line)
         if len(output_tail) > 160:
             del output_tail[:-160]
+        transfer_detail = None
+        if kind == "pip":
+            active_download, transfer_detail = _pip_download_progress(
+                line,
+                active_download,
+            )
         stage = _runtime_install_stage(line, kind=kind)
         if stage is not None:
             percent, detail = stage
-            display.update(percent, detail)
+            display.update(percent, transfer_detail or detail)
+        elif transfer_detail:
+            display.update(detail=transfer_detail)
         else:
             display.update(detail="处理中")
     reader.join(timeout=1.0)
@@ -524,10 +644,12 @@ __all__ = (
     '_DependencyProgressDisplay',
     '_PIP_PROGRESS_STAGES',
     '_pip_progress_from_output',
+    '_pip_download_progress',
     '_MonotonicProgressReporter',
     '_run_pip_requirement_with_progress',
     '_RuntimeInstallProgress',
     '_runtime_install_stage',
+    '_queue_output_records',
     '_run_command_with_progress',
     '_format_bytes',
     '_render_transfer_progress',

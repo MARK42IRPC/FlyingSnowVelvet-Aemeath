@@ -30,7 +30,7 @@ from lib.script.gemes.MAIN.game_packages import InstalledGame, get_game_package_
 from lib.script.workbench.theme import get_workbench_colors
 
 if TYPE_CHECKING:
-    from .runtime import GameRuntime
+    from lib.script.ui.game_runtime import GameRuntime
 
 
 def _set_theme_colors() -> None:

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from dataclasses import replace
 from enum import IntFlag
 
 from lib.core.layer import Layer, normalize_layer
@@ -356,3 +357,16 @@ class DrawBatch:
             raise TypeError("draw batch resources must be ResourceRevision values")
         object.__setattr__(self, "commands", commands)
         object.__setattr__(self, "resource_revisions", resource_revisions)
+
+
+def scale_batch_alpha(batch: DrawBatch, alpha: float) -> DrawBatch:
+    """Return a batch whose drawable command alpha is multiplied by ``alpha``."""
+    factor = _normalize_alpha(alpha)
+    if factor >= 1.0:
+        return batch
+    commands = tuple(
+        replace(command, alpha=command.alpha * factor)
+        if hasattr(command, "alpha") else command
+        for command in batch.commands
+    )
+    return DrawBatch(commands, batch.resource_revisions)

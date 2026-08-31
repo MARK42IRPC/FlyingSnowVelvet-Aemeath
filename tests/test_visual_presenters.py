@@ -18,6 +18,8 @@ from lib.core.graphics.application_visuals import (
     build_command_hint_visual,
     build_notice_panel_visual,
     build_command_action_panel_visual,
+    build_mic_stt_indicator_visual,
+    build_tooltip_visual,
     resolve_command_action_panel_layout,
     build_qr_panel_visual,
     build_rect_action_button_visual,
@@ -110,6 +112,32 @@ class _CommandHintMetrics:
 
 
 class VisualPresenterTests(unittest.TestCase):
+    def test_mic_indicator_presenter_has_stable_active_state(self):
+        idle = build_mic_stt_indicator_visual(speech_active=False)
+        active = build_mic_stt_indicator_visual(speech_active=True)
+
+        self.assertEqual(idle.size, Size(24, 24))
+        self.assertEqual(len(idle.batch.commands), 8)
+        self.assertEqual(idle.batch.commands[2].fill, Color(255, 182, 193))
+        self.assertEqual(active.batch.commands[2].fill, Color(255, 230, 240))
+
+    def test_tooltip_presenter_owns_wrap_theme_and_opacity(self):
+        visual = build_tooltip_visual(
+            "打开功能123",
+            _BubbleMetrics(),
+            max_text_width=80,
+            opacity=0.8,
+        )
+
+        self.assertGreater(visual.size.width, visual.content_rect.width)
+        self.assertEqual(visual.batch.commands[0].fill, Color(0, 0, 0))
+        self.assertEqual(visual.batch.commands[0].alpha, 0.8)
+        self.assertEqual(visual.batch.commands[2].fill, Color(255, 182, 193))
+        self.assertTrue(any(
+            isinstance(command, TextCommand) and command.text == "123"
+            for command in visual.batch.commands
+        ))
+
     def test_bubble_presenter_resolves_layout_and_mixed_font_commands(self):
         visual = build_bubble_visual(
             "AB12",

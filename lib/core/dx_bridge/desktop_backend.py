@@ -41,7 +41,13 @@ class DxDesktopBackend:
         interaction_sound_factory=None,
         particle_manager_provider=None,
         effect_manager_provider=None,
+        world_object_sound_factory=None,
+        launch_wuwa=None,
+        animation_factory=None,
+        animation_cleanup=None,
         workbench_opener=None,
+        music_service_provider=None,
+        game_command_runtime_factory=None,
     ) -> None:
         self.context = context or DxLoopContext()
         self.screen_provider = screen_provider or DxScreenProvider()
@@ -52,11 +58,18 @@ class DxDesktopBackend:
         self._interaction_sound_factory = interaction_sound_factory
         self._particle_manager_provider = particle_manager_provider
         self._effect_manager_provider = effect_manager_provider
+        self._world_object_sound_factory = world_object_sound_factory
+        self._launch_wuwa = launch_wuwa
+        self._animation_factory = animation_factory
+        self._animation_cleanup = animation_cleanup
         self._workbench_opener = workbench_opener
+        self._music_service_provider = music_service_provider
+        self._game_command_runtime_factory = game_command_runtime_factory
         self.world_object_backend = DxWorldObjectBackend(
             self.context,
             screen_provider=self.screen_provider,
             warp=self.warp,
+            sound_factory=self._world_object_sound_factory,
         )
         self._schedulers: list[DxScheduler] = []
         self._event_pumps: list[DxEventPump] = []
@@ -83,6 +96,11 @@ class DxDesktopBackend:
             screen_provider=self.screen_provider,
             warp=self.warp,
             workbench_opener=self._workbench_opener,
+            launch_wuwa=self._launch_wuwa,
+            animation_factory=self._animation_factory,
+            animation_cleanup=self._animation_cleanup,
+            music_service_provider=self._music_service_provider,
+            game_command_runtime_factory=self._game_command_runtime_factory,
         )
 
     def create_scheduler(self) -> DxScheduler:
@@ -208,7 +226,13 @@ def configure_dx_desktop_backend(
     interaction_sound_factory=None,
     particle_manager_provider=None,
     effect_manager_provider=None,
+    world_object_sound_factory=None,
+    launch_wuwa=None,
+    animation_factory=None,
+    animation_cleanup=None,
     workbench_opener=None,
+    music_service_provider=None,
+    game_command_runtime_factory=None,
 ) -> None:
     """Install one complete Qt-free DirectX desktop composition."""
     global _active_owner
@@ -228,7 +252,13 @@ def configure_dx_desktop_backend(
             interaction_sound_factory=interaction_sound_factory,
             particle_manager_provider=particle_manager_provider,
             effect_manager_provider=effect_manager_provider,
+            world_object_sound_factory=world_object_sound_factory,
+            launch_wuwa=launch_wuwa,
+            animation_factory=animation_factory,
+            animation_cleanup=animation_cleanup,
             workbench_opener=workbench_opener,
+            music_service_provider=music_service_provider,
+            game_command_runtime_factory=game_command_runtime_factory,
         )
         try:
             bundle = owner.bundle()

@@ -128,6 +128,9 @@ class DxOverlayWindow:
         if batch.commands:
             if not host.is_visible():
                 self.refresh_geometry()
+                # Reassert the passive-overlay contract before every show in
+                # case another native operation rewrote the extended style.
+                host.set_clickthrough(True)
                 host.show()
                 get_layer_manager().enforce_burst()
             host.request_repaint()

@@ -363,11 +363,17 @@ class Speaker(QWidget):
             self._drag_offset = None
             self._drag_trail.clear()
         elif event.button() == Qt.RightButton and not self._fading:
-            # 右键：切换音响专属搜索 UI
-            from lib.script.ui.speaker_search_dialog import get_speaker_search_dialog
-            dlg = get_speaker_search_dialog()
-            if dlg is not None:
-                dlg.toggle(self)
+            # 搜索 UI 由当前桌面后端消费，窗口对象不跨边界传递。
+            instance_id = int(getattr(self, "_world_object_instance_id", 0))
+            backend_id = str(getattr(self, "_world_object_backend_id", ""))
+            if instance_id > 0 and backend_id:
+                self._event_center.publish(Event(
+                    EventType.SPEAKER_SEARCH_TOGGLE_REQUEST,
+                    {
+                        "backend_id": backend_id,
+                        "instance_id": instance_id,
+                    },
+                ))
         else:
             super().mousePressEvent(event)
 

@@ -1,18 +1,23 @@
 """Qt-free application UI hosted by native DirectX windows."""
 from __future__ import annotations
 
-import webbrowser
 from collections.abc import Callable
+import time
 
 from config.config import ANIMATION, BUBBLE_CONFIG, COMMAND_DIALOG, UI
+from config.scale import scale_px
 from lib.core.application_ui import ApplicationUiHost
 from lib.core.event.center import Event, EventType, get_event_center
 from lib.core.graphics.application_visuals import (
     BubbleVisualDescription,
+    CommandActionPanelLayout,
+    application_tooltip_text,
     build_bubble_visual,
     build_command_action_panel_visual,
+    build_mic_stt_indicator_visual,
     build_notice_panel_visual,
     build_qr_panel_visual,
+    build_tooltip_visual,
     create_portable_command_hint_metrics,
     create_portable_bubble_text_metrics,
     decode_panel_image,
@@ -23,9 +28,10 @@ from lib.core.graphics.application_visuals import (
     resolve_command_action_panel_layout,
     resolve_qr_panel_layout,
 )
-from lib.core.graphics.commands import DrawBatch
+from lib.core.graphics.commands import DrawBatch, scale_batch_alpha
 from lib.core.graphics.resources import ImageResource
-from lib.core.graphics.types import Point, Rect
+from lib.core.graphics.screen import clamp_rect_position
+from lib.core.graphics.types import Point, Rect, Size
 from lib.core.graphics.visuals import (
     build_command_panel_batch,
     resolve_command_panel_geometry,
@@ -34,29 +40,194 @@ from lib.core.input.types import Key, MouseButton
 from lib.core.layer import Layer
 from lib.core.layer_manager import get_layer_manager
 from lib.core.logger import get_logger
+from lib.core.desktop_actions import dispatch_desktop_action
+from lib.core.world_objects import WorldObjectInstance
 
 from .loop import DxLoopContext, DxScheduledCall
+from .opacity import DxOpacityAnimator
+from .clipboard import write_clipboard_text
+from .announcement import DxAnnouncementWindow
 from .command_hint import DxCommandHintWindow
-from .screen import DxScreenProvider
+from .screen import DxScreenProvider, get_cursor_position
+from .speaker_search import DxSpeakerSearchWindow
+from .text_metrics import create_directwrite_text_metrics
 from .window_host import DxWindowHost
 
 
 _logger = get_logger(__name__)
-_ANNOUNCEMENT_URL = (
-    "https://gitee.com/Mark42IRPC/Aemeath-AIdeskpet/releases/download/RESC/"
-    "%E5%85%AC%E5%91%8A.txt"
-)
+
+
+class _DxTooltipWindow:
+    def __init__(self, context, screen_provider, *, window_host_factory, warp):
+        self._context = context
+        self._screen_provider = screen_provider
+        self._window_host_factory = window_host_factory
+        self._warp = bool(warp)
+        self._metrics = create_portable_bubble_text_metrics()
+        self._host = None
+        self._visual = None
+        self._text = ""
+        self._anchor = Point()
+        self._show_call = None
+        self._hide_call = None
+        self._request_generation = 0
+        self._cleanup_done = False
+        self._opacity = DxOpacityAnimator(context, self._request_repaint)
+
+    def _request_repaint(self) -> None:
+        if self._host is not None:
+            self._host.request_repaint()
+
+    @property
+    def host(self):
+        return self._host
+
+    def _build(self):
+        return build_tooltip_visual(
+            self._text,
+            self._metrics,
+            opacity=float(UI.get("tooltip_opacity", 0.8)),
+        )
+
+    def _geometry(self) -> Rect:
+        size = self._visual.size
+        screen = self._screen_provider.get_screen_rect_for_point(self._anchor)
+        scale = self._screen_provider.get_scale_for_point(self._anchor)
+        physical_width = size.width * scale
+        physical_height = size.height * scale
+        gap = scale_px(10, min_abs=1) * scale
+        x = self._anchor.x + gap
+        y = self._anchor.y
+        if x + physical_width > screen.x + screen.width:
+            x = self._anchor.x - physical_width - gap
+        x, y, _ = clamp_rect_position(
+            int(round(x)),
+            int(round(y)),
+            int(round(physical_width)),
+            int(round(physical_height)),
+            screen,
+        )
+        return Rect(x, y, size.width, size.height)
+
+    def _ensure_host(self):
+        if self._host is not None:
+            return self._host
+        geometry = self._geometry()
+        host = self._window_host_factory(
+            int(geometry.width),
+            int(geometry.height),
+            x=int(geometry.x),
+            y=int(geometry.y),
+            callbacks=self,
+            warp=self._warp,
+            topmost=True,
+            tool_window=True,
+            no_activate=True,
+            clickthrough=True,
+            logical_content=True,
+        )
+        self._context.register_poller(host)
+        get_layer_manager().register(host, Layer.TOOLTIP, name="DxTooltip")
+        self._host = host
+        native_metrics = create_directwrite_text_metrics(host)
+        if native_metrics is not None:
+            self._metrics = native_metrics
+            self._visual = self._build()
+        return host
+
+    def request(self, text: str, point: Point) -> None:
+        value = str(text or "").strip()
+        if not value or not isinstance(point, Point):
+            self.hide()
+            return
+        if value == self._text and point == self._anchor and (
+            self._show_call is not None
+            or (self._host is not None and self._host.is_visible())
+        ):
+            return
+        self.hide()
+        self._text = value
+        self._anchor = point
+        self._request_generation += 1
+        generation = self._request_generation
+        self._show_call = self._context.call_later(
+            1000,
+            lambda: self._show_if_current(generation),
+        )
+
+    def _show_if_current(self, generation: int) -> None:
+        self._show_call = None
+        if generation != self._request_generation or not self._text:
+            return
+        self._visual = self._build()
+        host = self._ensure_host()
+        host.set_geometry(self._geometry())
+        host.show()
+        self._opacity.fade_in()
+        host.request_repaint()
+        self._hide_call = self._context.call_later(5000, self.hide)
+
+    def hide(self) -> None:
+        self._request_generation += 1
+        for name in ("_show_call", "_hide_call"):
+            call = getattr(self, name)
+            setattr(self, name, None)
+            if call is not None:
+                call.cancel()
+        host = self._host
+        if host is not None and host.is_visible():
+            self._opacity.fade_out(host.hide)
+
+    def prepare_render(self) -> DrawBatch:
+        batch = self._visual.batch if self._visual is not None else DrawBatch()
+        return scale_batch_alpha(batch, self._opacity.value)
+
+    def handle_pointer_press(self, event):
+        return None
+    def handle_pointer_release(self, button):
+        return None
+    def handle_pointer_enter(self):
+        return None
+    def handle_pointer_leave(self):
+        return None
+    def handle_pointer_move(self, event):
+        return None
+    def handle_key_press(self, event):
+        return None
+    def handle_key_release(self, event):
+        return None
+    def handle_window_moved(self, position):
+        return None
+    def handle_host_close(self):
+        self.hide()
+
+    def cleanup(self) -> None:
+        if self._cleanup_done:
+            return
+        self._cleanup_done = True
+        self._opacity.cancel()
+        self.hide()
+        host, self._host = self._host, None
+        if host is not None:
+            get_layer_manager().unregister(host)
+            self._context.unregister_poller(host)
+            host.cleanup()
 
 
 class _DxBubbleWindow:
     """Native host for the Qt-baseline chat bubble presenter."""
 
-    def __init__(self, context, screen_provider, *, window_host_factory, warp, entity_provider):
+    def __init__(self, context, screen_provider, *, window_host_factory, warp, entity_provider, clipboard_writer=write_clipboard_text, tooltip_requester=None, tooltip_hider=None):
         self._context = context
         self._screen_provider = screen_provider
         self._window_host_factory = window_host_factory
         self._warp = bool(warp)
         self._entity_provider = entity_provider
+        self._clipboard_writer = clipboard_writer
+        self._tooltip_requester = tooltip_requester
+        self._tooltip_hider = tooltip_hider
+        self._event_center = get_event_center()
+        self._clickthrough = False
         self._metrics = create_portable_bubble_text_metrics()
         self._host = None
         self._description: BubbleVisualDescription | None = None
@@ -65,6 +236,11 @@ class _DxBubbleWindow:
         self._elapsed = 0
         self._hide_call = None
         self._cleanup_done = False
+        self._opacity = DxOpacityAnimator(context, self._request_repaint)
+
+    def _request_repaint(self) -> None:
+        if self._host is not None:
+            self._host.request_repaint()
 
     @property
     def host(self):
@@ -97,18 +273,44 @@ class _DxBubbleWindow:
         if self._host is not None:
             return self._host
         anchor = self._pet_anchor()
-        screen = self._screen_provider.get_screen_rect_for_point(anchor)
-        geometry = resolve_bubble_geometry(anchor, description.size, screen)
+        geometry = self._bubble_geometry(description)
         host = self._window_host_factory(
             int(geometry.width), int(geometry.height),
             x=int(geometry.x), y=int(geometry.y), callbacks=self,
             warp=self._warp, topmost=True, tool_window=True,
-            no_activate=True, clickthrough=False,
+            no_activate=True, clickthrough=self._clickthrough,
+            logical_content=True,
         )
         self._context.register_poller(host)
         get_layer_manager().register(host, Layer.PET_UI, name="DxBubble")
         self._host = host
+        native_metrics = create_directwrite_text_metrics(host)
+        if native_metrics is not None:
+            self._metrics = native_metrics
+            self._description = self._build(
+                self._current[0] if self._current is not None else "",
+                self._current[3] if self._current is not None else "center",
+            )
         return host
+
+    def _bubble_geometry(self, description: BubbleVisualDescription) -> Rect:
+        anchor = self._pet_anchor()
+        screen = self._screen_provider.get_screen_rect_for_point(anchor)
+        scale = self._screen_provider.get_scale_for_point(anchor)
+        physical = resolve_bubble_geometry(
+            anchor,
+            Size(
+                description.size.width * scale,
+                description.size.height * scale,
+            ),
+            screen,
+        )
+        return Rect(
+            physical.x,
+            physical.y,
+            description.size.width,
+            description.size.height,
+        )
 
     def _show_current(self):
         if self._current is None:
@@ -116,10 +318,9 @@ class _DxBubbleWindow:
         text, _min_ticks, max_ticks, align, _source, _task_id, _kind = self._current
         self._description = self._build(text, align)
         host = self._ensure_host(self._description)
-        anchor = self._pet_anchor()
-        screen = self._screen_provider.get_screen_rect_for_point(anchor)
-        host.set_geometry(resolve_bubble_geometry(anchor, self._description.size, screen))
+        host.set_geometry(self._bubble_geometry(self._description))
         host.show()
+        self._opacity.fade_in()
         host.request_repaint()
         self._elapsed = 0
         self._cancel_hide()
@@ -148,7 +349,14 @@ class _DxBubbleWindow:
         )
         if not item[0]:
             return
+        replacing_visible = (
+            self._current is not None
+            and self._host is not None
+            and self._host.is_visible()
+        )
         if force_replace:
+            if replacing_visible:
+                self._publish_rect_particle("up_fade")
             self._queue.clear()
             self._current = item
             self._show_current()
@@ -156,6 +364,8 @@ class _DxBubbleWindow:
             self._current = item
             self._show_current()
         elif self._elapsed >= self._current[1]:
+            if replacing_visible:
+                self._publish_rect_particle("up_fade")
             self._current = item
             self._show_current()
         else:
@@ -195,10 +405,11 @@ class _DxBubbleWindow:
 
     def hide(self):
         self._cancel_hide()
-        if self._host is not None:
-            self._host.hide()
+        was_visible = self._host is not None and self._host.is_visible()
+        if was_visible:
+            self._publish_rect_particle("right_fade")
+            self._opacity.fade_out(self._host.hide)
         self._current = None
-        self._description = None
         if self._queue:
             item = self._queue.pop(0)
             self._current = item
@@ -213,20 +424,33 @@ class _DxBubbleWindow:
             self._elapsed += 1
 
     def prepare_render(self) -> DrawBatch:
-        return self._description.batch if self._description is not None else DrawBatch()
+        batch = self._description.batch if self._description is not None else DrawBatch()
+        return scale_batch_alpha(batch, self._opacity.value)
 
     def set_anchor_entity(self, entity):
         if self._host is None or not self._host.is_visible() or self._description is None:
             return
-        anchor = self._pet_anchor()
-        screen = self._screen_provider.get_screen_rect_for_point(anchor)
-        self._host.set_geometry(resolve_bubble_geometry(anchor, self._description.size, screen))
+        self._host.set_geometry(self._bubble_geometry(self._description))
 
     def handle_pointer_press(self, event):
         button = getattr(event, "button", MouseButton.NONE)
+        if button in {MouseButton.LEFT, MouseButton.RIGHT}:
+            point = getattr(event, "screen_pos", None)
+            if not isinstance(point, Point):
+                local = getattr(event, "pos", Point())
+                getter = getattr(self._host, "get_geometry", None)
+                geometry = getter() if callable(getter) else getattr(self._host, "geometry", Rect())
+                point = Point(geometry.x + local.x, geometry.y + local.y)
+            self._event_center.publish(Event(EventType.PARTICLE_REQUEST, {
+                "particle_id": "click" if button == MouseButton.LEFT else "pink_click",
+                "area_type": "point",
+                "area_data": (point.x, point.y),
+            }))
         if button == MouseButton.LEFT:
             self.hide()
         elif button == MouseButton.RIGHT:
+            if self._current is not None:
+                self._clipboard_writer(self._current[0])
             self.hide()
 
     def handle_pointer_release(self, button):
@@ -234,9 +458,15 @@ class _DxBubbleWindow:
     def handle_pointer_enter(self):
         return None
     def handle_pointer_leave(self):
-        return None
+        if callable(self._tooltip_hider):
+            self._tooltip_hider()
     def handle_pointer_move(self, event):
-        return None
+        requester = self._tooltip_requester
+        if callable(requester):
+            requester(
+                application_tooltip_text("bubble"),
+                getattr(event, "screen_pos", Point()),
+            )
     def handle_key_press(self, event):
         if getattr(event, "key", Key.UNKNOWN) == Key.ESCAPE:
             self.hide()
@@ -252,11 +482,35 @@ class _DxBubbleWindow:
         if call is not None:
             call.cancel()
 
+    def _publish_rect_particle(self, particle_id: str) -> None:
+        if self._host is None:
+            return
+        getter = getattr(self._host, "get_geometry", None)
+        rect = getter() if callable(getter) else getattr(self._host, "geometry", Rect())
+        self._event_center.publish(Event(EventType.PARTICLE_REQUEST, {
+            "particle_id": particle_id,
+            "area_type": "rect",
+            "area_data": (
+                rect.x,
+                rect.y,
+                rect.x + rect.width,
+                rect.y + rect.height,
+            ),
+        }))
+
+    def set_clickthrough(self, enabled: bool) -> None:
+        self._clickthrough = bool(enabled)
+        if self._host is not None:
+            setter = getattr(self._host, "set_clickthrough", None)
+            if callable(setter):
+                setter(self._clickthrough)
+
     def cleanup(self):
         if self._cleanup_done:
             return
         self._cleanup_done = True
         self._cancel_hide()
+        self._opacity.cancel()
         host, self._host = self._host, None
         if host is not None:
             get_layer_manager().unregister(host)
@@ -267,12 +521,15 @@ class _DxBubbleWindow:
 class _DxCommandActionPanel:
     """One native window executing the shared eight-button action batch."""
 
-    def __init__(self, context, screen_provider, *, window_host_factory, warp, on_action):
+    def __init__(self, context, screen_provider, *, window_host_factory, warp, on_action, tooltip_requester=None, tooltip_hider=None):
         self._context = context
         self._screen_provider = screen_provider
         self._window_host_factory = window_host_factory
         self._warp = bool(warp)
         self._on_action = on_action
+        self._tooltip_requester = tooltip_requester
+        self._tooltip_hider = tooltip_hider
+        self._event_center = get_event_center()
         self._host = None
         self._command_rect: Rect | None = None
         self._hovered = ""
@@ -280,12 +537,38 @@ class _DxCommandActionPanel:
         self._interaction_mode = "companion"
         self._batch = DrawBatch()
         self._cleanup_done = False
+        self._clickthrough = False
+        self._opacity = DxOpacityAnimator(context, self._request_repaint)
+
+    def _request_repaint(self) -> None:
+        if self._host is not None:
+            self._host.request_repaint()
 
     @property
     def host(self):
         return self._host
 
     def _layout(self):
+        anchor = self._command_rect or Rect()
+        layout = resolve_command_action_panel_layout(anchor)
+        scale = self._screen_provider.get_scale_for_point(Point(
+            anchor.x + anchor.width / 2.0,
+            anchor.y + anchor.height / 2.0,
+        ))
+        if scale == 1.0:
+            return layout
+        rects = tuple((name, Rect(
+            anchor.x + (rect.x - anchor.x) * scale,
+            anchor.y + (rect.y - anchor.y) * scale,
+            rect.width * scale,
+            rect.height * scale,
+        )) for name, rect in layout.rects)
+        return CommandActionPanelLayout(
+            Size(layout.size.width * scale, layout.size.height * scale),
+            rects,
+        )
+
+    def _logical_layout(self):
         return resolve_command_action_panel_layout(self._command_rect or Rect())
 
     def _rebuild(self):
@@ -304,13 +587,15 @@ class _DxCommandActionPanel:
         if self._host is not None:
             return self._host
         layout = self._layout()
+        logical_layout = self._logical_layout()
         origin_x = min(rect.x for _name, rect in layout.rects)
         origin_y = min(rect.y for _name, rect in layout.rects)
         host = self._window_host_factory(
-            int(layout.size.width), int(layout.size.height),
+            int(logical_layout.size.width), int(logical_layout.size.height),
             x=int(origin_x), y=int(origin_y), callbacks=self,
             warp=self._warp, topmost=True, tool_window=True,
-            no_activate=False, clickthrough=False,
+            no_activate=False, clickthrough=self._clickthrough,
+            logical_content=True,
         )
         self._context.register_poller(host)
         get_layer_manager().register(host, Layer.PET_UI, name="DxCommandActionPanel")
@@ -325,9 +610,13 @@ class _DxCommandActionPanel:
         self._rebuild()
         if self._host is not None:
             layout = self._layout()
+            logical_layout = self._logical_layout()
             origin_x = min(item.x for _name, item in layout.rects)
             origin_y = min(item.y for _name, item in layout.rects)
-            self._host.set_geometry(Rect(origin_x, origin_y, layout.size.width, layout.size.height))
+            self._host.set_geometry(Rect(
+                origin_x, origin_y,
+                logical_layout.size.width, logical_layout.size.height,
+            ))
             self._host.request_repaint()
 
     def set_interaction_mode(self, mode: str) -> None:
@@ -345,20 +634,33 @@ class _DxCommandActionPanel:
         self._rebuild()
         host = self._ensure_host()
         layout = self._layout()
+        logical_layout = self._logical_layout()
         origin_x = min(item.x for _name, item in layout.rects)
         origin_y = min(item.y for _name, item in layout.rects)
-        host.set_geometry(Rect(origin_x, origin_y, layout.size.width, layout.size.height))
+        host.set_geometry(Rect(
+            origin_x, origin_y,
+            logical_layout.size.width, logical_layout.size.height,
+        ))
         host.show()
+        self._opacity.fade_in()
         host.request_repaint()
 
     def hide(self):
         self._hovered = ""
         self._pressed = ""
+        host = self._host
+        if host is not None and host.is_visible():
+            self._opacity.fade_out(host.hide)
+
+    def set_clickthrough(self, enabled: bool) -> None:
+        self._clickthrough = bool(enabled)
         if self._host is not None:
-            self._host.hide()
+            setter = getattr(self._host, "set_clickthrough", None)
+            if callable(setter):
+                setter(self._clickthrough)
 
     def prepare_render(self):
-        return self._batch
+        return scale_batch_alpha(self._batch, self._opacity.value)
 
     def _hit(self, pos: Point) -> str:
         layout = self._layout()
@@ -375,12 +677,22 @@ class _DxCommandActionPanel:
             self._rebuild()
             if self._host is not None:
                 self._host.request_repaint()
+        if name and callable(self._tooltip_requester):
+            self._tooltip_requester(application_tooltip_text(name), pos)
+        elif callable(self._tooltip_hider):
+            self._tooltip_hider()
 
     def handle_pointer_press(self, event):
         if getattr(event, "button", MouseButton.NONE) != MouseButton.LEFT:
             return
         pos = getattr(event, "global_pos", getattr(event, "screen_pos", Point()))
         self._pressed = self._hit(pos)
+        if self._pressed:
+            self._event_center.publish(Event(EventType.PARTICLE_REQUEST, {
+                "particle_id": "click",
+                "area_type": "point",
+                "area_data": (pos.x, pos.y),
+            }))
         self._rebuild()
         if self._host is not None:
             capture = getattr(self._host, "capture_mouse", None)
@@ -405,6 +717,8 @@ class _DxCommandActionPanel:
     def handle_pointer_enter(self):
         return None
     def handle_pointer_leave(self):
+        if callable(self._tooltip_hider):
+            self._tooltip_hider()
         if not self._pressed:
             self._hovered = ""
         self._rebuild()
@@ -423,6 +737,7 @@ class _DxCommandActionPanel:
         if self._cleanup_done:
             return
         self._cleanup_done = True
+        self._opacity.cancel()
         host, self._host = self._host, None
         if host is not None:
             get_layer_manager().unregister(host)
@@ -451,6 +766,9 @@ class _DxPanelWindow:
         on_navigation: Callable[[Key | int], str] | None = None,
         on_visibility_changed: Callable[[bool], None] | None = None,
         on_geometry_changed: Callable[[Rect], None] | None = None,
+        tooltip_text: str = "",
+        tooltip_requester: Callable[[str, Point], None] | None = None,
+        tooltip_hider: Callable[[], None] | None = None,
     ) -> None:
         self._context = context
         self._screen_provider = screen_provider
@@ -467,6 +785,9 @@ class _DxPanelWindow:
         self._on_navigation = on_navigation
         self._on_visibility_changed = on_visibility_changed
         self._on_geometry_changed = on_geometry_changed
+        self._tooltip_text = str(tooltip_text or "")
+        self._tooltip_requester = tooltip_requester
+        self._tooltip_hider = tooltip_hider
         self._host: DxWindowHost | None = None
         self._batch = DrawBatch()
         self._title = ""
@@ -477,9 +798,16 @@ class _DxPanelWindow:
         self._surface_kind = "notice"
         self._hide_call: DxScheduledCall | None = None
         self._cleanup_done = False
+        self._clickthrough = not self._interactive
         self._anchor_rect: Rect | None = None
         self._action_hovered = False
         self._action_pressed = False
+        self._visible = False
+        self._opacity = DxOpacityAnimator(context, self._request_repaint)
+
+    def _request_repaint(self) -> None:
+        if self._host is not None:
+            self._host.request_repaint()
 
     @property
     def host(self) -> DxWindowHost | None:
@@ -490,23 +818,33 @@ class _DxPanelWindow:
         width, height = self._size
         if self._interactive and self._anchor_rect is not None:
             anchor = self._anchor_rect
-            screen = self._screen_provider.get_screen_rect_for_point(Point(
+            point = Point(
                 anchor.x + anchor.width / 2.0,
                 anchor.y + anchor.height / 2.0,
-            ))
-            return resolve_command_panel_geometry(
-                anchor,
-                self._size,
-                screen,
-                offset_x=float(COMMAND_DIALOG.get("offset_x", 6)),
-                offset_y=float(COMMAND_DIALOG.get("offset_y", 0)),
             )
+            screen = self._screen_provider.get_screen_rect_for_point(point)
+            scale = self._screen_provider.get_scale_for_point(point)
+            physical = resolve_command_panel_geometry(
+                anchor,
+                (width * scale, height * scale),
+                screen,
+                offset_x=float(COMMAND_DIALOG.get("offset_x", 6)) * scale,
+                offset_y=float(COMMAND_DIALOG.get("offset_y", 0)) * scale,
+            )
+            return Rect(physical.x, physical.y, width, height)
+        point = Point(
+            screen.x + screen.width / 2.0,
+            screen.y + screen.height / 2.0,
+        )
+        scale = self._screen_provider.get_scale_for_point(point)
+        physical_width = width * scale
+        physical_height = height * scale
         if self._interactive:
-            x = screen.x + (screen.width - width) / 2.0
-            y = screen.y + (screen.height - height) / 2.0
+            x = screen.x + (screen.width - physical_width) / 2.0
+            y = screen.y + (screen.height - physical_height) / 2.0
         else:
-            x = screen.x + screen.width - width - 24
-            y = screen.y + screen.height - height - 48
+            x = screen.x + screen.width - physical_width - 24 * scale
+            y = screen.y + screen.height - physical_height - 48 * scale
         return Rect(x, y, width, height)
 
     def set_anchor_rect(self, geometry: Rect | None) -> None:
@@ -515,7 +853,7 @@ class _DxPanelWindow:
             resolved = self._geometry()
             self._host.set_geometry(resolved)
             if callable(self._on_geometry_changed):
-                self._on_geometry_changed(resolved)
+                self._on_geometry_changed(self._host.get_geometry())
 
     def _ensure_host(self) -> DxWindowHost:
         if self._cleanup_done:
@@ -533,7 +871,8 @@ class _DxPanelWindow:
             topmost=True,
             tool_window=True,
             no_activate=not self._interactive,
-            clickthrough=not self._interactive,
+            clickthrough=self._clickthrough,
+            logical_content=True,
         )
         try:
             self._context.register_poller(host)
@@ -546,7 +885,7 @@ class _DxPanelWindow:
         return host
 
     def is_visible(self) -> bool:
-        return self._host is not None and self._host.is_visible()
+        return self._visible
 
     def show_notice(self, text: str, *, title: str = "飞行雪绒", timeout_ms: int = 5000) -> None:
         self._title = str(title or "飞行雪绒")
@@ -613,20 +952,32 @@ class _DxPanelWindow:
                         max(8, int(self._size[1]) - 8),
                     )
             host.activate()
+        self._visible = True
+        self._opacity.fade_in()
         get_layer_manager().enforce_burst()
         host.request_repaint()
         if callable(self._on_geometry_changed):
-            self._on_geometry_changed(geometry)
+            self._on_geometry_changed(host.get_geometry())
         if callable(self._on_visibility_changed):
             self._on_visibility_changed(True)
 
     def hide(self) -> None:
         self._cancel_hide()
+        was_visible = self.is_visible()
+        self._visible = False
         self._composition = ""
-        if self._host is not None:
-            self._host.hide()
-        if callable(self._on_visibility_changed):
+        host = self._host
+        if host is not None:
+            self._opacity.fade_out(host.hide)
+        if was_visible and callable(self._on_visibility_changed):
             self._on_visibility_changed(False)
+
+    def set_clickthrough(self, enabled: bool) -> None:
+        self._clickthrough = bool(enabled) or not self._interactive
+        if self._host is not None:
+            setter = getattr(self._host, "set_clickthrough", None)
+            if callable(setter):
+                setter(self._clickthrough)
 
     def _notify_input_changed(self) -> None:
         if callable(self._on_input_changed):
@@ -688,7 +1039,7 @@ class _DxPanelWindow:
         ).batch
 
     def prepare_render(self) -> DrawBatch:
-        return self._batch
+        return scale_batch_alpha(self._batch, self._opacity.value)
 
     def handle_key_press(self, event: object) -> None:
         key = getattr(event, "key", Key.UNKNOWN)
@@ -805,6 +1156,8 @@ class _DxPanelWindow:
         return None
 
     def handle_pointer_leave(self) -> None:
+        if callable(self._tooltip_hider):
+            self._tooltip_hider()
         if self._surface_kind == "qr":
             self._action_hovered = False
             if not self._action_pressed:
@@ -813,6 +1166,11 @@ class _DxPanelWindow:
                     self._host.request_repaint()
 
     def handle_pointer_move(self, event: object) -> None:
+        if self._tooltip_text and callable(self._tooltip_requester):
+            self._tooltip_requester(
+                self._tooltip_text,
+                getattr(event, "screen_pos", Point()),
+            )
         if self._surface_kind != "qr":
             return None
         pos = getattr(event, "pos", Point())
@@ -837,7 +1195,9 @@ class _DxPanelWindow:
         if self._cleanup_done:
             return
         self._cleanup_done = True
+        self._visible = False
         self._cancel_hide()
+        self._opacity.cancel()
         host, self._host = self._host, None
         if host is None:
             return
@@ -846,6 +1206,222 @@ class _DxPanelWindow:
         finally:
             self._context.unregister_poller(host)
         host.cleanup()
+
+
+class _DxMicSttIndicator:
+    """Native counterpart of the Qt microphone listening indicator."""
+
+    def __init__(
+        self,
+        context,
+        screen_provider,
+        *,
+        window_host_factory,
+        warp,
+        entity_provider,
+        cursor_provider=get_cursor_position,
+        tooltip_requester=None,
+        tooltip_hider=None,
+    ):
+        self._context = context
+        self._screen_provider = screen_provider
+        self._window_host_factory = window_host_factory
+        self._warp = bool(warp)
+        self._entity_provider = entity_provider
+        self._cursor_provider = cursor_provider
+        self._tooltip_requester = tooltip_requester
+        self._tooltip_hider = tooltip_hider
+        self._event_center = get_event_center()
+        self._visual = build_mic_stt_indicator_visual()
+        self._host = None
+        self._listening = False
+        self._shown = False
+        self._speech_active = False
+        self._clickthrough = False
+        self._last_cursor_near = time.monotonic()
+        self._hover_radius = float(scale_px(120, min_abs=90))
+        self._hide_delay = 2.0
+        self._margin = float(scale_px(4, min_abs=3))
+        self._extra_offset_y = float(scale_px(20, min_abs=20))
+        self._cleanup_done = False
+        self._opacity = DxOpacityAnimator(context, self._request_repaint)
+
+    def _request_repaint(self) -> None:
+        if self._host is not None:
+            self._host.request_repaint()
+
+    @property
+    def host(self):
+        return self._host
+
+    def _pet_geometry(self) -> Rect | None:
+        entity = self._entity_provider()
+        if isinstance(entity, Rect):
+            return entity
+        getter = getattr(entity, "get_core_geometry", None)
+        if callable(getter):
+            geometry = getter()
+            if isinstance(geometry, Rect):
+                return geometry
+        return None
+
+    def _geometry(self) -> Rect:
+        size = self._visual.size
+        pet = self._pet_geometry()
+        if pet is None:
+            screen = self._screen_provider.get_primary_screen_rect()
+            pet = Rect(
+                screen.x + (screen.width - ANIMATION["pet_size"][0]) / 2.0,
+                screen.y + (screen.height - ANIMATION["pet_size"][1]) / 2.0,
+                ANIMATION["pet_size"][0],
+                ANIMATION["pet_size"][1],
+            )
+        screen = self._screen_provider.get_screen_rect_for_point(pet.top_left)
+        scale = self._screen_provider.get_scale_for_point(pet.top_left)
+        x, y, _ = clamp_rect_position(
+            int(round(pet.x + self._margin * scale)),
+            int(round(
+                pet.y - size.height * scale
+                - self._margin * scale
+                + self._extra_offset_y * scale
+            )),
+            int(round(size.width * scale)),
+            int(round(size.height * scale)),
+            screen,
+        )
+        return Rect(x, y, size.width, size.height)
+
+    def _ensure_host(self):
+        if self._cleanup_done:
+            raise RuntimeError("DX microphone indicator has been cleaned")
+        if self._host is not None:
+            return self._host
+        geometry = self._geometry()
+        host = self._window_host_factory(
+            int(geometry.width),
+            int(geometry.height),
+            x=int(geometry.x),
+            y=int(geometry.y),
+            callbacks=self,
+            warp=self._warp,
+            topmost=True,
+            tool_window=True,
+            no_activate=True,
+            clickthrough=self._clickthrough,
+            logical_content=True,
+        )
+        self._context.register_poller(host)
+        get_layer_manager().register(host, Layer.PET_UI, name="DxMicSttIndicator")
+        self._host = host
+        return host
+
+    def update_state(self, data: dict) -> None:
+        listening = bool(data.get("is_listening"))
+        speech_active = bool(data.get("speech_active"))
+        if speech_active != self._speech_active:
+            self._speech_active = speech_active
+            self._visual = build_mic_stt_indicator_visual(
+                speech_active=speech_active,
+            )
+        self._listening = listening
+        if not listening:
+            self.hide()
+            return
+        self._last_cursor_near = time.monotonic()
+        host = self._ensure_host()
+        host.set_geometry(self._geometry())
+        host.show()
+        self._shown = True
+        self._opacity.fade_in()
+        host.request_repaint()
+
+    def tick(self) -> None:
+        if not self._listening:
+            return
+        host = self._ensure_host()
+        geometry = self._geometry()
+        host.set_geometry(geometry)
+        geometry = host.get_geometry()
+        cursor = self._cursor_provider()
+        center = Point(
+            geometry.x + geometry.width / 2.0,
+            geometry.y + geometry.height / 2.0,
+        )
+        distance_sq = (cursor.x - center.x) ** 2 + (cursor.y - center.y) ** 2
+        now = time.monotonic()
+        if distance_sq <= self._hover_radius ** 2:
+            self._last_cursor_near = now
+            if not self._shown:
+                host.show()
+                self._shown = True
+                self._opacity.fade_in()
+                host.request_repaint()
+        elif self._shown and now - self._last_cursor_near >= self._hide_delay:
+            self._shown = False
+            self._opacity.fade_out(host.hide)
+
+    def hide(self) -> None:
+        self._shown = False
+        host = self._host
+        if host is not None and host.is_visible():
+            self._opacity.fade_out(host.hide)
+
+    def set_clickthrough(self, enabled: bool) -> None:
+        self._clickthrough = bool(enabled)
+        if self._host is not None:
+            setter = getattr(self._host, "set_clickthrough", None)
+            if callable(setter):
+                setter(self._clickthrough)
+
+    def prepare_render(self) -> DrawBatch:
+        return scale_batch_alpha(self._visual.batch, self._opacity.value)
+
+    def handle_pointer_press(self, event) -> None:
+        if getattr(event, "button", MouseButton.NONE) != MouseButton.LEFT:
+            return
+        point = getattr(event, "screen_pos", Point())
+        self._event_center.publish(Event(EventType.PARTICLE_REQUEST, {
+            "particle_id": "click",
+            "area_type": "point",
+            "area_data": (point.x, point.y),
+        }))
+        self._event_center.publish(Event(EventType.MIC_STT_STOP, {
+            "source": "mic_stt_indicator",
+        }))
+
+    def handle_pointer_release(self, button):
+        return None
+    def handle_pointer_enter(self):
+        return None
+    def handle_pointer_leave(self):
+        if callable(self._tooltip_hider):
+            self._tooltip_hider()
+    def handle_pointer_move(self, event):
+        if callable(self._tooltip_requester):
+            self._tooltip_requester(
+                application_tooltip_text("mic_stt"),
+                getattr(event, "screen_pos", Point()),
+            )
+    def handle_key_press(self, event):
+        return None
+    def handle_key_release(self, event):
+        return None
+    def handle_window_moved(self, position):
+        return None
+    def handle_host_close(self):
+        self.hide()
+
+    def cleanup(self) -> None:
+        if self._cleanup_done:
+            return
+        self._cleanup_done = True
+        self._shown = False
+        self._opacity.cancel()
+        host, self._host = self._host, None
+        if host is not None:
+            get_layer_manager().unregister(host)
+            self._context.unregister_poller(host)
+            host.cleanup()
 
 
 class DxApplicationUiHost:
@@ -860,21 +1436,35 @@ class DxApplicationUiHost:
         warp: bool = False,
         announcement_opener: Callable[[str], object] | None = None,
         workbench_opener: Callable[[str], bool] | None = None,
+        launch_wuwa: Callable[[], object] | None = None,
+        animation_factory: Callable[[], object] | None = None,
+        animation_cleanup: Callable[[], None] | None = None,
+        music_service_provider: Callable[[], object] | None = None,
+        game_command_runtime_factory: Callable[[], object] | None = None,
+        clipboard_writer: Callable[[str], bool] | None = None,
     ) -> None:
         self._context = context
         self._screen_provider = screen_provider or DxScreenProvider()
         self._window_host_factory = window_host_factory or DxWindowHost
         self._warp = bool(warp)
-        self._announcement_opener = announcement_opener or (
-            lambda url: webbrowser.open(url, new=2)
-        )
+        del announcement_opener
         self._workbench_opener = workbench_opener
+        self._launch_wuwa = launch_wuwa
+        self._animation_cleanup = animation_cleanup
+        self._music_service_provider = music_service_provider
+        self._game_command_runtime_factory = game_command_runtime_factory
+        self._game_command_runtime: object | None = None
+        self._clipboard_writer = clipboard_writer or write_clipboard_text
         self._event_center = get_event_center()
         self._yuanbao_service: object | None = None
         self._panels: dict[str, _DxPanelWindow] = {}
         self._bubble: _DxBubbleWindow | None = None
         self._action_panel: _DxCommandActionPanel | None = None
         self._command_hint: DxCommandHintWindow | None = None
+        self._speaker_search: DxSpeakerSearchWindow | None = None
+        self._announcement: DxAnnouncementWindow | None = None
+        self._mic_indicator: _DxMicSttIndicator | None = None
+        self._tooltip: _DxTooltipWindow | None = None
         self._subscriptions: list[tuple[EventType, Callable[[Event], None]]] = []
         self._prepared = False
         self._started = False
@@ -886,6 +1476,7 @@ class DxApplicationUiHost:
         self._clickthrough_enabled = False
         self._chat_listening = False
         self._interaction_mode = "companion"
+        self._animation = animation_factory() if callable(animation_factory) else None
 
     def prepare_application(self, application: object) -> None:
         self._context.assert_owner_thread()
@@ -920,6 +1511,18 @@ class DxApplicationUiHost:
         self._subscribe(EventType.MUSIC_LOGIN_QR_SHOW, self._on_music_qr)
         self._subscribe(EventType.MUSIC_LOGIN_QR_STATUS, self._on_music_qr)
         self._subscribe(EventType.MUSIC_LOGIN_QR_HIDE, self._on_music_hide)
+        self._subscribe(EventType.MIC_STT_STATE_CHANGE, self._on_mic_stt_state_change)
+        self._subscribe(
+            EventType.SPEAKER_SEARCH_TOGGLE_REQUEST,
+            self._on_speaker_search_toggle,
+        )
+        self._subscribe(EventType.MUSIC_STATUS_CHANGE, self._on_music_status_change)
+        self._subscribe(
+            EventType.MUSIC_LOGIN_STATUS_CHANGE,
+            self._on_music_login_status_change,
+        )
+        if callable(self._game_command_runtime_factory):
+            self._game_command_runtime = self._game_command_runtime_factory()
 
     def _bubble_window(self) -> _DxBubbleWindow:
         bubble = self._bubble
@@ -930,7 +1533,11 @@ class DxApplicationUiHost:
                 window_host_factory=self._window_host_factory,
                 warp=self._warp,
                 entity_provider=lambda: self._command_entity or self._last_pet_geometry,
+                clipboard_writer=self._clipboard_writer,
+                tooltip_requester=self._request_tooltip,
+                tooltip_hider=self._hide_tooltip,
             )
+            bubble.set_clickthrough(self._clickthrough_enabled)
             self._bubble = bubble
         return bubble
 
@@ -943,53 +1550,60 @@ class DxApplicationUiHost:
                 window_host_factory=self._window_host_factory,
                 warp=self._warp,
                 on_action=self._on_command_action,
+                tooltip_requester=self._request_tooltip,
+                tooltip_hider=self._hide_tooltip,
             )
             panel.set_interaction_mode(self._interaction_mode)
+            panel.set_clickthrough(self._clickthrough_enabled)
             self._action_panel = panel
         return panel
 
+    def _tooltip_window(self) -> _DxTooltipWindow:
+        tooltip = self._tooltip
+        if tooltip is None:
+            tooltip = _DxTooltipWindow(
+                self._context,
+                self._screen_provider,
+                window_host_factory=self._window_host_factory,
+                warp=self._warp,
+            )
+            self._tooltip = tooltip
+        return tooltip
+
+    def _request_tooltip(self, text: str, point: Point) -> None:
+        if text:
+            self._tooltip_window().request(text, point)
+
+    def _hide_tooltip(self) -> None:
+        if self._tooltip is not None:
+            self._tooltip.hide()
+
     def _on_command_action(self, action: str) -> None:
-        event_map = {
-            "close": EventType.APP_QUIT,
-        }
-        if action == "clickthrough":
-            self._clickthrough_enabled = not self._clickthrough_enabled
-            self._event_center.publish(Event(EventType.UI_CLICKTHROUGH_TOGGLE, {
-                "enabled": self._clickthrough_enabled,
-                "source": "dx_command_action",
-            }))
-            return
+        chat_listening = self._chat_listening
+        dispatch_desktop_action(
+            action,
+            clickthrough_enabled=self._clickthrough_enabled,
+            chat_listening=chat_listening,
+            launch_wuwa=self._launch_wuwa,
+        )
         if action == "chat_mode":
-            self._chat_listening = not self._chat_listening
-            self._event_center.publish(Event(
-                EventType.MIC_STT_START if self._chat_listening else EventType.MIC_STT_STOP,
-                {
-                    "source": "chat_mode_button",
-                    "auto_mode": False,
-                    "auto_submit": True,
-                    "emit_partial": True,
-                },
-            ))
-            return
-        if action == "interaction_mode":
-            self._event_center.publish(Event(EventType.INTERACTION_MODE_SET, {
-                "toggle": True,
-                "source": "dx_command_action",
-            }))
-            return
-        event_type = event_map.get(action)
-        if event_type is None:
-            return
-        payload = {"source": "dx_command_action", "action": action}
-        self._event_center.publish(Event(event_type, payload))
+            self._chat_listening = not chat_listening
 
     def _on_clickthrough_state(self, event: Event) -> None:
         enabled = bool((event.data or {}).get("enabled", False))
         self._clickthrough_enabled = enabled
-        if self._action_panel is not None and self._action_panel.host is not None:
-            setter = getattr(self._action_panel.host, "set_clickthrough", None)
-            if callable(setter):
-                setter(enabled)
+        if self._action_panel is not None:
+            self._action_panel.set_clickthrough(enabled)
+        if self._bubble is not None:
+            self._bubble.set_clickthrough(enabled)
+        if self._command_hint is not None:
+            self._command_hint.set_clickthrough(enabled)
+        if self._mic_indicator is not None:
+            self._mic_indicator.set_clickthrough(enabled)
+        for panel in self._panels.values():
+            panel.set_clickthrough(enabled)
+        if self._speaker_search is not None:
+            self._speaker_search.set_clickthrough(enabled)
 
     def _on_interaction_mode_changed(self, event: Event) -> None:
         mode = str((event.data or {}).get("mode", ""))
@@ -1011,6 +1625,95 @@ class DxApplicationUiHost:
         if self._bubble is not None:
             self._bubble.tick()
             self._bubble.set_anchor_entity(self._command_entity)
+        if self._speaker_search is not None:
+            self._speaker_search.tick()
+        if self._mic_indicator is not None:
+            self._mic_indicator.tick()
+        self._auto_hide_command_family()
+
+    def _auto_hide_command_family(self) -> None:
+        command = self._panels.get("command")
+        if command is None or not command.is_visible():
+            return
+        hosts = [command.host]
+        if self._command_hint is not None:
+            hosts.append(self._command_hint.host)
+        if self._action_panel is not None:
+            hosts.append(self._action_panel.host)
+        cursor = get_cursor_position()
+        nearest_sq = None
+        for host in hosts:
+            if host is None or not host.is_visible():
+                continue
+            getter = getattr(host, "get_geometry", None)
+            geometry = getter() if callable(getter) else getattr(host, "geometry", None)
+            if not isinstance(geometry, Rect):
+                continue
+            dx = cursor.x - (geometry.x + geometry.width / 2.0)
+            dy = cursor.y - (geometry.y + geometry.height / 2.0)
+            distance_sq = dx * dx + dy * dy
+            nearest_sq = distance_sq if nearest_sq is None else min(nearest_sq, distance_sq)
+        limit = float(UI.get("auto_hide_mouse_distance", scale_px(300, min_abs=1)))
+        if nearest_sq is not None and nearest_sq > limit * limit:
+            command.hide()
+
+    def _mic_indicator_window(self) -> _DxMicSttIndicator:
+        indicator = self._mic_indicator
+        if indicator is None:
+            indicator = _DxMicSttIndicator(
+                self._context,
+                self._screen_provider,
+                window_host_factory=self._window_host_factory,
+                warp=self._warp,
+                entity_provider=lambda: self._command_entity or self._last_pet_geometry,
+                tooltip_requester=self._request_tooltip,
+                tooltip_hider=self._hide_tooltip,
+            )
+            indicator.set_clickthrough(self._clickthrough_enabled)
+            self._mic_indicator = indicator
+        return indicator
+
+    def _on_mic_stt_state_change(self, event: Event) -> None:
+        data = event.data if isinstance(event.data, dict) else {}
+        self._mic_indicator_window().update_state(data)
+
+    def _speaker_search_window(self) -> DxSpeakerSearchWindow:
+        window = self._speaker_search
+        if window is None:
+            window = DxSpeakerSearchWindow(
+                self._context,
+                self._screen_provider,
+                music_service_provider=self._music_service_provider,
+                window_host_factory=self._window_host_factory,
+                warp=self._warp,
+                tooltip_requester=self._request_tooltip,
+                tooltip_hider=self._hide_tooltip,
+            )
+            window.set_clickthrough(self._clickthrough_enabled)
+            self._speaker_search = window
+        return window
+
+    def _on_speaker_search_toggle(self, event: Event) -> None:
+        data = event.data if isinstance(event.data, dict) else {}
+        if str(data.get("backend_id") or "") != "directx":
+            return
+        try:
+            instance_id = int(data.get("instance_id", 0))
+        except (TypeError, ValueError):
+            return
+        if instance_id <= 0:
+            return
+        self._speaker_search_window().toggle(
+            WorldObjectInstance("directx", instance_id, "speaker")
+        )
+
+    def _on_music_status_change(self, event: Event) -> None:
+        if self._speaker_search is not None:
+            self._speaker_search.update_music_state(event.data or {})
+
+    def _on_music_login_status_change(self, event: Event) -> None:
+        if self._speaker_search is not None:
+            self._speaker_search.update_login_state(event.data or {})
 
     def _panel(
         self,
@@ -1045,8 +1748,16 @@ class DxApplicationUiHost:
                 on_navigation=on_navigation,
                 on_visibility_changed=on_visibility_changed,
                 on_geometry_changed=on_geometry_changed,
+                tooltip_text=(
+                    application_tooltip_text("command")
+                    if panel_id == "command"
+                    else ""
+                ),
+                tooltip_requester=self._request_tooltip,
+                tooltip_hider=self._hide_tooltip,
             )
             self._panels[panel_id] = panel
+        panel.set_clickthrough(self._clickthrough_enabled)
         return panel
 
     def _notice_panel(self) -> _DxPanelWindow:
@@ -1083,7 +1794,10 @@ class DxApplicationUiHost:
                 warp=self._warp,
                 on_pick=self._on_command_hint_pick,
                 on_execute_hash=self._on_command_hint_execute,
+                tooltip_requester=self._request_tooltip,
+                tooltip_hider=self._hide_tooltip,
             )
+            hint.set_clickthrough(self._clickthrough_enabled)
             self._command_hint = hint
         return hint
 
@@ -1097,6 +1811,9 @@ class DxApplicationUiHost:
 
     def _on_command_visibility_changed(self, visible: bool) -> None:
         if visible:
+            self._event_center.publish(Event(EventType.TIMER_PAUSE, {
+                "source": "command_dialog",
+            }))
             panel = self._panels.get("command")
             if panel is not None:
                 hint = self._command_hint_window()
@@ -1104,8 +1821,27 @@ class DxApplicationUiHost:
                 hint.show_for(panel._geometry())
                 self._action_panel_window().set_command_rect(panel._geometry())
                 self._action_panel_window().show()
-        elif self._command_hint is not None:
-            self._command_hint.hide()
+        else:
+            panel = self._panels.get("command")
+            if panel is not None and panel.host is not None:
+                getter = getattr(panel.host, "get_geometry", None)
+                rect = getter() if callable(getter) else getattr(panel.host, "geometry", None)
+                if isinstance(rect, Rect):
+                    self._event_center.publish(Event(EventType.PARTICLE_REQUEST, {
+                        "particle_id": "right_fade",
+                        "area_type": "rect",
+                        "area_data": (
+                            rect.x,
+                            rect.y,
+                            rect.x + rect.width,
+                            rect.y + rect.height,
+                        ),
+                    }))
+            self._event_center.publish(Event(EventType.TIMER_RESUME, {
+                "source": "command_dialog",
+            }))
+            if self._command_hint is not None:
+                self._command_hint.hide()
             if self._action_panel is not None:
                 self._action_panel.hide()
 
@@ -1263,21 +1999,27 @@ class DxApplicationUiHost:
             panel.hide()
 
     def start_runtime(self, application: object) -> None:
+        if self._started and not self._stopped:
+            return
         self.prepare_runtime()
         self._started = True
         self._stopped = False
+        self._announcement_window().start()
+
+    def _announcement_window(self) -> DxAnnouncementWindow:
+        window = self._announcement
+        if window is None:
+            window = DxAnnouncementWindow(
+                self._context,
+                self._screen_provider,
+                window_host_factory=self._window_host_factory,
+                warp=self._warp,
+            )
+            self._announcement = window
+        return window
 
     def open_announcement(self) -> None:
-        try:
-            opened = self._announcement_opener(_ANNOUNCEMENT_URL)
-        except Exception as exc:
-            _logger.error("DX announcement open failed: %s", exc)
-            opened = False
-        if opened is False:
-            self._notice_panel().show_notice(
-                "公告页面打开失败，请稍后重试。",
-                title="桌宠公告",
-            )
+        self._announcement_window().open_manual()
 
     def open_settings(self) -> None:
         if not self._open_workbench_helper("overview"):
@@ -1295,6 +2037,13 @@ class DxApplicationUiHost:
             self._command_hint.hide()
         if self._bubble is not None:
             self._bubble.hide()
+        if self._speaker_search is not None:
+            self._speaker_search.hide()
+        if self._announcement is not None:
+            self._announcement.hide()
+        if self._mic_indicator is not None:
+            self._mic_indicator.hide()
+        self._hide_tooltip()
 
     def stop_runtime(self) -> None:
         if self._stopped:
@@ -1304,6 +2053,13 @@ class DxApplicationUiHost:
             self._event_center.unsubscribe(event_type, callback)
         self._subscriptions.clear()
         self._prepared = False
+        announcement, self._announcement = self._announcement, None
+        if announcement is not None:
+            announcement.cleanup()
+        game_runtime, self._game_command_runtime = self._game_command_runtime, None
+        cleanup = getattr(game_runtime, "cleanup", None)
+        if callable(cleanup):
+            cleanup()
 
     def cleanup(self) -> None:
         if self._cleaned:
@@ -1326,9 +2082,26 @@ class DxApplicationUiHost:
         action_panel, self._action_panel = self._action_panel, None
         if action_panel is not None:
             action_panel.cleanup()
+        speaker_search, self._speaker_search = self._speaker_search, None
+        if speaker_search is not None:
+            speaker_search.cleanup()
+        mic_indicator, self._mic_indicator = self._mic_indicator, None
+        if mic_indicator is not None:
+            mic_indicator.cleanup()
+        tooltip, self._tooltip = self._tooltip, None
+        if tooltip is not None:
+            tooltip.cleanup()
+        animation, self._animation = self._animation, None
+        if animation is not None:
+            if callable(self._animation_cleanup):
+                self._animation_cleanup()
+            else:
+                cleanup = getattr(animation, "cleanup", None)
+                if callable(cleanup):
+                    cleanup()
 
     def has_exit_animation(self) -> bool:
-        return False
+        return self._animation is not None
 
     def finalize(self) -> None:
         if self._finalized:

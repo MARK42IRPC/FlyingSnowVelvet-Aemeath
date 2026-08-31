@@ -109,6 +109,8 @@ class WorldObjectBackendTests(unittest.TestCase):
 
         self.assertTrue(instance.is_alive())
         self.assertEqual(instance.get_motion().position, Point(1, 2))
+        self.assertEqual(instance.get_center(), Point(20, 30))
+        self.assertEqual(instance.get_geometry(), Rect(10, 15, 20, 30))
         instance.set_gravity_enabled(False)
         instance.start_fadeout()
         instance.spawn_jump(0.8, 1.8)
@@ -120,7 +122,10 @@ class WorldObjectBackendTests(unittest.TestCase):
         instance.close()
         self.assertEqual(
             [call[0] for call in self.backend.calls],
-            ["create", "state", "motion", "gravity", "fade", "jump", "motion_delta", "close"],
+            [
+                "create", "state", "motion", "center", "geometry", "gravity",
+                "fade", "jump", "motion_delta", "close",
+            ],
         )
 
     def test_business_geometry_queries_return_core_values(self):

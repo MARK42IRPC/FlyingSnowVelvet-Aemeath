@@ -4,14 +4,14 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from lib.script.gemes.MAIN.manager_window import GameManagerWindow
+from lib.script.ui.game_manager_window import GameManagerWindow
 
 
 class GameManagerNativeDialogTests(unittest.TestCase):
     def test_install_uses_platform_default_file_dialog(self) -> None:
         fake_window = SimpleNamespace()
         with patch(
-            "lib.script.gemes.MAIN.manager_window.QFileDialog.getOpenFileName",
+            "lib.script.ui.game_manager_window.QFileDialog.getOpenFileName",
             return_value=("", ""),
         ) as get_open_file_name:
             GameManagerWindow._install_zip(fake_window)
@@ -25,7 +25,7 @@ class GameManagerNativeDialogTests(unittest.TestCase):
         )
         fake_window = SimpleNamespace(_selected_game=lambda: record)
         with patch(
-            "lib.script.gemes.MAIN.manager_window.QFileDialog.getSaveFileName",
+            "lib.script.ui.game_manager_window.QFileDialog.getSaveFileName",
             return_value=("", ""),
         ) as get_save_file_name:
             GameManagerWindow._export_selected_game(fake_window)

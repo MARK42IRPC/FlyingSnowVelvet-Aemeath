@@ -102,7 +102,7 @@ def _get_active_glow_pixmap(widget: "LahaiTetrisWidget", kind: str, block_size: 
     pixmap.fill(Qt.transparent)
     glow_painter = QPainter(pixmap)
     glow_painter.setRenderHint(QPainter.Antialiasing, True)
-    base = QColor(_THEME[kind][0])
+    base = QColor(*_THEME[kind][0])
     center = QPointF(extent * 0.5, extent * 0.5)
     gradient = QRadialGradient(center, extent * 0.48)
     glow_core = QColor(base)
@@ -138,7 +138,10 @@ def _draw_block_procedural(
     if kind == _SUN_KIND:
         _draw_sun_block(widget, painter, outer, active=active)
         return
-    base, inner, letter = _THEME[kind]
+    base_rgb, inner_rgb, letter_rgb = _THEME[kind]
+    base = QColor(*base_rgb)
+    inner = QColor(*inner_rgb)
+    letter = QColor(*letter_rgb)
 
     if active:
         painter.setPen(Qt.NoPen)

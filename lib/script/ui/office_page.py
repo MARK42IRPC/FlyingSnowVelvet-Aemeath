@@ -46,7 +46,7 @@ from lib.script.ui.office_icons import (
     office_submit_icon,
 )
 from lib.script.ui.office_style import office_stylesheet
-from lib.script.workbench.settings.page_layout import SettingsPageHeader, SettingsSection
+from lib.script.ui.workbench_settings_layout import SettingsPageHeader, SettingsSection
 from lib.script.workbench.theme import get_workbench_colors
 
 

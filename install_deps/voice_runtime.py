@@ -228,7 +228,7 @@ def ensure_cuda_voice_runtime(python_exe, mirrors) -> bool:
                 *directml_config.CUDA_RUNTIME_DEPENDENCIES,
                 "--disable-pip-version-check",
                 "--progress-bar",
-                "off",
+                "on",
                 "-i",
                 mirror["url"],
                 "--trusted-host",

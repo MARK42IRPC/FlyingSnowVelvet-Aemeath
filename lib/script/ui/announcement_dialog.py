@@ -2,20 +2,16 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import date
 from html import escape
-import json
 from pathlib import Path
-import re
-import threading
-import time
 from typing import Callable
 
 import requests
 from PyQt5.QtCore import QEasingCurve, QObject, QPropertyAnimation, Qt, pyqtSignal
-from PyQt5.QtGui import QCursor, QPainter
+from PyQt5.QtGui import QColor, QCursor, QPainter
 from PyQt5.QtWidgets import (
+    QFrame,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -26,96 +22,25 @@ from PyQt5.QtWidgets import (
 )
 
 from config.config import UI
-from lib.core.qt_bridge.colors import UI_THEME
 from lib.core.qt_bridge.font import get_ui_font, get_ui_font_family
-from config.scale import scale_px, scale_style_px
-from config.shared_storage_io import write_bytes_atomic
-from config.user_storage_paths import get_user_cache_dir, get_user_state_dir
+from config.scale import scale_px
 from lib.core.anchor_utils import apply_ui_opacity
+from lib.core.announcement import (
+    AnnouncementBlock,
+    AnnouncementDocument,
+    AnnouncementPreferences,
+    AnnouncementService,
+    is_announcement_suppressed,
+    load_announcement_preferences,
+    parse_announcement,
+    save_announcement_preferences,
+    set_announcement_forever_suppressed,
+)
 from lib.core.compute_hub import get_compute_hub
-from lib.core.logger import get_logger
+from lib.core.event.center import EventType, get_event_center
+from lib.core.graphics.announcement_visuals import ANNOUNCEMENT_SIZE, get_announcement_colors
 from lib.core.qt_bridge.screen import clamp_rect_position, get_screen_geometry_for_point
 from lib.core.unified_draw import Layer, get_layer_manager
-
-
-ANNOUNCEMENT_URL = (
-    "https://gitee.com/Mark42IRPC/Aemeath-AIdeskpet/releases/download/RESC/"
-    "%E5%85%AC%E5%91%8A.txt"
-)
-ANNOUNCEMENT_REQUEST_TIMEOUT = (5.0, 12.0)
-ANNOUNCEMENT_MAX_BYTES = 1024 * 1024
-
-_FIELD_START_RE = re.compile(
-    r'^\s*(title|subtitle|text)\s*:\s*"(.*)$',
-    re.IGNORECASE,
-)
-_logger = get_logger(__name__)
-
-
-@dataclass(frozen=True)
-class AnnouncementBlock:
-    kind: str
-    text: str
-
-
-@dataclass(frozen=True)
-class AnnouncementDocument:
-    title: str
-    blocks: tuple[AnnouncementBlock, ...]
-
-
-@dataclass(frozen=True)
-class AnnouncementPreferences:
-    suppress_forever: bool = False
-    suppress_date: str = ""
-
-
-def parse_announcement(raw_text: str) -> AnnouncementDocument:
-    """Parse ordered title/subtitle/text quoted blocks from the remote file."""
-    raw = str(raw_text or "").lstrip("\ufeff")
-    lines = raw.splitlines()
-    fields: list[tuple[str, str]] = []
-    index = 0
-
-    while index < len(lines):
-        match = _FIELD_START_RE.match(lines[index])
-        if match is None:
-            index += 1
-            continue
-
-        key = match.group(1).lower()
-        remainder = match.group(2)
-        inline = remainder.rstrip()
-        if inline.endswith('"'):
-            fields.append((key, inline[:-1].strip()))
-            index += 1
-            continue
-
-        value_lines: list[str] = []
-        if remainder:
-            value_lines.append(remainder)
-        index += 1
-        while index < len(lines) and lines[index].strip() != '"':
-            value_lines.append(lines[index])
-            index += 1
-        if index < len(lines):
-            index += 1
-        fields.append((key, "\n".join(value_lines).strip()))
-
-    title = next((value for key, value in fields if key == "title" and value), "")
-    blocks = tuple(
-        AnnouncementBlock(key, value)
-        for key, value in fields
-        if key in {"subtitle", "text"} and value
-    )
-
-    if not fields and raw.strip():
-        blocks = (AnnouncementBlock("text", raw.strip()),)
-    if not title:
-        title = "桌宠公告"
-    if not blocks and not raw.strip():
-        raise ValueError("公告内容为空")
-    return AnnouncementDocument(title=title, blocks=blocks)
 
 
 def announcement_to_html(document: AnnouncementDocument) -> str:
@@ -131,67 +56,27 @@ def announcement_to_html(document: AnnouncementDocument) -> str:
     return "".join(parts)
 
 
-def load_announcement_preferences(path: Path | None = None) -> AnnouncementPreferences:
-    state_path = Path(path) if path is not None else get_user_state_dir("announcement.json")
-    try:
-        payload = json.loads(state_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError, TypeError):
-        return AnnouncementPreferences()
-    if not isinstance(payload, dict):
-        return AnnouncementPreferences()
-    suppress_forever = payload.get("suppress_forever", False)
-    suppress_date = payload.get("suppress_date", "")
-    return AnnouncementPreferences(
-        suppress_forever=suppress_forever if isinstance(suppress_forever, bool) else False,
-        suppress_date=suppress_date if isinstance(suppress_date, str) else "",
-    )
+def _announcement_body_to_html(document: AnnouncementDocument) -> str:
+    """Render only body blocks; the window header owns the document title."""
+
+    def with_breaks(value: str) -> str:
+        return escape(value).replace("\n", "<br>")
+
+    parts: list[str] = []
+    for block in document.blocks:
+        tag = "h2" if block.kind == "subtitle" else "p"
+        parts.append(f"<{tag}>{with_breaks(block.text)}</{tag}>")
+    return "".join(parts)
 
 
-def save_announcement_preferences(
-    preferences: AnnouncementPreferences,
-    path: Path | None = None,
-) -> None:
-    state_path = Path(path) if path is not None else get_user_state_dir("announcement.json")
-    payload = {
-        "schema_version": 1,
-        "suppress_forever": bool(preferences.suppress_forever),
-        "suppress_date": str(preferences.suppress_date or ""),
-    }
-    write_bytes_atomic(
-        state_path,
-        (json.dumps(payload, ensure_ascii=False, indent=2) + "\n").encode("utf-8"),
-    )
+_WIDTH = int(ANNOUNCEMENT_SIZE.width)
+_HEIGHT = int(ANNOUNCEMENT_SIZE.height)
+_BORDER = scale_px(1, min_abs=1)
 
 
-def set_announcement_forever_suppressed(
-    suppressed: bool,
-    path: Path | None = None,
-) -> AnnouncementPreferences:
-    """Update only the permanent suppression flag and preserve today's choice."""
-    current = load_announcement_preferences(path)
-    updated = AnnouncementPreferences(
-        suppress_forever=bool(suppressed),
-        suppress_date=current.suppress_date,
-    )
-    save_announcement_preferences(updated, path)
-    return updated
-
-
-def is_announcement_suppressed(
-    preferences: AnnouncementPreferences,
-    current_date: date | None = None,
-) -> bool:
-    today = current_date or date.today()
-    return bool(
-        preferences.suppress_forever
-        or preferences.suppress_date == today.isoformat()
-    )
-
-
-_WIDTH = scale_px(520, min_abs=460)
-_HEIGHT = scale_px(440, min_abs=380)
-_LAYER = scale_px(2, min_abs=1)
-_BORDER = _LAYER * 2
+def _color_name(key: str) -> str:
+    color = get_announcement_colors()[key]
+    return f"#{color.red:02x}{color.green:02x}{color.blue:02x}"
 
 
 class DesktopPetAnnouncementDialog(QWidget):
@@ -214,13 +99,20 @@ class DesktopPetAnnouncementDialog(QWidget):
         self._requested_visible = False
         self._closing_animation = False
 
+        self._header_accent = QFrame(self)
+        self._header_accent.setObjectName("AnnouncementHeaderAccent")
+        self._header_accent.setFixedSize(
+            scale_px(3, min_abs=2),
+            scale_px(42, min_abs=36),
+        )
+
         self._header_label = QLabel("桌宠公告", self)
         self._header_label.setObjectName("AnnouncementHeader")
         header_font = get_ui_font(size=scale_px(17, min_abs=14))
         header_font.setBold(True)
         self._header_label.setFont(header_font)
 
-        self._source_label = QLabel("FLYING SNOW VELVET", self)
+        self._source_label = QLabel("SYSTEM BROADCAST  /  FSV", self)
         self._source_label.setObjectName("AnnouncementSource")
         self._source_label.setFont(get_ui_font(size=scale_px(10, min_abs=9)))
 
@@ -243,7 +135,8 @@ class DesktopPetAnnouncementDialog(QWidget):
 
         header_row = QHBoxLayout()
         header_row.setContentsMargins(0, 0, 0, 0)
-        header_row.setSpacing(scale_px(8, min_abs=6))
+        header_row.setSpacing(scale_px(12, min_abs=9))
+        header_row.addWidget(self._header_accent, 0, Qt.AlignVCenter)
         header_row.addLayout(header_text, 1)
         header_row.addWidget(self._close_button, 0, Qt.AlignTop)
 
@@ -269,6 +162,10 @@ class DesktopPetAnnouncementDialog(QWidget):
         self._retry_button.setObjectName("AnnouncementRetryButton")
         self._retry_button.clicked.connect(self.retry_requested.emit)
 
+        self._channel_label = QLabel("REMOTE CHANNEL  /  01", self)
+        self._channel_label.setObjectName("AnnouncementChannel")
+        self._channel_label.setFont(get_ui_font(size=scale_px(9, min_abs=8)))
+
         for button in (
             self._today_button,
             self._forever_button,
@@ -281,6 +178,7 @@ class DesktopPetAnnouncementDialog(QWidget):
         button_row = QHBoxLayout()
         button_row.setContentsMargins(0, 0, 0, 0)
         button_row.setSpacing(scale_px(9, min_abs=7))
+        button_row.addWidget(self._channel_label)
         button_row.addStretch(1)
         button_row.addWidget(self._error_close_button)
         button_row.addWidget(self._retry_button)
@@ -289,12 +187,12 @@ class DesktopPetAnnouncementDialog(QWidget):
 
         content = QVBoxLayout(self)
         content.setContentsMargins(
+            _BORDER + scale_px(20, min_abs=16),
+            _BORDER + scale_px(18, min_abs=14),
+            _BORDER + scale_px(20, min_abs=16),
             _BORDER + scale_px(17, min_abs=14),
-            _BORDER + scale_px(14, min_abs=12),
-            _BORDER + scale_px(17, min_abs=14),
-            _BORDER + scale_px(14, min_abs=12),
         )
-        content.setSpacing(scale_px(12, min_abs=9))
+        content.setSpacing(scale_px(15, min_abs=11))
         content.addLayout(header_row)
         content.addWidget(self._body, 1)
         content.addLayout(button_row)
@@ -307,23 +205,29 @@ class DesktopPetAnnouncementDialog(QWidget):
         self._opacity_animation.finished.connect(self._on_animation_finished)
 
     def show_document(self, document: AnnouncementDocument) -> None:
+        self.refresh_workbench_theme()
         self._body.document().setDefaultStyleSheet(self._document_stylesheet())
-        self._body.setHtml(announcement_to_html(document))
+        self._header_label.setText(document.title or "桌宠公告")
+        self._body.setHtml(_announcement_body_to_html(document))
         self._body.verticalScrollBar().setValue(0)
         self._set_action_mode("announcement")
         self._show_dialog()
 
     def show_loading(self) -> None:
+        self.refresh_workbench_theme()
+        self._header_label.setText("桌宠公告")
         self._body.setHtml(
-            '<div class="status"><h1>正在获取公告</h1>'
+            '<div class="status"><h2>正在获取公告</h2>'
             '<p>正在连接公告服务器，请稍候。</p></div>'
         )
         self._set_action_mode("loading")
         self._show_dialog()
 
     def show_error(self) -> None:
+        self.refresh_workbench_theme()
+        self._header_label.setText("桌宠公告")
         self._body.setHtml(
-            '<div class="status"><h1>公告暂时无法加载</h1>'
+            '<div class="status"><h2>公告暂时无法加载</h2>'
             '<p>没有可用的本地公告，请稍后重试。</p></div>'
         )
         self._set_action_mode("error")
@@ -331,6 +235,12 @@ class DesktopPetAnnouncementDialog(QWidget):
 
     def wants_visible(self) -> bool:
         return self._requested_visible
+
+    def refresh_workbench_theme(self) -> None:
+        """Repolish the announcement when the workbench theme changes."""
+        self.setStyleSheet(self._widget_stylesheet())
+        self._body.document().setDefaultStyleSheet(self._document_stylesheet())
+        self.update()
 
     def hide_dialog(self) -> None:
         if not self._requested_visible:
@@ -401,14 +311,10 @@ class DesktopPetAnnouncementDialog(QWidget):
     def paintEvent(self, event) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, False)
-        painter.fillRect(self.rect(), UI_THEME["border"])
-        painter.fillRect(
-            self.rect().adjusted(_LAYER, _LAYER, -_LAYER, -_LAYER),
-            UI_THEME["mid"],
-        )
+        painter.fillRect(self.rect(), QColor(_color_name("border_strong")))
         painter.fillRect(
             self.rect().adjusted(_BORDER, _BORDER, -_BORDER, -_BORDER),
-            UI_THEME["bg"],
+            QColor(_color_name("canvas")),
         )
 
     @staticmethod
@@ -416,92 +322,120 @@ class DesktopPetAnnouncementDialog(QWidget):
         font_family = get_ui_font_family().replace("'", "\\'")
         return f"""
             body {{
-                color: #101820;
+                color: {_color_name("text_muted")};
                 font-family: '{font_family}';
                 font-size: {scale_px(13, min_abs=11)}px;
-                line-height: 1.55;
+                line-height: 1.32;
                 margin: 0;
             }}
             h1 {{
-                color: #234c80;
-                font-size: {scale_px(19, min_abs=16)}px;
+                color: {_color_name("text")};
+                font-size: {scale_px(17, min_abs=14)}px;
                 font-weight: 700;
-                margin: 0 0 {scale_px(14, min_abs=10)}px 0;
+                margin: 0 0 {scale_px(8, min_abs=6)}px 0;
             }}
             h2 {{
-                color: #234c80;
-                font-size: {scale_px(15, min_abs=13)}px;
+                color: {_color_name("cyan")};
+                font-size: {scale_px(14, min_abs=12)}px;
                 font-weight: 700;
-                margin: {scale_px(16, min_abs=12)}px 0 {scale_px(6, min_abs=5)}px 0;
+                margin: {scale_px(12, min_abs=9)}px 0 {scale_px(5, min_abs=3)}px 0;
             }}
             p {{
-                color: #101820;
-                margin: 0 0 {scale_px(11, min_abs=8)}px 0;
+                color: {_color_name("text_muted")};
+                margin: 0 0 {scale_px(10, min_abs=7)}px 0;
                 white-space: pre-wrap;
             }}
-            .status {{ text-align: center; margin-top: {scale_px(70, min_abs=50)}px; }}
+            .status {{ text-align: center; margin-top: {scale_px(76, min_abs=54)}px; }}
         """
 
     @staticmethod
     def _widget_stylesheet() -> str:
-        border = UI_THEME["border"].name()
-        cyan = UI_THEME["mid"].name()
-        deep_cyan = UI_THEME["deep_cyan"].name()
-        pink = UI_THEME["bg"].name()
-        deep_pink = UI_THEME["deep_pink"].name()
+        canvas = _color_name("canvas")
+        surface = _color_name("surface")
+        surface_raised = _color_name("surface_raised")
+        surface_hover = _color_name("surface_hover")
+        border = _color_name("border")
+        border_strong = _color_name("border_strong")
+        text = _color_name("text")
+        text_muted = _color_name("text_muted")
+        text_dim = _color_name("text_dim")
+        cyan = _color_name("cyan")
+        pink = _color_name("pink")
+        pink_hover = _color_name("pink_hover")
         font_family = get_ui_font_family().replace("'", "\\'")
-        return scale_style_px(
-            f"""
+        return f"""
             QWidget#DesktopPetAnnouncementDialog {{
-                color: {border};
+                color: {text};
                 font-family: '{font_family}';
             }}
-            QLabel#AnnouncementHeader {{ color: {border}; }}
-            QLabel#AnnouncementSource {{ color: #234c80; font-weight: 600; }}
+            QFrame#AnnouncementHeaderAccent {{
+                background: {pink};
+                border: none;
+                border-right: {scale_px(1, min_abs=1)}px solid {cyan};
+            }}
+            QLabel#AnnouncementHeader {{
+                color: {text};
+                font-size: {scale_px(18, min_abs=15)}px;
+                font-weight: 700;
+            }}
+            QLabel#AnnouncementSource, QLabel#AnnouncementChannel {{
+                color: {text_dim};
+                font-weight: 500;
+            }}
             QTextBrowser#AnnouncementBody {{
-                background: #fff8fb;
-                color: #101820;
-                border: 2px solid {border};
-                border-top-color: {deep_cyan};
-                border-bottom-color: {deep_pink};
+                background: {surface};
+                color: {text_muted};
+                border: {scale_px(1, min_abs=1)}px solid {border};
+                border-top-color: {border_strong};
+                border-radius: {scale_px(4, min_abs=3)}px;
                 padding: 0px;
             }}
             QToolButton#AnnouncementCloseButton {{
                 background: transparent;
-                color: {border};
-                border: 2px solid transparent;
-                font-size: 20px;
-                font-weight: bold;
+                color: {text_muted};
+                border: {scale_px(1, min_abs=1)}px solid transparent;
+                border-radius: {scale_px(4, min_abs=3)}px;
+                font-size: {scale_px(19, min_abs=17)}px;
+                font-weight: 500;
                 padding: 0px;
             }}
             QToolButton#AnnouncementCloseButton:hover {{
-                background: {deep_pink};
+                background: {surface_hover};
+                color: {text};
                 border-color: {border};
             }}
             QPushButton {{
-                background: #fff8fb;
-                color: {border};
-                border: 2px solid {border};
-                padding: 4px 12px;
-                font-weight: bold;
+                background: {surface_raised};
+                color: {text};
+                border: {scale_px(1, min_abs=1)}px solid {border};
+                border-radius: {scale_px(4, min_abs=3)}px;
+                padding: {scale_px(4, min_abs=3)}px {scale_px(13, min_abs=10)}px;
+                font-weight: 600;
             }}
-            QPushButton:hover {{ background: {cyan}; }}
-            QPushButton:pressed {{ background: {pink}; }}
-            QPushButton#AnnouncementTodayButton {{ background: {cyan}; }}
-            QPushButton#AnnouncementTodayButton:hover {{ background: {deep_cyan}; }}
-            QPushButton#AnnouncementForeverButton {{ background: {pink}; }}
-            QPushButton#AnnouncementForeverButton:hover {{ background: {deep_pink}; }}
+            QPushButton:hover {{ background: {surface_hover}; border-color: {cyan}; }}
+            QPushButton:pressed {{ background: {border_strong}; }}
+            QPushButton#AnnouncementForeverButton {{ color: {text_muted}; }}
+            QPushButton#AnnouncementTodayButton {{
+                background: {pink};
+                color: {canvas};
+                border-color: {pink};
+            }}
+            QPushButton#AnnouncementTodayButton:hover {{
+                background: {pink_hover};
+                border-color: {pink_hover};
+            }}
             QScrollBar:vertical {{
-                background: #fff8fb;
-                width: 10px;
+                background: {surface};
+                width: {scale_px(8, min_abs=7)}px;
                 border: none;
             }}
             QScrollBar::handle:vertical {{
-                background: {deep_cyan};
-                min-height: 28px;
-                border: 1px solid {border};
+                background: {border_strong};
+                min-height: {scale_px(28, min_abs=22)}px;
+                border: none;
+                border-radius: {scale_px(3, min_abs=2)}px;
             }}
-            QScrollBar::handle:vertical:hover {{ background: {deep_pink}; }}
+            QScrollBar::handle:vertical:hover {{ background: {cyan}; }}
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
                 height: 0px;
                 border: none;
@@ -510,14 +444,12 @@ class DesktopPetAnnouncementDialog(QWidget):
                 background: transparent;
             }}
             """
-        )
 
 
 class AnnouncementController(QObject):
-    """Own the announcement request, window, cache, and suppression state."""
+    """Qt view adapter over the backend-neutral announcement service."""
 
-    _download_succeeded = pyqtSignal(int, bool, str)
-    _download_failed = pyqtSignal(int, bool, str)
+    _dispatch_requested = pyqtSignal(object)
 
     def __init__(
         self,
@@ -528,267 +460,70 @@ class AnnouncementController(QObject):
         today_provider: Callable[[], date] = date.today,
     ) -> None:
         super().__init__(parent)
-        self._state_path = Path(state_path) if state_path is not None else get_user_state_dir(
-            "announcement.json"
-        )
-        self._cache_path = Path(cache_path) if cache_path is not None else get_user_cache_dir(
-            "announcement.txt"
-        )
-        self._today_provider = today_provider
-        self._preferences = load_announcement_preferences(self._state_path)
         self._dialog: DesktopPetAnnouncementDialog | None = None
-        self._current_document: AnnouncementDocument | None = None
-        self._manual_waiting = False
-        self._request_id = 0
-        self._active_request_id = 0
-        self._futures = {}
         self._closed = False
-        self._response_lock = threading.Lock()
-        self._active_responses = {}
+        self._dispatch_requested.connect(lambda callback: callback())
+        self._event_center = get_event_center()
+        self._event_center.subscribe(EventType.CONFIG_UPDATED, self._on_config_updated)
+        self._service = AnnouncementService(
+            dispatch=self._dispatch,
+            on_loading=self._show_loading,
+            on_document=self._show_document,
+            on_error=self._show_error,
+            on_hide=self._hide_dialog,
+            state_path=state_path,
+            cache_path=cache_path,
+            today_provider=today_provider,
+            submit_io=lambda func, *args: get_compute_hub().submit_io(func, *args),
+            request_get=lambda *args, **kwargs: requests.get(*args, **kwargs),
+        )
 
-        self._download_succeeded.connect(self._on_download_succeeded)
-        self._download_failed.connect(self._on_download_failed)
+    def _dispatch(self, callback: Callable[[], None]) -> None:
+        self._dispatch_requested.emit(callback)
+
+    def _on_config_updated(self, event) -> None:
+        if self._dialog is not None:
+            self._dialog.refresh_workbench_theme()
 
     def start(self) -> bool:
-        """Start the non-blocking startup fetch unless automatic display is suppressed."""
-        if self._closed or self._is_suppressed():
-            return False
-        return self._request_download(manual=False)
+        return self._service.start()
 
     def open_from_tray(self) -> None:
-        """Fetch and show the latest announcement for every manual open."""
-        if self._closed:
-            return
-        dialog = self._ensure_dialog()
-        dialog.show_loading()
-        self._manual_waiting = True
-        self._request_download(manual=True)
-
-    def cleanup(self) -> None:
-        if self._closed:
-            return
-        self._manual_waiting = False
-        with self._response_lock:
-            self._closed = True
-            futures = tuple(self._futures.values())
-            responses = tuple(self._active_responses.values())
-            self._futures.clear()
-            self._active_responses.clear()
-        for future in futures:
-            future.cancel()
-        for response in responses:
-            try:
-                response.close()
-            except Exception:
-                pass
-        if self._dialog is not None:
-            self._dialog.cleanup()
-            self._dialog = None
-
-    def _request_download(self, *, manual: bool) -> bool:
-        if self._closed:
-            return False
-
-        self._request_id += 1
-        request_id = self._request_id
-        with self._response_lock:
-            self._active_request_id = request_id
-            stale_futures = tuple(self._futures.values())
-            stale_responses = tuple(self._active_responses.values())
-            self._active_responses.clear()
-        for future in stale_futures:
-            future.cancel()
-        for response in stale_responses:
-            try:
-                response.close()
-            except Exception:
-                pass
-        try:
-            future = get_compute_hub().submit_io(
-                self._download_worker,
-                request_id,
-                manual,
-            )
-        except Exception as exc:
-            self._on_download_failed(request_id, manual, str(exc))
-            return False
-        with self._response_lock:
-            if not self._closed:
-                self._futures[request_id] = future
-        try:
-            future.add_done_callback(
-                lambda completed, current_id=request_id: self._discard_future(
-                    current_id,
-                    completed,
-                )
-            )
-        except (AttributeError, TypeError):
-            pass
-        return True
-
-    def _download_worker(self, request_id: int, manual: bool) -> None:
-        response = None
-        try:
-            if not self._request_is_current(request_id):
-                return
-            response = requests.get(
-                ANNOUNCEMENT_URL,
-                params={"_": str(time.time_ns())},
-                headers={
-                    "User-Agent": "FlyingSnowVelvet-Announcement/1.0",
-                    "Cache-Control": "no-cache",
-                    "Pragma": "no-cache",
-                },
-                timeout=ANNOUNCEMENT_REQUEST_TIMEOUT,
-                stream=True,
-            )
-            with self._response_lock:
-                if self._closed or request_id != self._active_request_id:
-                    response.close()
-                    return
-                self._active_responses[request_id] = response
-            response.raise_for_status()
-
-            payload = bytearray()
-            for chunk in response.iter_content(chunk_size=16 * 1024):
-                if not self._request_is_current(request_id):
-                    return
-                if not chunk:
-                    continue
-                payload.extend(chunk)
-                if len(payload) > ANNOUNCEMENT_MAX_BYTES:
-                    raise ValueError("公告文件超过 1 MiB 限制")
-            raw_text = self._decode_payload(bytes(payload))
-            parse_announcement(raw_text)
-            self._download_succeeded.emit(request_id, manual, raw_text)
-        except Exception as exc:
-            if not self._closed:
-                self._download_failed.emit(request_id, manual, str(exc))
-        finally:
-            if response is not None:
-                try:
-                    response.close()
-                except Exception:
-                    pass
-            with self._response_lock:
-                if self._active_responses.get(request_id) is response:
-                    self._active_responses.pop(request_id, None)
-
-    def _on_download_succeeded(self, request_id: int, manual: bool, raw_text: str) -> None:
-        if self._closed or request_id != self._active_request_id:
-            return
-        try:
-            document = parse_announcement(raw_text)
-        except ValueError as exc:
-            self._on_download_failed(request_id, manual, str(exc))
-            return
-
-        self._current_document = document
-        try:
-            write_bytes_atomic(self._cache_path, raw_text.encode("utf-8"))
-        except OSError as exc:
-            _logger.warning("缓存桌宠公告失败: %s", exc)
-
-        manual_display = bool(manual or self._manual_waiting)
-        self._manual_waiting = False
-        if manual_display:
-            if self._dialog is not None and self._dialog.wants_visible():
-                self._dialog.show_document(document)
-            return
-        if not self._is_suppressed():
-            self._ensure_dialog().show_document(document)
-
-    def _on_download_failed(self, request_id: int, manual: bool, message: str) -> None:
-        if self._closed or request_id != self._active_request_id:
-            return
-        _logger.warning("下载桌宠公告失败: %s", message)
-
-        document = self._current_document or self._load_cached_document()
-        if document is not None:
-            self._current_document = document
-
-        manual_display = bool(manual or self._manual_waiting)
-        self._manual_waiting = False
-        if manual_display:
-            if self._dialog is None or not self._dialog.wants_visible():
-                return
-            if document is None:
-                self._dialog.show_error()
-            else:
-                self._dialog.show_document(document)
-            return
-        if document is not None and not self._is_suppressed():
-            self._ensure_dialog().show_document(document)
+        self._service.open_manual()
 
     def _ensure_dialog(self) -> DesktopPetAnnouncementDialog:
         if self._dialog is None:
             self._dialog = DesktopPetAnnouncementDialog()
-            self._dialog.suppress_today_requested.connect(self._suppress_today)
-            self._dialog.suppress_forever_requested.connect(self._suppress_forever)
-            self._dialog.retry_requested.connect(self._retry_from_dialog)
-            self._dialog.dismissed.connect(self._on_dialog_dismissed)
+            self._dialog.suppress_today_requested.connect(self._service.suppress_today)
+            self._dialog.suppress_forever_requested.connect(self._service.suppress_forever)
+            self._dialog.retry_requested.connect(self._service.retry)
+            self._dialog.dismissed.connect(self._service.dismiss)
         return self._dialog
 
-    def _suppress_today(self) -> None:
-        self._preferences = AnnouncementPreferences(
-            suppress_forever=False,
-            suppress_date=self._today_provider().isoformat(),
-        )
-        self._save_preferences()
+    def _show_loading(self) -> None:
+        self._ensure_dialog().show_loading()
+
+    def _show_document(self, document, manual: bool) -> None:
+        if manual:
+            if self._dialog is not None and self._dialog.wants_visible():
+                self._dialog.show_document(document)
+            return
+        self._ensure_dialog().show_document(document)
+
+    def _show_error(self, manual: bool) -> None:
+        if manual and self._dialog is not None and self._dialog.wants_visible():
+            self._dialog.show_error()
+
+    def _hide_dialog(self) -> None:
         if self._dialog is not None:
             self._dialog.hide_dialog()
 
-    def _suppress_forever(self) -> None:
-        self._preferences = AnnouncementPreferences(
-            suppress_forever=True,
-            suppress_date=self._preferences.suppress_date,
-        )
-        self._save_preferences()
+    def cleanup(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        self._service.cleanup()
+        self._event_center.unsubscribe(EventType.CONFIG_UPDATED, self._on_config_updated)
         if self._dialog is not None:
-            self._dialog.hide_dialog()
-
-    def _retry_from_dialog(self) -> None:
-        if self._dialog is not None:
-            self._dialog.show_loading()
-        self._manual_waiting = True
-        self._request_download(manual=True)
-
-    def _on_dialog_dismissed(self) -> None:
-        self._manual_waiting = False
-
-    def _request_is_current(self, request_id: int) -> bool:
-        with self._response_lock:
-            return not self._closed and request_id == self._active_request_id
-
-    def _discard_future(self, request_id: int, future) -> None:
-        with self._response_lock:
-            if self._futures.get(request_id) is future:
-                self._futures.pop(request_id, None)
-
-    def _save_preferences(self) -> None:
-        try:
-            save_announcement_preferences(self._preferences, self._state_path)
-        except OSError as exc:
-            _logger.warning("保存桌宠公告显示偏好失败: %s", exc)
-
-    def _is_suppressed(self) -> bool:
-        self._preferences = load_announcement_preferences(self._state_path)
-        return is_announcement_suppressed(self._preferences, self._today_provider())
-
-    def _load_cached_document(self) -> AnnouncementDocument | None:
-        try:
-            raw_text = self._cache_path.read_text(encoding="utf-8")
-            return parse_announcement(raw_text)
-        except (OSError, UnicodeError, ValueError):
-            return None
-
-    @staticmethod
-    def _decode_payload(payload: bytes) -> str:
-        if not payload:
-            raise ValueError("公告内容为空")
-        for encoding in ("utf-8-sig", "gb18030"):
-            try:
-                return payload.decode(encoding)
-            except UnicodeDecodeError:
-                continue
-        return payload.decode("utf-8", errors="replace")
+            self._dialog.cleanup()
+            self._dialog = None

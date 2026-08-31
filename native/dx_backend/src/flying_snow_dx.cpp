@@ -9,6 +9,7 @@
 #include <d3d11.h>
 #include <dcomp.h>
 #include <dwrite.h>
+#include <dwrite_3.h>
 #include <dxgi1_2.h>
 #include <wrl/client.h>
 
@@ -139,6 +140,8 @@ struct Runtime {
     ComPtr<ID2D1Bitmap1> target_bitmap;
     ComPtr<ID2D1SolidColorBrush> solid_brush;
     ComPtr<IDWriteFactory> dwrite_factory;
+    ComPtr<IDWriteFontCollection1> font_collection;
+    std::vector<std::wstring> font_paths;
     ComPtr<IDCompositionDevice> composition_device;
     std::unordered_map<fsdx_handle, Resource> resources;
     std::unordered_set<fsdx_handle> released_resources;
@@ -166,6 +169,44 @@ fsdx_status create_resource_bitmap(
     const std::vector<uint8_t>& premultiplied_pixels,
     ComPtr<ID2D1Bitmap1>* bitmap_out
 );
+
+fsdx_status rebuild_font_collection(Runtime* runtime) {
+    runtime->font_collection.Reset();
+    if (runtime->font_paths.empty()) {
+        return FSDX_STATUS_OK;
+    }
+    ComPtr<IDWriteFactory5> factory5;
+    HRESULT hr = runtime->dwrite_factory.As(&factory5);
+    if (FAILED(hr)) {
+        return fail_hr(FSDX_STATUS_UNSUPPORTED, "IDWriteFactory5", hr);
+    }
+    ComPtr<IDWriteFontSetBuilder1> builder;
+    hr = factory5->CreateFontSetBuilder(&builder);
+    if (FAILED(hr)) {
+        return fail_hr(FSDX_STATUS_RENDER_FAILED, "CreateFontSetBuilder", hr);
+    }
+    for (const auto& path : runtime->font_paths) {
+        ComPtr<IDWriteFontFile> file;
+        hr = runtime->dwrite_factory->CreateFontFileReference(path.c_str(), nullptr, &file);
+        if (FAILED(hr)) {
+            return fail_hr(FSDX_STATUS_RENDER_FAILED, "CreateFontFileReference", hr);
+        }
+        hr = builder->AddFontFile(file.Get());
+        if (FAILED(hr)) {
+            return fail_hr(FSDX_STATUS_RENDER_FAILED, "IDWriteFontSetBuilder1::AddFontFile", hr);
+        }
+    }
+    ComPtr<IDWriteFontSet> font_set;
+    hr = builder->CreateFontSet(&font_set);
+    if (FAILED(hr)) {
+        return fail_hr(FSDX_STATUS_RENDER_FAILED, "IDWriteFontSetBuilder::CreateFontSet", hr);
+    }
+    hr = factory5->CreateFontCollectionFromFontSet(font_set.Get(), &runtime->font_collection);
+    if (FAILED(hr)) {
+        return fail_hr(FSDX_STATUS_RENDER_FAILED, "CreateFontCollectionFromFontSet", hr);
+    }
+    return FSDX_STATUS_OK;
+}
 
 constexpr size_t maximum_event_queue_size = 4096;
 constexpr wchar_t window_class_name[] = L"FlyingSnowDxWindowV7";
@@ -1161,6 +1202,11 @@ fsdx_status create_d2d_resources(const std::shared_ptr<Runtime>& runtime, uint32
         return fail_hr(FSDX_STATUS_DEVICE_INIT_FAILED, "DWriteCreateFactory", hr);
     }
 
+    const fsdx_status font_status = rebuild_font_collection(runtime.get());
+    if (font_status != FSDX_STATUS_OK) {
+        return font_status;
+    }
+
     return create_offscreen_targets(runtime.get(), runtime->width, runtime->height);
 }
 
@@ -1319,6 +1365,7 @@ fsdx_status recover_device(const std::shared_ptr<Runtime>& runtime) {
     runtime->target_bitmap.Reset();
     runtime->solid_brush.Reset();
     runtime->dwrite_factory.Reset();
+    runtime->font_collection.Reset();
     runtime->d2d_context.Reset();
     runtime->d2d_device.Reset();
     runtime->d2d_factory.Reset();
@@ -1593,7 +1640,7 @@ fsdx_status draw_text_command(
     ComPtr<IDWriteTextFormat> format;
     HRESULT hr = runtime->dwrite_factory->CreateTextFormat(
         family.c_str(),
-        nullptr,
+        runtime->font_collection.Get(),
         (command->flags & FSDX_DRAW_FLAG_TEXT_BOLD) != 0
             ? DWRITE_FONT_WEIGHT_BOLD
             : DWRITE_FONT_WEIGHT_NORMAL,
@@ -1668,6 +1715,122 @@ extern "C" {
 
 FSDX_API uint32_t fsdx_get_abi_version(void) {
     return FSDX_ABI_VERSION;
+}
+
+FSDX_API fsdx_status fsdx_measure_text(
+    fsdx_handle runtime_handle,
+    const uint8_t* text_utf8,
+    uint64_t text_size,
+    const uint8_t* family_utf8,
+    uint64_t family_size,
+    float font_pixel_size,
+    uint32_t flags,
+    float* width_out,
+    float* height_out
+) {
+    clear_error();
+    if (width_out == nullptr || height_out == nullptr ||
+        text_size > static_cast<uint64_t>(std::numeric_limits<int>::max()) ||
+        family_size > static_cast<uint64_t>(std::numeric_limits<int>::max()) ||
+        !std::isfinite(font_pixel_size) || font_pixel_size <= 0.0f) {
+        return fail(FSDX_STATUS_INVALID_ARGUMENT, "text measurement arguments are invalid");
+    }
+    auto runtime = find_runtime(runtime_handle);
+    if (!runtime) {
+        return fail(FSDX_STATUS_INVALID_HANDLE, "runtime handle is invalid");
+    }
+    std::wstring text;
+    fsdx_status status = utf8_to_wide(text_utf8, static_cast<uint32_t>(text_size), &text);
+    if (status != FSDX_STATUS_OK) {
+        return status;
+    }
+    std::wstring family;
+    status = utf8_to_wide(family_utf8, static_cast<uint32_t>(family_size), &family);
+    if (status != FSDX_STATUS_OK) {
+        return status;
+    }
+    if (family.empty()) {
+        family = L"Segoe UI";
+    }
+    if (text.empty()) {
+        *width_out = 0.0f;
+        *height_out = font_pixel_size;
+        return FSDX_STATUS_OK;
+    }
+    std::lock_guard<std::mutex> lock(runtime->mutex);
+    if (!runtime->dwrite_factory) {
+        return fail(FSDX_STATUS_DEVICE_INIT_FAILED, "DirectWrite factory is unavailable");
+    }
+    ComPtr<IDWriteTextFormat> format;
+    HRESULT hr = runtime->dwrite_factory->CreateTextFormat(
+        family.c_str(),
+        runtime->font_collection.Get(),
+        (flags & FSDX_DRAW_FLAG_TEXT_BOLD) != 0
+            ? DWRITE_FONT_WEIGHT_BOLD
+            : DWRITE_FONT_WEIGHT_NORMAL,
+        DWRITE_FONT_STYLE_NORMAL,
+        DWRITE_FONT_STRETCH_NORMAL,
+        font_pixel_size,
+        L"",
+        &format
+    );
+    if (FAILED(hr)) {
+        return fail_hr(FSDX_STATUS_RENDER_FAILED, "IDWriteFactory::CreateTextFormat(measure)", hr);
+    }
+    hr = format->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+    if (FAILED(hr)) {
+        return fail_hr(FSDX_STATUS_RENDER_FAILED, "IDWriteTextFormat::SetWordWrapping(measure)", hr);
+    }
+    ComPtr<IDWriteTextLayout> layout;
+    hr = runtime->dwrite_factory->CreateTextLayout(
+        text.data(),
+        static_cast<UINT32>(text.size()),
+        format.Get(),
+        1000000.0f,
+        1000000.0f,
+        &layout
+    );
+    if (FAILED(hr)) {
+        return fail_hr(FSDX_STATUS_RENDER_FAILED, "IDWriteFactory::CreateTextLayout", hr);
+    }
+    DWRITE_TEXT_METRICS metrics{};
+    hr = layout->GetMetrics(&metrics);
+    if (FAILED(hr)) {
+        return fail_hr(FSDX_STATUS_RENDER_FAILED, "IDWriteTextLayout::GetMetrics", hr);
+    }
+    *width_out = std::max(0.0f, metrics.widthIncludingTrailingWhitespace);
+    *height_out = std::max(0.0f, metrics.height);
+    return FSDX_STATUS_OK;
+}
+
+FSDX_API fsdx_status fsdx_register_font_file(
+    fsdx_handle runtime_handle,
+    const uint8_t* path_utf8,
+    uint64_t path_size
+) {
+    clear_error();
+    if (path_utf8 == nullptr || path_size == 0 ||
+        path_size > static_cast<uint64_t>(std::numeric_limits<int>::max())) {
+        return fail(FSDX_STATUS_INVALID_ARGUMENT, "font path is invalid");
+    }
+    auto runtime = find_runtime(runtime_handle);
+    if (!runtime) {
+        return fail(FSDX_STATUS_INVALID_HANDLE, "runtime handle is invalid");
+    }
+    std::wstring path;
+    fsdx_status status = utf8_to_wide(path_utf8, static_cast<uint32_t>(path_size), &path);
+    if (status != FSDX_STATUS_OK || path.empty()) {
+        return fail(FSDX_STATUS_INVALID_ARGUMENT, "font path is not valid UTF-8");
+    }
+    const DWORD attributes = GetFileAttributesW(path.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0) {
+        return fail(FSDX_STATUS_INVALID_ARGUMENT, "font file does not exist");
+    }
+    std::lock_guard<std::mutex> lock(runtime->mutex);
+    if (std::find(runtime->font_paths.begin(), runtime->font_paths.end(), path) == runtime->font_paths.end()) {
+        runtime->font_paths.push_back(path);
+    }
+    return rebuild_font_collection(runtime.get());
 }
 
 FSDX_API fsdx_status fsdx_create_runtime(const fsdx_runtime_desc* desc, fsdx_handle* runtime_out) {
@@ -1905,6 +2068,13 @@ FSDX_API fsdx_status fsdx_create_window(
         return fail_win32(FSDX_STATUS_DEVICE_INIT_FAILED, "CreateWindowExW", GetLastError());
     }
     window->hwnd = hwnd;
+    // Passive visual overlays must never participate in desktop hit testing.
+    // WS_EX_TRANSPARENT/HTTRANSPARENT alone is not sufficient when the
+    // underlying target belongs to another process (notably fullscreen apps).
+    if (window->clickthrough &&
+        (window->creation_flags & FSDX_WINDOW_FLAG_NO_ACTIVATE) != 0) {
+        EnableWindow(hwnd, FALSE);
+    }
     fsdx_status status = create_composition_surface(runtime, window, desc->width, desc->height);
     if (status != FSDX_STATUS_OK) {
         destroy_native_window(window);
@@ -2068,6 +2238,9 @@ FSDX_API fsdx_status fsdx_set_window_clickthrough(
         return fail_win32(FSDX_STATUS_RENDER_FAILED, "SetWindowLongPtrW", GetLastError());
     }
     window->clickthrough = enabled != 0;
+    const bool passive_overlay = enabled != 0 &&
+        (window->creation_flags & FSDX_WINDOW_FLAG_NO_ACTIVATE) != 0;
+    EnableWindow(window->hwnd, passive_overlay ? FALSE : TRUE);
     SetWindowPos(
         window->hwnd,
         nullptr,

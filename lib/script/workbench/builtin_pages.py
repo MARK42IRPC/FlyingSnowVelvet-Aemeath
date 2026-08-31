@@ -7,16 +7,16 @@ from lib.script.workbench.page_registry import WorkbenchPageSpec, default_page_s
 
 
 def _create_bug_tracker_page():
-    from lib.script.bug_tracker.window import BugTrackerWindow
+    module = import_module("lib.script.ui.bug_tracker_window")
 
-    return BugTrackerWindow(embedded=True)
+    return module.BugTrackerWindow(embedded=True)
 
 
 def _create_game_manager_page():
-    from lib.script.gemes.MAIN.manager_window import GameManagerWindow
-    from lib.script.gemes.MAIN.runtime import get_game_runtime
+    window_module = import_module("lib.script.ui.game_manager_window")
+    runtime_module = import_module("lib.script.gemes.MAIN.runtime")
 
-    return GameManagerWindow(get_game_runtime(), embedded=True)
+    return window_module.GameManagerWindow(runtime_module.get_game_runtime(), embedded=True)
 
 
 def _create_office_page():

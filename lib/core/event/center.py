@@ -84,6 +84,7 @@ class EventType(Enum):
     UI_CREATE = "ui_create"                              # UI 组件创建请求
     UI_ANCHOR_RESPONSE = "ui_anchor_response"            # 锚点坐标响应
     UI_HINT_PICK = "ui_hint_pick"                        # 命令提示框条目点击
+    UI_TRAY_MENU_REQUEST = "ui_tray_menu_request"        # 请求当前后端显示托盘菜单
     AUTOSTART_STATUS_CHANGE = "autostart_status_change"  # 开机启动状态变化
     GAME_MODE_SET = "game_mode_set"                      # 请求进入游戏模式
     GAME_MODE_EXIT = "game_mode_exit"                    # 请求退出游戏模式
@@ -155,6 +156,7 @@ class EventType(Enum):
     # 音响窗口范围请求和响应事件
     SPEAKER_WINDOW_REQUEST = "speaker_window_request"  # 请求音响窗口范围
     SPEAKER_WINDOW_RESPONSE = "speaker_window_response"  # 响应音响窗口范围
+    SPEAKER_SEARCH_TOGGLE_REQUEST = "speaker_search_toggle_request"  # 切换指定音响的搜索 UI
 
     # 管理器事件（解耦通信）
     MANAGER_SPAWN_REQUEST = "manager_spawn_request"  # 管理器生成请求

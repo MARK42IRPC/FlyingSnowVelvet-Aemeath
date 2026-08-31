@@ -17,7 +17,7 @@
 extern "C" {
 #endif
 
-#define FSDX_ABI_VERSION 7u
+#define FSDX_ABI_VERSION 9u
 #define FSDX_RUNTIME_FLAG_WARP 0x00000001u
 #define FSDX_DRAW_FLAG_FLIPPED 0x00000001u
 #define FSDX_DRAW_FLAG_HAS_FILL 0x00000002u
@@ -232,6 +232,25 @@ FSDX_API fsdx_status fsdx_recover_device(fsdx_handle runtime);
 FSDX_API fsdx_status fsdx_get_device_generation(
     fsdx_handle runtime,
     uint64_t* generation_out
+);
+
+FSDX_API fsdx_status fsdx_measure_text(
+    fsdx_handle runtime,
+    const uint8_t* text_utf8,
+    uint64_t text_size,
+    const uint8_t* family_utf8,
+    uint64_t family_size,
+    float font_pixel_size,
+    uint32_t flags,
+    float* width_out,
+    float* height_out
+);
+
+/* Register a private font file used by TextCommand family names. */
+FSDX_API fsdx_status fsdx_register_font_file(
+    fsdx_handle runtime,
+    const uint8_t* path_utf8,
+    uint64_t path_size
 );
 
 FSDX_API fsdx_status fsdx_register_resource(

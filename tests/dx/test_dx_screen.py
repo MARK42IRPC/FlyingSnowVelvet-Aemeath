@@ -19,11 +19,13 @@ class DxScreenProviderTests(unittest.TestCase):
             DxMonitor(
                 Rect(-1280, 0, 1280, 1024),
                 Rect(-1280, 0, 1280, 984),
+                dpi=120,
             ),
             DxMonitor(
                 Rect(0, 0, 1920, 1080),
                 Rect(0, 0, 1920, 1040),
                 primary=True,
+                dpi=144,
             ),
         ]
         provider = DxScreenProvider(lambda: tuple(topology))
@@ -41,6 +43,9 @@ class DxScreenProviderTests(unittest.TestCase):
             Rect(0, 0, 1920, 1080),
         )
         self.assertEqual(provider.get_primary_screen_rect(), Rect(0, 0, 1920, 1080))
+        self.assertEqual(provider.get_dpi_for_point(Point(-100, 10)), 120)
+        self.assertEqual(provider.get_dpi_for_point(Point(100, 10)), 144)
+        self.assertEqual(provider.get_scale_for_point(Point(100, 10)), 1.5)
 
         topology[:] = [
             DxMonitor(

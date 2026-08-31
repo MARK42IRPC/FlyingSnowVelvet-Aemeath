@@ -17,6 +17,7 @@ from .commands import (
     TextCommand,
     TransformPop,
     TransformPush,
+    scale_batch_alpha,
 )
 from .collision import adjust_rect, point_in_rect, rects_intersect, segment_intersects_rect
 from .image_loader import (
@@ -55,6 +56,7 @@ __all__ = [
     "ClipPop",
     "TransformPush",
     "TransformPop",
+    "scale_batch_alpha",
     "Color",
     "FontSpec",
     "get_anchor_point",

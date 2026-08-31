@@ -105,21 +105,12 @@ class QtDependencyBoundaryTests(unittest.TestCase):
         }
 
         allowed_files = {
-            "lib/script/SEanima/animation_player.py",
             "lib/script/bug_tracker/__main__.py",
-            "lib/script/bug_tracker/window.py",
-            "lib/script/cloudmusic/_qt_player.py",
-            "lib/script/gemes/MAIN/manager_window.py",
-            "lib/script/gemes/MAIN/runtime.py",
-            "lib/script/gemes/packages/official/lahai_tetris/code/lahai_tetris_pkg/constants.py",
             "lib/script/gemes/packages/official/lahai_tetris/code/lahai_tetris_pkg/render.py",
             "lib/script/gemes/packages/official/lahai_tetris/code/lahai_tetris_pkg/widget.py",
-            "lib/script/main.py",
             "lib/script/app/qt_backend_bootstrap.py",
             "lib/script/app/qt_application_ui.py",
             "lib/script/app/workbench_helper_entry.py",
-            "lib/script/workbench/components.py",
-            "lib/script/workbench/settings/page_layout.py",
         }
 
         unexpected = sorted(
@@ -150,6 +141,14 @@ class QtDependencyBoundaryTests(unittest.TestCase):
             script_root / "SEanima" / name
             for name in ("animation.py", "clip.py", "decoder.py", "effects.py")
         )
+        paths.extend((script_root / "cloudmusic").rglob("*.py"))
+        paths.extend((script_root / "workbench").rglob("*.py"))
+        paths.extend((script_root / "gemes" / "MAIN").rglob("*.py"))
+        paths.extend(
+            path
+            for path in (script_root / "bug_tracker").rglob("*.py")
+            if path.name != "__main__.py"
+        )
         lahai_root = (
             script_root
             / "gemes"
@@ -159,7 +158,7 @@ class QtDependencyBoundaryTests(unittest.TestCase):
             / "code"
             / "lahai_tetris_pkg"
         )
-        paths.extend(lahai_root / name for name in ("model.py", "skills.py"))
+        paths.extend(lahai_root / name for name in ("constants.py", "model.py", "skills.py"))
 
         violations = self._qt_import_violations(repo_root, paths)
 
@@ -173,8 +172,7 @@ class QtDependencyBoundaryTests(unittest.TestCase):
             script_root / "app" / "qt_application_ui.py",
             script_root / "app" / "qt_backend_bootstrap.py",
             script_root / "app" / "workbench_helper_entry.py",
-            script_root / "workbench" / "components.py",
-            script_root / "workbench" / "settings" / "page_layout.py",
+            script_root / "bug_tracker" / "__main__.py",
         }
         violations = []
 
@@ -349,6 +347,45 @@ class QtDependencyBoundaryTests(unittest.TestCase):
             layer_manager.enforce_now()
             assert layer_manager.snapshot()[0][3:] == ("probe", True)
             assert PetWindow.__name__ == "PetWindow"
+            """
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+
+    def test_backend_neutral_product_packages_import_without_pyqt(self):
+        repo_root = Path(__file__).resolve().parents[1]
+        script = textwrap.dedent(
+            """
+            import builtins
+            import sys
+
+            original_import = builtins.__import__
+
+            def blocked_import(name, *args, **kwargs):
+                if name == "PyQt5" or name.startswith("PyQt5."):
+                    raise AssertionError(f"backend-neutral package imported Qt: {name}")
+                return original_import(name, *args, **kwargs)
+
+            builtins.__import__ = blocked_import
+
+            import lib.script.SEanima.animation
+            import lib.script.bug_tracker.service
+            import lib.script.cloudmusic.manager
+            import lib.script.gemes.MAIN.runtime
+            import lib.script.workbench.page_registry
+            import lib.script.workbench.settings
+            import lib.script.workbench.theme
+            from lib.script.gemes.packages.official.lahai_tetris.code.lahai_tetris_pkg import constants
+
+            assert constants.THEME["A"][0] == (255, 120, 126)
+            assert not [name for name in sys.modules if name.startswith("PyQt5")]
             """
         )
         result = subprocess.run(

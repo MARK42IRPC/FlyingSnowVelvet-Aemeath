@@ -42,7 +42,7 @@ from config.general_user_settings import save_general_values
 from config.scale import scale_px
 from lib.core.anchor_utils import apply_ui_opacity
 from lib.core.event.center import Event, EventType, get_event_center
-from lib.script.workbench.components import (
+from lib.script.ui.workbench_components import (
     WorkbenchOverviewPage,
     WorkbenchPetAboutButton,
     create_window_button,

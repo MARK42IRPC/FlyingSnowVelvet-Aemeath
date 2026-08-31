@@ -6,6 +6,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from lib.core.logger import get_logger
+from lib.core.event.center import Event, EventType, get_event_center
 from lib.core.tray_host import (
     TrayCommand,
     TrayCommandCallback,
@@ -26,6 +27,8 @@ FSDX_TRAY_COMMAND_ANNOUNCEMENT = int(TrayCommand.ANNOUNCEMENT)
 FSDX_TRAY_COMMAND_QUIT = int(TrayCommand.QUIT)
 FSDX_TRAY_COMMAND_OPEN_SETTINGS = int(TrayCommand.OPEN_SETTINGS)
 FSDX_EVENT_TRAY_COMMAND = 19
+_TRAY_CALLBACK_MESSAGE = 0x8000 + 0x41
+_WM_RBUTTONUP = 0x0205
 
 _CHECKABLE_COMMANDS = {
     TrayCommand.TOGGLE_GAME_MODE,
@@ -122,6 +125,11 @@ class DxTrayHost:
         self._shutdown_started = False
         self._registered = False
         self.last_error: str | None = None
+        self._event_center = get_event_center()
+        self._event_center.subscribe(
+            EventType.UI_TRAY_MENU_REQUEST,
+            self._on_tray_menu_request,
+        )
 
     def connect_quit_requested(self, callback: Callable[[], None]) -> None:
         if not callable(callback):
@@ -310,6 +318,26 @@ class DxTrayHost:
         if target is not None:
             target._call(target._library.fsdx_show_tray, target._runtime, self._tray, 0)
 
+    def show_context_menu(self) -> None:
+        """Ask the native tray window to open the same menu as a right click."""
+        if self._target is None and not self.initialize():
+            raise DxBridgeError(self.last_error or "DX tray is unavailable")
+        hwnd = self.native_handle
+        if hwnd is None:
+            raise DxBridgeError("DX tray native window is unavailable")
+        post_message = ctypes.windll.user32.PostMessageW
+        post_message.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_size_t, ctypes.c_ssize_t]
+        post_message.restype = ctypes.c_int
+        if not post_message(hwnd, _TRAY_CALLBACK_MESSAGE, 0, _WM_RBUTTONUP):
+            raise ctypes.WinError()
+
+    def _on_tray_menu_request(self, event: Event) -> None:
+        del event
+        try:
+            self.show_context_menu()
+        except Exception as exc:
+            _logger.error("DX tray menu request failed: %s", exc)
+
     def poll_events(self, capacity: int = 64) -> tuple[int, ...]:
         target = self._target
         if target is None or self._cleanup_done:
@@ -365,6 +393,10 @@ class DxTrayHost:
         if self._cleanup_done:
             return
         self._cleanup_done = True
+        self._event_center.unsubscribe(
+            EventType.UI_TRAY_MENU_REQUEST,
+            self._on_tray_menu_request,
+        )
         self._cancel_retry()
         if self._registered:
             self._context.unregister_poller(self)

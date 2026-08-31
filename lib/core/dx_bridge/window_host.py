@@ -4,7 +4,7 @@ from __future__ import annotations
 import ctypes
 from dataclasses import dataclass
 
-from lib.core.graphics.commands import DrawBatch
+from lib.core.graphics.commands import DrawBatch, TransformPop, TransformPush
 from lib.core.graphics.types import Point, Rect
 from lib.core.input.types import (
     Key,
@@ -239,8 +239,12 @@ class DxWindowHost(DxOffscreenTarget):
         tool_window: bool = True,
         no_activate: bool = False,
         clickthrough: bool = False,
+        logical_content: bool = False,
         library=None,
     ) -> None:
+        self._logical_content = bool(logical_content)
+        self._logical_width = max(1, int(width))
+        self._logical_height = max(1, int(height))
         super().__init__(width, height, warp=warp, library=library)
         _configure_window_api(self._library)
         self._callbacks = callbacks
@@ -279,6 +283,8 @@ class DxWindowHost(DxOffscreenTarget):
         except Exception:
             super().cleanup()
             raise
+        if self._logical_content:
+            self._set_logical_geometry(Rect(x, y, width, height))
 
     @property
     def identity(self) -> int:
@@ -330,6 +336,12 @@ class DxWindowHost(DxOffscreenTarget):
             raise TypeError("geometry must be a Rect")
         if not self.is_alive():
             return
+        if self._logical_content:
+            self._set_logical_geometry(geometry)
+            return
+        self._set_physical_geometry(geometry)
+
+    def _set_physical_geometry(self, geometry: Rect) -> None:
         self._call_render_with_recovery(
             self._library.fsdx_set_window_geometry,
             self._runtime,
@@ -341,6 +353,32 @@ class DxWindowHost(DxOffscreenTarget):
         )
         self.width = max(1, int(round(geometry.width)))
         self.height = max(1, int(round(geometry.height)))
+
+    def _set_logical_geometry(self, geometry: Rect) -> None:
+        self._logical_width = max(1, int(round(geometry.width)))
+        self._logical_height = max(1, int(round(geometry.height)))
+        scale = self.content_scale
+        self._set_physical_geometry(Rect(
+            geometry.x,
+            geometry.y,
+            max(1, int(round(self._logical_width * scale))),
+            max(1, int(round(self._logical_height * scale))),
+        ))
+
+    @property
+    def content_scale(self) -> float:
+        return max(1, self.get_dpi()) / 96.0 if self._logical_content else 1.0
+
+    def get_logical_size(self) -> tuple[int, int]:
+        return self._logical_width, self._logical_height
+
+    def set_position(self, position: Point) -> None:
+        if not isinstance(position, Point):
+            raise TypeError("position must be a Point")
+        geometry = self.get_geometry()
+        self._set_physical_geometry(Rect(
+            position.x, position.y, geometry.width, geometry.height,
+        ))
 
     def get_dpi(self) -> int:
         return int(self._state().dpi) if self.is_alive() else 96
@@ -379,8 +417,8 @@ class DxWindowHost(DxOffscreenTarget):
                 self._library.fsdx_set_window_ime_position,
                 self._runtime,
                 self._window,
-                int(x),
-                int(y),
+                int(round(x * self.content_scale)),
+                int(round(y * self.content_scale)),
             )
 
     def capture_mouse(self) -> None:
@@ -425,6 +463,14 @@ class DxWindowHost(DxOffscreenTarget):
     def render_batch(self, batch: DrawBatch, viewport: Rect | None = None) -> None:
         if not isinstance(batch, DrawBatch):
             raise TypeError("DX window host requires a DrawBatch")
+        scale = self.content_scale
+        if scale != 1.0 and batch.commands:
+            batch = DrawBatch(
+                (TransformPush((scale, 0.0, 0.0, scale, 0.0, 0.0)),
+                 *batch.commands,
+                 TransformPop()),
+                batch.resource_revisions,
+            )
         commands = list(batch.commands)
         self._release_stale_resources(batch)
         native_commands = (_DrawCommand * len(commands))()
@@ -513,11 +559,12 @@ class DxWindowHost(DxOffscreenTarget):
         elif event.type == FSDX_EVENT_POINTER_LEAVE:
             callbacks.handle_pointer_leave()
         elif event.type in (FSDX_EVENT_POINTER_PRESS, FSDX_EVENT_POINTER_MOVE):
+            scale = self.content_scale
             mouse = MouseInput(
                 button=self._mouse_button(event.button),
                 buttons=MouseButtons(event.buttons),
                 global_pos=event.screen_pos,
-                pos=event.local_pos,
+                pos=Point(event.local_pos.x / scale, event.local_pos.y / scale),
                 pet=callbacks,
             )
             if event.type == FSDX_EVENT_POINTER_PRESS:

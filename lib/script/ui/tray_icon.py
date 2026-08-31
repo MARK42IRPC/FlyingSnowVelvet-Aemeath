@@ -44,6 +44,10 @@ class TrayIcon(QObject):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._event_center = get_event_center()
+        self._event_center.subscribe(
+            EventType.UI_TRAY_MENU_REQUEST,
+            self._on_tray_menu_request,
+        )
         self._tray_icon = None
         self._menu = None
         self._autostart_action = None
@@ -401,6 +405,10 @@ class TrayIcon(QObject):
             return
         self._show_menu_above_cursor()
 
+    def _on_tray_menu_request(self, event: Event) -> None:
+        del event
+        self.show_context_menu()
+
     def _on_quit(self):
         """处理退出动作"""
         _logger.info('用户通过托盘菜单请求退出')
@@ -685,6 +693,10 @@ class TrayIcon(QObject):
 
     def cleanup(self):
         """清理托盘图标资源"""
+        self._event_center.unsubscribe(
+            EventType.UI_TRAY_MENU_REQUEST,
+            self._on_tray_menu_request,
+        )
         self._unsubscribe_clickthrough_events()
         self._unsubscribe_game_mode_events()
         self._stop_retry()

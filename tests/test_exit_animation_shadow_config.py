@@ -1,6 +1,6 @@
 import unittest
 
-from lib.script.SEanima.animation_player import (
+from lib.script.ui.animation_player import (
     _build_exit_shadow_metrics,
     _normalize_exit_shadow_direction,
 )

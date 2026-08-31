@@ -19,7 +19,14 @@ os.environ.setdefault("QT_PLUGIN_PATH", os.path.join(_QT_ROOT, "Qt5", "plugins")
 
 from config.config import PARTICLES
 from lib.core.dx_bridge.offscreen import DxOffscreenTarget, find_dx_library
-from lib.core.graphics.application_visuals import build_qr_panel_visual, qr_panel_size
+from lib.core.graphics.announcement_visuals import build_announcement_visual
+from lib.core.graphics.application_visuals import (
+    build_qr_panel_visual,
+    create_portable_command_hint_metrics,
+    qr_panel_size,
+)
+from lib.core.graphics.speaker_playlist_visuals import build_speaker_playlist_visual
+from lib.core.graphics.speaker_visuals import build_speaker_search_visual
 from lib.core.graphics.resources import ImageResource, RasterFrame
 from lib.core.graphics.types import Color
 from lib.core.graphics.visuals import build_command_shell_batch, build_particle_batch
@@ -67,6 +74,20 @@ class VisualBackendParityTests(unittest.TestCase):
         finally:
             painter.end()
         return image
+
+    def _assert_sample_pixels(self, batch, width: int, height: int, points) -> None:
+        qt_image = self._qt_image(batch, width, height)
+        with DxOffscreenTarget(width, height, warp=True) as target:
+            target.render_batch(batch)
+            dx_pixels = target.readback_rgba()
+        for x, y in points:
+            offset = (int(y) * width + int(x)) * 4
+            color = qt_image.pixelColor(int(x), int(y))
+            self.assertEqual(
+                tuple(dx_pixels[offset:offset + 4]),
+                (color.red(), color.green(), color.blue(), color.alpha()),
+                f"backend pixel mismatch at {(x, y)}",
+            )
 
     def test_shared_particle_geometry_matches_qt_reference_pixels(self):
         with patch.dict(PARTICLES, {"enable_stroke": False}):
@@ -130,6 +151,66 @@ class VisualBackendParityTests(unittest.TestCase):
                 (qt_color.red(), qt_color.green(), qt_color.blue(), qt_color.alpha()),
                 f"QR panel pixel mismatch at {(x, y)}",
             )
+
+    def test_speaker_search_visual_states_match_across_backends(self):
+        visual = build_speaker_search_visual(
+            "雪绒",
+            "",
+            tuple(f"03:2{i} 测试歌曲 {i}" for i in range(8)),
+            create_portable_command_hint_metrics(),
+            selected=1,
+            hovered="search",
+            pressed="search",
+        )
+        width, height = int(visual.size.width), int(visual.size.height)
+        row = visual.result_rects[1]
+        self._assert_sample_pixels(visual.batch, width, height, (
+            (0, 0),
+            (2, 2),
+            (int(visual.input_rect.x), int(visual.input_rect.y)),
+            (int(visual.search_rect.x + 5), int(visual.search_rect.y + 5)),
+            (int(row.x + row.width - 3), int(row.y + row.height / 2)),
+            (width - 1, height - 1),
+        ))
+
+    def test_speaker_playlist_visual_states_match_across_backends(self):
+        visual = build_speaker_playlist_visual(
+            tuple((index, f"歌曲 {index}") for index in range(9)),
+            create_portable_command_hint_metrics(),
+            current_index=1,
+            selected=2,
+            playing=True,
+            progress=0.5,
+            remaining=125,
+            hovered="remove",
+            pressed="remove",
+        )
+        width, height = int(visual.size.width), int(visual.size.height)
+        row = visual.row_rects[2]
+        self._assert_sample_pixels(visual.batch, width, height, (
+            (0, 0),
+            (2, 2),
+            (int(visual.slider_rect.x + 3), int(visual.slider_rect.y + 3)),
+            (int(row.x + row.width - 3), int(row.y + row.height / 2)),
+            (int(visual.remove_rect.x + 5), int(visual.remove_rect.y + 5)),
+            (width - 1, height - 1),
+        ))
+
+    def test_announcement_shell_matches_across_backends(self):
+        visual = build_announcement_visual(
+            create_portable_command_hint_metrics(),
+            mode="error",
+            hovered="retry",
+            pressed="retry",
+        )
+        width, height = int(visual.size.width), int(visual.size.height)
+        self._assert_sample_pixels(visual.batch, width, height, (
+            (0, 0),
+            (2, 2),
+            (width // 2, 2),
+            (2, height // 2),
+            (width - 1, height - 1),
+        ))
 
 
 if __name__ == "__main__":

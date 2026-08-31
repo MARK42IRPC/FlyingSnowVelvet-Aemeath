@@ -183,6 +183,12 @@ class WorldObjectInstance:
     def get_motion(self) -> WorldObjectMotion | None:
         return _require_instance_backend(self).get_motion(self.instance_id)
 
+    def get_center(self) -> Point:
+        return _require_instance_backend(self).get_center(self.instance_id)
+
+    def get_geometry(self) -> Rect:
+        return _require_instance_backend(self).get_geometry(self.instance_id)
+
     def is_alive(self) -> bool:
         return self.get_state().alive
 
@@ -312,10 +318,10 @@ def create_world_object(
 def get_world_object_center(instance: WorldObjectInstance) -> Point:
     if not isinstance(instance, WorldObjectInstance):
         raise TypeError("world-object center requires a WorldObjectInstance")
-    return _require_instance_backend(instance).get_center(instance.instance_id)
+    return instance.get_center()
 
 
 def get_world_object_geometry(instance: WorldObjectInstance) -> Rect:
     if not isinstance(instance, WorldObjectInstance):
         raise TypeError("world-object geometry requires a WorldObjectInstance")
-    return _require_instance_backend(instance).get_geometry(instance.instance_id)
+    return instance.get_geometry()

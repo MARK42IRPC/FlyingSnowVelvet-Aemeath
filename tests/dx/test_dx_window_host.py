@@ -4,6 +4,7 @@ import ctypes
 import os
 import threading
 import unittest
+from unittest.mock import patch
 
 from lib.core.dx_bridge.window_host import (
     FSDX_EVENT_FLAG_TEXT_FIRST,
@@ -79,6 +80,48 @@ class DxWindowHostTests(unittest.TestCase):
             host.release_mouse()
             self.assertFalse(host.has_mouse_capture())
             self.assertEqual(host.stack_window(None), host.native_handle)
+        finally:
+            host.cleanup()
+
+    def test_logical_content_scales_once_at_125_and_150_percent(self):
+        positions = []
+
+        class Callbacks:
+            def handle_pointer_press(self, event):
+                positions.append(event.pos)
+
+        host = DxWindowHost(
+            8, 6, warp=True, topmost=False,
+            callbacks=Callbacks(), logical_content=True,
+        )
+        try:
+            for dpi, expected_size in ((120, (10, 8)), (144, (12, 9))):
+                with patch.object(host, "get_dpi", return_value=dpi):
+                    host.set_geometry(Rect(-20, 10, 8, 6))
+                    self.assertEqual((host.width, host.height), expected_size)
+                    host.render_batch(DrawBatch((
+                        RectCommand(Rect(0, 0, 8, 6), fill=Color(20, 40, 60)),
+                    )))
+                    pixels = host.readback_rgba()
+                    self.assertTrue(pixels[-1])
+                    host._dispatch_event(DxHostEvent(
+                        type=FSDX_EVENT_POINTER_PRESS,
+                        timestamp_ms=0,
+                        local_pos=Point(expected_size[0] / 2, expected_size[1] / 2),
+                        screen_pos=Point(100, 100),
+                        size=expected_size,
+                        dpi=dpi,
+                        key=0,
+                        button=int(MouseButton.LEFT),
+                        buttons=int(MouseButton.LEFT),
+                        modifiers=0,
+                        repeat_count=0,
+                        codepoint=0,
+                        flags=0,
+                        pointer_id=0,
+                    ))
+                    self.assertAlmostEqual(positions[-1].x, expected_size[0] / 2 / (dpi / 96.0))
+                    self.assertAlmostEqual(positions[-1].y, expected_size[1] / 2 / (dpi / 96.0))
         finally:
             host.cleanup()
 
