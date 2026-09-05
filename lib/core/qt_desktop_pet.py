@@ -57,18 +57,6 @@ if __name__ == '__main__':
         except Exception:
             _show_startup_error('控制面板 helper 启动失败：\n\n' + traceback.format_exc())
             sys.exit(1)
-    if len(sys.argv) >= 3 and sys.argv[1] == '--fsv-update-helper':
-        try:
-            import json
-            from lib.script.app.update_installer import run_update_installer
-
-            payload = json.loads(sys.argv[2])
-            if not isinstance(payload, dict):
-                raise ValueError('invalid update payload')
-            sys.exit(run_update_installer(payload))
-        except Exception as exc:
-            _show_startup_error('更新辅助进程启动失败：\n\n' + str(exc))
-            sys.exit(1)
     if len(sys.argv) >= 4 and sys.argv[1] == '--fsv-restart-helper':
         try:
             import json
@@ -89,6 +77,7 @@ if __name__ == '__main__':
         backend_selection = configure_selected_desktop_backend()
         from lib.core.desktop_backend import get_desktop_backend_bundle
         from lib.script.main import main
+        from lib.script.app.startup_cleanup import schedule_startup_cleanup
     except ModuleNotFoundError as e:
         missing = getattr(e, "name", None) or "unknown"
         install_bat = os.path.join(project_root, "安装依赖.bat")
@@ -98,6 +87,7 @@ if __name__ == '__main__':
         _show_startup_error("程序启动失败：\n\n" + traceback.format_exc())
         sys.exit(1)
 
+    schedule_startup_cleanup()
     main(
         backend_selection=backend_selection,
         backend_bundle=get_desktop_backend_bundle(),

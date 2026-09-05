@@ -261,8 +261,8 @@ def install_all(python_exe, mirrors):
             reset=True,
         )
 
-        def report(percent, package=pkg, overall=job_completed):
-            display.update(package, percent, overall, total_jobs)
+        def report(percent, detail="", package=pkg, overall=job_completed):
+            display.update(package, percent, overall, total_jobs, detail=detail)
 
         installed, failure_detail = _install_one(
             python_exe,

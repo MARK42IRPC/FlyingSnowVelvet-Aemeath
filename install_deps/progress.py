@@ -105,6 +105,7 @@ class _DependencyProgressDisplay:
         *,
         force=False,
         reset=False,
+        detail="",
     ):
         package = str(package)
         percent = max(0, min(100, int(package_percent)))
@@ -120,7 +121,8 @@ class _DependencyProgressDisplay:
         current = max(0, min(total, int(overall_current)))
         current = max(self._overall_current, current)
         self._overall_current = current
-        payload = (package, percent, current, total)
+        detail = " ".join(str(detail or "").split())
+        payload = (package, percent, current, total, detail)
         if payload == self._last_payload and not force:
             return
         self._last_payload = payload
@@ -144,6 +146,8 @@ class _DependencyProgressDisplay:
         package_name = _fmt_color(package, "progress_current")
         first = f"  {current_label} {package_bar} {package_value}  {package_name}"
         second = f"  {overall_label} {overall_bar} {overall_value}"
+        if detail:
+            first += f"  {detail}"
 
         # The GUI installer consumes explicit UTF-8 progress records. Keep the
         # regular non-interactive console output compact, while allowing the
@@ -260,14 +264,25 @@ class _MonotonicProgressReporter:
     def value(self):
         return self._value
 
-    def __call__(self, value):
+    def __call__(self, value, detail=""):
         value = max(0, min(100, int(value)))
         if value < self._value:
             value = self._value
-        if value == self._value:
+        if value == self._value and not detail:
             return
         self._value = value
-        self._callback(value)
+        try:
+            self._callback(value, detail)
+        except TypeError:
+            self._callback(value)
+
+
+def _emit_progress(callback, percent, detail=""):
+    """Keep old one-argument progress callbacks compatible with status text."""
+    try:
+        callback(percent, detail)
+    except TypeError:
+        callback(percent)
 
 def _run_pip_requirement_with_progress(
     python_exe,
@@ -335,7 +350,10 @@ def _run_pip_requirement_with_progress(
     percent = 5
     reader_done = False
     deadline = time.monotonic() + PIP_INSTALL_TIMEOUT
-    progress_callback(percent)
+    # Derive this from the existing deadline so timeout-sensitive callers do
+    # not need an extra clock read before the first polling iteration.
+    last_heartbeat = deadline - 5.0
+    _emit_progress(progress_callback, percent, "正在启动 pip")
     while proc.poll() is None or not reader_done:
         if proc.poll() is None and time.monotonic() >= deadline:
             try:
@@ -352,6 +370,10 @@ def _run_pip_requirement_with_progress(
             line = output_queue.get(timeout=0.12)
         except queue.Empty:
             line = ""
+            now = time.monotonic()
+            if now - last_heartbeat >= 5.0:
+                _emit_progress(progress_callback, percent, "pip 正在完成安装，请稍候")
+                last_heartbeat = now
         if line is None:
             reader_done = True
         elif line:
@@ -361,10 +383,10 @@ def _run_pip_requirement_with_progress(
             next_percent = _pip_progress_from_output(line, percent)
             if next_percent != percent:
                 percent = next_percent
-                progress_callback(percent)
+                _emit_progress(progress_callback, percent)
 
     if proc.returncode == 0 and percent < 95:
-        progress_callback(95)
+        _emit_progress(progress_callback, 95, "pip 已完成，正在确认安装结果")
 
     reader.join(timeout=1.0)
     return proc.returncode, "".join(output_tail)

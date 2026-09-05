@@ -22,7 +22,7 @@ def _hostname(text: str) -> str:
 
 
 def validate_ai_values(values: dict) -> None:
-    if str(values.get("office_backend", "dsh") or "dsh") not in {"dsh", "open_interpreter"}:
+    if str(values.get("office_backend", "dsh") or "dsh") != "dsh":
         raise ValueError("办公后端选择无效")
     force_mode = str(values.get("force_reply_mode", "")).strip()
     welfare_intelligence_boost = values.get("welfare_intelligence_boost")

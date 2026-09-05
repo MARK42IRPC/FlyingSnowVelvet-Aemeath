@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import io
+import os
 import subprocess
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from lib.script.office import runtime as office_runtime
@@ -81,7 +83,7 @@ class DshOfficeRuntimeLifecycleTests(unittest.TestCase):
         )
 
     def test_readiness_reports_missing_managed_prompt(self):
-        with patch.object(
+        with patch.dict("config.ollama_config.OFFICE_MODE", {"backend": "dsh"}, clear=False), patch.object(
             office_runtime,
             "office_system_prompt_path",
             return_value=office_runtime.project_root() / "resc" / "agent" / "missing.txt",
@@ -90,12 +92,36 @@ class DshOfficeRuntimeLifecycleTests(unittest.TestCase):
 
         self.assertIn("办公系统提示词资源无法读取", error)
 
-    def test_readiness_rejects_unimplemented_office_backend(self):
-        with patch.dict("config.ollama_config.OFFICE_MODE", {"backend": "open_interpreter"}, clear=False):
+    def test_readiness_rejects_non_dsh_backend(self):
+        with patch.dict("config.ollama_config.OFFICE_MODE", {"backend": "unsupported"}, clear=False):
             error = office_runtime.runtime_readiness_error()
 
-        self.assertIn("Open Interpreter", error)
         self.assertIn("选择 DSH", error)
+
+    def test_node_environment_rejects_external_runtime_hooks(self):
+        injected = {
+            "Path": r"C:\\user-tools",
+            "NODE_OPTIONS": r"--import=C:\\outside\\hook.mjs",
+            "node_path": r"C:\\outside\\modules",
+            "NODE_TLS_REJECT_UNAUTHORIZED": "0",
+            "NPM_CONFIG_PREFIX": r"C:\\outside\\npm",
+            "DSH_HOME": r"C:\\outside\\dsh",
+            "FSV_OFFICE_MODEL": "outside-model",
+            "OPENSSL_CONF": r"C:\\outside\\openssl.cnf",
+        }
+        with patch.dict(os.environ, injected, clear=True), patch.object(
+            office_runtime,
+            "bundled_node_executable",
+            return_value=Path(r"C:\\missing\\node.exe"),
+        ):
+            environment = office_runtime._isolated_node_environment()
+
+        self.assertNotIn(r"C:\\user-tools", environment["PATH"])
+        self.assertIn("System32", environment["PATH"])
+        self.assertEqual(environment["NODE_ENV"], "production")
+        for name in injected:
+            if name != "Path":
+                self.assertNotIn(name, environment)
 
 
 if __name__ == "__main__":

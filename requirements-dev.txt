@@ -1,2 +1,1 @@
--r requirements-service.txt
-openai>=2.24.0
+-r requirements.txt

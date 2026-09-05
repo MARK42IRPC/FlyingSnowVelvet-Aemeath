@@ -81,13 +81,13 @@ python install_deps.py
 
 ```powershell
 python -m compileall config lib scripts install_deps.py
-python scripts/package_release.py --dry-run
+python -m unittest discover -s tests -p "test_*.py" -q
 ```
 
-如果改了绿色包边界，追加：
+如果改了发行版 payload 或安装器，追加：
 
 ```powershell
-python scripts/package_green_release.py --dry-run
+python -m unittest tests.test_offline_distribution tests.test_windows_zip_extract
 ```
 
 如果改了测试覆盖范围，运行对应 unittest，例如：
@@ -112,7 +112,7 @@ py -3 -m unittest discover -s tests -p "test_*music*.py"
 
 使用简短中文或 Conventional Commit 均可，重点是说明影响范围：
 
-- `fix: 修正普通包浏览器离线包边界`
+- `fix: 修正离线发行版浏览器资源边界`
 - `feat: 增加音乐 provider 路由`
 - `docs: 重写项目说明文档`
 - `refactor: 收敛本地服务生命周期`

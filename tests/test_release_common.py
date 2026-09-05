@@ -7,8 +7,7 @@ from scripts.release_common import (
     configure_console_output,
     read_app_version,
 )
-from scripts.package_green_release import _should_exclude as green_should_exclude
-from scripts.package_release import ROOT, _should_exclude as release_should_exclude
+from scripts.build_offline_distribution import PRODUCT_ROOT, excluded
 from lib.core.dsh_runtime_contract import RUNTIME_SOURCE_FILES
 
 
@@ -48,46 +47,41 @@ class ReleaseCommonTests(unittest.TestCase):
         self.assertEqual(stdout.options, expected)
         self.assertEqual(stderr.options, expected)
 
-    def test_release_packages_include_the_update_installer(self):
-        installer = ROOT / 'lib' / 'script' / 'app' / 'update_installer.py'
+    def test_offline_payload_includes_the_update_installer(self):
+        installer = PRODUCT_ROOT / 'lib' / 'script' / 'app' / 'update_installer.py'
         self.assertTrue(installer.is_file())
-        self.assertFalse(release_should_exclude(installer))
-        self.assertFalse(green_should_exclude(installer))
+        self.assertFalse(excluded(installer.relative_to(PRODUCT_ROOT)))
 
     def test_release_packages_include_bundled_unrar_and_license(self):
         for relative in (
             Path('lib/script/gsvmove/bin/UnRAR.exe'),
             Path('lib/script/gsvmove/bin/LICENSE-UnRAR.txt'),
         ):
-            path = ROOT / relative
+            path = PRODUCT_ROOT / relative
             with self.subTest(path=relative.as_posix()):
                 self.assertTrue(path.is_file())
-                self.assertFalse(release_should_exclude(path))
-                self.assertFalse(green_should_exclude(path))
+                self.assertFalse(excluded(relative))
 
     def test_release_packages_include_dsh_sources_but_not_installed_runtimes(self):
         for relative in RUNTIME_SOURCE_FILES:
-            path = ROOT / "services" / "dsh-office-runtime" / relative
+            path = PRODUCT_ROOT / "services" / "dsh-office-runtime" / relative
             with self.subTest(path=relative):
                 self.assertTrue(path.is_file())
-                self.assertFalse(release_should_exclude(path))
-                self.assertFalse(green_should_exclude(path))
+                self.assertFalse(excluded(Path("services/dsh-office-runtime") / relative))
 
-        excluded = (
-            ROOT / "services" / "dsh-office-runtime" / "node_modules" / "package.json",
-            ROOT / "resc" / "node-24.13.0-win-x64" / "node.exe",
+        excluded_paths = (
+            PRODUCT_ROOT / "services" / "dsh-office-runtime" / "node_modules" / "package.json",
+            PRODUCT_ROOT / "resc" / "node-24.13.0-win-x64" / "node.exe",
         )
-        for path in excluded:
+        for path in excluded_paths:
             with self.subTest(path=path):
-                self.assertTrue(release_should_exclude(path))
-                self.assertTrue(green_should_exclude(path))
+                self.assertTrue(excluded(path.relative_to(PRODUCT_ROOT)))
 
     def test_release_packages_include_managed_office_system_prompt(self):
-        prompt = ROOT / "resc" / "agent" / "office_system_prompt.txt"
+        prompt = PRODUCT_ROOT / "resc" / "agent" / "office_system_prompt.txt"
 
         self.assertTrue(prompt.is_file())
-        self.assertFalse(release_should_exclude(prompt))
-        self.assertFalse(green_should_exclude(prompt))
+        self.assertFalse(excluded(prompt.relative_to(PRODUCT_ROOT)))
 
     def test_release_packages_include_bundled_office_skills(self):
         skill_names = (
@@ -103,11 +97,10 @@ class ReleaseCommonTests(unittest.TestCase):
             "fsv-release-validation",
         )
         for name in skill_names:
-            path = ROOT / "resc" / "agent" / name / "SKILL.md"
+            path = PRODUCT_ROOT / "resc" / "agent" / name / "SKILL.md"
             with self.subTest(path=path):
                 self.assertTrue(path.is_file())
-                self.assertFalse(release_should_exclude(path))
-                self.assertFalse(green_should_exclude(path))
+                self.assertFalse(excluded(path.relative_to(PRODUCT_ROOT)))
 
 if __name__ == '__main__':
     unittest.main()

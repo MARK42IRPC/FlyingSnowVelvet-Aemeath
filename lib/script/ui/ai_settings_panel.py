@@ -86,6 +86,7 @@ from lib.script.chat.network_policy import API_TIMEOUT_SECS
 from lib.script.chat.persona_storage import ensure_user_persona_file
 from lib.script.microphone_stt.push_to_talk import parse_hotkey_binding
 from lib.script.ui.update_dialog import DesktopPetUpdateDialog
+from lib.script.ui.cuda_runtime_installer import CudaRuntimeInstallerDialog
 from lib.script.ui.voice_package_installer import (
     VoicePackageInstallBanner,
     VoicePackageInstallerDialog,
@@ -101,6 +102,7 @@ from lib.script.ui.workbench_settings_layout import (
 from lib.script.workbench.theme import COLORS as WORKBENCH_COLORS, get_workbench_colors
 from lib.script.gsvmove import get_voice_package_status
 from config.voice_runtime import is_cuda_runtime_ready
+from lib.core.cuda_runtime_installer import has_nvidia_gpu, probe_cuda_runtime_session
 
 _logger = get_logger(__name__)
 
@@ -1736,7 +1738,12 @@ class AISettingsPanel(QWidget):
         self._autostart_status_subscribed = False
         self._update_dialog: DesktopPetUpdateDialog | None = None
         self._voice_installer_dialog: VoicePackageInstallerDialog | None = None
+        self._cuda_installer_dialog: CudaRuntimeInstallerDialog | None = None
         self._qq_group_dialog: QQGroupDialog | None = None
+        self._nvidia_gpu_present = False
+        self._cuda_runtime_validated = False
+        self._cuda_capability_pending = False
+        self._cuda_capability_generation = 0
         self._subscribe_autostart_events()
         self.setWindowTitle("控制面板")
         self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
@@ -2117,22 +2124,17 @@ class AISettingsPanel(QWidget):
             "办公模式可以使用独立的 API 配置。",
         )
         form = create_settings_form()
+        self._office_mode_form = form
         self._office_mode_section.body_layout.addLayout(form)
 
         self._office_backend = _WatermarkComboBox()
         self._office_backend.setView(QListView(self._office_backend))
         self._office_backend.addItem("DeepSeek Harness（推荐）", "dsh")
-        self._office_backend.addItem("Open Interpreter（待接入）", "open_interpreter")
-        open_interpreter_index = self._office_backend.findData("open_interpreter")
-        if open_interpreter_index >= 0:
-            item = self._office_backend.model().item(open_interpreter_index)
-            if item is not None:
-                item.setEnabled(False)
         form.addRow("办公后端", self._office_backend)
         self._set_form_row_description(
             form,
             self._office_backend,
-            "当前使用 DeepSeek Harness 办公侧车；Open Interpreter 的 skill、审批和会话桥接仍在适配中。",
+            "办公模式使用 DeepSeek Harness 侧车，任务、会话和权限由桌宠统一管理。",
         )
 
         self._office_use_independent_api = QCheckBox("办公模式独立api")
@@ -2201,6 +2203,13 @@ class AISettingsPanel(QWidget):
             form,
             self._office_warmup_on_startup,
             "启用后，桌宠启动时自动预热办公运行时，减少首次任务的等待时间。",
+        )
+
+        self._office_independent_api_rows = (
+            self._office_api_key,
+            self._office_api_provider,
+            self._office_api_base_url,
+            office_api_model_row,
         )
 
         self._office_use_independent_api.toggled.connect(self._update_office_mode_fields_visibility)
@@ -2308,6 +2317,16 @@ class AISettingsPanel(QWidget):
         self._gsv_gpu_hybrid = QCheckBox("通用 GPU 加速（DirectML）")
         self._gsv_gpu_hybrid.setChecked(_DEFAULT_VALUES["gsv_gpu_hybrid"])
         form.addRow("", self._gsv_gpu_hybrid)
+
+        self._install_cuda_runtime_button = QPushButton("安装N卡推理环境")
+        self._install_cuda_runtime_button.setObjectName("InstallCudaVoiceRuntimeButton")
+        self._install_cuda_runtime_button.clicked.connect(self._on_install_cuda_runtime)
+        form.addRow("", self._install_cuda_runtime_button)
+        self._set_form_row_description(
+            form,
+            self._install_cuda_runtime_button,
+            "下载并安装精简 NVIDIA CUDA 语音推理环境。",
+        )
 
         self._gsv_nvidia_cuda_acceleration = QCheckBox(
             "N卡加速（将提高显存占用）"
@@ -2510,6 +2529,8 @@ class AISettingsPanel(QWidget):
         if page_title is not None:
             page_title.hide()
         self._workbench_pages[page_id] = page
+        if page_id == 'ai':
+            self._refresh_cuda_runtime_capability_async()
         return page
 
     def _build_config_category_panel(self, category) -> QWidget:
@@ -3450,6 +3471,67 @@ class AISettingsPanel(QWidget):
         self.fade_out()
         delay_ms = max(80, int(UI.get("ui_fade_duration", 180)))
         QTimer.singleShot(delay_ms, dialog.show_dialog)
+
+    def _ensure_cuda_installer_dialog(self) -> CudaRuntimeInstallerDialog:
+        if self._cuda_installer_dialog is None:
+            dialog = CudaRuntimeInstallerDialog()
+            dialog.install_succeeded.connect(self._on_cuda_runtime_installed)
+            self._cuda_installer_dialog = dialog
+        return self._cuda_installer_dialog
+
+    def _on_install_cuda_runtime(self) -> None:
+        if not self._nvidia_gpu_present:
+            self._emit_info("未检测到可用的 NVIDIA 显卡。", min_tick=12, max_tick=120)
+            return
+        dialog = self._ensure_cuda_installer_dialog()
+        self.fade_out()
+        delay_ms = max(80, int(UI.get("ui_fade_duration", 180)))
+        QTimer.singleShot(delay_ms, dialog.show_dialog)
+
+    def _on_cuda_runtime_installed(self, _result=None) -> None:
+        self._nvidia_gpu_present = True
+        self._cuda_runtime_validated = True
+        self._cuda_capability_pending = False
+        self._update_gsv_settings_visibility()
+
+    def _refresh_cuda_runtime_capability_async(self) -> None:
+        if self._cuda_capability_pending:
+            return
+        self._cuda_capability_pending = True
+        self._cuda_capability_generation += 1
+        generation = self._cuda_capability_generation
+
+        def worker() -> None:
+            nvidia_present = False
+            runtime_installed = False
+            runtime_ready = False
+            detail = ""
+            try:
+                nvidia_present = bool(has_nvidia_gpu())
+                runtime_installed = nvidia_present and is_cuda_runtime_ready()
+                if runtime_installed:
+                    runtime_ready, detail = probe_cuda_runtime_session()
+            except Exception as exc:
+                detail = str(exc).strip() or repr(exc)
+
+            def apply_result() -> None:
+                if generation != self._cuda_capability_generation:
+                    return
+                self._cuda_capability_pending = False
+                self._nvidia_gpu_present = bool(nvidia_present)
+                self._cuda_runtime_validated = bool(runtime_ready)
+                self._update_gsv_settings_visibility()
+                if detail:
+                    message = "N卡推理环境校验失败" if runtime_installed else "N卡推理能力检测失败"
+                    _logger.warning("%s: %s", message, detail)
+
+            self._ui_thread_call.emit(apply_result)
+
+        try:
+            get_compute_hub().submit_interactive_io(worker)
+        except Exception as exc:
+            self._cuda_capability_pending = False
+            _logger.debug("N卡推理环境检测任务提交失败: %s", exc)
 
     def _on_voice_package_installed(self, _result=None) -> None:
         values = load_ai_values(_DEFAULT_VALUES)
@@ -4610,6 +4692,7 @@ class AISettingsPanel(QWidget):
     def show_centered(self) -> None:
         self.load_values()
         self._refresh_voice_package_ui()
+        self._refresh_cuda_runtime_capability_async()
         current_index = 0
         # 获取当前选中的标签索引（从按钮组或按钮列表）
         if hasattr(self, '_tab_button_group') and self._tab_button_group is not None:
@@ -4696,9 +4779,18 @@ class AISettingsPanel(QWidget):
             self._tick_subscribed = False
 
     def deleteLater(self) -> None:
+        self._cuda_capability_generation += 1
         self._unsubscribe_border_effect_events()
         self._unsubscribe_autostart_events()
         self._hide_floating_tab()
+        for attr_name in ("_voice_installer_dialog", "_cuda_installer_dialog"):
+            dialog = getattr(self, attr_name, None)
+            if dialog is not None:
+                try:
+                    dialog.cleanup()
+                except RuntimeError:
+                    pass
+                setattr(self, attr_name, None)
         if self._tab_floating is not None:
             self._tab_floating.deleteLater()
             self._tab_floating = None
@@ -4904,7 +4996,9 @@ class AISettingsPanel(QWidget):
             "gsv_auto_start": bool(self._gsv_auto_start.isChecked()),
             "gsv_gpu_hybrid": bool(self._gsv_gpu_hybrid.isChecked()),
             "gsv_nvidia_cuda_acceleration": bool(
-                getattr(self, "_gsv_nvidia_cuda_acceleration", None)
+                self._cuda_runtime_validated
+                and self._nvidia_gpu_present
+                and getattr(self, "_gsv_nvidia_cuda_acceleration", None)
                 and self._gsv_nvidia_cuda_acceleration.isChecked()
             ),
             "gsv_temperature": gsv_temperature,
@@ -4996,40 +5090,40 @@ class AISettingsPanel(QWidget):
         self._ollama_section.setVisible(mode == "2")
 
     def _update_gsv_settings_visibility(self) -> None:
-        self._voice_section.setVisible(bool(self._gsv_launcher_available))
+        voice_available = bool(self._gsv_launcher_available)
+        nvidia_present = bool(getattr(self, "_nvidia_gpu_present", False))
+        cuda_validated = bool(getattr(self, "_cuda_runtime_validated", False))
+        self._voice_section.setVisible(voice_available)
+        install_button = getattr(self, "_install_cuda_runtime_button", None)
+        if install_button is not None:
+            install_button.setVisible(
+                voice_available
+                and nvidia_present
+                and not cuda_validated
+            )
         cuda_checkbox = getattr(self, "_gsv_nvidia_cuda_acceleration", None)
         if cuda_checkbox is not None:
             cuda_checkbox.setVisible(
-                bool(self._gsv_launcher_available) and is_cuda_runtime_ready()
+                voice_available
+                and nvidia_present
+                and cuda_validated
             )
 
     def _update_office_mode_fields_visibility(self) -> None:
         enabled = self._office_use_independent_api.isChecked()
-        self._office_api_key.setVisible(enabled)
-        self._office_api_provider.setVisible(enabled)
-        self._office_api_base_url.setVisible(enabled)
-        self._office_api_model.setVisible(enabled)
-        self._probe_office_api_models_btn.setVisible(enabled)
+        self._office_backend.setVisible(True)
+        self._office_use_independent_api.setVisible(True)
+        self._office_warmup_on_startup.setVisible(True)
 
-        # 同时控制表单行的可见性
-        for i in range(self._office_mode_section.body_layout.count()):
-            item = self._office_mode_section.body_layout.itemAt(i)
-            if item and item.layout():
-                form_layout = item.layout()
-                if hasattr(form_layout, 'rowCount'):
-                    for row in range(form_layout.rowCount()):
-                        label_item = form_layout.itemAt(row, QFormLayout.LabelRole)
-                        field_item = form_layout.itemAt(row, QFormLayout.FieldRole)
-
-                        # 第一行是checkbox，始终显示
-                        if row == 0:
-                            continue
-
-                        # 其他行根据enabled状态显示/隐藏
-                        if label_item and label_item.widget():
-                            label_item.widget().setVisible(enabled)
-                        if field_item and field_item.widget():
-                            field_item.widget().setVisible(enabled)
+        form = self._office_mode_form
+        for field in self._office_independent_api_rows:
+            row, _role = form.getWidgetPosition(field)
+            if row < 0:
+                continue
+            label_item = form.itemAt(row, QFormLayout.LabelRole)
+            if label_item is not None and label_item.widget() is not None:
+                label_item.widget().setVisible(enabled)
+            field.setVisible(enabled)
 
     def _refresh_voice_package_ui(self) -> None:
         status = get_voice_package_status()

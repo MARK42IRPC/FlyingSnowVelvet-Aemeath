@@ -36,17 +36,10 @@ NPM_REGISTRIES = [
 DEPENDENCIES = [
     ("PyQt5", "Qt GUI framework", ("PyQt5",)),
     ("Pillow", "image processing", ("PIL",)),
-    ("fastapi", "local web relay API framework", ("fastapi",)),
-    ("httpx", "async HTTP client for local web relay", ("httpx",)),
-    ("packaging", "version / requirement parsing helpers", ("packaging",)),
-    ("openai", "OpenAI-compatible client for local web relay", ("openai",)),
     ("opencv-python", "image preprocessing for local web relay", ("cv2",)),
     ("playwright", "browser automation for web login capture", ("playwright",)),
-    ("pydantic", "data validation for local web relay", ("pydantic",)),
-    ("pydantic-settings", "settings loader for local web relay", ("pydantic_settings",)),
     ("requests", "HTTP client", ("requests",)),
     ("qrcode", "QR code generation for music login", ("qrcode",)),
-    ("sse-starlette", "SSE streaming for local web relay", ("sse_starlette",)),
     ("mutagen", "local audio metadata parsing", ("mutagen",)),
     ("jieba-fast", "compiled Chinese tokenizer for genie-tts", ("jieba_fast",)),
     ("opencc-python-reimplemented", "Chinese script conversion for the ONNX text frontend", ("opencc",)),
@@ -62,7 +55,6 @@ DEPENDENCIES = [
     ("pywin32", "Windows COM bridge (win32com/pythoncom)", ("pythoncom", "win32com")),
     ("sounddevice", "microphone capture for speech-to-text", ("sounddevice",)),
     ("webrtcvad-wheels", "lightweight speech endpoint detection", ("webrtcvad",)),
-    ("uvicorn", "ASGI server for local web relay", ("uvicorn",)),
     ("vosk", "offline speech-to-text engine", ("vosk",)),
 ]
 

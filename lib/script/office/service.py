@@ -446,7 +446,7 @@ class OfficeService:
         if task is None or not prompt:
             return False
         if not str(task.get("session_id", "")).strip():
-            self._set_error("该历史任务没有可恢复的 DSH 会话")
+            self._set_error("该历史任务没有可恢复的办公后端会话")
             return False
         self._store.add_message(task_id, "user", prompt)
         self._store.update(

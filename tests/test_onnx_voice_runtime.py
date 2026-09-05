@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -12,6 +13,7 @@ from lib.script.gsvmove.onnx_runtime import (
     _run_cuda_session,
     _configure_hybrid_provider,
     _configure_mixed_language_frontend,
+    _load_isolated_genie_frontend,
     _split_auto_language_text,
     normalize_language,
 )
@@ -59,6 +61,87 @@ class AimisiOnnx:
 
 
 class OnnxVoiceRuntimeTests(unittest.TestCase):
+    @staticmethod
+    def _make_fake_genie(site: Path, version: str = "2.0.2") -> Path:
+        package = site / "genie_tts"
+        for relative in (
+            "Core/Resources.py",
+            "G2P/SymbolsV2.py",
+            "G2P/Chinese/ChineseG2P.py",
+            "G2P/English/EnglishG2P.py",
+        ):
+            path = package / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("", encoding="utf-8")
+        (package / "__init__.py").write_text(
+            "raise RuntimeError('GUI init must never execute')\n",
+            encoding="utf-8",
+        )
+        (package / "GetPhonesAndBert.py").write_text(
+            "def get_phones_and_bert(text, language='Chinese'):\n"
+            "    return text, language\n",
+            encoding="utf-8",
+        )
+        (package / "ModelManager.py").write_text(
+            "class _Manager:\n"
+            "    def load_roberta_model(self):\n"
+            "        return True\n"
+            "model_manager = _Manager()\n",
+            encoding="utf-8",
+        )
+        dist = site / f"genie_tts-{version}.dist-info"
+        dist.mkdir(parents=True, exist_ok=True)
+        (dist / "METADATA").write_text(
+            f"Metadata-Version: 2.1\nName: genie-tts\nVersion: {version}\n",
+            encoding="utf-8",
+        )
+        return package
+
+    @staticmethod
+    def _make_fake_common(root: Path) -> Path:
+        common = root / "common"
+        for relative in (
+            "G2P/EnglishG2P/checkpoint20.npz",
+            "G2P/ChineseG2P/opencpop-strict.txt",
+            "chinese-hubert-base/chinese-hubert-base.onnx",
+            "speaker_encoder.onnx",
+            "RoBERTa/RoBERTa.onnx",
+            "RoBERTa/roberta_tokenizer/tokenizer.json",
+        ):
+            path = common / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"x")
+        return common
+
+    def test_genie_loader_skips_side_effectful_init_and_restores_modules(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            site = root / "site-packages"
+            self._make_fake_genie(site)
+            common = self._make_fake_common(root)
+            sentinel = object()
+            with patch.dict(sys.modules, {"genie_tts": sentinel}), patch.object(
+                runtime_module, "_genie_search_roots", return_value=(site,)
+            ):
+                frontend, cleanup = _load_isolated_genie_frontend(common)
+                self.assertEqual(frontend("hello", "English"), ("hello", "English"))
+                self.assertIsNot(sys.modules["genie_tts"], sentinel)
+                cleanup()
+                self.assertIs(sys.modules.get("genie_tts"), sentinel)
+
+    def test_genie_loader_rejects_wrong_pinned_version(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            site = root / "site-packages"
+            self._make_fake_genie(site, version="2.0.1")
+            common = self._make_fake_common(root)
+            with patch.object(runtime_module, "_genie_search_roots", return_value=(site,)):
+                with self.assertRaisesRegex(
+                    OnnxVoiceRuntimeError,
+                    r"genie-tts==2\.0\.2.*2\.0\.1",
+                ):
+                    _load_isolated_genie_frontend(common)
+
     def test_cuda_iobinding_keeps_device_outputs_and_cpu_stop_flag(self):
         class FakeBinding:
             def __init__(self):

@@ -13,6 +13,7 @@ export const inject = ["agents", "sessions", "systemPrompt"];
 const PROTOCOL = "fsv-office/1";
 const PROVIDER = "fsv-office";
 const API_KEY_REF = "FSV_OFFICE_API_KEY";
+const EXIT_GRACE_MS = 1000;
 const EFFORTS = new Set(["off", "high", "max"]);
 const EFFORT_STRATEGIES = {
   off: "Use a direct execution strategy. Keep planning lightweight and perform only the checks needed for a correct, safe result.",
@@ -65,6 +66,11 @@ export function apply(ctx) {
 
   if (typeof exit !== "function") {
     throw new Error("fsv-office-bridge requires the launcher appExit service");
+  }
+
+  function requestExit(code) {
+    setTimeout(() => process.exit(code), EXIT_GRACE_MS);
+    exit(code);
   }
 
   const findTaskForAgent = (agent) => sessionTasks.get(String(agent?.session?.id ?? ""));
@@ -281,8 +287,8 @@ export function apply(ctx) {
     sessionTasks.clear();
     emit("shutdown_complete");
     input.close();
-    process.stdin.pause();
-    exit(0);
+    process.stdin.destroy();
+    requestExit(0);
   }
 
   function dispatch(command) {
@@ -329,7 +335,7 @@ export function apply(ctx) {
   void start().catch((error) => {
     emit("fatal", { message: errorText(error) });
     input.close();
-    process.stdin.pause();
-    exit(1);
+    process.stdin.destroy();
+    requestExit(1);
   });
 }

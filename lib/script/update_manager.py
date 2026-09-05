@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import tempfile
@@ -166,25 +167,38 @@ def _isoformat(dt: datetime) -> str:
     return text.replace("+00:00", "Z")
 
 
-def _select_zip_asset(assets: object, tag: str = "") -> dict | None:
+def _select_installer_asset(assets: object, tag: str = "") -> dict | None:
+    """Select only a signed native offline installer asset.
+
+    Source archives and the retired ``-green.zip`` package are deliberately
+    rejected.  Falling back to a provider's ``zipball_url`` would silently
+    turn an update into a source checkout, so callers must fail closed when no
+    EXE is attached.
+    """
     if not isinstance(assets, list):
         return None
     candidates: list[dict] = []
+    exact_name = f"flying snow velvet-{str(tag or '').strip()}-offline-installer.exe".replace(" ", "").lower()
+    pattern = re.compile(r"^flyingsnowvelvet-(?:.+-)?offline-installer\.exe$", re.IGNORECASE)
     for asset in assets:
         if not isinstance(asset, dict):
             continue
         name = str(asset.get("name") or "").strip()
         url = str(asset.get("browser_download_url") or "").strip()
-        lower_name = name.lower()
-        if lower_name.endswith(".zip") and not lower_name.endswith("-green.zip") and url:
+        lower_name = name.lower().replace(" ", "")
+        if pattern.match(lower_name) and url:
             candidates.append(asset)
     if not candidates:
         return None
-    generated_name = f"{str(tag or '').strip()}.zip".lower()
     for asset in candidates:
-        if str(asset.get("name") or "").strip().lower() != generated_name:
+        if str(asset.get("name") or "").strip().lower().replace(" ", "") == exact_name:
             return asset
-    return candidates[0]
+    return sorted(candidates, key=lambda item: str(item.get("name") or "").lower())[0]
+
+
+# Backward-compatible alias for integrations that imported the old private
+# selector.  It intentionally never returns ZIP assets anymore.
+_select_zip_asset = _select_installer_asset
 
 
 def _extract_gitee_attachments(page_data: object) -> list[dict]:
@@ -346,21 +360,21 @@ class UpdateManager(_UpdateBase):
     ) -> UpdateResult:
         from lib.script.app.update_installer import (
             launch_update_installer,
-            validate_update_archive,
+            validate_update_installer,
         )
 
         self._progress(0, 0, f"开始下载桌宠包 {release.asset_name}...")
         staging_dir = _STAGING_ROOT / uuid.uuid4().hex
-        archive_name = Path(release.asset_name or "release.zip").name
-        if not archive_name.lower().endswith(".zip"):
-            archive_name += ".zip"
-        archive_path = staging_dir / archive_name
+        installer_name = Path(release.asset_name or "FlyingSnowVelvet-Offline-Installer.exe").name
+        if not installer_name.lower().endswith(".exe"):
+            raise UpdateError("更新源未提供离线安装器 EXE")
+        archive_path = staging_dir / installer_name
         partial_path = archive_path.with_suffix(archive_path.suffix + ".part")
         try:
             self._download_release(release, partial_path)
             partial_path.replace(archive_path)
             self._progress(0, 0, "下载完成，正在校验更新包...")
-            validate_update_archive(archive_path)
+            validate_update_installer(archive_path)
             release_payload = {
                 "tag": release.tag,
                 "published_at": _isoformat(release.published_at),
@@ -388,11 +402,7 @@ class UpdateManager(_UpdateBase):
             release.source,
         )
         reason = "install_scheduled" if launch_installer else "download_ready"
-        message = (
-            "更新包已就绪，退出后将自动覆盖安装并重启。"
-            if launch_installer
-            else "更新包已下载并通过校验，请选择重启模式。"
-        )
+        message = "离线安装器已启动，桌宠将在退出后完成更新。" if launch_installer else "离线安装器已下载并通过校验，请启动安装器完成更新。"
         self._progress(1, 1, message)
         return UpdateResult(
             True,
@@ -408,7 +418,7 @@ class UpdateManager(_UpdateBase):
         *,
         restart_command: list[str] | None = None,
     ) -> UpdateResult:
-        """将已下载的更新包交给 helper，供 UI 在选择重启模式后调用。"""
+        """将已下载的离线 EXE 交给原生安装器。"""
         from lib.script.app.update_installer import launch_update_installer
 
         archive_path = update.archive_path
@@ -495,13 +505,11 @@ class UpdateManager(_UpdateBase):
         if not isinstance(data, dict) or bool(data.get("draft")):
             raise UpdateError("GitHub PACK release 不存在或尚未发布")
         tag = str(data.get("tag_name") or "PACK")
-        asset = _select_zip_asset(data.get("assets"), tag)
-        download_url = str(
-            (asset or {}).get("browser_download_url") or data.get("zipball_url") or ""
-        ).strip()
+        asset = _select_installer_asset(data.get("assets"), tag)
+        download_url = str((asset or {}).get("browser_download_url") or "").strip()
         if not download_url:
-            raise UpdateError("GitHub PACK release 缺少 ZIP 下载地址")
-        asset_name = str((asset or {}).get("name") or "FlyingSnowVelvet-PACK.zip")
+            raise UpdateError("GitHub PACK release 缺少离线安装器 EXE")
+        asset_name = str((asset or {}).get("name") or "FlyingSnowVelvet-PACK-Offline-Installer.exe")
         updated_at = str(data.get("updated_at") or data.get("published_at") or data.get("created_at") or "")
         ref_data = UpdateManager._fetch_release_json(_GITHUB_PACK_REF_API, "GitHub PACK tag")
         ref_object = ref_data.get("object") if isinstance(ref_data, dict) else None
@@ -538,16 +546,16 @@ class UpdateManager(_UpdateBase):
         except UpdateError:
             pass
         api_assets = data.get("assets") if isinstance(data.get("assets"), list) else []
-        asset = _select_zip_asset([*attachments, *api_assets], tag)
+        asset = _select_installer_asset([*attachments, *api_assets], tag)
         if asset is None:
-            raise UpdateError("Gitee 最新包 release 缺少 ZIP 下载地址")
+            raise UpdateError("Gitee 最新包 release 缺少离线安装器 EXE")
         published_text = str(data.get("updated_at") or data.get("created_at") or "")
         revision = page_revision or str(data.get("target_commitish") or "")
         download_url = str(asset.get("browser_download_url") or "")
         return ReleaseInfo(
             tag=tag,
             published_at=_parse_datetime(published_text),
-            asset_name=str(asset.get("name") or "Aemeath-latest.zip"),
+            asset_name=str(asset.get("name") or "FlyingSnowVelvet-latest-Offline-Installer.exe"),
             download_url=download_url,
             source="Gitee",
             revision=revision or f"release:{data.get('id', '')}:{published_text}",
@@ -617,8 +625,12 @@ class UpdateManager(_UpdateBase):
                             self._progress(
                                 downloaded,
                                 total_bytes,
-                                "正在下载新的分发包...",
+                                f"正在下载离线安装器… {downloaded // (1024 * 1024)} MB",
                             )
+                    if total_bytes and downloaded != total_bytes:
+                        raise UpdateError(
+                            f"下载内容长度不完整：{downloaded}/{total_bytes} bytes"
+                        )
                 return
             except requests.RequestException as exc:
                 last_error = exc

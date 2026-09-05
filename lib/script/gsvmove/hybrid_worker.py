@@ -9,6 +9,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 import traceback
 import uuid
 from collections import deque
@@ -19,23 +20,77 @@ class VoiceWorkerError(RuntimeError):
     pass
 
 
+def _site_packages_for_python(python_path: Path) -> Path | None:
+    """Resolve a conventional Lib/site-packages directory for an interpreter."""
+    executable = Path(python_path).resolve()
+    roots = [executable.parent]
+    if executable.parent.name.casefold() in {"scripts", "bin"}:
+        roots.insert(0, executable.parent.parent)
+    for root in roots:
+        candidate = root / "Lib" / "site-packages"
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
+def _bundled_python_path(app_root: Path) -> Path | None:
+    candidate = Path(app_root).resolve().parent / "runtime" / "python311" / "python.exe"
+    return candidate if candidate.is_file() else None
+
+
 def _get_cuda_nvidia_bin_dirs(python_path: Path) -> tuple[Path, ...]:
     """Return pip-installed NVIDIA DLL directories for an isolated venv."""
-    site_packages = Path(python_path).resolve().parent.parent / "Lib" / "site-packages"
+    runtime_root = Path(python_path).resolve().parent.parent
+    bundle_dir = _get_cuda_bundle_bin_dir(python_path)
+    site_packages = runtime_root / "Lib" / "site-packages"
     nvidia_root = site_packages / "nvidia"
     try:
-        return tuple(
-            sorted(
-                path
-                for path in nvidia_root.glob("*/bin")
-                if path.is_dir()
-            )
-        )
+        directories = [
+            path
+            for path in sorted(nvidia_root.glob("*/bin"))
+            if path.is_dir()
+        ]
     except OSError:
-        return ()
+        directories = []
+    if bundle_dir is not None:
+        directories.insert(0, bundle_dir)
+    result = []
+    seen = set()
+    for directory in directories:
+        key = os.path.normcase(str(directory))
+        if key not in seen:
+            seen.add(key)
+            result.append(directory)
+    return tuple(result)
 
 
-def _preload_onnxruntime_dlls(provider: str, runtime_module=None) -> None:
+def _get_cuda_bundle_bin_dir(python_path: Path) -> Path | None:
+    """Read the installed bundle marker and return its safe DLL directory."""
+    runtime_root = Path(python_path).resolve().parent.parent
+    marker_path = runtime_root / "runtime.json"
+    try:
+        payload = json.loads(marker_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict) or payload.get("source") != "bundle":
+        return None
+    relative = str(payload.get("dll_directory") or "").replace("\\", "/").strip()
+    if not relative or relative.startswith("/") or ":" in relative.split("/", 1)[0]:
+        return None
+    candidate = (runtime_root / Path(*relative.split("/"))).resolve()
+    try:
+        candidate.relative_to(runtime_root)
+    except ValueError:
+        return None
+    return candidate if candidate.is_dir() else None
+
+
+def _preload_onnxruntime_dlls(
+    provider: str,
+    runtime_module=None,
+    *,
+    dll_directory: Path | None = None,
+) -> None:
     """Load CUDA DLLs before importing the project or creating model sessions."""
     if provider != "cuda":
         return
@@ -43,7 +98,15 @@ def _preload_onnxruntime_dlls(provider: str, runtime_module=None) -> None:
         import onnxruntime as runtime_module
     preload = getattr(runtime_module, "preload_dlls", None)
     if callable(preload):
-        preload()
+        directory = dll_directory
+        if directory is None:
+            configured = str(os.environ.get("AEMEATH_CUDA_DLL_DIR", "") or "").strip()
+            if configured:
+                directory = Path(configured)
+        if directory is not None and Path(directory).is_dir():
+            preload(directory=str(directory))
+        else:
+            preload()
 
 
 def _terminate_worker_process_tree(process: subprocess.Popen) -> None:
@@ -87,6 +150,8 @@ class VoiceWorkerRuntime:
         provider: str,
         python_path: Path,
         isolate_user_site: bool = False,
+        module_overlay: Path | tuple[Path, ...] | list[Path] | None = None,
+        cancel_event: threading.Event | None = None,
     ) -> None:
         if provider not in {"cpu", "hybrid", "cuda"}:
             raise ValueError(f"不支持的 ONNX Worker Provider：{provider}")
@@ -98,15 +163,57 @@ class VoiceWorkerRuntime:
         self._messages: Queue[dict | None] = Queue()
         self._stderr_tail: deque[str] = deque(maxlen=80)
         self._closed = False
+        self._cancel_event = cancel_event
 
         worker_script = Path(__file__).resolve()
         project_root = worker_script.parents[3]
+        if module_overlay is None:
+            overlays: tuple[Path, ...] = ()
+        elif isinstance(module_overlay, (tuple, list)):
+            overlays = tuple(Path(item).resolve() for item in module_overlay)
+        else:
+            overlays = (Path(module_overlay).resolve(),)
+        for overlay in overlays:
+            if not overlay.is_dir():
+                raise VoiceWorkerError(f"ONNX Worker 覆盖层不存在：{overlay}")
+
+        # Make the runtime self-contained: DirectML's overlay comes first,
+        # followed by the package's common site-packages and project code.
+        site_paths: list[Path] = list(overlays)
+        for candidate in (
+            _site_packages_for_python(Path(python_path)),
+            project_root.parent / "runtime" / "python311" / "Lib" / "site-packages",
+            _site_packages_for_python(Path(sys.executable)),
+        ):
+            if candidate is not None:
+                candidate = Path(candidate).resolve()
+                if candidate.is_dir() and candidate not in site_paths:
+                    site_paths.append(candidate)
         env = os.environ.copy()
-        env["PYTHONPATH"] = str(project_root)
+        for variable in (
+            "PYTHONHOME",
+            "PYTHONPATH",
+            "PYTHONSTARTUP",
+            "PYTHONUSERBASE",
+            "VIRTUAL_ENV",
+            "CONDA_PREFIX",
+            "CONDA_DEFAULT_ENV",
+            "NODE_OPTIONS",
+            "NODE_PATH",
+            "NPM_CONFIG_PREFIX",
+            "DSH_HOME",
+            "DSH_RUNTIME_ROOT",
+            "FSV_OFFICE_HOME",
+            "FSV_OFFICE_RUNTIME",
+            "OPENSSL_CONF",
+            "SSL_CERT_DIR",
+            "SSL_CERT_FILE",
+            "PLAYWRIGHT_BROWSERS_PATH",
+        ):
+            env.pop(variable, None)
         env["PYTHONUTF8"] = "1"
         env["PYTHONIOENCODING"] = "utf-8"
-        if isolate_user_site:
-            env["PYTHONNOUSERSITE"] = "1"
+        env["PYTHONNOUSERSITE"] = "1"
         path_entries = [
             entry
             for entry in str(env.get("PATH") or "").split(os.pathsep)
@@ -122,11 +229,29 @@ class VoiceWorkerRuntime:
             getattr(subprocess, "CREATE_NO_WINDOW", 0)
             | getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0)
         )
+        bootstrap = (
+            "import json,runpy,sys;"
+            "project,paths,worker=sys.argv[1:4];"
+            "sys.path[:0]=[path for path in json.loads(paths) if path];"
+            "sys.path.insert(len(json.loads(paths)),project);"
+            "sys.argv=[worker,*sys.argv[4:]];"
+            "runpy.run_path(worker,run_name='__main__')"
+        )
+        bundled_python = _bundled_python_path(project_root)
+        if provider == "cpu" and bundled_python is not None:
+            python_path = bundled_python
         try:
             self._process = subprocess.Popen(
                 [
                     str(python_path),
+                    "-I",
                     "-u",
+                    "-X",
+                    "utf8",
+                    "-c",
+                    bootstrap,
+                    str(project_root),
+                    json.dumps([str(path) for path in site_paths], ensure_ascii=False),
                     str(worker_script),
                     "--worker",
                     "--provider",
@@ -203,12 +328,20 @@ class VoiceWorkerRuntime:
         return " | ".join(tuple(self._stderr_tail)[-6:])
 
     def _next_message(self, timeout: float) -> dict:
-        try:
-            message = self._messages.get(timeout=timeout)
-        except Empty as exc:
-            detail = self._error_detail()
-            suffix = f"：{detail}" if detail else ""
-            raise VoiceWorkerError(f"ONNX Worker 响应超时{suffix}") from exc
+        deadline = time.monotonic() + max(0.1, float(timeout))
+        while True:
+            if self._cancel_event is not None and self._cancel_event.is_set():
+                raise VoiceWorkerError("ONNX Worker 操作已取消")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                detail = self._error_detail()
+                suffix = f"：{detail}" if detail else ""
+                raise VoiceWorkerError(f"ONNX Worker 响应超时{suffix}")
+            try:
+                message = self._messages.get(timeout=min(0.2, remaining))
+                break
+            except Empty:
+                continue
         if message is None:
             code = self._process.poll()
             detail = self._error_detail()
@@ -289,7 +422,8 @@ class CpuVoiceWorkerRuntime(VoiceWorkerRuntime):
 class HybridVoiceWorkerRuntime(VoiceWorkerRuntime):
     def __init__(self, package_root: Path, output_root: Path) -> None:
         from config.voice_runtime import (
-            get_directml_python_path,
+            get_directml_worker_python_path,
+            get_directml_worker_site_packages,
             is_directml_runtime_ready,
         )
 
@@ -299,8 +433,9 @@ class HybridVoiceWorkerRuntime(VoiceWorkerRuntime):
             package_root,
             output_root,
             provider="hybrid",
-            python_path=get_directml_python_path(),
+            python_path=get_directml_worker_python_path(),
             isolate_user_site=True,
+            module_overlay=get_directml_worker_site_packages(),
         )
 
 
@@ -312,7 +447,7 @@ class CudaVoiceWorkerRuntime(VoiceWorkerRuntime):
         )
 
         if not is_cuda_runtime_ready():
-            raise VoiceWorkerError("NVIDIA CUDA 语音运行时未安装，请重新运行安装依赖")
+            raise VoiceWorkerError("NVIDIA CUDA 语音运行时未安装，请在设置中安装N卡推理环境")
         super().__init__(
             package_root,
             output_root,
@@ -345,7 +480,11 @@ def _run_worker(package_root: Path, output_root: Path, provider: str) -> int:
             # Load ORT before project configuration so Qt's bundled DLLs cannot
             # shadow the execution provider's native dependencies.
             import onnxruntime as _onnxruntime_preload
-            _preload_onnxruntime_dlls(provider, _onnxruntime_preload)
+            _preload_onnxruntime_dlls(
+                provider,
+                _onnxruntime_preload,
+                dll_directory=_get_cuda_bundle_bin_dir(Path(sys.executable)),
+            )
 
             from lib.script.gsvmove.onnx_runtime import OnnxVoiceRuntime
 

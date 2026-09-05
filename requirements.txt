@@ -9,7 +9,6 @@ onnx>=1.17
 onnxruntime>=1.22,<2
 opencc-python-reimplemented>=0.1.7,<1
 opencv_python>=4.13.0.92
-packaging>=23.2
 Pillow>=10.2.0
 playwright>=1.50.0
 pycaw>=20181226

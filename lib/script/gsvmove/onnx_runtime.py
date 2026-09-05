@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import gc
+import importlib
+import importlib.machinery
 import importlib.util
 import math
+import os
 import re
 import sys
+import types
 import uuid
 from dataclasses import dataclass
+from email.parser import Parser
 from pathlib import Path
 
 import numpy as np
@@ -28,6 +33,228 @@ class OnnxVoiceRuntimeError(RuntimeError):
 
 
 _HYBRID_CPU_MODEL_NAMES = {"t2s_stage_decoder_fp32.onnx"}
+GENIE_TTS_REQUIRED_VERSION = "2.0.2"
+_GENIE_TTS_MODULE = "genie_tts"
+_GENIE_TTS_REQUIRED_FILES = (
+    "GetPhonesAndBert.py",
+    "ModelManager.py",
+    "Core/Resources.py",
+    "G2P/SymbolsV2.py",
+    "G2P/Chinese/ChineseG2P.py",
+    "G2P/English/EnglishG2P.py",
+)
+_GENIE_RESOURCE_ENV = (
+    "GENIE_DATA_DIR",
+    "English_G2P_DIR",
+    "Chinese_G2P_DIR",
+    "HUBERT_MODEL_DIR",
+    "SV_MODEL",
+    "ROBERTA_MODEL_DIR",
+)
+
+
+def _normalise_distribution_name(value: object) -> str:
+    return re.sub(r"[-_.]+", "-", str(value or "").strip()).casefold()
+
+
+def _python_site_package_roots() -> tuple[Path, ...]:
+    """Return site-package roots belonging to this interpreter first.
+
+    ``-I`` removes PYTHONPATH and user-site entries, but an application started
+    from a regular interpreter can still inherit arbitrary ``sys.path`` items.
+    Prefer the interpreter's own installation so an unrelated genie_tts package
+    cannot silently win package discovery.
+    """
+    roots: list[Path] = []
+    prefixes = (getattr(sys, "prefix", ""), getattr(sys, "base_prefix", ""))
+    executable = Path(sys.executable or "")
+    if executable.name:
+        prefixes += (str(executable.parent), str(executable.parent.parent))
+    for prefix in prefixes:
+        if not prefix:
+            continue
+        base = Path(prefix)
+        candidates = (base / "Lib" / "site-packages", base / "lib" / "site-packages")
+        for candidate in candidates:
+            try:
+                resolved = candidate.resolve()
+            except OSError:
+                resolved = candidate
+            if resolved.is_dir() and resolved not in roots:
+                roots.append(resolved)
+    return tuple(roots)
+
+
+def _genie_search_roots() -> tuple[Path, ...]:
+    roots: list[Path] = list(_python_site_package_roots())
+    for item in sys.path:
+        if not item:
+            continue
+        try:
+            candidate = Path(item).resolve()
+        except (OSError, TypeError, ValueError):
+            continue
+        if candidate.is_dir() and candidate not in roots:
+            roots.append(candidate)
+    return tuple(roots)
+
+
+def _read_genie_distribution(parent: Path) -> tuple[str | None, str | None, Path | None]:
+    """Read genie-tts metadata without importing the package."""
+    try:
+        candidates = sorted(parent.glob("genie_tts-*.dist-info"), key=lambda item: item.name.casefold())
+    except OSError:
+        candidates = []
+    for directory in candidates:
+        metadata_path = directory / "METADATA"
+        try:
+            message = Parser().parsestr(metadata_path.read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            continue
+        name = str(message.get("Name") or "").strip()
+        version = str(message.get("Version") or "").strip()
+        if _normalise_distribution_name(name) == "genie-tts":
+            return name, version, directory
+    return None, None, None
+
+
+def _find_genie_tts_package() -> tuple[Path, str, Path]:
+    """Find a complete, pinned Genie package using the current interpreter."""
+    seen: set[str] = set()
+    diagnostics: list[str] = []
+    for parent in _genie_search_roots():
+        key = os.path.normcase(os.path.abspath(str(parent)))
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            spec = importlib.machinery.PathFinder.find_spec(_GENIE_TTS_MODULE, [str(parent)])
+        except (ImportError, OSError, AttributeError):
+            spec = None
+        locations = tuple(spec.submodule_search_locations or ()) if spec is not None else ()
+        if not locations:
+            continue
+        package_root = Path(locations[0]).resolve()
+        name, version, metadata_dir = _read_genie_distribution(parent)
+        if name is None:
+            diagnostics.append(f"{package_root} (缺少 genie-tts METADATA)")
+            continue
+        if version != GENIE_TTS_REQUIRED_VERSION:
+            diagnostics.append(f"{package_root} ({name} {version or 'unknown'})")
+            continue
+        missing = [item for item in _GENIE_TTS_REQUIRED_FILES if not (package_root / Path(item)).is_file()]
+        if missing:
+            diagnostics.append(f"{package_root} (缺少 {missing[0]})")
+            continue
+        return package_root, version, metadata_dir  # type: ignore[return-value]
+    detail = "; ".join(diagnostics[:4]) or "未找到可搜索的 site-packages"
+    raise OnnxVoiceRuntimeError(
+        "genie-tts==2.0.2 双语文本前端不可用；"
+        f"解释器={sys.executable!r}；检查结果={detail}"
+    )
+
+
+def _make_genie_package_module(package_root: Path) -> types.ModuleType:
+    """Install a package shell without executing its GUI-heavy __init__.py."""
+    package_spec = importlib.machinery.ModuleSpec(
+        _GENIE_TTS_MODULE,
+        loader=None,
+        is_package=True,
+    )
+    package_spec.submodule_search_locations = [str(package_root)]
+    package = types.ModuleType(_GENIE_TTS_MODULE)
+    package.__file__ = str(package_root / "__init__.py")
+    package.__path__ = [str(package_root)]  # type: ignore[attr-defined]
+    package.__package__ = _GENIE_TTS_MODULE
+    package.__spec__ = package_spec
+    package.__version__ = GENIE_TTS_REQUIRED_VERSION
+    return package
+
+
+def _load_isolated_genie_frontend(common_dir: Path):
+    """Load only Genie's bilingual frontend and local resources.
+
+    The published ``genie-tts`` top-level module starts a GUI/server import and
+    is not safe in a headless installer/runtime.  A synthetic package shell
+    lets the two frontend modules use their normal relative imports while
+    avoiding that side effect entirely.
+    """
+    previous_modules = {
+        name: value
+        for name, value in sys.modules.items()
+        if name == _GENIE_TTS_MODULE or name.startswith(_GENIE_TTS_MODULE + ".")
+    }
+    previous_environment = {name: os.environ.get(name) for name in _GENIE_RESOURCE_ENV}
+    root = Path(common_dir).resolve()
+    resource_values = {
+        "GENIE_DATA_DIR": root,
+        "English_G2P_DIR": root / "G2P" / "EnglishG2P",
+        "Chinese_G2P_DIR": root / "G2P" / "ChineseG2P",
+        "HUBERT_MODEL_DIR": root / "chinese-hubert-base",
+        "SV_MODEL": root / "speaker_encoder.onnx",
+        "ROBERTA_MODEL_DIR": root / "RoBERTa",
+    }
+    required_resources = (
+        resource_values["English_G2P_DIR"] / "checkpoint20.npz",
+        resource_values["Chinese_G2P_DIR"] / "opencpop-strict.txt",
+        resource_values["HUBERT_MODEL_DIR"] / "chinese-hubert-base.onnx",
+        resource_values["SV_MODEL"],
+        resource_values["ROBERTA_MODEL_DIR"] / "RoBERTa.onnx",
+        resource_values["ROBERTA_MODEL_DIR"] / "roberta_tokenizer" / "tokenizer.json",
+    )
+    missing_resources = [str(path) for path in required_resources if not path.is_file()]
+    if missing_resources:
+        raise OnnxVoiceRuntimeError(
+            "语音包缺少 Genie 本地资源：" + ", ".join(missing_resources[:3])
+        )
+    try:
+        package_root, _version, _metadata_dir = _find_genie_tts_package()
+        for name in tuple(sys.modules):
+            if name == _GENIE_TTS_MODULE or name.startswith(_GENIE_TTS_MODULE + "."):
+                sys.modules.pop(name, None)
+        for name, value in resource_values.items():
+            os.environ[name] = str(value)
+        sys.modules[_GENIE_TTS_MODULE] = _make_genie_package_module(package_root)
+        frontend_module = importlib.import_module("genie_tts.GetPhonesAndBert")
+        manager_module = importlib.import_module("genie_tts.ModelManager")
+        g2pw_path = root / "G2P" / "G2PW" / "g2pw_frontend.py"
+        if g2pw_path.is_file():
+            adapter_spec = importlib.util.spec_from_file_location("aemeath_g2pw_frontend", g2pw_path)
+            if adapter_spec is None or adapter_spec.loader is None:
+                raise RuntimeError("无法初始化内置 G2PW 前端")
+            adapter = importlib.util.module_from_spec(adapter_spec)
+            adapter_spec.loader.exec_module(adapter)
+            install = getattr(adapter, "install", None)
+            if callable(install):
+                install(root)
+        model_manager = getattr(manager_module, "model_manager", None)
+        if model_manager is None or not callable(getattr(model_manager, "load_roberta_model", None)):
+            raise RuntimeError("Genie ModelManager 不完整")
+        if not model_manager.load_roberta_model():
+            raise RuntimeError("内置 Chinese RoBERTa 模型无法加载")
+        get_phones = getattr(frontend_module, "get_phones_and_bert", None)
+        if not callable(get_phones):
+            raise RuntimeError("Genie 双语前端缺少 get_phones_and_bert")
+    except Exception:
+        for name in tuple(sys.modules):
+            if name == _GENIE_TTS_MODULE or name.startswith(_GENIE_TTS_MODULE + "."):
+                sys.modules.pop(name, None)
+        sys.modules.update(previous_modules)
+        raise
+    finally:
+        for name, value in previous_environment.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+    def cleanup() -> None:
+        for name in tuple(sys.modules):
+            if name == _GENIE_TTS_MODULE or name.startswith(_GENIE_TTS_MODULE + "."):
+                sys.modules.pop(name, None)
+        sys.modules.update(previous_modules)
+
+    return get_phones, cleanup
 
 
 def _run_cuda_session(
@@ -446,8 +673,21 @@ class OnnxVoiceRuntime:
             raise OnnxVoiceRuntimeError("无法加载语音包推理入口")
         module = importlib.util.module_from_spec(spec)
         sys.modules[module_name] = module
+        genie_cleanup = None
         try:
             spec.loader.exec_module(module)
+            # Replace the archive's GUI-heavy loader with the isolated,
+            # metadata-pinned frontend loader.  Test/future lightweight
+            # inference entries that do not expose this hook are left alone.
+            if callable(getattr(module, "load_text_frontend", None)):
+                genie_state: dict[str, object] = {}
+
+                def load_text_frontend(common_dir):
+                    frontend, cleanup = _load_isolated_genie_frontend(Path(common_dir))
+                    genie_state["cleanup"] = cleanup
+                    return frontend
+
+                module.load_text_frontend = load_text_frontend
             providers = (
                 _configure_hybrid_provider(module)
                 if provider == "hybrid"
@@ -459,7 +699,15 @@ class OnnxVoiceRuntime:
             )
             native_mixed_frontend = _configure_mixed_language_frontend(module)
             engine = module.AimisiOnnx(root, providers)
+            genie_cleanup = genie_state.get("cleanup") if "genie_state" in locals() else None
         except Exception as exc:
+            if callable(locals().get("genie_state", {}).get("cleanup")):
+                genie_cleanup = locals()["genie_state"]["cleanup"]
+            if callable(genie_cleanup):
+                try:
+                    genie_cleanup()
+                except Exception:
+                    pass
             sys.modules.pop(module_name, None)
             detail = str(exc).strip() or repr(exc)
             raise OnnxVoiceRuntimeError(f"ONNX 语音模型加载失败：{detail}") from exc
@@ -471,6 +719,7 @@ class OnnxVoiceRuntime:
         self._module_name = module_name
         self._module = module
         self._engine = engine
+        self._genie_cleanup = genie_cleanup
 
     def synthesize_to_file(self, payload: dict, output_path: Path) -> Path:
         request = OnnxInferenceRequest.from_payload(payload)
@@ -543,5 +792,12 @@ class OnnxVoiceRuntime:
     def close(self) -> None:
         self._engine = None
         self._module = None
+        cleanup = getattr(self, "_genie_cleanup", None)
+        self._genie_cleanup = None
+        if callable(cleanup):
+            try:
+                cleanup()
+            except Exception:
+                pass
         sys.modules.pop(self._module_name, None)
         gc.collect()

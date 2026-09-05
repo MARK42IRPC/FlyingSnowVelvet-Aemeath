@@ -1,0 +1,7 @@
+#include "resource.h"
+
+#ifndef RT_MANIFEST
+#define RT_MANIFEST 24
+#endif
+IDI_INSTALLER ICON "icon.ico"
+1 RT_MANIFEST "installer.manifest"

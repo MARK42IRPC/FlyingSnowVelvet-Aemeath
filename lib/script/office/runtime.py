@@ -21,7 +21,6 @@ logger = get_logger(__name__)
 
 DSH_VERSION = dsh_config.DSH_VERSION
 NODE_VERSION = dsh_config.NODE_VERSION_TEXT
-NPM_VERSION = dsh_config.NPM_VERSION
 PROTOCOL = "fsv-office/1"
 OFFICE_SYSTEM_PROMPT_RESOURCE = Path("resc") / "agent" / "office_system_prompt.txt"
 OFFICE_SKILL_ROOT_RESOURCE = Path("resc") / "agent"
@@ -60,10 +59,29 @@ def bundled_node_executable() -> Path:
     return dsh_config.node_root(project_root()) / "bin" / "node"
 
 
+def is_offline_distribution() -> bool:
+    """Return whether the application is running from an installed payload.
+
+    An installed payload must fail closed when its private Node runtime is
+    missing.  Falling back to a developer machine's ``node.exe`` can make a
+    partially installed package appear healthy while loading incompatible
+    modules from outside the release.
+    """
+    override = str(os.environ.get("FSV_OFFLINE_DISTRIBUTION", "") or "").strip().lower()
+    if override in {"1", "true", "yes", "on"}:
+        return True
+    try:
+        return (project_root().parent / ".fsv-install-root").is_file()
+    except OSError:
+        return False
+
+
 def resolve_node_executable() -> str | None:
     bundled = bundled_node_executable()
     if bundled.is_file():
         return str(bundled)
+    if is_offline_distribution():
+        return None
     system_node = shutil.which("node")
     if not system_node:
         return None
@@ -102,7 +120,7 @@ def runtime_readiness_error() -> str:
     except Exception:
         backend = "dsh"
     if backend != "dsh":
-        return "当前办公后端尚未接入 Open Interpreter，请在 AI 设置中选择 DSH"
+        return "办公后端配置无效，请在 AI 设置中选择 DSH"
     source_error = dsh_config.runtime_source_error(project_root())
     if source_error:
         return f"{source_error}，请重新解压程序包"
@@ -116,10 +134,6 @@ def runtime_readiness_error() -> str:
     installed_error = dsh_config.installed_runtime_error(project_root())
     if installed_error:
         return f"{installed_error}，请重新运行“安装依赖.bat”"
-    if bundled_node_executable().is_file():
-        npm_cli = dsh_config.npm_cli_path(project_root())
-        if not npm_cli.is_file():
-            return f"npm {NPM_VERSION} 运行时不完整，请重新运行“安装依赖.bat”"
     return ""
 
 
@@ -130,9 +144,55 @@ def _hidden_process_kwargs() -> dict:
     return {"creationflags": flags} if flags else {}
 
 
+def _isolated_node_environment() -> dict[str, str]:
+    """Keep ordinary command discovery while rejecting inherited Node hooks."""
+    blocked_prefixes = (
+        "DSH_",
+        "FSV_OFFICE_",
+        "NPM_CONFIG_",
+        "NODE_",
+        "NVM_",
+        "PNPM_",
+        "YARN_",
+        "VOLTA_",
+    )
+    blocked_names = {
+        "OPENSSL_CONF",
+        "SSL_CERT_DIR",
+        "SSL_CERT_FILE",
+        "COREPACK_HOME",
+    }
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if key.upper() != "PATH"
+        and key.upper() not in blocked_names
+        and not key.upper().startswith(blocked_prefixes)
+    }
+    bundled = bundled_node_executable()
+    if os.name == "nt":
+        windows_root = os.environ.get("SystemRoot", r"C:\\Windows")
+        # Keep only the private Node directory and Windows loader paths.  When
+        # the private executable is absent, retain the system paths solely for
+        # DLL resolution; resolve_node_executable() has already failed closed
+        # and the caller must not start an external Node process.
+        environment["PATH"] = os.pathsep.join(
+            item for item in (
+                str(bundled.parent) if bundled.is_file() else "",
+                str(Path(windows_root) / "System32"),
+                windows_root,
+            ) if item
+        )
+    else:
+        environment["PATH"] = os.environ.get("PATH", "")
+    environment["NODE_ENV"] = "production"
+    return environment
+
+
 class DshOfficeRuntime:
     def __init__(self, event_callback: Callable[[dict], None]) -> None:
         self._event_callback = event_callback
+        self._lifecycle_lock = threading.Lock()
         self._lock = threading.RLock()
         self._write_lock = threading.Lock()
         self._process: subprocess.Popen | None = None
@@ -148,6 +208,15 @@ class DshOfficeRuntime:
             return self._process is not None and self._process.poll() is None
 
     def start(self, *, workspace: Path, base_url: str, model: str, api_key: str) -> None:
+        with self._lifecycle_lock:
+            self._start(
+                workspace=workspace,
+                base_url=base_url,
+                model=model,
+                api_key=api_key,
+            )
+
+    def _start(self, *, workspace: Path, base_url: str, model: str, api_key: str) -> None:
         with self._lock:
             if self._closed:
                 raise RuntimeError("DSH 办公运行时已清理")
@@ -168,51 +237,61 @@ class DshOfficeRuntime:
         with self._lock:
             if self._closed:
                 raise RuntimeError("DSH 办公运行时已清理")
-            if self.running and self._fingerprint == fingerprint:
-                self.send({"type": "configure", "apiKey": api_key})
-                return
-            if self._process is not None:
-                self._stop_locked()
+            reconfigure = self.running and self._fingerprint == fingerprint
+            should_stop = self._process is not None
+        if reconfigure:
+            self.send({"type": "configure", "apiKey": api_key})
+            return
+        if should_stop:
+            with self._lock:
+                self._cleaning = True
+            self._stop_process()
+
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("DSH 办公运行时已清理")
             self._cleaning = False
-            dsh_home = self._provision_profile()
-            sessions = get_user_state_dir("office", "dsh-sessions")
-            sessions.mkdir(parents=True, exist_ok=True)
-            log_path = get_user_state_dir("office", "dsh-runtime.log")
-            log_path.parent.mkdir(parents=True, exist_ok=True)
-            stderr_handle = log_path.open("a", encoding="utf-8", errors="replace")
-            env = os.environ.copy()
-            env.update({
-                "DSH_HOME": str(dsh_home),
-                "DSH_BUNDLED_SKILL_DIR": str(office_skill_root()),
-                "DSH_TELEMETRY_DISABLED": "1",
-                "FSV_OFFICE_BASE_URL": base_url,
-                "FSV_OFFICE_MODEL": model,
-                "FSV_OFFICE_SESSION_ROOT": str(sessions),
-                "FSV_OFFICE_SYSTEM_PROMPT": system_prompt,
-            })
-            command = [
-                str(resolve_node_executable()),
-                str(dsh_entry_path()),
-                "--profile",
-                "fsv-office",
-            ]
-            try:
-                process = subprocess.Popen(
-                    command,
-                    cwd=str(workspace),
-                    env=env,
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.PIPE,
-                    stderr=stderr_handle,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
-                    bufsize=1,
-                    **_hidden_process_kwargs(),
-                )
-            except Exception:
-                stderr_handle.close()
-                raise
+
+        dsh_home = self._provision_profile()
+        sessions = get_user_state_dir("office", "dsh-sessions")
+        sessions.mkdir(parents=True, exist_ok=True)
+        log_path = get_user_state_dir("office", "dsh-runtime.log")
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        stderr_handle = log_path.open("a", encoding="utf-8", errors="replace")
+        env = _isolated_node_environment()
+        env.update({
+            "DSH_HOME": str(dsh_home),
+            "DSH_BUNDLED_SKILL_DIR": str(office_skill_root()),
+            "DSH_TELEMETRY_DISABLED": "1",
+            "FSV_OFFICE_BASE_URL": base_url,
+            "FSV_OFFICE_MODEL": model,
+            "FSV_OFFICE_SESSION_ROOT": str(sessions),
+            "FSV_OFFICE_SYSTEM_PROMPT": system_prompt,
+        })
+        command = [
+            str(resolve_node_executable()),
+            str(dsh_entry_path()),
+            "--profile",
+            "fsv-office",
+        ]
+        try:
+            process = subprocess.Popen(
+                command,
+                cwd=str(workspace),
+                env=env,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=stderr_handle,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                bufsize=1,
+                **_hidden_process_kwargs(),
+            )
+        except Exception:
+            stderr_handle.close()
+            raise
+        with self._lock:
             self._process = process
             self._stderr_handle = stderr_handle
             self._fingerprint = fingerprint
@@ -251,7 +330,13 @@ class DshOfficeRuntime:
                     logger.debug("[DshOfficeRuntime] Ignored non-bridge JSON output")
                     continue
                 self._event_callback(payload)
+                if payload.get("type") == "shutdown_complete" and self._cleaning:
+                    break
         finally:
+            try:
+                stream.close()
+            except (OSError, ValueError):
+                pass
             return_code = process.poll()
             with self._lock:
                 owned = self._process is process
@@ -283,15 +368,17 @@ class DshOfficeRuntime:
         return dsh_home
 
     def cleanup(self) -> None:
-        with self._lock:
-            if self._closed and self._process is None:
-                return
-            self._closed = True
-            self._cleaning = True
-            self._stop_locked()
+        with self._lifecycle_lock:
+            with self._lock:
+                if self._closed and self._process is None:
+                    return
+                self._closed = True
+                self._cleaning = True
+            self._stop_process()
 
-    def _stop_locked(self) -> None:
-        process = self._process
+    def _stop_process(self) -> None:
+        with self._lock:
+            process = self._process
         if process is None:
             return
         if process.poll() is None:
@@ -300,9 +387,12 @@ class DshOfficeRuntime:
                 process.wait(timeout=3)
             except (RuntimeError, subprocess.TimeoutExpired):
                 self._terminate_process_tree(process)
-        self._process = None
-        self._fingerprint = None
-        handle, self._stderr_handle = self._stderr_handle, None
+        with self._lock:
+            if self._process is not process:
+                return
+            self._process = None
+            self._fingerprint = None
+            handle, self._stderr_handle = self._stderr_handle, None
         if handle is not None:
             handle.close()
 
@@ -320,7 +410,12 @@ class DshOfficeRuntime:
                     check=False,
                     **_hidden_process_kwargs(),
                 )
-                return
+                try:
+                    process.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    pass
+                if process.poll() is not None:
+                    return
             except (OSError, subprocess.SubprocessError):
                 pass
         try:

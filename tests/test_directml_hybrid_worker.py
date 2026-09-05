@@ -12,8 +12,10 @@ from config import voice_runtime
 from lib.script.gsvmove import service as service_module
 from lib.script.gsvmove.hybrid_worker import (
     CpuVoiceWorkerRuntime,
+    HybridVoiceWorkerRuntime,
     VoiceWorkerRuntime,
     _get_cuda_nvidia_bin_dirs,
+    _get_cuda_bundle_bin_dir,
     _preload_onnxruntime_dlls,
     _resolve_worker_output,
     _terminate_worker_process_tree,
@@ -29,6 +31,30 @@ class DirectMLHybridWorkerTests(unittest.TestCase):
         _preload_onnxruntime_dlls("cuda", runtime_module)
 
         runtime_module.preload_dlls.assert_called_once_with()
+
+    def test_cuda_bundle_preload_uses_marker_dll_directory(self):
+        runtime_module = Mock()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            python_path = root / "Scripts" / "python.exe"
+            dll_dir = root / "Lib" / "site-packages" / "aemeath_cuda_runtime" / "cuda" / "bin"
+            dll_dir.mkdir(parents=True)
+            (root / "runtime.json").write_text(
+                json.dumps(
+                    {
+                        "source": "bundle",
+                        "dll_directory": "Lib/site-packages/aemeath_cuda_runtime/cuda/bin",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            self.assertEqual(_get_cuda_bundle_bin_dir(python_path), dll_dir)
+            _preload_onnxruntime_dlls(
+                "cuda",
+                runtime_module,
+                dll_directory=dll_dir,
+            )
+        runtime_module.preload_dlls.assert_called_once_with(directory=str(dll_dir))
 
     def test_cuda_worker_discovers_nvidia_bin_directories(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -86,6 +112,55 @@ class DirectMLHybridWorkerTests(unittest.TestCase):
         self.assertEqual(
             flags & getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0),
             getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0),
+        )
+        self.assertIn("-I", command)
+        self.assertIn("utf8", command)
+        self.assertEqual(popen.call_args.kwargs["env"]["PYTHONNOUSERSITE"], "1")
+        self.assertNotIn("PYTHONPATH", popen.call_args.kwargs["env"])
+
+    def test_bundled_directml_runtime_marker_is_valid(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app_root = Path(tmpdir) / "install" / "app"
+            runtime_root = voice_runtime.get_bundled_directml_runtime_root(app_root)
+            dll = voice_runtime.get_bundled_directml_dll_path(app_root)
+            python = voice_runtime.get_bundled_python_path(app_root)
+            dll.parent.mkdir(parents=True)
+            python.parent.mkdir(parents=True)
+            dll.write_bytes(b"DirectML")
+            python.write_bytes(b"python")
+            (runtime_root / voice_runtime.DIRECTML_RUNTIME_MARKER_NAME).write_text(
+                json.dumps(
+                    {
+                        "format": voice_runtime.DIRECTML_BUNDLED_FORMAT,
+                        "format_version": voice_runtime.DIRECTML_BUNDLED_FORMAT_VERSION,
+                        "runtime": "onnxruntime-directml",
+                        "version": voice_runtime.DIRECTML_RUNTIME_VERSION,
+                        "abi": voice_runtime.DIRECTML_RUNTIME_ABI,
+                        "provider": "DmlExecutionProvider",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            self.assertTrue(voice_runtime.is_bundled_directml_runtime_ready(app_root))
+
+    def test_hybrid_worker_passes_bundled_overlay_to_isolated_runtime(self):
+        python = Path("C:/release/runtime/python311/python.exe")
+        overlay = Path("C:/release/runtime/onnx-directml/site-packages")
+        with patch("config.voice_runtime.is_directml_runtime_ready", return_value=True), patch(
+            "config.voice_runtime.get_directml_worker_python_path", return_value=python
+        ), patch(
+            "config.voice_runtime.get_directml_worker_site_packages", return_value=overlay
+        ), patch.object(VoiceWorkerRuntime, "__init__", return_value=None) as initialize:
+            HybridVoiceWorkerRuntime(Path("package"), Path("output"))
+
+        initialize.assert_called_once_with(
+            Path("package"),
+            Path("output"),
+            provider="hybrid",
+            python_path=python,
+            isolate_user_site=True,
+            module_overlay=overlay,
         )
 
     def test_cuda_runtime_prepends_nvidia_dll_directories_to_worker_path(self):

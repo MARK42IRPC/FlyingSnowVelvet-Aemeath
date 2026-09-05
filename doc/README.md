@@ -16,8 +16,11 @@
 | 审计 Qt 依赖与绘制后端边界 | [Qt 边界契约](Qt边界契约.md) |
 | 实现 Windows DirectX 后端 | [DirectX 后端实现方案](DX后端实现方案.md) |
 | 修改 ONNX 语音包、安装器或推理桥接 | [ONNX 语音包协议](语音包协议.md) |
+| 修改办公后端、侧车或权限协议 | [维护手册](维护手册.md)“办公模式”与 `tests/test_office_*` |
+| 构建或发布精简 CUDA 语音运行时 | [CUDA 语音运行时构建与发布](CUDA语音运行时构建与发布.md) |
 | 开发或维护游戏扩展包 | [游戏包格式](游戏包格式.md) 与 [游戏模式说明](游戏模式说明.txt) |
 | 准备发行版 | 根目录 `RELEASING.md` |
+| 构建离线发行版 EXE | [发行版 EXE 构建逻辑](发行版EXE构建逻辑.md) |
 
 ## 当前工程入口
 
@@ -28,7 +31,7 @@
 - 用户配置：`config/user_settings.py`、`config/general_user_settings.py`
 - 音乐公开入口：`lib.script.music.get_music_service()`
 - 游戏包服务：`lib/script/gemes/MAIN/game_packages.py`
-- 发布入口：`scripts/package_release.py`、`scripts/package_green_release.py`
+- 发布入口：`scripts/build_offline_distribution.py`、`scripts/build_offline_installer.py`
 - 共享发布逻辑：`scripts/release_common.py`
 - 自动化测试：`tests/test_*.py`
 

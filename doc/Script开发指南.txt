@@ -128,7 +128,8 @@ AI 工具调度位于 `lib/script/tool_dispatcher/dispatcher.py`。`STREAM_FINAL
 
 像 GSV 语音缓存这类自动生成文件，应写入统一 `cache/` 目录，而不是可提交源码目录或 `config/`。
 
-更新后的程序由独立 helper 等待旧进程退出后覆盖安装。更新窗口完成下载后显示“更新依赖并重启桌宠”，普通重启使用 `启动程序.bat`，环境重启使用 `安装依赖.bat`；两个入口都在 helper 成功完成覆盖后执行。
+更新后的程序由原生离线安装器在旧进程退出后完成目录切换。更新窗口下载并校验 EXE 后
+显示“启动安装器并退出”；安装器使用 payload 内隔离 Python/Node 并启动新程序。
 
 九、最小管理器模板
 ```python

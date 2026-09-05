@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
-import subprocess
+import struct
 import tempfile
 import unittest
 import zipfile
@@ -12,13 +13,14 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from lib.script.app.update_installer import (
-    build_bat_restart_command,
-    install_update_archive,
     launch_update_installer,
-    run_update_installer,
-    validate_update_archive,
+    validate_update_installer,
+    OFFLINE_INSTALLER_MAGIC,
+    OFFLINE_INSTALLER_TRAILER_FORMAT,
+    OFFLINE_INSTALLER_TRAILER_SIZE,
 )
 from lib.core.event.center import EventType
+from lib.script.app.windows_command import build_bat_command
 from lib.script.update_manager import (
     InstalledState,
     ReleaseInfo,
@@ -27,11 +29,40 @@ from lib.script.update_manager import (
 )
 
 
-def _write_archive(path: Path, entries: dict[str, str]) -> None:
+def _write_installer(path: Path, entries: dict[str, str]) -> None:
+    buffer = tempfile.SpooledTemporaryFile(max_size=1024 * 1024)
+    try:
+        with zipfile.ZipFile(buffer, "w") as bundle:
+            for name, content in entries.items():
+                bundle.writestr(name, content)
+        buffer.seek(0)
+        archive = buffer.read()
+    finally:
+        buffer.close()
     path.parent.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(path, "w") as bundle:
-        for name, content in entries.items():
-            bundle.writestr(name, content)
+    path.write_bytes(
+        b"MZ" + b"stub" + archive + struct.pack(
+            OFFLINE_INSTALLER_TRAILER_FORMAT,
+            OFFLINE_INSTALLER_MAGIC,
+            len(archive),
+            hashlib.sha256(archive).digest(),
+        )
+    )
+
+
+def _rewrite_trailer(path: Path, *, archive_size=None, digest=None, magic=None) -> None:
+    data = bytearray(path.read_bytes())
+    trailer_offset = len(data) - OFFLINE_INSTALLER_TRAILER_SIZE
+    old_magic, old_size, old_digest = struct.unpack(
+        OFFLINE_INSTALLER_TRAILER_FORMAT, data[trailer_offset:]
+    )
+    data[trailer_offset:] = struct.pack(
+        OFFLINE_INSTALLER_TRAILER_FORMAT,
+        old_magic if magic is None else magic,
+        old_size if archive_size is None else archive_size,
+        old_digest if digest is None else digest,
+    )
+    path.write_bytes(data)
 
 
 class UpdateInstallerTests(unittest.TestCase):
@@ -43,129 +74,83 @@ class UpdateInstallerTests(unittest.TestCase):
             normal.write_text("@echo off\n", encoding="utf-8")
             environment.write_text("@echo off\n", encoding="utf-8")
 
-            normal_command = build_bat_restart_command(root, "normal")
-            environment_command = build_bat_restart_command(root, "environment")
+            normal_command = build_bat_command(root, "normal")
+            environment_command = build_bat_command(root, "environment")
 
             self.assertIn("-EncodedCommand", normal_command)
             normal_script = base64.b64decode(normal_command[-1]).decode("utf-16-le")
             environment_script = base64.b64decode(environment_command[-1]).decode("utf-16-le")
-            self.assertIn(
-                base64.b64encode(str(normal.resolve()).encode("utf-8")).decode("ascii"),
-                normal_script,
-            )
-            self.assertIn(
-                base64.b64encode(str(environment.resolve()).encode("utf-8")).decode("ascii"),
-                environment_script,
-            )
+            self.assertIn("FromBase64String", normal_script)
+            self.assertIn("FromBase64String", environment_script)
 
-    def test_install_overwrites_application_but_preserves_user_data(self):
+    def test_offline_installer_trailer_and_payload_are_validated(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            installer = Path(temp_dir) / "FlyingSnowVelvet-LTS2-Offline-Installer.exe"
+            _write_installer(installer, {".fsv-install-root": "marker\n", "app/readme.txt": "ok"})
+            info = validate_update_installer(installer)
+            self.assertEqual(info.archive_size > 0, True)
+            corrupted = bytearray(installer.read_bytes())
+            corrupted[8] ^= 0x01
+            installer.write_bytes(corrupted)
+            with self.assertRaisesRegex(ValueError, "SHA-256"):
+                validate_update_installer(installer)
+
+    def test_truncated_installer_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            installer = Path(temp_dir) / "truncated.exe"
+            _write_installer(installer, {".fsv-install-root": "marker\n"})
+            installer.write_bytes(installer.read_bytes()[:-1])
+            with self.assertRaises(ValueError):
+                validate_update_installer(installer)
+
+    def test_invalid_magic_and_archive_size_are_rejected(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            project = root / "project"
-            project.mkdir()
-            (project / "app.py").write_text("old", encoding="utf-8")
-            protected = {
-                "resc/user/settings.json": "user",
-                "resc/models/model.bin": "model",
-                "logs/current.log": "log",
-                "py.ini": "python",
-            }
-            for relative, content in protected.items():
-                target = project / relative
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_text(content, encoding="utf-8")
-            archive = root / "update.zip"
-            entries = {"package/app.py": "new", "package/README.md": "readme"}
-            entries.update({f"package/{name}": "replaced" for name in protected})
-            _write_archive(archive, entries)
-            state_path = project / "resc/user/update_state.json"
+            for suffix, mutate in (
+                ("magic", lambda path: _rewrite_trailer(path, magic=b"bad")),
+                ("size", lambda path: _rewrite_trailer(path, archive_size=10**9)),
+            ):
+                installer = root / f"{suffix}.exe"
+                _write_installer(installer, {".fsv-install-root": "marker\n"})
+                mutate(installer)
+                with self.subTest(suffix=suffix), self.assertRaises(ValueError):
+                    validate_update_installer(installer)
 
-            count = install_update_archive(
-                archive,
-                project,
-                state_path,
-                {
-                    "tag": "PACK",
-                    "published_at": "2026-07-29T00:00:00Z",
-                    "revision": "abc",
-                    "source": "GitHub",
-                },
-            )
-
-            self.assertGreater(count, 0)
-            self.assertEqual((project / "app.py").read_text(encoding="utf-8"), "new")
-            for relative, content in protected.items():
-                self.assertEqual((project / relative).read_text(encoding="utf-8"), content)
-            state = json.loads(state_path.read_text(encoding="utf-8"))
-            self.assertEqual(state["revision"], "abc")
-
-    def test_archive_path_traversal_is_rejected(self):
+    def test_corrupt_zip_is_rejected_after_hash_matches(self):
         with tempfile.TemporaryDirectory() as temp_dir:
-            archive = Path(temp_dir) / "unsafe.zip"
-            _write_archive(archive, {"../outside.txt": "bad"})
-            with self.assertRaisesRegex(ValueError, "不安全路径"):
-                validate_update_archive(archive)
-
-    @patch("lib.script.app.update_installer._write_update_log")
-    @patch("lib.script.app.update_installer._is_process_running", return_value=True)
-    @patch("lib.script.app.update_installer.install_update_archive")
-    @patch("lib.script.app.update_installer.subprocess.Popen")
-    def test_parent_timeout_neither_installs_nor_restarts(
-        self, popen, install, _running, _log
-    ):
-        payload = {
-            "project_root": "C:/app",
-            "archive_path": "C:/temp/update.zip",
-            "state_path": "C:/app/resc/user/update_state.json",
-            "parent_pid": 123,
-            "restart_command": ["python", "app.py"],
-            "release": {},
-        }
-        self.assertEqual(run_update_installer(payload, max_wait=0), 2)
-        install.assert_not_called()
-        popen.assert_not_called()
-
-    @patch("lib.script.app.update_installer.shutil.rmtree")
-    @patch("lib.script.app.update_installer._write_update_log")
-    @patch("lib.script.app.update_installer._is_process_running", return_value=False)
-    @patch("lib.script.app.update_installer.install_update_archive", return_value=10)
-    @patch("lib.script.app.update_installer.subprocess.Popen")
-    def test_successful_install_restarts_new_application(
-        self, popen, install, _running, _log, _rmtree
-    ):
-        popen.return_value.pid = 456
-        payload = {
-            "project_root": "C:/app",
-            "archive_path": "C:/temp/update.zip",
-            "state_path": "C:/app/resc/user/update_state.json",
-            "parent_pid": 123,
-            "restart_command": ["python", "app.py"],
-            "release": {"tag": "PACK"},
-        }
-        self.assertEqual(run_update_installer(payload), 0)
-        install.assert_called_once()
-        self.assertEqual(popen.call_args.args[0], ["python", "app.py"])
+            installer = Path(temp_dir) / "corrupt.exe"
+            _write_installer(installer, {".fsv-install-root": "marker\n"})
+            data = bytearray(installer.read_bytes())
+            trailer_offset = len(data) - OFFLINE_INSTALLER_TRAILER_SIZE
+            _, archive_size, _ = struct.unpack(
+                OFFLINE_INSTALLER_TRAILER_FORMAT, data[trailer_offset:]
+            )
+            archive_offset = trailer_offset - archive_size
+            data[archive_offset] ^= 0xFF
+            digest = hashlib.sha256(data[archive_offset:trailer_offset]).digest()
+            data[trailer_offset:] = struct.pack(
+                OFFLINE_INSTALLER_TRAILER_FORMAT,
+                OFFLINE_INSTALLER_MAGIC,
+                archive_size,
+                digest,
+            )
+            installer.write_bytes(data)
+            with self.assertRaisesRegex(ValueError, "ZIP|损坏"):
+                validate_update_installer(installer)
 
     @patch("lib.script.app.update_installer.subprocess.Popen")
-    @patch("lib.script.app.update_installer.build_restart_command", return_value=["python", "app.py"])
-    def test_launch_uses_dedicated_update_helper(self, _command, popen):
+    def test_launch_uses_native_installer_and_pending_state(self, popen):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            archive = root / "stage/update.zip"
-            archive.parent.mkdir()
-            archive.write_bytes(b"zip")
-            launch_update_installer(
-                archive,
-                root,
-                root / "state.json",
-                {"tag": "PACK"},
-            )
+            installer = root / "stage/FlyingSnowVelvet-LTS2-Offline-Installer.exe"
+            installer.parent.mkdir()
+            _write_installer(installer, {".fsv-install-root": "marker\n"})
+            launch_update_installer(installer, root, root / "state.json", {"tag": "PACK"})
 
         command = popen.call_args.args[0]
-        self.assertIn("--fsv-update-helper", command)
-        payload = json.loads(command[-1])
-        self.assertEqual(payload["parent_pid"] > 0, True)
-        self.assertEqual(payload["restart_command"], ["python", "app.py"])
+        self.assertEqual(command[0], str(installer.resolve()))
+        self.assertIn("--update-target", command)
+        self.assertTrue(any(str(item).endswith(".json") for item in command))
 
     def test_manager_only_downloads_and_hands_off_before_exit(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -175,14 +160,14 @@ class UpdateInstallerTests(unittest.TestCase):
             release = ReleaseInfo(
                 "PACK",
                 datetime(2026, 7, 29, tzinfo=timezone.utc),
-                "pack.zip",
+                "FlyingSnowVelvet-LTS2-Offline-Installer.exe",
                 "download",
                 "GitHub",
                 "revision",
             )
 
             def download(_release, destination):
-                _write_archive(destination, {"package/README.md": "new"})
+                _write_installer(destination, {".fsv-install-root": "marker\n", "app/README.md": "new"})
 
             with (
                 patch("lib.script.update_manager._STAGING_ROOT", root / "stage"),
@@ -195,11 +180,11 @@ class UpdateInstallerTests(unittest.TestCase):
             self.assertFalse(state_path.exists())
             launch.assert_called_once()
 
-    def test_dialog_offers_restart_modes_after_download(self):
+    def test_dialog_offers_native_installer_after_download(self):
         from lib.script.ui.update_dialog import DesktopPetUpdateDialog
 
         published = datetime(2026, 7, 29, tzinfo=timezone.utc)
-        release = ReleaseInfo("PACK", published, "pack.zip", "download", "GitHub")
+        release = ReleaseInfo("PACK", published, "FlyingSnowVelvet-PACK-Offline-Installer.exe", "download", "GitHub")
         result = UpdateResult(
             True,
             InstalledState("PACK", published),
@@ -213,18 +198,38 @@ class UpdateInstallerTests(unittest.TestCase):
             _set_progress_done=Mock(),
             _set_actions=Mock(),
             _fmt_dt=lambda value: value.isoformat(),
-            _start_normal_restart=Mock(),
-            _start_environment_restart=Mock(),
+            _start_release_launch=Mock(),
+            hide_dialog=Mock(),
         )
         center = Mock()
         with patch("lib.script.ui.update_dialog.get_event_center", return_value=center):
             DesktopPetUpdateDialog._on_release_done(dialog, result)
 
         center.publish.assert_not_called()
-        self.assertEqual(dialog._status_label.setText.call_args.args[0], "更新依赖并重启桌宠")
+        self.assertEqual(dialog._status_label.setText.call_args.args[0], "离线安装器已准备")
         actions = dialog._set_actions.call_args.args
-        self.assertEqual(actions[0], ("普通重启", dialog._start_normal_restart))
-        self.assertEqual(actions[1], ("环境重启", dialog._start_environment_restart))
+        self.assertEqual(actions[0][0], "稍后安装")
+        self.assertEqual(actions[1], ("启动安装器并退出", dialog._start_release_launch))
+
+    def test_native_installer_launch_requests_app_quit(self):
+        from lib.script.ui.update_dialog import DesktopPetUpdateDialog
+
+        published = datetime(2026, 7, 29, tzinfo=timezone.utc)
+        result = UpdateResult(
+            True,
+            InstalledState("PACK", published),
+            ReleaseInfo("PACK", published, "installer.exe", "download", "GitHub"),
+            reason="install_scheduled",
+        )
+        dialog = SimpleNamespace(_busy=False, _pending_update=result, _set_busy=Mock(), _set_actions=Mock())
+        center = Mock()
+        with patch("lib.script.ui.update_dialog.get_event_center", return_value=center):
+            DesktopPetUpdateDialog._on_restart_done(dialog, result)
+
+        center.publish.assert_called_once()
+        event = center.publish.call_args.args[0]
+        self.assertEqual(event.type, EventType.APP_QUIT)
+        self.assertEqual(event.data, {"exit_code": 0})
 
 
 if __name__ == "__main__":

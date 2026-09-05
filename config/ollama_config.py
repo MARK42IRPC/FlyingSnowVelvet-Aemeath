@@ -181,7 +181,7 @@ AUTO_COMPANION = {
 
 # 办公模式配置
 OFFICE_MODE = {
-    'backend': 'dsh',               # 办公运行后端：dsh / open_interpreter（待接入）
+    'backend': 'dsh',               # 办公运行后端：dsh
     'use_independent_api': False,    # 是否使用独立的 API 配置
     'api_key': '',                   # 办公模式独立接口密钥
     'api_base_url': '',              # 办公模式独立接口地址

@@ -13,7 +13,8 @@
 
 - **运行稳定**：启动、预热、退出、清理链路集中在主生命周期中，运行时状态尽量不污染源码目录。
 - **能力收敛**：聊天、音乐、本地托管服务等模块逐步统一入口，减少历史兼容层和重复单例。
-- **离线友好**：普通发布包尽量轻量，绿色包可携带语音模型和启动动画资源，便于无网络环境部署。
+- **离线友好**：正式发布由单 EXE 安装器提供完整隔离运行环境、CPU 推理依赖、Vosk
+  模型和启动/退出动画资源，便于无网络环境部署。
 
 ## 功能概览
 
@@ -42,7 +43,8 @@
 
 - 控制面板工作台按页面懒加载，切换页面和主题使用淡入淡出；工作台是普通任务栏窗口，不修改桌宠全局帧率限制。
 - 配置保存、语音包解压、麦克风启动和更新探测/下载都通过交互 I/O 或独立后台任务执行，只有保存成功才允许关闭或重启设置面板。
-- 更新包完成校验后由独立 helper 在旧进程退出后覆盖安装；随后可选择普通重启进入 `启动程序.bat`，或环境重启进入 `安装依赖.bat`。
+- 更新器下载并校验同一个离线安装器 EXE；用户确认后退出桌宠，由原生安装器完成目录切换，
+  不执行本机 Python 或外部 Node。
 
 ### 音乐
 
@@ -54,7 +56,8 @@
 ### 系统浏览器登录
 
 - 音乐登录/授权流程使用 Playwright 驱动系统 Microsoft Edge，不下载或内置 Chromium。
-- Vosk 模型、启动动画和 Python 安装器均不再内置，缺失时由安装脚本按清单下载。
+- 开发源码可按 `resc.net.txt` 补全 Vosk/动画资源；正式离线安装器会把这些资源直接放入
+  payload，且只保留 `resc/GIF/SEanima/` 文件夹，不携带 `SEanima.zip`。
 
 ## 目录速览
 
@@ -70,9 +73,9 @@
 | `lib/script/gsvmove/` | ONNX 语音包安装与本地 TTS 推理兼容门面 |
 | `lib/script/microphone_stt/` | 本地 STT 与按键说话 |
 | `lib/script/ui/` | 控制面板、气泡、命令框、音乐面板、二维码面板等 UI |
-| `services/` | 办公 DSH 侧车源码与固定依赖 |
-| `resc/` | GIF、字体、音效、模型、绿色包离线资源与用户运行目录 |
-| `scripts/` | 普通包、绿色包和其他维护脚本 |
+| `services/` | 办公 DSH 侧车源码及固定依赖 |
+| `resc/` | GIF、字体、音效、模型、离线构建资源与用户运行目录 |
+| `scripts/` | 离线发行版构建、依赖和其他维护脚本 |
 | `tests/` | unittest 回归测试 |
 
 ## 快速开始
@@ -95,8 +98,8 @@ python install_deps.py
 - 无可用 Python 时通过 PowerShell 从 Gitee/GitHub 自动下载、校验并安装固定的 Python 3.11；随后选择解释器并写入 `py.ini`
 - 安装 `requirements.txt` 中的 Python 包
 - 准备 Vosk 语音识别模型
-- 在共享语音运行目录创建可选的 DirectML GPU 混合推理 venv
-- 按用户选择准备可选的 DeepSeek Harness 办公侧车和固定依赖
+- 在共享语音运行目录创建 DirectML GPU 混合推理 venv；NVIDIA CUDA 环境改由控制面板按需安装
+- 准备 DSH 办公后端及固定依赖
 - 按 `resc.net.txt` 多源、可续传地下载缺失的 Vosk、启动动画和 Python 资源，并在解压前校验归档
 - 校验随程序提供的官方 UnRAR 解压后端；ONNX 语音包由控制面板按需安装
 - 启动桌宠主程序
@@ -137,14 +140,19 @@ python lib/core/qt_desktop_pet.py
 
 可使用 `py -3.11 scripts/config_tool.py check|compact|migrate|effective` 检查、压缩、迁移或查看最终生效配置。测试和便携环境可通过 `AEMEATH_DESK_PET_HOME` 覆盖根目录。
 
-`resc.net.txt` 是重型资源的唯一下载清单，发布包不携带清单中对应的资源文件。
+`resc.net.txt` 是开发环境补全资源的下载清单。正式发行只上传一个带完整隔离
+Python/Node/CPU ONNX/DirectML overlay 的
+`FlyingSnowVelvet-<version>-Offline-Installer.exe`；安装器内置
+`resc/GIF/SEanima/` 文件夹和 Vosk 模型，不依赖用户机器上的 Python、Node 或 CUDA。
+构建入口是 `scripts/build_offline_distribution.py` 与
+`scripts/build_offline_installer.py`，发布工作流使用当前仓库的临时
+`build/offline-release` 目录。
 
 ## 常用检查
 
 ```powershell
 python -m compileall config lib scripts install_deps.py install_deps
-python scripts/package_release.py --dry-run
-python scripts/package_green_release.py --dry-run
+python -m unittest discover -s tests -p "test_*.py" -q
 ```
 
 按改动范围追加运行测试，例如：
@@ -156,10 +164,14 @@ py -3 -m unittest tests.test_openai_dashscope_multimodal
 
 ## 发布包边界
 
-- 普通包和绿色包：源码、默认小型资源、文档，不带 `resc/models/`、`resc/GIF/SEanima/` 或 Python 安装包。
-- 安装器依据 `resc.net.txt` 在首次运行时补齐缺失的重型资源。
-- 两类包都应脱敏 `config/ollama_config.py` 中的密钥、登录态和会话字段。
-- 两类包都携带约 548 KiB 的官方 UnRAR 与许可证，用于桌宠内安装七分卷 ONNX 语音包；模型分卷不进入程序发行包。
+- 离线安装器只从当前仓库构建，payload 包含固定 Python 3.11、Node 24.13.0、DSH
+  production `node_modules`、CPU `onnx`/`onnxruntime`、`genie-tts` 双语前端、
+  `jieba`/`jieba-fast`、Vosk 模型和 `SEanima` 文件夹。
+- CUDA、Torch、NVIDIA、TensorRT 不进入基础发行版；DirectML 以独立 overlay 随包提供，
+  由设置面板按需启用。
+- 安装器使用原生 ZIP 解压和尾部 SHA-256 校验，安装过程显示当前文件、百分比、文件/字节
+  进度和预计剩余时间；安装结束后由用户点击“退出安装并启动飞行雪绒”。
+- 用户数据、密钥、登录态、日志和缓存保存在 `C:\AemeathDeskPet`，不进入 payload。
 
 ## 许可证与声明
 

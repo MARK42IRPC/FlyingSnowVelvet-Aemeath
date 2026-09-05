@@ -1,0 +1,4 @@
+Vendored zlib 1.3.1 source for static ZIP DEFLATE extraction.
+Origin: Unity IL2CPP zlib source tree, based on zlib 1.3.1.
+License: zlib license; see README.
+Only the inflate and CRC source set is compiled by the installer build.

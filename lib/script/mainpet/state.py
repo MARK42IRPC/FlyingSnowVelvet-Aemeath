@@ -30,8 +30,8 @@ _MOVE_WANDER_RANDOM_TYPE = "wander_random"
 
 
 def log(msg):
-    """统一状态机日志输出。"""
-    _logger.debug("[StateMachine] %s", msg)
+    """状态机正常运行日志默认静默，需要排查时可临时恢复。"""
+    # _logger.debug("[StateMachine] %s", msg)
 
 
 class StateMachine:

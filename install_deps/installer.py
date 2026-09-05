@@ -195,11 +195,8 @@ def main():
         else:
             print("\n已跳过 DSH 办公运行时安装；办公模式需改用已接入的其它后端。", flush=True)
 
-        _print_stage(5, "选择并准备可选 ONNX 语音 GPU 运行时...")
-        use_cuda, use_directml = choose_voice_gpu_runtimes()
-        if use_cuda and not ensure_cuda_voice_runtime(python_exe, mirrors):
-            _print_warn("NVIDIA CUDA 运行时未准备完成，设置页不会显示 N 卡加速")
-        if use_directml and not ensure_directml_hybrid_runtime(python_exe, mirrors):
+        _print_stage(5, "准备 ONNX 语音通用 GPU 运行时...")
+        if not ensure_directml_hybrid_runtime(python_exe, mirrors):
             _print_warn("DirectML 混合推理环境未准备完成，ONNX 语音将使用 CPU")
 
         if _microphone_runtime_ready(python_exe):

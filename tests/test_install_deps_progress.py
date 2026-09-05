@@ -277,58 +277,37 @@ class InstallDependenciesProgressTests(unittest.TestCase):
             self.assertEqual(marker["version"], install_deps.directml_config.DIRECTML_RUNTIME_VERSION)
             self.assertEqual(marker["abi"], "cp311-win_amd64")
 
-    def test_cuda_runtime_is_installed_from_ranked_mirror_in_versioned_venv(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            target = Path(tmpdir) / "voice" / "runtimes" / "onnx-cuda" / "runtime"
-            target_python = target / "Scripts" / "python.exe"
-            pip_commands = []
+    def test_directml_probe_ignores_native_diagnostics(self):
+        payload = {
+            "python": [3, 11],
+            "bits": 64,
+            "version": install_deps.directml_config.DIRECTML_RUNTIME_VERSION,
+            "providers": ["DmlExecutionProvider", "CPUExecutionProvider"],
+        }
+        result = subprocess.CompletedProcess(
+            [],
+            0,
+            stdout="onnxruntime warning\n" + json.dumps(payload) + "\n",
+        )
+        with patch.object(install_deps, "_run", return_value=result):
+            ready, detail = install_deps._directml_runtime_probe(Path("python.exe"))
 
-            def run(command, timeout=12):
-                if command[1:3] == ["-c", "import struct; print(struct.calcsize('P') * 8)"]:
-                    return subprocess.CompletedProcess(command, 0, stdout="64\n")
-                if "venv" in command:
-                    staging = Path(command[-1])
-                    (staging / "Scripts").mkdir(parents=True)
-                    (staging / "Scripts" / "python.exe").write_bytes(b"python")
-                    return subprocess.CompletedProcess(command, 0, stdout="")
-                if "pip" in command:
-                    pip_commands.append(command)
-                    return subprocess.CompletedProcess(command, 0, stdout="installed")
-                raise AssertionError(command)
+        self.assertTrue(ready)
+        self.assertEqual(detail, "")
 
-            def run_progress(command, **kwargs):
-                pip_commands.append(command)
-                self.assertEqual(kwargs["kind"], "pip")
-                self.assertEqual(kwargs["timeout"], install_deps.DSH_RUNTIME_INSTALL_TIMEOUT)
-                return 0, "installed"
+    def test_cuda_runtime_does_not_fall_back_to_full_pip_environment(self):
+        with patch.object(install_deps, "_get_version", return_value=(3, 11, 6)), patch.object(
+            install_deps, "_run", return_value=subprocess.CompletedProcess([], 0, stdout="64\n")
+        ), patch.object(
+            install_deps.directml_config, "is_cuda_runtime_ready", return_value=False
+        ), patch.object(
+            install_deps,
+            "_install_cuda_runtime_bundle",
+            return_value=(False, "test bundle unavailable"),
+        ):
+            installed = install_deps.ensure_cuda_voice_runtime("python.exe")
 
-            mirror = {"name": "Tsinghua", "url": "https://mirror.example/simple", "host": "mirror.example"}
-            with patch.object(install_deps, "_get_version", return_value=(3, 11, 6)), patch.object(
-                install_deps, "_run", side_effect=run
-            ), patch.object(
-                install_deps, "_run_command_with_progress", side_effect=run_progress
-            ), patch.object(
-                install_deps.directml_config, "get_cuda_runtime_root", return_value=target
-            ), patch.object(
-                install_deps.directml_config, "get_cuda_python_path", return_value=target_python
-            ), patch.object(
-                install_deps.directml_config, "is_cuda_runtime_ready", side_effect=[False, True]
-            ), patch.object(
-                install_deps, "_cuda_runtime_probe", return_value=(True, "")
-            ):
-                installed = install_deps.ensure_cuda_voice_runtime("python.exe", [mirror])
-
-            self.assertTrue(installed)
-            self.assertEqual(pip_commands[0][pip_commands[0].index("-i") + 1], mirror["url"])
-            self.assertIn(install_deps.directml_config.CUDA_RUNTIME_REQUIREMENT, pip_commands[0])
-            self.assertIn("nvidia-cuda-nvrtc-cu12", pip_commands[0])
-            self.assertIn("nvidia-cudnn-cu12", pip_commands[0])
-            progress_option = pip_commands[0].index("--progress-bar")
-            self.assertEqual(pip_commands[0][progress_option + 1], "on")
-            marker = json.loads(
-                (target / install_deps.directml_config.CUDA_RUNTIME_MARKER_NAME).read_text(encoding="utf-8")
-            )
-            self.assertEqual(marker["provider"], "CUDAExecutionProvider")
+        self.assertFalse(installed)
 
     def test_cuda_probe_preloads_dlls_and_reports_provider_loader_diagnostics(self):
         payload = {
@@ -349,36 +328,6 @@ class InstallDependenciesProgressTests(unittest.TestCase):
         self.assertFalse(ready)
         self.assertIn("Failed to load onnxruntime_providers_cuda.dll", detail)
         self.assertIn("preload", run.call_args.args[0][-1])
-
-    def test_gpu_runtime_choice_defaults_to_directml_without_nvidia_gpu(self):
-        output = io.StringIO()
-        with patch.object(install_deps, "_has_nvidia_gpu", return_value=False), patch(
-            "builtins.input", side_effect=lambda prompt: (output.write(prompt), "")[1]
-        ), patch.object(install_deps, "_COLOR_ENABLED", True), contextlib.redirect_stdout(output):
-            self.assertEqual(install_deps.choose_voice_gpu_runtimes(), (False, True))
-        text = output.getvalue()
-        self.assertIn("\033[92m[推荐]\033[0m", text)
-        self.assertIn("请选择 [1-2，默认 2]", text)
-        self.assertNotIn("NVIDIA CUDA", text)
-
-    def test_gpu_runtime_choice_ignores_hidden_cuda_selection_without_nvidia_gpu(self):
-        output = io.StringIO()
-        with patch.object(install_deps, "_has_nvidia_gpu", return_value=False), patch(
-            "builtins.input", return_value="4"
-        ), contextlib.redirect_stdout(output):
-            self.assertEqual(install_deps.choose_voice_gpu_runtimes(), (False, True))
-        self.assertNotIn("NVIDIA CUDA", output.getvalue())
-
-    def test_gpu_runtime_choice_recommends_cuda_with_directml_fallback_for_nvidia_gpu(self):
-        output = io.StringIO()
-        with patch.object(install_deps, "_has_nvidia_gpu", return_value=True), patch(
-            "builtins.input", side_effect=lambda prompt: (output.write(prompt), "")[1]
-        ), contextlib.redirect_stdout(output):
-            self.assertEqual(install_deps.choose_voice_gpu_runtimes(), (True, True))
-        self.assertIn("NVIDIA CUDA", output.getvalue())
-        self.assertIn("请选择 [1-4，默认 4]", output.getvalue())
-        with patch("builtins.input", return_value="4"):
-            self.assertEqual(install_deps.choose_voice_gpu_runtimes(), (True, True))
 
     def test_python_311_is_preferred_over_current_non_target_runtime(self):
         with patch.object(install_deps, "_current_runtime_executable", return_value="C:\\Python312\\python.exe"):

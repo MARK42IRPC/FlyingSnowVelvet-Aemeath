@@ -15,6 +15,6 @@ user-invocable: true
 - DSH 使用固定 Node/npm 和 `services/dsh-office-runtime/package-lock.json`，用户侧安装执行 `npm ci --omit=dev --ignore-scripts --no-audit --no-fund`，不得用任意 npm install 改写锁文件。
 - 单个依赖失败时保留后续模块和最终摘要；进度必须由真实 pip 阶段或模块完成驱动，不使用按时间虚增的百分比。
 - 不在应用运行时联网自修复、扫描用户目录寻找替代环境或覆盖用户 API key、登录态和运行日志。
-- 修改安装器后运行安装器专项测试，并检查普通版和绿色版 dry-run。
+- 修改安装器后运行安装器专项测试，并检查统一离线发行包 dry-run。
 
 Skill 只提供安装边界；真正执行安装必须由用户明确触发并经过桌宠现有流程。

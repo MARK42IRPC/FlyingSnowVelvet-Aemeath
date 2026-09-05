@@ -1,15 +1,17 @@
-name: Publish PACK release
+name: Publish offline installer
 
 on:
   push:
     tags:
       - PACK
+      - 'v*'
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 concurrency:
-  group: publish-pack
+  group: publish-offline-installer
   cancel-in-progress: false
 
 jobs:
@@ -17,87 +19,160 @@ jobs:
     runs-on: windows-latest
     env:
       PYTHONIOENCODING: utf-8
-      PYTHONUTF8: "1"
+      PYTHONUTF8: '1'
+      NODE_VERSION: 24.13.0
     steps:
-      - name: Check out tagged snapshot
-        uses: actions/checkout@v5
+      - name: Check out the desktop-pet workspace
+        uses: actions/checkout@v4
 
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v6
+      - name: Set up build Python
+        uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: '3.11'
 
-      - name: Fetch verified normal package
-        id: package
+      - name: Prepare isolated CPU build environment
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $version = (& python -c 'from pathlib import Path; from scripts.release_common import read_app_version; print(read_app_version(Path.cwd()))' |
-            Out-String).Trim()
-          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($version)) {
-            throw 'Could not read APP_VERSION.'
-          }
-          New-Item -ItemType Directory -Path dist -Force | Out-Null
-          $zipPath = (Join-Path (Resolve-Path dist).Path "FlyingSnowVelvet-$version.zip")
-          $manifestPath = (Join-Path (Resolve-Path dist).Path "FlyingSnowVelvet-$version-manifest.json")
-          $sourceRoot = 'https://gitee.com/Mark42IRPC/Aemeath-AIdeskpet/releases/download/%E6%9C%80%E6%96%B0%E5%8C%85'
-          curl.exe --fail --location --retry 5 --retry-all-errors `
-            --connect-timeout 20 --max-time 300 `
-            --output $zipPath "$sourceRoot/FlyingSnowVelvet-$version.zip"
-          if ($LASTEXITCODE -ne 0) {
-            throw 'Could not download the verified normal ZIP from Gitee.'
-          }
-          curl.exe --fail --location --retry 5 --retry-all-errors `
-            --connect-timeout 20 --max-time 120 `
-            --output $manifestPath "$sourceRoot/FlyingSnowVelvet-$version-manifest.json"
-          if ($LASTEXITCODE -ne 0) {
-            throw 'Could not download the verified normal manifest from Gitee.'
-          }
-          python -c 'import json,sys,zipfile; z=zipfile.ZipFile(sys.argv[1]); bad=z.testzip(); actual={i.filename for i in z.infolist()}; z.close(); listed={i["path"] for i in json.load(open(sys.argv[2],encoding="utf-8"))}; raise SystemExit(1 if bad or actual != listed else 0)' $zipPath $manifestPath
-          if ($LASTEXITCODE -ne 0) {
-            throw 'The mirrored ZIP or manifest failed validation.'
-          }
-          "zip_path=$zipPath" >> $env:GITHUB_OUTPUT
-          "manifest_path=$manifestPath" >> $env:GITHUB_OUTPUT
-          Get-FileHash -Algorithm SHA256 -LiteralPath $zipPath, $manifestPath
+          $root = (Resolve-Path .).Path
+          $build = Join-Path $root 'build/offline-release'
+          $venv = Join-Path $build 'venv'
+          $site = Join-Path $build 'cpu-site-packages'
+          New-Item -ItemType Directory -Force -Path $build, $site | Out-Null
+          python -m venv $venv
+          $python = Join-Path $venv 'Scripts/python.exe'
+          & $python -m pip install --upgrade pip
 
-      - name: Upload PACK release assets
+          # Install the normal application requirements into a disposable
+          # target.  genie-tts is installed without its optional Torch/GUI
+          # dependencies; build_offline_distribution resolves its observed
+          # bilingual ONNX frontend closure explicitly.
+          $requirements = Join-Path $build 'requirements-cpu.txt'
+          Get-Content requirements.txt |
+            Where-Object { $_ -notmatch '^\s*genie-tts\s*([<>=!~]|$)' } |
+            Set-Content -Encoding utf8 $requirements
+          & $python -m pip install --no-cache-dir --only-binary=:all: --target $site -r $requirements
+          & $python -m pip install --no-cache-dir --target $site --no-deps genie-tts==2.0.2
+          & $python -m pip install --no-cache-dir --target $site --only-binary=:all: `
+            'onnx>=1.17' 'onnxruntime==1.22.0' 'tokenizers' 'pypinyin' 'g2pM' `
+            'nltk' 'regex' 'jieba-fast==0.53' 'jieba'
+
+          # Download the optional DirectML wheel as a separate overlay.  It
+          # never enters the CPU site-packages tree.
+          $wheelDir = Join-Path $build 'directml'
+          New-Item -ItemType Directory -Force -Path $wheelDir | Out-Null
+          & $python -m pip download --no-deps --only-binary=:all: `
+            --dest $wheelDir onnxruntime-directml==1.22.0
+          $wheel = Get-ChildItem $wheelDir -Filter 'onnxruntime_directml-1.22.0-*.whl' | Select-Object -First 1
+          if ($null -eq $wheel) { throw 'DirectML wheel was not downloaded.' }
+
+          "BUILD_ROOT=$build" >> $env:GITHUB_ENV
+          "BUILD_PYTHON=$python" >> $env:GITHUB_ENV
+          "CPU_SITE=$site" >> $env:GITHUB_ENV
+          "DIRECTML_WHEEL=$($wheel.FullName)" >> $env:GITHUB_ENV
+
+      - name: Prepare bundled models and SEanima folder
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          function Get-Resource([string]$name) {
+            $urls = @(
+              "https://github.com/MARK42IRPC/FlyingSnowVelvet-Aemeath/releases/download/RESC/$name",
+              "https://gitee.com/Mark42IRPC/Aemeath-AIdeskpet/releases/download/RESC/$name"
+            )
+            $destination = Join-Path $env:BUILD_ROOT $name
+            foreach ($url in $urls) {
+              try {
+                Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $destination -TimeoutSec 300
+                if ((Get-Item $destination).Length -gt 0) { return $destination }
+              } catch { Remove-Item -LiteralPath $destination -Force -ErrorAction SilentlyContinue }
+            }
+            throw "Unable to download resource: $name"
+          }
+          function Expand-Resource([string]$archiveName, [string]$destination, [string]$expectedRoot) {
+            $archive = Get-Resource $archiveName
+            $temp = Join-Path $env:BUILD_ROOT ("extract-" + [guid]::NewGuid().ToString('N'))
+            New-Item -ItemType Directory -Force -Path $temp | Out-Null
+            Expand-Archive -LiteralPath $archive -DestinationPath $temp -Force
+            $candidate = Get-ChildItem -LiteralPath $temp -Directory -Recurse |
+              Where-Object { $_.Name -ieq $expectedRoot } | Select-Object -First 1
+            if ($null -eq $candidate) { throw "Resource archive lacks $expectedRoot" }
+            $target = Join-Path $destination $expectedRoot
+            Remove-Item -LiteralPath $target -Recurse -Force -ErrorAction SilentlyContinue
+            New-Item -ItemType Directory -Force -Path $destination | Out-Null
+            Move-Item -LiteralPath $candidate.FullName -Destination $target
+            Remove-Item -LiteralPath $temp -Recurse -Force
+            Remove-Item -LiteralPath $archive -Force
+          }
+          $models = Join-Path (Resolve-Path .).Path 'resc/models'
+          Expand-Resource 'vosk-model-small-cn-0.22.zip' $models 'vosk-model-small-cn-0.22'
+          Expand-Resource 'vosk-model-small-en-us-0.15.zip' $models 'vosk-model-small-en-us-0.15'
+          $gif = Join-Path (Resolve-Path .).Path 'resc/GIF'
+          Expand-Resource 'SEanima.zip' $gif 'SEanima'
+
+      - name: Prepare bundled Node and DSH production dependencies
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $nodeArchive = Join-Path $env:BUILD_ROOT "node-v$env:NODE_VERSION-win-x64.zip"
+          Invoke-WebRequest -UseBasicParsing `
+            -Uri "https://nodejs.org/dist/v$env:NODE_VERSION/node-v$env:NODE_VERSION-win-x64.zip" `
+            -OutFile $nodeArchive -TimeoutSec 300
+          $nodeExtract = Join-Path $env:BUILD_ROOT 'node-extract'
+          Expand-Archive -LiteralPath $nodeArchive -DestinationPath $nodeExtract -Force
+          $nodeRuntime = Get-ChildItem $nodeExtract -Directory | Select-Object -First 1
+          if ($null -eq $nodeRuntime -or -not (Test-Path (Join-Path $nodeRuntime.FullName 'node.exe'))) { throw 'Node runtime is incomplete.' }
+          $env:PATH = "$($nodeRuntime.FullName);$env:PATH"
+          $dsh = Join-Path (Resolve-Path .).Path 'services/dsh-office-runtime'
+          Push-Location $dsh
+          try {
+            & (Join-Path $nodeRuntime.FullName 'node.exe') (Join-Path $nodeRuntime.FullName 'node_modules/npm/bin/npm-cli.js') `
+              ci --omit=dev --ignore-scripts --no-audit --no-fund
+          } finally { Pop-Location }
+          "NODE_RUNTIME=$($nodeRuntime.FullName)" >> $env:GITHUB_ENV
+          if (-not (Test-Path (Join-Path $dsh 'node_modules/@deepseek-ai/dsh/lib/bin.js'))) {
+            throw 'DSH production node_modules is incomplete.'
+          }
+
+      - name: Build the unified offline payload
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = (& $env:BUILD_PYTHON -c "from pathlib import Path; from scripts.release_common import read_app_version; print(read_app_version(Path.cwd()))").Trim()
+          if ([string]::IsNullOrWhiteSpace($version)) { throw 'APP_VERSION is empty.' }
+          $workspace = Join-Path $env:BUILD_ROOT 'workspace'
+          & $env:BUILD_PYTHON scripts/build_offline_distribution.py `
+            --source-root (Resolve-Path .).Path `
+            --workspace $workspace `
+            --python-home ((& python -c 'import sys; print(sys.prefix)').Trim()) `
+            --site-packages $env:CPU_SITE `
+            --dsh-node-runtime $env:NODE_RUNTIME `
+            --dsh-node-modules ((Resolve-Path services/dsh-office-runtime/node_modules).Path) `
+            --directml-wheel $env:DIRECTML_WHEEL
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          $installer = Join-Path (Resolve-Path dist).Path "FlyingSnowVelvet-$version-Offline-Installer.exe"
+          & $env:BUILD_PYTHON scripts/build_offline_installer.py --workspace $workspace --version $version --output $installer
+          if (-not (Test-Path $installer)) { throw 'Offline installer was not created.' }
+          & $env:BUILD_PYTHON -c "from pathlib import Path; from lib.script.app.update_installer import validate_update_installer; validate_update_installer(Path(r'$installer'))"
+          Copy-Item -LiteralPath (Join-Path $workspace 'manifest.json') -Destination (Join-Path (Resolve-Path dist).Path "FlyingSnowVelvet-$version-manifest.json")
+          Get-FileHash -Algorithm SHA256 -LiteralPath $installer, (Join-Path (Resolve-Path dist).Path "FlyingSnowVelvet-$version-manifest.json")
+          "RELEASE_VERSION=$version" >> $env:GITHUB_ENV
+          "INSTALLER_PATH=$installer" >> $env:GITHUB_ENV
+
+      - name: Publish only the native installer and manifest
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $currentZip = [IO.Path]::GetFileName('${{ steps.package.outputs.zip_path }}')
-          $currentManifest = [IO.Path]::GetFileName('${{ steps.package.outputs.manifest_path }}')
-          $assetNames = @(gh release view PACK --json assets --jq '.assets[].name' --repo '${{ github.repository }}')
-          if ($LASTEXITCODE -ne 0) {
-            throw 'Could not list existing PACK release assets.'
-          }
-          foreach ($assetName in $assetNames) {
-            $isPackage = $assetName -like 'FlyingSnowVelvet-*.zip' -or $assetName -like 'FlyingSnowVelvet-*-manifest.json'
-            $isCurrent = $assetName -eq $currentZip -or $assetName -eq $currentManifest
-            if ($isPackage -and -not $isCurrent) {
-              gh release delete-asset PACK $assetName --yes --repo '${{ github.repository }}'
-              if ($LASTEXITCODE -ne 0) {
-                throw "Could not delete stale PACK asset: $assetName"
-              }
+          $tag = '${{ github.ref_name }}'
+          if ([string]::IsNullOrWhiteSpace($tag)) { $tag = 'PACK' }
+          $installerName = [IO.Path]::GetFileName($env:INSTALLER_PATH)
+          $manifestName = "FlyingSnowVelvet-$env:RELEASE_VERSION-manifest.json"
+          $assets = @(gh release view $tag --json assets --jq '.assets[].name' --repo '${{ github.repository }}' 2>$null)
+          foreach ($asset in $assets) {
+            if (($asset -match '\.zip$') -or ($asset -match '-green') -or (($asset -match 'FlyingSnowVelvet-.*\.exe$') -and $asset -ne $installerName) -or (($asset -match 'FlyingSnowVelvet-.*manifest\.json$') -and $asset -ne $manifestName)) {
+              gh release delete-asset $tag $asset --yes --repo '${{ github.repository }}' | Out-Null
             }
           }
-          gh release upload PACK `
-            '${{ steps.package.outputs.zip_path }}' `
-            '${{ steps.package.outputs.manifest_path }}' `
-            --clobber `
-            --repo '${{ github.repository }}'
-
-      - name: Remove stale build diagnostics
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release delete-asset PACK pack-build-diagnostic.log `
-            --yes `
-            --repo '${{ github.repository }}'
-          if ($LASTEXITCODE -ne 0) {
-            Write-Host 'No stale PACK diagnostics asset was present.'
-          }
-          exit 0
+          gh release upload $tag $env:INSTALLER_PATH (Join-Path (Resolve-Path dist).Path $manifestName) --clobber --repo '${{ github.repository }}'

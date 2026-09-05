@@ -14,7 +14,7 @@ from lib.script.app.desktop_shortcut import (
     _create_shortcut_via_powershell,
     _get_shortcut_target_via_powershell,
 )
-from lib.script.app.update_installer import build_bat_restart_command
+from lib.script.app.windows_command import build_bat_command
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -119,7 +119,7 @@ class WindowsSpecialCharacterLaunchTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            command = build_bat_restart_command(root, "normal")
+            command = build_bat_command(root, "normal")
             self.assertNotIn(str(root), "\0".join(command))
             result = subprocess.run(
                 command,
@@ -160,7 +160,7 @@ class WindowsSpecialCharacterLaunchTests(unittest.TestCase):
             )
 
             result = subprocess.run(
-                build_bat_restart_command(root, "normal"),
+                build_bat_command(root, "normal"),
                 stdin=subprocess.DEVNULL,
                 capture_output=True,
                 text=False,
@@ -187,7 +187,7 @@ class WindowsSpecialCharacterLaunchTests(unittest.TestCase):
             )
 
             result = subprocess.run(
-                build_bat_restart_command(root, "environment"),
+                build_bat_command(root, "environment"),
                 stdin=subprocess.DEVNULL,
                 capture_output=True,
                 text=False,

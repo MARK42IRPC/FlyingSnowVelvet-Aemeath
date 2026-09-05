@@ -36,7 +36,6 @@ from lib.script.update_manager import (
     UpdateManager,
     UpdateResult,
 )
-from lib.script.app.update_installer import build_bat_restart_command
 
 _WIDTH = scale_px(360, min_abs=320)
 _HEIGHT = scale_px(248, min_abs=220)
@@ -363,16 +362,14 @@ class DesktopPetUpdateDialog(QWidget):
             return
         self._release_done_signal.emit(result)
 
-    def _run_release_restart(self, mode: str) -> None:
+    def _run_release_launch(self) -> None:
         update = self._pending_update
         if update is None:
             self._error_signal.emit("缺少待安装的更新包，请重新下载。")
             return
         manager = UpdateManager()
         try:
-            project_root = Path(__file__).resolve().parents[3]
-            command = build_bat_restart_command(project_root, mode)
-            result = manager.launch_pending_update(update, restart_command=command)
+            result = manager.launch_pending_update(update)
         except UpdateError as exc:
             self._error_signal.emit(str(exc))
             return
@@ -450,17 +447,15 @@ class DesktopPetUpdateDialog(QWidget):
             return
         self._set_busy(False)
         self._pending_update = update
-        self._status_label.setText("更新依赖并重启桌宠")
+        self._status_label.setText("离线安装器已准备")
         self._detail_label.setText(
             f"已准备 {update.release_info.asset_name}（{self._fmt_dt(update.release_info.published_at)}）\n"
-            "需要重启以检查依赖项。请选择普通重启或环境重启。"
+            "启动安装器后，当前桌宠会退出；安装器将使用包内运行环境完成更新。"
         )
         self._set_progress_done()
-        normal_handler = getattr(self, "_start_normal_restart", lambda: None)
-        environment_handler = getattr(self, "_start_environment_restart", lambda: None)
         self._set_actions(
-            ("普通重启", normal_handler),
-            ("环境重启", environment_handler),
+            ("稍后安装", self.hide_dialog),
+            ("启动安装器并退出", self._start_release_launch),
         )
 
     def _on_git_checked(self, result: object) -> None:
@@ -524,24 +519,14 @@ class DesktopPetUpdateDialog(QWidget):
         self._set_actions(None, None)
         self._start_worker(self._run_release_install, "release-update-install")
 
-    def _start_normal_restart(self) -> None:
-        self._start_update_restart("normal")
-
-    def _start_environment_restart(self) -> None:
-        self._start_update_restart("environment")
-
-    def _start_update_restart(self, mode: str) -> None:
+    def _start_release_launch(self) -> None:
         if self._busy or self._pending_update is None:
             return
-        label = "环境重启" if mode == "environment" else "普通重启"
-        self._status_label.setText(f"正在准备{label}")
-        self._detail_label.setText("更新 helper 将在桌宠退出后覆盖文件并启动指定入口。")
+        self._status_label.setText("正在启动离线安装器")
+        self._detail_label.setText("请稍候，安装器启动成功后桌宠将退出。")
         self._set_busy(True)
         self._set_actions(None, None)
-        self._start_worker(
-            lambda: self._run_release_restart(mode),
-            "release-update-restart",
-        )
+        self._start_worker(self._run_release_launch, "release-update-launch")
 
     def _on_restart_done(self, result: object) -> None:
         if not isinstance(result, UpdateResult):
