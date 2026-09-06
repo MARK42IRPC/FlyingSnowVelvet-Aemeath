@@ -537,7 +537,8 @@ def validate_payload_tree(
     cancellation_check: CancellationCheck | None = None,
 ) -> dict[str, object]:
     """Validate an extracted v2 archive and every payload digest."""
-    root = Path(bundle_root).resolve()
+    # Keep the input path spelling stable for isolated child environments.
+    root = Path(bundle_root)
     _ensure_regular_file(root / CUDA_RUNTIME_V2_MANIFEST_NAME, CUDA_RUNTIME_V2_MANIFEST_NAME)
     _ensure_regular_file(root / CUDA_RUNTIME_V2_CHECKSUM_NAME, CUDA_RUNTIME_V2_CHECKSUM_NAME)
     manifest = validate_manifest(_read_json(root / CUDA_RUNTIME_V2_MANIFEST_NAME, "manifest"))
@@ -749,7 +750,7 @@ def worker_launch_command(
 
 def write_worker_launchers(payload_root: Path) -> tuple[Path, Path]:
     """Create deterministic launchers which never resolve system Python."""
-    root = Path(payload_root).resolve()
+    root = Path(payload_root)
     worker_dir = root / "worker"
     entry = root / Path(*CUDA_RUNTIME_V2_WORKER_ENTRY.split("/"))
     if not entry.is_file():

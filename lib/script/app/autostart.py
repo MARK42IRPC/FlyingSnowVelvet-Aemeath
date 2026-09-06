@@ -9,6 +9,7 @@ from pathlib import Path
 
 from lib.core.logger import get_logger
 from lib.script.app.desktop_shortcut import (
+    _create_shortcut_via_pywin32,
     _create_shortcut_via_powershell,
     _get_shortcut_target,
     _paths_refer_same_file,
@@ -135,6 +136,14 @@ def enable_autostart() -> tuple[bool, str]:
                 description="飞行雪绒桌面宠物",
                 icon_path=str(get_project_root() / "resc" / "icon.ico"),
             )
+            if not ok:
+                ok, message = _create_shortcut_via_pywin32(
+                    shortcut_path=str(temporary_path),
+                    target_path=str(launch_script),
+                    working_dir=str(get_project_root()),
+                    description="飞行雪绒桌面宠物",
+                    icon_path=str(get_project_root() / "resc" / "icon.ico"),
+                )
             if not ok:
                 return False, message or "创建 Startup 快捷方式失败"
             if not _shortcut_targets_launch_script(temporary_path):

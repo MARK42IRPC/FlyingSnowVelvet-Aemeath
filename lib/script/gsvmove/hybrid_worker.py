@@ -22,7 +22,10 @@ class VoiceWorkerError(RuntimeError):
 
 def _site_packages_for_python(python_path: Path) -> Path | None:
     """Resolve a conventional Lib/site-packages directory for an interpreter."""
-    executable = Path(python_path).resolve()
+    # Preserve the caller's spelling (including Windows 8.3 temp paths).
+    # These paths are placed in child-process environments and must remain
+    # consistent with the paths used to construct the temporary fixture.
+    executable = Path(python_path)
     roots = [executable.parent]
     if executable.parent.name.casefold() in {"scripts", "bin"}:
         roots.insert(0, executable.parent.parent)
@@ -40,7 +43,7 @@ def _bundled_python_path(app_root: Path) -> Path | None:
 
 def _get_cuda_nvidia_bin_dirs(python_path: Path) -> tuple[Path, ...]:
     """Return pip-installed NVIDIA DLL directories for an isolated venv."""
-    runtime_root = Path(python_path).resolve().parent.parent
+    runtime_root = Path(python_path).parent.parent
     bundle_dir = _get_cuda_bundle_bin_dir(python_path)
     site_packages = runtime_root / "Lib" / "site-packages"
     nvidia_root = site_packages / "nvidia"
@@ -66,7 +69,7 @@ def _get_cuda_nvidia_bin_dirs(python_path: Path) -> tuple[Path, ...]:
 
 def _get_cuda_bundle_bin_dir(python_path: Path) -> Path | None:
     """Read the installed bundle marker and return its safe DLL directory."""
-    runtime_root = Path(python_path).resolve().parent.parent
+    runtime_root = Path(python_path).parent.parent
     marker_path = runtime_root / "runtime.json"
     try:
         payload = json.loads(marker_path.read_text(encoding="utf-8"))
@@ -77,9 +80,11 @@ def _get_cuda_bundle_bin_dir(python_path: Path) -> Path | None:
     relative = str(payload.get("dll_directory") or "").replace("\\", "/").strip()
     if not relative or relative.startswith("/") or ":" in relative.split("/", 1)[0]:
         return None
-    candidate = (runtime_root / Path(*relative.split("/"))).resolve()
+    candidate = runtime_root / Path(*relative.split("/"))
+    resolved_root = runtime_root.resolve()
+    resolved_candidate = candidate.resolve()
     try:
-        candidate.relative_to(runtime_root)
+        resolved_candidate.relative_to(resolved_root)
     except ValueError:
         return None
     return candidate if candidate.is_dir() else None

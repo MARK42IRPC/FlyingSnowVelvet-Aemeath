@@ -29,7 +29,10 @@ from lib.core.graphics.types import Color, Point, Rect
 from lib.core.input.types import Key, MouseButton
 
 
-@unittest.skipUnless(os.name == "nt", "DirectX window integration requires Windows")
+@unittest.skipUnless(
+    os.name == "nt" and os.environ.get("FSV_RUN_NATIVE_WINDOW_TESTS") == "1",
+    "DirectX window integration requires an enabled interactive Windows desktop",
+)
 class DxWindowHostTests(unittest.TestCase):
     def test_v7_struct_sizes_are_fixed(self):
         self.assertEqual(ctypes.sizeof(_WindowDesc), 32)
