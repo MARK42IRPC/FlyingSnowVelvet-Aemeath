@@ -698,7 +698,7 @@ def _is_ambient_runtime_key(key: object) -> bool:
 
 
 def _launcher_environment(bundle_root: Path, base: Mapping[str, str] | None = None) -> dict[str, str]:
-    root = Path(bundle_root).resolve()
+    root = Path(bundle_root)
     python_home = root / "python"
     site_packages = root / "runtime" / "Lib" / "site-packages"
     worker = root / "worker"

@@ -161,9 +161,19 @@ def _create_shortcut_via_powershell(
         if rc == 0 and os.path.exists(shortcut_path):
             return True, ''
         detail = (stderr or stdout or '').strip()
-        return False, detail or f'return_code={rc}'
+        fallback_ok, fallback_message = _create_shortcut_via_pywin32(
+            shortcut_path, target_path, working_dir, description, icon_path
+        )
+        if fallback_ok:
+            return True, ''
+        return False, detail or fallback_message or f'return_code={rc}'
     except Exception as e:
-        return False, f'{type(e).__name__}: {e}'
+        fallback_ok, fallback_message = _create_shortcut_via_pywin32(
+            shortcut_path, target_path, working_dir, description, icon_path
+        )
+        if fallback_ok:
+            return True, ''
+        return False, fallback_message or f'{type(e).__name__}: {e}'
 
 
 def _create_shortcut_via_pywin32(
@@ -222,11 +232,20 @@ def _get_shortcut_target_via_powershell(shortcut_path: str) -> tuple[str | None,
         cmd = build_encoded_powershell_command(ps_script)
         rc, stdout, stderr = _run_capture_text(cmd, timeout=10, env=env)
         if rc != 0:
-            return None, (stderr or stdout or '').strip() or f'return_code={rc}'
+            fallback_target, fallback_message = _get_shortcut_target_via_pywin32(shortcut_path)
+            if fallback_target:
+                return fallback_target, ''
+            return None, (stderr or stdout or '').strip() or fallback_message or f'return_code={rc}'
         target = (stdout or '').strip()
-        return (target or None), ''
+        if target:
+            return target, ''
+        fallback_target, fallback_message = _get_shortcut_target_via_pywin32(shortcut_path)
+        return fallback_target, fallback_message
     except Exception as e:
-        return None, f'{type(e).__name__}: {e}'
+        fallback_target, fallback_message = _get_shortcut_target_via_pywin32(shortcut_path)
+        if fallback_target:
+            return fallback_target, ''
+        return None, fallback_message or f'{type(e).__name__}: {e}'
 
 
 def _get_shortcut_target_via_pywin32(shortcut_path: str) -> tuple[str | None, str]:
