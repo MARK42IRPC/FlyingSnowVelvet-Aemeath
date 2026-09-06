@@ -38,6 +38,12 @@ jobs:
             $summary = ($output -split "`r?`n" | Where-Object { $_ -match '^(FAIL|ERROR):|^FAILED \(' }) -join ' | '
             if (-not $summary) { $summary = 'unittest discovery failed without a parsed summary' }
             Write-Output "::error title=Unit tests::$summary"
+            ($output -split "`r?`n" | Where-Object {
+              $_ -match '^(Traceback|  File |AssertionError|[A-Za-z]+Error:|FAILED \()'
+            } | Select-Object -Last 20) | ForEach-Object {
+              $detail = $_.Trim() -replace '%', '%25' -replace "`r", '' -replace "`n", ''
+              Write-Output "::error title=Unit test detail::$detail"
+            }
             exit $exitCode
           }
 
