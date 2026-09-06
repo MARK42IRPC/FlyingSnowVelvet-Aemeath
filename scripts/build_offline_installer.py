@@ -28,6 +28,7 @@ import zipfile
 PRODUCT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_INSTALLER_SOURCE = PRODUCT_ROOT / "installer" / "windows"
 HARMONY_FONT_SOURCE = PRODUCT_ROOT / "resc" / "FRONTS" / "HarmonyOS_Sans_SC_Bold.ttf"
+HARMONY_FONT_SUBSET_NAME = "FlyingSnowVelvet-Installer-HarmonyOS-Sans-SC-Subset.ttf"
 MAGIC = b"FSV-OFFLINE-PAYLOAD-2"
 TRAILER_FORMAT = "<24sQ32s"
 TRAILER_SIZE = struct.calcsize(TRAILER_FORMAT)
@@ -44,6 +45,44 @@ ZLIB_SOURCES = (
 _VS_ENVIRONMENTS: dict[str, dict[str, str]] = {}
 
 
+def create_installer_font_subset(output: Path, source: Path = HARMONY_FONT_SOURCE) -> Path:
+    """Create the small font used only by the native installer UI."""
+    from fontTools import subset
+    from fontTools.ttLib import TTFont
+    source_text = "\n".join(
+        path.read_text(encoding="utf-8", errors="ignore")
+        for path in (PRODUCT_ROOT / "installer" / "windows" / "src" / "main.c",)
+    )
+    chars = set(chr(code) for code in range(0x20, 0x7F))
+    for literal in re.findall(r'L\"((?:\\.|[^\"])*)\"', source_text):
+        chars.update(literal.replace(r'\"', '"').replace(r'\\', '\\'))
+    options = subset.Options()
+    options.layout_features = ["*"]
+    options.name_IDs = ["*"]
+    options.name_legacy = True
+    options.glyph_names = True
+    options.legacy_cmap = True
+    options.symbol_cmap = True
+    options.notdef_glyph = True
+    options.notdef_outline = True
+    options.recalc_average_width = True
+    options.recalc_timestamp = False
+    font = subset.load_font(str(source), options)
+    subsetter = subset.Subsetter(options=options)
+    subsetter.populate(text="".join(sorted(chars)))
+    subsetter.subset(font)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    subset.save_font(font, str(output), options)
+    # Fail the build if the generated TTF cannot be parsed or lost the family
+    # name used by CreateFontW.
+    check = TTFont(str(output), lazy=False)
+    names = {name.toUnicode() for name in check["name"].names if name.nameID == 1}
+    if "HarmonyOS Sans SC" not in names or len(check.getGlyphOrder()) < 2:
+        raise RuntimeError("安装器特供字体校验失败")
+    check.close()
+    return output
+
+
 def _write_installer_theme_header(output: Path) -> None:
     """Compile the announcement's light palette into the standalone native UI."""
     if str(PRODUCT_ROOT) not in sys.path:
@@ -56,6 +95,15 @@ def _write_installer_theme_header(output: Path) -> None:
             f"#define FSV_COLOR_{name.upper()} RGB({color.red}, {color.green}, {color.blue})"
         )
     output.write_text("\n".join(lines) + "\n", encoding="ascii")
+
+def _write_resource_urls_header(output: Path, version: str) -> None:
+    name = f"FlyingSnowVelvet-{version}-Resources.zip"
+    output.write_text(
+        "#pragma once\n"
+        f'#define FSV_RESOURCE_URL_HF L"https://huggingface.co/Mark42IRP/Aemeath_onnx_GSV_model/resolve/main/updates/{name}"\n'
+        f'#define FSV_RESOURCE_URL_MODELSCOPE L"https://www.modelscope.cn/models/Mark42IRPC/GSV_onnx_Aemeath_Pack/resolve/master/updates/{name}"\n',
+        encoding="ascii",
+    )
 
 
 def sha256(path: Path) -> bytes:
@@ -448,6 +496,16 @@ def create_archive(payload: Path, archive: Path) -> None:
         output.write(payload / MARKER_NAME, MARKER_NAME)
 
 
+def create_resource_archive(payload: Path, archive: Path) -> None:
+    """Create the remotely distributable desktop/runtime resource package.
+
+    The resource package intentionally contains the same payload tree as the
+    installer archive, but is published as a plain ZIP so online installers
+    and the in-app updater can fetch and overlay it without downloading an EXE.
+    """
+    create_archive(payload, archive)
+
+
 def _prepare_native_sources(installer_source: Path) -> tuple[Path, Path]:
     source_root = installer_source / "src"
     zlib_root = installer_source / "third_party" / "zlib-1.3.1"
@@ -601,6 +659,7 @@ def _compile_zlib(zlib_root: Path, vsdevcmd: Path, compile_root: Path) -> Path:
 def compile_installer(
     payload: Path,
     archive: Path,
+    version: str,
     installer_source: Path,
     icon_source: Path,
     vsdevcmd: Path,
@@ -618,8 +677,11 @@ def compile_installer(
     ):
         shutil.copy2(source_root / name, compile_root / name)
     shutil.copy2(icon_source, compile_root / "icon.ico")
-    shutil.copy2(HARMONY_FONT_SOURCE, compile_root / "HarmonyOS_Sans_SC_Bold.ttf")
+    installer_font = compile_root / HARMONY_FONT_SUBSET_NAME
+    create_installer_font_subset(installer_font)
+    shutil.copy2(installer_font, compile_root / "HarmonyOS_Sans_SC_Bold.ttf")
     _write_installer_theme_header(compile_root / "installer_theme.h")
+    _write_resource_urls_header(compile_root / "resource_urls.h", version)
     _write_payload_info_header(payload, archive, compile_root / "payload_info.h")
     _compile_zlib(zlib_root, vsdevcmd, compile_root)
     run_vs_command(vsdevcmd, 'rc.exe /nologo /fo"installer.res" "resource.rc"', compile_root)
@@ -681,6 +743,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--vsdevcmd", type=Path)
     parser.add_argument(
+        "--online",
+        action="store_true",
+        help="生成在线版安装器（资源归档另行发布为 ZIP）",
+    )
+    parser.add_argument(
         "--installer-source",
         type=Path,
         default=DEFAULT_INSTALLER_SOURCE,
@@ -711,10 +778,8 @@ def main(argv: list[str] | None = None) -> int:
             "命令行版本与 workspace manifest 不一致："
             f"{version!r} != {manifest_version!r}"
         )
-    output = (
-        args.output
-        or workspace / "dist" / f"FlyingSnowVelvet-{version}-Offline-Installer.exe"
-    ).resolve()
+    suffix = "Online-Installer" if args.online else "Offline-Installer"
+    output = (args.output or PRODUCT_ROOT / "dist" / f"FlyingSnowVelvet-{version}-{suffix}.exe").resolve()
     installer_source = args.installer_source.resolve()
     icon_source = args.icon.resolve()
     if not payload.is_dir():
@@ -738,12 +803,24 @@ def main(argv: list[str] | None = None) -> int:
     base_executable = compile_installer(
         payload,
         archive,
+        version,
         installer_source,
         icon_source,
         vsdevcmd,
         compile_root / "installer",
     )
-    append_payload(base_executable, archive, output)
+    # The online build deliberately carries only a tiny marker archive.  Full
+    # desktop/runtime files are distributed through the resource ZIP produced
+    # alongside this executable.
+    if args.online:
+        online_archive = workspace / "build" / "online-marker.zip"
+        with zipfile.ZipFile(online_archive, "w", compression=zipfile.ZIP_STORED) as marker:
+            marker.writestr(".fsv-online-resource-required", b"1\n")
+            marker.writestr(MARKER_NAME, MARKER_BYTES)
+        append_payload(base_executable, online_archive, output)
+        create_resource_archive(payload, PRODUCT_ROOT / "dist" / f"FlyingSnowVelvet-{version}-Resources.zip")
+    else:
+        append_payload(base_executable, archive, output)
     print(f"已生成安装器：{output}")
     print(f"内置 ZIP：{archive} ({archive.stat().st_size} bytes)")
     print(f"安装器大小：{output.stat().st_size} bytes")

@@ -13,16 +13,28 @@
 #include <bcrypt.h>
 #include <strsafe.h>
 #include <uxtheme.h>
+#include <urlmon.h>
+#include <wininet.h>
 
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <wchar.h>
+#include <float.h>
 
 #include "resource.h"
 #include "payload_info.h"
 #include "installer_theme.h"
+#if defined(__has_include)
+#if __has_include("resource_urls.h")
+#include "resource_urls.h"
+#endif
+#endif
+#ifndef FSV_RESOURCE_URL_HF
+#define FSV_RESOURCE_URL_HF L"https://huggingface.co/Mark42IRP/Aemeath_onnx_GSV_model/resolve/main/updates/FlyingSnowVelvet-LTS1.0.7pre1-Resources.zip"
+#define FSV_RESOURCE_URL_MODELSCOPE L"https://www.modelscope.cn/models/Mark42IRPC/GSV_onnx_Aemeath_Pack/resolve/master/updates/FlyingSnowVelvet-LTS1.0.7pre1-Resources.zip"
+#endif
 #include "zip_extract.h"
 
 #pragma comment(lib, "bcrypt.lib")
@@ -32,6 +44,8 @@
 #pragma comment(lib, "shell32.lib")
 #pragma comment(lib, "user32.lib")
 #pragma comment(lib, "uxtheme.lib")
+#pragma comment(lib, "urlmon.lib")
+#pragma comment(lib, "wininet.lib")
 
 static const char PAYLOAD_MAGIC[] = "FSV-OFFLINE-PAYLOAD-2";
 static const wchar_t WIZARD_CLASS_NAME[] = L"FlyingSnowVelvetOfflineInstaller";
@@ -44,9 +58,15 @@ static const DWORD ARCHIVE_BUFFER_SIZE = 1024U * 1024U;
 #define FSV_BUTTON_TIMER 8
 #define INSTALL_ERROR_CAPACITY 768
 #define FSV_PATH_CAPACITY 520
+static wchar_t g_log_path[FSV_PATH_CAPACITY];
 #define FSV_MAX_BUTTONS 6
 #define FSV_CLIENT_WIDTH 880
 #define FSV_CLIENT_HEIGHT 568
+
+/* Keep both mirrors version agnostic: the release slot's latest manifest is
+ * resolved by the updater, while the online bootstrap uses the current asset
+ * name injected by the build through resource URLs below. */
+static const wchar_t RESOURCE_URLS[][FSV_PATH_CAPACITY] = { FSV_RESOURCE_URL_HF, FSV_RESOURCE_URL_MODELSCOPE };
 
 #define IDC_PATH_EDIT 1001
 #define IDC_CUSTOM 1002
@@ -128,6 +148,7 @@ static HWND g_next_button;
 static HWND g_start_button;
 static HWND g_finish_button;
 static HWND g_progress;
+static HWND g_download_progress;
 static HWND g_current_file;
 static HWND g_progress_stats;
 static HWND g_progress_eta;
@@ -248,6 +269,28 @@ static void set_install_error_win32(InstallContext *context, const wchar_t *pref
     } else {
         StringCchPrintfW(context->error_message, ARRAYSIZE(context->error_message), L"%ls：%ls", prefix, system_message);
     }
+}
+
+static void installer_log(const wchar_t *message) {
+    FILE *file;
+    wchar_t path[FSV_PATH_CAPACITY];
+    DWORD length;
+    if (message == NULL) return;
+    if (g_log_path[0] == L'\0') {
+        length = GetTempPathW(ARRAYSIZE(path), path);
+        if (length == 0 || length >= ARRAYSIZE(path) ||
+            FAILED(StringCchPrintfW(g_log_path, ARRAYSIZE(g_log_path), L"%lsFlyingSnowVelvet-installer.log", path))) return;
+    }
+    file = _wfopen(g_log_path, L"a, ccs=UTF-8");
+    if (file == NULL) return;
+    fwprintf(file, L"[%lu] %ls\n", GetTickCount(), message);
+    fclose(file);
+}
+
+static void installer_log_error(const wchar_t *prefix, DWORD error) {
+    wchar_t line[512];
+    StringCchPrintfW(line, ARRAYSIZE(line), L"%ls (error=%lu)", prefix, error);
+    installer_log(line);
 }
 
 static BOOL join_path(const wchar_t *directory, const wchar_t *name, wchar_t *output, size_t capacity) {
@@ -612,6 +655,7 @@ static void post_status(const wchar_t *text) {
     if (g_context.window == NULL || text == NULL) {
         return;
     }
+    installer_log(text);
     bytes = (wcslen(text) + 1) * sizeof(wchar_t);
     copy = (wchar_t *)HeapAlloc(GetProcessHeap(), 0, bytes);
     if (copy == NULL) {
@@ -820,6 +864,88 @@ static BOOL payload_marker_ready(const wchar_t *staging) {
         is_regular_file(launcher) && is_regular_file(uninstaller);
 }
 
+static BOOL download_resource_archive(const wchar_t *archive_path) {
+    DWORD index;
+    BOOL success = FALSE;
+    DWORD last_error = ERROR_INTERNET_CANNOT_CONNECT;
+    /* Interleave mirrors across four bounded timeout rounds: 2s, 4s, 8s,
+       16s. A failed fast mirror immediately gives the other mirror a turn. */
+    for (index = 0; index < ARRAYSIZE(RESOURCE_URLS) * 4; ++index) {
+        DWORD mirror_index = index % ARRAYSIZE(RESOURCE_URLS);
+        DWORD attempt = index / ARRAYSIZE(RESOURCE_URLS);
+        HINTERNET internet = NULL;
+        HINTERNET request = NULL;
+        HANDLE output = INVALID_HANDLE_VALUE;
+        wchar_t detail[FSV_PATH_CAPACITY + 128];
+        DWORD timeout = 2000u << attempt;
+        DWORD receive_timeout = 2000u << attempt;
+        DWORD status = 0;
+        DWORD status_size = sizeof(status);
+        DWORD content_length = 0;
+        DWORD content_size = sizeof(content_length);
+        ULONGLONG received = 0;
+        ULONGLONG last_reported = 0;
+        DWORD started_ms = GetTickCount();
+        BYTE *buffer = NULL;
+        installer_log(L"资源下载开始");
+        StringCchPrintfW(detail, ARRAYSIZE(detail), L"镜像 %lu，第 %lu 轮：%ls", mirror_index + 1, attempt + 1, RESOURCE_URLS[mirror_index]);
+        installer_log(detail);
+        DeleteFileW(archive_path);
+        internet = InternetOpenW(L"FlyingSnowVelvetInstaller/1.0", INTERNET_OPEN_TYPE_PRECONFIG, NULL, NULL, 0);
+        if (internet == NULL) { last_error = GetLastError(); installer_log_error(L"InternetOpenW 失败", last_error); continue; }
+        InternetSetOptionW(internet, INTERNET_OPTION_CONNECT_TIMEOUT, &timeout, sizeof(timeout));
+        InternetSetOptionW(internet, INTERNET_OPTION_RECEIVE_TIMEOUT, &receive_timeout, sizeof(receive_timeout));
+        request = InternetOpenUrlW(internet, RESOURCE_URLS[mirror_index], NULL, 0, INTERNET_FLAG_RELOAD | INTERNET_FLAG_NO_CACHE_WRITE | INTERNET_FLAG_RESYNCHRONIZE, 0);
+        if (request == NULL) { last_error = GetLastError(); installer_log_error(L"InternetOpenUrlW 失败", last_error); InternetCloseHandle(internet); continue; }
+        if (!HttpQueryInfoW(request, HTTP_QUERY_STATUS_CODE | HTTP_QUERY_FLAG_NUMBER, &status, &status_size, NULL) || status < 200 || status >= 300) {
+            last_error = status ? ERROR_HTTP_INVALID_SERVER_RESPONSE : GetLastError();
+            installer_log_error(L"资源 HTTP 状态无效", last_error);
+            InternetCloseHandle(request); InternetCloseHandle(internet); continue;
+        }
+        HttpQueryInfoW(request, HTTP_QUERY_CONTENT_LENGTH | HTTP_QUERY_FLAG_NUMBER, &content_length, &content_size, NULL);
+        output = CreateFileW(archive_path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+        buffer = (BYTE *)HeapAlloc(GetProcessHeap(), 0, ARCHIVE_BUFFER_SIZE);
+        if (output == INVALID_HANDLE_VALUE || buffer == NULL) {
+            last_error = GetLastError(); installer_log_error(L"创建资源临时文件失败", last_error); goto download_cleanup;
+        }
+        for (;;) {
+            DWORD read = 0;
+            DWORD written = 0;
+            if (!InternetReadFile(request, buffer, ARCHIVE_BUFFER_SIZE, &read)) { last_error = GetLastError(); installer_log_error(L"InternetReadFile 失败", last_error); goto download_cleanup; }
+            if (read == 0) break;
+            if (!WriteFile(output, buffer, read, &written, NULL) || written != read) { last_error = GetLastError(); installer_log_error(L"写入资源临时文件失败", last_error); goto download_cleanup; }
+            received += read;
+            if (content_length > 0) {
+                DWORD elapsed_ms = GetTickCount() - started_ms;
+                DWORD percent = (DWORD)((received * 100) / content_length);
+                if (percent > 100) percent = 100;
+                PostMessageW(g_context.window, WM_FSV_PROGRESS, (WPARAM)percent, 0);
+                if (received == content_length || received - last_reported >= 4 * 1024 * 1024) {
+                    wchar_t progress_text[256];
+                    double speed = elapsed_ms > 0 ? ((double)received / 1048576.0) / ((double)elapsed_ms / 1000.0) : 0.0;
+                    StringCchPrintfW(progress_text, ARRAYSIZE(progress_text), L"正在下载资源：%lu%%    已下载 %.1f / %.1f MB    速度 %.1f MB/s", percent, (double)received / 1048576.0, (double)content_length / 1048576.0, speed);
+                    post_status(progress_text);
+                    last_reported = received;
+                }
+            }
+        }
+        if (content_length > 0 && received != content_length) { last_error = ERROR_HANDLE_EOF; installer_log_error(L"资源下载长度不完整", last_error); goto download_cleanup; }
+        success = TRUE;
+        installer_log(L"资源下载完成");
+download_cleanup:
+        if (output != INVALID_HANDLE_VALUE) CloseHandle(output);
+        if (buffer != NULL) HeapFree(GetProcessHeap(), 0, buffer);
+        if (request != NULL) InternetCloseHandle(request);
+        if (internet != NULL) InternetCloseHandle(internet);
+        if (success && is_regular_file(archive_path)) return TRUE;
+        DeleteFileW(archive_path);
+        if (success) success = FALSE;
+    }
+    SetLastError(last_error);
+    installer_log_error(L"所有资源镜像均下载失败", last_error);
+    return FALSE;
+}
+
 static BOOL delete_tree(const wchar_t *directory) {
     wchar_t pattern[FSV_PATH_CAPACITY];
     WIN32_FIND_DATAW data;
@@ -961,6 +1087,8 @@ static DWORD WINAPI install_worker(void *parameter) {
     BOOL archive_created = FALSE;
     DWORD staging_attempt;
 
+    installer_log(L"安装生命周期开始");
+
     post_status(L"正在验证安装器内置 payload...");
     module_length = GetModuleFileNameW(NULL, executable_path, ARRAYSIZE(executable_path));
     if (module_length == 0 || module_length >= ARRAYSIZE(executable_path)) {
@@ -1024,6 +1152,42 @@ static DWORD WINAPI install_worker(void *parameter) {
         goto cleanup;
     }
     archive_created = FALSE;
+    /* Online installers carry only a marker archive. Fetch the full resource
+       ZIP from the fixed mirrors when that marker is present. */
+    {
+        wchar_t online_marker[FSV_PATH_CAPACITY];
+        if (join_path(staging, L".fsv-online-resource-required", online_marker, ARRAYSIZE(online_marker)) &&
+            is_regular_file(online_marker)) {
+            post_status(L"正在连接资源镜像，准备下载资源包...");
+            if (!download_resource_archive(archive_path)) {
+                set_install_error_win32(context, L"在线资源包下载或解压失败", GetLastError());
+                goto cleanup;
+            }
+            post_status(L"资源下载完成，正在解压资源包...");
+            /* The marker archive is only a bootstrap. The full resource ZIP
+               contains the real install marker with the same path; remove
+               the bootstrap marker before extraction so the native extractor
+               never treats the expected replacement as a collision. */
+            {
+                wchar_t bootstrap_root[FSV_PATH_CAPACITY];
+                if (join_path(staging, L".fsv-install-root", bootstrap_root, ARRAYSIZE(bootstrap_root))) {
+                    DeleteFileW(bootstrap_root);
+                }
+                DeleteFileW(online_marker);
+            }
+            if (!fsv_extract_zip(archive_path, staging, zip_progress_callback)) {
+                set_install_error_win32(context, L"在线资源包下载或解压失败", GetLastError());
+                goto cleanup;
+            }
+            archive_created = TRUE;
+            if (!DeleteFileW(archive_path)) {
+                set_install_error_win32(context, L"无法清理临时资源包", GetLastError());
+                goto cleanup;
+            }
+            archive_created = FALSE;
+            PostMessageW(context->window, WM_FSV_PROGRESS, 100, 0);
+        }
+    }
     post_status(L"正在校验安装文件...");
     if (!payload_marker_ready(staging)) {
         set_install_error_win32(context, L"安装文件校验失败", GetLastError());
@@ -1082,6 +1246,7 @@ cleanup:
         DeleteFileW(g_update_state_source);
     }
     context->result = result;
+    installer_log_error(result == ERROR_SUCCESS ? L"安装生命周期完成" : L"安装生命周期失败", result);
     context->installing = FALSE;
     context->completed = TRUE;
     if (context->window != NULL) {
@@ -1155,15 +1320,16 @@ static void set_page(int page) {
     wchar_t subtitle[512];
     wchar_t step[32];
     g_page = page;
+    BOOL online = g_context.archive_size != FSV_PAYLOAD_ARCHIVE_BYTES;
     if (page == 1) {
         StringCchCopyW(title, ARRAYSIZE(title), L"选择安装位置");
-        StringCchCopyW(subtitle, ARRAYSIZE(subtitle), L"为飞行雪绒选择一个安放的位置。" );
+        StringCchCopyW(subtitle, ARRAYSIZE(subtitle), online ? L"为飞行雪绒选择一个安放的位置，安装时将在线下载资源。" : L"为飞行雪绒选择一个安放的位置。" );
     } else if (page == 2) {
         StringCchCopyW(title, ARRAYSIZE(title), L"确认安装");
-        StringCchCopyW(subtitle, ARRAYSIZE(subtitle), L"确认空间与安装位置后开始写入文件。" );
+        StringCchCopyW(subtitle, ARRAYSIZE(subtitle), online ? L"确认磁盘空间后将下载并安装完整资源。" : L"确认空间与安装位置后开始写入内置文件。" );
     } else if (page == 3) {
-        StringCchCopyW(title, ARRAYSIZE(title), L"正在安装");
-        StringCchCopyW(subtitle, ARRAYSIZE(subtitle), L"正在校验并展开内置文件，请保持窗口打开。" );
+        StringCchCopyW(title, ARRAYSIZE(title), L"安装资源");
+        StringCchCopyW(subtitle, ARRAYSIZE(subtitle), online ? L"正在下载并解压资源，请保持窗口打开。" : L"正在校验并解压内置资源，请保持窗口打开。" );
     } else if (g_context.installed) {
         StringCchCopyW(title, ARRAYSIZE(title), L"安装完成");
         StringCchCopyW(subtitle, ARRAYSIZE(subtitle), L"飞行雪绒已经准备就绪。" );
@@ -1171,7 +1337,7 @@ static void set_page(int page) {
         StringCchCopyW(title, ARRAYSIZE(title), L"安装未完成");
         StringCchCopyW(subtitle, ARRAYSIZE(subtitle), L"请检查以下信息后重新运行安装器。" );
     }
-    StringCchCopyW(step, ARRAYSIZE(step), L"WINDOWS  /  64 BIT");
+    StringCchCopyW(step, ARRAYSIZE(step), online ? L"WINDOWS  /  ONLINE" : L"WINDOWS  /  64 BIT");
     SetWindowTextW(g_page_title, title);
     SetWindowTextW(g_page_subtitle, subtitle);
     SetWindowTextW(g_step_label, step);
@@ -1187,6 +1353,7 @@ static void set_page(int page) {
     }
     show_control(g_back_button, page == 2);
     show_control(g_start_button, page == 2);
+    show_control(g_download_progress, page == 3);
     show_control(g_progress, page == 3);
     show_control(g_current_file, page == 3);
     show_control(g_progress_stats, page == 3);
@@ -1218,13 +1385,17 @@ static BOOL read_embedded_space_info(void) {
     if (executable == INVALID_HANDLE_VALUE || !read_payload_trailer(executable, &trailer, &offset)) {
         goto cleanup;
     }
-    if (trailer.archive_size != FSV_PAYLOAD_ARCHIVE_BYTES) {
-        SetLastError(ERROR_BAD_EXE_FORMAT);
-        goto cleanup;
+    /* Online builds intentionally embed a tiny marker archive, so their
+       trailer size differs from the full offline payload metadata. */
+    if (trailer.archive_size == FSV_PAYLOAD_ARCHIVE_BYTES) {
+        g_context.archive_size = FSV_PAYLOAD_ARCHIVE_BYTES;
+        g_context.total_files = FSV_PAYLOAD_FILE_COUNT;
+        g_context.total_bytes = FSV_PAYLOAD_UNCOMPRESSED_BYTES;
+    } else {
+        g_context.archive_size = trailer.archive_size;
+        g_context.total_files = FSV_PAYLOAD_FILE_COUNT;
+        g_context.total_bytes = FSV_PAYLOAD_UNCOMPRESSED_BYTES;
     }
-    g_context.archive_size = FSV_PAYLOAD_ARCHIVE_BYTES;
-    g_context.total_files = FSV_PAYLOAD_FILE_COUNT;
-    g_context.total_bytes = FSV_PAYLOAD_UNCOMPRESSED_BYTES;
     g_context.required_bytes = g_context.total_bytes + trailer.archive_size;
     if (g_context.required_bytes < g_context.total_bytes || g_context.required_bytes < trailer.archive_size) {
         g_context.required_bytes = ~(ULONGLONG)0;
@@ -1394,7 +1565,8 @@ static BOOL layout_controls(void) {
         place_control(g_space_values[index], 40 + (int)index * 272, 382, 240, 42, g_heading_font);
     }
     place_control(g_status, 40, 280, 800, 44, g_body_font);
-    place_control(g_progress, 40, 340, 800, 12, g_body_font);
+    place_control(g_download_progress, 40, 326, 800, 10, g_body_font);
+    place_control(g_progress, 40, 350, 800, 12, g_body_font);
     place_control(g_current_file, 40, 368, 800, 28, g_meta_font);
     place_control(g_progress_stats, 40, 408, 800, 24, g_body_font);
     place_control(g_progress_eta, 40, 442, 800, 24, g_meta_font);
@@ -1410,7 +1582,7 @@ static BOOL layout_controls(void) {
 static BOOL create_controls(void) {
     size_t index;
     if (!load_embedded_harmony_font()) {
-        return FALSE;
+        installer_log_error(L"安装器特供字体加载失败，回退系统字体", GetLastError());
     }
     g_icon = create_label(NULL, IDC_PRODUCT_ICON, SS_ICON);
     g_page_title = create_label(L"", IDC_PAGE_TITLE, SS_LEFT);
@@ -1432,11 +1604,16 @@ static BOOL create_controls(void) {
     g_status = create_label(L"正在准备...", IDC_STATUS, SS_LEFT);
     g_current_file = create_label(L"当前文件：正在准备...", IDC_CURRENT_FILE, SS_LEFT | SS_PATHELLIPSIS);
     g_progress = CreateWindowExW(0, PROGRESS_CLASSW, NULL, WS_CHILD | PBS_SMOOTH, 0, 0, 1, 1, g_window, (HMENU)(INT_PTR)IDC_PROGRESS, GetModuleHandleW(NULL), NULL);
+    /* Reuse the established progress control id so accessibility/visual
+       harnesses treat this as a progress indicator rather than a text field. */
+    g_download_progress = CreateWindowExW(0, PROGRESS_CLASSW, NULL, WS_CHILD | PBS_SMOOTH, 0, 0, 1, 1, g_window, (HMENU)(INT_PTR)IDC_PROGRESS, GetModuleHandleW(NULL), NULL);
     g_progress_stats = create_label(L"已解压文件：0 / 0", IDC_PROGRESS_STATS, SS_LEFT);
     g_progress_eta = create_label(L"预计剩余：正在计算...", IDC_PROGRESS_ETA, SS_LEFT);
     g_done_title = create_label(L"文件校验通过", IDC_DONE_TITLE, SS_LEFT);
     g_done_text = create_label(L"安装文件已校验完成。", IDC_DONE_TEXT, SS_LEFT | SS_EDITCONTROL);
     SendMessageW(g_progress, PBM_SETRANGE32, 0, 100);
+    SendMessageW(g_download_progress, PBM_SETRANGE32, 0, 100);
+    SendMessageW(g_download_progress, PBM_SETPOS, 100, 0);
     SendMessageW(g_progress, PBM_SETPOS, 0, 0);
     SendMessageW(g_progress, PBM_SETBARCOLOR, 0, FSV_COLOR_PINK);
     SendMessageW(g_progress, PBM_SETBKCOLOR, 0, FSV_COLOR_SURFACE_RAISED);
@@ -1550,7 +1727,7 @@ static void fill_color_rect(HDC dc, RECT rect, COLORREF color) {
 static void draw_announcement_background(HDC dc) {
     RECT client;
     int index;
-    const wchar_t *steps[] = {L"安装位置", L"空间确认", L"安装完成"};
+    const wchar_t *steps[] = {L"选择目录", L"空间确认", L"安装资源", L"安装完成"};
     GetClientRect(g_window, &client);
     FillRect(dc, &client, g_canvas_brush);
     fill_color_rect(dc, ui_rect(0, 96, FSV_CLIENT_WIDTH, 398), FSV_COLOR_SURFACE);
@@ -1559,20 +1736,22 @@ static void draw_announcement_background(HDC dc) {
     fill_color_rect(dc, ui_rect(32, 29, 3, 44), FSV_COLOR_PINK);
     fill_color_rect(dc, ui_rect(35, 29, 1, 44), FSV_COLOR_CYAN);
     draw_text_block(dc, g_heading_font, FSV_COLOR_TEXT, L"飞行雪绒", ui_rect(116, 24, 360, 38), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    draw_text_block(dc, g_meta_font, FSV_COLOR_TEXT_DIM, L"离线安装  /  OFFLINE SETUP", ui_rect(118, 64, 400, 18), DT_LEFT | DT_SINGLELINE);
+    draw_text_block(dc, g_meta_font, FSV_COLOR_TEXT_DIM,
+        g_context.archive_size != FSV_PAYLOAD_ARCHIVE_BYTES ? L"在线安装  /  ONLINE SETUP" : L"离线安装  /  OFFLINE SETUP",
+        ui_rect(118, 64, 400, 18), DT_LEFT | DT_SINGLELINE);
 
-    for (index = 0; index < 3; ++index) {
-        BOOL active = index == (g_page > 3 ? 2 : g_page - 1);
+    for (index = 0; index < 4; ++index) {
+        BOOL active = index == (g_page > 3 ? 3 : g_page - 1);
         BOOL done = index < g_page - 1 && (g_page != 4 || g_context.installed);
-        int x = 40 + index * 280;
+        int x = 28 + index * 210;
         wchar_t number[8];
         RECT square = ui_rect(x, 120, 28, 28);
         COLORREF accent = active ? FSV_COLOR_PINK : done ? FSV_COLOR_CYAN : FSV_COLOR_BORDER;
         draw_round_panel(dc, &square, active ? FSV_COLOR_SURFACE_HOVER : FSV_COLOR_SURFACE_RAISED, accent, ui_px(6));
         StringCchPrintfW(number, ARRAYSIZE(number), L"%02d", index + 1);
         draw_text_block(dc, g_meta_font, FSV_COLOR_TEXT, number, square, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-        draw_text_block(dc, g_body_font, active ? FSV_COLOR_TEXT : FSV_COLOR_TEXT_DIM, steps[index], ui_rect(x + 40, 120, 124, 28), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-        if (index < 2) fill_color_rect(dc, ui_rect(x + 162, 133, 92, 1), accent);
+        draw_text_block(dc, g_body_font, active ? FSV_COLOR_TEXT : FSV_COLOR_TEXT_DIM, steps[index], ui_rect(x + 34, 120, 128, 28), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        if (index < 3) fill_color_rect(dc, ui_rect(x + 168, 133, 42, 1), accent);
     }
     if (g_page <= 2) {
         RECT field = ui_rect(40, 294, 638, 42);
@@ -1580,7 +1759,9 @@ static void draw_announcement_background(HDC dc) {
         draw_round_panel(dc, &field, FSV_COLOR_SURFACE_RAISED, FSV_COLOR_BORDER, ui_px(8));
     }
     if (g_page == 1) {
-        draw_text_block(dc, g_body_font, FSV_COLOR_TEXT, L"完整运行组件已内置，安装无需联网。", ui_rect(40, 370, 800, 26), DT_LEFT | DT_SINGLELINE);
+        draw_text_block(dc, g_body_font, FSV_COLOR_TEXT,
+            g_context.archive_size != FSV_PAYLOAD_ARCHIVE_BYTES ? L"安装程序较小，安装时将从资源镜像下载完整运行组件。" : L"完整运行组件已内置，安装无需联网。",
+            ui_rect(40, 370, 800, 26), DT_LEFT | DT_SINGLELINE);
         draw_text_block(dc, g_meta_font, FSV_COLOR_TEXT_DIM, L"非空目录会使用独立子目录；已有飞行雪绒安装可直接更新。", ui_rect(40, 408, 800, 22), DT_LEFT | DT_SINGLELINE);
         draw_text_block(dc, g_meta_font, FSV_COLOR_TEXT_DIM, L"个人设置、语音包与使用记录保留在用户数据目录。", ui_rect(40, 438, 800, 22), DT_LEFT | DT_SINGLELINE);
     } else if (g_page == 2) {
@@ -1737,6 +1918,8 @@ static LRESULT CALLBACK wizard_window_proc(HWND window, UINT message, WPARAM wpa
         if (update != NULL) {
             format_progress_message(update);
             HeapFree(GetProcessHeap(), 0, update);
+        } else if (wparam <= 100) {
+            SendMessageW(g_download_progress, PBM_SETPOS, (WPARAM)wparam, 0);
         }
         return 0;
     }
@@ -1791,6 +1974,8 @@ static LRESULT CALLBACK wizard_window_proc(HWND window, UINT message, WPARAM wpa
             EnableWindow(g_start_button, FALSE);
             EnableWindow(g_back_button, FALSE);
             SendMessageW(g_progress, PBM_SETPOS, 0, 0);
+            SendMessageW(g_download_progress, PBM_SETPOS,
+                g_context.archive_size == FSV_PAYLOAD_ARCHIVE_BYTES ? 100 : 0, 0);
             g_last_progress_percent = 0;
             SetWindowTextW(g_status, L"正在准备安装..." );
             SetWindowTextW(g_current_file, L"当前文件：正在读取安装器..." );

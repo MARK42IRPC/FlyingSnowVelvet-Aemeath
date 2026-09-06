@@ -41,10 +41,13 @@ class OfflineInstallerVisualTests(unittest.TestCase):
             native_test_root / "installer_visual_harness.c",
             native_test_root / "installer_visual_harness.rc",
             installer.PRODUCT_ROOT / "resc" / "icon.ico",
-            installer.PRODUCT_ROOT / "resc" / "FRONTS" / "HarmonyOS_Sans_SC_Bold.ttf",
         ):
             destination = root / source.name
             shutil.copy2(source, destination)
+        shutil.copy2(
+            installer.PRODUCT_ROOT / "resc" / "FRONTS" / "HarmonyOS_Sans_SC_Bold.ttf",
+            root / "HarmonyOS_Sans_SC_Bold.ttf",
+        )
         installer._write_installer_theme_header(root / "installer_theme.h")
         (root / "payload_info.h").write_text(
             "#pragma once\n"

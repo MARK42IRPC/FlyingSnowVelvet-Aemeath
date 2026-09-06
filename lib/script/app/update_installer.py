@@ -188,6 +188,37 @@ def extract_update_installer_bundle(bundle_path: Path, destination: Path) -> Pat
         raise ValueError(f"更新安装器压缩包不是有效 ZIP：{exc}") from exc
 
 
+def install_resource_bundle(bundle_path: Path, project_root: Path) -> None:
+    """Safely overlay a desktop/runtime resource ZIP onto an installation."""
+    bundle = Path(bundle_path).resolve()
+    target_root = _installation_root(Path(project_root))
+    staging = bundle.parent / f".fsv-resource-{os.getpid()}"
+    shutil.rmtree(staging, ignore_errors=True)
+    staging.mkdir(parents=True, exist_ok=True)
+    try:
+        with zipfile.ZipFile(bundle) as archive:
+            for member in archive.infolist():
+                name = str(member.filename or "").replace("\\", "/")
+                path = Path(name)
+                if not name or path.is_absolute() or ".." in path.parts:
+                    raise ValueError(f"资源包包含不安全路径：{name}")
+                archive.extract(member, staging)
+        marker = staging / ".fsv-install-root"
+        if not marker.is_file():
+            raise ValueError("资源包缺少安装标记")
+        for source in staging.iterdir():
+            if source.name == ".fsv-install-root":
+                continue
+            destination = target_root / source.name
+            if source.is_dir():
+                shutil.copytree(source, destination, dirs_exist_ok=True)
+            else:
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, destination)
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+
+
 def _installation_root(project_root: Path) -> Path:
     """Resolve the directory selected by the native installer.
 

@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import sys
 import time
 import zipfile
@@ -33,6 +34,9 @@ _ASSET_NAME_RE = re.compile(
 )
 _MANIFEST_NAME_RE = re.compile(
     r"^FlyingSnowVelvet-(?P<version>[A-Za-z0-9._+-]+)-manifest\.json$"
+)
+_RESOURCE_NAME_RE = re.compile(
+    r"^FlyingSnowVelvet-(?P<version>[A-Za-z0-9._+-]+)-Resources\.zip$"
 )
 
 
@@ -62,6 +66,12 @@ def _read_tokens(path: Path | None) -> tuple[str, str]:
     modelscope_token = os.environ.get("MODELSCOPE_TOKEN") or os.environ.get("MODELSCOPE_API_TOKEN") or ""
     for value in values:
         token = value.strip()
+        # Atoken files commonly annotate credentials as ``label：token`` or
+        # ``label=token``; accept the token portion without logging it.
+        if "：" in token:
+            token = token.rsplit("：", 1)[1].strip()
+        elif "=" in token and not token.startswith(("hf_", "ms-")):
+            token = token.rsplit("=", 1)[1].strip()
         if not hf_token and _HF_TOKEN_RE.fullmatch(token):
             hf_token = token
         if not modelscope_token and _MODELSCOPE_TOKEN_RE.fullmatch(token):
@@ -183,6 +193,52 @@ def _publication_files(asset_path: Path, metadata_path: Path) -> tuple[Path, ...
     return tuple(files)
 
 
+def prepare_resource_release(
+    resource_archive: Path,
+    *,
+    version: str,
+    revision: str,
+    published_at: str | None,
+    output_dir: Path,
+) -> tuple[Path, Path]:
+    """Prepare a desktop/runtime resource ZIP and its update metadata.
+
+    Resource bundles are the only files uploaded for online updates; EXE files
+    remain local build artifacts.  The ZIP is checked for traversal entries
+    before metadata is emitted.
+    """
+    source = Path(resource_archive).resolve()
+    if not source.is_file() or source.suffix.casefold() != ".zip":
+        raise SystemExit(f"缺少资源包 ZIP：{source}")
+    if not _VERSION_RE.fullmatch(version):
+        raise SystemExit(f"版本号不能用于发布文件名：{version!r}")
+    with zipfile.ZipFile(source) as archive:
+        for member in archive.infolist():
+            normalized = str(member.filename or "").replace("\\", "/")
+            path = Path(normalized)
+            if path.is_absolute() or ".." in path.parts:
+                raise SystemExit(f"资源包包含不安全路径：{member.filename}")
+    output_dir = Path(output_dir).resolve()
+    target = output_dir / "updates" / f"FlyingSnowVelvet-{version}-Resources.zip"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, target)
+    metadata_path = output_dir / Path(OFFLINE_UPDATE_METADATA_PATH)
+    metadata_path.parent.mkdir(parents=True, exist_ok=True)
+    metadata = {
+        "format": OFFLINE_UPDATE_FORMAT,
+        "version": version,
+        "published_at": _isoformat(published_at),
+        "revision": revision.strip() or f"sha256:{_sha256(target)}",
+        "asset_name": target.name,
+        "asset_path": target.relative_to(output_dir).as_posix(),
+        "size": target.stat().st_size,
+        "sha256": _sha256(target),
+        "kind": "resources",
+    }
+    metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return target, metadata_path
+
+
 def _old_update_paths(remote_paths: list[str], current_version: str) -> list[str]:
     """Return only obsolete installer/manifest files under the update slot."""
     obsolete: list[str] = []
@@ -191,7 +247,7 @@ def _old_update_paths(remote_paths: list[str], current_version: str) -> list[str
         if not path.startswith("updates/") or path.count("/") != 1:
             continue
         name = path.rsplit("/", 1)[1]
-        match = _ASSET_NAME_RE.fullmatch(name) or _MANIFEST_NAME_RE.fullmatch(name)
+        match = _ASSET_NAME_RE.fullmatch(name) or _MANIFEST_NAME_RE.fullmatch(name) or _RESOURCE_NAME_RE.fullmatch(name)
         if match is not None and match.group("version") != current_version:
             obsolete.append(path)
     return sorted(set(obsolete))
@@ -341,17 +397,29 @@ def cleanup_old_releases(*, hf_token: str, modelscope_token: str, current_versio
 def publish_release(asset_path: Path, metadata_path: Path, output_dir: Path, *, hf_token: str, modelscope_token: str) -> None:
     if not hf_token or not modelscope_token:
         raise SystemExit("发布离线安装器需要 HF_TOKEN 与 MODELSCOPE_TOKEN")
-    metadata = _validate_local_release(asset_path, metadata_path)
-    publication_files = _publication_files(asset_path, metadata_path)
-    immutable_files = tuple(path for path in publication_files if path != metadata_path)
+    try:
+        raw_metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise SystemExit(f"发布清单无法读取：{metadata_path}") from exc
+    if isinstance(raw_metadata, dict) and raw_metadata.get("kind") == "resources":
+        metadata = raw_metadata
+    else:
+        metadata = _validate_local_release(asset_path, metadata_path)
+    publication_files = (asset_path, metadata_path)
+    if not (isinstance(metadata, dict) and metadata.get("kind") == "resources"):
+        publication_files = _publication_files(asset_path, metadata_path)
+    # Remote model hubs now carry resource ZIPs and manifests only; installer
+    # EXEs remain local release artifacts.  Keep metadata publication intact.
+    resource_files = tuple(
+        path for path in output_dir.joinpath("updates").glob("*-Resources.zip")
+        if path.is_file()
+    )
+    immutable_files = tuple(resource_files)
     # Both mirrors receive immutable payloads before either latest pointer is
     # moved. A retry can then safely continue without rebuilding the archive.
-    _publish_huggingface(
-        asset_path, metadata_path, output_dir, hf_token, files=immutable_files
-    )
-    _publish_modelscope(
-        asset_path, metadata_path, output_dir, modelscope_token, files=immutable_files
-    )
+    if immutable_files:
+        _publish_huggingface(asset_path, metadata_path, output_dir, hf_token, files=immutable_files)
+        _publish_modelscope(asset_path, metadata_path, output_dir, modelscope_token, files=immutable_files)
     _publish_huggingface(
         asset_path, metadata_path, output_dir, hf_token, files=(metadata_path,)
     )
@@ -367,7 +435,8 @@ def publish_release(asset_path: Path, metadata_path: Path, output_dir: Path, *, 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--installer", type=Path, required=True)
+    parser.add_argument("--installer", type=Path)
+    parser.add_argument("--resource", type=Path, help="桌宠与 runtime 资源包 ZIP（在线版发布）")
     parser.add_argument("--version", required=True)
     parser.add_argument("--revision", default=os.environ.get("GITHUB_SHA", ""))
     parser.add_argument("--published-at")
@@ -376,14 +445,25 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--token-file", type=Path)
     parser.add_argument("--prepare-only", action="store_true")
     args = parser.parse_args(argv)
-    asset_path, metadata_path = prepare_release(
-        args.installer,
-        version=args.version,
-        revision=args.revision,
-        published_at=args.published_at,
-        output_dir=args.output_dir,
-        manifest=args.manifest,
-    )
+    if args.resource:
+        asset_path, metadata_path = prepare_resource_release(
+            args.resource,
+            version=args.version,
+            revision=args.revision,
+            published_at=args.published_at,
+            output_dir=args.output_dir,
+        )
+    else:
+        if not args.installer:
+            raise SystemExit("需要 --installer 或 --resource")
+        asset_path, metadata_path = prepare_release(
+            args.installer,
+            version=args.version,
+            revision=args.revision,
+            published_at=args.published_at,
+            output_dir=args.output_dir,
+            manifest=args.manifest,
+        )
     print(f"已准备外层安装器 ZIP：{asset_path}")
     print(f"已生成更新清单：{metadata_path}")
     if not args.prepare_only:

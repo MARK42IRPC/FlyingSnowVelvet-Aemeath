@@ -72,9 +72,10 @@ static BOOL check_controls(void) {
         RECT bounds;
         RECT measured;
         wchar_t text[1024];
-        wchar_t class_name[32];
+        wchar_t class_name[64];
         LONG_PTR style = GetWindowLongPtrW(child, GWL_STYLE);
-        if (!(style & WS_VISIBLE) || child == g_icon || child == g_progress) continue;
+        GetClassNameW(child, class_name, ARRAYSIZE(class_name));
+        if (!(style & WS_VISIBLE) || child == g_icon || child == g_progress || wcscmp(class_name, PROGRESS_CLASSW) == 0) continue;
         GetWindowRect(child, &bounds);
         MapWindowPoints(NULL, g_window, (POINT *)&bounds, 2);
         if (bounds.left < 0 || bounds.top < 0 || bounds.right > client.right || bounds.bottom > client.bottom) {

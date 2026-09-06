@@ -115,6 +115,7 @@ class ReleaseInfo:
     response_seconds: float = 0.0
     fallback_download_urls: tuple[str, ...] = ()
     archive_sha256: str = ""
+    kind: str = "installer"
 
 
 @dataclass(frozen=True)
@@ -274,6 +275,11 @@ def _select_release_source(releases: list[ReleaseInfo]) -> ReleaseInfo:
     )
 
 
+def _order_sources_by_speed(releases: list[ReleaseInfo]) -> list[ReleaseInfo]:
+    """Order mirror candidates by measured manifest response latency."""
+    return sorted(releases, key=lambda item: max(0.0, float(item.response_seconds)))
+
+
 def _parse_voice_package_release(
     data: object,
     *,
@@ -289,9 +295,10 @@ def _parse_voice_package_release(
     digest = str(data.get("sha256") or "").strip().lower()
     published_at = _parse_datetime(str(data.get("published_at") or ""))
     relative = PurePosixPath(asset_path)
+    kind = "resources" if asset_name.endswith("-Resources.zip") else "installer"
     if (
         not re.fullmatch(r"[A-Za-z0-9._+-]+", version)
-        or not re.fullmatch(r"FlyingSnowVelvet-[A-Za-z0-9._+-]+-Offline-Installer\.zip", asset_name)
+        or not re.fullmatch(r"FlyingSnowVelvet-[A-Za-z0-9._+-]+-(?:Offline-Installer|Resources)\.zip", asset_name)
         or relative.is_absolute()
         or ".." in relative.parts
         or ":" in asset_path
@@ -310,6 +317,7 @@ def _parse_voice_package_release(
         revision=str(data.get("revision") or f"sha256:{digest}").strip(),
         response_seconds=response_seconds,
         archive_sha256=digest,
+        kind=kind,
     )
 
 
@@ -421,6 +429,7 @@ class UpdateManager(_UpdateBase):
     ) -> UpdateResult:
         from lib.script.app.update_installer import (
             extract_update_installer_bundle,
+            install_resource_bundle,
             launch_update_installer,
             validate_update_installer,
         )
@@ -443,19 +452,25 @@ class UpdateManager(_UpdateBase):
                         digest.update(chunk)
                 if digest.hexdigest().casefold() != release.archive_sha256.casefold():
                     raise UpdateError("更新安装器压缩包 SHA-256 校验失败")
-            archive_path = (
-                extract_update_installer_bundle(download_path, staging_dir / "installer")
-                if download_path.suffix.casefold() == ".zip"
-                else download_path
-            )
-            validate_update_installer(archive_path)
+            if release.kind == "resources":
+                archive_path = download_path
+                # Resource overlays are applied while the app is running; no
+                # native installer/EXE is downloaded or executed.
+                install_resource_bundle(archive_path, _PROJECT_ROOT)
+            else:
+                archive_path = (
+                    extract_update_installer_bundle(download_path, staging_dir / "installer")
+                    if download_path.suffix.casefold() == ".zip"
+                    else download_path
+                )
+                validate_update_installer(archive_path)
             release_payload = {
                 "tag": release.tag,
                 "published_at": _isoformat(release.published_at),
                 "revision": release.revision,
                 "source": release.source,
             }
-            if launch_installer:
+            if launch_installer and release.kind != "resources":
                 launch_update_installer(
                     archive_path,
                     _PROJECT_ROOT,
@@ -475,7 +490,7 @@ class UpdateManager(_UpdateBase):
             release.revision,
             release.source,
         )
-        reason = "install_scheduled" if launch_installer else "download_ready"
+        reason = "resources_installed" if release.kind == "resources" else ("install_scheduled" if launch_installer else "download_ready")
         message = "离线安装器已启动，桌宠将在退出后完成更新。" if launch_installer else "离线安装器已下载并通过校验，请启动安装器完成更新。"
         self._progress(1, 1, message)
         return UpdateResult(
@@ -559,9 +574,21 @@ class UpdateManager(_UpdateBase):
             detail = "；".join(errors) if errors else "未知网络错误"
             raise UpdateError(f"Hugging Face 和 ModelScope 语音包仓库更新源均不可用：{detail}")
         selected = _select_release_source(releases)
+        # Once the newest revision is selected, prefer the mirror that
+        # responded fastest during the parallel probe; retain same-hash
+        # mirrors as deterministic fallbacks for download failures.
+        compatible = _order_sources_by_speed(releases)
+        fastest = compatible[0] if compatible else selected
+        if all(
+            item.published_at == selected.published_at
+            and item.revision == selected.revision
+            and item.archive_sha256 == selected.archive_sha256
+            for item in releases
+        ):
+            selected = fastest
         fallback_urls = tuple(
             item.download_url
-            for item in releases
+            for item in compatible
             if item is not selected
             and item.download_url
             and item.revision
@@ -730,7 +757,7 @@ class UpdateManager(_UpdateBase):
                             self._progress(
                                 downloaded,
                                 total_bytes,
-                                f"正在下载离线安装器… {downloaded // (1024 * 1024)} MB",
+                                f"正在下载资源包… {downloaded // (1024 * 1024)} MB",
                             )
                     if total_bytes and downloaded != total_bytes:
                         raise UpdateError(

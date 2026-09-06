@@ -10,6 +10,13 @@ from scripts import build_offline_installer as installer
 
 
 class OfflineDistributionTests(unittest.TestCase):
+    def test_installer_font_subset_is_compact_and_keeps_visible_copy(self):
+        from scripts.build_offline_installer import create_installer_font_subset
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output = Path(tmpdir) / "installer.ttf"
+            create_installer_font_subset(output)
+            self.assertLess(output.stat().st_size, 200_000)
+            self.assertGreater(output.stat().st_size, 20_000)
     def test_distribution_state_round_trips_and_resume_requires_same_inputs(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
