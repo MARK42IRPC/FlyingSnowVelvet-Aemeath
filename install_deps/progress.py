@@ -642,7 +642,11 @@ def _render_transfer_progress(prefix, current, total, start_time):
             current,
             total,
             width=26,
-            color_kind="progress_current",
+            # Transfer samples are consumed by both the terminal and the
+            # installer GUI. Keep this shared wire format independent of the
+            # process-wide ANSI toggle so test order or pipe redirection
+            # cannot change the progress-bar shape.
+            color_kind=None,
         )
         value = _fmt_color(f"{percent:>6.2f}%", "progress_value")
         return f"{prefix} {bar} {value} {current_text}/{total_text} {speed_text}"
