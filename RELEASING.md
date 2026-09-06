@@ -59,6 +59,8 @@ CUDA、NVIDIA、TensorRT 或 `onnxruntime-gpu`。
 `resc/GIF/SEanima/` 文件夹、固定 Node 和 DSH production `node_modules` 收集到
 payload；`build_offline_installer.py` 再编译原生安装器并追加 ZIP 与 SHA-256 尾记录。
 最终 payload 不包含 `SEanima.zip`、构建脚本、测试目录、用户状态或开发缓存。
+构建失败后可对输入未变化的完整工作区使用 `--resume`；需要重新收集时使用 `--clean`。
+两者只处理工作区中的已知生成路径，且 `build/`、`.venv/` 与 `venv/` 永不进入 payload。
 
 发布工作流需要配置仓库 secrets `HF_TOKEN` 与 `MODELSCOPE_TOKEN`，仅用于模型仓库上传；
 本地可使用 `scripts/publish_offline_installer.py --token-file <令牌文件>`，令牌不会写入发布清单。

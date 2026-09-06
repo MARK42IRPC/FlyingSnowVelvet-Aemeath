@@ -5,6 +5,7 @@ on:
     tags:
       - PACK
       - 'v*'
+      - 'LTS*'
   workflow_dispatch:
 
 permissions:
@@ -30,6 +31,27 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Validate release version and tag
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = (python -c "from pathlib import Path; from scripts.release_common import read_app_version; print(read_app_version(Path.cwd()))").Trim()
+          if ([string]::IsNullOrWhiteSpace($version)) { throw 'APP_VERSION is empty.' }
+          if ('${{ github.ref_type }}' -eq 'tag' -and '${{ github.ref_name }}' -like 'LTS*' -and '${{ github.ref_name }}' -ne $version) {
+            throw "Release tag ${{ github.ref_name }} does not match APP_VERSION $version."
+          }
+
+      - name: Cache build downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~\AppData\Local\pip\Cache
+            build/offline-release/resource-cache
+            services/dsh-office-runtime/node_modules
+          key: windows-offline-release-${{ hashFiles('requirements.txt', 'services/dsh-office-runtime/package-lock.json', 'config/version_info.py') }}
+          restore-keys: |
+            windows-offline-release-
+
       - name: Prepare isolated CPU build environment
         shell: pwsh
         run: |
@@ -51,9 +73,9 @@ jobs:
           Get-Content requirements.txt |
             Where-Object { $_ -notmatch '^\s*genie-tts\s*([<>=!~]|$)' } |
             Set-Content -Encoding utf8 $requirements
-          & $python -m pip install --no-cache-dir --only-binary=:all: --target $site -r $requirements
-          & $python -m pip install --no-cache-dir --target $site --no-deps genie-tts==2.0.2
-          & $python -m pip install --no-cache-dir --target $site --only-binary=:all: `
+          & $python -m pip install --only-binary=:all: --target $site -r $requirements
+          & $python -m pip install --target $site --no-deps genie-tts==2.0.2
+          & $python -m pip install --only-binary=:all: `
             'onnx>=1.17' 'onnxruntime==1.22.0' 'tokenizers' 'pypinyin' 'g2pM' `
             'nltk' 'regex' 'jieba-fast==0.53' 'jieba'
 
@@ -77,15 +99,31 @@ jobs:
           $ErrorActionPreference = 'Stop'
           function Get-Resource([string]$name) {
             $urls = @(
-              "https://github.com/MARK42IRPC/FlyingSnowVelvet-Aemeath/releases/download/RESC/$name",
-              "https://gitee.com/Mark42IRPC/Aemeath-AIdeskpet/releases/download/RESC/$name"
+              "https://gitee.com/Mark42IRPC/Aemeath-AIdeskpet/releases/download/RESC/$name",
+              "https://github.com/MARK42IRPC/FlyingSnowVelvet-Aemeath/releases/download/RESC/$name"
             )
-            $destination = Join-Path $env:BUILD_ROOT $name
+            $cache = Join-Path $env:BUILD_ROOT 'resource-cache'
+            New-Item -ItemType Directory -Force -Path $cache | Out-Null
+            $destination = Join-Path $cache $name
+            if (Test-Path $destination) {
+              try {
+                $zip = [IO.Compression.ZipFile]::OpenRead($destination)
+                $zip.Dispose()
+                return $destination
+              } catch {
+                Remove-Item -LiteralPath $destination -Force -ErrorAction SilentlyContinue
+              }
+            }
+            $partial = "$destination.part"
             foreach ($url in $urls) {
               try {
-                Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $destination -TimeoutSec 300
-                if ((Get-Item $destination).Length -gt 0) { return $destination }
-              } catch { Remove-Item -LiteralPath $destination -Force -ErrorAction SilentlyContinue }
+                Remove-Item -LiteralPath $partial -Force -ErrorAction SilentlyContinue
+                Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $partial -TimeoutSec 300
+                $zip = [IO.Compression.ZipFile]::OpenRead($partial)
+                $zip.Dispose()
+                Move-Item -LiteralPath $partial -Destination $destination -Force
+                return $destination
+              } catch { Remove-Item -LiteralPath $partial -Force -ErrorAction SilentlyContinue }
             }
             throw "Unable to download resource: $name"
           }
@@ -102,7 +140,6 @@ jobs:
             New-Item -ItemType Directory -Force -Path $destination | Out-Null
             Move-Item -LiteralPath $candidate.FullName -Destination $target
             Remove-Item -LiteralPath $temp -Recurse -Force
-            Remove-Item -LiteralPath $archive -Force
           }
           $models = Join-Path (Resolve-Path .).Path 'resc/models'
           Expand-Resource 'vosk-model-small-cn-0.22.zip' $models 'vosk-model-small-cn-0.22'
@@ -114,21 +151,51 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $nodeArchive = Join-Path $env:BUILD_ROOT "node-v$env:NODE_VERSION-win-x64.zip"
-          Invoke-WebRequest -UseBasicParsing `
-            -Uri "https://nodejs.org/dist/v$env:NODE_VERSION/node-v$env:NODE_VERSION-win-x64.zip" `
-            -OutFile $nodeArchive -TimeoutSec 300
+          $resourceCache = Join-Path $env:BUILD_ROOT 'resource-cache'
+          New-Item -ItemType Directory -Force -Path $resourceCache | Out-Null
+          $nodeArchive = Join-Path $resourceCache "node-v$env:NODE_VERSION-win-x64.zip"
+          $nodeArchivePart = "$nodeArchive.part"
+          $expectedNodeHash = (& $env:BUILD_PYTHON -c "from lib.core.dsh_runtime_contract import NODE_ARCHIVE_SHA256; print(NODE_ARCHIVE_SHA256)").Trim()
+          if (Test-Path $nodeArchive) {
+            $cachedNodeHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $nodeArchive).Hash.ToLowerInvariant()
+            if ($cachedNodeHash -ne $expectedNodeHash.ToLowerInvariant()) {
+              Remove-Item -LiteralPath $nodeArchive -Force
+            }
+          }
+          if (-not (Test-Path $nodeArchive)) {
+            $nodeUrls = @(
+              "https://npmmirror.com/mirrors/node/v$env:NODE_VERSION/node-v$env:NODE_VERSION-win-x64.zip",
+              "https://mirrors.cloud.tencent.com/nodejs-release/v$env:NODE_VERSION/node-v$env:NODE_VERSION-win-x64.zip",
+              "https://nodejs.org/dist/v$env:NODE_VERSION/node-v$env:NODE_VERSION-win-x64.zip"
+            )
+            foreach ($nodeUrl in $nodeUrls) {
+              try {
+                Remove-Item -LiteralPath $nodeArchivePart -Force -ErrorAction SilentlyContinue
+                Invoke-WebRequest -UseBasicParsing -Uri $nodeUrl -OutFile $nodeArchivePart -TimeoutSec 300
+                Move-Item -LiteralPath $nodeArchivePart -Destination $nodeArchive -Force
+                break
+              } catch {
+                Remove-Item -LiteralPath $nodeArchivePart -Force -ErrorAction SilentlyContinue
+              }
+            }
+          }
+          if (-not (Test-Path $nodeArchive)) { throw 'Node archive could not be downloaded from any mirror.' }
+          $actualNodeHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $nodeArchive).Hash.ToLowerInvariant()
+          if ($actualNodeHash -ne $expectedNodeHash.ToLowerInvariant()) { throw "Node archive SHA-256 mismatch: $actualNodeHash" }
           $nodeExtract = Join-Path $env:BUILD_ROOT 'node-extract'
           Expand-Archive -LiteralPath $nodeArchive -DestinationPath $nodeExtract -Force
           $nodeRuntime = Get-ChildItem $nodeExtract -Directory | Select-Object -First 1
           if ($null -eq $nodeRuntime -or -not (Test-Path (Join-Path $nodeRuntime.FullName 'node.exe'))) { throw 'Node runtime is incomplete.' }
           $env:PATH = "$($nodeRuntime.FullName);$env:PATH"
           $dsh = Join-Path (Resolve-Path .).Path 'services/dsh-office-runtime'
-          Push-Location $dsh
-          try {
-            & (Join-Path $nodeRuntime.FullName 'node.exe') (Join-Path $nodeRuntime.FullName 'node_modules/npm/bin/npm-cli.js') `
-              ci --omit=dev --ignore-scripts --no-audit --no-fund
-          } finally { Pop-Location }
+          $dshError = (& $env:BUILD_PYTHON -c "from pathlib import Path; from lib.core.dsh_runtime_contract import installed_runtime_error; print(installed_runtime_error(Path.cwd()))").Trim()
+          if (-not [string]::IsNullOrWhiteSpace($dshError)) {
+            Push-Location $dsh
+            try {
+              & (Join-Path $nodeRuntime.FullName 'node.exe') (Join-Path $nodeRuntime.FullName 'node_modules/npm/bin/npm-cli.js') `
+                ci --omit=dev --ignore-scripts --no-audit --no-fund
+            } finally { Pop-Location }
+          }
           "NODE_RUNTIME=$($nodeRuntime.FullName)" >> $env:GITHUB_ENV
           if (-not (Test-Path (Join-Path $dsh 'node_modules/@deepseek-ai/dsh/lib/bin.js'))) {
             throw 'DSH production node_modules is incomplete.'
@@ -148,7 +215,8 @@ jobs:
             --site-packages $env:CPU_SITE `
             --dsh-node-runtime $env:NODE_RUNTIME `
             --dsh-node-modules ((Resolve-Path services/dsh-office-runtime/node_modules).Path) `
-            --directml-wheel $env:DIRECTML_WHEEL
+            --directml-wheel $env:DIRECTML_WHEEL `
+            --clean
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           $installer = Join-Path (Resolve-Path dist).Path "FlyingSnowVelvet-$version-Offline-Installer.exe"
           & $env:BUILD_PYTHON scripts/build_offline_installer.py --workspace $workspace --version $version --output $installer
@@ -163,7 +231,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          & $env:BUILD_PYTHON -m pip install --no-cache-dir huggingface_hub modelscope
+          & $env:BUILD_PYTHON -m pip install huggingface_hub modelscope
 
       - name: Wrap and publish the installer to voice-package hubs
         shell: pwsh

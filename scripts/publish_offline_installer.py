@@ -8,6 +8,7 @@ import json
 import os
 import re
 import sys
+import time
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -69,6 +70,34 @@ def _release_paths(output_dir: Path, version: str) -> tuple[Path, Path]:
     return asset_path, metadata_path
 
 
+def _validate_local_release(asset_path: Path, metadata_path: Path) -> dict[str, object]:
+    """Validate the generated ZIP and latest.json before any remote upload."""
+    try:
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise SystemExit(f"本地发布清单无法读取：{metadata_path}") from exc
+    if not isinstance(metadata, dict):
+        raise SystemExit("本地发布清单必须是 JSON 对象")
+    actual_size = asset_path.stat().st_size
+    actual_sha256 = _sha256(asset_path)
+    if (
+        metadata.get("format") != OFFLINE_UPDATE_FORMAT
+        or metadata.get("asset_path") != f"{OFFLINE_UPDATE_METADATA_PATH.rsplit('/', 1)[0]}/{asset_path.name}"
+        or int(metadata.get("size", -1)) != actual_size
+        or str(metadata.get("sha256", "")).lower() != actual_sha256
+    ):
+        raise SystemExit("本地安装器 ZIP 与 latest.json 的大小或 SHA-256 不一致")
+    with zipfile.ZipFile(asset_path) as archive:
+        members = [item for item in archive.infolist() if not item.is_dir()]
+        expected_installer = asset_path.name.replace(
+            "-Offline-Installer.zip",
+            "-Offline-Installer.exe",
+        )
+        if len(members) != 1 or members[0].filename != expected_installer:
+            raise SystemExit("本地安装器 ZIP 必须只包含清单指定的 EXE")
+    return metadata
+
+
 def prepare_release(
     installer: Path,
     *,
@@ -88,10 +117,16 @@ def prepare_release(
     asset_path, metadata_path = _release_paths(output_dir, version)
     asset_path.parent.mkdir(parents=True, exist_ok=True)
     metadata_path.parent.mkdir(parents=True, exist_ok=True)
+    expected_name = f"FlyingSnowVelvet-{version}-Offline-Installer.exe"
+    if installer.name != expected_name:
+        raise SystemExit(f"安装器文件名与版本不一致：需要 {expected_name}，实际为 {installer.name}")
     temporary_asset = asset_path.with_suffix(asset_path.suffix + ".part")
-    with zipfile.ZipFile(temporary_asset, "w", compression=zipfile.ZIP_STORED, allowZip64=True) as archive:
-        archive.write(installer, installer.name)
-    os.replace(temporary_asset, asset_path)
+    try:
+        with zipfile.ZipFile(temporary_asset, "w", compression=zipfile.ZIP_STORED, allowZip64=True) as archive:
+            archive.write(installer, installer.name)
+        os.replace(temporary_asset, asset_path)
+    finally:
+        temporary_asset.unlink(missing_ok=True)
     if manifest is not None:
         manifest = manifest.resolve()
         if not manifest.is_file():
@@ -109,6 +144,7 @@ def prepare_release(
         "sha256": _sha256(asset_path),
     }
     metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    _validate_local_release(asset_path, metadata_path)
     return asset_path, metadata_path
 
 
@@ -123,40 +159,91 @@ def _publication_files(asset_path: Path, metadata_path: Path) -> tuple[Path, ...
     return tuple(files)
 
 
-def _publish_huggingface(asset_path: Path, metadata_path: Path, output_dir: Path, token: str) -> None:
+def _retry_upload(callback, description: str) -> None:
+    last_error: Exception | None = None
+    for attempt in range(1, 4):
+        try:
+            callback()
+            return
+        except Exception as exc:  # SDKs expose different transient exception types.
+            last_error = exc
+            if attempt == 3:
+                break
+            time.sleep(float(attempt))
+    raise RuntimeError(f"上传 {description} 失败（已重试 3 次）：{last_error}") from last_error
+
+
+def _publish_huggingface(
+    asset_path: Path,
+    metadata_path: Path,
+    output_dir: Path,
+    token: str,
+    *,
+    files: tuple[Path, ...] | None = None,
+) -> None:
     from huggingface_hub import HfApi
 
     api = HfApi(token=token)
-    for local_path in _publication_files(asset_path, metadata_path):
-        api.upload_file(
-            path_or_fileobj=str(local_path),
-            path_in_repo=local_path.relative_to(output_dir).as_posix(),
-            repo_id=VOICE_PACKAGE_HUGGINGFACE_REPO,
-            repo_type="model",
-            revision="main",
-            commit_message=f"Publish desktop installer {asset_path.stem}",
+    for local_path in files or _publication_files(asset_path, metadata_path):
+        path_in_repo = local_path.relative_to(output_dir).as_posix()
+        _retry_upload(
+            lambda: api.upload_file(
+                path_or_fileobj=str(local_path),
+                path_in_repo=path_in_repo,
+                repo_id=VOICE_PACKAGE_HUGGINGFACE_REPO,
+                repo_type="model",
+                revision="main",
+                commit_message=f"Publish desktop installer {asset_path.stem}",
+            ),
+            f"Hugging Face/{path_in_repo}",
         )
 
 
-def _publish_modelscope(asset_path: Path, metadata_path: Path, output_dir: Path, token: str) -> None:
+def _publish_modelscope(
+    asset_path: Path,
+    metadata_path: Path,
+    output_dir: Path,
+    token: str,
+    *,
+    files: tuple[Path, ...] | None = None,
+) -> None:
     from modelscope.hub.api import HubApi
 
     api = HubApi(token=token)
-    for local_path in _publication_files(asset_path, metadata_path):
-        api.upload_file(
-            repo_id=VOICE_PACKAGE_MODELSCOPE_REPO,
-            path_or_fileobj=str(local_path),
-            path_in_repo=local_path.relative_to(output_dir).as_posix(),
-            revision="master",
-            commit_message=f"Publish desktop installer {asset_path.stem}",
+    for local_path in files or _publication_files(asset_path, metadata_path):
+        path_in_repo = local_path.relative_to(output_dir).as_posix()
+        _retry_upload(
+            lambda: api.upload_file(
+                repo_id=VOICE_PACKAGE_MODELSCOPE_REPO,
+                path_or_fileobj=str(local_path),
+                path_in_repo=path_in_repo,
+                revision="master",
+                commit_message=f"Publish desktop installer {asset_path.stem}",
+            ),
+            f"ModelScope/{path_in_repo}",
         )
 
 
 def publish_release(asset_path: Path, metadata_path: Path, output_dir: Path, *, hf_token: str, modelscope_token: str) -> None:
     if not hf_token or not modelscope_token:
         raise SystemExit("发布离线安装器需要 HF_TOKEN 与 MODELSCOPE_TOKEN")
-    _publish_huggingface(asset_path, metadata_path, output_dir, hf_token)
-    _publish_modelscope(asset_path, metadata_path, output_dir, modelscope_token)
+    _validate_local_release(asset_path, metadata_path)
+    publication_files = _publication_files(asset_path, metadata_path)
+    immutable_files = tuple(path for path in publication_files if path != metadata_path)
+    # Both mirrors receive immutable payloads before either latest pointer is
+    # moved. A retry can then safely continue without rebuilding the archive.
+    _publish_huggingface(
+        asset_path, metadata_path, output_dir, hf_token, files=immutable_files
+    )
+    _publish_modelscope(
+        asset_path, metadata_path, output_dir, modelscope_token, files=immutable_files
+    )
+    _publish_huggingface(
+        asset_path, metadata_path, output_dir, hf_token, files=(metadata_path,)
+    )
+    _publish_modelscope(
+        asset_path, metadata_path, output_dir, modelscope_token, files=(metadata_path,)
+    )
 
 
 def main(argv: list[str] | None = None) -> int:

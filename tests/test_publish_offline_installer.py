@@ -59,6 +59,20 @@ class PublishOfflineInstallerTests(unittest.TestCase):
             self.assertEqual(data["sha256"], hashlib.sha256(asset.read_bytes()).hexdigest())
             validate_update_installer(installer)
 
+    def test_prepare_release_rejects_mismatched_installer_name(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            installer = root / "wrong-name.exe"
+            _write_installer(installer)
+            with self.assertRaises(SystemExit):
+                prepare_release(
+                    installer,
+                    version="LTS2",
+                    revision="commit-123",
+                    published_at="2026-09-06T00:00:00Z",
+                    output_dir=root / "publish",
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

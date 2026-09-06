@@ -9,6 +9,43 @@ from scripts import build_offline_installer as installer
 
 
 class OfflineDistributionTests(unittest.TestCase):
+    def test_distribution_state_round_trips_and_resume_requires_same_inputs(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source = root / "source"
+            python_home = root / "python"
+            site = root / "site"
+            node = root / "node"
+            modules = root / "modules"
+            wheel = root / "directml.whl"
+            for path in (source, python_home, site, node, modules):
+                path.mkdir()
+            wheel.write_bytes(b"wheel")
+            state = distribution._distribution_build_state(
+                source=source,
+                python_home=python_home,
+                site_packages_sources=(site,),
+                node_runtime=node,
+                node_modules=modules,
+                directml_wheel=wheel,
+                without_music=False,
+            )
+            workspace = root / "workspace"
+            workspace.mkdir()
+            distribution._write_distribution_state(workspace, state)
+            self.assertEqual(distribution._read_distribution_state(workspace), state)
+            wheel.write_bytes(b"changed")
+            changed = distribution._distribution_build_state(
+                source=source,
+                python_home=python_home,
+                site_packages_sources=(site,),
+                node_runtime=node,
+                node_modules=modules,
+                directml_wheel=wheel,
+                without_music=False,
+            )
+            self.assertNotEqual(changed, state)
+
     def test_python_runtime_keeps_sqlite_for_bundled_nltk_frontend(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -44,6 +81,8 @@ class OfflineDistributionTests(unittest.TestCase):
         self.assertFalse(distribution.excluded(Path("resc/agent/office_system_prompt.txt")))
         self.assertFalse(distribution.excluded(Path("resc/GIF/SEanima/demo/0001.webp")))
         self.assertTrue(distribution.excluded(Path("resc/GIF/SEanima.zip")))
+        self.assertTrue(distribution.excluded(Path("build/offline-release/workspace/payload.zip")))
+        self.assertTrue(distribution.excluded(Path(".venv/Lib/site-packages/runtime.py")))
 
     def test_manifest_keeps_seanima_directory_and_excludes_zip_archive(self):
         with tempfile.TemporaryDirectory() as tmpdir:

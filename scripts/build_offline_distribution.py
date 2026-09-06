@@ -33,6 +33,7 @@ def log_stage(message: str) -> None:
 PRODUCT_ROOT = Path(__file__).resolve().parents[1]
 PAYLOAD_MARKER_NAME = ".fsv-install-root"
 PAYLOAD_MARKER_BYTES = b"FSV-OFFLINE-PAYLOAD-2\n"
+BUILD_STATE_NAME = ".fsv-distribution-state.json"
 # These are the modules imported by the installed desktop application and by
 # the CPU ONNX voice frontend.  The optional CUDA/TensorRT stack is deliberately
 # absent; it is never copied into the base runtime.
@@ -158,6 +159,9 @@ EXCLUDED_PARTS = {
     "scripts",
     "install_deps",
     "doc",
+    "build",
+    ".venv",
+    "venv",
     "dist",
     "logs",
     "用户反馈",
@@ -1006,6 +1010,76 @@ def write_release_launcher_config(app_root: Path) -> None:
     )
 
 
+def _distribution_build_state(
+    *,
+    source: Path,
+    python_home: Path,
+    site_packages_sources: tuple[Path, ...],
+    node_runtime: Path,
+    node_modules: Path,
+    directml_wheel: Path,
+    without_music: bool,
+) -> dict[str, object]:
+    """Return the explicit inputs used by a staged distribution.
+
+    The state is intentionally path based.  A resume is an operator choice;
+    the state prevents accidentally reusing a payload staged for a different
+    source tree or dependency overlay while keeping the check cheap.
+    """
+    def signature(path: Path) -> dict[str, object]:
+        try:
+            stat_result = path.stat()
+        except OSError:
+            return {"path": str(path), "missing": True}
+        return {
+            "path": str(path),
+            "size": stat_result.st_size,
+            "mtime_ns": stat_result.st_mtime_ns,
+        }
+
+    return {
+        "format": 1,
+        "source": signature(source),
+        "python_home": signature(python_home),
+        "site_packages": [signature(item) for item in site_packages_sources],
+        "node_runtime": signature(node_runtime),
+        "node_modules": signature(node_modules),
+        "directml_wheel": signature(directml_wheel),
+        "without_music": bool(without_music),
+    }
+
+
+def _read_distribution_state(workspace: Path) -> dict[str, object] | None:
+    path = workspace / BUILD_STATE_NAME
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, TypeError, ValueError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _write_distribution_state(workspace: Path, state: dict[str, object]) -> None:
+    path = workspace / BUILD_STATE_NAME
+    temporary = path.with_suffix(path.suffix + ".part")
+    temporary.write_text(
+        json.dumps(state, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    os.replace(temporary, path)
+
+
+def _is_complete_staged_distribution(workspace: Path, payload: Path) -> bool:
+    marker = payload / PAYLOAD_MARKER_NAME
+    manifest = workspace / "manifest.json"
+    if not marker.is_file() or marker.read_bytes() != PAYLOAD_MARKER_BYTES:
+        return False
+    try:
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, TypeError, ValueError):
+        return False
+    return isinstance(data, dict) and isinstance(data.get("files"), list) and bool(data["files"])
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source-root", type=Path, default=PRODUCT_ROOT)
@@ -1033,6 +1107,16 @@ def main() -> int:
     )
     parser.add_argument("--without-music", action="store_true",
                         help="不收集音乐登录/播放扩展，仅生成启动核心")
+    parser.add_argument(
+        "--clean",
+        action="store_true",
+        help="删除当前工作区的已知生成目录后重新构建",
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="输入指纹一致且 payload 已完成时复用现有工作区",
+    )
     args = parser.parse_args()
 
     source = args.source_root.resolve()
@@ -1047,18 +1131,43 @@ def main() -> int:
     )
     node_runtime = args.dsh_node_runtime.resolve()
     node_modules = args.dsh_node_modules.resolve()
-    for required in (source, python_home, *site_packages_sources, node_runtime, node_modules):
+    directml_wheel = args.directml_wheel.resolve()
+    for required in (source, python_home, *site_packages_sources, node_runtime, node_modules, directml_wheel):
         if not required.exists():
             raise SystemExit(f"缺少收集输入：{required}")
     if workspace.exists():
         allowed = {
-            "README.md", "manifest.json", "build", "installer", "payload", "dist",
+            "README.md", "manifest.json", BUILD_STATE_NAME,
+            "build", "installer", "payload", "dist",
         }
         unexpected = [item.name for item in workspace.iterdir() if item.name not in allowed]
         if unexpected:
             raise SystemExit(f"发行版工作区含有未知文件，为避免覆盖而停止：{', '.join(unexpected)}")
     workspace.mkdir(parents=True, exist_ok=True)
     payload = workspace / "payload"
+    state = _distribution_build_state(
+        source=source,
+        python_home=python_home,
+        site_packages_sources=site_packages_sources,
+        node_runtime=node_runtime,
+        node_modules=node_modules,
+        directml_wheel=directml_wheel,
+        without_music=args.without_music,
+    )
+    if args.clean:
+        for relative in ("payload", "manifest.json", BUILD_STATE_NAME):
+            target = workspace / relative
+            if target.is_dir() and not target.is_symlink():
+                shutil.rmtree(target)
+            elif target.exists() or target.is_symlink():
+                target.unlink()
+    elif args.resume and payload.exists():
+        if _read_distribution_state(workspace) != state:
+            raise SystemExit("发行版工作区输入已变化，不能安全复用；请使用 --clean")
+        if _is_complete_staged_distribution(workspace, payload):
+            print(f"复用已完成的离线 payload：{payload}")
+            return 0
+        raise SystemExit("发行版工作区未完成，不能复用；请使用 --clean")
     if payload.exists():
         raise SystemExit(f"payload 已存在，为避免覆盖而停止：{payload}")
 
@@ -1094,7 +1203,7 @@ def main() -> int:
     node_pruning = prune_node_modules(services / "node_modules")
 
     log_stage("正在展开包内 DirectML 推理覆盖层")
-    directml = stage_directml_runtime(args.directml_wheel.resolve(), payload)
+    directml = stage_directml_runtime(directml_wheel, payload)
 
     write_payload_marker(payload)
     files = build_manifest(payload)
@@ -1126,6 +1235,7 @@ def main() -> int:
         json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
+    _write_distribution_state(workspace, state)
     print(f"已生成离线 payload：{payload}")
     print(f"文件数：{len(files)}")
     print(f"Python distributions：{len(distributions)}")
