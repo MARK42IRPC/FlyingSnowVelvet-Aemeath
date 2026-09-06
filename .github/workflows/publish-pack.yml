@@ -124,7 +124,7 @@ jobs:
           # distribution without a Windows wheel. Install that small fallback
           # separately, then install the verified Vosk wheel without resolving
           # its dependency graph again.
-          & $python -m pip install --target $site 'srt==3.5.3'
+          & $python -m pip install --target $site --no-deps --no-build-isolation 'srt==3.5.3'
           & $python -m pip install --only-binary=:all: --upgrade --target $site --no-deps 'vosk==0.3.45'
           if (-not (Test-Path (Join-Path $site 'srt.py')) -or -not (Test-Path (Join-Path $site 'vosk'))) {
             throw 'Vosk/srt installation is incomplete.'
