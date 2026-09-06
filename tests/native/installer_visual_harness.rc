@@ -1,8 +1,4 @@
 #include "resource.h"
 
-#ifndef RT_MANIFEST
-#define RT_MANIFEST 24
-#endif
 IDI_INSTALLER ICON "icon.ico"
 IDR_HARMONY_FONT RCDATA "HarmonyOS_Sans_SC_Bold.ttf"
-1 RT_MANIFEST "installer.manifest"

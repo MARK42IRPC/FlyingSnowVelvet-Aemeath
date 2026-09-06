@@ -8,7 +8,8 @@
 `24 字节 magic + 8 字节归档长度 + 32 字节 SHA-256` 尾记录。启动时先流式校验
 尾记录和归档，再用内置 Deflate/Zip64 解压器展开到同卷临时目录。
 
-界面为三步亮色向导：
+界面采用工作台/公告面板风格的三步亮色向导，顶部显示品牌与步骤导航，中部承载当前操作内容，底部提供操作按钮；
+所有产品文字使用资源内嵌的 `resc/FRONTS/HarmonyOS_Sans_SC_Bold.ttf` 鸿蒙字体。
 
 1. 显示默认安装目录；点击“自定义安装目录”调用系统文件夹选择器。目标目录非空
    时自动创建 `飞行雪绒` 或带序号的空子目录，不覆盖用户文件。
@@ -21,8 +22,9 @@
 `app\启动飞行雪绒.exe`。启动器设置绝对的包内 Python 3.11、Node 24.13.0 和 Qt
 路径，并清理外部 `PYTHONPATH`、`PYTHONHOME`、`NODE_PATH`、Qt/OpenSSL 等覆盖。
 
-更新器下载同一个 EXE，并可通过 `--update-target` 预填现有安装目录；成功切换后
-将状态文件复制到 `app\resc\user\update_state.json`。`app\卸载飞行雪绒.exe`
+更新器从对应 ONNX 语音包的 Hugging Face / ModelScope 仓库下载外层 ZIP，解包后校验其中唯一的
+离线安装器 EXE，并可通过 `--update-target` 预填现有安装目录；成功切换后将状态文件复制到
+`app\resc\user\update_state.json`。`app\卸载飞行雪绒.exe`
 使用独立清理 helper 删除安装目录和 `C:\AemeathDeskPet` 契约目录。
 
 构建与测试：
@@ -31,4 +33,5 @@
 python scripts/build_offline_distribution.py --help
 python scripts/build_offline_installer.py --help
 python -m unittest tests.test_windows_zip_extract tests.test_update_installer -q
+python -m unittest tests.test_publish_offline_installer -q
 ```

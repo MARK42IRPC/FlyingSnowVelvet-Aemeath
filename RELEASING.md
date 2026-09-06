@@ -1,20 +1,22 @@
 # 飞行雪绒发行流程
 
-正式发行物只有一个 Windows 离线安装器 EXE。源码仓库、桌宠开发入口和发行版
+正式发行物是一个包裹 Windows 离线安装器 EXE 的 ZIP。源码仓库、桌宠开发入口和发行版
 构建入口保持在同一个 Git 工作区；不会从桌面上的其它发行版目录复制文件。
 
 ## 版本与发布槽
 
 版本唯一来源是 `config/version_info.py` 的 `APP_VERSION`。推送 `PACK` 或 `v*`
 标签后，`.github/workflows/publish-pack.yml` 在 Windows runner 中执行完整构建，
-并将以下两个资产上传到对应 release：
+并将以下文件上传到 ONNX 语音包的两个模型仓库：
 
-- `FlyingSnowVelvet-<version>-Offline-Installer.exe`
-- `FlyingSnowVelvet-<version>-manifest.json`
+- `updates/FlyingSnowVelvet-<version>-Offline-Installer.zip`
+- `updates/FlyingSnowVelvet-<version>-manifest.json`
+- `updates/latest.json`
 
-GitHub `PACK` 与 Gitee“最新包”应指向同一提交。更新器只接受名称匹配
-`FlyingSnowVelvet-*-Offline-Installer.exe` 的真实资产，拒绝源码 ZIP、历史 green ZIP
-和 `zipball_url` 回退；这些名称只在清理旧 release 资产时作为拒绝规则出现。
+发布目标固定为 Hugging Face `Mark42IRP/Aemeath_onnx_GSV_model` 和 ModelScope
+`Mark42IRPC/GSV_onnx_Aemeath_Pack`。两个仓库的 `updates/latest.json` 必须指向同一版本、
+同一 revision 和同一 ZIP SHA-256；更新器只接受清单指定的单文件安装器 ZIP，不接受模型仓库的
+源码归档或其它 ZIP。
 
 ## 本地构建
 
@@ -57,6 +59,9 @@ CUDA、NVIDIA、TensorRT 或 `onnxruntime-gpu`。
 `resc/GIF/SEanima/` 文件夹、固定 Node 和 DSH production `node_modules` 收集到
 payload；`build_offline_installer.py` 再编译原生安装器并追加 ZIP 与 SHA-256 尾记录。
 最终 payload 不包含 `SEanima.zip`、构建脚本、测试目录、用户状态或开发缓存。
+
+发布工作流需要配置仓库 secrets `HF_TOKEN` 与 `MODELSCOPE_TOKEN`，仅用于模型仓库上传；
+本地可使用 `scripts/publish_offline_installer.py --token-file <令牌文件>`，令牌不会写入发布清单。
 
 ## 依赖边界
 

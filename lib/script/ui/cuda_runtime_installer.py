@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from PyQt5.QtCore import QEvent, QEasingCurve, QPoint, Qt, QPropertyAnimation, pyqtSignal
-from PyQt5.QtGui import QCursor, QPainter
+from PyQt5.QtGui import QColor, QCursor, QIcon, QPainter
 from PyQt5.QtWidgets import (
+    QFrame,
     QGraphicsOpacityEffect,
     QHBoxLayout,
     QLabel,
     QProgressBar,
     QPushButton,
+    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
@@ -22,8 +26,9 @@ from lib.core.cuda_runtime_installer import (
     CudaRuntimeInstallCancelled,
     CudaRuntimeInstallResult,
 )
-from lib.core.qt_bridge.colors import UI_THEME
-from lib.core.qt_bridge.font import get_ui_font
+from lib.core.event.center import EventType, get_event_center
+from lib.core.graphics.announcement_visuals import get_announcement_colors
+from lib.core.qt_bridge.font import get_ui_font, get_ui_font_family
 from lib.core.qt_bridge.screen import clamp_rect_position, get_screen_geometry_for_point
 from lib.core.unified_draw import Layer, get_layer_manager
 from lib.core.voice_runtime_contract import (
@@ -34,14 +39,14 @@ from lib.core.voice_runtime_contract import (
 from lib.script.gsvmove.cuda_runtime import create_cuda_runtime_installer
 
 
-_WIDTH = scale_px(470, min_abs=420)
-_HEIGHT = scale_px(420, min_abs=382)
-_LAYER = scale_px(2, min_abs=1)
-_BORDER = _LAYER * 2
+_WIDTH = scale_px(520, min_abs=470)
+_HEIGHT = scale_px(440, min_abs=410)
+_BORDER = scale_px(1, min_abs=1)
 
 
 def _color(name: str) -> str:
-    return UI_THEME[name].name()
+    color = get_announcement_colors()[name]
+    return f"#{color.red:02x}{color.green:02x}{color.blue:02x}"
 
 
 def _format_bytes(value: int) -> str:
@@ -60,9 +65,13 @@ class CudaRuntimeInstallerDialog(QWidget):
     _success_signal = pyqtSignal(object)
     _error_signal = pyqtSignal(str)
     _cancelled_signal = pyqtSignal()
+    _theme_signal = pyqtSignal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
+        self.setObjectName("CudaRuntimeInstallerDialog")
+        self.setWindowTitle("安装N卡推理环境")
+        self.setFont(get_ui_font(size=scale_px(13, min_abs=11)))
         self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFixedSize(_WIDTH, _HEIGHT)
@@ -84,12 +93,31 @@ class CudaRuntimeInstallerDialog(QWidget):
         self._animation.setEasingCurve(QEasingCurve.InOutQuad)
         self._animation.finished.connect(self._on_animation_finished)
 
-        self._title = QLabel("安装N卡推理环境", self)
+        self._header_accent = QFrame(self)
+        self._header_accent.setObjectName("InstallerHeaderAccent")
+        self._header_accent.setFixedSize(scale_px(3, min_abs=2), scale_px(42, min_abs=36))
+        self._title = QLabel("N卡语音加速", self)
+        self._title.setObjectName("InstallerTitle")
         self._title.installEventFilter(self)
         self._title.setCursor(Qt.OpenHandCursor)
-        title_font = get_ui_font(size=scale_px(16, min_abs=13))
+        title_font = get_ui_font(size=scale_px(18, min_abs=15))
         title_font.setBold(True)
         self._title.setFont(title_font)
+        self._source = QLabel("NVIDIA  /  VOICE RUNTIME", self)
+        self._source.setObjectName("InstallerMeta")
+        self._source.setFont(get_ui_font(size=scale_px(10, min_abs=9)))
+        header_text = QVBoxLayout()
+        header_text.setSpacing(2)
+        header_text.addWidget(self._title)
+        header_text.addWidget(self._source)
+        icon = QLabel(self)
+        icon_path = Path(__file__).resolve().parents[3] / "resc" / "icon.ico"
+        icon.setPixmap(QIcon(str(icon_path)).pixmap(scale_px(40), scale_px(40)))
+        header_row = QHBoxLayout()
+        header_row.setSpacing(scale_px(12, min_abs=9))
+        header_row.addWidget(self._header_accent)
+        header_row.addLayout(header_text, 1)
+        header_row.addWidget(icon)
 
         self._effect = QLabel(
             "启用后，ONNX 语音的语义解码与声学模型会优先使用 NVIDIA 显卡，"
@@ -97,7 +125,8 @@ class CudaRuntimeInstallerDialog(QWidget):
             self,
         )
         self._effect.setWordWrap(True)
-        self._effect.setFont(get_ui_font(size=scale_px(10, min_abs=9)))
+        self._effect.setFont(get_ui_font(size=scale_px(13, min_abs=11)))
+        self._effect.setObjectName("InstallerBodyText")
 
         required = (
             CUDA_RUNTIME_BUNDLE_ARCHIVE_BYTES
@@ -110,11 +139,25 @@ class CudaRuntimeInstallerDialog(QWidget):
             f"安装过程需约 {_format_bytes(required)} 可用空间",
             self,
         )
-        self._size_detail.setFont(get_ui_font(size=scale_px(10, min_abs=9)))
+        self._size_detail.setFont(get_ui_font(size=scale_px(12, min_abs=11)))
+        self._size_detail.setObjectName("InstallerMeta")
 
         self._status = QLabel("准备安装精简 NVIDIA CUDA 推理环境", self)
         self._status.setWordWrap(True)
-        self._status.setFont(get_ui_font(size=scale_px(11, min_abs=10)))
+        self._status.setFont(get_ui_font(size=scale_px(12, min_abs=11)))
+        self._status.setTextFormat(Qt.PlainText)
+        self._status.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self._status.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+        self._status_area = QScrollArea(self)
+        self._status_area.setObjectName("InstallerStatusArea")
+        self._status_area.setFrameShape(QFrame.NoFrame)
+        self._status_area.setWidgetResizable(True)
+        self._status_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._status_area.setWidget(self._status)
+        self._status_area.setMinimumHeight(scale_px(52, min_abs=48))
+        self._state = QLabel("待安装", self)
+        self._state.setObjectName("InstallerState")
+        self._state.setFont(get_ui_font(size=scale_px(11, min_abs=10)))
 
         download_label = QLabel("下载进度", self)
         download_label.setFont(get_ui_font(size=scale_px(10, min_abs=9)))
@@ -136,6 +179,7 @@ class CudaRuntimeInstallerDialog(QWidget):
         button_row = QHBoxLayout()
         button_row.setContentsMargins(0, 0, 0, 0)
         button_row.setSpacing(scale_px(9, min_abs=7))
+        button_row.addWidget(self._state)
         button_row.addStretch(1)
         button_row.addWidget(self._cancel)
         button_row.addWidget(self._primary)
@@ -147,16 +191,18 @@ class CudaRuntimeInstallerDialog(QWidget):
             scale_px(20, min_abs=17),
             scale_px(16, min_abs=14),
         )
-        layout.setSpacing(scale_px(8, min_abs=6))
-        layout.addWidget(self._title)
-        layout.addWidget(self._effect)
-        layout.addWidget(self._size_detail)
-        layout.addWidget(self._status)
-        layout.addWidget(download_label)
-        layout.addWidget(self._download_bar)
-        layout.addWidget(install_label)
-        layout.addWidget(self._install_bar)
-        layout.addStretch(1)
+        layout.setSpacing(scale_px(16, min_abs=12))
+        layout.addLayout(header_row)
+        self._content = QFrame(self)
+        self._content.setObjectName("InstallerContent")
+        content = QVBoxLayout(self._content)
+        content.setContentsMargins(scale_px(16), scale_px(14), scale_px(16), scale_px(14))
+        content.setSpacing(scale_px(10, min_abs=8))
+        for widget in (self._effect, self._size_detail, download_label,
+                       self._download_bar, install_label, self._install_bar):
+            content.addWidget(widget)
+        content.addWidget(self._status_area, 1)
+        layout.addWidget(self._content, 1)
         layout.addLayout(button_row)
 
         queued = Qt.QueuedConnection
@@ -165,6 +211,9 @@ class CudaRuntimeInstallerDialog(QWidget):
         self._success_signal.connect(self._on_install_success, queued)
         self._error_signal.connect(self._on_install_error, queued)
         self._cancelled_signal.connect(self._on_install_cancelled, queued)
+        self._theme_signal.connect(self._apply_style, queued)
+        self._event_center = get_event_center()
+        self._event_center.subscribe(EventType.CONFIG_UPDATED, self._on_config_updated)
         self._apply_style()
         self._reset()
 
@@ -172,6 +221,7 @@ class CudaRuntimeInstallerDialog(QWidget):
         return self._busy
 
     def show_dialog(self) -> None:
+        self._apply_style()
         if not self._busy:
             self._reset()
         self._center_on_screen()
@@ -183,6 +233,7 @@ class CudaRuntimeInstallerDialog(QWidget):
 
     def _reset(self) -> None:
         self._completed = False
+        self._state.setText("待安装")
         self._status.setText("准备安装精简 NVIDIA CUDA 推理环境")
         for bar in (self._download_bar, self._install_bar):
             bar.setRange(0, 1000)
@@ -202,6 +253,7 @@ class CudaRuntimeInstallerDialog(QWidget):
             self.hide_dialog()
             return
         self._busy = True
+        self._state.setText("安装中")
         self._status.setText("正在检查 Python、磁盘空间与旧运行环境")
         self._download_bar.setRange(0, 0)
         self._download_bar.setFormat("准备中")
@@ -238,6 +290,7 @@ class CudaRuntimeInstallerDialog(QWidget):
             self.hide_dialog()
             return
         self._cancel.setEnabled(False)
+        self._state.setText("取消中")
         self._status.setText("正在取消并清理临时文件")
         if self._installer is not None:
             self._installer.cancel()
@@ -260,6 +313,7 @@ class CudaRuntimeInstallerDialog(QWidget):
     def _on_install_success(self, result: object) -> None:
         self._busy = False
         self._completed = True
+        self._state.setText("已完成")
         self._installer = None
         self._install_future = None
         self._status.setText("N卡推理环境安装完成，设置页已开放N卡加速")
@@ -276,9 +330,11 @@ class CudaRuntimeInstallerDialog(QWidget):
         )
 
     def _on_install_error(self, message: str) -> None:
+        self._state.setText("安装失败")
         self._busy = False
         self._installer = None
         self._install_future = None
+        self._completed = False
         self._status.setText(str(message or "N卡推理环境安装失败"))
         for bar in (self._download_bar, self._install_bar):
             if bar.maximum() == 0:
@@ -292,9 +348,11 @@ class CudaRuntimeInstallerDialog(QWidget):
         self._primary.show()
 
     def _on_install_cancelled(self) -> None:
+        self._state.setText("已取消")
         self._busy = False
         self._installer = None
         self._install_future = None
+        self._completed = False
         self._status.setText("安装已取消，临时文件已清理")
         for bar in (self._download_bar, self._install_bar):
             if bar.maximum() == 0:
@@ -334,10 +392,15 @@ class CudaRuntimeInstallerDialog(QWidget):
         self.move(x, y)
 
     def cleanup(self) -> None:
+        if self._cleaned_up:
+            return
         self._cleaned_up = True
+        self._animation.stop()
+        self._event_center.unsubscribe(EventType.CONFIG_UPDATED, self._on_config_updated)
         if self._installer is not None:
             self._installer.cancel()
             self._installer = None
+        self._busy = False
         try:
             get_layer_manager().unregister(self)
         except Exception:
@@ -372,40 +435,64 @@ class CudaRuntimeInstallerDialog(QWidget):
     def paintEvent(self, event) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, False)
-        painter.fillRect(self.rect(), UI_THEME["border"])
-        painter.fillRect(self.rect().adjusted(_LAYER, _LAYER, -_LAYER, -_LAYER), UI_THEME["mid"])
-        painter.fillRect(self.rect().adjusted(_BORDER, _BORDER, -_BORDER, -_BORDER), UI_THEME["bg"])
+        painter.fillRect(self.rect(), QColor(_color("border_strong")))
+        painter.fillRect(self.rect().adjusted(_BORDER, _BORDER, -_BORDER, -_BORDER), QColor(_color("canvas")))
+
+    def _on_config_updated(self, event) -> None:
+        if not self._cleaned_up:
+            self._theme_signal.emit()
 
     def _apply_style(self) -> None:
+        family = get_ui_font_family().replace("'", "\\'")
         self.setStyleSheet(
             f"""
+            QWidget#CudaRuntimeInstallerDialog {{ font-family: '{family}'; }}
             QLabel {{ color: {_color('text')}; background: transparent; }}
+            QLabel#InstallerMeta, QLabel#InstallerBodyText {{ color: {_color('text_muted')}; }}
+            QLabel#InstallerState {{ color: {_color('text_dim')}; }}
+            QFrame#InstallerHeaderAccent {{
+                background: {_color('pink')}; border: none;
+                border-right: 1px solid {_color('cyan')};
+            }}
+            QFrame#InstallerContent {{ background: {_color('surface')}; border: none; }}
+            QScrollArea#InstallerStatusArea, QScrollArea#InstallerStatusArea > QWidget > QWidget {{
+                background: {_color('surface')}; border: none;
+            }}
+            QScrollBar:vertical {{ background: {_color('surface')}; width: 8px; }}
+            QScrollBar::handle:vertical {{ background: {_color('border_strong')}; min-height: 24px; }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0px; }}
             QProgressBar {{
                 color: {_color('text')};
-                background: {_color('mid')};
+                background: {_color('surface_raised')};
                 border: 1px solid {_color('border')};
                 border-radius: 3px;
                 text-align: center;
             }}
-            QProgressBar#CudaRuntimeDownloadProgress::chunk {{ background: {_color('deep_cyan')}; }}
-            QProgressBar#CudaRuntimeInstallProgress::chunk {{ background: {_color('deep_pink')}; }}
+            QProgressBar#CudaRuntimeDownloadProgress::chunk {{ background: {_color('cyan')}; }}
+            QProgressBar#CudaRuntimeInstallProgress::chunk {{ background: {_color('pink')}; }}
             QPushButton {{
                 min-width: {scale_px(94, min_abs=82)}px;
                 min-height: {scale_px(32, min_abs=28)}px;
                 color: {_color('text')};
-                background: {_color('mid')};
+                background: {_color('surface_raised')};
                 border: 1px solid {_color('border')};
                 border-radius: 3px;
                 padding: 0px {scale_px(10, min_abs=8)}px;
             }}
-            QPushButton:hover {{ background: {_color('highlight')}; }}
+            QPushButton:hover {{ background: {_color('surface_hover')}; border-color: {_color('cyan')}; }}
+            QPushButton:pressed {{ background: {_color('border_strong')}; }}
             QPushButton#CudaRuntimeInstallerPrimary {{
-                background: {_color('deep_pink')};
+                background: {_color('pink')};
+                color: {_color('canvas')};
+                border-color: {_color('pink')};
                 font-weight: 700;
             }}
-            QPushButton:disabled {{ color: {_color('deep_blue')}; }}
+            QPushButton#CudaRuntimeInstallerPrimary:hover {{ background: {_color('pink_hover')}; }}
+            QPushButton#CudaRuntimeInstallerPrimary:pressed {{ background: {_color('cyan')}; }}
+            QPushButton:disabled {{ color: {_color('text_dim')}; background: {_color('surface_raised')}; }}
             """
         )
+        self.update()
 
 
 __all__ = ["CudaRuntimeInstallerDialog"]

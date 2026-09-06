@@ -1,6 +1,16 @@
 # Changelog
 
-本文件记录飞行雪绒 LTS 系列的公开版本变更。版本标签与发布包名称保持一致，例如 `LTS1.0.7beta2`。
+本文件记录飞行雪绒 LTS 系列的公开版本变更。版本标签与发布包名称保持一致，例如 `LTS1.0.7pre1`。
+
+## [LTS1.0.7pre1] - 2026-09-06
+
+### Added
+- 新增自包含 NVIDIA CUDA 运行时 v2 方案，运行时携带 CPython、ONNX Runtime CUDA、CUDA/cuDNN DLL 和 Worker，只要求兼容的 NVIDIA 显示驱动。
+- 新增离线运行时构建、校验、清单哈希和安全解压工具，并为安装器页面增加原生 DPI/状态视觉验收。
+
+### Changed
+- Windows 离线安装器和 Qt N 卡安装窗口统一为公告面板风格的亮色向导，并内嵌 HarmonyOS Sans SC 字体。
+- 离线安装器更新链路改为校验并发布单文件 EXE 外层 ZIP，更新器从 Hugging Face 与 ModelScope 的固定清单选择同一发布包。
 
 ## [LTS1.0.7beta2] - 2026-08-30
 

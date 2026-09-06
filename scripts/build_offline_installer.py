@@ -21,11 +21,13 @@ import subprocess
 import os
 import re
 import tempfile
+import sys
 import zipfile
 
 
 PRODUCT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_INSTALLER_SOURCE = PRODUCT_ROOT / "installer" / "windows"
+HARMONY_FONT_SOURCE = PRODUCT_ROOT / "resc" / "FRONTS" / "HarmonyOS_Sans_SC_Bold.ttf"
 MAGIC = b"FSV-OFFLINE-PAYLOAD-2"
 TRAILER_FORMAT = "<24sQ32s"
 TRAILER_SIZE = struct.calcsize(TRAILER_FORMAT)
@@ -40,6 +42,20 @@ ZLIB_SOURCES = (
     "zutil.c",
 )
 _VS_ENVIRONMENTS: dict[str, dict[str, str]] = {}
+
+
+def _write_installer_theme_header(output: Path) -> None:
+    """Compile the announcement's light palette into the standalone native UI."""
+    if str(PRODUCT_ROOT) not in sys.path:
+        sys.path.insert(0, str(PRODUCT_ROOT))
+    from lib.core.graphics.announcement_visuals import ANNOUNCEMENT_LIGHT_COLORS
+
+    lines = ["#pragma once", ""]
+    for name, color in ANNOUNCEMENT_LIGHT_COLORS.items():
+        lines.append(
+            f"#define FSV_COLOR_{name.upper()} RGB({color.red}, {color.green}, {color.blue})"
+        )
+    output.write_text("\n".join(lines) + "\n", encoding="ascii")
 
 
 def sha256(path: Path) -> bytes:
@@ -445,6 +461,7 @@ def _prepare_native_sources(installer_source: Path) -> tuple[Path, Path]:
         source_root / "installer.manifest",
         source_root / "launcher.manifest",
         source_root / "uninstaller.manifest",
+        HARMONY_FONT_SOURCE,
         zlib_root / "zlib.h",
         *(zlib_root / name for name in ZLIB_SOURCES),
     )
@@ -597,6 +614,8 @@ def compile_installer(
     ):
         shutil.copy2(source_root / name, compile_root / name)
     shutil.copy2(icon_source, compile_root / "icon.ico")
+    shutil.copy2(HARMONY_FONT_SOURCE, compile_root / "HarmonyOS_Sans_SC_Bold.ttf")
+    _write_installer_theme_header(compile_root / "installer_theme.h")
     _write_payload_info_header(payload, archive, compile_root / "payload_info.h")
     _compile_zlib(zlib_root, vsdevcmd, compile_root)
     run_vs_command(vsdevcmd, 'rc.exe /nologo /fo"installer.res" "resource.rc"', compile_root)

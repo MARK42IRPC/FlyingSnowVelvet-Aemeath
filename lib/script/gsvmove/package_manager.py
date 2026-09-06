@@ -26,6 +26,10 @@ import requests
 
 from config.shared_storage import get_shared_root_dir
 from config.user_storage_paths import get_user_state_dir
+from config.version_info import (
+    VOICE_PACKAGE_HUGGINGFACE_REPO,
+    VOICE_PACKAGE_MODELSCOPE_REPO,
+)
 from lib.core.logger import get_logger
 from lib.script.gsvmove.rar_backend import ensure_bundled_unrar
 
@@ -38,10 +42,10 @@ VOICE_PACKAGE_RUNTIME_REVISION = 6
 VOICE_PACKAGE_DIR_NAME = "ONNX_aimisiV2"
 
 _MODELSCOPE_ARCHIVE_BASE = (
-    "https://www.modelscope.cn/models/Mark42IRPC/GSV_onnx_Aemeath_Pack/resolve/master"
+    f"https://www.modelscope.cn/models/{VOICE_PACKAGE_MODELSCOPE_REPO}/resolve/master"
 )
 _HUGGINGFACE_ARCHIVE_BASE = (
-    "https://huggingface.co/Mark42IRP/Aemeath_onnx_GSV_model/resolve/main"
+    f"https://huggingface.co/{VOICE_PACKAGE_HUGGINGFACE_REPO}/resolve/main"
 )
 _INSTALL_STAGING_OVERHEAD_BYTES = 512 * 1024 * 1024
 

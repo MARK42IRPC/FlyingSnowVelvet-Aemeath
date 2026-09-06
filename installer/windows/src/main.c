@@ -12,6 +12,7 @@
 #include <objbase.h>
 #include <bcrypt.h>
 #include <strsafe.h>
+#include <uxtheme.h>
 
 #include <stdint.h>
 #include <stdio.h>
@@ -21,6 +22,7 @@
 
 #include "resource.h"
 #include "payload_info.h"
+#include "installer_theme.h"
 #include "zip_extract.h"
 
 #pragma comment(lib, "bcrypt.lib")
@@ -29,6 +31,7 @@
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "shell32.lib")
 #pragma comment(lib, "user32.lib")
+#pragma comment(lib, "uxtheme.lib")
 
 static const char PAYLOAD_MAGIC[] = "FSV-OFFLINE-PAYLOAD-2";
 static const wchar_t WIZARD_CLASS_NAME[] = L"FlyingSnowVelvetOfflineInstaller";
@@ -42,6 +45,8 @@ static const DWORD ARCHIVE_BUFFER_SIZE = 1024U * 1024U;
 #define INSTALL_ERROR_CAPACITY 768
 #define FSV_PATH_CAPACITY 520
 #define FSV_MAX_BUTTONS 6
+#define FSV_CLIENT_WIDTH 880
+#define FSV_CLIENT_HEIGHT 568
 
 #define IDC_PATH_EDIT 1001
 #define IDC_CUSTOM 1002
@@ -130,11 +135,16 @@ static HWND g_status;
 static HWND g_space_info;
 static HWND g_done_title;
 static HWND g_done_text;
+static HWND g_space_values[3];
 static HFONT g_heading_font;
 static HFONT g_body_font;
+static HFONT g_meta_font;
+static HANDLE g_embedded_font;
+static DWORD g_embedded_font_count;
 static HBRUSH g_canvas_brush;
 static HBRUSH g_surface_brush;
 static HBRUSH g_raised_brush;
+static UINT g_dpi = 96;
 static int g_page = 1;
 static BYTE g_fade_alpha = 255;
 static ButtonVisualState g_button_states[FSV_MAX_BUTTONS];
@@ -145,8 +155,36 @@ static wchar_t g_update_state_path[FSV_PATH_CAPACITY];
 static wchar_t g_update_state_source[FSV_PATH_CAPACITY];
 static BOOL g_has_requested_directory;
 
+static int ui_px(int value) {
+    return MulDiv(value, (int)g_dpi, 96);
+}
+
+static RECT ui_rect(int x, int y, int width, int height) {
+    RECT result = {ui_px(x), ui_px(y), ui_px(x + width), ui_px(y + height)};
+    return result;
+}
+
 static LRESULT CALLBACK wizard_window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam);
 static LRESULT CALLBACK button_subclass_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam, UINT_PTR subclass_id, DWORD_PTR reference_data);
+
+static BOOL load_embedded_harmony_font(void) {
+    HINSTANCE instance = GetModuleHandleW(NULL);
+    HRSRC resource = FindResourceW(instance, MAKEINTRESOURCEW(IDR_HARMONY_FONT), RT_RCDATA);
+    HGLOBAL loaded;
+    DWORD size;
+    void *data;
+    if (resource == NULL) {
+        return FALSE;
+    }
+    size = SizeofResource(instance, resource);
+    loaded = LoadResource(instance, resource);
+    data = loaded == NULL ? NULL : LockResource(loaded);
+    if (size == 0 || data == NULL) {
+        return FALSE;
+    }
+    g_embedded_font = AddFontMemResourceEx(data, size, NULL, &g_embedded_font_count);
+    return g_embedded_font != NULL;
+}
 
 static BOOL copy_command_value(const wchar_t *value, wchar_t *output, size_t capacity) {
     if (value == NULL || *value == L'\0' || FAILED(StringCchCopyW(output, capacity, value))) {
@@ -1118,26 +1156,35 @@ static void set_page(int page) {
     wchar_t step[32];
     g_page = page;
     if (page == 1) {
-        StringCchCopyW(title, ARRAYSIZE(title), L"安装飞行雪绒");
-        StringCchCopyW(subtitle, ARRAYSIZE(subtitle), L"选择桌宠的安装位置，安装包内置完整运行环境。" );
+        StringCchCopyW(title, ARRAYSIZE(title), L"选择安装位置");
+        StringCchCopyW(subtitle, ARRAYSIZE(subtitle), L"为飞行雪绒选择一个安放的位置。" );
     } else if (page == 2) {
-        StringCchCopyW(title, ARRAYSIZE(title), L"准备安装");
+        StringCchCopyW(title, ARRAYSIZE(title), L"确认安装");
         StringCchCopyW(subtitle, ARRAYSIZE(subtitle), L"确认空间与安装位置后开始写入文件。" );
     } else if (page == 3) {
         StringCchCopyW(title, ARRAYSIZE(title), L"正在安装");
         StringCchCopyW(subtitle, ARRAYSIZE(subtitle), L"正在校验并展开内置文件，请保持窗口打开。" );
-    } else {
+    } else if (g_context.installed) {
         StringCchCopyW(title, ARRAYSIZE(title), L"安装完成");
         StringCchCopyW(subtitle, ARRAYSIZE(subtitle), L"飞行雪绒已经准备就绪。" );
+    } else {
+        StringCchCopyW(title, ARRAYSIZE(title), L"安装未完成");
+        StringCchCopyW(subtitle, ARRAYSIZE(subtitle), L"请检查以下信息后重新运行安装器。" );
     }
-    StringCchPrintfW(step, ARRAYSIZE(step), L"步骤 %d / 3", page >= 3 ? 3 : page);
+    StringCchCopyW(step, ARRAYSIZE(step), L"WINDOWS  /  64 BIT");
     SetWindowTextW(g_page_title, title);
     SetWindowTextW(g_page_subtitle, subtitle);
     SetWindowTextW(g_step_label, step);
-    show_control(g_path_edit, page == 1);
+    show_control(g_path_edit, page <= 2);
     show_control(g_custom_button, page == 1);
     show_control(g_next_button, page == 1);
     show_control(g_space_info, page == 2);
+    {
+        size_t index;
+        for (index = 0; index < ARRAYSIZE(g_space_values); ++index) {
+            show_control(g_space_values[index], page == 2);
+        }
+    }
     show_control(g_back_button, page == 2);
     show_control(g_start_button, page == 2);
     show_control(g_progress, page == 3);
@@ -1152,6 +1199,8 @@ static void set_page(int page) {
     g_fade_alpha = 218;
     SetLayeredWindowAttributes(g_window, 0, g_fade_alpha, LWA_ALPHA);
     SetTimer(g_window, FSV_FADE_TIMER, 16, NULL);
+    InvalidateRect(g_window, NULL, TRUE);
+    SetFocus(page == 1 ? g_next_button : page == 2 ? g_start_button : page == 4 ? g_finish_button : g_window);
 }
 
 static BOOL read_embedded_space_info(void) {
@@ -1212,12 +1261,14 @@ static BOOL normalize_selected_install_directory(void) {
 
 static void update_space_text(void) {
     wchar_t required[64];
+    wchar_t installed[64];
     wchar_t free_space[64];
-    wchar_t text[512];
+    wchar_t text[160];
     ULONGLONG available = 0;
     BOOL space_known;
     BOOL enough;
     format_bytes(g_context.required_bytes, required, ARRAYSIZE(required));
+    format_bytes(g_context.total_bytes, installed, ARRAYSIZE(installed));
     space_known = query_available_space(g_context.install_directory, &available);
     if (space_known) {
         format_bytes(available, free_space, ARRAYSIZE(free_space));
@@ -1228,20 +1279,19 @@ static void update_space_text(void) {
     StringCchPrintfW(
         text,
         ARRAYSIZE(text),
-        L"安装目录\n%ls\n\n预计占用空间：%ls（含临时校验空间）\n归档文件数：%llu\n当前可用空间：%ls%s",
-        g_context.install_directory,
-        required,
-        g_context.total_files,
-        free_space,
-        enough ? L"" : L"\n\n可用空间不足或目标磁盘不可用，请更换目录。"
+        enough ? L"共 %llu 个文件。安装后自动释放临时空间。" : L"共 %llu 个文件。磁盘空间不足或不可用，请返回并更换位置。",
+        g_context.total_files
     );
+    SetWindowTextW(g_space_values[0], installed);
+    SetWindowTextW(g_space_values[1], required);
+    SetWindowTextW(g_space_values[2], free_space);
     SetWindowTextW(g_space_info, text);
     EnableWindow(g_start_button, enough);
 }
 
 static void create_button(HWND *output, const wchar_t *text, int id, int x, int y, int width, int height) {
     ButtonVisualState *state;
-    *output = CreateWindowExW(0, L"BUTTON", text, WS_CHILD | WS_VISIBLE | BS_OWNERDRAW, x, y, width, height, g_window, (HMENU)(INT_PTR)id, GetModuleHandleW(NULL), NULL);
+    *output = CreateWindowExW(0, L"BUTTON", text, WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW, ui_px(x), ui_px(y), ui_px(width), ui_px(height), g_window, (HMENU)(INT_PTR)id, GetModuleHandleW(NULL), NULL);
     if (*output == NULL || g_button_count >= ARRAYSIZE(g_button_states)) {
         return;
     }
@@ -1276,8 +1326,9 @@ static LRESULT CALLBACK button_subclass_proc(HWND window, UINT message, WPARAM w
 static BOOL create_wizard_window(void) {
     WNDCLASSW window_class;
     RECT work_area;
-    int width = 760;
-    int height = 470;
+    RECT bounds = ui_rect(0, 0, FSV_CLIENT_WIDTH, FSV_CLIENT_HEIGHT);
+    int width;
+    int height;
     int x;
     int y;
     ZeroMemory(&window_class, sizeof(window_class));
@@ -1291,61 +1342,116 @@ static BOOL create_wizard_window(void) {
     if (RegisterClassW(&window_class) == 0 && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
         return FALSE;
     }
+    AdjustWindowRectExForDpi(&bounds, WS_CAPTION | WS_SYSMENU, FALSE, WS_EX_APPWINDOW | WS_EX_LAYERED, g_dpi);
+    width = bounds.right - bounds.left;
+    height = bounds.bottom - bounds.top;
     SystemParametersInfoW(SPI_GETWORKAREA, 0, &work_area, 0);
     x = work_area.left + ((work_area.right - work_area.left) - width) / 2;
     y = work_area.top + ((work_area.bottom - work_area.top) - height) / 2;
-    g_window = CreateWindowExW(WS_EX_APPWINDOW | WS_EX_LAYERED, WIZARD_CLASS_NAME, L"飞行雪绒安装器", WS_CAPTION | WS_SYSMENU, x, y, width, height, NULL, NULL, GetModuleHandleW(NULL), NULL);
+    g_window = CreateWindowExW(WS_EX_APPWINDOW | WS_EX_LAYERED | WS_EX_CONTROLPARENT, WIZARD_CLASS_NAME, L"飞行雪绒安装器", WS_CAPTION | WS_SYSMENU | WS_CLIPCHILDREN, x, y, width, height, NULL, NULL, GetModuleHandleW(NULL), NULL);
     if (g_window == NULL) {
         return FALSE;
     }
     return TRUE;
 }
 
-static BOOL create_controls(void) {
-    HICON icon = LoadIconW(GetModuleHandleW(NULL), MAKEINTRESOURCEW(IDI_INSTALLER));
-    g_heading_font = CreateFontW(28, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
-    g_body_font = CreateFontW(16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
-    if (g_heading_font == NULL || g_body_font == NULL) {
+static HWND create_label(const wchar_t *text, int id, DWORD style) {
+    return CreateWindowExW(0, L"STATIC", text, WS_CHILD | WS_VISIBLE | style,
+        0, 0, 1, 1, g_window, (HMENU)(INT_PTR)id, GetModuleHandleW(NULL), NULL);
+}
+
+static void place_control(HWND control, int x, int y, int width, int height, HFONT font) {
+    MoveWindow(control, ui_px(x), ui_px(y), ui_px(width), ui_px(height), TRUE);
+    SendMessageW(control, WM_SETFONT, (WPARAM)font, TRUE);
+}
+
+static BOOL layout_controls(void) {
+    HFONT old_heading = g_heading_font;
+    HFONT old_body = g_body_font;
+    HFONT old_meta = g_meta_font;
+    HICON icon;
+    size_t index;
+    g_heading_font = CreateFontW(-ui_px(26), 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"HarmonyOS Sans SC");
+    g_body_font = CreateFontW(-ui_px(15), 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"HarmonyOS Sans SC");
+    g_meta_font = CreateFontW(-ui_px(12), 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"HarmonyOS Sans SC");
+    if (g_heading_font == NULL || g_body_font == NULL || g_meta_font == NULL) {
         return FALSE;
     }
-    g_icon = CreateWindowExW(0, L"STATIC", NULL, WS_CHILD | WS_VISIBLE | SS_ICON, 36, 30, 48, 48, g_window, (HMENU)(INT_PTR)IDC_PRODUCT_ICON, GetModuleHandleW(NULL), NULL);
-    g_page_title = CreateWindowExW(0, L"STATIC", L"安装飞行雪绒", WS_CHILD | WS_VISIBLE, 100, 30, 500, 40, g_window, (HMENU)(INT_PTR)IDC_PAGE_TITLE, GetModuleHandleW(NULL), NULL);
-    g_page_subtitle = CreateWindowExW(0, L"STATIC", L"选择桌宠的安装位置，安装包内置完整运行环境。", WS_CHILD | WS_VISIBLE, 100, 72, 610, 28, g_window, (HMENU)(INT_PTR)IDC_PAGE_SUBTITLE, GetModuleHandleW(NULL), NULL);
-    g_step_label = CreateWindowExW(0, L"STATIC", L"步骤 1 / 3", WS_CHILD | WS_VISIBLE | SS_RIGHT, 610, 44, 88, 26, g_window, NULL, GetModuleHandleW(NULL), NULL);
-    g_path_edit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", g_context.install_directory, WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL | ES_READONLY, 48, 148, 610, 38, g_window, (HMENU)(INT_PTR)IDC_PATH_EDIT, GetModuleHandleW(NULL), NULL);
-    create_button(&g_custom_button, L"自定义安装目录", IDC_CUSTOM, 48, 202, 190, 40);
-    create_button(&g_next_button, L"下一步", IDC_NEXT, 574, 374, 120, 42);
-    g_space_info = CreateWindowExW(0, L"STATIC", L"正在读取内置归档信息...", WS_CHILD | SS_LEFT, 48, 128, 640, 190, g_window, (HMENU)(INT_PTR)IDC_SPACE_INFO, GetModuleHandleW(NULL), NULL);
-    create_button(&g_back_button, L"返回", IDC_BACK, 48, 374, 120, 42);
-    create_button(&g_start_button, L"开始安装", IDC_START, 574, 374, 120, 42);
-    g_status = CreateWindowExW(0, L"STATIC", L"正在准备...", WS_CHILD | SS_LEFT, 48, 128, 650, 32, g_window, (HMENU)(INT_PTR)IDC_STATUS, GetModuleHandleW(NULL), NULL);
-    g_current_file = CreateWindowExW(0, L"STATIC", L"当前文件：正在准备...", WS_CHILD | SS_LEFT | SS_PATHELLIPSIS, 48, 176, 650, 32, g_window, (HMENU)(INT_PTR)IDC_CURRENT_FILE, GetModuleHandleW(NULL), NULL);
-    g_progress = CreateWindowExW(0, PROGRESS_CLASSW, NULL, WS_CHILD | PBS_SMOOTH, 48, 224, 650, 28, g_window, (HMENU)(INT_PTR)IDC_PROGRESS, GetModuleHandleW(NULL), NULL);
-    g_progress_stats = CreateWindowExW(0, L"STATIC", L"已解压文件：0 / 0    数据：0 B / 0 B", WS_CHILD | SS_LEFT, 48, 270, 650, 28, g_window, (HMENU)(INT_PTR)IDC_PROGRESS_STATS, GetModuleHandleW(NULL), NULL);
-    g_progress_eta = CreateWindowExW(0, L"STATIC", L"预计剩余：正在计算...", WS_CHILD | SS_LEFT, 48, 304, 650, 28, g_window, (HMENU)(INT_PTR)IDC_PROGRESS_ETA, GetModuleHandleW(NULL), NULL);
-    g_done_title = CreateWindowExW(0, L"STATIC", L"安装完成", WS_CHILD | SS_LEFT, 48, 148, 650, 44, g_window, (HMENU)(INT_PTR)IDC_DONE_TITLE, GetModuleHandleW(NULL), NULL);
-    g_done_text = CreateWindowExW(0, L"STATIC", L"安装文件已校验完成。点击下方按钮后，将启动飞行雪绒并退出安装器。", WS_CHILD | SS_LEFT, 48, 208, 650, 72, g_window, (HMENU)(INT_PTR)IDC_DONE_TEXT, GetModuleHandleW(NULL), NULL);
-    create_button(&g_finish_button, L"退出安装并启动飞行雪绒", IDC_FINISH, 430, 374, 264, 42);
-    if (icon != NULL) {
-        SendMessageW(g_icon, STM_SETICON, (WPARAM)icon, 0);
+    place_control(g_icon, 52, 26, 48, 48, g_body_font);
+    icon = (HICON)LoadImageW(GetModuleHandleW(NULL), MAKEINTRESOURCEW(IDI_INSTALLER), IMAGE_ICON, ui_px(48), ui_px(48), LR_SHARED);
+    SendMessageW(g_icon, STM_SETICON, (WPARAM)icon, 0);
+    place_control(g_step_label, 644, 46, 196, 20, g_meta_font);
+    place_control(g_page_title, 40, 180, 800, 40, g_heading_font);
+    place_control(g_page_subtitle, 40, 228, 800, 28, g_body_font);
+    place_control(g_path_edit, 54, 303, 610, 24, g_body_font);
+    SendMessageW(g_path_edit, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, 0);
+    place_control(g_custom_button, 688, 294, 152, 42, g_body_font);
+    place_control(g_next_button, 680, 510, 160, 40, g_body_font);
+    place_control(g_back_button, 40, 510, 112, 40, g_body_font);
+    place_control(g_start_button, 680, 510, 160, 40, g_body_font);
+    place_control(g_space_info, 40, 436, 800, 42, g_meta_font);
+    for (index = 0; index < ARRAYSIZE(g_space_values); ++index) {
+        place_control(g_space_values[index], 40 + (int)index * 272, 382, 240, 42, g_heading_font);
     }
+    place_control(g_status, 40, 280, 800, 44, g_body_font);
+    place_control(g_progress, 40, 340, 800, 12, g_body_font);
+    place_control(g_current_file, 40, 368, 800, 28, g_meta_font);
+    place_control(g_progress_stats, 40, 408, 800, 24, g_body_font);
+    place_control(g_progress_eta, 40, 442, 800, 24, g_meta_font);
+    place_control(g_done_title, 40, 284, 800, 36, g_body_font);
+    place_control(g_done_text, 40, 336, 800, 140, g_body_font);
+    place_control(g_finish_button, 548, 510, 292, 40, g_body_font);
+    if (old_heading != NULL) DeleteObject(old_heading);
+    if (old_body != NULL) DeleteObject(old_body);
+    if (old_meta != NULL) DeleteObject(old_meta);
+    return TRUE;
+}
+
+static BOOL create_controls(void) {
+    size_t index;
+    if (!load_embedded_harmony_font()) {
+        return FALSE;
+    }
+    g_icon = create_label(NULL, IDC_PRODUCT_ICON, SS_ICON);
+    g_page_title = create_label(L"", IDC_PAGE_TITLE, SS_LEFT);
+    g_page_subtitle = create_label(L"", IDC_PAGE_SUBTITLE, SS_LEFT);
+    g_step_label = create_label(L"", 0, SS_RIGHT);
+    g_path_edit = CreateWindowExW(0, L"EDIT", g_context.install_directory,
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL | ES_READONLY,
+        0, 0, 1, 1, g_window, (HMENU)(INT_PTR)IDC_PATH_EDIT, GetModuleHandleW(NULL), NULL);
+    create_button(&g_custom_button, L"更改位置", IDC_CUSTOM, 0, 0, 1, 1);
+    create_button(&g_next_button, L"下一步", IDC_NEXT, 0, 0, 1, 1);
+    create_button(&g_back_button, L"返回", IDC_BACK, 0, 0, 1, 1);
+    create_button(&g_start_button, L"开始安装", IDC_START, 0, 0, 1, 1);
+    create_button(&g_finish_button, L"退出安装并启动飞行雪绒", IDC_FINISH, 0, 0, 1, 1);
+    g_space_info = create_label(L"", IDC_SPACE_INFO, SS_LEFT);
+    for (index = 0; index < ARRAYSIZE(g_space_values); ++index) {
+        g_space_values[index] = create_label(L"", 1020 + (int)index, SS_LEFT);
+        if (g_space_values[index] == NULL) return FALSE;
+    }
+    g_status = create_label(L"正在准备...", IDC_STATUS, SS_LEFT);
+    g_current_file = create_label(L"当前文件：正在准备...", IDC_CURRENT_FILE, SS_LEFT | SS_PATHELLIPSIS);
+    g_progress = CreateWindowExW(0, PROGRESS_CLASSW, NULL, WS_CHILD | PBS_SMOOTH, 0, 0, 1, 1, g_window, (HMENU)(INT_PTR)IDC_PROGRESS, GetModuleHandleW(NULL), NULL);
+    g_progress_stats = create_label(L"已解压文件：0 / 0", IDC_PROGRESS_STATS, SS_LEFT);
+    g_progress_eta = create_label(L"预计剩余：正在计算...", IDC_PROGRESS_ETA, SS_LEFT);
+    g_done_title = create_label(L"文件校验通过", IDC_DONE_TITLE, SS_LEFT);
+    g_done_text = create_label(L"安装文件已校验完成。", IDC_DONE_TEXT, SS_LEFT | SS_EDITCONTROL);
     SendMessageW(g_progress, PBM_SETRANGE32, 0, 100);
     SendMessageW(g_progress, PBM_SETPOS, 0, 0);
-    SendMessageW(g_progress, PBM_SETBARCOLOR, 0, RGB(233, 104, 157));
-    SendMessageW(g_progress, PBM_SETBKCOLOR, 0, RGB(252, 225, 237));
+    SendMessageW(g_progress, PBM_SETBARCOLOR, 0, FSV_COLOR_PINK);
+    SendMessageW(g_progress, PBM_SETBKCOLOR, 0, FSV_COLOR_SURFACE_RAISED);
+    SetWindowTheme(g_progress, L"", L"");
     {
         HWND controls[] = {g_page_title, g_page_subtitle, g_step_label, g_path_edit, g_custom_button, g_next_button, g_space_info, g_back_button, g_start_button, g_status, g_current_file, g_progress, g_progress_stats, g_progress_eta, g_done_title, g_done_text, g_finish_button};
-        size_t index;
-        for (index = 0; index < ARRAYSIZE(controls); ++index) {
-            if (controls[index] == NULL) {
+        size_t control_index;
+        for (control_index = 0; control_index < ARRAYSIZE(controls); ++control_index) {
+            if (controls[control_index] == NULL) {
                 return FALSE;
             }
-            SendMessageW(controls[index], WM_SETFONT, (WPARAM)(controls[index] == g_page_title || controls[index] == g_done_title ? g_heading_font : g_body_font), TRUE);
         }
     }
+    if (!layout_controls()) return FALSE;
     set_page(1);
-    ShowWindow(g_window, SW_SHOWNORMAL);
-    UpdateWindow(g_window);
     return TRUE;
 }
 
@@ -1377,24 +1483,25 @@ static void draw_button(const DRAWITEMSTRUCT *item) {
         }
     }
     if ((item->itemState & ODS_DISABLED) != 0) {
-        fill_color = RGB(236, 231, 234);
-        border_color = RGB(224, 216, 220);
-        text_color = RGB(140, 135, 142);
+        fill_color = FSV_COLOR_SURFACE_RAISED;
+        border_color = FSV_COLOR_BORDER;
+        text_color = FSV_COLOR_TEXT_DIM;
     } else {
-        COLORREF base = primary ? RGB(233, 104, 157) : RGB(255, 255, 255);
-        COLORREF hot = primary ? RGB(216, 82, 139) : RGB(255, 235, 244);
+        COLORREF base = primary ? FSV_COLOR_PINK : FSV_COLOR_SURFACE_RAISED;
+        COLORREF hot = primary ? FSV_COLOR_PINK_HOVER : FSV_COLOR_SURFACE_HOVER;
         fill_color = mix_color(base, hot, hover);
         if ((item->itemState & ODS_SELECTED) != 0) {
-            fill_color = primary ? RGB(194, 67, 123) : RGB(249, 216, 232);
+            fill_color = primary ? FSV_COLOR_CYAN : FSV_COLOR_BORDER_STRONG;
         }
-        border_color = primary ? fill_color : RGB(224, 132, 172);
-        text_color = primary ? RGB(255, 255, 255) : RGB(151, 57, 100);
+        border_color = primary ? fill_color : hover > 0 ? FSV_COLOR_CYAN : FSV_COLOR_BORDER;
+        text_color = primary ? FSV_COLOR_CANVAS : FSV_COLOR_TEXT;
     }
+    FillRect(item->hDC, &rect, item->CtlID == IDC_CUSTOM ? g_surface_brush : g_canvas_brush);
     brush = CreateSolidBrush(fill_color);
     pen = CreatePen(PS_SOLID, 1, border_color);
     old_brush = SelectObject(item->hDC, brush);
     old_pen = SelectObject(item->hDC, pen);
-    RoundRect(item->hDC, rect.left, rect.top, rect.right, rect.bottom, 8, 8);
+    RoundRect(item->hDC, rect.left, rect.top, rect.right, rect.bottom, ui_px(8), ui_px(8));
     SelectObject(item->hDC, old_pen);
     SelectObject(item->hDC, old_brush);
     DeleteObject(pen);
@@ -1403,12 +1510,89 @@ static void draw_button(const DRAWITEMSTRUCT *item) {
     SetTextColor(item->hDC, text_color);
     {
         wchar_t text[128];
+        HGDIOBJ old_font = SelectObject(item->hDC, g_body_font);
         GetWindowTextW(item->hwndItem, text, ARRAYSIZE(text));
-        DrawTextW(item->hDC, text, -1, &rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        DrawTextW(item->hDC, text, -1, &rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        SelectObject(item->hDC, old_font);
     }
     if ((item->itemState & ODS_FOCUS) != 0) {
         InflateRect(&rect, -3, -3);
         DrawFocusRect(item->hDC, &rect);
+    }
+}
+
+static void draw_round_panel(HDC device_context, const RECT *bounds, COLORREF fill_color, COLORREF border_color, int radius) {
+    HBRUSH fill_brush = CreateSolidBrush(fill_color);
+    HPEN border_pen = CreatePen(PS_SOLID, 1, border_color);
+    HGDIOBJ old_brush = SelectObject(device_context, fill_brush);
+    HGDIOBJ old_pen = SelectObject(device_context, border_pen);
+    RoundRect(device_context, bounds->left, bounds->top, bounds->right, bounds->bottom, radius, radius);
+    SelectObject(device_context, old_pen);
+    SelectObject(device_context, old_brush);
+    DeleteObject(border_pen);
+    DeleteObject(fill_brush);
+}
+
+static void draw_text_block(HDC device_context, HFONT font, COLORREF text_color, const wchar_t *text, RECT bounds, UINT format) {
+    HGDIOBJ old_font = SelectObject(device_context, font);
+    SetBkMode(device_context, TRANSPARENT);
+    SetTextColor(device_context, text_color);
+    DrawTextW(device_context, text, -1, &bounds, format | DT_NOPREFIX);
+    SelectObject(device_context, old_font);
+}
+
+static void fill_color_rect(HDC dc, RECT rect, COLORREF color) {
+    HBRUSH brush = CreateSolidBrush(color);
+    FillRect(dc, &rect, brush);
+    DeleteObject(brush);
+}
+
+static void draw_announcement_background(HDC dc) {
+    RECT client;
+    int index;
+    const wchar_t *steps[] = {L"安装位置", L"空间确认", L"安装完成"};
+    GetClientRect(g_window, &client);
+    FillRect(dc, &client, g_canvas_brush);
+    fill_color_rect(dc, ui_rect(0, 96, FSV_CLIENT_WIDTH, 398), FSV_COLOR_SURFACE);
+    fill_color_rect(dc, ui_rect(0, 96, FSV_CLIENT_WIDTH, 1), FSV_COLOR_BORDER);
+    fill_color_rect(dc, ui_rect(0, 494, FSV_CLIENT_WIDTH, 1), FSV_COLOR_BORDER);
+    fill_color_rect(dc, ui_rect(32, 29, 3, 44), FSV_COLOR_PINK);
+    fill_color_rect(dc, ui_rect(35, 29, 1, 44), FSV_COLOR_CYAN);
+    draw_text_block(dc, g_heading_font, FSV_COLOR_TEXT, L"飞行雪绒", ui_rect(116, 24, 360, 38), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text_block(dc, g_meta_font, FSV_COLOR_TEXT_DIM, L"离线安装  /  OFFLINE SETUP", ui_rect(118, 64, 400, 18), DT_LEFT | DT_SINGLELINE);
+
+    for (index = 0; index < 3; ++index) {
+        BOOL active = index == (g_page > 3 ? 2 : g_page - 1);
+        BOOL done = index < g_page - 1 && (g_page != 4 || g_context.installed);
+        int x = 40 + index * 280;
+        wchar_t number[8];
+        RECT square = ui_rect(x, 120, 28, 28);
+        COLORREF accent = active ? FSV_COLOR_PINK : done ? FSV_COLOR_CYAN : FSV_COLOR_BORDER;
+        draw_round_panel(dc, &square, active ? FSV_COLOR_SURFACE_HOVER : FSV_COLOR_SURFACE_RAISED, accent, ui_px(6));
+        StringCchPrintfW(number, ARRAYSIZE(number), L"%02d", index + 1);
+        draw_text_block(dc, g_meta_font, FSV_COLOR_TEXT, number, square, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        draw_text_block(dc, g_body_font, active ? FSV_COLOR_TEXT : FSV_COLOR_TEXT_DIM, steps[index], ui_rect(x + 40, 120, 124, 28), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        if (index < 2) fill_color_rect(dc, ui_rect(x + 162, 133, 92, 1), accent);
+    }
+    if (g_page <= 2) {
+        RECT field = ui_rect(40, 294, 638, 42);
+        draw_text_block(dc, g_meta_font, FSV_COLOR_TEXT_DIM, L"安装目录", ui_rect(40, 268, 400, 20), DT_LEFT | DT_SINGLELINE);
+        draw_round_panel(dc, &field, FSV_COLOR_SURFACE_RAISED, FSV_COLOR_BORDER, ui_px(8));
+    }
+    if (g_page == 1) {
+        draw_text_block(dc, g_body_font, FSV_COLOR_TEXT, L"完整运行组件已内置，安装无需联网。", ui_rect(40, 370, 800, 26), DT_LEFT | DT_SINGLELINE);
+        draw_text_block(dc, g_meta_font, FSV_COLOR_TEXT_DIM, L"非空目录会使用独立子目录；已有飞行雪绒安装可直接更新。", ui_rect(40, 408, 800, 22), DT_LEFT | DT_SINGLELINE);
+        draw_text_block(dc, g_meta_font, FSV_COLOR_TEXT_DIM, L"个人设置、语音包与使用记录保留在用户数据目录。", ui_rect(40, 438, 800, 22), DT_LEFT | DT_SINGLELINE);
+    } else if (g_page == 2) {
+        const wchar_t *labels[] = {L"安装后占用", L"安装所需空间（含临时文件）", L"磁盘可用空间"};
+        for (index = 0; index < 3; ++index) {
+            draw_text_block(dc, g_meta_font, FSV_COLOR_TEXT_DIM, labels[index], ui_rect(40 + index * 272, 356, 250, 22), DT_LEFT | DT_SINGLELINE);
+        }
+    }
+    if (g_page != 2) {
+        draw_text_block(dc, g_meta_font, FSV_COLOR_TEXT_DIM,
+            g_page == 3 ? L"正在安装，请保持窗口打开" : L"FLYING SNOW VELVET",
+            ui_rect(40, 521, 460, 20), DT_LEFT | DT_SINGLELINE);
     }
 }
 
@@ -1456,6 +1640,29 @@ static void format_progress_message(const FsvProgressMessage *update) {
 }
 
 static LRESULT CALLBACK wizard_window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
+    if (message == WM_PAINT) {
+        PAINTSTRUCT paint;
+        HDC device_context = BeginPaint(window, &paint);
+        draw_announcement_background(device_context);
+        EndPaint(window, &paint);
+        return 0;
+    }
+    if (message == WM_PRINTCLIENT) {
+        draw_announcement_background((HDC)wparam);
+        return 0;
+    }
+    if (message == WM_DPICHANGED) {
+        RECT *suggested = (RECT *)lparam;
+        RECT bounds;
+        g_dpi = HIWORD(wparam);
+        bounds = ui_rect(0, 0, FSV_CLIENT_WIDTH, FSV_CLIENT_HEIGHT);
+        AdjustWindowRectExForDpi(&bounds, WS_CAPTION | WS_SYSMENU, FALSE, WS_EX_APPWINDOW | WS_EX_LAYERED, g_dpi);
+        SetWindowPos(window, NULL, suggested->left, suggested->top,
+            bounds.right - bounds.left, bounds.bottom - bounds.top, SWP_NOZORDER | SWP_NOACTIVATE);
+        layout_controls();
+        InvalidateRect(window, NULL, TRUE);
+        return 0;
+    }
     if (message == WM_ERASEBKGND) {
         RECT rect;
         GetClientRect(window, &rect);
@@ -1465,17 +1672,12 @@ static LRESULT CALLBACK wizard_window_proc(HWND window, UINT message, WPARAM wpa
     if (message == WM_CTLCOLORSTATIC || message == WM_CTLCOLOREDIT) {
         HDC dc = (HDC)wparam;
         HWND control = (HWND)lparam;
-        SetBkMode(dc, TRANSPARENT);
-        if (control == g_page_title || control == g_done_title) {
-            SetTextColor(dc, RGB(32, 52, 77));
-        } else if (control == g_step_label) {
-            SetTextColor(dc, RGB(199, 69, 127));
-        } else if (control == g_current_file || control == g_progress_eta) {
-            SetTextColor(dc, RGB(52, 72, 99));
-        } else {
-            SetTextColor(dc, RGB(52, 72, 99));
-        }
-        return (LRESULT)(control == g_path_edit ? g_surface_brush : g_canvas_brush);
+        BOOL header = control == g_step_label || control == g_icon;
+        COLORREF background = control == g_path_edit ? FSV_COLOR_SURFACE_RAISED : header ? FSV_COLOR_CANVAS : FSV_COLOR_SURFACE;
+        SetBkMode(dc, OPAQUE);
+        SetBkColor(dc, background);
+        SetTextColor(dc, control == g_page_title ? FSV_COLOR_TEXT : FSV_COLOR_TEXT_MUTED);
+        return (LRESULT)(control == g_path_edit ? g_raised_brush : header ? g_canvas_brush : g_surface_brush);
     }
     if (message == WM_DRAWITEM && lparam != 0) {
         draw_button((const DRAWITEMSTRUCT *)lparam);
@@ -1542,11 +1744,11 @@ static LRESULT CALLBACK wizard_window_proc(HWND window, UINT message, WPARAM wpa
         close_finished_worker();
         if (wparam == ERROR_SUCCESS) {
             SetWindowTextW(g_done_title, L"文件校验通过");
-            SetWindowTextW(g_done_text, L"安装文件已校验完成。点击下方按钮后，将启动飞行雪绒并退出安装器。" );
+            SetWindowTextW(g_done_text, L"程序文件已安装并通过校验。\r\n\r\n启动飞行雪绒，即可开启桌面陪伴。" );
             set_page(4);
         } else {
             wchar_t text[INSTALL_ERROR_CAPACITY + 80];
-            StringCchPrintfW(text, ARRAYSIZE(text), L"安装未完成。\n\n%ls", g_context.error_message);
+            StringCchPrintfW(text, ARRAYSIZE(text), L"安装未完成。\r\n\r\n%ls", g_context.error_message);
             SetWindowTextW(g_done_text, text);
             SetWindowTextW(g_done_title, L"安装失败");
             SetWindowTextW(g_finish_button, L"退出安装器");
@@ -1613,7 +1815,7 @@ static LRESULT CALLBACK wizard_window_proc(HWND window, UINT message, WPARAM wpa
         }
     }
     if (message == WM_CLOSE) {
-        if (g_context.installing || g_page == 4) {
+        if (g_context.installing) {
             return 0;
         }
         DestroyWindow(window);
@@ -1642,6 +1844,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, 
     (void)previous;
     (void)show;
     ZeroMemory(&g_context, sizeof(g_context));
+    SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    g_dpi = GetDpiForSystem();
     set_install_error(&g_context, L"离线安装未完成。" );
     if (!parse_update_arguments(command_line)) {
         MessageBoxW(NULL, L"安装器启动参数无效。", L"飞行雪绒安装器", MB_OK | MB_ICONERROR);
@@ -1655,9 +1859,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, 
     controls.dwSize = sizeof(controls);
     controls.dwICC = ICC_PROGRESS_CLASS;
     InitCommonControlsEx(&controls);
-    g_canvas_brush = CreateSolidBrush(RGB(255, 248, 251));
-    g_surface_brush = CreateSolidBrush(RGB(255, 255, 255));
-    g_raised_brush = CreateSolidBrush(RGB(255, 245, 248));
+    g_canvas_brush = CreateSolidBrush(FSV_COLOR_CANVAS);
+    g_surface_brush = CreateSolidBrush(FSV_COLOR_SURFACE);
+    g_raised_brush = CreateSolidBrush(FSV_COLOR_SURFACE_RAISED);
     if (g_has_requested_directory) {
         if (!canonicalize_path(g_requested_directory, g_context.install_directory, ARRAYSIZE(g_context.install_directory))) {
             CoUninitialize();
@@ -1675,9 +1879,13 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, 
         return 1;
     }
     g_context.window = g_window;
+    ShowWindow(g_window, SW_SHOWNORMAL);
+    UpdateWindow(g_window);
     while (GetMessageW(&message, NULL, 0, 0) > 0) {
-        TranslateMessage(&message);
-        DispatchMessageW(&message);
+        if (!IsDialogMessageW(g_window, &message)) {
+            TranslateMessage(&message);
+            DispatchMessageW(&message);
+        }
     }
     if (g_context.worker != NULL) {
         WaitForSingleObject(g_context.worker, 5000);
@@ -1688,6 +1896,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, 
     }
     if (g_body_font != NULL) {
         DeleteObject(g_body_font);
+    }
+    if (g_meta_font != NULL) {
+        DeleteObject(g_meta_font);
+    }
+    if (g_embedded_font != NULL) {
+        RemoveFontMemResourceEx(g_embedded_font);
     }
     if (g_canvas_brush != NULL) {
         DeleteObject(g_canvas_brush);

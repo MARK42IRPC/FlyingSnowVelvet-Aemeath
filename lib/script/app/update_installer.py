@@ -6,6 +6,7 @@ import hashlib
 import io
 import json
 import os
+import shutil
 import subprocess
 import struct
 import time
@@ -155,6 +156,36 @@ def validate_update_installer(installer_path: Path) -> OfflineInstallerInfo:
     except zipfile.BadZipFile as exc:
         raise ValueError(f"离线安装器内置归档不是有效 ZIP：{exc}") from exc
     return info
+
+
+def extract_update_installer_bundle(bundle_path: Path, destination: Path) -> Path:
+    """Extract the single native installer from an outer distribution ZIP."""
+    bundle = Path(bundle_path).resolve()
+    target_root = Path(destination).resolve()
+    if not bundle.is_file():
+        raise ValueError("更新安装器压缩包不存在")
+    try:
+        with zipfile.ZipFile(bundle, "r") as archive:
+            members = [member for member in archive.infolist() if not member.is_dir()]
+            if len(members) != 1:
+                raise ValueError("更新安装器压缩包必须只包含一个文件")
+            member = members[0]
+            normalized = str(member.filename or "").replace("\\", "/")
+            member_path = Path(normalized)
+            if (
+                not normalized
+                or member_path.is_absolute()
+                or ".." in member_path.parts
+                or member_path.suffix.casefold() != ".exe"
+            ):
+                raise ValueError("更新安装器压缩包包含不安全或无效文件")
+            target_root.mkdir(parents=True, exist_ok=True)
+            target = target_root / member_path.name
+            with archive.open(member, "r") as source, target.open("wb") as output:
+                shutil.copyfileobj(source, output, length=1024 * 1024)
+            return target
+    except zipfile.BadZipFile as exc:
+        raise ValueError(f"更新安装器压缩包不是有效 ZIP：{exc}") from exc
 
 
 def _installation_root(project_root: Path) -> Path:

@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: publish-offline-installer
@@ -159,20 +159,26 @@ jobs:
           "RELEASE_VERSION=$version" >> $env:GITHUB_ENV
           "INSTALLER_PATH=$installer" >> $env:GITHUB_ENV
 
-      - name: Publish only the native installer and manifest
+      - name: Install Hub publishing SDKs
         shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $tag = '${{ github.ref_name }}'
-          if ([string]::IsNullOrWhiteSpace($tag)) { $tag = 'PACK' }
-          $installerName = [IO.Path]::GetFileName($env:INSTALLER_PATH)
+          & $env:BUILD_PYTHON -m pip install --no-cache-dir huggingface_hub modelscope
+
+      - name: Wrap and publish the installer to voice-package hubs
+        shell: pwsh
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          MODELSCOPE_TOKEN: ${{ secrets.MODELSCOPE_TOKEN }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $publishRoot = Join-Path $env:BUILD_ROOT 'voice-package-publication'
           $manifestName = "FlyingSnowVelvet-$env:RELEASE_VERSION-manifest.json"
-          $assets = @(gh release view $tag --json assets --jq '.assets[].name' --repo '${{ github.repository }}' 2>$null)
-          foreach ($asset in $assets) {
-            if (($asset -match '\.zip$') -or ($asset -match '-green') -or (($asset -match 'FlyingSnowVelvet-.*\.exe$') -and $asset -ne $installerName) -or (($asset -match 'FlyingSnowVelvet-.*manifest\.json$') -and $asset -ne $manifestName)) {
-              gh release delete-asset $tag $asset --yes --repo '${{ github.repository }}' | Out-Null
-            }
-          }
-          gh release upload $tag $env:INSTALLER_PATH (Join-Path (Resolve-Path dist).Path $manifestName) --clobber --repo '${{ github.repository }}'
+          $manifest = Join-Path (Resolve-Path dist).Path $manifestName
+          & $env:BUILD_PYTHON scripts/publish_offline_installer.py `
+            --installer $env:INSTALLER_PATH `
+            --version $env:RELEASE_VERSION `
+            --revision '${{ github.sha }}' `
+            --published-at ((Get-Date).ToUniversalTime().ToString('o')) `
+            --manifest $manifest `
+            --output-dir $publishRoot

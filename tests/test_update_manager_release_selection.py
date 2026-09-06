@@ -20,6 +20,7 @@ from lib.script.update_manager import (
     _GITEE_PACK_PAGE,
     _extract_gitee_attachments,
     _extract_gitee_revision,
+    _parse_voice_package_release,
     _select_release_source,
     _select_installer_asset,
     _is_retryable_request_error,
@@ -177,20 +178,22 @@ class UpdateManagerReleaseSelectionTests(unittest.TestCase):
 
     def test_one_failed_source_does_not_block_the_other(self):
         available = ReleaseInfo(
-            "PACK",
+            "LTS2",
             datetime(2026, 7, 29, tzinfo=timezone.utc),
-            "pack.exe",
+            "FlyingSnowVelvet-LTS2-Offline-Installer.zip",
             "download",
-            "GitHub",
+            "Hugging Face",
             "revision",
             0.1,
+            (),
+            "a" * 64,
         )
         manager = UpdateManager()
         with (
-            patch.object(manager, "_fetch_github_pack_release", return_value=available),
+            patch.object(manager, "_fetch_huggingface_voice_release", return_value=available),
             patch.object(
                 manager,
-                "_fetch_gitee_pack_release",
+                "_fetch_modelscope_voice_release",
                 side_effect=requests.ConnectionError("offline"),
             ),
         ):
@@ -199,20 +202,40 @@ class UpdateManagerReleaseSelectionTests(unittest.TestCase):
     def test_same_revision_source_is_attached_as_download_fallback(self):
         published = datetime(2026, 7, 29, tzinfo=timezone.utc)
         github = ReleaseInfo(
-            "PACK", published, "github.exe", "github", "GitHub", "same", 0.2
+            "LTS2", published, "github.zip", "github", "Hugging Face", "same", 0.2, (), "a" * 64
         )
         gitee = ReleaseInfo(
-            "最新包", published, "gitee.exe", "gitee", "Gitee", "same", 0.1
+            "LTS2", published, "gitee.zip", "gitee", "ModelScope", "same", 0.1, (), "a" * 64
         )
         manager = UpdateManager()
         with (
-            patch.object(manager, "_fetch_github_pack_release", return_value=github),
-            patch.object(manager, "_fetch_gitee_pack_release", return_value=gitee),
+            patch.object(manager, "_fetch_huggingface_voice_release", return_value=github),
+            patch.object(manager, "_fetch_modelscope_voice_release", return_value=gitee),
         ):
             selected = manager._fetch_latest_release()
 
-        self.assertEqual(selected.source, "Gitee")
+        self.assertEqual(selected.source, "ModelScope")
         self.assertEqual(selected.fallback_download_urls, ("github",))
+
+    def test_voice_package_manifest_builds_versioned_zip_release(self):
+        digest = "a" * 64
+        release = _parse_voice_package_release(
+            {
+                "format": "fsv-offline-installer-v1",
+                "version": "LTS2",
+                "published_at": "2026-07-29T00:00:00Z",
+                "revision": "same",
+                "asset_name": "FlyingSnowVelvet-LTS2-Offline-Installer.zip",
+                "asset_path": "updates/FlyingSnowVelvet-LTS2-Offline-Installer.zip",
+                "sha256": digest,
+            },
+            source_name="Hugging Face",
+            file_base_url="https://example.test/repo/resolve/main/",
+            response_seconds=0.1,
+        )
+        self.assertEqual(release.tag, "LTS2")
+        self.assertEqual(release.archive_sha256, digest)
+        self.assertTrue(release.download_url.endswith("updates/FlyingSnowVelvet-LTS2-Offline-Installer.zip"))
 
     def test_download_switches_to_same_revision_fallback(self):
         published = datetime(2026, 7, 29, tzinfo=timezone.utc)

@@ -2,7 +2,10 @@
 
 更新时间：2026-09-01
 
-本文定义 Windows 64 位 Python 3.11 下的 ONNX CUDA 语音运行时裁剪、验证和发布流程。运行时只服务于当前独立 ONNX 语音包，不作为通用 CUDA 或 ONNX Runtime 发行物。
+本文定义现有 **r1** 运行时的裁剪、验证和发布流程。r1 面向 Windows 64 位
+Python 3.11 venv，运行时只服务于当前独立 ONNX 语音包，不作为通用 CUDA 或
+ONNX Runtime 发行物。新的包内 CPython/Worker 方案属于独立的 **v2** 契约，见
+[CUDA 语音运行时 v2 自包含方案](CUDA语音运行时v2自包含方案.md)；在 v2 完成真实模型回归和发布审核前，不能把 r1 包当作 v2，也不能复用 r1 的哈希或激活标记。
 
 ## 1. 推进计划
 
@@ -48,7 +51,7 @@ Bundle 保留：
 
 Bundle 不包含：
 
-- Python 解释器、pip、setuptools 和 wheel；目标机器使用选定的 64 位 Python 3.11 创建 venv。
+- Python 解释器、pip、setuptools 和 wheel；**这是 r1 的边界**，目标机器使用选定的 64 位 Python 3.11 创建 venv。v2 将 CPython 3.11、启动器和 Worker 放在包内，不能沿用此条目。
 - CUDA 头文件、静态库和 import library。
 - cuRAND、cuSPARSE、cuSOLVER、NVRTC、nvJitLink 和 NVTX。
 - ORT TensorRT Provider、量化工具、transformer 工具和训练接口。

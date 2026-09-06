@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 import shutil
 import subprocess
@@ -12,16 +13,20 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Callable
-from urllib.parse import urljoin
+from urllib.parse import quote, urljoin
 
 import requests
 
 from config.version_info import (
     GITHUB_REPO,
+    OFFLINE_UPDATE_FORMAT,
+    OFFLINE_UPDATE_METADATA_PATH,
     RESOURCE_RELEASE_DATE,
     RESOURCE_VERSION,
+    VOICE_PACKAGE_HUGGINGFACE_REPO,
+    VOICE_PACKAGE_MODELSCOPE_REPO,
 )
 from lib.core.logger import get_logger
 
@@ -58,6 +63,22 @@ _DOWNLOAD_HEADERS = {
     "Accept": "*/*",
     "User-Agent": "FlyingSnowVelvet-Updater/1.0",
 }
+_VOICE_UPDATE_FORMAT = OFFLINE_UPDATE_FORMAT
+_VOICE_UPDATE_PATH = OFFLINE_UPDATE_METADATA_PATH
+_HUGGINGFACE_VOICE_UPDATE_URL = (
+    f"https://huggingface.co/{VOICE_PACKAGE_HUGGINGFACE_REPO}/resolve/main/"
+    f"{_VOICE_UPDATE_PATH}"
+)
+_MODELSCOPE_VOICE_UPDATE_URL = (
+    f"https://www.modelscope.cn/models/{VOICE_PACKAGE_MODELSCOPE_REPO}/resolve/master/"
+    f"{_VOICE_UPDATE_PATH}"
+)
+_HUGGINGFACE_VOICE_FILE_BASE = (
+    f"https://huggingface.co/{VOICE_PACKAGE_HUGGINGFACE_REPO}/resolve/main/"
+)
+_MODELSCOPE_VOICE_FILE_BASE = (
+    f"https://www.modelscope.cn/models/{VOICE_PACKAGE_MODELSCOPE_REPO}/resolve/master/"
+)
 
 InfoCallback = Callable[[str], None]
 ProgressCallback = Callable[[int, int, str], None]
@@ -93,6 +114,7 @@ class ReleaseInfo:
     revision: str = ""
     response_seconds: float = 0.0
     fallback_download_urls: tuple[str, ...] = ()
+    archive_sha256: str = ""
 
 
 @dataclass(frozen=True)
@@ -252,6 +274,45 @@ def _select_release_source(releases: list[ReleaseInfo]) -> ReleaseInfo:
     )
 
 
+def _parse_voice_package_release(
+    data: object,
+    *,
+    source_name: str,
+    file_base_url: str,
+    response_seconds: float,
+) -> ReleaseInfo:
+    if not isinstance(data, dict) or data.get("format") != _VOICE_UPDATE_FORMAT:
+        raise UpdateError(f"{source_name} 更新清单格式无效")
+    version = str(data.get("version") or "").strip()
+    asset_name = str(data.get("asset_name") or "").strip()
+    asset_path = str(data.get("asset_path") or "").strip().replace("\\", "/")
+    digest = str(data.get("sha256") or "").strip().lower()
+    published_at = _parse_datetime(str(data.get("published_at") or ""))
+    relative = PurePosixPath(asset_path)
+    if (
+        not re.fullmatch(r"[A-Za-z0-9._+-]+", version)
+        or not re.fullmatch(r"FlyingSnowVelvet-[A-Za-z0-9._+-]+-Offline-Installer\.zip", asset_name)
+        or relative.is_absolute()
+        or ".." in relative.parts
+        or ":" in asset_path
+        or not asset_path.startswith("updates/")
+        or relative.name != asset_name
+        or not re.fullmatch(r"[0-9a-f]{64}", digest)
+        or published_at.year < 2000
+    ):
+        raise UpdateError(f"{source_name} 更新清单缺少有效的安装器 ZIP 或校验信息")
+    return ReleaseInfo(
+        tag=version,
+        published_at=published_at,
+        asset_name=asset_name,
+        download_url=urljoin(file_base_url, quote(asset_path, safe="/")),
+        source=source_name,
+        revision=str(data.get("revision") or f"sha256:{digest}").strip(),
+        response_seconds=response_seconds,
+        archive_sha256=digest,
+    )
+
+
 class _UpdateBase:
     def __init__(
         self,
@@ -359,21 +420,34 @@ class UpdateManager(_UpdateBase):
         restart_command: list[str] | None = None,
     ) -> UpdateResult:
         from lib.script.app.update_installer import (
+            extract_update_installer_bundle,
             launch_update_installer,
             validate_update_installer,
         )
 
         self._progress(0, 0, f"开始下载桌宠包 {release.asset_name}...")
         staging_dir = _STAGING_ROOT / uuid.uuid4().hex
-        installer_name = Path(release.asset_name or "FlyingSnowVelvet-Offline-Installer.exe").name
-        if not installer_name.lower().endswith(".exe"):
-            raise UpdateError("更新源未提供离线安装器 EXE")
-        archive_path = staging_dir / installer_name
-        partial_path = archive_path.with_suffix(archive_path.suffix + ".part")
+        download_name = Path(release.asset_name or "FlyingSnowVelvet-Offline-Installer.zip").name
+        if Path(download_name).suffix.casefold() not in {".zip", ".exe"}:
+            raise UpdateError("更新源未提供离线安装器 ZIP")
+        download_path = staging_dir / download_name
+        partial_path = download_path.with_suffix(download_path.suffix + ".part")
         try:
             self._download_release(release, partial_path)
-            partial_path.replace(archive_path)
+            partial_path.replace(download_path)
             self._progress(0, 0, "下载完成，正在校验更新包...")
+            if release.archive_sha256:
+                digest = hashlib.sha256()
+                with download_path.open("rb") as stream:
+                    for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                        digest.update(chunk)
+                if digest.hexdigest().casefold() != release.archive_sha256.casefold():
+                    raise UpdateError("更新安装器压缩包 SHA-256 校验失败")
+            archive_path = (
+                extract_update_installer_bundle(download_path, staging_dir / "installer")
+                if download_path.suffix.casefold() == ".zip"
+                else download_path
+            )
             validate_update_installer(archive_path)
             release_payload = {
                 "tag": release.tag,
@@ -471,7 +545,7 @@ class UpdateManager(_UpdateBase):
         )
 
     def _fetch_latest_release(self) -> ReleaseInfo:
-        fetchers = (self._fetch_github_pack_release, self._fetch_gitee_pack_release)
+        fetchers = (self._fetch_huggingface_voice_release, self._fetch_modelscope_voice_release)
         releases: list[ReleaseInfo] = []
         errors: list[str] = []
         with ThreadPoolExecutor(max_workers=2, thread_name_prefix="release-source") as pool:
@@ -483,7 +557,7 @@ class UpdateManager(_UpdateBase):
                     errors.append(str(exc))
         if not releases:
             detail = "；".join(errors) if errors else "未知网络错误"
-            raise UpdateError(f"GitHub 和 Gitee 更新源均不可用：{detail}")
+            raise UpdateError(f"Hugging Face 和 ModelScope 语音包仓库更新源均不可用：{detail}")
         selected = _select_release_source(releases)
         fallback_urls = tuple(
             item.download_url
@@ -492,11 +566,42 @@ class UpdateManager(_UpdateBase):
             and item.download_url
             and item.revision
             and item.revision == selected.revision
+            and item.archive_sha256 == selected.archive_sha256
         )
         if fallback_urls:
             selected = replace(selected, fallback_download_urls=fallback_urls)
         self._info(f"已选择 {selected.source} 更新源（探测 {selected.response_seconds:.2f}s）。")
         return selected
+
+    @staticmethod
+    def _fetch_huggingface_voice_release() -> ReleaseInfo:
+        started = time.monotonic()
+        data = UpdateManager._fetch_release_json(
+            _HUGGINGFACE_VOICE_UPDATE_URL,
+            "Hugging Face 语音包仓库",
+            headers=_PAGE_JSON_HEADERS,
+        )
+        return _parse_voice_package_release(
+            data,
+            source_name="Hugging Face",
+            file_base_url=_HUGGINGFACE_VOICE_FILE_BASE,
+            response_seconds=time.monotonic() - started,
+        )
+
+    @staticmethod
+    def _fetch_modelscope_voice_release() -> ReleaseInfo:
+        started = time.monotonic()
+        data = UpdateManager._fetch_release_json(
+            _MODELSCOPE_VOICE_UPDATE_URL,
+            "ModelScope 语音包仓库",
+            headers=_PAGE_JSON_HEADERS,
+        )
+        return _parse_voice_package_release(
+            data,
+            source_name="ModelScope",
+            file_base_url=_MODELSCOPE_VOICE_FILE_BASE,
+            response_seconds=time.monotonic() - started,
+        )
 
     @staticmethod
     def _fetch_github_pack_release() -> ReleaseInfo:

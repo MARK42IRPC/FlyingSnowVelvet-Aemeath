@@ -13,6 +13,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from lib.script.app.update_installer import (
+    extract_update_installer_bundle,
     launch_update_installer,
     validate_update_installer,
     OFFLINE_INSTALLER_MAGIC,
@@ -137,6 +138,33 @@ class UpdateInstallerTests(unittest.TestCase):
             installer.write_bytes(data)
             with self.assertRaisesRegex(ValueError, "ZIP|损坏"):
                 validate_update_installer(installer)
+
+    def test_outer_bundle_extracts_only_one_native_installer(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            installer = root / "FlyingSnowVelvet-LTS2-Offline-Installer.exe"
+            bundle = root / "FlyingSnowVelvet-LTS2-Offline-Installer.zip"
+            extracted_root = root / "extracted"
+            _write_installer(installer, {".fsv-install-root": "marker\n"})
+            with zipfile.ZipFile(bundle, "w", compression=zipfile.ZIP_STORED) as archive:
+                archive.write(installer, installer.name)
+
+            extracted = extract_update_installer_bundle(bundle, extracted_root)
+
+            self.assertEqual(extracted.name, installer.name)
+            self.assertEqual(extracted.read_bytes(), installer.read_bytes())
+            validate_update_installer(extracted)
+
+    def test_outer_bundle_rejects_extra_files(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            bundle = root / "installer.zip"
+            with zipfile.ZipFile(bundle, "w") as archive:
+                archive.writestr("installer.exe", b"MZ")
+                archive.writestr("readme.txt", b"not allowed")
+
+            with self.assertRaisesRegex(ValueError, "只包含一个文件"):
+                extract_update_installer_bundle(bundle, root / "extracted")
 
     @patch("lib.script.app.update_installer.subprocess.Popen")
     def test_launch_uses_native_installer_and_pending_state(self, popen):
