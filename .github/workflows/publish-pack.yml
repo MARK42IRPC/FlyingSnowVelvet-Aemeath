@@ -35,6 +35,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
           $version = (python -c "from pathlib import Path; from scripts.release_common import read_app_version; print(read_app_version(Path.cwd()))").Trim()
           if ([string]::IsNullOrWhiteSpace($version)) { throw 'APP_VERSION is empty.' }
           if ('${{ github.ref_type }}' -eq 'tag' -and '${{ github.ref_name }}' -like 'LTS*' -and '${{ github.ref_name }}' -ne $version) {
@@ -47,15 +48,15 @@ jobs:
           path: |
             ~\AppData\Local\pip\Cache
             build/offline-release/resource-cache
+            build/offline-release/jieba-fast
             services/dsh-office-runtime/node_modules
           key: windows-offline-release-${{ hashFiles('requirements.txt', 'services/dsh-office-runtime/package-lock.json', 'config/version_info.py') }}
-          restore-keys: |
-            windows-offline-release-
 
       - name: Prepare isolated CPU build environment
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
           $root = (Resolve-Path .).Path
           $build = Join-Path $root 'build/offline-release'
           $venv = Join-Path $build 'venv'
@@ -71,13 +72,63 @@ jobs:
           # bilingual ONNX frontend closure explicitly.
           $requirements = Join-Path $build 'requirements-cpu.txt'
           Get-Content requirements.txt |
-            Where-Object { $_ -notmatch '^\s*genie-tts\s*([<>=!~]|$)' } |
+            Where-Object {
+              $_ -notmatch '^\s*genie-tts\s*([<>=!~]|$)' -and
+              $_ -notmatch '^\s*jieba-fast\s*([<>=!~]|$)' -and
+              $_ -notmatch '^\s*onnxruntime\s*([<>=!~]|$)' -and
+              $_ -notmatch '^\s*vosk\s*([<>=!~]|$)'
+            } |
             Set-Content -Encoding utf8 $requirements
           & $python -m pip install --only-binary=:all: --target $site -r $requirements
           & $python -m pip install --target $site --no-deps genie-tts==2.0.2
-          & $python -m pip install --only-binary=:all: `
+          & $python -m pip install --only-binary=:all: --upgrade --target $site `
             'onnx>=1.17' 'onnxruntime==1.22.0' 'tokenizers' 'pypinyin' 'g2pM' `
-            'nltk' 'regex' 'jieba-fast==0.53' 'jieba'
+            'nltk' 'regex' 'jieba'
+
+          # jieba-fast 0.53 has no PyPI wheel for Windows.  Use the project
+          # resource mirror and verify the pinned artifact before installing.
+          $jiebaName = 'jieba_fast-0.53-cp311-cp311-win_amd64.whl'
+          $jiebaHash = 'a5d9cf41d6817963a73f672a429dbfe5b03a4ff327cedf490d5f2b21be8c00d0'
+          $jiebaDir = Join-Path $build 'jieba-fast'
+          New-Item -ItemType Directory -Force -Path $jiebaDir | Out-Null
+          $jiebaWheel = Join-Path $jiebaDir $jiebaName
+          $jiebaPart = "$jiebaWheel.part"
+          $jiebaUrls = @(
+            "https://gitee.com/Mark42IRPC/Aemeath-AIdeskpet/releases/download/RESC/$jiebaName",
+            "https://github.com/MARK42IRPC/FlyingSnowVelvet-Aemeath/releases/download/RESC/$jiebaName"
+          )
+          $jiebaReady = $false
+          if (Test-Path $jiebaWheel) {
+            $jiebaReady = ((Get-FileHash -Algorithm SHA256 -LiteralPath $jiebaWheel).Hash.ToLowerInvariant() -eq $jiebaHash)
+            if (-not $jiebaReady) { Remove-Item -LiteralPath $jiebaWheel -Force }
+          }
+          if (-not $jiebaReady) {
+            foreach ($jiebaUrl in $jiebaUrls) {
+              try {
+                Remove-Item -LiteralPath $jiebaPart -Force -ErrorAction SilentlyContinue
+                Invoke-WebRequest -UseBasicParsing -Uri $jiebaUrl -OutFile $jiebaPart -TimeoutSec 300
+                $actualJiebaHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $jiebaPart).Hash.ToLowerInvariant()
+                if ($actualJiebaHash -ne $jiebaHash) { throw "jieba-fast SHA-256 mismatch: $actualJiebaHash" }
+                Move-Item -LiteralPath $jiebaPart -Destination $jiebaWheel -Force
+                $jiebaReady = $true
+                break
+              } catch { Remove-Item -LiteralPath $jiebaPart -Force -ErrorAction SilentlyContinue }
+            }
+          }
+          if (-not $jiebaReady) { throw 'jieba-fast wheel could not be downloaded and verified.' }
+          & $python -m pip install --upgrade --target $site --no-deps $jiebaWheel
+          $jiebaInstalled = Join-Path $site 'jieba_fast'
+          if (-not (Test-Path $jiebaInstalled)) { throw 'jieba-fast installation is incomplete.' }
+
+          # Vosk 0.3.45 depends on srt 3.5.3, which is a pure-Python source
+          # distribution without a Windows wheel. Install that small fallback
+          # separately, then install the verified Vosk wheel without resolving
+          # its dependency graph again.
+          & $python -m pip install --target $site 'srt==3.5.3'
+          & $python -m pip install --only-binary=:all: --upgrade --target $site --no-deps 'vosk==0.3.45'
+          if (-not (Test-Path (Join-Path $site 'srt.py')) -or -not (Test-Path (Join-Path $site 'vosk'))) {
+            throw 'Vosk/srt installation is incomplete.'
+          }
 
           # Download the optional DirectML wheel as a separate overlay.  It
           # never enters the CPU site-packages tree.
@@ -97,7 +148,20 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          function Get-Resource([string]$name) {
+          $PSNativeCommandUseErrorActionPreference = $true
+          function Test-ResourceArchive([string]$archive, [string]$expectedRoot) {
+            $zip = $null
+            try {
+              $zip = [IO.Compression.ZipFile]::OpenRead($archive)
+              foreach ($entry in $zip.Entries) {
+                $parts = $entry.FullName.Trim('/').Split('/')
+                if ($parts -contains $expectedRoot) { return $true }
+              }
+              return $false
+            } catch { return $false }
+            finally { if ($null -ne $zip) { $zip.Dispose() } }
+          }
+          function Get-Resource([string]$name, [string]$expectedRoot) {
             $urls = @(
               "https://gitee.com/Mark42IRPC/Aemeath-AIdeskpet/releases/download/RESC/$name",
               "https://github.com/MARK42IRPC/FlyingSnowVelvet-Aemeath/releases/download/RESC/$name"
@@ -106,21 +170,15 @@ jobs:
             New-Item -ItemType Directory -Force -Path $cache | Out-Null
             $destination = Join-Path $cache $name
             if (Test-Path $destination) {
-              try {
-                $zip = [IO.Compression.ZipFile]::OpenRead($destination)
-                $zip.Dispose()
-                return $destination
-              } catch {
-                Remove-Item -LiteralPath $destination -Force -ErrorAction SilentlyContinue
-              }
+              if (Test-ResourceArchive $destination $expectedRoot) { return $destination }
+              Remove-Item -LiteralPath $destination -Force -ErrorAction SilentlyContinue
             }
             $partial = "$destination.part"
             foreach ($url in $urls) {
               try {
                 Remove-Item -LiteralPath $partial -Force -ErrorAction SilentlyContinue
                 Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $partial -TimeoutSec 300
-                $zip = [IO.Compression.ZipFile]::OpenRead($partial)
-                $zip.Dispose()
+                if (-not (Test-ResourceArchive $partial $expectedRoot)) { throw "Resource archive lacks $expectedRoot" }
                 Move-Item -LiteralPath $partial -Destination $destination -Force
                 return $destination
               } catch { Remove-Item -LiteralPath $partial -Force -ErrorAction SilentlyContinue }
@@ -128,7 +186,7 @@ jobs:
             throw "Unable to download resource: $name"
           }
           function Expand-Resource([string]$archiveName, [string]$destination, [string]$expectedRoot) {
-            $archive = Get-Resource $archiveName
+            $archive = Get-Resource $archiveName $expectedRoot
             $temp = Join-Path $env:BUILD_ROOT ("extract-" + [guid]::NewGuid().ToString('N'))
             New-Item -ItemType Directory -Force -Path $temp | Out-Null
             Expand-Archive -LiteralPath $archive -DestinationPath $temp -Force
@@ -151,6 +209,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
           $resourceCache = Join-Path $env:BUILD_ROOT 'resource-cache'
           New-Item -ItemType Directory -Force -Path $resourceCache | Out-Null
           $nodeArchive = Join-Path $resourceCache "node-v$env:NODE_VERSION-win-x64.zip"
@@ -172,6 +231,10 @@ jobs:
               try {
                 Remove-Item -LiteralPath $nodeArchivePart -Force -ErrorAction SilentlyContinue
                 Invoke-WebRequest -UseBasicParsing -Uri $nodeUrl -OutFile $nodeArchivePart -TimeoutSec 300
+                $downloadedNodeHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $nodeArchivePart).Hash.ToLowerInvariant()
+                if ($downloadedNodeHash -ne $expectedNodeHash.ToLowerInvariant()) {
+                  throw "Node archive SHA-256 mismatch from ${nodeUrl}: $downloadedNodeHash"
+                }
                 Move-Item -LiteralPath $nodeArchivePart -Destination $nodeArchive -Force
                 break
               } catch {
@@ -205,6 +268,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
           $version = (& $env:BUILD_PYTHON -c "from pathlib import Path; from scripts.release_common import read_app_version; print(read_app_version(Path.cwd()))").Trim()
           if ([string]::IsNullOrWhiteSpace($version)) { throw 'APP_VERSION is empty.' }
           $workspace = Join-Path $env:BUILD_ROOT 'workspace'
@@ -231,6 +295,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
           & $env:BUILD_PYTHON -m pip install huggingface_hub modelscope
 
       - name: Wrap and publish the installer to voice-package hubs
@@ -240,6 +305,7 @@ jobs:
           MODELSCOPE_TOKEN: ${{ secrets.MODELSCOPE_TOKEN }}
         run: |
           $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
           $publishRoot = Join-Path $env:BUILD_ROOT 'voice-package-publication'
           $manifestName = "FlyingSnowVelvet-$env:RELEASE_VERSION-manifest.json"
           $manifest = Join-Path (Resolve-Path dist).Path $manifestName

@@ -990,23 +990,24 @@ def write_payload_marker(payload: Path) -> None:
 
 
 def write_release_launcher_config(app_root: Path) -> None:
+    app_root.mkdir(parents=True, exist_ok=True)
     (app_root / "py.ini").write_text(
         "[Python]\n"
         "python_executable = ..\\runtime\\python311\\python.exe\n"
         "pythonw_executable = ..\\runtime\\python311\\pythonw.exe\n",
         encoding="utf-8",
     )
-    # The offline installer writes the native launcher before it creates its
-    # archive.  Keep this batch only as a compatibility entry point for code
-    # that still resolves its historical name; it must not depend on
-    # PowerShell or an external Python installation.
+    # Keep this compatibility entry point ASCII-only. cmd.exe interprets a
+    # UTF-8 BOM or a UTF-8 Chinese executable name using the active code page,
+    # which turns the generated batch into an unusable command on Windows.
+    # The native launcher is copied under the stable ASCII alias below.
     (app_root / "启动程序.bat").write_text(
         "@echo off\n"
         "setlocal DisableDelayedExpansion\n"
         "cd /d \"%~dp0\" || exit /b 1\n"
-        "\"%~dp0启动飞行雪绒.exe\" %*\n"
+        "\"%~dp0FlyingSnowVelvetLauncher.exe\" %*\n"
         "exit /b %errorlevel%\n",
-        encoding="utf-8-sig",
+        encoding="ascii",
     )
 
 
@@ -1022,24 +1023,76 @@ def _distribution_build_state(
 ) -> dict[str, object]:
     """Return the explicit inputs used by a staged distribution.
 
-    The state is intentionally path based.  A resume is an operator choice;
-    the state prevents accidentally reusing a payload staged for a different
-    source tree or dependency overlay while keeping the check cheap.
+    The state records a content fingerprint for every input tree.  A resume is
+    an operator choice; the fingerprint prevents accidentally reusing a
+    payload staged for a different source tree or dependency overlay.
     """
-    def signature(path: Path) -> dict[str, object]:
+    def signature(
+        path: Path,
+        *,
+        excluded_relative=None,
+    ) -> dict[str, object]:
+        """Build a compact recursive fingerprint for a file or directory.
+
+        Directory mtime is not reliable when a nested file is edited in place.
+        Include every file's relative name and metadata in the digest so a
+        resume can never silently reuse a payload assembled from older inputs.
+        The source tree uses the same exclusion rules as payload collection;
+        otherwise the build's own generated directory would invalidate every
+        subsequent resume.
+        """
         try:
             stat_result = path.stat()
         except OSError:
             return {"path": str(path), "missing": True}
+        if not path.is_dir():
+            return {
+                "path": str(path),
+                "kind": "file",
+                "size": stat_result.st_size,
+                "mtime_ns": stat_result.st_mtime_ns,
+                "sha256": sha256(path),
+            }
+
+        digest = hashlib.sha256()
+        file_count = 0
+        total_bytes = 0
+        try:
+            children = sorted(
+                (item for item in path.rglob("*") if item.is_file()),
+                key=lambda item: item.relative_to(path).as_posix(),
+            )
+            for item in children:
+                relative = item.relative_to(path).as_posix()
+                relative_path = PurePosixPath(relative)
+                if excluded_relative is not None and excluded_relative(relative_path):
+                    continue
+                item_stat = item.stat()
+                digest.update(relative.encode("utf-8", "surrogateescape"))
+                digest.update(b"\0")
+                digest.update(str(item_stat.st_size).encode("ascii"))
+                digest.update(b"\0")
+                digest.update(str(item_stat.st_mtime_ns).encode("ascii"))
+                digest.update(b"\0")
+                digest.update(sha256(item).encode("ascii"))
+                digest.update(b"\n")
+                file_count += 1
+                total_bytes += item_stat.st_size
+        except OSError:
+            return {"path": str(path), "missing": True}
         return {
             "path": str(path),
+            "kind": "directory",
             "size": stat_result.st_size,
             "mtime_ns": stat_result.st_mtime_ns,
+            "file_count": file_count,
+            "total_bytes": total_bytes,
+            "sha256": digest.hexdigest(),
         }
 
     return {
         "format": 1,
-        "source": signature(source),
+        "source": signature(source, excluded_relative=excluded),
         "python_home": signature(python_home),
         "site_packages": [signature(item) for item in site_packages_sources],
         "node_runtime": signature(node_runtime),
@@ -1077,7 +1130,40 @@ def _is_complete_staged_distribution(workspace: Path, payload: Path) -> bool:
         data = json.loads(manifest.read_text(encoding="utf-8"))
     except (FileNotFoundError, OSError, TypeError, ValueError):
         return False
-    return isinstance(data, dict) and isinstance(data.get("files"), list) and bool(data["files"])
+    entries = data.get("files") if isinstance(data, dict) else None
+    if not isinstance(entries, list) or not entries:
+        return False
+    expected: set[str] = set()
+    digest_pattern = re.compile(r"^[0-9a-f]{64}$")
+    try:
+        for entry in entries:
+            if not isinstance(entry, dict):
+                return False
+            relative = PurePosixPath(str(entry.get("path", "")))
+            if (
+                not relative.parts
+                or relative.is_absolute()
+                or ".." in relative.parts
+                or relative.as_posix() in expected
+                or not isinstance(entry.get("size"), int)
+                or entry["size"] < 0
+                or not digest_pattern.fullmatch(str(entry.get("sha256", "")).lower())
+            ):
+                return False
+            target = payload.joinpath(*relative.parts)
+            if not target.is_file() or target.stat().st_size != entry["size"]:
+                return False
+            if sha256(target) != str(entry["sha256"]).lower():
+                return False
+            expected.add(relative.as_posix())
+        actual = {
+            item.relative_to(payload).as_posix()
+            for item in payload.rglob("*")
+            if item.is_file()
+        }
+    except (OSError, ValueError, TypeError):
+        return False
+    return actual == expected
 
 
 def main() -> int:
@@ -1145,6 +1231,13 @@ def main() -> int:
             raise SystemExit(f"发行版工作区含有未知文件，为避免覆盖而停止：{', '.join(unexpected)}")
     workspace.mkdir(parents=True, exist_ok=True)
     payload = workspace / "payload"
+    if args.clean:
+        for relative in ("payload", "manifest.json", BUILD_STATE_NAME):
+            target = workspace / relative
+            if target.is_dir() and not target.is_symlink():
+                shutil.rmtree(target)
+            elif target.exists() or target.is_symlink():
+                target.unlink()
     state = _distribution_build_state(
         source=source,
         python_home=python_home,
@@ -1154,14 +1247,7 @@ def main() -> int:
         directml_wheel=directml_wheel,
         without_music=args.without_music,
     )
-    if args.clean:
-        for relative in ("payload", "manifest.json", BUILD_STATE_NAME):
-            target = workspace / relative
-            if target.is_dir() and not target.is_symlink():
-                shutil.rmtree(target)
-            elif target.exists() or target.is_symlink():
-                target.unlink()
-    elif args.resume and payload.exists():
+    if args.resume and payload.exists():
         if _read_distribution_state(workspace) != state:
             raise SystemExit("发行版工作区输入已变化，不能安全复用；请使用 --clean")
         if _is_complete_staged_distribution(workspace, payload):

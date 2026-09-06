@@ -57,6 +57,10 @@ dist/FlyingSnowVelvet-<version>-Offline-Installer.exe
    清理本次临时目录并保留旧安装。
 5. 显示“安装完成”，只有用户点击“退出安装并启动飞行雪绒”才启动包内 launcher。
 
+离线 payload 同时保留历史中文启动器文件名和 `FlyingSnowVelvetLauncher.exe` ASCII
+别名。构建器生成的 `启动程序.bat` 使用无 BOM 的 ASCII 内容并调用别名，避免 Windows
+cmd.exe 按系统代码页解析 UTF-8 中文路径时产生乱码。
+
 更新器把现有安装目录通过 `--update-target` 传给同一个 EXE；安装成功后写回
 `app/resc/user/update_state.json`。卸载器删除安装目录和 `C:\AemeathDeskPet` 契约
 目录，使用独立临时 helper 避免删除自身时锁定。

@@ -146,6 +146,7 @@ def validate_payload(payload: Path) -> None:
         ".fsv-install-root",
         "app/py.ini",
         "app/lib/core/qt_desktop_pet.py",
+        "app/FlyingSnowVelvetLauncher.exe",
         "app/启动飞行雪绒.exe",
         "app/卸载飞行雪绒.exe",
         "app/services/dsh-office-runtime/package.json",
@@ -554,6 +555,9 @@ def compile_payload_binaries(
     )
     app_root = payload / "app"
     app_root.mkdir(parents=True, exist_ok=True)
+    # Keep the historical Chinese filename for Explorer/UI compatibility and
+    # provide an ASCII alias for the generated batch file.
+    shutil.copy2(launcher, app_root / "FlyingSnowVelvetLauncher.exe")
     shutil.copy2(launcher, app_root / "启动飞行雪绒.exe")
     shutil.copy2(uninstaller, app_root / "卸载飞行雪绒.exe")
 
@@ -667,7 +671,7 @@ def append_payload(base_executable: Path, archive: Path, output: Path) -> None:
         ))
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--workspace", type=Path, required=True)
     parser.add_argument("--output", type=Path)
@@ -688,7 +692,7 @@ def main() -> int:
         default=PRODUCT_ROOT / "resc" / "icon.ico",
         help="安装器、启动器与卸载器共用的 ICO 文件",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     workspace = args.workspace.resolve()
     payload = workspace / "payload"
@@ -698,9 +702,15 @@ def main() -> int:
         workspace_manifest = json.loads((workspace / "manifest.json").read_text(encoding="utf-8"))
     except (OSError, TypeError, ValueError) as exc:
         raise SystemExit(f"发行版 manifest 无效：{workspace / 'manifest.json'}") from exc
-    version = str(args.version or workspace_manifest.get("version") or "").strip()
+    manifest_version = str(workspace_manifest.get("version") or "").strip()
+    version = str(args.version or manifest_version).strip()
     if not version or not re.fullmatch(r"[A-Za-z0-9._+-]+", version):
         raise SystemExit(f"发行版本不能用于安装器文件名：{version!r}")
+    if manifest_version and version != manifest_version:
+        raise SystemExit(
+            "命令行版本与 workspace manifest 不一致："
+            f"{version!r} != {manifest_version!r}"
+        )
     output = (
         args.output
         or workspace / "dist" / f"FlyingSnowVelvet-{version}-Offline-Installer.exe"

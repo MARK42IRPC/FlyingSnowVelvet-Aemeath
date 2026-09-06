@@ -21,6 +21,9 @@
 安装成功后显示“安装完成”，用户点击“退出安装并启动飞行雪绒”才启动
 `app\启动飞行雪绒.exe`。启动器设置绝对的包内 Python 3.11、Node 24.13.0 和 Qt
 路径，并清理外部 `PYTHONPATH`、`PYTHONHOME`、`NODE_PATH`、Qt/OpenSSL 等覆盖。
+同时提供 `app\FlyingSnowVelvetLauncher.exe` ASCII 别名；生成的
+`启动程序.bat` 只调用该别名并使用 ASCII 编码，避免 cmd.exe 在非 UTF-8 代码页下误读
+UTF-8 BOM 或中文文件名。
 
 更新器从对应 ONNX 语音包的 Hugging Face / ModelScope 仓库下载外层 ZIP，解包后校验其中唯一的
 离线安装器 EXE，并可通过 `--update-target` 预填现有安装目录；成功切换后将状态文件复制到

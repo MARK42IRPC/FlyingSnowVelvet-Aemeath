@@ -28,6 +28,12 @@ from lib.script.app.update_installer import validate_update_installer
 _VERSION_RE = re.compile(r"[A-Za-z0-9._+-]+")
 _HF_TOKEN_RE = re.compile(r"^hf_[A-Za-z0-9]+$")
 _MODELSCOPE_TOKEN_RE = re.compile(r"^ms-[A-Za-z0-9-]+$")
+_ASSET_NAME_RE = re.compile(
+    r"^FlyingSnowVelvet-(?P<version>[A-Za-z0-9._+-]+)-Offline-Installer\.zip$"
+)
+_MANIFEST_NAME_RE = re.compile(
+    r"^FlyingSnowVelvet-(?P<version>[A-Za-z0-9._+-]+)-manifest\.json$"
+)
 
 
 def _sha256(path: Path) -> str:
@@ -78,10 +84,17 @@ def _validate_local_release(asset_path: Path, metadata_path: Path) -> dict[str, 
         raise SystemExit(f"本地发布清单无法读取：{metadata_path}") from exc
     if not isinstance(metadata, dict):
         raise SystemExit("本地发布清单必须是 JSON 对象")
+    match = _ASSET_NAME_RE.fullmatch(asset_path.name)
+    if match is None:
+        raise SystemExit(f"发布 ZIP 文件名无效：{asset_path.name}")
+    version = match.group("version")
+    expected_asset_name = asset_path.name
     actual_size = asset_path.stat().st_size
     actual_sha256 = _sha256(asset_path)
     if (
         metadata.get("format") != OFFLINE_UPDATE_FORMAT
+        or metadata.get("version") != version
+        or metadata.get("asset_name") != expected_asset_name
         or metadata.get("asset_path") != f"{OFFLINE_UPDATE_METADATA_PATH.rsplit('/', 1)[0]}/{asset_path.name}"
         or int(metadata.get("size", -1)) != actual_size
         or str(metadata.get("sha256", "")).lower() != actual_sha256
@@ -96,6 +109,16 @@ def _validate_local_release(asset_path: Path, metadata_path: Path) -> dict[str, 
         if len(members) != 1 or members[0].filename != expected_installer:
             raise SystemExit("本地安装器 ZIP 必须只包含清单指定的 EXE")
     return metadata
+
+
+def _validate_release_manifest(manifest_path: Path, version: str) -> None:
+    """Reject a payload manifest from a different release before publishing."""
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise SystemExit(f"发行版 manifest 无法读取：{manifest_path}") from exc
+    if not isinstance(manifest, dict) or str(manifest.get("version", "")).strip() != version:
+        raise SystemExit(f"发行版 manifest 版本与发布版本不一致：{manifest_path}")
 
 
 def prepare_release(
@@ -131,6 +154,7 @@ def prepare_release(
         manifest = manifest.resolve()
         if not manifest.is_file():
             raise SystemExit(f"发行版 manifest 不存在：{manifest}")
+        _validate_release_manifest(manifest, version)
         target_manifest = asset_path.parent / f"FlyingSnowVelvet-{version}-manifest.json"
         target_manifest.write_bytes(manifest.read_bytes())
     metadata = {
@@ -144,7 +168,7 @@ def prepare_release(
         "sha256": _sha256(asset_path),
     }
     metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    _validate_local_release(asset_path, metadata_path)
+    metadata = _validate_local_release(asset_path, metadata_path)
     return asset_path, metadata_path
 
 
@@ -157,6 +181,20 @@ def _publication_files(asset_path: Path, metadata_path: Path) -> tuple[Path, ...
         files.append(manifest_path)
     files.append(metadata_path)
     return tuple(files)
+
+
+def _old_update_paths(remote_paths: list[str], current_version: str) -> list[str]:
+    """Return only obsolete installer/manifest files under the update slot."""
+    obsolete: list[str] = []
+    for raw_path in remote_paths:
+        path = str(raw_path or "").replace("\\", "/")
+        if not path.startswith("updates/") or path.count("/") != 1:
+            continue
+        name = path.rsplit("/", 1)[1]
+        match = _ASSET_NAME_RE.fullmatch(name) or _MANIFEST_NAME_RE.fullmatch(name)
+        if match is not None and match.group("version") != current_version:
+            obsolete.append(path)
+    return sorted(set(obsolete))
 
 
 def _retry_upload(callback, description: str) -> None:
@@ -224,10 +262,86 @@ def _publish_modelscope(
         )
 
 
+def _cleanup_huggingface_old_releases(token: str, current_version: str) -> list[str]:
+    from huggingface_hub import HfApi
+
+    api = HfApi(token=token)
+    remote_paths = api.list_repo_files(
+        repo_id=VOICE_PACKAGE_HUGGINGFACE_REPO,
+        repo_type="model",
+        revision="main",
+        token=token,
+    )
+    obsolete = _old_update_paths(list(remote_paths), current_version)
+    for path in obsolete:
+        _retry_upload(
+            lambda path=path: api.delete_file(
+                path_in_repo=path,
+                repo_id=VOICE_PACKAGE_HUGGINGFACE_REPO,
+                repo_type="model",
+                revision="main",
+                token=token,
+                commit_message=f"Remove obsolete installer {path}",
+            ),
+            f"Hugging Face/{path}",
+        )
+    return obsolete
+
+
+def _cleanup_modelscope_old_releases(token: str, current_version: str) -> list[str]:
+    """Best-effort cleanup; ModelScope may require a cookie session for DELETE."""
+    try:
+        from modelscope_hub import HubApi
+    except ImportError:
+        return []
+    api = HubApi(token=token)
+    remote_files = api.list_repo_files(
+        VOICE_PACKAGE_MODELSCOPE_REPO,
+        "model",
+        revision="master",
+        recursive=True,
+    )
+    obsolete = _old_update_paths(
+        [str(getattr(item, "path", item)) for item in remote_files],
+        current_version,
+    )
+    if obsolete:
+        result = api.delete_files(
+            VOICE_PACKAGE_MODELSCOPE_REPO,
+            "model",
+            obsolete,
+            revision="master",
+        )
+        failed = [str(item) for item in (result or {}).get("failed_files", [])]
+        if failed:
+            raise RuntimeError("ModelScope 未删除文件：" + ", ".join(failed))
+    return obsolete
+
+
+def cleanup_old_releases(*, hf_token: str, modelscope_token: str, current_version: str) -> None:
+    """Remove obsolete update-slot files without touching model archives."""
+    try:
+        removed = _cleanup_huggingface_old_releases(hf_token, current_version)
+        if removed:
+            print("已清理 Hugging Face 旧安装器：" + ", ".join(removed))
+    except Exception as exc:
+        print(f"警告：Hugging Face 旧安装器清理失败，保留远端文件：{exc}", file=sys.stderr)
+    try:
+        removed = _cleanup_modelscope_old_releases(modelscope_token, current_version)
+        if removed:
+            print("已清理 ModelScope 旧安装器：" + ", ".join(removed))
+    except Exception as exc:
+        print(
+            "警告：ModelScope 旧安装器清理失败（API token 可能不具备删除权限），"
+            f"保留远端文件：{exc}",
+            file=sys.stderr,
+        )
+
+
 def publish_release(asset_path: Path, metadata_path: Path, output_dir: Path, *, hf_token: str, modelscope_token: str) -> None:
     if not hf_token or not modelscope_token:
         raise SystemExit("发布离线安装器需要 HF_TOKEN 与 MODELSCOPE_TOKEN")
-    _validate_local_release(asset_path, metadata_path)
+    metadata = _validate_local_release(asset_path, metadata_path)
     publication_files = _publication_files(asset_path, metadata_path)
     immutable_files = tuple(path for path in publication_files if path != metadata_path)
     # Both mirrors receive immutable payloads before either latest pointer is
@@ -243,6 +357,11 @@ def publish_release(asset_path: Path, metadata_path: Path, output_dir: Path, *, 
     )
     _publish_modelscope(
         asset_path, metadata_path, output_dir, modelscope_token, files=(metadata_path,)
+    )
+    cleanup_old_releases(
+        hf_token=hf_token,
+        modelscope_token=modelscope_token,
+        current_version=str(metadata.get("version", "")),
     )
 
 

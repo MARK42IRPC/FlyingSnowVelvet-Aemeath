@@ -1,4 +1,5 @@
 import json
+import os
 import tempfile
 import unittest
 import zipfile
@@ -46,6 +47,69 @@ class OfflineDistributionTests(unittest.TestCase):
             )
             self.assertNotEqual(changed, state)
 
+            nested = source / "nested" / "input.txt"
+            nested.parent.mkdir(parents=True)
+            nested.write_bytes(b"one")
+            before_nested = distribution._distribution_build_state(
+                source=source,
+                python_home=python_home,
+                site_packages_sources=(site,),
+                node_runtime=node,
+                node_modules=modules,
+                directml_wheel=wheel,
+                without_music=False,
+            )
+            original_stat = nested.stat()
+            nested.write_bytes(b"two")
+            # Preserve the timestamp and size to ensure the content digest,
+            # rather than directory metadata, detects the changed input.
+            os.utime(
+                nested,
+                ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns),
+            )
+            after_nested = distribution._distribution_build_state(
+                source=source,
+                python_home=python_home,
+                site_packages_sources=(site,),
+                node_runtime=node,
+                node_modules=modules,
+                directml_wheel=wheel,
+                without_music=False,
+            )
+            self.assertNotEqual(after_nested, before_nested)
+
+    def test_resume_validation_rejects_missing_or_changed_payload_files(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            workspace = root / "workspace"
+            payload = workspace / "payload"
+            payload.mkdir(parents=True)
+            marker = payload / distribution.PAYLOAD_MARKER_NAME
+            marker.write_bytes(distribution.PAYLOAD_MARKER_BYTES)
+            content = payload / "app" / "data.txt"
+            content.parent.mkdir(parents=True)
+            content.write_bytes(b"payload")
+            manifest = [
+                {
+                    "path": item.relative_to(payload).as_posix(),
+                    "size": item.stat().st_size,
+                    "sha256": distribution.sha256(item),
+                }
+                for item in sorted(payload.rglob("*"))
+                if item.is_file()
+            ]
+            workspace.mkdir(exist_ok=True)
+            (workspace / "manifest.json").write_text(
+                json.dumps({"files": manifest}), encoding="utf-8"
+            )
+            self.assertTrue(
+                distribution._is_complete_staged_distribution(workspace, payload)
+            )
+            content.write_bytes(b"changed")
+            self.assertFalse(
+                distribution._is_complete_staged_distribution(workspace, payload)
+            )
+
     def test_python_runtime_keeps_sqlite_for_bundled_nltk_frontend(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -83,6 +147,33 @@ class OfflineDistributionTests(unittest.TestCase):
         self.assertTrue(distribution.excluded(Path("resc/GIF/SEanima.zip")))
         self.assertTrue(distribution.excluded(Path("build/offline-release/workspace/payload.zip")))
         self.assertTrue(distribution.excluded(Path(".venv/Lib/site-packages/runtime.py")))
+
+    def test_generated_release_batch_is_ascii_and_uses_launcher_alias(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app_root = Path(tmpdir) / "app"
+            distribution.write_release_launcher_config(app_root)
+            raw = (app_root / "启动程序.bat").read_bytes()
+            self.assertTrue(raw.startswith(b"@echo off"))
+            self.assertNotIn(b"\xef\xbb\xbf", raw)
+            self.assertTrue(all(byte < 128 for byte in raw))
+            self.assertIn(b"FlyingSnowVelvetLauncher.exe", raw)
+
+    def test_installer_rejects_version_different_from_workspace_manifest(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workspace = Path(tmpdir) / "workspace"
+            workspace.mkdir()
+            (workspace / "manifest.json").write_text(
+                json.dumps({"version": "LTS1"}), encoding="utf-8"
+            )
+            with self.assertRaises(SystemExit):
+                installer.main(
+                    [
+                        "--workspace",
+                        str(workspace),
+                        "--version",
+                        "LTS2",
+                    ]
+                )
 
     def test_manifest_keeps_seanima_directory_and_excludes_zip_archive(self):
         with tempfile.TemporaryDirectory() as tmpdir:

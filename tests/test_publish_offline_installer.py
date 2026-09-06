@@ -13,7 +13,7 @@ from lib.script.app.update_installer import (
     OFFLINE_INSTALLER_TRAILER_FORMAT,
     validate_update_installer,
 )
-from scripts.publish_offline_installer import prepare_release
+from scripts.publish_offline_installer import _old_update_paths, prepare_release
 
 
 def _write_installer(path: Path) -> None:
@@ -36,6 +36,26 @@ def _write_installer(path: Path) -> None:
 
 
 class PublishOfflineInstallerTests(unittest.TestCase):
+    def test_old_update_paths_are_limited_to_versioned_update_assets(self):
+        paths = _old_update_paths(
+            [
+                "updates/FlyingSnowVelvet-LTS1-Offline-Installer.zip",
+                "updates/FlyingSnowVelvet-LTS1-manifest.json",
+                "updates/FlyingSnowVelvet-LTS2-Offline-Installer.zip",
+                "updates/latest.json",
+                "Aemeath_ONNX_GSV_Complete_FP32.rar",
+                "updates/readme.txt",
+            ],
+            "LTS2",
+        )
+        self.assertEqual(
+            paths,
+            [
+                "updates/FlyingSnowVelvet-LTS1-Offline-Installer.zip",
+                "updates/FlyingSnowVelvet-LTS1-manifest.json",
+            ],
+        )
+
     def test_prepare_release_creates_outer_zip_and_latest_manifest(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -71,6 +91,23 @@ class PublishOfflineInstallerTests(unittest.TestCase):
                     revision="commit-123",
                     published_at="2026-09-06T00:00:00Z",
                     output_dir=root / "publish",
+                )
+
+    def test_prepare_release_rejects_manifest_from_another_version(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            installer = root / "FlyingSnowVelvet-LTS2-Offline-Installer.exe"
+            _write_installer(installer)
+            manifest = root / "manifest.json"
+            manifest.write_text(json.dumps({"version": "LTS1"}), encoding="utf-8")
+            with self.assertRaises(SystemExit):
+                prepare_release(
+                    installer,
+                    version="LTS2",
+                    revision="commit-123",
+                    published_at="2026-09-06T00:00:00Z",
+                    output_dir=root / "publish",
+                    manifest=manifest,
                 )
 
 

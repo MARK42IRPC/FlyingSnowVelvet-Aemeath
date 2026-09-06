@@ -5,7 +5,7 @@
 
 ## 版本与发布槽
 
-版本唯一来源是 `config/version_info.py` 的 `APP_VERSION`。推送 `PACK` 或 `v*`
+版本唯一来源是 `config/version_info.py` 的 `APP_VERSION`。推送 `PACK`、`v*` 或 `LTS*`
 标签后，`.github/workflows/publish-pack.yml` 在 Windows runner 中执行完整构建，
 并将以下文件上传到 ONNX 语音包的两个模型仓库：
 
@@ -86,6 +86,8 @@ payload；`build_offline_installer.py` 再编译原生安装器并追加 ZIP 与
 4. 完成后显示“安装完成”，只有用户点击“退出安装并启动飞行雪绒”才启动程序。
 5. 启动器只使用 payload 内 Python/Node，并清理 `PYTHONPATH`、`PYTHONHOME`、
    `NODE_PATH`、外部 Qt/OpenSSL 等环境覆盖。
+   `启动程序.bat` 使用无 BOM 的 ASCII 内容并调用 `FlyingSnowVelvetLauncher.exe` 别名，
+   以兼容 Windows 非 UTF-8 代码页。
 6. `app/卸载飞行雪绒.exe` 删除安装目录及 `C:\AemeathDeskPet` 契约目录。
 
 更新流程下载同一个离线安装器 EXE，校验尾记录后传入现有安装目录；桌宠退出后由
