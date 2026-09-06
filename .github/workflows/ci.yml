@@ -29,7 +29,17 @@ jobs:
         run: python -m compileall config lib install_deps.py install_deps scripts
 
       - name: Unit tests
-        run: python -m unittest discover -s tests -p "test_*.py" -v
+        shell: pwsh
+        run: |
+          $output = (& python -m unittest discover -s tests -p "test_*.py" -v 2>&1 | Out-String)
+          $exitCode = $LASTEXITCODE
+          $output | Write-Host
+          if ($exitCode -ne 0) {
+            $summary = ($output -split "`r?`n" | Where-Object { $_ -match '^(FAIL|ERROR):|^FAILED \(' }) -join ' | '
+            if (-not $summary) { $summary = 'unittest discovery failed without a parsed summary' }
+            Write-Output "::error title=Unit tests::$summary"
+            exit $exitCode
+          }
 
       - name: Offline release configuration tests
         run: python -m unittest tests.test_offline_distribution tests.test_update_manager_release_selection tests.test_update_installer -q
