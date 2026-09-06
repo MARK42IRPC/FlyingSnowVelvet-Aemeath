@@ -108,7 +108,10 @@ class AutostartTests(unittest.TestCase):
 
             enable.assert_called_once_with()
 
-    @unittest.skipUnless(os.name == "nt", "Windows integration test")
+    @unittest.skipUnless(
+        os.name == "nt" and os.environ.get("FSV_RUN_WINDOWS_SHELL_TESTS") == "1",
+        "Windows shell integration requires an interactive COM session",
+    )
     def test_real_startup_shortcut_round_trip(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             startup_dir = Path(temp_dir) / "Startup"

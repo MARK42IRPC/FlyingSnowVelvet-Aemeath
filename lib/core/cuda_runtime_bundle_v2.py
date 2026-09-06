@@ -729,7 +729,7 @@ def worker_launch_command(
     base_environment: Mapping[str, str] | None = None,
 ) -> tuple[list[str], dict[str, str]]:
     """Return a process command that uses only files inside ``bundle_root``."""
-    root = Path(bundle_root).resolve()
+    root = Path(bundle_root)
     python = root / Path(*CUDA_RUNTIME_V2_PYTHON_EXECUTABLE.split("/"))
     entry = root / Path(*CUDA_RUNTIME_V2_WORKER_ENTRY.split("/"))
     launcher = root / Path(*CUDA_RUNTIME_V2_WORKER_PYTHON_LAUNCHER.split("/"))

@@ -84,7 +84,10 @@ class WindowsSpecialCharacterLaunchTests(unittest.TestCase):
             self.assertIn('cd /d "%~dp0"', content, name)
             self.assertNotIn("%~sdp0", content, name)
 
-    @unittest.skipUnless(os.name == "nt", "Windows integration test")
+    @unittest.skipUnless(
+        os.name == "nt" and os.environ.get("FSV_RUN_WINDOWS_SHELL_TESTS") == "1",
+        "Windows shell integration requires an interactive COM session",
+    )
     def test_powershell_shortcut_round_trip_with_special_path(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir) / SPECIAL_SEGMENT
