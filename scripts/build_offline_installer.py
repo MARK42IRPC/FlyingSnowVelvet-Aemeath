@@ -236,7 +236,6 @@ def validate_payload(payload: Path) -> None:
         "opencc",
         "soundfile",
         "soxr",
-        "cv2",
         "pycaw",
         "comtypes",
         "win32com",

@@ -282,14 +282,11 @@ class _LoginMixin:
         clean_nickname = str(nickname or "").strip() or "未知用户"
         return f"{clean_platform}登录成功:{clean_nickname}"
 
-    @staticmethod
-    def _qq_is_png_bytes(data: bytes) -> bool:
-        return isinstance(data, (bytes, bytearray)) and bytes(data).startswith(b"\x89PNG\r\n\x1a\n")
-
     def _qq_qr_png_from_response(self, response) -> bytes | None:
         data = bytes(getattr(response, "content", b"") or b"")
-        if self._qq_is_png_bytes(data):
-            return data
+        normalized = self._qq_normalize_qr_image_bytes(data)
+        if normalized:
+            return normalized
 
         text = str(getattr(response, "text", "") or "").strip()
         if not text:
@@ -311,7 +308,7 @@ class _LoginMixin:
                 if qr_png:
                     return qr_png
 
-        return data or None
+        return None
 
     @staticmethod
     def _qq_has_login_cookies(session) -> bool:
@@ -953,69 +950,25 @@ class _LoginMixin:
             return None
 
     @staticmethod
-    def _qq_crop_qr_image_bytes(data: bytes) -> bytes | None:
+    def _qq_normalize_qr_image_bytes(data: bytes) -> bytes | None:
         raw = bytes(data or b'')
         if not raw:
             return None
         try:
-            import cv2
-            import numpy as np
+            import io
+            from PIL import Image
         except Exception:
             return None
-
         try:
-            img = cv2.imdecode(np.frombuffer(raw, dtype=np.uint8), cv2.IMREAD_COLOR)
+            with Image.open(io.BytesIO(raw)) as image:
+                image.load()
+                if image.width < 12 or image.height < 12:
+                    return None
+                output = io.BytesIO()
+                image.convert('RGBA').save(output, format='PNG')
+                return output.getvalue()
         except Exception:
-            img = None
-        if img is None:
             return None
-
-        detector = cv2.QRCodeDetector()
-
-        def _crop(points) -> bytes | None:
-            if points is None:
-                return None
-            pts = np.array(points, dtype=np.float32).reshape(-1, 2)
-            if pts.size < 8:
-                return None
-            min_x = max(0, int(np.floor(np.min(pts[:, 0]))) - 16)
-            min_y = max(0, int(np.floor(np.min(pts[:, 1]))) - 16)
-            max_x = min(img.shape[1], int(np.ceil(np.max(pts[:, 0]))) + 16)
-            max_y = min(img.shape[0], int(np.ceil(np.max(pts[:, 1]))) + 16)
-            if max_x <= min_x or max_y <= min_y:
-                return None
-            cropped = img[min_y:max_y, min_x:max_x]
-            if cropped.size == 0:
-                return None
-            ok, encoded = cv2.imencode('.png', cropped)
-            if not ok:
-                return None
-            return bytes(encoded)
-
-        try:
-            ok, decoded_info, points, _ = detector.detectAndDecodeMulti(img)
-        except Exception:
-            ok, decoded_info, points = False, (), None
-        if ok and points is not None and len(points):
-            best_idx = 0
-            best_area = -1.0
-            for idx, quad in enumerate(points):
-                quad_np = np.array(quad, dtype=np.float32).reshape(-1, 2)
-                area = float(cv2.contourArea(quad_np.astype(np.int32)))
-                if area > best_area and str((decoded_info[idx] if idx < len(decoded_info) else '') or '').strip():
-                    best_area = area
-                    best_idx = idx
-            cropped = _crop(points[best_idx])
-            if cropped:
-                return cropped
-
-        try:
-            decoded, points, _ = detector.detectAndDecode(img)
-        except Exception:
-            decoded, points = '', None
-        if str(decoded or '').strip() and points is not None:
-            return _crop(points)
-        return None
 
     def _qq_fetch_locator_image_bytes(self, page, locator) -> bytes | None:
         if locator is None:
@@ -1071,37 +1024,11 @@ class _LoginMixin:
             try:
                 candidate.wait_for(state='visible', timeout=1000)
                 raw_bytes = self._qq_fetch_locator_image_bytes(page, candidate)
-                png_bytes = self._qq_crop_qr_image_bytes(raw_bytes or b'')
-                if not png_bytes and raw_bytes:
-                    try:
-                        hint = ' '.join(
-                            str(candidate.get_attribute(name) or '').strip().lower()
-                            for name in ('src', 'class', 'alt', 'id')
-                        )
-                    except Exception:
-                        hint = ''
-                    if any(token in hint for token in ('ptqrshow', 'qrcode', 'qrlogin', 'qr_code', 'qrsig')):
-                        png_bytes = raw_bytes
+                png_bytes = self._qq_normalize_qr_image_bytes(raw_bytes or b'')
                 if png_bytes:
                     break
             except Exception:
                 continue
-
-        if not png_bytes:
-            try:
-                dialog = page.locator("[role='dialog']").first
-                dialog.wait_for(state='visible', timeout=1000)
-                raw_bytes = dialog.screenshot(type='png')
-                png_bytes = self._qq_crop_qr_image_bytes(raw_bytes or b'')
-            except Exception:
-                png_bytes = None
-
-        if not png_bytes:
-            try:
-                raw_bytes = page.screenshot(type='png', full_page=False)
-                png_bytes = self._qq_crop_qr_image_bytes(raw_bytes or b'')
-            except Exception:
-                png_bytes = None
 
         if png_bytes:
             try:

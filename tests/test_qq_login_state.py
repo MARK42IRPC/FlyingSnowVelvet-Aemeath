@@ -1,10 +1,33 @@
 import unittest
+from io import BytesIO
 from unittest.mock import Mock, patch
+
+from PIL import Image
 
 from lib.script.cloudmusic._mixin_login import _LoginMixin
 
 
 class QQLoginStateTests(unittest.TestCase):
+    @staticmethod
+    def _image_bytes(image_format="JPEG"):
+        buffer = BytesIO()
+        Image.new("RGB", (64, 64), "white").save(buffer, format=image_format)
+        return buffer.getvalue()
+
+    def test_qq_qr_response_normalizes_supported_images_to_png(self):
+        login = object.__new__(_LoginMixin)
+        response = Mock(content=self._image_bytes(), text="")
+
+        result = login._qq_qr_png_from_response(response)
+
+        self.assertTrue(result.startswith(b"\x89PNG\r\n\x1a\n"))
+
+    def test_qq_qr_response_rejects_non_image_payload(self):
+        login = object.__new__(_LoginMixin)
+        response = Mock(content=b"<html>upstream error</html>", text="upstream error")
+
+        self.assertIsNone(login._qq_qr_png_from_response(response))
+
     def test_confirmed_basic_qq_auth_is_a_usable_login_state(self):
         cookies = {"p_uin": "o123456", "p_skey": "basic-auth"}
 

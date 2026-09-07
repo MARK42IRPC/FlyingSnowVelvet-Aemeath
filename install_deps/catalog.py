@@ -36,7 +36,6 @@ NPM_REGISTRIES = [
 DEPENDENCIES = [
     ("PyQt5", "Qt GUI framework", ("PyQt5",)),
     ("Pillow", "image processing", ("PIL",)),
-    ("opencv-python", "image preprocessing for local web relay", ("cv2",)),
     ("playwright", "browser automation for web login capture", ("playwright",)),
     ("requests", "HTTP client", ("requests",)),
     ("qrcode", "QR code generation for music login", ("qrcode",)),

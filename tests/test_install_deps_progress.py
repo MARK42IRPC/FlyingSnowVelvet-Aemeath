@@ -838,6 +838,10 @@ ERROR: No matching distribution found for dependency
         self.assertIn("100%", text)
         self.assertIn("[━━━━━━━━━━━━━━━━━━━━━━━━━━]", text)
 
+    def test_opencv_is_not_an_installer_dependency(self):
+        names = [package for package, _description, _checks in install_deps.DEPENDENCIES]
+        self.assertNotIn("opencv-python", names)
+
     def test_progress_bar_has_stable_width(self):
         with patch.object(install_deps, "_COLOR_ENABLED", False):
             bar = install_deps._render_dependency_bar(50, 100, width=10)

@@ -50,7 +50,6 @@ DEFAULT_BASE_DISTRIBUTIONS = (
     "mutagen",
     "pyncm",
     "playwright",
-    "opencv-python",
     "pycaw",
     "comtypes",
     "pywin32",
