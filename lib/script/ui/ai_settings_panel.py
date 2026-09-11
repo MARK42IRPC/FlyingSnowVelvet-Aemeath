@@ -86,7 +86,6 @@ from lib.script.chat.network_policy import API_TIMEOUT_SECS
 from lib.script.chat.persona_storage import ensure_user_persona_file
 from lib.script.microphone_stt.push_to_talk import parse_hotkey_binding
 from lib.script.ui.update_dialog import DesktopPetUpdateDialog
-from lib.script.ui.cuda_runtime_installer import CudaRuntimeInstallerDialog
 from lib.script.ui.voice_package_installer import (
     VoicePackageInstallBanner,
     VoicePackageInstallerDialog,
@@ -101,8 +100,7 @@ from lib.script.ui.workbench_settings_layout import (
 )
 from lib.script.workbench.theme import COLORS as WORKBENCH_COLORS, get_workbench_colors
 from lib.script.gsvmove import get_voice_package_status
-from config.voice_runtime import is_cuda_runtime_ready
-from lib.core.cuda_runtime_installer import has_nvidia_gpu, probe_cuda_runtime_session
+from lib.core.nvidia_gpu import has_nvidia_gpu
 
 _logger = get_logger(__name__)
 
@@ -1738,10 +1736,8 @@ class AISettingsPanel(QWidget):
         self._autostart_status_subscribed = False
         self._update_dialog: DesktopPetUpdateDialog | None = None
         self._voice_installer_dialog: VoicePackageInstallerDialog | None = None
-        self._cuda_installer_dialog: CudaRuntimeInstallerDialog | None = None
         self._qq_group_dialog: QQGroupDialog | None = None
         self._nvidia_gpu_present = False
-        self._cuda_runtime_validated = False
         self._cuda_capability_pending = False
         self._cuda_capability_generation = 0
         self._subscribe_autostart_events()
@@ -2318,23 +2314,16 @@ class AISettingsPanel(QWidget):
         self._gsv_gpu_hybrid.setChecked(_DEFAULT_VALUES["gsv_gpu_hybrid"])
         form.addRow("", self._gsv_gpu_hybrid)
 
-        self._install_cuda_runtime_button = QPushButton("安装N卡推理环境")
-        self._install_cuda_runtime_button.setObjectName("InstallCudaVoiceRuntimeButton")
-        self._install_cuda_runtime_button.clicked.connect(self._on_install_cuda_runtime)
-        form.addRow("", self._install_cuda_runtime_button)
-        self._set_form_row_description(
-            form,
-            self._install_cuda_runtime_button,
-            "下载并安装精简 NVIDIA CUDA 语音推理环境。",
-        )
-
-        self._gsv_nvidia_cuda_acceleration = QCheckBox(
-            "N卡加速（将提高显存占用）"
-        )
+        self._gsv_nvidia_cuda_acceleration = QCheckBox("N卡加速")
         self._gsv_nvidia_cuda_acceleration.setChecked(
             _DEFAULT_VALUES["gsv_nvidia_cuda_acceleration"]
         )
         form.addRow("", self._gsv_nvidia_cuda_acceleration)
+        self._set_form_row_description(
+            form,
+            self._gsv_nvidia_cuda_acceleration,
+            "使用 NVIDIA 显卡推理，只需已安装显卡驱动；开启后显存占用会增加。",
+        )
 
         self._gsv_temperature = _DecimalSliderField(0.01, 2.0, 0.01, value=_DEFAULT_VALUES["gsv_temperature"])
         form.addRow("采样温度", self._gsv_temperature)
@@ -2530,7 +2519,7 @@ class AISettingsPanel(QWidget):
             page_title.hide()
         self._workbench_pages[page_id] = page
         if page_id == 'ai':
-            self._refresh_cuda_runtime_capability_async()
+            self._refresh_nvidia_acceleration_capability_async()
         return page
 
     def _build_config_category_panel(self, category) -> QWidget:
@@ -3472,29 +3461,9 @@ class AISettingsPanel(QWidget):
         delay_ms = max(80, int(UI.get("ui_fade_duration", 180)))
         QTimer.singleShot(delay_ms, dialog.show_dialog)
 
-    def _ensure_cuda_installer_dialog(self) -> CudaRuntimeInstallerDialog:
-        if self._cuda_installer_dialog is None:
-            dialog = CudaRuntimeInstallerDialog()
-            dialog.install_succeeded.connect(self._on_cuda_runtime_installed)
-            self._cuda_installer_dialog = dialog
-        return self._cuda_installer_dialog
+    def _refresh_nvidia_acceleration_capability_async(self) -> None:
+        """Detect the NVIDIA driver; the runtime needs nothing else."""
 
-    def _on_install_cuda_runtime(self) -> None:
-        if not self._nvidia_gpu_present:
-            self._emit_info("未检测到可用的 NVIDIA 显卡。", min_tick=12, max_tick=120)
-            return
-        dialog = self._ensure_cuda_installer_dialog()
-        self.fade_out()
-        delay_ms = max(80, int(UI.get("ui_fade_duration", 180)))
-        QTimer.singleShot(delay_ms, dialog.show_dialog)
-
-    def _on_cuda_runtime_installed(self, _result=None) -> None:
-        self._nvidia_gpu_present = True
-        self._cuda_runtime_validated = True
-        self._cuda_capability_pending = False
-        self._update_gsv_settings_visibility()
-
-    def _refresh_cuda_runtime_capability_async(self) -> None:
         if self._cuda_capability_pending:
             return
         self._cuda_capability_pending = True
@@ -3503,14 +3472,9 @@ class AISettingsPanel(QWidget):
 
         def worker() -> None:
             nvidia_present = False
-            runtime_installed = False
-            runtime_ready = False
             detail = ""
             try:
                 nvidia_present = bool(has_nvidia_gpu())
-                runtime_installed = nvidia_present and is_cuda_runtime_ready()
-                if runtime_installed:
-                    runtime_ready, detail = probe_cuda_runtime_session()
             except Exception as exc:
                 detail = str(exc).strip() or repr(exc)
 
@@ -3519,11 +3483,9 @@ class AISettingsPanel(QWidget):
                     return
                 self._cuda_capability_pending = False
                 self._nvidia_gpu_present = bool(nvidia_present)
-                self._cuda_runtime_validated = bool(runtime_ready)
                 self._update_gsv_settings_visibility()
                 if detail:
-                    message = "N卡推理环境校验失败" if runtime_installed else "N卡推理能力检测失败"
-                    _logger.warning("%s: %s", message, detail)
+                    _logger.warning("N卡能力检测失败: %s", detail)
 
             self._ui_thread_call.emit(apply_result)
 
@@ -3531,7 +3493,7 @@ class AISettingsPanel(QWidget):
             get_compute_hub().submit_interactive_io(worker)
         except Exception as exc:
             self._cuda_capability_pending = False
-            _logger.debug("N卡推理环境检测任务提交失败: %s", exc)
+            _logger.debug("N卡能力检测任务提交失败: %s", exc)
 
     def _on_voice_package_installed(self, _result=None) -> None:
         values = load_ai_values(_DEFAULT_VALUES)
@@ -4692,7 +4654,7 @@ class AISettingsPanel(QWidget):
     def show_centered(self) -> None:
         self.load_values()
         self._refresh_voice_package_ui()
-        self._refresh_cuda_runtime_capability_async()
+        self._refresh_nvidia_acceleration_capability_async()
         current_index = 0
         # 获取当前选中的标签索引（从按钮组或按钮列表）
         if hasattr(self, '_tab_button_group') and self._tab_button_group is not None:
@@ -4783,7 +4745,7 @@ class AISettingsPanel(QWidget):
         self._unsubscribe_border_effect_events()
         self._unsubscribe_autostart_events()
         self._hide_floating_tab()
-        for attr_name in ("_voice_installer_dialog", "_cuda_installer_dialog"):
+        for attr_name in ("_voice_installer_dialog",):
             dialog = getattr(self, attr_name, None)
             if dialog is not None:
                 try:
@@ -4996,8 +4958,7 @@ class AISettingsPanel(QWidget):
             "gsv_auto_start": bool(self._gsv_auto_start.isChecked()),
             "gsv_gpu_hybrid": bool(self._gsv_gpu_hybrid.isChecked()),
             "gsv_nvidia_cuda_acceleration": bool(
-                self._cuda_runtime_validated
-                and self._nvidia_gpu_present
+                self._nvidia_gpu_present
                 and getattr(self, "_gsv_nvidia_cuda_acceleration", None)
                 and self._gsv_nvidia_cuda_acceleration.isChecked()
             ),
@@ -5092,22 +5053,10 @@ class AISettingsPanel(QWidget):
     def _update_gsv_settings_visibility(self) -> None:
         voice_available = bool(self._gsv_launcher_available)
         nvidia_present = bool(getattr(self, "_nvidia_gpu_present", False))
-        cuda_validated = bool(getattr(self, "_cuda_runtime_validated", False))
         self._voice_section.setVisible(voice_available)
-        install_button = getattr(self, "_install_cuda_runtime_button", None)
-        if install_button is not None:
-            install_button.setVisible(
-                voice_available
-                and nvidia_present
-                and not cuda_validated
-            )
         cuda_checkbox = getattr(self, "_gsv_nvidia_cuda_acceleration", None)
         if cuda_checkbox is not None:
-            cuda_checkbox.setVisible(
-                voice_available
-                and nvidia_present
-                and cuda_validated
-            )
+            cuda_checkbox.setVisible(voice_available and nvidia_present)
 
     def _update_office_mode_fields_visibility(self) -> None:
         enabled = self._office_use_independent_api.isChecked()

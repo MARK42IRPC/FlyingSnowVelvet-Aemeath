@@ -19,6 +19,12 @@ from pathlib import Path
 import numpy as np
 
 from lib.script.gsvmove.package_manager import validate_voice_package
+from lib.script.gsvmove.native_graph import (
+    NativeGraphSession,
+    NativeRuntimeUnavailable,
+    native_device_count,
+    native_last_error,
+)
 
 
 _CJK_PATTERN = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
@@ -257,110 +263,47 @@ def _load_isolated_genie_frontend(common_dir: Path):
     return get_phones, cleanup
 
 
-def _run_cuda_session(
-    session,
-    inputs: dict,
-    *,
-    cpu_output_indexes: tuple[int, ...] = (),
-):
-    """Run a CUDA Session while keeping non-scalar outputs on the device."""
-    io_binding_factory = getattr(session, "io_binding", None)
-    if not callable(io_binding_factory):
-        return session.run(None, inputs)
+def _configure_native_cuda_sessions(module) -> list[NativeGraphSession]:
+    """Route the archive's graphs through the self-written CUDA runtime.
 
-    binding = io_binding_factory()
-    for name, value in inputs.items():
-        if callable(getattr(value, "device_name", None)):
-            binding.bind_ortvalue_input(name, value)
-        else:
-            binding.bind_cpu_input(name, value)
-    for index, output in enumerate(session.get_outputs()):
-        device = "cpu" if index in cpu_output_indexes else "cuda"
-        binding.bind_output(output.name, device)
-    session.run_with_iobinding(binding)
-    return binding.get_outputs()
+    The archive keeps owning everything that is not a graph forward pass: text
+    normalisation, the Chinese frontend and the sampling loop all stay in the
+    package's Python.  Every acoustic graph (hubert, speaker, both T2S decoders
+    and VITS) is created through ``load_optional_external_session``, so replacing
+    that single seam moves the whole synthesis chain onto the GPU.
+    """
+
+    count = native_device_count()
+    if count <= 0:
+        detail = native_last_error()
+        suffix = f"：{detail}" if detail else ""
+        raise OnnxVoiceRuntimeError(f"自研 CUDA 推理端没有可用设备{suffix}")
+
+    native_sessions: list[NativeGraphSession] = []
+
+    def load_native_session(model_path, weights_path, _providers):
+        try:
+            session = NativeGraphSession(model_path, weights_path)
+        except NativeRuntimeUnavailable as exc:
+            raise OnnxVoiceRuntimeError(str(exc)) from exc
+        except Exception as exc:
+            raise OnnxVoiceRuntimeError(
+                f"自研 CUDA 推理端无法加载 {Path(model_path).name}：{exc}"
+            ) from exc
+        native_sessions.append(session)
+        return session
+
+    module.load_optional_external_session = load_native_session
+    return native_sessions
 
 
-def _to_numpy(value, np_module):
-    converter = getattr(value, "numpy", None)
-    return converter() if callable(converter) else np_module.asarray(value)
-
-
-def _configure_cuda_semantic_iobinding(module) -> None:
-    """Keep the autoregressive semantic decoder state in CUDA memory."""
-    engine_class = getattr(module, "AimisiOnnx", None)
-    if not callable(getattr(engine_class, "_semantic_tokens", None)):
-        return
-
-    def semantic_tokens(
-        self,
-        text_seq,
-        text_bert,
-        prompt_seq,
-        prompt_bert,
-        max_steps,
-        top_k,
-        top_p,
-        temperature,
-        repetition_penalty,
-        rng,
-    ):
-        x, prompts = _run_cuda_session(
-            self.t2s_encoder,
-            {
-                "ref_seq": prompt_seq,
-                "text_seq": text_seq,
-                "ref_bert": prompt_bert,
-                "text_bert": text_bert,
-                "ssl_content": self.ssl_content,
-            },
-        )
-        sampling = self._sampling_inputs(
-            top_k,
-            top_p,
-            temperature,
-            repetition_penalty,
-            rng,
-        )
-        y, y_emb, *present = _run_cuda_session(
-            self.t2s_first,
-            {"x": x, "prompts": prompts, **sampling},
-        )
-        state_names = [
-            item.name for item in self.t2s_stage.get_inputs()
-            if item.name not in module.SAMPLING_INPUTS
-        ]
-
-        for _ in range(max_steps):
-            values = [y, y_emb, *present]
-            state = dict(zip(state_names, values))
-            state.update(self._sampling_inputs(
-                top_k,
-                top_p,
-                temperature,
-                repetition_penalty,
-                rng,
-            ))
-            outputs = _run_cuda_session(
-                self.t2s_stage,
-                state,
-                cpu_output_indexes=(2,),
-            )
-            y, y_emb, stop_condition, *present = outputs
-            if bool(_to_numpy(stop_condition, module.np).item()):
-                break
-        else:
-            print(f"Warning: semantic decoder reached max_steps={max_steps}")
-
-        generated = _to_numpy(y, module.np)[:, _to_numpy(prompts, module.np).shape[1] :]
-        eos = module.np.flatnonzero(generated[0] >= 1024)
-        if eos.size:
-            generated = generated[:, : int(eos[0])]
-        if generated.shape[1] == 0:
-            generated = module.np.zeros((1, 1), dtype=module.np.int64)
-        return generated[None, :, :].astype(module.np.int64, copy=False)
-
-    engine_class._semantic_tokens = semantic_tokens
+def _release_native_sessions(sessions) -> None:
+    for session in reversed(tuple(sessions or ())):
+        try:
+            session.close()
+        except Exception:
+            pass
+    sessions.clear()
 
 
 def _configure_hybrid_provider(module) -> list[str]:
@@ -395,47 +338,6 @@ def _configure_hybrid_provider(module) -> list[str]:
     module.make_session_options = make_session_options
     module.load_optional_external_session = load_hybrid_session
     return ["DmlExecutionProvider", "CPUExecutionProvider"]
-
-
-def _configure_cuda_provider(module) -> list[str]:
-    """Use CUDA for every model session while retaining CPU fallback."""
-    available = set(module.ort.get_available_providers())
-    if "CUDAExecutionProvider" not in available:
-        raise OnnxVoiceRuntimeError(
-            f"CUDA Provider 不可用，当前 Provider：{sorted(available)}"
-        )
-    if "CPUExecutionProvider" not in available:
-        raise OnnxVoiceRuntimeError("CPU fallback Provider 不可用")
-
-    def make_session_options():
-        options = module.ort.SessionOptions()
-        options.graph_optimization_level = module.ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-        options.execution_mode = module.ort.ExecutionMode.ORT_SEQUENTIAL
-        options.enable_mem_pattern = False
-        options.intra_op_num_threads = max(1, min(module.os.cpu_count() or 1, 8))
-        return options
-
-    original_loader = module.load_optional_external_session
-
-    def load_cuda_session(model_path, weights_path, _providers):
-        session_providers = (
-            ["CUDAExecutionProvider", "CPUExecutionProvider"]
-        )
-        session = original_loader(model_path, weights_path, session_providers)
-        getter = getattr(session, "get_providers", None)
-        if callable(getter):
-            active_providers = tuple(getter())
-            if "CUDAExecutionProvider" not in active_providers:
-                raise OnnxVoiceRuntimeError(
-                    "CUDA Session 未启用 CUDAExecutionProvider，"
-                    f"当前 Provider：{list(active_providers)}"
-                )
-        return session
-
-    module.make_session_options = make_session_options
-    module.load_optional_external_session = load_cuda_session
-    _configure_cuda_semantic_iobinding(module)
-    return ["CUDAExecutionProvider", "CPUExecutionProvider"]
 
 
 @dataclass(frozen=True)
@@ -674,6 +576,7 @@ class OnnxVoiceRuntime:
         module = importlib.util.module_from_spec(spec)
         sys.modules[module_name] = module
         genie_cleanup = None
+        native_sessions: list[NativeGraphSession] = []
         try:
             spec.loader.exec_module(module)
             # Replace the archive's GUI-heavy loader with the isolated,
@@ -688,15 +591,15 @@ class OnnxVoiceRuntime:
                     return frontend
 
                 module.load_text_frontend = load_text_frontend
-            providers = (
-                _configure_hybrid_provider(module)
-                if provider == "hybrid"
-                else (
-                    _configure_cuda_provider(module)
-                    if provider == "cuda"
-                    else module.select_providers(provider)
-                )
-            )
+            if provider == "cuda":
+                # The frontend graphs still run on ONNX Runtime, so CPU support
+                # stays a real precondition; the acoustic graphs never touch it.
+                providers = module.select_providers("cpu")
+                native_sessions = _configure_native_cuda_sessions(module)
+            elif provider == "hybrid":
+                providers = _configure_hybrid_provider(module)
+            else:
+                providers = module.select_providers(provider)
             native_mixed_frontend = _configure_mixed_language_frontend(module)
             engine = module.AimisiOnnx(root, providers)
             genie_cleanup = genie_state.get("cleanup") if "genie_state" in locals() else None
@@ -708,6 +611,7 @@ class OnnxVoiceRuntime:
                     genie_cleanup()
                 except Exception:
                     pass
+            _release_native_sessions(native_sessions)
             sys.modules.pop(module_name, None)
             detail = str(exc).strip() or repr(exc)
             raise OnnxVoiceRuntimeError(f"ONNX 语音模型加载失败：{detail}") from exc
@@ -716,6 +620,7 @@ class OnnxVoiceRuntime:
         self.sample_rate = int(validation.manifest.get("sample_rate") or 32000)
         self.provider = provider
         self._native_mixed_frontend = native_mixed_frontend
+        self._native_sessions = native_sessions
         self._module_name = module_name
         self._module = module
         self._engine = engine
@@ -792,6 +697,8 @@ class OnnxVoiceRuntime:
     def close(self) -> None:
         self._engine = None
         self._module = None
+        _release_native_sessions(getattr(self, "_native_sessions", ()))
+        self._native_sessions = []
         cleanup = getattr(self, "_genie_cleanup", None)
         self._genie_cleanup = None
         if callable(cleanup):

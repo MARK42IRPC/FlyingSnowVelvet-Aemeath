@@ -11,20 +11,20 @@ logger = get_logger(__name__)
 
 
 def schedule_startup_cleanup() -> None:
-    """Clean stale CUDA runtime artifacts without delaying the first window."""
+    """Remove the obsolete onnx-cuda runtime without delaying the first window."""
 
     def worker() -> None:
         report = cleanup_obsolete_cuda_runtime_artifacts()
         if report.removed:
             logger.info(
-                "已清理 %s 个过时 CUDA 语音运行时或残留包体",
+                "已清理 %s 个过时 onnx-cuda 运行时条目",
                 len(report.removed),
             )
         for message in report.errors:
-            logger.warning("CUDA 语音运行时启动清理未完成: %s", message)
+            logger.warning("onnx-cuda 运行时启动清理未完成: %s", message)
         if report.skipped:
             logger.warning(
-                "CUDA 语音运行时启动清理跳过 %s 个重解析路径",
+                "onnx-cuda 运行时启动清理跳过 %s 个重解析路径",
                 len(report.skipped),
             )
 

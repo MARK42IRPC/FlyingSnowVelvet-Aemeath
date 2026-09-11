@@ -18,67 +18,12 @@ DIRECTML_RUNTIME_MARKER_NAME = "runtime.json"
 DIRECTML_BUNDLED_FORMAT = "fsv-bundled-directml-overlay"
 DIRECTML_BUNDLED_FORMAT_VERSION = 1
 
-CUDA_RUNTIME_VERSION = "1.22.0"
-CUDA_RUNTIME_ABI = "cp311-win_amd64"
-CUDA_RUNTIME_MARKER_NAME = "runtime.json"
-
-# The optional Bundle is deliberately separate from the DirectML runtime above.
-# Keep this list conservative: these are the DLLs observed while running every
-# current voice graph with ORT 1.22/CUDA 12 on Windows.  The package builder
-# and installer both consume this single source of truth.
-CUDA_RUNTIME_BUNDLE_FORMAT = "aemeath-onnx-cuda-runtime"
-CUDA_RUNTIME_BUNDLE_FORMAT_VERSION = 1
-CUDA_RUNTIME_BUNDLE_RELEASE = "r1"
-CUDA_RUNTIME_BUNDLE_ARCHIVE_NAME = (
-    "aemeath-onnx-cuda-r1-ort1.22-cu12-cp311-win_amd64.zip"
-)
-CUDA_RUNTIME_BUNDLE_SHA256 = (
-    "643225a1b6544315b6b3d0c41cc5ed65be15c5b1ea7fb33ee3295bc3d5d348b1"
-)
-CUDA_RUNTIME_BUNDLE_ARCHIVE_BYTES = 1_700_089_579
-CUDA_RUNTIME_BUNDLE_PAYLOAD_BYTES = 2_532_836_762
-CUDA_RUNTIME_BUNDLE_STAGING_OVERHEAD_BYTES = 512 * 1024 * 1024
-CUDA_RUNTIME_BUNDLE_URLS = (
-    "https://www.modelscope.cn/models/Mark42IRPC/GSV_onnx_Aemeath_Pack/resolve/master/"
-    + CUDA_RUNTIME_BUNDLE_ARCHIVE_NAME,
-    "https://huggingface.co/Mark42IRP/Aemeath_onnx_GSV_model/resolve/main/"
-    + CUDA_RUNTIME_BUNDLE_ARCHIVE_NAME,
-)
-CUDA_RUNTIME_BUNDLE_PAYLOAD_ROOT = "payload"
-CUDA_RUNTIME_BUNDLE_DLL_DIRECTORY = (
-    "Lib/site-packages/aemeath_cuda_runtime/cuda/bin"
-)
-CUDA_RUNTIME_BUNDLE_REQUIRED_DLLS = (
-    "cublasLt64_12.dll",
-    "cublas64_12.dll",
-    "cufft64_11.dll",
-    "cudart64_12.dll",
-    "cudnn_engines_precompiled64_9.dll",
-    "cudnn_adv64_9.dll",
-    "cudnn_ops64_9.dll",
-    "cudnn_heuristic64_9.dll",
-    "cudnn_graph64_9.dll",
-    "cudnn_engines_runtime_compiled64_9.dll",
-    "cudnn_engines_tensor_ir64_9.dll",
-    "cudnn64_9.dll",
-)
-CUDA_RUNTIME_BUNDLE_ORT_FILES = (
-    "__init__.py",
-    "capi/__init__.py",
-    "capi/_ld_preload.py",
-    "capi/_pybind_state.py",
-    "capi/build_and_package_info.py",
-    "capi/onnxruntime_inference_collection.py",
-    "capi/onnxruntime_pybind11_state.pyd",
-    "capi/onnxruntime_providers_cuda.dll",
-    "capi/onnxruntime_providers_shared.dll",
-    "capi/onnxruntime.dll",
-    "capi/onnxruntime_validation.py",
-    "capi/version_info.py",
-    "LICENSE",
-    "ThirdPartyNotices.txt",
-)
-
+# The self-written CUDA runtime is a single DLL that needs nothing but the
+# NVIDIA display driver.  It ships with the release, so unlike DirectML there is
+# no versioned virtual environment to install.
+CUDA_VOICE_RUNTIME_DLL_NAME = "fsv_cuda_voice_runtime.dll"
+CUDA_VOICE_RUNTIME_DIR_NAME = "cuda-voice"
+CUDA_VOICE_RUNTIME_ENV_VAR = "AEMEATH_CUDA_VOICE_RUNTIME"
 
 def get_shared_root_dir() -> Path:
     """Return the shared application root without importing ``config``."""
@@ -210,86 +155,61 @@ def get_directml_worker_site_packages() -> Path | None:
     return None
 
 
-def get_cuda_runtime_root() -> Path:
-    return (
-        get_shared_root_dir()
-        / "voice"
-        / "runtimes"
-        / "onnx-cuda"
-        / f"{CUDA_RUNTIME_VERSION}-{CUDA_RUNTIME_ABI}"
-    )
+def get_cuda_voice_runtime_shared_root() -> Path:
+    """User-visible home of the self-written CUDA runtime artifact."""
+
+    return get_shared_root_dir() / "voice" / "runtimes" / CUDA_VOICE_RUNTIME_DIR_NAME
 
 
-def get_cuda_python_path(runtime_root: Path | None = None) -> Path:
-    root = Path(runtime_root) if runtime_root is not None else get_cuda_runtime_root()
-    return root / "Scripts" / "python.exe"
+def get_shared_cuda_voice_runtime_path() -> Path:
+    return get_cuda_voice_runtime_shared_root() / CUDA_VOICE_RUNTIME_DLL_NAME
 
 
-def get_cuda_runtime_marker_path(runtime_root: Path | None = None) -> Path:
-    root = Path(runtime_root) if runtime_root is not None else get_cuda_runtime_root()
-    return root / CUDA_RUNTIME_MARKER_NAME
+def get_bundled_cuda_voice_runtime_path(app_root: Path | None = None) -> Path:
+    """Runtime that ships next to the executable inside a release."""
+
+    root = Path(app_root) if app_root is not None else Path(__file__).resolve().parents[2]
+    return root.parent / "runtime" / CUDA_VOICE_RUNTIME_DIR_NAME / CUDA_VOICE_RUNTIME_DLL_NAME
 
 
-def get_cuda_provider_dll_path(runtime_root: Path | None = None) -> Path:
-    root = Path(runtime_root) if runtime_root is not None else get_cuda_runtime_root()
+def get_development_cuda_voice_runtime_path(app_root: Path | None = None) -> Path:
+    """Build output of ``native/cuda_voice_runtime`` on a development machine."""
+
+    root = Path(app_root) if app_root is not None else Path(__file__).resolve().parents[2]
     return (
         root
-        / "Lib"
-        / "site-packages"
-        / "onnxruntime"
-        / "capi"
-        / "onnxruntime_providers_cuda.dll"
+        / "build"
+        / "cuda_voice_runtime"
+        / "Release"
+        / CUDA_VOICE_RUNTIME_DLL_NAME
     )
 
 
-def get_cuda_bundle_dll_dir(runtime_root: Path | None = None) -> Path:
-    """Return the flat CUDA DLL directory used by a downloaded bundle."""
-    root = Path(runtime_root) if runtime_root is not None else get_cuda_runtime_root()
-    return root / Path(CUDA_RUNTIME_BUNDLE_DLL_DIRECTORY)
+def get_cuda_voice_runtime_candidates(app_root: Path | None = None) -> tuple[Path, ...]:
+    """Every location that may hold the runtime, most authoritative first."""
 
-
-def get_cuda_bundle_manifest_path(runtime_root: Path | None = None) -> Path:
-    """Return the bundle manifest path inside an installed runtime."""
-    root = Path(runtime_root) if runtime_root is not None else get_cuda_runtime_root()
-    return root / "bundle.json"
-
-
-def is_cuda_runtime_ready(runtime_root: Path | None = None) -> bool:
-    """Check the pinned Bundle marker and its required runtime files."""
-    root = Path(runtime_root) if runtime_root is not None else get_cuda_runtime_root()
-    python_path = get_cuda_python_path(root)
-    marker_path = get_cuda_runtime_marker_path(root)
-    if not python_path.is_file() or not get_cuda_provider_dll_path(root).is_file():
-        return False
-    try:
-        payload = json.loads(marker_path.read_text(encoding="utf-8"))
-        manifest = json.loads(get_cuda_bundle_manifest_path(root).read_text(encoding="utf-8"))
-    except (OSError, TypeError, ValueError):
-        return False
-    ready = (
-        isinstance(payload, dict)
-        and isinstance(manifest, dict)
-        and payload.get("runtime") == "onnxruntime-gpu"
-        and payload.get("version") == CUDA_RUNTIME_VERSION
-        and payload.get("abi") == CUDA_RUNTIME_ABI
-        and payload.get("provider") == "CUDAExecutionProvider"
-        and payload.get("source") == "bundle"
-        and payload.get("bundle_format") == CUDA_RUNTIME_BUNDLE_FORMAT
-        and payload.get("bundle_version") == CUDA_RUNTIME_BUNDLE_FORMAT_VERSION
-        and payload.get("archive_sha256") == CUDA_RUNTIME_BUNDLE_SHA256
-        and bool(payload.get("bundle_id"))
-        and payload.get("bundle_id") == manifest.get("bundle_id")
-        and manifest.get("format") == CUDA_RUNTIME_BUNDLE_FORMAT
-        and manifest.get("format_version") == CUDA_RUNTIME_BUNDLE_FORMAT_VERSION
-        and manifest.get("python_abi") == CUDA_RUNTIME_ABI
-        and manifest.get("onnxruntime_version") == CUDA_RUNTIME_VERSION
+    override = str(os.environ.get(CUDA_VOICE_RUNTIME_ENV_VAR, "") or "").strip()
+    candidates: list[Path] = []
+    if override:
+        candidate = Path(override).expanduser()
+        candidates.append(candidate / CUDA_VOICE_RUNTIME_DLL_NAME if candidate.is_dir() else candidate)
+    candidates.extend(
+        (
+            get_bundled_cuda_voice_runtime_path(app_root),
+            get_development_cuda_voice_runtime_path(app_root),
+            get_shared_cuda_voice_runtime_path(),
+        )
     )
-    if not ready:
-        return False
-    dll_dir = get_cuda_bundle_dll_dir(root)
-    required = tuple(payload.get("required_dlls") or CUDA_RUNTIME_BUNDLE_REQUIRED_DLLS)
-    return (
-        required == CUDA_RUNTIME_BUNDLE_REQUIRED_DLLS
-        and dll_dir.is_dir()
-        and all((dll_dir / name).is_file() for name in required)
-    )
+    return tuple(candidates)
+
+
+def resolve_cuda_voice_runtime_path(app_root: Path | None = None) -> Path | None:
+    """Return the first existing runtime DLL, or ``None`` when unavailable."""
+
+    for candidate in get_cuda_voice_runtime_candidates(app_root):
+        try:
+            if candidate.is_file():
+                return candidate
+        except OSError:
+            continue
+    return None

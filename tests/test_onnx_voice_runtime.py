@@ -9,14 +9,15 @@ from lib.script.gsvmove.onnx_runtime import (
     OnnxInferenceRequest,
     OnnxVoiceRuntime,
     OnnxVoiceRuntimeError,
-    _configure_cuda_provider,
-    _run_cuda_session,
     _configure_hybrid_provider,
     _configure_mixed_language_frontend,
+    _configure_native_cuda_sessions,
     _load_isolated_genie_frontend,
+    _release_native_sessions,
     _split_auto_language_text,
     normalize_language,
 )
+from lib.script.gsvmove.native_graph import NativeRuntimeUnavailable
 from lib.script.gsvmove.package_manager import VoicePackageValidation
 
 
@@ -142,55 +143,6 @@ class OnnxVoiceRuntimeTests(unittest.TestCase):
                 ):
                     _load_isolated_genie_frontend(common)
 
-    def test_cuda_iobinding_keeps_device_outputs_and_cpu_stop_flag(self):
-        class FakeBinding:
-            def __init__(self):
-                self.inputs = []
-                self.outputs = []
-
-            def bind_ortvalue_input(self, name, value):
-                self.inputs.append((name, "ort", value))
-
-            def bind_cpu_input(self, name, value):
-                self.inputs.append((name, "cpu", value))
-
-            def bind_output(self, name, device):
-                self.outputs.append((name, device))
-
-            def get_outputs(self):
-                return self.outputs
-
-        class FakeSession:
-            def __init__(self):
-                self.binding = FakeBinding()
-
-            def io_binding(self):
-                return self.binding
-
-            def get_outputs(self):
-                return [
-                    type("Output", (), {"name": "y"})(),
-                    type("Output", (), {"name": "stop"})(),
-                ]
-
-            def run_with_iobinding(self, binding):
-                self.ran_binding = binding
-
-        class FakeOrtValue:
-            def device_name(self):
-                return "cuda"
-
-        session = FakeSession()
-        _run_cuda_session(
-            session,
-            {"state": FakeOrtValue(), "sample_noise": object()},
-            cpu_output_indexes=(1,),
-        )
-
-        self.assertEqual(session.binding.inputs[0][1], "ort")
-        self.assertEqual(session.binding.inputs[1][1], "cpu")
-        self.assertEqual(session.binding.outputs, [("y", "cuda"), ("stop", "cpu")])
-
     def test_hybrid_provider_keeps_iterative_stage_on_cpu(self):
         class FakeOptions:
             pass
@@ -233,90 +185,100 @@ class OnnxVoiceRuntimeTests(unittest.TestCase):
             ("vits_v2pro.onnx", ("DmlExecutionProvider", "CPUExecutionProvider")),
         ])
 
-    def test_cuda_provider_uses_cuda_for_iterative_stage(self):
-        class FakeOptions:
-            pass
-
-        class FakeOrt:
-            class GraphOptimizationLevel:
-                ORT_ENABLE_ALL = "all"
-
-            class ExecutionMode:
-                ORT_SEQUENTIAL = "sequential"
-
-            SessionOptions = FakeOptions
-
-            @staticmethod
-            def get_available_providers():
-                return ["CUDAExecutionProvider", "CPUExecutionProvider"]
-
-        calls = []
-
+    def test_native_cuda_provider_needs_a_visible_device(self):
         class FakeModule:
-            ort = FakeOrt()
-            os = type("FakeOs", (), {"cpu_count": staticmethod(lambda: 12)})
-
             @staticmethod
             def load_optional_external_session(model_path, weights_path, providers):
-                calls.append((Path(model_path).name, tuple(providers)))
                 return providers
 
-        module = FakeModule()
-        providers = _configure_cuda_provider(module)
-        options = module.make_session_options()
-        module.load_optional_external_session(Path("t2s_stage_decoder_fp32.onnx"), Path("a.bin"), providers)
-        module.load_optional_external_session(Path("vits_v2pro.onnx"), Path("b.bin"), providers)
+        with patch.object(runtime_module, "native_device_count", return_value=0), patch.object(
+            runtime_module,
+            "native_last_error",
+            return_value="driver too old",
+        ):
+            with self.assertRaisesRegex(OnnxVoiceRuntimeError, "没有可用设备：driver too old"):
+                _configure_native_cuda_sessions(FakeModule())
 
-        self.assertEqual(providers, ["CUDAExecutionProvider", "CPUExecutionProvider"])
-        self.assertFalse(options.enable_mem_pattern)
-        self.assertEqual(options.execution_mode, "sequential")
-        self.assertEqual(calls, [
-            ("t2s_stage_decoder_fp32.onnx", ("CUDAExecutionProvider", "CPUExecutionProvider")),
-            ("vits_v2pro.onnx", ("CUDAExecutionProvider", "CPUExecutionProvider")),
-        ])
-
-    def test_cuda_provider_rejects_session_that_falls_back_to_cpu(self):
-        class FakeOptions:
-            pass
-
-        class FakeOrt:
-            class GraphOptimizationLevel:
-                ORT_ENABLE_ALL = "all"
-
-            class ExecutionMode:
-                ORT_SEQUENTIAL = "sequential"
-
-            SessionOptions = FakeOptions
-
-            @staticmethod
-            def get_available_providers():
-                return ["CUDAExecutionProvider", "CPUExecutionProvider"]
+    def test_native_cuda_provider_replaces_every_graph_session(self):
+        created = []
 
         class FakeSession:
-            @staticmethod
-            def get_providers():
-                return ["CPUExecutionProvider"]
+            def __init__(self, model_path, weights_path):
+                self.model_path = Path(model_path)
+                self.weights_path = weights_path
+                self.closed = False
+                created.append(self)
+
+            def close(self):
+                self.closed = True
 
         class FakeModule:
-            ort = FakeOrt()
-            os = type("FakeOs", (), {"cpu_count": staticmethod(lambda: 12)})
-
             @staticmethod
-            def load_optional_external_session(_model_path, _weights_path, _providers):
-                return FakeSession()
+            def load_optional_external_session(model_path, weights_path, providers):
+                return "ort:" + Path(model_path).name
 
         module = FakeModule()
-        _configure_cuda_provider(module)
-
-        with self.assertRaisesRegex(
-            OnnxVoiceRuntimeError,
-            "未启用 CUDAExecutionProvider",
+        with patch.object(runtime_module, "native_device_count", return_value=1), patch.object(
+            runtime_module,
+            "NativeGraphSession",
+            FakeSession,
         ):
-            module.load_optional_external_session(
+            sessions = _configure_native_cuda_sessions(module)
+            session = module.load_optional_external_session(
                 Path("vits_v2pro.onnx"),
-                Path("weights.bin"),
-                ["CUDAExecutionProvider", "CPUExecutionProvider"],
+                Path("vits_v2pro_fp16.bin"),
+                ["CPUExecutionProvider"],
             )
+
+        self.assertIs(session, created[0])
+        self.assertEqual(sessions, created)
+        self.assertEqual(created[0].weights_path.name, "vits_v2pro_fp16.bin")
+        _release_native_sessions(sessions)
+        self.assertTrue(created[0].closed)
+        self.assertEqual(sessions, [])
+
+    def test_native_cuda_provider_reports_a_missing_runtime(self):
+        class FakeModule:
+            @staticmethod
+            def load_optional_external_session(model_path, weights_path, providers):
+                raise AssertionError("unreachable")
+
+        def explode(*_args, **_kwargs):
+            raise NativeRuntimeUnavailable("缺少 fsv_cuda_voice_runtime.dll")
+
+        module = FakeModule()
+        with patch.object(runtime_module, "native_device_count", return_value=1), patch.object(
+            runtime_module,
+            "NativeGraphSession",
+            explode,
+        ):
+            _configure_native_cuda_sessions(module)
+            with self.assertRaisesRegex(OnnxVoiceRuntimeError, "fsv_cuda_voice_runtime.dll"):
+                module.load_optional_external_session(Path("a.onnx"), None, [])
+
+    def test_native_cuda_provider_keeps_ort_cpu_for_the_frontend(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "infer.py").write_text(_FAKE_INFER, encoding="utf-8")
+            validation = VoicePackageValidation(
+                True,
+                "ok",
+                {"sample_rate": 32000, "name": "aimisiV2"},
+            )
+            with patch.object(runtime_module, "validate_voice_package", return_value=validation), patch.object(
+                runtime_module,
+                "native_device_count",
+                return_value=1,
+            ):
+                runtime = OnnxVoiceRuntime(root, provider="cuda")
+                try:
+                    self.assertEqual(runtime.provider, "cuda")
+                    self.assertEqual(runtime._engine.providers, ["cpu"])
+                    self.assertEqual(runtime._native_sessions, [])
+                    runtime.synthesize_to_file({"text": "hello"}, root / "out.wav")
+                finally:
+                    runtime.close()
+
     def test_language_detection_preserves_auto_for_mixed_text(self):
         self.assertEqual(normalize_language(None, "你好 Aemeath"), "auto")
         self.assertEqual(normalize_language("auto", "你好 Aemeath"), "auto")

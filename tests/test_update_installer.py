@@ -239,6 +239,33 @@ class UpdateInstallerTests(unittest.TestCase):
         self.assertEqual(actions[0][0], "稍后安装")
         self.assertEqual(actions[1], ("启动安装器并退出", dialog._start_release_launch))
 
+    def test_dialog_finishes_resource_overlay_without_launching_exe(self):
+        from lib.script.ui.update_dialog import DesktopPetUpdateDialog
+
+        published = datetime(2026, 9, 7, tzinfo=timezone.utc)
+        result = UpdateResult(
+            True,
+            InstalledState("LTS1.0.7pre2", published, "rev"),
+            ReleaseInfo(
+                "LTS1.0.7pre2", published, "FlyingSnowVelvet-LTS1.0.7pre2-Resources.zip",
+                "download", "ModelScope", "rev", kind="resources"
+            ),
+            reason="resources_installed",
+        )
+        dialog = SimpleNamespace(
+            _status_label=Mock(),
+            _detail_label=Mock(),
+            _set_busy=Mock(),
+            _set_progress_done=Mock(),
+            _set_actions=Mock(),
+            _fmt_dt=lambda value: value.isoformat(),
+            hide_dialog=Mock(),
+        )
+        DesktopPetUpdateDialog._on_release_done(dialog, result)
+
+        self.assertEqual(dialog._status_label.setText.call_args.args[0], "资源包已安装")
+        dialog._set_actions.assert_called_once_with(None, ("关闭", dialog.hide_dialog))
+
     def test_native_installer_launch_requests_app_quit(self):
         from lib.script.ui.update_dialog import DesktopPetUpdateDialog
 

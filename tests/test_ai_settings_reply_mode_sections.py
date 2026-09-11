@@ -322,38 +322,35 @@ class AISettingsReplyModeSectionsTests(unittest.TestCase):
 
         voice_section.setVisible.assert_called_once_with(True)
 
-    def test_nvidia_runtime_button_and_acceleration_are_mutually_gated(self):
+    def test_nvidia_acceleration_switch_follows_driver_presence(self):
         voice_section = Mock()
         checkbox = Mock()
-        install_button = Mock()
         panel = type("GsvPanel", (), {
             "_gsv_launcher_available": True,
             "_voice_section": voice_section,
             "_gsv_nvidia_cuda_acceleration": checkbox,
-            "_install_cuda_runtime_button": install_button,
             "_nvidia_gpu_present": True,
-            "_cuda_runtime_validated": False,
         })()
 
         AISettingsPanel._update_gsv_settings_visibility(panel)
-        checkbox.setVisible.assert_called_once_with(False)
-        install_button.setVisible.assert_called_once_with(True)
-
-        checkbox.reset_mock()
-        install_button.reset_mock()
-        panel._cuda_runtime_validated = True
-        AISettingsPanel._update_gsv_settings_visibility(panel)
         checkbox.setVisible.assert_called_once_with(True)
-        install_button.setVisible.assert_called_once_with(False)
 
         checkbox.reset_mock()
-        install_button.reset_mock()
         panel._nvidia_gpu_present = False
         AISettingsPanel._update_gsv_settings_visibility(panel)
         checkbox.setVisible.assert_called_once_with(False)
-        install_button.setVisible.assert_called_once_with(False)
 
-    def test_cuda_capability_check_runs_only_after_settings_requests_it(self):
+        checkbox.reset_mock()
+        panel._gsv_launcher_available = False
+        panel._nvidia_gpu_present = True
+        AISettingsPanel._update_gsv_settings_visibility(panel)
+        checkbox.setVisible.assert_called_once_with(False)
+
+    def test_nvidia_switch_has_no_installer_widget(self):
+        self.assertFalse(hasattr(self.panel, "_install_cuda_runtime_button"))
+        self.assertEqual(self.panel._gsv_nvidia_cuda_acceleration.text(), "N卡加速")
+
+    def test_acceleration_capability_check_runs_only_after_settings_requests_it(self):
         class ImmediateHub:
             @staticmethod
             def submit_interactive_io(func):
@@ -361,46 +358,36 @@ class AISettingsReplyModeSectionsTests(unittest.TestCase):
                 return object()
 
         self.panel._gsv_launcher_available = True
+        self.panel._nvidia_gpu_present = False
         with patch.object(panel_module, "has_nvidia_gpu", return_value=True), patch.object(
-            panel_module, "is_cuda_runtime_ready", return_value=True
-        ), patch.object(
-            panel_module, "probe_cuda_runtime_session", return_value=(True, "")
-        ), patch.object(
             panel_module, "get_compute_hub", return_value=ImmediateHub()
         ):
-            self.panel._refresh_cuda_runtime_capability_async()
-            self.app.processEvents()
-
-        self.assertTrue(self.panel._nvidia_gpu_present)
-        self.assertTrue(self.panel._cuda_runtime_validated)
-        self.assertTrue(self.panel._install_cuda_runtime_button.isHidden())
-        self.assertFalse(self.panel._gsv_nvidia_cuda_acceleration.isHidden())
-
-    def test_cuda_capability_check_recovers_when_probe_raises(self):
-        class ImmediateHub:
-            @staticmethod
-            def submit_interactive_io(func):
-                func()
-                return object()
-
-        self.panel._gsv_launcher_available = True
-        self.panel._cuda_runtime_validated = True
-        with patch.object(panel_module, "has_nvidia_gpu", return_value=True), patch.object(
-            panel_module, "is_cuda_runtime_ready", return_value=True
-        ), patch.object(
-            panel_module,
-            "probe_cuda_runtime_session",
-            side_effect=RuntimeError("probe failed"),
-        ), patch.object(
-            panel_module, "get_compute_hub", return_value=ImmediateHub()
-        ):
-            self.panel._refresh_cuda_runtime_capability_async()
+            self.panel._refresh_nvidia_acceleration_capability_async()
             self.app.processEvents()
 
         self.assertFalse(self.panel._cuda_capability_pending)
         self.assertTrue(self.panel._nvidia_gpu_present)
-        self.assertFalse(self.panel._cuda_runtime_validated)
-        self.assertFalse(self.panel._install_cuda_runtime_button.isHidden())
+        self.assertFalse(self.panel._gsv_nvidia_cuda_acceleration.isHidden())
+
+    def test_acceleration_capability_check_recovers_when_probe_raises(self):
+        class ImmediateHub:
+            @staticmethod
+            def submit_interactive_io(func):
+                func()
+                return object()
+
+        self.panel._gsv_launcher_available = True
+        self.panel._nvidia_gpu_present = True
+        with patch.object(
+            panel_module, "has_nvidia_gpu", side_effect=RuntimeError("probe failed")
+        ), patch.object(
+            panel_module, "get_compute_hub", return_value=ImmediateHub()
+        ):
+            self.panel._refresh_nvidia_acceleration_capability_async()
+            self.app.processEvents()
+
+        self.assertFalse(self.panel._cuda_capability_pending)
+        self.assertFalse(self.panel._nvidia_gpu_present)
         self.assertTrue(self.panel._gsv_nvidia_cuda_acceleration.isHidden())
 
     def test_voice_package_install_enables_and_persists_runtime(self):

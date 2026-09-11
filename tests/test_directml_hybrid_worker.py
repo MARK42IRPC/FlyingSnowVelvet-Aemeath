@@ -12,69 +12,19 @@ from config import voice_runtime
 from lib.script.gsvmove import service as service_module
 from lib.script.gsvmove.hybrid_worker import (
     CpuVoiceWorkerRuntime,
+    CudaVoiceWorkerRuntime,
     HybridVoiceWorkerRuntime,
     VoiceWorkerRuntime,
-    _get_cuda_nvidia_bin_dirs,
-    _get_cuda_bundle_bin_dir,
-    _preload_onnxruntime_dlls,
+    VoiceWorkerError,
     _resolve_worker_output,
     _terminate_worker_process_tree,
 )
 from lib.script.gsvmove.package_manager import VoicePackageStatus
+from lib.script.gsvmove import hybrid_worker
 from lib.core.event.center import Event, EventType
 
 
 class DirectMLHybridWorkerTests(unittest.TestCase):
-    def test_cuda_preload_calls_onnxruntime_dll_loader(self):
-        runtime_module = Mock()
-
-        _preload_onnxruntime_dlls("cuda", runtime_module)
-
-        runtime_module.preload_dlls.assert_called_once_with()
-
-    def test_cuda_bundle_preload_uses_marker_dll_directory(self):
-        runtime_module = Mock()
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            python_path = root / "Scripts" / "python.exe"
-            dll_dir = root / "Lib" / "site-packages" / "aemeath_cuda_runtime" / "cuda" / "bin"
-            dll_dir.mkdir(parents=True)
-            (root / "runtime.json").write_text(
-                json.dumps(
-                    {
-                        "source": "bundle",
-                        "dll_directory": "Lib/site-packages/aemeath_cuda_runtime/cuda/bin",
-                    }
-                ),
-                encoding="utf-8",
-            )
-            self.assertEqual(_get_cuda_bundle_bin_dir(python_path), dll_dir)
-            _preload_onnxruntime_dlls(
-                "cuda",
-                runtime_module,
-                dll_directory=dll_dir,
-            )
-        runtime_module.preload_dlls.assert_called_once_with(directory=str(dll_dir))
-
-    def test_cuda_worker_discovers_nvidia_bin_directories(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            python_path = root / "Scripts" / "python.exe"
-            for name in ("cublas", "cudnn"):
-                (root / "Lib" / "site-packages" / "nvidia" / name / "bin").mkdir(
-                    parents=True
-                )
-
-            directories = _get_cuda_nvidia_bin_dirs(python_path)
-
-        self.assertEqual(
-            directories,
-            (
-                root / "Lib" / "site-packages" / "nvidia" / "cublas" / "bin",
-                root / "Lib" / "site-packages" / "nvidia" / "cudnn" / "bin",
-            ),
-        )
-
     def test_windows_timeout_terminates_full_worker_process_tree(self):
         process = Mock(pid=321)
         process.poll.return_value = None
@@ -163,40 +113,6 @@ class DirectMLHybridWorkerTests(unittest.TestCase):
             module_overlay=overlay,
         )
 
-    def test_cuda_runtime_prepends_nvidia_dll_directories_to_worker_path(self):
-        process = Mock()
-        process.poll.return_value = 0
-        process.stdin = Mock()
-        process.stdout = Mock()
-        process.stderr = Mock()
-        worker_thread = Mock()
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            python_path = root / "Scripts" / "python.exe"
-            dll_dir = root / "Lib" / "site-packages" / "nvidia" / "cudnn" / "bin"
-            dll_dir.mkdir(parents=True)
-            with patch.object(
-                VoiceWorkerRuntime,
-                "_next_message",
-                return_value={"type": "ready", "provider": "cuda"},
-            ), patch(
-                "lib.script.gsvmove.hybrid_worker.subprocess.Popen",
-                return_value=process,
-            ) as popen, patch(
-                "lib.script.gsvmove.hybrid_worker.threading.Thread",
-                return_value=worker_thread,
-            ):
-                runtime = VoiceWorkerRuntime(
-                    root / "package",
-                    root / "output",
-                    provider="cuda",
-                    python_path=python_path,
-                )
-                runtime.close()
-
-        path_value = popen.call_args.kwargs["env"]["PATH"]
-        self.assertEqual(path_value.split(os.pathsep)[0], str(dll_dir))
-
     def test_runtime_path_is_versioned_under_shared_voice_root(self):
         with tempfile.TemporaryDirectory() as tmpdir, patch.dict(
             "os.environ", {"AEMEATH_DESK_PET_HOME": tmpdir}
@@ -211,6 +127,55 @@ class DirectMLHybridWorkerTests(unittest.TestCase):
             / "onnx-directml"
             / "1.22.0-cp311-win_amd64",
         )
+
+    def test_cuda_worker_refuses_to_start_without_the_native_runtime(self):
+        with patch(
+            "lib.core.voice_runtime_contract.resolve_cuda_voice_runtime_path",
+            return_value=None,
+        ):
+            with self.assertRaisesRegex(VoiceWorkerError, "fsv_cuda_voice_runtime.dll"):
+                CudaVoiceWorkerRuntime(Path("package"), Path("output"))
+
+    def test_cuda_worker_launches_isolated_worker_without_any_overlay(self):
+        library = Path("C:/build/cuda_voice_runtime/Release/fsv_cuda_voice_runtime.dll")
+        with tempfile.TemporaryDirectory() as tmpdir, patch(
+            "lib.core.voice_runtime_contract.resolve_cuda_voice_runtime_path",
+            return_value=library,
+        ), patch.object(VoiceWorkerRuntime, "__init__", return_value=None) as initialize:
+            runtime = CudaVoiceWorkerRuntime(Path(tmpdir) / "package", Path(tmpdir) / "output")
+
+        self.assertEqual(runtime.library_path, library)
+        initialize.assert_called_once_with(
+            Path(tmpdir) / "package",
+            Path(tmpdir) / "output",
+            provider="cuda",
+            python_path=Path(sys.executable),
+        )
+
+    def test_cuda_worker_accepts_the_provider_in_the_worker_protocol(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with self.assertRaisesRegex(ValueError, "不支持的 ONNX Worker Provider"):
+                VoiceWorkerRuntime(
+                    Path(tmpdir) / "package",
+                    Path(tmpdir) / "output",
+                    provider="bogus",
+                    python_path=Path(sys.executable),
+                )
+
+    def test_worker_protocol_accepts_the_cuda_provider(self):
+        with patch.object(sys, "argv", [
+            "hybrid_worker",
+            "--worker",
+            "--provider",
+            "cuda",
+            "--package-root",
+            "package",
+            "--output-root",
+            "output",
+        ]):
+            args = hybrid_worker._parse_args()
+
+        self.assertEqual(args.provider, "cuda")
 
     def test_worker_output_cannot_escape_managed_directory(self):
         with tempfile.TemporaryDirectory() as tmpdir:

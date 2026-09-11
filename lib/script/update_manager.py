@@ -400,10 +400,19 @@ class UpdateManager(_UpdateBase):
     def check_for_updates(self) -> ReleaseCheckResult:
         installed = self._load_installed_state()
         release = self._fetch_latest_release()
-        revision_changed = bool(release.revision) and release.revision != installed.revision
-        update_available = release.published_at > installed.installed_at or (
-            release.published_at == installed.installed_at and revision_changed
+        # The publication timestamp describes the remote artifact, not the
+        # application version installed on this machine.  Comparing dates
+        # alone made a freshly built pre2 client repeatedly offer its own
+        # pre2 resource archive.  A version change is sufficient; a same
+        # version update requires both sides to carry revisions so an absent
+        # legacy state file cannot create a perpetual update prompt.
+        same_version = release.tag == installed.version
+        revision_changed = (
+            bool(release.revision)
+            and bool(installed.revision)
+            and release.revision != installed.revision
         )
+        update_available = not same_version or revision_changed
         reason = "update_available" if update_available else "up_to_date"
         if update_available:
             self._info(
@@ -457,6 +466,14 @@ class UpdateManager(_UpdateBase):
                 # Resource overlays are applied while the app is running; no
                 # native installer/EXE is downloaded or executed.
                 install_resource_bundle(archive_path, _PROJECT_ROOT)
+                self._save_installed_state(
+                    InstalledState(
+                        release.tag,
+                        release.published_at,
+                        release.revision,
+                        release.source,
+                    )
+                )
             else:
                 archive_path = (
                     extract_update_installer_bundle(download_path, staging_dir / "installer")
@@ -514,6 +531,8 @@ class UpdateManager(_UpdateBase):
         if archive_path is None or not Path(archive_path).is_file():
             raise UpdateError("待安装更新包不存在，请重新下载。")
         release = update.release_info
+        if release.kind == "resources":
+            raise UpdateError("资源包已经安装，无需启动离线安装器。")
         release_payload = {
             "tag": release.tag,
             "published_at": _isoformat(release.published_at),
@@ -557,6 +576,24 @@ class UpdateManager(_UpdateBase):
         return InstalledState(
             version=RESOURCE_VERSION,
             installed_at=_parse_datetime(RESOURCE_RELEASE_DATE),
+        )
+
+    def _save_installed_state(self, state: InstalledState) -> None:
+        """Persist the resource revision after an in-process overlay."""
+        self._state_path.parent.mkdir(parents=True, exist_ok=True)
+        self._state_path.write_text(
+            json.dumps(
+                {
+                    "version": state.version,
+                    "installed_at": _isoformat(state.installed_at),
+                    "revision": state.revision,
+                    "source": state.source,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
         )
 
     def _fetch_latest_release(self) -> ReleaseInfo:

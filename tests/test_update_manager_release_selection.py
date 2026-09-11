@@ -281,6 +281,41 @@ class UpdateManagerReleaseSelectionTests(unittest.TestCase):
         self.assertTrue(result.update_available)
         self.assertIsInstance(result.installed_state, InstalledState)
 
+    def test_same_version_without_local_revision_is_not_reoffered(self):
+        published = datetime(2026, 9, 7, tzinfo=timezone.utc)
+        release = ReleaseInfo(
+            "LTS1.0.7pre2", published, "resources.zip", "download",
+            "ModelScope", "c8f0337", archive_sha256="a" * 64, kind="resources"
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = Path(temp_dir) / "state.json"
+            state_path.write_text(json.dumps({
+                "version": "LTS1.0.7pre2",
+                "installed_at": "2026-09-06T00:00:00Z",
+            }), encoding="utf-8")
+            manager = UpdateManager(state_path=state_path)
+            with patch.object(manager, "_fetch_latest_release", return_value=release):
+                result = manager.check_for_updates()
+        self.assertFalse(result.update_available)
+
+    def test_same_version_revision_change_is_an_update(self):
+        published = datetime(2026, 9, 7, tzinfo=timezone.utc)
+        release = ReleaseInfo(
+            "LTS1.0.7pre2", published, "resources.zip", "download",
+            "ModelScope", "new", archive_sha256="a" * 64, kind="resources"
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = Path(temp_dir) / "state.json"
+            state_path.write_text(json.dumps({
+                "version": "LTS1.0.7pre2",
+                "installed_at": "2026-09-06T00:00:00Z",
+                "revision": "old",
+            }), encoding="utf-8")
+            manager = UpdateManager(state_path=state_path)
+            with patch.object(manager, "_fetch_latest_release", return_value=release):
+                result = manager.check_for_updates()
+        self.assertTrue(result.update_available)
+
 
 if __name__ == "__main__":
     unittest.main()

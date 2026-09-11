@@ -1,0 +1,35 @@
+# Turns a PTX text file into a C++ translation unit holding a byte-exact string.
+# Invoked from CMake: -DFSV_PTX_IN=<file.ptx> -DFSV_PTX_OUT=<file.cpp>
+if(NOT DEFINED FSV_PTX_IN OR NOT DEFINED FSV_PTX_OUT)
+    message(FATAL_ERROR "FSV_PTX_IN and FSV_PTX_OUT are required")
+endif()
+
+file(READ "${FSV_PTX_IN}" PTX_HEX HEX)
+string(LENGTH "${PTX_HEX}" HEX_LENGTH)
+if(HEX_LENGTH EQUAL 0)
+    message(FATAL_ERROR "PTX file is empty: ${FSV_PTX_IN}")
+endif()
+
+set(OUTPUT "/* Generated from ${FSV_PTX_IN}. Do not edit. */\n")
+string(APPEND OUTPUT "namespace fsv {\n")
+string(APPEND OUTPUT "extern const char* const fsv_ptx_kernels_source;\n")
+string(APPEND OUTPUT "const char* const fsv_ptx_kernels_source =\n")
+
+set(CHUNK "")
+math(EXPR LAST_INDEX "${HEX_LENGTH} - 2")
+foreach(INDEX RANGE 0 ${LAST_INDEX} 2)
+    string(SUBSTRING "${PTX_HEX}" ${INDEX} 2 BYTE)
+    string(APPEND CHUNK "\\x${BYTE}")
+    string(LENGTH "${CHUNK}" CHUNK_LENGTH)
+    if(CHUNK_LENGTH GREATER 8000)
+        string(APPEND OUTPUT "\"${CHUNK}\"\n")
+        set(CHUNK "")
+    endif()
+endforeach()
+if(NOT CHUNK STREQUAL "")
+    string(APPEND OUTPUT "\"${CHUNK}\"\n")
+endif()
+string(APPEND OUTPUT ";\n}  // namespace fsv\n")
+
+file(WRITE "${FSV_PTX_OUT}" "${OUTPUT}")
+message(STATUS "Embedded PTX (${HEX_LENGTH} hex chars) into ${FSV_PTX_OUT}")

@@ -1,4 +1,9 @@
-"""Bounded cleanup for obsolete CUDA voice runtime artifacts."""
+"""Bounded cleanup for the obsolete onnx-cuda voice runtime artifacts.
+
+Earlier releases downloaded a multi-gigabyte CUDA ORT bundle into
+``<shared>/voice/runtimes/onnx-cuda``.  The self-written runtime needs none of
+it, so every startup removes whatever is still there.
+"""
 
 from __future__ import annotations
 
@@ -6,9 +11,6 @@ import os
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-
-from . import voice_runtime_contract as contract
-
 
 _FILE_ATTRIBUTE_REPARSE_POINT = 0x400
 
@@ -33,23 +35,27 @@ def _is_managed_runtime_parent(path: Path) -> bool:
     return len(parts) >= 3 and parts[-3:] == ("voice", "runtimes", "onnx-cuda")
 
 
+def _shared_root_dir() -> Path:
+    override = str(os.environ.get("AEMEATH_DESK_PET_HOME", "") or "").strip()
+    if override:
+        return Path(override).expanduser()
+    return Path(__file__).resolve().parents[2]
+
+
+def default_runtime_parent() -> Path:
+    return _shared_root_dir() / "voice" / "runtimes" / "onnx-cuda"
+
+
 def cleanup_obsolete_cuda_runtime_artifacts(
     runtime_parent: Path | None = None,
-    *,
-    preserve_valid_runtime: bool = True,
 ) -> CudaRuntimeCleanupReport:
-    """Remove only direct children of the managed ``onnx-cuda`` directory.
+    """Remove every direct child of the managed ``onnx-cuda`` directory.
 
-    Reparse points are deliberately left untouched. The function never scans
-    outside the fixed runtime parent and preserves the current pinned Bundle
-    when requested.
+    Reparse points are deliberately left untouched and the function never scans
+    outside the fixed runtime parent.
     """
 
-    parent = (
-        Path(runtime_parent)
-        if runtime_parent is not None
-        else contract.get_cuda_runtime_root().parent
-    )
+    parent = Path(runtime_parent) if runtime_parent is not None else default_runtime_parent()
     parent = parent.expanduser()
     if not _is_managed_runtime_parent(parent):
         return CudaRuntimeCleanupReport(errors=(f"拒绝清理非托管目录：{parent}",))
@@ -63,12 +69,6 @@ def cleanup_obsolete_cuda_runtime_artifacts(
     except OSError as exc:
         return CudaRuntimeCleanupReport(errors=(f"无法解析 CUDA 运行目录：{exc}",))
 
-    current_root = contract.get_cuda_runtime_root()
-    try:
-        current_name = current_root.name.casefold()
-    except Exception:
-        current_name = ""
-
     removed: list[Path] = []
     skipped: list[Path] = []
     errors: list[str] = []
@@ -78,8 +78,6 @@ def cleanup_obsolete_cuda_runtime_artifacts(
         return CudaRuntimeCleanupReport(errors=(f"无法枚举 CUDA 运行目录：{exc}",))
 
     for candidate in children:
-        name = candidate.name
-        lower_name = name.casefold()
         if _is_reparse_point(candidate) or candidate.is_symlink():
             skipped.append(candidate)
             continue
@@ -91,38 +89,17 @@ def cleanup_obsolete_cuda_runtime_artifacts(
         except OSError as exc:
             errors.append(f"无法解析 {candidate}：{exc}")
             continue
-
-        should_remove = False
-        try:
-            if candidate.is_dir():
-                is_current = lower_name == current_name
-                if (
-                    is_current
-                    and preserve_valid_runtime
-                    and contract.is_cuda_runtime_ready(candidate)
-                ):
-                    continue
-                should_remove = True
-            elif candidate.is_file():
-                should_remove = (
-                    lower_name.endswith(".part")
-                    or lower_name.endswith(".zip")
-                    or lower_name.endswith(".zip.download")
-                )
-        except OSError as exc:
-            errors.append(f"无法检查 {candidate}：{exc}")
-            continue
-
-        if not should_remove:
-            continue
         try:
             if candidate.is_dir():
                 shutil.rmtree(candidate)
-            else:
+            elif candidate.is_file():
                 os.unlink(candidate)
-            removed.append(candidate)
+            else:
+                continue
         except OSError as exc:
             errors.append(f"清理 {candidate} 失败：{exc}")
+            continue
+        removed.append(candidate)
 
     return CudaRuntimeCleanupReport(
         removed=tuple(removed),
@@ -134,4 +111,5 @@ def cleanup_obsolete_cuda_runtime_artifacts(
 __all__ = [
     "CudaRuntimeCleanupReport",
     "cleanup_obsolete_cuda_runtime_artifacts",
+    "default_runtime_parent",
 ]

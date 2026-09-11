@@ -295,40 +295,6 @@ class InstallDependenciesProgressTests(unittest.TestCase):
         self.assertTrue(ready)
         self.assertEqual(detail, "")
 
-    def test_cuda_runtime_does_not_fall_back_to_full_pip_environment(self):
-        with patch.object(install_deps, "_get_version", return_value=(3, 11, 6)), patch.object(
-            install_deps, "_run", return_value=subprocess.CompletedProcess([], 0, stdout="64\n")
-        ), patch.object(
-            install_deps.directml_config, "is_cuda_runtime_ready", return_value=False
-        ), patch.object(
-            install_deps,
-            "_install_cuda_runtime_bundle",
-            return_value=(False, "test bundle unavailable"),
-        ):
-            installed = install_deps.ensure_cuda_voice_runtime("python.exe")
-
-        self.assertFalse(installed)
-
-    def test_cuda_probe_preloads_dlls_and_reports_provider_loader_diagnostics(self):
-        payload = {
-            "python": [3, 11],
-            "bits": 64,
-            "version": install_deps.directml_config.CUDA_RUNTIME_VERSION,
-            "providers": ["CPUExecutionProvider"],
-        }
-        result = subprocess.CompletedProcess(
-            [],
-            0,
-            stdout=json.dumps(payload),
-            stderr="Failed to load onnxruntime_providers_cuda.dll: DLL load failed",
-        )
-        with patch.object(install_deps, "_run", return_value=result) as run:
-            ready, detail = install_deps._cuda_runtime_probe(Path("python.exe"))
-
-        self.assertFalse(ready)
-        self.assertIn("Failed to load onnxruntime_providers_cuda.dll", detail)
-        self.assertIn("preload", run.call_args.args[0][-1])
-
     def test_python_311_is_preferred_over_current_non_target_runtime(self):
         with patch.object(install_deps, "_current_runtime_executable", return_value="C:\\Python312\\python.exe"):
             target = install_deps._sort_key(((3, 11, 6), "C:\\Python311\\python.exe"))

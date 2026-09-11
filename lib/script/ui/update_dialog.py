@@ -447,6 +447,15 @@ class DesktopPetUpdateDialog(QWidget):
             return
         self._set_busy(False)
         self._pending_update = update
+        if update.release_info.kind == "resources":
+            self._status_label.setText("资源包已安装")
+            self._detail_label.setText(
+                f"已安装 {update.release_info.asset_name}（{self._fmt_dt(update.release_info.published_at)}）\n"
+                "资源已写入当前安装目录，后续启动将使用最新资源。"
+            )
+            self._set_progress_done()
+            self._set_actions(None, ("关闭", self.hide_dialog))
+            return
         self._status_label.setText("离线安装器已准备")
         self._detail_label.setText(
             f"已准备 {update.release_info.asset_name}（{self._fmt_dt(update.release_info.published_at)}）\n"

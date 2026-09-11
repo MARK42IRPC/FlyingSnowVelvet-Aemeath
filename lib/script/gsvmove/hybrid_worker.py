@@ -41,79 +41,6 @@ def _bundled_python_path(app_root: Path) -> Path | None:
     return candidate if candidate.is_file() else None
 
 
-def _get_cuda_nvidia_bin_dirs(python_path: Path) -> tuple[Path, ...]:
-    """Return pip-installed NVIDIA DLL directories for an isolated venv."""
-    runtime_root = Path(python_path).parent.parent
-    bundle_dir = _get_cuda_bundle_bin_dir(python_path)
-    site_packages = runtime_root / "Lib" / "site-packages"
-    nvidia_root = site_packages / "nvidia"
-    try:
-        directories = [
-            path
-            for path in sorted(nvidia_root.glob("*/bin"))
-            if path.is_dir()
-        ]
-    except OSError:
-        directories = []
-    if bundle_dir is not None:
-        directories.insert(0, bundle_dir)
-    result = []
-    seen = set()
-    for directory in directories:
-        key = os.path.normcase(str(directory))
-        if key not in seen:
-            seen.add(key)
-            result.append(directory)
-    return tuple(result)
-
-
-def _get_cuda_bundle_bin_dir(python_path: Path) -> Path | None:
-    """Read the installed bundle marker and return its safe DLL directory."""
-    runtime_root = Path(python_path).parent.parent
-    marker_path = runtime_root / "runtime.json"
-    try:
-        payload = json.loads(marker_path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, TypeError, ValueError):
-        return None
-    if not isinstance(payload, dict) or payload.get("source") != "bundle":
-        return None
-    relative = str(payload.get("dll_directory") or "").replace("\\", "/").strip()
-    if not relative or relative.startswith("/") or ":" in relative.split("/", 1)[0]:
-        return None
-    candidate = runtime_root / Path(*relative.split("/"))
-    resolved_root = runtime_root.resolve()
-    resolved_candidate = candidate.resolve()
-    try:
-        resolved_candidate.relative_to(resolved_root)
-    except ValueError:
-        return None
-    return candidate if candidate.is_dir() else None
-
-
-def _preload_onnxruntime_dlls(
-    provider: str,
-    runtime_module=None,
-    *,
-    dll_directory: Path | None = None,
-) -> None:
-    """Load CUDA DLLs before importing the project or creating model sessions."""
-    if provider != "cuda":
-        return
-    if runtime_module is None:
-        import onnxruntime as runtime_module
-    preload = getattr(runtime_module, "preload_dlls", None)
-    if callable(preload):
-        directory = dll_directory
-        if directory is None:
-            configured = str(os.environ.get("AEMEATH_CUDA_DLL_DIR", "") or "").strip()
-            if configured:
-                directory = Path(configured)
-        if directory is not None and Path(directory).is_dir():
-            preload(directory=str(directory))
-        else:
-            preload()
-
-
 def _terminate_worker_process_tree(process: subprocess.Popen) -> None:
     if process.poll() is not None:
         return
@@ -224,11 +151,6 @@ class VoiceWorkerRuntime:
             for entry in str(env.get("PATH") or "").split(os.pathsep)
             if "pyqt5\\qt5\\bin" not in entry.replace("/", "\\").lower()
         ]
-        if provider == "cuda":
-            path_entries = [
-                str(path)
-                for path in _get_cuda_nvidia_bin_dirs(Path(python_path))
-            ] + path_entries
         env["PATH"] = os.pathsep.join(path_entries)
         creationflags = (
             getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -243,7 +165,7 @@ class VoiceWorkerRuntime:
             "runpy.run_path(worker,run_name='__main__')"
         )
         bundled_python = _bundled_python_path(project_root)
-        if provider == "cpu" and bundled_python is not None:
+        if provider in {"cpu", "cuda"} and bundled_python is not None:
             python_path = bundled_python
         try:
             self._process = subprocess.Popen(
@@ -445,20 +367,31 @@ class HybridVoiceWorkerRuntime(VoiceWorkerRuntime):
 
 
 class CudaVoiceWorkerRuntime(VoiceWorkerRuntime):
-    def __init__(self, package_root: Path, output_root: Path) -> None:
-        from config.voice_runtime import (
-            get_cuda_python_path,
-            is_cuda_runtime_ready,
-        )
+    """N-card acceleration backed by the self-written CUDA runtime.
 
-        if not is_cuda_runtime_ready():
-            raise VoiceWorkerError("NVIDIA CUDA 语音运行时未安装，请在设置中安装N卡推理环境")
+    The native backend needs nothing but the NVIDIA display driver and replaces
+    the old multi-gigabyte downloaded ORT bundle.  It is a single DLL shipped
+    with the release, so unlike DirectML there is no per-machine environment to
+    install and no site-packages overlay to mount.
+
+    The parent process only checks that the DLL is present; the worker performs
+    the real driver check and reports failures through the startup handshake.
+    """
+
+    def __init__(self, package_root: Path, output_root: Path) -> None:
+        from lib.core.voice_runtime_contract import resolve_cuda_voice_runtime_path
+
+        library = resolve_cuda_voice_runtime_path()
+        if library is None:
+            raise VoiceWorkerError(
+                "自研 CUDA 推理端不可用：缺少 fsv_cuda_voice_runtime.dll"
+            )
+        self.library_path = library
         super().__init__(
             package_root,
             output_root,
             provider="cuda",
-            python_path=get_cuda_python_path(),
-            isolate_user_site=True,
+            python_path=Path(sys.executable),
         )
 
 
@@ -482,15 +415,6 @@ def _run_worker(package_root: Path, output_root: Path, provider: str) -> int:
     output_root.mkdir(parents=True, exist_ok=True)
     try:
         with contextlib.redirect_stdout(sys.stderr):
-            # Load ORT before project configuration so Qt's bundled DLLs cannot
-            # shadow the execution provider's native dependencies.
-            import onnxruntime as _onnxruntime_preload
-            _preload_onnxruntime_dlls(
-                provider,
-                _onnxruntime_preload,
-                dll_directory=_get_cuda_bundle_bin_dir(Path(sys.executable)),
-            )
-
             from lib.script.gsvmove.onnx_runtime import OnnxVoiceRuntime
 
             runtime = OnnxVoiceRuntime(package_root, provider=provider)
