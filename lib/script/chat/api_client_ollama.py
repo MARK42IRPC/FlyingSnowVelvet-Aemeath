@@ -11,7 +11,12 @@ from lib.core.logger import get_logger
 from ._multimodal import images_to_ollama_payload
 from .api_client_common import _ApiClientCommonMixin, multimodal_cooldown
 from .api_client_error import _ApiClientErrorMixin
-from .native_tools import NATIVE_TOOL_SYSTEM_NOTE, NativeToolCallAccumulator, get_native_tool_definitions
+from .native_tools import (
+    LEGACY_TOOL_SYSTEM_NOTE,
+    NATIVE_TOOL_SYSTEM_NOTE,
+    NativeToolCallAccumulator,
+    get_native_tool_definitions,
+)
 
 logger = get_logger(__name__)
 
@@ -80,6 +85,8 @@ class _ApiClientOllamaMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
         if native_tools_enabled:
             payload["messages"][0]["content"] = f"{persona.rstrip()}\n\n{NATIVE_TOOL_SYSTEM_NOTE}"
             payload["tools"] = get_native_tool_definitions()
+        elif allow_tools:
+            payload["messages"][0]["content"] = f"{persona.rstrip()}\n\n{LEGACY_TOOL_SYSTEM_NOTE}"
         resp = requests.post(
             f"{OLLAMA_BASE_URL}/api/chat",
             json=payload,
@@ -140,7 +147,8 @@ class _ApiClientOllamaMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
     @multimodal_cooldown
     def _generate_api(self, message: str, persona: str, model: str,
                       on_chunk_emit=None, images: list[bytes] = None,
-                      history: list[dict] | None = None) -> str:
+                      history: list[dict] | None = None,
+                      allow_tools: bool = True) -> str:
         """
         POST /api/generate（prompt 格式，所有 ollama 版本均支持）。
 
@@ -156,6 +164,8 @@ class _ApiClientOllamaMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
         name    = self._extract_character_name(persona)
         history_prompt = self._build_generate_history_prompt(history, name)
         prompt_parts = [persona]
+        if allow_tools:
+            prompt_parts.append(LEGACY_TOOL_SYSTEM_NOTE)
         if history_prompt:
             prompt_parts.append(f"[最近对话]\n{history_prompt}")
         prompt_parts.append(f"用户：{message}\n{name}：")

@@ -320,6 +320,7 @@ class OllamaSessionMixin:
                         full_text = self._generate_api(
                             message, persona, model,
                             on_chunk_emit=chunk_fn, images=current_images, history=history,
+                            allow_tools=allow_tools,
                         )
                         if model != self._selected_model:
                             logger.info("[OllamaManager] 使用备用模型成功: %s (/api/generate)", model)

@@ -9,9 +9,13 @@ from unittest.mock import patch
 from lib.script.chat.api_client_ollama import _ApiClientOllamaMixin
 from lib.script.chat.api_client_openai import _ApiClientOpenAIMixin
 from lib.script.chat.native_tools import (
+    LEGACY_TOOL_SYSTEM_NOTE,
     NativeToolCallAccumulator,
+    add_legacy_tool_instruction,
+    add_native_tool_instruction,
     get_native_tool_definitions,
     native_tool_to_dispatch,
+    strip_legacy_tool_protocol,
 )
 from lib.script.chat.ollama_session import OllamaSessionMixin
 
@@ -45,6 +49,77 @@ class NativeToolCallingTests(unittest.TestCase):
         self.assertIn("play_music", names)
         self.assertIn("inspect_screen", names)
         self.assertTrue(all(name.isascii() for name in names))
+
+    def test_legacy_fallback_instruction_replaces_the_persona_markers(self):
+        messages = [{"role": "system", "content": "persona"}]
+
+        injected = add_legacy_tool_instruction(messages)
+
+        self.assertEqual(messages[0]["content"], "persona")
+        self.assertTrue(injected[0]["content"].startswith("persona"))
+        self.assertIn(LEGACY_TOOL_SYSTEM_NOTE, injected[0]["content"])
+        self.assertIn("###音乐", injected[0]["content"])
+
+    def test_legacy_persona_block_is_stripped_at_request_time(self):
+        legacy = "\n".join((
+            "你是爱弥斯。",
+            "[输出格式]",
+            "4. 如需调用工具：///主题///正文###指令 参数###",
+            "5. 工具命令必须放在整句末尾，且每次最多一个工具命令。",
+            "[工具清单]",
+            "使用示例1：///日常///这就召唤雪豹！###雪豹 3###",
+            "1. ###音乐 歌名###：召唤音响并播放音乐。",
+            "[工具使用规则]",
+            "1. 除“回忆”“窥屏”外，其他工具不得主动调用。",
+        ))
+
+        cleaned = strip_legacy_tool_protocol(legacy)
+
+        self.assertNotIn("###", cleaned)
+        self.assertNotIn("[工具清单]", cleaned)
+        self.assertIn("你是爱弥斯。", cleaned)
+        self.assertIn("除“回忆”“窥屏”外", cleaned)
+
+    def test_legacy_stripper_keeps_markdown_headings_and_plain_text(self):
+        text = "# 标题\n\n### 子标题\n\n普通段落。"
+
+        self.assertEqual(strip_legacy_tool_protocol(text), text)
+
+    def test_runtime_persona_drops_legacy_tool_markers(self):
+        from types import SimpleNamespace
+
+        from lib.script.chat.handler_persona import ChatHandlerPersonaMixin
+
+        holder = SimpleNamespace(
+            _persona="你是爱弥斯。\n1. ###音乐 歌名###：召唤音响。",
+            _build_recent_memory_block=lambda: "",
+        )
+
+        runtime = ChatHandlerPersonaMixin._build_runtime_persona(holder)
+
+        self.assertIn("你是爱弥斯。", runtime)
+        self.assertNotIn("###", runtime)
+
+    def test_native_instruction_keeps_messages_untouched(self):
+        messages = [{"role": "system", "content": "persona"}]
+
+        injected = add_native_tool_instruction(messages)
+
+        self.assertEqual(messages, [{"role": "system", "content": "persona"}])
+        self.assertIn("原生函数工具", injected[0]["content"])
+
+    def test_openai_legacy_payloads_keep_the_plain_gateway_fallback(self):
+        payloads = [{
+            "model": "test",
+            "messages": [{"role": "system", "content": "persona"}],
+            "stream": True,
+        }]
+
+        variants = _ApiClientOpenAIMixin._append_legacy_tool_payloads(payloads)
+
+        self.assertIn("###音乐", variants[0]["messages"][0]["content"])
+        self.assertNotIn("tools", variants[0])
+        self.assertEqual(variants[-1]["messages"][0]["content"], "persona")
 
     def test_openai_fragments_are_merged_into_one_validated_call(self):
         accumulator = NativeToolCallAccumulator()
@@ -150,6 +225,48 @@ class NativeToolCallingTests(unittest.TestCase):
             )
 
         self.assertNotIn("tools", post.call_args.kwargs["json"])
+
+    def test_ollama_chat_falls_back_to_the_text_protocol(self):
+        response = _StreamResponse([{"message": {"content": "ok"}, "done": True}])
+
+        with patch.object(
+            _ApiClientOllamaMixin, "_native_tools_available", return_value=False
+        ), patch("lib.script.chat.api_client_ollama.requests.post", return_value=response) as post:
+            _ApiClientOllamaMixin()._chat_api("放首歌", "persona", "test-model")
+
+        payload = post.call_args.kwargs["json"]
+        self.assertNotIn("tools", payload)
+        self.assertIn("###音乐", payload["messages"][0]["content"])
+
+    def test_ollama_chat_omits_the_fallback_when_tools_are_disabled(self):
+        response = _StreamResponse([{"message": {"content": "ok"}, "done": True}])
+
+        with patch.object(
+            _ApiClientOllamaMixin, "_native_tools_available", return_value=False
+        ), patch("lib.script.chat.api_client_ollama.requests.post", return_value=response) as post:
+            _ApiClientOllamaMixin()._chat_api(
+                "放首歌", "persona", "test-model", allow_tools=False
+            )
+
+        self.assertEqual(post.call_args.kwargs["json"]["messages"][0]["content"], "persona")
+
+    def test_ollama_generate_prompt_carries_the_text_protocol(self):
+        response = _StreamResponse([{"response": "ok", "done": True}])
+
+        with patch("lib.script.chat.api_client_ollama.requests.post", return_value=response) as post:
+            _ApiClientOllamaMixin()._generate_api("放首歌", "你是爱弥斯。", "test-model")
+
+        self.assertIn("###音乐", post.call_args.kwargs["json"]["prompt"])
+
+    def test_ollama_generate_omits_the_protocol_when_tools_are_disabled(self):
+        response = _StreamResponse([{"response": "ok", "done": True}])
+
+        with patch("lib.script.chat.api_client_ollama.requests.post", return_value=response) as post:
+            _ApiClientOllamaMixin()._generate_api(
+                "放首歌", "你是爱弥斯。", "test-model", allow_tools=False
+            )
+
+        self.assertNotIn("###音乐", post.call_args.kwargs["json"]["prompt"])
 
     def test_completion_callback_keeps_single_argument_compatibility(self):
         session = OllamaSessionMixin()

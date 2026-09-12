@@ -5,6 +5,7 @@ from datetime import datetime
 from lib.core.logger import get_logger
 
 from .handler_stream_presenter import _strip_tool_commands_for_display
+from .native_tools import strip_legacy_tool_protocol
 from .persona_storage import resolve_persona_file_path
 
 logger = get_logger(__name__)
@@ -87,7 +88,7 @@ class ChatHandlerPersonaMixin:
         """
         now_text = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         time_suffix = f'当前时间：{now_text}'
-        base = (self._persona or '').strip()
+        base = strip_legacy_tool_protocol(self._persona or '').strip()
         memory_block = "" if skip_memory_block else self._build_recent_memory_block()
 
         sections: list[str] = []

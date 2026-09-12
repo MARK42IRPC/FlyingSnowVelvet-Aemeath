@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 import json
+import re
 from typing import Any
 
 
@@ -11,6 +12,54 @@ NATIVE_TOOL_SYSTEM_NOTE = (
     "当前请求提供原生函数工具。需要执行工具时必须直接调用对应函数，"
     "不要在正文中输出任何 ###指令###；不需要工具时只返回正常正文。"
 )
+
+# Gateways that reject the OpenAI ``tools`` field fall back to the historical
+# text protocol. The syntax lives here instead of the user-facing persona so the
+# character prompt no longer teaches the marker format.
+_LEGACY_TOOL_LINES = (
+    "1. ###音乐 歌名###：召唤音响并播放音乐。",
+    "2. ###下一曲###：播放下一首；###暂停###：播放/暂停切换。",
+    "3. ###回忆 主题### 或 ###回忆 开始时间 到 结束时间 主题###：回忆历史内容。",
+    "4. ###雪豹 数量### / ###沙发 数量### / ###摩托 数量###：生成对应物品。",
+    "5. ###闹钟 秒### 或 ###计时 秒###：生成倒计时闹钟（默认30秒）。",
+    "6. ###音量 值###：调音量（+10 / -10 / 50）。",
+    "7. ###瞬移 x y###：按 0~1 坐标瞬移，1 为左/上，0 为右/下。",
+    "8. ###浏览器 网址###：用系统默认浏览器打开 HTTP(S) 链接。",
+    "9. ###窥屏###：查看漂泊者目前的状态。",
+)
+
+LEGACY_TOOL_SYSTEM_NOTE = (
+    "当前请求不支持原生函数工具，请改用文本命令协议：\n"
+    "1. 需要工具时，在整句末尾追加一个 ###命令 参数###，每次回复最多一个。\n"
+    "2. 不需要工具时只返回正常正文，不要在正文出现任何 ### 标记。\n"
+    "可用命令：\n" + "\n".join(_LEGACY_TOOL_LINES)
+)
+
+# Closed markers such as ###音乐 纸飞机### are the retired text protocol.
+# Markdown headings ("### 标题") have no closing marker and stay untouched.
+_LEGACY_MARKER_LINE = re.compile(r"###[^#\n]{1,60}###")
+_LEGACY_SECTION_HEADER = "[工具清单]"
+
+
+def strip_legacy_tool_protocol(text: str) -> str:
+    """Drop persona lines that still teach the retired ###指令### protocol.
+
+    Personas are user-owned files, so an installation that predates native
+    function calling keeps its old ``[工具清单]`` block until the user edits it.
+    Removing those lines at request time keeps the marker syntax out of the
+    model prompt without rewriting the user's file.
+    """
+    kept: list[str] = []
+    for line in str(text or "").splitlines():
+        stripped = line.strip()
+        if stripped.startswith(_LEGACY_SECTION_HEADER):
+            continue
+        if _LEGACY_MARKER_LINE.search(line):
+            continue
+        if "工具命令" in line and ("末尾" in line or "最多" in line):
+            continue
+        kept.append(line)
+    return "\n".join(kept)
 
 
 def _function_tool(name: str, description: str, properties: dict | None = None,
@@ -115,12 +164,21 @@ def get_native_tool_definitions() -> list[dict]:
 
 def add_native_tool_instruction(messages: list[dict]) -> list[dict]:
     """Clone messages and add the native-tool rule without changing legacy payloads."""
+    return _add_tool_instruction(messages, NATIVE_TOOL_SYSTEM_NOTE)
+
+
+def add_legacy_tool_instruction(messages: list[dict]) -> list[dict]:
+    """Clone messages and add the text-command fallback for gateways without tools."""
+    return _add_tool_instruction(messages, LEGACY_TOOL_SYSTEM_NOTE)
+
+
+def _add_tool_instruction(messages: list[dict], note: str) -> list[dict]:
     cloned = deepcopy(messages)
     for message in cloned:
         if not isinstance(message, dict) or message.get("role") != "system":
             continue
         content = str(message.get("content") or "").rstrip()
-        message["content"] = f"{content}\n\n{NATIVE_TOOL_SYSTEM_NOTE}" if content else NATIVE_TOOL_SYSTEM_NOTE
+        message["content"] = f"{content}\n\n{note}" if content else note
         return cloned
 
     for message in reversed(cloned):
@@ -128,13 +186,13 @@ def add_native_tool_instruction(messages: list[dict]) -> list[dict]:
             continue
         content = message.get("content")
         if isinstance(content, str):
-            message["content"] = f"{NATIVE_TOOL_SYSTEM_NOTE}\n\n{content}"
+            message["content"] = f"{note}\n\n{content}"
             return cloned
         if isinstance(content, list):
             for block in content:
                 if isinstance(block, dict) and block.get("type") in ("text", "input_text"):
                     text = str(block.get("text") or "")
-                    block["text"] = f"{NATIVE_TOOL_SYSTEM_NOTE}\n\n{text}"
+                    block["text"] = f"{note}\n\n{text}"
                     return cloned
     return cloned
 

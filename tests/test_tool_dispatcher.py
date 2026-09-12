@@ -180,11 +180,17 @@ class ToolDispatcherTests(unittest.TestCase):
         info = next(event for event in events if event.type == EventType.INFORMATION)
         self.assertIn('未能打开', info.data['text'])
 
-    def test_persona_lists_every_supported_command(self):
+    def test_persona_no_longer_teaches_the_legacy_command_markers(self):
         persona = (Path(__file__).resolve().parents[1] / 'resc' / 'persona.txt').read_text(encoding='utf-8')
+        self.assertNotIn('###', persona)
+        self.assertIn('function calling', persona)
+
+    def test_legacy_fallback_prompt_still_lists_every_supported_command(self):
+        from lib.script.chat.native_tools import LEGACY_TOOL_SYSTEM_NOTE
+
         for command in _SUPPORTED_COMMANDS:
             with self.subTest(command=command):
-                self.assertIn(f'###{command}', persona)
+                self.assertIn(f'###{command}', LEGACY_TOOL_SYSTEM_NOTE)
 
 
 if __name__ == '__main__':
