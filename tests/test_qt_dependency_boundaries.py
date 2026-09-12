@@ -253,6 +253,45 @@ class QtDependencyBoundaryTests(unittest.TestCase):
     def test_core_event_protocol_has_no_toolkit_render_callback(self):
         self.assertFalse(hasattr(EventType, "DRAW_RENDER"))
 
+    def test_gui_never_requests_open_gl_or_a_web_engine(self):
+        # The payload drops Qt's software OpenGL rasterizer because nothing here
+        # asks Qt for a GL context.  This is the other half of that decision: a
+        # GL, Quick or WebEngine widget would need ``opengl32sw.dll`` shipped
+        # (and the ANGLE pair) again.
+        repo_root = Path(__file__).resolve().parents[1]
+        forbidden_tokens = (
+            "QtOpenGL",
+            "QtQuick",
+            "QtQml",
+            "QtWebEngine",
+            "QOpenGLWidget",
+            "QOpenGLContext",
+            "QOpenGLWindow",
+            "QSurfaceFormat",
+            "QQuickWidget",
+            "AA_UseSoftwareOpenGL",
+            "AA_UseDesktopOpenGL",
+            "AA_UseOpenGLES",
+        )
+        for path in (repo_root / "lib").rglob("*.py"):
+            source = path.read_text(encoding="utf-8-sig")
+            for token in forbidden_tokens:
+                self.assertNotIn(token, source, f"{path.relative_to(repo_root)}: {token}")
+
+    def test_unimplemented_backends_stay_disabled_while_the_payload_omits_gl(self):
+        from lib.core.backend_router import get_backend_descriptors
+        from scripts import build_offline_distribution as distribution
+
+        unavailable = {
+            descriptor.backend_id
+            for descriptor in get_backend_descriptors()
+            if not descriptor.available
+        }
+        # Enabling OpenGL (or adding a GL widget) means restoring the software
+        # rasterizer in ``QT_BIN_FILES``; keep the two facts in sync.
+        self.assertLessEqual({"opengl", "vulkan"}, unavailable)
+        self.assertNotIn("opengl32sw.dll", distribution.QT_BIN_FILES)
+
     def test_core_graphics_contract_has_no_toolkit_images_or_painter_callbacks(self):
         repo_root = Path(__file__).resolve().parents[1]
         graphics_root = repo_root / "lib" / "core" / "graphics"

@@ -276,13 +276,21 @@ def validate_payload(payload: Path) -> None:
         "jieba_fast/source/",
     )
     forbidden_site_suffixes = (".p", ".cc", ".lib", ".obj")
+    # Qt's software OpenGL rasterizer only loads when something asks for a GL
+    # context and the hardware paths failed; the workbench never does, so the
+    # payload drops it (guarded by tests/test_qt_dependency_boundaries.py).
+    forbidden_site_names = ("opengl32sw.dll",)
     site_prefix_folded = site_prefix.casefold()
     for path in folded_entries:
         if not path.startswith(site_prefix_folded):
             continue
         relative = path[len(site_prefix_folded):]
-        if relative.startswith(forbidden_site_prefixes) or relative.endswith(forbidden_site_suffixes):
-            raise SystemExit(f"payload 含有已剪枝的 Python 依赖文件：{path}")
+        if (
+            relative.startswith(forbidden_site_prefixes)
+            or relative.endswith(forbidden_site_suffixes)
+            or relative.rsplit("/", 1)[-1] in forbidden_site_names
+        ):
+            raise SystemExit(f"payload 含有已剪枝的依赖文件：{path}")
     if not any(path.startswith("app/resc/models/vosk-model-small-cn-0.22/") for path in folded_entries):
         raise SystemExit("payload 缺少 Vosk 中文识别模型")
     if not any(path.startswith("app/resc/models/vosk-model-small-en-us-0.15/") for path in folded_entries):

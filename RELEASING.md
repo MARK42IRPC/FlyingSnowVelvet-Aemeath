@@ -128,4 +128,5 @@ git diff --check
 `jieba_fast` 和 DirectML overlay，并确认不存在 `SEanima.zip`、Torch、NVIDIA、CUDA
 DLL、历史 green 资产或 ZIP 发布资产。site-packages 里还必须没有纯 Python `jieba`、
 `jieba_fast/analyse`、`jieba_fast/source`，也没有 `*.p`、`*.cc`、`*.lib`、`*.obj`
-这类开发期文件（`scripts/build_offline_installer.py` 会直接拒绝这样的 payload）。
+这类开发期文件，以及 Qt 的软件 OpenGL 回退 `opengl32sw.dll`
+（`scripts/build_offline_installer.py` 会直接拒绝这样的 payload）。

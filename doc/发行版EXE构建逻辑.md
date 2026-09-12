@@ -31,7 +31,9 @@ dist/FlyingSnowVelvet-<version>-Offline-Installer.exe
 metadata 解析依赖，并剪掉测试、文档、头文件/C++ 源码/链接期文件、缓存和未使用
 Qt/Node 子树。纯 Python `jieba`、`jieba_fast` 的关键词抽取与 SWIG 源码、只用 Jython
 加载的 `*.p` 概率表、npm 包内的 Yarn 插件、仓库根目录的测试日志与开发者 `py.ini`
-同样不进包。
+同样不进包。Qt 的软件 OpenGL 回退 `opengl32sw.dll` 也不进包：工作台不渲染 OpenGL
+（没有 `QOpenGLWidget`、Qt Quick 或 Qt WebEngine，`opengl` 后端未实现），
+`tests/test_qt_dependency_boundaries.py` 负责在有人引入 GL 用法时拦住。
 
 基础包明确拒绝 Torch、CUDA、NVIDIA、TensorRT、`onnxruntime-gpu`；DirectML 只在
 `runtime/onnx-directml/1.22.0-cp311-win_amd64` 中以独立 overlay 提供。启动器设置

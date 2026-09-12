@@ -270,7 +270,9 @@ QT_BIN_FILES = (
     "Qt5Network.dll",
     "libEGL.dll",
     "libGLESv2.dll",
-    "opengl32sw.dll",
+    # Qt's software OpenGL rasterizer (20 MiB) stays out: no workbench code asks
+    # for a GL context, and ``tests/test_qt_dependency_boundaries.py`` fails if
+    # that ever changes.
     "d3dcompiler_47.dll",
     "msvcp140.dll",
     "msvcp140_1.dll",
