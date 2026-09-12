@@ -20,8 +20,11 @@
 - 离线包依赖再剪枝约 53 MiB：移除从未被导入的纯 Python `jieba`（36 MiB）、`jieba_fast`
   的关键词抽取与 SWIG 源码、只用 Jython 加载的 `*.p` 概率表、`onnx` 的 C++ 源码、
   `numpy` 的链接期 `.lib`、Node 包内的 Yarn 插件，并阻止仓库根目录的测试日志与开发者
-  `py.ini` 进入 payload；payload 从 828.9 MiB 降到 776.0 MiB，安装器从 419,605,210
-  字节降到 393,106,317 字节。
+  `py.ini` 进入 payload。
+- 仓库根目录的设计预览页不再进包：`local_pages/` 改名为不跟踪的 `.localpage/`，
+  `.gitignore`、payload 收集与安装器归档都跳过新名和旧名，重复的 HarmonyOS 字体与
+  GIF 素材不再随包发布。两轮剪枝后 payload 从 828.9 MiB 降到 767.7 MiB，安装器从
+  419,605,210 字节降到 386,633,436 字节。
 
 ### Fixed
 - 修正文字闪动特效被矩形裁剪的问题。

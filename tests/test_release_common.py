@@ -118,5 +118,16 @@ class ReleaseCommonTests(unittest.TestCase):
         # The rule is scoped to the root: nested logs stay part of the package.
         self.assertFalse(excluded(Path("lib") / "script" / "runtime.log"))
 
+    def test_release_packages_exclude_local_preview_pages(self):
+        # The designer preview stays on disk next to the checkout; its fonts and
+        # GIFs duplicate shipped assets, so no build may sweep it into ``app/``.
+        for relative in (
+            Path(".localpage") / "index.html",
+            Path(".localpage") / "assets" / "media" / "pet-idle.gif",
+            Path("local_pages") / "index.html",
+        ):
+            with self.subTest(path=relative.as_posix()):
+                self.assertTrue(excluded(relative))
+
 if __name__ == '__main__':
     unittest.main()

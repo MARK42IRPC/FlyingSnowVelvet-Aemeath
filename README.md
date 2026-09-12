@@ -171,7 +171,8 @@ py -3 -m unittest tests.test_openai_dashscope_multimodal
   由设置面板按需启用。
 - 安装器使用原生 ZIP 解压和尾部 SHA-256 校验，安装过程显示当前文件、百分比、文件/字节
   进度和预计剩余时间；安装结束后由用户点击“退出安装并启动飞行雪绒”。
-- 用户数据、密钥、登录态、日志和缓存保存在 `C:\AemeathDeskPet`，不进入 payload。
+- 用户数据、密钥、登录态、日志和缓存保存在 `C:\AemeathDeskPet`，不进入 payload；
+  仓库根的本地设计预览页 `.localpage/` 既不跟踪也不进包。
 
 ## 许可证与声明
 

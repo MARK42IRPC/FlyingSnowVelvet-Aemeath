@@ -186,6 +186,10 @@ EXCLUDED_PARTS = {
     "dist",
     "logs",
     "用户反馈",
+    # The designer preview lives in the repository root only; its fonts and GIFs
+    # are duplicates of shipped assets and nothing reads them at runtime.
+    "local_pages",
+    ".localpage",
     ".tmp-workbench-repro",
     "native/dx_backend",
     "resc/playwright",

@@ -41,6 +41,9 @@ Qt/Node 子树。纯 Python `jieba`、`jieba_fast` 的关键词抽取与 SWIG �
 `resc/GIF/SEanima/` 必须以文件夹进入 payload，`SEanima.zip` 只可作为构建输入，
 不得出现在最终 manifest。Vosk 中英文模型目录同样直接进入 payload。用户设置、密钥、
 登录态、日志和缓存保存在 `C:\AemeathDeskPet`，不进入发行包。
+仓库根目录的设计预览页（`.localpage/`，旧名 `local_pages/`）只在本机保留：
+`.gitignore` 不跟踪它，构建器也不把它复制进 `app/`，旧工作区里的 `app/local_pages/`
+会被安装器归档过滤器丢弃。
 
 ## 单 EXE 协议
 

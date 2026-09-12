@@ -223,6 +223,27 @@ class OfflineDistributionTests(unittest.TestCase):
             )
             self.assertNotIn("app/doc/维护手册.md", paths)
 
+    def test_archive_view_drops_local_preview_pages(self):
+        # Staging skips the preview folder; the installer filter refuses a stale
+        # ``app/local_pages`` tree staged by an older workspace.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            payload = Path(tmpdir) / "payload"
+            for relative in (
+                Path("app") / ".localpage" / "index.html",
+                Path("app") / "local_pages" / "assets" / "fonts" / "HarmonyOS_Sans_SC_Bold.ttf",
+                Path("app") / "lib" / "core" / "qt_desktop_pet.py",
+            ):
+                path = payload / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"x")
+
+            paths = {relative for _, relative in installer._archive_entries(payload)}
+
+            self.assertIn("app/lib/core/qt_desktop_pet.py", paths)
+            self.assertFalse(
+                [path for path in paths if ".localpage" in path or "local_pages" in path]
+            )
+
     def test_directml_wheel_is_expanded_as_minimal_isolated_overlay(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

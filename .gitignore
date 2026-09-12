@@ -68,5 +68,8 @@ FlyingSnowVelvet-*.zip
 oprate/
 .oprate/
 
-# Local preview pages
+# Local preview pages: an on-disk design mock, never tracked or packaged.
+# ``local_pages/`` is the pre-rename name and stays ignored so an older checkout
+# cannot commit it by accident.
 local_pages/
+.localpage/
