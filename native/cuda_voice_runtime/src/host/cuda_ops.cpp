@@ -1141,6 +1141,40 @@ int fsv_cuda_fill_f32(fsv_cuda_ptr destination, size_t count, float value) {
     return kOk;
 }
 
+int fsv_cuda_argmax_i64(fsv_cuda_ptr input, fsv_cuda_ptr output, long long outer,
+                        long long mid, long long inner) {
+    if (!input || !output || outer <= 0 || mid <= 0 || inner <= 0) {
+        fsv::nv_set_error("invalid argmax arguments");
+        return kInvalidArgument;
+    }
+    const unsigned long long count =
+        static_cast<unsigned long long>(outer) * static_cast<unsigned long long>(inner);
+    if (!launch_1d("fsv_argmax_i64", count, device_pointer<float>(input),
+                   reinterpret_cast<long long*>(output), outer, mid, inner)) {
+        return kDriverFailure;
+    }
+    return kOk;
+}
+
+int fsv_cuda_instance_norm_f32(fsv_cuda_ptr input, fsv_cuda_ptr scale, fsv_cuda_ptr bias,
+                               fsv_cuda_ptr output, long long rows, long long channels,
+                               long long spatial, float epsilon) {
+    if (!input || !output || rows <= 0 || channels <= 0 || spatial <= 0) {
+        fsv::nv_set_error("invalid instance-norm arguments");
+        return kInvalidArgument;
+    }
+    /* One block per (batch, channel) row: the reduction and the normalisation
+       both walk the row, so the statistics never leave shared memory. */
+    if (!launch("fsv_instance_norm_f32", static_cast<unsigned>(rows), 1, 256, 1,
+                device_pointer<float>(input),
+                scale ? device_pointer<float>(scale) : nullptr,
+                bias ? device_pointer<float>(bias) : nullptr,
+                reinterpret_cast<float*>(output), rows, channels, spatial, epsilon)) {
+        return kDriverFailure;
+    }
+    return kOk;
+}
+
 int fsv_cuda_gather_f32(fsv_cuda_ptr data, fsv_cuda_ptr indices, fsv_cuda_ptr output,
                         long long outer, long long index_count, long long inner,
                         long long axis_size) {

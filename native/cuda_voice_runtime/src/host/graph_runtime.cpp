@@ -3745,6 +3745,124 @@ bool device_batch_norm(const std::vector<Tensor*>& inputs, float epsilon, Tensor
     }
     return true;
 }
+
+/* Pad in constant mode is a fill of the result plus one strided copy of the
+   operand into the box it occupies. The host version pulled the operand back
+   and walked every output element, and vits_v2pro evaluates 97 of them for its
+   attention masks, so each one was a queue drain for a few hundred kilobytes.
+   The other modes (edge, wrap, reflect) still take the host path: they read
+   neighbouring elements, which the copy's coordinate walk cannot express. */
+bool device_pad(const std::vector<Tensor*>& inputs, const std::vector<int64_t>& pads,
+                float value, const std::string& mode, Tensor& output) {
+    if (!mode.empty() && mode != "constant") return device_decline(inputs);
+    if (!device_ready(inputs, 1)) return device_decline(inputs);
+    const Tensor& source = *inputs[0];
+    const int64_t rank = static_cast<int64_t>(source.shape.size());
+    if (rank <= 0) return device_decline(inputs);
+    if (pads.size() != static_cast<std::size_t>(rank) * 2) return device_decline(inputs);
+    std::vector<int64_t> output_shape(source.shape);
+    for (int64_t dim = 0; dim < rank; ++dim) {
+        const int64_t begin = pads[static_cast<std::size_t>(dim)];
+        const int64_t end = pads[static_cast<std::size_t>(dim + rank)];
+        if (begin < 0 || end < 0) return device_decline(inputs);
+        output_shape[static_cast<std::size_t>(dim)] += begin + end;
+    }
+    const int64_t count = source.numel();
+    if (count <= 0) return device_decline(inputs);
+    output = device_tensor(output_shape, 1);
+    if (!adopt_device_output(output)) return device_decline(inputs);
+    const std::vector<int64_t> source_strides = strides_for(source.shape);
+    const std::vector<int64_t> output_strides = strides_for(output_shape);
+    fsv_cuda_index index = {};
+    int64_t destination_base = 0;
+    for (int64_t dim = 0; dim < rank; ++dim) {
+        const std::size_t slot = static_cast<std::size_t>(dim);
+        index.shape[slot] = source.shape[slot];
+        index.a_stride[slot] = source_strides[slot];
+        index.b_stride[slot] = output_strides[slot];
+        destination_base += pads[slot] * output_strides[slot];
+    }
+    index.rank = static_cast<int>(rank);
+    const fsv_cuda_ptr operand = ensure_device(*inputs[0]);
+    const fsv_cuda_ptr destination = output.device->pointer;
+    if (!operand ||
+        fsv_cuda_fill_f32(destination, static_cast<std::size_t>(output.numel()), value) != 0 ||
+        fsv_cuda_copy_nd_f32(operand, destination, static_cast<std::size_t>(count), 0,
+                             destination_base, static_cast<int>(rank), &index) != 0) {
+        output = Tensor();
+        return device_decline(inputs);
+    }
+    return true;
+}
+
+/* ArgMax is the token decision of the decode loop: the host version read the
+   logits back to find one index, which drained the queue 126 times a synthesis
+   for a scalar. The scan order matches the host reference, so a tie keeps the
+   lowest index. */
+bool device_argmax(const std::vector<Tensor*>& inputs, int64_t axis, bool keepdims,
+                   Tensor& output) {
+    if (!device_ready(inputs, 1)) return device_decline(inputs);
+    const Tensor& source = *inputs[0];
+    const int64_t rank = static_cast<int64_t>(source.shape.size());
+    if (rank <= 0) return device_decline(inputs);
+    if (axis < 0) axis += rank;
+    if (axis < 0 || axis >= rank) return device_decline(inputs);
+    std::vector<int64_t> output_shape = source.shape;
+    if (keepdims) {
+        output_shape[static_cast<std::size_t>(axis)] = 1;
+    } else {
+        output_shape.erase(output_shape.begin() + axis);
+    }
+    const int64_t outer = numel(std::vector<int64_t>(
+        source.shape.begin(), source.shape.begin() + axis));
+    const int64_t width = source.shape[static_cast<std::size_t>(axis)];
+    const int64_t inner = numel(std::vector<int64_t>(
+        source.shape.begin() + axis + 1, source.shape.end()));
+    if (outer <= 0 || width <= 0 || inner <= 0) return device_decline(inputs);
+    output = device_tensor(output_shape, 7);
+    if (!adopt_device_output(output)) return device_decline(inputs);
+    const fsv_cuda_ptr values = ensure_device(*inputs[0]);
+    if (!values || fsv_cuda_argmax_i64(values, output.device->pointer, outer, width,
+                                       inner) != 0) {
+        output = Tensor();
+        return device_decline(inputs);
+    }
+    return true;
+}
+
+/* InstanceNormalization reduces over the trailing dimensions of
+   [batch][channels][spatial...]. The host version read the whole activation
+   back and folded nine million elements one at a time; one block per
+   (batch, channel) row keeps both passes on the card. */
+bool device_instance_norm(const std::vector<Tensor*>& inputs, float epsilon,
+                          Tensor& output) {
+    if (inputs.size() < 3 || !inputs[1] || !inputs[2]) return device_decline(inputs);
+    if (!device_ready(inputs, 1)) return device_decline(inputs);
+    if (inputs[1]->dtype != 1 || inputs[2]->dtype != 1) return device_decline(inputs);
+    const Tensor& input = *inputs[0];
+    if (input.shape.size() < 3) return device_decline(inputs);
+    const int64_t batch = input.shape[0];
+    const int64_t channels = input.shape[1];
+    const int64_t spatial = numel(std::vector<int64_t>(
+        input.shape.begin() + 2, input.shape.end()));
+    if (batch <= 0 || channels <= 0 || spatial <= 0) return device_decline(inputs);
+    if (inputs[1]->numel() < channels || inputs[2]->numel() < channels) {
+        return device_decline(inputs);
+    }
+    output = device_tensor(input.shape, 1);
+    if (!adopt_device_output(output)) return device_decline(inputs);
+    const fsv_cuda_ptr value = ensure_device(*inputs[0]);
+    const fsv_cuda_ptr scale = ensure_device(*inputs[1]);
+    const fsv_cuda_ptr bias = ensure_device(*inputs[2]);
+    if (!value || !scale || !bias ||
+        fsv_cuda_instance_norm_f32(value, scale, bias, output.device->pointer,
+                                   batch * channels, channels, spatial,
+                                   epsilon) != 0) {
+        output = Tensor();
+        return device_decline(inputs);
+    }
+    return true;
+}
 std::vector<int64_t> axes_from_input(const Value& value, const fsv::AttributeProto* attr) {
     if (value.tensor) {
         std::vector<int64_t> axes;
@@ -4210,7 +4328,9 @@ bool GraphRuntime::run(const std::unordered_map<std::string, Tensor>& feeds,
             if (const fsv::AttributeProto* mode_attr = find_attr(node, "mode")) {
                 pad_mode = mode_attr->s;
             }
-            output = pad_tensor(inputs[0], pads, value, inputs[0].dtype, pad_mode);
+            if (!device_pad(slots, pads, value, pad_mode, output)) {
+                output = pad_tensor(inputs[0], pads, value, inputs[0].dtype, pad_mode);
+            }
             layout_shape_note("pad " + shape_text(inputs[0].shape) + " -> " +
                               shape_text(output.shape) + " mode=" + pad_mode);
         } else if (op == "Resize") {
@@ -4296,10 +4416,13 @@ bool GraphRuntime::run(const std::unordered_map<std::string, Tensor>& feeds,
         } else if (op == "Tile") {
             output = tile_tensor(inputs[0], ints_from_tensor(inputs[1]));
         } else if (op == "ArgMax") {
-            output = argmax_tensor(inputs[0], attr_int(node, "axis", 0),
-                                   attr_int(node, "keepdims", 1) != 0);
+            const int64_t argmax_axis = attr_int(node, "axis", 0);
+            const bool argmax_keepdims = attr_int(node, "keepdims", 1) != 0;
+            if (!device_argmax(slots, argmax_axis, argmax_keepdims, output)) {
+                output = argmax_tensor(inputs[0], argmax_axis, argmax_keepdims);
+            }
             layout_shape_note("argmax " + shape_text(inputs[0].shape) + " axis=" +
-                              std::to_string(attr_int(node, "axis", 0)) + " -> " +
+                              std::to_string(argmax_axis) + " -> " +
                               shape_text(output.shape));
         } else if (op == "TopK") {
             multi_outputs = topk_tensors(inputs[0], read_int_scalar(inputs[1]),
@@ -4445,7 +4568,9 @@ bool GraphRuntime::run(const std::unordered_map<std::string, Tensor>& feeds,
         } else if (op == "InstanceNormalization") {
             float epsilon = 1e-5f;
             if (const fsv::AttributeProto* eps_attr = find_attr(node, "epsilon")) epsilon = eps_attr->f;
-            output = instance_normalization_tensor(inputs[0], inputs[1], inputs[2], epsilon);
+            if (!device_instance_norm(slots, epsilon, output)) {
+                output = instance_normalization_tensor(inputs[0], inputs[1], inputs[2], epsilon);
+            }
         } else if (op == "CumSum") {
             int64_t axis = read_int_scalar(inputs[1], 0);
             Tensor source = inputs[0];

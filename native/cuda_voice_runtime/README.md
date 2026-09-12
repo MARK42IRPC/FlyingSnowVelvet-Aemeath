@@ -57,6 +57,19 @@ build\cuda_voice_runtime\Release\fsv_engine_smoke.exe
 内部做的上传与回读不在其中，两者相加才是驱动统计的总量。逐算子耗时是累计值，
 跨图累计，做差分才能得到单张图的数字。
 
+## 算子快路径
+
+主机实现先要把手上的张量回读成字节，所以解码链路上的算子都配了设备路径，分派在
+`src/host/graph_runtime.cpp`，每条路径的判据（也是正确性条件）列在
+`doc/自研CUDA极简推理端.md` 的“设备快路径与前提”表里。已经进公开头文件
+`include/fsv_cuda_voice_runtime.h` 的有：`GatherElements`、`ScatterElements`、
+`Where`、`ArgMax`、`InstanceNormalization`、块归约、通道仿射、标量缩放与转置
+快路径；`Pad` 的 constant 模式复用 `fsv_cuda_fill_f32` + `fsv_cuda_copy_nd_f32`，
+不单独出接口。
+
+加一个设备算子按“设计约束”第 2 条办：`fsv_engine_smoke` 里补 CPU/CUDA 对照用例，
+再把接口、内核、分派与文档绑进 `tests/test_cuda_runtime_compat.py` 的断言里。
+
 ## 设计约束
 
 1. 运行期不得引入 cudart、cuBLAS、ONNX Runtime 或任何 CUDA 工具链组件。

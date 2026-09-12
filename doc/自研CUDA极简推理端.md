@@ -226,6 +226,22 @@ fp32/fp16 包的驱动侧一次合成就占 2.45 s（见“三档语音包”）
    （见下文第 2、5 条），剩下的是 1×1 卷积、约 3.6 万次逐元素/拷贝/转置启动，
    以及零散形状。
 
+### 工具本身的开销（这一轮实测）
+
+- 打开 `FSV_NATIVE_OPSTATS` 会把一次合成从 2.33 s 抬到 4.80 s（每个节点一次加锁的
+  字符串查表加一次时钟读取）。**op-stats 的墙钟列只能用来排序，不能按百分比引用**，
+  更不能拿它估算某个算子改完能省多少。
+- 一个进程里第一次合成比之后每次慢约 2.4 s（cuda `[3.61, 2.34, 2.33]`，cpu 同样
+  `[5.25, 2.73, 2.74]`）：那是 PTX 的首次 JIT 与显存、主机缓冲的首次落位。只比较
+  `best`，`median` 会被它抬高。
+- 上传的暂存池不是隐藏的同步点：整个进程约 14000 次上传只触发约 15 次
+  `cuStreamSynchronize`（入口的 `stream_idle` 命中约 2000 次，其余都命中复用）。
+  怀疑"上传在偷偷排空队列"时先量这个，不要凭感觉改。
+- 阻塞回读：三次合成 1605 次、`busy` 1.25 s、真实搬运 0.11 s。`busy` 是墙钟减去
+  搬运，也就是主机等队列排空的时间，**它可以在节点之间挪动**：`[op-slow]` 报某个
+  节点 149 ms，通常指的是"它排到队尾时前面还压着 149 ms 的核函数"，不是那个算子
+  自己花了 149 ms。这一轮把该节点的回读整段拿掉之后，端到端没有变化，正是这个原因。
+
 **判据只有一个：改一处、看同进程 `best` 比值动不动**，并且改之前先确认机器是安静的
 （见上一节）。不要用计时器去选优化点。
 
@@ -260,11 +276,16 @@ fp32/fp16 包的驱动侧一次合成就占 2.45 s（见“三档语音包”）
 | `fsv_cuda_reduce_block_f32` | 被归约的轴是连续的一段（`[outer][mid][inner]`） | 坐标遍历；累加用 double，与主机路径同精度 |
 | `fsv_cuda_gather_elements_f32` | 数据是 float32、索引是 int64，且除被索引轴外形状一致 | 每步一次整张量回读 |
 | `fsv_cuda_where_f32` | 条件是 bool(9)、两个操作数是 float32；三操作数全连续 / 一个操作数是单元素 / 通用坐标遍历三条子路径 | 主机实现要回读全部三个操作数，解码循环里每个生成帧排空一次队列 |
+| `fsv_cuda_instance_norm_f32` | 输入 float32、rank ≥ 3，scale/bias 是逐通道的 float32 | 主机实现对整张激活逐元素回读并逐元素走两遍（hubert 的特征提取器一次合成 36 MB） |
+| `fsv_cuda_argmax_i64` | 输入 float32，目标轴折成 `[outer][mid][inner]` | 解码每步为取一个下标回读整份 logits；扫描顺序与主机一致，相等取最小下标 |
+| `fsv_cuda_fill_f32` + `fsv_cuda_copy_nd_f32` | Pad 的 `mode` 是 `constant`（或空）、pads 全为非负、数据 float32 | 主机实现回读操作数后逐元素走一遍输出；`edge`/`wrap`/`reflect` 仍走主机 |
 
 `fsv_cuda_transpose_tile_f32`、`fsv_cuda_transpose_swap_f32`、
 `fsv_cuda_reduce_block_f32`、`fsv_cuda_scale_into_f32`、`fsv_cuda_gather_elements_f32`
 、`fsv_cuda_where_f32`（配 `fsv_cuda_where_index`）是公开 C 接口；改签名要同步
 `include/fsv_cuda_voice_runtime.h`、`tools/fsv_engine_smoke.exe` 的用例和本文档。
+`fsv_cuda_argmax_i64`、`fsv_cuda_instance_norm_f32` 与 `fsv_cuda_scatter_elements_f32`
+同样在公开头文件里，加算子时一并补上自检用例。
 
 `Where` 的三条子路径由 host 侧按 stride 选，判据本身就是正确性条件：连续路径要求
 三个操作数都按结果布局连续，标量路径要求条件与非标量操作数连续且另一个操作数
@@ -349,10 +370,13 @@ cpu/cuda 的 `best` 比值。GPU 是当前的限速环节（依据见“开销�
    把 Concat 的多操作数合成一次启动、把 Gemm 的 transpose 折进矩阵乘，
    都是几万个内核里成百上千次的量级；`Split`/`Slice` 的连续拷贝仍是一次启动
    一个框。
-4. 设备化的回读点。`Where` 已完成（951 → 661 次回读/合成），剩下的主机实现是
-   `TopK`/`ArgMax`（各约 126 次）、`Pad`（约 97 次）和 `(graph-output)`
-   （约 164 次，调用方确实要字节）。前三者可以设备化，但 `Where` 的实测结果说明
-   砍回读点本身收益有限（限速环节在 GPU），所以这一项排在形状子图折叠与内核之后。
+4. ~~设备化的回读点~~（本轮已完成 `ArgMax`/`Pad`/`InstanceNormalization`，其中
+   `(graph-output)` 与 `TopK` 仍未设备化）。实测一次合成的阻塞回读从 539 次 /
+   103 MB 降到 442 次 / 61 MB：`ArgMax` 的 126 次、`InstanceNormalization` 的
+   36 MB 整张回读、`Pad` 的 98 次（只剩 1 次非 constant 模式）全部归零，新增的
+   只有 `Pad` 每次两发启动。同进程 `best` 比值 0.85×–0.88×，与改动前持平——
+   **回读的字节从来不是成本，成本是那一次排空**，去掉一个同步点只会把等待挪到
+   下一个同步点，所以这一项按收益仍然排在形状子图折叠与内核之后。
 5. 1×1 卷积与 batched MatMul。`m == 1` 的 batched MatMul 本轮换成了 GEMV 快路径：
    一个 256 线程的块负责 32 个输出列，块内 8 个 warp 各走 k 的一段（切分只在 warp
    之间，warp 内部仍是连续 32 列，否则 k-major 权重的访存会散成 32 条缓存行），

@@ -185,6 +185,19 @@ FSV_CUDA_API int fsv_cuda_fill_f32(fsv_cuda_ptr destination, size_t count, float
 FSV_CUDA_API int fsv_cuda_reduce_block_f32(fsv_cuda_ptr source, fsv_cuda_ptr destination,
                                            long long outer, long long mid, long long inner,
                                            int operation);
+/* Index of the first maximum along the middle axis of a [outer][mid][inner]
+   view, written as int64. ArgMax is the token decision of the decode loop, so
+   leaving it on the host made every step drain the queue for one scalar. */
+FSV_CUDA_API int fsv_cuda_argmax_i64(fsv_cuda_ptr input, fsv_cuda_ptr output,
+                                     long long outer, long long mid, long long inner);
+/* InstanceNormalization over the trailing dimensions of a
+   [rows][spatial] view, with the per-channel scale and bias applied
+   afterwards. ``rows`` is batch * channels, so the channel of a row is
+   ``row % channels``. */
+FSV_CUDA_API int fsv_cuda_instance_norm_f32(fsv_cuda_ptr input, fsv_cuda_ptr scale,
+                                            fsv_cuda_ptr bias, fsv_cuda_ptr output,
+                                            long long rows, long long channels,
+                                            long long spatial, float epsilon);
 /* destination = source * factor over a contiguous run. The factor rides as a
    kernel argument instead of a one-element tensor that has to be uploaded and
    broadcast on every Gemm. */

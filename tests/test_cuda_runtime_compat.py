@@ -96,6 +96,47 @@ class DeviceQuerySurfaceTests(unittest.TestCase):
         self.assertIn('"native_device_info"', module)
 
 
+class DeviceOperatorSurfaceTests(unittest.TestCase):
+    """The operators that used to run on the host and read their operand back.
+
+    Each one is pinned in four places at once -- the C entry point, the kernel,
+    the graph runtime's dispatch and the smoke test -- and a path that is only
+    wired in three of them silently falls back to the host loop it replaced.
+    """
+
+    def setUp(self):
+        self.header = _read(_NATIVE / "include" / "fsv_cuda_voice_runtime.h")
+        self.kernels = _read(_NATIVE / "src" / "kernels" / "fsv_kernels.cu")
+        self.runtime = _read(_NATIVE / "src" / "host" / "graph_runtime.cpp")
+        self.smoke = _read(_NATIVE / "tools" / "fsv_engine_smoke.cpp")
+
+    def test_new_entries_are_public(self):
+        for name in ("fsv_cuda_argmax_i64", "fsv_cuda_instance_norm_f32",
+                     "fsv_cuda_scatter_elements_f32"):
+            self.assertIn(f"FSV_CUDA_API int {name}(", self.header)
+
+    def test_kernels_back_every_entry(self):
+        for name in ("fsv_argmax_i64", "fsv_instance_norm_f32",
+                     "fsv_scatter_elements_f32"):
+            self.assertIn(f"void {name}(", self.kernels)
+
+    def test_graph_runtime_prefers_the_device_path(self):
+        for name in ("device_argmax", "device_instance_norm", "device_pad",
+                     "device_scatter_elements"):
+            self.assertIn(f"bool {name}(", self.runtime)
+
+    def test_smoke_test_has_a_case_per_path(self):
+        for name in ("argmax_dev", "instance_norm_dev", "pad_constant_dev",
+                     "scatter_elements_dev"):
+            self.assertIn(f'"{name}"', self.smoke)
+
+    def test_documents_list_the_device_paths(self):
+        doc = _read(_DOC)
+        for name in ("fsv_cuda_argmax_i64", "fsv_cuda_instance_norm_f32"):
+            self.assertIn(name, doc)
+        self.assertIn("设备快路径与前提", _read(_NATIVE / "README.md"))
+
+
 class CompatibilityDocumentationTests(unittest.TestCase):
     def test_documents_name_the_shipped_ptx_target(self):
         self.assertIn("`compute_61`", _read(_DOC))

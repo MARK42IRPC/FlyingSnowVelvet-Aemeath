@@ -765,6 +765,176 @@ void run_scatter_elements_case() {
                        : error_detail());
 }
 
+/* ArgMax keeps the lowest index when two values tie, which is what the host
+   reference does and what the decode loop's token pick relies on. */
+void run_argmax_case() {
+    const int outer = 3;
+    const int mid = 4;
+    const int inner = 2;
+    std::vector<float> input(static_cast<std::size_t>(outer) * mid * inner);
+    for (std::size_t index = 0; index < input.size(); ++index) {
+        input[index] = static_cast<float>(index % 7) * 0.25f;
+    }
+    /* A pair of equal maxima: the first one has to win. */
+    input[static_cast<std::size_t>((1 * mid + 2) * inner + 0)] = 9.0f;
+    input[static_cast<std::size_t>((1 * mid + 3) * inner + 0)] = 9.0f;
+    input[static_cast<std::size_t>((2 * mid + 1) * inner + 1)] = 5.0f;
+    std::vector<long long> expected(static_cast<std::size_t>(outer) * inner, 0);
+    for (int o = 0; o < outer; ++o) {
+        for (int in = 0; in < inner; ++in) {
+            float best = -std::numeric_limits<float>::infinity();
+            long long best_index = 0;
+            for (int step = 0; step < mid; ++step) {
+                const float value =
+                    input[static_cast<std::size_t>((o * mid + step) * inner + in)];
+                if (value > best) {
+                    best = value;
+                    best_index = step;
+                }
+            }
+            expected[static_cast<std::size_t>(o) * inner + in] = best_index;
+        }
+    }
+    fsv_cuda_ptr input_device = 0;
+    fsv_cuda_ptr output_device = 0;
+    const std::size_t input_bytes = input.size() * sizeof(float);
+    const std::size_t output_bytes = expected.size() * sizeof(long long);
+    bool ok = fsv_cuda_device_alloc(input_bytes, &input_device) == 0 &&
+              fsv_cuda_device_alloc(output_bytes, &output_device) == 0 &&
+              fsv_cuda_device_upload(input_device, input.data(), input_bytes) == 0;
+    int status = -1;
+    if (ok) status = fsv_cuda_argmax_i64(input_device, output_device, outer, mid, inner);
+    std::vector<long long> actual(expected.size(), -1);
+    if (ok && status == 0) {
+        ok = fsv_cuda_device_download(actual.data(), output_device, output_bytes) == 0;
+    }
+    if (input_device) fsv_cuda_device_free(input_device, input_bytes);
+    if (output_device) fsv_cuda_device_free(output_device, output_bytes);
+    bool same = ok && status == 0 && actual.size() == expected.size();
+    for (std::size_t index = 0; same && index < expected.size(); ++index) {
+        same = actual[index] == expected[index];
+    }
+    report("argmax_dev", same,
+           status == 0 ? (same ? "indices match" : "index mismatch") : error_detail());
+}
+
+/* InstanceNormalization folds each (batch, channel) row over the trailing
+   dimensions and then applies the per-channel scale and bias. */
+void run_instance_norm_case() {
+    const int batch = 1;
+    const int channels = 2;
+    const int spatial = 5;
+    const float epsilon = 1e-5f;
+    std::vector<float> input = {0.5f, -1.0f, 2.0f, 0.25f, 3.0f,
+                                1.5f, 0.0f, -2.5f, 0.75f, 1.0f};
+    std::vector<float> scale = {2.0f, 0.5f};
+    std::vector<float> bias = {0.5f, -0.25f};
+    std::vector<float> expected(input.size(), 0.0f);
+    for (int channel = 0; channel < channels; ++channel) {
+        double mean = 0.0;
+        double square = 0.0;
+        for (int step = 0; step < spatial; ++step) {
+            const double value = input[static_cast<std::size_t>(channel * spatial + step)];
+            mean += value;
+            square += value * value;
+        }
+        mean /= spatial;
+        const double variance = square / spatial - mean * mean;
+        const double inverse = 1.0 / std::sqrt(variance + epsilon);
+        for (int step = 0; step < spatial; ++step) {
+            const std::size_t slot = static_cast<std::size_t>(channel * spatial + step);
+            expected[slot] = static_cast<float>((input[slot] - mean) * inverse * scale[
+                static_cast<std::size_t>(channel)] + bias[static_cast<std::size_t>(channel)]);
+        }
+    }
+    fsv_cuda_ptr input_device = 0;
+    fsv_cuda_ptr scale_device = 0;
+    fsv_cuda_ptr bias_device = 0;
+    fsv_cuda_ptr output_device = 0;
+    const std::size_t input_bytes = input.size() * sizeof(float);
+    const std::size_t channel_bytes = static_cast<std::size_t>(channels) * sizeof(float);
+    bool ok = fsv_cuda_device_alloc(input_bytes, &input_device) == 0 &&
+              fsv_cuda_device_alloc(channel_bytes, &scale_device) == 0 &&
+              fsv_cuda_device_alloc(channel_bytes, &bias_device) == 0 &&
+              fsv_cuda_device_alloc(input_bytes, &output_device) == 0 &&
+              fsv_cuda_device_upload(input_device, input.data(), input_bytes) == 0 &&
+              fsv_cuda_device_upload(scale_device, scale.data(), channel_bytes) == 0 &&
+              fsv_cuda_device_upload(bias_device, bias.data(), channel_bytes) == 0;
+    int status = -1;
+    if (ok) {
+        status = fsv_cuda_instance_norm_f32(input_device, scale_device, bias_device,
+                                           output_device, batch * channels, channels,
+                                           spatial, epsilon);
+    }
+    std::vector<float> actual(expected.size(), 0.0f);
+    if (ok && status == 0) {
+        ok = fsv_cuda_device_download(actual.data(), output_device, input_bytes) == 0;
+    }
+    if (input_device) fsv_cuda_device_free(input_device, input_bytes);
+    if (scale_device) fsv_cuda_device_free(scale_device, channel_bytes);
+    if (bias_device) fsv_cuda_device_free(bias_device, channel_bytes);
+    if (output_device) fsv_cuda_device_free(output_device, input_bytes);
+    report("instance_norm_dev", ok && status == 0 && close_enough(expected, actual, 1e-5),
+           status == 0 ? "max err " + std::to_string(max_abs_error(expected, actual))
+                       : error_detail());
+}
+
+/* Pad in constant mode is the fill plus one strided copy the graph runtime now
+   issues, so this covers both entries the fast path depends on. */
+void run_pad_case() {
+    const int rows = 2;
+    const int columns = 3;
+    std::vector<float> source(static_cast<std::size_t>(rows) * columns);
+    for (std::size_t index = 0; index < source.size(); ++index) {
+        source[index] = static_cast<float>(index) + 0.5f;
+    }
+    const long long begin_rows = 1;
+    const long long begin_columns = 1;
+    const int out_rows = rows + static_cast<int>(begin_rows);
+    const int out_columns = columns + static_cast<int>(begin_columns + 2);
+    std::vector<float> expected(static_cast<std::size_t>(out_rows) * out_columns, 0.0f);
+    for (int row = 0; row < rows; ++row) {
+        for (int column = 0; column < columns; ++column) {
+            expected[static_cast<std::size_t>(row + begin_rows) * out_columns +
+                     static_cast<std::size_t>(column + begin_columns)] =
+                source[static_cast<std::size_t>(row) * columns + column];
+        }
+    }
+    fsv_cuda_index index{};
+    index.rank = 2;
+    index.shape[0] = rows;
+    index.shape[1] = columns;
+    index.a_stride[0] = columns;
+    index.a_stride[1] = 1;
+    index.b_stride[0] = out_columns;
+    index.b_stride[1] = 1;
+    const long long destination_base = begin_rows * out_columns + begin_columns;
+    fsv_cuda_ptr source_device = 0;
+    fsv_cuda_ptr output_device = 0;
+    const std::size_t source_bytes = source.size() * sizeof(float);
+    const std::size_t output_bytes = expected.size() * sizeof(float);
+    bool ok = fsv_cuda_device_alloc(source_bytes, &source_device) == 0 &&
+              fsv_cuda_device_alloc(output_bytes, &output_device) == 0 &&
+              fsv_cuda_device_upload(source_device, source.data(), source_bytes) == 0;
+    int status = -1;
+    if (ok) {
+        status = fsv_cuda_fill_f32(output_device, expected.size(), 0.0f);
+        if (status == 0) {
+            status = fsv_cuda_copy_nd_f32(source_device, output_device, source.size(), 0,
+                                          destination_base, 2, &index);
+        }
+    }
+    std::vector<float> actual(expected.size(), 0.0f);
+    if (ok && status == 0) {
+        ok = fsv_cuda_device_download(actual.data(), output_device, output_bytes) == 0;
+    }
+    if (source_device) fsv_cuda_device_free(source_device, source_bytes);
+    if (output_device) fsv_cuda_device_free(output_device, output_bytes);
+    report("pad_constant_dev", ok && status == 0 && close_enough(expected, actual, 1e-6),
+           status == 0 ? "max err " + std::to_string(max_abs_error(expected, actual))
+                       : error_detail());
+}
+
 /* Where(condition, a, b) with a byte condition. Three shapes matter: all three
    operands contiguous (the decoder's mask build), the condition broadcast over
    the result (the generic walk) and one operand a single value (the attention
@@ -857,6 +1027,9 @@ void check_device_operators() {
     run_reduce_case("reduce_block_l2", 3, 5, 2, 3);
     run_gather_elements_case();
     run_scatter_elements_case();
+    run_argmax_case();
+    run_instance_norm_case();
+    run_pad_case();
     run_where_case("where_contiguous", false, false, false);
     run_where_case("where_condition_broadcast", true, false, false);
     run_where_case("where_scalar_right", false, false, true);

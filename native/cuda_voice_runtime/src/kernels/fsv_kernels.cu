@@ -857,6 +857,78 @@ FSV_KERNEL void fsv_reduce_block_f32(const float* input, float* output,
     output[slot] = static_cast<float>(accumulator);
 }
 
+/* Index of the first maximum along one axis of a [outer][mid][inner] view.
+   One thread per output slot, walked in the same order the host reference uses
+   so ties keep the lowest index. */
+FSV_KERNEL void fsv_argmax_i64(const float* input, long long* output,
+                               long long outer, long long mid, long long inner) {
+    const long long slot = static_cast<long long>(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (slot >= outer * inner || mid <= 0) return;
+    const long long row = slot / inner;
+    const long long column = slot % inner;
+    const float* base = input + row * mid * inner + column;
+    float best = -CUDART_INF_F;
+    long long best_index = 0;
+    for (long long step = 0; step < mid; ++step) {
+        const float value = base[step * inner];
+        if (value > best) {
+            best = value;
+            best_index = step;
+        }
+    }
+    output[slot] = best_index;
+}
+
+/* InstanceNormalization over the trailing dimensions: every (batch, channel)
+   row is normalised on its own, then scaled and shifted per channel. One block
+   owns one row, so the statistics never leave the block. The host path folded
+   the row on the CPU, which meant a read-back of the whole activation; this
+   keeps it on the card. */
+FSV_KERNEL void fsv_instance_norm_f32(const float* input, const float* scale,
+                                      const float* bias, float* output, long long rows,
+                                      long long channels, long long spatial, float epsilon) {
+    const long long row = blockIdx.x;
+    if (row >= rows || spatial <= 0) return;
+    const float* base = input + row * spatial;
+    __shared__ double partial_sum[256];
+    __shared__ double partial_square[256];
+    double sum = 0.0;
+    double square = 0.0;
+    for (long long index = threadIdx.x; index < spatial; index += blockDim.x) {
+        const double value = static_cast<double>(base[index]);
+        sum += value;
+        square += value * value;
+    }
+    partial_sum[threadIdx.x] = sum;
+    partial_square[threadIdx.x] = square;
+    __syncthreads();
+    for (int step = blockDim.x / 2; step > 0; step >>= 1) {
+        if (threadIdx.x < step) {
+            partial_sum[threadIdx.x] += partial_sum[threadIdx.x + step];
+            partial_square[threadIdx.x] += partial_square[threadIdx.x + step];
+        }
+        __syncthreads();
+    }
+    __shared__ float row_mean;
+    __shared__ float row_inverse;
+    if (threadIdx.x == 0) {
+        const double mean = partial_sum[0] / static_cast<double>(spatial);
+        const double variance =
+            partial_square[0] / static_cast<double>(spatial) - mean * mean;
+        row_mean = static_cast<float>(mean);
+        row_inverse = 1.0f / sqrtf(static_cast<float>(variance) + epsilon);
+    }
+    __syncthreads();
+    const long long channel = channels > 0 ? row % channels : 0;
+    const float gain = scale ? scale[channel] : 1.0f;
+    const float shift = bias ? bias[channel] : 0.0f;
+    const float mean = row_mean;
+    const float inverse = row_inverse;
+    for (long long index = threadIdx.x; index < spatial; index += blockDim.x) {
+        output[row * spatial + index] = (base[index] - mean) * inverse * gain + shift;
+    }
+}
+
 /* Multiply a run of floats by a scalar that travels as a kernel argument. The
    graph used to build a one-element tensor, upload it and run a broadcast pass
    for every Gemm it evaluated; the factor costs nothing here. */
