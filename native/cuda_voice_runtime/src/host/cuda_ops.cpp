@@ -242,6 +242,13 @@ int fsv_cuda_get_device_info(int index, fsv_cuda_device_info* out) {
 
 const char* fsv_cuda_last_error(void) { return fsv::nv_last_error(); }
 
+int fsv_cuda_active_device(char* name, size_t name_size) {
+    const int index = fsv::nv_active_device(name, name_size);
+    if (index < 0) return -1;
+    fsv::nv_set_error("");
+    return index;
+}
+
 int fsv_cuda_take_alloc_failure(void) { return fsv::nv_take_alloc_failure() ? 1 : 0; }
 
 int fsv_cuda_binary_f32(const float* a, const float* b, float* c, size_t count, int operation) {

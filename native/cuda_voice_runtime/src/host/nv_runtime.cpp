@@ -20,6 +20,13 @@ namespace fsv {
 /* Generated at build time from src/kernels/*.cu (see cmake/embed_ptx.cmake). */
 extern const char* const fsv_ptx_kernels_source;
 
+/* PTX target the embedded kernels were built for, injected by CMakeLists from
+   FSV_PTX_ARCH; quoted in load-failure diagnostics so the error names what the
+   driver refused rather than only that it refused something. */
+#ifndef FSV_PTX_ARCH_TARGET
+#define FSV_PTX_ARCH_TARGET "unknown"
+#endif
+
 namespace {
 
 thread_local char g_error[512] = "";
@@ -524,6 +531,13 @@ HMODULE load_driver_module() {
     return module;
 }
 
+/* First entry point a loaded nvcuda.dll did not export. A driver too old for
+   this runtime used to be reported as "a driver API entry point is missing",
+   which leaves the user nothing to act on; naming it turns the same failure
+   into a diagnosis. Every call site passes a string literal, so the pointer
+   stays valid for the process lifetime. */
+const char* g_missing_symbol = nullptr;
+
 template <typename T>
 bool resolve(HMODULE module, const char* name, T& target) {
     std::string symbol(name);
@@ -533,6 +547,7 @@ bool resolve(HMODULE module, const char* name, T& target) {
         address = ::GetProcAddress(module, (symbol + "_v2").c_str());
     }
     if (!address) {
+        if (!g_missing_symbol) g_missing_symbol = name;
         return false;
     }
     target = reinterpret_cast<T>(address);
@@ -548,6 +563,130 @@ std::string describe(const NvDriverApi& api, int status) {
     std::snprintf(buffer, sizeof(buffer), "%s (%s, code %d)",
                   text ? text : "CUDA driver error", name ? name : "unknown", status);
     return std::string(buffer);
+}
+
+/* ---------------------------------------------------------------------------
+   Device selection and the memory budget it implies.
+
+   Picking a card used to mean "highest compute capability wins", with no look
+   at memory at all. On a machine with more than one card that is the wrong
+   question: a 2 GiB card outranks a 12 GiB one that can actually hold the
+   working set, so the runtime chose the one card that was guaranteed to run
+   out of memory on the first big allocation. The rules are now:
+
+     * an explicitly requested index wins (requested_device_index);
+     * otherwise the highest compute capability among the cards that can hold
+       the working set wins, with memory and then index breaking ties;
+     * a card below kMinDeviceMemoryBytes is not chosen by default, and the
+       refusal says which cards were seen and how big they are, because
+       "your card is too small" and "no NVIDIA card found" need different
+       answers from the user.
+   --------------------------------------------------------------------------- */
+
+/* A synthesis peaks around 2.7 GiB resident on the 4 GiB laptop card this was
+   tuned on, so a card that reports less than 3 GiB cannot hold it even with
+   nothing else running. Such a card still works as a forced choice for
+   experiments, it just must not be what the switch picks by itself. */
+const std::size_t kMinDeviceMemoryBytes = 3ull << 30;
+
+/* Result of the selection above, kept for diagnostics: which card the runtime
+   settled on and the description to print for it. */
+int g_active_device = -1;
+std::string g_active_device_text;
+
+/* Ceiling the recycle pool drops to after the first refused allocation. It is
+   a share of the card too (see below), because a fixed 96 MiB is a twentieth
+   of the 4 GiB card it was tuned on. */
+std::size_t g_pool_pressure_limit = kPoolPressureLimitBytes;
+
+/* The recycle pool is a cache, so its ceiling is a share of the card rather
+   than a fixed slice: 768 MiB is a fifth of a 4 GiB card and a quarter of a
+   3 GiB one. The constants stay as the ceiling for the large cards. */
+std::size_t pool_limit_for_memory(std::size_t total_bytes) {
+    if (!total_bytes) return kPoolLimitBytes;
+    const std::size_t scaled = total_bytes / 5;
+    const std::size_t floor = 96ull << 20;
+    if (scaled < floor) return floor;
+    return scaled > kPoolLimitBytes ? kPoolLimitBytes : scaled;
+}
+
+std::size_t pool_pressure_limit_for_memory(std::size_t total_bytes) {
+    if (!total_bytes) return kPoolPressureLimitBytes;
+    const std::size_t scaled = total_bytes / 40;
+    const std::size_t floor = 24ull << 20;
+    if (scaled < floor) return floor;
+    return scaled > kPoolPressureLimitBytes ? kPoolPressureLimitBytes : scaled;
+}
+
+/* Card the user asked for: -1 automatic, -2 switched off, -3 unreadable, and
+   anything else is an index. An index is obeyed exactly, including on a card
+   the automatic rules would have skipped, because forcing one is what the
+   switch is for.
+
+   CUDA_VISIBLE_DEVICES is deliberately not read here. The driver already acts
+   on it, so the device list this runtime enumerates is the filtered one, and
+   applying its value as an index a second time would re-map a list that was
+   already remapped. Measured on the development machine: with one card present,
+   CUDA_VISIBLE_DEVICES=7 makes cuInit fail with CUDA_ERROR_NO_DEVICE, and
+   CUDA_VISIBLE_DEVICES=0 behaves exactly like leaving it unset. */
+int requested_device_index() {
+    static const int requested = [] {
+        const char* raw = std::getenv("AEMEATH_CUDA_VOICE_DEVICE");
+        if (!raw || !*raw) return -1;
+        if (std::strcmp(raw, "none") == 0 || std::strcmp(raw, "-1") == 0) return -2;
+        char* end = nullptr;
+        const long value = std::strtol(raw, &end, 10);
+        if (end == raw || *end != '\0' || value < 0) return -3;
+        return static_cast<int>(value);
+    }();
+    return requested;
+}
+
+/* "NVIDIA GeForce RTX 3050 Laptop GPU (8.6, 4.0 GiB)": every diagnostic that
+   mentions a card uses this, so a report says which card was looked at rather
+   than only that something failed. */
+std::string describe_device(const NvDriverApi& api, int index) {
+    char name[256] = "";
+    int major = 0;
+    int minor = 0;
+    std::size_t total = 0;
+    NvDevice device = 0;
+    if (api.cuDeviceGet && api.cuDeviceGet(&device, index) == 0) {
+        if (api.cuDeviceGetName) api.cuDeviceGetName(name, sizeof(name), device);
+        if (api.cuDeviceGetAttribute) {
+            api.cuDeviceGetAttribute(&major, kAttrComputeCapabilityMajor, device);
+            api.cuDeviceGetAttribute(&minor, kAttrComputeCapabilityMinor, device);
+        }
+        if (api.cuDeviceTotalMem) api.cuDeviceTotalMem(&total, device);
+    }
+    char buffer[384];
+    std::snprintf(buffer, sizeof(buffer), "%s (%d.%d, %.1f GiB)",
+                  name[0] ? name : "NVIDIA GPU", major, minor,
+                  static_cast<double>(total) / 1073741824.0);
+    return std::string(buffer);
+}
+
+/* "12.6" from the encoded driver version (major * 1000 + minor * 10). */
+std::string driver_version_text(const NvDriverApi& api) {
+    int version = 0;
+    if (!api.cuDriverGetVersion || api.cuDriverGetVersion(&version) != 0 || version <= 0) {
+        return "未知";
+    }
+    char buffer[32];
+    std::snprintf(buffer, sizeof(buffer), "%d.%d", version / 1000, (version % 1000) / 10);
+    return std::string(buffer);
+}
+
+/* Every card the driver reports, on one line. A refusal has to list what was
+   found or the user cannot tell a missing driver from a card that is too
+   small. */
+std::string list_devices(const NvDriverApi& api, int count) {
+    std::string listing;
+    for (int index = 0; index < count; ++index) {
+        if (!listing.empty()) listing += "、";
+        listing += std::to_string(index) + "=" + describe_device(api, index);
+    }
+    return listing;
 }
 
 }  // namespace
@@ -610,7 +749,9 @@ bool NvRuntime::bind(std::string& error) {
               resolve(module, "cuStreamSynchronize", a.cuStreamSynchronize) &&
               resolve(module, "cuLaunchKernel", a.cuLaunchKernel);
     if (!ok) {
-        error = "nvcuda.dll 版本过旧：缺少驱动 API 入口";
+        error = std::string("nvcuda.dll 版本过旧：缺少驱动 API 入口 ") +
+                (g_missing_symbol ? g_missing_symbol : "unknown") +
+                "，请升级显卡驱动";
         return false;
     }
     a.cuGetErrorName = nullptr;
@@ -627,6 +768,23 @@ bool NvRuntime::bind(std::string& error) {
     resolve(module, "cuEventSynchronize", a.cuEventSynchronize);
     resolve(module, "cuEventDestroy", a.cuEventDestroy);
     a.loaded = true;
+    return true;
+}
+
+/* Driver only: no device, no context. Enumerating what a machine has must keep
+   working when none of its cards is usable, otherwise "no usable device"
+   cannot be explained. Caller holds g_mutex. */
+bool NvRuntime::driver_ready(std::string& error) {
+    if (!api_.loaded && !bind(error)) {
+        init_error_ = error;
+        return false;
+    }
+    const int status = api_.cuInit(0);
+    if (status != 0) {
+        error = "初始化 CUDA 驱动失败：" + describe(api_, status);
+        init_error_ = error;
+        return false;
+    }
     return true;
 }
 
@@ -653,24 +811,29 @@ bool NvRuntime::initialize(std::string& error) {
     if (initialized_) return true;
     std::lock_guard<std::mutex> guard(g_mutex);
     if (initialized_) return true;
-    if (!api_.loaded && !bind(error)) {
-        init_error_ = error;
-        return false;
-    }
-    int status = api_.cuInit(0);
-    if (status != 0) {
-        error = "初始化 CUDA 驱动失败：" + describe(api_, status);
-        init_error_ = error;
-        return false;
-    }
+    if (!driver_ready(error)) return false;
     int count = 0;
     if (api_.cuDeviceGetCount(&count) != 0 || count <= 0) {
         error = "没有检测到可用的 NVIDIA 设备";
         init_error_ = error;
         return false;
     }
-    int best = 0;
+    const int requested = requested_device_index();
+    if (requested == -2) {
+        error = "自研 CUDA 推理端已被 AEMEATH_CUDA_VOICE_DEVICE 关闭";
+        init_error_ = error;
+        return false;
+    }
+    if (requested == -3) {
+        error = "AEMEATH_CUDA_VOICE_DEVICE 的值无效：需要设备序号，或 none 表示关闭";
+        init_error_ = error;
+        return false;
+    }
+    int best = -1;
     int best_score = -1;
+    std::size_t best_memory = 0;
+    int largest = -1;
+    std::size_t largest_memory = 0;
     for (int index = 0; index < count; ++index) {
         NvDevice device = 0;
         if (api_.cuDeviceGet(&device, index) != 0) continue;
@@ -678,28 +841,72 @@ bool NvRuntime::initialize(std::string& error) {
         int minor = 0;
         api_.cuDeviceGetAttribute(&major, kAttrComputeCapabilityMajor, device);
         api_.cuDeviceGetAttribute(&minor, kAttrComputeCapabilityMinor, device);
-        int score = major * 100 + minor;
-        if (score > best_score) {
+        std::size_t total = 0;
+        api_.cuDeviceTotalMem(&total, device);
+        if (requested >= 0) {
+            /* The explicit switch also overrides the memory floor: forcing a
+               small card is what it is for. */
+            if (index == requested) {
+                best = index;
+                best_memory = total;
+            }
+            continue;
+        }
+        if (total < kMinDeviceMemoryBytes) {
+            if (total > largest_memory) {
+                largest_memory = total;
+                largest = index;
+            }
+            continue;
+        }
+        const int score = major * 100 + minor;
+        if (score > best_score || (score == best_score && total > best_memory)) {
             best_score = score;
             best = index;
+            best_memory = total;
         }
     }
-    NvDevice device = 0;
-    if (api_.cuDeviceGet(&device, best) != 0) {
-        error = "无法打开 NVIDIA 设备";
+    if (best < 0) {
+        if (requested >= 0) {
+            error = "指定的 CUDA 设备 " + std::to_string(requested) + " 不可用：驱动报告 " +
+                    std::to_string(count) + " 个设备（" + list_devices(api_, count) + "）";
+        } else {
+            error = "没有显存足够的 NVIDIA 设备（合成需要 3.0 GiB 以上）：驱动报告 " +
+                    std::to_string(count) + " 个设备（" + list_devices(api_, count) + "）";
+            if (largest >= 0) {
+                error += "；可用 AEMEATH_CUDA_VOICE_DEVICE=" + std::to_string(largest) +
+                         " 强制使用显存最大的那块卡";
+            }
+        }
         init_error_ = error;
         return false;
     }
-    status = api_.cuCtxCreate(&context_, 0, device);
+    /* A refused context or PTX load on a chosen card is the failure a user
+       reports most often ("我的卡用不了"), so every one of these messages says
+       which card, which driver and which PTX target was involved. */
+    const std::string device_text = describe_device(api_, best);
+    g_active_device = best;
+    g_active_device_text = device_text;
+    g_pool_limit = pool_limit_for_memory(best_memory);
+    g_pool_pressure_limit = pool_pressure_limit_for_memory(best_memory);
+    NvDevice device = 0;
+    if (api_.cuDeviceGet(&device, best) != 0) {
+        error = "无法打开 CUDA 设备：" + device_text;
+        init_error_ = error;
+        return false;
+    }
+    int status = api_.cuCtxCreate(&context_, 0, device);
     if (status != 0) {
-        error = "创建 CUDA 上下文失败：" + describe(api_, status);
+        error = "在 " + device_text + " 上创建 CUDA 上下文失败：" + describe(api_, status);
         init_error_ = error;
         return false;
     }
     status = api_.cuModuleLoadData(&module_, fsv_ptx_kernels_source);
     if (status != 0) {
-        error = "加载自研 PTX 内核失败：" + describe(api_, status) +
-                "（需要 NVIDIA 驱动支持 PTX ISA 8.5，请升级显卡驱动）";
+        error = "在 " + device_text + " 上加载自研 PTX 内核失败（驱动 CUDA " +
+                driver_version_text(api_) + "，内核 PTX 目标 " + FSV_PTX_ARCH_TARGET +
+                "）：" + describe(api_, status) +
+                "；内核是 PTX 8.5，需要 555 系及以上驱动，请升级显卡驱动";
         api_.cuCtxDestroy(context_);
         context_ = nullptr;
         init_error_ = error;
@@ -782,7 +989,7 @@ bool NvRuntime::acquire(std::size_t bytes, NvPtr& pointer, std::string& error) {
     int status = api_.cuMemAlloc(&address, bucket);
     if (status != 0) {
         drain_pool();
-        g_pool_limit = kPoolPressureLimitBytes;
+        g_pool_limit = g_pool_pressure_limit;
         status = api_.cuMemAlloc(&address, bucket);
     }
     g_stats.allocate_seconds += now_seconds() - started;
@@ -943,11 +1150,23 @@ int NvRuntime::device_count() {
 bool NvRuntime::device_info(int index, int* major, int* minor, std::size_t* memory,
                             char* name, std::size_t name_size) {
     std::string error;
-    if (!initialize(error)) {
-        nv_set_error(error);
-        return false;
+    {
+        /* Enumerating the cards has to work even when none of them is usable:
+           that is exactly the case the caller needs described. */
+        std::lock_guard<std::mutex> guard(g_mutex);
+        if (!driver_ready(error)) {
+            nv_set_error(error);
+            return false;
+        }
     }
     NvDevice device = 0;
+    int total_devices = 0;
+    if (api_.cuDeviceGetCount(&total_devices) == 0 &&
+        (index < 0 || index >= total_devices)) {
+        nv_set_error("设备序号 " + std::to_string(index) + " 超范围（共 " +
+                     std::to_string(total_devices) + " 个设备）");
+        return false;
+    }
     int status = api_.cuDeviceGet(&device, index);
     if (status != 0) {
         nv_set_error(describe(api_, status));
@@ -972,10 +1191,25 @@ bool NvRuntime::device_info(int index, int* major, int* minor, std::size_t* memo
 
 int NvRuntime::driver_version() {
     std::string error;
-    if (!initialize(error)) return 0;
+    {
+        /* A driver version is a property of the driver, not of a card, so it
+           is still answerable when device selection refuses every card. */
+        std::lock_guard<std::mutex> guard(g_mutex);
+        if (!driver_ready(error)) return 0;
+    }
     int version = 0;
     if (api_.cuDriverGetVersion(&version) != 0) return 0;
     return version;
+}
+
+int nv_active_device(char* name, std::size_t name_size) {
+    std::string error;
+    if (!NvRuntime::instance().initialize(error)) {
+        nv_set_error(error);
+        return -1;
+    }
+    if (name && name_size) std::snprintf(name, name_size, "%s", g_active_device_text.c_str());
+    return g_active_device;
 }
 
 }  // namespace fsv

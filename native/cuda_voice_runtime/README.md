@@ -38,6 +38,20 @@ build\cuda_voice_runtime\Release\fsv_engine_smoke.exe
 | `FSV_NATIVE_CAPTURE` | 保留全部中间结果供比对工具读取 |
 | `FSV_NATIVE_CPU_ONLY` | 完全禁用设备路径，用于取 CPU 参考值 |
 
+## 设备选择
+
+- `fsv_cuda_active_device(name, size)` 返回本进程选中的卡，`name` 填成
+  `GeForce RTX 3050 Laptop GPU (8.6, 4.0 GiB)`；`fsv_cuda_device_count()` 返回
+  -1 表示没有可用设备，原因见 `fsv_cuda_last_error`。
+- 默认只在显存 ≥ 3 GiB 的卡里挑（一次合成常驻约 2.7 GiB），先比算力、再比显存、
+  最后比序号。2 GiB 卡在第一次大分配上就会失败，选它等于选了唯一必然失败的卡。
+- 多卡机器用 `AEMEATH_CUDA_VOICE_DEVICE=<序号>` 指定，`none` / `-1` 把设备路径
+  整个关掉。序号不存在或值不合法直接报错，指定小显存卡也照用。
+- `CUDA_VISIBLE_DEVICES` 由驱动处理，本推理端枚举到的已经是过滤后的设备表，
+  因此不再重复解析。
+- `fsv_cuda_get_device_info(index)` 只加载驱动，没有可用卡时也能列出所有卡，
+  是"为什么用不了"的诊断入口；拒绝信息会列出每张卡的名字、算力与显存。
+
 读这些数字时注意两点。`FSV_NATIVE_OPSTATS` 的传输计数只覆盖图执行自己发起的
 传输（`ensure_host` / `ensure_device`），`cuda_ops.cpp` 里 `*_host` 形式的算子在
 内部做的上传与回读不在其中，两者相加才是驱动统计的总量。逐算子耗时是累计值，

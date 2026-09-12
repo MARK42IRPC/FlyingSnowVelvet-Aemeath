@@ -9,9 +9,16 @@
 - 运行期：`nvcuda.dll`（驱动自带）+ Windows 系统 DLL。DLL 只静态链接 MSVC 运行库，
   外部依赖仅 `KERNEL32.dll`。
 - 内核以 PTX 形式内嵌在 DLL 中，由驱动首次加载时 JIT 编译，因此同一份产物可以
-  覆盖不同架构的 N 卡。目标 PTX 为 `compute_75`，驱动需支持 PTX ISA 8.5
-  （2024 年以后的 555 系及以上驱动），版本过低时 `fsv_cuda_device_count` 返回 -1
-  并通过 `fsv_cuda_last_error` 说明原因。
+  覆盖不同架构的 N 卡。目标 PTX 为 `compute_61`（Pascal / GTX 10 系及以上）：
+  `compute_75` 的 PTX 驱动无法 JIT 到更老的卡上，Pascal 用户会直接拿不到设备。
+  实测（RTX 3050，`fsv_kernel_bench`）`compute_61` 与 `compute_75` 无差别
+  （`matmul_f32 m=1 k=2048 n=512` 28.65 / 28.82 µs，INT4 同形状 39.3 / 38.0 µs），
+  而 `compute_50` 在同一批内核上慢 12%–22%，所以 61 是"白拿兼容性"的那一档。
+  要改在 `native/cuda_voice_runtime/CMakeLists.txt` 的 `FSV_PTX_ARCH`
+  （或 `tools/build_windows.cmd` 顶部）。
+- PTX ISA 版本与目标架构是两件事：CUDA 12.6 不论目标为何都输出 `.version 8.5`，
+  所以驱动仍需 555 系（2024 年）及以上，这一点不因把架构降到 `compute_61` 而改变。
+  驱动过旧时加载 PTX 会失败，错误里带卡名、算力、驱动 CUDA 版本与内核 PTX 目标。
 - 构建期：需要 `nvcc`（生成 PTX）与 Visual Studio（编译宿主 C++）。工具链只出现在
   开发机，不进入发行产物。
 
@@ -56,6 +63,42 @@ GatherElements、`Where` 的连续/条件广播/左标量/右标量四种形状�
 同一形状连续入队 200 次、末尾同步一次，报每次启动的微秒数与等效带宽。图级基准
 分辨不出单个内核的改动（几千次启动里的一次变化会淹没在墙钟噪声里），判断内核是否
 真的变快用它；输入形状用 `--package` 那套真实解码形状，不要用随手编的形状。
+
+## 设备选择与不同 N 卡的兼容性
+
+`fsv_cuda_active_device(char* name, size_t size)` 返回本进程选中的卡并把 `name`
+填成 `GeForce RTX 3050 Laptop GPU (8.6, 4.0 GiB)`，没有可用卡时返回 -1，
+`fsv_cuda_last_error` 给出原因。选址规则按优先级：
+
+| 顺序 | 规则 | 理由 |
+| --- | --- | --- |
+| 1 | `AEMEATH_CUDA_VOICE_DEVICE=<序号>` 指定卡 | 双 N 卡机器（含"小显存独显 + 大显存独显"）必须能指定；`none` / `-1` 等于把设备路径整个关掉 |
+| 2 | 只在显存 ≥ 3 GiB 的卡里比算力，算力相同比显存，再相同比序号 | 一次合成常驻约 2.7 GiB，2 GiB 卡第一次大分配就失败，选它等于选了唯一必然失败的卡 |
+| 3 | 所有卡都 < 3 GiB 时判定"没有可用设备" | 与其让"N卡加速"开着却逐节点回退，不如让上层明确回退到 DirectML / CPU |
+
+`AEMEATH_CUDA_VOICE_DEVICE` 按指令执行：序号不存在、值不是序号都直接报错，指定
+小显存卡也照用（"强制"正是它的用途），并且照样绕过显存下限。`CUDA_VISIBLE_DEVICES`
+不由本推理端解析——**驱动自己就认它**，本推理端枚举到的设备表已经是过滤后的结果；
+实测在这台机器上（单卡）`CUDA_VISIBLE_DEVICES=7` 会让 `cuInit` 直接返回
+`CUDA_ERROR_NO_DEVICE`，`CUDA_VISIBLE_DEVICES=0` 与不设该变量完全一致，所以再解析
+一次等于对已经重映射过的表再做一次映射。
+
+拒绝时的错误列出**每张卡**的名字、算力与显存，并给出"用
+`AEMEATH_CUDA_VOICE_DEVICE=<显存最大的那张>` 强制使用"的建议——"没有 N 卡"和
+"你的卡太小"对用户是两件事，旧版把两者都报成"无法打开 NVIDIA 设备"。
+
+回收池的上限同样按选中卡的显存推算（`总显存/5`，4 GiB 卡上正好等于原来的
+768 MiB），首次分配失败后的回落上限也一样（`总显存/40`），所以小显存卡不会先被
+缓存占掉一截。3 GiB 卡上池上限降到 614 MiB。
+
+`fsv_cuda_get_device_info` 与 `fsv_cuda_device_count` 的分工：前者只加载驱动、
+不建上下文，因此没有可用卡时也能列出机器上的所有卡（诊断入口）；后者要完成选址，
+返回 -1 的含义是"不可用"。
+
+温度/驱动之外还有一条硬约束：PTX 由 `FSV_PTX_ARCH` 决定最低架构，`compute_61`
+覆盖 Pascal 及以后（GTX 10 系、16 系、20/30/40 系与对应专业卡）。Maxwell
+（GTX 9 系）需要 `compute_50`，而实测它会慢 12%–22%，因此不做默认；Kepler 及更老
+的卡 CUDA 12.6 本身已不支持。
 
 ## 显存驻留
 

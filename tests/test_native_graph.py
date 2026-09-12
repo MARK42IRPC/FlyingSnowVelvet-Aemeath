@@ -15,6 +15,8 @@ from lib.script.gsvmove.native_graph import (
     NativeRuntimeUnavailable,
     _encode_path,
     load_native_library,
+    native_active_device,
+    native_device_info,
 )
 
 
@@ -422,6 +424,87 @@ class NativeRuntimePathTests(unittest.TestCase):
         for raw in ("C:/a/b.dll", "C:/voice/ONNX_aimisiV2/vits_v2pro.onnx"):
             path = Path(raw)
             self.assertEqual(_encode_path(path).decode(codec), os.fspath(path))
+
+
+class _FakeDeviceLibrary:
+    """Stand-in for the device-query half of the C ABI.
+
+    ``devices`` is a list of dicts (name, major, minor, memory) and ``active``
+    is what ``fsv_cuda_active_device`` should answer, so a test can describe a
+    machine the runtime refused as easily as one it accepted.
+    """
+
+    def __init__(self, devices=(), active=-1, active_name=""):
+        self.devices = list(devices)
+        self.active = active
+        self.active_name = active_name
+        self.queried = []
+
+    def fsv_cuda_device_count(self):
+        return len(self.devices)
+
+    def fsv_cuda_get_device_info(self, index, out):
+        self.queried.append(index)
+        if index < 0 or index >= len(self.devices):
+            return 2
+        entry = self.devices[index]
+        out.index = index
+        out.major = entry["major"]
+        out.minor = entry["minor"]
+        out.global_memory_bytes = entry["memory"]
+        out.name = entry["name"].encode("utf-8")
+        return 0
+
+    def fsv_cuda_active_device(self, buffer, size):
+        if self.active < 0:
+            return -1
+        buffer.value = self.active_name.encode("utf-8")
+        return self.active
+
+
+class NativeDeviceQueryTests(unittest.TestCase):
+    def _library(self, *args, **kwargs):
+        library = _FakeDeviceLibrary(*args, **kwargs)
+        return library, patch.object(native_module, "load_native_library", return_value=library)
+
+    def test_device_info_reports_name_capability_and_memory(self):
+        library, patcher = self._library(
+            devices=[{"name": "NVIDIA GeForce RTX 3050 Laptop GPU", "major": 8, "minor": 6,
+                      "memory": 4294443008}]
+        )
+        with patcher:
+            info = native_device_info(0)
+        self.assertEqual(library.queried, [0])
+        self.assertIsNotNone(info)
+        self.assertEqual(info.name, "NVIDIA GeForce RTX 3050 Laptop GPU")
+        self.assertEqual(info.capability, "8.6")
+        self.assertAlmostEqual(info.memory_gib, 4.0, places=1)
+
+    def test_device_info_returns_none_for_an_unknown_index(self):
+        library, patcher = self._library(
+            devices=[{"name": "NVIDIA GeForce GTX 1050", "major": 6, "minor": 1,
+                      "memory": 2147483648}]
+        )
+        with patcher:
+            self.assertIsNone(native_device_info(3))
+        self.assertEqual(library.queried, [3])
+
+    def test_active_device_reports_the_selected_card(self):
+        _, patcher = self._library(
+            devices=[{"name": "NVIDIA GeForce RTX 3050 Laptop GPU", "major": 8, "minor": 6,
+                      "memory": 4294443008}],
+            active=0,
+            active_name="NVIDIA GeForce RTX 3050 Laptop GPU (8.6, 4.0 GiB)",
+        )
+        with patcher:
+            index, description = native_active_device()
+        self.assertEqual(index, 0)
+        self.assertEqual(description, "NVIDIA GeForce RTX 3050 Laptop GPU (8.6, 4.0 GiB)")
+
+    def test_active_device_maps_a_refusal_to_minus_one(self):
+        _, patcher = self._library(devices=[], active=-1)
+        with patcher:
+            self.assertEqual(native_active_device(), (-1, ""))
 
 
 if __name__ == "__main__":

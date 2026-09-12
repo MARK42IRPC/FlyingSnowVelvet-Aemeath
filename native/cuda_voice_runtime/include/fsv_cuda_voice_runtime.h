@@ -26,6 +26,13 @@ typedef struct fsv_cuda_device_info {
 
 FSV_CUDA_API int fsv_cuda_device_count(void);
 FSV_CUDA_API int fsv_cuda_get_device_info(int index, fsv_cuda_device_info* out);
+/* Index of the card device selection picked for this process, or -1 when there
+   is none (``fsv_cuda_last_error`` then says why). ``name`` receives
+   "GeForce RTX 3050 Laptop GPU (8.6, 4.0 GiB)" when it is not null. Only cards
+   with at least 3 GiB are picked automatically, because the acoustic graphs
+   peak around 2.7 GiB; AEMEATH_CUDA_VOICE_DEVICE forces an index instead, and
+   its value "none" (or "-1") turns the device path off completely. */
+FSV_CUDA_API int fsv_cuda_active_device(char* name, size_t name_size);
 FSV_CUDA_API const char* fsv_cuda_last_error(void);
 
 /* Non-zero when a device allocation has been refused since the previous call.

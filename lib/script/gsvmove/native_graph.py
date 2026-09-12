@@ -77,6 +77,42 @@ class _GraphOutput(ctypes.Structure):
     ]
 
 
+class _CudaDeviceInfo(ctypes.Structure):
+    """Mirror of ``fsv_cuda_device_info``."""
+
+    _fields_ = [
+        ("index", ctypes.c_int),
+        ("major", ctypes.c_int),
+        ("minor", ctypes.c_int),
+        ("global_memory_bytes", ctypes.c_size_t),
+        ("name", ctypes.c_char * 256),
+    ]
+
+
+@dataclass(frozen=True)
+class NativeDeviceInfo:
+    """One NVIDIA card as the runtime sees it.
+
+    The "NVIDIA acceleration" switch is only useful if the card behind it can be
+    named, so ``name``, ``capability`` and ``memory_gib`` are what the settings
+    and log surfaces report.
+    """
+
+    index: int
+    name: str
+    major: int
+    minor: int
+    memory_bytes: int
+
+    @property
+    def capability(self) -> str:
+        return f"{self.major}.{self.minor}"
+
+    @property
+    def memory_gib(self) -> float:
+        return self.memory_bytes / 1073741824.0
+
+
 @dataclass(frozen=True)
 class NativeTensorInfo:
     """The subset of ``onnxruntime.NodeArg`` the voice archive reads.
@@ -137,6 +173,18 @@ def load_native_library(library_path=None) -> ctypes.CDLL:
         except OSError as exc:
             raise NativeRuntimeUnavailable(f"加载自研 CUDA 推理端失败：{exc}") from exc
         _bind(library, "fsv_cuda_device_count", [], ctypes.c_int)
+        _bind(
+            library,
+            "fsv_cuda_get_device_info",
+            [ctypes.c_int, ctypes.POINTER(_CudaDeviceInfo)],
+            ctypes.c_int,
+        )
+        _bind(
+            library,
+            "fsv_cuda_active_device",
+            [ctypes.c_char_p, ctypes.c_size_t],
+            ctypes.c_int,
+        )
         _bind(library, "fsv_graph_create", [ctypes.c_char_p, ctypes.c_char_p], ctypes.c_void_p)
         _bind(library, "fsv_graph_free", [ctypes.c_void_p], None)
         _bind(library, "fsv_graph_input_count", [ctypes.c_void_p], ctypes.c_int)
@@ -185,6 +233,44 @@ def native_device_count() -> int:
     """Return the device count the self-written runtime sees."""
 
     return int(load_native_library().fsv_cuda_device_count())
+
+
+def native_device_info(index: int) -> NativeDeviceInfo | None:
+    """Return one card's name, capability and memory, or ``None`` on failure.
+
+    Unlike :func:`native_device_count` this does not require a usable card: the
+    runtime binds the driver only, so every card can be listed even when none of
+    them is big enough to be selected.
+    """
+
+    raw = _CudaDeviceInfo()
+    library = load_native_library()
+    # A struct instance is passed by reference for a POINTER() argument, which
+    # also keeps the call usable with the plain-object double the tests use.
+    if int(library.fsv_cuda_get_device_info(int(index), raw)) != 0:
+        return None
+    return NativeDeviceInfo(
+        index=int(raw.index),
+        name=raw.name.decode("utf-8", "replace"),
+        major=int(raw.major),
+        minor=int(raw.minor),
+        memory_bytes=int(raw.global_memory_bytes),
+    )
+
+
+def native_active_device() -> tuple[int, str]:
+    """Return the index and description of the card the runtime selected.
+
+    ``(-1, "")`` means there is no usable card and :func:`native_last_error`
+    explains why. The description reads like
+    ``NVIDIA GeForce RTX 3050 Laptop GPU (8.6, 4.0 GiB)``.
+    """
+
+    buffer = ctypes.create_string_buffer(320)
+    index = int(load_native_library().fsv_cuda_active_device(buffer, len(buffer)))
+    if index < 0:
+        return -1, ""
+    return index, buffer.value.decode("utf-8", "replace")
 
 
 def native_last_error() -> str:
@@ -508,13 +594,16 @@ def open_native_session(model_path, external_weights=None, *, library_path=None,
 
 
 __all__ = [
+    "NativeDeviceInfo",
     "NativeDeviceTensor",
     "NativeGraphError",
     "NativeGraphSession",
     "NativeRuntimeUnavailable",
     "NativeTensorInfo",
     "load_native_library",
+    "native_active_device",
     "native_device_count",
+    "native_device_info",
     "native_last_error",
     "open_native_session",
 ]

@@ -64,6 +64,25 @@ void check_device() {
     std::snprintf(detail, sizeof(detail), "%s sm_%d%d, %.1f GB", info.name, info.major,
                   info.minor, static_cast<double>(info.global_memory_bytes) / 1073741824.0);
     report("device", true, detail);
+
+    /* Every card has to be describable, because that listing is what a refused
+       selection prints to explain itself. */
+    bool all_described = count > 0;
+    for (int index = 0; index < count && all_described; ++index) {
+        fsv_cuda_device_info entry{};
+        all_described = fsv_cuda_get_device_info(index, &entry) == 0 && entry.name[0] != '\0';
+    }
+    report("device_info_all", all_described, std::to_string(count) + " device(s)");
+
+    /* Selection may pick any index, not necessarily 0, and the caller has to be
+       able to say which card the "NVIDIA acceleration" switch landed on. */
+    char selected[320] = "";
+    const int active = fsv_cuda_active_device(selected, sizeof(selected));
+    char selection_detail[400];
+    std::snprintf(selection_detail, sizeof(selection_detail), "index %d: %s", active,
+                  selected[0] ? selected : error_detail().c_str());
+    report("device_select", active >= 0 && active < count && selected[0] != '\0',
+           selection_detail);
 }
 
 void check_matmul() {

@@ -23,6 +23,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from lib.script.gsvmove.onnx_runtime import OnnxVoiceRuntime  # noqa: E402
+from lib.script.gsvmove.native_graph import native_active_device  # noqa: E402
 
 
 STANDARD_TEXT = "帮我 check 今天 schedule，eight 点叫我。"
@@ -69,6 +70,10 @@ def run_provider(provider, args, output_dir):
             "best": min(durations),
             "median": statistics.median(durations),
             "audio": np.asarray(audio, dtype=np.float32),
+            # Which card the runtime picked belongs in the report: a benchmark
+            # on the wrong card, or on the host after a refusal, reads as a
+            # performance regression otherwise.
+            "device": native_active_device()[1] if provider == "cuda" else "",
         }
     finally:
         runtime.close()
@@ -94,6 +99,8 @@ def main() -> int:
             continue
         results.append(result)
         audio_seconds = result["audio"].size / 32000
+        if result["device"]:
+            print(f"{provider} 设备：{result['device']}")
         print(
             f"{provider:<6} load {result['load']:5.1f}s  "
             f"best {result['best']:6.2f}s  median {result['median']:6.2f}s  "

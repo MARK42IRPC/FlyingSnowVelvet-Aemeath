@@ -109,6 +109,10 @@ private:
     NvRuntime& operator=(const NvRuntime&) = delete;
 
     bool bind(std::string& error);
+    /* nvcuda.dll loaded and cuInit called, no device and no context: enough to
+       enumerate cards, so a machine with no usable one can still report what it
+       found. Caller holds the runtime lock. */
+    bool driver_ready(std::string& error);
     bool current_context(std::string& error);
 
     NvDriverApi api_;
@@ -149,6 +153,12 @@ struct NvStats {
 };
 
 NvStats& nv_stats();
+
+/* Index and description ("GeForce RTX 3050 Laptop GPU (8.6, 4.0 GiB)") of the
+   card device selection picked for this process, or -1 when there is none.
+   ``name`` may be null. Initialises the runtime, so it is also the entry point
+   a host uses to report which card the "NVIDIA acceleration" switch landed on. */
+int nv_active_device(char* name, std::size_t name_size);
 
 /* Last error text for the public C API (thread local). */
 const char* nv_last_error();

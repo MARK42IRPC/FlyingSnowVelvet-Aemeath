@@ -13,8 +13,18 @@ endif()
 
 # Lower PTX target = wider hardware support; the driver JITs it at run time.
 # The CUDA toolkit is a BUILD-TIME tool only, user machines need the driver alone.
+#
+# compute_61 is Pascal (GTX 10xx), the oldest generation still common enough to
+# matter: PTX built for compute_75 cannot be JIT-compiled for it at all, so the
+# newer target silently locked those cards out. Measured with fsv_kernel_bench
+# on the RTX 3050 dev card, compute_61 matches compute_75 within noise
+# (matmul_f32 m=1 k=2048 n=512: 28.65 vs 28.82 us; int4 m=1 k=2048 n=512:
+# 39.3 vs 38.0 us), while compute_50 costs 12-22% on the same kernels, so 61 is
+# the floor that buys the compatibility for free. The PTX ISA version is a
+# separate matter: CUDA 12.6 emits .version 8.5 whatever the target, so the
+# driver still has to be 555-series (2024) or newer.
 if(NOT DEFINED FSV_PTX_ARCH)
-    set(FSV_PTX_ARCH "compute_75")
+    set(FSV_PTX_ARCH "compute_61")
 endif()
 
 find_program(NVCC_EXECUTABLE nvcc)
@@ -66,7 +76,11 @@ target_link_libraries(fsv_cuda_voice_runtime PRIVATE fsv_text_frontend)
 target_include_directories(fsv_cuda_voice_runtime
     PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include"
     PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/host")
-target_compile_definitions(fsv_cuda_voice_runtime PRIVATE FSV_CUDA_VOICE_BUILD_DLL)
+# FSV_PTX_ARCH_TARGET is quoted by the PTX load-failure diagnostic in
+# nv_runtime.cpp, so the message says which target the driver refused.
+target_compile_definitions(fsv_cuda_voice_runtime PRIVATE
+    FSV_CUDA_VOICE_BUILD_DLL
+    FSV_PTX_ARCH_TARGET="${FSV_PTX_ARCH}")
 set_target_properties(fsv_cuda_voice_runtime PROPERTIES
     OUTPUT_NAME "fsv_cuda_voice_runtime"
     WINDOWS_EXPORT_ALL_SYMBOLS OFF)
