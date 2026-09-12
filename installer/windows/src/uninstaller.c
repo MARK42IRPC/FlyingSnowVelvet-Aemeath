@@ -76,6 +76,8 @@ static int g_hover_action;
 static int g_hover_exit;
 static int g_hover_voice;
 static int g_hover_data;
+static BOOL g_voice_checked;
+static BOOL g_data_checked;
 
 static LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam);
 static LRESULT CALLBACK button_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam, UINT_PTR id, DWORD_PTR data);
@@ -88,6 +90,32 @@ static int ui_px(int value) {
 static RECT ui_rect(int x, int y, int width, int height) {
     RECT result = {ui_px(x), ui_px(y), ui_px(x + width), ui_px(y + height)};
     return result;
+}
+
+/* Owner-drawn checkboxes have no native check state, so the dialog keeps the
+   toggle state and answers the button messages other code still uses. */
+static BOOL *checkbox_state(UINT_PTR id) {
+    if (id == (UINT_PTR)IDC_DELETE_VOICE) {
+        return &g_voice_checked;
+    }
+    if (id == (UINT_PTR)IDC_DELETE_DATA) {
+        return &g_data_checked;
+    }
+    return NULL;
+}
+
+static BOOL checkbox_checked(int id) {
+    BOOL *state = checkbox_state((UINT_PTR)id);
+    return state != NULL && *state;
+}
+
+static void checkbox_toggle(HWND control, int id) {
+    BOOL *state = checkbox_state((UINT_PTR)id);
+    if (control == NULL || state == NULL) {
+        return;
+    }
+    *state = !*state;
+    InvalidateRect(control, NULL, FALSE);
 }
 
 static BOOL join_path(const wchar_t *root, const wchar_t *relative, wchar_t *output, size_t capacity) {
@@ -536,13 +564,13 @@ static void draw_check_mark(HDC dc, const RECT *box) {
     DeleteObject(pen);
 }
 
-static void draw_checkbox(HWND window, HDC dc, int hover) {
+static void draw_checkbox(HWND window, HDC dc, int hover, BOOL checked) {
     RECT bounds;
     RECT box;
     RECT text_bounds;
     int size = ui_px(FSV_CHECKBOX_SIZE);
-    int checked = (int)SendMessageW(window, BM_GETCHECK, 0, 0);
     BOOL enabled = IsWindowEnabled(window);
+    BOOL focused = GetFocus() == window;
     COLORREF border;
     GetClientRect(window, &bounds);
     FillRect(dc, &bounds, g_surface_brush);
@@ -550,17 +578,28 @@ static void draw_checkbox(HWND window, HDC dc, int hover) {
     box.top = bounds.top + (bounds.bottom - bounds.top - size) / 2;
     box.right = box.left + size;
     box.bottom = box.top + size;
-    if (checked == BST_CHECKED) {
+    if (checked) {
         draw_round_panel(dc, &box, FSV_COLOR_PINK, FSV_COLOR_PINK, ui_px(6));
         draw_check_mark(dc, &box);
     } else {
         border = !enabled ? FSV_COLOR_BORDER : hover > 0 ? FSV_COLOR_PINK : FSV_COLOR_BORDER_STRONG;
         draw_round_panel(dc, &box, FSV_COLOR_SURFACE, border, ui_px(6));
     }
-    if (GetFocus() == window) {
+    if (focused && enabled) {
+        /* Keyboard focus uses the accent ring; the native dotted focus
+           rectangle reads as a stray system artefact on this surface. */
         RECT ring = box;
-        InflateRect(&ring, -3, -3);
-        DrawFocusRect(dc, &ring);
+        HPEN pen;
+        HGDIOBJ old_pen;
+        HGDIOBJ old_brush;
+        InflateRect(&ring, -1, -1);
+        pen = CreatePen(PS_SOLID, 1, FSV_COLOR_CYAN);
+        old_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
+        old_pen = SelectObject(dc, pen);
+        RoundRect(dc, ring.left, ring.top, ring.right, ring.bottom, ui_px(5), ui_px(5));
+        SelectObject(dc, old_pen);
+        SelectObject(dc, old_brush);
+        DeleteObject(pen);
     }
     text_bounds = bounds;
     text_bounds.left = box.right + ui_px(10);
@@ -577,12 +616,18 @@ static void draw_checkbox(HWND window, HDC dc, int hover) {
 
 static LRESULT CALLBACK checkbox_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam, UINT_PTR id, DWORD_PTR data) {
     int *hover = (int *)data;
-    if (message == WM_PAINT) {
-        PAINTSTRUCT paint;
-        HDC dc = BeginPaint(window, &paint);
-        draw_checkbox(window, dc, hover != NULL ? *hover : 0);
-        EndPaint(window, &paint);
-        return 0;
+    if (message == BM_SETCHECK || message == BM_GETCHECK) {
+        /* The control is owner drawn, so the dialog answers the check state. */
+        BOOL *checked = checkbox_state(id);
+        if (checked == NULL) {
+            return 0;
+        }
+        if (message == BM_SETCHECK) {
+            *checked = wparam == (WPARAM)BST_CHECKED;
+            InvalidateRect(window, NULL, FALSE);
+            return 0;
+        }
+        return *checked ? BST_CHECKED : BST_UNCHECKED;
     }
     if (message == WM_ERASEBKGND) {
         return 1;
@@ -631,7 +676,7 @@ static void create_button(HWND *output, const wchar_t *text, int id, int *hover)
 
 static void create_checkbox(HWND *output, const wchar_t *text, int id, int *hover) {
     *output = CreateWindowExW(
-        0, L"BUTTON", text, WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX,
+        0, L"BUTTON", text, WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
         0, 0, 1, 1, g_window, (HMENU)(INT_PTR)id, GetModuleHandleW(NULL), NULL
     );
     SendMessageW(*output, WM_SETFONT, (WPARAM)g_body_font, TRUE);
@@ -812,7 +857,17 @@ static LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LP
         return (LRESULT)g_surface_brush;
     }
     if (message == WM_DRAWITEM && lparam != 0) {
-        draw_button((const DRAWITEMSTRUCT *)lparam);
+        const DRAWITEMSTRUCT *item = (const DRAWITEMSTRUCT *)lparam;
+        if (item->CtlID == IDC_DELETE_VOICE || item->CtlID == IDC_DELETE_DATA) {
+            draw_checkbox(
+                item->hwndItem,
+                item->hDC,
+                item->CtlID == IDC_DELETE_VOICE ? g_hover_voice : g_hover_data,
+                checkbox_checked((int)item->CtlID)
+            );
+        } else {
+            draw_button(item);
+        }
         return TRUE;
     }
     if (message == WM_DPICHANGED && lparam != 0) {
@@ -841,6 +896,10 @@ static LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LP
     }
     if (message == WM_COMMAND) {
         int id = LOWORD(wparam);
+        if ((id == IDC_DELETE_VOICE || id == IDC_DELETE_DATA) && HIWORD(wparam) == BN_CLICKED) {
+            checkbox_toggle(id == IDC_DELETE_VOICE ? g_voice_check : g_data_check, id);
+            return 0;
+        }
         if (id == IDC_UNINSTALL && HIWORD(wparam) == BN_CLICKED && !g_cleanup_running) {
             BOOL delete_voice = SendMessageW(g_voice_check, BM_GETCHECK, 0, 0) == BST_CHECKED;
             BOOL delete_data = SendMessageW(g_data_check, BM_GETCHECK, 0, 0) == BST_CHECKED;
@@ -901,9 +960,9 @@ static BOOL initialize_ui(void) {
         40, 188, 800, 64, g_body_font, SS_LEFT
     );
     g_path = create_label(g_cleanup.install_root, 56, 274, 768, 28, g_body_font, SS_PATHELLIPSIS);
-    g_voice_check = CreateWindowExW(0, L"BUTTON", L"删除语音包", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX, 0, 0, 1, 1, g_window, (HMENU)(INT_PTR)IDC_DELETE_VOICE, GetModuleHandleW(NULL), NULL);
+    create_checkbox(&g_voice_check, L"删除语音包", IDC_DELETE_VOICE, &g_hover_voice);
     g_voice_hint = create_label(L"同时删除 C:\\AemeathDeskPet\\voice 下的语音包、推理运行时与语音识别模型。", 72, 364, 768, 20, g_meta_font, SS_LEFT);
-    g_data_check = CreateWindowExW(0, L"BUTTON", L"删除用户数据", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX, 0, 0, 1, 1, g_window, (HMENU)(INT_PTR)IDC_DELETE_DATA, GetModuleHandleW(NULL), NULL);
+    create_checkbox(&g_data_check, L"删除用户数据", IDC_DELETE_DATA, &g_hover_data);
     g_data_hint = create_label(L"包含飞行雪绒的记忆、用户配置、Apikey、桌面办公区等；删除后无法恢复。", 72, 428, 768, 20, g_meta_font, SS_LEFT);
     create_button(&g_action, L"卸载飞行雪绒", IDC_UNINSTALL, &g_hover_action);
     create_button(&g_exit, L"退出", IDC_EXIT, &g_hover_exit);
@@ -915,8 +974,6 @@ static BOOL initialize_ui(void) {
     SetWindowTheme(g_progress, L"", L"");
     SendMessageW(g_progress, PBM_SETBARCOLOR, 0, FSV_COLOR_PINK);
     SendMessageW(g_progress, PBM_SETBKCOLOR, 0, FSV_COLOR_SURFACE_RAISED);
-    SetWindowSubclass(g_voice_check, checkbox_proc, (UINT_PTR)IDC_DELETE_VOICE, (DWORD_PTR)&g_hover_voice);
-    SetWindowSubclass(g_data_check, checkbox_proc, (UINT_PTR)IDC_DELETE_DATA, (DWORD_PTR)&g_hover_data);
     if (!layout_controls()) {
         return FALSE;
     }

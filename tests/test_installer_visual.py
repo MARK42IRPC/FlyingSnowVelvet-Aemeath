@@ -213,6 +213,25 @@ class OfflineInstallerVisualTests(unittest.TestCase):
             self.assertEqual(image.getpixel((1, 1)), self._rgb("canvas"))
             self.assertEqual(image.getpixel((50, 300)), self._rgb("surface_raised"))
 
+    def test_focused_buttons_use_the_accent_ring_without_a_dotted_outline(self) -> None:
+        # set_page() focuses the default button, so page 1 renders the primary
+        # button (x=680..840, y=510..550) with the keyboard focus state.
+        image = self._run_case(96, 1)
+        for point in ((760, 510), (760, 549), (680, 530), (839, 530)):
+            with self.subTest(point=point):
+                self.assertEqual(image.getpixel(point), self._rgb("cyan"))
+
+        # The native dotted focus rectangle used to draw alternating dark dots
+        # three pixels inside the button edge; the accent ring leaves the
+        # interior completely free of them.
+        dark = sum(
+            1
+            for y in range(511, 550)
+            for x in range(681, 840)
+            if sum(image.getpixel((x, y))) < 200
+        )
+        self.assertEqual(dark, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

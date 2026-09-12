@@ -1675,6 +1675,7 @@ static void draw_button(const DRAWITEMSTRUCT *item) {
     COLORREF border_color;
     COLORREF text_color;
     BOOL primary = item->CtlID != IDC_CUSTOM && item->CtlID != IDC_BACK;
+    BOOL focused = (item->itemState & ODS_FOCUS) != 0;
     int hover = 0;
     size_t index;
     for (index = 0; index < g_button_count; ++index) {
@@ -1696,6 +1697,11 @@ static void draw_button(const DRAWITEMSTRUCT *item) {
         }
         border_color = primary ? fill_color : hover > 0 ? FSV_COLOR_CYAN : FSV_COLOR_BORDER;
         text_color = primary ? FSV_COLOR_CANVAS : FSV_COLOR_TEXT;
+        if (focused) {
+            /* Keyboard focus keeps the accent ring; the native dotted focus
+               rectangle is not part of this surface. */
+            border_color = FSV_COLOR_CYAN;
+        }
     }
     FillRect(item->hDC, &rect, item->CtlID == IDC_CUSTOM ? g_surface_brush : g_canvas_brush);
     brush = CreateSolidBrush(fill_color);
@@ -1715,10 +1721,6 @@ static void draw_button(const DRAWITEMSTRUCT *item) {
         GetWindowTextW(item->hwndItem, text, ARRAYSIZE(text));
         DrawTextW(item->hDC, text, -1, &rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
         SelectObject(item->hDC, old_font);
-    }
-    if ((item->itemState & ODS_FOCUS) != 0) {
-        InflateRect(&rect, -3, -3);
-        DrawFocusRect(item->hDC, &rect);
     }
 }
 

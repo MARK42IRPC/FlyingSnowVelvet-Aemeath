@@ -40,6 +40,7 @@ static BOOL check_controls(void) {
     HDC dc = GetDC(g_window);
     RECT client;
     int failures = 0;
+    int index;
     wchar_t face[LF_FACESIZE];
     HGDIOBJ old_font = SelectObject(dc, g_body_font);
     GetTextFaceW(dc, ARRAYSIZE(face), face);
@@ -76,6 +77,31 @@ static BOOL check_controls(void) {
         }
         SelectObject(dc, old_font);
     }
+    for (index = 0; index < 2; ++index) {
+        int id = index == 0 ? IDC_DELETE_VOICE : IDC_DELETE_DATA;
+        HWND control = GetDlgItem(g_window, id);
+        LONG_PTR style = control == NULL ? 0 : GetWindowLongPtrW(control, GWL_STYLE);
+        LRESULT before;
+        /* The options are owner drawn: a native BS_AUTOCHECKBOX repaints its own
+           glyph over the custom box as soon as the user clicks it. */
+        if (control == NULL || (style & BS_TYPEMASK) != BS_OWNERDRAW) {
+            fprintf(stderr, "Checkbox %d is not owner drawn\n", id);
+            ++failures;
+            continue;
+        }
+        before = SendMessageW(control, BM_GETCHECK, 0, 0);
+        SendMessageW(control, BM_SETCHECK, BST_CHECKED, 0);
+        if (SendMessageW(control, BM_GETCHECK, 0, 0) != BST_CHECKED) {
+            fprintf(stderr, "Checkbox %d lost its checked state\n", id);
+            ++failures;
+        }
+        SendMessageW(control, BM_SETCHECK, BST_UNCHECKED, 0);
+        if (SendMessageW(control, BM_GETCHECK, 0, 0) != BST_UNCHECKED) {
+            fprintf(stderr, "Checkbox %d kept its checked state\n", id);
+            ++failures;
+        }
+        SendMessageW(control, BM_SETCHECK, (WPARAM)before, 0);
+    }
     ReleaseDC(g_window, dc);
     return failures == 0;
 }
@@ -103,6 +129,7 @@ static void paint_capture_children(HDC dc) {
         wchar_t class_name[32];
         LONG_PTR style;
         int saved_dc;
+        int id;
         if (!(GetWindowLongPtrW(child, GWL_STYLE) & WS_VISIBLE)) continue;
         GetWindowRect(child, &bounds);
         MapWindowPoints(NULL, g_window, (POINT *)&bounds, 2);
@@ -115,11 +142,14 @@ static void paint_capture_children(HDC dc) {
         local.bottom = bounds.bottom - bounds.top;
         GetClassNameW(child, class_name, ARRAYSIZE(class_name));
         style = GetWindowLongPtrW(child, GWL_STYLE);
-        if (wcscmp(class_name, L"Button") == 0 && (style & BS_TYPEMASK) == BS_OWNERDRAW) {
+        id = GetDlgCtrlID(child);
+        if (wcscmp(class_name, L"Button") == 0 && (id == IDC_DELETE_VOICE || id == IDC_DELETE_DATA)) {
+            draw_checkbox(child, dc, id == IDC_DELETE_VOICE ? g_hover_voice : g_hover_data, checkbox_checked(id));
+        } else if (wcscmp(class_name, L"Button") == 0 && (style & BS_TYPEMASK) == BS_OWNERDRAW) {
             DRAWITEMSTRUCT item;
             ZeroMemory(&item, sizeof(item));
             item.CtlType = ODT_BUTTON;
-            item.CtlID = (UINT)GetDlgCtrlID(child);
+            item.CtlID = (UINT)id;
             item.itemID = item.CtlID;
             item.itemAction = ODA_DRAWENTIRE;
             item.itemState = IsWindowEnabled(child) ? 0 : ODS_DISABLED;
@@ -128,9 +158,6 @@ static void paint_capture_children(HDC dc) {
             item.hDC = dc;
             item.rcItem = local;
             draw_button(&item);
-        } else if (wcscmp(class_name, L"Button") == 0 && (style & BS_TYPEMASK) == BS_AUTOCHECKBOX) {
-            int hover = GetDlgCtrlID(child) == IDC_DELETE_VOICE ? g_hover_voice : g_hover_data;
-            draw_checkbox(child, dc, hover);
         } else {
             SendMessageW(child, WM_PRINT, (WPARAM)dc, PRF_CLIENT | PRF_NONCLIENT | PRF_ERASEBKGND);
         }
