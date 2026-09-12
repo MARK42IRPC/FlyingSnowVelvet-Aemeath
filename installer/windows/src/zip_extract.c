@@ -13,11 +13,23 @@
 #define FSV_ZIP_LOCAL_HEADER_SIZE 30U
 #define FSV_ZIP_CENTRAL_HEADER_SIZE 46U
 #define FSV_ZIP_MAX_ENTRIES 10000000ULL
-/* Unpacking runs on a small worker pool: a single dominant thread starves the
-   installer UI and, on hybrid CPUs, pins one core instead of sharing the work.
-   Two logical processors stay free so the desktop keeps responding. */
-#define FSV_ZIP_MAX_WORKERS 8U
+/* Unpacking runs on a bounded worker pool whose *active* size is decided from
+   measured load.  Opening one thread per logical processor minus two opened
+   eight inflate threads on a 12-thread laptop, drove every core to 100% and
+   stalled the desktop - while a measurement on that same CPU (i5-12450H)
+   showed the throughput is identical from two to eight workers because the
+   write path, not inflate, is the bottleneck.  More threads therefore buy
+   nothing and only add contention, so the pool stays small and shrinks
+   further when the machine is already busy. */
+#define FSV_ZIP_MAX_WORKERS 4U
 #define FSV_ZIP_RESERVED_PROCESSORS 2U
+/* Adaptive load gate.  ``GetSystemTimes`` reports whole-machine utilisation and
+   ``GetProcessTimes`` our own share of it, so the workers stay just below the
+   ceiling: an idle machine runs the whole pool, a machine that is already busy
+   falls back towards a single worker instead of adding to the stall. */
+#define FSV_ZIP_CPU_CEILING_PERCENT 65U
+#define FSV_ZIP_CPU_SAMPLE_MS 250U
+#define FSV_ZIP_GATE_SLEEP_MS 10U
 
 typedef struct FsvZipInfo {
     ULONGLONG archive_size;
@@ -54,6 +66,17 @@ typedef struct FsvZipProgressState {
     ULONGLONG last_sample_at;
     ULONGLONG last_sample_bytes;
     double bytes_per_second;
+    ULONGLONG cpu_sample_at;
+    ULONGLONG cpu_idle_time;
+    ULONGLONG cpu_kernel_time;
+    ULONGLONG cpu_user_time;
+    ULONGLONG process_kernel_time;
+    ULONGLONG process_user_time;
+    DWORD cpu_busy_percent;
+    DWORD process_busy_percent;
+    DWORD processors;
+    DWORD max_workers;
+    volatile LONG64 active_workers;
     wchar_t current_file[FSV_ZIP_PATH_CAPACITY];
 } FsvZipProgressState;
 
@@ -722,11 +745,20 @@ static BOOL extract_entry(
         0,
         NULL,
         CREATE_NEW,
-        FILE_ATTRIBUTE_NORMAL,
+        FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN,
         NULL
     );
     if (output == INVALID_HANDLE_VALUE) {
         return FALSE;
+    }
+    /* The central directory already told us how large the file will be, so
+       reserve it up front.  Otherwise NTFS extends the file while we write,
+       which is the most expensive part of a many-file install.  This is only
+       an optimisation, so a refusal is not an error. */
+    if (entry->uncompressed_size > 0) {
+        FILE_ALLOCATION_INFO allocation;
+        allocation.AllocationSize.QuadPart = (LONGLONG)entry->uncompressed_size;
+        SetFileInformationByHandle(output, FileAllocationInfo, &allocation, sizeof(allocation));
     }
     {
         LARGE_INTEGER position;
@@ -766,31 +798,168 @@ typedef struct FsvZipJob {
     volatile LONG64 cursor;
 } FsvZipJob;
 
-static DWORD zip_worker_count(ULONGLONG entries) {
-    DWORD processors = GetActiveProcessorCount(ALL_PROCESSOR_GROUPS);
-    DWORD workers;
-    if (processors == 0) {
-        processors = 1;
+unsigned fsv_zip_worker_count(unsigned logical_processors, unsigned entry_count) {
+    unsigned workers;
+    if (logical_processors <= FSV_ZIP_RESERVED_PROCESSORS) {
+        workers = 1;
+    } else {
+        workers = logical_processors - FSV_ZIP_RESERVED_PROCESSORS;
     }
-    workers = processors > FSV_ZIP_RESERVED_PROCESSORS
-        ? processors - FSV_ZIP_RESERVED_PROCESSORS
-        : 1;
     if (workers > FSV_ZIP_MAX_WORKERS) {
         workers = FSV_ZIP_MAX_WORKERS;
     }
-    if (entries > 0 && (ULONGLONG)workers > entries) {
-        workers = (DWORD)entries;
+    if (entry_count > 0 && workers > entry_count) {
+        workers = entry_count;
     }
     return workers == 0 ? 1 : workers;
 }
 
+unsigned fsv_zip_worker_limit(unsigned logical_processors, unsigned max_workers,
+                              unsigned busy_percent, unsigned our_percent) {
+    /* Work out how much of the machine the other processes still leave us, then
+       convert that headroom into a number of workers.  ``busy_percent`` and
+       ``our_percent`` are both shares of the whole machine, so subtracting our
+       own work keeps the loop stable: as our workers ramp up, ``others`` stays
+       put and the limit does not oscillate. */
+    unsigned others;
+    unsigned allowance;
+    unsigned half;
+    if (logical_processors == 0) {
+        logical_processors = 1;
+    }
+    others = busy_percent > our_percent ? busy_percent - our_percent : 0;
+    if (others >= FSV_ZIP_CPU_CEILING_PERCENT) {
+        allowance = 1;
+    } else {
+        allowance = (FSV_ZIP_CPU_CEILING_PERCENT - others) * logical_processors / 100U;
+        if (allowance < 1) {
+            allowance = 1;
+        }
+    }
+    /* Never take more than half of the logical processors, even when the
+       machine looks idle: the memory bus and the disk are shared with
+       everything else that is running. */
+    half = logical_processors / 2U;
+    if (half == 0) {
+        half = 1;
+    }
+    if (allowance > half) {
+        allowance = half;
+    }
+    if (allowance > max_workers) {
+        allowance = max_workers;
+    }
+    return allowance == 0 ? 1 : allowance;
+}
+
+static DWORD zip_worker_count(ULONGLONG entries) {
+    unsigned count = entries > 0xFFFFFFFFULL ? 0xFFFFFFFFU : (unsigned)entries;
+    return (DWORD)fsv_zip_worker_count(GetActiveProcessorCount(ALL_PROCESSOR_GROUPS), count);
+}
+
+static ULONGLONG zip_cpu_time(const FILETIME *value) {
+    ULARGE_INTEGER combined;
+    combined.LowPart = value->dwLowDateTime;
+    combined.HighPart = value->dwHighDateTime;
+    return combined.QuadPart;
+}
+
+/* Refresh the two load samples: whole-machine utilisation and this process's
+   share of it, both as percentages of the whole machine.  ``GetSystemTimes``
+   counts idle time inside kernel time, so the machine is busy = kernel + user
+   - idle.  The values are cached for FSV_ZIP_CPU_SAMPLE_MS because every worker
+   asks for them before claiming an entry. */
+static void zip_sample_load(FsvZipProgressState *state) {
+    FILETIME idle_time;
+    FILETIME kernel_time;
+    FILETIME user_time;
+    FILETIME creation_time;
+    FILETIME exit_time;
+    FILETIME process_kernel_time;
+    FILETIME process_user_time;
+    ULONGLONG idle;
+    ULONGLONG kernel;
+    ULONGLONG user;
+    ULONGLONG previous_total;
+    ULONGLONG busy;
+    ULONGLONG idle_delta;
+    ULONGLONG process_total;
+    ULONGLONG previous_process_total;
+    ULONGLONG now;
+    if (!GetSystemTimes(&idle_time, &kernel_time, &user_time) ||
+        !GetProcessTimes(GetCurrentProcess(), &creation_time, &exit_time, &process_kernel_time, &process_user_time)) {
+        return;
+    }
+    now = GetTickCount64();
+    idle = zip_cpu_time(&idle_time);
+    kernel = zip_cpu_time(&kernel_time);
+    user = zip_cpu_time(&user_time);
+    process_total = zip_cpu_time(&process_kernel_time) + zip_cpu_time(&process_user_time);
+    EnterCriticalSection(&state->lock);
+    if (state->cpu_sample_at != 0 && now - state->cpu_sample_at < FSV_ZIP_CPU_SAMPLE_MS) {
+        LeaveCriticalSection(&state->lock);
+        return;
+    }
+    previous_total = state->cpu_kernel_time + state->cpu_user_time;
+    if (state->cpu_sample_at != 0 && kernel + user > previous_total) {
+        busy = (kernel + user) - previous_total;
+        idle_delta = idle >= state->cpu_idle_time ? idle - state->cpu_idle_time : 0;
+        state->cpu_busy_percent = idle_delta < busy
+            ? (DWORD)(((busy - idle_delta) * 100ULL) / busy)
+            : 0;
+        previous_process_total = state->process_kernel_time + state->process_user_time;
+        if (process_total > previous_process_total) {
+            ULONGLONG process_percent = (process_total - previous_process_total) * 100ULL / busy;
+            state->process_busy_percent = process_percent > 100 ? 100 : (DWORD)process_percent;
+        } else {
+            state->process_busy_percent = 0;
+        }
+    } else {
+        state->cpu_busy_percent = 0;
+        state->process_busy_percent = 0;
+    }
+    state->cpu_idle_time = idle;
+    state->cpu_kernel_time = kernel;
+    state->cpu_user_time = user;
+    state->process_kernel_time = zip_cpu_time(&process_kernel_time);
+    state->process_user_time = zip_cpu_time(&process_user_time);
+    state->cpu_sample_at = now;
+    LeaveCriticalSection(&state->lock);
+}
+
+/* Park a worker while the machine is already using all the headroom we are
+   willing to take.  The calling thread always keeps at least one slot, so the
+   extraction can never stall completely. */
+static BOOL zip_wait_for_slot(FsvZipProgressState *state) {
+    for (;;) {
+        LONG64 active;
+        DWORD limit;
+        if (zip_failed(state)) {
+            return FALSE;
+        }
+        zip_sample_load(state);
+        active = InterlockedCompareExchange64(&state->active_workers, 0, 0);
+        limit = fsv_zip_worker_limit(
+            state->processors,
+            state->max_workers,
+            state->cpu_busy_percent,
+            state->process_busy_percent
+        );
+        if (active < (LONG64)limit) {
+            return TRUE;
+        }
+        Sleep(FSV_ZIP_GATE_SLEEP_MS);
+    }
+}
+
 /* One worker unpacks entries handed out by a shared cursor. Each worker owns
    its own archive handle, zlib stream and buffers so nothing is serialized
-   except progress reporting and directory creation. */
+   except progress reporting and directory creation. Workers stay at the lowest
+   priority so any foreground work wins the scheduler. */
 static DWORD WINAPI extract_worker(void *parameter) {
     FsvZipJob *job = (FsvZipJob *)parameter;
     HANDLE archive;
-    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_LOWEST);
     archive = CreateFileW(
         job->archive_path,
         GENERIC_READ,
@@ -807,25 +976,25 @@ static DWORD WINAPI extract_worker(void *parameter) {
     while (!zip_failed(job->state)) {
         FsvZipEntry entry;
         ULONGLONG next_position;
-        ULONGLONG index = (ULONGLONG)InterlockedIncrement64(&job->cursor) - 1ULL;
+        ULONGLONG index;
+        if (!zip_wait_for_slot(job->state)) {
+            break;
+        }
+        index = (ULONGLONG)InterlockedIncrement64(&job->cursor) - 1ULL;
         if (index >= job->count) {
             break;
         }
+        InterlockedIncrement64(&job->state->active_workers);
         ZeroMemory(&entry, sizeof(entry));
-        if (!read_entry(archive, job->offsets[index], job->central_end, &entry, &next_position)) {
+        if (!read_entry(archive, job->offsets[index], job->central_end, &entry, &next_position) ||
+            !extract_entry(archive, job->archive_size, &entry, job->destination, job->state)) {
             zip_record_failure(job->state, GetLastError());
-            break;
-        }
-        if (!extract_entry(archive, job->archive_size, &entry, job->destination, job->state)) {
-            zip_record_failure(job->state, GetLastError());
-            free_entry(&entry);
-            break;
-        }
-        if (!entry.directory) {
+        } else if (!entry.directory) {
             InterlockedIncrement64(&job->state->completed_files);
             post_progress(job->state, NULL, FALSE);
         }
         free_entry(&entry);
+        InterlockedDecrement64(&job->state->active_workers);
     }
     CloseHandle(archive);
     return 0;
@@ -924,6 +1093,8 @@ BOOL fsv_extract_zip(const wchar_t *archive_path, const wchar_t *destination, Fs
     state.failure = ERROR_SUCCESS;
     state.scanning_directory = FALSE;
     post_progress(&state, L"正在准备解压...", TRUE);
+    state.processors = GetActiveProcessorCount(ALL_PROCESSOR_GROUPS);
+    state.max_workers = zip_worker_count(info.entry_count);
     job.state = &state;
     job.archive_path = archive_path;
     job.destination = destination;
@@ -932,7 +1103,7 @@ BOOL fsv_extract_zip(const wchar_t *archive_path, const wchar_t *destination, Fs
     job.central_end = central_end;
     job.archive_size = info.archive_size;
     job.cursor = 0;
-    worker_count = zip_worker_count(info.entry_count);
+    worker_count = state.max_workers;
     for (worker_index = 0; worker_index + 1 < worker_count; ++worker_index) {
         HANDLE thread = CreateThread(NULL, 0, extract_worker, &job, 0, NULL);
         if (thread == NULL) {

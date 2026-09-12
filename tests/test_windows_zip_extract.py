@@ -216,6 +216,49 @@ class WindowsZipExtractTests(unittest.TestCase):
             self.assertEqual(parts[0], "OK")
             self.assertEqual(parts[2:], [str(len(expected)), "100"])
 
+    def test_worker_pool_and_peak_gate_leave_headroom(self):
+        # 12 logical processors used to open eight inflate threads and peg every
+        # core even though two to eight workers measure the same throughput.
+        sizing = {1: 1, 2: 1, 4: 2, 6: 4, 8: 4, 12: 4, 64: 4}
+        for logical, expected in sizing.items():
+            with self.subTest(logical=logical):
+                result = self.run_harness("tune", str(logical), "17300", "0", "0")
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                fields = result.stdout.split()
+                self.assertEqual(fields[0], "OK")
+                self.assertEqual(fields[1], str(expected))
+                # An idle machine still never exceeds the whole-machine
+                # ceiling or half of the logical processors.
+                idle_limit = min(
+                    expected,
+                    max(1, 65 * logical // 100),
+                    max(1, logical // 2),
+                )
+                self.assertEqual(fields[2], str(idle_limit))
+        # Fewer entries than workers must not spawn idle threads.
+        result = self.run_harness("tune", "12", "3", "0", "0")
+        self.assertEqual(result.stdout.split(), ["OK", "3", "3"])
+        # The active limit follows the measured headroom: an idle machine runs
+        # the whole pool, and a machine that is already busy drops towards one
+        # worker instead of adding to the stall.
+        cases = (
+            (12, "17300", 0, 0, 4),
+            (12, "17300", 60, 40, 4),
+            (12, "17300", 40, 0, 3),
+            (12, "17300", 55, 0, 1),
+            (12, "17300", 80, 10, 1),
+            (12, "17300", 100, 40, 1),
+            (4, "17300", 0, 0, 2),
+            (8, "17300", 30, 5, 3),
+        )
+        for logical, entries, busy, ours, expected in cases:
+            with self.subTest(logical=logical, busy=busy, ours=ours):
+                result = self.run_harness(
+                    "tune", str(logical), entries, str(busy), str(ours)
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(result.stdout.split()[2], str(expected))
+
     def test_zip64_entry_count_is_supported(self):
         with tempfile.TemporaryDirectory(prefix="fsv-zip64-") as temporary:
             root = Path(temporary)

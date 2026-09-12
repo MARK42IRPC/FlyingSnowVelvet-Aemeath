@@ -18,6 +18,13 @@ typedef struct FsvZipProgressMessage {
 
 typedef void (*FsvZipProgressCallback)(const FsvZipProgressMessage *message);
 
+/* Worker-pool sizing and the adaptive load limit are part of the contract with
+   the native harness, which pins them without running a disk-heavy
+   extraction. */
+unsigned fsv_zip_worker_count(unsigned logical_processors, unsigned entry_count);
+unsigned fsv_zip_worker_limit(unsigned logical_processors, unsigned max_workers,
+                              unsigned busy_percent, unsigned our_percent);
+
 BOOL fsv_extract_zip(
     const wchar_t *archive_path,
     const wchar_t *destination,
