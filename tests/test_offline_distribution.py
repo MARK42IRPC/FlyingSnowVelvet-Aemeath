@@ -430,6 +430,7 @@ class OfflineDistributionTests(unittest.TestCase):
                 "koffi/src/koffi/src/static.cjs": b"module.exports = {};",
                 "koffi/src/koffi/src/trampolines.cjs": b"module.exports = {};",
                 "koffi/src/koffi/src/call.cc": b"build source",
+                "@mixmark-io/domino/.yarn/plugins/@yarnpkg/plugin-workspace-tools.cjs": b"yarn plugin",
             }
             for relative, content in files.items():
                 path = root / relative
@@ -438,7 +439,7 @@ class OfflineDistributionTests(unittest.TestCase):
 
             result = distribution.prune_node_modules(root)
 
-            self.assertEqual(result["removed_files"], 11)
+            self.assertEqual(result["removed_files"], 12)
             self.assertTrue((root / "package" / "index.js").is_file())
             self.assertTrue((root / "package" / "LICENSE.md").is_file())
             self.assertTrue((root / "@img" / "sharp-win32-x64" / "lib" / "sharp.node").is_file())
@@ -451,6 +452,7 @@ class OfflineDistributionTests(unittest.TestCase):
             self.assertFalse((root / "package" / "test").exists())
             self.assertFalse((root / "@img" / "sharp-wasm32").exists())
             self.assertFalse((root / "node-pty" / "third_party").exists())
+            self.assertFalse((root / "@mixmark-io" / "domino" / ".yarn").exists())
 
     def test_playwright_node_is_shared_only_when_hash_matches(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -477,6 +479,12 @@ class OfflineDistributionTests(unittest.TestCase):
             for relative in (
                 "playwright/async_api/client.py",
                 "playwright/driver/package/types/types.d.ts",
+                "jieba_fast/analyse/analyzer.py",
+                "jieba_fast/source/jieba_fast_functions_wrap.cxx",
+                "jieba_fast/posseg/prob_emit.p",
+                "jieba_fast/finalseg/prob_start.p",
+                "jieba_fast/posseg/prob_emit.py",
+                "jieba_fast/dict.txt",
                 "pythonwin/pywin.py",
                 "win32comext/shell/__init__.py",
                 "isapi/README.txt",
@@ -490,10 +498,45 @@ class OfflineDistributionTests(unittest.TestCase):
 
             result = distribution.prune_python_nonruntime_artifacts(root)
 
-            self.assertEqual(result["removed_files"], 7)
+            self.assertEqual(result["removed_files"], 11)
             self.assertTrue((root / "win32com" / "client" / "__init__.py").is_file())
+            self.assertTrue((root / "jieba_fast" / "posseg" / "prob_emit.py").is_file())
+            self.assertTrue((root / "jieba_fast" / "dict.txt").is_file())
             self.assertFalse((root / "playwright" / "async_api").exists())
             self.assertFalse((root / "win32comext").exists())
+            self.assertFalse((root / "jieba_fast" / "analyse").exists())
+            self.assertFalse((root / "jieba_fast" / "source").exists())
+            self.assertFalse((root / "jieba_fast" / "posseg" / "prob_emit.p").exists())
+
+    def test_unused_site_distributions_leave_no_import_package_or_metadata(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            for relative in (
+                "jieba/__init__.py",
+                "jieba/posseg/prob_emit.py",
+                "jieba-0.42.1.dist-info/METADATA",
+                "jieba_fast/__init__.py",
+                "jieba_fast-0.53.dist-info/METADATA",
+            ):
+                path = root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"x")
+
+            result = distribution.prune_python_unused_distributions(root)
+
+            self.assertEqual(result["removed_files"], 3)
+            self.assertFalse((root / "jieba").exists())
+            self.assertFalse((root / "jieba-0.42.1.dist-info").exists())
+            self.assertTrue((root / "jieba_fast" / "__init__.py").is_file())
+            self.assertTrue((root / "jieba_fast-0.53.dist-info" / "METADATA").is_file())
+
+    def test_pure_python_tokenizer_is_not_a_distribution_root(self):
+        # Every consumer imports the compiled ``jieba_fast`` fork, and the
+        # dependency installer never installs the pure package, so collecting it
+        # would only widen the gap between offline and online installs.
+        self.assertNotIn("jieba", distribution.DEFAULT_BASE_DISTRIBUTIONS)
+        self.assertIn("jieba-fast", distribution.DEFAULT_BASE_DISTRIBUTIONS)
+        self.assertIn("jieba", distribution.UNUSED_SITE_DISTRIBUTIONS)
 
 
 if __name__ == "__main__":

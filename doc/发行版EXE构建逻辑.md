@@ -27,8 +27,11 @@ dist/FlyingSnowVelvet-<version>-Offline-Installer.exe
 
 基础 Python 依赖闭包包括 PyQt5、音频/桌面桥接、Vosk、CPU `onnx`/
 `onnxruntime`、`genie-tts==2.0.2` 双语前端、`tokenizers`、`pypinyin`、`g2pM`、
-`nltk`、`regex`、`jieba`/`jieba-fast`、`opencc`、`soundfile` 和 `soxr`。构建器按
-实际发行版 metadata 解析依赖，并剪掉测试、文档、头文件、缓存和未使用 Qt/Node 子树。
+`nltk`、`regex`、`jieba-fast`、`opencc`、`soundfile` 和 `soxr`。构建器按实际发行版
+metadata 解析依赖，并剪掉测试、文档、头文件/C++ 源码/链接期文件、缓存和未使用
+Qt/Node 子树。纯 Python `jieba`、`jieba_fast` 的关键词抽取与 SWIG 源码、只用 Jython
+加载的 `*.p` 概率表、npm 包内的 Yarn 插件、仓库根目录的测试日志与开发者 `py.ini`
+同样不进包。
 
 基础包明确拒绝 Torch、CUDA、NVIDIA、TensorRT、`onnxruntime-gpu`；DirectML 只在
 `runtime/onnx-directml/1.22.0-cp311-win_amd64` 中以独立 overlay 提供。启动器设置

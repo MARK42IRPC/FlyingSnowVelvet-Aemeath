@@ -166,7 +166,7 @@ py -3 -m unittest tests.test_openai_dashscope_multimodal
 
 - 离线安装器只从当前仓库构建，payload 包含固定 Python 3.11、Node 24.13.0、DSH
   production `node_modules`、CPU `onnx`/`onnxruntime`、`genie-tts` 双语前端、
-  `jieba`/`jieba-fast`、Vosk 模型和 `SEanima` 文件夹。
+  `jieba-fast`（编译版分词器）、Vosk 模型和 `SEanima` 文件夹。
 - CUDA、Torch、NVIDIA、TensorRT 不进入基础发行版；DirectML 以独立 overlay 随包提供，
   由设置面板按需启用。
 - 安装器使用原生 ZIP 解压和尾部 SHA-256 校验，安装过程显示当前文件、百分比、文件/字节

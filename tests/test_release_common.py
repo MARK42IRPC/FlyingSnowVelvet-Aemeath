@@ -102,5 +102,21 @@ class ReleaseCommonTests(unittest.TestCase):
                 self.assertTrue(path.is_file())
                 self.assertFalse(excluded(path.relative_to(PRODUCT_ROOT)))
 
+    def test_release_packages_exclude_root_run_artifacts(self):
+        # Test logs, editor scratch files and the developer's portable
+        # interpreter override only exist in the repository root; the release
+        # writes its own ``app/py.ini`` after staging the source tree.
+        for relative in (
+            Path("fulltest.log"),
+            Path("fulltest2.log"),
+            Path("py.ini"),
+            Path(".tmp-office-settings.png"),
+        ):
+            with self.subTest(path=relative.as_posix()):
+                self.assertTrue(excluded(relative))
+
+        # The rule is scoped to the root: nested logs stay part of the package.
+        self.assertFalse(excluded(Path("lib") / "script" / "runtime.log"))
+
 if __name__ == '__main__':
     unittest.main()

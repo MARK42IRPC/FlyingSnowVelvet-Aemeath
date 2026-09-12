@@ -35,8 +35,11 @@ $python = Join-Path $venv 'Scripts/python.exe'
 
 在隔离 site-packages 中安装 `requirements.txt` 的 CPU 依赖；`genie-tts==2.0.2`
 必须用 `--no-deps` 安装，并显式准备 `onnx`、CPU `onnxruntime`、`tokenizers`、
-`pypinyin`、`g2pM`、`nltk`、`regex`、`jieba` 和 `jieba-fast`。不要安装 Torch、
+`pypinyin`、`g2pM`、`nltk`、`regex` 和 `jieba-fast`。不要安装 Torch、
 CUDA、NVIDIA、TensorRT 或 `onnxruntime-gpu`。
+
+纯 Python 的 `jieba` 既不安装也不收集：中文前端、词性标注和变调规则都导入编译版
+`jieba_fast`，两者携带同一份词典，离线包多带一份只会引入没有代码覆盖的导入路径。
 
 准备好以下构建输入后执行：
 
@@ -74,8 +77,8 @@ payload；`build_offline_installer.py` 再编译原生安装器并追加 ZIP 与
 
 ## 依赖边界
 
-- 基础包：CPU `onnx`/`onnxruntime`、`genie-tts` 双语 ONNX 前端、`jieba`/
-  `jieba-fast`、Vosk、PyQt5、音频和桌面桥接依赖。
+- 基础包：CPU `onnx`/`onnxruntime`、`genie-tts` 双语 ONNX 前端、`jieba-fast`
+  （编译版分词器，纯 Python `jieba` 不分发）、Vosk、PyQt5、音频和桌面桥接依赖。
 - 可选 overlay：固定版本 `onnxruntime-directml`，位于
   `runtime/onnx-directml/1.22.0-cp311-win_amd64`，不与 CPU site-packages 混合。
 - 不打包：Torch、NVIDIA 工具链的 CUDA/cuDNN DLL、TensorRT、`onnxruntime-gpu` 及其
@@ -122,5 +125,7 @@ git diff --check
 ```
 
 发布前确认 `manifest.json` 中存在 `SEanima/`、Vosk、CPU ONNX、`genie_tts`、
-`jieba` 和 DirectML overlay，并确认不存在 `SEanima.zip`、Torch、NVIDIA、CUDA
-DLL、历史 green 资产或 ZIP 发布资产。
+`jieba_fast` 和 DirectML overlay，并确认不存在 `SEanima.zip`、Torch、NVIDIA、CUDA
+DLL、历史 green 资产或 ZIP 发布资产。site-packages 里还必须没有纯 Python `jieba`、
+`jieba_fast/analyse`、`jieba_fast/source`，也没有 `*.p`、`*.cc`、`*.lib`、`*.obj`
+这类开发期文件（`scripts/build_offline_installer.py` 会直接拒绝这样的 payload）。
