@@ -28,8 +28,11 @@
   `QOpenGLWidget`/`QSurfaceFormat`/Qt Quick/Qt WebEngine 用法，`opengl` 后端仍未实现，
   实测 `QApplication` 加桌宠式半透明窗口跑完后进程只加载 `d3d11`/`dxgi`，从不请求
   GL 上下文。守卫测试在有人引入 GL 用法或启用 OpenGL 后端时失败，提示把该 DLL 放回
-  `QT_BIN_FILES`。三轮剪枝后 payload 从 828.9 MiB 降到 747.8 MiB，安装器从
-  419,605,210 字节降到 378,102,835 字节。
+  `QT_BIN_FILES`。
+- 安装器内置归档改用 Deflate level 6（原来为构建速度用 level 1）：`payload.zip` 从
+  377,405,939 字节降到 353,348,712 字节，打包只多花约 15 秒，包内 zlib 解压速度不变。
+  连同前面几轮剪枝，payload 从 828.9 MiB 降到 747.8 MiB，安装器从 419,605,210 字节
+  降到 354,045,608 字节。
 
 ### Fixed
 - 修正文字闪动特效被矩形裁剪的问题。

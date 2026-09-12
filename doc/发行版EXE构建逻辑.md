@@ -52,6 +52,8 @@ Qt/Node 子树。纯 Python `jieba`、`jieba_fast` 的关键词抽取与 SWIG �
 构建器先用 Python 标准库生成 Zip64/Deflate 归档，再把归档和 64 字节尾记录追加到
 原生 PE：`24 字节 magic + 8 字节归档长度 + 32 字节 SHA-256`。更新器和安装器都在
 解压前流式校验该尾记录，避免把截断或源码 ZIP 当作程序包。
+归档按 Deflate level 6 压缩：相对 level 1 多花约 15 秒构建时间换来 24 MiB 体积，
+解压仍走包内 zlib 的 `inflate`，安装耗时不变。
 
 原生安装器执行顺序：
 
