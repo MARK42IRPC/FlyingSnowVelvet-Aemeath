@@ -32,8 +32,8 @@
 #endif
 #endif
 #ifndef FSV_RESOURCE_URL_HF
-#define FSV_RESOURCE_URL_HF L"https://huggingface.co/Mark42IRP/Aemeath_onnx_GSV_model/resolve/main/updates/FlyingSnowVelvet-LTS1.0.7pre3-Resources.zip"
-#define FSV_RESOURCE_URL_MODELSCOPE L"https://www.modelscope.cn/models/Mark42IRPC/GSV_onnx_Aemeath_Pack/resolve/master/updates/FlyingSnowVelvet-LTS1.0.7pre3-Resources.zip"
+#define FSV_RESOURCE_URL_HF L"https://huggingface.co/Mark42IRP/Aemeath_onnx_GSV_model/resolve/main/updates/FlyingSnowVelvet-LTS1.0.7pre4-Resources.zip"
+#define FSV_RESOURCE_URL_MODELSCOPE L"https://www.modelscope.cn/models/Mark42IRPC/GSV_onnx_Aemeath_Pack/resolve/master/updates/FlyingSnowVelvet-LTS1.0.7pre4-Resources.zip"
 #endif
 #include "zip_extract.h"
 
