@@ -165,6 +165,35 @@ class OfflineInstallerVisualTests(unittest.TestCase):
                 changed = sum(1 for pixel in self._pixels(difference) if pixel != (0, 0, 0))
                 self.assertGreater(changed, 1000)
 
+    def test_progress_page_uses_the_voice_page_bar_style(self) -> None:
+        image = self._run_case(96, 3)
+        # Page 3 puts the two 24px bars at y=320..344 (archive) and y=364..388
+        # (extraction), both 800px wide starting at x=40.
+        archive_row = 332
+        extract_row = 376
+        self.assertEqual(image.getpixel((120, archive_row)), self._rgb("cyan"))
+        self.assertEqual(image.getpixel((120, extract_row)), self._rgb("pink"))
+        # The extraction chunk stops at 64%; the rest stays on the light track.
+        self.assertEqual(image.getpixel((700, extract_row)), self._rgb("surface_raised"))
+        # Outside the rounded, bordered track the page background shows through.
+        self.assertEqual(image.getpixel((1, archive_row)), self._rgb("surface"))
+
+        # Both bars carry a centred label (已完成 for the finished archive,
+        # 64% for extraction) and no text outside the middle of the bar.
+        for top, label in ((320, "已完成"), (364, "64%")):
+            with self.subTest(label=label):
+                region = image.crop((41, top, 839, top + 23))
+                # Antialiased glyphs rarely keep the exact token colour, so the
+                # label is counted by luminance: only the dark text is this far
+                # below the pink, cyan and raised track colours.
+                dark = sum(1 for pixel in self._pixels(region) if sum(pixel) < 300)
+                self.assertGreater(dark, 20, f"{label} missing from the bar")
+                outside = sum(
+                    1 for x in range(45, 250)
+                    if sum(image.getpixel((x, top + 12))) < 300
+                )
+                self.assertEqual(outside, 0, f"{label} is not centred")
+
     def test_button_states_and_disabled_space_action_use_light_tokens(self) -> None:
         normal = self._run_case(96, 1)
         hover = self._run_case(96, 8)

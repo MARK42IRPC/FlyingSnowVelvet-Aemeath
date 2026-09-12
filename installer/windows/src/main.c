@@ -139,6 +139,8 @@ typedef struct ProgressVisualState {
     int minimum;
     int maximum;
     int position;
+    BOOL show_percent;
+    const wchar_t *complete_text;
     COLORREF fill_color;
     COLORREF track_color;
 } ProgressVisualState;
@@ -198,7 +200,7 @@ static RECT ui_rect(int x, int y, int width, int height) {
 static LRESULT CALLBACK wizard_window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam);
 static LRESULT CALLBACK button_subclass_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam, UINT_PTR subclass_id, DWORD_PTR reference_data);
 static LRESULT CALLBACK progress_subclass_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam, UINT_PTR subclass_id, DWORD_PTR reference_data);
-static void prepare_progress_visual(HWND window, ProgressVisualState *state, COLORREF track_color);
+static void prepare_progress_visual(HWND window, ProgressVisualState *state, COLORREF track_color, COLORREF fill_color, BOOL show_percent, const wchar_t *complete_text);
 
 static BOOL load_embedded_harmony_font(void) {
     HINSTANCE instance = GetModuleHandleW(NULL);
@@ -1576,13 +1578,15 @@ static BOOL layout_controls(void) {
     for (index = 0; index < ARRAYSIZE(g_space_values); ++index) {
         place_control(g_space_values[index], 40 + (int)index * 272, 382, 240, 42, g_heading_font);
     }
-    place_control(g_status, 40, 280, 800, 44, g_body_font);
-    /* Rounded pill bars at 200% of the original 10px/12px heights. */
-    place_control(g_download_progress, 40, 326, 800, 20, g_body_font);
-    place_control(g_progress, 40, 350, 800, 24, g_body_font);
-    place_control(g_current_file, 40, 378, 800, 28, g_meta_font);
-    place_control(g_progress_stats, 40, 410, 800, 24, g_body_font);
-    place_control(g_progress_eta, 40, 442, 800, 24, g_meta_font);
+    place_control(g_status, 40, 268, 800, 40, g_body_font);
+    /* Both install bars follow the voice package page: one 24px height for the
+       two of them, a status line's worth of air above, and a clear gap between
+       the pair and the file/ETA lines below. */
+    place_control(g_download_progress, 40, 320, 800, 24, g_body_font);
+    place_control(g_progress, 40, 364, 800, 24, g_body_font);
+    place_control(g_current_file, 40, 400, 800, 24, g_meta_font);
+    place_control(g_progress_stats, 40, 432, 800, 24, g_body_font);
+    place_control(g_progress_eta, 40, 462, 800, 24, g_meta_font);
     place_control(g_done_title, 40, 284, 800, 36, g_body_font);
     place_control(g_done_text, 40, 336, 800, 140, g_body_font);
     place_control(g_finish_button, 548, 510, 292, 40, g_body_font);
@@ -1626,14 +1630,16 @@ static BOOL create_controls(void) {
     g_done_text = create_label(L"安装文件已校验完成。", IDC_DONE_TEXT, SS_LEFT | SS_EDITCONTROL);
     SetWindowTheme(g_progress, L"", L"");
     SetWindowTheme(g_download_progress, L"", L"");
-    prepare_progress_visual(g_progress, &g_progress_visual, FSV_COLOR_SURFACE_RAISED);
-    prepare_progress_visual(g_download_progress, &g_download_visual, FSV_COLOR_SURFACE_RAISED);
+    /* Cyan tracks the archive that is downloaded or already embedded; pink
+       tracks extraction, matching the voice package page's two bars. */
+    prepare_progress_visual(g_progress, &g_progress_visual, FSV_COLOR_SURFACE_RAISED, FSV_COLOR_PINK, TRUE, NULL);
+    prepare_progress_visual(g_download_progress, &g_download_visual, FSV_COLOR_SURFACE_RAISED, FSV_COLOR_CYAN, TRUE, L"已完成");
     SendMessageW(g_progress, PBM_SETRANGE32, 0, 100);
     SendMessageW(g_download_progress, PBM_SETRANGE32, 0, 100);
     SendMessageW(g_download_progress, PBM_SETPOS, 100, 0);
     SendMessageW(g_progress, PBM_SETPOS, 0, 0);
     SendMessageW(g_progress, PBM_SETBARCOLOR, 0, FSV_COLOR_PINK);
-    SendMessageW(g_download_progress, PBM_SETBARCOLOR, 0, FSV_COLOR_PINK);
+    SendMessageW(g_download_progress, PBM_SETBARCOLOR, 0, FSV_COLOR_CYAN);
     SendMessageW(g_progress, PBM_SETBKCOLOR, 0, FSV_COLOR_SURFACE_RAISED);
     SendMessageW(g_download_progress, PBM_SETBKCOLOR, 0, FSV_COLOR_SURFACE_RAISED);
     {
@@ -1742,20 +1748,20 @@ static void fill_color_rect(HDC dc, RECT rect, COLORREF color) {
     DeleteObject(brush);
 }
 
-static void draw_rounded_progress(HWND window, const ProgressVisualState *state) {
-    PAINTSTRUCT paint;
-    HDC device_context = BeginPaint(window, &paint);
-    RECT bounds;
+static void paint_rounded_progress(HDC device_context, const RECT *bounds, const ProgressVisualState *state) {
     RECT panel;
+    RECT filled_area;
     int radius;
     int span;
     int filled;
-    GetClientRect(window, &bounds);
-    FillRect(device_context, &bounds, g_surface_brush);
-    if (bounds.right - bounds.left >= 6 && bounds.bottom - bounds.top >= 6) {
-        panel = bounds;
+    FillRect(device_context, bounds, g_surface_brush);
+    if (bounds->right - bounds->left >= 6 && bounds->bottom - bounds->top >= 6) {
+        panel = *bounds;
         InflateRect(&panel, -1, -1);
-        radius = panel.bottom - panel.top;
+        /* The voice package page is the reference: a quiet rounded rectangle
+           with a hairline border, not a pill, so the two install bars read as a
+           pair instead of two different widgets. */
+        radius = ui_px(3);
         draw_round_panel(device_context, &panel, state->track_color, FSV_COLOR_BORDER, radius);
         span = state->maximum - state->minimum;
         filled = 0;
@@ -1766,21 +1772,43 @@ static void draw_rounded_progress(HWND window, const ProgressVisualState *state)
             }
         }
         if (filled > 0) {
-            /* The fill is clipped to its own pill so a partial bar keeps the
-               same rounded silhouette as an empty or complete one. */
-            HRGN clip = CreateRoundRectRgn(panel.left, panel.top, panel.left + filled + 1, panel.bottom + 1, radius, radius);
+            /* The voice page's chunk is a plain rectangle inside the hairline
+               border: only the track carries the rounded corners. */
             HBRUSH fill_brush = CreateSolidBrush(state->fill_color);
-            if (clip != NULL) {
-                SelectClipRgn(device_context, clip);
-            }
-            FillRect(device_context, &panel, fill_brush);
-            if (clip != NULL) {
-                SelectClipRgn(device_context, NULL);
-                DeleteObject(clip);
-            }
+            filled_area = panel;
+            filled_area.right = panel.left + filled;
+            FillRect(device_context, &filled_area, fill_brush);
             DeleteObject(fill_brush);
         }
+        if (state->show_percent) {
+            wchar_t label[32];
+            HFONT label_font = g_meta_font != NULL ? g_meta_font : (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+            int label_percent = 0;
+            if (span > 0) {
+                label_percent = (state->position - state->minimum) * 100 / span;
+            }
+            if (label_percent < 0) {
+                label_percent = 0;
+            } else if (label_percent > 100) {
+                label_percent = 100;
+            }
+            if (label_percent >= 100 && state->complete_text != NULL) {
+                StringCchCopyW(label, ARRAYSIZE(label), state->complete_text);
+            } else {
+                StringCchPrintfW(label, ARRAYSIZE(label), L"%d%%", label_percent);
+            }
+            draw_text_block(device_context, label_font, FSV_COLOR_TEXT, label, panel,
+                            DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        }
     }
+}
+
+static void draw_rounded_progress(HWND window, const ProgressVisualState *state) {
+    PAINTSTRUCT paint;
+    RECT bounds;
+    HDC device_context = BeginPaint(window, &paint);
+    GetClientRect(window, &bounds);
+    paint_rounded_progress(device_context, &bounds, state);
     EndPaint(window, &paint);
 }
 
@@ -1817,6 +1845,18 @@ static LRESULT CALLBACK progress_subclass_proc(HWND window, UINT message, WPARAM
             return 0;
         }
         break;
+    case WM_PRINT:
+    case WM_PRINTCLIENT:
+        /* The visual harness and any print-to-DC path ask the control to paint
+           into a caller's DC; without this the captured page would show the
+           stock progress bar instead of the shipped one. */
+        if (state != NULL) {
+            RECT bounds;
+            GetClientRect(window, &bounds);
+            paint_rounded_progress((HDC)wparam, &bounds, state);
+            return 0;
+        }
+        break;
     case WM_NCDESTROY:
         RemoveWindowSubclass(window, progress_subclass_proc, subclass_id);
         break;
@@ -1826,12 +1866,15 @@ static LRESULT CALLBACK progress_subclass_proc(HWND window, UINT message, WPARAM
     return DefSubclassProc(window, message, wparam, lparam);
 }
 
-static void prepare_progress_visual(HWND window, ProgressVisualState *state, COLORREF track_color) {
+static void prepare_progress_visual(HWND window, ProgressVisualState *state, COLORREF track_color,
+                                    COLORREF fill_color, BOOL show_percent, const wchar_t *complete_text) {
     ZeroMemory(state, sizeof(*state));
     state->minimum = 0;
     state->maximum = 100;
     state->position = 0;
-    state->fill_color = FSV_COLOR_PINK;
+    state->show_percent = show_percent;
+    state->complete_text = complete_text;
+    state->fill_color = fill_color;
     state->track_color = track_color;
     SetWindowSubclass(window, progress_subclass_proc, 1, (DWORD_PTR)state);
 }
@@ -1894,7 +1937,6 @@ static void format_progress_message(const FsvProgressMessage *update) {
     wchar_t total[64];
     wchar_t stats[256];
     wchar_t eta[128];
-    wchar_t percent[32];
     DWORD display_percent;
     if (update->current_file[0] != L'\0') {
         wchar_t current[FSV_PATH_CAPACITY + 16];
@@ -1919,15 +1961,16 @@ static void format_progress_message(const FsvProgressMessage *update) {
     } else {
         StringCchPrintfW(stats, ARRAYSIZE(stats), L"已安装文件：%llu / %llu    数据：%ls / %ls", update->completed_files, update->total_files, completed, total);
     }
-    StringCchPrintfW(percent, ARRAYSIZE(percent), L"%lu%%", display_percent);
     SetWindowTextW(g_progress_stats, stats);
     SendMessageW(g_progress, PBM_SETPOS, display_percent, 0);
+    /* The percentage now lives inside the bar, so the ETA line keeps only the
+       remaining time instead of repeating it. */
     if (update->eta_known) {
         wchar_t duration[64];
         format_duration(update->eta_seconds, duration, ARRAYSIZE(duration));
-        StringCchPrintfW(eta, ARRAYSIZE(eta), L"预计剩余：%ls    当前进度：%ls", duration, percent);
+        StringCchPrintfW(eta, ARRAYSIZE(eta), L"预计剩余：%ls", duration);
     } else {
-        StringCchPrintfW(eta, ARRAYSIZE(eta), L"预计剩余：正在计算...    当前进度：%ls", percent);
+        StringCchCopyW(eta, ARRAYSIZE(eta), L"预计剩余：正在计算...");
     }
     SetWindowTextW(g_progress_eta, eta);
 }
@@ -2092,7 +2135,7 @@ static LRESULT CALLBACK wizard_window_proc(HWND window, UINT message, WPARAM wpa
             SetWindowTextW(g_status, L"正在准备安装..." );
             SetWindowTextW(g_current_file, L"当前文件：正在读取安装器..." );
             SetWindowTextW(g_progress_stats, L"已校验内置归档：0 B / 0 B" );
-            SetWindowTextW(g_progress_eta, L"预计剩余：正在计算...    当前进度：0%" );
+            SetWindowTextW(g_progress_eta, L"预计剩余：正在计算..." );
             set_page(3);
             g_context.worker = CreateThread(NULL, 0, install_worker, &g_context, 0, NULL);
             if (g_context.worker == NULL) {
