@@ -2391,7 +2391,7 @@ class AISettingsPanel(QWidget):
 
         self._gsv_max_steps = _DecimalSliderField(64, 1200, 1, value=_DEFAULT_VALUES["gsv_max_steps"], decimals=0)
         form.addRow("最大解码步数", self._gsv_max_steps)
-        self._set_form_row_description(form, self._gsv_max_steps, "语义解码保护上限；过低可能截断，默认 500。")
+        self._set_form_row_description(form, self._gsv_max_steps, "单段文本的解码保护上限，默认 500；超出预算的文本会自动拆成多段合成。")
 
         self._ai_voice_max_chars = _DecimalSliderField(
             AI_VOICE_MAX_CHARS_MIN,

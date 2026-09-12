@@ -18,6 +18,7 @@ from pathlib import Path
 
 import numpy as np
 
+from lib.core.logger import get_logger
 from lib.script.gsvmove.package_manager import validate_voice_package
 from lib.script.gsvmove.native_graph import (
     NativeGraphSession,
@@ -518,6 +519,80 @@ def _split_auto_language_text(text: str) -> tuple[tuple[str, str], ...]:
     return ((source, "zh"),)
 
 
+# One synthesis request shares a single ``max_steps`` semantic-decode budget,
+# and the packed archive cuts the audio silently when that budget runs out:
+# the decoder never reports ``stop_condition`` and only prints a warning to
+# stdout, which the worker keeps off the protocol channel.  Measured on the
+# pinned v2Pro package (speed_factor 1.1) one Chinese character costs 4.5-5.2
+# semantic tokens, so the default 500 steps only covers about 100 characters
+# and ``cut0`` requests dropped the tail of longer replies.  Budget every
+# request against the cap instead of trusting the split method to do it.
+_SEMANTIC_TOKENS_PER_CHAR = 6.0
+_SEMANTIC_BUDGET_RATIO = 0.8
+_SEMANTIC_MIN_BUDGET_CHARS = 24
+# A healthy segment speaks roughly 0.19 s per character at speed 1.1; anything
+# far below this floor means the decode stopped before the text was finished.
+_SEMANTIC_MIN_SECONDS_PER_CHAR = 0.05
+_SEMANTIC_CLAUSE_PATTERN = re.compile(
+    r"[^。！？!?…；;，,、：:.\n]+[。！？!?…；;，,、：:.\n]*|\n+"
+)
+_logger = get_logger(__name__)
+
+
+def _semantic_char_budget(max_steps: int) -> int:
+    """Return how many characters may share one decode budget."""
+    steps = max(64, min(1200, int(max_steps or 0)))
+    return max(
+        _SEMANTIC_MIN_BUDGET_CHARS,
+        int(steps * _SEMANTIC_BUDGET_RATIO / _SEMANTIC_TOKENS_PER_CHAR),
+    )
+
+
+def _split_text_by_budget(text: str, limit: int) -> tuple[str, ...]:
+    """Split text on clause boundaries, never exceeding ``limit`` characters."""
+    source = str(text or "")
+    if len(source) <= limit:
+        return (source,) if source else ()
+    pieces: list[str] = []
+    for match in _SEMANTIC_CLAUSE_PATTERN.finditer(source):
+        piece = match.group(0)
+        while len(piece) > limit:
+            pieces.append(piece[:limit])
+            piece = piece[limit:]
+        if piece:
+            pieces.append(piece)
+    chunks: list[str] = []
+    current = ""
+    for piece in pieces:
+        if current and len(current) + len(piece) > limit:
+            chunks.append(current)
+            current = ""
+        current += piece
+    if current:
+        chunks.append(current)
+    return tuple(chunk for chunk in chunks if chunk.strip())
+
+
+def _fit_semantic_budget(
+    segments: tuple[tuple[str, str], ...],
+    max_steps: int,
+) -> tuple[tuple[str, str], ...]:
+    """Keep every request inside the archive's silent decode cap."""
+    limit = _semantic_char_budget(max_steps)
+    fitted: list[tuple[str, str]] = []
+    for text, language in segments:
+        if len(text) <= limit:
+            fitted.append((text, language))
+            continue
+        chunks = _split_text_by_budget(text, limit)
+        _logger.info(
+            "[Voice] 文本 %d 字超过 %d 步解码预算，已拆分为 %d 段合成",
+            len(text), max_steps, len(chunks),
+        )
+        fitted.extend((chunk, language) for chunk in chunks)
+    return tuple(fitted)
+
+
 def _configure_mixed_language_frontend(module) -> bool:
     """Keep mixed-language phonemes in one semantic inference request."""
     engine_class = getattr(module, "AimisiOnnx", None)
@@ -656,6 +731,7 @@ class OnnxVoiceRuntime:
             if request.language != "auto" or self._native_mixed_frontend
             else _split_auto_language_text(request.text)
         )
+        segments = _fit_semantic_budget(segments, request.max_steps)
         chunks: list[np.ndarray] = []
         silence = np.zeros(
             round(self.sample_rate * request.fragment_interval),
@@ -686,7 +762,14 @@ class OnnxVoiceRuntime:
                 overlap_length=request.overlap_length,
                 min_chunk_length=request.min_chunk_length,
             )
-            chunks.append(np.asarray(audio, dtype=np.float32).reshape(-1))
+            samples = np.asarray(audio, dtype=np.float32).reshape(-1)
+            expected = len(text) * _SEMANTIC_MIN_SECONDS_PER_CHAR * self.sample_rate
+            if samples.size < expected:
+                _logger.warning(
+                    "[Voice] 合成结果偏短，可能触发了解码上限或提前停止（%d 字 -> %.2f 秒）",
+                    len(text), samples.size / max(1, self.sample_rate),
+                )
+            chunks.append(samples)
             if silence.size and index + 1 < len(segments):
                 chunks.append(silence)
 

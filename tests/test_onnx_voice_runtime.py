@@ -12,9 +12,12 @@ from lib.script.gsvmove.onnx_runtime import (
     _configure_hybrid_provider,
     _configure_mixed_language_frontend,
     _configure_native_cuda_sessions,
+    _fit_semantic_budget,
     _load_isolated_genie_frontend,
     _release_native_sessions,
+    _semantic_char_budget,
     _split_auto_language_text,
+    _split_text_by_budget,
     normalize_language,
 )
 from lib.script.gsvmove.native_graph import NativeRuntimeUnavailable
@@ -466,6 +469,71 @@ class OnnxVoiceRuntimeTests(unittest.TestCase):
                     self.assertEqual(
                         [call[:2] for call in runtime._engine.calls],
                         [("你好, Aemeath!", "auto")],
+                    )
+                finally:
+                    runtime.close()
+
+    def test_semantic_char_budget_scales_with_the_decode_cap(self):
+        # One request shares one ``max_steps`` budget; the measured cost of a
+        # Chinese character (4.5~5.2 tokens with speed_factor 1.1) has to fit.
+        self.assertEqual(_semantic_char_budget(500), 66)
+        self.assertEqual(_semantic_char_budget(1200), 160)
+        self.assertEqual(_semantic_char_budget(0), 24)
+        self.assertLessEqual(_semantic_char_budget(500) * 5.2, 500)
+        self.assertLessEqual(_semantic_char_budget(1200) * 5.2, 1200)
+
+    def test_split_text_by_budget_preserves_every_character(self):
+        text = "第一句话在这里。第二句话稍微长一点点，仍然在预算之内。第三句话也很正常！"
+        chunks = _split_text_by_budget(text, 12)
+        self.assertEqual("".join(chunks), text)
+        self.assertTrue(all(len(chunk) <= 12 for chunk in chunks))
+
+        unpunctuated = "甲" * 50
+        chunks = _split_text_by_budget(unpunctuated, 12)
+        self.assertEqual("".join(chunks), unpunctuated)
+        self.assertTrue(all(len(chunk) <= 12 for chunk in chunks))
+
+        self.assertEqual(_split_text_by_budget("短句。", 12), ("短句。",))
+        self.assertEqual(_split_text_by_budget("", 12), ())
+
+    def test_fit_semantic_budget_keeps_short_text_in_one_request(self):
+        segments = (("短句也可以保持原样。", "zh"),)
+        self.assertEqual(_fit_semantic_budget(segments, 500), segments)
+
+        long_segments = (("字" * 200, "zh"),)
+        fitted = _fit_semantic_budget(long_segments, 500)
+        self.assertGreater(len(fitted), 1)
+        self.assertEqual("".join(text for text, _lang in fitted), "字" * 200)
+        self.assertTrue(all(len(text) <= 66 for text, _lang in fitted))
+        self.assertTrue(all(language == "zh" for _text, language in fitted))
+
+    def test_cut0_long_reply_is_split_before_the_decode_cap_truncates_it(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "infer.py").write_text(_FAKE_INFER, encoding="utf-8")
+            validation = VoicePackageValidation(
+                True,
+                "ok",
+                {"sample_rate": 32000, "name": "aimisiV2"},
+            )
+            text = (
+                "今天天气确实不错，适合出去走走，顺便把之前没买完的东西补齐。"
+                "你要是愿意的话，我们可以先去公园那边转一圈，然后再去超市看看有没有打折的水果。"
+                "对了，晚上想吃什么？我可以提前准备一下，免得回来太晚还要现做。"
+            )
+            with patch.object(runtime_module, "validate_voice_package", return_value=validation):
+                runtime = OnnxVoiceRuntime(root)
+                try:
+                    runtime.synthesize_to_file(
+                        {"text": text, "text_split_method": "cut0", "fragment_interval": 0},
+                        root / "long.wav",
+                    )
+                    calls = runtime._engine.calls
+                    self.assertGreater(len(calls), 1)
+                    self.assertEqual("".join(call[0] for call in calls), text)
+                    self.assertTrue(all(len(call[0]) <= 66 for call in calls))
+                    self.assertTrue(
+                        all(call[3]["text_split_method"] == "cut0" for call in calls)
                     )
                 finally:
                     runtime.close()
