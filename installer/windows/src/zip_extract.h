@@ -24,6 +24,12 @@ typedef void (*FsvZipProgressCallback)(const FsvZipProgressMessage *message);
 unsigned fsv_zip_worker_count(unsigned logical_processors, unsigned entry_count);
 unsigned fsv_zip_worker_limit(unsigned logical_processors, unsigned max_workers,
                               unsigned busy_percent, unsigned our_percent);
+/* Remaining time is part of the same contract: ``finished`` entries inside
+   ``elapsed_ms`` give a per-second rate which is applied to the entries still
+   outstanding.  Returns 0 while no estimate is possible, so the caller keeps
+   the previous value instead of flickering back to "calculating". */
+ULONGLONG fsv_zip_eta_seconds(ULONGLONG total_files, ULONGLONG completed_files,
+                              ULONGLONG finished, ULONGLONG elapsed_ms);
 
 BOOL fsv_extract_zip(
     const wchar_t *archive_path,

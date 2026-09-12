@@ -30,6 +30,10 @@
 #define FSV_ZIP_CPU_CEILING_PERCENT 65U
 #define FSV_ZIP_CPU_SAMPLE_MS 250U
 #define FSV_ZIP_GATE_SLEEP_MS 10U
+/* Remaining time is republished once per window.  Recomputing it more often
+   only makes the label jitter: one slow file moves an instantaneous rate far
+   more than it moves a two second average. */
+#define FSV_ZIP_ETA_WINDOW_MS 2000U
 
 typedef struct FsvZipInfo {
     ULONGLONG archive_size;
@@ -61,11 +65,11 @@ typedef struct FsvZipProgressState {
     volatile LONG64 completed_bytes;
     volatile LONG failed;
     DWORD failure;
-    ULONGLONG started_at;
     ULONGLONG last_post_at;
-    ULONGLONG last_sample_at;
-    ULONGLONG last_sample_bytes;
-    double bytes_per_second;
+    ULONGLONG eta_sample_at;
+    ULONGLONG eta_sample_files;
+    ULONGLONG eta_seconds;
+    BOOL eta_known;
     ULONGLONG cpu_sample_at;
     ULONGLONG cpu_idle_time;
     ULONGLONG cpu_kernel_time;
@@ -487,6 +491,18 @@ static BOOL ensure_directory(const wchar_t *directory) {
         (attributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0;
 }
 
+ULONGLONG fsv_zip_eta_seconds(ULONGLONG total_files, ULONGLONG completed_files,
+                              ULONGLONG finished, ULONGLONG elapsed_ms) {
+    double files_per_second;
+    ULONGLONG estimate;
+    if (finished == 0 || elapsed_ms == 0 || total_files <= completed_files) {
+        return 0;
+    }
+    files_per_second = ((double)finished * 1000.0) / (double)elapsed_ms;
+    estimate = (ULONGLONG)(((double)(total_files - completed_files) / files_per_second) + 0.5);
+    return estimate == 0 ? 1 : estimate;
+}
+
 static void post_progress(FsvZipProgressState *state, const wchar_t *path, BOOL force) {
     ULONGLONG now;
     ULONGLONG completed_bytes;
@@ -506,17 +522,31 @@ static void post_progress(FsvZipProgressState *state, const wchar_t *path, BOOL 
         LeaveCriticalSection(&state->lock);
         return;
     }
-    if (now > state->last_sample_at && completed_bytes >= state->last_sample_bytes) {
-        ULONGLONG elapsed = now - state->last_sample_at;
-        ULONGLONG delta = completed_bytes - state->last_sample_bytes;
-        if (elapsed > 0 && delta > 0) {
-            double sample = ((double)delta * 1000.0) / (double)elapsed;
-            state->bytes_per_second = state->bytes_per_second <= 0.0
-                ? sample
-                : state->bytes_per_second * 0.75 + sample * 0.25;
+    /* Average entry rate of the last window, applied to the entries still
+       outstanding.  The window is long enough to ride out a big file and only
+       one new estimate is published per window, so the label changes at most
+       every two seconds.  A window that finished nothing (a single large file
+       is being written) keeps the previous estimate. */
+    if (!state->scanning_directory) {
+        if (state->eta_sample_at == 0) {
+            state->eta_sample_at = now;
+            state->eta_sample_files = completed_files;
+        } else if (now - state->eta_sample_at >= FSV_ZIP_ETA_WINDOW_MS) {
+            ULONGLONG estimate = fsv_zip_eta_seconds(
+                (ULONGLONG)state->total_files,
+                completed_files,
+                completed_files >= state->eta_sample_files
+                    ? completed_files - state->eta_sample_files
+                    : 0,
+                now - state->eta_sample_at
+            );
+            if (estimate > 0) {
+                state->eta_seconds = estimate;
+                state->eta_known = TRUE;
+            }
+            state->eta_sample_at = now;
+            state->eta_sample_files = completed_files;
         }
-        state->last_sample_at = now;
-        state->last_sample_bytes = completed_bytes;
     }
     ZeroMemory(&message, sizeof(message));
     message.completed_files = completed_files;
@@ -527,8 +557,8 @@ static void post_progress(FsvZipProgressState *state, const wchar_t *path, BOOL 
     message.percent = state->total_bytes == 0 || completed_bytes >= state->total_bytes
         ? 100
         : (DWORD)(((double)completed_bytes * 100.0) / (double)state->total_bytes);
-    if (state->bytes_per_second > 1.0 && completed_bytes < state->total_bytes) {
-        message.eta_seconds = (ULONGLONG)(((double)(state->total_bytes - completed_bytes) / state->bytes_per_second) + 0.5);
+    if (state->eta_known) {
+        message.eta_seconds = state->eta_seconds;
         message.eta_known = TRUE;
     }
     StringCchCopyW(message.current_file, ARRAYSIZE(message.current_file), state->current_file);
@@ -1034,8 +1064,6 @@ BOOL fsv_extract_zip(const wchar_t *archive_path, const wchar_t *destination, Fs
     ZeroMemory(&state, sizeof(state));
     InitializeCriticalSection(&state.lock);
     state.callback = callback;
-    state.started_at = GetTickCount64();
-    state.last_sample_at = state.started_at;
     state.total_files = 0;
     state.total_bytes = 0;
     position = info.central_offset;

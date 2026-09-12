@@ -30,6 +30,17 @@ int wmain(int argc, wchar_t **argv) {
         );
         return 0;
     }
+    if (argc == 6 && wcscmp(argv[1], L"eta") == 0) {
+        ULONGLONG total_files = (ULONGLONG)_wtoi64(argv[2]);
+        ULONGLONG completed_files = (ULONGLONG)_wtoi64(argv[3]);
+        ULONGLONG finished = (ULONGLONG)_wtoi64(argv[4]);
+        ULONGLONG elapsed_ms = (ULONGLONG)_wtoi64(argv[5]);
+        printf(
+            "OK %llu\n",
+            (unsigned long long)fsv_zip_eta_seconds(total_files, completed_files, finished, elapsed_ms)
+        );
+        return 0;
+    }
     if (argc == 3 && wcscmp(argv[1], L"stats") == 0) {
         ULONGLONG files = 0;
         ULONGLONG bytes = 0;
@@ -57,6 +68,6 @@ int wmain(int argc, wchar_t **argv) {
         );
         return 0;
     }
-    fprintf(stderr, "usage: zip_extract_harness <stats ZIP | extract ZIP DEST | tune LOGICAL ENTRIES BUSY OURS>\n");
+    fprintf(stderr, "usage: zip_extract_harness <stats ZIP | extract ZIP DEST | tune LOGICAL ENTRIES BUSY OURS | eta TOTAL COMPLETED FINISHED WINDOW_MS>\n");
     return 64;
 }

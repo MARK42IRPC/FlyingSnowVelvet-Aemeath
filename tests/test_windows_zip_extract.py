@@ -259,6 +259,31 @@ class WindowsZipExtractTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertEqual(result.stdout.split()[2], str(expected))
 
+    def test_remaining_time_uses_the_average_entry_rate_of_one_window(self):
+        # Remaining time is the entries finished inside the last two second
+        # window divided into the entries still outstanding, so the estimate is
+        # republished at most once per window instead of on every progress post.
+        cases = (
+            # total, completed, finished, window_ms, seconds
+            (17300, 1300, 80, 2000, 400),   # 40 entries/s -> 16000 / 40
+            (1000, 500, 20, 2000, 50),      # 10 entries/s -> 500 / 10
+            (1000, 0, 10, 2000, 200),       # 5 entries/s -> 1000 / 5
+            (1000, 900, 1, 2000, 200),      # 0.5 entries/s -> 100 / 0.5
+            (1000, 999, 1, 2000, 2),        # sub-second work never rounds to 0
+            (1000, 999, 1, 1000, 1),        # 1 entry/s -> 1 / 1
+            (1000, 1000, 5, 2000, 0),       # nothing left, keep the last value
+            (1000, 500, 0, 2000, 0),        # a window that finished nothing
+            (1000, 500, 5, 0, 0),           # a window without duration
+            (0, 0, 5, 2000, 0),             # the entry count is still unknown
+        )
+        for total, completed, finished, window, expected in cases:
+            with self.subTest(total=total, completed=completed, finished=finished, window=window):
+                result = self.run_harness(
+                    "eta", str(total), str(completed), str(finished), str(window)
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(result.stdout.split(), ["OK", str(expected)])
+
     def test_zip64_entry_count_is_supported(self):
         with tempfile.TemporaryDirectory(prefix="fsv-zip64-") as temporary:
             root = Path(temporary)
