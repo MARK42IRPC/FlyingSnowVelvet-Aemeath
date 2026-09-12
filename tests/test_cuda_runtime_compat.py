@@ -137,6 +137,65 @@ class DeviceOperatorSurfaceTests(unittest.TestCase):
         self.assertIn("设备快路径与前提", _read(_NATIVE / "README.md"))
 
 
+class DeviceAbandonSurfaceTests(unittest.TestCase):
+    """Giving up on a full card for the whole run instead of node by node.
+
+    Each refusal used to buy one more host fallback, so a card that had run out
+    of memory turned a 2.8 s synthesis into 100 s of host work with nothing
+    visible to explain it. The threshold, the two reset points and the
+    diagnostic entries only hold while the header, the C ABI, the runtime and
+    the graph host all agree; the annotations in ``nv_runtime.h`` are what the
+    next reader has to reconcile the numbers against.
+    """
+
+    def setUp(self):
+        self.header = _read(_NATIVE / "include" / "fsv_cuda_voice_runtime.h")
+        self.ops = _read(_NATIVE / "src" / "host" / "cuda_ops.cpp")
+        self.internal = _read(_NATIVE / "src" / "host" / "nv_runtime.h")
+        self.runtime = _read(_NATIVE / "src" / "host" / "nv_runtime.cpp")
+        self.graph = _read(_NATIVE / "src" / "host" / "graph_runtime.cpp")
+        self.smoke = _read(_NATIVE / "tools" / "fsv_engine_smoke.cpp")
+
+    def test_c_abi_exposes_the_abandon_state(self):
+        self.assertIn("FSV_CUDA_API int fsv_cuda_device_abandoned(void);", self.header)
+        self.assertIn("FSV_CUDA_API void fsv_cuda_reset_device_abandoned(void);", self.header)
+        # The ABI is a thin forwarder, so the flag lives in exactly one place.
+        self.assertIn("fsv::nv_device_abandoned()", self.ops)
+        self.assertIn("fsv::nv_reset_device_abandoned()", self.ops)
+
+    def test_eight_refusals_in_a_row_end_the_device_path(self):
+        self.assertIn("const int kAllocFailureLimit = 8;", self.runtime)
+        self.assertIn("++g_alloc_streak >= kAllocFailureLimit", self.runtime)
+        # Both ways to get memory -- a pool hit and a fresh allocation -- have
+        # to clear the streak, or a graph that alternates hit and refusal would
+        # abandon a card that is still handing buffers out.
+        self.assertGreaterEqual(self.runtime.count("g_alloc_streak = 0;"), 3)
+
+    def test_an_abandoned_card_is_not_asked_again_this_run(self):
+        self.assertIn("bool nv_device_abandoned();", self.internal)
+        self.assertIn("void nv_reset_device_abandoned();", self.internal)
+        self.assertIn("if (g_device_abandoned) {", self.runtime)
+        self.assertIn("return enabled && !fsv_cuda_device_abandoned();", self.graph)
+
+    def test_the_next_run_gets_a_fresh_chance(self):
+        self.assertIn("fsv_cuda_reset_device_abandoned();", self.graph)
+        # Reset has to happen before the graph is executed, not while it runs.
+        self.assertLess(
+            self.graph.index("fsv_cuda_reset_device_abandoned();"),
+            self.graph.index('const bool trace = std::getenv("FSV_NATIVE_TRACE")'),
+        )
+
+    def test_refusals_and_abandonments_are_counted(self):
+        self.assertIn("unsigned long long allocation_failures = 0;", self.internal)
+        self.assertIn("unsigned long long abandonments = 0;", self.internal)
+        self.assertIn("alloc fail=%llu abandon=%llu", self.runtime)
+
+    def test_smoke_test_and_documents_cover_the_backoff(self):
+        self.assertIn('"device_abandon_flag"', self.smoke)
+        self.assertIn("fsv_cuda_device_abandoned", _read(_DOC))
+        self.assertIn("fsv_cuda_device_abandoned", _read(_NATIVE / "README.md"))
+
+
 class CompatibilityDocumentationTests(unittest.TestCase):
     def test_documents_name_the_shipped_ptx_target(self):
         self.assertIn("`compute_61`", _read(_DOC))

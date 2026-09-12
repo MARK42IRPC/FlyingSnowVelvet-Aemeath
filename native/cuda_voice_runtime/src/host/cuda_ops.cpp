@@ -251,6 +251,10 @@ int fsv_cuda_active_device(char* name, size_t name_size) {
 
 int fsv_cuda_take_alloc_failure(void) { return fsv::nv_take_alloc_failure() ? 1 : 0; }
 
+int fsv_cuda_device_abandoned(void) { return fsv::nv_device_abandoned() ? 1 : 0; }
+
+void fsv_cuda_reset_device_abandoned(void) { fsv::nv_reset_device_abandoned(); }
+
 int fsv_cuda_binary_f32(const float* a, const float* b, float* c, size_t count, int operation) {
     if (!a || !b || !c || !count || operation < 0 || operation > 2) {
         fsv::nv_set_error("invalid binary operator arguments");

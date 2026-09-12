@@ -135,6 +135,10 @@ struct NvStats {
     unsigned long long downloads = 0;
     unsigned long long download_bytes = 0;
     unsigned long long launches = 0;
+    /* Refused allocations: the counter that decides when a run gives up on the
+       card (see nv_device_abandoned). */
+    unsigned long long allocation_failures = 0;
+    unsigned long long abandonments = 0;
     double allocate_seconds = 0.0;
     double upload_seconds = 0.0;
     double download_seconds = 0.0;
@@ -167,5 +171,13 @@ void nv_set_error(const char* text);
 
 /* True once after a device allocation was refused; reading it clears the flag. */
 bool nv_take_alloc_failure();
+
+/* A card that is out of memory refuses every request, and each refusal used to
+   hand one more node to the host interpreter: correct output, a hundred times
+   slower, and the graph never stopped asking. Once this many allocations in a
+   row have been refused the run gives up on the card entirely, and the flag
+   stays set until the next run resets it. */
+bool nv_device_abandoned();
+void nv_reset_device_abandoned();
 
 }  // namespace fsv

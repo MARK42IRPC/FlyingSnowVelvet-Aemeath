@@ -47,6 +47,10 @@ build\cuda_voice_runtime\Release\fsv_engine_smoke.exe
   最后比序号。2 GiB 卡在第一次大分配上就会失败，选它等于选了唯一必然失败的卡。
 - 多卡机器用 `AEMEATH_CUDA_VOICE_DEVICE=<序号>` 指定，`none` / `-1` 把设备路径
   整个关掉。序号不存在或值不合法直接报错，指定小显存卡也照用。
+- 显存被其它进程占满时不再逐节点回退：连续 8 次分配失败即整轮切到主机实现，
+  `FSV_CUDA_STATS` 里记在 `alloc fail=` 与 `abandon=`，下一次图执行开始时自动复位重试。
+  `fsv_cuda_device_abandoned()` 查询本轮是否已退避，`fsv_cuda_reset_device_abandoned()`
+  手动复位。
 - `CUDA_VISIBLE_DEVICES` 由驱动处理，本推理端枚举到的已经是过滤后的设备表，
   因此不再重复解析。
 - `fsv_cuda_get_device_info(index)` 只加载驱动，没有可用卡时也能列出所有卡，

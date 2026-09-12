@@ -56,7 +56,9 @@ using fsv::Value;
 
 bool cuda_host_enabled() {
     static const bool enabled = std::getenv("FSV_NATIVE_CPU_ONLY") == nullptr;
-    return enabled;
+    /* A run that has run out of memory keeps every remaining node on the host:
+       the card is not asked again until the next run resets the flag. */
+    return enabled && !fsv_cuda_device_abandoned();
 }
 
 std::size_t element_size(int32_t dtype) {
@@ -4053,6 +4055,11 @@ const Tensor* GraphRuntime::find_resident(const std::string& name) const {
 bool GraphRuntime::run(const std::unordered_map<std::string, Tensor>& feeds,
                        std::unordered_map<std::string, Tensor>& outputs,
                        std::string& error) {
+    /* A new run gets a fresh chance at the card: the memory a previous run was
+       refused may have been released since (another process exiting, a package
+       swap), and abandoning the device for the rest of the process would turn a
+       transient shortage into a permanent slowdown. */
+    fsv_cuda_reset_device_abandoned();
     const bool trace = std::getenv("FSV_NATIVE_TRACE") != nullptr;
     std::unordered_map<std::string, Value> values;
     for (const auto& item : initializers_) {

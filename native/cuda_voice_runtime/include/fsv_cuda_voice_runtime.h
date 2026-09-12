@@ -40,6 +40,14 @@ FSV_CUDA_API const char* fsv_cuda_last_error(void);
    out-of-memory degradation once instead of once per declined node. */
 FSV_CUDA_API int fsv_cuda_take_alloc_failure(void);
 
+/* Non-zero while the current run has given up on the card: after a run of
+   refusals every remaining node executes on the host, so the graph finishes at
+   host speed instead of stalling on a full card. The graph runtime resets this
+   at the start of each run, and callers can also query it to report the
+   degradation. */
+FSV_CUDA_API int fsv_cuda_device_abandoned(void);
+FSV_CUDA_API void fsv_cuda_reset_device_abandoned(void);
+
 FSV_CUDA_API int fsv_cuda_binary_f32(const float* a, const float* b, float* c, size_t count, int operation);
 FSV_CUDA_API int fsv_cuda_unary_f32(const float* a, float* c, size_t count, int operation);
 FSV_CUDA_API int fsv_cuda_binary_f32_host(const float* a, const float* b, float* c, size_t count, int operation);

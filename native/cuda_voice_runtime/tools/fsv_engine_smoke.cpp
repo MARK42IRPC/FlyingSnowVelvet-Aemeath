@@ -83,6 +83,13 @@ void check_device() {
                   selected[0] ? selected : error_detail().c_str());
     report("device_select", active >= 0 && active < count && selected[0] != '\0',
            selection_detail);
+
+    /* The "give up on the card" flag has to be readable and resettable before
+       any graph runs: the host asks it to decide whether to keep sending work
+       to the device or run the rest of the synthesis on the CPU baseline. */
+    fsv_cuda_reset_device_abandoned();
+    report("device_abandon_flag", fsv_cuda_device_abandoned() == 0,
+           "reset clears the abandon flag");
 }
 
 void check_matmul() {

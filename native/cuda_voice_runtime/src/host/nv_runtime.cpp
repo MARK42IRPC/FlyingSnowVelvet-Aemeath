@@ -395,6 +395,9 @@ const std::size_t kPoolLimitBytes = 768ull << 20;
 const std::size_t kPoolPressureLimitBytes = 96ull << 20;
 std::size_t g_pool_limit = kPoolLimitBytes;
 bool g_alloc_failure = false;
+const int kAllocFailureLimit = 8;
+int g_alloc_streak = 0;
+bool g_device_abandoned = false;
 
 std::size_t pool_bucket(std::size_t bytes) {
     const std::size_t granularity = 1024;
@@ -488,7 +491,7 @@ struct StatsReporter {
         std::fprintf(stderr,
                      "[nv-stats] launch=%llu %.2fs | alloc=%llu (pool hit %llu) %.2fs |"
                      " upload=%llu %.2f GB %.2fs | download=%llu %.2f GB %.2fs |"
-                     " driver total %.2fs\n",
+                     " alloc fail=%llu abandon=%llu | driver total %.2fs\n",
                      stats.launches, stats.launch_seconds,
                      stats.allocations, stats.pool_hits, stats.allocate_seconds,
                      stats.uploads,
@@ -496,7 +499,8 @@ struct StatsReporter {
                      stats.upload_seconds,
                      stats.downloads,
                      static_cast<double>(stats.download_bytes) / 1073741824.0,
-                     stats.download_seconds, accounted);
+                     stats.download_seconds, stats.allocation_failures,
+                     stats.abandonments, accounted);
         /* The blocking copies are the only place the host waits for the
            device, so their wall clock is split: busy is the queue draining,
            transfer is the bytes moving. Peak is the runtime's own footprint,
@@ -705,6 +709,13 @@ bool nv_take_alloc_failure() {
     const bool failed = g_alloc_failure;
     g_alloc_failure = false;
     return failed;
+}
+
+bool nv_device_abandoned() { return g_device_abandoned; }
+
+void nv_reset_device_abandoned() {
+    g_device_abandoned = false;
+    g_alloc_streak = 0;
 }
 
 NvRuntime& NvRuntime::instance() {
@@ -974,6 +985,12 @@ NvStats& nv_stats() { return g_stats; }
 bool NvRuntime::acquire(std::size_t bytes, NvPtr& pointer, std::string& error) {
     if (!initialize(error)) return false;
     if (!current_context(error)) return false;
+    /* Already given up for this run: refuse without touching the driver, so the
+       remaining nodes go straight to the host implementation. */
+    if (g_device_abandoned) {
+        error = "显存不足：本次推理已整体切回主机执行";
+        return false;
+    }
     const std::size_t bucket = pool_bucket(bytes ? bytes : 1);
     auto iterator = g_pool.lower_bound(bucket);
     if (iterator != g_pool.end() && !iterator->second.empty()) {
@@ -982,6 +999,7 @@ bool NvRuntime::acquire(std::size_t bytes, NvPtr& pointer, std::string& error) {
         g_pool_bytes -= iterator->first;
         if (iterator->second.empty()) g_pool.erase(iterator);
         ++g_stats.pool_hits;
+        g_alloc_streak = 0;
         return true;
     }
     const double started = now_seconds();
@@ -995,6 +1013,15 @@ bool NvRuntime::acquire(std::size_t bytes, NvPtr& pointer, std::string& error) {
     g_stats.allocate_seconds += now_seconds() - started;
     if (status != 0) {
         g_alloc_failure = true;
+        ++g_stats.allocation_failures;
+        if (++g_alloc_streak >= kAllocFailureLimit && !g_device_abandoned) {
+            g_device_abandoned = true;
+            ++g_stats.abandonments;
+            std::fprintf(stderr,
+                         "[fsv-cuda] 显存连续 %d 次分配失败，本次推理整体切回 CPU 执行"
+                         "（不再逐节点回退）。\n",
+                         kAllocFailureLimit);
+        }
         char buffer[256];
         std::snprintf(buffer, sizeof(buffer), "显存分配 %.2f MB 失败：%s",
                       static_cast<double>(bucket) / 1048576.0, describe(api_, status).c_str());
@@ -1002,6 +1029,7 @@ bool NvRuntime::acquire(std::size_t bytes, NvPtr& pointer, std::string& error) {
         return false;
     }
     ++g_stats.allocations;
+    g_alloc_streak = 0;
     note_device_bytes(static_cast<long long>(bucket));
     pointer = address;
     return true;
