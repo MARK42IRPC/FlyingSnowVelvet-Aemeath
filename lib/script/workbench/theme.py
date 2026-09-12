@@ -6,6 +6,11 @@ from dataclasses import dataclass
 
 from config.font_config import get_ui_font_family
 from config.scale import scale_px
+from lib.core.graphics.workbench_tokens import (
+    WORKBENCH_DARK_TOKENS,
+    WORKBENCH_LIGHT_TOKENS,
+)
+from lib.core.graphics.workbench_tokens import resolve_workbench_mode as _resolve_mode
 
 
 @dataclass(frozen=True)
@@ -27,24 +32,8 @@ class WorkbenchColors:
     danger: str = "#ff7a92"
 
 
-DARK_COLORS = WorkbenchColors()
-LIGHT_COLORS = WorkbenchColors(
-    canvas="#fff8fb",
-    navigation="#fff0f5",
-    surface="#ffffff",
-    surface_raised="#fff5f8",
-    surface_hover="#ffe7f0",
-    border="#e7c5d2",
-    border_strong="#c99eb0",
-    text="#20344d",
-    text_muted="#344863",
-    text_dim="#4f627b",
-    pink="#e9689d",
-    pink_hover="#f58db7",
-    cyan="#91bdd8",
-    warning="#a97c36",
-    danger="#d95e78",
-)
+DARK_COLORS = WorkbenchColors(**WORKBENCH_DARK_TOKENS)
+LIGHT_COLORS = WorkbenchColors(**WORKBENCH_LIGHT_TOKENS)
 
 # 保留现有导入方对暗色 token 的兼容；样式生成通过 get_workbench_colors() 动态取色。
 COLORS = DARK_COLORS
@@ -52,14 +41,32 @@ COLORS = DARK_COLORS
 
 def get_workbench_colors(mode: str | None = None) -> WorkbenchColors:
     """返回当前工作台主题色；显式传入 dark/light 可用于预览和测试。"""
-    if mode is None:
-        try:
-            from config.config import UI
+    return LIGHT_COLORS if _resolve_mode(mode) == "light" else DARK_COLORS
 
-            mode = "light" if bool(UI.get("workbench_light_theme", False)) else "dark"
-        except Exception:
-            mode = "dark"
-    return LIGHT_COLORS if str(mode).strip().lower() == "light" else DARK_COLORS
+
+def window_button_stylesheet(mode: str | None = None) -> str:
+    """返回工作台窗口控制按钮的共享 QSS，供主窗口与独立浮窗复用。"""
+    c = get_workbench_colors(mode)
+    radius = scale_px(4, min_abs=3)
+    control_height = scale_px(32, min_abs=28)
+    return f"""
+    QToolButton#WorkbenchWindowButton {{
+        background: transparent;
+        border: none;
+        border-radius: {radius}px;
+        min-width: {control_height}px;
+        min-height: {control_height}px;
+        max-width: {control_height}px;
+        max-height: {control_height}px;
+        padding: 0px;
+    }}
+    QToolButton#WorkbenchWindowButton:hover {{
+        background: {c.surface_hover};
+    }}
+    QToolButton#WorkbenchWindowButton[danger="true"]:hover {{
+        background: {c.danger};
+    }}
+    """
 
 
 def workbench_stylesheet(mode: str | None = None) -> str:
@@ -143,26 +150,11 @@ def workbench_stylesheet(mode: str | None = None) -> str:
         color: {c.text};
         border-left-color: {c.pink};
     }}
-    QToolButton#WorkbenchWindowButton {{
-        background: transparent;
-        border: none;
-        border-radius: {radius}px;
-        min-width: {control_height}px;
-        min-height: {control_height}px;
-        max-width: {control_height}px;
-        max-height: {control_height}px;
-        padding: 0px;
-    }}
+    {window_button_stylesheet(mode)}
     QToolButton#WorkbenchAboutButton {{
         background: transparent;
         border: none;
         padding: 0px;
-    }}
-    QToolButton#WorkbenchWindowButton:hover {{
-        background: {c.surface_hover};
-    }}
-    QToolButton#WorkbenchWindowButton[danger="true"]:hover {{
-        background: {c.danger};
     }}
     QCheckBox#WorkbenchThemeToggle {{
         background: transparent;

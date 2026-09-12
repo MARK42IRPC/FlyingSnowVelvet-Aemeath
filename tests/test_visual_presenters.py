@@ -44,6 +44,7 @@ from lib.core.graphics.visuals import (
     update_speaker_intensity,
 )
 from lib.core.layer import Layer
+from lib.core.graphics.workbench_tokens import get_workbench_token_colors
 
 
 class _Particle:
@@ -229,6 +230,7 @@ class VisualPresenterTests(unittest.TestCase):
 
     def test_qr_panel_uses_qt_reference_layout_and_theme(self):
         width, height = qr_panel_size()
+        tokens = get_workbench_token_colors()
         resource = ImageResource(
             "qr:test",
             (RasterFrame(2, 1, bytes((20, 30, 40, 255)) * 2),),
@@ -239,9 +241,10 @@ class VisualPresenterTests(unittest.TestCase):
 
         self.assertEqual(visual.size, layout.size)
         self.assertEqual((width, height), (320, 430))
-        self.assertEqual(visual.batch.commands[0].fill, Color(0, 0, 0))
-        self.assertEqual(visual.batch.commands[1].fill, Color(173, 216, 230))
-        self.assertEqual(visual.batch.commands[2].fill, Color(255, 182, 193))
+        # 二维码浮窗跟随工作台明暗主题，不能再读私有 UI_THEME 色板。
+        self.assertEqual(visual.batch.commands[0].fill, tokens["border_strong"])
+        self.assertEqual(visual.batch.commands[1].fill, tokens["border"])
+        self.assertEqual(visual.batch.commands[2].fill, tokens["surface"])
         sprite = next(item for item in visual.batch.commands if hasattr(item, "frame"))
         self.assertEqual(sprite.target_size.width, layout.qr_rect.width)
         self.assertEqual(sprite.target_size.height, layout.qr_rect.width / 2)

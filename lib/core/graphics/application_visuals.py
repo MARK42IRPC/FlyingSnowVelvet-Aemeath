@@ -26,6 +26,7 @@ from .resources import ImageResource, RasterFrame
 from .rich_text_parser import TextSegment, contains_rich_text, parse_rich_text
 from .screen import clamp_rect_position
 from .types import Color, FontSpec, Point, Rect, Size
+from .workbench_tokens import get_workbench_token_colors
 
 
 @dataclass(frozen=True, slots=True)
@@ -763,10 +764,13 @@ def build_qr_panel_visual(
     border_width = scale_px(2, min_abs=1)
     font_size = max(1, int(FONT.get("ui_size", 12)))
     family = get_ui_font_family()
-    border = _theme_color("border", Color(0, 0, 0))
-    middle = _theme_color("mid", Color(173, 216, 230))
-    background = _theme_color("bg", Color(255, 182, 193))
-    text_color = _theme_color("text", Color(0, 0, 0))
+    # 浮窗跟随工作台明暗主题，色板只从共享 token 表读取。
+    tokens = get_workbench_token_colors()
+    border = tokens["border_strong"]
+    middle = tokens["border"]
+    background = tokens["surface"]
+    text_color = tokens["text"]
+    muted_text_color = tokens["text_muted"]
     commands = [
         RectCommand(Rect(0, 0, width, height), fill=border, layer=layer),
         RectCommand(
@@ -821,7 +825,7 @@ def build_qr_panel_visual(
         commands.append(TextCommand(
             str(placeholder or ""),
             FontSpec(family, font_size),
-            text_color,
+            tokens["text_dim"],
             layout.qr_rect,
             alignment=int(TextAlignment.HCENTER | TextAlignment.VCENTER),
             layer=layer,
@@ -830,7 +834,7 @@ def build_qr_panel_visual(
     commands.append(TextCommand(
         str(status or ""),
         FontSpec(family, status_font_size or font_size, status_bold),
-        text_color,
+        muted_text_color,
         layout.status_rect,
         alignment=int(
             TextAlignment.HCENTER | TextAlignment.VCENTER | TextAlignment.WORD_WRAP
@@ -845,15 +849,16 @@ def build_qr_panel_visual(
             state = "disabled"
         if state not in {"normal", "hover", "pressed", "disabled"}:
             state = "normal"
-        action_border = _theme_color("border", Color(0, 0, 0))
+        # 与浮窗 QSS 的按钮语言保持一致：常态面、悬浮面、按下描边、禁用面。
+        action_border = tokens["cyan"] if state == "hover" else tokens["border"]
         if state == "hover":
-            action_fill = Color(255, 200, 210)
+            action_fill = tokens["surface_hover"]
         elif state == "pressed":
-            action_fill = Color(255, 170, 190)
+            action_fill = tokens["border"]
         elif state == "disabled":
-            action_fill = _theme_color("mid", Color(173, 216, 230))
+            action_fill = tokens["surface"]
         else:
-            action_fill = _theme_color("bg", Color(255, 182, 193))
+            action_fill = tokens["surface_raised"]
         action_inset = scale_px(2, min_abs=1)
         action_content = Rect(
             layout.action_rect.x + action_inset,
@@ -867,7 +872,7 @@ def build_qr_panel_visual(
             TextCommand(
                 action_text,
                 FontSpec(family, font_size, True),
-                text_color,
+                tokens["text_dim"] if state == "disabled" else text_color,
                 action_content,
                 alignment=int(TextAlignment.HCENTER | TextAlignment.VCENTER),
                 alpha=0.55 if state == "disabled" else 1.0,
@@ -896,10 +901,11 @@ def build_notice_panel_visual(
     inset = border_width * 2
     family = get_ui_font_family()
     font_size = max(1, int(FONT.get("ui_size", 12)))
-    border = _theme_color("border", Color(0, 0, 0))
-    middle = _theme_color("mid", Color(173, 216, 230))
-    background = _theme_color("bg", Color(255, 182, 193))
-    text_color = _theme_color("text", Color(0, 0, 0))
+    tokens = get_workbench_token_colors()
+    border = tokens["border_strong"]
+    middle = tokens["border"]
+    background = tokens["surface"]
+    text_color = tokens["text"]
     batch = DrawBatch((
         RectCommand(Rect(0, 0, width, height), fill=border, layer=layer),
         RectCommand(
@@ -926,7 +932,7 @@ def build_notice_panel_visual(
         TextCommand(
             str(text or ""),
             FontSpec(family, font_size),
-            text_color,
+            tokens["text_muted"],
             Rect(inset + 10, inset + 32, width - (inset + 10) * 2, height - inset - 40),
             alignment=int(TextAlignment.LEFT | TextAlignment.TOP | TextAlignment.WORD_WRAP),
             layer=layer,

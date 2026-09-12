@@ -41,6 +41,7 @@ from lib.core.event.center import EventType, get_event_center
 from lib.core.graphics.announcement_visuals import ANNOUNCEMENT_SIZE, get_announcement_colors
 from lib.core.qt_bridge.screen import clamp_rect_position, get_screen_geometry_for_point
 from lib.core.unified_draw import Layer, get_layer_manager
+from lib.script.ui.workbench_floating import WorkbenchFloatingWindow
 
 
 def announcement_to_html(document: AnnouncementDocument) -> str:
@@ -79,8 +80,11 @@ def _color_name(key: str) -> str:
     return f"#{color.red:02x}{color.green:02x}{color.blue:02x}"
 
 
-class DesktopPetAnnouncementDialog(QWidget):
+class DesktopPetAnnouncementDialog(WorkbenchFloatingWindow):
     """Compact, scroll-ready desktop-pet announcement window."""
+
+    # 公告控制器已订阅主题事件并调用 refresh_workbench_theme()。
+    follows_workbench_theme = False
 
     suppress_today_requested = pyqtSignal()
     suppress_forever_requested = pyqtSignal()
@@ -127,6 +131,17 @@ class DesktopPetAnnouncementDialog(QWidget):
         )
         self._close_button.clicked.connect(self._dismiss)
 
+        self._minimize_button = QToolButton(self)
+        self._minimize_button.setObjectName("AnnouncementMinimizeButton")
+        self._minimize_button.setText("—")
+        self._minimize_button.setToolTip("最小化")
+        self._minimize_button.setAccessibleName("最小化")
+        self._minimize_button.setFixedSize(
+            scale_px(30, min_abs=26),
+            scale_px(30, min_abs=26),
+        )
+        self._minimize_button.clicked.connect(self.minimize_floating_window)
+
         header_text = QVBoxLayout()
         header_text.setContentsMargins(0, 0, 0, 0)
         header_text.setSpacing(0)
@@ -138,7 +153,16 @@ class DesktopPetAnnouncementDialog(QWidget):
         header_row.setSpacing(scale_px(12, min_abs=9))
         header_row.addWidget(self._header_accent, 0, Qt.AlignVCenter)
         header_row.addLayout(header_text, 1)
+        header_row.addWidget(self._minimize_button, 0, Qt.AlignTop)
         header_row.addWidget(self._close_button, 0, Qt.AlignTop)
+
+        self._header = QWidget(self)
+        self._header.setLayout(header_row)
+        self.attach_floating_drag_handle(
+            self._header,
+            self._header_label,
+            self._source_label,
+        )
 
         self._body = QTextBrowser(self)
         self._body.setObjectName("AnnouncementBody")
@@ -193,11 +217,11 @@ class DesktopPetAnnouncementDialog(QWidget):
             _BORDER + scale_px(17, min_abs=14),
         )
         content.setSpacing(scale_px(15, min_abs=11))
-        content.addLayout(header_row)
+        content.addWidget(self._header)
         content.addWidget(self._body, 1)
         content.addLayout(button_row)
 
-        self.setStyleSheet(self._widget_stylesheet())
+        self.install_floating_chrome()
 
         self._opacity_animation = QPropertyAnimation(self, b"windowOpacity", self)
         self._opacity_animation.setDuration(int(UI.get("ui_fade_duration", 180)))
@@ -238,9 +262,14 @@ class DesktopPetAnnouncementDialog(QWidget):
 
     def refresh_workbench_theme(self) -> None:
         """Repolish the announcement when the workbench theme changes."""
-        self.setStyleSheet(self._widget_stylesheet())
+        self.refresh_floating_theme()
+
+    def floating_stylesheet(self) -> str:
+        return self._widget_stylesheet()
+
+    def refresh_floating_theme(self) -> None:
+        super().refresh_floating_theme()
         self._body.document().setDefaultStyleSheet(self._document_stylesheet())
-        self.update()
 
     def hide_dialog(self) -> None:
         if not self._requested_visible:
@@ -390,16 +419,18 @@ class DesktopPetAnnouncementDialog(QWidget):
                 border-radius: {scale_px(4, min_abs=3)}px;
                 padding: 0px;
             }}
-            QToolButton#AnnouncementCloseButton {{
+            QToolButton#AnnouncementCloseButton,
+            QToolButton#AnnouncementMinimizeButton {{
                 background: transparent;
                 color: {text_muted};
                 border: {scale_px(1, min_abs=1)}px solid transparent;
                 border-radius: {scale_px(4, min_abs=3)}px;
-                font-size: {scale_px(19, min_abs=17)}px;
+                font-size: {scale_px(17, min_abs=15)}px;
                 font-weight: 500;
                 padding: 0px;
             }}
-            QToolButton#AnnouncementCloseButton:hover {{
+            QToolButton#AnnouncementCloseButton:hover,
+            QToolButton#AnnouncementMinimizeButton:hover {{
                 background: {surface_hover};
                 color: {text};
                 border-color: {border};

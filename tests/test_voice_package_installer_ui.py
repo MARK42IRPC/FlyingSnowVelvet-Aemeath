@@ -30,6 +30,7 @@ from lib.script.ui.voice_package_installer import (
     VoicePackageManagementBar,
 )
 from lib.script.ui import voice_package_installer as installer_ui
+from lib.script.workbench.theme import get_workbench_colors
 
 
 class VoicePackageInstallerUiTests(unittest.TestCase):
@@ -153,10 +154,13 @@ class VoicePackageInstallerUiTests(unittest.TestCase):
                     dialog._drive_detail.text(),
                 )
                 style = dialog.styleSheet()
+                colors = get_workbench_colors()
                 self.assertIn("QComboBox::down-arrow", style)
                 self.assertIn("QPushButton#VoiceInstallerPrimary", style)
                 self.assertIn("QPushButton#VoiceInstallerBackground", style)
-                self.assertIn("color: #000000", style)
+                self.assertIn(f"color: {colors.text}", style)
+                self.assertIn(f"color: {colors.canvas}", style)
+                self.assertIn(f"background: {colors.pink}", style)
                 self.assertIn("QAbstractItemView::item:selected", dialog._drive_combo.view().styleSheet())
                 dialog._secondary.hide()
                 dialog._reset()

@@ -5,8 +5,8 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from PyQt5.QtCore import QEvent, QEasingCurve, QPoint, Qt, QPropertyAnimation, pyqtSignal
-from PyQt5.QtGui import QCursor, QPainter
+from PyQt5.QtCore import QEasingCurve, Qt, QPropertyAnimation, pyqtSignal
+from PyQt5.QtGui import QColor, QCursor, QPainter
 from PyQt5.QtWidgets import (
     QComboBox,
     QFrame,
@@ -17,12 +17,12 @@ from PyQt5.QtWidgets import (
     QProgressBar,
     QPushButton,
     QSizePolicy,
+    QStyle,
     QVBoxLayout,
     QWidget,
 )
 
 from config.config import UI
-from lib.core.qt_bridge.colors import UI_THEME
 from lib.core.qt_bridge.font import get_ui_font
 from config.scale import scale_px
 from lib.core.anchor_utils import apply_ui_opacity
@@ -43,6 +43,11 @@ from lib.script.gsvmove.package_manager import (
     get_voice_package_status,
     list_fixed_drive_roots,
 )
+from lib.script.ui.workbench_floating import (
+    WorkbenchFloatingWindow,
+    floating_window_stylesheet,
+)
+from lib.script.workbench.theme import get_workbench_colors
 
 
 _WIDTH = scale_px(470, min_abs=420)
@@ -52,7 +57,8 @@ _BORDER = _LAYER * 2
 
 
 def _color(name: str) -> str:
-    return UI_THEME[name].name()
+    """Resolve a workbench design token as a QSS colour string."""
+    return getattr(get_workbench_colors(), name)
 
 
 def _format_bytes(value: int) -> str:
@@ -169,12 +175,12 @@ class VoicePackageInstallBanner(QFrame):
         self.setStyleSheet(
             f"""
             QFrame#VoicePackageInstallBanner {{
-                background: {_color('mid')};
-                border: 2px solid {_color('deep_pink')};
+                background: {_color('surface_raised')};
+                border: 2px solid {_color('pink')};
                 border-radius: 4px;
             }}
             QFrame#VoicePackageBannerAccent {{
-                background: {_color('deep_cyan')};
+                background: {_color('cyan')};
                 border: none;
                 border-radius: 1px;
             }}
@@ -184,7 +190,7 @@ class VoicePackageInstallBanner(QFrame):
                 border: none;
             }}
             QLabel#VoicePackageBannerDetail {{
-                color: {_color('deep_blue')};
+                color: {_color('text_dim')};
                 background: transparent;
                 border: none;
             }}
@@ -192,13 +198,13 @@ class VoicePackageInstallBanner(QFrame):
                 min-height: {scale_px(34, min_abs=30)}px;
                 padding: 0px {scale_px(10, min_abs=8)}px;
                 color: {_color('text')};
-                background: {_color('deep_pink')};
+                background: {_color('pink')};
                 border: 1px solid {_color('border')};
                 border-radius: 3px;
                 font-weight: 700;
             }}
             QPushButton#VoicePackageInstallButton:hover {{
-                background: {_color('highlight')};
+                background: {_color('surface_hover')};
                 color: {_color('text')};
             }}
             """
@@ -280,7 +286,7 @@ class VoicePackageManagementBar(QFrame):
         box.setWindowFlag(Qt.WindowStaysOnTopHint, True)
         box.setStyleSheet(
             f"""
-            QMessageBox {{ background: {_color('bg')}; }}
+            QMessageBox {{ background: {_color('surface')}; }}
             QMessageBox QLabel {{
                 min-width: {scale_px(330, min_abs=300)}px;
                 color: {_color('text')};
@@ -290,14 +296,14 @@ class VoicePackageManagementBar(QFrame):
                 min-width: {scale_px(92, min_abs=80)}px;
                 min-height: {scale_px(30, min_abs=27)}px;
                 color: {_color('text')};
-                background: {_color('mid')};
+                background: {_color('surface_raised')};
                 border: 1px solid {_color('border')};
                 border-radius: 3px;
             }}
-            QMessageBox QPushButton:hover {{ background: {_color('highlight')}; }}
+            QMessageBox QPushButton:hover {{ background: {_color('surface_hover')}; }}
             QMessageBox QPushButton#VoicePackageConfirmRemove {{
                 color: {_color('text')};
-                background: {_color('deep_pink')};
+                background: {_color('pink')};
                 font-weight: 700;
             }}
             """
@@ -355,12 +361,12 @@ class VoicePackageManagementBar(QFrame):
         self.setStyleSheet(
             f"""
             QFrame#VoicePackageManagementBar {{
-                background: {_color('mid')};
+                background: {_color('surface_raised')};
                 border: 1px solid {_color('border')};
                 border-radius: 3px;
             }}
             QLabel#VoicePackageManagementDetail {{
-                color: {_color('deep_blue')};
+                color: {_color('text_dim')};
                 background: transparent;
                 border: none;
             }}
@@ -368,24 +374,24 @@ class VoicePackageManagementBar(QFrame):
                 min-height: {scale_px(30, min_abs=27)}px;
                 padding: 0px {scale_px(9, min_abs=7)}px;
                 color: {_color('text')};
-                background: {_color('bg')};
-                border: 1px solid {_color('deep_pink')};
+                background: {_color('surface')};
+                border: 1px solid {_color('pink')};
                 border-radius: 3px;
                 font-weight: 600;
             }}
             QPushButton#VoicePackageRemoveButton:hover {{
                 color: {_color('text')};
-                background: {_color('highlight')};
+                background: {_color('surface_hover')};
             }}
             QPushButton#VoicePackageRemoveButton:disabled {{
-                color: {_color('deep_blue')};
+                color: {_color('text_dim')};
                 border-color: {_color('border')};
             }}
             """
         )
 
 
-class VoicePackageInstallerDialog(QWidget):
+class VoicePackageInstallerDialog(WorkbenchFloatingWindow):
     install_succeeded = pyqtSignal(object)
     _progress_signal = pyqtSignal(str, int, int, str)
     _info_signal = pyqtSignal(str)
@@ -411,8 +417,6 @@ class VoicePackageInstallerDialog(QWidget):
         self._remote_size_generation = 0
         self._remote_size_future = None
         self._cleaned_up = False
-        self._dragging = False
-        self._drag_offset = QPoint()
 
         self._opacity = QGraphicsOpacityEffect(self)
         self._opacity.setOpacity(0.0)
@@ -422,12 +426,23 @@ class VoicePackageInstallerDialog(QWidget):
         self._animation.setEasingCurve(QEasingCurve.InOutQuad)
         self._animation.finished.connect(self._on_animation_finished)
 
-        self._title = QLabel("安装最新语音包", self)
-        self._title.installEventFilter(self)
-        self._title.setCursor(Qt.OpenHandCursor)
+        self._header = QWidget(self)
+        self._title = QLabel("安装最新语音包", self._header)
         title_font = get_ui_font(size=scale_px(16, min_abs=13))
         title_font.setBold(True)
         self._title.setFont(title_font)
+        self._minimize_btn = self.create_floating_window_button(
+            self._header,
+            QStyle.SP_TitleBarMinButton,
+            "最小化",
+            self.minimize_floating_window,
+        )
+        self.attach_floating_drag_handle(self._header, self._title)
+        header_layout = QHBoxLayout(self._header)
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setSpacing(scale_px(10, min_abs=8))
+        header_layout.addWidget(self._title, 1)
+        header_layout.addWidget(self._minimize_btn, 0, Qt.AlignTop)
         self._status = QLabel("选择安装磁盘", self)
         self._status.setFont(get_ui_font(size=scale_px(11, min_abs=10)))
         self._status.setWordWrap(True)
@@ -495,7 +510,7 @@ class VoicePackageInstallerDialog(QWidget):
             _BORDER + scale_px(16, min_abs=13),
         )
         layout.setSpacing(scale_px(8, min_abs=6))
-        layout.addWidget(self._title)
+        layout.addWidget(self._header)
         layout.addWidget(self._status)
         layout.addSpacing(scale_px(3, min_abs=2))
         layout.addLayout(profile_row)
@@ -519,6 +534,7 @@ class VoicePackageInstallerDialog(QWidget):
         self._cancelled_signal.connect(self._on_install_cancelled, queued)
         self._remote_sizes_signal.connect(self._apply_remote_sizes, queued)
         self._apply_style()
+        self.install_floating_chrome()
 
     def show_dialog(self) -> None:
         if not self._busy:
@@ -546,6 +562,15 @@ class VoicePackageInstallerDialog(QWidget):
     def is_busy(self) -> bool:
         return self._busy
 
+    def minimize_floating_window(self) -> None:
+        # 安装进行中收起会失去进度入口，此时使用“后台安装”按钮代替。
+        if self._busy:
+            return
+        super().minimize_floating_window()
+
+    def _sync_minimize_button(self) -> None:
+        self._minimize_btn.setEnabled(not self._busy)
+
     def _reset(self) -> None:
         self._completed = False
         self._backgrounded = False
@@ -560,6 +585,7 @@ class VoicePackageInstallerDialog(QWidget):
         self._secondary.setEnabled(True)
         self._secondary.show()
         self._background.setEnabled(True)
+        self._sync_minimize_button()
         self._background.hide()
         self._primary.setText("开始安装")
         self._primary.setEnabled(True)
@@ -678,6 +704,7 @@ class VoicePackageInstallerDialog(QWidget):
 
         self._busy = True
         self._status.setText("正在准备下载")
+        self._sync_minimize_button()
         self._download_bar.setRange(0, 0)
         self._download_bar.setFormat("准备中")
         self._primary.setEnabled(False)
@@ -796,6 +823,7 @@ class VoicePackageInstallerDialog(QWidget):
     def _on_install_success(self, result: object) -> None:
         self._busy = False
         self._completed = True
+        self._sync_minimize_button()
         self._installer = None
         self._install_future = None
         install_result = result if isinstance(result, VoiceInstallResult) else None
@@ -825,6 +853,7 @@ class VoicePackageInstallerDialog(QWidget):
 
     def _on_install_error(self, message: str) -> None:
         self._busy = False
+        self._sync_minimize_button()
         self._installer = None
         self._install_future = None
         self._status.setText(str(message or "语音包安装失败"))
@@ -848,6 +877,7 @@ class VoicePackageInstallerDialog(QWidget):
 
     def _on_install_cancelled(self) -> None:
         self._busy = False
+        self._sync_minimize_button()
         self._installer = None
         self._install_future = None
         self._status.setText("安装已取消，临时文件已清理")
@@ -915,129 +945,52 @@ class VoicePackageInstallerDialog(QWidget):
         get_layer_manager().unregister(self)
         super().closeEvent(event)
 
-    def eventFilter(self, watched, event) -> bool:
-        if watched is self._title:
-            if event.type() == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
-                self._dragging = True
-                self._drag_offset = event.globalPos() - self.frameGeometry().topLeft()
-                self._title.setCursor(Qt.ClosedHandCursor)
-                event.accept()
-                return True
-            if event.type() == QEvent.MouseMove and self._dragging and event.buttons() & Qt.LeftButton:
-                self.move(event.globalPos() - self._drag_offset)
-                event.accept()
-                return True
-            if event.type() == QEvent.MouseButtonRelease and event.button() == Qt.LeftButton:
-                self._dragging = False
-                self._title.setCursor(Qt.OpenHandCursor)
-                event.accept()
-                return True
-        return super().eventFilter(watched, event)
-
     def paintEvent(self, event) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, False)
-        painter.fillRect(self.rect(), UI_THEME["border"])
-        painter.fillRect(self.rect().adjusted(_LAYER, _LAYER, -_LAYER, -_LAYER), UI_THEME["mid"])
-        painter.fillRect(self.rect().adjusted(_BORDER, _BORDER, -_BORDER, -_BORDER), UI_THEME["bg"])
+        colors = get_workbench_colors()
+        painter.fillRect(self.rect(), QColor(colors.border_strong))
+        painter.fillRect(
+            self.rect().adjusted(_LAYER, _LAYER, -_LAYER, -_LAYER),
+            QColor(colors.border),
+        )
+        painter.fillRect(
+            self.rect().adjusted(_BORDER, _BORDER, -_BORDER, -_BORDER),
+            QColor(colors.surface),
+        )
 
     def _apply_style(self) -> None:
-        self.setStyleSheet(
-            f"""
-            QLabel {{ color: {_color('text')}; background: transparent; }}
-            QComboBox {{
-                min-height: {scale_px(32, min_abs=28)}px;
-                padding: 0px {scale_px(42, min_abs=36)}px 0px {scale_px(9, min_abs=7)}px;
-                color: {_color('text')};
-                background: {_color('mid')};
-                border: 1px solid {_color('border')};
-                border-radius: 3px;
-            }}
-            QComboBox:focus {{ border: 2px solid {_color('deep_blue')}; }}
-            QComboBox::drop-down {{
-                subcontrol-origin: padding;
-                subcontrol-position: top right;
-                width: {scale_px(34, min_abs=30)}px;
-                background: {_color('deep_cyan')};
-                border: none;
-                border-left: 1px solid {_color('border')};
-            }}
-            QComboBox::drop-down:hover {{ background: {_color('highlight')}; }}
-            QComboBox::down-arrow {{
-                image: url(resc/ui/combo_down_arrow.svg);
-                width: {scale_px(12, min_abs=10)}px;
-                height: {scale_px(8, min_abs=6)}px;
-            }}
-            QProgressBar {{
-                color: {_color('text')};
-                background: {_color('mid')};
-                border: 1px solid {_color('border')};
-                border-radius: 3px;
-                text-align: center;
-            }}
-            QProgressBar#VoiceDownloadProgress::chunk {{ background: {_color('deep_cyan')}; }}
-            QProgressBar#VoiceExtractProgress::chunk {{ background: {_color('deep_pink')}; }}
-            QPushButton {{
-                min-width: {scale_px(94, min_abs=82)}px;
-                min-height: {scale_px(32, min_abs=28)}px;
-                color: {_color('text')};
-                background: {_color('mid')};
-                border: 1px solid {_color('border')};
-                border-radius: 3px;
-                padding: 0px {scale_px(10, min_abs=8)}px;
-            }}
-            QPushButton:hover {{ background: {_color('highlight')}; }}
-            QPushButton#VoiceInstallerBackground {{
-                color: {_color('text')};
-                background: {_color('deep_cyan')};
-                font-weight: 700;
-            }}
-            QPushButton#VoiceInstallerBackground:hover {{
-                color: {_color('text')};
-                background: {_color('highlight')};
-            }}
-            QPushButton#VoiceInstallerPrimary {{
-                color: {_color('text')};
-                background: {_color('deep_pink')};
-                font-weight: 700;
-            }}
-            QPushButton#VoiceInstallerPrimary:hover {{
-                color: {_color('text')};
-                background: {_color('highlight')};
-            }}
-            QPushButton:disabled {{ color: {_color('deep_blue')}; }}
-            """
-        )
+        self.setStyleSheet(self.floating_stylesheet())
         dropdown_style = f"""
             QAbstractItemView {{
                 color: {_color('text')};
-                background: {_color('bg')};
+                background: {_color('surface')};
                 border: 2px solid {_color('border')};
                 border-radius: 0px;
                 outline: none;
                 selection-color: {_color('text')};
-                selection-background-color: {_color('mid')};
+                selection-background-color: {_color('surface_raised')};
             }}
             QAbstractItemView::item {{
                 min-height: {scale_px(32, min_abs=28)}px;
                 padding: 0px {scale_px(9, min_abs=7)}px;
                 color: {_color('text')};
-                background: {_color('bg')};
+                background: {_color('surface')};
                 border: none;
             }}
             QAbstractItemView::item:hover,
             QAbstractItemView::item:selected {{
                 color: {_color('text')};
-                background: {_color('mid')};
+                background: {_color('surface_raised')};
             }}
             QScrollBar:vertical {{
                 width: {scale_px(10, min_abs=8)}px;
-                background: {_color('mid')};
+                background: {_color('surface_raised')};
                 border: none;
             }}
             QScrollBar::handle:vertical {{
                 min-height: {scale_px(22, min_abs=18)}px;
-                background: {_color('deep_pink')};
+                background: {_color('pink')};
                 border: none;
             }}
             QScrollBar::add-line:vertical,
@@ -1045,3 +998,74 @@ class VoicePackageInstallerDialog(QWidget):
             """
         self._drive_combo.view().setStyleSheet(dropdown_style)
         self._profile_combo.view().setStyleSheet(dropdown_style)
+
+    def floating_stylesheet(self) -> str:
+        """共享浮窗外壳 + 语音包安装器自身的控件语言。"""
+        return floating_window_stylesheet() + f"""
+            QLabel {{ color: {_color('text')}; background: transparent; }}
+            QComboBox {{
+                min-height: {scale_px(32, min_abs=28)}px;
+                padding: 0px {scale_px(42, min_abs=36)}px 0px {scale_px(9, min_abs=7)}px;
+                color: {_color('text')};
+                background: {_color('surface_raised')};
+                border: 1px solid {_color('border')};
+                border-radius: 3px;
+            }}
+            QComboBox:focus {{ border: 2px solid {_color('cyan')}; }}
+            QComboBox::drop-down {{
+                subcontrol-origin: padding;
+                subcontrol-position: top right;
+                width: {scale_px(34, min_abs=30)}px;
+                background: {_color('cyan')};
+                border: none;
+                border-left: 1px solid {_color('border')};
+            }}
+            QComboBox::drop-down:hover {{ background: {_color('surface_hover')}; }}
+            QComboBox::down-arrow {{
+                image: url(resc/ui/combo_down_arrow.svg);
+                width: {scale_px(12, min_abs=10)}px;
+                height: {scale_px(8, min_abs=6)}px;
+            }}
+            QProgressBar {{
+                color: {_color('text')};
+                background: {_color('surface_raised')};
+                border: 1px solid {_color('border')};
+                border-radius: 3px;
+                text-align: center;
+            }}
+            QProgressBar#VoiceDownloadProgress::chunk {{ background: {_color('cyan')}; }}
+            QProgressBar#VoiceExtractProgress::chunk {{ background: {_color('pink')}; }}
+            QPushButton {{
+                min-width: {scale_px(94, min_abs=82)}px;
+                min-height: {scale_px(32, min_abs=28)}px;
+                color: {_color('text')};
+                background: {_color('surface_raised')};
+                border: 1px solid {_color('border')};
+                border-radius: 3px;
+                padding: 0px {scale_px(10, min_abs=8)}px;
+            }}
+            QPushButton:hover {{ background: {_color('surface_hover')}; }}
+            QPushButton#VoiceInstallerBackground {{
+                color: {_color('canvas')};
+                background: {_color('cyan')};
+                font-weight: 700;
+            }}
+            QPushButton#VoiceInstallerBackground:hover {{
+                color: {_color('canvas')};
+                background: {_color('pink_hover')};
+            }}
+            QPushButton#VoiceInstallerPrimary {{
+                color: {_color('canvas')};
+                background: {_color('pink')};
+                font-weight: 700;
+            }}
+            QPushButton#VoiceInstallerPrimary:hover {{
+                color: {_color('canvas')};
+                background: {_color('pink_hover')};
+            }}
+            QPushButton:disabled {{
+                color: {_color('text_dim')};
+                background: {_color('surface_raised')};
+                border-color: {_color('border')};
+            }}
+            """

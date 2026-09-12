@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from config.config import UI
 from config.font_config import FONT, get_ui_font_family
 from config.scale import scale_px
 from lib.core.announcement import AnnouncementDocument
@@ -12,6 +11,7 @@ from lib.core.layer import Layer
 from .commands import DrawBatch, RectCommand, TextAlignment, TextCommand
 from .speaker_visuals import SpeakerTextMetrics
 from .types import Color, FontSpec, Rect, Size
+from .workbench_tokens import get_workbench_token_colors, resolve_workbench_mode
 
 
 ANNOUNCEMENT_SIZE = Size(
@@ -22,43 +22,41 @@ ANNOUNCEMENT_LINES_PER_PAGE = 13
 
 
 # The announcement keeps the project's pink/cyan identity, but uses it as a
-# restrained signal accent over the same quiet dark surfaces as the workbench.
-ANNOUNCEMENT_DARK_COLORS = {
-    "canvas": Color(13, 15, 18),
-    "surface": Color(23, 25, 31),
-    "surface_raised": Color(30, 33, 40),
-    "surface_hover": Color(39, 43, 51),
-    "border": Color(53, 58, 69),
-    "border_strong": Color(74, 81, 95),
-    "text": Color(244, 245, 247),
-    "text_muted": Color(168, 173, 183),
-    "text_dim": Color(119, 126, 139),
-    "pink": Color(255, 149, 188),
-    "pink_hover": Color(255, 177, 207),
-    "cyan": Color(140, 210, 255),
-    "danger": Color(255, 122, 146),
-}
+# restrained signal accent over the same quiet surfaces as the workbench, so it
+# reads its palette from the shared token table instead of a private copy.
+_ANNOUNCEMENT_TOKEN_NAMES = (
+    "canvas",
+    "surface",
+    "surface_raised",
+    "surface_hover",
+    "border",
+    "border_strong",
+    "text",
+    "text_muted",
+    "text_dim",
+    "pink",
+    "pink_hover",
+    "cyan",
+    "danger",
+)
 
-ANNOUNCEMENT_LIGHT_COLORS = {
-    "canvas": Color(255, 248, 251),
-    "surface": Color(255, 255, 255),
-    "surface_raised": Color(255, 245, 248),
-    "surface_hover": Color(255, 231, 240),
-    "border": Color(231, 197, 210),
-    "border_strong": Color(201, 158, 176),
-    "text": Color(32, 52, 77),
-    "text_muted": Color(52, 72, 99),
-    "text_dim": Color(79, 98, 123),
-    "pink": Color(233, 104, 157),
-    "pink_hover": Color(245, 141, 183),
-    "cyan": Color(145, 189, 216),
-    "danger": Color(217, 94, 120),
-}
+
+def _announcement_palette(mode: str) -> dict[str, Color]:
+    tokens = get_workbench_token_colors(mode)
+    return {name: tokens[name] for name in _ANNOUNCEMENT_TOKEN_NAMES}
+
+
+ANNOUNCEMENT_DARK_COLORS = _announcement_palette("dark")
+ANNOUNCEMENT_LIGHT_COLORS = _announcement_palette("light")
 
 
 def get_announcement_colors() -> dict[str, Color]:
     """Return the announcement palette matching the workbench theme."""
-    return ANNOUNCEMENT_LIGHT_COLORS if bool(UI.get("workbench_light_theme", False)) else ANNOUNCEMENT_DARK_COLORS
+    return (
+        ANNOUNCEMENT_LIGHT_COLORS
+        if resolve_workbench_mode() == "light"
+        else ANNOUNCEMENT_DARK_COLORS
+    )
 
 
 @dataclass(frozen=True, slots=True)

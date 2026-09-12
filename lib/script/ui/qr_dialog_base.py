@@ -6,9 +6,10 @@ from pathlib import Path
 
 from PyQt5.QtCore import Qt, QRect, QPropertyAnimation, QEasingCurve, QEvent
 from PyQt5.QtGui import QCursor, QPainter
-from PyQt5.QtWidgets import QGraphicsOpacityEffect, QPushButton, QWidget
+from PyQt5.QtWidgets import QGraphicsOpacityEffect, QPushButton, QStyle, QWidget
 
 from config.config import UI
+from config.scale import scale_px
 from lib.core.anchor_utils import apply_ui_opacity
 from lib.core.graphics.application_visuals import (
     build_qr_panel_visual,
@@ -21,8 +22,10 @@ from lib.core.graphics.resources import ImageResource
 from lib.core.qt_bridge.draw_backend import QtDrawBackend
 from lib.core.qt_bridge.screen import clamp_rect_position, get_screen_geometry_for_point
 from lib.core.unified_draw import Layer, get_layer_manager
+from lib.script.ui.workbench_floating import WorkbenchFloatingWindow
 
-class BaseQrDialog(QWidget):
+
+class BaseQrDialog(WorkbenchFloatingWindow):
     """标准二维码浮窗基类。"""
 
     def __init__(
@@ -58,6 +61,15 @@ class BaseQrDialog(QWidget):
         self._qr_resource: ImageResource | None = None
         self._draw_backend = QtDrawBackend()
 
+        self._minimize_btn = self.create_floating_window_button(
+            self,
+            QStyle.SP_TitleBarMinButton,
+            "最小化",
+            self.minimize_floating_window,
+        )
+        # 无任务栏入口的工具窗口无法从系统恢复，拖动整块浮窗面板即可移动。
+        self.attach_floating_drag_handle(self, cursor=False)
+
         self._action_btn = QPushButton(self._action_text, self)
         self._action_btn.setFocusPolicy(Qt.NoFocus)
         self._action_btn.setCursor(Qt.PointingHandCursor)
@@ -68,7 +80,7 @@ class BaseQrDialog(QWidget):
         # build_qr_panel_visual() in the parent paint pass.
         self._action_btn.setStyleSheet(
             "QPushButton { background: transparent; border: 0px; "
-            "color: transparent; padding: 0px; }"
+            "color: transparent; padding: 0px; min-width: 0px; min-height: 0px; }"
         )
 
         self._opacity = QGraphicsOpacityEffect(self)
@@ -79,6 +91,7 @@ class BaseQrDialog(QWidget):
         self._anim.setDuration(UI["ui_fade_duration"])
         self._anim.setEasingCurve(QEasingCurve.InOutQuad)
         self._layout_controls()
+        self.install_floating_chrome()
 
     def _content_rects(self) -> tuple[QRect, QRect, QRect, QRect, QRect]:
         layout = resolve_qr_panel_layout((self.width(), self.height()))
@@ -100,8 +113,16 @@ class BaseQrDialog(QWidget):
         ))
 
     def _layout_controls(self) -> None:
-        *_, btn_rect = self._content_rects()
+        inner, title, _, _, btn_rect = self._content_rects()
         self._action_btn.setGeometry(btn_rect)
+        size = scale_px(24, min_abs=22)
+        margin = scale_px(8, min_abs=6)
+        self._minimize_btn.setGeometry(
+            inner.x() + inner.width() - margin - size,
+            title.y() + max(0, (title.height() - size) // 2),
+            size,
+            size,
+        )
 
     def _set_dialog_title(self, title: str | None) -> None:
         if title:

@@ -25,6 +25,7 @@ from lib.core.graphics.application_visuals import (
 )
 from lib.core.graphics.commands import TextCommand
 from lib.core.graphics.types import Color
+from lib.core.graphics.workbench_tokens import get_workbench_token_colors
 from lib.core.layer_manager import cleanup_layer_manager
 from lib.script.ui.qr_dialog_base import BaseQrDialog
 
@@ -61,9 +62,10 @@ class QrPanelVisualTests(unittest.TestCase):
             self.assertEqual(action_rect.y(), int(round(layout.action_rect.y)))
 
             visual = dialog._build_panel_visual()
-            self.assertEqual(visual.batch.commands[0].fill.red, 0)
-            self.assertEqual(visual.batch.commands[1].fill.green, 216)
-            self.assertEqual(visual.batch.commands[2].fill.red, 255)
+            tokens = get_workbench_token_colors()
+            self.assertEqual(visual.batch.commands[0].fill, tokens["border_strong"])
+            self.assertEqual(visual.batch.commands[1].fill, tokens["border"])
+            self.assertEqual(visual.batch.commands[2].fill, tokens["surface"])
         finally:
             dialog.close()
 
@@ -82,8 +84,13 @@ class QrPanelVisualTests(unittest.TestCase):
         )
         self.assertEqual(normal.action_rect, resolve_qr_panel_layout().action_rect)
         self.assertEqual(len(normal.batch.commands), len(hover.batch.commands))
-        self.assertEqual(hover.batch.commands[-2].fill, Color(255, 200, 210))
-        self.assertEqual(pressed.batch.commands[-2].fill, Color(255, 170, 190))
+        tokens = get_workbench_token_colors()
+        self.assertEqual(normal.batch.commands[-2].fill, tokens["surface_raised"])
+        self.assertEqual(hover.batch.commands[-2].fill, tokens["surface_hover"])
+        self.assertEqual(pressed.batch.commands[-2].fill, tokens["border"])
+        # 悬浮态的按钮描边使用工作台强调色。
+        self.assertEqual(hover.batch.commands[-3].fill, tokens["cyan"])
+        self.assertEqual(normal.batch.commands[-3].fill, tokens["border"])
         self.assertNotEqual(normal.batch.commands[-2].fill, hover.batch.commands[-2].fill)
         self.assertEqual(disabled.batch.commands[-1].alpha, 0.55)
         self.assertIsInstance(normal.batch.commands[-1], TextCommand)

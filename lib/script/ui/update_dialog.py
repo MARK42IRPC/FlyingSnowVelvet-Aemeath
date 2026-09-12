@@ -6,27 +6,29 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
-from PyQt5.QtCore import QEvent, QPoint, Qt, QPropertyAnimation, QEasingCurve, pyqtSignal
-from PyQt5.QtGui import QCursor, QPainter
+from PyQt5.QtCore import Qt, QPropertyAnimation, QEasingCurve, pyqtSignal
+from PyQt5.QtGui import QColor, QCursor, QPainter
 from PyQt5.QtWidgets import (
     QGraphicsOpacityEffect,
     QHBoxLayout,
     QLabel,
     QPushButton,
     QProgressBar,
+    QStyle,
     QVBoxLayout,
     QWidget,
 )
 
 from config.config import UI
-from lib.core.qt_bridge.colors import UI_THEME
 from lib.core.qt_bridge.font import get_ui_font
-from config.scale import scale_px, scale_style_px
+from config.scale import scale_px
 from lib.core.anchor_utils import apply_ui_opacity
 from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import Event, EventType, get_event_center
 from lib.core.qt_bridge.screen import clamp_rect_position, get_screen_geometry_for_point
 from lib.core.unified_draw import Layer, get_layer_manager
+from lib.script.ui.workbench_floating import WorkbenchFloatingWindow
+from lib.script.workbench.theme import get_workbench_colors
 from lib.script.update_manager import (
     GitSyncCheckResult,
     GitSyncManager,
@@ -42,13 +44,8 @@ _HEIGHT = scale_px(248, min_abs=220)
 _LAYER = scale_px(2, min_abs=1)
 _BORDER = _LAYER * 2
 
-_C_BORDER = UI_THEME["border"]
-_C_MID = UI_THEME["mid"]
-_C_BG = UI_THEME["bg"]
-_C_TEXT = UI_THEME["text"]
 
-
-class DesktopPetUpdateDialog(QWidget):
+class DesktopPetUpdateDialog(WorkbenchFloatingWindow):
     """承载分发包更新与开发版同步的独立小窗。"""
 
     _detail_signal = pyqtSignal(str)
@@ -75,14 +72,18 @@ class DesktopPetUpdateDialog(QWidget):
         self._pending_update: UpdateResult | None = None
         self._primary_handler: Callable[[], None] | None = None
         self._secondary_handler: Callable[[], None] | None = None
-        self._dragging = False
-        self._drag_offset = QPoint()
 
-        self._title_label = QLabel(self)
+        self._header = QWidget(self)
+        self._title_label = QLabel(self._header)
         self._title_label.setFont(self._build_title_font())
         self._title_label.setAlignment(Qt.AlignCenter)
-        self._title_label.installEventFilter(self)
-        self._title_label.setCursor(Qt.OpenHandCursor)
+        self._minimize_btn = self.create_floating_window_button(
+            self._header,
+            QStyle.SP_TitleBarMinButton,
+            "最小化",
+            self.minimize_floating_window,
+        )
+        self.attach_floating_drag_handle(self._header, self._title_label)
 
         self._status_label = QLabel(self)
         self._status_label.setFont(get_ui_font(size=scale_px(13, min_abs=10)))
@@ -98,53 +99,24 @@ class DesktopPetUpdateDialog(QWidget):
         self._progress_bar.setTextVisible(True)
         self._progress_bar.setRange(0, 1)
         self._progress_bar.setValue(0)
-        self._progress_bar.setStyleSheet(
-            scale_style_px(
-                "QProgressBar {"
-                f"background: rgb({_C_BG.red()}, {_C_BG.green()}, {_C_BG.blue()});"
-                f"border: 2px solid rgb({_C_BORDER.red()}, {_C_BORDER.green()}, {_C_BORDER.blue()});"
-                f"color: rgb({_C_TEXT.red()}, {_C_TEXT.green()}, {_C_TEXT.blue()});"
-                "text-align: center;"
-                "font-weight: bold;"
-                "min-height: 26px;"
-                "}"
-                "QProgressBar::chunk {"
-                f"background: rgb({_C_MID.red()}, {_C_MID.green()}, {_C_MID.blue()});"
-                "}"
-            )
-        )
 
         self._secondary_btn = QPushButton(self)
         self._secondary_btn.clicked.connect(self._on_secondary_clicked)
         self._secondary_btn.hide()
 
         self._primary_btn = QPushButton(self)
+        self._primary_btn.setObjectName("WorkbenchFloatingPrimary")
         self._primary_btn.clicked.connect(self._on_primary_clicked)
         self._primary_btn.hide()
-
-        btn_style = scale_style_px(
-            "QPushButton {"
-            f"background: rgb({_C_BG.red()}, {_C_BG.green()}, {_C_BG.blue()});"
-            f"border: 2px solid rgb({_C_BORDER.red()}, {_C_BORDER.green()}, {_C_BORDER.blue()});"
-            f"color: rgb({_C_TEXT.red()}, {_C_TEXT.green()}, {_C_TEXT.blue()});"
-            "font-weight: bold;"
-            "padding: 4px 10px;"
-            "min-height: 28px;"
-            "}"
-            "QPushButton:hover {"
-            f"background: rgb({_C_MID.red()}, {_C_MID.green()}, {_C_MID.blue()});"
-            "}"
-            "QPushButton:pressed {"
-            "background: rgb(255, 190, 205);"
-            "}"
-            "QPushButton:disabled {"
-            "color: rgb(160, 160, 160);"
-            "}"
-        )
-        self._secondary_btn.setStyleSheet(btn_style)
-        self._primary_btn.setStyleSheet(btn_style)
         self._secondary_btn.setFont(get_ui_font())
         self._primary_btn.setFont(get_ui_font())
+
+        header_layout = QHBoxLayout(self._header)
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setSpacing(scale_px(10, min_abs=8))
+        header_layout.addSpacing(scale_px(26, min_abs=24))
+        header_layout.addWidget(self._title_label, 1)
+        header_layout.addWidget(self._minimize_btn, 0, Qt.AlignTop)
 
         content = QVBoxLayout(self)
         content.setContentsMargins(
@@ -154,7 +126,7 @@ class DesktopPetUpdateDialog(QWidget):
             _BORDER + scale_px(12, min_abs=10),
         )
         content.setSpacing(scale_px(12, min_abs=8))
-        content.addWidget(self._title_label)
+        content.addWidget(self._header)
         content.addWidget(self._status_label)
         content.addWidget(self._detail_label, 1)
         content.addWidget(self._progress_bar)
@@ -184,6 +156,7 @@ class DesktopPetUpdateDialog(QWidget):
         self._git_done_signal.connect(self._on_git_done)
         self._restart_done_signal.connect(self._on_restart_done)
         self._error_signal.connect(self._on_worker_error)
+        self.install_floating_chrome()
 
     def begin_release_check(self) -> bool:
         if self._busy:
@@ -239,6 +212,8 @@ class DesktopPetUpdateDialog(QWidget):
         self._busy = busy
         self._secondary_btn.setEnabled(not busy)
         self._primary_btn.setEnabled(not busy)
+        # 安装/下载中不允许收起，避免用户失去进度入口。
+        self._minimize_btn.setEnabled(not busy)
 
     def _show_dialog(self) -> None:
         self._center_on_screen()
@@ -580,25 +555,6 @@ class DesktopPetUpdateDialog(QWidget):
         if callable(self._primary_handler):
             self._primary_handler()
 
-    def eventFilter(self, watched, event) -> bool:
-        if watched is self._title_label:
-            if event.type() == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
-                self._dragging = True
-                self._drag_offset = event.globalPos() - self.frameGeometry().topLeft()
-                self._title_label.setCursor(Qt.ClosedHandCursor)
-                event.accept()
-                return True
-            if event.type() == QEvent.MouseMove and self._dragging and event.buttons() & Qt.LeftButton:
-                self.move(event.globalPos() - self._drag_offset)
-                event.accept()
-                return True
-            if event.type() == QEvent.MouseButtonRelease and event.button() == Qt.LeftButton:
-                self._dragging = False
-                self._title_label.setCursor(Qt.OpenHandCursor)
-                event.accept()
-                return True
-        return super().eventFilter(watched, event)
-
     def closeEvent(self, event) -> None:
         if self._busy:
             event.ignore()
@@ -617,14 +573,15 @@ class DesktopPetUpdateDialog(QWidget):
     def paintEvent(self, event) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, False)
-        painter.fillRect(self.rect(), _C_BORDER)
+        colors = get_workbench_colors()
+        painter.fillRect(self.rect(), QColor(colors.border_strong))
         painter.fillRect(
             self.rect().adjusted(_LAYER, _LAYER, -_LAYER, -_LAYER),
-            _C_MID,
+            QColor(colors.border),
         )
         painter.fillRect(
             self.rect().adjusted(_BORDER, _BORDER, -_BORDER, -_BORDER),
-            _C_BG,
+            QColor(colors.surface),
         )
 
     @staticmethod
