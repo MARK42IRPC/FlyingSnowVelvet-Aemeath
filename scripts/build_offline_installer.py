@@ -34,6 +34,10 @@ TRAILER_FORMAT = "<24sQ32s"
 TRAILER_SIZE = struct.calcsize(TRAILER_FORMAT)
 MARKER_NAME = ".fsv-install-root"
 MARKER_BYTES = MAGIC + b"\n"
+# Mirrors ``build_offline_distribution.APP_DOC_ASSET_DIRECTORY``.  The archive
+# filter below drops ``app/doc`` scratch material, and this is the one subtree
+# the about page reads at runtime, so the two staging scripts must agree.
+APP_DOC_ASSET_DIRECTORY = Path("doc") / "贡献名单和主播的狗盆"
 ZLIB_SOURCES = (
     "adler32.c",
     "crc32.c",
@@ -153,6 +157,7 @@ def _archive_entries(payload: Path) -> list[tuple[Path, str]]:
         "tests",
         "用户反馈",
     }
+    bundled_doc_prefix = tuple(part.lower() for part in APP_DOC_ASSET_DIRECTORY.parts)
     for item in sorted(payload.rglob("*")):
         if not item.is_file():
             continue
@@ -161,7 +166,15 @@ def _archive_entries(payload: Path) -> list[tuple[Path, str]]:
         if any(part.lower() in {"__pycache__", ".pytest_cache", ".ruff_cache"} for part in parts):
             continue
         if len(parts) >= 2 and parts[0].lower() == "app" and parts[1].lower() in excluded_app_parts:
-            continue
+            bundled_doc = (
+                len(parts) >= 1 + len(bundled_doc_prefix)
+                and all(
+                    parts[1 + offset].lower() == part
+                    for offset, part in enumerate(bundled_doc_prefix)
+                )
+            )
+            if not bundled_doc:
+                continue
         if len(parts) == 1 and parts[0].lower() in {item.lower() for item in root_files}:
             continue
         if len(parts) == 2 and parts[0].lower() == "app" and parts[1].lower() in {item.lower() for item in root_files}:

@@ -196,6 +196,33 @@ class OfflineDistributionTests(unittest.TestCase):
             self.assertIn("app/resc/GIF/SEanima/demo/0001.webp", paths)
             self.assertNotIn("app/resc/GIF/SEanima.zip", paths)
 
+    def test_archive_view_keeps_only_the_bundled_about_page_documents(self):
+        # Both staging scripts must agree on the one ``doc`` subtree that ships.
+        self.assertEqual(
+            distribution.APP_DOC_ASSET_DIRECTORY, installer.APP_DOC_ASSET_DIRECTORY
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            payload = Path(tmpdir) / "payload"
+            doc_root = payload / "app" / installer.APP_DOC_ASSET_DIRECTORY
+            doc_root.mkdir(parents=True, exist_ok=True)
+            doc_root.joinpath("开发贡献.txt").write_text(
+                "贡献:开发者-Mark42\n", encoding="utf-8"
+            )
+            sponsor = doc_root / "如果想给作者买鸡腿饭的话" / "喵.jpg"
+            sponsor.parent.mkdir(parents=True)
+            sponsor.write_bytes(b"\xff\xd8\xff")
+            scratch = payload / "app" / "doc" / "维护手册.md"
+            scratch.parent.mkdir(parents=True, exist_ok=True)
+            scratch.write_text("内部文档", encoding="utf-8")
+
+            paths = {relative for _, relative in installer._archive_entries(payload)}
+
+            self.assertIn("app/doc/贡献名单和主播的狗盆/开发贡献.txt", paths)
+            self.assertIn(
+                "app/doc/贡献名单和主播的狗盆/如果想给作者买鸡腿饭的话/喵.jpg", paths
+            )
+            self.assertNotIn("app/doc/维护手册.md", paths)
+
     def test_directml_wheel_is_expanded_as_minimal_isolated_overlay(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -291,6 +318,95 @@ class OfflineDistributionTests(unittest.TestCase):
             build_output.write_text("not a dll", encoding="utf-8")
             with self.assertRaises(RuntimeError):
                 distribution.stage_cuda_voice_runtime(source_root, root / "payload")
+
+    def test_app_doc_assets_are_staged_where_the_workbench_reads_them(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source_root = root / "repo"
+            doc_root = source_root / distribution.APP_DOC_ASSET_DIRECTORY
+            (doc_root / "如果想给作者买鸡腿饭的话").mkdir(parents=True)
+            doc_root.joinpath("开发贡献.txt").write_text(
+                "贡献:开发者-Mark42\n===https://space.bilibili.com/486401719\n",
+                encoding="utf-8",
+            )
+            (doc_root / "如果想给作者买鸡腿饭的话" / "喵.png").write_bytes(b"\x89PNG\r\n")
+            app = root / "payload" / "app"
+
+            details = distribution.stage_app_doc_assets(source_root, app)
+
+            self.assertTrue(details["bundled"])
+            self.assertEqual(details["path"], "doc/贡献名单和主播的狗盆")
+            self.assertEqual(details["files"], 2)
+            self.assertTrue(
+                (app / "doc" / "贡献名单和主播的狗盆" / "开发贡献.txt").is_file()
+            )
+            self.assertTrue(
+                (
+                    app
+                    / "doc"
+                    / "贡献名单和主播的狗盆"
+                    / "如果想给作者买鸡腿饭的话"
+                    / "喵.png"
+                ).is_file()
+            )
+
+    def test_missing_app_doc_assets_are_not_an_error(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            app = root / "payload" / "app"
+
+            details = distribution.stage_app_doc_assets(root / "repo", app)
+
+            self.assertFalse(details["bundled"])
+            self.assertEqual(details["files"], 0)
+            self.assertFalse(app.exists())
+
+    def test_staged_app_doc_assets_satisfy_the_workbench_contract(self):
+        from unittest import mock
+
+        from lib.script.ui import ai_settings_panel
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source_root = root / "repo"
+            doc_root = source_root / distribution.APP_DOC_ASSET_DIRECTORY
+            doc_root.mkdir(parents=True)
+            doc_root.joinpath("开发贡献.txt").write_text(
+                "\n".join(
+                    (
+                        "贡献:开发者-Mark42的铁镐（Mark42IRPC）-保留所有权利",
+                        "===https://space.bilibili.com/486401719",
+                        "贡献:配音-猫咪",
+                        "===https://space.bilibili.com/1838261330",
+                        "贡献:服务器支持-TDSI服务器",
+                        "===https://tdsi.top",
+                        "贡献:启动动画-K39゜",
+                        "===https://space.bilibili.com/419336032",
+                        "贡献:关闭动画-大yi巴狐狸_",
+                        "===https://space.bilibili.com/220895159",
+                    )
+                ),
+                encoding="utf-8",
+            )
+            sponsor_image = (
+                doc_root
+                / "如果想给作者买鸡腿饭的话"
+                / "喵-感谢支持喵-欢迎工单喵.jpg"
+            )
+            sponsor_image.parent.mkdir(parents=True)
+            sponsor_image.write_bytes(b"\xff\xd8\xff")
+            app = root / "payload" / "app"
+            distribution.stage_app_doc_assets(source_root, app)
+
+            with mock.patch.object(ai_settings_panel, "_project_root", lambda: app):
+                self.assertTrue(ai_settings_panel._contribution_list_path().is_file())
+                self.assertTrue(ai_settings_panel._sponsor_author_image_path().is_file())
+                records = ai_settings_panel._load_contribution_records()
+
+            # Without the staged document the workbench falls back to the three
+            # built-in records, which is exactly the reported regression.
+            self.assertEqual(len(ai_settings_panel._MANUAL_CONTRIBUTION_RECORDS), 3)
+            self.assertGreater(len(records), len(ai_settings_panel._MANUAL_CONTRIBUTION_RECORDS))
 
     def test_node_pruning_keeps_runtime_and_licenses(self):
         with tempfile.TemporaryDirectory() as tmpdir:

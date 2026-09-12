@@ -88,6 +88,9 @@ CUDA_VOICE_RUNTIME_BUILD_CANDIDATES = (
     Path("build") / "cuda_voice_runtime" / "Release" / CUDA_VOICE_RUNTIME_DLL_NAME,
     Path("build") / "cuda_voice_runtime-61" / "Release" / CUDA_VOICE_RUNTIME_DLL_NAME,
 )
+# ``doc`` is developer material and stays out of the payload, but the workbench
+# about pages read their data from this one folder at runtime.
+APP_DOC_ASSET_DIRECTORY = Path("doc") / "贡献名单和主播的狗盆"
 
 PINNED_BASE_DISTRIBUTIONS = {
     "genie-tts": "2.0.2",
@@ -874,6 +877,30 @@ def stage_cuda_voice_runtime(
     return None
 
 
+def stage_app_doc_assets(source_root: Path, app_root: Path) -> dict[str, object]:
+    """Ship the about-page assets the workbench reads from ``doc/``.
+
+    The contribution list and the sponsor card load their text and image from
+    ``doc/贡献名单和主播的狗盆``.  The rest of ``doc`` stays out of the payload, so
+    without this step a packaged install silently falls back to the few
+    built-in contribution records and shows a missing sponsor image.
+    """
+    source = source_root / APP_DOC_ASSET_DIRECTORY
+    target = app_root / APP_DOC_ASSET_DIRECTORY
+    files = (
+        sorted(item for item in source.rglob("*") if item.is_file())
+        if source.is_dir()
+        else []
+    )
+    for item in files:
+        copy_file(item, target / item.relative_to(source))
+    return {
+        "bundled": bool(files),
+        "path": APP_DOC_ASSET_DIRECTORY.as_posix(),
+        "files": len(files),
+    }
+
+
 def copy_minimal_pyqt5(
     site_packages: Path | tuple[Path, ...] | list[Path],
     target_root: Path,
@@ -1293,6 +1320,11 @@ def main() -> int:
     copy_tree(source, app)
     copy_native_runtime(source, app)
     write_release_launcher_config(app)
+    doc_assets = stage_app_doc_assets(source, app)
+    if doc_assets["bundled"]:
+        log_stage(f"已打包关于页资源：{doc_assets['files']} 个文件")
+    else:
+        log_stage("没有关于页资源，本次发行不含贡献名单与赞助图片")
     cuda_voice_runtime = stage_cuda_voice_runtime(source, payload)
     if cuda_voice_runtime is None:
         log_stage("没有自研 CUDA 运行库构建产物，本次发行不含 runtime/cuda-voice/")
@@ -1337,6 +1369,7 @@ def main() -> int:
         "voice_synthesis": True,
         "cuda_onnx": False,
         "cuda_voice_runtime": cuda_voice_runtime,
+        "app_doc_assets": doc_assets,
         "python": {
             "major_minor": "3.11",
             "distributions": distributions,
