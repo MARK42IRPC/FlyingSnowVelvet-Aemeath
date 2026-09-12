@@ -143,15 +143,14 @@ _DEFAULT_VALUES = {
     "gsv_auto_start": False,
     "gsv_gpu_hybrid": False,
     "gsv_nvidia_cuda_acceleration": False,
-    "gsv_temperature": 1.0,
+    "gsv_temperature": 1.35,
     "gsv_top_k": 15,
     "gsv_top_p": 1.0,
-    "gsv_repetition_penalty": 1.35,
-    "gsv_speed_factor": 1.0,
-    "gsv_text_split_method": "cut5",
+    "gsv_repetition_penalty": 1.6,
+    "gsv_speed_factor": 1.1,
+    "gsv_text_split_method": "cut0",
     "gsv_fragment_interval": 0.3,
     "gsv_seed": -1,
-    "gsv_max_steps": 500,
     "ai_voice_max_chars": AI_VOICE_MAX_CHARS_DEFAULT,
     "gsv_cache_max_files": 20,
     "memory_context_limit": 12,
@@ -2333,7 +2332,59 @@ class AISettingsPanel(QWidget):
         self._set_form_row_description(
             form,
             self._gsv_temperature,
-            "T2S 采样温度；越高变化越多，过高可能使语调不稳定。",
+            "情绪自然：数值越高语调起伏越丰富，过高可能使语调不稳定。",
+        )
+
+        self._gsv_repetition_penalty = _DecimalSliderField(
+            0.1,
+            2.0,
+            0.01,
+            value=_DEFAULT_VALUES["gsv_repetition_penalty"],
+        )
+        form.addRow("重复惩罚", self._gsv_repetition_penalty)
+        self._set_form_row_description(
+            form,
+            self._gsv_repetition_penalty,
+            "情绪丰富：数值越高越不容易重复同一语气。",
+        )
+
+        self._gsv_speed_factor = _DecimalSliderField(0.5, 2.0, 0.05, value=_DEFAULT_VALUES["gsv_speed_factor"])
+        form.addRow("ONNX语速", self._gsv_speed_factor)
+        self._set_form_row_description(
+            form,
+            self._gsv_speed_factor,
+            "语速快慢：1.0 为原速，数值越大语速越快。",
+        )
+
+        self._gsv_cache_max_files = _DecimalSliderField(1, 128, 1, value=_DEFAULT_VALUES["gsv_cache_max_files"], decimals=0)
+        form.addRow("语音缓存上限", self._gsv_cache_max_files)
+        self._set_form_row_description(
+            form,
+            self._gsv_cache_max_files,
+            "语音保存条数：保留最近生成的语音条数，超出后自动删除旧缓存。",
+        )
+
+        gsv_cache_row, gsv_cache_layout = self._create_field_row_group(spacing=scale_px(8, min_abs=6))
+        self._open_gsv_cache_dir_btn = QPushButton("打开文件夹")
+        self._open_gsv_cache_dir_btn.setFixedWidth(scale_px(132, min_abs=112))
+        self._open_gsv_cache_dir_btn.clicked.connect(self._on_open_gsv_cache_dir)
+        gsv_cache_layout.addWidget(self._open_gsv_cache_dir_btn, 0)
+        gsv_cache_layout.addStretch(1)
+        form.addRow("语音缓存", gsv_cache_row)
+        self._set_form_row_description(
+            form,
+            gsv_cache_row,
+            "打开 ONNX 语音缓存目录。",
+        )
+        self._set_widget_description(self._open_gsv_cache_dir_btn, "打开 ONNX 语音缓存目录。")
+
+        self._gsv_advanced_toggle = QCheckBox("高级设置")
+        self._gsv_advanced_toggle.toggled.connect(self._update_gsv_advanced_visibility)
+        form.addRow("", self._gsv_advanced_toggle)
+        self._set_form_row_description(
+            form,
+            self._gsv_advanced_toggle,
+            "展开采样候选、分句、停顿、随机种子和字数限制等进阶参数。",
         )
 
         self._gsv_top_k = _DecimalSliderField(1, 1025, 1, value=_DEFAULT_VALUES["gsv_top_k"], decimals=0)
@@ -2343,23 +2394,6 @@ class AISettingsPanel(QWidget):
         self._gsv_top_p = _DecimalSliderField(0.01, 1.0, 0.01, value=_DEFAULT_VALUES["gsv_top_p"])
         form.addRow("Top-P", self._gsv_top_p)
         self._set_form_row_description(form, self._gsv_top_p, "限制累计概率候选范围，1.0 表示不额外截断。")
-
-        self._gsv_repetition_penalty = _DecimalSliderField(
-            0.1,
-            2.0,
-            0.01,
-            value=_DEFAULT_VALUES["gsv_repetition_penalty"],
-        )
-        form.addRow("重复惩罚", self._gsv_repetition_penalty)
-        self._set_form_row_description(form, self._gsv_repetition_penalty, "抑制语义 token 重复，默认 1.35。")
-
-        self._gsv_speed_factor = _DecimalSliderField(0.5, 2.0, 0.05, value=_DEFAULT_VALUES["gsv_speed_factor"])
-        form.addRow("ONNX语速", self._gsv_speed_factor)
-        self._set_form_row_description(
-            form,
-            self._gsv_speed_factor,
-            "模型内部语速，1.0 为原速；不会通过重采样改变音高。",
-        )
 
         self._gsv_text_split_method = _WatermarkComboBox()
         self._gsv_text_split_method.setView(QListView(self._gsv_text_split_method))
@@ -2389,10 +2423,6 @@ class AISettingsPanel(QWidget):
         form.addRow("随机种子", self._gsv_seed)
         self._set_form_row_description(form, self._gsv_seed, "-1 为随机；固定非负整数可复现 T2S 采样结果。")
 
-        self._gsv_max_steps = _DecimalSliderField(64, 1200, 1, value=_DEFAULT_VALUES["gsv_max_steps"], decimals=0)
-        form.addRow("最大解码步数", self._gsv_max_steps)
-        self._set_form_row_description(form, self._gsv_max_steps, "单段文本的解码保护上限，默认 500；超出预算的文本会自动拆成多段合成。")
-
         self._ai_voice_max_chars = _DecimalSliderField(
             AI_VOICE_MAX_CHARS_MIN,
             AI_VOICE_MAX_CHARS_MAX,
@@ -2406,27 +2436,16 @@ class AISettingsPanel(QWidget):
             "ONNX 语音合成最大文本长度，超过此长度的回复不会转为语音。",
         )
 
-        self._gsv_cache_max_files = _DecimalSliderField(1, 128, 1, value=_DEFAULT_VALUES["gsv_cache_max_files"], decimals=0)
-        form.addRow("语音缓存上限", self._gsv_cache_max_files)
-        self._set_form_row_description(
-            form,
-            self._gsv_cache_max_files,
-            "保留最近生成的 ONNX 语音条数，超出后按时间自动删除旧缓存。",
+        self._voice_settings_form = form
+        self._gsv_advanced_rows = (
+            self._gsv_top_k,
+            self._gsv_top_p,
+            self._gsv_text_split_method,
+            self._gsv_fragment_interval,
+            self._gsv_seed,
+            self._ai_voice_max_chars,
         )
-
-        gsv_cache_row, gsv_cache_layout = self._create_field_row_group(spacing=scale_px(8, min_abs=6))
-        self._open_gsv_cache_dir_btn = QPushButton("打开文件夹")
-        self._open_gsv_cache_dir_btn.setFixedWidth(scale_px(132, min_abs=112))
-        self._open_gsv_cache_dir_btn.clicked.connect(self._on_open_gsv_cache_dir)
-        gsv_cache_layout.addWidget(self._open_gsv_cache_dir_btn, 0)
-        gsv_cache_layout.addStretch(1)
-        form.addRow("语音缓存", gsv_cache_row)
-        self._set_form_row_description(
-            form,
-            gsv_cache_row,
-            "打开 ONNX 语音缓存目录。",
-        )
-        self._set_widget_description(self._open_gsv_cache_dir_btn, "打开 ONNX 语音缓存目录。")
+        self._update_gsv_advanced_visibility()
         self._update_gsv_settings_visibility()
 
         memory_section = scaffold.add_section(
@@ -4883,7 +4902,7 @@ class AISettingsPanel(QWidget):
             raise ValueError("模型视力范围应为 0~100")
 
         try:
-            gsv_temperature = float(self._gsv_temperature.text().strip() or "1.0")
+            gsv_temperature = float(self._gsv_temperature.text().strip() or "1.35")
         except ValueError as e:
             raise ValueError("GSV服务温度必须是数字") from e
         if not (0.01 <= gsv_temperature <= 2.0):
@@ -4891,22 +4910,21 @@ class AISettingsPanel(QWidget):
 
         gsv_top_k = int(float(self._gsv_top_k.text().strip() or "15"))
         gsv_top_p = float(self._gsv_top_p.text().strip() or "1.0")
-        gsv_repetition_penalty = float(self._gsv_repetition_penalty.text().strip() or "1.35")
+        gsv_repetition_penalty = float(self._gsv_repetition_penalty.text().strip() or "1.6")
 
         try:
-            gsv_speed_factor = float(self._gsv_speed_factor.text().strip() or "1.0")
+            gsv_speed_factor = float(self._gsv_speed_factor.text().strip() or "1.1")
         except ValueError as e:
             raise ValueError("GSV语速必须是数字") from e
         if not (0.5 <= gsv_speed_factor <= 2.0):
             raise ValueError("GSV语速范围应为 0.5~2.0")
 
-        gsv_text_split_method = str(self._gsv_text_split_method.currentData() or "cut5")
+        gsv_text_split_method = str(self._gsv_text_split_method.currentData() or "cut0")
         gsv_fragment_interval = float(self._gsv_fragment_interval.text().strip() or "0.3")
         try:
             gsv_seed = int(self._gsv_seed.text().strip() or "-1")
         except ValueError as e:
             raise ValueError("GSV随机种子必须是整数") from e
-        gsv_max_steps = int(float(self._gsv_max_steps.text().strip() or "500"))
 
         try:
             ai_voice_max_chars = int(float(
@@ -4973,7 +4991,6 @@ class AISettingsPanel(QWidget):
             "gsv_text_split_method": gsv_text_split_method,
             "gsv_fragment_interval": gsv_fragment_interval,
             "gsv_seed": gsv_seed,
-            "gsv_max_steps": gsv_max_steps,
             "ai_voice_max_chars": ai_voice_max_chars,
             "gsv_cache_max_files": gsv_cache_max_files,
             "memory_context_limit": memory_context_limit,
@@ -5010,17 +5027,16 @@ class AISettingsPanel(QWidget):
         self._gsv_nvidia_cuda_acceleration.setChecked(bool(
             values.get("gsv_nvidia_cuda_acceleration", False)
         ))
-        self._gsv_temperature.setText(str(values.get("gsv_temperature", 1.0)))
+        self._gsv_temperature.setText(str(values.get("gsv_temperature", 1.35)))
         self._gsv_top_k.setText(str(values.get("gsv_top_k", 15)))
         self._gsv_top_p.setText(str(values.get("gsv_top_p", 1.0)))
-        self._gsv_repetition_penalty.setText(str(values.get("gsv_repetition_penalty", 1.35)))
-        self._gsv_speed_factor.setText(str(values.get("gsv_speed_factor", 1.0)))
-        split_method = str(values.get("gsv_text_split_method", "cut5"))
+        self._gsv_repetition_penalty.setText(str(values.get("gsv_repetition_penalty", 1.6)))
+        self._gsv_speed_factor.setText(str(values.get("gsv_speed_factor", 1.1)))
+        split_method = str(values.get("gsv_text_split_method", "cut0"))
         split_index = self._gsv_text_split_method.findData(split_method)
         self._gsv_text_split_method.setCurrentIndex(max(0, split_index))
         self._gsv_fragment_interval.setText(str(values.get("gsv_fragment_interval", 0.3)))
         self._gsv_seed.setText(str(values.get("gsv_seed", -1)))
-        self._gsv_max_steps.setText(str(values.get("gsv_max_steps", 500)))
         self._ai_voice_max_chars.setText(str(values.get(
             "ai_voice_max_chars",
             AI_VOICE_MAX_CHARS_DEFAULT,
@@ -5060,6 +5076,21 @@ class AISettingsPanel(QWidget):
         cuda_checkbox = getattr(self, "_gsv_nvidia_cuda_acceleration", None)
         if cuda_checkbox is not None:
             cuda_checkbox.setVisible(voice_available and nvidia_present)
+
+    def _update_gsv_advanced_visibility(self, *_args) -> None:
+        form = getattr(self, "_voice_settings_form", None)
+        toggle = getattr(self, "_gsv_advanced_toggle", None)
+        if form is None or toggle is None:
+            return
+        visible = bool(toggle.isChecked())
+        for field in getattr(self, "_gsv_advanced_rows", ()):
+            row, _role = form.getWidgetPosition(field)
+            if row < 0:
+                continue
+            label_item = form.itemAt(row, QFormLayout.LabelRole)
+            if label_item is not None and label_item.widget() is not None:
+                label_item.widget().setVisible(visible)
+            field.setVisible(visible)
 
     def _update_office_mode_fields_visibility(self) -> None:
         enabled = self._office_use_independent_api.isChecked()

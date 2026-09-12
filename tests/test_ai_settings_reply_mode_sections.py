@@ -105,6 +105,32 @@ class AISettingsReplyModeSectionsTests(unittest.TestCase):
 
         self.assertEqual(values["auto_companion_interval_minutes"], 13)
 
+    def test_voice_common_settings_stay_open_and_advanced_collapsed(self):
+        for field in (
+            self.panel._gsv_temperature,
+            self.panel._gsv_repetition_penalty,
+            self.panel._gsv_speed_factor,
+            self.panel._gsv_cache_max_files,
+        ):
+            with self.subTest(field=field):
+                self.assertFalse(field.isHidden())
+
+        self.assertFalse(self.panel._gsv_advanced_toggle.isChecked())
+        for field in self.panel._gsv_advanced_rows:
+            with self.subTest(field=field):
+                self.assertTrue(field.isHidden())
+
+        self.panel._gsv_advanced_toggle.setChecked(True)
+        self.app.processEvents()
+        for field in self.panel._gsv_advanced_rows:
+            with self.subTest(field=field):
+                self.assertFalse(field.isHidden())
+
+    def test_collect_values_omits_removed_voice_settings(self):
+        values = self.panel._collect_values()
+
+        self.assertNotIn("gsv_max_steps", values)
+
     def test_mode_specific_sections_are_hidden_until_selected(self):
         self._select_mode("1")
         self.assertFalse(self.panel._welfare_section.isHidden())

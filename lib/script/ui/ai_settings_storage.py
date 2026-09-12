@@ -41,15 +41,14 @@ def load_ai_values(default_values: dict) -> dict:
         "gsv_nvidia_cuda_acceleration": bool(
             oc.OLLAMA.get("gsv_nvidia_cuda_acceleration", False)
         ),
-        "gsv_temperature": oc.OLLAMA.get("gsv_temperature", 1.0),
+        "gsv_temperature": oc.OLLAMA.get("gsv_temperature", 1.35),
         "gsv_top_k": oc.OLLAMA.get("gsv_top_k", 15),
         "gsv_top_p": oc.OLLAMA.get("gsv_top_p", 1.0),
-        "gsv_repetition_penalty": oc.OLLAMA.get("gsv_repetition_penalty", 1.35),
-        "gsv_speed_factor": oc.OLLAMA.get("gsv_speed_factor", 1.0),
-        "gsv_text_split_method": oc.OLLAMA.get("gsv_text_split_method", "cut5"),
+        "gsv_repetition_penalty": oc.OLLAMA.get("gsv_repetition_penalty", 1.6),
+        "gsv_speed_factor": oc.OLLAMA.get("gsv_speed_factor", 1.1),
+        "gsv_text_split_method": oc.OLLAMA.get("gsv_text_split_method", "cut0"),
         "gsv_fragment_interval": oc.OLLAMA.get("gsv_fragment_interval", 0.3),
         "gsv_seed": oc.OLLAMA.get("gsv_seed", -1),
-        "gsv_max_steps": oc.OLLAMA.get("gsv_max_steps", 500),
         "ai_voice_max_chars": oc.OLLAMA.get(
             "ai_voice_max_chars",
             oc.AI_VOICE_MAX_CHARS_DEFAULT,
@@ -108,7 +107,6 @@ def apply_ai_runtime(values: dict, default_values: dict) -> None:
     oc.OLLAMA["gsv_text_split_method"] = values["gsv_text_split_method"]
     oc.OLLAMA["gsv_fragment_interval"] = values["gsv_fragment_interval"]
     oc.OLLAMA["gsv_seed"] = values["gsv_seed"]
-    oc.OLLAMA["gsv_max_steps"] = values["gsv_max_steps"]
     oc.OLLAMA["ai_voice_max_chars"] = values["ai_voice_max_chars"]
     oc.OLLAMA["gsv_cache_max_files"] = values["gsv_cache_max_files"]
     oc.OLLAMA["memory_context_limit"] = memory_context_limit

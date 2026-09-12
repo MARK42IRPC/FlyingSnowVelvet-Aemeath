@@ -137,15 +137,14 @@ OLLAMA = {
     'gsv_auto_start':      False,     # 启用本地 ONNX 语音；关闭后不预热，也不响应文本语音请求
     'gsv_gpu_hybrid':      False,     # 使用隔离 DirectML Worker；关闭时立即释放 GPU 运行时
     'gsv_nvidia_cuda_acceleration': False,  # 使用隔离 CUDA Worker；仅在 CUDA 运行时可用时显示
-    'gsv_temperature':     1.0,       # ONNX T2S 采样温度（0.01~2.0）
+    'gsv_temperature':     1.35,      # ONNX T2S 采样温度（0.01~2.0）
     'gsv_top_k':           15,        # ONNX T2S Top-K（1~1025）
     'gsv_top_p':           1.0,       # ONNX T2S Top-P（0.01~1.0）
-    'gsv_repetition_penalty': 1.35,   # ONNX T2S 重复惩罚（0.1~2.0）
-    'gsv_speed_factor':    1.0,       # ONNX 模型原生语速（0.5~2.0，1.0=原速）
-    'gsv_text_split_method': 'cut5',  # 长文本分句方式（cut0~cut5）
+    'gsv_repetition_penalty': 1.6,    # ONNX T2S 重复惩罚（0.1~2.0）
+    'gsv_speed_factor':    1.1,       # ONNX 模型原生语速（0.5~2.0，1.0=原速）
+    'gsv_text_split_method': 'cut0',  # 长文本分句方式（cut0~cut5，cut0=不自动分句）
     'gsv_fragment_interval': 0.3,     # 分句片段之间的停顿秒数（0~5）
     'gsv_seed':            -1,        # ONNX 采样种子（-1=随机）
-    'gsv_max_steps':       500,       # ONNX 语义解码保护上限（64~1200）
     'ai_voice_max_chars':  AI_VOICE_MAX_CHARS_DEFAULT,  # GSV 语音合成最大文本长度（20~256）
     'gsv_cache_max_files': 20,       # GSV 语音缓存最大保存条数（1~128）
     'memory_context_limit': 12,      # 发送给 AI 时附带的 recent memory 条数（0~48，0 = 不附带）
@@ -219,7 +218,6 @@ _AI_SETTING_DEFAULTS = {
     'gsv_text_split_method': OLLAMA['gsv_text_split_method'],
     'gsv_fragment_interval': OLLAMA['gsv_fragment_interval'],
     'gsv_seed': OLLAMA['gsv_seed'],
-    'gsv_max_steps': OLLAMA['gsv_max_steps'],
     'ai_voice_max_chars': OLLAMA['ai_voice_max_chars'],
     'gsv_cache_max_files': OLLAMA['gsv_cache_max_files'],
     'memory_context_limit': OLLAMA['memory_context_limit'],
@@ -295,7 +293,6 @@ def _legacy_ai_setting_values() -> dict:
         'gsv_text_split_method': OLLAMA['gsv_text_split_method'],
         'gsv_fragment_interval': OLLAMA['gsv_fragment_interval'],
         'gsv_seed': OLLAMA['gsv_seed'],
-        'gsv_max_steps': OLLAMA['gsv_max_steps'],
         'ai_voice_max_chars': OLLAMA['ai_voice_max_chars'],
         'gsv_cache_max_files': OLLAMA['gsv_cache_max_files'],
         'memory_context_limit': OLLAMA['memory_context_limit'],
@@ -331,7 +328,6 @@ def _legacy_ai_setting_values() -> dict:
             'gsv_text_split_method': 'gsv_text_split_method',
             'gsv_fragment_interval': 'gsv_fragment_interval',
             'gsv_seed': 'gsv_seed',
-            'gsv_max_steps': 'gsv_max_steps',
             'ai_voice_max_chars': 'ai_voice_max_chars',
             'gsv_cache_max_files': 'gsv_cache_max_files',
             'memory_context_limit': 'memory_context_limit',
@@ -376,7 +372,6 @@ def _apply_ai_setting_values(values: dict) -> None:
     OLLAMA['gsv_text_split_method'] = values['gsv_text_split_method']
     OLLAMA['gsv_fragment_interval'] = values['gsv_fragment_interval']
     OLLAMA['gsv_seed'] = values['gsv_seed']
-    OLLAMA['gsv_max_steps'] = values['gsv_max_steps']
     OLLAMA['ai_voice_max_chars'] = values['ai_voice_max_chars']
     OLLAMA['gsv_cache_max_files'] = values['gsv_cache_max_files']
     OLLAMA['memory_context_limit'] = values['memory_context_limit']

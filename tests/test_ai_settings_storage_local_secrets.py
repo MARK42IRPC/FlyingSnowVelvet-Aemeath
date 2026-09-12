@@ -93,11 +93,18 @@ class AISettingsStorageLocalSecretsTests(unittest.TestCase):
             "gsv_text_split_method",
             "gsv_fragment_interval",
             "gsv_seed",
-            "gsv_max_steps",
             "gsv_gpu_hybrid",
         ):
             with self.subTest(key=key):
                 self.assertIn(key, loaded)
+
+    def test_shipped_onnx_voice_defaults(self):
+        defaults = oc.get_ai_setting_defaults()
+
+        self.assertEqual(defaults["gsv_temperature"], 1.35)
+        self.assertEqual(defaults["gsv_repetition_penalty"], 1.6)
+        self.assertEqual(defaults["gsv_speed_factor"], 1.1)
+        self.assertEqual(defaults["gsv_text_split_method"], "cut0")
 
     def test_apply_runtime_converts_auto_companion_minutes_to_milliseconds(self):
         defaults = oc.get_ai_setting_defaults()

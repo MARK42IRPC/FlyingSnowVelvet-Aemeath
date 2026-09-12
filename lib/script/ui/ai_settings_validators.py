@@ -41,7 +41,6 @@ def validate_ai_values(values: dict) -> None:
     gsv_text_split_method = values.get("gsv_text_split_method")
     gsv_fragment_interval = values.get("gsv_fragment_interval")
     gsv_seed = values.get("gsv_seed")
-    gsv_max_steps = values.get("gsv_max_steps")
     gsv_auto_start = values.get("gsv_auto_start")
     gsv_gpu_hybrid = values.get("gsv_gpu_hybrid")
     gsv_nvidia_cuda_acceleration = values.get("gsv_nvidia_cuda_acceleration", False)
@@ -152,11 +151,6 @@ def validate_ai_values(values: dict) -> None:
         raise ValueError("GSV随机种子必须是整数")
     if not (-1 <= gsv_seed <= 2**32 - 1):
         raise ValueError("GSV随机种子范围应为 -1~4294967295")
-
-    if isinstance(gsv_max_steps, bool) or not isinstance(gsv_max_steps, int):
-        raise ValueError("GSV最大解码步数必须是整数")
-    if not (64 <= gsv_max_steps <= 1200):
-        raise ValueError("GSV最大解码步数范围应为 64~1200")
 
     if not isinstance(gsv_auto_start, bool):
         raise ValueError("GSV自动启用开关无效")
