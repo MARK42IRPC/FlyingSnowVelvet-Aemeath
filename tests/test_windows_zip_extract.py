@@ -187,6 +187,35 @@ class WindowsZipExtractTests(unittest.TestCase):
             self.assertLess(int(parts[1]), 100)
             self.assertEqual(parts[2:], ["500", "100"])
 
+    def test_parallel_extraction_keeps_every_entry_intact(self):
+        with tempfile.TemporaryDirectory(prefix="fsv-zip-parallel-") as temporary:
+            root = Path(temporary)
+            archive = root / "payload.zip"
+            destination = root / "destination"
+            expected = {}
+            with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as output:
+                # A wide tree exercises the shared work cursor, the nested
+                # folders race on directory creation, and the large member has
+                # to survive being unpacked next to many small ones.
+                for index in range(240):
+                    name = f"app/模块{index % 7}/子目录{index % 5}/file-{index:04d}.txt"
+                    data = (f"payload {index} " * (index % 23 + 1)).encode("utf-8")
+                    output.writestr(name, data)
+                    expected[name] = data
+                large = bytes(range(256)) * 32768
+                output.writestr("runtime/large.bin", large)
+                expected["runtime/large.bin"] = large
+
+            result = self.run_harness("extract", archive, destination)
+
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            for name, data in expected.items():
+                with self.subTest(name=name):
+                    self.assertEqual((destination / Path(name)).read_bytes(), data)
+            parts = result.stdout.split()
+            self.assertEqual(parts[0], "OK")
+            self.assertEqual(parts[2:], [str(len(expected)), "100"])
+
     def test_zip64_entry_count_is_supported(self):
         with tempfile.TemporaryDirectory(prefix="fsv-zip64-") as temporary:
             root = Path(temporary)

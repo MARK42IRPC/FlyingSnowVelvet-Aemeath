@@ -13,6 +13,11 @@
 #define FSV_ZIP_LOCAL_HEADER_SIZE 30U
 #define FSV_ZIP_CENTRAL_HEADER_SIZE 46U
 #define FSV_ZIP_MAX_ENTRIES 10000000ULL
+/* Unpacking runs on a small worker pool: a single dominant thread starves the
+   installer UI and, on hybrid CPUs, pins one core instead of sharing the work.
+   Two logical processors stay free so the desktop keeps responding. */
+#define FSV_ZIP_MAX_WORKERS 8U
+#define FSV_ZIP_RESERVED_PROCESSORS 2U
 
 typedef struct FsvZipInfo {
     ULONGLONG archive_size;
@@ -36,11 +41,14 @@ typedef struct FsvZipEntry {
 
 typedef struct FsvZipProgressState {
     FsvZipProgressCallback callback;
+    CRITICAL_SECTION lock;
     BOOL scanning_directory;
     ULONGLONG total_files;
     ULONGLONG total_bytes;
-    ULONGLONG completed_files;
-    ULONGLONG completed_bytes;
+    volatile LONG64 completed_files;
+    volatile LONG64 completed_bytes;
+    volatile LONG failed;
+    DWORD failure;
     ULONGLONG started_at;
     ULONGLONG last_post_at;
     ULONGLONG last_sample_at;
@@ -458,20 +466,26 @@ static BOOL ensure_directory(const wchar_t *directory) {
 
 static void post_progress(FsvZipProgressState *state, const wchar_t *path, BOOL force) {
     ULONGLONG now;
+    ULONGLONG completed_bytes;
+    ULONGLONG completed_files;
     FsvZipProgressMessage message;
     if (state->callback == NULL) {
         return;
     }
     now = GetTickCount64();
+    EnterCriticalSection(&state->lock);
     if (path != NULL) {
         StringCchCopyW(state->current_file, ARRAYSIZE(state->current_file), path);
     }
+    completed_bytes = (ULONGLONG)state->completed_bytes;
+    completed_files = (ULONGLONG)state->completed_files;
     if (!force && state->last_post_at != 0 && now - state->last_post_at < 80) {
+        LeaveCriticalSection(&state->lock);
         return;
     }
-    if (now > state->last_sample_at && state->completed_bytes >= state->last_sample_bytes) {
+    if (now > state->last_sample_at && completed_bytes >= state->last_sample_bytes) {
         ULONGLONG elapsed = now - state->last_sample_at;
-        ULONGLONG delta = state->completed_bytes - state->last_sample_bytes;
+        ULONGLONG delta = completed_bytes - state->last_sample_bytes;
         if (elapsed > 0 && delta > 0) {
             double sample = ((double)delta * 1000.0) / (double)elapsed;
             state->bytes_per_second = state->bytes_per_second <= 0.0
@@ -479,24 +493,35 @@ static void post_progress(FsvZipProgressState *state, const wchar_t *path, BOOL 
                 : state->bytes_per_second * 0.75 + sample * 0.25;
         }
         state->last_sample_at = now;
-        state->last_sample_bytes = state->completed_bytes;
+        state->last_sample_bytes = completed_bytes;
     }
     ZeroMemory(&message, sizeof(message));
-    message.completed_files = state->completed_files;
+    message.completed_files = completed_files;
     message.scanning_directory = state->scanning_directory;
     message.total_files = state->total_files;
-    message.completed_bytes = state->completed_bytes;
+    message.completed_bytes = completed_bytes;
     message.total_bytes = state->total_bytes;
-    message.percent = state->total_bytes == 0 || state->completed_bytes >= state->total_bytes
+    message.percent = state->total_bytes == 0 || completed_bytes >= state->total_bytes
         ? 100
-        : (DWORD)(((double)state->completed_bytes * 100.0) / (double)state->total_bytes);
-    if (state->bytes_per_second > 1.0 && state->completed_bytes < state->total_bytes) {
-        message.eta_seconds = (ULONGLONG)(((double)(state->total_bytes - state->completed_bytes) / state->bytes_per_second) + 0.5);
+        : (DWORD)(((double)completed_bytes * 100.0) / (double)state->total_bytes);
+    if (state->bytes_per_second > 1.0 && completed_bytes < state->total_bytes) {
+        message.eta_seconds = (ULONGLONG)(((double)(state->total_bytes - completed_bytes) / state->bytes_per_second) + 0.5);
         message.eta_known = TRUE;
     }
     StringCchCopyW(message.current_file, ARRAYSIZE(message.current_file), state->current_file);
     state->callback(&message);
     state->last_post_at = now;
+    LeaveCriticalSection(&state->lock);
+}
+
+static BOOL zip_failed(FsvZipProgressState *state) {
+    return InterlockedCompareExchange(&state->failed, 0, 0) != 0;
+}
+
+static void zip_record_failure(FsvZipProgressState *state, DWORD error) {
+    if (InterlockedExchange(&state->failed, 1) == 0) {
+        state->failure = error == ERROR_SUCCESS ? ERROR_INVALID_DATA : error;
+    }
 }
 
 static BOOL copy_stored(
@@ -529,11 +554,7 @@ static BOOL copy_stored(
         crc = crc32(crc, buffer, received);
         remaining -= received;
         produced += received;
-        if (state->completed_bytes > ~(ULONGLONG)0 - received) {
-            SetLastError(ERROR_FILE_TOO_LARGE);
-            goto cleanup;
-        }
-        state->completed_bytes += received;
+        InterlockedAdd64(&state->completed_bytes, (LONG64)received);
         post_progress(state, path, FALSE);
     }
     if (produced != expected_size || (DWORD)crc != expected_crc) {
@@ -603,11 +624,7 @@ static BOOL copy_deflated(
                 }
                 crc = crc32(crc, output_buffer, produced_now);
                 produced += produced_now;
-                if (state->completed_bytes > ~(ULONGLONG)0 - produced_now) {
-                    SetLastError(ERROR_FILE_TOO_LARGE);
-                    goto inflate_cleanup;
-                }
-                state->completed_bytes += produced_now;
+                InterlockedAdd64(&state->completed_bytes, (LONG64)produced_now);
                 post_progress(state, path, FALSE);
             }
         }
@@ -738,15 +755,97 @@ static BOOL extract_entry(
     return success;
 }
 
+typedef struct FsvZipJob {
+    FsvZipProgressState *state;
+    const wchar_t *archive_path;
+    const wchar_t *destination;
+    const ULONGLONG *offsets;
+    ULONGLONG count;
+    ULONGLONG central_end;
+    ULONGLONG archive_size;
+    volatile LONG64 cursor;
+} FsvZipJob;
+
+static DWORD zip_worker_count(ULONGLONG entries) {
+    DWORD processors = GetActiveProcessorCount(ALL_PROCESSOR_GROUPS);
+    DWORD workers;
+    if (processors == 0) {
+        processors = 1;
+    }
+    workers = processors > FSV_ZIP_RESERVED_PROCESSORS
+        ? processors - FSV_ZIP_RESERVED_PROCESSORS
+        : 1;
+    if (workers > FSV_ZIP_MAX_WORKERS) {
+        workers = FSV_ZIP_MAX_WORKERS;
+    }
+    if (entries > 0 && (ULONGLONG)workers > entries) {
+        workers = (DWORD)entries;
+    }
+    return workers == 0 ? 1 : workers;
+}
+
+/* One worker unpacks entries handed out by a shared cursor. Each worker owns
+   its own archive handle, zlib stream and buffers so nothing is serialized
+   except progress reporting and directory creation. */
+static DWORD WINAPI extract_worker(void *parameter) {
+    FsvZipJob *job = (FsvZipJob *)parameter;
+    HANDLE archive;
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+    archive = CreateFileW(
+        job->archive_path,
+        GENERIC_READ,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        NULL,
+        OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN,
+        NULL
+    );
+    if (archive == INVALID_HANDLE_VALUE) {
+        zip_record_failure(job->state, GetLastError());
+        return 1;
+    }
+    while (!zip_failed(job->state)) {
+        FsvZipEntry entry;
+        ULONGLONG next_position;
+        ULONGLONG index = (ULONGLONG)InterlockedIncrement64(&job->cursor) - 1ULL;
+        if (index >= job->count) {
+            break;
+        }
+        ZeroMemory(&entry, sizeof(entry));
+        if (!read_entry(archive, job->offsets[index], job->central_end, &entry, &next_position)) {
+            zip_record_failure(job->state, GetLastError());
+            break;
+        }
+        if (!extract_entry(archive, job->archive_size, &entry, job->destination, job->state)) {
+            zip_record_failure(job->state, GetLastError());
+            free_entry(&entry);
+            break;
+        }
+        if (!entry.directory) {
+            InterlockedIncrement64(&job->state->completed_files);
+            post_progress(job->state, NULL, FALSE);
+        }
+        free_entry(&entry);
+    }
+    CloseHandle(archive);
+    return 0;
+}
+
 BOOL fsv_extract_zip(const wchar_t *archive_path, const wchar_t *destination, FsvZipProgressCallback callback) {
     HANDLE archive = INVALID_HANDLE_VALUE;
+    HANDLE workers[FSV_ZIP_MAX_WORKERS - 1];
     LARGE_INTEGER size;
     FsvZipInfo info;
     FsvZipProgressState state;
+    FsvZipJob job;
+    ULONGLONG *offsets = NULL;
     ULONGLONG position;
     ULONGLONG central_end;
     ULONGLONG index;
     ULONGLONG file_count = 0;
+    DWORD worker_count;
+    DWORD created = 0;
+    DWORD worker_index;
     BOOL success = FALSE;
     archive = CreateFileW(
         archive_path,
@@ -764,6 +863,7 @@ BOOL fsv_extract_zip(const wchar_t *archive_path, const wchar_t *destination, Fs
         return FALSE;
     }
     ZeroMemory(&state, sizeof(state));
+    InitializeCriticalSection(&state.lock);
     state.callback = callback;
     state.started_at = GetTickCount64();
     state.last_sample_at = state.started_at;
@@ -780,6 +880,19 @@ BOOL fsv_extract_zip(const wchar_t *archive_path, const wchar_t *destination, Fs
     state.scanning_directory = TRUE;
     state.total_files = info.entry_count;
     post_progress(&state, L"正在读取归档目录...", TRUE);
+    if (info.entry_count > 0) {
+        SIZE_T offset_bytes;
+        if (info.entry_count > (ULONGLONG)(~(SIZE_T)0) / sizeof(ULONGLONG)) {
+            SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+            goto cleanup;
+        }
+        offset_bytes = (SIZE_T)info.entry_count * sizeof(ULONGLONG);
+        offsets = (ULONGLONG *)HeapAlloc(GetProcessHeap(), 0, offset_bytes);
+        if (offsets == NULL) {
+            SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+            goto cleanup;
+        }
+    }
     for (index = 0; index < info.entry_count; ++index) {
         FsvZipEntry entry;
         ULONGLONG next_position;
@@ -792,8 +905,9 @@ BOOL fsv_extract_zip(const wchar_t *archive_path, const wchar_t *destination, Fs
             goto cleanup;
         }
         free_entry(&entry);
+        offsets[index] = position;
         position = next_position;
-        state.completed_files = index + 1;
+        state.completed_files = (LONG64)(index + 1);
         post_progress(&state, NULL, FALSE);
     }
     if (position != central_end) {
@@ -806,31 +920,48 @@ BOOL fsv_extract_zip(const wchar_t *archive_path, const wchar_t *destination, Fs
     }
     state.completed_files = 0;
     state.completed_bytes = 0;
+    state.failed = 0;
+    state.failure = ERROR_SUCCESS;
     state.scanning_directory = FALSE;
-    position = info.central_offset;
     post_progress(&state, L"正在准备解压...", TRUE);
-    for (index = 0; index < info.entry_count; ++index) {
-        FsvZipEntry entry;
-        ULONGLONG next_position;
-        ZeroMemory(&entry, sizeof(entry));
-        if (!read_entry(archive, position, central_end, &entry, &next_position)) {
-            goto cleanup;
+    job.state = &state;
+    job.archive_path = archive_path;
+    job.destination = destination;
+    job.offsets = offsets;
+    job.count = info.entry_count;
+    job.central_end = central_end;
+    job.archive_size = info.archive_size;
+    job.cursor = 0;
+    worker_count = zip_worker_count(info.entry_count);
+    for (worker_index = 0; worker_index + 1 < worker_count; ++worker_index) {
+        HANDLE thread = CreateThread(NULL, 0, extract_worker, &job, 0, NULL);
+        if (thread == NULL) {
+            break;
         }
-        if (!extract_entry(archive, info.archive_size, &entry, destination, &state)) {
-            free_entry(&entry);
-            goto cleanup;
+        workers[created++] = thread;
+    }
+    /* The calling thread always unpacks too, so a machine that refuses new
+       threads still extracts the archive sequentially. */
+    extract_worker(&job);
+    if (created > 0) {
+        WaitForMultipleObjects(created, workers, TRUE, INFINITE);
+        while (created > 0) {
+            --created;
+            CloseHandle(workers[created]);
         }
-        if (!entry.directory) {
-            ++state.completed_files;
-            post_progress(&state, NULL, FALSE);
-        }
-        free_entry(&entry);
-        position = next_position;
+    }
+    if (zip_failed(&state)) {
+        SetLastError(state.failure);
+        goto cleanup;
     }
     post_progress(&state, L"解压完成，正在校验文件...", TRUE);
     success = TRUE;
 
 cleanup:
+    if (offsets != NULL) {
+        HeapFree(GetProcessHeap(), 0, offsets);
+    }
+    DeleteCriticalSection(&state.lock);
     {
         DWORD error = success ? ERROR_SUCCESS : GetLastError();
         CloseHandle(archive);
