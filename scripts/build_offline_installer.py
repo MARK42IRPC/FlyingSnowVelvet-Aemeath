@@ -247,7 +247,6 @@ def validate_payload(payload: Path) -> None:
         "pypinyin",
         "g2pM",
         "nltk",
-        "jieba",
         "jieba_fast",
         "opencc",
         "soundfile",
@@ -265,6 +264,23 @@ def validate_payload(payload: Path) -> None:
             for path in folded_entries
         ):
             raise SystemExit(f"payload 缺少 CPU 推理/桌面依赖：{module}")
+    # ``build_offline_distribution`` owns the full pruning rule; this mirrors the
+    # parts that used to ship by accident.  A staged workspace must never carry
+    # the pure-Python tokenizer fork, the keyword-extraction and SWIG trees, or
+    # link-time/C++ build outputs.
+    forbidden_site_prefixes = (
+        "jieba/",
+        "jieba_fast/analyse/",
+        "jieba_fast/source/",
+    )
+    forbidden_site_suffixes = (".p", ".cc", ".lib", ".obj")
+    site_prefix_folded = site_prefix.casefold()
+    for path in folded_entries:
+        if not path.startswith(site_prefix_folded):
+            continue
+        relative = path[len(site_prefix_folded):]
+        if relative.startswith(forbidden_site_prefixes) or relative.endswith(forbidden_site_suffixes):
+            raise SystemExit(f"payload 含有已剪枝的 Python 依赖文件：{path}")
     if not any(path.startswith("app/resc/models/vosk-model-small-cn-0.22/") for path in folded_entries):
         raise SystemExit("payload 缺少 Vosk 中文识别模型")
     if not any(path.startswith("app/resc/models/vosk-model-small-en-us-0.15/") for path in folded_entries):

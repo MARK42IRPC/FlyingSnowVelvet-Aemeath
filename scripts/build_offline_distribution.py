@@ -37,6 +37,13 @@ BUILD_STATE_NAME = ".fsv-distribution-state.json"
 # These are the modules imported by the installed desktop application and by
 # the CPU ONNX voice frontend.  The optional CUDA/TensorRT stack is deliberately
 # absent; it is never copied into the base runtime.
+#
+# The pure-Python ``jieba`` is absent on purpose: every consumer imports the
+# compiled ``jieba_fast`` fork (the tone-sandhi rules alias it as
+# ``import jieba_fast as jieba``) and both wheels carry the same dictionaries,
+# so the pure package would only add an untested 36 MiB import path.  The
+# dependency installer never installs it either, which keeps the offline and
+# online installs identical.
 DEFAULT_BASE_DISTRIBUTIONS = (
     "PyQt5",
     "Pillow",
@@ -61,7 +68,6 @@ DEFAULT_BASE_DISTRIBUTIONS = (
     "g2pM",
     "nltk",
     "jieba-fast",
-    "jieba",
     "opencc-python-reimplemented",
     "soundfile",
     "soxr",
@@ -134,6 +140,9 @@ NODE_BUILD_SOURCE_SUFFIXES = frozenset({
 })
 NODE_UNUSED_DIRECTORY_NAMES = frozenset({
     ".github",
+    # Yarn plug-ins are vendored into a few published tarballs (domino carries
+    # one for its own repository) and are never loaded by the npm install.
+    ".yarn",
     "__tests__",
     "benchmark",
     "benchmarks",
@@ -192,6 +201,9 @@ EXCLUDED_PATH_SEQUENCES = tuple(
 )
 EXCLUDED_ROOT_FILES = {
     ".gitignore",
+    # The developer's local portable-interpreter override.  The release writes
+    # its own py.ini pointing at the payload runtime.
+    "py.ini",
     "resc.net.txt",
     "requirements.txt",
     "requirements-dev.txt",
@@ -319,8 +331,13 @@ def normalize_name(value: str) -> str:
 
 def excluded(relative: Path) -> bool:
     text = relative.as_posix().lower()
-    if len(relative.parts) == 1 and relative.name.lower() in {item.lower() for item in EXCLUDED_ROOT_FILES}:
-        return True
+    if len(relative.parts) == 1:
+        if relative.name.lower() in {item.lower() for item in EXCLUDED_ROOT_FILES}:
+            return True
+        # Run artifacts live in the repository root only: test logs and editor
+        # scratch files are not part of the product and must never be shipped.
+        if relative.suffix.lower() == ".log" or relative.name.lower().startswith(".tmp-"):
+            return True
     if text.startswith("resc/models/"):
         allowed = (
             "resc/models/vosk-model-small-cn-0.22",
@@ -510,7 +527,14 @@ def _site_file_allowed(relative: Path) -> bool:
     lowered = relative.as_posix().lower()
     if any(part in {"__pycache__", "tests", "test", "testing"} for part in relative.parts):
         return False
-    if relative.suffix.lower() in {".pyc", ".pyo", ".pyi", ".h", ".hpp", ".c", ".cpp", ".pxd", ".pyx", ".pxi", ".whl"}:
+    # Headers, C/C++ sources and link-time objects ship in some wheels for
+    # downstream builds; nothing imports them at runtime.
+    if relative.suffix.lower() in {
+        ".pyc", ".pyo", ".pyi", ".whl",
+        ".h", ".hh", ".hpp", ".hxx", ".c", ".cc", ".cpp", ".cxx", ".inl",
+        ".pxd", ".pyx", ".pxi",
+        ".lib", ".obj", ".asm", ".def", ".exp", ".i",
+    }:
         return False
     if "/include/" in f"/{lowered}/" or lowered.endswith("/include"):
         return False
@@ -732,6 +756,11 @@ def prune_python_nonruntime_artifacts(site_packages: Path) -> dict[str, int]:
     paths = (
         Path("playwright") / "async_api",
         Path("playwright") / "driver" / "package" / "types",
+        # The tokenizer ships keyword-extraction frontends (TF-IDF/TextRank) and
+        # SWIG wrapper sources; the voice frontend only cuts and tags words with
+        # the packaged dictionaries.
+        Path("jieba_fast") / "analyse",
+        Path("jieba_fast") / "source",
         Path("pythonwin"),
         Path("win32comext"),
         Path("isapi"),
@@ -757,6 +786,58 @@ def prune_python_nonruntime_artifacts(site_packages: Path) -> dict[str, int]:
             shutil.rmtree(path)
         else:
             path.unlink()
+    # ``jieba_fast.posseg``/``jieba_fast.finalseg`` only load the pickle tables
+    # on Jython: CPython takes the ``prob_*.py`` modules next to them, so the
+    # compiled fork ships every probability table twice.
+    jieba_fast = site_packages / "jieba_fast"
+    if jieba_fast.is_dir():
+        for item in sorted(jieba_fast.rglob("*.p")):
+            if not item.is_file():
+                continue
+            removed_bytes += item.stat().st_size
+            removed_files += 1
+            item.unlink()
+    return {"removed_files": removed_files, "removed_bytes": removed_bytes}
+
+
+# Distributions that only pull their weight in a developer environment: the
+# compiled ``jieba_fast`` fork replaces the pure-Python ``jieba`` (the tone
+# rules alias it as ``import jieba_fast as jieba``) and both wheels ship the same
+# dictionaries, while ``requirements.txt`` and ``install_deps/catalog.py`` never
+# install the pure package.
+UNUSED_SITE_DISTRIBUTIONS = ("jieba",)
+
+
+def prune_python_unused_distributions(site_packages: Path) -> dict[str, int]:
+    """Drop collected distributions that no shipped module imports.
+
+    ``collect_distributions`` no longer resolves these roots, so this guard only
+    fires for a workspace staged by an older builder or when a dependency starts
+    pulling the package back in.  The ``dist-info`` goes with the import package
+    so ``importlib.metadata`` cannot advertise a distribution whose files are
+    gone.
+    """
+    removed_files = 0
+    removed_bytes = 0
+    for name in UNUSED_SITE_DISTRIBUTIONS:
+        candidates = (site_packages / name, *site_packages.glob(f"{name}-*.dist-info"))
+        for path in candidates:
+            if not path.exists():
+                continue
+            if path.is_file():
+                items: tuple[Path, ...] = (path,)
+            else:
+                items = tuple(item for item in path.rglob("*") if item.is_file())
+            for item in items:
+                try:
+                    removed_bytes += item.stat().st_size
+                except OSError:
+                    pass
+                removed_files += 1
+            if path.is_dir():
+                shutil.rmtree(path)
+            else:
+                path.unlink()
     return {"removed_files": removed_files, "removed_bytes": removed_bytes}
 
 
@@ -1020,6 +1101,7 @@ def stage_python_runtime(
         copy_distribution(dist, site_packages_source, target_site)
     copy_minimal_pyqt5(site_packages_source, target_site, distributions)
     prune_genie_tts_runtime(target_site)
+    prune_python_unused_distributions(target_site)
     prune_python_nonruntime_artifacts(target_site)
     remove_forbidden_site_files(target_site)
     return [
