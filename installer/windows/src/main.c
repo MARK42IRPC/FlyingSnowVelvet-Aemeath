@@ -135,6 +135,14 @@ typedef struct ButtonVisualState {
     BOOL hover_target;
 } ButtonVisualState;
 
+typedef struct ProgressVisualState {
+    int minimum;
+    int maximum;
+    int position;
+    COLORREF fill_color;
+    COLORREF track_color;
+} ProgressVisualState;
+
 static InstallContext g_context;
 static HWND g_window;
 static HWND g_page_title;
@@ -170,6 +178,8 @@ static int g_page = 1;
 static BYTE g_fade_alpha = 255;
 static ButtonVisualState g_button_states[FSV_MAX_BUTTONS];
 static size_t g_button_count;
+static ProgressVisualState g_progress_visual;
+static ProgressVisualState g_download_visual;
 static DWORD g_last_progress_percent;
 static wchar_t g_requested_directory[FSV_PATH_CAPACITY];
 static wchar_t g_update_state_path[FSV_PATH_CAPACITY];
@@ -187,6 +197,8 @@ static RECT ui_rect(int x, int y, int width, int height) {
 
 static LRESULT CALLBACK wizard_window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam);
 static LRESULT CALLBACK button_subclass_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam, UINT_PTR subclass_id, DWORD_PTR reference_data);
+static LRESULT CALLBACK progress_subclass_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam, UINT_PTR subclass_id, DWORD_PTR reference_data);
+static void prepare_progress_visual(HWND window, ProgressVisualState *state, COLORREF track_color);
 
 static BOOL load_embedded_harmony_font(void) {
     HINSTANCE instance = GetModuleHandleW(NULL);
@@ -1565,10 +1577,11 @@ static BOOL layout_controls(void) {
         place_control(g_space_values[index], 40 + (int)index * 272, 382, 240, 42, g_heading_font);
     }
     place_control(g_status, 40, 280, 800, 44, g_body_font);
-    place_control(g_download_progress, 40, 326, 800, 10, g_body_font);
-    place_control(g_progress, 40, 350, 800, 12, g_body_font);
-    place_control(g_current_file, 40, 368, 800, 28, g_meta_font);
-    place_control(g_progress_stats, 40, 408, 800, 24, g_body_font);
+    /* Rounded pill bars at 200% of the original 10px/12px heights. */
+    place_control(g_download_progress, 40, 326, 800, 20, g_body_font);
+    place_control(g_progress, 40, 350, 800, 24, g_body_font);
+    place_control(g_current_file, 40, 378, 800, 28, g_meta_font);
+    place_control(g_progress_stats, 40, 410, 800, 24, g_body_font);
     place_control(g_progress_eta, 40, 442, 800, 24, g_meta_font);
     place_control(g_done_title, 40, 284, 800, 36, g_body_font);
     place_control(g_done_text, 40, 336, 800, 140, g_body_font);
@@ -1611,13 +1624,18 @@ static BOOL create_controls(void) {
     g_progress_eta = create_label(L"预计剩余：正在计算...", IDC_PROGRESS_ETA, SS_LEFT);
     g_done_title = create_label(L"文件校验通过", IDC_DONE_TITLE, SS_LEFT);
     g_done_text = create_label(L"安装文件已校验完成。", IDC_DONE_TEXT, SS_LEFT | SS_EDITCONTROL);
+    SetWindowTheme(g_progress, L"", L"");
+    SetWindowTheme(g_download_progress, L"", L"");
+    prepare_progress_visual(g_progress, &g_progress_visual, FSV_COLOR_SURFACE_RAISED);
+    prepare_progress_visual(g_download_progress, &g_download_visual, FSV_COLOR_SURFACE_RAISED);
     SendMessageW(g_progress, PBM_SETRANGE32, 0, 100);
     SendMessageW(g_download_progress, PBM_SETRANGE32, 0, 100);
     SendMessageW(g_download_progress, PBM_SETPOS, 100, 0);
     SendMessageW(g_progress, PBM_SETPOS, 0, 0);
     SendMessageW(g_progress, PBM_SETBARCOLOR, 0, FSV_COLOR_PINK);
+    SendMessageW(g_download_progress, PBM_SETBARCOLOR, 0, FSV_COLOR_PINK);
     SendMessageW(g_progress, PBM_SETBKCOLOR, 0, FSV_COLOR_SURFACE_RAISED);
-    SetWindowTheme(g_progress, L"", L"");
+    SendMessageW(g_download_progress, PBM_SETBKCOLOR, 0, FSV_COLOR_SURFACE_RAISED);
     {
         HWND controls[] = {g_page_title, g_page_subtitle, g_step_label, g_path_edit, g_custom_button, g_next_button, g_space_info, g_back_button, g_start_button, g_status, g_current_file, g_progress, g_progress_stats, g_progress_eta, g_done_title, g_done_text, g_finish_button};
         size_t control_index;
@@ -1722,6 +1740,100 @@ static void fill_color_rect(HDC dc, RECT rect, COLORREF color) {
     HBRUSH brush = CreateSolidBrush(color);
     FillRect(dc, &rect, brush);
     DeleteObject(brush);
+}
+
+static void draw_rounded_progress(HWND window, const ProgressVisualState *state) {
+    PAINTSTRUCT paint;
+    HDC device_context = BeginPaint(window, &paint);
+    RECT bounds;
+    RECT panel;
+    int radius;
+    int span;
+    int filled;
+    GetClientRect(window, &bounds);
+    FillRect(device_context, &bounds, g_surface_brush);
+    if (bounds.right - bounds.left >= 6 && bounds.bottom - bounds.top >= 6) {
+        panel = bounds;
+        InflateRect(&panel, -1, -1);
+        radius = panel.bottom - panel.top;
+        draw_round_panel(device_context, &panel, state->track_color, FSV_COLOR_BORDER, radius);
+        span = state->maximum - state->minimum;
+        filled = 0;
+        if (span > 0 && state->position > state->minimum) {
+            filled = (panel.right - panel.left) * (state->position - state->minimum) / span;
+            if (filled > panel.right - panel.left) {
+                filled = panel.right - panel.left;
+            }
+        }
+        if (filled > 0) {
+            /* The fill is clipped to its own pill so a partial bar keeps the
+               same rounded silhouette as an empty or complete one. */
+            HRGN clip = CreateRoundRectRgn(panel.left, panel.top, panel.left + filled + 1, panel.bottom + 1, radius, radius);
+            HBRUSH fill_brush = CreateSolidBrush(state->fill_color);
+            if (clip != NULL) {
+                SelectClipRgn(device_context, clip);
+            }
+            FillRect(device_context, &panel, fill_brush);
+            if (clip != NULL) {
+                SelectClipRgn(device_context, NULL);
+                DeleteObject(clip);
+            }
+            DeleteObject(fill_brush);
+        }
+    }
+    EndPaint(window, &paint);
+}
+
+static LRESULT CALLBACK progress_subclass_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam, UINT_PTR subclass_id, DWORD_PTR reference_data) {
+    ProgressVisualState *state = (ProgressVisualState *)reference_data;
+    LRESULT result;
+    switch (message) {
+    case PBM_SETRANGE32:
+    case PBM_SETPOS:
+    case PBM_SETBARCOLOR:
+    case PBM_SETBKCOLOR:
+        /* Forward first so the control keeps its own range/value for
+           accessibility, then repaint with the shared rounded style. */
+        result = DefSubclassProc(window, message, wparam, lparam);
+        if (state != NULL) {
+            if (message == PBM_SETRANGE32) {
+                state->minimum = (int)wparam;
+                state->maximum = (int)lparam;
+            } else if (message == PBM_SETPOS) {
+                state->position = (int)wparam;
+            } else if (message == PBM_SETBARCOLOR) {
+                state->fill_color = (COLORREF)lparam;
+            } else {
+                state->track_color = (COLORREF)lparam;
+            }
+            InvalidateRect(window, NULL, FALSE);
+        }
+        return result;
+    case WM_ERASEBKGND:
+        return 1;
+    case WM_PAINT:
+        if (state != NULL) {
+            draw_rounded_progress(window, state);
+            return 0;
+        }
+        break;
+    case WM_NCDESTROY:
+        RemoveWindowSubclass(window, progress_subclass_proc, subclass_id);
+        break;
+    default:
+        break;
+    }
+    return DefSubclassProc(window, message, wparam, lparam);
+}
+
+static void prepare_progress_visual(HWND window, ProgressVisualState *state, COLORREF track_color) {
+    ZeroMemory(state, sizeof(*state));
+    state->minimum = 0;
+    state->maximum = 100;
+    state->position = 0;
+    state->fill_color = FSV_COLOR_PINK;
+    state->track_color = track_color;
+    SetWindowSubclass(window, progress_subclass_proc, 1, (DWORD_PTR)state);
 }
 
 static void draw_announcement_background(HDC dc) {
