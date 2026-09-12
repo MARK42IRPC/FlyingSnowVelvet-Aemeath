@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import tempfile
+import time
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
@@ -14,24 +15,10 @@ from lib.script.update_manager import (
     ReleaseInfo,
     UpdateError,
     UpdateManager,
-    _GITHUB_PACK_API,
-    _GITHUB_PACK_REF_API,
-    _GITEE_PACK_API,
-    _GITEE_PACK_PAGE,
-    _extract_gitee_attachments,
-    _extract_gitee_revision,
     _parse_voice_package_release,
     _select_release_source,
-    _select_installer_asset,
     _is_retryable_request_error,
 )
-
-
-def _response(payload):
-    response = Mock()
-    response.json.return_value = payload
-    response.raise_for_status.return_value = None
-    return response
 
 
 class UpdateManagerReleaseSelectionTests(unittest.TestCase):
@@ -42,138 +29,31 @@ class UpdateManagerReleaseSelectionTests(unittest.TestCase):
         self.assertTrue(_is_retryable_request_error(requests.HTTPError(response=response)))
         self.assertTrue(_is_retryable_request_error(requests.ConnectionError("reset")))
 
-    def test_installer_asset_requires_a_download_url(self):
-        selected = _select_installer_asset([
-            {"name": "manifest.json", "browser_download_url": "manifest"},
-            {"name": "broken.exe"},
-            {"name": "FlyingSnowVelvet-LTS2-Offline-Installer.exe", "browser_download_url": "package"},
-        ])
-        self.assertEqual(selected["name"], "FlyingSnowVelvet-LTS2-Offline-Installer.exe")
-
-    def test_zip_and_green_assets_are_rejected(self):
-        selected = _select_installer_asset(
-            [
-                {"name": "最新包.zip", "browser_download_url": "source"},
-                {"name": "FlyingSnowVelvet-LTS2-green.zip", "browser_download_url": "green"},
-            ],
-            "最新包",
-        )
-        self.assertIsNone(selected)
-
-    def test_versioned_installer_is_preferred_for_release_tag(self):
-        selected = _select_installer_asset(
-            [
-                {"name": "FlyingSnowVelvet-other-Offline-Installer.exe", "browser_download_url": "other"},
-                {"name": "FlyingSnowVelvet-LTS2-Offline-Installer.exe", "browser_download_url": "package"},
-            ],
-            "LTS2",
-        )
-        self.assertEqual(selected["browser_download_url"], "package")
-
-    def test_github_requires_a_real_installer_asset(self):
-        payload = {
-            "id": 123,
-            "tag_name": "PACK",
-            "updated_at": "2026-07-28T16:19:59Z",
-            "assets": [{
-                "name": "FlyingSnowVelvet-LTS2-Offline-Installer.exe",
-                "browser_download_url": "https://example.test/installer.exe",
-            }],
-            "zipball_url": "https://example.test/github-pack.zip",
-        }
-        tag_ref = {"object": {"sha": "abc123"}}
-        with patch(
-            "lib.script.update_manager.requests.get",
-            side_effect=[_response(payload), _response(tag_ref)],
-        ) as get:
-            release = UpdateManager._fetch_github_pack_release()
-
-        self.assertEqual(get.call_args_list[0].args[0], _GITHUB_PACK_API)
-        self.assertEqual(get.call_args_list[1].args[0], _GITHUB_PACK_REF_API)
-        self.assertEqual(release.tag, "PACK")
-        self.assertEqual(release.source, "GitHub")
-        self.assertEqual(release.revision, "abc123")
-        self.assertEqual(release.download_url, payload["assets"][0]["browser_download_url"])
-
-    def test_gitee_uses_fixed_latest_package_release_asset(self):
-        payload = {
-            "id": 456,
-            "tag_name": "最新包",
-            "target_commitish": "abc123",
-            "created_at": "2026-07-29T00:21:25+08:00",
-            "assets": [{
-                "name": "FlyingSnowVelvet-最新包-Offline-Installer.exe",
-                "browser_download_url": "https://example.test/gitee-pack.zip",
-            }],
-        }
-        with patch(
-            "lib.script.update_manager.requests.get",
-            side_effect=[_response(payload), _response({})],
-        ) as get:
-            release = UpdateManager._fetch_gitee_pack_release()
-
-        self.assertEqual(get.call_args_list[0].args[0], _GITEE_PACK_API)
-        self.assertEqual(get.call_args_list[1].args[0], _GITEE_PACK_PAGE)
-        self.assertEqual(release.source, "Gitee")
-        self.assertEqual(release.revision, "abc123")
-        self.assertEqual(release.download_url, "https://example.test/gitee-pack.zip")
-
-    def test_gitee_page_attachment_is_normalized_and_preferred(self):
-        page_data = {
-            "release": {
-                "release": {
-                    "attach_files": [{
-                        "name": "FlyingSnowVelvet-LTS2-Offline-Installer.exe",
-                        "download_url": "/downloads/real-package.zip",
-                    }]
-                }
-            }
-        }
-        self.assertEqual(
-            _extract_gitee_attachments(page_data),
-            [{
-                "name": "FlyingSnowVelvet-LTS2-Offline-Installer.exe",
-                "browser_download_url": "https://gitee.com/downloads/real-package.zip",
-            }],
-        )
-
-    def test_gitee_page_revision_overrides_stale_release_api_target(self):
-        self.assertEqual(
-            _extract_gitee_revision({
-                "release": {
-                    "tag": {
-                        "commit": {"id": "current-tag-commit"},
-                    }
-                }
-            }),
-            "current-tag-commit",
-        )
-
     def test_newer_release_wins_before_network_latency(self):
         older_fast = ReleaseInfo(
-            "PACK",
+            "LTS1.0.7pre2",
             datetime(2026, 7, 28, tzinfo=timezone.utc),
-            "github.exe",
-            "github",
-            "GitHub",
-            "github:1",
+            "huggingface.zip",
+            "huggingface",
+            "Hugging Face",
+            "hf:1",
             0.1,
         )
         newer_slow = ReleaseInfo(
-            "最新包",
+            "LTS1.0.7pre3",
             datetime(2026, 7, 29, tzinfo=timezone.utc),
-            "gitee.exe",
-            "gitee",
-            "Gitee",
-            "gitee:1",
+            "modelscope.zip",
+            "modelscope",
+            "ModelScope",
+            "ms:1",
             2.0,
         )
         self.assertIs(_select_release_source([older_fast, newer_slow]), newer_slow)
 
     def test_equal_release_time_uses_faster_source(self):
         published = datetime(2026, 7, 29, tzinfo=timezone.utc)
-        slow = ReleaseInfo("PACK", published, "a.exe", "a", "GitHub", "a", 1.5)
-        fast = ReleaseInfo("最新包", published, "b.exe", "b", "Gitee", "b", 0.2)
+        slow = ReleaseInfo("LTS2", published, "a.zip", "a", "Hugging Face", "a", 1.5)
+        fast = ReleaseInfo("LTS2", published, "b.zip", "b", "ModelScope", "b", 0.2)
         self.assertIs(_select_release_source([slow, fast]), fast)
 
     def test_one_failed_source_does_not_block_the_other(self):
@@ -201,21 +81,21 @@ class UpdateManagerReleaseSelectionTests(unittest.TestCase):
 
     def test_same_revision_source_is_attached_as_download_fallback(self):
         published = datetime(2026, 7, 29, tzinfo=timezone.utc)
-        github = ReleaseInfo(
-            "LTS2", published, "github.zip", "github", "Hugging Face", "same", 0.2, (), "a" * 64
+        huggingface = ReleaseInfo(
+            "LTS2", published, "hf.zip", "huggingface", "Hugging Face", "same", 0.2, (), "a" * 64
         )
-        gitee = ReleaseInfo(
-            "LTS2", published, "gitee.zip", "gitee", "ModelScope", "same", 0.1, (), "a" * 64
+        modelscope = ReleaseInfo(
+            "LTS2", published, "ms.zip", "modelscope", "ModelScope", "same", 0.1, (), "a" * 64
         )
         manager = UpdateManager()
         with (
-            patch.object(manager, "_fetch_huggingface_voice_release", return_value=github),
-            patch.object(manager, "_fetch_modelscope_voice_release", return_value=gitee),
+            patch.object(manager, "_fetch_huggingface_voice_release", return_value=huggingface),
+            patch.object(manager, "_fetch_modelscope_voice_release", return_value=modelscope),
         ):
             selected = manager._fetch_latest_release()
 
         self.assertEqual(selected.source, "ModelScope")
-        self.assertEqual(selected.fallback_download_urls, ("github",))
+        self.assertEqual(selected.fallback_download_urls, ("huggingface",))
 
     def test_voice_package_manifest_builds_versioned_zip_release(self):
         digest = "a" * 64
@@ -240,35 +120,38 @@ class UpdateManagerReleaseSelectionTests(unittest.TestCase):
     def test_download_switches_to_same_revision_fallback(self):
         published = datetime(2026, 7, 29, tzinfo=timezone.utc)
         release = ReleaseInfo(
-            "最新包",
+            "LTS2",
             published,
-            "package.exe",
-            "gitee",
-            "Gitee",
+            "FlyingSnowVelvet-LTS2-Offline-Installer.zip",
+            "modelscope",
+            "ModelScope",
             "same",
             0.1,
-            ("github",),
+            ("huggingface",),
         )
         manager = UpdateManager()
         with patch.object(
             manager,
             "_download_url",
-            side_effect=[UpdateError("gitee unavailable"), None],
+            side_effect=[UpdateError("modelscope unavailable"), None],
         ) as download:
-            manager._download_release(release, Path("package.exe"))
+            manager._download_release(release, Path("package.zip"))
 
-        self.assertEqual([call.args[0] for call in download.call_args_list], ["gitee", "github"])
+        self.assertEqual(
+            [call.args[0] for call in download.call_args_list], ["modelscope", "huggingface"]
+        )
 
-    def test_revision_change_is_an_update_even_when_timestamp_matches(self):
+    def test_matching_timestamp_is_already_the_latest_package(self):
         published = datetime(2026, 7, 29, tzinfo=timezone.utc)
         release = ReleaseInfo(
-            "PACK", published, "pack.exe", "download", "GitHub", "new", 0.1
+            "LTS2", published, "FlyingSnowVelvet-LTS2-Offline-Installer.zip", "download",
+            "ModelScope", "new", 0.1, (), "a" * 64,
         )
         with tempfile.TemporaryDirectory() as temp_dir:
             state_path = Path(temp_dir) / "state.json"
             state_path.write_text(
                 json.dumps({
-                    "version": "PACK",
+                    "version": "LTS2",
                     "installed_at": "2026-07-29T00:00:00Z",
                     "revision": "old",
                 }),
@@ -278,8 +161,39 @@ class UpdateManagerReleaseSelectionTests(unittest.TestCase):
             with patch.object(manager, "_fetch_latest_release", return_value=release):
                 result = manager.check_for_updates()
 
-        self.assertTrue(result.update_available)
+        self.assertFalse(result.update_available)
+        self.assertEqual(result.reason, "up_to_date")
         self.assertIsInstance(result.installed_state, InstalledState)
+
+    def test_local_build_newer_than_the_published_package_is_up_to_date(self):
+        published = datetime(2026, 9, 12, tzinfo=timezone.utc)
+        release = ReleaseInfo(
+            "LTS1.0.7pre3",
+            published,
+            "FlyingSnowVelvet-LTS1.0.7pre3-Offline-Installer.zip",
+            "download",
+            "Hugging Face",
+            "remote-revision",
+            0.1,
+            (),
+            "a" * 64,
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = Path(temp_dir) / "state.json"
+            state_path.write_text(
+                json.dumps({
+                    "version": "LTS1.0.7pre4",
+                    "installed_at": "2026-09-13T00:00:00Z",
+                    "revision": "local-revision",
+                }),
+                encoding="utf-8",
+            )
+            manager = UpdateManager(state_path=state_path)
+            with patch.object(manager, "_fetch_latest_release", return_value=release):
+                result = manager.check_for_updates()
+
+        self.assertFalse(result.update_available)
+        self.assertEqual(result.reason, "up_to_date")
 
     def test_same_version_without_local_revision_is_not_reoffered(self):
         published = datetime(2026, 9, 7, tzinfo=timezone.utc)
@@ -315,6 +229,120 @@ class UpdateManagerReleaseSelectionTests(unittest.TestCase):
             with patch.object(manager, "_fetch_latest_release", return_value=release):
                 result = manager.check_for_updates()
         self.assertTrue(result.update_available)
+
+
+    def test_probe_starts_every_source_at_once_and_honours_the_budget(self):
+        available = ReleaseInfo(
+            "LTS2",
+            datetime(2026, 7, 29, tzinfo=timezone.utc),
+            "FlyingSnowVelvet-LTS2-Offline-Installer.zip",
+            "download",
+            "Hugging Face",
+            "revision",
+            0.1,
+            (),
+            "a" * 64,
+        )
+
+        def stall(deadline=None):
+            time.sleep(1.5)
+            raise UpdateError("stalled source")
+
+        manager = UpdateManager()
+        with (
+            patch.object(manager, "_fetch_huggingface_voice_release", return_value=available),
+            patch.object(manager, "_fetch_modelscope_voice_release", side_effect=stall),
+            patch("lib.script.update_manager._PROBE_BUDGET_SECONDS", 0.8),
+            patch("lib.script.update_manager._PROBE_GRACE_SECONDS", 5.0),
+        ):
+            started = time.monotonic()
+            selected = manager._fetch_latest_release()
+            elapsed = time.monotonic() - started
+
+        self.assertEqual(selected, available)
+        self.assertLess(elapsed, 1.5)
+
+    def test_probe_only_asks_the_two_model_hubs(self):
+        older = datetime(2026, 7, 29, tzinfo=timezone.utc)
+        newer = datetime(2026, 8, 2, tzinfo=timezone.utc)
+        manifest = ReleaseInfo(
+            "LTS2", older, "hf.zip", "hf", "Hugging Face", "r1", 0.1, (), "a" * 64
+        )
+        modelscope = ReleaseInfo(
+            "LTS3", newer, "ms.zip", "ms", "ModelScope", "r2", 0.2, (), "b" * 64
+        )
+        manager = UpdateManager()
+        with (
+            patch.object(manager, "_fetch_huggingface_voice_release", return_value=manifest) as hf,
+            patch.object(manager, "_fetch_modelscope_voice_release", return_value=modelscope) as ms,
+        ):
+            selected = manager._fetch_latest_release()
+
+        self.assertEqual(selected.source, "ModelScope")
+        self.assertEqual(selected.tag, "LTS3")
+        self.assertEqual(hf.call_count, 1)
+        self.assertEqual(ms.call_count, 1)
+        self.assertFalse(hasattr(UpdateManager, "_fetch_github_pack_release"))
+        self.assertFalse(hasattr(UpdateManager, "_fetch_gitee_pack_release"))
+
+    def test_probe_gives_up_inside_the_budget_when_every_source_stalls(self):
+        def stall(deadline=None):
+            time.sleep(1.5)
+            raise UpdateError("stalled source")
+
+        manager = UpdateManager()
+        with (
+            patch.object(manager, "_fetch_huggingface_voice_release", side_effect=stall),
+            patch.object(manager, "_fetch_modelscope_voice_release", side_effect=stall),
+            patch("lib.script.update_manager._PROBE_BUDGET_SECONDS", 0.8),
+        ):
+            started = time.monotonic()
+            with self.assertRaises(UpdateError):
+                manager._fetch_latest_release()
+            elapsed = time.monotonic() - started
+
+        self.assertLess(elapsed, 1.5)
+
+    def test_manifest_probe_is_skipped_once_the_budget_is_spent(self):
+        with patch("lib.script.update_manager.requests.get") as request:
+            with self.assertRaises(UpdateError):
+                UpdateManager._fetch_release_json(
+                    "https://example.test/updates/latest.json",
+                    "测试源",
+                    deadline=time.monotonic() - 1.0,
+                )
+        request.assert_not_called()
+
+    def test_update_notice_reports_the_version_not_the_file_name(self):
+        published = datetime(2026, 9, 7, tzinfo=timezone.utc)
+        release = ReleaseInfo(
+            "LTS1.0.8",
+            published,
+            "FlyingSnowVelvet-LTS1.0.8-Offline-Installer.zip",
+            "download",
+            "ModelScope",
+            "revision",
+            archive_sha256="a" * 64,
+        )
+        messages: list[str] = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = Path(temp_dir) / "state.json"
+            state_path.write_text(
+                json.dumps({
+                    "version": "LTS1.0.7pre3",
+                    "installed_at": "2026-09-06T00:00:00Z",
+                    "revision": "old",
+                }),
+                encoding="utf-8",
+            )
+            manager = UpdateManager(state_path=state_path, info_callback=messages.append)
+            with patch.object(manager, "_fetch_latest_release", return_value=release):
+                result = manager.check_for_updates()
+
+        self.assertTrue(result.update_available)
+        notice = " ".join(messages)
+        self.assertIn("LTS1.0.8", notice)
+        self.assertNotIn("Offline-Installer.zip", notice)
 
 
 if __name__ == "__main__":

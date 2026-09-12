@@ -1334,7 +1334,10 @@ static void set_page(int page) {
     wchar_t subtitle[512];
     wchar_t step[32];
     g_page = page;
-    BOOL online = g_context.archive_size != FSV_PAYLOAD_ARCHIVE_BYTES;
+    /* The build mode is a compile-time constant: this page is painted before
+       the trailer is read, so ``archive_size`` is still zero here and must not
+       decide the wording. */
+    BOOL online = FSV_ONLINE_BUILD ? TRUE : FALSE;
     if (page == 1) {
         StringCchCopyW(title, ARRAYSIZE(title), L"选择安装位置");
         StringCchCopyW(subtitle, ARRAYSIZE(subtitle), online ? L"为飞行雪绒选择一个安放的位置，安装时将在线下载资源。" : L"为飞行雪绒选择一个安放的位置。" );
@@ -1894,7 +1897,7 @@ static void draw_announcement_background(HDC dc) {
     fill_color_rect(dc, ui_rect(35, 29, 1, 44), FSV_COLOR_CYAN);
     draw_text_block(dc, g_heading_font, FSV_COLOR_TEXT, L"飞行雪绒", ui_rect(116, 24, 360, 38), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     draw_text_block(dc, g_meta_font, FSV_COLOR_TEXT_DIM,
-        g_context.archive_size != FSV_PAYLOAD_ARCHIVE_BYTES ? L"在线安装  /  ONLINE SETUP" : L"离线安装  /  OFFLINE SETUP",
+        FSV_ONLINE_BUILD ? L"在线安装  /  ONLINE SETUP" : L"离线安装  /  OFFLINE SETUP",
         ui_rect(118, 64, 400, 18), DT_LEFT | DT_SINGLELINE);
 
     for (index = 0; index < 4; ++index) {
@@ -1917,7 +1920,7 @@ static void draw_announcement_background(HDC dc) {
     }
     if (g_page == 1) {
         draw_text_block(dc, g_body_font, FSV_COLOR_TEXT,
-            g_context.archive_size != FSV_PAYLOAD_ARCHIVE_BYTES ? L"安装程序较小，安装时将从资源镜像下载完整运行组件。" : L"完整运行组件已内置，安装无需联网。",
+            FSV_ONLINE_BUILD ? L"安装程序较小，安装时将从资源镜像下载完整运行组件。" : L"完整运行组件已内置，安装无需联网。",
             ui_rect(40, 370, 800, 26), DT_LEFT | DT_SINGLELINE);
         draw_text_block(dc, g_meta_font, FSV_COLOR_TEXT_DIM, L"非空目录会使用独立子目录；已有飞行雪绒安装可直接更新。", ui_rect(40, 408, 800, 22), DT_LEFT | DT_SINGLELINE);
         draw_text_block(dc, g_meta_font, FSV_COLOR_TEXT_DIM, L"个人设置、语音包与使用记录保留在用户数据目录。", ui_rect(40, 438, 800, 22), DT_LEFT | DT_SINGLELINE);
@@ -2188,7 +2191,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, 
     ZeroMemory(&g_context, sizeof(g_context));
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     g_dpi = GetDpiForSystem();
-    set_install_error(&g_context, L"离线安装未完成。" );
+    set_install_error(&g_context, FSV_ONLINE_BUILD ? L"在线安装未完成。" : L"离线安装未完成。" );
     if (!parse_update_arguments(command_line)) {
         MessageBoxW(NULL, L"安装器启动参数无效。", L"飞行雪绒安装器", MB_OK | MB_ICONERROR);
         return 1;

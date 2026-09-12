@@ -7,6 +7,7 @@ import tempfile
 import unittest
 import zipfile
 import zlib
+from unittest import mock
 
 from scripts import build_offline_installer as installer
 
@@ -24,12 +25,17 @@ class WindowsZipExtractTests(unittest.TestCase):
         cls.compile_root = Path(cls._temporary.name)
         source_root = installer.DEFAULT_INSTALLER_SOURCE / "src"
         zlib_root = installer.DEFAULT_INSTALLER_SOURCE / "third_party" / "zlib-1.3.1"
+        lzma_root = installer.DEFAULT_INSTALLER_SOURCE / installer.LZMA_DIRECTORY
         shutil.copy2(source_root / "zip_extract.c", cls.compile_root / "zip_extract.c")
         shutil.copy2(source_root / "zip_extract.h", cls.compile_root / "zip_extract.h")
         shutil.copy2(
             Path(__file__).parent / "native" / "zip_extract_harness.c",
             cls.compile_root / "zip_extract_harness.c",
         )
+        lzma_compile_root = cls.compile_root / "lzma"
+        lzma_compile_root.mkdir(parents=True, exist_ok=True)
+        for name in (*installer.LZMA_HEADERS, *installer.LZMA_SOURCES):
+            shutil.copy2(lzma_root / name, lzma_compile_root / name)
         installer._compile_zlib(zlib_root, vsdevcmd, cls.compile_root)
         installer.run_vs_command(
             vsdevcmd,
@@ -44,9 +50,12 @@ class WindowsZipExtractTests(unittest.TestCase):
                     "/utf-8",
                     "/DZ_SOLO",
                     '/I"zlib"',
+                    '/I"lzma"',
                     '/Fe:"zip_extract_harness.exe"',
                     '"zip_extract_harness.c"',
                     '"zip_extract.c"',
+                    '"lzma\\LzmaDec.c"',
+                    '"lzma\\Lzma2Dec.c"',
                     '"zlibstatic.lib"',
                     "/link",
                     "/SUBSYSTEM:CONSOLE",
@@ -215,6 +224,133 @@ class WindowsZipExtractTests(unittest.TestCase):
             parts = result.stdout.split()
             self.assertEqual(parts[0], "OK")
             self.assertEqual(parts[2:], [str(len(expected)), "100"])
+
+    @staticmethod
+    def write_sharded_payload(root: Path) -> tuple[Path, dict[str, bytes]]:
+        payload = root / "payload"
+        expected = {
+            # Large enough to cross the decoder's input and output buffers.
+            "app/动画/大文件.bin": bytes(range(256)) * 20000,
+            "app/模块/小文件.txt": b"shard payload " * 7,
+            "runtime/empty.dat": b"",
+            ".fsv-install-root": installer.MARKER_BYTES,
+        }
+        for name, data in expected.items():
+            path = payload / Path(name)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+        archive = root / "payload.zip"
+        installer.create_archive(payload, archive)
+        return archive, expected
+
+    def test_sharded_archive_round_trips_every_placeholder(self):
+        with tempfile.TemporaryDirectory(prefix="fsv-zip-shard-") as temporary:
+            root = Path(temporary)
+            archive, expected = self.write_sharded_payload(root)
+            destination = root / "分片安装目录"
+            with zipfile.ZipFile(archive) as bundle:
+                self.assertIsNone(bundle.testzip())
+                names = [member.filename for member in bundle.infolist()]
+                self.assertIn(installer.PAYLOAD_SHARD_INDEX_NAME, names)
+                self.assertTrue(
+                    [
+                        name
+                        for name in names
+                        if name.startswith(".fsv-shard-") and name.endswith(".fsvlzma")
+                    ]
+                )
+                placeholders = [
+                    member
+                    for member in bundle.infolist()
+                    if member.compress_size == 0
+                    and not member.filename.startswith(".fsv-shard-")
+                ]
+                # The compatibility view still lists every payload path, with
+                # the real size, but no bytes of its own.
+                self.assertEqual(
+                    {member.filename for member in placeholders},
+                    set(expected) - {".fsv-install-root"},
+                )
+                for member in placeholders:
+                    self.assertEqual(member.file_size, len(expected[member.filename]))
+
+            result = self.run_harness("extract", archive, destination)
+
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            for name, data in expected.items():
+                with self.subTest(name=name):
+                    self.assertEqual((destination / Path(name)).read_bytes(), data)
+            self.assertEqual(result.stdout.split()[2:], [str(len(expected)), "100"])
+            stats = self.run_harness("stats", archive)
+            self.assertEqual(stats.stdout.split()[:1], ["OK"])
+            self.assertEqual(
+                stats.stdout.split()[1:],
+                [str(len(expected)), str(sum(len(data) for data in expected.values()))],
+            )
+
+    def test_sharded_archive_rejects_a_damaged_shard(self):
+        with tempfile.TemporaryDirectory(prefix="fsv-zip-shard-crc-") as temporary:
+            root = Path(temporary)
+            archive, _ = self.write_sharded_payload(root)
+            with zipfile.ZipFile(archive) as bundle:
+                shard = next(
+                    member
+                    for member in bundle.infolist()
+                    if member.filename.startswith(".fsv-shard-")
+                    and member.filename.endswith(".fsvlzma")
+                )
+            raw = bytearray(archive.read_bytes())
+            name_length, extra_length = struct.unpack_from("<HH", raw, shard.header_offset + 26)
+            data_offset = shard.header_offset + 30 + name_length + extra_length
+            raw[data_offset + 4096 % shard.compress_size] ^= 0xFF
+            archive.write_bytes(bytes(raw))
+
+            result = self.run_harness("extract", archive, root / "destination")
+
+            self.assertNotEqual(result.returncode, 0)
+
+    def test_sharded_archive_rejects_a_mismatched_index(self):
+        with tempfile.TemporaryDirectory(prefix="fsv-zip-shard-index-") as temporary:
+            root = Path(temporary)
+            archive, _ = self.write_sharded_payload(root)
+            with zipfile.ZipFile(archive) as bundle:
+                member = bundle.getinfo(installer.PAYLOAD_SHARD_INDEX_NAME)
+            raw = bytearray(archive.read_bytes())
+            name_length, extra_length = struct.unpack_from("<HH", raw, member.header_offset + 26)
+            data_offset = member.header_offset + 30 + name_length + extra_length
+            # Claim a size that the placeholder entry contradicts.
+            raw[data_offset + 4 + 16] ^= 0x01
+            archive.write_bytes(bytes(raw))
+
+            result = self.run_harness("extract", archive, root / "destination")
+
+            self.assertNotEqual(result.returncode, 0)
+
+    def test_sharded_archive_splits_across_several_shards(self):
+        with tempfile.TemporaryDirectory(prefix="fsv-zip-shard-multi-") as temporary:
+            root = Path(temporary)
+            with mock.patch.object(installer, "PAYLOAD_SHARD_TARGET_BYTES", 4096):
+                archive, expected = self.write_sharded_payload(root)
+            with zipfile.ZipFile(archive) as bundle:
+                self.assertGreater(
+                    len(
+                        [
+                            member
+                            for member in bundle.infolist()
+                            if member.filename.endswith(".fsvlzma")
+                        ]
+                    ),
+                    1,
+                )
+                self.assertIsNone(bundle.testzip())
+
+            destination = root / "destination"
+            result = self.run_harness("extract", archive, destination)
+
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            for name, data in expected.items():
+                with self.subTest(name=name):
+                    self.assertEqual((destination / Path(name)).read_bytes(), data)
 
     def test_worker_pool_and_peak_gate_leave_headroom(self):
         # 12 logical processors used to open eight inflate threads and peg every

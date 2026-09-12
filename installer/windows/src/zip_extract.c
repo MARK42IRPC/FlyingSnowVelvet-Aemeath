@@ -7,8 +7,10 @@
 #include <string.h>
 
 #include "zlib.h"
+#include "Lzma2Dec.h"
 
 #define FSV_ZIP_READ_BUFFER (1024U * 1024U)
+#define FSV_ZIP_SHARD_READ_BUFFER (1024U * 1024U)
 #define FSV_ZIP_EOCD_SCAN (0x10000ULL + 22ULL)
 #define FSV_ZIP_LOCAL_HEADER_SIZE 30U
 #define FSV_ZIP_CENTRAL_HEADER_SIZE 46U
@@ -125,6 +127,22 @@ static void fsv_zfree(voidpf opaque, voidpf address) {
         HeapFree(GetProcessHeap(), 0, address);
     }
 }
+
+/* The LZMA SDK allocates its probability tables and the shard dictionary
+   through this adapter, so the extractor keeps using a single allocator. */
+static void *fsv_lzma_alloc(ISzAllocPtr opaque, size_t size) {
+    (void)opaque;
+    return HeapAlloc(GetProcessHeap(), 0, size == 0 ? 1 : size);
+}
+
+static void fsv_lzma_free(ISzAllocPtr opaque, void *address) {
+    (void)opaque;
+    if (address != NULL) {
+        HeapFree(GetProcessHeap(), 0, address);
+    }
+}
+
+static const ISzAlloc g_fsv_lzma_alloc = { fsv_lzma_alloc, fsv_lzma_free };
 
 static BOOL read_at(HANDLE file, ULONGLONG offset, void *buffer, DWORD size) {
     LARGE_INTEGER position;
@@ -290,6 +308,75 @@ static void free_entry(FsvZipEntry *entry) {
         HeapFree(GetProcessHeap(), 0, entry->name);
     }
     ZeroMemory(entry, sizeof(*entry));
+}
+
+static BOOL entry_name_is(const FsvZipEntry *entry, const char *text) {
+    size_t length = strlen(text);
+    return (size_t)entry->name_length == length &&
+        memcmp(entry->name, text, length) == 0;
+}
+
+/* Recognise ``.fsv-shard-NNN.fsvlzma``.  The digit check is what keeps the
+   index entry (``.fsv-shard-index.bin``) from being mistaken for a shard. */
+static BOOL entry_name_is_shard(const FsvZipEntry *entry, DWORD *number) {
+    static const char prefix[] = FSV_ZIP_SHARD_NAME_PREFIX;
+    static const char suffix[] = FSV_ZIP_SHARD_NAME_SUFFIX;
+    const size_t prefix_length = sizeof(prefix) - 1;
+    const size_t suffix_length = sizeof(suffix) - 1;
+    DWORD value = 0;
+    size_t offset;
+    if ((size_t)entry->name_length != prefix_length + 3 + suffix_length ||
+        memcmp(entry->name, prefix, prefix_length) != 0 ||
+        memcmp(entry->name + prefix_length + 3, suffix, suffix_length) != 0) {
+        return FALSE;
+    }
+    for (offset = 0; offset < 3; ++offset) {
+        BYTE digit = entry->name[prefix_length + offset];
+        if (digit < (BYTE)'0' || digit > (BYTE)'9') {
+            return FALSE;
+        }
+        value = value * 10U + (DWORD)(digit - (BYTE)'0');
+    }
+    if (number != NULL) {
+        *number = value;
+    }
+    return TRUE;
+}
+
+/* Resolve an entry's data offset through its local header, and check that the
+   whole payload stays inside the archive. */
+static BOOL locate_entry_data(
+    HANDLE archive,
+    ULONGLONG archive_size,
+    const FsvZipEntry *entry,
+    ULONGLONG *data_offset
+) {
+    BYTE local_header[FSV_ZIP_LOCAL_HEADER_SIZE];
+    WORD name_length;
+    WORD extra_length;
+    ULONGLONG offset;
+    if (!read_at(archive, entry->local_offset, local_header, sizeof(local_header)) ||
+        read_u32_le(local_header) != 0x04034b50U) {
+        SetLastError(ERROR_BAD_FORMAT);
+        return FALSE;
+    }
+    name_length = read_u16_le(local_header + 26);
+    extra_length = read_u16_le(local_header + 28);
+    if (entry->local_offset > archive_size ||
+        sizeof(local_header) > archive_size - entry->local_offset ||
+        name_length > archive_size - entry->local_offset - sizeof(local_header) ||
+        extra_length > archive_size - entry->local_offset - sizeof(local_header) - name_length) {
+        SetLastError(ERROR_BAD_FORMAT);
+        return FALSE;
+    }
+    offset = entry->local_offset + sizeof(local_header) + name_length + extra_length;
+    if (offset < entry->local_offset || offset > archive_size ||
+        entry->compressed_size > archive_size - offset) {
+        SetLastError(ERROR_BAD_FORMAT);
+        return FALSE;
+    }
+    *data_offset = offset;
+    return TRUE;
 }
 
 static BOOL is_reserved_windows_component(const wchar_t *component) {
@@ -703,73 +790,37 @@ cleanup:
     return success;
 }
 
-static BOOL extract_entry(
-    HANDLE archive,
-    ULONGLONG archive_size,
+/* Create the target file for one entry, together with its parent directories.
+   The archive-relative path is handed back for progress reporting because the
+   shard workers need it after the entry itself has been released. */
+static BOOL open_entry_output(
     const FsvZipEntry *entry,
     const wchar_t *destination,
-    FsvZipProgressState *state
+    wchar_t *relative,
+    wchar_t *output_path,
+    HANDLE *output
 ) {
-    BYTE local_header[FSV_ZIP_LOCAL_HEADER_SIZE];
-    WORD name_length;
-    WORD extra_length;
-    ULONGLONG data_offset;
-    wchar_t relative[FSV_ZIP_PATH_CAPACITY];
-    wchar_t output_path[FSV_ZIP_PATH_CAPACITY];
-    HANDLE output = INVALID_HANDLE_VALUE;
-    BOOL success = FALSE;
-    if (!decode_entry_path(entry, relative, ARRAYSIZE(relative))) {
+    wchar_t parent[FSV_ZIP_PATH_CAPACITY];
+    wchar_t *separator;
+    if (!decode_entry_path(entry, relative, FSV_ZIP_PATH_CAPACITY) ||
+        !join_path(destination, relative, output_path, FSV_ZIP_PATH_CAPACITY)) {
+        SetLastError(ERROR_BAD_PATHNAME);
         return FALSE;
     }
-    if (!join_path(destination, relative, output_path, ARRAYSIZE(output_path))) {
+    if (FAILED(StringCchCopyW(parent, ARRAYSIZE(parent), output_path))) {
         SetLastError(ERROR_BUFFER_OVERFLOW);
         return FALSE;
     }
-    if (entry->directory) {
-        return ensure_directory(output_path);
-    }
-    if ((entry->flags_value & 0x0001U) != 0 || (entry->method != 0 && entry->method != 8)) {
-        SetLastError(ERROR_NOT_SUPPORTED);
+    separator = wcsrchr(parent, L'\\');
+    if (separator == NULL) {
+        SetLastError(ERROR_BAD_PATHNAME);
         return FALSE;
     }
-    if (!read_at(archive, entry->local_offset, local_header, sizeof(local_header)) ||
-        read_u32_le(local_header) != 0x04034b50U) {
-        SetLastError(ERROR_BAD_FORMAT);
+    *separator = L'\0';
+    if (!ensure_directory(parent)) {
         return FALSE;
     }
-    name_length = read_u16_le(local_header + 26);
-    extra_length = read_u16_le(local_header + 28);
-    if (entry->local_offset > archive_size ||
-        sizeof(local_header) > archive_size - entry->local_offset ||
-        name_length > archive_size - entry->local_offset - sizeof(local_header) ||
-        extra_length > archive_size - entry->local_offset - sizeof(local_header) - name_length) {
-        SetLastError(ERROR_BAD_FORMAT);
-        return FALSE;
-    }
-    data_offset = entry->local_offset + sizeof(local_header) + name_length + extra_length;
-    if (data_offset < entry->local_offset || data_offset > archive_size ||
-        entry->compressed_size > archive_size - data_offset) {
-        SetLastError(ERROR_BAD_FORMAT);
-        return FALSE;
-    }
-    {
-        wchar_t parent[FSV_ZIP_PATH_CAPACITY];
-        wchar_t *separator;
-        if (FAILED(StringCchCopyW(parent, ARRAYSIZE(parent), output_path))) {
-            SetLastError(ERROR_BUFFER_OVERFLOW);
-            return FALSE;
-        }
-        separator = wcsrchr(parent, L'\\');
-        if (separator == NULL) {
-            SetLastError(ERROR_BAD_PATHNAME);
-            return FALSE;
-        }
-        *separator = L'\0';
-        if (!ensure_directory(parent)) {
-            return FALSE;
-        }
-    }
-    output = CreateFileW(
+    *output = CreateFileW(
         output_path,
         GENERIC_WRITE,
         0,
@@ -778,7 +829,7 @@ static BOOL extract_entry(
         FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN,
         NULL
     );
-    if (output == INVALID_HANDLE_VALUE) {
+    if (*output == INVALID_HANDLE_VALUE) {
         return FALSE;
     }
     /* The central directory already told us how large the file will be, so
@@ -788,7 +839,35 @@ static BOOL extract_entry(
     if (entry->uncompressed_size > 0) {
         FILE_ALLOCATION_INFO allocation;
         allocation.AllocationSize.QuadPart = (LONGLONG)entry->uncompressed_size;
-        SetFileInformationByHandle(output, FileAllocationInfo, &allocation, sizeof(allocation));
+        SetFileInformationByHandle(*output, FileAllocationInfo, &allocation, sizeof(allocation));
+    }
+    return TRUE;
+}
+
+static BOOL extract_entry(
+    HANDLE archive,
+    ULONGLONG archive_size,
+    const FsvZipEntry *entry,
+    const wchar_t *destination,
+    FsvZipProgressState *state
+) {
+    ULONGLONG data_offset = 0;
+    wchar_t relative[FSV_ZIP_PATH_CAPACITY];
+    wchar_t output_path[FSV_ZIP_PATH_CAPACITY];
+    HANDLE output = INVALID_HANDLE_VALUE;
+    BOOL success = FALSE;
+    if (entry->directory) {
+        return decode_entry_path(entry, relative, ARRAYSIZE(relative)) &&
+            join_path(destination, relative, output_path, ARRAYSIZE(output_path)) &&
+            ensure_directory(output_path);
+    }
+    if ((entry->flags_value & 0x0001U) != 0 || (entry->method != 0 && entry->method != 8)) {
+        SetLastError(ERROR_NOT_SUPPORTED);
+        return FALSE;
+    }
+    if (!locate_entry_data(archive, archive_size, entry, &data_offset) ||
+        !open_entry_output(entry, destination, relative, output_path, &output)) {
+        return FALSE;
     }
     {
         LARGE_INTEGER position;
@@ -1030,6 +1109,543 @@ static DWORD WINAPI extract_worker(void *parameter) {
     return 0;
 }
 
+/* One row of ``.fsv-shard-index.bin``: which shard carries the file, where the
+   file starts inside that shard's decoded bytes, and the central-directory
+   record that names it. */
+typedef struct FsvShardFile {
+    ULONGLONG offset;
+    ULONGLONG size;
+    ULONGLONG position;
+    DWORD shard;
+} FsvShardFile;
+
+typedef struct FsvShardRange {
+    ULONGLONG start;
+    ULONGLONG count;
+    ULONGLONG bytes;
+} FsvShardRange;
+
+typedef struct FsvShardJob {
+    FsvZipProgressState *state;
+    const wchar_t *archive_path;
+    const wchar_t *destination;
+    const FsvShardFile *files;
+    ULONGLONG central_end;
+    ULONGLONG entry_start;
+    ULONGLONG entry_count;
+    ULONGLONG data_offset;
+    ULONGLONG compressed_size;
+    ULONGLONG bytes;
+    DWORD expected_crc;
+} FsvShardJob;
+
+/* Open the next placeholder of a shard run, refusing a shard whose index and
+   central directory disagree about the file. */
+static BOOL open_next_shard_file(
+    FsvShardJob *job,
+    HANDLE archive,
+    ULONGLONG file_index,
+    wchar_t *relative,
+    wchar_t *output_path,
+    HANDLE *output
+) {
+    FsvZipEntry entry;
+    ULONGLONG next_position;
+    BOOL opened;
+    ZeroMemory(&entry, sizeof(entry));
+    if (!read_entry(
+            archive,
+            job->files[job->entry_start + file_index].position,
+            job->central_end,
+            &entry,
+            &next_position)) {
+        free_entry(&entry);
+        return FALSE;
+    }
+    if (entry.directory ||
+        entry.uncompressed_size != job->files[job->entry_start + file_index].size) {
+        free_entry(&entry);
+        SetLastError(ERROR_BAD_FORMAT);
+        return FALSE;
+    }
+    opened = open_entry_output(&entry, job->destination, relative, output_path, output);
+    free_entry(&entry);
+    return opened;
+}
+
+/* Release a finished (or empty) file: close it, publish progress and give the
+   adaptive load gate its slot back. */
+static BOOL finish_shard_file(
+    FsvShardJob *job,
+    HANDLE *output,
+    ULONGLONG file_index,
+    ULONGLONG *file_written,
+    BOOL *active
+) {
+    FsvZipProgressState *state = job->state;
+    if (!CloseHandle(*output)) {
+        *output = INVALID_HANDLE_VALUE;
+        zip_record_failure(state, GetLastError());
+        return FALSE;
+    }
+    *output = INVALID_HANDLE_VALUE;
+    *file_written = 0;
+    if (*active) {
+        InterlockedDecrement64(&state->active_workers);
+        *active = FALSE;
+    }
+    InterlockedIncrement64(&state->completed_files);
+    InterlockedAdd64(
+        &state->completed_bytes,
+        (LONG64)job->files[job->entry_start + file_index].size
+    );
+    post_progress(state, NULL, FALSE);
+    return TRUE;
+}
+
+/* Decode one solid shard and write the files it carries.  A shard owns a
+   contiguous run of the payload, so workers need no coordination beyond the
+   shared progress state and the adaptive load gate - and the decode of one
+   shard overlaps the writes of the others, which is where the wall-clock win
+   over a single solid stream comes from. */
+static DWORD WINAPI extract_shard_worker(void *parameter) {
+    FsvShardJob *job = (FsvShardJob *)parameter;
+    FsvZipProgressState *state = job->state;
+    HANDLE archive = INVALID_HANDLE_VALUE;
+    HANDLE output = INVALID_HANDLE_VALUE;
+    BYTE *input = NULL;
+    BYTE *decoded = NULL;
+    CLzma2Dec decoder;
+    BOOL decoder_allocated = FALSE;
+    BOOL active = FALSE;
+    BOOL finished = FALSE;
+    BOOL success = FALSE;
+    ULONGLONG stream_position = 0;
+    ULONGLONG written_total = 0;
+    ULONGLONG file_index = 0;
+    ULONGLONG file_written = 0;
+    wchar_t relative[FSV_ZIP_PATH_CAPACITY];
+    wchar_t output_path[FSV_ZIP_PATH_CAPACITY];
+    uLong crc = crc32(0L, Z_NULL, 0);
+    SizeT in_position = 0;
+    SizeT in_length = 0;
+
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_LOWEST);
+    archive = CreateFileW(
+        job->archive_path,
+        GENERIC_READ,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        NULL,
+        OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN,
+        NULL
+    );
+    if (archive == INVALID_HANDLE_VALUE) {
+        zip_record_failure(state, GetLastError());
+        return 1;
+    }
+    input = (BYTE *)HeapAlloc(GetProcessHeap(), 0, FSV_ZIP_SHARD_READ_BUFFER);
+    decoded = (BYTE *)HeapAlloc(GetProcessHeap(), 0, FSV_ZIP_SHARD_READ_BUFFER);
+    if (input == NULL || decoded == NULL) {
+        zip_record_failure(state, ERROR_NOT_ENOUGH_MEMORY);
+        goto cleanup;
+    }
+    Lzma2Dec_Construct(&decoder);
+    if (Lzma2Dec_Allocate(&decoder, FSV_ZIP_SHARD_DICT_PROPERTY, &g_fsv_lzma_alloc) != SZ_OK) {
+        zip_record_failure(state, ERROR_BAD_FORMAT);
+        goto cleanup;
+    }
+    decoder_allocated = TRUE;
+    Lzma2Dec_Init(&decoder);
+    for (;;) {
+        SizeT source_length;
+        SizeT destination_length = FSV_ZIP_SHARD_READ_BUFFER;
+        SizeT produced;
+        SizeT offset = 0;
+        ELzmaStatus status = LZMA_STATUS_NOT_SPECIFIED;
+        if (zip_failed(state)) {
+            goto cleanup;
+        }
+        if (in_position == in_length) {
+            ULONGLONG remaining = job->compressed_size - stream_position;
+            DWORD request = remaining > FSV_ZIP_SHARD_READ_BUFFER
+                ? FSV_ZIP_SHARD_READ_BUFFER
+                : (DWORD)remaining;
+            if (request == 0 ||
+                !read_at(archive, job->data_offset + stream_position, input, request)) {
+                zip_record_failure(state, request == 0 ? ERROR_BAD_FORMAT : GetLastError());
+                goto cleanup;
+            }
+            stream_position += request;
+            in_length = (SizeT)request;
+            in_position = 0;
+        }
+        source_length = in_length - in_position;
+        if (Lzma2Dec_DecodeToBuf(
+                &decoder,
+                decoded,
+                &destination_length,
+                input + in_position,
+                &source_length,
+                LZMA_FINISH_ANY,
+                &status) != SZ_OK) {
+            zip_record_failure(state, ERROR_BAD_FORMAT);
+            goto cleanup;
+        }
+        if (source_length > 0) {
+            crc = crc32(crc, input + in_position, (uInt)source_length);
+            in_position += source_length;
+        }
+        /* ``Lzma2Dec_DecodeToBuf`` reports the produced byte count through
+           ``destLen``; it does not leave the remaining capacity there. */
+        produced = destination_length;
+        if (status == LZMA_STATUS_FINISHED_WITH_MARK) {
+            finished = TRUE;
+        }
+        while (offset < produced) {
+            ULONGLONG remaining;
+            DWORD take;
+            DWORD written = 0;
+            if (output == INVALID_HANDLE_VALUE) {
+                if (file_index >= job->entry_count) {
+                    zip_record_failure(state, ERROR_BAD_FORMAT);
+                    goto cleanup;
+                }
+                if (!zip_wait_for_slot(state)) {
+                    goto cleanup;
+                }
+                InterlockedIncrement64(&state->active_workers);
+                active = TRUE;
+                if (!open_next_shard_file(
+                        job, archive, file_index, relative, output_path, &output)) {
+                    zip_record_failure(state, GetLastError());
+                    goto cleanup;
+                }
+                file_written = 0;
+                post_progress(state, relative, FALSE);
+            }
+            remaining = job->files[job->entry_start + file_index].size - file_written;
+            if (remaining == 0) {
+                if (!finish_shard_file(job, &output, file_index, &file_written, &active)) {
+                    goto cleanup;
+                }
+                file_index += 1;
+                continue;
+            }
+            take = (DWORD)((ULONGLONG)(produced - offset) < remaining
+                ? (ULONGLONG)(produced - offset)
+                : remaining);
+            if (!WriteFile(output, decoded + offset, take, &written, NULL) || written != take) {
+                zip_record_failure(state, GetLastError());
+                goto cleanup;
+            }
+            offset += (SizeT)take;
+            file_written += take;
+            written_total += take;
+            if (file_written == job->files[job->entry_start + file_index].size) {
+                if (!finish_shard_file(job, &output, file_index, &file_written, &active)) {
+                    goto cleanup;
+                }
+                file_index += 1;
+            }
+        }
+        if (finished) {
+            break;
+        }
+        if (source_length == 0 && produced == 0) {
+            zip_record_failure(state, ERROR_BAD_FORMAT);
+            goto cleanup;
+        }
+    }
+    /* An empty file never receives decoded bytes, so the tail of a run has to
+       be created once the stream has ended. */
+    while (file_index < job->entry_count &&
+           job->files[job->entry_start + file_index].size == 0) {
+        if (!zip_wait_for_slot(state)) {
+            goto cleanup;
+        }
+        InterlockedIncrement64(&state->active_workers);
+        active = TRUE;
+        if (!open_next_shard_file(
+                job, archive, file_index, relative, output_path, &output)) {
+            zip_record_failure(state, GetLastError());
+            goto cleanup;
+        }
+        if (!finish_shard_file(job, &output, file_index, &file_written, &active)) {
+            goto cleanup;
+        }
+        file_index += 1;
+    }
+    if (file_index != job->entry_count ||
+        written_total != job->bytes ||
+        in_position != in_length ||
+        stream_position != job->compressed_size ||
+        crc != (uLong)job->expected_crc) {
+        zip_record_failure(state, ERROR_CRC);
+        goto cleanup;
+    }
+    success = TRUE;
+
+cleanup:
+    if (output != INVALID_HANDLE_VALUE) {
+        CloseHandle(output);
+    }
+    if (active) {
+        InterlockedDecrement64(&state->active_workers);
+    }
+    if (decoder_allocated) {
+        Lzma2Dec_Free(&decoder, &g_fsv_lzma_alloc);
+    }
+    if (input != NULL) {
+        HeapFree(GetProcessHeap(), 0, input);
+    }
+    if (decoded != NULL) {
+        HeapFree(GetProcessHeap(), 0, decoded);
+    }
+    CloseHandle(archive);
+    return success ? 0 : 1;
+}
+
+/* Rebuild the shard layout from ``.fsv-shard-index.bin`` and unpack every
+   shard, one batch at a time so a busy machine never sees more decoders than
+   the adaptive ceiling allows. */
+/* Entries that carry their own bytes - the install marker, or a small archive
+   that mixes a real file into the sharded layout - still have to land on disk.
+   They are few and tiny, so they are unpacked before the shard batches start. */
+static BOOL extract_plain_entries(
+    HANDLE archive,
+    ULONGLONG archive_size,
+    const wchar_t *destination,
+    FsvZipProgressState *state,
+    const ULONGLONG *offsets,
+    ULONGLONG entry_count,
+    ULONGLONG central_end
+) {
+    ULONGLONG index;
+    for (index = 0; index < entry_count; ++index) {
+        FsvZipEntry entry;
+        ULONGLONG next_position;
+        BOOL extracted;
+        DWORD error;
+        ZeroMemory(&entry, sizeof(entry));
+        if (!read_entry(archive, offsets[index], central_end, &entry, &next_position)) {
+            free_entry(&entry);
+            return FALSE;
+        }
+        if (entry.directory ||
+            entry.compressed_size == 0 ||
+            entry_name_is(&entry, FSV_ZIP_SHARD_INDEX_NAME) ||
+            entry_name_is_shard(&entry, NULL)) {
+            free_entry(&entry);
+            continue;
+        }
+        extracted = extract_entry(archive, archive_size, &entry, destination, state);
+        error = GetLastError();
+        free_entry(&entry);
+        if (!extracted) {
+            SetLastError(error);
+            return FALSE;
+        }
+        InterlockedIncrement64(&state->completed_files);
+        post_progress(state, NULL, FALSE);
+    }
+    return TRUE;
+}
+
+static BOOL extract_sharded_archive(
+    HANDLE archive,
+    const wchar_t *archive_path,
+    const wchar_t *destination,
+    FsvZipProgressState *state,
+    const ULONGLONG *shard_positions,
+    DWORD shard_count,
+    ULONGLONG index_position,
+    const ULONGLONG *placeholder_positions,
+    ULONGLONG placeholder_count,
+    ULONGLONG archive_size,
+    ULONGLONG central_end
+) {
+    FsvZipEntry entry;
+    ULONGLONG next_position;
+    ULONGLONG data_offset = 0;
+    ULONGLONG index_size;
+    ULONGLONG rows;
+    ULONGLONG row;
+    BYTE *index_bytes = NULL;
+    FsvShardFile *files = NULL;
+    FsvShardRange *ranges = NULL;
+    FsvShardJob jobs[FSV_ZIP_MAX_SHARDS];
+    DWORD active_shards[FSV_ZIP_MAX_SHARDS];
+    DWORD active_count = 0;
+    DWORD shard;
+    DWORD workers;
+    DWORD start;
+    BOOL success = FALSE;
+
+    ZeroMemory(&entry, sizeof(entry));
+    if (!read_entry(archive, index_position, central_end, &entry, &next_position)) {
+        free_entry(&entry);
+        return FALSE;
+    }
+    index_size = entry.compressed_size;
+    if (entry.directory || entry.method != 0 ||
+        entry.compressed_size != entry.uncompressed_size ||
+        index_size < 4 || index_size > FSV_ZIP_SHARD_INDEX_MAX_BYTES ||
+        !locate_entry_data(archive, archive_size, &entry, &data_offset)) {
+        free_entry(&entry);
+        SetLastError(ERROR_BAD_FORMAT);
+        return FALSE;
+    }
+    free_entry(&entry);
+    index_bytes = (BYTE *)HeapAlloc(GetProcessHeap(), 0, (SIZE_T)index_size);
+    if (index_bytes == NULL) {
+        SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+        return FALSE;
+    }
+    if (!read_at(archive, data_offset, index_bytes, (DWORD)index_size)) {
+        goto cleanup;
+    }
+    rows = read_u32_le(index_bytes);
+    if (rows != placeholder_count ||
+        4ULL + rows * FSV_ZIP_SHARD_INDEX_ROW != index_size) {
+        SetLastError(ERROR_BAD_FORMAT);
+        goto cleanup;
+    }
+    files = (FsvShardFile *)HeapAlloc(
+        GetProcessHeap(), 0, (SIZE_T)rows * sizeof(FsvShardFile)
+    );
+    ranges = (FsvShardRange *)HeapAlloc(
+        GetProcessHeap(), 0, (SIZE_T)shard_count * sizeof(FsvShardRange)
+    );
+    if (files == NULL || ranges == NULL) {
+        SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+        goto cleanup;
+    }
+    ZeroMemory(ranges, (SIZE_T)shard_count * sizeof(FsvShardRange));
+    for (row = 0; row < rows; ++row) {
+        const BYTE *record = index_bytes + 4 + row * FSV_ZIP_SHARD_INDEX_ROW;
+        DWORD file_shard = read_u32_le(record);
+        ULONGLONG offset = read_u64_le(record + 4);
+        ULONGLONG size = read_u64_le(record + 12);
+        if (file_shard >= shard_count ||
+            (ranges[file_shard].count > 0 &&
+             ranges[file_shard].start + ranges[file_shard].count != row) ||
+            offset != ranges[file_shard].bytes) {
+            SetLastError(ERROR_BAD_FORMAT);
+            goto cleanup;
+        }
+        if (ranges[file_shard].count == 0) {
+            ranges[file_shard].start = row;
+        }
+        ranges[file_shard].count += 1;
+        ranges[file_shard].bytes += size;
+        files[row].offset = offset;
+        files[row].size = size;
+        files[row].position = placeholder_positions[row];
+        files[row].shard = file_shard;
+    }
+    for (shard = 0; shard < shard_count; ++shard) {
+        if (ranges[shard].count > 0) {
+            active_shards[active_count++] = shard;
+        }
+    }
+    if (active_count == 0) {
+        SetLastError(ERROR_BAD_FORMAT);
+        goto cleanup;
+    }
+    workers = state->max_workers;
+    if (workers > active_count) {
+        workers = active_count;
+    }
+    zip_sample_load(state);
+    {
+        DWORD limit = fsv_zip_worker_limit(
+            state->processors,
+            state->max_workers,
+            state->cpu_busy_percent,
+            state->process_busy_percent
+        );
+        if (workers > limit) {
+            workers = limit;
+        }
+    }
+    if (workers == 0) {
+        workers = 1;
+    }
+    for (start = 0; start < active_count; ++start) {
+        shard = active_shards[start];
+        ZeroMemory(&entry, sizeof(entry));
+        if (!read_entry(archive, shard_positions[shard], central_end, &entry, &next_position) ||
+            entry.directory || entry.method != 0 ||
+            !locate_entry_data(archive, archive_size, &entry, &data_offset)) {
+            free_entry(&entry);
+            SetLastError(ERROR_BAD_FORMAT);
+            goto cleanup;
+        }
+        jobs[start].state = state;
+        jobs[start].archive_path = archive_path;
+        jobs[start].destination = destination;
+        jobs[start].files = files;
+        jobs[start].central_end = central_end;
+        jobs[start].entry_start = ranges[shard].start;
+        jobs[start].entry_count = ranges[shard].count;
+        jobs[start].data_offset = data_offset;
+        jobs[start].compressed_size = entry.compressed_size;
+        jobs[start].bytes = ranges[shard].bytes;
+        jobs[start].expected_crc = entry.crc32;
+        free_entry(&entry);
+    }
+    for (start = 0; start < active_count;) {
+        HANDLE threads[FSV_ZIP_MAX_WORKERS - 1];
+        DWORD batch = active_count - start;
+        DWORD created = 0;
+        DWORD offset;
+        if (batch > workers) {
+            batch = workers;
+        }
+        for (offset = 1; offset < batch; ++offset) {
+            HANDLE thread = CreateThread(NULL, 0, extract_shard_worker, &jobs[start + offset], 0, NULL);
+            if (thread == NULL) {
+                break;
+            }
+            threads[created++] = thread;
+        }
+        extract_shard_worker(&jobs[start]);
+        if (created > 0) {
+            WaitForMultipleObjects(created, threads, TRUE, INFINITE);
+        }
+        /* A machine that refused new threads still unpacks every shard, just
+           without the overlap. */
+        for (offset = created + 1; offset < batch; ++offset) {
+            extract_shard_worker(&jobs[start + offset]);
+        }
+        while (created > 0) {
+            --created;
+            CloseHandle(threads[created]);
+        }
+        if (zip_failed(state)) {
+            goto cleanup;
+        }
+        start += batch;
+    }
+    success = TRUE;
+
+cleanup:
+    if (zip_failed(state)) {
+        SetLastError(state->failure);
+    }
+    if (files != NULL) {
+        HeapFree(GetProcessHeap(), 0, files);
+    }
+    if (ranges != NULL) {
+        HeapFree(GetProcessHeap(), 0, ranges);
+    }
+    if (index_bytes != NULL) {
+        HeapFree(GetProcessHeap(), 0, index_bytes);
+    }
+    return success;
+}
+
 BOOL fsv_extract_zip(const wchar_t *archive_path, const wchar_t *destination, FsvZipProgressCallback callback) {
     HANDLE archive = INVALID_HANDLE_VALUE;
     HANDLE workers[FSV_ZIP_MAX_WORKERS - 1];
@@ -1038,10 +1654,15 @@ BOOL fsv_extract_zip(const wchar_t *archive_path, const wchar_t *destination, Fs
     FsvZipProgressState state;
     FsvZipJob job;
     ULONGLONG *offsets = NULL;
+    ULONGLONG *placeholder_positions = NULL;
+    ULONGLONG shard_positions[FSV_ZIP_MAX_SHARDS];
     ULONGLONG position;
     ULONGLONG central_end;
     ULONGLONG index;
     ULONGLONG file_count = 0;
+    ULONGLONG placeholder_count = 0;
+    ULONGLONG index_position = 0;
+    DWORD shard_count = 0;
     DWORD worker_count;
     DWORD created = 0;
     DWORD worker_index;
@@ -1062,6 +1683,7 @@ BOOL fsv_extract_zip(const wchar_t *archive_path, const wchar_t *destination, Fs
         return FALSE;
     }
     ZeroMemory(&state, sizeof(state));
+    ZeroMemory(shard_positions, sizeof(shard_positions));
     InitializeCriticalSection(&state.lock);
     state.callback = callback;
     state.total_files = 0;
@@ -1085,7 +1707,8 @@ BOOL fsv_extract_zip(const wchar_t *archive_path, const wchar_t *destination, Fs
         }
         offset_bytes = (SIZE_T)info.entry_count * sizeof(ULONGLONG);
         offsets = (ULONGLONG *)HeapAlloc(GetProcessHeap(), 0, offset_bytes);
-        if (offsets == NULL) {
+        placeholder_positions = (ULONGLONG *)HeapAlloc(GetProcessHeap(), 0, offset_bytes);
+        if (offsets == NULL || placeholder_positions == NULL) {
             SetLastError(ERROR_NOT_ENOUGH_MEMORY);
             goto cleanup;
         }
@@ -1093,13 +1716,37 @@ BOOL fsv_extract_zip(const wchar_t *archive_path, const wchar_t *destination, Fs
     for (index = 0; index < info.entry_count; ++index) {
         FsvZipEntry entry;
         ULONGLONG next_position;
+        DWORD shard_number = 0;
+        BOOL meta = FALSE;
         ZeroMemory(&entry, sizeof(entry));
         if (!read_entry(archive, position, central_end, &entry, &next_position)) {
             goto cleanup;
         }
-        if (!entry.directory && (!add_u64(&file_count, 1) || !add_u64(&state.total_bytes, entry.uncompressed_size))) {
-            free_entry(&entry);
-            goto cleanup;
+        if (!entry.directory) {
+            if (entry_name_is(&entry, FSV_ZIP_SHARD_INDEX_NAME)) {
+                index_position = position;
+                meta = TRUE;
+            } else if (entry_name_is_shard(&entry, &shard_number)) {
+                if (shard_number < FSV_ZIP_MAX_SHARDS) {
+                    shard_positions[shard_number] = position;
+                    if (shard_number + 1U > shard_count) {
+                        shard_count = shard_number + 1U;
+                    }
+                }
+                meta = TRUE;
+            }
+            /* The shard entries and the index are packaging overhead: the file
+               and byte totals have to describe the installed tree alone. */
+            if (!meta) {
+                if (!add_u64(&file_count, 1) ||
+                    !add_u64(&state.total_bytes, entry.uncompressed_size)) {
+                    free_entry(&entry);
+                    goto cleanup;
+                }
+                if (entry.compressed_size == 0 && placeholder_count < file_count) {
+                    placeholder_positions[placeholder_count++] = position;
+                }
+            }
         }
         free_entry(&entry);
         offsets[index] = position;
@@ -1123,6 +1770,30 @@ BOOL fsv_extract_zip(const wchar_t *archive_path, const wchar_t *destination, Fs
     post_progress(&state, L"正在准备解压...", TRUE);
     state.processors = GetActiveProcessorCount(ALL_PROCESSOR_GROUPS);
     state.max_workers = zip_worker_count(info.entry_count);
+    if (index_position != 0) {
+        success =
+            extract_plain_entries(
+                archive, info.archive_size, destination, &state,
+                offsets, info.entry_count, central_end
+            ) &&
+            extract_sharded_archive(
+                archive,
+                archive_path,
+                destination,
+                &state,
+                shard_positions,
+                shard_count,
+                index_position,
+                placeholder_positions,
+                placeholder_count,
+                info.archive_size,
+                central_end
+            );
+        if (success) {
+            post_progress(&state, L"解压完成，正在校验文件...", TRUE);
+        }
+        goto cleanup;
+    }
     job.state = &state;
     job.archive_path = archive_path;
     job.destination = destination;
@@ -1159,6 +1830,9 @@ BOOL fsv_extract_zip(const wchar_t *archive_path, const wchar_t *destination, Fs
 cleanup:
     if (offsets != NULL) {
         HeapFree(GetProcessHeap(), 0, offsets);
+    }
+    if (placeholder_positions != NULL) {
+        HeapFree(GetProcessHeap(), 0, placeholder_positions);
     }
     DeleteCriticalSection(&state.lock);
     {
@@ -1220,7 +1894,12 @@ BOOL fsv_zip_get_statistics(
         if (!read_entry(archive, position, central_end, &entry, &next_position)) {
             goto cleanup;
         }
-        if (!entry.directory && (!add_u64(&files, 1) || !add_u64(&bytes, entry.uncompressed_size))) {
+        /* The shard entries and their index describe the packaging, not the
+           installed tree, so they must not inflate the reported totals. */
+        if (!entry.directory &&
+            !entry_name_is(&entry, FSV_ZIP_SHARD_INDEX_NAME) &&
+            !entry_name_is_shard(&entry, NULL) &&
+            (!add_u64(&files, 1) || !add_u64(&bytes, entry.uncompressed_size))) {
             free_entry(&entry);
             goto cleanup;
         }

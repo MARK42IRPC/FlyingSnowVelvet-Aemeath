@@ -1,4 +1,4 @@
-"""GitHub 分发更新与开发版 Git 同步管理器。"""
+"""Hugging Face / ModelScope 分发更新与开发版 Git 同步管理器。"""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import subprocess
 import tempfile
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, wait
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -35,26 +35,8 @@ _logger = get_logger(__name__)
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _STATE_PATH = _PROJECT_ROOT / "resc" / "user" / "update_state.json"
 _STAGING_ROOT = Path(tempfile.gettempdir()) / "FlyingSnowVelvet" / "updates"
-_GITHUB_PACK_API = (
-    "https://api.github.com/repos/MARK42IRPC/"
-    "FlyingSnowVelvet-Aemeath/releases/tags/PACK"
-)
-_GITHUB_PACK_REF_API = (
-    "https://api.github.com/repos/MARK42IRPC/"
-    "FlyingSnowVelvet-Aemeath/git/ref/tags/PACK"
-)
-_GITEE_PACK_API = (
-    "https://gitee.com/api/v5/repos/Mark42IRPC/"
-    "Aemeath-AIdeskpet/releases/tags/%E6%9C%80%E6%96%B0%E5%8C%85"
-)
-_GITEE_PACK_PAGE = (
-    "https://gitee.com/Mark42IRPC/Aemeath-AIdeskpet/"
-    "releases/tag/%E6%9C%80%E6%96%B0%E5%8C%85"
-)
-_API_HEADERS = {
-    "Accept": "application/vnd.github+json",
-    "User-Agent": "FlyingSnowVelvet-Updater/1.0",
-}
+# GitHub 与 Gitee 的 release 对单文件有体积上限，装不下离线安装器 ZIP，因此不再作为
+# 更新源：只探测 Hugging Face 与 ModelScope，与原生在线安装器的两个镜像保持一致。
 _PAGE_JSON_HEADERS = {
     "Accept": "application/json",
     "User-Agent": "FlyingSnowVelvet-Updater/1.0",
@@ -79,6 +61,14 @@ _HUGGINGFACE_VOICE_FILE_BASE = (
 _MODELSCOPE_VOICE_FILE_BASE = (
     f"https://www.modelscope.cn/models/{VOICE_PACKAGE_MODELSCOPE_REPO}/resolve/master/"
 )
+
+# Every update source is probed at the same time and the whole probe has a
+# hard ceiling.  The native online installer uses the same idea with bounded
+# 2s/4s/8s/16s rounds, so a stalled mirror can never freeze the check.  Once a
+# source answers we keep listening for a couple of seconds to learn about a
+# faster mirror, then return the best answer we have.
+_PROBE_BUDGET_SECONDS = 16.0
+_PROBE_GRACE_SECONDS = 2.0
 
 InfoCallback = Callable[[str], None]
 ProgressCallback = Callable[[int, int, str], None]
@@ -190,79 +180,6 @@ def _isoformat(dt: datetime) -> str:
     return text.replace("+00:00", "Z")
 
 
-def _select_installer_asset(assets: object, tag: str = "") -> dict | None:
-    """Select only a signed native offline installer asset.
-
-    Source archives and the retired ``-green.zip`` package are deliberately
-    rejected.  Falling back to a provider's ``zipball_url`` would silently
-    turn an update into a source checkout, so callers must fail closed when no
-    EXE is attached.
-    """
-    if not isinstance(assets, list):
-        return None
-    candidates: list[dict] = []
-    exact_name = f"flying snow velvet-{str(tag or '').strip()}-offline-installer.exe".replace(" ", "").lower()
-    pattern = re.compile(r"^flyingsnowvelvet-(?:.+-)?offline-installer\.exe$", re.IGNORECASE)
-    for asset in assets:
-        if not isinstance(asset, dict):
-            continue
-        name = str(asset.get("name") or "").strip()
-        url = str(asset.get("browser_download_url") or "").strip()
-        lower_name = name.lower().replace(" ", "")
-        if pattern.match(lower_name) and url:
-            candidates.append(asset)
-    if not candidates:
-        return None
-    for asset in candidates:
-        if str(asset.get("name") or "").strip().lower().replace(" ", "") == exact_name:
-            return asset
-    return sorted(candidates, key=lambda item: str(item.get("name") or "").lower())[0]
-
-
-# Backward-compatible alias for integrations that imported the old private
-# selector.  It intentionally never returns ZIP assets anymore.
-_select_zip_asset = _select_installer_asset
-
-
-def _extract_gitee_attachments(page_data: object) -> list[dict]:
-    if not isinstance(page_data, dict):
-        return []
-    release_root = page_data.get("release")
-    release_data = release_root.get("release") if isinstance(release_root, dict) else None
-    attached = release_data.get("attach_files") if isinstance(release_data, dict) else None
-    if not isinstance(attached, list):
-        return []
-    normalized: list[dict] = []
-    for item in attached:
-        if not isinstance(item, dict):
-            continue
-        name = str(item.get("name") or item.get("file_name") or "").strip()
-        raw_url = str(
-            item.get("browser_download_url")
-            or item.get("download_url")
-            or item.get("url")
-            or item.get("path")
-            or ""
-        ).strip()
-        if name and raw_url:
-            normalized.append({
-                "name": name,
-                "browser_download_url": urljoin("https://gitee.com", raw_url),
-            })
-    return normalized
-
-
-def _extract_gitee_revision(page_data: object) -> str:
-    if not isinstance(page_data, dict):
-        return ""
-    release_root = page_data.get("release")
-    tag_data = release_root.get("tag") if isinstance(release_root, dict) else None
-    commit_data = tag_data.get("commit") if isinstance(tag_data, dict) else None
-    if not isinstance(commit_data, dict):
-        return ""
-    return str(commit_data.get("id") or "").strip()
-
-
 def _select_release_source(releases: list[ReleaseInfo]) -> ReleaseInfo:
     if not releases:
         raise UpdateError("没有可用的更新源")
@@ -319,6 +236,11 @@ def _parse_voice_package_release(
         archive_sha256=digest,
         kind=kind,
     )
+
+
+def _probe_source(fetcher: Callable[..., ReleaseInfo], deadline: float) -> ReleaseInfo:
+    """Run one source probe under the shared probe deadline."""
+    return fetcher(deadline=deadline)
 
 
 class _UpdateBase:
@@ -400,27 +322,27 @@ class UpdateManager(_UpdateBase):
     def check_for_updates(self) -> ReleaseCheckResult:
         installed = self._load_installed_state()
         release = self._fetch_latest_release()
-        # The publication timestamp describes the remote artifact, not the
-        # application version installed on this machine.  Comparing dates
-        # alone made a freshly built pre2 client repeatedly offer its own
-        # pre2 resource archive.  A version change is sufficient; a same
-        # version update requires both sides to carry revisions so an absent
-        # legacy state file cannot create a perpetual update prompt.
+        # 远端发布时间必须严格晚于本机已安装的时间戳：本地更晚说明本机（开发版，
+        # 或刚覆盖过资源包）已经不比远端旧，此时再提示就是在引导一次降级；相等说明
+        # 同一个包已经装过（资源包覆盖后本地时间戳直接取远端发布时间），也必须归到
+        # “已经是最新包”。revision 只用于识别同一版本的重发，且两侧都带 revision 时
+        # 才比较，避免缺失的旧状态文件变成一个永久更新提示。
         same_version = release.tag == installed.version
+        newer_release = release.published_at > installed.installed_at
         revision_changed = (
             bool(release.revision)
             and bool(installed.revision)
             and release.revision != installed.revision
         )
-        update_available = not same_version or revision_changed
+        update_available = newer_release and (not same_version or revision_changed)
         reason = "update_available" if update_available else "up_to_date"
         if update_available:
             self._info(
-                f"检测到新的桌宠包 {release.asset_name}（{release.published_at.date()}），当前版本为 {installed.version}（{installed.installed_at.date()}）。"
+                f"检测到新的分发包 {release.tag}（{release.published_at.date()}），当前版本 {installed.version}（{installed.installed_at.date()}）。"
             )
         else:
             self._info(
-                f"当前已为最新分发包 {installed.version}（{installed.installed_at.date()}），无需更新。"
+                f"当前已是最新分发包 {installed.version}（{installed.installed_at.date()}），无需更新。"
             )
         return ReleaseCheckResult(
             installed_state=installed,
@@ -443,7 +365,7 @@ class UpdateManager(_UpdateBase):
             validate_update_installer,
         )
 
-        self._progress(0, 0, f"开始下载桌宠包 {release.asset_name}...")
+        self._progress(0, 0, f"开始下载分发包 {release.tag}（{release.asset_name}）...")
         staging_dir = _STAGING_ROOT / uuid.uuid4().hex
         download_name = Path(release.asset_name or "FlyingSnowVelvet-Offline-Installer.zip").name
         if Path(download_name).suffix.casefold() not in {".zip", ".exe"}:
@@ -597,19 +519,44 @@ class UpdateManager(_UpdateBase):
         )
 
     def _fetch_latest_release(self) -> ReleaseInfo:
-        fetchers = (self._fetch_huggingface_voice_release, self._fetch_modelscope_voice_release)
+        # 只探测两个模型仓库：它们是仅有的能放下离线安装器 ZIP 的地方，也正是原生
+        # 在线安装器依次尝试的两个镜像。探测一个永远给不出安装包的源只会白等超时。
+        fetchers = (
+            self._fetch_huggingface_voice_release,
+            self._fetch_modelscope_voice_release,
+        )
+        deadline = time.monotonic() + _PROBE_BUDGET_SECONDS
         releases: list[ReleaseInfo] = []
         errors: list[str] = []
-        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="release-source") as pool:
-            futures = [pool.submit(fetcher) for fetcher in fetchers]
-            for future in as_completed(futures):
-                try:
-                    releases.append(future.result())
-                except Exception as exc:
-                    errors.append(str(exc))
+        first_success = 0.0
+        pool = ThreadPoolExecutor(max_workers=len(fetchers), thread_name_prefix="release-source")
+        try:
+            pending = {pool.submit(_probe_source, fetcher, deadline) for fetcher in fetchers}
+            while pending:
+                now = time.monotonic()
+                if now >= deadline:
+                    break
+                wait_for = deadline - now
+                if first_success:
+                    wait_for = min(wait_for, max(0.0, first_success + _PROBE_GRACE_SECONDS - now))
+                if wait_for <= 0:
+                    break
+                done, pending = wait(pending, timeout=wait_for)
+                for future in done:
+                    try:
+                        releases.append(future.result())
+                        if not first_success:
+                            first_success = time.monotonic()
+                    except Exception as exc:
+                        errors.append(str(exc))
+                if first_success and time.monotonic() >= first_success + _PROBE_GRACE_SECONDS:
+                    break
+        finally:
+            # A stalled mirror must never hold the check open past the budget.
+            pool.shutdown(wait=False)
         if not releases:
             detail = "；".join(errors) if errors else "未知网络错误"
-            raise UpdateError(f"Hugging Face 和 ModelScope 语音包仓库更新源均不可用：{detail}")
+            raise UpdateError(f"所有更新源在 {_PROBE_BUDGET_SECONDS:.0f} 秒内均不可用：{detail}")
         selected = _select_release_source(releases)
         # Once the newest revision is selected, prefer the mirror that
         # responded fastest during the parallel probe; retain same-hash
@@ -638,12 +585,13 @@ class UpdateManager(_UpdateBase):
         return selected
 
     @staticmethod
-    def _fetch_huggingface_voice_release() -> ReleaseInfo:
+    def _fetch_huggingface_voice_release(deadline: float | None = None) -> ReleaseInfo:
         started = time.monotonic()
         data = UpdateManager._fetch_release_json(
             _HUGGINGFACE_VOICE_UPDATE_URL,
             "Hugging Face 语音包仓库",
             headers=_PAGE_JSON_HEADERS,
+            deadline=deadline,
         )
         return _parse_voice_package_release(
             data,
@@ -653,12 +601,13 @@ class UpdateManager(_UpdateBase):
         )
 
     @staticmethod
-    def _fetch_modelscope_voice_release() -> ReleaseInfo:
+    def _fetch_modelscope_voice_release(deadline: float | None = None) -> ReleaseInfo:
         started = time.monotonic()
         data = UpdateManager._fetch_release_json(
             _MODELSCOPE_VOICE_UPDATE_URL,
             "ModelScope 语音包仓库",
             headers=_PAGE_JSON_HEADERS,
+            deadline=deadline,
         )
         return _parse_voice_package_release(
             data,
@@ -668,83 +617,26 @@ class UpdateManager(_UpdateBase):
         )
 
     @staticmethod
-    def _fetch_github_pack_release() -> ReleaseInfo:
-        started = time.monotonic()
-        data = UpdateManager._fetch_release_json(_GITHUB_PACK_API, "GitHub PACK")
-        if not isinstance(data, dict) or bool(data.get("draft")):
-            raise UpdateError("GitHub PACK release 不存在或尚未发布")
-        tag = str(data.get("tag_name") or "PACK")
-        asset = _select_installer_asset(data.get("assets"), tag)
-        download_url = str((asset or {}).get("browser_download_url") or "").strip()
-        if not download_url:
-            raise UpdateError("GitHub PACK release 缺少离线安装器 EXE")
-        asset_name = str((asset or {}).get("name") or "FlyingSnowVelvet-PACK-Offline-Installer.exe")
-        updated_at = str(data.get("updated_at") or data.get("published_at") or data.get("created_at") or "")
-        ref_data = UpdateManager._fetch_release_json(_GITHUB_PACK_REF_API, "GitHub PACK tag")
-        ref_object = ref_data.get("object") if isinstance(ref_data, dict) else None
-        revision = str(ref_object.get("sha") or "") if isinstance(ref_object, dict) else ""
-        if not revision:
-            revision = f"release:{data.get('id', '')}:{updated_at}"
-        return ReleaseInfo(
-            tag=tag,
-            published_at=_parse_datetime(updated_at),
-            asset_name=asset_name,
-            download_url=download_url,
-            source="GitHub",
-            revision=revision,
-            response_seconds=time.monotonic() - started,
-        )
-
-    @staticmethod
-    def _fetch_gitee_pack_release() -> ReleaseInfo:
-        started = time.monotonic()
-        data = UpdateManager._fetch_release_json(_GITEE_PACK_API, "Gitee 最新包")
-        if not isinstance(data, dict) or bool(data.get("prerelease")):
-            raise UpdateError("Gitee 最新包 release 不存在或尚未发布")
-        tag = str(data.get("tag_name") or "最新包")
-        attachments: list[dict] = []
-        page_revision = ""
-        try:
-            page_data = UpdateManager._fetch_release_json(
-                _GITEE_PACK_PAGE,
-                "Gitee 最新包页面",
-                headers=_PAGE_JSON_HEADERS,
-            )
-            attachments = _extract_gitee_attachments(page_data)
-            page_revision = _extract_gitee_revision(page_data)
-        except UpdateError:
-            pass
-        api_assets = data.get("assets") if isinstance(data.get("assets"), list) else []
-        asset = _select_installer_asset([*attachments, *api_assets], tag)
-        if asset is None:
-            raise UpdateError("Gitee 最新包 release 缺少离线安装器 EXE")
-        published_text = str(data.get("updated_at") or data.get("created_at") or "")
-        revision = page_revision or str(data.get("target_commitish") or "")
-        download_url = str(asset.get("browser_download_url") or "")
-        return ReleaseInfo(
-            tag=tag,
-            published_at=_parse_datetime(published_text),
-            asset_name=str(asset.get("name") or "FlyingSnowVelvet-latest-Offline-Installer.exe"),
-            download_url=download_url,
-            source="Gitee",
-            revision=revision or f"release:{data.get('id', '')}:{published_text}",
-            response_seconds=time.monotonic() - started,
-        )
-
-    @staticmethod
     def _fetch_release_json(
         url: str,
         source_name: str,
         *,
         headers: dict[str, str] | None = None,
+        deadline: float | None = None,
     ) -> object:
         last_error: requests.RequestException | None = None
         for attempt in range(1, 4):
+            remaining = None if deadline is None else deadline - time.monotonic()
+            if remaining is not None and remaining <= 0.5:
+                if last_error is not None:
+                    break
+                raise UpdateError(f"{source_name} 探测超时")
+            timeout = 10.0 if remaining is None else max(0.5, min(10.0, remaining))
             try:
                 response = requests.get(
                     url,
-                    timeout=10,
-                    headers=headers or _API_HEADERS,
+                    timeout=timeout,
+                    headers=headers or _PAGE_JSON_HEADERS,
                 )
                 response.raise_for_status()
                 return response.json()
@@ -754,7 +646,13 @@ class UpdateManager(_UpdateBase):
                 last_error = exc
                 if attempt >= 3 or not _is_retryable_request_error(exc):
                     break
-                time.sleep(0.25 * attempt)
+                pause = 0.25 * attempt
+                if deadline is not None:
+                    slack = deadline - time.monotonic()
+                    if slack <= 0.5:
+                        break
+                    pause = min(pause, slack)
+                time.sleep(pause)
         raise UpdateError(f"{source_name} 读取失败：{last_error}") from last_error
 
     def _download_release(self, release: ReleaseInfo, dest_path: Path) -> None:

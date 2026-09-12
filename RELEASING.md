@@ -60,7 +60,9 @@ CUDA、NVIDIA、TensorRT 或 `onnxruntime-gpu`。
 
 `build_offline_distribution.py` 会把当前仓库源码、Vosk 中英文模型、
 `resc/GIF/SEanima/` 文件夹、固定 Node 和 DSH production `node_modules` 收集到
-payload；`build_offline_installer.py` 再编译原生安装器并追加 ZIP 与 SHA-256 尾记录。
+payload；`build_offline_installer.py` 再把内置归档按 4 路固态 LZMA2 分片重打
+（ZIP 条目只保留路径与真实大小，`--online` 资源包仍用 Deflate），编译原生安装器并追加
+归档与 SHA-256 尾记录。
 最终 payload 不包含 `SEanima.zip`、构建脚本、测试目录、用户状态或开发缓存。
 构建机上存在 `build/cuda_voice_runtime/Release/fsv_cuda_voice_runtime.dll`（自研 CUDA
 极简推理端的构建产物）时，同一条命令会把它放进 `runtime/cuda-voice/`，安装后“N卡加速”

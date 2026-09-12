@@ -53,7 +53,8 @@ class OfflineInstallerVisualTests(unittest.TestCase):
             "#pragma once\n"
             "#define FSV_PAYLOAD_ARCHIVE_BYTES 1ULL\n"
             "#define FSV_PAYLOAD_FILE_COUNT 1ULL\n"
-            "#define FSV_PAYLOAD_UNCOMPRESSED_BYTES 1ULL\n",
+            "#define FSV_PAYLOAD_UNCOMPRESSED_BYTES 1ULL\n"
+            "#define FSV_ONLINE_BUILD 0\n",
             encoding="ascii",
         )
 

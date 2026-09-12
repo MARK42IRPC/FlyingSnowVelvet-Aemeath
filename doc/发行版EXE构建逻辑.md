@@ -49,18 +49,36 @@ Qt/Node 子树。纯 Python `jieba`、`jieba_fast` 的关键词抽取与 SWIG �
 
 ## 单 EXE 协议
 
-构建器先用 Python 标准库生成 Zip64/Deflate 归档，再把归档和 64 字节尾记录追加到
-原生 PE：`24 字节 magic + 8 字节归档长度 + 32 字节 SHA-256`。更新器和安装器都在
-解压前流式校验该尾记录，避免把截断或源码 ZIP 当作程序包。
-归档按 Deflate level 6 压缩：相对 level 1 多花约 15 秒构建时间换来 24 MiB 体积，
-解压仍走包内 zlib 的 `inflate`，安装耗时不变。
+构建器先用 Python 标准库生成 Zip64 归档，再把归档和 64 字节尾记录追加到原生 PE：
+`24 字节 magic + 8 字节归档长度 + 32 字节 SHA-256`。更新器和安装器都在解压前流式校验
+该尾记录，避免把截断或源码 ZIP 当作程序包。
+
+内置归档仍是结构完整的普通 ZIP：每个 payload 文件都有一条带真实路径和真实大小的条目，
+所以应用内更新器照旧遍历并校验全部路径，原生安装器也照旧从目录读出文件数与字节总数。
+区别在于条目自身不再携带字节——文件内容按目录顺序拼成 4 路独立的 LZMA2 固态分片，
+分片以普通 STORED 条目 `.fsv-shard-NNN.fsvlzma` 存放，`.fsv-shard-index.bin` 逐行记录
+每个条目属于哪个分片、在解出流中的偏移与长度。原始 LZMA2 流不自带字典大小，所以
+`installer/windows/src/zip_extract.h` 的 `FSV_ZIP_SHARD_DICT_PROPERTY` 必须与
+`scripts/build_offline_installer.py` 的 `PAYLOAD_SHARD_DICT_PROPERTY` 一致（64 MiB = `0x1C`）；
+打包时会断言，`tests/test_offline_installer_archive.py` 也会核对两处常量。
+
+收益与代价：`payload.zip` 从 353,348,712 字节降到 257,514,095 字节，安装器从
+354,045,608 字节降到 258,227,887 字节（−27.1%）。解压仍由建文件与落盘主导（实测
+17,124 个文件的纯 `inflate` 只占 4.1 秒），每个分片边解 LZMA2 边写自己的文件，分片之间
+并行，所以同一台机器上用同一份原生解压器实测总耗时从 56.1 秒降到 43.7 秒。分片解码器
+沿用解压线程池的自适应负载门与最低线程优先级：并发分片数取逻辑核数减 2、上限 4，其他
+进程占用超过 65% 时向单分片收敛，因此不会吃满任意一核。写入路径照旧按未压缩大小预分配
+文件；解压期的额外内存主要是每个活跃分片的 64 MiB 解码字典。
+
+在线资源包（`FlyingSnowVelvet-<version>-Resources.zip`）保持 Deflate：应用内更新器用
+`zipfile` 直接覆盖解压它，读不了分片布局，原生在线安装器的两条路径则都支持。
 
 原生安装器执行顺序：
 
 1. 显示默认安装目录；自定义目录调用系统文件夹选择器。非空目录自动创建空的
    `飞行雪绒` 子目录或带序号目录。
 2. 显示预计占用空间、文件数和磁盘余量。
-3. 工作线程复制并校验内置归档，调用内置 ZIP/Deflate/Zip64 解压器，实时报告当前
+3. 工作线程复制并校验内置归档，调用内置 ZIP/Deflate/LZMA2/Zip64 解压器，实时报告当前
    文件、百分比、已解压文件/字节数和 ETA。校验进度达到 100% 后仍会继续进入解压阶段，
    不启动外部自解压程序。
 4. 在同一卷临时目录完成 marker、Python、启动器、卸载器校验后原子切换目录；失败时
@@ -84,7 +102,7 @@ Qt/Node 子树。纯 Python `jieba`、`jieba_fast` 的关键词抽取与 SWIG �
 ```powershell
 python scripts/build_offline_distribution.py --help
 python scripts/build_offline_installer.py --help
-python -m unittest tests.test_offline_distribution tests.test_windows_zip_extract tests.test_update_installer -q
+python -m unittest tests.test_offline_distribution tests.test_offline_installer_archive tests.test_windows_zip_extract tests.test_update_installer -q
 ```
 
 发布工作流 `.github/workflows/publish-pack.yml` 会在当前仓库 checkout 后创建隔离

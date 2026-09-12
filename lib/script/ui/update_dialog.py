@@ -166,8 +166,11 @@ class DesktopPetUpdateDialog(WorkbenchFloatingWindow):
         self._git_check = None
         self._prepare_dialog(
             title="检查新版本",
-            status="正在检查新的分发包",
-            detail="请稍候，正在并发探测 GitHub 与 Gitee 更新源。",
+            status="正在获取更新包",
+            detail=(
+                "请稍候，正在并发探测更新源"
+                "（Hugging Face / ModelScope），最长 16 秒。"
+            ),
         )
         self._set_busy(True)
         self._show_dialog()
@@ -399,7 +402,7 @@ class DesktopPetUpdateDialog(WorkbenchFloatingWindow):
             self._status_label.setText("检测到新的分发包")
             self._detail_label.setText(
                 f"当前：{check.installed_state.version}（{self._fmt_dt(check.installed_state.installed_at)}）\n"
-                f"最新：{check.release_info.asset_name}（{self._fmt_dt(check.release_info.published_at)}）"
+                f"最新：{check.release_info.tag}（{self._fmt_dt(check.release_info.published_at)}）"
             )
             self._progress_bar.hide()
             self._set_actions(
@@ -425,7 +428,7 @@ class DesktopPetUpdateDialog(WorkbenchFloatingWindow):
         if update.release_info.kind == "resources":
             self._status_label.setText("资源包已安装")
             self._detail_label.setText(
-                f"已安装 {update.release_info.asset_name}（{self._fmt_dt(update.release_info.published_at)}）\n"
+                f"已安装 {update.release_info.tag}（{self._fmt_dt(update.release_info.published_at)}）\n"
                 "资源已写入当前安装目录，后续启动将使用最新资源。"
             )
             self._set_progress_done()
@@ -433,7 +436,8 @@ class DesktopPetUpdateDialog(WorkbenchFloatingWindow):
             return
         self._status_label.setText("离线安装器已准备")
         self._detail_label.setText(
-            f"已准备 {update.release_info.asset_name}（{self._fmt_dt(update.release_info.published_at)}）\n"
+            f"已准备 {update.release_info.tag}（{self._fmt_dt(update.release_info.published_at)}）\n"
+            f"更新文件：{update.release_info.asset_name}\n"
             "启动安装器后，当前桌宠会退出；安装器将使用包内运行环境完成更新。"
         )
         self._set_progress_done()

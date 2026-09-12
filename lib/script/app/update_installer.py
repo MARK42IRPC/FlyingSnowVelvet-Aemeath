@@ -138,6 +138,11 @@ def validate_update_installer(installer_path: Path) -> OfflineInstallerInfo:
     # Validate the ZIP directory through a bounded file view.  The native
     # installer performs the final extraction/path checks, but rejecting a
     # malformed download here gives the user an actionable error before exit.
+    # The payload bytes live in LZMA2 shard entries, which are ordinary stored
+    # entries, while every payload path keeps a placeholder entry that only
+    # advertises its real size.  Both are covered below: the loop still vets
+    # every path, and ``testzip`` still verifies the shards' CRC-32, while the
+    # zero-length placeholders cost nothing to read.
     try:
         with info.path.open("rb") as handle:
             bounded = _BoundedFile(handle, info.archive_offset, info.archive_size)

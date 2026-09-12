@@ -31,6 +31,26 @@ unsigned fsv_zip_worker_limit(unsigned logical_processors, unsigned max_workers,
 ULONGLONG fsv_zip_eta_seconds(ULONGLONG total_files, ULONGLONG completed_files,
                               ULONGLONG finished, ULONGLONG elapsed_ms);
 
+/* Sharded payload contract, mirrored by ``scripts/build_offline_installer.py``.
+   The offline archive keeps one placeholder entry per file, so the in-app
+   updater can still walk and vet every path, but the bytes themselves live in
+   a handful of independent solid LZMA2 streams ("shards").  The index entry
+   lists, for every placeholder in central-directory order, which shard holds
+   it and where inside the decoded stream it starts.  A placeholder advertises
+   its real size with a zero compressed size, which is what tells the extractor
+   to take the bytes from a shard instead of the entry itself.
+
+   A raw LZMA2 stream does not describe its own dictionary, so the dictionary
+   size is baked into both sides; 0x1C encodes 64 MiB. */
+#define FSV_ZIP_SHARD_INDEX_NAME ".fsv-shard-index.bin"
+#define FSV_ZIP_SHARD_NAME_PREFIX ".fsv-shard-"
+#define FSV_ZIP_SHARD_NAME_SUFFIX ".fsvlzma"
+#define FSV_ZIP_SHARD_NAME_DIGITS 3
+#define FSV_ZIP_MAX_SHARDS 64
+#define FSV_ZIP_SHARD_DICT_PROPERTY 0x1C
+#define FSV_ZIP_SHARD_INDEX_ROW 20U
+#define FSV_ZIP_SHARD_INDEX_MAX_BYTES (64U * 1024U * 1024U)
+
 BOOL fsv_extract_zip(
     const wchar_t *archive_path,
     const wchar_t *destination,

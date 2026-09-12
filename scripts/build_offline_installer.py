@@ -13,6 +13,7 @@ import argparse
 from importlib import metadata
 import hashlib
 import json
+import lzma
 import locale
 from pathlib import Path
 import shutil
@@ -46,6 +47,35 @@ ZLIB_SOURCES = (
     "inftrees.c",
     "zutil.c",
 )
+LZMA_DIRECTORY = Path("third_party") / "lzma-sdk"
+LZMA_SOURCES = (
+    "LzmaDec.c",
+    "Lzma2Dec.c",
+)
+LZMA_HEADERS = (
+    "LzmaDec.h",
+    "Lzma2Dec.h",
+    "7zTypes.h",
+    "Compiler.h",
+    "Precomp.h",
+)
+# The offline payload is packed as a handful of independent solid LZMA2
+# streams ("shards") sitting inside an otherwise ordinary ZIP.  One solid
+# stream compresses slightly better, but it would pin the whole extraction to
+# a single core, which is what the adaptive worker pool exists to avoid.  Four
+# shards keep every core's share bounded and cost well under one percent of the
+# packed size.  The dictionary size has to be mirrored by the native decoder
+# (``FSV_ZIP_SHARD_DICT_PROPERTY`` in ``installer/windows/src/zip_extract.h``)
+# because a raw LZMA2 stream does not describe its own dictionary.
+PAYLOAD_SHARD_INDEX_NAME = ".fsv-shard-index.bin"
+PAYLOAD_SHARD_NAME_TEMPLATE = ".fsv-shard-{index:03d}.fsvlzma"
+PAYLOAD_SHARD_TARGET_BYTES = 224 << 20
+PAYLOAD_SHARD_DICT_SIZE = 64 << 20
+PAYLOAD_SHARD_DICT_PROPERTY = 0x1C
+PAYLOAD_SHARD_FILTERS = (
+    {"id": lzma.FILTER_LZMA2, "preset": 9, "dict_size": PAYLOAD_SHARD_DICT_SIZE},
+)
+PAYLOAD_SHARD_INDEX_ROW = struct.Struct("<IQQ")
 _VS_ENVIRONMENTS: dict[str, dict[str, str]] = {}
 
 
@@ -518,25 +548,163 @@ def ensure_payload_marker(workspace: Path, payload: Path) -> None:
     )
 
 
-def create_archive(payload: Path, archive: Path) -> None:
+def _shard_dictionary_property(dictionary_size: int) -> int:
+    """Encode a dictionary size as the LZMA2 property byte.
+
+    ``LZMA2_DIC_SIZE_FROM_PROP(p)`` is ``(2 | (p & 1)) << (p / 2 + 11)``, so a
+    power-of-two dictionary of ``2 ** exponent`` bytes needs ``(exponent - 12)
+    * 2``.  A raw LZMA2 stream carries no such byte, which is why the packer
+    and the native decoder have to agree on it out of band.
+    """
+    if dictionary_size < 4096 or dictionary_size & (dictionary_size - 1):
+        raise ValueError("LZMA2 字典大小必须是 4096 以上的 2 的幂")
+    return (dictionary_size.bit_length() - 13) * 2
+
+
+def _shard_plan(entries: list[tuple[Path, str]]) -> list[list[int]]:
+    """Split the payload into solid shards, always cutting at file boundaries."""
+    shards: list[list[int]] = []
+    current: list[int] = []
+    current_bytes = 0
+    for index, (source, _) in enumerate(entries):
+        size = source.stat().st_size
+        if current and current_bytes + size > PAYLOAD_SHARD_TARGET_BYTES:
+            shards.append(current)
+            current = []
+            current_bytes = 0
+        current.append(index)
+        current_bytes += size
+    if current:
+        shards.append(current)
+    return shards
+
+
+def _write_sharded_archive(
+    output: zipfile.ZipFile,
+    payload: Path,
+    entries: list[tuple[Path, str]],
+) -> None:
+    """Store every payload byte in independent LZMA2 shards inside the ZIP.
+
+    The per-file entries stay in the archive, but only as placeholders: the
+    in-app updater still walks and vets each path, and the extractor learns
+    from the central directory how many files and bytes to expect.  The bytes
+    themselves live in the shard entries, and the index entry maps every
+    placeholder - in central-directory order - to its shard and offset.
+    """
+    plan = _shard_plan(entries)
+    shard_of = [0] * len(entries)
+    offset_of = [0] * len(entries)
+    sizes = [0] * len(entries)
+    for number, members in enumerate(plan):
+        info = zipfile.ZipInfo(PAYLOAD_SHARD_NAME_TEMPLATE.format(index=number))
+        info.compress_type = zipfile.ZIP_STORED
+        offset = 0
+        compressor = lzma.LZMACompressor(
+            format=lzma.FORMAT_RAW, filters=PAYLOAD_SHARD_FILTERS
+        )
+        with output.open(info, "w") as handle:
+            pending = bytearray()
+            for member in members:
+                source, _ = entries[member]
+                shard_of[member] = number
+                offset_of[member] = offset
+                with source.open("rb") as stream:
+                    for chunk in iter(lambda: stream.read(4 << 20), b""):
+                        offset += len(chunk)
+                        pending += compressor.compress(chunk)
+                        if len(pending) >= (4 << 20):
+                            handle.write(bytes(pending))
+                            pending.clear()
+                sizes[member] = offset - offset_of[member]
+            pending += compressor.flush()
+            if pending:
+                handle.write(bytes(pending))
+    rows = bytearray(struct.pack("<I", len(entries)))
+    for member in range(len(entries)):
+        rows += PAYLOAD_SHARD_INDEX_ROW.pack(
+            shard_of[member], offset_of[member], sizes[member]
+        )
+    index_info = zipfile.ZipInfo(PAYLOAD_SHARD_INDEX_NAME)
+    index_info.compress_type = zipfile.ZIP_STORED
+    output.writestr(index_info, bytes(rows))
+    for _, relative in entries:
+        placeholder = zipfile.ZipInfo(relative)
+        placeholder.compress_type = zipfile.ZIP_STORED
+        output.writestr(placeholder, b"")
+    output.write(payload / MARKER_NAME, MARKER_NAME)
+
+
+def _patch_entry_sizes(archive: Path, sizes: dict[str, int]) -> None:
+    """Advertise the real size on every placeholder entry.
+
+    ``zipfile`` refuses to write a stored entry whose size does not match its
+    data, so the placeholders are written empty and fixed up here.  The native
+    extractor reserves each target file from this value and reports progress
+    against it, and no byte length changes, so the offsets stay valid.
+    """
+    with zipfile.ZipFile(archive) as bundle:
+        start_directory = bundle.start_dir
+        members = bundle.infolist()
+    with archive.open("r+b") as handle:
+        position = start_directory
+        for member in members:
+            name = member.filename
+            size = sizes.get(name)
+            if size is not None and 0 < size < 0xFFFFFFFF:
+                handle.seek(member.header_offset + 22)
+                handle.write(struct.pack("<I", size))
+                handle.seek(position + 24)
+                handle.write(struct.pack("<I", size))
+            position += (
+                46
+                + len(name.encode("utf-8"))
+                + len(member.extra or b"")
+                + len(member.comment or b"")
+            )
+
+
+def create_archive(payload: Path, archive: Path, *, sharded: bool = True) -> None:
     archive.parent.mkdir(parents=True, exist_ok=True)
     if archive.exists():
         archive.unlink()
+    entries = [
+        (source, relative)
+        for source, relative in _archive_entries(payload)
+        if relative != MARKER_NAME
+    ]
+    if sharded:
+        property_byte = _shard_dictionary_property(PAYLOAD_SHARD_DICT_SIZE)
+        if property_byte != PAYLOAD_SHARD_DICT_PROPERTY:
+            raise SystemExit("LZMA2 字典属性与原生解码器不一致")
+        # The placeholder size lives in the 32-bit field a stored entry uses
+        # for its data length, so a bigger file would silently lose its size.
+        oversized = [
+            relative
+            for source, relative in entries
+            if source.stat().st_size >= 0xFFFFFFFF
+        ]
+        if oversized:
+            raise SystemExit(f"分片归档不支持 4 GiB 以上的单个文件：{oversized[0]}")
+        with zipfile.ZipFile(
+            archive, mode="w", compression=zipfile.ZIP_STORED, allowZip64=True
+        ) as output:
+            _write_sharded_archive(output, payload, entries)
+        _patch_entry_sizes(
+            archive, {relative: source.stat().st_size for source, relative in entries}
+        )
+        return
     with zipfile.ZipFile(
         archive,
         mode="w",
         compression=zipfile.ZIP_DEFLATED,
-        # The payload is ~750 MiB of mostly already-compressed binaries, so the
-        # level is worth the extra build time: level 6 saves 24 MiB over level 1
-        # for about 15 seconds of packaging.  The native extractor inflates at
-        # the same speed either way.
+        # Level 6 is worth the extra build time for the plain archive: it saves
+        # 24 MiB over level 1 for about 15 seconds of packaging, and the native
+        # extractor inflates at the same speed either way.
         compresslevel=6,
         allowZip64=True,
     ) as output:
-        entries = _archive_entries(payload)
         for source, relative in entries:
-            if relative == MARKER_NAME:
-                continue
             output.write(source, relative)
         output.write(payload / MARKER_NAME, MARKER_NAME)
 
@@ -547,13 +715,16 @@ def create_resource_archive(payload: Path, archive: Path) -> None:
     The resource package intentionally contains the same payload tree as the
     installer archive, but is published as a plain ZIP so online installers
     and the in-app updater can fetch and overlay it without downloading an EXE.
+    It stays on ordinary Deflate because the in-app updater overlays it with
+    ``zipfile``, which cannot read the sharded layout.
     """
-    create_archive(payload, archive)
+    create_archive(payload, archive, sharded=False)
 
 
-def _prepare_native_sources(installer_source: Path) -> tuple[Path, Path]:
+def _prepare_native_sources(installer_source: Path) -> tuple[Path, Path, Path]:
     source_root = installer_source / "src"
     zlib_root = installer_source / "third_party" / "zlib-1.3.1"
+    lzma_root = installer_source / LZMA_DIRECTORY
     required = (
         source_root / "main.c",
         source_root / "zip_extract.c",
@@ -568,11 +739,12 @@ def _prepare_native_sources(installer_source: Path) -> tuple[Path, Path]:
         HARMONY_FONT_SOURCE,
         zlib_root / "zlib.h",
         *(zlib_root / name for name in ZLIB_SOURCES),
+        *(lzma_root / name for name in (*LZMA_HEADERS, *LZMA_SOURCES)),
     )
     missing = [path for path in required if not path.is_file()]
     if missing:
         raise SystemExit(f"缺少原生安装器源文件：{missing[0]}")
-    return source_root, zlib_root
+    return source_root, zlib_root, lzma_root
 
 
 def _write_resource_script(path: Path, manifest_name: str, *, include_font: bool = False) -> None:
@@ -642,7 +814,7 @@ def compile_payload_binaries(
     vsdevcmd: Path,
     compile_root: Path,
 ) -> None:
-    source_root, _ = _prepare_native_sources(installer_source)
+    source_root, _, _ = _prepare_native_sources(installer_source)
     launcher = _compile_payload_binary(
         source_root=source_root,
         icon_source=icon_source,
@@ -670,14 +842,25 @@ def compile_payload_binaries(
     shutil.copy2(uninstaller, app_root / "卸载飞行雪绒.exe")
 
 
-def _write_payload_info_header(payload: Path, archive: Path, output: Path) -> None:
+def _write_payload_info_header(
+    payload: Path,
+    archive: Path,
+    output: Path,
+    *,
+    online: bool,
+) -> None:
     entries = _archive_entries(payload)
     total_bytes = sum(source.stat().st_size for source, _ in entries)
     output.write_text(
         "#pragma once\n\n"
         f"#define FSV_PAYLOAD_ARCHIVE_BYTES ((ULONGLONG){archive.stat().st_size}ULL)\n"
         f"#define FSV_PAYLOAD_FILE_COUNT ((ULONGLONG){len(entries)}ULL)\n"
-        f"#define FSV_PAYLOAD_UNCOMPRESSED_BYTES ((ULONGLONG){total_bytes}ULL)\n",
+        f"#define FSV_PAYLOAD_UNCOMPRESSED_BYTES ((ULONGLONG){total_bytes}ULL)\n"
+        # The build mode is baked in rather than derived from the payload size:
+        # the wizard paints its first page before it reads the trailer, so a
+        # size comparison showed the online wording on the offline installer's
+        # opening screen.
+        f"#define FSV_ONLINE_BUILD {1 if online else 0}\n",
         encoding="ascii",
     )
 
@@ -714,8 +897,10 @@ def compile_installer(
     icon_source: Path,
     vsdevcmd: Path,
     compile_root: Path,
+    *,
+    online: bool = False,
 ) -> Path:
-    source_root, zlib_root = _prepare_native_sources(installer_source)
+    source_root, zlib_root, lzma_root = _prepare_native_sources(installer_source)
     compile_root.mkdir(parents=True, exist_ok=True)
     for name in (
         "main.c",
@@ -726,13 +911,19 @@ def compile_installer(
         "installer.manifest",
     ):
         shutil.copy2(source_root / name, compile_root / name)
+    lzma_compile_root = compile_root / "lzma"
+    lzma_compile_root.mkdir(parents=True, exist_ok=True)
+    for name in (*LZMA_HEADERS, *LZMA_SOURCES):
+        shutil.copy2(lzma_root / name, lzma_compile_root / name)
     shutil.copy2(icon_source, compile_root / "icon.ico")
     installer_font = compile_root / HARMONY_FONT_SUBSET_NAME
     create_installer_font_subset(installer_font)
     shutil.copy2(installer_font, compile_root / "HarmonyOS_Sans_SC_Bold.ttf")
     _write_installer_theme_header(compile_root / "installer_theme.h")
     _write_resource_urls_header(compile_root / "resource_urls.h", version)
-    _write_payload_info_header(payload, archive, compile_root / "payload_info.h")
+    _write_payload_info_header(
+        payload, archive, compile_root / "payload_info.h", online=online
+    )
     _compile_zlib(zlib_root, vsdevcmd, compile_root)
     run_vs_command(vsdevcmd, 'rc.exe /nologo /fo"installer.res" "resource.rc"', compile_root)
     run_vs_command(
@@ -747,9 +938,12 @@ def compile_installer(
             "/utf-8",
             "/DZ_SOLO",
             '/I"zlib"',
+            '/I"lzma"',
             "/Fe:FlyingSnowVelvetInstaller.base.exe",
             '"main.c"',
             '"zip_extract.c"',
+            '"lzma\\LzmaDec.c"',
+            '"lzma\\Lzma2Dec.c"',
             '"zlibstatic.lib"',
             '"installer.res"',
             "/link",
@@ -858,6 +1052,7 @@ def main(argv: list[str] | None = None) -> int:
         icon_source,
         vsdevcmd,
         compile_root / "installer",
+        online=args.online,
     )
     # The online build deliberately carries only a tiny marker archive.  Full
     # desktop/runtime files are distributed through the resource ZIP produced
