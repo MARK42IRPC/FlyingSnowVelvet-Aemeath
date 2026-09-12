@@ -11,7 +11,7 @@ import unicodedata
 from pathlib import Path
 
 from config.config import PARTICLES, SPEAKER_AUDIO
-from config.config_ui import COLORS, UI_THEME
+from .palette import COLORS, UI_THEME
 from config.font_config import FONT, get_digit_font_family, get_ui_font_family
 from config.scale import scale_px
 from lib.core.graphics.commands import (

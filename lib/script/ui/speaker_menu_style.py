@@ -6,6 +6,13 @@ from PyQt5.QtCore import QRect, Qt
 from PyQt5.QtGui import QPainter, QColor
 
 from config.config import SPEAKER_SEARCH_UI
+from lib.core.graphics.commands import DrawBatch
+from lib.core.graphics.panel_visuals import (
+    action_button_commands,
+    panel_shell_commands,
+)
+from lib.core.graphics.types import Rect
+from lib.core.qt_bridge.draw_backend import QtDrawBackend
 from lib.core.qt_bridge.colors import COLORS, UI_THEME
 from lib.core.qt_bridge.font import get_ui_font
 from config.scale import scale_px
@@ -26,15 +33,22 @@ _C_ACTION_HOVER = UI_THEME['deep_pink']
 
 _LAYER = scale_px(2, min_abs=1)
 _BORDER = _LAYER * 2
+_DRAW_BACKEND = QtDrawBackend()
+
+
+def _to_core_rect(rect: QRect) -> Rect:
+    return Rect(rect.x(), rect.y(), rect.width(), rect.height())
+
+
+def _to_qt_rect(rect: Rect) -> QRect:
+    return QRect(int(rect.x), int(rect.y), int(rect.width), int(rect.height))
 
 
 def paint_speaker_menu_panel(painter: QPainter, rect: QRect) -> QRect:
     """绘制音响菜单族共享三层面板，并返回内容区。"""
-    painter.fillRect(rect, _C_BORDER)
-    painter.fillRect(rect.adjusted(_LAYER, _LAYER, -_LAYER, -_LAYER), _C_MID)
-    content_rect = rect.adjusted(_BORDER, _BORDER, -_BORDER, -_BORDER)
-    painter.fillRect(content_rect, _C_BG)
-    return content_rect
+    commands, content = panel_shell_commands(_to_core_rect(rect), inset=_LAYER)
+    _DRAW_BACKEND.render(DrawBatch(tuple(commands)), painter)
+    return _to_qt_rect(content)
 
 
 def paint_speaker_action_button(
@@ -45,15 +59,18 @@ def paint_speaker_action_button(
     pressed: bool = False,
 ) -> QRect:
     """绘制音响菜单族统一动作按钮，并返回内容区。"""
-    painter.fillRect(rect, _C_ACTION_BORDER)
-    mid_rect = rect.adjusted(_LAYER, _LAYER, -_LAYER, -_LAYER)
-    painter.fillRect(mid_rect, _C_ACTION_MID)
-    content_rect = mid_rect.adjusted(_LAYER, _LAYER, -_LAYER, -_LAYER)
     if hovered:
-        painter.fillRect(content_rect, _C_ACTION_HOVER)
-        content_rect = content_rect.adjusted(_LAYER, _LAYER, -_LAYER, -_LAYER)
-    painter.fillRect(content_rect, _C_HL if pressed else _C_ACTION_BG)
-    return content_rect
+        state = "pressed" if pressed else "hover"
+    else:
+        state = "pressed_flat" if pressed else "normal"
+    commands, content = action_button_commands(
+        _to_core_rect(rect),
+        None,
+        state=state,
+        inset=_LAYER,
+    )
+    _DRAW_BACKEND.render(DrawBatch(tuple(commands)), painter)
+    return _to_qt_rect(content)
 
 
 class SpeakerActionButtonMixin:

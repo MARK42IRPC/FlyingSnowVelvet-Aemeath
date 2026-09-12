@@ -1,7 +1,7 @@
 """气泡框类"""
 from PyQt5.QtWidgets import QWidget, QGraphicsOpacityEffect, QApplication
 from PyQt5.QtCore import Qt, QPropertyAnimation, QEasingCurve, QPoint
-from PyQt5.QtGui import QPainter, QFontMetrics, QCursor
+from PyQt5.QtGui import QPainter, QCursor
 
 from config.config import UI, BUBBLE_CONFIG
 from lib.core.qt_bridge.font import (
@@ -28,58 +28,11 @@ from lib.core.graphics.application_visuals import (
     build_bubble_visual,
     resolve_bubble_geometry,
 )
-from lib.core.graphics.types import FontSpec, Point, Rect, Size
-from lib.core.graphics.rich_text_parser import TextSegment
+from lib.core.graphics.types import Point, Rect, Size
+from lib.core.qt_bridge.text_metrics import QtTextMetrics
 from lib.script.voice.ams_bug import AmsBugSound
 
 _logger = get_logger(__name__)
-
-
-class _QtBubbleTextMetrics:
-    """Expose Qt's low-level font metrics to the shared bubble presenter."""
-
-    def __init__(self, default_font, digit_font):
-        self._default_metrics = QFontMetrics(default_font)
-        self._digit_metrics = QFontMetrics(digit_font)
-        self._default_font_qt = default_font
-        self.default_font = FontSpec(
-            default_font.family(),
-            default_font.pixelSize(),
-            default_font.bold(),
-        )
-        self.digit_font = FontSpec(
-            digit_font.family(),
-            digit_font.pixelSize(),
-            digit_font.bold(),
-        )
-        self.default_line_height = float(self._default_metrics.height())
-        self.digit_line_height = float(self._digit_metrics.height())
-        self.default_ascent = float(self._default_metrics.ascent())
-        self.default_descent = float(self._default_metrics.descent())
-        self.digit_ascent = float(self._digit_metrics.ascent())
-        self.digit_descent = float(self._digit_metrics.descent())
-
-    def measure(self, text: str, *, digit: bool = False) -> float:
-        metrics = self._digit_metrics if digit else self._default_metrics
-        return float(metrics.horizontalAdvance(str(text or "")))
-
-    def measure_segment(self, segment: TextSegment) -> float:
-        """Measure a rich text segment with style and scale."""
-        from PyQt5.QtGui import QFont
-
-        # Keep measurement identical to the FontSpec resolved by the presenter.
-        font = QFont(self._default_font_qt)
-        font.setPixelSize(max(1, int(round(font.pixelSize() * segment.scale))))
-
-        if segment.style == "bold":
-            font.setBold(True)
-        elif segment.style == "bold_italic":
-            font.setBold(True)
-        elif segment.style == "code":
-            font.setFamily("Consolas")
-
-        metrics = QFontMetrics(font)
-        return float(metrics.horizontalAdvance(segment.text))
 
 
 class BubbleInfo:
@@ -157,7 +110,7 @@ class Bubble(QWidget):
         self._font = get_ui_font()
         self._font.setBold(True)
         self._digit_font = get_digit_font()
-        self._text_metrics = _QtBubbleTextMetrics(self._font, self._digit_font)
+        self._text_metrics = QtTextMetrics(self._font, self._digit_font)
         self._draw_backend = QtDrawBackend()
         self._visual: BubbleVisualDescription | None = None
         self._bug_sound = AmsBugSound()

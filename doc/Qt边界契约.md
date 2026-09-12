@@ -1,6 +1,6 @@
 # Qt 边界契约
 
-更新时间：2026-08-30
+更新时间：2026-09-12
 
 本文档描述当前有效的 Qt 依赖边界。历史迁移阶段和已完成清单已删除；实现状态以源码、`tests/test_qt_dependency_boundaries.py` 和 `tests/test_code_structure_boundaries.py` 为准。跨后端视觉语义见 [视觉表现契约](视觉表现契约.md)。
 
@@ -65,6 +65,8 @@ DirectX 主进程不得加载 PyQt。需要控制面板时只启动隔离工作�
 - `config` 和非 bridge 核心零 Qt 导入；
 - 后端中立业务包零 Qt/qt_bridge 导入；
 - `lib/core` 不反向导入 `lib.script`，启动入口除外；
+- `lib/core`（含 `lib/core/graphics`）不读取 `config/config_ui.py`：产品色板由 `lib/core/graphics/palette.py` 唯一拥有，`config/config_ui.py` 只重新导出同一 `COLORS` / `UI_THEME` 对象；
+- 已迁移的面板 QWidget 宿主只执行共享 `DrawBatch`，不得直接填充面板或排版文字；尚无命令原语的矢量图标可以保留在宿主；
 - 世界对象管理器、事件协议和图形契约不暴露 toolkit 类型；
 - 阻断 PyQt 后核心与 DirectX 交互路径仍可导入运行。
 
@@ -73,6 +75,7 @@ DirectX 主进程不得加载 PyQt。需要控制面板时只启动隔离工作�
 ```powershell
 py -3 -m compileall -q config lib scripts install_deps.py install_deps
 py -3 -m unittest tests.test_qt_dependency_boundaries tests.test_code_structure_boundaries -v
+py -3 -m unittest tests.test_visual_presenters tests.test_shared_panel_visuals -q
 py -3 -m unittest discover -s tests -p "test_*.py" -q
 git diff --check
 ```

@@ -11,20 +11,25 @@
 
 from __future__ import annotations
 
-from PyQt5.QtWidgets import QWidget, QApplication, QGraphicsOpacityEffect
-from PyQt5.QtCore import Qt, QPoint, QRect, QPropertyAnimation, QEasingCurve
-from PyQt5.QtGui import QPainter, QColor
+from PyQt5.QtWidgets import QWidget, QGraphicsOpacityEffect
+from PyQt5.QtCore import Qt, QPoint, QPropertyAnimation, QEasingCurve
+from PyQt5.QtGui import QPainter
 
 from config.config import UI, SPEAKER_SEARCH_UI
-from lib.core.qt_bridge.colors import UI_THEME
 from config.tooltip_config import TOOLTIPS
 from lib.core.qt_bridge.font import (
     get_digit_font,
-    draw_mixed_text,
     get_ui_font,
-    measure_mixed_text,
-    elide_mixed_text,
 )
+from lib.core.graphics.media_panel_visuals import (
+    SEARCH_RESULT_PAGE_SIZE as _PAGE_SIZE,
+    SEARCH_RESULT_ROW_HEIGHT as _ROW_H,
+    build_search_result_panel_visual,
+    search_result_panel_size,
+)
+from lib.core.graphics.types import Size
+from lib.core.qt_bridge.draw_backend import QtDrawBackend
+from lib.core.qt_bridge.text_metrics import QtTextMetrics
 from config.scale import scale_px
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.unified_draw import Layer, get_layer_manager
@@ -33,23 +38,11 @@ from lib.core.anchor_utils import apply_ui_opacity
 from lib.core.qt_bridge.window import coerce_qpoint
 from lib.script.ui.page_turn_buttons import make_page_buttons, update_page_buttons_position
 from lib.script.ui.speaker_menu_style import (
-    _C_BORDER,
-    _C_MID,
-    _C_BG,
-    _C_TEXT,
-    _C_HL,
-    _LAYER,
     _BORDER,
-    paint_speaker_menu_panel,
 )
 
 # ── 布局常量 ──────────────────────────────────────────────────────────
-_PAGE_SIZE = 5     # 每页条目数
-_ROW_H     = scale_px(20, min_abs=1)  # 每行高度（px）
-_PAD_X     = scale_px(6, min_abs=1)   # 文字水平内边距（px）
 _GAP_Y     = scale_px(2, min_abs=1)   # 与搜索框的垂直间距（px）
-_MAX_WIDTH = scale_px(360, min_abs=1)  # 最大宽度（px）
-_MIN_WIDTH = scale_px(240, min_abs=1)  # 最小宽度（与搜索框等宽，px）
 _DIALOG_H  = SPEAKER_SEARCH_UI.get('height', scale_px(36, min_abs=1))  # 搜索框高度
 
 
@@ -78,6 +71,8 @@ class SpeakerSearchResultBox(QWidget):
         self._font = get_ui_font()
         self._font.setBold(True)
         self._digit_font = get_digit_font()
+        self._text_metrics = QtTextMetrics(self._font, self._digit_font)
+        self._draw_backend = QtDrawBackend()
 
         # ── 状态 ────────────────────────────────────────────────────
         self._items: list[tuple[int | str, str]] = []   # [(track_ref, display_text)]
@@ -219,28 +214,13 @@ class SpeakerSearchResultBox(QWidget):
 
     def _refresh_size(self) -> None:
         """根据当前内容自适应窗口宽高。"""
-        if self._searching:
-            texts  = ['♪ 搜索中...']
-            n_rows = 1
-        elif not self._items:
-            texts  = ['(无结果，请输入关键词后搜索)']
-            n_rows = 1
-        else:
-            page_items = self._page_items()
-            texts      = [t for _, t in page_items]
-            n_rows     = len(page_items)
-            if self._has_pages():
-                max_page = (len(self._items) - 1) // _PAGE_SIZE
-                texts.append(f'{self._page + 1}/{max_page + 1}')
-                n_rows += 1
-
-        max_text_w = max(
-            (measure_mixed_text(t, self._font, self._digit_font) for t in texts),
-            default=scale_px(60, min_abs=1),
+        size = search_result_panel_size(
+            tuple(self._items),
+            self._text_metrics,
+            page=self._page,
+            searching=self._searching,
         )
-        w = int(max(_MIN_WIDTH, min(_MAX_WIDTH, max_text_w + _BORDER * 2 + _PAD_X * 2)))
-        h = int(_BORDER * 2 + n_rows * _ROW_H)
-        self.setFixedSize(w, h)
+        self.setFixedSize(int(size.width), int(size.height))
 
     # ==================================================================
     # 私有：位置与动画
@@ -378,49 +358,13 @@ class SpeakerSearchResultBox(QWidget):
     def paintEvent(self, event) -> None:
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing, False)
-        p.setFont(self._font)
-        paint_speaker_menu_panel(p, self.rect())
-
-        content_x = _BORDER
-        content_w = self.width() - _BORDER * 2
-        y = _BORDER
-
-        if self._searching:
-            # 搜索中提示
-            text_rect = QRect(content_x + _PAD_X, y, content_w - _PAD_X * 2, _ROW_H)
-            p.setPen(_C_TEXT)
-            p.drawText(text_rect, Qt.AlignLeft | Qt.AlignVCenter, '♪ 搜索中...')
-
-        elif not self._items:
-            # 空状态提示
-            text_rect = QRect(content_x + _PAD_X, y, content_w - _PAD_X * 2, _ROW_H)
-            p.setPen(_C_TEXT)
-            p.drawText(text_rect, Qt.AlignLeft | Qt.AlignVCenter,
-                       '(无结果，请输入关键词后搜索)')
-
-        else:
-            # 歌曲列表
-            items = self._page_items()
-            for i, (_sid, display) in enumerate(items):
-                row_rect  = QRect(content_x, y, content_w, _ROW_H)
-                text_rect = QRect(content_x + _PAD_X, y, content_w - _PAD_X * 2, _ROW_H)
-                # 高亮选中行
-                if i == self._selected:
-                    p.fillRect(row_rect, _C_HL)
-                p.setPen(_C_TEXT)
-                draw_mixed_text(
-                    p, text_rect,
-                    elide_mixed_text(display, text_rect.width(), self._font, self._digit_font),
-                    self._font, self._digit_font,
-                )
-                y += _ROW_H
-
-            # 翻页指示器
-            if self._has_pages():
-                max_page  = (len(self._items) - 1) // _PAGE_SIZE
-                page_text = f'{self._page + 1}/{max_page + 1}'
-                text_rect = QRect(content_x + _PAD_X, y, content_w - _PAD_X * 2, _ROW_H)
-                p.setPen(_C_TEXT)
-                draw_mixed_text(p, text_rect, page_text, self._font, self._digit_font, Qt.AlignCenter)
-
+        visual = build_search_result_panel_visual(
+            Size(self.width(), self.height()),
+            tuple(self._items),
+            self._text_metrics,
+            page=self._page,
+            selected=self._selected,
+            searching=self._searching,
+        )
+        self._draw_backend.render(visual.batch, p)
         p.end()

@@ -16,12 +16,14 @@
 from __future__ import annotations
 
 from PyQt5.QtWidgets import QWidget, QGraphicsOpacityEffect
-from PyQt5.QtCore import Qt, QRect, QPointF, QPropertyAnimation, QEasingCurve
+from PyQt5.QtCore import Qt, QPointF, QPropertyAnimation, QEasingCurve
 from PyQt5.QtGui import QPainter, QPen, QPolygonF, QCursor
 
 from config.config import UI
-from lib.core.qt_bridge.colors import COLORS, UI_THEME
-from lib.core.qt_bridge.font import get_ui_font, get_digit_font, draw_mixed_text, elide_mixed_text
+from lib.core.graphics.media_panel_visuals import build_playlist_panel_visual
+from lib.core.qt_bridge.draw_backend import QtDrawBackend
+from lib.core.qt_bridge.font import get_ui_font, get_digit_font
+from lib.core.qt_bridge.text_metrics import QtTextMetrics
 from config.scale import scale_px
 from config.tooltip_config import TOOLTIPS
 from lib.core.event.center import get_event_center, EventType, Event
@@ -61,7 +63,6 @@ _BORDER    = _LAYER * 2  # 单侧边框总厚度（2px 黑 + 2px 青）
 _PAD_X     = scale_px(6, min_abs=1)    # 文字水平内边距（px）
 _GAP       = scale_px(6, min_abs=1)    # 与音响右边缘的水平间距（px）
 _PAGE_SIZE = 7     # 每页最多条目数
-_C_HL      = UI_THEME['highlight']  # 选中高亮（与搜索列表一致）
 _REMOVE_BTN_W = scale_px(20, min_abs=1)
 _REMOVE_BTN_H = scale_px(20, min_abs=1)
 _AUTO_HIDE_MOUSE_DISTANCE = UI.get('auto_hide_mouse_distance', scale_px(300, min_abs=1))
@@ -202,6 +203,8 @@ class PlaylistPanel(QWidget):
         self._font = get_ui_font()
         self._font.setBold(True)
         self._digit_font = get_digit_font()
+        self._text_metrics = QtTextMetrics(self._font, self._digit_font)
+        self._draw_backend = QtDrawBackend()
 
         # ── 状态 ──────────────────────────────────────────────────────
         self._visible: bool      = False
@@ -881,62 +884,14 @@ class PlaylistPanel(QWidget):
     def paintEvent(self, event) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, False)
-        painter.setFont(self._font)
-
-        # ── 三层边框（与命令提示框风格完全一致）────────────────────────
-        painter.fillRect(self.rect(), COLORS['black'])
-        painter.fillRect(self.rect().adjusted(_LAYER, _LAYER, -_LAYER, -_LAYER), COLORS['cyan'])
-        painter.fillRect(self.rect().adjusted(_BORDER, _BORDER, -_BORDER, -_BORDER), COLORS['pink'])
-
-        content_x = _BORDER
-        content_w = self.width() - _BORDER * 2
-        y         = _BORDER
-
-        if not self._queue:
-            # 空队列提示
-            text_rect = QRect(content_x + _PAD_X, y, content_w - _PAD_X * 2, _ROW_H)
-            painter.setPen(COLORS['text'])
-            painter.drawText(text_rect, Qt.AlignLeft | Qt.AlignVCenter, '（队列为空）')
-        else:
-            items = self._page_items()
-            page_offset = self._page * _PAGE_SIZE
-            for i, (_, display) in enumerate(items):
-                row_rect  = QRect(content_x, y, content_w, _ROW_H)
-                text_rect = QRect(content_x + _PAD_X, y, content_w - _PAD_X * 2, _ROW_H)
-                is_current = (page_offset + i == self._current_index)
-                # 搜索列表同款：高亮选中行；当前播放行保持青色标识
-                if i == self._selected and not is_current:
-                    painter.fillRect(row_rect, _C_HL)
-                if is_current:
-                    painter.fillRect(row_rect, COLORS['cyan'])
-                prefix = '> ' if i == self._selected else ''
-                label = prefix + ('♪ ' + display if is_current else display)
-                painter.setPen(COLORS['text'])
-                draw_mixed_text(
-                    painter,
-                    text_rect,
-                    elide_mixed_text(label, text_rect.width(), self._font, self._digit_font),
-                    self._font,
-                    self._digit_font,
-                    Qt.AlignLeft | Qt.AlignVCenter,
-                )
-                y += _ROW_H
-
-            # 翻页指示器
-            if self._has_pages():
-                max_page  = (len(self._queue) - 1) // _PAGE_SIZE
-                page_text = f'{self._page + 1}/{max_page + 1}'
-                text_rect = QRect(content_x + _PAD_X, y, content_w - _PAD_X * 2, _ROW_H)
-                painter.setPen(COLORS['text'])
-                draw_mixed_text(
-                    painter,
-                    text_rect,
-                    page_text,
-                    self._font,
-                    self._digit_font,
-                    Qt.AlignCenter | Qt.AlignVCenter,
-                )
-
+        visual = build_playlist_panel_visual(
+            tuple(self._queue),
+            self._text_metrics,
+            page=self._page,
+            selected=self._selected,
+            current_index=self._current_index,
+        )
+        self._draw_backend.render(visual.batch, painter)
         painter.end()
 
     def closeEvent(self, event) -> None:

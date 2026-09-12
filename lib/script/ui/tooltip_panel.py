@@ -10,17 +10,13 @@ from __future__ import annotations
 
 from PyQt5.QtWidgets import QWidget, QApplication, QGraphicsOpacityEffect
 from PyQt5.QtCore import Qt, QPoint, QPropertyAnimation, QEasingCurve, QTimer
-from PyQt5.QtGui import QPainter, QFontMetrics, QCursor
+from PyQt5.QtGui import QPainter, QCursor
 
 from config.config import UI
-from lib.core.qt_bridge.colors import COLORS, UI_THEME
-from lib.core.qt_bridge.font import (
-    get_ui_font,
-    get_digit_font,
-    draw_mixed_text,
-    wrap_mixed_text,
-    measure_mixed_text,
-)
+from lib.core.graphics.application_visuals import build_tooltip_visual
+from lib.core.qt_bridge.draw_backend import QtDrawBackend
+from lib.core.qt_bridge.font import get_ui_font, get_digit_font
+from lib.core.qt_bridge.text_metrics import QtTextMetrics
 from config.scale import scale_px
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.unified_draw import Layer, get_layer_manager
@@ -79,6 +75,9 @@ class TooltipPanel(QWidget):
         self._font = get_ui_font()
         self._font.setBold(True)
         self._digit_font = get_digit_font()
+        self._text_metrics = QtTextMetrics(self._font, self._digit_font)
+        self._draw_backend = QtDrawBackend()
+        self._visual = None
 
         # ── 悬停状态 ─────────────────────────────────────────────────
         self._visible          = False
@@ -237,18 +236,10 @@ class TooltipPanel(QWidget):
 
     def _recalc_size(self) -> None:
         """依据文本内容重新计算面板尺寸。"""
-        lines  = self._wrap_text(self._current_text)
-        fm_def = QFontMetrics(self._font)
-        fm_dig = QFontMetrics(self._digit_font)
-        line_h = max(fm_def.height(), fm_dig.height())
-        text_w = max(
-            (measure_mixed_text(ln, self._font, self._digit_font) for ln in lines),
-            default=scale_px(40, min_abs=1),
-        )
-        text_h = line_h * len(lines)
+        visual = self._build_visual()
         self.setFixedSize(
-            text_w + _PAD_X * 2 + _BORDER * 2,
-            text_h + _PAD_Y * 2 + _BORDER * 2,
+            int(visual.size.width),
+            int(visual.size.height),
         )
 
     def _reposition(self, cursor_pos: QPoint) -> None:
@@ -270,7 +261,23 @@ class TooltipPanel(QWidget):
 
     def _wrap_text(self, text: str) -> list[str]:
         """按 _MAX_TEXT_W 像素宽度对文本进行自动换行。"""
-        return wrap_mixed_text(text, _MAX_TEXT_W, self._font, self._digit_font)
+        return list(self._build_visual(text).lines)
+
+    def _build_visual(self, text: str | None = None):
+        """Resolve the shared tooltip visual for the current text."""
+        visual = build_tooltip_visual(
+            self._current_text if text is None else text,
+            self._text_metrics,
+            max_text_width=_MAX_TEXT_W,
+            padding_x=_PAD_X,
+            padding_y=_PAD_Y,
+            border_width=_LAYER,
+            opacity=1.0,
+            min_text_width=scale_px(40, min_abs=1),
+        )
+        if text is None:
+            self._visual = visual
+        return visual
 
     # ==================================================================
     # 绘制
@@ -279,41 +286,10 @@ class TooltipPanel(QWidget):
     def paintEvent(self, event) -> None:
         if not self._current_text:
             return
-
+        visual = self._build_visual()
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, False)
-
-        # 轻量三层边框：黑 → 蓝 → 粉
-        painter.fillRect(self.rect(), COLORS['black'])
-        painter.fillRect(self.rect().adjusted(_LAYER, _LAYER, -_LAYER, -_LAYER), UI_THEME['deep_cyan'])
-        inner_rect = self.rect().adjusted(_BORDER, _BORDER, -_BORDER, -_BORDER)
-        painter.fillRect(inner_rect, COLORS['pink'])
-
-        # 文字区域
-        content = self.rect().adjusted(
-            _BORDER + _PAD_X, _BORDER + _PAD_Y,
-            -_BORDER - _PAD_X, -_BORDER - _PAD_Y,
-        )
-        lines = self._wrap_text(self._current_text)
-        line_h = max(
-            QFontMetrics(self._font).height(),
-            QFontMetrics(self._digit_font).height(),
-        )
-
-        painter.setPen(COLORS['black'])
-        painter.setFont(self._font)
-        for i, ln in enumerate(lines):
-            line_rect = content.adjusted(0, i * line_h, 0, 0)
-            line_rect.setHeight(line_h)
-            draw_mixed_text(
-                painter,
-                line_rect,
-                ln,
-                self._font,
-                self._digit_font,
-                Qt.AlignLeft | Qt.AlignVCenter,
-            )
-
+        self._draw_backend.render(visual.batch, painter)
         painter.end()
 
 

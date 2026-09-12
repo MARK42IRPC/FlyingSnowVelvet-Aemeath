@@ -2,8 +2,8 @@
 
 from PyQt5.QtGui import QColor
 
-from config.config_ui import COLORS as CORE_COLORS
-from config.config_ui import UI_THEME as CORE_UI_THEME
+from lib.core.graphics.palette import COLORS as CORE_COLORS
+from lib.core.graphics.palette import UI_THEME as CORE_UI_THEME
 from lib.core.graphics.types import coerce_color
 
 

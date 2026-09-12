@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
-from PyQt5.QtCore import QPoint, Qt, QRect
+from PyQt5.QtCore import QPoint, Qt
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QButtonGroup
 from PyQt5.QtGui import QPainter
 
 from config.scale import scale_px
+from lib.core.graphics.panel_visuals import build_tab_bar_visual
+from lib.core.graphics.types import Size
 from lib.core.qt_bridge.colors import UI_THEME
+from lib.core.qt_bridge.draw_backend import QtDrawBackend
 from lib.core.unified_draw import Layer, get_layer_manager
 
 
@@ -18,41 +21,18 @@ class TabBarWidget(QWidget):
         super().__init__(parent)
         self._layer = scale_px(2, min_abs=1)
         self._border = self._layer * 2
+        self._draw_backend = QtDrawBackend()
 
     def paintEvent(self, event):
         painter = QPainter(self)
         rect = self.rect()
         if rect.width() <= 0 or rect.height() <= 0:
             return
-
-        layer = self._layer
-        border = self._border
-        width = rect.width()
-        height = rect.height()
-
-        # 1. 粉色背景：左边、上边、下边内缩 border，右边延伸到边缘
-        painter.fillRect(
-            QRect(border, border, width - border, height - 2 * border),
-            UI_THEME["bg"]
+        visual = build_tab_bar_visual(
+            Size(rect.width(), rect.height()),
+            inset=self._layer,
         )
-
-        # 2. 浅青色边框：完全包围，厚度 layer
-        # 左边：x=0, y=layer, 宽度=layer, 高度=height-2*layer
-        painter.fillRect(QRect(0, layer, layer, height - 2 * layer), UI_THEME["mid"])
-        # 上边：x=border, y=0, 宽度=width-border, 高度=layer
-        painter.fillRect(QRect(border, 0, width - border, layer), UI_THEME["mid"])
-        # 下边：x=border, y=height-layer, 宽度=width-border, 高度=layer
-        painter.fillRect(QRect(border, height - layer, width - border, layer), UI_THEME["mid"])
-        # 右边：x=width-layer, y=layer, 宽度=layer, 高度=height-2*layer
-        painter.fillRect(QRect(width - layer, layer, layer, height - 2 * layer), UI_THEME["mid"])
-
-        # 3. 黑色边框：左、上、下三边，厚度 layer
-        # 左边：x=0, y=0, 宽度=layer, 高度=height
-        painter.fillRect(QRect(0, 0, layer, height), UI_THEME["border"])
-        # 上边：x=border, y=0, 宽度=width-border, 高度=layer
-        painter.fillRect(QRect(border, 0, width - border, layer), UI_THEME["border"])
-        # 下边：x=border, y=height-layer, 宽度=width-border, 高度=layer
-        painter.fillRect(QRect(border, height - layer, width - border, layer), UI_THEME["border"])
+        self._draw_backend.render(visual.batch, painter)
 
 
 def attach_ai_settings_tabs(panel, general_categories) -> None:

@@ -13,22 +13,19 @@
 from __future__ import annotations
 
 from PyQt5.QtWidgets import QWidget, QGraphicsOpacityEffect
-from PyQt5.QtCore import Qt, QRect, QPoint, QPropertyAnimation, QEasingCurve
-from PyQt5.QtGui import QPainter, QColor, QPolygon
+from PyQt5.QtCore import Qt, QRect, QPropertyAnimation, QEasingCurve
+from PyQt5.QtGui import QPainter
 
 from config.config import UI, FONT
-from lib.core.qt_bridge.colors import COLORS, UI_THEME
+from lib.core.graphics.media_panel_visuals import build_progress_panel_visual
 from lib.core.qt_bridge.font import get_digit_font, get_ui_font
+from lib.core.qt_bridge.draw_backend import QtDrawBackend
+from lib.core.qt_bridge.text_metrics import QtTextMetrics
 from config.scale import scale_px
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.unified_draw import Layer, get_layer_manager
 from lib.core.qt_bridge.screen import clamp_rect_position
 from lib.core.anchor_utils import apply_ui_opacity
-
-
-# ── 进度条专用配色（使用深色版本）─────────────────────────────────────
-_PROGRESS_CYAN   = UI_THEME['deep_cyan']  # 已播放部分：深青色
-_PROGRESS_HANDLE = UI_THEME['deep_pink']  # 滑块：深粉色
 
 
 # ── 布局常量 ──────────────────────────────────────────────────────────
@@ -69,6 +66,8 @@ class ProgressPanel(QWidget):
         self._font = get_ui_font(FONT['ui_size'] - 1)
         self._font.setBold(True)
         self._time_font = get_digit_font(FONT['ui_size'] - 1)
+        self._text_metrics = QtTextMetrics(self._font, self._time_font)
+        self._draw_backend = QtDrawBackend()
 
         # ── 状态 ──────────────────────────────────────────────────────
         self._visible: bool       = False
@@ -292,54 +291,13 @@ class ProgressPanel(QWidget):
 
     def paintEvent(self, event) -> None:
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing, False)
-        painter.setFont(self._font)
-
-        # ── 内层背景（先绘制，外黑边框最后覆盖）────────────────────────
-        painter.fillRect(self.rect().adjusted(_LAYER, _LAYER, -_LAYER, -_LAYER), COLORS['cyan'])
-        painter.fillRect(self.rect().adjusted(_BORDER, _BORDER, -_BORDER, -_BORDER), COLORS['pink'])
-
-        progress = self._drag_progress if self._dragging else self._progress
-
-        # ── 进度滑条区域 ───────────────────────────────────────────
-        slider_rect = self._get_slider_rect()
-
-        # 已播放部分（高饱和度青色填充）
-        fill_width = int(progress * slider_rect.width())
-        if fill_width > 0:
-            painter.fillRect(
-                QRect(slider_rect.x(), slider_rect.y(), fill_width, slider_rect.height()),
-                _PROGRESS_CYAN
-            )
-
-        # 滑块：深粉色菱形（接近正方形）
-        handle_x = slider_rect.x() + fill_width
-        handle_x = max(slider_rect.x(), min(slider_rect.right(), handle_x))
-        cx = handle_x
-        cy = slider_rect.y() + slider_rect.height() // 2
-        half_size = max(1, slider_rect.height() // 2 - scale_px(1, min_abs=1))  # 统一尺寸，形成接近正方形的菱形
-        diamond = QPolygon([
-            QPoint(cx,             cy - half_size),
-            QPoint(cx + half_size, cy),
-            QPoint(cx,             cy + half_size),
-            QPoint(cx - half_size, cy),
-        ])
         painter.setRenderHint(QPainter.Antialiasing, True)
-        painter.setBrush(_PROGRESS_HANDLE)
-        painter.setPen(Qt.NoPen)
-        painter.drawPolygon(diamond)
-        painter.setRenderHint(QPainter.Antialiasing, False)
+        self._draw_backend.render(self._build_visual().batch, painter)
+        painter.end()
 
-        # ── 分隔线（仅在内容区域内绘制，不超出边框）──────────────────
-        sep_rect = self._get_sep_rect()
-        painter.fillRect(sep_rect, COLORS['cyan'])
-        black_x = sep_rect.x() + (sep_rect.width() - _SEP_BK_W) // 2
-        inner_y = _BORDER
-        inner_h = _HEIGHT - _BORDER * 2
-        painter.fillRect(QRect(black_x, inner_y, _SEP_BK_W, inner_h), COLORS['black'])
-
-        # ── 剩余时间显示（拉海洛字体）─────────────────────────────────
-        time_rect = self._get_time_rect()
+    def _build_visual(self):
+        """解析共享进度条视觉（业务状态 -> 后端无关描述）。"""
+        progress = self._drag_progress if self._dragging else self._progress
         if self._dragging:
             # 拖动时：根据当前进度反推剩余时间
             # 假设 remaining 对应的是 (1 - _progress) 的比例
@@ -354,22 +312,11 @@ class ProgressPanel(QWidget):
         minutes = remaining // 60
         seconds = remaining % 60
         time_text = f"{minutes}:{seconds:02d}"
-
-        painter.setFont(self._time_font)
-        painter.setPen(COLORS['text'])
-        painter.drawText(time_rect, Qt.AlignCenter, time_text)
-        painter.setFont(self._font)
-
-        # ── 外黑边框最后绘制，覆盖所有内容 ───────────────────────────
-        r = self.rect()
-        top_h = _LAYER
-        side_w = _LAYER
-        painter.fillRect(QRect(r.x(),          r.y(),              r.width(), top_h),  COLORS['black'])
-        painter.fillRect(QRect(r.x(),          r.bottom() - top_h + 1, r.width(), top_h),  COLORS['black'])
-        painter.fillRect(QRect(r.x(),          r.y(),              side_w,    r.height()), COLORS['black'])
-        painter.fillRect(QRect(r.right() - side_w + 1, r.y(),      side_w,    r.height()), COLORS['black'])
-
-        painter.end()
+        return build_progress_panel_visual(
+            progress=progress,
+            time_text=time_text,
+            metrics=self._text_metrics,
+        )
 
     def cleanup(self) -> None:
         try:

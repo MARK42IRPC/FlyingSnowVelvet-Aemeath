@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from PyQt5.QtWidgets import QWidget, QGraphicsOpacityEffect
-from PyQt5.QtCore import Qt, QPropertyAnimation, QEasingCurve, QRect
-from PyQt5.QtGui import QPainter, QColor, QCursor
+from PyQt5.QtCore import Qt, QPropertyAnimation, QEasingCurve
+from PyQt5.QtGui import QPainter, QCursor
 import time
 
 from config.config import UI
-from lib.core.qt_bridge.colors import COLORS
+from lib.core.graphics.application_visuals import build_mic_stt_indicator_visual
+from lib.core.qt_bridge.draw_backend import QtDrawBackend
 from config.scale import scale_px
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.unified_draw import Layer, get_layer_manager
@@ -34,6 +35,7 @@ class MicSttIndicator(QWidget):
         self._hover_radius = scale_px(120, min_abs=90)
         self._hide_delay = 2.0
         self._last_mouse_inside_ts = time.monotonic()
+        self._draw_backend = QtDrawBackend()
 
         self.setWindowFlags(
             Qt.Tool
@@ -157,45 +159,8 @@ class MicSttIndicator(QWidget):
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, False)
-        layer = scale_px(2, min_abs=1)
-        cyan_rect = self.rect().adjusted(layer, layer, -layer, -layer)
-        content_rect = cyan_rect.adjusted(layer, layer, -layer, -layer)
-
-        painter.fillRect(self.rect(), COLORS['black'])
-        painter.fillRect(cyan_rect, COLORS['cyan'])
-
-        fill_color = QColor(255, 230, 240) if self._speech_active else COLORS['pink']
-        painter.fillRect(content_rect, fill_color)
-
-        # 麦克风图标
-        painter.setRenderHint(QPainter.Antialiasing, True)
-        mic_width = max(4, content_rect.width() // 3)
-        mic_height = max(6, content_rect.height() - scale_px(4, min_abs=2))
-        mic_x = content_rect.center().x() - mic_width // 2
-        mic_y = content_rect.top() + scale_px(1, min_abs=1)
-        mic_rect = QRect(mic_x, mic_y, mic_width, mic_height).intersected(content_rect)
-        painter.setBrush(COLORS.get('deep_blue', COLORS['black']))
-        painter.setPen(Qt.NoPen)
-        painter.drawRoundedRect(mic_rect, 2, 2)
-
-        stem_height = scale_px(3, min_abs=2)
-        stem_width = max(2, mic_width // 2)
-        stem_rect = QRect(
-            mic_rect.center().x() - stem_width // 2,
-            mic_rect.bottom() - stem_height + 1,
-            stem_width,
-            stem_height
-        )
-        painter.drawRect(stem_rect)
-        base_height = scale_px(1, min_abs=1)
-        base_rect = QRect(
-            stem_rect.center().x() - stem_width,
-            stem_rect.bottom() + 1,
-            stem_width * 2,
-            base_height
-        )
-        painter.drawRect(base_rect)
-
+        visual = build_mic_stt_indicator_visual(speech_active=self._speech_active)
+        self._draw_backend.render(visual.batch, painter)
         painter.end()
 
     def mousePressEvent(self, event):

@@ -30,6 +30,9 @@ from PyQt5.QtWidgets import (
 from config.config import UI
 from lib.core.qt_bridge.colors import COLORS, UI_THEME
 from lib.core.qt_bridge.font import get_cmd_font, get_ui_font, get_digit_font
+from lib.core.graphics.panel_visuals import build_panel_shell_visual
+from lib.core.graphics.types import Rect
+from lib.core.qt_bridge.draw_backend import QtDrawBackend
 from config.scale import scale_px, scale_style_px
 from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import get_event_center, EventType, Event
@@ -221,6 +224,7 @@ class CmdWindow(QWidget):
 
         # 可见性
         self._visible = False
+        self._draw_backend = QtDrawBackend()
 
         # 命令历史
         self._history:     deque[str] = deque(maxlen=self._HISTORY_MAX)
@@ -668,16 +672,10 @@ class CmdWindow(QWidget):
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, False)
-        layer  = scale_px(2, min_abs=1)
-        inset2 = layer * 2
-
-        painter.fillRect(self.rect(), COLORS['black'])
-
-        cyan_rect = self.rect().adjusted(layer, layer, -layer, -layer)
-        painter.fillRect(cyan_rect, COLORS['cyan'])
-
-        content_rect = self.rect().adjusted(inset2, inset2, -inset2, -inset2)
-        painter.fillRect(content_rect, COLORS['pink'])
+        visual = build_panel_shell_visual(Rect(
+            0, 0, self.width(), self.height(),
+        ))
+        self._draw_backend.render(visual.batch, painter)
 
     # ------------------------------------------------------------------
     # 鼠标事件：标题栏拖拽移动 + 边缘拖拽缩放

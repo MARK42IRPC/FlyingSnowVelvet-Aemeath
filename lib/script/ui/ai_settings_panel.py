@@ -39,10 +39,13 @@ from PyQt5.QtWidgets import (
     QSlider,
     QMenu,
 )
-from PyQt5.QtGui import QPainter, QColor, QCursor, QPixmap
+from PyQt5.QtGui import QPainter, QCursor, QPixmap
 
 from config.config import ANIMATION, UI
+from lib.core.graphics.settings_panel_visuals import build_ai_settings_panel_visual
+from lib.core.graphics.types import Size
 from lib.core.qt_bridge.colors import UI_THEME
+from lib.core.qt_bridge.draw_backend import QtDrawBackend
 from lib.core.qt_bridge.font import get_ui_font, get_digit_font
 from lib.core.backend_router import get_backend_descriptors
 from config.general_user_settings import save_general_values
@@ -168,7 +171,6 @@ _TITLE_FONT_SIZE = scale_px(23, min_abs=17)
 _CONFIG_FONT_SIZE = scale_px(17, min_abs=12)
 _DROPDOWN_ITEM_FONT_SIZE = max(scale_px(8, min_abs=8), _CONFIG_FONT_SIZE - scale_px(2, min_abs=1))
 _PANEL_SCALE = 1.05
-_LEFT_WM_SCALE = 2.0 / 3.0
 _AI_HINT_TEXT = "保存后会写入本地 AI 配置文件，建议重启程序后完整生效"
 _GENERAL_HINT_TEXT = "保存后会写入本地配置文件，建议重启程序后完整生效"
 _HINT_FONT_SIZE = max(scale_px(12, min_abs=9), _CONFIG_FONT_SIZE - scale_px(2, min_abs=1))
@@ -1755,6 +1757,7 @@ class AISettingsPanel(QWidget):
         self._drag_offset = QPoint()
         self._gpu_watermark_text = "UnKnow GPU 0.00 GB\nRAM 0.00 GB"
         self._panel_watermark_text = _WATERMARK_TEXT
+        self._draw_backend = QtDrawBackend()
         self._tick_counter = 0
         self._tick_subscribed = False
 
@@ -5513,45 +5516,10 @@ class AISettingsPanel(QWidget):
         rect = self.rect()
         if rect.width() <= 0 or rect.height() <= 0:
             return
-        painter.fillRect(rect, UI_THEME["border"])
-        painter.fillRect(
-            rect.adjusted(self._layer, self._layer, -self._layer, -self._layer),
-            UI_THEME["mid"],
+        visual = build_ai_settings_panel_visual(
+            Size(rect.width(), rect.height()),
+            top_watermark_text=self._gpu_watermark_text,
+            side_watermark_text=self._panel_watermark_text,
+            inset=self._layer,
         )
-        painter.fillRect(
-            rect.adjusted(self._border, self._border, -self._border, -self._border),
-            UI_THEME["bg"],
-        )
-
-        wm_color = QColor(UI_THEME["deep_pink"])
-        wm_color.setAlpha(220)
-        painter.setPen(wm_color)
-
-        # 顶部硬件水印：字号缩小为左下水印的 1/3，贴顶并水平居中。
-        wm_font_small = get_digit_font(size=max(scale_px(8, min_abs=6), scale_px(46, min_abs=24) // 3))
-        wm_font_small.setBold(True)
-        painter.setFont(wm_font_small)
-        top_wm_h = max(scale_px(42, min_abs=18), int(self.height() * 0.14))
-        top_wm_rect = rect.adjusted(
-            self._border + scale_px(6),
-            self._border + scale_px(1),
-            -self._border - scale_px(6),
-            -(self.height() - top_wm_h - self._border - scale_px(1)),
-        )
-        painter.drawText(top_wm_rect, Qt.AlignHCenter | Qt.AlignTop, self._gpu_watermark_text)
-
-        wm_font = get_digit_font(
-            size=max(scale_px(12, min_abs=10), int(round(scale_px(46, min_abs=24) * _LEFT_WM_SCALE)))
-        )
-        wm_font.setBold(True)
-        painter.setFont(wm_font)
-        wm_width = max(scale_px(80, min_abs=1), int(round((self.width() // 2) * _LEFT_WM_SCALE)))
-        wm_height = max(scale_px(80, min_abs=1), int(round((self.height() * 0.42) * _LEFT_WM_SCALE)))
-        wm_shift_right = scale_px(30, min_abs=24)
-        wm_rect = rect.adjusted(
-            self._border + scale_px(8) + wm_shift_right,
-            self.height() - wm_height - self._border - scale_px(6),
-            -(self.width() - wm_width - self._border - scale_px(8) - wm_shift_right),
-            -self._border - scale_px(6),
-        )
-        painter.drawText(wm_rect, Qt.AlignLeft | Qt.AlignBottom, self._panel_watermark_text)
+        self._draw_backend.render(visual.batch, painter)

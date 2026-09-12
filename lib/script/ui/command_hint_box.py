@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from PyQt5.QtWidgets import QWidget, QApplication, QGraphicsOpacityEffect
 from PyQt5.QtCore import Qt, QPoint, QPropertyAnimation, QEasingCurve
-from PyQt5.QtGui import QFontMetrics, QPainter
+from PyQt5.QtGui import QPainter
 
 from config.config import UI
 from config.tooltip_config import TOOLTIPS
@@ -27,7 +27,8 @@ from lib.core.graphics.application_visuals import (
     build_command_hint_visual,
     command_hint_side_font_size,
 )
-from lib.core.graphics.types import FontSpec, Rect
+from lib.core.graphics.types import Rect
+from lib.core.qt_bridge.text_metrics import QtTextMetrics
 from lib.core.qt_bridge.draw_backend import QtDrawBackend
 from config.scale import scale_px
 from lib.core.event.center import get_event_center, EventType, Event
@@ -43,46 +44,6 @@ _GAP_Y       = scale_px(2, min_abs=1)   # 与 CommandDialog 的垂直间距（px
 
 # ── 无输入时显示的默认提示行 ──────────────────────────────────────────
 _DEFAULT_HINTS: list[str] = list(COMMAND_HINT_DEFAULT_ITEMS)
-
-
-class _QtCommandHintTextMetrics:
-    """Expose only low-level Qt glyph metrics to the shared presenter."""
-
-    def __init__(self, default_font, digit_font, side_font) -> None:
-        self._default_metrics = QFontMetrics(default_font)
-        self._digit_metrics = QFontMetrics(digit_font)
-        self._side_metrics = QFontMetrics(side_font)
-        self.default_font = FontSpec(
-            default_font.family(),
-            default_font.pixelSize(),
-            default_font.bold(),
-        )
-        self.digit_font = FontSpec(
-            digit_font.family(),
-            digit_font.pixelSize(),
-            digit_font.bold(),
-        )
-        self.side_font = FontSpec(
-            side_font.family(),
-            side_font.pixelSize(),
-            side_font.bold(),
-        )
-        self.default_ascent = float(self._default_metrics.ascent())
-        self.default_descent = float(self._default_metrics.descent())
-        self.digit_ascent = float(self._digit_metrics.ascent())
-        self.digit_descent = float(self._digit_metrics.descent())
-
-    def measure(
-        self,
-        text: str,
-        *,
-        digit: bool = False,
-        side: bool = False,
-    ) -> float:
-        metrics = self._side_metrics if side else (
-            self._digit_metrics if digit else self._default_metrics
-        )
-        return float(metrics.horizontalAdvance(str(text or "")))
 
 
 class CommandHintBox(QWidget):
@@ -119,10 +80,10 @@ class CommandHintBox(QWidget):
         self._side_label_font = get_digit_font(
             size=command_hint_side_font_size(self._font.pixelSize())
         )
-        self._text_metrics = _QtCommandHintTextMetrics(
+        self._text_metrics = QtTextMetrics(
             self._font,
             self._digit_font,
-            self._side_label_font,
+            side_font=self._side_label_font,
         )
         self._draw_backend = QtDrawBackend()
         self._visual: CommandHintVisualDescription | None = None

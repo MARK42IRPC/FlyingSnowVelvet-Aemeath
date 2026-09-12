@@ -8,7 +8,7 @@ from typing import Protocol
 
 from PIL import Image
 
-from config.config_ui import COLORS, UI_THEME
+from .palette import COLORS, UI_THEME
 from config.font_config import FONT, get_digit_font_family, get_ui_font_family
 from config.scale import scale_px
 from lib.core.layer import Layer
@@ -396,6 +396,7 @@ def build_tooltip_visual(
     padding_y: float = 3,
     border_width: float = 1,
     opacity: float = 0.8,
+    min_text_width: float = 0.0,
     layer: int = int(Layer.TOOLTIP),
 ) -> BubbleVisualDescription:
     """Resolve the project tooltip style without a GUI toolkit dependency."""
@@ -420,6 +421,7 @@ def build_tooltip_visual(
         ),
         default=0.0,
     )
+    text_width = max(float(text_width), float(min_text_width))
     width = max(1, int(round(text_width + padding_x * 2 + border_width * 4)))
     height = max(1, int(round(len(lines) * line_height + padding_y * 2 + border_width * 4)))
     inner = Rect(

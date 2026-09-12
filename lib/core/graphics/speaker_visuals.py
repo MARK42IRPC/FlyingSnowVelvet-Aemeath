@@ -5,12 +5,13 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from config.config_music import SPEAKER_SEARCH_UI
-from config.config_ui import COLORS, UI_THEME
+from .palette import COLORS, UI_THEME
 from config.font_config import FONT, get_ui_font_family
 from config.scale import scale_px
 from lib.core.layer import Layer
 
 from .commands import DrawBatch, RectCommand, TextAlignment, TextCommand
+from .panel_visuals import action_button_commands, panel_shell_commands
 from .types import FontSpec, Rect, Size
 
 
@@ -67,18 +68,14 @@ def speaker_visual_hit_test(
 
 
 def _panel_commands(rect: Rect, *, layer: int, z: int) -> list[object]:
-    inset = scale_px(2, min_abs=1)
-    return [
-        RectCommand(rect, fill=UI_THEME["border"], layer=layer, z=z),
-        RectCommand(
-            Rect(rect.x + inset, rect.y + inset, rect.width - inset * 2, rect.height - inset * 2),
-            fill=UI_THEME["mid"], layer=layer, z=z + 1,
-        ),
-        RectCommand(
-            Rect(rect.x + inset * 2, rect.y + inset * 2, rect.width - inset * 4, rect.height - inset * 4),
-            fill=UI_THEME["bg"], layer=layer, z=z + 2,
-        ),
-    ]
+    return panel_shell_commands(
+        rect,
+        layer=layer,
+        z=z,
+        border=UI_THEME["border"],
+        mid=UI_THEME["mid"],
+        bg=UI_THEME["bg"],
+    )[0]
 
 
 def _button_commands(
@@ -90,49 +87,9 @@ def _button_commands(
     layer: int,
     z: int,
 ) -> list[object]:
-    inset = scale_px(2, min_abs=1)
-    commands = [
-        RectCommand(rect, fill=COLORS["black"], layer=layer, z=z),
-        RectCommand(
-            Rect(rect.x + inset, rect.y + inset, rect.width - inset * 2, rect.height - inset * 2),
-            fill=COLORS["cyan"], layer=layer, z=z + 1,
-        ),
-    ]
-    hovered = state in {"hover", "pressed"}
-    if hovered:
-        commands.append(RectCommand(
-            Rect(rect.x + inset * 2, rect.y + inset * 2, rect.width - inset * 4, rect.height - inset * 4),
-            fill=UI_THEME["deep_pink"], layer=layer, z=z + 2,
-        ))
-        content = Rect(
-            rect.x + inset * 3, rect.y + inset * 3,
-            rect.width - inset * 6, rect.height - inset * 6,
-        )
-        content_z = z + 3
-    else:
-        content = Rect(
-            rect.x + inset * 2, rect.y + inset * 2,
-            rect.width - inset * 4, rect.height - inset * 4,
-        )
-        content_z = z + 2
-    commands.extend((
-        RectCommand(
-            content,
-            fill=UI_THEME["highlight"] if state == "pressed" else COLORS["pink"],
-            layer=layer,
-            z=content_z,
-        ),
-        TextCommand(
-            label,
-            font,
-            COLORS["black"],
-            content,
-            alignment=int(TextAlignment.HCENTER | TextAlignment.VCENTER),
-            layer=layer,
-            z=content_z + 1,
-        ),
-    ))
-    return commands
+    return action_button_commands(
+        rect, label, font, state=state, layer=layer, z=z
+    )[0]
 
 
 def _elide(text: str, width: float, metrics: SpeakerTextMetrics) -> str:

@@ -6,28 +6,9 @@ import config.config_runtime as _config_runtime
 
 from config.scale import scale_px
 from config.font_config import FONT
-from lib.core.graphics.types import Color
+from lib.core.graphics.palette import COLORS, UI_THEME
 
 
-COLORS = {
-    'pink':  Color(255, 182, 193),   # 淡粉色 #FFB6C1
-    'cyan':  Color(173, 216, 230),   # 浅青色 #ADD8E6
-    'deep_blue': Color(35, 76, 128), # 深蓝色 #234C80
-    'black': Color(0,   0,   0),
-    'text':  Color(51,  51,  51),
-}
-UI_THEME = {
-    'border':       Color(0,   0,   0),     # 黑色外框
-    'mid':          Color(173, 216, 230),   # 浅青色中框（主宠物同款）
-    'bg':           Color(255, 182, 193),   # 淡粉色背景（主宠物粉色）
-    'text':         Color(0,   0,   0),     # 黑色字体
-    'icon':         Color(0,   0,   0),     # 黑色图标
-    'highlight':    Color(255, 200, 210),   # 高亮选中（稍亮的粉色）
-    # 深色版本（饱和度提高15%）
-    'deep_cyan':    Color(129, 198, 221),   # 深青色（浅青色饱和度+15%）
-    'deep_pink':    Color(255, 149, 164),   # 深粉色（浅粉色饱和度+15%）
-    'deep_blue':    Color(35,  76, 128),    # 深蓝色
-}
 WINDOW = {}
 UI = {
     'cmd_window_width':        scale_px(240),   # CMD窗口宽度（包含2px黑边）

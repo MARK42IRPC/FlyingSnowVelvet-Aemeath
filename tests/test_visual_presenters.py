@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from config.config import COMMAND_DIALOG, UI
+from config.config_ui import COLORS as CONFIG_COLORS, UI_THEME as CONFIG_UI_THEME
 from lib.core.dx_bridge.effect_system import DxEffectOverlay, build_effect_batch as build_dx_effect_batch
 from lib.core.dx_bridge.particle_system import build_particle_batch as build_dx_particle_batch
 from lib.core.event.center import Event, EventType
@@ -44,6 +45,7 @@ from lib.core.graphics.visuals import (
     update_speaker_intensity,
 )
 from lib.core.layer import Layer
+from lib.core.graphics.palette import COLORS as CORE_COLORS, UI_THEME as CORE_UI_THEME
 from lib.core.graphics.workbench_tokens import get_workbench_token_colors
 
 
@@ -457,6 +459,81 @@ class VisualPresenterTests(unittest.TestCase):
                 name = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
                 if name in forbidden:
                     violations.append(f"{path.name}:{node.lineno}:{name}")
+        self.assertEqual(violations, [])
+
+    def test_core_does_not_read_config_ui_for_product_colours(self):
+        """``lib/core`` owns the palette; only the config layer may re-export it."""
+        repo = Path(__file__).resolve().parents[1]
+        violations = []
+        for path in sorted((repo / "lib/core").rglob("*.py")):
+            if "__pycache__" in path.parts:
+                continue
+            relative = path.relative_to(repo).as_posix()
+            tree = ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        if alias.name == "config.config_ui" or alias.name.startswith("config.config_ui."):
+                            violations.append(f"{relative}:{node.lineno}:import config.config_ui")
+                elif isinstance(node, ast.ImportFrom):
+                    module = node.module or ""
+                    if module == "config.config_ui" or module.startswith("config.config_ui."):
+                        violations.append(f"{relative}:{node.lineno}:from config.config_ui")
+                    elif module == "config" and any(alias.name == "config_ui" for alias in node.names):
+                        violations.append(f"{relative}:{node.lineno}:from config import config_ui")
+                elif isinstance(node, ast.Attribute) and node.attr == "config_ui":
+                    violations.append(f"{relative}:{node.lineno}:config.config_ui")
+        self.assertEqual(violations, [])
+
+    def test_config_ui_reexports_the_core_palette_objects(self):
+        """User overrides must land on the same dicts the presenters read."""
+        self.assertIs(CONFIG_COLORS, CORE_COLORS)
+        self.assertIs(CONFIG_UI_THEME, CORE_UI_THEME)
+        self.assertEqual(CORE_COLORS["pink"], Color(255, 182, 193))
+        self.assertEqual(CORE_COLORS["cyan"], Color(173, 216, 230))
+        self.assertEqual(CORE_UI_THEME["highlight"], Color(255, 200, 210))
+        self.assertEqual(CORE_UI_THEME["deep_pink"], Color(255, 149, 164))
+
+    def test_qt_panel_hosts_only_execute_shared_visuals(self):
+        """Migrated panel hosts may keep vector glyphs but not product fills/text.
+
+        Vector icons (``drawPolygon``/``drawLine``/``drawRect``) still live in
+        the hosts until the command contract gains a polygon primitive, but the
+        layered panel fills and every text run must come from a shared batch.
+        """
+        repo = Path(__file__).resolve().parents[1]
+        hosts = (
+            "lib/script/ui/mic_stt_indicator.py",
+            "lib/script/ui/tooltip_panel.py",
+            "lib/script/ui/ai_settings_tabs.py",
+            "lib/script/ui/ai_settings_panel.py",
+            "lib/script/ui/progress_panel.py",
+            "lib/script/ui/playlist_panel.py",
+            "lib/script/ui/speaker_search_result_box.py",
+            "lib/script/ui/speaker_menu_style.py",
+            "lib/script/ui/cmd_window.py",
+        )
+        forbidden = {
+            "Color",
+            "EllipseCommand",
+            "LineCommand",
+            "RectCommand",
+            "SpriteCommand",
+            "TextCommand",
+            "drawText",
+            "draw_mixed_text",
+            "fillRect",
+        }
+        violations = []
+        for relative in hosts:
+            path = repo / relative
+            tree = ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                name = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
+                if name in forbidden:
+                    violations.append(f"{relative}:{node.lineno}:{name}")
         self.assertEqual(violations, [])
 
     def test_dx_exports_delegate_to_shared_presenters(self):

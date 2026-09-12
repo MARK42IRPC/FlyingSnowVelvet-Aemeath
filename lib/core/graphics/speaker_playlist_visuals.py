@@ -3,12 +3,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from config.config_ui import COLORS, UI_THEME
+from .palette import COLORS, UI_THEME
 from config.font_config import FONT, get_ui_font_family
 from config.scale import scale_px
 from lib.core.layer import Layer
 
 from .commands import DrawBatch, RectCommand, TextAlignment, TextCommand
+from .panel_visuals import panel_shell_commands
 from .speaker_visuals import SpeakerTextMetrics
 from .types import FontSpec, Rect, Size
 
@@ -68,27 +69,7 @@ def speaker_playlist_hit_test(
 
 
 def _panel_commands(rect: Rect, layer: int, z: int = 0) -> list[object]:
-    return [
-        RectCommand(rect, fill=COLORS["black"], layer=layer, z=z),
-        RectCommand(
-            Rect(
-                rect.x + _LAYER_WIDTH,
-                rect.y + _LAYER_WIDTH,
-                rect.width - _LAYER_WIDTH * 2,
-                rect.height - _LAYER_WIDTH * 2,
-            ),
-            fill=COLORS["cyan"], layer=layer, z=z + 1,
-        ),
-        RectCommand(
-            Rect(
-                rect.x + _BORDER,
-                rect.y + _BORDER,
-                rect.width - _BORDER * 2,
-                rect.height - _BORDER * 2,
-            ),
-            fill=COLORS["pink"], layer=layer, z=z + 2,
-        ),
-    ]
+    return panel_shell_commands(rect, inset=_LAYER_WIDTH, layer=layer, z=z)[0]
 
 
 def _button_commands(
