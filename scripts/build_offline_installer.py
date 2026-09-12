@@ -134,6 +134,7 @@ def _archive_entries(payload: Path) -> list[tuple[Path, str]]:
         ".tmp-ort.json",
         "安装依赖.bat",
         "调试模式.bat",
+        "启动程序.bat",
     }
     excluded_app_parts = {
         ".claude",
@@ -194,7 +195,6 @@ def validate_payload(payload: Path) -> None:
         ".fsv-install-root",
         "app/py.ini",
         "app/lib/core/qt_desktop_pet.py",
-        "app/FlyingSnowVelvetLauncher.exe",
         "app/启动飞行雪绒.exe",
         "app/卸载飞行雪绒.exe",
         "app/services/dsh-office-runtime/package.json",
@@ -599,7 +599,7 @@ def compile_payload_binaries(
         compile_root=compile_root / "launcher",
         source_name="launcher.c",
         manifest_name="launcher.manifest",
-        output_name="FlyingSnowVelvetLauncher.exe",
+        output_name="FSVLauncher.exe",
     )
     uninstaller = _compile_payload_binary(
         source_root=source_root,
@@ -612,9 +612,8 @@ def compile_payload_binaries(
     )
     app_root = payload / "app"
     app_root.mkdir(parents=True, exist_ok=True)
-    # Keep the historical Chinese filename for Explorer/UI compatibility and
-    # provide an ASCII alias for the generated batch file.
-    shutil.copy2(launcher, app_root / "FlyingSnowVelvetLauncher.exe")
+    # The package ships exactly two executables: the launcher and the
+    # uninstaller. No batch entry point is generated for the offline package.
     shutil.copy2(launcher, app_root / "启动飞行雪绒.exe")
     shutil.copy2(uninstaller, app_root / "卸载飞行雪绒.exe")
 

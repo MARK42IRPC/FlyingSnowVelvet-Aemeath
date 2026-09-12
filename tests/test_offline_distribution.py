@@ -155,15 +155,16 @@ class OfflineDistributionTests(unittest.TestCase):
         self.assertTrue(distribution.excluded(Path("build/offline-release/workspace/payload.zip")))
         self.assertTrue(distribution.excluded(Path(".venv/Lib/site-packages/runtime.py")))
 
-    def test_generated_release_batch_is_ascii_and_uses_launcher_alias(self):
+    def test_source_batch_entry_is_excluded_from_payload(self):
+        self.assertTrue(distribution.excluded(Path("启动程序.bat")))
+
+    def test_generated_release_config_ships_no_batch_entry(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             app_root = Path(tmpdir) / "app"
             distribution.write_release_launcher_config(app_root)
-            raw = (app_root / "启动程序.bat").read_bytes()
-            self.assertTrue(raw.startswith(b"@echo off"))
-            self.assertNotIn(b"\xef\xbb\xbf", raw)
-            self.assertTrue(all(byte < 128 for byte in raw))
-            self.assertIn(b"FlyingSnowVelvetLauncher.exe", raw)
+            self.assertFalse((app_root / "启动程序.bat").exists())
+            config = (app_root / "py.ini").read_text(encoding="utf-8")
+            self.assertIn("..\\runtime\\python311\\pythonw.exe", config)
 
     def test_installer_rejects_version_different_from_workspace_manifest(self):
         with tempfile.TemporaryDirectory() as tmpdir:

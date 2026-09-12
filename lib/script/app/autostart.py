@@ -14,6 +14,10 @@ from lib.script.app.desktop_shortcut import (
     _get_shortcut_target,
     _paths_refer_same_file,
 )
+from lib.script.app.launch_entry import (
+    source_launch_script_path,
+    resolve_launch_entry,
+)
 
 
 _logger = get_logger(__name__)
@@ -25,14 +29,21 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
 def get_project_root() -> Path:
-    """Return the directory containing the active launch batch file."""
+    """Return the directory containing the active launch entry."""
     if bool(getattr(sys, "frozen", False)):
         return Path(sys.executable).resolve().parent
     return _PROJECT_ROOT
 
 
 def get_launch_script_path() -> Path:
-    return get_project_root() / "启动程序.bat"
+    """Return the packaged launcher exe when present, else the source batch."""
+    root = get_project_root()
+    return resolve_launch_entry(root) or source_launch_script_path(root)
+
+
+def get_legacy_launch_script_path() -> Path:
+    """Return the pre-package batch entry, still recognized during upgrades."""
+    return source_launch_script_path(get_project_root())
 
 
 def get_user_startup_dir() -> Path | None:
@@ -86,11 +97,31 @@ def _remove_legacy_registry_value() -> None:
         pass
 
 
-def _shortcut_targets_launch_script(shortcut_path: Path) -> bool:
+def _shortcut_targets_current_entry(shortcut_path: Path) -> bool:
     if not shortcut_path.is_file():
         return False
     target, _message = _get_shortcut_target(str(shortcut_path))
     return bool(target) and _paths_refer_same_file(str(target), str(get_launch_script_path()))
+
+
+def _shortcut_targets_legacy_entry(shortcut_path: Path) -> bool:
+    if not shortcut_path.is_file():
+        return False
+    legacy = get_legacy_launch_script_path()
+    if not legacy.is_file():
+        return False
+    target, _message = _get_shortcut_target(str(shortcut_path))
+    return bool(target) and _paths_refer_same_file(str(target), str(legacy))
+
+
+def _shortcut_targets_launch_script(shortcut_path: Path) -> bool:
+    """Accept the packaged entry and the batch entry from a previous release.
+
+    An existing Startup shortcut that still points at ``启动程序.bat`` keeps the
+    user's autostart preference enabled across the upgrade; the next
+    ``enable_autostart`` call rewrites it to the packaged launcher.
+    """
+    return _shortcut_targets_current_entry(shortcut_path) or _shortcut_targets_legacy_entry(shortcut_path)
 
 
 def is_autostart_enabled() -> bool:
@@ -123,7 +154,7 @@ def enable_autostart() -> tuple[bool, str]:
 
     try:
         startup_dir.mkdir(parents=True, exist_ok=True)
-        if _shortcut_targets_launch_script(shortcut_path):
+        if _shortcut_targets_current_entry(shortcut_path):
             _remove_legacy_registry_value()
             return True, ""
 
@@ -184,7 +215,23 @@ def disable_autostart() -> tuple[bool, str]:
 
 
 def migrate_legacy_autostart() -> None:
-    """Migrate a valid old HKCU Run entry once, without elevating privileges."""
+    """Migrate old launch entries once, without elevating privileges.
+
+    Two legacy forms exist: the HKCU Run value, and a Startup shortcut that
+    still points at ``启动程序.bat`` from a release that shipped the batch entry.
+    Both are rewritten to the currently preferred launch entry.
+    """
+    shortcut_path = get_startup_shortcut_path()
+    if (
+        shortcut_path is not None
+        and _shortcut_targets_legacy_entry(shortcut_path)
+        and not _shortcut_targets_current_entry(shortcut_path)
+    ):
+        ok, message = enable_autostart()
+        if not ok:
+            _logger.warning("迁移旧自启动快捷方式失败: %s", message)
+        return
+
     if is_autostart_enabled():
         _remove_legacy_registry_value()
         return
@@ -193,7 +240,10 @@ def migrate_legacy_autostart() -> None:
     if not legacy_value:
         return
     legacy_target = legacy_value.strip().strip('"')
-    if not _paths_refer_same_file(legacy_target, str(get_launch_script_path())):
+    if not (
+        _paths_refer_same_file(legacy_target, str(get_launch_script_path()))
+        or _paths_refer_same_file(legacy_target, str(get_legacy_launch_script_path()))
+    ):
         return
 
     ok, message = enable_autostart()
@@ -204,6 +254,7 @@ def migrate_legacy_autostart() -> None:
 __all__ = [
     "disable_autostart",
     "enable_autostart",
+    "get_legacy_launch_script_path",
     "get_launch_script_path",
     "get_project_root",
     "get_startup_shortcut_path",

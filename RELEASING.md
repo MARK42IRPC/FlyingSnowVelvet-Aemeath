@@ -86,8 +86,8 @@ payload；`build_offline_installer.py` 再编译原生安装器并追加 ZIP 与
 4. 完成后显示“安装完成”，只有用户点击“退出安装并启动飞行雪绒”才启动程序。
 5. 启动器只使用 payload 内 Python/Node，并清理 `PYTHONPATH`、`PYTHONHOME`、
    `NODE_PATH`、外部 Qt/OpenSSL 等环境覆盖。
-   `启动程序.bat` 使用无 BOM 的 ASCII 内容并调用 `FlyingSnowVelvetLauncher.exe` 别名，
-   以兼容 Windows 非 UTF-8 代码页。
+   package 内只保留 `启动飞行雪绒.exe` 与 `卸载飞行雪绒.exe`，不生成
+   `启动程序.bat`；快捷方式与开机启动直接指向启动 exe。
 6. `app/卸载飞行雪绒.exe` 删除安装目录及 `C:\AemeathDeskPet` 契约目录。
 
 更新流程下载同一个离线安装器 EXE，校验尾记录后传入现有安装目录；桌宠退出后由

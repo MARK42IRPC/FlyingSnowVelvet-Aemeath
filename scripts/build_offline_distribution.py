@@ -190,6 +190,7 @@ EXCLUDED_ROOT_FILES = {
     "install_deps.py",
     "安装依赖.bat",
     "调试模式.bat",
+    "启动程序.bat",
     ".tmp-office-settings.png",
     ".tmp-ort.json",
     "pyproject.toml",
@@ -995,18 +996,6 @@ def write_release_launcher_config(app_root: Path) -> None:
         "python_executable = ..\\runtime\\python311\\python.exe\n"
         "pythonw_executable = ..\\runtime\\python311\\pythonw.exe\n",
         encoding="utf-8",
-    )
-    # Keep this compatibility entry point ASCII-only. cmd.exe interprets a
-    # UTF-8 BOM or a UTF-8 Chinese executable name using the active code page,
-    # which turns the generated batch into an unusable command on Windows.
-    # The native launcher is copied under the stable ASCII alias below.
-    (app_root / "启动程序.bat").write_text(
-        "@echo off\n"
-        "setlocal DisableDelayedExpansion\n"
-        "cd /d \"%~dp0\" || exit /b 1\n"
-        "\"%~dp0FlyingSnowVelvetLauncher.exe\" %*\n"
-        "exit /b %errorlevel%\n",
-        encoding="ascii",
     )
 
 

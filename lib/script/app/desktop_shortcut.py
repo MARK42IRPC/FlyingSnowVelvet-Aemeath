@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import os
 import subprocess
+from pathlib import Path
 
 from config.config import STARTUP
 from lib.core.logger import get_logger
 from lib.core.process_utils import hidden_process_kwargs
+from lib.script.app.launch_entry import resolve_launch_entry
 from lib.script.app.windows_command import build_encoded_powershell_command
 
 logger = get_logger(__name__)
@@ -279,11 +281,12 @@ def ensure_desktop_shortcut(script_dir: str) -> None:
             return
 
         script_dir = os.path.abspath(script_dir)
-        bat_path = os.path.join(script_dir, '启动程序.bat')
         ico_path = os.path.join(script_dir, 'resc', 'icon.ico')
-        if not os.path.exists(bat_path):
-            logger.debug('启动脚本不存在，跳过桌面快捷方式同步: %s', bat_path)
+        launch_entry = resolve_launch_entry(Path(script_dir))
+        if launch_entry is None:
+            logger.debug('启动入口不存在，跳过桌面快捷方式同步: %s', script_dir)
             return
+        launch_target = str(launch_entry)
 
         desktop_paths = _collect_desktop_paths()
         if not desktop_paths:
@@ -304,12 +307,12 @@ def ensure_desktop_shortcut(script_dir: str) -> None:
 
         def _try_create_shortcut(desktop_path: str) -> bool:
             shortcut_path = os.path.join(desktop_path, '飞行雪绒.lnk')
-            expected_target = _normalize_file_path_for_compare(bat_path)
+            expected_target = _normalize_file_path_for_compare(launch_target)
 
             if os.path.exists(shortcut_path):
                 current_target, read_msg = _get_shortcut_target(shortcut_path)
                 current_target_norm = _normalize_file_path_for_compare(current_target or '')
-                if current_target and _paths_refer_same_file(current_target, bat_path):
+                if current_target and _paths_refer_same_file(current_target, launch_target):
                     logger.info('桌面快捷方式目标已正确（samefile），跳过重建: %s', shortcut_path)
                     return True
                 if current_target_norm and current_target_norm == expected_target:
@@ -321,7 +324,7 @@ def ensure_desktop_shortcut(script_dir: str) -> None:
                         '桌面快捷方式目标不匹配，准备重建: %s (current=%s, expected=%s)',
                         shortcut_path,
                         current_target,
-                        bat_path,
+                        launch_target,
                     )
                 else:
                     logger.debug(
@@ -340,7 +343,7 @@ def ensure_desktop_shortcut(script_dir: str) -> None:
 
             ok, msg = _create_shortcut_via_powershell(
                 shortcut_path=shortcut_path,
-                target_path=bat_path,
+                target_path=launch_target,
                 working_dir=script_dir,
                 description='飞行雪绒桌面宠物',
                 icon_path=icon_for_shortcut,
@@ -353,7 +356,7 @@ def ensure_desktop_shortcut(script_dir: str) -> None:
 
             ok, msg = _create_shortcut_via_pywin32(
                 shortcut_path=shortcut_path,
-                target_path=bat_path,
+                target_path=launch_target,
                 working_dir=script_dir,
                 description='飞行雪绒桌面宠物',
                 icon_path=icon_for_shortcut,
