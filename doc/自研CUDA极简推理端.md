@@ -417,4 +417,5 @@ Hangul 音节按 Unicode 算法展开，不进表。
 `peng2 you5` 变 `peng2 you3`、“试一试” `yi5` 变 `yi2` 等）；把 OpenCC `s2tw`
 换成恒等映射，有 2 句变化（“银行”里 `行` 的读音、“胡同儿”的儿化）。这些数据
 来自 `tools/dev_tokenizer_diff.py` 同目录的消融脚本思路，移植前需要先决定
-jieba 词表与 posseg 概率表（约 13 MB）的落盘位置。
+jieba 词表与 posseg 概率表（约 11 MB）的落盘位置。离线包里这两份数据只由编译版
+`jieba_fast` 携带（`dict.txt` 与 `posseg/prob_*.py`），纯 Python `jieba` 已经剪掉。
