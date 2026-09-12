@@ -14,6 +14,7 @@ from typing import Optional
 from config.user_storage_paths import get_user_logs_dir
 from lib.core.event.center import Event, EventType, get_event_center
 from lib.core.logger import get_logger
+from lib.core.process_utils import hidden_process_kwargs
 from lib.script.bug_tracker.storage import get_bug_tracker_event_log_path
 
 logger = get_logger(__name__)
@@ -21,22 +22,6 @@ logger = get_logger(__name__)
 _IPC_HOST = "127.0.0.1"
 _IPC_PORT = 49673
 _STARTUP_WAIT_SECS = 6.0
-
-
-def _hidden_console_kwargs() -> dict[str, object]:
-    if os.name != "nt":
-        return {}
-    kwargs: dict[str, object] = {}
-    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    if creationflags:
-        kwargs["creationflags"] = creationflags
-    startupinfo_cls = getattr(subprocess, "STARTUPINFO", None)
-    if startupinfo_cls is not None:
-        startupinfo = startupinfo_cls()
-        startupinfo.dwFlags |= getattr(subprocess, "STARTF_USESHOWWINDOW", 0)
-        startupinfo.wShowWindow = getattr(subprocess, "SW_HIDE", 0)
-        kwargs["startupinfo"] = startupinfo
-    return kwargs
 
 
 def _project_root() -> Path:
@@ -124,7 +109,7 @@ class BugTrackerService:
                     cmd,
                     cwd=str(_project_root()),
                     env=env,
-                    **_hidden_console_kwargs(),
+                    **hidden_process_kwargs(),
                 )
                 self._set_tracked_process(proc)
             except Exception as exc:

@@ -7,6 +7,7 @@ import subprocess
 
 from config.config import STARTUP
 from lib.core.logger import get_logger
+from lib.core.process_utils import hidden_process_kwargs
 from lib.script.app.windows_command import build_encoded_powershell_command
 
 logger = get_logger(__name__)
@@ -48,6 +49,7 @@ def _run_capture_text(
         text=False,
         timeout=timeout,
         env=env,
+        **hidden_process_kwargs(),
     )
     stdout = _decode_process_output(result.stdout or b'')
     stderr = _decode_process_output(result.stderr or b'')

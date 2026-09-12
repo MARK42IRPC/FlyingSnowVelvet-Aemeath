@@ -15,6 +15,7 @@ from config.user_storage_paths import get_user_state_dir
 from lib.core.compute_hub import get_compute_hub
 from lib.core import dsh_runtime_contract as dsh_config
 from lib.core.logger import get_logger
+from lib.core.process_utils import hidden_process_kwargs
 
 
 logger = get_logger(__name__)
@@ -94,6 +95,7 @@ def resolve_node_executable() -> str | None:
             errors="replace",
             timeout=5,
             check=False,
+            **hidden_process_kwargs(),
         )
     except (OSError, subprocess.SubprocessError):
         return None
@@ -135,13 +137,6 @@ def runtime_readiness_error() -> str:
     if installed_error:
         return f"{installed_error}，请重新运行“安装依赖.bat”"
     return ""
-
-
-def _hidden_process_kwargs() -> dict:
-    if os.name != "nt":
-        return {}
-    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    return {"creationflags": flags} if flags else {}
 
 
 def _isolated_node_environment() -> dict[str, str]:
@@ -286,7 +281,7 @@ class DshOfficeRuntime:
                 encoding="utf-8",
                 errors="replace",
                 bufsize=1,
-                **_hidden_process_kwargs(),
+                **hidden_process_kwargs(),
             )
         except Exception:
             stderr_handle.close()
@@ -408,7 +403,7 @@ class DshOfficeRuntime:
                     stderr=subprocess.DEVNULL,
                     timeout=8,
                     check=False,
-                    **_hidden_process_kwargs(),
+                    **hidden_process_kwargs(),
                 )
                 try:
                     process.wait(timeout=3)

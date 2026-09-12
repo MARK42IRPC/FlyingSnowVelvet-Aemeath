@@ -11,6 +11,8 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
+from lib.core.process_utils import hidden_process_kwargs
+
 _SYS_INFO_FILE = "sys.txt"
 _FALLBACK_CONTROL_PANEL_WATERMARK = ("Aemeath", "AIsetting")
 _FALLBACK_HARDWARE_WATERMARK = ("UnKnow GPU 0.00 GB", "RAM 0.00 GB")
@@ -80,7 +82,13 @@ def _decode_process_output(raw: bytes | None) -> str:
 
 
 def _run_capture_text(cmd: list[str], timeout: int) -> tuple[int, str, str]:
-    result = subprocess.run(cmd, capture_output=True, text=False, timeout=timeout)
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=False,
+        timeout=timeout,
+        **hidden_process_kwargs(),
+    )
     stdout = _decode_process_output(result.stdout or b'')
     stderr = _decode_process_output(result.stderr or b'')
     return result.returncode, stdout, stderr

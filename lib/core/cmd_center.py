@@ -8,6 +8,7 @@ logger = get_logger(__name__)
 from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.hash_cmd_registry import get_hash_cmd_registry
+from lib.core.process_utils import hidden_process_kwargs
 from config.config import TIMEOUTS
 
 
@@ -71,7 +72,11 @@ class CmdCenter:
         timeout_val = TIMEOUTS['cmd_exec']
         try:
             result = subprocess.run(
-                cmd, shell=True, capture_output=True, timeout=timeout_val
+                cmd,
+                shell=True,
+                capture_output=True,
+                timeout=timeout_val,
+                **hidden_process_kwargs(),
             )
             raw = result.stdout or result.stderr or b''
             output = raw.decode('gbk', errors='replace').strip() or '命令执行完成'

@@ -31,6 +31,7 @@ from config.version_info import (
     VOICE_PACKAGE_MODELSCOPE_REPO,
 )
 from lib.core.logger import get_logger
+from lib.core.process_utils import hidden_process_kwargs
 from lib.script.gsvmove.rar_backend import ensure_bundled_unrar
 
 
@@ -829,22 +830,6 @@ def missing_runtime_modules() -> tuple[str, ...]:
     return tuple(name for name in _RUNTIME_MODULES if importlib.util.find_spec(name) is None)
 
 
-def _hidden_console_kwargs() -> dict:
-    if os.name != "nt":
-        return {}
-    result: dict = {}
-    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    if flags:
-        result["creationflags"] = flags
-    startupinfo_class = getattr(subprocess, "STARTUPINFO", None)
-    if startupinfo_class is not None:
-        startupinfo = startupinfo_class()
-        startupinfo.dwFlags |= getattr(subprocess, "STARTF_USESHOWWINDOW", 0)
-        startupinfo.wShowWindow = getattr(subprocess, "SW_HIDE", 0)
-        result["startupinfo"] = startupinfo
-    return result
-
-
 def _extract_command(
     unrar_path: Path,
     archive: Path,
@@ -887,7 +872,7 @@ def _terminate_process(proc: subprocess.Popen) -> None:
                 stderr=subprocess.DEVNULL,
                 timeout=8,
                 check=False,
-                **_hidden_console_kwargs(),
+                **hidden_process_kwargs(),
             )
         else:
             proc.terminate()
@@ -1150,7 +1135,7 @@ class VoicePackageInstaller:
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
-            **_hidden_console_kwargs(),
+            **hidden_process_kwargs(),
         )
         with self._process_lock:
             self._active_process = proc
@@ -1223,7 +1208,7 @@ class VoicePackageInstaller:
                 stdin=subprocess.DEVNULL,
                 stdout=output,
                 stderr=subprocess.STDOUT,
-                **_hidden_console_kwargs(),
+                **hidden_process_kwargs(),
             )
             with self._process_lock:
                 self._active_process = proc
