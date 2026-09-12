@@ -697,6 +697,74 @@ void run_gather_elements_case() {
                        : error_detail());
 }
 
+/* ScatterElements(reduction="none"): the result starts as a copy of the
+   operand and the updates overwrite the positions the indices select. The
+   index tensor is narrower than the operand along the scattered axis and one
+   index is negative, which is the wrap the decoder's shapes rely on. */
+void run_scatter_elements_case() {
+    const int rows = 5;
+    const int columns = 6;
+    const int placed = 3;
+    std::vector<float> data(static_cast<std::size_t>(rows) * columns);
+    for (std::size_t index = 0; index < data.size(); ++index) {
+        data[index] = static_cast<float>(index) * 0.25f;
+    }
+    /* Indices are distinct within a row: reduction="none" leaves the order of
+       two writes to the same slot undefined, so a duplicate could not be
+       asserted against a reference the way the rest of this case is. */
+    const long long raw_indices[rows * placed] = {4, 1, 5, 0, 2, -1, 3, 5, 1,
+                                                  2, 0, 4, 3, 0, 4};
+    std::vector<float> updates(static_cast<std::size_t>(rows) * placed);
+    for (std::size_t index = 0; index < updates.size(); ++index) {
+        updates[index] = 100.0f + static_cast<float>(index);
+    }
+    std::vector<float> expected = data;
+    for (int row = 0; row < rows; ++row) {
+        for (int column = 0; column < placed; ++column) {
+            const std::size_t slot = static_cast<std::size_t>(row) * placed + column;
+            long long target = raw_indices[slot];
+            if (target < 0) target += columns;
+            expected[static_cast<std::size_t>(row) * columns +
+                     static_cast<std::size_t>(target)] = updates[slot];
+        }
+    }
+    fsv_cuda_ptr output_device = 0;
+    fsv_cuda_ptr indices_device = 0;
+    fsv_cuda_ptr updates_device = 0;
+    const std::size_t data_bytes = data.size() * sizeof(float);
+    const std::size_t index_bytes = updates.size() * sizeof(long long);
+    const std::size_t update_bytes = updates.size() * sizeof(float);
+    /* The entry point takes the operand already copied into the destination,
+       which is what the graph's device path does with one box copy first. */
+    bool ok = fsv_cuda_device_alloc(data_bytes, &output_device) == 0 &&
+              fsv_cuda_device_alloc(index_bytes, &indices_device) == 0 &&
+              fsv_cuda_device_alloc(update_bytes, &updates_device) == 0 &&
+              fsv_cuda_device_upload(output_device, data.data(), data_bytes) == 0 &&
+              fsv_cuda_device_upload(indices_device, raw_indices, index_bytes) == 0 &&
+              fsv_cuda_device_upload(updates_device, updates.data(), update_bytes) == 0;
+    fsv_cuda_index index{};
+    index.rank = 2;
+    index.shape[0] = rows;
+    index.shape[1] = placed;
+    index.a_stride[0] = columns;
+    index.a_stride[1] = 1;
+    int status = -1;
+    if (ok) {
+        status = fsv_cuda_scatter_elements_f32(updates_device, indices_device, output_device,
+                                               updates.size(), 1, columns, &index);
+    }
+    std::vector<float> actual(data.size(), 0.0f);
+    if (ok && status == 0) {
+        ok = fsv_cuda_device_download(actual.data(), output_device, data_bytes) == 0;
+    }
+    if (output_device) fsv_cuda_device_free(output_device, data_bytes);
+    if (indices_device) fsv_cuda_device_free(indices_device, index_bytes);
+    if (updates_device) fsv_cuda_device_free(updates_device, update_bytes);
+    report("scatter_elements_dev", ok && status == 0 && close_enough(expected, actual, 1e-6),
+           status == 0 ? "max err " + std::to_string(max_abs_error(expected, actual))
+                       : error_detail());
+}
+
 /* Where(condition, a, b) with a byte condition. Three shapes matter: all three
    operands contiguous (the decoder's mask build), the condition broadcast over
    the result (the generic walk) and one operand a single value (the attention
@@ -788,6 +856,7 @@ void check_device_operators() {
     run_reduce_case("reduce_block_max", 4, 15, 1, 2);
     run_reduce_case("reduce_block_l2", 3, 5, 2, 3);
     run_gather_elements_case();
+    run_scatter_elements_case();
     run_where_case("where_contiguous", false, false, false);
     run_where_case("where_condition_broadcast", true, false, false);
     run_where_case("where_scalar_right", false, false, true);

@@ -1118,6 +1118,43 @@ FSV_KERNEL void fsv_gather_elements_f32(const float* data, const long long* indi
     output[flat] = data[offset + selected * data_stride[axis]];
 }
 
+/* ScatterElements(reduction="none"): the result is the operand with the
+   indexed positions overwritten, so the caller lays down a copy of the
+   operand first and this kernel writes the updates over it. The walk is the
+   index tensor's own coordinates with the axis coordinate replaced by the
+   index value, and a_stride carries the operand's strides in output dimension
+   order — the same convention as the gather kernel above, whose dual this is.
+   An out-of-range index is clamped to 0 exactly like gather clamps it; ONNX
+   calls one an error and the host path is the one that reports it. */
+FSV_KERNEL void fsv_scatter_elements_f32(const float* updates, const long long* indices,
+                                         float* output, unsigned long long count,
+                                         long long axis, long long axis_size,
+                                         FsvIndex index) {
+    const unsigned long long flat =
+        static_cast<unsigned long long>(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (flat >= count) return;
+    long long shape[FSV_MAX_RANK];
+    long long data_stride[FSV_MAX_RANK];
+    long long output_stride[FSV_MAX_RANK];
+    fsv_load_index(index, shape, data_stride, output_stride);
+    unsigned int rest = static_cast<unsigned int>(flat);
+    long long offset = 0;
+    for (int dim = index.rank - 1; dim >= 0; --dim) {
+        const unsigned int size = static_cast<unsigned int>(shape[dim]);
+        if (size > 1) {
+            const unsigned int coordinate = rest % size;
+            rest /= size;
+            if (dim != axis) {
+                offset += static_cast<long long>(coordinate) * data_stride[dim];
+            }
+        }
+    }
+    long long selected = indices[flat];
+    if (selected < 0) selected += axis_size;
+    if (selected < 0 || selected >= axis_size) selected = 0;
+    output[offset + selected * data_stride[axis]] = updates[flat];
+}
+
 /* Where(condition, a, b): the result takes a where the condition is non-zero
    and b otherwise. The condition is a byte tensor, so four condition bytes
    travel with four results, and the two operands take the same broadcast walk

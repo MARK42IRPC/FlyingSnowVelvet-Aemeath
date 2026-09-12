@@ -1180,6 +1180,26 @@ int fsv_cuda_gather_elements_f32(fsv_cuda_ptr data, fsv_cuda_ptr indices,
     return kOk;
 }
 
+/* ScatterElements(reduction="none"): the destination already holds a copy of
+   the operand and this writes the updates over the indexed positions. */
+int fsv_cuda_scatter_elements_f32(fsv_cuda_ptr updates, fsv_cuda_ptr indices,
+                                  fsv_cuda_ptr output, size_t count, long long axis,
+                                  long long axis_size, const fsv_cuda_index* index) {
+    DeviceIndex spec{};
+    if (!updates || !indices || !output || !count || !copy_index(index, spec) || axis < 0 ||
+        axis_size <= 0) {
+        fsv::nv_set_error("invalid scatter-elements arguments");
+        return kInvalidArgument;
+    }
+    if (!launch_1d("fsv_scatter_elements_f32", count, device_pointer<float>(updates),
+                   reinterpret_cast<const long long*>(indices),
+                   reinterpret_cast<float*>(output),
+                   static_cast<unsigned long long>(count), axis, axis_size, spec)) {
+        return kDriverFailure;
+    }
+    return kOk;
+}
+
 int fsv_cuda_matmul_dev(fsv_cuda_ptr a, fsv_cuda_ptr b, fsv_cuda_ptr c, int m, int k, int n) {
     return fsv_cuda_matmul_f32(device_pointer<float>(a), device_pointer<float>(b),
                                reinterpret_cast<float*>(c), m, k, n);

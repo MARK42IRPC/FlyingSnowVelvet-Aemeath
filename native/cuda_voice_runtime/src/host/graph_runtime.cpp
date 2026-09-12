@@ -3158,6 +3158,77 @@ bool device_gather_elements(const std::vector<Tensor*>& inputs, int64_t axis, Te
     return true;
 }
 
+/* ScatterElements is the dual of GatherElements above and ran on the host for
+   the same reason: the fallback downloads both operands, and the T2S decoder
+   evaluates it once per step, so the queue is drained 63 times a synthesis
+   for a node whose arithmetic is trivial. The device path lays down the copy
+   of the operand and scatters the updates with two launches instead. */
+bool device_scatter_elements(const std::vector<Tensor*>& inputs, int64_t axis,
+                             const std::string& reduction, Tensor& output) {
+    /* The reduction variants are a different operator; only "none" is the
+       overwrite this kernel and the host reference implement. */
+    if (reduction != "none" && !reduction.empty()) return device_decline(inputs);
+    if (inputs.size() < 3 || !inputs[1] || !inputs[2]) return device_decline(inputs);
+    if (!device_ready(inputs, 1)) return device_decline(inputs);
+    /* Indices travel as int64 integers and the updates as float32, the same
+       split GatherElements uses. */
+    if (inputs[1]->dtype != 7 || inputs[2]->dtype != 1) return device_decline(inputs);
+    const Tensor& data = *inputs[0];
+    const Tensor& positions = *inputs[1];
+    const Tensor& updates = *inputs[2];
+    const int64_t rank = static_cast<int64_t>(data.shape.size());
+    if (rank <= 0 || rank > 8) return device_decline(inputs);
+    if (positions.shape.size() != data.shape.size() ||
+        updates.shape.size() != data.shape.size()) {
+        return device_decline(inputs);
+    }
+    int64_t indexed = axis;
+    if (indexed < 0) indexed += rank;
+    if (indexed < 0 || indexed >= rank) return device_decline(inputs);
+    for (int64_t dim = 0; dim < rank; ++dim) {
+        if (dim == indexed) continue;
+        if (data.shape[static_cast<std::size_t>(dim)] !=
+                positions.shape[static_cast<std::size_t>(dim)] ||
+            data.shape[static_cast<std::size_t>(dim)] !=
+                updates.shape[static_cast<std::size_t>(dim)]) {
+            return device_decline(inputs);
+        }
+    }
+    if (positions.shape[static_cast<std::size_t>(indexed)] !=
+        updates.shape[static_cast<std::size_t>(indexed)]) {
+        return device_decline(inputs);
+    }
+    const int64_t count = positions.numel();
+    if (count <= 0 || data.numel() <= 0) return device_decline(inputs);
+    output = device_tensor(data.shape, 1);
+    if (!adopt_device_output(output)) return device_decline(inputs);
+    const fsv_cuda_ptr source = ensure_device(*inputs[0]);
+    const fsv_cuda_ptr slots = ensure_device(*inputs[1]);
+    const fsv_cuda_ptr values = ensure_device(*inputs[2]);
+    const std::vector<int64_t> own = strides_for(data.shape);
+    fsv_cuda_index index = {};
+    for (int64_t dim = 0; dim < rank; ++dim) {
+        index.shape[dim] = positions.shape[static_cast<std::size_t>(dim)];
+        index.a_stride[dim] = own[static_cast<std::size_t>(dim)];
+        /* The result is contiguous and shares the operand's shape, so the same
+           stride row describes both sides of the copy. */
+        index.b_stride[dim] = own[static_cast<std::size_t>(dim)];
+    }
+    index.rank = static_cast<int>(rank);
+    const fsv_cuda_ptr destination = output.device->pointer;
+    if (!source || !slots || !values ||
+        fsv_cuda_copy_nd_f32(source, destination, static_cast<std::size_t>(data.numel()),
+                             0, 0, static_cast<int>(rank), &index) != 0 ||
+        fsv_cuda_scatter_elements_f32(values, slots, destination,
+                                      static_cast<std::size_t>(count), indexed,
+                                      data.shape[static_cast<std::size_t>(indexed)],
+                                      &index) != 0) {
+        output = Tensor();
+        return device_decline(inputs);
+    }
+    return true;
+}
+
 /* Split along one axis, one device-to-device box copy per part. The host
    version downloaded the whole operand, cut it and uploaded every part again,
    which cost 106 MB of round trips per synthesis. */
@@ -4178,8 +4249,14 @@ bool GraphRuntime::run(const std::unordered_map<std::string, Tensor>& feeds,
                               std::to_string(attr_int(node, "axis", 0)));
         } else if (op == "ScatterElements") {
             const fsv::AttributeProto* reduction_attr = find_attr(node, "reduction");
-            output = scatter_elements_tensor(inputs[0], inputs[1], inputs[2],
-                attr_int(node, "axis", 0), reduction_attr ? reduction_attr->s : "none");
+            const std::string reduction = reduction_attr ? reduction_attr->s : "none";
+            if (!device_scatter_elements(slots, attr_int(node, "axis", 0), reduction, output)) {
+                output = scatter_elements_tensor(inputs[0], inputs[1], inputs[2],
+                    attr_int(node, "axis", 0), reduction);
+            }
+            layout_shape_note("scatter_elements " + shape_text(inputs[0].shape) + " " +
+                              shape_text(inputs[1].shape) + " axis=" +
+                              std::to_string(attr_int(node, "axis", 0)));
         } else if (op == "Cast") {
             output = cast_tensor(inputs[0], static_cast<int32_t>(attr_int(node, "to")));
         } else if (op == "CastLike") {

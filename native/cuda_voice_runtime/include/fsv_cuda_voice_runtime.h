@@ -201,6 +201,14 @@ FSV_CUDA_API int fsv_cuda_gather_elements_f32(fsv_cuda_ptr data, fsv_cuda_ptr in
                                               fsv_cuda_ptr output, size_t count,
                                               long long axis, long long axis_size,
                                               const fsv_cuda_index* index);
+/* ScatterElements(reduction="none"): the caller copies the operand into
+   ``output`` first and this writes the updates over it. ``index`` carries the
+   index tensor's shape with the operand's strides in output dimension order,
+   the same layout the gather entry point takes. */
+FSV_CUDA_API int fsv_cuda_scatter_elements_f32(fsv_cuda_ptr updates, fsv_cuda_ptr indices,
+                                               fsv_cuda_ptr output, size_t count,
+                                               long long axis, long long axis_size,
+                                               const fsv_cuda_index* index);
 /* Where(condition, a, b): a byte condition picks between two float operands.
    The condition carries its own stride row because the attention masks
    broadcast it over one of the operands. */
