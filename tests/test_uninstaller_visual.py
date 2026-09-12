@@ -155,6 +155,47 @@ class OfflineUninstallerVisualTests(unittest.TestCase):
         self.assertEqual(hovered.getpixel(voice_box), self._rgb("surface"))
         self.assertEqual(hovered.getpixel(data_box), self._rgb("surface"))
 
+    def test_cleanup_page_reuses_the_installer_bar_pair(self) -> None:
+        cleanup = self._run_case(96, 4)
+
+        # The scan bar (cyan) sits at y=320..344 and the delete bar (pink) at
+        # y=364..388, the same hairline-bordered rounded track the installer
+        # shows on its resource page.
+        self.assertEqual(cleanup.getpixel((100, 332)), self._rgb("cyan"))
+        self.assertEqual(cleanup.getpixel((820, 332)), self._rgb("cyan"))
+        self.assertEqual(cleanup.getpixel((100, 376)), self._rgb("pink"))
+        self.assertEqual(cleanup.getpixel((820, 376)), self._rgb("surface_raised"))
+        self.assertEqual(cleanup.getpixel((820, 365)), self._rgb("border"))
+
+        # The completed scan says so; the delete bar shows its percentage.
+        scan_text = sum(
+            1
+            for x in range(360, 520)
+            for y in range(324, 341)
+            if cleanup.getpixel((x, y)) == self._rgb("text")
+        )
+        delete_text = sum(
+            1
+            for x in range(410, 480)
+            for y in range(368, 385)
+            if cleanup.getpixel((x, y)) == self._rgb("text")
+        )
+        self.assertGreater(scan_text, 20)
+        self.assertGreater(delete_text, 10)
+
+        # The counters sit under the bars and the gap between the pair stays
+        # empty, so the page does not read as cramped.
+        stats_text = sum(
+            1
+            for x in range(40, 600)
+            for y in range(400, 418)
+            if cleanup.getpixel((x, y)) == self._rgb("text")
+        )
+        self.assertGreater(stats_text, 50)
+        for x in (200, 440, 700):
+            self.assertEqual(cleanup.getpixel((x, 352)), self._rgb("surface"))
+            self.assertEqual(cleanup.getpixel((x, 440)), self._rgb("surface"))
+
     def test_states_have_real_pixel_differences(self) -> None:
         images = {
             page: self._run_case(96, page)

@@ -25,11 +25,14 @@
 #define FSV_PATH_CAPACITY 1024
 #define WM_FSV_UNINSTALL_STATUS (WM_APP + 1)
 #define WM_FSV_UNINSTALL_DONE (WM_APP + 2)
+#define WM_FSV_UNINSTALL_PROGRESS (WM_APP + 3)
 #define IDC_UNINSTALL 2001
 #define IDC_EXIT 2002
 #define IDC_PROGRESS 2003
 #define IDC_DELETE_VOICE 2004
 #define IDC_DELETE_DATA 2005
+#define IDC_PROGRESS_DELETE 2006
+#define IDC_PROGRESS_STATS 2007
 #define FSV_CLIENT_WIDTH 880
 #define FSV_CLIENT_HEIGHT 568
 #define FSV_CHECKBOX_SIZE 20
@@ -78,6 +81,42 @@ static int g_hover_voice;
 static int g_hover_data;
 static BOOL g_voice_checked;
 static BOOL g_data_checked;
+static HWND g_progress_delete;
+static HWND g_progress_stats;
+
+/* Same rounded bar the installer uses on its resource page: a quiet track with
+   a hairline border, a plain rectangular chunk and centred text.  A negative
+   position means "amount unknown": the bar sweeps instead of filling. */
+typedef struct ProgressVisualState {
+    int minimum;
+    int maximum;
+    int position;
+    BOOL show_percent;
+    const wchar_t *complete_text;
+    const wchar_t *pending_text;
+    COLORREF fill_color;
+    COLORREF track_color;
+} ProgressVisualState;
+
+static ProgressVisualState g_scan_progress_visual;
+static ProgressVisualState g_delete_progress_visual;
+
+/* Cleanup progress, filled by the worker thread and read by the UI thread
+   through WM_FSV_UNINSTALL_PROGRESS. */
+typedef struct CleanupProgress {
+    ULONGLONG total_files;
+    ULONGLONG total_bytes;
+    ULONGLONG scanned_files;
+    ULONGLONG scanned_bytes;
+    ULONGLONG deleted_files;
+    ULONGLONG deleted_bytes;
+    ULONGLONG last_post_at;
+    BOOL scanning;
+} CleanupProgress;
+
+static CleanupProgress g_progress_state;
+
+static void post_cleanup_progress(BOOL force);
 
 static LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam);
 static LRESULT CALLBACK button_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam, UINT_PTR id, DWORD_PTR data);
@@ -193,7 +232,13 @@ static BOOL path_is_prefix_of(const wchar_t *prefix, const wchar_t *path) {
     return path[length] == L'\0' || path[length] == L'\\' || path[length] == L'/';
 }
 
-static BOOL delete_tree(const wchar_t *directory) {
+static ULONGLONG file_size_of(const WIN32_FIND_DATAW *data) {
+    return ((ULONGLONG)data->nFileSizeHigh << 32) | data->nFileSizeLow;
+}
+
+/* One traversal serves both cleanup phases: with ``count_only`` it only fills in
+   the totals the progress bars need, otherwise it deletes and reports. */
+static BOOL delete_tree(const wchar_t *directory, BOOL count_only) {
     wchar_t pattern[FSV_PATH_CAPACITY];
     WIN32_FIND_DATAW data;
     HANDLE search;
@@ -207,7 +252,7 @@ static BOOL delete_tree(const wchar_t *directory) {
         return FALSE;
     }
     if ((attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
-        return RemoveDirectoryW(directory);
+        return count_only ? TRUE : RemoveDirectoryW(directory);
     }
     if (!join_path(directory, L"*", pattern, ARRAYSIZE(pattern))) {
         SetLastError(ERROR_BUFFER_OVERFLOW);
@@ -227,14 +272,18 @@ static BOOL delete_tree(const wchar_t *directory) {
             }
             if ((data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) {
                 if ((data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
-                    if (!RemoveDirectoryW(child)) {
+                    if (!count_only && !RemoveDirectoryW(child)) {
                         success = FALSE;
                         break;
                     }
-                } else if (!delete_tree(child)) {
+                } else if (!delete_tree(child, count_only)) {
                     success = FALSE;
                     break;
                 }
+            } else if (count_only) {
+                g_progress_state.total_files += 1;
+                g_progress_state.total_bytes += file_size_of(&data);
+                post_cleanup_progress(FALSE);
             } else {
                 if ((data.dwFileAttributes & FILE_ATTRIBUTE_READONLY) != 0) {
                     SetFileAttributesW(child, data.dwFileAttributes & ~FILE_ATTRIBUTE_READONLY);
@@ -243,6 +292,9 @@ static BOOL delete_tree(const wchar_t *directory) {
                     success = FALSE;
                     break;
                 }
+                g_progress_state.deleted_files += 1;
+                g_progress_state.deleted_bytes += file_size_of(&data);
+                post_cleanup_progress(FALSE);
             }
         } while (FindNextFileW(search, &data));
         if (success && GetLastError() != ERROR_NO_MORE_FILES) {
@@ -251,6 +303,9 @@ static BOOL delete_tree(const wchar_t *directory) {
         FindClose(search);
     } else if (GetLastError() != ERROR_FILE_NOT_FOUND) {
         return FALSE;
+    }
+    if (count_only) {
+        return TRUE;
     }
     if ((attributes & FILE_ATTRIBUTE_READONLY) != 0) {
         SetFileAttributesW(directory, attributes & ~FILE_ATTRIBUTE_READONLY);
@@ -266,12 +321,15 @@ static void record_error(DWORD *error, DWORD code) {
 
 /* Optional cleanup must never remove the installation directory itself or one
    of its ancestors: the program tree is deleted once, after this step. */
-static void delete_optional_tree(const wchar_t *path, const wchar_t *install_root, DWORD *error) {
+static void delete_optional_tree(const wchar_t *path, const wchar_t *install_root, DWORD *error, BOOL count_only) {
     DWORD code;
     if (path_is_prefix_of(path, install_root)) {
         return;
     }
-    if (delete_tree(path)) {
+    if (delete_tree(path, count_only)) {
+        return;
+    }
+    if (count_only) {
         return;
     }
     code = GetLastError();
@@ -281,14 +339,27 @@ static void delete_optional_tree(const wchar_t *path, const wchar_t *install_roo
     record_error(error, code);
 }
 
-static void delete_optional_file(const wchar_t *path, DWORD *error) {
+static void delete_optional_file(const wchar_t *path, DWORD *error, BOOL count_only) {
     DWORD code;
+    if (count_only) {
+        WIN32_FIND_DATAW data;
+        HANDLE search = FindFirstFileW(path, &data);
+        if (search != INVALID_HANDLE_VALUE) {
+            g_progress_state.total_files += 1;
+            g_progress_state.total_bytes += file_size_of(&data);
+            FindClose(search);
+        }
+        return;
+    }
     if (!DeleteFileW(path)) {
         code = GetLastError();
         if (code != ERROR_FILE_NOT_FOUND && code != ERROR_PATH_NOT_FOUND) {
             record_error(error, code);
         }
+        return;
     }
+    g_progress_state.deleted_files += 1;
+    post_cleanup_progress(FALSE);
 }
 
 static BOOL desktop_office_workspace_path(wchar_t *output, size_t capacity) {
@@ -303,20 +374,20 @@ static BOOL desktop_office_workspace_path(wchar_t *output, size_t capacity) {
     return success;
 }
 
-static void delete_voice_package(const wchar_t *install_root, DWORD *error) {
+static void delete_voice_package(const wchar_t *install_root, DWORD *error, BOOL count_only) {
     wchar_t path[FSV_PATH_CAPACITY];
     if (join_path(SHARED_ROOT_DIRECTORY, L"voice", path, ARRAYSIZE(path))) {
-        delete_optional_tree(path, install_root, error);
+        delete_optional_tree(path, install_root, error, count_only);
     }
     if (join_path(SHARED_ROOT_DIRECTORY, L"models\\vosk", path, ARRAYSIZE(path))) {
-        delete_optional_tree(path, install_root, error);
+        delete_optional_tree(path, install_root, error, count_only);
     }
     if (join_path(SHARED_ROOT_DIRECTORY, L"start_gsvmove.bat", path, ARRAYSIZE(path))) {
-        delete_optional_file(path, error);
+        delete_optional_file(path, error, count_only);
     }
 }
 
-static void delete_user_data(const wchar_t *install_root, DWORD *error) {
+static void delete_user_data(const wchar_t *install_root, DWORD *error, BOOL count_only) {
     static const wchar_t *directories[] = {
         L"user",
         L"config",
@@ -328,11 +399,11 @@ static void delete_user_data(const wchar_t *install_root, DWORD *error) {
     size_t index;
     for (index = 0; index < ARRAYSIZE(directories); ++index) {
         if (join_path(SHARED_ROOT_DIRECTORY, directories[index], path, ARRAYSIZE(path))) {
-            delete_optional_tree(path, install_root, error);
+            delete_optional_tree(path, install_root, error, count_only);
         }
     }
     if (desktop_office_workspace_path(path, ARRAYSIZE(path))) {
-        delete_optional_tree(path, install_root, error);
+        delete_optional_tree(path, install_root, error, count_only);
     }
 }
 
@@ -359,28 +430,88 @@ static void post_status(const wchar_t *text) {
     }
 }
 
+static void format_size(ULONGLONG bytes, wchar_t *output, size_t capacity) {
+    if (bytes >= 1024ULL * 1024ULL * 1024ULL) {
+        StringCchPrintfW(output, capacity, L"%.2f GB", (double)bytes / (1024.0 * 1024.0 * 1024.0));
+    } else if (bytes >= 1024ULL * 1024ULL) {
+        StringCchPrintfW(output, capacity, L"%.1f MB", (double)bytes / (1024.0 * 1024.0));
+    } else {
+        StringCchPrintfW(output, capacity, L"%.0f KB", (double)bytes / 1024.0);
+    }
+}
+
+static int progress_percent(ULONGLONG completed, ULONGLONG total) {
+    if (total == 0) {
+        return 0;
+    }
+    return completed >= total ? 100 : (int)(completed * 100ULL / total);
+}
+
+/* Publish both bar positions to the window thread.  Called for every deleted
+   file, so the posts are coalesced to roughly twelve per second. */
+static void post_cleanup_progress(BOOL force) {
+    ULONGLONG now = GetTickCount64();
+    int scan;
+    int remove;
+    if (!force && g_progress_state.last_post_at != 0 && now - g_progress_state.last_post_at < 80) {
+        return;
+    }
+    g_progress_state.last_post_at = now;
+    if (g_progress_state.scanning) {
+        /* The total is still unknown while counting, so the scan bar sweeps. */
+        scan = -1;
+        remove = 0;
+    } else {
+        scan = 100;
+        remove = g_progress_state.total_bytes > 0
+            ? progress_percent(g_progress_state.deleted_bytes, g_progress_state.total_bytes)
+            : progress_percent(g_progress_state.deleted_files, g_progress_state.total_files);
+    }
+    PostMessageW(g_cleanup.window, WM_FSV_UNINSTALL_PROGRESS, (WPARAM)scan, (LPARAM)remove);
+}
+
 static DWORD WINAPI cleanup_worker(void *parameter) {
     CleanupContext *context = (CleanupContext *)parameter;
     HANDLE parent = OpenProcess(SYNCHRONIZE, FALSE, context->parent_pid);
     DWORD result = ERROR_SUCCESS;
+    DWORD counted = ERROR_SUCCESS;
+    ZeroMemory(&g_progress_state, sizeof(g_progress_state));
     if (parent != NULL) {
         WaitForSingleObject(parent, 30000);
         CloseHandle(parent);
     }
+    /* Count first so the delete bar has a real total instead of guessing.  The
+       same traversal then runs again to delete, which is cheap next to the
+       seventeen thousand files an installed copy contains. */
+    g_progress_state.scanning = TRUE;
+    post_status(L"正在统计待删除文件...");
+    post_cleanup_progress(TRUE);
+    if (context->delete_voice_package) {
+        delete_voice_package(context->install_root, &counted, TRUE);
+    }
+    if (context->delete_user_data) {
+        delete_user_data(context->install_root, &counted, TRUE);
+    }
+    delete_tree(context->install_root, TRUE);
+    g_progress_state.scanning = FALSE;
+    post_cleanup_progress(TRUE);
     if (context->delete_voice_package) {
         post_status(L"正在删除语音包与语音推理运行时...");
-        delete_voice_package(context->install_root, &result);
+        delete_voice_package(context->install_root, &result, FALSE);
     }
     if (context->delete_user_data) {
         post_status(L"正在删除飞行雪绒的记忆、用户配置与 APikey...");
-        delete_user_data(context->install_root, &result);
+        delete_user_data(context->install_root, &result, FALSE);
     }
     post_status(L"正在删除飞行雪绒程序文件...");
-    if (!delete_tree(context->install_root)) {
+    if (!delete_tree(context->install_root, FALSE)) {
         if (result == ERROR_SUCCESS) {
             result = GetLastError();
         }
     }
+    g_progress_state.deleted_files = g_progress_state.total_files;
+    g_progress_state.deleted_bytes = g_progress_state.total_bytes;
+    post_cleanup_progress(TRUE);
     prune_empty_shared_root();
     MoveFileExW(context->helper_path, NULL, MOVEFILE_DELAY_UNTIL_REBOOT);
     PostMessageW(context->window, WM_FSV_UNINSTALL_DONE, result, 0);
@@ -656,6 +787,167 @@ static LRESULT CALLBACK checkbox_proc(HWND window, UINT message, WPARAM wparam, 
     return DefSubclassProc(window, message, wparam, lparam);
 }
 
+static void paint_rounded_progress(HDC dc, const RECT *bounds, const ProgressVisualState *state) {
+    RECT panel;
+    RECT filled_area;
+    int span;
+    int filled;
+    FillRect(dc, bounds, g_surface_brush);
+    if (bounds->right - bounds->left < 6 || bounds->bottom - bounds->top < 6) {
+        return;
+    }
+    panel = *bounds;
+    InflateRect(&panel, -1, -1);
+    draw_round_panel(dc, &panel, state->track_color, FSV_COLOR_BORDER, ui_px(3));
+    span = state->maximum - state->minimum;
+    filled = 0;
+    if (state->position < 0) {
+        /* Unknown amount: sweep a quarter of the track instead of filling it. */
+        int width = panel.right - panel.left;
+        int chunk = width / 4;
+        if (chunk < ui_px(24)) {
+            chunk = ui_px(24);
+        }
+        if (chunk > width) {
+            chunk = width;
+        }
+        if (width > chunk) {
+            DWORD phase = (DWORD)(GetTickCount64() % 1600ULL);
+            int travel = width - chunk;
+            int offset = phase < 800
+                ? travel * (int)phase / 800
+                : travel * (int)(1600 - phase) / 800;
+            HBRUSH sweep_brush = CreateSolidBrush(state->fill_color);
+            filled_area = panel;
+            filled_area.left = panel.left + offset;
+            filled_area.right = filled_area.left + chunk;
+            FillRect(dc, &filled_area, sweep_brush);
+            DeleteObject(sweep_brush);
+        }
+    } else if (span > 0 && state->position > state->minimum) {
+        filled = (panel.right - panel.left) * (state->position - state->minimum) / span;
+        if (filled > panel.right - panel.left) {
+            filled = panel.right - panel.left;
+        }
+        if (filled > 0) {
+            HBRUSH fill_brush = CreateSolidBrush(state->fill_color);
+            filled_area = panel;
+            filled_area.right = panel.left + filled;
+            FillRect(dc, &filled_area, fill_brush);
+            DeleteObject(fill_brush);
+        }
+    }
+    if (state->show_percent) {
+        wchar_t label[64];
+        HFONT label_font = g_meta_font != NULL ? g_meta_font : (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+        if (state->position < 0) {
+            StringCchCopyW(label, ARRAYSIZE(label), state->pending_text != NULL ? state->pending_text : L"");
+        } else {
+            int label_percent = span > 0 ? (state->position - state->minimum) * 100 / span : 0;
+            if (label_percent < 0) {
+                label_percent = 0;
+            } else if (label_percent > 100) {
+                label_percent = 100;
+            }
+            if (label_percent >= 100 && state->complete_text != NULL) {
+                StringCchCopyW(label, ARRAYSIZE(label), state->complete_text);
+            } else {
+                StringCchPrintfW(label, ARRAYSIZE(label), L"%d%%", label_percent);
+            }
+        }
+        draw_text_block(dc, label_font, FSV_COLOR_TEXT, label, panel, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    }
+}
+
+static void draw_rounded_progress(HWND window, const ProgressVisualState *state) {
+    PAINTSTRUCT paint;
+    RECT bounds;
+    HDC dc = BeginPaint(window, &paint);
+    GetClientRect(window, &bounds);
+    paint_rounded_progress(dc, &bounds, state);
+    EndPaint(window, &paint);
+}
+
+static LRESULT CALLBACK progress_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam, UINT_PTR id, DWORD_PTR data) {
+    ProgressVisualState *state = (ProgressVisualState *)data;
+    LRESULT result;
+    switch (message) {
+    case PBM_SETRANGE32:
+    case PBM_SETPOS:
+    case PBM_SETBARCOLOR:
+    case PBM_SETBKCOLOR:
+        /* Forward first so the control keeps its own value for accessibility,
+           then repaint with the shared rounded style. */
+        result = DefSubclassProc(window, message, wparam, lparam);
+        if (state != NULL) {
+            if (message == PBM_SETRANGE32) {
+                state->minimum = (int)wparam;
+                state->maximum = (int)lparam;
+            } else if (message == PBM_SETPOS) {
+                state->position = (int)wparam;
+            } else if (message == PBM_SETBARCOLOR) {
+                state->fill_color = (COLORREF)lparam;
+            } else {
+                state->track_color = (COLORREF)lparam;
+            }
+            InvalidateRect(window, NULL, FALSE);
+        }
+        return result;
+    case WM_ERASEBKGND:
+        return 1;
+    case WM_PAINT:
+        if (state != NULL) {
+            draw_rounded_progress(window, state);
+            return 0;
+        }
+        break;
+    case WM_PRINT:
+    case WM_PRINTCLIENT:
+        /* The visual harness paints into its own DC; without this the capture
+           would show the stock progress bar instead of the shipped one. */
+        if (state != NULL) {
+            RECT bounds;
+            GetClientRect(window, &bounds);
+            paint_rounded_progress((HDC)wparam, &bounds, state);
+            return 0;
+        }
+        break;
+    case WM_NCDESTROY:
+        RemoveWindowSubclass(window, progress_proc, id);
+        break;
+    default:
+        break;
+    }
+    return DefSubclassProc(window, message, wparam, lparam);
+}
+
+static HWND create_progress(int id, ProgressVisualState *state, COLORREF fill_color,
+                            const wchar_t *complete_text, const wchar_t *pending_text) {
+    HWND control = CreateWindowExW(
+        0, PROGRESS_CLASSW, NULL, WS_CHILD | PBS_SMOOTH,
+        0, 0, 1, 1, g_window, (HMENU)(INT_PTR)id, GetModuleHandleW(NULL), NULL
+    );
+    if (control == NULL) {
+        return NULL;
+    }
+    ZeroMemory(state, sizeof(*state));
+    state->minimum = 0;
+    state->maximum = 100;
+    state->position = 0;
+    state->show_percent = TRUE;
+    state->complete_text = complete_text;
+    state->pending_text = pending_text;
+    state->fill_color = fill_color;
+    state->track_color = FSV_COLOR_SURFACE_RAISED;
+    SetWindowTheme(control, L"", L"");
+    SendMessageW(control, PBM_SETRANGE32, 0, 100);
+    SendMessageW(control, PBM_SETPOS, 0, 0);
+    SendMessageW(control, PBM_SETBARCOLOR, 0, fill_color);
+    SendMessageW(control, PBM_SETBKCOLOR, 0, FSV_COLOR_SURFACE_RAISED);
+    SetWindowSubclass(control, progress_proc, (UINT_PTR)id, (DWORD_PTR)state);
+    return control;
+}
+
 static HWND create_label(const wchar_t *text, int x, int y, int width, int height, HFONT font, DWORD style) {
     HWND label = CreateWindowExW(
         0, L"STATIC", text, WS_CHILD | WS_VISIBLE | style,
@@ -758,10 +1050,13 @@ static BOOL layout_controls(void) {
     place_control(g_voice_hint, 72, 364, 768, 20, g_meta_font);
     place_control(g_data_check, 40, 400, 800, 26, g_body_font);
     place_control(g_data_hint, 72, 428, 768, 20, g_meta_font);
-    place_control(g_progress, 40, 462, 800, 24, g_body_font);
+    place_control(g_progress, 40, 320, 800, 24, g_body_font);
+    place_control(g_progress_delete, 40, 364, 800, 24, g_body_font);
+    place_control(g_progress_stats, 40, 400, 800, 20, g_meta_font);
     place_control(g_action, 680, 510, 160, 40, g_body_font);
     place_control(g_exit, 528, 510, 140, 40, g_body_font);
     apply_rounded_progress_region(g_progress, ui_px(24));
+    apply_rounded_progress_region(g_progress_delete, ui_px(24));
     if (old_title != NULL) DeleteObject(old_title);
     if (old_body != NULL) DeleteObject(old_body);
     if (old_meta != NULL) DeleteObject(old_meta);
@@ -779,10 +1074,14 @@ static void apply_mode_visibility(void) {
     ShowWindow(g_data_hint, show_options);
     if (g_cleanup_mode) {
         ShowWindow(g_progress, SW_SHOW);
+        ShowWindow(g_progress_delete, SW_SHOW);
+        ShowWindow(g_progress_stats, SW_SHOW);
         ShowWindow(g_action, SW_HIDE);
         ShowWindow(g_exit, SW_HIDE);
     } else {
         ShowWindow(g_progress, SW_HIDE);
+        ShowWindow(g_progress_delete, SW_HIDE);
+        ShowWindow(g_progress_stats, SW_HIDE);
         ShowWindow(g_action, SW_SHOW);
         ShowWindow(g_exit, SW_SHOW);
     }
@@ -886,10 +1185,41 @@ static LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LP
         HeapFree(GetProcessHeap(), 0, text);
         return 0;
     }
+    if (message == WM_FSV_UNINSTALL_PROGRESS) {
+        wchar_t stats[256];
+        wchar_t removed[32];
+        wchar_t total[32];
+        int scan = (int)wparam;
+        SendMessageW(g_progress, PBM_SETPOS, scan < 0 ? -1 : scan, 0);
+        SendMessageW(g_progress_delete, PBM_SETPOS, (int)lparam, 0);
+        if (scan < 0) {
+            StringCchPrintfW(
+                stats,
+                ARRAYSIZE(stats),
+                L"正在统计待删除文件：%llu 个文件",
+                (unsigned long long)g_progress_state.total_files
+            );
+        } else {
+            format_size(g_progress_state.deleted_bytes, removed, ARRAYSIZE(removed));
+            format_size(g_progress_state.total_bytes, total, ARRAYSIZE(total));
+            StringCchPrintfW(
+                stats,
+                ARRAYSIZE(stats),
+                L"已删除 %llu / %llu 个文件 · %ls / %ls",
+                (unsigned long long)g_progress_state.deleted_files,
+                (unsigned long long)g_progress_state.total_files,
+                removed,
+                total
+            );
+        }
+        SetWindowTextW(g_progress_stats, stats);
+        return 0;
+    }
     if (message == WM_FSV_UNINSTALL_DONE) {
         g_cleanup_running = FALSE;
-        SendMessageW(g_progress, PBM_SETMARQUEE, FALSE, 0);
         ShowWindow(g_progress, SW_HIDE);
+        ShowWindow(g_progress_delete, SW_HIDE);
+        ShowWindow(g_progress_stats, SW_HIDE);
         show_uninstall_result((DWORD)wparam);
         InvalidateRect(window, NULL, TRUE);
         return 0;
@@ -966,14 +1296,14 @@ static BOOL initialize_ui(void) {
     g_data_hint = create_label(L"包含飞行雪绒的记忆、用户配置、Apikey、桌面办公区等；删除后无法恢复。", 72, 428, 768, 20, g_meta_font, SS_LEFT);
     create_button(&g_action, L"卸载飞行雪绒", IDC_UNINSTALL, &g_hover_action);
     create_button(&g_exit, L"退出", IDC_EXIT, &g_hover_exit);
-    g_progress = CreateWindowExW(0, PROGRESS_CLASSW, NULL, WS_CHILD | PBS_MARQUEE, 0, 0, 1, 1, g_window, (HMENU)(INT_PTR)IDC_PROGRESS, GetModuleHandleW(NULL), NULL);
+    g_progress = create_progress(IDC_PROGRESS, &g_scan_progress_visual, FSV_COLOR_CYAN, L"已完成", L"正在统计");
+    g_progress_delete = create_progress(IDC_PROGRESS_DELETE, &g_delete_progress_visual, FSV_COLOR_PINK, L"已完成", L"正在准备");
+    g_progress_stats = create_label(L"", 40, 400, 800, 20, g_meta_font, SS_LEFT);
     if (g_title == NULL || g_body == NULL || g_path == NULL || g_voice_check == NULL || g_voice_hint == NULL ||
-        g_data_check == NULL || g_data_hint == NULL || g_action == NULL || g_exit == NULL || g_progress == NULL) {
+        g_data_check == NULL || g_data_hint == NULL || g_action == NULL || g_exit == NULL ||
+        g_progress == NULL || g_progress_delete == NULL || g_progress_stats == NULL) {
         return FALSE;
     }
-    SetWindowTheme(g_progress, L"", L"");
-    SendMessageW(g_progress, PBM_SETBARCOLOR, 0, FSV_COLOR_PINK);
-    SendMessageW(g_progress, PBM_SETBKCOLOR, 0, FSV_COLOR_SURFACE_RAISED);
     if (!layout_controls()) {
         return FALSE;
     }
@@ -1069,7 +1399,6 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, 
     UpdateWindow(g_window);
     if (g_cleanup_mode) {
         g_cleanup_running = TRUE;
-        SendMessageW(g_progress, PBM_SETMARQUEE, TRUE, 28);
         worker = CreateThread(NULL, 0, cleanup_worker, &g_cleanup, 0, NULL);
         if (worker == NULL) {
             g_cleanup_running = FALSE;

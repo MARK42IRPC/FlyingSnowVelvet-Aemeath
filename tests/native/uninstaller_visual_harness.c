@@ -192,6 +192,11 @@ int wmain(int argc, wchar_t **argv) {
     } else if (page == 3) {
         g_hover_action = 100;
         g_hover_voice = 100;
+    } else if (page == 4) {
+        /* Cleanup progress: the scan finished, the delete is part way done. */
+        SendMessageW(g_progress, PBM_SETPOS, 100, 0);
+        SendMessageW(g_progress_delete, PBM_SETPOS, 64, 0);
+        SetWindowTextW(g_progress_stats, L"已删除 12048 / 17283 个文件 · 2.1 GB / 3.8 GB");
     }
     if (!check_controls()) {
         cleanup_uninstaller_ui();
