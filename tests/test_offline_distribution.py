@@ -1,4 +1,5 @@
 import json
+import hashlib
 import os
 import tempfile
 import unittest
@@ -226,6 +227,70 @@ class OfflineDistributionTests(unittest.TestCase):
     def test_directml_wheel_rejects_path_traversal(self):
         with self.assertRaises(RuntimeError):
             distribution._safe_wheel_member("../outside.dll")
+
+    def test_cuda_voice_runtime_is_bundled_where_the_contract_looks_for_it(self):
+        from lib.core import voice_runtime_contract
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source_root = root / "repo"
+            build_output = source_root / distribution.CUDA_VOICE_RUNTIME_BUILD_CANDIDATES[0]
+            build_output.parent.mkdir(parents=True)
+            build_output.write_bytes(b"MZ" + b"\0" * 4096)
+            payload = root / "workspace" / "payload"
+            payload.mkdir(parents=True)
+
+            details = distribution.stage_cuda_voice_runtime(source_root, payload)
+
+            target = (
+                payload
+                / distribution.CUDA_VOICE_RUNTIME_DIRECTORY
+                / distribution.CUDA_VOICE_RUNTIME_DLL_NAME
+            )
+            self.assertTrue(details["bundled"])
+            self.assertEqual(details["path"], "runtime/cuda-voice/fsv_cuda_voice_runtime.dll")
+            self.assertEqual(details["size"], target.stat().st_size)
+            self.assertEqual(
+                details["sha256"],
+                hashlib.sha256(target.read_bytes()).hexdigest(),
+            )
+            # The release layout and the runtime contract are two independent
+            # spellings of the same path: <install>/app next to
+            # runtime/cuda-voice/fsv_cuda_voice_runtime.dll.
+            self.assertEqual(
+                voice_runtime_contract.get_bundled_cuda_voice_runtime_path(payload / "app"),
+                target,
+            )
+            self.assertEqual(
+                distribution.CUDA_VOICE_RUNTIME_DLL_NAME,
+                voice_runtime_contract.CUDA_VOICE_RUNTIME_DLL_NAME,
+            )
+            self.assertEqual(
+                distribution.CUDA_VOICE_RUNTIME_DIRECTORY.name,
+                voice_runtime_contract.CUDA_VOICE_RUNTIME_DIR_NAME,
+            )
+
+    def test_missing_cuda_voice_runtime_build_output_is_not_an_error(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            payload = root / "payload"
+            payload.mkdir()
+            self.assertIsNone(
+                distribution.stage_cuda_voice_runtime(root / "repo" / "unbuilt", payload)
+            )
+            # A build machine without the CUDA toolkit must still produce a
+            # release; it just ships without the optional runtime.
+            self.assertEqual(list(payload.iterdir()), [])
+
+    def test_cuda_voice_runtime_staging_rejects_a_non_pe_file(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source_root = root / "repo"
+            build_output = source_root / distribution.CUDA_VOICE_RUNTIME_BUILD_CANDIDATES[0]
+            build_output.parent.mkdir(parents=True)
+            build_output.write_text("not a dll", encoding="utf-8")
+            with self.assertRaises(RuntimeError):
+                distribution.stage_cuda_voice_runtime(source_root, root / "payload")
 
     def test_node_pruning_keeps_runtime_and_licenses(self):
         with tempfile.TemporaryDirectory() as tmpdir:

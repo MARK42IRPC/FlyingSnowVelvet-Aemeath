@@ -59,6 +59,10 @@ CUDA、NVIDIA、TensorRT 或 `onnxruntime-gpu`。
 `resc/GIF/SEanima/` 文件夹、固定 Node 和 DSH production `node_modules` 收集到
 payload；`build_offline_installer.py` 再编译原生安装器并追加 ZIP 与 SHA-256 尾记录。
 最终 payload 不包含 `SEanima.zip`、构建脚本、测试目录、用户状态或开发缓存。
+构建机上存在 `build/cuda_voice_runtime/Release/fsv_cuda_voice_runtime.dll`（自研 CUDA
+极简推理端的构建产物）时，同一条命令会把它放进 `runtime/cuda-voice/`，安装后“N卡加速”
+只依赖 NVIDIA 显示驱动即可工作；构建机没编过 CUDA 运行库时这一步跳过，发行包不含该
+目录，语音链路按 DirectML → CPU 顺序回退。
 构建失败后可对输入未变化的完整工作区使用 `--resume`；需要重新收集时使用 `--clean`。
 两者只处理工作区中的已知生成路径，且 `build/`、`.venv/` 与 `venv/` 永不进入 payload。
 
@@ -71,7 +75,9 @@ payload；`build_offline_installer.py` 再编译原生安装器并追加 ZIP 与
   `jieba-fast`、Vosk、PyQt5、音频和桌面桥接依赖。
 - 可选 overlay：固定版本 `onnxruntime-directml`，位于
   `runtime/onnx-directml/1.22.0-cp311-win_amd64`，不与 CPU site-packages 混合。
-- 不打包：Torch、CUDA DLL、NVIDIA、TensorRT、`onnxruntime-gpu` 及其依赖链。
+- 不打包：Torch、NVIDIA 工具链的 CUDA/cuDNN DLL、TensorRT、`onnxruntime-gpu` 及其
+  依赖链。自研推理端不属于这条禁令：它只有一个 driver-only 的
+  `runtime/cuda-voice/fsv_cuda_voice_runtime.dll`，作为可选组件随包发布。
 - DSH：Node 24.13.0 与 `npm ci --omit=dev --ignore-scripts` 生成的 production
   `node_modules`，由原生启动器设置绝对路径；不会回退系统 Node。
 

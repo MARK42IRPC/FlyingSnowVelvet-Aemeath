@@ -78,6 +78,16 @@ DIRECTML_RUNTIME_DIRECTORY = (
     / f"{DIRECTML_RUNTIME_VERSION}-{DIRECTML_RUNTIME_ABI}"
 )
 DIRECTML_MARKER_NAME = "runtime.json"
+# The self-written CUDA runtime is a single driver-only DLL: no CUDA toolkit,
+# no cuDNN, no per-machine venv.  ``lib/core/voice_runtime_contract.py`` looks
+# for it at ``runtime/cuda-voice`` inside the release, so the N-card switch works
+# on a machine that only has the NVIDIA display driver.
+CUDA_VOICE_RUNTIME_DIRECTORY = Path("runtime") / "cuda-voice"
+CUDA_VOICE_RUNTIME_DLL_NAME = "fsv_cuda_voice_runtime.dll"
+CUDA_VOICE_RUNTIME_BUILD_CANDIDATES = (
+    Path("build") / "cuda_voice_runtime" / "Release" / CUDA_VOICE_RUNTIME_DLL_NAME,
+    Path("build") / "cuda_voice_runtime-61" / "Release" / CUDA_VOICE_RUNTIME_DLL_NAME,
+)
 
 PINNED_BASE_DISTRIBUTIONS = {
     "genie-tts": "2.0.2",
@@ -833,6 +843,37 @@ def copy_native_runtime(source_root: Path, app_root: Path) -> bool:
     return False
 
 
+def stage_cuda_voice_runtime(
+    source_root: Path,
+    payload_root: Path,
+) -> dict[str, object] | None:
+    """Bundle the built self-written CUDA runtime beside the executable.
+
+    A build machine without the CUDA toolkit has no
+    ``build/cuda_voice_runtime/Release`` output, and the release then ships
+    without the runtime: the voice worker falls back to DirectML/CPU, so a
+    missing output is a normal state and not an error.  Anything that is picked
+    up still has to be a PE image, so a stray text file left at that path cannot
+    end up in the installer.
+    """
+    for candidate in CUDA_VOICE_RUNTIME_BUILD_CANDIDATES:
+        source = source_root / candidate
+        if not source.is_file():
+            continue
+        with source.open("rb") as handle:
+            if handle.read(2) != b"MZ":
+                raise RuntimeError(f"自研 CUDA 运行库不是有效的 PE 文件：{source}")
+        target = payload_root / CUDA_VOICE_RUNTIME_DIRECTORY / CUDA_VOICE_RUNTIME_DLL_NAME
+        copy_file(source, target)
+        return {
+            "bundled": True,
+            "path": (CUDA_VOICE_RUNTIME_DIRECTORY / CUDA_VOICE_RUNTIME_DLL_NAME).as_posix(),
+            "size": target.stat().st_size,
+            "sha256": sha256(target),
+        }
+    return None
+
+
 def copy_minimal_pyqt5(
     site_packages: Path | tuple[Path, ...] | list[Path],
     target_root: Path,
@@ -1252,6 +1293,11 @@ def main() -> int:
     copy_tree(source, app)
     copy_native_runtime(source, app)
     write_release_launcher_config(app)
+    cuda_voice_runtime = stage_cuda_voice_runtime(source, payload)
+    if cuda_voice_runtime is None:
+        log_stage("没有自研 CUDA 运行库构建产物，本次发行不含 runtime/cuda-voice/")
+    else:
+        log_stage(f"已打包自研 CUDA 运行库：{cuda_voice_runtime['path']}")
     roots = tuple(
         name
         for name in DEFAULT_BASE_DISTRIBUTIONS
@@ -1290,6 +1336,7 @@ def main() -> int:
         "speech_recognition": True,
         "voice_synthesis": True,
         "cuda_onnx": False,
+        "cuda_voice_runtime": cuda_voice_runtime,
         "python": {
             "major_minor": "3.11",
             "distributions": distributions,
