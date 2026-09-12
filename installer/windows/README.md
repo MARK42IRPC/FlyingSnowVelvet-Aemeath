@@ -27,8 +27,15 @@
 
 更新器从对应 ONNX 语音包的 Hugging Face / ModelScope 仓库下载外层 ZIP，解包后校验其中唯一的
 离线安装器 EXE，并可通过 `--update-target` 预填现有安装目录；成功切换后将状态文件复制到
-`app\resc\user\update_state.json`。`app\卸载飞行雪绒.exe`
-使用独立清理 helper 删除安装目录和 `C:\AemeathDeskPet` 契约目录。
+`app\resc\user\update_state.json`。
+
+`app\卸载飞行雪绒.exe` 与安装器共用同一套工作台亮色令牌、品牌头和鸿蒙内嵌字体，
+中部提供两个自绘复选框：“删除语音包”（`C:\AemeathDeskPet\voice`、`models\vosk`
+与 `start_gsvmove.bat`）和“删除用户数据”（记忆、用户配置、Apikey、日志与桌面
+“飞行雪绒办公区”）；两者默认不勾选，并带有小字说明。确认后由独立临时 helper
+（`--cleanup <root> <pid> [--delete-voice-package] [--delete-user-data]`）删除安装
+目录和选中的 `C:\AemeathDeskPet` 契约目录，可选清理带安全护栏，永不删除安装目录
+及其祖先。
 
 构建与测试：
 

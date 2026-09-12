@@ -1,0 +1,4 @@
+#include "resource.h"
+
+IDI_INSTALLER ICON "icon.ico"
+IDR_HARMONY_FONT RCDATA "HarmonyOS_Sans_SC_Bold.ttf"

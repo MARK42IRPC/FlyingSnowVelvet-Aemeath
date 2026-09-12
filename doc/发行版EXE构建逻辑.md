@@ -63,8 +63,11 @@ dist/FlyingSnowVelvet-<version>-Offline-Installer.exe
 解析 UTF-8 中文路径，也避免启动时闪现控制台窗口。
 
 更新器把现有安装目录通过 `--update-target` 传给同一个 EXE；安装成功后写回
-`app/resc/user/update_state.json`。卸载器删除安装目录和 `C:\AemeathDeskPet` 契约
-目录，使用独立临时 helper 避免删除自身时锁定。
+`app/resc/user/update_state.json`。卸载器采用与安装器一致的工作台亮色界面（品牌头、
+白卡片、鸿蒙内嵌字体），提供“删除语音包”和“删除用户数据”两个默认不勾选的复选框；
+确认后由独立临时 helper 删除安装目录，并按选项清理 `C:\AemeathDeskPet` 下的语音包、
+推理运行时、记忆/配置/Apikey/日志与桌面办公区。可选清理带前缀护栏，永不删除安装
+目录及其祖先；helper 用独立临时副本避免删除自身时锁定。
 
 ## 构建与审计
 

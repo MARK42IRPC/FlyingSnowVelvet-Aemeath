@@ -51,7 +51,10 @@ def create_installer_font_subset(output: Path, source: Path = HARMONY_FONT_SOURC
     from fontTools.ttLib import TTFont
     source_text = "\n".join(
         path.read_text(encoding="utf-8", errors="ignore")
-        for path in (PRODUCT_ROOT / "installer" / "windows" / "src" / "main.c",)
+        for path in (
+            PRODUCT_ROOT / "installer" / "windows" / "src" / "main.c",
+            PRODUCT_ROOT / "installer" / "windows" / "src" / "uninstaller.c",
+        )
     )
     chars = set(chr(code) for code in range(0x20, 0x7F))
     for literal in re.findall(r'L\"((?:\\.|[^\"])*)\"', source_text):
@@ -529,14 +532,15 @@ def _prepare_native_sources(installer_source: Path) -> tuple[Path, Path]:
     return source_root, zlib_root
 
 
-def _write_resource_script(path: Path, manifest_name: str) -> None:
-    path.write_text(
+def _write_resource_script(path: Path, manifest_name: str, *, include_font: bool = False) -> None:
+    text = (
         '#include "resource.h"\n\n'
         '#ifndef RT_MANIFEST\n#define RT_MANIFEST 24\n#endif\n'
         'IDI_INSTALLER ICON "icon.ico"\n'
-        f'1 RT_MANIFEST "{manifest_name}"\n',
-        encoding="ascii",
     )
+    if include_font:
+        text += 'IDR_HARMONY_FONT RCDATA "HarmonyOS_Sans_SC_Bold.ttf"\n'
+    path.write_text(text + f'1 RT_MANIFEST "{manifest_name}"\n', encoding="ascii")
 
 
 def _compile_payload_binary(
@@ -548,12 +552,16 @@ def _compile_payload_binary(
     source_name: str,
     manifest_name: str,
     output_name: str,
+    embed_font: bool = False,
 ) -> Path:
     compile_root.mkdir(parents=True, exist_ok=True)
     for name in (source_name, manifest_name, "resource.h"):
         shutil.copy2(source_root / name, compile_root / name)
     shutil.copy2(icon_source, compile_root / "icon.ico")
-    _write_resource_script(compile_root / "native.rc", manifest_name)
+    _write_installer_theme_header(compile_root / "installer_theme.h")
+    if embed_font:
+        create_installer_font_subset(compile_root / "HarmonyOS_Sans_SC_Bold.ttf")
+    _write_resource_script(compile_root / "native.rc", manifest_name, include_font=embed_font)
     run_vs_command(vsdevcmd, 'rc.exe /nologo /fo"native.res" "native.rc"', compile_root)
     run_vs_command(
         vsdevcmd,
@@ -609,6 +617,7 @@ def compile_payload_binaries(
         source_name="uninstaller.c",
         manifest_name="uninstaller.manifest",
         output_name="FlyingSnowVelvetUninstaller.exe",
+        embed_font=True,
     )
     app_root = payload / "app"
     app_root.mkdir(parents=True, exist_ok=True)

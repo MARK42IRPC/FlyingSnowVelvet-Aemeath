@@ -88,7 +88,10 @@ payload；`build_offline_installer.py` 再编译原生安装器并追加 ZIP 与
    `NODE_PATH`、外部 Qt/OpenSSL 等环境覆盖。
    package 内只保留 `启动飞行雪绒.exe` 与 `卸载飞行雪绒.exe`，不生成
    `启动程序.bat`；快捷方式与开机启动直接指向启动 exe。
-6. `app/卸载飞行雪绒.exe` 删除安装目录及 `C:\AemeathDeskPet` 契约目录。
+6. `app/卸载飞行雪绒.exe` 使用与安装器一致的工作台界面，提供“删除语音包”和
+   “删除用户数据”两个默认不勾选的复选框（均带小字说明）；确认后删除安装目录，
+   并按选项清理 `C:\AemeathDeskPet` 下的语音包/推理运行时、记忆/配置/Apikey/日志
+   与桌面“飞行雪绒办公区”。可选清理有前缀护栏，永不删除安装目录及其祖先。
 
 更新流程下载同一个离线安装器 EXE，校验尾记录后传入现有安装目录；桌宠退出后由
 安装器完成目录切换并写回 `app/resc/user/update_state.json`。更新器不执行 ZIP 覆盖
