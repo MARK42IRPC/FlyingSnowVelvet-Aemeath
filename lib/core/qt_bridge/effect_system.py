@@ -14,7 +14,7 @@ import math
 from pathlib import Path
 
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QPainter
+from PyQt5.QtGui import QFont, QFontMetrics, QPainter
 from PyQt5.QtWidgets import QWidget
 
 from lib.core.event.center import Event, EventType, get_event_center
@@ -22,7 +22,7 @@ from lib.core.layer import Layer
 from lib.core.layer_manager import get_layer_manager
 from lib.core.logger import get_logger
 from lib.core.graphics.resources import ImageResource
-from lib.core.graphics.visuals import build_effect_batch, load_effect_resource
+from lib.core.graphics.visuals import build_effect_batch, load_effect_resource, resolve_effect_font
 from lib.core.qt_bridge.draw_backend import QtDrawBackend
 
 
@@ -47,6 +47,21 @@ def _prepare_effects_for_inplace_update(effects: list) -> None:
         effect._tick_prev_opacity = float(getattr(effect, "_render_opacity", getattr(effect, "opacity", 1.0)))
         effect._tick_prev_scale = float(getattr(effect, "_render_scale", getattr(effect, "scale", 1.0)))
         effect._tick_prev_rotation = float(getattr(effect, "_render_rotation", getattr(effect, "rotation", 0.0)))
+
+
+def _prepare_effect_backend_state(effect) -> None:
+    """Store exact Qt metrics so centred effect text is never clipped."""
+    text = str(getattr(effect, "text", "") or "")
+    if not text:
+        return
+    spec = resolve_effect_font(effect)
+    font = QFont(spec.family)
+    font.setPixelSize(int(spec.pixel_size))
+    font.setBold(bool(spec.bold))
+    metrics = QFontMetrics(font)
+    effect._text_w = float(metrics.horizontalAdvance(text))
+    effect._text_h = float(metrics.height())
+    effect._text_baseline_offset = (metrics.ascent() - metrics.descent()) // 2
 
 
 def _resolve_resource_path(resource_path: str) -> str:
@@ -269,6 +284,7 @@ class EffectOverlay(QWidget):
                 effect._render_opacity = float(getattr(effect, "opacity", 1.0))
                 effect._render_scale = float(getattr(effect, "scale", 1.0))
                 effect._render_rotation = float(getattr(effect, "rotation", 0.0))
+                _prepare_effect_backend_state(effect)
             appended = True
 
         if not appended:

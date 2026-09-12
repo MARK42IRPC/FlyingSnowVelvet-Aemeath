@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import math
 import random
+import unicodedata
 from pathlib import Path
 
 from config.config import PARTICLES, SPEAKER_AUDIO
@@ -164,17 +165,8 @@ def build_particle_batch(particles: list[object]) -> DrawBatch:
         if bool(getattr(particle, "is_text", False)):
             text = str(getattr(particle, "text", ""))
             font = _particle_font(particle)
-            measured_width = getattr(particle, "_text_w", None)
-            try:
-                width = float(measured_width) if measured_width is not None else len(text) * font.pixel_size * 0.72
-            except (TypeError, ValueError):
-                width = len(text) * font.pixel_size * 0.72
+            width, height = _text_run_extent(particle, text, font.pixel_size)
             width = max(font.pixel_size * 2.0, width)
-            measured_height = getattr(particle, "_text_h", None)
-            try:
-                height = float(measured_height) if measured_height is not None else max(font.pixel_size * 1.6, 12.0)
-            except (TypeError, ValueError):
-                height = max(font.pixel_size * 1.6, 12.0)
             rect = Rect(x - width / 2.0, y - height / 2.0, width, height)
             bloom = max(0.0, float(getattr(particle, "bloom", 0.0) or 0.0))
             text_alpha = alpha
@@ -442,7 +434,8 @@ def build_world_object_batch(
     return DrawBatch(tuple(commands), (ResourceRevision(resource.resource_id, 1),))
 
 
-def _effect_font(effect: object) -> FontSpec:
+def resolve_effect_font(effect: object) -> FontSpec:
+    """Resolve the shared font spec used to render a text effect."""
     font_type = str(getattr(effect, "font_type", "ui") or "ui").lower()
     family = get_digit_font_family() if font_type in {"digit", "number", "lahai"} else get_ui_font_family()
     weight = getattr(effect, "font_weight", None)
@@ -452,6 +445,45 @@ def _effect_font(effect: object) -> FontSpec:
     except (TypeError, ValueError):
         pass
     return FontSpec(family, max(1, int(getattr(effect, "font_size", 32))), bold)
+
+
+# East Asian ideographs and fullwidth forms advance by one em; Latin glyphs
+# advance less. The estimate is deliberately generous because callers centre the
+# run inside the resulting box, so over-estimating never shifts or clips text.
+_NARROW_ADVANCE_RATIO = 0.72
+_WIDE_ADVANCE_RATIO = 1.0
+
+
+def estimate_text_advance(text: str, pixel_size: float) -> float:
+    """Conservative single-line advance width for a text run."""
+    size = max(1.0, float(pixel_size))
+    total = 0.0
+    for character in str(text or ""):
+        if unicodedata.combining(character):
+            continue
+        if unicodedata.east_asian_width(character) in {"W", "F"}:
+            total += _WIDE_ADVANCE_RATIO
+        else:
+            total += _NARROW_ADVANCE_RATIO
+    return max(size, total * size)
+
+
+def _optional_float(value) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _text_run_extent(item: object, text: str, pixel_size: float) -> tuple[float, float]:
+    """Return the text box size, preferring metrics measured by the backend."""
+    width = _optional_float(getattr(item, "_text_w", None))
+    height = _optional_float(getattr(item, "_text_h", None))
+    if width is None:
+        width = estimate_text_advance(text, pixel_size)
+    if height is None:
+        height = max(pixel_size * 1.6, 12.0)
+    return width, height
 
 
 def load_effect_resource(path: str | Path, options: dict | None = None) -> ImageResource | None:
@@ -557,11 +589,12 @@ def build_effect_batch(effects: list[object]) -> DrawBatch:
         if not text:
             continue
         size = max(1, int(getattr(effect, "font_size", 32)))
-        width = max(size * 2.0, len(text) * size * 0.72)
-        height = max(size * 1.6, 12.0)
+        width, height = _text_run_extent(effect, text, size)
+        width = max(size * 2.0, width)
+        height = max(size, height)
         x, y = _position(effect)
         rect = Rect(x - width / 2.0, y - height / 2.0, width, height)
-        font = _effect_font(effect)
+        font = resolve_effect_font(effect)
         color = _color(getattr(effect, "color", None))
         glow = max(0.0, float(getattr(effect, "glow", 0.0) or 0.0))
         glow_color = _color(getattr(effect, "glow_color", None), color)
@@ -609,7 +642,9 @@ __all__ = [
     "build_effect_batch",
     "build_particle_batch",
     "build_world_object_batch",
+    "estimate_text_advance",
     "load_effect_resource",
+    "resolve_effect_font",
     "resolve_speaker_scale",
     "resolve_command_panel_geometry",
     "sample_motor_jitter",
