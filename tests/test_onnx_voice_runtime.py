@@ -16,6 +16,7 @@ from lib.script.gsvmove.onnx_runtime import (
     _load_isolated_genie_frontend,
     _release_native_sessions,
     _semantic_char_budget,
+    _semantic_steps_for_text,
     _split_auto_language_text,
     _split_text_by_budget,
     normalize_language,
@@ -365,6 +366,16 @@ class OnnxVoiceRuntimeTests(unittest.TestCase):
 
         self.assertEqual(request.media_type, "wav")
 
+    def test_request_defaults_to_adaptive_max_steps(self):
+        request = OnnxInferenceRequest.from_payload({"text": "hello"})
+        self.assertIsNone(request.max_steps)
+
+        auto_request = OnnxInferenceRequest.from_payload({
+            "text": "hello",
+            "max_steps": "auto",
+        })
+        self.assertIsNone(auto_request.max_steps)
+
     def test_request_accepts_complete_gsv_v2_payload(self):
         request = OnnxInferenceRequest.from_payload({
             "text": "hello",
@@ -438,9 +449,12 @@ class OnnxVoiceRuntimeTests(unittest.TestCase):
                     )
                     self.assertGreater(output.stat().st_size, 44)
                     call = runtime._engine.calls[0]
-                    self.assertEqual(call[:3], ("hello", "en", 500))
+                    self.assertEqual(call[:3], ("hello", "en", 64))
+                    self.assertEqual(call[2], _semantic_steps_for_text(5, 2.0))
                     self.assertEqual(call[3]["speed_factor"], 2.0)
-                    self.assertEqual(call[3]["temperature"], 1.0)
+                    self.assertEqual(call[3]["temperature"], 1.35)
+                    self.assertEqual(call[3]["repetition_penalty"], 1.6)
+                    self.assertEqual(call[3]["text_split_method"], "cut0")
                     self.assertEqual(call[3]["top_k"], 15)
                     self.assertEqual(runtime._module.soxr.calls, [])
                 finally:
@@ -481,6 +495,23 @@ class OnnxVoiceRuntimeTests(unittest.TestCase):
         self.assertEqual(_semantic_char_budget(0), 24)
         self.assertLessEqual(_semantic_char_budget(500) * 5.2, 500)
         self.assertLessEqual(_semantic_char_budget(1200) * 5.2, 1200)
+        # Slower speech spends more tokens per character, so the same step cap
+        # has to cover fewer characters.
+        self.assertEqual(_semantic_char_budget(500, 2.0), 121)
+        self.assertEqual(_semantic_char_budget(500, 0.5), 30)
+
+    def test_adaptive_steps_scale_with_text_and_speed(self):
+        self.assertEqual(_semantic_steps_for_text(160, 1.1), 1200)
+        self.assertEqual(_semantic_steps_for_text(66, 1.1), 495)
+        self.assertEqual(_semantic_steps_for_text(1, 1.1), 64)
+        self.assertLess(
+            _semantic_steps_for_text(66, 2.0),
+            _semantic_steps_for_text(66, 1.1),
+        )
+        self.assertGreater(
+            _semantic_steps_for_text(66, 0.5),
+            _semantic_steps_for_text(66, 1.1),
+        )
 
     def test_split_text_by_budget_preserves_every_character(self):
         text = "第一句话在这里。第二句话稍微长一点点，仍然在预算之内。第三句话也很正常！"
@@ -507,6 +538,20 @@ class OnnxVoiceRuntimeTests(unittest.TestCase):
         self.assertTrue(all(len(text) <= 66 for text, _lang in fitted))
         self.assertTrue(all(language == "zh" for _text, language in fitted))
 
+    def test_adaptive_budget_only_splits_above_the_archive_ceiling(self):
+        short_segments = (("字" * 160, "zh"),)
+        self.assertEqual(_fit_semantic_budget(short_segments), short_segments)
+
+        long_segments = (("字" * 200, "zh"),)
+        fitted = _fit_semantic_budget(long_segments)
+        self.assertGreater(len(fitted), 1)
+        self.assertEqual("".join(text for text, _lang in fitted), "字" * 200)
+        self.assertTrue(all(len(text) <= 160 for text, _lang in fitted))
+
+        slow_segments = (("字" * 200, "zh"),)
+        slow_fitted = _fit_semantic_budget(slow_segments, None, 0.5)
+        self.assertGreater(len(slow_fitted), len(fitted))
+
     def test_cut0_long_reply_is_split_before_the_decode_cap_truncates_it(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -520,6 +565,8 @@ class OnnxVoiceRuntimeTests(unittest.TestCase):
                 "今天天气确实不错，适合出去走走，顺便把之前没买完的东西补齐。"
                 "你要是愿意的话，我们可以先去公园那边转一圈，然后再去超市看看有没有打折的水果。"
                 "对了，晚上想吃什么？我可以提前准备一下，免得回来太晚还要现做。"
+                "如果时间来得及，我们还可以顺路去书店看看新到的画册，然后再慢慢走回家。"
+                "回来的路上顺便买点你爱吃的零食，晚上一起看一部轻松的电影。"
             )
             with patch.object(runtime_module, "validate_voice_package", return_value=validation):
                 runtime = OnnxVoiceRuntime(root)
@@ -531,7 +578,22 @@ class OnnxVoiceRuntimeTests(unittest.TestCase):
                     calls = runtime._engine.calls
                     self.assertGreater(len(calls), 1)
                     self.assertEqual("".join(call[0] for call in calls), text)
-                    self.assertTrue(all(len(call[0]) <= 66 for call in calls))
+                    self.assertTrue(
+                        all(
+                            len(call[0])
+                            <= _semantic_char_budget(1200, call[3]["speed_factor"])
+                            for call in calls
+                        )
+                    )
+                    self.assertTrue(
+                        all(
+                            call[2]
+                            == _semantic_steps_for_text(
+                                len(call[0]), call[3]["speed_factor"]
+                            )
+                            for call in calls
+                        )
+                    )
                     self.assertTrue(
                         all(call[3]["text_split_method"] == "cut0" for call in calls)
                     )

@@ -50,20 +50,20 @@ def is_gsvmove_launcher_available() -> bool:
 
 
 def _get_gsv_temperature() -> float:
-    raw_value = oc.OLLAMA.get("gsv_temperature", 1.0)
+    raw_value = oc.OLLAMA.get("gsv_temperature", 1.35)
     try:
         temperature = float(raw_value)
     except (TypeError, ValueError):
-        temperature = 1.0
+        temperature = 1.35
     return max(0.01, min(2.0, temperature))
 
 
 def _get_gsv_speed_factor() -> float:
-    raw_value = oc.OLLAMA.get("gsv_speed_factor", 1.0)
+    raw_value = oc.OLLAMA.get("gsv_speed_factor", 1.1)
     try:
         speed_factor = float(raw_value)
     except (TypeError, ValueError):
-        speed_factor = 1.0
+        speed_factor = 1.1
     return max(0.5, min(2.0, speed_factor))
 
 
@@ -84,19 +84,18 @@ def _get_gsv_int(key: str, default: int, minimum: int, maximum: int) -> int:
 
 
 def _get_gsv_inference_defaults() -> dict:
-    split_method = str(oc.OLLAMA.get("gsv_text_split_method", "cut5") or "cut5").strip().lower()
+    split_method = str(oc.OLLAMA.get("gsv_text_split_method", "cut0") or "cut0").strip().lower()
     if split_method not in {"cut0", "cut1", "cut2", "cut3", "cut4", "cut5"}:
-        split_method = "cut5"
+        split_method = "cut0"
     return {
         "temperature": _get_gsv_temperature(),
         "top_k": _get_gsv_int("gsv_top_k", 15, 1, 1025),
         "top_p": _get_gsv_float("gsv_top_p", 1.0, 0.01, 1.0),
-        "repetition_penalty": _get_gsv_float("gsv_repetition_penalty", 1.35, 0.1, 2.0),
+        "repetition_penalty": _get_gsv_float("gsv_repetition_penalty", 1.6, 0.1, 2.0),
         "speed_factor": _get_gsv_speed_factor(),
         "text_split_method": split_method,
         "fragment_interval": _get_gsv_float("gsv_fragment_interval", 0.3, 0.0, 5.0),
         "seed": _get_gsv_int("gsv_seed", -1, -1, 2**32 - 1),
-        "max_steps": _get_gsv_int("gsv_max_steps", 500, 64, 1200),
     }
 
 

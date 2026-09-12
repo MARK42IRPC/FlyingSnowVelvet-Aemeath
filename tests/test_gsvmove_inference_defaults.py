@@ -29,8 +29,10 @@ class GsvmoveInferenceDefaultsTests(unittest.TestCase):
             "text_split_method": "cut2",
             "fragment_interval": 0.45,
             "seed": 42,
-            "max_steps": 640,
         })
+        # The decode cap is adaptive now; a stale config value is ignored and
+        # per-request ``max_steps`` still overrides the runtime default.
+        self.assertNotIn("max_steps", defaults)
 
     def test_invalid_config_values_fall_back_or_clamp(self):
         configured = {
@@ -38,16 +40,30 @@ class GsvmoveInferenceDefaultsTests(unittest.TestCase):
             "gsv_top_p": -1,
             "gsv_text_split_method": "unknown",
             "gsv_seed": "invalid",
-            "gsv_max_steps": 1,
         }
         with patch.dict(service_module.oc.OLLAMA, configured, clear=False):
             defaults = service_module._get_gsv_inference_defaults()
 
         self.assertEqual(defaults["top_k"], 1025)
         self.assertEqual(defaults["top_p"], 0.01)
-        self.assertEqual(defaults["text_split_method"], "cut5")
+        self.assertEqual(defaults["text_split_method"], "cut0")
         self.assertEqual(defaults["seed"], -1)
-        self.assertEqual(defaults["max_steps"], 64)
+        self.assertNotIn("max_steps", defaults)
+
+    def test_missing_onnx_voice_config_uses_shipped_defaults(self):
+        cleared = {
+            "gsv_temperature": None,
+            "gsv_repetition_penalty": None,
+            "gsv_speed_factor": None,
+            "gsv_text_split_method": None,
+        }
+        with patch.dict(service_module.oc.OLLAMA, cleared, clear=False):
+            defaults = service_module._get_gsv_inference_defaults()
+
+        self.assertEqual(defaults["temperature"], 1.35)
+        self.assertEqual(defaults["repetition_penalty"], 1.6)
+        self.assertEqual(defaults["speed_factor"], 1.1)
+        self.assertEqual(defaults["text_split_method"], "cut0")
 
 
 if __name__ == "__main__":

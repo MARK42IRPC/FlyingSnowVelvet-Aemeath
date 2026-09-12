@@ -365,7 +365,7 @@ class OnnxInferenceRequest:
     streaming_mode: int
     overlap_length: int
     min_chunk_length: int
-    max_steps: int
+    max_steps: int | None
 
     @classmethod
     def from_payload(cls, payload: dict) -> "OnnxInferenceRequest":
@@ -384,11 +384,11 @@ class OnnxInferenceRequest:
         )
         top_k = _bounded_int(payload.get("top_k"), 15, 1, 1025)
         top_p = _bounded_float(payload.get("top_p"), 1.0, 0.01, 1.0)
-        speed_factor = _bounded_float(payload.get("speed_factor"), 1.0, 0.5, 2.0)
-        temperature = _bounded_float(payload.get("temperature"), 1.0, 0.01, 2.0)
-        text_split_method = str(payload.get("text_split_method") or "cut5").strip().lower()
+        speed_factor = _bounded_float(payload.get("speed_factor"), 1.1, 0.5, 2.0)
+        temperature = _bounded_float(payload.get("temperature"), 1.35, 0.01, 2.0)
+        text_split_method = str(payload.get("text_split_method") or "cut0").strip().lower()
         if text_split_method not in {"cut0", "cut1", "cut2", "cut3", "cut4", "cut5"}:
-            text_split_method = "cut5"
+            text_split_method = "cut0"
         batch_size = _bounded_int(payload.get("batch_size"), 1, 1, 200)
         batch_threshold = _bounded_float(payload.get("batch_threshold"), 0.75, 0.0, 1.0)
         split_bucket = _coerce_bool(payload.get("split_bucket"), True)
@@ -398,13 +398,18 @@ class OnnxInferenceRequest:
         if media_type not in {"wav", "raw", "ogg", "aac"}:
             media_type = "wav"
         parallel_infer = _coerce_bool(payload.get("parallel_infer"), True)
-        repetition_penalty = _bounded_float(payload.get("repetition_penalty"), 1.35, 0.1, 2.0)
+        repetition_penalty = _bounded_float(payload.get("repetition_penalty"), 1.6, 0.1, 2.0)
         sample_steps = _bounded_int(payload.get("sample_steps"), 32, 1, 1000)
         super_sampling = _coerce_bool(payload.get("super_sampling"), False)
         streaming_mode = _bounded_int(payload.get("streaming_mode"), 0, 0, 3)
         overlap_length = _bounded_int(payload.get("overlap_length"), 2, 0, 128)
         min_chunk_length = _bounded_int(payload.get("min_chunk_length"), 16, 1, 1024)
-        max_steps = _bounded_int(payload.get("max_steps"), 500, 64, 1200)
+        max_steps_raw = payload.get("max_steps")
+        max_steps = (
+            None
+            if max_steps_raw in (None, "", "auto")
+            else _bounded_int(max_steps_raw, 500, 64, 1200)
+        )
         return cls(
             text=text,
             language=language,
@@ -519,17 +524,22 @@ def _split_auto_language_text(text: str) -> tuple[tuple[str, str], ...]:
     return ((source, "zh"),)
 
 
-# One synthesis request shares a single ``max_steps`` semantic-decode budget,
-# and the packed archive cuts the audio silently when that budget runs out:
-# the decoder never reports ``stop_condition`` and only prints a warning to
-# stdout, which the worker keeps off the protocol channel.  Measured on the
-# pinned v2Pro package (speed_factor 1.1) one Chinese character costs 4.5-5.2
-# semantic tokens, so the default 500 steps only covers about 100 characters
-# and ``cut0`` requests dropped the tail of longer replies.  Budget every
-# request against the cap instead of trusting the split method to do it.
+# One synthesis request shares a single semantic-decode budget, and the packed
+# archive cuts the audio silently when that budget runs out: the decoder never
+# reports ``stop_condition`` and only prints a warning to stdout, which the
+# worker keeps off the protocol channel.  Measured on the pinned v2Pro package
+# (reference speed 1.1) one Chinese character costs 4.5-5.2 semantic tokens and
+# the cost scales inversely with ``speed_factor``, so a fixed step count either
+# truncates long text or wastes latency on short text.  Callers may still pin
+# ``max_steps`` explicitly; otherwise every segment derives its own cap from
+# its text length and speed, and the archive ceiling only forces a split when a
+# single request cannot cover the text at all.
 _SEMANTIC_TOKENS_PER_CHAR = 6.0
+_SEMANTIC_REFERENCE_SPEED = 1.1
 _SEMANTIC_BUDGET_RATIO = 0.8
 _SEMANTIC_MIN_BUDGET_CHARS = 24
+_SEMANTIC_MIN_STEPS = 64
+_SEMANTIC_MAX_STEPS = 1200
 # A healthy segment speaks roughly 0.19 s per character at speed 1.1; anything
 # far below this floor means the decode stopped before the text was finished.
 _SEMANTIC_MIN_SECONDS_PER_CHAR = 0.05
@@ -539,13 +549,32 @@ _SEMANTIC_CLAUSE_PATTERN = re.compile(
 _logger = get_logger(__name__)
 
 
-def _semantic_char_budget(max_steps: int) -> int:
+def _semantic_tokens_per_char(speed_factor: float = _SEMANTIC_REFERENCE_SPEED) -> float:
+    """Return the measured decode cost of one character at ``speed_factor``."""
+    speed = _bounded_float(speed_factor, 1.0, 0.5, 2.0)
+    return _SEMANTIC_TOKENS_PER_CHAR * _SEMANTIC_REFERENCE_SPEED / speed
+
+
+def _semantic_char_budget(
+    max_steps: int,
+    speed_factor: float = _SEMANTIC_REFERENCE_SPEED,
+) -> int:
     """Return how many characters may share one decode budget."""
-    steps = max(64, min(1200, int(max_steps or 0)))
+    steps = max(_SEMANTIC_MIN_STEPS, min(_SEMANTIC_MAX_STEPS, int(max_steps or 0)))
     return max(
         _SEMANTIC_MIN_BUDGET_CHARS,
-        int(steps * _SEMANTIC_BUDGET_RATIO / _SEMANTIC_TOKENS_PER_CHAR),
+        int(steps * _SEMANTIC_BUDGET_RATIO / _semantic_tokens_per_char(speed_factor)),
     )
+
+
+def _semantic_steps_for_text(
+    char_count: int,
+    speed_factor: float = _SEMANTIC_REFERENCE_SPEED,
+) -> int:
+    """Return the adaptive decode cap a text of ``char_count`` characters needs."""
+    tokens = _semantic_tokens_per_char(speed_factor) * max(1, int(char_count))
+    steps = math.ceil(tokens / _SEMANTIC_BUDGET_RATIO)
+    return max(_SEMANTIC_MIN_STEPS, min(_SEMANTIC_MAX_STEPS, steps))
 
 
 def _split_text_by_budget(text: str, limit: int) -> tuple[str, ...]:
@@ -575,10 +604,14 @@ def _split_text_by_budget(text: str, limit: int) -> tuple[str, ...]:
 
 def _fit_semantic_budget(
     segments: tuple[tuple[str, str], ...],
-    max_steps: int,
+    max_steps: int | None = None,
+    speed_factor: float = _SEMANTIC_REFERENCE_SPEED,
 ) -> tuple[tuple[str, str], ...]:
     """Keep every request inside the archive's silent decode cap."""
-    limit = _semantic_char_budget(max_steps)
+    limit = _semantic_char_budget(
+        _SEMANTIC_MAX_STEPS if max_steps is None else max_steps,
+        speed_factor,
+    )
     fitted: list[tuple[str, str]] = []
     for text, language in segments:
         if len(text) <= limit:
@@ -586,8 +619,8 @@ def _fit_semantic_budget(
             continue
         chunks = _split_text_by_budget(text, limit)
         _logger.info(
-            "[Voice] 文本 %d 字超过 %d 步解码预算，已拆分为 %d 段合成",
-            len(text), max_steps, len(chunks),
+            "[Voice] 文本 %d 字超过单段 %d 字的解码预算，已拆分为 %d 段合成",
+            len(text), limit, len(chunks),
         )
         fitted.extend((chunk, language) for chunk in chunks)
     return tuple(fitted)
@@ -731,17 +764,26 @@ class OnnxVoiceRuntime:
             if request.language != "auto" or self._native_mixed_frontend
             else _split_auto_language_text(request.text)
         )
-        segments = _fit_semantic_budget(segments, request.max_steps)
+        segments = _fit_semantic_budget(
+            segments,
+            request.max_steps,
+            request.speed_factor,
+        )
         chunks: list[np.ndarray] = []
         silence = np.zeros(
             round(self.sample_rate * request.fragment_interval),
             dtype=np.float32,
         )
         for index, (text, language) in enumerate(segments):
+            steps = (
+                request.max_steps
+                if request.max_steps is not None
+                else _semantic_steps_for_text(len(text), request.speed_factor)
+            )
             audio = engine.synthesize(
                 text,
                 language,
-                max_steps=request.max_steps,
+                max_steps=steps,
                 prompt_text=request.prompt_text,
                 prompt_lang=request.prompt_language,
                 top_k=request.top_k,
