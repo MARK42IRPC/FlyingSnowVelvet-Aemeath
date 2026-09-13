@@ -70,8 +70,10 @@ Qt/Node 子树。纯 Python `jieba`、`jieba_fast` 的关键词抽取与 SWIG �
 进程占用超过 65% 时向单分片收敛，因此不会吃满任意一核。写入路径照旧按未压缩大小预分配
 文件；解压期的额外内存主要是每个活跃分片的 64 MiB 解码字典。
 
-在线资源包（`FlyingSnowVelvet-<version>-Resources.zip`）保持 Deflate：应用内更新器用
-`zipfile` 直接覆盖解压它，读不了分片布局，原生在线安装器的两条路径则都支持。
+在线资源包（`FlyingSnowVelvet-<version>-Resources.zip`）默认仍发布 Deflate，作为分片切换的
+缓冲：LTS1.0.7pre4 的应用内更新器（`install_resource_bundle`）已经同时读分片与 Deflate，
+但更早的客户端只会把分片归档里的占位条目解成空文件。等所有在用客户端都升级到读得懂分片的
+版本后，构建时加 `--resource-sharded` 即可让资源包改用同一套 LZMA2 分片布局。
 
 原生安装器执行顺序：
 

@@ -709,16 +709,20 @@ def create_archive(payload: Path, archive: Path, *, sharded: bool = True) -> Non
         output.write(payload / MARKER_NAME, MARKER_NAME)
 
 
-def create_resource_archive(payload: Path, archive: Path) -> None:
+def create_resource_archive(
+    payload: Path, archive: Path, *, sharded: bool = False
+) -> None:
     """Create the remotely distributable desktop/runtime resource package.
 
     The resource package intentionally contains the same payload tree as the
     installer archive, but is published as a plain ZIP so online installers
     and the in-app updater can fetch and overlay it without downloading an EXE.
-    It stays on ordinary Deflate because the in-app updater overlays it with
-    ``zipfile``, which cannot read the sharded layout.
+
+    It defaults to ordinary Deflate.  LTS1.0.7pre4 的应用内更新器已经能读分片，
+    但更早的客户端只会把分片归档里的占位条目解成空文件；等所有在用客户端都
+    升到读得懂分片的版本后，再用 ``sharded=True`` 切换发布布局。
     """
-    create_archive(payload, archive, sharded=False)
+    create_archive(payload, archive, sharded=sharded)
 
 
 def _prepare_native_sources(installer_source: Path) -> tuple[Path, Path, Path]:
@@ -992,6 +996,11 @@ def main(argv: list[str] | None = None) -> int:
         help="生成在线版安装器（资源归档另行发布为 ZIP）",
     )
     parser.add_argument(
+        "--resource-sharded",
+        action="store_true",
+        help="在线资源包改用 LZMA2 分片布局（需等所有在用客户端都能读分片）",
+    )
+    parser.add_argument(
         "--installer-source",
         type=Path,
         default=DEFAULT_INSTALLER_SOURCE,
@@ -1063,7 +1072,11 @@ def main(argv: list[str] | None = None) -> int:
             marker.writestr(".fsv-online-resource-required", b"1\n")
             marker.writestr(MARKER_NAME, MARKER_BYTES)
         append_payload(base_executable, online_archive, output)
-        create_resource_archive(payload, PRODUCT_ROOT / "dist" / f"FlyingSnowVelvet-{version}-Resources.zip")
+        create_resource_archive(
+            payload,
+            PRODUCT_ROOT / "dist" / f"FlyingSnowVelvet-{version}-Resources.zip",
+            sharded=args.resource_sharded,
+        )
     else:
         append_payload(base_executable, archive, output)
     print(f"已生成安装器：{output}")

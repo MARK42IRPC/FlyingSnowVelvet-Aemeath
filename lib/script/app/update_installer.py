@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import lzma
 import os
 import shutil
 import subprocess
@@ -25,6 +26,22 @@ from lib.script.app.restart import (
 OFFLINE_INSTALLER_MAGIC = b"FSV-OFFLINE-PAYLOAD-2"
 OFFLINE_INSTALLER_TRAILER_FORMAT = "<24sQ32s"
 OFFLINE_INSTALLER_TRAILER_SIZE = struct.calcsize(OFFLINE_INSTALLER_TRAILER_FORMAT)
+
+# 在线资源包与离线安装器共用同一套 LZMA2 分片布局（构建方见
+# scripts/build_offline_installer.py，原生解码方见
+# installer/windows/src/zip_extract.h）。LTS1.0.7pre4 起应用内更新器同时读分片
+# 归档和旧的普通 Deflate ZIP：在线资源包先继续发布 Deflate 版本作为切换缓冲，
+# 等所有在用客户端都能读分片后再由构建脚本改用分片布局。
+RESOURCE_ARCHIVE_MARKER = ".fsv-install-root"
+RESOURCE_SHARD_INDEX_NAME = ".fsv-shard-index.bin"
+RESOURCE_SHARD_NAME_PREFIX = ".fsv-shard-"
+RESOURCE_SHARD_NAME_SUFFIX = ".fsvlzma"
+RESOURCE_SHARD_INDEX_ROW_FORMAT = struct.Struct("<IQQ")
+RESOURCE_SHARD_DICT_SIZE = 64 << 20
+RESOURCE_SHARD_FILTERS = (
+    {"id": lzma.FILTER_LZMA2, "dict_size": RESOURCE_SHARD_DICT_SIZE},
+)
+_RESOURCE_SHARD_READ_SIZE = 1 << 20
 
 
 @dataclass(frozen=True)
@@ -194,7 +211,11 @@ def extract_update_installer_bundle(bundle_path: Path, destination: Path) -> Pat
 
 
 def install_resource_bundle(bundle_path: Path, project_root: Path) -> None:
-    """Safely overlay a desktop/runtime resource ZIP onto an installation."""
+    """Safely overlay a desktop/runtime resource ZIP onto an installation.
+
+    LTS1.0.7pre4 起同时接受旧的普通 Deflate 资源包和新的 LZMA2 分片资源包：归档里
+    带分片索引就走分片解码，否则回退到 ``zipfile`` 逐条解压。
+    """
     bundle = Path(bundle_path).resolve()
     target_root = _installation_root(Path(project_root))
     staging = bundle.parent / f".fsv-resource-{os.getpid()}"
@@ -202,13 +223,8 @@ def install_resource_bundle(bundle_path: Path, project_root: Path) -> None:
     staging.mkdir(parents=True, exist_ok=True)
     try:
         with zipfile.ZipFile(bundle) as archive:
-            for member in archive.infolist():
-                name = str(member.filename or "").replace("\\", "/")
-                path = Path(name)
-                if not name or path.is_absolute() or ".." in path.parts:
-                    raise ValueError(f"资源包包含不安全路径：{name}")
-                archive.extract(member, staging)
-        marker = staging / ".fsv-install-root"
+            _extract_resource_archive(archive, staging)
+        marker = staging / RESOURCE_ARCHIVE_MARKER
         if not marker.is_file():
             raise ValueError("资源包缺少安装标记")
         for source in staging.iterdir():
@@ -222,6 +238,170 @@ def install_resource_bundle(bundle_path: Path, project_root: Path) -> None:
                 shutil.copy2(source, destination)
     finally:
         shutil.rmtree(staging, ignore_errors=True)
+
+
+def _resource_archive_name(member: zipfile.ZipInfo) -> str:
+    return str(member.filename or "").replace("\\", "/")
+
+
+def _resource_member_path(name: str) -> Path:
+    path = Path(name)
+    if not name or path.is_absolute() or ".." in path.parts:
+        raise ValueError(f"资源包包含不安全路径：{name}")
+    return path
+
+
+def _is_resource_shard_name(name: str) -> bool:
+    return name.startswith(RESOURCE_SHARD_NAME_PREFIX) and name.endswith(
+        RESOURCE_SHARD_NAME_SUFFIX
+    )
+
+
+def _read_resource_shard_index(
+    archive: zipfile.ZipFile,
+) -> list[tuple[int, int, int]] | None:
+    """按中央目录顺序返回 ``(分片号, 分片内偏移, 长度)``；普通 ZIP 返回 None。"""
+    try:
+        raw = archive.read(RESOURCE_SHARD_INDEX_NAME)
+    except KeyError:
+        return None
+    if len(raw) < 4:
+        raise ValueError("资源包分片索引不完整")
+    count = struct.unpack_from("<I", raw, 0)[0]
+    row_size = RESOURCE_SHARD_INDEX_ROW_FORMAT.size
+    if len(raw) < 4 + count * row_size:
+        raise ValueError("资源包分片索引不完整")
+    return [
+        RESOURCE_SHARD_INDEX_ROW_FORMAT.unpack_from(raw, 4 + index * row_size)
+        for index in range(count)
+    ]
+
+
+class _ResourceShardReader:
+    """把一条 raw LZMA2 分片流按需解码成有界大小的输出块。"""
+
+    def __init__(
+        self, stream: io.BufferedIOBase, *, chunk_size: int = _RESOURCE_SHARD_READ_SIZE
+    ) -> None:
+        self._stream = stream
+        self._chunk_size = int(chunk_size)
+        self._decompressor = lzma.LZMADecompressor(
+            format=lzma.FORMAT_RAW, filters=RESOURCE_SHARD_FILTERS
+        )
+        self._buffer = b""
+        self._input_done = False
+        self.position = 0
+
+    def _pump(self) -> bool:
+        if self._decompressor.eof:
+            return False
+        if self._decompressor.needs_input:
+            if self._input_done:
+                return False
+            chunk = self._stream.read(self._chunk_size)
+            if not chunk:
+                self._input_done = True
+            data = self._decompressor.decompress(chunk, self._chunk_size)
+        else:
+            data = self._decompressor.decompress(b"", self._chunk_size)
+        if not data:
+            return False
+        self._buffer += data
+        return True
+
+    def read(self, count: int) -> bytes:
+        while len(self._buffer) < count:
+            if not self._pump():
+                break
+        data = self._buffer[:count]
+        self._buffer = self._buffer[count:]
+        self.position += len(data)
+        return data
+
+    def skip_to(self, offset: int) -> bool:
+        if offset < self.position:
+            return False
+        while self.position < offset:
+            chunk = self.read(min(offset - self.position, self._chunk_size))
+            if not chunk:
+                return False
+        return True
+
+    def verify_complete(self) -> bool:
+        """读到流结束标记，并在有多余解压数据时判定索引与归档不一致。"""
+        while True:
+            if self._decompressor.eof:
+                return not self._buffer
+            if self._buffer:
+                return False
+            if not self._pump():
+                return False
+
+
+def _extract_resource_shard_member(
+    reader: _ResourceShardReader, target: Path, size: int
+) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    remaining = int(size)
+    with target.open("wb") as output:
+        while remaining > 0:
+            chunk = reader.read(min(remaining, _RESOURCE_SHARD_READ_SIZE))
+            if not chunk:
+                raise ValueError("资源包分片数据不完整")
+            output.write(chunk)
+            remaining -= len(chunk)
+
+
+def _extract_sharded_resource_archive(
+    archive: zipfile.ZipFile,
+    staging: Path,
+    rows: list[tuple[int, int, int]],
+) -> None:
+    placeholders: list[tuple[zipfile.ZipInfo, str]] = []
+    shard_names: set[str] = set()
+    for member in archive.infolist():
+        name = _resource_archive_name(member)
+        if name == RESOURCE_SHARD_INDEX_NAME:
+            continue
+        if _is_resource_shard_name(name):
+            shard_names.add(name)
+            continue
+        _resource_member_path(name)
+        if member.is_dir() or name == RESOURCE_ARCHIVE_MARKER:
+            archive.extract(member, staging)
+            continue
+        placeholders.append((member, name))
+    if len(placeholders) != len(rows):
+        raise ValueError("资源包分片索引与文件数量不一致")
+    shards: dict[int, list[tuple[int, int, Path]]] = {}
+    for (member, name), (shard, offset, size) in zip(placeholders, rows):
+        if member.file_size not in (0, size):
+            raise ValueError(f"资源包分片索引与文件大小不一致：{name}")
+        target = staging / _resource_member_path(name)
+        shards.setdefault(shard, []).append((offset, size, target))
+    for shard in sorted(shards):
+        shard_name = f"{RESOURCE_SHARD_NAME_PREFIX}{shard:03d}{RESOURCE_SHARD_NAME_SUFFIX}"
+        if shard_name not in shard_names:
+            raise ValueError(f"资源包缺少分片：{shard_name}")
+        with archive.open(shard_name, "r") as stream:
+            reader = _ResourceShardReader(stream)
+            for offset, size, target in sorted(shards[shard]):
+                if not reader.skip_to(offset):
+                    raise ValueError(f"资源包分片偏移超出范围：{shard_name}")
+                _extract_resource_shard_member(reader, target, size)
+            if not reader.verify_complete():
+                raise ValueError(f"资源包分片数据不完整：{shard_name}")
+
+
+def _extract_resource_archive(archive: zipfile.ZipFile, staging: Path) -> None:
+    """把资源包解到 staging；分片归档与旧的 Deflate 归档走不同路径。"""
+    rows = _read_resource_shard_index(archive)
+    if rows is None:
+        for member in archive.infolist():
+            _resource_member_path(_resource_archive_name(member))
+            archive.extract(member, staging)
+        return
+    _extract_sharded_resource_archive(archive, staging, rows)
 
 
 def _installation_root(project_root: Path) -> Path:

@@ -17,6 +17,7 @@ from pathlib import Path
 from unittest import mock
 
 from scripts import build_offline_installer as installer
+from lib.script.app.update_installer import install_resource_bundle
 
 
 SHARD_PREFIX = ".fsv-shard-"
@@ -177,8 +178,9 @@ class ShardedArchiveFormatTests(unittest.TestCase):
                     installer.create_archive(payload, root / "payload.zip")
 
     def test_resource_archive_stays_a_plain_deflated_zip(self):
-        # The in-app updater overlays the resource package with ``zipfile``,
-        # which cannot read the sharded layout the installer archive uses.
+        # LTS1.0.7pre4 的更新器已经能读分片，但更早的客户端只会把占位条目解成
+        # 空文件；过渡期内发布的资源包必须继续用 Deflate，直到所有在用客户端
+        # 都升到能读分片的版本。
         with tempfile.TemporaryDirectory(prefix="fsv-archive-plain-") as temporary:
             root = Path(temporary)
             payload = self.write_payload(root, {"app/data.bin": b"resource payload" * 512})
@@ -195,6 +197,104 @@ class ShardedArchiveFormatTests(unittest.TestCase):
                     bundle.getinfo("app/data.bin").compress_type, zipfile.ZIP_DEFLATED
                 )
                 self.assertEqual(bundle.read("app/data.bin"), b"resource payload" * 512)
+
+
+class ResourceBundleOverlayTests(unittest.TestCase):
+    """在线资源包双读：分片归档与旧的 Deflate 归档都要能覆盖安装。"""
+
+    def write_payload(self, root: Path, files: dict[str, bytes]) -> Path:
+        payload = root / "payload"
+        for name, data in files.items():
+            path = payload / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+        (payload / installer.MARKER_NAME).write_bytes(installer.MARKER_BYTES)
+        return payload
+
+    def test_sharded_resource_archive_overlays_every_file(self):
+        files = {
+            "app/data.bin": bytes(range(256)) * 900,
+            "app/services/dsh/package.json": b'{"name":"dsh"}' * 40,
+            "runtime/python311/python.exe": b"stub" * 100,
+            "app/empty.dat": b"",
+        }
+        with tempfile.TemporaryDirectory(prefix="fsv-resource-sharded-") as temporary:
+            root = Path(temporary)
+            payload = self.write_payload(root, files)
+            archive = root / "resources.zip"
+            # 收紧分片目标，强制落到多条分片上，覆盖跨分片的偏移与顺序。
+            with mock.patch.object(installer, "PAYLOAD_SHARD_TARGET_BYTES", 1000):
+                installer.create_resource_archive(payload, archive, sharded=True)
+            with zipfile.ZipFile(archive) as bundle:
+                shards = [name for name in bundle.namelist() if name.startswith(SHARD_PREFIX)]
+            self.assertGreater(len(shards), 1)
+            install_root = root / "install"
+            install_root.mkdir()
+
+            install_resource_bundle(archive, install_root)
+
+            # 安装标记只在 staging 里校验，覆盖安装时不会被复制过去。
+            self.assertFalse((install_root / installer.MARKER_NAME).exists())
+            for name, data in files.items():
+                with self.subTest(name=name):
+                    self.assertEqual((install_root / name).read_bytes(), data)
+
+    def test_deflated_resource_archive_still_overlays(self):
+        files = {"app/data.bin": b"resource payload" * 512}
+        with tempfile.TemporaryDirectory(prefix="fsv-resource-plain-") as temporary:
+            root = Path(temporary)
+            payload = self.write_payload(root, files)
+            archive = root / "resources.zip"
+            installer.create_resource_archive(payload, archive)
+            install_root = root / "install"
+            install_root.mkdir()
+
+            install_resource_bundle(archive, install_root)
+
+            self.assertEqual(
+                (install_root / "app/data.bin").read_bytes(), files["app/data.bin"]
+            )
+
+    def test_sharded_resource_archive_rejects_a_missing_shard(self):
+        with tempfile.TemporaryDirectory(prefix="fsv-resource-broken-") as temporary:
+            root = Path(temporary)
+            archive = root / "resources.zip"
+            rows = struct.pack("<I", 1) + installer.PAYLOAD_SHARD_INDEX_ROW.pack(0, 0, 4)
+            with zipfile.ZipFile(archive, "w") as bundle:
+                bundle.writestr(installer.PAYLOAD_SHARD_INDEX_NAME, rows)
+                bundle.writestr("app/a.bin", b"")
+                bundle.writestr(installer.MARKER_NAME, installer.MARKER_BYTES)
+            install_root = root / "install"
+            install_root.mkdir()
+
+            with self.assertRaises(ValueError):
+                install_resource_bundle(archive, install_root)
+            self.assertFalse((install_root / "app" / "a.bin").exists())
+
+    def test_sharded_resource_archive_rejects_truncated_data(self):
+        with tempfile.TemporaryDirectory(prefix="fsv-resource-cut-") as temporary:
+            root = Path(temporary)
+            archive = root / "resources.zip"
+            compressor = lzma.LZMACompressor(
+                format=lzma.FORMAT_RAW, filters=list(installer.PAYLOAD_SHARD_FILTERS)
+            )
+            shard = compressor.compress(b"0123456789") + compressor.flush()
+            # 索引声明 20 字节，分片只解得出 10 字节，更新器必须报错收场。
+            rows = struct.pack("<I", 1) + installer.PAYLOAD_SHARD_INDEX_ROW.pack(0, 0, 20)
+            with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_STORED) as bundle:
+                bundle.writestr(installer.PAYLOAD_SHARD_INDEX_NAME, rows)
+                bundle.writestr(
+                    installer.PAYLOAD_SHARD_NAME_TEMPLATE.format(index=0), shard
+                )
+                info = zipfile.ZipInfo("app/a.bin")
+                info.compress_type = zipfile.ZIP_STORED
+                bundle.writestr(info, b"")
+                bundle.writestr(installer.MARKER_NAME, installer.MARKER_BYTES)
+            install_root = root / "install"
+            install_root.mkdir()
+
+            with self.assertRaises(ValueError):
+                install_resource_bundle(archive, install_root)
 
 
 if __name__ == "__main__":
