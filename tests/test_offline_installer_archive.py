@@ -324,13 +324,15 @@ class ResourceOverlayLockTests(unittest.TestCase):
             archive = self.write_archive(root, files)
             install_root = root / "install"
             install_root.mkdir()
-            locked = install_root / "app" / "b.bin"
+            # 用 resolve() 比较：CI 的 TEMP 走 8.3 短名（RUNNER~1），未解析的
+            # 路径与安装根解析后的写法不同，直接比 Path 会漏掉这次注入。
+            locked = (install_root / "app" / "b.bin").resolve()
             real_copy2 = shutil.copy2
             blocked: list[Path] = []
 
             def flaky_copy(source, destination, *args, **kwargs):
-                if Path(destination) == locked and not blocked:
-                    blocked.append(Path(destination))
+                if Path(destination).resolve() == locked and not blocked:
+                    blocked.append(locked)
                     raise PermissionError(32, "file in use")
                 return real_copy2(source, destination, *args, **kwargs)
 
