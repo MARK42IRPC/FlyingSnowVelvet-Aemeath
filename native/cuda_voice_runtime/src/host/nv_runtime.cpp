@@ -404,6 +404,27 @@ std::size_t pool_bucket(std::size_t bytes) {
     return ((bytes + granularity - 1) / granularity) * granularity;
 }
 
+/* Size class a device buffer is pooled under. Rounding is fine for small
+   buffers and coarse for large ones: an autoregressive decode loop reads a
+   longer sequence every step, so nearly every multi-megabyte intermediate is a
+   little bigger than the step before, and a bucket that almost matches still
+   misses -- which pays a cuMemAlloc/cuMemFree pair (a context stall, tens of
+   microseconds) per tensor, per step. Above the floor the class grows in steps
+   of an eighth, so the sizes a growing sequence walks through share buffers:
+   about 47 classes between the floor and 64 MiB, at most 12.5% wasted. */
+const std::size_t kPoolClassFloor = 256ull << 10;
+
+std::size_t pool_class(std::size_t bytes) {
+    const std::size_t granularity = 1024;
+    std::size_t size = bytes ? bytes : 1;
+    if (size <= kPoolClassFloor) {
+        return ((size + granularity - 1) / granularity) * granularity;
+    }
+    std::size_t step = kPoolClassFloor;
+    while (step < size) step += step / 8;
+    return step;
+}
+
 /* Page-locked bounce buffers for host/device copies.
 
    ``cuMemcpyHtoD`` from pageable memory performs a stream synchronisation
@@ -976,7 +997,7 @@ bool NvRuntime::allocate(std::size_t bytes, NvPtr& pointer, std::string& error) 
 
 void NvRuntime::release(NvPtr pointer, std::size_t bytes) {
     if (!pointer) return;
-    if (bytes) note_device_bytes(-static_cast<long long>(pool_bucket(bytes)));
+    if (bytes) note_device_bytes(-static_cast<long long>(pool_class(bytes)));
     api_.cuMemFree(pointer);
 }
 
@@ -991,7 +1012,7 @@ bool NvRuntime::acquire(std::size_t bytes, NvPtr& pointer, std::string& error) {
         error = "显存不足：本次推理已整体切回主机执行";
         return false;
     }
-    const std::size_t bucket = pool_bucket(bytes ? bytes : 1);
+    const std::size_t bucket = pool_class(bytes ? bytes : 1);
     auto iterator = g_pool.lower_bound(bucket);
     if (iterator != g_pool.end() && !iterator->second.empty()) {
         pointer = iterator->second.back();
@@ -1037,7 +1058,7 @@ bool NvRuntime::acquire(std::size_t bytes, NvPtr& pointer, std::string& error) {
 
 void NvRuntime::recycle(NvPtr pointer, std::size_t bytes) {
     if (!pointer) return;
-    const std::size_t bucket = pool_bucket(bytes ? bytes : 1);
+    const std::size_t bucket = pool_class(bytes ? bytes : 1);
     if (g_pool_bytes + bucket <= g_pool_limit) {
         g_pool[bucket].push_back(pointer);
         g_pool_bytes += bucket;
