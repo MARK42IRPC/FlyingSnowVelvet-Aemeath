@@ -1,13 +1,19 @@
 from __future__ import annotations
 
+import gc
+import sys
+import threading
+import types
 import unittest
 from unittest.mock import patch
 
 import numpy as np
 
 from lib.core import audio_meter as audio_meter_module
+from lib.core import audio_spectrum as audio_spectrum_module
 from lib.core.audio_meter import AudioMeter
 from lib.core.audio_spectrum import (
+    AudioSpectrumAnalyzer,
     band_level_db,
     level_to_intensity,
 )
@@ -141,6 +147,226 @@ class AudioMeterFrequencyTests(unittest.TestCase):
         self.assertEqual(config["freq_max"], 250.0)
         self.assertEqual(config["level_floor_db"], -50.0)
         self.assertEqual(config["level_ceil_db"], 0.0)
+
+
+class _FakeComObject:
+    """COM 对象替身：只记录引用计数，释放由指针替身负责。"""
+
+    def __init__(self, name):
+        self.name = name
+        self.refcount = 0
+
+    def add_ref(self):
+        self.refcount += 1
+
+    def release(self):
+        self.refcount -= 1
+
+
+class _FakeInterfacePointer:
+    """comtypes 接口指针替身：构造即持有一次引用，QueryInterface 返回自带引用的新指针。
+
+    真实环境里 `ctypes.cast(client, POINTER(IFace))` 不增加引用计数，被 cast 的临时
+    指针与结果指针共享同一个 COM 引用；临时指针先析构就会把仍在使用的接口提前释放，
+    进程退出期表现为 access violation 或 “COM method call without VTable”。这里用引用
+    计数把这个约束固化下来：临时指针析构后接口仍必须有人持有。
+    """
+
+    def __init__(self, target, iid=None):
+        self.target = target
+        self.iid = iid
+        target.add_ref()
+
+    def __del__(self):
+        target = self.target
+        self.target = None
+        if target is not None:
+            target.release()
+
+    def QueryInterface(self, interface):
+        return _FakeInterfacePointer(self.target, getattr(interface, "_iid_", None))
+
+    def __getattr__(self, name):
+        if name == "target":  # 属性还没建立时不要递归
+            raise AttributeError(name)
+        return getattr(self.target, name)
+
+
+class _FakeIAudioClient:
+    _iid_ = "IID_IAudioClient"
+
+
+class _FakeIAudioMeterInformation:
+    _iid_ = "IID_IAudioMeterInformation"
+
+
+class _FakeAudioClientObject(_FakeComObject):
+    """IAudioClient 替身：回环流打开路径会用到的成员。"""
+
+    def __init__(self):
+        super().__init__("IAudioClient")
+        self.mix_format = types.SimpleNamespace(
+            wFormatTag=0x0003,
+            nChannels=2,
+            nSamplesPerSec=48000,
+            wBitsPerSample=32,
+            nBlockAlign=8,
+        )
+        self.initialize_args = None
+        self.started = False
+        self.stopped = False
+        self.service_object = _FakeComObject("IAudioCaptureClient")
+
+    def GetMixFormat(self):
+        return types.SimpleNamespace(contents=self.mix_format)
+
+    def Initialize(self, *args):
+        self.initialize_args = args
+
+    def GetService(self, iid):
+        return _FakeInterfacePointer(self.service_object, iid)
+
+    def Start(self):
+        self.started = True
+
+    def Stop(self):
+        self.stopped = True
+
+
+class _FakeAudioMeterObject(_FakeComObject):
+    def __init__(self):
+        super().__init__("IAudioMeterInformation")
+        self.peak = 0.25
+
+    def GetPeakValue(self):
+        return self.peak
+
+
+class _FakeAudioDevice:
+    """IMMDevice 替身：按 iid 分发 Activate 结果。"""
+
+    def __init__(self):
+        self.client_object = _FakeAudioClientObject()
+        self.meter_object = _FakeAudioMeterObject()
+        self.activate_count = 0
+
+    def Activate(self, iid, clsctx, params):
+        if iid == _FakeIAudioMeterInformation._iid_:
+            target = self.meter_object
+        else:
+            target = self.client_object
+        self.activate_count += 1
+        return _FakeInterfacePointer(target, iid)
+
+
+def _fake_audio_modules(device):
+    """注入 pycaw / comtypes 替身，让 COM 路径在没有音频设备的机器上也能跑。"""
+    pycaw = types.ModuleType("pycaw")
+    pycaw_pycaw = types.ModuleType("pycaw.pycaw")
+    pycaw_pycaw.AudioUtilities = types.SimpleNamespace(
+        GetSpeakers=lambda: types.SimpleNamespace(_dev=device)
+    )
+    pycaw_pycaw.IAudioMeterInformation = _FakeIAudioMeterInformation
+    pycaw_api = types.ModuleType("pycaw.api")
+    pycaw_audioclient = types.ModuleType("pycaw.api.audioclient")
+    pycaw_audioclient.IAudioClient = _FakeIAudioClient
+    pycaw_api.audioclient = pycaw_audioclient
+
+    class _FakeIUnknown:
+        """只是让 `_declare_capture_client` 里的类定义能执行。"""
+
+    comtypes = types.ModuleType("comtypes")
+    comtypes.CLSCTX_ALL = 23
+    comtypes.IUnknown = _FakeIUnknown
+    comtypes.GUID = lambda value: value
+    comtypes.COMMETHOD = lambda *args, **kwargs: None
+
+    return {
+        "pycaw": pycaw,
+        "pycaw.pycaw": pycaw_pycaw,
+        "pycaw.api": pycaw_api,
+        "pycaw.api.audioclient": pycaw_audioclient,
+        "comtypes": comtypes,
+    }
+
+
+def _bare_analyzer():
+    """只带 `_open_capture` 所需字段的分析器（不启动采样线程）。"""
+    analyzer = object.__new__(AudioSpectrumAnalyzer)
+    analyzer._freq_min = 60.0
+    analyzer._freq_max = 250.0
+    analyzer._window_size = 4096
+    analyzer._lock = threading.Lock()
+    analyzer._sample_rate = 0
+    analyzer._channels = 0
+    analyzer._tag = 0
+    analyzer._bits = 0
+    analyzer._block_align = 0
+    return analyzer
+
+
+class CapturePointerOwnershipTests(unittest.TestCase):
+    """回环流接口各自持有一次引用（退出期 comtypes 崩溃的回归用例）。"""
+
+    def setUp(self):
+        saved = audio_spectrum_module._CAPTURE_CLIENT_CLASS
+        audio_spectrum_module._CAPTURE_CLIENT_CLASS = None
+        self.addCleanup(
+            setattr, audio_spectrum_module, "_CAPTURE_CLIENT_CLASS", saved
+        )
+        self.device = _FakeAudioDevice()
+        patcher = patch.dict(sys.modules, _fake_audio_modules(self.device))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_open_capture_keeps_one_reference_per_interface(self):
+        analyzer = _bare_analyzer()
+
+        capture, client, window, error = analyzer._open_capture()
+
+        self.assertEqual(error, "")
+        self.assertEqual(analyzer._sample_rate, 48000)
+        self.assertEqual(analyzer._channels, 2)
+        self.assertEqual(analyzer._block_align, 8)
+        self.assertEqual(window.shape, (4096,))
+        self.assertTrue(self.device.client_object.started)
+        # Activate / GetService 的临时指针已经析构，引用只由 client / capture 持有。
+        self.assertEqual(self.device.client_object.refcount, 1)
+        self.assertEqual(self.device.client_object.service_object.refcount, 1)
+
+        del capture, client
+        gc.collect()
+
+        self.assertEqual(self.device.client_object.refcount, 0)
+        self.assertEqual(self.device.client_object.service_object.refcount, 0)
+
+
+class MeterPointerOwnershipTests(unittest.TestCase):
+    """IAudioMeterInformation 同样不能被临时指针抢走引用。"""
+
+    def setUp(self):
+        self.device = _FakeAudioDevice()
+        patcher = patch.dict(sys.modules, _fake_audio_modules(self.device))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        spectrum = _FakeSpectrum(freq_min=60.0, freq_max=250.0)
+        spectrum_patcher = patch(
+            "lib.core.audio_spectrum.AudioSpectrumAnalyzer", lambda **kwargs: spectrum
+        )
+        spectrum_patcher.start()
+        self.addCleanup(spectrum_patcher.stop)
+
+    def test_cleanup_releases_meter_pointer(self):
+        meter = AudioMeter()
+        self.addCleanup(meter.cleanup)
+
+        self.assertIsNotNone(meter._meter)
+        self.assertEqual(self.device.meter_object.refcount, 1)
+
+        meter.cleanup()
+
+        self.assertIsNone(meter._meter)
+        self.assertEqual(self.device.meter_object.refcount, 0)
 
 
 if __name__ == "__main__":

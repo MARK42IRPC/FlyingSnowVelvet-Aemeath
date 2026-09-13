@@ -77,6 +77,16 @@
   `PARTICLES.overlay_hide_linger_ms`（默认 500ms）再隐藏，滞留期内重新出现粒子/特效即
   取消隐藏，不再反复 `show()` 和 `LayerManager.enforce_burst()`；退出、暂停和清理仍然
   立即隐藏，不受滞留影响。策略集中在 `lib/core/qt_bridge/overlay_policy.py`。
+- 修复退出后 stderr 的 comtypes 崩溃（`OSError: exception: access violation writing ...`
+  与 `ValueError: COM method call without VTable`）：`lib/core/audio_meter.py` 与
+  `lib/core/audio_spectrum.py` 用 `ctypes.cast` 把 `IMMDevice.Activate()` 的返回值改写成
+  `IAudioMeterInformation`/`IAudioClient`，但 `cast` 不增加引用计数，Activate 的临时指针与
+  结果指针共享同一个 COM 引用，临时指针先析构就会把仍在使用的接口提前释放，之后任何一次
+  `Release()` 都落在已释放的对象上。两处改用 `QueryInterface`（pycaw 自身取接口的方式，
+  返回自带引用的指针），`AudioMeter.cleanup()` 同时在 COM 仍可用时放掉 meter 指针，退出期
+  不再依赖 GC 与 COM 拆卸的先后；新增回归用例用指针替身记录引用计数，回环客户端与 meter
+  各持一次引用（`tests/test_audio_spectrum.py`），真实设备上打开回环、静音期重建设备流、
+  重新播放和退出均正常。
 
 ## [LTS1.0.7pre3] - 2026-09-12
 

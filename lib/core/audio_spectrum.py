@@ -253,14 +253,17 @@ class AudioSpectrumAnalyzer:
         window = None
         try:
             import numpy as np
-            from ctypes import POINTER, cast
             from comtypes import CLSCTX_ALL
             from pycaw.pycaw import AudioUtilities
             from pycaw.api.audioclient import IAudioClient
 
             device = AudioUtilities.GetSpeakers()._dev
-            interface = device.Activate(IAudioClient._iid_, CLSCTX_ALL, None)
-            client = cast(interface, POINTER(IAudioClient))
+            # 必须用 QueryInterface 取接口，不要用 ctypes.cast 改写 Activate 的结果：
+            # cast 不增加引用计数，源指针与结果指针会共享同一个 COM 引用，源指针
+            # 先析构时仍在使用的接口被提前释放（退出期表现为 access violation 与
+            # “COM method call without VTable”）。QueryInterface 返回自带引用的指针。
+            activated = device.Activate(IAudioClient._iid_, CLSCTX_ALL, None)
+            client = activated.QueryInterface(IAudioClient)
             mix_format = client.GetMixFormat()
             tag = int(mix_format.contents.wFormatTag)
             channels = max(1, int(mix_format.contents.nChannels))
@@ -276,10 +279,8 @@ class AudioSpectrumAnalyzer:
                 None,
             )
             capture_cls = _declare_capture_client()
-            capture = cast(
-                client.GetService(capture_cls._iid_),
-                POINTER(capture_cls),
-            )
+            service = client.GetService(capture_cls._iid_)
+            capture = service.QueryInterface(capture_cls)
             with self._lock:
                 self._sample_rate = sample_rate
                 self._channels = channels

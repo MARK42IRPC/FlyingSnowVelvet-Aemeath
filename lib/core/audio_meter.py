@@ -73,13 +73,16 @@ class AudioMeter:
         """初始化 pycaw COM 接口；失败时静默降级。"""
         try:
             from pycaw.pycaw import AudioUtilities, IAudioMeterInformation
-            from ctypes import POINTER, cast
             from comtypes import CLSCTX_ALL
 
-            speakers  = AudioUtilities.GetSpeakers()
-            dev       = speakers._dev
-            interface = dev.Activate(IAudioMeterInformation._iid_, CLSCTX_ALL, None)
-            self._meter = cast(interface, POINTER(IAudioMeterInformation))
+            speakers = AudioUtilities.GetSpeakers()
+            dev = speakers._dev
+            # 用 QueryInterface 取接口：ctypes.cast 不增加引用计数，会让 Activate
+            # 的临时指针与结果指针共享同一个 COM 引用，临时指针先析构时把仍在使用的
+            # 接口提前释放（退出期表现为 access violation 与 “COM method call
+            # without VTable”）。QueryInterface 返回自带引用的指针，pycaw 自身也这样做。
+            activated = dev.Activate(IAudioMeterInformation._iid_, CLSCTX_ALL, None)
+            self._meter = activated.QueryInterface(IAudioMeterInformation)
             logger.debug("[AudioMeter] IAudioMeterInformation 初始化成功")
         except ImportError:
             logger.warning("[AudioMeter] pycaw 未安装，响度检测不可用")
@@ -201,6 +204,8 @@ class AudioMeter:
         if worker is not None and worker.is_alive():
             worker.join(timeout=0.2)
         self._worker = None
+        # 在 COM 仍可用时显式放掉 meter 指针，退出期不再依赖 GC 与 COM 拆卸的先后。
+        self._meter = None
         spectrum = self._spectrum
         self._spectrum = None
         if spectrum is not None:
