@@ -13,7 +13,11 @@ from config.tooltip_config import TOOLTIPS
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.desktop_actions import request_tray_menu
 from lib.core.unified_draw import Layer, get_layer_manager
-from lib.core.qt_bridge.screen import clamp_rect_position
+from lib.core.qt_bridge.screen import (
+    clamp_rect_position,
+    move_widget_to_global,
+    widget_global_rect,
+)
 from lib.core.anchor_utils import apply_ui_opacity
 from lib.script.ui.rect_action_button_style import paint_rect_action_button
 
@@ -74,8 +78,9 @@ class MoreFunctionsButton(QWidget):
     def _update_position(self) -> None:
         if not self._launch_wuwa_button or not self._launch_wuwa_button.isVisible():
             return
-        btn_x = self._launch_wuwa_button.x()
-        btn_y = self._launch_wuwa_button.y()
+        target_rect = widget_global_rect(self._launch_wuwa_button)
+        btn_x = target_rect.x()
+        btn_y = target_rect.y()
         new_x = btn_x
         new_y = btn_y - self.HEIGHT
         x, y, _ = clamp_rect_position(
@@ -86,8 +91,7 @@ class MoreFunctionsButton(QWidget):
             point=QPoint(btn_x, btn_y),
             fallback_widget=self,
         )
-        if self.x() != x or self.y() != y:
-            self.move(x, y)
+        move_widget_to_global(self, x, y)
 
     def fade_in(self) -> None:
         if self._visible:
@@ -105,7 +109,7 @@ class MoreFunctionsButton(QWidget):
             self._anim.finished.disconnect(self._on_fade_out_complete)
         except TypeError:
             pass
-        rect = self.geometry()
+        rect = widget_global_rect(self)
         self._anim.finished.connect(self._on_fade_out_complete)
         self._animate(0.0)
         self._event_center.publish(Event(EventType.PARTICLE_REQUEST, {

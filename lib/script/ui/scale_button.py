@@ -12,7 +12,11 @@ from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.desktop_actions import adjust_desktop_scale
 from lib.core.graphics.types import Point
 from lib.core.unified_draw import Layer, get_layer_manager
-from lib.core.qt_bridge.screen import clamp_rect_position
+from lib.core.qt_bridge.screen import (
+    clamp_rect_position,
+    move_widget_to_global,
+    widget_global_rect,
+)
 from config.user_scale_config import get_user_scale_config
 from lib.core.anchor_utils import (
     animate_opacity,
@@ -143,10 +147,11 @@ class ScaleUpButton(QWidget):
             return
 
         # 获取 clickthrough_button 的位置和尺寸
-        btn_x = self._clickthrough_button.x()
-        btn_y = self._clickthrough_button.y()
-        btn_width = self._clickthrough_button.width()
-        btn_height = self._clickthrough_button.height()
+        target_rect = widget_global_rect(self._clickthrough_button)
+        btn_x = target_rect.x()
+        btn_y = target_rect.y()
+        btn_width = target_rect.width()
+        btn_height = target_rect.height()
 
         # clickthrough_button 的 right 锚点（全局坐标）
         # right 锚点 = (btn_x + btn_width, btn_y + btn_height // 2)
@@ -171,16 +176,15 @@ class ScaleUpButton(QWidget):
             fallback_widget=self,
         )
 
-        if self.x() != x or self.y() != y:
-            self.move(x, y)
-            # 广播自身位置变化，供下游 UI（缩小按钮）即时跟随
-            anchor_update_event = Event(EventType.UI_ANCHOR_RESPONSE, {
-                'window_id': self._ui_id,
-                'anchor_id': 'all',
-                'anchor_point': Point(x, y),
-                'ui_id': 'all'
-            })
-            self._event_center.publish(anchor_update_event)
+        move_widget_to_global(self, x, y)
+        # 广播自身位置变化，供下游 UI（缩小按钮）即时跟随
+        anchor_update_event = Event(EventType.UI_ANCHOR_RESPONSE, {
+            'window_id': self._ui_id,
+            'anchor_id': 'all',
+            'anchor_point': Point(x, y),
+            'ui_id': 'all'
+        })
+        self._event_center.publish(anchor_update_event)
 
     def fade_in(self):
         if self._visible:
@@ -202,7 +206,7 @@ class ScaleUpButton(QWidget):
             return
         self._visible = False
 
-        rect = self.geometry()
+        rect = widget_global_rect(self)
         self._anim.finished.connect(self._on_fade_out_complete)
         self._animate(0.0)
 
@@ -374,10 +378,11 @@ class ScaleDownButton(QWidget):
             return
 
         # 获取 scale_up_button 的位置和尺寸
-        btn_x = self._scale_up_button.x()
-        btn_y = self._scale_up_button.y()
-        btn_width = self._scale_up_button.width()
-        btn_height = self._scale_up_button.height()
+        target_rect = widget_global_rect(self._scale_up_button)
+        btn_x = target_rect.x()
+        btn_y = target_rect.y()
+        btn_width = target_rect.width()
+        btn_height = target_rect.height()
 
         # scale_up_button 的 right 锚点（全局坐标）
         target_right_x = btn_x + btn_width
@@ -397,8 +402,7 @@ class ScaleDownButton(QWidget):
             fallback_widget=self,
         )
 
-        if self.x() != x or self.y() != y:
-            self.move(x, y)
+        move_widget_to_global(self, x, y)
 
     def fade_in(self):
         if self._visible:
@@ -420,7 +424,7 @@ class ScaleDownButton(QWidget):
             return
         self._visible = False
 
-        rect = self.geometry()
+        rect = widget_global_rect(self)
         self._anim.finished.connect(self._on_fade_out_complete)
         self._animate(0.0)
 

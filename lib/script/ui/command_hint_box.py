@@ -34,7 +34,11 @@ from config.scale import scale_px
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.hash_cmd_registry import get_hash_cmd_registry
 from lib.core.unified_draw import Layer, get_layer_manager
-from lib.core.qt_bridge.screen import clamp_rect_position
+from lib.core.qt_bridge.screen import (
+    clamp_rect_position,
+    move_widget_to_global,
+    widget_global_rect,
+)
 from lib.core.anchor_utils import apply_ui_opacity
 from lib.core.qt_bridge.window import coerce_qpoint
 from lib.script.ui.page_turn_buttons import make_page_buttons, update_page_buttons_position
@@ -217,7 +221,7 @@ class CommandHintBox(QWidget):
         self._visible         = False
         self._anchor_available = False
         # right_fade 消散特效（与 CloseButton 等一致）
-        rect = self.geometry()
+        rect = widget_global_rect(self)
         self._event_center.publish(Event(EventType.PARTICLE_REQUEST, {
             'particle_id': 'right_fade',
             'area_type':   'rect',
@@ -283,8 +287,7 @@ class CommandHintBox(QWidget):
             point=self._anchor_point,
             fallback_widget=self,
         )
-        if self.x() != x or self.y() != y:
-            self.move(x, y)
+        move_widget_to_global(self, x, y)
         update_page_buttons_position(self, self._prev_btn, self._next_btn, self._has_pages())
 
     # ==================================================================

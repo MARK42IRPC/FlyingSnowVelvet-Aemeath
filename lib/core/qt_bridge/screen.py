@@ -119,3 +119,39 @@ def clamp_rect_position(
         ),
     )
     return clamped_x, clamped_y, geometry
+
+
+def widget_global_rect(widget: QWidget) -> QRect:
+    """返回任意控件（含子控件）在屏幕坐标系中的矩形。"""
+    try:
+        origin = widget.mapToGlobal(QPoint(0, 0))
+    except Exception:
+        return QRect(widget.x(), widget.y(), widget.width(), widget.height())
+    return QRect(origin.x(), origin.y(), widget.width(), widget.height())
+
+
+def move_widget_to_global(widget: QWidget, x: int, y: int) -> None:
+    """按屏幕坐标移动控件，宿主分层时换算成宿主本地坐标。
+
+    右键 UI 合并为一层后，命令框与附属按钮都是宿主窗口的子控件，`move()` 使用的是
+    父窗口本地坐标。这里统一接收全局目标位置，记录到 `_layer_global_pos`（宿主据此
+    计算自己的几何与命中区域），再换算成本地坐标后移动；`Qt` 下相同坐标的 `move()`
+    不会触发原生窗口操作，拖动时每个帧只有宿主窗口移动一次。
+    """
+    x = int(x)
+    y = int(y)
+    try:
+        widget._layer_global_pos = (x, y)
+    except Exception:
+        pass
+    host = getattr(widget, "_layer_host", None)
+    if host is not None:
+        try:
+            origin = host.mapToGlobal(QPoint(0, 0))
+        except Exception:
+            origin = None
+        if origin is not None:
+            x -= origin.x()
+            y -= origin.y()
+    if widget.x() != x or widget.y() != y:
+        widget.move(x, y)

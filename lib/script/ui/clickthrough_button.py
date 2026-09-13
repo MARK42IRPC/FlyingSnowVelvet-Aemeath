@@ -11,7 +11,11 @@ from config.tooltip_config import TOOLTIPS
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.graphics.types import Point
 from lib.core.unified_draw import Layer, get_layer_manager
-from lib.core.qt_bridge.screen import clamp_rect_position
+from lib.core.qt_bridge.screen import (
+    clamp_rect_position,
+    move_widget_to_global,
+    widget_global_rect,
+)
 from lib.script.voice.ams_clickthrough_reminder import AmsClickthroughReminderSound
 from lib.core.anchor_utils import (
     animate_opacity,
@@ -227,16 +231,15 @@ class ClickThroughButton(QWidget):
             fallback_widget=self,
         )
 
-        if self.x() != x or self.y() != y:
-            self.move(x, y)
-            # 广播自身位置变化，供下游 UI（如缩放按钮）即时跟随
-            anchor_update_event = Event(EventType.UI_ANCHOR_RESPONSE, {
-                'window_id': self._ui_id,
-                'anchor_id': 'all',
-                'anchor_point': Point(x, y),
-                'ui_id': 'all'
-            })
-            self._event_center.publish(anchor_update_event)
+        move_widget_to_global(self, x, y)
+        # 广播自身位置变化，供下游 UI（如缩放按钮）即时跟随
+        anchor_update_event = Event(EventType.UI_ANCHOR_RESPONSE, {
+            'window_id': self._ui_id,
+            'anchor_id': 'all',
+            'anchor_point': Point(x, y),
+            'ui_id': 'all'
+        })
+        self._event_center.publish(anchor_update_event)
 
     def fade_in(self):
         if self._visible:
@@ -267,7 +270,7 @@ class ClickThroughButton(QWidget):
         self._anchor_available = False  # 锚点不可用，停止跟随
 
         # 在隐藏之前保存几何位置
-        rect = self.geometry()
+        rect = widget_global_rect(self)
 
         # 设置动画完成后的回调
         self._anim.finished.connect(self._on_fade_out_complete)

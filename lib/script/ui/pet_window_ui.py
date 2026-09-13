@@ -11,11 +11,13 @@ from lib.script.ui.interaction_mode_button import InteractionModeButton
 from lib.script.ui.launch_wuwa_button import LaunchWutheringWavesButton
 from lib.script.ui.mic_stt_indicator import MicSttIndicator
 from lib.script.ui.more_functions_button import MoreFunctionsButton
+from lib.script.ui.right_click_ui_layer import RightClickUiLayer
 from lib.script.ui.scale_button import ScaleDownButton, ScaleUpButton
 from lib.script.ui.shutdown import hide_all_runtime_ui
 
 
 _UI_ATTRS = (
+    "_right_click_ui_layer",
     "_close_btn",
     "_clickthrough_btn",
     "_scale_up_btn",
@@ -58,7 +60,26 @@ def create_pet_window_ui(owner, on_close):
     )
     mic_stt_indicator = MicSttIndicator(owner)
 
+    # 右键 UI 合并为一层：命令框、提示框与全部附属按钮共用同一个顶层窗口，
+    # 拖动桌宠时每个帧只移动一次原生窗口，也不再各自重复裁剪/重绘。
+    layer = RightClickUiLayer()
+    layer.adopt(
+        cmd,
+        hint_box,
+        close_btn,
+        clickthrough_btn,
+        scale_up_btn,
+        scale_down_btn,
+        launch_wuwa_btn,
+        chat_mode_btn,
+        interaction_mode_btn,
+        more_functions_btn,
+        getattr(hint_box, "_prev_btn", None),
+        getattr(hint_box, "_next_btn", None),
+    )
+
     return {
+        "_right_click_ui_layer": layer,
         "_close_btn": close_btn,
         "_clickthrough_btn": clickthrough_btn,
         "_scale_up_btn": scale_up_btn,

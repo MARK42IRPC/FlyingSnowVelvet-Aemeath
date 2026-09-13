@@ -11,7 +11,11 @@ from config.scale import scale_px
 from lib.core.anchor_utils import apply_ui_opacity
 from lib.core.event.center import Event, EventType, get_event_center
 from lib.core.qt_bridge.font import get_ui_font
-from lib.core.qt_bridge.screen import clamp_rect_position
+from lib.core.qt_bridge.screen import (
+    clamp_rect_position,
+    move_widget_to_global,
+    widget_global_rect,
+)
 from lib.core.unified_draw import Layer, get_layer_manager
 from lib.script.ui.rect_action_button_style import paint_rect_action_button
 
@@ -76,8 +80,9 @@ class InteractionModeButton(QWidget):
         button = self._anchor_button
         if button is None or not button.isVisible():
             return
-        target_right_x = button.x() + button.width()
-        target_right_y = button.y() + button.height() // 2
+        target_rect = widget_global_rect(button)
+        target_right_x = target_rect.x() + target_rect.width()
+        target_right_y = target_rect.y() + target_rect.height() // 2
         x, y, _ = clamp_rect_position(
             target_right_x,
             target_right_y - self.HEIGHT // 2,
@@ -86,8 +91,7 @@ class InteractionModeButton(QWidget):
             point=QPoint(target_right_x, target_right_y),
             fallback_widget=self,
         )
-        if self.x() != x or self.y() != y:
-            self.move(x, y)
+        move_widget_to_global(self, x, y)
 
     def fade_in(self) -> None:
         if self._visible:
@@ -105,7 +109,7 @@ class InteractionModeButton(QWidget):
             self._anim.finished.disconnect(self._on_fade_out_complete)
         except TypeError:
             pass
-        rect = self.geometry()
+        rect = widget_global_rect(self)
         self._anim.finished.connect(self._on_fade_out_complete)
         self._animate(0.0)
         self._event_center.publish(Event(EventType.PARTICLE_REQUEST, {

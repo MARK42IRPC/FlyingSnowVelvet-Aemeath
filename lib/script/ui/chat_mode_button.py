@@ -12,7 +12,11 @@ from lib.core.qt_bridge.font import get_ui_font
 from config.scale import scale_px
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.unified_draw import Layer, get_layer_manager
-from lib.core.qt_bridge.screen import clamp_rect_position
+from lib.core.qt_bridge.screen import (
+    clamp_rect_position,
+    move_widget_to_global,
+    widget_global_rect,
+)
 from lib.core.anchor_utils import apply_ui_opacity
 from lib.script.ui.rect_action_button_style import paint_rect_action_button
 
@@ -90,7 +94,7 @@ class ChatModeButton(QWidget):
     # ------------------------------------------------------------------
     def _target_geometry(self):
         if self._launch_button and self._launch_button.isVisible():
-            return self._launch_button.geometry()
+            return widget_global_rect(self._launch_button)
         return None
 
     def _update_position(self) -> None:
@@ -108,8 +112,7 @@ class ChatModeButton(QWidget):
             point=QPoint(new_x, new_y),
             fallback_widget=self
         )
-        if self.x() != x or self.y() != y:
-            self.move(x, y)
+        move_widget_to_global(self, x, y)
 
     def fade_in(self) -> None:
         if self._visible:
@@ -127,7 +130,7 @@ class ChatModeButton(QWidget):
             self._anim.finished.disconnect(self._on_fade_out_complete)
         except TypeError:
             pass
-        rect = self.geometry()
+        rect = widget_global_rect(self)
         self._anim.finished.connect(self._on_fade_out_complete)
         self._animate(0.0)
         self._event_center.publish(Event(EventType.PARTICLE_REQUEST, {

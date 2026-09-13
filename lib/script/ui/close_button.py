@@ -7,7 +7,11 @@ from config.scale import scale_px
 from config.tooltip_config import TOOLTIPS
 from lib.script.ui.close_button_handler import CloseButtonEventHandler
 from lib.core.event.center import get_event_center, EventType, Event
-from lib.core.qt_bridge.screen import clamp_rect_position
+from lib.core.qt_bridge.screen import (
+    clamp_rect_position,
+    move_widget_to_global,
+    widget_global_rect,
+)
 from lib.core.anchor_utils import (
     refresh_last_activity,
 )
@@ -193,8 +197,7 @@ class CloseButton(RectActionButton):
             fallback_widget=self,
         )
 
-        if self.x() != x or self.y() != y:
-            self.move(x, y)
+        move_widget_to_global(self, x, y)
 
     def fade_in(self):
         if self._visible:
@@ -225,7 +228,7 @@ class CloseButton(RectActionButton):
         self._anchor_available = False  # 锚点不可用，停止跟随
 
         # 在隐藏之前保存几何位置
-        rect = self.geometry()
+        rect = widget_global_rect(self)
 
         # 设置动画完成后的回调
         self._anim.finished.connect(self._on_fade_out_complete)

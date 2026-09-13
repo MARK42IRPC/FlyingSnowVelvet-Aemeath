@@ -17,7 +17,11 @@ from lib.core.graphics.visuals import (
     resolve_command_panel_geometry,
 )
 from lib.core.unified_draw import Layer, get_layer_manager
-from lib.core.qt_bridge.screen import get_screen_geometry_for_point
+from lib.core.qt_bridge.screen import (
+    get_screen_geometry_for_point,
+    move_widget_to_global,
+    widget_global_rect,
+)
 from lib.core.qt_bridge.draw_backend import QtDrawBackend
 from lib.core.anchor_utils import (
     animate_opacity,
@@ -97,6 +101,9 @@ class CommandDialog(QWidget):
 
         self._visible = False
         self._description = TOOLTIPS['command_dialog']
+
+        # 右键 UI 合并为一层后的宿主窗口（由 pet_window_ui 注入）
+        self._layer_host = None
 
         # 事件中心
         self._event_center = get_event_center()
@@ -272,7 +279,7 @@ class CommandDialog(QWidget):
             self._event_center.publish(resume_event)
 
             # 发布粒子申请事件
-            rect = self.geometry()
+            rect = widget_global_rect(self)
             particle_event = Event(EventType.PARTICLE_REQUEST, {
                 'particle_id': 'right_fade',
                 'area_type': 'rect',
@@ -283,7 +290,7 @@ class CommandDialog(QWidget):
             # 如果pet_widget为None，只显示命令框但不处理锚点
             if pet_widget is None:
                 # 显示窗口
-                self.show()
+                self._show_in_layer()
                 self._entry.setFocus()
 
                 # 同时显示关闭按钮
@@ -331,7 +338,7 @@ class CommandDialog(QWidget):
                 self._update_position()
 
                 # 显示窗口
-                self.show()
+                self._show_in_layer()
                 self._entry.setFocus()
 
                 # 同时显示关闭按钮
@@ -468,8 +475,7 @@ class CommandDialog(QWidget):
         self._anchor_id = current_side
         self._anchor_point = self._build_pet_anchor(self._pet_top_left, self._placement_side)
 
-        if self.x() != x or self.y() != y:
-            self.move(x, y)
+        move_widget_to_global(self, x, y)
 
         # 发布锚点更新事件，通知 close_button 更新位置
         anchor_update_event = Event(EventType.UI_ANCHOR_RESPONSE, {
@@ -515,10 +521,20 @@ class CommandDialog(QWidget):
         """执行淡入淡出动画"""
         animate_opacity(self._anim, self._opacity, target)
 
+    def _show_in_layer(self) -> None:
+        """显示命令框；合并为一层时先让宿主窗口整体显示。"""
+        host = self._layer_host
+        if host is not None:
+            host.show_layer()
+        self.show()
+
     def _on_anim_finished(self):
         """动画结束回调 - 淡出完成时隐藏窗口（仅在不可见状态时执行）"""
         if not self._visible:
-            self.hide()
+            if self._layer_host is not None:
+                self._layer_host.hide_layer()
+            else:
+                self.hide()
 
     def _on_return_pressed(self):
         """输入框回车处理：关闭对话框并发布对应输入事件"""
@@ -623,7 +639,7 @@ class CommandDialog(QWidget):
             try:
                 if not widget.isVisible():
                     continue
-                center = widget.geometry().center()
+                center = widget_global_rect(widget).center()
                 dx = mouse.x() - center.x()
                 dy = mouse.y() - center.y()
                 dist_sq = dx * dx + dy * dy
