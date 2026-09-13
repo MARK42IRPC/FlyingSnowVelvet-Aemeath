@@ -742,6 +742,8 @@ _KEY_FRIENDLY_NAME = {
         "ema_decay": "EMA衰减系数",
         "freq_min": "最低频率(Hz)",
         "freq_max": "最高频率(Hz)",
+        "level_floor_db": "强度下限(dB)",
+        "level_ceil_db": "强度上限(dB)",
     },
     "CLOUD_MUSIC": {
         "provider": "音乐平台",

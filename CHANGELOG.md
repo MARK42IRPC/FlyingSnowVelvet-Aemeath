@@ -20,6 +20,11 @@
   `@deepseek-ai/dsh`（`FSV_OFFICE_LOCAL_DSH` → `PATH` → npm 全局目录 → `%APPDATA%\npm`），
   校验包名、依赖集合与 major.minor 版本同系列后复用包内或系统 Node 启动侧车；未探测到时
   设置项置灰并在描述里说明原因，内置 DSH 仍是默认后端。
+- 音响形变改为跟随系统混音的节奏频段：新增 `lib/core/audio_spectrum.py`，在默认输出设备上开
+  WASAPI 回环流并做 rFFT，只统计 `SPEAKER_AUDIO.freq_min`–`freq_max`（默认 60–250Hz，
+  鼓点/贝斯）的能量，再按 `level_floor_db`–`level_ceil_db` 映射成 0.0–1.0 强度；不再用整体
+  峰值的开方值驱动，正常播放时只有真正的鼓点峰值接近满形变，低速段不再“挤成一坨”。
+  回环不可用时仍回退到原来的峰值路径；`response_gain` 默认由 4.0 调整为 1.4。
 
 ### Fixed
 - 修复长文本语音朗读被静默截断：一次合成请求里的整段文本共享同一个语义解码预算
