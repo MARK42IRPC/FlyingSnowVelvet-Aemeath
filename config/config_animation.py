@@ -47,6 +47,7 @@ PARTICLES = {
     'async_update_enabled': False,  # 纯 Python 对象粒子默认关闭线程池异步更新
     'perf_log_enabled': False,   # 输出粒子系统低频性能聚合日志
     'perf_log_interval_ticks': 60,  # 粒子性能日志输出间隔（tick）
+    'overlay_hide_linger_ms': 500,  # 粒子/特效覆盖层清空后延迟隐藏（毫秒），抑制原生 show/hide 抖动
 }
 PHYSICS = {
     # 雪豹跳跃参数

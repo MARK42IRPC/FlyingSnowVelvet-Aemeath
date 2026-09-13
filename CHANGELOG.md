@@ -40,6 +40,13 @@
   的字数，先在分句与读点边界把超长文本拆段再逐段合成，段落之间沿用 `fragment_interval`
   停顿；同一段文本的端到端实测由 18.2 秒（截断）恢复到 23.0 秒完整合成。合成结果明显短于
   文本长度时写入警告日志，便于再次出现提前停止时定位。
+- 修复桌宠运行时的任务栏闪烁（用户反馈“类似焦点争夺”）：Qt 粒子与特效覆盖层此前是可激活
+  窗口，粒子清空/重新出现都会 `hide()`/`show()` 并重申置顶，前台窗口跟着在覆盖层和其它
+  窗口之间来回移动。现在两个覆盖层都设置 `WA_ShowWithoutActivating` 并补上
+  `WS_EX_NOACTIVATE`（与 DX 后端的 `FSDX_WINDOW_FLAG_NO_ACTIVATE` 对齐），清空后先滞留
+  `PARTICLES.overlay_hide_linger_ms`（默认 500ms）再隐藏，滞留期内重新出现粒子/特效即
+  取消隐藏，不再反复 `show()` 和 `LayerManager.enforce_burst()`；退出、暂停和清理仍然
+  立即隐藏，不受滞留影响。策略集中在 `lib/core/qt_bridge/overlay_policy.py`。
 
 ## [LTS1.0.7pre3] - 2026-09-12
 

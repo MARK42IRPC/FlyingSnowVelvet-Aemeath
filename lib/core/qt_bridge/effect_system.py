@@ -13,7 +13,7 @@ from collections import deque
 import math
 from pathlib import Path
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QFont, QFontMetrics, QPainter
 from PyQt5.QtWidgets import QWidget
 
@@ -24,6 +24,7 @@ from lib.core.logger import get_logger
 from lib.core.graphics.resources import ImageResource
 from lib.core.graphics.visuals import build_effect_batch, load_effect_resource, resolve_effect_font
 from lib.core.qt_bridge.draw_backend import QtDrawBackend
+from lib.core.qt_bridge.overlay_policy import enable_no_activate, resolve_hide_linger_ms
 
 
 _logger = get_logger(__name__)
@@ -74,7 +75,7 @@ def _resolve_resource_path(resource_path: str) -> str:
 class EffectOverlay(QWidget):
     """全屏透明覆盖层，仅用于绘制特效。"""
 
-    def __init__(self, effect_manager, *, manager_cleanup=None, parent=None):
+    def __init__(self, effect_manager, *, manager_cleanup=None, parent=None, hide_linger_ms=None):
         super().__init__(parent)
         self.setWindowFlags(
             Qt.Tool
@@ -84,12 +85,19 @@ class EffectOverlay(QWidget):
         )
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        # 与粒子覆盖层同一策略：显示不激活 + WS_EX_NOACTIVATE（详见 overlay_policy）。
+        self.setAttribute(Qt.WA_ShowWithoutActivating)
+        self._no_activate_applied = False
         self.setStyleSheet("background: transparent;")
         self._layer_manager = get_layer_manager()
         self._layer_manager.register(self, Layer.EFFECT, name='EffectOverlay')
 
         self._effects = []
         self._paused = False
+        self._hide_linger_ms = resolve_hide_linger_ms(hide_linger_ms)
+        self._hide_timer = QTimer(self)
+        self._hide_timer.setSingleShot(True)
+        self._hide_timer.timeout.connect(self._on_hide_timeout)
         self._draw_seq = 0
         self._pending_requests = deque()
         self._needs_immediate_repaint = False
@@ -102,6 +110,17 @@ class EffectOverlay(QWidget):
         self._event_center.subscribe(EventType.EFFECT_REQUEST, self._on_effect_request)
         self._event_center.subscribe(EventType.TICK, self._on_tick)
         self._event_center.subscribe(EventType.FRAME, self._on_frame)
+
+    # ------------------------------------------------------------------
+    def _ensure_no_activate(self) -> None:
+        """给覆盖层补 WS_EX_NOACTIVATE，保证显示覆盖层不会移动前台窗口。"""
+        if self._no_activate_applied:
+            return
+        self._no_activate_applied = enable_no_activate(self)
+
+    def showEvent(self, event):
+        self._ensure_no_activate()
+        super().showEvent(event)
 
     def _on_effect_request(self, event: Event):
         data = event.data
@@ -142,7 +161,7 @@ class EffectOverlay(QWidget):
 
         self._effects = alive_effects
         if not self._effects:
-            self._clear_and_hide()
+            self._schedule_hide()
 
     def _on_frame(self, event: Event):
         if self._paused:
@@ -290,7 +309,9 @@ class EffectOverlay(QWidget):
         if not appended:
             return
 
-        if not had_effects:
+        self._cancel_scheduled_hide()
+        # 滞留期内覆盖层仍然可见，此时不需要再次 show()/重申置顶。
+        if not had_effects and not self.isVisible():
             self._needs_immediate_repaint = True
             self.show()
             self._layer_manager.enforce_burst()
@@ -308,6 +329,27 @@ class EffectOverlay(QWidget):
 
         painter.end()
 
+    def _schedule_hide(self) -> None:
+        """特效清空后延迟隐藏覆盖层，避免原生 show/hide 与置顶重申抖动任务栏。"""
+        if self._hide_linger_ms <= 0:
+            self._clear_and_hide()
+            return
+        if self._hide_timer.isActive():
+            return
+        if self.isVisible():
+            # 滞留期间窗口仍然可见，先刷成空帧，避免残留上一帧特效。
+            self.update()
+        self._hide_timer.start(self._hide_linger_ms)
+
+    def _cancel_scheduled_hide(self) -> None:
+        if self._hide_timer.isActive():
+            self._hide_timer.stop()
+
+    def _on_hide_timeout(self) -> None:
+        if self._paused or self._effects:
+            return
+        self._clear_and_hide()
+
     def _clear_and_hide(self) -> None:
         """隐藏前先同步清空透明缓冲，避免下次复显出现上一帧残影。"""
         self._needs_immediate_repaint = False
@@ -318,6 +360,7 @@ class EffectOverlay(QWidget):
 
     def flush_immediately(self) -> None:
         """立即清空当前可见特效，但不解绑事件，供退出流程前段使用。"""
+        self._cancel_scheduled_hide()
         self._pending_requests.clear()
         self._effects.clear()
         self._clear_and_hide()
