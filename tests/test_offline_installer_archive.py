@@ -8,6 +8,7 @@ agree with, and the parts of the contract the in-app updater depends on.
 from __future__ import annotations
 
 import lzma
+import shutil
 import struct
 import tempfile
 import types
@@ -17,6 +18,7 @@ from pathlib import Path
 from unittest import mock
 
 from scripts import build_offline_installer as installer
+from lib.script.app import update_installer
 from lib.script.app.update_installer import install_resource_bundle
 
 
@@ -295,6 +297,76 @@ class ResourceBundleOverlayTests(unittest.TestCase):
 
             with self.assertRaises(ValueError):
                 install_resource_bundle(archive, install_root)
+
+
+class ResourceOverlayLockTests(unittest.TestCase):
+    """被扫盘/杀毒占用的文件跳过并重试，其它文件照常替换。"""
+
+    def write_payload(self, root: Path, files: dict[str, bytes]) -> Path:
+        payload = root / "payload"
+        for name, data in files.items():
+            path = payload / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+        (payload / installer.MARKER_NAME).write_bytes(installer.MARKER_BYTES)
+        return payload
+
+    def write_archive(self, root: Path, files: dict[str, bytes]) -> Path:
+        payload = self.write_payload(root, files)
+        archive = root / "resources.zip"
+        installer.create_resource_archive(payload, archive)
+        return archive
+
+    def test_overlay_retries_a_locked_file(self):
+        files = {"app/a.bin": b"a" * 32, "app/b.bin": b"b" * 32}
+        with tempfile.TemporaryDirectory(prefix="fsv-resource-locked-") as temporary:
+            root = Path(temporary)
+            archive = self.write_archive(root, files)
+            install_root = root / "install"
+            install_root.mkdir()
+            locked = install_root / "app" / "b.bin"
+            real_copy2 = shutil.copy2
+            blocked: list[Path] = []
+
+            def flaky_copy(source, destination, *args, **kwargs):
+                if Path(destination) == locked and not blocked:
+                    blocked.append(Path(destination))
+                    raise PermissionError(32, "file in use")
+                return real_copy2(source, destination, *args, **kwargs)
+
+            with mock.patch.object(update_installer, "RESOURCE_OVERLAY_RETRY_DELAY", 0.0):
+                with mock.patch.object(
+                    update_installer.shutil, "copy2", side_effect=flaky_copy
+                ):
+                    install_resource_bundle(archive, install_root)
+
+            self.assertEqual(blocked, [locked])
+            for name, data in files.items():
+                with self.subTest(name=name):
+                    self.assertEqual((install_root / name).read_bytes(), data)
+
+    def test_overlay_reports_files_that_stay_locked(self):
+        files = {"app/a.bin": b"a" * 32, "app/b.bin": b"b" * 32}
+        with tempfile.TemporaryDirectory(prefix="fsv-resource-stuck-") as temporary:
+            root = Path(temporary)
+            archive = self.write_archive(root, files)
+            install_root = root / "install"
+            install_root.mkdir()
+
+            def always_locked(*args, **kwargs):
+                raise PermissionError(32, "file in use")
+
+            with mock.patch.object(update_installer, "RESOURCE_OVERLAY_RETRY_DELAY", 0.0):
+                with mock.patch.object(
+                    update_installer.shutil, "copy2", side_effect=always_locked
+                ):
+                    with self.assertRaises(ValueError) as caught:
+                        install_resource_bundle(archive, install_root)
+
+            message = str(caught.exception)
+            self.assertIn("占用", message)
+            self.assertIn("a.bin", message)
+            self.assertIn("b.bin", message)
 
 
 if __name__ == "__main__":

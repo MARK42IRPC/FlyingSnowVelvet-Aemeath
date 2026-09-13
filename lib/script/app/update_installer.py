@@ -43,6 +43,11 @@ RESOURCE_SHARD_FILTERS = (
 )
 _RESOURCE_SHARD_READ_SIZE = 1 << 20
 
+# 覆盖安装时被扫盘、杀毒或索引进程短暂占住的目标文件不立刻判失败：先把能替换的
+# 全部替换掉，被占用的记下来最后回头重试，仍然失败的才连文件名一起报错。
+RESOURCE_OVERLAY_ATTEMPTS = 3
+RESOURCE_OVERLAY_RETRY_DELAY = 0.4
+
 
 @dataclass(frozen=True)
 class OfflineInstallerInfo:
@@ -227,17 +232,59 @@ def install_resource_bundle(bundle_path: Path, project_root: Path) -> None:
         marker = staging / RESOURCE_ARCHIVE_MARKER
         if not marker.is_file():
             raise ValueError("资源包缺少安装标记")
-        for source in staging.iterdir():
-            if source.name == ".fsv-install-root":
-                continue
-            destination = target_root / source.name
-            if source.is_dir():
-                shutil.copytree(source, destination, dirs_exist_ok=True)
-            else:
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(source, destination)
+        _overlay_staging(staging, target_root)
     finally:
         shutil.rmtree(staging, ignore_errors=True)
+
+
+def _overlay_actions(actions: list[tuple[Path | None, Path]]) -> list[str]:
+    """执行覆盖动作，只重试失败的那些；返回最终仍然失败的目标路径。"""
+    pending = list(actions)
+    for attempt in range(RESOURCE_OVERLAY_ATTEMPTS):
+        failed: list[tuple[Path | None, Path]] = []
+        for source, destination in pending:
+            try:
+                if source is None:
+                    destination.mkdir(parents=True, exist_ok=True)
+                else:
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(source, destination)
+            except OSError:
+                failed.append((source, destination))
+        if not failed:
+            return []
+        pending = failed
+        if attempt + 1 < RESOURCE_OVERLAY_ATTEMPTS:
+            time.sleep(RESOURCE_OVERLAY_RETRY_DELAY)
+    return [str(destination) for _, destination in pending]
+
+
+def _overlay_staging(staging: Path, target_root: Path) -> None:
+    """把 staging 的内容覆盖到安装目录，被占用的文件跳过并最后重试。
+
+    逐文件替换而不是整目录 ``copytree``，是为了让一个被占用的文件只跳过它自己，
+    目录里其它文件照常更新。目录本身也走同一套重试，空的目录结构因此不会丢。
+    """
+    actions: list[tuple[Path | None, Path]] = []
+    for source in sorted(staging.iterdir()):
+        if source.name == RESOURCE_ARCHIVE_MARKER:
+            continue
+        destination = target_root / source.name
+        if not source.is_dir():
+            actions.append((source, destination))
+            continue
+        actions.append((None, destination))
+        for item in sorted(source.rglob("*")):
+            relative = item.relative_to(source)
+            if item.is_dir():
+                actions.append((None, destination / relative))
+            else:
+                actions.append((item, destination / relative))
+    failed = _overlay_actions(actions)
+    if failed:
+        preview = "、".join(failed[:3])
+        more = "" if len(failed) <= 3 else f" 等 {len(failed)} 个文件"
+        raise ValueError(f"资源包有文件被占用，未能替换：{preview}{more}")
 
 
 def _resource_archive_name(member: zipfile.ZipInfo) -> str:
