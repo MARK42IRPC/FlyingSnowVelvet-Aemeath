@@ -79,6 +79,35 @@ std::size_t element_size(int32_t dtype) {
     }
 }
 
+/* Temporary diagnostic (FSV_NATIVE_PROBE): splits the node loop's wall time
+   into input gathering, operator execution and result storing, so an
+   optimisation can be aimed at the part that actually costs. */
+struct NodeProbe {
+    unsigned long long nodes = 0;
+    double gather = 0.0;
+    double exec = 0.0;
+    double store = 0.0;
+};
+
+NodeProbe& node_probe() {
+    static NodeProbe* probe = new NodeProbe();
+    return *probe;
+}
+
+bool node_probe_enabled() {
+    static const bool enabled = std::getenv("FSV_NATIVE_PROBE") != nullptr;
+    return enabled;
+}
+
+struct NodeProbeFlusher {
+    ~NodeProbeFlusher() {
+        if (!node_probe_enabled()) return;
+        const NodeProbe& probe = node_probe();
+        std::fprintf(stderr, "[probe] nodes=%llu gather=%.3fs exec=%.3fs store=%.3fs\n",
+                     probe.nodes, probe.gather, probe.exec, probe.store);
+    }
+} g_node_probe_flusher;
+
 using fsv::TensorDeviceStorage;
 
 /* Makes the host payload current. Cheap for a host-only tensor, and a device
@@ -3935,6 +3964,127 @@ GraphRuntime::GraphRuntime(ModelProto model, std::string model_dir,
     : model_(std::move(model)), model_dir_(std::move(model_dir)),
       external_weights_path_(std::move(external_weights)) {}
 
+/* A slot index that means "this node leaves the operand out", the same thing
+   ``node.inputs`` says with an empty name. Also used as the read count of a
+   value that must never be released. */
+const std::size_t kNoValueSlot = std::numeric_limits<std::size_t>::max();
+
+struct GraphRuntime::Plan {
+    /* One entry per name the model can mention, in reset order. The pointers
+       stay valid for the life of the runtime: a name is inserted once and
+       never erased, and erasing is the only thing that moves an element of an
+       unordered_map. */
+    std::vector<Value*> slots;
+    /* Weights, paired with their slot, so binding them costs a pointer store
+       instead of a lookup per weight. */
+    std::vector<std::pair<Value*, const Tensor*>> initializers;
+    /* Operand and result slots, flattened by node. */
+    std::vector<std::size_t> node_inputs;
+    std::vector<std::size_t> input_offset;
+    std::vector<std::size_t> node_outputs;
+    std::vector<std::size_t> output_offset;
+    /* Reads per slot, with graph outputs pinned so the release pass cannot
+       drop a value the caller still reads. */
+    std::vector<std::size_t> uses;
+};
+
+/* Every name a graph can put into the enclosing value table. An If branch or a
+   Loop body writes its own outputs into the scope it runs in, so those names
+   have to be in the table too. */
+void collect_value_names(const fsv::GraphProto& graph, std::vector<std::string>& names) {
+    for (const auto& node : graph.nodes) {
+        for (const std::string& name : node.inputs) {
+            if (!name.empty()) names.push_back(name);
+        }
+        for (const std::string& name : node.outputs) {
+            if (!name.empty()) names.push_back(name);
+        }
+        for (const auto& attribute : node.attributes) {
+            if (attribute.graph) collect_value_names(*attribute.graph, names);
+            for (const auto& nested : attribute.graphs) {
+                if (nested) collect_value_names(*nested, names);
+            }
+        }
+    }
+}
+
+/* Same walk as count_value_uses(), but charging the reads to slots. */
+void collect_read_counts(const fsv::GraphProto& graph,
+                         const std::unordered_map<std::string, std::size_t>& slot_of,
+                         std::vector<std::size_t>& uses) {
+    for (const auto& node : graph.nodes) {
+        for (const std::string& name : node.inputs) {
+            if (name.empty()) continue;
+            auto found = slot_of.find(name);
+            if (found != slot_of.end()) ++uses[found->second];
+        }
+        for (const auto& attribute : node.attributes) {
+            if (attribute.graph) collect_read_counts(*attribute.graph, slot_of, uses);
+            for (const auto& nested : attribute.graphs) {
+                if (nested) collect_read_counts(*nested, slot_of, uses);
+            }
+        }
+    }
+}
+
+bool GraphRuntime::build_plan(std::string& error) {
+    (void)error;
+    std::unique_ptr<Plan> plan(new Plan());
+    std::vector<std::string> names;
+    names.reserve(initializers_.size() + model_.graph.nodes.size() * 4);
+    for (const auto& item : initializers_) names.push_back(item.first);
+    for (const ValueInfo& info : model_.graph.inputs) names.push_back(info.name);
+    for (const ValueInfo& info : model_.graph.outputs) names.push_back(info.name);
+    collect_value_names(model_.graph, names);
+    std::sort(names.begin(), names.end());
+    names.erase(std::unique(names.begin(), names.end()), names.end());
+
+    std::unordered_map<std::string, std::size_t> slot_of;
+    slot_of.reserve(names.size() * 2);
+    values_.reserve(names.size() * 2);
+    plan->slots.reserve(names.size());
+    for (const std::string& name : names) {
+        slot_of.emplace(name, plan->slots.size());
+        plan->slots.push_back(&values_[name]);
+    }
+    plan->uses.assign(plan->slots.size(), 0);
+    collect_read_counts(model_.graph, slot_of, plan->uses);
+    for (const ValueInfo& info : model_.graph.outputs) {
+        auto found = slot_of.find(info.name);
+        if (found != slot_of.end()) plan->uses[found->second] = kNoValueSlot;
+    }
+    plan->initializers.reserve(initializers_.size());
+    for (const auto& item : initializers_) {
+        auto found = slot_of.find(item.first);
+        if (found == slot_of.end()) continue;
+        plan->initializers.emplace_back(plan->slots[found->second], &item.second);
+    }
+
+    const std::vector<fsv::NodeProto>& nodes = model_.graph.nodes;
+    plan->input_offset.reserve(nodes.size() + 1);
+    plan->output_offset.reserve(nodes.size() + 1);
+    plan->node_inputs.reserve(nodes.size() * 2);
+    plan->node_outputs.reserve(nodes.size() * 2);
+    for (const fsv::NodeProto& node : nodes) {
+        plan->input_offset.push_back(plan->node_inputs.size());
+        for (const std::string& name : node.inputs) {
+            auto found = name.empty() ? slot_of.end() : slot_of.find(name);
+            plan->node_inputs.push_back(found == slot_of.end() ? kNoValueSlot
+                                                              : found->second);
+        }
+        plan->output_offset.push_back(plan->node_outputs.size());
+        for (const std::string& name : node.outputs) {
+            auto found = name.empty() ? slot_of.end() : slot_of.find(name);
+            plan->node_outputs.push_back(found == slot_of.end() ? kNoValueSlot
+                                                               : found->second);
+        }
+    }
+    plan->input_offset.push_back(plan->node_inputs.size());
+    plan->output_offset.push_back(plan->node_outputs.size());
+    plan_ = std::move(plan);
+    return true;
+}
+
 bool GraphRuntime::prepare(std::string& error) {
     initializers_.clear();
     external_files_.clear();
@@ -3988,7 +4138,7 @@ bool GraphRuntime::prepare(std::string& error) {
         }
         constants_registered_ = true;
     }
-    return true;
+    return build_plan(error);
 }
 
 GraphRuntime::~GraphRuntime() {
@@ -4061,16 +4211,31 @@ bool GraphRuntime::run(const std::unordered_map<std::string, Tensor>& feeds,
        transient shortage into a permanent slowdown. */
     fsv_cuda_reset_device_abandoned();
     const bool trace = std::getenv("FSV_NATIVE_TRACE") != nullptr;
-    std::unordered_map<std::string, Value> values;
-    for (const auto& item : initializers_) {
-        Value value;
-        value.tensor = std::make_shared<Tensor>(item.second);
-        values[item.first] = std::move(value);
+    /* The value table belongs to the runtime, not to the run: every slot is
+       emptied and filled again, which costs a pointer store per name instead
+       of rebuilding, allocating and rehashing the whole table for every decode
+       step. */
+    std::vector<std::size_t> remaining;
+    if (plan_) {
+        for (Value* slot : plan_->slots) *slot = Value();
+        remaining = plan_->uses;
+        for (const auto& item : plan_->initializers) {
+            Value value;
+            value.tensor = std::make_shared<Tensor>(*item.second);
+            *item.first = std::move(value);
+        }
+    } else {
+        values_.clear();
+        for (const auto& item : initializers_) {
+            Value value;
+            value.tensor = std::make_shared<Tensor>(item.second);
+            values_[item.first] = std::move(value);
+        }
     }
     for (const auto& item : feeds) {
         Value value;
         value.tensor = std::make_shared<Tensor>(item.second);
-        values[item.first] = std::move(value);
+        values_[item.first] = std::move(value);
     }
     /* A retained output stands in for its input when the caller has no host
        bytes for it, which is the point of retaining it: the decode loop hands
@@ -4082,40 +4247,66 @@ bool GraphRuntime::run(const std::unordered_map<std::string, Tensor>& feeds,
         if (retained == resident_.end()) continue;
         Value value;
         value.tensor = std::make_shared<Tensor>(retained->second);
-        values[item.first] = std::move(value);
+        values_[item.first] = std::move(value);
     }
 
-    std::function<bool(const GraphProto&, std::unordered_map<std::string, Value>&,
-                       std::string&, bool)> execute;
-    execute = [&](const GraphProto& graph,
-                  std::unordered_map<std::string, Value>& values,
+    /* Which store a node reads from and writes to. The top-level graph uses the
+       plan's slots; a subgraph gets a map of its own, which is what an If
+       branch or a Loop body needs to read the enclosing scope. */
+    struct Scope {
+        std::unordered_map<std::string, Value>* map = nullptr;
+        const GraphRuntime::Plan* plan = nullptr;
+        std::vector<std::size_t>* remaining = nullptr;
+    };
+
+    std::function<bool(const GraphProto&, Scope&, std::string&, bool)> execute;
+    execute = [&](const GraphProto& graph, Scope& scope,
                   std::string& error, bool top_level) -> bool {
+    const bool planned = scope.plan != nullptr;
+    const std::vector<std::size_t>* plan_inputs = planned ? &scope.plan->node_inputs : nullptr;
+    const std::vector<std::size_t>* plan_input_offset = planned ? &scope.plan->input_offset : nullptr;
+    const std::vector<std::size_t>* plan_outputs = planned ? &scope.plan->node_outputs : nullptr;
+    const std::vector<std::size_t>* plan_output_offset = planned ? &scope.plan->output_offset : nullptr;
+    std::unordered_map<std::string, Value>& values = scope.map ? *scope.map : values_;
     std::unordered_map<std::string, std::size_t> remaining_uses;
     const bool release_unused = top_level && !capture_ && !std::getenv("FSV_NATIVE_CAPTURE");
-    if (release_unused) {
+    if (release_unused && !planned) {
         count_value_uses(graph, remaining_uses);
         /* The caller reads these through the output map once the graph ends. */
         for (const ValueInfo& info : graph.outputs) remaining_uses.erase(info.name);
     }
-    std::size_t node_index = 0;
-    for (const auto& node : graph.nodes) {
+    for (std::size_t node_index = 0; node_index < graph.nodes.size(); ++node_index) {
+        const fsv::NodeProto& node = graph.nodes[node_index];
         if (trace) {
             FSV_TRACE( "[native-run] node %zu %s (%s)\n",
                          node_index, node.op_type.c_str(), node.name.c_str());
         }
-        ++node_index;
         const std::string& op = node.op_type;
         fsv::opstats::Scope op_scope(op.c_str(), node.name.c_str());
+        const bool probe = node_probe_enabled();
+        const std::chrono::steady_clock::time_point probe_start = probe
+            ? std::chrono::steady_clock::now()
+            : std::chrono::steady_clock::time_point();
         std::vector<Tensor> inputs;
         /* Points at the tensor held by the value table. The device helpers
            remember residency on it, so a weight is uploaded once per run
            rather than once per node that reads it. */
         std::vector<Tensor*> slots;
         std::vector<Value> input_values;
-        for (const std::string& name : node.inputs) {
+        const std::size_t input_count = node.inputs.size();
+        inputs.reserve(input_count);
+        slots.reserve(input_count);
+        input_values.reserve(input_count);
+        const std::size_t input_base = planned ? (*plan_input_offset)[node_index] : 0;
+        for (std::size_t input_index = 0; input_index < input_count; ++input_index) {
             Value value;
-            auto iterator = values.find(name);
-            if (iterator != values.end()) value = iterator->second;
+            if (planned) {
+                const std::size_t slot = (*plan_inputs)[input_base + input_index];
+                if (slot != kNoValueSlot) value = *scope.plan->slots[slot];
+            } else {
+                auto iterator = values.find(node.inputs[input_index]);
+                if (iterator != values.end()) value = iterator->second;
+            }
             input_values.push_back(value);
             if (value.tensor) {
                 slots.push_back(value.tensor.get());
@@ -4131,6 +4322,19 @@ bool GraphRuntime::run(const std::unordered_map<std::string, Tensor>& feeds,
                              shape_text(inputs[index].shape).c_str(), inputs[index].dtype);
             }
         }
+        const std::chrono::steady_clock::time_point probe_gathered = probe
+            ? std::chrono::steady_clock::now()
+            : std::chrono::steady_clock::time_point();
+        /* Where this node's results go, or null for an optional output the
+           graph leaves unnamed. */
+        const std::size_t output_base = planned ? (*plan_output_offset)[node_index] : 0;
+        auto output_slot = [&](std::size_t index) -> Value* {
+            if (!planned) {
+                return node.outputs[index].empty() ? nullptr : &values[node.outputs[index]];
+            }
+            const std::size_t slot = (*plan_outputs)[output_base + index];
+            return slot == kNoValueSlot ? nullptr : scope.plan->slots[slot];
+        };
         Tensor output;
         std::vector<Tensor> multi_outputs;
         Value sequence_value;
@@ -4608,7 +4812,9 @@ bool GraphRuntime::run(const std::unordered_map<std::string, Tensor>& feeds,
                 branch = else_attr->graph.get();
             }
             std::unordered_map<std::string, Value> branch_values = values;
-            if (!execute(*branch, branch_values, error, false)) return false;
+            Scope branch_scope;
+            branch_scope.map = &branch_values;
+            if (!execute(*branch, branch_scope, error, false)) return false;
             flow_values.clear();
             for (const ValueInfo& info : branch->outputs) {
                 auto iterator = branch_values.find(info.name);
@@ -4657,7 +4863,9 @@ bool GraphRuntime::run(const std::unordered_map<std::string, Tensor>& feeds,
                 for (std::size_t index = 0; index < carried.size(); ++index) {
                     body_values[body.inputs[index + 2].name] = carried[index];
                 }
-                if (!execute(body, body_values, error, false)) return false;
+                Scope body_scope;
+                body_scope.map = &body_values;
+                if (!execute(body, body_scope, error, false)) return false;
                 if (body.outputs.empty()) {
                     error = "Loop body output missing: " + node.name;
                     return false;
@@ -4695,23 +4903,24 @@ bool GraphRuntime::run(const std::unordered_map<std::string, Tensor>& feeds,
             error = "native runtime does not support op yet: " + op + " (" + node.name + ")";
             return false;
         }
+        const std::chrono::steady_clock::time_point probe_executed = probe
+            ? std::chrono::steady_clock::now()
+            : std::chrono::steady_clock::time_point();
         if (!flow_values.empty()) {
             if (flow_values.size() != node.outputs.size()) {
                 error = "native op output count mismatch for " + op + " (" + node.name + ")";
                 return false;
             }
             for (std::size_t index = 0; index < flow_values.size(); ++index) {
-                if (!node.outputs[index].empty()) {
-                    values[node.outputs[index]] = std::move(flow_values[index]);
-                }
+                if (Value* slot = output_slot(index)) *slot = std::move(flow_values[index]);
             }
         } else if (sequence_value.is_sequence) {
             if (trace) {
                 FSV_TRACE( "[native-run]   out sequence size=%zu\n",
                              sequence_value.sequence.size());
             }
-            for (const std::string& name : node.outputs) {
-                if (!name.empty()) values[name] = sequence_value;
+            for (std::size_t index = 0; index < node.outputs.size(); ++index) {
+                if (Value* slot = output_slot(index)) *slot = sequence_value;
             }
         } else if (!multi_outputs.empty()) {
             if (multi_outputs.size() != node.outputs.size()) {
@@ -4725,7 +4934,7 @@ bool GraphRuntime::run(const std::unordered_map<std::string, Tensor>& feeds,
                 }
                 Value value;
                 value.tensor = std::make_shared<Tensor>(std::move(multi_outputs[index]));
-                if (!node.outputs[index].empty()) values[node.outputs[index]] = value;
+                if (Value* slot = output_slot(index)) *slot = value;
             }
         } else {
             if (output.dtype == 0) {
@@ -4738,11 +4947,24 @@ bool GraphRuntime::run(const std::unordered_map<std::string, Tensor>& feeds,
             }
             Value value;
             value.tensor = std::make_shared<Tensor>(std::move(output));
-            for (const std::string& name : node.outputs) {
-                if (!name.empty()) values[name] = value;
+            for (std::size_t index = 0; index < node.outputs.size(); ++index) {
+                if (Value* slot = output_slot(index)) *slot = value;
             }
         }
         if (release_unused) {
+            if (planned) {
+                /* The read counts were walked once, in prepare(); the run only
+                   counts them down. */
+                const std::size_t base = (*plan_input_offset)[node_index];
+                std::vector<std::size_t>& counts = *scope.remaining;
+                for (std::size_t index = 0; index < input_count; ++index) {
+                    const std::size_t slot = (*plan_inputs)[base + index];
+                    if (slot == kNoValueSlot) continue;
+                    if (--counts[slot] != 0) continue;
+                    Value& value = *scope.plan->slots[slot];
+                    if (value.tensor) release_device_copy(*value.tensor);
+                }
+            } else {
             for (const std::string& name : node.inputs) {
                 if (name.empty()) continue;
                 auto remaining = remaining_uses.find(name);
@@ -4754,18 +4976,32 @@ bool GraphRuntime::run(const std::unordered_map<std::string, Tensor>& feeds,
                     release_device_copy(*value->second.tensor);
                 }
             }
+            }
+        }
+        if (probe) {
+            NodeProbe& counters = node_probe();
+            ++counters.nodes;
+            counters.gather +=
+                std::chrono::duration<double>(probe_gathered - probe_start).count();
+            counters.exec +=
+                std::chrono::duration<double>(probe_executed - probe_gathered).count();
+            counters.store += std::chrono::duration<double>(
+                std::chrono::steady_clock::now() - probe_executed).count();
         }
     }
         return true;
     };
-    if (!execute(model_.graph, values, error, true)) return false;
+    Scope root_scope;
+    root_scope.plan = plan_.get();
+    root_scope.remaining = &remaining;
+    if (!execute(model_.graph, root_scope, error, true)) return false;
     const char* capture_env = capture_ ? "requested" : std::getenv("FSV_NATIVE_CAPTURE");
     FSV_TRACE( "[native-run] capture=%s values=%zu\n",
-                 capture_env ? capture_env : "(null)", values.size());
+                 capture_env ? capture_env : "(null)", values_.size());
     if (capture_env) {
         captured_.clear();
         std::size_t shown = 0;
-        for (const auto& item : values) {
+        for (const auto& item : values_) {
             if (item.second.tensor) {
                 captured_[item.first] = *item.second.tensor;
                 if (shown < 40) {
@@ -4778,8 +5014,8 @@ bool GraphRuntime::run(const std::unordered_map<std::string, Tensor>& feeds,
     outputs.clear();
     for (const ValueInfo& info : model_.graph.outputs) {
         fsv::opstats::Scope output_scope("(graph-output)");
-        auto iterator = values.find(info.name);
-        if (iterator == values.end() || !iterator->second.tensor) {
+        auto iterator = values_.find(info.name);
+        if (iterator == values_.end() || !iterator->second.tensor) {
             error = "graph output missing: " + info.name;
             return false;
         }

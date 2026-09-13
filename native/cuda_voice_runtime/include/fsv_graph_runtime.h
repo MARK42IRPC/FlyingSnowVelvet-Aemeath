@@ -135,6 +135,15 @@ private:
     std::vector<std::string> resident_names_;
     bool constants_registered_ = false;
     bool capture_ = false;
+    /* Every run writes its values into this one table. The plan maps a node's
+       operand and result names onto slots in it, so the node loop does not
+       hash a string per operand, and building the table costs a pointer store
+       per slot instead of an insertion per name. Both are built once, in
+       prepare(); see build_plan(). */
+    struct Plan;
+    std::unordered_map<std::string, Value> values_;
+    std::unique_ptr<Plan> plan_;
+    bool build_plan(std::string& error);
 
 public:
     const Tensor* find_captured(const std::string& name) const;
