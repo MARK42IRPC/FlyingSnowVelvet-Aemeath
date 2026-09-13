@@ -1266,15 +1266,17 @@ int fsv_cuda_matmul_f32_batched(fsv_cuda_ptr a, fsv_cuda_ptr b, fsv_cuda_ptr c, 
         }
         return kOk;
     }
-    /* Several rows: one thread per four adjacent columns of one row -- the
-       kernel's kMatmulColumns. The reduction is not split across lanes: the
-       weight is k-major, so a warp already reads a contiguous run of columns at
-       every step, and splitting k would turn each of those reads into its own
-       sector. The parallelism comes from the columns per thread instead. */
-    const long long groups_per_row = (static_cast<long long>(n) + 3) / 4;
-    const long long groups = static_cast<long long>(m) * groups_per_row;
+    /* Several rows: one thread per kMatmulColumns adjacent columns of
+       kMatmulRows consecutive rows -- the kernel's register tile. The reduction
+       is not split across lanes: the weight is k-major, so a warp already reads
+       a contiguous run of columns at every step, and splitting k would turn
+       each of those reads into its own sector. The parallelism comes from the
+       tile instead. */
+    const long long row_tiles = (static_cast<long long>(m) + 3) / 4;
+    const long long tiles_per_row = (static_cast<long long>(n) + 3) / 4;
+    const long long tiles = row_tiles * tiles_per_row;
     const unsigned block_x = 256;
-    const unsigned grid_x = static_cast<unsigned>((groups + block_x - 1) / block_x);
+    const unsigned grid_x = static_cast<unsigned>((tiles + block_x - 1) / block_x);
     if (!launch3("fsv_matmul_f32_batched", grid_x, 1, static_cast<unsigned>(batch),
                  block_x, 1, device_pointer<float>(a), device_pointer<float>(b),
                  reinterpret_cast<float*>(c), m, k, n, batch, slice_offset, spec)) {

@@ -966,6 +966,7 @@ FSV_KERNEL void fsv_fill_f32(float* destination, unsigned long long count, float
    place of the single dependent one. The sum order is therefore unchanged for
    the vector path and the tolerance of the reference holds. */
 constexpr int kMatmulColumns = 4;
+constexpr int kMatmulRows = 4;
 
 FSV_KERNEL void fsv_matmul_f32_batched(const float* a, const float* b, float* c,
                                        int m, int k, int n, long long batch,
@@ -989,25 +990,43 @@ FSV_KERNEL void fsv_matmul_f32_batched(const float* a, const float* b, float* c,
             b_base += coordinate * b_stride[dim];
         }
     }
-    /* One thread owns kMatmulColumns adjacent columns of one row. A quad never
-       spans two rows: the group index is per row, so the columns a thread
-       reads are adjacent in the k-major weight. */
-    const long long groups_per_row =
+    /* One thread owns kMatmulRows consecutive rows and kMatmulColumns adjacent
+       columns of each. A quad never spans two rows: the tile index is per row
+       group, so the columns a thread reads are adjacent in the k-major weight.
+
+       The rows are what the old one-row-per-thread mapping wasted. Every row
+       of a product re-read the same weight quad, so the weight traffic the
+       thread issued scaled with the row count while the arithmetic stayed the
+       same; owning four rows divides that traffic by four and turns the kernel
+       from L1-bandwidth bound into an arithmetic one. */
+    const long long tiles_per_row =
         (static_cast<long long>(n) + kMatmulColumns - 1) / kMatmulColumns;
-    const long long group = static_cast<long long>(blockIdx.x) * blockDim.x + threadIdx.x;
-    if (group >= static_cast<long long>(m) * groups_per_row) return;
-    const int row = static_cast<int>(group / groups_per_row);
-    const int col = static_cast<int>(group - static_cast<long long>(row) * groups_per_row) *
-                    kMatmulColumns;
+    const long long tile = static_cast<long long>(blockIdx.x) * blockDim.x + threadIdx.x;
+    const long long row_tile = tile / tiles_per_row;
+    const int row0 = static_cast<int>(row_tile * kMatmulRows);
+    const int col = static_cast<int>(tile - row_tile * tiles_per_row) * kMatmulColumns;
+    if (row0 >= m || col >= n) return;
+    /* A partial last tile keeps its rows inside the matrix: the extra rows read
+       the last real row again and their results are dropped. */
+    const int rows = min(kMatmulRows, m - row0);
     const int usable = min(kMatmulColumns, n - col);
-    const float* a_row = a + a_base + static_cast<size_t>(row) * k;
     const float* b_column = b + b_base + col;
-    /* [reduction step mod 4][column] */
-    float sums[4][kMatmulColumns];
+    const float* a_rows[kMatmulRows];
 #pragma unroll
-    for (int slot = 0; slot < 4; ++slot) {
+    for (int row = 0; row < kMatmulRows; ++row) {
+        a_rows[row] = a + a_base + static_cast<size_t>(row0 + min(row, rows - 1)) * k;
+    }
+    /* [row][reduction step mod 4][column] */
+    float sums[kMatmulRows][4][kMatmulColumns];
 #pragma unroll
-        for (int column = 0; column < kMatmulColumns; ++column) sums[slot][column] = 0.0f;
+    for (int row = 0; row < kMatmulRows; ++row) {
+#pragma unroll
+        for (int slot = 0; slot < 4; ++slot) {
+#pragma unroll
+            for (int column = 0; column < kMatmulColumns; ++column) {
+                sums[row][slot][column] = 0.0f;
+            }
+        }
     }
     int step = 0;
     /* The vector path needs both operands 16-byte aligned: the activation row
@@ -1016,7 +1035,11 @@ FSV_KERNEL void fsv_matmul_f32_batched(const float* a, const float* b, float* c,
        re-read out of alignment. */
     if ((k & 3) == 0 && (n & 3) == 0 && usable == kMatmulColumns) {
         for (; step + 4 <= k; step += 4) {
-            const float4 activation = *reinterpret_cast<const float4*>(a_row + step);
+            float4 activation[kMatmulRows];
+#pragma unroll
+            for (int row = 0; row < kMatmulRows; ++row) {
+                activation[row] = *reinterpret_cast<const float4*>(a_rows[row] + step);
+            }
             const float4 b0 = *reinterpret_cast<const float4*>(
                 b_column + static_cast<size_t>(step + 0) * n);
             const float4 b1 = *reinterpret_cast<const float4*>(
@@ -1025,39 +1048,49 @@ FSV_KERNEL void fsv_matmul_f32_batched(const float* a, const float* b, float* c,
                 b_column + static_cast<size_t>(step + 2) * n);
             const float4 b3 = *reinterpret_cast<const float4*>(
                 b_column + static_cast<size_t>(step + 3) * n);
-            sums[0][0] += activation.x * b0.x;
-            sums[0][1] += activation.x * b0.y;
-            sums[0][2] += activation.x * b0.z;
-            sums[0][3] += activation.x * b0.w;
-            sums[1][0] += activation.y * b1.x;
-            sums[1][1] += activation.y * b1.y;
-            sums[1][2] += activation.y * b1.z;
-            sums[1][3] += activation.y * b1.w;
-            sums[2][0] += activation.z * b2.x;
-            sums[2][1] += activation.z * b2.y;
-            sums[2][2] += activation.z * b2.z;
-            sums[2][3] += activation.z * b2.w;
-            sums[3][0] += activation.w * b3.x;
-            sums[3][1] += activation.w * b3.y;
-            sums[3][2] += activation.w * b3.z;
-            sums[3][3] += activation.w * b3.w;
+#pragma unroll
+            for (int row = 0; row < kMatmulRows; ++row) {
+                sums[row][0][0] += activation[row].x * b0.x;
+                sums[row][0][1] += activation[row].x * b0.y;
+                sums[row][0][2] += activation[row].x * b0.z;
+                sums[row][0][3] += activation[row].x * b0.w;
+                sums[row][1][0] += activation[row].y * b1.x;
+                sums[row][1][1] += activation[row].y * b1.y;
+                sums[row][1][2] += activation[row].y * b1.z;
+                sums[row][1][3] += activation[row].y * b1.w;
+                sums[row][2][0] += activation[row].z * b2.x;
+                sums[row][2][1] += activation[row].z * b2.y;
+                sums[row][2][2] += activation[row].z * b2.z;
+                sums[row][2][3] += activation[row].z * b2.w;
+                sums[row][3][0] += activation[row].w * b3.x;
+                sums[row][3][1] += activation[row].w * b3.y;
+                sums[row][3][2] += activation[row].w * b3.z;
+                sums[row][3][3] += activation[row].w * b3.w;
+            }
         }
     }
     for (; step < k; ++step) {
-        const float value = a_row[step];
         const float* weights = b_column + static_cast<size_t>(step) * n;
 #pragma unroll
-        for (int column = 0; column < kMatmulColumns; ++column) {
-            if (column < usable) sums[step & 3][column] += value * weights[column];
+        for (int row = 0; row < kMatmulRows; ++row) {
+            const float value = a_rows[row][step];
+#pragma unroll
+            for (int column = 0; column < kMatmulColumns; ++column) {
+                if (column < usable) sums[row][step & 3][column] += value * weights[column];
+            }
         }
     }
-    float* destination =
-        c + static_cast<size_t>(slice) * m * n + static_cast<size_t>(row) * n + col;
 #pragma unroll
-    for (int column = 0; column < kMatmulColumns; ++column) {
-        if (column < usable) {
-            destination[column] = (sums[0][column] + sums[1][column]) +
-                                  (sums[2][column] + sums[3][column]);
+    for (int row = 0; row < kMatmulRows; ++row) {
+        if (row >= rows) break;
+        float* destination = c + static_cast<size_t>(slice) * m * n +
+                             static_cast<size_t>(row0 + row) * n + col;
+#pragma unroll
+        for (int column = 0; column < kMatmulColumns; ++column) {
+            if (column < usable) {
+                destination[column] = (sums[row][0][column] + sums[row][1][column]) +
+                                      (sums[row][2][column] + sums[row][3][column]);
+            }
         }
     }
 }

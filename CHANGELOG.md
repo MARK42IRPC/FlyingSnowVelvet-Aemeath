@@ -35,6 +35,14 @@
   偏移，分片读不满或有多余数据都报错），旧的普通 Deflate 包仍由 `zipfile` 逐条解压；
   本版本发布继续用 Deflate，构建脚本新增 `--resource-sharded` 开关，等在用客户端都升级到
   读得懂分片的版本后再切换。
+- 自研 CUDA 推理端的 f32 batched MatMul 改为 4 行 × 4 列的寄存器分块（原来一个线程只负责
+  一行 4 列，权重 quad 每行都要重读一次）：`fsv_kernel_bench` 上语音包的主力形状快 1.4×–2.6×
+  （`m=212 k=2048 n=512` 814.7→313.5 µs、`m=212 k=512 n=2048` 1126.2→521.9 µs），
+  每个输出的规约顺序未变，`fsv_engine_smoke` 的 13 个 matmul 对照用例全部通过，int8 包
+  端到端音频逐位一致；受益的是把 `MatMulNBits` 还原成 f32 的 fp32/fp16 包。
+- 新增 `native/cuda_voice_runtime/tools/dev_voice_soak.py`：在同一进程里连续合成并逐次打印
+  耗时、`nvidia-smi` 显存与采样点差。24 次实测显存 3186→2857 MiB、结果与第一次逐位一致、
+  `alloc fail=0 abandon=0`，确认自研后端可以长时间占用显卡。
 
 ### Fixed
 - 修复长文本语音朗读被静默截断：一次合成请求里的整段文本共享同一个语义解码预算
