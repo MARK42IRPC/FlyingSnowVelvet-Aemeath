@@ -890,9 +890,12 @@ int fsv_cuda_binary_bcast_f32(fsv_cuda_ptr a, fsv_cuda_ptr b, fsv_cuda_ptr c, si
             return kOk;
         }
     }
-    if (!launch_1d("fsv_binary_bcast_f32", count, device_pointer<float>(a),
-                   device_pointer<float>(b), reinterpret_cast<float*>(c),
-                   static_cast<unsigned long long>(count), spec)) {
+    /* The kernel walks the index once and moves four elements per thread, so
+       the grid is the vector one rather than one block per 256 elements. */
+    if (!launch("fsv_binary_bcast_f32", vector_blocks(count), 1, 256, 1,
+                device_pointer<float>(a), device_pointer<float>(b),
+                reinterpret_cast<float*>(c),
+                static_cast<unsigned long long>(count), spec)) {
         return kDriverFailure;
     }
     return kOk;

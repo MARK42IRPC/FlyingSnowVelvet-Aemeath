@@ -15,20 +15,22 @@ string(APPEND OUTPUT "namespace fsv {\n")
 string(APPEND OUTPUT "extern const char* const fsv_ptx_kernels_source;\n")
 string(APPEND OUTPUT "const char* const fsv_ptx_kernels_source =\n")
 
-set(CHUNK "")
-math(EXPR LAST_INDEX "${HEX_LENGTH} - 2")
-foreach(INDEX RANGE 0 ${LAST_INDEX} 2)
-    string(SUBSTRING "${PTX_HEX}" ${INDEX} 2 BYTE)
-    string(APPEND CHUNK "\\x${BYTE}")
-    string(LENGTH "${CHUNK}" CHUNK_LENGTH)
-    if(CHUNK_LENGTH GREATER 8000)
-        string(APPEND OUTPUT "\"${CHUNK}\"\n")
-        set(CHUNK "")
-    endif()
-endforeach()
-if(NOT CHUNK STREQUAL "")
+# One regex pass escapes every byte. The loop this replaces asked for a
+# two-character substring of the whole hexadecimal string once per byte, so it
+# expanded a half-megabyte argument a million times and grew a chunk buffer
+# back to eight thousand characters a million times: a build step that should
+# take a second took tens of minutes.
+string(REGEX REPLACE "(..)" "\\\\x\\1" PTX_ESCAPED "${PTX_HEX}")
+
+# The chunk size is a multiple of four so that a chunk boundary never splits
+# the four characters of one \xNN escape.
+set(CHUNK_SIZE 8192)
+string(LENGTH "${PTX_ESCAPED}" ESCAPED_LENGTH)
+math(EXPR LAST_INDEX "${ESCAPED_LENGTH} - 1")
+foreach(INDEX RANGE 0 ${LAST_INDEX} ${CHUNK_SIZE})
+    string(SUBSTRING "${PTX_ESCAPED}" ${INDEX} ${CHUNK_SIZE} CHUNK)
     string(APPEND OUTPUT "\"${CHUNK}\"\n")
-endif()
+endforeach()
 string(APPEND OUTPUT ";\n}  // namespace fsv\n")
 
 file(WRITE "${FSV_PTX_OUT}" "${OUTPUT}")

@@ -577,18 +577,83 @@ __device__ __forceinline__ void fsv_walk_coordinates(const FsvIndex& index,
     *b_offset = b_total;
 }
 
+/* Broadcast operator, four outputs per thread.
+
+   The generic form walks the coordinate index once per element, and that walk
+   is a chain of software divisions. The exported graphs broadcast over the
+   innermost dimension far more often than not -- a per-channel bias is
+   [1,C,1] against [1,C,T] -- and inside one row the two operand offsets
+   advance by a single constant stride per element. One walk per thread then
+   feeds a float4 store instead of four walks and four stores, and the groups
+   the row condition does not cover keep the element-wise walk. */
 FSV_KERNEL void fsv_binary_bcast_f32(const float* a, const float* b, float* c,
                                      unsigned long long count, FsvIndex index) {
-    unsigned long long flat = static_cast<unsigned long long>(blockIdx.x) * blockDim.x + threadIdx.x;
-    if (flat >= count) return;
-    if (index.rank == 0) {
-        c[flat] = fsv_binary_apply(index.operation, a[flat], b[flat]);
+    const unsigned long long base =
+        (static_cast<unsigned long long>(blockIdx.x) * blockDim.x + threadIdx.x) * 4ull;
+    if (base >= count) return;
+    const int operation = index.operation;
+    if (index.rank <= 0) {
+        for (unsigned long long flat = base; flat < base + 4ull && flat < count; ++flat) {
+            c[flat] = fsv_binary_apply(operation, a[flat], b[flat]);
+        }
         return;
     }
-    long long a_offset = 0;
-    long long b_offset = 0;
-    fsv_walk_coordinates(index, flat, &a_offset, &b_offset);
-    c[flat] = fsv_binary_apply(index.operation, a[a_offset], b[b_offset]);
+    /* The strides hold within a row of the innermost dimension; a group that
+       reaches past the end of its row must not step the offset per element. */
+    const long long last_size = index.shape[index.rank - 1];
+    const long long a_step = index.a_stride[index.rank - 1];
+    const long long b_step = index.b_stride[index.rank - 1];
+    if (last_size >= 4 && (a_step == 0 || a_step == 1) && (b_step == 0 || b_step == 1) &&
+        base + 4ull <= count &&
+        base % static_cast<unsigned long long>(last_size) + 4ull <=
+            static_cast<unsigned long long>(last_size)) {
+        long long a_offset = 0;
+        long long b_offset = 0;
+        fsv_walk_coordinates(index, base, &a_offset, &b_offset);
+        float4 result;
+        /* Four scalar loads whose addresses differ by the row stride would be
+           four transactions per quarter-warp; an operand whose stride is one
+           and whose offset is aligned reads as one vector instead. */
+        const bool a_vector = a_step == 1 && (a_offset & 3ll) == 0;
+        const bool b_vector = b_step == 1 && (b_offset & 3ll) == 0;
+        if (a_vector && b_step == 0) {
+            const float4 x = *reinterpret_cast<const float4*>(a + a_offset);
+            const float y = b[b_offset];
+            result.x = fsv_binary_apply(operation, x.x, y);
+            result.y = fsv_binary_apply(operation, x.y, y);
+            result.z = fsv_binary_apply(operation, x.z, y);
+            result.w = fsv_binary_apply(operation, x.w, y);
+        } else if (a_step == 0 && b_vector) {
+            const float x = a[a_offset];
+            const float4 y = *reinterpret_cast<const float4*>(b + b_offset);
+            result.x = fsv_binary_apply(operation, x, y.x);
+            result.y = fsv_binary_apply(operation, x, y.y);
+            result.z = fsv_binary_apply(operation, x, y.z);
+            result.w = fsv_binary_apply(operation, x, y.w);
+        } else if (a_vector && b_vector) {
+            const float4 x = *reinterpret_cast<const float4*>(a + a_offset);
+            const float4 y = *reinterpret_cast<const float4*>(b + b_offset);
+            result.x = fsv_binary_apply(operation, x.x, y.x);
+            result.y = fsv_binary_apply(operation, x.y, y.y);
+            result.z = fsv_binary_apply(operation, x.z, y.z);
+            result.w = fsv_binary_apply(operation, x.w, y.w);
+        } else {
+            result.x = fsv_binary_apply(operation, a[a_offset], b[b_offset]);
+            result.y = fsv_binary_apply(operation, a[a_offset + a_step], b[b_offset + b_step]);
+            result.z =
+                fsv_binary_apply(operation, a[a_offset + 2 * a_step], b[b_offset + 2 * b_step]);
+            result.w =
+                fsv_binary_apply(operation, a[a_offset + 3 * a_step], b[b_offset + 3 * b_step]);
+        }
+        *reinterpret_cast<float4*>(c + base) = result;
+        return;
+    }
+    for (unsigned long long flat = base; flat < base + 4ull && flat < count; ++flat) {
+        long long a_offset = 0;
+        long long b_offset = 0;
+        fsv_walk_coordinates(index, flat, &a_offset, &b_offset);
+        c[flat] = fsv_binary_apply(operation, a[a_offset], b[b_offset]);
+    }
 }
 
 /* Element-wise operator on two operands that are both laid out exactly like

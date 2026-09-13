@@ -166,6 +166,53 @@ void bench_conv2d(int batch, int channels, int height, int width, int out_channe
     report("conv2d_f32", shape, micros, bytes, checksum);
 }
 
+/* c[b, c, s] = a[b, c, s] op bias[b, c, 1]: the innermost dimension of the
+   second operand is broadcast, which is the shape the graph runtime cannot
+   serve with either of its contiguous kernels and therefore leaves to the
+   coordinate walk. A per-channel bias over [1, C, T] is that shape. */
+void bench_binary_bcast(int batch, int channels, int spatial, int warmup, int iters) {
+    const std::size_t count =
+        static_cast<std::size_t>(batch) * channels * spatial;
+    const std::size_t bias_count = static_cast<std::size_t>(batch) * channels;
+    std::vector<float> a = random_values(count, 41u);
+    std::vector<float> bias = random_values(bias_count, 42u);
+    std::vector<float> c(count, 0.0f);
+    fsv_cuda_ptr device_a = upload_bytes(a.data(), a.size() * sizeof(float));
+    fsv_cuda_ptr device_b = upload_bytes(bias.data(), bias.size() * sizeof(float));
+    fsv_cuda_ptr device_c = upload_bytes(c.data(), c.size() * sizeof(float));
+    fsv_cuda_index index{};
+    index.rank = 3;
+    index.operation = 0;
+    index.shape[0] = batch;
+    index.shape[1] = channels;
+    index.shape[2] = spatial;
+    /* a is laid out like the result; the bias advances with the channel and is
+       flat along the spatial axis, so that dimension gets a zero stride. */
+    index.a_stride[0] = static_cast<long long>(channels) * spatial;
+    index.a_stride[1] = spatial;
+    index.a_stride[2] = 1;
+    index.b_stride[0] = channels;
+    index.b_stride[1] = 1;
+    index.b_stride[2] = 0;
+    const double micros = time_launches(
+        [&] {
+            if (fsv_cuda_binary_bcast_f32(device_a, device_b, device_c, count, &index) != 0) {
+                fail("binary_bcast_f32");
+            }
+        },
+        warmup, iters);
+    if (fsv_cuda_device_download(c.data(), device_c, c.size() * sizeof(float)) != 0) {
+        fail("download");
+    }
+    double checksum = 0.0;
+    for (float value : c) checksum += value;
+    const double bytes =
+        static_cast<double>(a.size() + bias.size() + c.size()) * sizeof(float);
+    char shape[64];
+    std::snprintf(shape, sizeof(shape), "b=%d c=%d s=%d bias-last", batch, channels, spatial);
+    report("binary_bcast", shape, micros, bytes, checksum);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -173,7 +220,8 @@ int main(int argc, char** argv) {
         std::printf("usage: fsv_kernel_bench <kernel> <shape...> [--iters N] [--warmup N]\n"
                     "  matmul_f32    m k n [batch]\n"
                     "  matmul_nbits4 m k n block_size\n"
-                    "  conv2d        batch channels h w out_channels kh kw\n");
+                    "  conv2d        batch channels h w out_channels kh kw\n"
+                    "  binary_bcast  batch channels spatial\n");
         return 2;
     }
     std::vector<int> numbers;
@@ -208,6 +256,9 @@ int main(int argc, char** argv) {
         if (numbers.size() < 7) return 2;
         bench_conv2d(numbers[0], numbers[1], numbers[2], numbers[3], numbers[4], numbers[5],
                      numbers[6], warmup, iters);
+    } else if (kernel == "binary_bcast") {
+        if (numbers.size() < 3) return 2;
+        bench_binary_bcast(numbers[0], numbers[1], numbers[2], warmup, iters);
     } else {
         std::printf("unknown kernel %s\n", kernel.c_str());
         return 2;
