@@ -13,6 +13,7 @@ from pathlib import Path
 
 
 DSH_VERSION = "0.1.0-rc.6"
+OFFICE_BACKENDS = ("dsh", "local_dsh")
 NODE_VERSION = "24.13.0"
 NODE_VERSION_TEXT = f"v{NODE_VERSION}"
 NPM_VERSION = "11.6.2"

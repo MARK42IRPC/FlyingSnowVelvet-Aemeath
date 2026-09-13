@@ -17,12 +17,15 @@ from lib.core import dsh_runtime_contract as dsh_config
 from lib.core.logger import get_logger
 from lib.core.process_utils import hidden_process_kwargs
 
+from . import local_dsh
+
 
 logger = get_logger(__name__)
 
 DSH_VERSION = dsh_config.DSH_VERSION
 NODE_VERSION = dsh_config.NODE_VERSION_TEXT
 PROTOCOL = "fsv-office/1"
+OFFICE_BACKENDS = dsh_config.OFFICE_BACKENDS
 OFFICE_SYSTEM_PROMPT_RESOURCE = Path("resc") / "agent" / "office_system_prompt.txt"
 OFFICE_SKILL_ROOT_RESOURCE = Path("resc") / "agent"
 
@@ -106,6 +109,17 @@ def dsh_entry_path() -> Path:
     return dsh_config.dsh_entry_path(project_root())
 
 
+def office_backend() -> str:
+    """返回当前办公后端；未知值原样返回交给就绪检查报错。"""
+    try:
+        from config.ollama_config import OFFICE_MODE
+
+        backend = str(OFFICE_MODE.get("backend", "dsh") or "dsh").strip().lower()
+    except Exception:
+        backend = "dsh"
+    return backend or "dsh"
+
+
 def normalize_openai_base_url(value: object) -> str:
     """Convert a full chat-completions endpoint to the SDK base URL."""
     base_url = str(value or "").strip().rstrip("/")
@@ -116,13 +130,9 @@ def normalize_openai_base_url(value: object) -> str:
 
 
 def runtime_readiness_error() -> str:
-    try:
-        from config.ollama_config import OFFICE_MODE
-        backend = str(OFFICE_MODE.get("backend", "dsh") or "dsh").strip().lower()
-    except Exception:
-        backend = "dsh"
-    if backend != "dsh":
-        return "办公后端配置无效，请在 AI 设置中选择 DSH"
+    backend = office_backend()
+    if backend not in OFFICE_BACKENDS:
+        return "办公后端配置无效，请在 AI 设置中选择 DSH 或本机 DeepSeek Harness"
     source_error = dsh_config.runtime_source_error(project_root())
     if source_error:
         return f"{source_error}，请重新解压程序包"
@@ -130,6 +140,13 @@ def runtime_readiness_error() -> str:
         load_office_system_prompt()
     except RuntimeError as exc:
         return str(exc)
+    if backend == "local_dsh":
+        install = local_dsh.probe_local_dsh()
+        if install is None:
+            return local_dsh.local_dsh_status(project_root()).get("reason") or ""
+        if local_dsh.resolve_local_node_executable(project_root()) is None:
+            return "本机 DeepSeek Harness 需要 Node 运行时，请安装 Node 或重新运行“安装依赖.bat”"
+        return ""
     node = resolve_node_executable()
     if node is None:
         return f"缺少 Node {NODE_VERSION}，请重新运行“安装依赖.bat”"
@@ -137,6 +154,29 @@ def runtime_readiness_error() -> str:
     if installed_error:
         return f"{installed_error}，请重新运行“安装依赖.bat”"
     return ""
+
+
+def resolve_launch_command() -> tuple[list[str], dict[str, str]]:
+    """返回办公侧车命令行，以及需要追加的隔离环境变量。"""
+    backend = office_backend()
+    if backend == "local_dsh":
+        install = local_dsh.probe_local_dsh()
+        if install is None:
+            raise RuntimeError(
+                local_dsh.local_dsh_status(project_root()).get("reason")
+                or "未探测到可用的本机 DeepSeek Harness"
+            )
+        node = local_dsh.resolve_local_node_executable(project_root())
+        if node is None:
+            raise RuntimeError("本机 DeepSeek Harness 需要 Node 运行时")
+        return (
+            [node, str(install.entry), "--profile", "fsv-office"],
+            {"NODE_PATH": str(install.node_modules_root)},
+        )
+    node = resolve_node_executable()
+    if node is None:
+        raise RuntimeError(f"缺少 Node {NODE_VERSION}，请重新运行“安装依赖.bat”")
+    return ([node, str(dsh_entry_path()), "--profile", "fsv-office"], {})
 
 
 def _isolated_node_environment() -> dict[str, str]:
@@ -263,12 +303,8 @@ class DshOfficeRuntime:
             "FSV_OFFICE_SESSION_ROOT": str(sessions),
             "FSV_OFFICE_SYSTEM_PROMPT": system_prompt,
         })
-        command = [
-            str(resolve_node_executable()),
-            str(dsh_entry_path()),
-            "--profile",
-            "fsv-office",
-        ]
+        command, extra_env = resolve_launch_command()
+        env.update(extra_env)
         try:
             process = subprocess.Popen(
                 command,

@@ -2128,11 +2128,22 @@ class AISettingsPanel(QWidget):
         self._office_backend = _WatermarkComboBox()
         self._office_backend.setView(QListView(self._office_backend))
         self._office_backend.addItem("DeepSeek Harness（推荐）", "dsh")
+        self._local_dsh_status = self._probe_local_dsh()
+        self._office_backend.addItem("本机 DeepSeek Harness（探测）", "local_dsh")
+        if not self._local_dsh_status.get("available"):
+            local_item = self._office_backend.model().item(
+                self._office_backend.findData("local_dsh")
+            )
+            if local_item is not None:
+                local_item.setEnabled(False)
         form.addRow("办公后端", self._office_backend)
         self._set_form_row_description(
             form,
             self._office_backend,
-            "办公模式使用 DeepSeek Harness 侧车，任务、会话和权限由桌宠统一管理。",
+            self._office_backend_description(),
+        )
+        self._office_backend.currentIndexChanged.connect(
+            self._refresh_office_backend_description
         )
 
         self._office_use_independent_api = QCheckBox("办公模式独立api")
@@ -5107,6 +5118,40 @@ class AISettingsPanel(QWidget):
             if label_item is not None and label_item.widget() is not None:
                 label_item.widget().setVisible(enabled)
             field.setVisible(enabled)
+
+    def _probe_local_dsh(self) -> dict:
+        """只读探测本机 DeepSeek Harness，探测失败不影响设置面板。"""
+        try:
+            from lib.script.office import local_dsh
+
+            return dict(local_dsh.local_dsh_status())
+        except Exception as exc:
+            return {
+                "available": False,
+                "reason": f"探测本机 DeepSeek Harness 失败：{exc}",
+            }
+
+    def _office_backend_description(self) -> str:
+        backend = str(self._office_backend.currentData() or "dsh")
+        if backend != "local_dsh":
+            return "办公模式使用 DeepSeek Harness 侧车，任务、会话和权限由桌宠统一管理。"
+        status = getattr(self, "_local_dsh_status", None) or {}
+        if status.get("available"):
+            version = str(status.get("version") or "").strip()
+            source = str(status.get("source") or "").strip()
+            path = str(status.get("path") or "").strip()
+            label = f"复用本机 DeepSeek Harness {version}".strip()
+            if source:
+                label = f"{label}（{source}）"
+            return f"{label}：{path}" if path else label
+        return str(status.get("reason") or "未探测到可用的本机 DeepSeek Harness")
+
+    def _refresh_office_backend_description(self, *_args) -> None:
+        form = getattr(self, "_office_mode_form", None)
+        backend = getattr(self, "_office_backend", None)
+        if form is None or backend is None:
+            return
+        self._set_form_row_description(form, backend, self._office_backend_description())
 
     def _refresh_voice_package_ui(self) -> None:
         status = get_voice_package_status()

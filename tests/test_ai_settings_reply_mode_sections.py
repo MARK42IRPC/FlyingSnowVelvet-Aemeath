@@ -35,12 +35,19 @@ class AISettingsReplyModeSectionsTests(unittest.TestCase):
             return_value=VoicePackageStatus("missing", "not installed"),
         )
         self._voice_package_probe.start()
+        self._local_dsh_probe = patch.object(
+            AISettingsPanel,
+            "_probe_local_dsh",
+            return_value={"available": False, "reason": "未探测到 本机 DeepSeek Harness"},
+        )
+        self._local_dsh_probe.start()
         with patch.object(AISettingsPanel, "_refresh_hardware_watermark_async", lambda self: None):
             self.panel = AISettingsPanel(lazy_workbench_pages=True)
 
     def tearDown(self):
         self.panel.deleteLater()
         self.app.processEvents()
+        self._local_dsh_probe.stop()
         self._voice_package_probe.stop()
 
     def _select_mode(self, mode: str) -> None:
@@ -59,15 +66,37 @@ class AISettingsReplyModeSectionsTests(unittest.TestCase):
             ("规则回复", "3"),
         ])
 
-    def test_office_backend_selector_exposes_only_dsh(self):
+    def test_office_backend_selector_lists_builtin_and_local(self):
         field = self.panel._office_backend
         self.assertEqual(
             [(field.itemText(i), field.itemData(i)) for i in range(field.count())],
             [
                 ("DeepSeek Harness（推荐）", "dsh"),
+                ("本机 DeepSeek Harness（探测）", "local_dsh"),
             ],
         )
         self.assertTrue(field.model().item(field.findData("dsh")).isEnabled())
+        self.assertFalse(field.model().item(field.findData("local_dsh")).isEnabled())
+
+        field.setCurrentIndex(field.findData("local_dsh"))
+
+        self.assertIn("未探测到", self.panel._office_backend_description())
+
+    def test_office_backend_description_reports_local_install(self):
+        field = self.panel._office_backend
+        self.panel._local_dsh_status = {
+            "available": True,
+            "version": "0.1.0-rc.6",
+            "source": "npm 全局目录",
+            "path": r"C:\Users\demo\AppData\Roaming\npm\node_modules\@deepseek-ai\dsh",
+        }
+        field.setCurrentIndex(field.findData("local_dsh"))
+
+        description = self.panel._office_backend_description()
+
+        self.assertIn("0.1.0-rc.6", description)
+        self.assertIn("npm 全局目录", description)
+        self.assertIn(r"AppData\Roaming\npm", description)
 
     def test_office_backend_does_not_hide_independent_api_toggle_or_warmup(self):
         self.assertFalse(self.panel._office_backend.isHidden())

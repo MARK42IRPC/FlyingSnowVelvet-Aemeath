@@ -4,6 +4,7 @@ import math
 from urllib.parse import urlparse
 
 from config.ollama_config import AI_VOICE_MAX_CHARS_MAX, AI_VOICE_MAX_CHARS_MIN
+from lib.core.dsh_runtime_contract import OFFICE_BACKENDS
 
 
 def is_valid_http_url(text: str) -> bool:
@@ -22,7 +23,7 @@ def _hostname(text: str) -> str:
 
 
 def validate_ai_values(values: dict) -> None:
-    if str(values.get("office_backend", "dsh") or "dsh") != "dsh":
+    if str(values.get("office_backend", "dsh") or "dsh") not in OFFICE_BACKENDS:
         raise ValueError("办公后端选择无效")
     force_mode = str(values.get("force_reply_mode", "")).strip()
     welfare_intelligence_boost = values.get("welfare_intelligence_boost")
