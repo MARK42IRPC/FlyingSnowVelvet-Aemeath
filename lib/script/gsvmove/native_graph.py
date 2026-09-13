@@ -152,6 +152,22 @@ def _bind(library: ctypes.CDLL, name: str, argtypes, restype) -> None:
     function.restype = restype
 
 
+def _optional_binding(library: ctypes.CDLL, name: str, argtypes, restype):
+    """Bind an entry point a runtime built before it does not export.
+
+    The driver and the graph runtime ship as one file, but a DLL left behind by
+    an earlier install is a real situation: a feature it cannot support is
+    skipped rather than turning the whole runtime into a load failure.
+    """
+
+    function = getattr(library, name, None)
+    if function is None:
+        return None
+    function.argtypes = argtypes
+    function.restype = restype
+    return function
+
+
 def load_native_library(library_path=None) -> ctypes.CDLL:
     """Load and cache the runtime DLL declared by the shared contract."""
 
@@ -215,6 +231,28 @@ def load_native_library(library_path=None) -> ctypes.CDLL:
             library,
             "fsv_graph_read_resident",
             [ctypes.c_void_p, ctypes.c_char_p, ctypes.POINTER(_GraphOutput)],
+            ctypes.c_int,
+        )
+        # Device lending. A DLL left behind by an earlier install does not
+        # export these, and the feature is skipped rather than turning the
+        # whole runtime into a load failure.
+        _optional_binding(
+            library,
+            "fsv_graph_set_retained",
+            [ctypes.c_void_p, ctypes.POINTER(ctypes.c_char_p), ctypes.c_int],
+            None,
+        )
+        _optional_binding(
+            library,
+            "fsv_graph_borrow_device",
+            [ctypes.c_void_p, ctypes.c_char_p],
+            ctypes.c_void_p,
+        )
+        _optional_binding(library, "fsv_graph_release_device", [ctypes.c_void_p], None)
+        _optional_binding(
+            library,
+            "fsv_graph_import_device",
+            [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_void_p],
             ctypes.c_int,
         )
         _bind(library, "fsv_graph_last_error", [], ctypes.c_char_p)
@@ -285,6 +323,11 @@ def _decode_name(raw: bytes | None) -> str:
 
 _RESIDENT_OUTPUT_PREFIX = "present_"
 _RESIDENT_INPUT_PREFIX = "past_"
+# Besides its cache the decoder hands the token it just produced, and the
+# embedding that goes with it, straight back in on the next step. Neither name
+# says anything about the other, so the pair is listed here: the archive is the
+# only place that defines the convention.
+_DECODER_STEP_PAIRS = (("y", "iy"), ("y_emb", "iy_emb"))
 
 
 def _resident_pairs(input_names, output_names) -> dict[str, str]:
@@ -298,6 +341,10 @@ def _resident_pairs(input_names, output_names) -> dict[str, str]:
 
     The rule is inert for every graph without that cycle, because it needs both
     halves of the name to be present.
+
+    The step pair below rides on the same discovery: a graph that names its own
+    previous step is the graph that names a cache, so the cache is what says
+    the archive is a decoder before anything else is assumed about it.
     """
 
     available = set(input_names)
@@ -308,7 +355,30 @@ def _resident_pairs(input_names, output_names) -> dict[str, str]:
         source = _RESIDENT_INPUT_PREFIX + name[len(_RESIDENT_OUTPUT_PREFIX) :]
         if source in available:
             pairs[name] = source
+    if not pairs:
+        return pairs
+    outputs = set(output_names)
+    for output, source in _DECODER_STEP_PAIRS:
+        if output in outputs and source in available:
+            pairs[output] = source
     return pairs
+
+
+def _retained_outputs(pairs: dict[str, str], output_names) -> tuple[str, ...]:
+    """Outputs nobody on the host reads and no input name pairs with.
+
+    The first half of an autoregressive decoder is the case this exists for: it
+    produces the cache the second half consumes, so the value only has to reach
+    the next graph. Leaving it on the card saves the read-back and the upload
+    that would otherwise carry that cache to the host and straight back to the
+    same card, which for a long text is gigabytes of traffic nobody looks at.
+    """
+
+    return tuple(
+        name
+        for name in output_names
+        if name.startswith(_RESIDENT_OUTPUT_PREFIX) and name not in pairs
+    )
 
 
 class NativeDeviceTensor:
@@ -333,6 +403,21 @@ class NativeDeviceTensor:
         return self._name
 
     @property
+    def owner(self) -> "NativeGraphSession":
+        """The session whose device buffer this handle names."""
+
+        return self._session
+
+    def borrow(self):
+        """Lend this output's device buffer to another graph.
+
+        Returns ``None`` when the value has no live device copy, which sends
+        the caller back to :meth:`numpy`.
+        """
+
+        return self._session.borrow_device(self._name)
+
+    @property
     def shape(self) -> tuple[int, ...]:
         return self._shape
 
@@ -344,6 +429,11 @@ class NativeDeviceTensor:
         """Read the retained device buffer back to the host."""
 
         return self._session.read_resident(self._name)
+
+    def __getitem__(self, key):
+        """Index the value as the array it stands for; see :meth:`numpy`."""
+
+        return self.numpy()[key]
 
     def __array__(self, dtype=None, copy=None) -> np.ndarray:
         array = self.numpy()
@@ -398,6 +488,22 @@ class NativeGraphSession:
         self._resident_pairs = _resident_pairs(self._input_names, self._output_names)
         self._resident_inputs = frozenset(self._resident_pairs.values())
         self._resident_outputs = frozenset(self._resident_pairs)
+        # Bound by load_native_library, and left unset by a runtime too old to
+        # export them; the retention below is what the feature hangs on.
+        self._set_retained = getattr(library, "fsv_graph_set_retained", None)
+        self._borrow_device = getattr(library, "fsv_graph_borrow_device", None)
+        self._release_device = getattr(library, "fsv_graph_release_device", None)
+        self._import_device = getattr(library, "fsv_graph_import_device", None)
+        self._retained_outputs = (
+            _retained_outputs(self._resident_pairs, self._output_names)
+            if self._set_retained is not None
+            else ()
+        )
+        self._device_outputs = self._resident_outputs | frozenset(self._retained_outputs)
+        if self._retained_outputs:
+            encoded = [name.encode("utf-8") for name in self._retained_outputs]
+            retained_names = (ctypes.c_char_p * len(encoded))(*encoded)
+            self._set_retained(handle, retained_names, len(encoded))
         if self._resident_pairs:
             flat: list[bytes] = []
             for output, source in sorted(self._resident_pairs.items()):
@@ -414,6 +520,33 @@ class NativeGraphSession:
         """Output names that stay on the card between runs."""
 
         return self._resident_outputs
+
+    @property
+    def retained_outputs(self) -> tuple[str, ...]:
+        """Output names kept on the card for another graph to read."""
+
+        return self._retained_outputs
+
+    def borrow_device(self, name: str):
+        """Lend one retained output's device buffer to another graph.
+
+        Returns the runtime's borrow handle, or ``None`` when that value has no
+        live device copy (an operator left it on the host) or the runtime is
+        too old to lend one: the caller then goes through the bytes like any
+        other array.
+        """
+
+        with self._lock:
+            handle = self._handle
+            if handle is None or self._borrow_device is None:
+                return None
+            return self._borrow_device(handle, str(name).encode("utf-8")) or None
+
+    def release_device(self, borrowed) -> None:
+        """Give a borrowed device buffer back; see :meth:`borrow_device`."""
+
+        if borrowed and self._release_device is not None:
+            self._release_device(borrowed)
 
     @property
     def input_names(self) -> tuple[str, ...]:
@@ -454,16 +587,39 @@ class NativeGraphSession:
 
             # A retained cache tensor is named but not sent: the runtime reads
             # its own device buffer for that input, so leaving it out of the
-            # feed list is what makes it skip the upload.
-            supplied = [
-                name
-                for name in self._input_names
-                if name in feed
-                and not (
-                    isinstance(feed[name], NativeDeviceTensor)
-                    and name in self._resident_inputs
-                )
-            ]
+            # feed list is what makes it skip the upload. A tensor another
+            # graph retained travels the same way once its buffer has been
+            # bound here, which is what keeps a cache produced by the first
+            # stage from a round trip through host memory.
+            supplied: list[str] = []
+            loans: list[tuple[str, object]] = []
+            for name in self._input_names:
+                if name not in feed:
+                    continue
+                value = feed[name]
+                if isinstance(value, NativeDeviceTensor):
+                    if value.owner is self:
+                        if name in self._resident_inputs:
+                            continue
+                    elif (
+                        name in self._resident_inputs
+                        and self._resident_pairs.get(value.name) == name
+                    ):
+                        borrowed = value.borrow()
+                        if borrowed is not None:
+                            # The buffer is bound to the name this graph reads
+                            # it as, which is not the name the other graph
+                            # produced it under.
+                            loans.append((name, borrowed))
+                            continue
+                supplied.append(name)
+            for input_name, borrowed in loans:
+                encoded_name = input_name.encode("utf-8")
+                if int(self._import_device(handle, encoded_name, borrowed)) != 0:
+                    raise NativeGraphError(
+                        f"绑定借用的设备缓冲失败（{self._model_path.name}）："
+                        f"{_last_error(self._library)}"
+                    )
             keepalive: list[object] = []
             tensors = (_GraphTensor * len(supplied))()
             for index, name in enumerate(supplied):
@@ -485,13 +641,20 @@ class NativeGraphSession:
                 entry.ndim = len(shape)
 
             outputs = (_GraphOutput * len(self._output_names))()
-            status = self._library.fsv_graph_run(
-                handle,
-                tensors,
-                len(supplied),
-                outputs,
-                len(self._output_names),
-            )
+            try:
+                status = self._library.fsv_graph_run(
+                    handle,
+                    tensors,
+                    len(supplied),
+                    outputs,
+                    len(self._output_names),
+                )
+            finally:
+                # The run has bound what it borrowed into its own value table,
+                # so the loan can go back before the graph is reported as
+                # finished.
+                for _input_name, borrowed in loans:
+                    self.release_device(borrowed)
             if status != 0:
                 raise NativeGraphError(
                     f"自研 CUDA 推理图执行失败（{self._model_path.name}）："
@@ -526,7 +689,7 @@ class NativeGraphSession:
         dtype = _NUMPY_DTYPE_BY_ONNX.get(int(entry.dtype))
         if dtype is None:
             raise NativeGraphError(f"输出张量 {name} 的数据类型不受支持：{int(entry.dtype)}")
-        if resident_handles and name in self._resident_outputs:
+        if resident_handles and name in self._device_outputs:
             return NativeDeviceTensor(self, name, shape, dtype)
         count = 1
         for dimension in shape:

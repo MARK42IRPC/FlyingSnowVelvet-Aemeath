@@ -121,6 +121,18 @@ public:
     bool resident_output(const std::string& name) const;
     /* Host view of a retained output, or null before it has been produced. */
     const Tensor* find_resident(const std::string& name) const;
+    /* Declares outputs to keep on the card without an input to pair them with:
+       the caller hands the buffer to another graph instead of reading it. */
+    void set_retained(const std::vector<std::string>& names);
+    /* Lends a retained output's device buffer to another graph, reporting the
+       shape and type that have to travel with it. Null when that output has no
+       live device copy, which sends the caller back to the host bytes. */
+    std::shared_ptr<TensorDeviceStorage> borrow_device(
+        const std::string& name, std::vector<int64_t>& shape, int32_t& dtype) const;
+    /* Binds an input name to a buffer another graph lent, for the next run to
+       read instead of an upload. The host payload stays empty: the value
+       lives on the card. */
+    void set_device_feed(const std::string& name, Tensor tensor);
 
 private:
     ModelProto model_;
@@ -133,6 +145,9 @@ private:
     std::unordered_map<std::string, Tensor> resident_;
     std::unordered_map<std::string, std::string> resident_feeder_;
     std::vector<std::string> resident_names_;
+    /* Inputs this run reads from a buffer another graph lent. One-shot: a loan
+       is consumed by the next run and then dropped. */
+    std::unordered_map<std::string, Tensor> device_feeds_;
     bool constants_registered_ = false;
     bool capture_ = false;
     /* Every run writes its values into this one table. The plan maps a node's

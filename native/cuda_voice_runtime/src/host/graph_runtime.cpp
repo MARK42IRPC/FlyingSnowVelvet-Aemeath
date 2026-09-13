@@ -54,6 +54,43 @@ using fsv::Tensor;
 using fsv::TensorProto;
 using fsv::Value;
 
+/* The dispatch chain below compares a node's operator against string literals,
+   and ``std::string == const char*`` measures the literal before it compares a
+   byte of either side. Reducing both sides to one hash up front turns every
+   test into an integer compare: the literals are folded at compile time, and a
+   node's hash is taken once, when the plan is built, rather than once per test.
+
+   FNV-1a, chosen because it is four lines and the input is a fixed set of
+   operator names rather than attacker-controlled text. */
+
+constexpr std::uint64_t hash_op_name(const char* text, std::size_t size) {
+    std::uint64_t value = 14695981039346656037ull;
+    for (std::size_t index = 0; index < size; ++index) {
+        value ^= static_cast<unsigned char>(text[index]);
+        value *= 1099511628211ull;
+    }
+    return value;
+}
+
+constexpr std::uint64_t hash_op_name(const std::string& text) {
+    return hash_op_name(text.data(), text.size());
+}
+
+template <std::size_t size>
+constexpr std::uint64_t hash_op_name(const char (&literal)[size]) {
+    return hash_op_name(literal, size - 1);
+}
+
+/* An operator name whose only job is to answer ``op == "Add"`` cheaply. */
+struct OpName {
+    std::uint64_t hash = 0;
+
+    template <std::size_t size>
+    bool operator==(const char (&literal)[size]) const {
+        return hash == hash_op_name(literal);
+    }
+};
+
 bool cuda_host_enabled() {
     static const bool enabled = std::getenv("FSV_NATIVE_CPU_ONLY") == nullptr;
     /* A run that has run out of memory keeps every remaining node on the host:
@@ -3978,6 +4015,8 @@ struct GraphRuntime::Plan {
     /* Weights, paired with their slot, so binding them costs a pointer store
        instead of a lookup per weight. */
     std::vector<std::pair<Value*, const Tensor*>> initializers;
+    /* One operator hash per top-level node, in node order. */
+    std::vector<std::uint64_t> op_hashes;
     /* Operand and result slots, flattened by node. */
     std::vector<std::size_t> node_inputs;
     std::vector<std::size_t> input_offset;
@@ -4065,7 +4104,9 @@ bool GraphRuntime::build_plan(std::string& error) {
     plan->output_offset.reserve(nodes.size() + 1);
     plan->node_inputs.reserve(nodes.size() * 2);
     plan->node_outputs.reserve(nodes.size() * 2);
+    plan->op_hashes.reserve(nodes.size());
     for (const fsv::NodeProto& node : nodes) {
+        plan->op_hashes.push_back(hash_op_name(node.op_type));
         plan->input_offset.push_back(plan->node_inputs.size());
         for (const std::string& name : node.inputs) {
             auto found = name.empty() ? slot_of.end() : slot_of.find(name);
@@ -4202,6 +4243,29 @@ const Tensor* GraphRuntime::find_resident(const std::string& name) const {
     return &iterator->second;
 }
 
+void GraphRuntime::set_retained(const std::vector<std::string>& names) {
+    for (const std::string& name : names) {
+        if (!resident_output(name)) resident_names_.push_back(name);
+    }
+}
+
+std::shared_ptr<TensorDeviceStorage> GraphRuntime::borrow_device(
+    const std::string& name, std::vector<int64_t>& shape, int32_t& dtype) const {
+    auto iterator = resident_.find(name);
+    if (iterator == resident_.end()) return nullptr;
+    const Tensor& tensor = iterator->second;
+    /* A value that only ever lived in host memory is not a loan: the caller
+       reads its bytes instead. */
+    if (!tensor.device || !tensor.device->device_valid) return nullptr;
+    shape = tensor.shape;
+    dtype = tensor.dtype;
+    return tensor.device;
+}
+
+void GraphRuntime::set_device_feed(const std::string& name, Tensor tensor) {
+    device_feeds_[name] = std::move(tensor);
+}
+
 bool GraphRuntime::run(const std::unordered_map<std::string, Tensor>& feeds,
                        std::unordered_map<std::string, Tensor>& outputs,
                        std::string& error) {
@@ -4237,12 +4301,30 @@ bool GraphRuntime::run(const std::unordered_map<std::string, Tensor>& feeds,
         value.tensor = std::make_shared<Tensor>(item.second);
         values_[item.first] = std::move(value);
     }
+    /* A buffer another graph lent is already on the card, so the run reads it
+       there instead of uploading the same bytes again. A caller that supplies
+       host bytes for the same name still wins, and the loan is spent by this
+       run whatever happens. */
+    std::vector<std::string> device_fed_names;
+    device_fed_names.reserve(device_feeds_.size());
+    for (auto& item : device_feeds_) {
+        if (feeds.find(item.first) != feeds.end()) continue;
+        device_fed_names.push_back(item.first);
+        Value value;
+        value.tensor = std::make_shared<Tensor>(std::move(item.second));
+        values_[item.first] = std::move(value);
+    }
+    device_feeds_.clear();
     /* A retained output stands in for its input when the caller has no host
        bytes for it, which is the point of retaining it: the decode loop hands
        the cache back without ever materialising it. A caller that does supply
        the input wins, and that is how the first step seeds the cache. */
     for (const auto& item : resident_feeder_) {
         if (feeds.find(item.first) != feeds.end()) continue;
+        if (std::find(device_fed_names.begin(), device_fed_names.end(),
+                      item.first) != device_fed_names.end()) {
+            continue;
+        }
         auto retained = resident_.find(item.second);
         if (retained == resident_.end()) continue;
         Value value;
@@ -4265,6 +4347,7 @@ bool GraphRuntime::run(const std::unordered_map<std::string, Tensor>& feeds,
     const bool planned = scope.plan != nullptr;
     const std::vector<std::size_t>* plan_inputs = planned ? &scope.plan->node_inputs : nullptr;
     const std::vector<std::size_t>* plan_input_offset = planned ? &scope.plan->input_offset : nullptr;
+    const std::vector<std::uint64_t>* plan_op_hashes = planned ? &scope.plan->op_hashes : nullptr;
     const std::vector<std::size_t>* plan_outputs = planned ? &scope.plan->node_outputs : nullptr;
     const std::vector<std::size_t>* plan_output_offset = planned ? &scope.plan->output_offset : nullptr;
     std::unordered_map<std::string, Value>& values = scope.map ? *scope.map : values_;
@@ -4281,8 +4364,11 @@ bool GraphRuntime::run(const std::unordered_map<std::string, Tensor>& feeds,
             FSV_TRACE( "[native-run] node %zu %s (%s)\n",
                          node_index, node.op_type.c_str(), node.name.c_str());
         }
-        const std::string& op = node.op_type;
-        fsv::opstats::Scope op_scope(op.c_str(), node.name.c_str());
+        /* The plan carries this node's operator hash; an If/Loop body is cold
+           enough to hash its operator here instead. */
+        const OpName op{planned ? (*plan_op_hashes)[node_index]
+                                : hash_op_name(node.op_type)};
+        fsv::opstats::Scope op_scope(node.op_type.c_str(), node.name.c_str());
         const bool probe = node_probe_enabled();
         const std::chrono::steady_clock::time_point probe_start = probe
             ? std::chrono::steady_clock::now()
@@ -4900,7 +4986,7 @@ bool GraphRuntime::run(const std::unordered_map<std::string, Tensor>& feeds,
             }
             flow_values = std::move(carried);
         } else {
-            error = "native runtime does not support op yet: " + op + " (" + node.name + ")";
+            error = "native runtime does not support op yet: " + node.op_type + " (" + node.name + ")";
             return false;
         }
         const std::chrono::steady_clock::time_point probe_executed = probe
@@ -4908,7 +4994,7 @@ bool GraphRuntime::run(const std::unordered_map<std::string, Tensor>& feeds,
             : std::chrono::steady_clock::time_point();
         if (!flow_values.empty()) {
             if (flow_values.size() != node.outputs.size()) {
-                error = "native op output count mismatch for " + op + " (" + node.name + ")";
+                error = "native op output count mismatch for " + node.op_type + " (" + node.name + ")";
                 return false;
             }
             for (std::size_t index = 0; index < flow_values.size(); ++index) {
@@ -4924,7 +5010,7 @@ bool GraphRuntime::run(const std::unordered_map<std::string, Tensor>& feeds,
             }
         } else if (!multi_outputs.empty()) {
             if (multi_outputs.size() != node.outputs.size()) {
-                error = "native op output count mismatch for " + op + " (" + node.name + ")";
+                error = "native op output count mismatch for " + node.op_type + " (" + node.name + ")";
                 return false;
             }
             for (std::size_t index = 0; index < multi_outputs.size(); ++index) {
@@ -4938,7 +5024,7 @@ bool GraphRuntime::run(const std::unordered_map<std::string, Tensor>& feeds,
             }
         } else {
             if (output.dtype == 0) {
-                error = "native op failed for " + op + " (" + node.name + ")";
+                error = "native op failed for " + node.op_type + " (" + node.name + ")";
                 return false;
             }
             if (trace) {

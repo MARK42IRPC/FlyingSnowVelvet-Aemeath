@@ -79,6 +79,16 @@ bool copy_graph_tensor(const std::string& name, const fsv::Tensor& tensor,
     return true;
 }
 
+/* A device buffer on loan from another graph. The shared handle keeps the
+   bytes alive until the borrowing run has bound them, and the shape and type
+   travel with it because a borrowed input arrives with no host payload to read
+   them from. */
+struct DeviceLoan {
+    std::shared_ptr<fsv::TensorDeviceStorage> storage;
+    std::vector<int64_t> shape;
+    int32_t dtype = 0;
+};
+
 }  // namespace
 
 struct fsv_graph_handle {
@@ -276,6 +286,55 @@ int fsv_graph_read_resident(struct fsv_graph_handle* handle, const char* name,
         g_graph_error = exc.what();
         return 1;
     }
+}
+
+/* Declares outputs that stay on the card between runs without a paired input:
+   a run reports such an output with a null ``data``, and the caller hands the
+   buffer to another graph instead of reading its bytes. */
+void fsv_graph_set_retained(struct fsv_graph_handle* handle,
+                            const char* const* names, int count) {
+    if (!handle || !names || count <= 0) return;
+    std::vector<std::string> retained;
+    retained.reserve(static_cast<std::size_t>(count));
+    for (int index = 0; index < count; ++index) {
+        if (names[index]) retained.emplace_back(names[index]);
+    }
+    handle->runtime.set_retained(retained);
+}
+
+/* Lends one retained output's device buffer to another graph. */
+void* fsv_graph_borrow_device(struct fsv_graph_handle* handle, const char* name) {
+    if (!handle || !name) return nullptr;
+    try {
+        std::unique_ptr<DeviceLoan> loan(new DeviceLoan());
+        loan->storage = handle->runtime.borrow_device(name, loan->shape, loan->dtype);
+        if (!loan->storage) return nullptr;
+        return loan.release();
+    } catch (const std::exception& exc) {
+        g_graph_error = exc.what();
+        return nullptr;
+    }
+}
+
+void fsv_graph_release_device(void* borrowed) {
+    delete static_cast<DeviceLoan*>(borrowed);
+}
+
+/* Binds a borrowed device buffer to the name a run reads as an input, so the
+   next run binds the value without an upload. */
+int fsv_graph_import_device(struct fsv_graph_handle* handle, const char* name,
+                            const void* borrowed) {
+    if (!handle || !name || !borrowed) {
+        g_graph_error = "invalid borrowed tensor arguments";
+        return 1;
+    }
+    const DeviceLoan* loan = static_cast<const DeviceLoan*>(borrowed);
+    fsv::Tensor tensor;
+    tensor.shape = loan->shape;
+    tensor.dtype = loan->dtype;
+    tensor.device = loan->storage;
+    handle->runtime.set_device_feed(name, std::move(tensor));
+    return 0;
 }
 
 void fsv_graph_release_outputs(fsv_graph_output* outputs, std::size_t count) {

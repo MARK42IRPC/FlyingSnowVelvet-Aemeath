@@ -28,8 +28,14 @@ class _FakeLibrary:
         self.outputs = list(outputs)
         self.results = dict(results)
         self.resident = set(resident)
+        self.retained = set()
+        self.lendable = True
         self.resident_results = dict(resident_results or {})
         self.resident_declared = None
+        self.retained_declared = None
+        self.borrows = []
+        self.imports = []
+        self.released = []
         self.resident_reads = []
         self.feeds = []
         self.capture_enabled = None
@@ -69,6 +75,28 @@ class _FakeLibrary:
         self._store(entries[0], name, self.resident_results.get(key, self.results[key]))
         return 0
 
+    def fsv_graph_set_retained(self, handle, names, count):
+        self.retained_declared = [
+            names[index].decode("utf-8") for index in range(int(count))
+        ]
+        self.retained.update(self.retained_declared)
+
+    def fsv_graph_borrow_device(self, handle, name):
+        key = name.decode("utf-8")
+        self.borrows.append(key)
+        # Only a value that was declared retained and is still on the card has
+        # anything to lend; anything else sends the caller back to the bytes.
+        if key not in self.retained or not self.lendable:
+            return None
+        return id(self) + len(self.borrows)
+
+    def fsv_graph_import_device(self, handle, name, borrowed):
+        self.imports.append((name.decode("utf-8"), borrowed))
+        return 0
+
+    def fsv_graph_release_device(self, borrowed):
+        self.released.append(borrowed)
+
     def _store(self, entry, name, value):
         array = np.ascontiguousarray(value)
         dims = (ctypes.c_int64 * array.ndim)(*array.shape)
@@ -103,7 +131,7 @@ class _FakeLibrary:
             )
         self.feeds.append(feeds)
         for index, name in enumerate(self.outputs):
-            if name in self.resident:
+            if name in self.resident or name in self.retained:
                 # A retained output comes back named, shaped and typed, but
                 # with no payload: the bytes stayed on the card.
                 entry = outputs[index]
@@ -337,6 +365,167 @@ class NativeGraphResidentTests(unittest.TestCase):
         session = self._session(library)
         with self.assertRaisesRegex(NativeGraphError, "缺少输入张量"):
             session.run(None, {})
+
+
+class NativeGraphDeviceLoanTests(unittest.TestCase):
+    """The cache handed from one graph to the next one."""
+
+    def _session(self, library, name="graph.onnx"):
+        with tempfile.TemporaryDirectory() as tmp:
+            model = Path(tmp) / name
+            model.write_bytes(b"graph")
+            with patch.object(native_module, "load_native_library", return_value=library):
+                return NativeGraphSession(model, None)
+
+    def _producer(self):
+        """The half that produces a cache and never reads it back."""
+
+        return _FakeLibrary(
+            ["x"],
+            ["y", "present_k"],
+            {
+                "y": np.zeros((1, 2), dtype=np.float32),
+                "present_k": np.zeros((1, 4), dtype=np.float32),
+            },
+        )
+
+    def _consumer(self, suffix="k"):
+        """The half that keeps the cache it is handed."""
+
+        past = f"past_{suffix}"
+        present = f"present_{suffix}"
+        return _FakeLibrary(
+            ["token", past],
+            ["logits", present],
+            {
+                "logits": np.asarray([[1.0, 2.0]], dtype=np.float32),
+                present: np.zeros((1, 4), dtype=np.float32),
+            },
+        )
+
+    def test_a_cache_with_no_paired_input_is_declared_retained(self):
+        library = self._producer()
+        session = self._session(library, "first_stage.onnx")
+        self.assertEqual(session.retained_outputs, ("present_k",))
+        self.assertEqual(library.retained_declared, ["present_k"])
+        self.assertEqual(session.resident_outputs, frozenset())
+        self.assertIsNone(library.resident_declared)
+
+    def test_run_returns_the_retained_cache_as_a_handle(self):
+        library = self._producer()
+        session = self._session(library, "first_stage.onnx")
+        outputs = session.run(None, {"x": np.zeros((1, 1), dtype=np.float32)})
+        self.assertIsInstance(outputs[1], native_module.NativeDeviceTensor)
+        self.assertEqual(library.resident_reads, [])
+
+    def test_a_borrowed_buffer_is_imported_and_given_back(self):
+        producer = self._producer()
+        consumer = self._consumer()
+        first = self._session(producer, "first_stage.onnx")
+        stage = self._session(consumer, "stage.onnx")
+        cache = first.run(None, {"x": np.zeros((1, 1), dtype=np.float32)})[1]
+        token = np.asarray([[3]], dtype=np.int64)
+        stage.run(None, {"token": token, "past_k": cache})
+        # The buffer is bound to the name the consumer reads it as, which is
+        # what makes the run pick it up instead of asking for bytes.
+        self.assertEqual([name for name, _ in consumer.imports], ["past_k"])
+        self.assertEqual(consumer.released, [consumer.imports[0][1]])
+        # The bytes never crossed to the host: no upload, no read-back.
+        self.assertNotIn("past_k", consumer.feeds[-1])
+        self.assertEqual(producer.resident_reads, [])
+
+    def test_a_cache_without_a_device_copy_is_sent_as_bytes(self):
+        producer = self._producer()
+        producer.lendable = False
+        consumer = self._consumer()
+        first = self._session(producer, "first_stage.onnx")
+        stage = self._session(consumer, "stage.onnx")
+        cache = first.run(None, {"x": np.zeros((1, 1), dtype=np.float32)})[1]
+        stage.run(None, {"token": np.asarray([[3]], dtype=np.int64), "past_k": cache})
+        self.assertEqual(consumer.imports, [])
+        self.assertEqual(consumer.released, [])
+        self.assertIn("past_k", consumer.feeds[-1])
+        self.assertEqual(producer.resident_reads, ["present_k"])
+
+    def test_a_handle_only_travels_to_the_input_it_pairs_with(self):
+        producer = self._producer()
+        consumer = self._consumer(suffix="v")
+        first = self._session(producer, "first_stage.onnx")
+        stage = self._session(consumer, "stage.onnx")
+        cache = first.run(None, {"x": np.zeros((1, 1), dtype=np.float32)})[1]
+        stage.run(None, {"token": np.asarray([[3]], dtype=np.int64), "past_v": cache})
+        self.assertEqual(consumer.imports, [])
+        self.assertEqual(producer.resident_reads, ["present_k"])
+
+
+class NativeGraphStepFeedTests(unittest.TestCase):
+    """The decoder handing its own previous step straight back in."""
+
+    def _session(self, library):
+        with tempfile.TemporaryDirectory() as tmp:
+            model = Path(tmp) / "stage.onnx"
+            model.write_bytes(b"graph")
+            with patch.object(native_module, "load_native_library", return_value=library):
+                return NativeGraphSession(model, None)
+
+    def _stage(self):
+        return _FakeLibrary(
+            ["iy", "iy_emb", "past_k"],
+            ["y", "y_emb", "present_k"],
+            {
+                "y": np.asarray([[3]], dtype=np.int64),
+                "y_emb": np.zeros((1, 2, 4), dtype=np.float32),
+                "present_k": np.zeros((1, 4), dtype=np.float32),
+            },
+            resident={"y", "y_emb", "present_k"},
+        )
+
+    def _first_step(self, session):
+        return session.run(
+            None,
+            {
+                "iy": np.asarray([[3]], dtype=np.int64),
+                "iy_emb": np.zeros((1, 2, 4), dtype=np.float32),
+                "past_k": np.zeros((1, 4), dtype=np.float32),
+            },
+        )
+
+    def test_the_step_is_declared_next_to_the_cache(self):
+        library = self._stage()
+        session = self._session(library)
+        self.assertEqual(
+            session.resident_outputs, frozenset({"y", "y_emb", "present_k"})
+        )
+        self.assertEqual(
+            sorted(library.resident_declared),
+            [("present_k", "past_k"), ("y", "iy"), ("y_emb", "iy_emb")],
+        )
+        self.assertEqual(library.retained_declared, None)
+
+    def test_the_step_pair_needs_the_cache_to_look_like_a_decoder(self):
+        self.assertEqual(native_module._resident_pairs(["iy"], ["y"]), {})
+        self.assertEqual(
+            native_module._resident_pairs(
+                ["token", "past_k", "iy"], ["logits", "present_k", "y"]
+            ),
+            {"present_k": "past_k", "y": "iy"},
+        )
+
+    def test_handing_the_step_back_keeps_it_on_the_card(self):
+        library = self._stage()
+        session = self._session(library)
+        outputs = self._first_step(session)
+        self.assertIsInstance(outputs[0], native_module.NativeDeviceTensor)
+        session.run(None, {"iy": outputs[0], "iy_emb": outputs[1], "past_k": outputs[2]})
+        self.assertEqual(list(library.feeds[-1]), [])
+        self.assertEqual(library.resident_reads, [])
+
+    def test_a_step_that_is_read_still_materialises(self):
+        library = self._stage()
+        session = self._session(library)
+        outputs = self._first_step(session)
+        self.assertEqual(outputs[0][:, 0].tolist(), [3])
+        self.assertEqual(library.resident_reads, ["y"])
 
 
 class NativeRuntimePathTests(unittest.TestCase):

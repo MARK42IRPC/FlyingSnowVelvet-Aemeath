@@ -56,6 +56,20 @@ FSV_CUDA_API void fsv_graph_set_resident(
 /* Host bytes of a retained output, for a caller that really wants to read it. */
 FSV_CUDA_API int fsv_graph_read_resident(
     struct fsv_graph_handle* handle, const char* name, fsv_graph_output* output);
+/* Declares outputs to keep on the card between runs without a paired input: a
+   run reports such an output with a null ``data``, and the caller hands the
+   buffer to another graph instead of reading its bytes. */
+FSV_CUDA_API void fsv_graph_set_retained(
+    struct fsv_graph_handle* handle, const char* const* names, int count);
+/* Lends one retained output's device buffer so another graph can read it
+   without a round trip through host memory. Returns null when that output has
+   no live device copy, which sends the caller back to the bytes. */
+FSV_CUDA_API void* fsv_graph_borrow_device(
+    struct fsv_graph_handle* handle, const char* name);
+FSV_CUDA_API void fsv_graph_release_device(void* borrowed);
+/* Reads the resident output ``name`` from a borrowed buffer on the next run. */
+FSV_CUDA_API int fsv_graph_import_device(
+    struct fsv_graph_handle* handle, const char* name, const void* borrowed);
 FSV_CUDA_API const char* fsv_graph_last_error(void);
 
 #ifdef __cplusplus
