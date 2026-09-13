@@ -541,3 +541,67 @@ def get_active_config() -> dict:
         return _build_rule_reply_config(force_mode)
 
     return _build_error_config(force_mode, '回复模式无效')
+
+
+# ============================================================
+# 办公模式 API 路由
+# ============================================================
+
+OFFICE_API_WELFARE_REJECTED = (
+    "办公模式不支持福利 API。请在工作台把回复模式切换到「手动 API」，"
+    "填写接口地址、密钥和模型后再试。"
+)
+OFFICE_API_INCOMPLETE_TEMPLATE = (
+    "办公模式独立 API 配置不完整：缺少{missing}，请在工作台补齐后再试。"
+)
+
+
+def _office_independent_values() -> dict:
+    """读取办公模式独立 API 值，密钥优先取用户密钥文件。"""
+    saved_secrets = _load_local_secret_overrides()
+    return {
+        'api_key': str(
+            saved_secrets.get('office_api_key') or OFFICE_MODE.get('api_key') or ''
+        ).strip(),
+        'base_url': str(OFFICE_MODE.get('api_base_url') or '').strip(),
+        'model': str(OFFICE_MODE.get('api_model') or '').strip(),
+    }
+
+
+def get_office_active_config() -> dict:
+    """返回办公模式实际使用的接口配置，出错时不回退到其他来源。
+
+    办公任务会写入用户磁盘，因此这里不做事来源回退：开启“办公模式独立 api”
+    时配置不完整直接报错；关闭时复用当前回复模式，但福利 API 不是用户自有的
+    接口，必须拒绝。调用方以 ``api_type != 'openai_compatible'`` 作为拒绝条件，
+    并把 ``error`` 展示给用户。
+    """
+    force_mode = _normalize_force_mode(FORCE_REPLY_MODE)
+    if bool(OFFICE_MODE.get('use_independent_api', False)):
+        values = _office_independent_values()
+        missing = [
+            label
+            for label, value in (
+                ('接口密钥', values['api_key']),
+                ('接口地址', values['base_url']),
+                ('接口模型', values['model']),
+            )
+            if not value
+        ]
+        if missing:
+            return _build_error_config(
+                force_mode,
+                OFFICE_API_INCOMPLETE_TEMPLATE.format(missing='、'.join(missing)),
+            )
+        return _build_openai_config(
+            values['api_key'],
+            'office_api',
+            force_mode,
+            base_url=values['base_url'],
+            model=values['model'],
+        )
+
+    active = get_active_config()
+    if str(active.get('key_source') or '') == 'welfare_api':
+        return _build_error_config(force_mode, OFFICE_API_WELFARE_REJECTED)
+    return active

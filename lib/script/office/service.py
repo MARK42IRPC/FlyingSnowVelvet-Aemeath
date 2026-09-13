@@ -206,6 +206,13 @@ class OfficeService:
                 task_id = self._active_task_id
             if task_id:
                 self._dismiss_thinking_feedback(task_id)
+        else:
+            with self._lock:
+                has_active_task = self._active_task_id is not None
+            if not has_active_task:
+                reason = self._office_api_error()
+                if reason:
+                    self._refuse_office_input(reason)
         self._mark_state_dirty()
 
     def _on_hash_command(self, event: Event) -> None:
@@ -228,6 +235,32 @@ class OfficeService:
             "particle": False,
             "source": "office",
         }))
+
+    def _office_api_error(self) -> str:
+        """返回必须拒绝办公输入的原因；配置可用时返回空串。
+
+        办公模式只接受用户自有的 OpenAI 兼容接口。开启“办公模式独立 api”时
+        配置不完整直接报错，不回退到其他来源；关闭时复用当前回复模式，但福利
+        API 会被拒绝。
+        """
+        try:
+            import config.ollama_config as office_config
+
+            active_config = office_config.get_office_active_config()
+        except Exception as exc:
+            return f"办公接口配置读取失败：{exc}"
+        if active_config.get("api_type") == "openai_compatible":
+            return ""
+        return str(active_config.get("error") or "").strip() or (
+            "办公模式需要用户自有的 OpenAI 兼容接口，请在工作台配置手动 API"
+        )
+
+    def _refuse_office_input(self, reason: str) -> None:
+        with self._lock:
+            repeated = self._last_error == reason
+        self._set_error(reason)
+        if not repeated:
+            self._publish_office_notice(reason)
 
     def request_new_conversation(self) -> bool:
         """Prepare a blank office conversation without creating an empty task."""
@@ -364,7 +397,7 @@ class OfficeService:
             try:
                 import config.ollama_config as office_config
 
-                active_config = office_config.get_active_config()
+                active_config = office_config.get_office_active_config()
                 if active_config.get("api_type") != "openai_compatible":
                     return
 
@@ -406,6 +439,11 @@ class OfficeService:
         if not prompt:
             return None
         active = self._store.active()
+        if active is None:
+            reason = self._office_api_error()
+            if reason:
+                self._refuse_office_input(reason)
+                return None
         if active is not None:
             task_id = str(active["id"])
             self._store.add_message(task_id, "user", prompt)
@@ -441,6 +479,10 @@ class OfficeService:
         if self._store.active() is not None:
             self._set_error("当前已有任务运行，请先等待完成或取消")
             return False
+        reason = self._office_api_error()
+        if reason:
+            self._refuse_office_input(reason)
+            return False
         task = self._store.get(task_id)
         prompt = str(text or "").strip()
         if task is None or not prompt:
@@ -474,9 +516,12 @@ class OfficeService:
                         return
                 import config.ollama_config as office_config
 
-                active_config = office_config.get_active_config()
+                active_config = office_config.get_office_active_config()
                 if active_config.get("api_type") != "openai_compatible":
-                    raise RuntimeError("办公模式当前支持福利 API 或手动 API，请先在工作台切换")
+                    raise RuntimeError(
+                        str(active_config.get("error") or "").strip()
+                        or "办公模式需要用户自有的 OpenAI 兼容接口，请在工作台配置手动 API"
+                    )
                 api_key = str(active_config.get("api_key") or "").strip()
                 base_url = str(active_config.get("base_url") or "").strip()
                 model = str(active_config.get("model") or "").strip()

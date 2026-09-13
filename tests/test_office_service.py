@@ -59,6 +59,16 @@ class OfficeServiceLifecycleTests(unittest.TestCase):
         ), patch(
             "lib.script.office.service.runtime_readiness_error",
             return_value="",
+        ), patch(
+            "config.ollama_config.get_office_active_config",
+            return_value={
+                "api_type": "openai_compatible",
+                "base_url": "https://example.invalid/v1",
+                "model": "test-model",
+                "api_key": "test-key",
+                "key_source": "office_api",
+                "error": "",
+            },
         ):
             service = OfficeService(
                 scheduler=scheduler,
@@ -367,6 +377,96 @@ class OfficeServiceLifecycleTests(unittest.TestCase):
                 "kind": "thinking",
             }])
             self.assertEqual(store.get(task_id)["reasoning_text"], "先检查")
+
+
+class OfficeApiRefusalTests(unittest.TestCase):
+    def tearDown(self):
+        cleanup_event_center()
+
+    def _service(self, root: Path):
+        scheduler = FakeScheduler()
+        store = OfficeTaskStore(root / "tasks.json")
+        ipc = OfficeFileIpc(root / "ipc")
+        with patch(
+            "lib.script.office.service.ensure_default_office_workspace",
+            return_value=root / "workspace",
+        ), patch(
+            "lib.script.office.service.runtime_readiness_error",
+            return_value="",
+        ):
+            service = OfficeService(
+                scheduler=scheduler,
+                mode_service=_ModeService(),
+                task_store=store,
+                ipc=ipc,
+                runtime_factory=_Runtime,
+            )
+        return service, store
+
+    @staticmethod
+    def _rejected_config(message: str) -> dict:
+        return {"api_type": "error", "error": message, "key_source": ""}
+
+    def test_welfare_api_input_is_refused_and_explained(self):
+        from config.ollama_config import OFFICE_API_WELFARE_REJECTED
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            service, store = self._service(Path(tmpdir))
+            self.addCleanup(service.cleanup)
+            information = []
+            service._event_center.subscribe(
+                EventType.INFORMATION,
+                lambda event: information.append(event.data),
+            )
+            with patch(
+                "config.ollama_config.get_office_active_config",
+                return_value=self._rejected_config(OFFICE_API_WELFARE_REJECTED),
+            ):
+                task_id = service.submit_text("写一份周报")
+                resumed = service.resume_task("missing-task", "继续")
+
+            self.assertIsNone(task_id)
+            self.assertFalse(resumed)
+            self.assertEqual(store.snapshot(), [])
+            self.assertEqual(service._last_error, OFFICE_API_WELFARE_REJECTED)
+            self.assertEqual(
+                [item["text"] for item in information],
+                [OFFICE_API_WELFARE_REJECTED],
+            )
+
+    def test_switching_into_office_warns_before_the_first_message(self):
+        message = "办公模式独立 API 配置不完整：缺少接口密钥，请在工作台补齐后再试。"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            service, _store = self._service(Path(tmpdir))
+            self.addCleanup(service.cleanup)
+            information = []
+            service._event_center.subscribe(
+                EventType.INFORMATION,
+                lambda event: information.append(event.data),
+            )
+            with patch(
+                "config.ollama_config.get_office_active_config",
+                return_value=self._rejected_config(message),
+            ):
+                service._on_mode_changed(Event(
+                    EventType.INTERACTION_MODE_CHANGED,
+                    {"mode": InteractionMode.OFFICE.value},
+                ))
+
+            self.assertEqual(service._last_error, message)
+            self.assertEqual([item["text"] for item in information], [message])
+
+    def test_usable_api_keeps_office_input_working(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            service, store = self._service(Path(tmpdir))
+            self.addCleanup(service.cleanup)
+            with patch.object(service, "_start_task_worker") as start:
+                task_id = service.submit_text("正常任务")
+
+            self.assertIsNotNone(task_id)
+            self.assertEqual(service._last_error, "")
+            self.assertTrue(start.called)
+            self.assertEqual(len(store.snapshot()), 1)
 
 
 if __name__ == "__main__":
