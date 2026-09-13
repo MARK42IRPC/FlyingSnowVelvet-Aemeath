@@ -45,7 +45,33 @@ class _Runtime:
         self.cleanup_count += 1
 
 
-class OfficeServiceLifecycleTests(unittest.TestCase):
+# 办公输入在 submit_text/submit_default_text 里才读取接口配置，只在构造 OfficeService
+# 时打桩会让用例随开发机的密钥文件变化：CI 上没有本地密钥、默认回复模式又是福利 API，
+# 办公输入会被整体拒绝。这里改为整个用例期间注入可用配置。
+USABLE_OFFICE_CONFIG = {
+    "api_type": "openai_compatible",
+    "base_url": "https://example.invalid/v1",
+    "model": "test-model",
+    "api_key": "test-key",
+    "key_source": "office_api",
+    "error": "",
+}
+
+
+class _UsableOfficeConfig:
+    """注入可用的办公接口配置，禁止用例读取开发机的真实密钥。"""
+
+    def setUp(self) -> None:
+        super().setUp()
+        patcher = patch(
+            "config.ollama_config.get_office_active_config",
+            return_value=dict(USABLE_OFFICE_CONFIG),
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+
+class OfficeServiceLifecycleTests(_UsableOfficeConfig, unittest.TestCase):
     def tearDown(self):
         cleanup_event_center()
 
@@ -59,16 +85,6 @@ class OfficeServiceLifecycleTests(unittest.TestCase):
         ), patch(
             "lib.script.office.service.runtime_readiness_error",
             return_value="",
-        ), patch(
-            "config.ollama_config.get_office_active_config",
-            return_value={
-                "api_type": "openai_compatible",
-                "base_url": "https://example.invalid/v1",
-                "model": "test-model",
-                "api_key": "test-key",
-                "key_source": "office_api",
-                "error": "",
-            },
         ):
             service = OfficeService(
                 scheduler=scheduler,
@@ -379,7 +395,7 @@ class OfficeServiceLifecycleTests(unittest.TestCase):
             self.assertEqual(store.get(task_id)["reasoning_text"], "先检查")
 
 
-class OfficeApiRefusalTests(unittest.TestCase):
+class OfficeApiRefusalTests(_UsableOfficeConfig, unittest.TestCase):
     def tearDown(self):
         cleanup_event_center()
 
