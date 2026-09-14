@@ -11,6 +11,13 @@ from config.scale import scale_px
 from lib.core.layer import Layer
 
 from .commands import DrawBatch, RectCommand, TextAlignment, TextCommand
+from .media_panel_visuals import (
+    PROGRESS_PANEL_HEIGHT,
+    SLIDER_TICK_COUNT,
+    build_slider_visual,
+    slider_ratio_at,
+    snap_slider_ratio,
+)
 from .panel_visuals import action_button_commands, panel_shell_commands
 from .types import FontSpec, Rect, Size
 
@@ -23,6 +30,14 @@ SPEAKER_SEARCH_MODE_LABELS = {
     "album": "专辑优先",
     "playlist": "歌单优先",
 }
+
+#: Vertical layout of the speaker menu family: two button rows, then the
+#: volume slider, then the「搜索框 + 搜索歌曲」row. Hosts (Qt widgets and the DX
+#: window) anchor their window geometry on these offsets.
+SPEAKER_CONTROL_HEIGHT = scale_px(32, min_abs=1)
+SPEAKER_CONTROL_GAP = scale_px(2, min_abs=1)
+SPEAKER_VOLUME_Y = SPEAKER_CONTROL_HEIGHT * 2 + SPEAKER_CONTROL_GAP
+SPEAKER_SEARCH_Y = SPEAKER_VOLUME_Y + PROGRESS_PANEL_HEIGHT + SPEAKER_CONTROL_GAP
 
 
 class SpeakerTextMetrics(Protocol):
@@ -39,6 +54,8 @@ class SpeakerSearchVisualDescription:
     control_rects: tuple[tuple[str, Rect], ...]
     result_rects: tuple[Rect, ...]
     page_rect: Rect | None
+    volume_rect: Rect
+    volume_track_rect: Rect
     batch: DrawBatch
 
 
@@ -51,6 +68,8 @@ def speaker_visual_hit_test(
     x: float,
     y: float,
 ) -> tuple[str, int]:
+    if _contains(visual.volume_rect, x, y):
+        return "volume", -1
     if _contains(visual.search_rect, x, y):
         return "search", -1
     if _contains(visual.input_rect, x, y):
@@ -120,6 +139,7 @@ def build_speaker_search_visual(
     playing: bool = False,
     logged_in: bool = False,
     provider_label: str = "网易模式",
+    volume: float = 0.0,
     hovered: str = "",
     pressed: str = "",
     layer: int = int(Layer.PET_UI),
@@ -128,9 +148,11 @@ def build_speaker_search_visual(
     button_width = int(SPEAKER_SEARCH_UI.get("button_width", scale_px(80, min_abs=1)))
     search_height = int(SPEAKER_SEARCH_UI.get("height", scale_px(36, min_abs=1)))
     total_width = input_width + button_width
-    control_height = scale_px(32, min_abs=1)
-    control_gap = scale_px(2, min_abs=1)
-    search_y = control_height * 2 + control_gap
+    control_height = SPEAKER_CONTROL_HEIGHT
+    control_gap = SPEAKER_CONTROL_GAP
+    slider_height = PROGRESS_PANEL_HEIGHT
+    volume_y = SPEAKER_VOLUME_Y
+    search_y = SPEAKER_SEARCH_Y
     result_y = search_y + search_height + scale_px(2, min_abs=1)
     border = scale_px(4, min_abs=1)
     row_height = scale_px(20, min_abs=1)
@@ -181,7 +203,18 @@ def build_speaker_search_visual(
         "playlist": "播放列表",
         "search": "搜索中..." if searching else "搜索歌曲",
     }
-    commands: list[object] = []
+    volume_rect = Rect(0, volume_y, total_width, slider_height)
+    slider_visual = build_slider_visual(
+        ratio=max(0.0, min(1.0, float(volume))),
+        x=0,
+        y=volume_y,
+        width=total_width,
+        height=slider_height,
+        ticks=SLIDER_TICK_COUNT,
+        layer=layer,
+        z=0,
+    )
+    commands: list[object] = list(slider_visual.batch.commands)
     for name, rect in controls:
         state = "pressed" if pressed == name and hovered == name else "hover" if hovered == name else "normal"
         commands.extend(_button_commands(rect, labels[name], font, state=state, layer=layer, z=0))
@@ -237,15 +270,32 @@ def build_speaker_search_visual(
         ))
     return SpeakerSearchVisualDescription(
         Size(width, height), entry_rect, search_rect, controls,
-        tuple(row_rects), page_rect, DrawBatch(tuple(commands)),
+        tuple(row_rects), page_rect, volume_rect, slider_visual.track_rect,
+        DrawBatch(tuple(commands)),
     )
 
 
+def speaker_volume_ratio_at(visual: SpeakerSearchVisualDescription, x: float) -> float:
+    """Map a pointer x to the shared speaker volume ratio."""
+    return slider_ratio_at(visual.volume_track_rect, x)
+
+
+def snap_volume_ratio(ratio: float) -> float:
+    """Snap a speaker volume ratio to the shared tick positions."""
+    return snap_slider_ratio(ratio, SLIDER_TICK_COUNT)
+
+
 __all__ = [
+    "SPEAKER_CONTROL_GAP",
+    "SPEAKER_CONTROL_HEIGHT",
     "SPEAKER_SEARCH_MODE_LABELS",
     "SPEAKER_SEARCH_MODES",
     "SPEAKER_SEARCH_PAGE_SIZE",
+    "SPEAKER_SEARCH_Y",
+    "SPEAKER_VOLUME_Y",
     "SpeakerSearchVisualDescription",
     "build_speaker_search_visual",
     "speaker_visual_hit_test",
+    "speaker_volume_ratio_at",
+    "snap_volume_ratio",
 ]

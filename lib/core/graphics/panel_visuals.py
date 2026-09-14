@@ -295,6 +295,40 @@ def rotated_square_commands(
     ]
 
 
+#: Portrait slider handle aspect (height / width), roughly 4:3.
+SLIDER_HANDLE_ASPECT = 4.0 / 3.0
+
+
+def slider_handle_commands(
+    center_x: float,
+    track_rect: Rect,
+    fill: Color,
+    *,
+    aspect: float = SLIDER_HANDLE_ASPECT,
+    layer: int = int(Layer.PANEL),
+    z: int = 0,
+    alpha: float = 1.0,
+) -> tuple[list[object], Rect]:
+    """Build the shared portrait slider handle and return ``(commands, rect)``.
+
+    The handle is a vertical rectangle (about 4:3, taller than wide) centred on
+    the requested position and clamped inside the track. It replaces the old
+    rotated square so the playback progress bar and the speaker volume slider
+    share one look that matches the pink/cyan panel language.
+    """
+    height = max(2.0, float(track_rect.height))
+    width = max(2.0, float(round(height / max(1.0, float(aspect)))))
+    left = float(center_x) - width / 2.0
+    left = max(
+        float(track_rect.x),
+        min(float(track_rect.x) + float(track_rect.width) - width, left),
+    )
+    rect = Rect(left, float(track_rect.y), width, height)
+    return [
+        RectCommand(rect, fill=fill, alpha=alpha, layer=layer, z=z),
+    ], rect
+
+
 @dataclass(frozen=True, slots=True)
 class TabBarVisual:
     """Resolved geometry and draw commands for the AI settings tab strip."""
@@ -357,6 +391,7 @@ def build_tab_bar_visual(
 __all__ = [
     "ActionButtonVisual",
     "PanelVisual",
+    "SLIDER_HANDLE_ASPECT",
     "TabBarVisual",
     "action_button_commands",
     "build_action_button_visual",
@@ -367,4 +402,5 @@ __all__ = [
     "panel_inset",
     "panel_shell_commands",
     "rotated_square_commands",
+    "slider_handle_commands",
 ]

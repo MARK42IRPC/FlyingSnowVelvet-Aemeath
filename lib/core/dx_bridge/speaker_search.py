@@ -12,10 +12,13 @@ from lib.core.graphics.application_visuals import create_portable_command_hint_m
 from lib.core.graphics.commands import DrawBatch, scale_batch_alpha
 from lib.core.graphics.screen import clamp_rect_position
 from lib.core.graphics.speaker_visuals import (
+    SPEAKER_SEARCH_Y,
     SPEAKER_SEARCH_MODES,
     SpeakerSearchVisualDescription,
     build_speaker_search_visual,
     speaker_visual_hit_test,
+    speaker_volume_ratio_at,
+    snap_volume_ratio,
 )
 from lib.core.graphics.types import Point, Rect
 from lib.core.input.types import Key, MouseButton
@@ -45,6 +48,7 @@ _TOOLTIP_KEYS = {
     "priority": "speaker_search_priority",
     "login": "speaker_music_login",
     "playlist": "speaker_playlist_toggle",
+    "volume": "speaker_volume_slider",
 }
 
 
@@ -92,6 +96,8 @@ class DxSpeakerSearchWindow:
         self._playing = False
         self._logged_in = False
         self._provider_label = "音乐模式"
+        self._volume = 0.0
+        self._volume_dragging = False
         self._clickthrough = False
         self._visual = self._build_visual()
         self._playlist: DxSpeakerPlaylistWindow | None = None
@@ -131,6 +137,10 @@ class DxSpeakerSearchWindow:
             self._provider_label = str(service.provider_mode_label)
         except Exception:
             pass
+        try:
+            self._volume = snap_volume_ratio(float(service.get_volume_percent()) / 100.0)
+        except Exception:
+            pass
 
     def _build_visual(self) -> SpeakerSearchVisualDescription:
         return build_speaker_search_visual(
@@ -145,6 +155,7 @@ class DxSpeakerSearchWindow:
             playing=self._playing,
             logged_in=self._logged_in,
             provider_label=self._provider_label,
+            volume=self._volume,
             hovered=(
                 "result" if self._hovered_result >= 0 else self._hovered
             ),
@@ -201,7 +212,7 @@ class DxSpeakerSearchWindow:
             - 30 * scale
         )
         proposed_x = target.x + target.width + gap
-        proposed_y = search_top - 66 * scale
+        proposed_y = search_top - SPEAKER_SEARCH_Y * scale
         x, y, _ = clamp_rect_position(
             proposed_x, proposed_y, physical_width, physical_height, screen,
         )
@@ -555,6 +566,9 @@ class DxSpeakerSearchWindow:
 
     def handle_pointer_move(self, event: object) -> None:
         pos = getattr(event, "pos", Point())
+        if self._volume_dragging:
+            self._apply_volume_ratio(pos.x)
+            return
         action, index = speaker_visual_hit_test(self._visual, pos.x, pos.y)
         hovered_result = index if action == "result" else -1
         if action != self._hovered or hovered_result != self._hovered_result:
@@ -585,6 +599,14 @@ class DxSpeakerSearchWindow:
             "area_data": (point.x, point.y),
         }))
 
+    def _apply_volume_ratio(self, x: float) -> None:
+        ratio = snap_volume_ratio(speaker_volume_ratio_at(self._visual, x))
+        if abs(ratio - self._volume) < 1e-9:
+            return
+        self._volume = ratio
+        self._event_center.publish(Event(EventType.MUSIC_VOLUME, {"volume": ratio}))
+        self._refresh()
+
     def handle_pointer_press(self, event: object) -> None:
         pos = getattr(event, "pos", Point())
         button = getattr(event, "button", MouseButton.NONE)
@@ -593,6 +615,15 @@ class DxSpeakerSearchWindow:
             self._publish_click_particle(event)
         if action == "result":
             self._activate_result(index, button)
+            return
+        if action == "volume" and button == MouseButton.LEFT:
+            self._volume_dragging = True
+            capture = getattr(self._host, "capture_mouse", None)
+            if callable(capture):
+                capture()
+            self._apply_volume_ratio(pos.x)
+            if self._host is not None:
+                self._host.activate()
             return
         if button != MouseButton.LEFT:
             return
@@ -612,6 +643,7 @@ class DxSpeakerSearchWindow:
             self._host.activate()
 
     def handle_pointer_release(self, button: MouseButton) -> None:
+        self._volume_dragging = False
         action = self._pressed
         commit = bool(action and action == self._hovered and button == MouseButton.LEFT)
         self._pressed = ""

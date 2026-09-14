@@ -28,6 +28,7 @@ from .panel_visuals import (
     panel_inset,
     panel_shell_commands,
     rotated_square_commands,
+    slider_handle_commands,
 )
 from .types import FontSpec, Rect, Size
 
@@ -54,6 +55,8 @@ class MediaTextMetrics(Protocol):
 
 PROGRESS_PANEL_WIDTH = scale_px(240, min_abs=1)
 PROGRESS_PANEL_HEIGHT = scale_px(20, min_abs=1)
+#: Snap positions / small tick marks drawn by the shared horizontal slider.
+SLIDER_TICK_COUNT = 20
 PLAYLIST_PAGE_SIZE = 7
 PLAYLIST_ROW_HEIGHT = scale_px(20, min_abs=1)
 
@@ -270,6 +273,137 @@ def build_progress_panel_visual(
         handle_rect,
         separator,
         time_rect,
+        DrawBatch(tuple(commands)),
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class SliderVisual:
+    """Resolved geometry and draw commands for one horizontal slider."""
+
+    size: Size
+    track_rect: Rect
+    handle_rect: Rect
+    tick_rects: tuple[Rect, ...]
+    batch: DrawBatch
+
+
+def slider_track_rect(
+    *,
+    x: int = 0,
+    y: int = 0,
+    width: int | None = None,
+    height: int | None = None,
+) -> Rect:
+    """Return the inner track rectangle of a shared horizontal slider."""
+    width = PROGRESS_PANEL_WIDTH if width is None else max(1, int(width))
+    height = PROGRESS_PANEL_HEIGHT if height is None else max(1, int(height))
+    border = panel_inset() * 2
+    return Rect(
+        int(x) + border,
+        int(y) + border,
+        width - border * 2,
+        height - border * 2,
+    )
+
+
+def slider_ratio_at(track_rect: Rect, x: float) -> float:
+    """Map a pointer x inside ``track_rect`` to a 0.0-1.0 slider ratio."""
+    width = float(track_rect.width)
+    if width <= 0:
+        return 0.0
+    return max(0.0, min(1.0, (float(x) - float(track_rect.x)) / width))
+
+
+def snap_slider_ratio(ratio: float, steps: int = SLIDER_TICK_COUNT) -> float:
+    """Snap a ratio to the nearest tick so dragging feels grainy."""
+    count = max(1, int(steps))
+    value = max(0.0, min(1.0, float(ratio)))
+    return round(value * count) / count
+
+
+def build_slider_visual(
+    *,
+    ratio: float,
+    x: int = 0,
+    y: int = 0,
+    width: int | None = None,
+    height: int | None = None,
+    ticks: int = SLIDER_TICK_COUNT,
+    layer: int = int(Layer.PANEL),
+    z: int = 0,
+    alpha: float = 1.0,
+) -> SliderVisual:
+    """Build the shared horizontal slider used by volume-style controls.
+
+    The shell, fill, ``ticks`` small marks and the portrait handle all come from
+    the same tokens as the playback progress bar, so the speaker volume slider
+    and the media panels cannot drift apart. Hosts that want the notched
+    "grainy" drag feel snap the ratio to ``1 / ticks``.
+    """
+    width = PROGRESS_PANEL_WIDTH if width is None else max(1, int(width))
+    height = PROGRESS_PANEL_HEIGHT if height is None else max(1, int(height))
+    origin_x = int(x)
+    origin_y = int(y)
+    inset = panel_inset()
+    border = inset * 2
+    outer = Rect(origin_x, origin_y, width, height)
+    commands: list[object] = [
+        RectCommand(outer, fill=COLORS["black"], alpha=alpha, layer=layer, z=z),
+        RectCommand(
+            inset_rect(outer, inset), fill=COLORS["cyan"], alpha=alpha, layer=layer, z=z + 1,
+        ),
+        RectCommand(
+            inset_rect(outer, border), fill=COLORS["pink"], alpha=alpha, layer=layer, z=z + 2,
+        ),
+    ]
+
+    track = slider_track_rect(x=origin_x, y=origin_y, width=width, height=height)
+    value = max(0.0, min(1.0, float(ratio)))
+    fill_width = int(round(value * track.width))
+    if fill_width > 0:
+        commands.append(RectCommand(
+            Rect(track.x, track.y, fill_width, track.height),
+            fill=UI_THEME["deep_cyan"],
+            alpha=alpha,
+            layer=layer,
+            z=z + 3,
+        ))
+
+    tick_rects: list[Rect] = []
+    count = max(0, int(ticks))
+    if count:
+        tick_width = scale_px(1, min_abs=1)
+        tick_height = max(2, int(round(track.height * 0.4)))
+        tick_y = track.y + (track.height - tick_height) // 2
+        for index in range(1, count + 1):
+            tick_x = track.x + int(round(index * track.width / count))
+            tick_x = min(tick_x, track.x + track.width - tick_width)
+            rect = Rect(tick_x, tick_y, tick_width, tick_height)
+            tick_rects.append(rect)
+            commands.append(RectCommand(
+                rect,
+                fill=COLORS["black"],
+                alpha=0.55 * alpha,
+                layer=layer,
+                z=z + 3,
+            ))
+
+    handle_commands, handle_rect = slider_handle_commands(
+        track.x + fill_width,
+        track,
+        UI_THEME["deep_pink"],
+        layer=layer,
+        z=z + 4,
+        alpha=alpha,
+    )
+    commands.extend(handle_commands)
+    commands.extend(panel_frame_commands(outer, inset=inset, layer=layer, z=z + 5, alpha=alpha))
+    return SliderVisual(
+        Size(width, height),
+        track,
+        handle_rect,
+        tuple(tick_rects),
         DrawBatch(tuple(commands)),
     )
 
@@ -554,12 +688,18 @@ __all__ = [
     "SEARCH_RESULT_PAGE_SIZE",
     "SEARCH_RESULT_ROW_HEIGHT",
     "SEARCH_RESULT_SEARCHING_TEXT",
+    "SLIDER_TICK_COUNT",
     "SearchResultPanelVisual",
+    "SliderVisual",
     "build_playlist_panel_visual",
     "build_progress_panel_visual",
     "build_search_result_panel_visual",
+    "build_slider_visual",
     "elide_mixed_text",
     "mixed_text_commands",
     "mixed_text_width",
     "search_result_panel_size",
+    "slider_ratio_at",
+    "slider_track_rect",
+    "snap_slider_ratio",
 ]

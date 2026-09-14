@@ -21,12 +21,17 @@ from lib.script.ui.speaker_menu_style import (
     _C_ACTION_TEXT,
     SpeakerActionButtonMixin,
 )
+from lib.script.ui.speaker_volume_slider import (
+    DEFAULT_HEIGHT as _VOLUME_SLIDER_HEIGHT,
+    SpeakerVolumeSlider,
+)
 
 # ── 尺寸 ──────────────────────────────────────────────────────────────
 _BTN_WIDTH        = scale_px(40, min_abs=1)  # 图标按钮宽度（播放/暂停、下一曲）
 _BTN_HEIGHT       = scale_px(32, min_abs=1)  # 所有按钮统一高度
 _BTN_PLAYLIST_W   = scale_px(80, min_abs=1)  # 播放列表按钮宽度（与搜索按钮等宽）
 _SEARCH_DIALOG_W  = SPEAKER_SEARCH_UI.get('input_width', scale_px(160, min_abs=1)) + SPEAKER_SEARCH_UI.get('button_width', scale_px(80, min_abs=1))
+_VOLUME_SLIDER_GAP = scale_px(2, min_abs=1)  # 滑条与搜索框/按钮之间的间隙
 
 
 def _safe_music_service():
@@ -686,7 +691,8 @@ class SpeakerControlButtons:
       - 播放列表（80px） ：右下锚点对齐"搜索歌曲"按钮的右上锚点
       - 模式按钮（80px） ：左下锚点对齐"播放列表"按钮左上锚点
 
-    所有按钮高度统一为 32px。
+    所有按钮高度统一为 32px。音量滑条与搜索框整行等宽，贴在搜索框正上方，
+    其余按钮整体上移一个滑条高度，保证互不重叠。
     """
 
     def __init__(self, speaker_search_dialog):
@@ -699,6 +705,7 @@ class SpeakerControlButtons:
         self._playlist_btn   = PlaylistButton()
         self._playlist_btn.set_dialog(speaker_search_dialog)
         self._platform_mode_btn = PlatformModeButton()
+        self._volume_slider = SpeakerVolumeSlider(_SEARCH_DIALOG_W, _VOLUME_SLIDER_HEIGHT)
         self._buttons = [
             self._search_priority_btn,
             self._play_pause_btn,
@@ -767,10 +774,17 @@ class SpeakerControlButtons:
         # 搜索框的尺寸
         dialog_width = _SEARCH_DIALOG_W
 
+        # ── 音量滑条：与搜索框整行等宽，贴在搜索框正上方 ────────────────
+        slider_y = self._anchor_point.y() - _VOLUME_SLIDER_GAP - _VOLUME_SLIDER_HEIGHT
+        self._volume_slider.move(self._anchor_point.x(), slider_y)
+
+        # 其余按钮整体上移到滑条之上，避免与滑条重叠
+        buttons_bottom_y = slider_y - _VOLUME_SLIDER_GAP
+
         # ── 搜索优先级按钮：左下锚点对齐搜索框左上锚点 ────────────────
         search_priority_x, search_priority_y, _ = clamp_rect_position(
             self._anchor_point.x(),
-            self._anchor_point.y() - _BTN_HEIGHT - scale_px(2, min_abs=1),
+            buttons_bottom_y - _BTN_HEIGHT,
             _BTN_PLAYLIST_W,
             _BTN_HEIGHT,
             point=self._anchor_point,
@@ -815,7 +829,7 @@ class SpeakerControlButtons:
         # "搜索歌曲"按钮右上角 = (dialog_left + dialog_width, dialog_top)
         playlist_x, playlist_y, _ = clamp_rect_position(
             self._anchor_point.x() + dialog_width - _BTN_PLAYLIST_W,
-            self._anchor_point.y() - _BTN_HEIGHT - scale_px(2, min_abs=1),
+            buttons_bottom_y - _BTN_HEIGHT,
             _BTN_PLAYLIST_W,
             _BTN_HEIGHT,
             point=self._anchor_point,
@@ -850,6 +864,7 @@ class SpeakerControlButtons:
 
         for btn in self._buttons:
             btn.fade_in()
+        self._volume_slider.fade_in()
         self._update_positions()
 
     def fade_out(self):
@@ -859,11 +874,13 @@ class SpeakerControlButtons:
         self._anchor_available = False
         for btn in self._buttons:
             btn.fade_out()
+        self._volume_slider.fade_out()
 
     def cleanup(self):
         """清理资源"""
         self._event_center.unsubscribe(EventType.UI_ANCHOR_RESPONSE, self._on_anchor_response)
         self._event_center.unsubscribe(EventType.UI_CREATE, self._on_ui_create)
+        self._volume_slider.cleanup()
         for btn in self._buttons:
             try:
                 btn.close()

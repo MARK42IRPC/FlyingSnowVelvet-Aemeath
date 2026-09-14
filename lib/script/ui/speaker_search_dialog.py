@@ -458,6 +458,9 @@ class SpeakerSearchDialog(QWidget):
             getattr(self._result_box, "_next_btn", None),
         ]
         widgets.extend(getattr(self._control_buttons, "_buttons", []))
+        volume_slider = getattr(self._control_buttons, "_volume_slider", None)
+        if volume_slider is not None:
+            widgets.append(volume_slider)
         return [w for w in widgets if w is not None]
 
     def _is_mouse_far_from_family(self) -> bool:
