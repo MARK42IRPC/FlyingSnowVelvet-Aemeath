@@ -70,6 +70,14 @@ class AISettingsReplyModeSectionsTests(unittest.TestCase):
     def _backend_items(field) -> list[tuple[str, object]]:
         return [(field.itemText(index), field.itemData(index)) for index in range(field.count())]
 
+    @staticmethod
+    def _body_size_hint(section) -> int:
+        """分区 body 的布局高度：隐藏项必须完全不占位，否则折叠会留下大空白。"""
+        layout = section.body_layout
+        layout.invalidate()
+        layout.activate()
+        return layout.sizeHint().height()
+
     def test_reply_mode_list_contains_only_direct_routes(self):
         items = [
             (self.panel._force_mode.itemText(index), self.panel._force_mode.itemData(index))
@@ -141,15 +149,35 @@ class AISettingsReplyModeSectionsTests(unittest.TestCase):
         self.assertFalse(self.panel._office_backend.isHidden())
         self.assertFalse(self.panel._office_use_independent_api.isHidden())
         self.assertFalse(self.panel._office_warmup_on_startup.isHidden())
-        self.assertTrue(self.panel._office_api_key.isHidden())
+        self.assertTrue(self.panel._office_independent_api_group.isHidden())
+        self.assertEqual(
+            self.panel._office_independent_api_form.rowCount(),
+            len(self.panel._office_independent_api_rows),
+        )
 
         self.panel._office_use_independent_api.setChecked(True)
 
         self.assertFalse(self.panel._office_backend.isHidden())
         self.assertFalse(self.panel._office_use_independent_api.isHidden())
         self.assertFalse(self.panel._office_warmup_on_startup.isHidden())
+        self.assertFalse(self.panel._office_independent_api_group.isHidden())
         for field in self.panel._office_independent_api_rows:
             self.assertFalse(field.isHidden())
+
+    def test_collapsed_office_group_releases_its_row_space(self):
+        section = self.panel._office_mode_section
+        group = self.panel._office_independent_api_group
+
+        self.panel._office_use_independent_api.setChecked(True)
+        expanded = self._body_size_hint(section)
+        self.panel._office_use_independent_api.setChecked(False)
+        collapsed = self._body_size_hint(section)
+
+        self.assertAlmostEqual(
+            expanded - collapsed,
+            group.sizeHint().height() + section.body_layout.spacing(),
+            delta=2,
+        )
 
     def test_auto_companion_interval_slider_uses_minute_limits(self):
         field = self.panel._auto_companion_interval_minutes
@@ -184,15 +212,30 @@ class AISettingsReplyModeSectionsTests(unittest.TestCase):
                 self.assertFalse(field.isHidden())
 
         self.assertFalse(self.panel._gsv_advanced_toggle.isChecked())
-        for field in self.panel._gsv_advanced_rows:
-            with self.subTest(field=field):
-                self.assertTrue(field.isHidden())
+        self.assertTrue(self.panel._gsv_advanced_group.isHidden())
+        self.assertEqual(
+            self.panel._gsv_advanced_form.rowCount(),
+            len(self.panel._gsv_advanced_rows),
+        )
 
         self.panel._gsv_advanced_toggle.setChecked(True)
         self.app.processEvents()
-        for field in self.panel._gsv_advanced_rows:
-            with self.subTest(field=field):
-                self.assertFalse(field.isHidden())
+        self.assertFalse(self.panel._gsv_advanced_group.isHidden())
+
+    def test_collapsed_gsv_advanced_group_releases_its_row_space(self):
+        section = self.panel._voice_section
+        group = self.panel._gsv_advanced_group
+
+        self.panel._gsv_advanced_toggle.setChecked(True)
+        expanded = self._body_size_hint(section)
+        self.panel._gsv_advanced_toggle.setChecked(False)
+        collapsed = self._body_size_hint(section)
+
+        self.assertAlmostEqual(
+            expanded - collapsed,
+            group.sizeHint().height() + section.body_layout.spacing(),
+            delta=2,
+        )
 
     def test_collect_values_omits_removed_voice_settings(self):
         values = self.panel._collect_values()

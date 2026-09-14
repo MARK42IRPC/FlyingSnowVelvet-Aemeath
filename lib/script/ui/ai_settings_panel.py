@@ -2157,10 +2157,20 @@ class AISettingsPanel(QWidget):
             "开启后，办公模式将使用下方配置的独立 API，而不是使用手动 API 的配置。",
         )
 
+        # 折叠块整块放进分区 body：QFormLayout 隐藏行仍占行距，会留下一条大空白
+        self._office_independent_api_group = QWidget(self._office_mode_section)
+        independent_layout = QVBoxLayout(self._office_independent_api_group)
+        independent_layout.setContentsMargins(0, 0, 0, 0)
+        independent_layout.setSpacing(0)
+        independent_form = create_settings_form()
+        self._office_independent_api_form = independent_form
+        independent_layout.addLayout(independent_form)
+        self._office_mode_section.body_layout.addWidget(self._office_independent_api_group)
+
         self._office_api_key = _ApiKeyLineEdit()
-        form.addRow("办公接口密钥", self._office_api_key)
+        independent_form.addRow("办公接口密钥", self._office_api_key)
         self._set_form_row_description(
-            form,
+            independent_form,
             self._office_api_key,
             "办公模式独立使用的 OpenAI 兼容接口密钥，单独保存在用户密钥文件中。",
         )
@@ -2170,9 +2180,9 @@ class AISettingsPanel(QWidget):
         for label, base_url in _MANUAL_API_PROVIDER_PRESETS:
             self._office_api_provider.addItem(label, base_url)
         self._office_api_provider.currentIndexChanged.connect(self._on_office_api_provider_changed)
-        form.addRow("常用提供商", self._office_api_provider)
+        independent_form.addRow("常用提供商", self._office_api_provider)
         self._set_form_row_description(
-            form,
+            independent_form,
             self._office_api_provider,
             "选择后自动填入该提供商的 OpenAI 兼容接口地址；自定义地址仍可直接填写。",
         )
@@ -2180,9 +2190,9 @@ class AISettingsPanel(QWidget):
         self._office_api_base_url = QLineEdit()
         self._office_api_base_url.textChanged.connect(self._sync_office_api_provider_selection)
         self._office_api_base_url.editingFinished.connect(self._normalize_office_api_base_url_input)
-        form.addRow("办公接口地址", self._office_api_base_url)
+        independent_form.addRow("办公接口地址", self._office_api_base_url)
         self._set_form_row_description(
-            form,
+            independent_form,
             self._office_api_base_url,
             "办公模式独立使用的外部接口地址，通常填写兼容 OpenAI 的基地址。",
         )
@@ -2200,18 +2210,22 @@ class AISettingsPanel(QWidget):
         self._probe_office_api_models_btn.setFixedWidth(scale_px(100, min_abs=84))
         self._probe_office_api_models_btn.clicked.connect(self._on_probe_office_api_models)
         office_api_model_layout.addWidget(self._probe_office_api_models_btn, 0)
-        form.addRow("办公接口模型", office_api_model_row)
+        independent_form.addRow("办公接口模型", office_api_model_row)
         self._set_form_row_description(
-            form,
+            independent_form,
             office_api_model_row,
             "办公模式独立使用的外部接口模型名，例如 gpt-5.4。可探测 OpenAI 兼容接口的 /models 列表，也可直接手动输入。",
         )
         self._set_widget_description(self._probe_office_api_models_btn, "使用当前填写的办公接口地址和密钥探测可用模型列表。")
 
+        tail_form = create_settings_form()
+        self._office_tail_form = tail_form
+        self._office_mode_section.body_layout.addLayout(tail_form)
+
         self._office_warmup_on_startup = QCheckBox("启动时预热")
-        form.addRow("", self._office_warmup_on_startup)
+        tail_form.addRow("", self._office_warmup_on_startup)
         self._set_form_row_description(
-            form,
+            tail_form,
             self._office_warmup_on_startup,
             "启用后，桌宠启动时自动预热办公运行时，减少首次任务的等待时间。",
         )
@@ -2400,13 +2414,23 @@ class AISettingsPanel(QWidget):
             "展开采样候选、分句、停顿、随机种子和字数限制等进阶参数。",
         )
 
+        # 折叠块整块放进分区 body：QFormLayout 隐藏行仍占行距，会留下一条大空白
+        self._gsv_advanced_group = QWidget(self._voice_section)
+        advanced_layout = QVBoxLayout(self._gsv_advanced_group)
+        advanced_layout.setContentsMargins(0, 0, 0, 0)
+        advanced_layout.setSpacing(0)
+        advanced_form = create_settings_form()
+        self._gsv_advanced_form = advanced_form
+        advanced_layout.addLayout(advanced_form)
+        self._voice_section.body_layout.addWidget(self._gsv_advanced_group)
+
         self._gsv_top_k = _DecimalSliderField(1, 1025, 1, value=_DEFAULT_VALUES["gsv_top_k"], decimals=0)
-        form.addRow("Top-K", self._gsv_top_k)
-        self._set_form_row_description(form, self._gsv_top_k, "每一步保留概率最高的候选数量，默认 15。")
+        advanced_form.addRow("Top-K", self._gsv_top_k)
+        self._set_form_row_description(advanced_form, self._gsv_top_k, "每一步保留概率最高的候选数量，默认 15。")
 
         self._gsv_top_p = _DecimalSliderField(0.01, 1.0, 0.01, value=_DEFAULT_VALUES["gsv_top_p"])
-        form.addRow("Top-P", self._gsv_top_p)
-        self._set_form_row_description(form, self._gsv_top_p, "限制累计概率候选范围，1.0 表示不额外截断。")
+        advanced_form.addRow("Top-P", self._gsv_top_p)
+        self._set_form_row_description(advanced_form, self._gsv_top_p, "限制累计概率候选范围，1.0 表示不额外截断。")
 
         self._gsv_text_split_method = _WatermarkComboBox()
         self._gsv_text_split_method.setView(QListView(self._gsv_text_split_method))
@@ -2419,8 +2443,8 @@ class AISettingsPanel(QWidget):
             ("按英文句号分句", "cut4"),
         ):
             self._gsv_text_split_method.addItem(label, value)
-        form.addRow("长文本分句", self._gsv_text_split_method)
-        self._set_form_row_description(form, self._gsv_text_split_method, "控制长回复如何拆成多个独立语音片段。")
+        advanced_form.addRow("长文本分句", self._gsv_text_split_method)
+        self._set_form_row_description(advanced_form, self._gsv_text_split_method, "控制长回复如何拆成多个独立语音片段。")
 
         self._gsv_fragment_interval = _DecimalSliderField(
             0.0,
@@ -2428,13 +2452,13 @@ class AISettingsPanel(QWidget):
             0.05,
             value=_DEFAULT_VALUES["gsv_fragment_interval"],
         )
-        form.addRow("片段停顿(秒)", self._gsv_fragment_interval)
-        self._set_form_row_description(form, self._gsv_fragment_interval, "分句片段之间插入的静音时长，默认 0.3 秒。")
+        advanced_form.addRow("片段停顿(秒)", self._gsv_fragment_interval)
+        self._set_form_row_description(advanced_form, self._gsv_fragment_interval, "分句片段之间插入的静音时长，默认 0.3 秒。")
 
         self._gsv_seed = QLineEdit(str(_DEFAULT_VALUES["gsv_seed"]))
         self._gsv_seed.setPlaceholderText("-1 表示每次随机")
-        form.addRow("随机种子", self._gsv_seed)
-        self._set_form_row_description(form, self._gsv_seed, "-1 为随机；固定非负整数可复现 T2S 采样结果。")
+        advanced_form.addRow("随机种子", self._gsv_seed)
+        self._set_form_row_description(advanced_form, self._gsv_seed, "-1 为随机；固定非负整数可复现 T2S 采样结果。")
 
         self._ai_voice_max_chars = _DecimalSliderField(
             AI_VOICE_MAX_CHARS_MIN,
@@ -2442,14 +2466,13 @@ class AISettingsPanel(QWidget):
             1,
             value=_DEFAULT_VALUES["ai_voice_max_chars"],
         )
-        form.addRow("语音字数限制", self._ai_voice_max_chars)
+        advanced_form.addRow("语音字数限制", self._ai_voice_max_chars)
         self._set_form_row_description(
-            form,
+            advanced_form,
             self._ai_voice_max_chars,
             "ONNX 语音合成最大文本长度，超过此长度的回复不会转为语音。",
         )
 
-        self._voice_settings_form = form
         self._gsv_advanced_rows = (
             self._gsv_top_k,
             self._gsv_top_p,
@@ -5093,35 +5116,19 @@ class AISettingsPanel(QWidget):
             cuda_checkbox.setVisible(voice_available and nvidia_present)
 
     def _update_gsv_advanced_visibility(self, *_args) -> None:
-        form = getattr(self, "_voice_settings_form", None)
+        group = getattr(self, "_gsv_advanced_group", None)
         toggle = getattr(self, "_gsv_advanced_toggle", None)
-        if form is None or toggle is None:
+        if group is None or toggle is None:
             return
-        visible = bool(toggle.isChecked())
-        for field in getattr(self, "_gsv_advanced_rows", ()):
-            row, _role = form.getWidgetPosition(field)
-            if row < 0:
-                continue
-            label_item = form.itemAt(row, QFormLayout.LabelRole)
-            if label_item is not None and label_item.widget() is not None:
-                label_item.widget().setVisible(visible)
-            field.setVisible(visible)
+        group.setVisible(bool(toggle.isChecked()))
 
     def _update_office_mode_fields_visibility(self) -> None:
-        enabled = self._office_use_independent_api.isChecked()
         self._office_backend.setVisible(True)
         self._office_use_independent_api.setVisible(True)
         self._office_warmup_on_startup.setVisible(True)
-
-        form = self._office_mode_form
-        for field in self._office_independent_api_rows:
-            row, _role = form.getWidgetPosition(field)
-            if row < 0:
-                continue
-            label_item = form.itemAt(row, QFormLayout.LabelRole)
-            if label_item is not None and label_item.widget() is not None:
-                label_item.widget().setVisible(enabled)
-            field.setVisible(enabled)
+        group = getattr(self, "_office_independent_api_group", None)
+        if group is not None:
+            group.setVisible(bool(self._office_use_independent_api.isChecked()))
 
     def _probe_local_dsh(self) -> dict:
         """读取启动期探测结果，没有缓存时按需只读探测；失败不影响设置面板。"""
