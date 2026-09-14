@@ -5,7 +5,9 @@
 往下滚动到底部再请求更早的一页，发帖按钮受客户端 12 秒冷却约束。
 
 字号与控件间距对齐工作台（页头 19/11、卡片 14/17/11、输入与按钮 14）；卡片正文再按字数
-在 1~2 倍之间自适应，短句放大、长文回到基准字号。
+在 1~2 倍之间自适应，短句放大、长文回到基准字号。正文支持 `**粗体**`、`*斜体*`、
+`__下划线__`、`~~删除线~~` 四种行内标记（解析与输入辅助都在 `forum_markup`），发帖框左侧
+四个复选小按钮会在光标处自动加上标记，接着打的字就落在标记里。
 卡片底纹由 `forum_texture` 按卡片信息内容哈希生成，这里只负责把它铺到卡片上。
 窗口优先级跟随工作台窗口：普通窗口 + 无边框，既不置顶也不进 `LayerManager`——
 注册进去的窗口会被 `stack_window()` 放进 `HWND_TOPMOST` 链，那正是「压住别的窗口」
@@ -49,14 +51,23 @@ from lib.script.ui.forum_style import (
     FORUM_ACCENT_LABELS,
     FORUM_CARD_RADIUS,
     forum_card_text_size,
+    forum_card_text_color,
     forum_stylesheet,
     forum_texture_color,
+)
+from lib.script.ui.forum_markup import (
+    FORMAT_BY_KEY,
+    FORUM_MARKUP_FORMATS,
+    span_at_cursor,
+    to_html,
+    toggle,
 )
 from lib.script.ui.forum_texture import (
     CardTexture,
     card_texture,
     paint_card_texture,
 )
+from lib.script.ui.forum_text import MarkupText
 from lib.script.ui.workbench_components import create_window_button
 
 COLUMN_COUNT = 3
@@ -75,6 +86,16 @@ DEFAULT_WINDOW_HEIGHT = scale_px(800, min_abs=700)
 LOAD_OLDER_THRESHOLD_PX = scale_px(140, min_abs=90)
 NICKNAME_MAX_LENGTH = 24
 FORUM_NICKNAME_PLACEHOLDER = "输入昵称…（未输入以匿名发送）"
+
+
+def _format_button_font(key: str):
+    """按钮字符自己就是效果示例：B 加粗、I 斜体、U 下划线、S 删除线。"""
+    font = get_ui_font(size=scale_px(12, min_abs=10))
+    font.setBold(key == "bold")
+    font.setItalic(key == "italic")
+    font.setUnderline(key == "underline")
+    font.setStrikeOut(key == "strike")
+    return font
 
 
 class ForumCard(QFrame):
@@ -105,20 +126,26 @@ class ForumCard(QFrame):
         name.setWordWrap(True)
         layout.addWidget(name, 0, Qt.AlignLeft)
 
-        content = QLabel(message.content, self)
-        content.setObjectName("ForumCardText")
-        # 正文越短字号越大（1~2 倍），卡片不会因为一句话就空掉。
-        content.setFont(get_ui_font(size=forum_card_text_size(message.content)))
-        content.setWordWrap(True)
-        content.setAlignment(Qt.AlignHCenter)
-        content.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        content.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
-        layout.addWidget(content, 0)
+        # 正文越短字号越大（1~2 倍，标记不计入字数），卡片不会因为一句话就空掉。
+        # 富文本：成对标记渲染成粗体/斜体/下划线/删除线，原文先转义（用户写的 `<b>` 只当
+        # 普通字符显示）；粗体由 `MarkupText` 加同色描边落实，细节见 `forum_text`。
+        self._content = MarkupText(
+            to_html(message.content),
+            font=get_ui_font(size=forum_card_text_size(message.content)),
+            color=forum_card_text_color(),
+            width_hint=CARD_MIN_WIDTH,
+            parent=self,
+        )
+        layout.addWidget(self._content, 0)
 
         stamp = QLabel(format_relative_time(message.created_at), self)
         stamp.setObjectName("ForumCardMeta")
         stamp.setFont(get_ui_font(size=scale_px(11, min_abs=9)))
         layout.addWidget(stamp, 0, Qt.AlignRight)
+
+    def refresh_theme(self) -> None:
+        """换主题时重刷正文颜色：富文本颜色写在字符格式里，刷新样式表碰不到。"""
+        self._content.set_color(forum_card_text_color())
 
     def paintEvent(self, event) -> None:
         """先按样式表画底与描边，再在最底层铺一层带卡片色调的几何底纹。"""
@@ -347,12 +374,40 @@ class ForumWindow(QtWorkbenchToolPage):
         bottom_row.setContentsMargins(0, 0, 0, 0)
         bottom_row.setSpacing(scale_px(10, min_abs=8))
 
+        format_row = QHBoxLayout()
+        format_row.setContentsMargins(0, 0, 0, 0)
+        format_row.setSpacing(scale_px(5, min_abs=4))
+        self._format_buttons: dict[str, QToolButton] = {}
+        for fmt in FORUM_MARKUP_FORMATS:
+            button = QToolButton(composer)
+            button.setObjectName("ForumFormatButton")
+            button.setText(fmt.button)
+            button.setCheckable(True)
+            button.setToolTip(
+                f"{fmt.label}：选中文字后点一下，用 {fmt.marker} 把选区包起来；没有选中时"
+                f"先点亮按钮再输入，打的字就自动是{fmt.label}。再点一下取消。"
+            )
+            button.setCursor(Qt.PointingHandCursor)
+            button.setFont(_format_button_font(fmt.key))
+            button.clicked.connect(
+                lambda _checked=False, key=fmt.key: self._toggle_format(key)
+            )
+            self._format_buttons[fmt.key] = button
+            format_row.addWidget(button)
+        bottom_row.addLayout(format_row, 0)
+
         self._input = QLineEdit(composer)
         self._input.setObjectName("ForumInput")
         self._input.setPlaceholderText(f"说点什么…（最多 {FORUM_MAX_CONTENT} 字）")
         self._input.setMaxLength(FORUM_MAX_CONTENT)
         self._input.setFont(get_ui_font(size=scale_px(14, min_abs=12)))
+        self._input.setToolTip(
+            "支持 **粗体**、*斜体*、__下划线__、~~删除线~~；左边四个小按钮会在光标处自动加标记。"
+        )
         self._input.textChanged.connect(self._sync_composer_state)
+        # 光标/选区一变就重算按钮的复选状态，按钮始终表示「光标处是不是这种格式」。
+        self._input.cursorPositionChanged.connect(self._sync_format_buttons)
+        self._input.selectionChanged.connect(self._sync_format_buttons)
         self._input.returnPressed.connect(self._on_send)
         bottom_row.addWidget(self._input, 1)
 
@@ -384,6 +439,41 @@ class ForumWindow(QtWorkbenchToolPage):
             # UI 字体没有 U+2713，用形近的数学根号作勾选标记。
             button.setText("\u221a" if selected else "")
 
+    def _toggle_format(self, key: str) -> None:
+        """复选按钮：在光标/选区处加减一对标记，接着打的字自动落在标记里。"""
+        fmt = FORMAT_BY_KEY.get(str(key or ""))
+        if fmt is None:
+            return
+        caret = self._caret_position()
+        selected = len(self._input.selectedText())
+        text, start, end = toggle(self._input.text(), caret, caret + selected, fmt.marker)
+        if len(text) > FORUM_MAX_CONTENT:
+            self._set_status(f"加上标记会超过 {FORUM_MAX_CONTENT} 字上限，先删掉一些再试")
+            self._sync_format_buttons()
+            return
+        self._input.setText(text)
+        self._input.setSelection(start, end - start)
+        self._input.setFocus()
+        self._sync_format_buttons()
+
+    def _sync_format_buttons(self) -> None:
+        """按钮的复选状态跟着光标：亮着就表示光标处的字已经是这种格式。"""
+        text = self._input.text()
+        caret = self._caret_position()
+        for key, button in self._format_buttons.items():
+            checked = span_at_cursor(text, caret, FORMAT_BY_KEY[key].marker) is not None
+            if button.isChecked() != checked:
+                button.setChecked(checked)
+
+    def _caret_position(self) -> int:
+        """选区起点或光标位置。
+
+        `QLineEdit.cursorPosition()` 在选中文字时指的是选区**末尾**，直接拿它算选区会把
+        标记加错地方（实测会加成「正文****」）；`selectionStart()` 没有选区时返回 -1。
+        """
+        start = self._input.selectionStart()
+        return start if start >= 0 else self._input.cursorPosition()
+
     def _on_send(self) -> None:
         if not self._send_button.isEnabled():
             return
@@ -406,6 +496,7 @@ class ForumWindow(QtWorkbenchToolPage):
         self._send_button.setEnabled(remaining <= 0 and has_content)
         self._send_button.setText(f"发送（{remaining}s）" if remaining > 0 else "发送")
         self._counter.setText(f"{len(self._input.text())}/{FORUM_MAX_CONTENT}")
+        self._sync_format_buttons()
 
     def _on_scrolled(self, value: int) -> None:
         bar = self._scroll.verticalScrollBar()
@@ -508,6 +599,9 @@ class ForumWindow(QtWorkbenchToolPage):
 
     def refresh_workbench_theme(self) -> None:
         self.setStyleSheet(forum_stylesheet())
+        # 正文颜色在富文本字符格式里，样式表刷不到，逐张卡片重刷。
+        for card in self.findChildren(ForumCard):
+            card.refresh_theme()
 
     def _on_config_updated(self, event) -> None:
         values = (event.data or {}).get("values") or {}

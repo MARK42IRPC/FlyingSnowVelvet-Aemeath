@@ -14,18 +14,35 @@ os.environ.setdefault(
 os.environ.setdefault("QT_PLUGIN_PATH", os.path.join(_QT_ROOT, "Qt5", "plugins"))
 
 from PyQt5.QtCore import QPoint, Qt
-from PyQt5.QtGui import QColor, QIcon, QImage, QPainter
-from PyQt5.QtWidgets import QApplication, QLabel, QMenu
+from PyQt5.QtGui import QColor, QFont, QIcon, QImage, QPainter
+from PyQt5.QtWidgets import QApplication, QLabel, QMenu, QTextEdit, QWidget
 
 from config.scale import scale_px
-from lib.core.forum import FORUM_DEFAULT_ACCENT, FORUM_ACCENTS, ForumMessage, ForumPage
+from lib.core.forum import (
+    FORUM_DEFAULT_ACCENT,
+    FORUM_ACCENTS,
+    FORUM_MAX_CONTENT,
+    ForumMessage,
+    ForumPage,
+)
 from lib.core.layer_manager import get_layer_manager
+from lib.script.ui.forum_markup import (
+    FORUM_MARKUP_FORMATS,
+    marker_positions,
+    span_at_cursor,
+    to_html,
+    toggle,
+    visible_text,
+)
 from lib.script.ui.forum_style import (
     FORUM_ACCENT_LABELS,
     FORUM_TEXTURE_TINT_RATIO,
     forum_accent_color,
+    forum_card_text_color,
+    forum_card_text_size,
     forum_texture_color,
 )
+from lib.script.ui.forum_text import MarkupText, bold_outline_width
 from lib.script.ui.forum_texture import (
     CARD_TEXTURE_ALPHA_RANGE,
     CARD_TEXTURE_COARSE_PATTERNS,
@@ -48,6 +65,7 @@ from lib.script.ui.forum_window import (
     ForumCard,
     ForumWindow,
 )
+from lib.script.workbench.theme import get_workbench_colors
 
 
 def message(index, *, accent="pink", content=None):
@@ -58,6 +76,26 @@ def message(index, *, accent="pink", content=None):
         accent=accent,
         created_at=1_700_000_000_000,
     )
+
+
+def document_fragments(widget):
+    """正文文档里的 `(文字, 字符格式)` 片段：用来核对哪一段真的被排版成粗体/斜体。"""
+    pieces = []
+    block = widget.document().begin()
+    while block.isValid():
+        piece = block.begin()
+        while not piece.atEnd():
+            fragment = piece.fragment()
+            if fragment.isValid() and fragment.text():
+                pieces.append((fragment.text(), fragment.charFormat()))
+            piece += 1
+        block = block.next()
+    return pieces
+
+
+def text_colors(widget):
+    """正文文档里用到的前景色集合：换主题有没有刷到正文，看这个。"""
+    return {fmt.foreground().color().name() for _text, fmt in document_fragments(widget)}
 
 
 #: 底纹在纯灰卡片上的单通道均值偏移上限：更深的花纹允许到这个量级，再多就会压过卡片底色。
@@ -283,7 +321,7 @@ class ForumWindowTests(unittest.TestCase):
         try:
             self.app.processEvents()
             name = card.findChild(QLabel, "ForumCardName")
-            content = card.findChild(QLabel, "ForumCardText")
+            content = card.findChild(QTextEdit, "ForumCardText")
             stamp = card.findChild(QLabel, "ForumCardMeta")
 
             name_top = name.mapTo(card, QPoint(0, 0))
@@ -292,10 +330,15 @@ class ForumWindowTests(unittest.TestCase):
 
             self.assertLessEqual(name_top.x(), content_top.x())
             self.assertLess(name_top.y(), stamp_top.y())
+            self.assertGreater(stamp_top.y(), content_top.y())
+            # 正文控件铺满列宽，居中由文档的块格式落实。
+            self.assertTrue(
+                int(content.document().begin().blockFormat().alignment())
+                & int(Qt.AlignHCenter)
+            )
             self.assertAlmostEqual(
                 content_top.x() + content.width() / 2, card.width() / 2, delta=2
             )
-            self.assertGreater(stamp_top.y(), content_top.y())
             self.assertAlmostEqual(
                 stamp_top.x() + stamp.width(),
                 card.width() - card.layout().contentsMargins().right(),
@@ -310,7 +353,7 @@ class ForumWindowTests(unittest.TestCase):
         card = ForumCard(message(1, content="这是一条足够长的留言内容用来验证卡片的基准字号不会变化"))
         try:
             name = card.findChild(QLabel, "ForumCardName")
-            content = card.findChild(QLabel, "ForumCardText")
+            content = card.findChild(QTextEdit, "ForumCardText")
             stamp = card.findChild(QLabel, "ForumCardMeta")
 
             self.assertEqual(content.font().pixelSize(), scale_px(17, min_abs=12))
@@ -331,7 +374,7 @@ class ForumWindowTests(unittest.TestCase):
         for content in contents:
             card = ForumCard(message(1, content=content))
             try:
-                sizes.append(card.findChild(QLabel, "ForumCardText").font().pixelSize())
+                sizes.append(card.findChild(QTextEdit, "ForumCardText").font().pixelSize())
             finally:
                 card.deleteLater()
 
@@ -346,6 +389,155 @@ class ForumWindowTests(unittest.TestCase):
         for size in sizes:
             self.assertGreaterEqual(size, base)
             self.assertLessEqual(size, base * 2)
+
+    def test_card_text_renders_markup_as_rich_text_with_a_bold_outline(self):
+        card = ForumCard(message(1, content="**雪绒**最*棒*"))
+        try:
+            content = card.findChild(QTextEdit, "ForumCardText")
+            # 正文是只读富文本控件（原先是 QLabel）：QLabel 拿不到 QTextDocument，
+            # 也没法给粗体片段单独加描边。
+            self.assertIsInstance(content, MarkupText)
+            pieces = dict(document_fragments(content))
+            # 标记被吃掉，正文分成粗 / 平 / 斜三种片段。
+            self.assertNotIn("*", "".join(pieces))
+            self.assertEqual(set(pieces), {"雪绒", "最", "棒"})
+            bold = pieces["雪绒"]
+            # 粗体 = 字重拉到 Bold + 同色描边把笔画撑粗；UI 字体只有 Bold 一个字面，光靠
+            # `<b>` 看不出区别，所以描边宽度跟着字号走。
+            self.assertGreaterEqual(bold.fontWeight(), QFont.Bold)
+            self.assertNotEqual(bold.textOutline().style(), Qt.NoPen)
+            self.assertAlmostEqual(
+                bold.textOutline().widthF(),
+                bold_outline_width(content.font().pixelSize()),
+                delta=0.01,
+            )
+            # 普通片段不加粗也不描边；斜体由 Qt 给没有斜体面的字体合成。
+            self.assertLess(pieces["最"].fontWeight(), QFont.Bold)
+            self.assertEqual(pieces["最"].textOutline().style(), Qt.NoPen)
+            self.assertTrue(pieces["棒"].fontItalic())
+            self.assertFalse(pieces["最"].fontItalic())
+            self.assertFalse(bold.fontItalic())
+        finally:
+            card.deleteLater()
+
+    def test_card_text_wraps_at_the_real_column_width_without_clipping(self):
+        card = ForumCard(message(1, content="**粗体**与*斜体*和__下划线__以及~~删除线~~"))
+        try:
+            for width in (CARD_MIN_WIDTH, CARD_MIN_WIDTH + 90):
+                card.resize(width, card.sizeHint().height())
+                card.show()
+                self.app.processEvents()
+                content = card.findChild(QTextEdit, "ForumCardText")
+                document = content.document()
+                # 量高不能顺带改排版宽度：正文要按真实列宽换行（曾经被 sizeHint 改成卡片最小
+                # 宽度，卡片就裁掉最后一行），控件高度也要真的装得下排好的文档。
+                self.assertAlmostEqual(
+                    document.textWidth(), content.viewport().width(), delta=1
+                )
+                self.assertGreaterEqual(content.height() + 0.5, document.size().height())
+        finally:
+            card.deleteLater()
+            self.app.processEvents()
+
+    def test_card_text_keeps_written_html_literal_and_centers_every_line(self):
+        card = ForumCard(message(1, content="<b>不是标签</b>\n第二行"))
+        try:
+            content = card.findChild(QTextEdit, "ForumCardText")
+            self.assertIn(
+                "<b>不是标签</b>",
+                "".join(text for text, _fmt in document_fragments(content)),
+            )
+            self.assertIn("第二行", content.toPlainText())
+            block = content.document().begin()
+            while block.isValid():
+                self.assertTrue(
+                    int(block.blockFormat().alignment()) & int(Qt.AlignHCenter)
+                )
+                block = block.next()
+        finally:
+            card.deleteLater()
+
+    def test_card_text_size_counts_visible_words_and_color_follows_the_theme(self):
+        marked = ForumCard(message(1, content="**喵**"))
+        plain = ForumCard(message(2, content="喵"))
+        try:
+            marked_text = marked.findChild(QTextEdit, "ForumCardText")
+            plain_text = plain.findChild(QTextEdit, "ForumCardText")
+            # 标记不算字数：`**喵**` 和 `喵` 一样是一个字，字号也该一样大。
+            self.assertEqual(forum_card_text_size("**喵**"), forum_card_text_size("喵"))
+            self.assertEqual(marked_text.font().pixelSize(), plain_text.font().pixelSize())
+            self.assertEqual(plain_text.font().pixelSize(), forum_card_text_size("喵"))
+            self.assertNotEqual(
+                forum_card_text_color("dark"), forum_card_text_color("light")
+            )
+            self.assertEqual(
+                text_colors(plain_text), {QColor(forum_card_text_color()).name()}
+            )
+            # 颜色写在字符格式里（粗体描边要用同一个颜色），换主题要显式重刷。
+            light = get_workbench_colors("light")
+            with patch(
+                "lib.script.ui.forum_style.get_workbench_colors", return_value=light
+            ):
+                plain.refresh_theme()
+            self.assertEqual(
+                text_colors(plain_text), {QColor(light.text).name()}
+            )
+        finally:
+            marked.deleteLater()
+            plain.deleteLater()
+
+    def test_format_buttons_wrap_the_selection_and_untoggle_it(self):
+        buttons = self.window._format_buttons
+        self.assertEqual(set(buttons), {fmt.key for fmt in FORUM_MARKUP_FORMATS})
+        self.assertIn("QToolButton#ForumFormatButton", self.window.styleSheet())
+        for fmt in FORUM_MARKUP_FORMATS:
+            button = buttons[fmt.key]
+            self.assertTrue(button.isCheckable())
+            self.assertEqual(button.text(), fmt.button)
+            self.assertEqual(button.cursor().shape(), Qt.PointingHandCursor)
+            # 提示文案要说清标记本身，以及「选中 / 点亮 / 取消」三种用法。
+            self.assertIn(fmt.marker, button.toolTip())
+            self.assertIn(fmt.label, button.toolTip())
+            self.assertIn(fmt.marker, self.window._input.toolTip())
+
+        self.window._input.setText("飞行雪绒")
+        self.window._input.setSelection(0, 4)
+        buttons["bold"].click()
+        self.assertEqual(self.window._input.text(), "**飞行雪绒**")
+        self.assertTrue(buttons["bold"].isChecked())
+        buttons["bold"].click()
+        self.assertEqual(self.window._input.text(), "飞行雪绒")
+        self.assertEqual(self.window._input.selectedText(), "飞行雪绒")
+        self.assertFalse(buttons["bold"].isChecked())
+
+    def test_format_button_arms_the_next_keystrokes_and_tracks_the_caret(self):
+        self.window._input.setText("")
+        self.window._input.setCursorPosition(0)
+        bold = self.window._format_buttons["bold"]
+        italic = self.window._format_buttons["italic"]
+        bold.click()
+        # 空输入点亮按钮：先落下标记对，光标停在中间，接着打的字自动是粗体。
+        self.assertEqual(self.window._input.text(), "****")
+        self.assertEqual(self.window._caret_position(), 2)
+        self.assertTrue(bold.isChecked())
+        self.window._input.insert("喵")
+        self.assertEqual(self.window._input.text(), "**喵**")
+        self.assertTrue(bold.isChecked())
+        # 光标还在粗体里：斜体按钮不该跟着亮（`**` 是偶数星号串，不算一对斜体）。
+        self.assertFalse(italic.isChecked())
+        # 光标移出标记对，粗体按钮跟着熄灭。
+        self.window._input.setCursorPosition(self.window._input.text().index("**", 1) + 2)
+        self.assertFalse(bold.isChecked())
+
+    def test_format_button_refuses_to_push_the_text_over_the_limit(self):
+        full = "字" * FORUM_MAX_CONTENT
+        self.window._input.setText(full)
+        self.window._input.setSelection(0, FORUM_MAX_CONTENT)
+        self.window._format_buttons["bold"].click()
+        # 加上标记会超上限：正文一个字都不动，只在状态栏说明。
+        self.assertEqual(self.window._input.text(), full)
+        self.assertIn(str(FORUM_MAX_CONTENT), self.window._status.text())
+        self.assertFalse(self.window._format_buttons["bold"].isChecked())
 
     def test_card_texture_is_stable_per_message(self):
         self.assertEqual(card_texture(42), card_texture(42))
@@ -434,13 +626,14 @@ class ForumWindowTests(unittest.TestCase):
 
     @staticmethod
     def _card_means(texture, accent=FORUM_DEFAULT_ACCENT):
-        """在一张纯灰卡片上只画底纹（标签藏起来），返回逐通道均值与最大通道偏差。"""
+        """在一张纯灰卡片上只画底纹（子控件全藏起来），返回逐通道均值与最大通道偏差。"""
         card = ForumCard(message(1, accent=accent, content="纹理"))
         card.texture = texture
         card.setStyleSheet("QFrame#ForumCard { background: #808080; border: none; }")
         card.resize(200, 140)
-        for label in card.findChildren(QLabel):
-            label.hide()
+        # 正文是 MarkupText（QTextEdit），不再只是 QLabel：漏掉它就等于把正文像素也算进底纹。
+        for child in card.findChildren(QWidget):
+            child.hide()
         image = QImage(200, 140, QImage.Format_ARGB32_Premultiplied)
         image.fill(QColor(0, 0, 0))
         painter = QPainter(image)
@@ -573,6 +766,64 @@ class ForumWindowTests(unittest.TestCase):
         self.assertIs(second, fake)
         self.assertIs(forum_module.get_forum_window(), fake)
         self.assertEqual(refresh.call_count, 2)
+
+
+class ForumMarkupTests(unittest.TestCase):
+    """行内标记的解析与发帖框补标记：纯文本进出，不建窗口。"""
+
+    def test_paired_markers_become_tags(self):
+        self.assertEqual(to_html("**粗体**"), "<b>粗体</b>")
+        self.assertEqual(to_html("*斜体*"), "<i>斜体</i>")
+        self.assertEqual(to_html("__下划线__"), "<u>下划线</u>")
+        self.assertEqual(to_html("~~删除线~~"), "<s>删除线</s>")
+        # `***` 是粗体叠斜体两层，没有单独的按钮。
+        self.assertEqual(to_html("***粗斜体***"), "<b><i>粗斜体</i></b>")
+
+    def test_markers_nest_and_the_longest_marker_wins(self):
+        self.assertEqual(to_html("**粗 *斜* 体**"), "<b>粗 <i>斜</i> 体</b>")
+        self.assertEqual(to_html("**粗**和**再粗**"), "<b>粗</b>和<b>再粗</b>")
+
+    def test_unpaired_markers_and_written_html_stay_literal(self):
+        # 没配对的标记按普通字符显示，不吞掉正文。
+        self.assertEqual(to_html("**没收尾"), "**没收尾")
+        self.assertEqual(visible_text("**没收尾"), "**没收尾")
+        self.assertEqual(to_html("~~一半"), "~~一半")
+        # 用户写的 HTML 先转义再套标签。
+        self.assertEqual(to_html("<b>x</b> & y"), "&lt;b&gt;x&lt;/b&gt; &amp; y")
+        self.assertEqual(to_html("**<b>**"), "<b>&lt;b&gt;</b>")
+
+    def test_visible_text_is_what_the_reader_sees(self):
+        self.assertEqual(visible_text("**喵**"), "喵")
+        self.assertEqual(visible_text("__下划线__"), "下划线")
+        self.assertEqual(visible_text("**粗 *斜* 体**"), "粗 斜 体")
+        self.assertEqual(visible_text("没标记"), "没标记")
+
+    def test_bold_markers_are_not_mistaken_for_italic(self):
+        # `**粗体**` 的星号是偶数串，不能算成一对斜体，否则粗体按钮会让斜体按钮跟着亮。
+        self.assertEqual(marker_positions("**粗体**", "*"), ())
+        self.assertEqual(marker_positions("**粗体**", "**"), (0, 4))
+        self.assertEqual(marker_positions("*斜体*", "*"), (0, 3))
+        self.assertIsNone(span_at_cursor("**粗体**", 3, "*"))
+        self.assertEqual(span_at_cursor("**粗体**", 3, "**"), (0, 4))
+
+    def test_toggle_wraps_the_selection_and_untoggles_it(self):
+        text, start, end = toggle("飞行雪绒", 0, 4, "**")
+        self.assertEqual(text, "**飞行雪绒**")
+        self.assertEqual((start, end), (2, 6))
+        self.assertEqual(toggle(text, start, end, "**"), ("飞行雪绒", 0, 4))
+
+    def test_toggle_at_the_caret_arms_the_next_keystrokes(self):
+        text, start, end = toggle("", 0, 0, "**")
+        # 空输入：光标落在标记对中间，接着打的字自动落在标记里。
+        self.assertEqual(text, "****")
+        self.assertEqual(start, end)
+        self.assertEqual(text[:start] + "喵" + text[end:], "**喵**")
+        # 再点一下取消，回到空输入。
+        self.assertEqual(toggle(text, start, end, "**"), ("", 0, 0))
+
+    def test_toggle_inside_bold_italic_peels_only_one_layer(self):
+        # `***粗斜体***` 里点一次斜体只脱掉斜体标记，粗体留着。
+        self.assertEqual(toggle("***粗斜体***", 4, 4, "*"), ("**粗斜体**", 3, 3))
 
 
 if __name__ == "__main__":

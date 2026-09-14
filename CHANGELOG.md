@@ -205,6 +205,18 @@
   用法写在人格词里就同步不到改过人格词的用户，所以改由
   `native_tools.native_tool_system_note()` 在请求期读文件并拼进 system 消息；文件缺失或读取
   失败时只留 `NATIVE_TOOL_SYSTEM_NOTE` 里的硬性规则，不影响降级路径。
+- 雪绒论坛卡片正文支持 `**粗体**`、`*斜体*`、`__下划线__`、`~~删除线~~` 四种行内标记
+  （`***粗斜体***` 就是两层叠加），解析放在不依赖 GUI 的 `lib/script/ui/forum_markup.py`：
+  原文先转义 `&`、`<`、`>` 与换行，再把成对的标记换成标签，没配对的标记按普通字符显示；
+  标记是纯文本、原样存服务端，只有雪绒论坛把它渲染成格式。底部发帖框左侧新增四个复选小按钮
+  （按钮字 B / I / U / S 本身就是效果示例）：选中文字点一下把选区包进标记、空输入点亮后接着
+  打的字自动落进标记、光标已在标记里时按钮点亮表示「这里已经是这种格式」，再点一下取消。
+  正文控件从 QLabel 换成只读富文本控件 `lib/script/ui/forum_text.py` 的 `MarkupText`：UI 字体
+  只注册了 Bold 一个字面（`resc/FRONTS/HarmonyOS_Sans_SC_Bold.ttf`），`<b>`、`font-weight`
+  与三种 QFont weight 实测墨迹完全相同，QLabel 里看不出加粗、也拿不到 `QTextDocument`；
+  `MarkupText` 遍历字符片段给加粗片段叠一层同色描边（笔宽按字号取 `BOLD_OUTLINE_RATIO`），
+  斜体 / 下划线 / 删除线交给 Qt 合成与绘制期装饰。量高改用临时文档，避免 `sizeHint()` 把已
+  排好版的正文改窄、裁掉最后一行。
 
 ### Fixed
 - 修复 CUDA 构建在“嵌入 PTX”一步要几十分钟：`cmake/embed_ptx.cmake` 原来按两个十六进制

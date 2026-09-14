@@ -7,6 +7,7 @@ from PyQt5.QtGui import QColor
 from config.font_config import get_ui_font_family
 from config.scale import scale_px
 from lib.core.forum import FORUM_ACCENTS
+from lib.script.ui.forum_markup import visible_text
 from lib.script.workbench.theme import get_workbench_colors, window_button_stylesheet
 
 #: 论坛卡片的四档描边配色；档位与核心的 `FORUM_ACCENTS` 同源，不再各写一份。
@@ -51,10 +52,11 @@ def forum_card_text_scale(text: str) -> float:
     """按正文字数给出字号倍率：6 字及以内 2 倍，24 字及以上 1 倍，中间线性过渡。
 
     卡片是拿来看短句的：字少的卡片放大字号才不至于空一大片，但上限两倍，
-    免得一个字撑满整张卡。
+    免得一个字撑满整张卡。字数按 `forum_markup.visible_text()` 的可见文字算，
+    `**喵**` 这种带标记的短句仍然是 1 个字。
     """
     low, high = FORUM_CARD_TEXT_SCALE_RANGE
-    length = len(str(text or "").strip())
+    length = len(visible_text(text).strip())
     if length <= FORUM_CARD_TEXT_SHORT_LENGTH:
         return high
     if length >= FORUM_CARD_TEXT_LONG_LENGTH:
@@ -73,6 +75,15 @@ def forum_accent_color(accent: str, mode: str | None = None) -> str:
     """返回某档 accent 的描边色；未知档位退回主题粉。"""
     colors = _LIGHT_ACCENT_COLORS if _is_light(mode) else _DARK_ACCENT_COLORS
     return colors.get(str(accent or "").strip().lower(), get_workbench_colors(mode).pink)
+
+
+def forum_card_text_color(mode: str | None = None) -> str:
+    """卡片正文颜色。
+
+    正文颜色写在字符格式里（加粗片段的同色描边要用同一个颜色、样式表管不到富文本片段），
+    所以由这里单一给出：卡片构造时取一次，`CONFIG_UPDATED` 换主题时再取一次。
+    """
+    return get_workbench_colors(mode).text
 
 
 def _is_light(mode: str | None) -> bool:
@@ -142,7 +153,13 @@ def forum_stylesheet(mode: str | None = None) -> str:
         }}
         QLabel#ForumCardMeta {{ color: {c.text_dim}; }}
         QLabel#ForumCardName {{ color: {c.text}; font-weight: 700; }}
-        QLabel#ForumCardText {{ color: {c.text}; }}
+        QTextEdit#ForumCardText {{
+            background: transparent;
+            border: none;
+            color: {c.text};
+            selection-background-color: {c.pink};
+            selection-color: {c.canvas};
+        }}
         QScrollArea#ForumScroll {{
             background: transparent;
             border: none;
@@ -217,6 +234,26 @@ def forum_stylesheet(mode: str | None = None) -> str:
             border: {scale_px(2, min_abs=2)}px solid {c.text};
         }}
         {swatch_rules}
+        QToolButton#ForumFormatButton {{
+            border-radius: {scale_px(3, min_abs=2)}px;
+            border: {border}px solid {c.border};
+            background: {c.surface_raised};
+            color: {c.text_muted};
+            min-width: {scale_px(24, min_abs=21)}px;
+            max-width: {scale_px(24, min_abs=21)}px;
+            min-height: {scale_px(22, min_abs=19)}px;
+            max-height: {scale_px(22, min_abs=19)}px;
+            padding: 0px;
+        }}
+        QToolButton#ForumFormatButton:hover {{
+            border-color: {c.cyan};
+            color: {c.text};
+        }}
+        QToolButton#ForumFormatButton:checked {{
+            border-color: {c.cyan};
+            background: {c.surface_hover};
+            color: {c.text};
+        }}
         QWidget#ForumWindow QScrollBar:vertical {{
             background: {c.canvas};
             width: {scale_px(10, min_abs=8)}px;
@@ -246,6 +283,7 @@ __all__ = [
     "FORUM_TEXTURE_TINT_RATIO",
     "forum_card_text_scale",
     "forum_card_text_size",
+    "forum_card_text_color",
     "forum_texture_color",
     "forum_accent_color",
     "forum_stylesheet",
