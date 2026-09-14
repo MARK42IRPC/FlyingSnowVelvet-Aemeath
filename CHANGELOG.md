@@ -96,6 +96,10 @@
   不再与滑条重叠。共享层新增 `build_slider_visual` 与 `slider_handle_commands`，
   DX 音响搜索描述（`lib/core/graphics/speaker_visuals.py`）加入同一条音量带并可拖动，
   两个后端的几何、刻度与配色一致。
+- 滑条手柄由粉色菱形改成竖向矩形（高宽约 4:3）：共享层新增 `slider_handle_commands`
+  统一生成竖矩形手柄并移除已无调用方的 `rotated_square_commands`，播放进度条
+  （Qt 播放列表 UI 与 DX 音响播放列表描述）和音响右键 UI 音量滑条因此形状一致，
+  更贴合黑/青/粉的面板基调。
 
 ### Fixed
 - 修复 CUDA 构建在“嵌入 PTX”一步要几十分钟：`cmake/embed_ptx.cmake` 原来按两个十六进制

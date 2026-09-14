@@ -19,8 +19,6 @@ from lib.core.graphics.commands import (
     RectCommand,
     TextAlignment,
     TextCommand,
-    TransformPop,
-    TransformPush,
 )
 from lib.core.graphics.media_panel_visuals import (
     PROGRESS_PANEL_HEIGHT,
@@ -41,6 +39,7 @@ from lib.core.graphics.media_panel_visuals import (
 )
 from lib.core.graphics.palette import COLORS, UI_THEME
 from lib.core.graphics.panel_visuals import (
+    SLIDER_HANDLE_ASPECT,
     action_button_commands,
     build_action_button_visual,
     build_panel_shell_visual,
@@ -49,7 +48,7 @@ from lib.core.graphics.panel_visuals import (
     panel_frame_commands,
     panel_inset,
     panel_shell_commands,
-    rotated_square_commands,
+    slider_handle_commands,
 )
 from lib.core.graphics.settings_panel_visuals import (
     LEFT_WATERMARK_SCALE,
@@ -206,24 +205,24 @@ class PanelVisualTests(unittest.TestCase):
         self.assertEqual(button.content_rect, inset_rect(rect, panel_inset() * 2))
         self.assertEqual(len(button.batch.commands), 4)
 
-    def test_rotated_square_is_a_diamond_around_its_centre(self):
-        commands = rotated_square_commands(10.0, 20.0, 7.0, COLORS["pink"])
-        self.assertIsInstance(commands[0], TransformPush)
-        self.assertIsInstance(commands[-1], TransformPop)
-        matrix = commands[0].matrix
-        diagonal = 0.7071067811865476
-        self.assertEqual(matrix[4], 10.0)
-        self.assertEqual(matrix[5], 20.0)
-        self.assertAlmostEqual(matrix[0], diagonal, places=12)
-        self.assertAlmostEqual(matrix[1], diagonal, places=12)
-        self.assertAlmostEqual(matrix[2], -diagonal, places=12)
-        self.assertAlmostEqual(matrix[3], diagonal, places=12)
+    def test_slider_handle_is_a_portrait_rect_inside_the_track(self):
+        track = Rect(4, 4, 100, 12)
+        commands, rect = slider_handle_commands(54.0, track, COLORS["pink"])
+        self.assertEqual(len(commands), 1)
+        self.assertIsInstance(commands[0], RectCommand)
+        self.assertEqual(commands[0].rect, rect)
+        self.assertEqual(commands[0].fill, COLORS["pink"])
+        self.assertGreater(rect.height, rect.width)
+        self.assertAlmostEqual(rect.height / rect.width, SLIDER_HANDLE_ASPECT, places=2)
+        self.assertAlmostEqual(rect.x + rect.width / 2.0, 54.0, places=6)
+        self.assertEqual(rect.y, track.y)
+        self.assertEqual(rect.height, track.height)
 
-        rect = commands[1].rect
-        half_side = 7.0 / 1.4142135623730951
-        self.assertAlmostEqual(rect.x, -half_side, places=9)
-        self.assertAlmostEqual(rect.y, -half_side, places=9)
-        self.assertAlmostEqual(rect.width, half_side * 2, places=9)
+        # The handle never leaves the track, even at both ends.
+        empty_commands, empty = slider_handle_commands(-10.0, track, COLORS["pink"])
+        self.assertEqual(empty.x, track.x)
+        _full_commands, full = slider_handle_commands(200.0, track, COLORS["pink"])
+        self.assertEqual(full.x + full.width, track.x + track.width)
 
     def test_tab_bar_keeps_pink_open_to_the_right_edge(self):
         size = Size(200, 30)
@@ -329,18 +328,22 @@ class MediaPanelVisualTests(unittest.TestCase):
             Rect(border + slider_width + separator_width, border, time_width, PROGRESS_PANEL_HEIGHT - border * 2),
         )
 
-        half_size = max(1, int(visual.slider_rect.height) // 2 - scale_px(1, min_abs=1))
-        self.assertEqual(visual.handle_rect.width, half_size * 2)
+        handle_width = round(visual.slider_rect.height / SLIDER_HANDLE_ASPECT)
+        self.assertEqual(visual.handle_rect.width, handle_width)
+        self.assertEqual(visual.handle_rect.height, visual.slider_rect.height)
         self.assertEqual(
             visual.handle_rect.x,
-            border + int(0.5 * slider_width) - half_size,
+            border + int(0.5 * slider_width) - handle_width / 2.0,
         )
-        self.assertEqual(visual.handle_rect.y, border + visual.slider_rect.height // 2 - half_size)
+        self.assertEqual(visual.handle_rect.y, border)
 
         empty = build_progress_panel_visual(progress=-1.0, time_text="0:00", metrics=METRICS)
-        self.assertEqual(empty.handle_rect.x, border - half_size)
+        self.assertEqual(empty.handle_rect.x, border)
         full = build_progress_panel_visual(progress=2.0, time_text="9:99", metrics=METRICS)
-        self.assertEqual(full.handle_rect.x, border + slider_width - 1 - half_size)
+        self.assertEqual(
+            full.handle_rect.x + full.handle_rect.width,
+            border + slider_width,
+        )
 
     def test_progress_panel_draws_frame_after_content(self):
         visual = build_progress_panel_visual(progress=0.5, time_text="1:23", metrics=METRICS)

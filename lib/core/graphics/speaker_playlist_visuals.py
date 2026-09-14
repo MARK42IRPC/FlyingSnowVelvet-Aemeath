@@ -9,7 +9,7 @@ from config.scale import scale_px
 from lib.core.layer import Layer
 
 from .commands import DrawBatch, RectCommand, TextAlignment, TextCommand
-from .panel_visuals import panel_shell_commands
+from .panel_visuals import panel_shell_commands, slider_handle_commands
 from .speaker_visuals import SpeakerTextMetrics
 from .types import FontSpec, Rect, Size
 
@@ -193,12 +193,14 @@ def build_speaker_playlist_visual(
             Rect(slider_rect.x, slider_rect.y, fill_width, slider_rect.height),
             fill=COLORS["cyan"], layer=layer, z=3,
         ))
-    handle_size = max(2, slider_rect.height - 2)
-    handle_x = max(slider_rect.x, min(slider_rect.x + slider_rect.width, slider_rect.x + fill_width))
-    commands.append(RectCommand(
-        Rect(handle_x - handle_size / 2.0, slider_rect.y + 1, handle_size, handle_size),
-        fill=UI_THEME["deep_pink"], layer=layer, z=4,
-    ))
+    handle_commands, _handle_rect = slider_handle_commands(
+        slider_rect.x + fill_width,
+        slider_rect,
+        UI_THEME["deep_pink"],
+        layer=layer,
+        z=4,
+    )
+    commands.extend(handle_commands)
     time_rect = Rect(
         _BORDER + slider_width + separator_width,
         _PROGRESS_Y + _BORDER,

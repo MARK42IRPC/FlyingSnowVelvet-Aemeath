@@ -27,7 +27,6 @@ from .panel_visuals import (
     panel_frame_commands,
     panel_inset,
     panel_shell_commands,
-    rotated_square_commands,
     slider_handle_commands,
 )
 from .types import FontSpec, Rect, Size
@@ -220,18 +219,15 @@ def build_progress_panel_visual(
             z=3,
         ))
 
-    handle_x = max(slider.x, min(slider.x + slider.width - 1, slider.x + fill_width))
-    handle_y = slider.y + slider.height // 2
-    half_size = max(1, int(slider.height) // 2 - scale_px(1, min_abs=1))
-    commands.extend(rotated_square_commands(
-        handle_x,
-        handle_y,
-        half_size,
+    handle_commands, handle_rect = slider_handle_commands(
+        slider.x + fill_width,
+        slider,
         UI_THEME["deep_pink"],
         layer=layer,
         z=4,
         alpha=alpha,
-    ))
+    )
+    commands.extend(handle_commands)
 
     separator = Rect(border + slider_width, inset, separator_width, height - inset * 2)
     commands.append(RectCommand(
@@ -261,12 +257,6 @@ def build_progress_panel_visual(
     ))
     commands.extend(panel_frame_commands(outer, inset=inset, layer=layer, z=5, alpha=alpha))
 
-    handle_rect = Rect(
-        handle_x - half_size,
-        handle_y - half_size,
-        half_size * 2,
-        half_size * 2,
-    )
     return ProgressPanelVisual(
         Size(width, height),
         slider,

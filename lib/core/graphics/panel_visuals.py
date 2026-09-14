@@ -19,8 +19,6 @@ from .commands import (
     RectCommand,
     TextAlignment,
     TextCommand,
-    TransformPop,
-    TransformPush,
 )
 from .palette import COLORS, UI_THEME
 from .types import Color, FontSpec, Rect, Size
@@ -261,40 +259,6 @@ def build_action_button_visual(
     )
 
 
-def rotated_square_commands(
-    center_x: float,
-    center_y: float,
-    half_diagonal: float,
-    fill: Color,
-    *,
-    layer: int = int(Layer.PANEL),
-    z: int = 0,
-    alpha: float = 1.0,
-) -> list[object]:
-    """Build a diamond (a square rotated 45 degrees) centred on one point."""
-    radius = max(0.5, float(half_diagonal))
-    half_side = radius / 1.4142135623730951
-    diagonal = 0.7071067811865476
-    return [
-        TransformPush((
-            diagonal,
-            diagonal,
-            -diagonal,
-            diagonal,
-            float(center_x),
-            float(center_y),
-        )),
-        RectCommand(
-            Rect(-half_side, -half_side, half_side * 2, half_side * 2),
-            fill=fill,
-            alpha=alpha,
-            layer=layer,
-            z=z,
-        ),
-        TransformPop(),
-    ]
-
-
 #: Portrait slider handle aspect (height / width), roughly 4:3.
 SLIDER_HANDLE_ASPECT = 4.0 / 3.0
 
@@ -401,6 +365,5 @@ __all__ = [
     "panel_frame_commands",
     "panel_inset",
     "panel_shell_commands",
-    "rotated_square_commands",
     "slider_handle_commands",
 ]
