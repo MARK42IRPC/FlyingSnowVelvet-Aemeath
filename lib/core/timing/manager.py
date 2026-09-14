@@ -203,8 +203,8 @@ class TimingManager:
         if task_id in self._tasks:
             task = self._tasks[task_id]
             task.active = False
-            logger.debug("[TimingManager] Paused task %s: current_tick=%s/%s",
-                         task_id, task.current_tick, task.interval_ticks)
+            # 这里刻意不记日志：每个任务每次暂停都来一条，实测占全量 DEBUG 的六成以上且无
+            # 排查价值；需要临时排查时再按需加回。
 
     def resume_task(self, task_id: str):
         """恢复任务（从暂停时的进度继续）"""
@@ -212,8 +212,7 @@ class TimingManager:
             task = self._tasks[task_id]
             # 恢复时保留 current_tick 进度，从暂停处继续计时
             task.active = True
-            logger.debug("[TimingManager] Resumed task %s: current_tick=%s/%s",
-                         task_id, task.current_tick, task.interval_ticks)
+            # 同上，恢复也不逐次记日志。
 
     def clear_all(self):
         """清空所有任务"""

@@ -5,6 +5,21 @@
 ## [LTS1.0.7pre4] - 2026-09-13
 
 ### Added
+- 办公模式拆成两个界面：工作台里的「办公模式」页只留配置项（办公后端、办公模式独立 api、
+  启动时预热）与「技能管理」「插件管理」两张卡片，任务界面搬进独立办公窗口
+  （`lib/script/ui/office_page.py`，工作台式自绘外壳 + 尺寸手柄），由配置页上的「打开办公页面」
+  按钮与托盘一级入口「办公页面」打开，复用模块级单例。`office` 工作台页的工厂改为
+  `office_mode_page.OfficeModePage`；配置控件复用 `OfficeModeSettings`（与 AI 设置面板同一份
+  实现），保存走 `save_office_values()` 只覆盖 `OFFICE_VALUE_KEYS` 里的办公字段，默认值表移到
+  `ai_settings_defaults.AI_DEFAULT_VALUES` 由两处共用。独立办公窗口在退出时由
+  `lib/script/ui/shutdown.py` 统一隐藏与释放。
+- 工作台新增「技能管理」「插件管理」卡片（`lib/script/ui/office_manager_card.py` 共用实现）：
+  列表固定露出 5 行，多出的条目在卡片内滚动，卡片高度不随条目数变化；安装选择目录并复制进
+  用户根，删除有确认框，内置项不可删除。技能来自 `lib/script/office/skills.py`（内置根
+  `resc/agent` 只读 + DSH home 下的用户根，名字取 `SKILL.md` frontmatter，同名时用户根覆盖
+  内置），插件来自 `lib/script/office/plugins.py`（包体复制进 profile 的 `node_modules`，包名
+  登记在 `<用户根>/user/state/office/plugins.json`，启动 provisioning 时由
+  `apply_registered_bundles()` 合并回被覆盖的 profile `package.json`）。
 - 托盘菜单新增「雪绒论坛」入口与独立窗口：`lib/core/forum.py` 是不导入任何 GUI 库的留言墙
   客户端，`GET /api/feed` 按 id 倒序分页（默认 60 条，`before` 往前翻页）、`POST /api/messages`
   发帖，响应限 2 MiB，429 译成中文限流说明；请求交给注入的 `submit_io` 线程池、结果经
@@ -165,19 +180,31 @@
   620，卡片最小宽度随三列网格调到 170。卡片重排为左上昵称、中间居中大字正文、右下小字日期，
   并按卡片信息的内容哈希稳定铺一层几何底纹（见下条）。底部发帖框新增昵称输入框，留空即以
   「匿名」发送，昵称默认值随之从「雪绒桌宠」改成与服务端一致的「匿名」。
-- 卡片底纹从 6 种单层花纹扩到 10 种并抽到 `lib/script/ui/forum_texture.py`：几何间隙拼贴
+- 论坛卡片正文按字数自适应字号：`forum_style.forum_card_text_size()` 让 6 字及以内的短句取到
+  2 倍字号、24 字及以上回到基准 17（`scale_px(17, min_abs=12)`），中间线性过渡；一句话的
+  卡片不再空一大片，长留言仍按基准字号排版。
+- 卡片底纹从 6 种单层花纹扩到 15 种并抽到 `lib/script/ui/forum_texture.py`：几何间隙拼贴
   （tiles 圆角瓷砖 / bricks 错缝长砖 / crosses 十字瓷砖，块与块之间留缝）、几何瓷砖平铺
-  （diamonds 菱形 / hexes 六边蜂窝 / triangles 三角 / dots 圆点 / rings 圆环）、艺术渐变
+  （diamonds 菱形 / hexes 六边蜂窝 / triangles 三角 / dots 圆点 / rings 圆环）、粗线几何
+  （polygons 空心多边形 / solid_polygons 实心多边形 / coarse_rings 粗圆环 / coarse_crosses
+  粗十字 / hatch 斜纹：边数、线宽、图形尺寸与斜纹间隔都由种子取值并叠坐标噪波）、艺术渐变
   （radial_dots 点半径与透明度沿到焦点的距离渐变、fade_stripes 斜线透明度渐变）。种子从
   留言 id 换成卡片信息（id / 昵称 / 正文 / 配色 / 时间）的 `blake2b` 内容哈希，正文改一个字
-  就会换一套底纹，跨进程仍然一致。透明度仍是 8~16、颜色仍是主题中性色，只轻微影响明度、不
-  参与 accent 配色。底纹按（花纹 + 卡片尺寸 + 颜色 + 设备像素比）缓存成透明位图再 blit，
+  就会换一套底纹，跨进程仍然一致。底纹比首版更实：透明度 8~16 提到 20~34、线宽以
+  `CARD_TEXTURE_STROKE_BASE`（2px）为下限、平铺边长收到 12~22、斜纹间隔收到平铺边长的
+  0.45~1.0 倍，颜色也从纯中性色改成「主题中性色按 `FORUM_TEXTURE_TINT_RATIO` 掺上卡片
+  accent」（`forum_style.forum_texture_color(accent=...)`），底纹因此带上卡片自己的色调。
+  底纹按（花纹 + 卡片尺寸 + 颜色 + 设备像素比）缓存成透明位图再 blit，
   一屏卡片重绘由 5.7 ms 降到 1.9 ms（蜂窝花纹单卡 4.5 ms → 0.23 ms），滚动不再掉帧。
 - 托盘菜单收敛一级入口：去掉「bug跟踪」与「CMD终端」，「清理桌面 / 清理缓存 / 清理历史」
   三个清理动作收成「桌宠清理」二级菜单（悬停自动展开），条目改名为「桌面物体 / 音乐缓存 /
   登录数据」，二级菜单用同一个 `TrayContextMenu` 构造并新增指针箭头绘制，因此与一级菜单
   是同一套样式。两个入口的功能没有丢失：故障跟踪仍可从工作台工具页打开，CMD 终端仍可由
   命令对话框的 `/` 前缀与 DX 原生托盘菜单打开，`TrayCommand` 与主协调路由未改动。
+- 原生工具的可用函数与参数从代码常量搬到 `resc/toolcall.txt`：人格词是用户文件、升级不覆盖，
+  用法写在人格词里就同步不到改过人格词的用户，所以改由
+  `native_tools.native_tool_system_note()` 在请求期读文件并拼进 system 消息；文件缺失或读取
+  失败时只留 `NATIVE_TOOL_SYSTEM_NOTE` 里的硬性规则，不影响降级路径。
 
 ### Fixed
 - 修复 CUDA 构建在“嵌入 PTX”一步要几十分钟：`cmake/embed_ptx.cmake` 原来按两个十六进制
@@ -228,6 +255,21 @@
   不创建标签项，`SettingsFormLayout._normalize_row()` 对空标签也帮不上忙；改成显式
   `addRow(QLabel("", parent), widget)` 让空标签占住固定宽的标签列，收起/展开两态都与其它字段
   同列（离屏渲染改前/改后对照确认）。
+- 修复点歌经常播错歌：`ToolDispatcher._search_music()` 原来先按「作者是不是鸣潮」分档、再拿
+  「歌名更短」当次级键，而歌名长短和点歌意图无关，会把接口排在第一位的正确结果挤掉（实测
+  点「拉海洛之心」播成同作者的「纸飞机」、点「逆潮」播成「远航星的告别」）。现在先把歌名
+  去噪归一（书名号、括号后缀、全角空格与标点都丢掉）再比：完全相同 +2、互相包含 +1，作者含
+  「鸣潮」另 +2，平手保持接口原本的热度顺序，不再用歌名长度当次级键；这两次实测错播在
+  `tests/test_tool_dispatcher.py` 里各钉了一条回归用例。
+- 修复独立办公窗口的窗口底透明：`lib/script/ui/office_page.py` 是自绘外壳、没有宿主替它铺
+  表面，`office_stylesheet()` 却一直把根控件设成 `background: transparent`，离屏渲染实测
+  根背景 alpha=0，页头文字与卡片留白直接透出桌面。`office_stylesheet(standalone=True)`
+  现在自己铺 `canvas` 画布底与 `border_strong` 描边（内嵌到工作台或设置面板时仍保持透明），
+  窗口同时订阅 `CONFIG_UPDATED`，换主题后重刷样式，`cleanup()` 里退订。
+- 修复技能与插件的安装路径逃逸：安装时把清单里的名字直接拼进技能根 / `node_modules`，名字
+  写成 `../..` 这类路径就会把内容复制到根目录之外，而列表与卸载只看根目录，装出来的目录
+  既看不见也删不掉。`skills._safe_skill_dir_name()` 与 `plugins._package_dir_parts()`
+  现在拒绝路径分隔符、`.`/`..` 以及含 `:` 的段。
 
 ## [LTS1.0.7pre3] - 2026-09-12
 
