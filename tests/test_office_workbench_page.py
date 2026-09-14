@@ -28,6 +28,10 @@ from PyQt5.QtWidgets import QApplication, QFrame, QLabel, QMessageBox, QMenu, QW
 from lib.script.office.ipc import OfficeFileIpc
 from lib.script.ui.office_page import OfficeWorkbenchPage
 from lib.script.ui.office_style import office_stylesheet
+from lib.script.ui.workbench_settings_layout import (
+    SETTINGS_FONT_SIZE,
+    SETTINGS_HINT_FONT_SIZE,
+)
 from lib.script.workbench.theme import get_workbench_colors
 
 
@@ -222,6 +226,25 @@ class OfficeWorkbenchPageTests(unittest.TestCase):
                 "companion",
             )
             self.assertEqual(page._mode_buttons["office"].property("officeMode"), "office")
+
+    def test_office_text_follows_workbench_settings_font_size(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            page, _ipc = self._page(Path(tmpdir) / "ipc")
+
+            # 正文与控件字号直接取工作台设置页档位，不再吃应用默认的 12px。
+            self.assertEqual(page._task_title.font().pixelSize(), SETTINGS_FONT_SIZE)
+            stylesheet = page.styleSheet()
+            self.assertIn(f"font-size: {SETTINGS_FONT_SIZE}px;", stylesheet)
+            # 次要信息（选中提示等）比正文小两号，且不再逐条写死字号。
+            self.assertIn(f"font-size: {SETTINGS_HINT_FONT_SIZE}px;", stylesheet)
+            self.assertNotIn("font-size: 11px;", stylesheet)
+            self.assertNotIn("font-size: 12px;", stylesheet)
+
+            page._conversation_view.set_messages([("assistant", "你好", False, "")])
+            bubble = page._conversation_view.findChild(QLabel, "OfficeChatBubbleText")
+            self.assertIsNotNone(bubble)
+            assert bubble is not None
+            self.assertEqual(bubble.font().pixelSize(), SETTINGS_FONT_SIZE)
 
     def test_text_context_menu_is_chinese_and_limited_to_clipboard_actions(self):
         with tempfile.TemporaryDirectory() as tmpdir:

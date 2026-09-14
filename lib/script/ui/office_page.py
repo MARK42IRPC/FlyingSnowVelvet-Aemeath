@@ -51,7 +51,11 @@ from lib.script.ui.office_icons import (
 )
 from lib.script.ui.office_style import office_stylesheet
 from lib.script.ui.workbench_components import create_window_button
-from lib.script.ui.workbench_settings_layout import SettingsPageHeader, SettingsSection
+from lib.script.ui.workbench_settings_layout import (
+    SETTINGS_FONT_SIZE,
+    SettingsPageHeader,
+    SettingsSection,
+)
 from lib.script.workbench.theme import get_workbench_colors
 
 
@@ -255,7 +259,8 @@ class OfficeWorkbenchPage(QtWorkbenchToolPage):
         content_layout.setSpacing(scale_px(9, min_abs=7))
 
         header = QHBoxLayout()
-        title_font = get_ui_font(size=scale_px(15, min_abs=13))
+        # 卡片标题与正文同档、靠字重区分：正文已经对齐工作台设置页，标题再放小就比正文还小。
+        title_font = get_ui_font(size=SETTINGS_FONT_SIZE)
         title_font.setBold(True)
         self._task_title = QLabel("新任务", content_card)
         self._task_title.setObjectName("OfficeTaskTitle")

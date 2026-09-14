@@ -7,6 +7,10 @@ from PyQt5.QtWidgets import QFrame, QHBoxLayout, QWidget
 from config.font_config import get_ui_font_family
 from config.scale import scale_px
 from lib.script.office.contracts import REASONING_EFFORTS
+from lib.script.ui.workbench_settings_layout import (
+    SETTINGS_FONT_SIZE,
+    SETTINGS_HINT_FONT_SIZE,
+)
 from lib.script.workbench.theme import get_workbench_colors
 
 
@@ -91,6 +95,10 @@ def office_stylesheet(
         else "background: transparent;"
     )
     radius = scale_px(4, min_abs=3)
+    #: 正文与控件字号直接取工作台设置页的档位：办公面此前是应用默认的 12px，比工作台小一档。
+    base_font = SETTINGS_FONT_SIZE
+    #: 次要信息（提示、聊天发送者、系统提示）比正文小两号。
+    meta_font = SETTINGS_HINT_FONT_SIZE
     control_height = scale_px(34, min_abs=30)
     compact_height = scale_px(31, min_abs=27)
     horizontal_padding = scale_px(11, min_abs=9)
@@ -98,6 +106,7 @@ def office_stylesheet(
         {page_selector}, QDialog#OfficeApprovalDialog {{
             color: {c.text};
             font-family: '{font_family}';
+            font-size: {base_font}px;
         }}
         {page_selector} * , QDialog#OfficeApprovalDialog * {{
             font-family: '{font_family}';
@@ -175,6 +184,11 @@ def office_stylesheet(
         QLabel#OfficeFieldLabel, QLabel#OfficeSelectionHint,
         QLabel#OfficeApprovalReason, QLabel#OfficeApprovalScope,
         QLabel#OfficeApprovalCommandLabel {{ color: {c.text_muted}; }}
+        QLabel#OfficeSelectionHint, QLabel#OfficeConfigHint,
+        QLabel#OfficeManagerHint, QLabel#OfficeChatSender,
+        QLabel#OfficeChatSystem {{
+            font-size: {meta_font}px;
+        }}
         QLabel#OfficeApprovalKicker {{
             color: {c.pink};
             font-weight: 700;
@@ -441,17 +455,14 @@ def office_stylesheet(
             color: {c.text_muted};
             background: transparent;
             padding: {scale_px(3, min_abs=2)}px {scale_px(8, min_abs=6)}px;
-            font-size: {scale_px(11, min_abs=10)}px;
         }}
         QLabel#OfficeChatSender {{
             color: {c.text_muted};
             background: transparent;
-            font-size: {scale_px(10, min_abs=9)}px;
         }}
         QFrame#OfficeChatBubble {{
             border-radius: {scale_px(10, min_abs=8)}px;
             padding: {OFFICE_BUBBLE_PAD_V}px {OFFICE_BUBBLE_PAD_H}px;
-            font-size: {scale_px(12, min_abs=11)}px;
         }}
         QFrame#OfficeChatBubble[side="assistant"] {{
             background: {c.surface_raised};

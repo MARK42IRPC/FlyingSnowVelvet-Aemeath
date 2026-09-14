@@ -1,10 +1,17 @@
 from __future__ import annotations
 
+import atexit
 import os
+import shutil
+import tempfile
 import unittest
 from unittest.mock import Mock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+# 与其余办公测试一致：指向临时用户根，避免读到本机的亮色主题配置。
+_TEST_HOME = tempfile.mkdtemp(prefix="office-effort-test-")
+os.environ["AEMEATH_DESK_PET_HOME"] = _TEST_HOME
+atexit.register(shutil.rmtree, _TEST_HOME, ignore_errors=True)
 
 import PyQt5.QtCore
 
@@ -16,15 +23,26 @@ os.environ.setdefault(
 os.environ.setdefault("QT_PLUGIN_PATH", os.path.join(_QT_ROOT, "Qt5", "plugins"))
 
 from PyQt5.QtGui import QColor, QImage
-from PyQt5.QtWidgets import QApplication, QSlider, QVBoxLayout, QWidget
+from PyQt5.QtWidgets import (
+    QApplication,
+    QSlider,
+    QStyle,
+    QStyleOptionSlider,
+    QVBoxLayout,
+    QWidget,
+)
 
 from lib.script.office.contracts import DEFAULT_REASONING_EFFORT, REASONING_EFFORTS
 from lib.script.ui.office_effort_slider import (
     EFFORT_LABELS,
     EFFORT_LEVELS,
+    EFFORT_STAR_COUNT,
+    EFFORT_STARS,
     EFFORT_TICK_COUNT,
     OfficeEffortSlider,
     effort_level_color,
+    effort_stars,
+    star_dots,
 )
 from lib.script.ui.office_style import office_effort_colors, office_stylesheet
 from lib.script.workbench.theme import get_workbench_colors
@@ -147,6 +165,83 @@ class OfficeEffortSliderTests(unittest.TestCase):
         self.assertEqual(colors, office_effort_colors())
         self.assertEqual(effort_level_color("off"), colors[0])
         self.assertEqual(effort_level_color("ultra"), colors[-1])
+
+    def _star_columns(self, value: int) -> set[int]:
+        """渲染滑条并收集填色段里亮点所在的列：星点是纯白，比档位色亮得多。"""
+        slider = self.slider._slider
+        slider.setValue(value)
+        self._holder.resize(self._holder.sizeHint())
+        self.app.processEvents()
+        image = QImage(slider.size(), QImage.Format_ARGB32_Premultiplied)
+        image.fill(QColor(0, 0, 0, 0))
+        slider.render(image)
+        option = QStyleOptionSlider()
+        slider.initStyleOption(option)
+        groove = slider.style().subControlRect(
+            QStyle.CC_Slider, option, QStyle.SC_SliderGroove, slider
+        )
+        rows = range(max(0, groove.top()), min(slider.height(), groove.bottom() + 1))
+        return {
+            x
+            for y in rows
+            for x in range(slider.width())
+            if min(QColor(image.pixel(x, y)).getRgb()[:3]) >= 200
+        }
+
+    def test_level_name_sits_left_of_the_track_on_the_same_row(self):
+        label = self.slider._level_label
+        track = self.slider._slider
+
+        label_center = label.mapTo(self.slider, label.rect().center())
+        track_center = track.mapTo(self.slider, track.rect().center())
+        label_right = label.mapTo(self.slider, label.rect().topRight()).x()
+        track_left = track.mapTo(self.slider, track.rect().topLeft()).x()
+
+        # 档位名贴在滑条左边、和滑条同一行，不再居中悬浮在轨道上方。
+        self.assertLess(label_right, track_left)
+        self.assertLess(label_center.x(), track_center.x())
+        self.assertLessEqual(abs(label_center.y() - track_center.y()), 3)
+
+        track_top = track.mapTo(self.slider, track.rect().topLeft()).y()
+        label_top = label.mapTo(self.slider, label.rect().topLeft()).y()
+        self.assertLessEqual(label_top, track_top + track.height())
+
+    def test_star_dots_stay_on_the_track_and_stop_at_the_filled_edge(self):
+        self.assertEqual(star_dots(0.0, 200.0, 0.0, 10.0, 2.0), ())
+
+        whole = star_dots(0.0, 200.0, 200.0, 10.0, 2.0)
+        self.assertEqual(len(whole), EFFORT_STAR_COUNT)
+        for x, y, radius, alpha in whole:
+            with self.subTest(x=x):
+                self.assertGreaterEqual(x, 0.0)
+                self.assertLess(x, 200.0)
+                self.assertLessEqual(abs(y - 10.0), 2.0)
+                self.assertGreaterEqual(radius, 1.0)
+                self.assertTrue(0 <= alpha <= 255)
+
+        # 填色只到一半时少画一半：留下的星点位置和整条轨道时完全一致，不整体挪位。
+        half = star_dots(0.0, 200.0, 100.0, 10.0, 2.0)
+        self.assertEqual(
+            [dot[0] for dot in half], [dot[0] for dot in whole if dot[0] < 100.0]
+        )
+
+    def test_starfield_is_painted_inside_the_track_and_grows_with_the_level(self):
+        lowest = self._star_columns(0)
+        highest = self._star_columns(4)
+
+        self.assertTrue(highest)
+        self.assertLess(len(lowest), len(highest))
+
+    def test_star_map_is_fixed_by_seed(self):
+        self.assertEqual(len(EFFORT_STARS), EFFORT_STAR_COUNT)
+        self.assertEqual(EFFORT_STARS, effort_stars())
+        for ratio, drift, radius, alpha in EFFORT_STARS:
+            with self.subTest(ratio=ratio):
+                self.assertGreaterEqual(ratio, 0.0)
+                self.assertLessEqual(ratio, 1.0)
+                self.assertLessEqual(abs(drift), 1.0)
+                self.assertGreater(radius, 0.0)
+                self.assertTrue(0 <= alpha <= 255)
 
     def test_level_colors_increase_monotonically_towards_cyan(self):
         def channels(value: str) -> tuple[int, int, int]:

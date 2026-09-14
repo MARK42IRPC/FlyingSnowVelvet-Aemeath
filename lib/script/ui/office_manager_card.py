@@ -30,7 +30,7 @@ from PyQt5.QtWidgets import (
 from config.scale import scale_px
 from lib.core.logger import get_logger
 from lib.core.qt_bridge.font import get_ui_font
-from lib.script.ui.workbench_settings_layout import SettingsSection
+from lib.script.ui.workbench_settings_layout import SETTINGS_FONT_SIZE, SettingsSection
 
 logger = get_logger(__name__)
 
@@ -120,7 +120,8 @@ class OfficeManagerCard(SettingsSection):
     def _build_list(self) -> None:
         self._list = QListWidget(self)
         self._list.setObjectName("OfficeManagerList")
-        self._list.setFont(get_ui_font(size=scale_px(12, min_abs=10)))
+        # 行高由这份字体度量算出（`rows_height()`），跟办公面其余正文同档。
+        self._list.setFont(get_ui_font(size=SETTINGS_FONT_SIZE))
         self._list.setWordWrap(False)
         self._list.setTextElideMode(Qt.ElideRight)
         self._list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)

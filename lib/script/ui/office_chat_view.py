@@ -19,6 +19,7 @@ from PyQt5.QtWidgets import (
 from config.scale import scale_px
 from lib.core.qt_bridge.font import get_ui_font
 from lib.script.ui.office_style import OFFICE_BUBBLE_PAD_H
+from lib.script.ui.workbench_settings_layout import SETTINGS_FONT_SIZE
 from lib.script.workbench.theme import get_workbench_colors
 
 _SENDER_LABELS = {"user": "你", "assistant": "助手", "system": "系统"}
@@ -315,7 +316,8 @@ class OfficeConversationView(QScrollArea):
 
         text_label = QLabel(bubble)
         text_label.setObjectName("OfficeChatBubbleText")
-        text_label.setFont(get_ui_font(size=scale_px(12, min_abs=11)))
+        # 气泡正文与办公页正文同档，不再单独用小一号的字。
+        text_label.setFont(get_ui_font(size=SETTINGS_FONT_SIZE))
         text_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         text_label.setTextFormat(Qt.RichText)
         text_label.setWordWrap(True)

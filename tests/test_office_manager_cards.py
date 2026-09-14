@@ -25,12 +25,14 @@ os.environ.setdefault(
 os.environ.setdefault("QT_PLUGIN_PATH", os.path.join(_QT_ROOT, "Qt5", "plugins"))
 
 from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QFontMetrics
 from PyQt5.QtWidgets import QApplication, QMessageBox
 
 from config.scale import scale_px
 from lib.script.office import plugins as office_plugins
 from lib.script.office import skills as office_skills
 from lib.script.ui.office_manager_card import VISIBLE_ROWS, OfficeManagerCard
+from lib.script.ui.workbench_settings_layout import SETTINGS_FONT_SIZE
 
 
 class _Entry:
@@ -119,6 +121,17 @@ class OfficeManagerCardTests(unittest.TestCase):
         tall = self._card([_Entry(f"skill-{index}") for index in range(12)])
 
         self.assertEqual(short.list_widget().height(), tall.list_widget().height())
+
+    def test_card_rows_use_workbench_settings_font_size(self):
+        card = self._card([_Entry("skill")])
+        widget = card.list_widget()
+
+        # 卡片列表字号跟工作台设置页同档，行高由这份字号算出来。
+        self.assertEqual(widget.font().pixelSize(), SETTINGS_FONT_SIZE)
+        self.assertEqual(
+            card._row_height(),
+            QFontMetrics(widget.font()).lineSpacing() + scale_px(14, min_abs=12),
+        )
 
     def test_delete_button_tracks_selection_and_blocks_bundled_entries(self):
         bundled = _Entry("fsv-bundled", bundled=True)
