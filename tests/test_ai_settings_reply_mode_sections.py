@@ -14,11 +14,12 @@ os.environ.setdefault(
 )
 os.environ.setdefault("QT_PLUGIN_PATH", os.path.join(_QT_ROOT, "Qt5", "plugins"))
 
-from PyQt5.QtWidgets import QApplication, QComboBox
+from PyQt5.QtWidgets import QApplication, QComboBox, QFormLayout, QFrame, QLabel, QScrollArea, QVBoxLayout
 
 from lib.core.event.center import EventType
 from lib.script.ui import ai_settings_panel as panel_module
 from lib.script.ui.ai_settings_panel import AISettingsPanel
+from lib.script.ui.workbench_settings_layout import SETTINGS_LABEL_WIDTH
 from lib.script.gsvmove.package_manager import VoicePackageStatus
 from lib.script.workbench.theme import get_workbench_colors, workbench_stylesheet
 
@@ -178,6 +179,63 @@ class AISettingsReplyModeSectionsTests(unittest.TestCase):
             group.sizeHint().height() + section.body_layout.spacing(),
             delta=2,
         )
+
+    def test_office_warmup_row_shares_the_office_field_column(self):
+        """「启动时预热」独占一张表单，标签列必须与办公分区其它行同宽，否则会左移一列。"""
+        field = self.panel._office_warmup_on_startup
+        row, role = self.panel._office_tail_form.getWidgetPosition(field)
+        self.assertEqual(role, QFormLayout.FieldRole)
+        label_item = self.panel._office_tail_form.itemAt(row, QFormLayout.LabelRole)
+        self.assertIsNotNone(label_item, "空标签行不占标签列，会把字段挤到分区最左侧")
+        label = label_item.widget()
+        self.assertIsInstance(label, QLabel)
+        self.assertEqual(label.text(), "")
+        self.assertEqual(label.minimumWidth(), SETTINGS_LABEL_WIDTH)
+        self.assertEqual(label.maximumWidth(), SETTINGS_LABEL_WIDTH)
+
+        class ImmediateHub:
+            """页面构建的异步探测就地跑完，避免占用共享的后台线程池。"""
+
+            @staticmethod
+            def submit_interactive_io(func):
+                future = Future()
+                try:
+                    func()
+                except Exception as exc:
+                    future.set_exception(exc)
+                else:
+                    future.set_result(None)
+                return future
+
+        with patch.object(panel_module, "get_compute_hub", return_value=ImmediateHub()):
+            host = QFrame()
+            host.setObjectName("WorkbenchPageHost")
+            host.setStyleSheet(workbench_stylesheet())
+            host_layout = QVBoxLayout(host)
+            host_layout.addWidget(self.panel.create_workbench_page("ai"))
+            host.resize(1010, 760)
+            host.show()
+            self.addCleanup(host.close)
+            self.addCleanup(host.deleteLater)
+            scroll = host.findChild(QScrollArea)
+            self.assertIsNotNone(scroll)
+            scroll.widget().setFixedWidth(1000)
+            self.app.processEvents()
+
+            section = self.panel._office_mode_section
+            for expanded in (False, True):
+                with self.subTest(expanded=expanded):
+                    self.panel._office_use_independent_api.setChecked(expanded)
+                    self.app.processEvents()
+                    section.body_layout.invalidate()
+                    section.body_layout.activate()
+                    self.app.processEvents()
+                    reference = self.panel._office_use_independent_api.mapTo(
+                        section, PyQt5.QtCore.QPoint(0, 0)
+                    ).x()
+                    warmup = field.mapTo(section, PyQt5.QtCore.QPoint(0, 0)).x()
+                    self.assertGreater(reference, 0)
+                    self.assertEqual(warmup, reference, "「启动时预热」必须和办公分区其它字段同列")
 
     def test_auto_companion_interval_slider_uses_minute_limits(self):
         field = self.panel._auto_companion_interval_minutes

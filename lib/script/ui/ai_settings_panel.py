@@ -2223,7 +2223,10 @@ class AISettingsPanel(QWidget):
         self._office_mode_section.body_layout.addLayout(tail_form)
 
         self._office_warmup_on_startup = QCheckBox("启动时预热")
-        tail_form.addRow("", self._office_warmup_on_startup)
+        # 这一行单独在一张表单里，而 QFormLayout 的标签列宽度取自表内最长标签：
+        # 整张表都没有标签时标签列塌成 0，「启动时预热」会比上面的复选框左移一个标签列。
+        # 显式给一个同宽的空白标签，让它落在和其他设置行相同的字段列上。
+        tail_form.addRow(QLabel("", tail_form.parentWidget()), self._office_warmup_on_startup)
         self._set_form_row_description(
             tail_form,
             self._office_warmup_on_startup,
