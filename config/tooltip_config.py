@@ -55,6 +55,7 @@ TOOLTIPS: dict[str, str] = {
     'tray_ai_settings':         '打开控制面板（含 AI 设置）',
     'tray_announcement':        '打开桌宠公告',
     'tray_forum':               '打开雪绒论坛：三列留言卡片、滚动加载更早留言、可发帖',
+    'tray_office':              '打开办公页面：新建办公任务、查看对话、推理与工具记录',
     'tray_game_mode':           '切换游戏模式：暂停粒子/特效/物理/层级刷新，并将桌宠帧率降至 30fps',
     'tray_clickthrough':        '切换鼠标穿透模式',
     'tray_restore_clickthrough':'关闭鼠标穿透模式，恢复正常交互',

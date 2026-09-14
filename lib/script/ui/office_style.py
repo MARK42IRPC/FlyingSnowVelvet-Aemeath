@@ -68,24 +68,41 @@ def _office_effort_rules(mode: str | None = None) -> str:
     )
 
 
-def office_stylesheet(mode: str | None = None) -> str:
+def office_stylesheet(
+    mode: str | None = None,
+    *,
+    page_name: str = "OfficeWorkbenchPage",
+    standalone: bool = False,
+) -> str:
+    """办公页样式表。
+
+    `standalone=True` 用于独立窗口：窗口是自绘外壳、没有宿主替它画底，必须自己铺
+    `canvas` 画布底与描边；离屏渲染实测不带这条时根背景 alpha=0，页头文字与卡片留白
+    会直接透出桌面。内嵌到工作台或设置面板时保持透明，由宿主提供表面。
+    """
     c = get_workbench_colors(mode)
+    page_selector = f"QWidget#{page_name}"
     effort_rules = _office_effort_rules(mode)
     font_family = get_ui_font_family().replace("'", "\\'")
     border = scale_px(1, min_abs=1)
+    page_surface = (
+        f"background: {c.canvas}; border: {border}px solid {c.border_strong};"
+        if standalone
+        else "background: transparent;"
+    )
     radius = scale_px(4, min_abs=3)
     control_height = scale_px(34, min_abs=30)
     compact_height = scale_px(31, min_abs=27)
     horizontal_padding = scale_px(11, min_abs=9)
     return f"""
-        QWidget#OfficeWorkbenchPage, QDialog#OfficeApprovalDialog {{
+        {page_selector}, QDialog#OfficeApprovalDialog {{
             color: {c.text};
             font-family: '{font_family}';
         }}
-        QWidget#OfficeWorkbenchPage * , QDialog#OfficeApprovalDialog * {{
+        {page_selector} * , QDialog#OfficeApprovalDialog * {{
             font-family: '{font_family}';
         }}
-        QWidget#OfficeWorkbenchPage {{ background: transparent; }}
+        {page_selector} {{ {page_surface} }}
         QDialog#OfficeApprovalDialog {{
             background: {c.canvas};
             color: {c.text};
@@ -131,23 +148,23 @@ def office_stylesheet(mode: str | None = None) -> str:
         QFrame#OfficeAccentCyan {{ background: {c.cyan}; border: none; }}
         QFrame#OfficeAccentPink {{ background: {c.pink}; border: none; }}
 
-        QWidget#OfficeWorkbenchPage QFrame#SettingsPageHeader {{
+        {page_selector} QFrame#SettingsPageHeader {{
             background: transparent;
             border: none;
         }}
-        QWidget#OfficeWorkbenchPage QLabel#SettingsPageTitle {{
+        {page_selector} QLabel#SettingsPageTitle {{
             color: {c.text};
             font-weight: 700;
         }}
-        QWidget#OfficeWorkbenchPage QLabel#SettingsPageDescription {{
+        {page_selector} QLabel#SettingsPageDescription {{
             color: {c.text_muted};
         }}
-        QWidget#OfficeWorkbenchPage QFrame#SettingsSection {{
+        {page_selector} QFrame#SettingsSection {{
             background: {c.surface};
             border: {border}px solid {c.border};
             border-radius: {radius}px;
         }}
-        QWidget#OfficeWorkbenchPage QLabel#SettingsSectionTitle {{
+        {page_selector} QLabel#SettingsSectionTitle {{
             color: {c.text};
             font-weight: 700;
         }}
@@ -195,7 +212,7 @@ def office_stylesheet(mode: str | None = None) -> str:
             border-color: {c.danger};
         }}
 
-        QWidget#OfficeWorkbenchPage QPushButton,
+        {page_selector} QPushButton,
         QDialog#OfficeApprovalDialog QPushButton {{
             min-height: {control_height}px;
             padding: 0px {horizontal_padding}px;
@@ -205,44 +222,44 @@ def office_stylesheet(mode: str | None = None) -> str:
             border-radius: {radius}px;
             font-weight: 600;
         }}
-        QWidget#OfficeWorkbenchPage QPushButton:hover,
+        {page_selector} QPushButton:hover,
         QDialog#OfficeApprovalDialog QPushButton:hover {{
             background: {c.surface_hover};
             border-color: {c.cyan};
         }}
-        QWidget#OfficeWorkbenchPage QPushButton:pressed,
+        {page_selector} QPushButton:pressed,
         QDialog#OfficeApprovalDialog QPushButton:pressed {{
             border-color: {c.pink};
         }}
-        QWidget#OfficeWorkbenchPage QPushButton:disabled,
+        {page_selector} QPushButton:disabled,
         QDialog#OfficeApprovalDialog QPushButton:disabled {{
             color: {c.text_dim};
             background: {c.surface};
             border-color: {c.border};
         }}
-        QWidget#OfficeWorkbenchPage QPushButton#OfficeModeSegment {{
+        {page_selector} QPushButton#OfficeModeSegment {{
             min-height: {compact_height}px;
             padding: 0px {scale_px(9, min_abs=7)}px;
             background: {c.surface};
             color: {c.text_muted};
         }}
-        QWidget#OfficeWorkbenchPage QPushButton#OfficeModeSegment[officeMode="companion"]:checked {{
+        {page_selector} QPushButton#OfficeModeSegment[officeMode="companion"]:checked {{
             background: {c.cyan};
             color: {c.canvas};
             border-color: {c.cyan};
         }}
-        QWidget#OfficeWorkbenchPage QPushButton#OfficeModeSegment[officeMode="office"]:checked {{
+        {page_selector} QPushButton#OfficeModeSegment[officeMode="office"]:checked {{
             background: {c.pink};
             color: {c.canvas};
             border-color: {c.pink};
         }}
-        QWidget#OfficeWorkbenchPage QPushButton#OfficeSubmitButton {{
+        {page_selector} QPushButton#OfficeSubmitButton {{
             min-width: {scale_px(112, min_abs=100)}px;
             background: {c.cyan};
             color: {c.canvas};
             border-color: {c.cyan};
         }}
-        QWidget#OfficeWorkbenchPage QPushButton#OfficeSubmitButton:hover {{
+        {page_selector} QPushButton#OfficeSubmitButton:hover {{
             background: {c.pink_hover};
             color: {c.canvas};
             border-color: {c.pink_hover};
@@ -273,7 +290,7 @@ def office_stylesheet(mode: str | None = None) -> str:
             border-color: {c.danger};
         }}
 
-        QWidget#OfficeWorkbenchPage QToolButton {{
+        {page_selector} QToolButton {{
             min-height: {compact_height}px;
             padding: 0px {scale_px(8, min_abs=6)}px;
             color: {c.text};
@@ -281,23 +298,24 @@ def office_stylesheet(mode: str | None = None) -> str:
             border: {border}px solid {c.border};
             border-radius: {radius}px;
         }}
-        QWidget#OfficeWorkbenchPage QToolButton#OfficeNewTaskButton:hover,
-        QWidget#OfficeWorkbenchPage QToolButton#OfficeBrowseButton:hover {{
+        {page_selector} QToolButton#OfficeNewTaskButton:hover,
+        {page_selector} QToolButton#OfficeBrowseButton:hover {{
             background: {c.surface_hover};
             border-color: {c.cyan};
         }}
-        QWidget#OfficeWorkbenchPage QToolButton#OfficeDeleteTaskButton:hover,
-        QWidget#OfficeWorkbenchPage QToolButton#OfficeCancelButton:hover {{
+        {page_selector} QToolButton#OfficeDeleteTaskButton:hover,
+        {page_selector} QToolButton#OfficeCancelButton:hover {{
             background: {c.surface_hover};
             color: {c.danger};
             border-color: {c.danger};
         }}
-        QWidget#OfficeWorkbenchPage QToolButton:disabled {{
+        {page_selector} QToolButton:disabled {{
             color: {c.text_dim};
             background: {c.surface};
         }}
 
         QListWidget#OfficeTaskHistory, QListWidget#OfficeTodoList,
+        QListWidget#OfficeManagerList,
         QPlainTextEdit#OfficeReasoning,
         QPlainTextEdit#OfficeEvents, QPlainTextEdit#OfficePrompt,
         QPlainTextEdit#OfficeApprovalCommand, QLineEdit#OfficeWorkspace {{
@@ -314,13 +332,13 @@ def office_stylesheet(mode: str | None = None) -> str:
             padding: {scale_px(7, min_abs=5)}px;
         }}
         QPlainTextEdit#OfficePrompt:focus, QLineEdit#OfficeWorkspace:focus {{ border-color: {c.cyan}; }}
-        QWidget#OfficeWorkbenchPage QLineEdit {{ min-height: {control_height}px; }}
+        {page_selector} QLineEdit {{ min-height: {control_height}px; }}
 
         QLabel#OfficeEffortLevel {{
             color: {c.text_muted};
             font-weight: 600;
         }}
-        QWidget#OfficeWorkbenchPage QSlider#OfficeEffortSlider {{
+        {page_selector} QSlider#OfficeEffortSlider {{
             min-height: {scale_px(26, min_abs=24)}px;
         }}
         QSlider#OfficeEffortSlider::groove:horizontal {{
@@ -363,6 +381,32 @@ def office_stylesheet(mode: str | None = None) -> str:
             padding: {scale_px(7, min_abs=5)}px;
             border-bottom: {border}px solid {c.border};
         }}
+        QListWidget#OfficeManagerList {{ outline: none; }}
+        QListWidget#OfficeManagerList::item {{
+            padding: 0px {scale_px(9, min_abs=7)}px;
+            border-radius: {radius}px;
+        }}
+        QListWidget#OfficeManagerList::item:hover {{ background: {c.surface_hover}; }}
+        QListWidget#OfficeManagerList::item:selected {{
+            background: {c.surface_hover};
+            color: {c.pink};
+        }}
+        {page_selector} QPushButton#SettingsPrimaryAction,
+        {page_selector} QPushButton[primary="true"] {{
+            background: {c.cyan};
+            color: {c.canvas};
+            border-color: {c.cyan};
+        }}
+        {page_selector} QPushButton#SettingsPrimaryAction:hover,
+        {page_selector} QPushButton[primary="true"]:hover {{
+            background: {c.pink_hover};
+            color: {c.canvas};
+            border-color: {c.pink_hover};
+        }}
+        {page_selector} QLabel#OfficeConfigHint,
+        {page_selector} QLabel#OfficeManagerHint {{ color: {c.text_muted}; }}
+        {page_selector} QLabel#OfficeConfigHint[tone="error"],
+        {page_selector} QLabel#OfficeManagerHint[tone="error"] {{ color: {c.danger}; }}
         QTabWidget#OfficeTaskTabs::pane {{
             border: {border}px solid {c.border};
             background: {c.canvas};
@@ -462,20 +506,20 @@ def office_stylesheet(mode: str | None = None) -> str:
             font-family: 'Consolas', '{font_family}';
         }}
 
-        QWidget#OfficeWorkbenchPage QMenu {{
+        {page_selector} QMenu {{
             background: {c.surface_raised};
             color: {c.text};
             border: {border}px solid {c.border};
             border-radius: {radius}px;
             padding: {scale_px(3, min_abs=2)}px 0px;
         }}
-        QWidget#OfficeWorkbenchPage QMenu::item {{
+        {page_selector} QMenu::item {{
             padding: {scale_px(5, min_abs=4)}px {scale_px(18, min_abs=12)}px;
         }}
-        QWidget#OfficeWorkbenchPage QMenu::item:selected {{
+        {page_selector} QMenu::item:selected {{
             background: {c.surface_hover};
         }}
-        QWidget#OfficeWorkbenchPage QMenu::item:disabled {{
+        {page_selector} QMenu::item:disabled {{
             color: {c.text_dim};
         }}
 

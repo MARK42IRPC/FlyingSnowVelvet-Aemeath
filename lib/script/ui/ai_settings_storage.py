@@ -81,6 +81,33 @@ def save_ai_values(values: dict, default_values: dict) -> None:
     save_section("ai", ordinary_values, setting_defaults)
 
 
+#: 办公模式相关字段；办公页面只改这几个键，其余字段沿用落盘值。
+OFFICE_VALUE_KEYS = (
+    "office_backend",
+    "office_use_independent_api",
+    "office_api_key",
+    "office_api_base_url",
+    "office_api_model",
+    "office_warmup_on_startup",
+)
+
+
+def save_office_values(values: dict, default_values: dict) -> dict:
+    """只把办公模式相关字段写回配置，其余字段保持当前落盘值。
+
+    办公配置从 AI 设置面板搬到办公页面后，办公页面不能拿整份 AI 表单去保存，
+    否则会把用户没在办公页面上看过的字段一起覆盖掉。这里先读全量、覆盖办公字段、
+    再走原有的保存与热重载路径，返回合并后的完整值供调用方复用。
+    """
+    merged = load_ai_values(default_values)
+    for key in OFFICE_VALUE_KEYS:
+        if key in values:
+            merged[key] = values[key]
+    save_ai_values(merged, default_values)
+    apply_ai_runtime(merged, default_values)
+    return merged
+
+
 def apply_ai_runtime(values: dict, default_values: dict) -> None:
     import config.ollama_config as oc
 

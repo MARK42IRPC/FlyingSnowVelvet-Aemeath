@@ -61,6 +61,13 @@ def hide_all_runtime_ui() -> None:
     except Exception as exc:
         logger.debug('[ui.shutdown] hide failed for forum window: %s', exc)
 
+    try:
+        from lib.script.ui.office_page import get_office_window
+
+        _safe_flush_hide_and_close(get_office_window())
+    except Exception as exc:
+        logger.debug('[ui.shutdown] hide failed for office window: %s', exc)
+
 
 def cleanup_all_runtime_ui() -> None:
     """释放全局 UI 单例资源。"""
@@ -94,3 +101,10 @@ def cleanup_all_runtime_ui() -> None:
         cleanup_forum_window()
     except Exception as exc:
         logger.debug('[ui.shutdown] cleanup failed for forum window: %s', exc)
+
+    try:
+        from lib.script.ui.office_page import cleanup_office_window
+
+        cleanup_office_window()
+    except Exception as exc:
+        logger.debug('[ui.shutdown] cleanup failed for office window: %s', exc)

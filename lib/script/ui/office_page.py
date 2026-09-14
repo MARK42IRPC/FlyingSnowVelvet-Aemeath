@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 from PyQt5.QtCore import QSignalBlocker, QSize, Qt, QTimer
+from PyQt5.QtGui import QCursor
 from PyQt5.QtWidgets import (
     QButtonGroup,
     QApplication,
@@ -21,8 +22,10 @@ from PyQt5.QtWidgets import (
     QMenu,
     QPlainTextEdit,
     QPushButton,
+    QSizeGrip,
     QSizePolicy,
     QSplitter,
+    QStyle,
     QTabWidget,
     QToolButton,
     QVBoxLayout,
@@ -30,6 +33,7 @@ from PyQt5.QtWidgets import (
 )
 
 from config.scale import scale_px
+from lib.core.event.center import EventType, get_event_center
 from lib.core.logger import get_logger
 from lib.core.qt_bridge.font import get_ui_font
 from lib.core.qt_bridge.workbench_page import QtWorkbenchToolPage
@@ -46,6 +50,7 @@ from lib.script.ui.office_icons import (
     office_submit_icon,
 )
 from lib.script.ui.office_style import office_stylesheet
+from lib.script.ui.workbench_components import create_window_button
 from lib.script.ui.workbench_settings_layout import SettingsPageHeader, SettingsSection
 from lib.script.workbench.theme import get_workbench_colors
 
@@ -82,6 +87,11 @@ def _display_time(value: object) -> str:
         return text[:16]
 
 
+#: 独立办公页面的默认尺寸；任务列表与对话区并排也能放下。
+DEFAULT_WINDOW_WIDTH = scale_px(1120, min_abs=1000)
+DEFAULT_WINDOW_HEIGHT = scale_px(760, min_abs=680)
+
+
 class OfficeWorkbenchPage(QtWorkbenchToolPage):
     POLL_INTERVAL_MS = 250
 
@@ -93,7 +103,13 @@ class OfficeWorkbenchPage(QtWorkbenchToolPage):
     ) -> None:
         super().__init__(embedded=embedded)
         self.setObjectName("OfficeWorkbenchPage")
+        self.setWindowTitle("办公页面")
         self.setMinimumSize(scale_px(720, min_abs=660), scale_px(520, min_abs=470))
+        if not self._embedded:
+            # 独立办公页面：普通窗口 + 无边框，优先级与雪绒论坛窗口一致（不置顶、不进 LayerManager）。
+            self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint)
+            self.setAttribute(Qt.WA_StyledBackground, True)
+            self.resize(DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT)
 
         self._ipc = ipc or OfficeFileIpc()
         self._state: dict = {}
@@ -108,9 +124,70 @@ class OfficeWorkbenchPage(QtWorkbenchToolPage):
         self._apply_theme()
         self.set_embedded_mode(embedded)
 
+        # 独立窗口不经过工作台的主题刷新链路，自己订阅配置事件跟随明暗主题。
+        self._theme_subscribed = False
+        if not self._embedded:
+            self._event_center = get_event_center()
+            self._event_center.subscribe(EventType.CONFIG_UPDATED, self._on_config_updated)
+            self._theme_subscribed = True
+
+        self._size_grip = QSizeGrip(self)
+        self._size_grip.setFixedSize(scale_px(18, min_abs=15), scale_px(18, min_abs=15))
+        self._size_grip.raise_()
+        self._size_grip.setVisible(not self._embedded)
+
         self._poll_timer = QTimer(self)
         self._poll_timer.setInterval(self.POLL_INTERVAL_MS)
         self._poll_timer.timeout.connect(self._poll_state)
+
+    def _build_close_button(self) -> QWidget:
+        """独立窗口的关闭按钮；内嵌到工作台时由工作台自己管关闭。"""
+        self.set_drag_handle(self._page_header)
+        return create_window_button(
+            self._page_header,
+            QStyle.SP_TitleBarCloseButton,
+            "关闭办公页面",
+            self.fade_out,
+            danger=True,
+        )
+
+    def show_centered(self) -> None:
+        """把独立窗口摆到鼠标所在屏幕的中间。"""
+        screen = QApplication.screenAt(QCursor.pos()) or QApplication.primaryScreen()
+        geometry = screen.availableGeometry() if screen is not None else self.geometry()
+        x = geometry.x() + (geometry.width() - self.width()) // 2
+        y = geometry.y() + (geometry.height() - self.height()) // 2
+        self.move(max(geometry.left(), x), max(geometry.top(), y))
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        grip = getattr(self, "_size_grip", None)
+        if grip is not None and grip.isVisible():
+            grip.move(self.width() - grip.width(), self.height() - grip.height())
+            grip.raise_()
+
+    def cleanup(self) -> None:
+        """释放页面占用：停掉轮询计时器、退订配置事件，独立窗口再随 deleteLater 销毁。"""
+        self._poll_timer.stop()
+        self._unsubscribe_theme()
+
+    def _unsubscribe_theme(self) -> None:
+        """退订配置事件；重复 cleanup 不重复退订。"""
+        event_center = getattr(self, "_event_center", None)
+        if event_center is None or not getattr(self, "_theme_subscribed", False):
+            return
+        self._theme_subscribed = False
+        try:
+            event_center.unsubscribe(EventType.CONFIG_UPDATED, self._on_config_updated)
+        except Exception as exc:
+            logger.debug('[office] 退订配置事件失败: %s', exc)
+
+    def _on_config_updated(self, _event) -> None:
+        """配置更新后重刷样式：独立窗口没有工作台那层热重载。"""
+        try:
+            self._apply_theme()
+        except Exception as exc:
+            logger.debug('[office] 主题刷新失败: %s', exc)
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
@@ -127,7 +204,13 @@ class OfficeWorkbenchPage(QtWorkbenchToolPage):
             "创建并跟踪桌面办公任务，查看执行详情与工具记录。",
             self,
         )
-        root.addWidget(self._page_header)
+        header_row = QHBoxLayout()
+        header_row.setContentsMargins(0, 0, 0, 0)
+        header_row.setSpacing(scale_px(8, min_abs=6))
+        header_row.addWidget(self._page_header, 1)
+        if not self._embedded:
+            header_row.addWidget(self._build_close_button(), 0, Qt.AlignTop)
+        root.addLayout(header_row)
 
         splitter = QSplitter(Qt.Horizontal, self)
         splitter.setObjectName("OfficeMainSplitter")
@@ -678,7 +761,7 @@ class OfficeWorkbenchPage(QtWorkbenchToolPage):
         self._delete_task_button.setEnabled(False)
 
     def _apply_theme(self) -> None:
-        self.setStyleSheet(office_stylesheet())
+        self.setStyleSheet(office_stylesheet(standalone=not self._embedded))
         self._conversation_view.refresh()
         self._refresh_office_icons()
 
@@ -695,3 +778,34 @@ class OfficeWorkbenchPage(QtWorkbenchToolPage):
         self._cancel_button.setIcon(office_cancel_icon(icon_color))
         self._cancel_button.setIconSize(icon_size)
         self._submit_button.setIcon(office_submit_icon(colors.canvas))
+
+
+_instance: OfficeWorkbenchPage | None = None
+
+
+def get_office_window() -> OfficeWorkbenchPage | None:
+    """当前独立办公页面；没有打开过时返回 None。"""
+    return _instance
+
+
+def open_office_window() -> OfficeWorkbenchPage:
+    """打开（或复用）独立办公页面，并拉一次最新任务状态。"""
+    global _instance
+    window = _instance
+    if window is None:
+        window = OfficeWorkbenchPage()
+        _instance = window
+    window.show_centered()
+    window.fade_in()
+    window.refresh_workbench_page()
+    return window
+
+
+def cleanup_office_window() -> None:
+    """关闭并释放独立办公页面。"""
+    global _instance
+    window, _instance = _instance, None
+    if window is None:
+        return
+    window.cleanup()
+    window.deleteLater()

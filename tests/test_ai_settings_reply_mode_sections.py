@@ -18,6 +18,7 @@ from PyQt5.QtWidgets import QApplication, QComboBox, QFormLayout, QFrame, QLabel
 
 from lib.core.event.center import EventType
 from lib.script.ui import ai_settings_panel as panel_module
+from lib.script.ui import office_mode_settings as office_settings_module
 from lib.script.ui.ai_settings_panel import AISettingsPanel
 from lib.script.ui.workbench_settings_layout import SETTINGS_LABEL_WIDTH
 from lib.script.gsvmove.package_manager import VoicePackageStatus
@@ -484,7 +485,8 @@ class AISettingsReplyModeSectionsTests(unittest.TestCase):
         response.json.return_value = {
             "data": [{"id": "qwen3"}, {"id": "gpt-5"}, {"id": "qwen3"}, {}],
         }
-        with patch.object(panel_module.requests, "get", return_value=response) as request:
+        # HTTP 探测搬到 office_mode_settings 之后，面板只做转发，补丁要打在真正发请求的模块上。
+        with patch.object(office_settings_module.requests, "get", return_value=response) as request:
             models = AISettingsPanel._probe_manual_api_models("api.example.com/v1", "secret-key")
 
         self.assertEqual(models, ["gpt-5", "qwen3"])

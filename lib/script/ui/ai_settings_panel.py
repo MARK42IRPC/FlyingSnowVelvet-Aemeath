@@ -17,8 +17,6 @@ import webbrowser
 from pathlib import Path
 from typing import Callable
 
-import requests
-
 from PyQt5.QtCore import Qt, QPoint, QSize, QPropertyAnimation, QEasingCurve, QTimer, pyqtSignal
 from PyQt5.QtWidgets import (
     QWidget,
@@ -39,7 +37,7 @@ from PyQt5.QtWidgets import (
     QSlider,
     QMenu,
 )
-from PyQt5.QtGui import QPainter, QCursor, QPixmap
+from PyQt5.QtGui import QPainter, QPixmap
 
 from config.config import ANIMATION, UI
 from lib.core.graphics.settings_panel_visuals import build_ai_settings_panel_visual
@@ -57,6 +55,7 @@ from config.ollama_config import (
 from config.scale import scale_px
 from lib.script.ui.ai_settings_validators import validate_ai_values
 from lib.script.ui.ai_settings_storage import load_ai_values, save_ai_values, apply_ai_runtime
+from lib.script.ui.ai_settings_defaults import AI_DEFAULT_VALUES as _DEFAULT_VALUES
 from lib.script.ui.announcement_dialog import (
     load_announcement_preferences,
     set_announcement_forever_suppressed,
@@ -85,7 +84,6 @@ from lib.script.SEanima.clip import (
 )
 from lib.script.SEanima.decoder import playback_duration_seconds, scan_animation_frame_files
 from lib.script.chat.ollama_registry import get_available_model_names, get_model_list_error
-from lib.script.chat.network_policy import API_TIMEOUT_SECS
 from lib.script.chat.persona_storage import ensure_user_persona_file
 from lib.script.microphone_stt.push_to_talk import parse_hotkey_binding
 from lib.script.ui.update_dialog import DesktopPetUpdateDialog
@@ -101,7 +99,20 @@ from lib.script.ui.workbench_settings_layout import (
     SettingsPageScaffold,
     create_settings_form,
 )
-from lib.script.workbench.theme import COLORS as WORKBENCH_COLORS, get_workbench_colors
+from lib.script.workbench.theme import get_workbench_colors
+from lib.script.ui.office_mode_settings import (
+    ApiKeyLineEdit as _ApiKeyLineEdit,
+    MANUAL_API_PROVIDER_PRESETS as _MANUAL_API_PROVIDER_PRESETS,
+    OfficeModeSettings,
+    WatermarkComboBox as _WatermarkComboBox,
+    create_field_row_group as _create_field_row_group_helper,
+    describe_form_row as _describe_form_row_helper,
+    fetch_api_models as _fetch_api_models,
+    manual_api_models_url as _manual_api_models_url,
+    normalize_api_base_url as _normalize_api_base_url,
+    parse_api_models as _parse_api_models,
+    set_widget_description as _set_widget_description_helper,
+)
 from lib.script.gsvmove import get_voice_package_status
 from lib.core.nvidia_gpu import has_nvidia_gpu
 
@@ -117,53 +128,7 @@ _EXTERNAL_CONFIG_FIELD_KINDS = {
     "external_announcement_suppression",
 }
 
-_MANUAL_API_PROVIDER_PRESETS = (
-    ("自定义地址", ""),
-    ("OpenAI", "https://api.openai.com/v1"),
-    ("DeepSeek", "https://api.deepseek.com/v1"),
-    ("Kimi", "https://api.moonshot.cn/v1"),
-    ("智谱 AI", "https://open.bigmodel.cn/api/paas/v4"),
-    ("阿里云百炼", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
-    ("硅基流动", "https://api.siliconflow.cn/v1"),
-    ("OpenRouter", "https://openrouter.ai/api/v1"),
-)
 
-_DEFAULT_VALUES = {
-    "api_key": "",
-    "force_reply_mode": "1",
-    "welfare_intelligence_boost": False,
-    "api_base_url": "",
-    "api_model": "gpt-5.4",
-    "ollama_base_url": "http://localhost:11434",
-    "ollama_model": "qwen2.5",
-    "num_gpu": -1,
-    "num_thread": 0,
-    "api_temperature": 1.35,
-    "model_vision": 0,
-    "gsv_auto_start": False,
-    "gsv_gpu_hybrid": False,
-    "gsv_nvidia_cuda_acceleration": False,
-    "gsv_temperature": 1.35,
-    "gsv_top_k": 15,
-    "gsv_top_p": 1.0,
-    "gsv_repetition_penalty": 1.6,
-    "gsv_speed_factor": 1.1,
-    "gsv_text_split_method": "cut0",
-    "gsv_fragment_interval": 0.3,
-    "gsv_seed": -1,
-    "ai_voice_max_chars": AI_VOICE_MAX_CHARS_DEFAULT,
-    "gsv_cache_max_files": 20,
-    "memory_context_limit": 12,
-    "memory_recall_count": 30,
-    "api_enable_thinking": False,
-    "auto_companion_enabled": True,
-    "auto_companion_interval_minutes": 2,
-    "office_use_independent_api": False,
-    "office_api_key": "",
-    "office_api_base_url": "",
-    "office_api_model": "gpt-5.4",
-    "office_warmup_on_startup": True,
-}
 
 _WATERMARK_TEXT = "Aemeath\nAIsetting"
 _TITLE_FONT_SIZE = scale_px(23, min_abs=17)
@@ -1374,69 +1339,6 @@ def _num_gpu_from_mode(mode: str) -> int:
     return -1
 
 
-class _WatermarkComboBox(QComboBox):
-    """Combo box with guarded refresh and workbench popup layering."""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._before_popup_callback: Callable[[], None] | None = None
-        self._popup_refreshing = False
-        self._popup_window_instance = None
-
-    def set_before_popup_callback(self, callback: Callable[[], None] | None) -> None:
-        self._before_popup_callback = callback
-
-    def _popup_window(self):
-        if self._popup_window_instance is not None:
-            return self._popup_window_instance
-        view = self.view()
-        return view.window() if view is not None else None
-
-    def _unregister_popup_layer(self) -> None:
-        popup = self._popup_window()
-        if popup is not None:
-            get_layer_manager().unregister(popup)
-
-    def showPopup(self) -> None:
-        callback = self._before_popup_callback
-        if callable(callback) and not self._popup_refreshing:
-            self._popup_refreshing = True
-            try:
-                callback()
-            finally:
-                self._popup_refreshing = False
-
-        if self.count() <= 0:
-            return
-
-        super().showPopup()
-        popup = self._popup_window()
-        if popup is not None:
-            self._popup_window_instance = popup
-            popup.setWindowFlag(Qt.WindowStaysOnTopHint, True)
-            popup.show()
-            layer_manager = get_layer_manager()
-            layer_manager.register(
-                popup,
-                _DROPDOWN_POPUP_LAYER,
-                name="AISettingsDropdownPopup",
-            )
-            layer_manager.enforce_burst()
-            popup.raise_()
-            popup.activateWindow()
-
-    def hidePopup(self) -> None:
-        self._unregister_popup_layer()
-        try:
-            super().hidePopup()
-        finally:
-            self._popup_window_instance = None
-
-    def wheelEvent(self, event) -> None:
-        # 下拉框不消费滚轮，让外层设置页面独占滚动手势。
-        event.ignore()
-
-
 class _NoWheelSlider(QSlider):
     """屏蔽滚轮事件的水平滑条，避免滚动页面时误操作。"""
 
@@ -1507,63 +1409,6 @@ class _SmoothScrollArea(QScrollArea):
         self._wheel_anim.setEndValue(target)
         self._wheel_anim.start()
         event.accept()
-
-
-class _ApiKeyLineEdit(QLineEdit):
-    """接口密钥输入框：展示时脱敏（前7后4，中间 *），编辑时显示原文。"""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._raw_text = ""
-        self._masked = True
-        self._updating = False
-        self.editingFinished.connect(self._on_editing_finished)
-
-    @staticmethod
-    def _mask_text(raw_text: str) -> str:
-        text = str(raw_text or "")
-        if len(text) <= 11:
-            return text
-        return f"{text[:7]}{'*' * (len(text) - 11)}{text[-4:]}"
-
-    def set_raw_text(self, raw_text: str) -> None:
-        self._raw_text = str(raw_text or "").strip()
-        self._apply_masked_text()
-
-    def raw_text(self) -> str:
-        if not self._masked and not self._updating:
-            self._raw_text = self.text().strip()
-        return self._raw_text
-
-    def _apply_masked_text(self) -> None:
-        self._masked = True
-        self._updating = True
-        self.setText(self._mask_text(self._raw_text))
-        self._updating = False
-
-    def _apply_plain_text(self) -> None:
-        self._masked = False
-        self._updating = True
-        self.setText(self._raw_text)
-        self._updating = False
-
-    def _on_editing_finished(self) -> None:
-        if self._updating:
-            return
-        if not self._masked:
-            self._raw_text = self.text().strip()
-        self._apply_masked_text()
-
-    def focusInEvent(self, event) -> None:
-        super().focusInEvent(event)
-        self._apply_plain_text()
-        self.selectAll()
-
-    def focusOutEvent(self, event) -> None:
-        if not self._masked and not self._updating:
-            self._raw_text = self.text().strip()
-        self._apply_masked_text()
-        super().focusOutEvent(event)
 
 
 class _DecimalSliderField(QWidget):
@@ -1823,16 +1668,10 @@ class AISettingsPanel(QWidget):
 
     @staticmethod
     def _set_widget_description(widget: QWidget | None, text: str) -> None:
-        if widget is None:
-            return
-        desc = str(text or "").strip()
-        if not desc:
-            return
-        setattr(widget, "_description", desc)
+        _set_widget_description_helper(widget, text)
 
     def _set_form_row_description(self, form: QFormLayout, field_widget: QWidget, text: str) -> None:
-        self._set_widget_description(field_widget, text)
-        self._set_widget_description(form.labelForField(field_widget), text)
+        _describe_form_row_helper(form, field_widget, text)
 
     def _invoke_ui_callable(self, func) -> None:
         if callable(func):
@@ -1846,12 +1685,7 @@ class AISettingsPanel(QWidget):
 
     @staticmethod
     def _create_field_row_group(spacing: int = 0):
-        group = QWidget()
-        group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        row = QHBoxLayout(group)
-        row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(int(spacing))
-        return group, row
+        return _create_field_row_group_helper(spacing)
 
     def _create_config_line_edit(
         self,
@@ -2129,119 +1963,27 @@ class AISettingsPanel(QWidget):
             "办公模式",
             "办公模式可以使用独立的 API 配置。",
         )
-        form = create_settings_form()
-        self._office_mode_form = form
-        self._office_mode_section.body_layout.addLayout(form)
-
-        self._office_backend = _WatermarkComboBox()
-        self._office_backend.setView(QListView(self._office_backend))
-        self._office_backend.addItem("DeepSeek Harness（推荐）", "dsh")
-        self._local_dsh_status = self._probe_local_dsh()
-        self._ensure_local_dsh_item()
-        form.addRow("办公后端", self._office_backend)
-        self._set_form_row_description(
-            form,
-            self._office_backend,
-            self._office_backend_description(),
+        self._office_settings = OfficeModeSettings(
+            parent=self._office_mode_section,
+            probe=self._probe_local_dsh,
+            info=self._emit_info,
+            dispatch=self._run_on_ui_thread,
         )
-        self._office_backend.currentIndexChanged.connect(
-            self._refresh_office_backend_description
-        )
-
-        self._office_use_independent_api = QCheckBox("办公模式独立api")
-        self._office_use_independent_api.setChecked(False)
-        form.addRow("", self._office_use_independent_api)
-        self._set_form_row_description(
-            form,
-            self._office_use_independent_api,
-            "开启后，办公模式将使用下方配置的独立 API，而不是使用手动 API 的配置。",
-        )
-
-        # 折叠块整块放进分区 body：QFormLayout 隐藏行仍占行距，会留下一条大空白
-        self._office_independent_api_group = QWidget(self._office_mode_section)
-        independent_layout = QVBoxLayout(self._office_independent_api_group)
-        independent_layout.setContentsMargins(0, 0, 0, 0)
-        independent_layout.setSpacing(0)
-        independent_form = create_settings_form()
-        self._office_independent_api_form = independent_form
-        independent_layout.addLayout(independent_form)
-        self._office_mode_section.body_layout.addWidget(self._office_independent_api_group)
-
-        self._office_api_key = _ApiKeyLineEdit()
-        independent_form.addRow("办公接口密钥", self._office_api_key)
-        self._set_form_row_description(
-            independent_form,
-            self._office_api_key,
-            "办公模式独立使用的 OpenAI 兼容接口密钥，单独保存在用户密钥文件中。",
-        )
-
-        self._office_api_provider = _WatermarkComboBox()
-        self._office_api_provider.setView(QListView(self._office_api_provider))
-        for label, base_url in _MANUAL_API_PROVIDER_PRESETS:
-            self._office_api_provider.addItem(label, base_url)
-        self._office_api_provider.currentIndexChanged.connect(self._on_office_api_provider_changed)
-        independent_form.addRow("常用提供商", self._office_api_provider)
-        self._set_form_row_description(
-            independent_form,
-            self._office_api_provider,
-            "选择后自动填入该提供商的 OpenAI 兼容接口地址；自定义地址仍可直接填写。",
-        )
-
-        self._office_api_base_url = QLineEdit()
-        self._office_api_base_url.textChanged.connect(self._sync_office_api_provider_selection)
-        self._office_api_base_url.editingFinished.connect(self._normalize_office_api_base_url_input)
-        independent_form.addRow("办公接口地址", self._office_api_base_url)
-        self._set_form_row_description(
-            independent_form,
-            self._office_api_base_url,
-            "办公模式独立使用的外部接口地址，通常填写兼容 OpenAI 的基地址。",
-        )
-
-        office_api_model_row, office_api_model_layout = self._create_field_row_group(spacing=scale_px(8, min_abs=6))
-        self._office_api_model = _WatermarkComboBox()
-        self._office_api_model.setView(QListView(self._office_api_model))
-        self._office_api_model.setEditable(True)
-        self._office_api_model.setInsertPolicy(QComboBox.NoInsert)
-        self._office_api_model.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        if self._office_api_model.lineEdit():
-            self._office_api_model.lineEdit().setPlaceholderText("输入或探测办公接口模型")
-        office_api_model_layout.addWidget(self._office_api_model, 1)
-        self._probe_office_api_models_btn = QPushButton("探测模型")
-        self._probe_office_api_models_btn.setFixedWidth(scale_px(100, min_abs=84))
-        self._probe_office_api_models_btn.clicked.connect(self._on_probe_office_api_models)
-        office_api_model_layout.addWidget(self._probe_office_api_models_btn, 0)
-        independent_form.addRow("办公接口模型", office_api_model_row)
-        self._set_form_row_description(
-            independent_form,
-            office_api_model_row,
-            "办公模式独立使用的外部接口模型名，例如 gpt-5.4。可探测 OpenAI 兼容接口的 /models 列表，也可直接手动输入。",
-        )
-        self._set_widget_description(self._probe_office_api_models_btn, "使用当前填写的办公接口地址和密钥探测可用模型列表。")
-
-        tail_form = create_settings_form()
-        self._office_tail_form = tail_form
-        self._office_mode_section.body_layout.addLayout(tail_form)
-
-        self._office_warmup_on_startup = QCheckBox("启动时预热")
-        # 这一行单独在一张表单里，而 QFormLayout 的标签列宽度取自表内最长标签：
-        # 整张表都没有标签时标签列塌成 0，「启动时预热」会比上面的复选框左移一个标签列。
-        # 显式给一个同宽的空白标签，让它落在和其他设置行相同的字段列上。
-        tail_form.addRow(QLabel("", tail_form.parentWidget()), self._office_warmup_on_startup)
-        self._set_form_row_description(
-            tail_form,
-            self._office_warmup_on_startup,
-            "启用后，桌宠启动时自动预热办公运行时，减少首次任务的等待时间。",
-        )
-
-        self._office_independent_api_rows = (
-            self._office_api_key,
-            self._office_api_provider,
-            self._office_api_base_url,
-            office_api_model_row,
-        )
-
-        self._office_use_independent_api.toggled.connect(self._update_office_mode_fields_visibility)
-        self._update_office_mode_fields_visibility()
+        self._office_settings.build_into(self._office_mode_section)
+        # 兼容旧引用点：控件树由 OfficeModeSettings 统一持有，这里只做别名，不复制行为。
+        self._office_mode_form = self._office_settings.backend_form
+        self._office_backend = self._office_settings.backend
+        self._office_use_independent_api = self._office_settings.use_independent_api
+        self._office_independent_api_group = self._office_settings.independent_api_group
+        self._office_independent_api_form = self._office_settings.independent_api_form
+        self._office_independent_api_rows = self._office_settings.independent_api_rows
+        self._office_api_key = self._office_settings.api_key
+        self._office_api_provider = self._office_settings.api_provider
+        self._office_api_base_url = self._office_settings.api_base_url
+        self._office_api_model = self._office_settings.api_model
+        self._probe_office_api_models_btn = self._office_settings.probe_button
+        self._office_tail_form = self._office_settings.tail_form
+        self._office_warmup_on_startup = self._office_settings.warmup_on_startup
 
         self._ollama_section = scaffold.add_section(
             "Ollama 配置",
@@ -5037,12 +4779,7 @@ class AISettingsPanel(QWidget):
             "api_enable_thinking": bool(self._api_enable_thinking.isChecked()),
             "auto_companion_enabled": bool(self._auto_companion_enabled.isChecked()),
             "auto_companion_interval_minutes": int(self._auto_companion_interval_minutes.value()),
-            "office_use_independent_api": bool(self._office_use_independent_api.isChecked()),
-            "office_backend": str(self._office_backend.currentData() or "dsh"),
-            "office_api_key": str(self._office_api_key.raw_text()).strip(),
-            "office_api_base_url": str(self._office_api_base_url.text()).strip(),
-            "office_api_model": str(self._office_api_model.currentText()).strip(),
-            "office_warmup_on_startup": bool(self._office_warmup_on_startup.isChecked()),
+            **self._office_settings.values(),
         }
         self._validate_ai_values(values)
         return values
@@ -5088,16 +4825,7 @@ class AISettingsPanel(QWidget):
         self._auto_companion_interval_minutes.set_value(values.get("auto_companion_interval_minutes", 2))
         self._auto_companion_interval_minutes.setEnabled(self._auto_companion_enabled.isChecked())
 
-        self._office_use_independent_api.setChecked(bool(values.get("office_use_independent_api", False)))
-        saved_backend = str(values.get("office_backend", "dsh") or "dsh")
-        self._ensure_local_dsh_item(saved_backend=saved_backend)
-        backend_index = self._office_backend.findData(saved_backend)
-        self._office_backend.setCurrentIndex(backend_index if backend_index >= 0 else 0)
-        self._office_api_key.set_raw_text(str(values.get("office_api_key", "")))
-        self._office_api_base_url.setText(str(values.get("office_api_base_url", "")))
-        self._sync_office_api_provider_selection()
-        self._office_api_model.setCurrentText(str(values.get("office_api_model", "gpt-5.4")))
-        self._office_warmup_on_startup.setChecked(bool(values.get("office_warmup_on_startup", True)))
+        self._office_settings.set_values(values)
 
         mode_value = str(values.get("force_reply_mode", "") or "").strip()
         idx = self._force_mode.findData(mode_value)
@@ -5125,13 +4853,6 @@ class AISettingsPanel(QWidget):
             return
         group.setVisible(bool(toggle.isChecked()))
 
-    def _update_office_mode_fields_visibility(self) -> None:
-        self._office_backend.setVisible(True)
-        self._office_use_independent_api.setVisible(True)
-        self._office_warmup_on_startup.setVisible(True)
-        group = getattr(self, "_office_independent_api_group", None)
-        if group is not None:
-            group.setVisible(bool(self._office_use_independent_api.isChecked()))
 
     def _probe_local_dsh(self) -> dict:
         """读取启动期探测结果，没有缓存时按需只读探测；失败不影响设置面板。"""
@@ -5149,46 +4870,13 @@ class AISettingsPanel(QWidget):
             }
 
     def _ensure_local_dsh_item(self, *, saved_backend: str | None = None) -> None:
-        """按启动期探测结果决定是否列出「本机 DeepSeek Harness」。
-
-        探测到可用安装时列在「DeepSeek Harness（推荐）」之后；没有探测到时
-        默认不显示，只有在已保存该后端的情况下才保留一个置灰条目，避免把
-        用户既有的选择静默改回内置 DSH。
-        """
-        if self._office_backend.findData("local_dsh") >= 0:
-            return
-        status = getattr(self, "_local_dsh_status", None) or {}
-        if status.get("available"):
-            self._office_backend.addItem("本机 DeepSeek Harness", "local_dsh")
-            return
-        if str(saved_backend or "") != "local_dsh":
-            return
-        self._office_backend.addItem("本机 DeepSeek Harness（未探测到）", "local_dsh")
-        item = self._office_backend.model().item(self._office_backend.findData("local_dsh"))
-        if item is not None:
-            item.setEnabled(False)
+        self._office_settings.ensure_local_dsh_item(saved_backend=saved_backend)
 
     def _office_backend_description(self) -> str:
-        backend = str(self._office_backend.currentData() or "dsh")
-        if backend != "local_dsh":
-            return "办公模式使用 DeepSeek Harness 侧车，任务、会话和权限由桌宠统一管理。"
-        status = getattr(self, "_local_dsh_status", None) or {}
-        if status.get("available"):
-            version = str(status.get("version") or "").strip()
-            source = str(status.get("source") or "").strip()
-            path = str(status.get("path") or "").strip()
-            label = f"复用本机 DeepSeek Harness {version}".strip()
-            if source:
-                label = f"{label}（{source}）"
-            return f"{label}：{path}" if path else label
-        return str(status.get("reason") or "未探测到可用的本机 DeepSeek Harness")
+        return self._office_settings.backend_description()
 
     def _refresh_office_backend_description(self, *_args) -> None:
-        form = getattr(self, "_office_mode_form", None)
-        backend = getattr(self, "_office_backend", None)
-        if form is None or backend is None:
-            return
-        self._set_form_row_description(form, backend, self._office_backend_description())
+        self._office_settings.refresh_backend_description()
 
     def _refresh_voice_package_ui(self) -> None:
         status = get_voice_package_status()
@@ -5242,45 +4930,19 @@ class AISettingsPanel(QWidget):
     @staticmethod
     def _normalize_manual_api_base_url(raw_url: str) -> str:
         """补全手动 OpenAI 兼容地址的协议，保留用户填写的路径。"""
-        text = str(raw_url or "").strip()
-        if not text:
-            return ""
-        if re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", text):
-            return text.rstrip("/")
-        if text.startswith("//"):
-            return f"https:{text}".rstrip("/")
-
-        host = text.split("/", 1)[0].lower()
-        is_local = (
-            host == "localhost"
-            or host.startswith("localhost:")
-            or host.startswith("127.")
-            or host.startswith("0.0.0.0")
-            or host.startswith("[::1]")
-            or host == "::1"
-        )
-        scheme = "http" if is_local else "https"
-        return f"{scheme}://{text}".rstrip("/")
+        return _normalize_api_base_url(raw_url)
 
     def _normalize_manual_api_base_url_input(self) -> None:
         normalized = self._normalize_manual_api_base_url(self._api_base_url.text())
         if normalized != self._api_base_url.text().strip():
             self._api_base_url.setText(normalized)
 
-    def _normalize_office_api_base_url_input(self) -> None:
-        normalized = self._normalize_manual_api_base_url(self._office_api_base_url.text())
-        if normalized != self._office_api_base_url.text().strip():
-            self._office_api_base_url.setText(normalized)
 
     def _on_manual_api_provider_changed(self, _index: int) -> None:
         base_url = str(self._manual_api_provider.currentData() or "").strip()
         if base_url:
             self._api_base_url.setText(base_url)
 
-    def _on_office_api_provider_changed(self, _index: int) -> None:
-        base_url = str(self._office_api_provider.currentData() or "").strip()
-        if base_url:
-            self._office_api_base_url.setText(base_url)
 
     def _sync_manual_api_provider_selection(self, *_args) -> None:
         current_base_url = self._normalize_manual_api_base_url(self._api_base_url.text())
@@ -5297,61 +4959,18 @@ class AISettingsPanel(QWidget):
             self._manual_api_provider.setCurrentIndex(matched_index)
             self._manual_api_provider.blockSignals(False)
 
-    def _sync_office_api_provider_selection(self, *_args) -> None:
-        current_base_url = self._normalize_manual_api_base_url(self._office_api_base_url.text())
-        matched_index = 0
-        for index in range(1, self._office_api_provider.count()):
-            preset_url = self._normalize_manual_api_base_url(
-                str(self._office_api_provider.itemData(index) or "")
-            )
-            if current_base_url and current_base_url == preset_url:
-                matched_index = index
-                break
-        if self._office_api_provider.currentIndex() != matched_index:
-            self._office_api_provider.blockSignals(True)
-            self._office_api_provider.setCurrentIndex(matched_index)
-            self._office_api_provider.blockSignals(False)
 
     @classmethod
     def _manual_api_models_url(cls, base_url: str) -> str:
-        root = cls._normalize_manual_api_base_url(base_url)
-        root = root.rstrip("/")
-        for suffix in ("/chat/completions",):
-            if root.lower().endswith(suffix):
-                root = root[:-len(suffix)].rstrip("/")
-                break
-        return f"{root}/models" if root else ""
+        return _manual_api_models_url(base_url)
 
     @staticmethod
     def _parse_manual_api_models(payload) -> list[str]:
-        data = payload.get("data") if isinstance(payload, dict) else None
-        if not isinstance(data, list):
-            raise ValueError("接口没有返回兼容的模型列表")
-        models = {
-            str(item.get("id", "")).strip()
-            for item in data
-            if isinstance(item, dict) and str(item.get("id", "")).strip()
-        }
-        return sorted(models, key=str.casefold)
+        return _parse_api_models(payload)
 
     @classmethod
     def _probe_manual_api_models(cls, base_url: str, api_key: str) -> list[str]:
-        models_url = cls._manual_api_models_url(base_url)
-        if not models_url:
-            raise ValueError("请先填写接口地址")
-        key = str(api_key or "").strip()
-        if not key:
-            raise ValueError("请先填写接口密钥")
-        response = requests.get(
-            models_url,
-            headers={"Authorization": f"Bearer {key}"},
-            timeout=API_TIMEOUT_SECS,
-        )
-        response.raise_for_status()
-        models = cls._parse_manual_api_models(response.json())
-        if not models:
-            raise ValueError("接口未返回可用模型")
-        return models
+        return _fetch_api_models(base_url, api_key)
 
     def _refresh_manual_api_model_choices(self, selected_model: str = "", models: list[str] | None = None) -> None:
         if not isinstance(self._api_model, QComboBox):
@@ -5415,67 +5034,7 @@ class AISettingsPanel(QWidget):
             self._probe_manual_api_models_btn.setText("探测模型")
             self._emit_info("模型探测正在进行，请稍候。", min_tick=10, max_tick=100)
 
-    def _on_probe_office_api_models(self) -> None:
-        base_url = self._normalize_manual_api_base_url(self._office_api_base_url.text())
-        api_key = self._office_api_key.raw_text()
-        if not base_url or not api_key:
-            self._emit_info("请先填写办公接口地址和办公接口密钥。", min_tick=10, max_tick=100)
-            return
-        self._office_api_base_url.setText(base_url)
-        selected_model = self._office_api_model.currentText().strip()
-        self._probe_office_api_models_btn.setEnabled(False)
-        self._probe_office_api_models_btn.setText("探测中...")
 
-        def worker() -> None:
-            try:
-                models = self._probe_manual_api_models(base_url, api_key)
-            except Exception as exc:
-                _logger.warning("办公 API 模型探测失败: %s", exc)
-
-                def apply_failure() -> None:
-                    self._probe_office_api_models_btn.setEnabled(True)
-                    self._probe_office_api_models_btn.setText("探测模型")
-                    self._emit_info("办公模型探测失败，请检查接口地址、密钥和服务兼容性。", min_tick=12, max_tick=140)
-
-                self._run_on_ui_thread(apply_failure)
-                return
-
-            def apply_success() -> None:
-                self._refresh_office_api_model_choices(selected_model, models)
-                self._probe_office_api_models_btn.setEnabled(True)
-                self._probe_office_api_models_btn.setText("探测模型")
-                self._emit_info(f"已探测到 {len(models)} 个办公模型。", min_tick=10, max_tick=100)
-
-            self._run_on_ui_thread(apply_success)
-
-        future = get_compute_hub().submit_latest(
-            "ai_settings_office_api_model_probe",
-            worker,
-            executor="io",
-        )
-        if future is None:
-            self._probe_office_api_models_btn.setEnabled(True)
-            self._probe_office_api_models_btn.setText("探测模型")
-            self._emit_info("办公模型探测正在进行，请稍候。", min_tick=10, max_tick=100)
-
-    def _refresh_office_api_model_choices(self, selected_model: str = "", models: list[str] | None = None) -> None:
-        if not isinstance(self._office_api_model, QComboBox):
-            return
-        selected_text = str(selected_model or "").strip()
-        choices = list(models or [])
-        self._office_api_model.blockSignals(True)
-        self._office_api_model.clear()
-        for model in choices:
-            self._office_api_model.addItem(model, model)
-        if selected_text:
-            index = self._office_api_model.findData(selected_text)
-            if index >= 0:
-                self._office_api_model.setCurrentIndex(index)
-            else:
-                self._office_api_model.setEditText(selected_text)
-        elif choices:
-            self._office_api_model.setCurrentIndex(0)
-        self._office_api_model.blockSignals(False)
 
     def _emit_info(self, text: str, min_tick: int = 12, max_tick: int = 140) -> None:
         self._ec.publish(Event(EventType.INFORMATION, {

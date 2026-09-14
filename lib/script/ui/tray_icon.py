@@ -280,6 +280,12 @@ class TrayIcon(QObject):
         forum_action.triggered.connect(self._on_forum)
         self._menu.addAction(forum_action)
 
+        office_action = QAction('办公页面', self._menu)
+        office_action.setToolTip(TOOLTIPS['tray_office'])
+        office_action.setStatusTip(TOOLTIPS['tray_office'])
+        office_action.triggered.connect(self._on_office_page)
+        self._menu.addAction(office_action)
+
         self._game_mode_action = QAction('游戏模式', self._menu)
         self._game_mode_action.setCheckable(True)
         self._set_game_mode_action_checked(self._game_mode_enabled)
@@ -509,6 +515,20 @@ class TrayIcon(QObject):
         self._game_mode_enabled = target
         self._set_game_mode_action_checked(target)
         self._emit_command(TrayCommand.TOGGLE_GAME_MODE, target)
+
+    def _on_office_page(self):
+        """打开独立办公页面（工作台式自绘外壳）。"""
+        try:
+            from lib.script.ui.office_page import open_office_window
+
+            open_office_window()
+        except Exception as exc:
+            _logger.error('打开办公页面失败: %s', exc)
+            self._event_center.publish(Event(EventType.INFORMATION, {
+                'text': f'打开办公页面失败: {exc}',
+                'min': 12,
+                'max': 120,
+            }))
 
     def _subscribe_game_mode_events(self):
         """订阅游戏模式状态事件，用于同步托盘动作。"""

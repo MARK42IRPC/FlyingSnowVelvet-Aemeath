@@ -102,8 +102,8 @@ _PAGE_PRESENTATION: dict[str, dict] = {
     "office": {
         "title": "办公模式",
         "group": "智能交互",
-        "description": "任务历史、实时执行状态、推理和权限管理",
-        "keywords": ("vibe coding", "编码", "任务", "DSH", "办公"),
+        "description": "办公后端、独立接口、技能与插件；任务界面在独立办公页面",
+        "keywords": ("vibe coding", "编码", "任务", "DSH", "办公", "技能", "插件"),
     },
     "ui_anim": {
         "title": "界面与动画",

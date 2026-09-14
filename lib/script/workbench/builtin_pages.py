@@ -20,8 +20,9 @@ def _create_game_manager_page():
 
 
 def _create_office_page():
-    module = import_module("lib.script.ui.office_page")
-    return module.OfficeWorkbenchPage(embedded=True)
+    # 工作台只放办公配置；任务界面是独立窗口（配置页按钮与托盘入口打开）。
+    module = import_module("lib.script.ui.office_mode_page")
+    return module.OfficeModePage(embedded=True)
 
 
 def builtin_tool_page_specs() -> tuple[WorkbenchPageSpec, ...]:
