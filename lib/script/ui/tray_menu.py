@@ -7,8 +7,8 @@ from PyQt5.QtWidgets import (
     QStyle,
     QStyleOptionMenuItem,
 )
-from PyQt5.QtGui import QColor, QFontMetrics, QPainter
-from PyQt5.QtCore import Qt, QSize, QRect
+from PyQt5.QtGui import QColor, QFontMetrics, QPainter, QPolygon
+from PyQt5.QtCore import QPoint, Qt, QSize, QRect
 from PyQt5.QtCore import QPropertyAnimation, QEasingCurve
 
 from config.config import UI
@@ -43,6 +43,9 @@ class _TrayMenuHintStyle(QProxyStyle):
         self._wm_side_pad = scale_px(1, min_abs=1)
         self._wm_shift_x = scale_px(2, min_abs=1)
         self._text_shift_x = scale_px(7, min_abs=1)
+        self._arrow_w = scale_px(6, min_abs=4)
+        self._arrow_h = scale_px(7, min_abs=5)
+        self._arrow_pad = scale_px(4, min_abs=3)
 
     def _watermark_font(self, base_font):
         base_px = base_font.pixelSize() if base_font is not None else -1
@@ -121,6 +124,7 @@ class _TrayMenuHintStyle(QProxyStyle):
             item_rect.height(),
         )
         row_rect = row_rect.intersected(inner_rect)
+        is_submenu = opt.menuItemType == QStyleOptionMenuItem.SubMenu
         is_selected = bool(opt.state & QStyle.State_Selected)
         is_checked = bool(
             opt.checkType != QStyleOptionMenuItem.NotCheckable and opt.checked
@@ -130,10 +134,12 @@ class _TrayMenuHintStyle(QProxyStyle):
         elif is_checked:
             painter.fillRect(row_rect, UI_THEME['deep_pink'])
 
+        # 二级菜单条目要给右侧箭头留位，文字才不会被箭头压住。
+        arrow_room = self._arrow_w + self._arrow_pad if is_submenu else 0
         text_rect = QRect(
             row_rect.left() + self._pad_x + self._text_shift_x,
             row_rect.top(),
-            max(0, row_rect.width() - self._pad_x * 2),
+            max(0, row_rect.width() - self._pad_x * 2 - arrow_room),
             row_rect.height(),
         )
 
@@ -164,6 +170,9 @@ class _TrayMenuHintStyle(QProxyStyle):
         text = fm.elidedText(opt.text, Qt.ElideRight, text_rect.width())
         painter.drawText(text_rect, Qt.AlignCenter, text)
 
+        if is_submenu:
+            self._draw_submenu_arrow(painter, row_rect, wm_color)
+
     def sizeFromContents(self, contents_type, option, size, widget=None):
         if contents_type == QStyle.CT_MenuItem and self._is_target_menu(widget):
             opt = QStyleOptionMenuItem(option)
@@ -178,9 +187,33 @@ class _TrayMenuHintStyle(QProxyStyle):
                 + self._pad_x * 2
                 + text_w
                 + self._text_extra_w
+                + (
+                    self._arrow_w + self._arrow_pad
+                    if opt.menuItemType == QStyleOptionMenuItem.SubMenu
+                    else 0
+                )
             )
             return QSize(max(size.width(), item_w), max(size.height(), self._row_h))
         return super().sizeFromContents(contents_type, option, size, widget)
+
+    def _draw_submenu_arrow(self, painter, row_rect: QRect, color: QColor) -> None:
+        """二级菜单箭头：与左侧水位字同色，展开项和普通项保持同一套语言。"""
+        center_y = row_rect.center().y() + 1
+        right = row_rect.right() - self._arrow_pad
+        left = right - self._arrow_w
+        half = self._arrow_h // 2
+        painter.save()
+        try:
+            painter.setRenderHint(QPainter.Antialiasing, True)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(color)
+            painter.drawPolygon(QPolygon([
+                QPoint(left, center_y - half),
+                QPoint(right, center_y),
+                QPoint(left, center_y + half + 1),
+            ]))
+        finally:
+            painter.restore()
 
     def pixelMetric(self, metric, option=None, widget=None):
         is_target = (widget is None) or self._is_target_menu(widget)

@@ -280,19 +280,6 @@ class TrayIcon(QObject):
         forum_action.triggered.connect(self._on_forum)
         self._menu.addAction(forum_action)
 
-        bug_tracker_action = QAction('bug跟踪', self._menu)
-        bug_tracker_action.setToolTip(TOOLTIPS['tray_bug_tracker'])
-        bug_tracker_action.setStatusTip(TOOLTIPS['tray_bug_tracker'])
-        bug_tracker_action.triggered.connect(self._on_bug_tracker)
-        self._menu.addAction(bug_tracker_action)
-
-        # CMD窗口动作
-        cmd_window_action = QAction('CMD终端', self._menu)
-        cmd_window_action.setToolTip(TOOLTIPS['tray_cmd_window'])
-        cmd_window_action.setStatusTip(TOOLTIPS['tray_cmd_window'])
-        cmd_window_action.triggered.connect(self._on_cmd_window)
-        self._menu.addAction(cmd_window_action)
-
         self._game_mode_action = QAction('游戏模式', self._menu)
         self._game_mode_action.setCheckable(True)
         self._set_game_mode_action_checked(self._game_mode_enabled)
@@ -326,26 +313,34 @@ class TrayIcon(QObject):
         self._menu.addSeparator()
 
         # ── 清理维护 ───────────────────────────────────────────────
-        # 清理桌面动作
-        cleanup_action = QAction('清理桌面', self._menu)
+        # 三个清理动作收进二级菜单：一级只留一个「桌宠清理」，悬停自动展开。
+        cleanup_menu = TrayContextMenu(self._menu)
+
+        # 清理桌面物体动作
+        cleanup_action = QAction('桌面物体', cleanup_menu)
         cleanup_action.setToolTip(TOOLTIPS['tray_cleanup_desktop'])
         cleanup_action.setStatusTip(TOOLTIPS['tray_cleanup_desktop'])
         cleanup_action.triggered.connect(self._on_cleanup_desktop)
-        self._menu.addAction(cleanup_action)
+        cleanup_menu.addAction(cleanup_action)
 
-        # 清理缓存动作
-        cleanup_cache_action = QAction('清理缓存', self._menu)
+        # 清理音乐缓存动作
+        cleanup_cache_action = QAction('音乐缓存', cleanup_menu)
         cleanup_cache_action.setToolTip(TOOLTIPS['tray_cleanup_cache'])
         cleanup_cache_action.setStatusTip(TOOLTIPS['tray_cleanup_cache'])
         cleanup_cache_action.triggered.connect(self._on_cleanup_cache)
-        self._menu.addAction(cleanup_cache_action)
+        cleanup_menu.addAction(cleanup_cache_action)
 
-        # 清理历史动作
-        cleanup_history_action = QAction('清理历史', self._menu)
+        # 清理登录数据动作
+        cleanup_history_action = QAction('登录数据', cleanup_menu)
         cleanup_history_action.setToolTip(TOOLTIPS['tray_cleanup_history'])
         cleanup_history_action.setStatusTip(TOOLTIPS['tray_cleanup_history'])
         cleanup_history_action.triggered.connect(self._on_cleanup_history)
-        self._menu.addAction(cleanup_history_action)
+        cleanup_menu.addAction(cleanup_history_action)
+
+        cleanup_entry = self._menu.addMenu(cleanup_menu)
+        cleanup_entry.setText('桌宠清理')
+        cleanup_entry.setToolTip(TOOLTIPS['tray_cleanup_menu'])
+        cleanup_entry.setStatusTip(TOOLTIPS['tray_cleanup_menu'])
 
         self._menu.addSeparator()
 
@@ -507,21 +502,6 @@ class TrayIcon(QObject):
                 'min': 12,
                 'max': 120,
             }))
-
-    def _on_bug_tracker(self):
-        try:
-            self.preload_workbench().show_page('bug_tracker')
-        except Exception as exc:
-            _logger.error('打开 bug 跟踪器失败: %s', exc)
-            self._event_center.publish(Event(EventType.INFORMATION, {
-                'text': f'打开 bug 跟踪器失败: {exc}',
-                'min': 12,
-                'max': 120,
-            }))
-
-    def _on_cmd_window(self):
-        """处理CMD窗口动作：打开CMD终端窗口。"""
-        self._emit_command(TrayCommand.OPEN_CMD)
 
     def _on_toggle_game_mode(self, checked: bool):
         """处理游戏模式切换动作。"""

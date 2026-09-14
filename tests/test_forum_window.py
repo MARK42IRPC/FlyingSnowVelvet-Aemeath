@@ -21,19 +21,22 @@ from config.scale import scale_px
 from lib.core.forum import FORUM_DEFAULT_ACCENT, FORUM_ACCENTS, ForumMessage, ForumPage
 from lib.core.layer_manager import get_layer_manager
 from lib.script.ui.forum_style import FORUM_ACCENT_LABELS, forum_accent_color
-from lib.script.ui.forum_window import (
-    CARD_MIN_WIDTH,
+from lib.script.ui.forum_texture import (
     CARD_TEXTURE_ALPHA_RANGE,
     CARD_TEXTURE_PATTERNS,
+    CardTexture,
+    card_texture,
+    texture_seed,
+)
+from lib.script.ui.forum_window import (
+    CARD_MIN_WIDTH,
     COLUMN_COUNT,
     DEFAULT_WINDOW_WIDTH,
     FORUM_NICKNAME_PLACEHOLDER,
     MIN_WINDOW_WIDTH,
     NICKNAME_MAX_LENGTH,
-    CardTexture,
     ForumCard,
     ForumWindow,
-    card_texture,
 )
 
 
@@ -306,15 +309,45 @@ class ForumWindowTests(unittest.TestCase):
         self.assertIsInstance(card_texture("坏 id"), CardTexture)
 
         patterns = set()
-        for message_id in range(1, 60):
+        for message_id in range(1, 200):
             texture = card_texture(message_id)
             patterns.add(texture.pattern)
             self.assertIn(texture.pattern, CARD_TEXTURE_PATTERNS)
             self.assertGreaterEqual(texture.alpha, CARD_TEXTURE_ALPHA_RANGE[0])
             self.assertLessEqual(texture.alpha, CARD_TEXTURE_ALPHA_RANGE[1])
             self.assertGreater(texture.tile, 0)
+            self.assertGreaterEqual(texture.gap, 1)
+            self.assertLess(texture.gap, texture.tile)
+            self.assertLessEqual(abs(texture.origin_x), texture.tile)
+            self.assertLessEqual(abs(texture.origin_y), texture.tile)
+            self.assertTrue(0.0 <= texture.focus_x <= 1.0)
+            self.assertTrue(0.0 <= texture.focus_y <= 1.0)
         # 不同留言要拿到不同花纹，否则整面墙看起来是同一个底。
         self.assertEqual(patterns, set(CARD_TEXTURE_PATTERNS))
+
+    def test_card_texture_seed_hashes_the_card_content(self):
+        base = message(1, content="同一段内容")
+        copy = ForumMessage(
+            id=base.id,
+            nickname=base.nickname,
+            content=base.content,
+            accent=base.accent,
+            created_at=base.created_at,
+        )
+        edited = ForumMessage(
+            id=base.id,
+            nickname=base.nickname,
+            content="改过的内容",
+            accent=base.accent,
+            created_at=base.created_at,
+        )
+
+        # 种子是内容哈希而不是进程内 hash()：同一张卡片跨进程也拿同一套底纹。
+        self.assertEqual(texture_seed(base), texture_seed(copy))
+        self.assertEqual(texture_seed(42), 9514420467213374319)
+        self.assertEqual(card_texture(base), card_texture(copy))
+        # id 不变、只有正文变了也要换底纹。
+        self.assertNotEqual(texture_seed(base), texture_seed(edited))
 
     @staticmethod
     def _card_means(texture):

@@ -5,6 +5,7 @@
 往下滚动到底部再请求更早的一页，发帖按钮受客户端 12 秒冷却约束。
 
 字号与控件间距对齐工作台（页头 19/11、卡片 14/17/11、输入与按钮 14）。
+卡片底纹由 `forum_texture` 按卡片信息内容哈希生成，这里只负责把它铺到卡片上。
 窗口优先级跟随工作台窗口：普通窗口 + 无边框，既不置顶也不进 `LayerManager`——
 注册进去的窗口会被 `stack_window()` 放进 `HWND_TOPMOST` 链，那正是「压住别的窗口」
 的来源。
@@ -12,11 +13,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-import random
-
-from PyQt5.QtCore import QEvent, QPoint, QRectF, Qt, QTimer, pyqtSignal
-from PyQt5.QtGui import QColor, QCursor, QPainter, QPainterPath, QPen, QPolygon
+from PyQt5.QtCore import QEvent, QRectF, Qt, QTimer, pyqtSignal
+from PyQt5.QtGui import QCursor, QPainter
 from PyQt5.QtWidgets import (
     QApplication,
     QFrame,
@@ -52,6 +50,11 @@ from lib.script.ui.forum_style import (
     forum_stylesheet,
     forum_texture_color,
 )
+from lib.script.ui.forum_texture import (
+    CardTexture,
+    card_texture,
+    paint_card_texture,
+)
 from lib.script.ui.workbench_components import create_window_button
 
 COLUMN_COUNT = 3
@@ -71,35 +74,6 @@ LOAD_OLDER_THRESHOLD_PX = scale_px(140, min_abs=90)
 NICKNAME_MAX_LENGTH = 24
 FORUM_NICKNAME_PLACEHOLDER = "输入昵称…（未输入以匿名发送）"
 
-#: 卡片底纹的平铺几何花纹；颜色由主题给（深色白/浅色黑），只改明度、不碰 accent 描边。
-CARD_TEXTURE_PATTERNS = ("stripes", "grid", "dots", "triangles", "checks", "rings")
-CARD_TEXTURE_TILES = (16, 20, 24, 28, 32)
-CARD_TEXTURE_ALPHA_RANGE = (8, 16)
-
-
-@dataclass(frozen=True, slots=True)
-class CardTexture:
-    """一张卡片的底纹规格：花纹、透明度和平铺尺寸。"""
-
-    pattern: str
-    alpha: int
-    tile: int
-
-
-def card_texture(message_id) -> CardTexture:
-    """按留言 id 稳定地挑一组底纹，同一张卡片每次重绘都一致。"""
-    try:
-        seed = int(message_id)
-    except (TypeError, ValueError):
-        seed = 0
-    rng = random.Random(seed)
-    low, high = CARD_TEXTURE_ALPHA_RANGE
-    return CardTexture(
-        pattern=rng.choice(CARD_TEXTURE_PATTERNS),
-        alpha=rng.randint(low, high),
-        tile=scale_px(rng.choice(CARD_TEXTURE_TILES), min_abs=12),
-    )
-
 
 class ForumCard(QFrame):
     """一条留言卡片：左上昵称、中间大字正文、右下日期，accent 只决定描边颜色。"""
@@ -107,7 +81,7 @@ class ForumCard(QFrame):
     def __init__(self, message: ForumMessage, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.message = message
-        self.texture = card_texture(message.id)
+        self.texture: CardTexture = card_texture(message)
         self.setObjectName("ForumCard")
         self.setProperty("accent", message.accent)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
@@ -149,82 +123,18 @@ class ForumCard(QFrame):
         texture = self.texture
         if texture is None:
             return
+        border = scale_px(1, min_abs=1)
         painter = QPainter(self)
         try:
-            painter.setRenderHint(QPainter.Antialiasing, True)
-            border = scale_px(1, min_abs=1)
-            path = QPainterPath()
-            path.addRoundedRect(
+            paint_card_texture(
+                painter,
                 QRectF(self.rect()).adjusted(border, border, -border, -border),
-                FORUM_CARD_RADIUS,
-                FORUM_CARD_RADIUS,
+                texture,
+                forum_texture_color(),
+                radius=FORUM_CARD_RADIUS,
             )
-            painter.setClipPath(path)
-            self._paint_texture(painter, texture)
         finally:
             painter.end()
-
-    def _paint_texture(self, painter: QPainter, texture: CardTexture) -> None:
-        """平铺一种几何花纹；颜色是主题给出的中性色，靠透明度只影响明度。"""
-        overlay = QColor(forum_texture_color())
-        overlay.setAlpha(texture.alpha)
-        pen = QPen(overlay)
-        pen.setWidth(scale_px(1, min_abs=1))
-        painter.setPen(pen)
-        painter.setBrush(Qt.NoBrush)
-
-        rect = self.rect()
-        tile = max(scale_px(8, min_abs=6), int(texture.tile))
-        pattern = texture.pattern
-
-        if pattern == "stripes":
-            offset = -rect.height()
-            while offset < rect.width():
-                painter.drawLine(offset, rect.height(), offset + rect.height(), 0)
-                offset += tile
-            return
-
-        if pattern == "grid":
-            for x in range(0, rect.width() + 1, tile):
-                painter.drawLine(x, 0, x, rect.height())
-            for y in range(0, rect.height() + 1, tile):
-                painter.drawLine(0, y, rect.width(), y)
-            return
-
-        if pattern == "dots":
-            radius = max(1, tile // 7)
-            painter.setBrush(overlay)
-            for y in range(tile // 2, rect.height(), tile):
-                for x in range(tile // 2, rect.width(), tile):
-                    painter.drawEllipse(QPoint(x, y), radius, radius)
-            return
-
-        if pattern == "triangles":
-            side = max(scale_px(8, min_abs=6), tile)
-            for y in range(0, rect.height() + side, side):
-                for x in range(0, rect.width() + side, side):
-                    painter.drawPolygon(
-                        QPolygon([
-                            QPoint(x, y + side),
-                            QPoint(x + side, y + side),
-                            QPoint(x, y),
-                        ])
-                    )
-            return
-
-        if pattern == "checks":
-            half = max(2, tile // 2)
-            for row, y in enumerate(range(0, rect.height(), half)):
-                for column, x in enumerate(range(0, rect.width(), half)):
-                    if (row + column) % 2 == 0:
-                        painter.fillRect(x, y, half, half, overlay)
-            return
-
-        # rings：蜂窝式同心圆环
-        radius = max(2, tile // 2)
-        for y in range(tile // 2, rect.height() + tile, tile):
-            for x in range(tile // 2, rect.width() + tile, tile):
-                painter.drawEllipse(QPoint(x, y), radius, radius)
 
 
 class ForumWindow(QtWorkbenchToolPage):
