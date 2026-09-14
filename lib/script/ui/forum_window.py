@@ -4,7 +4,8 @@
 窗口只负责呈现与交互：卡片宽度固定为列宽、高度随内容变化，卡片配色只改描边；
 往下滚动到底部再请求更早的一页，发帖按钮受客户端 12 秒冷却约束。
 
-字号与控件间距对齐工作台（页头 19/11、卡片 14/17/11、输入与按钮 14）。
+字号与控件间距对齐工作台（页头 19/11、卡片 14/17/11、输入与按钮 14）；卡片正文再按字数
+在 1~2 倍之间自适应，短句放大、长文回到基准字号。
 卡片底纹由 `forum_texture` 按卡片信息内容哈希生成，这里只负责把它铺到卡片上。
 窗口优先级跟随工作台窗口：普通窗口 + 无边框，既不置顶也不进 `LayerManager`——
 注册进去的窗口会被 `stack_window()` 放进 `HWND_TOPMOST` 链，那正是「压住别的窗口」
@@ -47,6 +48,7 @@ from lib.core.qt_bridge.workbench_page import QtWorkbenchToolPage
 from lib.script.ui.forum_style import (
     FORUM_ACCENT_LABELS,
     FORUM_CARD_RADIUS,
+    forum_card_text_size,
     forum_stylesheet,
     forum_texture_color,
 )
@@ -76,7 +78,7 @@ FORUM_NICKNAME_PLACEHOLDER = "输入昵称…（未输入以匿名发送）"
 
 
 class ForumCard(QFrame):
-    """一条留言卡片：左上昵称、中间大字正文、右下日期，accent 只决定描边颜色。"""
+    """一条留言卡片：左上昵称、中间大字正文、右下日期；accent 决定描边颜色与底纹色调。"""
 
     def __init__(self, message: ForumMessage, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -105,7 +107,8 @@ class ForumCard(QFrame):
 
         content = QLabel(message.content, self)
         content.setObjectName("ForumCardText")
-        content.setFont(get_ui_font(size=scale_px(17, min_abs=12)))
+        # 正文越短字号越大（1~2 倍），卡片不会因为一句话就空掉。
+        content.setFont(get_ui_font(size=forum_card_text_size(message.content)))
         content.setWordWrap(True)
         content.setAlignment(Qt.AlignHCenter)
         content.setTextInteractionFlags(Qt.TextSelectableByMouse)
@@ -118,7 +121,7 @@ class ForumCard(QFrame):
         layout.addWidget(stamp, 0, Qt.AlignRight)
 
     def paintEvent(self, event) -> None:
-        """先按样式表画底与描边，再在最底层铺一层只改明度的几何底纹。"""
+        """先按样式表画底与描边，再在最底层铺一层带卡片色调的几何底纹。"""
         super().paintEvent(event)
         texture = self.texture
         if texture is None:
@@ -130,7 +133,7 @@ class ForumCard(QFrame):
                 painter,
                 QRectF(self.rect()).adjusted(border, border, -border, -border),
                 texture,
-                forum_texture_color(),
+                forum_texture_color(accent=self.property("accent")),
                 radius=FORUM_CARD_RADIUS,
             )
         finally:

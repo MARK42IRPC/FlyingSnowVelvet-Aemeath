@@ -20,10 +20,20 @@ from PyQt5.QtWidgets import QApplication, QLabel, QMenu
 from config.scale import scale_px
 from lib.core.forum import FORUM_DEFAULT_ACCENT, FORUM_ACCENTS, ForumMessage, ForumPage
 from lib.core.layer_manager import get_layer_manager
-from lib.script.ui.forum_style import FORUM_ACCENT_LABELS, forum_accent_color
+from lib.script.ui.forum_style import (
+    FORUM_ACCENT_LABELS,
+    FORUM_TEXTURE_TINT_RATIO,
+    forum_accent_color,
+    forum_texture_color,
+)
 from lib.script.ui.forum_texture import (
     CARD_TEXTURE_ALPHA_RANGE,
+    CARD_TEXTURE_COARSE_PATTERNS,
     CARD_TEXTURE_PATTERNS,
+    CARD_TEXTURE_SIDES,
+    CARD_TEXTURE_STROKE_BASE,
+    CARD_TEXTURE_STROKE_DIVISORS,
+    CARD_TEXTURE_TILES,
     CardTexture,
     card_texture,
     texture_seed,
@@ -48,6 +58,12 @@ def message(index, *, accent="pink", content=None):
         accent=accent,
         created_at=1_700_000_000_000,
     )
+
+
+#: 底纹在纯灰卡片上的单通道均值偏移上限：更深的花纹允许到这个量级，再多就会压过卡片底色。
+_TEXTURE_DELTA_BUDGET = 14
+#: 逐像素最大通道偏差上限：底纹带 accent 色调后会明显大于中性色，但不能变成彩色噪点。
+_TEXTURE_TINT_BUDGET = 24
 
 
 class FakeService:
@@ -290,7 +306,8 @@ class ForumWindowTests(unittest.TestCase):
             self.app.processEvents()
 
     def test_card_fonts_follow_the_workbench_ramp(self):
-        card = ForumCard(message(1))
+        # 用一条够长的正文（≥ 24 字）把正文锁在基准字号上，只看三档字号的相对关系。
+        card = ForumCard(message(1, content="这是一条足够长的留言内容用来验证卡片的基准字号不会变化"))
         try:
             name = card.findChild(QLabel, "ForumCardName")
             content = card.findChild(QLabel, "ForumCardText")
@@ -304,7 +321,33 @@ class ForumWindowTests(unittest.TestCase):
         finally:
             card.deleteLater()
 
-    def test_card_texture_is_stable_per_message_and_only_shifts_lightness(self):
+    def test_card_text_grows_as_the_message_gets_shorter(self):
+        contents = (
+            "喵",
+            "今天天气不错，出门散散步吧",
+            "这是一条足够长的留言内容用来验证卡片的基准字号不会变化",
+        )
+        sizes = []
+        for content in contents:
+            card = ForumCard(message(1, content=content))
+            try:
+                sizes.append(card.findChild(QLabel, "ForumCardText").font().pixelSize())
+            finally:
+                card.deleteLater()
+
+        base = scale_px(17, min_abs=12)
+        short, middle, long = sizes
+        # 字越少字越大：一个字直接顶到两倍，长文回到基准字号，中间线性过渡。
+        self.assertEqual(short, base * 2)
+        self.assertEqual(long, base)
+        self.assertLess(base, middle)
+        self.assertLess(middle, short)
+        # 放大倍数收在 1x~2x 之间，不会更小也不会更大。
+        for size in sizes:
+            self.assertGreaterEqual(size, base)
+            self.assertLessEqual(size, base * 2)
+
+    def test_card_texture_is_stable_per_message(self):
         self.assertEqual(card_texture(42), card_texture(42))
         self.assertIsInstance(card_texture("坏 id"), CardTexture)
 
@@ -349,10 +392,50 @@ class ForumWindowTests(unittest.TestCase):
         # id 不变、只有正文变了也要换底纹。
         self.assertNotEqual(texture_seed(base), texture_seed(edited))
 
+    def test_coarse_textures_seed_their_shape_and_stroke(self):
+        self.assertTrue(set(CARD_TEXTURE_COARSE_PATTERNS) <= set(CARD_TEXTURE_PATTERNS))
+        sides = set()
+        strokes = set()
+        coarse = set()
+        for message_id in range(1, 200):
+            texture = card_texture(message_id)
+            sides.add(texture.sides)
+            strokes.add(round(texture.stroke, 2))
+            if texture.pattern in CARD_TEXTURE_COARSE_PATTERNS:
+                coarse.add(texture.pattern)
+            # 粗线花纹要拿到种子给出的边数、线宽、间隔与噪波盐值。
+            self.assertGreaterEqual(texture.sides, 3)
+            self.assertLessEqual(texture.sides, 8)
+            self.assertGreater(texture.stroke, 0.0)
+            self.assertGreater(texture.spacing, 0)
+            self.assertGreater(texture.noise_salt, 0)
+        # 多边形要从三角形铺到八边形，线宽也不能只有一档。
+        self.assertEqual(sides, set(CARD_TEXTURE_SIDES))
+        self.assertGreater(len(strokes), 1)
+        self.assertEqual(coarse, set(CARD_TEXTURE_COARSE_PATTERNS))
+
+    def test_seeded_textures_stay_within_the_contrast_budget(self):
+        plain, _ = self._card_means(None, accent=FORUM_DEFAULT_ACCENT)
+        for message_id in range(1, 60):
+            texture = card_texture(message_id)
+            means, spread = self._card_means(texture, accent=FORUM_DEFAULT_ACCENT)
+            delta = abs(sum(means) / 3 - sum(plain) / 3)
+            # 花纹可以更深、带卡片色调，但不能压过卡片本身和正文。
+            self.assertLessEqual(delta, _TEXTURE_DELTA_BUDGET, texture.pattern)
+            self.assertLessEqual(spread, _TEXTURE_TINT_BUDGET, texture.pattern)
+
+    def test_texture_density_and_stroke_are_turned_up(self):
+        """底纹契约：平铺更密、线宽更粗、颜色更深；改这几个常数要同步这里。"""
+        self.assertLessEqual(max(CARD_TEXTURE_TILES), 22)
+        self.assertLessEqual(max(CARD_TEXTURE_STROKE_DIVISORS), 6)
+        self.assertGreaterEqual(CARD_TEXTURE_STROKE_BASE, 2)
+        self.assertGreaterEqual(CARD_TEXTURE_ALPHA_RANGE[0], 20)
+        self.assertLessEqual(CARD_TEXTURE_ALPHA_RANGE[1], 40)
+
     @staticmethod
-    def _card_means(texture):
+    def _card_means(texture, accent=FORUM_DEFAULT_ACCENT):
         """在一张纯灰卡片上只画底纹（标签藏起来），返回逐通道均值与最大通道偏差。"""
-        card = ForumCard(message(1, content="纹理"))
+        card = ForumCard(message(1, accent=accent, content="纹理"))
         card.texture = texture
         card.setStyleSheet("QFrame#ForumCard { background: #808080; border: none; }")
         card.resize(200, 140)
@@ -378,24 +461,65 @@ class ForumWindowTests(unittest.TestCase):
                 sampled += 1
         return [value / sampled for value in totals], spread
 
-    def test_texture_only_nudges_lightness_and_follows_the_theme(self):
-        plain, plain_spread = self._card_means(None)
-        self.assertLessEqual(plain_spread, 3)
+    def test_texture_color_blends_the_neutral_with_the_card_accent(self):
+        """底纹颜色 = 中性色 + accent 描边色按比例混合；不带 accent 时是纯中性色。"""
+        self.assertGreater(FORUM_TEXTURE_TINT_RATIO, 0.0)
+        expected = {
+            "dark": {"pink": "#ffd5e4", "cyan": "#d1edff", "blue": "#d8e1ff", "snow": "#f2f5fa"},
+            "light": {"pink": "#5a2a3e", "cyan": "#1e4056", "blue": "#242e50", "snow": "#393e46"},
+        }
+        for mode, table in expected.items():
+            with self.subTest(mode=mode), patch(
+                "lib.core.graphics.workbench_tokens.resolve_workbench_mode",
+                return_value=mode,
+            ):
+                self.assertEqual(
+                    forum_texture_color(),
+                    "#ffffff" if mode == "dark" else "#000000",
+                )
+                for accent, color in table.items():
+                    with self.subTest(accent=accent):
+                        self.assertEqual(forum_texture_color(accent=accent), color)
+                        # 底纹色和描边色同源：色调方向必须一致（粉偏红、青偏蓝）。
+                        stroke = QColor(forum_accent_color(accent, mode))
+                        texture = QColor(color)
+                        self.assertEqual(
+                            (texture.red() - texture.green() > 0),
+                            (stroke.red() - stroke.green() > 0),
+                        )
+
+    def test_texture_tints_the_card_and_follows_the_theme(self):
+        """渲染核验：底纹把 accent 色调带上卡片，深色主题提亮、浅色主题压暗。"""
         for mode, direction in (("dark", 1), ("light", -1)):
-            for pattern in CARD_TEXTURE_PATTERNS:
-                with self.subTest(mode=mode, pattern=pattern), patch(
+            for accent in ("pink", "cyan", "blue"):
+                with self.subTest(mode=mode, accent=accent), patch(
                     "lib.core.graphics.workbench_tokens.resolve_workbench_mode",
                     return_value=mode,
                 ):
+                    plain, plain_spread = self._card_means(None, accent=accent)
+                    self.assertLessEqual(plain_spread, 3)
                     means, spread = self._card_means(
-                        CardTexture(pattern=pattern, alpha=16, tile=16)
+                        CardTexture(pattern="hexes", alpha=CARD_TEXTURE_ALPHA_RANGE[1], tile=16),
+                        accent=accent,
                     )
                     delta = sum(means) / 3 - sum(plain) / 3
-                    # 中性色：三个通道同时同向变化，不引入色相。
-                    self.assertLessEqual(spread, 3)
-                    # 深色主题的卡片偏亮纹理、浅色主题偏暗纹理，幅度都很小。
-                    self.assertGreater(direction * delta, 0, (mode, pattern))
-                    self.assertLessEqual(abs(delta), 6, (mode, pattern))
+                    # 深色主题偏亮纹理、浅色主题偏暗纹理，幅度受预算约束。
+                    self.assertGreater(direction * delta, 0, (mode, accent))
+                    self.assertLessEqual(abs(delta), _TEXTURE_DELTA_BUDGET, (mode, accent))
+                    self.assertLessEqual(spread, _TEXTURE_TINT_BUDGET, (mode, accent))
+                    # 色调方向与 accent 一致：红绿偏差、蓝绿偏差的符号都要对上。
+                    stroke = QColor(forum_accent_color(accent, mode))
+                    tinted = [value - base for value, base in zip(means, plain)]
+                    self.assertGreater(
+                        (tinted[0] - tinted[1]) * (stroke.red() - stroke.green()),
+                        0,
+                        (mode, accent),
+                    )
+                    self.assertGreater(
+                        (tinted[2] - tinted[1]) * (stroke.blue() - stroke.green()),
+                        0,
+                        (mode, accent),
+                    )
         self.app.processEvents()
 
     def test_accent_labels_cover_every_core_accent(self):
