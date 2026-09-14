@@ -46,6 +46,8 @@ class _TrayMenuHintStyle(QProxyStyle):
         self._arrow_w = scale_px(6, min_abs=4)
         self._arrow_h = scale_px(7, min_abs=5)
         self._arrow_pad = scale_px(4, min_abs=3)
+        # 箭头绘制点到内容右边缘的距离：比预留位小一点，箭头整体略靠右。
+        self._arrow_inset = scale_px(2, min_abs=2)
 
     def _watermark_font(self, base_font):
         base_px = base_font.pixelSize() if base_font is not None else -1
@@ -134,14 +136,7 @@ class _TrayMenuHintStyle(QProxyStyle):
         elif is_checked:
             painter.fillRect(row_rect, UI_THEME['deep_pink'])
 
-        # 二级菜单条目要给右侧箭头留位，文字才不会被箭头压住。
-        arrow_room = self._arrow_w + self._arrow_pad if is_submenu else 0
-        text_rect = QRect(
-            row_rect.left() + self._pad_x + self._text_shift_x,
-            row_rect.top(),
-            max(0, row_rect.width() - self._pad_x * 2 - arrow_room),
-            row_rect.height(),
-        )
+        text_rect = self._item_text_rect(row_rect, is_submenu)
 
         if is_selected:
             wm_color = QColor(UI_THEME['deep_cyan'])
@@ -173,6 +168,25 @@ class _TrayMenuHintStyle(QProxyStyle):
         if is_submenu:
             self._draw_submenu_arrow(painter, row_rect, wm_color)
 
+    def _item_text_rect(self, row_rect: QRect, is_submenu: bool) -> QRect:
+        """条目文字矩形。
+
+        所有行共用同一条文字中心竖线。二级菜单条目右侧要给箭头留位，留位只从它
+        自己的可写宽度里左右各收一半：二级项既不比同级项偏移，也不会顶到箭头。
+        """
+        arrow_room = self._arrow_w + self._arrow_pad if is_submenu else 0
+        center_x = (
+            row_rect.left()
+            + self._pad_x
+            + self._text_shift_x
+            + (row_rect.width() - self._pad_x * 2) // 2
+        )
+        half = (row_rect.width() - self._pad_x * 2) // 2
+        if arrow_room:
+            half = min(half, row_rect.right() - arrow_room - center_x)
+        half = max(0, half)
+        return QRect(center_x - half, row_rect.top(), half * 2, row_rect.height())
+
     def sizeFromContents(self, contents_type, option, size, widget=None):
         if contents_type == QStyle.CT_MenuItem and self._is_target_menu(widget):
             opt = QStyleOptionMenuItem(option)
@@ -199,7 +213,7 @@ class _TrayMenuHintStyle(QProxyStyle):
     def _draw_submenu_arrow(self, painter, row_rect: QRect, color: QColor) -> None:
         """二级菜单箭头：与左侧水位字同色，展开项和普通项保持同一套语言。"""
         center_y = row_rect.center().y() + 1
-        right = row_rect.right() - self._arrow_pad
+        right = row_rect.right() - self._arrow_inset
         left = right - self._arrow_w
         half = self._arrow_h // 2
         painter.save()
