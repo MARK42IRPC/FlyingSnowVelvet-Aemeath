@@ -47,6 +47,7 @@ def office_stylesheet(mode: str | None = None) -> str:
         QDialog#OfficeApprovalDialog {{
             background: {c.canvas};
             color: {c.text};
+            border: {border}px solid {c.border_strong};
         }}
         QMessageBox#OfficeConfirmDialog {{
             background: {c.canvas};
@@ -379,6 +380,18 @@ def office_stylesheet(mode: str | None = None) -> str:
             border-left: {scale_px(3, min_abs=2)}px solid {c.pink};
             border-radius: {radius}px;
         }}
+        QToolButton#OfficeApprovalClose {{
+            background: transparent;
+            border: none;
+            border-radius: {radius}px;
+            min-width: {control_height}px;
+            min-height: {control_height}px;
+            max-width: {control_height}px;
+            max-height: {control_height}px;
+            padding: 0px;
+        }}
+        QToolButton#OfficeApprovalClose:hover {{ background: {c.surface_hover}; }}
+        QToolButton#OfficeApprovalClose[danger="true"]:hover {{ background: {c.danger}; }}
         QLabel#OfficeApprovalIcon {{
             min-width: {scale_px(28, min_abs=24)}px;
             background: transparent;

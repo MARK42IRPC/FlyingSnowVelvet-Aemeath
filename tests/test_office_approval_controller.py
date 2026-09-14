@@ -21,7 +21,14 @@ os.environ.setdefault(
 )
 os.environ.setdefault("QT_PLUGIN_PATH", os.path.join(_QT_ROOT, "Qt5", "plugins"))
 
-from PyQt5.QtWidgets import QApplication, QLabel, QPlainTextEdit, QWidget
+from PyQt5.QtCore import Qt
+from PyQt5.QtWidgets import (
+    QApplication,
+    QLabel,
+    QPlainTextEdit,
+    QToolButton,
+    QWidget,
+)
 
 from lib.script.office.ipc import OfficeFileIpc
 from lib.script.ui.office_approval_controller import OfficeApprovalController
@@ -87,6 +94,30 @@ class OfficeApprovalControllerTests(unittest.TestCase):
             controller._poll()
             self.assertIsNotNone(controller.active_dialog)
             self.assertEqual(controller.active_dialog.approval_id, "approval-2")
+
+    def test_dialog_drops_the_windows_caption_bar(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ipc = OfficeFileIpc(Path(tmpdir))
+            ipc.publish({"pending_approval": self._approval("approval-1")}, [])
+            controller = OfficeApprovalController(ipc=ipc)
+            self.addCleanup(controller.cleanup)
+            controller.start()
+            dialog = controller.active_dialog
+            assert dialog is not None
+
+            self.assertTrue(dialog.windowFlags() & Qt.FramelessWindowHint)
+            self.assertTrue(dialog.testAttribute(Qt.WA_StyledBackground))
+
+            close_button = dialog.findChild(QToolButton, "OfficeApprovalClose")
+            self.assertIsNotNone(close_button)
+            self.assertIn("OfficeApprovalClose", dialog.styleSheet())
+            self.assertIn(get_workbench_colors().danger, dialog.styleSheet())
+
+            # 无窗眉时关闭按钮承担“拒绝”语义，点一下要真的提交拒绝。
+            close_button.click()
+            self.app.processEvents()
+            command = ipc.consume()[0]
+            self.assertEqual(command["data"]["decision"], "reject")
 
     def test_dialog_uses_shared_pet_office_visual_language(self):
         with tempfile.TemporaryDirectory() as tmpdir:

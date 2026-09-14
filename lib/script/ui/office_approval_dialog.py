@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtCore import QEvent, QPoint, Qt, pyqtSignal
 from PyQt5.QtGui import QIcon
 from PyQt5.QtWidgets import (
     QDialog,
@@ -14,12 +14,14 @@ from PyQt5.QtWidgets import (
     QLabel,
     QPlainTextEdit,
     QPushButton,
+    QStyle,
     QVBoxLayout,
     QWidget,
 )
 
 from config.scale import scale_px
 from lib.core.qt_bridge.font import get_ui_font
+from lib.core.qt_bridge.screen import clamp_rect_position, get_screen_geometry_for_point
 from lib.script.ui.office_icons import (
     office_allow_icon,
     office_allow_task_icon,
@@ -27,6 +29,7 @@ from lib.script.ui.office_icons import (
     office_warning_icon,
 )
 from lib.script.ui.office_style import create_office_accent_bar, office_stylesheet
+from lib.script.ui.workbench_components import create_window_button
 from lib.script.workbench.theme import get_workbench_colors
 
 
@@ -41,11 +44,19 @@ class OfficeApprovalDialog(QDialog):
         self._approval = dict(approval or {})
         self._approval_id = str(self._approval.get("approval_id", ""))
         self._resolved = False
+        self._drag_targets: set[QWidget] = set()
+        self._dragging = False
+        self._drag_offset = QPoint()
+        self._placed = False
 
         self.setObjectName("OfficeApprovalDialog")
         self.setWindowTitle("办公权限许可")
+        # 工作台是同款无窗眉自绘外壳，这里不再保留 Windows 原生标题栏。
+        self.setWindowFlags(
+            Qt.Dialog | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
+        )
         self.setWindowModality(Qt.WindowModal if parent is not None else Qt.ApplicationModal)
-        self.setWindowFlag(Qt.WindowStaysOnTopHint, True)
+        self.setAttribute(Qt.WA_StyledBackground, True)
         self.setMinimumWidth(scale_px(500, min_abs=460))
         self.setMaximumWidth(scale_px(680, min_abs=620))
         self.setAttribute(Qt.WA_DeleteOnClose, True)
@@ -66,6 +77,8 @@ class OfficeApprovalDialog(QDialog):
 
         header = QFrame(self)
         header.setObjectName("OfficeApprovalHeader")
+        header.setCursor(Qt.OpenHandCursor)
+        self._install_drag_target(header)
         header_layout = QHBoxLayout(header)
         header_layout.setContentsMargins(
             scale_px(12, min_abs=10),
@@ -95,6 +108,16 @@ class OfficeApprovalDialog(QDialog):
         title.setWordWrap(True)
         title_column.addWidget(title)
         header_layout.addLayout(title_column, 1)
+
+        close_button = create_window_button(
+            header,
+            QStyle.SP_TitleBarCloseButton,
+            "关闭（视为拒绝）",
+            lambda: self._resolve("reject"),
+            danger=True,
+        )
+        close_button.setObjectName("OfficeApprovalClose")
+        header_layout.addWidget(close_button, 0, Qt.AlignTop)
         root.addWidget(header)
 
         reason = str(self._approval.get("reason") or "需要用户许可")
@@ -152,6 +175,69 @@ class OfficeApprovalDialog(QDialog):
     @property
     def approval_id(self) -> str:
         return self._approval_id
+
+    def _install_drag_target(self, widget: QWidget) -> None:
+        """窗眉区域拖动整窗（无原生标题栏，沿用工作台的做法）。"""
+        widget.installEventFilter(self)
+        self._drag_targets.add(widget)
+
+    def eventFilter(self, watched, event):
+        if watched in self._drag_targets:
+            if (
+                event.type() == QEvent.MouseButtonPress
+                and event.button() == Qt.LeftButton
+            ):
+                self._dragging = True
+                self._drag_offset = event.globalPos() - self.frameGeometry().topLeft()
+                event.accept()
+                return True
+            if (
+                event.type() == QEvent.MouseMove
+                and self._dragging
+                and (event.buttons() & Qt.LeftButton)
+            ):
+                self.move(event.globalPos() - self._drag_offset)
+                event.accept()
+                return True
+            if (
+                event.type() == QEvent.MouseButtonRelease
+                and event.button() == Qt.LeftButton
+            ):
+                self._dragging = False
+                event.accept()
+                return True
+        return super().eventFilter(watched, event)
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        if self._placed:
+            return
+        self._placed = True
+        self.adjustSize()
+        self._center_on_reference()
+
+    def _center_on_reference(self) -> None:
+        """有可见父窗就居中于父窗，否则居中于光标所在屏幕（与公告窗一致）。"""
+        parent = self.parentWidget()
+        point = None
+        if parent is not None and parent.isVisible():
+            reference = parent.frameGeometry()
+            x = reference.x() + (reference.width() - self.width()) // 2
+            y = reference.y() + (reference.height() - self.height()) // 2
+            point = reference.center()
+        else:
+            geometry = get_screen_geometry_for_point(fallback_widget=self)
+            x = geometry.x() + (geometry.width() - self.width()) // 2
+            y = geometry.y() + (geometry.height() - self.height()) // 2
+        x, y, _ = clamp_rect_position(
+            x,
+            y,
+            self.width(),
+            self.height(),
+            point=point,
+            fallback_widget=self,
+        )
+        self.move(x, y)
 
     def _resolve(self, decision: str) -> None:
         if self._resolved:
