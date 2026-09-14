@@ -31,6 +31,7 @@ from .contracts import (
 )
 from .ipc import OfficeFileIpc
 from .mode import InteractionModeService, get_interaction_mode_service
+from .pet_tools import execute_pet_tool
 from .runtime import DshOfficeRuntime, runtime_readiness_error
 from .storage import OfficeTaskStore
 from .workspace import ensure_default_office_workspace
@@ -585,6 +586,8 @@ class OfficeService:
             self._apply_session_event(task_id, data.get("event"))
         elif event_type == "approval_request" and task_id:
             self._handle_approval_request(task_id, data)
+        elif event_type == "pet_tool_call" and task_id:
+            self._handle_pet_tool_call(task_id, data)
         elif event_type == "task_idle" and task_id:
             self._dismiss_thinking_feedback(task_id)
             changes = self._take_stream_buffer(task_id)
@@ -698,6 +701,40 @@ class OfficeService:
             self._pending_approval = pending
         self._store.update(task_id, status=OfficeTaskStatus.WAITING_APPROVAL.value)
         self._event_center.publish(Event(EventType.OFFICE_APPROVAL_REQUEST, dict(pending)))
+
+    def _handle_pet_tool_call(self, task_id: str, data: dict) -> None:
+        """执行侧车回传的桌宠工具调用，把结果还给模型并写进任务记录。
+
+        桌宠能力只在主进程存在，侧车只能把 (name, arguments) 回传；这里执行完必须
+        回一条 pet_tool_result，否则侧车的工具调用会一直等（直到它自己的超时）。
+        """
+        call_id = str(data.get("callId", ""))
+        tool_name = str(data.get("name", ""))
+        arguments = data.get("arguments") if isinstance(data.get("arguments"), dict) else {}
+        result = execute_pet_tool(tool_name, arguments)
+        payload = {
+            "type": "pet_tool_result",
+            "taskId": task_id,
+            "callId": call_id,
+            "ok": bool(result.get("ok")),
+            "message": str(result.get("message", "")),
+        }
+        with self._lock:
+            if self._cleaned:
+                return
+        try:
+            self._runtime.send(payload)
+        except Exception as exc:
+            logger.warning("[OfficeService] 桌宠工具结果回传失败: %s", exc)
+        try:
+            self._store.add_event(task_id, "pet/tool", {
+                "name": tool_name,
+                "arguments": arguments,
+                "ok": payload["ok"],
+                "message": payload["message"],
+            })
+        except KeyError:
+            logger.debug("[OfficeService] 桌宠工具事件落在已删除的任务上: %s", task_id)
 
     def resolve_approval(self, approval_id: str, decision: str) -> bool:
         with self._lock:

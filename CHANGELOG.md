@@ -16,6 +16,17 @@
   显示字数，按客户端 12 秒冷却锁住发送按钮并倒计时（服务端同 IP 6 秒 1 条，客户端更保守）。
   窗口是模块级单例，退出时由 `lib/script/ui/shutdown.py` 统一隐藏与释放。托盘菜单入口在 Qt
   后端生效；DX 后端的原生托盘菜单仍是无「bug跟踪」的精简集合，暂未列入该入口。
+- 办公模式新增桌宠能力工具：音乐、雪豹、沙发、摩托、倒计时、音量与瞬移现在也能由办公代理
+  调用。桌宠能力只活在主进程，Node 侧车拿不到音响窗口、动画管理器和音乐服务，所以走「工具
+  登记 + 命令回传」：`services/dsh-office-runtime/bridge/index.mjs` 用
+  `@deepseek-ai/dsh-tools` 的 `defineTool` 注册与陪伴模式同名的 10 个工具（参数与
+  `lib/script/chat/native_tools.py` 的原生工具一致），模型调用时回传 `pet_tool_call`；
+  `lib/script/office/pet_tools.py` 复用 `native_tool_to_dispatch()` 把调用翻译成桌宠指令，
+  交给 `ToolDispatcher.execute_command()` 执行，结果以 `pet_tool_result` 回包（15 秒超时）
+  并作为一条 `pet/tool` 事件写进任务详情页的「工具记录」。刻意不开放 `recall_memory` 与
+  `inspect_screen`（都要往陪伴聊天流注入 `INPUT_CHAT`，办公模式没有这条通道）以及
+  `open_browser`（会在办公沙箱与审批边界之外打开系统浏览器）。桌宠工具不触发审批：它们不请求
+  沙箱提权，也不读写工作区。
 
 ### Changed
 - 语音设置只保留四个常用项：采样温度（情绪自然）、重复惩罚（情绪丰富）、ONNX 语速（语速快慢）
@@ -126,6 +137,10 @@
   窗口外框用 `border_strong` 收边并居中于父窗或光标所在屏幕，与工作台、办公页同一套
   明暗主题令牌。
 
+- `ToolDispatcher._accepts_mode_generation()` 明确 `mode_generation is None` 的含义：调用方
+  没有陪伴模式代次（办公模式的桌宠工具）时，只要求桌面仍停在办公模式；切回陪伴模式后，办公
+  发出但没收尾的异步工作同样作废。此前这条路径一律判为过期，办公模式的音乐、窥屏、浏览器
+  指令会被静默丢弃。
 - 本机 DeepSeek Harness 的探测改到启动等待期：`main.py` 在 `APP_PRE_START` 把只读探测
   排进 IO 线程池跑一次并缓存（`local_dsh.prime_local_dsh_status()`），设置面板只读缓存，
   不再在打开面板时于 UI 线程现算 `npm prefix -g` 与若干次 `node --version`。办公后端下拉

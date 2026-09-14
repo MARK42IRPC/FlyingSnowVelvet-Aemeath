@@ -47,6 +47,8 @@ REQUIRED_DSH_PACKAGES = (
     "dsh-llm-pi-ai",
     "dsh-session",
     "dsh-system-prompt",
+    # 办公桥通过 @deepseek-ai/dsh-tools 的 defineTool 注册桌宠能力工具。
+    "dsh-tools",
 )
 
 

@@ -194,6 +194,69 @@ class OfficeServiceLifecycleTests(_UsableOfficeConfig, unittest.TestCase):
             self.assertNotIn(task_id, service._stream_buffers)
             self.assertIsNone(service._active_task_id)
 
+    def test_pet_tool_call_runs_on_the_desktop_and_answers_the_sidecar(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            service, _scheduler, store, _ipc = self._service(Path(tmpdir))
+            self.addCleanup(service.cleanup)
+            task = store.create("放首歌", Path(tmpdir) / "workspace")
+            task_id = task["id"]
+            calls = []
+
+            def fake_execute(name, arguments=None, **_kwargs):
+                calls.append((name, arguments))
+                return {"ok": True, "message": "已让音响搜索并播放：纸飞机"}
+
+            with patch("lib.script.office.service.execute_pet_tool", side_effect=fake_execute):
+                service._on_runtime_event(Event(EventType.OFFICE_RUNTIME_EVENT, {
+                    "type": "pet_tool_call",
+                    "taskId": task_id,
+                    "callId": "call-1",
+                    "name": "play_music",
+                    "arguments": {"query": "纸飞机"},
+                }))
+
+            self.assertEqual(calls, [("play_music", {"query": "纸飞机"})])
+            self.assertEqual(service._runtime.sent, [{
+                "type": "pet_tool_result",
+                "taskId": task_id,
+                "callId": "call-1",
+                "ok": True,
+                "message": "已让音响搜索并播放：纸飞机",
+            }])
+            recorded = [
+                item for item in store.get(task_id)["events"] if item["type"] == "pet/tool"
+            ]
+            self.assertEqual(len(recorded), 1)
+            self.assertEqual(recorded[0]["data"]["name"], "play_music")
+            self.assertEqual(recorded[0]["data"]["arguments"], {"query": "纸飞机"})
+            self.assertTrue(recorded[0]["data"]["ok"])
+
+    def test_pet_tool_call_for_a_removed_task_still_answers_the_sidecar(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            service, _scheduler, store, _ipc = self._service(Path(tmpdir))
+            self.addCleanup(service.cleanup)
+
+            with patch(
+                "lib.script.office.service.execute_pet_tool",
+                return_value={"ok": False, "message": "桌宠能力不可用：音乐"},
+            ):
+                service._on_runtime_event(Event(EventType.OFFICE_RUNTIME_EVENT, {
+                    "type": "pet_tool_call",
+                    "taskId": "missing-task",
+                    "callId": "call-2",
+                    "name": "play_music",
+                    "arguments": {},
+                }))
+
+            self.assertEqual(service._runtime.sent, [{
+                "type": "pet_tool_result",
+                "taskId": "missing-task",
+                "callId": "call-2",
+                "ok": False,
+                "message": "桌宠能力不可用：音乐",
+            }])
+            self.assertEqual(store.get("missing-task"), None)
+
     def test_default_input_resumes_latest_modified_task(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             service, _scheduler, store, _ipc = self._service(Path(tmpdir))

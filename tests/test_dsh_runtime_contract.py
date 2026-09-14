@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -9,6 +10,7 @@ from unittest.mock import patch
 from lib.core import dsh_runtime_contract as dsh_config
 from lib.script.office import runtime as office_runtime
 from lib.script.office.contracts import REASONING_EFFORTS
+from lib.script.office.pet_tools import PET_TOOL_NAMES, pet_tool_definitions
 
 
 def _write_json(path: Path, payload: dict) -> None:
@@ -161,6 +163,41 @@ class DshRuntimeContractTests(unittest.TestCase):
         for value in REASONING_EFFORTS:
             with self.subTest(effort=value):
                 self.assertIn('\n  %s: "' % value, bridge)
+
+
+    def test_bridge_exposes_the_office_pet_tools_with_matching_names_and_parameters(self):
+        runtime_root = dsh_config.dsh_runtime_root(office_runtime.project_root())
+        bridge = (runtime_root / "bridge" / "index.mjs").read_text(encoding="utf-8")
+
+        inject_line = bridge.split("export const inject", 1)[1].split(";", 1)[0]
+        self.assertIn('"tools"', inject_line)
+        self.assertIn('emit("pet_tool_call"', bridge)
+        self.assertIn('case "pet_tool_result"', bridge)
+        self.assertIn('from "@deepseek-ai/dsh-tools"', bridge)
+        self.assertIn("const COUNT_PARAMETER = {", bridge)
+
+        table = bridge.split("const PET_TOOLS = [", 1)[1].split("\n];", 1)[0]
+        self.assertEqual(
+            re.findall('\n\\s+name: "([a-z_]+)"', table),
+            list(PET_TOOL_NAMES),
+        )
+        for definition in pet_tool_definitions():
+            function = definition["function"]
+            entry = table.split('name: "%s"' % function["name"], 1)[1].split("\n  {", 1)[0]
+            for parameter in function["parameters"].get("properties", {}):
+                with self.subTest(tool=function["name"], parameter=parameter):
+                    self.assertIn("%s:" % parameter, entry)
+
+    def test_bridge_manifest_declares_the_tools_peer_dependency(self):
+        runtime_root = dsh_config.dsh_runtime_root(office_runtime.project_root())
+        bridge = json.loads(
+            (runtime_root / "bridge" / "package.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            bridge["peerDependencies"]["@deepseek-ai/dsh-tools"],
+            dsh_config.DSH_VERSION,
+        )
+        self.assertIn("dsh-tools", dsh_config.REQUIRED_DSH_PACKAGES)
 
 
 if __name__ == "__main__":

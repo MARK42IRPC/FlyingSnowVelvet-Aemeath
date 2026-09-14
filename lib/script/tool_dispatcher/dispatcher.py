@@ -379,10 +379,16 @@ class ToolDispatcher:
         logger.info("[ToolDispatcher] 工具调度器已初始化")
 
     def _accepts_mode_generation(self, mode_generation: int | None) -> bool:
+        """判断一次指令调用是否仍属于当前陪伴模式代次。
+
+        `mode_generation is None` 表示调用方没有陪伴模式代次：办公模式的桌宠工具走这条
+        路（它们不属于任何一次陪伴对话），只要桌面还停在办公模式就放行；切回陪伴模式后，
+        办公发出但还没跑完的异步工作同样作废。
+        """
         if self._mode_service is None:
             return True
         if mode_generation is None:
-            return False
+            return self._mode_service.is_office
         return self._mode_service.accepts_companion_generation(mode_generation)
 
     def _event_mode_generation(self, event: Event) -> tuple[bool, int | None]:
@@ -431,6 +437,25 @@ class ToolDispatcher:
 
         source = "native" if native_tool_call is not None else "legacy"
         logger.info("[ToolDispatcher] 工具调用: source=%s cmd=%s arg=%s", source, cmd, arg or '<无>')
+
+        self.execute_command(cmd, arg, mode_generation=mode_generation)
+
+    def execute_command(
+        self,
+        command: str,
+        argument: str = '',
+        *,
+        mode_generation: int | None = None,
+    ) -> bool:
+        """执行一条桌宠指令，返回是否命中已知指令。
+
+        聊天工具调用与办公模式的桌宠工具共用这条路径：调用方负责来源鉴权，
+        这里只做指令分派（陪伴模式的 generation 校验留在 `_on_stream_final`）。
+        """
+        cmd = str(command or '').strip()
+        arg = str(argument or '').strip()
+        if not cmd:
+            return False
 
         if cmd == '音乐':
             if not arg:
@@ -494,6 +519,8 @@ class ToolDispatcher:
 
         else:
             logger.warning("[ToolDispatcher] 未知指令: %s", cmd)
+            return False
+        return True
 
     def _handle_screen_peek(self, *, mode_generation: int | None = None) -> None:
         """截取当前主屏幕，并仅向模型追加一次多模态请求。"""

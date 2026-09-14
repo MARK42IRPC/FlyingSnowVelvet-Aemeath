@@ -49,6 +49,10 @@ class _FakeModeService:
     def accepts_companion_generation(self, generation):
         return self.mode == "companion" and generation == self.generation
 
+    @property
+    def is_office(self):
+        return self.mode == "office"
+
 
 class ToolDispatcherTests(unittest.TestCase):
     def setUp(self):
@@ -99,6 +103,37 @@ class ToolDispatcherTests(unittest.TestCase):
         }))
 
         self.assertEqual(self.center.published, [])
+
+    def test_office_pet_tool_without_generation_is_gated_by_the_current_mode(self):
+        """办公模式的桌宠工具没有陪伴代次：只有停在办公模式才放行。"""
+        mode = _FakeModeService(mode="office", generation=1)
+        with patch.object(dispatcher_module, 'get_event_center', return_value=self.center):
+            dispatcher = ToolDispatcher(mode_service=mode)
+        self.addCleanup(dispatcher.cleanup)
+
+        self.assertTrue(dispatcher._accepts_mode_generation(None))
+
+        mode.mode = "companion"
+        mode.generation = 2
+        self.assertFalse(dispatcher._accepts_mode_generation(None))
+        self.assertTrue(dispatcher._accepts_mode_generation(2))
+
+    def test_office_music_request_survives_the_companion_generation_gate(self):
+        mode = _FakeModeService(mode="office", generation=3)
+        with patch.object(dispatcher_module, 'get_event_center', return_value=self.center):
+            dispatcher = ToolDispatcher(mode_service=mode)
+        self.addCleanup(dispatcher.cleanup)
+        dispatcher._check_has_speaker = Mock(return_value=True)
+        service = Mock()
+        service.search.return_value = [
+            SimpleNamespace(track_id='netease:1', title='纸飞机', artist='鸣潮', display='03:20 纸飞机 - 鸣潮')
+        ]
+
+        with patch.object(dispatcher_module, 'get_music_service', return_value=service):
+            handled = dispatcher.execute_command('音乐', '纸飞机')
+
+        self.assertTrue(handled)
+        self.assertEqual([event.type for event in self.center.published], [EventType.MUSIC_PLAY_TOP])
 
     def test_direct_commands_publish_expected_events(self):
         cases = (
