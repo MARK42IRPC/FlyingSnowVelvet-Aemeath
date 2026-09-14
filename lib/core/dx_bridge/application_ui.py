@@ -1998,6 +1998,9 @@ class DxApplicationUiHost:
         if panel is not None:
             panel.hide()
 
+    def prewarm_runtime_ui(self) -> None:
+        """DX 面板按需构建，没有需要抢跑的启动期预绘制。"""
+
     def start_runtime(self, application: object) -> None:
         if self._started and not self._stopped:
             return

@@ -14,6 +14,9 @@ class ApplicationUiHost(Protocol):
     def prepare_runtime(self) -> None:
         """Create runtime UI that must exist before APP_MAIN."""
 
+    def prewarm_runtime_ui(self) -> None:
+        """Start startup-wait UI pre-drawing when the user enabled it."""
+
     def start_runtime(self, application: object) -> None:
         """Start announcement and staged UI preloading."""
 

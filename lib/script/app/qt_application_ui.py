@@ -38,6 +38,14 @@ class QtApplicationUiHost:
         init_tooltip_panel()
         get_cmd_window()
 
+    def prewarm_runtime_ui(self) -> None:
+        """启动等待期抢跑预绘制 UI 缓存（开关关闭时保持原分步预加载）。"""
+        if self._preloader is not None:
+            return
+        from lib.script.ui.preloader import prewarm_runtime_ui_cache
+
+        self._preloader = prewarm_runtime_ui_cache()
+
     def start_runtime(self, application: object) -> None:
         if self._runtime_started:
             return
@@ -53,7 +61,8 @@ class QtApplicationUiHost:
         self._office_approval_controller = OfficeApprovalController()
         self._office_approval_controller.start()
         self._announcement_controller = AnnouncementController(application)
-        self._preloader = preload_runtime_ui()
+        if self._preloader is None:
+            self._preloader = preload_runtime_ui()
         self._announcement_controller.start()
 
     def open_announcement(self) -> None:
@@ -83,6 +92,7 @@ class QtApplicationUiHost:
             self._office_approval_controller = None
         if self._preloader is not None:
             self._preloader.stop()
+            self._preloader.release_all()
             self._preloader = None
         if self._announcement_controller is not None:
             self._announcement_controller.cleanup()

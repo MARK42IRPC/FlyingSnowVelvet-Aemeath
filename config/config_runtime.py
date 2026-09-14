@@ -99,6 +99,9 @@ set_draw_scale(DRAW['scale'])
 STARTUP = {
     'ensure_desktop_shortcut': True,
     'log_retention_count': 20,
+    # 启动等待（APP_PRE_START → APP_INIT_READY）期间是否异步预绘制常用 UI 控件进
+    # 30 MiB 上限的内存缓存池。默认关闭，可在工作台「系统调度 → 启动」里打开。
+    'ui_cache_preload': False,
 }
 
 _user_scale_config = get_user_scale_config()

@@ -95,6 +95,7 @@ class ApplicationRuntimeContractTests(unittest.TestCase):
             class ApplicationUi:
                 def prepare_application(self, application): pass
                 def prepare_runtime(self): pass
+                def prewarm_runtime_ui(self): pass
                 def start_runtime(self, application): pass
                 def open_announcement(self): pass
                 def begin_shutdown(self): pass

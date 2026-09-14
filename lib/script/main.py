@@ -186,6 +186,9 @@ class ApplicationState:
         # ── 动态发现模块（扫描管理器和粒子脚本）──────────────────────
         discover_all()
 
+        # ── 启动等待期异步预绘制 UI 缓存（系统调度 → 启动，默认关闭）──
+        self._application_ui.prewarm_runtime_ui()
+
         # 启动延时与启动动画开关绑定：关闭动画时跳过延时。
         startup_delay_ms = 3000 if bool(ANIMATION.get('start_exit_enabled', True)) else 0
         if startup_delay_ms > 0:

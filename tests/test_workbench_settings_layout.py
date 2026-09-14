@@ -1,5 +1,6 @@
 import os
 import unittest
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -14,6 +15,7 @@ os.environ.setdefault("QT_PLUGIN_PATH", os.path.join(_QT_ROOT, "Qt5", "plugins")
 
 from PyQt5.QtWidgets import (
     QApplication,
+    QCheckBox,
     QComboBox,
     QFormLayout,
     QFrame,
@@ -31,7 +33,10 @@ from lib.script.ui.workbench_settings_layout import (
     SettingsPageScaffold,
     create_settings_form,
 )
-from lib.script.ui.workbench_settings_layout import SETTINGS_FONT_SIZE
+from lib.script.ui.workbench_settings_layout import (
+    SETTINGS_FONT_SIZE,
+    SETTINGS_LABEL_WIDTH,
+)
 from lib.script.workbench.theme import LIGHT_COLORS, workbench_stylesheet
 from lib.script.ui.ai_settings_panel import (
     AISettingsPanel,
@@ -137,6 +142,36 @@ class WorkbenchSettingsLayoutTests(unittest.TestCase):
         host.close()
         panel.deleteLater()
         host.deleteLater()
+        self.app.processEvents()
+
+    def test_startup_page_exposes_ui_cache_toggle_with_a_fitting_label(self):
+        with patch.object(AISettingsPanel, '_refresh_hardware_watermark_async', lambda self: None):
+            panel = AISettingsPanel(lazy_workbench_pages=True)
+            page = panel.create_workbench_page('system_dispatch')
+
+        fields = [
+            field
+            for field in panel._config_tab_meta['system_dispatch']['fields']
+            if field.get('dict_name') == 'STARTUP' and field.get('key') == 'ui_cache_preload'
+        ]
+        self.assertEqual(len(fields), 1)
+        self.assertIsInstance(fields[0]['editor'], QCheckBox)
+
+        labels = [
+            label
+            for label in page.findChildren(QLabel)
+            if label.text() == '启动期预绘制缓存'
+        ]
+        self.assertEqual(len(labels), 1)
+        label = labels[0]
+        self.assertEqual(label.objectName(), 'ConfigFormLabel')
+        self.assertLessEqual(
+            label.fontMetrics().horizontalAdvance(label.text()),
+            SETTINGS_LABEL_WIDTH,
+        )
+
+        page.deleteLater()
+        panel.deleteLater()
         self.app.processEvents()
 
     def test_workbench_theme_stylesheets_have_dark_and_light_palettes(self):

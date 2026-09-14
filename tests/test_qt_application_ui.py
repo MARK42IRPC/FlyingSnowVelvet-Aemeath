@@ -28,6 +28,9 @@ class QtApplicationUiHostTests(unittest.TestCase):
             def stop(self):
                 calls.append("preloader_stop")
 
+            def release_all(self):
+                calls.append("preloader_release")
+
         class ApprovalController:
             def __init__(self):
                 calls.append("approval_init")
@@ -48,6 +51,7 @@ class QtApplicationUiHostTests(unittest.TestCase):
             ),
             "lib.script.ui.preloader": types.SimpleNamespace(
                 preload_runtime_ui=lambda: Preloader(),
+                prewarm_runtime_ui_cache=lambda: Preloader(),
             ),
             "lib.script.ui.office_approval_controller": types.SimpleNamespace(
                 OfficeApprovalController=ApprovalController,
@@ -77,6 +81,7 @@ class QtApplicationUiHostTests(unittest.TestCase):
             host.finalize()
 
         self.assertEqual(calls.count("preloader_stop"), 1)
+        self.assertEqual(calls.count("preloader_release"), 1)
         self.assertEqual(calls.count("announcement_cleanup"), 1)
         self.assertEqual(calls.count("approval_start"), 1)
         self.assertEqual(calls.count("approval_cleanup"), 1)
@@ -85,6 +90,127 @@ class QtApplicationUiHostTests(unittest.TestCase):
         self.assertEqual(calls.count("animation_cleanup"), 1)
         self.assertIn("announcement_open", calls)
         self.assertIn("ui_hide", calls)
+
+    def test_startup_wait_prewarm_reuses_one_preloader(self):
+        calls = []
+
+        class Animation:
+            pass
+
+        class Preloader:
+            pass
+
+        def eager_prewarm():
+            calls.append("prewarm")
+            return Preloader()
+
+        def staged_preload():
+            calls.append("staged")
+            return Preloader()
+
+        class AnnouncementController:
+            def __init__(self, application):
+                pass
+
+            def start(self):
+                pass
+
+            def cleanup(self):
+                pass
+
+        class ApprovalController:
+            def __init__(self):
+                pass
+
+            def start(self):
+                pass
+
+            def cleanup(self):
+                pass
+
+        modules = {
+            "lib.script.SEanima.animation": types.SimpleNamespace(
+                get_start_exit_animation=lambda: Animation(),
+            ),
+            "lib.script.ui.announcement_dialog": types.SimpleNamespace(
+                AnnouncementController=AnnouncementController,
+            ),
+            "lib.script.ui.preloader": types.SimpleNamespace(
+                preload_runtime_ui=staged_preload,
+                prewarm_runtime_ui_cache=eager_prewarm,
+            ),
+            "lib.script.ui.office_approval_controller": types.SimpleNamespace(
+                OfficeApprovalController=ApprovalController,
+            ),
+        }
+
+        with patch.dict(sys.modules, modules):
+            from lib.script.app.qt_application_ui import QtApplicationUiHost
+
+            host = QtApplicationUiHost()
+            host.prewarm_runtime_ui()
+            host.prewarm_runtime_ui()
+            host.start_runtime(object())
+
+        self.assertEqual(calls, ["prewarm"])
+
+    def test_prewarm_is_skipped_when_the_toggle_is_off(self):
+        calls = []
+
+        class Animation:
+            pass
+
+        class Preloader:
+            def stop(self):
+                calls.append("stop")
+
+            def release_all(self):
+                calls.append("release")
+
+        class AnnouncementController:
+            def __init__(self, application):
+                pass
+
+            def start(self):
+                pass
+
+            def cleanup(self):
+                pass
+
+        class ApprovalController:
+            def __init__(self):
+                pass
+
+            def start(self):
+                pass
+
+            def cleanup(self):
+                pass
+
+        modules = {
+            "lib.script.SEanima.animation": types.SimpleNamespace(
+                get_start_exit_animation=lambda: Animation(),
+            ),
+            "lib.script.ui.announcement_dialog": types.SimpleNamespace(
+                AnnouncementController=AnnouncementController,
+            ),
+            "lib.script.ui.preloader": types.SimpleNamespace(
+                preload_runtime_ui=lambda: (calls.append("staged"), Preloader())[1],
+                prewarm_runtime_ui_cache=lambda: (calls.append("prewarm"), None)[1],
+            ),
+            "lib.script.ui.office_approval_controller": types.SimpleNamespace(
+                OfficeApprovalController=ApprovalController,
+            ),
+        }
+
+        with patch.dict(sys.modules, modules):
+            from lib.script.app.qt_application_ui import QtApplicationUiHost
+
+            host = QtApplicationUiHost()
+            host.prewarm_runtime_ui()
+            host.start_runtime(object())
+
+        self.assertEqual(calls, ["prewarm", "staged"])
 
 
 if __name__ == "__main__":

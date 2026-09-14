@@ -329,6 +329,7 @@ _CATEGORY_KEY_ALLOWLIST = {
         "STARTUP": {
             "ensure_desktop_shortcut",
             "log_retention_count",
+            "ui_cache_preload",
         },
     },
     "desktop_pet_update": {},  # 桌宠更新标签页 - 没有配置字段，只有按钮
@@ -339,6 +340,7 @@ _GENERAL_BOOL_KEYS: set[tuple[str, str]] = {
     ("PARTICLES", "enable_stroke"),
     ("MORTOR", "bgm_enabled"),
     ("STARTUP", "ensure_desktop_shortcut"),
+    ("STARTUP", "ui_cache_preload"),
 }
 
 _GENERAL_NUMERIC_RULES: dict[tuple[str, str], tuple[str, float, float]] = {
@@ -607,6 +609,7 @@ _GENERAL_CONFIG_DEFAULTS: dict[str, dict[str, object]] = {
     "STARTUP": {
         "ensure_desktop_shortcut": True,
         "log_retention_count": 20,
+        "ui_cache_preload": False,
     },
 }
 
@@ -676,6 +679,7 @@ _KEY_FRIENDLY_NAME = {
     "STARTUP": {
         "ensure_desktop_shortcut": "启动时创建快捷方式",
         "log_retention_count": "日志保留数量",
+        "ui_cache_preload": "启动期预绘制缓存",
     },
     "BUBBLE_CONFIG": {
         "default_min_ticks": "默认最小显示tick",
@@ -1918,6 +1922,8 @@ class AISettingsPanel(QWidget):
                 if key == "start_animation_duration"
                 else "，推荐默认"
             )
+        elif (dict_name, key) == ("STARTUP", "ui_cache_preload"):
+            recommendation = "，启动等待期预绘制常用窗口，缓存上限30MB"
         return (
             f"{section_name} · {friendly_name}\n"
             f"配置键: {dict_name}.{key}\n"
