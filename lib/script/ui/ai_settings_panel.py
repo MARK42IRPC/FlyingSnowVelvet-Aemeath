@@ -2137,13 +2137,7 @@ class AISettingsPanel(QWidget):
         self._office_backend.setView(QListView(self._office_backend))
         self._office_backend.addItem("DeepSeek Harness（推荐）", "dsh")
         self._local_dsh_status = self._probe_local_dsh()
-        self._office_backend.addItem("本机 DeepSeek Harness（探测）", "local_dsh")
-        if not self._local_dsh_status.get("available"):
-            local_item = self._office_backend.model().item(
-                self._office_backend.findData("local_dsh")
-            )
-            if local_item is not None:
-                local_item.setEnabled(False)
+        self._ensure_local_dsh_item()
         form.addRow("办公后端", self._office_backend)
         self._set_form_row_description(
             form,
@@ -5069,7 +5063,9 @@ class AISettingsPanel(QWidget):
         self._auto_companion_interval_minutes.setEnabled(self._auto_companion_enabled.isChecked())
 
         self._office_use_independent_api.setChecked(bool(values.get("office_use_independent_api", False)))
-        backend_index = self._office_backend.findData(str(values.get("office_backend", "dsh") or "dsh"))
+        saved_backend = str(values.get("office_backend", "dsh") or "dsh")
+        self._ensure_local_dsh_item(saved_backend=saved_backend)
+        backend_index = self._office_backend.findData(saved_backend)
         self._office_backend.setCurrentIndex(backend_index if backend_index >= 0 else 0)
         self._office_api_key.set_raw_text(str(values.get("office_api_key", "")))
         self._office_api_base_url.setText(str(values.get("office_api_base_url", "")))
@@ -5128,16 +5124,39 @@ class AISettingsPanel(QWidget):
             field.setVisible(enabled)
 
     def _probe_local_dsh(self) -> dict:
-        """只读探测本机 DeepSeek Harness，探测失败不影响设置面板。"""
+        """读取启动期探测结果，没有缓存时按需只读探测；失败不影响设置面板。"""
         try:
             from lib.script.office import local_dsh
 
+            cached = local_dsh.cached_local_dsh_status()
+            if cached is not None:
+                return dict(cached)
             return dict(local_dsh.local_dsh_status())
         except Exception as exc:
             return {
                 "available": False,
                 "reason": f"探测本机 DeepSeek Harness 失败：{exc}",
             }
+
+    def _ensure_local_dsh_item(self, *, saved_backend: str | None = None) -> None:
+        """按启动期探测结果决定是否列出「本机 DeepSeek Harness」。
+
+        探测到可用安装时列在「DeepSeek Harness（推荐）」之后；没有探测到时
+        默认不显示，只有在已保存该后端的情况下才保留一个置灰条目，避免把
+        用户既有的选择静默改回内置 DSH。
+        """
+        if self._office_backend.findData("local_dsh") >= 0:
+            return
+        status = getattr(self, "_local_dsh_status", None) or {}
+        if status.get("available"):
+            self._office_backend.addItem("本机 DeepSeek Harness", "local_dsh")
+            return
+        if str(saved_backend or "") != "local_dsh":
+            return
+        self._office_backend.addItem("本机 DeepSeek Harness（未探测到）", "local_dsh")
+        item = self._office_backend.model().item(self._office_backend.findData("local_dsh"))
+        if item is not None:
+            item.setEnabled(False)
 
     def _office_backend_description(self) -> str:
         backend = str(self._office_backend.currentData() or "dsh")

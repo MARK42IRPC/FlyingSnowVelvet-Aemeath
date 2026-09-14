@@ -189,6 +189,9 @@ class ApplicationState:
         # ── 启动等待期异步预绘制 UI 缓存（系统调度 → 启动，默认关闭）──
         self._application_ui.prewarm_runtime_ui()
 
+        # ── 启动等待期后台探测本机 DeepSeek Harness（办公后端可选路由）──
+        self._probe_local_dsh_in_background()
+
         # 启动延时与启动动画开关绑定：关闭动画时跳过延时。
         startup_delay_ms = 3000 if bool(ANIMATION.get('start_exit_enabled', True)) else 0
         if startup_delay_ms > 0:
@@ -278,6 +281,18 @@ class ApplicationState:
             self._office.warmup_runtime()
         except Exception as exc:
             logger.debug("[Office] 启动预热失败: %s", exc)
+
+    def _probe_local_dsh_in_background(self) -> None:
+        """启动等待期在 IO 线程池只读探测本机 DeepSeek Harness。
+
+        结果缓存供设置面板与办公运行时复用，探测失败或排不进队列都不影响启动。
+        """
+        try:
+            from lib.script.office import local_dsh
+
+            local_dsh.schedule_local_dsh_probe()
+        except Exception as exc:
+            logger.debug("[Office] 本机 DSH 探测未能排入后台: %s", exc)
 
     def _on_tray_quit(self):
         """托盘菜单退出回调"""

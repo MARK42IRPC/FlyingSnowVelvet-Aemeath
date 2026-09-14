@@ -54,6 +54,22 @@ class AISettingsReplyModeSectionsTests(unittest.TestCase):
         self.panel._force_mode.setCurrentIndex(self.panel._force_mode.findData(mode))
         self.app.processEvents()
 
+    def _build_panel(self, status: dict, *, saved_backend: str | None = None):
+        """按给定探测结果重建面板（本机 DSH 探测只在构造期读一次）。"""
+        probe = patch.object(AISettingsPanel, "_probe_local_dsh", return_value=dict(status))
+        probe.start()
+        self.addCleanup(probe.stop)
+        with patch.object(AISettingsPanel, "_refresh_hardware_watermark_async", lambda self: None):
+            panel = AISettingsPanel(lazy_workbench_pages=True)
+        self.addCleanup(panel.deleteLater)
+        if saved_backend is not None:
+            panel._set_values_to_form({"office_backend": saved_backend})
+        return panel
+
+    @staticmethod
+    def _backend_items(field) -> list[tuple[str, object]]:
+        return [(field.itemText(index), field.itemData(index)) for index in range(field.count())]
+
     def test_reply_mode_list_contains_only_direct_routes(self):
         items = [
             (self.panel._force_mode.itemText(index), self.panel._force_mode.itemData(index))
@@ -66,37 +82,60 @@ class AISettingsReplyModeSectionsTests(unittest.TestCase):
             ("规则回复", "3"),
         ])
 
-    def test_office_backend_selector_lists_builtin_and_local(self):
+    def test_office_backend_hides_local_entry_when_probe_finds_nothing(self):
         field = self.panel._office_backend
-        self.assertEqual(
-            [(field.itemText(i), field.itemData(i)) for i in range(field.count())],
-            [
-                ("DeepSeek Harness（推荐）", "dsh"),
-                ("本机 DeepSeek Harness（探测）", "local_dsh"),
-            ],
-        )
-        self.assertTrue(field.model().item(field.findData("dsh")).isEnabled())
-        self.assertFalse(field.model().item(field.findData("local_dsh")).isEnabled())
 
-        field.setCurrentIndex(field.findData("local_dsh"))
+        self.assertEqual(self._backend_items(field), [("DeepSeek Harness（推荐）", "dsh")])
+        self.assertEqual(field.currentData(), "dsh")
+        self.assertIn("DeepSeek Harness", self.panel._office_backend_description())
 
-        self.assertIn("未探测到", self.panel._office_backend_description())
-
-    def test_office_backend_description_reports_local_install(self):
-        field = self.panel._office_backend
-        self.panel._local_dsh_status = {
+    def test_office_backend_lists_local_entry_when_probe_succeeds(self):
+        panel = self._build_panel({
             "available": True,
             "version": "0.1.0-rc.6",
             "source": "npm 全局目录",
             "path": r"C:\Users\demo\AppData\Roaming\npm\node_modules\@deepseek-ai\dsh",
-        }
+        })
+        field = panel._office_backend
+
+        self.assertEqual(self._backend_items(field), [
+            ("DeepSeek Harness（推荐）", "dsh"),
+            ("本机 DeepSeek Harness", "local_dsh"),
+        ])
+        self.assertTrue(field.model().item(field.findData("local_dsh")).isEnabled())
+
         field.setCurrentIndex(field.findData("local_dsh"))
 
-        description = self.panel._office_backend_description()
-
+        description = panel._office_backend_description()
         self.assertIn("0.1.0-rc.6", description)
         self.assertIn("npm 全局目录", description)
         self.assertIn(r"AppData\Roaming\npm", description)
+
+    def test_office_backend_keeps_saved_local_choice_when_probe_finds_nothing(self):
+        panel = self._build_panel(
+            {"available": False, "reason": "未探测到 本机 DeepSeek Harness"},
+            saved_backend="local_dsh",
+        )
+        field = panel._office_backend
+
+        self.assertEqual(self._backend_items(field), [
+            ("DeepSeek Harness（推荐）", "dsh"),
+            ("本机 DeepSeek Harness（未探测到）", "local_dsh"),
+        ])
+        self.assertFalse(field.model().item(field.findData("local_dsh")).isEnabled())
+        self.assertEqual(field.currentData(), "local_dsh")
+        self.assertIn("未探测到", panel._office_backend_description())
+
+    def test_office_backend_does_not_duplicate_local_entry_on_reload(self):
+        panel = self._build_panel({"available": True, "version": "0.1.0-rc.6"})
+
+        panel._set_values_to_form({"office_backend": "local_dsh"})
+        panel._set_values_to_form({"office_backend": "dsh"})
+
+        field = panel._office_backend
+        entries = [data for _text, data in self._backend_items(field)]
+        self.assertEqual(entries.count("local_dsh"), 1)
+        self.assertEqual(field.currentData(), "dsh")
 
     def test_office_backend_does_not_hide_independent_api_toggle_or_warmup(self):
         self.assertFalse(self.panel._office_backend.isHidden())

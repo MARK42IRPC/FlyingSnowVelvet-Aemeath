@@ -14,6 +14,7 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -45,14 +46,17 @@ _CACHE: LocalDshInstall | None = None
 _PROBED = False
 _ROOT_CACHE: list[tuple[Path, str]] | None = None
 _NODE_CACHE: dict[str, str | None] = {}
+_STATUS_CACHE: dict | None = None
+_STATUS_LOCK = threading.Lock()
 
 
 def reset_local_dsh_cache() -> None:
     """清除探测缓存（测试与用户手动重新探测时使用）。"""
-    global _CACHE, _PROBED, _ROOT_CACHE
+    global _CACHE, _PROBED, _ROOT_CACHE, _STATUS_CACHE
     _CACHE = None
     _PROBED = False
     _ROOT_CACHE = None
+    _STATUS_CACHE = None
     _NODE_CACHE.clear()
 
 
@@ -363,3 +367,40 @@ def local_dsh_status(project_root: Path | None = None) -> dict:
         "node": node or "",
         "reason": "" if available else (reason or install.reason),
     }
+
+
+def cached_local_dsh_status() -> dict | None:
+    """返回启动期探测留下的结果；没有探测过时返回 ``None``。"""
+    return dict(_STATUS_CACHE) if _STATUS_CACHE is not None else None
+
+
+def prime_local_dsh_status(project_root: Path | None = None) -> dict:
+    """探测一次并缓存，供设置面板与办公运行时复用。"""
+    global _STATUS_CACHE
+    cached = cached_local_dsh_status()
+    if cached is not None:
+        return cached
+    status = local_dsh_status(project_root)
+    with _STATUS_LOCK:
+        if _STATUS_CACHE is None:
+            _STATUS_CACHE = dict(status)
+        return dict(_STATUS_CACHE)
+
+
+def schedule_local_dsh_probe(submit_io=None):
+    """把启动期探测排进 IO 线程池；已有结果或排不进队列时返回 ``None``。
+
+    探测本身只读、不写用户数据，放在启动等待期做可以避免设置面板打开时
+    现算一次 ``npm prefix -g`` 与若干次 ``node --version``。
+    """
+    if _STATUS_CACHE is not None:
+        return None
+    submit = submit_io
+    if submit is None:
+        from lib.core.compute_hub import get_compute_hub
+
+        submit = get_compute_hub().submit_io
+    try:
+        return submit(prime_local_dsh_status)
+    except Exception:
+        return None

@@ -157,6 +157,74 @@ class LocalDshProbeTests(unittest.TestCase):
         self.assertFalse(status["available"])
         self.assertIn("未探测到", status["reason"])
 
+    def test_prime_status_caches_one_result_per_process(self):
+        root = _build_install(self.root / "global")
+        self._use_override(root)
+        self.assertIsNone(local_dsh.cached_local_dsh_status())
+
+        primed = local_dsh.prime_local_dsh_status(self.root)
+
+        self.assertEqual(primed["version"], dsh_config.DSH_VERSION)
+        self.assertEqual(local_dsh.cached_local_dsh_status(), primed)
+
+        manifest = root / "node_modules" / "@deepseek-ai" / "dsh" / "package.json"
+        manifest.unlink()
+
+        self.assertEqual(local_dsh.prime_local_dsh_status(self.root), primed)
+
+        local_dsh.reset_local_dsh_cache()
+
+        self.assertIsNone(local_dsh.cached_local_dsh_status())
+        self.assertIn("未探测到", local_dsh.local_dsh_status(self.root)["reason"])
+
+    def test_schedule_probe_uses_injected_submit_and_runs_once(self):
+        root = _build_install(self.root / "global")
+        self._use_override(root)
+        submitted = []
+
+        def submit(func):
+            submitted.append(func)
+            func()
+            return "future"
+
+        self.assertEqual(local_dsh.schedule_local_dsh_probe(submit), "future")
+        self.assertEqual(submitted, [local_dsh.prime_local_dsh_status])
+        self.assertIsNotNone(local_dsh.cached_local_dsh_status())
+
+        self.assertIsNone(local_dsh.schedule_local_dsh_probe(submit))
+        self.assertEqual(len(submitted), 1)
+
+    def test_schedule_probe_swallows_submit_failure(self):
+        def submit(func):
+            raise RuntimeError("pool closed")
+
+        self.assertIsNone(local_dsh.schedule_local_dsh_probe(submit))
+
+
+class LocalDshStartupProbeTests(unittest.TestCase):
+    """启动等待期探测的接线：只排队列，不阻塞启动。"""
+
+    def _state(self):
+        from lib.script.main import ApplicationState
+
+        return ApplicationState.__new__(ApplicationState)
+
+    def test_pre_start_schedules_probe(self):
+        state = self._state()
+
+        with patch.object(local_dsh, "schedule_local_dsh_probe") as schedule:
+            state._probe_local_dsh_in_background()
+
+        schedule.assert_called_once_with()
+
+    def test_probe_failure_does_not_break_startup(self):
+        state = self._state()
+
+        with patch.object(
+            local_dsh, "schedule_local_dsh_probe", side_effect=RuntimeError("blocked")
+        ):
+            state._probe_local_dsh_in_background()
+
 
 if __name__ == "__main__":
     unittest.main()
