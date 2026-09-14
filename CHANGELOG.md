@@ -191,6 +191,13 @@
   「独立 api」4 行收起后各留 66px / 44px 空白，整页多出 110px。两处折叠改为把折叠内容放进
   独立容器（`_gsv_advanced_group` / `_office_independent_api_group`）后整块 `setVisible()`，
   布局项被完全跳过；离屏渲染改前/改后对照确认收起态空白消失、展开态坐标逐像素一致。
+- 退出动画的出厂默认目录改回 `爱弥斯联合_anima`：`lib/script/SEanima/clip.py` 的
+  `DEFAULT_EXIT_ANIMATION_FOLDER` 自 LTS1.0.6beta2 起就是它，但
+  `config/config_animation.py` 的 `ANIMATION` 字典一直写着 `星炬学院_anima`；带配置的默认值
+  会覆盖代码默认值，所以没改过设置的用户退出动画仍是旧序列帧。`tests/test_seanima_clip_config.py`
+  新增两例守住一致性（出厂配置必须等于代码常量、两个默认目录都必须在资源树里存在），
+  离线安装器的 payload 校验清单同步改成要求 `爱弥斯联合_anima/0001.webp`，包内缺该目录时
+  构建会直接失败而不是等到运行时才发现。
 
 ## [LTS1.0.7pre3] - 2026-09-12
 

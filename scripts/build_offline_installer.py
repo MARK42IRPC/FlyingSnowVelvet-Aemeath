@@ -251,7 +251,7 @@ def validate_payload(payload: Path) -> None:
         "app/resc/agent/office_system_prompt.txt",
         "app/resc/node-24.13.0-win-x64/node.exe",
         "app/resc/GIF/SEanima/耶比_anima/0001.webp",
-        "app/resc/GIF/SEanima/星炬学院_anima/0001.webp",
+        "app/resc/GIF/SEanima/爱弥斯联合_anima/0001.webp",
         "runtime/python311/python.exe",
         "runtime/python311/pythonw.exe",
         "runtime/python311/Lib/site-packages/PyQt5/__init__.py",
