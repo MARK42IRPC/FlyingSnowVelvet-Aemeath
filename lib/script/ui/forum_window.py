@@ -3,12 +3,20 @@
 数据来自 `lib/core/forum.py`（`GET /api/feed` 分页读取、`POST /api/messages` 发帖）。
 窗口只负责呈现与交互：卡片宽度固定为列宽、高度随内容变化，卡片配色只改描边；
 往下滚动到底部再请求更早的一页，发帖按钮受客户端 12 秒冷却约束。
+
+字号与控件间距对齐工作台（页头 19/11、卡片 14/17/11、输入与按钮 14）。
+窗口优先级跟随工作台窗口：普通窗口 + 无边框，既不置顶也不进 `LayerManager`——
+注册进去的窗口会被 `stack_window()` 放进 `HWND_TOPMOST` 链，那正是「压住别的窗口」
+的来源。
 """
 
 from __future__ import annotations
 
-from PyQt5.QtCore import QEvent, Qt, QTimer, pyqtSignal
-from PyQt5.QtGui import QCursor
+from dataclasses import dataclass
+import random
+
+from PyQt5.QtCore import QEvent, QPoint, QRectF, Qt, QTimer, pyqtSignal
+from PyQt5.QtGui import QColor, QCursor, QPainter, QPainterPath, QPen, QPolygon
 from PyQt5.QtWidgets import (
     QApplication,
     QFrame,
@@ -36,27 +44,70 @@ from lib.core.forum import (
     ForumService,
     format_relative_time,
 )
-from lib.core.layer import Layer
 from lib.core.qt_bridge.font import get_ui_font
 from lib.core.qt_bridge.workbench_page import QtWorkbenchToolPage
-from lib.core.unified_draw import get_layer_manager
 from lib.script.ui.forum_style import (
     FORUM_ACCENT_LABELS,
+    FORUM_CARD_RADIUS,
     forum_stylesheet,
+    forum_texture_color,
 )
 from lib.script.ui.workbench_components import create_window_button
 
 COLUMN_COUNT = 3
-CARD_MIN_WIDTH = scale_px(300, min_abs=250)
+WALL_MARGIN = scale_px(16, min_abs=13)
+COLUMN_SPACING = scale_px(12, min_abs=10)
+#: 窗口宽度取工作台的一半左右，三列必须仍能并排放下，所以卡片最小宽度随之下调。
+CARD_MIN_WIDTH = scale_px(170, min_abs=150)
+#: 最小宽度直接由三列网格推出，避免窗口窄到把卡片挤出行外。
+MIN_WINDOW_WIDTH = (
+    COLUMN_COUNT * CARD_MIN_WIDTH
+    + (COLUMN_COUNT - 1) * COLUMN_SPACING
+    + 2 * WALL_MARGIN
+)
+DEFAULT_WINDOW_WIDTH = max(MIN_WINDOW_WIDTH, scale_px(620, min_abs=580))
+DEFAULT_WINDOW_HEIGHT = scale_px(800, min_abs=700)
 LOAD_OLDER_THRESHOLD_PX = scale_px(140, min_abs=90)
+NICKNAME_MAX_LENGTH = 24
+FORUM_NICKNAME_PLACEHOLDER = "输入昵称…（未输入以匿名发送）"
+
+#: 卡片底纹的平铺几何花纹；颜色由主题给（深色白/浅色黑），只改明度、不碰 accent 描边。
+CARD_TEXTURE_PATTERNS = ("stripes", "grid", "dots", "triangles", "checks", "rings")
+CARD_TEXTURE_TILES = (16, 20, 24, 28, 32)
+CARD_TEXTURE_ALPHA_RANGE = (8, 16)
+
+
+@dataclass(frozen=True, slots=True)
+class CardTexture:
+    """一张卡片的底纹规格：花纹、透明度和平铺尺寸。"""
+
+    pattern: str
+    alpha: int
+    tile: int
+
+
+def card_texture(message_id) -> CardTexture:
+    """按留言 id 稳定地挑一组底纹，同一张卡片每次重绘都一致。"""
+    try:
+        seed = int(message_id)
+    except (TypeError, ValueError):
+        seed = 0
+    rng = random.Random(seed)
+    low, high = CARD_TEXTURE_ALPHA_RANGE
+    return CardTexture(
+        pattern=rng.choice(CARD_TEXTURE_PATTERNS),
+        alpha=rng.randint(low, high),
+        tile=scale_px(rng.choice(CARD_TEXTURE_TILES), min_abs=12),
+    )
 
 
 class ForumCard(QFrame):
-    """一条留言卡片：宽度随列宽，高度随内容，accent 只决定描边颜色。"""
+    """一条留言卡片：左上昵称、中间大字正文、右下日期，accent 只决定描边颜色。"""
 
     def __init__(self, message: ForumMessage, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.message = message
+        self.texture = card_texture(message.id)
         self.setObjectName("ForumCard")
         self.setProperty("accent", message.accent)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
@@ -64,33 +115,116 @@ class ForumCard(QFrame):
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(
+            scale_px(14, min_abs=11),
             scale_px(12, min_abs=10),
-            scale_px(10, min_abs=8),
+            scale_px(14, min_abs=11),
             scale_px(12, min_abs=10),
-            scale_px(11, min_abs=9),
         )
-        layout.setSpacing(scale_px(6, min_abs=5))
+        layout.setSpacing(scale_px(9, min_abs=7))
 
-        head = QHBoxLayout()
-        head.setContentsMargins(0, 0, 0, 0)
-        head.setSpacing(scale_px(8, min_abs=6))
         name = QLabel(message.nickname, self)
         name.setObjectName("ForumCardName")
-        name.setFont(get_ui_font(size=scale_px(12, min_abs=10)))
-        head.addWidget(name, 1)
-        stamp = QLabel(format_relative_time(message.created_at), self)
-        stamp.setObjectName("ForumCardMeta")
-        stamp.setFont(get_ui_font(size=scale_px(10, min_abs=9)))
-        head.addWidget(stamp, 0, Qt.AlignRight)
-        layout.addLayout(head)
+        name.setFont(get_ui_font(size=scale_px(14, min_abs=12)))
+        # 昵称按内容换行，长昵称不会把这张卡片撑得比同列其它卡片宽。
+        name.setWordWrap(True)
+        layout.addWidget(name, 0, Qt.AlignLeft)
 
         content = QLabel(message.content, self)
         content.setObjectName("ForumCardText")
-        content.setFont(get_ui_font(size=scale_px(12, min_abs=10)))
+        content.setFont(get_ui_font(size=scale_px(17, min_abs=12)))
         content.setWordWrap(True)
+        content.setAlignment(Qt.AlignHCenter)
         content.setTextInteractionFlags(Qt.TextSelectableByMouse)
         content.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
-        layout.addWidget(content)
+        layout.addWidget(content, 0)
+
+        stamp = QLabel(format_relative_time(message.created_at), self)
+        stamp.setObjectName("ForumCardMeta")
+        stamp.setFont(get_ui_font(size=scale_px(11, min_abs=9)))
+        layout.addWidget(stamp, 0, Qt.AlignRight)
+
+    def paintEvent(self, event) -> None:
+        """先按样式表画底与描边，再在最底层铺一层只改明度的几何底纹。"""
+        super().paintEvent(event)
+        texture = self.texture
+        if texture is None:
+            return
+        painter = QPainter(self)
+        try:
+            painter.setRenderHint(QPainter.Antialiasing, True)
+            border = scale_px(1, min_abs=1)
+            path = QPainterPath()
+            path.addRoundedRect(
+                QRectF(self.rect()).adjusted(border, border, -border, -border),
+                FORUM_CARD_RADIUS,
+                FORUM_CARD_RADIUS,
+            )
+            painter.setClipPath(path)
+            self._paint_texture(painter, texture)
+        finally:
+            painter.end()
+
+    def _paint_texture(self, painter: QPainter, texture: CardTexture) -> None:
+        """平铺一种几何花纹；颜色是主题给出的中性色，靠透明度只影响明度。"""
+        overlay = QColor(forum_texture_color())
+        overlay.setAlpha(texture.alpha)
+        pen = QPen(overlay)
+        pen.setWidth(scale_px(1, min_abs=1))
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+
+        rect = self.rect()
+        tile = max(scale_px(8, min_abs=6), int(texture.tile))
+        pattern = texture.pattern
+
+        if pattern == "stripes":
+            offset = -rect.height()
+            while offset < rect.width():
+                painter.drawLine(offset, rect.height(), offset + rect.height(), 0)
+                offset += tile
+            return
+
+        if pattern == "grid":
+            for x in range(0, rect.width() + 1, tile):
+                painter.drawLine(x, 0, x, rect.height())
+            for y in range(0, rect.height() + 1, tile):
+                painter.drawLine(0, y, rect.width(), y)
+            return
+
+        if pattern == "dots":
+            radius = max(1, tile // 7)
+            painter.setBrush(overlay)
+            for y in range(tile // 2, rect.height(), tile):
+                for x in range(tile // 2, rect.width(), tile):
+                    painter.drawEllipse(QPoint(x, y), radius, radius)
+            return
+
+        if pattern == "triangles":
+            side = max(scale_px(8, min_abs=6), tile)
+            for y in range(0, rect.height() + side, side):
+                for x in range(0, rect.width() + side, side):
+                    painter.drawPolygon(
+                        QPolygon([
+                            QPoint(x, y + side),
+                            QPoint(x + side, y + side),
+                            QPoint(x, y),
+                        ])
+                    )
+            return
+
+        if pattern == "checks":
+            half = max(2, tile // 2)
+            for row, y in enumerate(range(0, rect.height(), half)):
+                for column, x in enumerate(range(0, rect.width(), half)):
+                    if (row + column) % 2 == 0:
+                        painter.fillRect(x, y, half, half, overlay)
+            return
+
+        # rings：蜂窝式同心圆环
+        radius = max(2, tile // 2)
+        for y in range(tile // 2, rect.height() + tile, tile):
+            for x in range(tile // 2, rect.width() + tile, tile):
+                painter.drawEllipse(QPoint(x, y), radius, radius)
 
 
 class ForumWindow(QtWorkbenchToolPage):
@@ -103,14 +237,11 @@ class ForumWindow(QtWorkbenchToolPage):
         self.setObjectName("ForumWindow")
         self.setWindowTitle("雪绒论坛")
         if not self._embedded:
-            self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+            # 优先级跟工作台窗口一致：普通窗口 + 无边框，不置顶、不进 LayerManager。
+            self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint)
             self.setAttribute(Qt.WA_StyledBackground, True)
-            self.setMinimumSize(
-                scale_px(1120, min_abs=1000),
-                scale_px(680, min_abs=600),
-            )
-            self.resize(scale_px(1240, min_abs=1080), scale_px(800, min_abs=700))
-            get_layer_manager().register(self, Layer.PANEL, name="ForumWindow")
+            self.setMinimumSize(MIN_WINDOW_WIDTH, scale_px(680, min_abs=600))
+            self.resize(DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT)
 
         self._messages: list[ForumMessage] = []
         self._column_layouts: list[QVBoxLayout] = []
@@ -165,17 +296,17 @@ class ForumWindow(QtWorkbenchToolPage):
         title_box.setSpacing(scale_px(1, min_abs=1))
         title = QLabel("雪绒论坛", header)
         title.setObjectName("ForumTitle")
-        title_font = get_ui_font(size=scale_px(18, min_abs=16))
+        title_font = get_ui_font(size=scale_px(19, min_abs=16))
         title_font.setBold(True)
         title.setFont(title_font)
         self._subtitle = QLabel("雪绒留言墙 · 正在读取…", header)
         self._subtitle.setObjectName("ForumSubtitle")
-        self._subtitle.setFont(get_ui_font(size=scale_px(10, min_abs=9)))
+        self._subtitle.setFont(get_ui_font(size=scale_px(11, min_abs=9)))
         title_box.addWidget(title)
         title_box.addWidget(self._subtitle)
 
         self._refresh_button = QPushButton("刷新", header)
-        self._refresh_button.setFont(get_ui_font(size=scale_px(11, min_abs=10)))
+        self._refresh_button.setFont(get_ui_font(size=scale_px(14, min_abs=12)))
         self._refresh_button.clicked.connect(self.refresh)
 
         close_button = create_window_button(
@@ -199,12 +330,12 @@ class ForumWindow(QtWorkbenchToolPage):
         wall = QWidget(self)
         wall_layout = QVBoxLayout(wall)
         wall_layout.setContentsMargins(
-            scale_px(16, min_abs=13),
+            WALL_MARGIN,
             scale_px(12, min_abs=10),
-            scale_px(16, min_abs=13),
-            scale_px(6, min_abs=5),
+            WALL_MARGIN,
+            scale_px(7, min_abs=6),
         )
-        wall_layout.setSpacing(scale_px(8, min_abs=6))
+        wall_layout.setSpacing(scale_px(10, min_abs=8))
 
         self._scroll = QScrollArea(wall)
         self._scroll.setObjectName("ForumScroll")
@@ -217,14 +348,14 @@ class ForumWindow(QtWorkbenchToolPage):
         self._host = host
         host_layout = QHBoxLayout(host)
         host_layout.setContentsMargins(0, 0, 0, 0)
-        host_layout.setSpacing(scale_px(12, min_abs=10))
+        host_layout.setSpacing(COLUMN_SPACING)
         self._host_layout = host_layout
         for index in range(COLUMN_COUNT):
             column = QWidget(host)
             column.setObjectName("ForumColumn")
             column_layout = QVBoxLayout(column)
             column_layout.setContentsMargins(0, 0, 0, 0)
-            column_layout.setSpacing(scale_px(12, min_abs=10))
+            column_layout.setSpacing(COLUMN_SPACING)
             column_layout.addStretch(1)
             host_layout.addWidget(column, 1)
             self._column_layouts.append(column_layout)
@@ -237,28 +368,32 @@ class ForumWindow(QtWorkbenchToolPage):
 
         self._status = QLabel("正在连接雪绒论坛…", wall)
         self._status.setObjectName("ForumStatus")
-        self._status.setFont(get_ui_font(size=scale_px(10, min_abs=9)))
+        self._status.setFont(get_ui_font(size=scale_px(11, min_abs=9)))
         wall_layout.addWidget(self._status, 0)
         return wall
 
     def _build_composer(self) -> QWidget:
         composer = QFrame(self)
         composer.setObjectName("ForumComposer")
-        layout = QHBoxLayout(composer)
+        layout = QVBoxLayout(composer)
         layout.setContentsMargins(
             scale_px(16, min_abs=13),
-            scale_px(10, min_abs=8),
+            scale_px(11, min_abs=9),
             scale_px(16, min_abs=13),
-            scale_px(10, min_abs=8),
+            scale_px(11, min_abs=9),
         )
-        layout.setSpacing(scale_px(8, min_abs=6))
+        layout.setSpacing(scale_px(9, min_abs=7))
+
+        top_row = QHBoxLayout()
+        top_row.setContentsMargins(0, 0, 0, 0)
+        top_row.setSpacing(scale_px(10, min_abs=8))
 
         accent_row = QHBoxLayout()
         accent_row.setContentsMargins(0, 0, 0, 0)
         accent_row.setSpacing(scale_px(5, min_abs=4))
         accent_label = QLabel("描边", composer)
         accent_label.setObjectName("ForumHint")
-        accent_label.setFont(get_ui_font(size=scale_px(10, min_abs=9)))
+        accent_label.setFont(get_ui_font(size=scale_px(11, min_abs=9)))
         accent_row.addWidget(accent_label)
         self._accent_buttons: dict[str, QToolButton] = {}
         for accent in FORUM_ACCENTS:
@@ -275,27 +410,50 @@ class ForumWindow(QtWorkbenchToolPage):
             self._accent_buttons[accent] = button
             accent_row.addWidget(button)
         self._select_accent(self._selected_accent)
-        layout.addLayout(accent_row, 0)
+        top_row.addLayout(accent_row, 0)
+
+        self._nickname = QLineEdit(composer)
+        self._nickname.setObjectName("ForumNickname")
+        self._nickname.setPlaceholderText(FORUM_NICKNAME_PLACEHOLDER)
+        self._nickname.setMaxLength(NICKNAME_MAX_LENGTH)
+        self._nickname.setFont(get_ui_font(size=scale_px(12, min_abs=10)))
+        self._nickname.setToolTip(
+            f"最多 {NICKNAME_MAX_LENGTH} 字；留空就以「匿名」发送，服务端会给空昵称补上这一档。"
+        )
+        # 小输入框：宽度刚好框住那句提示（再加样式表的左右内边距），不挤压正文输入框。
+        self._nickname.setFixedWidth(max(
+            scale_px(184, min_abs=164),
+            self._nickname.fontMetrics().horizontalAdvance(FORUM_NICKNAME_PLACEHOLDER)
+            + scale_px(26, min_abs=22),
+        ))
+        top_row.addWidget(self._nickname, 0)
+        top_row.addStretch(1)
+        layout.addLayout(top_row)
+
+        bottom_row = QHBoxLayout()
+        bottom_row.setContentsMargins(0, 0, 0, 0)
+        bottom_row.setSpacing(scale_px(10, min_abs=8))
 
         self._input = QLineEdit(composer)
         self._input.setObjectName("ForumInput")
         self._input.setPlaceholderText(f"说点什么…（最多 {FORUM_MAX_CONTENT} 字）")
         self._input.setMaxLength(FORUM_MAX_CONTENT)
-        self._input.setFont(get_ui_font(size=scale_px(12, min_abs=10)))
+        self._input.setFont(get_ui_font(size=scale_px(14, min_abs=12)))
         self._input.textChanged.connect(self._sync_composer_state)
         self._input.returnPressed.connect(self._on_send)
-        layout.addWidget(self._input, 1)
+        bottom_row.addWidget(self._input, 1)
 
         self._counter = QLabel(f"0/{FORUM_MAX_CONTENT}", composer)
         self._counter.setObjectName("ForumHint")
-        self._counter.setFont(get_ui_font(size=scale_px(10, min_abs=9)))
-        layout.addWidget(self._counter, 0)
+        self._counter.setFont(get_ui_font(size=scale_px(11, min_abs=9)))
+        bottom_row.addWidget(self._counter, 0)
 
         self._send_button = QPushButton("发送", composer)
         self._send_button.setObjectName("ForumSend")
-        self._send_button.setFont(get_ui_font(size=scale_px(11, min_abs=10)))
+        self._send_button.setFont(get_ui_font(size=scale_px(14, min_abs=12)))
         self._send_button.clicked.connect(self._on_send)
-        layout.addWidget(self._send_button, 0)
+        bottom_row.addWidget(self._send_button, 0)
+        layout.addLayout(bottom_row)
         return composer
 
     # ── 交互 ─────────────────────────────────────────────────────────
@@ -318,6 +476,7 @@ class ForumWindow(QtWorkbenchToolPage):
             return
         error = self._service.post(
             self._input.text(),
+            nickname=self._nickname.text(),
             accent=self._selected_accent,
         )
         if error:
@@ -424,7 +583,7 @@ class ForumWindow(QtWorkbenchToolPage):
             )
             layout = self._column_layouts[index]
             layout.insertWidget(layout.count() - 1, card)
-            self._column_heights[index] += height + scale_px(12, min_abs=10)
+            self._column_heights[index] += height + COLUMN_SPACING
 
     # ── 状态与生命周期 ───────────────────────────────────────────────
 
@@ -467,10 +626,6 @@ class ForumWindow(QtWorkbenchToolPage):
         self._service.cleanup()
         try:
             self._event_center.unsubscribe(EventType.CONFIG_UPDATED, self._on_config_updated)
-        except Exception:
-            pass
-        try:
-            get_layer_manager().unregister(self)
         except Exception:
             pass
 

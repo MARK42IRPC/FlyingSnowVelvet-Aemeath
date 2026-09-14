@@ -13,17 +13,27 @@ os.environ.setdefault(
 )
 os.environ.setdefault("QT_PLUGIN_PATH", os.path.join(_QT_ROOT, "Qt5", "plugins"))
 
-from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QIcon
-from PyQt5.QtWidgets import QApplication, QMenu
+from PyQt5.QtCore import QPoint, Qt
+from PyQt5.QtGui import QColor, QIcon, QImage, QPainter
+from PyQt5.QtWidgets import QApplication, QLabel, QMenu
 
-from lib.core.forum import FORUM_ACCENTS, ForumMessage, ForumPage
+from config.scale import scale_px
+from lib.core.forum import FORUM_DEFAULT_ACCENT, FORUM_ACCENTS, ForumMessage, ForumPage
+from lib.core.layer_manager import get_layer_manager
 from lib.script.ui.forum_style import FORUM_ACCENT_LABELS, forum_accent_color
 from lib.script.ui.forum_window import (
     CARD_MIN_WIDTH,
+    CARD_TEXTURE_ALPHA_RANGE,
+    CARD_TEXTURE_PATTERNS,
     COLUMN_COUNT,
+    DEFAULT_WINDOW_WIDTH,
+    FORUM_NICKNAME_PLACEHOLDER,
+    MIN_WINDOW_WIDTH,
+    NICKNAME_MAX_LENGTH,
+    CardTexture,
     ForumCard,
     ForumWindow,
+    card_texture,
 )
 
 
@@ -61,8 +71,8 @@ class FakeService:
         self.older_calls += 1
         return True
 
-    def post(self, content, *, accent=""):
-        self.posts.append((content, accent))
+    def post(self, content, *, nickname=None, accent=""):
+        self.posts.append((content, nickname, accent))
         if self.post_error:
             return self.post_error
         self._remaining = 12.0
@@ -113,7 +123,7 @@ class ForumWindowTests(unittest.TestCase):
         short = message(1, content="短")
         long = message(2, content="很长的留言内容 " * 12)
         self.window._on_page(ForumPage(messages=(short, long), mode="latest", total=2))
-        self.window.resize(1240, 800)
+        self.window.resize(620, 800)
         self.window.show()
         self.app.processEvents()
 
@@ -153,7 +163,8 @@ class ForumWindowTests(unittest.TestCase):
 
         self.window._on_send()
 
-        self.assertEqual(service.posts, [("飞行雪绒加油", "cyan")])
+        # 昵称留空就原样交给核心，由核心按服务端约定落成「匿名」。
+        self.assertEqual(service.posts, [("飞行雪绒加油", "", "cyan")])
         self.assertEqual(self.window._input.text(), "")
         self.assertFalse(self.window._send_button.isEnabled())
         self.assertTrue(self.window._send_button.text().startswith("发送（"))
@@ -190,6 +201,173 @@ class ForumWindowTests(unittest.TestCase):
         self.assertTrue(self.window.windowFlags() & Qt.FramelessWindowHint)
         self.assertIsNotNone(self.window._drag_handle)
         self.assertEqual(self.window._drag_handle.cursor().shape(), Qt.OpenHandCursor)
+
+    def test_window_matches_the_workbench_priority_and_keeps_three_columns(self):
+        flags = self.window.windowFlags()
+        self.assertTrue(flags & Qt.Window)
+        self.assertTrue(flags & Qt.FramelessWindowHint)
+        # windowType 是掩码取出的枚举，不能用按位与判断；普通窗口 = Qt.Window。
+        self.assertEqual(self.window.windowType(), Qt.Window)
+        self.assertFalse(flags & Qt.WindowStaysOnTopHint)
+        registered = {
+            name for _layer, _z, _seq, name, _visible in get_layer_manager().snapshot()
+        }
+        self.assertNotIn("ForumWindow", registered)
+
+        # 宽度只有工作台的一半左右，三列仍要能并排放下：最小宽度由网格推出。
+        wall_layout = self.window._scroll.parentWidget().layout()
+        margins = wall_layout.contentsMargins()
+        needed = (
+            COLUMN_COUNT * CARD_MIN_WIDTH
+            + (COLUMN_COUNT - 1) * self.window._host_layout.spacing()
+            + margins.left()
+            + margins.right()
+        )
+        self.assertEqual(needed, MIN_WINDOW_WIDTH)
+        self.assertEqual(self.window.minimumWidth(), MIN_WINDOW_WIDTH)
+        self.assertEqual(self.window.width(), DEFAULT_WINDOW_WIDTH)
+        self.assertLessEqual(self.window.width(), scale_px(660, min_abs=620))
+
+    def test_nickname_box_is_small_and_explains_the_anonymous_default(self):
+        nickname = self.window._nickname
+
+        self.assertEqual(nickname.placeholderText(), FORUM_NICKNAME_PLACEHOLDER)
+        self.assertIn("匿名", nickname.placeholderText())
+        self.assertEqual(nickname.maxLength(), NICKNAME_MAX_LENGTH)
+        # 小输入框：宽度刚好放下提示文案，不挤压正文输入框。
+        self.assertGreaterEqual(
+            nickname.width(),
+            nickname.fontMetrics().horizontalAdvance(FORUM_NICKNAME_PLACEHOLDER),
+        )
+
+        self.window.resize(620, 800)
+        self.window.show()
+        self.app.processEvents()
+        self.assertLess(nickname.width(), self.window._input.width())
+
+    def test_composer_sends_the_typed_nickname(self):
+        service = FakeService()
+        self.window._service = service
+        self.window._nickname.setText("  小明  ")
+        self.window._input.setText("带昵称的留言")
+        self.window._sync_composer_state()
+
+        self.window._on_send()
+
+        self.assertEqual(service.posts, [("带昵称的留言", "  小明  ", FORUM_DEFAULT_ACCENT)])
+        self.assertEqual(self.window._nickname.text(), "  小明  ")
+
+    def test_card_puts_nickname_top_left_content_centered_date_bottom_right(self):
+        card = ForumCard(message(1, content="居中大字文案"))
+        card.resize(CARD_MIN_WIDTH, card.sizeHint().height())
+        card.show()
+        try:
+            self.app.processEvents()
+            name = card.findChild(QLabel, "ForumCardName")
+            content = card.findChild(QLabel, "ForumCardText")
+            stamp = card.findChild(QLabel, "ForumCardMeta")
+
+            name_top = name.mapTo(card, QPoint(0, 0))
+            content_top = content.mapTo(card, QPoint(0, 0))
+            stamp_top = stamp.mapTo(card, QPoint(0, 0))
+
+            self.assertLessEqual(name_top.x(), content_top.x())
+            self.assertLess(name_top.y(), stamp_top.y())
+            self.assertAlmostEqual(
+                content_top.x() + content.width() / 2, card.width() / 2, delta=2
+            )
+            self.assertGreater(stamp_top.y(), content_top.y())
+            self.assertAlmostEqual(
+                stamp_top.x() + stamp.width(),
+                card.width() - card.layout().contentsMargins().right(),
+                delta=2,
+            )
+        finally:
+            card.deleteLater()
+            self.app.processEvents()
+
+    def test_card_fonts_follow_the_workbench_ramp(self):
+        card = ForumCard(message(1))
+        try:
+            name = card.findChild(QLabel, "ForumCardName")
+            content = card.findChild(QLabel, "ForumCardText")
+            stamp = card.findChild(QLabel, "ForumCardMeta")
+
+            self.assertEqual(content.font().pixelSize(), scale_px(17, min_abs=12))
+            self.assertEqual(name.font().pixelSize(), scale_px(14, min_abs=12))
+            self.assertEqual(stamp.font().pixelSize(), scale_px(11, min_abs=9))
+            self.assertGreater(content.font().pixelSize(), name.font().pixelSize())
+            self.assertGreater(name.font().pixelSize(), stamp.font().pixelSize())
+        finally:
+            card.deleteLater()
+
+    def test_card_texture_is_stable_per_message_and_only_shifts_lightness(self):
+        self.assertEqual(card_texture(42), card_texture(42))
+        self.assertIsInstance(card_texture("坏 id"), CardTexture)
+
+        patterns = set()
+        for message_id in range(1, 60):
+            texture = card_texture(message_id)
+            patterns.add(texture.pattern)
+            self.assertIn(texture.pattern, CARD_TEXTURE_PATTERNS)
+            self.assertGreaterEqual(texture.alpha, CARD_TEXTURE_ALPHA_RANGE[0])
+            self.assertLessEqual(texture.alpha, CARD_TEXTURE_ALPHA_RANGE[1])
+            self.assertGreater(texture.tile, 0)
+        # 不同留言要拿到不同花纹，否则整面墙看起来是同一个底。
+        self.assertEqual(patterns, set(CARD_TEXTURE_PATTERNS))
+
+    @staticmethod
+    def _card_means(texture):
+        """在一张纯灰卡片上只画底纹（标签藏起来），返回逐通道均值与最大通道偏差。"""
+        card = ForumCard(message(1, content="纹理"))
+        card.texture = texture
+        card.setStyleSheet("QFrame#ForumCard { background: #808080; border: none; }")
+        card.resize(200, 140)
+        for label in card.findChildren(QLabel):
+            label.hide()
+        image = QImage(200, 140, QImage.Format_ARGB32_Premultiplied)
+        image.fill(QColor(0, 0, 0))
+        painter = QPainter(image)
+        card.render(painter)
+        painter.end()
+        card.deleteLater()
+
+        totals = [0, 0, 0]
+        spread = 0
+        sampled = 0
+        for x in range(0, 200, 2):
+            for y in range(0, 140, 2):
+                red, green, blue = image.pixelColor(x, y).getRgb()[:3]
+                totals[0] += red
+                totals[1] += green
+                totals[2] += blue
+                spread = max(spread, max(red, green, blue) - min(red, green, blue))
+                sampled += 1
+        return [value / sampled for value in totals], spread
+
+    def test_texture_only_nudges_lightness_and_follows_the_theme(self):
+        plain, plain_spread = self._card_means(None)
+        self.assertLessEqual(plain_spread, 3)
+        for mode, direction in (("dark", 1), ("light", -1)):
+            for pattern in CARD_TEXTURE_PATTERNS:
+                with self.subTest(mode=mode, pattern=pattern), patch(
+                    "lib.core.graphics.workbench_tokens.resolve_workbench_mode",
+                    return_value=mode,
+                ):
+                    means, spread = self._card_means(
+                        CardTexture(pattern=pattern, alpha=16, tile=16)
+                    )
+                    delta = sum(means) / 3 - sum(plain) / 3
+                    # 中性色：三个通道同时同向变化，不引入色相。
+                    self.assertLessEqual(spread, 3)
+                    # 深色主题的卡片偏亮纹理、浅色主题偏暗纹理，幅度都很小。
+                    self.assertGreater(direction * delta, 0, (mode, pattern))
+                    self.assertLessEqual(abs(delta), 6, (mode, pattern))
+        self.app.processEvents()
+
+    def test_accent_labels_cover_every_core_accent(self):
+        # 档位来自核心、中文标签在样式模块，两边漂移就会在铺色板时 KeyError。
+        self.assertEqual(set(FORUM_ACCENT_LABELS), set(FORUM_ACCENTS))
 
     def test_tray_menu_exposes_the_forum_entry(self):
         from lib.script.ui.tray_icon import TrayIcon

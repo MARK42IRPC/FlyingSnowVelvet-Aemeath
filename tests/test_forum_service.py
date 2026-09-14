@@ -3,6 +3,7 @@ from concurrent.futures import Future
 
 from lib.core.forum import (
     FORUM_DEFAULT_ACCENT,
+    FORUM_DEFAULT_NICKNAME,
     FORUM_MAX_CONTENT,
     FORUM_POST_COOLDOWN_SECS,
     ForumService,
@@ -230,7 +231,7 @@ class ForumServiceTests(unittest.TestCase):
             post=lambda url, **kwargs: FakeResponse(
                 {
                     "ok": True,
-                    "message": {"id": 9, "nickname": "雪绒桌宠", "content": kwargs["json"]["content"], "created_at": 1},
+                    "message": {"id": 9, "nickname": "匿名", "content": kwargs["json"]["content"], "created_at": 1},
                     "total": 1,
                 }
             ),
@@ -253,7 +254,31 @@ class ForumServiceTests(unittest.TestCase):
 
         post_request = [item for item in self.requests if item[0] == "post"][0]
         self.assertEqual(post_request[2]["json"]["accent"], FORUM_DEFAULT_ACCENT)
-        self.assertEqual(post_request[2]["json"]["nickname"], "雪绒桌宠")
+        self.assertEqual(post_request[2]["json"]["nickname"], "匿名")
+
+    def test_post_keeps_blank_nickname_as_the_anonymous_default(self):
+        service = self._service(
+            get=lambda url, **kwargs: FakeResponse(feed_payload([])),
+            post=lambda url, **kwargs: FakeResponse(
+                {
+                    "ok": True,
+                    "message": {
+                        "id": 11,
+                        "nickname": kwargs["json"]["nickname"],
+                        "content": kwargs["json"]["content"],
+                        "created_at": 1,
+                    },
+                    "total": 1,
+                }
+            ),
+        )
+
+        self.assertIsNone(service.post("  留空白  ", nickname="   "))
+
+        post_request = [item for item in self.requests if item[0] == "post"][0]
+        self.assertEqual(post_request[2]["json"]["nickname"], FORUM_DEFAULT_NICKNAME)
+        self.assertEqual(FORUM_DEFAULT_NICKNAME, "匿名")
+        self.assertEqual(self.posted[0].nickname, "匿名")
 
     def test_post_failure_is_reported(self):
         service = self._service(

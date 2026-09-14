@@ -33,7 +33,8 @@ FORUM_PAGE_LIMIT = 60
 FORUM_MAX_CONTENT = 200
 #: 客户端冷却，比服务端的 6 秒限流更保守。
 FORUM_POST_COOLDOWN_SECS = 12.0
-FORUM_DEFAULT_NICKNAME = "雪绒桌宠"
+#: 与 `/api/feed` 未填昵称时的返回一致：服务端把空昵称落成「匿名」。
+FORUM_DEFAULT_NICKNAME = "匿名"
 FORUM_ACCENTS = ("pink", "cyan", "blue", "snow")
 FORUM_DEFAULT_ACCENT = "snow"
 FORUM_MAX_RESPONSE_BYTES = 2 * 1024 * 1024

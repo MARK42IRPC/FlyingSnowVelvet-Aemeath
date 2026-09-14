@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from config.font_config import get_ui_font_family
 from config.scale import scale_px
+from lib.core.forum import FORUM_ACCENTS
 from lib.script.workbench.theme import get_workbench_colors, window_button_stylesheet
 
-#: 论坛卡片的四档描边配色，与 `/api/feed` 的 accent 字段一一对应。
-FORUM_ACCENTS = ("pink", "cyan", "blue", "snow")
+#: 论坛卡片的四档描边配色；档位与核心的 `FORUM_ACCENTS` 同源，不再各写一份。
 FORUM_ACCENT_LABELS = {
     "pink": "粉",
     "cyan": "青",
@@ -30,6 +30,10 @@ _LIGHT_ACCENT_COLORS = {
 }
 
 
+#: 卡片圆角；卡片底纹要按同一个圆角裁剪，所以由这里统一给出。
+FORUM_CARD_RADIUS = scale_px(6, min_abs=4)
+
+
 def forum_accent_color(accent: str, mode: str | None = None) -> str:
     """返回某档 accent 的描边色；未知档位退回主题粉。"""
     colors = _LIGHT_ACCENT_COLORS if _is_light(mode) else _DARK_ACCENT_COLORS
@@ -42,12 +46,21 @@ def _is_light(mode: str | None) -> bool:
     return resolve_workbench_mode(mode) == "light"
 
 
+def forum_texture_color(mode: str | None = None) -> str:
+    """卡片底纹的颜色：深色主题用白、浅色主题用黑。
+
+    两个都是中性色，叠在卡片底上只改明度、不加色相——论坛卡片的配色只由 accent
+    描边决定，底纹不参与调色。
+    """
+    return "#000000" if _is_light(mode) else "#ffffff"
+
+
 def forum_stylesheet(mode: str | None = None) -> str:
     c = get_workbench_colors(mode)
     font_family = get_ui_font_family().replace("'", "\\'")
     border = scale_px(1, min_abs=1)
     radius = scale_px(4, min_abs=3)
-    card_radius = scale_px(6, min_abs=4)
+    card_radius = FORUM_CARD_RADIUS
     control_height = scale_px(32, min_abs=28)
     accent_rules = "\n        ".join(
         f'QFrame#ForumCard[accent="{accent}"] {{ border: {border}px solid '
@@ -181,6 +194,8 @@ def forum_stylesheet(mode: str | None = None) -> str:
 __all__ = [
     "FORUM_ACCENTS",
     "FORUM_ACCENT_LABELS",
+    "FORUM_CARD_RADIUS",
+    "forum_texture_color",
     "forum_accent_color",
     "forum_stylesheet",
 ]
