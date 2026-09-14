@@ -88,6 +88,16 @@ _ALIAS_TO_COMMAND = {
 }
 _FUZZY_ALIASES = tuple(_ALIAS_TO_COMMAND.items())
 _DEFAULT_MUSIC_CHOICES = ('靛青宇宙', '碎花', '纸飞机', '小小奇迹', '星炬不息')
+# 音乐搜索结果重排权重：歌名像不像 > 作者是不是鸣潮，平手时保持接口热度顺序。
+_SONG_SCORE_EXACT_NAME = 2
+_SONG_SCORE_PARTIAL_NAME = 1
+_SONG_SCORE_MINGCHAO_ARTIST = 2
+_MINGCHAO_ARTIST_KEYWORD = '鸣潮'
+# 比对歌名时丢掉的噪声字符：接口歌名常带书名号、括号后缀与全角空格。
+_SONG_TEXT_NOISE = str.maketrans(
+    '', '',
+    ' \t\u3000「」『』（）()【】[]{}《》〈〉“”"\'‘’·•-–—_~!！?？,，.。:：;；/\\|',
+)
 _DEFAULT_TIMER_SECONDS = 30
 _MAX_TIMER_SECONDS = 99 * 3600 + 59 * 60 + 59
 _MAX_SPAWN_COUNT = 20
@@ -357,6 +367,11 @@ def _extract_tool_invocation(text: str) -> tuple[str, str] | None:
         sample = str(fallback_matches[0].group(1) or '').strip().replace('\n', ' ')
         logger.warning('[ToolDispatcher] 检测到工具标记但无法解析: %s', sample[:80])
     return None
+
+
+def _normalize_song_text(text) -> str:
+    """把歌名与关键词压成同一形态：去掉标点空白后再比大小写。"""
+    return str(text or "").translate(_SONG_TEXT_NOISE).casefold()
 
 
 class ToolDispatcher:
@@ -677,42 +692,39 @@ class ToolDispatcher:
         """
         使用音乐抽象层搜索音乐，返回 (track_ref, display) 或 (None, None)。
 
-        API 返回结果本身按热度排序，客户端做稳定优先级调整：
-        1. 作者名包含“鸣潮”优先
-        2. 歌名完全匹配优先
-        其余保持原有热度顺序。
+        API 返回结果本身按热度排序，客户端按「歌名像不像 + 是不是鸣潮曲」重排：
+        1. 归一化后歌名完全相同 +2，歌名与关键词互相包含 +1
+        2. 作者名包含“鸣潮” +2
+        平手时保持接口原本的热度顺序（稳定排序）。
+
+        这里不再用「歌名更短优先」当次级键：歌名长短和点歌意图无关，
+        它会把接口排在第一位的正确结果挤掉（实测点「拉海洛之心」播成同作者的
+        「纸飞机」、点「逆潮」播成「远航星的告别」）。
         """
         try:
             tracks = get_music_service().search(keyword, mode='song', limit=20)
             if not tracks:
                 return None, None
 
-            kw_lower = keyword.lower()
+            normalized_keyword = _normalize_song_text(keyword)
 
-            def _song_priority(track) -> tuple[int, int]:
-                """优先级越小越靠前（稳定排序，热度顺序作为兜底）。"""
-                name = str(getattr(track, 'title', '') or '').lower()
-                is_exact_name = name == kw_lower
-
+            def _song_priority(track) -> int:
+                """得分越高越靠前；同分保持接口热度顺序。"""
+                title = _normalize_song_text(getattr(track, 'title', ''))
+                score = 0
+                if title and normalized_keyword:
+                    if title == normalized_keyword:
+                        score += _SONG_SCORE_EXACT_NAME
+                    elif normalized_keyword in title or (
+                        len(title) >= 2 and title in normalized_keyword
+                    ):
+                        score += _SONG_SCORE_PARTIAL_NAME
                 artist_blob = str(getattr(track, 'artist', '') or '')
-                has_mingchao_author = '鸣潮' in artist_blob
+                if _MINGCHAO_ARTIST_KEYWORD in artist_blob:
+                    score += _SONG_SCORE_MINGCHAO_ARTIST
+                return score
 
-                # 0: 鸣潮 + 完全匹配
-                # 1: 鸣潮作者
-                # 2: 完全匹配
-                # 3: 其他
-                if has_mingchao_author and is_exact_name:
-                    rank = 0
-                elif has_mingchao_author:
-                    rank = 1
-                elif is_exact_name:
-                    rank = 2
-                else:
-                    rank = 3
-                # 次级键让同级下歌名更短的略优先，其余保持稳定排序。
-                return rank, len(str(getattr(track, 'title', '') or ''))
-
-            tracks.sort(key=_song_priority)
+            tracks.sort(key=_song_priority, reverse=True)
 
             idx = min(_PLAY_INDEX, len(tracks) - 1)
             track = tracks[idx]

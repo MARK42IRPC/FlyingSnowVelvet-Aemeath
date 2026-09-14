@@ -129,7 +129,11 @@ class ToolDispatcherTests(unittest.TestCase):
             SimpleNamespace(track_id='netease:1', title='纸飞机', artist='鸣潮', display='03:20 纸飞机 - 鸣潮')
         ]
 
-        with patch.object(dispatcher_module, 'get_music_service', return_value=service):
+        # 音乐指令在线程池里执行；这里换成同步 hub，否则断言会看工作线程的调度时机，
+        # 同进程里先跑过别的测试（例如办公页保存）就会稳定失败。
+        with patch.object(dispatcher_module, 'get_compute_hub', return_value=_ImmediateComputeHub()), patch.object(
+            dispatcher_module, 'get_music_service', return_value=service
+        ):
             handled = dispatcher.execute_command('音乐', '纸飞机')
 
         self.assertTrue(handled)
@@ -183,6 +187,48 @@ class ToolDispatcherTests(unittest.TestCase):
         self.assertEqual(event.type, EventType.MUSIC_PLAY_TOP)
         self.assertEqual(event.data['track_ref'], 'netease:1')
 
+    def test_music_search_reranks_by_song_name_before_author_heat(self):
+        """点歌时歌名命中的结果必须压过同作者的更短热门曲。
+
+        回归：旧实现先按「作者是不是鸣潮」分档，再用「歌名更短」当次级键，
+        实测点「拉海洛之心」播成同作者的「纸飞机」、点「逆潮」播成「远航星的告别」。
+        """
+        cases = (
+            (
+                '拉海洛之心',
+                [
+                    SimpleNamespace(track_id='netease:lahairoi', title='「拉海洛」之心',
+                                    artist='鸣潮先约电台', display='03:53 「拉海洛」之心 - 鸣潮先约电台'),
+                    SimpleNamespace(track_id='netease:papermoon', title='纸飞机',
+                                    artist='鸣潮先约电台', display='03:53 纸飞机 - 鸣潮先约电台'),
+                ],
+                'netease:lahairoi',
+            ),
+            (
+                '逆潮',
+                [
+                    SimpleNamespace(track_id='netease:againstthetide', title='Against the Tide（逆潮）',
+                                    artist='鸣潮先约电台', display='03:45 Against the Tide（逆潮） - 鸣潮先约电台'),
+                    SimpleNamespace(track_id='netease:farewell', title='远航星的告别',
+                                    artist='鸣潮先约电台', display='03:45 远航星的告别 - 鸣潮先约电台'),
+                ],
+                'netease:againstthetide',
+            ),
+        )
+        for keyword, tracks, expected_ref in cases:
+            with self.subTest(keyword=keyword):
+                self.center.published.clear()
+                service = Mock()
+                service.search.return_value = list(tracks)
+                self.dispatcher._check_has_speaker = Mock(return_value=True)
+
+                with patch.object(dispatcher_module, 'get_music_service', return_value=service):
+                    self.dispatcher._handle_music_request(keyword)
+
+                event = self.center.published[-1]
+                self.assertEqual(event.type, EventType.MUSIC_PLAY_TOP)
+                self.assertEqual(event.data['track_ref'], expected_ref)
+
     def test_recall_reads_canonical_memory_and_disables_recursive_tools(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             memory_dir = Path(tmpdir)
@@ -219,6 +265,8 @@ class ToolDispatcherTests(unittest.TestCase):
         persona = (Path(__file__).resolve().parents[1] / 'resc' / 'persona.txt').read_text(encoding='utf-8')
         self.assertNotIn('###', persona)
         self.assertIn('function calling', persona)
+        # 工具用法归 resc/toolcall.txt，请求期拼接，人格词里不放函数名。
+        self.assertNotIn('play_music', persona)
 
     def test_legacy_fallback_prompt_still_lists_every_supported_command(self):
         from lib.script.chat.native_tools import LEGACY_TOOL_SYSTEM_NOTE
