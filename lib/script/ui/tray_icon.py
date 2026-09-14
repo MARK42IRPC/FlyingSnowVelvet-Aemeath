@@ -274,6 +274,12 @@ class TrayIcon(QObject):
         )
         self._menu.addAction(announcement_action)
 
+        forum_action = QAction('雪绒论坛', self._menu)
+        forum_action.setToolTip(TOOLTIPS['tray_forum'])
+        forum_action.setStatusTip(TOOLTIPS['tray_forum'])
+        forum_action.triggered.connect(self._on_forum)
+        self._menu.addAction(forum_action)
+
         bug_tracker_action = QAction('bug跟踪', self._menu)
         bug_tracker_action.setToolTip(TOOLTIPS['tray_bug_tracker'])
         bug_tracker_action.setStatusTip(TOOLTIPS['tray_bug_tracker'])
@@ -487,6 +493,20 @@ class TrayIcon(QObject):
 
     def open_settings(self):
         self._on_ai_settings()
+
+    def _on_forum(self):
+        """打开雪绒论坛窗口（工作台式三列卡片墙）。"""
+        try:
+            from lib.script.ui.forum_window import open_forum_window
+
+            open_forum_window()
+        except Exception as exc:
+            _logger.error('打开雪绒论坛失败: %s', exc)
+            self._event_center.publish(Event(EventType.INFORMATION, {
+                'text': f'打开雪绒论坛失败: {exc}',
+                'min': 12,
+                'max': 120,
+            }))
 
     def _on_bug_tracker(self):
         try:
