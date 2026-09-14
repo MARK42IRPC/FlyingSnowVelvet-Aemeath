@@ -6,10 +6,12 @@ import time
 import unittest
 from unittest.mock import patch
 
+from lib.script.chat import native_tools as native_tools_module
 from lib.script.chat.api_client_ollama import _ApiClientOllamaMixin
 from lib.script.chat.api_client_openai import _ApiClientOpenAIMixin
 from lib.script.chat.native_tools import (
     LEGACY_TOOL_SYSTEM_NOTE,
+    NATIVE_TOOL_SYSTEM_NOTE,
     NativeToolCallAccumulator,
     add_legacy_tool_instruction,
     add_native_tool_instruction,
@@ -107,6 +109,27 @@ class NativeToolCallingTests(unittest.TestCase):
 
         self.assertEqual(messages, [{"role": "system", "content": "persona"}])
         self.assertIn("原生函数工具", injected[0]["content"])
+
+    def test_native_instruction_concatenates_the_toolcall_prompt_file(self):
+        """工具用法放在独立 txt 里、请求期拼接，人格词保持用户可编辑。"""
+        messages = [{"role": "system", "content": "persona"}]
+
+        injected = add_native_tool_instruction(messages)
+
+        content = injected[0]["content"]
+        self.assertTrue(content.startswith("persona"))
+        self.assertIn(NATIVE_TOOL_SYSTEM_NOTE, content)
+        self.assertIn("play_music(query)", content)
+        self.assertNotIn("play_music", messages[0]["content"])
+
+    def test_toolcall_prompt_file_is_optional(self):
+        messages = [{"role": "system", "content": "persona"}]
+
+        with patch.object(native_tools_module, 'TOOLCALL_PROMPT_RELATIVE_PATH',
+                          'resc/__missing_toolcall__.txt'):
+            injected = add_native_tool_instruction(messages)
+
+        self.assertEqual(injected[0]["content"], f"persona\n\n{NATIVE_TOOL_SYSTEM_NOTE}")
 
     def test_openai_legacy_payloads_keep_the_plain_gateway_fallback(self):
         payloads = [{

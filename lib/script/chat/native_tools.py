@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 import json
+from pathlib import Path
 import re
 from typing import Any
 
@@ -12,6 +13,11 @@ NATIVE_TOOL_SYSTEM_NOTE = (
     "当前请求提供原生函数工具。需要执行工具时必须直接调用对应函数，"
     "不要在正文中输出任何 ###指令###；不需要工具时只返回正常正文。"
 )
+
+# 工具用法放在独立提示词文件里、请求期拼接：人格词是用户文件（升级不覆盖），
+# 把用法写进人格词就没法同步到已经改过人格词的用户。
+TOOLCALL_PROMPT_RELATIVE_PATH = "resc/toolcall.txt"
+_PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 # Gateways that reject the OpenAI ``tools`` field fall back to the historical
 # text protocol. The syntax lives here instead of the user-facing persona so the
@@ -164,7 +170,24 @@ def get_native_tool_definitions() -> list[dict]:
 
 def add_native_tool_instruction(messages: list[dict]) -> list[dict]:
     """Clone messages and add the native-tool rule without changing legacy payloads."""
-    return _add_tool_instruction(messages, NATIVE_TOOL_SYSTEM_NOTE)
+    return _add_tool_instruction(messages, native_tool_system_note())
+
+
+def load_toolcall_prompt() -> str:
+    """读取独立的工具用法提示词；文件缺失或读取失败时返回空串。"""
+    try:
+        text = (_PROJECT_ROOT / TOOLCALL_PROMPT_RELATIVE_PATH).read_text(
+            encoding="utf-8-sig"
+        )
+    except OSError:
+        return ""
+    return text.strip()
+
+
+def native_tool_system_note() -> str:
+    """原生工具的完整说明：硬性规则加上独立文件里的用法细节。"""
+    sections = (NATIVE_TOOL_SYSTEM_NOTE, load_toolcall_prompt())
+    return "\n\n".join(section for section in sections if section)
 
 
 def add_legacy_tool_instruction(messages: list[dict]) -> list[dict]:

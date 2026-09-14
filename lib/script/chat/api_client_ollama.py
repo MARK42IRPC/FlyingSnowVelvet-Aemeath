@@ -13,9 +13,9 @@ from .api_client_common import _ApiClientCommonMixin, multimodal_cooldown
 from .api_client_error import _ApiClientErrorMixin
 from .native_tools import (
     LEGACY_TOOL_SYSTEM_NOTE,
-    NATIVE_TOOL_SYSTEM_NOTE,
     NativeToolCallAccumulator,
     get_native_tool_definitions,
+    native_tool_system_note,
 )
 
 logger = get_logger(__name__)
@@ -83,7 +83,7 @@ class _ApiClientOllamaMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
         }
         native_tools_enabled = allow_tools and self._native_tools_available(OLLAMA_BASE_URL, model)
         if native_tools_enabled:
-            payload["messages"][0]["content"] = f"{persona.rstrip()}\n\n{NATIVE_TOOL_SYSTEM_NOTE}"
+            payload["messages"][0]["content"] = f"{persona.rstrip()}\n\n{native_tool_system_note()}"
             payload["tools"] = get_native_tool_definitions()
         elif allow_tools:
             payload["messages"][0]["content"] = f"{persona.rstrip()}\n\n{LEGACY_TOOL_SYSTEM_NOTE}"
