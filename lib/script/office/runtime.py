@@ -396,6 +396,10 @@ class DshOfficeRuntime:
             shutil.copy2(source_profile / name, profile / name)
         for name in ("package.json", "index.mjs", "credentials.mjs"):
             shutil.copy2(source_bridge / name, bridge / name)
+        # 每次启动都从源 profile 覆盖 package.json，用户装的插件要在这里补回 bundles。
+        from .plugins import apply_registered_bundles
+
+        apply_registered_bundles(profile / "package.json")
         return dsh_home
 
     def cleanup(self) -> None:
