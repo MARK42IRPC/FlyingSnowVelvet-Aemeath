@@ -14,11 +14,13 @@ const PROTOCOL = "fsv-office/1";
 const PROVIDER = "fsv-office";
 const API_KEY_REF = "FSV_OFFICE_API_KEY";
 const EXIT_GRACE_MS = 1000;
-const EFFORTS = new Set(["off", "high", "max"]);
+const EFFORTS = new Set(["off", "low", "high", "max", "ultra"]);
 const EFFORT_STRATEGIES = {
   off: "Use a direct execution strategy. Keep planning lightweight and perform only the checks needed for a correct, safe result.",
+  low: "Use a fast execution strategy. Keep planning minimal, change the smallest coherent set of files, and check only what the change touches.",
   high: "Use a balanced execution strategy. Inspect relevant context, maintain a short plan for multi-step work, and verify material changes.",
   max: "Use a thorough execution strategy. Investigate relevant alternatives and edge cases, keep progress explicit, and verify the result comprehensively.",
+  ultra: "Use a deliberate execution strategy. Map the request onto the codebase before editing, weigh alternatives and failure modes, keep an explicit plan, and verify the result against edge cases and regressions.",
 };
 
 function emit(type, payload = {}) {

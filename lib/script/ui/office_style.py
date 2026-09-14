@@ -6,6 +6,7 @@ from PyQt5.QtWidgets import QFrame, QHBoxLayout, QWidget
 
 from config.font_config import get_ui_font_family
 from config.scale import scale_px
+from lib.script.office.contracts import REASONING_EFFORTS
 from lib.script.workbench.theme import get_workbench_colors
 
 
@@ -27,8 +28,49 @@ def create_office_accent_bar(parent: QWidget) -> QWidget:
     return bar
 
 
+def _hex_to_rgb(value: str) -> tuple[int, int, int]:
+    text = str(value or "").strip().lstrip("#")
+    if len(text) == 3:
+        text = "".join(ch * 2 for ch in text)
+    if len(text) != 6:
+        raise ValueError(f"unsupported color: {value!r}")
+    return tuple(int(text[index:index + 2], 16) for index in (0, 2, 4))
+
+
+def _mix_hex(start: str, end: str, ratio: float) -> str:
+    """在两个 #rrggbb 之间线性取色。"""
+    ratio = max(0.0, min(1.0, float(ratio)))
+    left = _hex_to_rgb(start)
+    right = _hex_to_rgb(end)
+    return "#%02x%02x%02x" % tuple(
+        round(alpha + (beta - alpha) * ratio) for alpha, beta in zip(left, right)
+    )
+
+
+def office_effort_colors(mode: str | None = None) -> tuple[str, ...]:
+    """推理强度各档的档位色：按强度从淡粉线性过渡到青。"""
+    c = get_workbench_colors(mode)
+    steps = max(2, len(REASONING_EFFORTS))
+    return tuple(
+        _mix_hex(c.pink, c.cyan, index / (steps - 1)) for index in range(steps)
+    )
+
+
+def _office_effort_rules(mode: str | None = None) -> str:
+    return "".join(
+        f"""
+        QLabel#OfficeEffortLevel[level="{index}"] {{ color: {color}; }}
+        QSlider#OfficeEffortSlider[level="{index}"]::sub-page:horizontal,
+        QSlider#OfficeEffortSlider[level="{index}"]::handle:horizontal {{
+            background: {color};
+        }}"""
+        for index, color in enumerate(office_effort_colors(mode))
+    )
+
+
 def office_stylesheet(mode: str | None = None) -> str:
     c = get_workbench_colors(mode)
+    effort_rules = _office_effort_rules(mode)
     font_family = get_ui_font_family().replace("'", "\\'")
     border = scale_px(1, min_abs=1)
     radius = scale_px(4, min_abs=3)
@@ -258,8 +300,7 @@ def office_stylesheet(mode: str | None = None) -> str:
         QListWidget#OfficeTaskHistory, QListWidget#OfficeTodoList,
         QPlainTextEdit#OfficeReasoning,
         QPlainTextEdit#OfficeEvents, QPlainTextEdit#OfficePrompt,
-        QPlainTextEdit#OfficeApprovalCommand, QLineEdit#OfficeWorkspace,
-        QComboBox#OfficeReasoningEffort {{
+        QPlainTextEdit#OfficeApprovalCommand, QLineEdit#OfficeWorkspace {{
             background: {c.surface};
             color: {c.text};
             border: {border}px solid {c.border};
@@ -272,24 +313,39 @@ def office_stylesheet(mode: str | None = None) -> str:
         QPlainTextEdit#OfficeApprovalCommand, QLineEdit#OfficeWorkspace {{
             padding: {scale_px(7, min_abs=5)}px;
         }}
-        QPlainTextEdit#OfficePrompt:focus, QLineEdit#OfficeWorkspace:focus,
-        QComboBox#OfficeReasoningEffort:focus {{ border-color: {c.cyan}; }}
-        QWidget#OfficeWorkbenchPage QLineEdit,
-        QWidget#OfficeWorkbenchPage QComboBox {{ min-height: {control_height}px; }}
-        QComboBox#OfficeReasoningEffort {{
-            padding: 0px {scale_px(28, min_abs=24)}px 0px {scale_px(8, min_abs=6)}px;
+        QPlainTextEdit#OfficePrompt:focus, QLineEdit#OfficeWorkspace:focus {{ border-color: {c.cyan}; }}
+        QWidget#OfficeWorkbenchPage QLineEdit {{ min-height: {control_height}px; }}
+
+        QLabel#OfficeEffortLevel {{
+            color: {c.text_muted};
+            font-weight: 600;
         }}
-        QComboBox#OfficeReasoningEffort::drop-down {{
-            width: {scale_px(24, min_abs=20)}px;
-            border: none;
+        QWidget#OfficeWorkbenchPage QSlider#OfficeEffortSlider {{
+            min-height: {scale_px(26, min_abs=24)}px;
         }}
-        QComboBox#OfficeReasoningEffort QAbstractItemView {{
-            background: {c.surface_raised};
-            color: {c.text};
-            border: {border}px solid {c.border_strong};
-            selection-background-color: {c.surface_hover};
-            selection-color: {c.pink};
+        QSlider#OfficeEffortSlider::groove:horizontal {{
+            height: {scale_px(5, min_abs=4)}px;
+            background: {c.surface_hover};
+            border: {border}px solid {c.border};
+            border-radius: {scale_px(3, min_abs=2)}px;
         }}
+        QSlider#OfficeEffortSlider::sub-page:horizontal {{
+            border: {border}px solid {c.border};
+            border-radius: {scale_px(3, min_abs=2)}px;
+        }}
+        QSlider#OfficeEffortSlider::handle:horizontal {{
+            width: {scale_px(12, min_abs=10)}px;
+            margin: -{scale_px(5, min_abs=4)}px 0px;
+            border: {border}px solid {c.canvas};
+            border-radius: {scale_px(7, min_abs=6)}px;
+        }}
+        QSlider#OfficeEffortSlider::handle:horizontal:hover {{
+            border-color: {c.text};
+        }}
+        QSlider#OfficeEffortSlider:focus::handle:horizontal {{
+            border-color: {c.text};
+        }}
+{effort_rules}
         QListWidget#OfficeTaskHistory {{
             outline: none;
         }}

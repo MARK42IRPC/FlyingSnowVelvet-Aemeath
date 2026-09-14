@@ -58,7 +58,7 @@ class OfficeWorkbenchPageTests(unittest.TestCase):
             page.refresh_workbench_page()
             page._start_new_task_draft()
             page._workspace_edit.setText(str(workspace))
-            page._effort_combo.setCurrentIndex(page._effort_combo.findData("max"))
+            page._effort_slider.set_effort("max")
             page._prompt_edit.setPlainText("创建一个项目")
 
             page._submit_prompt()
@@ -66,6 +66,67 @@ class OfficeWorkbenchPageTests(unittest.TestCase):
 
             self.assertEqual(commands[0]["command"], "new_task")
             self.assertEqual(commands[0]["data"]["workspace"], str(workspace))
+            self.assertEqual(commands[0]["data"]["reasoning_effort"], "max")
+
+    def test_effort_slider_uses_five_levels_and_sends_wire_value(self):
+        from lib.script.office.contracts import REASONING_EFFORTS
+        from lib.script.ui.office_effort_slider import EFFORT_LEVELS, EFFORT_TICK_COUNT
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            page, ipc = self._page(root / "ipc")
+            slider = page._effort_slider
+
+            self.assertEqual(
+                [value for value, _label in EFFORT_LEVELS], list(REASONING_EFFORTS)
+            )
+            self.assertEqual(slider._slider.minimum(), 0)
+            self.assertEqual(slider._slider.maximum(), 4)
+            self.assertEqual(slider._slider.singleStep(), 1)
+            self.assertEqual(slider._slider.pageStep(), 1)
+            # QSS 覆盖 groove/handle 后原生刻度不再绘制，五档刻度由滑条自绘。
+            self.assertEqual(slider._slider.tickPosition(), slider._slider.NoTicks)
+            self.assertEqual(EFFORT_TICK_COUNT, 5)
+
+            slider._slider.setValue(4)
+            self.assertEqual(slider.effort(), "ultra")
+            self.assertEqual(slider._level_label.text(), "沉思")
+
+            slider.set_effort("low")
+            self.assertEqual(slider.effort(), "low")
+            self.assertEqual(slider._level_label.text(), "轻量")
+            slider.set_effort("不存在的档位")
+            self.assertEqual(slider.effort(), "high")
+
+    def test_selected_task_effort_change_sends_set_reasoning(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            task = {
+                "id": "task-1",
+                "session_id": "session-1",
+                "title": "进行中",
+                "workspace": str(root / "workspace"),
+                "status": "completed",
+                "reasoning_effort": "high",
+                "updated_at": "2026-08-17T12:00:00+00:00",
+                "messages": [],
+                "events": [],
+                "todos": [],
+                "stream_text": "",
+                "reasoning_text": "",
+                "error": "",
+            }
+            page, ipc = self._page(root / "ipc")
+            ipc.publish({"mode": "office", "workspace": task["workspace"], "active_task_id": None}, [task])
+            page.refresh_workbench_page()
+            page._history_list.setCurrentRow(0)
+            ipc.consume()
+
+            page._effort_slider._slider.setValue(3)
+
+            commands = ipc.consume()
+            self.assertEqual(commands[0]["command"], "set_reasoning")
+            self.assertEqual(commands[0]["data"]["task_id"], "task-1")
             self.assertEqual(commands[0]["data"]["reasoning_effort"], "max")
 
     def test_active_task_disables_new_task_and_submit(self):

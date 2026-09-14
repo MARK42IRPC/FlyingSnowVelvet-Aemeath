@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from lib.script.office.contracts import REASONING_EFFORTS
 from lib.script.office.storage import OfficeTaskStore
 
 
@@ -25,6 +26,14 @@ class OfficeTaskStoreTests(unittest.TestCase):
         self.assertEqual(loaded["session_id"], "session-1")
         self.assertEqual(loaded["messages"][-1]["text"], "开始处理")
         self.assertEqual(loaded["events"][-1]["type"], "tool/call")
+
+    def test_accepts_every_reasoning_effort_level(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = OfficeTaskStore(Path(tmpdir) / "tasks.json")
+            for effort in REASONING_EFFORTS:
+                with self.subTest(effort=effort):
+                    created = store.create("task", Path(tmpdir), reasoning_effort=effort)
+                    self.assertEqual(created["reasoning_effort"], effort)
 
     def test_rejects_invalid_reasoning_effort(self):
         with tempfile.TemporaryDirectory() as tmpdir:

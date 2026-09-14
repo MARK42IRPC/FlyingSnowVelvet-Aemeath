@@ -10,7 +10,6 @@ from pathlib import Path
 from PyQt5.QtCore import QSignalBlocker, QSize, Qt, QTimer
 from PyQt5.QtWidgets import (
     QButtonGroup,
-    QComboBox,
     QApplication,
     QFileDialog,
     QHBoxLayout,
@@ -34,10 +33,11 @@ from config.scale import scale_px
 from lib.core.logger import get_logger
 from lib.core.qt_bridge.font import get_ui_font
 from lib.core.qt_bridge.workbench_page import QtWorkbenchToolPage
-from lib.script.office.contracts import ACTIVE_TASK_STATUSES
+from lib.script.office.contracts import ACTIVE_TASK_STATUSES, DEFAULT_REASONING_EFFORT
 from lib.script.office.ipc import OfficeFileIpc
 from lib.script.office.workspace import DEFAULT_WORKSPACE_NAME, resolve_desktop_dir
 from lib.script.ui.office_chat_view import OfficeConversationView
+from lib.script.ui.office_effort_slider import OfficeEffortSlider
 from lib.script.ui.office_icons import (
     office_browse_icon,
     office_cancel_icon,
@@ -69,7 +69,6 @@ _STATUS_TONE = {
     "failed": "danger",
     "cancelled": "muted",
 }
-_EFFORTS = (("off", "关闭"), ("high", "高"), ("max", "最大"))
 
 
 def _display_time(value: object) -> str:
@@ -213,6 +212,11 @@ class OfficeWorkbenchPage(QtWorkbenchToolPage):
         controls.setSpacing(scale_px(7, min_abs=5))
         workspace_label = QLabel("工作目录", content_card)
         workspace_label.setObjectName("OfficeFieldLabel")
+        effort_label = QLabel("推理强度", content_card)
+        effort_label.setObjectName("OfficeFieldLabel")
+        label_width = max(workspace_label.sizeHint().width(), effort_label.sizeHint().width())
+        workspace_label.setFixedWidth(label_width)
+        effort_label.setFixedWidth(label_width)
         controls.addWidget(workspace_label)
         self._workspace_edit = QLineEdit(content_card)
         self._workspace_edit.setObjectName("OfficeWorkspace")
@@ -225,22 +229,22 @@ class OfficeWorkbenchPage(QtWorkbenchToolPage):
         self._browse_button.setToolTip("选择工作目录")
         self._browse_button.clicked.connect(self._choose_workspace)
         controls.addWidget(self._browse_button)
-        effort_label = QLabel("推理强度", content_card)
-        effort_label.setObjectName("OfficeFieldLabel")
-        controls.addWidget(effort_label)
-        self._effort_combo = QComboBox(content_card)
-        self._effort_combo.setObjectName("OfficeReasoningEffort")
-        for value, label in _EFFORTS:
-            self._effort_combo.addItem(label, value)
-        self._effort_combo.currentIndexChanged.connect(self._on_effort_changed)
-        controls.addWidget(self._effort_combo)
+        content_layout.addLayout(controls)
+
+        effort_row = QHBoxLayout()
+        effort_row.setSpacing(scale_px(7, min_abs=5))
+        effort_row.addWidget(effort_label, 0, Qt.AlignVCenter)
+        self._effort_slider = OfficeEffortSlider(content_card)
+        self._effort_slider.effort_changed.connect(self._on_effort_changed)
+        effort_row.addWidget(self._effort_slider, 0, Qt.AlignVCenter)
+        effort_row.addStretch(1)
         self._cancel_button = QToolButton(content_card)
         self._cancel_button.setObjectName("OfficeCancelButton")
         self._cancel_button.setText("取消任务")
         self._cancel_button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         self._cancel_button.clicked.connect(self._cancel_active_task)
-        controls.addWidget(self._cancel_button)
-        content_layout.addLayout(controls)
+        effort_row.addWidget(self._cancel_button)
+        content_layout.addLayout(effort_row)
 
         self._tabs = QTabWidget(content_card)
         self._tabs.setObjectName("OfficeTaskTabs")
@@ -457,7 +461,7 @@ class OfficeWorkbenchPage(QtWorkbenchToolPage):
                     self._workspace_edit.setCursorPosition(0)
                 self._workspace_edit.setReadOnly(False)
                 self._browse_button.setEnabled(True)
-                self._set_effort("high")
+                self._set_effort(DEFAULT_REASONING_EFFORT)
                 self._conversation_view.clear()
                 self._set_plain_text(self._reasoning_view, "")
                 self._set_plain_text(self._events_view, "")
@@ -473,7 +477,7 @@ class OfficeWorkbenchPage(QtWorkbenchToolPage):
                 self._workspace_edit.setReadOnly(True)
                 self._workspace_edit.setCursorPosition(0)
                 self._browse_button.setEnabled(False)
-                self._set_effort(str(task.get("reasoning_effort") or "high"))
+                self._set_effort(str(task.get("reasoning_effort") or DEFAULT_REASONING_EFFORT))
                 self._render_task(task)
                 can_resume = bool(str(task.get("session_id") or ""))
                 can_submit = active is None and can_resume
@@ -552,8 +556,7 @@ class OfficeWorkbenchPage(QtWorkbenchToolPage):
         self._status_badge.style().polish(self._status_badge)
 
     def _set_effort(self, effort: str) -> None:
-        index = self._effort_combo.findData(effort)
-        self._effort_combo.setCurrentIndex(index if index >= 0 else 1)
+        self._effort_slider.set_effort(effort)
 
     def _sync_mode_buttons(self) -> None:
         mode = "office" if str(self._state.get("mode")) == "office" else "companion"
@@ -571,13 +574,13 @@ class OfficeWorkbenchPage(QtWorkbenchToolPage):
         if selected:
             self._workspace_edit.setText(str(Path(selected).resolve()))
 
-    def _on_effort_changed(self, index: int) -> None:
+    def _on_effort_changed(self, effort: str) -> None:
         if self._updating_controls:
             return
         task = self._task_by_id(self._selected_task_id)
         if task is None:
             return
-        effort = str(self._effort_combo.itemData(index) or "high")
+        effort = str(effort or DEFAULT_REASONING_EFFORT)
         self._ipc.submit(
             "set_reasoning",
             task_id=str(task.get("id") or ""),
@@ -599,7 +602,7 @@ class OfficeWorkbenchPage(QtWorkbenchToolPage):
                 "new_task",
                 text=text,
                 workspace=workspace,
-                reasoning_effort=str(self._effort_combo.currentData() or "high"),
+                reasoning_effort=str(self._effort_slider.effort() or DEFAULT_REASONING_EFFORT),
             )
         else:
             self._ipc.submit(

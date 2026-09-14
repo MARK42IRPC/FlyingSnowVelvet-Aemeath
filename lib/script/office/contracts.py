@@ -26,7 +26,9 @@ class ApprovalDecision(str, Enum):
     REJECT = "reject"
 
 
-REASONING_EFFORTS = ("off", "high", "max")
+# 推理强度是「从省到深」的五档阶梯，元组顺序即强度顺序：办公页滑条按同一顺序排列，
+# 索引 0 对应淡粉、末位对应青。旧的 off/high/max 三档仍是合法值，历史任务文件无需迁移。
+REASONING_EFFORTS = ("off", "low", "high", "max", "ultra")
 DEFAULT_REASONING_EFFORT = "high"
 ACTIVE_TASK_STATUSES = frozenset({
     OfficeTaskStatus.QUEUED.value,

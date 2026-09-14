@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from lib.core import dsh_runtime_contract as dsh_config
 from lib.script.office import runtime as office_runtime
+from lib.script.office.contracts import REASONING_EFFORTS
 
 
 def _write_json(path: Path, payload: dict) -> None:
@@ -146,6 +147,20 @@ class DshRuntimeContractTests(unittest.TestCase):
             "async function createTask", 1
         )[0]
         self.assertNotIn("reasoningEffort", selection)
+
+
+    def test_bridge_accepts_the_same_reasoning_effort_vocabulary(self):
+        runtime_root = dsh_config.dsh_runtime_root(office_runtime.project_root())
+        bridge = (runtime_root / "bridge" / "index.mjs").read_text(encoding="utf-8")
+
+        self.assertIn(
+            "const EFFORTS = new Set([%s]);"
+            % ", ".join('"%s"' % value for value in REASONING_EFFORTS),
+            bridge,
+        )
+        for value in REASONING_EFFORTS:
+            with self.subTest(effort=value):
+                self.assertIn('\n  %s: "' % value, bridge)
 
 
 if __name__ == "__main__":
