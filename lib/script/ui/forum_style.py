@@ -36,6 +36,10 @@ _LIGHT_ACCENT_COLORS = {
 #: 卡片圆角；卡片底纹要按同一个圆角裁剪，所以由这里统一给出。
 FORUM_CARD_RADIUS = scale_px(6, min_abs=4)
 
+#: 竖排滚动条的宽度。窗口最小宽度要把它与 `forum_window.SCROLL_GAP` 一起算进去，
+#: 所以由这里给出，样式表本体的 `QScrollBar:vertical` 也取这一个值。
+FORUM_SCROLLBAR_WIDTH = scale_px(10, min_abs=8)
+
 #: 卡片正文的自适应字号倍率：字越少字越大，但只在这个区间里取。
 FORUM_CARD_TEXT_SCALE_RANGE = (1.0, 2.0)
 #: 正文字数少于/等于这里的值就取到倍率上限。
@@ -256,7 +260,7 @@ def forum_stylesheet(mode: str | None = None) -> str:
         }}
         QWidget#ForumWindow QScrollBar:vertical {{
             background: {c.canvas};
-            width: {scale_px(10, min_abs=8)}px;
+            width: {FORUM_SCROLLBAR_WIDTH}px;
             border: none;
         }}
         QWidget#ForumWindow QScrollBar::handle:vertical {{
@@ -279,6 +283,7 @@ __all__ = [
     "FORUM_ACCENTS",
     "FORUM_ACCENT_LABELS",
     "FORUM_CARD_RADIUS",
+    "FORUM_SCROLLBAR_WIDTH",
     "FORUM_CARD_TEXT_SCALE_RANGE",
     "FORUM_TEXTURE_TINT_RATIO",
     "forum_card_text_scale",

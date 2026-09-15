@@ -52,6 +52,7 @@ from lib.core.qt_bridge.workbench_page import QtWorkbenchToolPage
 from lib.script.ui.forum_style import (
     FORUM_ACCENT_LABELS,
     FORUM_CARD_RADIUS,
+    FORUM_SCROLLBAR_WIDTH,
     forum_card_text_size,
     forum_card_text_color,
     forum_stylesheet,
@@ -76,13 +77,19 @@ from lib.script.ui.workbench_components import create_window_button
 COLUMN_COUNT = 3
 WALL_MARGIN = scale_px(16, min_abs=13)
 COLUMN_SPACING = scale_px(12, min_abs=10)
+#: 卡片右侧与滚动条之间的空隙：卡片贴着条子会把滚动条读成「卡片右边框」，最后一列像被压住。
+SCROLL_GAP = scale_px(10, min_abs=8)
+#: 滚动条连同它前面的空隙占掉的横向空间；滚动条一出现，视口就少这么多宽度。
+SCROLL_GUTTER = FORUM_SCROLLBAR_WIDTH + SCROLL_GAP
 #: 窗口宽度取工作台的一半左右，三列必须仍能并排放下，所以卡片最小宽度随之下调。
 CARD_MIN_WIDTH = scale_px(170, min_abs=150)
-#: 最小宽度直接由三列网格推出，避免窗口窄到把卡片挤出行外。
+#: 最小宽度由三列网格 + 滚动条占位推出，避免窗口窄到把卡片挤出行外（滚动条一出现就少一个
+#: `SCROLL_GUTTER`，不预先留出来的话三列会被挤到卡片最小宽度以下）。
 MIN_WINDOW_WIDTH = (
     COLUMN_COUNT * CARD_MIN_WIDTH
     + (COLUMN_COUNT - 1) * COLUMN_SPACING
     + 2 * WALL_MARGIN
+    + SCROLL_GUTTER
 )
 DEFAULT_WINDOW_WIDTH = max(MIN_WINDOW_WIDTH, scale_px(620, min_abs=580))
 DEFAULT_WINDOW_HEIGHT = scale_px(800, min_abs=700)
@@ -298,7 +305,8 @@ class ForumWindow(QtWorkbenchToolPage):
         host.setObjectName("ForumColumnHost")
         self._host = host
         host_layout = QHBoxLayout(host)
-        host_layout.setContentsMargins(0, 0, 0, 0)
+        # 只在右侧留出滚动条的空隙：视口宽度不含滚动条，卡片会正好顶在条子上。
+        host_layout.setContentsMargins(0, 0, SCROLL_GAP, 0)
         host_layout.setSpacing(COLUMN_SPACING)
         self._host_layout = host_layout
         for index in range(COLUMN_COUNT):

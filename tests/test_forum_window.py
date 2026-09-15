@@ -76,6 +76,8 @@ from lib.script.ui.forum_window import (
     FORUM_NICKNAME_PLACEHOLDER,
     MIN_WINDOW_WIDTH,
     NICKNAME_MAX_LENGTH,
+    SCROLL_GAP,
+    SCROLL_GUTTER,
     ForumCard,
     ForumWindow,
 )
@@ -208,6 +210,29 @@ class ForumWindowTests(unittest.TestCase):
         self.assertLessEqual(max(widths) - min(widths), 2, widths)
         self.assertGreaterEqual(min(widths), CARD_MIN_WIDTH)
 
+    def test_cards_keep_a_comfortable_gap_from_the_scroll_bar(self):
+        messages = tuple(message(index) for index in range(24))
+        self.window.resize(DEFAULT_WINDOW_WIDTH, 620)
+        self.window.show()
+        self.app.processEvents()
+        self.window._on_page(ForumPage(messages=messages, mode="latest", total=24))
+        for _ in range(4):
+            self.window.layout().invalidate()
+            self.app.processEvents()
+
+        bar = self.window._scroll.verticalScrollBar()
+        self.assertTrue(bar.isVisible())
+        bar_left = bar.mapTo(self.window, QPoint(0, 0)).x()
+        gaps = [
+            bar_left - (card.mapTo(self.window, QPoint(0, 0)).x() + card.width())
+            for card in self.window.findChildren(ForumCard)
+        ]
+        self.assertEqual(len(gaps), 24)
+        # 卡片贴着滚动条会被读成「卡片右边框」，最后一列像被压住：右侧要留出 SCROLL_GAP。
+        self.assertAlmostEqual(min(gaps), SCROLL_GAP, delta=2)
+        # 空隙长在卡片墙上（host 的右边距），不是把滚动条自己推离窗口边。
+        self.assertEqual(self.window._host_layout.contentsMargins().right(), SCROLL_GAP)
+
     def test_older_page_appends_and_bottom_scroll_requests_more(self):
         service = FakeService()
         self.window._service = service
@@ -285,7 +310,8 @@ class ForumWindowTests(unittest.TestCase):
         }
         self.assertNotIn("ForumWindow", registered)
 
-        # 宽度只有工作台的一半左右，三列仍要能并排放下：最小宽度由网格推出。
+        # 宽度只有工作台的一半左右，三列仍要能并排放下：最小宽度由网格推出，并预留滚动条
+        # 与它前面的空隙（滚动条一出现，视口就少这么多）。
         wall_layout = self.window._scroll.parentWidget().layout()
         margins = wall_layout.contentsMargins()
         needed = (
@@ -293,6 +319,7 @@ class ForumWindowTests(unittest.TestCase):
             + (COLUMN_COUNT - 1) * self.window._host_layout.spacing()
             + margins.left()
             + margins.right()
+            + SCROLL_GUTTER
         )
         self.assertEqual(needed, MIN_WINDOW_WIDTH)
         self.assertEqual(self.window.minimumWidth(), MIN_WINDOW_WIDTH)
