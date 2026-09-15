@@ -30,6 +30,7 @@ from lib.core.forum import (
 from lib.core.event.center import Event, EventType, get_event_center
 from lib.core.graphics.image_loader import decode_image_frames
 from lib.core.layer_manager import get_layer_manager
+from lib.core.qt_bridge.font import get_ui_font
 from lib.core.qt_bridge.gif_loader import qimage_from_raster_frame
 from lib.script.ui.forum_markup import (
     FORUM_EFFECT_TOKENS,
@@ -56,7 +57,12 @@ from lib.script.ui.forum_sticker import (
     ink_bounds,
     sticker_frames,
 )
-from lib.script.ui.forum_text import MarkupText, bold_outline_width
+from lib.script.ui.forum_text import (
+    BOLD_OUTLINE_MAX_PX,
+    BOLD_OUTLINE_MIN_PX,
+    MarkupText,
+    bold_outline_width,
+)
 from lib.script.ui.forum_texture import (
     CARD_TEXTURE_ALPHA_RANGE,
     CARD_TEXTURE_COARSE_PATTERNS,
@@ -112,6 +118,42 @@ def document_fragments(widget):
 def text_colors(widget):
     """正文文档里用到的前景色集合：换主题有没有刷到正文，看这个。"""
     return {fmt.foreground().color().name() for _text, fmt in document_fragments(widget)}
+
+
+def markup_ink(text, size):
+    """一段正文的墨迹像素数：量「加粗比普通粗多少」用，与主题无关。
+
+    背景色取左上角那一颗（正文居中，角落一定是底色），只数明显偏离底色的像素；正文用深色，
+    这样不依赖控件自己的底色是深是浅（控件单独 grab 出来时底色是浅的，没有窗口样式表）。
+    """
+    widget = MarkupText(
+        to_html(text),
+        font=get_ui_font(size=size),
+        color="#101820",
+        width_hint=430,
+    )
+    try:
+        widget.setFixedWidth(430)
+        widget.show()
+        for _ in range(4):
+            QApplication.processEvents()
+        image = widget.grab().toImage()
+        background = image.pixelColor(0, 0)
+        total = 0
+        for y in range(image.height()):
+            for x in range(image.width()):
+                colour = image.pixelColor(x, y)
+                if (
+                    abs(colour.red() - background.red())
+                    + abs(colour.green() - background.green())
+                    + abs(colour.blue() - background.blue())
+                    > 60
+                ):
+                    total += 1
+        return total
+    finally:
+        widget.deleteLater()
+        QApplication.processEvents()
 
 
 #: 底纹在纯灰卡片上的单通道均值偏移上限：更深的花纹允许到这个量级，再多就会压过卡片底色。
@@ -460,6 +502,45 @@ class ForumWindowTests(unittest.TestCase):
             self.assertFalse(bold.fontItalic())
         finally:
             card.deleteLater()
+
+    def test_bold_outline_is_bounded_by_its_limits(self):
+        # UI 字体只有 Bold 一个字面，加粗完全靠这层同色描边，所以笔宽是唯一的旋钮：
+        # 必须大于 0（`QPen` 宽度 0 会被 Qt 当成 1px 的 cosmetic 笔，比 0.5px 还粗），
+        # 也不能随字号无限变粗（2 倍字号的短句上会把字怀填死）。
+        self.assertGreater(BOLD_OUTLINE_MIN_PX, 0)
+        self.assertEqual(bold_outline_width(8), BOLD_OUTLINE_MIN_PX)
+        self.assertAlmostEqual(bold_outline_width(17), 0.51, delta=0.01)
+        self.assertEqual(bold_outline_width(34), BOLD_OUTLINE_MAX_PX)
+        self.assertEqual(bold_outline_width(96), BOLD_OUTLINE_MAX_PX)
+        widths = [bold_outline_width(size) for size in (10, 12, 17, 24, 34, 48)]
+        self.assertEqual(widths, sorted(widths))
+        for width in widths:
+            self.assertGreaterEqual(width, BOLD_OUTLINE_MIN_PX)
+            self.assertLessEqual(width, BOLD_OUTLINE_MAX_PX)
+
+        # 实际排版出来的片段用的是同一个笔宽，而且短句那张卡真的落在上限上。
+        card = ForumCard(message(1, content="**短**"))
+        try:
+            content = card.findChild(QTextEdit, "ForumCardText")
+            self.assertEqual(content.font().pixelSize(), scale_px(17, min_abs=12) * 2)
+            pieces = dict(document_fragments(content))
+            self.assertEqual(pieces["短"].textOutline().widthF(), BOLD_OUTLINE_MAX_PX)
+        finally:
+            card.deleteLater()
+            self.app.processEvents()
+
+    def test_bold_ink_is_heavier_than_plain_without_filling_the_strokes(self):
+        # 需求原话：「论坛卡片的粗体似乎会有额外描边，导致部分文字会融合细节特征」。加粗要看得出来
+        # （墨迹明显多），又不能把笔画糊在一起（墨迹不能失控）。上下限按最容易糊的 2 倍字号量：
+        # 现行口径（33px 给 0.99px 描边）实测 +27%；旧口径给 1.48px，同一把尺子上是 +37%，那时
+        # 「加粗」两个字的笔画已经连成一片。上限取 0.32 就是要挡住旧口径。
+        size = scale_px(17, min_abs=12) * 2
+        plain = markup_ink("雪绒细节", size)
+        bold = markup_ink("**雪绒细节**", size)
+        ratio = (bold - plain) / plain
+        self.assertGreater(plain, 0)
+        self.assertGreater(ratio, 0.12)
+        self.assertLess(ratio, 0.32)
 
     def test_card_text_wraps_at_the_real_column_width_without_clipping(self):
         card = ForumCard(message(1, content="**粗体**与*斜体*和__下划线__以及~~删除线~~"))

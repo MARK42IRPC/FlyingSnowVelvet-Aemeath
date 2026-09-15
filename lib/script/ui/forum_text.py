@@ -9,6 +9,11 @@ QTextEdit：既拿得到 QTextDocument（给加粗片段加一层同色细描边
 斜体、下划线、删除线不需要额外处理：Qt 会为没有斜体面的字体合成倾斜，`<u>` / `<s>` 本来
 就是绘制期装饰。正文颜色写在字符格式里（粗体描边也要用同一个颜色），所以换主题时调用方要
 重新 `set_color()`。
+
+描边笔宽是这套方案唯一的旋钮，`bold_outline_width()` 按字号取并**封顶**：卡片正文在基准字号
+的 1~2 倍之间自适应，2 倍的短句（33px 上下）如果按比例给 1.5px 描边，「加粗」这类笔画密的字会
+糊成一团、丢掉字怀（墨迹比普通字多 37%，相邻笔画连成一片）。上下限的取值见 `BOLD_OUTLINE_RATIO` /
+`BOLD_OUTLINE_MIN_PX` / `BOLD_OUTLINE_MAX_PX`。
 """
 
 from __future__ import annotations
@@ -29,14 +34,23 @@ from PyQt5.QtGui import (
 from PyQt5.QtWidgets import QFrame, QSizePolicy, QTextEdit
 
 #: 粗体描边的笔宽按字号取：字号越大笔画越粗，固定像素数在大字号下会显得没有加粗。
-BOLD_OUTLINE_RATIO = 0.045
-#: 再小的字号也要留一点描边，否则短句放大的卡片上看不出区别。
-BOLD_OUTLINE_MIN_PX = 1.0
+BOLD_OUTLINE_RATIO = 0.03
+#: 再小的字号也要留一点描边，否则短句放大的卡片上看不出区别。必须大于 0：`QPen` 的宽度 0
+#: 会被 Qt 当成 1px 的 cosmetic 笔，看着像「没描边」，实际比 0.5px 还粗。
+BOLD_OUTLINE_MIN_PX = 0.5
+#: 描边不能一味跟着字号变粗：正文在 1~2 倍之间自适应，2 倍的短句（33px 上下）按比例要 1.5px，
+#: 那样笔画密的字（加、粗、雪）会糊成一团、字怀被填死，所以封顶在 1px。
+BOLD_OUTLINE_MAX_PX = 1.0
 
 
 def bold_outline_width(font_size: int) -> float:
-    """粗体描边的笔宽（px）：UI 字体只有 Bold 一个字面，靠同色描边把笔画撑粗。"""
-    return max(BOLD_OUTLINE_MIN_PX, round(float(font_size) * BOLD_OUTLINE_RATIO, 2))
+    """粗体描边的笔宽（px）：UI 字体只有 Bold 一个字面，靠同色描边把笔画撑粗。
+
+    随字号线性增长，但收在 `[BOLD_OUTLINE_MIN_PX, BOLD_OUTLINE_MAX_PX]` 之间：下限保证小字号
+    仍看得出加粗，上限保证 2 倍字号的短句卡片上笔画不糊在一起。
+    """
+    scaled = round(float(font_size) * BOLD_OUTLINE_RATIO, 2)
+    return min(BOLD_OUTLINE_MAX_PX, max(BOLD_OUTLINE_MIN_PX, scaled))
 
 
 class MarkupText(QTextEdit):
@@ -168,4 +182,10 @@ class MarkupText(QTextEdit):
         cursor.mergeCharFormat(fmt)
 
 
-__all__ = ["BOLD_OUTLINE_MIN_PX", "BOLD_OUTLINE_RATIO", "MarkupText", "bold_outline_width"]
+__all__ = [
+    "BOLD_OUTLINE_MAX_PX",
+    "BOLD_OUTLINE_MIN_PX",
+    "BOLD_OUTLINE_RATIO",
+    "MarkupText",
+    "bold_outline_width",
+]
