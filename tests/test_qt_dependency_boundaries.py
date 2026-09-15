@@ -105,6 +105,9 @@ class QtDependencyBoundaryTests(unittest.TestCase):
         }
 
         allowed_files = {
+            # 打包前的发行包自检（``scripts/`` 不进 payload）要在离屏 Qt 里真的把工作台、
+            # 办公窗口、论坛与粒子构造一遍，所以它是构建工具里唯一允许直接引用 PyQt5 的。
+            "scripts/payload_selftest.py",
             "lib/script/bug_tracker/__main__.py",
             "lib/script/gemes/packages/official/lahai_tetris/code/lahai_tetris_pkg/render.py",
             "lib/script/gemes/packages/official/lahai_tetris/code/lahai_tetris_pkg/widget.py",

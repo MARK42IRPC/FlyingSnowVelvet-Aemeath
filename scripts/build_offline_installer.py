@@ -35,6 +35,10 @@ TRAILER_FORMAT = "<24sQ32s"
 TRAILER_SIZE = struct.calcsize(TRAILER_FORMAT)
 MARKER_NAME = ".fsv-install-root"
 MARKER_BYTES = MAGIC + b"\n"
+# 打包阶段自己写进 payload 的文件（安装标记、启动器、卸载器）没有稳定的来源 mtime：
+# 归档条目会带上生成时刻，同一份 payload 连打两次就会得到不同字节。统一钉到一个固定
+# 时刻，两次打包的哈希比对才是在证明「打包是确定的」，而不是在比两次的时钟。
+PACKAGED_FILE_MTIME = 1_700_000_000.0
 # Mirrors ``build_offline_distribution.APP_DOC_ASSET_DIRECTORY``.  The archive
 # filter below drops ``app/doc`` scratch material, and this is the one subtree
 # the about page reads at runtime, so the two staging scripts must agree.
@@ -76,6 +80,10 @@ PAYLOAD_SHARD_FILTERS = (
     {"id": lzma.FILTER_LZMA2, "preset": 9, "dict_size": PAYLOAD_SHARD_DICT_SIZE},
 )
 PAYLOAD_SHARD_INDEX_ROW = struct.Struct("<IQQ")
+# 归档里由打包器自己生成的条目（分片索引、占位条目、在线版 marker）统一用 ZIP 纪元写出，
+# 两次打包才会得到同样的字节。``ZipInfo`` 的默认值就是这个，但 ``ZipFile.writestr`` 收到
+# 字符串名时会用当前时间，所以凡是自己造的条目都必须显式给 ``ZipInfo``。
+ARCHIVE_ENTRY_DATE_TIME = (1980, 1, 1, 0, 0, 0)
 _VS_ENVIRONMENTS: dict[str, dict[str, str]] = {}
 
 
@@ -517,9 +525,20 @@ def run_vs_command(vsdevcmd: Path, command: str, cwd: Path) -> None:
         batch.unlink(missing_ok=True)
 
 
+def pin_packaged_mtime(path: Path) -> None:
+    """把打包阶段生成的文件的 mtime 钉到固定时刻（见 ``PACKAGED_FILE_MTIME``）。"""
+    os.utime(path, (PACKAGED_FILE_MTIME, PACKAGED_FILE_MTIME))
+
+
 def ensure_payload_marker(workspace: Path, payload: Path) -> None:
+    """写安装标记并刷新清单：只记路径与大小，不算 SHA-256。
+
+    逐文件哈希要把上千兆文件重新读一遍，而它想防的「包内容不对」由打包前的真实启动
+    与功能自检、以及打包时连打两次比对哈希一起兜住（见 ``main``）。
+    """
     marker = payload / MARKER_NAME
     marker.write_bytes(MARKER_BYTES)
+    pin_packaged_mtime(marker)
 
     manifest_path = workspace / "manifest.json"
     if not manifest_path.is_file():
@@ -531,7 +550,6 @@ def ensure_payload_marker(workspace: Path, payload: Path) -> None:
         {
             "path": relative,
             "size": source.stat().st_size,
-            "sha256": sha256(source).hex(),
         }
         for source, relative in _archive_entries(payload)
         if relative != MARKER_NAME
@@ -539,7 +557,6 @@ def ensure_payload_marker(workspace: Path, payload: Path) -> None:
     entries.append({
         "path": MARKER_NAME,
         "size": len(MARKER_BYTES),
-        "sha256": hashlib.sha256(MARKER_BYTES).hexdigest(),
     })
     manifest["files"] = sorted(entries, key=lambda entry: entry["path"])
     manifest_path.write_text(
@@ -597,7 +614,9 @@ def _write_sharded_archive(
     offset_of = [0] * len(entries)
     sizes = [0] * len(entries)
     for number, members in enumerate(plan):
-        info = zipfile.ZipInfo(PAYLOAD_SHARD_NAME_TEMPLATE.format(index=number))
+        info = zipfile.ZipInfo(
+            PAYLOAD_SHARD_NAME_TEMPLATE.format(index=number), ARCHIVE_ENTRY_DATE_TIME
+        )
         info.compress_type = zipfile.ZIP_STORED
         offset = 0
         compressor = lzma.LZMACompressor(
@@ -625,11 +644,11 @@ def _write_sharded_archive(
         rows += PAYLOAD_SHARD_INDEX_ROW.pack(
             shard_of[member], offset_of[member], sizes[member]
         )
-    index_info = zipfile.ZipInfo(PAYLOAD_SHARD_INDEX_NAME)
+    index_info = zipfile.ZipInfo(PAYLOAD_SHARD_INDEX_NAME, ARCHIVE_ENTRY_DATE_TIME)
     index_info.compress_type = zipfile.ZIP_STORED
     output.writestr(index_info, bytes(rows))
     for _, relative in entries:
-        placeholder = zipfile.ZipInfo(relative)
+        placeholder = zipfile.ZipInfo(relative, ARCHIVE_ENTRY_DATE_TIME)
         placeholder.compress_type = zipfile.ZIP_STORED
         output.writestr(placeholder, b"")
     output.write(payload / MARKER_NAME, MARKER_NAME)
@@ -795,7 +814,9 @@ def _compile_payload_binary(
             f'/Fe:"{output_name}"',
             f'"{source_name}"',
             '"native.res"',
+            "/Brepro",
             "/link",
+            "/Brepro",
             "/SUBSYSTEM:WINDOWS",
             "/DYNAMICBASE",
             "/HIGHENTROPYVA",
@@ -844,6 +865,8 @@ def compile_payload_binaries(
     # uninstaller. No batch entry point is generated for the offline package.
     shutil.copy2(launcher, app_root / "启动飞行雪绒.exe")
     shutil.copy2(uninstaller, app_root / "卸载飞行雪绒.exe")
+    pin_packaged_mtime(app_root / "启动飞行雪绒.exe")
+    pin_packaged_mtime(app_root / "卸载飞行雪绒.exe")
 
 
 def _write_payload_info_header(
@@ -950,7 +973,9 @@ def compile_installer(
             '"lzma\\Lzma2Dec.c"',
             '"zlibstatic.lib"',
             '"installer.res"',
+            "/Brepro",
             "/link",
+            "/Brepro",
             "/SUBSYSTEM:WINDOWS",
             "/DYNAMICBASE",
             "/HIGHENTROPYVA",
@@ -979,6 +1004,105 @@ def append_payload(base_executable: Path, archive: Path, output: Path) -> None:
             archive.stat().st_size,
             archive_hash,
         ))
+
+
+def create_online_marker_archive(archive: Path) -> None:
+    """写出在线版 EXE 内置的小归档：只声明「完整资源要另外下载」。
+
+    条目时间戳必须固定：``ZipFile.writestr`` 收到字符串名时会把当前时间写进条目，那样同一份
+    payload 连打两次就不是同一份字节（见 ``_verify_reproducible``）。
+    """
+    archive.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_STORED) as marker:
+        for name, content in (
+            (".fsv-online-resource-required", b"1\n"),
+            (MARKER_NAME, MARKER_BYTES),
+        ):
+            entry = zipfile.ZipInfo(name, ARCHIVE_ENTRY_DATE_TIME)
+            entry.compress_type = zipfile.ZIP_STORED
+            marker.writestr(entry, content)
+
+
+def _package_once(
+    payload: Path,
+    output: Path,
+    *,
+    version: str,
+    installer_source: Path,
+    icon_source: Path,
+    vsdevcmd: Path,
+    compile_root: Path,
+    online: bool,
+    resource_sharded: bool,
+) -> tuple[Path, ...]:
+    """按给定输出路径完整打一次包，返回这一次产出的文件。
+
+    离线版产出安装器，在线版另外产出资源包 ZIP。同一份 payload 连打两次必须得到逐字节
+    相同的文件，所以编译带 ``/Brepro``（链接器不再写入编译时间），归档顺序完全由 payload
+    的排序决定，打包自己生成的文件按 ``PACKAGED_FILE_MTIME`` 写归档条目；调用方用两次
+    产物的哈希比对来证明这一点（见 ``_verify_reproducible``）。
+    """
+    workspace = payload.parent
+    archive = workspace / "build" / "payload.zip"
+    compile_payload_binaries(
+        payload,
+        installer_source,
+        icon_source,
+        vsdevcmd,
+        compile_root / "payload-binaries",
+    )
+    ensure_payload_marker(workspace, payload)
+    create_archive(payload, archive)
+    base_executable = compile_installer(
+        payload,
+        archive,
+        version,
+        installer_source,
+        icon_source,
+        vsdevcmd,
+        compile_root / "installer",
+        online=online,
+    )
+    # The online build deliberately carries only a tiny marker archive.  Full
+    # desktop/runtime files are distributed through the resource ZIP produced
+    # alongside this executable.
+    if online:
+        online_archive = workspace / "build" / "online-marker.zip"
+        create_online_marker_archive(online_archive)
+        append_payload(base_executable, online_archive, output)
+        resource = output.parent / f"FlyingSnowVelvet-{version}-Resources.zip"
+        create_resource_archive(payload, resource, sharded=resource_sharded)
+        return (output, resource)
+    append_payload(base_executable, archive, output)
+    return (output,)
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _verify_reproducible(
+    first: tuple[Path, ...], second: tuple[Path, ...]
+) -> dict[str, str]:
+    """两次打包的产物必须逐字节相同，返回保留下来的哈希。"""
+    if [path.name for path in first] != [path.name for path in second]:
+        raise SystemExit(
+            "两次打包产出的文件不一致：" + ", ".join(path.name for path in first)
+        )
+    digests: dict[str, str] = {}
+    for left, right in zip(first, second):
+        left_digest = _sha256_file(left)
+        right_digest = _sha256_file(right)
+        if left_digest != right_digest:
+            raise SystemExit(
+                f"两次打包的结果不一致：{left.name} {left_digest} != {right_digest}"
+            )
+        digests[left.name] = left_digest
+    return digests
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1012,11 +1136,20 @@ def main(argv: list[str] | None = None) -> int:
         default=PRODUCT_ROOT / "resc" / "icon.ico",
         help="安装器、启动器与卸载器共用的 ICO 文件",
     )
+    parser.add_argument(
+        "--skip-launch-check",
+        action="store_true",
+        help="跳过打包前对 payload 的真实启动与功能自检",
+    )
+    parser.add_argument(
+        "--skip-reproducible-check",
+        action="store_true",
+        help="只打一次包；默认连打两次并比对哈希，只保留一份",
+    )
     args = parser.parse_args(argv)
 
     workspace = args.workspace.resolve()
     payload = workspace / "payload"
-    archive = workspace / "build" / "payload.zip"
     compile_root = workspace / "build" / ".installer-compile"
     try:
         workspace_manifest = json.loads((workspace / "manifest.json").read_text(encoding="utf-8"))
@@ -1039,49 +1172,64 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit(f"缺少 payload：{payload}")
     if not icon_source.is_file():
         raise SystemExit(f"缺少程序图标：{icon_source}")
+    if not args.skip_launch_check:
+        # 打包之前先让 payload 自己跑一遍：真实启动 + 工作台、办公窗口、论坛、粒子与
+        # 各项服务。它比逐文件哈希更能说明这份包能不能用。
+        if str(PRODUCT_ROOT) not in sys.path:
+            # 直接跑 ``py -3 scripts/build_offline_installer.py`` 时 sys.path[0] 是
+            # ``scripts/``，按模块名引仓库代码要先补上仓库根。
+            sys.path.insert(0, str(PRODUCT_ROOT))
+        from scripts.verify_payload_runtime import verify_payload_runtime
+
+        verify_payload_runtime(workspace, log=print)
     _prepare_native_sources(installer_source)
     vsdevcmd = find_vsdevcmd(args.vsdevcmd.resolve() if args.vsdevcmd else None)
     if compile_root.exists():
         shutil.rmtree(compile_root)
     compile_root.mkdir(parents=True)
-    compile_payload_binaries(
-        payload,
-        installer_source,
-        icon_source,
-        vsdevcmd,
-        compile_root / "payload-binaries",
-    )
-    ensure_payload_marker(workspace, payload)
-    create_archive(payload, archive)
-    base_executable = compile_installer(
-        payload,
-        archive,
-        version,
-        installer_source,
-        icon_source,
-        vsdevcmd,
-        compile_root / "installer",
-        online=args.online,
-    )
-    # The online build deliberately carries only a tiny marker archive.  Full
-    # desktop/runtime files are distributed through the resource ZIP produced
-    # alongside this executable.
-    if args.online:
-        online_archive = workspace / "build" / "online-marker.zip"
-        with zipfile.ZipFile(online_archive, "w", compression=zipfile.ZIP_STORED) as marker:
-            marker.writestr(".fsv-online-resource-required", b"1\n")
-            marker.writestr(MARKER_NAME, MARKER_BYTES)
-        append_payload(base_executable, online_archive, output)
-        create_resource_archive(
+    staging = output.parent / f".fsv-package-{os.getpid()}"
+    shutil.rmtree(staging, ignore_errors=True)
+    staging.mkdir(parents=True)
+    try:
+        first = _package_once(
             payload,
-            PRODUCT_ROOT / "dist" / f"FlyingSnowVelvet-{version}-Resources.zip",
-            sharded=args.resource_sharded,
+            staging / output.name,
+            version=version,
+            installer_source=installer_source,
+            icon_source=icon_source,
+            vsdevcmd=vsdevcmd,
+            compile_root=compile_root / "run-1",
+            online=args.online,
+            resource_sharded=args.resource_sharded,
         )
-    else:
-        append_payload(base_executable, archive, output)
+        digests = {path.name: _sha256_file(path) for path in first}
+        if not args.skip_reproducible_check:
+            # 打包两次对比哈希：一致就说明打包本身是确定的（也说明这次没打出残缺的包），
+            # 比逐文件算 SHA-256 快得多，也不会被扫描/杀毒软件拖住。
+            second = _package_once(
+                payload,
+                staging / "second" / output.name,
+                version=version,
+                installer_source=installer_source,
+                icon_source=icon_source,
+                vsdevcmd=vsdevcmd,
+                compile_root=compile_root / "run-2",
+                online=args.online,
+                resource_sharded=args.resource_sharded,
+            )
+            digests = _verify_reproducible(first, second)
+            print("两次打包结果一致，只保留第一份。")
+        kept: list[Path] = []
+        for path in first:
+            target = output if path.name == output.name else output.parent / path.name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(path, target)
+            kept.append(target)
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
     print(f"已生成安装器：{output}")
-    print(f"内置 ZIP：{archive} ({archive.stat().st_size} bytes)")
-    print(f"安装器大小：{output.stat().st_size} bytes")
+    for target in kept:
+        print(f"产出：{target} ({target.stat().st_size} bytes) sha256={digests[target.name]}")
     return 0
 
 

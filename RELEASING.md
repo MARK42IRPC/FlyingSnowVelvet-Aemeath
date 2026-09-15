@@ -68,6 +68,9 @@ payload；`build_offline_installer.py` 再把内置归档按 4 路固态 LZMA2 �
 极简推理端的构建产物）时，同一条命令会把它放进 `runtime/cuda-voice/`，安装后“N卡加速”
 只依赖 NVIDIA 显示驱动即可工作；构建机没编过 CUDA 运行库时这一步跳过，发行包不含该
 目录，语音链路按 DirectML → CPU 顺序回退。
+`build_offline_installer.py` 在打包前会先用包内解释器对 payload 跑一次真实启动与功能自检
+（`scripts/verify_payload_runtime.py`），然后连打两次包比对哈希，只有两次逐字节一致才保留
+一份；发行包不再逐文件算 SHA-256。
 构建失败后可对输入未变化的完整工作区使用 `--resume`；需要重新收集时使用 `--clean`。
 两者只处理工作区中的已知生成路径，且 `build/`、`.venv/` 与 `venv/` 永不进入 payload。
 `doc/` 整体不进入 payload，但 `doc/贡献名单和主播的狗盆/`（贡献名单与赞助图片）

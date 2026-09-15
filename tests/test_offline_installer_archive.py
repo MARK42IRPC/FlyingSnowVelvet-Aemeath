@@ -7,12 +7,14 @@ agree with, and the parts of the contract the in-app updater depends on.
 
 from __future__ import annotations
 
+import json
 import lzma
 import os
 import shutil
 import struct
 import subprocess
 import tempfile
+import time
 import types
 import unittest
 import zipfile
@@ -206,6 +208,150 @@ class ShardedArchiveFormatTests(unittest.TestCase):
                 )
                 self.assertEqual(bundle.read("app/data.bin"), b"resource payload" * 512)
 
+
+
+class PackagingVerificationTests(unittest.TestCase):
+    """打包期校验：不逐文件算 SHA-256，改由启动自检 + 两次打包比对哈希。"""
+
+    def staged_workspace(self, root: Path) -> tuple[Path, Path]:
+        workspace = root / "workspace"
+        payload = workspace / "payload"
+        (payload / "app").mkdir(parents=True)
+        (payload / "app" / "data.bin").write_bytes(b"payload")
+        (workspace / "manifest.json").write_text(
+            json.dumps({"version": "LTS-test"}), encoding="utf-8"
+        )
+        return workspace, payload
+
+    def test_marker_and_manifest_only_record_paths_and_sizes(self):
+        with tempfile.TemporaryDirectory(prefix="fsv-marker-") as temporary:
+            workspace, payload = self.staged_workspace(Path(temporary))
+            with mock.patch.object(installer, "validate_payload", lambda payload: None):
+                installer.ensure_payload_marker(workspace, payload)
+
+            manifest_text = (workspace / "manifest.json").read_text(encoding="utf-8")
+            self.assertNotIn("sha256", manifest_text)
+            entries = {
+                entry["path"]: entry
+                for entry in json.loads(manifest_text)["files"]
+            }
+            for path, entry in entries.items():
+                with self.subTest(path=path):
+                    self.assertEqual(set(entry), {"path", "size"})
+            self.assertEqual(
+                entries[installer.MARKER_NAME]["size"], len(installer.MARKER_BYTES)
+            )
+            self.assertEqual(
+                entries["app/data.bin"]["size"], (payload / "app" / "data.bin").stat().st_size
+            )
+
+    def test_pin_packaged_mtime_overrides_whatever_the_write_left(self):
+        with tempfile.TemporaryDirectory(prefix="fsv-pin-") as temporary:
+            target = Path(temporary) / "generated.bin"
+            target.write_bytes(b"payload")
+            os.utime(target, (installer.PACKAGED_FILE_MTIME + 3600,) * 2)
+            installer.pin_packaged_mtime(target)
+            self.assertEqual(target.stat().st_mtime, installer.PACKAGED_FILE_MTIME)
+            # 钉住的时刻同时决定归档条目的时间戳，两次打包才会得到同样的字节。
+            self.assertEqual(installer.PACKAGED_FILE_MTIME, 1_700_000_000.0)
+
+    def test_compile_payload_binaries_pins_the_two_executables(self):
+        with tempfile.TemporaryDirectory(prefix="fsv-pin-bins-") as temporary:
+            root = Path(temporary)
+            payload = root / "payload"
+            payload.mkdir()
+            built = root / "built"
+            built.mkdir()
+            for name in ("FSVLauncher.exe", "FlyingSnowVelvetUninstaller.exe"):
+                (built / name).write_bytes(name.encode("ascii"))
+            with mock.patch.object(
+                installer, "_prepare_native_sources", return_value=(root, root, root)
+            ), mock.patch.object(
+                installer,
+                "_compile_payload_binary",
+                side_effect=lambda **kwargs: built / kwargs["output_name"],
+            ):
+                installer.compile_payload_binaries(payload, root, root, root, root)
+            for name in ("启动飞行雪绒.exe", "卸载飞行雪绒.exe"):
+                with self.subTest(name=name):
+                    target = payload / "app" / name
+                    self.assertTrue(target.is_file())
+                    self.assertEqual(
+                        target.stat().st_mtime, installer.PACKAGED_FILE_MTIME
+                    )
+
+    def test_online_marker_archive_is_deterministic(self):
+        # 在线版 EXE 内置的小归档也必须逐字节可复现：``ZipFile.writestr`` 收到字符串名时
+        # 会把当前时间写进条目，这里让时钟每次都不同，两次生成的归档仍必须相同。
+        with tempfile.TemporaryDirectory(prefix="fsv-online-marker-") as temporary:
+            root = Path(temporary)
+            # 先按真实时钟取好一串不同的时刻，再让 ``time.localtime`` 每次返回下一个。
+            ticks = iter(
+                [time.localtime(moment) for moment in
+                 (1_600_000_000, 1_700_000_000, 1_800_000_000) * 8]
+            )
+            with mock.patch("time.localtime", side_effect=lambda *_: next(ticks)):
+                first = root / "first.zip"
+                second = root / "second.zip"
+                installer.create_online_marker_archive(first)
+                installer.create_online_marker_archive(second)
+            self.assertEqual(first.read_bytes(), second.read_bytes())
+            with zipfile.ZipFile(first) as bundle:
+                self.assertEqual(
+                    sorted(bundle.namelist()),
+                    sorted([".fsv-online-resource-required", installer.MARKER_NAME]),
+                )
+                self.assertEqual(bundle.read(installer.MARKER_NAME), installer.MARKER_BYTES)
+
+    def test_sharded_archive_entries_use_the_fixed_timestamp(self):
+        # 打包器自己造的条目（分片、索引、占位）都必须显式带上固定时间戳；只要有一条走
+        # ``writestr(名字字符串)``，时刻就会跟着构建时钟变，两次打包不再是同一份字节。
+        with tempfile.TemporaryDirectory(prefix="fsv-shard-clock-") as temporary:
+            root = Path(temporary)
+            payload = root / "payload"
+            (payload / "app").mkdir(parents=True)
+            (payload / "app" / "data.bin").write_bytes(b"shard payload " * 64)
+            (payload / installer.MARKER_NAME).write_bytes(installer.MARKER_BYTES)
+            installer.pin_packaged_mtime(payload / installer.MARKER_NAME)
+            archive = root / "payload.zip"
+
+            installer.create_archive(payload, archive)
+
+            with zipfile.ZipFile(archive) as bundle:
+                members = bundle.infolist()
+                self.assertGreater(len(members), 2)
+                for member in members:
+                    if member.filename == installer.MARKER_NAME:
+                        # 标记按文件写出，条目时间戳来自它那份固定的 mtime。
+                        continue
+                    with self.subTest(member=member.filename):
+                        self.assertEqual(
+                            member.date_time, installer.ARCHIVE_ENTRY_DATE_TIME
+                        )
+            self.assertEqual(installer.ARCHIVE_ENTRY_DATE_TIME, (1980, 1, 1, 0, 0, 0))
+
+    def test_reproducible_check_keeps_one_copy_and_rejects_drift(self):
+        with tempfile.TemporaryDirectory(prefix="fsv-repro-") as temporary:
+            root = Path(temporary)
+            first_dir = root / "first"
+            second_dir = root / "second"
+            first_dir.mkdir()
+            second_dir.mkdir()
+            for directory in (first_dir, second_dir):
+                (directory / "installer.exe").write_bytes(b"installer")
+                (directory / "resources.zip").write_bytes(b"resources")
+            first = (first_dir / "installer.exe", first_dir / "resources.zip")
+            second = (second_dir / "installer.exe", second_dir / "resources.zip")
+            digests = installer._verify_reproducible(first, second)
+            self.assertEqual(
+                digests["installer.exe"], installer._sha256_file(first[0])
+            )
+            self.assertEqual(set(digests), {"installer.exe", "resources.zip"})
+            (second_dir / "resources.zip").write_bytes(b"other resources")
+            with self.assertRaises(SystemExit):
+                installer._verify_reproducible(first, second)
+            with self.assertRaises(SystemExit):
+                installer._verify_reproducible(first, (second_dir / "installer.exe",))
 
 class ResourceBundleOverlayTests(unittest.TestCase):
     """在线资源包双读：分片归档与旧的 Deflate 归档都要能覆盖安装。"""

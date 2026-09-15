@@ -16,7 +16,6 @@ import os
 from pathlib import Path, PurePosixPath
 import re
 import shutil
-import subprocess
 import sys
 import zipfile
 
@@ -1125,17 +1124,24 @@ def sha256(path: Path) -> str:
 
 
 def build_manifest(payload: Path) -> list[dict[str, object]]:
+    """记录 payload 里每个文件的路径与大小。
+
+    这里不算 SHA-256：把上千兆文件重新读一遍既慢又会被扫描/杀毒软件拖成几分钟，而发行包
+    是否可信由打包前后两道检查回答——打包前在 payload 里跑一次真实启动与功能自检，
+    打包时连打两次比对哈希（见 ``scripts/build_offline_installer.py`` 与
+    ``doc/发行版EXE构建逻辑.md``）。清单本身仍然逐条列出路径与真实大小，原生安装器与
+    更新器读的就是这份视图。
+    """
     files = sorted(item for item in payload.rglob("*") if item.is_file())
     total = len(files)
     entries = []
-    log_stage(f"正在生成逐文件 SHA-256 清单（{total} 个文件）")
+    log_stage(f"正在生成 payload 清单（{total} 个文件）")
     for index, item in enumerate(files, start=1):
         entries.append({
             "path": item.relative_to(payload).as_posix(),
             "size": item.stat().st_size,
-            "sha256": sha256(item),
         })
-        if index % 1000 == 0 or index == total:
+        if index % 2000 == 0 or index == total:
             log_stage(f"清单进度：{index}/{total}（{index * 100 // max(total, 1)}%）")
     return entries
 
@@ -1311,6 +1317,11 @@ def _write_distribution_state(workspace: Path, state: dict[str, object]) -> None
 
 
 def _is_complete_staged_distribution(workspace: Path, payload: Path) -> bool:
+    """只做结构检查：marker 在、清单里的路径都能对上文件与其记录的大小。
+
+    刻意不再逐文件比对内容：``--resume`` 只想回答「这份 payload 收完了没有」，
+    内容层面的正确性由打包前的启动自检与打包时的两次哈希比对负责。
+    """
     marker = payload / PAYLOAD_MARKER_NAME
     manifest = workspace / "manifest.json"
     if not marker.is_file() or marker.read_bytes() != PAYLOAD_MARKER_BYTES:
@@ -1323,7 +1334,6 @@ def _is_complete_staged_distribution(workspace: Path, payload: Path) -> bool:
     if not isinstance(entries, list) or not entries:
         return False
     expected: set[str] = set()
-    digest_pattern = re.compile(r"^[0-9a-f]{64}$")
     try:
         for entry in entries:
             if not isinstance(entry, dict):
@@ -1336,13 +1346,10 @@ def _is_complete_staged_distribution(workspace: Path, payload: Path) -> bool:
                 or relative.as_posix() in expected
                 or not isinstance(entry.get("size"), int)
                 or entry["size"] < 0
-                or not digest_pattern.fullmatch(str(entry.get("sha256", "")).lower())
             ):
                 return False
             target = payload.joinpath(*relative.parts)
             if not target.is_file() or target.stat().st_size != entry["size"]:
-                return False
-            if sha256(target) != str(entry["sha256"]).lower():
                 return False
             expected.add(relative.as_posix())
         actual = {

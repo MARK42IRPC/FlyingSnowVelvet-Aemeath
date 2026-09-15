@@ -149,7 +149,10 @@ class OfflineDistributionTests(unittest.TestCase):
             self.assertEqual(capped["source"]["sampled_bytes"], chunk * 2)
             self.assertGreater(capped["source"]["total_bytes"], chunk * 2)
 
-    def test_resume_validation_rejects_missing_or_changed_payload_files(self):
+    def test_resume_validation_checks_structure_not_content(self):
+        # ``--resume`` 只回答「这份 payload 收完了没有」：marker 在、清单里的路径都能对上
+        # 文件与其记录的大小。内容层面的正确性由打包前的启动自检与打包时的两次哈希比对负责，
+        # 所以同样大小的内容改动不再让工作区失效。
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             workspace = root / "workspace"
@@ -164,7 +167,6 @@ class OfflineDistributionTests(unittest.TestCase):
                 {
                     "path": item.relative_to(payload).as_posix(),
                     "size": item.stat().st_size,
-                    "sha256": distribution.sha256(item),
                 }
                 for item in sorted(payload.rglob("*"))
                 if item.is_file()
@@ -177,8 +179,35 @@ class OfflineDistributionTests(unittest.TestCase):
                 distribution._is_complete_staged_distribution(workspace, payload)
             )
             content.write_bytes(b"changed")
+            self.assertTrue(
+                distribution._is_complete_staged_distribution(workspace, payload)
+            )
+            content.unlink()
             self.assertFalse(
                 distribution._is_complete_staged_distribution(workspace, payload)
+            )
+            content.write_bytes(b"payload")
+            self.assertTrue(
+                distribution._is_complete_staged_distribution(workspace, payload)
+            )
+            content.write_bytes(b"payload and more")
+            self.assertFalse(
+                distribution._is_complete_staged_distribution(workspace, payload)
+            )
+            marker.unlink()
+            self.assertFalse(
+                distribution._is_complete_staged_distribution(workspace, payload)
+            )
+
+    def test_manifest_entries_carry_path_and_size_only(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            payload = Path(tmpdir) / "payload"
+            (payload / "app").mkdir(parents=True)
+            (payload / "app" / "data.txt").write_bytes(b"payload")
+            entries = distribution.build_manifest(payload)
+            self.assertEqual(
+                entries,
+                [{"path": "app/data.txt", "size": 7}],
             )
 
     def test_python_runtime_keeps_sqlite_for_bundled_nltk_frontend(self):

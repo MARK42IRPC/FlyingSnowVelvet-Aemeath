@@ -71,7 +71,7 @@ Qt/Node 子树。纯 Python `jieba`、`jieba_fast` 的关键词抽取与 SWIG �
 文件；解压期的额外内存主要是每个活跃分片的 64 MiB 解码字典。
 
 在线资源包（`FlyingSnowVelvet-<version>-Resources.zip`）默认仍发布 Deflate，作为分片切换的
-缓冲：LTS1.0.7pre4 的应用内更新器（`install_resource_bundle`）已经同时读分片与 Deflate，
+缓冲：LTS1.0.7pre4 起的应用内更新器（`install_resource_bundle`）已经同时读分片与 Deflate，
 但更早的客户端只会把分片归档里的占位条目解成空文件。等所有在用客户端都升级到读得懂分片的
 版本后，构建时加 `--resource-sharded` 即可让资源包改用同一套 LZMA2 分片布局。
 
@@ -110,11 +110,32 @@ DLL、模型与 wheel 一定进指纹，而十几 GB 的 site-packages / node_mo
 已作为独立输入指纹。因此 `--resume` 的语义是「输入没有明显变化」（增删改文件必然改变指纹，
 保持大小与 mtime 的内容改动只对采样到的文件可靠），不是「逐字节相同」。
 
+## 打包期校验
+
+发行包的校验不再逐文件算 SHA-256：`manifest.json` 与安装器内置归档的目录都只记路径与真实
+大小，打包期改用两道检查回答「这份包能不能用」：
+
+1. **打包前跑一次真实的桌宠启动与功能测试**（`scripts/verify_payload_runtime.py`）。它用
+   payload 自带的 `runtime/python311/python.exe`、在原生 launcher 等价的环境里起两个进程：
+   `--mode startup` 走完整的启动路径（补齐上次的待替换文件、预载可选推理运行时、挑桌面后端、
+   构造 `ApplicationState`，等到 `APP_INIT_READY` 再有序退出），`--mode features` 在离屏 Qt 里
+   构造工作台的全部页面、独立办公窗口、论坛窗口与星空粒子，并逐个探测服务、字体/序列帧/Vosk/
+   Node 资源与用户存储可写。任何一项失败都会中止打包（`--skip-launch-check` 只留给调试）。
+   它验证的是发行包本身：包内解释器、包内 wheel、包内 DLL 与资源树。
+2. **连打两次包并比对哈希**。两次产物必须逐字节相同，一致才保留第一份，不一致直接报错
+   （`--skip-reproducible-check` 只打一次）。为此打包自己写进 payload 的文件
+   （`.fsv-install-root`、`启动飞行雪绒.exe`、`卸载飞行雪绒.exe`）按 `PACKAGED_FILE_MTIME`
+   固定 mtime，C 编译带 `/Brepro`，归档条目与 PE 时间戳都不再跟随构建时刻。
+
+`--resume` 的完整性检查同样只做结构检查（marker 在、清单里的路径都能对上文件与其记录的大小），
+不再逐文件重算内容哈希。
+
 ## 构建与审计
 
 ```powershell
 python scripts/build_offline_distribution.py --help
 python scripts/build_offline_installer.py --help
+python scripts/verify_payload_runtime.py --workspace build/offline-release/workspace
 python -m unittest tests.test_offline_distribution tests.test_offline_installer_archive tests.test_windows_zip_extract tests.test_update_installer -q
 ```
 
