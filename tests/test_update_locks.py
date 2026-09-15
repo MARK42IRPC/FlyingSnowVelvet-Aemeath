@@ -86,27 +86,28 @@ class WorkbenchHelperRestoreTests(unittest.TestCase):
             ),
             mock.patch.object(update_locks, "_terminate_process") as terminate,
             mock.patch.object(update_locks, "_workbench_helper_process_id", return_value=helper_pid),
-            mock.patch.object(update_locks, "_restore_workbench_helper") as restore,
             mock.patch.object(update_locks.time, "sleep"),
         ):
-            released = update_locks.release_install_directory_locks(root, info=lambda _m: None)
-        return released, terminate, restore
+            report = update_locks.release_install_directory_locks(
+                root, info=lambda _m: None
+            )
+        return report, terminate
 
-    def test_helper_is_relaunched_after_being_killed(self):
+    def test_helper_pid_is_reported_so_the_window_can_be_reopened_later(self):
         root = Path(tempfile.gettempdir()) / "fsv-root"
-        released, terminate, restore = self.run_release(helper_pid=99, root=root)
+        report, terminate = self.run_release(helper_pid=99, root=root)
 
-        self.assertEqual(len(released), 2)
+        self.assertEqual(len(report.processes), 2)
+        self.assertEqual(report.workbench_helper_pid, 99)
         self.assertEqual([call.args[0] for call in terminate.call_args_list], [10, 99])
-        restore.assert_called_once()
 
-    def test_other_processes_do_not_trigger_a_relaunch(self):
+    def test_other_processes_do_not_ask_for_a_reopen(self):
         root = Path(tempfile.gettempdir()) / "fsv-root"
-        released, terminate, restore = self.run_release(helper_pid=None, root=root)
+        report, terminate = self.run_release(helper_pid=None, root=root)
 
-        self.assertEqual(len(released), 2)
+        self.assertEqual(len(report.processes), 2)
+        self.assertIsNone(report.workbench_helper_pid)
         self.assertEqual([call.args[0] for call in terminate.call_args_list], [10, 99])
-        restore.assert_not_called()
 
 
 class UpdateLockKillTests(unittest.TestCase):
@@ -144,12 +145,16 @@ class UpdateLockKillTests(unittest.TestCase):
                     self.skipTest("复制出的解释器没能常驻，跳过这次释放验证")
 
                 messages: list[str] = []
-                released = update_locks.release_install_directory_locks(
+                report = update_locks.release_install_directory_locks(
                     install_root, info=messages.append
                 )
 
-                self.assertTrue(any(str(child.pid) in item for item in released), released)
+                self.assertTrue(
+                    any(str(child.pid) in item for item in report.processes),
+                    report.processes,
+                )
                 self.assertTrue(messages and "后台进程" in messages[0], messages)
+                self.assertIsNone(report.workbench_helper_pid)
                 time.sleep(1.0)
                 self.assertIsNotNone(child.poll())
             finally:

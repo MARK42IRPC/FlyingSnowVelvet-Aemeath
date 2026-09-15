@@ -13,6 +13,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from lib.script.app import update_installer
+from lib.script.app.update_locks import LockReleaseReport
 from lib.script.app.update_installer import (
     OverlayOutcome,
     clear_update_installer_cache,
@@ -254,7 +255,7 @@ class UpdateInstallerTests(unittest.TestCase):
                 patch("lib.script.app.update_installer.launch_update_installer") as launch,
                 patch(
                     "lib.script.app.update_locks.release_install_directory_locks",
-                    return_value=(),
+                    return_value=LockReleaseReport(),
                 ),
             ):
                 result = manager.install_release(release)
@@ -298,7 +299,7 @@ class UpdateInstallerTests(unittest.TestCase):
                 ),
                 patch(
                     "lib.script.app.update_locks.release_install_directory_locks",
-                    return_value=(),
+                    return_value=LockReleaseReport(),
                 ) as locks,
                 patch.object(
                     update_installer,
@@ -326,7 +327,7 @@ class UpdateInstallerTests(unittest.TestCase):
                 ),
                 patch(
                     "lib.script.app.update_locks.release_install_directory_locks",
-                    return_value=(),
+                    return_value=LockReleaseReport(),
                 ),
             ):
                 with self.assertRaisesRegex(UpdateError, "SHA-256"):
@@ -376,15 +377,59 @@ class UpdateInstallerTests(unittest.TestCase):
                 ) as defer,
                 patch(
                     "lib.script.app.update_locks.release_install_directory_locks",
-                    return_value=(),
+                    return_value=LockReleaseReport(
+                        processes=("pythonw.exe(99)",), workbench_helper_pid=99
+                    ),
                 ),
+                patch("lib.script.update_manager._restart_workbench_window") as restart,
             ):
                 result = manager.install_release(release)
 
             self.assertEqual(result.reason, "resources_installed")
-            self.assertEqual(len(result.notes), 1)
-            self.assertIn("app/onnx.dll", result.notes[0])
+            joined = "\n".join(result.notes)
+            self.assertIn("app/onnx.dll", joined)
+            self.assertIn("1 个占用安装目录的后台进程", joined)
             self.assertEqual(defer.call_args.args[1], install_root)
+            # 覆盖安装做完才重开控制面板，免得它重新锁住刚腾出来的文件。
+            restart.assert_called_once()
+
+    def test_installer_handoff_never_reopens_the_workbench_window(self):
+        """桌宠马上要退出：任何还活着的自有进程都会挡住原生安装器换目录。"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            manager = UpdateManager(state_path=root / "state.json")
+            release = ReleaseInfo(
+                "PACK",
+                datetime(2026, 9, 15, tzinfo=timezone.utc),
+                "FlyingSnowVelvet-PACK-Offline-Installer.exe",
+                "download",
+                "HF",
+                "rev",
+            )
+
+            def download(_release, destination):
+                _write_installer(
+                    destination, {".fsv-install-root": "marker\n"}
+                )
+
+            with (
+                patch("lib.script.update_manager._STAGING_ROOT", root / "stage"),
+                patch.object(manager, "_download_release", side_effect=download),
+                patch(
+                    "lib.script.app.update_locks.release_install_directory_locks",
+                    return_value=LockReleaseReport(
+                        processes=("pythonw.exe(99)",), workbench_helper_pid=99
+                    ),
+                ),
+                patch("lib.script.app.update_installer.launch_update_installer") as launch,
+                patch("lib.script.update_manager._restart_workbench_window") as restart,
+            ):
+                result = manager.install_release(release)
+
+            launch.assert_called_once()
+            self.assertEqual(result.reason, "install_scheduled")
+            self.assertIn("1 个占用安装目录的后台进程", result.notes[0])
+            restart.assert_not_called()
 
     def test_dialog_offers_native_installer_after_download(self):
         from lib.script.ui.update_dialog import DesktopPetUpdateDialog

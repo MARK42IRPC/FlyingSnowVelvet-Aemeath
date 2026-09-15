@@ -17,6 +17,7 @@ import os
 import subprocess
 import time
 from ctypes import wintypes
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable
 
@@ -34,6 +35,18 @@ _IMAGE_PATH_LENGTH = 32768
 _TASKKILL_TIMEOUT_SECONDS = 15.0
 # 结束进程后给文件系统一点时间真正关掉句柄，再开始覆盖安装。
 _SETTLE_SECONDS = 0.3
+
+
+@dataclass(frozen=True)
+class LockReleaseReport:
+    """一次占用释放的结果。
+
+    ``workbench_helper_pid`` 是被这次释放关掉的控制面板窗口；调用方要在覆盖安装
+    做完之后再按原页面把它打开——提前打开会把刚腾出来的文件重新锁上。
+    """
+
+    processes: tuple[str, ...] = ()
+    workbench_helper_pid: int | None = None
 
 
 class _PROCESSENTRY32W(ctypes.Structure):
@@ -146,16 +159,6 @@ def _workbench_helper_process_id() -> int | None:
         return None
 
 
-def _restore_workbench_helper() -> None:
-    """控制面板窗口被这次释放关掉时把它按原页面重新拉起来。"""
-    try:
-        from lib.script.app.workbench_helper import relaunch_workbench_helper
-
-        relaunch_workbench_helper()
-    except Exception as exc:
-        logger.debug("重新拉起控制面板 helper 失败: %s", exc)
-
-
 def _target_processes(
     processes: Iterable[tuple[int, int, str]], root: Path, protected: set[int]
 ) -> list[tuple[int, str]]:
@@ -188,10 +191,10 @@ def release_install_directory_locks(
     install_root: Path | str | None = None,
     *,
     info: Callable[[str], None] | None = None,
-) -> tuple[str, ...]:
-    """结束镜像位于安装目录内的自有子进程，返回被结束的进程描述。
+) -> LockReleaseReport:
+    """结束镜像位于安装目录内的自有子进程，返回这次释放的结果。
 
-    返回空元组表示没有需要释放的占用。失败不会抛异常：更新流程本身远比“清理干净”
+    没有需要释放的占用时返回空报告。失败不会抛异常：更新流程本身远比“清理干净”
     重要，剩下的占用交给覆盖安装的重试与延迟替换处理。
     """
 
@@ -203,7 +206,7 @@ def release_install_directory_locks(
                 pass
 
     if os.name != "nt":
-        return ()
+        return LockReleaseReport()
     try:
         root = (
             Path(install_root).resolve()
@@ -213,11 +216,11 @@ def release_install_directory_locks(
         processes = _snapshot_processes()
     except Exception as exc:
         logger.debug("枚举更新占用进程失败: %s", exc)
-        return ()
+        return LockReleaseReport()
     protected = _ancestor_pids(processes) | {os.getpid()}
     targets = _target_processes(processes, root, protected)
     if not targets:
-        return ()
+        return LockReleaseReport()
     helper_pid = _workbench_helper_process_id()
     killed: list[str] = []
     names: list[str] = []
@@ -232,10 +235,10 @@ def release_install_directory_locks(
     notify(f"已结束 {len(killed)} 个占用安装目录的后台进程（{preview}）")
     logger.info("更新前释放安装目录占用：%s", "、".join(killed))
     time.sleep(_SETTLE_SECONDS)
-    if helper_pid is not None and helper_pid in killed_pids:
-        # 控制面板是用户看得见的窗口，被这次释放关掉就按原页面重新打开。
-        _restore_workbench_helper()
-    return tuple(killed)
+    return LockReleaseReport(
+        processes=tuple(killed),
+        workbench_helper_pid=helper_pid if helper_pid in killed_pids else None,
+    )
 
 
-__all__ = ["release_install_directory_locks"]
+__all__ = ["LockReleaseReport", "release_install_directory_locks"]

@@ -78,6 +78,16 @@ class UpdateError(RuntimeError):
     """更新流程异常。"""
 
 
+def _restart_workbench_window() -> None:
+    """按原页面重新打开被更新流程关掉的控制面板窗口。"""
+    try:
+        from lib.script.app.workbench_helper import relaunch_workbench_helper
+
+        relaunch_workbench_helper()
+    except Exception as exc:
+        _logger.debug("重新打开控制面板窗口失败: %s", exc)
+
+
 def _is_retryable_request_error(exc: requests.RequestException) -> bool:
     response = getattr(exc, "response", None)
     status_code = int(getattr(response, "status_code", 0) or 0)
@@ -394,8 +404,10 @@ class UpdateManager(_UpdateBase):
                 released = release_install_directory_locks(
                     _PROJECT_ROOT, info=self._info
                 )
-                if released:
-                    notes.append(f"已结束 {len(released)} 个占用安装目录的后台进程。")
+                if released.processes:
+                    notes.append(
+                        f"已结束 {len(released.processes)} 个占用安装目录的后台进程。"
+                    )
                 outcome = install_resource_bundle(
                     archive_path,
                     _PROJECT_ROOT,
@@ -418,6 +430,9 @@ class UpdateManager(_UpdateBase):
                         notes.append(
                             f"{len(deferred)} 个文件正在使用中，已登记为下次启动时替换：{preview}{more}"
                         )
+                if released.workbench_helper_pid is not None:
+                    # 覆盖安装做完再开窗：提前打开会把刚腾出来的文件重新锁上。
+                    _restart_workbench_window()
                 self._save_installed_state(
                     InstalledState(
                         release.tag,
@@ -444,7 +459,15 @@ class UpdateManager(_UpdateBase):
                 "source": release.source,
             }
             if launch_installer and release.kind != "resources":
-                release_install_directory_locks(_PROJECT_ROOT, info=self._info)
+                # 这里不重开控制面板：桌宠马上要退出，任何还活着的自有进程都会
+                # 挡住原生安装器切换安装目录。
+                released = release_install_directory_locks(
+                    _PROJECT_ROOT, info=self._info
+                )
+                if released.processes:
+                    notes.append(
+                        f"已结束 {len(released.processes)} 个占用安装目录的后台进程。"
+                    )
                 launch_update_installer(
                     archive_path,
                     _PROJECT_ROOT,
@@ -511,8 +534,11 @@ class UpdateManager(_UpdateBase):
             restart_command=restart_command,
         )
         notes = update.notes
-        if released:
-            notes = (*notes, f"已结束 {len(released)} 个占用安装目录的后台进程。")
+        if released.processes:
+            notes = (
+                *notes,
+                f"已结束 {len(released.processes)} 个占用安装目录的后台进程。",
+            )
         return replace(update, reason="install_scheduled", notes=notes)
 
     def check_and_update(self) -> UpdateResult:
