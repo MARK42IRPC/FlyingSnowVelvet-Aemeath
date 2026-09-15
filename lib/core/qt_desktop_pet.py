@@ -35,6 +35,28 @@ def _preload_optional_onnx_runtime() -> None:
         pass
 
 
+def _apply_pending_update_overlay() -> None:
+    """补装上次更新里被占用、没能替换的文件。
+
+    必须排在 PyQt5 与 onnxruntime 导入之前：模块一旦加载，它和它依赖的 DLL 就再也
+    换不掉，补装也就无从谈起。补装失败只记日志，绝不挡启动。
+    """
+    try:
+        from lib.script.app.update_installer import apply_pending_overlay
+
+        applied = apply_pending_overlay()
+        if applied:
+            from lib.core.logger import get_logger
+
+            get_logger(__name__).info(
+                "已补装 %s 个上次更新被占用的文件：%s",
+                len(applied),
+                "、".join(applied[:5]),
+            )
+    except Exception:
+        pass
+
+
 # 添加项目根目录到 Python 路径（向上三级，从 lib/core 到根目录）
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if project_root not in sys.path:
@@ -71,6 +93,7 @@ if __name__ == '__main__':
             _show_startup_error('重启辅助进程启动失败：\n\n' + str(exc))
             sys.exit(1)
     try:
+        _apply_pending_update_overlay()
         _preload_optional_onnx_runtime()
         from lib.script.app.qt_backend_bootstrap import configure_selected_desktop_backend
 

@@ -123,6 +123,8 @@ class UpdateResult:
     release_info: ReleaseInfo
     reason: str = ""
     archive_path: Path | None = None
+    # 需要告诉用户的补充说明：被占用而登记为下次启动补装的文件、结束掉的后台进程等。
+    notes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -359,11 +361,13 @@ class UpdateManager(_UpdateBase):
         restart_command: list[str] | None = None,
     ) -> UpdateResult:
         from lib.script.app.update_installer import (
+            defer_overlay_leftovers,
             extract_update_installer_bundle,
             install_resource_bundle,
             launch_update_installer,
             validate_update_installer,
         )
+        from lib.script.app.update_locks import release_install_directory_locks
 
         self._progress(0, 0, f"开始下载分发包 {release.tag}（{release.asset_name}）...")
         staging_dir = _STAGING_ROOT / uuid.uuid4().hex
@@ -372,22 +376,48 @@ class UpdateManager(_UpdateBase):
             raise UpdateError("更新源未提供离线安装器 ZIP")
         download_path = staging_dir / download_name
         partial_path = download_path.with_suffix(download_path.suffix + ".part")
+        notes: list[str] = []
         try:
-            self._download_release(release, partial_path)
+            # 下载时顺手算出 SHA-256：清单里的哈希就是这份文件唯一要核对的校验值，
+            # 不再在下载结束后把几百兆重新读一遍（那正是“校验更新包”卡住的原因）。
+            digest = self._download_release(release, partial_path)
             partial_path.replace(download_path)
-            self._progress(0, 0, "下载完成，正在校验更新包...")
-            if release.archive_sha256:
-                digest = hashlib.sha256()
-                with download_path.open("rb") as stream:
-                    for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-                        digest.update(chunk)
-                if digest.hexdigest().casefold() != release.archive_sha256.casefold():
-                    raise UpdateError("更新安装器压缩包 SHA-256 校验失败")
+            self._progress(0, 0, "正在核对更新包 SHA-256…")
+            if release.archive_sha256 and not digest:
+                raise UpdateError("更新包缺少可校验的 SHA-256，已取消更新")
+            if release.archive_sha256 and digest.casefold() != release.archive_sha256.casefold():
+                raise UpdateError("更新安装器压缩包 SHA-256 校验失败")
             if release.kind == "resources":
                 archive_path = download_path
                 # Resource overlays are applied while the app is running; no
                 # native installer/EXE is downloaded or executed.
-                install_resource_bundle(archive_path, _PROJECT_ROOT)
+                released = release_install_directory_locks(
+                    _PROJECT_ROOT, info=self._info
+                )
+                if released:
+                    notes.append(f"已结束 {len(released)} 个占用安装目录的后台进程。")
+                outcome = install_resource_bundle(
+                    archive_path,
+                    _PROJECT_ROOT,
+                    progress=lambda text: self._progress(0, 0, text),
+                )
+                if outcome.locked:
+                    deferred = defer_overlay_leftovers(
+                        outcome,
+                        outcome.target_root or _PROJECT_ROOT,
+                        release={
+                            "tag": release.tag,
+                            "published_at": _isoformat(release.published_at),
+                            "revision": release.revision,
+                            "source": release.source,
+                        },
+                    )
+                    if deferred:
+                        preview = "、".join(deferred[:3])
+                        more = "" if len(deferred) <= 3 else f" 等 {len(deferred)} 个文件"
+                        notes.append(
+                            f"{len(deferred)} 个文件正在使用中，已登记为下次启动时替换：{preview}{more}"
+                        )
                 self._save_installed_state(
                     InstalledState(
                         release.tag,
@@ -397,12 +427,16 @@ class UpdateManager(_UpdateBase):
                     )
                 )
             else:
+                # 下载文件就是清单里的那一份，SHA-256 已经覆盖了安装器内置归档的全部
+                # 字节，这里只做 PE 尾记录与 ZIP 目录的结构检查。
                 archive_path = (
                     extract_update_installer_bundle(download_path, staging_dir / "installer")
                     if download_path.suffix.casefold() == ".zip"
                     else download_path
                 )
-                validate_update_installer(archive_path)
+                validate_update_installer(
+                    archive_path, verify_payload=not release.archive_sha256
+                )
             release_payload = {
                 "tag": release.tag,
                 "published_at": _isoformat(release.published_at),
@@ -410,6 +444,7 @@ class UpdateManager(_UpdateBase):
                 "source": release.source,
             }
             if launch_installer and release.kind != "resources":
+                release_install_directory_locks(_PROJECT_ROOT, info=self._info)
                 launch_update_installer(
                     archive_path,
                     _PROJECT_ROOT,
@@ -431,6 +466,8 @@ class UpdateManager(_UpdateBase):
         )
         reason = "resources_installed" if release.kind == "resources" else ("install_scheduled" if launch_installer else "download_ready")
         message = "离线安装器已启动，桌宠将在退出后完成更新。" if launch_installer else "离线安装器已下载并通过校验，请启动安装器完成更新。"
+        if release.kind == "resources":
+            message = "资源包已安装，后续启动将使用最新资源。"
         self._progress(1, 1, message)
         return UpdateResult(
             True,
@@ -438,6 +475,7 @@ class UpdateManager(_UpdateBase):
             release,
             reason=reason,
             archive_path=archive_path,
+            notes=tuple(notes),
         )
 
     def launch_pending_update(
@@ -448,6 +486,7 @@ class UpdateManager(_UpdateBase):
     ) -> UpdateResult:
         """将已下载的离线 EXE 交给原生安装器。"""
         from lib.script.app.update_installer import launch_update_installer
+        from lib.script.app.update_locks import release_install_directory_locks
 
         archive_path = update.archive_path
         if archive_path is None or not Path(archive_path).is_file():
@@ -461,6 +500,9 @@ class UpdateManager(_UpdateBase):
             "revision": release.revision,
             "source": release.source,
         }
+        # 桌宠退出的那一刻，办公侧车、控制面板 helper 与语音 worker 还在用安装目录里的
+        # node.exe / DLL；先把它们结束，原生安装器接管目录切换时就不会再撞占用。
+        released = release_install_directory_locks(_PROJECT_ROOT, info=self._info)
         launch_update_installer(
             archive_path,
             _PROJECT_ROOT,
@@ -468,7 +510,10 @@ class UpdateManager(_UpdateBase):
             release_payload,
             restart_command=restart_command,
         )
-        return replace(update, reason="install_scheduled")
+        notes = update.notes
+        if released:
+            notes = (*notes, f"已结束 {len(released)} 个占用安装目录的后台进程。")
+        return replace(update, reason="install_scheduled", notes=notes)
 
     def check_and_update(self) -> UpdateResult:
         check_result = self.check_for_updates()
@@ -655,20 +700,24 @@ class UpdateManager(_UpdateBase):
                 time.sleep(pause)
         raise UpdateError(f"{source_name} 读取失败：{last_error}") from last_error
 
-    def _download_release(self, release: ReleaseInfo, dest_path: Path) -> None:
+    def _download_release(self, release: ReleaseInfo, dest_path: Path) -> str:
+        """下载发布包，返回流式计算出的 SHA-256（十六进制小写）。
+
+        哈希随下载一起算：清单里的 ``sha256`` 是这份文件唯一需要核对的校验值，下载
+        结束后不再把几百兆重新读一遍。
+        """
         urls = (release.download_url, *release.fallback_download_urls)
         errors: list[str] = []
         for index, download_url in enumerate(urls):
             try:
-                self._download_url(download_url, dest_path)
-                return
+                return self._download_url(download_url, dest_path)
             except UpdateError as exc:
                 errors.append(str(exc))
                 if index + 1 < len(urls):
                     self._info("当前镜像下载失败，正在切换同 revision 备用源...")
         raise UpdateError("；".join(errors) or "没有可用的更新包下载地址")
 
-    def _download_url(self, download_url: str, dest_path: Path) -> None:
+    def _download_url(self, download_url: str, dest_path: Path) -> str:
         last_error: requests.RequestException | None = None
         for attempt in range(1, 4):
             try:
@@ -682,12 +731,14 @@ class UpdateManager(_UpdateBase):
                     total_text = str(resp.headers.get("Content-Length") or "").strip()
                     total_bytes = int(total_text) if total_text.isdigit() else 0
                     downloaded = 0
+                    digest = hashlib.sha256()
                     dest_path.parent.mkdir(parents=True, exist_ok=True)
                     with open(dest_path, "wb") as fp:
                         for chunk in resp.iter_content(chunk_size=512 * 1024):
                             if not chunk:
                                 continue
                             fp.write(chunk)
+                            digest.update(chunk)
                             downloaded += len(chunk)
                             self._progress(
                                 downloaded,
@@ -698,7 +749,7 @@ class UpdateManager(_UpdateBase):
                         raise UpdateError(
                             f"下载内容长度不完整：{downloaded}/{total_bytes} bytes"
                         )
-                return
+                return digest.hexdigest()
             except requests.RequestException as exc:
                 last_error = exc
                 dest_path.unlink(missing_ok=True)

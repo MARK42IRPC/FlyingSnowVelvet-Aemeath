@@ -100,6 +100,33 @@ def read_workbench_helper_request() -> dict:
     }
 
 
+def workbench_helper_process_id() -> int | None:
+    """控制面板 helper 的进程号；没有在运行时返回 None。
+
+    更新前要结束占用安装目录的自有子进程（helper 是同一份代码的第二个进程），
+    记下 pid 才能在它被结束之后把窗口重新拉起来。
+    """
+    process = _helper_process
+    if process is None or process.poll() is not None:
+        return None
+    return int(process.pid)
+
+
+def relaunch_workbench_helper() -> bool:
+    """按上一次的页面请求重新拉起控制面板窗口。"""
+    try:
+        request = read_workbench_helper_request()
+    except Exception:
+        return False
+    return bool(
+        launch_workbench_helper(
+            str(request.get("page_id") or "overview"),
+            game_id=str(request.get("game_id") or ""),
+            game_action=str(request.get("game_action") or ""),
+        )
+    )
+
+
 def launch_workbench_helper(
     initial_page: str = "overview",
     *,

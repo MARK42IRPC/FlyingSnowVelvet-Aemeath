@@ -425,21 +425,24 @@ class DesktopPetUpdateDialog(WorkbenchFloatingWindow):
             return
         self._set_busy(False)
         self._pending_update = update
+        notes = "\n".join(str(note) for note in update.notes if str(note).strip())
         if update.release_info.kind == "resources":
             self._status_label.setText("资源包已安装")
-            self._detail_label.setText(
+            detail = (
                 f"已安装 {update.release_info.tag}（{self._fmt_dt(update.release_info.published_at)}）\n"
                 "资源已写入当前安装目录，后续启动将使用最新资源。"
             )
+            self._detail_label.setText(f"{detail}\n{notes}" if notes else detail)
             self._set_progress_done()
             self._set_actions(None, ("关闭", self.hide_dialog))
             return
         self._status_label.setText("离线安装器已准备")
-        self._detail_label.setText(
+        detail = (
             f"已准备 {update.release_info.tag}（{self._fmt_dt(update.release_info.published_at)}）\n"
             f"更新文件：{update.release_info.asset_name}\n"
             "启动安装器后，当前桌宠会退出；安装器将使用包内运行环境完成更新。"
         )
+        self._detail_label.setText(f"{detail}\n{notes}" if notes else detail)
         self._set_progress_done()
         self._set_actions(
             ("稍后安装", self.hide_dialog),

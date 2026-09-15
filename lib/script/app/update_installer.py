@@ -14,8 +14,9 @@ import time
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
+from typing import Callable, Sequence
 
+from config.user_storage_paths import get_user_state_dir
 from lib.script.app.restart import (
     _detached_kwargs,
 )
@@ -44,9 +45,24 @@ RESOURCE_SHARD_FILTERS = (
 _RESOURCE_SHARD_READ_SIZE = 1 << 20
 
 # 覆盖安装时被扫盘、杀毒或索引进程短暂占住的目标文件不立刻判失败：先把能替换的
-# 全部替换掉，被占用的记下来最后回头重试，仍然失败的才连文件名一起报错。
-RESOURCE_OVERLAY_ATTEMPTS = 3
-RESOURCE_OVERLAY_RETRY_DELAY = 0.4
+# 全部替换掉，被占用的记下来最后回头重试（``RESOURCE_OVERLAY_ATTEMPTS`` 次、
+# 间隔 ``RESOURCE_OVERLAY_RETRY_DELAY`` 秒），仍然失败的登记为待补装项。
+RESOURCE_OVERLAY_ATTEMPTS = 4
+RESOURCE_OVERLAY_RETRY_DELAY = 0.5
+# 覆盖前比对同名文件内容用的读数块大小。
+_OVERLAY_COMPARE_SIZE = 1 << 20
+
+# 一次资源包覆盖里没能替换掉的少数文件（基本只有桌宠自己加载中的模块）会搬到用户根的
+# 待补装目录，由下次启动时最先执行的 ``apply_pending_overlay`` 补上：那时桌宠还没加载
+# 这些模块，文件已经可以替换，模块与它依赖的 DLL 也就不会被换出半个版本。
+PENDING_OVERLAY_VERSION = 1
+PENDING_OVERLAY_DIR_NAME = "update-pending-overlay"
+PENDING_OVERLAY_MANIFEST_NAME = "manifest.json"
+PENDING_OVERLAY_FILES_NAME = "files"
+
+# 校验过的离线安装器按「路径 + 大小 + mtime」缓存：一次更新里安装器会被校验两遍
+# （下载后交接前、真正启动前），第二遍必须零成本。
+_INSTALLER_CACHE: dict[tuple[str, int, int], OfflineInstallerInfo] = {}
 
 
 @dataclass(frozen=True)
@@ -55,6 +71,19 @@ class OfflineInstallerInfo:
     archive_offset: int
     archive_size: int
     archive_sha256: str
+
+
+@dataclass(frozen=True)
+class OverlayOutcome:
+    """资源包覆盖安装的结果。
+
+    ``locked`` 是被占用、没能替换的相对路径；``staging`` 仍保留解压结果，交给
+    ``defer_overlay_leftovers`` 搬进待补装目录，没有待补装项时为 None。
+    """
+
+    locked: tuple[str, ...] = ()
+    staging: Path | None = None
+    target_root: Path | None = None
 
 
 class _BoundedFile:
@@ -137,34 +166,59 @@ def _read_offline_installer_trailer(path: Path) -> OfflineInstallerInfo:
     )
 
 
-def validate_update_installer(installer_path: Path) -> OfflineInstallerInfo:
-    """Validate an offline installer and its appended ZIP payload.
+def _installer_cache_key(installer: Path) -> tuple[str, int, int]:
+    stat = installer.stat()
+    return (str(installer), int(stat.st_size), int(stat.st_mtime_ns))
 
-    Validation is deliberately streaming so a several-hundred-megabyte
-    release cannot exhaust the desktop process while an update is prepared.
-    """
-    info = _read_offline_installer_trailer(Path(installer_path))
+
+def clear_update_installer_cache() -> None:
+    """清空安装器校验缓存（测试改写同一个文件时使用）。"""
+    _INSTALLER_CACHE.clear()
+
+
+def _hash_file_range(path: Path, offset: int, size: int) -> str:
     digest = hashlib.sha256()
-    with info.path.open("rb") as handle:
-        handle.seek(info.archive_offset)
-        remaining = info.archive_size
+    with path.open("rb") as handle:
+        handle.seek(offset)
+        remaining = int(size)
         while remaining:
             chunk = handle.read(min(1024 * 1024, remaining))
             if not chunk:
                 raise ValueError("离线安装器内置归档提前结束")
             digest.update(chunk)
             remaining -= len(chunk)
-    if digest.hexdigest().casefold() != info.archive_sha256.casefold():
+    return digest.hexdigest()
+
+
+def validate_update_installer(
+    installer_path: Path, *, verify_payload: bool = False
+) -> OfflineInstallerInfo:
+    """校验离线安装器，并返回它的 PE 尾记录。
+
+    更新链路的完整性只认一个哈希：发布清单里的 SHA-256，它在下载时随流算出（见
+    ``UpdateManager._download_url``）。``verify_payload`` 只留给清单没给哈希的
+    情况，那时才把内置归档再哈希一遍。
+
+    ZIP 目录这里只做结构与路径检查，不再调 ``testzip()``：那会把几百兆 payload
+    整份解压并逐条算 CRC-32，是整个更新流程里最卡的一步，而真正落盘的解压由原生
+    安装器完成。校验结果按“路径 + 大小 + mtime”缓存，同一次更新里安装器被校验
+    两遍（交接前、启动前）不会重复读盘。
+    """
+    installer = Path(installer_path).resolve()
+    if not installer.is_file():
+        raise ValueError("离线安装器不存在")
+    key = _installer_cache_key(installer)
+    cached = _INSTALLER_CACHE.get(key)
+    if cached is not None:
+        return cached
+    info = _read_offline_installer_trailer(installer)
+    if verify_payload and _hash_file_range(
+        info.path, info.archive_offset, info.archive_size
+    ).casefold() != info.archive_sha256.casefold():
         raise ValueError("离线安装器内置归档 SHA-256 校验失败")
 
-    # Validate the ZIP directory through a bounded file view.  The native
-    # installer performs the final extraction/path checks, but rejecting a
-    # malformed download here gives the user an actionable error before exit.
-    # The payload bytes live in LZMA2 shard entries, which are ordinary stored
-    # entries, while every payload path keeps a placeholder entry that only
-    # advertises its real size.  Both are covered below: the loop still vets
-    # every path, and ``testzip`` still verifies the shards' CRC-32, while the
-    # zero-length placeholders cost nothing to read.
+    # 通过有界文件视图校验 ZIP 目录。原生安装器会在真正解压时做最终检查，这里提前
+    # 拒绝畸形下载，好在退出桌宠之前给出可操作的错误。
     try:
         with info.path.open("rb") as handle:
             bounded = _BoundedFile(handle, info.archive_offset, info.archive_size)
@@ -177,11 +231,9 @@ def validate_update_installer(installer_path: Path) -> OfflineInstallerInfo:
                     member_path = Path(normalized)
                     if member_path.is_absolute() or ".." in member_path.parts:
                         raise ValueError(f"离线安装器包含不安全路径：{member.filename}")
-                broken = bundle.testzip()
-                if broken:
-                    raise ValueError(f"离线安装器内置归档损坏：{broken}")
     except zipfile.BadZipFile as exc:
         raise ValueError(f"离线安装器内置归档不是有效 ZIP：{exc}") from exc
+    _INSTALLER_CACHE[key] = info
     return info
 
 
@@ -215,30 +267,83 @@ def extract_update_installer_bundle(bundle_path: Path, destination: Path) -> Pat
         raise ValueError(f"更新安装器压缩包不是有效 ZIP：{exc}") from exc
 
 
-def install_resource_bundle(bundle_path: Path, project_root: Path) -> None:
+def install_resource_bundle(
+    bundle_path: Path,
+    project_root: Path,
+    *,
+    progress: Callable[[str], None] | None = None,
+) -> OverlayOutcome:
     """Safely overlay a desktop/runtime resource ZIP onto an installation.
 
     LTS1.0.7pre4 起同时接受旧的普通 Deflate 资源包和新的 LZMA2 分片资源包：归档里
     带分片索引就走分片解码，否则回退到 ``zipfile`` 逐条解压。
+
+    返回值列出「内容确实不同、但文件被占用而没能替换」的相对路径。调用方（
+    ``UpdateManager.install_release``）会把它们登记成待补装项，而不是让整次更新失败：
+    在线资源包里绝大多数文件与安装目录逐字节相同，剩下一两个被加载中的模块本来就要等
+    桌宠重启才能换。
     """
+    report = progress if callable(progress) else (lambda _message: None)
     bundle = Path(bundle_path).resolve()
     target_root = _installation_root(Path(project_root))
     staging = bundle.parent / f".fsv-resource-{os.getpid()}"
     shutil.rmtree(staging, ignore_errors=True)
     staging.mkdir(parents=True, exist_ok=True)
     try:
+        report("正在解压资源包…")
         with zipfile.ZipFile(bundle) as archive:
             _extract_resource_archive(archive, staging)
         marker = staging / RESOURCE_ARCHIVE_MARKER
         if not marker.is_file():
             raise ValueError("资源包缺少安装标记")
-        _overlay_staging(staging, target_root)
-    finally:
+        report("正在覆盖安装文件…")
+        locked = _overlay_staging(staging, target_root)
+    except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
+        raise
+    if not locked:
+        shutil.rmtree(staging, ignore_errors=True)
+        return OverlayOutcome(target_root=target_root)
+    return OverlayOutcome(
+        locked=tuple(
+            sorted(
+                destination.relative_to(target_root).as_posix()
+                for _, destination in locked
+            )
+        ),
+        staging=staging,
+        target_root=target_root,
+    )
 
 
-def _overlay_actions(actions: list[tuple[Path | None, Path]]) -> list[str]:
-    """执行覆盖动作，只重试失败的那些；返回最终仍然失败的目标路径。"""
+def _file_digest(path: Path) -> str | None:
+    digest = hashlib.sha256()
+    try:
+        with path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(_OVERLAY_COMPARE_SIZE), b""):
+                digest.update(chunk)
+    except OSError:
+        return None
+    return digest.hexdigest()
+
+
+def _same_content(source: Path, destination: Path) -> bool:
+    """包内文件与安装目录里的同名文件是否逐字节相同。"""
+    try:
+        if not destination.is_file():
+            return False
+        if destination.stat().st_size != source.stat().st_size:
+            return False
+    except OSError:
+        return False
+    source_digest = _file_digest(source)
+    return source_digest is not None and source_digest == _file_digest(destination)
+
+
+def _overlay_actions(
+    actions: list[tuple[Path | None, Path]],
+) -> list[tuple[Path | None, Path]]:
+    """执行覆盖动作，只重试失败的那些；返回最终仍然失败的动作。"""
     pending = list(actions)
     for attempt in range(RESOURCE_OVERLAY_ATTEMPTS):
         failed: list[tuple[Path | None, Path]] = []
@@ -256,14 +361,18 @@ def _overlay_actions(actions: list[tuple[Path | None, Path]]) -> list[str]:
         pending = failed
         if attempt + 1 < RESOURCE_OVERLAY_ATTEMPTS:
             time.sleep(RESOURCE_OVERLAY_RETRY_DELAY)
-    return [str(destination) for _, destination in pending]
+    return pending
 
 
-def _overlay_staging(staging: Path, target_root: Path) -> None:
-    """把 staging 的内容覆盖到安装目录，被占用的文件跳过并最后重试。
+def _overlay_staging(
+    staging: Path, target_root: Path
+) -> list[tuple[Path | None, Path]]:
+    """把 staging 的内容覆盖到安装目录，返回被占用、没能替换的文件。
 
     逐文件替换而不是整目录 ``copytree``，是为了让一个被占用的文件只跳过它自己，
     目录里其它文件照常更新。目录本身也走同一套重试，空的目录结构因此不会丢。
+    内容与安装目录逐字节相同的文件直接跳过：既省掉一次全量写入，也不会去撞别人
+    已经打开的文件句柄。
     """
     actions: list[tuple[Path | None, Path]] = []
     for source in sorted(staging.iterdir()):
@@ -271,20 +380,17 @@ def _overlay_staging(staging: Path, target_root: Path) -> None:
             continue
         destination = target_root / source.name
         if not source.is_dir():
-            actions.append((source, destination))
+            if not _same_content(source, destination):
+                actions.append((source, destination))
             continue
         actions.append((None, destination))
         for item in sorted(source.rglob("*")):
             relative = item.relative_to(source)
             if item.is_dir():
                 actions.append((None, destination / relative))
-            else:
+            elif not _same_content(item, destination / relative):
                 actions.append((item, destination / relative))
-    failed = _overlay_actions(actions)
-    if failed:
-        preview = "、".join(failed[:3])
-        more = "" if len(failed) <= 3 else f" 等 {len(failed)} 个文件"
-        raise ValueError(f"资源包有文件被占用，未能替换：{preview}{more}")
+    return _overlay_actions(actions)
 
 
 def _resource_archive_name(member: zipfile.ZipInfo) -> str:
@@ -451,6 +557,9 @@ def _extract_resource_archive(archive: zipfile.ZipFile, staging: Path) -> None:
     _extract_sharded_resource_archive(archive, staging, rows)
 
 
+_PROJECT_ROOT = Path(__file__).resolve().parents[3]
+
+
 def _installation_root(project_root: Path) -> Path:
     """Resolve the directory selected by the native installer.
 
@@ -465,6 +574,217 @@ def _installation_root(project_root: Path) -> Path:
     if (parent / "runtime" / "python311").is_dir() and (parent / "app").is_dir():
         return parent
     return root
+
+
+def pending_overlay_root() -> Path:
+    """待补装目录：存放上次覆盖安装里没能替换、等下次启动补上的文件。"""
+    return get_user_state_dir(PENDING_OVERLAY_DIR_NAME)
+
+
+def _relative_overlay_path(value: object) -> str | None:
+    """把登记的相对路径规整成 posix 写法；不安全或为空时返回 None。"""
+    raw = str(value or "").replace("\\", "/").strip()
+    if not raw:
+        return None
+    try:
+        _resource_member_path(raw)
+    except ValueError:
+        return None
+    return raw
+
+
+def _load_pending_overlay(manifest_path: Path) -> dict:
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    if payload.get("version") != PENDING_OVERLAY_VERSION:
+        return {}
+    files = payload.get("files")
+    entries: dict[str, dict] = {}
+    if isinstance(files, list):
+        for item in files:
+            if not isinstance(item, dict):
+                continue
+            relative = _relative_overlay_path(item.get("path"))
+            if relative is not None:
+                entries[relative] = item
+    return {
+        "version": PENDING_OVERLAY_VERSION,
+        "install_root": str(payload.get("install_root") or ""),
+        "release": payload.get("release") if isinstance(payload.get("release"), dict) else {},
+        "files": entries,
+    }
+
+
+def _pending_overlay_signature(entry: dict) -> tuple[int, int] | None:
+    """补装登记时记下的「大小 + mtime」；清单被改坏时返回 None。"""
+    size = entry.get("size")
+    mtime_ns = entry.get("mtime_ns")
+    if size is None or mtime_ns is None:
+        return None
+    try:
+        return int(size), int(mtime_ns)
+    except (TypeError, ValueError):
+        return None
+
+
+def _write_pending_overlay(manifest: dict) -> None:
+    root = pending_overlay_root()
+    manifest_path = root / PENDING_OVERLAY_MANIFEST_NAME
+    entries = manifest.get("files") or {}
+    if not entries:
+        shutil.rmtree(root, ignore_errors=True)
+        return
+    root.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "version": PENDING_OVERLAY_VERSION,
+        "install_root": str(manifest.get("install_root") or ""),
+        "release": manifest.get("release") or {},
+        "files": [entries[name] for name in sorted(entries)],
+    }
+    temporary = manifest_path.with_name(manifest_path.name + ".part")
+    temporary.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    os.replace(temporary, manifest_path)
+
+
+def defer_overlay_leftovers(
+    outcome: OverlayOutcome,
+    target_root: Path,
+    *,
+    release: dict | None = None,
+) -> tuple[str, ...]:
+    """把没能替换的文件搬进待补装目录，登记给下次启动补上。
+
+    登记时记下目标文件当时的「大小 + mtime」：如果之后有别的流程（比如完整离线安装器）
+    换过这个文件，补装就会跳过它，不会用旧字节覆盖更新的版本。
+    """
+    staging = Path(outcome.staging) if outcome.staging is not None else None
+    deferred: list[str] = []
+    try:
+        if staging is None or not staging.is_dir():
+            return ()
+        root = pending_overlay_root()
+        files_root = root / PENDING_OVERLAY_FILES_NAME
+        manifest_path = root / PENDING_OVERLAY_MANIFEST_NAME
+        manifest = _load_pending_overlay(manifest_path)
+        if manifest:
+            recorded_root = Path(manifest.get("install_root") or ".")
+            if os.path.normcase(os.path.abspath(str(recorded_root))) != os.path.normcase(
+                os.path.abspath(str(target_root))
+            ):
+                # 上一次的待补装项属于另一个安装目录：连同暂存文件一起丢弃，
+                # 不让它们永远占着用户根。
+                shutil.rmtree(root, ignore_errors=True)
+                manifest = {}
+        manifest.setdefault("version", PENDING_OVERLAY_VERSION)
+        manifest["install_root"] = str(target_root)
+        if release:
+            manifest["release"] = dict(release)
+        entries = manifest.setdefault("files", {})
+        for relative in outcome.locked:
+            normalized = _relative_overlay_path(relative)
+            if normalized is None:
+                continue
+            source = staging / Path(normalized)
+            if not source.is_file():
+                continue
+            destination = files_root / Path(normalized)
+            try:
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                os.replace(source, destination)
+            except OSError:
+                try:
+                    shutil.copy2(source, destination)
+                except OSError:
+                    continue
+            try:
+                stat = (Path(target_root) / Path(normalized)).stat()
+                size: int | None = int(stat.st_size)
+                mtime_ns: int | None = int(stat.st_mtime_ns)
+            except OSError:
+                size, mtime_ns = None, None
+            entries[normalized] = {
+                "path": normalized,
+                "size": size,
+                "mtime_ns": mtime_ns,
+            }
+            deferred.append(normalized)
+        if not deferred:
+            return ()
+        _write_pending_overlay(manifest)
+        return tuple(sorted(deferred))
+    finally:
+        if staging is not None:
+            shutil.rmtree(staging, ignore_errors=True)
+
+
+def apply_pending_overlay(install_root: Path | None = None) -> tuple[str, ...]:
+    """启动时补装上次更新里被占用、没能替换的文件；失败静默留给下次启动。
+
+    必须在桌宠加载这些模块之前运行（见 ``lib/core/qt_desktop_pet.py`` 的启动钩子），
+    这样被换掉的模块与它依赖的 DLL 才会同时是最新的一份。
+    """
+    manifest_path = pending_overlay_root() / PENDING_OVERLAY_MANIFEST_NAME
+    if not manifest_path.is_file():
+        return ()
+    manifest = _load_pending_overlay(manifest_path)
+    entries = manifest.get("files") or {}
+    if not entries:
+        _write_pending_overlay({"files": {}})
+        return ()
+    root = (
+        Path(install_root).resolve()
+        if install_root is not None
+        else _installation_root(_PROJECT_ROOT)
+    )
+    if manifest.get("install_root") and os.path.normcase(
+        os.path.abspath(str(manifest["install_root"]))
+    ) != os.path.normcase(str(root)):
+        _write_pending_overlay({"files": {}})
+        return ()
+    files_root = pending_overlay_root() / PENDING_OVERLAY_FILES_NAME
+    applied: list[str] = []
+    remaining: dict[str, dict] = {}
+    for relative, entry in entries.items():
+        source = files_root / Path(relative)
+        target = root / Path(relative)
+        if not source.is_file():
+            continue
+        try:
+            stat = target.stat()
+            current = (int(stat.st_size), int(stat.st_mtime_ns))
+        except OSError:
+            current = None
+        recorded = _pending_overlay_signature(entry)
+        if recorded is not None and current != recorded:
+            # 安装目录里这个文件已经被别的流程换过，补装不再适用。
+            source.unlink(missing_ok=True)
+            continue
+        if current is not None and _same_content(source, target):
+            source.unlink(missing_ok=True)
+            applied.append(relative)
+            continue
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+        except OSError:
+            remaining[relative] = entry
+            continue
+        source.unlink(missing_ok=True)
+        applied.append(relative)
+    _write_pending_overlay(
+        {
+            "install_root": str(root),
+            "release": manifest.get("release") or {},
+            "files": remaining,
+        }
+    )
+    return tuple(sorted(applied))
 
 
 def _write_pending_release(path: Path, release: dict) -> None:

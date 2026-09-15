@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import tempfile
+import threading
 import time
 import unittest
 from datetime import datetime, timezone
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -343,6 +346,47 @@ class UpdateManagerReleaseSelectionTests(unittest.TestCase):
         notice = " ".join(messages)
         self.assertIn("LTS1.0.8", notice)
         self.assertNotIn("Offline-Installer.zip", notice)
+
+
+class StreamingDownloadHashTests(unittest.TestCase):
+    """下载时随流算 SHA-256：更新包只需要核对这一个哈希。"""
+
+    def test_download_returns_the_streamed_digest(self):
+        payload = b"fsv-update-payload" * 90000
+        expected = hashlib.sha256(payload).hexdigest()
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):  # noqa: N802 - BaseHTTPRequestHandler 的接口名
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+            def log_message(self, *_args):  # pragma: no cover - 测试里不需要访问日志
+                return
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                destination = Path(temp_dir) / "FlyingSnowVelvet-LTS2-Resources.zip"
+                progress: list[str] = []
+                manager = UpdateManager(
+                    progress_callback=lambda _c, _t, message: progress.append(message)
+                )
+                digest = manager._download_url(
+                    f"http://127.0.0.1:{server.server_port}/resources.zip", destination
+                )
+
+                self.assertEqual(digest, expected)
+                self.assertEqual(destination.read_bytes(), payload)
+                self.assertTrue(progress)
+                self.assertTrue(all("下载" in message for message in progress))
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
 
 
 if __name__ == "__main__":

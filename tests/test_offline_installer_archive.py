@@ -19,7 +19,11 @@ from unittest import mock
 
 from scripts import build_offline_installer as installer
 from lib.script.app import update_installer
-from lib.script.app.update_installer import install_resource_bundle
+from lib.script.app.update_installer import (
+    apply_pending_overlay,
+    defer_overlay_leftovers,
+    install_resource_bundle,
+)
 
 
 SHARD_PREFIX = ".fsv-shard-"
@@ -347,28 +351,113 @@ class ResourceOverlayLockTests(unittest.TestCase):
                 with self.subTest(name=name):
                     self.assertEqual((install_root / name).read_bytes(), data)
 
-    def test_overlay_reports_files_that_stay_locked(self):
+    def test_overlay_defers_what_stays_locked_and_applies_it_on_the_next_start(self):
+        """一直被占用的文件不再让整次更新失败，登记后由下次启动补装。"""
         files = {"app/a.bin": b"a" * 32, "app/b.bin": b"b" * 32}
         with tempfile.TemporaryDirectory(prefix="fsv-resource-stuck-") as temporary:
             root = Path(temporary)
             archive = self.write_archive(root, files)
             install_root = root / "install"
             install_root.mkdir()
+            pending = root / "pending"
 
             def always_locked(*args, **kwargs):
                 raise PermissionError(32, "file in use")
 
-            with mock.patch.object(update_installer, "RESOURCE_OVERLAY_RETRY_DELAY", 0.0):
-                with mock.patch.object(
+            with (
+                mock.patch.object(update_installer, "RESOURCE_OVERLAY_RETRY_DELAY", 0.0),
+                mock.patch.object(
                     update_installer.shutil, "copy2", side_effect=always_locked
-                ):
-                    with self.assertRaises(ValueError) as caught:
-                        install_resource_bundle(archive, install_root)
+                ),
+                mock.patch.object(
+                    update_installer, "pending_overlay_root", return_value=pending
+                ),
+            ):
+                outcome = install_resource_bundle(archive, install_root)
 
-            message = str(caught.exception)
-            self.assertIn("占用", message)
-            self.assertIn("a.bin", message)
-            self.assertIn("b.bin", message)
+            self.assertEqual(outcome.locked, ("app/a.bin", "app/b.bin"))
+            self.assertIsNotNone(outcome.staging)
+            self.assertEqual(outcome.target_root, install_root.resolve())
+            self.assertFalse((install_root / "app" / "a.bin").exists())
+
+            with mock.patch.object(
+                update_installer, "pending_overlay_root", return_value=pending
+            ):
+                deferred = defer_overlay_leftovers(
+                    outcome, install_root, release={"tag": "PACK"}
+                )
+                self.assertEqual(deferred, ("app/a.bin", "app/b.bin"))
+                self.assertFalse(Path(outcome.staging).exists())
+                self.assertTrue((pending / "manifest.json").is_file())
+
+                applied = apply_pending_overlay(install_root)
+                self.assertEqual(applied, ("app/a.bin", "app/b.bin"))
+                # 补装完成后目录与清单一起清掉，不会留在磁盘上。
+                self.assertFalse(pending.exists())
+
+            for name, data in files.items():
+                with self.subTest(name=name):
+                    self.assertEqual((install_root / name).read_bytes(), data)
+
+    def test_pending_overlay_skips_files_replaced_by_another_flow(self):
+        """登记后又被动过的目标文件不能被旧字节覆盖。"""
+        with tempfile.TemporaryDirectory(prefix="fsv-resource-stale-") as temporary:
+            root = Path(temporary)
+            install_root = root / "install"
+            install_root.mkdir()
+            target_file = install_root / "app" / "a.bin"
+            target_file.parent.mkdir(parents=True)
+            target_file.write_bytes(b"old")
+            pending = root / "pending"
+            staged = pending / update_installer.PENDING_OVERLAY_FILES_NAME / "app" / "a.bin"
+            staged.parent.mkdir(parents=True)
+            staged.write_bytes(b"new")
+            outcome = update_installer.OverlayOutcome(
+                locked=("app/a.bin",), staging=root / "staging", target_root=install_root
+            )
+            (root / "staging" / "app").mkdir(parents=True)
+            (root / "staging" / "app" / "a.bin").write_bytes(b"new")
+
+            with mock.patch.object(
+                update_installer, "pending_overlay_root", return_value=pending
+            ):
+                defer_overlay_leftovers(outcome, install_root)
+                # 完整安装器后来换过这个文件：大小与 mtime 都变了。
+                target_file.write_bytes(b"replaced by the offline installer")
+                applied = apply_pending_overlay(install_root)
+                # 不适用的补装项连同待补装目录一起丢掉，不留下残留。
+                self.assertFalse(pending.exists())
+
+            self.assertEqual(applied, ())
+            self.assertEqual(target_file.read_bytes(), b"replaced by the offline installer")
+
+    def test_overlay_skips_files_that_are_already_identical(self):
+        """内容一致的文件不重写：省掉一次全量写入，也不去撞别人的文件句柄。"""
+        files = {"app/a.bin": b"a" * 4096, "app/b.bin": b"changed"}
+        with tempfile.TemporaryDirectory(prefix="fsv-resource-same-") as temporary:
+            root = Path(temporary)
+            archive = self.write_archive(root, files)
+            install_root = root / "install"
+            (install_root / "app").mkdir(parents=True)
+            (install_root / "app" / "a.bin").write_bytes(files["app/a.bin"])
+            (install_root / "app" / "b.bin").write_bytes(b"stale")
+
+            real_copy2 = shutil.copy2
+            copied: list[str] = []
+
+            def tracking_copy(source, destination, *args, **kwargs):
+                copied.append(Path(destination).name)
+                return real_copy2(source, destination, *args, **kwargs)
+
+            with mock.patch.object(
+                update_installer.shutil, "copy2", side_effect=tracking_copy
+            ):
+                outcome = install_resource_bundle(archive, install_root)
+
+            self.assertEqual(outcome.locked, ())
+            self.assertEqual(copied, ["b.bin"])
+            self.assertEqual((install_root / "app" / "a.bin").read_bytes(), files["app/a.bin"])
+            self.assertEqual((install_root / "app" / "b.bin").read_bytes(), b"changed")
 
 
 if __name__ == "__main__":

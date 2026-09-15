@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import QByteArray, Qt
 from PyQt5.QtGui import QFont, QFontDatabase, QFontMetrics
 from PyQt5.QtWidgets import QApplication, QWidget
 
@@ -13,10 +13,21 @@ _registered_families: tuple[str, str] | None = None
 
 
 def _register_font_family(font_path: str, fallback_family: str) -> str:
+    """按内容注册字体，不把安装目录里的 ttf 一直握在手里。
+
+    Qt 在 Windows 上会把 ``addApplicationFont(路径)`` 打开的字体文件映射到进程
+    退出为止：只要用路径注册过，``resc/FRONTS/*.ttf`` 就再也不能被覆盖，在线资源
+    包更新会因此报 13 号错误。改从这里读进内存后用 ``addApplicationFontFromData``
+    注册，安装目录里的字体文件永远不产生句柄。
+    """
     path = Path(font_path)
     if not path.exists() or QApplication.instance() is None:
         return fallback_family
-    font_id = QFontDatabase.addApplicationFont(str(path))
+    try:
+        payload = path.read_bytes()
+    except OSError:
+        return fallback_family
+    font_id = QFontDatabase.addApplicationFontFromData(QByteArray(payload))
     if font_id == -1:
         return fallback_family
     families = QFontDatabase.applicationFontFamilies(font_id)

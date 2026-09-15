@@ -12,7 +12,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+from lib.script.app import update_installer
 from lib.script.app.update_installer import (
+    OverlayOutcome,
+    clear_update_installer_cache,
     extract_update_installer_bundle,
     launch_update_installer,
     validate_update_installer,
@@ -25,6 +28,7 @@ from lib.script.app.windows_command import build_bat_command
 from lib.script.update_manager import (
     InstalledState,
     ReleaseInfo,
+    UpdateError,
     UpdateManager,
     UpdateResult,
 )
@@ -88,13 +92,56 @@ class UpdateInstallerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             installer = Path(temp_dir) / "FlyingSnowVelvet-LTS2-Offline-Installer.exe"
             _write_installer(installer, {".fsv-install-root": "marker\n", "app/readme.txt": "ok"})
-            info = validate_update_installer(installer)
+            info = validate_update_installer(installer, verify_payload=True)
             self.assertEqual(info.archive_size > 0, True)
             corrupted = bytearray(installer.read_bytes())
             corrupted[8] ^= 0x01
             installer.write_bytes(corrupted)
+            clear_update_installer_cache()
             with self.assertRaisesRegex(ValueError, "SHA-256"):
-                validate_update_installer(installer)
+                validate_update_installer(installer, verify_payload=True)
+
+    def test_default_validation_never_reads_the_payload(self):
+        """默认校验只认发布清单的哈希：不重算内置归档，也不逐条 CRC。"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            installer = Path(temp_dir) / "FlyingSnowVelvet-LTS2-Offline-Installer.exe"
+            _write_installer(
+                installer, {".fsv-install-root": "marker\n", "app/readme.txt": "ok"}
+            )
+            with (
+                patch.object(
+                    update_installer,
+                    "_hash_file_range",
+                    side_effect=AssertionError("不应重新哈希内置归档"),
+                ),
+                patch.object(
+                    update_installer.zipfile.ZipFile,
+                    "testzip",
+                    side_effect=AssertionError("不应逐条校验 payload"),
+                ),
+            ):
+                info = validate_update_installer(installer)
+            self.assertEqual(info.archive_size > 0, True)
+
+    def test_validation_result_is_cached_per_file_state(self):
+        """同一次更新里安装器会被校验两遍，第二遍必须直接命中缓存。"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            installer = Path(temp_dir) / "FlyingSnowVelvet-LTS2-Offline-Installer.exe"
+            _write_installer(installer, {".fsv-install-root": "marker\n"})
+            real_reader = update_installer._read_offline_installer_trailer
+            calls: list[Path] = []
+
+            def counting_reader(path):
+                calls.append(Path(path))
+                return real_reader(path)
+
+            with patch.object(
+                update_installer, "_read_offline_installer_trailer", counting_reader
+            ):
+                first = validate_update_installer(installer)
+                second = validate_update_installer(installer)
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(first, second)
 
     def test_truncated_installer_is_rejected(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -117,7 +164,8 @@ class UpdateInstallerTests(unittest.TestCase):
                 with self.subTest(suffix=suffix), self.assertRaises(ValueError):
                     validate_update_installer(installer)
 
-    def test_corrupt_zip_is_rejected_after_hash_matches(self):
+    def test_broken_zip_directory_is_rejected_without_reading_the_payload(self):
+        """内置归档的 ZIP 目录必须先能读出来，路径也必须安全。"""
         with tempfile.TemporaryDirectory() as temp_dir:
             installer = Path(temp_dir) / "corrupt.exe"
             _write_installer(installer, {".fsv-install-root": "marker\n"})
@@ -126,17 +174,20 @@ class UpdateInstallerTests(unittest.TestCase):
             _, archive_size, _ = struct.unpack(
                 OFFLINE_INSTALLER_TRAILER_FORMAT, data[trailer_offset:]
             )
-            archive_offset = trailer_offset - archive_size
-            data[archive_offset] ^= 0xFF
-            digest = hashlib.sha256(data[archive_offset:trailer_offset]).digest()
-            data[trailer_offset:] = struct.pack(
-                OFFLINE_INSTALLER_TRAILER_FORMAT,
-                OFFLINE_INSTALLER_MAGIC,
-                archive_size,
-                digest,
-            )
+            # 打坏中央目录尾记录：不再逐条解压也要能立刻拒绝。
+            data[trailer_offset - 22] ^= 0xFF
             installer.write_bytes(data)
-            with self.assertRaisesRegex(ValueError, "ZIP|损坏"):
+            clear_update_installer_cache()
+            with self.assertRaisesRegex(ValueError, "ZIP"):
+                validate_update_installer(installer)
+
+    def test_unsafe_member_path_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            installer = Path(temp_dir) / "unsafe.exe"
+            _write_installer(
+                installer, {".fsv-install-root": "marker\n", "../escape.txt": "nope"}
+            )
+            with self.assertRaisesRegex(ValueError, "不安全路径"):
                 validate_update_installer(installer)
 
     def test_outer_bundle_extracts_only_one_native_installer(self):
@@ -201,12 +252,139 @@ class UpdateInstallerTests(unittest.TestCase):
                 patch("lib.script.update_manager._STAGING_ROOT", root / "stage"),
                 patch.object(manager, "_download_release", side_effect=download),
                 patch("lib.script.app.update_installer.launch_update_installer") as launch,
+                patch(
+                    "lib.script.app.update_locks.release_install_directory_locks",
+                    return_value=(),
+                ),
             ):
                 result = manager.install_release(release)
 
             self.assertEqual(result.reason, "install_scheduled")
             self.assertFalse(state_path.exists())
             launch.assert_called_once()
+
+    def test_install_release_accepts_the_streamed_digest_and_rejects_a_mismatch(self):
+        """清单哈希与下载流算出的 SHA-256 一致才放行，且不再重读下载文件。"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            payload = b"resource payload" * 32
+            digest = hashlib.sha256(payload).hexdigest()
+            published = datetime(2026, 9, 15, tzinfo=timezone.utc)
+            release = ReleaseInfo(
+                "PACK",
+                published,
+                "FlyingSnowVelvet-PACK-Resources.zip",
+                "download",
+                "HF",
+                "rev",
+                0.1,
+                (),
+                digest,
+                "resources",
+            )
+            manager = UpdateManager(state_path=root / "state.json")
+
+            def download(_release, destination, expected=digest):
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_bytes(payload)
+                return expected
+
+            with (
+                patch("lib.script.update_manager._STAGING_ROOT", root / "stage"),
+                patch.object(manager, "_download_release", side_effect=download),
+                patch(
+                    "lib.script.app.update_installer.install_resource_bundle",
+                    return_value=OverlayOutcome(target_root=root),
+                ),
+                patch(
+                    "lib.script.app.update_locks.release_install_directory_locks",
+                    return_value=(),
+                ) as locks,
+                patch.object(
+                    update_installer,
+                    "_hash_file_range",
+                    side_effect=AssertionError("不应重读已下载的更新包"),
+                ),
+            ):
+                result = manager.install_release(release)
+
+            self.assertEqual(result.reason, "resources_installed")
+            self.assertEqual(result.notes, ())
+            locks.assert_called_once()
+
+            def mismatched(_release, destination):
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_bytes(b"tampered")
+                return hashlib.sha256(b"tampered").hexdigest()
+
+            with (
+                patch("lib.script.update_manager._STAGING_ROOT", root / "stage2"),
+                patch.object(manager, "_download_release", side_effect=mismatched),
+                patch(
+                    "lib.script.app.update_installer.install_resource_bundle",
+                    return_value=OverlayOutcome(target_root=root),
+                ),
+                patch(
+                    "lib.script.app.update_locks.release_install_directory_locks",
+                    return_value=(),
+                ),
+            ):
+                with self.assertRaisesRegex(UpdateError, "SHA-256"):
+                    manager.install_release(release)
+
+    def test_manager_defers_locked_resource_files_and_reports_them(self):
+        """被占用而没能替换的文件不让整次更新失败，而是登记为下次启动补装。"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            install_root = root / "install"
+            install_root.mkdir()
+            payload = b"resource payload"
+            digest = hashlib.sha256(payload).hexdigest()
+            published = datetime(2026, 9, 15, tzinfo=timezone.utc)
+            release = ReleaseInfo(
+                "PACK",
+                published,
+                "FlyingSnowVelvet-PACK-Resources.zip",
+                "download",
+                "HF",
+                "rev",
+                0.1,
+                (),
+                digest,
+                "resources",
+            )
+            manager = UpdateManager(state_path=root / "state.json")
+            staging = root / "stage" / "uuid" / ".fsv-resource-1"
+
+            def download(_release, destination):
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_bytes(payload)
+                return digest
+
+            with (
+                patch("lib.script.update_manager._STAGING_ROOT", root / "stage"),
+                patch.object(manager, "_download_release", side_effect=download),
+                patch(
+                    "lib.script.app.update_installer.install_resource_bundle",
+                    return_value=OverlayOutcome(
+                        locked=("app/onnx.dll",), staging=staging, target_root=install_root
+                    ),
+                ),
+                patch(
+                    "lib.script.app.update_installer.defer_overlay_leftovers",
+                    return_value=("app/onnx.dll",),
+                ) as defer,
+                patch(
+                    "lib.script.app.update_locks.release_install_directory_locks",
+                    return_value=(),
+                ),
+            ):
+                result = manager.install_release(release)
+
+            self.assertEqual(result.reason, "resources_installed")
+            self.assertEqual(len(result.notes), 1)
+            self.assertIn("app/onnx.dll", result.notes[0])
+            self.assertEqual(defer.call_args.args[1], install_root)
 
     def test_dialog_offers_native_installer_after_download(self):
         from lib.script.ui.update_dialog import DesktopPetUpdateDialog
