@@ -1402,8 +1402,9 @@ static BOOL read_embedded_space_info(void) {
     if (executable == INVALID_HANDLE_VALUE || !read_payload_trailer(executable, &trailer, &offset)) {
         goto cleanup;
     }
-    /* Online builds intentionally embed a tiny marker archive, so their
-       trailer size differs from the full offline payload metadata. */
+    /* Offline builds embed the full payload archive and bake its size into
+       FSV_PAYLOAD_ARCHIVE_BYTES; online builds embed only a tiny bootstrap
+       marker and bake the sentinel 0 there, so the two can never collide. */
     if (trailer.archive_size == FSV_PAYLOAD_ARCHIVE_BYTES) {
         g_context.archive_size = FSV_PAYLOAD_ARCHIVE_BYTES;
         g_context.total_files = FSV_PAYLOAD_FILE_COUNT;

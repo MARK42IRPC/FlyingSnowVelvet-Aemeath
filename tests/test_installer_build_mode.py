@@ -40,11 +40,49 @@ class InstallerBuildModeTests(unittest.TestCase):
                 with self.subTest(online=online):
                     info = root / f"payload_info_{int(online)}.h"
                     installer._write_payload_info_header(
-                        payload, archive, info, online=online
+                        payload, None if online else archive, info, online=online
                     )
                     text = info.read_text(encoding="ascii")
                     self.assertIn(expected, text)
                     self.assertIn("FSV_PAYLOAD_ARCHIVE_BYTES", text)
+
+    def test_online_header_bakes_the_no_archive_sentinel(self) -> None:
+        # 在线版 EXE 里只有几百字节的 bootstrap marker，分片归档压完就丢；常量写成哨兵 0，
+        # 原生安装器只拿它把「归档就在 EXE 里」和「归档要另外下载」分开。
+        with tempfile.TemporaryDirectory(prefix="fsv-payload-info-") as temporary:
+            root = Path(temporary)
+            payload = root / "payload"
+            payload.mkdir()
+            (payload / "app.txt").write_bytes(b"payload")
+            archive = root / "payload.zip"
+            archive.write_bytes(b"archive" * 8)
+
+            online_header = root / "online.h"
+            installer._write_payload_info_header(
+                payload, None, online_header, online=True
+            )
+            self.assertIn(
+                "#define FSV_PAYLOAD_ARCHIVE_BYTES ((ULONGLONG)0ULL)",
+                online_header.read_text(encoding="ascii"),
+            )
+
+            offline_header = root / "offline.h"
+            installer._write_payload_info_header(
+                payload, archive, offline_header, online=False
+            )
+            self.assertIn(
+                f"#define FSV_PAYLOAD_ARCHIVE_BYTES ((ULONGLONG){archive.stat().st_size}ULL)",
+                offline_header.read_text(encoding="ascii"),
+            )
+
+            with self.assertRaises(SystemExit):
+                installer._write_payload_info_header(
+                    payload, archive, root / "wrong-online.h", online=True
+                )
+            with self.assertRaises(SystemExit):
+                installer._write_payload_info_header(
+                    payload, None, root / "wrong-offline.h", online=False
+                )
 
     def test_visible_copy_follows_the_compiled_build_mode(self) -> None:
         source = self.native_source()

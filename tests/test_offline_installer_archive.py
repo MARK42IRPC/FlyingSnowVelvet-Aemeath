@@ -330,6 +330,49 @@ class PackagingVerificationTests(unittest.TestCase):
                         )
             self.assertEqual(installer.ARCHIVE_ENTRY_DATE_TIME, (1980, 1, 1, 0, 0, 0))
 
+    def test_online_pack_skips_the_sharded_archive(self):
+        # 在线版不带内置归档：整份 payload 的 LZMA2 分片压完就丢，白花发行构建里最长的一段。
+        with tempfile.TemporaryDirectory(prefix="fsv-online-skip-") as temporary:
+            root = Path(temporary)
+            payload = root / "payload"
+            (payload / "app").mkdir(parents=True)
+            (payload / "app" / "data.bin").write_bytes(b"payload")
+            base = root / "base.exe"
+            base.write_bytes(b"base")
+            for online in (True, False):
+                with self.subTest(online=online), mock.patch.object(
+                    installer, "compile_payload_binaries"
+                ), mock.patch.object(
+                    installer, "ensure_payload_marker"
+                ), mock.patch.object(
+                    installer, "create_archive"
+                ) as create_archive, mock.patch.object(
+                    installer, "compile_installer", return_value=base
+                ) as compile_installer, mock.patch.object(
+                    installer, "append_payload"
+                ), mock.patch.object(
+                    installer, "create_resource_archive"
+                ) as create_resource:
+                    installer._package_once(
+                        payload,
+                        root / ("online" if online else "offline") / "out.exe",
+                        version="LTS-test",
+                        installer_source=root,
+                        icon_source=root,
+                        vsdevcmd=root,
+                        compile_root=root / "compile",
+                        online=online,
+                        resource_sharded=False,
+                    )
+                if online:
+                    create_archive.assert_not_called()
+                    create_resource.assert_called_once()
+                    self.assertIsNone(compile_installer.call_args.args[1])
+                else:
+                    create_archive.assert_called_once()
+                    create_resource.assert_not_called()
+                    self.assertIsNotNone(compile_installer.call_args.args[1])
+
     def test_reproducible_check_keeps_one_copy_and_rejects_drift(self):
         with tempfile.TemporaryDirectory(prefix="fsv-repro-") as temporary:
             root = Path(temporary)

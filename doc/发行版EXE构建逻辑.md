@@ -75,6 +75,12 @@ Qt/Node 子树。纯 Python `jieba`、`jieba_fast` 的关键词抽取与 SWIG �
 但更早的客户端只会把分片归档里的占位条目解成空文件。等所有在用客户端都升级到读得懂分片的
 版本后，构建时加 `--resource-sharded` 即可让资源包改用同一套 LZMA2 分片布局。
 
+在线版 EXE 不生成这份分片归档：它内嵌的只是一个几百字节的 bootstrap marker
+（`.fsv-online-resource-required` + `.fsv-install-root`），完整资源包由安装器按内置镜像 URL
+另下，所以打包时不再把整份 payload 压一遍。烘焙给原生安装器的 `FSV_PAYLOAD_ARCHIVE_BYTES`
+在在线版写成哨兵 `0`，`main.c` 只拿它把「归档就在 EXE 里」与「归档要另外下载」分开
+（离线版写入真实归档大小）；文件数与未压缩字节数两种模式都会写，它们决定空间预估与解压进度。
+
 原生安装器执行顺序：
 
 1. 显示默认安装目录；自定义目录调用系统文件夹选择器。非空目录自动创建空的

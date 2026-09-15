@@ -871,16 +871,29 @@ def compile_payload_binaries(
 
 def _write_payload_info_header(
     payload: Path,
-    archive: Path,
+    archive: Path | None,
     output: Path,
     *,
     online: bool,
 ) -> None:
+    """烘焙安装器要用的 payload 常量。
+
+    ``archive`` 只有在离线版才是那个内置的完整归档：在线版 EXE 里只有几百字节的 bootstrap
+    marker，完整资源包是安装时另外下的，所以 ``FSV_PAYLOAD_ARCHIVE_BYTES`` 写成哨兵 0。
+    原生安装器只拿它把「归档就在 EXE 里」与「归档要另外下载」分开（``set_payload`` 与下载
+    进度条的初值），真值由 ``FSV_ONLINE_BUILD`` 决定。文件数与未压缩字节数两种模式都要：
+    它们决定磁盘空间预估与解压进度。
+    """
+    if online and archive is not None:
+        raise SystemExit("在线版不带内置归档，不该传 archive")
+    if not online and archive is None:
+        raise SystemExit("离线版必须提供内置归档")
     entries = _archive_entries(payload)
     total_bytes = sum(source.stat().st_size for source, _ in entries)
+    archive_bytes = 0 if archive is None else archive.stat().st_size
     output.write_text(
         "#pragma once\n\n"
-        f"#define FSV_PAYLOAD_ARCHIVE_BYTES ((ULONGLONG){archive.stat().st_size}ULL)\n"
+        f"#define FSV_PAYLOAD_ARCHIVE_BYTES ((ULONGLONG){archive_bytes}ULL)\n"
         f"#define FSV_PAYLOAD_FILE_COUNT ((ULONGLONG){len(entries)}ULL)\n"
         f"#define FSV_PAYLOAD_UNCOMPRESSED_BYTES ((ULONGLONG){total_bytes}ULL)\n"
         # The build mode is baked in rather than derived from the payload size:
@@ -918,7 +931,7 @@ def _compile_zlib(zlib_root: Path, vsdevcmd: Path, compile_root: Path) -> Path:
 
 def compile_installer(
     payload: Path,
-    archive: Path,
+    archive: Path | None,
     version: str,
     installer_source: Path,
     icon_source: Path,
@@ -1043,7 +1056,6 @@ def _package_once(
     产物的哈希比对来证明这一点（见 ``_verify_reproducible``）。
     """
     workspace = payload.parent
-    archive = workspace / "build" / "payload.zip"
     compile_payload_binaries(
         payload,
         installer_source,
@@ -1052,7 +1064,12 @@ def _package_once(
         compile_root / "payload-binaries",
     )
     ensure_payload_marker(workspace, payload)
-    create_archive(payload, archive)
+    # 在线版不带内置归档，只塞一个几百字节的 bootstrap marker，所以完全不建分片归档：
+    # 那一步要把整份 payload 压一遍（发行构建里最长的一段），在线版压完就丢。
+    archive = None
+    if not online:
+        archive = workspace / "build" / "payload.zip"
+        create_archive(payload, archive)
     base_executable = compile_installer(
         payload,
         archive,
