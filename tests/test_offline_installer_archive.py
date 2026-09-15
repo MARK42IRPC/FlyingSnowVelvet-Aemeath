@@ -8,8 +8,10 @@ agree with, and the parts of the contract the in-app updater depends on.
 from __future__ import annotations
 
 import lzma
+import os
 import shutil
 import struct
+import subprocess
 import tempfile
 import types
 import unittest
@@ -303,6 +305,24 @@ class ResourceBundleOverlayTests(unittest.TestCase):
                 install_resource_bundle(archive, install_root)
 
 
+def _directory_link(logical: Path, physical: Path) -> bool:
+    """建一个指向 physical 的目录链接 / junction；建不出来时返回 False。"""
+    try:
+        logical.symlink_to(physical, target_is_directory=True)
+        return True
+    except OSError:
+        pass
+    if os.name != "nt":
+        return False
+    junction = subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(logical), str(physical)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    return junction.returncode == 0
+
+
 class ResourceOverlayLockTests(unittest.TestCase):
     """被扫盘/杀毒占用的文件跳过并重试，其它文件照常替换。"""
 
@@ -398,6 +418,39 @@ class ResourceOverlayLockTests(unittest.TestCase):
             for name, data in files.items():
                 with self.subTest(name=name):
                     self.assertEqual((install_root / name).read_bytes(), data)
+
+    def test_pending_overlay_recognizes_a_differently_spelled_install_root(self):
+        """登记与补装之间安装根换了种写法，也要认得出来。
+
+        登记时写的是调用方给的安装根，补装时比的是 ``resolve()`` 之后的安装根：CI 上两者
+        一个带短名、一个是真实路径，按字面比较会把待补装项当成别的安装目录丢掉，被占用的
+        文件于是永远补不上。
+        """
+        with tempfile.TemporaryDirectory(prefix="fsv-resource-alias-") as temporary:
+            base = Path(temporary)
+            real = base / "install"
+            (real / "app").mkdir(parents=True)
+            (real / "app" / "a.bin").write_bytes(b"old")
+            link = base / "link"
+            if not _directory_link(link, real):
+                self.skipTest("无法创建目录链接，跳过写法归一验证")
+            pending = base / "pending"
+            staging = base / "staging"
+            (staging / "app").mkdir(parents=True)
+            (staging / "app" / "a.bin").write_bytes(b"new")
+            outcome = update_installer.OverlayOutcome(
+                locked=("app/a.bin",), staging=staging, target_root=real
+            )
+
+            with mock.patch.object(
+                update_installer, "pending_overlay_root", return_value=pending
+            ):
+                deferred = defer_overlay_leftovers(outcome, link, release={"tag": "PACK"})
+                self.assertEqual(deferred, ("app/a.bin",))
+                applied = apply_pending_overlay(link)
+
+            self.assertEqual(applied, ("app/a.bin",))
+            self.assertEqual((real / "app" / "a.bin").read_bytes(), b"new")
 
     def test_pending_overlay_skips_files_replaced_by_another_flow(self):
         """登记后又被动过的目标文件不能被旧字节覆盖。"""

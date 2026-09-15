@@ -20,6 +20,7 @@ from config.user_storage_paths import get_user_state_dir
 from lib.script.app.restart import (
     _detached_kwargs,
 )
+from lib.script.app.update_paths import canonical_path
 
 # Keep this protocol in sync with scripts/build_offline_installer.py and the
 # native installer.  The trailer lets the updater validate a downloaded EXE
@@ -674,9 +675,7 @@ def defer_overlay_leftovers(
         manifest = _load_pending_overlay(manifest_path)
         if manifest:
             recorded_root = Path(manifest.get("install_root") or ".")
-            if os.path.normcase(os.path.abspath(str(recorded_root))) != os.path.normcase(
-                os.path.abspath(str(target_root))
-            ):
+            if canonical_path(recorded_root) != canonical_path(target_root):
                 # 上一次的待补装项属于另一个安装目录：连同暂存文件一起丢弃，
                 # 不让它们永远占着用户根。
                 shutil.rmtree(root, ignore_errors=True)
@@ -742,9 +741,9 @@ def apply_pending_overlay(install_root: Path | None = None) -> tuple[str, ...]:
         if install_root is not None
         else _installation_root(_PROJECT_ROOT)
     )
-    if manifest.get("install_root") and os.path.normcase(
-        os.path.abspath(str(manifest["install_root"]))
-    ) != os.path.normcase(str(root)):
+    if manifest.get("install_root") and canonical_path(
+        manifest["install_root"]
+    ) != canonical_path(root):
         _write_pending_overlay({"files": {}})
         return ()
     files_root = pending_overlay_root() / PENDING_OVERLAY_FILES_NAME

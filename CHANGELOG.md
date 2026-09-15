@@ -276,6 +276,11 @@
   让整次更新失败，而是登记到用户根的 `state/update-pending-overlay/`，由下次启动时在 PyQt5 与
   onnxruntime 导入之前补装，目标文件之后被完整安装器换过时补装项自动作废。
 ### Fixed
+- 修复安装路径带 8.3 短名 / 目录链接时更新会悄悄失效：占用释放先把安装根 `resolve()`，而进程
+  镜像路径是原样字符串，按字面比较一个占用进程都挑不出来（覆盖安装又报 13 号错误），补装清单
+  同理会把待补装项判成「属于另一个安装目录」整份丢掉、被占用的文件永远补不上。两处改走
+  `lib/script/app/update_paths.py` 的写法归一：`realpath` 摊平短名与 junction，再按 Windows
+  不区分大小写比较。
 - 修复 CUDA 构建在“嵌入 PTX”一步要几十分钟：`cmake/embed_ptx.cmake` 原来按两个十六进制
   字符循环一次（半兆内核对应上百万次），每轮都把整份十六进制串展开进一次
   `string(SUBSTRING ...)`，再把 8 KB 缓冲逐字符 `string(APPEND)`，两次拷贝都是平方级。

@@ -8,6 +8,9 @@ cofork 原生模块（覆盖时报 13 号错误）。这里在覆盖安装或交
 
 只结束镜像确实位于安装目录内的进程，且永远跳过当前进程及其全部祖先进程——安装后的启动壳
 ``启动飞行雪绒.exe`` 是当前进程的父进程，用 ``taskkill /T`` 结束它会把桌宠自己一起带走。
+
+路径比较统一走 ``update_paths`` 的写法归一：镜像路径与安装根可能一个带 8.3 短名 / junction、
+另一个已经 ``resolve()``，按字面比会一个占用进程都挑不出来。
 """
 
 from __future__ import annotations
@@ -23,6 +26,7 @@ from typing import Callable, Iterable
 
 from lib.core.logger import get_logger
 from lib.core.process_utils import hidden_process_kwargs
+from lib.script.app.update_paths import is_inside
 
 logger = get_logger(__name__)
 
@@ -142,14 +146,6 @@ def _ancestor_pids(processes: Iterable[tuple[int, int, str]]) -> set[int]:
         current = parent
 
 
-def _is_inside(path: str, root: str) -> bool:
-    if not path:
-        return False
-    candidate = os.path.normcase(os.path.abspath(path))
-    prefix = os.path.normcase(os.path.abspath(root)).rstrip(os.sep) + os.sep
-    return candidate.startswith(prefix)
-
-
 def _workbench_helper_process_id() -> int | None:
     try:
         from lib.script.app.workbench_helper import workbench_helper_process_id
@@ -167,7 +163,7 @@ def _target_processes(
     for pid, _, name in processes:
         if pid in protected:
             continue
-        if not _is_inside(_process_image_path(pid), str(root)):
+        if not is_inside(_process_image_path(pid), root):
             continue
         targets.append((pid, name))
     return targets

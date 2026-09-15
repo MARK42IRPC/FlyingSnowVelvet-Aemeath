@@ -25,6 +25,24 @@ def _needed_interpreter_files(prefix: Path) -> list[str]:
     return [name for name in names if (prefix / name).is_file()]
 
 
+def _directory_link(logical: Path, physical: Path) -> bool:
+    """建一个指向 physical 的目录链接 / junction；建不出来时返回 False。"""
+    try:
+        logical.symlink_to(physical, target_is_directory=True)
+        return True
+    except OSError:
+        pass
+    if os.name != "nt":
+        return False
+    junction = subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(logical), str(physical)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    return junction.returncode == 0
+
+
 class UpdateLockTargetTests(unittest.TestCase):
     """目标筛选：只动镜像在安装目录里的进程，当前进程与祖先一律跳过。"""
 
@@ -42,6 +60,14 @@ class UpdateLockTargetTests(unittest.TestCase):
             targets = update_locks._target_processes(processes, root, {os.getpid()})
 
         self.assertEqual(targets, [(10, "node.exe")])
+
+    def test_a_process_without_a_readable_image_path_is_never_a_target(self):
+        """取不到镜像路径（权限不足 / 进程已退出）时一律不碰。"""
+        root = Path(tempfile.gettempdir()) / "fsv-root"
+        with mock.patch.object(update_locks, "_process_image_path", return_value=None):
+            targets = update_locks._target_processes([(10, 1, "node.exe")], root, set())
+
+        self.assertEqual(targets, [])
 
     def test_current_process_and_its_ancestors_are_never_targets(self):
         """安装壳 -> 桌宠进程 -> 侧车 的链条里只有侧车可以被结束。"""
@@ -68,6 +94,41 @@ class UpdateLockTargetTests(unittest.TestCase):
         processes = [(1, 2, "a.exe"), (2, 1, "b.exe")]
         with mock.patch.object(update_locks.os, "getpid", return_value=1):
             self.assertEqual(update_locks._ancestor_pids(processes), {2})
+
+    def test_targets_are_found_when_the_install_root_is_spelled_differently(self):
+        """安装根换成短名 / junction 写法后，仍要认出安装目录里的进程。
+
+        释放流程先 ``resolve()`` 安装根，而 ``QueryFullProcessImageNameW`` 原样返回镜像
+        路径：CI 上两者一个带 8.3 短名（或中间夹着链接），按字面比较会一个占用进程都挑不
+        出来，覆盖安装于是又回到 13 号错误。
+        """
+        with tempfile.TemporaryDirectory(prefix="fsv-lock-alias-") as temporary:
+            base = Path(temporary)
+            real = base / "install"
+            (real / "app" / "resc").mkdir(parents=True)
+            link = base / "link"
+            if not _directory_link(link, real):
+                self.skipTest("无法创建目录链接，跳过写法归一验证")
+            processes = [(10, 0, "node.exe")]
+            images = {10: str(link / "app" / "resc" / "node.exe")}
+            with (
+                mock.patch.object(
+                    update_locks, "_snapshot_processes", return_value=processes
+                ),
+                mock.patch.object(
+                    update_locks, "_process_image_path", side_effect=images.get
+                ),
+                mock.patch.object(update_locks, "_terminate_process"),
+                mock.patch.object(
+                    update_locks, "_workbench_helper_process_id", return_value=None
+                ),
+                mock.patch.object(update_locks.time, "sleep"),
+            ):
+                report = update_locks.release_install_directory_locks(
+                    link, info=lambda _message: None
+                )
+
+        self.assertEqual(report.processes, ("node.exe(10)",))
 
 
 class WorkbenchHelperRestoreTests(unittest.TestCase):
@@ -160,6 +221,12 @@ class UpdateLockKillTests(unittest.TestCase):
             finally:
                 if child.poll() is None:
                     child.kill()
+                try:
+                    # 等它真的退出再让临时目录被删：句柄没关干净时 rmtree 会报
+                    # PermissionError，把真正的断言结果盖掉。
+                    child.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    pass
 
 
 if __name__ == "__main__":
