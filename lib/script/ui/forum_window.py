@@ -8,7 +8,9 @@
 在 1~2 倍之间自适应，短句放大、长文回到基准字号。正文支持 `**粗体**`、`*斜体*`、
 `__下划线__`、`~~删除线~~` 四种行内标记（解析与输入辅助都在 `forum_markup`），发帖框左侧
 四个复选小按钮会在光标处自动加上标记，接着打的字就落在标记里。
-卡片底纹由 `forum_texture` 按卡片信息内容哈希生成，这里只负责把它铺到卡片上。
+卡片底纹由 `forum_texture` 按卡片信息内容哈希生成，这里只负责把它铺到卡片上；正文里写了
+`[雪豹]` 这类效果令牌时，令牌被 `forum_markup` 洗掉，卡片底部另贴一张会自己走的 gif
+（`forum_sticker`，帧由全局 `GIF_FRAME` 事件推进）。
 窗口优先级跟随工作台窗口：普通窗口 + 无边框，既不置顶也不进 `LayerManager`——
 注册进去的窗口会被 `stack_window()` 放进 `HWND_TOPMOST` 链，那正是「压住别的窗口」
 的来源。
@@ -67,6 +69,7 @@ from lib.script.ui.forum_texture import (
     card_texture,
     paint_card_texture,
 )
+from lib.script.ui.forum_sticker import ForumSticker, sticker_paths
 from lib.script.ui.forum_text import MarkupText
 from lib.script.ui.workbench_components import create_window_button
 
@@ -105,6 +108,8 @@ class ForumCard(QFrame):
         super().__init__(parent)
         self.message = message
         self.texture: CardTexture = card_texture(message)
+        #: 正文效果令牌对应的贴图控件，贴在卡片底部（`forum_sticker`）。
+        self._stickers: list[ForumSticker] = []
         self.setObjectName("ForumCard")
         self.setProperty("accent", message.accent)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
@@ -142,6 +147,12 @@ class ForumCard(QFrame):
         stamp.setObjectName("ForumCardMeta")
         stamp.setFont(get_ui_font(size=scale_px(11, min_abs=9)))
         layout.addWidget(stamp, 0, Qt.AlignRight)
+
+        # 效果令牌（`[雪豹]`）在正文里已经洗掉，贴图补在卡片最底部、居中，作为这条留言的落款。
+        for path in sticker_paths(message.content):
+            sticker = ForumSticker(path, self)
+            self._stickers.append(sticker)
+            layout.addWidget(sticker, 0, Qt.AlignHCenter)
 
     def refresh_theme(self) -> None:
         """换主题时重刷正文颜色：富文本颜色写在字符格式里，刷新样式表碰不到。"""

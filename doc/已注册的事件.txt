@@ -97,6 +97,7 @@
 [GIF_FRAME]
 - lib/core/pet_window.py -> self._handle_gif_frame_event
 - lib/script/ui/world_objects/snow_leopard.py -> self._on_gif_frame [has unsubscribe]
+- lib/script/ui/forum_sticker.py -> self._on_gif_frame [has unsubscribe]
 
 [GIF_LOOP_COMPLETED]
 - lib/script/mainpet/state.py -> self._on_gif_loop_completed

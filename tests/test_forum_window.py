@@ -13,9 +13,11 @@ os.environ.setdefault(
 )
 os.environ.setdefault("QT_PLUGIN_PATH", os.path.join(_QT_ROOT, "Qt5", "plugins"))
 
-from PyQt5.QtCore import QPoint, Qt
+from PyQt5.QtCore import QEvent, QPoint, Qt
 from PyQt5.QtGui import QColor, QFont, QIcon, QImage, QPainter
 from PyQt5.QtWidgets import QApplication, QLabel, QMenu, QTextEdit, QWidget
+
+from PIL import Image
 
 from config.scale import scale_px
 from lib.core.forum import (
@@ -25,9 +27,14 @@ from lib.core.forum import (
     ForumMessage,
     ForumPage,
 )
+from lib.core.event.center import Event, EventType, get_event_center
+from lib.core.graphics.image_loader import decode_image_frames
 from lib.core.layer_manager import get_layer_manager
+from lib.core.qt_bridge.gif_loader import qimage_from_raster_frame
 from lib.script.ui.forum_markup import (
+    FORUM_EFFECT_TOKENS,
     FORUM_MARKUP_FORMATS,
+    effect_tokens,
     marker_positions,
     span_at_cursor,
     to_html,
@@ -41,6 +48,13 @@ from lib.script.ui.forum_style import (
     forum_card_text_color,
     forum_card_text_size,
     forum_texture_color,
+)
+from lib.script.ui.forum_sticker import (
+    FORUM_STICKER_ASSETS,
+    STICKER_HEIGHT,
+    ForumSticker,
+    ink_bounds,
+    sticker_frames,
 )
 from lib.script.ui.forum_text import MarkupText, bold_outline_width
 from lib.script.ui.forum_texture import (
@@ -768,6 +782,117 @@ class ForumWindowTests(unittest.TestCase):
         self.assertEqual(refresh.call_count, 2)
 
 
+class ForumStickerTests(unittest.TestCase):
+    """效果令牌的贴图：正文里写了 `[雪豹]`，令牌洗掉、卡片底部贴一张会自己走的 gif。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_only_token_cards_get_a_sticker_at_the_bottom(self):
+        plain = ForumCard(message(1, content="今天没有令牌"))
+        token = ForumCard(message(2, content="看到[雪豹]了"))
+        named = ForumCard(message(3, content="看到雪豹了"))
+        try:
+            self.assertEqual(plain.findChildren(ForumSticker), [])
+            self.assertEqual(named.findChildren(ForumSticker), [])
+            stickers = token.findChildren(ForumSticker)
+            self.assertEqual(len(stickers), 1)
+            sticker = stickers[0]
+            self.assertEqual(sticker.path, FORUM_STICKER_ASSETS["[雪豹]"])
+            # 令牌从正文里洗掉了，贴图是卡片最底部的一项、居中摆放。
+            layout = token.layout()
+            last = layout.itemAt(layout.count() - 1)
+            self.assertIs(last.widget(), sticker)
+            self.assertTrue(last.alignment() & Qt.AlignHCenter)
+            self.assertIsInstance(layout.itemAt(layout.count() - 2).widget(), QLabel)
+            # 贴图真的占高：同样的正文，带令牌的卡片比不带的高出一张贴图。
+            self.assertGreater(token.sizeHint().height(), named.sizeHint().height())
+        finally:
+            for card in (plain, token, named):
+                card.deleteLater()
+            self.app.processEvents()
+
+    def test_sticker_frames_are_trimmed_to_the_artwork_and_cached(self):
+        path = FORUM_STICKER_ASSETS["[雪豹]"]
+        decoded = decode_image_frames(path)
+        raw = [qimage_from_raster_frame(frame) for frame in decoded]
+        frames = sticker_frames(path, STICKER_HEIGHT)
+        self.assertGreater(len(frames), 1)
+        self.assertGreater(len(raw), 1)
+        self.assertEqual(
+            {(frame.width(), frame.height()) for frame in frames},
+            {(frames[0].width(), frames[0].height())},
+        )
+        self.assertEqual(frames[0].height(), STICKER_HEIGHT)
+        # 同一张 gif 的所有卡片共用一份解码结果。
+        self.assertIs(sticker_frames(path, STICKER_HEIGHT), frames)
+        # 贴图方块就是图案本身：按全部帧可见像素的并集裁掉 gif 自带的透明留白，再等比缩放到
+        # STICKER_HEIGHT。并集这里用 Pillow 的 alpha 包围盒另算一遍（另一套实现），
+        # 逐帧裁会让各帧对齐基准漂移，所以必须取并集。
+        union = None
+        for frame in decoded:
+            alpha = Image.frombytes(
+                "RGBA", (frame.width, frame.height), frame.pixels
+            ).split()[3]
+            left, top, right, bottom = alpha.getbbox()
+            union = (
+                (left, top, right, bottom)
+                if union is None
+                else (
+                    min(union[0], left),
+                    min(union[1], top),
+                    max(union[2], right),
+                    max(union[3], bottom),
+                )
+            )
+        self.assertEqual(
+            (ink_bounds(raw).width(), ink_bounds(raw).height()),
+            (union[2] - union[0], union[3] - union[1]),
+        )
+        self.assertLess(union[3] - union[1], raw[0].height())
+        self.assertEqual(
+            (frames[0].width(), frames[0].height()),
+            (
+                round(STICKER_HEIGHT * (union[2] - union[0]) / (union[3] - union[1])),
+                STICKER_HEIGHT,
+            ),
+        )
+
+    def test_sticker_advances_on_the_global_gif_frame_event(self):
+        sticker = ForumSticker(FORUM_STICKER_ASSETS["[雪豹]"])
+        try:
+            count = sticker.frame_count()
+            self.assertGreater(count, 1)
+            first = sticker.current_frame()
+            self.assertIsNotNone(first)
+            sticker.advance()
+            self.assertEqual(sticker.frame_index(), 1 % count)
+            # 帧由全局 GIF_FRAME 推进，和雪豹世界物体同一个时钟，不另起 QTimer。
+            get_event_center().publish(Event(EventType.GIF_FRAME, {"frame_count": 1}))
+            self.assertEqual(sticker.frame_index(), 2 % count)
+            for _ in range(count):
+                sticker.advance()
+            self.assertEqual(sticker.frame_index(), 2 % count)
+        finally:
+            sticker.deleteLater()
+            self.app.processEvents()
+
+    def test_destroyed_sticker_releases_its_subscription(self):
+        center = get_event_center()
+        listeners = center._listeners  # 只读：核对订阅有没有跟着控件销毁一起退掉。
+        before = len(listeners.get(EventType.GIF_FRAME, []))
+        card = ForumCard(message(1, content="[雪豹]"))
+        self.app.processEvents()
+        self.assertEqual(len(listeners.get(EventType.GIF_FRAME, [])), before + 1)
+        # 卡片重排是 setParent(None) + deleteLater()：贴图跟着卡片销毁，订阅必须一起退，
+        # 否则事件中心会一直握着一个已经销毁的控件。
+        card.deleteLater()
+        self.app.sendPostedEvents(None, QEvent.DeferredDelete)
+        self.app.processEvents()
+        self.assertEqual(len(listeners.get(EventType.GIF_FRAME, [])), before)
+
+
 class ForumMarkupTests(unittest.TestCase):
     """行内标记的解析与发帖框补标记：纯文本进出，不建窗口。"""
 
@@ -797,6 +922,25 @@ class ForumMarkupTests(unittest.TestCase):
         self.assertEqual(visible_text("__下划线__"), "下划线")
         self.assertEqual(visible_text("**粗 *斜* 体**"), "粗 斜 体")
         self.assertEqual(visible_text("没标记"), "没标记")
+
+    def test_effect_tokens_are_washed_out_of_the_rendered_text(self):
+        # `[雪豹]` 是效果令牌：正文里写它表示贴一张动图，令牌本身不出现在卡片上。
+        self.assertEqual(to_html("今天看到[雪豹]路过"), "今天看到路过")
+        self.assertEqual(visible_text("今天看到[雪豹]路过"), "今天看到路过")
+        self.assertEqual(effect_tokens("今天看到[雪豹]路过"), ("[雪豹]",))
+        self.assertEqual(effect_tokens("没有令牌"), ())
+        self.assertEqual(effect_tokens("[雪豹]和[雪豹]"), ("[雪豹]",))
+        # 令牌算效果、不算可见字数，也不参进底纹以外的排版。
+        self.assertEqual(visible_text("[雪豹]"), "")
+
+    def test_effect_tokens_are_stripped_after_markup_render(self):
+        # 顺序很重要：先洗令牌会留下一对没有内容的星号，卡片上直接印出 `****`。
+        self.assertEqual(to_html("**[雪豹]**"), "<b></b>")
+        self.assertEqual(to_html("[雪豹]"), "")
+
+    def test_every_effect_token_has_a_sticker_asset(self):
+        # 令牌在 forum_markup、贴图在 forum_sticker：两边漂移就会在贴图时 KeyError。
+        self.assertEqual(set(FORUM_EFFECT_TOKENS), set(FORUM_STICKER_ASSETS))
 
     def test_bold_markers_are_not_mistaken_for_italic(self):
         # `**粗体**` 的星号是偶数串，不能算成一对斜体，否则粗体按钮会让斜体按钮跟着亮。

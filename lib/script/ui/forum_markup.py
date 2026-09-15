@@ -11,6 +11,11 @@
 原样存在服务端：别的客户端看到的是带标记的原文，只有雪绒论坛把它渲染成格式，所以这里不
 做任何服务端清洗。解析只认成对的标记，没配对的标记按普通字符显示。
 
+除了四种行内标记，正文里还能写「效果令牌」（`FORUM_EFFECT_TOKENS`，目前只有 `[雪豹]`）：
+令牌不是格式而是指令，渲染时整段洗掉，由卡片底部另贴一张动图（令牌与贴图资源的对应关系在
+`lib/script/ui/forum_sticker.py`，两边成对）。令牌同样原样存在服务端，这里只负责认出来并
+洗掉，不做服务端清洗。
+
 模块不导入任何 GUI 库：`to_html()` 给出正文用的富文本片段（Qt 富文本子集），`visible_text()`
 供字号自适应按可见字数计算，`span_at_cursor()` / `toggle()` 供发帖框按钮在光标处加减标记。
 """
@@ -40,6 +45,10 @@ FORUM_MARKUP_FORMATS = (
 )
 FORMAT_BY_KEY = {fmt.key: fmt for fmt in FORUM_MARKUP_FORMATS}
 
+#: 正文里的「效果令牌」：不是格式而是一条指令——渲染时整段洗掉，由卡片底部另贴一张动图。
+#: 令牌到贴图资源的对应关系长在 `lib/script/ui/forum_sticker.py`，新增令牌要同时补那边。
+FORUM_EFFECT_TOKENS: tuple[str, ...] = ("[雪豹]",)
+
 #: 解析顺序即标签优先级：`***` 必须排在 `**` 前、`**` 排在 `*` 前。
 _TAG_GROUPS = (
     ("bold_italic", ("b", "i")),
@@ -63,18 +72,42 @@ _SPACE_RUN = re.compile(r"  +")
 
 
 def to_html(text) -> str:
-    """把留言正文转成 QLabel 富文本片段：先转义原文，再把成对标记换成标签。"""
+    """把留言正文转成 QLabel 富文本片段：先转义原文，再把成对标记换成标签，最后洗掉效果令牌。
+
+    效果令牌放在标记渲染**之后**才洗：`**[雪豹]**` 先变成 `<b>[雪豹]</b>`、再洗成 `<b></b>`；
+    反过来先洗就只剩一对没有内容的星号，卡片上会直接印出 `****`。
+    """
     escaped = str(text or "").translate(_ESCAPE_TABLE)
     escaped = escaped.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "<br>")
     escaped = _SPACE_RUN.sub(
         lambda match: " " + "&nbsp;" * (len(match.group(0)) - 1), escaped
     )
-    return _PATTERN.sub(_render_match, escaped)
+    return strip_effect_tokens(_PATTERN.sub(_render_match, escaped))
 
 
 def visible_text(text) -> str:
-    """去掉成对标记后的可见文字；没配对的标记按普通字符保留。"""
-    return _PATTERN.sub(_strip_match, str(text or ""))
+    """去掉成对标记与效果令牌后的可见文字；没配对的标记按普通字符保留。"""
+    return strip_effect_tokens(_PATTERN.sub(_strip_match, str(text or "")))
+
+
+def effect_tokens(text) -> tuple[str, ...]:
+    """正文里出现过的效果令牌，按首次出现顺序去重。"""
+    raw = str(text or "")
+    found = sorted(
+        (raw.index(token), token)
+        for token in FORUM_EFFECT_TOKENS
+        if token and token in raw
+    )
+    return tuple(token for _spot, token in found)
+
+
+def strip_effect_tokens(text) -> str:
+    """洗掉正文里的效果令牌：渲染出来的文字里不留令牌，贴图另走卡片底部。"""
+    result = str(text or "")
+    for token in FORUM_EFFECT_TOKENS:
+        if token:
+            result = result.replace(token, "")
+    return result
 
 
 def marker_positions(text, marker: str) -> tuple[int, ...]:
@@ -172,11 +205,14 @@ def _strip_match(match: re.Match) -> str:
 
 
 __all__ = [
+    "FORUM_EFFECT_TOKENS",
     "FORUM_MARKUP_FORMATS",
     "FORMAT_BY_KEY",
     "ForumMarkupFormat",
+    "effect_tokens",
     "marker_positions",
     "span_at_cursor",
+    "strip_effect_tokens",
     "to_html",
     "toggle",
     "visible_text",
