@@ -1,7 +1,7 @@
 """星空划过粒子：沿一个方向布朗漂移、尾段淡出的白色 bloom 光点。
 
 触发场景：办公页推理强度滑条被按住时，每个逻辑 tick（20 次/秒）从这个控件的位置召唤
-一批光点，松开即停；光点往右漂出、尾段淡出，读起来像星空从滑块旁划过。
+一批光点，松开即停；光点往左漂出、尾段淡出，读起来像星空从滑块旁划过。
 
 请求参数（`particle_options`，全部可省略）：
 
@@ -11,7 +11,7 @@
   其余部分由渲染层铺同心光圈（见 `lib/core/graphics/visuals.py` 的圆形 bloom）。
 - `duration_ticks`：持续时长（tick），默认 20（1 秒）。
 - `fade_ticks`：其中最后多少 tick 用来淡出，默认 10；0 表示不淡出。
-- `direction`：漂移方向 `(x, y)`，默认 `(1.0, 0.0)` 即往右。
+- `direction`：漂移方向 `(x, y)`，默认 `(-1.0, 0.0)` 即往左。
 
 `speed_range`、`brownian`、`brownian_drag`、`spread` 是同一批可选调参，默认值就是上面
 描述的观感，调用方一般不需要给。
@@ -31,13 +31,13 @@ from lib.script.practical.base_particle import BaseParticleScript, per_second_de
 
 STAR_STREAK_PARTICLE_ID = "star_streak"
 
-#: 默认参数：往右、每次 0~1 颗、bloom 半径 2~4px、持续 20 tick、其中 10 tick 淡出、白色。
+#: 默认参数：往左、每次 0~1 颗、bloom 半径 2~4px、持续 20 tick、其中 10 tick 淡出、白色。
 DEFAULT_COUNT_RANGE = (0, 1)
 DEFAULT_COLOR = Color(255, 255, 255)
 DEFAULT_BLOOM_RANGE = (2, 4)
 DEFAULT_DURATION_TICKS = 20
 DEFAULT_FADE_TICKS = 10
-DEFAULT_DIRECTION = (1.0, 0.0)
+DEFAULT_DIRECTION = (-1.0, 0.0)
 
 #: 观感调参：方向速度（px/秒）、每 tick 的随机抖动加速度（px/秒）与抖动阻尼，
 #: 以及召唤点附近的随机散布（px），避免多颗光点叠成一条直线。

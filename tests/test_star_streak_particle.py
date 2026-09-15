@@ -139,24 +139,27 @@ class StarStreakParticleTests(unittest.TestCase):
             with self.subTest(bloom=grain.bloom):
                 self.assertAlmostEqual(grain.size, max(1.2, grain.bloom * CORE_RATIO))
 
-    def test_default_direction_drifts_right(self):
+    def test_default_direction_drifts_left(self):
+        # 布朗抖动是随机的，不固定种子时这条断言会飘。
+        random.seed(1234)
         grain = self._grain()
         start_x, start_y = grain.x, grain.y
 
         for _ in range(20):
             grain.update()
 
-        self.assertGreater(grain.x - start_x, 20.0)
-        self.assertLess(abs(grain.y - start_y), 20.0)
+        self.assertLess(grain.x - start_x, -20.0)
+        # 主体位移在水平轴上：方向若写成斜向，纵向位移会追平横向位移。
+        self.assertLess(abs(grain.y - start_y), abs(grain.x - start_x))
 
     def test_direction_option_flips_the_drift(self):
-        grain = self._grain(direction=(-1.0, 0.0))
+        grain = self._grain(direction=(1.0, 0.0))
         start_x = grain.x
 
         for _ in range(20):
             grain.update()
 
-        self.assertLess(grain.x - start_x, -20.0)
+        self.assertGreater(grain.x - start_x, 20.0)
 
     def test_grains_keep_drifting_with_brownian_jitter(self):
         config = _script(count_range=(1, 1)).request_config()
@@ -169,7 +172,7 @@ class StarStreakParticleTests(unittest.TestCase):
 
         # 布朗抖动让每颗的位移都不一样，但都朝同一个方向。
         self.assertGreater(len({round(x, 3) for x, _y in steps}), 20)
-        self.assertTrue(all(x > 0.0 for x, _y in steps))
+        self.assertTrue(all(x < 0.0 for x, _y in steps))
         self.assertTrue(any(abs(y) > 0.01 for _x, y in steps))
 
     def test_fade_curve_holds_then_drops_over_the_fade_ticks(self):

@@ -97,7 +97,7 @@
 - 作用：办公页推理强度滑条被按住时，每个逻辑 tick 从滑块位置召唤的星空划过光点
 - 参数：`count_range`（本次随机个数，默认 `(0, 1)`）、`color`（默认白色）、
   `bloom_range`（bloom 半径随机范围，默认 `(2, 4)` 像素）、`duration_ticks`（默认 20）、
-  `fade_ticks`（其中最后多少 tick 淡出，默认 10）、`direction`（默认往右 `(1, 0)`）；
+  `fade_ticks`（其中最后多少 tick 淡出，默认 10）、`direction`（默认往左 `(-1, 0)`）；
   方向速度与布朗抖动由脚本自己的 `speed_range` / `brownian` / `brownian_drag` 兜底，
   调用方一般只给前六项，全部省略即需求默认观感
 

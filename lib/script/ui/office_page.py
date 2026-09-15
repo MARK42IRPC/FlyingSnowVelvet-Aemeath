@@ -7,7 +7,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-from PyQt5.QtCore import QSignalBlocker, QSize, Qt, QTimer
+from PyQt5.QtCore import QEvent, QSignalBlocker, QSize, Qt, QTimer
 from PyQt5.QtGui import QCursor
 from PyQt5.QtWidgets import (
     QButtonGroup,
@@ -97,7 +97,7 @@ def _display_time(value: object) -> str:
 DEFAULT_WINDOW_WIDTH = scale_px(1120, min_abs=1000)
 DEFAULT_WINDOW_HEIGHT = scale_px(760, min_abs=680)
 
-#: 按住推理滑条时召唤的星空粒子；粒子自带默认参数（往右、白色、bloom 2~4px、20 tick 淡出）。
+#: 按住推理滑条时召唤的星空粒子；粒子自带默认参数（往左、白色、bloom 2~4px、20 tick 淡出）。
 EFFORT_STAR_PARTICLE_ID = "star_streak"
 
 
@@ -152,7 +152,7 @@ class OfficeWorkbenchPage(QtWorkbenchToolPage):
         self._poll_timer.timeout.connect(self._poll_state)
 
     def _build_window_buttons(self) -> QWidget:
-        """右上角窗口按钮：最小化、全屏、关闭，与工作台主窗口同一套按钮。
+        """右上角窗口按钮：最小化、最大化、关闭，与工作台主窗口同一套按钮。
 
         内嵌到工作台时由工作台自己管窗口，这一组按钮不出现。
         """
@@ -164,35 +164,36 @@ class OfficeWorkbenchPage(QtWorkbenchToolPage):
         self._minimize_button = create_window_button(
             box, QStyle.SP_TitleBarMinButton, "最小化", self.showMinimized
         )
-        self._fullscreen_button = create_window_button(
-            box, QStyle.SP_TitleBarMaxButton, "全屏", self._toggle_fullscreen
+        self._maximize_button = create_window_button(
+            box, QStyle.SP_TitleBarMaxButton, "最大化", self._toggle_maximized
         )
         self._close_button = create_window_button(
             box, QStyle.SP_TitleBarCloseButton, "关闭办公页面", self.fade_out, danger=True
         )
-        for button in (self._minimize_button, self._fullscreen_button, self._close_button):
+        for button in (self._minimize_button, self._maximize_button, self._close_button):
             layout.addWidget(button)
         return box
 
-    def _toggle_fullscreen(self) -> None:
-        if self.isFullScreen():
+    def _toggle_maximized(self) -> None:
+        """最大化 / 还原：只铺满工作区，不进入全屏，窗口不会盖住任务栏。"""
+        if self.isMaximized():
             self.showNormal()
         else:
-            self.showFullScreen()
+            self.showMaximized()
         self._refresh_window_state_controls()
 
     def _refresh_window_state_controls(self) -> None:
-        """全屏按钮在「全屏 / 还原」之间换图标，全屏时收掉右下角拖拽手柄。"""
-        fullscreen = self.isFullScreen()
-        button = getattr(self, "_fullscreen_button", None)
+        """最大化按钮在「最大化 / 还原」之间换图标，最大化时收掉右下角拖拽手柄。"""
+        maximized = self.isMaximized()
+        button = getattr(self, "_maximize_button", None)
         if button is not None:
-            icon = QStyle.SP_TitleBarNormalButton if fullscreen else QStyle.SP_TitleBarMaxButton
+            icon = QStyle.SP_TitleBarNormalButton if maximized else QStyle.SP_TitleBarMaxButton
             button.setIcon(self.style().standardIcon(icon))
-            button.setToolTip("退出全屏" if fullscreen else "全屏")
+            button.setToolTip("还原" if maximized else "最大化")
         self._sync_size_grip()
 
     def _sync_size_grip(self) -> None:
-        """把右下角拖拽手柄贴到窗口角上；内嵌工作台或全屏时收起来。
+        """把右下角拖拽手柄贴到窗口角上；内嵌工作台或最大化时收起来。
 
         手柄刚建出来时还没显示，只按 resizeEvent 摆位会把它留在 (0, 0)，窗口左上角
         就多出一块方点，所以显示时也重新摆一次。
@@ -200,13 +201,13 @@ class OfficeWorkbenchPage(QtWorkbenchToolPage):
         grip = getattr(self, "_size_grip", None)
         if grip is None:
             return
-        grip.setVisible(not self._embedded and not self.isFullScreen())
+        grip.setVisible(not self._embedded and not self.isMaximized())
         grip.move(self.width() - grip.width(), self.height() - grip.height())
         grip.raise_()
 
     def _after_standalone_hide(self) -> None:
-        """独立窗口关掉后退出全屏，下次打开回到普通尺寸。"""
-        if self._embedded or not self.isFullScreen():
+        """独立窗口关掉后还原尺寸，下次打开回到普通窗口。"""
+        if self._embedded or not self.isMaximized():
             return
         self.showNormal()
         self._refresh_window_state_controls()
@@ -222,6 +223,12 @@ class OfficeWorkbenchPage(QtWorkbenchToolPage):
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self._sync_size_grip()
+
+    def changeEvent(self, event) -> None:
+        """系统或拖拽改变最大化状态时同步按钮图标与尺寸手柄。"""
+        super().changeEvent(event)
+        if event.type() == QEvent.WindowStateChange and hasattr(self, "_maximize_button"):
+            self._refresh_window_state_controls()
 
     def cleanup(self) -> None:
         """释放页面占用：停掉轮询计时器、退订配置事件，独立窗口再随 deleteLater 销毁。"""
@@ -770,7 +777,7 @@ class OfficeWorkbenchPage(QtWorkbenchToolPage):
         self._publish_effort_stars()
 
     def _publish_effort_stars(self) -> None:
-        """从滑块当前把手的位置往右召唤星空光点（粒子默认参数即为需求的那一套）。"""
+        """从滑块当前把手的位置召唤星空光点（粒子默认参数即为需求的那一套）。"""
         if not self.isVisible():
             return
         center = self._effort_slider.handle_center()

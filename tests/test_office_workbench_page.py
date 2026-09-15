@@ -262,28 +262,36 @@ class OfficeWorkbenchPageTests(unittest.TestCase):
 
             self.assertEqual(page.findChildren(QToolButton, "WorkbenchWindowButton"), [])
 
-    def test_standalone_window_offers_minimize_fullscreen_and_close(self):
+    def test_standalone_window_offers_minimize_maximize_and_close(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             ipc = OfficeFileIpc(Path(tmpdir) / "ipc")
             page = OfficeWorkbenchPage(embedded=False, ipc=ipc)
             self.addCleanup(page.deleteLater)
+            page.resize(1120, 760)
+            page.show()
+            self.app.processEvents()
 
             buttons = page.findChildren(QToolButton, "WorkbenchWindowButton")
             self.assertEqual(len(buttons), 3)
             self.assertEqual(page._minimize_button.toolTip(), "最小化")
-            self.assertEqual(page._fullscreen_button.toolTip(), "全屏")
+            self.assertEqual(page._maximize_button.toolTip(), "最大化")
             self.assertEqual(page._close_button.toolTip(), "关闭办公页面")
             self.assertTrue(page._close_button.property("danger"))
             self.assertTrue(page._size_grip.isVisibleTo(page))
 
-            page._toggle_fullscreen()
-            self.assertTrue(page.isFullScreen())
-            self.assertEqual(page._fullscreen_button.toolTip(), "退出全屏")
+            page._toggle_maximized()
+            # 走最大化而不是全屏：窗口只铺满工作区，不覆盖任务栏。
+            self.app.processEvents()
+            self.assertTrue(page.isMaximized())
+            self.assertFalse(page.isFullScreen())
+            self.assertTrue(page.screen().availableGeometry().contains(page.geometry()))
+            self.assertEqual(page._maximize_button.toolTip(), "还原")
             self.assertFalse(page._size_grip.isVisibleTo(page))
 
-            page._toggle_fullscreen()
-            self.assertFalse(page.isFullScreen())
-            self.assertEqual(page._fullscreen_button.toolTip(), "全屏")
+            page._toggle_maximized()
+            self.app.processEvents()
+            self.assertFalse(page.isMaximized())
+            self.assertEqual(page._maximize_button.toolTip(), "最大化")
             self.assertTrue(page._size_grip.isVisibleTo(page))
 
     def test_size_grip_sticks_to_the_bottom_right_corner(self):

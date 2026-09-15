@@ -45,14 +45,15 @@
 - 新增星空划过粒子 `star_streak`（`lib/script/practical/star_streak_particle.py`）：白色 bloom 圆形
   颗粒沿一个方向匀漂、叠加布朗抖动，尾段 `fade_ticks` 内线性淡出。请求参数为 `count_range`（本次
   随机个数）、`color`、`bloom_range`（bloom 半径的随机范围）、`duration_ticks`、`fade_ticks`、
-  `direction`，默认依次是 `(0, 1)`、白色、`(2, 4)` 像素、20 tick、其中最后 10 tick 淡出、往右。
+  `direction`，默认依次是 `(0, 1)`、白色、`(2, 4)` 像素、20 tick、其中最后 10 tick 淡出、往左。
   办公页推理滑条被按住时每个逻辑 tick（`EventType.TICK`）从滑块把手位置召唤一批，松开、页面隐藏或
   `cleanup()` 都退订。圆形粒子的 bloom 改由共享视觉层展开：`visuals.CIRCLE_BLOOM_RINGS` 按「半径占
   bloom 半径的比例 / 透明度倍数」由外到内铺同心光圈，`_particle_bounds()` 的保守包围盒取
   `max(size, bloom)`，Qt 与 DX 消费同一份命令批次。
-- 独立办公窗口右上角备齐最小化、全屏 / 还原、关闭三个按钮（`create_window_button()` 加
-  `theme.window_button_stylesheet()` 的 `WorkbenchWindowButton`，与工作台主窗口同一套），全屏时
-  收掉右下角尺寸手柄、关闭先退出全屏再淡出；内嵌到工作台时不出现这组按钮，窗口交给工作台。
+- 独立办公窗口右上角备齐最小化、最大化 / 还原、关闭三个按钮（`create_window_button()` 加
+  `theme.window_button_stylesheet()` 的 `WorkbenchWindowButton`，与工作台主窗口同一套）：最大化走
+  `showMaximized()` 只铺满工作区，不进全屏、不覆盖任务栏，按钮在「最大化 / 还原」之间换图标，最大化
+  时收掉右下角尺寸手柄、关闭先还原尺寸再淡出；内嵌到工作台时不出现这组按钮，窗口交给工作台。
 
 ### Changed
 - 托盘菜单「桌宠清理」二级项与同级项的文字中心对齐：所有行的条目文字矩形统一由
