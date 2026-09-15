@@ -234,8 +234,37 @@ _AI_SETTING_DEFAULTS = {
 }
 
 
+#: 办公模式字段：和 AI 字段同存于用户配置的 "ai" 段落，但写盘归属分开——AI 设置面板只写
+#: `get_ai_panel_setting_defaults()` 里的键，办公模式页只写 `get_office_setting_defaults()`
+#: 里的键。两边各写各的，任一页保存都不会把对方没在界面上出现过的字段覆盖回默认值。
+#: 注意 `_AI_SETTING_DEFAULTS` 仍是含办公字段的全量默认值：启动加载与旧配置迁移都要用它。
+OFFICE_SETTING_KEYS = (
+    'office_use_independent_api',
+    'office_backend',
+    'office_api_key',
+    'office_api_base_url',
+    'office_api_model',
+    'office_warmup_on_startup',
+)
+
+
 def get_ai_setting_defaults() -> dict:
+    """「ai」段落的全部默认值（含办公字段），供加载、迁移与整段读写用。"""
     return dict(_AI_SETTING_DEFAULTS)
+
+
+def get_ai_panel_setting_defaults() -> dict:
+    """AI 设置面板拥有的默认值：不含办公模式字段。"""
+    return {
+        key: value
+        for key, value in _AI_SETTING_DEFAULTS.items()
+        if key not in OFFICE_SETTING_KEYS
+    }
+
+
+def get_office_setting_defaults() -> dict:
+    """办公模式页拥有的默认值：只有办公模式字段。"""
+    return {key: _AI_SETTING_DEFAULTS[key] for key in OFFICE_SETTING_KEYS}
 
 
 def _literal_python_config(path: Path) -> dict[str, object]:

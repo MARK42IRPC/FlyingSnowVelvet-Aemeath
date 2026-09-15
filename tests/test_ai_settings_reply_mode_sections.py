@@ -14,13 +14,12 @@ os.environ.setdefault(
 )
 os.environ.setdefault("QT_PLUGIN_PATH", os.path.join(_QT_ROOT, "Qt5", "plugins"))
 
-from PyQt5.QtWidgets import QApplication, QComboBox, QFormLayout, QFrame, QLabel, QScrollArea, QVBoxLayout
+from PyQt5.QtWidgets import QApplication, QComboBox, QLabel
 
 from lib.core.event.center import EventType
 from lib.script.ui import ai_settings_panel as panel_module
 from lib.script.ui import office_mode_settings as office_settings_module
 from lib.script.ui.ai_settings_panel import AISettingsPanel
-from lib.script.ui.workbench_settings_layout import SETTINGS_LABEL_WIDTH
 from lib.script.gsvmove.package_manager import VoicePackageStatus
 from lib.script.workbench.theme import get_workbench_colors, workbench_stylesheet
 
@@ -37,40 +36,17 @@ class AISettingsReplyModeSectionsTests(unittest.TestCase):
             return_value=VoicePackageStatus("missing", "not installed"),
         )
         self._voice_package_probe.start()
-        self._local_dsh_probe = patch.object(
-            AISettingsPanel,
-            "_probe_local_dsh",
-            return_value={"available": False, "reason": "未探测到 本机 DeepSeek Harness"},
-        )
-        self._local_dsh_probe.start()
         with patch.object(AISettingsPanel, "_refresh_hardware_watermark_async", lambda self: None):
             self.panel = AISettingsPanel(lazy_workbench_pages=True)
 
     def tearDown(self):
         self.panel.deleteLater()
         self.app.processEvents()
-        self._local_dsh_probe.stop()
         self._voice_package_probe.stop()
 
     def _select_mode(self, mode: str) -> None:
         self.panel._force_mode.setCurrentIndex(self.panel._force_mode.findData(mode))
         self.app.processEvents()
-
-    def _build_panel(self, status: dict, *, saved_backend: str | None = None):
-        """按给定探测结果重建面板（本机 DSH 探测只在构造期读一次）。"""
-        probe = patch.object(AISettingsPanel, "_probe_local_dsh", return_value=dict(status))
-        probe.start()
-        self.addCleanup(probe.stop)
-        with patch.object(AISettingsPanel, "_refresh_hardware_watermark_async", lambda self: None):
-            panel = AISettingsPanel(lazy_workbench_pages=True)
-        self.addCleanup(panel.deleteLater)
-        if saved_backend is not None:
-            panel._set_values_to_form({"office_backend": saved_backend})
-        return panel
-
-    @staticmethod
-    def _backend_items(field) -> list[tuple[str, object]]:
-        return [(field.itemText(index), field.itemData(index)) for index in range(field.count())]
 
     @staticmethod
     def _body_size_hint(section) -> int:
@@ -92,151 +68,19 @@ class AISettingsReplyModeSectionsTests(unittest.TestCase):
             ("规则回复", "3"),
         ])
 
-    def test_office_backend_hides_local_entry_when_probe_finds_nothing(self):
-        field = self.panel._office_backend
+    def test_ai_panel_has_no_office_section(self):
+        """办公配置只长在办公模式页上：面板里不该再有办公分段或办公控件。"""
+        section_titles = [
+            label.text() for label in self.panel.findChildren(QLabel, "SettingsSectionTitle")
+        ]
 
-        self.assertEqual(self._backend_items(field), [("DeepSeek Harness（推荐）", "dsh")])
-        self.assertEqual(field.currentData(), "dsh")
-        self.assertIn("DeepSeek Harness", self.panel._office_backend_description())
-
-    def test_office_backend_lists_local_entry_when_probe_succeeds(self):
-        panel = self._build_panel({
-            "available": True,
-            "version": "0.1.0-rc.6",
-            "source": "npm 全局目录",
-            "path": r"C:\Users\demo\AppData\Roaming\npm\node_modules\@deepseek-ai\dsh",
-        })
-        field = panel._office_backend
-
-        self.assertEqual(self._backend_items(field), [
-            ("DeepSeek Harness（推荐）", "dsh"),
-            ("本机 DeepSeek Harness", "local_dsh"),
-        ])
-        self.assertTrue(field.model().item(field.findData("local_dsh")).isEnabled())
-
-        field.setCurrentIndex(field.findData("local_dsh"))
-
-        description = panel._office_backend_description()
-        self.assertIn("0.1.0-rc.6", description)
-        self.assertIn("npm 全局目录", description)
-        self.assertIn(r"AppData\Roaming\npm", description)
-
-    def test_office_backend_keeps_saved_local_choice_when_probe_finds_nothing(self):
-        panel = self._build_panel(
-            {"available": False, "reason": "未探测到 本机 DeepSeek Harness"},
-            saved_backend="local_dsh",
+        self.assertNotIn("办公模式", section_titles)
+        self.assertFalse(hasattr(self.panel, "_office_settings"))
+        self.assertFalse(
+            [name for name in vars(self.panel) if name.startswith("_office")]
         )
-        field = panel._office_backend
-
-        self.assertEqual(self._backend_items(field), [
-            ("DeepSeek Harness（推荐）", "dsh"),
-            ("本机 DeepSeek Harness（未探测到）", "local_dsh"),
-        ])
-        self.assertFalse(field.model().item(field.findData("local_dsh")).isEnabled())
-        self.assertEqual(field.currentData(), "local_dsh")
-        self.assertIn("未探测到", panel._office_backend_description())
-
-    def test_office_backend_does_not_duplicate_local_entry_on_reload(self):
-        panel = self._build_panel({"available": True, "version": "0.1.0-rc.6"})
-
-        panel._set_values_to_form({"office_backend": "local_dsh"})
-        panel._set_values_to_form({"office_backend": "dsh"})
-
-        field = panel._office_backend
-        entries = [data for _text, data in self._backend_items(field)]
-        self.assertEqual(entries.count("local_dsh"), 1)
-        self.assertEqual(field.currentData(), "dsh")
-
-    def test_office_backend_does_not_hide_independent_api_toggle_or_warmup(self):
-        self.assertFalse(self.panel._office_backend.isHidden())
-        self.assertFalse(self.panel._office_use_independent_api.isHidden())
-        self.assertFalse(self.panel._office_warmup_on_startup.isHidden())
-        self.assertTrue(self.panel._office_independent_api_group.isHidden())
-        self.assertEqual(
-            self.panel._office_independent_api_form.rowCount(),
-            len(self.panel._office_independent_api_rows),
-        )
-
-        self.panel._office_use_independent_api.setChecked(True)
-
-        self.assertFalse(self.panel._office_backend.isHidden())
-        self.assertFalse(self.panel._office_use_independent_api.isHidden())
-        self.assertFalse(self.panel._office_warmup_on_startup.isHidden())
-        self.assertFalse(self.panel._office_independent_api_group.isHidden())
-        for field in self.panel._office_independent_api_rows:
-            self.assertFalse(field.isHidden())
-
-    def test_collapsed_office_group_releases_its_row_space(self):
-        section = self.panel._office_mode_section
-        group = self.panel._office_independent_api_group
-
-        self.panel._office_use_independent_api.setChecked(True)
-        expanded = self._body_size_hint(section)
-        self.panel._office_use_independent_api.setChecked(False)
-        collapsed = self._body_size_hint(section)
-
-        self.assertAlmostEqual(
-            expanded - collapsed,
-            group.sizeHint().height() + section.body_layout.spacing(),
-            delta=2,
-        )
-
-    def test_office_warmup_row_shares_the_office_field_column(self):
-        """「启动时预热」独占一张表单，标签列必须与办公分区其它行同宽，否则会左移一列。"""
-        field = self.panel._office_warmup_on_startup
-        row, role = self.panel._office_tail_form.getWidgetPosition(field)
-        self.assertEqual(role, QFormLayout.FieldRole)
-        label_item = self.panel._office_tail_form.itemAt(row, QFormLayout.LabelRole)
-        self.assertIsNotNone(label_item, "空标签行不占标签列，会把字段挤到分区最左侧")
-        label = label_item.widget()
-        self.assertIsInstance(label, QLabel)
-        self.assertEqual(label.text(), "")
-        self.assertEqual(label.minimumWidth(), SETTINGS_LABEL_WIDTH)
-        self.assertEqual(label.maximumWidth(), SETTINGS_LABEL_WIDTH)
-
-        class ImmediateHub:
-            """页面构建的异步探测就地跑完，避免占用共享的后台线程池。"""
-
-            @staticmethod
-            def submit_interactive_io(func):
-                future = Future()
-                try:
-                    func()
-                except Exception as exc:
-                    future.set_exception(exc)
-                else:
-                    future.set_result(None)
-                return future
-
-        with patch.object(panel_module, "get_compute_hub", return_value=ImmediateHub()):
-            host = QFrame()
-            host.setObjectName("WorkbenchPageHost")
-            host.setStyleSheet(workbench_stylesheet())
-            host_layout = QVBoxLayout(host)
-            host_layout.addWidget(self.panel.create_workbench_page("ai"))
-            host.resize(1010, 760)
-            host.show()
-            self.addCleanup(host.close)
-            self.addCleanup(host.deleteLater)
-            scroll = host.findChild(QScrollArea)
-            self.assertIsNotNone(scroll)
-            scroll.widget().setFixedWidth(1000)
-            self.app.processEvents()
-
-            section = self.panel._office_mode_section
-            for expanded in (False, True):
-                with self.subTest(expanded=expanded):
-                    self.panel._office_use_independent_api.setChecked(expanded)
-                    self.app.processEvents()
-                    section.body_layout.invalidate()
-                    section.body_layout.activate()
-                    self.app.processEvents()
-                    reference = self.panel._office_use_independent_api.mapTo(
-                        section, PyQt5.QtCore.QPoint(0, 0)
-                    ).x()
-                    warmup = field.mapTo(section, PyQt5.QtCore.QPoint(0, 0)).x()
-                    self.assertGreater(reference, 0)
-                    self.assertEqual(warmup, reference, "「启动时预热」必须和办公分区其它字段同列")
+        values = self.panel._collect_values()
+        self.assertFalse([key for key in values if key.startswith("office_")])
 
     def test_auto_companion_interval_slider_uses_minute_limits(self):
         field = self.panel._auto_companion_interval_minutes

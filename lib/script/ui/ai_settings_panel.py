@@ -96,6 +96,7 @@ from lib.script.workbench.settings import (
     GENERAL_CONFIG_CATEGORIES,
 )
 from lib.script.ui.workbench_settings_layout import (
+    SmoothScrollArea,
     SettingsPageScaffold,
     create_settings_form,
 )
@@ -103,7 +104,6 @@ from lib.script.workbench.theme import get_workbench_colors
 from lib.script.ui.office_mode_settings import (
     ApiKeyLineEdit as _ApiKeyLineEdit,
     MANUAL_API_PROVIDER_PRESETS as _MANUAL_API_PROVIDER_PRESETS,
-    OfficeModeSettings,
     WatermarkComboBox as _WatermarkComboBox,
     create_field_row_group as _create_field_row_group_helper,
     describe_form_row as _describe_form_row_helper,
@@ -1346,71 +1346,6 @@ class _NoWheelSlider(QSlider):
         event.ignore()
 
 
-class _SmoothScrollArea(QScrollArea):
-    """滚轮平滑滚动容器：将离散滚动步进转换为短动画过渡。"""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._wheel_target_value = 0
-        self._wheel_pending_px = 0.0
-        self._wheel_anim = QPropertyAnimation(self.verticalScrollBar(), b"value", self)
-        self._wheel_anim.setEasingCurve(QEasingCurve.OutQuart)
-        self._wheel_anim.setDuration(160)
-        bar = self.verticalScrollBar()
-        bar.setSingleStep(scale_px(24, min_abs=18))
-        bar.setPageStep(scale_px(120, min_abs=96))
-        bar.rangeChanged.connect(self._on_scroll_range_changed)
-
-    def _on_scroll_range_changed(self, minimum: int, maximum: int) -> None:
-        self._wheel_target_value = max(minimum, min(maximum, self._wheel_target_value))
-
-    def wheelEvent(self, event) -> None:
-        bar = self.verticalScrollBar()
-        if bar is None or bar.maximum() <= bar.minimum():
-            super().wheelEvent(event)
-            return
-
-        if not event.pixelDelta().isNull():
-            delta_px = float(event.pixelDelta().y())
-        else:
-            angle_y = int(event.angleDelta().y())
-            if angle_y == 0:
-                super().wheelEvent(event)
-                return
-            delta_px = float(angle_y) / 120.0 * float(scale_px(48, min_abs=36))
-
-        if abs(delta_px) < 1e-6:
-            event.accept()
-            return
-
-        self._wheel_pending_px += delta_px
-        scroll_delta = int(self._wheel_pending_px)
-        if scroll_delta == 0:
-            event.accept()
-            return
-        self._wheel_pending_px -= float(scroll_delta)
-
-        current = int(bar.value())
-        base = self._wheel_target_value if self._wheel_anim.state() == QPropertyAnimation.Running else current
-        target = int(round(base - scroll_delta))
-        target = max(bar.minimum(), min(bar.maximum(), target))
-        if target == current:
-            self._wheel_pending_px = 0.0
-            event.accept()
-            return
-
-        distance = abs(target - current)
-        duration = max(110, min(280, int(120 + distance * 0.45)))
-
-        self._wheel_target_value = target
-        self._wheel_anim.stop()
-        self._wheel_anim.setDuration(duration)
-        self._wheel_anim.setStartValue(current)
-        self._wheel_anim.setEndValue(target)
-        self._wheel_anim.start()
-        event.accept()
-
-
 class _DecimalSliderField(QWidget):
     """带数值显示的小数滑块字段。"""
 
@@ -1811,7 +1746,7 @@ class AISettingsPanel(QWidget):
             content_panel,
             "AI设置",
             _AI_HINT_TEXT,
-            scroll_factory=_SmoothScrollArea,
+            scroll_factory=SmoothScrollArea,
         )
         self._ai_scaffold = scaffold
         self._title_label = scaffold.title_label
@@ -1958,32 +1893,6 @@ class AISettingsPanel(QWidget):
             "外部接口模型名，例如 qwen3.5-plus。可探测 OpenAI 兼容接口的 /models 列表，也可直接手动输入。",
         )
         self._set_widget_description(self._probe_manual_api_models_btn, "使用当前填写的接口地址和密钥探测可用模型列表。")
-
-        self._office_mode_section = scaffold.add_section(
-            "办公模式",
-            "办公模式可以使用独立的 API 配置。",
-        )
-        self._office_settings = OfficeModeSettings(
-            parent=self._office_mode_section,
-            probe=self._probe_local_dsh,
-            info=self._emit_info,
-            dispatch=self._run_on_ui_thread,
-        )
-        self._office_settings.build_into(self._office_mode_section)
-        # 兼容旧引用点：控件树由 OfficeModeSettings 统一持有，这里只做别名，不复制行为。
-        self._office_mode_form = self._office_settings.backend_form
-        self._office_backend = self._office_settings.backend
-        self._office_use_independent_api = self._office_settings.use_independent_api
-        self._office_independent_api_group = self._office_settings.independent_api_group
-        self._office_independent_api_form = self._office_settings.independent_api_form
-        self._office_independent_api_rows = self._office_settings.independent_api_rows
-        self._office_api_key = self._office_settings.api_key
-        self._office_api_provider = self._office_settings.api_provider
-        self._office_api_base_url = self._office_settings.api_base_url
-        self._office_api_model = self._office_settings.api_model
-        self._probe_office_api_models_btn = self._office_settings.probe_button
-        self._office_tail_form = self._office_settings.tail_form
-        self._office_warmup_on_startup = self._office_settings.warmup_on_startup
 
         self._ollama_section = scaffold.add_section(
             "Ollama 配置",
@@ -2335,7 +2244,7 @@ class AISettingsPanel(QWidget):
             panel,
             category_title,
             category.description or _GENERAL_HINT_TEXT,
-            scroll_factory=_SmoothScrollArea,
+            scroll_factory=SmoothScrollArea,
         )
         title_label = scaffold.title_label
         hint_label = scaffold.description_label
@@ -4779,7 +4688,6 @@ class AISettingsPanel(QWidget):
             "api_enable_thinking": bool(self._api_enable_thinking.isChecked()),
             "auto_companion_enabled": bool(self._auto_companion_enabled.isChecked()),
             "auto_companion_interval_minutes": int(self._auto_companion_interval_minutes.value()),
-            **self._office_settings.values(),
         }
         self._validate_ai_values(values)
         return values
@@ -4825,8 +4733,6 @@ class AISettingsPanel(QWidget):
         self._auto_companion_interval_minutes.set_value(values.get("auto_companion_interval_minutes", 2))
         self._auto_companion_interval_minutes.setEnabled(self._auto_companion_enabled.isChecked())
 
-        self._office_settings.set_values(values)
-
         mode_value = str(values.get("force_reply_mode", "") or "").strip()
         idx = self._force_mode.findData(mode_value)
         self._force_mode.setCurrentIndex(max(0, idx))
@@ -4853,30 +4759,6 @@ class AISettingsPanel(QWidget):
             return
         group.setVisible(bool(toggle.isChecked()))
 
-
-    def _probe_local_dsh(self) -> dict:
-        """读取启动期探测结果，没有缓存时按需只读探测；失败不影响设置面板。"""
-        try:
-            from lib.script.office import local_dsh
-
-            cached = local_dsh.cached_local_dsh_status()
-            if cached is not None:
-                return dict(cached)
-            return dict(local_dsh.local_dsh_status())
-        except Exception as exc:
-            return {
-                "available": False,
-                "reason": f"探测本机 DeepSeek Harness 失败：{exc}",
-            }
-
-    def _ensure_local_dsh_item(self, *, saved_backend: str | None = None) -> None:
-        self._office_settings.ensure_local_dsh_item(saved_backend=saved_backend)
-
-    def _office_backend_description(self) -> str:
-        return self._office_settings.backend_description()
-
-    def _refresh_office_backend_description(self, *_args) -> None:
-        self._office_settings.refresh_backend_description()
 
     def _refresh_voice_package_ui(self) -> None:
         status = get_voice_package_status()

@@ -223,6 +223,18 @@
   默认的 12px；推理条档位名从轨道上方挪到滑条左侧、与「推理强度」标签同一行，已达档位的填色
   段里铺一层固定种子的星点当星空（`EFFORT_STAR_COUNT` / `EFFORT_STAR_SEED`，横坐标按整条
   轨道比例摆放，换档只是多露出几颗，星点与光晕都裁在槽内）。
+- 办公配置从 AI 设置面板移除：办公后端、独立 API 与启动时预热只长在工作台「办公模式」页，
+  写盘归属跟着拆开——`save_ai_values()` 只写 `get_ai_panel_setting_defaults()`（不含 `office_*`），
+  `save_office_values()` 只写 `OFFICE_VALUE_KEYS`（`config.ollama_config.OFFICE_SETTING_KEYS`），
+  表单没提交的办公键沿用当前生效值，密钥文件改成「调用方没给的密钥沿用磁盘现值」，面板保存
+  不再把办公配置或办公密钥清回默认值，`apply_ai_runtime()` 也只在 values 带办公键时才动
+  `OFFICE_MODE`。
+- 办公模式配置页与 AI 设置页统一手感：内嵌到工作台时不再重复页内大标题（顶栏已经显示页名，
+  与 `create_workbench_page()` 对 AI 页的处理一致），滚动换成两边共用的
+  `workbench_settings_layout.SmoothScrollArea`（原 `ai_settings_panel._SmoothScrollArea` 搬进
+  共用模块），「保存办公配置」从分区正文搬到底部 `SettingsActionBar`（左侧新增常驻状态行
+  `SettingsActionStatus`，保存与探测结果都落在这一行），「打开办公页面」改写成设置面板同款的
+  控件行（右对齐标签 + 控件列），技能/插件列表项字重跟同页正文一样加粗。
 ### Fixed
 - 修复 CUDA 构建在“嵌入 PTX”一步要几十分钟：`cmake/embed_ptx.cmake` 原来按两个十六进制
   字符循环一次（半兆内核对应上百万次），每轮都把整份十六进制串展开进一次

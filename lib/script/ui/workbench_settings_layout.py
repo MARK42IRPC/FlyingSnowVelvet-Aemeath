@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import QEasingCurve, QPropertyAnimation, Qt
 from PyQt5.QtWidgets import (
     QFormLayout,
     QFrame,
@@ -64,6 +64,71 @@ class SettingsFormLayout(QFormLayout):
 
 def create_settings_form() -> SettingsFormLayout:
     return SettingsFormLayout()
+
+
+class SmoothScrollArea(QScrollArea):
+    """滚轮平滑滚动容器：把离散滚动步进变成短动画过渡，设置页共用同一份手感。"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._wheel_target_value = 0
+        self._wheel_pending_px = 0.0
+        self._wheel_anim = QPropertyAnimation(self.verticalScrollBar(), b"value", self)
+        self._wheel_anim.setEasingCurve(QEasingCurve.OutQuart)
+        self._wheel_anim.setDuration(160)
+        bar = self.verticalScrollBar()
+        bar.setSingleStep(scale_px(24, min_abs=18))
+        bar.setPageStep(scale_px(120, min_abs=96))
+        bar.rangeChanged.connect(self._on_scroll_range_changed)
+
+    def _on_scroll_range_changed(self, minimum: int, maximum: int) -> None:
+        self._wheel_target_value = max(minimum, min(maximum, self._wheel_target_value))
+
+    def wheelEvent(self, event) -> None:
+        bar = self.verticalScrollBar()
+        if bar is None or bar.maximum() <= bar.minimum():
+            super().wheelEvent(event)
+            return
+
+        if not event.pixelDelta().isNull():
+            delta_px = float(event.pixelDelta().y())
+        else:
+            angle_y = int(event.angleDelta().y())
+            if angle_y == 0:
+                super().wheelEvent(event)
+                return
+            delta_px = float(angle_y) / 120.0 * float(scale_px(48, min_abs=36))
+
+        if abs(delta_px) < 1e-6:
+            event.accept()
+            return
+
+        self._wheel_pending_px += delta_px
+        scroll_delta = int(self._wheel_pending_px)
+        if scroll_delta == 0:
+            event.accept()
+            return
+        self._wheel_pending_px -= float(scroll_delta)
+
+        current = int(bar.value())
+        base = self._wheel_target_value if self._wheel_anim.state() == QPropertyAnimation.Running else current
+        target = int(round(base - scroll_delta))
+        target = max(bar.minimum(), min(bar.maximum(), target))
+        if target == current:
+            self._wheel_pending_px = 0.0
+            event.accept()
+            return
+
+        distance = abs(target - current)
+        duration = max(110, min(280, int(120 + distance * 0.45)))
+
+        self._wheel_target_value = target
+        self._wheel_anim.stop()
+        self._wheel_anim.setDuration(duration)
+        self._wheel_anim.setStartValue(current)
+        self._wheel_anim.setEndValue(target)
+        self._wheel_anim.start()
+        event.accept()
 
 
 class SettingsPageHeader(QFrame):
@@ -130,6 +195,11 @@ class SettingsActionBar(QFrame):
         super().__init__(parent)
         self.setObjectName("SettingsActionBar")
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        #: 左侧状态文案：只在页面有话说时占位，按钮始终靠右。
+        self.status_label = QLabel("", self)
+        self.status_label.setObjectName("SettingsActionStatus")
+        self.status_label.setWordWrap(True)
+        self.status_label.hide()
         self.button_layout = QHBoxLayout(self)
         self.button_layout.setContentsMargins(
             scale_px(12, min_abs=10),
@@ -138,7 +208,20 @@ class SettingsActionBar(QFrame):
             scale_px(9, min_abs=7),
         )
         self.button_layout.setSpacing(scale_px(8, min_abs=6))
+        # 状态文案拿走左侧的富余空间：单行显示，按钮不受文案长短影响。
+        self.button_layout.addWidget(self.status_label, 1)
         self.button_layout.addStretch(1)
+
+    def set_status(self, text: str, *, tone: str = "") -> None:
+        """更新左侧状态文案；空字符串即收起这一行。"""
+        message = str(text or "")
+        self.status_label.setText(message)
+        self.status_label.setProperty("tone", tone)
+        style = self.status_label.style()
+        if style is not None:
+            style.unpolish(self.status_label)
+            style.polish(self.status_label)
+        self.status_label.setVisible(bool(message))
 
     def add_action(self, text: str, callback: Callable[[], None], *, primary: bool = False) -> QPushButton:
         button = QPushButton(text, self)
@@ -209,6 +292,12 @@ class SettingsPageScaffold:
     def add_action(self, text: str, callback: Callable[[], None], *, primary: bool = False) -> QPushButton:
         self.action_bar.show()
         return self.action_bar.add_action(text, callback, primary=primary)
+
+    def set_status(self, text: str, *, tone: str = "") -> None:
+        """在底部动作条左侧显示状态文案；有内容时动作条一定可见。"""
+        if str(text or ""):
+            self.action_bar.show()
+        self.action_bar.set_status(text, tone=tone)
 
     def finish(self) -> None:
         apply_settings_page_fonts(self.root_layout.parentWidget())

@@ -120,8 +120,11 @@ class OfficeManagerCard(SettingsSection):
     def _build_list(self) -> None:
         self._list = QListWidget(self)
         self._list.setObjectName("OfficeManagerList")
-        # 行高由这份字体度量算出（`rows_height()`），跟办公面其余正文同档。
-        self._list.setFont(get_ui_font(size=SETTINGS_FONT_SIZE))
+        # 行高由这份字体度量算出（`rows_height()`）；字号取设置页档位、字重跟设置页的
+        # 标签与控件一样加粗，否则列表项比同页的正文细一档。
+        list_font = get_ui_font(size=SETTINGS_FONT_SIZE)
+        list_font.setBold(True)
+        self._list.setFont(list_font)
         self._list.setWordWrap(False)
         self._list.setTextElideMode(Qt.ElideRight)
         self._list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)

@@ -72,7 +72,9 @@ def load_ai_values(default_values: dict) -> dict:
 def save_ai_values(values: dict, default_values: dict) -> None:
     import config.ollama_config as oc
 
-    setting_defaults = oc.get_ai_setting_defaults()
+    # 只写 AI 设置面板拥有的键：办公字段归办公模式页写（见 OFFICE_VALUE_KEYS），
+    # 否则面板保存会把用户没在这页看过的办公配置覆盖回默认值。
+    setting_defaults = oc.get_ai_panel_setting_defaults()
     ordinary_values = {
         key: values.get(key, default)
         for key, default in setting_defaults.items()
@@ -82,6 +84,7 @@ def save_ai_values(values: dict, default_values: dict) -> None:
 
 
 #: 办公模式相关字段；办公页面只改这几个键，其余字段沿用落盘值。
+#: 与 `config.ollama_config.OFFICE_SETTING_KEYS` 必须一致（默认值从那边取），两边漂了就报错。
 OFFICE_VALUE_KEYS = (
     "office_backend",
     "office_use_independent_api",
@@ -95,15 +98,24 @@ OFFICE_VALUE_KEYS = (
 def save_office_values(values: dict, default_values: dict) -> dict:
     """只把办公模式相关字段写回配置，其余字段保持当前落盘值。
 
-    办公配置从 AI 设置面板搬到办公页面后，办公页面不能拿整份 AI 表单去保存，
-    否则会把用户没在办公页面上看过的字段一起覆盖掉。这里先读全量、覆盖办公字段、
-    再走原有的保存与热重载路径，返回合并后的完整值供调用方复用。
+    办公配置只长在办公模式页上（AI 设置面板里不再有这一块），所以这里只写
+    `OFFICE_VALUE_KEYS` 里的键：先读全量、覆盖办公字段、再走原有的保存与热重载
+    路径，返回合并后的完整值供调用方复用。其余 AI 字段由 `save_ai_values` 负责。
     """
-    merged = load_ai_values(default_values)
-    for key in OFFICE_VALUE_KEYS:
-        if key in values:
-            merged[key] = values[key]
-    save_ai_values(merged, default_values)
+    import config.ollama_config as oc
+
+    office_defaults = oc.get_office_setting_defaults()
+    # 调用方没给的办公键沿用当前生效值：半份表单不会把用户配置写回默认值。
+    current = load_ai_values(default_values)
+    office_values = {
+        key: values.get(key, current.get(key, office_defaults[key]))
+        for key in OFFICE_VALUE_KEYS
+    }
+    merged = dict(current)
+    merged.update(office_values)
+    _write_local_ai_secrets(merged)
+    # save_section 会保留不在 defaults 里的既有键，因此 AI 字段不会被这条写盘动到。
+    save_section("ai", office_values, office_defaults)
     apply_ai_runtime(merged, default_values)
     return merged
 
@@ -145,12 +157,23 @@ def apply_ai_runtime(values: dict, default_values: dict) -> None:
     oc.AUTO_COMPANION["interval_ms"] = (interval_minutes * 60000, interval_minutes * 60000)
     oc.OLLAMA_OPTIONS["num_gpu"] = values["num_gpu"]
     oc.OLLAMA_OPTIONS["num_thread"] = values["num_thread"]
-    oc.OFFICE_MODE["use_independent_api"] = values["office_use_independent_api"]
-    oc.OFFICE_MODE["backend"] = str(values.get("office_backend", "dsh") or "dsh")
-    oc.OFFICE_MODE["api_key"] = values["office_api_key"]
-    oc.OFFICE_MODE["api_base_url"] = values["office_api_base_url"]
-    oc.OFFICE_MODE["api_model"] = values["office_api_model"]
-    oc.OFFICE_MODE["warmup_on_startup"] = values["office_warmup_on_startup"]
+    # 办公字段只在办公模式页保存时出现；AI 面板保存的 values 里没有这些键，沿用当前运行时值。
+    oc.OFFICE_MODE["use_independent_api"] = bool(
+        values.get("office_use_independent_api", oc.OFFICE_MODE.get("use_independent_api", False))
+    )
+    oc.OFFICE_MODE["backend"] = str(
+        values.get("office_backend", oc.OFFICE_MODE.get("backend", "dsh")) or "dsh"
+    )
+    oc.OFFICE_MODE["api_key"] = values.get("office_api_key", oc.OFFICE_MODE.get("api_key", ""))
+    oc.OFFICE_MODE["api_base_url"] = values.get(
+        "office_api_base_url", oc.OFFICE_MODE.get("api_base_url", "")
+    )
+    oc.OFFICE_MODE["api_model"] = values.get(
+        "office_api_model", oc.OFFICE_MODE.get("api_model", "gpt-5.4")
+    )
+    oc.OFFICE_MODE["warmup_on_startup"] = bool(
+        values.get("office_warmup_on_startup", oc.OFFICE_MODE.get("warmup_on_startup", True))
+    )
 
     try:
         from lib.script.chat.ollama import get_ollama_manager
@@ -188,10 +211,12 @@ def _write_text_atomic(path: Path, text: str) -> None:
 
 
 def _write_local_ai_secrets(values: dict) -> None:
-    payload = {
-        key: str(values.get(key, "") or "").strip()
-        for key in _SECRET_KEYS
-    }
+    """写用户密钥文件；调用方没提供的密钥沿用磁盘现值，不静默清空。"""
+    payload = {key: "" for key in _SECRET_KEYS}
+    payload.update(_read_local_ai_secrets())
+    for key in _SECRET_KEYS:
+        if key in values:
+            payload[key] = str(values.get(key, "") or "").strip()
     _write_text_atomic(
         _local_ai_secret_path(),
         json.dumps(payload, ensure_ascii=False, indent=2) + "\n",

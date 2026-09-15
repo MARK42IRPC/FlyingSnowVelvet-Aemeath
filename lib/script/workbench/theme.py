@@ -390,6 +390,15 @@ def workbench_stylesheet(mode: str | None = None) -> str:
         border: {border}px solid {c.border};
         border-radius: {radius}px;
     }}
+    QFrame#WorkbenchPageHost QFrame#SettingsActionBar QLabel#SettingsActionStatus {{
+        color: {c.text_muted};
+        background: transparent;
+        border: none;
+        padding-left: {scale_px(2, min_abs=1)}px;
+    }}
+    QFrame#WorkbenchPageHost QFrame#SettingsActionBar QLabel#SettingsActionStatus[tone="error"] {{
+        color: {c.danger};
+    }}
     QFrame#WorkbenchPageHost QPushButton#SettingsPrimaryAction,
     QFrame#WorkbenchPageHost QPushButton[primary="true"] {{
         background: {c.cyan};

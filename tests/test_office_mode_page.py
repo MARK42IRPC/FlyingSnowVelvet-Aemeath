@@ -24,18 +24,35 @@ os.environ.setdefault(
 os.environ.setdefault("QT_PLUGIN_PATH", os.path.join(_QT_ROOT, "Qt5", "plugins"))
 
 from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import QApplication, QLabel, QWidget
+from PyQt5.QtWidgets import (
+    QApplication,
+    QFormLayout,
+    QFrame,
+    QLabel,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
 
-from config.scale import scale_px
 from lib.script.office import plugins as office_plugins
 from lib.script.office import skills as office_skills
+from lib.script.ui import office_mode_settings as office_settings_module
 from lib.script.ui.ai_settings_defaults import AI_DEFAULT_VALUES
 from lib.script.ui.ai_settings_storage import load_ai_values
 from lib.script.ui.office_manager_card import VISIBLE_ROWS, OfficeManagerCard
-from lib.script.ui.office_mode_page import OPEN_OFFICE_HINT, OfficeModePage
+from lib.script.ui.office_mode_page import (
+    OPEN_OFFICE_HINT,
+    SAVE_STATUS_HINT,
+    OfficeModePage,
+)
 from lib.script.ui.office_page import OfficeWorkbenchPage
+from lib.script.ui.workbench_settings_layout import (
+    SETTINGS_FONT_SIZE,
+    SETTINGS_LABEL_WIDTH,
+    SmoothScrollArea,
+)
 from lib.script.workbench.builtin_pages import builtin_tool_page_specs
-from lib.script.workbench.theme import get_workbench_colors
+from lib.script.workbench.theme import get_workbench_colors, workbench_stylesheet
 
 
 class OfficeModePageTests(unittest.TestCase):
@@ -51,6 +68,27 @@ class OfficeModePageTests(unittest.TestCase):
         page = OfficeModePage(embedded=True)
         self.addCleanup(page.deleteLater)
         return page
+
+    def _page_with_probe(self, status: dict) -> OfficeModePage:
+        """按给定本机 DSH 探测结果建页（探测只在构造期读一次）。"""
+        probe = patch.object(
+            office_settings_module, "probe_local_dsh", return_value=dict(status)
+        )
+        probe.start()
+        self.addCleanup(probe.stop)
+        return self._page()
+
+    @staticmethod
+    def _backend_items(field) -> list[tuple[str, object]]:
+        return [(field.itemText(index), field.itemData(index)) for index in range(field.count())]
+
+    @staticmethod
+    def _body_size_hint(section) -> int:
+        """分区 body 的布局高度：隐藏项必须完全不占位，否则折叠会留下大空白。"""
+        layout = section.body_layout
+        layout.invalidate()
+        layout.activate()
+        return layout.sizeHint().height()
 
     def test_builtin_office_page_is_the_config_only_page(self):
         spec = next(spec for spec in builtin_tool_page_specs() if spec.page_id == "office")
@@ -74,7 +112,7 @@ class OfficeModePageTests(unittest.TestCase):
             [title for title in section_titles if title],
             ["办公配置", "技能管理", "插件管理"],
         )
-        # 配置控件来自共用的 OfficeModeSettings，与 AI 设置面板是同一份实现。
+        # 配置控件来自 OfficeModeSettings；办公配置只长在这一页上。
         settings = page._office_settings
         self.assertEqual(settings.backend.itemData(0), "dsh")
         self.assertIsNotNone(settings.use_independent_api)
@@ -82,6 +120,46 @@ class OfficeModePageTests(unittest.TestCase):
         self.assertIsNotNone(page._save_button)
         self.assertEqual(page._save_button.text(), "保存办公配置")
         self.assertTrue(bool(page._save_button.property("primary")))
+
+    def test_page_uses_the_shared_settings_scaffold_primitives(self):
+        """页眉、滚动、底部按钮都跟工作台设置页走同一套原语。"""
+        page = self._page()
+        scaffold = page._scaffold
+
+        self.assertIsInstance(scaffold.scroll, SmoothScrollArea)
+        self.assertTrue(scaffold.action_bar.isVisibleTo(page))
+        # 保存按钮在底部动作条里，不在分区正文里——与 AI 设置页一致。
+        self.assertIs(page._save_button.parentWidget(), scaffold.action_bar)
+        self.assertNotIn(page._save_button, page._config_section.findChildren(QPushButton))
+        self.assertIn(page._open_button, page._config_section.findChildren(QPushButton))
+        # 「打开办公页面」按设置面板的控件行铺：右对齐标签 + 控件列。
+        labels = [
+            label.text()
+            for label in page._config_section.findChildren(QLabel, "ConfigFormLabel")
+        ]
+        self.assertIn("办公页面", labels)
+        self.assertEqual(page._status_label.text(), SAVE_STATUS_HINT)
+
+    def test_embedded_page_hides_the_in_page_title(self):
+        """工作台顶栏已经显示页名，内嵌时页内不再重复大标题（与 AI 设置页一致）。"""
+        page = self._page()
+
+        self.assertTrue(page._scaffold.title_label.isHidden())
+        self.assertFalse(page._scaffold.description_label.isHidden())
+
+        page.set_embedded_mode(False)
+
+        self.assertFalse(page._scaffold.title_label.isHidden())
+
+    def test_manager_lists_use_the_bold_settings_font(self):
+        """列表项字号取设置页档位，字重跟同页正文一样加粗，不再细一档。"""
+        page = self._page()
+
+        for card in (page._skill_card, page._plugin_card):
+            with self.subTest(kind=card._kind):
+                font = card.list_widget().font()
+                self.assertEqual(font.pixelSize(), SETTINGS_FONT_SIZE)
+                self.assertTrue(font.bold())
 
     def test_page_keeps_a_button_that_opens_the_standalone_office_page(self):
         page = self._page()
@@ -157,6 +235,149 @@ class OfficeModePageTests(unittest.TestCase):
 
         self.assertEqual(office_mode_page.list_office_skills(), office_skills.list_skills())
         self.assertEqual(office_mode_page.list_office_plugins(), office_plugins.list_plugins())
+
+    # ── 办公后端与本机 DSH ───────────────────────────────────────────
+
+    def test_office_backend_hides_local_entry_when_probe_finds_nothing(self):
+        page = self._page_with_probe(
+            {"available": False, "reason": "未探测到 本机 DeepSeek Harness"}
+        )
+        field = page._office_settings.backend
+
+        self.assertEqual(self._backend_items(field), [("DeepSeek Harness（推荐）", "dsh")])
+        self.assertEqual(field.currentData(), "dsh")
+        self.assertIn("DeepSeek Harness", page._office_settings.backend_description())
+
+    def test_office_backend_lists_local_entry_when_probe_succeeds(self):
+        page = self._page_with_probe({
+            "available": True,
+            "version": "0.1.0-rc.6",
+            "source": "npm 全局目录",
+            "path": r"C:\Users\demo\AppData\Roaming\npm\node_modules\@deepseek-ai\dsh",
+        })
+        field = page._office_settings.backend
+
+        self.assertEqual(self._backend_items(field), [
+            ("DeepSeek Harness（推荐）", "dsh"),
+            ("本机 DeepSeek Harness", "local_dsh"),
+        ])
+        self.assertTrue(field.model().item(field.findData("local_dsh")).isEnabled())
+
+        field.setCurrentIndex(field.findData("local_dsh"))
+
+        description = page._office_settings.backend_description()
+        self.assertIn("0.1.0-rc.6", description)
+        self.assertIn("npm 全局目录", description)
+        self.assertIn(r"AppData\Roaming\npm", description)
+
+    def test_office_backend_keeps_saved_local_choice_when_probe_finds_nothing(self):
+        page = self._page_with_probe(
+            {"available": False, "reason": "未探测到 本机 DeepSeek Harness"}
+        )
+        settings = page._office_settings
+        settings.set_values({"office_backend": "local_dsh"})
+        field = settings.backend
+
+        self.assertEqual(self._backend_items(field), [
+            ("DeepSeek Harness（推荐）", "dsh"),
+            ("本机 DeepSeek Harness（未探测到）", "local_dsh"),
+        ])
+        self.assertFalse(field.model().item(field.findData("local_dsh")).isEnabled())
+        self.assertEqual(field.currentData(), "local_dsh")
+        self.assertIn("未探测到", settings.backend_description())
+
+    def test_office_backend_does_not_duplicate_local_entry_on_reload(self):
+        page = self._page_with_probe({"available": True, "version": "0.1.0-rc.6"})
+        settings = page._office_settings
+
+        settings.set_values({"office_backend": "local_dsh"})
+        settings.set_values({"office_backend": "dsh"})
+
+        field = settings.backend
+        entries = [data for _text, data in self._backend_items(field)]
+        self.assertEqual(entries.count("local_dsh"), 1)
+        self.assertEqual(field.currentData(), "dsh")
+
+    def test_office_backend_does_not_hide_independent_api_toggle_or_warmup(self):
+        page = self._page()
+        settings = page._office_settings
+
+        self.assertFalse(settings.backend.isHidden())
+        self.assertFalse(settings.use_independent_api.isHidden())
+        self.assertFalse(settings.warmup_on_startup.isHidden())
+        self.assertTrue(settings.independent_api_group.isHidden())
+        self.assertEqual(
+            settings.independent_api_form.rowCount(),
+            len(settings.independent_api_rows),
+        )
+
+        settings.use_independent_api.setChecked(True)
+
+        self.assertFalse(settings.backend.isHidden())
+        self.assertFalse(settings.use_independent_api.isHidden())
+        self.assertFalse(settings.warmup_on_startup.isHidden())
+        self.assertFalse(settings.independent_api_group.isHidden())
+        for field in settings.independent_api_rows:
+            self.assertFalse(field.isHidden())
+
+    def test_collapsed_office_group_releases_its_row_space(self):
+        page = self._page()
+        settings = page._office_settings
+        section = page._config_section
+        group = settings.independent_api_group
+
+        settings.use_independent_api.setChecked(True)
+        expanded = self._body_size_hint(section)
+        settings.use_independent_api.setChecked(False)
+        collapsed = self._body_size_hint(section)
+
+        self.assertAlmostEqual(
+            expanded - collapsed,
+            group.sizeHint().height() + section.body_layout.spacing(),
+            delta=2,
+        )
+
+    def test_office_warmup_row_shares_the_office_field_column(self):
+        """「启动时预热」独占一张表单，标签列必须与办公分区其它行同宽，否则会左移一列。"""
+        page = self._page()
+        settings = page._office_settings
+        field = settings.warmup_on_startup
+        row, role = settings.tail_form.getWidgetPosition(field)
+
+        self.assertEqual(role, QFormLayout.FieldRole)
+        label_item = settings.tail_form.itemAt(row, QFormLayout.LabelRole)
+        self.assertIsNotNone(label_item, "空标签行不占标签列，会把字段挤到分区最左侧")
+        label = label_item.widget()
+        self.assertIsInstance(label, QLabel)
+        self.assertEqual(label.text(), "")
+        self.assertEqual(label.minimumWidth(), SETTINGS_LABEL_WIDTH)
+        self.assertEqual(label.maximumWidth(), SETTINGS_LABEL_WIDTH)
+
+        host = QFrame()
+        host.setObjectName("WorkbenchPageHost")
+        host.setStyleSheet(workbench_stylesheet())
+        host_layout = QVBoxLayout(host)
+        host_layout.addWidget(page)
+        host.resize(1010, 760)
+        host.show()
+        self.addCleanup(host.close)
+        self.addCleanup(host.deleteLater)
+        self.app.processEvents()
+
+        section = page._config_section
+        for expanded in (False, True):
+            with self.subTest(expanded=expanded):
+                settings.use_independent_api.setChecked(expanded)
+                self.app.processEvents()
+                section.body_layout.invalidate()
+                section.body_layout.activate()
+                self.app.processEvents()
+                reference = settings.use_independent_api.mapTo(
+                    section, PyQt5.QtCore.QPoint(0, 0)
+                ).x()
+                warmup = field.mapTo(section, PyQt5.QtCore.QPoint(0, 0)).x()
+                self.assertGreater(reference, 0)
+                self.assertEqual(warmup, reference, "「启动时预热」必须和办公分区其它字段同列")
 
 
 if __name__ == "__main__":

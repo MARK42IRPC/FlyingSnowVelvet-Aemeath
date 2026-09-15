@@ -15,6 +15,136 @@ from lib.script.ui import ai_settings_storage as storage
 
 
 class AISettingsStorageLocalSecretsTests(unittest.TestCase):
+    def test_office_value_keys_match_the_shared_defaults_table(self):
+        """写盘键与 `config.ollama_config.OFFICE_SETTING_KEYS` 必须一一对应。"""
+        self.assertEqual(
+            set(storage.OFFICE_VALUE_KEYS),
+            set(oc.OFFICE_SETTING_KEYS),
+        )
+        self.assertEqual(
+            set(oc.get_office_setting_defaults()),
+            set(oc.OFFICE_SETTING_KEYS),
+        )
+        # AI 面板拥有的默认值不含办公字段，整段加载用的默认值仍然含。
+        self.assertFalse(
+            [key for key in oc.get_ai_panel_setting_defaults() if key.startswith("office_")]
+        )
+        self.assertTrue(
+            [key for key in oc.get_ai_setting_defaults() if key.startswith("office_")]
+        )
+
+    def test_ai_panel_save_keeps_office_config_and_secret(self):
+        """AI 设置面板保存不碰办公字段：办公配置与办公密钥只由办公模式页写。"""
+        defaults = oc.get_ai_setting_defaults()
+        office_original = dict(oc.OFFICE_MODE)
+        self.addCleanup(lambda: (oc.OFFICE_MODE.clear(), oc.OFFICE_MODE.update(office_original)))
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            settings_path = root / "user" / "settings.json"
+            secret_path = root / "user" / "secrets" / "ai.json"
+            with patch.object(user_settings, "get_user_settings_path", return_value=settings_path), patch.object(
+                storage, "_local_ai_secret_path", return_value=secret_path
+            ), patch("lib.script.chat.ollama.get_ollama_manager"), patch(
+                "lib.core.event.center.get_event_center"
+            ):
+                storage.save_office_values({
+                    "office_backend": "local_dsh",
+                    "office_use_independent_api": True,
+                    "office_api_key": "office-secret",
+                    "office_api_base_url": "https://office.example/v1",
+                    "office_api_model": "office-model",
+                    "office_warmup_on_startup": False,
+                }, defaults)
+
+                panel_values = {
+                    key: value
+                    for key, value in oc.get_ai_setting_defaults().items()
+                    if not key.startswith("office_")
+                }
+                panel_values.update({"api_key": "panel-key", "api_model": "panel-model"})
+                storage.save_ai_values(panel_values, defaults)
+
+            ai = json.loads(settings_path.read_text(encoding="utf-8"))["overrides"]["ai"]
+            self.assertEqual(ai["api_model"], "panel-model")
+            self.assertEqual(ai["office_backend"], "local_dsh")
+            self.assertTrue(ai["office_use_independent_api"])
+            self.assertEqual(ai["office_api_model"], "office-model")
+            self.assertEqual(ai["office_api_base_url"], "https://office.example/v1")
+            self.assertFalse(ai["office_warmup_on_startup"])
+
+            secrets = json.loads(secret_path.read_text(encoding="utf-8"))
+            self.assertEqual(secrets["api_key"], "panel-key")
+            self.assertEqual(secrets["office_api_key"], "office-secret")
+
+    def test_apply_runtime_keeps_office_state_when_values_omit_office_keys(self):
+        """面板保存时 values 里没有办公键，运行时办公状态不得被默认值顶掉。"""
+        defaults = oc.get_ai_setting_defaults()
+        office_original = dict(oc.OFFICE_MODE)
+        self.addCleanup(lambda: (oc.OFFICE_MODE.clear(), oc.OFFICE_MODE.update(office_original)))
+        oc.OFFICE_MODE.update({
+            "backend": "local_dsh",
+            "use_independent_api": True,
+            "api_key": "kept-key",
+            "api_base_url": "https://office.example/v1",
+            "api_model": "kept-model",
+            "warmup_on_startup": False,
+        })
+        values = {
+            key: value
+            for key, value in defaults.items()
+            if not key.startswith("office_")
+        }
+        values["api_key"] = "panel-key"
+
+        with patch("lib.script.chat.ollama.get_ollama_manager"), patch(
+            "lib.core.event.center.get_event_center"
+        ):
+            storage.apply_ai_runtime(values, defaults)
+
+        self.assertEqual(oc.API_KEY, "panel-key")
+        self.assertEqual(oc.OFFICE_MODE["backend"], "local_dsh")
+        self.assertTrue(oc.OFFICE_MODE["use_independent_api"])
+        self.assertEqual(oc.OFFICE_MODE["api_key"], "kept-key")
+        self.assertEqual(oc.OFFICE_MODE["api_base_url"], "https://office.example/v1")
+        self.assertEqual(oc.OFFICE_MODE["api_model"], "kept-model")
+        self.assertFalse(oc.OFFICE_MODE["warmup_on_startup"])
+
+    def test_office_save_keeps_keys_the_form_did_not_provide(self):
+        """办公页只提交半份表单时，没提交的办公键沿用当前生效值而不是回落到默认值。"""
+        defaults = oc.get_ai_setting_defaults()
+        office_original = dict(oc.OFFICE_MODE)
+        self.addCleanup(lambda: (oc.OFFICE_MODE.clear(), oc.OFFICE_MODE.update(office_original)))
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            settings_path = root / "user" / "settings.json"
+            secret_path = root / "user" / "secrets" / "ai.json"
+            with patch.object(user_settings, "get_user_settings_path", return_value=settings_path), patch.object(
+                storage, "_local_ai_secret_path", return_value=secret_path
+            ), patch("lib.script.chat.ollama.get_ollama_manager"), patch(
+                "lib.core.event.center.get_event_center"
+            ):
+                storage.save_office_values({
+                    "office_backend": "local_dsh",
+                    "office_use_independent_api": True,
+                    "office_api_key": "office-secret",
+                    "office_api_base_url": "https://office.example/v1",
+                    "office_api_model": "office-model",
+                    "office_warmup_on_startup": False,
+                }, defaults)
+                merged = storage.save_office_values({"office_backend": "dsh"}, defaults)
+
+            self.assertEqual(merged["office_backend"], "dsh")
+            self.assertEqual(merged["office_api_model"], "office-model")
+            self.assertEqual(merged["office_api_base_url"], "https://office.example/v1")
+            self.assertTrue(merged["office_use_independent_api"])
+            self.assertFalse(merged["office_warmup_on_startup"])
+            self.assertEqual(oc.OFFICE_MODE["api_model"], "office-model")
+
+            secrets = json.loads(secret_path.read_text(encoding="utf-8"))
+            self.assertEqual(secrets["office_api_key"], "office-secret")
+
     def test_save_ai_values_writes_sparse_settings_and_separate_secrets(self):
         defaults = oc.get_ai_setting_defaults()
         values = {

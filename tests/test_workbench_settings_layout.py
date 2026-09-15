@@ -1,4 +1,5 @@
 import os
+import time
 import unittest
 from unittest.mock import patch
 
@@ -24,6 +25,8 @@ from PyQt5.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from PyQt5.QtCore import QPropertyAnimation
+from PyQt5.QtGui import QWheelEvent
 
 from config.scale import scale_px
 from lib.script.workbench.settings import (
@@ -34,6 +37,7 @@ from lib.script.ui.workbench_settings_layout import (
     create_settings_form,
 )
 from lib.script.ui.workbench_settings_layout import (
+    SmoothScrollArea,
     SETTINGS_FONT_SIZE,
     SETTINGS_LABEL_WIDTH,
 )
@@ -198,6 +202,69 @@ class WorkbenchSettingsLayoutTests(unittest.TestCase):
 
         self.assertEqual(field.font().pixelSize(), SETTINGS_FONT_SIZE)
         self.assertGreaterEqual(field.sizeHint().height(), field.fontMetrics().height())
+
+        page.deleteLater()
+        self.app.processEvents()
+
+    def test_smooth_scroll_area_animates_wheel_scrolling(self):
+        """平滑滚动容器把滚轮步进转成短动画：设置页共用这一份手感。"""
+        area = SmoothScrollArea()
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        for index in range(60):
+            layout.addWidget(QLabel(f"行 {index}"))
+        area.setWidgetResizable(True)
+        area.setWidget(content)
+        area.resize(320, 200)
+        area.show()
+        self.app.processEvents()
+        self.addCleanup(area.deleteLater)
+
+        bar = area.verticalScrollBar()
+        self.assertGreater(bar.maximum(), 0)
+        # 单步取设置页的档位；pageStep 由 QScrollArea 按视口高度接管，这里不锁值。
+        self.assertEqual(bar.singleStep(), scale_px(24, min_abs=18))
+
+        event = QWheelEvent(
+            PyQt5.QtCore.QPointF(10.0, 10.0),
+            PyQt5.QtCore.QPointF(10.0, 10.0),
+            PyQt5.QtCore.QPoint(0, 0),
+            PyQt5.QtCore.QPoint(0, -120),
+            PyQt5.QtCore.Qt.NoButton,
+            PyQt5.QtCore.Qt.NoModifier,
+            PyQt5.QtCore.Qt.NoScrollPhase,
+            False,
+        )
+        # 滚轮事件由视口收，`QAbstractScrollArea` 再转给容器的 `wheelEvent`。
+        QApplication.sendEvent(area.viewport(), event)
+
+        self.assertEqual(area._wheel_anim.state(), QPropertyAnimation.Running)
+        deadline = time.monotonic() + 2.0
+        while bar.value() == 0 and time.monotonic() < deadline:
+            self.app.processEvents()
+            time.sleep(0.01)
+        self.assertGreater(bar.value(), 0)
+
+    def test_action_bar_status_slot_sits_left_of_the_buttons(self):
+        page = QWidget()
+        scaffold = SettingsPageScaffold(page, "测试设置", "说明")
+        save_button = scaffold.add_action("保存更改", lambda: None, primary=True)
+        layout = scaffold.action_bar.button_layout
+        status_label = scaffold.action_bar.status_label
+
+        self.assertFalse(status_label.isVisibleTo(scaffold.action_bar))
+
+        scaffold.set_status("配置已保存。")
+
+        self.assertTrue(status_label.isVisibleTo(scaffold.action_bar))
+        self.assertEqual(status_label.text(), "配置已保存。")
+        self.assertLess(layout.indexOf(status_label), layout.indexOf(save_button))
+
+        scaffold.set_status("保存失败。", tone="error")
+        self.assertEqual(status_label.property("tone"), "error")
+
+        scaffold.set_status("")
+        self.assertFalse(status_label.isVisibleTo(scaffold.action_bar))
 
         page.deleteLater()
         self.app.processEvents()
