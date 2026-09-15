@@ -380,5 +380,63 @@ class OfficeModePageTests(unittest.TestCase):
                 self.assertEqual(warmup, reference, "「启动时预热」必须和办公分区其它字段同列")
 
 
+class OfficeSettingsWindowFlashTests(unittest.TestCase):
+    """办公配置块构造时不许把控件提升成顶层窗口。
+
+    `OfficeModeSettings._build()` 里的控件建出来时还没有父控件，铺进分区是后面
+    `build_into()` 的事。Qt 把「没有父控件的控件」的 `setVisible(True)` 当成「显示一个顶层
+    窗口」，而办公页是切到该页时才构造的，于是桌面上会闪出一个空的小窗口（实测 216×59）。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def _page_counting_parentless_shows(self) -> tuple[OfficeModePage, list[str]]:
+        promoted: list[str] = []
+        original = QWidget.setVisible
+
+        def guarded(widget, visible):
+            if visible and widget.parent() is None:
+                promoted.append(type(widget).__name__)
+            return original(widget, visible)
+
+        probe = patch.object(
+            office_settings_module,
+            "probe_local_dsh",
+            return_value={"available": False, "reason": "未探测到本机 DeepSeek Harness"},
+        )
+        with probe, patch.object(QWidget, "setVisible", guarded):
+            page = OfficeModePage(embedded=True)
+            # 勾选独立 api：显隐回调要在控件已经铺进分区之后跑。
+            page._office_settings.use_independent_api.setChecked(True)
+            page._office_settings.update_fields_visibility()
+        return page, promoted
+
+    def test_building_the_page_never_shows_a_widget_without_a_parent(self):
+        page, promoted = self._page_counting_parentless_shows()
+        self.addCleanup(page.deleteLater)
+
+        self.assertEqual(
+            promoted,
+            [],
+            "无父控件被 setVisible(True) 会被 Qt 当成顶层窗口，切页时会闪出一个空窗口",
+        )
+
+    def test_only_the_independent_api_group_changes_visibility(self):
+        page, _ = self._page_counting_parentless_shows()
+        self.addCleanup(page.deleteLater)
+        settings = page._office_settings
+
+        settings.use_independent_api.setChecked(False)
+        self.assertTrue(settings.independent_api_group.isHidden())
+        settings.use_independent_api.setChecked(True)
+        self.assertFalse(settings.independent_api_group.isHidden())
+        # 常显的三行不参与显隐，也不该被这个回调动过。
+        for widget in (settings.backend, settings.use_independent_api, settings.warmup_on_startup):
+            with self.subTest(widget=type(widget).__name__):
+                self.assertFalse(widget.isHidden())
+
+
 if __name__ == "__main__":
     unittest.main()

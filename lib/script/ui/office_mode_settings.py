@@ -453,9 +453,14 @@ class OfficeModeSettings(QObject):
     # ── 可见性与说明 ─────────────────────────────────────────────────
 
     def update_fields_visibility(self, *_args) -> None:
-        self.backend.setVisible(True)
-        self.use_independent_api.setVisible(True)
-        self.warmup_on_startup.setVisible(True)
+        """只有「独立 api」这一整块会显隐；其它三行常显，不去动它们的可见性。
+
+        这里绝不能顺手给 `backend` / `use_independent_api` / `warmup_on_startup` 补
+        `setVisible(True)`：它们在 `_build()` 里建出来时还没有父控件，而 Qt 把「没有父控件的
+        控件」的 `setVisible(True)` 当成「显示一个顶层窗口」——办公页是切到该页时才构造的
+        （工作台 `_ensure_external_page()`），桌面上就会闪出一个空的小窗口。铺进宿主分区之后
+        这几行本来就会跟着分区一起显示，补这一下对渲染结果没有任何影响。
+        """
         group = getattr(self, "independent_api_group", None)
         if group is not None:
             group.setVisible(bool(self.use_independent_api.isChecked()))
