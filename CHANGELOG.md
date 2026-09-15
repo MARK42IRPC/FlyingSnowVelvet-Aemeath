@@ -42,6 +42,17 @@
   `inspect_screen`（都要往陪伴聊天流注入 `INPUT_CHAT`，办公模式没有这条通道）以及
   `open_browser`（会在办公沙箱与审批边界之外打开系统浏览器）。桌宠工具不触发审批：它们不请求
   沙箱提权，也不读写工作区。
+- 新增星空划过粒子 `star_streak`（`lib/script/practical/star_streak_particle.py`）：白色 bloom 圆形
+  颗粒沿一个方向匀漂、叠加布朗抖动，尾段 `fade_ticks` 内线性淡出。请求参数为 `count_range`（本次
+  随机个数）、`color`、`bloom_range`（bloom 半径的随机范围）、`duration_ticks`、`fade_ticks`、
+  `direction`，默认依次是 `(0, 1)`、白色、`(2, 4)` 像素、20 tick、其中最后 10 tick 淡出、往右。
+  办公页推理滑条被按住时每个逻辑 tick（`EventType.TICK`）从滑块把手位置召唤一批，松开、页面隐藏或
+  `cleanup()` 都退订。圆形粒子的 bloom 改由共享视觉层展开：`visuals.CIRCLE_BLOOM_RINGS` 按「半径占
+  bloom 半径的比例 / 透明度倍数」由外到内铺同心光圈，`_particle_bounds()` 的保守包围盒取
+  `max(size, bloom)`，Qt 与 DX 消费同一份命令批次。
+- 独立办公窗口右上角备齐最小化、全屏 / 还原、关闭三个按钮（`create_window_button()` 加
+  `theme.window_button_stylesheet()` 的 `WorkbenchWindowButton`，与工作台主窗口同一套），全屏时
+  收掉右下角尺寸手柄、关闭先退出全屏再淡出；内嵌到工作台时不出现这组按钮，窗口交给工作台。
 
 ### Changed
 - 托盘菜单「桌宠清理」二级项与同级项的文字中心对齐：所有行的条目文字矩形统一由
@@ -218,11 +229,13 @@
   斜体 / 下划线 / 删除线交给 Qt 合成与绘制期装饰。量高改用临时文档，避免 `sizeHint()` 把已
   排好版的正文改窄、裁掉最后一行。
 
-- 办公窗口的正文与控件字号对齐工作台设置页（`SETTINGS_FONT_SIZE`，提示、聊天发送者与系统行
-  取小两号的 `SETTINGS_HINT_FONT_SIZE`）：任务标题、聊天气泡、技能/插件卡片列表不再吃应用
-  默认的 12px；推理条档位名从轨道上方挪到滑条左侧、与「推理强度」标签同一行，已达档位的填色
-  段里铺一层固定种子的星点当星空（`EFFORT_STAR_COUNT` / `EFFORT_STAR_SEED`，横坐标按整条
-  轨道比例摆放，换档只是多露出几颗，星点与光晕都裁在槽内）。
+- 办公窗口的正文与控件字号铺到整棵控件树并复用设置页口径：`office_style.apply_office_fonts()` 先调
+  `workbench_settings_layout.apply_settings_page_fonts()`（页头说明与分区标题 / 说明、输入控件），
+  再补设置页没有的工具按钮、文本视图、标签页和 `Office*` 标签；QSS 的 `font-size` 只作用于选择器
+  命中的那个控件本身，不铺这一遍子控件仍是应用默认的 12px。
+- 推理强度滑条从卡片正文搬进卡片最底部的输入坞 `QFrame#OfficeComposer`（提示词在上、动作条在下），
+  排在发送按钮左侧；档位名仍在滑条左侧与「推理强度」标签同一行，已达档位刻度用该档颜色。滑条填色
+  段里那层固定种子的星点（`EFFORT_STAR_COUNT` / `EFFORT_STAR_SEED`）随之删掉，星空交给粒子层。
 - 办公配置从 AI 设置面板移除：办公后端、独立 API 与启动时预热只长在工作台「办公模式」页，
   写盘归属跟着拆开——`save_ai_values()` 只写 `get_ai_panel_setting_defaults()`（不含 `office_*`），
   `save_office_values()` 只写 `OFFICE_VALUE_KEYS`（`config.ollama_config.OFFICE_SETTING_KEYS`），
@@ -299,6 +312,9 @@
   写成 `../..` 这类路径就会把内容复制到根目录之外，而列表与卸载只看根目录，装出来的目录
   既看不见也删不掉。`skills._safe_skill_dir_name()` 与 `plugins._package_dir_parts()`
   现在拒绝路径分隔符、`.`/`..` 以及含 `:` 的段。
+- 修复独立办公窗口的尺寸手柄停在左上角：`QSizeGrip` 建出来时还没显示，`resizeEvent` 里的
+  `grip.isVisible()` 为假就直接跳过摆位，手柄留在 (0, 0)，页头左上角多出一块方点。显示与缩放现在
+  都走 `_sync_size_grip()`，独立窗口渲染预览里方点消失、手柄回到右下角。
 
 ## [LTS1.0.7pre3] - 2026-09-12
 

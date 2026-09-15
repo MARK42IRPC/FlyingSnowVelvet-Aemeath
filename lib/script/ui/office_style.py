@@ -2,7 +2,19 @@
 
 from __future__ import annotations
 
-from PyQt5.QtWidgets import QFrame, QHBoxLayout, QWidget
+from PyQt5.QtWidgets import (
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QPlainTextEdit,
+    QPushButton,
+    QTabBar,
+    QToolButton,
+    QTreeWidget,
+    QWidget,
+)
 
 from config.font_config import get_ui_font_family
 from config.scale import scale_px
@@ -10,12 +22,63 @@ from lib.script.office.contracts import REASONING_EFFORTS
 from lib.script.ui.workbench_settings_layout import (
     SETTINGS_FONT_SIZE,
     SETTINGS_HINT_FONT_SIZE,
+    apply_settings_page_fonts,
 )
-from lib.script.workbench.theme import get_workbench_colors
+from lib.core.qt_bridge.font import get_ui_font
+from lib.script.workbench.theme import get_workbench_colors, window_button_stylesheet
 
 
 OFFICE_BUBBLE_PAD_V = scale_px(7, min_abs=6)
 OFFICE_BUBBLE_PAD_H = scale_px(10, min_abs=8)
+
+#: 走小一号提示字号的标签：与设置页的 SettingsPageDescription / SettingsSectionDescription 同级。
+OFFICE_HINT_LABELS = frozenset({
+    "OfficeSelectionHint",
+    "OfficeConfigHint",
+    "OfficeManagerHint",
+    "OfficeChatSender",
+    "OfficeChatSystem",
+})
+
+#: 与同页正文同档、只靠字重区分的标签：标题、字段名、状态徽标、档位名。
+OFFICE_BOLD_LABELS = frozenset({
+    "OfficeTaskTitle",
+    "OfficeApprovalTitle",
+    "OfficeStatusBadge",
+    "OfficeFieldLabel",
+    "OfficeEffortLevel",
+})
+
+
+def apply_office_fonts(root: QWidget) -> None:
+    """把工作台设置页的字号档铺到办公面的整棵控件树。
+
+    办公页的控件在构建时继承应用默认的 12px，而 QSS 里的 `font-size` 只作用于选择器命中的
+    那个控件本身，子控件不会跟着变大——只看样式表，办公面的正文会比工作台设置页小一档。
+    这里先套用 `workbench_settings_layout.apply_settings_page_fonts` 的现成口径（页头说明
+    与分区标题/说明、输入控件），再补办公面独有的控件与标签，两个页面自然同一套字号。
+    """
+    apply_settings_page_fonts(root)
+
+    body_font = get_ui_font(size=SETTINGS_FONT_SIZE)
+    bold_font = get_ui_font(size=SETTINGS_FONT_SIZE)
+    bold_font.setBold(True)
+    hint_font = get_ui_font(size=SETTINGS_HINT_FONT_SIZE)
+    # 设置页没有工具按钮，办公面的「新任务 / 浏览 / 取消」跟同页按钮一样走粗体。
+    for widget in root.findChildren(QToolButton):
+        widget.setFont(bold_font)
+    # 文本视图与标签页跟随正文档；设置页不含这些控件，需要办公面自己铺。
+    for widget_type in (QPlainTextEdit, QListWidget, QTreeWidget, QTabBar):
+        for widget in root.findChildren(widget_type):
+            widget.setFont(body_font)
+    for label in root.findChildren(QLabel):
+        if label.property("preserveCustomFont"):
+            continue
+        name = label.objectName()
+        if name in OFFICE_HINT_LABELS:
+            label.setFont(hint_font)
+        elif name in OFFICE_BOLD_LABELS:
+            label.setFont(bold_font)
 
 
 def create_office_accent_bar(parent: QWidget) -> QWidget:
@@ -304,7 +367,10 @@ def office_stylesheet(
             border-color: {c.danger};
         }}
 
-        {page_selector} QToolButton {{
+        {page_selector} QToolButton#OfficeNewTaskButton,
+        {page_selector} QToolButton#OfficeDeleteTaskButton,
+        {page_selector} QToolButton#OfficeBrowseButton,
+        {page_selector} QToolButton#OfficeCancelButton {{
             min-height: {compact_height}px;
             padding: 0px {scale_px(8, min_abs=6)}px;
             color: {c.text};
@@ -323,7 +389,10 @@ def office_stylesheet(
             color: {c.danger};
             border-color: {c.danger};
         }}
-        {page_selector} QToolButton:disabled {{
+        {page_selector} QToolButton#OfficeNewTaskButton:disabled,
+        {page_selector} QToolButton#OfficeDeleteTaskButton:disabled,
+        {page_selector} QToolButton#OfficeBrowseButton:disabled,
+        {page_selector} QToolButton#OfficeCancelButton:disabled {{
             color: {c.text_dim};
             background: {c.surface};
         }}
@@ -348,12 +417,26 @@ def office_stylesheet(
         QPlainTextEdit#OfficePrompt:focus, QLineEdit#OfficeWorkspace:focus {{ border-color: {c.cyan}; }}
         {page_selector} QLineEdit {{ min-height: {control_height}px; }}
 
+        QFrame#OfficeComposer {{
+            background: {c.navigation};
+            border: {border}px solid {c.border};
+            border-radius: {radius}px;
+        }}
+        QFrame#OfficeComposer QPlainTextEdit#OfficePrompt {{
+            background: {c.surface};
+            border: {border}px solid {c.border};
+        }}
+        QFrame#OfficeComposer QPlainTextEdit#OfficePrompt:focus {{
+            border-color: {c.cyan};
+        }}
+
         QLabel#OfficeEffortLevel {{
             color: {c.text_muted};
             font-weight: 600;
         }}
         {page_selector} QSlider#OfficeEffortSlider {{
             min-height: {scale_px(26, min_abs=24)}px;
+            background: transparent;
         }}
         QSlider#OfficeEffortSlider::groove:horizontal {{
             height: {scale_px(5, min_abs=4)}px;
@@ -552,7 +635,12 @@ def office_stylesheet(
         QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
             background: transparent;
         }}
-    """
+    """ + window_button_stylesheet(mode)
 
 
-__all__ = ["create_office_accent_bar", "office_stylesheet", "OFFICE_BUBBLE_PAD_H"]
+__all__ = [
+    "OFFICE_BUBBLE_PAD_H",
+    "apply_office_fonts",
+    "create_office_accent_bar",
+    "office_stylesheet",
+]

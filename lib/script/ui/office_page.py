@@ -13,6 +13,7 @@ from PyQt5.QtWidgets import (
     QButtonGroup,
     QApplication,
     QFileDialog,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -35,6 +36,7 @@ from PyQt5.QtWidgets import (
 from config.scale import scale_px
 from lib.core.event.center import EventType, get_event_center
 from lib.core.logger import get_logger
+from lib.core.particle_utils import spawn_particle_at_point
 from lib.core.qt_bridge.font import get_ui_font
 from lib.core.qt_bridge.workbench_page import QtWorkbenchToolPage
 from lib.script.office.contracts import ACTIVE_TASK_STATUSES, DEFAULT_REASONING_EFFORT
@@ -49,7 +51,7 @@ from lib.script.ui.office_icons import (
     office_new_icon,
     office_submit_icon,
 )
-from lib.script.ui.office_style import office_stylesheet
+from lib.script.ui.office_style import apply_office_fonts, office_stylesheet
 from lib.script.ui.workbench_components import create_window_button
 from lib.script.ui.workbench_settings_layout import (
     SETTINGS_FONT_SIZE,
@@ -95,6 +97,9 @@ def _display_time(value: object) -> str:
 DEFAULT_WINDOW_WIDTH = scale_px(1120, min_abs=1000)
 DEFAULT_WINDOW_HEIGHT = scale_px(760, min_abs=680)
 
+#: 按住推理滑条时召唤的星空粒子；粒子自带默认参数（往右、白色、bloom 2~4px、20 tick 淡出）。
+EFFORT_STAR_PARTICLE_ID = "star_streak"
+
 
 class OfficeWorkbenchPage(QtWorkbenchToolPage):
     POLL_INTERVAL_MS = 250
@@ -123,37 +128,88 @@ class OfficeWorkbenchPage(QtWorkbenchToolPage):
         self._seen_new_task_revision: int | None = None
         self._submission_pending = False
         self._updating_controls = False
+        self._effort_star_trail_active = False
 
         self._build_ui()
         self._apply_theme()
         self.set_embedded_mode(embedded)
 
-        # 独立窗口不经过工作台的主题刷新链路，自己订阅配置事件跟随明暗主题。
+        # 独立窗口不经过工作台的主题刷新链路，自己订阅配置事件跟随明暗主题；
+        # 星空粒子按逻辑 tick 召唤，也走同一个事件中心（按住滑条时临时订阅 TICK）。
+        self._event_center = get_event_center()
         self._theme_subscribed = False
         if not self._embedded:
-            self._event_center = get_event_center()
             self._event_center.subscribe(EventType.CONFIG_UPDATED, self._on_config_updated)
             self._theme_subscribed = True
 
         self._size_grip = QSizeGrip(self)
         self._size_grip.setFixedSize(scale_px(18, min_abs=15), scale_px(18, min_abs=15))
         self._size_grip.raise_()
-        self._size_grip.setVisible(not self._embedded)
+        self._refresh_window_state_controls()
 
         self._poll_timer = QTimer(self)
         self._poll_timer.setInterval(self.POLL_INTERVAL_MS)
         self._poll_timer.timeout.connect(self._poll_state)
 
-    def _build_close_button(self) -> QWidget:
-        """独立窗口的关闭按钮；内嵌到工作台时由工作台自己管关闭。"""
+    def _build_window_buttons(self) -> QWidget:
+        """右上角窗口按钮：最小化、全屏、关闭，与工作台主窗口同一套按钮。
+
+        内嵌到工作台时由工作台自己管窗口，这一组按钮不出现。
+        """
         self.set_drag_handle(self._page_header)
-        return create_window_button(
-            self._page_header,
-            QStyle.SP_TitleBarCloseButton,
-            "关闭办公页面",
-            self.fade_out,
-            danger=True,
+        box = QWidget(self._page_header)
+        layout = QHBoxLayout(box)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(scale_px(4, min_abs=3))
+        self._minimize_button = create_window_button(
+            box, QStyle.SP_TitleBarMinButton, "最小化", self.showMinimized
         )
+        self._fullscreen_button = create_window_button(
+            box, QStyle.SP_TitleBarMaxButton, "全屏", self._toggle_fullscreen
+        )
+        self._close_button = create_window_button(
+            box, QStyle.SP_TitleBarCloseButton, "关闭办公页面", self.fade_out, danger=True
+        )
+        for button in (self._minimize_button, self._fullscreen_button, self._close_button):
+            layout.addWidget(button)
+        return box
+
+    def _toggle_fullscreen(self) -> None:
+        if self.isFullScreen():
+            self.showNormal()
+        else:
+            self.showFullScreen()
+        self._refresh_window_state_controls()
+
+    def _refresh_window_state_controls(self) -> None:
+        """全屏按钮在「全屏 / 还原」之间换图标，全屏时收掉右下角拖拽手柄。"""
+        fullscreen = self.isFullScreen()
+        button = getattr(self, "_fullscreen_button", None)
+        if button is not None:
+            icon = QStyle.SP_TitleBarNormalButton if fullscreen else QStyle.SP_TitleBarMaxButton
+            button.setIcon(self.style().standardIcon(icon))
+            button.setToolTip("退出全屏" if fullscreen else "全屏")
+        self._sync_size_grip()
+
+    def _sync_size_grip(self) -> None:
+        """把右下角拖拽手柄贴到窗口角上；内嵌工作台或全屏时收起来。
+
+        手柄刚建出来时还没显示，只按 resizeEvent 摆位会把它留在 (0, 0)，窗口左上角
+        就多出一块方点，所以显示时也重新摆一次。
+        """
+        grip = getattr(self, "_size_grip", None)
+        if grip is None:
+            return
+        grip.setVisible(not self._embedded and not self.isFullScreen())
+        grip.move(self.width() - grip.width(), self.height() - grip.height())
+        grip.raise_()
+
+    def _after_standalone_hide(self) -> None:
+        """独立窗口关掉后退出全屏，下次打开回到普通尺寸。"""
+        if self._embedded or not self.isFullScreen():
+            return
+        self.showNormal()
+        self._refresh_window_state_controls()
 
     def show_centered(self) -> None:
         """把独立窗口摆到鼠标所在屏幕的中间。"""
@@ -165,14 +221,12 @@ class OfficeWorkbenchPage(QtWorkbenchToolPage):
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
-        grip = getattr(self, "_size_grip", None)
-        if grip is not None and grip.isVisible():
-            grip.move(self.width() - grip.width(), self.height() - grip.height())
-            grip.raise_()
+        self._sync_size_grip()
 
     def cleanup(self) -> None:
         """释放页面占用：停掉轮询计时器、退订配置事件，独立窗口再随 deleteLater 销毁。"""
         self._poll_timer.stop()
+        self._end_effort_star_trail()
         self._unsubscribe_theme()
 
     def _unsubscribe_theme(self) -> None:
@@ -213,7 +267,7 @@ class OfficeWorkbenchPage(QtWorkbenchToolPage):
         header_row.setSpacing(scale_px(8, min_abs=6))
         header_row.addWidget(self._page_header, 1)
         if not self._embedded:
-            header_row.addWidget(self._build_close_button(), 0, Qt.AlignTop)
+            header_row.addWidget(self._build_window_buttons(), 0, Qt.AlignTop)
         root.addLayout(header_row)
 
         splitter = QSplitter(Qt.Horizontal, self)
@@ -300,11 +354,9 @@ class OfficeWorkbenchPage(QtWorkbenchToolPage):
         controls.setSpacing(scale_px(7, min_abs=5))
         workspace_label = QLabel("工作目录", content_card)
         workspace_label.setObjectName("OfficeFieldLabel")
-        effort_label = QLabel("推理强度", content_card)
-        effort_label.setObjectName("OfficeFieldLabel")
-        label_width = max(workspace_label.sizeHint().width(), effort_label.sizeHint().width())
-        workspace_label.setFixedWidth(label_width)
-        effort_label.setFixedWidth(label_width)
+        # 两个字段名都是四个字，字号统一后宽度天然一致，不再写死宽度（写死会被后面的字号覆盖撑破）。
+        self._effort_label = QLabel("推理强度", content_card)
+        self._effort_label.setObjectName("OfficeFieldLabel")
         controls.addWidget(workspace_label)
         self._workspace_edit = QLineEdit(content_card)
         self._workspace_edit.setObjectName("OfficeWorkspace")
@@ -319,21 +371,6 @@ class OfficeWorkbenchPage(QtWorkbenchToolPage):
         controls.addWidget(self._browse_button)
         content_layout.addLayout(controls)
 
-        effort_row = QHBoxLayout()
-        effort_row.setSpacing(scale_px(7, min_abs=5))
-        effort_row.addWidget(effort_label, 0, Qt.AlignVCenter)
-        self._effort_slider = OfficeEffortSlider(content_card)
-        self._effort_slider.effort_changed.connect(self._on_effort_changed)
-        effort_row.addWidget(self._effort_slider, 0, Qt.AlignVCenter)
-        effort_row.addStretch(1)
-        self._cancel_button = QToolButton(content_card)
-        self._cancel_button.setObjectName("OfficeCancelButton")
-        self._cancel_button.setText("取消任务")
-        self._cancel_button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
-        self._cancel_button.clicked.connect(self._cancel_active_task)
-        effort_row.addWidget(self._cancel_button)
-        content_layout.addLayout(effort_row)
-
         self._tabs = QTabWidget(content_card)
         self._tabs.setObjectName("OfficeTaskTabs")
         self._conversation_view = OfficeConversationView(self._tabs)
@@ -347,30 +384,61 @@ class OfficeWorkbenchPage(QtWorkbenchToolPage):
         self._tabs.addTab(self._events_view, "工具记录")
         content_layout.addWidget(self._tabs, 1)
 
-        self._prompt_edit = QPlainTextEdit(content_card)
+        # 输入区：提示词与「推理强度 + 发送」同处一块输入坞，推理滑条就在发送按钮左侧。
+        composer = QFrame(content_card)
+        composer.setObjectName("OfficeComposer")
+        composer_layout = QVBoxLayout(composer)
+        composer_layout.setContentsMargins(
+            scale_px(9, min_abs=7),
+            scale_px(9, min_abs=7),
+            scale_px(9, min_abs=7),
+            scale_px(7, min_abs=5),
+        )
+        composer_layout.setSpacing(scale_px(7, min_abs=5))
+
+        self._prompt_edit = QPlainTextEdit(composer)
         self._prompt_edit.setObjectName("OfficePrompt")
         self._prompt_edit.setPlaceholderText("输入任务或继续要求")
         self._prompt_edit.setMinimumHeight(scale_px(74, min_abs=66))
         self._prompt_edit.setMaximumHeight(scale_px(116, min_abs=104))
         self._install_text_context_menu(self._prompt_edit)
-        content_layout.addWidget(self._prompt_edit)
+        composer_layout.addWidget(self._prompt_edit)
 
-        submit_row = QHBoxLayout()
-        self._selection_hint = QLabel("", content_card)
+        action_row = QHBoxLayout()
+        action_row.setSpacing(scale_px(8, min_abs=6))
+        action_row.addWidget(self._effort_label, 0, Qt.AlignVCenter)
+        self._effort_slider = OfficeEffortSlider(composer)
+        self._effort_slider.effort_changed.connect(self._on_effort_changed)
+        self._effort_slider.handle_pressed.connect(self._begin_effort_star_trail)
+        self._effort_slider.handle_released.connect(self._end_effort_star_trail)
+        action_row.addWidget(self._effort_slider, 0, Qt.AlignVCenter)
+        action_row.addStretch(1)
+        self._selection_hint = QLabel("", composer)
         self._selection_hint.setObjectName("OfficeSelectionHint")
-        submit_row.addWidget(self._selection_hint, 1)
-        self._submit_button = QPushButton("开始任务", content_card)
+        action_row.addWidget(self._selection_hint, 0, Qt.AlignVCenter)
+        self._cancel_button = QToolButton(composer)
+        self._cancel_button.setObjectName("OfficeCancelButton")
+        self._cancel_button.setText("取消任务")
+        self._cancel_button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self._cancel_button.clicked.connect(self._cancel_active_task)
+        action_row.addWidget(self._cancel_button)
+        self._submit_button = QPushButton("开始任务", composer)
         self._submit_button.setObjectName("OfficeSubmitButton")
         self._submit_button.setProperty("primary", True)
         self._submit_button.clicked.connect(self._submit_prompt)
-        submit_row.addWidget(self._submit_button)
-        content_layout.addLayout(submit_row)
+        action_row.addWidget(self._submit_button)
+        composer_layout.addLayout(action_row)
+        content_layout.addWidget(composer)
 
         splitter.addWidget(history_card)
         splitter.addWidget(content_card)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([scale_px(245, min_abs=220), scale_px(720, min_abs=640)])
+
+        # 字号铺到整棵控件树：QSS 的 font-size 只作用于选择器命中的那个控件本身，
+        # 子控件会在构建时继承应用默认的 12px，比工作台设置页小一档。
+        apply_office_fonts(self)
 
     def _read_only_view(self, object_name: str) -> QPlainTextEdit:
         view = QPlainTextEdit(self)
@@ -424,6 +492,7 @@ class OfficeWorkbenchPage(QtWorkbenchToolPage):
         super().showEvent(event)
         self._poll_state(force=True)
         self._poll_timer.start()
+        self._sync_size_grip()
         # 预热办公运行时，减少首次任务的等待时间
         try:
             from lib.script.office.service import get_office_service
@@ -433,6 +502,8 @@ class OfficeWorkbenchPage(QtWorkbenchToolPage):
 
     def hideEvent(self, event) -> None:
         self._poll_timer.stop()
+        # 窗口被宿主收走时不给「松开鼠标」的机会，这里兜底停掉星空粒子。
+        self._end_effort_star_trail()
         super().hideEvent(event)
 
     def closeEvent(self, event) -> None:
@@ -674,6 +745,36 @@ class OfficeWorkbenchPage(QtWorkbenchToolPage):
             task_id=str(task.get("id") or ""),
             reasoning_effort=effort,
         )
+
+    # ── 星空粒子 ─────────────────────────────────────────────────────
+
+    def _begin_effort_star_trail(self) -> None:
+        """按住推理滑条：立刻召唤一批星空光点，之后每个逻辑 tick 再召唤一批。"""
+        if self._effort_star_trail_active:
+            return
+        self._effort_star_trail_active = True
+        self._event_center.subscribe(EventType.TICK, self._on_effort_star_tick)
+        self._publish_effort_stars()
+
+    def _end_effort_star_trail(self) -> None:
+        """松开滑条或页面收尾时停止召唤；重复调用安全。"""
+        if not self._effort_star_trail_active:
+            return
+        self._effort_star_trail_active = False
+        try:
+            self._event_center.unsubscribe(EventType.TICK, self._on_effort_star_tick)
+        except Exception as exc:
+            logger.debug('[office] 退订 tick 失败: %s', exc)
+
+    def _on_effort_star_tick(self, _event) -> None:
+        self._publish_effort_stars()
+
+    def _publish_effort_stars(self) -> None:
+        """从滑块当前把手的位置往右召唤星空光点（粒子默认参数即为需求的那一套）。"""
+        if not self.isVisible():
+            return
+        center = self._effort_slider.handle_center()
+        spawn_particle_at_point(center.x(), center.y(), EFFORT_STAR_PARTICLE_ID)
 
     def _submit_prompt(self) -> None:
         if self._active_task() is not None:

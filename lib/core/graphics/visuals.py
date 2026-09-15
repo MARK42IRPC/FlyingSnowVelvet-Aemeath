@@ -62,6 +62,11 @@ def _particle_bloom_color(base: Color) -> Color:
     )
 
 
+#: 圆形粒子的 bloom 光圈：`(半径占 bloom 半径的比例, 透明度倍数)`，由外到内铺在核心下面。
+#: 每颗粒子最多三条命令，层数与透明度对齐文字 bloom 的 30% 预算。
+CIRCLE_BLOOM_RINGS = ((1.0, 0.14), (0.75, 0.26))
+
+
 def _particle_alpha(particle: object) -> float:
     # Qt's no_fade path deliberately uses opaque alpha, regardless of the
     # optional alpha_override field.  This is part of the visual contract.
@@ -231,8 +236,23 @@ def build_particle_batch(particles: list[object]) -> DrawBatch:
             continue
 
         size = max(0.0, float(getattr(particle, "size", 0.0)))
-        radius = size if bool(getattr(particle, "is_circle", False)) else size / 2.0
-        command_type = EllipseCommand if bool(getattr(particle, "is_circle", False)) else RectCommand
+        is_circle = bool(getattr(particle, "is_circle", False))
+        radius = size if is_circle else size / 2.0
+        command_type = EllipseCommand if is_circle else RectCommand
+        if is_circle:
+            # 圆形粒子的 bloom：核心外面铺几圈同色淡光，径向叠出柔边光晕。
+            bloom = max(0.0, float(getattr(particle, "bloom", 0.0) or 0.0))
+            if bloom > radius:
+                glow = _particle_bloom_color(_color(getattr(particle, "color", None)))
+                for radius_ratio, alpha_ratio in CIRCLE_BLOOM_RINGS:
+                    ring = bloom * radius_ratio
+                    if ring <= radius:
+                        continue
+                    commands.append(EllipseCommand(
+                        Rect(x - ring, y - ring, ring * 2.0, ring * 2.0),
+                        fill=glow, alpha=alpha * alpha_ratio,
+                        layer=layer, z=z, order=order,
+                    ))
         commands.append(command_type(
             Rect(x - radius, y - radius, radius * 2.0, radius * 2.0), fill=color,
             stroke=border.with_alpha(255) if enable_stroke else None,

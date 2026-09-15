@@ -23,7 +23,15 @@ os.environ.setdefault(
 )
 os.environ.setdefault("QT_PLUGIN_PATH", os.path.join(_QT_ROOT, "Qt5", "plugins"))
 
-from PyQt5.QtWidgets import QApplication, QFrame, QLabel, QMessageBox, QMenu, QWidget
+from PyQt5.QtWidgets import (
+    QApplication,
+    QFrame,
+    QLabel,
+    QMenu,
+    QMessageBox,
+    QToolButton,
+    QWidget,
+)
 
 from lib.script.office.ipc import OfficeFileIpc
 from lib.script.ui.office_page import OfficeWorkbenchPage
@@ -227,6 +235,110 @@ class OfficeWorkbenchPageTests(unittest.TestCase):
             )
             self.assertEqual(page._mode_buttons["office"].property("officeMode"), "office")
 
+    def test_reasoning_slider_sits_left_of_the_submit_button_in_the_composer(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            page, _ipc = self._page(Path(tmpdir) / "ipc")
+            page.resize(1120, 760)
+            page.show()
+            self.app.processEvents()
+
+            composer = page.findChild(QFrame, "OfficeComposer")
+            self.assertIsNotNone(composer)
+            # 推理滑条与发送按钮同处底部输入坞，滑条在按钮左侧、同一行。
+            self.assertIs(page._effort_slider.parent(), composer)
+            self.assertIs(page._submit_button.parent(), composer)
+            slider_center = page._effort_slider.mapTo(page, page._effort_slider.rect().center())
+            submit_center = page._submit_button.mapTo(page, page._submit_button.rect().center())
+            self.assertLess(slider_center.x(), submit_center.x())
+            self.assertLessEqual(abs(slider_center.y() - submit_center.y()), 24)
+            # 提示词也在同一块输入坞里，且排在动作条上面。
+            self.assertIs(page._prompt_edit.parent(), composer)
+            prompt_bottom = page._prompt_edit.mapTo(page, page._prompt_edit.rect().bottomLeft()).y()
+            self.assertLess(prompt_bottom, slider_center.y())
+
+    def test_embedded_page_has_no_window_buttons(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            page, _ipc = self._page(Path(tmpdir) / "ipc")
+
+            self.assertEqual(page.findChildren(QToolButton, "WorkbenchWindowButton"), [])
+
+    def test_standalone_window_offers_minimize_fullscreen_and_close(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ipc = OfficeFileIpc(Path(tmpdir) / "ipc")
+            page = OfficeWorkbenchPage(embedded=False, ipc=ipc)
+            self.addCleanup(page.deleteLater)
+
+            buttons = page.findChildren(QToolButton, "WorkbenchWindowButton")
+            self.assertEqual(len(buttons), 3)
+            self.assertEqual(page._minimize_button.toolTip(), "最小化")
+            self.assertEqual(page._fullscreen_button.toolTip(), "全屏")
+            self.assertEqual(page._close_button.toolTip(), "关闭办公页面")
+            self.assertTrue(page._close_button.property("danger"))
+            self.assertTrue(page._size_grip.isVisibleTo(page))
+
+            page._toggle_fullscreen()
+            self.assertTrue(page.isFullScreen())
+            self.assertEqual(page._fullscreen_button.toolTip(), "退出全屏")
+            self.assertFalse(page._size_grip.isVisibleTo(page))
+
+            page._toggle_fullscreen()
+            self.assertFalse(page.isFullScreen())
+            self.assertEqual(page._fullscreen_button.toolTip(), "全屏")
+            self.assertTrue(page._size_grip.isVisibleTo(page))
+
+    def test_size_grip_sticks_to_the_bottom_right_corner(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ipc = OfficeFileIpc(Path(tmpdir) / "ipc")
+            page = OfficeWorkbenchPage(embedded=False, ipc=ipc)
+            self.addCleanup(page.deleteLater)
+            page.resize(1120, 760)
+            page.show()
+            self.app.processEvents()
+
+            grip = page._size_grip
+            # 手柄建出来时还没显示，只按 resizeEvent 摆位会把它留在 (0, 0)，
+            # 独立窗口左上角就多出一块方点；显示时也要重新贴到右下角。
+            self.assertEqual(grip.x(), page.width() - grip.width())
+            self.assertEqual(grip.y(), page.height() - grip.height())
+
+    def test_holding_the_effort_slider_streams_star_particles_each_tick(self):
+        from lib.core.event.center import Event, EventType, get_event_center
+        from lib.script.ui.office_page import EFFORT_STAR_PARTICLE_ID
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            page, _ipc = self._page(Path(tmpdir) / "ipc")
+            page.resize(1120, 760)
+            page.show()
+            self.app.processEvents()
+
+            center = get_event_center()
+            received: list = []
+            center.subscribe(EventType.PARTICLE_REQUEST, received.append)
+            self.addCleanup(center.unsubscribe, EventType.PARTICLE_REQUEST, received.append)
+
+            page._effort_slider.set_effort("ultra")
+            page._begin_effort_star_trail()
+            center.publish(Event(EventType.TICK))
+            center.publish(Event(EventType.TICK))
+            handle = page._effort_slider.handle_center()
+            page._effort_slider.set_effort("off")
+            center.publish(Event(EventType.TICK))
+            page._end_effort_star_trail()
+            center.publish(Event(EventType.TICK))
+
+            # 按下时先召唤一批，之后每个逻辑 tick 一批；松开后不再召唤。
+            self.assertEqual(len(received), 4)
+            self.assertEqual(
+                [event.data["particle_id"] for event in received],
+                [EFFORT_STAR_PARTICLE_ID] * 4,
+            )
+            self.assertTrue(all(event.data["area_type"] == "point" for event in received))
+            first = received[0].data["area_data"]
+            self.assertEqual(first, (handle.x(), handle.y()))
+            self.assertLess(received[-1].data["area_data"][0], first[0])
+            # 光点从滑块把手往外飘：粒子自己带默认参数，调用方不重复给。
+            self.assertTrue(all(not event.data.get("particle_options") for event in received))
+
     def test_office_text_follows_workbench_settings_font_size(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             page, _ipc = self._page(Path(tmpdir) / "ipc")
@@ -245,6 +357,34 @@ class OfficeWorkbenchPageTests(unittest.TestCase):
             self.assertIsNotNone(bubble)
             assert bubble is not None
             self.assertEqual(bubble.font().pixelSize(), SETTINGS_FONT_SIZE)
+
+            # 办公面整体（列表、输入框、按钮）都铺到设置页档位：QSS 的 font-size 只管命中
+            # 的那个控件本身，不铺这一遍子控件还是应用默认的 12px。
+            for widget in (
+                page._history_list,
+                page._prompt_edit,
+                page._workspace_edit,
+                page._submit_button,
+                page._tabs.tabBar(),
+            ):
+                with self.subTest(widget=widget.objectName() or type(widget).__name__):
+                    self.assertEqual(widget.font().pixelSize(), SETTINGS_FONT_SIZE)
+            # 次要信息走小两号的提示档。
+            self.assertEqual(page._selection_hint.font().pixelSize(), SETTINGS_HINT_FONT_SIZE)
+            self.assertTrue(page._submit_button.font().bold())
+            self.assertTrue(page._task_title.font().bold())
+            self.assertFalse(page._prompt_edit.font().bold())
+
+            # 页头说明与分区标题复用设置页同一套映射：说明小两号，分区标题与正文同档加粗。
+            header_description = page.findChild(QLabel, "SettingsPageDescription")
+            self.assertIsNotNone(header_description)
+            assert header_description is not None
+            self.assertEqual(header_description.font().pixelSize(), SETTINGS_HINT_FONT_SIZE)
+            section_title = page.findChild(QLabel, "SettingsSectionTitle")
+            self.assertIsNotNone(section_title)
+            assert section_title is not None
+            self.assertEqual(section_title.font().pixelSize(), SETTINGS_FONT_SIZE)
+            self.assertTrue(section_title.font().bold())
 
     def test_text_context_menu_is_chinese_and_limited_to_clipboard_actions(self):
         with tempfile.TemporaryDirectory() as tmpdir:

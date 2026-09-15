@@ -291,6 +291,29 @@ class ParticleBoundsTests(unittest.TestCase):
         self.assertEqual((bounds.left(), bounds.top()), (74.0, 60.0))
         self.assertEqual((bounds.right(), bounds.bottom()), (126.0, 90.0))
 
+    def test_circle_bounds_include_bloom_halo(self):
+        particle = SimpleNamespace(
+            x=50.0,
+            y=60.0,
+            size=2.0,
+            bloom=9.0,
+            is_circle=True,
+        )
+
+        bounds = _particle_bounds(particle)
+
+        # bloom 比核心大时按 bloom 取包围盒，光晕移动后不会留下残影。
+        self.assertEqual((bounds.left(), bounds.top()), (41.0, 51.0))
+        self.assertEqual((bounds.right(), bounds.bottom()), (59.0, 69.0))
+
+    def test_circle_bounds_ignore_smaller_bloom(self):
+        particle = SimpleNamespace(x=50.0, y=60.0, size=8.0, bloom=3.0, is_circle=True)
+
+        bounds = _particle_bounds(particle)
+
+        self.assertEqual((bounds.left(), bounds.top()), (42.0, 52.0))
+        self.assertEqual((bounds.right(), bounds.bottom()), (58.0, 68.0))
+
 
 if __name__ == "__main__":
     unittest.main()

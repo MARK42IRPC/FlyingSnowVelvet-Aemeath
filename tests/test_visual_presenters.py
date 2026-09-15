@@ -69,6 +69,12 @@ class _TextParticle(_Particle):
     bloom = 2.0
 
 
+class _CircleParticle(_Particle):
+    is_circle = True
+    size = 2.0
+    bloom = 6.0
+
+
 class _TextEffect:
     alive = True
     x = 8.0
@@ -572,6 +578,27 @@ class VisualPresenterTests(unittest.TestCase):
         self.assertEqual(len(text_commands), 25)
         self.assertAlmostEqual(text_commands[0].alpha, 0.30 * 0.10)
 
+    def test_circle_bloom_rings_wrap_the_core(self):
+        commands = build_particle_batch([_CircleParticle()]).commands
+
+        # 两圈光晕由外到内铺在核心之前，半径按 CIRCLE_BLOOM_RINGS 收，颜色混白。
+        self.assertEqual(len(commands), 3)
+        self.assertTrue(all(isinstance(item, EllipseCommand) for item in commands))
+        self.assertEqual([item.rect.width for item in commands], [12.0, 9.0, 4.0])
+        self.assertEqual(commands[0].fill, commands[1].fill)
+        self.assertNotEqual(commands[0].fill, commands[2].fill)
+        self.assertLess(commands[0].alpha, commands[1].alpha)
+        self.assertLess(commands[1].alpha, commands[2].alpha)
+
+    def test_circle_without_bloom_keeps_a_single_command(self):
+        particle = _CircleParticle()
+        particle.bloom = 0.0
+
+        commands = build_particle_batch([particle]).commands
+
+        self.assertEqual(len(commands), 1)
+        self.assertEqual(commands[0].rect.width, 4.0)
+
     def test_effect_feather_multiplies_qt_edge_masks(self):
         frame = RasterFrame(4, 4, bytes((10, 20, 30, 255)) * 16)
         resource = ImageResource("effect:test", (frame,))
@@ -654,3 +681,4 @@ class VisualPresenterTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+from lib.core.graphics.commands import EllipseCommand

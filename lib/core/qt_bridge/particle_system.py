@@ -147,7 +147,11 @@ def _particle_bounds(particle) -> QRectF:
             include(QRectF(x, y - height / 2.0, width, height))
     else:
         size = max(0.0, float(getattr(particle, 'size', 0.0)))
-        radius = size if getattr(particle, 'is_circle', False) else size / 2.0
+        is_circle = bool(getattr(particle, 'is_circle', False))
+        radius = size if is_circle else size / 2.0
+        if is_circle:
+            # 圆形粒子的 bloom 光圈比核心更外扩，包围盒要连光晕一起算，否则移动时留下残影。
+            radius = max(radius, max(0.0, float(getattr(particle, 'bloom', 0.0) or 0.0)))
         for x, y in positions:
             include(QRectF(x - radius, y - radius, radius * 2.0, radius * 2.0))
 

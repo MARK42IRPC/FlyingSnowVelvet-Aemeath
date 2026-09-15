@@ -22,7 +22,8 @@ os.environ.setdefault(
 )
 os.environ.setdefault("QT_PLUGIN_PATH", os.path.join(_QT_ROOT, "Qt5", "plugins"))
 
-from PyQt5.QtGui import QColor, QImage
+from PyQt5.QtCore import QEvent, QPointF, Qt
+from PyQt5.QtGui import QColor, QImage, QMouseEvent
 from PyQt5.QtWidgets import (
     QApplication,
     QSlider,
@@ -36,13 +37,9 @@ from lib.script.office.contracts import DEFAULT_REASONING_EFFORT, REASONING_EFFO
 from lib.script.ui.office_effort_slider import (
     EFFORT_LABELS,
     EFFORT_LEVELS,
-    EFFORT_STAR_COUNT,
-    EFFORT_STARS,
     EFFORT_TICK_COUNT,
     OfficeEffortSlider,
     effort_level_color,
-    effort_stars,
-    star_dots,
 )
 from lib.script.ui.office_style import office_effort_colors, office_stylesheet
 from lib.script.workbench.theme import get_workbench_colors
@@ -166,8 +163,8 @@ class OfficeEffortSliderTests(unittest.TestCase):
         self.assertEqual(effort_level_color("off"), colors[0])
         self.assertEqual(effort_level_color("ultra"), colors[-1])
 
-    def _star_columns(self, value: int) -> set[int]:
-        """渲染滑条并收集填色段里亮点所在的列：星点是纯白，比档位色亮得多。"""
+    def _white_columns(self, value: int) -> set[int]:
+        """渲染滑条并收集轨道上的纯白列：星空已经搬到粒子层，轨道上不该再有白点。"""
         slider = self.slider._slider
         slider.setValue(value)
         self._holder.resize(self._holder.sizeHint())
@@ -181,10 +178,11 @@ class OfficeEffortSliderTests(unittest.TestCase):
             QStyle.CC_Slider, option, QStyle.SC_SliderGroove, slider
         )
         rows = range(max(0, groove.top()), min(slider.height(), groove.bottom() + 1))
+        columns = range(max(0, groove.left()), min(slider.width(), groove.right() + 1))
         return {
             x
             for y in rows
-            for x in range(slider.width())
+            for x in columns
             if min(QColor(image.pixel(x, y)).getRgb()[:3]) >= 200
         }
 
@@ -206,42 +204,68 @@ class OfficeEffortSliderTests(unittest.TestCase):
         label_top = label.mapTo(self.slider, label.rect().topLeft()).y()
         self.assertLessEqual(label_top, track_top + track.height())
 
-    def test_star_dots_stay_on_the_track_and_stop_at_the_filled_edge(self):
-        self.assertEqual(star_dots(0.0, 200.0, 0.0, 10.0, 2.0), ())
+    def test_track_paints_no_white_sparkles_anymore(self):
+        # 星空改由粒子层从滑块位置召唤（`star_streak`），轨道本身只剩档位色与刻度。
+        self.assertEqual(self._white_columns(0), set())
+        self.assertEqual(self._white_columns(4), set())
 
-        whole = star_dots(0.0, 200.0, 200.0, 10.0, 2.0)
-        self.assertEqual(len(whole), EFFORT_STAR_COUNT)
-        for x, y, radius, alpha in whole:
-            with self.subTest(x=x):
-                self.assertGreaterEqual(x, 0.0)
-                self.assertLess(x, 200.0)
-                self.assertLessEqual(abs(y - 10.0), 2.0)
-                self.assertGreaterEqual(radius, 1.0)
-                self.assertTrue(0 <= alpha <= 255)
-
-        # 填色只到一半时少画一半：留下的星点位置和整条轨道时完全一致，不整体挪位。
-        half = star_dots(0.0, 200.0, 100.0, 10.0, 2.0)
-        self.assertEqual(
-            [dot[0] for dot in half], [dot[0] for dot in whole if dot[0] < 100.0]
+    def _press(self, slider, point, button=Qt.LeftButton) -> None:
+        press = QMouseEvent(
+            QEvent.MouseButtonPress,
+            QPointF(point),
+            button,
+            button,
+            Qt.NoModifier,
         )
+        slider.mousePressEvent(press)
 
-    def test_starfield_is_painted_inside_the_track_and_grows_with_the_level(self):
-        lowest = self._star_columns(0)
-        highest = self._star_columns(4)
+    def _release(self, slider, point, button=Qt.LeftButton) -> None:
+        release = QMouseEvent(
+            QEvent.MouseButtonRelease,
+            QPointF(point),
+            button,
+            Qt.NoButton,
+            Qt.NoModifier,
+        )
+        slider.mouseReleaseEvent(release)
 
-        self.assertTrue(highest)
-        self.assertLess(len(lowest), len(highest))
+    def test_holding_the_handle_reports_press_and_release(self):
+        seen: list[str] = []
+        self.slider.handle_pressed.connect(lambda: seen.append("press"))
+        self.slider.handle_released.connect(lambda: seen.append("release"))
+        track = self.slider._slider
 
-    def test_star_map_is_fixed_by_seed(self):
-        self.assertEqual(len(EFFORT_STARS), EFFORT_STAR_COUNT)
-        self.assertEqual(EFFORT_STARS, effort_stars())
-        for ratio, drift, radius, alpha in EFFORT_STARS:
-            with self.subTest(ratio=ratio):
-                self.assertGreaterEqual(ratio, 0.0)
-                self.assertLessEqual(ratio, 1.0)
-                self.assertLessEqual(abs(drift), 1.0)
-                self.assertGreater(radius, 0.0)
-                self.assertTrue(0 <= alpha <= 255)
+        self._press(track, track.rect().center())
+        self._release(track, track.rect().center())
+
+        self.assertEqual(seen, ["press", "release"])
+
+    def test_right_button_press_is_ignored(self):
+        seen: list[str] = []
+        self.slider.handle_pressed.connect(lambda: seen.append("press"))
+        track = self.slider._slider
+
+        self._press(track, track.rect().center(), Qt.RightButton)
+        self._release(track, track.rect().center(), Qt.RightButton)
+
+        self.assertEqual(seen, [])
+
+    def test_handle_center_follows_the_level_and_sits_on_the_track(self):
+        track = self.slider._slider
+        self._holder.resize(self._holder.sizeHint())
+        self.app.processEvents()
+
+        self.slider.set_effort("off")
+        lowest = self.slider.handle_center()
+        self.slider.set_effort("ultra")
+        highest = self.slider.handle_center()
+
+        # 把手中心随档位右移，纵坐标落在滑条自己的屏幕矩形里（粒子就从这里往外飘）。
+        self.assertGreater(highest.x(), lowest.x())
+        top_left = track.mapToGlobal(track.rect().topLeft())
+        bottom_right = track.mapToGlobal(track.rect().bottomRight())
+        self.assertTrue(top_left.x() <= lowest.x() <= bottom_right.x())
+        self.assertTrue(top_left.y() <= lowest.y() <= bottom_right.y())
 
     def test_level_colors_increase_monotonically_towards_cyan(self):
         def channels(value: str) -> tuple[int, int, int]:

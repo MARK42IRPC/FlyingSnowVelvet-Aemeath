@@ -8,7 +8,7 @@
 - 更新机制：`tick` 推进真实状态，`frame` 仅负责插值绘制
 - 运行语义：practical 粒子已统一切到 `tick/秒` 语义，不再依赖运行时 `frame_fps`
 
-当前已注册粒子：20 个
+当前已注册粒子：21 个
 
 二、已注册粒子列表
 
@@ -91,6 +91,15 @@
 20. `floating_text`
 - 文件：`floating_text_particle.py`
 - 作用：游戏分数、连击和技能反馈的浮动文字粒子
+
+21. `star_streak`
+- 文件：`star_streak_particle.py`
+- 作用：办公页推理强度滑条被按住时，每个逻辑 tick 从滑块位置召唤的星空划过光点
+- 参数：`count_range`（本次随机个数，默认 `(0, 1)`）、`color`（默认白色）、
+  `bloom_range`（bloom 半径随机范围，默认 `(2, 4)` 像素）、`duration_ticks`（默认 20）、
+  `fade_ticks`（其中最后多少 tick 淡出，默认 10）、`direction`（默认往右 `(1, 0)`）；
+  方向速度与布朗抖动由脚本自己的 `speed_range` / `brownian` / `brownian_drag` 兜底，
+  调用方一般只给前六项，全部省略即需求默认观感
 
 三、统一事件格式
 ```python
