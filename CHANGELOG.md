@@ -262,6 +262,10 @@
   `SCROLL_GUTTER` = 滚动条宽度 + `SCROLL_GAP`（滚动条宽度提成
   `forum_style.FORUM_SCROLLBAR_WIDTH`，样式表本体与最小宽度推导共用一份），否则滚动条一出现
   视口少 20px，三列会被挤到卡片最小宽度 170 以下。
+- 发行构建的输入指纹改为抽样：`--resume` 用的 `.fsv-distribution-state.json` 仍逐文件记录
+  相对路径 / 大小 / mtime，内容只按预算抽样（每个文件最多 64 KiB、每棵输入树最多 50 MiB，
+  按文件大小从大到小取），解释器自带的 `Lib/site-packages` 不再重复进指纹。发版构建不再把
+  十几 GB 的 site-packages / node_modules 整个读一遍，构建时间不再主要花在校验输入上。
 ### Fixed
 - 修复 CUDA 构建在“嵌入 PTX”一步要几十分钟：`cmake/embed_ptx.cmake` 原来按两个十六进制
   字符循环一次（半兆内核对应上百万次），每轮都把整份十六进制串展开进一次

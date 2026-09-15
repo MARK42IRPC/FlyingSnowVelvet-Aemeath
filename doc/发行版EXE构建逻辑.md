@@ -99,6 +99,17 @@ Qt/Node 子树。纯 Python `jieba`、`jieba_fast` 的关键词抽取与 SWIG �
 推理运行时、记忆/配置/Apikey/日志与桌面办公区。可选清理带前缀护栏，永不删除安装
 目录及其祖先；helper 用独立临时副本避免删除自身时锁定。
 
+## 构建状态指纹
+
+工作区里的 `.fsv-distribution-state.json` 记录本次 payload 用到的输入指纹，供 `--resume`
+判断能不能复用已有 payload。指纹对每个文件记录相对路径、大小与 mtime，内容只按预算抽样：
+每个文件最多读 `FINGERPRINT_SAMPLE_CHUNK_BYTES`（64 KiB）、每棵输入树最多读
+`FINGERPRINT_SAMPLE_BUDGET_BYTES`（50 MiB），候选按「大文件优先、同名按路径」排序，所以
+DLL、模型与 wheel 一定进指纹，而十几 GB 的 site-packages / node_modules 不会被整个读一遍。
+解释器自带的 `Lib/site-packages` 不进解释器指纹：`copy_python_runtime` 从不复制它，依赖覆盖层
+已作为独立输入指纹。因此 `--resume` 的语义是「输入没有明显变化」（增删改文件必然改变指纹，
+保持大小与 mtime 的内容改动只对采样到的文件可靠），不是「逐字节相同」。
+
 ## 构建与审计
 
 ```powershell

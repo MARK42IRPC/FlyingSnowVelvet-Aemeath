@@ -1155,6 +1155,25 @@ def write_release_launcher_config(app_root: Path) -> None:
     )
 
 
+# ``--resume`` only needs a fingerprint that follows real input changes, not a
+# byte-for-byte digest of every input file.  Reading the full trees pulled more
+# than ten gigabytes per build (``Lib/site-packages`` was hashed twice: once
+# through the interpreter root and once as the dependency overlay) and
+# dominated the release build's wall clock.
+FINGERPRINT_SAMPLE_BUDGET_BYTES = 50 * 1024 * 1024
+FINGERPRINT_SAMPLE_CHUNK_BYTES = 64 * 1024
+
+
+def _python_home_excluded(relative: PurePosixPath) -> bool:
+    """Drop ``Lib/site-packages`` from the interpreter fingerprint.
+
+    ``copy_python_runtime`` never copies the interpreter's own ``site-packages``
+    (``STDLIB_EXCLUDED_DIRS``) and the dependency overlay is fingerprinted as
+    its own input, so hashing it here only doubles the read.
+    """
+    return tuple(part.lower() for part in relative.parts)[:2] == ("lib", "site-packages")
+
+
 def _distribution_build_state(
     *,
     source: Path,
@@ -1179,9 +1198,11 @@ def _distribution_build_state(
         """Build a compact recursive fingerprint for a file or directory.
 
         Directory mtime is not reliable when a nested file is edited in place.
-        Include every file's relative name and metadata in the digest so a
-        resume can never silently reuse a payload assembled from older inputs.
-        The source tree uses the same exclusion rules as payload collection;
+        Include every file's relative name, size and mtime in the digest so a
+        resume can never silently reuse a payload assembled from older inputs;
+        content is sampled on top of that (see
+        ``FINGERPRINT_SAMPLE_BUDGET_BYTES``) instead of reading every byte.  The
+        source tree uses the same exclusion rules as payload collection;
         otherwise the build's own generated directory would invalidate every
         subsequent resume.
         """
@@ -1201,7 +1222,9 @@ def _distribution_build_state(
         digest = hashlib.sha256()
         file_count = 0
         total_bytes = 0
+        sampled_bytes = 0
         try:
+            entries: list[tuple[str, Path, os.stat_result]] = []
             children = sorted(
                 (item for item in path.rglob("*") if item.is_file()),
                 key=lambda item: item.relative_to(path).as_posix(),
@@ -1212,16 +1235,37 @@ def _distribution_build_state(
                 if excluded_relative is not None and excluded_relative(relative_path):
                     continue
                 item_stat = item.stat()
+                entries.append((relative, item, item_stat))
                 digest.update(relative.encode("utf-8", "surrogateescape"))
                 digest.update(b"\0")
                 digest.update(str(item_stat.st_size).encode("ascii"))
                 digest.update(b"\0")
                 digest.update(str(item_stat.st_mtime_ns).encode("ascii"))
-                digest.update(b"\0")
-                digest.update(sha256(item).encode("ascii"))
                 digest.update(b"\n")
                 file_count += 1
                 total_bytes += item_stat.st_size
+            # Content is sampled on top of the per-name metadata above: read the
+            # largest files first, at most ``FINGERPRINT_SAMPLE_CHUNK_BYTES`` per
+            # file and ``FINGERPRINT_SAMPLE_BUDGET_BYTES`` per tree.  Ordering is
+            # deterministic (size descending, then relative path), so the digest
+            # only depends on the inputs.
+            budget = FINGERPRINT_SAMPLE_BUDGET_BYTES
+            for relative, item, item_stat in sorted(
+                entries, key=lambda entry: (-entry[2].st_size, entry[0])
+            ):
+                if budget <= 0:
+                    break
+                wanted = min(item_stat.st_size, FINGERPRINT_SAMPLE_CHUNK_BYTES, budget)
+                if wanted <= 0:
+                    continue
+                with item.open("rb") as handle:
+                    chunk = handle.read(wanted)
+                digest.update(relative.encode("utf-8", "surrogateescape"))
+                digest.update(b"\1")
+                digest.update(hashlib.sha256(chunk).hexdigest().encode("ascii"))
+                digest.update(b"\n")
+                budget -= len(chunk)
+                sampled_bytes += len(chunk)
         except OSError:
             return {"path": str(path), "missing": True}
         return {
@@ -1231,13 +1275,14 @@ def _distribution_build_state(
             "mtime_ns": stat_result.st_mtime_ns,
             "file_count": file_count,
             "total_bytes": total_bytes,
+            "sampled_bytes": sampled_bytes,
             "sha256": digest.hexdigest(),
         }
 
     return {
-        "format": 1,
+        "format": 2,
         "source": signature(source, excluded_relative=excluded),
-        "python_home": signature(python_home),
+        "python_home": signature(python_home, excluded_relative=_python_home_excluded),
         "site_packages": [signature(item) for item in site_packages_sources],
         "node_runtime": signature(node_runtime),
         "node_modules": signature(node_modules),

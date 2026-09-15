@@ -86,6 +86,69 @@ class OfflineDistributionTests(unittest.TestCase):
             )
             self.assertNotEqual(after_nested, before_nested)
 
+    def test_distribution_state_samples_content_instead_of_hashing_every_file(self):
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source = root / "source"
+            python_home = root / "python"
+            site = root / "site"
+            node = root / "node"
+            modules = root / "modules"
+            wheel = root / "directml.whl"
+            for path in (source, python_home, site, node, modules):
+                path.mkdir()
+            wheel.write_bytes(b"wheel")
+            package = python_home / "Lib" / "site-packages"
+            package.mkdir(parents=True)
+            installed = package / "huge.pyd"
+            installed.write_bytes(b"p" * 4096)
+            chunk = distribution.FINGERPRINT_SAMPLE_CHUNK_BYTES
+            big = source / "big.bin"
+            big.write_bytes(b"a" * (chunk * 3))
+
+            def state():
+                return distribution._distribution_build_state(
+                    source=source,
+                    python_home=python_home,
+                    site_packages_sources=(site,),
+                    node_runtime=node,
+                    node_modules=modules,
+                    directml_wheel=wheel,
+                    without_music=False,
+                )
+
+            before = state()
+            # 每个文件最多读一个采样块，整棵树不超过采样预算。
+            self.assertEqual(before["source"]["total_bytes"], chunk * 3)
+            self.assertEqual(before["source"]["sampled_bytes"], chunk)
+            # 解释器自带的 site-packages 不是 payload 输入，不进解释器指纹。
+            self.assertEqual(before["python_home"]["file_count"], 0)
+            original_installed = installed.stat()
+            installed.write_bytes(b"q" * 4096)
+            os.utime(
+                installed,
+                ns=(original_installed.st_atime_ns, original_installed.st_mtime_ns),
+            )
+            self.assertEqual(state()["python_home"], before["python_home"])
+            # 大文件只采样头部，保持大小与 mtime 不变地改内容也要改变指纹。
+            original_big = big.stat()
+            data = bytearray(big.read_bytes())
+            data[0] = ord("b")
+            big.write_bytes(bytes(data))
+            os.utime(big, ns=(original_big.st_atime_ns, original_big.st_mtime_ns))
+            self.assertNotEqual(state()["source"]["sha256"], before["source"]["sha256"])
+            # 采样预算按整棵输入树封顶，不会把树整个读一遍。
+            for index in range(3):
+                (source / f"bulk-{index}.bin").write_bytes(b"z" * chunk)
+            with mock.patch.object(
+                distribution, "FINGERPRINT_SAMPLE_BUDGET_BYTES", chunk * 2
+            ):
+                capped = state()
+            self.assertEqual(capped["source"]["sampled_bytes"], chunk * 2)
+            self.assertGreater(capped["source"]["total_bytes"], chunk * 2)
+
     def test_resume_validation_rejects_missing_or_changed_payload_files(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
