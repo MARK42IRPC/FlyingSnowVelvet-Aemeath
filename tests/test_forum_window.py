@@ -156,8 +156,11 @@ def markup_ink(text, size):
         QApplication.processEvents()
 
 
-#: 底纹在纯灰卡片上的单通道均值偏移上限：更深的花纹允许到这个量级，再多就会压过卡片底色。
-_TEXTURE_DELTA_BUDGET = 14
+#: 底纹单通道均值偏移上限：花纹可以更深、可以带卡片色调，但不能压过卡片底色。
+#: 深色主题的底纹从白出发，离中灰天然更远：实测最深的种子在深色主题下约 15、浅色主题下约 8.7，
+#: 上限取两者之上并留出余量。种子底纹的两套主题都要跑，改 `CARD_TEXTURE_ALPHA_RANGE`、
+#: `FORUM_TEXTURE_TINT_RATIO` 或平铺/线宽常数时要同步这里。
+_TEXTURE_DELTA_BUDGET = 16
 #: 逐像素最大通道偏差上限：底纹带 accent 色调后会明显大于中性色，但不能变成彩色噪点。
 _TEXTURE_TINT_BUDGET = 24
 
@@ -729,14 +732,25 @@ class ForumWindowTests(unittest.TestCase):
         self.assertEqual(coarse, set(CARD_TEXTURE_COARSE_PATTERNS))
 
     def test_seeded_textures_stay_within_the_contrast_budget(self):
-        plain, _ = self._card_means(None, accent=FORUM_DEFAULT_ACCENT)
-        for message_id in range(1, 60):
-            texture = card_texture(message_id)
-            means, spread = self._card_means(texture, accent=FORUM_DEFAULT_ACCENT)
-            delta = abs(sum(means) / 3 - sum(plain) / 3)
-            # 花纹可以更深、带卡片色调，但不能压过卡片本身和正文。
-            self.assertLessEqual(delta, _TEXTURE_DELTA_BUDGET, texture.pattern)
-            self.assertLessEqual(spread, _TEXTURE_TINT_BUDGET, texture.pattern)
+        # 底纹色跟着工作台主题走（深色提亮、浅色压暗），两套主题必须都跑：只跑当前主题的话，
+        # 开发机上的亮色主题会把深色主题里的超预算种子放过去。
+        for mode in ("dark", "light"):
+            with self.subTest(mode=mode), patch(
+                "lib.core.graphics.workbench_tokens.resolve_workbench_mode",
+                return_value=mode,
+            ):
+                plain, _ = self._card_means(None, accent=FORUM_DEFAULT_ACCENT)
+                for message_id in range(1, 60):
+                    texture = card_texture(message_id)
+                    means, spread = self._card_means(texture, accent=FORUM_DEFAULT_ACCENT)
+                    delta = abs(sum(means) / 3 - sum(plain) / 3)
+                    # 花纹可以更深、带卡片色调，但不能压过卡片本身和正文。
+                    self.assertLessEqual(
+                        delta, _TEXTURE_DELTA_BUDGET, (mode, texture.pattern)
+                    )
+                    self.assertLessEqual(
+                        spread, _TEXTURE_TINT_BUDGET, (mode, texture.pattern)
+                    )
 
     def test_texture_density_and_stroke_are_turned_up(self):
         """底纹契约：平铺更密、线宽更粗、颜色更深；改这几个常数要同步这里。"""

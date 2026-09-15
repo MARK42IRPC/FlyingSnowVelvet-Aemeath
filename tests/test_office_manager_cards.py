@@ -322,5 +322,67 @@ class OfficePluginCardTests(unittest.TestCase):
         )
 
 
+class OfficePluginListingTests(unittest.TestCase):
+    """内置 bundle 的列表来自源 profile 的声明，不依赖本机运行时里的包体。"""
+
+    def setUp(self):
+        _reset_office_state()
+
+    def _source_profile(self, tmp: Path, name: str) -> Path:
+        profile = Path(tmp) / "profile"
+        profile.mkdir(parents=True, exist_ok=True)
+        (profile / "package.json").write_text(
+            json.dumps({"name": "@fsv/dsh-office-profile", "dsh": {"profile": {"bundles": [name]}}}),
+            encoding="utf-8",
+        )
+        return profile
+
+    def _patched(self, profile: Path, modules: Path):
+        return (
+            patch.object(office_plugins, "source_profile_dir", return_value=profile),
+            patch.object(office_plugins, "runtime_node_modules", return_value=modules),
+        )
+
+    def test_declared_bundle_is_listed_without_the_runtime_payload(self):
+        """干净检出（CI）没有 profile 的 node_modules，内置 bundle 也要照常露出来。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            name = "@fsv/not-provisioned-bundle"
+            profile = self._source_profile(tmp, name)
+            modules = Path(tmp) / "node_modules"
+            source_patch, modules_patch = self._patched(profile, modules)
+            with source_patch, modules_patch:
+                entries = office_plugins.list_plugins()
+
+        entry = next(item for item in entries if item.name == name)
+        self.assertTrue(entry.bundled)
+        self.assertFalse(entry.removable)
+        self.assertEqual(entry.version, "")
+        self.assertEqual(entry.description, office_plugins.MISSING_BUNDLE_HINT)
+        self.assertEqual(entry.path, modules.joinpath(*name.split("/")))
+
+    def test_landed_package_dir_wins_over_the_missing_bundle_hint(self):
+        """包体已经装到运行时里时，列表显示包自己的版本与说明。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            name = "@fsv/provisioned-bundle"
+            profile = self._source_profile(tmp, name)
+            modules = Path(tmp) / "node_modules"
+            directory = modules.joinpath(*name.split("/"))
+            directory.mkdir(parents=True, exist_ok=True)
+            (directory / "package.json").write_text(
+                json.dumps({"name": name, "version": "2.3.4", "description": "已装好的内置插件"}),
+                encoding="utf-8",
+            )
+            source_patch, modules_patch = self._patched(profile, modules)
+            with source_patch, modules_patch:
+                entries = office_plugins.list_plugins()
+
+        entry = next(item for item in entries if item.name == name)
+        self.assertTrue(entry.bundled)
+        self.assertFalse(entry.removable)
+        self.assertEqual(entry.version, "2.3.4")
+        self.assertEqual(entry.description, "已装好的内置插件")
+        self.assertEqual(entry.path, directory)
+
+
 if __name__ == "__main__":
     unittest.main()

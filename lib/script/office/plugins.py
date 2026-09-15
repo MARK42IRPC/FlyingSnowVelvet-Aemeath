@@ -28,6 +28,8 @@ PLUGIN_REGISTRY_FILE = "plugins.json"
 #: 办公 profile 的目录名，与 `runtime._provision_profile` 保持一致。
 PROFILE_DIR_NAME = "fsv-office"
 _PACKAGE_MANIFEST = "package.json"
+#: 源 profile 声明了内置 bundle、但本机运行时目录里还没装到包体时的列表说明。
+MISSING_BUNDLE_HINT = "运行时里还没装到这个内置 bundle，装好本机运行时后即可加载"
 
 _registry_lock = threading.Lock()
 
@@ -137,18 +139,24 @@ def builtin_bundles() -> list[str]:
     return [str(name).strip() for name in bundles if str(name).strip()]
 
 
+def runtime_node_modules() -> Path | None:
+    """程序自带运行时的 node_modules；运行时模块取不到时返回 None。"""
+    try:
+        from .runtime import runtime_root
+    except Exception:
+        return None
+    return Path(runtime_root()) / "node_modules"
+
+
 def _package_dir(name: str) -> Path | None:
     """按 node_modules 解析顺序找包目录：先 profile，再程序自带运行时。"""
     parts = _package_dir_parts(name)
     if parts is None:
         return None
     candidates = [profile_node_modules()]
-    try:
-        from .runtime import runtime_root
-
-        candidates.append(runtime_root() / "node_modules")
-    except Exception:
-        pass
+    bundled_modules = runtime_node_modules()
+    if bundled_modules is not None:
+        candidates.append(bundled_modules)
     for root in candidates:
         directory = Path(root).joinpath(*parts)
         if (directory / _PACKAGE_MANIFEST).is_file():
@@ -193,8 +201,19 @@ def list_plugins() -> list[OfficePlugin]:
             )
     for name in builtin_bundles():
         plugin = read_plugin(name, bundled=True)
-        if plugin is not None:
-            found.setdefault(plugin.name, plugin)
+        if plugin is None:
+            # 源 profile 声明的内置 bundle 属于发布契约，包体要等本机运行时装好才落到
+            # node_modules 里（CI 检出、刚装上还没跑过 provisioning 的机器都没有）。
+            # 这里照样列出并标记成内置，否则界面上一个内置项都看不到。
+            bundled_modules = runtime_node_modules()
+            plugin = OfficePlugin(
+                name=name,
+                version="",
+                description=MISSING_BUNDLE_HINT,
+                path=(bundled_modules / name) if bundled_modules else profile_node_modules() / name,
+                bundled=True,
+            )
+        found.setdefault(plugin.name, plugin)
     return sorted(found.values(), key=lambda plugin: plugin.name.casefold())
 
 
@@ -296,6 +315,7 @@ def apply_registered_bundles(profile_package_path: Path) -> None:
 
 
 __all__ = [
+    "MISSING_BUNDLE_HINT",
     "OfficePlugin",
     "PLUGIN_REGISTRY_FILE",
     "PluginError",
@@ -309,5 +329,6 @@ __all__ = [
     "registered_bundles",
     "registry_path",
     "remove_plugin",
+    "runtime_node_modules",
     "source_profile_dir",
 ]
