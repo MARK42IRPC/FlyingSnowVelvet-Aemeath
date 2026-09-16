@@ -561,6 +561,13 @@ class ForumBoardPage(QWidget):
         self._replies_layout.setContentsMargins(0, 0, 0, 0)
         self._replies_layout.setSpacing(scale_px(6, min_abs=5))
         detail_layout.addWidget(self._replies_host)
+        # 空态提示**常驻**：它和回复行挤在同一个布局里，但 `_clear_reply_rows()` 会跳过它。
+        # 早先它跟着行一起被删掉，`self._empty_hint` 就成了指向已销毁 QLabel 的野引用，
+        # 下一次 `_sync_replies_state()`（或 `on_reply_posted()`）在 `setVisible` 上抛
+        # 「wrapped C/C++ object of type QLabel has been deleted」，整个回调当场中断——
+        # 用户看到的就是「回复列表不显示」（2026-09-16 线上日志实测，看第二篇帖子必现）。
+        self._empty_hint = self._empty_reply_hint()
+        self._empty_hint.setVisible(False)
 
         self._more_replies = QPushButton("加载更多回复", host)
         self._more_replies.setObjectName("ForumGhostButton")
@@ -862,7 +869,6 @@ class ForumBoardPage(QWidget):
     def on_reply_posted(self, reply: ForumReply, floor: int) -> None:
         self._reply_input.clear()
         self._clear_reply_target()
-        self._empty_reply_hint().setVisible(False)
         self._floor_by_id[reply.id] = floor
         row = ForumReplyRow(reply, floor, parent=self._replies_host)
         row.like_clicked.connect(self._on_reply_like)
@@ -1008,8 +1014,9 @@ class ForumBoardPage(QWidget):
         total = self._service.replies_total or len(self._reply_rows)
         self._replies_title.setText(f"回复（{total}）")
         self._more_replies.setVisible(self._service.has_more_replies)
-        if not self._reply_rows:
-            self._empty_reply_hint().setVisible(True)
+        # 空态只看「有没有行」：有行就收起来，没行才铺出来（两个方向都要动，
+        # 只管「显示」的话，从空帖切到有回复的帖子时空态会一直挂在那儿）。
+        self._empty_reply_hint().setVisible(not self._reply_rows)
 
     def _sync_session(self, session) -> None:
         logged_in = is_logged_in(session)
@@ -1126,17 +1133,22 @@ class ForumBoardPage(QWidget):
         self._rows.clear()
 
     def _clear_reply_rows(self) -> None:
+        hint = getattr(self, "_empty_hint", None)
         while self._replies_layout.count():
             item = self._replies_layout.takeAt(0)
             widget = item.widget()
-            if widget is not None:
-                widget.setParent(None)
-                widget.deleteLater()
+            if widget is None or widget is hint:
+                continue
+            widget.setParent(None)
+            widget.deleteLater()
+        if hint is not None:
+            # 取出来再放回去：空态始终排在回复行前面，但它自己不跟着被销毁。
+            self._replies_layout.insertWidget(0, hint)
         self._reply_rows.clear()
         self._floor_by_id.clear()
 
     def _empty_reply_hint(self) -> QLabel:
-        """「还没有人回复」的空态；复用同一个标签，不重复创建。"""
+        """「还没有人回复」的空态；常驻同一个标签，不重复创建、也不跟着回复行被删。"""
         hint = getattr(self, "_empty_hint", None)
         if hint is not None:
             return hint

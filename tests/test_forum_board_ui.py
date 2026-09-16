@@ -344,6 +344,57 @@ class DetailTests(BoardPageTestCase):
         self.app.processEvents()
         self.assertTrue(self.page._empty_reply_hint().isVisible())
 
+    def test_the_reply_area_survives_being_cleared_twice(self) -> None:
+        """空态提示不能跟着回复行被清掉。
+
+        它和回复行挤在同一个布局里：早先 `_clear_reply_rows()` 会把整个布局清空，
+        `self._empty_hint` 于是成了指向已销毁 QLabel 的野引用。下一句
+        `_sync_replies_state()` 在 `setVisible` 上抛
+        「wrapped C/C++ object of type QLabel has been deleted」，整个回调当场中断——
+        线上看到的就是「回复列表不显示」（2026-09-16 日志实测，看第二篇帖子必现）。
+        """
+        self.page._stack.setCurrentIndex(1)
+        self.page.on_replies(ForumReplyPage(replies=(), page=1), False)
+        self._settle()
+        self.page.on_replies(ForumReplyPage(replies=(), page=1), False)
+        self._settle()
+        self.assertTrue(self.page._empty_hint.isVisible())
+
+    def test_a_reply_still_lands_after_the_reply_area_was_cleared(self) -> None:
+        """空帖 → 换一篇有回复的帖子 → 再发一条：日志里 `on_reply_posted` 就是这么挂的。"""
+        self.page._stack.setCurrentIndex(1)
+        self.page.on_replies(ForumReplyPage(replies=(), page=1), False)
+        self._settle()
+        self.page.on_replies(ForumReplyPage(replies=(reply(7),), page=1, total=1), False)
+        self._settle()
+        self.page.on_reply_posted(reply(9), 2)
+        self._settle()
+        self.assertEqual(sorted(self.page._reply_rows), [7, 9])
+
+    def test_a_second_page_of_the_same_post_keeps_the_hint_alive(self) -> None:
+        """同一篇帖子反复铺回复（切页 / 重进详情）时，空态提示始终是同一个活控件。"""
+        self.page._stack.setCurrentIndex(1)
+        hint = self.page._empty_reply_hint()
+        self._settle()
+        for _ in range(3):
+            self.page.on_replies(ForumReplyPage(replies=(reply(7),), page=1, total=1), False)
+            self._settle()
+        self.assertIs(self.page._empty_reply_hint(), hint)
+        self.assertIs(self.page._empty_hint.parent(), self.page._replies_host)
+        self.assertEqual(sorted(self.page._reply_rows), [7])
+        self.assertEqual(self.page._replies_layout.indexOf(hint), 0)
+        self.assertFalse(hint.isVisible())
+
+    def _settle(self) -> None:
+        """跑一遍事件循环，并让 `deleteLater()` 真的落地。
+
+        `processEvents()` 不会处理 DeferredDelete：不补这一下，被删的控件在测试里
+        仍然「活着」，这类野引用 bug 就抓不到了。
+        """
+        self.app.processEvents()
+        self.app.sendPostedEvents(None, QEvent.DeferredDelete)
+        self.app.processEvents()
+
     def test_back_button_returns_to_the_list(self) -> None:
         self.open()
         self.page._back_button.click()
