@@ -90,6 +90,13 @@ def forum_card_text_color(mode: str | None = None) -> str:
     return get_workbench_colors(mode).text
 
 
+def forum_muted_text_color(mode: str | None = None) -> str:
+    """次级正文颜色（引用、代码块）。样式表里的 `text_muted` 是同一个 token，
+    但正文一旦交给 `forum_text.MarkupText` 逐段着色，颜色就只能由这里给。
+    """
+    return get_workbench_colors(mode).text_muted
+
+
 def _is_light(mode: str | None) -> bool:
     from lib.core.graphics.workbench_tokens import resolve_workbench_mode
 
@@ -165,7 +172,7 @@ def forum_stylesheet(mode: str | None = None) -> str:
         QLabel#ForumCardMeta {{ color: {c.text_dim}; }}
         QLabel#ForumCardName {{ color: {c.text}; font-weight: 700; }}
         QLabel#ForumCardDeviceTag {{ color: {c.text_dim}; }}
-        QTextEdit#ForumCardText {{
+        QTextEdit#ForumCardText, QTextEdit#ForumBodyText {{
             background: transparent;
             border: none;
             color: {c.text};
@@ -266,6 +273,24 @@ def forum_stylesheet(mode: str | None = None) -> str:
             background: {c.surface_hover};
             color: {c.text};
         }}
+        QToolButton#ForumColorButton {{
+            border-radius: {scale_px(3, min_abs=2)}px;
+            border: {border}px solid {c.border};
+            background: {c.surface_raised};
+            color: {c.text_muted};
+            min-height: {scale_px(22, min_abs=19)}px;
+            max-height: {scale_px(22, min_abs=19)}px;
+            padding: 0px {scale_px(7, min_abs=6)}px;
+        }}
+        QToolButton#ForumColorButton:hover {{
+            border-color: {c.cyan};
+            color: {c.text};
+        }}
+        QToolButton#ForumColorButton:checked {{
+            border-color: {c.cyan};
+            background: {c.surface_hover};
+            color: {c.text};
+        }}
         QWidget#ForumColorControl {{ background: transparent; }}
         QCheckBox#ForumColorToggle {{
             color: {c.text_muted};
@@ -354,6 +379,13 @@ def forum_stylesheet(mode: str | None = None) -> str:
         QLabel#ForumPostQuote, QLabel#ForumFieldLabel {{ color: {c.text_muted}; }}
         QLabel#ForumPostTag, QLabel#ForumEmptyHint {{ color: {c.text_dim}; }}
         QLabel#ForumFloor {{ color: {c.cyan}; font-weight: 700; }}
+        QLabel#ForumImageThumb {{
+            background: {c.surface_raised};
+            color: {c.text_dim};
+            border: {border}px solid {c.border};
+            border-radius: {scale_px(4, min_abs=3)}px;
+        }}
+        QLabel#ForumImageThumb:hover {{ border-color: {c.cyan}; }}
         QLabel#ForumBadge {{
             background: {c.border_strong};
             color: {c.canvas};
@@ -429,6 +461,7 @@ def forum_stylesheet(mode: str | None = None) -> str:
         QWidget#ForumBoardPage, QWidget#ForumAccountPage, QWidget#ForumDetailHost,
         QWidget#ForumAccountHost,
         QWidget#ForumReplyComposer, QWidget#ForumComposerHost,
+        QWidget#ForumComposeTools, QWidget#ForumComposeColors, QWidget#ForumImageStrip,
         QWidget#ForumAccountStack, QStackedWidget#ForumAccountStack {{
             background: transparent;
         }}

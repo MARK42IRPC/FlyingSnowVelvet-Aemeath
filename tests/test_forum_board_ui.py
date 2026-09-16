@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import base64
 import os
+import pathlib
 import tempfile
 import unittest
 from concurrent.futures import Future
@@ -20,10 +22,13 @@ os.environ.setdefault(
 os.environ.setdefault("QT_PLUGIN_PATH", os.path.join(_QT_ROOT, "Qt5", "plugins"))
 
 from PyQt5.QtCore import QEvent, QPointF, Qt
-from PyQt5.QtGui import QMouseEvent
+from PyQt5.QtGui import QFont, QMouseEvent, QTextCursor
 from PyQt5.QtWidgets import QApplication
 
 from lib.core.forum_api import (
+    FORUM_CONTENT_MAX,
+    FORUM_IMAGES_PER_POST,
+    ForumImage,
     ForumPost,
     ForumPostPage,
     ForumReply,
@@ -33,7 +38,14 @@ from lib.core.forum_api import (
     ForumUser,
 )
 from lib.core.forum_session import ForumSessionStore
-from lib.script.ui.forum_board import TAG_CHIP_LIMIT, ForumBoardPage
+from lib.script.ui import forum_board
+from lib.script.ui.forum_board import TAG_CHIP_LIMIT, ForumBoardPage, ForumImageThumb
+from lib.script.ui.forum_text import MarkupText
+
+#: 一张 1×1 的真 PNG（`QPixmap` 解得开）；缩略图那几条用例拿它当「一张图」。
+PNG_1PX = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+)
 
 
 def post(index: int, **overrides) -> ForumPost:
@@ -84,6 +96,9 @@ class FakeService:
         self.current_post: ForumPost | None = None
         self.reply_error = ""
         self.thread_error = ""
+        self.upload_error = ""
+        self.uploaded: list = []
+        self.upload_result = ForumImage(id="a" * 32, bytes=128)
         self.snapshot = False
         self.cleaned = False
 
@@ -130,9 +145,18 @@ class FakeService:
         self._record("load_tags")
         return True
 
-    def post_thread(self, title, content, *, tags=None) -> str:
-        self._record("post_thread", title=title, content=content, tags=tags)
+    def post_thread(self, title, content, *, tags=None, images=None) -> str:
+        self._record("post_thread", title=title, content=content, tags=tags, images=images)
         return self.thread_error
+
+    def upload_image(self, data, *, name="") -> str:
+        # 键名不叫 name：`_record(name, **kwargs)` 的第一个参数就是它，会撞上。
+        self._record("upload_image", size=len(data), filename=name)
+        return self.upload_error
+
+    def load_thumbnail(self, image_id) -> bool:
+        self._record("load_thumbnail", image_id=image_id)
+        return True
 
     def cache_summary(self) -> dict:
         return {"files": 0, "bytes": 0}
@@ -503,7 +527,8 @@ class ComposerTests(BoardPageTestCase):
         self.page._compose_send.click()
         call = [item for item in self.service.calls if item[0] == "post_thread"][-1]
         self.assertEqual(
-            call[1], {"title": "新主题", "content": "正文内容", "tags": "自测, 接口"}
+            call[1],
+            {"title": "新主题", "content": "正文内容", "tags": "自测, 接口", "images": []},
         )
 
     def test_service_refusal_stays_on_the_composer(self) -> None:
@@ -622,6 +647,271 @@ class BackFromDetailTests(unittest.TestCase):
         self._settle()
         self.assertEqual(self.page._stack.currentIndex(), 0)
 
+
+class ComposerToolsTests(BoardPageTestCase):
+    """发帖页的辅助：行内标记、文字色 / 描边色、图片上传。"""
+
+    def open_composer(self) -> None:
+        self.login()
+        self.page.open_composer()
+        self.app.processEvents()
+
+    def select_all(self) -> None:
+        cursor = self.page._thread_body.textCursor()
+        cursor.setPosition(0)
+        cursor.setPosition(len(self.page._body_text()), QTextCursor.KeepAnchor)
+        self.page._thread_body.setTextCursor(cursor)
+
+    def test_markup_button_wraps_the_selection(self) -> None:
+        self.open_composer()
+        self.page._thread_body.setPlainText("正文内容")
+        self.select_all()
+        self.page._format_buttons["bold"].click()
+        self.assertEqual(self.page._body_text(), "**正文内容**")
+        self.assertTrue(self.page._format_buttons["bold"].isChecked())
+
+    def test_markup_button_reflects_the_caret(self) -> None:
+        self.open_composer()
+        self.page._thread_body.setPlainText("**粗**")
+        cursor = self.page._thread_body.textCursor()
+        cursor.setPosition(2)
+        self.page._thread_body.setTextCursor(cursor)
+        self.assertTrue(self.page._format_buttons["bold"].isChecked())
+        self.assertFalse(self.page._format_buttons["italic"].isChecked())
+
+    def test_markup_button_wont_blow_the_character_limit(self) -> None:
+        self.open_composer()
+        self.page._thread_body.setPlainText("x" * FORUM_CONTENT_MAX)
+        self.select_all()
+        self.page._format_buttons["bold"].click()
+        self.assertEqual(len(self.page._body_text()), FORUM_CONTENT_MAX)
+        self.assertIn("超过", self.page._thread_error.text())
+
+    def test_color_button_wraps_the_selection_and_reveals_its_slider(self) -> None:
+        self.open_composer()
+        self.assertFalse(self.page._color_host.isVisible())
+        self.page._thread_body.setPlainText("红字")
+        self.select_all()
+        self.page._color_buttons["color"].click()
+        text = self.page._body_text()
+        self.assertTrue(text.startswith("[color=#"), text)
+        self.assertTrue(text.endswith("[/color]"), text)
+        self.assertIn("红字", text)
+        self.assertTrue(self.page._color_host.isVisible())
+        self.assertTrue(self.page._color_pickers["color"].isVisible())
+        self.assertFalse(self.page._color_pickers["outline"].isVisible())
+
+    def test_color_button_toggles_the_wrap_off_again(self) -> None:
+        self.open_composer()
+        self.page._thread_body.setPlainText("红字")
+        self.select_all()
+        self.page._color_buttons["color"].click()
+        self.page._color_buttons["color"].click()
+        self.assertEqual(self.page._body_text(), "红字")
+
+    def test_the_outline_button_is_independent_from_the_text_colour(self) -> None:
+        self.open_composer()
+        self.page._thread_body.setPlainText("描边字")
+        self.select_all()
+        self.page._color_buttons["outline"].click()
+        text = self.page._body_text()
+        self.assertIn("[outline=#", text)
+        self.assertNotIn("[color=", text)
+
+    def test_dragging_the_picker_recolours_the_same_run(self) -> None:
+        self.open_composer()
+        self.page._thread_body.setPlainText("红字")
+        self.select_all()
+        self.page._color_buttons["color"].click()
+        self.page._color_pickers["color"].set_color("#00ff00")
+        text = self.page._body_text()
+        self.assertEqual(text.count("[color="), 1)
+        self.assertIn(f"[color={self.page._color_pickers['color'].color()}]", text)
+
+    def test_image_button_follows_the_login_state(self) -> None:
+        self.page.open_composer()
+        self.assertFalse(self.page._image_button.isEnabled())
+        self.login()
+        self.page._sync_composer()
+        self.assertTrue(self.page._image_button.isEnabled())
+
+    def test_adding_an_image_goes_through_the_service(self) -> None:
+        self.open_composer()
+        target = pathlib.Path(self._tmp.name) / "封面.png"
+        target.write_bytes(PNG_1PX)
+        with patch.object(
+            forum_board.QFileDialog, "getOpenFileName", return_value=(str(target), "")
+        ):
+            self.page._on_add_image()
+        self.assertEqual([name for name, _ in self.service.calls], ["upload_image"])
+        self.assertEqual(self.service.calls[-1][1]["filename"], "封面.png")
+        self.assertTrue(self.page._uploading_image)
+        self.assertFalse(self.page._image_button.isEnabled())
+        self.assertEqual(self.page._image_button.text(), "正在上传…")
+
+    def test_the_fifth_image_is_refused_before_the_file_dialog(self) -> None:
+        self.open_composer()
+        self.page._compose_images = [
+            ForumImage(id=f"{index:032x}") for index in range(FORUM_IMAGES_PER_POST)
+        ]
+        self.page._on_add_image()
+        self.assertIn(f"最多挂 {FORUM_IMAGES_PER_POST} 张图", self.page._thread_error.text())
+        self.assertEqual([name for name, _ in self.service.calls], [])
+
+    def upload_one(self) -> ForumImage:
+        image = ForumImage(id="c" * 32, url="/api/images/" + "c" * 32)
+        self.page._pending_image_bytes = PNG_1PX
+        self.page._uploading_image = True
+        self.page.on_image_uploaded(image)
+        self.app.processEvents()
+        return image
+
+    def test_uploaded_image_is_attached_and_written_into_the_body(self) -> None:
+        self.open_composer()
+        self.upload_one()
+        self.assertEqual([image.id for image in self.page._compose_images], ["c" * 32])
+        self.assertIn(f"![图片](/api/images/{'c' * 32})", self.page._body_text())
+        self.assertTrue(self.page._image_strip.isVisible())
+        thumbs = self.page._image_strip.findChildren(ForumImageThumb)
+        self.assertEqual(len(thumbs), 1)
+        self.assertTrue(thumbs[0].has_data())
+
+    def test_publishing_carries_the_uploaded_images(self) -> None:
+        self.open_composer()
+        self.upload_one()
+        self.page._thread_title.setText("带图的帖子")
+        self.page._compose_send.click()
+        call = [item for item in self.service.calls if item[0] == "post_thread"][-1]
+        self.assertEqual(call[1]["images"], ["c" * 32])
+
+    def test_clicking_a_thumbnail_drops_it_from_the_post(self) -> None:
+        self.open_composer()
+        self.upload_one()
+        thumb = self.page._image_strip.findChildren(ForumImageThumb)[0]
+        self.release(thumb, QPointF(2, 2))
+        self.app.processEvents()
+        self.assertEqual(self.page._compose_images, [])
+        self.assertFalse(self.page._image_strip.isVisible())
+
+    def test_upload_failure_lands_on_the_error_line(self) -> None:
+        self.open_composer()
+        self.page._uploading_image = True
+        self.page.on_image_error("图片超过论坛 1500 KB 的上限，压缩一下再传")
+        self.assertIn("1500 KB", self.page._thread_error.text())
+        self.assertTrue(self.page._thread_error.isVisible())
+        self.assertEqual(self.page._compose_images, [])
+        self.assertTrue(self.page._image_button.isEnabled())
+
+    def test_publishing_clears_the_attached_images(self) -> None:
+        self.open_composer()
+        self.upload_one()
+        self.page.on_thread_posted(post(99))
+        self.app.processEvents()
+        self.assertEqual(self.page._compose_images, [])
+        self.assertFalse(self.page._image_strip.isVisible())
+
+
+class ListThumbTests(BoardPageTestCase):
+    """列表行的缩略图：按图 id 去服务层取，取回来的铺上，取不回来的别再要。"""
+
+    def asked(self) -> list:
+        return [item[1]["image_id"] for item in self.service.calls if item[0] == "load_thumbnail"]
+
+    def test_rows_with_images_ask_for_thumbnails(self) -> None:
+        entry = post(1, images=(ForumImage(id="a" * 32), ForumImage(id="b" * 32)))
+        self.page.on_posts(page_of([entry]), False)
+        self.app.processEvents()
+        self.assertEqual(self.asked(), ["a" * 32, "b" * 32])
+        self.assertEqual(len(self.page.findChildren(ForumImageThumb)), 2)
+
+    def test_thumbnail_bytes_are_painted_onto_the_row(self) -> None:
+        entry = post(1, images=(ForumImage(id="a" * 32),))
+        self.page.on_posts(page_of([entry]), False)
+        self.page.on_thumbnail("a" * 32, PNG_1PX)
+        thumbs = self.page.findChildren(ForumImageThumb)
+        self.assertEqual(len(thumbs), 1)
+        self.assertTrue(thumbs[0].has_data())
+
+    def test_a_failed_thumbnail_is_not_asked_for_again(self) -> None:
+        entry = post(1, images=(ForumImage(id="a" * 32),))
+        self.page.on_posts(page_of([entry]), False)
+        self.page.on_thumbnail("a" * 32, b"")
+        self.page._refresh_thumbs()
+        self.assertEqual(self.asked(), ["a" * 32])
+
+    def test_garbage_bytes_leave_the_placeholder(self) -> None:
+        entry = post(1, images=(ForumImage(id="a" * 32),))
+        self.page.on_posts(page_of([entry]), False)
+        self.page.on_thumbnail("a" * 32, b"not an image")
+        self.assertFalse(self.page.findChildren(ForumImageThumb)[0].has_data())
+
+    def test_rows_without_an_image_list_keep_the_text_hint(self) -> None:
+        self.page.on_posts(page_of([post(1, image_count=2)]), False)
+        self.assertIn("【图片 ×2】", self.page._rows[1]._excerpt.text())
+
+    def test_rows_with_images_do_not_repeat_the_count_in_text(self) -> None:
+        entry = post(1, image_count=1, images=(ForumImage(id="a" * 32),))
+        self.page.on_posts(page_of([entry]), False)
+        self.assertNotIn("【图片", self.page._rows[1]._excerpt.text())
+
+
+class DetailBodyTests(BoardPageTestCase):
+    """详情页正文：纯文字走 QLabel，带标记 / 带颜色的一段换成能逐段描边的 `MarkupText`。"""
+
+    def open(self, content: str, **overrides) -> None:
+        entry = post(1, content=content, **overrides)
+        self.service.current_post = entry
+        self.page.on_post(entry)
+        self.app.processEvents()
+
+    def widgets(self) -> list:
+        body = self.page._detail_body
+        return [body.itemAt(index).widget() for index in range(body.count())]
+
+    def rich(self) -> list:
+        return [widget for widget in self.widgets() if isinstance(widget, MarkupText)]
+
+    def test_a_plain_paragraph_stays_a_label(self) -> None:
+        self.open("只是正文")
+        self.assertEqual(self.rich(), [])
+        self.assertEqual(self.widgets()[0].text(), "只是正文")
+
+    def test_a_coloured_paragraph_is_rendered_by_markup_text(self) -> None:
+        self.open("[color=#ff0000]红[/color]与[outline=#00ff00]绿[/outline]")
+        self.assertEqual(len(self.rich()), 1)
+        widget = self.rich()[0]
+        self.assertEqual(widget.document().toPlainText(), "红与绿")
+        self.assertNotIn("[color=", widget.document().toPlainText())
+        # `QTextCursor.charFormat()` 说的是「光标前一个字」的格式，所以位置要往后挪一格。
+        first = QTextCursor(widget.document())
+        first.setPosition(1)
+        self.assertEqual(first.charFormat().foreground().color().name(), "#ff0000")
+        second = QTextCursor(widget.document())
+        second.setPosition(3)
+        self.assertEqual(second.charFormat().textOutline().color().name(), "#00ff00")
+        self.assertGreater(second.charFormat().textOutline().width(), 0)
+
+    def test_inline_markers_render_instead_of_being_shown(self) -> None:
+        self.open("前**粗**后")
+        self.assertEqual(len(self.rich()), 1)
+        widget = self.rich()[0]
+        self.assertEqual(widget.document().toPlainText(), "前粗后")
+        cursor = QTextCursor(widget.document())
+        cursor.setPosition(2)
+        self.assertGreaterEqual(cursor.charFormat().fontWeight(), QFont.Bold)
+
+    def test_a_code_block_keeps_its_markers_verbatim(self) -> None:
+        self.open("```\n**不是加粗**\n```")
+        self.assertEqual(self.rich(), [])
+        self.assertIn("**不是加粗**", self.widgets()[0].text())
+
+    def test_the_detail_lists_the_post_images(self) -> None:
+        self.open("正文", images=(ForumImage(id="a" * 32),))
+        self.assertEqual(len(self.page._detail_host.findChildren(ForumImageThumb)), 1)
+        self.assertEqual(
+            [item[1]["image_id"] for item in self.service.calls if item[0] == "load_thumbnail"],
+            ["a" * 32],
+        )
 
 if __name__ == "__main__":
     unittest.main()

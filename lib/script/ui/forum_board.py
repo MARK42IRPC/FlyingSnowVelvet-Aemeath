@@ -7,14 +7,24 @@
 - 发帖是同一个页面里的第三屏（工具栏「发帖」进入），标题、正文、标签都在这里填；
   发布成功后新帖直接插到列表最前面，不用等下一次刷新。
 - 点赞、回复都需要登录：未登录时按钮变成「去登录」，点了由窗口切到账号页。
-- 正文不下载图片：`lib/core/forum_markdown.py` 把 Markdown 降级成块，图片降级成占位符。
+- 正文里的图片按需取字节：`CommunityService.load_thumbnail()` 先看磁盘缓存（`lib/core/forum_images.py`），
+  列表行的缩略图与发帖页上传后的预览共用同一个控件（`ForumImageThumb`）。
+- 发帖页与留言墙共用同一套行内标记辅助（`lib/script/ui/forum_markup.py` 的 `toggle()`），正文是多行
+  编辑框，所以按钮打交道的对象是 `QTextCursor` 而不是 `QLineEdit`；「文字色 / 描边色」两个按钮把选中的
+  一段包进颜色令牌（`lib/core/forum_colors.py` 的 `apply_color_tokens()`），一篇帖子因此可以有几段不同的颜色。
+- 正文里的行内标记与颜色由 `forum_text.MarkupText` 逐段渲染：QLabel 的富文本能给文字上色，但给不出
+  描边，而描边色是发帖页的一个按钮，所以带标记或带颜色的段落才换成它，纯文字段仍走 QLabel 的快路径。
 - 翻页沿用留言墙的手感：滚到底自动加载下一页，也有一个明确的「加载更多」按钮兜底。
 """
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtGui import QPixmap, QTextCursor
 from PyQt5.QtWidgets import (
+    QFileDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -31,18 +41,22 @@ from config.scale import scale_px
 from lib.core.forum_api import (
     FORUM_CONTENT_MAX,
     FORUM_DEFAULT_SORT,
+    FORUM_IMAGES_PER_POST,
     FORUM_REPLY_MAX,
     FORUM_SORT_LABELS,
     FORUM_TAG_MAX_COUNT,
     FORUM_TITLE_MAX,
     FORUM_TITLE_MIN,
+    ForumImage,
     ForumPost,
     ForumPostPage,
     ForumReply,
     ForumReplyPage,
     ForumTag,
     format_timestamp,
+    image_markdown,
 )
+from lib.core.forum_colors import ForumTextRun, apply_color_tokens, iter_color_tokens
 from lib.core.forum_community import CommunityService
 from lib.core.forum_markdown import (
     BLOCK_CODE,
@@ -56,6 +70,17 @@ from lib.core.forum_markdown import (
 from lib.core.forum_session import ForumSessionStore, is_logged_in
 from lib.core.logger import get_logger
 from lib.core.qt_bridge.font import get_ui_font
+from lib.script.ui.forum_color_control import ForumColorControl, format_button_font
+from lib.script.ui.forum_markup import (
+    FORMAT_BY_KEY,
+    FORUM_MARKUP_FORMATS,
+    escape_text,
+    span_at_cursor,
+    to_html,
+    toggle,
+)
+from lib.script.ui.forum_style import forum_card_text_color, forum_muted_text_color
+from lib.script.ui.forum_text import MarkupText
 from lib.script.ui.workbench_settings_layout import SmoothScrollArea
 
 logger = get_logger(__name__)
@@ -73,6 +98,15 @@ _SORT_TOOLTIPS = {
     "active": "按最后一条回复的时间排序",
     "old": "按发布时间从旧到新",
 }
+#: 列表行缩略图与发帖页预览图的边长（正方形；图不裁切，按长边贴合进去）。
+LIST_THUMB_SIZE = scale_px(54, min_abs=42)
+COMPOSE_THUMB_SIZE = scale_px(68, min_abs=54)
+#: 内存里最多留几张图的字节：磁盘缓存才是常态（`lib/core/forum_images.py`），
+#: 这里只为了让来回切页时预览立刻就在。
+THUMB_MEMORY_LIMIT = 128
+#: 发帖页富文本正文的高度估算宽度（还没有真实列宽时用它量高）。
+BODY_WIDTH_HINT = scale_px(420, min_abs=280)
+
 #: 详情页正文块的字号：列表、引用、代码各一档，其余用默认。
 _BLOCK_FONT_DEFAULT = 13
 _HEADING_FONT_SIZES = {1: 18, 2: 16, 3: 15, 4: 14, 5: 14, 6: 13}
@@ -98,6 +132,80 @@ def _apply_like_state(button: QToolButton, liked: bool, count: int, prefix: str 
     if style is not None:
         style.unpolish(button)
         style.polish(button)
+
+
+def _color_span_at(text, caret: int, kind: str) -> tuple[int, int] | None:
+    """光标落在哪一段同类颜色令牌里，给出 `(开始令牌起点, 这一段结束的位置)`。
+
+    颜色令牌是「从出现处生效、到同类下一个令牌为止」（见 `lib/core/forum_colors.py`），所以
+    按顺序扫一遍同类令牌就够：光标在开始令牌之后、下一个同类令牌之前，就是被这一段包着。
+    """
+    body = str(text or "")
+    opening: int | None = None
+    for start, _end, token_kind, value in iter_color_tokens(body):
+        if token_kind != kind:
+            continue
+        if opening is not None and opening <= caret < start:
+            return opening, start
+        opening = start if value else None
+    if opening is not None and caret >= opening:
+        return opening, len(body)
+    return None
+
+
+class ForumImageThumb(QLabel):
+    """一张图片的小预览：列表行与发帖页共用。
+
+    给得出字节就直接画（发帖页刚上传的图本地就有），否则先摆一个占位空框，等页面把
+    `CommunityService.load_thumbnail()` 取回来的字节交给 `set_data()`。描边与底色在样式表的
+    `QLabel#ForumImageThumb` 里，尺寸由调用方给（列表行与发帖页两档）。
+
+    `removable=True` 时点一下发 `clicked`（发帖页用它把这张图从帖子里摘掉）；列表行里不可移除，
+    点击照常由父级（整行）接走，于是在列表里点缩略图与点这一行是同一件事。
+    """
+
+    clicked = pyqtSignal(str)
+
+    def __init__(self, image_id, *, size: int, removable: bool = False, parent=None) -> None:
+        super().__init__(parent)
+        self.image_id = str(image_id or "")
+        self._removable = bool(removable)
+        self._data = b""
+        self._size = max(8, int(size))
+        self.setObjectName("ForumImageThumb")
+        self.setFixedSize(self._size, self._size)
+        self.setAlignment(Qt.AlignCenter)
+        self.setFont(_font(10))
+        self.setText("图" if self.image_id else "?")
+        self.setToolTip("点一下把这张图从帖子里摘掉" if self._removable else "帖子里的图片")
+        if self._removable:
+            self.setCursor(Qt.PointingHandCursor)
+
+    def set_data(self, data) -> bool:
+        """把字节画上去；解码不出来就保持占位框（少一张预览不该打断整页）。"""
+        raw = bytes(data or b"")
+        if not raw:
+            return False
+        if raw == self._data:
+            return True
+        pixmap = QPixmap()
+        if not pixmap.loadFromData(raw):
+            return False
+        self._data = raw
+        self.setText("")
+        self.setPixmap(
+            pixmap.scaled(self._size, self._size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        )
+        return True
+
+    def has_data(self) -> bool:
+        return bool(self._data)
+
+    def mouseReleaseEvent(self, event) -> None:
+        if self._removable and event.button() == Qt.LeftButton:
+            self.clicked.emit(self.image_id)
+            return
+        super().mouseReleaseEvent(event)
 
 
 class ForumPostRow(QFrame):
@@ -140,13 +248,26 @@ class ForumPostRow(QFrame):
         text_box.addLayout(title_row)
 
         body = post.excerpt.strip() or plain_text(post.content, limit=EXCERPT_LENGTH)
-        if post.image_count and "【图片" not in body:
+        # 拉到了图片列表就铺缩略图，只在「接口只给了张数、没给图」时才退回文字提示。
+        if post.image_count and not post.images and "【图片" not in body:
             body = f"{body}　【图片 ×{post.image_count}】"
         self._excerpt = QLabel(body or "（没有正文）", self)
         self._excerpt.setObjectName("ForumPostExcerpt")
         self._excerpt.setFont(_font(11))
         self._excerpt.setWordWrap(True)
         text_box.addWidget(self._excerpt)
+
+        self._thumbs: list[ForumImageThumb] = []
+        if post.images:
+            strip = QHBoxLayout()
+            strip.setContentsMargins(0, scale_px(2, min_abs=1), 0, 0)
+            strip.setSpacing(scale_px(5, min_abs=4))
+            for image in post.images[:FORUM_IMAGES_PER_POST]:
+                thumb = ForumImageThumb(image.id, size=LIST_THUMB_SIZE, parent=self)
+                self._thumbs.append(thumb)
+                strip.addWidget(thumb, 0)
+            strip.addStretch(1)
+            text_box.addLayout(strip)
 
         meta_row = QHBoxLayout()
         meta_row.setContentsMargins(0, 0, 0, 0)
@@ -317,6 +438,20 @@ class ForumBoardPage(QWidget):
         self._reply_target: tuple[int, int] | None = None
         self._sort = FORUM_DEFAULT_SORT
         self._disposed = False
+        #: 发帖页已经传好的图片（顺序就是要挂到帖子上的顺序）。
+        self._compose_images: list[ForumImage] = []
+        #: 正在传的那张图的本地字节：上传成功时用它先把预览画出来，不必再回站里取一次。
+        self._pending_image_bytes = b""
+        self._uploading_image = False
+        #: 正文改成自己的那一刻 `_set_body_text()` 会举起这个旗子，`on_body_changed` 据此判断
+        #: 「这次改动是我做的」，不把颜色区段的坐标当成过期。
+        self._body_writing = False
+        #: 最近一次上色的区段：拖颜色滑条时按它重刷。
+        self._color_spans: dict[str, tuple[int, int]] = {}
+        #: 图片字节的内存副本（磁盘缓存另有 `lib/core/forum_images.py`）；取不回来的记在
+        #: `_thumb_failed` 里，免得每次刷新都再要一遍。
+        self._thumb_data: dict[str, bytes] = {}
+        self._thumb_failed: set[str] = set()
         #: 首次进入时才自动读第一页；来回切页签不再重复请求。
         self._loaded = False
 
@@ -679,15 +814,30 @@ class ForumBoardPage(QWidget):
         self._thread_title.setFont(_font(12))
         card_layout.addWidget(self._thread_title)
 
+        card_layout.addWidget(self._build_compose_tools(card), 0)
+        card_layout.addWidget(self._build_compose_colors(card), 0)
+
         self._thread_body = QPlainTextEdit(card)
         self._thread_body.setObjectName("ForumThreadBody")
         self._thread_body.setPlaceholderText(
-            "正文（支持 Markdown：标题、列表、引用、代码块；图片接口未接入，图片会显示成占位符）"
+            "正文（支持 Markdown：标题、列表、引用、代码块；上面的按钮会在光标处加标记，"
+            "也能给选中的一段选文字色与描边色）"
         )
         self._thread_body.setFont(_font(12))
         self._thread_body.setMinimumHeight(scale_px(150, min_abs=110))
-        self._thread_body.textChanged.connect(self._sync_thread_counter)
+        self._thread_body.textChanged.connect(self._on_body_changed)
+        # 光标 / 选区一动就重算按钮的复选状态：亮着就表示「光标处的字就是这种格式 / 这个颜色」。
+        self._thread_body.cursorPositionChanged.connect(self._sync_format_buttons)
+        self._thread_body.selectionChanged.connect(self._sync_format_buttons)
         card_layout.addWidget(self._thread_body, 1)
+
+        self._image_strip = QWidget(card)
+        self._image_strip.setObjectName("ForumImageStrip")
+        self._image_row = QHBoxLayout(self._image_strip)
+        self._image_row.setContentsMargins(0, 0, 0, 0)
+        self._image_row.setSpacing(scale_px(6, min_abs=5))
+        self._image_strip.setVisible(False)
+        card_layout.addWidget(self._image_strip, 0)
 
         self._thread_counter = QLabel(f"0 / {FORUM_CONTENT_MAX}", card)
         self._thread_counter.setObjectName("ForumThreadCounter")
@@ -735,7 +885,255 @@ class ForumBoardPage(QWidget):
         scroll.setWidget(host)
         layout.addWidget(scroll, 1)
         self._sync_thread_counter()
+        self._sync_compose_images()
         return page
+
+    def _build_compose_tools(self, card: QWidget) -> QWidget:
+        """正文上方的工具栏：行内标记 + 文字色 / 描边色 + 添加图片。
+
+        四个字母按钮与留言墙是同一套（`forum_markup.toggle()`），只是打交道的对象换成了
+        `QPlainTextEdit` 的光标；「文字色 / 描边色」两个按钮既是开关也是应用动作
+        （勾上就把选中的一段上成当前颜色，再点一下取消），对应的滑条见 `_build_compose_colors()`。
+        """
+        bar = QWidget(card)
+        bar.setObjectName("ForumComposeTools")
+        row = QHBoxLayout(bar)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(scale_px(5, min_abs=4))
+
+        self._format_buttons: dict[str, QToolButton] = {}
+        for fmt in FORUM_MARKUP_FORMATS:
+            button = QToolButton(bar)
+            button.setObjectName("ForumFormatButton")
+            button.setText(fmt.button)
+            button.setCheckable(True)
+            button.setToolTip(
+                f"{fmt.label}：选中文字后点一下，用 {fmt.marker} 把选区包起来；没有选中时先点亮按钮"
+                f"再输入，打的字就自动是{fmt.label}。再点一下取消。"
+            )
+            button.setCursor(Qt.PointingHandCursor)
+            button.setFont(format_button_font(fmt.key))
+            button.clicked.connect(lambda _checked=False, key=fmt.key: self._toggle_body_format(key))
+            self._format_buttons[fmt.key] = button
+            row.addWidget(button, 0)
+
+        self._color_buttons: dict[str, QToolButton] = {}
+        for kind, label, tip in (
+            ("color", "文字色", "把选中的一段（或接下来打的字）改成选定的文字色；再点一下取消"),
+            ("outline", "描边色", "给选中的一段（或接下来打的字）加一圈描边色；再点一下取消"),
+        ):
+            button = QToolButton(bar)
+            button.setObjectName("ForumColorButton")
+            button.setText(label)
+            button.setCheckable(True)
+            button.setToolTip(tip)
+            button.setCursor(Qt.PointingHandCursor)
+            button.setFont(_font(11))
+            button.clicked.connect(lambda _checked=False, key=kind: self._toggle_body_color(key))
+            self._color_buttons[kind] = button
+            row.addWidget(button, 0)
+
+        row.addStretch(1)
+        self._image_button = QPushButton("添加图片", bar)
+        self._image_button.setObjectName("ForumGhostButton")
+        self._image_button.setFont(_font(11))
+        self._image_button.clicked.connect(self._on_add_image)
+        row.addWidget(self._image_button, 0)
+        return bar
+
+    def _build_compose_colors(self, card: QWidget) -> QWidget:
+        """颜色滑条那一行：勾了哪一档就铺开哪一档，两个都没勾就整行收起。
+
+        这里的取色控件不带自己的复选框（`show_toggle=False`）：开关就是工具栏上那两个按钮，
+        控件只负责「选颜色」，滑条因此常驻。
+        """
+        host = QWidget(card)
+        host.setObjectName("ForumComposeColors")
+        row = QHBoxLayout(host)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(scale_px(8, min_abs=6))
+        self._color_pickers: dict[str, ForumColorControl] = {}
+        for kind, label in (("color", "文字颜色"), ("outline", "描边颜色")):
+            picker = ForumColorControl(host, label, show_toggle=False)
+            picker.colorChanged.connect(lambda _color, key=kind: self._reapply_body_color(key))
+            self._color_pickers[kind] = picker
+            row.addWidget(picker, 0)
+        row.addStretch(1)
+        host.setVisible(False)
+        self._color_host = host
+        return host
+
+    # ── 发帖页：行内标记、颜色与图片 ─────────────────────────────────
+
+    def _body_text(self) -> str:
+        return self._thread_body.toPlainText()
+
+    def _body_caret(self) -> int:
+        """光标位置；选中一段时给选区起点（`QTextCursor.position()` 指的是选区末尾）。"""
+        cursor = self._thread_body.textCursor()
+        return cursor.selectionStart() if cursor.hasSelection() else cursor.position()
+
+    def _body_selection(self) -> tuple[int, int]:
+        cursor = self._thread_body.textCursor()
+        return cursor.selectionStart(), cursor.selectionEnd()
+
+    def _set_body_text(self, text: str, start: int, stop: int) -> None:
+        """换掉正文并摆好光标 / 选区；`_body_writing` 让 `_on_body_changed()` 知道是自己改的。"""
+        self._body_writing = True
+        try:
+            self._thread_body.setPlainText(text)
+        finally:
+            self._body_writing = False
+        size = len(text)
+        cursor = self._thread_body.textCursor()
+        cursor.setPosition(max(0, min(int(start), size)))
+        if stop > start:
+            cursor.setPosition(max(0, min(int(stop), size)), QTextCursor.KeepAnchor)
+        self._thread_body.setTextCursor(cursor)
+        self._thread_body.setFocus()
+        self._sync_format_buttons()
+
+    def _on_body_changed(self) -> None:
+        self._sync_thread_counter()
+        if not self._body_writing:
+            # 正文被人手改了，之前记下的颜色区段坐标就不再可信，别再拿它去改颜色。
+            self._color_spans.clear()
+
+    def _toggle_body_format(self, key: str) -> None:
+        """复选按钮：在光标 / 选区处加减一对标记，接着打的字自动落在标记里。"""
+        fmt = FORMAT_BY_KEY.get(str(key or ""))
+        if fmt is None:
+            return
+        caret, end = self._body_selection()
+        text, start, stop = toggle(self._body_text(), caret, end, fmt.marker)
+        if len(text) > FORUM_CONTENT_MAX:
+            self._compose_error(f"加上标记会超过 {FORUM_CONTENT_MAX} 字上限，先删掉一些再试")
+            self._sync_format_buttons()
+            return
+        self._set_body_text(text, start, stop)
+
+    def _toggle_body_color(self, kind: str) -> None:
+        """「文字色 / 描边色」按钮：勾上就是把选中的一段上成当前颜色，再点一下取消。"""
+        picker = self._color_pickers.get(kind)
+        if picker is None:
+            return
+        body = self._body_text()
+        start, end = self._body_selection()
+        if _color_span_at(body, start, kind) is not None:
+            value = ""  # 光标已经在这一段里了：这一下就是取消
+        else:
+            value = picker.color()
+        text, new_start, new_stop = apply_color_tokens(body, start, end, **{kind: value})
+        if len(text) > FORUM_CONTENT_MAX:
+            self._compose_error(f"加颜色令牌会超过 {FORUM_CONTENT_MAX} 字上限，先删掉一些再试")
+            self._sync_format_buttons()
+            return
+        if value:
+            self._color_spans[kind] = (new_start, new_stop)
+        else:
+            self._color_spans.pop(kind, None)
+        self._set_body_text(text, new_start, new_stop)
+        self._sync_color_host()
+
+    def _reapply_body_color(self, kind: str) -> None:
+        """拖动滑条时，把刚上过色的那一段换成新颜色（换色是重刷，不会越点越长）。"""
+        button = self._color_buttons.get(kind)
+        picker = self._color_pickers.get(kind)
+        span = self._color_spans.get(kind)
+        if span is None or picker is None or button is None or not button.isChecked():
+            return
+        body = self._body_text()
+        text, start, stop = apply_color_tokens(body, span[0], span[1], **{kind: picker.color()})
+        if text == body:
+            return
+        self._color_spans[kind] = (start, stop)
+        self._set_body_text(text, start, stop)
+
+    def _sync_format_buttons(self) -> None:
+        """按钮的复选状态跟着光标：亮着就表示光标处的字已经是这种格式 / 这个颜色。"""
+        if not hasattr(self, "_format_buttons"):
+            return
+        text = self._body_text()
+        caret = self._body_caret()
+        for key, button in self._format_buttons.items():
+            checked = span_at_cursor(text, caret, FORMAT_BY_KEY[key].marker) is not None
+            if button.isChecked() != checked:
+                button.setChecked(checked)
+        for kind, button in self._color_buttons.items():
+            checked = _color_span_at(text, caret, kind) is not None
+            if button.isChecked() != checked:
+                button.setChecked(checked)
+
+    def _sync_color_host(self) -> None:
+        """颜色滑条跟着两个按钮走：勾了哪一档铺开哪一档，两个都没勾就整行收起。"""
+        shown = False
+        for kind, picker in self._color_pickers.items():
+            visible = self._color_buttons[kind].isChecked()
+            picker.setVisible(visible)
+            shown = shown or visible
+        self._color_host.setVisible(shown)
+
+    def _insert_body_text(self, text: str) -> None:
+        """在光标处插一段文字（图片 Markdown 走这里），超过了字数上限就只在错误行说明。"""
+        body = self._body_text()
+        caret, end = self._body_selection()
+        merged = body[:caret] + text + body[end:]
+        if len(merged) > FORUM_CONTENT_MAX:
+            self._compose_error(f"插进来会超过 {FORUM_CONTENT_MAX} 字上限，先删掉一些再试")
+            return
+        stop = caret + len(text)
+        self._set_body_text(merged, stop, stop)
+
+    def _on_add_image(self) -> None:
+        """选一张图并上传；本地能拦下的问题（图上够了）就不必再走一趟网络。"""
+        if len(self._compose_images) >= FORUM_IMAGES_PER_POST:
+            self._compose_error(f"一个帖子最多挂 {FORUM_IMAGES_PER_POST} 张图，先摘掉一张再传")
+            return
+        path, _selected = QFileDialog.getOpenFileName(
+            self, "选一张图片", "", "图片 (*.png *.jpg *.jpeg *.gif *.webp);;所有文件 (*)"
+        )
+        if not path:
+            return
+        try:
+            data = Path(path).read_bytes()
+        except OSError as exc:
+            self._compose_error(f"这个文件读不出来：{exc}")
+            return
+        self._pending_image_bytes = data
+        error = self._service.upload_image(data, name=Path(path).name)
+        if error:
+            self._pending_image_bytes = b""
+            self._compose_error(error)
+            self._sync_composer()
+            return
+        self._uploading_image = True
+        self._compose_error("")
+        self._sync_composer()
+
+    def _remove_compose_image(self, image_id: str) -> None:
+        """把一张已经传上去的图从这篇帖子里摘掉（图库那边不动）。"""
+        ident = str(image_id or "")
+        self._compose_images = [image for image in self._compose_images if image.id != ident]
+        self._sync_compose_images()
+
+    def _sync_compose_images(self) -> None:
+        """铺开已上传图片的预览条；一张都没有就整条收起。"""
+        while self._image_row.count():
+            item = self._image_row.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.setParent(None)
+                widget.deleteLater()
+        for image in self._compose_images:
+            thumb = ForumImageThumb(
+                image.id, size=COMPOSE_THUMB_SIZE, removable=True, parent=self._image_strip
+            )
+            thumb.set_data(self._thumb_data.get(image.id, b""))
+            thumb.clicked.connect(self._remove_compose_image)
+            self._image_row.addWidget(thumb, 0)
+        self._image_row.addStretch(1)
+        self._image_strip.setVisible(bool(self._compose_images))
+        self._sync_composer()
 
     # ── 对外 ─────────────────────────────────────────────────────────
 
@@ -826,6 +1224,8 @@ class ForumBoardPage(QWidget):
         self._thread_title.clear()
         self._thread_body.clear()
         self._thread_tags.clear()
+        self._compose_images = []
+        self._sync_compose_images()
         self._compose_error("")
         self._add_row(post, top=True)
         self._stack.setCurrentIndex(0)
@@ -878,6 +1278,40 @@ class ForumBoardPage(QWidget):
         self._sync_replies_state()
         bar = self._detail_scroll.verticalScrollBar()
         bar.setValue(bar.maximum())
+
+    def on_image_uploaded(self, image) -> None:
+        """上传成功：挂进这篇帖子，顺手把图片 Markdown 插在光标处。"""
+        self._uploading_image = False
+        data = self._pending_image_bytes
+        self._pending_image_bytes = b""
+        if image is None or not getattr(image, "id", ""):
+            self._sync_composer()
+            return
+        if len(self._compose_images) < FORUM_IMAGES_PER_POST:
+            self._compose_images.append(image)
+            if data:
+                self._remember_thumb(image.id, data)
+        self._compose_error("")
+        self._insert_body_text(image_markdown(image))
+        self._sync_compose_images()
+
+    def on_image_error(self, message: str) -> None:
+        """上传失败：原因写在发帖页的错误行上，图不挂进帖子。"""
+        self._uploading_image = False
+        self._pending_image_bytes = b""
+        self._compose_error(message)
+        self._sync_composer()
+
+    def on_thumbnail(self, image_id, data) -> None:
+        """某张图的字节到了（取不回来时给空串）：铺到页面上，失败的记下来别再要。"""
+        ident = str(image_id or "")
+        if not ident:
+            return
+        if data:
+            self._remember_thumb(ident, data)
+        else:
+            self._thumb_failed.add(ident)
+        self._refresh_thumbs()
 
     def on_likes(self, kind: str, target_id: int, liked: bool, count: int) -> None:
         if kind == "reply":
@@ -1038,6 +1472,7 @@ class ForumBoardPage(QWidget):
             self._list_layout.insertWidget(0, row)
         else:
             self._list_layout.insertWidget(self._list_layout.count() - 1, row)
+        self._refresh_thumbs()
         return row
 
     def _on_publish_thread(self) -> None:
@@ -1045,6 +1480,7 @@ class ForumBoardPage(QWidget):
             self._thread_title.text(),
             self._thread_body.toPlainText(),
             tags=self._thread_tags.text(),
+            images=[image.id for image in self._compose_images],
         )
         self._compose_error(error)
 
@@ -1077,6 +1513,21 @@ class ForumBoardPage(QWidget):
         self._compose_button.setToolTip(
             "发布一篇新帖" if logged_in else "发布一篇新帖（需要登录）"
         )
+        count = len(self._compose_images)
+        full = count >= FORUM_IMAGES_PER_POST
+        self._image_button.setEnabled(logged_in and not self._uploading_image and not full)
+        if self._uploading_image:
+            self._image_button.setText("正在上传…")
+        else:
+            suffix = f"（{count}/{FORUM_IMAGES_PER_POST}）" if count else ""
+            self._image_button.setText(f"添加图片{suffix}")
+        if not logged_in:
+            tip = "登录后才能上传图片"
+        elif full:
+            tip = f"一个帖子最多挂 {FORUM_IMAGES_PER_POST} 张图"
+        else:
+            tip = "上传一张图片（PNG / JPEG / GIF / WebP），正文里会插入它的 Markdown"
+        self._image_button.setToolTip(tip)
 
     def _render_body(self, post: ForumPost) -> None:
         self._clear_detail_body()
@@ -1093,27 +1544,114 @@ class ForumBoardPage(QWidget):
                 self._detail_body.addWidget(line)
             elif block.kind == BLOCK_HEADING:
                 size = _HEADING_FONT_SIZES.get(int(block.level or 1), 14)
-                self._add_body_label(block.text, "ForumPostHeading", size, bold=True)
+                self._add_body_label(block.text, "ForumPostHeading", size, bold=True, block=block)
             elif block.kind == BLOCK_QUOTE:
-                self._add_body_label(f"“{block.text}”", "ForumPostQuote", 12)
+                self._add_body_label(
+                    f"“{block.text}”",
+                    "ForumPostQuote",
+                    12,
+                    block=block,
+                    prefix="“",
+                    suffix="”",
+                    color=forum_muted_text_color(),
+                )
             elif block.kind == BLOCK_CODE:
                 self._add_body_label(block.text, "ForumPostCode", 11)
             elif block.kind == BLOCK_LIST:
                 marker = f"{block.marker} " if block.marker else ""
                 indent = "　" * max(0, int(block.level))
+                prefix = f"{indent}{marker}"
                 self._add_body_label(
-                    f"{indent}{marker}{block.text}", "ForumPostText", _BLOCK_FONT_DEFAULT
+                    f"{prefix}{block.text}",
+                    "ForumPostText",
+                    _BLOCK_FONT_DEFAULT,
+                    block=block,
+                    prefix=prefix,
                 )
             else:
-                self._add_body_label(block.text, "ForumPostText", _BLOCK_FONT_DEFAULT)
+                self._add_body_label(block.text, "ForumPostText", _BLOCK_FONT_DEFAULT, block=block)
+        self._add_body_images(post)
 
-    def _add_body_label(self, text: str, name: str, size: int, *, bold: bool = False) -> None:
+    def _add_body_label(
+        self,
+        text: str,
+        name: str,
+        size: int,
+        *,
+        bold: bool = False,
+        block=None,
+        prefix: str = "",
+        suffix: str = "",
+        color: str = "",
+    ) -> None:
+        """正文的一段。
+
+        纯文字段用 QLabel（样式表管字体与颜色，最省事）；带行内标记或颜色令牌的段换成
+        `MarkupText`——QLabel 的富文本能给文字上色，但给不出**描边**，而描边色是发帖页的
+        一个按钮，漏掉它就成了「发了带描边的帖子，看起来却没有描边」。两条路径的字体、字号
+        与颜色取自同一处，观感一致。
+        """
+        if block is not None and self._block_needs_rich(block):
+            self._add_body_rich(
+                block, name, size, bold=bold, prefix=prefix, suffix=suffix, color=color
+            )
+            return
         label = QLabel(text, self._detail_host)
         label.setObjectName(name)
         label.setFont(_font(size, bold=bold))
         label.setWordWrap(True)
         label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self._detail_body.addWidget(label)
+
+    @staticmethod
+    def _block_needs_rich(block) -> bool:
+        """这一段光靠 QLabel 显示不出原样吗（有颜色令牌，或有行内标记）。"""
+        if block.kind == BLOCK_CODE:
+            # 代码块里的 `**` 就是要原样显示，别当成格式解释。
+            return False
+        if any(run.color or run.outline for run in block.runs):
+            return True
+        html = to_html(block.raw)
+        return bool(html) and html != escape_text(block.text)
+
+    def _add_body_rich(
+        self, block, name: str, size: int, *, bold: bool, prefix: str, suffix: str, color: str
+    ) -> None:
+        """带标记 / 带颜色的段：交给 `MarkupText` 逐段着色（连描边一起）。
+
+        前缀（列表的项目符号与缩进、引用的书名号）不进 `block.runs`，所以要自己补一段没有
+        颜色的 run，段的边界才对得上——`MarkupText` 是按累计字符数定位的。
+        """
+        runs = block.runs
+        if prefix or suffix:
+            runs = (ForumTextRun(prefix),) + runs + (ForumTextRun(suffix),)
+        widget = MarkupText(
+            escape_text(prefix) + to_html(block.raw) + escape_text(suffix),
+            font=_font(size, bold=bold),
+            color=color or forum_card_text_color(),
+            width_hint=BODY_WIDTH_HINT,
+            runs=runs,
+            align=Qt.AlignLeft,
+            object_name="ForumBodyText",
+            parent=self._detail_host,
+        )
+        widget.setProperty("forumBlock", name)
+        self._detail_body.addWidget(widget)
+
+    def _add_body_images(self, post: ForumPost) -> None:
+        """正文底下铺这一帖的配图；正文里那句「【图片】」占位当图注留着。"""
+        if not post.images:
+            return
+        strip = QHBoxLayout()
+        strip.setContentsMargins(0, scale_px(3, min_abs=2), 0, 0)
+        strip.setSpacing(scale_px(6, min_abs=5))
+        for image in post.images[:FORUM_IMAGES_PER_POST]:
+            strip.addWidget(
+                ForumImageThumb(image.id, size=LIST_THUMB_SIZE, parent=self._detail_host), 0
+            )
+        strip.addStretch(1)
+        self._detail_body.addLayout(strip)
+        self._refresh_thumbs()
 
     def _clear_detail_body(self) -> None:
         while self._detail_body.count():
@@ -1158,6 +1696,31 @@ class ForumBoardPage(QWidget):
         self._replies_layout.addWidget(hint)
         self._empty_hint = hint
         return hint
+
+    def _remember_thumb(self, image_id: str, data: bytes) -> None:
+        """记一份图片字节（内存里只留最近这些张，磁盘缓存才是常态）。"""
+        while len(self._thumb_data) >= THUMB_MEMORY_LIMIT:
+            self._thumb_data.pop(next(iter(self._thumb_data)), None)
+        self._thumb_data[image_id] = bytes(data)
+        self._thumb_failed.discard(image_id)
+
+    def _refresh_thumbs(self) -> None:
+        """把手上有的字节铺到页面上每一张缩略图；还没有的去服务层取（同一张只跑一趟）。
+
+        刻意按控件树现查现铺（`findChildren`），不另记一张「图 id → 控件」的表：行被清掉时
+        Qt 会把子控件从树上摘掉，这里就不可能捏着一个已经销毁的控件——列表反复重排也不会。
+        """
+        for thumb in self.findChildren(ForumImageThumb):
+            ident = thumb.image_id
+            if not ident or thumb.has_data():
+                continue
+            data = self._thumb_data.get(ident)
+            if data:
+                thumb.set_data(data)
+                continue
+            if ident in self._thumb_failed:
+                continue
+            self._service.load_thumbnail(ident)
 
     def _mark_warn(self, label: QLabel) -> None:
         if label.property("tone") == "warn":
