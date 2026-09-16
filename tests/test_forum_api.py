@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import time
 import unittest
+from unittest import mock
 
 from lib.core.forum_api import (
     FORUM_API_BASE,
@@ -335,14 +337,21 @@ class FormatterTests(unittest.TestCase):
         self.assertEqual(format_timestamp("坏了"), "")
 
     def test_date_and_expiry(self) -> None:
-        self.assertEqual(format_date(0), "")
-        self.assertEqual(format_date(1_789_477_000), "2026-09-15")
-        self.assertEqual(format_date(1_789_477_000, with_time=True), "2026-09-15 20:56")
-        self.assertEqual(
-            format_expiry(1_792_069_000, now=1_789_477_000),
-            "2026-10-15 20:56（还有 30 天）",
-        )
-        self.assertEqual(format_expiry(0), "未知")
+        # 这两个格式化函数按**本机时区**渲染，直接断言字面量在 CI（UTC）上必挂，
+        # 所以把 `localtime` 钉成固定的东八区时刻：断言的是「时刻怎么排版」，而不是「跑在哪台机器上」。
+        ticks = {
+            stamp: time.gmtime(stamp + 8 * 3600)
+            for stamp in (1_789_477_000, 1_792_069_000)
+        }
+        with mock.patch("time.localtime", side_effect=ticks.__getitem__):
+            self.assertEqual(format_date(0), "")
+            self.assertEqual(format_date(1_789_477_000), "2026-09-15")
+            self.assertEqual(format_date(1_789_477_000, with_time=True), "2026-09-15 20:56")
+            self.assertEqual(
+                format_expiry(1_792_069_000, now=1_789_477_000),
+                "2026-10-15 20:56（还有 30 天）",
+            )
+            self.assertEqual(format_expiry(0), "未知")
 
     def test_session_expiry_flag(self) -> None:
         from lib.core.forum_api import ForumSession
