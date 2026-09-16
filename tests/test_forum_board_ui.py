@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
+from concurrent.futures import Future
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -434,6 +435,61 @@ class StatusTests(BoardPageTestCase):
     def test_cleanup_stops_the_service(self) -> None:
         self.page.cleanup()
         self.assertTrue(self.service.cleaned)
+
+
+class BackFromDetailTests(unittest.TestCase):
+    """「返回列表」要真的回得去：晚到的详情结果不能再把页面拽回详情。
+
+    这一例刻意用真的 `CommunityService`，只把提交口换成一个还没完成的 Future，
+    因为问题就出在「请求比用户慢」上——替身服务永远复现不了。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self._env = patch.dict(os.environ, {"AEMEATH_DESK_PET_HOME": self._tmp.name}, clear=False)
+        self._env.start()
+        self.addCleanup(self._env.stop)
+        self.page = ForumBoardPage(session=ForumSessionStore())
+        self.addCleanup(self._dispose)
+        self.future = Future()
+        self.page._service._submit_io = lambda worker, *args: self.future
+        self.page.resize(760, 620)
+        self.page.show()
+        self.app.processEvents()
+
+    def _dispose(self) -> None:
+        self.page.cleanup()
+        self.page.deleteLater()
+        self.app.processEvents()
+
+    def _settle(self) -> None:
+        for _ in range(4):
+            self.app.processEvents()
+
+    def test_back_stays_on_the_list_when_the_post_arrives_late(self) -> None:
+        self.page.open_post(7)
+        generation = self.page._service._detail_generation
+        self.assertEqual(self.page._stack.currentIndex(), 1)
+
+        self.page._back_button.click()
+        self.assertEqual(self.page._stack.currentIndex(), 0)
+
+        self.future.set_result((generation, post(7), ForumReplyPage(replies=(), page=1, total=0)))
+        self._settle()
+        self.assertEqual(self.page._stack.currentIndex(), 0)
+        self.assertEqual(self.page.subtitle(), "主论坛")
+
+    def test_back_survives_a_late_failure_too(self) -> None:
+        self.page.open_post(7)
+        self.page._back_button.click()
+        self.future.set_exception(RuntimeError("断网"))
+        self._settle()
+        self.assertEqual(self.page._stack.currentIndex(), 0)
 
 
 if __name__ == "__main__":

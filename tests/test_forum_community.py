@@ -303,6 +303,51 @@ class DetailTests(ServiceTestCase):
         self.assertIsNone(self.service.current_post)
         self.assertFalse(self.service.load_more_replies())
 
+    def test_detail_result_arriving_after_leaving_is_dropped(self) -> None:
+        """返回列表之后晚到的详情结果不能再把用户拽回详情。"""
+        self.client.reply_pages[1] = ForumReplyPage(replies=(ForumReply(id=7),), page=1, total=1)
+        self.service.open_post(12)
+        generation = self.service._detail_generation
+        self.service.close_post()
+        before = len(self.listener.post)
+        self.service._handle_post((generation, self.client.post, self.client.reply_pages[1]))
+        self.assertEqual(len(self.listener.post), before)
+        self.assertIsNone(self.service.current_post)
+        self.assertEqual(self.service.replies_total, 0)
+
+    def test_replies_page_arriving_after_leaving_is_dropped(self) -> None:
+        self.client.reply_pages[1] = ForumReplyPage(
+            replies=(ForumReply(id=7),), page=1, total=2, has_more=True
+        )
+        self.service.open_post(12)
+        generation = self.service._detail_generation
+        self.service.close_post()
+        before = len(self.listener.replies)
+        self.service._handle_replies((generation, 2, True, ForumReplyPage(replies=(ForumReply(id=8),), page=2)))
+        self.assertEqual(len(self.listener.replies), before)
+        self.assertFalse(self.service.has_more_replies)
+        self.assertEqual(self.service.replies_total, 0)
+
+    def test_reply_arriving_after_leaving_is_dropped(self) -> None:
+        self.login()
+        self.service.open_post(12)
+        generation = self.service._detail_generation
+        self.service.close_post()
+        before = len(self.listener.reply_posted)
+        self.service._handle_reply_posted((generation, self.client.reply))
+        self.assertEqual(len(self.listener.reply_posted), before)
+        self.assertEqual(self.service.replies_total, 0)
+
+    def test_reopening_another_post_ignores_the_previous_answer(self) -> None:
+        """换了帖子之后，上一篇迟到的正文不能盖在新帖子上。"""
+        self.client.reply_pages[1] = ForumReplyPage(replies=(), page=1, total=0)
+        self.service.open_post(11)
+        stale = self.service._detail_generation
+        self.client.post = ForumPost(id=12, title="第二篇", content="正文")
+        self.service.open_post(12)
+        self.service._handle_post((stale, ForumPost(id=11, title="第一篇", content="旧正文"), ForumReplyPage()))
+        self.assertEqual(self.service.current_post.id, 12)
+
     def test_reply_requires_login_and_valid_text(self) -> None:
         self.service.open_post(12)
         self.assertEqual(self.service.post_reply(12, "  "), "回复不能为空")

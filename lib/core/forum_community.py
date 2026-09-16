@@ -29,7 +29,6 @@ from lib.core.forum_api import (
     ForumApiError,
     ForumPost,
     ForumPostPage,
-    ForumReply,
     ForumSession,
     ForumUser,
     validate_password,
@@ -80,6 +79,7 @@ class CommunityService:
         self._replies_total = 0
         self._has_more_replies = False
         self._loading_replies = False
+        self._detail_generation = 0
         self._like_inflight: set[tuple[str, int]] = set()
         self._account_loading = False
 
@@ -253,13 +253,17 @@ class CommunityService:
         if not post_id:
             return False
         with self._lock:
+            self._detail_generation += 1
+            generation = self._detail_generation
             self._post = None
             self._replies_page = 0
             self._replies_total = 0
             self._has_more_replies = False
             self._loading_replies = True
         self._notify("on_status", "正在读取帖子…", "")
-        return self._submit(self._load_post_worker, self._handle_post, int(post_id))
+        return self._submit(
+            self._load_post_worker, self._handle_post, int(post_id), generation
+        )
 
     def load_more_replies(self) -> bool:
         post = self._post
@@ -270,18 +274,23 @@ class CommunityService:
                 return False
             self._loading_replies = True
             page = max(1, self._replies_page + 1)
-        return self._submit(self._load_replies_worker, self._handle_replies, post.id, page, True)
+            generation = self._detail_generation
+        return self._submit(
+            self._load_replies_worker, self._handle_replies, post.id, page, True, generation
+        )
 
-    def _load_post_worker(self, post_id: int):
-        return post_id, self._client.get_post(post_id), self._client.list_replies(
+    def _load_post_worker(self, post_id: int, generation: int):
+        return generation, self._client.get_post(post_id), self._client.list_replies(
             post_id, page=1, per_page=self._page_size
         )
 
     def _handle_post(self, result) -> None:
-        post_id, post, replies = result
+        generation, post, replies = result
         if self._closed:
             return
         with self._lock:
+            if generation != self._detail_generation:
+                return
             self._post = post
             self._replies_page = replies.page if replies.replies else 0
             self._replies_total = replies.total or len(replies.replies)
@@ -291,16 +300,18 @@ class CommunityService:
         self._notify("on_replies", replies, False)
         self._notify("on_status", f"共 {self._replies_total} 条回复", "")
 
-    def _load_replies_worker(self, post_id: int, page: int, append: bool):
-        return page, append, self._client.list_replies(
+    def _load_replies_worker(self, post_id: int, page: int, append: bool, generation: int):
+        return generation, page, append, self._client.list_replies(
             post_id, page=page, per_page=self._page_size
         )
 
     def _handle_replies(self, result) -> None:
-        page_number, append, page = result
+        generation, page_number, append, page = result
         if self._closed:
             return
         with self._lock:
+            if generation != self._detail_generation:
+                return
             self._loading_replies = False
             self._replies_page = page_number
             self._replies_total = page.total or self._replies_total
@@ -308,7 +319,13 @@ class CommunityService:
         self._notify("on_replies", page, append)
 
     def close_post(self) -> None:
+        """离开详情：顺手作废还在路上的详情与回复结果。
+
+        只把 `_post` 清空是不够的：晚到的详情结果会把页面又拽回详情，用户按了「返回列表」
+        却回不去（服务端慢一点就必现）。代数一变，旧结果在 handler 里就被丢掉。
+        """
         with self._lock:
+            self._detail_generation += 1
             self._post = None
             self._replies_page = 0
             self._replies_total = 0
@@ -327,19 +344,31 @@ class CommunityService:
         if not self._session.logged_in():
             return "登录后才能回复"
         text = str(content).strip()
+        with self._lock:
+            generation = self._detail_generation
         self._notify("on_status", "正在发送回复…", "")
-        if not self._submit(self._post_reply_worker, self._handle_reply_posted, int(post_id), text, parent_id):
+        if not self._submit(
+            self._post_reply_worker,
+            self._handle_reply_posted,
+            int(post_id),
+            text,
+            parent_id,
+            generation,
+        ):
             return "回复请求未能发出"
         return ""
 
-    def _post_reply_worker(self, post_id: int, content: str, parent_id):
+    def _post_reply_worker(self, post_id: int, content: str, parent_id, generation: int):
         self._sync_token()
-        return self._client.create_reply(post_id, content, parent_id=parent_id)
+        return generation, self._client.create_reply(post_id, content, parent_id=parent_id)
 
-    def _handle_reply_posted(self, reply: ForumReply) -> None:
+    def _handle_reply_posted(self, result) -> None:
+        generation, reply = result
         if self._closed:
             return
         with self._lock:
+            if generation != self._detail_generation:
+                return
             floor = max(1, self._replies_total + 1)
             self._replies_total = floor
             if self._post is not None:
