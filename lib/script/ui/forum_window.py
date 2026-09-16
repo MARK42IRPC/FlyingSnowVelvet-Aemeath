@@ -31,6 +31,7 @@ from PyQt5.QtWidgets import (
     QScrollArea,
     QSizeGrip,
     QSizePolicy,
+    QStackedWidget,
     QStyle,
     QStyleOptionButton,
     QToolButton,
@@ -50,12 +51,14 @@ from lib.core.forum import (
     ForumService,
     format_relative_time,
 )
+from lib.core.forum_api import ForumApiClient
 from lib.core.forum_filter import (
     FORUM_REASON_BANNED_WORD,
     FORUM_REASON_LINK,
     FORUM_REASON_LONG_NUMBER,
     ForumViolation,
 )
+from lib.core.forum_session import ForumSessionStore, is_logged_in
 from lib.core.logger import get_logger
 from lib.core.qt_bridge.font import get_ui_font
 from lib.core.qt_bridge.workbench_page import QtWorkbenchToolPage
@@ -68,6 +71,8 @@ from lib.script.ui.forum_style import (
     forum_stylesheet,
     forum_texture_color,
 )
+from lib.script.ui.forum_account import ForumAccountPage
+from lib.script.ui.forum_board import ForumBoardPage
 from lib.script.ui.forum_color_picker import (
     MAX_LIGHTNESS,
     MIN_LIGHTNESS,
@@ -118,6 +123,14 @@ LOAD_OLDER_THRESHOLD_PX = scale_px(140, min_abs=90)
 #: 昵称上限：核心层 `FORUM_MAX_NICKNAME` 是唯一事实源，这里只做别名。
 NICKNAME_MAX_LENGTH = FORUM_MAX_NICKNAME
 FORUM_NICKNAME_PLACEHOLDER = "输入昵称…（未输入以匿名发送）"
+
+#: 社区页的三个子页面；顺序就是导航条从左到右的顺序。
+FORUM_PAGES = (
+    ("wall", "留言墙"),
+    ("board", "主论坛"),
+    ("account", "账号页"),
+)
+FORUM_DEFAULT_PAGE = "wall"
 
 logger = get_logger(__name__)
 
@@ -459,8 +472,16 @@ class ForumWindow(QtWorkbenchToolPage):
         self._dispatch_requested.connect(self._run_dispatched, Qt.QueuedConnection)
         self._event_center = get_event_center()
         self._event_center.subscribe(EventType.CONFIG_UPDATED, self._on_config_updated)
+        # 登录态与主站客户端：主论坛与账号页共用同一份，登录一次两边都认。
+        self._session_store = ForumSessionStore.load()
+        self._api = ForumApiClient()
+        self._wall_subtitle = "雪绒留言墙 · 正在读取…"
+        self._page = FORUM_DEFAULT_PAGE
+        self._wall_loaded = False
 
         self._build_ui()
+        self._session_store.subscribe(self._on_session_changed)
+        self._on_session_changed(self._session_store.get())
 
         self._service = ForumService(
             dispatch=self._dispatch,
@@ -483,13 +504,31 @@ class ForumWindow(QtWorkbenchToolPage):
         root.setSpacing(0)
 
         root.addWidget(self._build_header())
-        root.addWidget(self._build_wall(), 1)
-        root.addWidget(self._build_composer())
+        self._nav = self._build_nav()
+        root.addWidget(self._nav)
+
+        # 三个子页面共用一块显示区：留言墙还是原来那面卡片墙，另外两个是主站社区页。
+        self._stack = QStackedWidget(self)
+        self._stack.setObjectName("ForumPageStack")
+        self._wall = self._build_wall()
+        self._board = ForumBoardPage(session=self._session_store, api=self._api, parent=self)
+        self._account = ForumAccountPage(session=self._session_store, api=self._api, parent=self)
+        # 未登录时主论坛的「去登录」直接把用户送到账号页。
+        self._board.login_requested.connect(lambda: self.set_page("account"))
+        self._board.subtitle_changed.connect(self._sync_subtitle)
+        self._account.subtitle_changed.connect(self._sync_subtitle)
+        for widget in (self._wall, self._board, self._account):
+            self._stack.addWidget(widget)
+        root.addWidget(self._stack, 1)
+
+        self._composer = self._build_composer()
+        root.addWidget(self._composer)
 
         self._size_grip = QSizeGrip(self)
         self._size_grip.setFixedSize(scale_px(18, min_abs=15), scale_px(18, min_abs=15))
         self._size_grip.raise_()
         self._size_grip.setVisible(not self._embedded)
+        self.set_page(FORUM_DEFAULT_PAGE, refresh=False)
 
     def _build_header(self) -> QWidget:
         header = QFrame(self)
@@ -538,6 +577,79 @@ class ForumWindow(QtWorkbenchToolPage):
         layout.addWidget(self._refresh_button, 0)
         layout.addWidget(close_button, 0)
         return header
+
+    def _build_nav(self) -> QWidget:
+        """导航条：留言墙 / 主论坛 / 账号页三个页签，右侧是当前账号状态。"""
+        bar = QFrame(self)
+        bar.setObjectName("ForumToolbar")
+        layout = QHBoxLayout(bar)
+        layout.setContentsMargins(scale_px(16, min_abs=13), 0, scale_px(16, min_abs=13), 0)
+        layout.setSpacing(scale_px(4, min_abs=3))
+        self._tab_buttons: dict[str, QToolButton] = {}
+        for key, label in FORUM_PAGES:
+            button = QToolButton(bar)
+            button.setObjectName("ForumTab")
+            button.setText(label)
+            button.setCheckable(True)
+            button.setCursor(Qt.PointingHandCursor)
+            button.setFont(get_ui_font(size=scale_px(13, min_abs=11)))
+            button.clicked.connect(lambda _checked=False, target=key: self.set_page(target))
+            self._tab_buttons[key] = button
+            layout.addWidget(button, 0)
+        layout.addStretch(1)
+        self._account_badge = QLabel("未登录", bar)
+        self._account_badge.setObjectName("ForumHint")
+        self._account_badge.setFont(get_ui_font(size=scale_px(10, min_abs=9)))
+        layout.addWidget(self._account_badge, 0)
+        return bar
+
+    # ── 子页面导航 ───────────────────────────────────────────────────
+
+    def page(self) -> str:
+        """当前子页面的 key（`wall` / `board` / `account`）。"""
+        return self._page
+
+    def set_page(self, name: str, *, refresh: bool = True) -> None:
+        """切换子页面；`refresh=False` 只摆位置（构造期用）。"""
+        key = str(name or "").strip()
+        if key not in self._tab_buttons:
+            key = FORUM_DEFAULT_PAGE
+        self._page = key
+        for page_key, button in self._tab_buttons.items():
+            button.setChecked(page_key == key)
+        self._stack.setCurrentWidget(
+            {"wall": self._wall, "board": self._board, "account": self._account}[key]
+        )
+        # 发帖框是留言墙的：主论坛有自己的回复框，账号页不需要输入。
+        self._composer.setVisible(key == "wall")
+        self._sync_subtitle()
+        if refresh:
+            self._refresh_page(key)
+
+    def _refresh_page(self, key: str) -> None:
+        """切页签只在「这一页还没拉过数据」时请求一次，来回切不重复发请求。"""
+        if key == "wall":
+            if not self._wall_loaded:
+                self.refresh()
+            return
+        page = self._board if key == "board" else self._account
+        if page.needs_initial_load():
+            page.refresh()
+
+    def _sync_subtitle(self) -> None:
+        if self._page == "wall":
+            self._set_subtitle(self._wall_subtitle)
+            return
+        page = self._board if self._page == "board" else self._account
+        self._set_subtitle(page.subtitle())
+
+    def _on_session_changed(self, session) -> None:
+        """登录态变化：导航条右侧的小字跟着变，账号页的副标题也重算。"""
+        logged_in = is_logged_in(session)
+        label = session.user.label if logged_in else ""
+        self._account_badge.setText(f"已登录：{label}" if logged_in else "未登录")
+        if self._page == "account":
+            self._sync_subtitle()
 
     def _build_wall(self) -> QWidget:
         wall = QWidget(self)
@@ -739,7 +851,16 @@ class ForumWindow(QtWorkbenchToolPage):
     # ── 交互 ─────────────────────────────────────────────────────────
 
     def refresh(self) -> None:
-        self._set_subtitle("雪绒留言墙 · 正在读取…")
+        """刷新当前子页面；页眉的刷新按钮走这里。"""
+        if self._page == "board":
+            self._board.refresh()
+            return
+        if self._page == "account":
+            self._account.refresh()
+            return
+        self._wall_loaded = True
+        self._wall_subtitle = "雪绒留言墙 · 正在读取…"
+        self._set_subtitle(self._wall_subtitle)
         self._set_status("正在刷新最新留言…")
         self._service.refresh()
 
@@ -937,6 +1058,9 @@ class ForumWindow(QtWorkbenchToolPage):
                 style.polish(self._status)
 
     def _set_subtitle(self, text: str) -> None:
+        if self._page == "wall":
+            # 留言墙的副标题由服务回调随时改，切页回来要能还原。
+            self._wall_subtitle = text
         self._subtitle.setText(text)
 
     def refresh_workbench_theme(self) -> None:
@@ -973,6 +1097,12 @@ class ForumWindow(QtWorkbenchToolPage):
         self._disposed = True
         self._cooldown_timer.stop()
         self._service.cleanup()
+        for page in (self._board, self._account):
+            page.cleanup()
+        try:
+            self._session_store.unsubscribe(self._on_session_changed)
+        except Exception:
+            pass
         try:
             self._event_center.unsubscribe(EventType.CONFIG_UPDATED, self._on_config_updated)
         except Exception:
@@ -1016,6 +1146,8 @@ def cleanup_forum_window() -> None:
 
 
 __all__ = [
+    "FORUM_DEFAULT_PAGE",
+    "FORUM_PAGES",
     "ForumCard",
     "ForumWindow",
     "cleanup_forum_window",

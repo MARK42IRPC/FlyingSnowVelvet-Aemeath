@@ -284,6 +284,125 @@ def forum_stylesheet(mode: str | None = None) -> str:
             border-color: {c.cyan};
         }}
         QFrame#ForumColorPreview {{ border-radius: {scale_px(2, min_abs=2)}px; }}
+        QFrame#ForumToolbar {{
+            background: {c.surface};
+            border: none;
+            border-bottom: {border}px solid {c.border};
+        }}
+        QToolButton#ForumTab {{
+            background: transparent;
+            color: {c.text_muted};
+            border: none;
+            border-bottom: {scale_px(2, min_abs=2)}px solid transparent;
+            padding: {scale_px(6, min_abs=5)}px {scale_px(12, min_abs=10)}px;
+            font-weight: 600;
+        }}
+        QToolButton#ForumTab:hover {{ color: {c.text}; }}
+        QToolButton#ForumTab:checked {{
+            color: {c.text};
+            border-bottom-color: {c.pink};
+        }}
+        QToolButton#ForumSortButton, QToolButton#ForumTagChip {{
+            background: {c.surface_raised};
+            color: {c.text_muted};
+            border: {border}px solid {c.border};
+            border-radius: {radius}px;
+            padding: {scale_px(4, min_abs=3)}px {scale_px(9, min_abs=7)}px;
+        }}
+        QToolButton#ForumSortButton:hover, QToolButton#ForumTagChip:hover {{
+            color: {c.text};
+            border-color: {c.cyan};
+        }}
+        QToolButton#ForumSortButton:checked, QToolButton#ForumTagChip:checked {{
+            background: {c.cyan};
+            border-color: {c.cyan};
+            color: {c.canvas};
+        }}
+        QPushButton#ForumGhostButton {{
+            min-height: {scale_px(26, min_abs=22)}px;
+            padding: 0px {scale_px(10, min_abs=8)}px;
+            background: transparent;
+            color: {c.text_muted};
+            border: {border}px solid {c.border};
+        }}
+        QPushButton#ForumGhostButton:hover {{
+            color: {c.text};
+            border-color: {c.cyan};
+        }}
+        QPushButton#ForumDangerButton {{
+            background: transparent;
+            color: {c.pink};
+            border: {border}px solid {c.pink};
+        }}
+        QPushButton#ForumDangerButton:hover {{
+            background: {c.pink};
+            color: {c.canvas};
+        }}
+        QFrame#ForumPostRow {{
+            background: {c.surface};
+            border: {border}px solid {c.border};
+            border-radius: {radius}px;
+        }}
+        QFrame#ForumPostRow:hover {{
+            background: {c.surface_raised};
+            border-color: {c.cyan};
+        }}
+        QLabel#ForumPostTitle, QLabel#ForumDetailTitle, QLabel#ForumSectionTitle,
+        QLabel#ForumPostHeading, QLabel#ForumPostText, QLabel#ForumReplyText,
+        QLabel#ForumFieldValue {{ color: {c.text}; }}
+        QLabel#ForumPostExcerpt, QLabel#ForumPostMeta, QLabel#ForumReplyMeta,
+        QLabel#ForumPostQuote, QLabel#ForumFieldLabel {{ color: {c.text_muted}; }}
+        QLabel#ForumPostTag, QLabel#ForumEmptyHint {{ color: {c.text_dim}; }}
+        QLabel#ForumFloor {{ color: {c.cyan}; font-weight: 700; }}
+        QLabel#ForumBadge {{
+            background: {c.border_strong};
+            color: {c.canvas};
+            border-radius: {scale_px(3, min_abs=2)}px;
+            padding: {scale_px(1, min_abs=1)}px {scale_px(5, min_abs=4)}px;
+        }}
+        QLabel#ForumBadge[state="pinned"] {{ background: {c.pink}; }}
+        QLabel#ForumBadge[state="locked"] {{ background: {c.text_dim}; }}
+        QLabel#ForumPostCode {{
+            background: {c.surface_raised};
+            color: {c.text_muted};
+            border: {border}px solid {c.border};
+            border-radius: {scale_px(3, min_abs=2)}px;
+            padding: {scale_px(5, min_abs=4)}px {scale_px(7, min_abs=5)}px;
+        }}
+        QFrame#ForumDivider {{ background: {c.border}; border: none; }}
+        QToolButton#ForumLikeButton {{
+            background: transparent;
+            border: none;
+            color: {c.text_muted};
+            padding: {scale_px(2, min_abs=2)}px {scale_px(4, min_abs=3)}px;
+        }}
+        QToolButton#ForumLikeButton:hover {{ color: {c.pink}; }}
+        QToolButton#ForumLikeButton[liked="yes"] {{
+            color: {c.pink};
+            font-weight: 700;
+        }}
+        QToolButton#ForumLinkButton {{
+            background: transparent;
+            border: none;
+            color: {c.text_muted};
+        }}
+        QToolButton#ForumLinkButton:hover {{ color: {c.cyan}; }}
+        QFrame#ForumReplyRow {{
+            background: {c.surface};
+            border: {border}px solid {c.border};
+            border-left: {scale_px(3, min_abs=2)}px solid {c.border_strong};
+            border-radius: {radius}px;
+        }}
+        QFrame#ForumReplyComposer, QFrame#ForumAccountCard {{
+            background: {c.surface};
+            border: {border}px solid {c.border};
+            border-radius: {radius}px;
+        }}
+        QWidget#ForumColumnHost, QWidget#ForumColumn, QWidget#ForumBoardList,
+        QWidget#ForumBoardPage, QWidget#ForumAccountPage, QWidget#ForumDetailHost,
+        QWidget#ForumReplyComposer, QStackedWidget#ForumAccountStack {{
+            background: transparent;
+        }}
         QWidget#ForumWindow QScrollBar:vertical {{
             background: {c.canvas};
             width: {FORUM_SCROLLBAR_WIDTH}px;
