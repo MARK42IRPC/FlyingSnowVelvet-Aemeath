@@ -53,6 +53,7 @@ from config.ollama_config import (
     AI_VOICE_MAX_CHARS_MIN,
 )
 from config.scale import scale_px
+from config.shared_storage_paths import get_shared_root_dir
 from lib.script.ui.ai_settings_validators import validate_ai_values
 from lib.script.ui.ai_settings_storage import load_ai_values, save_ai_values, apply_ai_runtime
 from lib.script.ui.ai_settings_defaults import AI_DEFAULT_VALUES as _DEFAULT_VALUES
@@ -60,6 +61,7 @@ from lib.script.ui.announcement_dialog import (
     load_announcement_preferences,
     set_announcement_forever_suppressed,
 )
+from lib.script.app.uninstall_entry import launch_uninstaller, resolve_uninstaller
 from lib.script.ui.qq_group_dialog import QQGroupDialog
 from lib.script.ui.ai_settings_tabs import (
     attach_ai_settings_tabs,
@@ -2820,6 +2822,23 @@ class AISettingsPanel(QWidget):
         qq_group_btn.clicked.connect(self._show_qq_group_qrcode)
         manual_row.addWidget(qq_group_btn, 1)
         manual_section.body_layout.addLayout(manual_row)
+
+        uninstall_section = scaffold.add_help_section(
+            "卸载",
+            "退出桌宠并把程序文件交给安装版卸载程序；源码工作区只能手动删除目录。",
+            help_text=(
+                "离线安装包装好的飞行雪绒自带卸载程序，就在启动器的旁边。\n\n"
+                "点「卸载桌宠」会先退出桌宠，再由卸载程序删除 app 与 runtime 下的程序文件；"
+                "用户数据、记忆、语音包默认保留，卸载界面上可以勾选一并删除。\n\n"
+                "源码工作区没有卸载程序：想移除就把当前目录整个删掉。"
+                "用户数据仍然放在共享目录里，需要时单独清理。"
+            ),
+        )
+        uninstall_btn = QPushButton("卸载桌宠", uninstall_section)
+        uninstall_btn.setObjectName("uninstallPetButton")
+        uninstall_btn.setProperty("danger", True)
+        uninstall_btn.clicked.connect(self._on_uninstall_pet)
+        uninstall_section.body_layout.addWidget(uninstall_btn)
         scaffold.finish()
 
         self._config_tab_meta["desktop_pet_update"] = {
@@ -2833,13 +2852,21 @@ class AISettingsPanel(QWidget):
                 stable_section.title_label,
                 dev_section.title_label,
                 manual_section.title_label,
+                uninstall_section.title_label,
             ],
             "section_hint_labels": [
                 stable_section.description_label,
                 dev_section.description_label,
                 manual_section.description_label,
+                uninstall_section.description_label,
             ],
-            "buttons": [check_update_btn, sync_dev_btn, quark_update_btn, qq_group_btn],
+            "buttons": [
+                check_update_btn,
+                sync_dev_btn,
+                quark_update_btn,
+                qq_group_btn,
+                uninstall_btn,
+            ],
         }
 
         return panel
@@ -5186,6 +5213,40 @@ class AISettingsPanel(QWidget):
 
     def _show_qq_group_qrcode(self) -> None:
         self._ensure_qq_group_dialog().show_dialog()
+
+    def _on_uninstall_pet(self) -> None:
+        uninstaller = resolve_uninstaller(_project_root())
+        if uninstaller is None:
+            self._show_info_message(
+                "源码工作区没有安装版卸载程序。\n\n"
+                "想移除飞行雪绒，直接删除当前工作区目录即可；"
+                f"用户数据、记忆与语音包保存在 {get_shared_root_dir()} 下，需要时单独删除。"
+            )
+            return
+        from PyQt5.QtWidgets import QMessageBox
+
+        confirmed = QMessageBox.warning(
+            self,
+            "卸载桌宠",
+            "将退出桌宠，并由卸载程序删除程序文件。\n"
+            "用户数据、记忆与语音包默认保留，可在卸载界面上勾选一并删除。\n\n"
+            "确定继续吗？",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if confirmed != QMessageBox.Yes:
+            return
+        try:
+            launch_uninstaller(uninstaller)
+        except Exception as exc:
+            self._show_info_message(f"启动卸载程序失败：{exc}")
+            return
+        self._emit_info("卸载程序已启动，桌宠即将退出。", min_tick=10, max_tick=120)
+
+        def quit_for_uninstall() -> None:
+            self._ec.publish(Event(EventType.APP_QUIT, {"exit_code": 0}))
+
+        QTimer.singleShot(600, quit_for_uninstall)
 
     def _on_restore_defaults(self) -> None:
         self._set_values_to_form(_DEFAULT_VALUES)

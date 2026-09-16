@@ -436,6 +436,16 @@ def workbench_stylesheet(mode: str | None = None) -> str:
         color: {c.canvas};
         border-color: {c.pink_hover};
     }}
+    QFrame#WorkbenchPageHost QPushButton[danger="true"] {{
+        background: transparent;
+        color: {c.danger};
+        border-color: {c.danger};
+    }}
+    QFrame#WorkbenchPageHost QPushButton[danger="true"]:hover {{
+        background: {c.danger};
+        color: {c.canvas};
+        border-color: {c.danger};
+    }}
     QScrollArea#WorkbenchNavigationScroll {{
         background: transparent;
         border: none;
