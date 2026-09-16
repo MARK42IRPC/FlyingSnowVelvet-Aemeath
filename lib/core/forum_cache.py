@@ -120,14 +120,14 @@ def drop_entry(name: str) -> bool:
 
 
 def cache_stats() -> dict:
-    """当前占用：文件数与总字节数，账号页把它显示在清理按钮旁边。"""
+    """当前占用：文件数与总字节数，账号页把它显示在清理按钮旁边。
+
+    图片目录也算在里面（它们同样长在缓存根下，清理按钮一起清），口径与
+    `clear_cache()` 一致：清掉多少就说多少。
+    """
     files = 0
     total = 0
-    try:
-        entries = list(cache_dir().glob("*.json"))
-    except OSError:
-        entries = []
-    for path in entries:
+    for path in _iter_cache_files():
         try:
             files += 1
             total += path.stat().st_size
@@ -148,9 +148,13 @@ def _iter_cache_files() -> list[Path]:
 
 
 def _trim_total() -> None:
-    """总量超过上限时按修改时间丢最早的条目。"""
+    """总量超过上限时按修改时间丢最早的条目。
+
+    只算 `*.json` 快照：图片字节另有自己的目录与预算（`lib/core/forum_images.py`），
+    按快照这 1 MiB 的口径去数它们，随手写一张图就会把快照全挤掉。
+    """
     total = 0
-    files = _iter_cache_files()
+    files = [path for path in _iter_cache_files() if path.suffix == ".json"]
     sizes: list[tuple[Path, int]] = []
     for path in files:
         try:

@@ -11,7 +11,9 @@
 - `on_user_activity(user, posts, replies)`：某位用户（默认自己）的资料与动态
 - `on_tags(tags)` / `on_account(user)` / `on_session(session)` / `on_health(data)`
 - `on_status(text, tone)` / `on_error(text)` / `on_session_error(action, text)`
-  （最后一条只在登录 / 注册失败时发，`action` 是 `"login"` 或 `"register"`）
+  （登录 / 注册失败专用，`action` 是 `"login"` 或 `"register"`）
+- `on_image_uploaded(image)` / `on_image_error(text)`：发帖页上传图片的结果
+- `on_thumbnail(image_id, data)`：某张图的字节到了（失败给 `b""`，界面留空即可）
 
 列表的首屏结果会顺手写进 `lib/core/forum_cache.py` 的小快照（只存第一页、无筛选的
 列表与标签云），下次打开先铺快照再请求；快照是**公开内容**，不含 token。
@@ -23,11 +25,12 @@ from collections.abc import Callable
 from concurrent.futures import Future
 import threading
 
-from lib.core import forum_cache
+from lib.core import forum_cache, forum_images
 from lib.core.compute_hub import get_compute_hub
 from lib.core.forum_api import (
     FORUM_API_PAGE_SIZE,
     FORUM_DEFAULT_SORT,
+    FORUM_IMAGE_MAX_BYTES,
     ForumApiClient,
     ForumApiError,
     ForumPost,
@@ -35,9 +38,12 @@ from lib.core.forum_api import (
     ForumReplyPage,
     ForumSession,
     ForumUser,
+    image_data_url,
     validate_content,
     validate_password,
     validate_reply,
+    validate_image_bytes,
+    validate_image_ids,
     validate_tags,
     validate_title,
     validate_username,
@@ -92,6 +98,9 @@ class CommunityService:
         self._detail_generation = 0
         self._like_inflight: set[tuple[str, int]] = set()
         self._account_loading = False
+        self._uploading_image = False
+        #: 正在下载的图片：同一张只跑一趟，列表反复重排也不会重复拉。
+        self._thumb_inflight: set[str] = set()
 
     # ── 只读状态 ─────────────────────────────────────────────────────
 
@@ -422,13 +431,21 @@ class CommunityService:
 
     # ── 新帖 ─────────────────────────────────────────────────────────
 
-    def post_thread(self, title, content, *, tags=None) -> str:
-        """发一篇新帖；返回空串表示已提交，否则是要显示在状态栏的原因。"""
+    def post_thread(self, title, content, *, tags=None, images=None) -> str:
+        """发一篇新帖；`images` 是已经上传好的图片（见 `upload_image()`）。
+
+        返回空串表示已提交，否则是要显示在状态栏的原因。
+        """
         if self._closed:
             return "窗口已关闭"
         if not self._session.logged_in():
             return "登录后才能发帖"
-        error = validate_title(title) or validate_content(content) or validate_tags(tags)
+        error = (
+            validate_title(title)
+            or validate_content(content)
+            or validate_tags(tags)
+            or validate_image_ids(images)
+        )
         if error:
             return error
         with self._lock:
@@ -443,15 +460,16 @@ class CommunityService:
             str(title).strip(),
             str(content).strip(),
             payload,
+            images,
         ):
             with self._lock:
                 self._posting_thread = False
             return "发帖请求未能发出"
         return ""
 
-    def _post_thread_worker(self, title: str, content: str, tags):
+    def _post_thread_worker(self, title: str, content: str, tags, images):
         self._sync_token()
-        return self._client.create_post(title, content, tags=tags)
+        return self._client.create_post(title, content, tags=tags, images=images)
 
     def _handle_thread_posted(self, post: ForumPost) -> None:
         if self._closed:
@@ -461,6 +479,91 @@ class CommunityService:
             self._post_total += 1
         self._notify("on_thread_posted", post)
         self._notify("on_status", f"已发布《{post.title}》", "")
+
+    # ── 图片 ─────────────────────────────────────────────────────────
+
+    def upload_image(self, data, *, name: str = "") -> str:
+        """上传一张图片（`data` 是文件字节）；返回空串表示已提交。
+
+        本地先按魔数与大小过一遍（`validate_image_bytes()`），白跑一趟网络没有意义。
+        结果走 `on_image_uploaded(image)`；失败带着原因走 `on_image_error(text)` 与
+        `on_status(..., "warn")`，让发帖页把原因写在自己的错误行上。
+        """
+        session = self._session.get()
+        if self._closed or session is None or not session.token:
+            return "登录后才能上传图片"
+        error = validate_image_bytes(data)
+        if error:
+            return error
+        with self._lock:
+            if self._uploading_image:
+                return "上一张图片还在上传，稍等一下"
+            self._uploading_image = True
+        self._notify("on_status", f"正在上传{_describe_image(name)}…", "")
+        if not self._submit(self._upload_worker, self._handle_image_uploaded, bytes(data)):
+            with self._lock:
+                self._uploading_image = False
+            return "上传请求未能发出"
+        return ""
+
+    def load_thumbnail(self, image_id) -> bool:
+        """取一张图的字节（先看磁盘缓存），结果走 `on_thumbnail(image_id, data)`。
+
+        同一张图只跑一趟；**失败不算错误**：回一句 `b""`，界面留空就行——少一张
+        缩略图不该打断整页。取回来的字节落进 `lib/core/forum_images.py` 的缓存。
+        """
+        ident = str(image_id or "").strip()
+        if self._closed or not ident:
+            return False
+        with self._lock:
+            if ident in self._thumb_inflight:
+                return False
+            self._thumb_inflight.add(ident)
+        if not self._submit(self._thumbnail_worker, self._handle_thumbnail, ident):
+            with self._lock:
+                self._thumb_inflight.discard(ident)
+            return False
+        return True
+
+    def _upload_worker(self, data: bytes):
+        self._sync_token()
+        try:
+            return self._client.upload_image(image_data_url(data)), ""
+        except ForumApiError as exc:
+            return None, image_error_message(exc)
+
+    def _handle_image_uploaded(self, result) -> None:
+        image, message = result
+        if self._closed:
+            return
+        with self._lock:
+            self._uploading_image = False
+        if image is None:
+            self._notify("on_image_error", message)
+            self._notify("on_status", message, "warn")
+            return
+        self._notify("on_image_uploaded", image)
+        self._notify("on_status", "图片上传好了", "")
+
+    def _thumbnail_worker(self, image_id: str):
+        cached = forum_images.read_image_bytes(image_id)
+        if cached:
+            return image_id, cached
+        try:
+            data = self._client.fetch_image(image_id)
+        except ForumApiError as exc:
+            _logger.debug("[Community] 缩略图 %s 取不回来: %s", image_id, exc)
+            return image_id, b""
+        forum_images.write_image_bytes(image_id, data)
+        return image_id, data
+
+    def _handle_thumbnail(self, result) -> None:
+        image_id, data = result
+        if self._closed:
+            return
+        with self._lock:
+            self._thumb_inflight.discard(image_id)
+        self._notify("on_thumbnail", image_id, data)
 
     # ── 用户资料 ─────────────────────────────────────────────────────
 
@@ -694,6 +797,19 @@ class CommunityService:
             handler(*args, **kwargs)
         except Exception as exc:
             _logger.warning("[Community] 回调 %s 失败: %s", name, exc)
+
+
+def image_error_message(error: ForumApiError) -> str:
+    """图片上传失败时给用户看的一句：413 有自己的说法，其余走通用文案。"""
+    if error.status == 413:
+        return f"图片超过论坛 {FORUM_IMAGE_MAX_BYTES // 1000} KB 的上限，压缩一下再传"
+    return error.friendly()
+
+
+def _describe_image(name: str) -> str:
+    """状态栏里那张图的说法：有文件名就用文件名，没有就说「图片」。"""
+    text = str(name or "").strip()
+    return text if text else "图片"
 
 
 def friendly_error(error: Exception, *, action: str = "") -> str:

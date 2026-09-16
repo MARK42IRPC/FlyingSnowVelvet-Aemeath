@@ -10,7 +10,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from lib.core import forum_cache
+from lib.core import forum_cache, forum_images
 from lib.core.forum_cache import (
     FORUM_CACHE_MAX_ENTRY_BYTES,
     FORUM_CACHE_VERSION,
@@ -100,6 +100,21 @@ class CacheTests(unittest.TestCase):
         )
         self.assertFalse(entry_path("entry-0").exists())
         self.assertTrue(entry_path("entry-4").exists())
+
+    def test_image_bytes_do_not_evict_the_snapshots(self) -> None:
+        write_entry("board-new", {"posts": [{"content": "x" * 240_000}]})
+        # 图片另有自己的预算：写进去的字节不该按快照那 1 MiB 的口径把快照挤掉。
+        for index in range(4):
+            self.assertTrue(forum_images.write_image_bytes(f"{index:032x}", b"\x00" * 300_000))
+        self.assertIsNotNone(read_entry("board-new"))
+        self.assertEqual(forum_images.image_stats()["files"], 4)
+
+    def test_stats_and_clear_cache_cover_the_image_directory(self) -> None:
+        write_entry("board-new", {"posts": []})
+        forum_images.write_image_bytes("a" * 32, b"\x00" * 100)
+        self.assertEqual(cache_stats(), {"files": 2, "bytes": entry_path("board-new").stat().st_size + 100})
+        self.assertEqual(clear_cache().files, 2)
+        self.assertFalse(forum_images.images_dir().exists())
 
     def test_clear_cache_reports_what_it_removed(self) -> None:
         write_entry("board-new", {"posts": []})

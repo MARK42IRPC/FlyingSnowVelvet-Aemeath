@@ -8,14 +8,16 @@ import unittest
 from concurrent.futures import Future
 from unittest.mock import patch
 
-from lib.core import forum_cache
+from lib.core import forum_cache, forum_images
 from lib.core.forum_api import (
+    FORUM_IMAGE_MAX_BYTES,
     ForumApiError,
     ForumLikeResult,
     ForumPost,
     ForumPostPage,
     ForumReply,
     ForumReplyPage,
+    ForumImage,
     ForumSession,
     ForumTag,
     ForumUser,
@@ -54,6 +56,9 @@ class FakeListener:
         self.session_error: list = []
         self.thread_posted: list = []
         self.user_activity: list = []
+        self.image_uploaded: list = []
+        self.image_error: list = []
+        self.thumbnails: list = []
 
     def on_posts(self, page, append, **kwargs) -> None:
         self.posts.append((page, append, kwargs))
@@ -72,6 +77,15 @@ class FakeListener:
 
     def on_user_activity(self, user, posts, replies) -> None:
         self.user_activity.append((user, posts, replies))
+
+    def on_image_uploaded(self, image) -> None:
+        self.image_uploaded.append(image)
+
+    def on_image_error(self, message) -> None:
+        self.image_error.append(message)
+
+    def on_thumbnail(self, image_id, data) -> None:
+        self.thumbnails.append((image_id, data))
 
     def on_likes(self, kind, target_id, liked, count) -> None:
         self.likes.append((kind, target_id, liked, count))
@@ -112,6 +126,9 @@ class FakeClient:
         self.health_result = {"status": "ok", "service": "fxxr-forum"}
         self.session_result = ForumSession(token="t" * 64, user=ForumUser(id=1, username="demo"))
         self.user_result = ForumUser(id=1, username="demo")
+        self.image_result = ForumImage(id="a" * 32, url="/api/images/" + "a" * 32)
+        self.image_bytes = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
+        self.image_data_urls: list = []
         self.error: Exception | None = None
 
     def _record(self, name, **kwargs):
@@ -135,9 +152,18 @@ class FakeClient:
         self._record("list_replies", post_id=post_id, **kwargs)
         return self.reply_pages.get(kwargs.get("page", 1), ForumReplyPage(page=kwargs.get("page", 1)))
 
-    def create_post(self, title, content, *, tags=None):
-        self._record("create_post", title=title, content=content, tags=tags)
+    def create_post(self, title, content, *, tags=None, images=None):
+        self._record("create_post", title=title, content=content, tags=tags, images=images)
         return self.post
+
+    def upload_image(self, data_url):
+        self._record("upload_image")
+        self.image_data_urls.append(data_url)
+        return self.image_result
+
+    def fetch_image(self, image_id):
+        self._record("fetch_image", image_id=image_id)
+        return self.image_bytes
 
     def user_profile(self, username):
         self._record("user_profile", username=username)
@@ -434,6 +460,98 @@ class ThreadTests(ServiceTestCase):
         self.client.error = None
         self.assertEqual(self.service.post_thread("标题", "正文"), "")
         self.assertEqual([name for name, _ in self.client.calls].count("create_post"), 2)
+
+    def test_thread_carries_uploaded_images(self) -> None:
+        self.login()
+        self.assertEqual(self.service.post_thread("标题", "正文", images=["a" * 32]), "")
+        self.assertEqual(self.client.calls[-1][1]["images"], ["a" * 32])
+        self.assertEqual(
+            self.service.post_thread("标题", "正文", images=["a" * 32, "b" * 32, "c" * 32, "d" * 32, "e" * 32]),
+            "一个帖子最多挂 4 张图，现在有 5 张",
+        )
+        self.assertEqual([name for name, _ in self.client.calls].count("create_post"), 1)
+
+
+class ImageTests(ServiceTestCase):
+    """发帖页的图片：本地先拦一道，成功走回调，缩略图先吃磁盘缓存。"""
+
+    PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
+
+    def test_upload_needs_a_login(self) -> None:
+        self.assertEqual(self.service.upload_image(self.PNG), "登录后才能上传图片")
+        self.assertEqual(self.client.calls, [])
+
+    def test_upload_validates_locally(self) -> None:
+        self.login()
+        self.assertIn("空的", self.service.upload_image(b""))
+        self.assertIn("只收 PNG", self.service.upload_image("不是图片".encode("utf-8")))
+        huge = b"\x89PNG\r\n\x1a\n" + b"\x00" * FORUM_IMAGE_MAX_BYTES
+        self.assertIn("1500 KB", self.service.upload_image(huge))
+        self.assertEqual(self.client.calls, [])
+
+    def test_uploaded_image_reaches_the_listener(self) -> None:
+        self.login()
+        self.assertEqual(self.service.upload_image(self.PNG, name="封面.png"), "")
+        self.assertTrue(self.client.image_data_urls[-1].startswith("data:image/png;base64,"))
+        self.assertEqual(self.client.token, "t" * 64)
+        self.assertEqual(self.listener.image_uploaded[-1].id, "a" * 32)
+        self.assertEqual(self.listener.image_error, [])
+        self.assertIn("封面.png", self.listener.status[0][0])
+        self.assertEqual(self.listener.status[-1], ("图片上传好了", ""))
+
+    def test_upload_failure_reports_the_server_limit(self) -> None:
+        self.login()
+        self.client.error = ForumApiError(413, "payload_too_large", "Image is too large.")
+        self.assertEqual(self.service.upload_image(self.PNG), "")
+        self.assertIn("1500 KB", self.listener.image_error[-1])
+        self.assertEqual(self.listener.status[-1][1], "warn")
+        self.assertEqual(self.listener.image_uploaded, [])
+        # 失败之后在途标记要放掉，下一张还能传。
+        self.client.error = None
+        self.assertEqual(self.service.upload_image(self.PNG), "")
+        self.assertEqual(self.listener.image_uploaded[-1].id, "a" * 32)
+
+    def test_second_upload_while_one_is_in_flight_is_refused(self) -> None:
+        self.login()
+        service = CommunityService(
+            dispatch=lambda callback: callback(),
+            listener=self.listener,
+            client=self.client,
+            session=self.store,
+            submit_io=never,
+        )
+        self.addCleanup(service.cleanup)
+        self.assertEqual(service.upload_image(self.PNG), "")
+        self.assertIn("还在上传", service.upload_image(self.PNG))
+        self.assertEqual([name for name, _ in self.client.calls].count("upload_image"), 0)
+
+    def test_thumbnail_prefers_the_disk_cache(self) -> None:
+        cached = b"\x89PNG\r\n\x1a\n" + b"cached"
+        forum_images.write_image_bytes("b" * 32, cached)
+        self.assertTrue(self.service.load_thumbnail("b" * 32))
+        self.assertEqual(self.listener.thumbnails[-1], ("b" * 32, cached))
+        self.assertNotIn("fetch_image", [name for name, _ in self.client.calls])
+
+    def test_thumbnail_fetches_once_then_serves_the_cache(self) -> None:
+        fetched = b"\x89PNG\r\n\x1a\n" + b"fetched"
+        self.client.image_bytes = fetched
+        self.assertTrue(self.service.load_thumbnail("c" * 32))
+        self.assertEqual(self.listener.thumbnails[-1], ("c" * 32, fetched))
+        self.assertEqual([name for name, _ in self.client.calls].count("fetch_image"), 1)
+        self.assertEqual(forum_images.read_image_bytes("c" * 32), fetched)
+        self.assertTrue(self.service.load_thumbnail("c" * 32))
+        self.assertEqual([name for name, _ in self.client.calls].count("fetch_image"), 1)
+
+    def test_thumbnail_failure_is_not_an_error(self) -> None:
+        self.client.error = ForumApiError(500, "internal_error", "boom")
+        self.assertTrue(self.service.load_thumbnail("d" * 32))
+        self.assertEqual(self.listener.thumbnails[-1], ("d" * 32, b""))
+        self.assertEqual(self.listener.errors, [])
+        self.assertFalse(self.service.load_thumbnail(""))
+        # 失败之后在途标记要放掉，下次还能再试。
+        self.client.error = None
+        self.assertTrue(self.service.load_thumbnail("d" * 32))
+        self.assertEqual(self.listener.thumbnails[-1][1], self.client.image_bytes)
 
 
 class UserActivityTests(ServiceTestCase):
