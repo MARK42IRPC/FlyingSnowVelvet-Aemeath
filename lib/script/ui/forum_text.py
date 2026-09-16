@@ -63,10 +63,15 @@ class MarkupText(QTextEdit):
         font: QFont,
         color: str,
         width_hint: int,
+        outline_color: str | None = None,
         parent=None,
     ) -> None:
         super().__init__(parent)
         self._color = QColor(color)
+        #: 描边颜色默认跟随正文颜色：只有一个颜色时笔画撑粗，观感最稳。
+        self._outline_color = QColor(outline_color) if outline_color else QColor(color)
+        if not self._outline_color.isValid():
+            self._outline_color = QColor(self._color)
         self._bold_outline = bold_outline_width(font.pixelSize())
         #: 原始片段留着：量高要用一份临时文档重排一遍，不能拿现成文档反复改宽度。
         self._html = str(html or "")
@@ -99,6 +104,15 @@ class MarkupText(QTextEdit):
     def set_color(self, color: str) -> None:
         """换主题时重刷正文颜色（颜色写在字符格式里，样式表管不到）。"""
         self._color = QColor(color)
+        self._outline_color = QColor(color)
+        self._restyle()
+        self.update()
+
+    def set_colors(self, color: str, outline_color: str | None = None) -> None:
+        """同时设置正文色与描边色；描边色为空时跟随正文色。"""
+        self._color = QColor(color)
+        outline = QColor(outline_color) if outline_color else QColor(color)
+        self._outline_color = outline if outline.isValid() else QColor(color)
         self._restyle()
         self.update()
 
@@ -175,7 +189,8 @@ class MarkupText(QTextEdit):
     def _embolden(self, piece) -> None:
         fmt = piece.charFormat()
         fmt.setForeground(self._color)
-        fmt.setTextOutline(QPen(self._color, self._bold_outline))
+        # 描边用单独的颜色：粗体片段因此能同时选正文色与描边色（用户可选同色）。
+        fmt.setTextOutline(QPen(self._outline_color, self._bold_outline))
         cursor = QTextCursor(self.document())
         cursor.setPosition(piece.position())
         cursor.setPosition(piece.position() + piece.length(), QTextCursor.KeepAnchor)

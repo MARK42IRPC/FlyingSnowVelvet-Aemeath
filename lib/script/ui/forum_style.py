@@ -117,6 +117,11 @@ def forum_texture_color(mode: str | None = None, accent: str | None = None) -> s
     ).name()
 
 
+def forum_picker_track_color(mode: str | None = None) -> str:
+    """无渐变滑条（明度条之外的兜底）的轨道底色，取主题中框色。"""
+    return get_workbench_colors(mode).border_strong
+
+
 def forum_stylesheet(mode: str | None = None) -> str:
     c = get_workbench_colors(mode)
     font_family = get_ui_font_family().replace("'", "\\'")
@@ -155,8 +160,11 @@ def forum_stylesheet(mode: str | None = None) -> str:
         QLabel#ForumSubtitle, QLabel#ForumStatus, QLabel#ForumHint {{
             color: {c.text_muted};
         }}
+        QLabel#ForumHeaderNotice {{ color: {c.text_dim}; }}
+        QLabel#ForumStatus[tone="warn"] {{ color: {c.pink}; }}
         QLabel#ForumCardMeta {{ color: {c.text_dim}; }}
         QLabel#ForumCardName {{ color: {c.text}; font-weight: 700; }}
+        QLabel#ForumCardDeviceTag {{ color: {c.text_dim}; }}
         QTextEdit#ForumCardText {{
             background: transparent;
             border: none;
@@ -258,6 +266,8 @@ def forum_stylesheet(mode: str | None = None) -> str:
             background: {c.surface_hover};
             color: {c.text};
         }}
+        QWidget#ForumColorControl {{ background: transparent; }}
+        QFrame#ForumColorPreview {{ border-radius: {scale_px(2, min_abs=2)}px; }}
         QWidget#ForumWindow QScrollBar:vertical {{
             background: {c.canvas};
             width: {FORUM_SCROLLBAR_WIDTH}px;
@@ -291,5 +301,6 @@ __all__ = [
     "forum_card_text_color",
     "forum_texture_color",
     "forum_accent_color",
+    "forum_picker_track_color",
     "forum_stylesheet",
 ]

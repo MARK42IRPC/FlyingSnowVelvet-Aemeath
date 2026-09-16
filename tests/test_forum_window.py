@@ -305,7 +305,11 @@ class ForumWindowTests(unittest.TestCase):
         self.window._on_send()
 
         # 昵称留空就原样交给核心，由核心按服务端约定落成「匿名」。
-        self.assertEqual(service.posts, [("飞行雪绒加油", "", "cyan")])
+        # 正文前面会带上选中的颜色令牌（渲染时整段洗掉）。
+        self.assertEqual(len(service.posts), 1)
+        posted, nickname, accent = service.posts[0]
+        self.assertEqual((nickname, accent), ("", "cyan"))
+        self.assertTrue(posted.endswith("飞行雪绒加油"))
         self.assertEqual(self.window._input.text(), "")
         self.assertFalse(self.window._send_button.isEnabled())
         self.assertTrue(self.window._send_button.text().startswith("发送（"))
@@ -397,7 +401,10 @@ class ForumWindowTests(unittest.TestCase):
 
         self.window._on_send()
 
-        self.assertEqual(service.posts, [("带昵称的留言", "  小明  ", FORUM_DEFAULT_ACCENT)])
+        self.assertEqual(len(service.posts), 1)
+        posted, nickname, accent = service.posts[0]
+        self.assertEqual((nickname, accent), ("  小明  ", FORUM_DEFAULT_ACCENT))
+        self.assertTrue(posted.endswith("带昵称的留言"))
         self.assertEqual(self.window._nickname.text(), "  小明  ")
 
     def test_card_puts_nickname_top_left_content_centered_date_bottom_right(self):

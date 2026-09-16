@@ -4,6 +4,11 @@
 服务端限流是同一 IP 6 秒 1 条、每小时 30 条；本模块在客户端额外加 12 秒冷却
 （`FORUM_POST_COOLDOWN_SECS`），比服务端保守，避免用户点出 429。
 
+服务端没有任何内容检查，所以发帖前先过一遍 `lib/core/forum_filter` 的本地过滤
+（链接、六位以上数字串、违规词）；命中即拒绝，由窗口层提示并播语音、同时维持 12 秒冷却。
+发出去的正文尾部会附上本机设备标识（`[sha-xxxxxxxx]`，见 `lib/core/device_identity`），
+同设备的留言因此可以被认成同一个人；展示时由 `strip_device_tag()` 洗掉。
+
 和公告服务一样，这里不导入任何 GUI 库：网络请求交给 `submit_io` 注入的线程池，
 结果通过 `dispatch` 回到 UI 线程，请求函数也可注入以便测试。
 """
@@ -15,12 +20,15 @@ from concurrent.futures import Future
 from dataclasses import dataclass
 import json
 import math
+import re
 import threading
 import time
 
 import requests
 
 from lib.core.compute_hub import get_compute_hub
+from lib.core.device_identity import get_device_tag
+from lib.core.forum_filter import ForumViolation, check_content
 from lib.core.logger import get_logger
 
 _logger = get_logger(__name__)
@@ -37,6 +45,10 @@ FORUM_POST_COOLDOWN_SECS = 12.0
 FORUM_DEFAULT_NICKNAME = "匿名"
 FORUM_ACCENTS = ("pink", "cyan", "blue", "snow")
 FORUM_DEFAULT_ACCENT = "snow"
+#: 昵称上限：服务端不限制，这里与窗口输入框一致，避免超长昵称把卡片撑开。
+FORUM_MAX_NICKNAME = 12
+#: 设备标识尾注：``[sha-123abcDE]``，八位十六进制，同设备恒定。
+FORUM_DEVICE_TAG_PREFIX = "sha-"
 FORUM_MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 FORUM_HEADERS = {
     "User-Agent": "FlyingSnowVelvet-Forum/1.0",
@@ -46,13 +58,19 @@ FORUM_HEADERS = {
 
 @dataclass(frozen=True, slots=True)
 class ForumMessage:
-    """一条论坛留言；字段与 `/api/feed` 返回一一对应。"""
+    """一条论坛留言；字段与 `/api/feed` 返回一一对应。
+
+    `content` 是**洗掉设备标识之后**的展示文本，`device_tag` 是单独取出来的标识
+    （形如 ``sha-123abcDE``，没有则为空串）。两者都由 `parse_feed` / `parse_post_result`
+    从服务端原文拆出来，UI 不需要再认识尾注格式。
+    """
 
     id: int
     nickname: str
     content: str
     accent: str
     created_at: int
+    device_tag: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +87,48 @@ def normalize_accent(value, *, fallback: str = FORUM_DEFAULT_ACCENT) -> str:
     return accent if accent in FORUM_ACCENTS else fallback
 
 
+_DEVICE_TAG_RE = re.compile(
+    r"\s*\[sha-[0-9a-fA-F]{8}\]\s*$",
+)
+
+
+def strip_device_tag(text) -> str:
+    """洗掉正文末尾的设备标识尾注，返回用户真正看到的文字。
+
+    标识由 `build_content_with_device_tag()` 加在结尾，等于给留言盖了一个「同设备」的戳。
+    卡片展示的是洗掉之后的内容，标识另在昵称右侧以小字呈现（见 `device_tag_of()`）。
+    """
+    return _DEVICE_TAG_RE.sub("", str(text or "")).rstrip()
+
+
+def device_tag_of(text) -> str:
+    """取出正文里的设备标识（形如 ``sha-123abcDE``）；没有则返回空串。"""
+    match = _DEVICE_TAG_RE.search(str(text or ""))
+    if match is None:
+        return ""
+    return match.group(0).strip().strip("[]")
+
+
+def build_content_with_device_tag(content, *, tag: str | None = None) -> str:
+    """在正文结尾附上本机设备标识，用于发送。
+
+    已有尾注时不再叠加：用户手打一个 ``[sha-xxxxxxxx]`` 也不会变成两条。
+    """
+    text = str(content or "").strip()
+    if device_tag_of(text):
+        return text
+    resolved = str(tag or "").strip() or get_device_tag()
+    return f"{text}[{resolved}]"
+
+
+def normalize_nickname(value, *, fallback: str = FORUM_DEFAULT_NICKNAME) -> str:
+    """截断昵称到上限；空昵称落成「匿名」，与服务端行为一致。"""
+    text = str(value or "").strip()
+    if not text:
+        return fallback
+    return text[:FORUM_MAX_NICKNAME]
+
+
 def parse_feed(payload) -> tuple[tuple[ForumMessage, ...], int]:
     """把 `/api/feed` 响应解析成留言元组与总条数。"""
     if not isinstance(payload, dict):
@@ -83,7 +143,10 @@ def parse_feed(payload) -> tuple[tuple[ForumMessage, ...], int]:
     for item in raw_messages:
         if not isinstance(item, dict):
             continue
-        content = str(item.get("content") or "").strip()
+        raw_content = str(item.get("content") or "").strip()
+        if not raw_content:
+            continue
+        content = strip_device_tag(raw_content)
         if not content:
             continue
         try:
@@ -94,7 +157,7 @@ def parse_feed(payload) -> tuple[tuple[ForumMessage, ...], int]:
             created_at = int(item.get("created_at") or 0)
         except (TypeError, ValueError):
             created_at = 0
-        nickname = str(item.get("nickname") or "").strip() or "匿名"
+        nickname = normalize_nickname(item.get("nickname"))
         messages.append(
             ForumMessage(
                 id=message_id,
@@ -102,6 +165,7 @@ def parse_feed(payload) -> tuple[tuple[ForumMessage, ...], int]:
                 content=content,
                 accent=normalize_accent(item.get("accent")),
                 created_at=created_at,
+                device_tag=device_tag_of(raw_content),
             )
         )
 
@@ -121,7 +185,7 @@ def parse_post_result(payload) -> ForumMessage:
     message = payload.get("message")
     if not isinstance(message, dict):
         raise ValueError("论坛返回结构异常")
-    content = str(message.get("content") or "").strip()
+    raw_content = str(message.get("content") or "").strip()
     try:
         message_id = int(message.get("id"))
     except (TypeError, ValueError) as exc:
@@ -132,10 +196,11 @@ def parse_post_result(payload) -> ForumMessage:
         created_at = 0
     return ForumMessage(
         id=message_id,
-        nickname=str(message.get("nickname") or "").strip() or "匿名",
-        content=content,
+        nickname=normalize_nickname(message.get("nickname")),
+        content=strip_device_tag(raw_content),
         accent=normalize_accent(message.get("accent")),
         created_at=created_at,
+        device_tag=device_tag_of(raw_content),
     )
 
 
@@ -301,8 +366,12 @@ class ForumService:
         *,
         nickname: str = FORUM_DEFAULT_NICKNAME,
         accent: str | None = None,
-    ) -> str | None:
-        """提交一条留言；返回 `None` 表示已发出，否则返回拒绝原因。"""
+    ) -> ForumViolation | str | None:
+        """提交一条留言。
+
+        返回 `None` 表示已发出，`ForumViolation` 表示被本地过滤拦下（窗口层据此提示并播语音），
+        其它字符串表示普通拒绝原因（内容为空、冷却中一类）。
+        """
         if self._closed:
             return "论坛窗口已关闭"
         text = str(content or "").strip()
@@ -313,13 +382,19 @@ class ForumService:
         remaining = self.cooldown_remaining()
         if remaining > 0:
             return f"发帖冷却中，请等待 {int(math.ceil(remaining))} 秒"
+        violation = check_content(text)
+        if violation is not None:
+            # 违规同样进冷却：否则用户可以连续试探过滤规则。
+            with self._lock:
+                self._last_post_at = self._clock()
+            return violation
         with self._lock:
             self._last_post_at = self._clock()
         if not self._submit(
             self._post_worker,
             self._handle_posted,
-            text,
-            str(nickname or "").strip() or FORUM_DEFAULT_NICKNAME,
+            build_content_with_device_tag(text),
+            normalize_nickname(nickname),
             normalize_accent(accent),
         ):
             return "发帖请求未能发出"
@@ -409,16 +484,22 @@ __all__ = [
     "FORUM_BASE_URL",
     "FORUM_DEFAULT_ACCENT",
     "FORUM_DEFAULT_NICKNAME",
+    "FORUM_DEVICE_TAG_PREFIX",
     "FORUM_FEED_URL",
     "FORUM_MAX_CONTENT",
+    "FORUM_MAX_NICKNAME",
     "FORUM_PAGE_LIMIT",
     "FORUM_POST_COOLDOWN_SECS",
     "FORUM_POST_URL",
     "ForumMessage",
     "ForumPage",
     "ForumService",
+    "build_content_with_device_tag",
+    "device_tag_of",
     "format_relative_time",
     "normalize_accent",
+    "normalize_nickname",
     "parse_feed",
     "parse_post_result",
+    "strip_device_tag",
 ]

@@ -49,6 +49,14 @@ FORMAT_BY_KEY = {fmt.key: fmt for fmt in FORUM_MARKUP_FORMATS}
 #: 令牌到贴图资源的对应关系长在 `lib/script/ui/forum_sticker.py`，新增令牌要同时补那边。
 FORUM_EFFECT_TOKENS: tuple[str, ...] = ("[雪豹]",)
 
+#: 颜色令牌：``[color=#rrggbb]`` 声明正文色、``[outline=#rrggbb]`` 声明描边色。
+#: 服务端不认这些写法，它们和四种行内标记一样只是纯文本，由雪绒论坛自己渲染，所以**必须
+#: 留在正文开头**（渲染时整段洗掉），别的客户端看到的是带令牌的原文。
+_COLOR_TOKEN_RE = re.compile(
+    r"\[(?:color|outline)\s*=\s*#[0-9a-fA-F]{6}\]",
+    re.IGNORECASE,
+)
+
 #: 解析顺序即标签优先级：`***` 必须排在 `**` 前、`**` 排在 `*` 前。
 _TAG_GROUPS = (
     ("bold_italic", ("b", "i")),
@@ -82,12 +90,41 @@ def to_html(text) -> str:
     escaped = _SPACE_RUN.sub(
         lambda match: " " + "&nbsp;" * (len(match.group(0)) - 1), escaped
     )
-    return strip_effect_tokens(_PATTERN.sub(_render_match, escaped))
+    return strip_color_tokens(strip_effect_tokens(_PATTERN.sub(_render_match, escaped)))
 
 
 def visible_text(text) -> str:
     """去掉成对标记与效果令牌后的可见文字；没配对的标记按普通字符保留。"""
-    return strip_effect_tokens(_PATTERN.sub(_strip_match, str(text or "")))
+    return strip_color_tokens(strip_effect_tokens(_PATTERN.sub(_strip_match, str(text or ""))))
+
+
+def strip_color_tokens(text) -> str:
+    """洗掉正文里的颜色令牌：渲染出来的文字里不留令牌，颜色另走 `text_colors()`。"""
+    return _COLOR_TOKEN_RE.sub("", str(text or ""))
+
+
+def text_colors(text) -> tuple[str, str]:
+    """读出正文里的（文字色, 描边色）；缺一项就返回空串，调用方据此回退主题色。"""
+    color = ""
+    outline = ""
+    for match in _COLOR_TOKEN_RE.finditer(str(text or "")):
+        token = match.group(0).lower()
+        value = token.rsplit("#", 1)[-1].rstrip("]")
+        if token.startswith("[color"):
+            color = f"#{value}"
+        else:
+            outline = f"#{value}"
+    return color, outline
+
+
+def build_color_tokens(color: str | None, outline: str | None) -> str:
+    """把选中的颜色拼成正文开头的令牌串；两端都为空时返回空串。"""
+    parts: list[str] = []
+    if color:
+        parts.append(f"[color={color}]")
+    if outline:
+        parts.append(f"[outline={outline}]")
+    return "".join(parts)
 
 
 def effect_tokens(text) -> tuple[str, ...]:

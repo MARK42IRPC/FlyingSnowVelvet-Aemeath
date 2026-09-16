@@ -42,11 +42,19 @@ from lib.core.forum import (
     FORUM_ACCENTS,
     FORUM_DEFAULT_ACCENT,
     FORUM_MAX_CONTENT,
+    FORUM_MAX_NICKNAME,
     ForumMessage,
     ForumPage,
     ForumService,
     format_relative_time,
 )
+from lib.core.forum_filter import (
+    FORUM_REASON_BANNED_WORD,
+    FORUM_REASON_LINK,
+    FORUM_REASON_LONG_NUMBER,
+    ForumViolation,
+)
+from lib.core.logger import get_logger
 from lib.core.qt_bridge.font import get_ui_font
 from lib.core.qt_bridge.workbench_page import QtWorkbenchToolPage
 from lib.script.ui.forum_style import (
@@ -58,10 +66,20 @@ from lib.script.ui.forum_style import (
     forum_stylesheet,
     forum_texture_color,
 )
+from lib.script.ui.forum_color_picker import (
+    MAX_LIGHTNESS,
+    MIN_LIGHTNESS,
+    ForumColorSlider,
+    color_to_hsl,
+    hsl_color,
+    hue_gradient_stops,
+)
 from lib.script.ui.forum_markup import (
     FORMAT_BY_KEY,
     FORUM_MARKUP_FORMATS,
+    build_color_tokens,
     span_at_cursor,
+    text_colors,
     to_html,
     toggle,
 )
@@ -73,6 +91,7 @@ from lib.script.ui.forum_texture import (
 from lib.script.ui.forum_sticker import ForumSticker, sticker_paths
 from lib.script.ui.forum_text import MarkupText
 from lib.script.ui.workbench_components import create_window_button
+from lib.script.ui.workbench_settings_layout import SmoothScrollArea
 
 COLUMN_COUNT = 3
 WALL_MARGIN = scale_px(16, min_abs=13)
@@ -94,8 +113,14 @@ MIN_WINDOW_WIDTH = (
 DEFAULT_WINDOW_WIDTH = max(MIN_WINDOW_WIDTH, scale_px(620, min_abs=580))
 DEFAULT_WINDOW_HEIGHT = scale_px(800, min_abs=700)
 LOAD_OLDER_THRESHOLD_PX = scale_px(140, min_abs=90)
-NICKNAME_MAX_LENGTH = 24
+#: 昵称上限：核心层 `FORUM_MAX_NICKNAME` 是唯一事实源，这里只做别名。
+NICKNAME_MAX_LENGTH = FORUM_MAX_NICKNAME
 FORUM_NICKNAME_PLACEHOLDER = "输入昵称…（未输入以匿名发送）"
+
+logger = get_logger(__name__)
+
+#: 页眉小字：留言来自社区，不是官方口径。
+FORUM_HEADER_NOTICE = "内容来自社区，不一定来自官方，请仔细甄别"
 
 
 def _format_button_font(key: str):
@@ -106,6 +131,128 @@ def _format_button_font(key: str):
     font.setUnderline(key == "underline")
     font.setStrikeOut(key == "strike")
     return font
+
+
+#: 违规原因码 → 给用户看的一句话。原因码来自 `lib/core/forum_filter`。
+_VIOLATION_MESSAGES = {
+    FORUM_REASON_LINK: "留言里不能带网址或链接，去掉之后再发吧",
+    FORUM_REASON_LONG_NUMBER: "留言里不能带六位以上的数字（电话、账号一类）",
+    FORUM_REASON_BANNED_WORD: "留言里有违规词，改掉之后再发吧",
+}
+
+
+def violation_message(violation: ForumViolation) -> str:
+    """把违规判定翻译成状态栏文案；未知原因码给一句兜底说明。"""
+    base = _VIOLATION_MESSAGES.get(
+        violation.reason, "这条留言包含不允许的内容，改掉之后再发吧"
+    )
+    detail = str(violation.detail or "").strip()
+    return f"{base}（{detail}）" if detail else base
+
+
+class ForumColorControl(QWidget):
+    """一组「色相 + 明度」滑条：给正文或描边选颜色。
+
+    两个滑条都是 0.0–1.0 的比例，真正换算成颜色的是 `forum_color_picker.hsl_color()`；
+    色相条铺整圈彩虹，明度条铺当前色相的暗→亮渐变，拖哪一条都能立刻从滑条本身看出结果。
+    控件对外只暴露 `color()` 与 `colorChanged`，调用方不用认识 HSL。
+    """
+
+    colorChanged = pyqtSignal(str)
+
+    def __init__(self, parent: QWidget | None = None, label: str = "颜色") -> None:
+        super().__init__(parent)
+        self.setObjectName("ForumColorControl")
+        self._hue = 0.0
+        self._lightness = 0.85
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(scale_px(3, min_abs=2))
+
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.setSpacing(scale_px(5, min_abs=4))
+        self._label = QLabel(label, self)
+        self._label.setObjectName("ForumHint")
+        self._label.setFont(get_ui_font(size=scale_px(11, min_abs=9)))
+        self._preview = QFrame(self)
+        self._preview.setObjectName("ForumColorPreview")
+        self._preview.setFixedSize(scale_px(22, min_abs=19), scale_px(12, min_abs=10))
+        header.addWidget(self._label, 0)
+        header.addWidget(self._preview, 0)
+        header.addStretch(1)
+        layout.addLayout(header)
+
+        self._hue_slider = ForumColorSlider(
+            tooltip=f"{label}：拖动选择色相",
+            gradient_stops=hue_gradient_stops(),
+            parent=self,
+        )
+        self._hue_slider.setFixedHeight(scale_px(12, min_abs=10))
+        # 两个颜色控件并排，各自给一条能看出渐变的宽度。
+        self._hue_slider.setMinimumWidth(scale_px(170, min_abs=140))
+        layout.addWidget(self._hue_slider)
+
+        self._lightness_slider = ForumColorSlider(
+            tooltip=f"{label}：拖动选择明度",
+            parent=self,
+        )
+        self._lightness_slider.setFixedHeight(scale_px(12, min_abs=10))
+        self._lightness_slider.setMinimumWidth(scale_px(170, min_abs=140))
+        layout.addWidget(self._lightness_slider)
+
+        self._hue_slider.valueChanged.connect(self._on_hue_changed)
+        self._lightness_slider.valueChanged.connect(self._on_lightness_changed)
+        self._sync_preview()
+
+    # ── 对外 ─────────────────────────────────────────────────────────
+
+    def color(self) -> str:
+        return hsl_color(self._hue * 360.0, self._lightness).name()
+
+    def set_color(self, color: str | None) -> None:
+        """按颜色反推两个滑条的位置；传 None 表示回到默认档。"""
+        if color:
+            hue, lightness = color_to_hsl(color)
+            self._hue = max(0.0, min(1.0, hue / 360.0))
+            span = max(1e-6, MAX_LIGHTNESS - MIN_LIGHTNESS)
+            self._lightness = max(
+                0.0, min(1.0, (lightness - MIN_LIGHTNESS) / span)
+            )
+        else:
+            self._hue, self._lightness = 0.0, 0.85
+        self._hue_slider.set_ratio(self._hue)
+        self._lightness_slider.set_ratio(self._lightness)
+        self._sync_preview()
+
+    @property
+    def option_label(self) -> QLabel:
+        return self._label
+
+    # ── 内部 ─────────────────────────────────────────────────────────
+
+    def _on_hue_changed(self, ratio: float) -> None:
+        self._hue = float(ratio)
+        self._sync_preview()
+        self.colorChanged.emit(self.color())
+
+    def _on_lightness_changed(self, ratio: float) -> None:
+        self._lightness = float(ratio)
+        self._sync_preview()
+        self.colorChanged.emit(self.color())
+
+    def _sync_preview(self) -> None:
+        color = self.color()
+        self._preview.setStyleSheet(
+            f"background: {color}; border: 1px solid rgba(0, 0, 0, 0.35);"
+        )
+        # 明度条按当前色相重铺渐变，拖色相时它跟着变。
+        stops = tuple(
+            (index / 6.0, hsl_color(self._hue * 360.0, MIN_LIGHTNESS + (MAX_LIGHTNESS - MIN_LIGHTNESS) * index / 6.0).name())
+            for index in range(7)
+        )
+        self._lightness_slider.set_gradient_stops(stops)
 
 
 class ForumCard(QFrame):
@@ -131,20 +278,39 @@ class ForumCard(QFrame):
         )
         layout.setSpacing(scale_px(9, min_abs=7))
 
+        # 昵称行：昵称 + 右侧淡色小字的设备标识。标识是「同一台机器」的留言印记，
+        # 匿名留言没有标识，这一格就直接不占位（不给匿名也留一条空气缝）。
+        name_row = QHBoxLayout()
+        name_row.setContentsMargins(0, 0, 0, 0)
+        name_row.setSpacing(scale_px(6, min_abs=5))
+
         name = QLabel(message.nickname, self)
         name.setObjectName("ForumCardName")
         name.setFont(get_ui_font(size=scale_px(14, min_abs=12)))
         # 昵称按内容换行，长昵称不会把这张卡片撑得比同列其它卡片宽。
         name.setWordWrap(True)
-        layout.addWidget(name, 0, Qt.AlignLeft)
+        name_row.addWidget(name, 0, Qt.AlignLeft | Qt.AlignVCenter)
+
+        device_tag = str(getattr(message, "device_tag", "") or "").strip()
+        if device_tag:
+            tag = QLabel(device_tag, self)
+            tag.setObjectName("ForumCardDeviceTag")
+            tag.setFont(get_ui_font(size=scale_px(9, min_abs=8)))
+            tag.setToolTip("这条留言来自同一台设备（别人无法冒充）")
+            name_row.addWidget(tag, 0, Qt.AlignLeft | Qt.AlignVCenter)
+        name_row.addStretch(1)
+        layout.addLayout(name_row)
 
         # 正文越短字号越大（1~2 倍，标记不计入字数），卡片不会因为一句话就空掉。
         # 富文本：成对标记渲染成粗体/斜体/下划线/删除线，原文先转义（用户写的 `<b>` 只当
         # 普通字符显示）；粗体由 `MarkupText` 加同色描边落实，细节见 `forum_text`。
+        # 留言自带的颜色令牌（正文开头）优先；没写就跟随主题。
+        message_color, message_outline = text_colors(message.content)
         self._content = MarkupText(
             to_html(message.content),
             font=get_ui_font(size=forum_card_text_size(message.content)),
-            color=forum_card_text_color(),
+            color=message_color or forum_card_text_color(),
+            outline_color=message_outline or message_color or forum_card_text_color(),
             width_hint=CARD_MIN_WIDTH,
             parent=self,
         )
@@ -162,8 +328,16 @@ class ForumCard(QFrame):
             layout.addWidget(sticker, 0, Qt.AlignHCenter)
 
     def refresh_theme(self) -> None:
-        """换主题时重刷正文颜色：富文本颜色写在字符格式里，刷新样式表碰不到。"""
-        self._content.set_color(forum_card_text_color())
+        """换主题时重刷正文颜色：富文本颜色写在字符格式里，刷新样式表碰不到。
+
+        留言自带颜色令牌时保留它自己的颜色，只对跟随主题的卡片生效。
+        """
+        message_color, message_outline = text_colors(self.message.content)
+        theme_color = forum_card_text_color()
+        self._content.set_colors(
+            message_color or theme_color,
+            message_outline or message_color or theme_color,
+        )
 
     def paintEvent(self, event) -> None:
         """先按样式表画底与描边，再在最底层铺一层带卡片色调的几何底纹。"""
@@ -207,6 +381,8 @@ class ForumWindow(QtWorkbenchToolPage):
         self._scroll: QScrollArea | None = None
         self._selected_accent = FORUM_DEFAULT_ACCENT
         self._disposed = False
+        #: 违规提示语音（懒创建；音频缺失时为 None 并静默跳过）。
+        self._violation_sound = None
         # 回调来自 IO 线程，显式排队回 UI 线程，避免渲染中途重入。
         self._dispatch_requested.connect(self._run_dispatched, Qt.QueuedConnection)
         self._event_center = get_event_center()
@@ -246,7 +422,8 @@ class ForumWindow(QtWorkbenchToolPage):
     def _build_header(self) -> QWidget:
         header = QFrame(self)
         header.setObjectName("ForumHeader")
-        header.setFixedHeight(scale_px(66, min_abs=58))
+        # 三行页眉：标题、副标题、社区内容提示；比原来高一行小字。
+        header.setFixedHeight(scale_px(82, min_abs=72))
         self.set_drag_handle(header)
 
         title_box = QVBoxLayout()
@@ -262,6 +439,12 @@ class ForumWindow(QtWorkbenchToolPage):
         self._subtitle.setFont(get_ui_font(size=scale_px(11, min_abs=9)))
         title_box.addWidget(title)
         title_box.addWidget(self._subtitle)
+
+        # 页眉小字：留言是社区内容，不是官方公告，标出来免得被当成官方口径。
+        self._notice = QLabel(FORUM_HEADER_NOTICE, header)
+        self._notice.setObjectName("ForumHeaderNotice")
+        self._notice.setFont(get_ui_font(size=scale_px(9, min_abs=8)))
+        title_box.addWidget(self._notice)
 
         self._refresh_button = QPushButton("刷新", header)
         self._refresh_button.setFont(get_ui_font(size=scale_px(14, min_abs=12)))
@@ -295,7 +478,9 @@ class ForumWindow(QtWorkbenchToolPage):
         )
         wall_layout.setSpacing(scale_px(10, min_abs=8))
 
-        self._scroll = QScrollArea(wall)
+        # 平滑滚动：复用设置页那套把离散滚轮步进转成短动画的容器，
+        # 留言墙的滚动手感与工作台一致，不再是一格一格地跳。
+        self._scroll = SmoothScrollArea(wall)
         self._scroll.setObjectName("ForumScroll")
         self._scroll.setWidgetResizable(True)
         self._scroll.setFrameShape(QFrame.NoFrame)
@@ -350,7 +535,7 @@ class ForumWindow(QtWorkbenchToolPage):
         accent_row = QHBoxLayout()
         accent_row.setContentsMargins(0, 0, 0, 0)
         accent_row.setSpacing(scale_px(5, min_abs=4))
-        accent_label = QLabel("描边", composer)
+        accent_label = QLabel("卡片描边", composer)
         accent_label.setObjectName("ForumHint")
         accent_label.setFont(get_ui_font(size=scale_px(11, min_abs=9)))
         accent_row.addWidget(accent_label)
@@ -370,6 +555,20 @@ class ForumWindow(QtWorkbenchToolPage):
             accent_row.addWidget(button)
         self._select_accent(self._selected_accent)
         top_row.addLayout(accent_row, 0)
+
+        # 正文颜色与描边颜色：各一组「色相 + 明度」滑条，外加一枚跟随主题的重置。
+        # 原有的「卡片描边」档位仍在左边，管的是卡片边框；这两组管的是卡里的字。
+        color_row = QHBoxLayout()
+        color_row.setContentsMargins(0, 0, 0, 0)
+        color_row.setSpacing(scale_px(8, min_abs=6))
+        self._text_color_picker = ForumColorControl(composer, "文字颜色")
+        self._outline_color_picker = ForumColorControl(composer, "描边颜色")
+        color_row.addWidget(self._text_color_picker, 0)
+        color_row.addWidget(self._outline_color_picker, 0)
+        color_row.addStretch(1)
+        # 颜色控件单独占一行：挤进昵称那一行会把两个滑条压到看不出渐变，
+        # 「拖哪个位置是什么颜色」当场就看不出来了。
+        layout.addLayout(color_row)
 
         self._nickname = QLineEdit(composer)
         self._nickname.setObjectName("ForumNickname")
@@ -441,7 +640,23 @@ class ForumWindow(QtWorkbenchToolPage):
         self._send_button.clicked.connect(self._on_send)
         bottom_row.addWidget(self._send_button, 0)
         layout.addLayout(bottom_row)
+
+        # 输入框里实时预览选中的字色与描边色：选色控件改一下，输入框立刻变。
+        self._text_color_picker.colorChanged.connect(lambda _c: self._sync_input_colors())
+        self._outline_color_picker.colorChanged.connect(lambda _c: self._sync_input_colors())
+        self._sync_input_colors()
         return composer
+
+    def _sync_input_colors(self) -> None:
+        """把选中的文字色 / 描边色刷到输入框上，选色结果当场可见。"""
+        if not hasattr(self, "_input"):
+            return
+        text_color = self._text_color_picker.color()
+        outline_color = self._outline_color_picker.color()
+        self._input.setStyleSheet(
+            f"QLineEdit#ForumInput {{ color: {text_color}; }}"
+            f"QLineEdit#ForumInput:focus {{ border-color: {outline_color}; }}"
+        )
 
     # ── 交互 ─────────────────────────────────────────────────────────
 
@@ -496,11 +711,23 @@ class ForumWindow(QtWorkbenchToolPage):
     def _on_send(self) -> None:
         if not self._send_button.isEnabled():
             return
+        # 颜色令牌拼在正文最前面（渲染时整段洗掉），随留言一起发给服务端。
+        tokens = build_color_tokens(
+            self._text_color_picker.color(),
+            self._outline_color_picker.color(),
+        )
+        content = f"{tokens}{self._input.text()}" if tokens else self._input.text()
         error = self._service.post(
-            self._input.text(),
+            content,
             nickname=self._nickname.text(),
             accent=self._selected_accent,
         )
+        if isinstance(error, ForumViolation):
+            # 违规：提示 + 播一条爱弥斯口吻的语音，冷却照常开始（见 ForumService.post）。
+            self._set_status(violation_message(error), tone="warn")
+            self._play_violation_sound()
+            self._sync_composer_state()
+            return
         if error:
             self._set_status(error)
             self._sync_composer_state()
@@ -508,6 +735,17 @@ class ForumWindow(QtWorkbenchToolPage):
         self._input.clear()
         self._set_status("已发送，等待论坛确认…")
         self._sync_composer_state()
+
+    def _play_violation_sound(self) -> None:
+        """播一条随机的违规提示语音；音频缺失时静默跳过，不影响拦截本身。"""
+        try:
+            from lib.script.voice.forum_violation import ForumViolationSound
+
+            if self._violation_sound is None:
+                self._violation_sound = ForumViolationSound()
+            self._violation_sound.play()
+        except Exception as exc:
+            logger.debug("[ForumWindow] 违规提示语音播放失败: %s", exc)
 
     def _sync_composer_state(self) -> None:
         remaining = int(self._service.cooldown_remaining() + 0.999)
@@ -610,8 +848,15 @@ class ForumWindow(QtWorkbenchToolPage):
 
     # ── 状态与生命周期 ───────────────────────────────────────────────
 
-    def _set_status(self, text: str) -> None:
+    def _set_status(self, text: str, *, tone: str = "") -> None:
+        """状态栏文案；``tone`` 为 ``warn`` 时用告警色，违规提示才不会看着像普通提示。"""
         self._status.setText(text)
+        if self._status.property("tone") != tone:
+            self._status.setProperty("tone", tone)
+            style = self._status.style()
+            if style is not None:
+                style.unpolish(self._status)
+                style.polish(self._status)
 
     def _set_subtitle(self, text: str) -> None:
         self._subtitle.setText(text)
