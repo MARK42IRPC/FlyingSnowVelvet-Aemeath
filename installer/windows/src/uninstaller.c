@@ -9,6 +9,7 @@
 #include <shlobj.h>
 #include <strsafe.h>
 #include <string.h>
+#include <tlhelp32.h>
 #include <uxtheme.h>
 #include <wchar.h>
 
@@ -470,6 +471,179 @@ static void post_cleanup_progress(BOOL force) {
     PostMessageW(g_cleanup.window, WM_FSV_UNINSTALL_PROGRESS, (WPARAM)scan, (LPARAM)remove);
 }
 
+/* Close the running Flying Snow Velvet (desktop pet plus its services).
+   The desktop pet, its voice runtime and the office sidecars all run out
+   of the install root, so they keep app\runtime\*.exe and *.dll mapped and
+   the delete pass leaves locked leftovers behind.  The uninstaller closes
+   them itself instead of asking the user to quit the pet first.
+
+   Matching is by image path only: a process is handled when its executable
+   lives inside the install root or inside the shared contract directory
+   C:\AemeathDeskPet.  An unrelated system python.exe / node.exe / ollama.exe
+   is never touched.  Windows first get WM_CLOSE (the pet exits through its
+   own path and stops its children), and whatever is still alive after the
+   grace period gets terminated. */
+
+#define FSV_SHUTDOWN_GRACE_MS 2500
+#define FSV_SHUTDOWN_ROUNDS 4
+#define FSV_SHUTDOWN_MAX_PIDS 96
+
+static BOOL path_within_root(const wchar_t *path, const wchar_t *root) {
+    size_t length;
+    if (path == NULL || root == NULL) {
+        return FALSE;
+    }
+    length = wcslen(root);
+    if (length == 0) {
+        return FALSE;
+    }
+    if (_wcsnicmp(path, root, length) != 0) {
+        return FALSE;
+    }
+    return path[length] == L'\0' || path[length] == L'\\';
+}
+
+static BOOL process_matches_root(DWORD pid, const wchar_t *install_root, const wchar_t *shared_root) {
+    HANDLE handle;
+    wchar_t image[FSV_PATH_CAPACITY];
+    DWORD length = ARRAYSIZE(image);
+    BOOL match = FALSE;
+    if (pid == 0 || pid == GetCurrentProcessId()) {
+        return FALSE;
+    }
+    handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (handle == NULL) {
+        return FALSE;
+    }
+    if (QueryFullProcessImageNameW(handle, 0, image, &length)) {
+        match = path_within_root(image, install_root) ||
+                path_within_root(image, shared_root);
+    }
+    CloseHandle(handle);
+    return match;
+}
+
+static int collect_process_targets(DWORD *pids, int capacity, const wchar_t *install_root, const wchar_t *shared_root) {
+    HANDLE snapshot;
+    PROCESSENTRY32W entry;
+    int count = 0;
+    snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snapshot == INVALID_HANDLE_VALUE) {
+        return 0;
+    }
+    ZeroMemory(&entry, sizeof(entry));
+    entry.dwSize = sizeof(entry);
+    if (Process32FirstW(snapshot, &entry)) {
+        do {
+            if (count >= capacity) {
+                break;
+            }
+            if (process_matches_root(entry.th32ProcessID, install_root, shared_root)) {
+                pids[count++] = entry.th32ProcessID;
+            }
+        } while (Process32NextW(snapshot, &entry));
+    }
+    CloseHandle(snapshot);
+    return count;
+}
+
+static BOOL CALLBACK request_close_window(HWND window, LPARAM parameter) {
+    DWORD owner = 0;
+    GetWindowThreadProcessId(window, &owner);
+    if (owner == (DWORD)parameter) {
+        PostMessageW(window, WM_CLOSE, 0, 0);
+    }
+    return TRUE;
+}
+
+static BOOL process_still_alive(DWORD pid) {
+    HANDLE handle = OpenProcess(SYNCHRONIZE, FALSE, pid);
+    DWORD wait;
+    if (handle == NULL) {
+        return FALSE;
+    }
+    wait = WaitForSingleObject(handle, 0);
+    CloseHandle(handle);
+    return wait == WAIT_TIMEOUT;
+}
+
+static void terminate_process(DWORD pid) {
+    HANDLE handle = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, FALSE, pid);
+    if (handle == NULL) {
+        return;
+    }
+    if (TerminateProcess(handle, 1)) {
+        WaitForSingleObject(handle, 2000);
+    }
+    CloseHandle(handle);
+}
+
+/* Returns how many processes had to be terminated outright.  ``report``
+   writes the step into the cleanup window; the quiet mode used at startup
+   leaves the instruction text alone. */
+static int stop_install_root_processes(const wchar_t *install_root, const wchar_t *shared_root, BOOL report) {
+    DWORD pids[FSV_SHUTDOWN_MAX_PIDS];
+    int terminated = 0;
+    int round;
+    if (install_root == NULL || install_root[0] == L'\0') {
+        return 0;
+    }
+    for (round = 0; round < FSV_SHUTDOWN_ROUNDS; ++round) {
+        int count = collect_process_targets(pids, (int)ARRAYSIZE(pids), install_root, shared_root);
+        int index;
+        if (count == 0) {
+            break;
+        }
+        if (report) {
+            post_status(L"正在关闭飞行雪绒及其服务组件...");
+        }
+        for (index = 0; index < count; ++index) {
+            EnumWindows(request_close_window, (LPARAM)pids[index]);
+        }
+        Sleep(FSV_SHUTDOWN_GRACE_MS);
+        for (index = 0; index < count; ++index) {
+            if (process_still_alive(pids[index])) {
+                terminate_process(pids[index]);
+                terminated += 1;
+            }
+        }
+    }
+    return terminated;
+}
+
+/* The uninstaller window shows up first, then the pet is closed in the
+   background so the file delete a few clicks later is not fighting locks. */
+static DWORD WINAPI shutdown_worker(void *parameter) {
+    wchar_t *install_root = (wchar_t *)parameter;
+    if (install_root != NULL) {
+        stop_install_root_processes(install_root, SHARED_ROOT_DIRECTORY, FALSE);
+        HeapFree(GetProcessHeap(), 0, install_root);
+    }
+    return 0;
+}
+
+static BOOL start_shutdown_worker(const wchar_t *install_root) {
+    size_t bytes;
+    wchar_t *copy;
+    HANDLE worker;
+    if (install_root == NULL || install_root[0] == L'\0') {
+        return FALSE;
+    }
+    bytes = (wcslen(install_root) + 1) * sizeof(wchar_t);
+    copy = (wchar_t *)HeapAlloc(GetProcessHeap(), 0, bytes);
+    if (copy == NULL) {
+        return FALSE;
+    }
+    memcpy(copy, install_root, bytes);
+    worker = CreateThread(NULL, 0, shutdown_worker, copy, 0, NULL);
+    if (worker == NULL) {
+        HeapFree(GetProcessHeap(), 0, copy);
+        return FALSE;
+    }
+    CloseHandle(worker);
+    return TRUE;
+}
+
 static DWORD WINAPI cleanup_worker(void *parameter) {
     CleanupContext *context = (CleanupContext *)parameter;
     HANDLE parent = OpenProcess(SYNCHRONIZE, FALSE, context->parent_pid);
@@ -480,6 +654,10 @@ static DWORD WINAPI cleanup_worker(void *parameter) {
         WaitForSingleObject(parent, 30000);
         CloseHandle(parent);
     }
+    /* Nothing out of the install root may stay mapped while files are being
+       deleted; the startup pass is best effort and the pet may have been
+       started again while the options were on screen. */
+    stop_install_root_processes(context->install_root, SHARED_ROOT_DIRECTORY, TRUE);
     /* Count first so the delete bar has a real total instead of guessing.  The
        same traversal then runs again to delete, which is cheap next to the
        seventeen thousand files an installed copy contains. */
@@ -1286,7 +1464,7 @@ static BOOL initialize_ui(void) {
     g_cleanup.window = g_window;
     g_title = create_label(g_cleanup_mode ? L"正在卸载" : L"卸载飞行雪绒", 40, 138, 800, 40, g_title_font, SS_LEFT);
     g_body = create_label(
-        g_cleanup_mode ? L"正在等待飞行雪绒退出..." : L"卸载将删除程序文件（app 与 runtime）。\r\n用户数据与语音包默认保留，可勾选下方选项一并删除。",
+        g_cleanup_mode ? L"正在关闭飞行雪绒与其服务组件，随后删除程序文件..." : L"卸载将删除程序文件（app 与 runtime）。\r\n桌宠及其服务组件已在后台关闭；用户数据与语音包默认保留，可勾选下方选项一并删除。",
         40, 188, 800, 64, g_body_font, SS_LEFT
     );
     g_path = create_label(g_cleanup.install_root, 56, 274, 768, 28, g_body_font, SS_PATHELLIPSIS);
@@ -1397,6 +1575,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, 
     }
     ShowWindow(g_window, SW_SHOWNORMAL);
     UpdateWindow(g_window);
+    if (!g_cleanup_mode) {
+        /* Closing the pet takes a couple of seconds, so it runs behind the
+           window instead of delaying it.  Failure is not fatal: the cleanup
+           worker sweeps again right before it starts deleting. */
+        start_shutdown_worker(g_cleanup.install_root);
+    }
     if (g_cleanup_mode) {
         g_cleanup_running = TRUE;
         worker = CreateThread(NULL, 0, cleanup_worker, &g_cleanup, 0, NULL);
