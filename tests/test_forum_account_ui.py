@@ -21,7 +21,7 @@ os.environ.setdefault("QT_PLUGIN_PATH", os.path.join(_QT_ROOT, "Qt5", "plugins")
 from PyQt5.QtWidgets import QApplication
 
 from lib.core import forum_cache
-from lib.core.forum_api import ForumSession, ForumUser
+from lib.core.forum_api import ForumPost, ForumPostPage, ForumReplyPage, ForumSession, ForumUser
 from lib.core.forum_cache import ForumCacheReport
 from lib.core.forum_session import ForumSessionStore, session_path
 from lib.script.ui.forum_account import ForumAccountPage
@@ -59,6 +59,10 @@ class FakeService:
         self._record("refresh_account")
         return True
 
+    def load_user(self, username=None) -> bool:
+        self._record("load_user", username=username)
+        return True
+
     def check_health(self) -> bool:
         self._record("check_health")
         return True
@@ -86,6 +90,19 @@ def user(**overrides) -> ForumUser:
     }
     payload.update(overrides)
     return ForumUser(**payload)
+
+
+def post(post_id: int, title: str) -> ForumPost:
+    return ForumPost(id=post_id, title=title, content="正文", author=user(), reply_count=2, like_count=1)
+
+
+def post_page(posts=()) -> ForumPostPage:
+    items = tuple(posts)
+    return ForumPostPage(posts=items, page=1, per_page=20, total=len(items), total_pages=1, has_more=False)
+
+
+def reply_page(total: int = 0) -> ForumReplyPage:
+    return ForumReplyPage(replies=(), page=1, per_page=20, total=total, total_pages=0)
 
 
 def session(user_obj: ForumUser | None = None) -> ForumSession:
@@ -191,12 +208,70 @@ class ProfileTests(AccountPageTestCase):
         self.page._logout_button.click()
         self.assertEqual([call for call in self.service.calls if call[0] == "logout"][-1][1], {"forget": False})
 
+    def test_login_form_switches_between_login_and_register(self) -> None:
+        page = self.page
+        self.assertTrue(page._display_name.isVisible() is False)
+        page.set_mode("register")
+        self.assertTrue(page._mode_buttons["register"].isChecked())
+        self.assertIn("一个 IP 只能注册一个账号", page._form_hint.text())
+        self.assertTrue(page._register_button.isVisible())
+        self.assertFalse(page._login_button.isVisible())
+        page.set_mode("login")
+        self.assertIn("不区分大小写", page._form_hint.text())
+        self.assertFalse(page._display_name.isVisible())
+
+    def test_enter_key_routes_by_mode(self) -> None:
+        page = self.page
+        page._username.setText("demo_user")
+        page._password.setText("demo-password-123")
+        page._on_submit()
+        self.assertEqual(self.service.calls[-1][0], "login")
+        self.service.calls.clear()
+        page.set_mode("register")
+        page._on_submit()
+        self.assertEqual(self.service.calls[-1][0], "register")
+
+    def test_password_toggle_reveals_the_field(self) -> None:
+        page = self.page
+        page._toggle_password()
+        self.assertEqual(page._password.echoMode(), page._password.Normal)
+        self.assertEqual(page._password_toggle.text(), "隐藏")
+        page._toggle_password()
+        self.assertEqual(page._password.echoMode(), page._password.Password)
+
+    def test_activity_rows_open_the_post(self) -> None:
+        page = self.page
+        self.login()
+        self.assertEqual([call for call in self.service.calls if call[0] == "load_user"][-1][1], {"username": None})
+        opened: list[int] = []
+        page.post_requested.connect(opened.append)
+        page.on_user_activity(user(), post_page([post(12, "带图首帖"), post(13, "第二篇")]), reply_page(5))
+        self.assertIn("共 2 篇帖子、5 条回复", page._activity_hint.text())
+        rows = [
+            page._activity_layout.itemAt(index).widget()
+            for index in range(page._activity_layout.count())
+        ]
+        self.assertEqual(len(rows), 2)
+        rows[0].activated.emit(12)
+        self.assertEqual(opened, [12])
+
+    def test_empty_activity_explains_itself(self) -> None:
+        self.login()
+        self.page.on_user_activity(user(), post_page(), reply_page(3))
+        self.assertIn("还没有发过帖子", self.page._activity_hint.text())
+
     def test_session_loss_returns_to_the_form(self) -> None:
         self.login()
         self.store.clear()
         self.app.processEvents()
         self.assertEqual(self.page._stack.currentIndex(), 0)
         self.assertEqual(self.page.subtitle(), "账号页 · 未登录")
+
+    def test_refresh_asks_for_my_activity_before_the_profile(self) -> None:
+        self.login()
+        self.service.calls.clear()
+        self.page.refresh()
+        self.assertEqual([call[0] for call in self.service.calls], ["load_user", "refresh_account"])
 
     def test_refresh_routes_by_login_state(self) -> None:
         self.page.refresh()

@@ -3,7 +3,9 @@
 列表只放「标题 + 摘要 + 作者 + 计数 + 时间」，点一行才进详情；详情页才显示正文块、
 回复与楼层（需求 细节3），避免列表里堆一屏正文拖慢滚动。
 
-- 排序只暴露两档：`new`（最新）与 `hot`（最热，服务端按点赞与回复数加权）。
+- 排序四档与服务端 `sort` 取值一一对应：最新 / 最热 / 最近回复 / 最早。
+- 发帖是同一个页面里的第三屏（工具栏「发帖」进入），标题、正文、标签都在这里填；
+  发布成功后新帖直接插到列表最前面，不用等下一次刷新。
 - 点赞、回复都需要登录：未登录时按钮变成「去登录」，点了由窗口切到账号页。
 - 正文不下载图片：`lib/core/forum_markdown.py` 把 Markdown 降级成块，图片降级成占位符。
 - 翻页沿用留言墙的手感：滚到底自动加载下一页，也有一个明确的「加载更多」按钮兜底。
@@ -17,6 +19,7 @@ from PyQt5.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QPlainTextEdit,
     QPushButton,
     QStackedWidget,
     QToolButton,
@@ -26,9 +29,13 @@ from PyQt5.QtWidgets import (
 
 from config.scale import scale_px
 from lib.core.forum_api import (
+    FORUM_CONTENT_MAX,
     FORUM_DEFAULT_SORT,
     FORUM_REPLY_MAX,
     FORUM_SORT_LABELS,
+    FORUM_TAG_MAX_COUNT,
+    FORUM_TITLE_MAX,
+    FORUM_TITLE_MIN,
     ForumPost,
     ForumPostPage,
     ForumReply,
@@ -59,6 +66,13 @@ LOAD_MORE_THRESHOLD_PX = scale_px(160, min_abs=110)
 TAG_CHIP_LIMIT = 6
 #: 列表里的摘要长度。
 EXCERPT_LENGTH = 72
+#: 四档排序的说法；键与服务端 `sort` 取值一致。
+_SORT_TOOLTIPS = {
+    "new": "按发布时间从新到旧",
+    "hot": "按点赞与回复数加权排序",
+    "active": "按最后一条回复的时间排序",
+    "old": "按发布时间从旧到新",
+}
 #: 详情页正文块的字号：列表、引用、代码各一档，其余用默认。
 _BLOCK_FONT_DEFAULT = 13
 _HEADING_FONT_SIZES = {1: 18, 2: 16, 3: 15, 4: 14, 5: 14, 6: 13}
@@ -332,24 +346,30 @@ class ForumBoardPage(QWidget):
         self._stack.setObjectName("ForumBoardStack")
         self._stack.addWidget(self._build_list())
         self._stack.addWidget(self._build_detail())
+        self._stack.addWidget(self._build_composer())
         root.addWidget(self._stack, 1)
 
     def _build_toolbar(self) -> QWidget:
         bar = QFrame(self)
         bar.setObjectName("ForumToolbar")
-        layout = QHBoxLayout(bar)
-        layout.setContentsMargins(
+        outer = QVBoxLayout(bar)
+        outer.setContentsMargins(
             scale_px(16, min_abs=13),
             scale_px(8, min_abs=6),
             scale_px(16, min_abs=13),
             scale_px(8, min_abs=6),
         )
-        layout.setSpacing(scale_px(8, min_abs=6))
+        outer.setSpacing(scale_px(6, min_abs=5))
 
+        # 第一行：排序 + 发帖 / 刷新。排序按钮点一下就是一次请求，所以不放下拉菜单，
+        # 四档平铺能在窄窗口里一眼看全。
+        top = QHBoxLayout()
+        top.setContentsMargins(0, 0, 0, 0)
+        top.setSpacing(scale_px(6, min_abs=5))
         sort_label = QLabel("排序", bar)
-        sort_label.setObjectName("ForumHint")
+        sort_label.setObjectName("ForumTagLabel")
         sort_label.setFont(_font(11))
-        layout.addWidget(sort_label, 0)
+        top.addWidget(sort_label, 0)
 
         self._sort_buttons: dict[str, QToolButton] = {}
         for sort, label in FORUM_SORT_LABELS.items():
@@ -359,39 +379,57 @@ class ForumBoardPage(QWidget):
             button.setCheckable(True)
             button.setCursor(Qt.PointingHandCursor)
             button.setFont(_font(11))
-            button.setToolTip(
-                "按发布时间从新到旧" if sort == "new" else "按点赞与回复数排序"
-            )
+            button.setToolTip(_SORT_TOOLTIPS.get(sort, label))
             button.clicked.connect(lambda _checked=False, target=sort: self.set_sort(target))
             self._sort_buttons[sort] = button
-            layout.addWidget(button, 0)
+            top.addWidget(button, 0)
         self._sync_sort_buttons()
+
+        top.addStretch(1)
+        self._compose_button = QPushButton("发帖", bar)
+        self._compose_button.setObjectName("ForumSend")
+        self._compose_button.setFont(_font(11))
+        self._compose_button.setToolTip("发布一篇新帖（需要登录）")
+        self._compose_button.clicked.connect(self.open_composer)
+        top.addWidget(self._compose_button, 0)
+
+        self._refresh_button = QPushButton("刷新", bar)
+        self._refresh_button.setObjectName("ForumGhostButton")
+        self._refresh_button.setFont(_font(11))
+        self._refresh_button.setToolTip("重新读取第一页并刷新标签云")
+        self._refresh_button.clicked.connect(self.refresh)
+        top.addWidget(self._refresh_button, 0)
+        outer.addLayout(top)
+
+        # 第二行：标签 + 搜索。标签多起来会换行，搜索框因此单独占一行右侧。
+        bottom = QHBoxLayout()
+        bottom.setContentsMargins(0, 0, 0, 0)
+        bottom.setSpacing(scale_px(6, min_abs=5))
+        tag_label = QLabel("标签", bar)
+        tag_label.setObjectName("ForumTagLabel")
+        tag_label.setFont(_font(11))
+        bottom.addWidget(tag_label, 0)
 
         self._tag_row = QHBoxLayout()
         self._tag_row.setContentsMargins(0, 0, 0, 0)
         self._tag_row.setSpacing(scale_px(5, min_abs=4))
-        layout.addLayout(self._tag_row, 0)
+        bottom.addLayout(self._tag_row, 0)
 
-        layout.addStretch(1)
+        bottom.addStretch(1)
         self._search = QLineEdit(bar)
         self._search.setObjectName("ForumSearchInput")
         self._search.setPlaceholderText("搜索帖子标题或正文…")
         self._search.setFont(_font(11))
         self._search.setFixedWidth(scale_px(180, min_abs=150))
         self._search.returnPressed.connect(self._on_search)
-        layout.addWidget(self._search, 0)
+        bottom.addWidget(self._search, 0)
 
         self._search_button = QPushButton("搜索", bar)
         self._search_button.setObjectName("ForumGhostButton")
         self._search_button.setFont(_font(11))
         self._search_button.clicked.connect(self._on_search)
-        layout.addWidget(self._search_button, 0)
-
-        self._refresh_button = QPushButton("刷新", bar)
-        self._refresh_button.setFont(_font(11))
-        self._refresh_button.setToolTip("重新读取第一页并刷新标签云")
-        self._refresh_button.clicked.connect(self.refresh)
-        layout.addWidget(self._refresh_button, 0)
+        bottom.addWidget(self._search_button, 0)
+        outer.addLayout(bottom)
         return bar
 
     def _build_list(self) -> QWidget:
@@ -570,11 +608,135 @@ class ForumBoardPage(QWidget):
         self._detail_scroll.setWidget(host)
         layout.addWidget(self._detail_scroll, 1)
         return page
+    def _build_composer(self) -> QWidget:
+        """发帖页：标题 + 正文 + 标签，发布成功就回到列表。"""
+        page = QWidget(self)
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        bar = QFrame(page)
+        bar.setObjectName("ForumToolbar")
+        bar_layout = QHBoxLayout(bar)
+        bar_layout.setContentsMargins(
+            scale_px(16, min_abs=13),
+            scale_px(8, min_abs=6),
+            scale_px(16, min_abs=13),
+            scale_px(8, min_abs=6),
+        )
+        bar_layout.setSpacing(scale_px(8, min_abs=6))
+        self._compose_back = QPushButton("← 返回列表", bar)
+        self._compose_back.setObjectName("ForumGhostButton")
+        self._compose_back.setFont(_font(11))
+        self._compose_back.clicked.connect(self.show_list)
+        bar_layout.addWidget(self._compose_back, 0)
+        self._compose_hint = QLabel("新主题", bar)
+        self._compose_hint.setObjectName("ForumHint")
+        self._compose_hint.setFont(_font(11))
+        bar_layout.addWidget(self._compose_hint, 1)
+        layout.addWidget(bar, 0)
+
+        scroll = SmoothScrollArea(page)
+        scroll.setObjectName("ForumScroll")
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        host = QWidget(scroll)
+        host.setObjectName("ForumComposerHost")
+        host_layout = QVBoxLayout(host)
+        host_layout.setContentsMargins(
+            scale_px(16, min_abs=13),
+            scale_px(10, min_abs=8),
+            scale_px(16 + 10, min_abs=13 + 8),
+            scale_px(10, min_abs=8),
+        )
+        host_layout.setSpacing(scale_px(8, min_abs=6))
+
+        card = QFrame(host)
+        card.setObjectName("ForumThreadComposer")
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(
+            scale_px(14, min_abs=11),
+            scale_px(12, min_abs=10),
+            scale_px(14, min_abs=11),
+            scale_px(12, min_abs=10),
+        )
+        card_layout.setSpacing(scale_px(7, min_abs=5))
+
+        self._thread_title = QLineEdit(card)
+        self._thread_title.setObjectName("ForumField")
+        self._thread_title.setPlaceholderText(
+            f"标题（{FORUM_TITLE_MIN}–{FORUM_TITLE_MAX} 字）"
+        )
+        self._thread_title.setMaxLength(FORUM_TITLE_MAX)
+        self._thread_title.setFont(_font(12))
+        card_layout.addWidget(self._thread_title)
+
+        self._thread_body = QPlainTextEdit(card)
+        self._thread_body.setObjectName("ForumThreadBody")
+        self._thread_body.setPlaceholderText(
+            "正文（支持 Markdown：标题、列表、引用、代码块；图片接口未接入，图片会显示成占位符）"
+        )
+        self._thread_body.setFont(_font(12))
+        self._thread_body.setMinimumHeight(scale_px(150, min_abs=110))
+        self._thread_body.textChanged.connect(self._sync_thread_counter)
+        card_layout.addWidget(self._thread_body, 1)
+
+        self._thread_counter = QLabel(f"0 / {FORUM_CONTENT_MAX}", card)
+        self._thread_counter.setObjectName("ForumThreadCounter")
+        self._thread_counter.setFont(_font(10))
+        card_layout.addWidget(self._thread_counter, 0, Qt.AlignRight)
+
+        self._thread_tags = QLineEdit(card)
+        self._thread_tags.setObjectName("ForumField")
+        self._thread_tags.setPlaceholderText(
+            f"标签（可选，最多 {FORUM_TAG_MAX_COUNT} 个，用逗号隔开）"
+        )
+        self._thread_tags.setFont(_font(12))
+        card_layout.addWidget(self._thread_tags)
+
+        self._thread_error = QLabel("", card)
+        self._thread_error.setObjectName("ForumFieldError")
+        self._thread_error.setFont(_font(11))
+        self._thread_error.setWordWrap(True)
+        self._thread_error.setVisible(False)
+        card_layout.addWidget(self._thread_error)
+
+        buttons = QHBoxLayout()
+        buttons.setContentsMargins(0, 0, 0, 0)
+        buttons.setSpacing(scale_px(8, min_abs=6))
+        self._compose_send = QPushButton("发布", card)
+        self._compose_send.setObjectName("ForumSend")
+        self._compose_send.setFont(_font(12))
+        self._compose_send.clicked.connect(self._on_publish_thread)
+        buttons.addWidget(self._compose_send, 0)
+        self._compose_cancel = QPushButton("取消", card)
+        self._compose_cancel.setObjectName("ForumGhostButton")
+        self._compose_cancel.setFont(_font(12))
+        self._compose_cancel.clicked.connect(self.show_list)
+        buttons.addWidget(self._compose_cancel, 0)
+        self._compose_login = QPushButton("去登录", card)
+        self._compose_login.setFont(_font(12))
+        self._compose_login.setVisible(False)
+        self._compose_login.clicked.connect(self.login_requested.emit)
+        buttons.addWidget(self._compose_login, 0)
+        buttons.addStretch(1)
+        card_layout.addLayout(buttons)
+
+        host_layout.addWidget(card, 0)
+        host_layout.addStretch(1)
+        scroll.setWidget(host)
+        layout.addWidget(scroll, 1)
+        self._sync_thread_counter()
+        return page
+
     # ── 对外 ─────────────────────────────────────────────────────────
 
     def subtitle(self) -> str:
         """页眉副标题：详情页报帖子标题，列表页报帖子总数。"""
         post = self._service.current_post
+        if self._stack.currentIndex() == 2:
+            return "主论坛 · 发布新帖"
         if self._stack.currentIndex() == 1 and post is not None:
             return f"主论坛 · {post.title}"
         total = self._service.post_total
@@ -607,6 +769,14 @@ class ForumBoardPage(QWidget):
         self._sync_tag_chips()
         self._service.load_posts(sort=self._sort, tag=tag or "", query=self._search.text())
 
+    def open_composer(self) -> None:
+        """进入发帖页；没登录就先把话说清楚，别让人写完才发现发不出去。"""
+        self._compose_error("" if self._session.logged_in() else "登录后才能发帖。")
+        self._stack.setCurrentIndex(2)
+        if self._session.logged_in():
+            self._thread_title.setFocus()
+        self.subtitle_changed.emit()
+
     def open_post(self, post_id) -> None:
         """进入详情：先摆好骨架再请求，点击的反馈立刻可见。"""
         if not post_id:
@@ -633,13 +803,7 @@ class ForumBoardPage(QWidget):
         if not append:
             self._clear_rows()
         for post in page.posts:
-            if post.id in self._rows:
-                continue
-            row = ForumPostRow(post, self._list_host)
-            row.activated.connect(self.open_post)
-            row.like_clicked.connect(self._on_row_like)
-            self._rows[post.id] = row
-            self._list_layout.insertWidget(self._list_layout.count() - 1, row)
+            self._add_row(post)
         count = len(self._rows)
         if count == 0:
             self._list_hint.setText("没有找到帖子；换个关键字或标签再试")
@@ -648,6 +812,17 @@ class ForumBoardPage(QWidget):
             total = page.total or count
             self._list_hint.setText(f"{prefix}已显示 {count} / {total} 篇帖子")
         self._more_button.setVisible(self._service.has_more_posts and not cached)
+        self.subtitle_changed.emit()
+
+    def on_thread_posted(self, post: ForumPost) -> None:
+        """新帖发出去：清空表单、把它插到列表最前面并退出发帖页。"""
+        self._thread_title.clear()
+        self._thread_body.clear()
+        self._thread_tags.clear()
+        self._compose_error("")
+        self._add_row(post, top=True)
+        self._stack.setCurrentIndex(0)
+        self._list_hint.setText(f"已发布《{post.title}》")
         self.subtitle_changed.emit()
 
     def on_post(self, post: ForumPost) -> None:
@@ -844,10 +1019,57 @@ class ForumBoardPage(QWidget):
         self._detail_login_hint.setVisible(not logged_in)
         self._sync_composer()
 
+    def _add_row(self, post: ForumPost, *, top: bool = False):
+        """把一篇帖子摆进列表；`top=True` 时插到最前面（刚发布的新帖）。"""
+        if not post.id or post.id in self._rows:
+            return None
+        row = ForumPostRow(post, self._list_host)
+        row.activated.connect(self.open_post)
+        row.like_clicked.connect(self._on_row_like)
+        self._rows[post.id] = row
+        if top:
+            self._list_layout.insertWidget(0, row)
+        else:
+            self._list_layout.insertWidget(self._list_layout.count() - 1, row)
+        return row
+
+    def _on_publish_thread(self) -> None:
+        error = self._service.post_thread(
+            self._thread_title.text(),
+            self._thread_body.toPlainText(),
+            tags=self._thread_tags.text(),
+        )
+        self._compose_error(error)
+
+    def _compose_error(self, text: str) -> None:
+        message = str(text or "").strip()
+        self._thread_error.setText(message)
+        self._thread_error.setVisible(bool(message))
+
+    def _sync_thread_counter(self) -> None:
+        length = len(self._thread_body.toPlainText())
+        over = length > FORUM_CONTENT_MAX
+        self._thread_counter.setText(
+            f"{length} / {FORUM_CONTENT_MAX}" if not over else f"超出 {length - FORUM_CONTENT_MAX} 字"
+        )
+        if self._thread_counter.property("tone") == ("warn" if over else ""):
+            return
+        self._thread_counter.setProperty("tone", "warn" if over else "")
+        style = self._thread_counter.style()
+        if style is not None:
+            style.unpolish(self._thread_counter)
+            style.polish(self._thread_counter)
+
     def _sync_composer(self) -> None:
         logged_in = self._session.logged_in()
         has_text = bool(self._reply_input.text().strip())
         self._reply_send.setEnabled(logged_in and has_text)
+        self._compose_send.setEnabled(logged_in)
+        self._compose_send.setToolTip("" if logged_in else "登录后才能发帖")
+        self._compose_login.setVisible(not logged_in)
+        self._compose_button.setToolTip(
+            "发布一篇新帖" if logged_in else "发布一篇新帖（需要登录）"
+        )
 
     def _render_body(self, post: ForumPost) -> None:
         self._clear_detail_body()

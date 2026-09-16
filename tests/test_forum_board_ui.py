@@ -83,6 +83,7 @@ class FakeService:
         self.post_total = 0
         self.current_post: ForumPost | None = None
         self.reply_error = ""
+        self.thread_error = ""
         self.snapshot = False
         self.cleaned = False
 
@@ -128,6 +129,10 @@ class FakeService:
     def load_tags(self) -> bool:
         self._record("load_tags")
         return True
+
+    def post_thread(self, title, content, *, tags=None) -> str:
+        self._record("post_thread", title=title, content=content, tags=tags)
+        return self.thread_error
 
     def cache_summary(self) -> dict:
         return {"files": 0, "bytes": 0}
@@ -416,7 +421,82 @@ class ReplyComposerTests(BoardPageTestCase):
         self.assertEqual(self.page._reply_rows[9].floor, 2)
 
 
+class ComposerTests(BoardPageTestCase):
+    """发帖页：进入、本地字段转发、发布成功回到列表。"""
+
+    def test_toolbar_carries_every_sort_and_the_compose_entry(self) -> None:
+        from lib.core.forum_api import FORUM_SORT_LABELS
+
+        self.assertEqual(set(self.page._sort_buttons), set(FORUM_SORT_LABELS))
+        self.assertEqual(self.page._compose_button.text(), "发帖")
+
+    def test_logged_out_composer_asks_for_login(self) -> None:
+        self.page.open_composer()
+        self.assertEqual(self.page._stack.currentIndex(), 2)
+        self.assertTrue(self.page._thread_error.isVisible())
+        self.assertIn("登录", self.page._thread_error.text())
+        self.assertFalse(self.page._compose_send.isEnabled())
+
+    def test_logged_in_composer_is_ready(self) -> None:
+        self.login()
+        self.page.open_composer()
+        self.assertFalse(self.page._thread_error.isVisible())
+        self.assertTrue(self.page._compose_send.isEnabled())
+
+    def test_publishing_forwards_title_body_and_tags(self) -> None:
+        self.login()
+        self.page.open_composer()
+        self.page._thread_title.setText("新主题")
+        self.page._thread_body.setPlainText("正文内容")
+        self.page._thread_tags.setText("自测, 接口")
+        self.page._compose_send.click()
+        call = [item for item in self.service.calls if item[0] == "post_thread"][-1]
+        self.assertEqual(
+            call[1], {"title": "新主题", "content": "正文内容", "tags": "自测, 接口"}
+        )
+
+    def test_service_refusal_stays_on_the_composer(self) -> None:
+        self.login()
+        self.service.thread_error = "标题至少 2 个字"
+        self.page.open_composer()
+        self.page._thread_title.setText("短")
+        self.page._compose_send.click()
+        self.assertEqual(self.page._stack.currentIndex(), 2)
+        self.assertEqual(self.page._thread_error.text(), "标题至少 2 个字")
+
+    def test_published_thread_lands_on_top_of_the_list(self) -> None:
+        self.login()
+        self.page.on_posts(page_of([post(2), post(3)]), False)
+        self.page.open_composer()
+        self.page._thread_title.setText("新主题")
+        self.page._thread_body.setPlainText("正文内容")
+        self.page._thread_tags.setText("自测")
+        self.page.on_thread_posted(post(99, title="刚发的帖子"))
+        self.assertEqual(self.page._stack.currentIndex(), 0)
+        self.assertEqual(self.page._thread_title.text(), "")
+        self.assertEqual(self.page._thread_body.toPlainText(), "")
+        self.assertEqual(self.page._thread_tags.text(), "")
+        first = self.page._list_layout.itemAt(0).widget()
+        self.assertIs(first, self.page._rows[99])
+        self.assertIn("已发布", self.page._list_hint.text())
+
+    def test_counter_warns_when_the_body_is_too_long(self) -> None:
+        from lib.core.forum_api import FORUM_CONTENT_MAX
+
+        self.page.open_composer()
+        self.page._thread_body.setPlainText("x" * (FORUM_CONTENT_MAX + 5))
+        self.assertEqual(self.page._thread_counter.property("tone"), "warn")
+        self.assertIn("超出", self.page._thread_counter.text())
+        self.page._thread_body.setPlainText("短正文")
+        self.assertEqual(self.page._thread_counter.property("tone"), "")
+        self.assertEqual(self.page._thread_counter.text(), f"3 / {FORUM_CONTENT_MAX}")
+
+
 class StatusTests(BoardPageTestCase):
+    def test_subtitle_mentions_the_composer(self) -> None:
+        self.page.open_composer()
+        self.assertIn("发布新帖", self.page.subtitle())
+
     def test_subtitle_reports_the_post_total_and_detail_title(self) -> None:
         self.assertEqual(self.page.subtitle(), "主论坛")
         self.service.post_total = 12

@@ -109,6 +109,17 @@ def device_tag_of(text) -> str:
     return match.group(0).strip().strip("[]")
 
 
+def device_tag_for_display(nickname, content) -> str:
+    """卡片上要呈现的设备标识；昵称是「匿名」时是空串。
+
+    标识的作用是「同一台机器的留言能对上」，而匿名留言正是为了不让人对上——正文里
+    就算带着 ``[sha-xxxxxxxx]`` 尾注，匿名这一档也不把它摆到卡片上。
+    """
+    if normalize_nickname(nickname) == FORUM_DEFAULT_NICKNAME:
+        return ""
+    return device_tag_of(content)
+
+
 def build_content_with_device_tag(content, *, tag: str | None = None) -> str:
     """在正文结尾附上本机设备标识，用于发送。
 
@@ -165,7 +176,7 @@ def parse_feed(payload) -> tuple[tuple[ForumMessage, ...], int]:
                 content=content,
                 accent=normalize_accent(item.get("accent")),
                 created_at=created_at,
-                device_tag=device_tag_of(raw_content),
+                device_tag=device_tag_for_display(nickname, raw_content),
             )
         )
 
@@ -200,7 +211,7 @@ def parse_post_result(payload) -> ForumMessage:
         content=strip_device_tag(raw_content),
         accent=normalize_accent(message.get("accent")),
         created_at=created_at,
-        device_tag=device_tag_of(raw_content),
+        device_tag=device_tag_for_display(message.get("nickname"), raw_content),
     )
 
 
@@ -495,6 +506,7 @@ __all__ = [
     "ForumPage",
     "ForumService",
     "build_content_with_device_tag",
+    "device_tag_for_display",
     "device_tag_of",
     "format_relative_time",
     "normalize_accent",

@@ -4,6 +4,9 @@
 直接写在界面上，用户能自己确认「东西存在哪」。注册成功即自动登录：服务端在注册响应里
 就返回 token，`CommunityService` 拿到就落盘并通知两个子页面。
 
+登录与注册共用一组输入框，顶部两个模式签只切换「显示名字段 + 提示文案 + 回车提交动作」；
+注册模式下额外提醒服务端的一条硬规则：**同一个 IP 只能注册一个账号**。
+
 「清理登录数据」删本地 token（并在有 token 时顺便让服务端作废它），「清理浏览缓存」
 清的是 `<用户根>/cache/forum/` 的小快照 —— 启动时也会清一次，所以按钮旁边同时显示
 当前占用，方便确认确实清了。
@@ -19,6 +22,7 @@ from PyQt5.QtWidgets import (
     QLineEdit,
     QPushButton,
     QStackedWidget,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -39,13 +43,21 @@ from lib.core.forum_community import CommunityService
 from lib.core.forum_session import ForumSessionStore, is_logged_in, session_path
 from lib.core.logger import get_logger
 from lib.core.qt_bridge.font import get_ui_font
+from lib.script.ui.forum_board import ForumPostRow
+from lib.script.ui.workbench_settings_layout import SmoothScrollArea
 
 logger = get_logger(__name__)
 
-_FORM_HINT = (
+_FORM_HINT_LOGIN = (
+    "用户名不区分大小写；账号不存在与密码错误统一按「登录失败」返回，不区分是哪一个。"
+)
+_FORM_HINT_REGISTER = (
     f"用户名 {FORUM_USERNAME_MIN}–{FORUM_USERNAME_MAX} 位，只能用字母、数字、下划线和中划线；"
     f"密码至少 {FORUM_PASSWORD_MIN} 位。注册成功会自动登录。"
+    "一个 IP 只能注册一个账号，注册过就直接登录。"
 )
+#: 「最新帖子」卡里最多铺几条。
+_ACTIVITY_ROW_LIMIT = 3
 
 
 def _require_password(password) -> str:
@@ -65,6 +77,8 @@ class ForumAccountPage(QWidget):
     _dispatch_requested = pyqtSignal(object)
     #: 登录态变化后窗口要重写副标题与导航条小字。
     subtitle_changed = pyqtSignal()
+    #: 「最新帖子」里点了某一行：窗口切到主论坛并打开这篇帖子。
+    post_requested = pyqtSignal(int)
 
     def __init__(
         self,
@@ -79,6 +93,8 @@ class ForumAccountPage(QWidget):
         self._disposed = False
         #: 首次进入才自动查一次；之后靠刷新按钮。
         self._loaded = False
+        #: 登录表单当前模式：`login` / `register`（见 `set_mode()`）。
+        self._mode = "login"
 
         self._dispatch_requested.connect(self._run_dispatched, Qt.QueuedConnection)
         self._service = CommunityService(
@@ -95,7 +111,22 @@ class ForumAccountPage(QWidget):
     # ── 界面 ─────────────────────────────────────────────────────────
 
     def _build_ui(self) -> None:
-        root = QVBoxLayout(self)
+        # 账号页也会长高（登录表单、资料、最新帖子、本机数据、服务器状态），所以本体放进
+        # 滚动区：塞不下时整页滚动，而不是把卡片压扁——压扁会让「最新帖子」的行互相压字。
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        self._scroll = SmoothScrollArea(self)
+        self._scroll.setObjectName("ForumScroll")
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setFrameShape(QFrame.NoFrame)
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+
+        host = QWidget(self._scroll)
+        host.setObjectName("ForumAccountHost")
+        self._host = host
+        root = QVBoxLayout(host)
         root.setContentsMargins(
             scale_px(16, min_abs=13),
             scale_px(14, min_abs=11),
@@ -110,6 +141,7 @@ class ForumAccountPage(QWidget):
         self._stack.addWidget(self._build_profile_card())
         root.addWidget(self._stack, 0)
 
+        root.addWidget(self._build_activity_card(), 0)
         root.addWidget(self._build_data_card(), 0)
         root.addWidget(self._build_server_card(), 0)
         root.addStretch(1)
@@ -119,6 +151,9 @@ class ForumAccountPage(QWidget):
         self._status.setFont(_font(11))
         self._status.setWordWrap(True)
         root.addWidget(self._status, 0)
+
+        self._scroll.setWidget(host)
+        outer.addWidget(self._scroll, 1)
 
     def _card(self, title: str) -> tuple[QFrame, QVBoxLayout]:
         card = QFrame(self)
@@ -151,22 +186,52 @@ class ForumAccountPage(QWidget):
         card, layout = self._card("登录 / 注册")
         self._login_card = card
 
+        # 模式签：登录与注册共用下面这组输入框，切换只改提示与字段可见性。
+        mode_row = QHBoxLayout()
+        mode_row.setContentsMargins(0, 0, 0, 0)
+        mode_row.setSpacing(scale_px(4, min_abs=3))
+        self._mode_buttons: dict[str, QToolButton] = {}
+        for mode, caption in (("login", "登录"), ("register", "注册新账号")):
+            tab = QToolButton(card)
+            tab.setObjectName("ForumModeTab")
+            tab.setText(caption)
+            tab.setCheckable(True)
+            tab.setCursor(Qt.PointingHandCursor)
+            tab.setFont(_font(12, bold=True))
+            tab.clicked.connect(lambda _checked=False, target=mode: self.set_mode(target))
+            self._mode_buttons[mode] = tab
+            mode_row.addWidget(tab, 0)
+        mode_row.addStretch(1)
+        layout.addLayout(mode_row)
+
         self._username = self._field(card, "用户名")
         self._username.setMaxLength(FORUM_USERNAME_MAX)
         layout.addWidget(self._username)
 
+        password_row = QHBoxLayout()
+        password_row.setContentsMargins(0, 0, 0, 0)
+        password_row.setSpacing(scale_px(6, min_abs=5))
         self._password = self._field(card, "密码", password=True)
-        layout.addWidget(self._password)
+        password_row.addWidget(self._password, 1)
+        self._password_toggle = QToolButton(card)
+        self._password_toggle.setObjectName("ForumLinkButton")
+        self._password_toggle.setText("显示")
+        self._password_toggle.setCursor(Qt.PointingHandCursor)
+        self._password_toggle.setFont(_font(10))
+        self._password_toggle.setToolTip("把密码显示成明文，方便核对输入")
+        self._password_toggle.clicked.connect(self._toggle_password)
+        password_row.addWidget(self._password_toggle, 0)
+        layout.addLayout(password_row)
 
         self._display_name = self._field(card, f"显示名（可选，最多 {FORUM_DISPLAY_NAME_MAX} 字）")
         self._display_name.setMaxLength(FORUM_DISPLAY_NAME_MAX)
         layout.addWidget(self._display_name)
 
-        hint = QLabel(_FORM_HINT, card)
-        hint.setObjectName("ForumHint")
-        hint.setFont(_font(10))
-        hint.setWordWrap(True)
-        layout.addWidget(hint)
+        self._form_hint = QLabel(_FORM_HINT_LOGIN, card)
+        self._form_hint.setObjectName("ForumHint")
+        self._form_hint.setFont(_font(10))
+        self._form_hint.setWordWrap(True)
+        layout.addWidget(self._form_hint)
 
         buttons = QHBoxLayout()
         buttons.setContentsMargins(0, 0, 0, 0)
@@ -177,6 +242,7 @@ class ForumAccountPage(QWidget):
         self._login_button.clicked.connect(self._on_login)
         buttons.addWidget(self._login_button, 0)
         self._register_button = QPushButton("注册新账号", card)
+        self._register_button.setObjectName("ForumGhostButton")
         self._register_button.setFont(_font(12))
         self._register_button.setToolTip("注册成功后自动登录，并把 token 存进共享目录")
         self._register_button.clicked.connect(self._on_register)
@@ -184,9 +250,10 @@ class ForumAccountPage(QWidget):
         buttons.addStretch(1)
         layout.addLayout(buttons)
 
-        # 回车直接登录；密码框回车也走同一条路。
-        self._password.returnPressed.connect(self._on_login)
-        self._username.returnPressed.connect(lambda: self._password.setFocus())
+        # 回车提交：走 `_on_submit()` 按当前模式分发；用户名回车先跳到密码。
+        self._password.returnPressed.connect(self._on_submit)
+        self._username.returnPressed.connect(self._focus_password)
+        self._sync_mode()
         return card
 
     def _build_profile_card(self) -> QWidget:
@@ -234,6 +301,23 @@ class ForumAccountPage(QWidget):
         buttons.addWidget(self._logout_button, 0)
         buttons.addStretch(1)
         layout.addLayout(buttons)
+        return card
+
+    def _build_activity_card(self) -> QWidget:
+        """「最新帖子」：登录后铺自己的最近几篇，点一行直接进主论坛详情。"""
+        card, layout = self._card("最新帖子")
+        self._activity_card = card
+        self._activity_hint = QLabel("登录后这里会列出你最近发的帖子。", card)
+        self._activity_hint.setObjectName("ForumHint")
+        self._activity_hint.setFont(_font(10))
+        self._activity_hint.setWordWrap(True)
+        layout.addWidget(self._activity_hint)
+
+        self._activity_host = QWidget(card)
+        self._activity_layout = QVBoxLayout(self._activity_host)
+        self._activity_layout.setContentsMargins(0, 0, 0, 0)
+        self._activity_layout.setSpacing(scale_px(6, min_abs=5))
+        layout.addWidget(self._activity_host)
         return card
 
     def _build_data_card(self) -> QWidget:
@@ -291,12 +375,23 @@ class ForumAccountPage(QWidget):
             return "账号页 · 未登录"
         return f"账号页 · 已登录 {session.user.label}"
 
+    def set_mode(self, mode: str) -> None:
+        """切换登录 / 注册；同一个表单，只改提示与字段。"""
+        target = "register" if str(mode).strip() == "register" else "login"
+        if target == self._mode:
+            return
+        self._mode = target
+        self._sync_mode()
+
     def needs_initial_load(self) -> bool:
         return not self._loaded
 
     def refresh(self) -> None:
+        """登录时刷新资料与「最新帖子」；未登录就问一次服务器状态。"""
         self._loaded = True
         if self._session.logged_in():
+            # 先问一次「我最近发了什么」，再让服务端确认 token 还有效。
+            self._service.load_user()
             self._service.refresh_account()
         else:
             self._on_check_health()
@@ -313,6 +408,27 @@ class ForumAccountPage(QWidget):
 
     def on_session(self, session) -> None:
         self._sync_session(session)
+
+    def on_user_activity(self, user: ForumUser, posts, replies) -> None:
+        """自己的资料与动态：资料顺手刷新，「最新帖子」铺最近几篇。"""
+        if user.username:
+            self._fill_profile(user)
+        self._clear_activity_rows()
+        recent = tuple(posts.posts)[:_ACTIVITY_ROW_LIMIT]
+        for post in recent:
+            row = ForumPostRow(post, self._activity_host)
+            row.activated.connect(self.post_requested.emit)
+            self._activity_layout.addWidget(row)
+        total_posts = posts.total or len(posts.posts)
+        total_replies = replies.total or len(replies.replies)
+        if recent:
+            self._activity_hint.setText(
+                f"共 {total_posts} 篇帖子、{total_replies} 条回复；下面是最近 {len(recent)} 篇，点一行进详情。"
+            )
+        else:
+            self._activity_hint.setText(
+                f"还没有发过帖子；已经回复过 {total_replies} 条。"
+            )
 
     def on_account(self, user: ForumUser) -> None:
         self._fill_profile(user)
@@ -364,6 +480,11 @@ class ForumAccountPage(QWidget):
         if error:
             self._set_status(error, tone="warn")
 
+    def _toggle_password(self) -> None:
+        shown = self._password.echoMode() == QLineEdit.Normal
+        self._password.setEchoMode(QLineEdit.Password if shown else QLineEdit.Normal)
+        self._password_toggle.setText("显示" if shown else "隐藏")
+
     def _on_logout(self) -> None:
         if self._service.logout():
             self._set_status("正在退出登录…")
@@ -393,6 +514,38 @@ class ForumAccountPage(QWidget):
         """store 的通知：两个子页面都会收到，这里只管自己。"""
         self._sync_session(session)
 
+    def _sync_mode(self) -> None:
+        """模式签与字段可见性对齐；两种模式共用用户名与密码。"""
+        registering = self._mode == "register"
+        for mode, tab in self._mode_buttons.items():
+            tab.setChecked(mode == self._mode)
+        self._display_name.setVisible(registering)
+        self._form_hint.setText(_FORM_HINT_REGISTER if registering else _FORM_HINT_LOGIN)
+        self._login_button.setVisible(not registering)
+        self._register_button.setVisible(registering)
+        self._register_button.setObjectName("ForumSend" if registering else "ForumGhostButton")
+        style = self._register_button.style()
+        if style is not None:
+            style.unpolish(self._register_button)
+            style.polish(self._register_button)
+    def _focus_password(self) -> None:
+        self._password.setFocus()
+
+    def _on_submit(self) -> None:
+        """回车提交：按当前模式走登录或注册。"""
+        if self._mode == "register":
+            self._on_register()
+        else:
+            self._on_login()
+
+    def _clear_activity_rows(self) -> None:
+        while self._activity_layout.count():
+            item = self._activity_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.setParent(None)
+                widget.deleteLater()
+
     def _sync_session(self, session) -> None:
         logged_in = is_logged_in(session)
         self._stack.setCurrentIndex(1 if logged_in else 0)
@@ -401,6 +554,7 @@ class ForumAccountPage(QWidget):
         if logged_in:
             self._password.clear()
             self._fill_profile(session.user, expires_at=session.expires_at)
+            self._service.load_user()
         self._sync_cache_label()
         self.subtitle_changed.emit()
 

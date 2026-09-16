@@ -112,6 +112,23 @@ class DeviceTagTests(unittest.TestCase):
         self.assertEqual(messages[0].device_tag, "sha-123abcDE")
         self.assertEqual(messages[1].device_tag, "")
 
+    def test_anonymous_messages_never_show_a_device_tag(self):
+        """匿名发言不呈现设备标识：正文里带着尾注也一样。"""
+        messages, _total = parse_feed({
+            "ok": True, "total": 1,
+            "messages": [{"id": 7, "nickname": "匿名", "content": "无名的留言[sha-123abcDE]",
+                          "accent": "snow", "created_at": 3}],
+        })
+        self.assertEqual(messages[0].content, "无名的留言")
+        self.assertEqual(messages[0].device_tag, "")
+
+    def test_device_tag_for_display_skips_anonymous(self):
+        from lib.core.forum import device_tag_for_display
+
+        self.assertEqual(device_tag_for_display("匿名", "你好[sha-123abcDE]"), "")
+        self.assertEqual(device_tag_for_display("", "你好[sha-123abcDE]"), "")
+        self.assertEqual(device_tag_for_display("小明", "你好[sha-123abcDE]"), "sha-123abcDE")
+
     def test_tag_only_content_is_dropped(self):
         messages, _total = parse_feed({
             "ok": True, "total": 1,

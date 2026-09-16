@@ -393,14 +393,43 @@ def forum_stylesheet(mode: str | None = None) -> str:
             border-left: {scale_px(3, min_abs=2)}px solid {c.border_strong};
             border-radius: {radius}px;
         }}
-        QFrame#ForumReplyComposer, QFrame#ForumAccountCard {{
+        QFrame#ForumReplyComposer, QFrame#ForumAccountCard,
+        QFrame#ForumThreadComposer {{
             background: {c.surface};
             border: {border}px solid {c.border};
             border-radius: {radius}px;
         }}
+        QToolButton#ForumModeTab {{
+            background: transparent;
+            color: {c.text_muted};
+            border: none;
+            border-bottom: {scale_px(2, min_abs=2)}px solid transparent;
+            padding: {scale_px(4, min_abs=3)}px {scale_px(6, min_abs=5)}px;
+            font-weight: 700;
+        }}
+        QToolButton#ForumModeTab:hover {{ color: {c.text}; }}
+        QToolButton#ForumModeTab:checked {{
+            color: {c.pink};
+            border-bottom-color: {c.pink};
+        }}
+        QPlainTextEdit#ForumThreadBody {{
+            background: {c.surface_raised};
+            color: {c.text};
+            border: {border}px solid {c.border};
+            border-radius: {radius}px;
+            padding: {scale_px(6, min_abs=5)}px {scale_px(9, min_abs=7)}px;
+            selection-background-color: {c.pink};
+        }}
+        QPlainTextEdit#ForumThreadBody:focus {{ border-color: {c.cyan}; }}
+        QLabel#ForumFieldError {{ color: {c.pink}; }}
+        QLabel#ForumTagLabel {{ color: {c.text_muted}; }}
+        QLabel#ForumThreadCounter {{ color: {c.text_dim}; }}
+        QLabel#ForumThreadCounter[tone="warn"] {{ color: {c.pink}; }}
         QWidget#ForumColumnHost, QWidget#ForumColumn, QWidget#ForumBoardList,
         QWidget#ForumBoardPage, QWidget#ForumAccountPage, QWidget#ForumDetailHost,
-        QWidget#ForumReplyComposer, QStackedWidget#ForumAccountStack {{
+        QWidget#ForumAccountHost,
+        QWidget#ForumReplyComposer, QWidget#ForumComposerHost,
+        QWidget#ForumAccountStack, QStackedWidget#ForumAccountStack {{
             background: transparent;
         }}
         QWidget#ForumWindow QScrollBar:vertical {{

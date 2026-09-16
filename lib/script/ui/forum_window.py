@@ -363,7 +363,8 @@ class ForumCard(QFrame):
         layout.setSpacing(scale_px(9, min_abs=7))
 
         # 昵称行：昵称 + 右侧淡色小字的设备标识。标识是「同一台机器」的留言印记，
-        # 匿名留言没有标识，这一格就直接不占位（不给匿名也留一条空气缝）。
+        # 匿名留言不摆这一格（`forum.device_tag_for_display()` 已经把匿名档洗成空串，
+        # 卡片因此不会给匿名留一条空气缝）。
         name_row = QHBoxLayout()
         name_row.setContentsMargins(0, 0, 0, 0)
         name_row.setSpacing(scale_px(6, min_abs=5))
@@ -518,6 +519,8 @@ class ForumWindow(QtWorkbenchToolPage):
         self._account = ForumAccountPage(session=self._session_store, api=self._api, parent=self)
         # 未登录时主论坛的「去登录」直接把用户送到账号页。
         self._board.login_requested.connect(lambda: self.set_page("account"))
+        # 账号页「最新帖子」点一行：切到主论坛并直接进这篇帖子的详情。
+        self._account.post_requested.connect(self._open_post_in_board)
         self._board.subtitle_changed.connect(self._sync_subtitle)
         self._account.subtitle_changed.connect(self._sync_subtitle)
         for widget in (self._wall, self._board, self._account):
@@ -611,6 +614,13 @@ class ForumWindow(QtWorkbenchToolPage):
     def page(self) -> str:
         """当前子页面的 key（`wall` / `board` / `account`）。"""
         return self._page
+
+    def _open_post_in_board(self, post_id) -> None:
+        """从账号页跳到主论坛的某篇帖子；没登录时按钮本来就点不到。"""
+        if not post_id:
+            return
+        self.set_page("board")
+        self._board.open_post(int(post_id))
 
     def set_page(self, name: str, *, refresh: bool = True) -> None:
         """切换子页面；`refresh=False` 只摆位置（构造期用）。"""
