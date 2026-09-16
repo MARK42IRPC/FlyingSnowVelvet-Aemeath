@@ -39,8 +39,8 @@ FORUM_API_HEADERS = {
 FORUM_API_PAGE_SIZE = 20
 FORUM_API_MAX_PAGE_SIZE = 50
 #: 关键词搜索用 `q`，服务端按标题与正文模糊匹配。
-FORUM_API_SORTS = ("new", "hot")
-FORUM_SORT_LABELS = {"new": "最新", "hot": "最热"}
+FORUM_API_SORTS = ("new", "hot", "active", "old")
+FORUM_SORT_LABELS = {"new": "最新", "hot": "最热", "active": "最近回复", "old": "最早"}
 FORUM_DEFAULT_SORT = "new"
 
 #: 服务端限制（`GET /api` 的 `limits` 是权威，这里是打开面板前的本地兜底校验）。
@@ -139,6 +139,8 @@ class ForumReply:
     image_count: int = 0
     created_at: int = 0
     updated_at: int = 0
+    #: 只有 `/users/:name/replies` 会带：这条回复挂在哪个帖子上。
+    post_title: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -184,6 +186,19 @@ def _as_bool(value) -> bool:
 
 def _as_text(value) -> str:
     return str(value or "").strip()
+
+
+def _unwrap(payload, key: str):
+    """服务端把新建 / 读取的单个对象再嵌一层键名（`{"post": {...}}`）。
+
+    客户端只关心里面那个对象；顺手兼容摊平的写法，服务端换形状时不会整块功能报
+    「论坛没有返回…」。
+    """
+    if isinstance(payload, dict):
+        inner = payload.get(key)
+        if isinstance(inner, dict):
+            return inner
+    return payload
 
 
 def _as_tags(value) -> tuple[str, ...]:
@@ -303,6 +318,7 @@ def parse_reply(payload) -> ForumReply:
         image_count=len(images) if isinstance(images, (list, tuple)) else 0,
         created_at=_as_int(payload.get("created_at")),
         updated_at=_as_int(payload.get("updated_at")),
+        post_title=_as_text(payload.get("post_title")),
     )
 
 
@@ -587,7 +603,24 @@ class ForumApiClient:
         return parse_post_page(self._call("GET", "/posts", params=params))
 
     def get_post(self, post_id) -> ForumPost:
-        post = parse_post(self._call("GET", f"/posts/{_as_int(post_id)}"))
+        """详情；服务端顺手把 `view_count` 加 1，本地不重复计。"""
+        data = self._call("GET", f"/posts/{_as_int(post_id)}")
+        post = parse_post(_unwrap(data, "post"))
+        if not post.id:
+            raise ForumApiError(0, "bad_response", "论坛没有返回这篇帖子")
+        return post
+
+    def create_post(self, title, content, *, tags=None) -> ForumPost:
+        """发一篇新帖；只发标签不传图片（图片接口没接入，见模块开头说明）。"""
+        body: dict[str, object] = {
+            "title": _as_text(title),
+            "content": str(content or ""),
+        }
+        tag_list = list(_as_tags(tags))
+        if tag_list:
+            body["tags"] = tag_list
+        data = self._call("POST", "/posts", json_body=body)
+        post = parse_post(_unwrap(data, "post"))
         if not post.id:
             raise ForumApiError(0, "bad_response", "论坛没有返回这篇帖子")
         return post
@@ -595,6 +628,46 @@ class ForumApiClient:
     def tags(self, limit: int = FORUM_TAGS_LIMIT) -> tuple[ForumTag, ...]:
         data = self._call("GET", "/tags", params={"limit": max(1, _as_int(limit, FORUM_TAGS_LIMIT))}, authorized=False)
         return parse_tags(data)
+
+    # ── 用户资料 ─────────────────────────────────────────────────────
+
+    def user_profile(self, username) -> ForumUser:
+        """公开资料；不需要 token，用户名大小写不敏感。"""
+        name = _require_username(username)
+        user = parse_user(_unwrap(self._call("GET", f"/users/{name}"), "user"))
+        if user is None:
+            raise ForumApiError(0, "bad_response", "论坛没有返回这位用户的资料")
+        return user
+
+    def user_posts(
+        self,
+        username,
+        *,
+        page: int = 1,
+        per_page: int = FORUM_API_PAGE_SIZE,
+    ) -> ForumPostPage:
+        """某个人发的帖子；服务端只认分页参数。"""
+        name = _require_username(username)
+        params = {
+            "page": max(1, _as_int(page, 1)),
+            "per_page": _clamp_per_page(per_page),
+        }
+        return parse_post_page(self._call("GET", f"/users/{name}/posts", params=params))
+
+    def user_replies(
+        self,
+        username,
+        *,
+        page: int = 1,
+        per_page: int = FORUM_API_PAGE_SIZE,
+    ) -> ForumReplyPage:
+        """某个人发的回复；每条额外带 `post_title`，方便点回原帖。"""
+        name = _require_username(username)
+        params = {
+            "page": max(1, _as_int(page, 1)),
+            "per_page": _clamp_per_page(per_page),
+        }
+        return parse_reply_page(self._call("GET", f"/users/{name}/replies", params=params))
 
     # ── 回复 ─────────────────────────────────────────────────────────
 
@@ -617,7 +690,8 @@ class ForumApiClient:
         body: dict[str, object] = {"content": str(content or "")}
         if parent_id not in (None, ""):
             body["parent_id"] = _as_int(parent_id)
-        reply = parse_reply(self._call("POST", f"/posts/{_as_int(post_id)}/replies", json_body=body))
+        data = self._call("POST", f"/posts/{_as_int(post_id)}/replies", json_body=body)
+        reply = parse_reply(_unwrap(data, "reply"))
         if not reply.id:
             raise ForumApiError(0, "bad_response", "论坛没有返回这条回复")
         return reply
@@ -648,6 +722,13 @@ def _read_json(response):
         raise ForumApiError(_as_int(getattr(response, "status_code", 0)), "bad_response", "论坛返回的不是 JSON") from exc
 
 
+def _require_username(username) -> str:
+    name = _as_text(username)
+    if not name:
+        raise ForumApiError(0, "bad_request", "缺少用户名")
+    return name
+
+
 def _clamp_per_page(value) -> int:
     return max(1, min(_as_int(value, FORUM_API_PAGE_SIZE) or FORUM_API_PAGE_SIZE, FORUM_API_MAX_PAGE_SIZE))
 
@@ -674,6 +755,33 @@ def validate_password(password) -> str:
     text = str(password or "")
     if len(text) < FORUM_PASSWORD_MIN:
         return f"密码至少 {FORUM_PASSWORD_MIN} 位"
+    return ""
+
+
+def validate_content(content) -> str:
+    """帖子正文规则：不能空、不超过 `FORUM_CONTENT_MAX`；返回空串表示可用。"""
+    text = str(content or "").strip()
+    if not text:
+        return "正文不能为空"
+    if len(text) > FORUM_CONTENT_MAX:
+        return f"正文不能超过 {FORUM_CONTENT_MAX} 字"
+    return ""
+
+
+def validate_tags(value) -> str:
+    """标签在服务端是可选字段，这里只拦「数量」与「单个长度」两条硬规则。"""
+    if isinstance(value, str):
+        items = str(value).split(",")
+    elif isinstance(value, (list, tuple)):
+        items = [str(item) for item in value]
+    else:
+        return ""
+    items = [item.strip() for item in items if item.strip()]
+    if len(items) > FORUM_TAG_MAX_COUNT:
+        return f"最多 {FORUM_TAG_MAX_COUNT} 个标签"
+    for item in items:
+        if len(item) > FORUM_TAG_MAX_LENGTH:
+            return f"每个标签最多 {FORUM_TAG_MAX_LENGTH} 个字"
     return ""
 
 
@@ -737,7 +845,9 @@ __all__ = [
     "parse_session",
     "parse_tags",
     "parse_user",
+    "validate_content",
     "validate_password",
+    "validate_tags",
     "validate_reply",
     "validate_title",
     "validate_username",

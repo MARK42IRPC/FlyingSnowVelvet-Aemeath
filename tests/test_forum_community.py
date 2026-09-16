@@ -51,6 +51,8 @@ class FakeListener:
         self.status: list = []
         self.errors: list = []
         self.health: list = []
+        self.thread_posted: list = []
+        self.user_activity: list = []
 
     def on_posts(self, page, append, **kwargs) -> None:
         self.posts.append((page, append, kwargs))
@@ -63,6 +65,12 @@ class FakeListener:
 
     def on_reply_posted(self, reply, floor) -> None:
         self.reply_posted.append((reply, floor))
+
+    def on_thread_posted(self, post) -> None:
+        self.thread_posted.append(post)
+
+    def on_user_activity(self, user, posts, replies) -> None:
+        self.user_activity.append((user, posts, replies))
 
     def on_likes(self, kind, target_id, liked, count) -> None:
         self.likes.append((kind, target_id, liked, count))
@@ -121,6 +129,22 @@ class FakeClient:
 
     def list_replies(self, post_id, **kwargs):
         self._record("list_replies", post_id=post_id, **kwargs)
+        return self.reply_pages.get(kwargs.get("page", 1), ForumReplyPage(page=kwargs.get("page", 1)))
+
+    def create_post(self, title, content, *, tags=None):
+        self._record("create_post", title=title, content=content, tags=tags)
+        return self.post
+
+    def user_profile(self, username):
+        self._record("user_profile", username=username)
+        return self.user_result
+
+    def user_posts(self, username, **kwargs):
+        self._record("user_posts", username=username, **kwargs)
+        return self.post_pages.get(kwargs.get("page", 1), ForumPostPage(page=kwargs.get("page", 1)))
+
+    def user_replies(self, username, **kwargs):
+        self._record("user_replies", username=username, **kwargs)
         return self.reply_pages.get(kwargs.get("page", 1), ForumReplyPage(page=kwargs.get("page", 1)))
 
     def create_reply(self, post_id, content, parent_id=None):
@@ -372,6 +396,70 @@ class DetailTests(ServiceTestCase):
         reply, floor = self.listener.reply_posted[-1]
         self.assertEqual((reply.id, floor), (7, 2))
         self.assertEqual(self.service.replies_total, 2)
+
+
+class ThreadTests(ServiceTestCase):
+    """发帖：登录与本地校验守在前面，成功之后要让界面把新帖插进列表。"""
+
+    def test_thread_needs_a_login(self) -> None:
+        self.assertEqual(self.service.post_thread("标题", "正文"), "登录后才能发帖")
+        self.assertNotIn("create_post", [name for name, _ in self.client.calls])
+
+    def test_thread_validates_locally(self) -> None:
+        self.login()
+        self.assertEqual(self.service.post_thread("短", "正文"), "标题至少 2 个字")
+        self.assertEqual(self.service.post_thread("标题", "   "), "正文不能为空")
+        self.assertEqual(self.service.post_thread("标题", "正文", tags="a,b,c,d,e,f"), "最多 5 个标签")
+        self.assertNotIn("create_post", [name for name, _ in self.client.calls])
+
+    def test_thread_is_sent_with_title_body_and_tags(self) -> None:
+        self.login()
+        self.assertEqual(self.service.post_thread(" 标题 ", " 正文 ", tags="general, Demo"), "")
+        name, kwargs = self.client.calls[-1]
+        self.assertEqual(name, "create_post")
+        self.assertEqual((kwargs["title"], kwargs["content"], kwargs["tags"]), ("标题", "正文", "general, Demo"))
+        self.assertEqual(self.client.token, "t" * 64)
+        self.assertEqual(self.listener.thread_posted[-1].id, 12)
+        self.assertEqual(self.service.post_total, 1)
+
+    def test_failed_thread_releases_the_guard(self) -> None:
+        self.login()
+        self.client.error = ForumApiError(500, "internal_error", "boom")
+        self.assertEqual(self.service.post_thread("标题", "正文"), "")
+        self.assertTrue(self.listener.errors)
+        self.client.error = None
+        self.assertEqual(self.service.post_thread("标题", "正文"), "")
+        self.assertEqual([name for name, _ in self.client.calls].count("create_post"), 2)
+
+
+class UserActivityTests(ServiceTestCase):
+    """`load_user()`：自己的资料与最近动态，账号页「最新帖子」用它。"""
+
+    def test_load_user_uses_the_signed_in_username(self) -> None:
+        self.login()
+        self.assertTrue(self.service.load_user())
+        names = [kwargs.get("username") for name, kwargs in self.client.calls if name.startswith("user_")]
+        self.assertEqual(names, ["demo", "demo", "demo"])
+
+    def test_load_user_accepts_another_username(self) -> None:
+        self.login()
+        self.service.load_user("someone")
+        self.assertEqual(self.client.calls[-1][1]["username"], "someone")
+
+    def test_load_user_reports_the_profile_and_activity(self) -> None:
+        self.login()
+        self.client.post_pages[1] = ForumPostPage(posts=(ForumPost(id=31, title="甲"),), page=1, total=3, has_more=True)
+        self.client.reply_pages[1] = ForumReplyPage(replies=(ForumReply(id=41),), page=1, total=5)
+        self.service.load_user()
+        user, posts, replies = self.listener.user_activity[-1]
+        self.assertEqual(user.username, "demo")
+        self.assertEqual((posts.posts[0].id, posts.total), (31, 3))
+        self.assertEqual((replies.replies[0].id, replies.total), (41, 5))
+        self.assertIn("3 篇帖子", self.listener.status[-1][0])
+
+    def test_load_user_without_a_username_does_nothing(self) -> None:
+        self.assertFalse(self.service.load_user())
+        self.assertEqual(self.client.calls, [])
 
 
 class LikeTests(ServiceTestCase):

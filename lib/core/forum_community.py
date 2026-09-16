@@ -7,6 +7,8 @@
 
 - `on_posts(page, append)` / `on_post(post)` / `on_replies(page, append)`
 - `on_reply_posted(reply, floor)` / `on_likes(kind, target_id, liked, count)`
+- `on_thread_posted(post)`：新帖发出去之后
+- `on_user_activity(user, posts, replies)`：某位用户（默认自己）的资料与动态
 - `on_tags(tags)` / `on_account(user)` / `on_session(session)` / `on_health(data)`
 - `on_status(text, tone)` / `on_error(text)`
 
@@ -29,10 +31,14 @@ from lib.core.forum_api import (
     ForumApiError,
     ForumPost,
     ForumPostPage,
+    ForumReplyPage,
     ForumSession,
     ForumUser,
+    validate_content,
     validate_password,
     validate_reply,
+    validate_tags,
+    validate_title,
     validate_username,
 )
 from lib.core.forum_session import ForumSessionStore
@@ -75,6 +81,9 @@ class CommunityService:
         self._has_more_posts = False
         self._post_total = 0
         self._post: ForumPost | None = None
+        self._posting_thread = False
+        self._user_generation = 0
+        self._user_loading = False
         self._replies_page = 0
         self._replies_total = 0
         self._has_more_replies = False
@@ -410,6 +419,85 @@ class CommunityService:
             self._like_inflight.discard((kind, int(target_id)))
         self._notify("on_likes", kind, int(target_id), like_result.liked, like_result.like_count)
 
+    # ── 新帖 ─────────────────────────────────────────────────────────
+
+    def post_thread(self, title, content, *, tags=None) -> str:
+        """发一篇新帖；返回空串表示已提交，否则是要显示在状态栏的原因。"""
+        if self._closed:
+            return "窗口已关闭"
+        if not self._session.logged_in():
+            return "登录后才能发帖"
+        error = validate_title(title) or validate_content(content) or validate_tags(tags)
+        if error:
+            return error
+        with self._lock:
+            if self._posting_thread:
+                return "正在发布，请稍候"
+            self._posting_thread = True
+        payload = tuple(tags) if isinstance(tags, (list, tuple)) else str(tags or "")
+        self._notify("on_status", "正在发布新帖…", "")
+        if not self._submit(
+            self._post_thread_worker,
+            self._handle_thread_posted,
+            str(title).strip(),
+            str(content).strip(),
+            payload,
+        ):
+            with self._lock:
+                self._posting_thread = False
+            return "发帖请求未能发出"
+        return ""
+
+    def _post_thread_worker(self, title: str, content: str, tags):
+        self._sync_token()
+        return self._client.create_post(title, content, tags=tags)
+
+    def _handle_thread_posted(self, post: ForumPost) -> None:
+        if self._closed:
+            return
+        with self._lock:
+            self._posting_thread = False
+            self._post_total += 1
+        self._notify("on_thread_posted", post)
+        self._notify("on_status", f"已发布《{post.title}》", "")
+
+    # ── 用户资料 ─────────────────────────────────────────────────────
+
+    def load_user(self, username=None) -> bool:
+        """读一位用户的公开资料与最近动态；不传用户名就用自己的账号。"""
+        session = self._session.get()
+        fallback = str(session.user.username or "").strip() if session is not None else ""
+        name = str(username or "").strip() or fallback
+        if self._closed or not name:
+            return False
+        with self._lock:
+            self._user_generation += 1
+            generation = self._user_generation
+            self._user_loading = True
+        self._notify("on_status", f"正在读取 {name} 的资料…", "")
+        return self._submit(self._load_user_worker, self._handle_user, generation, name)
+
+    def _load_user_worker(self, generation: int, username: str):
+        user = self._client.user_profile(username)
+        posts = self._client.user_posts(username, per_page=self._page_size)
+        replies = self._client.user_replies(username, per_page=self._page_size)
+        return generation, user, posts, replies
+
+    def _handle_user(self, result) -> None:
+        generation, user, posts, replies = result
+        if self._closed:
+            return
+        with self._lock:
+            if generation != self._user_generation:
+                return
+            self._user_loading = False
+        self._notify("on_user_activity", user, posts, replies)
+        self._notify(
+            "on_status",
+            f"{user.label}：{posts.total} 篇帖子、{replies.total} 条回复",
+            "",
+        )
+
     # ── 账号 ─────────────────────────────────────────────────────────
 
     def login(self, username, password) -> str:
@@ -569,6 +657,8 @@ class CommunityService:
             self._loading_posts = False
             self._loading_replies = False
             self._account_loading = False
+            self._posting_thread = False
+            self._user_loading = False
             self._like_inflight.clear()
         if error is not None and isinstance(error, ForumApiError) and error.is_auth_error():
             # token 失效：本地登录态留着只会一直 401。
@@ -697,6 +787,7 @@ def _tags_from_cache(payload):
 
 __all__ = [
     "CommunityService",
+    "ForumReplyPage",
     "friendly_error",
     "post_to_cache",
 ]

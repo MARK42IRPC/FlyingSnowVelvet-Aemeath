@@ -61,6 +61,10 @@ class FakeService:
         self._record("check_health")
         return True
 
+    def load_user(self, username=None) -> bool:
+        self._record("load_user", username=username)
+        return True
+
     def load_more_posts(self) -> bool:
         self._record("load_more_posts")
         return True

@@ -163,6 +163,62 @@ class RequestTests(unittest.TestCase):
         self.assertEqual(request.calls[0]["json"], {"content": "写得好", "parent_id": 3})
         self.assertEqual(reply.id, 7)
 
+    def test_reply_reads_the_nested_envelope(self) -> None:
+        """服务端把新建的回复嵌在 `data.reply` 里（实测），摊平写法也要认。"""
+        client, _request = self._client(ok({"reply": {"id": 7, "post_id": 12}, "location": "/api/posts/12/replies/7"}))
+        self.assertEqual(client.create_reply(12, "写得好").id, 7)
+
+        flat, _request = self._client(ok({"id": 8, "post_id": 12}))
+        self.assertEqual(flat.create_reply(12, "写得好").id, 8)
+
+    def test_post_detail_reads_the_nested_envelope(self) -> None:
+        client, request = self._client(ok({"post": {"id": 12, "title": "标题"}}))
+        post = client.get_post(12)
+        self.assertEqual(request.calls[0]["url"], f"{FORUM_API_BASE}/posts/12")
+        self.assertEqual((post.id, post.title), (12, "标题"))
+
+    def test_create_post_posts_title_content_and_tags(self) -> None:
+        client, request = self._client(ok({"post": {"id": 31, "title": "标题"}, "location": "/api/posts/31"}))
+        post = client.create_post("标题", "正文", tags=["General", "demo"])
+        self.assertEqual(request.calls[0]["method"], "POST")
+        self.assertEqual(request.calls[0]["url"], f"{FORUM_API_BASE}/posts")
+        self.assertEqual(request.calls[0]["json"], {"title": "标题", "content": "正文", "tags": ["general", "demo"]})
+        self.assertEqual(post.id, 31)
+
+    def test_create_post_without_tags_omits_the_field(self) -> None:
+        client, request = self._client(ok({"post": {"id": 31}}))
+        client.create_post("标题", "正文")
+        self.assertEqual(request.calls[0]["json"], {"title": "标题", "content": "正文"})
+
+    def test_every_documented_sort_passes_through(self) -> None:
+        for sort in ("new", "hot", "active", "old"):
+            client, request = self._client(ok({"posts": []}))
+            client.list_posts(sort=sort)
+            self.assertEqual(request.calls[0]["params"]["sort"], sort)
+
+    def test_user_profile_endpoints(self) -> None:
+        client, request = self._client(
+            ok({"user": {"id": 2, "username": "demo", "likes_given": 4}}),
+            ok({"user": {"username": "demo"}, "posts": [{"id": 12, "title": "标题"}], "page": 1, "total": 1}),
+            ok({"user": {"username": "demo"}, "replies": [
+                {"id": 7, "post_id": 12, "content": "写得好", "post_title": "标题"},
+            ], "page": 1, "total": 1}),
+        )
+        self.assertEqual(client.user_profile("demo").likes_given, 4)
+        self.assertEqual(client.user_posts("demo", per_page=999).posts[0].id, 12)
+        replies = client.user_replies("demo").replies
+        self.assertEqual((replies[0].id, replies[0].post_title), (7, "标题"))
+        self.assertEqual(request.calls[0]["url"], f"{FORUM_API_BASE}/users/demo")
+        self.assertEqual(request.calls[1]["url"], f"{FORUM_API_BASE}/users/demo/posts")
+        self.assertEqual(request.calls[1]["params"]["per_page"], 50)
+        self.assertEqual(request.calls[2]["url"], f"{FORUM_API_BASE}/users/demo/replies")
+
+    def test_user_profile_requires_a_name(self) -> None:
+        client, _request = self._client()
+        with self.assertRaises(ForumApiError) as ctx:
+            client.user_profile("   ")
+        self.assertEqual(ctx.exception.code, "bad_request")
+
     def test_error_payload_becomes_a_translated_exception(self) -> None:
         client, _request = self._client(fail(400, "invalid_request", '"title" must be at least 2 characters.'))
         with self.assertRaises(ForumApiError) as ctx:
