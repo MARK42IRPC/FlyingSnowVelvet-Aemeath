@@ -260,6 +260,23 @@ class ProfileTests(AccountPageTestCase):
         self.page.on_user_activity(user(), post_page(), reply_page(3))
         self.assertIn("还没有发过帖子", self.page._activity_hint.text())
 
+    def test_register_blocked_by_the_ip_rule_switches_to_login(self) -> None:
+        page = self.page
+        page.set_mode("register")
+        page.on_session_error(
+            "register", "注册失败：这个 IP 已经注册过账号了（一个 IP 只能注册一个）。"
+        )
+        self.assertEqual(page._mode, "login")
+        self.assertTrue(page._login_button.isVisible())
+        self.assertFalse(page._register_button.isVisible())
+
+    def test_other_session_errors_keep_the_current_mode(self) -> None:
+        page = self.page
+        page.set_mode("register")
+        page.on_session_error("login", "用户名或密码不对")
+        page.on_session_error("register", "注册失败：用户名已被占用")
+        self.assertEqual(page._mode, "register")
+
     def test_session_loss_returns_to_the_form(self) -> None:
         self.login()
         self.store.clear()

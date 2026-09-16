@@ -432,8 +432,15 @@ class ForumApiError(Exception):
         self.message = _as_text(message)
         self.details = details if isinstance(details, dict) else {}
 
-    def friendly(self) -> str:
-        """给用户看的一句话；服务端英文原因只在没有更合适的中文时补在后面。"""
+    def friendly(self, *, action: str = "") -> str:
+        """给用户看的一句话；服务端英文原因只在没有更合适的中文时补在后面。
+
+        `action` 是这次请求的「表单动作」（`"login"` / `"register"`）：同样是 401，
+        「token 过期要重新登录」和「登录时密码打错」不是一回事；账号页把动作传进来，
+        这里按动作换措辞。不传就是原来的通用文案。
+        """
+        if action in ("login", "register"):
+            return self._form_message(action)
         status = self.status
         if status == 0:
             return f"网络连接失败：{self.message or '请检查网络后重试'}"
@@ -461,6 +468,28 @@ class ForumApiError(Exception):
             base = f"论坛请求失败（HTTP {status}）"
         detail = self.message
         return f"{base}：{detail}" if detail else base
+
+    def _form_message(self, action: str) -> str:
+        """登录 / 注册表单上要显示的那句话。"""
+        status = self.status
+        if status == 0:
+            return f"网络连接失败：{self.message or '请检查网络后重试'}"
+        if status == 401:
+            return "用户名或密码不对（账号不存在与密码错误，服务端刻意不区分）"
+        if status == 409:
+            detail = self.message or "用户名已被占用"
+            if "IP" in detail:
+                # 服务端限制「一个 IP 只能注册一个账号」，这句话必须原样带到界面上，
+                # 不然用户只会看到「已注册」却不知道自己并没有注册过。
+                return f"注册失败：{detail}换一个网络（比如手机热点）可以注册新账号，也可以直接用已有账号登录。"
+            return f"注册失败：{detail}"
+        if status == 400:
+            return f"内容不符合论坛要求：{self.message}" if self.message else "内容不符合论坛要求"
+        if status == 403:
+            return "没有权限：这个账号可能被限制注册或登录"
+        if status == 429:
+            return "尝试太频繁，等一分钟再试"
+        return self.friendly()
 
     def is_auth_error(self) -> bool:
         """token 失效一类：调用方据此清掉本地登录态。"""

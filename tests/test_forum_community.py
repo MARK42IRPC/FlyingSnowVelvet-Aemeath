@@ -51,6 +51,7 @@ class FakeListener:
         self.status: list = []
         self.errors: list = []
         self.health: list = []
+        self.session_error: list = []
         self.thread_posted: list = []
         self.user_activity: list = []
 
@@ -83,6 +84,9 @@ class FakeListener:
 
     def on_session(self, session) -> None:
         self.session.append(session)
+
+    def on_session_error(self, action, message) -> None:
+        self.session_error.append((action, message))
 
     def on_status(self, text, tone="") -> None:
         self.status.append((text, tone))
@@ -460,6 +464,31 @@ class UserActivityTests(ServiceTestCase):
     def test_load_user_without_a_username_does_nothing(self) -> None:
         self.assertFalse(self.service.load_user())
         self.assertEqual(self.client.calls, [])
+
+
+class SessionErrorTests(ServiceTestCase):
+    """登录 / 注册失败：文案要按表单来说，并且把动作一起告诉界面。"""
+
+    def test_wrong_password_says_the_password_is_wrong(self) -> None:
+        self.client.error = ForumApiError(401, "unauthorized", "Invalid username or password.")
+        self.assertEqual(self.service.login("demo_user", "wrong-password"), "")
+        action, message = self.listener.session_error[-1]
+        self.assertEqual(action, "login")
+        self.assertIn("用户名或密码不对", message)
+        self.assertEqual(self.listener.status[-1], (message, "warn"))
+
+    def test_register_conflict_keeps_the_server_wording(self) -> None:
+        self.client.error = ForumApiError(409, "conflict", "这个 IP 已经注册过账号了（一个 IP 只能注册一个）。")
+        self.service.register("demo_user", "demo-password-123")
+        action, message = self.listener.session_error[-1]
+        self.assertEqual(action, "register")
+        self.assertIn("这个 IP 已经注册过账号了", message)
+        self.assertIn("手机热点", message)
+
+    def test_other_failures_do_not_report_a_form_action(self) -> None:
+        self.client.error = ForumApiError(500, "internal_error", "boom")
+        self.service.load_posts()
+        self.assertEqual(self.listener.session_error, [])
 
 
 class LikeTests(ServiceTestCase):

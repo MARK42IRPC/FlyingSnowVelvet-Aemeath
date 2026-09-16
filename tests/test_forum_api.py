@@ -235,6 +235,24 @@ class RequestTests(unittest.TestCase):
         self.assertTrue(ctx.exception.is_auth_error())
         self.assertIn("登录状态已失效", ctx.exception.friendly())
 
+    def test_login_and_register_get_their_own_wording(self) -> None:
+        """401 在「token 过期」和「登录密码打错」不是一回事。"""
+        wrong_password = ForumApiError(401, "unauthorized", "Invalid username or password.")
+        self.assertIn("用户名或密码不对", wrong_password.friendly(action="login"))
+        self.assertIn("用户名或密码不对", wrong_password.friendly(action="register"))
+        self.assertIn("登录状态已失效", wrong_password.friendly())
+
+        same_ip = ForumApiError(409, "conflict", "这个 IP 已经注册过账号了（一个 IP 只能注册一个）。")
+        message = same_ip.friendly(action="register")
+        self.assertIn("这个 IP 已经注册过账号了", message)
+        self.assertIn("手机热点", message)
+
+        taken = ForumApiError(409, "conflict", "这个用户名已经有人用了。")
+        self.assertEqual(taken.friendly(action="register"), "注册失败：这个用户名已经有人用了。")
+
+        self.assertIn("太频繁", ForumApiError(429, "rate_limited", "slow down").friendly(action="login"))
+        self.assertIn("网络连接失败", ForumApiError(0, "network", "timeout").friendly(action="login"))
+
     def test_friendly_messages_cover_the_documented_codes(self) -> None:
         cases = {
             403: "没有权限",

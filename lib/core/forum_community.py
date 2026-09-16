@@ -10,7 +10,8 @@
 - `on_thread_posted(post)`：新帖发出去之后
 - `on_user_activity(user, posts, replies)`：某位用户（默认自己）的资料与动态
 - `on_tags(tags)` / `on_account(user)` / `on_session(session)` / `on_health(data)`
-- `on_status(text, tone)` / `on_error(text)`
+- `on_status(text, tone)` / `on_error(text)` / `on_session_error(action, text)`
+  （最后一条只在登录 / 注册失败时发，`action` 是 `"login"` 或 `"register"`）
 
 列表的首屏结果会顺手写进 `lib/core/forum_cache.py` 的小快照（只存第一页、无筛选的
 列表与标签云），下次打开先铺快照再请求；快照是**公开内容**，不含 token。
@@ -505,7 +506,13 @@ class CommunityService:
         if error:
             return error
         self._notify("on_status", "正在登录…", "")
-        self._submit(self._login_worker, self._handle_session, str(username).strip(), str(password))
+        self._submit(
+            self._login_worker,
+            self._handle_session,
+            str(username).strip(),
+            str(password),
+            action="login",
+        )
         return ""
 
     def register(self, username, password, display_name=None) -> str:
@@ -519,6 +526,7 @@ class CommunityService:
             str(username).strip(),
             str(password),
             str(display_name or "").strip() or None,
+            action="register",
         )
         return ""
 
@@ -631,7 +639,8 @@ class CommunityService:
     def _sync_token(self) -> None:
         self._client.token = self._session.token()
 
-    def _submit(self, worker, handler, *args) -> bool:
+    def _submit(self, worker, handler, *args, action: str = "") -> bool:
+        """提交一次请求；`action` 是表单动作（登录 / 注册），只用来决定失败措辞。"""
         try:
             future = self._submit_io(worker, *args)
         except Exception as exc:
@@ -643,14 +652,21 @@ class CommunityService:
             try:
                 result = done.result()
             except Exception as exc:
-                self._dispatch(lambda message=friendly_error(exc), error=exc: self._handle_error(message, error))
+                message = friendly_error(exc, action=action)
+                self._dispatch(
+                    lambda message=message, error=exc, action=action: self._handle_error(
+                        message, error, action=action
+                    )
+                )
                 return
             self._dispatch(lambda result=result: handler(result))
 
         future.add_done_callback(complete)
         return True
 
-    def _handle_error(self, message: str, error: Exception | None = None) -> None:
+    def _handle_error(
+        self, message: str, error: Exception | None = None, *, action: str = ""
+    ) -> None:
         if self._closed:
             return
         with self._lock:
@@ -664,6 +680,9 @@ class CommunityService:
             # token 失效：本地登录态留着只会一直 401。
             self._session.clear()
             self._notify("on_session", None)
+        if action:
+            # 登录 / 注册失败要让账号页知道「是哪一步失败了」，它据此决定停在哪个模式。
+            self._notify("on_session_error", action, message)
         self._notify("on_error", message)
         self._notify("on_status", message, "warn")
 
@@ -677,10 +696,14 @@ class CommunityService:
             _logger.warning("[Community] 回调 %s 失败: %s", name, exc)
 
 
-def friendly_error(error: Exception) -> str:
-    """把异常翻成一句中文；`ForumApiError` 自己会翻，其余按网络问题处理。"""
+def friendly_error(error: Exception, *, action: str = "") -> str:
+    """把异常翻成一句中文；`ForumApiError` 自己会翻，其余按网络问题处理。
+
+    `action` 透传给 `ForumApiError.friendly()`，让登录 / 注册这两条表单链路拿到
+    「密码打错」而不是「登录状态已失效」。
+    """
     if isinstance(error, ForumApiError):
-        return error.friendly()
+        return error.friendly(action=action)
     text = str(error).strip()
     return f"请求失败：{text}" if text else "请求失败"
 

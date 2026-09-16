@@ -409,6 +409,15 @@ class ForumAccountPage(QWidget):
     def on_session(self, session) -> None:
         self._sync_session(session)
 
+    def on_session_error(self, action: str, message: str) -> None:
+        """登录 / 注册被服务端拒了。
+
+        注册撞上「一个 IP 只能注册一个账号」时直接切回登录模式：这张表单再点几次也不会
+        成功，不如把用户送到能用的那一边（状态栏里已经有服务端原文）。
+        """
+        if action == "register" and "IP" in str(message):
+            self.set_mode("login")
+
     def on_user_activity(self, user: ForumUser, posts, replies) -> None:
         """自己的资料与动态：资料顺手刷新，「最新帖子」铺最近几篇。"""
         if user.username:
