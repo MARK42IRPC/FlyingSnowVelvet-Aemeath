@@ -45,6 +45,10 @@ _SPACE_RE = re.compile(r"[ \t]{2,}")
 
 #: 图片占位符：不下载字节，只标出「这里有一张图」。
 IMAGE_PLACEHOLDER = "【图片】"
+#: 图片 Markdown 的地址形如 `/api/images/<id>`（也可以带站点前缀）；id 认 8~64 位
+#: 的字母数字串，服务端给的是 32 位十六进制。
+_IMAGE_URL_RE = re.compile(r"^(?:https?://[^/]+)?/api/images/([^/?#\s]+)/?$")
+_IMAGE_ID_RE = re.compile(r"^[0-9A-Za-z_-]{8,64}$")
 #: 链接里的 URL 最长显示这么多字符，再长就截断，免得一行全是地址。
 MAX_URL_CHARS = 60
 
@@ -67,6 +71,56 @@ class ForumBlock:
     marker: str = ""
     runs: tuple[ForumTextRun, ...] = ()
     raw: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class ForumImageToken:
+    """正文里的一句图片 Markdown：`![说明](/api/images/<id>)`。
+
+    详情页据此把「【图片】」占位符就地换成真的图片控件。`image_id` 是能取字节的那串 id；
+    `alt` 是方括号里的说明（没有就是空串）；`raw` 是这一句原文（要原样显示时用它）。
+    认不出 id 的图片（外站地址、写坏的链接）不会变成 token，仍旧当文字留在原地。
+    """
+
+    image_id: str = ""
+    alt: str = ""
+    raw: str = ""
+
+
+def image_id_from_url(url) -> str:
+    """从图片 Markdown 的地址里取 id；不是本站图片就给空串（调用方按普通文字处理）。"""
+    match = _IMAGE_URL_RE.match(str(url or "").strip())
+    if match is None:
+        return ""
+    ident = match.group(1)
+    return ident if _IMAGE_ID_RE.match(ident) else ""
+
+
+def split_images(text) -> tuple[str | ForumImageToken, ...]:
+    """把一段原文按图片 Markdown 切成「文字 / 图片」交替的顺序（顺序就是出现顺序）。
+
+    文字段是**原文**（行内标记还在），渲染方再走一遍 `render_blocks()`；一句能取字节的图片
+    单独成段，渲染方给它摆一个图片控件——这就是「占位符换真图」。整段没有可取的图片时返回
+    `(原文,)`，渲染方据此走原来的纯文字路径。
+    """
+    body = str(text or "")
+    parts: list[str | ForumImageToken] = []
+    cursor = 0
+    for match in _IMAGE_RE.finditer(body):
+        ident = image_id_from_url(match.group(2))
+        if not ident:
+            continue
+        if match.start() > cursor:
+            parts.append(body[cursor:match.start()])
+        parts.append(
+            ForumImageToken(image_id=ident, alt=match.group(1).strip(), raw=match.group(0))
+        )
+        cursor = match.end()
+    if not parts:
+        return (body,)
+    if cursor < len(body):
+        parts.append(body[cursor:])
+    return tuple(parts)
 
 
 def _strip_inline(text: str) -> str:
@@ -276,9 +330,12 @@ __all__ = [
     "BLOCK_QUOTE",
     "EXCERPT_LENGTH",
     "ForumBlock",
+    "ForumImageToken",
     "IMAGE_PLACEHOLDER",
     "MAX_BLOCKS",
     "excerpt",
+    "image_id_from_url",
     "plain_text",
     "render_blocks",
+    "split_images",
 ]

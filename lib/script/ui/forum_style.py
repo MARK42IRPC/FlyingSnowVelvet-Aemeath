@@ -36,6 +36,11 @@ _LIGHT_ACCENT_COLORS = {
 #: 卡片圆角；卡片底纹要按同一个圆角裁剪，所以由这里统一给出。
 FORUM_CARD_RADIUS = scale_px(6, min_abs=4)
 
+#: 详情页正文里那张整幅图的描边宽度（一条边的宽度）。QLabel 不会把超出内容区的位图缩下来、
+#: 只会裁掉，所以 `ForumDetailImage` 算图的尺寸时要把两边边框一起刨掉（`_frame()` 给的就是
+#: 2 倍这个值），样式表里 `QLabel#ForumDetailImage` 也取它当 `border` 的宽度。
+FORUM_IMAGE_FRAME = scale_px(1, min_abs=1)
+
 #: 竖排滚动条的宽度。窗口最小宽度要把它与 `forum_window.SCROLL_GAP` 一起算进去，
 #: 所以由这里给出，样式表本体的 `QScrollBar:vertical` 也取这一个值。
 FORUM_SCROLLBAR_WIDTH = scale_px(10, min_abs=8)
@@ -386,6 +391,12 @@ def forum_stylesheet(mode: str | None = None) -> str:
             border-radius: {scale_px(4, min_abs=3)}px;
         }}
         QLabel#ForumImageThumb:hover {{ border-color: {c.cyan}; }}
+        QLabel#ForumDetailImage {{
+            background: {c.surface_raised};
+            color: {c.text_dim};
+            border: {FORUM_IMAGE_FRAME}px solid {c.border};
+            border-radius: {scale_px(5, min_abs=4)}px;
+        }}
         QLabel#ForumBadge {{
             background: {c.border_strong};
             color: {c.canvas};

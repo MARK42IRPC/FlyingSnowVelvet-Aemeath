@@ -12,9 +12,12 @@ from lib.core.forum_markdown import (
     BLOCK_PARAGRAPH,
     BLOCK_QUOTE,
     IMAGE_PLACEHOLDER,
+    ForumImageToken,
     excerpt,
+    image_id_from_url,
     plain_text,
     render_blocks,
+    split_images,
 )
 
 FENCE = "`" * 3
@@ -126,6 +129,54 @@ class PlainTextTests(unittest.TestCase):
     def test_excerpt_uses_the_default_budget(self) -> None:
         self.assertEqual(excerpt("短"), "短")
         self.assertTrue(excerpt("字" * 200).endswith("…"))
+
+
+class SplitImagesTests(unittest.TestCase):
+    """`split_images()`：把一段原文按「能取字节的图片」切成文字段与图片段。"""
+
+    ID = "76ab7378bad3dc2e9aba9fac929c7a87"
+
+    def test_a_lone_image_becomes_a_token(self) -> None:
+        parts = split_images(f"![图片](/api/images/{self.ID})")
+        self.assertEqual(len(parts), 1)
+        self.assertIsInstance(parts[0], ForumImageToken)
+        self.assertEqual(parts[0].image_id, self.ID)
+        self.assertEqual(parts[0].alt, "图片")
+        self.assertEqual(parts[0].raw, f"![图片](/api/images/{self.ID})")
+
+    def test_text_around_an_image_keeps_its_order(self) -> None:
+        parts = split_images(f"看图：![图](/api/images/{self.ID})后文")
+        self.assertEqual(parts[0], "看图：")
+        self.assertIsInstance(parts[1], ForumImageToken)
+        self.assertEqual(parts[2], "后文")
+
+    def test_an_image_without_a_usable_id_stays_text(self) -> None:
+        """外站地址 / 写坏的 id 取不到字节，仍旧当文字留在原地（渲染方走纯文字路径）。"""
+        for content in (
+            "外站 ![x](https://example.com/a.png) 不动",
+            "写坏的 ![x](/api/images/短) 不动",
+            "没有图片的正文",
+        ):
+            with self.subTest(content=content):
+                self.assertEqual(split_images(content), (content,))
+
+    def test_several_images_become_several_tokens(self) -> None:
+        parts = split_images(f"![甲](/api/images/{self.ID})\n![乙](/api/images/{'b' * 32})")
+        self.assertEqual(
+            [part.image_id for part in parts if isinstance(part, ForumImageToken)],
+            [self.ID, "b" * 32],
+        )
+
+    def test_image_id_from_url_only_takes_our_own_images(self) -> None:
+        self.assertEqual(image_id_from_url(f"/api/images/{self.ID}"), self.ID)
+        self.assertEqual(image_id_from_url(f"https://forum.example/api/images/{self.ID}"), self.ID)
+        self.assertEqual(image_id_from_url("https://example.com/a.png"), "")
+        self.assertEqual(image_id_from_url("/api/images/短"), "")
+        self.assertEqual(image_id_from_url(""), "")
+
+    def test_empty_input_has_no_parts(self) -> None:
+        self.assertEqual(split_images(""), ("",))
+        self.assertEqual(split_images(None), ("",))
 
 
 if __name__ == "__main__":

@@ -22,9 +22,9 @@ os.environ.setdefault(
 os.environ.setdefault("QT_PLUGIN_PATH", os.path.join(_QT_ROOT, "Qt5", "plugins"))
 
 from PyQt5 import sip
-from PyQt5.QtCore import QEvent, QPointF, Qt
-from PyQt5.QtGui import QFont, QMouseEvent, QTextCursor
-from PyQt5.QtWidgets import QApplication
+from PyQt5.QtCore import QBuffer, QEvent, QIODevice, QPointF, Qt
+from PyQt5.QtGui import QFont, QMouseEvent, QPixmap, QTextCursor
+from PyQt5.QtWidgets import QApplication, QLabel
 
 from lib.core.forum_api import (
     FORUM_CONTENT_MAX,
@@ -39,14 +39,31 @@ from lib.core.forum_api import (
     ForumUser,
 )
 from lib.core.forum_session import ForumSessionStore
+from lib.core.forum_markdown import IMAGE_PLACEHOLDER
 from lib.script.ui import forum_board
-from lib.script.ui.forum_board import TAG_CHIP_LIMIT, ForumBoardPage, ForumImageThumb
+from lib.script.ui.forum_board import (
+    FORUM_IMAGE_MAX_PIXELS,
+    TAG_CHIP_LIMIT,
+    ForumBoardPage,
+    ForumDetailImage,
+    ForumImageThumb,
+)
 from lib.script.ui.forum_text import MarkupText
 
 #: 一张 1×1 的真 PNG（`QPixmap` 解得开）；缩略图那几条用例拿它当「一张图」。
 PNG_1PX = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
 )
+
+
+def png_bytes(width: int, height: int) -> bytes:
+    """现场造一张真 PNG（像素尺寸就是要的那个数），给「按比例铺开」那几条用例用。"""
+    pixmap = QPixmap(int(width), int(height))
+    pixmap.fill(Qt.red)
+    buffer = QBuffer()
+    buffer.open(QIODevice.WriteOnly)
+    pixmap.save(buffer, "PNG")
+    return bytes(buffer.data())
 
 
 def post(index: int, **overrides) -> ForumPost:
@@ -930,6 +947,192 @@ class DetailBodyTests(BoardPageTestCase):
             [item[1]["image_id"] for item in self.service.calls if item[0] == "load_thumbnail"],
             ["a" * 32],
         )
+
+    def asked(self) -> list:
+        return [
+            item[1]["image_id"] for item in self.service.calls if item[0] == "load_thumbnail"
+        ]
+
+    def labels(self) -> list:
+        return [widget for widget in self.widgets() if isinstance(widget, QLabel)]
+
+    def text_of_labels(self) -> str:
+        """正文里能看见的文字：纯文字段是 QLabel，带标记 / 带颜色的一段是 `MarkupText`。"""
+        pieces = [
+            label.text()
+            for label in self.labels()
+            if not isinstance(label, ForumDetailImage)
+        ]
+        pieces.extend(widget.document().toPlainText() for widget in self.rich())
+        return " / ".join(pieces)
+
+    def shown_pictures(self) -> list:
+        return self.page._detail_host.findChildren(ForumDetailImage)
+
+    def test_an_image_markdown_becomes_the_picture_in_place(self) -> None:
+        """正文里那句图片 Markdown 就地铺成真图，那句「【图片】」占位符不再当字显示。"""
+        ident = "a" * 32
+        self.open(f"看图\n\n![图片](/api/images/{ident})", images=(ForumImage(id=ident),))
+        self.assertNotIn(IMAGE_PLACEHOLDER, self.text_of_labels())
+        self.assertEqual([image.image_id for image in self.shown_pictures()], [ident])
+        self.assertEqual(self.asked(), [ident])
+        # 就地铺过的那张图不再往正文底下补一行缩略图（同一张图不铺两遍）。
+        layouts = [
+            self.page._detail_body.itemAt(index).layout()
+            for index in range(self.page._detail_body.count())
+        ]
+        self.assertEqual(layouts, [None, None])
+
+    def column_width(self) -> int:
+        """正文栏的可用宽度：图就该铺满这里（宿主宽度还要刨掉它自己那圈外边距）。"""
+        return self.page._detail_body.geometry().width()
+
+    def content_box(self, image) -> tuple[int, int]:
+        """图控件的**内容区**尺寸：边框不算，那是不放图的。"""
+        return image.width() - image._frame(), image.height() - image._frame()
+
+    def assert_fills_the_column(self, image) -> None:
+        """位图正好铺满内容区（可以差一个像素的取整），控件又正好占满正文栏。
+
+        两条都必须成立：位图比内容区大就是被裁（QLabel 不缩），比内容区小就是缩在一角留着空白
+        ——两种都算排版坏了。
+        """
+        content = self.content_box(image)
+        drawn = image.pixmap().size()
+        self.assertLessEqual(abs(drawn.width() - content[0]), 1, (content, drawn))
+        self.assertLessEqual(abs(drawn.height() - content[1]), 1, (content, drawn))
+        self.assertGreaterEqual(content[0], self.column_width() - 2 * image._frame() - 1)
+        self.assertLessEqual(content[0], self.column_width() + 1)
+
+    def test_the_picture_fills_the_column_without_being_stretched(self) -> None:
+        ident = "a" * 32
+        self.page.resize(760, 640)
+        self.app.processEvents()
+        self.open(f"![图](/api/images/{ident})", images=(ForumImage(id=ident),))
+        self.page.on_thumbnail(ident, png_bytes(1600, 800))
+        self.app.processEvents()
+        image = self.shown_pictures()[0]
+        self.assert_fills_the_column(image)
+        # 4:2 的图铺出来还是 4:2：等比缩放，不拉伸（两像素描边先刨掉）。
+        width, height = self.content_box(image)
+        self.assertAlmostEqual(width / height, 2.0, places=2)
+
+    def test_a_small_picture_is_scaled_up_to_the_column(self) -> None:
+        """比正文栏窄的图跟着放大：正文里的图缩在一角会显得整块排版断开。"""
+        ident = "a" * 32
+        self.page.resize(760, 640)
+        self.app.processEvents()
+        self.open(f"![图](/api/images/{ident})", images=(ForumImage(id=ident),))
+        self.page.on_thumbnail(ident, png_bytes(60, 30))
+        self.app.processEvents()
+        image = self.shown_pictures()[0]
+        self.assert_fills_the_column(image)
+        width, height = self.content_box(image)
+        self.assertGreater(width, 60)
+        self.assertAlmostEqual(width / height, 2.0, places=2)
+
+    def test_the_picture_refits_when_the_column_changes_width(self) -> None:
+        ident = "a" * 32
+        self.page.resize(760, 640)
+        self.app.processEvents()
+        self.open(f"![图](/api/images/{ident})", images=(ForumImage(id=ident),))
+        self.page.on_thumbnail(ident, png_bytes(1600, 800))
+        self.app.processEvents()
+        wide = self.shown_pictures()[0].width()
+        self.page.resize(460, 640)
+        self.app.processEvents()
+        image = self.shown_pictures()[0]
+        self.assertLess(image.width(), wide)
+        self.assert_fills_the_column(image)
+
+    def test_the_first_frame_after_the_bytes_arrive_is_already_full_width(self) -> None:
+        """字节到的**当场**就该是整幅图，不能先画一张小图再跳大。
+
+        控件宽度最终是布局给的，但如果铺图时只按「占位框那点宽度」铺，第一帧看到的就是一张
+        138x69 的小图贴在 138x358 的框里（离屏实测），下一帧才跳到 716x358——观感上是一次闪烁。
+        """
+        ident = "a" * 32
+        self.page.resize(760, 640)
+        self.app.processEvents()
+        self.open(f"![图](/api/images/{ident})", images=(ForumImage(id=ident),))
+        # 特意**不**跑事件循环：查的就是「铺图这一下」之后、布局接手之前的状态。
+        self.page.on_thumbnail(ident, png_bytes(1600, 800))
+        image = self.shown_pictures()[0]
+        self.assert_fills_the_column(image)
+
+    def test_the_picture_is_never_cropped_by_a_squeezed_layout(self) -> None:
+        """正文长到出现竖滚动条时，图片仍然完整。
+
+        图的高度原来是布局算的：布局在某一帧里没把它排开就会压到最小高度，位图比内容区高，
+        QLabel 不缩放、**直接裁掉一条**（离屏实测 704x353 的控件被压成 704x84，位图却是
+        702x351，用户看到的是图被拦腰截断）。高度改成按宽高比钉死之后，这一帧不会出现。
+        """
+        ident = "a" * 32
+        body = "\n\n".join(f"第 {index} 段正文，用来把页面撑出竖滚动条。" for index in range(40))
+        self.page.resize(760, 420)
+        self.app.processEvents()
+        self.open(f"![图](/api/images/{ident})\n\n{body}", images=(ForumImage(id=ident),))
+        self.page.on_thumbnail(ident, png_bytes(1600, 800))
+        for _ in range(4):
+            self.app.processEvents()
+            image = self.shown_pictures()[0]
+            self.assert_fills_the_column(image)
+
+    def test_a_tall_picture_keeps_its_ratio(self) -> None:
+        """竖图也一样：铺满栏宽、按原比例给高度，不裁也不压。"""
+        ident = "a" * 32
+        self.open(f"![竖图](/api/images/{ident})", images=(ForumImage(id=ident),))
+        self.page.on_thumbnail(ident, png_bytes(400, 1600))
+        self.app.processEvents()
+        image = self.shown_pictures()[0]
+        self.assert_fills_the_column(image)
+        width, height = self.content_box(image)
+        self.assertAlmostEqual(width / height, 0.25, places=2)
+
+    def test_an_absurd_aspect_ratio_is_capped(self) -> None:
+        """病态长条不会被放大成几亿像素的位图。
+
+        正文里的图铺满栏宽才好看，但等比放大是「栏宽说了算」的：一张 1x2000 的 PNG 不到 100 字节，
+        按 704 的栏宽放大要 702x1404000 的位图（约 4 GB 的像素缓冲），进程直接崩。所以超预算的图
+        按同一个比例整体缩回来——宽高比不变，只是不再铺满栏宽。
+        """
+        ident = "a" * 32
+        self.page.resize(760, 640)
+        self.app.processEvents()
+        self.open(f"![长条](/api/images/{ident})", images=(ForumImage(id=ident),))
+        self.page.on_thumbnail(ident, png_bytes(1, 2000))
+        self.app.processEvents()
+        image = self.shown_pictures()[0]
+        width, height = self.content_box(image)
+        drawn = image.pixmap().size()
+        self.assertLessEqual(width * height, FORUM_IMAGE_MAX_PIXELS)
+        # 比例仍然是原图的（1:2000），只是缩小了：没有拉伸、也没有旋转。
+        self.assertAlmostEqual(width / height, 1 / 2000, places=5)
+        self.assertLessEqual(abs(drawn.width() - width), 1, (width, height, drawn))
+        self.assertLessEqual(abs(drawn.height() - height), 1, (width, height, drawn))
+
+    def test_switching_posts_takes_the_picture_away(self) -> None:
+        ident = "a" * 32
+        self.open(f"![图](/api/images/{ident})", images=(ForumImage(id=ident),))
+        self.assertEqual(len(self.shown_pictures()), 1)
+        self.open("另一篇，没有图")
+        self.assertEqual(self.shown_pictures(), [])
+
+    def test_an_external_picture_stays_text(self) -> None:
+        """外站地址取不到字节，仍旧当文字显示（别摆一个永远空着的图框）。"""
+        self.open("外站 ![x](https://example.com/a.png) 不动")
+        self.assertEqual(self.shown_pictures(), [])
+        self.assertIn("example.com", self.text_of_labels())
+
+    def test_the_fallback_strip_only_carries_pictures_the_body_never_showed(self) -> None:
+        inline, other = "a" * 32, "b" * 32
+        self.open(
+            f"![图](/api/images/{inline})",
+            images=(ForumImage(id=inline), ForumImage(id=other)),
+        )
+        self.assertEqual([image.image_id for image in self.shown_pictures()], [inline])
+        thumbs = self.page._detail_host.findChildren(ForumImageThumb)
+        self.assertEqual([thumb.image_id for thumb in thumbs], [other])
 
     def test_switching_posts_takes_the_previous_images_away(self) -> None:
         """换一篇帖子时，正文配图那一行连它里面的缩略图都要一起清掉。

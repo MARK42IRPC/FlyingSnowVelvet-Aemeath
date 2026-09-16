@@ -22,7 +22,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PyQt5 import sip
-from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtCore import QEvent, QSize, Qt, pyqtSignal
 from PyQt5.QtGui import QPixmap, QTextCursor
 from PyQt5.QtWidgets import (
     QFileDialog,
@@ -32,6 +32,7 @@ from PyQt5.QtWidgets import (
     QLineEdit,
     QPlainTextEdit,
     QPushButton,
+    QSizePolicy,
     QStackedWidget,
     QToolButton,
     QVBoxLayout,
@@ -65,8 +66,10 @@ from lib.core.forum_markdown import (
     BLOCK_HEADING,
     BLOCK_LIST,
     BLOCK_QUOTE,
+    ForumImageToken,
     plain_text,
     render_blocks,
+    split_images,
 )
 from lib.core.forum_session import ForumSessionStore, is_logged_in
 from lib.core.logger import get_logger
@@ -80,7 +83,11 @@ from lib.script.ui.forum_markup import (
     to_html,
     toggle,
 )
-from lib.script.ui.forum_style import forum_card_text_color, forum_muted_text_color
+from lib.script.ui.forum_style import (
+    FORUM_IMAGE_FRAME,
+    forum_card_text_color,
+    forum_muted_text_color,
+)
 from lib.script.ui.forum_text import MarkupText
 from lib.script.ui.workbench_settings_layout import SmoothScrollArea
 
@@ -107,6 +114,16 @@ COMPOSE_THUMB_SIZE = scale_px(68, min_abs=54)
 THUMB_MEMORY_LIMIT = 128
 #: 发帖页富文本正文的高度估算宽度（还没有真实列宽时用它量高）。
 BODY_WIDTH_HINT = scale_px(420, min_abs=280)
+
+#: 详情页正文里一张图最多铺成多少像素（宽 × 高，约 16 MiB 的 RGBA）。正文里的图铺满栏宽才显得
+#: 完整，但极端宽高比的图按栏宽放大会很吓人：一张 1x2000 的 PNG 不到 100 字节，按 704 的栏宽等比
+#: 放大要 702x1404000 的位图（约 4 GB），QLabel 的像素缓冲撑不住。所以超预算的图按同一个宽高比
+#: 整体缩回来。
+#:
+#: 这条线只兜病态长条：临界栏宽 = sqrt(预算 × 宽高比)，所以 16:9 / 3:2 / 4:3 / 1:1 要栏宽 2000px
+#: 以上才碰得到，1:2 要 1414px，1:4 要 1000px——都在常见窗口之外（默认窗口 620，撑满 1080p 也就
+#: 1900 上下）。真要碰到，图也只是从「铺满栏宽」变成「按预算缩一点」，不会裁、不会变形。
+FORUM_IMAGE_MAX_PIXELS = 4_000_000
 
 #: 详情页正文块的字号：列表、引用、代码各一档，其余用默认。
 _BLOCK_FONT_DEFAULT = 13
@@ -173,7 +190,42 @@ def _color_span_at(text, caret: int, kind: str) -> tuple[int, int] | None:
     return None
 
 
-class ForumImageThumb(QLabel):
+class ForumImageView(QLabel):
+    """帖子里的图片控件的共同部分：认一个 `image_id`、等字节、把位图画上去。
+
+    字节由页面去服务层取（`CommunityService.load_thumbnail()`），`_refresh_thumbs()` 按控件树
+    现铺；两种观感共用这一套接口，铺图的那段代码就不用分家：`ForumImageThumb` 是正方形的小
+    缩略图（列表行、发帖页），`ForumDetailImage` 是正文里就地铺开的那一张整幅图。
+    """
+
+    def __init__(self, image_id, parent=None) -> None:
+        super().__init__(parent)
+        self.image_id = str(image_id or "")
+        self._data = b""
+
+    def set_data(self, data) -> bool:
+        """把字节画上去；解码不出来就保持占位框（少一张预览不该打断整页）。"""
+        raw = bytes(data or b"")
+        if not raw:
+            return False
+        if raw == self._data:
+            return True
+        pixmap = QPixmap()
+        if not pixmap.loadFromData(raw):
+            return False
+        self._data = raw
+        self._paint(pixmap)
+        return True
+
+    def has_data(self) -> bool:
+        return bool(self._data)
+
+    def _paint(self, pixmap: QPixmap) -> None:
+        """把解出来的位图铺上去；尺寸由子类决定。"""
+        raise NotImplementedError
+
+
+class ForumImageThumb(ForumImageView):
     """一张图片的小预览：列表行与发帖页共用。
 
     给得出字节就直接画（发帖页刚上传的图本地就有），否则先摆一个占位空框，等页面把
@@ -187,10 +239,8 @@ class ForumImageThumb(QLabel):
     clicked = pyqtSignal(str)
 
     def __init__(self, image_id, *, size: int, removable: bool = False, parent=None) -> None:
-        super().__init__(parent)
-        self.image_id = str(image_id or "")
+        super().__init__(image_id, parent)
         self._removable = bool(removable)
-        self._data = b""
         self._size = max(8, int(size))
         self.setObjectName("ForumImageThumb")
         self.setFixedSize(self._size, self._size)
@@ -201,31 +251,181 @@ class ForumImageThumb(QLabel):
         if self._removable:
             self.setCursor(Qt.PointingHandCursor)
 
-    def set_data(self, data) -> bool:
-        """把字节画上去；解码不出来就保持占位框（少一张预览不该打断整页）。"""
-        raw = bytes(data or b"")
-        if not raw:
-            return False
-        if raw == self._data:
-            return True
-        pixmap = QPixmap()
-        if not pixmap.loadFromData(raw):
-            return False
-        self._data = raw
+    def _paint(self, pixmap: QPixmap) -> None:
         self.setText("")
         self.setPixmap(
             pixmap.scaled(self._size, self._size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         )
-        return True
-
-    def has_data(self) -> bool:
-        return bool(self._data)
 
     def mouseReleaseEvent(self, event) -> None:
         if self._removable and event.button() == Qt.LeftButton:
             self.clicked.emit(self.image_id)
             return
         super().mouseReleaseEvent(event)
+
+
+class ForumDetailImage(ForumImageView):
+    """详情页正文里的一张图：就地替掉那句「【图片】」占位符。
+
+    铺满正文栏：比栏宽的缩到栏宽，比栏窄的跟着放大，只等比缩放——不拉伸、不裁切、也不旋转，
+    所以只要栏里放得下，图就是「尽可能大」的那一档。高度由原图宽高比推出来并钉死
+    （`setFixedHeight()`），宽度交给布局跟着正文栏走；栏宽一变就重算一次（父控件上挂了 resize
+    事件过滤器）。
+
+    描边是样式表给的（`QLabel#ForumDetailImage`），所以算尺寸时要把那圈边框刨掉：
+    QLabel 不缩放超出内容区的位图，算漏一步就会把图裁掉一圈。
+    """
+
+    def __init__(self, image_id, *, width_hint: int = BODY_WIDTH_HINT, parent=None) -> None:
+        super().__init__(image_id, parent)
+        self._pixmap: QPixmap | None = None
+        self._natural = QSize()
+        self._width_hint = max(1, int(width_hint))
+        self._watched: QWidget | None = None
+        self.setObjectName("ForumDetailImage")
+        self.setAlignment(Qt.AlignCenter)
+        self.setFont(_font(10))
+        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        self.setText("图片加载中…" if self.image_id else "图片")
+        self.setToolTip("帖子里的图片")
+        self.setMinimumSize(scale_px(140, min_abs=100), scale_px(84, min_abs=62))
+
+    # ── 尺寸 ─────────────────────────────────────────────────────────
+
+    def sizeHint(self) -> QSize:
+        size = self._desired_size()
+        return size if not size.isEmpty() else super().sizeHint()
+
+    def minimumSizeHint(self) -> QSize:
+        """铺开之后不再要求「至少这么宽」：控件的最小宽度会把整个窗口钉住，收不回去。
+
+        图的尺寸靠 `sizeHint()` 撑起来，所以这里让路不影响观感，只让窄窗口还能继续变窄。
+        """
+        if self._pixmap is None:
+            return super().minimumSizeHint()
+        return QSize(0, 0)
+
+    def _frame(self) -> int:
+        """边框占掉的宽度（左右各一条）。"""
+        return 2 * int(FORUM_IMAGE_FRAME)
+
+    def _column_width(self) -> int:
+        """正文栏的可用宽度：父控件宽度减掉它自己那圈外边距。"""
+        parent = self.parentWidget()
+        width = parent.width() if parent is not None else 0
+        layout = parent.layout() if parent is not None else None
+        if layout is not None:
+            margins = layout.contentsMargins()
+            width -= margins.left() + margins.right()
+        return width if width > 0 else self._width_hint
+
+    def _desired_size(self) -> QSize:
+        """当前栏宽下图该占的位置（含描边）：铺满正文栏，只等比缩放。
+
+        宽度**就是**栏宽——正文里的图是正文的一部分，比栏窄的图缩在左上角、右半边全是空白，
+        看着就像排版坏了。高度按原图宽高比推出来，所以「尽可能大」与「不拉伸、不旋转」
+        同时成立。
+
+        极端宽高比的图会被 `FORUM_IMAGE_MAX_PIXELS` 收一道：放大的倍数与收窄的倍数都是同一个
+        比例，所以收回来之后仍然只有等比缩放，宽高比不变。
+        """
+        if self._natural.isEmpty():
+            return QSize()
+        natural_width = max(1, self._natural.width())
+        natural_height = max(1, self._natural.height())
+        width = max(1, self._column_width() - self._frame())
+        height = self._height_for_width(width, natural_width, natural_height)
+        area = width * height
+        if area > FORUM_IMAGE_MAX_PIXELS:
+            # 收窄之后**只用新宽度重算高度**（而不是两个方向各缩一次）：两个方向各缩一次会各带
+            # 一次取整，比例就对不上原位图了，位图按原比例铺进这个框会留出一条空白。
+            shrink = (FORUM_IMAGE_MAX_PIXELS / float(area)) ** 0.5
+            width = max(1, int(width * shrink))
+            height = self._height_for_width(width, natural_width, natural_height)
+        return QSize(width + self._frame(), height + self._frame())
+
+    @staticmethod
+    def _height_for_width(width: int, natural_width: int, natural_height: int) -> int:
+        """按原图宽高比算出给定宽度对应的高度（只这一处做这个除法）。"""
+        return max(1, int(round(width * natural_height / natural_width)))
+
+    # ── 铺图与自适应 ─────────────────────────────────────────────────
+
+    def _paint(self, pixmap: QPixmap) -> None:
+        self._pixmap = pixmap
+        self._natural = pixmap.size()
+        self.setMinimumSize(0, 0)
+        self.updateGeometry()
+        self._fit_to_column()
+
+    def _fit_to_column(self) -> None:
+        """按当前栏宽重排一次：高度按宽高比钉死，位图跟着控件实际尺寸铺。
+
+        高度走 `setFixedHeight()`、宽度留给布局，刻意**不**用 `setFixedSize()`：固定**宽度**会把
+        控件的最小宽度一起钉死，图一铺开整个窗口就再也收不回去（QLayout 拿它当自己的最小宽度，
+        实测 760 宽的窗口缩到 460 会被顶回来）。高度不钉死也有坑：布局在某一帧里没排开时会把
+        控件压到最小高度，位图比内容区高，QLabel 不缩放、直接裁掉一条（离屏实测 704x353 的控件
+        被压成 704x84，位图却是 702x351）——高度钉住，这一帧就不会出现。
+        """
+        if self._pixmap is None or self._natural.isEmpty():
+            return
+        size = self._desired_size()
+        self.setFixedHeight(size.height())
+        # 宽度是布局说了算，但当场先摆到位：不然第一帧会拿占位框的宽度去铺图，画出一张小图再
+        # 跳到整栏宽（离屏实测的一帧闪烁）。布局随后按正文栏重排，宽了窄了都归它管。
+        if self.width() != size.width():
+            self.resize(size.width(), size.height())
+        self.setText("")
+        self._rescale_pixmap()
+
+    def _rescale_pixmap(self) -> None:
+        """按控件现在的尺寸重铺位图（只等比缩放）。
+
+        量的主要是控件自己的 `width()` 而不是栏宽：宽度是布局给的，窄窗口下两者可能差一个滚动条。
+        但还要跟 `_desired_size()` 取一次较小值：那是「栏宽 / 预算」算出来的上限，布局万一给得
+        更宽（将来换了 sizePolicy、或哪一层加了 stretch），位图也不会跟着涨过上限——不裁切靠
+        这个盒子，不超预算也靠它。宽高比固定，所以也不会有拉伸。尺寸没变就不重铺，
+        `resizeEvent` 里可以放心多调。
+        """
+        if self._pixmap is None or self._natural.isEmpty():
+            return
+        limit = self._desired_size()
+        box = QSize(
+            max(1, min(self.width(), limit.width()) - self._frame()),
+            max(1, min(self.height(), limit.height()) - self._frame()),
+        )
+        scaled = self._pixmap.scaled(box, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        current = self.pixmap()
+        if current is None or current.isNull() or current.size() != scaled.size():
+            self.setPixmap(scaled)
+
+    def resizeEvent(self, event) -> None:
+        """宽度是布局给的：布局一改尺寸就按新尺寸重铺位图。"""
+        super().resizeEvent(event)
+        self._rescale_pixmap()
+
+    # ── 跟着正文栏走 ─────────────────────────────────────────────────
+
+    def _watch_parent(self) -> None:
+        parent = self.parentWidget()
+        if parent is self._watched:
+            return
+        if self._watched is not None:
+            self._watched.removeEventFilter(self)
+        self._watched = parent
+        if parent is not None:
+            parent.installEventFilter(self)
+
+    def event(self, event) -> bool:
+        if event.type() in (QEvent.ParentChange, QEvent.Show):
+            self._watch_parent()
+            self._fit_to_column()
+        return super().event(event)
+
+    def eventFilter(self, watched, event) -> bool:
+        if watched is self._watched and event.type() == QEvent.Resize:
+            self._fit_to_column()
+        return super().eventFilter(watched, event)
 
 
 class ForumPostRow(QFrame):
@@ -1555,6 +1755,8 @@ class ForumBoardPage(QWidget):
         if not blocks:
             self._add_body_label("（这篇帖子没有正文）", "ForumPostText", 12)
             return
+        #: 正文里已经就地铺出来的图片 id：最底下那行兜底缩略图据此跳过它们，同一张图不铺两遍。
+        inlined: set[str] = set()
         for block in blocks:
             if block.kind == BLOCK_DIVIDER:
                 line = QFrame(self._detail_host)
@@ -1564,33 +1766,109 @@ class ForumBoardPage(QWidget):
                 self._detail_body.addWidget(line)
             elif block.kind == BLOCK_HEADING:
                 size = _HEADING_FONT_SIZES.get(int(block.level or 1), 14)
-                self._add_body_label(block.text, "ForumPostHeading", size, bold=True, block=block)
+                inlined |= self._add_body_source(
+                    block, block.raw, "ForumPostHeading", size, bold=True
+                )
             elif block.kind == BLOCK_QUOTE:
-                self._add_body_label(
-                    f"“{block.text}”",
+                inlined |= self._add_body_source(
+                    block,
+                    block.raw,
                     "ForumPostQuote",
                     12,
-                    block=block,
                     prefix="“",
                     suffix="”",
                     color=forum_muted_text_color(),
                 )
             elif block.kind == BLOCK_CODE:
+                # 代码块里的图片 Markdown 就是要原样显示，不做就地替换。
                 self._add_body_label(block.text, "ForumPostCode", 11)
             elif block.kind == BLOCK_LIST:
                 marker = f"{block.marker} " if block.marker else ""
                 indent = "　" * max(0, int(block.level))
-                prefix = f"{indent}{marker}"
-                self._add_body_label(
-                    f"{prefix}{block.text}",
+                inlined |= self._add_body_source(
+                    block,
+                    block.raw,
                     "ForumPostText",
                     _BLOCK_FONT_DEFAULT,
-                    block=block,
-                    prefix=prefix,
+                    prefix=f"{indent}{marker}",
                 )
             else:
-                self._add_body_label(block.text, "ForumPostText", _BLOCK_FONT_DEFAULT, block=block)
-        self._add_body_images(post)
+                inlined |= self._add_body_source(
+                    block, block.raw, "ForumPostText", _BLOCK_FONT_DEFAULT
+                )
+        self._add_body_images(post, inlined)
+
+    def _add_body_source(
+        self,
+        block,
+        source: str,
+        name: str,
+        size: int,
+        *,
+        bold: bool = False,
+        prefix: str = "",
+        suffix: str = "",
+        color: str = "",
+    ) -> set[str]:
+        """铺正文的一块，块里的图片 Markdown 就地换成真图；返回换掉的图片 id。
+
+        整块没有可取图片（外站地址也算没有）时走原来那条纯文字路径——一个 QLabel 或一个
+        `MarkupText`，观感与以前一字不差。图前 / 图后的文字段是**原文**（行内标记还在），
+        得逐段再跑一遍 `render_blocks()` 才能把标记解释成富文本；列表的项目符号与引用的书名号
+        只挂在第一段 / 最后一段文字上（整块就一张图时它们没地方挂，也就不显示了）。
+        """
+        parts = split_images(source)
+        if len(parts) == 1 and isinstance(parts[0], str):
+            self._add_body_label(
+                f"{prefix}{block.text}{suffix}",
+                name,
+                size,
+                bold=bold,
+                block=block,
+                prefix=prefix,
+                suffix=suffix,
+                color=color,
+            )
+            return set()
+        texts = [part for part in parts if isinstance(part, str) and part.strip()]
+        inlined: set[str] = set()
+        text_index = 0
+        for part in parts:
+            if isinstance(part, ForumImageToken):
+                self._add_body_image(part.image_id)
+                inlined.add(part.image_id)
+                continue
+            text = part.strip()
+            if not text:
+                continue
+            first = text_index == 0
+            last = text_index == len(texts) - 1
+            text_index += 1
+            pieces = render_blocks(text)
+            for index, piece in enumerate(pieces):
+                head = prefix if first and index == 0 else ""
+                tail = suffix if last and index == len(pieces) - 1 else ""
+                self._add_body_label(
+                    f"{head}{piece.text}{tail}",
+                    name,
+                    size,
+                    bold=bold,
+                    block=piece,
+                    prefix=head,
+                    suffix=tail,
+                    color=color,
+                )
+        return inlined
+
+    def _add_body_image(self, image_id: str) -> None:
+        """正文里的一句图片 Markdown 就地铺成整幅图。
+
+        占位符在哪，图就在哪；宽度跟着正文栏走、只等比缩放（`ForumDetailImage`），所以图在栏内
+        尽可能大，又不会被拉伸或旋转。
+        """
+        image = ForumDetailImage(image_id, width_hint=BODY_WIDTH_HINT, parent=self._detail_host)
+        self._detail_body.addWidget(image, 0, Qt.AlignLeft)
+        self._refresh_thumbs()
 
     def _add_body_label(
         self,
@@ -1658,16 +1936,26 @@ class ForumBoardPage(QWidget):
         widget.setProperty("forumBlock", name)
         self._detail_body.addWidget(widget)
 
-    def _add_body_images(self, post: ForumPost) -> None:
-        """正文底下铺这一帖的配图；正文里那句「【图片】」占位当图注留着。"""
-        if not post.images:
+    def _add_body_images(self, post: ForumPost, inlined: set[str] | None = None) -> None:
+        """兜底：这一帖挂了图、正文里却没能就地铺出来的，在正文底下补一行小缩略图。
+
+        正文里认得出的图片已经铺成整幅图了（`_add_body_image()`），`inlined` 就是那些 id；
+        这里只收漏网之鱼（正文没写图片 Markdown、或者写的是外站地址），同一张图不铺第二遍。
+        """
+        shown = inlined or set()
+        rest = [
+            image.id
+            for image in post.images[:FORUM_IMAGES_PER_POST]
+            if image.id not in shown
+        ]
+        if not rest:
             return
         strip = QHBoxLayout()
         strip.setContentsMargins(0, scale_px(3, min_abs=2), 0, 0)
         strip.setSpacing(scale_px(6, min_abs=5))
-        for image in post.images[:FORUM_IMAGES_PER_POST]:
+        for ident in rest:
             strip.addWidget(
-                ForumImageThumb(image.id, size=LIST_THUMB_SIZE, parent=self._detail_host), 0
+                ForumImageThumb(ident, size=LIST_THUMB_SIZE, parent=self._detail_host), 0
             )
         strip.addStretch(1)
         self._detail_body.addLayout(strip)
@@ -1755,7 +2043,7 @@ class ForumBoardPage(QWidget):
         刻意按控件树现查现铺（`findChildren`），不另记一张「图 id → 控件」的表：行被清掉时
         Qt 会把子控件从树上摘掉，这里就不可能捏着一个已经销毁的控件——列表反复重排也不会。
         """
-        for thumb in self.findChildren(ForumImageThumb):
+        for thumb in self.findChildren(ForumImageView):
             ident = thumb.image_id
             if not ident or thumb.has_data():
                 continue
