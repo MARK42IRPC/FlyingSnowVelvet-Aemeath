@@ -2,6 +2,13 @@
 
 本文件记录飞行雪绒 LTS 系列的公开版本变更。版本标签与发布包名称保持一致，例如 `LTS1.0.7pre1`。
 
+## [LTS1.0.7pre5] - 2026-09-16
+
+### Fixed
+- 修复右键雪堆必崩：`snow_pile.py` 的右键分支调用了一个从未存在过的 `_spawn_cb`，
+  每次右键都抛 `AttributeError`。右键与批次生成现在共用 `_request_leopard_spawn()`，
+  只发布 `MANAGER_INTERACTION`，由 `SnowPileManager` 查数量、比上限后再转发生成事件。
+
 ## [LTS1.0.7pre4V2] - 2026-09-15
 
 ### Fixed

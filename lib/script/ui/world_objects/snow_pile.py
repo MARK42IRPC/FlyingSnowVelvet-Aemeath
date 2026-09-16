@@ -218,12 +218,7 @@ class SnowPile(QWidget):
             return
 
         self._batch_remaining -= 1
-        center = self.get_center()
-        self._event_center.publish(Event(EventType.MANAGER_INTERACTION, {
-            'manager_id': 'snow_pile',
-            'action': 'spawn_leopard',
-            'position': Point(float(center.x()), float(center.y())),
-        }))
+        self._request_leopard_spawn()
 
         if self._batch_remaining > 0:
             from lib.core.timing import get_timing_manager
@@ -234,6 +229,21 @@ class SnowPile(QWidget):
             self._batch_item_task_id = tm.add_task(random.randint(lo, hi), repeat=False)
         else:
             self._schedule_next_batch()
+
+    def _request_leopard_spawn(self) -> None:
+        """请求雪堆管理器生成一只雪豹（批次生成与右键共用同一条事件路径）。
+
+        雪堆本体不直接调用雪豹管理器：它只发布 ``MANAGER_INTERACTION``，
+        由 ``SnowPileManager`` 去查雪豹数量、比对自然生成上限后再转发
+        ``MANAGER_SPAWN_REQUEST``。之前右键分支直接调用了一个不存在的
+        ``self._spawn_cb``，一按右键就 AttributeError。
+        """
+        center = self.get_center()
+        self._event_center.publish(Event(EventType.MANAGER_INTERACTION, {
+            'manager_id': 'snow_pile',
+            'action': 'spawn_leopard',
+            'position': Point(float(center.x()), float(center.y())),
+        }))
 
     # ==================================================================
     # 粒子申请
@@ -307,7 +317,7 @@ class SnowPile(QWidget):
         elif event.button() == Qt.RightButton and not self._fading:
             self._snow_sound.play()
             self._spawn_snow_drift_particles()
-            self._spawn_cb(self)  # 右键：直接生成一只雪豹
+            self._request_leopard_spawn()  # 右键：直接生成一只雪豹
         else:
             super().mousePressEvent(event)
 
