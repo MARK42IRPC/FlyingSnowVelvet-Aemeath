@@ -12,6 +12,10 @@
   3. **违规词**：``FORUM_BANNED_WORDS`` 里的词，忽略大小写、全角半角与常见分隔符
      （``*``/``.``/`` ``/``-``/``_``），所以 ``加*微``、``加 微`` 都拦得住。
 
+判定前会先洗掉正文里的颜色令牌（``lib/core/forum_colors.py``）：令牌里的六位十六进制数
+会被长数字规则误伤，而它本来就不算留言内容。违规词表按用途分成四组，``category`` 跟着
+命中词所属的组走——窗口层按这个类别挑提示语音，别让「广告」配上「骂人」的话术。
+
 模块不导入任何 GUI 库，返回的是结构化的 ``ForumViolation``，由调用方决定怎么提示。
 """
 
@@ -21,21 +25,56 @@ from dataclasses import dataclass
 import re
 import unicodedata
 
+from lib.core.forum_colors import strip_color_tokens
+
+#: 违规词的分类：只表示「这条留言是哪一类问题」，UI 提示与提示语音都按它选话术。
+FORUM_CATEGORY_LINK = "link"
+FORUM_CATEGORY_NUMBER = "number"
+FORUM_CATEGORY_TRAFFIC = "traffic"
+FORUM_CATEGORY_PROMOTION = "promotion"
+FORUM_CATEGORY_ABUSE = "abuse"
+FORUM_CATEGORY_ILLEGAL = "illegal"
+FORUM_CATEGORY_GENERIC = "generic"
+
 #: 违规词表：命中任一即拒绝。全部按「已经去掉分隔符的小写形式」比较。
 #:
 #: 维护约定：只放**明确**的违规词，不要放正常留言可能出现的词。词表故意保持短小，
 #: 宁可漏拦也不要误伤；需要收紧时在这里加词，不需要改判定逻辑。
-FORUM_BANNED_WORDS: tuple[str, ...] = (
+#:
+#: 分组同时承担两件事：词本身，以及命中后播哪一类提示语音（`FORUM_CATEGORY_*`）。
+#: 换分组等于换话术，所以「骂人」和「广告」不能合成一组。
+FORUM_BANNED_WORD_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     # 引流 / 联系方式
-    "加微信", "加qq", "加群", "进群", "拉群", "私聊", "私我",
-    "微信号", "二维码", "扫码", "公众号", "关注我",
+    (
+        FORUM_CATEGORY_TRAFFIC,
+        (
+            "加微信", "加qq", "加群", "进群", "拉群", "私聊", "私我",
+            "微信号", "二维码", "扫码", "公众号", "关注我",
+        ),
+    ),
     # 广告 / 交易
-    "代练", "代充", "出售", "低价出", "免费领", "点击领取", "刷单", "返利",
-    "优惠券", "折扣码", "拼单", "带货",
+    (
+        FORUM_CATEGORY_PROMOTION,
+        (
+            "代练", "代充", "出售", "低价出", "免费领", "点击领取", "刷单", "返利",
+            "优惠券", "折扣码", "拼单", "带货",
+        ),
+    ),
     # 辱骂与攻击
-    "傻逼", "煞笔", "沙比", "智障", "脑残", "废物", "滚出去", "去死",
+    (
+        FORUM_CATEGORY_ABUSE,
+        ("傻逼", "煞笔", "沙比", "智障", "脑残", "废物", "滚出去", "去死"),
+    ),
     # 违法违规
-    "外挂", "破解版", "盗版", "赌博", "博彩", "色情", "代开", "发票",
+    (
+        FORUM_CATEGORY_ILLEGAL,
+        ("外挂", "破解版", "盗版", "赌博", "博彩", "色情", "代开", "发票"),
+    ),
+)
+
+#: 所有违规词，按分组顺序铺平；只关心「哪些词」的调用方用它。
+FORUM_BANNED_WORDS: tuple[str, ...] = tuple(
+    word for _category, words in FORUM_BANNED_WORD_GROUPS for word in words
 )
 
 #: 判定原因码；UI 与语音提示按它选择文案。
@@ -66,10 +105,15 @@ _WORD_SEPARATORS = "*.*-_ \u3000·|/\\、,，。.。"
 
 @dataclass(frozen=True, slots=True)
 class ForumViolation:
-    """一条违规判定：``reason`` 是稳定的原因码，``detail`` 是命中的原文片段。"""
+    """一条违规判定：``reason`` 是稳定的原因码，``detail`` 是命中的原文片段。
+
+    ``category`` 是更细的一层（``FORUM_CATEGORY_*``），语音提示按它挑音频：原因码只有
+    链接 / 长数字 / 违规词三种，违规词里「骂人」和「广告」却得用两套话术。
+    """
 
     reason: str
     detail: str
+    category: str = ""
 
 
 def normalize_for_matching(text) -> str:
@@ -117,17 +161,31 @@ def find_banned_word(text) -> str | None:
     return best_word or None
 
 
+def category_for_word(word: str) -> str:
+    """某个违规词属于哪一组；词表里没有的词给通用类。"""
+    target = str(word or "")
+    for category, words in FORUM_BANNED_WORD_GROUPS:
+        if target in words:
+            return category
+    return FORUM_CATEGORY_GENERIC
+
+
 def check_content(text) -> ForumViolation | None:
-    """按固定顺序检查一段留言；返回第一条违规，没有则返回 None。"""
-    link = find_link(text)
+    """按固定顺序检查一段留言；返回第一条违规，没有则返回 None。
+
+    判定前先洗掉颜色令牌：``[color=#000000]`` 里的六位数字会被长数字规则误伤，
+    而令牌是渲染指令、不是留言内容。
+    """
+    raw = strip_color_tokens(text)
+    link = find_link(raw)
     if link:
-        return ForumViolation(FORUM_REASON_LINK, link)
-    number = find_long_number(text)
+        return ForumViolation(FORUM_REASON_LINK, link, FORUM_CATEGORY_LINK)
+    number = find_long_number(raw)
     if number:
-        return ForumViolation(FORUM_REASON_LONG_NUMBER, number)
-    word = find_banned_word(text)
+        return ForumViolation(FORUM_REASON_LONG_NUMBER, number, FORUM_CATEGORY_NUMBER)
+    word = find_banned_word(raw)
     if word:
-        return ForumViolation(FORUM_REASON_BANNED_WORD, word)
+        return ForumViolation(FORUM_REASON_BANNED_WORD, word, category_for_word(word))
     return None
 
 
@@ -137,12 +195,21 @@ def is_allowed(text) -> bool:
 
 
 __all__ = [
+    "FORUM_BANNED_WORD_GROUPS",
     "FORUM_BANNED_WORDS",
+    "FORUM_CATEGORY_ABUSE",
+    "FORUM_CATEGORY_GENERIC",
+    "FORUM_CATEGORY_ILLEGAL",
+    "FORUM_CATEGORY_LINK",
+    "FORUM_CATEGORY_NUMBER",
+    "FORUM_CATEGORY_PROMOTION",
+    "FORUM_CATEGORY_TRAFFIC",
     "FORUM_LONG_NUMBER_MIN_DIGITS",
     "FORUM_REASON_BANNED_WORD",
     "FORUM_REASON_LINK",
     "FORUM_REASON_LONG_NUMBER",
     "ForumViolation",
+    "category_for_word",
     "check_content",
     "find_banned_word",
     "find_link",

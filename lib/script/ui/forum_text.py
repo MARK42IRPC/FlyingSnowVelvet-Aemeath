@@ -10,6 +10,15 @@ QTextEdit：既拿得到 QTextDocument（给加粗片段加一层同色细描边
 就是绘制期装饰。正文颜色写在字符格式里（粗体描边也要用同一个颜色），所以换主题时调用方要
 重新 `set_color()`。
 
+描边在这一层有两个来源，别混在一起：
+
+- **加粗**：UI 字体只有 Bold 一个字面，`<b>` 看不出区别，所以给加粗片段叠一层**同色**描边把
+  笔画撑粗（`_embolden`）。这层描边是排版手段，不改变正文颜色，也不该出现在普通片段上。
+- **留言自带的描边色**（`[outline=#rrggbb]` 令牌，见 `lib/core/forum_colors.py`）：发帖人选了
+  描边色就是要「整条字都描边」，所以 `outline_all=True` 时整篇正文都上描边，粗体再用
+  `MESSAGE_OUTLINE_BOLD_GAIN` 倍笔宽把「加粗」和普通字区分开。没有令牌时保持原样，
+  普通片段一律不描边（`tests/test_forum_window.py` 按这条守线）。
+
 描边笔宽是这套方案唯一的旋钮，`bold_outline_width()` 按字号取并**封顶**：卡片正文在基准字号
 的 1~2 倍之间自适应，2 倍的短句（33px 上下）如果按比例给 1.5px 描边，「加粗」这类笔画密的字会
 糊成一团、丢掉字怀（墨迹比普通字多 37%，相邻笔画连成一片）。上下限的取值见 `BOLD_OUTLINE_RATIO` /
@@ -41,6 +50,10 @@ BOLD_OUTLINE_MIN_PX = 0.5
 #: 描边不能一味跟着字号变粗：正文在 1~2 倍之间自适应，2 倍的短句（33px 上下）按比例要 1.5px，
 #: 那样笔画密的字（加、粗、雪）会糊成一团、字怀被填死，所以封顶在 1px。
 BOLD_OUTLINE_MAX_PX = 1.0
+#: 整条留言描边时粗体的笔宽倍数。普通字也带上描边之后，粗体如果还用同一个笔宽，两者在
+#: 卡片上就完全一样了（UI 字体只有 Bold 一个字面，撑不出更粗的墨迹），所以粗体加倍；
+#: 上限也跟着翻倍，仍然收在「别把 2 倍字号的短句填死」这条线内。
+MESSAGE_OUTLINE_BOLD_GAIN = 2.0
 
 
 def bold_outline_width(font_size: int) -> float:
@@ -64,6 +77,7 @@ class MarkupText(QTextEdit):
         color: str,
         width_hint: int,
         outline_color: str | None = None,
+        outline_all: bool = False,
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -72,6 +86,8 @@ class MarkupText(QTextEdit):
         self._outline_color = QColor(outline_color) if outline_color else QColor(color)
         if not self._outline_color.isValid():
             self._outline_color = QColor(self._color)
+        #: 留言自己带了描边色令牌就整篇描边；否则描边只用来撑粗加粗片段。
+        self._outline_all = bool(outline_all)
         self._bold_outline = bold_outline_width(font.pixelSize())
         #: 原始片段留着：量高要用一份临时文档重排一遍，不能拿现成文档反复改宽度。
         self._html = str(html or "")
@@ -103,16 +119,24 @@ class MarkupText(QTextEdit):
 
     def set_color(self, color: str) -> None:
         """换主题时重刷正文颜色（颜色写在字符格式里，样式表管不到）。"""
-        self._color = QColor(color)
-        self._outline_color = QColor(color)
-        self._restyle()
-        self.update()
+        self.set_colors(color)
 
-    def set_colors(self, color: str, outline_color: str | None = None) -> None:
-        """同时设置正文色与描边色；描边色为空时跟随正文色。"""
+    def set_colors(
+        self,
+        color: str,
+        outline_color: str | None = None,
+        *,
+        outline_all: bool | None = None,
+    ) -> None:
+        """同时设置正文色与描边色；描边色为空时跟随正文色。
+
+        `outline_all` 省略时沿用当前设定：留言自带描边色就整篇描边，没有就只撑粗加粗片段。
+        """
         self._color = QColor(color)
         outline = QColor(outline_color) if outline_color else QColor(color)
         self._outline_color = outline if outline.isValid() else QColor(color)
+        if outline_all is not None:
+            self._outline_all = bool(outline_all)
         self._restyle()
         self.update()
 
@@ -174,6 +198,9 @@ class MarkupText(QTextEdit):
         # 就变成「最后一段是粗体则全文都粗」——实测 `普通**粗**` 整条留言都会变粗。
         base_format = QTextCharFormat()
         base_format.setForeground(self._color)
+        if self._outline_all:
+            # 留言自带的描边色：整篇正文都描，不只是加粗的那几段。
+            base_format.setTextOutline(QPen(self._outline_color, self._bold_outline))
         cursor.mergeCharFormat(base_format)
 
         block = document.begin()
@@ -189,8 +216,12 @@ class MarkupText(QTextEdit):
     def _embolden(self, piece) -> None:
         fmt = piece.charFormat()
         fmt.setForeground(self._color)
+        width = self._bold_outline
+        if self._outline_all:
+            # 普通字也描边了，粗体得比它更粗才分得出来。
+            width = self._bold_outline * MESSAGE_OUTLINE_BOLD_GAIN
         # 描边用单独的颜色：粗体片段因此能同时选正文色与描边色（用户可选同色）。
-        fmt.setTextOutline(QPen(self._outline_color, self._bold_outline))
+        fmt.setTextOutline(QPen(self._outline_color, width))
         cursor = QTextCursor(self.document())
         cursor.setPosition(piece.position())
         cursor.setPosition(piece.position() + piece.length(), QTextCursor.KeepAnchor)
@@ -201,6 +232,7 @@ __all__ = [
     "BOLD_OUTLINE_MAX_PX",
     "BOLD_OUTLINE_MIN_PX",
     "BOLD_OUTLINE_RATIO",
+    "MESSAGE_OUTLINE_BOLD_GAIN",
     "MarkupText",
     "bold_outline_width",
 ]

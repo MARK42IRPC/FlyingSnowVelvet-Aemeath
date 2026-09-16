@@ -16,6 +16,10 @@
 `lib/script/ui/forum_sticker.py`，两边成对）。令牌同样原样存在服务端，这里只负责认出来并
 洗掉，不做服务端清洗。
 
+颜色令牌（``[color=#rrggbb]`` / ``[outline=#rrggbb]``）是另一套东西：它由核心层的
+`lib/core/forum_colors.py` 认，因为发送前的本地过滤也要先把令牌洗掉再判违规。这里只负责在
+渲染与数字数时把它一起洗掉。
+
 模块不导入任何 GUI 库：`to_html()` 给出正文用的富文本片段（Qt 富文本子集），`visible_text()`
 供字号自适应按可见字数计算，`span_at_cursor()` / `toggle()` 供发帖框按钮在光标处加减标记。
 """
@@ -24,6 +28,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
+
+from lib.core.forum_colors import strip_color_tokens
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,14 +54,6 @@ FORMAT_BY_KEY = {fmt.key: fmt for fmt in FORUM_MARKUP_FORMATS}
 #: 正文里的「效果令牌」：不是格式而是一条指令——渲染时整段洗掉，由卡片底部另贴一张动图。
 #: 令牌到贴图资源的对应关系长在 `lib/script/ui/forum_sticker.py`，新增令牌要同时补那边。
 FORUM_EFFECT_TOKENS: tuple[str, ...] = ("[雪豹]",)
-
-#: 颜色令牌：``[color=#rrggbb]`` 声明正文色、``[outline=#rrggbb]`` 声明描边色。
-#: 服务端不认这些写法，它们和四种行内标记一样只是纯文本，由雪绒论坛自己渲染，所以**必须
-#: 留在正文开头**（渲染时整段洗掉），别的客户端看到的是带令牌的原文。
-_COLOR_TOKEN_RE = re.compile(
-    r"\[(?:color|outline)\s*=\s*#[0-9a-fA-F]{6}\]",
-    re.IGNORECASE,
-)
 
 #: 解析顺序即标签优先级：`***` 必须排在 `**` 前、`**` 排在 `*` 前。
 _TAG_GROUPS = (
@@ -96,35 +94,6 @@ def to_html(text) -> str:
 def visible_text(text) -> str:
     """去掉成对标记与效果令牌后的可见文字；没配对的标记按普通字符保留。"""
     return strip_color_tokens(strip_effect_tokens(_PATTERN.sub(_strip_match, str(text or ""))))
-
-
-def strip_color_tokens(text) -> str:
-    """洗掉正文里的颜色令牌：渲染出来的文字里不留令牌，颜色另走 `text_colors()`。"""
-    return _COLOR_TOKEN_RE.sub("", str(text or ""))
-
-
-def text_colors(text) -> tuple[str, str]:
-    """读出正文里的（文字色, 描边色）；缺一项就返回空串，调用方据此回退主题色。"""
-    color = ""
-    outline = ""
-    for match in _COLOR_TOKEN_RE.finditer(str(text or "")):
-        token = match.group(0).lower()
-        value = token.rsplit("#", 1)[-1].rstrip("]")
-        if token.startswith("[color"):
-            color = f"#{value}"
-        else:
-            outline = f"#{value}"
-    return color, outline
-
-
-def build_color_tokens(color: str | None, outline: str | None) -> str:
-    """把选中的颜色拼成正文开头的令牌串；两端都为空时返回空串。"""
-    parts: list[str] = []
-    if color:
-        parts.append(f"[color={color}]")
-    if outline:
-        parts.append(f"[outline={outline}]")
-    return "".join(parts)
 
 
 def effect_tokens(text) -> tuple[str, ...]:

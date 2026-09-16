@@ -13,9 +13,12 @@ from lib.core.forum import (
     strip_device_tag,
 )
 from lib.core.forum_filter import (
+    FORUM_BANNED_WORD_GROUPS,
+    FORUM_BANNED_WORDS,
     FORUM_REASON_BANNED_WORD,
     FORUM_REASON_LINK,
     FORUM_REASON_LONG_NUMBER,
+    category_for_word,
     check_content,
     find_banned_word,
     find_link,
@@ -125,6 +128,39 @@ class NicknameLimitTests(unittest.TestCase):
     def test_blank_nickname_falls_back_to_anonymous(self):
         self.assertEqual(normalize_nickname(""), "匿名")
         self.assertEqual(normalize_nickname(None), "匿名")
+
+
+class CategoryTests(unittest.TestCase):
+    """分类只影响话术，不影响拦不拦：链接 / 数字两种原因码各成一类，违规词按词表分组。"""
+
+    def test_each_reason_carries_its_category(self):
+        self.assertEqual(check_content("看 https://a.com").category, "link")
+        self.assertEqual(check_content("我的号 123456").category, "number")
+
+    def test_banned_words_report_the_group_they_came_from(self):
+        self.assertEqual(check_content("加微信").category, "traffic")
+        self.assertEqual(check_content("低价出装备").category, "promotion")
+        self.assertEqual(check_content("傻逼").category, "abuse")
+        self.assertEqual(check_content("外挂哪里买").category, "illegal")
+
+    def test_groups_and_the_flat_table_agree(self):
+        flat = tuple(word for _category, words in FORUM_BANNED_WORD_GROUPS for word in words)
+        self.assertEqual(flat, FORUM_BANNED_WORDS)
+        self.assertEqual(len(set(flat)), len(flat), "同一个词不能出现在两组里")
+        for category, words in FORUM_BANNED_WORD_GROUPS:
+            self.assertTrue(words, category)
+            for word in words:
+                self.assertEqual(category_for_word(word), category)
+        self.assertEqual(category_for_word("词表里没有的词"), "generic")
+
+    def test_color_tokens_are_not_content(self):
+        # `[color=#000000]` 里的六位数字以前会被长数字规则当成手机号拦下来，颜色越「规整」
+        # 越容易踩到：令牌是渲染指令，判定前必须先洗掉。
+        self.assertIsNone(check_content("[color=#000000]你好"))
+        self.assertIsNone(check_content("[outline=#123456]你好"))
+        self.assertIsNone(check_content("[color=#ff00aa][outline=#000000]你好呀"))
+        # 令牌之外的数字照样拦：洗令牌不等于放过正文。
+        self.assertEqual(check_content("[color=#000000]我的号 123456").reason, "long_number")
 
 
 if __name__ == "__main__":

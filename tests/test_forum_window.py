@@ -60,6 +60,7 @@ from lib.script.ui.forum_sticker import (
 from lib.script.ui.forum_text import (
     BOLD_OUTLINE_MAX_PX,
     BOLD_OUTLINE_MIN_PX,
+    MESSAGE_OUTLINE_BOLD_GAIN,
     MarkupText,
     bold_outline_width,
 )
@@ -570,6 +571,51 @@ class ForumWindowTests(unittest.TestCase):
         finally:
             card.deleteLater()
             self.app.processEvents()
+
+    def test_outline_token_strokes_the_whole_message(self):
+        # `[outline=...]` 是发帖人自己选的描边色：整条正文都该描，不只是加粗片段
+        # （用户报的「带描边但渲染无描边」就是这么来的）。
+        card = ForumCard(message(1, content="[outline=#ff3b30]普通字也要有描边"))
+        try:
+            content = card.findChild(QTextEdit, "ForumCardText")
+            plain = dict(document_fragments(content))["普通字也要有描边"]
+            self.assertNotEqual(plain.textOutline().style(), Qt.NoPen)
+            self.assertEqual(plain.textOutline().color().name(), "#ff3b30")
+            self.assertAlmostEqual(
+                plain.textOutline().widthF(),
+                bold_outline_width(content.font().pixelSize()),
+                delta=0.01,
+            )
+        finally:
+            card.deleteLater()
+
+    def test_outline_token_keeps_bold_heavier_than_plain(self):
+        # 普通字也描边之后，粗体如果还用同一个笔宽就和普通字一模一样，所以粗体加倍。
+        card = ForumCard(message(1, content="[outline=#ff3b30]**加粗**和普通"))
+        try:
+            content = card.findChild(QTextEdit, "ForumCardText")
+            pieces = dict(document_fragments(content))
+            bold = pieces["加粗"].textOutline().widthF()
+            plain = pieces["和普通"].textOutline().widthF()
+            self.assertGreater(bold, plain)
+            self.assertAlmostEqual(
+                bold,
+                bold_outline_width(content.font().pixelSize()) * MESSAGE_OUTLINE_BOLD_GAIN,
+                delta=0.01,
+            )
+        finally:
+            card.deleteLater()
+
+    def test_color_only_message_keeps_plain_text_unstroked(self):
+        # 只选了文字色的留言不该顺带给普通字描边：描边令牌没写就不描。
+        card = ForumCard(message(1, content="[color=#1f6feb]只有文字色"))
+        try:
+            content = card.findChild(QTextEdit, "ForumCardText")
+            plain = dict(document_fragments(content))["只有文字色"]
+            self.assertEqual(plain.textOutline().style(), Qt.NoPen)
+            self.assertEqual(plain.foreground().color().name(), "#1f6feb")
+        finally:
+            card.deleteLater()
 
     def test_bold_ink_is_heavier_than_plain_without_filling_the_strokes(self):
         # 需求原话：「论坛卡片的粗体似乎会有额外描边，导致部分文字会融合细节特征」。加粗要看得出来

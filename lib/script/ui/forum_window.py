@@ -58,6 +58,7 @@ from lib.core.forum_filter import (
     FORUM_REASON_LONG_NUMBER,
     ForumViolation,
 )
+from lib.core.forum_colors import build_color_tokens, text_colors
 from lib.core.forum_session import ForumSessionStore, is_logged_in
 from lib.core.logger import get_logger
 from lib.core.qt_bridge.font import get_ui_font
@@ -84,9 +85,7 @@ from lib.script.ui.forum_color_picker import (
 from lib.script.ui.forum_markup import (
     FORMAT_BY_KEY,
     FORUM_MARKUP_FORMATS,
-    build_color_tokens,
     span_at_cursor,
-    text_colors,
     to_html,
     toggle,
 )
@@ -396,6 +395,9 @@ class ForumCard(QFrame):
             font=get_ui_font(size=forum_card_text_size(message.content)),
             color=message_color or forum_card_text_color(),
             outline_color=message_outline or message_color or forum_card_text_color(),
+            # 只有留言自己带了 `[outline=...]` 才整篇描边：没选描边色的卡片仍按老样子，
+            # 描边只负责把加粗片段撑粗。
+            outline_all=bool(message_outline),
             width_hint=CARD_MIN_WIDTH,
             parent=self,
         )
@@ -422,6 +424,7 @@ class ForumCard(QFrame):
         self._content.set_colors(
             message_color or theme_color,
             message_outline or message_color or theme_color,
+            outline_all=bool(message_outline),
         )
 
     def paintEvent(self, event) -> None:
@@ -923,8 +926,9 @@ class ForumWindow(QtWorkbenchToolPage):
         )
         if isinstance(error, ForumViolation):
             # 违规：提示 + 播一条爱弥斯口吻的语音，冷却照常开始（见 ForumService.post）。
+            # 语音按违规类别挑（链接 / 数字 / 骂人 / 广告…），免得话术和问题对不上。
             self._set_status(violation_message(error), tone="warn")
-            self._play_violation_sound()
+            self._play_violation_sound(error.category)
             self._sync_composer_state()
             return
         if error:
@@ -935,14 +939,14 @@ class ForumWindow(QtWorkbenchToolPage):
         self._set_status("已发送，等待论坛确认…")
         self._sync_composer_state()
 
-    def _play_violation_sound(self) -> None:
-        """播一条随机的违规提示语音；音频缺失时静默跳过，不影响拦截本身。"""
+    def _play_violation_sound(self, category: str = "") -> None:
+        """播一条该违规类别的提示语音；音频缺失时静默跳过，不影响拦截本身。"""
         try:
             from lib.script.voice.forum_violation import ForumViolationSound
 
             if self._violation_sound is None:
                 self._violation_sound = ForumViolationSound()
-            self._violation_sound.play()
+            self._violation_sound.play(category)
         except Exception as exc:
             logger.debug("[ForumWindow] 违规提示语音播放失败: %s", exc)
 

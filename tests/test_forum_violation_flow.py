@@ -148,5 +148,59 @@ class WindowViolationTests(unittest.TestCase):
         self.assertGreater(sound.file_count, 0)
 
 
+class ViolationVoiceCategoryTests(unittest.TestCase):
+    """提示语音要跟违规类别对上：骂人的留言不能配「广告」的话术。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def setUp(self) -> None:
+        cleanup_event_center()
+        self.voices: list[dict] = []
+        get_event_center().subscribe(
+            EventType.VOICE_REQUEST,
+            lambda event: self.voices.append(dict(event.data)),
+        )
+        self.addCleanup(cleanup_event_center)
+
+    def _send(self, text: str) -> str:
+        """发一条注定被拦下的留言，返回这次播放的音频路径。"""
+        window = ForumWindow()
+        try:
+            window._service = _service()
+            window._input.setText(text)
+            window._sync_composer_state()
+            window._on_send()
+            self.assertEqual(len(self.voices), 1, text)
+            return self.voices[-1]["source"]
+        finally:
+            window.cleanup()
+
+    def test_each_category_plays_its_own_folder(self):
+        cases = (
+            ("看看 https://spam.example", "链接"),
+            ("我的号是 123456789", "数字"),
+            ("傻逼", "辱骂"),
+            ("加微信找我", "引流"),
+            ("低价出装备", "广告"),
+            # 违法违规还没有专属话术，回落到通用。
+            ("外挂哪里买", "通用"),
+        )
+        for text, folder in cases:
+            self.voices.clear()
+            source = self._send(text)
+            self.assertIn(os.path.join("forum", "违规时", folder), source, text)
+
+    def test_sound_reports_which_categories_have_audio(self):
+        sound = ForumViolationSound()
+        self.assertGreater(sound.file_count, 0)
+        for category in ("link", "number", "abuse", "traffic", "promotion"):
+            self.assertTrue(sound.has_category(category), category)
+        # 表中没有的类别（违法违规）与空类别都由「通用」兜底。
+        self.assertFalse(sound.has_category("illegal"))
+        self.assertFalse(sound.has_category(""))
+
+
 if __name__ == "__main__":
     unittest.main()
