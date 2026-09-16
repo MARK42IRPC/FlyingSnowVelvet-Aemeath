@@ -381,6 +381,19 @@ def workbench_stylesheet(mode: str | None = None) -> str:
         color: {c.text};
         font-weight: 700;
     }}
+    QFrame#WorkbenchPageHost QFrame#SettingsSection QToolButton#SettingsSectionHelpButton {{
+        color: {c.text_dim};
+        background: transparent;
+        border: {border}px solid transparent;
+        border-radius: {scale_px(8, min_abs=7)}px;
+        font-weight: 700;
+        padding: 0px;
+    }}
+    QFrame#WorkbenchPageHost QFrame#SettingsSection QToolButton#SettingsSectionHelpButton:hover {{
+        color: {c.cyan};
+        background: {c.surface_hover};
+        border-color: {c.cyan};
+    }}
     QFrame#WorkbenchPageHost QLabel#ConfigFormLabel {{
         color: {c.text_muted};
         font-weight: 600;

@@ -186,6 +186,9 @@ class EventType(Enum):
     SPEAKER_SEARCH_DIALOG_READY = "speaker_search_dialog_ready"  # 搜索 UI 就绪
     CLOUD_MUSIC_MANAGER_READY = "cloud_music_manager_ready"  # 云音乐管理器就绪
 
+    # ── 帮助窗口 ─────────────────────────────────────────────────────
+    HELP_WINDOW_REQUEST = "help_window_request"  # 打开帮助窗口：title、text
+
 
 class Event:
     """事件对象"""

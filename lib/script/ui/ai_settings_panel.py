@@ -137,6 +137,140 @@ _DROPDOWN_ITEM_FONT_SIZE = max(scale_px(8, min_abs=8), _CONFIG_FONT_SIZE - scale
 _PANEL_SCALE = 1.05
 _AI_HINT_TEXT = "保存后会写入本地 AI 配置文件，建议重启程序后完整生效"
 _GENERAL_HINT_TEXT = "保存后会写入本地配置文件，建议重启程序后完整生效"
+
+#: 各配置分组「问号」按钮弹出的说明。键是 `(分类 id, 配置字典名)`，
+#: 值是给用户看的整段文字。没登记的组合不出问号——宁可没有入口，
+#: 也不要弹一个空窗口出来。换行用 `\n`，帮助窗口按普通文本原样呈现。
+_SECTION_HELP_TEXTS: dict[tuple[str, str], str] = {
+    ("ui_anim", "ANIMATION"): (
+        "这里管桌宠自己的动画节奏。\n\n"
+        "「帧率」是主循环推进动画的速度，调低会更省电，但动作看起来会一顿一顿的；"
+        "「GIF 帧率」只影响循环播放的动图这一类资源。\n\n"
+        "「启动/退出动画」可以换成自己喜欢的动画文件夹，时长按帧数和帧率换算，"
+        "帧数越多、时长越短，动作就越快。退出时的阴影强度、模糊半径和方向只作用于"
+        "退出动画那一帧的效果。\n\n"
+        "改完建议重启程序，动画资源是启动时加载的。"
+    ),
+    ("ui_anim", "UI"): (
+        "这里管所有界面窗口的外观与手感。\n\n"
+        "「桌宠透明度」只改桌宠本身；「界面控件透明度」改的是面板、气泡这一类控件；"
+        "「提示框透明度」单独管鼠标悬停提示。三个都是各自独立生效的。\n\n"
+        "「淡入淡出时长」决定窗口出现和消失时那段渐变动画有多长，调小会更干脆，"
+        "调到很小基本就是瞬间切换。\n\n"
+        "「鼠标远离距离」是命令框自动收起前允许鼠标离开多远。\n\n"
+        "「渲染后端」切换 Qt 与 DX 两套绘制实现，需要重启程序才会真正换过去。"
+    ),
+    ("ui_anim", "COMMAND_DIALOG"): (
+        "命令框的输入保持多久算「还在用」。\n\n"
+        "超过这个空闲时间没有输入，命令框会自己收起并中断当前这次输入，"
+        "免得它一直停在桌面上挡住别的东西。"
+    ),
+    ("behavior_physics", "PARTICLES"): (
+        "桌宠活动时飘出来的那层粒子。\n\n"
+        "「描边」打开后每颗粒子会多一圈轮廓，粒子小而密的时候更容易看清；"
+        "「淡出阈值」是粒子透明到多少就彻底不再绘制，调高会让粒子更早消失、更省一点性能，"
+        "调低则粒子会在很淡的状态下多留一会儿。"
+    ),
+    ("behavior_physics", "BEHAVIOR"): (
+        "桌宠平时怎么走、怎么跟周围的东西打交道。\n\n"
+        "「音响徘徊半径」是桌宠路过音响时会在多近的距离内被吸引过去；"
+        "「双击判定」是按几次 tick 来区分单击和双击，调小会让双击更容易触发，"
+        "但也更容易把两次慢点击误判成双击。\n\n"
+        "「移动速度」三项分别是最高速度、加速度和最低速度，决定了它从静止走到全速"
+        "要多久、以及慢速挪动时有多慢。"
+    ),
+    ("behavior_physics", "PHYSICS"): (
+        "桌宠被扔出去之后怎么落地和弹跳。\n\n"
+        "「最大弹跳次数」用完就停下不再反弹；「地面高度」是屏幕高度的百分比，"
+        "调大等于把地面往下压；「空气阻力」越大，飞出去之后减速越快。"
+    ),
+    ("audio_music", "AUDIO_VOLUMES"): (
+        "各路人声与音效的独立音量。\n\n"
+        "这些音量是乘法叠加的：某一个调成 0 就是这一类彻底静音，"
+        "而不影响别的类别。想整体变小，可以先只动「总音量」这一项。"
+    ),
+    ("audio_music", "VOICE"): (
+        "语音合成与麦克风输入。\n\n"
+        "上面一块决定桌宠说话用什么音色和语速，以及一次能合成多长的文本；"
+        "下面一块决定麦克风怎么听、听多久判定说完、以及识别结果交给谁。\n\n"
+        "麦克风相关项改错会让桌宠听不清或一直抢话，不确定时先保持默认。"
+    ),
+    ("audio_music", "SPEAKER_AUDIO"): (
+        "音响上的动感效果跟着声音怎么动。\n\n"
+        "「频段」决定响应哪一段频率的声音：范围收窄到低频，音响只跟鼓点跳；"
+        "拉到高频则只跟人声和镲片这类声音动作。\n\n"
+        "「灵敏度」和「平滑」控制反应的幅度与跟手的快慢，平滑调大动作更柔和、"
+        "但会慢半拍。"
+    ),
+    ("audio_music", "CLOUD_MUSIC"): (
+        "云音乐账号与播放行为。\n\n"
+        "登录信息保存在本机，清理登录数据会一并清掉。\n\n"
+        "音质这一项只在账号有对应权限时才会真正生效，没有权限时会自动回退到可用的档位。"
+    ),
+    ("scene_objects", "SNOW_LEOPARD"): (
+        "雪豹的生成与交互参数。\n\n"
+        "「生成高度」用屏幕高度的百分比表示，两条一起决定它可能出现的高度范围。\n\n"
+        "「交互半径」是鼠标要多近才算碰到它；「自然生成上限」限制同一时间最多同时存在几只，"
+        "调太大会明显吃性能。「跳跃力度」决定被点起来之后跳多高。"
+    ),
+    ("scene_objects", "SNOW_PILE"): (
+        "雪堆的生成、大小与批量出雪豹的节奏。\n\n"
+        "「生成高度」是屏幕高度百分比；「大小」是缩放范围，两端可以不一样大。\n\n"
+        "批量参数决定右键雪堆之后每隔多久出一只、「一批出几只」以及一只接一只之间的间隔，"
+        "三项都调小会瞬间刷出一大群雪豹，慎用。"
+    ),
+    ("scene_objects", "SOFA"): (
+        "沙发出现的位置，以及它的「保护半径」。\n\n"
+        "保护半径内的其他对象不会被生成或移动进来，避免有东西压在沙发上。"
+    ),
+    ("scene_objects", "MORTOR"): (
+        "摩托的生成位置、移动速度，以及是否播放它自带的背景音乐。\n\n"
+        "速度的单位是每帧像素数，帧率越高实际移动越快。"
+    ),
+    ("scene_objects", "CLOCK"): (
+        "闹钟出现在屏幕的哪个高度，以及倒计时持续多久。"
+    ),
+    ("scene_objects", "SPEAKER"): (
+        "音响出现的高度范围。\n\n"
+        "音响的音量与动感响应频段请在音响自己的右键菜单里单独调整，"
+        "这里只管它出在屏幕的哪个高度。"
+    ),
+    ("scene_objects", "SNOWBALL"): (
+        "雪球的生成范围与交互参数。"
+    ),
+    ("scene_objects", "OBJECTS"): (
+        "通用物体参数，作用于没有单独列出的那些桌面对象。"
+    ),
+    ("system_dispatch", "TIMEOUTS"): (
+        "各条链路的等待上限。\n\n"
+        "调小会让卡住的操作更快失败并给出提示，代价是网络慢的时候容易误判超时；"
+        "调大则相反——不容易误判，但真出问题时用户要等更久。"
+    ),
+    ("system_dispatch", "TOOL_DISPATCHER"): (
+        "AI 请求工具（打开网页、搜索一类）时怎么调度。\n\n"
+        "并发数决定同时最多跑几个工具，调大更快但更吃资源；"
+        "重试次数与间隔决定失败后要不要再试一次。"
+    ),
+    ("system_dispatch", "CLOUD_MUSIC"): (
+        "与《鸣潮》相关的设置。\n\n"
+        "「启动路径」用于让桌宠找到游戏本体，路径填错只会让相关功能失效，"
+        "不会影响其他功能。"
+    ),
+    ("system_dispatch", "DRAW"): (
+        "绘制相关的运行参数，主要影响画面刷新与渲染开销。\n\n"
+        "不确定的时候保持默认即可。"
+    ),
+    ("system_dispatch", "STARTUP"): (
+        "启动时的行为。\n\n"
+        "「确保桌面快捷方式」会在每次启动时检查并补回缺失的快捷方式，"
+        "同时负责开机启动项的迁移；关掉之后不会再自动维护这些入口。"
+    ),
+}
+
+
+def _section_help_text(category_id: str, dict_name: str) -> str:
+    """取某个配置分组的帮助文案；没登记过就返回空串（此时不显示问号）。"""
+    return _SECTION_HELP_TEXTS.get((str(category_id), str(dict_name)), "")
 _HINT_FONT_SIZE = max(scale_px(12, min_abs=9), _CONFIG_FONT_SIZE - scale_px(2, min_abs=1))
 _UPDATE_BUTTON_ROW_GAP = scale_px(10, min_abs=10)
 _QUARK_UPDATE_URL = "https://pan.quark.cn/s/9158e62439e2"
@@ -1763,9 +1897,16 @@ class AISettingsPanel(QWidget):
         self._voice_package_management.set_package_status(self._voice_package_status)
         scaffold.content_layout.addWidget(self._voice_package_management)
 
-        interface_section = scaffold.add_section(
+        interface_section = scaffold.add_help_section(
             "回复模式",
             "选择本次保存后固定使用的回复来源。",
+            help_text=(
+                "决定桌宠聊天时去哪拿回复。选中的来源失败时不会自动换一个，"
+                "而是直接把失败报出来，所以你看到问题就知道该改哪一项。\n\n"
+                "福利 API 走项目提供的公共接口，不用自己填密钥；手动 API 需要你自己填"
+                "密钥和地址；本地 Ollama 全部在本机跑，不联网但吃显卡；"
+                "规则回复完全不调用模型，只按关键词给固定回应。"
+            ),
         )
         form = create_settings_form()
         interface_section.body_layout.addLayout(form)
@@ -1822,9 +1963,14 @@ class AISettingsPanel(QWidget):
         )
         self._set_widget_description(self._open_persona_file_btn, "使用系统默认程序打开当前生效的人格 txt。")
 
-        self._welfare_section = scaffold.add_section(
+        self._welfare_section = scaffold.add_help_section(
             "福利 API 配置",
             "仅在回复模式选择福利 API 时显示。",
+            help_text=(
+                "公共接口的开关，只在回复模式选「福利 API」时才有意义。\n\n"
+                "「智力提升」打开后会换成能力更强的模型，回复更聪明但更慢，"
+                "也更容易触发公共接口的限流。只是日常闲聊的话关着就够用。"
+            ),
         )
         form = create_settings_form()
         self._welfare_section.body_layout.addLayout(form)
@@ -1836,9 +1982,16 @@ class AISettingsPanel(QWidget):
             "关闭时使用 Agnes 2.0 Flash；开启后使用 Agnes 2.5 Flash。",
         )
 
-        self._manual_api_section = scaffold.add_section(
+        self._manual_api_section = scaffold.add_help_section(
             "手动 API 配置",
             "仅在回复模式选择手动 API 时显示。",
+            help_text=(
+                "接任意 OpenAI 兼容接口。\n\n"
+                "「接口密钥」单独保存，不写进普通配置文件，清理登录数据时会一起清掉。\n\n"
+                "「常用提供商」只是帮你把地址填好，选完仍然可以手动改；"
+                "用第三方中转或自建服务时，注意地址要以 /v1 结尾。\n\n"
+                "「模型名」必须和对方服务里实际存在的名字一致，填错会直接报错而不是自动回退。"
+            ),
         )
         form = create_settings_form()
         self._manual_api_section.body_layout.addLayout(form)
@@ -1894,9 +2047,15 @@ class AISettingsPanel(QWidget):
         )
         self._set_widget_description(self._probe_manual_api_models_btn, "使用当前填写的接口地址和密钥探测可用模型列表。")
 
-        self._ollama_section = scaffold.add_section(
+        self._ollama_section = scaffold.add_help_section(
             "Ollama 配置",
             "仅在回复模式选择本地 Ollama 时显示。",
+            help_text=(
+                "把推理放在本机跑，不联网、不上传内容。\n\n"
+                "需要先自己装好 Ollama 并把模型拉下来；地址通常是本机的 11434 端口。\n\n"
+                "本地模型的效果和显存直接相关，模型越大越慢；"
+                "机器带不动时可以换小模型，而不是反复调这里的参数。"
+            ),
         )
         form = create_settings_form()
         self._ollama_section.body_layout.addLayout(form)
@@ -1950,9 +2109,15 @@ class AISettingsPanel(QWidget):
             "CPU 推理线程数，0 表示使用框架默认值。",
         )
 
-        generation_section = scaffold.add_section(
+        generation_section = scaffold.add_help_section(
             "生成参数",
             "调整大模型输出与图片输入。",
+            help_text=(
+                "控制模型「怎么答」。\n\n"
+                "「温度」越高回答越随机、越低越保守；「最大长度」限制一次最多说多长；"
+                "「上下文轮数」决定它还记得前面聊过多少。\n\n"
+                "上下文调大会同时增加显存占用和每次回复的时间，长对话卡顿时优先动这一项。"
+            ),
         )
         form = create_settings_form()
         generation_section.body_layout.addLayout(form)
@@ -1977,9 +2142,16 @@ class AISettingsPanel(QWidget):
         self._update_reply_mode_sections()
 
         self._gsv_launcher_available = not self._voice_package_status.install_required
-        self._voice_section = scaffold.add_section(
+        self._voice_section = scaffold.add_help_section(
             "语音合成",
             "控制 ONNX 语音模型、采样、节奏和本地缓存。",
+            help_text=(
+                "桌宠说话的声音。\n\n"
+                "涉及到具体模型、采样率和分段的项建议保持默认：这些值和语音包是配套的，"
+                "改错会让声音变调、变快或者直接不出声。\n\n"
+                "「缓存」用来复用已经合成过的句子，关掉之后每句话都要重新推理，"
+                "反应明显变慢，但不会再往磁盘写文件。"
+            ),
         )
         form = create_settings_form()
         self._voice_section.body_layout.addLayout(form)
@@ -2138,9 +2310,15 @@ class AISettingsPanel(QWidget):
         self._update_gsv_advanced_visibility()
         self._update_gsv_settings_visibility()
 
-        memory_section = scaffold.add_section(
+        memory_section = scaffold.add_help_section(
             "记忆与陪伴",
             "调整会话记忆规模和自动陪伴行为。",
+            help_text=(
+                "桌宠记得多少，以及会不会主动找你说话。\n\n"
+                "「记忆条数」决定长期记忆里保留多少条内容，调大更连贯但每次请求也更长。\n\n"
+                "「自动陪伴」打开后桌宠会按设定间隔自己开口；"
+                "间隔按分钟算，调得太小会显得聒噪，也会更快消耗 API 额度。"
+            ),
         )
         form = create_settings_form()
         memory_section.body_layout.addLayout(form)
@@ -2288,7 +2466,10 @@ class AISettingsPanel(QWidget):
                 continue
 
             section_fields_added = False
-            section = scaffold.add_section(_friendly_section_name(str(dict_name), str(section_title)))
+            section = scaffold.add_help_section(
+                _friendly_section_name(str(dict_name), str(section_title)),
+                help_text=_section_help_text(category_id, str(dict_name)),
+            )
             section_label = section.title_label
             self._set_widget_description(
                 section_label,
@@ -2578,9 +2759,16 @@ class AISettingsPanel(QWidget):
         title_label: QLabel,
         hint_label: QLabel,
     ) -> QWidget:
-        stable_section = scaffold.add_section(
+        stable_section = scaffold.add_help_section(
             "稳定版本",
             "检查最新分发包。下载完成后桌宠会退出，由独立更新进程覆盖安装并重新启动。",
+            help_text=(
+                "稳定版是给所有用户用的正式版本，更新前会先核对发布清单里的校验值。\n\n"
+                "点「检查新版本」后桌宠会去发布槽取最新安装包。下载完成不会当场替换文件，"
+                "而是先退出桌宠，再由独立更新进程接管安装目录、覆盖完成之后把桌宠重新拉起来，"
+                "所以更新过程中桌面会短暂少一只桌宠，属于正常现象。\n\n"
+                "更新只覆盖程序文件，用户数据、配置和缓存都不受影响。"
+            ),
         )
         stable_row = QHBoxLayout()
         stable_row.setContentsMargins(0, 0, 0, 0)
@@ -2592,18 +2780,29 @@ class AISettingsPanel(QWidget):
         stable_row.addWidget(check_update_btn, 1)
         stable_section.body_layout.addLayout(stable_row)
 
-        dev_section = scaffold.add_section(
+        dev_section = scaffold.add_help_section(
             "开发版本",
             "面向需要跟随远端代码的使用场景。同步前请先确认本地改动已妥善保存。",
+            help_text=(
+                "开发版跟随远端主干代码，比稳定版更新得更快，但也可能带着还没验证完的改动。\n\n"
+                "同步会用远端版本覆盖本地程序文件。如果你改过源码、装过额外插件，"
+                "请先确认这些改动已经妥善保存或另有备份，覆盖之后无法找回。\n\n"
+                "只想要能稳定用的版本时，请走上面的稳定版。"
+            ),
         )
         sync_dev_btn = QPushButton("同步开发版", dev_section)
         sync_dev_btn.setObjectName("syncDevButton")
         sync_dev_btn.clicked.connect(self._on_sync_dev_build)
         dev_section.body_layout.addWidget(sync_dev_btn)
 
-        manual_section = scaffold.add_section(
+        manual_section = scaffold.add_help_section(
             "手动获取",
             "自动更新不可用时，可通过网盘或 QQ 群获取完整安装包。",
+            help_text=(
+                "网络不通、更新服务 unavailable 或者自动更新反复失败时走这里。\n\n"
+                "网盘和 QQ 群里放的都是完整安装包，下载后直接安装即可，"
+                "不需要先卸载旧版本，安装程序会自己处理覆盖。"
+            ),
         )
         manual_row = QHBoxLayout()
         manual_row.setContentsMargins(0, 0, 0, 0)
@@ -2649,9 +2848,14 @@ class AISettingsPanel(QWidget):
         title_label: QLabel,
         hint_label: QLabel,
     ) -> QWidget:
-        section = scaffold.add_section(
+        section = scaffold.add_help_section(
             "支持作者",
             "扫描赞助码，或通过下方按钮前往爱发电。",
+            help_text=(
+                "桌宠是免费的，也不会在里面塞广告。\n\n"
+                "如果它帮到了你，可以扫赞助码或去爱发电支持一下维护工作；"
+                "赞助完全自愿，不影响任何功能的使用。"
+            ),
         )
 
         card = QWidget(section)
@@ -2720,9 +2924,14 @@ class AISettingsPanel(QWidget):
             if str(record.get("url") or "").strip()
         ]
         total_count = len(records)
-        section = scaffold.add_section(
+        section = scaffold.add_help_section(
             f"贡献者 ({total_count})",
             "选择条目可打开对应开发者主页。",
+            help_text=(
+                "这份名单来自仓库里的贡献者记录，按角色整理。\n\n"
+                "点条目会在浏览器里打开对应主页。名单只列已登记的贡献者，"
+                "漏掉的话可以在仓库里提 issue 补上。"
+            ),
         )
 
         buttons: list[QPushButton] = []

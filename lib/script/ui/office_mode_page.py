@@ -126,9 +126,17 @@ class OfficeModePage(QtWorkbenchToolPage):
         self._build_actions()
 
     def _build_config_section(self) -> None:
-        section = self._scaffold.add_section(
+        section = self._scaffold.add_help_section(
             "办公配置",
             "办公后端、办公模式独立 API 与启动预热都在这里设置。",
+            help_text=(
+                "办公模式是桌宠的另一套工作方式：对话交给具备工具调用能力的后端，"
+                "任务在独立的办公页面里跑，桌宠本体只留一个入口。\n\n"
+                "「办公后端」决定任务交给谁执行；「独立接口」让办公模式用与日常聊天"
+                "不同的模型，方便一边闲聊一边干活；「启动预热」会在开机时先把办公"
+                "运行时拉起来，第一次打开办公页面更快，代价是多占一点常驻内存。\n\n"
+                "这些设置只影响办公模式，日常聊天不受影响。"
+            ),
         )
         self._config_section = section
 

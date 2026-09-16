@@ -12,6 +12,7 @@ class QtApplicationUiHost:
 
         self._animation = get_start_exit_animation()
         self._announcement_controller = None
+        self._help_window_controller = None
         self._office_approval_controller = None
         self._preloader = None
         self._runtime_prepared = False
@@ -53,6 +54,7 @@ class QtApplicationUiHost:
         self._runtime_stopped = False
 
         from lib.script.ui.announcement_dialog import AnnouncementController
+        from lib.script.ui.help_window import HelpWindowController
         from lib.script.ui.preloader import preload_runtime_ui
         from lib.script.ui.office_approval_controller import (
             OfficeApprovalController,
@@ -61,6 +63,7 @@ class QtApplicationUiHost:
         self._office_approval_controller = OfficeApprovalController()
         self._office_approval_controller.start()
         self._announcement_controller = AnnouncementController(application)
+        self._help_window_controller = HelpWindowController(application)
         if self._preloader is None:
             self._preloader = preload_runtime_ui()
         self._announcement_controller.start()
@@ -97,6 +100,9 @@ class QtApplicationUiHost:
         if self._announcement_controller is not None:
             self._announcement_controller.cleanup()
             self._announcement_controller = None
+        if self._help_window_controller is not None:
+            self._help_window_controller.cleanup()
+            self._help_window_controller = None
 
         from lib.script.gemes import cleanup_game_runtime
 

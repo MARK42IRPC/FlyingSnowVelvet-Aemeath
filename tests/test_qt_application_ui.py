@@ -41,6 +41,13 @@ class QtApplicationUiHostTests(unittest.TestCase):
             def cleanup(self):
                 calls.append("approval_cleanup")
 
+        class HelpWindowController:
+            def __init__(self, application):
+                calls.append(("help_init", application))
+
+            def cleanup(self):
+                calls.append("help_cleanup")
+
         modules = {
             "lib.script.SEanima.animation": types.SimpleNamespace(
                 get_start_exit_animation=lambda: Animation(),
@@ -48,6 +55,9 @@ class QtApplicationUiHostTests(unittest.TestCase):
             ),
             "lib.script.ui.announcement_dialog": types.SimpleNamespace(
                 AnnouncementController=AnnouncementController,
+            ),
+            "lib.script.ui.help_window": types.SimpleNamespace(
+                HelpWindowController=HelpWindowController,
             ),
             "lib.script.ui.preloader": types.SimpleNamespace(
                 preload_runtime_ui=lambda: Preloader(),
@@ -83,6 +93,7 @@ class QtApplicationUiHostTests(unittest.TestCase):
         self.assertEqual(calls.count("preloader_stop"), 1)
         self.assertEqual(calls.count("preloader_release"), 1)
         self.assertEqual(calls.count("announcement_cleanup"), 1)
+        self.assertEqual(calls.count("help_cleanup"), 1)
         self.assertEqual(calls.count("approval_start"), 1)
         self.assertEqual(calls.count("approval_cleanup"), 1)
         self.assertEqual(calls.count("game_cleanup"), 1)
@@ -128,12 +139,22 @@ class QtApplicationUiHostTests(unittest.TestCase):
             def cleanup(self):
                 pass
 
+        class HelpWindowController:
+            def __init__(self, application):
+                pass
+
+            def cleanup(self):
+                pass
+
         modules = {
             "lib.script.SEanima.animation": types.SimpleNamespace(
                 get_start_exit_animation=lambda: Animation(),
             ),
             "lib.script.ui.announcement_dialog": types.SimpleNamespace(
                 AnnouncementController=AnnouncementController,
+            ),
+            "lib.script.ui.help_window": types.SimpleNamespace(
+                HelpWindowController=HelpWindowController,
             ),
             "lib.script.ui.preloader": types.SimpleNamespace(
                 preload_runtime_ui=staged_preload,
@@ -187,12 +208,22 @@ class QtApplicationUiHostTests(unittest.TestCase):
             def cleanup(self):
                 pass
 
+        class HelpWindowController:
+            def __init__(self, application):
+                pass
+
+            def cleanup(self):
+                pass
+
         modules = {
             "lib.script.SEanima.animation": types.SimpleNamespace(
                 get_start_exit_animation=lambda: Animation(),
             ),
             "lib.script.ui.announcement_dialog": types.SimpleNamespace(
                 AnnouncementController=AnnouncementController,
+            ),
+            "lib.script.ui.help_window": types.SimpleNamespace(
+                HelpWindowController=HelpWindowController,
             ),
             "lib.script.ui.preloader": types.SimpleNamespace(
                 preload_runtime_ui=lambda: (calls.append("staged"), Preloader())[1],

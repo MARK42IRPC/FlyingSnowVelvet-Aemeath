@@ -16,12 +16,17 @@ from PyQt5.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
+from lib.core.event.center import Event, EventType, get_event_center
+from lib.core.logger import get_logger
 from lib.core.qt_bridge.font import get_ui_font
 from config.scale import scale_px
+
+_logger = get_logger(__name__)
 
 
 SETTINGS_LABEL_WIDTH = scale_px(176, min_abs=156)
@@ -156,16 +161,45 @@ class SettingsPageHeader(QFrame):
 
 
 class SettingsSection(QFrame):
-    def __init__(self, title: str, description: str = "", parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        title: str,
+        description: str = "",
+        parent: QWidget | None = None,
+        *,
+        help_text: str = "",
+    ) -> None:
         super().__init__(parent)
         self.setObjectName("SettingsSection")
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        #: 问号按钮要不要出现、点了弹什么，都由这一份分类说明决定。
+        self._help_text = str(help_text or "").strip()
 
         self.title_label = QLabel(title, self)
         self.title_label.setObjectName("SettingsSectionTitle")
         title_font = get_ui_font(size=scale_px(13, min_abs=11))
         title_font.setBold(True)
         self.title_label.setFont(title_font)
+
+        # 小标题右侧的灰色问号：只负责发事件，具体弹窗由帮助窗口控制器订阅后展示。
+        # 没有帮助文案的分类不显示问号，免得点开一个空窗口。
+        self.help_button = QToolButton(self)
+        self.help_button.setObjectName("SettingsSectionHelpButton")
+        self.help_button.setText("?")
+        self.help_button.setCursor(Qt.PointingHandCursor)
+        self.help_button.setFocusPolicy(Qt.NoFocus)
+        self.help_button.setFixedSize(scale_px(16, min_abs=14), scale_px(16, min_abs=14))
+        self.help_button.setToolTip(f"{title} 是什么？")
+        self.help_button.setAccessibleName(f"{title} 帮助")
+        self.help_button.setVisible(bool(self._help_text))
+        self.help_button.clicked.connect(self._request_help)
+
+        title_row = QHBoxLayout()
+        title_row.setContentsMargins(0, 0, 0, 0)
+        title_row.setSpacing(scale_px(6, min_abs=5))
+        title_row.addWidget(self.title_label, 0, Qt.AlignVCenter)
+        title_row.addWidget(self.help_button, 0, Qt.AlignVCenter)
+        title_row.addStretch(1)
 
         self.description_label = QLabel(description, self)
         self.description_label.setObjectName("SettingsSectionDescription")
@@ -185,9 +219,36 @@ class SettingsSection(QFrame):
             scale_px(17, min_abs=13),
         )
         layout.setSpacing(scale_px(7, min_abs=5))
-        layout.addWidget(self.title_label)
+        layout.addLayout(title_row)
         layout.addWidget(self.description_label)
         layout.addLayout(self.body_layout)
+
+    # ── 帮助 ─────────────────────────────────────────────────────────
+
+    def set_help_text(self, text: str) -> None:
+        """换掉这一节的帮助文案；空文案同时把问号收起来。"""
+        self._help_text = str(text or "").strip()
+        self.help_button.setVisible(bool(self._help_text))
+
+    def help_text(self) -> str:
+        return self._help_text
+
+    def _request_help(self) -> None:
+        """发一条帮助事件；只要问号可见，文案在 `set_help_text` 里已经保证非空。"""
+        text = self._help_text
+        if not text:
+            return
+        try:
+            get_event_center().publish(
+                Event(
+                    EventType.HELP_WINDOW_REQUEST,
+                    {"title": self.title_label.text(), "text": text},
+                )
+            )
+        except Exception:
+            # 帮助窗口只是辅助信息，事件发布失败不该把设置页点崩；但也不能静默——
+            # 之前这里吞掉过一次「忘记导入 Event」的真 bug。
+            _logger.debug("帮助事件发布失败", exc_info=True)
 
 
 class SettingsActionBar(QFrame):
@@ -286,6 +347,12 @@ class SettingsPageScaffold:
 
     def add_section(self, title: str, description: str = "") -> SettingsSection:
         section = SettingsSection(title, description, self.content)
+        self.content_layout.addWidget(section)
+        return section
+
+    def add_help_section(self, title: str, description: str = "", *, help_text: str = "") -> SettingsSection:
+        """同 `add_section`，但给这一节带上帮助文案（小标题右侧因此出现问号）。"""
+        section = SettingsSection(title, description, self.content, help_text=help_text)
         self.content_layout.addWidget(section)
         return section
 

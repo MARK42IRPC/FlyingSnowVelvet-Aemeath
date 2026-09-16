@@ -2,8 +2,8 @@
 
 生成范围: 所有 *.py 中的 EventCenter subscribe / unsubscribe / publish(Event(EventType.*)) 静态扫描结果
 仓库根目录: C:\Users\白草净华\Desktop\飞行雪绒项目\飞行雪绒WORKINGSPACE
-已发现订阅事件种类: 72
-已发现发布事件种类: 71
+已发现订阅事件种类: 73
+已发现发布事件种类: 72
 
 === 订阅汇总（按事件类型） ===
 
@@ -101,6 +101,11 @@
 
 [GIF_LOOP_COMPLETED]
 - lib/script/mainpet/state.py -> self._on_gif_loop_completed
+
+[HELP_WINDOW_REQUEST]
+- lib/script/ui/help_window.py -> self._on_help_requested [has unsubscribe]
+  载荷: `title`、`text`；打开帮助窗口（同时只保留一个）。
+  发布方: lib/script/ui/workbench_settings_layout.py
 
 [INFORMATION]
 - lib/script/ui/bubble.py -> self._on_information
