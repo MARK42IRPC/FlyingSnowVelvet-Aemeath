@@ -6,16 +6,24 @@ import unittest
 
 from lib.core.forum_api import (
     FORUM_API_BASE,
+    FORUM_IMAGES_PER_POST,
+    FORUM_IMAGE_MAX_BYTES,
     FORUM_REPLY_MAX,
     ForumApiClient,
     ForumApiError,
     format_date,
     format_expiry,
     format_timestamp,
+    image_data_url,
+    image_markdown,
+    image_mime,
+    parse_images,
     parse_like_result,
     parse_post_page,
     parse_tags,
     parse_user,
+    validate_image_bytes,
+    validate_image_ids,
     validate_password,
     validate_reply,
     validate_title,
@@ -342,6 +350,165 @@ class FormatterTests(unittest.TestCase):
         self.assertFalse(ForumSession(token="t", expires_at=0).expired())
         self.assertTrue(ForumSession(token="t", expires_at=100, ).expired(now=200))
         self.assertFalse(ForumSession(token="t", expires_at=300).expired(now=200))
+
+
+PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"\x00" * 24
+GIF_BYTES = b"GIF89a" + b"\x00" * 24
+WEBP_BYTES = b"RIFF\x00\x00\x00\x00WEBP" + b"\x00" * 8
+SVG_BYTES = b"<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>"
+
+
+class ImageParseTests(unittest.TestCase):
+    """图片元信息：服务端给的键就是这一套（`id` 是 32 位十六进制串，不是整数）。"""
+
+    def test_post_keeps_its_images(self) -> None:
+        post = parse_post_page({
+            "posts": [{
+                "id": 12, "title": "带图首帖", "content": "看图 ![截图](/api/images/9f3a)",
+                "images": [{
+                    "id": "9f3a1c", "url": "/api/images/9f3a1c", "mime": "image/png",
+                    "bytes": 20480, "width": 800, "height": 600, "post_id": 12,
+                }],
+            }],
+            "page": 1, "total_pages": 1,
+        }).posts[0]
+        self.assertEqual(post.image_count, 1)
+        self.assertEqual(post.images[0].id, "9f3a1c")
+        self.assertEqual((post.images[0].width, post.images[0].height), (800, 600))
+        self.assertEqual(post.images[0].absolute_url, "")
+
+    def test_a_broken_entry_does_not_hide_the_others(self) -> None:
+        images = parse_images([{"id": "a"}, {"url": "/api/images/b"}, "不是字典", None])
+        self.assertEqual([image.id for image in images], ["a"])
+        self.assertEqual(parse_images(None), ())
+        self.assertEqual(parse_images("9f3a"), ())
+
+    def test_count_follows_the_raw_array(self) -> None:
+        """计数按数组长度算：中间有一条认不出来，也仍然如实报「两张图」。"""
+        post = parse_post_page({"posts": [{"id": 1, "title": "x", "images": [{"id": "a"}, {}]}],
+                                "page": 1, "total_pages": 1}).posts[0]
+        self.assertEqual(post.image_count, 2)
+        self.assertEqual(len(post.images), 1)
+        fallback = parse_post_page({"posts": [{"id": 2, "title": "x", "image_count": 3}],
+                                   "page": 1, "total_pages": 1}).posts[0]
+        self.assertEqual(fallback.image_count, 3)
+
+
+class ImageTypeTests(unittest.TestCase):
+    def test_magic_numbers_are_recognised(self) -> None:
+        self.assertEqual(image_mime(PNG_BYTES), "image/png")
+        self.assertEqual(image_mime(GIF_BYTES), "image/gif")
+        self.assertEqual(image_mime(WEBP_BYTES), "image/webp")
+        self.assertEqual(image_mime(b"\xff\xd8\xff\xe0more"), "image/jpeg")
+        self.assertEqual(image_mime(SVG_BYTES), "")
+        self.assertEqual(image_mime(b""), "")
+        self.assertEqual(image_mime(None), "")
+
+    def test_data_url_carries_the_sniffed_type(self) -> None:
+        import base64
+
+        url = image_data_url(PNG_BYTES)
+        self.assertTrue(url.startswith("data:image/png;base64,"))
+        self.assertEqual(base64.b64decode(url.split(",", 1)[1]), PNG_BYTES)
+
+    def test_validation_says_why_it_refuses(self) -> None:
+        self.assertEqual(validate_image_bytes(PNG_BYTES), "")
+        self.assertIn("是空的", validate_image_bytes(b""))
+        self.assertIn("PNG", validate_image_bytes(SVG_BYTES))
+        self.assertIn("PNG", validate_image_bytes(PNG_BYTES, mime="image/svg+xml"))
+        too_big = PNG_BYTES + b"\x00" * FORUM_IMAGE_MAX_BYTES
+        self.assertIn("上限", validate_image_bytes(too_big))
+
+    def test_image_count_limit(self) -> None:
+        self.assertEqual(validate_image_ids(["a", "b"]), "")
+        too_many = [f"id{index}" for index in range(FORUM_IMAGES_PER_POST + 1)]
+        self.assertIn("最多", validate_image_ids(too_many))
+
+    def test_markdown_round_trip(self) -> None:
+        from lib.core.forum_api import ForumImage
+        from lib.core.forum_markdown import render_blocks
+
+        self.assertEqual(image_markdown("9f3a1c"), "![图片](/api/images/9f3a1c)")
+        self.assertEqual(
+            image_markdown(ForumImage(id="abc"), alt="截图"),
+            "![截图](/api/images/abc)",
+        )
+        self.assertIn("【图片】截图", render_blocks(image_markdown("9f3a1c", alt="截图"))[0].text)
+
+
+class ImageRequestTests(unittest.TestCase):
+    def _client(self, *responses, token: str = ""):
+        request = FakeRequest(*responses)
+        return ForumApiClient(token=token, request=request), request
+
+    def test_upload_sends_a_data_url_and_reads_the_image_back(self) -> None:
+        client, request = self._client(
+            ok({"image": {"id": "9f3a1c", "url": "/api/images/9f3a1c", "mime": "image/png",
+                           "bytes": 28, "width": 8, "height": 8},
+                "markdown": "![image](/api/images/9f3a1c)"}),
+            token="t",
+        )
+        image = client.upload_image(image_data_url(PNG_BYTES))
+        self.assertEqual(image.id, "9f3a1c")
+        call = request.calls[0]
+        self.assertEqual((call["method"], call["url"]), ("POST", f"{FORUM_API_BASE}/images"))
+        self.assertTrue(call["json"]["data"].startswith("data:image/png;base64,"))
+        self.assertEqual(call["headers"]["Authorization"], "Bearer t")
+
+    def test_upload_failure_stays_a_forum_error(self) -> None:
+        client, _request = self._client(fail(413, "payload_too_large", "图片超过上限，压缩后重传"), token="t")
+        with self.assertRaises(ForumApiError) as ctx:
+            client.upload_image(image_data_url(PNG_BYTES))
+        self.assertEqual(ctx.exception.status, 413)
+        # 通用文案；图片上传那条链路上另有更具体的一句「单张 ≤1.5 MB」（服务层给）。
+        self.assertIn("太大", ctx.exception.friendly())
+
+    def test_upload_without_an_image_id_is_an_error(self) -> None:
+        client, _request = self._client(ok({"markdown": "![image](/api/images/x)"}), token="t")
+        with self.assertRaises(ForumApiError) as ctx:
+            client.upload_image(image_data_url(PNG_BYTES))
+        self.assertEqual(ctx.exception.code, "bad_response")
+
+    def test_fetch_returns_the_bytes_without_a_token(self) -> None:
+        client, request = self._client(FakeResponse({}, content=PNG_BYTES))
+        self.assertEqual(client.fetch_image("9f3a1c"), PNG_BYTES)
+        call = request.calls[0]
+        self.assertEqual(call["method"], "GET")
+        self.assertEqual(call["url"], f"{FORUM_API_BASE}/images/9f3a1c")
+        self.assertNotIn("Authorization", call["headers"])
+
+    def test_fetch_failures_are_explained(self) -> None:
+        client, _request = self._client(FakeResponse({}, status_code=404, content=b""))
+        with self.assertRaises(ForumApiError) as ctx:
+            client.fetch_image("gone")
+        self.assertEqual(ctx.exception.status, 404)
+        client, _request = self._client(FakeResponse({}, content=b""))
+        with self.assertRaises(ForumApiError):
+            client.fetch_image("empty")
+        client, _request = self._client()
+        with self.assertRaises(ForumApiError) as ctx:
+            client.fetch_image("  ")
+        self.assertEqual(ctx.exception.code, "bad_request")
+        client, _request = self._client(FakeResponse({}, content=b"x" * (2 * 1024 * 1024 + 1)))
+        with self.assertRaises(ForumApiError):
+            client.fetch_image("huge")
+
+    def test_create_post_attaches_the_images(self) -> None:
+        from lib.core.forum_api import ForumImage
+
+        client, request = self._client(ok({"post": {"id": 31, "images": [{"id": "9f3a1c"}]}}), token="t")
+        post = client.create_post("标题", "正文", images=[ForumImage(id="9f3a1c")])
+        self.assertEqual(request.calls[0]["json"]["images"], ["9f3a1c"])
+        self.assertEqual(post.images[0].id, "9f3a1c")
+
+    def test_create_post_caps_the_image_list(self) -> None:
+        client, request = self._client(ok({"post": {"id": 31}}), token="t")
+        ids = [f"id{index}" for index in range(FORUM_IMAGES_PER_POST + 3)]
+        client.create_post("标题", "正文", images=ids)
+        self.assertEqual(len(request.calls[0]["json"]["images"]), FORUM_IMAGES_PER_POST)
+        client, request = self._client(ok({"post": {"id": 31}}), token="t")
+        client.create_post("标题", "正文")
+        self.assertNotIn("images", request.calls[0]["json"])
 
 
 if __name__ == "__main__":

@@ -10,12 +10,14 @@
 - 主站时间戳是**秒**（留言墙是毫秒，两套不能混用），`format_timestamp()` 是这里的口径。
 - 和 `lib/core/forum.py` 一样不导入任何 GUI：请求函数可注入以便测试，线程与回主线程由
   `lib/core/forum_community.py` 负责。
-- 图片接口（`/api/images`）没有接入：浏览帖子只渲染文字，不下载图片字节，打开一篇配图帖
-  不该顺带拉几 MB 流量（正文里的图片按 `lib/core/forum_markdown.py` 的规则降级成占位符）。
+- 图片：`POST /api/images` 传 data URL 拿图，`GET /api/images/:id` 取字节，发帖时用 `images`
+  数组挂上去（单帖最多 4 张、单张 ≤1.5 MB，值见 `GET /api` 的 `limits`）。**取字节永远是显式的**
+  ——拉列表不会顺带下载图片，谁要缩略图谁自己 `fetch_image()`，字节缓存见 `lib/core/forum_images.py`。
 """
 
 from __future__ import annotations
 
+import base64
 from collections.abc import Callable
 from dataclasses import dataclass, field
 import math
@@ -55,6 +57,21 @@ FORUM_USERNAME_MAX = 24
 FORUM_PASSWORD_MIN = 8
 FORUM_DISPLAY_NAME_MAX = 32
 FORUM_TAGS_LIMIT = 50
+
+#: 图片上限（2026-09-16 实测 `GET /api` 的 limits）：单张 ≤1.5 MB、单帖 ≤4 张。
+FORUM_IMAGE_MAX_BYTES = 1500000
+FORUM_IMAGES_PER_POST = 4
+#: 服务端支持的四种类型；SVG 被拒（防 XSS），别把它加进来。
+FORUM_IMAGE_MIMES = ("image/png", "image/jpeg", "image/gif", "image/webp")
+#: 取字节时的兜底上限：服务端本来就 ≤1.5 MB，这里只用来挡住异常响应把内存撑爆。
+FORUM_IMAGE_FETCH_MAX_BYTES = 2 * 1024 * 1024
+#: 上传前的本地魔数校验表：服务端也按魔数认，本地先认一遍是为了少跑一趟网络。
+_IMAGE_MAGIC = (
+    ("image/png", b"\x89PNG\r\n\x1a\n"),
+    ("image/jpeg", b"\xff\xd8\xff"),
+    ("image/gif", b"GIF87a"),
+    ("image/gif", b"GIF89a"),
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,6 +129,8 @@ class ForumPost:
     created_at: int = 0
     updated_at: int = 0
     last_reply_at: int = 0
+    #: 帖子挂着的图片（列表接口也会带回来，所以列表能直接铺缩略图）。
+    images: tuple[ForumImage, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,6 +160,8 @@ class ForumReply:
     updated_at: int = 0
     #: 只有 `/users/:name/replies` 会带：这条回复挂在哪个帖子上。
     post_title: str = ""
+    #: 回复挂着的图片（与帖子同一套规则）。
+    images: tuple[ForumImage, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -157,6 +178,25 @@ class ForumReplyPage:
 class ForumTag:
     name: str = ""
     count: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class ForumImage:
+    """一张已上传的图片；`url` 是站内相对路径（正文里就用它），`absolute_url` 是完整地址。
+
+    `id` 是服务端给的 32 位十六进制串（不是整数，别按帖子 id 那样解析）。
+    """
+
+    id: str = ""
+    url: str = ""
+    absolute_url: str = ""
+    mime: str = ""
+    bytes: int = 0
+    width: int = 0
+    height: int = 0
+    post_id: int = 0
+    reply_id: int = 0
+    created_at: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -252,8 +292,12 @@ def parse_session(payload) -> ForumSession:
 def parse_post(payload) -> ForumPost:
     if not isinstance(payload, dict):
         raise ValueError("论坛返回结构异常")
-    images = payload.get("images")
-    image_count = len(images) if isinstance(images, (list, tuple)) else 0
+    raw_images = payload.get("images")
+    images = parse_images(raw_images)
+    # 计数按原始数组长度算：里面有认不出来的条目时，也仍然如实报「有几张图」。
+    image_count = (
+        len(raw_images) if isinstance(raw_images, (list, tuple)) else _as_int(payload.get("image_count"))
+    )
     return ForumPost(
         id=_as_int(payload.get("id")),
         title=_as_text(payload.get("title")),
@@ -271,6 +315,7 @@ def parse_post(payload) -> ForumPost:
         created_at=_as_int(payload.get("created_at")),
         updated_at=_as_int(payload.get("updated_at")),
         last_reply_at=_as_int(payload.get("last_reply_at")),
+        images=images,
     )
 
 
@@ -302,11 +347,44 @@ def parse_post_page(payload) -> ForumPostPage:
     )
 
 
+def parse_image(payload) -> ForumImage | None:
+    """解析一张图片；没有 id 就不是一张有效图片，返回 None。"""
+    if not isinstance(payload, dict):
+        return None
+    ident = _as_text(payload.get("id"))
+    if not ident:
+        return None
+    return ForumImage(
+        id=ident,
+        url=_as_text(payload.get("url")) or f"/api/images/{ident}",
+        absolute_url=_as_text(payload.get("absolute_url")),
+        mime=_as_text(payload.get("mime")).lower(),
+        bytes=_as_int(payload.get("bytes")),
+        width=_as_int(payload.get("width")),
+        height=_as_int(payload.get("height")),
+        post_id=_as_int(payload.get("post_id")),
+        reply_id=_as_int(payload.get("reply_id")),
+        created_at=_as_int(payload.get("created_at")),
+    )
+
+
+def parse_images(value) -> tuple[ForumImage, ...]:
+    """解析图片数组；认不出来的条目直接跳过，不让一张坏图毁掉整篇帖子。"""
+    if not isinstance(value, (list, tuple)):
+        return ()
+    images: list[ForumImage] = []
+    for item in value:
+        image = parse_image(item)
+        if image is not None:
+            images.append(image)
+    return tuple(images)
+
+
 def parse_reply(payload) -> ForumReply:
     if not isinstance(payload, dict):
         raise ValueError("论坛返回结构异常")
     parent = payload.get("parent_id")
-    images = payload.get("images")
+    raw_images = payload.get("images")
     return ForumReply(
         id=_as_int(payload.get("id")),
         post_id=_as_int(payload.get("post_id")),
@@ -315,10 +393,13 @@ def parse_reply(payload) -> ForumReply:
         author=parse_user(payload.get("author")),
         like_count=_as_int(payload.get("like_count")),
         liked_by_me=_as_bool(payload.get("liked_by_me")),
-        image_count=len(images) if isinstance(images, (list, tuple)) else 0,
+        image_count=(
+            len(raw_images) if isinstance(raw_images, (list, tuple)) else _as_int(payload.get("image_count"))
+        ),
         created_at=_as_int(payload.get("created_at")),
         updated_at=_as_int(payload.get("updated_at")),
         post_title=_as_text(payload.get("post_title")),
+        images=parse_images(raw_images),
     )
 
 
@@ -639,8 +720,13 @@ class ForumApiClient:
             raise ForumApiError(0, "bad_response", "论坛没有返回这篇帖子")
         return post
 
-    def create_post(self, title, content, *, tags=None) -> ForumPost:
-        """发一篇新帖；只发标签不传图片（图片接口没接入，见模块开头说明）。"""
+    def create_post(self, title, content, *, tags=None, images=None) -> ForumPost:
+        """发一篇新帖；`images` 是已经上传好的图片（`ForumImage` 或 id 串，最多 4 张）。
+
+        图片要显示在正文里，还得在正文那边写上 `![说明](/api/images/<id>)`
+        （`image_markdown()` 拼这句）；两种做法服务端都认，`images` 只是让接口把图片
+        列表带回来，列表页据此铺缩略图。
+        """
         body: dict[str, object] = {
             "title": _as_text(title),
             "content": str(content or ""),
@@ -648,6 +734,9 @@ class ForumApiClient:
         tag_list = list(_as_tags(tags))
         if tag_list:
             body["tags"] = tag_list
+        image_ids = _image_ids(images)
+        if image_ids:
+            body["images"] = image_ids[:FORUM_IMAGES_PER_POST]
         data = self._call("POST", "/posts", json_body=body)
         post = parse_post(_unwrap(data, "post"))
         if not post.id:
@@ -725,6 +814,66 @@ class ForumApiClient:
             raise ForumApiError(0, "bad_response", "论坛没有返回这条回复")
         return reply
 
+    # ── 图片 ─────────────────────────────────────────────────────────
+
+    def upload_image(self, data_url) -> ForumImage:
+        """上传一张图片：`data_url` 是 `data:image/png;base64,...` 或裸 base64。
+
+        服务端按魔数认真实类型，声明类型和实际不符直接 400，所以本地先用
+        `validate_image_bytes()` 拦一道。上传成功只是把图片存进图库，要显示在帖子里
+        还得发帖时挂上去（见 `create_post()` 的 `images`）。
+        """
+        data = self._call("POST", "/images", json_body={"data": str(data_url or "")})
+        image = parse_image(_unwrap(data, "image"))
+        if image is None:
+            raise ForumApiError(0, "bad_response", "论坛没有返回这张图片")
+        return image
+
+    def fetch_image(self, image_id) -> bytes:
+        """取图片字节；`GET /api/images/:id` 返回的是字节流而不是 JSON，所以不走 `_call`。
+
+        不需要 token。拿不到（404 / 网络 / 空内容）一律抛 `ForumApiError`，调用方当作
+        「这张图没有」处理即可——列表缩略图就是这么用的，不为了缺一张图打断整页。
+        """
+        ident = _as_text(image_id)
+        if not ident:
+            raise ForumApiError(0, "bad_request", "图片编号是空的")
+        try:
+            response = self._request(
+                "GET",
+                self.image_url(ident),
+                json=None,
+                params=None,
+                headers=dict(FORUM_API_HEADERS),
+                timeout=self._timeout,
+            )
+        except Exception as exc:
+            raise ForumApiError(0, "network", str(exc)) from exc
+        try:
+            status = _as_int(getattr(response, "status_code", 0))
+            content = getattr(response, "content", b"") or b""
+        finally:
+            close = getattr(response, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    pass
+        if status >= 400:
+            raise ForumApiError(status, "", "图片取不回来")
+        if not isinstance(content, (bytes, bytearray)):
+            raise ForumApiError(0, "bad_response", "论坛返回的图片不是字节流")
+        data = bytes(content)
+        if not data:
+            raise ForumApiError(0, "bad_response", "论坛返回了一张空图片")
+        if len(data) > FORUM_IMAGE_FETCH_MAX_BYTES:
+            raise ForumApiError(0, "too_large", "图片比允许的还大，不下载了")
+        return data
+
+    def image_url(self, image_id) -> str:
+        """`GET /api/images/:id` 的完整地址（正文里写相对路径，这里给的是绝对地址）。"""
+        return f"{self._base_url}/images/{_as_text(image_id)}"
+
     # ── 点赞 ─────────────────────────────────────────────────────────
 
     def like_post(self, post_id, *, liked: bool = True) -> ForumLikeResult:
@@ -765,6 +914,81 @@ def _clamp_per_page(value) -> int:
 def _normalize_sort(value) -> str:
     sort = _as_text(value).lower()
     return sort if sort in FORUM_API_SORTS else FORUM_DEFAULT_SORT
+
+
+def image_mime(data) -> str:
+    """按魔数认图片真实类型；认不出来返回空串。
+
+    PNG / JPEG / GIF 一看头几个字节就知道；WebP 的魔数藏在 RIFF 头里（第 8–12 字节是
+    `WEBP`），所以单独判一次。认不出来就是「这种文件论坛不收」，SVG 走的也是这条路。
+    """
+    if not isinstance(data, (bytes, bytearray)) or not data:
+        return ""
+    head = bytes(data[:16])
+    for mime, magic in _IMAGE_MAGIC:
+        if head.startswith(magic):
+            return mime
+    if head.startswith(b"RIFF") and head[8:12] == b"WEBP":
+        return "image/webp"
+    return ""
+
+
+def validate_image_bytes(data, *, mime: str = "") -> str:
+    """上传前的本地校验：空 / 太大 / 类型不认识各给一句话，通过返回空串。
+
+    真正说了算的仍是服务端（它也按魔数认），这里只是别让用户白等一次往返。
+    """
+    if not isinstance(data, (bytes, bytearray)) or not data:
+        return "这个文件是空的，换一张图片试试"
+    if len(data) > FORUM_IMAGE_MAX_BYTES:
+        return (
+            f"图片有 {len(data) // 1024} KB，超过论坛 {FORUM_IMAGE_MAX_BYTES // 1000} KB 的上限，"
+            "压缩一下再传"
+        )
+    if not image_mime(data):
+        return "论坛只收 PNG / JPEG / GIF / WebP 图片（SVG 会被拒），换一张试试"
+    declared = str(mime or "").strip().lower()
+    if declared and declared not in FORUM_IMAGE_MIMES:
+        return "论坛只收 PNG / JPEG / GIF / WebP 图片（SVG 会被拒），换一张试试"
+    return ""
+
+
+def image_data_url(data, *, mime: str = "") -> str:
+    """把图片字节拼成上传用的 data URL；类型按魔数认，认不出就用调用方给的。"""
+    raw = bytes(data or b"")
+    kind = image_mime(raw) or str(mime or "").strip().lower() or "application/octet-stream"
+    return f"data:{kind};base64,{base64.b64encode(raw).decode('ascii')}"
+
+
+def image_markdown(image, *, alt: str = "") -> str:
+    """正文里插这张图用的 Markdown；`alt` 是图说，空着就用「图片」。"""
+    ident = getattr(image, "id", None) or image
+    label = _as_text(alt) or "图片"
+    return f"![{label}](/api/images/{_as_text(ident)})"
+
+
+def validate_image_ids(ids) -> str:
+    """单帖图片张数的本地校验；超了返回一句话，通过返回空串。"""
+    count = len(_image_ids(ids))
+    if count > FORUM_IMAGES_PER_POST:
+        return f"一个帖子最多挂 {FORUM_IMAGES_PER_POST} 张图，现在有 {count} 张"
+    return ""
+
+
+def _image_ids(images) -> list[str]:
+    """把 `ForumImage` / id 串 / 混合列表统一成 id 串列表，顺序与去重照原样。"""
+    if images in (None, ""):
+        return []
+    if isinstance(images, (ForumImage, str)):
+        images = [images]
+    if not isinstance(images, (list, tuple, set)):
+        return []
+    seen: list[str] = []
+    for item in images:
+        ident = _as_text(getattr(item, "id", None) or item)
+        if ident and ident not in seen:
+            seen.append(ident)
+    return seen
 
 
 def validate_username(username) -> str:
@@ -843,6 +1067,10 @@ __all__ = [
     "FORUM_CONTENT_MAX",
     "FORUM_DEFAULT_SORT",
     "FORUM_DISPLAY_NAME_MAX",
+    "FORUM_IMAGES_PER_POST",
+    "FORUM_IMAGE_FETCH_MAX_BYTES",
+    "FORUM_IMAGE_MAX_BYTES",
+    "FORUM_IMAGE_MIMES",
     "FORUM_PASSWORD_MIN",
     "FORUM_REPLY_MAX",
     "FORUM_SORT_LABELS",
@@ -855,6 +1083,7 @@ __all__ = [
     "FORUM_USERNAME_MIN",
     "ForumApiClient",
     "ForumApiError",
+    "ForumImage",
     "ForumLikeResult",
     "ForumPost",
     "ForumPostPage",
@@ -866,6 +1095,11 @@ __all__ = [
     "format_date",
     "format_expiry",
     "format_timestamp",
+    "image_data_url",
+    "image_markdown",
+    "image_mime",
+    "parse_image",
+    "parse_images",
     "parse_like_result",
     "parse_post",
     "parse_post_page",
@@ -875,6 +1109,8 @@ __all__ = [
     "parse_tags",
     "parse_user",
     "validate_content",
+    "validate_image_bytes",
+    "validate_image_ids",
     "validate_password",
     "validate_tags",
     "validate_reply",
