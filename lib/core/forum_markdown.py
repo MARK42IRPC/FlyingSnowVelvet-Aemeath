@@ -4,6 +4,10 @@
 只做适合一个侧栏宽度的降级：标题、引用、列表、代码块、分隔线各自成块，行内标记洗成
 纯文本，图片降级成「【图片】」占位符而不是下载字节。
 
+颜色令牌（`[color=#rrggbb]` 一类）是唯一的例外：它不是标记而是**分段信息**，所以
+`_strip_inline()` 不动它，由 `_with_runs()` 统一切成 `ForumTextRun`，`text` 只留可见
+文字、`runs` 带着每段的颜色（详情页按段着色）。
+
 刻意不引入 Markdown 库，也不生成 HTML：帖子正文可能带 `<script>` 一类标签，纯文本投影
 既躲开注入，又让渲染成本与正文长度线性相关（一段一个 QLabel，超出上限就截断）。
 """
@@ -12,6 +16,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
+
+from lib.core.forum_colors import ForumTextRun, color_runs
 
 BLOCK_PARAGRAPH = "paragraph"
 BLOCK_HEADING = "heading"
@@ -45,12 +51,17 @@ MAX_URL_CHARS = 60
 
 @dataclass(frozen=True, slots=True)
 class ForumBlock:
-    """详情页的一段：`kind` 决定字体与缩进，`text` 是已经洗掉标记的纯文本。"""
+    """详情页的一段：`kind` 决定字体与缩进，`text` 是已经洗掉标记的纯文本。
+
+    `runs` 是按颜色切好的段（见 `lib/core/forum_colors.py`）：没有颜色令牌时是空元组，
+    渲染方据此走「不用着色」的快路径；有颜色时 `"".join(run.text) == text`。
+    """
 
     kind: str = BLOCK_PARAGRAPH
     text: str = ""
     level: int = 0
     marker: str = ""
+    runs: tuple[ForumTextRun, ...] = ()
 
 
 def _strip_inline(text: str) -> str:
@@ -80,6 +91,22 @@ def _strip_inline(text: str) -> str:
             break
         text = replaced
     return _SPACE_RE.sub(" ", text).strip()
+
+
+def _with_runs(block: ForumBlock) -> ForumBlock:
+    """给一块补上「按颜色切好的段」，顺手把令牌从 `text` 里去掉。
+
+    颜色令牌是纯文本，`_strip_inline()` 不认识它：早先它会原样留在正文里，详情页把
+    `[color=#ff0000]` 当普通字显示出来（列表摘要也一样）。这里统一按 `forum_colors`
+    的语法切段：`text` 只留可见文字，颜色走 `runs`；没有令牌时原样返回，`runs` 保持空。
+    """
+    runs = color_runs(block.text)
+    plain = "".join(run.text for run in runs)
+    if plain == block.text:
+        return block
+    return ForumBlock(
+        kind=block.kind, text=plain, level=block.level, marker=block.marker, runs=runs
+    )
 
 
 def _table_row(text: str) -> str | None:
@@ -198,7 +225,7 @@ def render_blocks(
         flush_code()
     if truncated:
         blocks.append(ForumBlock(kind=BLOCK_PARAGRAPH, text="（正文过长，这里只显示前面一段）"))
-    return tuple(blocks)
+    return tuple(_with_runs(block) for block in blocks)
 
 
 def plain_text(content, *, limit: int | None = None) -> str:

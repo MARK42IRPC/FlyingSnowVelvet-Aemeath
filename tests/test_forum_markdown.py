@@ -83,6 +83,38 @@ class RenderTests(unittest.TestCase):
         self.assertEqual(len(blocks[0].text), 100)
 
 
+class ColorRunTests(unittest.TestCase):
+    """颜色令牌不是标记而是分段信息：`text` 只留可见文字，颜色走 `runs`。"""
+
+    def test_tokens_are_not_shown_as_text(self) -> None:
+        blocks = render_blocks("[color=#ff0000]红[/color]黑字")
+        self.assertEqual(blocks[0].text, "红黑字")
+        self.assertNotIn("color", plain_text("[color=#ff0000]红[/color]黑字"))
+        self.assertNotIn("color", excerpt("[color=#ff0000]红[/color]黑字"))
+
+    def test_runs_carry_each_paragraphs_colours(self) -> None:
+        blocks = render_blocks("[color=#ff0000]红[/color]黑\n\n> [outline=#00ff00]绿边[/outline]尾")
+        self.assertEqual(
+            [(run.text, run.color, run.outline) for run in blocks[0].runs],
+            [("红", "#ff0000", ""), ("黑", "", "")],
+        )
+        self.assertEqual(
+            [(run.text, run.color, run.outline) for run in blocks[1].runs],
+            [("绿边", "", "#00ff00"), ("尾", "", "")],
+        )
+
+    def test_blocks_without_tokens_have_no_runs(self) -> None:
+        """没有令牌时 `runs` 保持空元组：渲染方据此走「不用着色」的快路径。"""
+        blocks = render_blocks("# 标题\n\n正文")
+        self.assertEqual([block.runs for block in blocks], [(), ()])
+
+    def test_joined_runs_always_match_the_block_text(self) -> None:
+        content = "# [color=#ff0000]标题[/color]\n\n- [outline=#0000ff]甲[/outline]\n\n```\n[color=#ffffff]代码[/color]\n```"
+        for block in render_blocks(content):
+            if block.runs:
+                self.assertEqual("".join(run.text for run in block.runs), block.text)
+
+
 class PlainTextTests(unittest.TestCase):
     def test_plain_text_joins_blocks_on_one_line(self) -> None:
         self.assertEqual(plain_text("# 标题\n\n正文一\n\n- 正文二"), "标题 正文一 正文二")
