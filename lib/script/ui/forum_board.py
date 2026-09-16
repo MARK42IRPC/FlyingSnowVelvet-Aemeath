@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from PyQt5 import sip
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QPixmap, QTextCursor
 from PyQt5.QtWidgets import (
@@ -132,6 +133,25 @@ def _apply_like_state(button: QToolButton, liked: bool, count: int, prefix: str 
     if style is not None:
         style.unpolish(button)
         style.polish(button)
+
+
+def _clear_layout(layout) -> None:
+    """把一个（嵌套）布局里的控件全部摘掉并排队销毁，更深一层的布局一样处理。
+
+    `QLayout.takeAt()` 只把子布局从这一层摘下来：布局本身还攥着自己的控件不放，得连它
+    一起清，否则那些控件会留在页面上（`_clear_detail_body()` 的正文配图行就是这么漏的）。
+    """
+    while layout.count():
+        item = layout.takeAt(0)
+        widget = item.widget()
+        if widget is not None:
+            widget.setParent(None)
+            widget.deleteLater()
+            continue
+        child = item.layout()
+        if child is not None:
+            _clear_layout(child)
+            child.deleteLater()
 
 
 def _color_span_at(text, caret: int, kind: str) -> tuple[int, int] | None:
@@ -1660,6 +1680,13 @@ class ForumBoardPage(QWidget):
             if widget is not None:
                 widget.setParent(None)
                 widget.deleteLater()
+                continue
+            # 正文配图那一行是**嵌套布局**（`_add_body_images()` 走的是 `addLayout()`）：
+            # 只 takeAt 不删它，里面那几张缩略图就一直挂在详情页上（换帖之后是残影）。
+            layout = item.layout()
+            if layout is not None:
+                _clear_layout(layout)
+                layout.deleteLater()
 
     def _clear_rows(self) -> None:
         while self._list_layout.count() > 1:
@@ -1671,11 +1698,13 @@ class ForumBoardPage(QWidget):
         self._rows.clear()
 
     def _clear_reply_rows(self) -> None:
-        hint = getattr(self, "_empty_hint", None)
+        hint = self._live_empty_hint()
         while self._replies_layout.count():
             item = self._replies_layout.takeAt(0)
             widget = item.widget()
             if widget is None or widget is hint:
+                continue
+            if sip.isdeleted(widget):
                 continue
             widget.setParent(None)
             widget.deleteLater()
@@ -1685,11 +1714,27 @@ class ForumBoardPage(QWidget):
         self._reply_rows.clear()
         self._floor_by_id.clear()
 
-    def _empty_reply_hint(self) -> QLabel:
-        """「还没有人回复」的空态；常驻同一个标签，不重复创建、也不跟着回复行被删。"""
+    def _live_empty_hint(self) -> QLabel | None:
+        """常驻的空态标签；底下的 C++ 对象已经不在了就当它没有（`sip.isdeleted`）。"""
         hint = getattr(self, "_empty_hint", None)
+        if hint is None or sip.isdeleted(hint):
+            return None
+        return hint
+
+    def _empty_reply_hint(self) -> QLabel:
+        """「还没有人回复」的空态；常驻同一个标签，不重复创建、也不跟着回复行被删。
+
+        `self._empty_hint` 只是 Python 侧的引用：控件在别处被销毁之后这个引用还在，继续用
+        就会在 `setVisible()` 上抛「wrapped C/C++ object of type QLabel has been deleted」，
+        整个 `on_replies` / `on_reply_posted` 回调当场中断——用户看到的就是「回复列表不显示」
+        （2026-09-16 线上日志实测）。所以每次都先确认底下的 C++ 对象还活着，死了就重建一个、
+        并把这件事写进日志：回复列表绝不能因为一个提示标签而整片空掉。
+        """
+        hint = self._live_empty_hint()
         if hint is not None:
             return hint
+        if getattr(self, "_empty_hint", None) is not None:
+            logger.warning("[ForumBoard] 空态提示已被销毁，重建一个（回复列表不该因此中断）")
         hint = QLabel("还没有人回复，来做第一个吧", self._replies_host)
         hint.setObjectName("ForumEmptyHint")
         hint.setFont(_font(11))

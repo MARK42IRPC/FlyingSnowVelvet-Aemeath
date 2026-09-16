@@ -21,6 +21,7 @@ os.environ.setdefault(
 )
 os.environ.setdefault("QT_PLUGIN_PATH", os.path.join(_QT_ROOT, "Qt5", "plugins"))
 
+from PyQt5 import sip
 from PyQt5.QtCore import QEvent, QPointF, Qt
 from PyQt5.QtGui import QFont, QMouseEvent, QTextCursor
 from PyQt5.QtWidgets import QApplication
@@ -394,6 +395,23 @@ class DetailTests(BoardPageTestCase):
         self.page.on_reply_posted(reply(9), 2)
         self._settle()
         self.assertEqual(sorted(self.page._reply_rows), [7, 9])
+
+    def test_the_reply_list_survives_a_destroyed_empty_hint(self) -> None:
+        """空态提示被别处销毁，也不能把整片回复列表带走。
+
+        `self._empty_hint` 只是个 Python 侧引用：底下的 C++ 对象一没，`setVisible()` 就抛
+        「wrapped C/C++ object of type QLabel has been deleted」，`on_replies` 当场中断——
+        用户看到的就是「回复列表不显示」（2026-09-16 线上日志实测）。这里是比「别删它」更强
+        的一道闸：真被删了就当它没有、重建一个，回复行照铺。
+        """
+        self.page._stack.setCurrentIndex(1)
+        sip.delete(self.page._empty_hint)
+        self.page.on_replies(ForumReplyPage(replies=(reply(7),), page=1, total=1), False)
+        self._settle()
+        self.assertEqual(sorted(self.page._reply_rows), [7])
+        self.assertIn("回复（1）", self.page._replies_title.text())
+        self.assertFalse(self.page._empty_reply_hint().isVisible())
+        self.assertIs(self.page._empty_reply_hint().parent(), self.page._replies_host)
 
     def test_a_second_page_of_the_same_post_keeps_the_hint_alive(self) -> None:
         """同一篇帖子反复铺回复（切页 / 重进详情）时，空态提示始终是同一个活控件。"""
@@ -912,6 +930,22 @@ class DetailBodyTests(BoardPageTestCase):
             [item[1]["image_id"] for item in self.service.calls if item[0] == "load_thumbnail"],
             ["a" * 32],
         )
+
+    def test_switching_posts_takes_the_previous_images_away(self) -> None:
+        """换一篇帖子时，正文配图那一行连它里面的缩略图都要一起清掉。
+
+        配图行是 `addLayout()` 塞进 `_detail_body` 的**嵌套布局**：`takeAt()` 只把它从这一层
+        摘下来，布局本身还攥着缩略图不放——只要那个布局对象还被谁引用着（信号、闭包、调试器
+        都算），旧图就一直挂在详情页上，压在回复区那一块（用户看到的是「回复列表不显示」）。
+        """
+        self.open("正文", images=(ForumImage(id="a" * 32),))
+        strip = self.page._detail_body.itemAt(1).layout()
+        self.assertIsNotNone(strip)
+        self.assertEqual(strip.count(), 2)  # 一张缩略图 + 末尾那条撑开的空白
+        self.open("另一篇，没有图")
+        self.assertEqual(self.page._detail_host.findChildren(ForumImageThumb), [])
+        self.assertEqual(strip.count(), 0)
+        self.assertEqual(self.page._detail_body.count(), 1)
 
 if __name__ == "__main__":
     unittest.main()
