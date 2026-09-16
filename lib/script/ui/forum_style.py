@@ -267,6 +267,22 @@ def forum_stylesheet(mode: str | None = None) -> str:
             color: {c.text};
         }}
         QWidget#ForumColorControl {{ background: transparent; }}
+        QCheckBox#ForumColorToggle {{
+            color: {c.text_muted};
+            spacing: {scale_px(5, min_abs=4)}px;
+        }}
+        QCheckBox#ForumColorToggle::indicator {{
+            width: {scale_px(12, min_abs=10)}px;
+            height: {scale_px(12, min_abs=10)}px;
+            border: {border}px solid {c.border_strong};
+            border-radius: {scale_px(2, min_abs=2)}px;
+            background: {c.surface_raised};
+        }}
+        QCheckBox#ForumColorToggle::indicator:hover {{ border-color: {c.cyan}; }}
+        QCheckBox#ForumColorToggle::indicator:checked {{
+            background: {c.cyan};
+            border-color: {c.cyan};
+        }}
         QFrame#ForumColorPreview {{ border-radius: {scale_px(2, min_abs=2)}px; }}
         QWidget#ForumWindow QScrollBar:vertical {{
             background: {c.canvas};

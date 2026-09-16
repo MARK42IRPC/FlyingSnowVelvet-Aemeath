@@ -12,16 +12,26 @@
 from __future__ import annotations
 
 from PyQt5.QtCore import QRect, Qt, pyqtSignal
-from PyQt5.QtGui import QColor, QLinearGradient, QPainter
+from PyQt5.QtGui import QColor, QLinearGradient, QPainter, QPen
 from PyQt5.QtWidgets import QWidget
 
 from config.scale import scale_px
-from lib.core.graphics.media_panel_visuals import build_slider_visual, slider_ratio_at
+from lib.core.graphics.commands import DrawBatch
+from lib.core.graphics.media_panel_visuals import (
+    PROGRESS_PANEL_HEIGHT,
+    build_slider_visual,
+    slider_ratio_at,
+    slider_track_rect,
+)
+from lib.core.graphics.panel_visuals import UI_THEME, slider_handle_commands
+from lib.core.graphics.types import Rect
 from lib.core.layer import Layer
 from lib.core.qt_bridge.draw_backend import QtDrawBackend
 from lib.script.ui.forum_style import forum_picker_track_color
-#: 滑条高度与圆角：比留言卡片正文更细，作为取色的辅助控件不抢视线。
-SLIDER_HEIGHT = scale_px(14, min_abs=12)
+
+#: 滑条高度直接取共享滑条（音乐进度条、音响音量条）的高度。三层外框和竖把手的比例都
+#: 跟着这个高度走，取色滑条因此和播放进度条是同一套控件语言，而不是一条被压扁的细条。
+SLIDER_HEIGHT = PROGRESS_PANEL_HEIGHT
 #: 明度下限不是 0：全黑在深色主题上等于隐形，留一点可见度。
 MIN_LIGHTNESS = 0.18
 MAX_LIGHTNESS = 1.0
@@ -95,8 +105,13 @@ class ForumColorSlider(QWidget):
         self._gradient_stops = stops
         self.update()
 
-    def track_rect(self) -> QRect:
-        return QRect(*_track_geometry(self.width(), self.height()))
+    def track_rect(self) -> Rect:
+        """轨道矩形，直接取共享滑条那份几何。
+
+        返回后端的 ``Rect`` 而不是 ``QRect``：命中测试要把它交给 ``slider_ratio_at``，
+        两者用同一份几何，绘制轨道和点击落点不会各算各的。
+        """
+        return slider_track_rect(width=self.width(), height=self.height())
 
     # ── 交互 ─────────────────────────────────────────────────────────
 
@@ -143,8 +158,13 @@ class ForumColorSlider(QWidget):
             ticks=0,
             layer=int(Layer.PANEL),
         )
-        QtDrawBackend().render(visual.batch, painter)
+        # 顺序要紧：先让共享滑条铺一遍外壳（外框与青 / 粉两层圈都由它保证和其它滑条一致），
+        # 再把渐变盖进轨道，最后把竖把手重画到渐变之上。原来的顺序让渐变和压暗层埋掉了
+        # 把手，滑条看上去像没有把手。
+        backend = QtDrawBackend()
+        backend.render(visual.batch, painter)
         self._paint_gradient(painter, visual.track_rect)
+        self._paint_handle(painter, backend, visual.track_rect)
         painter.end()
 
     def _paint_gradient(self, painter: QPainter, track) -> None:
@@ -171,13 +191,34 @@ class ForumColorSlider(QWidget):
                 QRect(rect.x() + filled, rect.y(), remaining, rect.height()),
                 QColor(0, 0, 0, 96),
             )
+        # 一圈 1px 暗描边把渐变收进面板里，和外壳的黑 / 青两层圈是同一套做法。
+        self._stroke_inside(painter, rect)
 
+    def _paint_handle(self, painter: QPainter, backend: QtDrawBackend, track) -> None:
+        """把共享滑条的竖把手重画在渐变之上，任何色相上都看得见当前位置。"""
+        center = float(track.x) + self._ratio * float(track.width)
+        commands, rect = slider_handle_commands(
+            center,
+            track,
+            UI_THEME["deep_pink"],
+            layer=int(Layer.PANEL),
+        )
+        backend.render(DrawBatch(tuple(commands)), painter)
+        self._stroke_inside(
+            painter,
+            QRect(int(rect.x), int(rect.y), int(rect.width), int(rect.height)),
+        )
 
-def _track_geometry(width: int, height: int) -> tuple[int, int, int, int]:
-    """滑条内部轨道矩形（去掉三层外框）。"""
-    track = slider_track_rect(width=width, height=height)
-    return track.x, track.y, track.width, track.height
-
+    @staticmethod
+    def _stroke_inside(painter: QPainter, rect: QRect) -> None:
+        """沿矩形内侧描 1px 暗边；描在内侧所以不会溢到外框上。"""
+        width = int(rect.width()) - 1
+        height = int(rect.height()) - 1
+        if width <= 0 or height <= 0:
+            return
+        painter.setPen(QPen(QColor(0, 0, 0), 1))
+        painter.setBrush(Qt.NoBrush)
+        painter.drawRect(int(rect.x()), int(rect.y()), width, height)
 
 def hue_gradient_stops():
     """色相滑条的渐变停靠点：6 段 60° 覆盖整圈。"""

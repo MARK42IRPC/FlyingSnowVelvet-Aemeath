@@ -19,9 +19,10 @@
 from __future__ import annotations
 
 from PyQt5.QtCore import QEvent, QRectF, Qt, QTimer, pyqtSignal
-from PyQt5.QtGui import QCursor, QPainter
+from PyQt5.QtGui import QColor, QCursor, QPainter, QPainterPath, QPen
 from PyQt5.QtWidgets import (
     QApplication,
+    QCheckBox,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -31,6 +32,7 @@ from PyQt5.QtWidgets import (
     QSizeGrip,
     QSizePolicy,
     QStyle,
+    QStyleOptionButton,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -150,12 +152,49 @@ def violation_message(violation: ForumViolation) -> str:
     return f"{base}（{detail}）" if detail else base
 
 
+class ForumColorToggle(QCheckBox):
+    """论坛取色开关：勾选后在方框里补一个对勾。
+
+    样式表一旦给 `::indicator` 画了背景，Qt 就不再画原生的勾选标记，方框会变成一个实心
+    色块——看上去分不清是「已勾选」还是「只是个色块」。这里按 `QStyle` 给出的 indicator
+    矩形自己描一个对勾，不依赖字体字形，12px 的小方框里也能画准。
+    """
+
+    def paintEvent(self, event) -> None:
+        super().paintEvent(event)
+        if not self.isChecked():
+            return
+        option = QStyleOptionButton()
+        self.initStyleOption(option)
+        rect = self.style().subElementRect(QStyle.SE_CheckBoxIndicator, option, self)
+        if rect.width() <= 2 or rect.height() <= 2:
+            return
+        pen = QPen(QColor(0, 0, 0, 170))
+        pen.setWidthF(max(1.4, rect.height() * 0.16))
+        pen.setCapStyle(Qt.RoundCap)
+        pen.setJoinStyle(Qt.RoundJoin)
+        path = QPainterPath()
+        path.moveTo(rect.x() + rect.width() * 0.26, rect.y() + rect.height() * 0.52)
+        path.lineTo(rect.x() + rect.width() * 0.44, rect.y() + rect.height() * 0.70)
+        path.lineTo(rect.x() + rect.width() * 0.76, rect.y() + rect.height() * 0.30)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setPen(pen)
+        painter.drawPath(path)
+        painter.end()
+
+
 class ForumColorControl(QWidget):
-    """一组「色相 + 明度」滑条：给正文或描边选颜色。
+    """一组「色相 + 明度」滑条：勾选后才给正文或描边选颜色。
+
+    每条颜色控件自带一个复选框：不勾选就收起两条滑条、直接用主题默认色，卡片上也就不写
+    颜色令牌；勾选后才铺开滑条自选。默认的留言因此不会平白多出一串颜色令牌，想改色的
+    人也有一个明确的入口。
 
     两个滑条都是 0.0–1.0 的比例，真正换算成颜色的是 `forum_color_picker.hsl_color()`；
     色相条铺整圈彩虹，明度条铺当前色相的暗→亮渐变，拖哪一条都能立刻从滑条本身看出结果。
-    控件对外只暴露 `color()` 与 `colorChanged`，调用方不用认识 HSL。
+    控件对外暴露 `color()`（当前色）、`token_color()`（写进正文的颜色）、`is_enabled()`
+    与 `colorChanged`，调用方不用认识 HSL。
     """
 
     colorChanged = pyqtSignal(str)
@@ -165,6 +204,7 @@ class ForumColorControl(QWidget):
         self.setObjectName("ForumColorControl")
         self._hue = 0.0
         self._lightness = 0.85
+        self._enabled = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -173,13 +213,17 @@ class ForumColorControl(QWidget):
         header = QHBoxLayout()
         header.setContentsMargins(0, 0, 0, 0)
         header.setSpacing(scale_px(5, min_abs=4))
-        self._label = QLabel(label, self)
-        self._label.setObjectName("ForumHint")
-        self._label.setFont(get_ui_font(size=scale_px(11, min_abs=9)))
+        # 复选框自己带标题：文字也是可点区域，比一个光秃秃的小方框好按。
+        self._toggle = ForumColorToggle(label, self)
+        self._toggle.setObjectName("ForumColorToggle")
+        self._toggle.setFont(get_ui_font(size=scale_px(11, min_abs=9)))
+        self._toggle.setCursor(Qt.PointingHandCursor)
+        self._toggle.setToolTip(f"勾选后才能自定义{label}；不勾选就跟着主题的默认色走。")
+        self._toggle.toggled.connect(self._on_toggled)
         self._preview = QFrame(self)
         self._preview.setObjectName("ForumColorPreview")
         self._preview.setFixedSize(scale_px(22, min_abs=19), scale_px(12, min_abs=10))
-        header.addWidget(self._label, 0)
+        header.addWidget(self._toggle, 0)
         header.addWidget(self._preview, 0)
         header.addStretch(1)
         layout.addLayout(header)
@@ -189,7 +233,7 @@ class ForumColorControl(QWidget):
             gradient_stops=hue_gradient_stops(),
             parent=self,
         )
-        self._hue_slider.setFixedHeight(scale_px(12, min_abs=10))
+        # 高度留给 ForumColorSlider 自己按共享滑条（音乐进度条）定，这里只定宽度：
         # 两个颜色控件并排，各自给一条能看出渐变的宽度。
         self._hue_slider.setMinimumWidth(scale_px(170, min_abs=140))
         layout.addWidget(self._hue_slider)
@@ -198,21 +242,33 @@ class ForumColorControl(QWidget):
             tooltip=f"{label}：拖动选择明度",
             parent=self,
         )
-        self._lightness_slider.setFixedHeight(scale_px(12, min_abs=10))
         self._lightness_slider.setMinimumWidth(scale_px(170, min_abs=140))
         layout.addWidget(self._lightness_slider)
 
         self._hue_slider.valueChanged.connect(self._on_hue_changed)
         self._lightness_slider.valueChanged.connect(self._on_lightness_changed)
+        self._apply_enabled()
         self._sync_preview()
 
     # ── 对外 ─────────────────────────────────────────────────────────
 
+    def is_enabled(self) -> bool:
+        """复选框是否勾选；没勾选时滑条收起，用的就是主题默认色。"""
+        return self._enabled
+
+    def set_enabled(self, enabled: bool) -> None:
+        self._toggle.setChecked(bool(enabled))
+
     def color(self) -> str:
-        return hsl_color(self._hue * 360.0, self._lightness).name()
+        """当前颜色：没勾选时是主题默认色，勾选后是滑条上的颜色。"""
+        return self._slider_color() if self._enabled else self._default_color()
+
+    def token_color(self) -> str:
+        """写进正文令牌的颜色；没勾选时返回空串，卡片于是用默认色。"""
+        return self._slider_color() if self._enabled else ""
 
     def set_color(self, color: str | None) -> None:
-        """按颜色反推两个滑条的位置；传 None 表示回到默认档。"""
+        """按颜色反推两个滑条的位置并勾选这条颜色；传 None 表示回到默认色。"""
         if color:
             hue, lightness = color_to_hsl(color)
             self._hue = max(0.0, min(1.0, hue / 360.0))
@@ -222,15 +278,31 @@ class ForumColorControl(QWidget):
             )
         else:
             self._hue, self._lightness = 0.0, 0.85
+        # 先摆好滑条再切复选框：切换会发 colorChanged，那一刻颜色应该已经是新的。
         self._hue_slider.set_ratio(self._hue)
         self._lightness_slider.set_ratio(self._lightness)
+        self._toggle.setChecked(bool(color))
         self._sync_preview()
 
-    @property
-    def option_label(self) -> QLabel:
-        return self._label
-
     # ── 内部 ─────────────────────────────────────────────────────────
+
+    def _on_toggled(self, checked: bool) -> None:
+        self._enabled = bool(checked)
+        self._apply_enabled()
+        self._sync_preview()
+        self.colorChanged.emit(self.color())
+
+    def _apply_enabled(self) -> None:
+        """没勾选就把两条滑条收起来，控件只剩标题与预览色块。"""
+        for slider in (self._hue_slider, self._lightness_slider):
+            slider.setVisible(self._enabled)
+
+    @staticmethod
+    def _default_color() -> str:
+        return forum_card_text_color()
+
+    def _slider_color(self) -> str:
+        return hsl_color(self._hue * 360.0, self._lightness).name()
 
     def _on_hue_changed(self, ratio: float) -> None:
         self._hue = float(ratio)
@@ -648,15 +720,21 @@ class ForumWindow(QtWorkbenchToolPage):
         return composer
 
     def _sync_input_colors(self) -> None:
-        """把选中的文字色 / 描边色刷到输入框上，选色结果当场可见。"""
+        """把选中的文字色 / 描边色刷到输入框上，选色结果当场可见。
+
+        没勾选的颜色不写规则：清空局部样式表之后，输入框回落到样式表里的默认色，
+        「没启用就用默认色」在输入框这儿也要成立。
+        """
         if not hasattr(self, "_input"):
             return
-        text_color = self._text_color_picker.color()
-        outline_color = self._outline_color_picker.color()
-        self._input.setStyleSheet(
-            f"QLineEdit#ForumInput {{ color: {text_color}; }}"
-            f"QLineEdit#ForumInput:focus {{ border-color: {outline_color}; }}"
-        )
+        rules: list[str] = []
+        text_color = self._text_color_picker.token_color()
+        outline_color = self._outline_color_picker.token_color()
+        if text_color:
+            rules.append(f"QLineEdit#ForumInput {{ color: {text_color}; }}")
+        if outline_color:
+            rules.append(f"QLineEdit#ForumInput:focus {{ border-color: {outline_color}; }}")
+        self._input.setStyleSheet("".join(rules))
 
     # ── 交互 ─────────────────────────────────────────────────────────
 
@@ -713,8 +791,8 @@ class ForumWindow(QtWorkbenchToolPage):
             return
         # 颜色令牌拼在正文最前面（渲染时整段洗掉），随留言一起发给服务端。
         tokens = build_color_tokens(
-            self._text_color_picker.color(),
-            self._outline_color_picker.color(),
+            self._text_color_picker.token_color(),
+            self._outline_color_picker.token_color(),
         )
         content = f"{tokens}{self._input.text()}" if tokens else self._input.text()
         error = self._service.post(

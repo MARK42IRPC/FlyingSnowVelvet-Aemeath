@@ -85,6 +85,7 @@ from lib.script.ui.forum_window import (
     SCROLL_GAP,
     SCROLL_GUTTER,
     ForumCard,
+    ForumColorControl,
     ForumWindow,
 )
 from lib.script.workbench.theme import get_workbench_colors
@@ -334,6 +335,37 @@ class ForumWindowTests(unittest.TestCase):
         self.assertFalse(self.window._send_button.isEnabled())
         self.window._on_send()
         self.assertEqual(service.posts, [])
+
+    def test_default_colors_are_left_out_of_the_message(self):
+        """两个复选框都没勾：正文里不该出现颜色令牌，卡片走默认色。"""
+        service = FakeService()
+        self.window._service = service
+        self.window._input.setText("默认色就好")
+        self.window._sync_composer_state()
+
+        self.window._on_send()
+
+        posted, _nickname, _accent = service.posts[0]
+        self.assertEqual(posted, "默认色就好")
+
+    def test_only_the_checked_color_reaches_the_message(self):
+        service = FakeService()
+        self.window._service = service
+        self.window._text_color_picker.set_color("#ff9580")
+        self.window._input.setText("只改字色")
+        self.window._sync_composer_state()
+
+        self.window._on_send()
+
+        posted, _nickname, _accent = service.posts[0]
+        # set_color 会把十六进制折进 HSL 再取回来，颜色会略有位移，但色相还在。
+        token = self.window._text_color_picker.token_color()
+        self.assertTrue(posted.startswith(f"[color={token}]"))
+        self.assertNotIn("[outline=", posted)
+        self.assertTrue(posted.endswith("只改字色"))
+        red, green, blue = (int(token[index:index + 2], 16) for index in (1, 3, 5))
+        self.assertGreater(red, green)
+        self.assertGreater(green, blue)
 
     def test_callbacks_arrive_through_the_dispatched_signal(self):
         received = []
@@ -909,6 +941,54 @@ class ForumWindowTests(unittest.TestCase):
         self.assertIs(second, fake)
         self.assertIs(forum_module.get_forum_window(), fake)
         self.assertEqual(refresh.call_count, 2)
+
+
+class ForumColorControlTests(unittest.TestCase):
+    """颜色控件的开关语义：不勾选就收起滑条、不写令牌，用主题默认色。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def _control(self, label: str = "文字颜色") -> ForumColorControl:
+        control = ForumColorControl(None, label)
+        self.addCleanup(control.deleteLater)
+        return control
+
+    def test_starts_switched_off_with_the_sliders_hidden(self):
+        control = self._control()
+        self.assertFalse(control.is_enabled())
+        self.assertTrue(control._hue_slider.isHidden())
+        self.assertTrue(control._lightness_slider.isHidden())
+
+    def test_disabled_control_uses_the_theme_default_and_writes_no_token(self):
+        control = self._control()
+        self.assertEqual(control.color(), forum_card_text_color())
+        self.assertEqual(control.token_color(), "")
+
+    def test_checked_control_shows_the_sliders_and_writes_its_own_color(self):
+        control = self._control()
+        control.set_color("#ff9580")
+        self.assertTrue(control.is_enabled())
+        self.assertFalse(control._hue_slider.isHidden())
+        self.assertEqual(control.token_color(), control.color())
+        self.assertNotEqual(control.token_color(), forum_card_text_color())
+
+    def test_toggling_emits_color_changed_either_way(self):
+        control = self._control()
+        seen: list[str] = []
+        control.colorChanged.connect(seen.append)
+        control.set_enabled(True)
+        control.set_enabled(False)
+        self.assertEqual(len(seen), 2)
+        self.assertEqual(seen[-1], forum_card_text_color())
+
+    def test_set_color_none_returns_to_the_default(self):
+        control = self._control()
+        control.set_color("#8fd4ff")
+        control.set_color(None)
+        self.assertFalse(control.is_enabled())
+        self.assertEqual(control.token_color(), "")
 
 
 class ForumStickerTests(unittest.TestCase):
