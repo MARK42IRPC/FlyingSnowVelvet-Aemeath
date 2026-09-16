@@ -9,6 +9,7 @@ from .palette import COLORS, UI_THEME
 from config.font_config import FONT, get_ui_font_family
 from config.scale import scale_px
 from lib.core.layer import Layer
+from lib.core.speaker_band import band_ratios, default_band
 
 from .commands import DrawBatch, RectCommand, TextAlignment, TextCommand
 from .media_panel_visuals import (
@@ -19,6 +20,12 @@ from .media_panel_visuals import (
     snap_slider_ratio,
 )
 from .panel_visuals import action_button_commands, panel_shell_commands
+from .speaker_band_visuals import (
+    BAND_SLIDER_GAP,
+    BAND_SLIDER_WIDTH,
+    band_hit_test,
+    build_band_slider_visual,
+)
 from .types import FontSpec, Rect, Size
 
 
@@ -56,6 +63,9 @@ class SpeakerSearchVisualDescription:
     page_rect: Rect | None
     volume_rect: Rect
     volume_track_rect: Rect
+    band_rect: Rect
+    band_track_rect: Rect
+    band_handles: tuple[Rect, Rect]
     batch: DrawBatch
 
 
@@ -68,6 +78,16 @@ def speaker_visual_hit_test(
     x: float,
     y: float,
 ) -> tuple[str, int]:
+    if visual.band_handles:
+        band_action = band_hit_test(
+            visual.band_track_rect,
+            visual.band_handles[0],
+            visual.band_handles[1],
+            x,
+            y,
+        )
+        if band_action:
+            return band_action, -1
     if _contains(visual.volume_rect, x, y):
         return "volume", -1
     if _contains(visual.search_rect, x, y):
@@ -140,6 +160,7 @@ def build_speaker_search_visual(
     logged_in: bool = False,
     provider_label: str = "网易模式",
     volume: float = 0.0,
+    band: tuple[float, float] | None = None,
     hovered: str = "",
     pressed: str = "",
     layer: int = int(Layer.PET_UI),
@@ -174,8 +195,10 @@ def build_speaker_search_visual(
     ))
     result_rows = len(display_items) + (1 if has_pages else 0)
     result_height = border * 2 + result_rows * row_height
-    width = max(total_width, result_width)
+    width = max(total_width + BAND_SLIDER_GAP + BAND_SLIDER_WIDTH, result_width)
     height = result_y + result_height
+    # 频段滑条与菜单上半部分上下对齐：顶到第一行按钮，底到搜索框下沿。
+    band_height = search_y + search_height
     font = FontSpec(get_ui_font_family(), max(1, int(FONT.get("ui_size", 12))), True)
 
     input_panel = Rect(0, search_y, input_width, search_height)
@@ -214,7 +237,24 @@ def build_speaker_search_visual(
         layer=layer,
         z=0,
     )
+    band_rect = Rect(
+        total_width + BAND_SLIDER_GAP, 0, BAND_SLIDER_WIDTH, band_height,
+    )
+    band_low_ratio, band_high_ratio = band_ratios(
+        default_band() if band is None else band
+    )
+    band_visual = build_band_slider_visual(
+        low_ratio=band_low_ratio,
+        high_ratio=band_high_ratio,
+        x=band_rect.x,
+        y=band_rect.y,
+        width=band_rect.width,
+        height=band_rect.height,
+        layer=layer,
+        z=0,
+    )
     commands: list[object] = list(slider_visual.batch.commands)
+    commands.extend(band_visual.batch.commands)
     for name, rect in controls:
         state = "pressed" if pressed == name and hovered == name else "hover" if hovered == name else "normal"
         commands.extend(_button_commands(rect, labels[name], font, state=state, layer=layer, z=0))
@@ -271,6 +311,7 @@ def build_speaker_search_visual(
     return SpeakerSearchVisualDescription(
         Size(width, height), entry_rect, search_rect, controls,
         tuple(row_rects), page_rect, volume_rect, slider_visual.track_rect,
+        band_rect, band_visual.track_rect, band_visual.handle_rects,
         DrawBatch(tuple(commands)),
     )
 
@@ -286,6 +327,8 @@ def snap_volume_ratio(ratio: float) -> float:
 
 
 __all__ = [
+    "BAND_SLIDER_GAP",
+    "BAND_SLIDER_WIDTH",
     "SPEAKER_CONTROL_GAP",
     "SPEAKER_CONTROL_HEIGHT",
     "SPEAKER_SEARCH_MODE_LABELS",

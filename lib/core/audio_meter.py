@@ -25,6 +25,9 @@ import threading
 
 logger = logging.getLogger(__name__)
 
+#: 同时登记的自定义频段上限（每个音响一条），超出后丢弃最早的一条。
+_MAX_REGISTERED_BANDS = 8
+
 _SPECTRUM_DEFAULTS = {
     "freq_min": 60.0,
     "freq_max": 250.0,
@@ -65,6 +68,8 @@ class AudioMeter:
         self._worker: threading.Thread | None = None
         self._spectrum = None
         self._spectrum_config = _spectrum_config()
+        self._band_lock = threading.Lock()
+        self._extra_bands: dict[str, tuple[float, float]] = {}
         self._init_meter()
         self._start_sampler()
         self._start_spectrum()
@@ -140,6 +145,77 @@ class AudioMeter:
                 self._peak = peak
             self._stop_event.wait(interval)
 
+    # ── 命名频段登记 ──────────────────────────────────────────────────
+
+    def register_band(self, key: str, low_hz: float, high_hz: float) -> None:
+        """登记（或更新）一个命名频段；同一个 key 重复登记只改范围。"""
+        name = str(key or "").strip()
+        if not name:
+            return
+        try:
+            low = max(0.0, float(low_hz))
+            band = (low, max(low, float(high_hz)))
+        except (TypeError, ValueError):
+            return
+        with self._band_lock:
+            if self._extra_bands.get(name) == band:
+                return
+            is_new = name not in self._extra_bands
+            self._extra_bands[name] = band
+            if is_new:
+                self._trim_bands()
+        self._sync_spectrum_bands()
+
+    def unregister_band(self, key: str) -> None:
+        """注销一个命名频段；未登记时无副作用。"""
+        name = str(key or "").strip()
+        with self._band_lock:
+            removed = self._extra_bands.pop(name, None) is not None
+        if removed:
+            self._sync_spectrum_bands()
+
+    def band_status(self) -> dict:
+        """返回已登记频段的只读快照（诊断与测试用）。"""
+        with self._band_lock:
+            return {
+                "keys": tuple(self._extra_bands),
+                "bands": tuple(self._extra_bands.values()),
+                "analyzing": self._spectrum is not None,
+            }
+
+    def _default_band(self) -> tuple[float, float]:
+        config = self._spectrum_config
+        return (config["freq_min"], config["freq_max"])
+
+    def _trim_bands(self) -> None:
+        """超出上限时按登记顺序丢弃最早的频段，避免长跑累积。"""
+        overflow = len(self._extra_bands) - _MAX_REGISTERED_BANDS
+        for name in list(self._extra_bands)[:max(0, overflow)]:
+            self._extra_bands.pop(name, None)
+
+    def _sync_spectrum_bands(self) -> None:
+        """把频段列表推给分析器（第 0 条始终是默认频段）。"""
+        spectrum = self._spectrum
+        if spectrum is None:
+            return
+        with self._band_lock:
+            bands = (self._default_band(),) + tuple(self._extra_bands.values())
+        try:
+            spectrum.set_bands(bands)
+        except Exception as exc:
+            logger.debug(f"[AudioMeter] 频段同步失败: {exc}")
+
+    def _band_index(self, key: str | None) -> int:
+        """把命名频段映射成分析器里的下标；未登记时回落到默认频段。"""
+        name = str(key or "").strip()
+        if not name:
+            return 0
+        with self._band_lock:
+            for position, existing in enumerate(self._extra_bands, start=1):
+                if existing == name:
+                    return position
+        return 0
+
     def get_peak(self) -> float:
         """
         返回当前系统音频输出峰值（0.0–1.0）。
@@ -149,14 +225,16 @@ class AudioMeter:
         with self._peak_lock:
             return self._peak
 
-    def get_frequency_intensity(self) -> float | None:
+    def get_frequency_intensity(self, key: str | None = None) -> float | None:
         """
-        返回当前节奏频段的强度（0.0–1.0）。
+        返回指定频段的强度（0.0–1.0）；``key`` 省略时取配置里的默认频段。
 
-        优先使用 WASAPI 回环 + FFT 的目标频段能量；回环不可用或还没有数据时，
-        回退到整体峰值开方，保证没有回环能力的机器仍有响度动画。
+        每个音响可以登记自己的动感响应频段（见 `lib/core/speaker_band.py`），
+        所有频段共用同一次回环分析。优先使用 WASAPI 回环 + FFT 的频段能量；
+        回环不可用或还没有数据时，回退到整体峰值开方，保证没有回环能力的机器
+        仍有响度动画。
         """
-        level_db = self.get_band_level_db()
+        level_db = self.get_band_level_db(key)
         if level_db is not None:
             # 延迟导入，避免不需要频段分析时加载频谱模块。
             from lib.core.audio_spectrum import level_to_intensity
@@ -171,19 +249,19 @@ class AudioMeter:
             return min(1.0, math.sqrt(peak))
         return 0.0
 
-    def get_band_level_db(self) -> float | None:
-        """返回最近一次节奏频段能量（dB）；回环不可用或没有数据时返回 None。"""
+    def get_band_level_db(self, key: str | None = None) -> float | None:
+        """返回指定频段最近一次的能量（dB）；回环不可用或没有数据时返回 None。"""
         spectrum = self._spectrum
         if spectrum is None:
             return None
         try:
-            return spectrum.get_level_db()
+            return spectrum.get_level_db(self._band_index(key))
         except Exception:
             return None
 
-    def get_frequency_source(self) -> str:
+    def get_frequency_source(self, key: str | None = None) -> str:
         """返回当前强度来源（诊断用）：`spectrum` / `peak` / `none`。"""
-        if self.get_band_level_db() is not None:
+        if self.get_band_level_db(key) is not None:
             return "spectrum"
         return "peak" if self.get_peak() > 0.01 else "none"
 

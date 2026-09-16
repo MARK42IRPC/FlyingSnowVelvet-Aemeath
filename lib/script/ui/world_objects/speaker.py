@@ -251,9 +251,16 @@ class Speaker(QWidget):
     # ==================================================================
 
     def _on_tick_frequency(self, event: Event) -> None:
-        """按 tick 采样系统音频频率，EMA 平滑后触发重绘。"""
-        from lib.core.audio_meter import get_audio_meter
-        freq_intensity = get_audio_meter().get_frequency_intensity()  # 0.0–1.0 频率强度
+        """按 tick 采样系统音频频率，EMA 平滑后触发重绘。
+
+        频段用这个音响自己的动感响应频段（右键菜单右侧滑条可单独调整），
+        没调整过时就是 `SPEAKER_AUDIO` 里的默认频段。
+        """
+        from lib.core.speaker_band import speaker_response_intensity
+
+        backend_id = str(getattr(self, "_world_object_backend_id", ""))
+        instance_id = int(getattr(self, "_world_object_instance_id", 0))
+        freq_intensity = speaker_response_intensity(backend_id, instance_id)  # 0.0–1.0
         if freq_intensity is None:
             freq_intensity = 0.0
         # 非对称 EMA：上升快（attack），下降慢（decay）

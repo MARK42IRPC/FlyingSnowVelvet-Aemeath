@@ -4,6 +4,7 @@ import gc
 import sys
 import threading
 import types
+import math
 import unittest
 from unittest.mock import patch
 
@@ -15,6 +16,7 @@ from lib.core.audio_meter import AudioMeter
 from lib.core.audio_spectrum import (
     AudioSpectrumAnalyzer,
     band_level_db,
+    bands_level_db,
     level_to_intensity,
 )
 
@@ -70,6 +72,51 @@ class LevelToIntensityTests(unittest.TestCase):
         self.assertEqual(level_to_intensity(-10.0, 0.0, -20.0), 0.0)
 
 
+class BandsLevelTests(unittest.TestCase):
+    """一次 FFT 求多个频段：每个频段口径与单频段入口一致。"""
+
+    def _tone(self, *frequencies: float, sample_rate: float = 32000.0, size: int = 4096):
+        time = np.arange(size, dtype=np.float32) / float(sample_rate)
+        signal = sum(np.sin(2.0 * np.pi * hz * time) for hz in frequencies)
+        return (signal / max(1, len(frequencies))).astype(np.float32)
+
+    def test_each_band_reports_its_own_energy(self):
+        samples = self._tone(100.0, 1000.0)
+        levels = bands_level_db(
+            samples,
+            32000.0,
+            ((80.0, 120.0), (900.0, 1100.0), (3000.0, 4000.0)),
+        )
+
+        self.assertEqual(len(levels), 3)
+        self.assertGreater(levels[0], -30.0)
+        self.assertAlmostEqual(levels[0], levels[1], delta=1.0)
+        self.assertLess(levels[2], levels[0] - 20.0)
+
+    def test_single_band_entry_matches_the_multi_band_result(self):
+        samples = self._tone(60.0)
+        single = band_level_db(samples, 32000.0, 50.0, 70.0)
+        multiple = bands_level_db(samples, 32000.0, ((50.0, 70.0),))[0]
+
+        self.assertAlmostEqual(single, multiple, places=9)
+
+    def test_reversed_band_bounds_behave_like_the_single_band_entry(self):
+        samples = self._tone(60.0)
+        self.assertAlmostEqual(
+            bands_level_db(samples, 32000.0, ((70.0, 50.0),))[0],
+            band_level_db(samples, 32000.0, 70.0, 50.0),
+            places=9,
+        )
+
+    def test_empty_band_list_returns_no_levels(self):
+        self.assertEqual(bands_level_db([], 32000.0, ()), ())
+
+    def test_missing_frames_fall_back_to_silence_for_every_band(self):
+        silence = band_level_db([], 32000.0, 50.0, 70.0)
+        levels = bands_level_db([], 32000.0, ((50.0, 70.0), (100.0, 200.0)))
+        self.assertEqual(levels, (silence, silence))
+
+
 class _FakeSpectrum:
     def __init__(self, *, freq_min, freq_max, level_db=None):
         self.freq_min = freq_min
@@ -77,8 +124,10 @@ class _FakeSpectrum:
         self.level_db = level_db
         self.cleaned = False
 
-    def get_level_db(self):
+    def get_level_db(self, index: int = 0):
         return self.level_db
+    def set_bands(self, bands):
+        self.bands = tuple(bands)
 
     def status(self):
         return {"ready": True, "level_db": self.level_db}

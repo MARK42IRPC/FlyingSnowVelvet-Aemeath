@@ -66,7 +66,7 @@ class QtWorldObjectBackend(WorldObjectBackend):
         except (AttributeError, RuntimeError):
             alive = False
         if not alive:
-            self._instances.pop(int(instance_id), None)
+            self._drop_instance(instance_id)
         return WorldObjectState(
             alive=alive,
             fading=bool(getattr(native, "_fading", False)),
@@ -137,9 +137,17 @@ class QtWorldObjectBackend(WorldObjectBackend):
             native.spawn_jump(power_min, power_max)
 
     def close(self, instance_id: int) -> None:
-        native = self._instances.pop(int(instance_id), None)
+        native = self._drop_instance(instance_id)
         if native is not None and hasattr(native, "close"):
             native.close()
+
+    def _drop_instance(self, instance_id: int):
+        """摘掉实例，并清掉它登记的响应频段。"""
+        native = self._instances.pop(int(instance_id), None)
+        from lib.core.speaker_band import forget_speaker_band
+
+        forget_speaker_band(self.backend_id, instance_id)
+        return native
 
     def get_center(self, instance_id: int) -> Point:
         native = self._get(instance_id)

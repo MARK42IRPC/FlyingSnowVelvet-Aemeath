@@ -23,6 +23,8 @@ SPEAKER_AUDIO = {
     'ema_decay':     0.08,   # EMA 衰减系数（峰值下降）
     'freq_min':     60.0,    # 关注频率范围下限（Hz）：鼓点/贝斯的节奏频段
     'freq_max':    250.0,    # 关注频率范围上限（Hz）
+    'band_slider_min_hz':  20.0,   # 音响右键频段滑条的下限（Hz，对数刻度底端）
+    'band_slider_max_hz': 2000.0,  # 音响右键频段滑条的上限（Hz，对数刻度顶端）
     'level_floor_db': -50.0, # 频段强度 0.0 对应的 dB（低于此值视为静音）
     'level_ceil_db':    0.0, # 频段强度 1.0 对应的 dB（高于此值视为最强）
 }

@@ -4,6 +4,7 @@ from PyQt5.QtCore import Qt, QPropertyAnimation, QEasingCurve, QPoint, QPointF, 
 from PyQt5.QtGui import QPainter, QPolygonF
 
 from config.config import SPEAKER_SEARCH_UI
+from lib.core.graphics.speaker_band_visuals import BAND_SLIDER_GAP
 from config.scale import scale_px
 from config.tooltip_config import TOOLTIPS
 from lib.core.event.center import get_event_center, EventType, Event
@@ -21,6 +22,11 @@ from lib.script.ui.speaker_menu_style import (
     _C_ACTION_TEXT,
     SpeakerActionButtonMixin,
 )
+from lib.script.ui.speaker_band_slider import (
+    DEFAULT_HEIGHT as _BAND_SLIDER_HEIGHT,
+    DEFAULT_WIDTH as _BAND_SLIDER_WIDTH,
+    SpeakerBandSlider,
+)
 from lib.script.ui.speaker_volume_slider import (
     DEFAULT_HEIGHT as _VOLUME_SLIDER_HEIGHT,
     SpeakerVolumeSlider,
@@ -31,7 +37,9 @@ _BTN_WIDTH        = scale_px(40, min_abs=1)  # 图标按钮宽度（播放/暂�
 _BTN_HEIGHT       = scale_px(32, min_abs=1)  # 所有按钮统一高度
 _BTN_PLAYLIST_W   = scale_px(80, min_abs=1)  # 播放列表按钮宽度（与搜索按钮等宽）
 _SEARCH_DIALOG_W  = SPEAKER_SEARCH_UI.get('input_width', scale_px(160, min_abs=1)) + SPEAKER_SEARCH_UI.get('button_width', scale_px(80, min_abs=1))
+_SEARCH_DIALOG_H  = int(SPEAKER_SEARCH_UI.get('height', scale_px(36, min_abs=1)))  # 搜索框高度
 _VOLUME_SLIDER_GAP = scale_px(2, min_abs=1)  # 滑条与搜索框/按钮之间的间隙
+_BAND_SLIDER_GAP  = BAND_SLIDER_GAP         # 频段滑条与菜单主体之间的水平间隙
 
 
 def _safe_music_service():
@@ -706,6 +714,7 @@ class SpeakerControlButtons:
         self._playlist_btn.set_dialog(speaker_search_dialog)
         self._platform_mode_btn = PlatformModeButton()
         self._volume_slider = SpeakerVolumeSlider(_SEARCH_DIALOG_W, _VOLUME_SLIDER_HEIGHT)
+        self._band_slider = SpeakerBandSlider(_BAND_SLIDER_WIDTH, _BAND_SLIDER_HEIGHT)
         self._buttons = [
             self._search_priority_btn,
             self._play_pause_btn,
@@ -765,6 +774,14 @@ class SpeakerControlButtons:
                     self._anchor_point = new_anchor_point
                     self._update_positions()
 
+    def _focused_speaker(self):
+        """当前锚定的音响实例（未锚定时为 None）。"""
+        return getattr(self._dialog, 'focused_speaker', None)
+
+    def set_focused_speaker(self, speaker) -> None:
+        """锚定音响变化时同步频段滑条的读数与写回目标。"""
+        self._band_slider.set_speaker(speaker)
+
     def _update_positions(self):
         """更新所有按钮的位置"""
         if not self._anchor_point:
@@ -777,6 +794,14 @@ class SpeakerControlButtons:
         # ── 音量滑条：与搜索框整行等宽，贴在搜索框正上方 ────────────────
         slider_y = self._anchor_point.y() - _VOLUME_SLIDER_GAP - _VOLUME_SLIDER_HEIGHT
         self._volume_slider.move(self._anchor_point.x(), slider_y)
+
+        # ── 响应频段滑条：菜单右侧，上下与菜单上半部分对齐 ──────────────
+        self._band_slider.set_speaker(self._focused_speaker())
+        self._band_slider.apply_geometry(
+            self._anchor_point.x() + dialog_width + _BAND_SLIDER_GAP,
+            self._anchor_point.y() + _SEARCH_DIALOG_H - _BAND_SLIDER_HEIGHT,
+            _BAND_SLIDER_HEIGHT,
+        )
 
         # 其余按钮整体上移到滑条之上，避免与滑条重叠
         buttons_bottom_y = slider_y - _VOLUME_SLIDER_GAP
@@ -865,6 +890,7 @@ class SpeakerControlButtons:
         for btn in self._buttons:
             btn.fade_in()
         self._volume_slider.fade_in()
+        self._band_slider.fade_in()
         self._update_positions()
 
     def fade_out(self):
@@ -875,12 +901,14 @@ class SpeakerControlButtons:
         for btn in self._buttons:
             btn.fade_out()
         self._volume_slider.fade_out()
+        self._band_slider.fade_out()
 
     def cleanup(self):
         """清理资源"""
         self._event_center.unsubscribe(EventType.UI_ANCHOR_RESPONSE, self._on_anchor_response)
         self._event_center.unsubscribe(EventType.UI_CREATE, self._on_ui_create)
         self._volume_slider.cleanup()
+        self._band_slider.cleanup()
         for btn in self._buttons:
             try:
                 btn.close()

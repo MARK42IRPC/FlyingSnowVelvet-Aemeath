@@ -22,6 +22,15 @@ from lib.core.graphics.speaker_visuals import (
 )
 from lib.core.graphics.types import Point, Rect
 from lib.core.input.types import Key, MouseButton
+from lib.core.speaker_band import (
+    MIN_HANDLE_GAP_RATIO,
+    band_from_ratios,
+    band_label,
+    band_ratios,
+    default_band,
+    get_speaker_band,
+    set_speaker_band,
+)
 from lib.core.layer import Layer
 from lib.core.layer_manager import get_layer_manager
 from lib.core.logger import get_logger
@@ -49,6 +58,8 @@ _TOOLTIP_KEYS = {
     "login": "speaker_music_login",
     "playlist": "speaker_playlist_toggle",
     "volume": "speaker_volume_slider",
+    "band_low": "speaker_band_slider",
+    "band_high": "speaker_band_slider",
 }
 
 
@@ -98,6 +109,8 @@ class DxSpeakerSearchWindow:
         self._provider_label = "音乐模式"
         self._volume = 0.0
         self._volume_dragging = False
+        self._band = default_band()
+        self._band_dragging = ""
         self._clickthrough = False
         self._visual = self._build_visual()
         self._playlist: DxSpeakerPlaylistWindow | None = None
@@ -156,6 +169,7 @@ class DxSpeakerSearchWindow:
             logged_in=self._logged_in,
             provider_label=self._provider_label,
             volume=self._volume,
+            band=self._band,
             hovered=(
                 "result" if self._hovered_result >= 0 else self._hovered
             ),
@@ -276,6 +290,8 @@ class DxSpeakerSearchWindow:
         if self._playlist is not None:
             self._playlist.hide()
         self._target = target
+        self._band = get_speaker_band(target.backend_id, target.instance_id)
+        self._band_dragging = ""
         self._input = ""
         self._composition = ""
         self._items = []
@@ -569,6 +585,9 @@ class DxSpeakerSearchWindow:
         if self._volume_dragging:
             self._apply_volume_ratio(pos.x)
             return
+        if self._band_dragging:
+            self._apply_band_ratio(pos.y)
+            return
         action, index = speaker_visual_hit_test(self._visual, pos.x, pos.y)
         hovered_result = index if action == "result" else -1
         if action != self._hovered or hovered_result != self._hovered_result:
@@ -607,6 +626,27 @@ class DxSpeakerSearchWindow:
         self._event_center.publish(Event(EventType.MUSIC_VOLUME, {"volume": ratio}))
         self._refresh()
 
+    def _apply_band_ratio(self, y: float) -> None:
+        """按拖动的把手更新该音响的响应频段（两个把手不许越过对方）。"""
+        if not self._band_dragging:
+            return
+        from lib.core.graphics.speaker_band_visuals import band_ratio_at
+
+        ratio = band_ratio_at(self._visual.band_track_rect, y)
+        low_ratio, high_ratio = band_ratios(self._band)
+        if self._band_dragging == "band_low":
+            low_ratio = min(ratio, max(0.0, high_ratio - MIN_HANDLE_GAP_RATIO))
+        else:
+            high_ratio = max(ratio, min(1.0, low_ratio + MIN_HANDLE_GAP_RATIO))
+        band = band_from_ratios(low_ratio, high_ratio)
+        if band == self._band:
+            return
+        self._band = band
+        target = self._target
+        if target is not None:
+            set_speaker_band(target.backend_id, target.instance_id, band[0], band[1])
+        self._refresh()
+
     def handle_pointer_press(self, event: object) -> None:
         pos = getattr(event, "pos", Point())
         button = getattr(event, "button", MouseButton.NONE)
@@ -615,6 +655,15 @@ class DxSpeakerSearchWindow:
             self._publish_click_particle(event)
         if action == "result":
             self._activate_result(index, button)
+            return
+        if action in ("band_low", "band_high") and button == MouseButton.LEFT:
+            self._band_dragging = action
+            capture = getattr(self._host, "capture_mouse", None)
+            if callable(capture):
+                capture()
+            self._apply_band_ratio(pos.y)
+            if self._host is not None:
+                self._host.activate()
             return
         if action == "volume" and button == MouseButton.LEFT:
             self._volume_dragging = True
@@ -644,6 +693,11 @@ class DxSpeakerSearchWindow:
 
     def handle_pointer_release(self, button: MouseButton) -> None:
         self._volume_dragging = False
+        if self._band_dragging:
+            self._band_dragging = ""
+            self._event_center.publish(Event(EventType.INFORMATION, {
+                "text": f"响应频段 {band_label(self._band)}", "min": 0,
+            }))
         action = self._pressed
         commit = bool(action and action == self._hovered and button == MouseButton.LEFT)
         self._pressed = ""

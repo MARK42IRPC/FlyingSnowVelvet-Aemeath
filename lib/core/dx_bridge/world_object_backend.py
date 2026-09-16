@@ -37,6 +37,9 @@ from .screen import DxScreenProvider, get_cursor_position
 from .window_host import DxWindowHost
 
 
+#: 后端标识：世界对象实例句柄与响应频段登记都以它区分后端。
+_BACKEND_ID = "directx"
+
 _PHYSICS_TYPES = {"motor", "clock", "sofa", "snowball", "snow_leopard", "speaker"}
 _RIGHT_CLICK_FLIPPABLE_TYPES = {"motor", "sofa", "snow_leopard", "speaker"}
 _WALL_FLIPPABLE_TYPES = {"sofa", "snow_leopard", "speaker"}
@@ -278,11 +281,12 @@ class _DxWorldObject:
         elif self.object_type == "snow_leopard":
             self._tick_snow_leopard_auto_flip()
         elif self.object_type == "speaker":
-            from lib.core.audio_meter import get_audio_meter
+            from lib.core.speaker_band import speaker_response_intensity
 
+            # 频段按实例登记，右键菜单右侧滑条可以单独调整。
             self._speaker_intensity = update_speaker_intensity(
                 self._speaker_intensity,
-                get_audio_meter().get_frequency_intensity(),
+                speaker_response_intensity(_BACKEND_ID, self.instance_id),
             )
             self.host.request_repaint()
         if self._lifetime_ticks_left is not None and self._drag_offset is None:
@@ -676,7 +680,7 @@ class _DxWorldObject:
         elif self.object_type in _RIGHT_CLICK_FLIPPABLE_TYPES:
             if self.object_type == "speaker":
                 get_event_center().publish(Event(EventType.SPEAKER_SEARCH_TOGGLE_REQUEST, {
-                    "backend_id": "directx",
+                    "backend_id": _BACKEND_ID,
                     "instance_id": self.instance_id,
                 }))
                 return
@@ -932,9 +936,16 @@ class DxWorldObjectBackend(WorldObjectBackend):
     def _get(self, instance_id: int) -> _DxWorldObject | None:
         instance = self._instances.get(int(instance_id))
         if instance is not None and not instance._alive:
-            self._instances.pop(int(instance_id), None)
+            self._drop_instance(instance_id)
             return None
         return instance
+
+    def _drop_instance(self, instance_id: int) -> None:
+        """摘掉实例，并清掉它登记的响应频段。"""
+        self._instances.pop(int(instance_id), None)
+        from lib.core.speaker_band import forget_speaker_band
+
+        forget_speaker_band(_BACKEND_ID, instance_id)
 
     def create(self, request: WorldObjectRequest) -> int:
         if self._cleanup_done:
@@ -959,7 +970,7 @@ class DxWorldObjectBackend(WorldObjectBackend):
         for instance_id, instance in tuple(self._instances.items()):
             instance.tick()
             if not instance._alive:
-                self._instances.pop(instance_id, None)
+                self._drop_instance(instance_id)
 
     def _on_gif_frame(self, event: Event) -> None:
         for instance in tuple(self._instances.values()):

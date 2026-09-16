@@ -40,6 +40,54 @@ def _silence_db() -> float:
     return _SILENCE_DB
 
 
+def bands_level_db(
+    samples,
+    sample_rate: float,
+    bands,
+    window_size: int = _DEFAULT_WINDOW_SIZE,
+) -> tuple[float, ...]:
+    """一次 rFFT 求出多个频段的 dB 值（满幅正弦为 0 dB）。
+
+    纯函数，便于用合成信号测试：Hann 窗 + rFFT，按窗函数相干增益归一化幅度，
+    再把频段内各 bin 的功率求和开方，得到近似带内 RMS。每个音响可以各自设定
+    动感响应频段，共用同一份频谱就能同时算出所有频段的结果。
+    """
+    normalized = tuple(
+        (max(0.0, float(low)), max(max(0.0, float(low)), float(high)))
+        for low, high in bands
+    )
+    if not normalized:
+        return ()
+    try:
+        import numpy as np
+    except ImportError:
+        return tuple(_SILENCE_DB for _ in normalized)
+    frames = np.asarray(samples, dtype=np.float32).reshape(-1)
+    size = int(window_size)
+    if frames.size == 0 or sample_rate <= 0 or size < 8:
+        return tuple(_SILENCE_DB for _ in normalized)
+    if frames.size < size:
+        frames = np.pad(frames, (size - frames.size, 0))
+    else:
+        frames = frames[-size:]
+    window = np.hanning(size).astype(np.float32)
+    # Hann 窗相干增益 0.5，幅度归一化因子为 size/2 * 0.5。
+    spectrum = np.abs(np.fft.rfft(frames * window)) / (size / 4.0)
+    freqs = np.fft.rfftfreq(size, d=1.0 / float(sample_rate))
+    levels: list[float] = []
+    for low, high in normalized:
+        band = (freqs >= low) & (freqs <= high)
+        if not bool(band.any()):
+            levels.append(_SILENCE_DB)
+            continue
+        energy = float(np.sqrt(np.sum(spectrum[band] ** 2))) / math.sqrt(2.0)
+        if not math.isfinite(energy) or energy <= 1e-7:
+            levels.append(_SILENCE_DB)
+            continue
+        levels.append(20.0 * math.log10(energy))
+    return tuple(levels)
+
+
 def band_level_db(
     samples,
     sample_rate: float,
@@ -49,34 +97,14 @@ def band_level_db(
 ) -> float:
     """返回 `freq_min`–`freq_max` 频段能量的 dB 值（满幅正弦为 0 dB）。
 
-    纯函数，便于用合成信号测试：Hann 窗 + rFFT，按窗函数相干增益归一化幅度，
-    再把频段内各 bin 的功率求和开方，得到近似带内 RMS。
+    单频段入口，内部复用 `bands_level_db`，多频段与单频段口径一致。
     """
-    try:
-        import numpy as np
-    except ImportError:
-        return _SILENCE_DB
-    frames = np.asarray(samples, dtype=np.float32).reshape(-1)
-    size = int(window_size)
-    if frames.size == 0 or sample_rate <= 0 or size < 8:
-        return _SILENCE_DB
-    if frames.size < size:
-        frames = np.pad(frames, (size - frames.size, 0))
-    else:
-        frames = frames[-size:]
-    window = np.hanning(size).astype(np.float32)
-    # Hann 窗相干增益 0.5，幅度归一化因子为 size/2 * 0.5。
-    spectrum = np.abs(np.fft.rfft(frames * window)) / (size / 4.0)
-    freqs = np.fft.rfftfreq(size, d=1.0 / float(sample_rate))
-    low = max(0.0, float(freq_min))
-    high = max(low, float(freq_max))
-    band = (freqs >= low) & (freqs <= high)
-    if not bool(band.any()):
-        return _SILENCE_DB
-    energy = float(np.sqrt(np.sum(spectrum[band] ** 2))) / math.sqrt(2.0)
-    if not math.isfinite(energy) or energy <= 1e-7:
-        return _SILENCE_DB
-    return 20.0 * math.log10(energy)
+    return bands_level_db(
+        samples,
+        sample_rate,
+        ((freq_min, freq_max),),
+        window_size,
+    )[0]
 
 
 def level_to_intensity(level_db: float, floor_db: float, ceil_db: float) -> float:
@@ -146,9 +174,11 @@ class AudioSpectrumAnalyzer:
     ) -> None:
         self._freq_min = float(freq_min)
         self._freq_max = float(freq_max)
+        self._default_band = (self._freq_min, self._freq_max)
         self._window_size = max(64, int(window_size))
         self._lock = threading.Lock()
-        self._level_db: float | None = None
+        self._bands: tuple[tuple[float, float], ...] = (self._default_band,)
+        self._levels_db: tuple[float | None, ...] = (None,)
         self._sample_rate = 0
         self._channels = 0
         self._reason = ""
@@ -163,21 +193,46 @@ class AudioSpectrumAnalyzer:
 
     # ── 只读状态 ──────────────────────────────────────────────────────
 
-    def get_level_db(self) -> float | None:
-        """返回最近一次频段能量（dB）；尚未就绪或不可用时返回 None。"""
+    def band_count(self) -> int:
+        """返回当前分析的频段数量（第 0 条是默认频段）。"""
         with self._lock:
-            return self._level_db
+            return len(self._bands)
+
+    def get_level_db(self, index: int = 0) -> float | None:
+        """返回第 ``index`` 条频段最近一次的能量（dB）；未就绪时返回 None。"""
+        with self._lock:
+            levels = self._levels_db
+            position = int(index)
+            if position < 0 or position >= len(levels):
+                return None
+            return levels[position]
+
+    def set_bands(self, bands) -> None:
+        """替换分析频段列表；第 0 条始终保持为默认频段。"""
+        normalized = tuple(
+            (max(0.0, float(low)), max(max(0.0, float(low)), float(high)))
+            for low, high in bands
+        )
+        if not normalized:
+            normalized = (self._default_band,)
+        with self._lock:
+            if normalized == self._bands:
+                return
+            self._bands = normalized
+            self._levels_db = tuple(None for _ in normalized)
 
     def status(self) -> dict:
         with self._lock:
             return {
                 "ready": self._ready,
                 "reason": self._reason,
-                "level_db": self._level_db,
+                "level_db": self._levels_db[0] if self._levels_db else None,
                 "sample_rate": self._sample_rate,
                 "channels": self._channels,
                 "freq_min": self._freq_min,
                 "freq_max": self._freq_max,
+                "band_count": len(self._bands),
+                "bands": tuple(self._bands),
             }
 
     def cleanup(self) -> None:
@@ -202,7 +257,7 @@ class AudioSpectrumAnalyzer:
         with self._lock:
             self._ready = False
             self._reason = str(reason)
-            self._level_db = None
+            self._levels_db = tuple(None for _ in self._bands)
 
     def _sampler_loop(self) -> None:
         self._ensure_com_initialized()
@@ -329,15 +384,18 @@ class AudioSpectrumAnalyzer:
             finally:
                 capture.ReleaseBuffer(frames)
         if appended:
-            level = band_level_db(
+            with self._lock:
+                bands = self._bands
+            levels = bands_level_db(
                 window,
                 self._sample_rate,
-                self._freq_min,
-                self._freq_max,
+                bands,
                 self._window_size,
             )
             with self._lock:
-                self._level_db = level
+                # 采样期间频段被替换时旧结果对应不上新列表，丢弃这一次。
+                if self._bands is bands:
+                    self._levels_db = levels
             return appended
         return None
 
@@ -356,5 +414,6 @@ class AudioSpectrumAnalyzer:
 __all__ = [
     "AudioSpectrumAnalyzer",
     "band_level_db",
+    "bands_level_db",
     "level_to_intensity",
 ]

@@ -197,12 +197,14 @@ class SpeakerSearchDialog(QWidget):
                 self._focused_speaker = speaker
                 self._update_anchor()
                 self._update_position()
+                self._control_buttons.set_focused_speaker(speaker)
         else:
             if speaker is None:
                 return
             self._focused_speaker = speaker
             self._update_anchor()
             self._show()
+            self._control_buttons.set_focused_speaker(speaker)
 
     def _on_search_toggle_request(self, event: Event) -> None:
         data = event.data if isinstance(event.data, dict) else {}
@@ -458,9 +460,10 @@ class SpeakerSearchDialog(QWidget):
             getattr(self._result_box, "_next_btn", None),
         ]
         widgets.extend(getattr(self._control_buttons, "_buttons", []))
-        volume_slider = getattr(self._control_buttons, "_volume_slider", None)
-        if volume_slider is not None:
-            widgets.append(volume_slider)
+        for name in ("_volume_slider", "_band_slider"):
+            slider = getattr(self._control_buttons, name, None)
+            if slider is not None:
+                widgets.append(slider)
         return [w for w in widgets if w is not None]
 
     def _is_mouse_far_from_family(self) -> bool:
