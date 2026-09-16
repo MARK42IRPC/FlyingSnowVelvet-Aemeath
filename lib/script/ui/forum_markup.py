@@ -77,17 +77,24 @@ _ESCAPE_TABLE = str.maketrans({"&": "&amp;", "<": "&lt;", ">": "&gt;"})
 _SPACE_RUN = re.compile(r"  +")
 
 
+def escape_text(text) -> str:
+    """转义成富文本片段：`&`、`<`、`>` 转义，换行变 `<br>`，第二个空格起补 `&nbsp;`。
+
+    这是 `to_html()` 的第一步，也是「没有标记的纯文字该长什么样」的尺子：帖子正文据此判断
+    某一块要不要走富文本渲染（`lib/core/forum_markdown.py` 的 `ForumBlock.rich`）。
+    """
+    escaped = str(text or "").translate(_ESCAPE_TABLE)
+    escaped = escaped.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "<br>")
+    return _SPACE_RUN.sub(lambda match: " " + "&nbsp;" * (len(match.group(0)) - 1), escaped)
+
+
 def to_html(text) -> str:
-    """把留言正文转成 QLabel 富文本片段：先转义原文，再把成对标记换成标签，最后洗掉效果令牌。
+    """把正文转成 QLabel / QTextEdit 的富文本片段：先转义原文，再把成对标记换成标签，最后洗掉效果令牌。
 
     效果令牌放在标记渲染**之后**才洗：`**[雪豹]**` 先变成 `<b>[雪豹]</b>`、再洗成 `<b></b>`；
     反过来先洗就只剩一对没有内容的星号，卡片上会直接印出 `****`。
     """
-    escaped = str(text or "").translate(_ESCAPE_TABLE)
-    escaped = escaped.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "<br>")
-    escaped = _SPACE_RUN.sub(
-        lambda match: " " + "&nbsp;" * (len(match.group(0)) - 1), escaped
-    )
+    escaped = escape_text(text)
     return strip_color_tokens(strip_effect_tokens(_PATTERN.sub(_render_match, escaped)))
 
 
@@ -216,6 +223,7 @@ __all__ = [
     "FORMAT_BY_KEY",
     "ForumMarkupFormat",
     "effect_tokens",
+    "escape_text",
     "marker_positions",
     "span_at_cursor",
     "strip_effect_tokens",

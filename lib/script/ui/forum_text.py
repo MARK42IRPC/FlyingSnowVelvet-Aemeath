@@ -23,6 +23,12 @@ QTextEdit：既拿得到 QTextDocument（给加粗片段加一层同色细描边
 的 1~2 倍之间自适应，2 倍的短句（33px 上下）如果按比例给 1.5px 描边，「加粗」这类笔画密的字会
 糊成一团、丢掉字怀（墨迹比普通字多 37%，相邻笔画连成一片）。上下限的取值见 `BOLD_OUTLINE_RATIO` /
 `BOLD_OUTLINE_MIN_PX` / `BOLD_OUTLINE_MAX_PX`。
+
+帖子详情页的正文也用它（`runs=` 与 `align=Qt.AlignLeft`）：那里一段正文可能有好几种颜色
+（`[color=#rrggbb]` 令牌按段生效，见 `lib/core/forum_colors.py`），QLabel 的富文本只认
+`<span style="color">`、给不出描边，所以按段着色与按段描边都落在这一层——`runs` 给出每段的文字与
+两个颜色，`_restyle()` 逐段 merge 到字符格式上。留言墙不传 `runs`，走的是原来那条「整篇一个色」
+的路径，像素与从前一致（`tests/test_forum_window.py` 按这条守线）。
 """
 
 from __future__ import annotations
@@ -41,6 +47,8 @@ from PyQt5.QtGui import (
     QTextOption,
 )
 from PyQt5.QtWidgets import QFrame, QSizePolicy, QTextEdit
+
+from lib.core.forum_colors import ForumTextRun
 
 #: 粗体描边的笔宽按字号取：字号越大笔画越粗，固定像素数在大字号下会显得没有加粗。
 BOLD_OUTLINE_RATIO = 0.03
@@ -78,6 +86,9 @@ class MarkupText(QTextEdit):
         width_hint: int,
         outline_color: str | None = None,
         outline_all: bool = False,
+        runs: tuple[ForumTextRun, ...] = (),
+        align=Qt.AlignHCenter,
+        object_name: str = "ForumCardText",
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -91,9 +102,12 @@ class MarkupText(QTextEdit):
         self._bold_outline = bold_outline_width(font.pixelSize())
         #: 原始片段留着：量高要用一份临时文档重排一遍，不能拿现成文档反复改宽度。
         self._html = str(html or "")
+        #: 按颜色切好的段；空元组就是留言墙那条「整篇一个色」的路径。
+        self._runs = tuple(runs)
+        self._align = align
         #: 没有布局宽度时（卡片刚建好、还没排版）按这个宽度估高。
         self._width_hint = max(1, int(width_hint))
-        self.setObjectName("ForumCardText")
+        self.setObjectName(object_name)
         self.setReadOnly(True)
         self.setFrameShape(QFrame.NoFrame)
         self.setContentsMargins(0, 0, 0, 0)
@@ -187,12 +201,12 @@ class MarkupText(QTextEdit):
     # ── 排版 ─────────────────────────────────────────────────────────
 
     def _restyle(self) -> None:
-        """居中、统一正文颜色，并给加粗片段加同色描边。"""
+        """对齐、统一正文颜色、按段着色，并给加粗片段加同色描边。"""
         document = self.document()
         cursor = QTextCursor(document)
         cursor.select(QTextCursor.Document)
         block_format = QTextBlockFormat()
-        block_format.setAlignment(Qt.AlignHCenter)
+        block_format.setAlignment(self._align)
         cursor.mergeBlockFormat(block_format)
         # 只带前景色的空格式：`cursor.charFormat()` 会把光标处的字重一起交出来，整篇铺下去
         # 就变成「最后一段是粗体则全文都粗」——实测 `普通**粗**` 整条留言都会变粗。
@@ -202,6 +216,7 @@ class MarkupText(QTextEdit):
             # 留言自带的描边色：整篇正文都描，不只是加粗的那几段。
             base_format.setTextOutline(QPen(self._outline_color, self._bold_outline))
         cursor.mergeCharFormat(base_format)
+        self._apply_runs()
 
         block = document.begin()
         while block.isValid():
@@ -213,15 +228,53 @@ class MarkupText(QTextEdit):
                 fragment += 1
             block = block.next()
 
+    def _apply_runs(self) -> None:
+        """把每一段的颜色刷到对应的字符范围上（`runs` 为空时什么都不做）。
+
+        段的边界就是可见文字的边界：`forum_markdown` 切块时已经保证
+        `"".join(run.text) == text`，而 `html` 里的标签与转义实体都不占字符，所以在文档里
+        按累计长度定位即可。只写该段声明过的颜色，没声明的留给 `_restyle()` 铺的默认色。
+        """
+        if not self._runs:
+            return
+        cursor = QTextCursor(self.document())
+        position = 0
+        for run in self._runs:
+            length = len(run.text)
+            if length and (run.color or run.outline):
+                fmt = QTextCharFormat()
+                if run.color:
+                    fmt.setForeground(QColor(run.color))
+                if run.outline:
+                    fmt.setTextOutline(QPen(QColor(run.outline), self._bold_outline))
+                cursor.setPosition(position)
+                cursor.setPosition(position + length, QTextCursor.KeepAnchor)
+                cursor.mergeCharFormat(fmt)
+            position += length
+
+    def _run_at(self, position: int) -> ForumTextRun | None:
+        """字符位置落在哪一段上；没分段时返回 None（留言墙那条路径）。"""
+        offset = 0
+        for run in self._runs:
+            if offset <= position < offset + len(run.text):
+                return run
+            offset += len(run.text)
+        return None
+
     def _embolden(self, piece) -> None:
         fmt = piece.charFormat()
-        fmt.setForeground(self._color)
+        # 分段着色时，粗体的描边也得跟着本段自己的颜色，不能一律回落到整篇的色。
+        run = self._run_at(piece.position())
+        fmt.setForeground(QColor(run.color) if run is not None and run.color else self._color)
         width = self._bold_outline
         if self._outline_all:
             # 普通字也描边了，粗体得比它更粗才分得出来。
             width = self._bold_outline * MESSAGE_OUTLINE_BOLD_GAIN
+        pen_color = self._outline_color
+        if run is not None and run.outline:
+            pen_color = QColor(run.outline)
         # 描边用单独的颜色：粗体片段因此能同时选正文色与描边色（用户可选同色）。
-        fmt.setTextOutline(QPen(self._outline_color, width))
+        fmt.setTextOutline(QPen(pen_color, width))
         cursor = QTextCursor(self.document())
         cursor.setPosition(piece.position())
         cursor.setPosition(piece.position() + piece.length(), QTextCursor.KeepAnchor)

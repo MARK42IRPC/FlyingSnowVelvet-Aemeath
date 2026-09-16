@@ -55,6 +55,10 @@ class ForumBlock:
 
     `runs` 是按颜色切好的段（见 `lib/core/forum_colors.py`）：没有颜色令牌时是空元组，
     渲染方据此走「不用着色」的快路径；有颜色时 `"".join(run.text) == text`。
+
+    `raw` 是这一段的原文（标记还在）。`text` 是纯文本投影，给列表摘要与「只铺字」的快路径用；
+    要看行内标记或按段着色时，渲染方拿 `raw` 自己转富文本（`forum_markup.to_html()`）——那是
+    界面层的事，核心层只负责把块切好、把原文留着。
     """
 
     kind: str = BLOCK_PARAGRAPH
@@ -62,6 +66,7 @@ class ForumBlock:
     level: int = 0
     marker: str = ""
     runs: tuple[ForumTextRun, ...] = ()
+    raw: str = ""
 
 
 def _strip_inline(text: str) -> str:
@@ -105,7 +110,12 @@ def _with_runs(block: ForumBlock) -> ForumBlock:
     if plain == block.text:
         return block
     return ForumBlock(
-        kind=block.kind, text=plain, level=block.level, marker=block.marker, runs=runs
+        kind=block.kind,
+        text=plain,
+        level=block.level,
+        marker=block.marker,
+        runs=runs,
+        raw=block.raw,
     )
 
 
@@ -143,14 +153,18 @@ def render_blocks(
     def flush_paragraph() -> None:
         if not paragraph:
             return
-        merged = _strip_inline(" ".join(paragraph))
+        raw = " ".join(paragraph)
+        merged = _strip_inline(raw)
         paragraph.clear()
         if merged:
-            blocks.append(ForumBlock(kind=BLOCK_PARAGRAPH, text=merged[:char_limit]))
+            blocks.append(
+                ForumBlock(kind=BLOCK_PARAGRAPH, text=merged[:char_limit], raw=raw)
+            )
 
     def flush_code() -> None:
         if code_lines:
-            blocks.append(ForumBlock(kind=BLOCK_CODE, text="\n".join(code_lines)[:char_limit]))
+            raw = "\n".join(code_lines)
+            blocks.append(ForumBlock(kind=BLOCK_CODE, text=raw[:char_limit], raw=raw))
             code_lines.clear()
 
     for raw_line in text.split("\n"):
@@ -186,14 +200,16 @@ def render_blocks(
                     kind=BLOCK_HEADING,
                     text=_strip_inline(heading.group(2))[:char_limit],
                     level=len(heading.group(1)),
+                    raw=heading.group(2),
                 )
             )
             continue
         if stripped.startswith(">"):
             flush_paragraph()
-            quoted = _strip_inline(stripped.lstrip(">").strip())
+            raw = stripped.lstrip(">").strip()
+            quoted = _strip_inline(raw)
             if quoted:
-                blocks.append(ForumBlock(kind=BLOCK_QUOTE, text=quoted[:char_limit]))
+                blocks.append(ForumBlock(kind=BLOCK_QUOTE, text=quoted[:char_limit], raw=raw))
             continue
         item = _LIST_RE.match(line)
         if item is not None:
@@ -209,6 +225,7 @@ def render_blocks(
                         text=body[:char_limit],
                         level=min(4, indent),
                         marker=marker,
+                        raw=item.group(3),
                     )
                 )
             continue
@@ -216,7 +233,9 @@ def render_blocks(
             flush_paragraph()
             row = _table_row(line)
             if row:
-                blocks.append(ForumBlock(kind=BLOCK_LIST, text=row[:char_limit]))
+                blocks.append(
+                    ForumBlock(kind=BLOCK_LIST, text=_strip_inline(row)[:char_limit], raw=row)
+                )
             continue
         paragraph.append(stripped)
 
