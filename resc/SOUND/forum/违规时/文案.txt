@@ -1,0 +1,33 @@
+留言墙违规提示语音 · 文案与生成参数
+=====================================
+
+音频格式：32 kHz / 单声道 / PCM 16-bit WAV，与桌宠其它语音产物一致。
+播放链路：ForumViolationSound -> VOICE_REQUEST -> lib/script/voice/handler.py -> 音频核心。
+挑文件规则：随机会话内随机一条，且不与上一条重复（DirectoryRandomSound）。
+
+文案（与文件名一一对应）
+------------------------
+违规1.wav  等等，这条留言可不能发出去哦。
+违规2.wav  带网址的留言会被拦下来，去掉链接再发一次吧。
+违规3.wav  这么一长串数字，我可不能帮你发出去。
+违规4.wav  这句话有点不太好听，换个说法好不好？
+违规5.wav  像是要拉人去别的地方呢，这种留言不行的哦。
+违规6.wav  广告可不能贴在留言墙上，说点真心话吧。
+违规7.wav  我帮你拦住啦，改一改我们再发出去吧。
+违规8.wav  先别急着发，这样的内容不太合适呢。
+
+生成方式
+--------
+用桌宠当前的语音推理链路与当前生效参数合成，不是语音包内置的验证入口默认值：
+
+- 推理器：lib/script/gsvmove/onnx_runtime.py 的 OnnxVoiceRuntime(package, provider="cuda")
+- 语音包：C:\AemeathDeskPet\voice\ONNX_aimisiV2（aimisiV2，v2Pro，runtime_revision 8）
+- 参数来源：lib/script/gsvmove/service.py 的 _get_gsv_inference_defaults()，
+  即 config/ollama_config.py 中当前生效的 gsv_* 设置：
+  temperature=1.35、top_k=15、top_p=1.0、repetition_penalty=1.6、
+  speed_factor=1.1、text_split_method=cut0、fragment_interval=0.3、seed=-1（随机采样）。
+  text_lang 固定 zh。
+
+重制步骤：改上面的文案后，用同一组参数逐条 synthesize_to_file 覆盖本目录下的 wav。
+seed 保持 -1 时每条都是新的随机采样，重制会得到不同的音色细节；要复现某一条，
+把那一次的 seed 固定下来再合成同一条文案。
