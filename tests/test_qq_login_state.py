@@ -1,10 +1,14 @@
+import ast
 import unittest
 from io import BytesIO
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 from PIL import Image
 
 from lib.script.cloudmusic._mixin_login import _LoginMixin
+
+_LOGIN_SOURCE = Path(__file__).resolve().parents[1] / "lib" / "script" / "cloudmusic" / "_mixin_login.py"
 
 
 class QQLoginStateTests(unittest.TestCase):
@@ -93,6 +97,50 @@ class QQLoginStateTests(unittest.TestCase):
         self.assertEqual(result, expected)
         visited = [call.args[0] for call in page.goto.call_args_list]
         self.assertNotIn(_LoginMixin._QQ_LOGIN_S_URL, visited)
+
+
+
+class QQBrowserLoginWorkerStructureTests(unittest.TestCase):
+    """锁住 `_qq_browser_login_worker` 的首轮守卫写法。
+
+    历史上这里写的是 `if (not has_uin if 'has_uin' in locals() else True):`，
+    靠 `locals()` 判「首轮有没有算过 uin」，静态分析看不到赋值点（曾触发 F821），
+    也很难读懂。现在改成循环前显式 `has_uin = False` + `if not has_uin:`，
+    行为不变（首轮按未登录处理），但可静态验证。
+    """
+
+    @staticmethod
+    def _worker_node():
+        tree = ast.parse(_LOGIN_SOURCE.read_text(encoding="utf-8"), filename=str(_LOGIN_SOURCE))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == "_qq_browser_login_worker":
+                return node
+        raise AssertionError("未找到 _qq_browser_login_worker")
+
+    def test_has_uin_is_initialized_before_the_poll_loop(self):
+        worker = self._worker_node()
+        loops = [node for node in ast.walk(worker) if isinstance(node, ast.While)]
+        self.assertTrue(loops, "登录轮询循环不见了")
+        loop = min(loops, key=lambda node: node.lineno)
+
+        pre_loop_assignments = [
+            node
+            for node in ast.walk(worker)
+            if isinstance(node, ast.Assign)
+            and node.lineno < loop.lineno
+            and any(
+                isinstance(target, ast.Name) and target.id == "has_uin"
+                for target in node.targets
+            )
+        ]
+        self.assertEqual(len(pre_loop_assignments), 1, "has_uin 未在轮询循环前初始化")
+        self.assertIsInstance(pre_loop_assignments[0].value, ast.Constant)
+        self.assertIs(pre_loop_assignments[0].value.value, False)
+
+    def test_no_locals_based_dead_condition_remains(self):
+        source = _LOGIN_SOURCE.read_text(encoding="utf-8")
+        self.assertNotIn("'has_uin' in locals()", source)
+        self.assertNotIn('"has_uin" in locals()', source)
 
 
 if __name__ == "__main__":

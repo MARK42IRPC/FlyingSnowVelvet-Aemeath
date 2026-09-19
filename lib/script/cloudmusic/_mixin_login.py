@@ -1576,13 +1576,15 @@ class _LoginMixin:
         last_cookie_map: dict[str, str] = {}
         captured_cookie_map: dict[str, str] = {}
         promoted = False
-        should_hide_qr = False
         last_qr_refresh_at: float | None = None
         last_qr_signature = ''
         last_qr_snapshot_at: float | None = None
         official_login_confirmed = False
         official_nickname = ''
         promotion_started_at: float | None = None
+        # 首轮（以及被 continue 跳过的轮次）尚未解析到 uin，按「未登录」处理；
+        # 该值在每轮尾部由 _qq_cookie_map_has_uin 刷新。
+        has_uin = False
         try:
             try:
                 from playwright.sync_api import sync_playwright
@@ -1668,7 +1670,7 @@ class _LoginMixin:
 
                 current_qr_signature = self._qq_current_qrcode_signature(page)
                 now = time.monotonic()
-                if (not has_uin if 'has_uin' in locals() else True):
+                if not has_uin:
                     should_refresh_snapshot = False
                     if current_qr_signature and current_qr_signature != last_qr_signature:
                         should_refresh_snapshot = True
@@ -1745,7 +1747,6 @@ class _LoginMixin:
                     nickname = official_nickname or self._qq_nickname_hint(client.get_session())
                     self._set_login_state(True, {'nickname': nickname}, provider='qq')
                     self._save_qq_login_cache()
-                    should_hide_qr = True
                     if login_access == 'full':
                         self._publish_qr_status('QQ音乐登录成功，已同步完整权限')
                     else:

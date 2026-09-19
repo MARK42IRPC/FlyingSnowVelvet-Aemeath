@@ -38,6 +38,11 @@ ec.unsubscribe(EventType.INFORMATION, on_info)
   - `#xxx` → `INPUT_HASH`
   - 普通文本 → `INPUT_TEXT`，再由 `InteractionModeService` 路由；陪伴模式发布 `INPUT_CHAT`，办公模式发布 `OFFICE_INPUT`
 - `/`、`#` 协议不经过交互模式路由，切换办公模式不会改变命令语义。
+- `INPUT_COMMAND.text` 的唯一来源是用户在命令框的键盘输入，`cmd_center` 收到后用
+  `subprocess.run(..., shell=True)` 执行——这是 `/` 命令框的既定语义（用户执行自己的命令），
+  不是注入面。禁止把 AI 输出、模型生成内容、网络返回或配置文件的文本接进这条事件；
+  AI 侧的指令分派走 `ToolDispatcher` 的封闭指令表，与 `INPUT_COMMAND` 无通路。
+  该契约由 `tests/test_shell_execution_allowlist.py` 静态守住（shell 落点 + 发布方白名单）。
 - 交互模式每次启动固定为 `companion`，不保存上次选择；`INTERACTION_MODE_CHANGED.generation` 用于拒绝切换后迟到的陪伴回复、气泡、语音和工具调用。
 - 内置 `#后端 dx` / `#后端 qt` 用于控制面板不可用时切换持久化绘制后端；配置保存成功后发布 `APP_QUIT {restart: true}`，保存失败不得退出当前实例。
 - 托盘“控制面板”使用 `TrayCommand.OPEN_SETTINGS`，由 `ApplicationUiHost.open_settings()` 承接；DX 主进程通过隔离 Qt workbench helper 打开，不能在 DX 进程内构造 `QWidget`。

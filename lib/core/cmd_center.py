@@ -68,7 +68,14 @@ class CmdCenter:
         compute_hub.submit_io(self._run_command, cmd)
 
     def _run_command(self, cmd: str):
-        """在后台线程中执行命令（超时配置化，不阻塞 Qt 主线程）"""
+        """在后台线程中执行命令（超时配置化，不阻塞 Qt 主线程）
+
+        `shell=True` 是本功能的既定语义：`/` 命令框就是给用户执行任意本地命令的入口
+        （见 doc/事件系统使用说明.txt「四、输入链路」），`cmd` 只可能来自用户键盘输入
+        （`command_dialog` / `cmd_window` / `ApplicationUiHost._publish_command`），
+        不存在来自 AI 输出、网络返回或配置文件的构造路径。改为参数数组会引入新的
+        引号/转义语义差异，反而破坏用户预期，故保留 shell 并由测试锁住入口集合。
+        """
         timeout_val = TIMEOUTS['cmd_exec']
         try:
             result = subprocess.run(

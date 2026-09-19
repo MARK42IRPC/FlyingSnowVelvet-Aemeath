@@ -127,6 +127,9 @@
 
 [INPUT_COMMAND]
 - lib/core/cmd_center.py -> self._on_input_command [has unsubscribe]
+  发布方: lib/core/dx_bridge/application_ui.py
+  说明: text 只来自用户在命令框的键盘输入；cmd_center 以 shell=True 执行属既定语义，
+        发布方白名单由 tests/test_shell_execution_allowlist.py 锁定。
 
 [INPUT_HASH]
 - lib/core/cmd_center.py -> self._on_input_hash [has unsubscribe; 内置 #图层、#后端 dx/qt]
@@ -423,10 +426,12 @@
 
 [UI_OPEN_CMD_WINDOW]
 - lib/script/ui/cmd_window.py -> self._on_open_cmd_window
-  发布方: lib/script/ui/tray_icon.py
+  发布方: lib/script/main.py（托盘 TrayCommand.OPEN_CMD 在此转成事件；tray_icon.py 只发托盘命令）
 
 [UI_OPEN_CMD_WINDOW_WITH_COMMAND]
 - lib/script/ui/cmd_window.py -> self._on_open_cmd_window_with_command
+  发布方: lib/script/ui/command_dialog.py
+  说明: 事件先赋给局部变量再 publish，静态正则扫不到，故此前缺失发布方记录。
 
 [VOICE_REQUEST]
 - lib/script/voice/handler.py -> self._on_voice_request [has unsubscribe]
@@ -575,6 +580,9 @@
 - lib/script/ui/speaker_search_dialog.py
 - lib/script/ui/yuanbao_login_dialog.py
 - lib/script/yuanbao_free_api/service.py
+
+[INPUT_COMMAND]
+- lib/core/dx_bridge/application_ui.py
 
 [INPUT_TEXT]
 - lib/core/dx_bridge/application_ui.py
@@ -796,7 +804,10 @@
 - lib/script/ui/command_hint_box.py
 
 [UI_OPEN_CMD_WINDOW]
-- lib/script/ui/tray_icon.py
+- lib/script/main.py
+
+[UI_OPEN_CMD_WINDOW_WITH_COMMAND]
+- lib/script/ui/command_dialog.py
 
 [VOICE_REQUEST]
 - lib/core/voice/random_sound.py

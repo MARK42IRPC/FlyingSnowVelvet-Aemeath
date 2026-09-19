@@ -44,12 +44,6 @@ ignore = [
 "lib/script/ui/bug_tracker_window.py" = ["F821"]
 "lib/script/ui/game_manager_window.py" = ["F821"]
 
-# ── 死条件 ────────────────────────────────────────────────────────────
-# `if (not has_uin if 'has_uin' in locals() else True):` —— `has_uin` 从未赋值，条件恒真，
-# 属重构残留。保留 F821 会让上面那条豁免规则无法表达「其它文件仍要报」，
-# 故此处单独豁免并在代码里留 TODO 跟踪。
-"lib/script/cloudmusic/_mixin_login.py" = ["F821"]
-
 # ── 「导入即生效」的副作用导入 ──────────────────────────────────────
 # config_runtime 在被导入时解析屏幕分辨率并 set_draw_scale()，随后的 `from config.scale
 # import scale_px` 才按正确缩放取值。这是有意的导入顺序，不是漏用。

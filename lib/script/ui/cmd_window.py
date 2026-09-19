@@ -428,7 +428,10 @@ class CmdWindow(QWidget):
         每行通过 _StreamLineEvent 投递到主线程。
         使用 chcp 65001 强制 UTF-8；fallback errors='replace'。
         """
-        # Windows：在 cmd 子 shell 里先切换代码页到 UTF-8
+        # Windows：在 cmd 子 shell 里先切换代码页到 UTF-8。
+        # shell=True 是命令框的实现前提（需要 chcp 内置命令与 & 串联），且 cmd
+        # 只来自用户在命令框的键盘输入，不存在外部注入源；入口集合由
+        # tests/test_shell_execution_allowlist.py 锁住。
         full_cmd = f'chcp 65001 > nul 2>&1 & {cmd}'
         env = os.environ.copy()
         env['PYTHONUTF8'] = '1'
