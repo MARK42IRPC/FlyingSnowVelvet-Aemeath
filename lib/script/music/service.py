@@ -1,4 +1,4 @@
-﻿"""Music service facade.
+"""Music service facade.
 
 This module provides a single entry-point for all music platform interactions.
 Callers should avoid importing provider-specific modules directly.

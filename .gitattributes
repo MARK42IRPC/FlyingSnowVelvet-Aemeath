@@ -1,0 +1,42 @@
+# 飞行雪绒 统一换行与编码约定
+#
+# 背景：仓库索引里已经是 LF（`git ls-files --eol` 全为 i/lf），但 Windows 上
+# `core.autocrlf=true` 会把检出结果写成 CRLF，旧文件里还混着带 BOM 的 Python 源码。
+# 这里把「进库一律 LF、Python 不带头部 BOM」写死，避免工具链因为不可见字符踩坑。
+#
+# 注意：本文件不改变已有文件内容，只影响之后 git 触碰它们时的归一化结果。
+
+* text=auto eol=lf
+
+*.py text eol=lf
+*.pyi text eol=lf
+*.txt text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.toml text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.cfg text eol=lf
+*.ini text eol=lf
+*.c text eol=lf
+*.h text eol=lf
+*.ps1 text eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 二进制资源不做换行归一化。
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.gif binary
+*.ico binary
+*.zip binary
+*.exe binary
+*.dll binary
+*.pyd binary
+*.onnx binary
+*.wav binary
+*.mp3 binary
+*.ttf binary
+*.otf binary

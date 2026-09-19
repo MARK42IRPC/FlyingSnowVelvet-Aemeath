@@ -28,6 +28,21 @@ jobs:
       - name: Syntax check
         run: python -m compileall config lib install_deps.py install_deps scripts
 
+      - name: Lint (ruff)
+        shell: pwsh
+        run: |
+          $output = (& python -m ruff check --output-format concise lib config scripts tests 2>&1 | Out-String)
+          $exitCode = $LASTEXITCODE
+          $output | Write-Host
+          if ($exitCode -ne 0) {
+            # 只把真正的违规行抛成注释，避免刷屏；明细仍在完整日志里。
+            ($output -split "`r?`n" | Where-Object { $_ -match '^\S+\.py:\d+:\d+: [A-Z]+\d+ ' } | Select-Object -First 20) | ForEach-Object {
+              $detail = $_.Trim() -replace '%', '%25'
+              Write-Output "::error title=ruff::$detail"
+            }
+            exit $exitCode
+          }
+
       - name: Unit tests
         shell: pwsh
         run: |

@@ -1,4 +1,4 @@
-﻿"""版本信息与 Github 仓库声明。"""
+"""版本信息与 Github 仓库声明。"""
 
 from __future__ import annotations
 

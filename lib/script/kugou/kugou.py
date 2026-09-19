@@ -1,4 +1,4 @@
-﻿"""Kugou music API client.
+"""Kugou music API client.
 
 Provides search, track metadata, playable URL lookup, and QR login helpers.
 """

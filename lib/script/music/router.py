@@ -1,4 +1,4 @@
-﻿"""Multi-source search router for music providers."""
+"""Multi-source search router for music providers."""
 
 from __future__ import annotations
 

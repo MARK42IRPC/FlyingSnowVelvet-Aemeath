@@ -1,4 +1,4 @@
-﻿"""网易云音乐管理器 - 播放、下载与进度控制 Mixin"""
+"""网易云音乐管理器 - 播放、下载与进度控制 Mixin"""
 
 import threading
 import random
