@@ -197,8 +197,10 @@ def validate_update_installer(
     """校验离线安装器，并返回它的 PE 尾记录。
 
     更新链路的完整性只认一个哈希：发布清单里的 SHA-256，它在下载时随流算出（见
-    ``UpdateManager._download_url``）。``verify_payload`` 只留给清单没给哈希的
-    情况，那时才把内置归档再哈希一遍。
+    ``UpdateManager._download_url``）。清单缺哈希时 ``UpdateManager`` 直接拒绝安装，
+    不再退化成「自己验自己」，因此生产路径都走默认值：只读尾部记录 + 检查 ZIP 目录。
+    ``verify_payload`` 是给本地工具与测试用的显式深校验开关，它会把内置归档重算一遍
+    SHA-256 来确认尾部记录自洽，代价是整份 payload 要读一次。
 
     ZIP 目录这里只做结构与路径检查，不再调 ``testzip()``：那会把几百兆 payload
     整份解压并逐条算 CRC-32，是整个更新流程里最卡的一步，而真正落盘的解压由原生

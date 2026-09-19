@@ -236,6 +236,7 @@ class UpdateInstallerTests(unittest.TestCase):
             root = Path(temp_dir)
             state_path = root / "state.json"
             manager = UpdateManager(state_path=state_path)
+            digest = "b" * 64
             release = ReleaseInfo(
                 "PACK",
                 datetime(2026, 7, 29, tzinfo=timezone.utc),
@@ -243,10 +244,14 @@ class UpdateInstallerTests(unittest.TestCase):
                 "download",
                 "GitHub",
                 "revision",
+                0.0,
+                (),
+                digest,
             )
 
             def download(_release, destination):
                 _write_installer(destination, {".fsv-install-root": "marker\n", "app/README.md": "new"})
+                return digest
 
             with (
                 patch("lib.script.update_manager._STAGING_ROOT", root / "stage"),
@@ -332,6 +337,43 @@ class UpdateInstallerTests(unittest.TestCase):
                 with self.assertRaisesRegex(UpdateError, "SHA-256"):
                     manager.install_release(release)
 
+    def test_manifest_without_sha256_is_refused_instead_of_downgraded(self):
+        """缺 sha256 的清单必须直接拒绝安装，不能退化成“自己验自己”。
+
+        旧行为会在这里回退到 `verify_payload=True`：期望值来自尾部记录、被校验的
+        内容也来自同一份下载文件，等于自己验自己，挡不住篡改。
+        """
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            manager = UpdateManager(state_path=root / "state.json")
+            release = ReleaseInfo(
+                "PACK",
+                datetime(2026, 7, 29, tzinfo=timezone.utc),
+                "FlyingSnowVelvet-LTS2-Offline-Installer.exe",
+                "download",
+                "GitHub",
+                "revision",
+            )
+
+            def download(_release, destination):
+                _write_installer(destination, {".fsv-install-root": "marker\n"})
+                return None
+
+            with (
+                patch("lib.script.update_manager._STAGING_ROOT", root / "stage"),
+                patch.object(manager, "_download_release", side_effect=download),
+                patch.object(
+                    update_installer,
+                    "_hash_file_range",
+                    side_effect=AssertionError("缺哈希时不应回退到重哈希内置归档"),
+                ),
+                patch("lib.script.app.update_installer.launch_update_installer") as launch,
+            ):
+                with self.assertRaisesRegex(UpdateError, "缺少 SHA-256"):
+                    manager.install_release(release)
+
+            launch.assert_not_called()
+
     def test_manager_defers_locked_resource_files_and_reports_them(self):
         """被占用而没能替换的文件不让整次更新失败，而是登记为下次启动补装。"""
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -397,6 +439,7 @@ class UpdateInstallerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             manager = UpdateManager(state_path=root / "state.json")
+            digest = "c" * 64
             release = ReleaseInfo(
                 "PACK",
                 datetime(2026, 9, 15, tzinfo=timezone.utc),
@@ -404,12 +447,16 @@ class UpdateInstallerTests(unittest.TestCase):
                 "download",
                 "HF",
                 "rev",
+                0.0,
+                (),
+                digest,
             )
 
             def download(_release, destination):
                 _write_installer(
                     destination, {".fsv-install-root": "marker\n"}
                 )
+                return digest
 
             with (
                 patch("lib.script.update_manager._STAGING_ROOT", root / "stage"),

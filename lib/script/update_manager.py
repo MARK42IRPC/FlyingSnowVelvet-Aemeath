@@ -393,9 +393,14 @@ class UpdateManager(_UpdateBase):
             digest = self._download_release(release, partial_path)
             partial_path.replace(download_path)
             self._progress(0, 0, "正在核对更新包 SHA-256…")
-            if release.archive_sha256 and not digest:
+            # 清单里的 sha256 是这份更新包唯一被信任的完整性凭据：少一个都不能装。
+            # 缺清单哈希时过去会退化成「下载流自算哈希 + 重哈希内置归档」，
+            # 那条路的“期望值”也来自同一份下载内容，等于自己验自己，挡不住篡改。
+            if not release.archive_sha256:
+                raise UpdateError("更新清单缺少 SHA-256，已拒绝安装")
+            if not digest:
                 raise UpdateError("更新包缺少可校验的 SHA-256，已取消更新")
-            if release.archive_sha256 and digest.casefold() != release.archive_sha256.casefold():
+            if digest.casefold() != release.archive_sha256.casefold():
                 raise UpdateError("更新安装器压缩包 SHA-256 校验失败")
             if release.kind == "resources":
                 archive_path = download_path
@@ -449,9 +454,9 @@ class UpdateManager(_UpdateBase):
                     if download_path.suffix.casefold() == ".zip"
                     else download_path
                 )
-                validate_update_installer(
-                    archive_path, verify_payload=not release.archive_sha256
-                )
+                # 走到这里 archive_sha256 一定非空（上面的守卫已拒绝缺哈希的清单），
+                # 下载流哈希已经覆盖了安装器内置归档的全部字节，无需再重哈希一遍。
+                validate_update_installer(archive_path)
             release_payload = {
                 "tag": release.tag,
                 "published_at": _isoformat(release.published_at),

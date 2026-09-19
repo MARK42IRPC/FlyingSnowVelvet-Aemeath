@@ -9,7 +9,7 @@
 
 from __future__ import annotations
 
-from collections import deque
+from collections import OrderedDict, deque
 from pathlib import Path
 
 from PyQt5.QtCore import Qt, QTimer
@@ -28,7 +28,11 @@ from lib.core.qt_bridge.overlay_policy import enable_no_activate, resolve_hide_l
 
 _logger = get_logger(__name__)
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]
-_RESOURCE_CACHE: dict[tuple, ImageResource] = {}
+
+# 资源路径 -> 已解码（可选羽化）的 ImageResource。条目只增不减会随长跑慢慢
+# 吃住内存，因此按「最近使用」保留有限条数；与 forum_texture 的纹理缓存同一思路。
+_RESOURCE_CACHE_MAX = 64
+_RESOURCE_CACHE: "OrderedDict[tuple, ImageResource]" = OrderedDict()
 
 
 def _effect_alive(effect) -> bool:
@@ -62,6 +66,27 @@ def _prepare_effect_backend_state(effect) -> None:
     effect._text_w = float(metrics.horizontalAdvance(text))
     effect._text_h = float(metrics.height())
     effect._text_baseline_offset = (metrics.ascent() - metrics.descent()) // 2
+
+
+def _cached_effect_resource(
+    cache_key: tuple, resolved_path: str, effect_options: dict
+) -> ImageResource | None:
+    """按 LRU 语义取/建 effect 资源缓存条目。
+
+    命中时把条目移到队尾（最近使用），未命中则加载并在超限时从队首淘汰最冷的一条。
+    被淘汰的条目只是不再复用，已创建的特效仍持有自己的资源引用，不会中断绘制。
+    """
+    cached = _RESOURCE_CACHE.get(cache_key)
+    if cached is not None:
+        _RESOURCE_CACHE.move_to_end(cache_key)
+        return cached
+    loaded = load_effect_resource(resolved_path, effect_options)
+    if loaded is None:
+        return None
+    _RESOURCE_CACHE[cache_key] = loaded
+    while len(_RESOURCE_CACHE) > _RESOURCE_CACHE_MAX:
+        _RESOURCE_CACHE.popitem(last=False)
+    return loaded
 
 
 def _resolve_resource_path(resource_path: str) -> str:
@@ -233,11 +258,9 @@ class EffectOverlay(QWidget):
                     bool(effect_options.get("edge_feather", False)),
                     effect_options.get("feather_ratio", 0.12),
                 )
-                visual_resource = _RESOURCE_CACHE.get(cache_key)
-                if visual_resource is None:
-                    visual_resource = load_effect_resource(resolved_path, effect_options)
-                    if visual_resource is not None:
-                        _RESOURCE_CACHE[cache_key] = visual_resource
+                visual_resource = _cached_effect_resource(
+                    cache_key, resolved_path, effect_options
+                )
                 if visual_resource is None:
                     continue
                 effect_options["resolved_resource_path"] = resolved_path
