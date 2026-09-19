@@ -324,7 +324,7 @@ class MortorManager(BaseManager):
             pass
 
         if not get_music_service().can_takeover_for_bgm():
-            logger.info("[MortorManager] 当前已有音乐播放，跳过摩托 BGM")
+            _logger.info("[MortorManager] 当前已有音乐播放，跳过摩托 BGM")
             return
 
         self._event_center.publish(Event(EventType.MUSIC_PLAY_TOP, {
@@ -339,7 +339,7 @@ class MortorManager(BaseManager):
         try:
             self._event_center.publish(Event(EventType.MUSIC_PLAY_PAUSE, {'playing': False}))
         except Exception as exc:
-            logger.error("[MortorManager] 暂停摩托BGM失败: %s", exc)
+            _logger.error("[MortorManager] 暂停摩托BGM失败: %s", exc)
         self._bgm_started_by_mortor = False
 
     # ==================================================================
