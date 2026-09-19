@@ -11,7 +11,7 @@
 from __future__ import annotations
 
 from PyQt5.QtWidgets import QWidget, QGraphicsOpacityEffect
-from PyQt5.QtCore import Qt, QPropertyAnimation, QEasingCurve, QPointF, QRectF
+from PyQt5.QtCore import Qt, QPropertyAnimation, QEasingCurve, QPointF
 from PyQt5.QtGui import QPainter, QPolygonF
 
 from config.scale import scale_px

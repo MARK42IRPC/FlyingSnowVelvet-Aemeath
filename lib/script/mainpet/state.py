@@ -89,7 +89,7 @@ class StateMachine:
         if task_id == self._behavior_task_id:
             self._trigger_behavior()
         elif task_id == self._wander_task_id:
-            log(f"Timer event: wander triggered")
+            log("Timer event: wander triggered")
             self._trigger_wander()
 
     def _on_gif_loop_completed(self, event):
@@ -171,7 +171,7 @@ class StateMachine:
         if new_state == 'moving' and self._current_state != 'idle':
             log("Moving can only interrupt idle")
             return
-        
+
         if self._current_state != 'idle' and new_state != 'idle':
             if current_action and not Actions.is_interruptible(current_action, by_event):
                 log("Cannot interrupt current action")
@@ -428,22 +428,22 @@ class StateMachine:
         管理器不存在或无活动雪豹时返回 None。
         """
         from lib.script.plugin_registry import get_manager
-        
+
         manager = get_manager('snow_leopard')
         if manager is None:
             return None
-        
+
         pet_pos = self._entity.get_core_position()
         nearest = manager.get_nearest_leopard_pos(pet_pos)
         nearest = coerce_point(nearest)
         if nearest is None:
             return None
-        
+
         # 将目标中心转换为宠物左上角移动目标
         pet_geom = self._entity.get_core_geometry()
         if pet_geom is None:
             return None
-        
+
         return Point(
             nearest.x - pet_geom.width // 2,
             nearest.y - pet_geom.height // 2,
@@ -455,22 +455,22 @@ class StateMachine:
         管理器不存在或无存活沙发时返回 None。
         """
         from lib.script.plugin_registry import get_manager
-        
+
         manager = get_manager('sofa')
         if manager is None:
             return None
-        
+
         pet_pos = self._entity.get_core_position()
         nearest = manager.get_nearest_sofa_pos(pet_pos)
         nearest = coerce_point(nearest)
         if nearest is None:
             return None
-        
+
         # 将目标中心转换为宠物左上角移动目标
         pet_geom = self._entity.get_core_geometry()
         if pet_geom is None:
             return None
-        
+
         return Point(
             nearest.x - pet_geom.width // 2,
             nearest.y - pet_geom.height // 2,

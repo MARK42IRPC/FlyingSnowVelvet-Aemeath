@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import logging
-import os
 import socket
 import threading
 import sys
-from pathlib import Path
 
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtCore import QObject, pyqtSignal

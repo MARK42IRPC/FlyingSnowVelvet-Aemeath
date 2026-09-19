@@ -34,10 +34,10 @@ def get_user_scale() -> float:
 def adjust_user_scale(delta: float) -> float:
     """
     Adjust user scale by delta and return new value.
-    
+
     Args:
         delta: Adjustment amount (e.g., 0.1 or -0.1)
-        
+
     Returns:
         New user scale value
     """
@@ -81,7 +81,7 @@ def get_draw_scale() -> float:
 
 def scale_px(value: float | int, min_abs: int | None = None) -> int:
     """Scale a pixel value and round to nearest integer.
-    
+
     The final scale is the product of draw_scale and user_scale.
     """
     raw = float(value)

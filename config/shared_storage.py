@@ -11,16 +11,16 @@ import threading
 from lib.core.logger import get_logger
 from config.shared_storage_paths import (
     get_project_root,
-    get_project_config_path,
-    get_shared_root_dir,
-    get_shared_config_dir,
     get_shared_config_path,
-    local_pending_sync_path as _local_pending_sync_path,
-    pending_sync_path as _pending_sync_path,
+    get_shared_root_dir,
     resolve_shared_config_path as _resolve_shared_config_path,
 )
 from config.shared_storage_io import flush_pending_syncs as _flush_pending_syncs
 from config.user_storage_paths import ensure_user_storage_layout
+
+#: 旧调用方一直从本模块取这两个路径助手（config.music.*、lib.script.chat.memory 等），
+#: 保持再导出；真正实现留在 config.shared_storage_paths。
+__all__ = ["ensure_shared_config_ready", "get_project_root", "get_shared_config_path"]
 
 _logger = get_logger(__name__)
 

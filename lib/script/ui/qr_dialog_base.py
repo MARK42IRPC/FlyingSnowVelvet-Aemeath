@@ -6,7 +6,7 @@ from pathlib import Path
 
 from PyQt5.QtCore import Qt, QRect, QPropertyAnimation, QEasingCurve, QEvent
 from PyQt5.QtGui import QCursor, QPainter
-from PyQt5.QtWidgets import QGraphicsOpacityEffect, QPushButton, QStyle, QWidget
+from PyQt5.QtWidgets import QGraphicsOpacityEffect, QPushButton, QStyle
 
 from config.config import UI
 from config.scale import scale_px

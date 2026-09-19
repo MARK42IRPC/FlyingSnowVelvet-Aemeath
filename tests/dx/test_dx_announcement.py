@@ -10,7 +10,7 @@ from lib.core.announcement import AnnouncementBlock, AnnouncementDocument
 from lib.core.dx_bridge.announcement import DxAnnouncementWindow
 from lib.core.dx_bridge.loop import DxLoopContext
 from lib.core.dx_bridge.screen import DxScreenProvider
-from lib.core.graphics.types import Point, Rect
+from lib.core.graphics.types import Rect
 
 
 def _immediate_submit(func, *args):

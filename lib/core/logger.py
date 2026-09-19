@@ -6,7 +6,6 @@ import glob
 import json
 import logging
 import os
-import sys
 import threading
 import traceback
 from datetime import datetime

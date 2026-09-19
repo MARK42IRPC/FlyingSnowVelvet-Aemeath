@@ -127,7 +127,7 @@ class ProgressPanel(QWidget):
     def set_position_below_playlist(self, playlist_rect: QRect) -> None:
         """
         设置位置：左下锚点对齐播放列表的左上锚点。
-        
+
         即：进度条的左上角 = 播放列表的左上角
         """
         x = playlist_rect.x()
@@ -150,11 +150,11 @@ class ProgressPanel(QWidget):
         """处理播放进度事件（由音乐管理器响应请求后发布）。"""
         if self._dragging or not self._visible:
             return
-        
+
         # 从事件中获取进度百分比和剩余时间
         progress = event.data.get('progress', 0.0)
         remaining = event.data.get('remaining', 0)
-        
+
         self._progress = progress
         self._remaining = remaining
         self.update()
@@ -221,7 +221,7 @@ class ProgressPanel(QWidget):
         """鼠标按下：开始拖动或跳转到点击位置。"""
         if event.button() != Qt.LeftButton:
             return
-            
+
         # 点击整个进度条区域都可以调整进度
         self._dragging = True
         self._drag_progress = self._x_to_progress(event.x())
@@ -237,11 +237,11 @@ class ProgressPanel(QWidget):
         """鼠标释放：发布进度百分比事件。"""
         if event.button() != Qt.LeftButton:
             return
-            
+
         if self._dragging:
             self._dragging = False
             self._progress = self._drag_progress
-            
+
             # 发布进度百分比事件，由音乐模块计算实际位置
             self._event_center.publish(Event(EventType.MUSIC_SEEK, {
                 'progress': self._progress,

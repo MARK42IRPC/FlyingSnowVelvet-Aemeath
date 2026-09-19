@@ -23,13 +23,13 @@ class MovementSettings:
 class MovementController:
     """
     移动控制器 - 管理实体的移动状态和算法
-    
+
     职责：
     - 管理移动状态（是否正在移动、目标位置、当前速度）
     - 实现速度插值算法（加速、减速）
     - 处理方向翻转
     - 计算每帧的位移
-    
+
     不负责：
     - 实际的窗口移动（由调用者执行）
     - 状态机的状态切换（由调用者通过回调触发）
@@ -42,7 +42,7 @@ class MovementController:
                  settings: MovementSettings | None = None):
         """
         初始化移动控制器
-        
+
         Args:
             on_position_update: 位置更新回调，参数为新位置
             on_move_complete: 移动完成回调
@@ -61,10 +61,10 @@ class MovementController:
         self._current_y = 0.0
         self._render_x = 0.0
         self._render_y = 0.0
-        
+
         # 方向
         self._flipped = False
-        
+
         # 回调
         self._on_position_update = on_position_update
         self._on_move_complete = on_move_complete
@@ -104,7 +104,7 @@ class MovementController:
     def start_move(self, target: Point, arrival_radius: float = 1.0) -> None:
         """
         开始移动到目标位置
-        
+
         Args:
             target: 目标位置（全局坐标）
         """
@@ -120,9 +120,9 @@ class MovementController:
     def update_target(self, target: Point, arrival_radius: float | None = None) -> None:
         """
         动态更新移动目标点（仅在移动中生效）
-        
+
         用于追踪动态目标（如跳跃中的雪豹）时持续刷新目标位置。
-        
+
         Args:
             target: 新的目标位置
         """
@@ -219,11 +219,11 @@ class MovementController:
     def _update_speed(self, dist: float) -> None:
         """
         更新移动速度（内部方法）
-        
+
         速度插值逻辑：
         - 在减速范围内：速度接近最低时尝试加速，高于最低时减速
         - 不在减速范围：持续加速直到最高速度
-        
+
         Args:
             dist: 当前距离目标的距离
         """

@@ -51,7 +51,7 @@ from lib.script.app.tray_actions import (
     set_autostart_enabled,
 )
 from lib.script.plugin_registry import (
-    discover_all, init_all_managers, cleanup_all_managers, get_manager
+    discover_all, init_all_managers, cleanup_all_managers
 )
 from lib.script.app.single_instance import (
     acquire_single_instance_lock as _new_acquire_single_instance_lock,

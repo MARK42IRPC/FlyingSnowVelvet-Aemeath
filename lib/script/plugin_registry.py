@@ -21,7 +21,7 @@
 
 import importlib
 import os
-from typing import Dict, List, Type, Callable, Any, Optional
+from typing import Dict, List, Type, Any, Optional
 from abc import ABC, abstractmethod
 
 from lib.core.logger import get_logger

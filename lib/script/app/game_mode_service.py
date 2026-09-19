@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
 
 from lib.core.event.center import Event, EventType, get_event_center
 from lib.core.layer_manager import get_layer_manager

@@ -31,7 +31,6 @@ from PyQt5.QtWidgets import (
     QSizePolicy,
     QStackedWidget,
     QStyle,
-    QToolButton,
     QVBoxLayout,
     QWidget,
 )

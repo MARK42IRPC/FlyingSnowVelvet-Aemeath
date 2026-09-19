@@ -2,7 +2,7 @@
 import random
 from typing import Optional
 
-from PyQt5.QtWidgets import QWidget, QApplication
+from PyQt5.QtWidgets import QWidget
 from PyQt5.QtCore    import Qt, QPoint
 from PyQt5.QtGui     import QPainter
 

@@ -11,7 +11,6 @@ from PyQt5.QtCore import Qt, QPropertyAnimation, QEasingCurve, QPoint
 from PyQt5.QtGui import QPainter
 
 from config.config import CLOUD_MUSIC, UI
-from lib.core.qt_bridge.colors import COLORS
 from lib.core.qt_bridge.font import get_ui_font
 from config.scale import scale_px
 from config.tooltip_config import TOOLTIPS

@@ -392,11 +392,11 @@ class ChatHandlerStreamPresenterMixin:
             raw_text = bot_reply.get_reply(AUTO_COMPANION_PROMPT)
         display_text = _strip_tool_commands_for_display(raw_text)
         is_status_text = _is_non_ai_status_text(display_text)
-        
+
         # 使用与流式回复结束相同的 min_ticks 计算逻辑
         final_min_ticks = self._calc_stream_final_min_ticks(display_text)
         final_max_ticks = max(BUBBLE_MAX_TICKS, final_min_ticks)
-        
+
         self._event_center.publish(Event(EventType.INFORMATION, {
             "text": display_text,
             "min":  final_min_ticks,

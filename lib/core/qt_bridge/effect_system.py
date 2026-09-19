@@ -10,7 +10,6 @@
 from __future__ import annotations
 
 from collections import deque
-import math
 from pathlib import Path
 
 from PyQt5.QtCore import Qt, QTimer

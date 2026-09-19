@@ -126,12 +126,12 @@ class ClockManager(BaseManager):
         event.data['text'] 已去掉开头的 '#'，值如 "闹钟 45" 或 "闹钟重力"
         """
         text = event.data.get('text', '').strip()
-        
+
         # 处理闹钟重力命令
         if text == '闹钟重力':
             self._toggle_gravity()
             return
-        
+
         if not text.startswith('闹钟'):
             return
 
@@ -178,15 +178,15 @@ class ClockManager(BaseManager):
     def _toggle_gravity(self):
         """切换重力开关状态"""
         self._gravity_enabled = not self._gravity_enabled
-        
+
         # 更新所有闹钟的重力状态
         for clock in self._clocks:
             if clock.is_alive():
                 clock.set_gravity_enabled(self._gravity_enabled)
-        
+
         status = "开启" if self._gravity_enabled else "关闭"
         log(f"重力已{status}")
-        
+
         self._event_center.publish(Event(EventType.INFORMATION, {
             'text': f'闹钟重力已{status}',
             'min':  0,
@@ -470,7 +470,7 @@ class ClockManager(BaseManager):
         # 滞回机制：进入和离开使用不同的阈值
         enter_radius = self._cfg.get('protect_radius', 10)
         exit_radius = self._cfg.get('protect_radius_exit', enter_radius + 20)
-        
+
         # 根据当前状态选择阈值
         threshold = exit_radius if in_protection else enter_radius
         threshold_sq = threshold * threshold

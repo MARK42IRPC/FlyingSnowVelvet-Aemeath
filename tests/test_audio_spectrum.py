@@ -4,7 +4,6 @@ import gc
 import sys
 import threading
 import types
-import math
 import unittest
 from unittest.mock import patch
 

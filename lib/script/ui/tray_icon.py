@@ -1,6 +1,5 @@
 """系统托盘图标模块"""
 import os
-import sys
 import uuid
 from pathlib import Path
 from PyQt5.QtWidgets import (

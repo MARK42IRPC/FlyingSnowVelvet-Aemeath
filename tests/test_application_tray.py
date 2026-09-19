@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import threading
 import unittest
-from unittest.mock import Mock, patch
 
 from lib.core.event.center import EventType, cleanup_event_center, get_event_center
 from lib.core.tray_host import TrayCommand, TrayMenuState

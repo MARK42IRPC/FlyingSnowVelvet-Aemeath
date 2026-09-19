@@ -6,7 +6,6 @@ from collections.abc import Callable
 
 from lib.core.event.center import Event, EventType, get_event_center
 from lib.core.graphics.commands import DrawBatch
-from lib.core.graphics.types import Rect
 from lib.core.graphics.visuals import build_particle_batch as _build_particle_batch
 from lib.core.layer import Layer, normalize_layer
 from lib.core.logger import get_logger

@@ -3,12 +3,11 @@
 import json
 import math
 import re
-import threading
 import time
 import base64
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from pathlib import Path
-from urllib.parse import quote_plus, urljoin
+from urllib.parse import quote_plus
 
 import requests
 

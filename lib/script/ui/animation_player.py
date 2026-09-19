@@ -29,7 +29,13 @@ from lib.core.unified_draw import Layer, get_layer_manager
 from lib.core.anchor_utils import apply_ui_opacity
 from lib.script.SEanima.clip import resolve_animation_clip
 from lib.script.SEanima.decoder import build_playback_plan, decode_frame_to_bytes, select_playback_files
-from lib.script.SEanima.effects import _build_exit_shadow_metrics, _normalize_exit_shadow_direction
+from lib.script.SEanima.effects import (
+    _build_exit_shadow_metrics,
+    _normalize_exit_shadow_direction,
+)
+
+#: 退出动画阴影的换算函数定义在 SEanima.effects；测试从这里取，保持再导出。
+__all__ = ["_build_exit_shadow_metrics", "_normalize_exit_shadow_direction"]
 
 _log = logging.getLogger(__name__)
 

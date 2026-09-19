@@ -22,7 +22,7 @@ os.environ.setdefault("QT_PLUGIN_PATH", os.path.join(_QT_ROOT, "Qt5", "plugins")
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtTest import QTest
-from PyQt5.QtWidgets import QApplication, QStackedWidget, QWidget
+from PyQt5.QtWidgets import QApplication, QWidget
 
 from config.config import UI
 from lib.core.qt_bridge.colors import COLORS, UI_THEME

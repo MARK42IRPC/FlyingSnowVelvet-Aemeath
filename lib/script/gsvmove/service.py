@@ -31,6 +31,9 @@ from lib.script.gsvmove.package_manager import (
     resolve_legacy_gsvmove_root,
 )
 
+#: 读取遗留 GSV 根目录文本的助手定义在 package_manager；测试从这里取，保持再导出。
+__all__ = ["_read_text_best_effort"]
+
 
 logger = get_logger(__name__)
 

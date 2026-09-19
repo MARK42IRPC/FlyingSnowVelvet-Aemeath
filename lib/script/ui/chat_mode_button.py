@@ -7,7 +7,6 @@ from PyQt5.QtCore import Qt, QPropertyAnimation, QEasingCurve, QPoint
 from PyQt5.QtGui import QPainter
 
 from config.config import UI
-from lib.core.qt_bridge.colors import COLORS
 from lib.core.qt_bridge.font import get_ui_font
 from config.scale import scale_px
 from lib.core.event.center import get_event_center, EventType, Event

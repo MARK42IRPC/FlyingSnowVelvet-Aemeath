@@ -84,7 +84,7 @@ from .render import (
     draw_warning_line,
     paint_widget,
 )
-from .skills import AuthorizationSkillSlot, EmptySkillSlot, FillSkillSlot, GravitySkillSlot, LahaiSkillSlot, PartnerSkillSlot, SplendorSkillSlot, StarlightSkillSlot
+from .skills import AuthorizationSkillSlot, FillSkillSlot, GravitySkillSlot, LahaiSkillSlot, PartnerSkillSlot, SplendorSkillSlot, StarlightSkillSlot
 from .stats import LahaiTetrisStats
 
 

@@ -88,7 +88,7 @@ class CloseButton(RectActionButton):
         获取指定锚点的位置
 
         Args:
-            anchor_id: 锚点 ID ('top', 'bottom', 'left', 'right', 
+            anchor_id: 锚点 ID ('top', 'bottom', 'left', 'right',
                         'top_left', 'top_right', 'bottom_left', 'bottom_right', 'center')
 
         Returns:
@@ -137,10 +137,9 @@ class CloseButton(RectActionButton):
                 cmd_pos = coerce_qpoint(event.data.get('anchor_point'))
                 if cmd_pos is None:
                     return
-                # 获取 command_dialog 的尺寸来计算 top_right 锚点
                 from config.config import UI
                 cmd_width = UI['cmd_window_width']
-                cmd_height = UI['cmd_window_height']
+                # 获取 command_dialog 的尺寸来计算 top_right 锚点
                 # 计算 top_right 锚点位置
                 new_anchor_point = QPoint(
                     cmd_pos.x() + cmd_width,  # top_right 锚点的 X 坐标

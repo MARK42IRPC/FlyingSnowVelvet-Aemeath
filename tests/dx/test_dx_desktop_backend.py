@@ -23,7 +23,6 @@ from lib.core.event.center import Event, EventType, cleanup_event_center, get_ev
 from lib.core.graphics.types import Point, Rect, Size
 from lib.core.graphics.application_visuals import (
     COMMAND_HINT_DEFAULT_ITEMS,
-    notice_panel_size,
     qr_panel_size,
     resolve_qr_panel_layout,
 )

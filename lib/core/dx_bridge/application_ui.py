@@ -18,7 +18,6 @@ from lib.core.graphics.application_visuals import (
     build_notice_panel_visual,
     build_qr_panel_visual,
     build_tooltip_visual,
-    create_portable_command_hint_metrics,
     create_portable_bubble_text_metrics,
     decode_panel_image,
     notice_panel_size,
@@ -272,7 +271,6 @@ class _DxBubbleWindow:
     def _ensure_host(self, description: BubbleVisualDescription):
         if self._host is not None:
             return self._host
-        anchor = self._pet_anchor()
         geometry = self._bubble_geometry(description)
         host = self._window_host_factory(
             int(geometry.width), int(geometry.height),

@@ -40,7 +40,6 @@ from lib.script.gsvmove.package_manager import (
     fetch_voice_package_size,
     fetch_voice_package_sizes,
     get_voice_package_profile,
-    get_voice_package_status,
     list_fixed_drive_roots,
 )
 from lib.script.ui.workbench_floating import (

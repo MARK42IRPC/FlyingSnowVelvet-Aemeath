@@ -405,9 +405,6 @@ def publish_release(asset_path: Path, metadata_path: Path, output_dir: Path, *, 
         metadata = raw_metadata
     else:
         metadata = _validate_local_release(asset_path, metadata_path)
-    publication_files = (asset_path, metadata_path)
-    if not (isinstance(metadata, dict) and metadata.get("kind") == "resources"):
-        publication_files = _publication_files(asset_path, metadata_path)
     # Remote model hubs now carry resource ZIPs and manifests only; installer
     # EXEs remain local release artifacts.  Keep metadata publication intact.
     resource_files = tuple(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+
 import config.config_runtime as _config_runtime
 
 from config.scale import scale_px, scale_size

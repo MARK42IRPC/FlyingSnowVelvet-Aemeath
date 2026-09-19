@@ -17,7 +17,6 @@ import re
 import os
 import threading
 import subprocess
-import traceback
 from collections import deque
 
 from PyQt5.QtCore import Qt, QPoint, QRect, QPropertyAnimation, QEasingCurve, QEvent, QTimer

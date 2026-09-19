@@ -206,7 +206,7 @@ class _EventsMixin:
         logger.debug("[CloudMusic] 收到 ENQUEUE: song_id=%s, display=%s", song_id, display)
 
         self._queue.append((song_id, display))
-        self._show_info(f"已加入播放队列")
+        self._show_info("已加入播放队列")
 
         if not self._is_playing and self._current_index == -1:
             self._current_index = 0

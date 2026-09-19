@@ -170,7 +170,6 @@ def build_speaker_search_visual(
     search_height = int(SPEAKER_SEARCH_UI.get("height", scale_px(36, min_abs=1)))
     total_width = input_width + button_width
     control_height = SPEAKER_CONTROL_HEIGHT
-    control_gap = SPEAKER_CONTROL_GAP
     slider_height = PROGRESS_PANEL_HEIGHT
     volume_y = SPEAKER_VOLUME_Y
     search_y = SPEAKER_SEARCH_Y

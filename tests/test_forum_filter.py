@@ -15,7 +15,6 @@ from lib.core.forum import (
 from lib.core.forum_filter import (
     FORUM_BANNED_WORD_GROUPS,
     FORUM_BANNED_WORDS,
-    FORUM_REASON_BANNED_WORD,
     FORUM_REASON_LINK,
     FORUM_REASON_LONG_NUMBER,
     category_for_word,

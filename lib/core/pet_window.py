@@ -18,7 +18,6 @@ from lib.core.logger import get_logger
 _logger = get_logger(__name__)
 from lib.core.event.key_handler import KeyEventHandler
 from lib.core.event.center import get_event_center, EventType, Event
-from config.user_scale_config import get_user_scale_config
 from lib.core.draw_core import DrawRequest, get_draw_core
 from lib.core.layer import Layer, normalize_layer
 from lib.core.graphics.types import Point, Size, coerce_point
@@ -589,7 +588,7 @@ class PetWindow(BaseEntity):
     def _handle_entity_position_request(self, event):
         """
         处理实体位置请求事件 - 支持管理器解耦通信
-        
+
         响应其他模块（如雪豹管理器）对主宠物位置/尺寸的查询。
         """
         entity_id = event.data.get('entity_id')
@@ -611,7 +610,7 @@ class PetWindow(BaseEntity):
     def _handle_entity_state_query(self, event):
         """
         处理实体状态查询事件 - 支持管理器解耦通信
-        
+
         响应其他模块对主宠物状态的查询，如是否在移动、当前状态等。
         """
         entity_id = event.data.get('entity_id')

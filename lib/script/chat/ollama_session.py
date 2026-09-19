@@ -2,7 +2,6 @@
 
 import json
 import inspect
-import threading
 import time
 
 import requests

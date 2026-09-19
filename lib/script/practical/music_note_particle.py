@@ -75,14 +75,14 @@ class MusicNoteParticle:
         """物理更新：布朗运动 → 向上移动 → 生命衰减"""
         # 布朗运动（随机漂移）
         self.vx += random.uniform(-self.brownian, self.brownian)
-        
+
         # 限制水平速度
         self.vx = max(-self._max_vx, min(self._max_vx, self.vx))
-        
+
         # 向上移动
         self.x += self.vx
         self.y += self.vy
-        
+
         # 生命衰减
         self.life -= tick_seconds()
 

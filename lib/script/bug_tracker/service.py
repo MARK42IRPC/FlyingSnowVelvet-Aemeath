@@ -11,7 +11,6 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from config.user_storage_paths import get_user_logs_dir
 from lib.core.event.center import Event, EventType, get_event_center
 from lib.core.logger import get_logger
 from lib.core.process_utils import hidden_process_kwargs

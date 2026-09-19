@@ -36,6 +36,17 @@ from lib.core.announcement import (
     save_announcement_preferences,
     set_announcement_forever_suppressed,
 )
+
+#: 这些偏好的定义在 lib.core.announcement；窗口模块与测试一直从这里取，保持再导出。
+__all__ = [
+    "AnnouncementBlock",
+    "AnnouncementPreferences",
+    "is_announcement_suppressed",
+    "load_announcement_preferences",
+    "parse_announcement",
+    "save_announcement_preferences",
+    "set_announcement_forever_suppressed",
+]
 from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import EventType, get_event_center
 from lib.core.graphics.announcement_visuals import ANNOUNCEMENT_SIZE, get_announcement_colors

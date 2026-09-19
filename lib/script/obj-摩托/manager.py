@@ -408,7 +408,7 @@ class MortorManager(BaseManager):
         # 滞回机制：进入和离开使用不同的阈值
         enter_radius = self._cfg.get('protect_radius', 10)
         exit_radius = self._cfg.get('protect_radius_exit', enter_radius + 20)
-        
+
         # 根据当前状态选择阈值
         threshold = exit_radius if in_protection else enter_radius
         threshold_sq = threshold * threshold

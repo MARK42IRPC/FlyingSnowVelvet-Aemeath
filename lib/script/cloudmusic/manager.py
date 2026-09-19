@@ -20,7 +20,6 @@
 import threading
 from collections.abc import Callable
 from concurrent.futures import Future
-from typing import Optional
 
 from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import get_event_center, EventType, Event
@@ -460,7 +459,6 @@ class CloudMusicManager(_LoginMixin, _CacheMixin, _PlaybackMixin, _EventsMixin):
         Returns:
             True 表示历史中存在并已删除；False 表示未命中或删除失败。
         """
-        from config.music import get_music_history
         try:
             provider = self._history_provider_for_song_id(song_id)
             removed = get_music_history(provider).remove(song_id)

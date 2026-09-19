@@ -827,7 +827,7 @@ class PlaylistPanel(QWidget):
             reset_page=False,
             update_remove_button=True,
         )
-    
+
     def _on_song_end(self, event: Event) -> None:
         """??????????????"""
         if not self._visible:

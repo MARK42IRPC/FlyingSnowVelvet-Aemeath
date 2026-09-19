@@ -22,12 +22,12 @@ class Task:
 class TimingManager:
     """
     统一计时器管理器
-    
+
     三个独立的定时器，完全解耦：
     - Tick定时器：20 tick/秒（每50ms触发一次tick事件）
     - Frame定时器：60fps（每16.67ms触发一次frame事件，用于窗口移动）
     - GIF帧定时器：10fps（每100ms触发一次GIF帧事件，用于动画播放）
-    
+
     通过事件中心发布帧事件、tick事件、GIF帧事件和定时器事件
     """
 
@@ -47,7 +47,7 @@ class TimingManager:
         self._cleaned = False
 
         # ── 三个独立的定时器 ────────────────────────────────────────
-        
+
         # Tick定时器：每50ms触发一次（20tick/秒）
         self._tick_timer = scheduler.create_periodic_timer(self._on_tick)
         self._tick_interval_ms = self.TICK_INTERVAL_MS
@@ -118,7 +118,7 @@ class TimingManager:
         dt_ms = max(0.0, (now - self._last_tick_monotonic) * 1000.0)
         self._last_tick_monotonic = now
         self._tick_count += 1
-        
+
         # 发布tick事件（每50ms一次，20次/秒）
         tick_event = Event(EventType.TICK, {
             'tick_count': self._tick_count,

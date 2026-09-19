@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Optional
 
 from lib.core.logger import get_logger
-from config.scale import set_user_scale, get_user_scale, adjust_user_scale
+from config.scale import set_user_scale
 from config.shared_storage import ensure_shared_config_ready, get_project_root, get_shared_config_path
 from config.user_settings import load_section, migrate_section_once, save_section
 from config.user_storage_paths import get_user_settings_path
@@ -70,7 +70,7 @@ class UserScaleConfig:
         self._legacy_config_file = get_project_root() / "config" / _USER_SCALE_CONFIG_FILE
         self._scale: float = _DEFAULT_USER_SCALE
         self._data_lock = threading.Lock()
-        
+
         self._config_dir.mkdir(parents=True, exist_ok=True)
         # 加载配置
         self._load()
@@ -163,15 +163,15 @@ class UserScaleConfig:
         """
         # 确保缩放在有效范围内
         scale = max(0.5, min(2.0, float(scale)))
-        
+
         with self._data_lock:
             self._scale = scale
-        
+
         # 同步到 scale.py 的全局变量
         set_user_scale(scale)
-        
+
         _logger.info("[UserScaleConfig] 用户缩放已更新: %.1f", scale)
-        
+
         # 保存到文件
         self.save()
 
@@ -189,13 +189,13 @@ class UserScaleConfig:
             new_scale = self._scale + delta
             new_scale = max(0.5, min(2.0, new_scale))
             self._scale = new_scale
-        
+
         # 同步到 scale.py 的全局变量
         set_user_scale(new_scale)
-        
+
         _logger.info("[UserScaleConfig] 用户缩放已调整: %.1f", new_scale)
-        
+
         # 保存到文件
         self.save()
-        
+
         return new_scale

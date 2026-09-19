@@ -15,7 +15,6 @@ os.environ.setdefault("QT_PLUGIN_PATH", os.path.join(_QT_ROOT, "Qt5", "plugins")
 
 from PyQt5.QtWidgets import QApplication
 
-from lib.core.ui_cache import UiCachePool
 from lib.script.ui.preloader import (
     WIDGET_FIXED_OVERHEAD_BYTES,
     UiPreloader,

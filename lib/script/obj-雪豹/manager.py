@@ -328,7 +328,7 @@ class SnowLeopardManager(BaseManager):
             size           = size,
         )
         self._leopards.append(leopard)
-        
+
         # 使用传入的力度参数，或从 SNOW_PILE 配置中读取
         if power_min is None or power_max is None:
             from config.config import SNOW_PILE
@@ -336,7 +336,7 @@ class SnowLeopardManager(BaseManager):
                 power_min = SNOW_PILE.get('spawn_power_min', 0.8)
             if power_max is None:
                 power_max = SNOW_PILE.get('spawn_power_max', 1.8)
-        
+
         leopard.spawn_jump(power_min, power_max)  # 生成时触发随机弹跳，使雪豹散开，避免重叠
         log(f"雪堆触发：生成雪豹 @ ({x}, {y})")
 

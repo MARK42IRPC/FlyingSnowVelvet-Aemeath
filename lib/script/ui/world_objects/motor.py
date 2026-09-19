@@ -2,7 +2,7 @@
 import time
 from collections import deque
 
-from PyQt5.QtWidgets import QApplication, QWidget
+from PyQt5.QtWidgets import QWidget
 from PyQt5.QtCore    import Qt, QPoint
 from PyQt5.QtGui     import QPainter
 
@@ -386,7 +386,7 @@ class Mortor(QWidget):
         body.vy = _JUMP_VY
         if self._move_speed > 0.0:
             body.vx = self._move_dir * self._move_speed
-    
+
     def _recharge_jump_charges(self) -> None:
         """按冷却时间恢复跳跃充能。"""
         if self._jump_charges >= _JUMP_MAX_CHARGES:

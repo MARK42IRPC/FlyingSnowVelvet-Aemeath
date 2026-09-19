@@ -169,7 +169,7 @@ class CommandDialog(QWidget):
         获取指定锚点的位置
 
         Args:
-            anchor_id: 锚点 ID ('top', 'bottom', 'left', 'right', 
+            anchor_id: 锚点 ID ('top', 'bottom', 'left', 'right',
                         'top_left', 'top_right', 'bottom_left', 'bottom_right', 'center')
 
         Returns:

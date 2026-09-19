@@ -4,7 +4,7 @@ import ctypes
 import os
 import unittest
 
-from lib.core.dx_bridge.offscreen import FSDX_ABI_VERSION, find_dx_library
+from lib.core.dx_bridge.offscreen import find_dx_library
 from lib.core.dx_bridge.loop import DxLoopContext
 from lib.core.dx_bridge.tray_host import (
     FSDX_EVENT_TRAY_COMMAND,

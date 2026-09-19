@@ -12,7 +12,7 @@ from lib.core.dx_bridge.loop import DxLoopContext
 from lib.core.dx_bridge.overlay_window import DxOverlayWindow
 from lib.core.dx_bridge.particle_system import DxParticleOverlay, build_particle_batch
 from lib.core.dx_bridge.screen import DxScreenProvider
-from lib.core.graphics.commands import DrawBatch, EllipseCommand, LineCommand, RectCommand, SpriteCommand, TextCommand
+from lib.core.graphics.commands import DrawBatch, LineCommand, RectCommand, SpriteCommand, TextCommand
 from lib.core.graphics.resources import ImageResource, RasterFrame
 from lib.core.graphics.types import Color, FontSpec, Point, Rect, Size
 from lib.core.event.center import Event, EventType

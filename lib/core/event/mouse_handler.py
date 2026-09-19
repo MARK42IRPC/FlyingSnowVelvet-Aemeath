@@ -2,7 +2,7 @@
 
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.graphics.types import coerce_point
-from lib.core.input.types import MouseButton, MouseButtons, MouseInput
+from lib.core.input.types import MouseButton, MouseButtons
 
 
 class MouseEventHandler:
@@ -31,7 +31,6 @@ class MouseEventHandler:
         """处理鼠标按下"""
         button = event.data.get('button')
         global_pos = event.data.get('global_pos')
-        pos = event.data.get('pos')
 
         if button == MouseButton.LEFT:
             # 粒子特效（使用全局坐标）

@@ -5,7 +5,7 @@ from PyQt5.QtWidgets import QWidget
 from PyQt5.QtCore    import Qt, QPoint
 from PyQt5.QtGui     import QPainter
 
-from config.config                import ANIMATION, SNOW_LEOPARD, BEHAVIOR, PHYSICS
+from config.config                import SNOW_LEOPARD, BEHAVIOR, PHYSICS
 from lib.core.event.center        import get_event_center, EventType, Event
 from lib.core.clickthrough_state  import is_clickthrough_enabled
 from lib.core.physics             import get_physics_world, PhysicsBody
@@ -270,7 +270,7 @@ class SnowLeopard(QWidget):
         # 随机反转朝向
         self._flipped = random.choice([True, False])
         self._advance_frame()
-        
+
         power             = random.uniform(power_min, power_max)
         body              = self._physics_body
         body.bounce_count = 0

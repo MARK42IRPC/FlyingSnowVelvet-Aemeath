@@ -12,7 +12,7 @@
 
 from __future__ import annotations
 
-from PyQt5.QtCore import QPoint, QRect, Qt
+from PyQt5.QtCore import QRect, Qt
 from PyQt5.QtGui import QRegion
 from PyQt5.QtWidgets import QWidget
 

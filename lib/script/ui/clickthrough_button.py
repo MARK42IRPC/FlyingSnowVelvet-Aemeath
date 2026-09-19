@@ -1,10 +1,9 @@
 """鼠标穿透按钮类"""
 from PyQt5.QtWidgets import QWidget, QGraphicsOpacityEffect
 from PyQt5.QtCore import Qt, QPropertyAnimation, QEasingCurve, QPoint
-from PyQt5.QtGui import QColor, QFont, QPainter
+from PyQt5.QtGui import QColor, QPainter
 
-from config.config import UI, FONT, TIMEOUTS
-from lib.core.qt_bridge.colors import COLORS
+from config.config import UI, TIMEOUTS
 from lib.core.qt_bridge.font import get_ui_font
 from config.scale import scale_px
 from config.tooltip_config import TOOLTIPS
@@ -120,7 +119,7 @@ class ClickThroughButton(QWidget):
         获取指定锚点的位置
 
         Args:
-            anchor_id: 锚点 ID ('top', 'bottom', 'left', 'right', 
+            anchor_id: 锚点 ID ('top', 'bottom', 'left', 'right',
                         'top_left', 'top_right', 'bottom_left', 'bottom_right', 'center')
 
         Returns:
@@ -171,10 +170,7 @@ class ClickThroughButton(QWidget):
                 cmd_pos = coerce_qpoint(event.data.get('anchor_point'))
                 if cmd_pos is None:
                     return
-                # 获取 command_dialog 的尺寸来计算 top_left 锚点
-                from config.config import UI
-                cmd_width = UI['cmd_window_width']
-                cmd_height = UI['cmd_window_height']
+                # command_dialog 的锚点就是自己的左上角
                 # 计算 top_left 锚点位置（就是左上角）
                 new_anchor_point = QPoint(
                     cmd_pos.x(),  # top_left 锚点的 X 坐标

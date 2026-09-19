@@ -13,7 +13,7 @@
 
 from __future__ import annotations
 
-from PyQt5.QtWidgets import QWidget, QApplication, QGraphicsOpacityEffect
+from PyQt5.QtWidgets import QWidget, QGraphicsOpacityEffect
 from PyQt5.QtCore import Qt, QPoint, QPropertyAnimation, QEasingCurve
 from PyQt5.QtGui import QPainter
 

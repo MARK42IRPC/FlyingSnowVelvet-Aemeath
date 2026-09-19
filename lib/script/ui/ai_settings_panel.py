@@ -5278,10 +5278,12 @@ class AISettingsPanel(QWidget):
         if self._save_task_pending:
             self._emit_info("已有配置保存任务正在进行，请稍候。", min_tick=10, max_tick=60)
             return
-        restart_action = lambda: self._ec.publish(Event(
-            EventType.APP_QUIT,
-            {"exit_code": 0, "restart": True},
-        ))
+
+        def restart_action():
+            self._ec.publish(Event(
+                EventType.APP_QUIT,
+                {"exit_code": 0, "restart": True},
+            ))
         self._save_completion_action = restart_action
         if not self._on_save(apply_runtime=False):
             self._save_completion_action = None

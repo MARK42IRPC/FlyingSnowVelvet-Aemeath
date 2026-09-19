@@ -21,7 +21,6 @@ from lib.core.graphics.commands import (
     TransformPop,
     TransformPush,
 )
-from lib.core.graphics.resources import RasterFrame
 from lib.core.graphics.types import Color, Rect
 
 

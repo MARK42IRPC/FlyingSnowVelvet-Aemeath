@@ -1,4 +1,4 @@
-﻿"""AI 设置面板 tabs 组装辅助。"""
+"""AI 设置面板 tabs 组装辅助。"""
 
 from __future__ import annotations
 
@@ -37,8 +37,6 @@ class TabBarWidget(QWidget):
 
 def attach_ai_settings_tabs(panel, general_categories) -> None:
     # 获取主题颜色
-    border_color = UI_THEME["border"]
-    bg_color = UI_THEME["bg"]
     mid_color = UI_THEME["mid"]
     highlight_color = UI_THEME["deep_cyan"]
     text_color = UI_THEME["text"]

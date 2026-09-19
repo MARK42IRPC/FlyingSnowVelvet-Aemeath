@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import datetime
-from pathlib import Path
 from typing import Callable
 
 from PyQt5.QtCore import Qt, QPropertyAnimation, QEasingCurve, pyqtSignal

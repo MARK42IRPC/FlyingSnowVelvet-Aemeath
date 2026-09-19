@@ -14,7 +14,7 @@ os.environ.setdefault(
 os.environ.setdefault("QT_PLUGIN_PATH", os.path.join(_QT_ROOT, "Qt5", "plugins"))
 
 from PyQt5.QtCore import QEvent, QPoint, Qt
-from PyQt5.QtGui import QColor, QFont, QIcon, QImage, QPainter
+from PyQt5.QtGui import QColor, QFont, QImage, QPainter
 from PyQt5.QtWidgets import QApplication, QLabel, QMenu, QTextEdit, QWidget
 
 from PIL import Image

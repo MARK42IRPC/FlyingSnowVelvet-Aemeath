@@ -2,7 +2,6 @@
 from PyQt5.QtCore import Qt, QPoint
 from PyQt5.QtGui import QColor
 
-from config.config import UI
 from config.scale import scale_px
 from config.tooltip_config import TOOLTIPS
 from lib.core.event.center import get_event_center, EventType, Event
@@ -117,7 +116,7 @@ class RestoreButton(RectActionButton):
         获取指定锚点的位置
 
         Args:
-            anchor_id: 锚点 ID ('top', 'bottom', 'left', 'right', 
+            anchor_id: 锚点 ID ('top', 'bottom', 'left', 'right',
                         'top_left', 'top_right', 'bottom_left', 'bottom_right', 'center')
 
         Returns:

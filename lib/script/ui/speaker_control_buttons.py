@@ -221,7 +221,7 @@ class PlayPauseButton(SpeakerControlButton):
 
         # 订阅播放状态变化事件
         self._event_center.subscribe(EventType.MUSIC_STATUS_CHANGE, self._on_status_change)
-        
+
         # 初始化时主动获取当前播放状态
         self._sync_playing_state()
 
@@ -526,9 +526,6 @@ class PlaylistButton(SpeakerControlButton):
         # 打开播放列表栏（懒初始化单例）
         if speaker:
             from lib.script.ui.playlist_panel import get_playlist_panel, init_playlist_panel
-            from lib.script.ui.progress_panel import get_progress_panel, init_progress_panel
-            # 初始化进度条（懒初始化单例）
-            progress_panel = get_progress_panel() or init_progress_panel()
             # 初始化播放列表
             panel = get_playlist_panel() or init_playlist_panel()
             panel.show_for(speaker)

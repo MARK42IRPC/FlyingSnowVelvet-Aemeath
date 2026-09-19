@@ -243,7 +243,6 @@ class Bubble(QWidget):
                 # 获取 pet_window 的尺寸来计算 top 锚点
                 from config.config import ANIMATION
                 pet_width = ANIMATION['pet_size'][0]
-                pet_height = ANIMATION['pet_size'][1]
                 # 计算 top 锚点位置
                 new_anchor_point = QPoint(
                     pet_pos.x() + pet_width // 2,  # top 锚点的 X 坐标

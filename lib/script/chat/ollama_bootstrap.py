@@ -2,7 +2,6 @@
 
 import json
 import subprocess
-import threading
 
 import requests
 

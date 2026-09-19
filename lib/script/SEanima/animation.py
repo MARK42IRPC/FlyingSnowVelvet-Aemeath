@@ -2,7 +2,7 @@
 import os
 import sys
 
-from lib.core.event.center import get_event_center, EventType, Event
+from lib.core.event.center import get_event_center, EventType
 from lib.core.logger import get_logger
 from config.config import ANIMATION
 

@@ -73,10 +73,10 @@ class VolumeConfig:
         self._legacy_config_file = get_project_root() / "config" / "music" / _VOLUME_CONFIG_FILE
         self._volume: float = _DEFAULT_VOLUME
         self._data_lock = threading.Lock()
-        
+
         # 确保目录存在
         self._config_dir.mkdir(parents=True, exist_ok=True)
-        
+
         # 加载配置
         self._load()
 
@@ -166,11 +166,11 @@ class VolumeConfig:
         """
         # 确保音量在有效范围内
         volume = max(0.0, min(1.0, float(volume)))
-        
+
         with self._data_lock:
             self._volume = volume
-        
+
         _logger.info("[VolumeConfig] 音量已更新: %.2f (%.0f%%)", volume, volume * 100)
-        
+
         # 保存到文件
         self.save()
