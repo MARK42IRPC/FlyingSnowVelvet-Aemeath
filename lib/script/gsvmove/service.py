@@ -11,6 +11,7 @@ from pathlib import Path
 from queue import Empty, Queue
 
 import config.ollama_config as oc
+from config.ollama_config import get_ai_setting_defaults
 from config.shared_storage import ensure_shared_config_ready, get_shared_root_dir
 from config.user_storage_paths import get_user_cache_dir
 from lib.core.compute_hub import get_compute_hub
@@ -49,21 +50,30 @@ def is_gsvmove_launcher_available() -> bool:
         return False
 
 
+def _shipped_default(key: str):
+    """出厂默认值的唯一来源：`config/ollama_config.py` 的 `_AI_SETTING_DEFAULTS`。
+
+    旧写法在调用点硬编码 `oc.OLLAMA.get("gsv_top_k", 15)` 这类兜底字面量，改默认值要同时
+    动配置与这里若干处，漏改就是「面板显示的和实际生效的不一致」。
+    """
+    return get_ai_setting_defaults()[key]
+
+
 def _get_gsv_temperature() -> float:
-    raw_value = oc.OLLAMA.get("gsv_temperature", 1.35)
+    raw_value = oc.OLLAMA.get("gsv_temperature", _shipped_default("gsv_temperature"))
     try:
         temperature = float(raw_value)
     except (TypeError, ValueError):
-        temperature = 1.35
+        temperature = float(_shipped_default("gsv_temperature"))
     return max(0.01, min(2.0, temperature))
 
 
 def _get_gsv_speed_factor() -> float:
-    raw_value = oc.OLLAMA.get("gsv_speed_factor", 1.1)
+    raw_value = oc.OLLAMA.get("gsv_speed_factor", _shipped_default("gsv_speed_factor"))
     try:
         speed_factor = float(raw_value)
     except (TypeError, ValueError):
-        speed_factor = 1.1
+        speed_factor = float(_shipped_default("gsv_speed_factor"))
     return max(0.5, min(2.0, speed_factor))
 
 
@@ -84,27 +94,34 @@ def _get_gsv_int(key: str, default: int, minimum: int, maximum: int) -> int:
 
 
 def _get_gsv_inference_defaults() -> dict:
-    split_method = str(oc.OLLAMA.get("gsv_text_split_method", "cut0") or "cut0").strip().lower()
+    split_method = str(
+        oc.OLLAMA.get("gsv_text_split_method", _shipped_default("gsv_text_split_method")) or "cut0"
+    ).strip().lower()
     if split_method not in {"cut0", "cut1", "cut2", "cut3", "cut4", "cut5"}:
         split_method = "cut0"
     return {
         "temperature": _get_gsv_temperature(),
-        "top_k": _get_gsv_int("gsv_top_k", 15, 1, 1025),
-        "top_p": _get_gsv_float("gsv_top_p", 1.0, 0.01, 1.0),
-        "repetition_penalty": _get_gsv_float("gsv_repetition_penalty", 1.6, 0.1, 2.0),
+        "top_k": _get_gsv_int("gsv_top_k", _shipped_default("gsv_top_k"), 1, 1025),
+        "top_p": _get_gsv_float("gsv_top_p", _shipped_default("gsv_top_p"), 0.01, 1.0),
+        "repetition_penalty": _get_gsv_float(
+            "gsv_repetition_penalty", _shipped_default("gsv_repetition_penalty"), 0.1, 2.0
+        ),
         "speed_factor": _get_gsv_speed_factor(),
         "text_split_method": split_method,
-        "fragment_interval": _get_gsv_float("gsv_fragment_interval", 0.3, 0.0, 5.0),
-        "seed": _get_gsv_int("gsv_seed", -1, -1, 2**32 - 1),
+        "fragment_interval": _get_gsv_float(
+            "gsv_fragment_interval", _shipped_default("gsv_fragment_interval"), 0.0, 5.0
+        ),
+        "seed": _get_gsv_int("gsv_seed", _shipped_default("gsv_seed"), -1, 2**32 - 1),
     }
 
 
 def _get_gsv_cache_max_files() -> int:
-    raw_value = oc.OLLAMA.get("gsv_cache_max_files", 20)
+    shipped = int(_shipped_default("gsv_cache_max_files"))
+    raw_value = oc.OLLAMA.get("gsv_cache_max_files", shipped)
     try:
         max_files = int(float(raw_value))
     except (TypeError, ValueError):
-        max_files = 20
+        max_files = shipped
     return max(1, min(128, max_files))
 
 

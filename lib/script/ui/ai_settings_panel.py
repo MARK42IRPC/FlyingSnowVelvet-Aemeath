@@ -1,4 +1,4 @@
-﻿"""AI 设置面板：编辑并保存 config/ollama_config.py。"""
+"""AI 设置面板：编辑并保存 config/ollama_config.py。"""
 
 from __future__ import annotations
 
@@ -4832,27 +4832,27 @@ class AISettingsPanel(QWidget):
             raise ValueError("模型视力范围应为 0~100")
 
         try:
-            gsv_temperature = float(self._gsv_temperature.text().strip() or "1.35")
+            gsv_temperature = float(self._gsv_temperature.text().strip() or str(_DEFAULT_VALUES["gsv_temperature"]))
         except ValueError as e:
             raise ValueError("GSV服务温度必须是数字") from e
         if not (0.01 <= gsv_temperature <= 2.0):
             raise ValueError("GSV服务温度范围应为 0.01~2")
 
-        gsv_top_k = int(float(self._gsv_top_k.text().strip() or "15"))
-        gsv_top_p = float(self._gsv_top_p.text().strip() or "1.0")
-        gsv_repetition_penalty = float(self._gsv_repetition_penalty.text().strip() or "1.6")
+        gsv_top_k = int(float(self._gsv_top_k.text().strip() or str(_DEFAULT_VALUES["gsv_top_k"])))
+        gsv_top_p = float(self._gsv_top_p.text().strip() or str(_DEFAULT_VALUES["gsv_top_p"]))
+        gsv_repetition_penalty = float(self._gsv_repetition_penalty.text().strip() or str(_DEFAULT_VALUES["gsv_repetition_penalty"]))
 
         try:
-            gsv_speed_factor = float(self._gsv_speed_factor.text().strip() or "1.1")
+            gsv_speed_factor = float(self._gsv_speed_factor.text().strip() or str(_DEFAULT_VALUES["gsv_speed_factor"]))
         except ValueError as e:
             raise ValueError("GSV语速必须是数字") from e
         if not (0.5 <= gsv_speed_factor <= 2.0):
             raise ValueError("GSV语速范围应为 0.5~2.0")
 
-        gsv_text_split_method = str(self._gsv_text_split_method.currentData() or "cut0")
-        gsv_fragment_interval = float(self._gsv_fragment_interval.text().strip() or "0.3")
+        gsv_text_split_method = str(self._gsv_text_split_method.currentData() or str(_DEFAULT_VALUES["gsv_text_split_method"]))
+        gsv_fragment_interval = float(self._gsv_fragment_interval.text().strip() or str(_DEFAULT_VALUES["gsv_fragment_interval"]))
         try:
-            gsv_seed = int(self._gsv_seed.text().strip() or "-1")
+            gsv_seed = int(self._gsv_seed.text().strip() or str(_DEFAULT_VALUES["gsv_seed"]))
         except ValueError as e:
             raise ValueError("GSV随机种子必须是整数") from e
 
@@ -4874,21 +4874,21 @@ class AISettingsPanel(QWidget):
             )
 
         try:
-            gsv_cache_max_files = int(float(self._gsv_cache_max_files.text().strip() or "20"))
+            gsv_cache_max_files = int(float(self._gsv_cache_max_files.text().strip() or str(_DEFAULT_VALUES["gsv_cache_max_files"])))
         except ValueError as e:
             raise ValueError("GSV缓存上限必须是整数") from e
         if not (1 <= gsv_cache_max_files <= 128):
             raise ValueError("GSV缓存上限范围应为 1~128")
 
         try:
-            memory_context_limit = int(float(self._memory_context_limit.text().strip() or "12"))
+            memory_context_limit = int(float(self._memory_context_limit.text().strip() or str(_DEFAULT_VALUES["memory_context_limit"])))
         except ValueError as e:
             raise ValueError("记忆上下文条数必须是整数") from e
         if not (0 <= memory_context_limit <= 48):
             raise ValueError("记忆上下文条数范围应为 0~48")
 
         try:
-            memory_recall_count = int(float(self._memory_recall_count.text().strip() or "5"))
+            memory_recall_count = int(float(self._memory_recall_count.text().strip() or str(_DEFAULT_VALUES["memory_recall_count"])))
         except ValueError as e:
             raise ValueError("回忆提取条数必须是整数") from e
         if not (5 <= memory_recall_count <= 50):
