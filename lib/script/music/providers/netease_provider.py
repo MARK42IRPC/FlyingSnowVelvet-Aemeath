@@ -1,17 +1,14 @@
-﻿"""NetEase provider adapter."""
+"""NetEase provider adapter."""
 
 from __future__ import annotations
-
-import re
 
 from lib.core.logger import get_logger
 
 from ..provider import MusicProvider
 from ..types import MusicTrack
+from ._shared import first_artist_from_list, format_duration_text
 
 logger = get_logger(__name__)
-
-_DURATION_TEXT_RE = re.compile(r"^\s*(\d{1,3}):(\d{2})\s*$")
 _SEARCH_MODE_TYPES = {
     "song": 1,
     "artist": 100,
@@ -45,40 +42,9 @@ class NetEaseMusicProvider(MusicProvider):
         return f"{cls.provider_name}:{sid}"
 
     @staticmethod
-    def _format_duration_text(duration_ms) -> str:
-        try:
-            if isinstance(duration_ms, str):
-                m = _DURATION_TEXT_RE.match(duration_ms)
-                if m:
-                    total_sec = int(m.group(1)) * 60 + int(m.group(2))
-                else:
-                    total_sec = max(0, int(float(duration_ms)) // 1000)
-            elif isinstance(duration_ms, dict):
-                raw = (
-                    duration_ms.get("duration_ms")
-                    or duration_ms.get("duration")
-                    or duration_ms.get("dt")
-                    or duration_ms.get("ms")
-                )
-                total_sec = max(0, int(raw) // 1000) if raw is not None else 0
-            else:
-                total_sec = max(0, int(duration_ms) // 1000)
-        except (TypeError, ValueError):
-            return "00:00"
-        mins, secs = divmod(total_sec, 60)
-        return f"{mins:02d}:{secs:02d}"
-
-    @staticmethod
     def _extract_first_artist(song: dict) -> str:
         artists = song.get("ar") or song.get("artists") or []
-        if not artists:
-            return "Unknown Artist"
-        first = artists[0]
-        if isinstance(first, dict):
-            name = str(first.get("name") or "").strip()
-            return name or "Unknown Artist"
-        name = str(first).strip()
-        return name or "Unknown Artist"
+        return first_artist_from_list(artists, unknown="Unknown Artist")
 
     def _song_to_track(self, song: dict) -> MusicTrack | None:
         track_ref = self._make_track_ref(song.get("id"))
@@ -87,7 +53,7 @@ class NetEaseMusicProvider(MusicProvider):
         title = str(song.get("name") or "未知歌曲").strip() or "未知歌曲"
         artist = self._extract_first_artist(song)
         duration_ms = song.get("dt") or song.get("duration")
-        display = f"{self._format_duration_text(duration_ms)} {title} - {artist}"
+        display = f"{format_duration_text(duration_ms)} {title} - {artist}"
         normalized_duration = None
         try:
             if duration_ms is not None:

@@ -1,20 +1,19 @@
-﻿"""QQ provider adapter."""
+"""QQ provider adapter."""
 
 from __future__ import annotations
-
-import re
 
 from lib.core.logger import get_logger
 from lib.script.qqmusic import get_qqmusic_client
 
 from ..provider import MusicProvider
 from ..types import MusicTrack
+from ._shared import UNKNOWN_TITLE, extract_first_artist, format_duration_text
 
 logger = get_logger(__name__)
-_DURATION_TEXT_RE = re.compile(r"^\s*(\d{1,3}):(\d{2})\s*$")
-_ARTIST_TEXT_SPLIT_RE = re.compile(r"\s*(?:、|，|,|&|＆|;|；|\bfeat\.?\b|\bft\.?\b)\s*", re.IGNORECASE)
-_UNKNOWN_TITLE = "未知歌曲"
-_UNKNOWN_ARTIST = "未知作者"
+
+#: QQ 原始字段名：`raw` 与平铺层都用 `singer`/`singers`/`artists` 这套写法。
+_QQ_RAW_ARTIST_KEYS = ("singer", "singers", "artists", "artist")
+_QQ_SONG_ARTIST_KEYS = ("singer", "singers", "artists", "artist")
 
 
 class QQMusicProvider(MusicProvider):
@@ -26,83 +25,13 @@ class QQMusicProvider(MusicProvider):
     def __init__(self) -> None:
         self._api = get_qqmusic_client()
 
-    @staticmethod
-    def _format_duration_text(duration_ms) -> str:
-        try:
-            if isinstance(duration_ms, str):
-                m = _DURATION_TEXT_RE.match(duration_ms)
-                if m:
-                    total_sec = int(m.group(1)) * 60 + int(m.group(2))
-                else:
-                    total_sec = max(0, int(float(duration_ms)) // 1000)
-            elif isinstance(duration_ms, dict):
-                raw = (
-                    duration_ms.get("duration_ms")
-                    or duration_ms.get("duration")
-                    or duration_ms.get("dt")
-                    or duration_ms.get("ms")
-                )
-                total_sec = max(0, int(raw) // 1000) if raw is not None else 0
-            else:
-                total_sec = max(0, int(duration_ms) // 1000)
-        except (TypeError, ValueError):
-            return "00:00"
-        mins, secs = divmod(total_sec, 60)
-        return f"{mins:02d}:{secs:02d}"
-
-    @staticmethod
-    def _looks_like_single_slash_name(left: str, right: str) -> bool:
-        return (
-            left.isascii()
-            and right.isascii()
-            and left.upper() == left
-            and right.upper() == right
-            and len(left) <= 4
-            and len(right) <= 4
-        )
-
-    @classmethod
-    def _split_first_artist_text(cls, artist_text) -> str:
-        text = str(artist_text or "").strip()
-        if not text:
-            return ""
-        parts = [part.strip() for part in _ARTIST_TEXT_SPLIT_RE.split(text) if part.strip()]
-        text = parts[0] if parts else text
-        if "/" not in text:
-            return text
-        left, right = [part.strip() for part in text.split("/", 1)]
-        if not left or not right or cls._looks_like_single_slash_name(left, right):
-            return text
-        return left
-
-    @classmethod
-    def _extract_artist_name(cls, raw_artist) -> str:
-        if isinstance(raw_artist, list):
-            for item in raw_artist:
-                name = cls._extract_artist_name(item)
-                if name:
-                    return name
-            return ""
-        if isinstance(raw_artist, dict):
-            for key in ("name", "title", "artist"):
-                name = cls._split_first_artist_text(raw_artist.get(key))
-                if name:
-                    return name
-            return ""
-        return cls._split_first_artist_text(raw_artist)
-
     @classmethod
     def _extract_first_artist(cls, song: dict) -> str:
-        raw = song.get("raw")
-        candidates = []
-        if isinstance(raw, dict):
-            candidates.extend(raw.get(key) for key in ("singer", "singers", "artists", "artist"))
-        candidates.extend(song.get(key) for key in ("singer", "singers", "artists", "artist"))
-        for candidate in candidates:
-            artist = cls._extract_artist_name(candidate)
-            if artist:
-                return artist
-        return _UNKNOWN_ARTIST
+        return extract_first_artist(
+            song,
+            raw_keys=_QQ_RAW_ARTIST_KEYS,
+            song_keys=_QQ_SONG_ARTIST_KEYS,
+        )
 
     def search(self, keyword: str, mode: str = "song", limit: int = 25) -> list[MusicTrack]:
         query = str(keyword or "").strip()
@@ -123,7 +52,7 @@ class QQMusicProvider(MusicProvider):
                 if not mid:
                     continue
                 media_mid = str(song.get("media_mid") or mid).strip() or mid
-                title = str(song.get("title") or _UNKNOWN_TITLE).strip() or _UNKNOWN_TITLE
+                title = str(song.get("title") or UNKNOWN_TITLE).strip() or UNKNOWN_TITLE
                 artist = self._extract_first_artist(song)
                 duration_ms = song.get("duration_ms")
                 normalized_duration = None
@@ -132,7 +61,7 @@ class QQMusicProvider(MusicProvider):
                         normalized_duration = int(duration_ms)
                 except (TypeError, ValueError):
                     normalized_duration = None
-                display = f"{self._format_duration_text(normalized_duration)} {title} - {artist}"
+                display = f"{format_duration_text(normalized_duration)} {title} - {artist}"
                 tracks.append(
                     MusicTrack(
                         provider=self.provider_name,

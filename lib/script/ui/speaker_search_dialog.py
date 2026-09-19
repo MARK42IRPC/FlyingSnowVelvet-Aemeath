@@ -10,7 +10,6 @@
 单例：同时只存在一个 UI 实例，多个音响共享；以最近获焦的音响为主。
 """
 
-import re
 from concurrent.futures import Future
 
 from PyQt5.QtWidgets import QWidget, QLineEdit, QGraphicsOpacityEffect
@@ -30,6 +29,7 @@ from lib.core.unified_draw import Layer, get_layer_manager
 from lib.core.qt_bridge.screen import clamp_rect_position
 from lib.core.anchor_utils import apply_ui_opacity
 from lib.script.music import get_music_service
+from lib.script.music.providers._shared import first_artist_from_list, format_duration_text
 from lib.script.ui.speaker_menu_style import (
     _C_BG,
     _C_ACTION_TEXT,
@@ -38,7 +38,6 @@ from lib.script.ui.speaker_menu_style import (
     paint_speaker_action_button,
 )
 
-_DURATION_TEXT_RE = re.compile(r"^\s*(\d{1,3}):(\d{2})\s*$")
 _SEARCH_MODE_ORDER = ('song', 'artist', 'album', 'playlist')
 _SEARCH_MODE_LABELS = {
     'song': '单曲优先',
@@ -267,46 +266,10 @@ class SpeakerSearchDialog(QWidget):
     # 搜索
     # ==================================================================
 
-    @staticmethod
-    def _format_duration_text(duration_ms) -> str:
-        try:
-            if isinstance(duration_ms, str):
-                m = _DURATION_TEXT_RE.match(duration_ms)
-                if m:
-                    total_sec = int(m.group(1)) * 60 + int(m.group(2))
-                else:
-                    total_sec = max(0, int(float(duration_ms)) // 1000)
-            elif isinstance(duration_ms, dict):
-                raw = (
-                    duration_ms.get('duration_ms')
-                    or duration_ms.get('duration')
-                    or duration_ms.get('dt')
-                    or duration_ms.get('ms')
-                )
-                total_sec = max(0, int(raw) // 1000) if raw is not None else 0
-            else:
-                total_sec = max(0, int(duration_ms) // 1000)
-        except (TypeError, ValueError):
-            return "00:00"
-        mins, secs = divmod(total_sec, 60)
-        return f"{mins:02d}:{secs:02d}"
-
-    @staticmethod
-    def _extract_first_artist(song: dict) -> str:
-        artists = song.get('ar') or song.get('artists') or []
-        if not artists:
-            return "未知作者"
-        first = artists[0]
-        if isinstance(first, dict):
-            name = str(first.get('name') or '').strip()
-            return name or "未知作者"
-        name = str(first).strip()
-        return name or "未知作者"
-
     def _build_song_display(self, song: dict) -> str:
         title = str(song.get('name') or '未知歌曲').strip() or '未知歌曲'
-        artist = self._extract_first_artist(song)
-        duration = self._format_duration_text(song.get('dt') or song.get('duration'))
+        artist = first_artist_from_list(song.get("ar") or song.get("artists") or [])
+        duration = format_duration_text(song.get('dt') or song.get('duration'))
         return f"{duration} {title} - {artist}"
 
     def _trigger_search(self):

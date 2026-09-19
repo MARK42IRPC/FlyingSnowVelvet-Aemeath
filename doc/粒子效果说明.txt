@@ -8,7 +8,7 @@
 - 更新机制：`tick` 推进真实状态，`frame` 仅负责插值绘制
 - 运行语义：practical 粒子已统一切到 `tick/秒` 语义，不再依赖运行时 `frame_fps`
 
-当前已注册粒子：21 个
+当前已注册粒子：18 个
 
 二、已注册粒子列表
 
@@ -76,23 +76,11 @@
 - 文件：`flicker_data_particle.py`
 - 作用：主宠移动与 AI 设置面板边缘闪烁特效
 
-17. `lahai_glow_burst`
-- 文件：`lahai_glow_burst_particle.py`
-- 作用：拉海洛方块中高亮块、关键命中等场景的发光漂移粒子
-
-18. `lahai_line_flash`
-- 文件：`lahai_line_flash_particle.py`
-- 作用：拉海洛方块消行时的横向爆散闪光粒子
-
-19. `lahai_preview_rise`
-- 文件：`lahai_preview_rise_particle.py`
-- 作用：拉海洛方块下一块预览替换时的竖向上升粒子
-
-20. `floating_text`
+17. `floating_text`
 - 文件：`floating_text_particle.py`
 - 作用：游戏分数、连击和技能反馈的浮动文字粒子
 
-21. `star_streak`
+18. `star_streak`
 - 文件：`star_streak_particle.py`
 - 作用：办公页推理强度滑条被按住时，每个逻辑 tick 从滑块位置召唤的星空划过光点
 - 参数：`count_range`（本次随机个数，默认 `(0, 1)`）、`color`（默认白色）、
@@ -127,6 +115,7 @@ Event(EventType.PARTICLE_REQUEST, {
 
 五、维护约定
 - 新增粒子后，必须同步更新本文档
+- 游戏包扩展粒子不走本清单：它们留在包内 `extensions/particles/`，由 `lib/script/gemes/MAIN/game_packages.py` 按 manifest 以 `<game_id>.<local_id>` 注册，见 `doc/游戏包格式.md`
 - 需要说明触发场景时，优先写“业务用途”而不是只写视觉形态
 - 若粒子公开协议发生变化，请检查 `doc/README.md` 是否需要更新入口说明
 - 若修改粒子时序，优先保持 `tick` 更新、`frame` 插值，不再回退到逐帧逻辑

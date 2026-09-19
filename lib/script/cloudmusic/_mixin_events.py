@@ -1,65 +1,27 @@
 """网易云音乐管理器 - 播放队列事件路由 Mixin"""
 
 import random
-import re
 import time
 from pathlib import Path
 
 from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import EventType, Event
 from lib.core.logger import get_logger
+from lib.script.music.providers._shared import first_artist_from_list, format_duration_text
 from config.config import TIMEOUTS, CLOUD_MUSIC
 from config.music import get_music_history
 from ._provider_clients import get_kugou_provider_client, get_qqmusic_provider_client
 from ._constants import _AUDIO_EXT_CANDIDATES, _PROJECT_ROOT, make_local_track_ref
 
 logger = get_logger(__name__)
-_DURATION_TEXT_RE = re.compile(r"^\s*(\d{1,3}):(\d{2})\s*$")
 _LIKED_ENQUEUE_LIMIT = 32
 
 
 class _EventsMixin:
     """非登录事件处理：队列操作、播放控制、喜欢列表。"""
 
-    @staticmethod
-    def _format_duration_text(duration_ms: int | None) -> str:
-        if duration_ms is None:
-            return "00:00"
-        try:
-            if isinstance(duration_ms, str):
-                m = _DURATION_TEXT_RE.match(duration_ms)
-                if m:
-                    total_sec = int(m.group(1)) * 60 + int(m.group(2))
-                else:
-                    total_sec = max(0, int(float(duration_ms)) // 1000)
-            elif isinstance(duration_ms, dict):
-                raw = (
-                    duration_ms.get('duration_ms')
-                    or duration_ms.get('duration')
-                    or duration_ms.get('dt')
-                    or duration_ms.get('ms')
-                )
-                total_sec = max(0, int(raw) // 1000) if raw is not None else 0
-            else:
-                total_sec = max(0, int(duration_ms) // 1000)
-        except (TypeError, ValueError):
-            return "00:00"
-        mins, secs = divmod(total_sec, 60)
-        return f"{mins:02d}:{secs:02d}"
-
-    @staticmethod
-    def _first_artist_name(artists) -> str:
-        if not artists:
-            return "未知作者"
-        first = artists[0]
-        if isinstance(first, dict):
-            name = str(first.get("name") or "").strip()
-            return name or "未知作者"
-        name = str(first).strip()
-        return name or "未知作者"
-
     def _build_song_display(self, title: str, artist: str, duration_ms: int | None = None) -> str:
-        duration = self._format_duration_text(duration_ms)
+        duration = format_duration_text(duration_ms)
         clean_title = str(title or "").strip() or "未知歌曲"
         clean_artist = str(artist or "").strip() or "未知作者"
         return f"{duration} {clean_title} - {clean_artist}"
@@ -584,7 +546,7 @@ class _EventsMixin:
 
             title = str(song.get('name') or sid).strip() or str(sid)
             artists = song.get('ar') or song.get('artists') or []
-            first_artist = self._first_artist_name(artists)
+            first_artist = first_artist_from_list(artists)
             dt_ms = song.get('dt') or song.get('duration')
             display = self._build_song_display(title, first_artist, dt_ms)
             items.append((sid, display))
@@ -627,7 +589,7 @@ class _EventsMixin:
             title = title or "未知歌曲"
             artist = str(song.get("artist") or "").strip()
             if not artist:
-                artist = self._first_artist_name(song.get("singer") or song.get("singers") or [])
+                artist = first_artist_from_list(song.get("singer") or song.get("singers") or [])
             if (not artist or artist == "未知作者") and detail:
                 artist = str(detail.get("artist") or "").strip() or artist
             duration_ms = (
