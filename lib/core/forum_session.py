@@ -20,6 +20,7 @@ from config.shared_storage_io import read_text_best_effort, write_shared_text
 from config.user_storage_paths import get_user_secrets_dir
 from lib.core.forum_api import ForumSession, ForumUser, parse_user
 from lib.core.logger import get_logger
+from lib.core.secret_files import harden_secret_path
 
 _logger = get_logger(__name__)
 
@@ -62,7 +63,10 @@ def save_session(session: ForumSession) -> bool:
         path.parent.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
         _logger.debug("[ForumSession] 会话目录不可用 %s: %s", path.parent, exc)
-    return bool(write_shared_text(path, text))
+    saved = bool(write_shared_text(path, text))
+    if saved:
+        harden_secret_path(path)
+    return saved
 
 
 def load_session(*, now: int | None = None) -> ForumSession | None:

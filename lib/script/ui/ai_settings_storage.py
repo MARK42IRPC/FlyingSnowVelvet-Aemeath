@@ -10,6 +10,7 @@ from pathlib import Path
 from config.user_settings import save_section
 from config.user_storage_paths import get_user_secrets_dir
 from lib.core.logger import get_logger
+from lib.core.secret_files import harden_secret_path
 
 _logger = get_logger(__name__)
 
@@ -208,6 +209,8 @@ def _write_text_atomic(path: Path, text: str) -> None:
             temp_path.unlink()
         except OSError:
             pass
+    # 密钥文件不继承共享根目录的宽松权限（见 lib/core/secret_files.py）。
+    harden_secret_path(path)
 
 
 def _write_local_ai_secrets(values: dict) -> None:

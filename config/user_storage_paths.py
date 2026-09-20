@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from config.shared_storage_paths import get_shared_root_dir
+from lib.core.secret_files import harden_secret_path
 
 
 def get_user_root_dir() -> Path:
@@ -44,3 +45,6 @@ def ensure_user_storage_layout() -> None:
         get_user_logs_dir(),
     ):
         path.mkdir(parents=True, exist_ok=True)
+    # secrets 目录单独收紧：里面的 token / 密钥 / 登录 Cookie 不应被同机其它账户读到，
+    # 收紧目录自身的 ACL 后，之后新建的文件与子目录都会继承这套权限。
+    harden_secret_path(get_user_secrets_dir())

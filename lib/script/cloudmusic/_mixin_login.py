@@ -14,6 +14,7 @@ import requests
 from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import EventType, Event
 from lib.core.logger import get_logger
+from lib.core.secret_files import harden_secret_path
 from lib.script.browser_auth import launch_playwright_edge, parse_cookie_header, parse_set_cookie_headers
 from config.config import TIMEOUTS, CLOUD_MUSIC
 
@@ -1184,6 +1185,7 @@ class _LoginMixin:
             }
             with open(_LOGIN_CACHE_FILE, 'w', encoding='utf-8') as f:
                 json.dump(payload, f, ensure_ascii=False, indent=2)
+            harden_secret_path(_LOGIN_CACHE_FILE)
             logger.info('[CloudMusic] 登录缓存已写入: %s', _LOGIN_CACHE_FILE)
             return True
         except Exception as e:
@@ -1237,6 +1239,7 @@ class _LoginMixin:
             }
             with open(_QQ_LOGIN_CACHE_FILE, 'w', encoding='utf-8') as f:
                 json.dump(payload, f, ensure_ascii=False, indent=2)
+            harden_secret_path(_QQ_LOGIN_CACHE_FILE)
             logger.info('[CloudMusic] QQ 登录缓存已写入: %s', _QQ_LOGIN_CACHE_FILE)
             return True
         except Exception as e:
@@ -1289,6 +1292,7 @@ class _LoginMixin:
             }
             with open(_KUGOU_LOGIN_CACHE_FILE, 'w', encoding='utf-8') as f:
                 json.dump(payload, f, ensure_ascii=False, indent=2)
+            harden_secret_path(_KUGOU_LOGIN_CACHE_FILE)
             logger.info('[CloudMusic] 酷狗登录缓存已写入: %s', _KUGOU_LOGIN_CACHE_FILE)
             return True
         except Exception as e:
