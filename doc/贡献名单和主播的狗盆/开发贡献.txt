@@ -11,7 +11,7 @@
 ===https://space.bilibili.com/1838261330
 
 贡献:服务器支持-TDSI服务器
-===https://tdsi.top
+===https://systemtemp.pages.dev/
 
 贡献:debug-所有粉丝
 ===郑重感谢所有参与测试版使用的粉丝们

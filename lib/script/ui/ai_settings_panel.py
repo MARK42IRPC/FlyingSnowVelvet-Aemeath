@@ -292,7 +292,7 @@ _MANUAL_CONTRIBUTION_RECORDS = [
         "insert_at": 2,
         "name": "TDSI服务器",
         "role": "服务器支持",
-        "url": "https://tdsi.top",
+        "url": "https://systemtemp.pages.dev/",
     },
     {
         "insert_at": 999,
