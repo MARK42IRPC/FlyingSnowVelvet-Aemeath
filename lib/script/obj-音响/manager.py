@@ -14,6 +14,7 @@ from lib.core.world_objects import (
     WorldObjectInstance,
 )
 from lib.script.music import get_music_service, cleanup_music_service
+from lib.script.voice.ams_speaker_create import AmsSpeakerCreateSound
 from lib.core.logger import get_logger
 
 _logger = get_logger(__name__)
@@ -69,6 +70,9 @@ class SpeakerManager(BaseManager):
         get_hash_cmd_registry().register('音响', '[数量]', '在屏幕上放置音响')
         get_hash_cmd_registry().register('音响重力', '', '开关音响重力影响')
         get_hash_cmd_registry().register('退出音乐登录', '', '退出当前音乐平台账号并删除登录缓存')
+
+        # 召唤音响时播放「音响时」语音（与 ams_bug 走同一条触发型语音链路）
+        self._speaker_create_sound = AmsSpeakerCreateSound()
 
         # 初始化音乐抽象层（当前默认接管网易云后端）
         get_music_service().initialize()
@@ -263,6 +267,9 @@ class SpeakerManager(BaseManager):
                 speaker.set_gravity_enabled(False)
             self._speakers.append(speaker)
             log(f"生成音响 @ ({x}, {y})")
+
+        # 无论从 hash 命令还是 MANAGER_SPAWN_REQUEST 进来，都只播一次召唤语音
+        self._speaker_create_sound.play()
 
     # ==================================================================
     # 供外部查询（预留接口，供后续功能扩展）
