@@ -17,6 +17,11 @@
 「手抖多打一个 ``[center]``」不会让排版跳来跳去。认不出来的字号（超出 ``FORUM_SIZE_MIN``
 ~ ``FORUM_SIZE_MAX``、或不是整数）按「没写」处理，整条令牌洗掉但排版不变。
 
+**段落边界**：渲染侧原本只在空行处分段（连续行按 Markdown 软换行并成一段），而发帖框是
+按**行**写令牌的——光标在哪一行，令牌就写在哪一行的开头。两边对不上时，第 2 行起的令牌会被
+当成同段里的「重复令牌」洗掉、几行还会并成一行显示。``starts_layout_paragraph()`` 正是给
+渲染方判这一行的：带令牌的行（以及它后面紧跟的那一行）另起一段，两边的段落定义就此对齐。
+
 模块不导入任何 GUI 库。
 """
 
@@ -68,6 +73,16 @@ def parse_layout_tokens(text) -> tuple[str, int, str]:
         if not align:
             align = str(name or "").lower()
     return strip_layout_tokens(raw), size, align
+
+
+def starts_layout_paragraph(text) -> bool:
+    """这一行是不是以排版令牌开头（渲染方据此让它另起一段）。
+
+    渲染侧的段落边界是空行——连续行按 Markdown 软换行并成一段；发帖框却按**行**写令牌。
+    不在这里断开的话，`[center]甲\n[center]乙` 会被当成「一段里写了两个对齐令牌」，第二个
+    只是被洗掉，两行还会并成一行显示。前导空白不算数（正文行本来就先 `strip()`）。
+    """
+    return FORUM_LAYOUT_TOKEN_RE.match(str(text or "").lstrip()) is not None
 
 
 def build_layout_tokens(*, size: int = 0, align: str = "") -> str:
@@ -181,5 +196,6 @@ __all__ = [
     "paragraph_spans",
     "parse_layout_tokens",
     "set_layout_tokens",
+    "starts_layout_paragraph",
     "strip_layout_tokens",
 ]

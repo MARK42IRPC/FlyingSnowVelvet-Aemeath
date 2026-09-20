@@ -5,6 +5,10 @@
 ## [LTS1.0.7pre5] - 2026-09-16
 
 ### Fixed
+- 修复帖子正文的多行排版被并成一行：发帖框按**行**写段落排版令牌（`[center]` / `[size=NN]`），
+  而渲染侧本来只在空行处分段、连续行按 Markdown 软换行并成一段——于是第 2 行起的令牌被当成
+  同一段里的重复令牌洗掉，几行还会挤成一行显示。现在带令牌的行由 `starts_layout_paragraph()`
+  判出、在渲染侧独占一段，两边对段落的定义一致。
 - 修复右键雪堆必崩：`snow_pile.py` 的右键分支调用了一个从未存在过的 `_spawn_cb`，
   每次右键都抛 `AttributeError`。右键与批次生成现在共用 `_request_leopard_spawn()`，
   只发布 `MANAGER_INTERACTION`，由 `SnowPileManager` 查数量、比上限后再转发生成事件。

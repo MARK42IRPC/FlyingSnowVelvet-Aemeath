@@ -13,6 +13,7 @@ from lib.core.forum_layout import (
     paragraph_spans,
     parse_layout_tokens,
     set_layout_tokens,
+    starts_layout_paragraph,
     strip_layout_tokens,
 )
 
@@ -26,6 +27,22 @@ class StripTests(unittest.TestCase):
     def test_lines_without_tokens_are_untouched(self):
         for text in ("没有令牌", "", "方括号 [不是令牌]"):
             self.assertEqual(strip_layout_tokens(text), text)
+
+class ParagraphBoundaryTests(unittest.TestCase):
+    """令牌行在渲染侧必须独占一段：发帖框按行写令牌，渲染侧的段落边界要跟着对齐。"""
+
+    def test_token_line_starts_a_paragraph(self):
+        self.assertTrue(starts_layout_paragraph("[center]正文"))
+        self.assertTrue(starts_layout_paragraph("  [ size = 20 ]正文"))
+        self.assertTrue(starts_layout_paragraph("[right]"))
+
+    def test_plain_line_does_not_start_a_paragraph(self):
+        self.assertFalse(starts_layout_paragraph("正文"))
+        self.assertFalse(starts_layout_paragraph(""))
+        self.assertFalse(starts_layout_paragraph(None))
+        # 行中间的令牌（颜色那种）不算段落开头。
+        self.assertFalse(starts_layout_paragraph("前文[center]后文"))
+
 
     def test_unknown_tokens_are_left_alone(self):
         # 认不出来的写法不是排版令牌：别的客户端写的原文要原样留着。

@@ -68,6 +68,32 @@ class RenderTests(unittest.TestCase):
         self.assertNotIn("<script>", blocks[0].text)
         self.assertTrue(blocks[0].text.endswith("正文"))
 
+class LayoutParagraphTests(unittest.TestCase):
+    """带排版令牌的行各成一段，不再按 Markdown 软换行并成一段。"""
+
+    def test_each_token_line_becomes_its_own_block(self) -> None:
+        blocks = render_blocks("[center]第一行\n[center]第二行\n[center]第三行")
+        self.assertEqual([block.text for block in blocks], ["第一行", "第二行", "第三行"])
+        self.assertEqual([block.align for block in blocks], ["center"] * 3)
+
+    def test_blank_lines_still_separate_paragraphs(self) -> None:
+        blocks = render_blocks("[center]第一行\n\n[center]第二行")
+        self.assertEqual([block.text for block in blocks], ["第一行", "第二行"])
+
+    def test_a_plain_line_after_a_token_line_is_its_own_block(self) -> None:
+        blocks = render_blocks("[center]居中\n普通一段")
+        self.assertEqual([block.text for block in blocks], ["居中", "普通一段"])
+        self.assertEqual([block.align for block in blocks], ["center", ""])
+
+    def test_soft_wrapping_still_joins_untokened_lines(self) -> None:
+        blocks = render_blocks("第一行\n第二行")
+        self.assertEqual([block.text for block in blocks], ["第一行 第二行"])
+
+    def test_sizes_on_each_line_are_kept(self) -> None:
+        blocks = render_blocks("[size=12]小\n[size=32]大")
+        self.assertEqual([block.size for block in blocks], [12, 32])
+
+
     def test_table_rows_collapse_into_one_line(self) -> None:
         blocks = render_blocks("| 名称 | 值 |\n| --- | --- |\n| a | 1 |")
         self.assertEqual([block.text for block in blocks], ["名称 | 值", "a | 1"])

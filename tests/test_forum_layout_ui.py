@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import unittest
 
+from PyQt5.QtWidgets import QLabel
+
 from lib.script.ui.forum_board import FORUM_SIZE_STEPS
 from lib.script.ui.forum_text import MarkupText
 from tests.test_forum_board_ui import BoardPageTestCase, post
@@ -160,6 +162,39 @@ class DetailLayoutTests(BoardPageTestCase):
         """没写令牌的段落不该被拽进富文本：排版令牌只影响写过它的那一段。"""
         self.open_post("[center]居中\n\n普通一段")
         self.assertEqual(len(self.page._detail_host.findChildren(MarkupText)), 1)
+
+    def test_every_centred_line_stays_on_its_own_row(self) -> None:
+        """发帖框按行写令牌：三行都居中时，详情页得是三段居中，而不是并成一行。"""
+        from PyQt5.QtCore import Qt
+
+        self.open_post("[center]第一行\n[center]第二行\n[center]第三行")
+        widgets = self.page._detail_host.findChildren(MarkupText)
+        self.assertEqual(len(widgets), 3)
+        for widget in widgets:
+            self.assertEqual(
+                int(widget.document().begin().blockFormat().alignment()),
+                int(Qt.AlignHCenter),
+            )
+        self.assertEqual(
+            [widget.toPlainText() for widget in widgets], ["第一行", "第二行", "第三行"]
+        )
+
+    def test_a_token_line_does_not_swallow_the_next_plain_line(self) -> None:
+        """令牌行后面紧跟的普通行是另一段：该回到默认的左对齐，也不该被并进去。"""
+        from PyQt5.QtCore import Qt
+
+        self.open_post("[center]居中\n普通一段")
+        widgets = self.page._detail_host.findChildren(MarkupText)
+        self.assertEqual(len(widgets), 1)
+        labels = [
+            child for child in self.page._detail_host.findChildren(QLabel)
+            if child.objectName() == "ForumPostText"
+        ]
+        self.assertEqual([label.text() for label in labels], ["普通一段"])
+        self.assertEqual(
+            int(widgets[0].document().begin().blockFormat().alignment()),
+            int(Qt.AlignHCenter),
+        )
 
     def test_left_token_puts_a_paragraph_back_on_the_left(self) -> None:
         from PyQt5.QtCore import Qt

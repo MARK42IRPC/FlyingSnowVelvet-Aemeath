@@ -20,7 +20,7 @@ from dataclasses import dataclass, replace
 import re
 
 from lib.core.forum_colors import ForumTextRun, color_runs
-from lib.core.forum_layout import parse_layout_tokens
+from lib.core.forum_layout import parse_layout_tokens, starts_layout_paragraph
 
 BLOCK_PARAGRAPH = "paragraph"
 BLOCK_HEADING = "heading"
@@ -213,6 +213,7 @@ def render_blocks(
     text = str(content or "").replace("\r\n", "\n").replace("\r", "\n").replace("\t", "    ")
     blocks: list[ForumBlock] = []
     paragraph: list[str] = []
+    paragraph_tokened = False
     code_lines: list[str] = []
     in_code = False
     truncated = False
@@ -221,11 +222,13 @@ def render_blocks(
     char_limit = max(16, int(max_block_chars))
 
     def flush_paragraph() -> None:
+        nonlocal paragraph_tokened
         if not paragraph:
             return
         raw = " ".join(paragraph)
         merged = _strip_inline(raw)
         paragraph.clear()
+        paragraph_tokened = False
         if merged:
             blocks.append(
                 ForumBlock(kind=BLOCK_PARAGRAPH, text=merged[:char_limit], raw=raw)
@@ -307,6 +310,12 @@ def render_blocks(
                     ForumBlock(kind=BLOCK_LIST, text=_strip_inline(row)[:char_limit], raw=row)
                 )
             continue
+        # 写排版令牌的行独占一段：发帖框按**行**写令牌，而这里只在空行处分段。不断开的话，
+        # 第二行起的 `[center]` 会被当成同一段里的重复令牌洗掉、几行还会并成一行；令牌行后面
+        # 紧跟的普通行同理——编辑器里那本来就是新的一段，该回到默认的左对齐。
+        if paragraph and (starts_layout_paragraph(stripped) or paragraph_tokened):
+            flush_paragraph()
+        paragraph_tokened = starts_layout_paragraph(stripped)
         paragraph.append(stripped)
 
     if not truncated:
