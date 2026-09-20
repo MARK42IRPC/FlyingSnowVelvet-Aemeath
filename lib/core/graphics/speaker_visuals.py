@@ -9,7 +9,7 @@ from .palette import COLORS, UI_THEME
 from config.font_config import FONT, get_ui_font_family
 from config.scale import scale_px
 from lib.core.layer import Layer
-from lib.core.speaker_band import band_ratios, default_band
+from lib.core.speaker_band import default_band
 
 from .commands import DrawBatch, RectCommand, TextAlignment, TextCommand
 from .media_panel_visuals import (
@@ -65,7 +65,8 @@ class SpeakerSearchVisualDescription:
     volume_track_rect: Rect
     band_rect: Rect
     band_track_rect: Rect
-    band_handles: tuple[Rect, Rect]
+    band_fill_rect: Rect
+    band_center_rect: Rect
     batch: DrawBatch
 
 
@@ -78,16 +79,9 @@ def speaker_visual_hit_test(
     x: float,
     y: float,
 ) -> tuple[str, int]:
-    if visual.band_handles:
-        band_action = band_hit_test(
-            visual.band_track_rect,
-            visual.band_handles[0],
-            visual.band_handles[1],
-            x,
-            y,
-        )
-        if band_action:
-            return band_action, -1
+    band_action = band_hit_test(visual.band_track_rect, visual.band_center_rect, x, y)
+    if band_action:
+        return band_action, -1
     if _contains(visual.volume_rect, x, y):
         return "volume", -1
     if _contains(visual.search_rect, x, y):
@@ -239,12 +233,8 @@ def build_speaker_search_visual(
     band_rect = Rect(
         total_width + BAND_SLIDER_GAP, 0, BAND_SLIDER_WIDTH, band_height,
     )
-    band_low_ratio, band_high_ratio = band_ratios(
-        default_band() if band is None else band
-    )
     band_visual = build_band_slider_visual(
-        low_ratio=band_low_ratio,
-        high_ratio=band_high_ratio,
+        band=default_band() if band is None else band,
         x=band_rect.x,
         y=band_rect.y,
         width=band_rect.width,
@@ -310,7 +300,8 @@ def build_speaker_search_visual(
     return SpeakerSearchVisualDescription(
         Size(width, height), entry_rect, search_rect, controls,
         tuple(row_rects), page_rect, volume_rect, slider_visual.track_rect,
-        band_rect, band_visual.track_rect, band_visual.handle_rects,
+        band_rect, band_visual.track_rect, band_visual.band_rect,
+        band_visual.center_rect,
         DrawBatch(tuple(commands)),
     )
 

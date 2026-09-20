@@ -31,7 +31,7 @@ TOOLTIPS: dict[str, str] = {
     'speaker_volume_up':        '音量 +5%',
     'speaker_volume_down':      '音量 -5%',
     'speaker_volume_slider':    '拖动调节音乐音量',
-    'speaker_band_slider':      '拖动上下把手，单独调节这个音响的动感响应频段',
+    'speaker_band_slider':      '拖动滑块，按 10Hz 步进调节这个音响的动感响应频段（中心 ±10Hz）',
     'speaker_play_mode':        '切换播放模式',
     'speaker_music_login':      '登录当前音乐平台账号',
     'speaker_platform_mode':    '切换并保存当前音乐平台模式',

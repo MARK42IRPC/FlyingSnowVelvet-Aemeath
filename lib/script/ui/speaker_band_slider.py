@@ -3,9 +3,9 @@
 布局与交互：
   - 贴在「搜索框 + 搜索歌曲」整行右侧，上下与菜单上半部分对齐
     （顶端对齐第一行按钮，底端对齐搜索框下沿）
-  - 外观来自共享竖向滑条视觉（黑/青/粉三层面板 + 两个横向把手 + 小刻度）
-  - 上下两个把手分别是响应频段的最低频率与最高频率，按住拖动即可单独调整
-    该音响的动感响应频段；**不做颗粒吸附**，比例连续
+  - 外观来自共享竖向滑条视觉（黑/青/粉三层面板 + 单个横向块 + 小刻度）
+  - 只有一个块：按住拖动，块的位置就是频段的中心频率，频段固定为中心 ±10Hz，
+    中心按 10Hz 吸附，所以拖出来的总是 10Hz 整数倍的区间
   - 松手时提示当前频段
 
 位置由 ``SpeakerControlButtons`` 统一管理；频段本身按世界对象实例存在
@@ -33,10 +33,8 @@ from lib.core.graphics.speaker_band_visuals import (
 from lib.core.graphics.speaker_visuals import SPEAKER_SEARCH_Y
 from lib.core.qt_bridge.draw_backend import QtDrawBackend
 from lib.core.speaker_band import (
-    MIN_HANDLE_GAP_RATIO,
-    band_from_ratios,
+    band_from_center_ratio,
     band_label,
-    band_ratios,
     default_band,
     get_speaker_band,
     set_speaker_band,
@@ -50,7 +48,7 @@ DEFAULT_HEIGHT = SPEAKER_SEARCH_Y + int(SPEAKER_SEARCH_UI.get('height', scale_px
 
 
 class SpeakerBandSlider(QWidget):
-    """音响右键 UI 的动感响应频段滑条（竖向、双把手，全局单例的附属控件）。"""
+    """音响右键 UI 的动感响应频段滑条（竖向、单块，全局单例的附属控件）。"""
 
     def __init__(self, width: int = DEFAULT_WIDTH, height: int = DEFAULT_HEIGHT) -> None:
         super().__init__()
@@ -198,10 +196,8 @@ class SpeakerBandSlider(QWidget):
     # ==================================================================
 
     def _build_visual(self) -> BandSliderVisual:
-        low_ratio, high_ratio = band_ratios(self._band)
         return build_band_slider_visual(
-            low_ratio=low_ratio,
-            high_ratio=high_ratio,
+            band=self._band,
             width=self.width(),
             height=self.height(),
             layer=int(Layer.PET_UI),
@@ -223,17 +219,12 @@ class SpeakerBandSlider(QWidget):
     # ==================================================================
 
     def _apply_y(self, y: float) -> None:
-        """按拖动的把手更新频段（两个把手都不许越过对方）。"""
+        """把块拖到指针所在的频率：频段随之变成「中心 ±10Hz」。"""
         if not self._dragging:
             return
         visual = self._ensure_visual()
         ratio = band_ratio_at(visual.track_rect, y)
-        low_ratio, high_ratio = band_ratios(self._band)
-        if self._dragging == 'band_low':
-            low_ratio = min(ratio, max(0.0, high_ratio - MIN_HANDLE_GAP_RATIO))
-        else:
-            high_ratio = max(ratio, min(1.0, low_ratio + MIN_HANDLE_GAP_RATIO))
-        band = band_from_ratios(low_ratio, high_ratio)
+        band = band_from_center_ratio(ratio)
         if band == self._band:
             return
         self._band = band
@@ -247,8 +238,7 @@ class SpeakerBandSlider(QWidget):
         visual = self._ensure_visual()
         action = band_hit_test(
             visual.track_rect,
-            visual.low_handle_rect,
-            visual.high_handle_rect,
+            visual.center_rect,
             event.x(),
             event.y(),
         )

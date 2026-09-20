@@ -1,4 +1,4 @@
-"""动感响应频段：对数映射、按音响登记，以及与 AudioMeter 的对接。"""
+"""动感响应频段：对数映射、单块中心 ±10Hz 吸附、按音响登记，以及与 AudioMeter 的对接。"""
 from __future__ import annotations
 
 import math
@@ -8,13 +8,18 @@ from unittest.mock import patch
 from config.config_music import SPEAKER_AUDIO
 from lib.core.audio_meter import AudioMeter
 from lib.core.speaker_band import (
-    MIN_HANDLE_GAP_RATIO,
-    band_from_ratios,
+    BAND_HALF_WIDTH_HZ,
+    BAND_SNAP_HZ,
+    band_center_hz,
+    band_center_ratio,
+    band_from_center_hz,
+    band_from_center_ratio,
     band_key,
     band_label,
     band_max_hz,
     band_min_hz,
     band_ratios,
+    center_limits_hz,
     clamp_band,
     clear_speaker_bands,
     default_band,
@@ -24,6 +29,7 @@ from lib.core.speaker_band import (
     ratio_from_frequency,
     registered_bands,
     set_speaker_band,
+    snap_frequency_hz,
     speaker_response_intensity,
 )
 
@@ -70,16 +76,46 @@ class BandMathTests(unittest.TestCase):
     def test_band_label_rounds_to_whole_hertz(self):
         self.assertEqual(band_label((60.0, 250.0)), '60–250 Hz')
 
-    def test_band_ratios_and_from_ratios_round_trip(self):
+    def test_band_ratios_are_ordered_low_to_high(self):
         low_ratio, high_ratio = band_ratios((61.0, 244.0))
-        self.assertLess(low_ratio, high_ratio - MIN_HANDLE_GAP_RATIO + 1e-9)
-        band = band_from_ratios(low_ratio, high_ratio)
-        self.assertAlmostEqual(band[0], 61.0, delta=1.0)
-        self.assertAlmostEqual(band[1], 244.0, delta=1.0)
+        self.assertLess(low_ratio, high_ratio)
 
-    def test_band_from_ratios_never_inverts_the_handles(self):
-        low, high = band_from_ratios(0.8, 0.2)
-        self.assertLess(low, high)
+    def test_center_band_is_always_half_width_either_side(self):
+        low, high = band_from_center_hz(120.0)
+        self.assertAlmostEqual(low, 120.0 - BAND_HALF_WIDTH_HZ, places=6)
+        self.assertAlmostEqual(high, 120.0 + BAND_HALF_WIDTH_HZ, places=6)
+        self.assertAlmostEqual(band_center_hz((low, high)), 120.0, places=6)
+
+    def test_center_is_snapped_to_ten_hertz_steps(self):
+        low, high = band_from_center_hz(123.4)
+        center = band_center_hz((low, high))
+        self.assertAlmostEqual(center, 120.0, places=6)
+        self.assertAlmostEqual(center % BAND_SNAP_HZ, 0.0, places=6)
+
+    def test_center_ratio_and_band_round_trip(self):
+        for center in (60.0, 250.0, 1000.0):
+            band = band_from_center_hz(center)
+            self.assertAlmostEqual(
+                band_center_hz(band_from_center_ratio(band_center_ratio(band))),
+                center,
+                places=6,
+            )
+
+    def test_center_stays_inside_the_slider_with_the_whole_block(self):
+        low, high = center_limits_hz()
+        self.assertAlmostEqual(low, band_min_hz() + BAND_HALF_WIDTH_HZ, places=6)
+        self.assertAlmostEqual(high, band_max_hz() - BAND_HALF_WIDTH_HZ, places=6)
+        for center in (0.0, 1e9, -50.0):
+            snapped = snap_frequency_hz(center)
+            self.assertGreaterEqual(snapped, low - 1e-9)
+            self.assertLessEqual(snapped, high + 1e-9)
+
+    def test_snap_frequency_survives_non_numeric_input(self):
+        low, high = center_limits_hz()
+        for bad in ("x", None, float("nan")):
+            snapped = snap_frequency_hz(bad)
+            self.assertGreaterEqual(snapped, low - 1e-9)
+            self.assertLessEqual(snapped, high + 1e-9)
 
     def test_band_key_requires_a_valid_identity(self):
         self.assertEqual(band_key('qt', 3), 'qt:3')

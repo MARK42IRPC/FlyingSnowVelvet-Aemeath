@@ -1,4 +1,4 @@
-"""竖向频段滑条：共享几何、命中判定、Qt 宿主与按钮组摆放。"""
+"""竖向频段滑条：单块几何、中心 ±10Hz 吸附、命中判定、Qt 宿主与按钮组摆放。"""
 from __future__ import annotations
 
 import os
@@ -37,11 +37,16 @@ from lib.core.graphics.speaker_visuals import (
     speaker_visual_hit_test,
 )
 from lib.core.speaker_band import (
+    BAND_HALF_WIDTH_HZ,
+    BAND_SNAP_HZ,
+    band_center_hz,
+    band_from_center_hz,
+    band_from_center_ratio,
+    band_max_hz,
+    band_min_hz,
     clear_speaker_bands,
     default_band,
-    frequency_from_ratio,
     get_speaker_band,
-    ratio_from_frequency,
     set_speaker_band,
 )
 from lib.script.ui.speaker_band_slider import (
@@ -62,76 +67,83 @@ def _speaker(backend: str = 'qt', instance: int = 7):
 
 
 class BandSliderVisualTests(unittest.TestCase):
-    def test_slider_keeps_the_shared_width_and_stacks_two_handles(self):
-        visual = build_band_slider_visual(low_ratio=0.25, high_ratio=0.75, height=124)
+    def test_slider_keeps_the_shared_width_and_draws_one_block(self):
+        visual = build_band_slider_visual(band=(60.0, 250.0), height=124)
 
         self.assertEqual((visual.size.width, visual.size.height), (BAND_SLIDER_WIDTH, 124))
         self.assertEqual(
             visual.track_rect,
             band_track_rect(width=BAND_SLIDER_WIDTH, height=124),
         )
-        self.assertEqual(visual.low_handle_rect.width, visual.track_rect.width)
+        self.assertEqual(len(visual.handle_rects), 1)
+        self.assertEqual(visual.center_rect.width, visual.track_rect.width)
         self.assertAlmostEqual(
-            visual.low_handle_rect.width / visual.low_handle_rect.height,
+            visual.center_rect.width / visual.center_rect.height,
             SLIDER_HANDLE_ASPECT,
             places=2,
         )
-        low_center = visual.low_handle_rect.y + visual.low_handle_rect.height / 2
-        high_center = visual.high_handle_rect.y + visual.high_handle_rect.height / 2
-        self.assertLess(high_center, low_center)
 
-    def test_handles_stay_inside_the_track_at_both_extremes(self):
-        visual = build_band_slider_visual(low_ratio=-4.0, high_ratio=9.0, height=124)
-        bottom = visual.track_rect.y + visual.track_rect.height
-        for handle in visual.handle_rects:
-            self.assertGreaterEqual(handle.y, visual.track_rect.y)
-            self.assertLessEqual(handle.y + handle.height, bottom)
+    def test_block_sits_inside_the_filled_band(self):
+        visual = build_band_slider_visual(band=band_from_center_hz(120.0), height=124)
+
+        block_center = visual.center_rect.y + visual.center_rect.height / 2
+        band_top = visual.band_rect.y
+        band_bottom = visual.band_rect.y + visual.band_rect.height
+        self.assertGreaterEqual(block_center, band_top - 1)
+        self.assertLessEqual(block_center, band_bottom + 1)
+
+    def test_handle_stays_inside_the_track_at_both_extremes(self):
+        for center in (1.0, 100000.0):
+            visual = build_band_slider_visual(band=band_from_center_hz(center), height=124)
+            bottom = visual.track_rect.y + visual.track_rect.height
+            for handle in visual.handle_rects:
+                self.assertGreaterEqual(handle.y, visual.track_rect.y)
+                self.assertLessEqual(handle.y + handle.height, bottom)
 
     def test_ratio_and_position_are_inverses(self):
-        visual = build_band_slider_visual(low_ratio=0.4, high_ratio=0.6, height=140)
+        visual = build_band_slider_visual(band=(60.0, 250.0), height=140)
         for ratio in (0.0, 0.3, 1.0):
             y = band_position(visual.track_rect, ratio)
             self.assertAlmostEqual(band_ratio_at(visual.track_rect, y), ratio, places=6)
 
     def test_ratio_at_the_ends_is_clamped(self):
-        visual = build_band_slider_visual(low_ratio=0.4, high_ratio=0.6, height=140)
+        visual = build_band_slider_visual(band=(60.0, 250.0), height=140)
         track = visual.track_rect
         self.assertEqual(band_ratio_at(track, track.y - 500), 1.0)
         self.assertEqual(band_ratio_at(track, track.y + track.height + 500), 0.0)
 
-    def test_hit_test_picks_the_nearest_handle(self):
-        visual = build_band_slider_visual(low_ratio=0.2, high_ratio=0.8, height=140)
+    def test_hit_test_accepts_anywhere_on_the_bar(self):
+        visual = build_band_slider_visual(band=(60.0, 250.0), height=140)
         middle_x = visual.track_rect.x + visual.track_rect.width / 2
-        low = visual.low_handle_rect
-        high = visual.high_handle_rect
 
-        self.assertEqual(
-            band_hit_test(visual.track_rect, low, high, middle_x, low.y + low.height / 2),
-            'band_low',
-        )
-        self.assertEqual(
-            band_hit_test(visual.track_rect, low, high, middle_x, high.y + high.height / 2),
-            'band_high',
-        )
+        for spot in (0.1, 0.5, 0.9):
+            y = visual.track_rect.y + visual.track_rect.height * spot
+            self.assertEqual(
+                band_hit_test(visual.track_rect, visual.center_rect, middle_x, y),
+                'band',
+            )
 
     def test_hit_test_ignores_pointers_outside_the_bar(self):
-        visual = build_band_slider_visual(low_ratio=0.2, high_ratio=0.8, height=140)
+        visual = build_band_slider_visual(band=(60.0, 250.0), height=140)
         track = visual.track_rect
         self.assertEqual(
-            band_hit_test(visual.track_rect, visual.low_handle_rect, visual.high_handle_rect,
+            band_hit_test(visual.track_rect, visual.center_rect,
                           track.x - 200, track.y + 10),
             '',
         )
         self.assertEqual(
-            band_hit_test(visual.track_rect, visual.low_handle_rect, visual.high_handle_rect,
+            band_hit_test(visual.track_rect, visual.center_rect,
                           track.x + 2, track.y + track.height + 200),
             '',
         )
 
-    def test_ratios_are_continuous_and_never_snapped(self):
-        """滑块不做颗粒吸附：非整刻度比例也要原样保留。"""
-        ratio = 0.333
-        self.assertAlmostEqual(ratio_from_frequency(frequency_from_ratio(ratio)), ratio, places=9)
+    def test_dragging_through_ratios_always_yields_ten_hertz_bands(self):
+        """拖动换算出来的频段总是整 10Hz 中心、固定 ±10Hz 宽。"""
+        for ratio in (0.0, 0.21, 0.5, 0.77, 1.0):
+            band = band_from_center_ratio(ratio)
+            center = band_center_hz(band)
+            self.assertAlmostEqual(band[1] - band[0], 2 * BAND_HALF_WIDTH_HZ, places=6)
+            self.assertAlmostEqual(center % BAND_SNAP_HZ, 0.0, places=6)
 
 
 class SpeakerMenuBandLayoutTests(unittest.TestCase):
@@ -158,23 +170,18 @@ class SpeakerMenuBandLayoutTests(unittest.TestCase):
             visual.size.width, visual.band_rect.x + visual.band_rect.width,
         )
 
-    def test_hit_test_distinguishes_band_handles_from_the_volume_row(self):
+    def test_hit_test_distinguishes_the_band_block_from_the_volume_row(self):
         visual = self._visual(band=(60.0, 250.0))
         middle_x = visual.band_track_rect.x + visual.band_track_rect.width / 2
-        low_handle, high_handle = visual.band_handles
-
-        self.assertEqual(
-            speaker_visual_hit_test(
-                visual, middle_x, low_handle.y + low_handle.height / 2,
-            ),
-            ('band_low', -1),
-        )
-        self.assertEqual(
-            speaker_visual_hit_test(
-                visual, middle_x, high_handle.y + high_handle.height / 2,
-            ),
-            ('band_high', -1),
-        )
+        block = visual.band_center_rect
+        fill_top = visual.band_fill_rect.y
+        fill_bottom = visual.band_fill_rect.y + visual.band_fill_rect.height
+        # 频段填充的上下沿都在滑条内，按哪儿都应该落在块上。
+        for y in (fill_top + 1, fill_bottom - 1, block.y + block.height / 2):
+            self.assertEqual(
+                speaker_visual_hit_test(visual, middle_x, y),
+                ('band', -1),
+            )
         self.assertEqual(
             speaker_visual_hit_test(visual, visual.volume_rect.x + 2, visual.volume_rect.y + 2),
             ('volume', -1),
@@ -193,10 +200,11 @@ class SpeakerMenuBandLayoutTests(unittest.TestCase):
             'result',
         )
 
-    def test_band_argument_moves_the_handles(self):
-        narrow = self._visual(band=(150.0, 180.0))
-        wide = self._visual(band=(40.0, 900.0))
-        self.assertNotEqual(narrow.band_handles, wide.band_handles)
+    def test_band_argument_moves_the_block(self):
+        narrow = self._visual(band=band_from_center_hz(120.0))
+        wide = self._visual(band=band_from_center_hz(1200.0))
+        self.assertNotEqual(narrow.band_center_rect, wide.band_center_rect)
+        self.assertNotEqual(narrow.band_fill_rect, wide.band_fill_rect)
 
 
 class SpeakerBandSliderWidgetTests(unittest.TestCase):
@@ -238,49 +246,60 @@ class SpeakerBandSliderWidgetTests(unittest.TestCase):
         slider.set_speaker(_speaker('qt', 7))
         self.assertEqual(slider.band, get_speaker_band('qt', 7))
 
-    def test_dragging_the_lower_handle_writes_the_band_back(self):
+    def test_dragging_the_block_writes_a_snapped_ten_hertz_band_back(self):
         set_speaker_band('qt', 7, 60.0, 250.0)
         slider = self._slider()
         slider.set_speaker(_speaker('qt', 7))
 
         track = slider._ensure_visual().track_rect
-        slider._dragging = 'band_low'
-        slider._apply_y(track.y + track.height * 0.02)
+        slider._dragging = 'band'
+        slider._apply_y(track.y + track.height * 0.75)
 
         band = get_speaker_band('qt', 7)
-        self.assertGreater(band[0], 60.0)
-        self.assertLess(band[0], band[1])
-        self.assertAlmostEqual(band[1], 250.0, delta=1.0)
+        # 拖动后上下限固定相差 ±10Hz，中心吸附到 10Hz 整数倍。
+        self.assertAlmostEqual(band[1] - band[0], 2 * BAND_HALF_WIDTH_HZ, places=6)
+        self.assertAlmostEqual(band_center_hz(band) % BAND_SNAP_HZ, 0.0, places=6)
+        self.assertNotAlmostEqual(band[0], 60.0, places=3)
 
-    def test_upper_handle_cannot_cross_the_lower_one(self):
+    def test_dragging_to_the_top_stays_inside_the_slider(self):
         set_speaker_band('qt', 7, 60.0, 250.0)
         slider = self._slider()
         slider.set_speaker(_speaker('qt', 7))
 
         track = slider._ensure_visual().track_rect
-        slider._dragging = 'band_high'
-        slider._apply_y(track.y + track.height)
+        slider._dragging = 'band'
+        slider._apply_y(track.y - 500)
 
         band = get_speaker_band('qt', 7)
         self.assertLess(band[0], band[1])
+        self.assertGreaterEqual(band[0], band_min_hz())
+        self.assertLessEqual(band[1], band_max_hz())
 
-    def test_press_grabs_the_handle_nearest_the_pointer(self):
+    def test_dragging_to_the_bottom_stays_inside_the_slider(self):
+        set_speaker_band('qt', 7, 60.0, 250.0)
+        slider = self._slider()
+        slider.set_speaker(_speaker('qt', 7))
+
+        track = slider._ensure_visual().track_rect
+        slider._dragging = 'band'
+        slider._apply_y(track.y + track.height + 500)
+
+        band = get_speaker_band('qt', 7)
+        self.assertGreaterEqual(band[0], band_min_hz())
+        self.assertLessEqual(band[1], band_max_hz())
+
+    def test_press_on_the_bar_starts_a_block_drag(self):
         set_speaker_band('qt', 7, 40.0, 900.0)
         slider = self._slider()
         slider.set_speaker(_speaker('qt', 7))
 
         visual = slider._ensure_visual()
         middle_x = visual.track_rect.x + visual.track_rect.width / 2
-        low_handle, high_handle = visual.handle_rects
-        slider.mousePressEvent(self._mouse(
-            QEvent.MouseButtonPress, slider, middle_x,
-            low_handle.y + low_handle.height / 2,
-        ))
-        self.assertEqual(slider._dragging, 'band_low')
-        slider.mouseReleaseEvent(self._mouse(
-            QEvent.MouseButtonRelease, slider, middle_x,
-            low_handle.y + low_handle.height / 2,
-        ))
+        block = visual.center_rect
+        y = block.y + block.height / 2
+        slider.mousePressEvent(self._mouse(QEvent.MouseButtonPress, slider, middle_x, y))
+        self.assertEqual(slider._dragging, 'band')
+        slider.mouseReleaseEvent(self._mouse(QEvent.MouseButtonRelease, slider, middle_x, y))
         self.assertEqual(slider._dragging, '')
 
     def test_press_outside_the_bar_does_not_start_a_drag(self):
@@ -304,9 +323,9 @@ class SpeakerBandSliderWidgetTests(unittest.TestCase):
 
         visual = slider._ensure_visual()
         middle_x = visual.track_rect.x + visual.track_rect.width / 2
-        low_handle = visual.handle_rects[0]
-        y = low_handle.y + low_handle.height / 2
-        slider.mousePressEvent(self._mouse(QEvent.MouseButtonPress, slider, middle_x, low_handle.y + 20))
+        block = visual.center_rect
+        y = block.y + block.height / 2
+        slider.mousePressEvent(self._mouse(QEvent.MouseButtonPress, slider, middle_x, block.y + 20))
         slider.mouseMoveEvent(self._mouse(QEvent.MouseMove, slider, middle_x, y))
         slider.mouseReleaseEvent(self._mouse(QEvent.MouseButtonRelease, slider, middle_x, y))
 
