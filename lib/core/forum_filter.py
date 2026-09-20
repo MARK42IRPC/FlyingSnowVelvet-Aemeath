@@ -12,9 +12,10 @@
   3. **违规词**：``FORUM_BANNED_WORDS`` 里的词，忽略大小写、全角半角与常见分隔符
      （``*``/``.``/`` ``/``-``/``_``），所以 ``加*微``、``加 微`` 都拦得住。
 
-判定前会先洗掉正文里的颜色令牌（``lib/core/forum_colors.py``）：令牌里的六位十六进制数
-会被长数字规则误伤，而它本来就不算留言内容。违规词表按用途分成四组，``category`` 跟着
-命中词所属的组走——窗口层按这个类别挑提示语音，别让「广告」配上「骂人」的话术。
+判定前会先洗掉正文里的颜色令牌（``lib/core/forum_colors.py``）与段落排版令牌
+（``lib/core/forum_layout.py``）：前者的六位十六进制数、后者的字号数字都会被长数字规则
+误伤，而它们本来就不算留言内容。违规词表按用途分成四组，``category`` 跟着命中词所属的
+组走——窗口层按这个类别挑提示语音，别让「广告」配上「骂人」的话术。
 
 模块不导入任何 GUI 库，返回的是结构化的 ``ForumViolation``，由调用方决定怎么提示。
 """
@@ -26,6 +27,7 @@ import re
 import unicodedata
 
 from lib.core.forum_colors import strip_color_tokens
+from lib.core.forum_layout import strip_layout_tokens
 
 #: 违规词的分类：只表示「这条留言是哪一类问题」，UI 提示与提示语音都按它选话术。
 FORUM_CATEGORY_LINK = "link"
@@ -173,10 +175,10 @@ def category_for_word(word: str) -> str:
 def check_content(text) -> ForumViolation | None:
     """按固定顺序检查一段留言；返回第一条违规，没有则返回 None。
 
-    判定前先洗掉颜色令牌：``[color=#000000]`` 里的六位数字会被长数字规则误伤，
-    而令牌是渲染指令、不是留言内容。
+    判定前先洗掉颜色令牌与排版令牌：``[color=#000000]`` 里的六位数字、``[size=999]``
+    里的字号都会被长数字规则误伤，而令牌是渲染指令、不是留言内容。
     """
-    raw = strip_color_tokens(text)
+    raw = strip_layout_tokens(strip_color_tokens(text))
     link = find_link(raw)
     if link:
         return ForumViolation(FORUM_REASON_LINK, link, FORUM_CATEGORY_LINK)

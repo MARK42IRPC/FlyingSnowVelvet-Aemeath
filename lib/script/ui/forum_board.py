@@ -25,6 +25,7 @@ from PyQt5 import sip
 from PyQt5.QtCore import QEvent, QSize, Qt, pyqtSignal
 from PyQt5.QtGui import QPixmap, QTextCursor
 from PyQt5.QtWidgets import (
+    QComboBox,
     QFileDialog,
     QFrame,
     QHBoxLayout,
@@ -59,6 +60,15 @@ from lib.core.forum_api import (
     image_markdown,
 )
 from lib.core.forum_colors import ForumTextRun, apply_color_tokens, iter_color_tokens
+from lib.core.forum_layout import (
+    FORUM_ALIGN_CENTER,
+    FORUM_ALIGN_LEFT,
+    FORUM_ALIGN_RIGHT,
+    FORUM_SIZE_MAX,
+    FORUM_SIZE_MIN,
+    parse_layout_tokens,
+    set_layout_tokens,
+)
 from lib.core.forum_community import CommunityService
 from lib.core.forum_markdown import (
     BLOCK_CODE,
@@ -127,6 +137,10 @@ FORUM_IMAGE_MAX_PIXELS = 4_000_000
 
 #: 详情页正文块的字号：列表、引用、代码各一档，其余用默认。
 _BLOCK_FONT_DEFAULT = 13
+#: 发帖页字号下拉里的档位（像素）；`FORUM_SIZE_MIN`/`MAX` 之外的值核心层会当「没写」。
+FORUM_SIZE_STEPS: tuple[int, ...] = tuple(
+    size for size in (12, 14, 16, 18, 20, 24, 28, 32, 40) if FORUM_SIZE_MIN <= size <= FORUM_SIZE_MAX
+)
 _HEADING_FONT_SIZES = {1: 18, 2: 16, 3: 15, 4: 14, 5: 14, 6: 13}
 
 
@@ -134,6 +148,20 @@ def _font(size: int, *, bold: bool = False):
     font = get_ui_font(size=scale_px(size, min_abs=max(8, size - 2)))
     font.setBold(bold)
     return font
+
+
+#: 段落对齐令牌到 Qt 对齐标志的映射；没写令牌的段落沿用调用方给的对齐。
+_ALIGNMENTS = {
+    FORUM_ALIGN_LEFT: Qt.AlignLeft,
+    FORUM_ALIGN_CENTER: Qt.AlignHCenter,
+    FORUM_ALIGN_RIGHT: Qt.AlignRight,
+}
+
+
+def _block_alignment(block) -> int:
+    """这一段该靠哪边：写了 `[center]` / `[right]` 就按令牌走，否则左对齐。"""
+    align = str(getattr(block, "align", "") or "").strip().lower()
+    return _ALIGNMENTS.get(align, Qt.AlignLeft)
 
 
 def _like_mark(liked: bool) -> str:
@@ -1035,6 +1063,7 @@ class ForumBoardPage(QWidget):
         card_layout.addWidget(self._thread_title)
 
         card_layout.addWidget(self._build_compose_tools(card), 0)
+        card_layout.addWidget(self._build_compose_layout(card), 0)
         card_layout.addWidget(self._build_compose_colors(card), 0)
 
         self._thread_body = QPlainTextEdit(card)
@@ -1049,6 +1078,8 @@ class ForumBoardPage(QWidget):
         # 光标 / 选区一动就重算按钮的复选状态：亮着就表示「光标处的字就是这种格式 / 这个颜色」。
         self._thread_body.cursorPositionChanged.connect(self._sync_format_buttons)
         self._thread_body.selectionChanged.connect(self._sync_format_buttons)
+        self._thread_body.cursorPositionChanged.connect(self._sync_layout_controls)
+        self._thread_body.selectionChanged.connect(self._sync_layout_controls)
         card_layout.addWidget(self._thread_body, 1)
 
         self._image_strip = QWidget(card)
@@ -1161,6 +1192,59 @@ class ForumBoardPage(QWidget):
         row.addWidget(self._image_button, 0)
         return bar
 
+    def _build_compose_layout(self, card: QWidget) -> QWidget:
+        """排版那一行：字号下拉 + 左 / 中 / 右三个对齐按钮。
+
+        这几个都不是行内标记而是**段落**属性（见 `lib/core/forum_layout.py`）：字号取下拉
+        里的档位，对齐三个按钮互斥，作用范围是光标所在的每一段。没有选中时点一下就把整段
+        设成这一档；光标已经在那一档里再点一下，字号回到默认、对齐回到左对齐。
+        """
+        bar = QWidget(card)
+        bar.setObjectName("ForumComposeLayout")
+        row = QHBoxLayout(bar)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(scale_px(5, min_abs=4))
+
+        label = QLabel("字号", bar)
+        label.setObjectName("ForumHint")
+        label.setFont(_font(11))
+        row.addWidget(label, 0)
+
+        self._size_combo = QComboBox(bar)
+        self._size_combo.setObjectName("ForumSizeCombo")
+        self._size_combo.setFont(_font(11))
+        # 第一档是「默认」：选它就把这一段的 `[size=...]` 摘掉，回到块自己的字号。
+        self._size_combo.addItem("默认", 0)
+        for size in FORUM_SIZE_STEPS:
+            self._size_combo.addItem(str(size), size)
+        self._size_combo.setToolTip("把光标所在的段落设成这个字号；选「默认」就回到原来的字号")
+        self._size_combo.currentIndexChanged.connect(
+            lambda _index: self._apply_body_size()
+        )
+        row.addWidget(self._size_combo, 0)
+
+        self._align_buttons: dict[str, QToolButton] = {}
+        for align, text, tip in (
+            (FORUM_ALIGN_LEFT, "靠左", "把光标所在的段落靠左对齐（默认对齐）"),
+            (FORUM_ALIGN_CENTER, "居中", "把光标所在的段落居中"),
+            (FORUM_ALIGN_RIGHT, "靠右", "把光标所在的段落靠右"),
+        ):
+            button = QToolButton(bar)
+            button.setObjectName("ForumColorButton")
+            button.setText(text)
+            button.setCheckable(True)
+            button.setToolTip(f"{tip}；再点一下回到左对齐")
+            button.setCursor(Qt.PointingHandCursor)
+            button.setFont(_font(11))
+            button.clicked.connect(
+                lambda checked=False, value=align: self._apply_body_align(value, checked)
+            )
+            self._align_buttons[align] = button
+            row.addWidget(button, 0)
+
+        row.addStretch(1)
+        return bar
+
     def _build_compose_colors(self, card: QWidget) -> QWidget:
         """颜色滑条那一行：勾了哪一档就铺开哪一档，两个都没勾就整行收起。
 
@@ -1232,6 +1316,67 @@ class ForumBoardPage(QWidget):
             return
         self._set_body_text(text, start, stop)
 
+    def _apply_body_size(self) -> None:
+        """把光标所在的每一段设成下拉里选的字号；「默认」把令牌摘掉。"""
+        size = int(self._size_combo.currentData() or 0)
+        self._write_body_layout(size=size)
+
+    def _apply_body_align(self, align: str, checked: bool) -> None:
+        """把光标所在的每一段设成这个对齐；同一个按钮再点一下就回到左对齐。
+
+        `checked` 是 `clicked` 信号带回来的**新**状态（Qt 在发出信号前已经翻过按钮），所以
+        「点暗了」就是取消。左对齐本身是默认值，点它永远等于回到默认，用它「点亮」没有意义。
+        """
+        if align == FORUM_ALIGN_LEFT:
+            wanted = FORUM_ALIGN_LEFT
+        else:
+            wanted = align if checked else ""
+        self._write_body_layout(align=wanted)
+
+    def _write_body_layout(self, *, size: int | None = None, align: str | None = None) -> None:
+        """把排版写进正文，写完按新状态刷新按钮。"""
+        body = self._body_text()
+        start, end = self._body_selection()
+        text, new_start, new_stop = set_layout_tokens(body, start, end, size=size, align=align)
+        if text == body:
+            self._sync_layout_controls()
+            return
+        if len(text) > FORUM_CONTENT_MAX:
+            self._compose_error(f"加排版令牌会超过 {FORUM_CONTENT_MAX} 字上限，先删掉一些再试")
+            self._sync_layout_controls()
+            return
+        self._set_body_text(text, new_start, new_stop)
+
+    def _sync_layout_controls(self) -> None:
+        """字号下拉与对齐按钮跟着光标走：显示光标所在段落当前的排版。"""
+        if not hasattr(self, "_size_combo"):
+            return
+        body = self._body_text()
+        caret = self._body_caret()
+        current_size, current_align = self._paragraph_layout_at(body, caret)
+        index = self._size_combo.findData(current_size)
+        if index >= 0 and self._size_combo.currentIndex() != index:
+            blocked = self._size_combo.blockSignals(True)
+            self._size_combo.setCurrentIndex(index)
+            self._size_combo.blockSignals(blocked)
+        for align, button in self._align_buttons.items():
+            checked = current_align == align and align != FORUM_ALIGN_LEFT
+            if align == FORUM_ALIGN_LEFT:
+                checked = current_align in ("", FORUM_ALIGN_LEFT)
+            if button.isChecked() != checked:
+                button.setChecked(checked)
+
+    @staticmethod
+    def _paragraph_layout_at(body: str, caret: int) -> tuple[int, str]:
+        """光标所在段落当前的 `(字号, 对齐)`；两段之间按下一段算。"""
+        offset = max(0, min(int(caret), len(body)))
+        start = body.rfind("\n", 0, offset) + 1
+        stop = body.find("\n", start)
+        if stop < 0:
+            stop = len(body)
+        _plain, size, align = parse_layout_tokens(body[start:stop])
+        return size, align
+
     def _toggle_body_color(self, kind: str) -> None:
         """「文字色 / 描边色」按钮：勾上就是把选中的一段上成当前颜色，再点一下取消。"""
         picker = self._color_pickers.get(kind)
@@ -1283,6 +1428,7 @@ class ForumBoardPage(QWidget):
             checked = _color_span_at(text, caret, kind) is not None
             if button.isChecked() != checked:
                 button.setChecked(checked)
+        self._sync_layout_controls()
 
     def _sync_color_host(self) -> None:
         """颜色滑条跟着两个按钮走：勾了哪一档铺开哪一档，两个都没勾就整行收起。"""
@@ -1767,14 +1913,14 @@ class ForumBoardPage(QWidget):
             elif block.kind == BLOCK_HEADING:
                 size = _HEADING_FONT_SIZES.get(int(block.level or 1), 14)
                 inlined |= self._add_body_source(
-                    block, block.raw, "ForumPostHeading", size, bold=True
+                    block, block.raw, "ForumPostHeading", block.size or size, bold=True
                 )
             elif block.kind == BLOCK_QUOTE:
                 inlined |= self._add_body_source(
                     block,
                     block.raw,
                     "ForumPostQuote",
-                    12,
+                    block.size or 12,
                     prefix="“",
                     suffix="”",
                     color=forum_muted_text_color(),
@@ -1789,12 +1935,15 @@ class ForumBoardPage(QWidget):
                     block,
                     block.raw,
                     "ForumPostText",
-                    _BLOCK_FONT_DEFAULT,
+                    block.size or _BLOCK_FONT_DEFAULT,
                     prefix=f"{indent}{marker}",
                 )
             else:
                 inlined |= self._add_body_source(
-                    block, block.raw, "ForumPostText", _BLOCK_FONT_DEFAULT
+                    block,
+                    block.raw,
+                    "ForumPostText",
+                    block.size or _BLOCK_FONT_DEFAULT,
                 )
         self._add_body_images(post, inlined)
 
@@ -1899,14 +2048,17 @@ class ForumBoardPage(QWidget):
         label.setFont(_font(size, bold=bold))
         label.setWordWrap(True)
         label.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        self._detail_body.addWidget(label)
+        self._detail_body.addWidget(label, 0, _block_alignment(block))
 
     @staticmethod
     def _block_needs_rich(block) -> bool:
-        """这一段光靠 QLabel 显示不出原样吗（有颜色令牌，或有行内标记）。"""
+        """这一段光靠 QLabel 显示不出原样吗（有颜色令牌、行内标记，或段落排版令牌）。"""
         if block.kind == BLOCK_CODE:
             # 代码块里的 `**` 就是要原样显示，别当成格式解释。
             return False
+        if getattr(block, "size", 0) or getattr(block, "align", ""):
+            # 字号要写进字符格式、对齐要跟块格式一起铺，QLabel 做不到这两件事。
+            return True
         if any(run.color or run.outline for run in block.runs):
             return True
         html = to_html(block.raw)
@@ -1929,7 +2081,8 @@ class ForumBoardPage(QWidget):
             color=color or forum_card_text_color(),
             width_hint=BODY_WIDTH_HINT,
             runs=runs,
-            align=Qt.AlignLeft,
+            align=_block_alignment(block),
+            size=getattr(block, "size", 0),
             object_name="ForumBodyText",
             parent=self._detail_host,
         )

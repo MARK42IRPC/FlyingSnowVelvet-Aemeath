@@ -4,9 +4,11 @@
 只做适合一个侧栏宽度的降级：标题、引用、列表、代码块、分隔线各自成块，行内标记洗成
 纯文本，图片降级成「【图片】」占位符而不是下载字节。
 
-颜色令牌（`[color=#rrggbb]` 一类）是唯一的例外：它不是标记而是**分段信息**，所以
-`_strip_inline()` 不动它，由 `_with_runs()` 统一切成 `ForumTextRun`，`text` 只留可见
-文字、`runs` 带着每段的颜色（详情页按段着色）。
+颜色令牌（`[color=#rrggbb]` 一类）与段落排版令牌（`[size=NN]` / `[center]` 一类，见
+`lib/core/forum_layout.py`）都属于**分段信息**而不是标记，所以 `_strip_inline()` 不动它们：
+颜色由 `_with_runs()` 统一切成 `ForumTextRun`，`text` 只留可见文字、`runs` 带着每段的颜色
+（详情页按段着色）；字号与对齐是段落属性，`render_blocks()` 在切块时就读出来写进
+`ForumBlock` 的 `size` / `align`，令牌本身不进正文。
 
 刻意不引入 Markdown 库，也不生成 HTML：帖子正文可能带 `<script>` 一类标签，纯文本投影
 既躲开注入，又让渲染成本与正文长度线性相关（一段一个 QLabel，超出上限就截断）。
@@ -14,10 +16,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import re
 
 from lib.core.forum_colors import ForumTextRun, color_runs
+from lib.core.forum_layout import parse_layout_tokens
 
 BLOCK_PARAGRAPH = "paragraph"
 BLOCK_HEADING = "heading"
@@ -63,6 +66,9 @@ class ForumBlock:
     `raw` 是这一段的原文（标记还在）。`text` 是纯文本投影，给列表摘要与「只铺字」的快路径用；
     要看行内标记或按段着色时，渲染方拿 `raw` 自己转富文本（`forum_markup.to_html()`）——那是
     界面层的事，核心层只负责把块切好、把原文留着。
+
+    `size` / `align` 是这一段写了排版令牌时的字号与对齐，0 与空串表示「没写」，渲染方据此
+    沿用块自己的默认值（标题字号、正文左对齐）。
     """
 
     kind: str = BLOCK_PARAGRAPH
@@ -71,6 +77,8 @@ class ForumBlock:
     marker: str = ""
     runs: tuple[ForumTextRun, ...] = ()
     raw: str = ""
+    size: int = 0
+    align: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -163,14 +171,22 @@ def _with_runs(block: ForumBlock) -> ForumBlock:
     plain = "".join(run.text for run in runs)
     if plain == block.text:
         return block
-    return ForumBlock(
-        kind=block.kind,
-        text=plain,
-        level=block.level,
-        marker=block.marker,
-        runs=runs,
-        raw=block.raw,
-    )
+    return replace(block, text=plain, runs=runs)
+
+
+def _with_layout(block: ForumBlock) -> ForumBlock:
+    """把段落开头的排版令牌读进 `size` / `align`，并从 `text` 里洗掉。
+
+    `size` / `align` 描述的是**整段**，所以不切段、只留两个值；渲染方按它们排版，
+    没写时（0 与空串）沿用块自己的默认值。代码块里的令牌就是要原样显示，因此整块跳过——
+    与 `**粗体**` 在代码块里的处理一致。
+    """
+    if block.kind == BLOCK_CODE:
+        return block
+    plain, size, align = parse_layout_tokens(block.text)
+    if plain == block.text and not size and not align:
+        return block
+    return replace(block, text=plain, size=size, align=align)
 
 
 def _table_row(text: str) -> str | None:
@@ -298,7 +314,8 @@ def render_blocks(
         flush_code()
     if truncated:
         blocks.append(ForumBlock(kind=BLOCK_PARAGRAPH, text="（正文过长，这里只显示前面一段）"))
-    return tuple(_with_runs(block) for block in blocks)
+    # 先读排版（会洗掉令牌），再按颜色切段：反过来的话 `runs` 的边界就对不上 `text` 了。
+    return tuple(_with_runs(_with_layout(block)) for block in blocks)
 
 
 def plain_text(content, *, limit: int | None = None) -> str:

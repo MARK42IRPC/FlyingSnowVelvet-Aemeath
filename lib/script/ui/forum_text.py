@@ -44,6 +44,7 @@ from PyQt5.QtGui import (
     QTextCharFormat,
     QTextCursor,
     QTextDocument,
+    QTextFormat,
     QTextOption,
 )
 from PyQt5.QtWidgets import QFrame, QSizePolicy, QTextEdit
@@ -88,6 +89,7 @@ class MarkupText(QTextEdit):
         outline_all: bool = False,
         runs: tuple[ForumTextRun, ...] = (),
         align=Qt.AlignHCenter,
+        size: int = 0,
         object_name: str = "ForumCardText",
         parent=None,
     ) -> None:
@@ -105,6 +107,8 @@ class MarkupText(QTextEdit):
         #: 按颜色切好的段；空元组就是留言墙那条「整篇一个色」的路径。
         self._runs = tuple(runs)
         self._align = align
+        #: 这一段自己写的字号（`[size=NN]`）：0 表示没写，用 `font` 带来的字号。
+        self._size = max(0, int(size))
         #: 没有布局宽度时（卡片刚建好、还没排版）按这个宽度估高。
         self._width_hint = max(1, int(width_hint))
         self.setObjectName(object_name)
@@ -216,6 +220,7 @@ class MarkupText(QTextEdit):
             # 留言自带的描边色：整篇正文都描，不只是加粗的那几段。
             base_format.setTextOutline(QPen(self._outline_color, self._bold_outline))
         cursor.mergeCharFormat(base_format)
+        self._apply_size()
         self._apply_runs()
 
         block = document.begin()
@@ -227,6 +232,21 @@ class MarkupText(QTextEdit):
                     self._embolden(piece)
                 fragment += 1
             block = block.next()
+
+    def _apply_size(self) -> None:
+        """把这一段自己写的字号铺到整段上（`[size=NN]`，段落属性）。
+
+        `QTextCharFormat.setFontPixelSize()` 在 PyQt5 里只是设了属性没有配套读取口，所以在
+        `QTextCharFormat` 上写 `QTextFormat.FontPixelSize`——`QTextDocument` 会按它重排，
+        `fragment.charFormat().font().pixelSize()` 也读得回来（离屏实测）。
+        """
+        if not self._size:
+            return
+        fmt = QTextCharFormat()
+        fmt.setProperty(QTextFormat.FontPixelSize, self._size)
+        cursor = QTextCursor(self.document())
+        cursor.select(QTextCursor.Document)
+        cursor.mergeCharFormat(fmt)
 
     def _apply_runs(self) -> None:
         """把每一段的颜色刷到对应的字符范围上（`runs` 为空时什么都不做）。

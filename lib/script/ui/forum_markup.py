@@ -16,9 +16,10 @@
 `lib/script/ui/forum_sticker.py`，两边成对）。令牌同样原样存在服务端，这里只负责认出来并
 洗掉，不做服务端清洗。
 
-颜色令牌（``[color=#rrggbb]`` / ``[outline=#rrggbb]``）是另一套东西：它由核心层的
-`lib/core/forum_colors.py` 认，因为发送前的本地过滤也要先把令牌洗掉再判违规。这里只负责在
-渲染与数字数时把它一起洗掉。
+颜色令牌（``[color=#rrggbb]`` / ``[outline=#rrggbb]``）与段落排版令牌（``[size=NN]`` /
+``[left]`` / ``[center]`` / ``[right]``）是另一套东西：它们由核心层的
+`lib/core/forum_colors.py` 与 `lib/core/forum_layout.py` 认，因为发送前的本地过滤也要先把
+令牌洗掉再判违规。这里只负责在渲染与数字数时把它们一起洗掉。
 
 模块不导入任何 GUI 库：`to_html()` 给出正文用的富文本片段（Qt 富文本子集），`visible_text()`
 供字号自适应按可见字数计算，`span_at_cursor()` / `toggle()` 供发帖框按钮在光标处加减标记。
@@ -30,6 +31,7 @@ from dataclasses import dataclass
 import re
 
 from lib.core.forum_colors import strip_color_tokens
+from lib.core.forum_layout import strip_layout_tokens
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,12 +97,16 @@ def to_html(text) -> str:
     反过来先洗就只剩一对没有内容的星号，卡片上会直接印出 `****`。
     """
     escaped = escape_text(text)
-    return strip_color_tokens(strip_effect_tokens(_PATTERN.sub(_render_match, escaped)))
+    return strip_layout_tokens(
+        strip_color_tokens(strip_effect_tokens(_PATTERN.sub(_render_match, escaped)))
+    )
 
 
 def visible_text(text) -> str:
-    """去掉成对标记与效果令牌后的可见文字；没配对的标记按普通字符保留。"""
-    return strip_color_tokens(strip_effect_tokens(_PATTERN.sub(_strip_match, str(text or ""))))
+    """去掉成对标记、效果令牌与颜色 / 排版令牌后的可见文字；没配对的标记按普通字符保留。"""
+    return strip_layout_tokens(
+        strip_color_tokens(strip_effect_tokens(_PATTERN.sub(_strip_match, str(text or ""))))
+    )
 
 
 def effect_tokens(text) -> tuple[str, ...]:
