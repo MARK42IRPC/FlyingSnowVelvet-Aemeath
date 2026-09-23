@@ -25,6 +25,23 @@
    条内居中文字，由 `progress_subclass_proc` 自绘。上方青色是资源归档的下载/校验，
    离线包内置资源时直接显示“已完成”；下方粉色是解压与安装进度，显示百分比。
 
+解压必须能在**不干净的目录**上跑完（用户实测报过 `当文件已存在时，无法创建该文件。`，
+183/80，卡在解压阶段装不下去）：
+
+- 目标文件用 `CREATE_ALWAYS` 打开，同名残留直接覆盖；写不完整的文件仍由 CRC 校验拒收。
+- 残留的形状冲突（该是目录的地方是文件、该是文件的地方是目录）由
+  `remove_conflicting_entry()` 清理。它带一个 `recursive` 开关：只有「需要把该路径当文件用」
+  的 `open_entry_output()` 才允许整棵删除；`ensure_directory()` 只清普通文件，因为分片 worker
+  是并行的，递归删除会拆掉兄弟 worker 刚写好的目录树。
+- 建目录整段（读属性 → 清冲突 → `CreateDirectoryW` → 复验）带重试，且只重试兄弟 worker
+  能造成的竞争错误；这是让并行解压在不干净目录上稳定收敛的唯一做法。
+- 切换目录前，`has_install_marker()` 把「带 `.fsv-install-root` 但 launcher/Python 缺失」的
+  目录认定为自己的半成品安装，允许覆盖修复；否则它会像外来目录一样被 `ERROR_DIR_NOT_EMPTY`
+  拒掉，用户再也装不上。真正无标记的非空外来目录仍然拒绝。
+- 开始解压前，`cleanup_orphan_staging_directories()` 清掉目标卷上
+  `FSV-<pid>-<tid>-<tick>` 形状、持有者进程已死的暂存目录（每个几百兆），先腾出空间。
+  只认这个精确形状，`FSV-` 开头的无关目录不动。
+
 安装成功后显示“安装完成”，用户点击“退出安装并启动飞行雪绒”才启动
 `app\启动飞行雪绒.exe`。启动器设置绝对的包内 Python 3.11、Node 24.13.0 和 Qt
 路径，并清理外部 `PYTHONPATH`、`PYTHONHOME`、`NODE_PATH`、Qt/OpenSSL 等覆盖。

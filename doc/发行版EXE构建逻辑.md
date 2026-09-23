@@ -93,6 +93,24 @@ Qt/Node 子树。纯 Python `jieba`、`jieba_fast` 的关键词抽取与 SWIG �
    清理本次临时目录并保留旧安装。
 5. 显示“安装完成”，只有用户点击“退出安装并启动飞行雪绒”才启动包内 launcher。
 
+安装器必须能在**不干净的目录**上跑完，这是用户实测报过的 183
+（`当文件已存在时，无法创建该文件。`）那一类问题：
+
+- 目标文件用 `CREATE_ALWAYS` 打开，同名残留直接覆盖（旧行为是 `CREATE_NEW`，路径上只要
+  有上一次中断留下的文件，整个安装就以 183/80 中断）。CRC 校验仍然拒收写不完整的文件。
+- 残留形状冲突（该是目录的地方是文件、该是文件的地方是目录）由
+  `remove_conflicting_entry(path, recursive)` 清理。`recursive` 只对「需要把该路径当文件用」
+  的 `open_entry_output()` 开放；`ensure_directory()` 只清普通文件，因为分片 worker 是并行
+  的，递归删除会拆掉兄弟 worker 刚写好的目录树。
+- 建目录整段（读属性 → 清冲突 → `CreateDirectoryW` → 复验）带重试，只重试兄弟 worker
+  能造成的竞争错误；这是唯一能让并行解压在不干净目录上稳定收敛的做法。
+- 切换目录前，`has_install_marker()` 认定「带 `.fsv-install-root` 但 launcher/Python 缺失」
+  的目录是**自己**的半成品安装，允许覆盖修复（否则它会像外来目录一样被
+  `ERROR_DIR_NOT_EMPTY` 拒掉，用户再也装不上）；真正无标记的非空外来目录仍然拒绝。
+- 开始解压前，`cleanup_orphan_staging_directories()` 清掉目标卷上
+  `FSV-<pid>-<tid>-<tick>` 形状、持有者进程已死的暂存目录（每个几百兆），先腾出空间再装。
+  只认这个精确形状，`FSV-` 开头的无关目录不动。
+
 离线 payload 的 `app/` 只放两个可执行文件：`启动飞行雪绒.exe` 与
 `卸载飞行雪绒.exe`。安装包不再生成 `启动程序.bat`，也不提供 ASCII 别名：
 安装完成、桌面快捷方式和开机启动都直接指向包内启动 exe，避免 cmd.exe 按系统代码页

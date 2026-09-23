@@ -154,6 +154,90 @@ class WindowsZipExtractTests(unittest.TestCase):
         path.write_bytes(local_record + central_record + zip64_eocd + locator + eocd)
         return content
 
+    @staticmethod
+    def write_overwrite_payload(root: Path) -> Path:
+        archive = root / "payload.zip"
+        with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as output:
+            output.writestr(".fsv-install-root", "marker\n")
+            output.writestr("app/readme.txt", "hello-new\n")
+            output.writestr("app/sub/deep.txt", "deep\n")
+        return archive
+
+    def test_extraction_overwrites_a_leftover_file(self):
+        """An interrupted run leaves files behind; installing must replace them.
+
+        The previous ``CREATE_NEW`` made any leftover path abort the whole
+        install with ERROR_ALREADY_EXISTS, which is the "当文件已存在时，无法创建
+        该文件" the user hit after an online install died mid-extraction.
+        """
+        with tempfile.TemporaryDirectory(prefix="fsv-zip-overwrite-") as temporary:
+            root = Path(temporary)
+            archive = self.write_overwrite_payload(root)
+            destination = root / "destination"
+            (destination / "app").mkdir(parents=True)
+            (destination / "app" / "readme.txt").write_text("stale\n", encoding="utf-8")
+
+            result = self.run_harness("extract", archive, destination)
+
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(
+                (destination / "app" / "readme.txt").read_text(encoding="utf-8"),
+                "hello-new\n",
+            )
+            self.assertEqual(
+                (destination / "app" / "sub" / "deep.txt").read_text(encoding="utf-8"),
+                "deep\n",
+            )
+
+    def test_extraction_clears_conflicting_files_and_directories(self):
+        """A file where a folder belongs (and vice versa) must not wedge setup.
+
+        A directory the archive wants as a *file* used to fail with
+        ERROR_ACCESS_DENIED and a file where the archive wants a *directory*
+        failed with ERROR_DIRECTORY, so both were dead ends for the user.
+        """
+        with tempfile.TemporaryDirectory(prefix="fsv-zip-conflict-") as temporary:
+            root = Path(temporary)
+            archive = self.write_overwrite_payload(root)
+
+            file_as_parent = root / "file-as-parent"
+            file_as_parent.mkdir(parents=True)
+            (file_as_parent / "app").write_text("i am a file\n", encoding="utf-8")
+            result = self.run_harness("extract", archive, file_as_parent)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(
+                (file_as_parent / "app" / "sub" / "deep.txt").read_text(encoding="utf-8"),
+                "deep\n",
+            )
+
+            directory_as_file = root / "directory-as-file"
+            (directory_as_file / "app" / "readme.txt").mkdir(parents=True)
+            (directory_as_file / "app" / "readme.txt" / "junk.txt").write_text(
+                "junk\n", encoding="utf-8"
+            )
+            result = self.run_harness("extract", archive, directory_as_file)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(
+                (directory_as_file / "app" / "readme.txt").read_text(encoding="utf-8"),
+                "hello-new\n",
+            )
+
+    def test_extraction_over_a_finished_tree_is_idempotent(self):
+        with tempfile.TemporaryDirectory(prefix="fsv-zip-idempotent-") as temporary:
+            root = Path(temporary)
+            archive = self.write_overwrite_payload(root)
+            destination = root / "destination"
+
+            first = self.run_harness("extract", archive, destination)
+            second = self.run_harness("extract", archive, destination)
+
+            self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+            self.assertEqual(second.returncode, 0, second.stdout + second.stderr)
+            self.assertEqual(
+                (destination / "app" / "readme.txt").read_text(encoding="utf-8"),
+                "hello-new\n",
+            )
+
     def test_extracts_unicode_stored_deflated_and_empty_files(self):
         with tempfile.TemporaryDirectory(prefix="fsv-zip-content-") as temporary:
             root = Path(temporary)

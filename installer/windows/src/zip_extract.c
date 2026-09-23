@@ -37,6 +37,15 @@
    more than it moves a two second average. */
 #define FSV_ZIP_ETA_WINDOW_MS 2000U
 
+/* Directory creation is a race between shard workers: sibling entries such as
+   ``app`` and ``app/readme.txt`` reach the same parent at the same time, and one
+   of them may be clearing a leftover *file* sitting where the folder belongs
+   while the other is already creating that folder.  Losing an individual step
+   just means the other worker got there first, so retry the whole
+   attributes/clear/create sequence briefly before declaring failure. */
+#define FSV_ZIP_MKDIR_ATTEMPTS 16U
+#define FSV_ZIP_MKDIR_DELAY_MS 10U
+
 typedef struct FsvZipInfo {
     ULONGLONG archive_size;
     ULONGLONG entry_count;
@@ -544,18 +553,108 @@ static BOOL join_path(const wchar_t *directory, const wchar_t *name, wchar_t *ou
     return SUCCEEDED(result);
 }
 
-static BOOL ensure_directory(const wchar_t *directory) {
+/* Clear one path that a fresh extraction has to claim for itself.
+
+   ``recursive`` decides how much may be destroyed:
+
+   - ``TRUE``  - the caller needs this path as a *file*; a stale directory tree
+     standing in the way may be deleted whole (only ``open_entry_output``).
+   - ``FALSE`` - the caller needs this path as a *directory*; only a plain file
+     is in the way, and directories are left alone.
+
+   The distinction matters because shard workers extract sibling entries in
+   parallel: worker A may already have replaced a leftover file with the real
+   directory while worker B is still clearing that same path.  A recursive
+   delete on ``FALSE`` would then tear down the tree A just wrote. */
+static BOOL remove_conflicting_entry(const wchar_t *path, BOOL recursive) {
+    DWORD attributes = GetFileAttributesW(path);
+    wchar_t pattern[FSV_ZIP_PATH_CAPACITY];
+    WIN32_FIND_DATAW data;
+    HANDLE handle;
+    BOOL success = TRUE;
+    if (attributes == INVALID_FILE_ATTRIBUTES) {
+        return TRUE;
+    }
+    if (attributes & FILE_ATTRIBUTE_READONLY) {
+        SetFileAttributesW(path, attributes & ~FILE_ATTRIBUTE_READONLY);
+    }
+    if ((attributes & FILE_ATTRIBUTE_DIRECTORY) == 0) {
+        /* Two entries can share a parent (``app`` and ``app/readme.txt``) and
+           the shard workers extract them in parallel; a sibling may have
+           removed the victim between the lookup above and the delete below.
+           That race is a success, not a failure - treating it as one aborted
+           the whole install with a bogus ERROR_FILE_NOT_FOUND. */
+        return DeleteFileW(path) || GetLastError() == ERROR_FILE_NOT_FOUND;
+    }
+    if (!recursive) {
+        return TRUE;
+    }
+    if (!join_path(path, L"*", pattern, ARRAYSIZE(pattern))) {
+        SetLastError(ERROR_BUFFER_OVERFLOW);
+        return FALSE;
+    }
+    handle = FindFirstFileW(pattern, &data);
+    if (handle != INVALID_HANDLE_VALUE) {
+        do {
+            wchar_t child[FSV_ZIP_PATH_CAPACITY];
+            if (wcscmp(data.cFileName, L".") == 0 || wcscmp(data.cFileName, L"..") == 0) {
+                continue;
+            }
+            if (!join_path(path, data.cFileName, child, ARRAYSIZE(child)) ||
+                !remove_conflicting_entry(child, TRUE)) {
+                success = FALSE;
+                break;
+            }
+        } while (FindNextFileW(handle, &data));
+        FindClose(handle);
+    } else {
+        DWORD find_error = GetLastError();
+        if (find_error != ERROR_FILE_NOT_FOUND && find_error != ERROR_PATH_NOT_FOUND) {
+            return FALSE;
+        }
+    }
+    if (success && !RemoveDirectoryW(path)) {
+        DWORD removal_error = GetLastError();
+        if (removal_error != ERROR_PATH_NOT_FOUND && removal_error != ERROR_FILE_NOT_FOUND) {
+            success = FALSE;
+        }
+    }
+    return success;
+}
+
+static BOOL ensure_directory(const wchar_t *directory);
+
+/* True for the errors a *sibling worker* can cause while it lands the same
+   path: the loser of such a race is not a real failure and is worth retrying.
+   Anything else (a read-only volume, a bad path) is reported as-is. */
+static BOOL is_directory_race_error(DWORD error) {
+    return error == ERROR_ACCESS_DENIED || error == ERROR_FILE_EXISTS ||
+        error == ERROR_ALREADY_EXISTS || error == ERROR_DIR_NOT_EMPTY ||
+        error == ERROR_FILE_NOT_FOUND || error == ERROR_SHARING_VIOLATION;
+}
+
+static BOOL ensure_directory_once(const wchar_t *directory) {
     wchar_t parent[FSV_ZIP_PATH_CAPACITY];
     wchar_t *separator;
     DWORD attributes = GetFileAttributesW(directory);
+    DWORD lookup_error = GetLastError();
     if (attributes != INVALID_FILE_ATTRIBUTES) {
-        if ((attributes & FILE_ATTRIBUTE_DIRECTORY) == 0 || (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
-            SetLastError(ERROR_CANT_ACCESS_FILE);
+        if ((attributes & FILE_ATTRIBUTE_DIRECTORY) != 0 &&
+            (attributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0) {
+            return TRUE;
+        }
+        /* A file (or a reparse point) sits where the archive needs a folder.
+           Clear it so the install can still land in a clean layout.  Only a
+           plain file may be removed here: a sibling worker may already have
+           put the real folder in place, and tearing that down would be worse
+           than the conflict we are fixing. */
+        if (!remove_conflicting_entry(directory, FALSE)) {
             return FALSE;
         }
-        return TRUE;
-    }
-    if (GetLastError() != ERROR_FILE_NOT_FOUND && GetLastError() != ERROR_PATH_NOT_FOUND) {
+    } else if (lookup_error != ERROR_FILE_NOT_FOUND && lookup_error != ERROR_PATH_NOT_FOUND) {
+        /* The path is unreachable for some other reason (a locked or denied
+           parent): creating it below would only obscure the real error. */
+        SetLastError(lookup_error);
         return FALSE;
     }
     if (FAILED(StringCchCopyW(parent, ARRAYSIZE(parent), directory))) {
@@ -576,6 +675,26 @@ static BOOL ensure_directory(const wchar_t *directory) {
     return attributes != INVALID_FILE_ATTRIBUTES &&
         (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0 &&
         (attributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0;
+}
+
+/* Create ``directory`` (and its parents), tolerating the sibling races above.
+
+   The whole attributes/clear/create sequence is retried rather than just the
+   failing call: when two workers race for the same path, the loser usually has
+   to re-read the attributes to discover that the winner has already produced
+   the folder - or that the winner's cleanup removed a file the loser was about
+   to delete. */
+static BOOL ensure_directory(const wchar_t *directory) {
+    for (unsigned attempt = 0; attempt < FSV_ZIP_MKDIR_ATTEMPTS; ++attempt) {
+        if (ensure_directory_once(directory)) {
+            return TRUE;
+        }
+        if (!is_directory_race_error(GetLastError())) {
+            return FALSE;
+        }
+        Sleep(FSV_ZIP_MKDIR_DELAY_MS);
+    }
+    return ensure_directory_once(directory);
 }
 
 ULONGLONG fsv_zip_eta_seconds(ULONGLONG total_files, ULONGLONG completed_files,
@@ -802,6 +921,7 @@ static BOOL open_entry_output(
 ) {
     wchar_t parent[FSV_ZIP_PATH_CAPACITY];
     wchar_t *separator;
+    DWORD attributes;
     if (!decode_entry_path(entry, relative, FSV_ZIP_PATH_CAPACITY) ||
         !join_path(destination, relative, output_path, FSV_ZIP_PATH_CAPACITY)) {
         SetLastError(ERROR_BAD_PATHNAME);
@@ -820,12 +940,23 @@ static BOOL open_entry_output(
     if (!ensure_directory(parent)) {
         return FALSE;
     }
+    /* Overwrite instead of CREATE_NEW: a leftover file from an interrupted run
+       used to abort the whole install with ERROR_ALREADY_EXISTS ("当文件已存在时，
+       无法创建该文件").  Replacing it is what an install is supposed to do, and
+       the CRC check below still rejects a file that cannot be written whole. */
+    attributes = GetFileAttributesW(output_path);
+    if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0) {
+        /* A stale directory where a file belongs: drop it, then write. */
+        if (!remove_conflicting_entry(output_path, TRUE)) {
+            return FALSE;
+        }
+    }
     *output = CreateFileW(
         output_path,
         GENERIC_WRITE,
         0,
         NULL,
-        CREATE_NEW,
+        CREATE_ALWAYS,
         FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN,
         NULL
     );

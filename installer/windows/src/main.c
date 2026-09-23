@@ -506,6 +506,19 @@ static BOOL is_known_install(const wchar_t *directory) {
         is_regular_file(python) && is_regular_file(launcher);
 }
 
+/* True when the folder carries our install marker, even if the file layout is
+   incomplete.  ``is_known_install`` additionally requires the launcher and the
+   embedded Python, so a run that died halfway through extraction leaves a
+   directory that looks foreign: without this check the next install would
+   refuse it with ERROR_DIR_NOT_EMPTY and the user could never install again. */
+static BOOL has_install_marker(const wchar_t *directory) {
+    wchar_t marker[FSV_PATH_CAPACITY];
+    if (!join_path(directory, L".fsv-install-root", marker, ARRAYSIZE(marker))) {
+        return FALSE;
+    }
+    return is_regular_file(marker);
+}
+
 static BOOL choose_safe_subdirectory(const wchar_t *selected, wchar_t *output, size_t capacity) {
     DWORD attributes = GetFileAttributesW(selected);
     wchar_t candidate[FSV_PATH_CAPACITY];
@@ -1023,11 +1036,12 @@ static BOOL replace_install_directory(const wchar_t *target, const wchar_t *stag
         SetLastError(ERROR_CANT_ACCESS_FILE);
         return FALSE;
     }
-    if (!is_known_install(target) && !directory_is_empty(target)) {
+    if (!is_known_install(target) && !has_install_marker(target) && !directory_is_empty(target)) {
+        /* A foreign non-empty folder: never overwrite someone else's data. */
         SetLastError(ERROR_DIR_NOT_EMPTY);
         return FALSE;
     }
-    if (is_known_install(target)) {
+    if (is_known_install(target) || has_install_marker(target)) {
         BOOL backup_named = FALSE;
         BOOL target_moved = FALSE;
         DWORD move_error = ERROR_SUCCESS;
@@ -1086,6 +1100,61 @@ static BOOL make_staging_directory_name(const wchar_t *install_directory, wchar_
     return TRUE;
 }
 
+/* An install that dumps its payload into ``FSV-<pid>-<tid>-<tick>`` on the
+   target volume leaves that folder behind whenever the run dies before the
+   final switch.  They are hundreds of megabytes each, so before starting a new
+   extraction the installer clears the ones no live process can still own. */
+static void cleanup_orphan_staging_directories(const wchar_t *install_directory) {
+    wchar_t existing[FSV_PATH_CAPACITY];
+    wchar_t volume[FSV_PATH_CAPACITY];
+    wchar_t pattern[FSV_PATH_CAPACITY];
+    WIN32_FIND_DATAW data;
+    HANDLE handle;
+    HANDLE live_owner;
+    if (!find_existing_ancestor(install_directory, existing, ARRAYSIZE(existing)) ||
+        !GetVolumePathNameW(existing, volume, ARRAYSIZE(volume)) ||
+        !join_path(volume, L"FSV-*", pattern, ARRAYSIZE(pattern))) {
+        return;
+    }
+    handle = FindFirstFileW(pattern, &data);
+    if (handle == INVALID_HANDLE_VALUE) {
+        return;
+    }
+    do {
+        wchar_t candidate[FSV_PATH_CAPACITY];
+        wchar_t *end;
+        unsigned long owner;
+        if ((data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0) {
+            continue;
+        }
+        if ((data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
+            continue;
+        }
+        /* Keep only the exact ``FSV-<pid>-<tid>-<tick>`` layout this installer
+           creates, so an unrelated folder that happens to start with FSV- is
+           never touched. */
+        if (!join_path(volume, data.cFileName, candidate, ARRAYSIZE(candidate))) {
+            continue;
+        }
+        end = NULL;
+        owner = wcstoul(data.cFileName + 4, &end, 10);
+        if (end == data.cFileName + 4 || end == NULL || *end != L'-' || owner == 0) {
+            continue;
+        }
+        if (owner == GetCurrentProcessId()) {
+            continue;
+        }
+        live_owner = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, (DWORD)owner);
+        if (live_owner != NULL) {
+            /* The owning process is still alive: its staging directory is in use. */
+            CloseHandle(live_owner);
+            continue;
+        }
+        delete_tree(candidate);
+    } while (FindNextFileW(handle, &data));
+    FindClose(handle);
+}
+
 static DWORD WINAPI install_worker(void *parameter) {
     InstallContext *context = (InstallContext *)parameter;
     wchar_t executable_path[FSV_PATH_CAPACITY];
@@ -1122,6 +1191,7 @@ static DWORD WINAPI install_worker(void *parameter) {
         set_install_error(context, L"目标磁盘可用空间不足，请返回后选择其他位置。" );
         goto cleanup;
     }
+    cleanup_orphan_staging_directories(context->install_directory);
     for (staging_attempt = 0; staging_attempt < 32; ++staging_attempt) {
         DWORD attributes;
         if (!make_staging_directory_name(context->install_directory, staging, ARRAYSIZE(staging), staging_attempt)) {
