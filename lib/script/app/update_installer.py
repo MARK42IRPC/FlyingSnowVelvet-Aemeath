@@ -12,6 +12,7 @@ import subprocess
 import struct
 import time
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Sequence
@@ -50,8 +51,12 @@ _RESOURCE_SHARD_READ_SIZE = 1 << 20
 # 间隔 ``RESOURCE_OVERLAY_RETRY_DELAY`` 秒），仍然失败的登记为待补装项。
 RESOURCE_OVERLAY_ATTEMPTS = 4
 RESOURCE_OVERLAY_RETRY_DELAY = 0.5
-# 覆盖前比对同名文件内容用的读数块大小。
+# 覆盖前比对同名文件用的读数块大小：只在大小对不上、或补装校验需要确证时才真的读内容。
 _OVERLAY_COMPARE_SIZE = 1 << 20
+# 覆盖阶段的落盘并行度：单个文件的拷贝是纯 IO 等待，串行跑会把资源包覆盖拖成主要瓶颈。
+# 线程池只负责发起拷贝，真正的写入仍然由系统完成，因此这里按固定上限取够用即可，
+# 不跟随 CPU 核数（核多不代表磁盘能吞下更多并发写）。
+RESOURCE_OVERLAY_COPY_WORKERS = 8
 
 # 一次资源包覆盖里没能替换掉的少数文件（基本只有桌宠自己加载中的模块）会搬到用户根的
 # 待补装目录，由下次启动时最先执行的 ``apply_pending_overlay`` 补上：那时桌宠还没加载
@@ -330,35 +335,80 @@ def _file_digest(path: Path) -> str | None:
     return digest.hexdigest()
 
 
-def _same_content(source: Path, destination: Path) -> bool:
-    """包内文件与安装目录里的同名文件是否逐字节相同。"""
+def _same_content(
+    source: Path, destination: Path, size: int | None = None, *, strict: bool = False
+) -> bool:
+    """包内文件与安装目录里的同名文件是否相同。
+
+    默认只比大小：文件字节的正确性已经由资源包的 SHA-256 兜住（见
+    ``UpdateManager.install_release``），覆盖阶段再逐文件读两遍内容，会把
+    「覆盖 17k 个文件」变成「读 2 x 733 MiB」，在装有实时防护的机器上实测慢一个数量级，
+    而它并不能多证明什么。大小一致即认为无需替换，所以绝大多数文件连打开都不需要。
+
+    ``strict=True`` 用于「判同即丢弃备份」的场景（``apply_pending_overlay``）：那里
+    大小相同但内容不同是真会发生的事（例如同尺寸的配置/二进制），只看大小就会把待补装
+    的副本删掉、更新彻底丢失，所以必须比对真实字节。
+    """
     try:
         if not destination.is_file():
             return False
-        if destination.stat().st_size != source.stat().st_size:
+        expected = source.stat().st_size if size is None else int(size)
+        if destination.stat().st_size != expected:
             return False
     except OSError:
         return False
+    if not strict:
+        return True
     source_digest = _file_digest(source)
     return source_digest is not None and source_digest == _file_digest(destination)
+
+
+def _overlay_one(source: Path | None, destination: Path) -> None:
+    """执行一个覆盖动作：``source`` 为 None 时只补目录。"""
+    if source is None:
+        destination.mkdir(parents=True, exist_ok=True)
+        return
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, destination)
 
 
 def _overlay_actions(
     actions: list[tuple[Path | None, Path]],
 ) -> list[tuple[Path | None, Path]]:
-    """执行覆盖动作，只重试失败的那些；返回最终仍然失败的动作。"""
-    pending = list(actions)
+    """执行覆盖动作，只重试失败的那些；返回最终仍然失败的动作。
+
+    拷贝并发发起：单个文件是纯 IO 等待，串行跑会把上千兆的覆盖拖成主要瓶颈。
+    目录动作不走线程池——它必须排在文件之前，否则并发拷贝会互相抢着建父目录。
+    """
+    directories = [action for action in actions if action[0] is None]
+    files = [action for action in actions if action[0] is not None]
+    pending = files
     for attempt in range(RESOURCE_OVERLAY_ATTEMPTS):
         failed: list[tuple[Path | None, Path]] = []
-        for source, destination in pending:
-            try:
-                if source is None:
-                    destination.mkdir(parents=True, exist_ok=True)
-                else:
-                    destination.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(source, destination)
-            except OSError:
-                failed.append((source, destination))
+        if attempt == 0:
+            for action in directories:
+                try:
+                    _overlay_one(*action)
+                except OSError:
+                    failed.append(action)
+        workers = min(RESOURCE_OVERLAY_COPY_WORKERS, len(pending)) or 1
+        if len(pending) <= 1:
+            for source, destination in pending:
+                try:
+                    _overlay_one(source, destination)
+                except OSError:
+                    failed.append((source, destination))
+        else:
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = {
+                    pool.submit(_overlay_one, source, destination): (source, destination)
+                    for source, destination in pending
+                }
+                for future, action in futures.items():
+                    try:
+                        future.result()
+                    except OSError:
+                        failed.append(action)
         if not failed:
             return []
         pending = failed
@@ -374,8 +424,8 @@ def _overlay_staging(
 
     逐文件替换而不是整目录 ``copytree``，是为了让一个被占用的文件只跳过它自己，
     目录里其它文件照常更新。目录本身也走同一套重试，空的目录结构因此不会丢。
-    内容与安装目录逐字节相同的文件直接跳过：既省掉一次全量写入，也不会去撞别人
-    已经打开的文件句柄。
+    与安装目录里同名同大小的文件直接跳过：既省掉一次全量写入，也不会去撞别人
+    已经打开的文件句柄（判同口径见 ``_same_content``）。
     """
     actions: list[tuple[Path | None, Path]] = []
     for source in sorted(staging.iterdir()):
@@ -394,6 +444,7 @@ def _overlay_staging(
             elif not _same_content(item, destination / relative):
                 actions.append((item, destination / relative))
     return _overlay_actions(actions)
+
 
 
 def _resource_archive_name(member: zipfile.ZipInfo) -> str:
@@ -766,7 +817,7 @@ def apply_pending_overlay(install_root: Path | None = None) -> tuple[str, ...]:
             # 安装目录里这个文件已经被别的流程换过，补装不再适用。
             source.unlink(missing_ok=True)
             continue
-        if current is not None and _same_content(source, target):
+        if current is not None and _same_content(source, target, strict=True):
             source.unlink(missing_ok=True)
             applied.append(relative)
             continue
