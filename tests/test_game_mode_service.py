@@ -11,6 +11,16 @@ from lib.script.app.game_mode_service import (
 from lib.script.chat.handler_auto_companion import _get_effective_auto_companion_interval_ms
 
 
+def _manual_reply_mode():
+    """把这些用例固定在非福利档。
+
+    福利 API 一档把自动陪伴钉死在 6 分钟并且忽略游戏模式覆盖（见
+    ``WELFARE_AUTO_COMPANION_INTERVAL_MS``），而默认配置就是福利档；这里要测的是
+    「游戏模式覆盖」本身，所以显式切到手动 API。
+    """
+    return patch("config.ollama_config.FORCE_REPLY_MODE", "0")
+
+
 class _FakeTimingManager:
     def __init__(self, frame_fps: int = 120, gif_fps: int = 16) -> None:
         self.frame_fps = frame_fps
@@ -113,19 +123,31 @@ class GameModeServiceTests(unittest.TestCase):
             service.cleanup()
 
     def test_auto_companion_interval_uses_game_mode_override(self) -> None:
-        self.assertGreaterEqual(_get_effective_auto_companion_interval_ms()[0], 120000)
-        service = GameModeService()
-        service.set_enabled(True, source="auto", notify=False)
-        self.assertEqual(_get_effective_auto_companion_interval_ms(), (300000, 300000))
-        service.cleanup()
+        with _manual_reply_mode():
+            self.assertGreaterEqual(_get_effective_auto_companion_interval_ms()[0], 120000)
+            service = GameModeService()
+            service.set_enabled(True, source="auto", notify=False)
+            self.assertEqual(_get_effective_auto_companion_interval_ms(), (300000, 300000))
+            service.cleanup()
 
     def test_auto_companion_interval_accepts_configured_minute_limits(self) -> None:
         from config.ollama_config import AUTO_COMPANION
 
-        with patch.dict(AUTO_COMPANION, {"interval_ms": (60000, 60000)}):
-            self.assertEqual(_get_effective_auto_companion_interval_ms(), (60000, 60000))
-        with patch.dict(AUTO_COMPANION, {"interval_ms": (1200000, 1200000)}):
-            self.assertEqual(_get_effective_auto_companion_interval_ms(), (1200000, 1200000))
+        with _manual_reply_mode():
+            with patch.dict(AUTO_COMPANION, {"interval_ms": (60000, 60000)}):
+                self.assertEqual(_get_effective_auto_companion_interval_ms(), (60000, 60000))
+            with patch.dict(AUTO_COMPANION, {"interval_ms": (1200000, 1200000)}):
+                self.assertEqual(_get_effective_auto_companion_interval_ms(), (1200000, 1200000))
+
+    def test_welfare_mode_pins_the_interval_above_the_game_mode_override(self) -> None:
+        """福利 API 档固定 6 分钟：游戏模式的覆盖不参与这一档。"""
+        with patch("config.ollama_config.FORCE_REPLY_MODE", "1"):
+            service = GameModeService()
+            try:
+                service.set_enabled(True, source="auto", notify=False)
+                self.assertEqual(_get_effective_auto_companion_interval_ms(), (360000, 360000))
+            finally:
+                service.cleanup()
 
     def test_restore_uses_configured_fps_when_runtime_is_temporarily_limited(self) -> None:
         timing = _FakeTimingManager()

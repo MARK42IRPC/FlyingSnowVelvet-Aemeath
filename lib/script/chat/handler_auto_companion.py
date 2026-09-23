@@ -12,7 +12,20 @@ logger = get_logger(__name__)
 AUTO_COMPANION_BASELINE_INTERVAL_MS = (120000, 120000)
 AUTO_COMPANION_MIN_INTERVAL_MS = 60000
 AUTO_COMPANION_MAX_INTERVAL_MS = 1200000
+#: 福利 API 模式下自动陪伴固定为 6 分钟一次：公共接口有限流，间隔再短只会互相挤掉请求，
+#: 所以这条路径不读用户配置，设置面板也不提供滑条（见 ``lib/script/ui/ai_settings_panel.py``）。
+WELFARE_AUTO_COMPANION_INTERVAL_MS = (360000, 360000)
 AUTO_COMPANION_PROMPT = '(仔细观察屏幕,然后简要分析漂泊者现在在做什么呢?)'
+
+
+def is_welfare_reply_mode() -> bool:
+    """当前回复模式是否为福利 API。"""
+    try:
+        from config.ollama_config import FORCE_REPLY_MODE
+
+        return str(FORCE_REPLY_MODE or "").strip() == "1"
+    except Exception:
+        return False
 
 
 def _resolve_auto_companion_interval(interval_value) -> tuple[int, int]:
@@ -58,6 +71,10 @@ def _is_auto_companion_enabled() -> bool:
 
 
 def _get_effective_auto_companion_interval_ms() -> tuple[int, int]:
+    # 福利 API 一档固定在 6 分钟：它的模型走公共接口，间隔越短越容易被限流，
+    # 所以这里直接忽略用户配置的分钟数。
+    if is_welfare_reply_mode():
+        return WELFARE_AUTO_COMPANION_INTERVAL_MS
     interval = _resolve_auto_companion_interval(AUTO_COMPANION.get('interval_ms'))
     try:
         from lib.script.app.game_mode_service import get_game_mode_auto_companion_interval_override

@@ -85,6 +85,8 @@ class AISettingsReplyModeSectionsTests(unittest.TestCase):
     def test_auto_companion_interval_slider_uses_minute_limits(self):
         field = self.panel._auto_companion_interval_minutes
 
+        # 默认是福利 API：这一档把间隔钉死在 6 分钟，滑条整行收起。
+        self._select_mode("0")
         field.set_value(1)
         self.assertEqual(field.value(), 1)
         self.assertEqual(field._value_label.text(), "1 分钟")
@@ -96,6 +98,46 @@ class AISettingsReplyModeSectionsTests(unittest.TestCase):
         self.assertFalse(field.isEnabled())
         self.panel._auto_companion_enabled.setChecked(True)
         self.assertTrue(field.isEnabled())
+
+    def test_welfare_mode_pins_the_auto_companion_interval_and_hides_the_slider(self):
+        """福利 API 模式下间隔固定 6 分钟：滑条与标签一起收起，不显示任何说明。"""
+        field = self.panel._auto_companion_interval_minutes
+        form = self.panel._reply_mode_form
+
+        self._select_mode("1")
+        self.assertEqual(field.value(), 6)
+        self.assertTrue(field.isHidden())
+        self.assertTrue(form.labelForField(field).isHidden())
+        self.assertEqual(self.panel._collect_values()["auto_companion_interval_minutes"], 6)
+
+        self._select_mode("0")
+        self.assertFalse(field.isHidden())
+        self.assertFalse(form.labelForField(field).isHidden())
+
+    def test_welfare_mode_does_not_add_an_explanatory_note(self):
+        """福利档收起滑条即可，不再补一行说明文字。"""
+        self.assertFalse(hasattr(self.panel, "_auto_companion_interval_note"))
+
+        texts = [
+            label.text()
+            for label in self.panel._reply_mode_form.findChildren(QLabel)
+            if label.text()
+        ]
+        self.assertFalse(
+            [text for text in texts if "福利" in text and "自动陪伴" in text],
+            f"福利档不应再显示说明行，找到: {texts}",
+        )
+
+    def test_welfare_mode_keeps_the_interval_pinned_after_a_slider_write(self):
+        """收回福利档后滑条值必须回到 6，否则保存会写进一个用户改不到的数。"""
+        field = self.panel._auto_companion_interval_minutes
+
+        self._select_mode("0")
+        field.set_value(17)
+        self._select_mode("2")
+        self.assertEqual(field.value(), 17)
+        self._select_mode("1")
+        self.assertEqual(field.value(), 6)
 
     def test_collect_values_includes_auto_companion_interval(self):
         self.panel._auto_companion_interval_minutes.set_value(13)

@@ -118,6 +118,7 @@ from lib.script.ui.office_mode_settings import (
 from lib.script.gsvmove import get_voice_package_status
 from lib.core.nvidia_gpu import has_nvidia_gpu
 
+from lib.script.chat.handler_auto_companion import WELFARE_AUTO_COMPANION_INTERVAL_MS
 _logger = get_logger(__name__)
 
 
@@ -126,6 +127,13 @@ _GPU_MODE_GPU = "gpu"
 _GPU_MODE_AUTO = "auto"
 _DROPDOWN_POPUP_LAYER = 601
 _EXTERNAL_CONFIG_FIELD_KINDS = {
+
+#: 福利 API 模式下自动陪伴固定 6 分钟。真源在
+#: ``lib.script.chat.handler_auto_companion.WELFARE_AUTO_COMPANION_INTERVAL_MS``，
+#: 这里只取它的分钟数用于预填滑条与校验，避免两处各写一个 6。
+WELFARE_AUTO_COMPANION_INTERVAL_MINUTES = int(
+    WELFARE_AUTO_COMPANION_INTERVAL_MS[0] // 60000
+)
     "external_autostart",
     "external_announcement_suppression",
 }
@@ -1917,6 +1925,7 @@ class AISettingsPanel(QWidget):
         )
         form = create_settings_form()
         interface_section.body_layout.addLayout(form)
+        self._reply_mode_form = form
 
         self._force_mode = _WatermarkComboBox()
         self._force_mode.setView(QListView(self._force_mode))
@@ -1954,7 +1963,8 @@ class AISettingsPanel(QWidget):
             self._auto_companion_interval_minutes,
             "自动陪伴两次观察之间的时间，范围 1~20 分钟。",
         )
-        self._auto_companion_enabled.toggled.connect(self._auto_companion_interval_minutes.setEnabled)
+
+        self._auto_companion_enabled.toggled.connect(self._update_auto_companion_interval_row)
 
         persona_row, persona_layout = self._create_field_row_group(spacing=scale_px(8, min_abs=6))
         self._open_persona_file_btn = QPushButton("设置人格词")
@@ -4972,11 +4982,11 @@ class AISettingsPanel(QWidget):
         self._api_enable_thinking.setChecked(bool(values.get("api_enable_thinking", False)))
         self._auto_companion_enabled.setChecked(bool(values.get("auto_companion_enabled", True)))
         self._auto_companion_interval_minutes.set_value(values.get("auto_companion_interval_minutes", 2))
-        self._auto_companion_interval_minutes.setEnabled(self._auto_companion_enabled.isChecked())
 
         mode_value = str(values.get("force_reply_mode", "") or "").strip()
         idx = self._force_mode.findData(mode_value)
         self._force_mode.setCurrentIndex(max(0, idx))
+        # 这一步同时按模式收起/展开间隔滑条，并按开关决定是否可调。
         self._update_reply_mode_sections()
 
     def _update_reply_mode_sections(self, *_args) -> None:
@@ -4984,6 +4994,31 @@ class AISettingsPanel(QWidget):
         self._welfare_section.setVisible(mode == "1")
         self._manual_api_section.setVisible(mode == "0")
         self._ollama_section.setVisible(mode == "2")
+        self._update_auto_companion_interval_row()
+
+    def _welfare_interval_locked(self) -> bool:
+        """福利 API 模式下自动陪伴间隔固定为 6 分钟。"""
+        return str(self._force_mode.currentData() or "1").strip() == "1"
+
+    def _update_auto_companion_interval_row(self, *_args) -> None:
+        """福利 API 时收起间隔滑条；其余模式按开关状态启用滑条。
+
+        Qt5 的 ``QFormLayout`` 没有 ``setRowVisible``，所以整行收起只能把这一行的
+        标签与字段一起隐藏：两个都不可见时该行高度归零。
+        """
+        locked = self._welfare_interval_locked()
+        slider = getattr(self, "_auto_companion_interval_minutes", None)
+        form = getattr(self, "_reply_mode_form", None)
+        if slider is None or form is None:
+            return
+        if locked:
+            # 固定值写回控件，保存时写盘的分钟数与运行时实际生效的 6 分钟一致。
+            slider.set_value(WELFARE_AUTO_COMPANION_INTERVAL_MINUTES)
+        label = form.labelForField(slider)
+        if label is not None:
+            label.setVisible(not locked)
+        slider.setVisible(not locked)
+        slider.setEnabled(not locked and self._auto_companion_enabled.isChecked())
 
     def _update_gsv_settings_visibility(self) -> None:
         voice_available = bool(self._gsv_launcher_available)
