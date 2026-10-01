@@ -24,7 +24,7 @@ from lib.core.render.backends.qt.runtime.widget_anchors import (
     get_anchor_point as resolve_anchor_point,
     publish_widget_anchor_response,
 )
-from lib.core.render.backends.qt.drawing.window import coerce_qpoint
+from lib.script.ui.render_bridge import qpoint_from_point
 from lib.script.ui.rect_action_button_style import paint_rect_action_button
 
 
@@ -155,7 +155,7 @@ class ClickThroughButton(QWidget):
             # 专门针对此 UI 组件的锚点响应
             # event.data.get('anchor_point') 已经是 command_dialog top_left 锚点的全局坐标
             # 直接使用，不需要再计算
-            new_anchor_point = coerce_qpoint(event.data.get('anchor_point'))
+            new_anchor_point = qpoint_from_point(event.data.get('anchor_point'))
             if new_anchor_point is None:
                 return
             # 只在锚点位置改变时更新
@@ -167,7 +167,7 @@ class ClickThroughButton(QWidget):
             # 需要根据当前锚点 ID 计算新的锚点位置
             if anchor_id == 'all':
                 # command_dialog 的新位置（左上角坐标）
-                cmd_pos = coerce_qpoint(event.data.get('anchor_point'))
+                cmd_pos = qpoint_from_point(event.data.get('anchor_point'))
                 if cmd_pos is None:
                     return
                 # command_dialog 的锚点就是自己的左上角

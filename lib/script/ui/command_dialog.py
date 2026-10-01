@@ -2,10 +2,9 @@
 
 from PyQt5.QtWidgets import QWidget, QLineEdit, QHBoxLayout, QApplication, QGraphicsOpacityEffect
 from PyQt5.QtCore import Qt, QPoint, QPropertyAnimation, QEasingCurve, QEvent
-from PyQt5.QtGui import QColor, QPainter, QCursor
+from PyQt5.QtGui import QPainter, QCursor
 
 from config.config import UI, COMMAND_DIALOG, ANIMATION
-from lib.core.render.backends.qt.drawing.colors import COLORS
 from lib.core.render.backends.qt.runtime.font import get_cmd_font
 from config.scale import scale_px, scale_style_px
 from config.tooltip_config import TOOLTIPS
@@ -22,7 +21,7 @@ from lib.core.render.backends.qt.runtime.screen import (
     move_widget_to_global,
     widget_global_rect,
 )
-from lib.core.render.backends.qt.drawing.draw_backend import QtDrawBackend
+from lib.script.ui.render_bridge import create_draw_backend, qt_color_name, qpoint_from_point
 from lib.core.anchor_utils import (
     animate_opacity,
 )
@@ -30,11 +29,7 @@ from lib.core.render.backends.qt.runtime.widget_anchors import (
     get_anchor_point as resolve_anchor_point,
     publish_widget_anchor_response,
 )
-from lib.core.render.backends.qt.drawing.window import coerce_qpoint
 
-
-def _hex(color: QColor) -> str:
-    return color.name()
 
 _AUTO_HIDE_MOUSE_DISTANCE = UI.get('auto_hide_mouse_distance', scale_px(300, min_abs=1))
 
@@ -75,7 +70,7 @@ class CommandDialog(QWidget):
             QLineEdit {{
                 background: white;
                 color: black;
-                border: 2px solid {_hex(COLORS['pink'])};
+                border: 2px solid {qt_color_name('pink')};
                 padding: 2px 4px;
             }}
         """))
@@ -107,7 +102,7 @@ class CommandDialog(QWidget):
 
         # 事件中心
         self._event_center = get_event_center()
-        self._draw_backend = QtDrawBackend()
+        self._draw_backend = create_draw_backend()
 
         # UI 组件 ID
         self._ui_id = 'command_dialog'
@@ -434,7 +429,7 @@ class CommandDialog(QWidget):
         if ui_id == self._ui_id:
             # 专门针对此 UI 组件的锚点响应
             # event.data.get('anchor_point') 是 PetWindow 某锚点的全局坐标
-            new_anchor_point = coerce_qpoint(event.data.get('anchor_point'))
+            new_anchor_point = qpoint_from_point(event.data.get('anchor_point'))
             if new_anchor_point:
                 self._pet_top_left = self._anchor_to_pet_top_left(new_anchor_point, anchor_id)
                 self._anchor_point = self._build_pet_anchor(self._pet_top_left, self._placement_side)
@@ -444,7 +439,7 @@ class CommandDialog(QWidget):
             # 需要根据当前锚点 ID 计算新的锚点位置
             if anchor_id == 'all':
                 # PetWindow 的新位置（左上角坐标）
-                pet_pos = coerce_qpoint(event.data.get('anchor_point'))
+                pet_pos = qpoint_from_point(event.data.get('anchor_point'))
                 if pet_pos:
                     self._pet_top_left = QPoint(pet_pos.x(), pet_pos.y())
                     self._anchor_point = self._build_pet_anchor(self._pet_top_left, self._placement_side)

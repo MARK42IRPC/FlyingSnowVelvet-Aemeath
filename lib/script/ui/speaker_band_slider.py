@@ -31,7 +31,7 @@ from lib.core.render.visuals.speaker_band_visuals import (
     build_band_slider_visual,
 )
 from lib.core.render.visuals.speaker_visuals import SPEAKER_SEARCH_Y
-from lib.core.render.backends.qt.drawing.draw_backend import QtDrawBackend
+from lib.script.ui.render_bridge import create_draw_backend
 from lib.core.speaker_band import (
     band_from_center_ratio,
     band_label,
@@ -62,7 +62,7 @@ class SpeakerBandSlider(QWidget):
         self.setCursor(Qt.PointingHandCursor)
         get_layer_manager().register(self, Layer.PET_UI)
 
-        self._draw_backend = QtDrawBackend()
+        self._draw_backend = create_draw_backend()
         self._event_center = get_event_center()
         self._description = TOOLTIPS.get('speaker_band_slider', '拖动调节音响的动感响应频段')
 

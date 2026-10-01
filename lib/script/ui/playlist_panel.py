@@ -21,7 +21,7 @@ from PyQt5.QtGui import QPainter, QPen, QPolygonF, QCursor
 
 from config.config import UI
 from lib.core.render.visuals.media_panel_visuals import build_playlist_panel_visual
-from lib.core.render.backends.qt.drawing.draw_backend import QtDrawBackend
+from lib.script.ui.render_bridge import create_draw_backend
 from lib.core.render.backends.qt.runtime.font import get_ui_font, get_digit_font
 from lib.core.render.backends.qt.runtime.text_metrics import QtTextMetrics
 from config.scale import scale_px
@@ -204,7 +204,7 @@ class PlaylistPanel(QWidget):
         self._font.setBold(True)
         self._digit_font = get_digit_font()
         self._text_metrics = QtTextMetrics(self._font, self._digit_font)
-        self._draw_backend = QtDrawBackend()
+        self._draw_backend = create_draw_backend()
 
         # ── 状态 ──────────────────────────────────────────────────────
         self._visible: bool      = False

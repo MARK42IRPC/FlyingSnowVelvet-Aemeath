@@ -15,7 +15,7 @@ from lib.script.voice.snowball_sound import SnowballSound
 from lib.core.render.backends.qt.runtime.screen import get_screen_geometry_for_point
 from lib.core.render.visuals.resources import ImageResource
 from lib.core.render.visuals.visuals import build_world_object_batch
-from lib.core.render.backends.qt.drawing.draw_backend import QtDrawBackend
+from lib.script.ui.render_bridge import create_draw_backend
 from lib.core.services.world_object_physics import resolve_world_object_physics
 
 # ── 产品物理参数由 lib/core/services 唯一解析，与沙发保持一致 ──────────
@@ -62,7 +62,7 @@ class Snowball(QWidget):
         if not isinstance(visual_resource, ImageResource):
             raise TypeError("snowball visual_resource must be an ImageResource")
         self._visual_resource = visual_resource
-        self._draw_backend = QtDrawBackend()
+        self._draw_backend = create_draw_backend()
         self._size    = size
         self._alpha   = 1.0
         self._alive   = True

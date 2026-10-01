@@ -27,7 +27,7 @@ from lib.core.render.visuals.media_panel_visuals import (
     slider_track_rect,
     snap_slider_ratio,
 )
-from lib.core.render.backends.qt.drawing.draw_backend import QtDrawBackend
+from lib.script.ui.render_bridge import create_draw_backend
 from lib.core.unified_draw import Layer, get_layer_manager
 from lib.script.music import get_music_service
 
@@ -67,7 +67,7 @@ class SpeakerVolumeSlider(QWidget):
         self.setCursor(Qt.PointingHandCursor)
         get_layer_manager().register(self, Layer.PET_UI)
 
-        self._draw_backend = QtDrawBackend()
+        self._draw_backend = create_draw_backend()
         self._event_center = get_event_center()
         self._description = '拖动调节音乐音量'
 

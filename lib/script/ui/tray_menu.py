@@ -12,13 +12,13 @@ from PyQt5.QtCore import QPoint, Qt, QSize, QRect
 from PyQt5.QtCore import QPropertyAnimation, QEasingCurve
 
 from config.config import UI
-from lib.core.render.backends.qt.drawing.colors import UI_THEME
 from lib.core.render.backends.qt.runtime.font import get_ui_font, get_digit_font
 from config.scale import scale_px
 from lib.core.anchor_utils import apply_ui_opacity
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.unified_draw import Layer, get_layer_manager
 from lib.script.ui.tooltip_panel import get_tooltip_panel
+from lib.script.ui.render_bridge import qt_color
 
 
 _TRAY_MENU_STYLE_FLAG = '_fxr_tray_menu_style'
@@ -75,23 +75,23 @@ class _TrayMenuHintStyle(QProxyStyle):
     def drawPrimitive(self, element, option, painter, widget=None):
         if element == QStyle.PE_PanelMenu and self._is_target_menu(widget):
             rect = widget.rect() if isinstance(widget, QMenu) else option.rect
-            painter.fillRect(rect, UI_THEME['border'])
+            painter.fillRect(rect, qt_color('border'))
             painter.fillRect(
                 rect.adjusted(self._layer, self._layer, -self._layer, -self._layer),
-                UI_THEME['mid'],
+                qt_color('mid'),
             )
             painter.fillRect(
                 rect.adjusted(self._border, self._border, -self._border, -self._border),
-                UI_THEME['bg'],
+                qt_color('bg'),
             )
             return
         if element == QStyle.PE_FrameMenu and self._is_target_menu(widget):
             rect = widget.rect() if isinstance(widget, QMenu) else option.rect
             if rect.isValid():
-                painter.fillRect(QRect(rect.left(), rect.top(), rect.width(), 1), UI_THEME['border'])
-                painter.fillRect(QRect(rect.left(), rect.bottom(), rect.width(), 1), UI_THEME['border'])
-                painter.fillRect(QRect(rect.left(), rect.top(), 1, rect.height()), UI_THEME['border'])
-                painter.fillRect(QRect(rect.right(), rect.top(), 1, rect.height()), UI_THEME['border'])
+                painter.fillRect(QRect(rect.left(), rect.top(), rect.width(), 1), qt_color('border'))
+                painter.fillRect(QRect(rect.left(), rect.bottom(), rect.width(), 1), qt_color('border'))
+                painter.fillRect(QRect(rect.left(), rect.top(), 1, rect.height()), qt_color('border'))
+                painter.fillRect(QRect(rect.right(), rect.top(), 1, rect.height()), qt_color('border'))
             return
         super().drawPrimitive(element, option, painter, widget)
 
@@ -111,11 +111,11 @@ class _TrayMenuHintStyle(QProxyStyle):
                 inner_rect.width(),
                 self._sep_cyan_h,
             )
-            painter.fillRect(sep_rect, UI_THEME['mid'])
+            painter.fillRect(sep_rect, qt_color('mid'))
             black_y = item_rect.top() + max(0, (self._sep_cyan_h - self._sep_black_h) // 2)
             painter.fillRect(
                 QRect(inner_rect.left(), black_y, inner_rect.width(), self._sep_black_h),
-                UI_THEME['border'],
+                qt_color('border'),
             )
             return
 
@@ -132,18 +132,18 @@ class _TrayMenuHintStyle(QProxyStyle):
             opt.checkType != QStyleOptionMenuItem.NotCheckable and opt.checked
         )
         if is_selected:
-            painter.fillRect(row_rect, UI_THEME['mid'])
+            painter.fillRect(row_rect, qt_color('mid'))
         elif is_checked:
-            painter.fillRect(row_rect, UI_THEME['deep_pink'])
+            painter.fillRect(row_rect, qt_color('deep_pink'))
 
         text_rect = self._item_text_rect(row_rect, is_submenu)
 
         if is_selected:
-            wm_color = QColor(UI_THEME['deep_cyan'])
+            wm_color = qt_color('deep_cyan')
         elif is_checked:
-            wm_color = QColor(UI_THEME['bg'])
+            wm_color = qt_color('bg')
         else:
-            wm_color = QColor(UI_THEME['deep_pink'])
+            wm_color = qt_color('deep_pink')
         wm_left = 'L' if is_checked else 'O'
         wm_rect = QRect(
             row_rect.left() + self._wm_side_pad + self._wm_shift_x,
@@ -155,7 +155,7 @@ class _TrayMenuHintStyle(QProxyStyle):
         painter.setFont(self._watermark_font(opt.font))
         painter.drawText(wm_rect, Qt.AlignLeft | Qt.AlignVCenter, wm_left)
 
-        text_color = QColor(UI_THEME['text'])
+        text_color = qt_color('text')
         if not (opt.state & QStyle.State_Enabled):
             text_color.setAlpha(140)
         painter.setPen(text_color)
@@ -355,5 +355,5 @@ class TrayContextMenu(QMenu):
         if self.width() <= 0 or self.height() <= 0:
             return
         painter = QPainter(self)
-        painter.fillRect(QRect(self.width() - 1, 0, 1, self.height()), UI_THEME['border'])
+        painter.fillRect(QRect(self.width() - 1, 0, 1, self.height()), qt_color('border'))
         painter.end()

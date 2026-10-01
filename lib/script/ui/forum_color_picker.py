@@ -26,7 +26,8 @@ from lib.core.render.visuals.media_panel_visuals import (
 from lib.core.render.visuals.panel_visuals import UI_THEME, slider_handle_commands
 from lib.core.render.visuals.types import Rect
 from lib.core.layer import Layer
-from lib.core.render.backends.qt.drawing.draw_backend import QtDrawBackend
+from lib.core.render.visuals.backend import DrawBackend
+from lib.script.ui.render_bridge import create_draw_backend
 from lib.script.ui.forum_style import forum_picker_track_color
 
 #: 滑条高度直接取共享滑条（音乐进度条、音响音量条）的高度。三层外框和竖把手的比例都
@@ -161,7 +162,7 @@ class ForumColorSlider(QWidget):
         # 顺序要紧：先让共享滑条铺一遍外壳（外框与青 / 粉两层圈都由它保证和其它滑条一致），
         # 再把渐变盖进轨道，最后把竖把手重画到渐变之上。原来的顺序让渐变和压暗层埋掉了
         # 把手，滑条看上去像没有把手。
-        backend = QtDrawBackend()
+        backend = create_draw_backend()
         backend.render(visual.batch, painter)
         self._paint_gradient(painter, visual.track_rect)
         self._paint_handle(painter, backend, visual.track_rect)
@@ -194,7 +195,7 @@ class ForumColorSlider(QWidget):
         # 一圈 1px 暗描边把渐变收进面板里，和外壳的黑 / 青两层圈是同一套做法。
         self._stroke_inside(painter, rect)
 
-    def _paint_handle(self, painter: QPainter, backend: QtDrawBackend, track) -> None:
+    def _paint_handle(self, painter: QPainter, backend: DrawBackend, track) -> None:
         """把共享滑条的竖把手重画在渐变之上，任何色相上都看得见当前位置。"""
         center = float(track.x) + self._ratio * float(track.width)
         commands, rect = slider_handle_commands(

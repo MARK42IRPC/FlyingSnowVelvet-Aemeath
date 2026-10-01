@@ -18,3 +18,23 @@ class DrawBackend(Protocol):
 
     def cleanup(self) -> None:
         """Release backend caches and resources."""
+
+
+class NullDrawBackend:
+    """No-op backend used before a desktop backend is configured.
+
+    A widget may legitimately be constructed and painted outside a running
+    application (tests, the isolated workbench helper). Drawing nothing keeps
+    that path alive without teaching the widget which toolkit is installed.
+    """
+
+    def render(
+        self,
+        batch: DrawBatch,
+        target: object,
+        viewport: Rect | None = None,
+    ) -> None:
+        return None
+
+    def cleanup(self) -> None:
+        return None

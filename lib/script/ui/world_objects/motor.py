@@ -15,7 +15,7 @@ from lib.script.voice.chrack     import ChrackSound
 from lib.core.render.visuals.resources import ImageResource
 from lib.core.render.visuals.types import Point
 from lib.core.render.visuals.visuals import build_world_object_batch, sample_motor_jitter
-from lib.core.render.backends.qt.drawing.draw_backend import QtDrawBackend
+from lib.script.ui.render_bridge import create_draw_backend
 from lib.core.services.world_object_physics import (
     DEFAULT_DRAG_TRAIL_WINDOW_SEC,
     DEFAULT_RELEASE_SAMPLE_MIN_DT_SEC,
@@ -70,7 +70,7 @@ class Mortor(QWidget):
         if not isinstance(visual_resource, ImageResource):
             raise TypeError("motor visual_resource must be an ImageResource")
         self._visual_resource = visual_resource
-        self._draw_backend = QtDrawBackend()
+        self._draw_backend = create_draw_backend()
         self._size           = size
         self._flipped        = False  # 默认朝右（右方向）
         self._move_dir       = 1      # 1=右，-1=左

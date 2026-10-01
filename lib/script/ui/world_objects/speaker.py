@@ -22,7 +22,7 @@ from lib.core.render.visuals.visuals import (
     resolve_speaker_scale,
     update_speaker_intensity,
 )
-from lib.core.render.backends.qt.drawing.draw_backend import QtDrawBackend
+from lib.script.ui.render_bridge import create_draw_backend
 from lib.core.services.world_object_physics import resolve_world_object_physics
 _WORLD_PHYSICS = resolve_world_object_physics()
 
@@ -64,7 +64,7 @@ class Speaker(QWidget):
         if not isinstance(visual_resource, ImageResource):
             raise TypeError("speaker visual_resource must be an ImageResource")
         self._visual_resource = visual_resource
-        self._draw_backend = QtDrawBackend()
+        self._draw_backend = create_draw_backend()
         self._size           = size
         self._flipped        = False
         self._alive          = True

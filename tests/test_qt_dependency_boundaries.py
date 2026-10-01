@@ -9,6 +9,90 @@ from lib.core.event.center import EventType
 
 
 class QtDependencyBoundaryTests(unittest.TestCase):
+    #: `lib/script/ui` 里必须活在 Qt 之上的产品控件（冻结基线，只减不增）。
+    #:
+    #: 这些文件 import `PyQt5` 是产品事实：控件本身就是 `QWidget` 子类。冻结它不是为了
+    #: 鼓励扩散，而是为了让「UI 的 Qt 面到底有多大」有一个可审计的答案——新增控件直接
+    #: 写 `PyQt5` 会被 `test_repository_qt_imports_stay_in_explicit_toolkit_boundaries`
+    #: 叫停，必须在这里显式登记并说明理由；条目在文件不再 import Qt 后也必须删掉。
+    #: 真正会随架构演进缩小的是同文件里「直接引用 `drawing/`」的那份清单，它现在是空的。
+    frozen_ui_qt_importers = frozenset({
+            "lib/script/ui/_particle_helper.py",
+            "lib/script/ui/ai_settings_panel.py",
+            "lib/script/ui/ai_settings_tabs.py",
+            "lib/script/ui/animation_player.py",
+            "lib/script/ui/announcement_dialog.py",
+            "lib/script/ui/bubble.py",
+            "lib/script/ui/bug_tracker_window.py",
+            "lib/script/ui/chat_mode_button.py",
+            "lib/script/ui/clickthrough_button.py",
+            "lib/script/ui/close_button.py",
+            "lib/script/ui/cloudmusic_login_dialog.py",
+            "lib/script/ui/cmd_window.py",
+            "lib/script/ui/command_dialog.py",
+            "lib/script/ui/command_hint_box.py",
+            "lib/script/ui/confirm_dialog.py",
+            "lib/script/ui/forum_account.py",
+            "lib/script/ui/forum_board.py",
+            "lib/script/ui/forum_color_control.py",
+            "lib/script/ui/forum_color_picker.py",
+            "lib/script/ui/forum_sticker.py",
+            "lib/script/ui/forum_style.py",
+            "lib/script/ui/forum_text.py",
+            "lib/script/ui/forum_texture.py",
+            "lib/script/ui/forum_window.py",
+            "lib/script/ui/game_manager_window.py",
+            "lib/script/ui/game_runtime.py",
+            "lib/script/ui/help_window.py",
+            "lib/script/ui/interaction_mode_button.py",
+            "lib/script/ui/launch_wuwa_button.py",
+            "lib/script/ui/mic_stt_indicator.py",
+            "lib/script/ui/more_functions_button.py",
+            "lib/script/ui/office_approval_controller.py",
+            "lib/script/ui/office_approval_dialog.py",
+            "lib/script/ui/office_chat_view.py",
+            "lib/script/ui/office_effort_slider.py",
+            "lib/script/ui/office_icons.py",
+            "lib/script/ui/office_manager_card.py",
+            "lib/script/ui/office_mode_page.py",
+            "lib/script/ui/office_mode_settings.py",
+            "lib/script/ui/office_page.py",
+            "lib/script/ui/office_style.py",
+            "lib/script/ui/page_turn_buttons.py",
+            "lib/script/ui/playlist_panel.py",
+            "lib/script/ui/preloader.py",
+            "lib/script/ui/progress_panel.py",
+            "lib/script/ui/qr_dialog_base.py",
+            "lib/script/ui/rect_action_button_style.py",
+            "lib/script/ui/render_bridge.py",
+            "lib/script/ui/restore_button.py",
+            "lib/script/ui/right_click_ui_layer.py",
+            "lib/script/ui/scale_button.py",
+            "lib/script/ui/speaker_band_slider.py",
+            "lib/script/ui/speaker_control_buttons.py",
+            "lib/script/ui/speaker_menu_style.py",
+            "lib/script/ui/speaker_search_dialog.py",
+            "lib/script/ui/speaker_search_result_box.py",
+            "lib/script/ui/speaker_volume_slider.py",
+            "lib/script/ui/tooltip_panel.py",
+            "lib/script/ui/tray_icon.py",
+            "lib/script/ui/tray_menu.py",
+            "lib/script/ui/update_dialog.py",
+            "lib/script/ui/voice_package_installer.py",
+            "lib/script/ui/workbench_components.py",
+            "lib/script/ui/workbench_floating.py",
+            "lib/script/ui/workbench_settings_layout.py",
+            "lib/script/ui/workbench_window.py",
+            "lib/script/ui/world_objects/clock.py",
+            "lib/script/ui/world_objects/motor.py",
+            "lib/script/ui/world_objects/snow_leopard.py",
+            "lib/script/ui/world_objects/snow_pile.py",
+            "lib/script/ui/world_objects/snowball.py",
+            "lib/script/ui/world_objects/sofa.py",
+            "lib/script/ui/world_objects/speaker.py",
+            "lib/script/ui/yuanbao_login_dialog.py",
+    })
+
     @staticmethod
     def _qt_import_violations(repo_root: Path, paths) -> list[str]:
         violations = []
@@ -104,6 +188,7 @@ class QtDependencyBoundaryTests(unittest.TestCase):
             for path in self._qt_import_violations(repo_root, paths)
         }
 
+        frozen_ui_qt_importers = self.frozen_ui_qt_importers
         allowed_files = {
             # 打包前的发行包自检（``scripts/`` 不进 payload）要在离屏 Qt 里真的把工作台、
             # 办公窗口、论坛与粒子构造一遍，所以它是构建工具里唯一允许直接引用 PyQt5 的。
@@ -120,8 +205,15 @@ class QtDependencyBoundaryTests(unittest.TestCase):
             path
             for path in qt_imports
             if not path.startswith("lib/core/render/backends/qt/")
-            and not path.startswith("lib/script/ui/")
+            and path not in frozen_ui_qt_importers
             and path not in allowed_files
+        )
+        #: `lib/script/ui` 是产品控件的落点，它必然 import PyQt5；但那份名单同样
+        #: 只减不增——控件不再需要 Qt 时必须删掉条目，避免冻结清单一涨再涨。
+        stale = sorted(frozen_ui_qt_importers - qt_imports)
+        self.assertEqual(stale, [], "这些控件已不再 import PyQt5；请从冻结清单中删除")
+        self.assertTrue(
+            frozen_ui_qt_importers <= {path for path in qt_imports if path.startswith("lib/script/ui/")}
         )
         self.assertEqual(unexpected, [])
 
@@ -377,7 +469,7 @@ class QtDependencyBoundaryTests(unittest.TestCase):
             draw_core.register_resource(ImageResource("pet", (frame,)))
             draw_core.add_draw_request(DrawRequest("pet"))
             assert draw_core.build_batch().commands[0].frame is frame
-            assert draw_core._backend.__class__.__name__ == "_NullDrawBackend"
+            assert draw_core._backend.__class__.__name__ == "NullDrawBackend"
             assert GifLoader([]).load_all() == {}
             assert [item.backend_id for item in BackendRouter().descriptors()] == [
                 "qt", "directx", "opengl", "vulkan"
@@ -554,53 +646,28 @@ class QtDependencyBoundaryTests(unittest.TestCase):
     def test_drawing_tier_is_reachable_only_from_the_router_and_backend_windows(self):
         """档位 A：`backends/qt/drawing/` 的允许引用面。
 
-        `drawing/` 是把声明式命令变成 QPainter 像素的地方。理想上只应被 `lib/core/render/router.py`
-        与后端自带窗口的绘制回调引用，但当前 `lib/script/ui` 里仍有一批控件直接构造 `QtDrawBackend`
-        并在自己的 `paintEvent` 里执行批次。这是既成事实，不是新许可：下面那份清单是**基线**，
-        只允许缩短——把某个文件从直接绘制改成走共享 presenter 后，必须同步从清单里删掉它；
-        任何新文件出现对 `drawing/` 的引用都会失败。
+        `drawing/` 是把声明式命令变成 QPainter 像素的地方。它只应被三处引用：
+        `lib/core/render/router.py`、后端自带窗口，以及 `lib/script/ui/render_bridge.py`
+        这个唯一的 UI 侧落点——控件要绘制能力就向它要，而不是自己 import 绘制档。
+
+        `lib/script/ui` 的直接引用已清零，基线集合保持为空；任何新文件出现对 `drawing/`
+        的引用都会失败。官方游戏包 v1 的控件沿用 Qt 页面约定，是文档化的既有例外。
         """
         repo_root = Path(__file__).resolve().parents[1]
         drawing_prefix = "lib.core.render.backends.qt.drawing"
 
-        #: 仍直接从 `drawing/` 构造绘制实现的 `lib/script/ui` 文件（基线，只减不增）。
-        frozen_ui_draw_importers = {
-            "lib/script/ui/ai_settings_panel.py",
-            "lib/script/ui/ai_settings_tabs.py",
-            "lib/script/ui/bubble.py",
-            "lib/script/ui/clickthrough_button.py",
-            "lib/script/ui/close_button.py",
-            "lib/script/ui/cmd_window.py",
-            "lib/script/ui/command_dialog.py",
-            "lib/script/ui/command_hint_box.py",
-            "lib/script/ui/forum_color_picker.py",
-            "lib/script/ui/forum_sticker.py",
-            "lib/script/ui/game_runtime.py",
-            "lib/script/ui/mic_stt_indicator.py",
-            "lib/script/ui/playlist_panel.py",
-            "lib/script/ui/progress_panel.py",
-            "lib/script/ui/qr_dialog_base.py",
-            "lib/script/ui/rect_action_button_style.py",
-            "lib/script/ui/restore_button.py",
-            "lib/script/ui/speaker_band_slider.py",
-            "lib/script/ui/speaker_control_buttons.py",
-            "lib/script/ui/speaker_menu_style.py",
-            "lib/script/ui/speaker_search_result_box.py",
-            "lib/script/ui/speaker_volume_slider.py",
-            "lib/script/ui/tooltip_panel.py",
-            "lib/script/ui/tray_menu.py",
-            "lib/script/ui/world_objects/clock.py",
-            "lib/script/ui/world_objects/motor.py",
-            "lib/script/ui/world_objects/snow_leopard.py",
-            "lib/script/ui/world_objects/snow_pile.py",
-            "lib/script/ui/world_objects/snowball.py",
-            "lib/script/ui/world_objects/sofa.py",
-            "lib/script/ui/world_objects/speaker.py",
-        }
+        #: `lib/script/ui` 已全部改走 `render_bridge`，这份清单为空才是目标状态。
+        #: 保留空集合而不是删掉变量，是为了让「只减不增」的清理断言继续有落点：
+        #: 将来若有人先加白名单再引新引用，下面的 stale 检查会要求他把白名单删掉。
+        frozen_ui_draw_importers: set[str] = set()
         #: 官方游戏包 v1 的控件沿用 Qt 页面约定，见 `doc/Qt边界契约.md` 第 2 节。
         frozen_other_importers = {
             "lib/script/gemes/packages/official/lahai_tetris/code/lahai_tetris_pkg/widget.py",
         }
+        #: 刻意保留的唯一 UI 侧落点：控件通过它拿绘制能力，而不是各自 import 本档。
+        #: 当前实现会在未配置后端时回退到 Qt（见文件内注释）；这是产品事实的收敛，
+        #: 不是又一次绕过。它必须保持最小：只暴露控件真正需要的能力。
+        allowed_seams = {"lib/script/ui/render_bridge.py"}
 
         def _drawing_refs(path):
             tree = ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
@@ -618,6 +685,7 @@ class QtDependencyBoundaryTests(unittest.TestCase):
             return found
 
         offenders = []
+        referencing = set()
         for base in (repo_root / "lib", repo_root / "scripts"):
             for path in sorted(base.rglob("*.py")):
                 relative = path.relative_to(repo_root).as_posix()
@@ -628,12 +696,27 @@ class QtDependencyBoundaryTests(unittest.TestCase):
                     continue
                 if not _drawing_refs(path):
                     continue
+                referencing.add(relative)
                 if relative in frozen_ui_draw_importers or relative in frozen_other_importers:
+                    continue
+                if relative in allowed_seams:
                     continue
                 offenders.append(relative)
 
-        self.assertEqual(offenders, [], "新增了对 drawing/ 的直接引用；请改走共享 presenter 或扩展基线并说明理由")
-        self.assertGreater(len(frozen_ui_draw_importers), 20)
+        self.assertEqual(offenders, [], "新增了对 drawing/ 的直接引用；请改走 render_bridge 或共享 presenter")
+        #: 清单只减不增：写进基线的文件一旦不再违规就必须删掉，否则清单会腐烂成许可。
+        self.assertEqual(
+            sorted((frozen_ui_draw_importers | frozen_other_importers) - referencing),
+            [],
+            "基线里的文件已不再直接引用 drawing/；请从清单中删除它",
+        )
+        #: 唯一允许的 UI 侧落点必须真的在用，且 UI 层不允许出现第二个直接引用方。
+        self.assertTrue(allowed_seams <= referencing, "render_bridge 未引用 drawing/，落点已失效")
+        self.assertEqual(
+            frozen_ui_draw_importers,
+            set(),
+            "档位 A 的目标是 `lib/script/ui` 零直接引用；重新引入必须先改契约文档并说明理由",
+        )
 
     def test_qt_runtime_tier_is_not_named_by_business_or_ui_code(self):
         """档位 B：`backends/qt/runtime/` 的具体路径不得出现在业务脚本里。

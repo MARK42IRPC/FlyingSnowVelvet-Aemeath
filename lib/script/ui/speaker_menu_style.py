@@ -12,28 +12,27 @@ from lib.core.render.visuals.panel_visuals import (
     panel_shell_commands,
 )
 from lib.core.render.visuals.types import Rect
-from lib.core.render.backends.qt.drawing.draw_backend import QtDrawBackend
-from lib.core.render.backends.qt.drawing.colors import COLORS, UI_THEME
+from lib.script.ui.render_bridge import create_draw_backend, qt_color
 from lib.core.render.backends.qt.runtime.font import get_ui_font
 from config.scale import scale_px
 from lib.core.unified_draw import Layer, get_layer_manager
 
-_C_BORDER = UI_THEME['border']
-_C_MID = UI_THEME['mid']
-_C_BG = UI_THEME['bg']
-_C_TEXT = UI_THEME['text']
-_C_ICON = UI_THEME['icon']
-_C_HL = UI_THEME['highlight']
+_C_BORDER = qt_color('border')
+_C_MID = qt_color('mid')
+_C_BG = qt_color('bg')
+_C_TEXT = qt_color('text')
+_C_ICON = qt_color('icon')
+_C_HL = qt_color('highlight')
 _C_ENTRY_BG = QColor(*SPEAKER_SEARCH_UI.get('entry_bg_color', (255, 255, 255)))
-_C_ACTION_BG = COLORS['pink']
-_C_ACTION_BORDER = COLORS['black']
-_C_ACTION_MID = COLORS['cyan']
-_C_ACTION_TEXT = COLORS['black']
-_C_ACTION_HOVER = UI_THEME['deep_pink']
+_C_ACTION_BG = qt_color('pink')
+_C_ACTION_BORDER = qt_color('black')
+_C_ACTION_MID = qt_color('cyan')
+_C_ACTION_TEXT = qt_color('black')
+_C_ACTION_HOVER = qt_color('deep_pink')
 
 _LAYER = scale_px(2, min_abs=1)
 _BORDER = _LAYER * 2
-_DRAW_BACKEND = QtDrawBackend()
+_DRAW_BACKEND = create_draw_backend()
 
 
 def _to_core_rect(rect: QRect) -> Rect:

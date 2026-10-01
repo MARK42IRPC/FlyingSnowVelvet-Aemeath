@@ -10,7 +10,7 @@ from lib.core.render.backends.qt.runtime.widget_anchors import (
     get_anchor_point as resolve_anchor_point,
     publish_widget_anchor_response,
 )
-from lib.core.render.backends.qt.drawing.window import coerce_qpoint
+from lib.script.ui.render_bridge import qpoint_from_point
 from lib.script.ui.rect_action_button_style import RectActionButton
 
 
@@ -171,14 +171,14 @@ class RestoreButton(RectActionButton):
 
     def _on_mouse_move(self, event):
         """处理鼠标移动事件 - 追踪鼠标位置"""
-        self._mouse_pos = coerce_qpoint(event.data.get('global_pos'))
+        self._mouse_pos = qpoint_from_point(event.data.get('global_pos'))
 
     def _on_anchor_response(self, event):
         """锚点响应事件处理"""
         ui_id = event.data.get('ui_id')
         window_id = event.data.get('window_id')
         anchor_id = event.data.get('anchor_id')
-        new_anchor_point = coerce_qpoint(event.data.get('anchor_point'))
+        new_anchor_point = qpoint_from_point(event.data.get('anchor_point'))
 
         # 只处理来自 pet_window 的锚点响应事件
         if window_id != self._target_ui_id:
@@ -204,7 +204,7 @@ class RestoreButton(RectActionButton):
             # 需要根据当前锚点 ID 计算新的锚点位置
             if anchor_id == 'all':
                 # pet_window 的新位置（左上角坐标）
-                pet_pos = coerce_qpoint(event.data.get('anchor_point'))
+                pet_pos = qpoint_from_point(event.data.get('anchor_point'))
                 if pet_pos is None:
                     return
                 # 获取 pet_window 的尺寸来计算 bottom 锚点

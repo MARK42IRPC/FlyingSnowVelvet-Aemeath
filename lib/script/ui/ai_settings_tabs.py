@@ -9,8 +9,7 @@ from PyQt5.QtGui import QPainter
 from config.scale import scale_px
 from lib.core.render.visuals.panel_visuals import build_tab_bar_visual
 from lib.core.render.visuals.types import Size
-from lib.core.render.backends.qt.drawing.colors import UI_THEME
-from lib.core.render.backends.qt.drawing.draw_backend import QtDrawBackend
+from lib.script.ui.render_bridge import create_draw_backend, qt_color
 from lib.core.unified_draw import Layer, get_layer_manager
 
 
@@ -21,7 +20,7 @@ class TabBarWidget(QWidget):
         super().__init__(parent)
         self._layer = scale_px(2, min_abs=1)
         self._border = self._layer * 2
-        self._draw_backend = QtDrawBackend()
+        self._draw_backend = create_draw_backend()
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -37,9 +36,9 @@ class TabBarWidget(QWidget):
 
 def attach_ai_settings_tabs(panel, general_categories) -> None:
     # 获取主题颜色
-    mid_color = UI_THEME["mid"]
-    highlight_color = UI_THEME["deep_cyan"]
-    text_color = UI_THEME["text"]
+    mid_color = qt_color("mid")
+    highlight_color = qt_color("deep_cyan")
+    text_color = qt_color("text")
     # 高亮向左扩展距离
     highlight_expand_left = scale_px(6, min_abs=4)
 

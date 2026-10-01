@@ -29,7 +29,7 @@ from lib.core.render.visuals.application_visuals import (
 )
 from lib.core.render.visuals.types import Rect
 from lib.core.render.backends.qt.runtime.text_metrics import QtTextMetrics
-from lib.core.render.backends.qt.drawing.draw_backend import QtDrawBackend
+from lib.script.ui.render_bridge import create_draw_backend, qpoint_from_point
 from config.scale import scale_px
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.hash_cmd_registry import get_hash_cmd_registry
@@ -40,7 +40,6 @@ from lib.core.render.backends.qt.runtime.screen import (
     widget_global_rect,
 )
 from lib.core.anchor_utils import apply_ui_opacity
-from lib.core.render.backends.qt.drawing.window import coerce_qpoint
 from lib.script.ui.page_turn_buttons import make_page_buttons, update_page_buttons_position
 
 
@@ -89,7 +88,7 @@ class CommandHintBox(QWidget):
             self._digit_font,
             side_font=self._side_label_font,
         )
-        self._draw_backend = QtDrawBackend()
+        self._draw_backend = create_draw_backend()
         self._visual: CommandHintVisualDescription | None = None
 
         # ── 状态 ──────────────────────────────────────────────────────
@@ -331,7 +330,7 @@ class CommandHintBox(QWidget):
 
         if ui_id == 'command_hint_box':
             # CommandDialog 对 bottom_left 请求的直接响应
-            new_pt = coerce_qpoint(event.data.get('anchor_point'))
+            new_pt = qpoint_from_point(event.data.get('anchor_point'))
             if new_pt is None:
                 return
             if self._anchor_point != new_pt:
@@ -340,7 +339,7 @@ class CommandHintBox(QWidget):
 
         elif ui_id == 'all' and window_id == 'command_dialog' and anchor_id == 'all':
             # CommandDialog 移动时的全局广播（anchor_point = 其左上角坐标）
-            cmd_pos = coerce_qpoint(event.data.get('anchor_point'))
+            cmd_pos = qpoint_from_point(event.data.get('anchor_point'))
             if cmd_pos is None:
                 return
             cmd_h   = UI['cmd_window_height']

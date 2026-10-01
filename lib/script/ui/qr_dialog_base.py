@@ -19,7 +19,7 @@ from lib.core.render.visuals.application_visuals import (
 )
 from lib.core.render.visuals.image_loader import load_image_resource
 from lib.core.render.visuals.resources import ImageResource
-from lib.core.render.backends.qt.drawing.draw_backend import QtDrawBackend
+from lib.script.ui.render_bridge import create_draw_backend
 from lib.core.render.backends.qt.runtime.screen import clamp_rect_position, get_screen_geometry_for_point
 from lib.core.unified_draw import Layer, get_layer_manager
 from lib.script.ui.workbench_floating import WorkbenchFloatingWindow
@@ -59,7 +59,7 @@ class BaseQrDialog(WorkbenchFloatingWindow):
         self._status_bold = bool(status_bold)
         self._status_font_size = status_font_size
         self._qr_resource: ImageResource | None = None
-        self._draw_backend = QtDrawBackend()
+        self._draw_backend = create_draw_backend()
 
         self._minimize_btn = self.create_floating_window_button(
             self,

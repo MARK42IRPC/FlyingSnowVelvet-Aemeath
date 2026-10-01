@@ -25,6 +25,12 @@
   托盘、播放器等平台能力）。`lib/core/backend_router.py` 与 `lib/core/desktop_backend.py` 迁入根层，
   旧路径不保留兼容壳。业务层与 `lib/script/ui` 对后端的引用面按「冻结基线，只减不增」的测试清单锁定，
   新增直接引用会失败。DX 仍是 `available=False` 的实验实现，暂不切分 `drawing/`、`runtime/`。
+- 绘制落点收敛：新增 `lib/script/ui/render_bridge.py`，作为控件取绘制实现、主题色与坐标转换的唯一
+  UI 侧入口。`lib/script/ui` 里直接 import `lib/core/render/backends/qt/drawing/` 的文件从 31 个降到 0，
+  新增引用会被测试叫停。未配置后端时它回退到真实 Qt 实现而不是空实现——空实现会让控件静默画不出
+  东西，把像素比对测试的回归伪装成通过（本轮真的踩到过一次）。控件直接 `import PyQt5` 的名单另有一份
+  只减不增的冻结清单，避免 UI 的 Qt 面在无人留意时长回来。主题色事实源仍是共享色板，本层只做
+  `Color -> QColor` 的边界转换。
 
 ### Fixed
 - 修复安装器在非空残留目录上必然失败：目标文件改用 `CREATE_ALWAYS`，残留文件/目录冲突

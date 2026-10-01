@@ -42,8 +42,7 @@ from PyQt5.QtGui import QPainter, QPixmap
 from config.config import ANIMATION, UI
 from lib.core.render.visuals.settings_panel_visuals import build_ai_settings_panel_visual
 from lib.core.render.visuals.types import Size
-from lib.core.render.backends.qt.drawing.colors import UI_THEME
-from lib.core.render.backends.qt.drawing.draw_backend import QtDrawBackend
+from lib.script.ui.render_bridge import create_draw_backend, qt_color_name
 from lib.core.render.backends.qt.runtime.font import get_ui_font, get_digit_font
 from lib.core.render.router import get_backend_descriptors
 from config.general_user_settings import save_general_values
@@ -1692,7 +1691,7 @@ class AISettingsPanel(QWidget):
         self._drag_offset = QPoint()
         self._gpu_watermark_text = "UnKnow GPU 0.00 GB\nRAM 0.00 GB"
         self._panel_watermark_text = _WATERMARK_TEXT
-        self._draw_backend = QtDrawBackend()
+        self._draw_backend = create_draw_backend()
         self._tick_counter = 0
         self._tick_subscribed = False
 
@@ -4260,11 +4259,11 @@ class AISettingsPanel(QWidget):
         self._install_line_edit_context_menus()
 
     def _apply_style(self) -> None:
-        border = UI_THEME["border"].name()
-        mid = UI_THEME["mid"].name()
-        bg = UI_THEME["bg"].name()
-        text = UI_THEME["text"].name()
-        highlight = UI_THEME["deep_cyan"].name()
+        border = qt_color_name("border")
+        mid = qt_color_name("mid")
+        bg = qt_color_name("bg")
+        text = qt_color_name("text")
+        highlight = qt_color_name("deep_cyan")
         about_c = get_workbench_colors()
         menu_font = get_ui_font(size=_CONFIG_FONT_SIZE)
         menu_font.setBold(True)

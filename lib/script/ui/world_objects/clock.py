@@ -8,7 +8,7 @@ from PyQt5.QtGui     import QPainter
 
 from lib.core.render.visuals.resources import ImageResource
 from lib.core.render.visuals.visuals import build_world_object_batch
-from lib.core.render.backends.qt.drawing.draw_backend import QtDrawBackend
+from lib.script.ui.render_bridge import create_draw_backend
 from lib.core.unified_draw import Layer, get_layer_manager
 from lib.core.event.center     import get_event_center, EventType, Event
 from lib.core.clickthrough_state import is_clickthrough_enabled
@@ -72,7 +72,7 @@ class Clock(QWidget):
         if not isinstance(visual_resource, ImageResource):
             raise TypeError("clock visual_resource must be an ImageResource")
         self._visual_resource = visual_resource
-        self._draw_backend = QtDrawBackend()
+        self._draw_backend = create_draw_backend()
         self._size           = size
         self._alive          = True
         self._alpha          = 1.0

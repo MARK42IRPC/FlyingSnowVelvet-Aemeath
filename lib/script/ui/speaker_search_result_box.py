@@ -28,14 +28,13 @@ from lib.core.render.visuals.media_panel_visuals import (
     search_result_panel_size,
 )
 from lib.core.render.visuals.types import Size
-from lib.core.render.backends.qt.drawing.draw_backend import QtDrawBackend
+from lib.script.ui.render_bridge import create_draw_backend, qpoint_from_point
 from lib.core.render.backends.qt.runtime.text_metrics import QtTextMetrics
 from config.scale import scale_px
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.unified_draw import Layer, get_layer_manager
 from lib.core.render.backends.qt.runtime.screen import clamp_rect_position
 from lib.core.anchor_utils import apply_ui_opacity
-from lib.core.render.backends.qt.drawing.window import coerce_qpoint
 from lib.script.ui.page_turn_buttons import make_page_buttons, update_page_buttons_position
 from lib.script.ui.speaker_menu_style import (
     _BORDER,
@@ -72,7 +71,7 @@ class SpeakerSearchResultBox(QWidget):
         self._font.setBold(True)
         self._digit_font = get_digit_font()
         self._text_metrics = QtTextMetrics(self._font, self._digit_font)
-        self._draw_backend = QtDrawBackend()
+        self._draw_backend = create_draw_backend()
 
         # ── 状态 ────────────────────────────────────────────────────
         self._items: list[tuple[int | str, str]] = []   # [(track_ref, display_text)]
@@ -280,7 +279,7 @@ class SpeakerSearchResultBox(QWidget):
 
         if ui_id == 'all' and window_id == 'speaker_search_dialog' and anchor_id == 'all':
             # anchor_point = dialog 左上角坐标
-            dialog_pos = coerce_qpoint(event.data.get('anchor_point'))
+            dialog_pos = qpoint_from_point(event.data.get('anchor_point'))
             if dialog_pos is None:
                 return
             # 结果框跟随 dialog 底部

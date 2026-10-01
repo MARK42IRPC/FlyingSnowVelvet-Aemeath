@@ -15,7 +15,7 @@ from lib.core.render.backends.qt.runtime.screen import get_screen_geometry_for_p
 from lib.script.voice.sofa       import SofaSound
 from lib.core.render.visuals.resources import ImageResource
 from lib.core.render.visuals.visuals import build_world_object_batch
-from lib.core.render.backends.qt.drawing.draw_backend import QtDrawBackend
+from lib.script.ui.render_bridge import create_draw_backend
 from lib.core.services.world_object_physics import resolve_world_object_physics
 _WORLD_PHYSICS = resolve_world_object_physics()
 
@@ -57,7 +57,7 @@ class Sofa(QWidget):
         if not isinstance(visual_resource, ImageResource):
             raise TypeError("sofa visual_resource must be an ImageResource")
         self._visual_resource = visual_resource
-        self._draw_backend = QtDrawBackend()
+        self._draw_backend = create_draw_backend()
         self._size           = size
         self._flipped        = False
         self._alive          = True

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from lib.core.render.registry import get_draw_backend_factory
-from lib.core.render.visuals.backend import DrawBackend
+from lib.core.render.visuals.backend import DrawBackend, NullDrawBackend
 from lib.core.render.visuals.commands import DrawBatch, DrawRequest
 from lib.core.render.visuals.resources import ImageResource, RasterFrame
 from lib.core.render.visuals.scene import DrawScene
@@ -77,22 +77,7 @@ class DrawCore:
     @staticmethod
     def _create_default_backend() -> DrawBackend:
         factory = get_draw_backend_factory()
-        return factory() if factory is not None else _NullDrawBackend()
-
-
-class _NullDrawBackend:
-    """No-op backend used when core code runs without a desktop host."""
-
-    def render(
-        self,
-        batch: DrawBatch,
-        target: object,
-        viewport: Rect | None = None,
-    ) -> None:
-        return None
-
-    def cleanup(self) -> None:
-        return None
+        return factory() if factory is not None else NullDrawBackend()
 
 
 _draw_core: DrawCore | None = None

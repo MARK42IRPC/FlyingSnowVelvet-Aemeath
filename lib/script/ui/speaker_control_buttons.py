@@ -17,7 +17,7 @@ from lib.core.render.backends.qt.runtime.widget_anchors import (
     get_anchor_point as resolve_anchor_point,
     publish_widget_anchor_response,
 )
-from lib.core.render.backends.qt.drawing.window import coerce_qpoint
+from lib.script.ui.render_bridge import qpoint_from_point
 from lib.script.ui.speaker_menu_style import (
     _C_ACTION_TEXT,
     SpeakerActionButtonMixin,
@@ -761,7 +761,7 @@ class SpeakerControlButtons:
             # 搜索框移动时的全局锚点更新
             if anchor_id == 'all':
                 # 搜索框的新位置（左上角坐标）
-                dialog_pos = coerce_qpoint(event.data.get('anchor_point'))
+                dialog_pos = qpoint_from_point(event.data.get('anchor_point'))
                 if dialog_pos is None:
                     return
                 # 计算 top_left 锚点位置

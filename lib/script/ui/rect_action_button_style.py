@@ -11,11 +11,11 @@ from lib.core.render.backends.qt.runtime.font import get_ui_font
 from lib.core.anchor_utils import animate_opacity, apply_ui_opacity
 from lib.core.render.visuals.application_visuals import build_rect_action_button_visual
 from lib.core.render.visuals.types import FontSpec
-from lib.core.render.backends.qt.drawing.draw_backend import QtDrawBackend
+from lib.script.ui.render_bridge import create_draw_backend
 from lib.core.unified_draw import Layer, get_layer_manager
 
 
-_DRAW_BACKEND = QtDrawBackend()
+_DRAW_BACKEND = create_draw_backend()
 
 
 def paint_rect_action_button(painter: QPainter, rect, font, text: str, hovered: bool = False) -> None:

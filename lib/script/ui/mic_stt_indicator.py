@@ -9,7 +9,7 @@ import time
 
 from config.config import UI
 from lib.core.render.visuals.application_visuals import build_mic_stt_indicator_visual
-from lib.core.render.backends.qt.drawing.draw_backend import QtDrawBackend
+from lib.script.ui.render_bridge import create_draw_backend
 from config.scale import scale_px
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.unified_draw import Layer, get_layer_manager
@@ -35,7 +35,7 @@ class MicSttIndicator(QWidget):
         self._hover_radius = scale_px(120, min_abs=90)
         self._hide_delay = 2.0
         self._last_mouse_inside_ts = time.monotonic()
-        self._draw_backend = QtDrawBackend()
+        self._draw_backend = create_draw_backend()
 
         self.setWindowFlags(
             Qt.Tool

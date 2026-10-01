@@ -27,11 +27,10 @@ from PyQt5.QtWidgets import (
 )
 
 from config.config import UI
-from lib.core.render.backends.qt.drawing.colors import COLORS, UI_THEME
 from lib.core.render.backends.qt.runtime.font import get_cmd_font, get_ui_font, get_digit_font
 from lib.core.render.visuals.panel_visuals import build_panel_shell_visual
 from lib.core.render.visuals.types import Rect
-from lib.core.render.backends.qt.drawing.draw_backend import QtDrawBackend
+from lib.script.ui.render_bridge import create_draw_backend, qt_color
 from config.scale import scale_px, scale_style_px
 from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import get_event_center, EventType, Event
@@ -115,7 +114,7 @@ class _TitleButton(QPushButton):
     def __init__(self, text: str, hover_bg: QColor, parent=None, custom_font=None):
         super().__init__(text, parent)
         self._hover_bg   = hover_bg
-        self._normal_bg  = COLORS['pink']
+        self._normal_bg  = qt_color('pink')
         self._hovered    = False
         font = custom_font if custom_font is not None else get_ui_font(size=scale_px(9))
         self.setFont(font)
@@ -126,11 +125,11 @@ class _TitleButton(QPushButton):
 
     def _refresh_style(self, hovered: bool):
         bg     = _hex(self._hover_bg) if hovered else _hex(self._normal_bg)
-        border = _hex(COLORS['black'])          # ← 黑色边框
+        border = qt_color('black').name()          # ← 黑色边框
         self.setStyleSheet(
             f"QPushButton {{"
             f"  background: {bg};"
-            f"  color: {_hex(COLORS['black'])};"
+            f"  color: {qt_color('black').name()};"
             f"  border: {scale_px(1, min_abs=1)}px solid {border};"
             f"  padding: 0px;"
             f"}}"
@@ -163,7 +162,7 @@ class _CloseButton(_TitleButton):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, True)
         pen_w = max(2, scale_px(2, min_abs=2))
-        pen = QPen(COLORS['black'], pen_w, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+        pen = QPen(qt_color('black'), pen_w, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
         painter.setPen(pen)
         m = max(5, scale_px(5, min_abs=5))
         r = self.rect().adjusted(m, m, -m, -m)
@@ -223,7 +222,7 @@ class CmdWindow(QWidget):
 
         # 可见性
         self._visible = False
-        self._draw_backend = QtDrawBackend()
+        self._draw_backend = create_draw_backend()
 
         # 命令历史
         self._history:     deque[str] = deque(maxlen=self._HISTORY_MAX)
@@ -282,7 +281,7 @@ class CmdWindow(QWidget):
         # Spinner / 状态标签
         self._spinner_label = QLabel(self._SPINNER_FRAMES[0], title_widget)
         self._spinner_label.setFont(get_ui_font(size=scale_px(11)))
-        self._spinner_label.setStyleSheet(f'color: {_hex(COLORS["cyan"])};')
+        self._spinner_label.setStyleSheet(f'color: {qt_color("cyan").name()};')
         self._spinner_label.setFixedWidth(scale_px(14))
         self._spinner_label.setVisible(False)
         title_layout.addWidget(self._spinner_label)
@@ -290,7 +289,7 @@ class CmdWindow(QWidget):
         # 标题文字：拉海洛粗体，深粉色水印风格
         wm_font = get_digit_font(size=scale_px(16))
         wm_font.setBold(True)
-        wm_color = QColor(UI_THEME['deep_pink'])
+        wm_color = qt_color('deep_pink')
         wm_color.setAlpha(210)
         title_label = QLabel('Command Line', title_widget)
         title_label.setFont(wm_font)
@@ -303,13 +302,13 @@ class CmdWindow(QWidget):
 
         # 「CLR」清空按钮：拉海洛字体
         clr_font = get_digit_font(size=scale_px(9))
-        btn_clr = _TitleButton('CLR', UI_THEME['deep_cyan'], title_widget, custom_font=clr_font)
+        btn_clr = _TitleButton('CLR', qt_color('deep_cyan'), title_widget, custom_font=clr_font)
         btn_clr._description = '清空输出'          # 项目 tooltip 系统
         btn_clr.clicked.connect(self._on_clear)
         title_layout.addWidget(btn_clr)
 
         # 关闭按钮：绘制型 × 符号，更粗更醒目
-        btn_close = _CloseButton(UI_THEME['deep_pink'], title_widget)
+        btn_close = _CloseButton(qt_color('deep_pink'), title_widget)
         btn_close._description = '关闭窗口'        # 项目 tooltip 系统
         btn_close.clicked.connect(self._hide_window)
         title_layout.addWidget(btn_close)
@@ -322,11 +321,11 @@ class CmdWindow(QWidget):
         self._output.setFont(get_cmd_font())
         self._output.setStyleSheet(scale_style_px(f"""
             QTextEdit {{
-                background: {_hex(COLORS['black'])};
-                color: {_hex(COLORS['cyan'])};
-                border: 2px solid {_hex(COLORS['cyan'])};
+                background: {qt_color('black').name()};
+                color: {qt_color('cyan').name()};
+                border: 2px solid {qt_color('cyan').name()};
                 padding: 4px;
-                selection-background-color: {_hex(UI_THEME['deep_cyan'])};
+                selection-background-color: {qt_color('deep_cyan').name()};
             }}
             QScrollBar:vertical {{
                 background: transparent;
@@ -334,7 +333,7 @@ class CmdWindow(QWidget):
                 border: none;
             }}
             QScrollBar::handle:vertical {{
-                background: {_hex(UI_THEME['deep_cyan'])};
+                background: {qt_color('deep_cyan').name()};
                 min-height: 20px;
                 border-radius: 3px;
             }}
@@ -354,9 +353,9 @@ class CmdWindow(QWidget):
         self._input.setFont(get_cmd_font())
         self._input.setStyleSheet(scale_style_px(f"""
             QLineEdit {{
-                background: {_hex(COLORS['black'])};
-                color: {_hex(COLORS['cyan'])};
-                border: 2px solid {_hex(COLORS['pink'])};
+                background: {qt_color('black').name()};
+                color: {qt_color('cyan').name()};
+                border: 2px solid {qt_color('pink').name()};
                 padding: 2px 6px;
             }}
         """))

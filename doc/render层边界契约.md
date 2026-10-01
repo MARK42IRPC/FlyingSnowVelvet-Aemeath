@@ -52,8 +52,8 @@ Vulkan 在本文档生效时只是 `registry.py` 里的一条未启用描述符�
 
 **档位 A：绘制执行（`backends/*/drawing/`）**
 
-- 只允许被 `router.py` 引用；
-- 不得导入 `lib/script`；
+- 只允许被 `router.py`、后端自带窗口，以及 `lib/script/ui/render_bridge.py` 这一个 UI 侧落点引用；
+- 不得导入 `lib/script`（`render_bridge.py` 是 UI 侧的解析/转发层，不在本档内，故它引用本档不算反向依赖）；
 - 不得复制产品颜色、字号、间距、圆角、阴影或效果常量；
 - 不得反向读取业务对象、页面状态或 `config.config_ui` 来补全视觉信息；
 - 子目录之间不得互相导入。
@@ -173,7 +173,8 @@ DX 保持未切分：DX 仍是 `available=False` 的实验实现，没有第二�
   `test_drawing_tier_is_reachable_only_from_the_router_and_backend_windows` 与
   `test_qt_runtime_tier_is_not_named_by_business_or_ui_code` 各自维护一份现存引用方清单：
   删除条目（迁移到共享 presenter 或后端中立协议）会通过，新增条目会失败。
-- 基线数字（2026-10-01）：`lib/script/ui` 中 31 个文件仍直接引用 `drawing/`，51 个仍以具体路径引用 `runtime/`。
+  清单同时断言「基线里的文件已不再违规」就必须删掉条目，避免清单腐烂成许可。
+- 基线数字（2026-10-01，第二轮结束时）：`lib/script/ui` 中 31 个文件仍直接引用 `drawing/`，51 个仍以具体路径引用 `runtime/`。
   这些是迁移债，不是新许可；清单的注释里写明了迁移方向。
 
 同轮修掉的搬迁副作用：
@@ -185,5 +186,43 @@ DX 保持未切分：DX 仍是 `available=False` 的实验实现，没有第二�
 验证：
 
 - `py -3 -m unittest discover -s tests -p "test_*.py" -q`：2035 通过（1 例 `tests.test_dsh_office_sidecar` 在满负载下超时，单跑通过，属既有环境抖动）。
+- `py -3 -m unittest discover -s tests/dx -p "test_*.py" -q`：122 通过、7 跳过。
+- `py -3 -m ruff check lib config scripts tests` 归零；`py -3 -m compileall -q config lib scripts tests` 通过。
+
+## 10. 第三轮执行记录（UI 侧绘制落点收敛）
+
+本节记录在上一轮之后把档位 A 的 UI 侧引用清零的过程。它同样不改视觉语义，只改控件的取色/取点/取绘制实现的方式。
+
+**新增 `lib/script/ui/render_bridge.py` 作为唯一的 UI 侧落点。** 控件不再各自 `import lib.core.render.backends.qt.drawing.*`，
+而是向这一层要能力：
+
+- `create_draw_backend()`：已配置后端时取 registry 里的绘制实现；未配置时（控件单元测试、隔离 helper）直接构造 Qt 实现。
+  回退到空实现是刻意排除的：Qt 是产品唯一受支持后端，控件像素断言必须画在真实实现上，空实现会把回归伪装成“通过”。
+- `create_component_layer()` / `create_component_layer_request()`：控件自用的绘制回调层（排序与注册后端无关，只有回调是 Qt）。
+- `qimage_from_raster_frame()`：核心 RGBA 帧转 QWidget 可直接绘制的图像对象。
+- `qt_color(token)` / `qt_color_name(token)` / `ensure_qcolor(value)`：主题色的 Qt 表示。色板事实源仍是
+  `lib/core/render/visuals/palette.py`（`COLORS` / `UI_THEME`），本层只做 `Color -> QColor` 的边界转换。
+- `qpoint_from_point(value)`：锚点/坐标载荷转 `QPoint`。
+
+**落地结果（2026-10-01）：** `lib/script/ui` 里对 `drawing/` 的直接引用从 31 个文件降到 **0**；
+基线集合 `frozen_ui_draw_importers` 随之清空，测试改为断言它保持为空。保留的例外只有一处：
+官方游戏包 v1 的控件沿用 Qt 页面约定（见 [Qt 边界契约](Qt边界契约.md) 第 2 节）。
+
+**没有做的事（避免误读）：** `registry.py` 没有被“顺手”扩成万能注册表。
+`create_component_layer`、`create_component_layer_request`、`convert_raster_frame`、`register_*_factory`、
+`configure_widget_render_factories` 这些名字**不存在**，也不应被复活——控件需要的解析/转发都留在 `render_bridge.py`，
+`registry.py` 只保留「后端装进来之后，服务从哪里取」。
+
+**同轮修正的一个真实回归：** 一度让控件改走 `create_draw_backend()` 并回退到空实现，导致 6 个像素比对测试
+（`test_bubble_visual`、`test_forum_color_picker`、`test_qr_dialog_shares_chrome_and_theme`、`test_workbench_window` 等）
+静默画不出东西。现在的落点明确在未配置后端时回退到 Qt 实现，就是本次修正的结果。
+
+**同轮新增的边界断言：** 控件直接 `import PyQt5` 的名单冻结在 `frozen_ui_qt_importers`（73 个文件，只减不增）。
+控件本身是 `QWidget`，这份清单是产品事实，但它的规模必须可审计：新增控件直接写字面 `PyQt5` 会被叫停，
+必须显式登记并说明理由。真正会随架构演进缩小的是上面那份“直接引用 `drawing/`”的清单。
+
+验证：
+
+- `py -3 -m unittest discover -s tests -p "test_*.py" -q`：2035 通过、10 跳过。
 - `py -3 -m unittest discover -s tests/dx -p "test_*.py" -q`：122 通过、7 跳过。
 - `py -3 -m ruff check lib config scripts tests` 归零；`py -3 -m compileall -q config lib scripts tests` 通过。

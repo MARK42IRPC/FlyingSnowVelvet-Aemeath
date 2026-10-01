@@ -21,8 +21,7 @@ from lib.core.render.backends.qt.runtime.widget_anchors import (
     get_anchor_point as resolve_anchor_point,
     publish_widget_anchor_response,
 )
-from lib.core.render.backends.qt.drawing.window import coerce_qpoint
-from lib.core.render.backends.qt.drawing.draw_backend import QtDrawBackend
+from lib.script.ui.render_bridge import create_draw_backend, qpoint_from_point
 from lib.core.render.visuals.application_visuals import (
     BubbleVisualDescription,
     build_bubble_visual,
@@ -111,7 +110,7 @@ class Bubble(QWidget):
         self._font.setBold(True)
         self._digit_font = get_digit_font()
         self._text_metrics = QtTextMetrics(self._font, self._digit_font)
-        self._draw_backend = QtDrawBackend()
+        self._draw_backend = create_draw_backend()
         self._visual: BubbleVisualDescription | None = None
         self._bug_sound = AmsBugSound()
 
@@ -227,7 +226,7 @@ class Bubble(QWidget):
         # 2. pet_window 移动时的全局锚点更新（ui_id='all'）
         if ui_id == self._ui_id:
             # 专门针对此 UI 组件的锚点响应
-            new_anchor_point = coerce_qpoint(event.data.get('anchor_point'))
+            new_anchor_point = qpoint_from_point(event.data.get('anchor_point'))
             if new_anchor_point is None:
                 return
             if self._anchor_point != new_anchor_point:
@@ -237,7 +236,7 @@ class Bubble(QWidget):
             # pet_window 移动时的全局锚点更新
             if anchor_id == 'all':
                 # pet_window 的新位置（左上角坐标）
-                pet_pos = coerce_qpoint(event.data.get('anchor_point'))
+                pet_pos = qpoint_from_point(event.data.get('anchor_point'))
                 if pet_pos is None:
                     return
                 # 获取 pet_window 的尺寸来计算 top 锚点

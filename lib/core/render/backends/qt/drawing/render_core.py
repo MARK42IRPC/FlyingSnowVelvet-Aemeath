@@ -1,4 +1,10 @@
-"""Qt-local painter callback queue for toolkit-owned windows."""
+"""Qt-local painter callback queue for toolkit-owned windows.
+
+Two shapes live here. `QtRenderCore`/`QtRenderItem`/`QtRenderRequest` are the
+original names, used by the drawing tier itself. `QtComponentLayer` is the
+backend-neutral name product widgets use (`lib/core/render/registry.py`):
+registration and ordering are toolkit-neutral, only `paintEvent` is Qt.
+"""
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -90,3 +96,10 @@ class QtRenderCore:
     def _next_order(self) -> int:
         self._seq += 1
         return self._seq
+
+
+#: Backend-neutral alias for product widgets: the ordering/registration logic is
+#: not Qt-specific, only the painter callback that reaches it is.
+QtComponentLayer = QtRenderCore
+QtComponentLayerItem = QtRenderItem
+QtComponentLayerRequest = QtRenderRequest
