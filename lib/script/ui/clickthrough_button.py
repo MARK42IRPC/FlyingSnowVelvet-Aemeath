@@ -4,13 +4,13 @@ from PyQt5.QtCore import Qt, QPropertyAnimation, QEasingCurve, QPoint
 from PyQt5.QtGui import QColor, QPainter
 
 from config.config import UI, TIMEOUTS
-from lib.core.render.backends.qt.font import get_ui_font
+from lib.core.render.backends.qt.runtime.font import get_ui_font
 from config.scale import scale_px
 from config.tooltip_config import TOOLTIPS
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.render.visuals.types import Point
 from lib.core.unified_draw import Layer, get_layer_manager
-from lib.core.render.backends.qt.screen import (
+from lib.core.render.backends.qt.runtime.screen import (
     clamp_rect_position,
     move_widget_to_global,
     widget_global_rect,
@@ -20,11 +20,11 @@ from lib.core.anchor_utils import (
     animate_opacity,
     refresh_last_activity,
 )
-from lib.core.render.backends.qt.widget_anchors import (
+from lib.core.render.backends.qt.runtime.widget_anchors import (
     get_anchor_point as resolve_anchor_point,
     publish_widget_anchor_response,
 )
-from lib.core.render.backends.qt.window import coerce_qpoint
+from lib.core.render.backends.qt.drawing.window import coerce_qpoint
 from lib.script.ui.rect_action_button_style import paint_rect_action_button
 
 

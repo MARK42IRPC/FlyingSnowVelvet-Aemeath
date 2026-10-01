@@ -19,8 +19,8 @@ from PyQt5.QtWidgets import QApplication
 from lib.core.event.center import Event, EventType
 from lib.core.render.visuals.commands import TextCommand
 from lib.core.render.visuals.visuals import build_effect_batch
-from lib.core.render.backends.qt.effect_system import EffectOverlay
-from lib.core.render.backends.qt.font import init_font_config
+from lib.core.render.backends.qt.runtime.effect_system import EffectOverlay
+from lib.core.render.backends.qt.runtime.font import init_font_config
 from lib.script.effects.flash_text_effect import FlashTextEffectScript
 
 

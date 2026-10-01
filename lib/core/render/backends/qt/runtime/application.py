@@ -4,7 +4,7 @@
 must also stay drivable without one, so every lookup goes through this single
 getter instead of calling ``QApplication.instance()`` at each site. Tests
 install a stand-in application object and restore the default afterwards,
-the same way :class:`lib.core.render.backends.qt.screen_capture.QtScreenCapture` takes
+the same way :class:`lib.core.render.backends.qt.runtime.screen_capture.QtScreenCapture` takes
 an ``application_getter``.
 
 This module lives in ``lib/core/render/backends/qt`` and may import PyQt5.

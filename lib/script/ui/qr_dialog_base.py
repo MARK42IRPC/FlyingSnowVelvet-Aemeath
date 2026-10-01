@@ -19,8 +19,8 @@ from lib.core.render.visuals.application_visuals import (
 )
 from lib.core.render.visuals.image_loader import load_image_resource
 from lib.core.render.visuals.resources import ImageResource
-from lib.core.render.backends.qt.draw_backend import QtDrawBackend
-from lib.core.render.backends.qt.screen import clamp_rect_position, get_screen_geometry_for_point
+from lib.core.render.backends.qt.drawing.draw_backend import QtDrawBackend
+from lib.core.render.backends.qt.runtime.screen import clamp_rect_position, get_screen_geometry_for_point
 from lib.core.unified_draw import Layer, get_layer_manager
 from lib.script.ui.workbench_floating import WorkbenchFloatingWindow
 

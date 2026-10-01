@@ -1,13 +1,11 @@
-"""`qt_bridge` must reach the live QApplication through one injectable getter."""
+"""Qt render backend must reach the live QApplication through one injectable getter."""
 from __future__ import annotations
 
 import unittest
 
-from lib.core.render.backends.qt.application import get_application, set_application_getter
-from lib.core.render.backends.qt import font as qt_font
-from lib.core.render.backends.qt import screen as qt_screen
-
-
+from lib.core.render.backends.qt.runtime.application import get_application, set_application_getter
+from lib.core.render.backends.qt.runtime import font as qt_font
+from lib.core.render.backends.qt.runtime import screen as qt_screen
 class _FakeApplication:
     def __init__(self, screens=(), primary=None):
         self._screens = list(screens)
@@ -76,13 +74,16 @@ class QtApplicationSeamTests(unittest.TestCase):
 
         self.assertEqual((rect.x, rect.y, rect.width, rect.height), (0, 0, 1824, 768))
 
-    def test_qt_bridge_looks_up_the_application_through_the_seam(self):
+    def test_qt_backend_looks_up_the_application_through_the_seam(self):
         """只允许 `application.py` 直接调 `QApplication.instance()`。"""
         from pathlib import Path
 
-        bridge = Path(__file__).resolve().parents[1] / "lib" / "core" / "qt_bridge"
+        qt_backend = (
+            Path(__file__).resolve().parents[1]
+            / "lib" / "core" / "render" / "backends" / "qt"
+        )
         offenders = {}
-        for path in sorted(bridge.glob("*.py")):
+        for path in sorted(qt_backend.glob("*.py")):
             if path.name == "application.py":
                 continue
             source = path.read_text(encoding="utf-8-sig")
@@ -91,7 +92,7 @@ class QtApplicationSeamTests(unittest.TestCase):
         self.assertEqual(
             offenders,
             {},
-            "qt_bridge 应走 application.get_application()，而不是直接取 QApplication.instance()",
+            "Qt 后端应走 application.get_application()，而不是直接取 QApplication.instance()",
         )
 
     def test_screen_query_falls_back_without_an_application(self):

@@ -33,7 +33,7 @@ def _ensure_qt_plugin_paths(logger: object) -> None:
 
 
 def _default_application_icon_path() -> Path:
-    return Path(__file__).resolve().parents[5] / "resc" / "icon.ico"
+    return Path(__file__).resolve().parents[6] / "resc" / "icon.ico"
 
 
 def _set_application_icon(application: QApplication, logger: object) -> None:
@@ -64,7 +64,7 @@ class QtApplicationRuntime(ApplicationRuntime):
 
         app = QApplication(sys.argv if argv is None else argv)
         app.setQuitOnLastWindowClosed(False)
-        from lib.core.render.backends.qt.windows_app_id import set_windows_app_user_model_id
+        from lib.core.render.backends.qt.runtime.windows_app_id import set_windows_app_user_model_id
 
         set_windows_app_user_model_id()
         _set_application_icon(app, logger)

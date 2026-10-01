@@ -1037,7 +1037,7 @@ class ToolDispatcher:
         if self._defer is not None:
             self._defer(delay_ms, callback)
             return
-        from lib.core.desktop_backend import get_deferred_call
+        from lib.core.render.registry import get_deferred_call
 
         deferred_call = get_deferred_call()
         if deferred_call is not None:

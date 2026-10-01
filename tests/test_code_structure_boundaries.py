@@ -104,9 +104,13 @@ class CodeStructureBoundaryTests(unittest.TestCase):
             "lib.core.render.backends.dx",
             "config.config_ui",
         )
+        scanned = sorted((_CORE / "render" / "visuals").glob("*.py"))
+        #: 目录改名后这里曾指向已不存在的 graphics，白名单静默失效；
+        #: 扫描集合非空才说明这条后端中立断言仍在生效。
+        self.assertGreater(len(scanned), 20)
         violations = []
 
-        for path in sorted((_CORE / "graphics").glob("*.py")):
+        for path in scanned:
             tree = ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
             for node in ast.walk(tree):
                 if isinstance(node, ast.Import):
@@ -185,6 +189,82 @@ class CodeStructureBoundaryTests(unittest.TestCase):
             item for item in found if any(part.startswith("_") for part in item[1].split(".")[3:])
         )
         self.assertEqual(private, [], "私有子模块不得被 ui 依赖")
+
+
+    def test_render_layer_has_the_documented_root_modules(self):
+        """`lib/core/render/` 的根层形状与 `doc/render层边界契约.md` 第 2 节一致。
+
+        规则要能写成可执行断言，前提是解析/转发/路由各自有稳定的落点。这里同时
+        钉住旧路径不复活：`lib/core/backend_router.py` 与 `lib/core/desktop_backend.py`
+        是搬迁前的落点，回来一个就会重新把「只有 router.py 做跨后端判定」变成空话。
+        """
+        repo_root = Path(__file__).resolve().parents[1]
+        render = repo_root / "lib" / "core" / "render"
+
+        for relative in (
+            "router.py",
+            "registry.py",
+            "backends/base.py",
+            "visuals/__init__.py",
+            "backends/qt/__init__.py",
+            "backends/qt/drawing/__init__.py",
+            "backends/qt/runtime/__init__.py",
+            "backends/dx/__init__.py",
+        ):
+            self.assertTrue((render / relative).is_file(), relative)
+
+        for retired in ("backend_router.py", "desktop_backend.py"):
+            self.assertFalse(
+                (repo_root / "lib" / "core" / retired).exists(),
+                f"旧路径 lib/core/{retired} 不得恢复；路由与注册表已迁入 render/",
+            )
+
+    def test_render_layer_never_imports_product_modules(self):
+        """`lib/core/render/` 整体不得导入 `lib.script`。
+
+        绘制层与平台能力层都被允许被业务层引用，但方向不能反过来：一旦 render
+        反向 import 业务模块，它就不再是可被单独替换的后端实现。
+        """
+        repo_root = Path(__file__).resolve().parents[1]
+        render = repo_root / "lib" / "core" / "render"
+        violations = []
+
+        for path in sorted(render.rglob("*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    names = [alias.name for alias in node.names]
+                elif isinstance(node, ast.ImportFrom):
+                    names = [node.module or ""]
+                else:
+                    continue
+                for name in names:
+                    if name == "lib.script" or name.startswith("lib.script."):
+                        violations.append(
+                            f"{path.relative_to(repo_root).as_posix()}:{node.lineno}:{name}"
+                        )
+
+        self.assertEqual(violations, [])
+
+    def test_qt_drawing_tier_stays_out_of_the_runtime_tier(self):
+        """`backends/qt/drawing/` 的模块集合是显式的，不随每次搬迁漂移。
+
+        档位 A 的判定依赖「哪些文件算绘制执行」有一个可枚举的答案；把 runtime
+        的模块塞进 drawing（或反过来）会让边界测试的清单失去意义。
+        """
+        repo_root = Path(__file__).resolve().parents[1]
+        qt = repo_root / "lib" / "core" / "render" / "backends" / "qt"
+        drawing = {p.name for p in (qt / "drawing").glob("*.py")}
+        runtime = {p.name for p in (qt / "runtime").glob("*.py")}
+
+        self.assertEqual(
+            drawing,
+            {"__init__.py", "draw_backend.py", "render_core.py", "gif_loader.py", "colors.py", "window.py"},
+        )
+        #: 两档不得有重叠模块；`__init__.py` 是包标记，不算归属。
+        self.assertEqual((drawing & runtime) - {"__init__.py"}, set())
+        self.assertGreater(len(runtime), 20)
+
 
 
 if __name__ == "__main__":

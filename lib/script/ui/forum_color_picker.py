@@ -26,7 +26,7 @@ from lib.core.render.visuals.media_panel_visuals import (
 from lib.core.render.visuals.panel_visuals import UI_THEME, slider_handle_commands
 from lib.core.render.visuals.types import Rect
 from lib.core.layer import Layer
-from lib.core.render.backends.qt.draw_backend import QtDrawBackend
+from lib.core.render.backends.qt.drawing.draw_backend import QtDrawBackend
 from lib.script.ui.forum_style import forum_picker_track_color
 
 #: 滑条高度直接取共享滑条（音乐进度条、音响音量条）的高度。三层外框和竖把手的比例都

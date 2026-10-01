@@ -8,8 +8,8 @@ from dataclasses import replace
 from config.config import GIF_FILES, DRAW, ANIMATION
 from lib.core.application_runtime import ApplicationRuntime
 from lib.core.application_ui import ApplicationUiHost
-from lib.core.backend_router import BackendSelection, get_active_backend_selection
-from lib.core.desktop_backend import (
+from lib.core.render.router import BackendSelection, get_active_backend_selection
+from lib.core.render.registry import (
     DesktopBackendBundle,
     get_desktop_backend_bundle,
 )

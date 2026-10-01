@@ -3,7 +3,7 @@ import unittest
 from PyQt5.QtGui import QColor, QImage
 
 from lib.core.render.visuals.resources import RasterFrame
-from lib.core.render.backends.qt.gif_loader import flip_frame, qimage_from_raster_frame, scale_frame
+from lib.core.render.backends.qt.drawing.gif_loader import flip_frame, qimage_from_raster_frame, scale_frame
 
 
 class QtGifLoaderTests(unittest.TestCase):

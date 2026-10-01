@@ -22,12 +22,12 @@ from lib.core.layer_manager import get_layer_manager
 from lib.core.logger import get_logger
 from lib.core.render.visuals.resources import ImageResource
 from lib.core.render.visuals.visuals import build_effect_batch, load_effect_resource, resolve_effect_font
-from lib.core.render.backends.qt.draw_backend import QtDrawBackend
-from lib.core.render.backends.qt.overlay_policy import enable_no_activate, resolve_hide_linger_ms
+from lib.core.render.backends.qt.drawing.draw_backend import QtDrawBackend
+from lib.core.render.backends.qt.runtime.overlay_policy import enable_no_activate, resolve_hide_linger_ms
 
 
 _logger = get_logger(__name__)
-_PROJECT_ROOT = Path(__file__).resolve().parents[5]
+_PROJECT_ROOT = Path(__file__).resolve().parents[6]
 
 # 资源路径 -> 已解码（可选羽化）的 ImageResource。条目只增不减会随长跑慢慢
 # 吃住内存，因此按「最近使用」保留有限条数；与 forum_texture 的纹理缓存同一思路。

@@ -69,7 +69,7 @@ class MusicDxBoundaryTests(unittest.TestCase):
             Path(__file__).resolve().parents[1]
             / "lib" / "script" / "cloudmusic" / "manager.py"
         ).read_text(encoding="utf-8-sig")
-        self.assertNotIn("qt_bridge", source)
+        self.assertNotIn("lib.core.render.backends.qt", source)
         self.assertNotIn("pyqtSignal", source)
         # Qt 信号名字是 Qt 播放器才有的 API，管理器应该只调方法。
         for signal_name in (

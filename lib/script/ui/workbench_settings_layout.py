@@ -23,7 +23,7 @@ from PyQt5.QtWidgets import (
 
 from lib.core.event.center import Event, EventType, get_event_center
 from lib.core.logger import get_logger
-from lib.core.render.backends.qt.font import get_ui_font
+from lib.core.render.backends.qt.runtime.font import get_ui_font
 from config.scale import scale_px
 
 _logger = get_logger(__name__)

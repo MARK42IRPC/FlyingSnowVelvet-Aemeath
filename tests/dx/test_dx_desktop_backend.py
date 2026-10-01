@@ -141,7 +141,7 @@ class DxDesktopBackendTests(unittest.TestCase):
                 configure_dx_desktop_backend,
                 get_dx_desktop_backend,
             )
-            from lib.core.desktop_backend import get_desktop_backend_bundle
+            from lib.core.render.registry import get_desktop_backend_bundle
             from lib.core.world_objects import get_world_object_backend
 
             configure_dx_desktop_backend(warp=True)
@@ -172,7 +172,7 @@ class DxDesktopBackendTests(unittest.TestCase):
         repo_root = Path(__file__).resolve().parents[2]
         script = textwrap.dedent(
             """
-            from lib.core.desktop_backend import get_desktop_backend_bundle
+            from lib.core.render.registry import get_desktop_backend_bundle
             from lib.core.render.backends.dx.desktop_backend import (
                 cleanup_dx_desktop_backend,
                 configure_dx_desktop_backend,
@@ -210,7 +210,7 @@ class DxDesktopBackendTests(unittest.TestCase):
         repo_root = Path(__file__).resolve().parents[2]
         script = textwrap.dedent(
             """
-            from lib.core.desktop_backend import (
+            from lib.core.render.registry import (
                 BackendAlreadyConfiguredError,
                 get_desktop_backend_bundle,
             )
@@ -255,7 +255,7 @@ class DxDesktopBackendTests(unittest.TestCase):
             from unittest.mock import patch
 
             import lib.core.render.backends.dx.desktop_backend as dx_backend
-            from lib.core.desktop_backend import get_desktop_backend_bundle
+            from lib.core.render.registry import get_desktop_backend_bundle
             from lib.script.app.qt_backend_bootstrap import _configure_qt_backend
 
             with patch.object(
@@ -330,7 +330,7 @@ class DxDesktopBackendTests(unittest.TestCase):
                 return original_import(name, *args, **kwargs)
             builtins.__import__ = blocked
 
-            from lib.core.backend_router import BackendSelection
+            from lib.core.render.router import BackendSelection
             from lib.core.render.backends.dx.desktop_backend import DxDesktopBackend
             from lib.script import main as app_main
 

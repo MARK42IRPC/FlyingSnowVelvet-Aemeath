@@ -4,7 +4,7 @@ from PyQt5.QtCore import Qt, QPropertyAnimation, QEasingCurve, QPoint
 from PyQt5.QtGui import QPainter, QCursor
 
 from config.config import UI, BUBBLE_CONFIG
-from lib.core.render.backends.qt.font import (
+from lib.core.render.backends.qt.runtime.font import (
     get_ui_font,
     get_digit_font,
 )
@@ -13,23 +13,23 @@ from config.tooltip_config import TOOLTIPS
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.unified_draw import Layer, get_layer_manager
 from lib.core.logger import get_logger
-from lib.core.render.backends.qt.screen import get_screen_geometry_for_point
+from lib.core.render.backends.qt.runtime.screen import get_screen_geometry_for_point
 from lib.core.anchor_utils import (
     apply_ui_opacity,
 )
-from lib.core.render.backends.qt.widget_anchors import (
+from lib.core.render.backends.qt.runtime.widget_anchors import (
     get_anchor_point as resolve_anchor_point,
     publish_widget_anchor_response,
 )
-from lib.core.render.backends.qt.window import coerce_qpoint
-from lib.core.render.backends.qt.draw_backend import QtDrawBackend
+from lib.core.render.backends.qt.drawing.window import coerce_qpoint
+from lib.core.render.backends.qt.drawing.draw_backend import QtDrawBackend
 from lib.core.render.visuals.application_visuals import (
     BubbleVisualDescription,
     build_bubble_visual,
     resolve_bubble_geometry,
 )
 from lib.core.render.visuals.types import Point, Rect, Size
-from lib.core.render.backends.qt.text_metrics import QtTextMetrics
+from lib.core.render.backends.qt.runtime.text_metrics import QtTextMetrics
 from lib.script.voice.ams_bug import AmsBugSound
 
 _logger = get_logger(__name__)

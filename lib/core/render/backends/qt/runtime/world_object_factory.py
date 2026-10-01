@@ -6,7 +6,7 @@ from importlib import import_module
 from typing import Callable
 
 from lib.core.render.visuals.types import Point
-from lib.core.render.backends.qt.window import to_qpoint
+from lib.core.render.backends.qt.drawing.window import to_qpoint
 
 
 @lru_cache(maxsize=None)

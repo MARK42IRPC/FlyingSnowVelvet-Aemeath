@@ -84,8 +84,8 @@ class ApplicationRuntimeContractTests(unittest.TestCase):
 
             builtins.__import__ = blocked_import
 
-            from lib.core.backend_router import BackendSelection
-            from lib.core.desktop_backend import DesktopBackendBundle
+            from lib.core.render.router import BackendSelection
+            from lib.core.render.registry import DesktopBackendBundle
             from lib.core.render.visuals.types import Rect
             from lib.script import main as app_main
 
@@ -173,7 +173,7 @@ class ApplicationRuntimeContractTests(unittest.TestCase):
 
             os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-            from lib.core.render.backends.qt.application_runtime import QtApplicationRuntime
+            from lib.core.render.backends.qt.runtime.application_runtime import QtApplicationRuntime
 
             class Logger:
                 def info(self, *args, **kwargs): pass

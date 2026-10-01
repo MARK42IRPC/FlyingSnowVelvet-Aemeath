@@ -17,9 +17,9 @@ from lib.core.render.visuals.visuals import build_particle_batch
 from lib.core.layer import Layer, normalize_layer
 from lib.core.layer_manager import get_layer_manager
 from lib.core.logger import get_logger
-from lib.core.render.backends.qt.screen import get_virtual_screen_geometry
-from lib.core.render.backends.qt.draw_backend import QtDrawBackend
-from lib.core.render.backends.qt.overlay_policy import enable_no_activate, resolve_hide_linger_ms
+from lib.core.render.backends.qt.runtime.screen import get_virtual_screen_geometry
+from lib.core.render.backends.qt.drawing.draw_backend import QtDrawBackend
+from lib.core.render.backends.qt.runtime.overlay_policy import enable_no_activate, resolve_hide_linger_ms
 
 _ASYNC_PARTICLE_UPDATE_THRESHOLD = 1200
 _PARTICLE_TILE_SIZE = 128

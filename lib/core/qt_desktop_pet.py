@@ -98,7 +98,7 @@ if __name__ == '__main__':
         from lib.script.app.qt_backend_bootstrap import configure_selected_desktop_backend
 
         backend_selection = configure_selected_desktop_backend()
-        from lib.core.desktop_backend import get_desktop_backend_bundle
+        from lib.core.render.registry import get_desktop_backend_bundle
         from lib.script.main import main
         from lib.script.app.startup_cleanup import schedule_startup_cleanup
     except ModuleNotFoundError as e:

@@ -19,6 +19,12 @@
   真实字节——那里「判同」等于丢弃备份。
 - 福利 API 档的自动陪伴间隔固定为 6 分钟一次，设置面板不再提供这条滑条，改由一行说明
   交代原因。这一档的优先级高于游戏模式覆盖：公共接口有限流，间隔越短越容易被限流。
+- 渲染层目录收敛到 `lib/core/render/` 的三层：根层是后端中立的解析/转发/路由（`router.py` 选后端、
+  `registry.py` 装服务、`backends/base.py` 定义 `DesktopBackendBundle`），`visuals/` 是共享视觉事实源，
+  `backends/qt/` 再分 `drawing/`（命令到 QPainter 的执行）与 `runtime/`（窗口、输入、调度、字体、屏幕、
+  托盘、播放器等平台能力）。`lib/core/backend_router.py` 与 `lib/core/desktop_backend.py` 迁入根层，
+  旧路径不保留兼容壳。业务层与 `lib/script/ui` 对后端的引用面按「冻结基线，只减不增」的测试清单锁定，
+  新增直接引用会失败。DX 仍是 `available=False` 的实验实现，暂不切分 `drawing/`、`runtime/`。
 
 ### Fixed
 - 修复安装器在非空残留目录上必然失败：目标文件改用 `CREATE_ALWAYS`，残留文件/目录冲突

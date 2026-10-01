@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from lib.core.desktop_backend import (
+from lib.core.render.registry import (
     get_screen_for_point_provider,
     get_virtual_screen_provider,
 )

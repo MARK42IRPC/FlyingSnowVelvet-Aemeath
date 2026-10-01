@@ -26,7 +26,7 @@ from config.scale import scale_px
 from lib.core.event.center import EventType, get_event_center
 from lib.core.render.visuals.image_loader import decode_image_frames
 from lib.core.logger import get_logger
-from lib.core.render.backends.qt.gif_loader import qimage_from_raster_frame
+from lib.core.render.backends.qt.drawing.gif_loader import qimage_from_raster_frame
 from lib.script.ui.forum_markup import effect_tokens
 
 

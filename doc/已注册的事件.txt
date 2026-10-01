@@ -52,7 +52,7 @@
 
 [EFFECT_REQUEST]
 - payload: `effect_id`、`anchor_type`、`anchor_data`、`effect_options`；只允许嵌套纯数据，不允许 toolkit 对象
-- lib/core/render/backends/qt/effect_system.py -> self._on_effect_request [has unsubscribe]
+- lib/core/render/backends/qt/runtime/effect_system.py -> self._on_effect_request [has unsubscribe]
   发布方: lib/core/effect_utils.py
 
 [ENTITY_POSITION_REQUEST]
@@ -76,7 +76,7 @@
 [FRAME]
 - lib/core/pet_window.py -> self._handle_frame_event
 - lib/core/physics.py -> self._on_frame [has unsubscribe]
-- lib/core/render/backends/qt/particle_system.py -> self._on_frame [has unsubscribe]
+- lib/core/render/backends/qt/runtime/particle_system.py -> self._on_frame [has unsubscribe]
 - lib/script/obj-摩托/manager.py -> self._on_frame [has unsubscribe]
 - lib/script/ui/world_objects/motor.py -> self._on_frame_move [has unsubscribe]
 - lib/script/ui/world_objects/speaker.py -> self._on_frame_frequency [has unsubscribe]
@@ -277,7 +277,7 @@
   发布方: lib/script/cloudmusic/manager.py
 
 [PARTICLE_REQUEST]
-- lib/core/render/backends/qt/particle_system.py -> self._on_particle_request [has unsubscribe]
+- lib/core/render/backends/qt/runtime/particle_system.py -> self._on_particle_request [has unsubscribe]
   发布方: lib/script/ui/world_objects/snow_leopard.py, lib/script/ui/world_objects/snow_pile.py, lib/script/ui/world_objects/snowball.py, lib/script/cloudmusic/_mixin_events.py, lib/script/obj-雪堆/manager.py, lib/script/ui/_particle_helper.py, lib/script/ui/ai_settings_panel.py, lib/script/ui/bubble.py, lib/script/ui/chat_mode_button.py, lib/script/ui/command_hint_box.py, lib/script/ui/launch_wuwa_button.py, lib/script/ui/more_functions_button.py, lib/script/ui/playlist_panel.py, lib/script/ui/speaker_search_dialog.py, lib/script/ui/speaker_search_result_box.py, lib/script/ui/tray_menu.py
 
 [PET_TELEPORT]
@@ -373,7 +373,7 @@
 - lib/script/ui/scale_button.py -> self._on_anchor_response
 - lib/script/ui/speaker_control_buttons.py -> self._on_anchor_response [has unsubscribe]
 - lib/script/ui/speaker_search_result_box.py -> self._on_anchor_response
-  发布方: lib/core/pet_window.py, lib/core/render/backends/qt/widget_anchors.py, lib/script/ui/clickthrough_button.py, lib/script/ui/command_dialog.py, lib/script/ui/scale_button.py, lib/script/ui/speaker_search_dialog.py
+  发布方: lib/core/pet_window.py, lib/core/render/backends/qt/runtime/widget_anchors.py, lib/script/ui/clickthrough_button.py, lib/script/ui/command_dialog.py, lib/script/ui/scale_button.py, lib/script/ui/speaker_search_dialog.py
 
 [UI_CLICKTHROUGH_TOGGLE]
 - lib/core/pet_window.py -> self._handle_clickthrough_toggle
@@ -787,7 +787,7 @@
 
 [UI_ANCHOR_RESPONSE]
 - lib/core/pet_window.py
-- lib/core/render/backends/qt/widget_anchors.py
+- lib/core/render/backends/qt/runtime/widget_anchors.py
 - lib/script/ui/clickthrough_button.py
 - lib/script/ui/command_dialog.py
 - lib/script/ui/scale_button.py

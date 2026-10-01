@@ -5,7 +5,7 @@ from itertools import count
 
 from lib.core.render.visuals.image_loader import resize_image_resource
 from lib.core.render.visuals.types import Point, Rect
-from lib.core.render.backends.qt.world_object_factory import create_world_object
+from lib.core.render.backends.qt.runtime.world_object_factory import create_world_object
 from lib.core.world_objects import (
     WorldObjectBackend,
     WorldObjectMotion,

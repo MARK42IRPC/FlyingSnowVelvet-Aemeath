@@ -11,12 +11,12 @@ from PyQt5.QtCore import Qt, QPropertyAnimation, QEasingCurve, QPoint
 from PyQt5.QtGui import QPainter
 
 from config.config import CLOUD_MUSIC, UI
-from lib.core.render.backends.qt.font import get_ui_font
+from lib.core.render.backends.qt.runtime.font import get_ui_font
 from config.scale import scale_px
 from config.tooltip_config import TOOLTIPS
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.unified_draw import Layer, get_layer_manager
-from lib.core.render.backends.qt.screen import (
+from lib.core.render.backends.qt.runtime.screen import (
     clamp_rect_position,
     move_widget_to_global,
     widget_global_rect,

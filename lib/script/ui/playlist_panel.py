@@ -21,16 +21,16 @@ from PyQt5.QtGui import QPainter, QPen, QPolygonF, QCursor
 
 from config.config import UI
 from lib.core.render.visuals.media_panel_visuals import build_playlist_panel_visual
-from lib.core.render.backends.qt.draw_backend import QtDrawBackend
-from lib.core.render.backends.qt.font import get_ui_font, get_digit_font
-from lib.core.render.backends.qt.text_metrics import QtTextMetrics
+from lib.core.render.backends.qt.drawing.draw_backend import QtDrawBackend
+from lib.core.render.backends.qt.runtime.font import get_ui_font, get_digit_font
+from lib.core.render.backends.qt.runtime.text_metrics import QtTextMetrics
 from config.scale import scale_px
 from config.tooltip_config import TOOLTIPS
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.render.visuals.types import Point
 from lib.core.input.types import Key
 from lib.core.unified_draw import Layer, get_layer_manager
-from lib.core.render.backends.qt.screen import clamp_rect_position, get_screen_geometry_for_point
+from lib.core.render.backends.qt.runtime.screen import clamp_rect_position, get_screen_geometry_for_point
 from lib.core.anchor_utils import apply_ui_opacity
 from lib.core.world_objects import WorldObjectInstance
 from lib.script.music import get_music_service

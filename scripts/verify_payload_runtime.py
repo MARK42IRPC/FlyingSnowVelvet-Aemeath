@@ -9,7 +9,7 @@
 PYTHONHOME / PYTHONPATH / NODE_PATH / Qt 覆盖，PATH 只用包内 Python、包内 Qt bin 与系统
 目录，用户根指向临时目录，因此不会读写用户真正的 ``%SystemDrive%\\AemeathDeskPet``。
 Qt 插件路径显式指向包内 PyQt5 自带的 ``Qt5/plugins``：桌宠运行时会自己设
-（``lib/core/render/backends/qt/application_runtime.py`` 的 ``_ensure_qt_plugin_paths``），离屏自检
+（``lib/core/render/backends/qt/runtime/application_runtime.py`` 的 ``_ensure_qt_plugin_paths``），离屏自检
 没有那一步，缺了它连 ``qoffscreen.dll`` 都找不到。
 """
 

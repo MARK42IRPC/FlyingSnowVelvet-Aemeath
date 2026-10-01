@@ -8,16 +8,16 @@ from lib.core.render.visuals.speaker_band_visuals import BAND_SLIDER_GAP
 from config.scale import scale_px
 from config.tooltip_config import TOOLTIPS
 from lib.core.event.center import get_event_center, EventType, Event
-from lib.core.render.backends.qt.screen import clamp_rect_position
+from lib.core.render.backends.qt.runtime.screen import clamp_rect_position
 from lib.script.music import get_music_service
 from lib.core.anchor_utils import (
     animate_opacity,
 )
-from lib.core.render.backends.qt.widget_anchors import (
+from lib.core.render.backends.qt.runtime.widget_anchors import (
     get_anchor_point as resolve_anchor_point,
     publish_widget_anchor_response,
 )
-from lib.core.render.backends.qt.window import coerce_qpoint
+from lib.core.render.backends.qt.drawing.window import coerce_qpoint
 from lib.script.ui.speaker_menu_style import (
     _C_ACTION_TEXT,
     SpeakerActionButtonMixin,

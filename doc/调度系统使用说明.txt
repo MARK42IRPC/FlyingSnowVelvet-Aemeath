@@ -3,7 +3,7 @@
 一、核心实现
 - 文件：`lib/core/timing/manager.py`
 - 后端协议：`lib/core/timing/scheduler.py`
-- Qt 实现：`lib/core/render/backends/qt/scheduler.py`
+- Qt 实现：`lib/core/render/backends/qt/runtime/scheduler.py`
 - 对外入口：`lib/core/timing/__init__.py`
 - 核心类：`TimingManager`
 - 其他使用者：`ChatHandler` 的流式刷新/自动陪伴、`OllamaManager` 的周期探测

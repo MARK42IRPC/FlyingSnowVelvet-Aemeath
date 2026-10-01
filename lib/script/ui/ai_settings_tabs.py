@@ -9,8 +9,8 @@ from PyQt5.QtGui import QPainter
 from config.scale import scale_px
 from lib.core.render.visuals.panel_visuals import build_tab_bar_visual
 from lib.core.render.visuals.types import Size
-from lib.core.render.backends.qt.colors import UI_THEME
-from lib.core.render.backends.qt.draw_backend import QtDrawBackend
+from lib.core.render.backends.qt.drawing.colors import UI_THEME
+from lib.core.render.backends.qt.drawing.draw_backend import QtDrawBackend
 from lib.core.unified_draw import Layer, get_layer_manager
 
 

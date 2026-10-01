@@ -18,7 +18,7 @@ from PyQt5.QtGui import QColor, QPainter, QCursor
 from PyQt5.QtCore import pyqtSignal
 
 from config.config import UI, SPEAKER_SEARCH_UI, CLOUD_MUSIC
-from lib.core.render.backends.qt.font import get_ui_font
+from lib.core.render.backends.qt.runtime.font import get_ui_font
 from config.scale import scale_px, scale_style_px
 from config.tooltip_config import TOOLTIPS
 from lib.core.compute_hub import get_compute_hub
@@ -26,7 +26,7 @@ from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.render.visuals.types import Point
 from lib.core.world_objects import WorldObjectInstance
 from lib.core.unified_draw import Layer, get_layer_manager
-from lib.core.render.backends.qt.screen import clamp_rect_position
+from lib.core.render.backends.qt.runtime.screen import clamp_rect_position
 from lib.core.anchor_utils import apply_ui_opacity
 from lib.script.music import get_music_service
 from lib.script.music.track_text import first_artist_from_list, format_duration_text

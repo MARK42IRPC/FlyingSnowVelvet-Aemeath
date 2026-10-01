@@ -7,7 +7,7 @@ from lib.core.input.types import (
     MouseButtons,
     MouseInput,
 )
-from lib.core.render.backends.qt.input import keyboard_input_from_qt, mouse_input_from_qt
+from lib.core.render.backends.qt.runtime.input import keyboard_input_from_qt, mouse_input_from_qt
 
 
 class _MouseEvent:

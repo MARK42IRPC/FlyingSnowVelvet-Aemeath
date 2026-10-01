@@ -122,8 +122,8 @@ class LifecycleContractTests(unittest.TestCase):
             import sys
             from unittest.mock import patch
 
-            from lib.core.backend_router import BackendSelection
-            from lib.core.desktop_backend import DesktopBackendBundle
+            from lib.core.render.router import BackendSelection
+            from lib.core.render.registry import DesktopBackendBundle
             from lib.core.render.visuals.types import Rect
             from lib.script import main as app_main
 

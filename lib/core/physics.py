@@ -422,7 +422,7 @@ class PhysicsWorld:
         """刷新当前虚拟桌面边界。"""
         provider = self._screen_bounds_provider
         if provider is None:
-            from lib.core.desktop_backend import get_virtual_screen_provider
+            from lib.core.render.registry import get_virtual_screen_provider
 
             provider = get_virtual_screen_provider()
         geom = provider() if provider is not None else Rect(0, 0, 1920, 1080)

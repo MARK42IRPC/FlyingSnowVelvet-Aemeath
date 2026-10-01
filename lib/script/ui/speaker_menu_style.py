@@ -12,9 +12,9 @@ from lib.core.render.visuals.panel_visuals import (
     panel_shell_commands,
 )
 from lib.core.render.visuals.types import Rect
-from lib.core.render.backends.qt.draw_backend import QtDrawBackend
-from lib.core.render.backends.qt.colors import COLORS, UI_THEME
-from lib.core.render.backends.qt.font import get_ui_font
+from lib.core.render.backends.qt.drawing.draw_backend import QtDrawBackend
+from lib.core.render.backends.qt.drawing.colors import COLORS, UI_THEME
+from lib.core.render.backends.qt.runtime.font import get_ui_font
 from config.scale import scale_px
 from lib.core.unified_draw import Layer, get_layer_manager
 

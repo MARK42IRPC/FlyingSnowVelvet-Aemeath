@@ -19,8 +19,8 @@ from PyQt5.QtWidgets import QApplication
 
 from lib.core.render.visuals.types import Point
 from lib.core.input.types import KeyboardInput, Key, MouseButton, MouseInput
-from lib.core.render.backends.qt import pet_widget as pet_widget_module
-from lib.core.render.backends.qt.pet_widget import QtPetWidget
+from lib.core.render.backends.qt.runtime import pet_widget as pet_widget_module
+from lib.core.render.backends.qt.runtime.pet_widget import QtPetWidget
 
 
 class _PetWidgetProbe(QtPetWidget):

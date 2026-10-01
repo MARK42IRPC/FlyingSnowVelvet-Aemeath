@@ -44,7 +44,7 @@ def _run_workbench_helper(initial_page: str = "overview") -> int:
 
     app = QApplication([sys.argv[0]])
     app.setQuitOnLastWindowClosed(False)
-    from lib.core.render.backends.qt.windows_app_id import set_windows_app_user_model_id
+    from lib.core.render.backends.qt.runtime.windows_app_id import set_windows_app_user_model_id
 
     set_windows_app_user_model_id()
     _icon_path = Path(__file__).resolve().parents[3] / "resc" / "icon.ico"
@@ -56,7 +56,7 @@ def _run_workbench_helper(initial_page: str = "overview") -> int:
         normalize_workbench_page,
         read_workbench_helper_request,
     )
-    from lib.core.render.backends.qt.music_player import QtMusicPlayer
+    from lib.core.render.backends.qt.runtime.music_player import QtMusicPlayer
     from lib.core.voice.core import cleanup_voice_core, get_voice_core
     from lib.script.gemes import cleanup_game_runtime
     from lib.script.music import cleanup_music_service

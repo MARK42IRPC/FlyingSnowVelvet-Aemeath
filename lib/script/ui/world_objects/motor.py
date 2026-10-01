@@ -10,12 +10,12 @@ from lib.core.unified_draw import Layer, get_layer_manager
 from lib.core.event.center     import get_event_center, EventType, Event
 from lib.core.clickthrough_state import is_clickthrough_enabled
 from lib.core.physics          import get_physics_world, PhysicsBody
-from lib.core.render.backends.qt.screen import get_screen_geometry_for_point
+from lib.core.render.backends.qt.runtime.screen import get_screen_geometry_for_point
 from lib.script.voice.chrack     import ChrackSound
 from lib.core.render.visuals.resources import ImageResource
 from lib.core.render.visuals.types import Point
 from lib.core.render.visuals.visuals import build_world_object_batch, sample_motor_jitter
-from lib.core.render.backends.qt.draw_backend import QtDrawBackend
+from lib.core.render.backends.qt.drawing.draw_backend import QtDrawBackend
 from lib.core.services.world_object_physics import (
     DEFAULT_DRAG_TRAIL_WINDOW_SEC,
     DEFAULT_RELEASE_SAMPLE_MIN_DT_SEC,

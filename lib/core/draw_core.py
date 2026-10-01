@@ -1,7 +1,7 @@
 """Backend-neutral draw facade configured by the desktop composition root."""
 from __future__ import annotations
 
-from lib.core.desktop_backend import get_draw_backend_factory
+from lib.core.render.registry import get_draw_backend_factory
 from lib.core.render.visuals.backend import DrawBackend
 from lib.core.render.visuals.commands import DrawBatch, DrawRequest
 from lib.core.render.visuals.resources import ImageResource, RasterFrame

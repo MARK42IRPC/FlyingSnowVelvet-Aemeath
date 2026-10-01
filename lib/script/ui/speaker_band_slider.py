@@ -31,7 +31,7 @@ from lib.core.render.visuals.speaker_band_visuals import (
     build_band_slider_visual,
 )
 from lib.core.render.visuals.speaker_visuals import SPEAKER_SEARCH_Y
-from lib.core.render.backends.qt.draw_backend import QtDrawBackend
+from lib.core.render.backends.qt.drawing.draw_backend import QtDrawBackend
 from lib.core.speaker_band import (
     band_from_center_ratio,
     band_label,

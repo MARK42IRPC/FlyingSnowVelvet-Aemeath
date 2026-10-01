@@ -23,8 +23,8 @@ from lib.core.render.visuals.application_visuals import BubbleVisualDescription
 from lib.core.render.visuals.commands import TextCommand
 from lib.core.render.visuals.types import Rect
 from lib.core.layer_manager import get_layer_manager
-from lib.core.render.backends.qt.colors import COLORS
-from lib.core.render.backends.qt.font import draw_mixed_text, measure_mixed_text, wrap_mixed_text
+from lib.core.render.backends.qt.drawing.colors import COLORS
+from lib.core.render.backends.qt.runtime.font import draw_mixed_text, measure_mixed_text, wrap_mixed_text
 from lib.script.ui.bubble import Bubble, BubbleInfo
 
 

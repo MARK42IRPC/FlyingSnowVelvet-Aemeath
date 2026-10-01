@@ -30,7 +30,7 @@ from lib.core.render.visuals.commands import (
     TransformPush,
 )
 from lib.core.render.visuals.types import Color, Rect
-from lib.core.render.backends.qt.gif_loader import qimage_from_raster_frame
+from lib.core.render.backends.qt.drawing.gif_loader import qimage_from_raster_frame
 
 
 class QtDrawBackend:

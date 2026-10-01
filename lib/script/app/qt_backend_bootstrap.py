@@ -102,13 +102,13 @@ def _create_game_command_runtime():
 
 
 def _configure_qt_backend() -> None:
-    from lib.core.render.backends.qt.desktop_backend import configure_qt_desktop_backend
-    from lib.core.render.backends.qt.effect_system import create_effect_overlay_factory
-    from lib.core.render.backends.qt.particle_system import create_particle_overlay_factory
-    from lib.core.render.backends.qt.pet_window import create_qt_pet_window_factory
-    from lib.core.render.backends.qt.tray_host import create_tray_host_factory
-    from lib.core.render.backends.qt.world_object_backend import QtWorldObjectBackend
-    from lib.core.render.backends.qt.music_player import QtMusicPlayer
+    from lib.core.render.backends.qt.runtime.desktop_backend import configure_qt_desktop_backend
+    from lib.core.render.backends.qt.runtime.effect_system import create_effect_overlay_factory
+    from lib.core.render.backends.qt.runtime.particle_system import create_particle_overlay_factory
+    from lib.core.render.backends.qt.runtime.pet_window import create_qt_pet_window_factory
+    from lib.core.render.backends.qt.runtime.tray_host import create_tray_host_factory
+    from lib.core.render.backends.qt.runtime.world_object_backend import QtWorldObjectBackend
+    from lib.core.render.backends.qt.runtime.music_player import QtMusicPlayer
     from lib.script.effects.manager import cleanup_effect_script_manager
     from lib.script.music.service import configure_music_player_factory
     from lib.script.app.qt_application_ui import create_application_ui_host
@@ -169,7 +169,7 @@ def _configure_dx_backend() -> None:
 def configure_selected_desktop_backend():
     """Register Qt lazily and apply the configured backend selection."""
     from config.config import UI
-    from lib.core.backend_router import configure_selected_backend, register_backend
+    from lib.core.render.router import configure_selected_backend, register_backend
 
     register_backend("qt", _configure_qt_backend)
     # directx 描述符当前是 available=False：实现与测试保留在

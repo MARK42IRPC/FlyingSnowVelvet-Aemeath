@@ -75,8 +75,8 @@ class PetHostContractTests(unittest.TestCase):
 
     def test_qt_pet_window_is_the_composition_boundary(self):
         from lib.core.pet_window import PetWindow
-        from lib.core.render.backends.qt.pet_widget import QtPetWidget
-        from lib.core.render.backends.qt.pet_window import QtPetWindow
+        from lib.core.render.backends.qt.runtime.pet_widget import QtPetWidget
+        from lib.core.render.backends.qt.runtime.pet_window import QtPetWindow
 
         self.assertTrue(issubclass(QtPetWindow, PetWindow))
         self.assertTrue(issubclass(QtPetWindow, QtPetWidget))

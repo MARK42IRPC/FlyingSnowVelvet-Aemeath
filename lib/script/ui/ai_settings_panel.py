@@ -42,10 +42,10 @@ from PyQt5.QtGui import QPainter, QPixmap
 from config.config import ANIMATION, UI
 from lib.core.render.visuals.settings_panel_visuals import build_ai_settings_panel_visual
 from lib.core.render.visuals.types import Size
-from lib.core.render.backends.qt.colors import UI_THEME
-from lib.core.render.backends.qt.draw_backend import QtDrawBackend
-from lib.core.render.backends.qt.font import get_ui_font, get_digit_font
-from lib.core.backend_router import get_backend_descriptors
+from lib.core.render.backends.qt.drawing.colors import UI_THEME
+from lib.core.render.backends.qt.drawing.draw_backend import QtDrawBackend
+from lib.core.render.backends.qt.runtime.font import get_ui_font, get_digit_font
+from lib.core.render.router import get_backend_descriptors
 from config.general_user_settings import save_general_values
 from config.ollama_config import (
     AI_VOICE_MAX_CHARS_DEFAULT,

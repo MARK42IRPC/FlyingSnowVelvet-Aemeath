@@ -12,7 +12,7 @@ from lib.core.unified_draw import Layer, get_layer_manager
 from lib.script.voice.snow          import SnowSound
 from lib.core.render.visuals.resources import ImageResource
 from lib.core.render.visuals.visuals import build_world_object_batch
-from lib.core.render.backends.qt.draw_backend import QtDrawBackend
+from lib.core.render.backends.qt.drawing.draw_backend import QtDrawBackend
 from lib.core.services.world_object_physics import resolve_world_object_physics
 
 # 产品物理参数由 lib/core/services 唯一解析，Qt 与 DX 两个后端读同一份数值

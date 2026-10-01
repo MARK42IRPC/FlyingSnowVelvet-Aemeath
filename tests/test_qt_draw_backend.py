@@ -29,7 +29,7 @@ from lib.core.render.visuals.commands import (
 from lib.core.render.visuals.resources import RasterFrame
 from lib.core.render.visuals.types import Color, Point, Rect, Size
 from lib.core.layer import Layer
-from lib.core.render.backends.qt.draw_backend import QtDrawBackend
+from lib.core.render.backends.qt.drawing.draw_backend import QtDrawBackend
 
 
 def _batch(frame: RasterFrame, *, revision: int, flipped: bool = False) -> DrawBatch:

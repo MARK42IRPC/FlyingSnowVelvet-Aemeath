@@ -6,7 +6,7 @@ from collections.abc import Callable
 
 from lib.core.logger import get_logger
 
-from lib.core.desktop_backend import (
+from lib.core.render.registry import (
     DesktopBackendBundle,
     install_desktop_backend_bundle,
     uninstall_desktop_backend_bundle,

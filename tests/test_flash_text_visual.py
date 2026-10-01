@@ -106,7 +106,7 @@ class FlashTextBackendMetricTests(unittest.TestCase):
         from PyQt5.QtWidgets import QApplication
 
         from lib.core.render.visuals.visuals import resolve_effect_font
-        from lib.core.render.backends.qt.effect_system import _prepare_effect_backend_state
+        from lib.core.render.backends.qt.runtime.effect_system import _prepare_effect_backend_state
 
         application = QApplication.instance() or QApplication([])
         self.assertIsNotNone(application)
@@ -124,7 +124,7 @@ class FlashTextBackendMetricTests(unittest.TestCase):
         self.assertEqual(effect._text_h, float(metrics.height()))
 
     def test_backend_state_ignores_effects_without_text(self) -> None:
-        from lib.core.render.backends.qt.effect_system import _prepare_effect_backend_state
+        from lib.core.render.backends.qt.runtime.effect_system import _prepare_effect_backend_state
 
         effect = _effect("")
         _prepare_effect_backend_state(effect)

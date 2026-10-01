@@ -7,15 +7,15 @@ from PyQt5.QtGui import QImage
 from lib.core.render.visuals.types import Point, Rect
 from lib.core.layer import Layer
 from lib.core.pet_window import PetWindow
-from lib.core.render.backends.qt.window import (
+from lib.core.render.backends.qt.drawing.window import (
     coerce_qpoint,
     move_widget,
     render_draw_core,
     set_pet_window_clickthrough,
     to_qpoint,
 )
-from lib.core.render.backends.qt.window_host import QtLayerWindowHost, QtWindowHost
-from lib.core.render.backends.qt.window_setup import finalize_pet_window_startup
+from lib.core.render.backends.qt.runtime.window_host import QtLayerWindowHost, QtWindowHost
+from lib.core.render.backends.qt.runtime.window_setup import finalize_pet_window_startup
 
 
 class _MoveProbe:
@@ -238,7 +238,7 @@ class QtWindowBridgeTests(unittest.TestCase):
         layer_manager = Mock()
 
         with patch(
-            "lib.core.render.backends.qt.window_setup.get_layer_manager",
+            "lib.core.render.backends.qt.runtime.window_setup.get_layer_manager",
             return_value=layer_manager,
         ):
             finalize_pet_window_startup(owner)

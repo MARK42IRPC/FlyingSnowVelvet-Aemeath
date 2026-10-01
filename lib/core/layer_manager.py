@@ -4,7 +4,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from lib.core.desktop_backend import get_deferred_call, get_layer_window_host_factory
+from lib.core.render.registry import get_deferred_call, get_layer_window_host_factory
 from lib.core.layer import Layer, draw_order_key, layer_name, normalize_layer
 from lib.core.window_host import (
     LayerWindowHost,

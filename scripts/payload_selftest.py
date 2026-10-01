@@ -77,7 +77,7 @@ def _run_startup(args) -> dict:
     _apply_pending_update_overlay()
     _preload_optional_onnx_runtime()
     backend_selection = configure_selected_desktop_backend()
-    from lib.core.desktop_backend import get_desktop_backend_bundle
+    from lib.core.render.registry import get_desktop_backend_bundle
 
     center = get_event_center()
     ready_at: list[float] = []
@@ -194,8 +194,7 @@ def _feature_services() -> str:
 
 
 def _feature_assets() -> str:
-    from lib.core.render.backends.qt import font as font_module
-
+    from lib.core.render.backends.qt.runtime import font as font_module
     app_root = Path(os.environ["FSV_APP_ROOT"])
     fonts = sorted((app_root / "resc" / "FRONTS").glob("*.ttf"))
     assert fonts, "包内没有 UI 字体"

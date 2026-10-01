@@ -1,19 +1,17 @@
 """Register the Qt desktop backend with backend-neutral core services."""
 
-from lib.core.desktop_backend import (
-    DesktopBackendBundle,
-    install_desktop_backend_bundle,
-)
-from lib.core.render.backends.qt.application_runtime import QtApplicationRuntime
-from lib.core.render.backends.qt.draw_backend import QtDrawBackend
-from lib.core.render.backends.qt.event_pump import create_event_pump
-from lib.core.render.backends.qt.scheduler import call_later, create_scheduler
-from lib.core.render.backends.qt.screen_capture import QtScreenCapture, capture_primary_screen_png
-from lib.core.render.backends.qt.screen import (
+from lib.core.render.backends.base import DesktopBackendBundle
+from lib.core.render.registry import install_desktop_backend_bundle
+from lib.core.render.backends.qt.runtime.application_runtime import QtApplicationRuntime
+from lib.core.render.backends.qt.drawing.draw_backend import QtDrawBackend
+from lib.core.render.backends.qt.runtime.event_pump import create_event_pump
+from lib.core.render.backends.qt.runtime.scheduler import call_later, create_scheduler
+from lib.core.render.backends.qt.runtime.screen_capture import QtScreenCapture, capture_primary_screen_png
+from lib.core.render.backends.qt.runtime.screen import (
     get_screen_rect_for_point,
     get_virtual_screen_rect,
 )
-from lib.core.render.backends.qt.window_host import (
+from lib.core.render.backends.qt.runtime.window_host import (
     create_qt_layer_window_host,
     create_qt_window_host,
 )

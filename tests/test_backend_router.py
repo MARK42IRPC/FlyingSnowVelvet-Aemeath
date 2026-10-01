@@ -6,7 +6,7 @@ import textwrap
 import unittest
 from pathlib import Path
 
-from lib.core.backend_router import (
+from lib.core.render.router import (
     BackendConfigurationError,
     BackendDescriptor,
     BackendRouter,
@@ -152,8 +152,8 @@ class BackendRouterTests(unittest.TestCase):
         repo_root = Path(__file__).resolve().parents[1]
         script = textwrap.dedent(
             """
-            from lib.core.backend_router import BackendRouter
-            from lib.core.desktop_backend import (
+            from lib.core.render.router import BackendRouter
+            from lib.core.render.registry import (
                 get_application_runtime_factory,
                 get_application_ui_host_factory,
                 get_deferred_call,
@@ -220,7 +220,7 @@ class BackendRouterTests(unittest.TestCase):
 
 _BUNDLE_HELPER = """
 def make_bundle(label):
-    from lib.core.desktop_backend import DesktopBackendBundle
+    from lib.core.render.registry import DesktopBackendBundle
     from lib.core.render.visuals.types import Rect
 
     def factory():
@@ -273,7 +273,7 @@ class SingleRenderBackendTests(unittest.TestCase):
     def test_second_different_backend_is_refused_and_the_first_survives(self):
         self._assert_ok(
             """
-            from lib.core.desktop_backend import (
+            from lib.core.render.registry import (
                 BackendAlreadyConfiguredError,
                 get_desktop_backend_bundle,
                 install_desktop_backend_bundle,
@@ -294,7 +294,7 @@ class SingleRenderBackendTests(unittest.TestCase):
     def test_repeat_install_from_the_same_owner_keeps_the_original_bundle(self):
         self._assert_ok(
             """
-            from lib.core.desktop_backend import (
+            from lib.core.render.registry import (
                 get_desktop_backend_bundle,
                 install_desktop_backend_bundle,
             )
@@ -314,7 +314,7 @@ class SingleRenderBackendTests(unittest.TestCase):
     def test_a_foreign_owner_cannot_displace_a_live_backend(self):
         self._assert_ok(
             """
-            from lib.core.desktop_backend import (
+            from lib.core.render.registry import (
                 BackendAlreadyConfiguredError,
                 get_desktop_backend_bundle,
                 install_desktop_backend_bundle,
@@ -335,7 +335,7 @@ class SingleRenderBackendTests(unittest.TestCase):
     def test_only_the_installer_can_retract_its_own_bundle(self):
         self._assert_ok(
             """
-            from lib.core.desktop_backend import (
+            from lib.core.render.registry import (
                 get_desktop_backend_bundle,
                 install_desktop_backend_bundle,
                 uninstall_desktop_backend_bundle,
@@ -356,7 +356,7 @@ class SingleRenderBackendTests(unittest.TestCase):
     def test_a_retracted_install_leaves_room_for_the_fallback_backend(self):
         self._assert_ok(
             """
-            from lib.core.desktop_backend import (
+            from lib.core.render.registry import (
                 get_desktop_backend_bundle,
                 install_desktop_backend_bundle,
                 uninstall_desktop_backend_bundle,
@@ -375,7 +375,7 @@ class SingleRenderBackendTests(unittest.TestCase):
     def test_anonymous_installs_cannot_re_register_themselves(self):
         self._assert_ok(
             """
-            from lib.core.desktop_backend import (
+            from lib.core.render.registry import (
                 BackendAlreadyConfiguredError,
                 get_desktop_backend_bundle,
                 install_desktop_backend_bundle,

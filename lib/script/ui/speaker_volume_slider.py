@@ -27,7 +27,7 @@ from lib.core.render.visuals.media_panel_visuals import (
     slider_track_rect,
     snap_slider_ratio,
 )
-from lib.core.render.backends.qt.draw_backend import QtDrawBackend
+from lib.core.render.backends.qt.drawing.draw_backend import QtDrawBackend
 from lib.core.unified_draw import Layer, get_layer_manager
 from lib.script.music import get_music_service
 

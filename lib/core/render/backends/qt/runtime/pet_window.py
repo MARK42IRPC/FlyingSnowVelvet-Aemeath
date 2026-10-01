@@ -2,12 +2,12 @@
 
 from lib.core.render.visuals.types import Point
 from lib.core.pet_window import PetWindow
-from lib.core.render.backends.qt.input import get_cursor_position
-from lib.core.render.backends.qt.pet_widget import QtPetWidget
-from lib.core.render.backends.qt.scheduler import QtScheduler
-from lib.core.render.backends.qt.widget_anchors import publish_widget_anchor_response
-from lib.core.render.backends.qt.window import move_widget, set_pet_window_clickthrough
-from lib.core.render.backends.qt.window_setup import (
+from lib.core.render.backends.qt.runtime.input import get_cursor_position
+from lib.core.render.backends.qt.runtime.pet_widget import QtPetWidget
+from lib.core.render.backends.qt.runtime.scheduler import QtScheduler
+from lib.core.render.backends.qt.runtime.widget_anchors import publish_widget_anchor_response
+from lib.core.render.backends.qt.drawing.window import move_widget, set_pet_window_clickthrough
+from lib.core.render.backends.qt.runtime.window_setup import (
     finalize_pet_window_startup,
     setup_pet_window,
 )

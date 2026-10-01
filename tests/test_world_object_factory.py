@@ -5,7 +5,7 @@ from unittest.mock import patch
 from PyQt5.QtCore import QPoint
 
 from lib.core.render.visuals.types import Point
-from lib.core.render.backends.qt.world_object_factory import (
+from lib.core.render.backends.qt.runtime.world_object_factory import (
     _resolve_world_object_type,
     create_world_object,
 )
@@ -26,7 +26,7 @@ class WorldObjectFactoryTests(unittest.TestCase):
     def test_factory_converts_core_position_and_caches_widget_type(self):
         module = SimpleNamespace(WorldObject=_WorldObject)
         with patch(
-            "lib.core.render.backends.qt.world_object_factory.import_module",
+            "lib.core.render.backends.qt.runtime.world_object_factory.import_module",
             return_value=module,
         ) as importer:
             first = create_world_object(
@@ -54,7 +54,7 @@ class WorldObjectFactoryTests(unittest.TestCase):
     def test_factory_rejects_non_callable_world_object_type(self):
         module = SimpleNamespace(WorldObject=object())
         with patch(
-            "lib.core.render.backends.qt.world_object_factory.import_module",
+            "lib.core.render.backends.qt.runtime.world_object_factory.import_module",
             return_value=module,
         ):
             with self.assertRaisesRegex(TypeError, "not callable"):

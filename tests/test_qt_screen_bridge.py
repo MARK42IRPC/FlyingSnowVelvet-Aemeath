@@ -4,9 +4,7 @@ from unittest.mock import patch
 from PyQt5.QtCore import QPoint, QRect
 
 from lib.core.render.visuals.types import Point
-from lib.core.render.backends.qt import screen as qt_screen
-
-
+from lib.core.render.backends.qt.runtime import screen as qt_screen
 class QtScreenBridgeTests(unittest.TestCase):
     def test_core_point_is_converted_at_qt_boundary(self):
         self.assertEqual(qt_screen._to_qpoint(Point(12.6, -3.4)), QPoint(13, -3))

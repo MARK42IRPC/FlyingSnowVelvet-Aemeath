@@ -184,7 +184,7 @@ class WorldObjectPhysicsBoundaryTests(unittest.TestCase):
 
     def test_qt_overlay_policy_delegates_to_the_service(self):
         """The Qt module keeps the mechanism and re-exports the shared numbers."""
-        from lib.core.render.backends.qt import overlay_policy
+        from lib.core.render.backends.qt.runtime import overlay_policy
         from lib.core.services import ui_presentation
 
         self.assertEqual(

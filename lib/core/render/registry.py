@@ -1,63 +1,58 @@
-"""Backend service registry configured by the desktop composition root.
+"""后端服务注册表：一个进程同时只允许一个后端生效。
 
-Exactly one backend may be live in a process. The composition root selects a
-backend once at startup, so this registry has no reset button: clearing it would
-let a second backend install itself on top of a running one, and every host
-already built from the first bundle would keep drawing through it.
+装配（`router.py`）决定“选哪个后端”，注册表决定“后端装进来之后，服务从哪里取”。
+组合入口在启动时安装一次，因此这里没有 reset：清空会让第二个后端覆盖正在运行的
+后端，而已经由第一个 bundle 构建出来的宿主仍会继续走旧实现。
+
+工厂与 `DesktopBackendBundle` 的形状定义在 `lib/core/render/backends/base.py`；
+本模块只保留安装/卸载语义与读取入口。
 """
 from __future__ import annotations
 
-from collections.abc import Callable
-from dataclasses import dataclass
-
-from lib.core.application_runtime import ApplicationRuntime
+from lib.core.logger import get_logger
+from lib.core.render.backends.base import (
+    ApplicationRuntimeFactory,
+    BackendCleanup,
+    DeferredCall,
+    DesktopBackendBundle,
+    DrawBackendFactory,
+    OverlayFactory,
+    PetWindowFactory,
+    SchedulerFactory,
+    ScreenCaptureFactory,
+    ScreenCaptureProvider,
+    ScreenForPointProvider,
+    VirtualScreenProvider,
+)
 from lib.core.application_ui import ApplicationUiHostFactory
 from lib.core.event.pump import EventPumpFactory
-from lib.core.render.visuals.capture import ScreenCapture
-from lib.core.render.visuals.backend import DrawBackend
-from lib.core.render.visuals.types import Point, Rect
-from lib.core.logger import get_logger
-from lib.core.overlay_host import OverlayHost
-from lib.core.pet_host import PetWindowHost
 from lib.core.tray_host import TrayHostFactory
-from lib.core.timing.scheduler import Scheduler
 from lib.core.window_host import LayerWindowHostFactory, WindowHostFactory
 
-
-DrawBackendFactory = Callable[[], DrawBackend]
-ApplicationRuntimeFactory = Callable[[], ApplicationRuntime]
-SchedulerFactory = Callable[[], Scheduler]
-ScreenCaptureFactory = Callable[[], ScreenCapture]
-PetWindowFactory = Callable[[object, OverlayHost], PetWindowHost]
-OverlayFactory = Callable[[], OverlayHost]
-DeferredCall = Callable[[int, Callable[[], None]], None]
-VirtualScreenProvider = Callable[[], Rect]
-ScreenForPointProvider = Callable[[Point | None], Rect]
-ScreenCaptureProvider = Callable[[], bytes | None]
-BackendCleanup = Callable[[], None]
-
-
-@dataclass(frozen=True)
-class DesktopBackendBundle:
-    """Desktop services installed atomically by one backend configurer."""
-
-    draw_backend_factory: DrawBackendFactory
-    application_runtime_factory: ApplicationRuntimeFactory
-    application_ui_host_factory: ApplicationUiHostFactory
-    scheduler_factory: SchedulerFactory
-    screen_capture_factory: ScreenCaptureFactory
-    pet_window_factory: PetWindowFactory
-    particle_overlay_factory: OverlayFactory
-    effect_overlay_factory: OverlayFactory
-    tray_host_factory: TrayHostFactory
-    event_pump_factory: EventPumpFactory
-    deferred_call: DeferredCall
-    virtual_screen_provider: VirtualScreenProvider
-    screen_for_point_provider: ScreenForPointProvider
-    layer_window_host_factory: LayerWindowHostFactory
-    screen_capture_provider: ScreenCaptureProvider | None = None
-    window_host_factory: WindowHostFactory | None = None
-    cleanup: BackendCleanup | None = None
+__all__ = [
+    "BackendAlreadyConfiguredError",
+    "DesktopBackendBundle",
+    "configure_desktop_backend",
+    "get_application_runtime_factory",
+    "get_application_ui_host_factory",
+    "get_deferred_call",
+    "get_desktop_backend_bundle",
+    "get_draw_backend_factory",
+    "get_effect_overlay_factory",
+    "get_event_pump_factory",
+    "get_layer_window_host_factory",
+    "get_particle_overlay_factory",
+    "get_pet_window_factory",
+    "get_scheduler_factory",
+    "get_screen_capture_factory",
+    "get_screen_capture_provider",
+    "get_screen_for_point_provider",
+    "get_tray_host_factory",
+    "get_virtual_screen_provider",
+    "get_window_host_factory",
+    "install_desktop_backend_bundle",
+    "uninstall_desktop_backend_bundle",
+]
 
 
 _bundle: DesktopBackendBundle | None = None
@@ -232,29 +227,3 @@ def uninstall_desktop_backend_bundle(owner: object) -> None:
         return
     _bundle = None
     _installation_owner = None
-
-
-__all__ = [
-    "BackendAlreadyConfiguredError",
-    "DesktopBackendBundle",
-    "configure_desktop_backend",
-    "get_application_runtime_factory",
-    "get_application_ui_host_factory",
-    "get_deferred_call",
-    "get_desktop_backend_bundle",
-    "get_draw_backend_factory",
-    "get_effect_overlay_factory",
-    "get_event_pump_factory",
-    "get_layer_window_host_factory",
-    "get_particle_overlay_factory",
-    "get_pet_window_factory",
-    "get_scheduler_factory",
-    "get_screen_capture_factory",
-    "get_screen_capture_provider",
-    "get_screen_for_point_provider",
-    "get_tray_host_factory",
-    "get_virtual_screen_provider",
-    "get_window_host_factory",
-    "install_desktop_backend_bundle",
-    "uninstall_desktop_backend_bundle",
-]

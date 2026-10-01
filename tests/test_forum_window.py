@@ -30,8 +30,8 @@ from lib.core.forum import (
 from lib.core.event.center import Event, EventType, get_event_center
 from lib.core.render.visuals.image_loader import decode_image_frames
 from lib.core.layer_manager import get_layer_manager
-from lib.core.render.backends.qt.font import get_ui_font
-from lib.core.render.backends.qt.gif_loader import qimage_from_raster_frame
+from lib.core.render.backends.qt.runtime.font import get_ui_font
+from lib.core.render.backends.qt.drawing.gif_loader import qimage_from_raster_frame
 from lib.script.ui.forum_markup import (
     FORUM_EFFECT_TOKENS,
     FORUM_MARKUP_FORMATS,

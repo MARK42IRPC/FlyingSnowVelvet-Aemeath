@@ -34,7 +34,7 @@ from lib.core.render.visuals.resources import ImageResource, RasterFrame
 from lib.core.render.visuals.types import Color, Rect
 from lib.core.render.visuals.visuals import build_command_shell_batch, build_particle_batch
 from lib.core.layer import Layer
-from lib.core.render.backends.qt.draw_backend import QtDrawBackend
+from lib.core.render.backends.qt.drawing.draw_backend import QtDrawBackend
 from tests.test_graphics_primitives_parity import (
     SAMPLING_ALPHA_TOLERANCE,
     SAMPLING_COVER_FLOOR,

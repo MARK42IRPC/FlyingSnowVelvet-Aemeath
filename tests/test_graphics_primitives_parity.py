@@ -64,7 +64,7 @@ from lib.core.render.visuals.commands import (
 )
 from lib.core.render.visuals.types import Color, Point, Rect
 from lib.core.layer import Layer
-from lib.core.render.backends.qt.draw_backend import QtDrawBackend
+from lib.core.render.backends.qt.drawing.draw_backend import QtDrawBackend
 
 #: Maximum coverage delta accepted for a pixel whose centre sits on an edge.
 SAMPLING_ALPHA_TOLERANCE = 48

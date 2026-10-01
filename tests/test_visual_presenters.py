@@ -375,8 +375,8 @@ class VisualPresenterTests(unittest.TestCase):
         forbidden = {"drawPixmap", "drawText", "drawLine", "drawRect", "drawEllipse", "setTransform"}
         violations = []
         for relative in (
-            "lib/core/render/backends/qt/effect_system.py",
-            "lib/core/render/backends/qt/particle_system.py",
+            "lib/core/render/backends/qt/runtime/effect_system.py",
+            "lib/core/render/backends/qt/runtime/particle_system.py",
         ):
             path = root / relative
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))

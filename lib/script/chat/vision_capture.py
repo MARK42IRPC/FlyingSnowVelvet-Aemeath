@@ -8,7 +8,7 @@ def capture_screen() -> list[bytes] | None:
     Returns:
         包含单个图片字节数据的列表，失败时返回 None
     """
-    from lib.core.desktop_backend import get_screen_capture_provider
+    from lib.core.render.registry import get_screen_capture_provider
 
     provider = get_screen_capture_provider()
     image_data = provider() if provider is not None else None

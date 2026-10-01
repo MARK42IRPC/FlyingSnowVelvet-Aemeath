@@ -5,7 +5,7 @@ from collections import deque
 import threading
 
 from lib.core.logger import get_logger
-from lib.core.desktop_backend import get_event_pump_factory
+from lib.core.render.registry import get_event_pump_factory
 from lib.core.event.pump import EventPump, EventPumpFactory
 logger = get_logger(__name__)
 

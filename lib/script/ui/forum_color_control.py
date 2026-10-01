@@ -29,7 +29,7 @@ from PyQt5.QtWidgets import (
 )
 
 from config.scale import scale_px
-from lib.core.render.backends.qt.font import get_ui_font
+from lib.core.render.backends.qt.runtime.font import get_ui_font
 from lib.script.ui.forum_color_picker import (
     MAX_LIGHTNESS,
     MIN_LIGHTNESS,

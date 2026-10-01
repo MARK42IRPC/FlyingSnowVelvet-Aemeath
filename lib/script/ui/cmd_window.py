@@ -27,11 +27,11 @@ from PyQt5.QtWidgets import (
 )
 
 from config.config import UI
-from lib.core.render.backends.qt.colors import COLORS, UI_THEME
-from lib.core.render.backends.qt.font import get_cmd_font, get_ui_font, get_digit_font
+from lib.core.render.backends.qt.drawing.colors import COLORS, UI_THEME
+from lib.core.render.backends.qt.runtime.font import get_cmd_font, get_ui_font, get_digit_font
 from lib.core.render.visuals.panel_visuals import build_panel_shell_visual
 from lib.core.render.visuals.types import Rect
-from lib.core.render.backends.qt.draw_backend import QtDrawBackend
+from lib.core.render.backends.qt.drawing.draw_backend import QtDrawBackend
 from config.scale import scale_px, scale_style_px
 from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import get_event_center, EventType, Event

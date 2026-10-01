@@ -4,7 +4,7 @@
 
 本文档定义 `lib/core/render/` 的目标结构与依赖边界。它不是阶段计划，而是结构改建完成后必须成立的规则。
 
-**状态：结构搬迁已按第 8 节执行，`drawing` / `runtime` 切分仍待进行。** 目录与引用规则以本文档为准；改建前的事实源是 [Qt 边界契约](Qt边界契约.md) 与 [跨后端视觉表现契约](视觉表现契约.md)，那两份文档继续负责“哪些内容算视觉逻辑”和“什么算无 Qt”。
+**状态：第 6 节迁移顺序 1、2（目录切分）、3 已执行；`contract.py` 协议抽取仅覆盖 `lib/script/ui` 之外的部分，视觉/平台能力的注入式收敛仍在进行。** 目录与引用规则以本文档为准；改建前的事实源是 [Qt 边界契约](Qt边界契约.md) 与 [跨后端视觉表现契约](视觉表现契约.md)，那两份文档继续负责“哪些内容算视觉逻辑”和“什么算无 Qt”。第一章描述的是最终目标：`lib/script` 当前仍有约 80 个文件以具体路径引用后端。
 
 本文只新增目录与引用规则，不改变任何视觉语义、数值来源或渲染结果。改建过程中出现分歧时，以 [视觉表现契约](视觉表现契约.md) 和当前 Qt 基准为事实源。
 
@@ -106,7 +106,7 @@ Vulkan 在本文档生效时只是 `registry.py` 里的一条未启用描述符�
 - `tests/test_qt_dependency_boundaries.py` 的白名单从 `lib/core/render/backends/qt/` 前缀改为 `lib/core/render/backends/qt/`；新增后端子树不在允许集合内，因此 Vulkan 的直接 `PyQt5` 导入不会因目录名而豁免。
 - 官方游戏包 v1 的例外保持不变（见 [Qt 边界契约](Qt边界契约.md) 第 2 节）。
 - `lib/core/render/visuals/` 的“不得导入 PyQt、bridge 或 `lib/script`”与现 `lib/core/render/visuals/` 一致，测试由目录改名同步。
-- `router.py` 不自行读取配置文件，而是消费 `BackendSelection`；一个进程只有一个后端生效，语义沿用现有 `lib/core/backend_router.py`。
+- `router.py` 不自行读取配置文件，而是消费 `BackendSelection`；一个进程只有一个后端生效，语义沿用现有 `lib/core/render/router.py`。
 - 用户或环境显式请求某个后端时，不接受静默回退；回退只发生在该后端初始化失败，且必须记录请求后端、实际后端与失败阶段。
 
 ## 6. 迁移顺序
@@ -122,7 +122,7 @@ Vulkan 在本文档生效时只是 `registry.py` 里的一条未启用描述符�
 
 ## 7. 验证
 
-以下断言必须在改建后成立，实现位置随落地进度补充：
+以下断言是**目标**，不是当前已全部成立的事实。第二轮执行后的实际符合度见第 9 节：前两条已经是硬断言，第三、四条以「冻结基线，只减不增」的清单形式落地，因为 `lib/script/ui` 里仍有一批控件直接构造绘制实现、并以具体路径引用 Qt 平台能力。
 
 - `lib/core/render/backends/*/drawing/` 不得被 `router.py` 之外的模块导入；
 - `lib/core/render/` 整体不得导入 `lib.script`，`visuals/` 还不得导入 `PyQt5` 或任一 `backends`；
@@ -147,3 +147,43 @@ Vulkan 在本文档生效时只是 `registry.py` 里的一条未启用描述符�
 DX 处理：`directx` 描述符改为 `BackendDescriptor("directx", "DirectX", False, experimental=True)`，与 `opengl`、`vulkan` 同属未启用后端。`lib/core/render/backends/dx/` 保留既有实现与测试，但不再由 `configure_selected_desktop_backend()` 注册，也不出现在用户可选后端里；请求 `directx` 时按未启用后端处理。重新启用 DX 时把 `available` 改回 `True` 并恢复注册，属于独立决策，不由本次搬迁暗示。
 
 搬迁是机械的：模块内容与公开符号不变，只有包路径变化。因此本次不新增重新导出层，也不保留任何 `lib.core.render.backends.qt` 形式的转发。
+
+## 9. 第二轮执行记录（drawing/runtime 切分与根层落地）
+
+本节记录在第 8 节之后的第二次结构改建。它改变了目录形状与引用路径，但不改变任何视觉语义或渲染结果。
+
+根层（第 2 节 `contract.py` / `router.py` / `registry.py`）：
+
+- `lib/core/backend_router.py` -> `lib/core/render/router.py`
+- `lib/core/desktop_backend.py` -> `lib/core/render/registry.py`
+- 新增 `lib/core/render/backends/base.py`：工厂别名与 `DesktopBackendBundle` 的形状定义；`registry.py` 只保留安装/卸载语义与读取入口，`router.py` 只做选择与装配。
+- `lib/core/render/__init__.py` 首次落地，只写包说明，不做任何聚合导出。
+
+Qt 后端分档（第 3 节档位 A / B）：
+
+- `backends/qt/drawing/`：`draw_backend.py`、`render_core.py`、`gif_loader.py`、`colors.py`、`window.py`。
+- `backends/qt/runtime/`：其余 25 个模块（窗口、输入、调度、字体、屏幕、文本度量、托盘、播放器、后端专属页面宿主等）。
+- `backends/qt/__init__.py` 明确不做 `from .runtime import *` 之类的聚合导出：按子包前缀判定的档位规则必须能直接判定，聚合入口会使其失效。
+
+DX 保持未切分：DX 仍是 `available=False` 的实验实现，没有第二个真实 `drawing/` 消费者之前不为它建平行目录。`doc/render层边界契约.md` 第 2 节画的 `backends/dx/drawing`、`backends/dx/runtime` 在 DX 重新启用时补齐。
+
+档位规则的落地方式（重要，避免误读）：
+
+- 规则本身是**冻结基线，只减不增**，不是「当前已满足」。`tests/test_qt_dependency_boundaries.py` 里
+  `test_drawing_tier_is_reachable_only_from_the_router_and_backend_windows` 与
+  `test_qt_runtime_tier_is_not_named_by_business_or_ui_code` 各自维护一份现存引用方清单：
+  删除条目（迁移到共享 presenter 或后端中立协议）会通过，新增条目会失败。
+- 基线数字（2026-10-01）：`lib/script/ui` 中 31 个文件仍直接引用 `drawing/`，51 个仍以具体路径引用 `runtime/`。
+  这些是迁移债，不是新许可；清单的注释里写明了迁移方向。
+
+同轮修掉的搬迁副作用：
+
+- 目录多一层后，`application_runtime.py` 与 `effect_system.py` 里按 `__file__` 层级推导项目根的 `parents[5]` 改为 `parents[6]`；前者曾使窗口图标路径失配，后者曾使特效资源根指向错误目录。
+- `tests/test_code_structure_boundaries.py::test_shared_visual_modules_are_backend_neutral` 在上一轮搬迁中仍 glob 已不存在的 `lib/core/graphics/`，断言静默失效；现已指向 `render/visuals/` 并断言扫描集合非空。
+- `tests/test_qt_application_seam.py` 的目录锚点与 `tests/test_visual_presenters.py` 的两个文件路径字符串同步到新位置。
+
+验证：
+
+- `py -3 -m unittest discover -s tests -p "test_*.py" -q`：2035 通过（1 例 `tests.test_dsh_office_sidecar` 在满负载下超时，单跑通过，属既有环境抖动）。
+- `py -3 -m unittest discover -s tests/dx -p "test_*.py" -q`：122 通过、7 跳过。
+- `py -3 -m ruff check lib config scripts tests` 归零；`py -3 -m compileall -q config lib scripts tests` 通过。

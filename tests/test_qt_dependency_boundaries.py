@@ -282,7 +282,7 @@ class QtDependencyBoundaryTests(unittest.TestCase):
                 self.assertNotIn(token, source, f"{path.relative_to(repo_root)}: {token}")
 
     def test_unimplemented_backends_stay_disabled_while_the_payload_omits_gl(self):
-        from lib.core.backend_router import get_backend_descriptors
+        from lib.core.render.router import get_backend_descriptors
         from scripts import build_offline_distribution as distribution
 
         unavailable = {
@@ -361,7 +361,7 @@ class QtDependencyBoundaryTests(unittest.TestCase):
             builtins.__import__ = blocked_import
 
             import config.config
-            from lib.core.backend_router import BackendRouter
+            from lib.core.render.router import BackendRouter
             from lib.core.draw_core import DrawCore
             from lib.core.event.center import EventCenter
             from lib.core.render.visuals.commands import DrawRequest
@@ -549,6 +549,202 @@ class QtDependencyBoundaryTests(unittest.TestCase):
             check=False,
         )
         self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+
+
+    def test_drawing_tier_is_reachable_only_from_the_router_and_backend_windows(self):
+        """档位 A：`backends/qt/drawing/` 的允许引用面。
+
+        `drawing/` 是把声明式命令变成 QPainter 像素的地方。理想上只应被 `lib/core/render/router.py`
+        与后端自带窗口的绘制回调引用，但当前 `lib/script/ui` 里仍有一批控件直接构造 `QtDrawBackend`
+        并在自己的 `paintEvent` 里执行批次。这是既成事实，不是新许可：下面那份清单是**基线**，
+        只允许缩短——把某个文件从直接绘制改成走共享 presenter 后，必须同步从清单里删掉它；
+        任何新文件出现对 `drawing/` 的引用都会失败。
+        """
+        repo_root = Path(__file__).resolve().parents[1]
+        drawing_prefix = "lib.core.render.backends.qt.drawing"
+
+        #: 仍直接从 `drawing/` 构造绘制实现的 `lib/script/ui` 文件（基线，只减不增）。
+        frozen_ui_draw_importers = {
+            "lib/script/ui/ai_settings_panel.py",
+            "lib/script/ui/ai_settings_tabs.py",
+            "lib/script/ui/bubble.py",
+            "lib/script/ui/clickthrough_button.py",
+            "lib/script/ui/close_button.py",
+            "lib/script/ui/cmd_window.py",
+            "lib/script/ui/command_dialog.py",
+            "lib/script/ui/command_hint_box.py",
+            "lib/script/ui/forum_color_picker.py",
+            "lib/script/ui/forum_sticker.py",
+            "lib/script/ui/game_runtime.py",
+            "lib/script/ui/mic_stt_indicator.py",
+            "lib/script/ui/playlist_panel.py",
+            "lib/script/ui/progress_panel.py",
+            "lib/script/ui/qr_dialog_base.py",
+            "lib/script/ui/rect_action_button_style.py",
+            "lib/script/ui/restore_button.py",
+            "lib/script/ui/speaker_band_slider.py",
+            "lib/script/ui/speaker_control_buttons.py",
+            "lib/script/ui/speaker_menu_style.py",
+            "lib/script/ui/speaker_search_result_box.py",
+            "lib/script/ui/speaker_volume_slider.py",
+            "lib/script/ui/tooltip_panel.py",
+            "lib/script/ui/tray_menu.py",
+            "lib/script/ui/world_objects/clock.py",
+            "lib/script/ui/world_objects/motor.py",
+            "lib/script/ui/world_objects/snow_leopard.py",
+            "lib/script/ui/world_objects/snow_pile.py",
+            "lib/script/ui/world_objects/snowball.py",
+            "lib/script/ui/world_objects/sofa.py",
+            "lib/script/ui/world_objects/speaker.py",
+        }
+        #: 官方游戏包 v1 的控件沿用 Qt 页面约定，见 `doc/Qt边界契约.md` 第 2 节。
+        frozen_other_importers = {
+            "lib/script/gemes/packages/official/lahai_tetris/code/lahai_tetris_pkg/widget.py",
+        }
+
+        def _drawing_refs(path):
+            tree = ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
+            found = []
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    names = [alias.name for alias in node.names]
+                elif isinstance(node, ast.ImportFrom):
+                    names = [node.module or ""]
+                else:
+                    continue
+                for name in names:
+                    if name == drawing_prefix or name.startswith(drawing_prefix + "."):
+                        found.append(name)
+            return found
+
+        offenders = []
+        for base in (repo_root / "lib", repo_root / "scripts"):
+            for path in sorted(base.rglob("*.py")):
+                relative = path.relative_to(repo_root).as_posix()
+                #: `drawing/` 内部与同包 runtime 的装配连线不算越界。
+                if "/render/backends/qt/drawing/" in relative:
+                    continue
+                if "/render/backends/qt/runtime/" in relative:
+                    continue
+                if not _drawing_refs(path):
+                    continue
+                if relative in frozen_ui_draw_importers or relative in frozen_other_importers:
+                    continue
+                offenders.append(relative)
+
+        self.assertEqual(offenders, [], "新增了对 drawing/ 的直接引用；请改走共享 presenter 或扩展基线并说明理由")
+        self.assertGreater(len(frozen_ui_draw_importers), 20)
+
+    def test_qt_runtime_tier_is_not_named_by_business_or_ui_code(self):
+        """档位 B：`backends/qt/runtime/` 的具体路径不得出现在业务脚本里。
+
+        能力和绘制不同：字体度量、屏幕几何、文本排版必须能被业务层使用，只是不允许写死后端路径。
+        当前它们以具体路径被 `lib/script/ui` 直接导入。清单同样是**冻结基线**，只减不增；
+        迁移方向是 `lib/core/render/contract.py` 的协议 + 组合入口注入。
+        """
+        repo_root = Path(__file__).resolve().parents[1]
+        runtime_prefix = "lib.core.render.backends.qt.runtime"
+
+        frozen_ui_runtime_importers = {
+            "lib/script/ui/ai_settings_panel.py",
+            "lib/script/ui/announcement_dialog.py",
+            "lib/script/ui/bubble.py",
+            "lib/script/ui/bug_tracker_window.py",
+            "lib/script/ui/chat_mode_button.py",
+            "lib/script/ui/clickthrough_button.py",
+            "lib/script/ui/close_button.py",
+            "lib/script/ui/cmd_window.py",
+            "lib/script/ui/command_dialog.py",
+            "lib/script/ui/command_hint_box.py",
+            "lib/script/ui/forum_account.py",
+            "lib/script/ui/forum_board.py",
+            "lib/script/ui/forum_color_control.py",
+            "lib/script/ui/forum_window.py",
+            "lib/script/ui/game_manager_window.py",
+            "lib/script/ui/game_runtime.py",
+            "lib/script/ui/help_window.py",
+            "lib/script/ui/interaction_mode_button.py",
+            "lib/script/ui/launch_wuwa_button.py",
+            "lib/script/ui/mic_stt_indicator.py",
+            "lib/script/ui/more_functions_button.py",
+            "lib/script/ui/office_approval_dialog.py",
+            "lib/script/ui/office_chat_view.py",
+            "lib/script/ui/office_manager_card.py",
+            "lib/script/ui/office_mode_page.py",
+            "lib/script/ui/office_page.py",
+            "lib/script/ui/office_style.py",
+            "lib/script/ui/page_turn_buttons.py",
+            "lib/script/ui/playlist_panel.py",
+            "lib/script/ui/progress_panel.py",
+            "lib/script/ui/qr_dialog_base.py",
+            "lib/script/ui/rect_action_button_style.py",
+            "lib/script/ui/restore_button.py",
+            "lib/script/ui/scale_button.py",
+            "lib/script/ui/speaker_control_buttons.py",
+            "lib/script/ui/speaker_menu_style.py",
+            "lib/script/ui/speaker_search_dialog.py",
+            "lib/script/ui/speaker_search_result_box.py",
+            "lib/script/ui/tooltip_panel.py",
+            "lib/script/ui/tray_menu.py",
+            "lib/script/ui/update_dialog.py",
+            "lib/script/ui/voice_package_installer.py",
+            "lib/script/ui/workbench_components.py",
+            "lib/script/ui/workbench_settings_layout.py",
+            "lib/script/ui/workbench_window.py",
+            "lib/script/ui/world_objects/clock.py",
+            "lib/script/ui/world_objects/motor.py",
+            "lib/script/ui/world_objects/snow_pile.py",
+            "lib/script/ui/world_objects/snowball.py",
+            "lib/script/ui/world_objects/sofa.py",
+            "lib/script/ui/world_objects/speaker.py",
+        }
+
+        offenders = []
+        for path in sorted((repo_root / "lib" / "script").rglob("*.py")):
+            relative = path.relative_to(repo_root).as_posix()
+            if not relative.startswith("lib/script/ui/"):
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    names = [alias.name for alias in node.names]
+                elif isinstance(node, ast.ImportFrom):
+                    names = [node.module or ""]
+                else:
+                    continue
+                for name in names:
+                    if name == runtime_prefix or name.startswith(runtime_prefix + "."):
+                        if relative not in frozen_ui_runtime_importers:
+                            offenders.append(f"{relative}:{node.lineno}:{name}")
+
+        self.assertEqual(offenders, [], "业务层新引入具体后端运行时路径；请经后端中立协议获取能力")
+        self.assertGreater(len(frozen_ui_runtime_importers), 20)
+
+    def test_qt_package_has_no_wildcard_reexport(self):
+        """`backends/qt/__init__.py` 不得用通配符聚合并导出子模块。
+
+        一旦它 `from .runtime import *`，按子包前缀判定的档位规则就会被聚合入口绕过，
+        档位 A 的清单也失去意义。这里用 AST 判定真实的通配符导入，而不是匹配文本
+        （说明性文字里出现 `from .runtime import *` 不应误报）。
+        """
+        repo_root = Path(__file__).resolve().parents[1]
+        init_path = (
+            repo_root / "lib" / "core" / "render" / "backends" / "qt" / "__init__.py"
+        )
+        tree = ast.parse(init_path.read_text(encoding="utf-8-sig"), filename=str(init_path))
+        wildcards = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                if any(alias.name == "*" for alias in node.names):
+                    wildcards.append(node.module)
+            elif isinstance(node, ast.Import):
+                if any(alias.name == "*" for alias in node.names):
+                    wildcards.append("<bare>")
+        self.assertEqual(wildcards, [])
+        names = {alias.name for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)
+                 for alias in node.names}
+        for submodule in ("runtime", "drawing"):
+            self.assertNotIn(submodule, names, f"__init__ 不得聚合导出 {submodule}")
 
 
 if __name__ == "__main__":
