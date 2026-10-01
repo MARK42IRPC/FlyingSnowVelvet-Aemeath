@@ -51,6 +51,12 @@
   全部通过。其余控件按渲染层边界契约文档第 12 节的滚动清单逐个迁移。
 
 ### Fixed
+- 修复控件层迁移后的一处越界回归：`command_dialog._is_mouse_far_from_family()` 仍在把核心
+  `Rect` 当 `QRect` 用（`widget_global_rect(widget).center()`），命令框自动隐藏的 TICK 分支因此抛
+  `TypeError: 'Point' object is not callable`，而事件中心会把回调异常吞成一条日志——所以它既不崩界面
+  也不报错，只是自动隐藏静默失效。已改为属性写法 `.center`，并补两道守卫：静态扫描「核心几何不得
+  按 Qt 方法写法取用」（含别名链 `a = producer(); b = a`），以及真实构造命令框、驱动 TICK 并盯事件
+  中心错误日志的运行期断言。同一模式在 `lib/script`、`lib/core`、`scripts` 全仓审计后只剩这一处。
 - 修复安装器在非空残留目录上必然失败：目标文件改用 `CREATE_ALWAYS`，残留文件/目录冲突
   会被清掉，带安装标记的半成品安装目录允许覆盖修复，开始解压前还会清理已死进程留下的
   `FSV-<pid>-<tid>-<tick>` 暂存目录。此前用户会遇到

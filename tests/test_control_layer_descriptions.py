@@ -356,5 +356,254 @@ class QtControlHostTests(unittest.TestCase):
             host.cleanup()
 
 
+
+#: 返回核心几何（`Rect` / `Point` / `Size`）的共享入口。这些返回值用**属性面试**
+#: （`rect.x`），与 Qt 的**方法面试**（`QRect.x()`）不同名同形，混用只会在运行时炸。
+_CORE_GEOMETRY_PRODUCERS = {
+    "screen_rect_for_point",
+    "widget_global_rect",
+    "widget_global_point",
+    "clamp_rect_position",
+    "pointer_position",
+    "clamp_core_rect_position",
+    "get_screen_rect_for_point",
+    "get_virtual_screen_rect",
+    "virtual_screen_rect",
+    "resolve_bubble_geometry",
+    "coerce_rect",
+    "coerce_point",
+    "coerce_size",
+    "Rect",
+    "Point",
+    "Size",
+}
+
+#: 迁移前 QRect/QPoint 上按方法用的名字。核心类型里它们是属性或不存在。
+_QT_STYLE_GEOMETRY_METHODS = {
+    "center", "x", "y", "width", "height", "right", "bottom", "left", "top",
+    "topLeft", "top_left", "size", "isValid", "isEmpty", "adjusted",
+    "getRect", "toRect",
+}
+
+
+class CoreGeometryCallStyleTests(unittest.TestCase):
+    """核心几何用属性，Qt 几何用方法；跨层访问不得再退回 Qt 的写法。
+
+    这组断言守着一次真实回归：`widget_global_rect()` 的返回值从 `QRect` 换成核心
+    `Rect` 后，`command_dialog._is_mouse_far_from_family()` 里遗留的
+    `widget_global_rect(widget).center()` 只有在该 TICK 分支真的跑到时才抛
+    `TypeError: \'Point\' object is not callable`——构造期、导入期与既有单元测试都
+    看不到它。静态扫描把整类写法挡在 CI 里，运行期断言再钉一次热点路径。
+    """
+
+    _SKIP_PARTS = ("/render/backends/qt/", "/render/backends/dx/")
+
+    @classmethod
+    def _scan(cls):
+        findings = []
+        roots = _REPO_ROOT / "lib" / "script", _REPO_ROOT / "lib" / "core", _REPO_ROOT / "scripts"
+        for root in roots:
+            for path in sorted(root.rglob("*.py")):
+                relative = path.relative_to(_REPO_ROOT).as_posix()
+                if "/__pycache__/" in relative:
+                    continue
+                if any(part in relative for part in cls._SKIP_PARTS):
+                    continue
+                try:
+                    tree = ast.parse(path.read_text(encoding="utf-8-sig"), filename=relative)
+                except SyntaxError:
+                    continue
+                findings.extend(cls._core_typed_misuse(relative, tree))
+        return sorted(set(findings))
+
+    @staticmethod
+    def _core_typed_misuse(relative, tree):
+        """把「绑定了核心几何的名字」当成 Qt 几何调用时报告出来。
+
+        追踪是传递的：`rect = widget_global_rect(w)` 与 `copy = rect` 都算核心几何。
+        这正是这类回归的复发路径——先出现一个中转变量，再有人给它写 `()`。
+        """
+        core_names: set[str] = set()
+        core_attrs: set[str] = set()
+        assignments = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign):
+                assignments.append((node.targets, node.value))
+            elif isinstance(node, ast.AnnAssign) and node.value is not None:
+                assignments.append(([node.target], node.value))
+
+        def is_core_expression(value):
+            """判断赋值右侧是否为「核心几何」。`a = producer(); b = a` 也算。"""
+            if isinstance(value, ast.Call):
+                name = getattr(value.func, "id", None) or getattr(value.func, "attr", None)
+                return name if name in _CORE_GEOMETRY_PRODUCERS else None
+            if isinstance(value, ast.Name) and value.id in core_names:
+                return "__alias__"
+            if (
+                isinstance(value, ast.Attribute)
+                and isinstance(value.value, ast.Name)
+                and value.value.id == "self"
+                and value.attr in core_attrs
+            ):
+                return "__alias__"
+            return None
+
+        # 迭代到不动点，让别名链（`a = producer(); b = a`）也被标记为核心几何。
+        changed = True
+        while changed:
+            changed = False
+            for targets, value in assignments:
+                if is_core_expression(value) is None:
+                    continue
+                for target in targets:
+                    if isinstance(target, ast.Name) and target.id not in core_names:
+                        core_names.add(target.id)
+                        changed = True
+                    elif (
+                        isinstance(target, ast.Attribute)
+                        and isinstance(target.value, ast.Name)
+                        and target.value.id == "self"
+                        and target.attr not in core_attrs
+                    ):
+                        core_attrs.add(target.attr)
+                        changed = True
+                    elif isinstance(target, ast.Tuple):
+                        for element in target.elts:
+                            if isinstance(element, ast.Name) and element.id not in core_names:
+                                core_names.add(element.id)
+                                changed = True
+
+        findings = []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+                continue
+            method = node.func.attr
+            if method not in _QT_STYLE_GEOMETRY_METHODS:
+                continue
+            receiver = node.func.value
+            label = None
+            if isinstance(receiver, ast.Name) and receiver.id in core_names:
+                label = f"{receiver.id}.{method}()"
+            elif (
+                isinstance(receiver, ast.Attribute)
+                and isinstance(receiver.value, ast.Name)
+                and receiver.value.id == "self"
+                and receiver.attr in core_attrs
+            ):
+                label = f"self.{receiver.attr}.{method}()"
+            elif isinstance(receiver, ast.Call):
+                producer = (
+                    getattr(receiver.func, "id", None)
+                    or getattr(receiver.func, "attr", None)
+                )
+                if producer in _CORE_GEOMETRY_PRODUCERS:
+                    label = f"{producer}(...).{method}()"
+            if label:
+                findings.append(f"{relative}:{node.lineno}:{label}")
+        return findings
+
+    def test_no_core_geometry_is_called_like_a_qt_type(self):
+        """核心 `Rect`/`Point` 的返回值不得再按 `QRect` 的方法写法取用。"""
+        findings = self._scan()
+        self.assertEqual(
+            findings,
+            [],
+            "核心几何是属性（rect.x）；这里出现了 Qt 风格的方法调用：\n"
+            + "\n".join(findings),
+        )
+
+    def test_core_geometry_keeps_the_same_reader_names_as_qt(self):
+        """属性名与 QRect 的方法名逐一对齐，迁移时只需去括号，不必改名字。"""
+        from lib.core.render.visuals.types import Rect
+
+        rect = Rect(10, 20, 30, 40)
+        self.assertEqual(rect.x, 10)
+        self.assertEqual(rect.y, 20)
+        self.assertEqual(rect.width, 30)
+        self.assertEqual(rect.height, 40)
+        self.assertEqual(rect.right, 40)
+        self.assertEqual(rect.bottom, 60)
+        self.assertEqual((rect.center.x, rect.center.y), (25.0, 40.0))
+        self.assertEqual((rect.top_left.x, rect.top_left.y), (10, 20))
+
+
+class CommandDialogGeometryIntegrationTests(unittest.TestCase):
+    """命令框的 TICK 分支真的跑到核心几何；它在构造期与导入期都不会被触发。"""
+
+    @classmethod
+    def setUpClass(cls):
+        import PyQt5
+
+        root = os.path.dirname(PyQt5.__file__)
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        os.environ.setdefault(
+            "QT_QPA_PLATFORM_PLUGIN_PATH",
+            os.path.join(root, "Qt5", "plugins", "platforms"),
+        )
+        os.environ.setdefault("QT_PLUGIN_PATH", os.path.join(root, "Qt5", "plugins"))
+
+        from PyQt5.QtWidgets import QApplication
+
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_mouse_distance_check_runs_on_core_geometry(self):
+        """驱动 `_is_mouse_far_from_family()`：它读的是核心 `Rect` 的属性。"""
+        from PyQt5.QtWidgets import QWidget
+
+        from lib.core.event.center import Event, EventType, get_event_center
+        from lib.core.render.visuals.types import Point
+        from lib.script.ui import pet_window_ui
+
+        class _PetStub:
+            def __init__(self, x, y):
+                self._position = Point(x, y)
+
+            def get_core_position(self):
+                return self._position
+
+        owner = QWidget()
+        owner.resize(200, 200)
+        ui = pet_window_ui.create_pet_window_ui(owner, on_close=lambda: None)
+        layer = ui["_right_click_ui_layer"]
+        try:
+            command = ui["_cmd"]
+            command.toggle(_PetStub(600, 400))
+            layer._on_frame()
+            self.app.processEvents()
+
+            # 直接命中报错行：`widget_global_rect(widget).center`
+            self.assertIsInstance(command._is_mouse_far_from_family(), bool)
+
+            # 再让 TICK 真的事件走一遍。事件中心吞掉回调异常并 `logger.exception`，
+            # 所以断言必须盯住日志，否则「回调炸了」看起来跟「什么都没发生」一样。
+            import logging
+
+            records = []
+
+            class _Capture(logging.Handler):
+                def emit(self, record):
+                    records.append(record.getMessage())
+
+            handler = _Capture()
+            event_logger = logging.getLogger("lib.core.event.center")
+            event_logger.addHandler(handler)
+            center = get_event_center()
+            try:
+                for _ in range(3):
+                    center.publish(Event(EventType.TICK, {}))
+                    self.app.processEvents()
+            finally:
+                event_logger.removeHandler(handler)
+
+            self.assertEqual(
+                [text for text in records if "Event handler error" in text],
+                [],
+            )
+        finally:
+            layer.close_layer()
+            pet_window_ui.shutdown_pet_window_ui(owner)
+            self.app.processEvents()
+
+
 if __name__ == "__main__":
     unittest.main()

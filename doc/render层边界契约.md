@@ -358,9 +358,27 @@ DX 保持未切分：DX 仍是 `available=False` 的实验实现，没有第二�
 
 验证：
 
-- `py -3 -m unittest discover -s tests -p "test_*.py" -q`：2051 通过、10 跳过。
+- `py -3 -m unittest discover -s tests -p "test_*.py" -q`：2054 通过、10 跳过。
 - `py -3 -m unittest discover -s tests/dx -p "test_*.py" -q`：122 通过、7 跳过。
 - `py -3 -m ruff check lib config scripts tests` 归零；`py -3 -m compileall -q config lib scripts tests` 通过。
+
+**同轮的越界回归与守卫（2026-10-01 追加）**
+
+第四轮把接缝返回值从 `QRect`/`QPoint` 换成核心几何后，`command_dialog._is_mouse_far_from_family()`
+里遗留的 `widget_global_rect(widget).center()` 直到该 TICK 分支真的跑到才抛
+`TypeError: 'Point' object is not callable`——构造期、导入期与既有单元测试都看不到它。已改为
+`.center`（属性）。同一模式的全仓再审计结论：`lib/script`、`lib/core`、`scripts` 里只剩这一处；
+`command_dialog._pet_top_left` 与 `restore_button` 的 `pet_pos.x()` 仍成立，因为那两处的
+`_pet_top_left` / 局部名确实保存着 `QPoint`（`configure_selection` 仍是纯 Qt 类）。
+
+新增的守卫把整类写法挡在 CI 里：
+
+- `CoreGeometryCallStyleTests::test_no_core_geometry_is_called_like_a_qt_type`：静态扫描
+  「绑定了核心几何的名字」（含别名链 `a = producer(); b = a`）是否被按 Qt 方法写法取用，
+  命中即以 `文件:行:名字` 报错。
+- `CommandDialogGeometryIntegrationTests::test_mouse_distance_check_runs_on_core_geometry`：
+  真的构造命令框与右键层、驱动 TICK，并盯住事件中心的错误日志——事件中心会吞掉回调异常，
+  只看「有没有抛异常」等于没断言。
 
 **滚动清单（下一个控件）**
 

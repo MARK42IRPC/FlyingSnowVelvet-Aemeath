@@ -628,7 +628,8 @@ class CommandDialog(QWidget):
             try:
                 if not widget.isVisible():
                     continue
-                center = widget_global_rect(widget).center()
+                # `widget_global_rect` 返回核心 `Rect`：center/x/y 是属性，不是方法。
+                center = widget_global_rect(widget).center
                 dx = mouse.x() - int(center.x)
                 dy = mouse.y() - int(center.y)
                 dist_sq = dx * dx + dy * dy
