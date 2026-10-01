@@ -4,11 +4,11 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from lib.core.dx_bridge.loop import DxLoopContext
-from lib.core.dx_bridge.screen import DxScreenProvider
-from lib.core.dx_bridge.speaker_search import DxSpeakerSearchWindow
+from lib.core.render.backends.dx.loop import DxLoopContext
+from lib.core.render.backends.dx.screen import DxScreenProvider
+from lib.core.render.backends.dx.speaker_search import DxSpeakerSearchWindow
 from lib.core.event.center import EventType, cleanup_event_center, get_event_center
-from lib.core.graphics.types import Point, Rect
+from lib.core.render.visuals.types import Point, Rect
 from lib.core.input.types import Key, MouseButton
 from lib.core.world_objects import (
     WorldObjectMotion,
@@ -120,7 +120,7 @@ class DxSpeakerSearchTests(unittest.TestCase):
             monitor_loader=lambda: (), fallback=Rect(0, 0, 900, 700),
         )
         self.layer_patch = patch(
-            "lib.core.dx_bridge.speaker_search.get_layer_manager",
+            "lib.core.render.backends.dx.speaker_search.get_layer_manager",
             return_value=_LayerManager(),
         )
         self.layer_patch.start()

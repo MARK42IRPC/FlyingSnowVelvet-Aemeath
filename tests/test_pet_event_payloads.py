@@ -4,7 +4,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from lib.core.event.center import Event, EventType
-from lib.core.graphics.types import Point, Rect
+from lib.core.render.visuals.types import Point, Rect
 from lib.core.pet_window import PetWindow
 from lib.core.world_objects import WorldObjectState
 
@@ -163,7 +163,7 @@ class PetEventPayloadTests(unittest.TestCase):
         forbidden_tokens = (
             "from PyQt5",
             "import PyQt5",
-            "lib.core.qt_bridge",
+            "lib.core.render.backends.qt",
             "QPixmap(",
             "QImage(",
             "QTransform(",

@@ -62,7 +62,7 @@ class ApplicationRuntimeContractTests(unittest.TestCase):
         self.assertNotIn("EffectOverlay", source)
         self.assertNotIn("QTimer", source)
         self.assertNotIn("QEvent", source)
-        self.assertNotIn("lib.core.qt_bridge", source)
+        self.assertNotIn("lib.core.render.backends.qt", source)
         self.assertNotIn("lib.script.ui", source)
         self.assertNotIn("lib.script.gemes", source)
         self.assertNotIn("configure_selected_backend", source)
@@ -86,7 +86,7 @@ class ApplicationRuntimeContractTests(unittest.TestCase):
 
             from lib.core.backend_router import BackendSelection
             from lib.core.desktop_backend import DesktopBackendBundle
-            from lib.core.graphics.types import Rect
+            from lib.core.render.visuals.types import Rect
             from lib.script import main as app_main
 
             class EventCenter:
@@ -173,7 +173,7 @@ class ApplicationRuntimeContractTests(unittest.TestCase):
 
             os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-            from lib.core.qt_bridge.application_runtime import QtApplicationRuntime
+            from lib.core.render.backends.qt.application_runtime import QtApplicationRuntime
 
             class Logger:
                 def info(self, *args, **kwargs): pass

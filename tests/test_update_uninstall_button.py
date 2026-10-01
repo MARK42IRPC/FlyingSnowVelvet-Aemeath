@@ -22,7 +22,7 @@ os.environ.setdefault(
 )
 os.environ.setdefault("QT_PLUGIN_PATH", os.path.join(_QT_ROOT, "Qt5", "plugins"))
 
-from PyQt5.QtWidgets import QApplication, QMessageBox, QPushButton
+from PyQt5.QtWidgets import QApplication, QPushButton
 
 from lib.core.event.center import EventType
 from lib.script.ui import ai_settings_panel as panel_module
@@ -68,9 +68,24 @@ class UpdatePageUninstallTests(unittest.TestCase):
             self.panel._on_uninstall_pet()
 
         launcher.assert_not_called()
+
         message = info.call_args[0][0]
         self.assertIn("源码工作区", message)
         self.assertIn(str(panel_module.get_shared_root_dir()), message)
+
+    def test_uninstall_confirmation_uses_the_shared_dialog(self):
+        """卸载确认必须走共享弹窗，不能再退回系统默认 QMessageBox。"""
+        target = Path(_TEST_HOME) / "卸载飞行雪绒.exe"
+        with patch.object(panel_module, "resolve_uninstaller", return_value=target), patch.object(
+            panel_module, "launch_uninstaller"
+        ), patch.object(panel_module, "ask_confirmation", return_value=False) as confirm:
+            self.panel._on_uninstall_pet()
+
+        confirm.assert_called_once()
+        self.assertEqual(confirm.call_args.args[0], self.panel)
+        self.assertEqual(confirm.call_args.kwargs["title"], "卸载桌宠")
+        self.assertEqual(confirm.call_args.kwargs["confirm_text"], "卸载")
+        self.assertTrue(confirm.call_args.kwargs["destructive"])
 
     def test_uninstall_confirmation_launches_the_installer_and_quits(self):
         target = Path(_TEST_HOME) / "卸载飞行雪绒.exe"
@@ -79,8 +94,8 @@ class UpdatePageUninstallTests(unittest.TestCase):
         with patch.object(panel_module, "resolve_uninstaller", return_value=target), patch.object(
             panel_module, "launch_uninstaller"
         ) as launcher, patch(
-            "PyQt5.QtWidgets.QMessageBox.warning",
-            return_value=QMessageBox.Yes,
+            "lib.script.ui.ai_settings_panel.ask_confirmation",
+            return_value=True,
         ), patch.object(
             panel_module.QTimer,
             "singleShot",
@@ -100,8 +115,8 @@ class UpdatePageUninstallTests(unittest.TestCase):
         with patch.object(panel_module, "resolve_uninstaller", return_value=target), patch.object(
             panel_module, "launch_uninstaller"
         ) as launcher, patch(
-            "PyQt5.QtWidgets.QMessageBox.warning",
-            return_value=QMessageBox.No,
+            "lib.script.ui.ai_settings_panel.ask_confirmation",
+            return_value=False,
         ):
             self.panel._on_uninstall_pet()
 

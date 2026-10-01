@@ -1,4 +1,10 @@
-"""Backend service registry configured by the desktop composition root."""
+"""Backend service registry configured by the desktop composition root.
+
+Exactly one backend may be live in a process. The composition root selects a
+backend once at startup, so this registry has no reset button: clearing it would
+let a second backend install itself on top of a running one, and every host
+already built from the first bundle would keep drawing through it.
+"""
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -7,9 +13,10 @@ from dataclasses import dataclass
 from lib.core.application_runtime import ApplicationRuntime
 from lib.core.application_ui import ApplicationUiHostFactory
 from lib.core.event.pump import EventPumpFactory
-from lib.core.graphics.capture import ScreenCapture
-from lib.core.graphics.backend import DrawBackend
-from lib.core.graphics.types import Point, Rect
+from lib.core.render.visuals.capture import ScreenCapture
+from lib.core.render.visuals.backend import DrawBackend
+from lib.core.render.visuals.types import Point, Rect
+from lib.core.logger import get_logger
 from lib.core.overlay_host import OverlayHost
 from lib.core.pet_host import PetWindowHost
 from lib.core.tray_host import TrayHostFactory
@@ -54,6 +61,12 @@ class DesktopBackendBundle:
 
 
 _bundle: DesktopBackendBundle | None = None
+_installation_owner: object | None = None
+_logger = get_logger(__name__)
+
+
+class BackendAlreadyConfiguredError(RuntimeError):
+    """Raised when a second backend tries to take over a live process."""
 
 
 def configure_desktop_backend(
@@ -76,9 +89,14 @@ def configure_desktop_backend(
     window_host_factory: WindowHostFactory | None = None,
     cleanup: BackendCleanup | None = None,
 ) -> None:
-    """Install one complete desktop backend before runtime services are created."""
-    global _bundle
-    _bundle = DesktopBackendBundle(
+    """Install one complete desktop backend before runtime services are created.
+
+    This is the anonymous entry point used by composition roots that install
+    themselves once, such as the Qt backend. Owners that may legitimately
+    re-register themselves go through :func:`install_desktop_backend_bundle`
+    with an ``owner`` token instead.
+    """
+    bundle = DesktopBackendBundle(
         draw_backend_factory=draw_backend_factory,
         application_runtime_factory=application_runtime_factory,
         application_ui_host_factory=application_ui_host_factory,
@@ -97,6 +115,7 @@ def configure_desktop_backend(
         window_host_factory=window_host_factory,
         cleanup=cleanup,
     )
+    install_desktop_backend_bundle(bundle)
 
 
 def get_desktop_backend_bundle() -> DesktopBackendBundle | None:
@@ -167,7 +186,75 @@ def get_window_host_factory() -> WindowHostFactory | None:
     return None if _bundle is None else _bundle.window_host_factory
 
 
-def reset_desktop_backend() -> None:
-    """Clear backend services for isolated tests."""
-    global _bundle
+def install_desktop_backend_bundle(
+    bundle: DesktopBackendBundle,
+    *,
+    owner: object | None = None,
+) -> None:
+    """Install the one desktop backend, or refuse to displace the live one.
+
+    Identity, not equality, decides whether a second install is the *same*
+    backend coming back. Rebuilt bundles compare unequal even when every factory
+    is equivalent (bound-method wrappers are fresh objects each call), so value
+    comparison would reject a legitimate re-registration; it is also the wrong
+    question, because two genuinely different backends can build equal bundles.
+    ``owner`` is the object that owns the bundle and may re-register itself; its
+    repeat install is a no-op that keeps the original bundle, so hosts built
+    from the first install never end up drawing through a second backend.
+    """
+    global _bundle, _installation_owner
+    if _bundle is None:
+        _bundle = bundle
+        _installation_owner = owner
+        return
+    if owner is not None and owner is _installation_owner:
+        _logger.debug("桌面后端已由同一 owner 安装，重复安装按空操作处理")
+        return
+    raise BackendAlreadyConfiguredError(
+        "a desktop backend is already active in this process; "
+        "the render backend is chosen once at startup and needs a restart"
+    )
+
+
+def uninstall_desktop_backend_bundle(owner: object) -> None:
+    """Retract a bundle that the given owner installed and failed to finish.
+
+    This is the rollback half of :func:`install_desktop_backend_bundle`, and it
+    is scoped to the installer: an owner can only take back its own install, and
+    a backend that never installed anything cannot use this to displace a live
+    one. It exists because a half-finished install must leave *nothing* behind —
+    otherwise the router's fallback backend would find the registry occupied by
+    a backend that has already been torn down and refuse to start, turning a
+    recoverable backend failure into a startup failure.
+    """
+    global _bundle, _installation_owner
+    if _bundle is None or _installation_owner is not owner:
+        return
     _bundle = None
+    _installation_owner = None
+
+
+__all__ = [
+    "BackendAlreadyConfiguredError",
+    "DesktopBackendBundle",
+    "configure_desktop_backend",
+    "get_application_runtime_factory",
+    "get_application_ui_host_factory",
+    "get_deferred_call",
+    "get_desktop_backend_bundle",
+    "get_draw_backend_factory",
+    "get_effect_overlay_factory",
+    "get_event_pump_factory",
+    "get_layer_window_host_factory",
+    "get_particle_overlay_factory",
+    "get_pet_window_factory",
+    "get_scheduler_factory",
+    "get_screen_capture_factory",
+    "get_screen_capture_provider",
+    "get_screen_for_point_provider",
+    "get_tray_host_factory",
+    "get_virtual_screen_provider",
+    "get_window_host_factory",
+    "install_desktop_backend_bundle",
+    "uninstall_desktop_backend_bundle",
+]

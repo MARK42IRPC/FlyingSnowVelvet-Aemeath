@@ -14,6 +14,7 @@
 #include <wrl/client.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <cstdint>
@@ -31,8 +32,12 @@
 using Microsoft::WRL::ComPtr;
 
 static_assert(
-    sizeof(fsdx_draw_command) == FSDX_DRAW_COMMAND_V6_SIZE,
+    sizeof(fsdx_draw_command) == FSDX_DRAW_COMMAND_V10_SIZE,
     "fsdx_draw_command ABI size changed"
+);
+static_assert(
+    FSDX_DRAW_COMMAND_V10_SIZE == FSDX_DRAW_COMMAND_V6_SIZE + 16u,
+    "ABI v10 must only append the radius/stroke/gradient-aux words"
 );
 static_assert(sizeof(fsdx_window_desc) == FSDX_WINDOW_DESC_V7_SIZE, "fsdx_window_desc ABI size changed");
 static_assert(sizeof(fsdx_window_state) == FSDX_WINDOW_STATE_V7_SIZE, "fsdx_window_state ABI size changed");
@@ -139,6 +144,9 @@ struct Runtime {
     ComPtr<ID2D1DeviceContext> d2d_context;
     ComPtr<ID2D1Bitmap1> target_bitmap;
     ComPtr<ID2D1SolidColorBrush> solid_brush;
+    /* Cap/join styles are a fixed small set, so they are created once per
+       device generation instead of once per stroked command. */
+    std::unordered_map<uint32_t, ComPtr<ID2D1StrokeStyle1>> stroke_styles;
     ComPtr<IDWriteFactory> dwrite_factory;
     ComPtr<IDWriteFontCollection1> font_collection;
     std::vector<std::wstring> font_paths;
@@ -1011,6 +1019,316 @@ D2D1_COLOR_F unpack_color(uint32_t rgba, float command_alpha) {
     return D2D1::ColorF(red, green, blue, alpha);
 }
 
+uint32_t stroke_cap_from_flags(uint32_t stroke_flags) {
+    return stroke_flags & FSDX_STROKE_CAP_MASK;
+}
+
+uint32_t stroke_join_from_flags(uint32_t stroke_flags) {
+    return (stroke_flags & FSDX_STROKE_JOIN_MASK) >> FSDX_STROKE_JOIN_SHIFT;
+}
+
+/* The shared layer declares flat/miter as 0, matching the D2D enums, so the
+   mapping is a direct cast guarded by the header masks. */
+D2D1_CAP_STYLE d2d_cap_style(uint32_t stroke_flags) {
+    switch (stroke_cap_from_flags(stroke_flags)) {
+    case FSDX_STROKE_CAP_SQUARE:
+        return D2D1_CAP_STYLE_SQUARE;
+    case FSDX_STROKE_CAP_ROUND:
+        return D2D1_CAP_STYLE_ROUND;
+    default:
+        return D2D1_CAP_STYLE_FLAT;
+    }
+}
+
+D2D1_LINE_JOIN d2d_line_join(uint32_t stroke_flags) {
+    switch (stroke_join_from_flags(stroke_flags)) {
+    case FSDX_STROKE_JOIN_BEVEL:
+        return D2D1_LINE_JOIN_BEVEL;
+    case FSDX_STROKE_JOIN_ROUND:
+        return D2D1_LINE_JOIN_ROUND;
+    default:
+        return D2D1_LINE_JOIN_MITER;
+    }
+}
+
+/* Cap/join styles are cached per device generation; the map is cleared when
+   the device is rebuilt so no stale style outlives its factory. */
+ComPtr<ID2D1StrokeStyle1> acquire_stroke_style(Runtime* runtime, uint32_t stroke_flags) {
+    const uint32_t key = stroke_flags &
+        (FSDX_STROKE_CAP_MASK | FSDX_STROKE_JOIN_MASK);
+    const auto cached = runtime->stroke_styles.find(key);
+    if (cached != runtime->stroke_styles.end()) {
+        return cached->second;
+    }
+    D2D1_STROKE_STYLE_PROPERTIES1 properties{};
+    properties.startCap = d2d_cap_style(key);
+    properties.endCap = d2d_cap_style(key);
+    properties.dashCap = d2d_cap_style(key);
+    properties.lineJoin = d2d_line_join(key);
+    properties.miterLimit = 10.0f;
+    properties.dashStyle = D2D1_DASH_STYLE_SOLID;
+    ComPtr<ID2D1StrokeStyle1> stroke_style;
+    const HRESULT hr = runtime->d2d_factory->CreateStrokeStyle(
+        properties,
+        nullptr,
+        0,
+        stroke_style.GetAddressOf()
+    );
+    if (FAILED(hr)) {
+        return nullptr;
+    }
+    runtime->stroke_styles.emplace(key, stroke_style);
+    return stroke_style;
+}
+
+struct GradientStopRecord {
+    float position;
+    uint32_t rgba;
+};
+
+bool read_gradient_stops(
+    const fsdx_draw_command* command,
+    const uint8_t* aux,
+    uint64_t aux_size,
+    std::vector<D2D1_GRADIENT_STOP>* stops_out
+) {
+    if (command->aux_size == 0 ||
+        command->aux_size % FSDX_GRADIENT_STOP_SIZE != 0 ||
+        command->aux_offset > aux_size ||
+        command->aux_size > aux_size - command->aux_offset) {
+        return false;
+    }
+    const uint32_t count = command->aux_size / FSDX_GRADIENT_STOP_SIZE;
+    stops_out->clear();
+    stops_out->reserve(count);
+    for (uint32_t index = 0; index < count; ++index) {
+        GradientStopRecord record{};
+        std::memcpy(
+            &record,
+            aux + command->aux_offset + static_cast<uint64_t>(index) * FSDX_GRADIENT_STOP_SIZE,
+            sizeof(record)
+        );
+        if (!std::isfinite(record.position)) {
+            return false;
+        }
+        D2D1_GRADIENT_STOP stop{};
+        stop.position = std::max(0.0f, std::min(1.0f, record.position));
+        stop.color = unpack_color(record.rgba, command->alpha);
+        stops_out->push_back(stop);
+    }
+    return !stops_out->empty();
+}
+
+/* A gradient brush is rebuilt per command in the current prototype; brush
+   pooling belongs with the other resource caches once profiles demand it. */
+ComPtr<ID2D1LinearGradientBrush> create_gradient_brush(
+    Runtime* runtime,
+    const fsdx_draw_command* command,
+    const uint8_t* aux,
+    uint64_t aux_size,
+    std::vector<D2D1_GRADIENT_STOP>* scratch
+) {
+    if (!read_gradient_stops(command, aux, aux_size, scratch)) {
+        return nullptr;
+    }
+    ComPtr<ID2D1GradientStopCollection> collection;
+    HRESULT hr = runtime->d2d_context->CreateGradientStopCollection(
+        scratch->data(),
+        static_cast<UINT32>(scratch->size()),
+        /* Measured against the Qt baseline, gamma-corrected interpolation
+           tracks QLinearGradient to within one 8-bit step; GAMMA_1_0 drifts by
+           tens of steps in the midtones. */
+        D2D1_GAMMA_2_2,
+        D2D1_EXTEND_MODE_CLAMP,
+        collection.GetAddressOf()
+    );
+    if (FAILED(hr)) {
+        return nullptr;
+    }
+    ComPtr<ID2D1LinearGradientBrush> brush;
+    hr = runtime->d2d_context->CreateLinearGradientBrush(
+        D2D1::LinearGradientBrushProperties(
+            D2D1::Point2F(command->x0, command->y0),
+            D2D1::Point2F(command->m11, command->m12)
+        ),
+        collection.Get(),
+        brush.GetAddressOf()
+    );
+    if (FAILED(hr)) {
+        return nullptr;
+    }
+    return brush;
+}
+
+bool command_has_gradient(const fsdx_draw_command* command) {
+    return (command->flags & FSDX_DRAW_FLAG_FILL_GRADIENT) != 0;
+}
+
+/* Direct2D antialiases every primitive by default, but the Qt baseline draws
+   shapes aliased unless the shared layer opted in. The flag is therefore
+   applied per command instead of being left to the backend default. */
+void apply_command_antialias(Runtime* runtime, const fsdx_draw_command* command) {
+    runtime->d2d_context->SetAntialiasMode(
+        (command->flags & FSDX_DRAW_FLAG_ANTIALIAS) != 0
+            ? D2D1_ANTIALIAS_MODE_PER_PRIMITIVE
+            : D2D1_ANTIALIAS_MODE_ALIASED
+    );
+}
+
+/* Path payloads are tightly packed segments; the first segment's start is the
+   figure origin because the shared layer already resolved absolute points. */
+bool read_path_segments(
+    const fsdx_draw_command* command,
+    const uint8_t* payload,
+    uint64_t payload_size,
+    std::vector<std::array<float, 6>>* segments_out
+) {
+    if (command->payload_size == 0 ||
+        command->payload_size % FSDX_PATH_SEGMENT_SIZE != 0 ||
+        !valid_payload_range(command, payload_size)) {
+        return false;
+    }
+    const uint32_t count = command->payload_size / FSDX_PATH_SEGMENT_SIZE;
+    segments_out->clear();
+    segments_out->reserve(count);
+    for (uint32_t index = 0; index < count; ++index) {
+        std::array<float, 6> values{};
+        std::memcpy(
+            values.data(),
+            payload + command->payload_offset + static_cast<uint64_t>(index) * FSDX_PATH_SEGMENT_SIZE,
+            sizeof(values)
+        );
+        for (float value : values) {
+            if (!std::isfinite(value)) {
+                return false;
+            }
+        }
+        segments_out->push_back(values);
+    }
+    return !segments_out->empty();
+}
+
+/* Axis-aligned rectangle with equal corner radii as path geometry, used for
+   rounded clip layers where D2D has no rounded-rect clip primitive. */
+ComPtr<ID2D1PathGeometry> create_rounded_path_geometry(
+    Runtime* runtime,
+    const D2D1_RECT_F& rect,
+    float radius
+) {
+    const float maximum = std::min(
+        std::max(0.0f, rect.right - rect.left),
+        std::max(0.0f, rect.bottom - rect.top)
+    ) / 2.0f;
+    const float corner = std::max(0.0f, std::min(radius, maximum));
+    if (corner <= 0.0f) {
+        return nullptr;
+    }
+    ComPtr<ID2D1PathGeometry> geometry;
+    if (FAILED(runtime->d2d_factory->CreatePathGeometry(geometry.GetAddressOf()))) {
+        return nullptr;
+    }
+    ComPtr<ID2D1GeometrySink> sink;
+    if (FAILED(geometry->Open(sink.GetAddressOf()))) {
+        return nullptr;
+    }
+    sink->BeginFigure(D2D1::Point2F(rect.left + corner, rect.top), D2D1_FIGURE_BEGIN_FILLED);
+    sink->AddLine(D2D1::Point2F(rect.right - corner, rect.top));
+    sink->AddArc(D2D1::ArcSegment(
+        D2D1::Point2F(rect.right, rect.top + corner),
+        D2D1::SizeF(corner, corner),
+        0.0f,
+        D2D1_SWEEP_DIRECTION_CLOCKWISE,
+        D2D1_ARC_SIZE_SMALL
+    ));
+    sink->AddLine(D2D1::Point2F(rect.right, rect.bottom - corner));
+    sink->AddArc(D2D1::ArcSegment(
+        D2D1::Point2F(rect.right - corner, rect.bottom),
+        D2D1::SizeF(corner, corner),
+        0.0f,
+        D2D1_SWEEP_DIRECTION_CLOCKWISE,
+        D2D1_ARC_SIZE_SMALL
+    ));
+    sink->AddLine(D2D1::Point2F(rect.left + corner, rect.bottom));
+    sink->AddArc(D2D1::ArcSegment(
+        D2D1::Point2F(rect.left, rect.bottom - corner),
+        D2D1::SizeF(corner, corner),
+        0.0f,
+        D2D1_SWEEP_DIRECTION_CLOCKWISE,
+        D2D1_ARC_SIZE_SMALL
+    ));
+    sink->AddLine(D2D1::Point2F(rect.left, rect.top + corner));
+    sink->AddArc(D2D1::ArcSegment(
+        D2D1::Point2F(rect.left + corner, rect.top),
+        D2D1::SizeF(corner, corner),
+        0.0f,
+        D2D1_SWEEP_DIRECTION_CLOCKWISE,
+        D2D1_ARC_SIZE_SMALL
+    ));
+    sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+    if (FAILED(sink->Close())) {
+        return nullptr;
+    }
+    return geometry;
+}
+
+/* Closure mirrors the shared ``build_polygon_path(closed=...)`` contract: a
+   path whose last point returns to the first has an explicit closing segment,
+   so it is stroked as a loop; anything else must stay open. Closing an open
+   polyline here would make D2D stroke the phantom return segment and turn the
+   end caps into joins, extending the line well past its declared endpoints. */
+bool path_is_closed(const std::vector<std::array<float, 6>>& segments) {
+    if (segments.size() < 3) {
+        return false;
+    }
+    const auto& first = segments.front();
+    const auto& last = segments.back();
+    return std::abs(last[4] - first[0]) < 1e-4f && std::abs(last[5] - first[1]) < 1e-4f;
+}
+
+ComPtr<ID2D1PathGeometry> create_path_geometry(
+    Runtime* runtime,
+    const std::vector<std::array<float, 6>>& segments
+) {
+    if (segments.empty()) {
+        return nullptr;
+    }
+    ComPtr<ID2D1PathGeometry> geometry;
+    if (FAILED(runtime->d2d_factory->CreatePathGeometry(geometry.GetAddressOf()))) {
+        return nullptr;
+    }
+    ComPtr<ID2D1GeometrySink> sink;
+    if (FAILED(geometry->Open(sink.GetAddressOf()))) {
+        return nullptr;
+    }
+    sink->BeginFigure(
+        D2D1::Point2F(segments.front()[0], segments.front()[1]),
+        D2D1_FIGURE_BEGIN_FILLED
+    );
+    for (const auto& segment : segments) {
+        /* curve[0]/curve[1] carry the quadratic control point; the shared
+           layer leaves them zero for straight segments, so a zero control is
+           treated as a line to match Qt's quadTo. */
+        const bool has_curve =
+            std::abs(segment[2]) > 0.0f || std::abs(segment[3]) > 0.0f;
+        if (has_curve) {
+            sink->AddQuadraticBezier(D2D1::QuadraticBezierSegment(
+                D2D1::Point2F(segment[2], segment[3]),
+                D2D1::Point2F(segment[4], segment[5])
+            ));
+        }
+        else {
+            sink->AddLine(D2D1::Point2F(segment[4], segment[5]));
+        }
+    }
+    sink->EndFigure(
+        path_is_closed(segments) ? D2D1_FIGURE_END_CLOSED : D2D1_FIGURE_END_OPEN
+    );
+    if (FAILED(sink->Close())) {
+        return nullptr;
+    }
+    return geometry;
+}
+
 fsdx_status create_offscreen_targets(
     Runtime* runtime,
     uint32_t width,
@@ -1070,11 +1388,50 @@ fsdx_status create_offscreen_targets(
     return FSDX_STATUS_OK;
 }
 
+bool valid_stroke_flags(uint32_t stroke_flags) {
+    if ((stroke_flags & ~(FSDX_STROKE_CAP_MASK | FSDX_STROKE_JOIN_MASK)) != 0) {
+        return false;
+    }
+    switch (stroke_cap_from_flags(stroke_flags)) {
+    case FSDX_STROKE_CAP_FLAT:
+    case FSDX_STROKE_CAP_SQUARE:
+    case FSDX_STROKE_CAP_ROUND:
+        break;
+    default:
+        return false;
+    }
+    switch (stroke_join_from_flags(stroke_flags)) {
+    case FSDX_STROKE_JOIN_MITER:
+    case FSDX_STROKE_JOIN_BEVEL:
+    case FSDX_STROKE_JOIN_ROUND:
+        break;
+    default:
+        return false;
+    }
+    return true;
+}
+
+/* Gradient payloads are validated here so the render loop can assume a
+   well-formed ramp; the aux region is validated by the caller. */
+fsdx_status validate_gradient_payload(const fsdx_draw_command* command, uint64_t payload_size) {
+    if (command->aux_size == 0) {
+        return fail(FSDX_STATUS_INVALID_ARGUMENT, "gradient fill requires stops");
+    }
+    if (command->aux_size % FSDX_GRADIENT_STOP_SIZE != 0 ||
+        command->aux_offset > payload_size ||
+        command->aux_size > payload_size - command->aux_offset) {
+        return fail(FSDX_STATUS_INVALID_ARGUMENT, "gradient stops exceed the aux payload");
+    }
+    return FSDX_STATUS_OK;
+}
+
 fsdx_status validate_draw_command(const fsdx_draw_command* command, uint64_t payload_size) {
     if (command->abi_version != FSDX_ABI_VERSION || command->struct_size != sizeof(fsdx_draw_command)) {
         return fail(FSDX_STATUS_ABI_MISMATCH, "draw command ABI version or size mismatch");
     }
-    if (!finite_geometry(command) || !std::isfinite(command->stroke_width) || command->stroke_width < 0.0f) {
+    if (!finite_geometry(command) || !std::isfinite(command->stroke_width) || command->stroke_width < 0.0f ||
+        !std::isfinite(command->radius) || command->radius < 0.0f ||
+        !valid_stroke_flags(command->stroke_flags)) {
         return fail(FSDX_STATUS_INVALID_ARGUMENT, "draw command contains invalid numeric values");
     }
 
@@ -1082,23 +1439,75 @@ fsdx_status validate_draw_command(const fsdx_draw_command* command, uint64_t pay
     case FSDX_COMMAND_SPRITE:
         if (command->resource == 0 || command->x1 <= 0.0f || command->y1 <= 0.0f ||
             (command->flags & ~FSDX_DRAW_FLAG_FLIPPED) != 0 || !valid_alpha(command->alpha) ||
-            command->payload_size != 0) {
+            command->payload_size != 0 || command->radius != 0.0f ||
+            command->stroke_flags != 0 || command->aux_size != 0) {
             return fail(FSDX_STATUS_INVALID_ARGUMENT, "invalid sprite draw command");
         }
         return FSDX_STATUS_OK;
-    case FSDX_COMMAND_LINE:
-        if (command->resource != 0 || command->flags != 0 || !valid_alpha(command->alpha) ||
-            command->payload_size != 0) {
+    case FSDX_COMMAND_LINE: {
+        constexpr uint32_t line_flags = FSDX_DRAW_FLAG_HAS_STROKE | FSDX_DRAW_FLAG_FILL_GRADIENT |
+            FSDX_DRAW_FLAG_ANTIALIAS;
+        if (command->resource != 0 || (command->flags & ~line_flags) != 0 ||
+            !valid_alpha(command->alpha) || command->payload_size != 0 ||
+            command->radius != 0.0f) {
             return fail(FSDX_STATUS_INVALID_ARGUMENT, "invalid line draw command");
         }
+        if ((command->flags & FSDX_DRAW_FLAG_FILL_GRADIENT) != 0) {
+            return validate_gradient_payload(command, payload_size);
+        }
+        if (command->aux_size != 0) {
+            return fail(FSDX_STATUS_INVALID_ARGUMENT, "unexpected aux payload on a solid line");
+        }
         return FSDX_STATUS_OK;
+    }
     case FSDX_COMMAND_RECT:
     case FSDX_COMMAND_ELLIPSE: {
-        constexpr uint32_t shape_flags = FSDX_DRAW_FLAG_HAS_FILL | FSDX_DRAW_FLAG_HAS_STROKE;
+        constexpr uint32_t shape_flags = FSDX_DRAW_FLAG_HAS_FILL | FSDX_DRAW_FLAG_HAS_STROKE |
+            FSDX_DRAW_FLAG_FILL_GRADIENT | FSDX_DRAW_FLAG_ANTIALIAS;
         if (command->resource != 0 || (command->flags & ~shape_flags) != 0 || !valid_alpha(command->alpha) ||
             command->payload_size != 0 ||
             ((command->flags & FSDX_DRAW_FLAG_HAS_STROKE) != 0 && command->stroke_width <= 0.0f)) {
             return fail(FSDX_STATUS_INVALID_ARGUMENT, "invalid shape draw command");
+        }
+        if ((command->flags & FSDX_DRAW_FLAG_FILL_GRADIENT) != 0) {
+            if ((command->flags & FSDX_DRAW_FLAG_HAS_FILL) == 0) {
+                return fail(FSDX_STATUS_INVALID_ARGUMENT, "gradient fill requires the fill flag");
+            }
+            const fsdx_status status = validate_gradient_payload(command, payload_size);
+            if (status != FSDX_STATUS_OK) {
+                return status;
+            }
+        }
+        else if (command->aux_size != 0) {
+            return fail(FSDX_STATUS_INVALID_ARGUMENT, "unexpected aux payload on a solid shape");
+        }
+        return FSDX_STATUS_OK;
+    }
+    case FSDX_COMMAND_PATH: {
+        constexpr uint32_t path_flags = FSDX_DRAW_FLAG_HAS_FILL | FSDX_DRAW_FLAG_HAS_STROKE |
+            FSDX_DRAW_FLAG_FILL_GRADIENT | FSDX_DRAW_FLAG_ANTIALIAS;
+        const bool has_fill = (command->flags & FSDX_DRAW_FLAG_HAS_FILL) != 0;
+        const bool has_stroke = (command->flags & FSDX_DRAW_FLAG_HAS_STROKE) != 0;
+        if (command->resource != 0 || (command->flags & ~path_flags) != 0 ||
+            !valid_alpha(command->alpha) || command->radius != 0.0f ||
+            (!has_fill && !has_stroke) ||
+            (has_stroke && command->stroke_width <= 0.0f)) {
+            return fail(FSDX_STATUS_INVALID_ARGUMENT, "invalid path draw command");
+        }
+        if (!has_fill && (command->flags & FSDX_DRAW_FLAG_FILL_GRADIENT) != 0) {
+            return fail(FSDX_STATUS_INVALID_ARGUMENT, "gradient fill requires the fill flag");
+        }
+        if (command->payload_size == 0 || command->payload_size % FSDX_PATH_SEGMENT_SIZE != 0) {
+            return fail(FSDX_STATUS_INVALID_ARGUMENT, "path command requires whole segments");
+        }
+        if ((command->flags & FSDX_DRAW_FLAG_FILL_GRADIENT) != 0) {
+            const fsdx_status status = validate_gradient_payload(command, payload_size);
+            if (status != FSDX_STATUS_OK) {
+                return status;
+            }
+        }
+        else if (command->aux_size != 0) {
+            return fail(FSDX_STATUS_INVALID_ARGUMENT, "unexpected aux payload on a solid path");
         }
         return FSDX_STATUS_OK;
     }
@@ -1113,8 +1522,16 @@ fsdx_status validate_draw_command(const fsdx_draw_command* command, uint64_t pay
         return FSDX_STATUS_OK;
     }
     case FSDX_COMMAND_CLIP_PUSH:
-        if (command->resource != 0 || command->flags != 0 || command->payload_size != 0) {
+        if (command->resource != 0 ||
+            (command->flags & ~FSDX_DRAW_FLAG_ANTIALIAS) != 0 || command->stroke_flags != 0 ||
+            command->aux_size != 0 ||
+            (command->payload_size != 0 && command->payload_size % FSDX_PATH_SEGMENT_SIZE != 0) ||
+            (command->payload_size == 0 && command->radius > 0.0f && command->x1 <= 0.0f) ||
+            (command->payload_size == 0 && command->y1 <= 0.0f && command->radius > 0.0f)) {
             return fail(FSDX_STATUS_INVALID_ARGUMENT, "invalid clip push command");
+        }
+        if (command->payload_size != 0 && !valid_payload_range(command, payload_size)) {
+            return fail(FSDX_STATUS_INVALID_ARGUMENT, "clip path exceeds the frame payload");
         }
         return FSDX_STATUS_OK;
     case FSDX_COMMAND_TRANSFORM_PUSH:
@@ -1364,6 +1781,7 @@ fsdx_status recover_device(const std::shared_ptr<Runtime>& runtime) {
     }
     runtime->target_bitmap.Reset();
     runtime->solid_brush.Reset();
+    runtime->stroke_styles.clear();
     runtime->dwrite_factory.Reset();
     runtime->font_collection.Reset();
     runtime->d2d_context.Reset();
@@ -2437,6 +2855,7 @@ FSDX_API fsdx_status fsdx_submit_frame(
 
     struct RenderState {
         uint32_t type;
+        bool layered;  /* true => PopLayer, false => PopAxisAlignedClip */
         D2D1_MATRIX_3X2_F transform;
     };
     std::vector<RenderState> render_states;
@@ -2446,11 +2865,15 @@ FSDX_API fsdx_status fsdx_submit_frame(
     catch (const std::bad_alloc&) {
         return fail(FSDX_STATUS_ALLOCATION_FAILED, "draw state allocation failed");
     }
+    /* Reused across commands so per-command brush/geometry work allocates once. */
+    std::vector<D2D1_GRADIENT_STOP> gradient_scratch;
+    std::vector<std::array<float, 6>> shape_segments;
 
     runtime->d2d_context->SetTarget(runtime->target_bitmap.Get());
     runtime->d2d_context->BeginDraw();
     runtime->d2d_context->SetTransform(D2D1::Matrix3x2F::Identity());
     runtime->d2d_context->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
+    runtime->d2d_context->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
     runtime->d2d_context->Clear(D2D1::ColorF(0, 0));
     fsdx_status draw_status = FSDX_STATUS_OK;
     for (const auto* command : ordered) {
@@ -2490,20 +2913,40 @@ FSDX_API fsdx_status fsdx_submit_frame(
             );
             break;
         }
-        case FSDX_COMMAND_LINE:
-            runtime->solid_brush->SetColor(unpack_color(command->stroke_rgba, command->alpha));
+        case FSDX_COMMAND_LINE: {
+            apply_command_antialias(runtime.get(), command);
+            ComPtr<ID2D1Brush> line_brush = runtime->solid_brush;
+            if ((command->flags & FSDX_DRAW_FLAG_HAS_FILL) != 0) {
+                line_brush = create_gradient_brush(
+                    runtime.get(), command, payload, payload_size, &gradient_scratch
+                );
+                if (!line_brush) {
+                    break;
+                }
+            }
+            else {
+                runtime->solid_brush->SetColor(unpack_color(command->stroke_rgba, command->alpha));
+            }
+            const ComPtr<ID2D1StrokeStyle1> style =
+                acquire_stroke_style(runtime.get(), command->stroke_flags);
             runtime->d2d_context->DrawLine(
                 D2D1::Point2F(command->x0, command->y0),
                 D2D1::Point2F(command->x1, command->y1),
-                runtime->solid_brush.Get(),
-                command->stroke_width > 0.0f ? command->stroke_width : 1.0f
+                line_brush.Get(),
+                command->stroke_width > 0.0f ? command->stroke_width : 1.0f,
+                style.Get()
             );
             break;
+        }
         case FSDX_COMMAND_RECT:
-        case FSDX_COMMAND_ELLIPSE: {
-            if (command->x1 <= 0.0f || command->y1 <= 0.0f) {
+        case FSDX_COMMAND_ELLIPSE:
+        case FSDX_COMMAND_PATH: {
+            if (command->type != FSDX_COMMAND_PATH &&
+                (command->x1 <= 0.0f || command->y1 <= 0.0f)) {
                 break;
             }
+            apply_command_antialias(runtime.get(), command);
+            const bool is_path = command->type == FSDX_COMMAND_PATH;
             const auto rect = D2D1::RectF(
                 command->x0,
                 command->y0,
@@ -2515,29 +2958,77 @@ FSDX_API fsdx_status fsdx_submit_frame(
                 command->x1 / 2.0f,
                 command->y1 / 2.0f
             );
+            const auto rounded = D2D1::RoundedRect(rect, command->radius, command->radius);
+            ComPtr<ID2D1PathGeometry> geometry;
+            if (is_path) {
+                if (!read_path_segments(command, payload, payload_size, &shape_segments)) {
+                    break;
+                }
+                geometry = create_path_geometry(runtime.get(), shape_segments);
+                if (!geometry) {
+                    break;
+                }
+            }
+            ComPtr<ID2D1Brush> fill_brush;
             if ((command->flags & FSDX_DRAW_FLAG_HAS_FILL) != 0) {
-                runtime->solid_brush->SetColor(unpack_color(command->fill_rgba, command->alpha));
-                if (command->type == FSDX_COMMAND_ELLIPSE) {
-                    runtime->d2d_context->FillEllipse(ellipse, runtime->solid_brush.Get());
+                if (command_has_gradient(command)) {
+                    fill_brush = create_gradient_brush(
+                        runtime.get(), command, payload, payload_size, &gradient_scratch
+                    );
                 }
                 else {
-                    runtime->d2d_context->FillRectangle(rect, runtime->solid_brush.Get());
+                    runtime->solid_brush->SetColor(unpack_color(command->fill_rgba, command->alpha));
+                    fill_brush = runtime->solid_brush;
+                }
+                if (fill_brush) {
+                    if (is_path) {
+                        runtime->d2d_context->FillGeometry(geometry.Get(), fill_brush.Get());
+                    }
+                    else if (command->type == FSDX_COMMAND_ELLIPSE) {
+                        runtime->d2d_context->FillEllipse(ellipse, fill_brush.Get());
+                    }
+                    else if (command->radius > 0.0f) {
+                        runtime->d2d_context->FillRoundedRectangle(rounded, fill_brush.Get());
+                    }
+                    else {
+                        runtime->d2d_context->FillRectangle(rect, fill_brush.Get());
+                    }
                 }
             }
             if ((command->flags & FSDX_DRAW_FLAG_HAS_STROKE) != 0) {
                 runtime->solid_brush->SetColor(unpack_color(command->stroke_rgba, command->alpha));
-                if (command->type == FSDX_COMMAND_ELLIPSE) {
+                const ComPtr<ID2D1StrokeStyle1> style =
+                    acquire_stroke_style(runtime.get(), command->stroke_flags);
+                if (is_path) {
+                    runtime->d2d_context->DrawGeometry(
+                        geometry.Get(),
+                        runtime->solid_brush.Get(),
+                        command->stroke_width,
+                        style.Get()
+                    );
+                }
+                else if (command->type == FSDX_COMMAND_ELLIPSE) {
                     runtime->d2d_context->DrawEllipse(
                         ellipse,
                         runtime->solid_brush.Get(),
-                        command->stroke_width
+                        command->stroke_width,
+                        style.Get()
+                    );
+                }
+                else if (command->radius > 0.0f) {
+                    runtime->d2d_context->DrawRoundedRectangle(
+                        rounded,
+                        runtime->solid_brush.Get(),
+                        command->stroke_width,
+                        style.Get()
                     );
                 }
                 else {
                     runtime->d2d_context->DrawRectangle(
                         rect,
                         runtime->solid_brush.Get(),
-                        command->stroke_width
+                        command->stroke_width,
+                        style.Get()
                     );
                 }
             }
@@ -2549,21 +3040,59 @@ FSDX_API fsdx_status fsdx_submit_frame(
         case FSDX_COMMAND_CLIP_PUSH: {
             D2D1_MATRIX_3X2_F current{};
             runtime->d2d_context->GetTransform(&current);
-            render_states.push_back(RenderState{command->type, current});
-            runtime->d2d_context->PushAxisAlignedClip(
-                D2D1::RectF(
-                    command->x0,
-                    command->y0,
-                    command->x0 + std::max(0.0f, command->x1),
-                    command->y0 + std::max(0.0f, command->y1)
-                ),
-                D2D1_ANTIALIAS_MODE_PER_PRIMITIVE
+            const auto clip_rect = D2D1::RectF(
+                command->x0,
+                command->y0,
+                command->x0 + std::max(0.0f, command->x1),
+                command->y0 + std::max(0.0f, command->y1)
             );
+            ComPtr<ID2D1PathGeometry> clip_geometry;
+            if (command->payload_size > 0) {
+                if (!read_path_segments(command, payload, payload_size, &shape_segments)) {
+                    break;
+                }
+                clip_geometry = create_path_geometry(runtime.get(), shape_segments);
+            }
+            else if (command->radius > 0.0f) {
+                clip_geometry = create_rounded_path_geometry(runtime.get(), clip_rect, command->radius);
+            }
+            if (!clip_geometry) {
+                render_states.push_back(RenderState{command->type, false, current});
+                runtime->d2d_context->PushAxisAlignedClip(
+                    clip_rect,
+                    (command->flags & FSDX_DRAW_FLAG_ANTIALIAS) != 0
+                        ? D2D1_ANTIALIAS_MODE_PER_PRIMITIVE
+                        : D2D1_ANTIALIAS_MODE_ALIASED
+                );
+                break;
+            }
+            ComPtr<ID2D1Layer> layer;
+            if (FAILED(runtime->d2d_context->CreateLayer(layer.GetAddressOf()))) {
+                break;
+            }
+            const auto parameters = D2D1::LayerParameters1(
+                D2D1::InfiniteRect(),
+                clip_geometry.Get(),
+                (command->flags & FSDX_DRAW_FLAG_ANTIALIAS) != 0
+                    ? D2D1_ANTIALIAS_MODE_PER_PRIMITIVE
+                    : D2D1_ANTIALIAS_MODE_ALIASED,
+                D2D1::IdentityMatrix(),
+                1.0f,
+                nullptr,
+                D2D1_LAYER_OPTIONS1_NONE
+            );
+            render_states.push_back(RenderState{command->type, true, current});
+            runtime->d2d_context->PushLayer(parameters, layer.Get());
             break;
         }
         case FSDX_COMMAND_CLIP_POP: {
             const RenderState state = render_states.back();
-            runtime->d2d_context->PopAxisAlignedClip();
+            if (state.layered) {
+                runtime->d2d_context->PopLayer();
+            }
+            else {
+                runtime->d2d_context->PopAxisAlignedClip();
+            }
             runtime->d2d_context->SetTransform(state.transform);
             render_states.pop_back();
             break;
@@ -2571,7 +3100,7 @@ FSDX_API fsdx_status fsdx_submit_frame(
         case FSDX_COMMAND_TRANSFORM_PUSH: {
             D2D1_MATRIX_3X2_F current{};
             runtime->d2d_context->GetTransform(&current);
-            render_states.push_back(RenderState{command->type, current});
+            render_states.push_back(RenderState{command->type, false, current});
             const auto transform = D2D1::Matrix3x2F(
                 command->m11,
                 command->m12,
@@ -2599,7 +3128,12 @@ FSDX_API fsdx_status fsdx_submit_frame(
     while (!render_states.empty()) {
         const RenderState state = render_states.back();
         if (state.type == FSDX_COMMAND_CLIP_PUSH) {
-            runtime->d2d_context->PopAxisAlignedClip();
+            if (state.layered) {
+                runtime->d2d_context->PopLayer();
+            }
+            else {
+                runtime->d2d_context->PopAxisAlignedClip();
+            }
         }
         runtime->d2d_context->SetTransform(state.transform);
         render_states.pop_back();

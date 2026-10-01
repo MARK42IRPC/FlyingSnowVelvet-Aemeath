@@ -12,8 +12,8 @@ from PyQt5.QtCore import QPoint, Qt, QSize, QRect
 from PyQt5.QtCore import QPropertyAnimation, QEasingCurve
 
 from config.config import UI
-from lib.core.qt_bridge.colors import UI_THEME
-from lib.core.qt_bridge.font import get_ui_font, get_digit_font
+from lib.core.render.backends.qt.colors import UI_THEME
+from lib.core.render.backends.qt.font import get_ui_font, get_digit_font
 from config.scale import scale_px
 from lib.core.anchor_utils import apply_ui_opacity
 from lib.core.event.center import get_event_center, EventType, Event

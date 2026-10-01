@@ -10,7 +10,7 @@ import unittest
 
 from PIL import Image, ImageChops
 
-from lib.core.graphics.announcement_visuals import ANNOUNCEMENT_LIGHT_COLORS
+from lib.core.render.visuals.announcement_visuals import ANNOUNCEMENT_LIGHT_COLORS
 from scripts import build_offline_installer as installer
 
 

@@ -7,10 +7,10 @@ from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QButtonGroup
 from PyQt5.QtGui import QPainter
 
 from config.scale import scale_px
-from lib.core.graphics.panel_visuals import build_tab_bar_visual
-from lib.core.graphics.types import Size
-from lib.core.qt_bridge.colors import UI_THEME
-from lib.core.qt_bridge.draw_backend import QtDrawBackend
+from lib.core.render.visuals.panel_visuals import build_tab_bar_visual
+from lib.core.render.visuals.types import Size
+from lib.core.render.backends.qt.colors import UI_THEME
+from lib.core.render.backends.qt.draw_backend import QtDrawBackend
 from lib.core.unified_draw import Layer, get_layer_manager
 
 

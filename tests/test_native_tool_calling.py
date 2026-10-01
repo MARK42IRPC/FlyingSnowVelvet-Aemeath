@@ -102,6 +102,14 @@ class NativeToolCallingTests(unittest.TestCase):
         self.assertIn("你是爱弥斯。", runtime)
         self.assertNotIn("###", runtime)
 
+    def test_play_music_schema_exposes_the_multi_song_field(self):
+        tools = {item["function"]["name"]: item for item in get_native_tool_definitions()}
+        properties = tools["play_music"]["function"]["parameters"]["properties"]
+
+        self.assertEqual(properties["query"]["type"], "string")
+        self.assertEqual(properties["queries"]["type"], "array")
+        self.assertEqual(properties["queries"]["items"]["type"], "string")
+
     def test_native_instruction_keeps_messages_untouched(self):
         messages = [{"role": "system", "content": "persona"}]
 
@@ -119,7 +127,7 @@ class NativeToolCallingTests(unittest.TestCase):
         content = injected[0]["content"]
         self.assertTrue(content.startswith("persona"))
         self.assertIn(NATIVE_TOOL_SYSTEM_NOTE, content)
-        self.assertIn("play_music(query)", content)
+        self.assertIn("play_music(query, queries)", content)
         self.assertNotIn("play_music", messages[0]["content"])
 
     def test_toolcall_prompt_file_is_optional(self):
@@ -179,6 +187,36 @@ class NativeToolCallingTests(unittest.TestCase):
                 },
             }),
             ("回忆", "2026-07-31 10:00:00 到 2026-07-31 11:00:00 音乐"),
+        )
+
+    def test_play_music_dispatch_joins_multiple_queries(self):
+        self.assertEqual(
+            native_tool_to_dispatch({
+                "name": "play_music",
+                "arguments": {"queries": ["纸飞机", "逆潮", "碎花"]},
+            }),
+            ("音乐", "纸飞机\n逆潮\n碎花"),
+        )
+
+    def test_text_protocol_multi_song_uses_the_pause_separator(self):
+        from lib.script.chat.native_tools import split_music_queries
+
+        self.assertEqual(split_music_queries("纸飞机、逆潮、碎花"), ["纸飞机", "逆潮", "碎花"])
+        self.assertEqual(split_music_queries("纸飞机\n逆潮"), ["纸飞机", "逆潮"])
+        self.assertEqual(split_music_queries(["A、B", "C"]), ["A、B", "C"])
+        self.assertEqual(split_music_queries("纸飞机、纸飞机、逆潮"), ["纸飞机", "逆潮"])
+
+    def test_play_music_dispatch_merges_single_query_and_drops_duplicates(self):
+        self.assertEqual(
+            native_tool_to_dispatch({
+                "name": "play_music",
+                "arguments": {"query": "纸飞机", "queries": ["纸飞机", "逆潮"]},
+            }),
+            ("音乐", "纸飞机\n逆潮"),
+        )
+        self.assertEqual(
+            native_tool_to_dispatch({"name": "play_music", "arguments": {}}),
+            ("音乐", ""),
         )
 
     def test_openai_stream_returns_text_and_structured_call(self):

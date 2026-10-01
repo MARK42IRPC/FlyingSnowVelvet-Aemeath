@@ -5,10 +5,10 @@ import threading
 import unittest
 from pathlib import Path
 
-from lib.core.dx_bridge.application_runtime import DxApplicationRuntime
-from lib.core.dx_bridge.event_pump import DxEventPump
-from lib.core.dx_bridge.loop import DxLoopContext
-from lib.core.dx_bridge.scheduler import DxScheduler
+from lib.core.render.backends.dx.application_runtime import DxApplicationRuntime
+from lib.core.render.backends.dx.event_pump import DxEventPump
+from lib.core.render.backends.dx.loop import DxLoopContext
+from lib.core.render.backends.dx.scheduler import DxScheduler
 
 
 class _Clock:
@@ -266,7 +266,7 @@ class DxApplicationRuntimeTests(unittest.TestCase):
 
             builtins.__import__ = blocked_import
 
-            from lib.core.dx_bridge import (
+            from lib.core.render.backends.dx import (
                 DxApplicationRuntime,
                 DxEventPump,
                 DxScheduler,

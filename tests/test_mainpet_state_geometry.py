@@ -6,7 +6,7 @@ from lib.core.game_obstacles import (
     configure_game_obstacle_provider,
     reset_game_obstacle_provider,
 )
-from lib.core.graphics.types import Point, Rect
+from lib.core.render.visuals.types import Point, Rect
 from lib.script.mainpet.state import StateMachine
 
 

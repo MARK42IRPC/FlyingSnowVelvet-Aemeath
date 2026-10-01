@@ -4,7 +4,8 @@
 - 订阅流式消息的最终回调事件（STREAM_FINAL）
 - 检测回复文本中是否包含 ###指令### 或 ###指令 参数### 格式的工具调用标记
 - 当前支持的指令：
-    音乐 <歌名>  →  搜索并播放歌曲，场上无音响时自动生成
+    音乐 <歌名>  →  搜索并播放歌曲，场上无音响时自动生成；
+                     多个歌名（换行或、分隔）时按顺序播放首首、追加其余到队列
     下一曲       →  播放下一首（无参数）
     暂停         →  播放/暂停切换（无参数）
     回忆 <参数>  →  从 memory.txt 提取历史信息并再次发送给大模型
@@ -41,7 +42,7 @@ from urllib.parse import urlparse
 from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.logger import get_logger
-from lib.script.chat.native_tools import native_tool_to_dispatch
+from lib.script.chat.native_tools import native_tool_to_dispatch, split_music_queries
 from lib.script.music import get_music_service
 from config.config import TOOL_DISPATCHER, DRAW, ANIMATION
 from config.user_storage_paths import get_user_state_dir
@@ -473,10 +474,11 @@ class ToolDispatcher:
             return False
 
         if cmd == '音乐':
-            if not arg:
-                arg = random.choice(_DEFAULT_MUSIC_CHOICES)
-                logger.info("[ToolDispatcher] 音乐指令缺少歌名，已改为随机播放: %s", arg)
-            get_compute_hub().submit_io(self._handle_music_request, arg, mode_generation)
+            queries = split_music_queries(arg)
+            if not queries:
+                queries = [random.choice(_DEFAULT_MUSIC_CHOICES)]
+                logger.info("[ToolDispatcher] 音乐指令缺少歌名，已改为随机播放: %s", queries[0])
+            get_compute_hub().submit_io(self._handle_music_request, queries, mode_generation)
 
         elif cmd == '下一曲':
             self._ec.publish(Event(EventType.MUSIC_NEXT_TRACK, {}))
@@ -574,15 +576,22 @@ class ToolDispatcher:
             # 绝对值：百分比转小数，限制在 0.0-1.0 范围内
             self._ec.publish(Event(EventType.MUSIC_VOLUME, {'volume': max(0.0, min(1.0, value / 100))}))
 
-    def _handle_music_request(self, keyword: str, mode_generation: int | None = None):
+    def _handle_music_request(
+        self,
+        queries: str | list[str],
+        mode_generation: int | None = None,
+    ):
         """
         后台线程：搜索音乐并播放。
 
         1. 检查场上是否有存活音响
         2. 若无，先请求生成音响
-        3. 搜索关键词，取第一首结果
-        4. 发布 MUSIC_PLAY_TOP 事件播放
+        3. 逐个搜索歌名，各取第一首结果
+        4. 首首发布 MUSIC_PLAY_TOP 立即播放，其余按顺序发布 MUSIC_ENQUEUE 追加到队列末尾
         """
+        requested = split_music_queries(queries) or ['']
+        label = '、'.join(requested)
+
         if not self._accepts_mode_generation(mode_generation):
             return
         has_speaker = self._check_has_speaker()
@@ -602,24 +611,51 @@ class ToolDispatcher:
         if not self._accepts_mode_generation(mode_generation):
             return
 
-        track_ref, display = self._search_music(keyword)
-        if not self._accepts_mode_generation(mode_generation):
-            return
-        if track_ref is None:
-            logger.warning("[ToolDispatcher] 搜索 '%s' 无结果", keyword)
-            self._ec.publish(Event(EventType.INFORMATION, {
-                'text': f'没有找到"{keyword}"相关的歌曲',
-                'min': 10,
-                'max': 100,
-            }))
+        found: list[tuple[str, str]] = []
+        for keyword in requested:
+            track_ref, display = self._search_music(keyword)
+            if not self._accepts_mode_generation(mode_generation):
+                return
+            if track_ref is None:
+                logger.warning("[ToolDispatcher] 搜索 '%s' 无结果", keyword)
+                self._ec.publish(Event(EventType.INFORMATION, {
+                    'text': f'没有找到"{keyword}"相关的歌曲',
+                    'min': 10,
+                    'max': 100,
+                }))
+                continue
+            found.append((track_ref, display))
+
+        if not found:
             return
 
-        logger.info("[ToolDispatcher] 播放: %s", display)
-        self._ec.publish(Event(EventType.MUSIC_PLAY_TOP, {
-            'song_id': track_ref,
-            'track_ref': track_ref,
-            'display': display,
-        }))
+        if len(requested) > 1:
+            logger.info("[ToolDispatcher] 播放 %d 首: %s", len(found), label)
+            self._ec.publish(Event(EventType.INFORMATION, {
+                'text': f'正在播放{len(found)}首歌曲',
+                'min': 10,
+                'max': 80,
+            }))
+
+        for position, (track_ref, display) in enumerate(found):
+            if not self._accepts_mode_generation(mode_generation):
+                return
+            if position == 0:
+                logger.info("[ToolDispatcher] 播放: %s", display)
+                self._ec.publish(Event(EventType.MUSIC_PLAY_TOP, {
+                    'song_id': track_ref,
+                    'track_ref': track_ref,
+                    'display': display,
+                }))
+            else:
+                logger.info("[ToolDispatcher] 加入队列: %s", display)
+                self._ec.publish(Event(EventType.MUSIC_ENQUEUE, {
+                    'song_id': track_ref,
+                    'track_ref': track_ref,
+                    'display': display,
+                    # 批量点歌由上面的一条汇总气泡交代，逐首再弹会连成一串同文案提示。
+                    'silent': True,
+                }))
 
     def _check_has_speaker(self) -> bool:
         """

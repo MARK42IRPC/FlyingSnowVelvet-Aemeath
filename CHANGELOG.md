@@ -4,6 +4,14 @@
 
 ## [LTS1.0.7pre6] - 2026-09-22
 
+### Added
+- 音乐工具支持一次点多首：`play_music` 新增 `queries` 数组参数，模型可以把「放《纸飞机》《逆潮》
+  《碎花》」一次传完；只支持文本协议的回退网关则用顿号（或换行）连写多个歌名。调度器逐个
+  搜索，第一首照常 `MUSIC_PLAY_TOP` 立即播放，其余按顺序 `MUSIC_ENQUEUE` 追加队列末尾，并给
+  一条「正在播放 N 首歌曲」汇总气泡；批量入队带 `silent=true`，不再逐首弹一串「已加入播放队列」。
+  办公模式的桌宠工具 `play_music` 走同一条路径，工具记录与回包给出「已让音响依次播放 N 首：…」。
+  单首点歌行为不变。
+
 ### Changed
 - 自动更新包覆盖提速：覆盖阶段不再对每个文件读两遍内容，只比同名文件的大小（字节正确性
   已由资源包的 SHA-256 在下载时兜住），拷贝并发发起。真实 733 MiB / 17,195 文件的资源包
@@ -17,12 +25,21 @@
   会被清掉，带安装标记的半成品安装目录允许覆盖修复，开始解压前还会清理已死进程留下的
   `FSV-<pid>-<tid>-<tick>` 暂存目录。此前用户会遇到
   `当文件已存在时，无法创建该文件。`（183/80）并卡在解压阶段装不下去。
+- 修复单个损坏的游戏扩展会让整条启动链失效：`GamePackageService` 现在逐个加载粒子和特效
+  扩展，加载失败的只跳过该扩展并记警告，不再让异常穿 `ApplicationState._on_init_ready`。
+  此前一个已安装游戏包引用被删除的模块路径（例如 `lib.core.graphics`）就会抛
+  `ModuleNotFoundError`，使托盘图标、托盘菜单和音响搜索 UI 一起消失——它们都在该回调的
+  异常点之后。已安装副本与官方源签名不一致时仍会自动重装覆盖。
 - 修复「福利 API 配置」分区里的开关比其它分区偏左约 18px：`QFormLayout` 在整张表只有
   无标签行时会整列丢掉标签列（`addRow("", widget)` 不登记 `LabelRole`），现在补偿一个
   可见的零高占位标签把该列留住。
 - 卸载桌宠的确认弹窗改用与其它弹窗一致的样式：此前是裸的 `QMessageBox.warning`，浅色
   背景、英文 Yes/No 按钮、正文颜色都不对。新增 `lib/script/ui/confirm_dialog.py` 统一
   确认与提示弹窗（中文按钮、工作台配色、破坏性操作走 danger 色、取消为默认键）。
+- 修复应用启动阶段的单点故障：`ApplicationState._on_init_ready` 现在把管理器初始化、
+  `APP_MAIN` 发布、托盘图标、运行期 UI 四个阶段各自做异常隔离，任一阶段抛错只记录该阶段
+  的堆栈并继续执行后续阶段。此前任意一处异常（例如某个已安装游戏的扩展 import 失败）
+  都会连带吞掉托盘图标、托盘菜单和主界面，用户只看到「宠物窗口出来了但右键音响没反应」。
 
 ## [LTS1.0.7pre5] - 2026-09-16
 
@@ -204,7 +221,7 @@
   复用共享滑条视觉（黑/青/粉三层面板、深青已播放填充、竖向矩形手柄），带 20 个小刻度，
   拖动吸附到 5% 档形成颗粒手感，松开时气泡提示当前百分比；原控制按钮整体上移一个滑条高度，
   不再与滑条重叠。共享层新增 `build_slider_visual` 与 `slider_handle_commands`，
-  DX 音响搜索描述（`lib/core/graphics/speaker_visuals.py`）加入同一条音量带并可拖动，
+  DX 音响搜索描述（`lib/core/render/visuals/speaker_visuals.py`）加入同一条音量带并可拖动，
   两个后端的几何、刻度与配色一致。
 - 滑条手柄由粉色菱形改成竖向矩形（高宽约 4:3）：共享层新增 `slider_handle_commands`
   统一生成竖矩形手柄并移除已无调用方的 `rotated_square_commands`，播放进度条
@@ -347,7 +364,7 @@
   `WS_EX_NOACTIVATE`（与 DX 后端的 `FSDX_WINDOW_FLAG_NO_ACTIVATE` 对齐），清空后先滞留
   `PARTICLES.overlay_hide_linger_ms`（默认 500ms）再隐藏，滞留期内重新出现粒子/特效即
   取消隐藏，不再反复 `show()` 和 `LayerManager.enforce_burst()`；退出、暂停和清理仍然
-  立即隐藏，不受滞留影响。策略集中在 `lib/core/qt_bridge/overlay_policy.py`。
+  立即隐藏，不受滞留影响。策略集中在 `lib/core/render/backends/qt/overlay_policy.py`。
 - 修复退出后 stderr 的 comtypes 崩溃（`OSError: exception: access violation writing ...`
   与 `ValueError: COM method call without VTable`）：`lib/core/audio_meter.py` 与
   `lib/core/audio_spectrum.py` 用 `ctypes.cast` 把 `IMMDevice.Activate()` 的返回值改写成

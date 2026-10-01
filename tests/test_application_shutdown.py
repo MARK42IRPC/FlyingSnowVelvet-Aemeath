@@ -17,7 +17,7 @@ os.environ.setdefault("QT_PLUGIN_PATH", os.path.join(_QT_ROOT, "Qt5", "plugins")
 
 from PyQt5.QtWidgets import QApplication
 
-from lib.core.qt_bridge.application_runtime import QtApplicationRuntime
+from lib.core.render.backends.qt.application_runtime import QtApplicationRuntime
 from lib.script.main import (
     ApplicationState,
     _SHUTDOWN_FORCE_TIMEOUT_MS,

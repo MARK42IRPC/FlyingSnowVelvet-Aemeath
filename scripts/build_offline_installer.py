@@ -132,7 +132,7 @@ def _write_installer_theme_header(output: Path) -> None:
     """Compile the announcement's light palette into the standalone native UI."""
     if str(PRODUCT_ROOT) not in sys.path:
         sys.path.insert(0, str(PRODUCT_ROOT))
-    from lib.core.graphics.announcement_visuals import ANNOUNCEMENT_LIGHT_COLORS
+    from lib.core.render.visuals.announcement_visuals import ANNOUNCEMENT_LIGHT_COLORS
 
     lines = ["#pragma once", ""]
     for name, color in ANNOUNCEMENT_LIGHT_COLORS.items():

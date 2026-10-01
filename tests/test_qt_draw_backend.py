@@ -16,7 +16,7 @@ os.environ.setdefault("QT_PLUGIN_PATH", os.path.join(_QT_ROOT, "Qt5", "plugins")
 
 from PyQt5.QtGui import QColor, QGuiApplication, QImage, QPainter
 
-from lib.core.graphics.commands import (
+from lib.core.render.visuals.commands import (
     ClipPop,
     ClipPush,
     DrawBatch,
@@ -26,10 +26,10 @@ from lib.core.graphics.commands import (
     TransformPop,
     TransformPush,
 )
-from lib.core.graphics.resources import RasterFrame
-from lib.core.graphics.types import Color, Point, Rect, Size
+from lib.core.render.visuals.resources import RasterFrame
+from lib.core.render.visuals.types import Color, Point, Rect, Size
 from lib.core.layer import Layer
-from lib.core.qt_bridge.draw_backend import QtDrawBackend
+from lib.core.render.backends.qt.draw_backend import QtDrawBackend
 
 
 def _batch(frame: RasterFrame, *, revision: int, flipped: bool = False) -> DrawBatch:

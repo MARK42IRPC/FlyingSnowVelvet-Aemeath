@@ -7,9 +7,9 @@ from pathlib import Path
 
 from PIL import Image
 
-from lib.core.dx_bridge.screen import DxMonitor, DxScreenProvider
-from lib.core.dx_bridge.screen_capture import DxScreenCapture
-from lib.core.graphics.types import Point, Rect
+from lib.core.render.backends.dx.screen import DxMonitor, DxScreenProvider
+from lib.core.render.backends.dx.screen_capture import DxScreenCapture
+from lib.core.render.visuals.types import Point, Rect
 
 
 class DxScreenProviderTests(unittest.TestCase):
@@ -148,8 +148,8 @@ class DxScreenCaptureTests(unittest.TestCase):
 
             builtins.__import__ = blocked_import
 
-            from lib.core.dx_bridge import DxMonitor, DxScreenCapture, DxScreenProvider
-            from lib.core.graphics.types import Rect
+            from lib.core.render.backends.dx import DxMonitor, DxScreenCapture, DxScreenProvider
+            from lib.core.render.visuals.types import Rect
 
             monitor = DxMonitor(Rect(0, 0, 1, 1), Rect(0, 0, 1, 1), primary=True)
             provider = DxScreenProvider(lambda: (monitor,))

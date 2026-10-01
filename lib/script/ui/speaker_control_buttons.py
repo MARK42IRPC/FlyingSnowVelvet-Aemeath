@@ -4,20 +4,20 @@ from PyQt5.QtCore import Qt, QPropertyAnimation, QEasingCurve, QPoint, QPointF, 
 from PyQt5.QtGui import QPainter, QPolygonF
 
 from config.config import SPEAKER_SEARCH_UI
-from lib.core.graphics.speaker_band_visuals import BAND_SLIDER_GAP
+from lib.core.render.visuals.speaker_band_visuals import BAND_SLIDER_GAP
 from config.scale import scale_px
 from config.tooltip_config import TOOLTIPS
 from lib.core.event.center import get_event_center, EventType, Event
-from lib.core.qt_bridge.screen import clamp_rect_position
+from lib.core.render.backends.qt.screen import clamp_rect_position
 from lib.script.music import get_music_service
 from lib.core.anchor_utils import (
     animate_opacity,
 )
-from lib.core.qt_bridge.widget_anchors import (
+from lib.core.render.backends.qt.widget_anchors import (
     get_anchor_point as resolve_anchor_point,
     publish_widget_anchor_response,
 )
-from lib.core.qt_bridge.window import coerce_qpoint
+from lib.core.render.backends.qt.window import coerce_qpoint
 from lib.script.ui.speaker_menu_style import (
     _C_ACTION_TEXT,
     SpeakerActionButtonMixin,

@@ -8,7 +8,7 @@
 - `count_range`：本次召唤的随机个数 `(最小, 最大)`，默认 `(0, 1)`。
 - `color`：`Color`、`(r, g, b)`、`(r, g, b, a)` 或 `#rrggbb`，默认白色。
 - `bloom_range`：bloom 半径的随机范围（像素），默认 `(2, 4)`；内核半径取 bloom 的一部分，
-  其余部分由渲染层铺同心光圈（见 `lib/core/graphics/visuals.py` 的圆形 bloom）。
+  其余部分由渲染层铺同心光圈（见 `lib/core/render/visuals/visuals.py` 的圆形 bloom）。
 - `duration_ticks`：持续时长（tick），默认 20（1 秒）。
 - `fade_ticks`：其中最后多少 tick 用来淡出，默认 10；0 表示不淡出。
 - `direction`：漂移方向 `(x, y)`，默认 `(-1.0, 0.0)` 即往左。
@@ -23,7 +23,7 @@ import math
 import random
 from typing import Tuple
 
-from lib.core.graphics.types import Color
+from lib.core.render.visuals.types import Color
 from config.config import PARTICLES
 from lib.script.plugin_registry import register_particle
 from lib.script.practical.base_particle import BaseParticleScript, per_second_delta

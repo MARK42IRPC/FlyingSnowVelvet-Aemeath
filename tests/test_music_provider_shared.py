@@ -7,7 +7,7 @@
 
 import unittest
 
-from lib.script.music.providers._shared import (
+from lib.script.music.track_text import (
     extract_first_artist,
     first_artist_from_list,
     format_duration_text,

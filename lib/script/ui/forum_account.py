@@ -42,7 +42,7 @@ from lib.core.forum_api import (
 from lib.core.forum_community import CommunityService
 from lib.core.forum_session import ForumSessionStore, is_logged_in, session_path
 from lib.core.logger import get_logger
-from lib.core.qt_bridge.font import get_ui_font
+from lib.core.render.backends.qt.font import get_ui_font
 from lib.script.ui.forum_board import ForumPostRow
 from lib.script.ui.workbench_settings_layout import SmoothScrollArea
 

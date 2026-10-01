@@ -29,12 +29,12 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QImage, QPainter
 from PyQt5.QtWidgets import QApplication
 
-from lib.core.graphics.commands import DrawBatch, TextCommand
-from lib.core.graphics.types import Color, Rect
-from lib.core.graphics.visuals import build_effect_batch, resolve_effect_font
+from lib.core.render.visuals.commands import DrawBatch, TextCommand
+from lib.core.render.visuals.types import Color, Rect
+from lib.core.render.visuals.visuals import build_effect_batch, resolve_effect_font
 from lib.core.layer import Layer
-from lib.core.qt_bridge.draw_backend import QtDrawBackend
-from lib.core.qt_bridge.effect_system import _prepare_effect_backend_state
+from lib.core.render.backends.qt.draw_backend import QtDrawBackend
+from lib.core.render.backends.qt.effect_system import _prepare_effect_backend_state
 from lib.script.effects.flash_text_effect import FlashTextEffectScript
 
 CANVAS = (960, 160)

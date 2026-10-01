@@ -22,7 +22,7 @@ from lib.script.ui.workbench_settings_layout import (
     SETTINGS_HINT_FONT_SIZE,
     apply_settings_page_fonts,
 )
-from lib.core.qt_bridge.font import get_ui_font
+from lib.core.render.backends.qt.font import get_ui_font
 from lib.script.workbench.theme import get_workbench_colors, window_button_stylesheet
 
 

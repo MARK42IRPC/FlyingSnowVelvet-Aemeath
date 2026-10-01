@@ -16,7 +16,7 @@ from PyQt5.QtGui import QPainter, QPolygonF
 
 from config.scale import scale_px
 from lib.core.event.center import get_event_center, EventType
-from lib.core.qt_bridge.screen import (
+from lib.core.render.backends.qt.screen import (
     clamp_rect_position,
     move_widget_to_global,
     widget_global_rect,

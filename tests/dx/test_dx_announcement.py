@@ -7,10 +7,10 @@ import unittest
 from unittest.mock import patch
 
 from lib.core.announcement import AnnouncementBlock, AnnouncementDocument
-from lib.core.dx_bridge.announcement import DxAnnouncementWindow
-from lib.core.dx_bridge.loop import DxLoopContext
-from lib.core.dx_bridge.screen import DxScreenProvider
-from lib.core.graphics.types import Rect
+from lib.core.render.backends.dx.announcement import DxAnnouncementWindow
+from lib.core.render.backends.dx.loop import DxLoopContext
+from lib.core.render.backends.dx.screen import DxScreenProvider
+from lib.core.render.visuals.types import Rect
 
 
 def _immediate_submit(func, *args):
@@ -65,7 +65,7 @@ class DxAnnouncementTests(unittest.TestCase):
     def test_manual_request_renders_native_document_and_long_content_pages(self):
         raw = ('title:"原生公告"\ntext:"' + '\n'.join(f"第 {i} 行" for i in range(40)) + '\n"\n').encode("utf-8")
         with tempfile.TemporaryDirectory() as tmpdir, patch(
-            "lib.core.dx_bridge.announcement.get_layer_manager",
+            "lib.core.render.backends.dx.announcement.get_layer_manager",
             return_value=_LayerManager(),
         ):
             context = DxLoopContext()
@@ -100,7 +100,7 @@ class DxAnnouncementTests(unittest.TestCase):
             (AnnouncementBlock("text", "\n".join(str(i) for i in range(40))),),
         )
         with patch(
-            "lib.core.dx_bridge.announcement.get_layer_manager",
+            "lib.core.render.backends.dx.announcement.get_layer_manager",
             return_value=_LayerManager(),
         ):
             window = DxAnnouncementWindow(

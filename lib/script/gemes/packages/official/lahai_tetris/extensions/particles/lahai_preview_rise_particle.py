@@ -5,7 +5,7 @@ from __future__ import annotations
 import random
 from typing import Tuple
 
-from lib.core.graphics.types import Color
+from lib.core.render.visuals.types import Color
 from lib.script.practical.base_particle import BaseParticleScript, per_second_delta, tick_seconds
 
 

@@ -7,7 +7,7 @@
 
 from dataclasses import dataclass
 from typing import Optional, Callable
-from lib.core.graphics.types import Point, coerce_point
+from lib.core.render.visuals.types import Point, coerce_point
 
 
 @dataclass(frozen=True, slots=True)

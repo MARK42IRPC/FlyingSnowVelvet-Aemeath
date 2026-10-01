@@ -82,6 +82,30 @@ class PetToolDispatchTests(unittest.TestCase):
                 self.assertIsNone(pet_tools.build_pet_dispatch(name, arguments))
 
 
+class PetToolMultiSongTests(unittest.TestCase):
+    def test_multi_song_call_dispatches_one_command_and_reads_as_a_list(self):
+        dispatcher = _RecordingDispatcher()
+
+        result = pet_tools.execute_pet_tool(
+            "play_music", {"queries": ["纸飞机", "逆潮"]}, dispatcher=dispatcher
+        )
+
+        self.assertEqual(dispatcher.calls, [("音乐", "纸飞机\n逆潮")])
+        self.assertTrue(result["ok"])
+        self.assertIn("2 首", result["message"])
+        self.assertIn("纸飞机、逆潮", result["message"])
+
+    def test_single_song_call_keeps_the_original_result_text(self):
+        dispatcher = _RecordingDispatcher()
+
+        result = pet_tools.execute_pet_tool(
+            "play_music", {"query": "纸飞机"}, dispatcher=dispatcher
+        )
+
+        self.assertEqual(dispatcher.calls, [("音乐", "纸飞机")])
+        self.assertEqual(result["message"], "已让音响搜索并播放：纸飞机")
+
+
 class PetToolExecutionTests(unittest.TestCase):
     def test_execute_dispatches_to_the_desktop_pet_dispatcher(self):
         dispatcher = _RecordingDispatcher()

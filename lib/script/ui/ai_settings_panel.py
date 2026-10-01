@@ -40,11 +40,11 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtGui import QPainter, QPixmap
 
 from config.config import ANIMATION, UI
-from lib.core.graphics.settings_panel_visuals import build_ai_settings_panel_visual
-from lib.core.graphics.types import Size
-from lib.core.qt_bridge.colors import UI_THEME
-from lib.core.qt_bridge.draw_backend import QtDrawBackend
-from lib.core.qt_bridge.font import get_ui_font, get_digit_font
+from lib.core.render.visuals.settings_panel_visuals import build_ai_settings_panel_visual
+from lib.core.render.visuals.types import Size
+from lib.core.render.backends.qt.colors import UI_THEME
+from lib.core.render.backends.qt.draw_backend import QtDrawBackend
+from lib.core.render.backends.qt.font import get_ui_font, get_digit_font
 from lib.core.backend_router import get_backend_descriptors
 from config.general_user_settings import save_general_values
 from config.ollama_config import (
@@ -62,6 +62,7 @@ from lib.script.ui.announcement_dialog import (
     set_announcement_forever_suppressed,
 )
 from lib.script.app.uninstall_entry import launch_uninstaller, resolve_uninstaller
+from lib.script.ui.confirm_dialog import ask_confirmation, show_message
 from lib.script.ui.qq_group_dialog import QQGroupDialog
 from lib.script.ui.ai_settings_tabs import (
     attach_ai_settings_tabs,
@@ -117,8 +118,8 @@ from lib.script.ui.office_mode_settings import (
 )
 from lib.script.gsvmove import get_voice_package_status
 from lib.core.nvidia_gpu import has_nvidia_gpu
-
 from lib.script.chat.handler_auto_companion import WELFARE_AUTO_COMPANION_INTERVAL_MS
+
 _logger = get_logger(__name__)
 
 
@@ -126,7 +127,6 @@ _GPU_MODE_CPU = "cpu"
 _GPU_MODE_GPU = "gpu"
 _GPU_MODE_AUTO = "auto"
 _DROPDOWN_POPUP_LAYER = 601
-_EXTERNAL_CONFIG_FIELD_KINDS = {
 
 #: 福利 API 模式下自动陪伴固定 6 分钟。真源在
 #: ``lib.script.chat.handler_auto_companion.WELFARE_AUTO_COMPANION_INTERVAL_MS``，
@@ -134,6 +134,7 @@ _EXTERNAL_CONFIG_FIELD_KINDS = {
 WELFARE_AUTO_COMPANION_INTERVAL_MINUTES = int(
     WELFARE_AUTO_COMPANION_INTERVAL_MS[0] // 60000
 )
+_EXTERNAL_CONFIG_FIELD_KINDS = {
     "external_autostart",
     "external_announcement_suppression",
 }
@@ -1924,8 +1925,8 @@ class AISettingsPanel(QWidget):
             ),
         )
         form = create_settings_form()
-        interface_section.body_layout.addLayout(form)
         self._reply_mode_form = form
+        interface_section.body_layout.addLayout(form)
 
         self._force_mode = _WatermarkComboBox()
         self._force_mode.setView(QListView(self._force_mode))
@@ -3108,8 +3109,7 @@ class AISettingsPanel(QWidget):
 
     def _show_info_message(self, message: str):
         """显示信息消息框"""
-        from PyQt5.QtWidgets import QMessageBox
-        QMessageBox.information(self, "提示", message)
+        show_message(self, title="提示", text=message)
 
     def _create_compact_pair_editor(
         self,
@@ -5259,18 +5259,20 @@ class AISettingsPanel(QWidget):
                 f"用户数据、记忆与语音包保存在 {get_shared_root_dir()} 下，需要时单独删除。"
             )
             return
-        from PyQt5.QtWidgets import QMessageBox
-
-        confirmed = QMessageBox.warning(
+        confirmed = ask_confirmation(
             self,
-            "卸载桌宠",
-            "将退出桌宠，并由卸载程序删除程序文件。\n"
-            "用户数据、记忆与语音包默认保留，可在卸载界面上勾选一并删除。\n\n"
-            "确定继续吗？",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No,
+            title="卸载桌宠",
+            text="确定卸载桌宠吗？",
+            informative_text=(
+                "将退出桌宠，并由卸载程序删除程序文件。\n"
+                "用户数据、记忆与语音包默认保留，可在卸载界面上勾选一并删除。\n\n"
+                "确定继续吗？"
+            ),
+            confirm_text="卸载",
+            destructive=True,
+            layer_name="UninstallPetConfirmation",
         )
-        if confirmed != QMessageBox.Yes:
+        if not confirmed:
             return
         try:
             launch_uninstaller(uninstaller)

@@ -5,9 +5,9 @@ from __future__ import annotations
 import random
 import unittest
 
-from lib.core.graphics.commands import DrawBatch, EllipseCommand
-from lib.core.graphics.types import Color
-from lib.core.graphics.visuals import build_particle_batch
+from lib.core.render.visuals.commands import DrawBatch, EllipseCommand
+from lib.core.render.visuals.types import Color
+from lib.core.render.visuals.visuals import build_particle_batch
 from lib.script.plugin_registry import discover_particles, particle_registry
 from lib.script.practical.star_streak_particle import (
     CORE_RATIO,

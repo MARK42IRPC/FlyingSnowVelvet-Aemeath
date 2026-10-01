@@ -3,8 +3,8 @@ from pathlib import Path
 
 from PIL import Image
 
-from lib.core.graphics.gif_loader import GifLoader
-from lib.core.graphics.resources import ImageResource, RasterFrame
+from lib.core.render.visuals.gif_loader import GifLoader
+from lib.core.render.visuals.resources import ImageResource, RasterFrame
 
 
 def test_gif_loader_returns_pure_rgba_resources():

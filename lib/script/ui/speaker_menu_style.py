@@ -6,15 +6,15 @@ from PyQt5.QtCore import QRect, Qt
 from PyQt5.QtGui import QPainter, QColor
 
 from config.config import SPEAKER_SEARCH_UI
-from lib.core.graphics.commands import DrawBatch
-from lib.core.graphics.panel_visuals import (
+from lib.core.render.visuals.commands import DrawBatch
+from lib.core.render.visuals.panel_visuals import (
     action_button_commands,
     panel_shell_commands,
 )
-from lib.core.graphics.types import Rect
-from lib.core.qt_bridge.draw_backend import QtDrawBackend
-from lib.core.qt_bridge.colors import COLORS, UI_THEME
-from lib.core.qt_bridge.font import get_ui_font
+from lib.core.render.visuals.types import Rect
+from lib.core.render.backends.qt.draw_backend import QtDrawBackend
+from lib.core.render.backends.qt.colors import COLORS, UI_THEME
+from lib.core.render.backends.qt.font import get_ui_font
 from config.scale import scale_px
 from lib.core.unified_draw import Layer, get_layer_manager
 

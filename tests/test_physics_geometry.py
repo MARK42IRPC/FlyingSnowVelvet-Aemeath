@@ -1,4 +1,4 @@
-from lib.core.graphics.types import Rect
+from lib.core.render.visuals.types import Rect
 from lib.core.physics import PhysicsBody, PhysicsWorld, _step_physics_batch
 
 

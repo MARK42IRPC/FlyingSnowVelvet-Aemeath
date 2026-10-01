@@ -22,7 +22,7 @@ class EntityBaseWithoutQtTests(unittest.TestCase):
             builtins.__import__ = blocked_import
 
             from lib.core.entity.base import BaseEntity
-            from lib.core.graphics.types import Point, Rect
+            from lib.core.render.visuals.types import Point, Rect
 
             class Entity(BaseEntity):
                 def change_state(self, state): pass

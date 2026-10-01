@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import unittest
 
-from lib.core.graphics.application_visuals import create_portable_command_hint_metrics
-from lib.core.graphics.speaker_visuals import (
+from lib.core.render.visuals.application_visuals import create_portable_command_hint_metrics
+from lib.core.render.visuals.speaker_visuals import (
     SPEAKER_SEARCH_PAGE_SIZE,
     build_speaker_search_visual,
     speaker_visual_hit_test,

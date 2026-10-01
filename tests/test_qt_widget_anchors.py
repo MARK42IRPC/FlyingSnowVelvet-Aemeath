@@ -3,8 +3,8 @@ import unittest
 from PyQt5.QtCore import QPoint
 
 from lib.core.event.center import EventType
-from lib.core.graphics.types import Point
-from lib.core.qt_bridge.widget_anchors import (
+from lib.core.render.visuals.types import Point
+from lib.core.render.backends.qt.widget_anchors import (
     get_anchor_point,
     publish_widget_anchor_response,
 )

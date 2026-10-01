@@ -7,26 +7,26 @@ from PyQt5.QtWidgets import QWidget
 from PyQt5.QtCore    import Qt, QPoint
 from PyQt5.QtGui     import QPainter
 
-from config.config                import BEHAVIOR, PHYSICS, SNOWBALL as _SNOWBALL_CFG
 from lib.core.event.center        import get_event_center, EventType, Event
 from lib.core.clickthrough_state  import is_clickthrough_enabled
 from lib.core.physics             import get_physics_world, PhysicsBody
 from lib.core.unified_draw import Layer, get_layer_manager
 from lib.script.voice.snowball_sound import SnowballSound
-from lib.core.qt_bridge.screen import get_screen_geometry_for_point
-from lib.core.graphics.resources import ImageResource
-from lib.core.graphics.visuals import build_world_object_batch
-from lib.core.qt_bridge.draw_backend import QtDrawBackend
+from lib.core.render.backends.qt.screen import get_screen_geometry_for_point
+from lib.core.render.visuals.resources import ImageResource
+from lib.core.render.visuals.visuals import build_world_object_batch
+from lib.core.render.backends.qt.draw_backend import QtDrawBackend
+from lib.core.services.world_object_physics import resolve_world_object_physics
 
-
-# ── 物理参数（从 PHYSICS 读取，与沙发保持一致）────────────────────────
-_MAX_THROW_VX: float     = PHYSICS.get('max_throw_vx', 25.0)
-_MAX_THROW_VY: float     = PHYSICS.get('max_throw_vy', 25.0)
-_DRAG_THRESHOLD: int     = PHYSICS.get('drag_threshold', 5)
-_MAX_BOUNCES: int        = PHYSICS.get('max_bounces', 5)
-_FADE_STEP: float        = PHYSICS.get('fade_step', 0.05)
-_FADE_INTERVAL_MS: int   = PHYSICS.get('fade_interval_ms', 50)
-_GROUND_Y_PCT: float     = PHYSICS.get('ground_y_pct', 0.90)
+# ── 产品物理参数由 lib/core/services 唯一解析，与沙发保持一致 ──────────
+_WORLD_PHYSICS = resolve_world_object_physics()
+_MAX_THROW_VX: float     = _WORLD_PHYSICS.max_throw_vx
+_MAX_THROW_VY: float     = _WORLD_PHYSICS.max_throw_vy
+_DRAG_THRESHOLD: int     = _WORLD_PHYSICS.drag_threshold
+_MAX_BOUNCES: int        = _WORLD_PHYSICS.max_bounces
+_FADE_STEP: float        = _WORLD_PHYSICS.fade_step
+_FADE_INTERVAL_MS: int   = _WORLD_PHYSICS.fade_interval_ms
+_GROUND_Y_PCT: float     = _WORLD_PHYSICS.ground_y_pct
 
 # 拖拽轨迹参数
 _DRAG_TRAIL_WINDOW_SEC: float    = 0.10
@@ -35,7 +35,6 @@ _RELEASE_SAMPLE_MIN_DT_SEC: float = 1.0 / 60.0
 # 粒子触发概率控制
 _PARTICLE_TRIGGER_CHANCE: float = 0.60   # 每次触发的概率（60%）
 _PARTICLE_TRIGGER_MAX:    int   = 6      # 单个雪球一生最多触发次数
-
 
 class Snowball(QWidget):
     """
@@ -85,7 +84,7 @@ class Snowball(QWidget):
         # 双击判定
         self._pending_click       = False
         self._pending_click_ticks = 0
-        self._double_click_ticks  = BEHAVIOR.get('double_click_ticks', 3)
+        self._double_click_ticks  = _WORLD_PHYSICS.double_click_ticks
 
         # 拖拽状态
         self._press_pos: QPoint | None   = None
@@ -99,8 +98,8 @@ class Snowball(QWidget):
         self._frozen: bool = False
 
         # ── 寿命计时 ────────────────────────────────────────────────
-        lt_min_s = _SNOWBALL_CFG.get('lifetime_min', 10)
-        lt_max_s = _SNOWBALL_CFG.get('lifetime_max', 15)
+        lt_min_s = _WORLD_PHYSICS.snowball_lifetime_min_sec
+        lt_max_s = _WORLD_PHYSICS.snowball_lifetime_max_sec
         lifetime_s = random.uniform(lt_min_s, lt_max_s)
         # 寿命以 TICK 计数（1 TICK ≈ 50ms）
         self._lifetime_ticks_total = max(1, int(round(lifetime_s * 20.0)))
@@ -135,7 +134,7 @@ class Snowball(QWidget):
             max_bounces = _MAX_BOUNCES,
         )
         # 雪球专属地面摩擦系数（比世界默认值更滑）
-        self._physics_body.bounce_vx_retain = _SNOWBALL_CFG.get('ground_friction', 0.96)
+        self._physics_body.bounce_vx_retain = _WORLD_PHYSICS.snowball_ground_friction
         self._physics_body.on_position_change = self._on_physics_position_change
         self._physics_body.on_wall_hit        = self._on_physics_wall_hit
         self._physics_body.on_ground_bounce   = self._on_physics_ground_bounce

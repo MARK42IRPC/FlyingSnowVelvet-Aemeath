@@ -23,7 +23,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[3]
 # text protocol. The syntax lives here instead of the user-facing persona so the
 # character prompt no longer teaches the marker format.
 _LEGACY_TOOL_LINES = (
-    "1. ###音乐 歌名###：召唤音响并播放音乐。",
+    "1. ###音乐 歌名###：召唤音响并播放音乐；多首用顿号连写，如 ###音乐 纸飞机、逆潮###。",
     "2. ###下一曲###：播放下一首；###暂停###：播放/暂停切换。",
     "3. ###回忆 主题### 或 ###回忆 开始时间 到 结束时间 主题###：回忆历史内容。",
     "4. ###雪豹 数量### / ###沙发 数量### / ###摩托 数量###：生成对应物品。",
@@ -99,8 +99,16 @@ _COUNT_PROPERTY = {
 _NATIVE_TOOL_DEFINITIONS = (
     _function_tool(
         "play_music",
-        "仅当用户明确要求播放音乐时调用。按歌名搜索并播放；未指定歌名时可省略 query。",
-        {"query": {"type": "string", "description": "用户要求播放的歌名。"}},
+        "仅当用户明确要求播放音乐时调用。按歌名搜索并播放；未指定歌名时可省略 query。"
+        "用户一次点了多首歌时用 queries 一次传完，按顺序全部加入播放队列。",
+        {
+            "query": {"type": "string", "description": "用户要求播放的单首歌名。"},
+            "queries": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "用户一次点播多首歌时的歌名列表，按用户说的顺序排列。",
+            },
+        },
     ),
     _function_tool("next_track", "仅当用户明确要求下一曲时调用。"),
     _function_tool("toggle_play_pause", "仅当用户明确要求播放或暂停切换时调用。"),
@@ -324,6 +332,34 @@ def _plain_string(value: Any) -> str:
     return str(value or "").strip()
 
 
+# 一次点多首时，原生调用要把歌名列表塞进既有的 (指令, 参数) 契约。
+# 原生调用由工具层用换行拼装；文本回退协议（###音乐###）里模型习惯用顿号分隔，
+# 两种写法都拆开，旧的单首调用保持不变。
+MUSIC_QUERY_SEPARATOR = "\n"
+_MUSIC_QUERY_SPLIT_PATTERN = re.compile(r"[\n、]+")
+
+
+def split_music_queries(raw: Any) -> list[str]:
+    """把工具参数或调度参数拆成一串歌名：保持顺序，去掉空白与重复。
+
+    字符串输入按换行或顿号拆（原生列表参数直接逐个取用，不再二次拆分，
+    因此歌名里带顿号也不会被误切）；列表输入逐项取用。
+    """
+    if isinstance(raw, str):
+        candidates: list[Any] = _MUSIC_QUERY_SPLIT_PATTERN.split(raw)
+    elif isinstance(raw, (list, tuple)):
+        candidates = list(raw)
+    else:
+        candidates = []
+
+    queries: list[str] = []
+    for candidate in candidates:
+        text = _plain_string(candidate)
+        if text and text not in queries:
+            queries.append(text)
+    return queries
+
+
 def _number_string(value: Any, default: str) -> str:
     if isinstance(value, bool):
         return default
@@ -353,7 +389,11 @@ def native_tool_to_dispatch(raw: Any) -> tuple[str, str] | None:
     arguments = call["arguments"]
 
     if name == "play_music":
-        return "音乐", _plain_string(arguments.get("query"))
+        queries = split_music_queries(arguments.get("queries"))
+        single = _plain_string(arguments.get("query"))
+        if single and single not in queries:
+            queries.insert(0, single)
+        return "音乐", MUSIC_QUERY_SEPARATOR.join(queries)
     if name == "next_track":
         return "下一曲", ""
     if name == "toggle_play_pause":

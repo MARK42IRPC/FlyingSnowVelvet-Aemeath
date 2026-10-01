@@ -17,10 +17,10 @@ os.environ.setdefault("QT_PLUGIN_PATH", os.path.join(_QT_ROOT, "Qt5", "plugins")
 from PyQt5.QtWidgets import QApplication
 
 from lib.core.event.center import Event, EventType
-from lib.core.graphics.commands import TextCommand
-from lib.core.graphics.visuals import build_effect_batch
-from lib.core.qt_bridge.effect_system import EffectOverlay
-from lib.core.qt_bridge.font import init_font_config
+from lib.core.render.visuals.commands import TextCommand
+from lib.core.render.visuals.visuals import build_effect_batch
+from lib.core.render.backends.qt.effect_system import EffectOverlay
+from lib.core.render.backends.qt.font import init_font_config
 from lib.script.effects.flash_text_effect import FlashTextEffectScript
 
 

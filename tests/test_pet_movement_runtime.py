@@ -6,7 +6,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from lib.core.event.center import EventType
-from lib.core.graphics.types import Point
+from lib.core.render.visuals.types import Point
 from lib.core.pet_movement_runtime import PetMovementRuntime
 
 
@@ -123,7 +123,7 @@ class PetMovementRuntimeTests(unittest.TestCase):
             builtins.__import__ = blocked_import
 
             from collections import defaultdict
-            from lib.core.graphics.types import Point
+            from lib.core.render.visuals.types import Point
             from lib.core.pet_movement_runtime import PetMovementRuntime
 
             class Center:

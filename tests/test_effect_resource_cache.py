@@ -9,8 +9,8 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
-from lib.core.qt_bridge import effect_system
-from lib.core.qt_bridge.effect_system import (
+from lib.core.render.backends.qt import effect_system
+from lib.core.render.backends.qt.effect_system import (
     _RESOURCE_CACHE_MAX,
     _cached_effect_resource,
 )

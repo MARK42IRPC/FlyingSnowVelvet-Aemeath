@@ -15,7 +15,7 @@ import math
 import random
 from typing import List
 
-from lib.core.graphics.types import Color
+from lib.core.render.visuals.types import Color
 from lib.script.practical.base_particle import BaseParticleScript, per_second_delta
 from lib.script.plugin_registry import register_particle
 

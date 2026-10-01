@@ -10,8 +10,8 @@ from config.config import UI
 from config.scale import scale_px
 from lib.core.anchor_utils import apply_ui_opacity
 from lib.core.event.center import Event, EventType, get_event_center
-from lib.core.qt_bridge.font import get_ui_font
-from lib.core.qt_bridge.screen import (
+from lib.core.render.backends.qt.font import get_ui_font
+from lib.core.render.backends.qt.screen import (
     clamp_rect_position,
     move_widget_to_global,
     widget_global_rect,

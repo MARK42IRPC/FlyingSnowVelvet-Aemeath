@@ -20,14 +20,14 @@ from PyQt5.QtCore import QPoint
 from PyQt5.QtWidgets import QApplication
 
 from lib.core.event.center import cleanup_event_center, get_event_center, EventType
-from lib.core.graphics.media_panel_visuals import (
+from lib.core.render.visuals.media_panel_visuals import (
     SLIDER_TICK_COUNT,
     build_slider_visual,
     slider_track_rect,
     snap_slider_ratio,
 )
-from lib.core.graphics.panel_visuals import SLIDER_HANDLE_ASPECT
-from lib.core.graphics.speaker_visuals import (
+from lib.core.render.visuals.panel_visuals import SLIDER_HANDLE_ASPECT
+from lib.core.render.visuals.speaker_visuals import (
     SPEAKER_CONTROL_HEIGHT,
     SPEAKER_SEARCH_Y,
     SPEAKER_VOLUME_Y,

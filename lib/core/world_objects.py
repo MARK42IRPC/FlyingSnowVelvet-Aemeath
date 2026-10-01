@@ -4,8 +4,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
-from lib.core.graphics.resources import ImageResource
-from lib.core.graphics.types import Point, Rect, coerce_point
+from lib.core.render.visuals.resources import ImageResource
+from lib.core.render.visuals.types import Point, Rect, coerce_point
 
 
 _CLOCK_MAX_COUNTDOWN_CENTIS = ((99 * 60 + 59) * 60 + 59) * 100 + 99

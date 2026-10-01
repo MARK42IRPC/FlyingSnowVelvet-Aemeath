@@ -17,14 +17,14 @@ os.environ.setdefault(
 )
 os.environ.setdefault("QT_PLUGIN_PATH", os.path.join(_QT_ROOT, "Qt5", "plugins"))
 
-from lib.core.graphics.application_visuals import (
+from lib.core.render.visuals.application_visuals import (
     build_qr_panel_visual,
     qr_panel_action_text,
     qr_panel_size,
     resolve_qr_panel_layout,
 )
-from lib.core.graphics.commands import TextCommand
-from lib.core.graphics.workbench_tokens import get_workbench_token_colors
+from lib.core.render.visuals.commands import TextCommand
+from lib.core.render.visuals.workbench_tokens import get_workbench_token_colors
 from lib.core.layer_manager import cleanup_layer_manager
 from lib.script.ui.qr_dialog_base import BaseQrDialog
 

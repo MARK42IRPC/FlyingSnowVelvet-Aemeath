@@ -18,20 +18,29 @@ os.environ.setdefault(
 os.environ.setdefault("QT_PLUGIN_PATH", os.path.join(_QT_ROOT, "Qt5", "plugins"))
 
 from config.config import PARTICLES
-from lib.core.dx_bridge.offscreen import DxOffscreenTarget, find_dx_library
-from lib.core.graphics.announcement_visuals import build_announcement_visual
-from lib.core.graphics.application_visuals import (
+from lib.core.render.backends.dx.offscreen import DxOffscreenTarget, find_dx_library
+from lib.core.render.visuals.announcement_visuals import build_announcement_visual
+from lib.core.render.visuals.application_visuals import (
     build_qr_panel_visual,
     create_portable_command_hint_metrics,
     qr_panel_size,
 )
-from lib.core.graphics.speaker_playlist_visuals import build_speaker_playlist_visual
-from lib.core.graphics.speaker_visuals import build_speaker_search_visual
-from lib.core.graphics.resources import ImageResource, RasterFrame
-from lib.core.graphics.types import Color
-from lib.core.graphics.visuals import build_command_shell_batch, build_particle_batch
+from lib.core.render.visuals.speaker_playlist_visuals import build_speaker_playlist_visual
+from lib.core.render.visuals.panel_visuals import build_panel_shell_visual
+from lib.core.render.visuals.media_panel_visuals import build_slider_visual
+from lib.core.render.visuals.speaker_band_visuals import build_band_slider_visual
+from lib.core.render.visuals.speaker_visuals import build_speaker_search_visual
+from lib.core.render.visuals.resources import ImageResource, RasterFrame
+from lib.core.render.visuals.types import Color, Rect
+from lib.core.render.visuals.visuals import build_command_shell_batch, build_particle_batch
 from lib.core.layer import Layer
-from lib.core.qt_bridge.draw_backend import QtDrawBackend
+from lib.core.render.backends.qt.draw_backend import QtDrawBackend
+from tests.test_graphics_primitives_parity import (
+    SAMPLING_ALPHA_TOLERANCE,
+    SAMPLING_COVER_FLOOR,
+    SAMPLING_SLACK,
+    _unpremultiply,
+)
 
 
 class _SquareParticle:
@@ -195,6 +204,90 @@ class VisualBackendParityTests(unittest.TestCase):
             (int(visual.remove_rect.x + 5), int(visual.remove_rect.y + 5)),
             (width - 1, height - 1),
         ))
+
+    def _assert_shape_parity(self, batch, width: int, height: int, label: str) -> None:
+        """形状专用：逐像素接受“同值”与已测量的采样并列，不接受其他任何差异。
+
+        采样并列的两条规则与 `tests.test_graphics_primitives_parity` 共用同一份常量，
+        避免同一套契约在两个文件里各自漂移。
+        """
+        qt_image = self._qt_image(batch, width, height)
+        with DxOffscreenTarget(width, height, warp=True) as target:
+            target.render_batch(batch)
+            dx_pixels = target.readback_rgba()
+
+        qt_pixels = []
+        for y in range(height):
+            row = []
+            for x in range(width):
+                color = qt_image.pixelColor(x, y)
+                row.append((color.red(), color.green(), color.blue(), color.alpha()))
+            qt_pixels.append(row)
+
+        painted = 0
+        for y in range(height):
+            for x in range(width):
+                offset = (y * width + x) * 4
+                dx_color = _unpremultiply(tuple(dx_pixels[offset:offset + 4]))
+                expected = qt_pixels[y][x]
+                if dx_color[3] == 0 and expected[3] == 0:
+                    continue
+                painted += 1
+                if dx_color == expected:
+                    continue
+                where = f"{label} mismatch at {(x, y)}"
+                self.assertLessEqual(
+                    abs(dx_color[3] - expected[3]),
+                    SAMPLING_ALPHA_TOLERANCE,
+                    f"{where}: alpha {dx_color[3]} vs {expected[3]}",
+                )
+                if min(dx_color[3], expected[3]) < SAMPLING_COVER_FLOOR:
+                    continue
+                neighbourhood = [
+                    qt_pixels[ny][nx]
+                    for ny in range(max(0, y - 1), min(height, y + 2))
+                    for nx in range(max(0, x - 1), min(width, x + 2))
+                ]
+                for channel in range(4):
+                    low = min(pixel[channel] for pixel in neighbourhood) - SAMPLING_SLACK
+                    high = max(pixel[channel] for pixel in neighbourhood) + SAMPLING_SLACK
+                    if low <= dx_color[channel] <= high:
+                        continue
+                    neighbour = max(neighbourhood, key=lambda pixel: pixel[channel])
+                    self.fail(
+                        f"{where}: channel {channel} {dx_color[channel]}"
+                        f" is outside the Qt 3x3 neighbourhood of {neighbour[channel]}"
+                    )
+        self.assertGreater(painted, 0, f"{label} painted nothing")
+
+    def test_panel_shell_matches_across_backends(self):
+        visual = build_panel_shell_visual(Rect(0, 0, 40, 24))
+        self._assert_shape_parity(
+            visual.batch, int(visual.size.width), int(visual.size.height), "panel shell"
+        )
+
+    def test_slider_visual_matches_across_backends(self):
+        for ratio in (0.0, 0.5, 1.0):
+            with self.subTest(ratio=ratio):
+                visual = build_slider_visual(ratio=ratio)
+                self._assert_shape_parity(
+                    visual.batch,
+                    int(visual.size.width),
+                    int(visual.size.height),
+                    f"slider ratio={ratio}",
+                )
+
+    def test_band_slider_matches_across_backends(self):
+        for label, ticks in (("ticks", None), ("no ticks", 0)):
+            with self.subTest(ticks=label):
+                kwargs = {} if ticks is None else {"ticks": ticks}
+                visual = build_band_slider_visual(band=(60.0, 250.0), height=124, **kwargs)
+                self._assert_shape_parity(
+                    visual.batch,
+                    int(visual.size.width),
+                    int(visual.size.height),
+                    f"band slider ({label})",
+                )
 
     def test_announcement_shell_matches_across_backends(self):
         visual = build_announcement_visual(

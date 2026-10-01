@@ -11,7 +11,7 @@ from typing import Tuple
 
 from config.font_config import get_digit_font_family
 from config.scale import scale_px
-from lib.core.graphics.types import Color, FontSpec
+from lib.core.render.visuals.types import Color, FontSpec
 from lib.script.practical.base_particle import BaseParticleScript, per_second_delta, tick_seconds
 from lib.script.plugin_registry import register_particle
 

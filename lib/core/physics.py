@@ -20,7 +20,7 @@ from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import get_event_center, EventType, Event
 from config.config import PHYSICS
 from lib.core.logger import get_logger
-from lib.core.graphics.types import Rect
+from lib.core.render.visuals.types import Rect
 
 _logger = get_logger(__name__)
 

@@ -1,6 +1,6 @@
 import unittest
 
-from lib.core.graphics.commands import (
+from lib.core.render.visuals.commands import (
     ClipPop,
     ClipPush,
     DrawBatch,
@@ -14,8 +14,8 @@ from lib.core.graphics.commands import (
     TransformPop,
     TransformPush,
 )
-from lib.core.graphics.resources import ImageResource, RasterFrame
-from lib.core.graphics.types import Color, FontSpec, Point, Rect, Size, coerce_color, coerce_rect
+from lib.core.render.visuals.resources import ImageResource, RasterFrame
+from lib.core.render.visuals.types import Color, FontSpec, Point, Rect, Size, coerce_color, coerce_rect
 
 
 def test_graphics_contracts_are_backend_neutral():

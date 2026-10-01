@@ -24,8 +24,8 @@ class QtDependencyBoundaryTests(unittest.TestCase):
                 if any(
                     name == "PyQt5"
                     or name.startswith("PyQt5.")
-                    or name == "lib.core.qt_bridge"
-                    or name.startswith("lib.core.qt_bridge.")
+                    or name == "lib.core.render.backends.qt"
+                    or name.startswith("lib.core.render.backends.qt.")
                     for name in names
                 ):
                     violations.append(str(path.relative_to(repo_root)))
@@ -35,7 +35,7 @@ class QtDependencyBoundaryTests(unittest.TestCase):
     def test_config_and_core_do_not_import_qt_or_qt_bridge(self):
         repo_root = Path(__file__).resolve().parents[1]
         roots = (repo_root / "config", repo_root / "lib" / "core")
-        excluded = repo_root / "lib" / "core" / "qt_bridge"
+        excluded = repo_root / "lib" / "core" / "render" / "backends" / "qt"
 
         violations = []
         for root in roots:
@@ -53,8 +53,8 @@ class QtDependencyBoundaryTests(unittest.TestCase):
                     if any(
                         name == "PyQt5"
                         or name.startswith("PyQt5.")
-                        or name == "lib.core.qt_bridge"
-                        or name.startswith("lib.core.qt_bridge.")
+                        or name == "lib.core.render.backends.qt"
+                        or name.startswith("lib.core.render.backends.qt.")
                         for name in names
                     ):
                         violations.append(str(path.relative_to(repo_root)))
@@ -64,7 +64,7 @@ class QtDependencyBoundaryTests(unittest.TestCase):
     def test_backend_neutral_core_does_not_import_qt_ui_implementations(self):
         repo_root = Path(__file__).resolve().parents[1]
         core_root = repo_root / "lib" / "core"
-        excluded = core_root / "qt_bridge"
+        excluded = core_root / "render" / "backends" / "qt"
         violations = []
 
         for path in core_root.rglob("*.py"):
@@ -119,7 +119,7 @@ class QtDependencyBoundaryTests(unittest.TestCase):
         unexpected = sorted(
             path
             for path in qt_imports
-            if not path.startswith("lib/core/qt_bridge/")
+            if not path.startswith("lib/core/render/backends/qt/")
             and not path.startswith("lib/script/ui/")
             and path not in allowed_files
         )
@@ -211,7 +211,7 @@ class QtDependencyBoundaryTests(unittest.TestCase):
             "QImage",
             "QPixmap",
             "QWidget",
-            "qt_bridge",
+            "lib.core.render.backends.qt",
             ".geometry()",
             ".get_center()",
             ".width()",
@@ -297,7 +297,7 @@ class QtDependencyBoundaryTests(unittest.TestCase):
 
     def test_core_graphics_contract_has_no_toolkit_images_or_painter_callbacks(self):
         repo_root = Path(__file__).resolve().parents[1]
-        graphics_root = repo_root / "lib" / "core" / "graphics"
+        graphics_root = repo_root / "lib" / "core" / "render" / "visuals"
         contract_paths = (
             graphics_root / "backend.py",
             graphics_root / "commands.py",
@@ -364,9 +364,9 @@ class QtDependencyBoundaryTests(unittest.TestCase):
             from lib.core.backend_router import BackendRouter
             from lib.core.draw_core import DrawCore
             from lib.core.event.center import EventCenter
-            from lib.core.graphics.commands import DrawRequest
-            from lib.core.graphics.gif_loader import GifLoader
-            from lib.core.graphics.resources import ImageResource, RasterFrame
+            from lib.core.render.visuals.commands import DrawRequest
+            from lib.core.render.visuals.gif_loader import GifLoader
+            from lib.core.render.visuals.resources import ImageResource, RasterFrame
             from lib.core.layer_manager import LayerManager
             from lib.core.pet_window import PetWindow
             from lib.core.physics import PhysicsWorld
@@ -400,6 +400,64 @@ class QtDependencyBoundaryTests(unittest.TestCase):
             check=False,
         )
         self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+
+    def test_workbench_helper_without_pyqt_reports_recoverable_error(self):
+        """阶段 3 退出条件：无 PyQt5 时打开 Qt 工作台要给明确可恢复提示。"""
+        repo_root = Path(__file__).resolve().parents[1]
+        script = textwrap.dedent(
+            """
+            import builtins
+            import ctypes
+            import io
+            import sys
+
+            original_import = builtins.__import__
+
+            def blocked_import(name, *args, **kwargs):
+                if name == "PyQt5" or name.startswith("PyQt5."):
+                    raise ModuleNotFoundError("PyQt5 blocked by test")
+                return original_import(name, *args, **kwargs)
+
+            builtins.__import__ = blocked_import
+            sys.stderr = io.StringIO()
+
+            boxes = []
+
+            class _User32:
+                def MessageBoxW(self, *args):
+                    boxes.append(args)
+                    return 1
+
+            class _Windll:
+                user32 = _User32()
+
+            ctypes.windll = _Windll()
+
+            from lib.script.app import workbench_helper_entry
+
+            code = workbench_helper_entry.run_workbench_helper("office")
+            stderr_text = sys.stderr.getvalue()
+            sys.stderr = sys.__stderr__
+            assert code == 1, code
+            assert "PyQt5" in stderr_text, stderr_text
+            assert len(boxes) == 1, boxes
+            _hwnd, message, title, flags = boxes[0]
+            assert "PyQt5" in message, message
+            assert flags == 0x30, flags
+            assert "\u63a7\u5236\u9762\u677f" in title, title
+            assert not [name for name in sys.modules if name.startswith("PyQt5")]
+            """
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+
 
     def test_backend_neutral_product_packages_import_without_pyqt(self):
         repo_root = Path(__file__).resolve().parents[1]
@@ -460,7 +518,7 @@ class QtDependencyBoundaryTests(unittest.TestCase):
             from lib.core.event.center import Event, EventType
             from lib.core.event.key_handler import KeyEventHandler
             from lib.core.game_obstacles import get_game_obstacle_rect
-            from lib.core.graphics.types import Point, Rect
+            from lib.core.render.visuals.types import Point, Rect
             from lib.core.input.types import Key
             from lib.script.mainpet.state import StateMachine
 

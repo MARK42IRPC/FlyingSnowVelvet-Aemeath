@@ -5,7 +5,7 @@ import re
 from config.config import BUBBLE_CONFIG
 from config.ollama_config import AI_VOICE_MAX_CHARS_DEFAULT, OLLAMA
 from lib.core.event.center import Event, EventType
-from lib.core.graphics.rich_text_parser import rich_text_to_plain_text
+from lib.core.render.visuals.rich_text_parser import rich_text_to_plain_text
 from lib.core.logger import get_logger
 from lib.script.chat import bot_reply
 from .native_tools import default_native_tool_reply, native_tool_to_dispatch

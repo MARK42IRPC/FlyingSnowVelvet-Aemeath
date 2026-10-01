@@ -17,13 +17,13 @@ from PyQt5.QtCore import QEasingCurve, QPoint, Qt, QRectF, QTimer, QVariantAnima
 from PyQt5.QtGui import QColor, QPainter, QPixmap
 from PyQt5.QtWidgets import QWidget
 
-from lib.core.qt_bridge.font import get_digit_font, get_ui_font
+from lib.core.render.backends.qt.font import get_digit_font, get_ui_font
 from config.scale import scale_px
 from lib.core.event.center import Event, EventType, get_event_center
 from lib.core.effect_utils import spawn_flash_text_effect, spawn_smooth_image_effect
 from lib.core.particle_utils import spawn_particle_at_point, spawn_particle_in_rect
 from lib.core.unified_draw import Layer
-from lib.core.qt_bridge.render_core import QtRenderCore, QtRenderRequest
+from lib.core.render.backends.qt.render_core import QtRenderCore, QtRenderRequest
 from lib.script.voice.ams_lahai_break_ams_record import AmsLahaiBreakAmsRecordSound
 from lib.script.voice.ams_lahai_combo_over_five import AmsLahaiComboOverFiveSound
 from lib.script.voice.ams_lahai_game_over import AmsLahaiGameOverSound

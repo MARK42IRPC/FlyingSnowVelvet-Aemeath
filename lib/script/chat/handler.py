@@ -4,7 +4,7 @@ from collections import deque
 from typing import TYPE_CHECKING
 
 from lib.core.event.center import get_event_center, EventType, Event
-from lib.core.graphics.capture import ScreenCapture
+from lib.core.render.visuals.capture import ScreenCapture
 from lib.core.timing.scheduler import PeriodicTimer, Scheduler
 from lib.script.chat.ollama import get_ollama_manager
 from lib.core.logger import get_logger

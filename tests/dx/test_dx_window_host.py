@@ -6,7 +6,7 @@ import threading
 import unittest
 from unittest.mock import patch
 
-from lib.core.dx_bridge.window_host import (
+from lib.core.render.backends.dx.window_host import (
     FSDX_EVENT_FLAG_TEXT_FIRST,
     FSDX_EVENT_FLAG_TEXT_LAST,
     FSDX_EVENT_KEY_PRESS,
@@ -24,8 +24,8 @@ from lib.core.dx_bridge.window_host import (
     DxHostEvent,
     create_dx_layer_window_host,
 )
-from lib.core.graphics.commands import DrawBatch, RectCommand
-from lib.core.graphics.types import Color, Point, Rect
+from lib.core.render.visuals.commands import DrawBatch, RectCommand
+from lib.core.render.visuals.types import Color, Point, Rect
 from lib.core.input.types import Key, MouseButton
 
 

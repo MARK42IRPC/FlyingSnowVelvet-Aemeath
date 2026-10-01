@@ -21,8 +21,8 @@ from PyQt5.QtGui import QMouseEvent
 from PyQt5.QtWidgets import QApplication
 
 from lib.core.event.center import EventType, cleanup_event_center, get_event_center
-from lib.core.graphics.panel_visuals import SLIDER_HANDLE_ASPECT
-from lib.core.graphics.speaker_band_visuals import (
+from lib.core.render.visuals.panel_visuals import SLIDER_HANDLE_ASPECT
+from lib.core.render.visuals.speaker_band_visuals import (
     BAND_SLIDER_GAP,
     BAND_SLIDER_WIDTH,
     band_hit_test,
@@ -31,7 +31,7 @@ from lib.core.graphics.speaker_band_visuals import (
     band_track_rect,
     build_band_slider_visual,
 )
-from lib.core.graphics.speaker_visuals import (
+from lib.core.render.visuals.speaker_visuals import (
     SPEAKER_SEARCH_Y,
     build_speaker_search_visual,
     speaker_visual_hit_test,

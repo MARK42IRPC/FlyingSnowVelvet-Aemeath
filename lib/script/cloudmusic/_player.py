@@ -45,6 +45,10 @@ class MciMusicPlayer:
     """
     基于 Windows MCI 的单曲播放器，线程安全。
 
+    实现 ``lib.core.services.music_playback.MusicPlayerProtocol``：命令是异步的，
+    结果（开始播放 / 自然播完 / 失败 / 时长）通过 ``set_callbacks()`` 注册的回调汇报，
+    回调在调用线程或轮询线程上执行，订阅方需自行保证线程安全。
+
     状态机：
         idle ──play()──> playing ──pause()──> paused
                     ↑                             |
@@ -59,23 +63,57 @@ class MciMusicPlayer:
         self._state:     str           = "idle"   # idle | playing | paused
         self._lock:      threading.Lock = threading.Lock()
         self._stop_flag: threading.Event = threading.Event()
-        self._on_finish: Optional[Callable] = None
         self._duration_ms: int = 0
+        self._generation:  int = 0
+        self._callbacks: dict = {
+            "started":  None,
+            "finished": None,
+            "error":    None,
+            "duration": None,
+        }
+
+    # ── 回调 ─────────────────────────────────────────────────────────────
+
+    def set_callbacks(
+        self,
+        *,
+        on_started:  Optional[Callable] = None,
+        on_finished: Optional[Callable] = None,
+        on_error:    Optional[Callable] = None,
+        on_duration_changed: Optional[Callable] = None,
+    ) -> None:
+        """注册回调，整体替换上一组；全部传 None 即解绑。"""
+        with self._lock:
+            self._callbacks = {
+                "started":  on_started,
+                "finished": on_finished,
+                "error":    on_error,
+                "duration": on_duration_changed,
+            }
+
+    def _emit(self, name: str, *args) -> None:
+        """取出回调并在锁外调用，避免订阅方回查播放器时自锁。"""
+        with self._lock:
+            callback = self._callbacks.get(name)
+        if callback is None:
+            return
+        try:
+            callback(*args)
+        except Exception as e:
+            logger.error("[MciMusicPlayer] %s 回调异常: %s", name, e)
 
     # ── 公开接口 ─────────────────────────────────────────────────────────
 
-    def play(self, file_path: str, volume: float = 0.8,
-             on_finish: Optional[Callable] = None) -> bool:
+    def play(self, file_path: str, volume: float = 0.8, generation: int = 0) -> None:
         """
         打开并播放文件，后台线程轮询自然结束。
 
         Args:
-            file_path: 本地 MP3 绝对路径
-            volume:    音量 0.0-1.0
-            on_finish: 自然播完时在后台线程回调（非 stop() 打断时）
-        Returns:
-            True 表示成功打开并开始播放
+            file_path:  本地音频绝对路径
+            volume:     音量 0.0-1.0
+            generation: 播放代数，回调原样带回，供订阅方丢弃过期结果
         """
+        failed = False
         with self._lock:
             self._close_locked()                               # 先停掉上一首
 
@@ -85,26 +123,30 @@ class MciMusicPlayer:
             if ret != 0:
                 logger.debug("[MciMusicPlayer] open 失败，尝试使用 mpegvideo")
                 ret = _mci(f'open "{file_path}" type mpegvideo alias {alias}')
-                if ret != 0:
-                    return False
+            if ret != 0:
+                failed = True
+            else:
+                _mci(f'set {alias} time format milliseconds')
+                try:
+                    self._duration_ms = max(0, int(_mci_query(f'status {alias} length') or 0))
+                except Exception:
+                    self._duration_ms = 0
 
-            _mci(f'set {alias} time format milliseconds')
-            try:
-                self._duration_ms = max(0, int(_mci_query(f'status {alias} length') or 0))
-            except Exception:
-                self._duration_ms = 0
+                vol = max(0, min(1000, int(volume * 1000)))
+                ret = _mci(f'setaudio {alias} volume to {vol}')
+                logger.debug("[MciMusicPlayer] setaudio %s volume to %s: ret=%s", alias, vol, ret)
+                ret = _mci(f'play {alias}')
+                logger.debug("[MciMusicPlayer] play %s: ret=%s", alias, ret)
 
-            vol = max(0, min(1000, int(volume * 1000)))
-            ret = _mci(f'setaudio {alias} volume to {vol}')
-            logger.debug("[MciMusicPlayer] setaudio %s volume to %s: ret=%s", alias, vol, ret)
-            ret = _mci(f'play {alias}')
-            logger.debug("[MciMusicPlayer] play %s: ret=%s", alias, ret)
+                self._alias      = alias
+                self._state      = "playing"
+                self._generation = int(generation)
+                stop_flag        = threading.Event()
+                self._stop_flag  = stop_flag
 
-            self._alias      = alias
-            self._state      = "playing"
-            self._on_finish  = on_finish
-            stop_flag        = threading.Event()
-            self._stop_flag  = stop_flag
+        if failed:
+            self._emit("error", int(generation), f"MCI 无法打开音频文件: {file_path}")
+            return
 
         threading.Thread(
             target=self._poll,
@@ -112,7 +154,11 @@ class MciMusicPlayer:
             daemon=True,
             name="cloudmusic-poll",
         ).start()
-        return True
+
+        self._emit("started", int(generation))
+        duration_ms = self.duration_ms()
+        if duration_ms > 0:
+            self._emit("duration", int(generation), duration_ms)
 
     def pause(self) -> bool:
         """暂停，返回 True 表示状态确实改变了。"""
@@ -124,7 +170,7 @@ class MciMusicPlayer:
             return True
 
     def resume(self) -> bool:
-        """继续播放，返回 True 表示状态确实改变了。"""
+        """恢复播放，返回 True 表示状态确实改变了。"""
         with self._lock:
             if self._state != "paused":
                 return False
@@ -137,15 +183,20 @@ class MciMusicPlayer:
         with self._lock:
             self._close_locked()
 
+    def cleanup(self) -> None:
+        """停止播放并解绑回调；可重复调用。"""
+        self.stop()
+        self.set_callbacks()
+
     def set_volume(self, volume: float):
-        """动态调整音量（播放或暂停状态均有效），volume 0.0-1.0。"""
+        """动态调整音量（播放或暂停状态都有效），volume 0.0-1.0。"""
         with self._lock:
             if self._alias and self._state in ("playing", "paused"):
                 vol = max(0, min(1000, int(volume * 1000)))
                 _mci(f'setaudio {self._alias} volume to {vol}')
 
     def seek(self, position_ms: int) -> bool:
-        """跳转到指定毫秒位置。"""
+        """跳转到指定播放位置。"""
         with self._lock:
             if not self._alias or self._state not in ("playing", "paused"):
                 return False
@@ -198,7 +249,7 @@ class MciMusicPlayer:
     # ── 内部 ─────────────────────────────────────────────────────────────
 
     def _close_locked(self):
-        """停止并关闭 MCI（必须在 _lock 内调用）。"""
+        """停止并关闭 MCI；必须在 _lock 内调用。"""
         self._stop_flag.set()
         if self._alias:
             ret = _mci(f'stop {self._alias}')
@@ -207,11 +258,10 @@ class MciMusicPlayer:
             logger.debug("[MciMusicPlayer] _close_locked close %s: ret=%s", self._alias, ret)
             self._alias = None
         self._state     = "idle"
-        self._on_finish = None
         self._duration_ms = 0
 
     def _poll(self, alias: str, stop_flag: threading.Event):
-        """后台轮询线程：等待 MCI 自然播完后回调 on_finish。"""
+        """后台轮询线程：等待 MCI 自然结束并回调 on_finished。"""
         poll_count = 0
         while not stop_flag.is_set():
             mode = _mci_query(f'status {alias} mode')
@@ -224,21 +274,16 @@ class MciMusicPlayer:
 
         if stop_flag.is_set():
             logger.debug("[MciMusicPlayer] _poll %s: 被停止", alias)
-            return   # 被 stop() 触发，资源已由调用方清理
+            return   # 由 stop() 负责释放资源，不再回调
 
-        # 自然播完：清理资源 + 触发回调
-        cb = None
+        # 自然放完：释放资源 + 触发回调
+        generation = 0
         with self._lock:
-            if self._alias == alias:     # 确认仍是同一首（未被切歌）
+            if self._alias == alias:     # 确认还是同一首，未被打断
                 _mci(f'close {alias}')
                 self._alias     = None
                 self._state     = "idle"
-                cb              = self._on_finish
-                self._on_finish = None
+                generation      = self._generation
 
         logger.debug("[MciMusicPlayer] _poll %s: 触发回调", alias)
-        if cb:
-            try:
-                cb()
-            except Exception as e:
-                logger.error("[MciMusicPlayer] _poll %s: 回调异常: %s", alias, e)
+        self._emit("finished", generation)

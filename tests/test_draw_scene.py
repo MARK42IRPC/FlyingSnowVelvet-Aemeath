@@ -1,7 +1,7 @@
-from lib.core.graphics.commands import DrawBatch, DrawRequest
-from lib.core.graphics.resources import ImageResource, RasterFrame
-from lib.core.graphics.scene import DrawScene
-from lib.core.graphics.types import Point, Rect
+from lib.core.render.visuals.commands import DrawBatch, DrawRequest
+from lib.core.render.visuals.resources import ImageResource, RasterFrame
+from lib.core.render.visuals.scene import DrawScene
+from lib.core.render.visuals.types import Point, Rect
 from lib.core.layer import Layer
 
 

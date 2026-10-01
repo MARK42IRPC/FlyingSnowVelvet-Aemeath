@@ -5,7 +5,7 @@ import weakref
 from collections.abc import Callable
 from typing import Protocol
 
-from lib.core.graphics.types import Rect
+from lib.core.render.visuals.types import Rect
 
 
 class LayerWindowHost(Protocol):

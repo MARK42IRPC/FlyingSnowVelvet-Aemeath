@@ -1,12 +1,12 @@
 import unittest
 
-from lib.core.graphics.collision import (
+from lib.core.render.visuals.collision import (
     adjust_rect,
     point_in_rect,
     rects_intersect,
     segment_intersects_rect,
 )
-from lib.core.graphics.types import Point, Rect
+from lib.core.render.visuals.types import Point, Rect
 
 
 class GraphicsCollisionTests(unittest.TestCase):

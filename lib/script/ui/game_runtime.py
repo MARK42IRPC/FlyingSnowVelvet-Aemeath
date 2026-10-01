@@ -9,7 +9,7 @@ from PyQt5.QtGui import QColor, QPainter
 from PyQt5.QtWidgets import QWidget
 
 from config.config import UI
-from lib.core.qt_bridge.font import get_ui_font
+from lib.core.render.backends.qt.font import get_ui_font
 from config.scale import scale_px
 from lib.core.anchor_utils import apply_ui_opacity
 from lib.core.compute_hub import get_compute_hub
@@ -18,12 +18,12 @@ from lib.core.game_obstacles import (
     configure_game_obstacle_provider,
     reset_game_obstacle_provider,
 )
-from lib.core.graphics.types import Rect
+from lib.core.render.visuals.types import Rect
 from lib.core.hash_cmd_registry import get_hash_cmd_registry
 from lib.core.logger import get_logger
-from lib.core.qt_bridge.screen import get_screen_geometry_for_point
+from lib.core.render.backends.qt.screen import get_screen_geometry_for_point
 from lib.core.unified_draw import Layer, get_layer_manager
-from lib.core.qt_bridge.render_core import QtRenderCore, QtRenderRequest
+from lib.core.render.backends.qt.render_core import QtRenderCore, QtRenderRequest
 from lib.script.voice.ams_open_lahai_tetris import AmsOpenLahaiTetrisSound
 from lib.script.gemes.MAIN.game_packages import (
     GamePackageError,

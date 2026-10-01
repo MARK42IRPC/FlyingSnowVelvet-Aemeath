@@ -4,7 +4,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from lib.core.event.center import Event, EventType
-from lib.core.graphics.types import Point, coerce_point
+from lib.core.render.visuals.types import Point, coerce_point
 from lib.core.movement_controller import MovementController, MovementSettings
 from lib.core.pet_movement_queue import MoveStep, PetMoveQueueManager
 

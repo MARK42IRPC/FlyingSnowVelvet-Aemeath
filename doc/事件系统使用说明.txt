@@ -144,6 +144,7 @@ MIC_STT_*
 MUSIC_*
 - 播放控制、登录状态、进度同步、队列操作都在 `MUSIC_*` 命名空间
 - 统一由音乐服务和 UI 组件解耦协作
+- `MUSIC_ENQUEUE` 支持可选 `silent=true`：一次点多首时调度器逐首追加队列不再各弹一次「已加入播放队列」，由 `MUSIC_PLAY_TOP` 前的一条汇总气泡交代
 
 MANAGER_SPAWN_REQUEST
 - 用途：请求对象管理器生成实体
@@ -169,7 +170,7 @@ PROTECTION_CHECK / PROTECTION_RESPONSE
 UI_ANCHOR_RESPONSE
 - 用途：发布窗口或 UI 锚点的全局桌面坐标
 - 字段：`window_id`、`anchor_id`、`ui_id`、`anchor_point`
-- `anchor_point` 固定使用 `lib.core.graphics.types.Point`；Qt 控件只在事件消费边界转换为 `QPoint`
+- `anchor_point` 固定使用 `lib.core.render.visuals.types.Point`；Qt 控件只在事件消费边界转换为 `QPoint`
 
 ENTITY_POSITION_RESPONSE / ENTITY_STATE_RESPONSE
 - `ENTITY_POSITION_RESPONSE.position` 固定使用 `Point`，`size` 为 `(width, height)` 数值元组
@@ -182,4 +183,4 @@ ENTITY_POSITION_RESPONSE / ENTITY_STATE_RESPONSE
 - 所有订阅都必须在 `cleanup()` 中退订
 - `mark_handled()` 只用于确实需要阻断传播的场景
 - 公共事件字段一旦公开使用，尽量保持兼容，不要频繁改 key
-- 几何字段统一使用 `lib.core.graphics` 值类型，不得从 Qt UI 反向泄漏原生对象
+- 几何字段统一使用 `lib.core.render.visuals` 值类型，不得从 Qt UI 反向泄漏原生对象

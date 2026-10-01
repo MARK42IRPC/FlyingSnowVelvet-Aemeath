@@ -6,7 +6,7 @@ from lib.core.logger import get_logger
 
 from ..provider import MusicProvider
 from ..types import MusicTrack
-from ._shared import first_artist_from_list, format_duration_text
+from ..track_text import first_artist_from_list, format_duration_text
 
 logger = get_logger(__name__)
 _SEARCH_MODE_TYPES = {

@@ -27,7 +27,7 @@ from PyQt5.QtGui import QMouseEvent
 from PyQt5.QtWidgets import QApplication
 
 from lib.core.event.center import EventType, cleanup_event_center, get_event_center
-from lib.core.graphics.resources import ImageResource, RasterFrame
+from lib.core.render.visuals.resources import ImageResource, RasterFrame
 from lib.script.ui.world_objects.snow_pile import SnowPile
 
 

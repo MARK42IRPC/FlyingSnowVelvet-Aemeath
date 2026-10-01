@@ -1,6 +1,6 @@
-from lib.core.graphics.types import Point, Rect
-from lib.core.qt_bridge.pet_widget import QtPetWidget
-from lib.core.qt_bridge.window import to_qpoint
+from lib.core.render.visuals.types import Point, Rect
+from lib.core.render.backends.qt.pet_widget import QtPetWidget
+from lib.core.render.backends.qt.window import to_qpoint
 
 
 class _Point:

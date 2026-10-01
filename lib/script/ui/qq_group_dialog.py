@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from config.scale import scale_px
-from lib.core.graphics.application_visuals import qr_panel_action_text
+from lib.core.render.visuals.application_visuals import qr_panel_action_text
 from lib.script.ui.qr_dialog_base import BaseQrDialog
 
 

@@ -1,7 +1,7 @@
 """鼠标事件处理器 - 处理核心鼠标输入。"""
 
 from lib.core.event.center import get_event_center, EventType, Event
-from lib.core.graphics.types import coerce_point
+from lib.core.render.visuals.types import coerce_point
 from lib.core.input.types import MouseButton, MouseButtons
 
 

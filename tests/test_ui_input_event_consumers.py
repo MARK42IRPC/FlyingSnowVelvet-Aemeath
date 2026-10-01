@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from lib.core.event.center import Event, EventCenter, EventType
-from lib.core.graphics.types import Point
+from lib.core.render.visuals.types import Point
 from lib.core.input.types import MouseButton
 from lib.script.ui.close_button_handler import CloseButtonEventHandler
 from lib.script.ui.command_dialog_handler import CommandDialogEventHandler

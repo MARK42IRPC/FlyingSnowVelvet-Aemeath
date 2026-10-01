@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from lib.core.graphics.types import Point, Rect
+from lib.core.render.visuals.types import Point, Rect
 from lib.core.window_host import PassiveWindowHost
 
 

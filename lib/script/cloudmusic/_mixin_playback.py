@@ -524,16 +524,10 @@ class _PlaybackMixin:
             return
 
         try:
-            if self._use_native_player:
-                if not self._music_player.is_busy():
-                    return
-                duration_ms = self._music_player.duration_ms_value() or self._current_duration_ms
-                pos_ms = self._music_player.position_ms()
-            else:
-                if not self._fallback_player.is_busy():
-                    return
-                duration_ms = self._fallback_player.duration_ms() or self._current_duration_ms
-                pos_ms = self._fallback_player.position_ms()
+            if not self._music_player.is_busy():
+                return
+            duration_ms = self._music_player.duration_ms() or self._current_duration_ms
+            pos_ms = self._music_player.position_ms()
 
             if pos_ms < 0:
                 return
@@ -1036,7 +1030,7 @@ class _PlaybackMixin:
         return cached
 
     # ------------------------------------------------------------------
-    # Qt 播放
+    # 播放器回调
     # ------------------------------------------------------------------
 
     def _play_file(self, path: Path, display: str):
@@ -1049,22 +1043,14 @@ class _PlaybackMixin:
         if self._queue and 0 <= self._current_index < len(self._queue):
             song_id, _ = self._queue[self._current_index]
             self._schedule_duration_probe(song_id, path)
-        if self._use_native_player:
-            self._music_player.play_requested.emit(str(path), get_effective_music_volume(self._volume), gen)
+        if self._music_player is None:
+            self._on_player_error(gen, "本地播放器不可用")
             return
-
-        ok = self._fallback_player.play(
+        self._music_player.play(
             str(path),
-            volume=get_effective_music_volume(self._volume),
-            on_finish=lambda: self._on_player_finished(gen),
+            get_effective_music_volume(self._volume),
+            gen,
         )
-        if not ok:
-            self._on_player_error(gen, "MCI 播放器打开文件失败")
-            return
-        self._on_player_started(gen)
-        duration_ms = self._fallback_player.duration_ms()
-        if duration_ms > 0:
-            self._on_player_duration_changed(gen, duration_ms)
 
     def _on_player_started(self, gen: int) -> None:
         with self._state_lock:
@@ -1072,8 +1058,7 @@ class _PlaybackMixin:
                 return
             self._is_playing = True
             self._is_paused = False
-        if self._use_native_player:
-            self._current_duration_ms = self._music_player.duration_ms_value() or self._current_duration_ms
+        self._current_duration_ms = self._music_player.duration_ms() or self._current_duration_ms
         display = self._pending_play_display
         self._show_info(f"正在播放: {display}")
         self._publish_status()
@@ -1107,14 +1092,23 @@ class _PlaybackMixin:
             self._cache_duration_probe_result(song_id, self._current_duration_ms)
 
     def _on_player_error(self, gen: int, message: str) -> None:
-        if self._use_native_player:
-            logger.warning("[CloudMusic] Qt 播放失败，切换到 MCI fallback: %s", message)
-            self._use_native_player = False
-            pending_path = str(self._pending_play_path or "").strip()
-            pending_display = str(self._pending_play_display or "").strip()
-            if pending_path:
-                self._play_file(Path(pending_path), pending_display)
-                return
+        fallback_factory = getattr(self, "_player_fallback_factory", None)
+        if fallback_factory is not None:
+            # 只降级一次，避免两个实现互相弹跳。
+            self._player_fallback_factory = None
+            logger.warning("[CloudMusic] 注入的播放器失败，降级到 MCI: %s", message)
+            try:
+                player = fallback_factory()
+            except Exception as exc:
+                logger.error("[CloudMusic] MCI 降级播放器构造失败: %s", exc)
+            else:
+                self._disconnect_music_player()
+                self._music_player = player
+                self._attach_music_player(player)
+                pending_path = str(self._pending_play_path or "").strip()
+                if pending_path:
+                    self._play_file(Path(pending_path), self._pending_play_display)
+                    return
         with self._state_lock:
             if self._play_gen != gen:
                 return
@@ -1172,10 +1166,8 @@ class _PlaybackMixin:
         if self._download_thread and not self._download_thread.done():
             self._download_cancel.set()
 
-        if self._use_native_player:
-            self._music_player.stop_requested.emit()
-        else:
-            self._fallback_player.stop()
+        if self._music_player is not None:
+            self._music_player.stop()
 
         with self._state_lock:
             self._play_gen += 1
@@ -1200,10 +1192,8 @@ class _PlaybackMixin:
         if self._download_thread and not self._download_thread.done():
             self._download_cancel.set()
 
-        if self._use_native_player:
-            self._music_player.stop_requested.emit()
-        else:
-            self._fallback_player.stop()
+        if self._music_player is not None:
+            self._music_player.stop()
 
         with self._state_lock:
             self._is_playing    = False

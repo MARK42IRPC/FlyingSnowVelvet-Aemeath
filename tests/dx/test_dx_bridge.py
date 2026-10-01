@@ -4,17 +4,18 @@ import ctypes
 from pathlib import Path
 import unittest
 
-from lib.core.dx_bridge import DxBridgeError, DxOffscreenTarget, find_dx_library
-from lib.core.dx_bridge.offscreen import (
+from lib.core.render.backends.dx import DxBridgeError, DxOffscreenTarget, find_dx_library
+from lib.core.render.backends.dx.offscreen import (
     FSDX_ABI_VERSION,
     FSDX_COMMAND_TEXT,
+    FSDX_DRAW_COMMAND_SIZE,
     FSDX_STATUS_ABI_MISMATCH,
     FSDX_STATUS_DEVICE_LOST,
     FSDX_STATUS_INVALID_ARGUMENT,
     FSDX_STATUS_UNSUPPORTED,
     _DrawCommand,
 )
-from lib.core.graphics.commands import (
+from lib.core.render.visuals.commands import (
     ClipPop,
     ClipPush,
     DrawBatch,
@@ -27,8 +28,8 @@ from lib.core.graphics.commands import (
     TransformPop,
     TransformPush,
 )
-from lib.core.graphics.resources import RasterFrame
-from lib.core.graphics.types import Color, FontSpec, Point, Rect
+from lib.core.render.visuals.resources import RasterFrame
+from lib.core.render.visuals.types import Color, FontSpec, Point, Rect
 from lib.core.layer import Layer
 from config import font_config
 
@@ -445,10 +446,26 @@ class DxBridgeTests(unittest.TestCase):
 
 class DxBridgeImportTests(unittest.TestCase):
     def test_draw_command_layout_has_stable_abi_size(self):
-        self.assertEqual(ctypes.sizeof(_DrawCommand), 104)
+        self.assertEqual(ctypes.sizeof(_DrawCommand), FSDX_DRAW_COMMAND_SIZE)
+        self.assertEqual(ctypes.sizeof(_DrawCommand), 120)
+
+    def test_draw_command_size_matches_abi_version(self):
+        """The pinned struct size must track the exported ABI version."""
+        header = (
+            Path(__file__).resolve().parents[2]
+            / "native"
+            / "dx_backend"
+            / "include"
+            / "flying_snow_dx.h"
+        ).read_text(encoding="utf-8")
+        self.assertIn(f"#define FSDX_ABI_VERSION {FSDX_ABI_VERSION}u", header)
+        self.assertIn(
+            f"#define FSDX_DRAW_COMMAND_V{FSDX_ABI_VERSION}_SIZE {ctypes.sizeof(_DrawCommand)}u",
+            header,
+        )
 
     def test_module_does_not_import_qt(self):
-        import lib.core.dx_bridge.offscreen as module
+        import lib.core.render.backends.dx.offscreen as module
 
         self.assertNotIn("PyQt5", module.__dict__)
 

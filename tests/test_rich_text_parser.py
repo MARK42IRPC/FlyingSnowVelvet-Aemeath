@@ -1,15 +1,15 @@
 import unittest
 
-from lib.core.graphics.application_visuals import build_bubble_visual
-from lib.core.graphics.commands import RectCommand, TextCommand
-from lib.core.graphics.rich_text_parser import (
+from lib.core.render.visuals.application_visuals import build_bubble_visual
+from lib.core.render.visuals.commands import RectCommand, TextCommand
+from lib.core.render.visuals.rich_text_parser import (
     TextSegment,
     contains_rich_text,
     parse_markdown_inline,
     rich_text_to_plain_text,
     segments_to_plain_text,
 )
-from lib.core.graphics.types import Color, FontSpec
+from lib.core.render.visuals.types import Color, FontSpec
 from lib.script.chat.handler_stream_presenter import (
     _build_ai_voice_text,
     _strip_tool_commands_for_display,

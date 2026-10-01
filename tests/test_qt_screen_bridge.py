@@ -3,8 +3,8 @@ from unittest.mock import patch
 
 from PyQt5.QtCore import QPoint, QRect
 
-from lib.core.graphics.types import Point
-from lib.core.qt_bridge import screen as qt_screen
+from lib.core.render.visuals.types import Point
+from lib.core.render.backends.qt import screen as qt_screen
 
 
 class QtScreenBridgeTests(unittest.TestCase):

@@ -4,7 +4,7 @@
 """
 from __future__ import annotations
 
-from lib.core.graphics.types import Color
+from lib.core.render.visuals.types import Color
 from lib.script.practical.click_particle import ClickParticleScript
 from lib.script.plugin_registry import register_particle
 

@@ -27,13 +27,13 @@ from PyQt5.QtWidgets import QApplication
 
 from config.config import PARTICLES
 from lib.core.event.center import Event, EventType
-from lib.core.qt_bridge.effect_system import EffectOverlay
-from lib.core.qt_bridge.overlay_policy import (
+from lib.core.render.backends.qt.effect_system import EffectOverlay
+from lib.core.render.backends.qt.overlay_policy import (
     DEFAULT_HIDE_LINGER_MS,
     enable_no_activate,
     resolve_hide_linger_ms,
 )
-from lib.core.qt_bridge.particle_system import ParticleOverlay
+from lib.core.render.backends.qt.particle_system import ParticleOverlay
 
 _WS_EX_NOACTIVATE = 0x08000000
 

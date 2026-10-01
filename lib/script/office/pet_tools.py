@@ -17,7 +17,11 @@ INPUT_CHAT（办公模式没有这条通道，窥屏还会把整屏内容送给�
 from __future__ import annotations
 
 from lib.core.logger import get_logger
-from lib.script.chat.native_tools import get_native_tool_definitions, native_tool_to_dispatch
+from lib.script.chat.native_tools import (
+    get_native_tool_definitions,
+    native_tool_to_dispatch,
+    split_music_queries,
+)
 
 logger = get_logger(__name__)
 
@@ -127,8 +131,12 @@ def execute_pet_tool(
 
 
 def _pet_tool_result_text(tool_name: str, argument: str) -> str:
+    queries = split_music_queries(argument) if tool_name == "play_music" else []
+    if len(queries) > 1:
+        # 一次点多首：新行为用换行分隔歌名，给模型与工具记录一份可读的多首文案。
+        return f"已让音响依次播放 {len(queries)} 首：{'、'.join(queries)}"
     template = _PET_TOOL_RESULT_TEXT.get(tool_name, "已执行桌宠指令：{detail}")
-    detail = str(argument or "").strip() or "随机歌曲"
+    detail = queries[0] if queries else (str(argument or "").strip() or "随机歌曲")
     return template.replace("{detail}", detail)
 
 

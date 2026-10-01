@@ -4,7 +4,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from lib.core.graphics.image_loader import (
+from lib.core.render.visuals.image_loader import (
     load_image_resource,
     resize_image_resource,
     resize_image_resource_to_height,

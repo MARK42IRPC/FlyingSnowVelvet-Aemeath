@@ -2,9 +2,9 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from lib.core.graphics.resources import ImageResource, RasterFrame
-from lib.core.graphics.types import Point, Rect
-from lib.core.qt_bridge.world_object_backend import QtWorldObjectBackend
+from lib.core.render.visuals.resources import ImageResource, RasterFrame
+from lib.core.render.visuals.types import Point, Rect
+from lib.core.render.backends.qt.world_object_backend import QtWorldObjectBackend
 from lib.script.app.qt_backend_bootstrap import _QT_WORLD_OBJECT_TYPES
 from lib.core.world_objects import (
     WorldObjectInstance,
@@ -181,10 +181,10 @@ class WorldObjectBackendTests(unittest.TestCase):
         backend = QtWorldObjectBackend(_QT_WORLD_OBJECT_TYPES)
         resource = _resource()
         with patch(
-            "lib.core.qt_bridge.world_object_backend.resize_image_resource",
+            "lib.core.render.backends.qt.world_object_backend.resize_image_resource",
             return_value=resource,
         ), patch(
-            "lib.core.qt_bridge.world_object_backend.create_world_object",
+            "lib.core.render.backends.qt.world_object_backend.create_world_object",
             return_value="created",
         ) as factory:
             instance_id = backend.create(WorldObjectRequest(

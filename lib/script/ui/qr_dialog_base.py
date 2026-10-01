@@ -11,16 +11,16 @@ from PyQt5.QtWidgets import QGraphicsOpacityEffect, QPushButton, QStyle
 from config.config import UI
 from config.scale import scale_px
 from lib.core.anchor_utils import apply_ui_opacity
-from lib.core.graphics.application_visuals import (
+from lib.core.render.visuals.application_visuals import (
     build_qr_panel_visual,
     decode_panel_image,
     qr_panel_size,
     resolve_qr_panel_layout,
 )
-from lib.core.graphics.image_loader import load_image_resource
-from lib.core.graphics.resources import ImageResource
-from lib.core.qt_bridge.draw_backend import QtDrawBackend
-from lib.core.qt_bridge.screen import clamp_rect_position, get_screen_geometry_for_point
+from lib.core.render.visuals.image_loader import load_image_resource
+from lib.core.render.visuals.resources import ImageResource
+from lib.core.render.backends.qt.draw_backend import QtDrawBackend
+from lib.core.render.backends.qt.screen import clamp_rect_position, get_screen_geometry_for_point
 from lib.core.unified_draw import Layer, get_layer_manager
 from lib.script.ui.workbench_floating import WorkbenchFloatingWindow
 

@@ -19,8 +19,8 @@ from PyQt5.QtCore import QPoint, QRect, Qt
 from PyQt5.QtWidgets import QApplication, QWidget
 
 from lib.core.event.center import Event, EventType
-from lib.core.graphics.types import Point
-from lib.core.qt_bridge.screen import move_widget_to_global
+from lib.core.render.visuals.types import Point
+from lib.core.render.backends.qt.screen import move_widget_to_global
 from lib.core.unified_draw import get_layer_manager
 from lib.script.ui import pet_window_ui
 from lib.script.ui.right_click_ui_layer import RightClickUiLayer

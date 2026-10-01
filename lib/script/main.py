@@ -13,7 +13,7 @@ from lib.core.desktop_backend import (
     DesktopBackendBundle,
     get_desktop_backend_bundle,
 )
-from lib.core.graphics.gif_loader import GifLoader
+from lib.core.render.visuals.gif_loader import GifLoader
 
 from lib.core.event.center import get_event_center, EventType, Event, cleanup_event_center
 from lib.core.logger import initialize as initialize_app_logger, cleanup as cleanup_app_logger, get_logger
@@ -209,15 +209,49 @@ class ApplicationState:
         })
 
     def _on_init_ready(self, event: Event):
-        """初始化就绪事件回调 - 创建主窗口和初始化管理器"""
+        """初始化就绪事件回调 - 创建主窗口和初始化管理器。
+
+        分四段推进，每段独立捕获异常：桌宠要能启动到托盘可用，不能因为某个
+        子系统的初始化失败而整条链路静默中断。此前这里是单一调用序列，任何
+        一步抛异常都会跳过其后的全部步骤——托盘图标、托盘菜单和 ``APP_MAIN``
+        之后的运行时就绪动作会一起消失，用户只看到"功能集体不见"。
+        """
         # 发布启动事件
         self._publish_event(EventType.APP_START, {
             'working_dir': self._script_dir
         })
 
-        # 宠物窗口
+        # 主宠窗口是其后所有能力的挂载点，没有它就没有可用的桌宠。
+        # 这一段不隔离：失败必须显式上报，而不是留下半启动状态。
         self._pet = self._pet_window_factory(self._gifs, self._particles)
 
+        for stage_name, stage in (
+            ("manager_init", self._init_stage_runtime_managers),
+            ("app_main", self._init_stage_publish_main),
+            ("tray", self._init_stage_tray),
+            ("runtime_ui", self._init_stage_runtime_ui),
+        ):
+            try:
+                stage()
+            except Exception:
+                import traceback
+                logger.error(
+                    "初始化阶段 %s 失败，已继续后续阶段:\n%s",
+                    stage_name,
+                    traceback.format_exc(),
+                )
+
+        logger.info('桌面宠物启动成功！')
+        logger.info('  左键点击 → 随机动作 + 粒子特效')
+        logger.info('  右键点击 → 打开/关闭 CMD 输入框')
+        logger.info('  鼠标悬停 → 显示关闭按钮（右上角）')
+        logger.info('  系统托盘 → 右键菜单退出')
+
+        # 办公模式启动预热
+        self._warmup_office_runtime_if_enabled()
+
+    def _init_stage_runtime_managers(self) -> None:
+        """初始化管理器、清理处理器与工具调度器。"""
         # ── 使用动态发现机制初始化所有管理器 ────────────────────────────
         # 管理器会在模块加载时自动注册，这里统一初始化
         self._managers = init_all_managers(self._pet)
@@ -230,14 +264,21 @@ class ApplicationState:
         self._tool_dispatcher = get_tool_dispatcher(mode_service=self._interaction_mode)
 
         self._game_mode.configure_runtime(self._pet, self._particles, self._effects)
+
+    def _init_stage_publish_main(self) -> None:
+        """准备运行时就绪并发布 ``APP_MAIN``，进入 main 状态。
+
+        该事件只能在此阶段发布：``APP_MAIN`` 的订阅者依赖运行时已就绪，
+        提前发布等于通知它们去用一个尚未准备好的运行时。
+        """
         self._application_ui.prepare_runtime()
 
-        # 发布main事件，进入main状态
         self._publish_event(EventType.APP_MAIN, {
             'gifs_loaded': len(self._gifs)
         })
 
-        # 初始化系统托盘图标
+    def _init_stage_tray(self) -> None:
+        """创建系统托盘宿主、同步菜单状态并初始化图标。"""
         self._tray_host = self._tray_host_factory()
         self._tray_menu_state = replace(
             self._tray_menu_state,
@@ -260,16 +301,9 @@ class ApplicationState:
         else:
             logger.warning('系统托盘图标初始化未立即成功，已转入后台重试')
 
+    def _init_stage_runtime_ui(self) -> None:
+        """启动运行时就绪动作（公告、帮助与预加载）。"""
         self._application_ui.start_runtime(self._app)
-
-        logger.info('桌面宠物启动成功！')
-        logger.info('  左键点击 → 随机动作 + 粒子特效')
-        logger.info('  右键点击 → 打开/关闭 CMD 输入框')
-        logger.info('  鼠标悬停 → 显示关闭按钮（右上角）')
-        logger.info('  系统托盘 → 右键菜单退出')
-
-        # 办公模式启动预热
-        self._warmup_office_runtime_if_enabled()
 
     def _warmup_office_runtime_if_enabled(self) -> None:
         """如果启用了办公模式启动预热，则在桌宠启动时预热运行时。"""

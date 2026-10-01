@@ -4,7 +4,7 @@ from __future__ import annotations
 from collections.abc import Callable
 import threading
 
-from lib.core.graphics.types import Rect
+from lib.core.render.visuals.types import Rect
 
 
 GameObstacleProvider = Callable[[], Rect | None]

@@ -6,13 +6,13 @@ from config.config import BEHAVIOR
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.action import Actions
 from lib.core.logger import get_logger
-from lib.core.graphics.collision import (
+from lib.core.render.visuals.collision import (
     adjust_rect,
     rects_intersect,
     segment_intersects_rect,
 )
 from lib.core.game_obstacles import get_game_obstacle_rect
-from lib.core.graphics.types import Point, Rect, coerce_point
+from lib.core.render.visuals.types import Point, Rect, coerce_point
 from lib.core.input.types import MouseButton
 from lib.core.screen_utils import get_screen_rect_for_point, get_virtual_screen_rect
 

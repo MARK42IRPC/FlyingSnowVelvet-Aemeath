@@ -1,7 +1,7 @@
 """音乐音符粒子效果脚本 - 向上移动、轻微布朗运动、无重力的随机颜色音符形状粒子"""
 import random
 
-from lib.core.graphics.types import Color
+from lib.core.render.visuals.types import Color
 from lib.script.practical.base_particle import BaseParticleScript, per_second_delta, tick_seconds
 from lib.script.plugin_registry import register_particle
 

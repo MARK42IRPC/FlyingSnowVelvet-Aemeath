@@ -5,27 +5,26 @@ from PyQt5.QtWidgets import QWidget
 from PyQt5.QtCore    import Qt, QPoint
 from PyQt5.QtGui     import QPainter
 
-from config.config                import SNOW_LEOPARD, BEHAVIOR, PHYSICS
 from lib.core.event.center        import get_event_center, EventType, Event
 from lib.core.clickthrough_state  import is_clickthrough_enabled
 from lib.core.physics             import get_physics_world, PhysicsBody
 from lib.core.unified_draw import Layer, get_layer_manager
 from lib.script.voice.snow          import SnowSound
-from lib.core.graphics.resources import ImageResource
-from lib.core.graphics.visuals import build_world_object_batch
-from lib.core.qt_bridge.draw_backend import QtDrawBackend
+from lib.core.render.visuals.resources import ImageResource
+from lib.core.render.visuals.visuals import build_world_object_batch
+from lib.core.render.backends.qt.draw_backend import QtDrawBackend
+from lib.core.services.world_object_physics import resolve_world_object_physics
 
-
-# ── 从配置文件读取物理参数 ─────────────────────────────────────────────
-_JUMP_VX: float = PHYSICS.get('snow_leopard_jump_vx', 5.0)
-_JUMP_VY: float = PHYSICS.get('snow_leopard_jump_vy', -13.0)
-_FADE_STEP: float = PHYSICS.get('fade_step', 0.05)
-_FADE_INTERVAL_MS: int = PHYSICS.get('fade_interval_ms', 50)
+# 产品物理参数由 lib/core/services 唯一解析，Qt 与 DX 两个后端读同一份数值
+_WORLD_PHYSICS = resolve_world_object_physics()
+_JUMP_VX: float = _WORLD_PHYSICS.snow_leopard_jump_vx
+_JUMP_VY: float = _WORLD_PHYSICS.snow_leopard_jump_vy
+_FADE_STEP: float = _WORLD_PHYSICS.fade_step
+_FADE_INTERVAL_MS: int = _WORLD_PHYSICS.fade_interval_ms
 _FLIP_INTERVAL: tuple = (
-    PHYSICS.get('flip_interval_min', 5000),
-    PHYSICS.get('flip_interval_max', 8000),
+    _WORLD_PHYSICS.flip_interval_min_ms,
+    _WORLD_PHYSICS.flip_interval_max_ms,
 )
-
 
 class SnowLeopard(QWidget):
     """
@@ -118,7 +117,7 @@ class SnowLeopard(QWidget):
         # 自首次按下已累积的 tick 数
         self._pending_click_ticks = 0
         # 双击判定间隔（tick 数），读取全局配置，与 sofa/speaker 保持一致
-        self._double_click_ticks  = BEHAVIOR.get('double_click_ticks', 3)
+        self._double_click_ticks  = _WORLD_PHYSICS.double_click_ticks
 
         # ── 自动翻转：使用 TimingManager.add_task（替代独立 QTimer）─
         self._flip_task_id = None
@@ -142,7 +141,7 @@ class SnowLeopard(QWidget):
 
     def get_center(self) -> QPoint:
         """返回雪豹锚点的全局屏幕坐标（水平居中，垂直中心按配置偏移）。"""
-        anchor_offset_y = SNOW_LEOPARD.get('anchor_offset_y', -30)
+        anchor_offset_y = _WORLD_PHYSICS.snow_leopard_anchor_offset_y
         return QPoint(
             self.x() + self._size[0] // 2,
             self.y() + self._size[1] // 2 + anchor_offset_y,
@@ -290,8 +289,8 @@ class SnowLeopard(QWidget):
         力度：在 [jump_power_min, jump_power_max] 范围内随机缩放 vx / vy。
         """
         power = random.uniform(
-            SNOW_LEOPARD.get('jump_power_min', 0.8),
-            SNOW_LEOPARD.get('jump_power_max', 1.2),
+            _WORLD_PHYSICS.snow_leopard_jump_power_min,
+            _WORLD_PHYSICS.snow_leopard_jump_power_max,
         )
         body              = self._physics_body
         body.bounce_count = 0

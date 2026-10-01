@@ -1,0 +1,800 @@
+"""粒子效果系统 (PyQt5版) - 事件驱动重构版"""
+from concurrent.futures import Future
+from copy import copy, deepcopy
+from collections import deque
+from math import floor
+from time import perf_counter
+
+from PyQt5.QtWidgets import QWidget
+from PyQt5.QtCore import Qt, QRect, QRectF, QTimer
+from PyQt5.QtGui import QColor, QFont, QFontMetrics, QPainter, QRegion
+
+from config.config import PARTICLES
+from lib.core.compute_hub import get_compute_hub
+from lib.core.event.center import get_event_center, EventType, Event
+from lib.core.render.visuals.types import Color, FontSpec
+from lib.core.render.visuals.visuals import build_particle_batch
+from lib.core.layer import Layer, normalize_layer
+from lib.core.layer_manager import get_layer_manager
+from lib.core.logger import get_logger
+from lib.core.render.backends.qt.screen import get_virtual_screen_geometry
+from lib.core.render.backends.qt.draw_backend import QtDrawBackend
+from lib.core.render.backends.qt.overlay_policy import enable_no_activate, resolve_hide_linger_ms
+
+_ASYNC_PARTICLE_UPDATE_THRESHOLD = 1200
+_PARTICLE_TILE_SIZE = 128
+_logger = get_logger(__name__)
+
+
+def _to_qcolor(value: object) -> QColor:
+    if isinstance(value, Color):
+        return QColor(value.red, value.green, value.blue, value.alpha)
+    if isinstance(value, (tuple, list)) and len(value) >= 3:
+        alpha = value[3] if len(value) >= 4 else 255
+        return QColor(int(value[0]), int(value[1]), int(value[2]), int(alpha))
+    return QColor(value)
+
+
+def _to_qfont(value: object) -> QFont:
+    if isinstance(value, QFont):
+        return value
+    if isinstance(value, FontSpec):
+        font = QFont(value.family)
+        font.setPixelSize(value.pixel_size)
+        font.setBold(value.bold)
+        return font
+    return QFont(value)
+
+
+def _particle_alive(particle) -> bool:
+    """兼容 alive 属性/方法，异常时按死亡处理。"""
+    alive = getattr(particle, 'alive', True)
+    try:
+        return bool(alive() if callable(alive) else alive)
+    except Exception:
+        return False
+
+
+def _update_particles_batch(particles: list) -> list:
+    """后台更新粒子并返回存活粒子列表。"""
+    alive_particles = []
+    for particle in particles:
+        try:
+            particle.update()
+        except Exception:
+            continue
+        if _particle_alive(particle):
+            alive_particles.append(particle)
+    return alive_particles
+
+
+def _clone_particle_for_update(particle):
+    """复制粒子供异步 tick 使用，避免后台线程修改正在绘制的对象。"""
+    try:
+        clone = deepcopy(particle)
+    except Exception:
+        clone = copy(particle)
+    if clone is particle:
+        raise TypeError('Particle snapshot must be an independent object')
+    clone._tick_prev_x = float(getattr(particle, 'x', 0.0))
+    clone._tick_prev_y = float(getattr(particle, 'y', 0.0))
+    return clone
+
+
+def _snapshot_particles_for_update(particles: list) -> list:
+    """构建隔离的异步更新快照。"""
+    return [_clone_particle_for_update(particle) for particle in particles]
+
+
+def _prepare_particles_for_inplace_update(particles: list) -> None:
+    """在原地更新前保存逻辑坐标，作为本次 tick 的插值起点。"""
+    for particle in particles:
+        particle._tick_prev_x = float(getattr(particle, 'x', 0.0))
+        particle._tick_prev_y = float(getattr(particle, 'y', 0.0))
+
+
+def _can_use_async_updates() -> bool:
+    return bool(PARTICLES.get('async_update_enabled', False))
+
+
+def _particle_bounds(particle) -> QRectF:
+    """返回粒子在当前 overlay 本地坐标中的保守绘制包围盒。
+
+    该函数不依赖 QWidget，用于空间索引、脏区裁剪和纯单元测试。
+    """
+    positions = [(
+        float(getattr(particle, '_render_x', getattr(particle, 'x', 0.0))),
+        float(getattr(particle, '_render_y', getattr(particle, 'y', 0.0))),
+    )]
+    for x_name, y_name in (("_tick_prev_x", "_tick_prev_y"), ("x", "y")):
+        if hasattr(particle, x_name) and hasattr(particle, y_name):
+            positions.append((float(getattr(particle, x_name)), float(getattr(particle, y_name))))
+
+    bounds: QRectF | None = None
+
+    def include(rect: QRectF) -> None:
+        nonlocal bounds
+        bounds = QRectF(rect) if bounds is None else bounds.united(rect)
+
+    if getattr(particle, 'is_text', False):
+        half_width = max(1.0, float(getattr(particle, '_text_w', 0.0)) / 2.0)
+        line_height = max(12.0, float(getattr(particle, '_text_h', 0.0) or 12.0))
+        baseline = float(getattr(particle, '_baseline_offset', 0.0))
+        bloom = max(0.0, float(getattr(particle, 'bloom', 0.0) or 0.0))
+        for x, y in positions:
+            include(QRectF(
+                x - half_width - bloom,
+                y + baseline - line_height - bloom,
+                half_width * 2.0 + bloom * 2.0,
+                line_height + bloom * 2.0,
+            ))
+    elif getattr(particle, 'is_line', False):
+        length = max(0.0, float(getattr(particle, 'length', 0.0)))
+        dx = float(getattr(particle, 'line_dx', 0.0)) * length
+        dy = float(getattr(particle, 'line_dy', 0.0)) * length
+        margin = max(1.0, float(getattr(particle, 'pen_width', 1.0)))
+        for x, y in positions:
+            include(QRectF(
+                min(x, x + dx) - margin,
+                min(y, y + dy) - margin,
+                abs(dx) + margin * 2.0,
+                abs(dy) + margin * 2.0,
+            ))
+    elif hasattr(particle, 'width') and hasattr(particle, 'height'):
+        width = max(0.0, float(getattr(particle, 'width', 0.0)))
+        height = max(0.0, float(getattr(particle, 'height', 0.0)))
+        for x, y in positions:
+            include(QRectF(x, y - height / 2.0, width, height))
+    else:
+        size = max(0.0, float(getattr(particle, 'size', 0.0)))
+        is_circle = bool(getattr(particle, 'is_circle', False))
+        radius = size if is_circle else size / 2.0
+        if is_circle:
+            # 圆形粒子的 bloom 光圈比核心更外扩，包围盒要连光晕一起算，否则移动时留下残影。
+            radius = max(radius, max(0.0, float(getattr(particle, 'bloom', 0.0) or 0.0)))
+        for x, y in positions:
+            include(QRectF(x - radius, y - radius, radius * 2.0, radius * 2.0))
+
+    return bounds or QRectF()
+
+
+def _tile_keys_for_bounds(bounds: QRectF) -> set[tuple[int, int]]:
+    """返回矩形覆盖的固定网格块；坐标允许位于虚拟桌面负半轴。"""
+    if bounds.isEmpty():
+        return set()
+    left = floor(bounds.left() / _PARTICLE_TILE_SIZE)
+    top = floor(bounds.top() / _PARTICLE_TILE_SIZE)
+    right = floor((bounds.right() - 1e-6) / _PARTICLE_TILE_SIZE)
+    bottom = floor((bounds.bottom() - 1e-6) / _PARTICLE_TILE_SIZE)
+    return {
+        (tile_x, tile_y)
+        for tile_y in range(top, bottom + 1)
+        for tile_x in range(left, right + 1)
+    }
+
+
+def _tile_rect(key: tuple[int, int]) -> QRect:
+    tile_x, tile_y = key
+    return QRect(
+        tile_x * _PARTICLE_TILE_SIZE,
+        tile_y * _PARTICLE_TILE_SIZE,
+        _PARTICLE_TILE_SIZE,
+        _PARTICLE_TILE_SIZE,
+    )
+
+
+def _merged_tile_rects(keys: set[tuple[int, int]]) -> list[QRect]:
+    """按行合并连续分块，减少 QRegion 的矩形节点数量。"""
+    rows: dict[int, list[int]] = {}
+    for tile_x, tile_y in keys:
+        rows.setdefault(tile_y, []).append(tile_x)
+
+    rects = []
+    for tile_y, tile_x_values in rows.items():
+        values = sorted(tile_x_values)
+        run_start = run_end = values[0]
+        for tile_x in values[1:]:
+            if tile_x == run_end + 1:
+                run_end = tile_x
+                continue
+            rects.append(QRect(
+                run_start * _PARTICLE_TILE_SIZE,
+                tile_y * _PARTICLE_TILE_SIZE,
+                (run_end - run_start + 1) * _PARTICLE_TILE_SIZE,
+                _PARTICLE_TILE_SIZE,
+            ))
+            run_start = run_end = tile_x
+        rects.append(QRect(
+            run_start * _PARTICLE_TILE_SIZE,
+            tile_y * _PARTICLE_TILE_SIZE,
+            (run_end - run_start + 1) * _PARTICLE_TILE_SIZE,
+            _PARTICLE_TILE_SIZE,
+        ))
+    return rects
+
+
+def _region_for_tiles(keys: set[tuple[int, int]]) -> QRegion:
+    region = QRegion()
+    for rect in _merged_tile_rects(keys):
+        region = region.united(QRegion(rect))
+    return region
+
+
+def _tile_keys_for_region(region: QRegion) -> set[tuple[int, int]]:
+    keys: set[tuple[int, int]] = set()
+    for rect in region.rects():
+        keys.update(_tile_keys_for_bounds(QRectF(rect)))
+    return keys
+
+
+def _render_order_key(particle) -> tuple[int, int, int]:
+    return (
+        int(getattr(particle, 'layer', Layer.PARTICLE)),
+        int(getattr(particle, 'z', 0)),
+        int(getattr(particle, '_draw_order', 0)),
+    )
+
+
+class _ParticleSpatialIndex:
+    """缓存粒子包围盒、块归属和绘制顺序的增量二维索引。"""
+
+    def __init__(self) -> None:
+        self._buckets: dict[tuple[int, int], dict[int, object]] = {}
+        self._tile_keys_by_id: dict[int, set[tuple[int, int]]] = {}
+        self._bounds_by_id: dict[int, QRectF] = {}
+        self._particles_by_id: dict[int, object] = {}
+        self._ordered_particles: list = []
+        self._order_signature: tuple = ()
+
+    @property
+    def occupied_tiles(self) -> set[tuple[int, int]]:
+        return set(self._buckets)
+
+    def sync(self, particles: list) -> set[tuple[int, int]]:
+        """同步逻辑状态；只有跨块或增删粒子时修改桶成员。"""
+        dirty_tiles: set[tuple[int, int]] = set()
+        live_particles = []
+        live_ids: set[int] = set()
+
+        for particle in particles:
+            if not _particle_alive(particle):
+                continue
+            particle_id = id(particle)
+            live_ids.add(particle_id)
+            live_particles.append(particle)
+            bounds = _particle_bounds(particle).adjusted(-2.0, -2.0, 2.0, 2.0)
+            new_keys = _tile_keys_for_bounds(bounds)
+            old_keys = self._tile_keys_by_id.get(particle_id, set())
+            dirty_tiles.update(old_keys)
+            dirty_tiles.update(new_keys)
+
+            for key in old_keys - new_keys:
+                bucket = self._buckets.get(key)
+                if bucket is None:
+                    continue
+                bucket.pop(particle_id, None)
+                if not bucket:
+                    self._buckets.pop(key, None)
+            for key in new_keys - old_keys:
+                self._buckets.setdefault(key, {})[particle_id] = particle
+
+            self._tile_keys_by_id[particle_id] = new_keys
+            self._bounds_by_id[particle_id] = bounds
+            self._particles_by_id[particle_id] = particle
+
+        for particle_id in set(self._particles_by_id) - live_ids:
+            old_keys = self._tile_keys_by_id.pop(particle_id, set())
+            dirty_tiles.update(old_keys)
+            for key in old_keys:
+                bucket = self._buckets.get(key)
+                if bucket is None:
+                    continue
+                bucket.pop(particle_id, None)
+                if not bucket:
+                    self._buckets.pop(key, None)
+            self._bounds_by_id.pop(particle_id, None)
+            self._particles_by_id.pop(particle_id, None)
+
+        signature = tuple((id(particle), *_render_order_key(particle)) for particle in live_particles)
+        if signature != self._order_signature:
+            self._ordered_particles = sorted(live_particles, key=_render_order_key)
+            self._order_signature = signature
+        return dirty_tiles
+
+    def particles_for_tiles(self, keys: set[tuple[int, int]], region: QRegion) -> list:
+        candidate_ids: set[int] = set()
+        for key in keys:
+            candidate_ids.update(self._buckets.get(key, ()))
+        if not candidate_ids:
+            return []
+        return [
+            particle
+            for particle in self._ordered_particles
+            if id(particle) in candidate_ids
+            and region.intersects(self._bounds_by_id[id(particle)].toAlignedRect())
+        ]
+
+    def bounds_for(self, particle) -> QRectF:
+        return self._bounds_by_id.get(id(particle), QRectF())
+
+    def clear(self) -> None:
+        self._buckets.clear()
+        self._tile_keys_by_id.clear()
+        self._bounds_by_id.clear()
+        self._particles_by_id.clear()
+        self._ordered_particles.clear()
+        self._order_signature = ()
+
+
+class ParticleOverlay(QWidget):
+    """
+    全屏透明覆盖层，仅用于绘制粒子。
+    设置为 Tool + FramelessWindowHint + WA_TransparentForMouseEvents，
+    不会拦截鼠标事件。
+    现在支持事件驱动的粒子创建。
+    """
+
+    def __init__(self, particle_manager, *, parent=None, hide_linger_ms=None):
+        super().__init__(parent)
+        self.setWindowFlags(
+            Qt.Tool
+            | Qt.FramelessWindowHint
+            | Qt.WindowStaysOnTopHint
+            | Qt.X11BypassWindowManagerHint
+        )
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        # 覆盖层只负责绘制：显示时不激活，并在显示后补 WS_EX_NOACTIVATE，
+        # 与 DX 后端 FSDX_WINDOW_FLAG_NO_ACTIVATE 对齐（详见 overlay_policy）。
+        self.setAttribute(Qt.WA_ShowWithoutActivating)
+        self._no_activate_applied = False
+        self.setStyleSheet("background: transparent;")
+        self._layer_manager = get_layer_manager()
+        self._layer_manager.register(self, Layer.PARTICLE, name='ParticleOverlay')
+
+        self._particles = []
+        self._spatial_index = _ParticleSpatialIndex()
+        self._font_cache: dict[FontSpec, QFont] = {}
+        self._draw_backend = QtDrawBackend()
+        self._paused = False
+        self._hide_linger_ms = resolve_hide_linger_ms(hide_linger_ms)
+        self._hide_timer = QTimer(self)
+        self._hide_timer.setSingleShot(True)
+        self._hide_timer.timeout.connect(self._on_hide_timeout)
+        self._draw_seq = 0
+        self._pending_requests = deque()
+        self._pending_future: Future | None = None
+        self._pending_snapshot_ids: set[int] = set()
+        self._cleanup_done = False
+        self._perf_log_enabled = bool(PARTICLES.get('perf_log_enabled', False))
+        self._perf_log_interval_ticks = max(1, int(PARTICLES.get('perf_log_interval_ticks', 60) or 60))
+        self._perf_tick_count = 0
+        self._perf_frame_count = 0
+        self._perf_request_count = 0
+        self._perf_spawned_count = 0
+        self._perf_update_ms_total = 0.0
+        self._perf_drain_ms_total = 0.0
+        self._perf_paint_ms_total = 0.0
+        self._perf_max_particles = 0
+
+        # 获取事件中心和粒子脚本管理器
+        self._event_center = get_event_center()
+        self._particle_manager = particle_manager
+
+        # 订阅粒子申请事件
+        self._event_center.subscribe(EventType.PARTICLE_REQUEST, self._on_particle_request)
+
+        # TICK 推进状态，FRAME 只负责插值与重绘
+        self._event_center.subscribe(EventType.TICK, self._on_tick)
+        self._event_center.subscribe(EventType.FRAME, self._on_frame)
+
+    # ------------------------------------------------------------------
+    def _ensure_no_activate(self) -> None:
+        """给覆盖层补 WS_EX_NOACTIVATE，保证显示覆盖层不会移动前台窗口。"""
+        if self._no_activate_applied:
+            return
+        self._no_activate_applied = enable_no_activate(self)
+
+    def showEvent(self, event):
+        self._ensure_no_activate()
+        super().showEvent(event)
+
+    def _refresh_spatial_grid(self, *, reindex: bool = True) -> None:
+        """同步索引或复用缓存，并仅刷新粒子实际占用的矩形块。"""
+        if reindex:
+            dirty_tiles = self._spatial_index.sync(self._particles)
+        else:
+            dirty_tiles = self._spatial_index.occupied_tiles
+        if dirty_tiles:
+            dirty_region = _region_for_tiles(dirty_tiles).intersected(QRegion(self.rect()))
+            if not dirty_region.isEmpty():
+                self.update(dirty_region)
+
+    def _font_for(self, value: object) -> QFont:
+        if not isinstance(value, FontSpec):
+            return _to_qfont(value)
+        font = self._font_cache.get(value)
+        if font is None:
+            font = _to_qfont(value)
+            self._font_cache[value] = font
+        return font
+
+    def _prepare_particle_backend_state(self, particle: object) -> None:
+        if not getattr(particle, 'is_text', False):
+            return
+        font = self._font_for(getattr(particle, 'font', FontSpec('', 12)))
+        metrics = QFontMetrics(font)
+        text = str(getattr(particle, 'text', ''))
+        particle._text_w = metrics.horizontalAdvance(text)
+        particle._text_h = metrics.height()
+        particle._baseline_offset = (metrics.ascent() - metrics.descent()) // 2
+
+    # ------------------------------------------------------------------
+    def _on_particle_request(self, event: Event):
+        """
+        处理粒子申请事件
+
+        事件数据格式:
+        - 矩形范围: {'particle_id': str, 'area_type': 'rect', 'area_data': (x1, y1, x2, y2)}
+        - 圆形范围: {'particle_id': str, 'area_type': 'circle', 'area_data': (x, y, radius)}
+        - 单点: {'particle_id': str, 'area_type': 'point', 'area_data': (x, y)}
+        """
+        data = event.data
+        particle_id = data.get('particle_id')
+        area_type = data.get('area_type', 'point')
+        area_data = data.get('area_data')
+        particle_options = data.get('particle_options') or {}
+
+        if not particle_id or not area_data:
+            return
+        if self._paused:
+            event.mark_handled()
+            return
+
+        self._pending_requests.append({
+            'particle_id': particle_id,
+            'area_type': area_type,
+            'area_data': area_data,
+            'particle_options': dict(particle_options),
+        })
+        if self._perf_log_enabled:
+            self._perf_request_count += 1
+        event.mark_handled()
+
+    # ------------------------------------------------------------------
+
+    # ------------------------------------------------------------------
+    def _on_tick(self, event: Event):
+        """全局 tick 事件处理 - 应用后台更新结果并提交下一 tick 粒子更新。"""
+        if self._paused:
+            return
+        tick_start = perf_counter() if self._perf_log_enabled else 0.0
+        drain_before = perf_counter() if self._perf_log_enabled else 0.0
+        self._apply_pending_updates()
+        self._drain_particle_requests()
+        if self._perf_log_enabled:
+            self._perf_drain_ms_total += (perf_counter() - drain_before) * 1000.0
+        if not self._particles:
+            if self._perf_log_enabled:
+                self._perf_tick_count += 1
+                self._maybe_log_perf()
+            return
+
+        use_async = _can_use_async_updates() and len(self._particles) >= _ASYNC_PARTICLE_UPDATE_THRESHOLD
+        if not use_async:
+            _prepare_particles_for_inplace_update(self._particles)
+            update_before = perf_counter() if self._perf_log_enabled else 0.0
+            self._particles = _update_particles_batch(self._particles)
+            if self._perf_log_enabled:
+                self._perf_update_ms_total += (perf_counter() - update_before) * 1000.0
+            self._pending_future = None
+            if not self._particles:
+                self._refresh_spatial_grid()
+                self._schedule_hide()
+            else:
+                self._refresh_spatial_grid()
+            if self._perf_log_enabled:
+                self._perf_tick_count += 1
+                self._perf_max_particles = max(self._perf_max_particles, len(self._particles))
+                self._maybe_log_perf()
+            return
+
+        if self._pending_future is not None:
+            return
+
+        try:
+            snapshot = _snapshot_particles_for_update(self._particles)
+        except Exception:
+            _prepare_particles_for_inplace_update(self._particles)
+            self._particles = _update_particles_batch(self._particles)
+            if not self._particles:
+                self._refresh_spatial_grid()
+                self._schedule_hide()
+            else:
+                self._refresh_spatial_grid()
+            return
+
+        future = get_compute_hub().submit_latest(
+            "particle_overlay_update",
+            _update_particles_batch,
+            snapshot,
+            executor="vector",
+        )
+        if future is not None:
+            self._pending_future = future
+            self._pending_snapshot_ids = {id(particle) for particle in self._particles}
+        if self._perf_log_enabled:
+            self._perf_tick_count += 1
+            self._perf_update_ms_total += (perf_counter() - tick_start) * 1000.0
+            self._perf_max_particles = max(self._perf_max_particles, len(self._particles))
+            self._maybe_log_perf()
+
+    def _on_frame(self, event: Event):
+        """全局帧事件处理 - 按 tick alpha 插值并请求重绘。"""
+        if self._paused:
+            return
+        if not self._particles:
+            return
+        alpha = float((event.data or {}).get('tick_alpha', 1.0) or 0.0)
+        alpha = max(0.0, min(1.0, alpha))
+        for particle in self._particles:
+            prev_x = float(getattr(particle, '_tick_prev_x', getattr(particle, 'x', 0.0)))
+            prev_y = float(getattr(particle, '_tick_prev_y', getattr(particle, 'y', 0.0)))
+            cur_x = float(getattr(particle, 'x', prev_x))
+            cur_y = float(getattr(particle, 'y', prev_y))
+            particle._render_x = prev_x + (cur_x - prev_x) * alpha
+            particle._render_y = prev_y + (cur_y - prev_y) * alpha
+        self._refresh_spatial_grid(reindex=False)
+
+    def _apply_pending_updates(self) -> None:
+        future = self._pending_future
+        if future is None or not future.done():
+            return
+        self._pending_future = None
+        snapshot_ids = self._pending_snapshot_ids
+        try:
+            updated_particles = future.result()
+        except Exception:
+            updated_particles = [
+                particle
+                for particle in self._particles
+                if id(particle) in snapshot_ids and _particle_alive(particle)
+            ]
+
+        extra_particles = [
+            particle
+            for particle in self._particles
+            if id(particle) not in snapshot_ids and _particle_alive(particle)
+        ]
+        self._pending_snapshot_ids = set()
+        self._particles = updated_particles + extra_particles
+        for particle in self._particles:
+            if not hasattr(particle, '_tick_prev_x'):
+                particle._tick_prev_x = float(getattr(particle, 'x', 0.0))
+            if not hasattr(particle, '_tick_prev_y'):
+                particle._tick_prev_y = float(getattr(particle, 'y', 0.0))
+            particle._render_x = float(getattr(particle, '_tick_prev_x', getattr(particle, 'x', 0.0)))
+            particle._render_y = float(getattr(particle, '_tick_prev_y', getattr(particle, 'y', 0.0)))
+
+        if not self._particles:
+            self._refresh_spatial_grid()
+            self._schedule_hide()
+            return
+        self._refresh_spatial_grid()
+
+    def _drain_particle_requests(self) -> None:
+        """在帧边界批量创建粒子，减少主线程事件风暴。"""
+        if not self._pending_requests:
+            return
+
+        if not self._particles:
+            virtual_geometry = get_virtual_screen_geometry()
+            if self.geometry() != virtual_geometry:
+                self.setGeometry(virtual_geometry)
+
+        offset_x = self.geometry().x()
+        offset_y = self.geometry().y()
+        had_particles = bool(self._particles)
+        appended = False
+
+        while self._pending_requests:
+            request = self._pending_requests.popleft()
+            particle_id = request['particle_id']
+            area_type = request['area_type']
+            area_data = request['area_data']
+            particle_options = request['particle_options']
+
+            script = self._particle_manager.get_script(particle_id)
+            if not script:
+                continue
+            if hasattr(script, 'set_request_options'):
+                try:
+                    script.set_request_options(dict(particle_options))
+                except Exception:
+                    pass
+
+            if area_type == 'rect':
+                x1, y1, x2, y2 = area_data
+                local_area_data = (x1 - offset_x, y1 - offset_y, x2 - offset_x, y2 - offset_y)
+            elif area_type == 'circle':
+                x, y, radius = area_data
+                local_area_data = (x - offset_x, y - offset_y, radius)
+            else:
+                x, y = area_data
+                local_area_data = (x - offset_x, y - offset_y)
+
+            new_particles = script.create_particles(area_type, local_area_data)
+            if not new_particles:
+                continue
+
+            self._particles.extend(new_particles)
+            if self._perf_log_enabled:
+                self._perf_spawned_count += len(new_particles)
+            for particle in new_particles:
+                self._prepare_particle_backend_state(particle)
+                self._draw_seq += 1
+                particle.layer = normalize_layer(
+                    particle_options.get('layer', getattr(particle, 'layer', Layer.PARTICLE)),
+                    Layer.PARTICLE,
+                )
+                try:
+                    particle.z = int(particle_options.get('z', getattr(particle, 'z', 0)))
+                except (TypeError, ValueError):
+                    particle.z = 0
+                particle._draw_order = self._draw_seq
+                particle._tick_prev_x = float(getattr(particle, 'x', 0.0))
+                particle._tick_prev_y = float(getattr(particle, 'y', 0.0))
+                particle._render_x = float(getattr(particle, 'x', 0.0))
+                particle._render_y = float(getattr(particle, 'y', 0.0))
+            appended = True
+
+        if not appended:
+            return
+
+        self._cancel_scheduled_hide()
+        # 滞留期内覆盖层仍然可见，此时不需要再次 show()/重申置顶。
+        if not had_particles and not self.isVisible():
+            self.show()
+            self._layer_manager.enforce_burst()
+        self._refresh_spatial_grid()
+
+    # ------------------------------------------------------------------
+    def paintEvent(self, event):
+        paint_start = perf_counter() if self._perf_log_enabled else 0.0
+        painter = QPainter(self)
+        painter.setClipRegion(event.region())
+        # 透明覆盖层每帧先清屏，避免上一帧像素残留
+        painter.setCompositionMode(QPainter.CompositionMode_Source)
+        painter.fillRect(event.region().boundingRect(), Qt.transparent)
+        painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
+
+        if not self._particles:
+            painter.end()
+            return
+
+        particles = self._spatial_index.particles_for_tiles(
+            _tile_keys_for_region(event.region()),
+            event.region(),
+        )
+        clip_rect = event.region().boundingRect()
+        visible_particles = [
+            particle
+            for particle in particles
+            if self._spatial_index.bounds_for(particle).intersects(QRectF(clip_rect))
+        ]
+        self._draw_backend.render(build_particle_batch(visible_particles), painter)
+
+        painter.end()
+        if self._perf_log_enabled:
+            self._perf_frame_count += 1
+            self._perf_paint_ms_total += (perf_counter() - paint_start) * 1000.0
+
+    def _maybe_log_perf(self) -> None:
+        if not self._perf_log_enabled or self._perf_tick_count < self._perf_log_interval_ticks:
+            return
+        avg_update_ms = self._perf_update_ms_total / max(1, self._perf_tick_count)
+        avg_drain_ms = self._perf_drain_ms_total / max(1, self._perf_tick_count)
+        avg_paint_ms = self._perf_paint_ms_total / max(1, self._perf_frame_count)
+        _logger.debug(
+            "[ParticlePerf] ticks=%d frames=%d live=%d peak=%d req=%d spawned=%d avg_update=%.3fms avg_drain=%.3fms avg_paint=%.3fms async=%s",
+            self._perf_tick_count,
+            self._perf_frame_count,
+            len(self._particles),
+            self._perf_max_particles,
+            self._perf_request_count,
+            self._perf_spawned_count,
+            avg_update_ms,
+            avg_drain_ms,
+            avg_paint_ms,
+            _can_use_async_updates(),
+        )
+        self._perf_tick_count = 0
+        self._perf_frame_count = 0
+        self._perf_request_count = 0
+        self._perf_spawned_count = 0
+        self._perf_update_ms_total = 0.0
+        self._perf_drain_ms_total = 0.0
+        self._perf_paint_ms_total = 0.0
+        self._perf_max_particles = 0
+
+    # ------------------------------------------------------------------
+    def _schedule_hide(self) -> None:
+        """粒子清空后延迟隐藏覆盖层。
+
+        粒子（尤其是右键 UI 淡出触发的 ``right_fade``）常常成串出现，清空即 ``hide()``
+        会让整组原生 show/hide 与 ``enforce_burst()`` 在同一秒内反复发生，任务栏跟着
+        抖动。这里改成滞留一小段时间，期间重新出现粒子就取消隐藏。
+        """
+        if self._hide_linger_ms <= 0:
+            self._clear_and_hide()
+            return
+        if self._hide_timer.isActive():
+            return
+        if self.isVisible():
+            # 滞留期间窗口仍然可见，先把透明缓冲刷成空帧，避免残留上一帧粒子。
+            self.update()
+        self._hide_timer.start(self._hide_linger_ms)
+
+    def _cancel_scheduled_hide(self) -> None:
+        if self._hide_timer.isActive():
+            self._hide_timer.stop()
+
+    def _on_hide_timeout(self) -> None:
+        if self._paused or self._particles:
+            return
+        self._clear_and_hide()
+
+    def _clear_and_hide(self) -> None:
+        """隐藏前先同步清空透明缓冲，避免退出时残留上一帧粒子。"""
+        if self.isVisible():
+            self.update()
+            self.repaint()
+        self.hide()
+
+    def flush_immediately(self) -> None:
+        """立即清空当前可见粒子，但不解绑事件，供退出流程前段使用。"""
+        self._cancel_scheduled_hide()
+        self._pending_future = None
+        self._pending_requests.clear()
+        self._pending_snapshot_ids.clear()
+        self._particles.clear()
+        self._spatial_index.clear()
+        self._clear_and_hide()
+
+    def set_paused(self, paused: bool) -> None:
+        """暂停/恢复粒子系统；暂停时立即清空现有可见粒子。"""
+        self._paused = bool(paused)
+        if self._paused:
+            self.flush_immediately()
+
+    # ------------------------------------------------------------------
+    def cleanup(self):
+        """清理资源"""
+        if self._cleanup_done:
+            return
+        self._cleanup_done = True
+        if self._event_center:
+            self._event_center.unsubscribe(EventType.PARTICLE_REQUEST, self._on_particle_request)
+            self._event_center.unsubscribe(EventType.TICK, self._on_tick)
+            self._event_center.unsubscribe(EventType.FRAME, self._on_frame)
+        self.flush_immediately()
+        self._font_cache.clear()
+        self._draw_backend.cleanup()
+        self._layer_manager.unregister(self)
+        try:
+            self.close()
+        except Exception:
+            pass
+        try:
+            self.deleteLater()
+        except Exception:
+            pass
+
+
+def create_particle_overlay_factory(particle_manager_provider):
+    """Bind the script particle registry to the Qt renderer."""
+
+    def create() -> ParticleOverlay:
+        return ParticleOverlay(particle_manager_provider())
+
+    return create

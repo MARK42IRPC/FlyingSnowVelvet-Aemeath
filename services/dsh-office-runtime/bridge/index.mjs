@@ -38,8 +38,15 @@ const COUNT_PARAMETER = {
 const PET_TOOLS = [
   {
     name: "play_music",
-    description: "仅当用户明确要求播放音乐时调用。按歌名搜索并播放；未指定歌名时可省略 query。",
-    parameters: { query: { type: "string", description: "用户要求播放的歌名。" } },
+    description: "仅当用户明确要求播放音乐时调用。按歌名搜索并播放；未指定歌名时可省略 query。用户一次点了多首歌时用 queries 一次传完，按顺序全部加入播放队列。",
+    parameters: {
+      query: { type: "string", description: "用户要求播放的单首歌名。" },
+      queries: {
+        type: "array",
+        items: { type: "string" },
+        description: "用户一次点播多首歌时的歌名列表，按用户说的顺序排列。",
+      },
+    },
   },
   {
     name: "next_track",

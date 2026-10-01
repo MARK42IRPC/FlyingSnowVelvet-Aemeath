@@ -59,8 +59,8 @@ from lib.core.forum_filter import (
 from lib.core.forum_colors import build_color_tokens, text_colors
 from lib.core.forum_session import ForumSessionStore, is_logged_in
 from lib.core.logger import get_logger
-from lib.core.qt_bridge.font import get_ui_font
-from lib.core.qt_bridge.workbench_page import QtWorkbenchToolPage
+from lib.core.render.backends.qt.font import get_ui_font
+from lib.core.render.backends.qt.workbench_page import QtWorkbenchToolPage
 from lib.script.ui.forum_style import (
     FORUM_ACCENT_LABELS,
     FORUM_CARD_RADIUS,

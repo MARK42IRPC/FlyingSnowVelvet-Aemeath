@@ -6,36 +6,40 @@ from PyQt5.QtWidgets import QWidget
 from PyQt5.QtCore    import Qt, QPoint
 from PyQt5.QtGui     import QPainter
 
-from config.config            import BEHAVIOR, PHYSICS, MORTOR
 from lib.core.unified_draw import Layer, get_layer_manager
 from lib.core.event.center     import get_event_center, EventType, Event
 from lib.core.clickthrough_state import is_clickthrough_enabled
 from lib.core.physics          import get_physics_world, PhysicsBody
-from lib.core.qt_bridge.screen import get_screen_geometry_for_point
+from lib.core.render.backends.qt.screen import get_screen_geometry_for_point
 from lib.script.voice.chrack     import ChrackSound
-from lib.core.graphics.resources import ImageResource
-from lib.core.graphics.types import Point
-from lib.core.graphics.visuals import build_world_object_batch, sample_motor_jitter
-from lib.core.qt_bridge.draw_backend import QtDrawBackend
+from lib.core.render.visuals.resources import ImageResource
+from lib.core.render.visuals.types import Point
+from lib.core.render.visuals.visuals import build_world_object_batch, sample_motor_jitter
+from lib.core.render.backends.qt.draw_backend import QtDrawBackend
+from lib.core.services.world_object_physics import (
+    DEFAULT_DRAG_TRAIL_WINDOW_SEC,
+    DEFAULT_RELEASE_SAMPLE_MIN_DT_SEC,
+    resolve_world_object_physics,
+)
+_WORLD_PHYSICS = resolve_world_object_physics()
 
-
-# 从配置文件读取物理参数
-_GROUND_Y_PCT: float = PHYSICS.get('ground_y_pct', 0.90)
-_MAX_THROW_VX: float = PHYSICS.get('max_throw_vx', 25.0)
-_MAX_THROW_VY: float = PHYSICS.get('max_throw_vy', 25.0)
-_DRAG_THRESHOLD: int = PHYSICS.get('drag_threshold', 5)
-_FADE_STEP: float = PHYSICS.get('fade_step', 0.05)
-_FADE_INTERVAL_MS: int = PHYSICS.get('fade_interval_ms', 50)
-_MAX_BOUNCES: int = PHYSICS.get('max_bounces', 5)
-_DRAG_TRAIL_WINDOW_SEC: float = 0.10
-_RELEASE_SAMPLE_MIN_DT_SEC: float = 1.0 / 60.0
-_BASE_MOVE_SPEED: float = float(MORTOR.get('move_speed_px_per_frame', 2.0))
-_ACCEL_PER_TICK: float = float(MORTOR.get('move_accel_per_tick', 1.0))
-_DECEL_PER_TICK: float = float(MORTOR.get('move_decel_per_tick', 2.0))
-_MAX_MOVE_SPEED: float = float(MORTOR.get('move_speed_max', 10.0))
-_JUMP_VY: float = float(MORTOR.get('jump_vy', PHYSICS.get('snow_leopard_jump_vy', -13.0)))
-_JUMP_COOLDOWN_SEC: float = float(MORTOR.get('jump_cooldown_sec', 2.0))
-_JUMP_MAX_CHARGES: int = int(MORTOR.get('jump_max_charges', 2))
+# 产品物理参数由 lib/core/services 唯一解析，Qt 与 DX 两个后端读同一份数值
+_GROUND_Y_PCT: float = _WORLD_PHYSICS.ground_y_pct
+_MAX_THROW_VX: float = _WORLD_PHYSICS.max_throw_vx
+_MAX_THROW_VY: float = _WORLD_PHYSICS.max_throw_vy
+_DRAG_THRESHOLD: int = _WORLD_PHYSICS.drag_threshold
+_FADE_STEP: float = _WORLD_PHYSICS.fade_step
+_FADE_INTERVAL_MS: int = _WORLD_PHYSICS.fade_interval_ms
+_MAX_BOUNCES: int = _WORLD_PHYSICS.max_bounces
+_DRAG_TRAIL_WINDOW_SEC: float = DEFAULT_DRAG_TRAIL_WINDOW_SEC
+_RELEASE_SAMPLE_MIN_DT_SEC: float = DEFAULT_RELEASE_SAMPLE_MIN_DT_SEC
+_BASE_MOVE_SPEED: float = _WORLD_PHYSICS.motor_move_speed_px_per_frame
+_ACCEL_PER_TICK: float = _WORLD_PHYSICS.motor_move_accel_per_tick
+_DECEL_PER_TICK: float = _WORLD_PHYSICS.motor_move_decel_per_tick
+_MAX_MOVE_SPEED: float = _WORLD_PHYSICS.motor_move_speed_max
+_JUMP_VY: float = _WORLD_PHYSICS.motor_jump_vy
+_JUMP_COOLDOWN_SEC: float = _WORLD_PHYSICS.motor_jump_cooldown_sec
+_JUMP_MAX_CHARGES: int = _WORLD_PHYSICS.motor_jump_max_charges
 _GROUND_EPSILON: float = 1.0
 class Mortor(QWidget):
     """
@@ -130,7 +134,7 @@ class Mortor(QWidget):
         # 自首次按下已累积的 tick 数
         self._pending_click_ticks = 0
         # 双击判定间隔（tick 数），读取全局配置，与 ClickHandler 保持一致
-        self._double_click_ticks  = BEHAVIOR.get('double_click_ticks', 3)
+        self._double_click_ticks  = _WORLD_PHYSICS.double_click_ticks
 
         self.move(position)
         self.show()
@@ -709,4 +713,3 @@ class Mortor(QWidget):
         self._draw_backend.cleanup()
         self._alive = False
         super().closeEvent(event)
-

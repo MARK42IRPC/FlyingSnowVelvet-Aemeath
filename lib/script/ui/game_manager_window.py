@@ -23,9 +23,9 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
-from lib.core.qt_bridge.font import get_digit_font, get_ui_font
+from lib.core.render.backends.qt.font import get_digit_font, get_ui_font
 from config.scale import scale_px
-from lib.core.qt_bridge.workbench_page import QtWorkbenchToolPage
+from lib.core.render.backends.qt.workbench_page import QtWorkbenchToolPage
 from lib.script.gemes.MAIN.game_packages import InstalledGame, get_game_package_service
 from lib.script.workbench.theme import get_workbench_colors
 

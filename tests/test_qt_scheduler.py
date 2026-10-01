@@ -2,7 +2,7 @@ import unittest
 
 from PyQt5.QtCore import QCoreApplication, QEventLoop, QTimer
 
-from lib.core.qt_bridge.scheduler import QtScheduler
+from lib.core.render.backends.qt.scheduler import QtScheduler
 
 
 class QtSchedulerTests(unittest.TestCase):

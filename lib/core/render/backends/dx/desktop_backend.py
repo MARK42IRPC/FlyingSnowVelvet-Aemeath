@@ -1,0 +1,341 @@
+"""DirectX desktop composition with one owned loop and cleanup boundary."""
+from __future__ import annotations
+
+import threading
+from collections.abc import Callable
+
+from lib.core.logger import get_logger
+
+from lib.core.desktop_backend import (
+    DesktopBackendBundle,
+    install_desktop_backend_bundle,
+    uninstall_desktop_backend_bundle,
+)
+from lib.core.world_objects import (
+    configure_world_object_backend,
+    get_world_object_backend,
+    reset_world_object_backend,
+)
+
+from .application_runtime import DxApplicationRuntime
+from .application_ui import DxApplicationUiHost
+from .effect_system import create_effect_overlay_factory
+from .event_pump import DxEventPump
+from .loop import DxLoopContext
+from .offscreen import DxOffscreenBackend
+from .particle_system import create_particle_overlay_factory
+from .pet_window import create_pet_window_factory
+from .scheduler import DxScheduler
+from .screen import DxScreenProvider
+from .screen_capture import DxScreenCapture
+from .tray_host import create_tray_host_factory
+from .window_host import create_dx_layer_window_host
+from .world_object_backend import DxWorldObjectBackend
+
+
+logger = get_logger(__name__)
+
+
+class DxDesktopBackend:
+    """Own every service installed by one DirectX desktop bundle."""
+
+    def __init__(
+        self,
+        *,
+        warp: bool = False,
+        context: DxLoopContext | None = None,
+        screen_provider: DxScreenProvider | None = None,
+        state_machine_factory=None,
+        startup_sound_factory=None,
+        interaction_sound_factory=None,
+        particle_manager_provider=None,
+        effect_manager_provider=None,
+        world_object_sound_factory=None,
+        launch_wuwa=None,
+        animation_factory=None,
+        animation_cleanup=None,
+        workbench_opener=None,
+        music_service_provider=None,
+        game_command_runtime_factory=None,
+    ) -> None:
+        self.context = context or DxLoopContext()
+        self.screen_provider = screen_provider or DxScreenProvider()
+        self.screen_capture = DxScreenCapture(self.screen_provider)
+        self.warp = bool(warp)
+        self._state_machine_factory = state_machine_factory
+        self._startup_sound_factory = startup_sound_factory
+        self._interaction_sound_factory = interaction_sound_factory
+        self._particle_manager_provider = particle_manager_provider
+        self._effect_manager_provider = effect_manager_provider
+        self._world_object_sound_factory = world_object_sound_factory
+        self._launch_wuwa = launch_wuwa
+        self._animation_factory = animation_factory
+        self._animation_cleanup = animation_cleanup
+        self._workbench_opener = workbench_opener
+        self._music_service_provider = music_service_provider
+        self._game_command_runtime_factory = game_command_runtime_factory
+        self.world_object_backend = DxWorldObjectBackend(
+            self.context,
+            screen_provider=self.screen_provider,
+            warp=self.warp,
+            sound_factory=self._world_object_sound_factory,
+        )
+        self._schedulers: list[DxScheduler] = []
+        self._event_pumps: list[DxEventPump] = []
+        self._lock = threading.RLock()
+        self._cleanup_done = False
+
+    @property
+    def cleaned(self) -> bool:
+        with self._lock:
+            return self._cleanup_done
+
+    def _ensure_active(self) -> None:
+        if self.cleaned:
+            raise RuntimeError("DirectX desktop backend has been cleaned")
+
+    def create_application_runtime(self) -> DxApplicationRuntime:
+        self._ensure_active()
+        return DxApplicationRuntime(self.context)
+
+    def create_application_ui_host(self) -> DxApplicationUiHost:
+        self._ensure_active()
+        return DxApplicationUiHost(
+            self.context,
+            screen_provider=self.screen_provider,
+            warp=self.warp,
+            workbench_opener=self._workbench_opener,
+            launch_wuwa=self._launch_wuwa,
+            animation_factory=self._animation_factory,
+            animation_cleanup=self._animation_cleanup,
+            music_service_provider=self._music_service_provider,
+            game_command_runtime_factory=self._game_command_runtime_factory,
+        )
+
+    def create_scheduler(self) -> DxScheduler:
+        with self._lock:
+            self._ensure_active()
+            scheduler = DxScheduler(self.context)
+            self._schedulers.append(scheduler)
+            return scheduler
+
+    def create_event_pump(self, callback: Callable[[], None]) -> DxEventPump:
+        with self._lock:
+            self._ensure_active()
+            pump = DxEventPump(self.context, callback)
+            self._event_pumps.append(pump)
+            return pump
+
+    def call_later(self, delay_ms: int, callback: Callable[[], None]) -> None:
+        self._ensure_active()
+        self.context.call_later(delay_ms, callback)
+
+    def create_screen_capture(self) -> DxScreenCapture:
+        self._ensure_active()
+        return DxScreenCapture(self.screen_provider)
+
+    def bundle(self) -> DesktopBackendBundle:
+        """Return the immutable service bundle bound to this owner."""
+        self._ensure_active()
+        return DesktopBackendBundle(
+            draw_backend_factory=DxOffscreenBackend,
+            application_runtime_factory=self.create_application_runtime,
+            application_ui_host_factory=self.create_application_ui_host,
+            scheduler_factory=self.create_scheduler,
+            screen_capture_factory=self.create_screen_capture,
+            pet_window_factory=create_pet_window_factory(
+                self.context,
+                screen_provider=self.screen_provider,
+                state_machine_factory=self._state_machine_factory,
+                startup_sound_factory=self._startup_sound_factory,
+                interaction_sound_factory=self._interaction_sound_factory,
+            ),
+            particle_overlay_factory=create_particle_overlay_factory(
+                self.context,
+                screen_provider=self.screen_provider,
+                warp=self.warp,
+                particle_manager_provider=self._particle_manager_provider,
+            ),
+            effect_overlay_factory=create_effect_overlay_factory(
+                self.context,
+                screen_provider=self.screen_provider,
+                warp=self.warp,
+                effect_manager_provider=self._effect_manager_provider,
+            ),
+            tray_host_factory=create_tray_host_factory(
+                self.context,
+                warp=self.warp,
+            ),
+            event_pump_factory=self.create_event_pump,
+            deferred_call=self.call_later,
+            virtual_screen_provider=self.screen_provider.get_virtual_screen_rect,
+            screen_for_point_provider=self.screen_provider.get_screen_rect_for_point,
+            layer_window_host_factory=create_dx_layer_window_host,
+            screen_capture_provider=self.screen_capture.capture_primary_png,
+            window_host_factory=create_dx_layer_window_host,
+            cleanup=self.cleanup,
+        )
+
+    def cleanup(self) -> None:
+        """Release tracked services and any native hosts left by a failed exit."""
+        with self._lock:
+            if self._cleanup_done:
+                return
+            self._cleanup_done = True
+            pumps, self._event_pumps = self._event_pumps, []
+            schedulers, self._schedulers = self._schedulers, []
+
+        first_error: BaseException | None = None
+        try:
+            self.world_object_backend.cleanup()
+        except Exception as exc:
+            first_error = exc
+
+        for pump in pumps:
+            try:
+                pump.disconnect()
+            except Exception as exc:
+                if first_error is None:
+                    first_error = exc
+        for scheduler in schedulers:
+            try:
+                scheduler.cleanup()
+            except Exception as exc:
+                if first_error is None:
+                    first_error = exc
+
+        for poller in self.context.registered_pollers():
+            try:
+                cleanup = getattr(poller, "cleanup", None)
+                if not callable(cleanup):
+                    cleanup = getattr(poller, "close", None)
+                if callable(cleanup):
+                    cleanup()
+            except Exception as exc:
+                if first_error is None:
+                    first_error = exc
+            finally:
+                self.context.unregister_poller(poller)
+
+        if get_world_object_backend() is self.world_object_backend:
+            reset_world_object_backend()
+        if first_error is not None:
+            raise first_error
+
+
+_active_owner: DxDesktopBackend | None = None
+_active_lock = threading.RLock()
+
+
+def configure_dx_desktop_backend(
+    *,
+    warp: bool = False,
+    state_machine_factory=None,
+    startup_sound_factory=None,
+    interaction_sound_factory=None,
+    particle_manager_provider=None,
+    effect_manager_provider=None,
+    world_object_sound_factory=None,
+    launch_wuwa=None,
+    animation_factory=None,
+    animation_cleanup=None,
+    workbench_opener=None,
+    music_service_provider=None,
+    game_command_runtime_factory=None,
+) -> None:
+    """Install one complete Qt-free DirectX desktop composition.
+
+    Installing twice with the same ``warp`` is a no-op: the existing owner is
+    handed back to the core registry as itself, so the bundle every host was
+    already built from stays the one in force. A second, *different* backend —
+    Qt included — is rejected by the core registry instead of being stacked on
+    top of this one.
+    """
+    global _active_owner
+    with _active_lock:
+        if _active_owner is not None and not _active_owner.cleaned:
+            if _active_owner.warp != bool(warp):
+                raise RuntimeError("DirectX desktop backend is already configured")
+            install_desktop_backend_bundle(
+                _active_owner.bundle(),
+                owner=_active_owner,
+            )
+            configure_world_object_backend(_active_owner.world_object_backend)
+            return
+
+        owner = DxDesktopBackend(
+            warp=warp,
+            state_machine_factory=state_machine_factory,
+            startup_sound_factory=startup_sound_factory,
+            interaction_sound_factory=interaction_sound_factory,
+            particle_manager_provider=particle_manager_provider,
+            effect_manager_provider=effect_manager_provider,
+            world_object_sound_factory=world_object_sound_factory,
+            launch_wuwa=launch_wuwa,
+            animation_factory=animation_factory,
+            animation_cleanup=animation_cleanup,
+            workbench_opener=workbench_opener,
+            music_service_provider=music_service_provider,
+            game_command_runtime_factory=game_command_runtime_factory,
+        )
+        try:
+            install_desktop_backend_bundle(owner.bundle(), owner=owner)
+            configure_world_object_backend(owner.world_object_backend)
+        except Exception:
+            _release_owner(owner)
+            raise
+        _active_owner = owner
+
+
+def _release_owner(owner: DxDesktopBackend) -> None:
+    """Tear down an owner that never became the active backend.
+
+    The install either fully takes effect or leaves nothing behind, so every
+    step of the rollback has to undo the one before it: the core registry
+    retracts the bundle (otherwise the router's fallback would find the
+    registry occupied by a backend that no longer exists), then the owner
+    releases its native resources — loop pollers, world objects and window
+    hosts a half-built owner may already have created. Cleanup failures must
+    not replace the error that made the install fail, so they are reported and
+    swallowed: the caller has to see why the backend was refused.
+    """
+    uninstall_desktop_backend_bundle(owner)
+    try:
+        owner.cleanup()
+    except Exception:
+        logger.exception("DirectX 后端安装失败后的清理也失败了")
+
+
+def get_dx_desktop_backend() -> DxDesktopBackend | None:
+    """Return the live owner, dropping a reference to one already cleaned.
+
+    The owner can be cleaned without going through
+    :func:`cleanup_dx_desktop_backend`: ``ApplicationState`` runs the bundle's
+    ``cleanup`` callback, which is this owner's own ``cleanup``. Leaving the
+    dead reference in place would let a later ``configure`` treat a torn-down
+    backend as active, so the stale handle is dropped on read.
+    """
+    global _active_owner
+    owner = _active_owner
+    if owner is not None and owner.cleaned:
+        with _active_lock:
+            if _active_owner is owner:
+                _active_owner = None
+        return None
+    return owner
+
+
+def cleanup_dx_desktop_backend() -> None:
+    global _active_owner
+    with _active_lock:
+        owner, _active_owner = _active_owner, None
+    if owner is not None:
+        owner.cleanup()
+
+
+__all__ = [
+    "DxDesktopBackend",
+    "cleanup_dx_desktop_backend",
+    "configure_dx_desktop_backend",
+    "get_dx_desktop_backend",
+]

@@ -7,7 +7,7 @@ from config.scale import scale_px
 from config.tooltip_config import TOOLTIPS
 from lib.script.ui.close_button_handler import CloseButtonEventHandler
 from lib.core.event.center import get_event_center, EventType, Event
-from lib.core.qt_bridge.screen import (
+from lib.core.render.backends.qt.screen import (
     clamp_rect_position,
     move_widget_to_global,
     widget_global_rect,
@@ -15,11 +15,11 @@ from lib.core.qt_bridge.screen import (
 from lib.core.anchor_utils import (
     refresh_last_activity,
 )
-from lib.core.qt_bridge.widget_anchors import (
+from lib.core.render.backends.qt.widget_anchors import (
     get_anchor_point as resolve_anchor_point,
     publish_widget_anchor_response,
 )
-from lib.core.qt_bridge.window import coerce_qpoint
+from lib.core.render.backends.qt.window import coerce_qpoint
 from lib.script.ui.rect_action_button_style import RectActionButton
 
 

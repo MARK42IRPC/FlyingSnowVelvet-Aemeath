@@ -3,7 +3,7 @@
 令牌本身是纯文本、由 `forum_markup` 定义并从正文里洗掉（`FORUM_EFFECT_TOKENS`），令牌到
 gif 的对应关系长在这里：新增一个令牌必须同时补 `FORUM_STICKER_ASSETS`，两处成对，测试会核对。
 
-gif 帧走后端无关的 `lib/core/graphics/image_loader.decode_image_frames` 解码，再按
+gif 帧走后端无关的 `lib/core/render/visuals/image_loader.decode_image_frames` 解码，再按
 （路径 + 目标尺寸）缓存成 `QImage`（`lru_cache`）——同一张 gif 的所有卡片共用一份，重排整墙
 不会反复解码。动画由全局 `EventType.GIF_FRAME` 推进，和雪豹世界物体同一个时钟，不给每张贴图
 各起一个 QTimer；贴图在卡片重排时跟着卡片 `deleteLater()` 一起销毁，销毁时退订事件中心，
@@ -24,9 +24,9 @@ from PyQt5.QtWidgets import QSizePolicy, QWidget
 
 from config.scale import scale_px
 from lib.core.event.center import EventType, get_event_center
-from lib.core.graphics.image_loader import decode_image_frames
+from lib.core.render.visuals.image_loader import decode_image_frames
 from lib.core.logger import get_logger
-from lib.core.qt_bridge.gif_loader import qimage_from_raster_frame
+from lib.core.render.backends.qt.gif_loader import qimage_from_raster_frame
 from lib.script.ui.forum_markup import effect_tokens
 
 

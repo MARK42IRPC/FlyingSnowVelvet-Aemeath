@@ -1,11 +1,26 @@
 from __future__ import annotations
 
+import builtins
+import io
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 from lib.script.app import workbench_helper
+
+
+def _block_pyqt_import(error: ModuleNotFoundError):
+    """把 PyQt5 及其子包的导入换成“未安装”，但不碰 `sys.modules`。"""
+    original_import = builtins.__import__
+
+    def blocked_import(name, *args, **kwargs):
+        if name == "PyQt5" or name.startswith("PyQt5."):
+            raise error
+        return original_import(name, *args, **kwargs)
+
+    return blocked_import
 
 
 class _Process:
@@ -118,6 +133,48 @@ class WorkbenchHelperLauncherTests(unittest.TestCase):
                 encoding="utf-8",
             )
             self.assertEqual(workbench_helper.read_workbench_helper_request(), {})
+
+
+    def test_helper_without_pyqt_reports_recoverable_error(self):
+        """缺 PyQt5 时 helper 必须给可恢复提示，而不是裸 traceback。
+
+        这里拦的是导入本身（`builtins.__import__`），不动 `sys.modules`：同进程里其他用例可能已经把
+        真的 PyQt5 装进去了，把它临时置为 `None` 会在 Qt 已初始化后弄出原子访问冲突。
+        """
+        from lib.script.app import workbench_helper_entry
+
+        blocked = ModuleNotFoundError("PyQt5 blocked by test")
+        stderr = io.StringIO()
+        with patch.object(
+            builtins,
+            "__import__",
+            side_effect=_block_pyqt_import(blocked),
+        ), patch.object(
+            sys,
+            "stderr",
+            stderr,
+        ), patch("ctypes.windll", create=True) as windll:
+            code = workbench_helper_entry.run_workbench_helper("office")
+
+        self.assertEqual(code, 1)
+        windll.user32.MessageBoxW.assert_called_once()
+        _handle, message, title, flags = windll.user32.MessageBoxW.call_args.args
+        self.assertIn("PyQt5", message)
+        self.assertIn("安装依赖", message)
+        self.assertEqual(title, "飞行雪绒 控制面板")
+        self.assertEqual(flags, 0x30)
+        self.assertEqual(stderr.getvalue().strip(), message)
+
+    def test_helper_does_not_swallow_unrelated_crashes(self):
+        from lib.script.app import workbench_helper_entry
+
+        with patch.object(
+            workbench_helper_entry,
+            "_run_workbench_helper",
+            side_effect=RuntimeError("boom"),
+        ):
+            with self.assertRaises(RuntimeError):
+                workbench_helper_entry.run_workbench_helper("office")
 
 
 if __name__ == "__main__":

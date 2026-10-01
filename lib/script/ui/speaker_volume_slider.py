@@ -19,7 +19,7 @@ from config.config import UI, SPEAKER_SEARCH_UI
 from config.scale import scale_px
 from lib.core.anchor_utils import apply_ui_opacity
 from lib.core.event.center import get_event_center, Event, EventType
-from lib.core.graphics.media_panel_visuals import (
+from lib.core.render.visuals.media_panel_visuals import (
     PROGRESS_PANEL_HEIGHT,
     SLIDER_TICK_COUNT,
     build_slider_visual,
@@ -27,7 +27,7 @@ from lib.core.graphics.media_panel_visuals import (
     slider_track_rect,
     snap_slider_ratio,
 )
-from lib.core.qt_bridge.draw_backend import QtDrawBackend
+from lib.core.render.backends.qt.draw_backend import QtDrawBackend
 from lib.core.unified_draw import Layer, get_layer_manager
 from lib.script.music import get_music_service
 

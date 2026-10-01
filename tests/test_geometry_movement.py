@@ -1,5 +1,5 @@
-from lib.core.graphics.anchors import get_anchor_point
-from lib.core.graphics.types import Point, Rect, coerce_point
+from lib.core.render.visuals.anchors import get_anchor_point
+from lib.core.render.visuals.types import Point, Rect, coerce_point
 from lib.core.movement_controller import MovementController
 from lib.core.pet_movement_queue import MoveStep, PetMoveQueueManager
 

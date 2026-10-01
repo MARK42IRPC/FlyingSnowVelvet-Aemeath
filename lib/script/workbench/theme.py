@@ -6,11 +6,11 @@ from dataclasses import dataclass
 
 from config.font_config import get_ui_font_family
 from config.scale import scale_px
-from lib.core.graphics.workbench_tokens import (
+from lib.core.render.visuals.workbench_tokens import (
     WORKBENCH_DARK_TOKENS,
     WORKBENCH_LIGHT_TOKENS,
 )
-from lib.core.graphics.workbench_tokens import resolve_workbench_mode as _resolve_mode
+from lib.core.render.visuals.workbench_tokens import resolve_workbench_mode as _resolve_mode
 
 
 @dataclass(frozen=True)
@@ -369,7 +369,8 @@ def workbench_stylesheet(mode: str | None = None) -> str:
         font-weight: 700;
     }}
     QFrame#WorkbenchPageHost QLabel#SettingsPageDescription,
-    QFrame#WorkbenchPageHost QLabel#SettingsSectionDescription {{
+    QFrame#WorkbenchPageHost QLabel#SettingsSectionDescription,
+    QFrame#WorkbenchPageHost QLabel#SettingsHintLabel {{
         color: {c.text_muted};
     }}
     QFrame#WorkbenchPageHost QFrame#SettingsSection {{

@@ -6,7 +6,7 @@ import config.config_runtime as _config_runtime
 
 from config.scale import scale_px
 from config.font_config import FONT
-from lib.core.graphics.palette import COLORS, UI_THEME
+from lib.core.render.visuals.palette import COLORS, UI_THEME
 
 
 WINDOW = {}

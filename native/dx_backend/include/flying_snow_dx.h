@@ -17,13 +17,33 @@
 extern "C" {
 #endif
 
-#define FSDX_ABI_VERSION 9u
+#define FSDX_ABI_VERSION 10u
 #define FSDX_RUNTIME_FLAG_WARP 0x00000001u
 #define FSDX_DRAW_FLAG_FLIPPED 0x00000001u
 #define FSDX_DRAW_FLAG_HAS_FILL 0x00000002u
 #define FSDX_DRAW_FLAG_HAS_STROKE 0x00000004u
 #define FSDX_DRAW_FLAG_TEXT_BOLD 0x00000008u
+#define FSDX_DRAW_FLAG_FILL_GRADIENT 0x00000010u
+/* Set when the shared layer asked for antialiased shape/raster edges. Qt's
+   baseline draws aliased unless opted in, so this must not be a backend
+   default; D2D otherwise always antialiases and the two would silently differ. */
+#define FSDX_DRAW_FLAG_ANTIALIAS 0x00000020u
 #define FSDX_DRAW_COMMAND_V6_SIZE 104u
+#define FSDX_DRAW_COMMAND_V10_SIZE 120u
+/* stroke_flags packs the backend-neutral cap/join enums into one word. */
+#define FSDX_STROKE_CAP_MASK 0x00000003u
+#define FSDX_STROKE_CAP_FLAT 0u
+#define FSDX_STROKE_CAP_SQUARE 1u
+#define FSDX_STROKE_CAP_ROUND 2u
+#define FSDX_STROKE_JOIN_SHIFT 2u
+#define FSDX_STROKE_JOIN_MASK 0x0000000cu
+#define FSDX_STROKE_JOIN_MITER 0u
+#define FSDX_STROKE_JOIN_BEVEL 1u
+#define FSDX_STROKE_JOIN_ROUND 2u
+/* One gradient stop is a float position followed by a packed RGBA word. */
+#define FSDX_GRADIENT_STOP_SIZE 8u
+/* One path segment is start(x,y), optional quadratic control(x,y), end(x,y). */
+#define FSDX_PATH_SEGMENT_SIZE 24u
 #define FSDX_WINDOW_FLAG_TOPMOST 0x00000001u
 #define FSDX_WINDOW_FLAG_TOOL 0x00000002u
 #define FSDX_WINDOW_FLAG_NO_ACTIVATE 0x00000004u
@@ -82,6 +102,7 @@ typedef enum fsdx_command_type {
     FSDX_COMMAND_CLIP_POP = 7,
     FSDX_COMMAND_TRANSFORM_PUSH = 8,
     FSDX_COMMAND_TRANSFORM_POP = 9,
+    FSDX_COMMAND_PATH = 10,
 } fsdx_command_type;
 
 typedef enum fsdx_event_type {
@@ -150,6 +171,11 @@ typedef struct fsdx_draw_command {
     float dy;
     uint32_t payload_offset;
     uint32_t payload_size;
+    /* ABI v10 additions: rounded corners, stroke cap/join and gradient stops. */
+    float radius;
+    uint32_t stroke_flags;
+    uint32_t aux_offset;
+    uint32_t aux_size;
 } fsdx_draw_command;
 
 typedef struct fsdx_window_desc {
@@ -214,8 +240,21 @@ typedef struct fsdx_event {
  * Text commands use x0/y0/x1/y1 as the layout rectangle, stroke_width as
  * the font pixel size, fill_rgba as text color, stroke_rgba as alignment,
  * and text_length to split UTF-8 text from the following font family.
- * Transform commands use m11/m12/m21/m22/dx/dy. Other command types leave
- * the payload and transform fields zeroed.
+ * Transform commands use m11/m12/m21/m22/dx/dy.
+ *
+ * Rect/ellipse commands use x1/y1 as the (non-negative) width/height and
+ * radius as the corner rounding. When FSDX_DRAW_FLAG_FILL_GRADIENT is set the
+ * fill is a linear gradient instead of fill_rgba: x0/y0 is its start point and
+ * m11/m12 its end point, with aux_offset/aux_size describing the sorted
+ * FSDX_GRADIENT_STOP_SIZE records in the aux payload.
+ *
+ * Path commands carry FSDX_PATH_SEGMENT_SIZE records at payload_offset and
+ * use the same fill/stroke/radius/gradient vocabulary. Clip pushes may carry a
+ * path payload and/or a non-zero radius; a zero radius with no path keeps the
+ * plain rectangular clip. Gradient stops always live in the aux payload so a
+ * command can carry both geometry and a gradient ramp.
+ *
+ * stroke_flags apply to stroked rect, ellipse, path and line commands.
  */
 
 FSDX_API uint32_t fsdx_get_abi_version(void);

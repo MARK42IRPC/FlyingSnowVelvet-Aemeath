@@ -663,28 +663,50 @@ class GamePackageService:
         particle_manager = get_particle_script_manager()
         effect_manager = get_effect_script_manager()
 
+        #: 单个扩展加载失败（缺依赖、语法错误、类名写错）只放弃该扩展。
+        #: 插件是外部输入，不能让它把整个桌宠启动链拖垮：这里曾经因为一个
+        #: 已安装包 import 旧模块路径而中断 ``_on_init_ready``，连带托盘、
+        #: 音响搜索 UI 和 APP_MAIN 之后的步骤全部没执行。
         for spec in record.manifest.particle_extensions:
             particle_id = qualify_game_extension_id(record.game_id, spec.local_id)
-            cls = self._load_extension_class(
-                record.install_dir / spec.module,
-                spec.class_name,
-                game_id=record.game_id,
-                local_id=spec.local_id,
-                kind="particle",
-            )
+            try:
+                cls = self._load_extension_class(
+                    record.install_dir / spec.module,
+                    spec.class_name,
+                    game_id=record.game_id,
+                    local_id=spec.local_id,
+                    kind="particle",
+                )
+            except Exception as exc:
+                _logger.warning(
+                    "[GamePackages] 跳过粒子扩展 %s（%s）：%s",
+                    particle_id,
+                    spec.module,
+                    exc,
+                )
+                continue
             particle_manager._instances.pop(particle_id, None)
             particle_manager.register_script(cls)
             registered_particles.append(particle_id)
 
         for spec in record.manifest.effect_extensions:
             effect_id = qualify_game_extension_id(record.game_id, spec.local_id)
-            cls = self._load_extension_class(
-                record.install_dir / spec.module,
-                spec.class_name,
-                game_id=record.game_id,
-                local_id=spec.local_id,
-                kind="effect",
-            )
+            try:
+                cls = self._load_extension_class(
+                    record.install_dir / spec.module,
+                    spec.class_name,
+                    game_id=record.game_id,
+                    local_id=spec.local_id,
+                    kind="effect",
+                )
+            except Exception as exc:
+                _logger.warning(
+                    "[GamePackages] 跳过特效扩展 %s（%s）：%s",
+                    effect_id,
+                    spec.module,
+                    exc,
+                )
+                continue
             effect_manager._instances.pop(effect_id, None)
             effect_manager.register_script(cls)
             registered_effects.append(effect_id)

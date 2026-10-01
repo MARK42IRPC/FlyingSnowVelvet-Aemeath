@@ -52,7 +52,7 @@
 
 [EFFECT_REQUEST]
 - payload: `effect_id`、`anchor_type`、`anchor_data`、`effect_options`；只允许嵌套纯数据，不允许 toolkit 对象
-- lib/core/qt_bridge/effect_system.py -> self._on_effect_request [has unsubscribe]
+- lib/core/render/backends/qt/effect_system.py -> self._on_effect_request [has unsubscribe]
   发布方: lib/core/effect_utils.py
 
 [ENTITY_POSITION_REQUEST]
@@ -60,7 +60,7 @@
   发布方: lib/core/event/center.py, lib/script/obj-雪豹/manager.py
 
 [ENTITY_POSITION_RESPONSE]
-- payload: position=`lib.core.graphics.types.Point`、size=`(width, height)`、entity_id、request_id
+- payload: position=`lib.core.render.visuals.types.Point`、size=`(width, height)`、entity_id、request_id
 - lib/script/obj-雪豹/manager.py -> self._handle_entity_position_response [has unsubscribe]
   发布方: lib/core/pet_window.py
 
@@ -69,14 +69,14 @@
   发布方: lib/core/event/center.py, lib/script/obj-雪豹/manager.py
 
 [ENTITY_STATE_RESPONSE]
-- payload: position/target 存在时为 `lib.core.graphics.types.Point`
+- payload: position/target 存在时为 `lib.core.render.visuals.types.Point`
 - lib/script/obj-雪豹/manager.py -> self._handle_entity_state_response [has unsubscribe]
   发布方: lib/core/pet_window.py
 
 [FRAME]
 - lib/core/pet_window.py -> self._handle_frame_event
 - lib/core/physics.py -> self._on_frame [has unsubscribe]
-- lib/core/qt_bridge/particle_system.py -> self._on_frame [has unsubscribe]
+- lib/core/render/backends/qt/particle_system.py -> self._on_frame [has unsubscribe]
 - lib/script/obj-摩托/manager.py -> self._on_frame [has unsubscribe]
 - lib/script/ui/world_objects/motor.py -> self._on_frame_move [has unsubscribe]
 - lib/script/ui/world_objects/speaker.py -> self._on_frame_frequency [has unsubscribe]
@@ -113,12 +113,12 @@
 
 [UI_BUBBLE_REMOVE]
 - lib/script/ui/bubble.py -> self._on_bubble_remove
-- lib/core/dx_bridge/application_ui.py -> self._on_bubble_remove
+- lib/core/render/backends/dx/application_ui.py -> self._on_bubble_remove
 
 [INPUT_TEXT]
 - payload: text、可选 raw/source；由模式服务补充 interaction_mode/mode_generation 后路由
 - lib/script/office/mode.py -> self._on_input_text [has unsubscribe]
-  发布方: lib/core/dx_bridge/application_ui.py, lib/script/microphone_stt/service.py, lib/script/ui/command_dialog.py
+  发布方: lib/core/render/backends/dx/application_ui.py, lib/script/microphone_stt/service.py, lib/script/ui/command_dialog.py
 
 [INPUT_CHAT]
 - lib/script/chat/handler.py -> self._on_input_chat [has unsubscribe]
@@ -127,7 +127,7 @@
 
 [INPUT_COMMAND]
 - lib/core/cmd_center.py -> self._on_input_command [has unsubscribe]
-  发布方: lib/core/dx_bridge/application_ui.py
+  发布方: lib/core/render/backends/dx/application_ui.py
   说明: text 只来自用户在命令框的键盘输入；cmd_center 以 shell=True 执行属既定语义，
         发布方白名单由 tests/test_shell_execution_allowlist.py 锁定。
 
@@ -146,11 +146,11 @@
 [INTERACTION_MODE_SET]
 - payload: mode=companion|office，或 toggle=true；可选 source
 - lib/script/office/mode.py -> self._on_mode_set [has unsubscribe]
-  发布方: lib/core/dx_bridge/application_ui.py, lib/script/office/service.py, lib/script/ui/interaction_mode_button.py
+  发布方: lib/core/render/backends/dx/application_ui.py, lib/script/office/service.py, lib/script/ui/interaction_mode_button.py
 
 [INTERACTION_MODE_CHANGED]
 - payload: mode、generation、source
-- lib/core/dx_bridge/application_ui.py -> self._on_interaction_mode_changed [has unsubscribe]
+- lib/core/render/backends/dx/application_ui.py -> self._on_interaction_mode_changed [has unsubscribe]
 - lib/script/chat/handler.py -> self._on_interaction_mode_changed [has unsubscribe]
 - lib/script/office/service.py -> self._on_mode_changed [has unsubscribe]
 - lib/script/ui/interaction_mode_button.py -> self._on_mode_changed [has unsubscribe]
@@ -233,7 +233,7 @@
 
 [OFFICE_APPROVAL_REQUEST]
 - payload: task_id、approval_id、tool_name、reason、可选 command
-- lib/core/dx_bridge/application_ui.py -> self._on_office_approval_request [has unsubscribe]
+- lib/core/render/backends/dx/application_ui.py -> self._on_office_approval_request [has unsubscribe]
   发布方: lib/script/office/service.py
 
 [OFFICE_INPUT]
@@ -277,7 +277,7 @@
   发布方: lib/script/cloudmusic/manager.py
 
 [PARTICLE_REQUEST]
-- lib/core/qt_bridge/particle_system.py -> self._on_particle_request [has unsubscribe]
+- lib/core/render/backends/qt/particle_system.py -> self._on_particle_request [has unsubscribe]
   发布方: lib/script/ui/world_objects/snow_leopard.py, lib/script/ui/world_objects/snow_pile.py, lib/script/ui/world_objects/snowball.py, lib/script/cloudmusic/_mixin_events.py, lib/script/obj-雪堆/manager.py, lib/script/ui/_particle_helper.py, lib/script/ui/ai_settings_panel.py, lib/script/ui/bubble.py, lib/script/ui/chat_mode_button.py, lib/script/ui/command_hint_box.py, lib/script/ui/launch_wuwa_button.py, lib/script/ui/more_functions_button.py, lib/script/ui/playlist_panel.py, lib/script/ui/speaker_search_dialog.py, lib/script/ui/speaker_search_result_box.py, lib/script/ui/tray_menu.py
 
 [PET_TELEPORT]
@@ -285,7 +285,7 @@
   发布方: lib/script/tool_dispatcher/dispatcher.py
 
 [PROTECTION_CHECK]
-- payload: pet_position=`lib.core.graphics.types.Point`、current_in_protection、request_id
+- payload: pet_position=`lib.core.render.visuals.types.Point`、current_in_protection、request_id
 - lib/script/obj-摩托/manager.py -> self._on_protection_check [has unsubscribe]
 - lib/script/obj-沙发/manager.py -> self._on_protection_check [has unsubscribe]
 - lib/script/obj-闹钟/manager.py -> self._on_protection_check [has unsubscribe]
@@ -360,7 +360,7 @@
 - lib/core/timing/manager.py -> self._on_timer_resume
 
 [UI_ANCHOR_RESPONSE]
-- payload: anchor_point=`lib.core.graphics.types.Point`、window_id、anchor_id、ui_id
+- payload: anchor_point=`lib.core.render.visuals.types.Point`、window_id、anchor_id、ui_id
 - lib/script/ui/bubble.py -> self._on_anchor_response
 - lib/script/ui/chat_mode_button.py -> self._on_anchor_response [has unsubscribe]
 - lib/script/ui/clickthrough_button.py -> self._on_anchor_response
@@ -373,7 +373,7 @@
 - lib/script/ui/scale_button.py -> self._on_anchor_response
 - lib/script/ui/speaker_control_buttons.py -> self._on_anchor_response [has unsubscribe]
 - lib/script/ui/speaker_search_result_box.py -> self._on_anchor_response
-  发布方: lib/core/pet_window.py, lib/core/qt_bridge/widget_anchors.py, lib/script/ui/clickthrough_button.py, lib/script/ui/command_dialog.py, lib/script/ui/scale_button.py, lib/script/ui/speaker_search_dialog.py
+  发布方: lib/core/pet_window.py, lib/core/render/backends/qt/widget_anchors.py, lib/script/ui/clickthrough_button.py, lib/script/ui/command_dialog.py, lib/script/ui/scale_button.py, lib/script/ui/speaker_search_dialog.py
 
 [UI_CLICKTHROUGH_TOGGLE]
 - lib/core/pet_window.py -> self._handle_clickthrough_toggle
@@ -467,6 +467,7 @@
 - lib/core/input/click.py
 
 [MUSIC_ENQUEUE]
+- lib/script/tool_dispatcher/dispatcher.py
 - lib/script/ui/speaker_search_result_box.py
 
 [MUSIC_ENQUEUE_HISTORY]
@@ -582,10 +583,10 @@
 - lib/script/yuanbao_free_api/service.py
 
 [INPUT_COMMAND]
-- lib/core/dx_bridge/application_ui.py
+- lib/core/render/backends/dx/application_ui.py
 
 [INPUT_TEXT]
-- lib/core/dx_bridge/application_ui.py
+- lib/core/render/backends/dx/application_ui.py
 - lib/script/microphone_stt/service.py
 - lib/script/ui/command_dialog.py
 
@@ -601,7 +602,7 @@
 - lib/script/office/mode.py
 
 [INTERACTION_MODE_SET]
-- lib/core/dx_bridge/application_ui.py
+- lib/core/render/backends/dx/application_ui.py
 - lib/script/office/service.py
 - lib/script/ui/interaction_mode_button.py
 
@@ -646,6 +647,7 @@
 - lib/core/input/click.py
 
 [MUSIC_ENQUEUE]
+- lib/script/tool_dispatcher/dispatcher.py
 - lib/script/ui/speaker_search_result_box.py
 
 [MUSIC_ENQUEUE_HISTORY]
@@ -785,7 +787,7 @@
 
 [UI_ANCHOR_RESPONSE]
 - lib/core/pet_window.py
-- lib/core/qt_bridge/widget_anchors.py
+- lib/core/render/backends/qt/widget_anchors.py
 - lib/script/ui/clickthrough_button.py
 - lib/script/ui/command_dialog.py
 - lib/script/ui/scale_button.py

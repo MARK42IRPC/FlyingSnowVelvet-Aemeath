@@ -187,6 +187,71 @@ class ToolDispatcherTests(unittest.TestCase):
         self.assertEqual(event.type, EventType.MUSIC_PLAY_TOP)
         self.assertEqual(event.data['track_ref'], 'netease:1')
 
+    def test_music_multi_query_plays_first_and_enqueues_the_rest(self):
+        service = Mock()
+        service.search.side_effect = lambda keyword, **kwargs: [
+            SimpleNamespace(track_id=f'netease:{keyword}', title=keyword, artist='鸣潮',
+                            display=f'03:20 {keyword} - 鸣潮')
+        ]
+        self.dispatcher._check_has_speaker = Mock(return_value=True)
+
+        with patch.object(dispatcher_module, 'get_music_service', return_value=service):
+            self.dispatcher._handle_music_request(['纸飞机', '逆潮', '碎花'])
+
+        music_events = [
+            event for event in self.center.published
+            if event.type in (EventType.MUSIC_PLAY_TOP, EventType.MUSIC_ENQUEUE)
+        ]
+        self.assertEqual(
+            [event.type for event in music_events],
+            [EventType.MUSIC_PLAY_TOP, EventType.MUSIC_ENQUEUE, EventType.MUSIC_ENQUEUE],
+        )
+        self.assertEqual(
+            [event.data['track_ref'] for event in music_events],
+            ['netease:纸飞机', 'netease:逆潮', 'netease:碎花'],
+        )
+
+    def test_music_multi_query_keeps_playable_songs_when_one_misses(self):
+        service = Mock()
+        service.search.side_effect = lambda keyword, **kwargs: (
+            [] if keyword == '不存在的歌'
+            else [SimpleNamespace(track_id=f'netease:{keyword}', title=keyword, artist='鸣潮',
+                                  display=f'03:20 {keyword} - 鸣潮')]
+        )
+        self.dispatcher._check_has_speaker = Mock(return_value=True)
+
+        with patch.object(dispatcher_module, 'get_music_service', return_value=service):
+            self.dispatcher._handle_music_request(['纸飞机', '不存在的歌', '碎花'])
+
+        music_events = [
+            event for event in self.center.published
+            if event.type in (EventType.MUSIC_PLAY_TOP, EventType.MUSIC_ENQUEUE)
+        ]
+        self.assertEqual(
+            [event.data['track_ref'] for event in music_events],
+            ['netease:纸飞机', 'netease:碎花'],
+        )
+        self.assertTrue(any(
+            event.type == EventType.INFORMATION and '不存在的歌' in str(event.data.get('text'))
+            for event in self.center.published
+        ))
+
+    def test_music_single_query_never_enqueues(self):
+        service = Mock()
+        service.search.return_value = [
+            SimpleNamespace(track_id='netease:1', title='纸飞机', artist='鸣潮',
+                            display='03:20 纸飞机 - 鸣潮')
+        ]
+        self.dispatcher._check_has_speaker = Mock(return_value=True)
+
+        with patch.object(dispatcher_module, 'get_music_service', return_value=service):
+            self.dispatcher._handle_music_request('纸飞机')
+
+        self.assertEqual(
+            [event.type for event in self.center.published],
+            [EventType.MUSIC_PLAY_TOP],
+        )
+
     def test_music_search_reranks_by_song_name_before_author_heat(self):
         """点歌时歌名命中的结果必须压过同作者的更短热门曲。
 

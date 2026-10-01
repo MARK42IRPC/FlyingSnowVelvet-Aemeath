@@ -1,6 +1,6 @@
 import unittest
 
-from lib.core.qt_bridge.screen_capture import QtScreenCapture
+from lib.core.render.backends.qt.screen_capture import QtScreenCapture
 
 
 class _Pixmap:

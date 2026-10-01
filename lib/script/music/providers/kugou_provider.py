@@ -7,7 +7,7 @@ from lib.script.kugou import get_kugou_client
 
 from ..provider import MusicProvider
 from ..types import MusicTrack
-from ._shared import UNKNOWN_TITLE, extract_first_artist, format_duration_text
+from ..track_text import UNKNOWN_TITLE, extract_first_artist, format_duration_text
 
 logger = get_logger(__name__)
 

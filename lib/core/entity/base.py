@@ -1,7 +1,7 @@
 """实体基类模块 - 定义统一的调度接口"""
 from abc import ABC, abstractmethod
 
-from lib.core.graphics.types import Point, Rect, coerce_point, coerce_rect
+from lib.core.render.visuals.types import Point, Rect, coerce_point, coerce_rect
 
 
 class BaseEntity(ABC):

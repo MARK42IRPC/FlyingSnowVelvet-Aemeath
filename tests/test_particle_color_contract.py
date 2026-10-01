@@ -6,8 +6,8 @@ from unittest.mock import patch
 
 from PyQt5.QtGui import QColor
 
-from lib.core.graphics.types import Color, FontSpec, coerce_color
-from lib.core.qt_bridge.particle_system import ParticleOverlay, _to_qcolor, _to_qfont
+from lib.core.render.visuals.types import Color, FontSpec, coerce_color
+from lib.core.render.backends.qt.particle_system import ParticleOverlay, _to_qcolor, _to_qfont
 from lib.script.practical.collision_particle import CollisionParticleScript
 from lib.script.practical.snow_drift_particle import SnowDriftParticleScript
 
@@ -46,7 +46,7 @@ class ParticleColorContractTests(unittest.TestCase):
             descent=lambda: 5,
         )
         with patch(
-            "lib.core.qt_bridge.particle_system.QFontMetrics",
+            "lib.core.render.backends.qt.particle_system.QFontMetrics",
             return_value=metrics,
         ):
             overlay._prepare_particle_backend_state(particle)
@@ -104,7 +104,7 @@ class ParticleColorContractTests(unittest.TestCase):
         self.assertEqual(violations, [])
 
     def test_particle_screen_bounds_use_core_rect(self):
-        from lib.core.graphics.types import Rect
+        from lib.core.render.visuals.types import Rect
 
         with patch(
             "lib.script.practical.collision_particle.get_virtual_screen_rect",

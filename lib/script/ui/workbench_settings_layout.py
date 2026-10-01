@@ -23,7 +23,7 @@ from PyQt5.QtWidgets import (
 
 from lib.core.event.center import Event, EventType, get_event_center
 from lib.core.logger import get_logger
-from lib.core.qt_bridge.font import get_ui_font
+from lib.core.render.backends.qt.font import get_ui_font
 from config.scale import scale_px
 
 _logger = get_logger(__name__)
@@ -51,20 +51,46 @@ class SettingsFormLayout(QFormLayout):
         self._normalize_row(self.rowCount() - 1)
 
     def _normalize_row(self, row: int) -> None:
+        field_item = self.itemAt(row, QFormLayout.FieldRole)
+        field = field_item.widget() if field_item is not None else None
         label_item = self.itemAt(row, QFormLayout.LabelRole)
         label = label_item.widget() if label_item is not None else None
+
         if isinstance(label, QLabel):
             label.setObjectName("ConfigFormLabel")
             label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
             label.setFixedWidth(SETTINGS_LABEL_WIDTH)
+        elif label is None and isinstance(field, QWidget) and not self._field_spans_row(field):
+            # ``addRow("", widget)`` registers no label item at all, so a form made
+            # only of label-less rows (the 福利 API 配置 section is exactly that)
+            # gets no label column: Qt then drops the reserved width and the
+            # control sits ~176px left of every other section's fields.  An
+            # explicit spacer keeps the column so those switches line up.
+            spacer = QLabel("", self.parentWidget())
+            spacer.setObjectName("ConfigFormLabel")
+            spacer.setFixedWidth(SETTINGS_LABEL_WIDTH)
+            # Zero height keeps the row as short as a label-less one, but the
+            # spacer must stay *visible*: QFormLayout skips hidden widgets when
+            # it measures the label column, so hiding it collapses the column
+            # right back to the bug being fixed here.
+            spacer.setFixedHeight(0)
+            spacer.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+            self.setWidget(row, QFormLayout.LabelRole, spacer)
 
-        field_item = self.itemAt(row, QFormLayout.FieldRole)
-        field = field_item.widget() if field_item is not None else None
         if isinstance(field, QWidget):
             policy = field.sizePolicy()
             field.setSizePolicy(QSizePolicy.Expanding, policy.verticalPolicy())
             field.setMinimumWidth(0)
             field.setMaximumWidth(16777215)
+
+    def _field_spans_row(self, field: QWidget) -> bool:
+        """Whether the field occupies both columns (so it needs no label column).
+
+        ``getWidgetPosition`` returns ``(row, role)`` and ``(-1, -1)`` when the
+        widget is not in the layout yet, so the row index alone is not enough.
+        """
+        row, role = self.getWidgetPosition(field)
+        return row >= 0 and role == QFormLayout.SpanningRole
 
 
 def create_settings_form() -> SettingsFormLayout:
@@ -396,7 +422,11 @@ def apply_settings_page_fonts(page: QWidget) -> None:
     for label in page.findChildren(QLabel):
         if label.property("preserveCustomFont"):
             continue
-        if label.objectName() in {"SettingsPageDescription", "SettingsSectionDescription"}:
+        if label.objectName() in {
+            "SettingsPageDescription",
+            "SettingsSectionDescription",
+            "SettingsHintLabel",
+        }:
             label.setFont(hint_font)
         elif label.objectName() in {"SettingsSectionTitle", "ConfigFormLabel"}:
             label.setFont(label_font)

@@ -16,17 +16,17 @@ from PyQt5.QtGui import QColor, QLinearGradient, QPainter, QPen
 from PyQt5.QtWidgets import QWidget
 
 from config.scale import scale_px
-from lib.core.graphics.commands import DrawBatch
-from lib.core.graphics.media_panel_visuals import (
+from lib.core.render.visuals.commands import DrawBatch
+from lib.core.render.visuals.media_panel_visuals import (
     PROGRESS_PANEL_HEIGHT,
     build_slider_visual,
     slider_ratio_at,
     slider_track_rect,
 )
-from lib.core.graphics.panel_visuals import UI_THEME, slider_handle_commands
-from lib.core.graphics.types import Rect
+from lib.core.render.visuals.panel_visuals import UI_THEME, slider_handle_commands
+from lib.core.render.visuals.types import Rect
 from lib.core.layer import Layer
-from lib.core.qt_bridge.draw_backend import QtDrawBackend
+from lib.core.render.backends.qt.draw_backend import QtDrawBackend
 from lib.script.ui.forum_style import forum_picker_track_color
 
 #: 滑条高度直接取共享滑条（音乐进度条、音响音量条）的高度。三层外框和竖把手的比例都

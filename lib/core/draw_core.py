@@ -2,11 +2,11 @@
 from __future__ import annotations
 
 from lib.core.desktop_backend import get_draw_backend_factory
-from lib.core.graphics.backend import DrawBackend
-from lib.core.graphics.commands import DrawBatch, DrawRequest
-from lib.core.graphics.resources import ImageResource, RasterFrame
-from lib.core.graphics.scene import DrawScene
-from lib.core.graphics.types import Rect
+from lib.core.render.visuals.backend import DrawBackend
+from lib.core.render.visuals.commands import DrawBatch, DrawRequest
+from lib.core.render.visuals.resources import ImageResource, RasterFrame
+from lib.core.render.visuals.scene import DrawScene
+from lib.core.render.visuals.types import Rect
 
 
 class DrawCore:

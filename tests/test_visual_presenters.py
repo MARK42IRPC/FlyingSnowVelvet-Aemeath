@@ -9,11 +9,11 @@ from unittest.mock import patch
 
 from config.config import COMMAND_DIALOG, UI
 from config.config_ui import COLORS as CONFIG_COLORS, UI_THEME as CONFIG_UI_THEME
-from lib.core.dx_bridge.effect_system import DxEffectOverlay, build_effect_batch as build_dx_effect_batch
-from lib.core.dx_bridge.particle_system import build_particle_batch as build_dx_particle_batch
+from lib.core.render.backends.dx.effect_system import DxEffectOverlay, build_effect_batch as build_dx_effect_batch
+from lib.core.render.backends.dx.particle_system import build_particle_batch as build_dx_particle_batch
 from lib.core.event.center import Event, EventType
-from lib.core.graphics.commands import RectCommand, TextCommand, TransformPush
-from lib.core.graphics.application_visuals import (
+from lib.core.render.visuals.commands import RectCommand, TextCommand, TransformPush
+from lib.core.render.visuals.application_visuals import (
     COMMAND_HINT_DEFAULT_ITEMS,
     build_bubble_visual,
     build_command_hint_visual,
@@ -30,9 +30,9 @@ from lib.core.graphics.application_visuals import (
     resolve_bubble_geometry,
     resolve_qr_panel_layout,
 )
-from lib.core.graphics.resources import ImageResource, RasterFrame
-from lib.core.graphics.types import Color, FontSpec, Point, Rect, Size
-from lib.core.graphics.visuals import (
+from lib.core.render.visuals.resources import ImageResource, RasterFrame
+from lib.core.render.visuals.types import Color, FontSpec, Point, Rect, Size
+from lib.core.render.visuals.visuals import (
     build_command_panel_batch,
     build_command_shell_batch,
     build_effect_batch,
@@ -45,8 +45,8 @@ from lib.core.graphics.visuals import (
     update_speaker_intensity,
 )
 from lib.core.layer import Layer
-from lib.core.graphics.palette import COLORS as CORE_COLORS, UI_THEME as CORE_UI_THEME
-from lib.core.graphics.workbench_tokens import get_workbench_token_colors
+from lib.core.render.visuals.palette import COLORS as CORE_COLORS, UI_THEME as CORE_UI_THEME
+from lib.core.render.visuals.workbench_tokens import get_workbench_token_colors
 
 
 class _Particle:
@@ -323,7 +323,7 @@ class VisualPresenterTests(unittest.TestCase):
         )
 
         with patch.dict(
-            "lib.core.graphics.visuals.SPEAKER_AUDIO",
+            "lib.core.render.visuals.visuals.SPEAKER_AUDIO",
             {
                 "ema_attack": 0.35,
                 "ema_decay": 0.08,
@@ -352,7 +352,7 @@ class VisualPresenterTests(unittest.TestCase):
             "TextCommand",
         }
         violations = []
-        for path in (repo / "lib/core/dx_bridge").glob("*.py"):
+        for path in (repo / "lib/core/render/backends/dx").glob("*.py"):
             relative = path.relative_to(repo).as_posix()
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
             for node in ast.walk(tree):
@@ -375,8 +375,8 @@ class VisualPresenterTests(unittest.TestCase):
         forbidden = {"drawPixmap", "drawText", "drawLine", "drawRect", "drawEllipse", "setTransform"}
         violations = []
         for relative in (
-            "lib/core/qt_bridge/effect_system.py",
-            "lib/core/qt_bridge/particle_system.py",
+            "lib/core/render/backends/qt/effect_system.py",
+            "lib/core/render/backends/qt/particle_system.py",
         ):
             path = root / relative
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -602,7 +602,7 @@ class VisualPresenterTests(unittest.TestCase):
     def test_effect_feather_multiplies_qt_edge_masks(self):
         frame = RasterFrame(4, 4, bytes((10, 20, 30, 255)) * 16)
         resource = ImageResource("effect:test", (frame,))
-        with patch("lib.core.graphics.visuals.load_image_resource", return_value=resource):
+        with patch("lib.core.render.visuals.visuals.load_image_resource", return_value=resource):
             result = load_effect_resource(
                 "unused.png",
                 {"edge_feather": True, "feather_ratio": 0.25},
@@ -615,8 +615,8 @@ class VisualPresenterTests(unittest.TestCase):
         frame = RasterFrame(2, 2, bytes((10, 20, 30, 255)) * 4)
         resource = ImageResource("effect:test", (frame,))
         with (
-            patch("lib.core.graphics.visuals.load_image_resource", return_value=resource),
-            patch("lib.core.graphics.visuals.resize_image_resource") as resize,
+            patch("lib.core.render.visuals.visuals.load_image_resource", return_value=resource),
+            patch("lib.core.render.visuals.visuals.resize_image_resource") as resize,
         ):
             result = load_effect_resource(
                 "unused.png",
@@ -681,4 +681,4 @@ class VisualPresenterTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-from lib.core.graphics.commands import EllipseCommand
+from lib.core.render.visuals.commands import EllipseCommand

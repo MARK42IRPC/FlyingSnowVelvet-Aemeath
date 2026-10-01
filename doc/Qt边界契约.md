@@ -4,17 +4,19 @@
 
 本文档描述当前有效的 Qt 依赖边界。历史迁移阶段和已完成清单已删除；实现状态以源码、`tests/test_qt_dependency_boundaries.py` 和 `tests/test_code_structure_boundaries.py` 为准。跨后端视觉语义见 [视觉表现契约](视觉表现契约.md)。
 
+本文只描述**已经成立**的边界，不描述待办。
+
 ## 1. 依赖方向
 
 ```text
 后端无关业务/控制器 -> lib/core 纯数据与服务协议
-Qt 产品 UI          -> lib/core/qt_bridge -> PyQt5
+Qt 产品 UI          -> lib/core/render/backends/qt -> PyQt5
 Qt 应用组合入口      -> Qt 产品 UI + Qt bridge
 ```
 
 后端无关代码不得：
 
-- 导入 `PyQt5` 或 `lib.core.qt_bridge`；
+- 导入 `PyQt5` 或 `lib.core.render.backends.qt`；
 - 在公开签名、事件载荷、配置或持久化数据中暴露 `QPoint`、`QRect`、`QImage`、`QPixmap`、`QPainter`、`QTimer` 等 Qt 类型；
 - 通过 `Any`、`object` 或动态属性把 Qt 对象藏进核心协议；
 - 调用 `QApplication.instance()`、`QTimer.singleShot()` 或 QWidget 方法；
@@ -26,19 +28,24 @@ Qt 应用组合入口      -> Qt 产品 UI + Qt bridge
 
 以下目录是明确的 toolkit 边界：
 
-- `lib/core/qt_bridge/`：QApplication、窗口、绘制、字体、屏幕、调度、事件泵和 QtMultimedia 适配；
+- `lib/core/render/backends/qt/`：QApplication、窗口、绘制、字体、屏幕、调度、事件泵和 QtMultimedia 适配；其中 `application.py` 是 `QApplication` 实例的唯一取用点，`font.py` / `screen.py` / `screen_capture.py` 不得再直接调 `QApplication.instance()`；
 - `lib/script/ui/`：产品 QWidget、工作台、对话框、动画播放器、游戏窗口和世界对象 UI；
 - `lib/script/app/qt_backend_bootstrap.py`：Qt 桌面 bundle 组合；
 - `lib/script/app/qt_application_ui.py`：Qt 产品 UI 生命周期组合；
 - `lib/script/app/workbench_helper_entry.py`：隔离工作台进程入口；
 - `lib/script/bug_tracker/__main__.py`：隔离故障跟踪进程入口。
 
+自绘只允许发生在上面列出的 toolkit 边界里：`QPainter`、`QPainterPath`、`QRegion`、
+`drawEllipse` / `drawPixmap` / `fillRect` 与 `paintEvent` 在 `lib/core/render/backends/qt/`、`lib/script/ui/` 和官方游戏包之外一律不出现，
+其余模块只能构造 `DrawBatch`。
+
 官方游戏包 v1 仍允许 `widget.py` 与 `render.py` 使用 Qt，因为当前游戏扩展契约直接创建 QWidget。其 `constants.py`、`model.py` 和 `skills.py` 必须保持纯 Python，不能因渲染需要导入 QColor 或其它 toolkit 类型。
 
 ## 3. 必须保持无 Qt 的位置
 
 - `config/`；
-- `lib/core/qt_bridge/` 之外的 `lib/core/`；
+- `lib/core/render/backends/qt/` 之外的 `lib/core/`；
+- `lib/core/services/`：后端中立的业务服务，解析产品数值（世界对象物理、淡入时长、覆盖层滞留）并定义跨后端协议（`music_playback.MusicPlayerProtocol`），必须能在阻断 PyQt 的进程中加载，且不得导入 `lib/script`；
 - `lib/script/chat/`、`office/`、`music/`、`gsvmove/`、`mainpet/`、`microphone_stt/`、`tool_dispatcher/`；
 - `lib/script/workbench/` 的页面元数据、注册表、设置 schema 和主题数据；
 - `lib/script/cloudmusic/` 的音乐业务实现；
@@ -52,30 +59,52 @@ Qt 应用组合入口      -> Qt 产品 UI + Qt bridge
 
 `DesktopBackendBundle` 原子提供应用运行时、应用 UI、调度、截图、主宠、托盘、覆盖层、屏幕和窗口宿主。`ApplicationState` 只消费 bundle，不直接导入具体 toolkit。
 
-Qt 后端由 `lib/script/app/qt_backend_bootstrap.py` 注册。Qt 产品 UI 位于 `lib/script/ui`；`lib/core/qt_bridge` 只完成原生对象转换、低级绘制和生命周期适配，不拥有产品页面。
+Qt 后端由 `lib/script/app/qt_backend_bootstrap.py` 注册。Qt 产品 UI 位于 `lib/script/ui`；`lib/core/render/backends/qt` 只完成原生对象转换、低级绘制和生命周期适配，不拥有产品页面。
 
-工作台的元数据和 schema 位于 `lib/script/workbench`，QWidget 布局位于 `lib/script/ui/workbench_components.py` 与 `workbench_settings_layout.py`。游戏的公开入口 `lib/script/gemes/MAIN/runtime.py` 是无 Qt 惰性门面，真正的 QWidget 运行时位于 `lib/script/ui/game_runtime.py`。音乐 Qt 播放器位于 `lib/core/qt_bridge/music_player.py`，业务管理器只依赖注入的播放器协议。
+工作台的元数据和 schema 位于 `lib/script/workbench`，QWidget 布局位于 `lib/script/ui/workbench_components.py` 与 `workbench_settings_layout.py`。游戏的公开入口 `lib/script/gemes/MAIN/runtime.py` 是无 Qt 惰性门面，真正的 QWidget 运行时位于 `lib/script/ui/game_runtime.py`。音乐播放器的后端中立协议在 `lib/core/services/music_playback.py` 的 `MusicPlayerProtocol`：命令是普通方法调用，结果走 `set_callbacks()` 注册的回调，不得再用 Qt 信号表达。Qt 实现在 `lib/core/render/backends/qt/music_player.py`，无 Qt 实现在 `lib/script/cloudmusic/_player.py` 的 `MciMusicPlayer`；两个后端的组合入口各自注入一个，`CloudMusicManager` 只驱动注入的那一个。
 
 DirectX 主进程不得加载 PyQt。需要控制面板时只启动隔离工作台 helper；未迁移的复杂 Qt UI 不应被包装成伪跨后端控件。
+
+一个进程只允许一个绘制后端生效，`lib/core/desktop_backend.py` 是唯一的安装点。bundle 只安装一次，安装者用**身份**（identity，不是字段相等）认领它：
+
+- 同一个 owner 重复安装是空操作，保留首次安装的 bundle —— DX 的 `configure_dx_desktop_backend` 依赖这条路径重入；
+- 第二个不同的后端拿到 `BackendAlreadyConfiguredError`，而不是在已生效的 bundle 上再覆盖一层；
+- 安装中途失败由安装者自己撤回（`uninstall_desktop_backend_bundle`）。撤回按 owner 收口，没装过的后端无法借它顶掉正在生效的后端；半成品安装必须什么都不留下，否则路由的 Qt 回退会撞上一个已经被拆掉的后端从而拒绝启动。
+
+`#后端` 命令不改运行时：它只写配置再走 `APP_QUIT{restart: True}` 重启，所以「换后端」永远是下一个进程的事。
+
+需要区分「绘制后端」和「绘制执行器」：`DrawCore` 经 `draw_backend_factory` 建的那一个是后端；`lib/script/ui/` 与 `lib/core/render/backends/qt/` 中按控件直接构造的 `QtDrawBackend()` 是绑定 QPainter 的执行器，各自持有自己的 pixmap 缓存，不构成第二个后端。
+
+产品数值只有一份来源：`lib/core/services/` 负责解析（`world_object_physics` 的世界对象物理参数、`ui_presentation` 的 UI 淡入时长与覆盖层滞留），两个 bridge 与 `lib/script/ui` 都只消费解析结果。世界对象的物理参数由 `resolve_world_object_physics()` 统一读 `PHYSICS` / `MORTOR` / `SNOWBALL` / `SNOW_LEOPARD` / `BEHAVIOR`，任何后端不得再自行读这些字典：此前 Qt 的七个世界对象页面与 DX 的 `world_object_backend` 各读一份，副本之间已经出现过可验证的默认值分歧（`ui_fade_duration` 一处回退 180、另一处 200）。技术步长（拖拽采样窗口、雪花特效密度、响铃秒数）不是产品数值，仍留在各自 bridge。本地音乐播放器同样只有一份契约：`MusicPlayerProtocol` 定义在 `lib/core/services/music_playback.py`，Qt 侧 `QtMusicPlayer` 与无 Qt 侧 `MciMusicPlayer` 各自实现它，`CloudMusicManager` 只调接口、不再区分后端。
 
 ## 5. 审计与验证
 
 静态测试必须覆盖：
 
 - `config` 和非 bridge 核心零 Qt 导入；
-- 后端中立业务包零 Qt/qt_bridge 导入；
+- 后端中立业务包零 Qt/`lib.core.render.backends.qt` 导入；
 - `lib/core` 不反向导入 `lib.script`，启动入口除外；
-- `lib/core`（含 `lib/core/graphics`）不读取 `config/config_ui.py`：产品色板由 `lib/core/graphics/palette.py` 唯一拥有，`config/config_ui.py` 只重新导出同一 `COLORS` / `UI_THEME` 对象；
+- `lib/core`（含 `lib/core/render/visuals`）不读取 `config/config_ui.py`：产品色板由 `lib/core/render/visuals/palette.py` 唯一拥有，`config/config_ui.py` 只重新导出同一 `COLORS` / `UI_THEME` 对象；
 - 已迁移的面板 QWidget 宿主只执行共享 `DrawBatch`，不得直接填充面板或排版文字；尚无命令原语的矢量图标可以保留在宿主；
+- `lib/core/render/backends/qt/` 中只有 `application.py` 可以出现 `QApplication.instance()`，其余模块必须经 `get_application()`；
 - 世界对象管理器、事件协议和图形契约不暴露 toolkit 类型；
-- 阻断 PyQt 后核心与 DirectX 交互路径仍可导入运行。
+- 世界对象物理参数只在 `lib/core/services/world_object_physics.py` 解析：DX 的 `world_object_backend` 与 `lib/script/ui/world_objects/` 都不得再导入 `PHYSICS` / `MORTOR` / `SNOWBALL` / `SNOW_LEOPARD` / `BEHAVIOR`，两个后端解析出的数值必须逐项相等；
+- `lib/core/render/visuals/` 下的 presenter 块不得导入 `PyQt5`、`lib.script`、`lib.core.render.backends.qt`、
+  `lib.core.render.backends.dx` 或 `config.config_ui`：它们是两个后端共用的事实源，必须能在任一边加载；
+- `ui/` 对 `lib/script/{chat,office,music,gsvmove}` 的导入是一份冻结清单：新增耦合会失败，清单里已不存在的条目
+  也会失败；私有子模块一律不允许；
+- 阻断 PyQt 后核心与 DirectX 交互路径仍可导入运行；
+- 一个进程只生效一个绘制后端：`tests/test_backend_router.py` 的 `SingleRenderBackendTests` 与 `tests/dx/test_dx_desktop_backend.py` 的同批用例断言第二个后端被拒、同 owner 重装保留原 bundle、失败安装可撤回并给回退后端留出位置；
+- 缺 PyQt5 时工作台 helper 只给可恢复中文提示（进程内提示文本 + 一个信息框）并以非 0 码退出，不得向用户泄露 `ModuleNotFoundError` 堆栈，也不得把其余崩溃一并吞掉。
 
 验证命令：
 
 ```powershell
 py -3 -m compileall -q config lib scripts install_deps.py install_deps
 py -3 -m unittest tests.test_qt_dependency_boundaries tests.test_code_structure_boundaries -v
-py -3 -m unittest tests.test_visual_presenters tests.test_shared_panel_visuals -q
+py -3 -m unittest tests.test_visual_presenters tests.test_shared_panel_visuals tests.test_visual_backend_parity -q
+py -3 -m unittest tests.test_backend_neutral_services tests.test_workbench_helper -q
+py -3 -m unittest tests.test_backend_router tests.dx.test_dx_desktop_backend -q
 py -3 -m unittest discover -s tests -p "test_*.py" -q
 git diff --check
 ```

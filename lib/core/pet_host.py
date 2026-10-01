@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from lib.core.graphics.types import Point
+from lib.core.render.visuals.types import Point
 from lib.core.input.types import KeyboardInput, MouseButton, MouseInput
 
 

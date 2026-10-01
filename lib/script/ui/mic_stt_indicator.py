@@ -8,12 +8,12 @@ from PyQt5.QtGui import QPainter, QCursor
 import time
 
 from config.config import UI
-from lib.core.graphics.application_visuals import build_mic_stt_indicator_visual
-from lib.core.qt_bridge.draw_backend import QtDrawBackend
+from lib.core.render.visuals.application_visuals import build_mic_stt_indicator_visual
+from lib.core.render.backends.qt.draw_backend import QtDrawBackend
 from config.scale import scale_px
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.unified_draw import Layer, get_layer_manager
-from lib.core.qt_bridge.screen import clamp_rect_position
+from lib.core.render.backends.qt.screen import clamp_rect_position
 from lib.core.anchor_utils import apply_ui_opacity
 
 

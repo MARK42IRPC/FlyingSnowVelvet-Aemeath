@@ -5,14 +5,46 @@ import sys
 from pathlib import Path
 
 
+def _report_missing_qt() -> None:
+    """无 PyQt5 时给出可恢复的提示，而不是一个裸 traceback。
+
+    DX 主进程不引入 Qt，控制面板是独立 helper 进程；这个进程才是唯一需要
+    PyQt5 的地方。用户看到的应该是“去装依赖”，而不是 ModuleNotFoundError 堆栈。
+    """
+    message = (
+        "无法打开控制面板：缺少 PyQt5。\n\n"
+        "桌宠主程序本身不需要 Qt，但控制面板是独立的 Qt 进程。\n"
+        "请运行安装依赖（“安装依赖.bat”）后重试。"
+    )
+    try:
+        print(message, file=sys.stderr)
+    except Exception:
+        pass
+    try:
+        import ctypes
+
+        ctypes.windll.user32.MessageBoxW(0, message, "飞行雪绒 控制面板", 0x30)
+    except Exception:
+        pass
+
+
 def run_workbench_helper(initial_page: str = "overview") -> int:
+    """跑一个独立的 Qt 控制面板进程。缺 PyQt5 时给可恢复提示而不泄露堆栈。"""
+    try:
+        return _run_workbench_helper(initial_page)
+    except ModuleNotFoundError:
+        _report_missing_qt()
+        return 1
+
+
+def _run_workbench_helper(initial_page: str = "overview") -> int:
     from PyQt5.QtGui import QIcon
     from PyQt5.QtCore import QTimer
     from PyQt5.QtWidgets import QApplication
 
     app = QApplication([sys.argv[0]])
     app.setQuitOnLastWindowClosed(False)
-    from lib.core.qt_bridge.windows_app_id import set_windows_app_user_model_id
+    from lib.core.render.backends.qt.windows_app_id import set_windows_app_user_model_id
 
     set_windows_app_user_model_id()
     _icon_path = Path(__file__).resolve().parents[3] / "resc" / "icon.ico"
@@ -24,7 +56,7 @@ def run_workbench_helper(initial_page: str = "overview") -> int:
         normalize_workbench_page,
         read_workbench_helper_request,
     )
-    from lib.core.qt_bridge.music_player import QtMusicPlayer
+    from lib.core.render.backends.qt.music_player import QtMusicPlayer
     from lib.core.voice.core import cleanup_voice_core, get_voice_core
     from lib.script.gemes import cleanup_game_runtime
     from lib.script.music import cleanup_music_service

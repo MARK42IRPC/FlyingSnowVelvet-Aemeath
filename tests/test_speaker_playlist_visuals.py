@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import unittest
 
-from lib.core.graphics.application_visuals import create_portable_command_hint_metrics
-from lib.core.graphics.speaker_playlist_visuals import (
+from lib.core.render.visuals.application_visuals import create_portable_command_hint_metrics
+from lib.core.render.visuals.speaker_playlist_visuals import (
     build_speaker_playlist_visual,
     speaker_playlist_hit_test,
 )

@@ -28,10 +28,10 @@ from lib.core.forum import (
     ForumPage,
 )
 from lib.core.event.center import Event, EventType, get_event_center
-from lib.core.graphics.image_loader import decode_image_frames
+from lib.core.render.visuals.image_loader import decode_image_frames
 from lib.core.layer_manager import get_layer_manager
-from lib.core.qt_bridge.font import get_ui_font
-from lib.core.qt_bridge.gif_loader import qimage_from_raster_frame
+from lib.core.render.backends.qt.font import get_ui_font
+from lib.core.render.backends.qt.gif_loader import qimage_from_raster_frame
 from lib.script.ui.forum_markup import (
     FORUM_EFFECT_TOKENS,
     FORUM_MARKUP_FORMATS,
@@ -821,7 +821,7 @@ class ForumWindowTests(unittest.TestCase):
         # 开发机上的亮色主题会把深色主题里的超预算种子放过去。
         for mode in ("dark", "light"):
             with self.subTest(mode=mode), patch(
-                "lib.core.graphics.workbench_tokens.resolve_workbench_mode",
+                "lib.core.render.visuals.workbench_tokens.resolve_workbench_mode",
                 return_value=mode,
             ):
                 plain, _ = self._card_means(None, accent=FORUM_DEFAULT_ACCENT)
@@ -884,7 +884,7 @@ class ForumWindowTests(unittest.TestCase):
         }
         for mode, table in expected.items():
             with self.subTest(mode=mode), patch(
-                "lib.core.graphics.workbench_tokens.resolve_workbench_mode",
+                "lib.core.render.visuals.workbench_tokens.resolve_workbench_mode",
                 return_value=mode,
             ):
                 self.assertEqual(
@@ -907,7 +907,7 @@ class ForumWindowTests(unittest.TestCase):
         for mode, direction in (("dark", 1), ("light", -1)):
             for accent in ("pink", "cyan", "blue"):
                 with self.subTest(mode=mode, accent=accent), patch(
-                    "lib.core.graphics.workbench_tokens.resolve_workbench_mode",
+                    "lib.core.render.visuals.workbench_tokens.resolve_workbench_mode",
                     return_value=mode,
                 ):
                     plain, plain_spread = self._card_means(None, accent=accent)

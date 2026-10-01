@@ -83,7 +83,7 @@ from lib.core.forum_markdown import (
 )
 from lib.core.forum_session import ForumSessionStore, is_logged_in
 from lib.core.logger import get_logger
-from lib.core.qt_bridge.font import get_ui_font
+from lib.core.render.backends.qt.font import get_ui_font
 from lib.script.ui.forum_color_control import ForumColorControl, format_button_font
 from lib.script.ui.forum_markup import (
     FORMAT_BY_KEY,

@@ -19,12 +19,12 @@ from PyQt5.QtWidgets import QApplication
 
 from config.config import UI
 from lib.core.event.center import cleanup_event_center
-from lib.core.graphics.application_visuals import BubbleVisualDescription
-from lib.core.graphics.commands import TextCommand
-from lib.core.graphics.types import Rect
+from lib.core.render.visuals.application_visuals import BubbleVisualDescription
+from lib.core.render.visuals.commands import TextCommand
+from lib.core.render.visuals.types import Rect
 from lib.core.layer_manager import get_layer_manager
-from lib.core.qt_bridge.colors import COLORS
-from lib.core.qt_bridge.font import draw_mixed_text, measure_mixed_text, wrap_mixed_text
+from lib.core.render.backends.qt.colors import COLORS
+from lib.core.render.backends.qt.font import draw_mixed_text, measure_mixed_text, wrap_mixed_text
 from lib.script.ui.bubble import Bubble, BubbleInfo
 
 

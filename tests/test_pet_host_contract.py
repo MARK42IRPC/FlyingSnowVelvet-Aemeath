@@ -21,7 +21,7 @@ class PetHostContractTests(unittest.TestCase):
 
             builtins.__import__ = blocked_import
 
-            from lib.core.graphics.types import Point
+            from lib.core.render.visuals.types import Point
             from lib.core.input.types import KeyboardInput, MouseButton, MouseInput
             from lib.core.pet_host import PetHostCallbacks
 
@@ -70,13 +70,13 @@ class PetHostContractTests(unittest.TestCase):
         self.assertNotIn("mouse_input_from_qt", source)
         self.assertNotIn("keyboard_input_from_qt", source)
         self.assertNotIn("render_draw_core", source)
-        self.assertNotIn("lib.core.qt_bridge", source)
+        self.assertNotIn("lib.core.render.backends.qt", source)
         self.assertNotIn("lib.script.ui", source)
 
     def test_qt_pet_window_is_the_composition_boundary(self):
         from lib.core.pet_window import PetWindow
-        from lib.core.qt_bridge.pet_widget import QtPetWidget
-        from lib.core.qt_bridge.pet_window import QtPetWindow
+        from lib.core.render.backends.qt.pet_widget import QtPetWidget
+        from lib.core.render.backends.qt.pet_window import QtPetWindow
 
         self.assertTrue(issubclass(QtPetWindow, PetWindow))
         self.assertTrue(issubclass(QtPetWindow, QtPetWidget))

@@ -1,6 +1,6 @@
 """Contract tests for the shared panel / media / settings visual presenters.
 
-``lib/core/graphics/panel_visuals.py``, ``media_panel_visuals.py`` and
+``lib/core/render/visuals/panel_visuals.py``, ``media_panel_visuals.py`` and
 ``settings_panel_visuals.py`` are the backend-neutral source of the pet
 panels' shell, geometry and text placement. The Qt hosts only execute the
 resulting batches, so the command order, colours and rects asserted here are
@@ -13,14 +13,14 @@ import unittest
 
 from config.font_config import get_digit_font_family
 from config.scale import scale_px
-from lib.core.graphics.commands import (
+from lib.core.render.visuals.commands import (
     ClipPop,
     ClipPush,
     RectCommand,
     TextAlignment,
     TextCommand,
 )
-from lib.core.graphics.media_panel_visuals import (
+from lib.core.render.visuals.media_panel_visuals import (
     PROGRESS_PANEL_HEIGHT,
     PROGRESS_PANEL_WIDTH,
     SEARCH_RESULT_EMPTY_TEXT,
@@ -37,8 +37,8 @@ from lib.core.graphics.media_panel_visuals import (
     mixed_text_width,
     search_result_panel_size,
 )
-from lib.core.graphics.palette import COLORS, UI_THEME
-from lib.core.graphics.panel_visuals import (
+from lib.core.render.visuals.palette import COLORS, UI_THEME
+from lib.core.render.visuals.panel_visuals import (
     SLIDER_HANDLE_ASPECT,
     action_button_commands,
     build_action_button_visual,
@@ -50,12 +50,12 @@ from lib.core.graphics.panel_visuals import (
     panel_shell_commands,
     slider_handle_commands,
 )
-from lib.core.graphics.settings_panel_visuals import (
+from lib.core.render.visuals.settings_panel_visuals import (
     LEFT_WATERMARK_SCALE,
     WATERMARK_ALPHA,
     build_ai_settings_panel_visual,
 )
-from lib.core.graphics.types import FontSpec, Rect, Size
+from lib.core.render.visuals.types import FontSpec, Rect, Size
 from lib.core.layer import Layer
 
 

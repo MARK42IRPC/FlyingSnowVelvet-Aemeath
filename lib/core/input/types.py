@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import IntEnum, IntFlag
 
-from lib.core.graphics.types import Point
+from lib.core.render.visuals.types import Point
 
 
 class MouseButton(IntEnum):

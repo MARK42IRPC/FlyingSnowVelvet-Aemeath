@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import unittest
 
-from lib.core.dx_bridge.text_metrics import (
+from lib.core.render.backends.dx.text_metrics import (
     DirectWriteTextMetrics,
     create_directwrite_text_metrics,
 )
-from lib.core.graphics.rich_text_parser import TextSegment
-from lib.core.graphics.types import FontSpec
+from lib.core.render.visuals.rich_text_parser import TextSegment
+from lib.core.render.visuals.types import FontSpec
 
 
 class _Target:

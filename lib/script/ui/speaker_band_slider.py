@@ -23,15 +23,15 @@ from config.scale import scale_px
 from config.tooltip_config import TOOLTIPS
 from lib.core.anchor_utils import apply_ui_opacity
 from lib.core.event.center import get_event_center, Event, EventType
-from lib.core.graphics.speaker_band_visuals import (
+from lib.core.render.visuals.speaker_band_visuals import (
     BAND_SLIDER_WIDTH,
     BandSliderVisual,
     band_hit_test,
     band_ratio_at,
     build_band_slider_visual,
 )
-from lib.core.graphics.speaker_visuals import SPEAKER_SEARCH_Y
-from lib.core.qt_bridge.draw_backend import QtDrawBackend
+from lib.core.render.visuals.speaker_visuals import SPEAKER_SEARCH_Y
+from lib.core.render.backends.qt.draw_backend import QtDrawBackend
 from lib.core.speaker_band import (
     band_from_center_ratio,
     band_label,

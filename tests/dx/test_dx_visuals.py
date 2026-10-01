@@ -7,17 +7,17 @@ import sys
 import textwrap
 import unittest
 
-from lib.core.dx_bridge.effect_system import DxEffectOverlay, build_effect_batch
-from lib.core.dx_bridge.loop import DxLoopContext
-from lib.core.dx_bridge.overlay_window import DxOverlayWindow
-from lib.core.dx_bridge.particle_system import DxParticleOverlay, build_particle_batch
-from lib.core.dx_bridge.screen import DxScreenProvider
-from lib.core.graphics.commands import DrawBatch, LineCommand, RectCommand, SpriteCommand, TextCommand
-from lib.core.graphics.resources import ImageResource, RasterFrame
-from lib.core.graphics.types import Color, FontSpec, Point, Rect, Size
+from lib.core.render.backends.dx.effect_system import DxEffectOverlay, build_effect_batch
+from lib.core.render.backends.dx.loop import DxLoopContext
+from lib.core.render.backends.dx.overlay_window import DxOverlayWindow
+from lib.core.render.backends.dx.particle_system import DxParticleOverlay, build_particle_batch
+from lib.core.render.backends.dx.screen import DxScreenProvider
+from lib.core.render.visuals.commands import DrawBatch, LineCommand, RectCommand, SpriteCommand, TextCommand
+from lib.core.render.visuals.resources import ImageResource, RasterFrame
+from lib.core.render.visuals.types import Color, FontSpec, Point, Rect, Size
 from lib.core.event.center import Event, EventType
 from lib.core.layer import Layer
-from lib.core.dx_bridge.offscreen import DxOffscreenTarget, find_dx_library
+from lib.core.render.backends.dx.offscreen import DxOffscreenTarget, find_dx_library
 
 
 class _Particle:
@@ -129,9 +129,9 @@ class DxVisualDeclarationTests(unittest.TestCase):
                     raise ModuleNotFoundError("PyQt5 blocked")
                 return original_import(name, *args, **kwargs)
             builtins.__import__ = blocked
-            from lib.core.dx_bridge.effect_system import build_effect_batch
-            from lib.core.dx_bridge.overlay_window import DxOverlayWindow
-            from lib.core.dx_bridge.particle_system import build_particle_batch
+            from lib.core.render.backends.dx.effect_system import build_effect_batch
+            from lib.core.render.backends.dx.overlay_window import DxOverlayWindow
+            from lib.core.render.backends.dx.particle_system import build_particle_batch
             assert callable(build_effect_batch)
             assert callable(build_particle_batch)
             """

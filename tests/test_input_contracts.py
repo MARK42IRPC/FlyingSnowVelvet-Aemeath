@@ -1,4 +1,4 @@
-from lib.core.graphics.types import Point
+from lib.core.render.visuals.types import Point
 from lib.core.input.types import (
     Key,
     KeyboardInput,
@@ -7,7 +7,7 @@ from lib.core.input.types import (
     MouseButtons,
     MouseInput,
 )
-from lib.core.qt_bridge.input import keyboard_input_from_qt, mouse_input_from_qt
+from lib.core.render.backends.qt.input import keyboard_input_from_qt, mouse_input_from_qt
 
 
 class _MouseEvent:

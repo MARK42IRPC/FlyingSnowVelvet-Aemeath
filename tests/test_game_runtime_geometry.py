@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 from PyQt5.QtCore import QPoint, QRect
 
-from lib.core.graphics.types import Rect
+from lib.core.render.visuals.types import Rect
 from lib.script.ui.game_runtime import (
     GameRuntime,
     GameRuntimePanel,

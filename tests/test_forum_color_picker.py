@@ -18,7 +18,7 @@ from PyQt5.QtCore import QEvent, QPointF, Qt
 from PyQt5.QtGui import QImage, QMouseEvent
 from PyQt5.QtWidgets import QApplication
 
-from lib.core.graphics.media_panel_visuals import (
+from lib.core.render.visuals.media_panel_visuals import (
     PROGRESS_PANEL_HEIGHT,
     slider_track_rect,
 )

@@ -3,7 +3,7 @@ from __future__ import annotations
 import ctypes
 import unittest
 
-from lib.core.dx_bridge.dpi_awareness import (
+from lib.core.render.backends.dx.dpi_awareness import (
     ensure_per_monitor_v2_dpi_awareness,
 )
 

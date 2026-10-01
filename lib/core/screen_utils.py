@@ -6,7 +6,7 @@ from lib.core.desktop_backend import (
     get_screen_for_point_provider,
     get_virtual_screen_provider,
 )
-from lib.core.graphics.types import Point, Rect, coerce_point
+from lib.core.render.visuals.types import Point, Rect, coerce_point
 
 
 _DEFAULT_SCREEN = Rect(0, 0, 1920, 1080)

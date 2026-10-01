@@ -14,14 +14,14 @@ from unittest.mock import Mock, patch
 from PIL import Image
 
 from config.config import UI
-from lib.core.dx_bridge.application_ui import DxApplicationUiHost
-from lib.core.dx_bridge.desktop_backend import DxDesktopBackend
-from lib.core.dx_bridge.loop import DxLoopContext
-from lib.core.dx_bridge.offscreen import find_dx_library
-from lib.core.dx_bridge.screen import DxScreenProvider
+from lib.core.render.backends.dx.application_ui import DxApplicationUiHost
+from lib.core.render.backends.dx.desktop_backend import DxDesktopBackend
+from lib.core.render.backends.dx.loop import DxLoopContext
+from lib.core.render.backends.dx.offscreen import find_dx_library
+from lib.core.render.backends.dx.screen import DxScreenProvider
 from lib.core.event.center import Event, EventType, cleanup_event_center, get_event_center
-from lib.core.graphics.types import Point, Rect, Size
-from lib.core.graphics.application_visuals import (
+from lib.core.render.visuals.types import Point, Rect, Size
+from lib.core.render.visuals.application_visuals import (
     COMMAND_HINT_DEFAULT_ITEMS,
     qr_panel_size,
     resolve_qr_panel_layout,
@@ -136,7 +136,7 @@ class DxDesktopBackendTests(unittest.TestCase):
                 return original_import(name, *args, **kwargs)
             builtins.__import__ = blocked
 
-            from lib.core.dx_bridge.desktop_backend import (
+            from lib.core.render.backends.dx.desktop_backend import (
                 cleanup_dx_desktop_backend,
                 configure_dx_desktop_backend,
                 get_dx_desktop_backend,
@@ -163,6 +163,129 @@ class DxDesktopBackendTests(unittest.TestCase):
             capture_output=True,
             text=True,
             timeout=30,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+
+    def test_reconfiguring_dx_reuses_the_single_installed_bundle(self):
+        """A second DX configure must not stack a second backend on the first."""
+        repo_root = Path(__file__).resolve().parents[2]
+        script = textwrap.dedent(
+            """
+            from lib.core.desktop_backend import get_desktop_backend_bundle
+            from lib.core.render.backends.dx.desktop_backend import (
+                cleanup_dx_desktop_backend,
+                configure_dx_desktop_backend,
+                get_dx_desktop_backend,
+            )
+            from lib.core.world_objects import get_world_object_backend
+
+            configure_dx_desktop_backend(warp=True)
+            owner = get_dx_desktop_backend()
+            bundle = get_desktop_backend_bundle()
+            world_objects = get_world_object_backend()
+
+            configure_dx_desktop_backend(warp=True)
+            assert get_dx_desktop_backend() is owner, "a second owner was created"
+            assert get_desktop_backend_bundle() is bundle, "the bundle was replaced"
+            assert get_world_object_backend() is world_objects
+            assert bundle.draw_backend_factory.__name__ == "DxOffscreenBackend"
+
+            cleanup_dx_desktop_backend()
+            assert get_dx_desktop_backend() is None
+            """
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+
+    def test_dx_cannot_take_over_a_process_that_already_has_a_backend(self):
+        """The DX composition root goes through the one-backend registry too."""
+        repo_root = Path(__file__).resolve().parents[2]
+        script = textwrap.dedent(
+            """
+            from lib.core.desktop_backend import (
+                BackendAlreadyConfiguredError,
+                get_desktop_backend_bundle,
+            )
+            from lib.script.app.qt_backend_bootstrap import (
+                _configure_dx_backend,
+                _configure_qt_backend,
+            )
+            from lib.core.render.backends.dx.desktop_backend import get_dx_desktop_backend
+            from lib.core.world_objects import get_world_object_backend
+
+            _configure_qt_backend()
+            bundle = get_desktop_backend_bundle()
+
+            try:
+                _configure_dx_backend()
+            except BackendAlreadyConfiguredError:
+                pass
+            else:
+                raise AssertionError("DX displaced the Qt backend")
+
+            assert get_desktop_backend_bundle() is bundle, "the live bundle changed"
+            assert bundle.draw_backend_factory.__name__ == "QtDrawBackend"
+            assert get_world_object_backend().__class__.__name__ == "QtWorldObjectBackend"
+            assert get_dx_desktop_backend() is None, "a refused owner stayed tracked"
+            """
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+
+    def test_failed_dx_install_leaves_the_registry_free_for_the_fallback(self):
+        """A half-finished install must not block the fallback backend."""
+        repo_root = Path(__file__).resolve().parents[2]
+        script = textwrap.dedent(
+            """
+            from unittest.mock import patch
+
+            import lib.core.render.backends.dx.desktop_backend as dx_backend
+            from lib.core.desktop_backend import get_desktop_backend_bundle
+            from lib.script.app.qt_backend_bootstrap import _configure_qt_backend
+
+            with patch.object(
+                dx_backend,
+                "configure_world_object_backend",
+                side_effect=RuntimeError("world objects unavailable"),
+            ):
+                try:
+                    dx_backend.configure_dx_desktop_backend(warp=True)
+                except RuntimeError as exc:
+                    assert "world objects unavailable" in str(exc)
+                else:
+                    raise AssertionError("the failed install did not raise")
+
+            assert get_desktop_backend_bundle() is None, "a dead bundle was left behind"
+            assert dx_backend.get_dx_desktop_backend() is None
+
+            # The router falls back to Qt on a DX failure; that only works if the
+            # failed install retracted itself.
+            _configure_qt_backend()
+            bundle = get_desktop_backend_bundle()
+            assert bundle is not None and bundle.draw_backend_factory.__name__ == "QtDrawBackend"
+            """
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            timeout=60,
             check=False,
         )
         self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
@@ -208,7 +331,7 @@ class DxDesktopBackendTests(unittest.TestCase):
             builtins.__import__ = blocked
 
             from lib.core.backend_router import BackendSelection
-            from lib.core.dx_bridge.desktop_backend import DxDesktopBackend
+            from lib.core.render.backends.dx.desktop_backend import DxDesktopBackend
             from lib.script import main as app_main
 
             class Service:
@@ -399,7 +522,7 @@ class DxApplicationUiHostTests(unittest.TestCase):
             return host
 
         patcher = patch(
-            "lib.core.dx_bridge.application_ui.get_layer_manager",
+            "lib.core.render.backends.dx.application_ui.get_layer_manager",
             return_value=self.layers,
         )
         patcher.start()
@@ -633,7 +756,7 @@ class DxApplicationUiHostTests(unittest.TestCase):
         self.assertTrue(command.is_visible())
 
         with patch(
-            "lib.core.dx_bridge.application_ui.get_cursor_position",
+            "lib.core.render.backends.dx.application_ui.get_cursor_position",
             return_value=Point(10000, 10000),
         ):
             self.ui._on_tick(Event(EventType.TICK))

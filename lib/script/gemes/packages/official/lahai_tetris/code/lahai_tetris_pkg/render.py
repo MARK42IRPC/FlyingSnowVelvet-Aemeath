@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from PyQt5.QtCore import Qt, QPointF, QRectF, QVariantAnimation
 from PyQt5.QtGui import QBrush, QColor, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap, QRadialGradient
 
-from lib.core.qt_bridge.font import get_digit_font, get_ui_font
+from lib.core.render.backends.qt.font import get_digit_font, get_ui_font
 from config.scale import scale_px
 
 from .constants import (

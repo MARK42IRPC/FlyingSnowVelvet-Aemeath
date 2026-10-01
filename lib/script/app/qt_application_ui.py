@@ -22,7 +22,7 @@ class QtApplicationUiHost:
         self._finalized = False
 
     def prepare_application(self, application: object) -> None:
-        from lib.core.qt_bridge.font import init_font_config
+        from lib.core.render.backends.qt.font import init_font_config
 
         init_font_config()
 

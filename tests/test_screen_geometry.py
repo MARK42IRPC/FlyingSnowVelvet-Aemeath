@@ -1,5 +1,5 @@
-from lib.core.graphics.screen import clamp_rect_position, screen_for_point, virtual_screen_rect
-from lib.core.graphics.types import Point, Rect
+from lib.core.render.visuals.screen import clamp_rect_position, screen_for_point, virtual_screen_rect
+from lib.core.render.visuals.types import Point, Rect
 
 
 def test_virtual_screen_rect_unions_negative_and_positive_monitors():

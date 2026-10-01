@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import unittest
 
-from lib.core.dx_bridge.loop import DxLoopContext
-from lib.core.dx_bridge.opacity import DxOpacityAnimator
-from lib.core.graphics.commands import DrawBatch, RectCommand, scale_batch_alpha
-from lib.core.graphics.types import Color, Rect
+from lib.core.render.backends.dx.loop import DxLoopContext
+from lib.core.render.backends.dx.opacity import DxOpacityAnimator
+from lib.core.render.visuals.commands import DrawBatch, RectCommand, scale_batch_alpha
+from lib.core.render.visuals.types import Color, Rect
 
 
 class DxOpacityTests(unittest.TestCase):

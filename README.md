@@ -51,6 +51,7 @@
 
 - 对外统一入口是 `lib/script/music/service.py`。
 - 搜索 provider 位于 `lib/script/music/providers/`，当前包括 QQ / 网易云 / 酷狗。
+- 歌曲展示文本（时长、歌手）的公开助手在 `lib/script/music/track_text.py`，provider、音乐管理器与音响面板共用一份。
 - `lib/script/cloudmusic/` 已退回内部播放运行时实现，不建议外部直接依赖。
 - UI 入口包括音响对象、搜索框、播放列表、进度面板等。
 

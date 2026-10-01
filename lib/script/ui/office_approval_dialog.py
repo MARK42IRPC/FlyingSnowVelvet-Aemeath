@@ -20,8 +20,8 @@ from PyQt5.QtWidgets import (
 )
 
 from config.scale import scale_px
-from lib.core.qt_bridge.font import get_ui_font
-from lib.core.qt_bridge.screen import clamp_rect_position, get_screen_geometry_for_point
+from lib.core.render.backends.qt.font import get_ui_font
+from lib.core.render.backends.qt.screen import clamp_rect_position, get_screen_geometry_for_point
 from lib.script.ui.office_icons import (
     office_allow_icon,
     office_allow_task_icon,

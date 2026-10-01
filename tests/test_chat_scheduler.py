@@ -175,11 +175,11 @@ class ChatSchedulerTests(unittest.TestCase):
             for node in ast.walk(tree):
                 if isinstance(node, ast.ImportFrom):
                     imported = node.module or ""
-                    if imported.startswith(("PyQt5", "lib.core.qt_bridge")):
+                    if imported.startswith(("PyQt5", "lib.core.render.backends.qt")):
                         forbidden.append((module_path.name, imported))
                 elif isinstance(node, ast.Import):
                     for alias in node.names:
-                        if alias.name.startswith(("PyQt5", "lib.core.qt_bridge")):
+                        if alias.name.startswith(("PyQt5", "lib.core.render.backends.qt")):
                             forbidden.append((module_path.name, alias.name))
 
         self.assertEqual(forbidden, [])

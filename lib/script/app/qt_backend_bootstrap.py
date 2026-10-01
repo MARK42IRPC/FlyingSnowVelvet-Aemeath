@@ -102,13 +102,13 @@ def _create_game_command_runtime():
 
 
 def _configure_qt_backend() -> None:
-    from lib.core.qt_bridge.desktop_backend import configure_qt_desktop_backend
-    from lib.core.qt_bridge.effect_system import create_effect_overlay_factory
-    from lib.core.qt_bridge.particle_system import create_particle_overlay_factory
-    from lib.core.qt_bridge.pet_window import create_qt_pet_window_factory
-    from lib.core.qt_bridge.tray_host import create_tray_host_factory
-    from lib.core.qt_bridge.world_object_backend import QtWorldObjectBackend
-    from lib.core.qt_bridge.music_player import QtMusicPlayer
+    from lib.core.render.backends.qt.desktop_backend import configure_qt_desktop_backend
+    from lib.core.render.backends.qt.effect_system import create_effect_overlay_factory
+    from lib.core.render.backends.qt.particle_system import create_particle_overlay_factory
+    from lib.core.render.backends.qt.pet_window import create_qt_pet_window_factory
+    from lib.core.render.backends.qt.tray_host import create_tray_host_factory
+    from lib.core.render.backends.qt.world_object_backend import QtWorldObjectBackend
+    from lib.core.render.backends.qt.music_player import QtMusicPlayer
     from lib.script.effects.manager import cleanup_effect_script_manager
     from lib.script.music.service import configure_music_player_factory
     from lib.script.app.qt_application_ui import create_application_ui_host
@@ -147,15 +147,18 @@ def _configure_qt_backend() -> None:
 
 
 def _configure_dx_backend() -> None:
-    from lib.core.dx_bridge.dpi_awareness import (
+    from lib.core.render.backends.dx.dpi_awareness import (
         ensure_per_monitor_v2_dpi_awareness,
     )
-    from lib.core.dx_bridge.desktop_backend import configure_dx_desktop_backend
+    from lib.core.render.backends.dx.desktop_backend import configure_dx_desktop_backend
+    from lib.script.cloudmusic._player import MciMusicPlayer
     from lib.script.music.service import configure_music_player_factory
 
     if not ensure_per_monitor_v2_dpi_awareness():
         raise RuntimeError("DirectX 后端无法启用 Per-Monitor V2 DPI 模式")
-    configure_music_player_factory(None)
+    # DX 后端注入无 Qt 的 MCI 播放器：与 Qt 后端注入 QtMusicPlayer 对称，
+    # 两边都走同一份 MusicPlayerProtocol，不再是“没有播放器”靠 fallback 兑出来。
+    configure_music_player_factory(MciMusicPlayer)
     configure_dx_desktop_backend(
         **_product_runtime_factories(),
         workbench_opener=_open_workbench,
@@ -169,5 +172,7 @@ def configure_selected_desktop_backend():
     from lib.core.backend_router import configure_selected_backend, register_backend
 
     register_backend("qt", _configure_qt_backend)
-    register_backend("directx", _configure_dx_backend)
+    # directx 描述符当前是 available=False：实现与测试保留在
+    # lib/core/render/backends/dx/，但不注册、不出现在用户可选后端里。
+    # _configure_dx_backend 保留为重新启用时的接线点。
     return configure_selected_backend(UI.get("render_backend", "qt"))

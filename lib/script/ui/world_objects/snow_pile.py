@@ -8,20 +8,19 @@ from PyQt5.QtGui     import QPainter
 
 from lib.core.unified_draw import Layer, get_layer_manager
 from lib.core.event.center    import get_event_center, EventType, Event
-from lib.core.graphics.types import Point
+from lib.core.render.visuals.types import Point
 from lib.core.clickthrough_state import is_clickthrough_enabled
-from lib.core.qt_bridge.screen import get_screen_geometry_for_point
+from lib.core.render.backends.qt.screen import get_screen_geometry_for_point
 from lib.script.voice.snow      import SnowSound
-from config.config            import PHYSICS, BEHAVIOR
-from lib.core.graphics.resources import ImageResource
-from lib.core.graphics.visuals import build_world_object_batch
-from lib.core.qt_bridge.draw_backend import QtDrawBackend
+from lib.core.render.visuals.resources import ImageResource
+from lib.core.render.visuals.visuals import build_world_object_batch
+from lib.core.render.backends.qt.draw_backend import QtDrawBackend
+from lib.core.services.world_object_physics import resolve_world_object_physics
 
-
-# 从配置文件读取物理参数
-_FADE_STEP: float = PHYSICS.get('fade_step', 0.05)
-_FADE_INTERVAL_MS: int = PHYSICS.get('fade_interval_ms', 50)
-
+# 产品物理参数由 lib/core/services 唯一解析，Qt 与 DX 两个后端读同一份数值
+_WORLD_PHYSICS = resolve_world_object_physics()
+_FADE_STEP: float = _WORLD_PHYSICS.fade_step
+_FADE_INTERVAL_MS: int = _WORLD_PHYSICS.fade_interval_ms
 
 class SnowPile(QWidget):
     """
@@ -110,7 +109,7 @@ class SnowPile(QWidget):
         # ── 双击判定（与 sofa/speaker 相同的 TICK 计数机制）──────────
         self._pending_click       = False
         self._pending_click_ticks = 0
-        self._double_click_ticks  = BEHAVIOR.get('double_click_ticks', 3)
+        self._double_click_ticks  = _WORLD_PHYSICS.double_click_ticks
         self._event_center.subscribe(EventType.TICK, self._on_tick_click)
 
         self._schedule_next_batch()

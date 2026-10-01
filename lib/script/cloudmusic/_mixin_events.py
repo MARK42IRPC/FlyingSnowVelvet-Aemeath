@@ -7,7 +7,7 @@ from pathlib import Path
 from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import EventType, Event
 from lib.core.logger import get_logger
-from lib.script.music.providers._shared import first_artist_from_list, format_duration_text
+from lib.script.music.track_text import first_artist_from_list, format_duration_text
 from config.config import TIMEOUTS, CLOUD_MUSIC
 from config.music import get_music_history
 from ._provider_clients import get_kugou_provider_client, get_qqmusic_provider_client
@@ -194,7 +194,11 @@ class _EventsMixin:
         self._play_current()
 
     def _on_enqueue(self, event: Event):
-        """处理 MUSIC_ENQUEUE 事件：右键加入队列末尾。"""
+        """处理 MUSIC_ENQUEUE 事件：右键加入队列末尾。
+
+        `silent` 为真时不再弹「已加入播放队列」气泡：一次投递多首的批量点歌由
+        调度器统一给一条汇总提示，逐首弹会连成一串同文案的气泡。
+        """
         song_ref = event.data.get('track_ref', event.data.get('song_id'))
         song_id = self._normalize_track_ref(song_ref)
         display = event.data.get('display', '')
@@ -206,7 +210,8 @@ class _EventsMixin:
         logger.debug("[CloudMusic] 收到 ENQUEUE: song_id=%s, display=%s", song_id, display)
 
         self._queue.append((song_id, display))
-        self._show_info("已加入播放队列")
+        if not event.data.get('silent', False):
+            self._show_info("已加入播放队列")
 
         if not self._is_playing and self._current_index == -1:
             self._current_index = 0
@@ -754,10 +759,8 @@ class _EventsMixin:
         if pos_sec < 0:
             return
         try:
-            if self._use_native_player:
-                self._music_player.seek_requested.emit(int(pos_sec * 1000))
-            else:
-                self._fallback_player.seek(int(pos_sec * 1000))
+            if self._music_player is not None:
+                self._music_player.seek(int(pos_sec * 1000))
             logger.debug(
                 "[CloudMusic] SEEK: 目标progress=%.4f, pos_sec=%.2f, duration_ms=%d",
                 progress if progress else 0,

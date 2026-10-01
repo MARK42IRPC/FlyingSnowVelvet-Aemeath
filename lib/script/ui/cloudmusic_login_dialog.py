@@ -5,7 +5,7 @@ from __future__ import annotations
 from PyQt5.QtCore import Qt, QTimer
 
 from lib.core.event.center import Event, EventType, get_event_center
-from lib.core.graphics.application_visuals import qr_panel_action_text
+from lib.core.render.visuals.application_visuals import qr_panel_action_text
 from lib.core.layer_manager import get_layer_manager
 from lib.script.ui.qr_dialog_base import BaseQrDialog
 

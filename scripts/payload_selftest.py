@@ -194,7 +194,7 @@ def _feature_services() -> str:
 
 
 def _feature_assets() -> str:
-    from lib.core.qt_bridge import font as font_module
+    from lib.core.render.backends.qt import font as font_module
 
     app_root = Path(os.environ["FSV_APP_ROOT"])
     fonts = sorted((app_root / "resc" / "FRONTS").glob("*.ttf"))

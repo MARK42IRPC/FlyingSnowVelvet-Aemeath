@@ -6,16 +6,15 @@ from PyQt5.QtWidgets import QWidget
 from PyQt5.QtCore    import Qt, QPoint
 from PyQt5.QtGui     import QPainter
 
-from config.config            import BEHAVIOR, PHYSICS
-from lib.core.graphics.resources import ImageResource
-from lib.core.graphics.visuals import build_world_object_batch
-from lib.core.qt_bridge.draw_backend import QtDrawBackend
+from lib.core.render.visuals.resources import ImageResource
+from lib.core.render.visuals.visuals import build_world_object_batch
+from lib.core.render.backends.qt.draw_backend import QtDrawBackend
 from lib.core.unified_draw import Layer, get_layer_manager
 from lib.core.event.center     import get_event_center, EventType, Event
 from lib.core.clickthrough_state import is_clickthrough_enabled
 from lib.core.physics          import get_physics_world, PhysicsBody
 from lib.core.particle_utils   import spawn_particle_at_point
-from lib.core.qt_bridge.screen import get_screen_geometry_for_point
+from lib.core.render.backends.qt.screen import get_screen_geometry_for_point
 from lib.script.voice.gear       import GearSound
 from lib.script.voice.ring       import RingSound
 from lib.core.world_objects import (
@@ -26,23 +25,23 @@ from lib.core.world_objects import (
     whole_clock_seconds,
 )
 
+from lib.core.services.world_object_physics import resolve_world_object_physics
+_WORLD_PHYSICS = resolve_world_object_physics()
 
-# 从配置文件读取物理参数
-_GROUND_Y_PCT: float = PHYSICS.get('ground_y_pct', 0.90)
-_MAX_THROW_VX: float = PHYSICS.get('max_throw_vx', 25.0)
-_MAX_THROW_VY: float = PHYSICS.get('max_throw_vy', 25.0)
-_DRAG_THRESHOLD: int = PHYSICS.get('drag_threshold', 5)
-_FADE_STEP: float = PHYSICS.get('fade_step', 0.05)
-_FADE_INTERVAL_MS: int = PHYSICS.get('fade_interval_ms', 50)
-_MAX_BOUNCES: int = PHYSICS.get('max_bounces', 5)
+# 产品物理参数由 lib/core/services 唯一解析，Qt 与 DX 两个后端读同一份数值
+_GROUND_Y_PCT: float = _WORLD_PHYSICS.ground_y_pct
+_MAX_THROW_VX: float = _WORLD_PHYSICS.max_throw_vx
+_MAX_THROW_VY: float = _WORLD_PHYSICS.max_throw_vy
+_DRAG_THRESHOLD: int = _WORLD_PHYSICS.drag_threshold
+_FADE_STEP: float = _WORLD_PHYSICS.fade_step
+_FADE_INTERVAL_MS: int = _WORLD_PHYSICS.fade_interval_ms
+_MAX_BOUNCES: int = _WORLD_PHYSICS.max_bounces
 _DRAG_TRAIL_WINDOW_SEC: float = 0.10
 _RELEASE_SAMPLE_MIN_DT_SEC: float = 1.0 / 60.0
 _TICK_INTERVAL_MS: int = 50
 _FINAL_RING_SECONDS: int = 10
 _END_UP_FORCE_INTERVAL_MS: int = 3000
 _END_UP_FORCE_INTERVAL_TICKS: int = max(1, int(round(_END_UP_FORCE_INTERVAL_MS / _TICK_INTERVAL_MS)))
-_END_UP_FORCE_VY: float = float(PHYSICS.get('clock_end_up_force_vy', PHYSICS.get('snow_leopard_jump_vy', -13.0)))
-_END_UP_FORCE_MULTIPLIER: float = 2.0
 class Clock(QWidget):
     """
     单个闹钟窗口。
@@ -133,7 +132,7 @@ class Clock(QWidget):
         # 自首次按下已累积的 tick 数
         self._pending_click_ticks = 0
         # 双击判定间隔（tick 数），读取全局配置，与 ClickHandler 保持一致
-        self._double_click_ticks  = BEHAVIOR.get('double_click_ticks', 3)
+        self._double_click_ticks  = _WORLD_PHYSICS.double_click_ticks
 
         self.move(position)
         self.show()
@@ -352,7 +351,8 @@ class Clock(QWidget):
         body.bounce_count = 0
         body.gravity_enabled = True
         body.active = True
-        boost_vy = _END_UP_FORCE_VY * _END_UP_FORCE_MULTIPLIER
+        # 配置里没有 clock_end_up_force_vy 这个键，原式为嵌套回退，实际取雪豹跳跃速度的两倍
+        boost_vy = _WORLD_PHYSICS.clock_up_force_vy
         body.vy = min(body.vy, boost_vy)
 
     def _sync_countdown_parts_from_total(self) -> None:
@@ -592,4 +592,3 @@ class Clock(QWidget):
         self._draw_backend.cleanup()
         self._alive = False
         super().closeEvent(event)
-

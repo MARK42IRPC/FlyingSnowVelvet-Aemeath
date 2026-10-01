@@ -6,7 +6,7 @@ from dataclasses import dataclass, replace
 from typing import Callable, Optional
 
 from lib.core.event.center import get_event_center, EventType, Event
-from lib.core.graphics.types import Point, coerce_point
+from lib.core.render.visuals.types import Point, coerce_point
 
 
 @dataclass

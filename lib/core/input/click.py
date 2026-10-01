@@ -2,7 +2,7 @@
 
 from config.config import BEHAVIOR
 from lib.core.event.center import get_event_center, EventType, Event
-from lib.core.graphics.types import Point
+from lib.core.render.visuals.types import Point
 from lib.core.input.types import MouseInput
 
 

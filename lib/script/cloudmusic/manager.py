@@ -102,19 +102,15 @@ class CloudMusicManager(_LoginMixin, _CacheMixin, _PlaybackMixin, _EventsMixin):
         self._login_ready = threading.Event()
         get_compute_hub().submit_io(self._login)
 
-        self._music_player = None
-        self._use_native_player = False
-        if music_player_factory is not None:
-            try:
-                self._music_player = music_player_factory()
-                self._connect_music_player()
-                self._use_native_player = True
-            except Exception as exc:
-                self._music_player = None
-                logger.warning("[CloudMusic] 原生播放器初始化失败，使用 MCI fallback: %s", exc)
+        # 播放器只有一条路径：优先用桌面组合注入的实现（Qt 后端注入 QtMusicPlayer，
+        # DX 后端注入 MciMusicPlayer），注入缺失或初始化失败时回落到内置的 MCI 实现。
+        # 每个实现都遵循 lib.core.services.music_playback.MusicPlayerProtocol。
+        self._player_fallback_factory = None
+        self._music_player = self._create_music_player(music_player_factory)
+        if self._music_player is None:
+            logger.error("[CloudMusic] 本地播放器不可用，音乐将只能进行队列与搜索")
         self._pending_play_display = ""
         self._pending_play_path = ""
-        self._fallback_player = MciMusicPlayer()
 
         # 音符粒子控制
         self._particle_timer = 0   # 粒子生成计时器（帧数）
@@ -205,29 +201,47 @@ class CloudMusicManager(_LoginMixin, _CacheMixin, _PlaybackMixin, _EventsMixin):
             "max": 30,
         }))
 
-    def _connect_music_player(self) -> None:
-        if self._music_player is None:
-            return
-        self._disconnect_music_player()
-        self._music_player.playback_started.connect(self._on_player_started)
-        self._music_player.playback_finished.connect(self._on_player_finished)
-        self._music_player.playback_error.connect(self._on_player_error)
-        self._music_player.duration_changed.connect(self._on_player_duration_changed)
+    def _create_music_player(self, factory):
+        """构造唯一的本地播放器：优先注入实现，构造失败时回落到内置 MCI。
+
+        注入实现不是 MCI 时另存一条降级路径（见 `_player_fallback_factory`）：它在**运行时**
+        报错（如 QtMultimedia 缺编解码器）时换成 MCI 重试，避免一个后端不可用就丢掉本地播放。
+        """
+        if factory is not None:
+            try:
+                player = factory()
+                self._attach_music_player(player)
+                if not isinstance(player, MciMusicPlayer):
+                    # 非 MCI 的注入实现留一条降级路径：它在运行时报错（如 QtMultimedia
+                    # 缺编解码器）时换成 MCI 重试，而不是丢掉本地播放。
+                    self._player_fallback_factory = MciMusicPlayer
+                return player
+            except Exception as exc:
+                logger.warning("[CloudMusic] 注入的播放器初始化失败，回落到 MCI: %s", exc)
+        try:
+            player = MciMusicPlayer()
+            self._attach_music_player(player)
+            return player
+        except Exception as exc:
+            logger.warning("[CloudMusic] MCI 播放器初始化失败，本地播放不可用: %s", exc)
+            return None
+
+    def _attach_music_player(self, player) -> None:
+        player.set_callbacks(
+            on_started=self._on_player_started,
+            on_finished=self._on_player_finished,
+            on_error=self._on_player_error,
+            on_duration_changed=self._on_player_duration_changed,
+        )
 
     def _disconnect_music_player(self) -> None:
         player = getattr(self, "_music_player", None)
         if player is None:
             return
-        for signal, slot in (
-            (player.playback_started, self._on_player_started),
-            (player.playback_finished, self._on_player_finished),
-            (player.playback_error, self._on_player_error),
-            (player.duration_changed, self._on_player_duration_changed),
-        ):
-            try:
-                signal.disconnect(slot)
-            except (TypeError, RuntimeError):
-                pass
+        try:
+            player.set_callbacks()
+        except (AttributeError, TypeError, RuntimeError):
+            pass
 
     def _subscribe_all_events(self) -> None:
         for event_type, handler in self._subscriptions:
@@ -310,10 +324,7 @@ class CloudMusicManager(_LoginMixin, _CacheMixin, _PlaybackMixin, _EventsMixin):
             if not self._is_playing or self._is_paused:
                 return
         try:
-            if self._use_native_player:
-                self._music_player.pause_requested.emit()
-            else:
-                self._fallback_player.pause()
+            self._music_player.pause()
             with self._state_lock:
                 self._is_paused = True
             self._publish_brief_info("已暂停")
@@ -327,10 +338,7 @@ class CloudMusicManager(_LoginMixin, _CacheMixin, _PlaybackMixin, _EventsMixin):
             if not self._is_paused:
                 return
         try:
-            if self._use_native_player:
-                self._music_player.resume_requested.emit()
-            else:
-                self._fallback_player.resume()
+            self._music_player.resume()
             with self._state_lock:
                 self._is_paused  = False
                 self._is_playing = True
@@ -356,10 +364,7 @@ class CloudMusicManager(_LoginMixin, _CacheMixin, _PlaybackMixin, _EventsMixin):
         self._volume = max(0.0, min(1.0, volume))
         try:
             effective = get_effective_music_volume(self._volume)
-            if self._use_native_player:
-                self._music_player.volume_requested.emit(effective)
-            else:
-                self._fallback_player.set_volume(effective)
+            self._music_player.set_volume(effective)
         except Exception:
             pass
         get_volume_config().set_volume(self._volume)
@@ -538,17 +543,13 @@ class CloudMusicManager(_LoginMixin, _CacheMixin, _PlaybackMixin, _EventsMixin):
         self._stop_internal()
         self._disconnect_music_player()
         try:
-            self._fallback_player.stop()
+            if self._music_player is not None:
+                self._music_player.cleanup()
         except Exception:
             pass
         with self._state_lock:
             self._clear_queue_locked()
         self._duration_cache.clear()
         self._current_duration_ms = 0
-        try:
-            if self._music_player is not None:
-                self._music_player.deleteLater()
-        except Exception:
-            pass
 
         logger.info("[CloudMusic] 已清理")

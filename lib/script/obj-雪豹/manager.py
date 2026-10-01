@@ -2,8 +2,8 @@
 import random
 
 from lib.core.event.center    import get_event_center, EventType, Event
-from lib.core.graphics.image_loader import load_image_resource
-from lib.core.graphics.types import Point, coerce_point
+from lib.core.render.visuals.image_loader import load_image_resource
+from lib.core.render.visuals.types import Point, coerce_point
 from lib.core.screen_utils import get_screen_rect_for_point
 from lib.core.world_objects import (
     create_world_object,

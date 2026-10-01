@@ -5,13 +5,13 @@ import unittest
 from unittest.mock import patch
 
 from lib.core.event.center import Event, EventType, get_event_center
-from lib.core.dx_bridge.loop import DxLoopContext
-from lib.core.dx_bridge.offscreen import find_dx_library
-from lib.core.dx_bridge.screen import DxScreenProvider
-from lib.core.dx_bridge.world_object_backend import DxWorldObjectBackend
-from lib.core.graphics.resources import ImageResource, RasterFrame
-from lib.core.graphics.commands import TextCommand
-from lib.core.graphics.types import Point, Rect
+from lib.core.render.backends.dx.loop import DxLoopContext
+from lib.core.render.backends.dx.offscreen import find_dx_library
+from lib.core.render.backends.dx.screen import DxScreenProvider
+from lib.core.render.backends.dx.world_object_backend import DxWorldObjectBackend
+from lib.core.render.visuals.resources import ImageResource, RasterFrame
+from lib.core.render.visuals.commands import TextCommand
+from lib.core.render.visuals.types import Point, Rect
 from lib.core.input.types import Key, KeyboardInput, MouseButton
 from lib.core.world_objects import WorldObjectRequest
 
@@ -271,7 +271,7 @@ class DxWorldObjectBackendTests(unittest.TestCase):
 
     def test_snow_leopard_auto_flip_pauses_during_jump(self):
         with patch(
-            "lib.core.dx_bridge.world_object_backend.random.uniform",
+            "lib.core.render.backends.dx.world_object_backend.random.uniform",
             return_value=5.0,
         ):
             instance_id = self.backend.create(_request("snow_leopard"))
@@ -298,7 +298,7 @@ class DxWorldObjectBackendTests(unittest.TestCase):
 
     def test_snow_leopard_click_jump_keeps_current_facing_direction(self):
         with patch(
-            "lib.core.dx_bridge.world_object_backend.random.uniform",
+            "lib.core.render.backends.dx.world_object_backend.random.uniform",
             return_value=1.0,
         ):
             instance_id = self.backend.create(_request("snow_leopard"))
@@ -407,14 +407,14 @@ class DxWorldObjectBackendTests(unittest.TestCase):
         try:
             instance_id = self.backend.create(_request("snowball"))
             instance = self.backend._instances[instance_id]
-            with patch("lib.core.dx_bridge.world_object_backend.random.random", return_value=0.0):
+            with patch("lib.core.render.backends.dx.world_object_backend.random.random", return_value=0.0):
                 for _ in range(10):
                     instance._on_physics_ground_bounce(instance._physics_body, stopped=False)
             self.assertEqual(received, ["snowball_drift"] * 6)
 
             rejected_id = self.backend.create(_request("snowball"))
             rejected = self.backend._instances[rejected_id]
-            with patch("lib.core.dx_bridge.world_object_backend.random.random", return_value=0.9):
+            with patch("lib.core.render.backends.dx.world_object_backend.random.random", return_value=0.9):
                 rejected._on_physics_ground_bounce(rejected._physics_body, stopped=False)
             self.assertEqual(received, ["snowball_drift"] * 6)
         finally:

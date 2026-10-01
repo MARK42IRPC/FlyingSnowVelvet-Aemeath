@@ -103,7 +103,7 @@ def forum_muted_text_color(mode: str | None = None) -> str:
 
 
 def _is_light(mode: str | None) -> bool:
-    from lib.core.graphics.workbench_tokens import resolve_workbench_mode
+    from lib.core.render.visuals.workbench_tokens import resolve_workbench_mode
 
     return resolve_workbench_mode(mode) == "light"
 

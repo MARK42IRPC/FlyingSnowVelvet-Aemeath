@@ -4,9 +4,9 @@ import ctypes
 import os
 import unittest
 
-from lib.core.dx_bridge.offscreen import find_dx_library
-from lib.core.dx_bridge.loop import DxLoopContext
-from lib.core.dx_bridge.tray_host import (
+from lib.core.render.backends.dx.offscreen import find_dx_library
+from lib.core.render.backends.dx.loop import DxLoopContext
+from lib.core.render.backends.dx.tray_host import (
     FSDX_EVENT_TRAY_COMMAND,
     DxTrayHost,
     _TrayState,

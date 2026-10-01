@@ -34,7 +34,9 @@ class BackendConfigurationError(RuntimeError):
 
 BACKEND_DESCRIPTORS = (
     BackendDescriptor("qt", "Qt", True),
-    BackendDescriptor("directx", "DirectX", True, experimental=True),
+    # DirectX 保留实现与测试，但按未启用后端处理：与 opengl、vulkan 同档。
+    # 重新启用需要独立决策，改回 available=True 并在组合入口恢复注册。
+    BackendDescriptor("directx", "DirectX", False, experimental=True),
     BackendDescriptor("opengl", "OpenGL", False),
     BackendDescriptor("vulkan", "Vulkan", False),
 )
