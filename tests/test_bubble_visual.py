@@ -24,6 +24,7 @@ from lib.core.render.visuals.commands import TextCommand
 from lib.core.render.visuals.types import Rect
 from lib.core.layer_manager import get_layer_manager
 from lib.core.render.backends.qt.drawing.colors import COLORS
+from lib.core.render.backends.qt.drawing.draw_backend import QtDrawBackend
 from lib.core.render.backends.qt.runtime.font import draw_mixed_text, measure_mixed_text, wrap_mixed_text
 from lib.script.ui.bubble import Bubble, BubbleInfo
 
@@ -94,7 +95,7 @@ class BubbleVisualTests(unittest.TestCase):
         image.fill(Qt.transparent)
         painter = QPainter(image)
         painter.setRenderHint(QPainter.Antialiasing, False)
-        bubble._draw_backend.render(visual.batch, painter, Rect(0, 0, width, height))
+        QtDrawBackend().render(visual.batch, painter, Rect(0, 0, width, height))
         painter.end()
         return image
 

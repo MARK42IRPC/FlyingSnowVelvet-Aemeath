@@ -39,6 +39,16 @@
   从 51 个文件降到 0，两份冻结清单（`drawing/`、`runtime/`）现在都是空的。
   产品页面共享的 QWidget 基类与锚点助手另立 `backends/qt/widgets/`，`runtime/text_metrics.py`
   迁入 `drawing/`，三条旧路径的转发模块一并删除。
+- 控件层改为「描述 + 后端渲染」，气泡框成为首个不再继承 `QWidget` 的产品控件：新增后端中立的
+  `lib/core/render/visuals/controls.py`（`BubbleControl` 状态机、`BubbleInfo` / `PointerEvent` /
+  `PointerClick` / `AnchorPlacement`）承载气泡的可见性、消息队列、`min/max` tick 判定、锚点解算、
+  透明度目标与绘制批次；真实顶层窗口移到 `backends/qt/widgets/control_host.py`，持有窗口标志、
+  透明度动画、绘制执行、指针翻译、剪贴板与 z-order。控件窗口宿主不静态引用 `drawing/`，绘制实现与
+  呈现几何由 `render_bridge.create_control_host()` 注入，档位 A 的引用清单不变。`bubble.py` 因此
+  不再 `import PyQt5`，`frozen_ui_qt_importers` 由 73 项降到 72 项；对外接口
+  （`adjust_size_to_text` / `fade_in` / `hide_bubble` / `clear_queue` / `remove_bubbles` /
+  `get_text_size` / `get_anchor_point` / `isVisible` / `hide` / `close`）保持不变，像素基准四条断言
+  全部通过。其余控件按渲染层边界契约文档第 12 节的滚动清单逐个迁移。
 
 ### Fixed
 - 修复安装器在非空残留目录上必然失败：目标文件改用 `CREATE_ALWAYS`，残留文件/目录冲突

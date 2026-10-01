@@ -22,7 +22,6 @@ class QtDependencyBoundaryTests(unittest.TestCase):
             "lib/script/ui/ai_settings_tabs.py",
             "lib/script/ui/animation_player.py",
             "lib/script/ui/announcement_dialog.py",
-            "lib/script/ui/bubble.py",
             "lib/script/ui/bug_tracker_window.py",
             "lib/script/ui/chat_mode_button.py",
             "lib/script/ui/clickthrough_button.py",

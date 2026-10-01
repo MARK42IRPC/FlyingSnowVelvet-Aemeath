@@ -1,0 +1,218 @@
+"""Qt 控件窗口宿主：把后端中立的控件描述渲染成一个真实顶层窗口。
+
+这是控件层"描述 + 后端渲染"结构里的后端那一半，属于 Qt 后端自有件（档位 D）。
+它只做 Qt 事实：窗口标志、透明度动画、绘制批次执行、指针事件翻译、剪贴板与
+z-order 注册。控件该画什么、什么时候画、点下去意味着什么，全部由注入的回调与
+``lib/core/render/visuals/controls.py`` 的描述对象决定。
+
+因此产品控件（``lib/script/ui/*.py``）不必再继承 ``QWidget``：控件的状态与绘制数据
+留在描述层，真实窗口由本模块持有。换后端时替换的是这一层，不是控件。
+"""
+from __future__ import annotations
+
+from collections.abc import Callable
+
+from PyQt5.QtCore import QEasingCurve, QPoint, QPropertyAnimation, Qt
+from PyQt5.QtGui import QPainter
+from PyQt5.QtWidgets import QApplication, QGraphicsOpacityEffect, QWidget
+
+from lib.core.render.backends.qt.widgets.anchors import get_anchor_point
+from lib.core.render.visuals.controls import (
+    BUTTON_LEFT,
+    BUTTON_MIDDLE,
+    BUTTON_NONE,
+    BUTTON_RIGHT,
+    PointerClick,
+    PointerEvent,
+)
+from lib.core.render.visuals.types import Point, Rect
+from lib.core.unified_draw import get_layer_manager
+
+_QPAINT_TO_CORE = {
+    Qt.LeftButton: BUTTON_LEFT,
+    Qt.RightButton: BUTTON_RIGHT,
+    Qt.MiddleButton: BUTTON_MIDDLE,
+}
+
+
+class QtControlHost(QWidget):
+    """一个渲染单个产品控件的顶层 Qt 窗口。
+
+    ``draw_backend`` 与 ``presentation_host`` 由组合入口注入（见 ``render_bridge``）：
+    本模块属于档位 D，不得静态引用档位 A 的绘制实现。
+
+    注入的回调：
+
+    - ``paint_batch``：返回当前要绘制的 ``DrawBatch``（``None`` 表示跳过本帧）。
+    - ``on_pointer``：把中立指针事件交给控件，返回它要执行的产品意图。
+    - ``on_fade_out_finished``：淡出动画正常结束时回调（被打断时不回调）。
+    """
+
+    def __init__(
+        self,
+        *,
+        draw_backend,
+        presentation_host,
+        paint_batch: Callable[[], object | None],
+        on_pointer: Callable[[PointerEvent], PointerClick] | None = None,
+        on_hide_requested: Callable[[], None] | None = None,
+        on_fade_out_finished: Callable[[], None] | None = None,
+        layer=None,
+        fade_duration_ms: int = 200,
+        fade_out_duration_ms: int = 200,
+        transparent_for_mouse: bool = False,
+        show_without_activating: bool = False,
+    ) -> None:
+        super().__init__()
+        self._paint_batch = paint_batch
+        self._on_pointer = on_pointer
+        self._on_hide_requested = on_hide_requested
+        self._on_fade_out_finished = on_fade_out_finished
+        self._awaiting_fade_out = False
+        self._fade_duration_ms = max(0, int(fade_duration_ms))
+        self._fade_out_duration_ms = max(0, int(fade_out_duration_ms))
+        self._draw_backend = draw_backend
+        self._presentation = presentation_host
+        self._closing = False
+
+        self.setWindowFlags(
+            Qt.Tool
+            | Qt.FramelessWindowHint
+            | Qt.WindowStaysOnTopHint
+        )
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        if show_without_activating:
+            self.setAttribute(Qt.WA_ShowWithoutActivating)
+        if transparent_for_mouse:
+            self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.setCursor(Qt.ArrowCursor)
+        if layer is not None:
+            get_layer_manager().register(self, layer)
+
+        self._opacity = QGraphicsOpacityEffect(self)
+        self._opacity.setOpacity(0.0)
+        self.setGraphicsEffect(self._opacity)
+        self._anim = QPropertyAnimation(self._opacity, b"opacity", self)
+        self._anim.setEasingCurve(QEasingCurve.InOutQuad)
+        self._anim.finished.connect(self._on_animation_finished)
+
+        #: 供说明书（tooltip）查找的说明字段；由产品控件写入。
+        self._description = ""
+
+    # ── 绘制 ───────────────────────────────────────────────────────
+    def paintEvent(self, event) -> None:
+        batch = self._paint_batch()
+        if batch is None:
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, False)
+        self._draw_backend.render(
+            batch,
+            painter,
+            Rect(0, 0, self.width(), self.height()),
+        )
+        painter.end()
+
+    # ── 指针 ───────────────────────────────────────────────────────
+    def pointer_event(self, event) -> PointerEvent:
+        """把一个 Qt 鼠标事件翻译成中立指针事件。"""
+        local = event.pos() if hasattr(event, "pos") else QPoint(0, 0)
+        global_pos = self.mapToGlobal(local)
+        return PointerEvent(
+            button=_QPAINT_TO_CORE.get(event.button(), BUTTON_NONE),
+            local=Point(local.x(), local.y()),
+            screen=Point(global_pos.x(), global_pos.y()),
+        )
+
+    def mousePressEvent(self, event) -> None:
+        if self._on_pointer is None:
+            return
+        intent = self._on_pointer(self.pointer_event(event))
+        if intent.copy_text is not None:
+            QApplication.clipboard().setText(intent.copy_text)
+        if intent.hide:
+            if self._on_hide_requested is not None:
+                self._on_hide_requested()
+            else:
+                self.hide()
+        event.accept()
+
+    # ── 尺寸、位置与命令 ───────────────────────────────────────────
+    def apply_size(self, width: int, height: int) -> None:
+        width, height = max(1, int(width)), max(1, int(height))
+        if self.width() != width or self.height() != height:
+            self.setFixedSize(width, height)
+
+    def move_to(self, x: int, y: int) -> None:
+        self._presentation.move_widget_to_global(self, int(x), int(y))
+
+    def geometry_rect(self) -> Rect:
+        """窗口在屏幕坐标系中的矩形（核心类型，不是 ``QRect``）。"""
+        return self._presentation.widget_global_rect(self)
+
+    def global_point(self, local: Point) -> Point:
+        return self._presentation.widget_global_point(self, local)
+
+    def local_anchor(self, anchor_id: str) -> QPoint:
+        """锚点在窗口本地坐标中的位置；事件总线上的锚点载荷要求整数 ``QPoint``。"""
+        point = get_anchor_point(self, anchor_id)
+        return QPoint(int(point.x()), int(point.y()))
+
+    def set_clickthrough(self, enabled: bool) -> None:
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, bool(enabled))
+
+    # ── 透明度动画 ─────────────────────────────────────────────────
+    def fade_to(self, target: float, *, duration_ms: int | None = None, fade_out: bool = False) -> None:
+        self._anim.stop()
+        value = max(0.0, min(1.0, float(target)))
+        self._anim.setStartValue(float(self._opacity.opacity()))
+        self._anim.setEndValue(value)
+        if duration_ms is None:
+            duration_ms = self._fade_out_duration_ms if fade_out else self._fade_duration_ms
+        self._anim.setDuration(max(0, int(duration_ms)))
+        self._awaiting_fade_out = bool(fade_out) and self._on_fade_out_finished is not None
+        self._anim.start()
+
+    def stop_animation(self) -> None:
+        self._awaiting_fade_out = False
+        self._anim.stop()
+
+    @property
+    def opacity(self) -> float:
+        return float(self._opacity.opacity())
+
+    def set_opacity(self, value: float) -> None:
+        self._opacity.setOpacity(max(0.0, min(1.0, float(value))))
+
+    def _on_animation_finished(self) -> None:
+        """淡出动画真正播完时通知控件；被新动画打断（``stop_animation``）不触发。"""
+        if not self._awaiting_fade_out:
+            return
+        self._awaiting_fade_out = False
+        if self._on_fade_out_finished is not None and not self._closing:
+            self._on_fade_out_finished()
+
+    # ── 生命周期 ───────────────────────────────────────────────────
+    def closeEvent(self, event) -> None:
+        self._closing = True
+        try:
+            get_layer_manager().unregister(self)
+        except Exception:
+            pass
+        super().closeEvent(event)
+
+    def cleanup(self) -> None:
+        self._closing = True
+        try:
+            self._anim.stop()
+        except Exception:
+            pass
+        try:
+            get_layer_manager().unregister(self)
+        except Exception:
+            pass
+        self.hide()
+        self.close()
+
+
+__all__ = ["QtControlHost"]

@@ -49,6 +49,20 @@ def create_draw_backend():
     return QtDrawBackend()
 
 
+def create_control_host(**kwargs):
+    """创建渲染单个控件的后端窗口宿主（Qt 下是 ``QtControlHost``）。
+
+    控件描述（``lib/core/render/visuals/controls.py``）不含窗口事实，真实窗口由后端
+    提供；本函数是控件侧唯一允许触碰"控件窗口宿主"实现的落点，与
+    ``create_draw_backend`` 同属档位 A 的解析/转发层。
+    """
+    from lib.core.render.backends.qt.widgets.control_host import QtControlHost
+
+    kwargs.setdefault("draw_backend", create_draw_backend())
+    kwargs.setdefault("presentation_host", presentation_host())
+    return QtControlHost(**kwargs)
+
+
 def create_component_layer():
     """创建控件自用的绘制回调层（排序与注册是后端无关的，只有回调是 Qt）。"""
     from lib.core.render.backends.qt.drawing.render_core import QtComponentLayer
@@ -167,6 +181,13 @@ def widget_global_point(widget, point):
 def move_widget_to_global(widget, x: int, y: int) -> None:
     """按屏幕坐标移动控件；宿主分层时由后端换算成宿主本地坐标。"""
     presentation_host().move_widget_to_global(widget, int(x), int(y))
+
+
+def pointer_position():
+    """当前指针的屏幕位置（核心 `Point`）。"""
+    from lib.core.render.backends.qt.drawing.window import pointer_core_position
+
+    return pointer_core_position()
 
 
 def ui_font(size: int | None = None):

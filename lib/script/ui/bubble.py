@@ -1,56 +1,46 @@
 """气泡框类"""
-from PyQt5.QtWidgets import QWidget, QGraphicsOpacityEffect, QApplication
-from PyQt5.QtCore import Qt, QPropertyAnimation, QEasingCurve, QPoint
-from PyQt5.QtGui import QPainter, QCursor
+from __future__ import annotations
 
-from config.config import UI, BUBBLE_CONFIG
+from config.config import ANIMATION, BUBBLE_CONFIG, UI
 from config.scale import scale_px
 from config.tooltip_config import TOOLTIPS
-from lib.core.event.center import get_event_center, EventType, Event
-from lib.core.unified_draw import Layer, get_layer_manager
+from lib.core.anchor_utils import apply_ui_opacity
+from lib.core.event.center import Event, EventType, get_event_center
 from lib.core.logger import get_logger
-from lib.core.anchor_utils import (
-    apply_ui_opacity,
+from lib.core.render.visuals.application_visuals import BubbleVisualDescription
+from lib.core.render.visuals.controls import (
+    TICK_HIDE,
+    TICK_NONE,
+    TICK_REPLACE_NEXT,
+    TICK_SHOW_NEXT,
+    BubbleControl,
+    BubbleInfo,
+    PointerEvent,
 )
-from lib.script.ui.render_bridge import create_draw_backend, qpoint_from_point, digit_font as get_digit_font, screen_rect_for_point as get_screen_geometry_for_point, text_metrics as QtTextMetrics, ui_font as get_ui_font
-from lib.core.render.visuals.application_visuals import (
-    BubbleVisualDescription,
-    build_bubble_visual,
-    resolve_bubble_geometry,
+from lib.core.render.visuals.types import Point
+from lib.core.unified_draw import Layer
+from lib.script.ui._particle_helper import publish_click_particle_at
+from lib.script.ui.render_bridge import (
+    create_control_host,
+    digit_font as get_digit_font,
+    qpoint_from_point,
+    screen_rect_for_point as get_screen_geometry_for_point,
+    pointer_position,
+    text_metrics as QtTextMetrics,
+    ui_font as get_ui_font,
 )
-from lib.core.render.visuals.types import Point, Rect, Size
 from lib.script.voice.ams_bug import AmsBugSound
-from lib.core.render.backends.qt.widgets.anchors import (
-    get_anchor_point as resolve_anchor_point,
-    publish_widget_anchor_response,
-)
 
 _logger = get_logger(__name__)
 
 
-class BubbleInfo:
-    """气泡信息"""
-    def __init__(
-        self,
-        text: str,
-        min_ticks: int,
-        max_ticks: int,
-        align: str = 'center',
-        source: str = '',
-        task_id: str = '',
-        kind: str = '',
-    ):
-        self.text = text
-        self.min_ticks = min_ticks
-        self.max_ticks = max_ticks
-        self.elapsed_ticks = 0
-        self.align = align  # 'left' | 'center'
-        self.source = str(source or '')
-        self.task_id = str(task_id or '')
-        self.kind = str(kind or '')
+def _area_data(rect) -> tuple:
+    """把核心 `Rect` 转成粒子请求要求的 `(x1, y1, x2, y2)` 整数四元组。"""
+    x1, y1 = int(rect.x), int(rect.y)
+    return (x1, y1, x1 + int(rect.width), y1 + int(rect.height))
 
 
-class Bubble(QWidget):
+class Bubble:
     """
     气泡框 - 监听"information"事件
     事件格式: text, min, max
@@ -62,57 +52,59 @@ class Bubble(QWidget):
     新消息逻辑：
     - 如果当前未达到最小显示时间，新消息会被忽略
     - 如果达到最小显示时间，新消息直接替换文字并重置计时器
+
+    本类不再继承 ``QWidget``：状态与绘制批次在 ``BubbleControl`` 描述对象里，
+    真实窗口（窗口标志、透明度动画、绘制执行）由后端窗口宿主持有。控件自身只负责
+    事件订阅、消息队列与"把描述交给宿主"。
     """
 
     def __init__(self):
-        super().__init__()
-        self.setWindowFlags(
-            Qt.Tool
-            | Qt.FramelessWindowHint
-            | Qt.WindowStaysOnTopHint
-        )
-        self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setCursor(Qt.ArrowCursor)
-        get_layer_manager().register(self, Layer.PET_UI)
-
-        # 透明度效果
-        self._opacity = QGraphicsOpacityEffect(self)
-        self._opacity.setOpacity(0.0)
-        self.setGraphicsEffect(self._opacity)
-
-        # 淡入淡出动画
-        self._anim = QPropertyAnimation(self._opacity, b'opacity', self)
-        self._anim.setDuration(UI['ui_fade_duration'])
-        self._anim.setEasingCurve(QEasingCurve.InOutQuad)
-
-        self._visible = False
-        self._description = TOOLTIPS['bubble']
-
-        # 事件中心
-        self._event_center = get_event_center()
-
-        # 当前气泡信息
-        self._current_bubble = None
-
-        # 待显示气泡队列：[(text, min_ticks, max_ticks, align, particle), ...]
-        self._pending_queue = []
-        self._fading_out = False
-        self._anim_finished_handler = None
-
-        # 字体设置
+        # 字体与间距是描述层的输入；`_font` / `_digit_font` / `_padding` /
+        # `_border_width` 保留为同名属性，供像素基准测试读取它们构造的排版参数。
         self._font = get_ui_font()
         self._font.setBold(True)
         self._digit_font = get_digit_font()
         self._text_metrics = QtTextMetrics(self._font, self._digit_font)
-        self._draw_backend = create_draw_backend()
-        self._visual: BubbleVisualDescription | None = None
-        self._bug_sound = AmsBugSound()
 
         # 从配置文件读取气泡参数
         self._padding = BUBBLE_CONFIG.get('padding', scale_px(12))
         self._border_width = BUBBLE_CONFIG.get('border_width', scale_px(2, min_abs=1))
 
-        # 订阅事件
+        self._control = BubbleControl(
+            self._text_metrics,
+            max_width=UI['bubble_max_width'],
+            padding=self._padding,
+            border_width=self._border_width,
+            fade_duration_ms=UI['ui_fade_duration'],
+            paint_layer=int(Layer.PET_UI),
+            opacity_scale=lambda: apply_ui_opacity(1.0),
+            placeholder_size=(scale_px(100, min_abs=1), scale_px(40, min_abs=1)),
+            ui_id='bubble',
+            target_ui_id='pet_window',
+            target_anchor_id='top',
+            self_anchor_id='bottom',
+        )
+
+        # 透明度效果与淡入淡出动画由后端窗口宿主持有；控件侧只保留目标值。
+        self._visible = False
+        self._fading_out = False
+        self._description = TOOLTIPS['bubble']
+        self._visual: BubbleVisualDescription | None = None
+        self._bug_sound = AmsBugSound()
+
+        self._host = create_control_host(
+            paint_batch=self._paint_batch,
+            on_pointer=self._on_pointer,
+            on_hide_requested=lambda: self.hide_bubble(),
+            on_fade_out_finished=self._on_fade_out_complete,
+            layer=Layer.PET_UI,
+            fade_duration_ms=UI['ui_fade_duration'],
+            fade_out_duration_ms=200,
+        )
+        self._host._description = self._description
+
+        # 事件中心
+        self._event_center = get_event_center()
         self._event_center.subscribe(EventType.TICK, self._on_tick)
         self._event_center.subscribe(EventType.INFORMATION, self._on_information)
         self._event_center.subscribe(EventType.UI_BUBBLE_HIDE, self._on_bubble_hide)
@@ -122,92 +114,104 @@ class Bubble(QWidget):
         self._event_center.subscribe(EventType.UI_ANCHOR_RESPONSE, self._on_anchor_response)
         self._event_center.subscribe(EventType.UI_CLICKTHROUGH_TOGGLE, self._on_clickthrough_toggle)
 
-        # UI 组件 ID
-        self._ui_id = 'bubble'
+    # ==================================================================
+    # 描述状态（测试与内部逻辑读取的稳定入口）
+    # ==================================================================
+    @property
+    def _current_bubble(self):
+        return self._control.current
 
-        # 锚点配置：对齐到主宠物的上锚点
-        self._target_ui_id = 'pet_window'
-        self._target_anchor_id = 'top'
-        self._self_anchor_id = 'bottom'
+    @_current_bubble.setter
+    def _current_bubble(self, value):
+        self._control.current = value
 
-        # 位置偏移
-        self._offset_x = 0
-        self._offset_y = 0
+    @property
+    def _pending_queue(self):
+        return self._control.pending_queue
 
-        # 当前锚点位置
-        self._anchor_point = None
+    @property
+    def _anchor_point(self):
+        return self._control.anchor_point
 
-        # 锚点是否可用
-        self._anchor_available = False
+    @_anchor_point.setter
+    def _anchor_point(self, value):
+        self._control.set_anchor_point(value)
 
-    def _wrap_text_into_lines(self, text: str, max_width: int) -> list:
-        """Resolve lines through the shared bubble layout policy."""
-        visual = build_bubble_visual(
-            text,
-            self._text_metrics,
-            max_width=max_width + self._border_width * 4,
-            padding=self._padding,
-            border_width=self._border_width,
-        )
-        return list(visual.lines)
+    @property
+    def _anchor_available(self):
+        return self._control.anchor_available
+
+    @_anchor_available.setter
+    def _anchor_available(self, value):
+        self._control.anchor_available = bool(value)
 
     def _build_visual(self, text: str, align: str = "center") -> BubbleVisualDescription:
-        return build_bubble_visual(
-            text,
-            self._text_metrics,
-            max_width=UI['bubble_max_width'],
-            padding=self._padding,
-            border_width=self._border_width,
-            align=align,
-            layer=int(Layer.PET_UI),
-        )
+        return self._control.build_visual(text, align)
 
     def get_text_size(self, text: str) -> tuple:
-        """
-        计算文本尺寸（自动换行，宽度不超过 bubble_max_width）
-
-        Args:
-            text: 文本内容
+        """计算文本尺寸（自动换行，宽度不超过 bubble_max_width）。
 
         Returns:
             (width, height)
         """
-        visual = self._build_visual(text)
-        return int(visual.size.width), int(visual.size.height)
+        return self._control.text_size(text)
 
+    def width(self) -> int:
+        return self._host.width()
+
+    def height(self) -> int:
+        return self._host.height()
+
+    def get_anchor_point(self, anchor_id: str):
+        """获取指定锚点在窗口本地坐标中的位置（整数 ``QPoint``）。"""
+        return self._host.local_anchor(anchor_id)
+
+    # ==================================================================
+    # 绘制
+    # ==================================================================
+    def _paint_batch(self):
+        if not self._current_bubble:
+            return None
+        visual = self._visual or self._build_visual(
+            self._current_bubble.text,
+            self._current_bubble.align,
+        )
+        return visual.batch
+
+    def _on_pointer(self, event: PointerEvent):
+        intent = self._control.click_intent(event)
+        if intent.particle_id:
+            publish_click_particle_at(intent.particle_id, event.screen.x, event.screen.y)
+        return intent
+
+    # ==================================================================
+    # 尺寸与位置
+    # ==================================================================
     def adjust_size_to_text(self, text: str):
         """根据文本调整窗口大小"""
         align = self._current_bubble.align if self._current_bubble else "center"
-        self._visual = self._build_visual(text, align)
-        self.setFixedSize(int(self._visual.size.width), int(self._visual.size.height))
-
-    def get_anchor_point(self, anchor_id: str) -> QPoint:
-        """
-        获取指定锚点的位置
-
-        Args:
-            anchor_id: 锚点 ID ('top', 'bottom', 'left', 'right',
-                        'top_left', 'top_right', 'bottom_left', 'bottom_right', 'center')
-
-        Returns:
-            锚点位置（相对于窗口的坐标）
-        """
-        return resolve_anchor_point(self, anchor_id)
+        self._visual = self._control.set_message(text, align)
+        self._host.apply_size(self._visual.size.width, self._visual.size.height)
 
     def _on_ui_create(self, event):
-        """UI ?????? - ???????"""
+        """UI 创建请求 - 回应自身锚点位置。"""
         target_window_id = event.data.get('window_id')
         request_anchor_id = event.data.get('anchor_id')
         requester_id = event.data.get('ui_id')
 
-        if target_window_id == self._ui_id:
-            publish_widget_anchor_response(
-                self._event_center,
-                self,
-                window_id=self._ui_id,
-                anchor_id=request_anchor_id,
-                ui_id=requester_id,
-            )
+        if target_window_id == self._control.ui_id:
+            self._publish_anchor_response(request_anchor_id, requester_id)
+
+    def _publish_anchor_response(self, anchor_id: str, ui_id: str) -> None:
+        event = Event(EventType.UI_ANCHOR_RESPONSE, {
+            'window_id': self._control.ui_id,
+            'anchor_id': anchor_id,
+            'anchor_point': self._control.anchor_global(
+                anchor_id, self._host.geometry_rect()
+            ),
+            'ui_id': ui_id,
+        })
+        self._event_center.publish(event)
 
     def _on_anchor_response(self, event):
         """锚点响应事件处理"""
@@ -218,15 +222,15 @@ class Bubble(QWidget):
         # 处理两种情况：
         # 1. 专门针对此 UI 组件的锚点响应（来自 pet_window）
         # 2. pet_window 移动时的全局锚点更新（ui_id='all'）
-        if ui_id == self._ui_id:
+        if ui_id == self._control.ui_id:
             # 专门针对此 UI 组件的锚点响应
             new_anchor_point = qpoint_from_point(event.data.get('anchor_point'))
             if new_anchor_point is None:
                 return
             if self._anchor_point != new_anchor_point:
-                self._anchor_point = new_anchor_point
+                self._control.set_anchor_point(new_anchor_point)
                 self._update_position()
-        elif ui_id == 'all' and window_id == self._target_ui_id:
+        elif ui_id == 'all' and window_id == self._control.target_ui_id:
             # pet_window 移动时的全局锚点更新
             if anchor_id == 'all':
                 # pet_window 的新位置（左上角坐标）
@@ -234,15 +238,14 @@ class Bubble(QWidget):
                 if pet_pos is None:
                     return
                 # 获取 pet_window 的尺寸来计算 top 锚点
-                from config.config import ANIMATION
                 pet_width = ANIMATION['pet_size'][0]
                 # 计算 top 锚点位置
-                new_anchor_point = QPoint(
+                new_anchor_point = Point(
                     pet_pos.x() + pet_width // 2,  # top 锚点的 X 坐标
                     pet_pos.y()  # top 锚点的 Y 坐标
                 )
                 if self._anchor_point != new_anchor_point:
-                    self._anchor_point = new_anchor_point
+                    self._control.set_anchor_point(new_anchor_point)
                     self._update_position()
 
     def _update_position(self):
@@ -253,43 +256,18 @@ class Bubble(QWidget):
         # self._anchor_point 是全局坐标（pet_window top 锚点的全局坐标）
         # 我们要让自己的 bottom 锚点对齐到 pet_window 的 top 锚点
 
-        # 计算新的窗口位置
-        # bottom 锚点相对于气泡框左上角的坐标是 (width // 2, height)
-        # 所以气泡框的左上角应该在：(锚点.x() - width // 2, 锚点.y() - height)
-
-        width = self.width() if self._current_bubble else scale_px(100, min_abs=1)
-        height = self.height() if self._current_bubble else scale_px(40, min_abs=1)
-
         screen = get_screen_geometry_for_point(
             point=self._anchor_point,
-            fallback_widget=self,
+            fallback_widget=self._host,
         )
-        geometry = resolve_bubble_geometry(
-            Point(self._anchor_point.x(), self._anchor_point.y()),
-            Size(width, height),
-            Rect(int(screen.x), int(screen.y), int(screen.width), int(screen.height)),
-            offset_x=self._offset_x,
-            offset_y=self._offset_y,
-        )
-        self.move(int(geometry.x), int(geometry.y))
-
-    def paintEvent(self, event):
-        """绘制气泡框 - 参考关闭按钮的样式"""
-        if not self._current_bubble:
+        placement = self._control.placement(screen)
+        if placement is None:
             return
+        self._host.move_to(placement.x, placement.y)
 
-        visual = self._visual or self._build_visual(
-            self._current_bubble.text,
-            self._current_bubble.align,
-        )
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing, False)
-        self._draw_backend.render(
-            visual.batch,
-            painter,
-            Rect(0, 0, self.width(), self.height()),
-        )
-
+    # ==================================================================
+    # 事件处理
+    # ==================================================================
     def _on_information(self, event: Event):
         """处理 INFORMATION 事件 - 添加气泡到队列"""
         text      = event.data.get('text', '')
@@ -338,30 +316,19 @@ class Bubble(QWidget):
 
     def _on_tick(self, event: Event):
         """Tick事件处理 - 更新气泡状态"""
-        if not self._current_bubble:
-            # 当前没有气泡，检查队列是否有待显示的
-            self._try_show_next_in_queue()
+        action = self._control.on_tick()
+        if action == TICK_NONE:
             return
-
-        # 如果正在淡出过程中，不处理 tick
-        if self._fading_out:
-            return
-
-        # 增加已显示时间
-        self._current_bubble.elapsed_ticks += 1
-
-        # 检查是否达到最大显示时间
-        if self._current_bubble.elapsed_ticks >= self._current_bubble.max_ticks:
-            # 达到最大时间，隐藏气泡
-            self.hide_bubble()
-            return
-
-        # 检查是否达到最小显示时间，且队列中有待显示的气泡
-        if (self._current_bubble.elapsed_ticks >= self._current_bubble.min_ticks
-                and self._pending_queue):
-            # 有待显示的气泡，隐藏当前气泡并显示下一个
+        if action == TICK_SHOW_NEXT:
             self._show_next_bubble_from_queue()
+        elif action == TICK_REPLACE_NEXT:
+            self._show_next_bubble_from_queue()
+        elif action == TICK_HIDE:
+            self.hide_bubble()
 
+    # ==================================================================
+    # 队列
+    # ==================================================================
     def add_bubble(self, text: str, min_ticks: int, max_ticks: int,
                    align: str = 'center', particle: bool = True,
                    force_replace: bool = False, *, source: str = '',
@@ -377,45 +344,21 @@ class Bubble(QWidget):
             particle: True 则替换气泡时触发上淡出粒子，False 则静默替换（无粒子）
             force_replace: True 时无视当前气泡 min 直接替换（并清空待显示队列）
         """
-        # 显式强制替换：无视当前显示时间。
-        if force_replace:
-            # 清空待显示队列，立即显示此气泡（高优先级）
-            self._pending_queue.clear()
+        action = self._control.add(
+            text, min_ticks, max_ticks, align, particle, force_replace,
+            source=source, task_id=task_id, kind=kind,
+        )
+        if action == "replace":
             self._replace_bubble(
                 text, min_ticks, max_ticks, align, particle,
                 source=source, task_id=task_id, kind=kind,
             )
-            return
-
-        # 如果当前没有气泡，直接显示
-        if not self._current_bubble:
-            self._replace_bubble(
-                text, min_ticks, max_ticks, align, particle,
-                source=source, task_id=task_id, kind=kind,
-            )
-            return
-
-        # 检查是否达到最小显示时间
-        if self._current_bubble.elapsed_ticks >= self._current_bubble.min_ticks:
-            # 达到最小显示时间，可以替换
-            self._replace_bubble(
-                text, min_ticks, max_ticks, align, particle,
-                source=source, task_id=task_id, kind=kind,
-            )
-        else:
-            # 未达到最小显示时间，将新气泡加入队列
-            self._pending_queue.append((
-                text, min_ticks, max_ticks, align, particle,
-                str(source or ''), str(task_id or ''), str(kind or ''),
-            ))
 
     def _show_next_bubble_from_queue(self):
         """从队列中取出下一个气泡并显示（当前气泡已达 min_ticks）"""
-        if not self._pending_queue:
+        item = self._control.pop_next()
+        if item is None:
             return
-
-        # 取出队列中的第一个气泡
-        item = self._pending_queue.pop(0)
         text, min_ticks, max_ticks, align, particle, source, task_id, kind = item
         self._replace_bubble(
             text, min_ticks, max_ticks, align, particle,
@@ -424,13 +367,8 @@ class Bubble(QWidget):
 
     def _try_show_next_in_queue(self):
         """当前没有气泡时，尝试显示队列中的下一个"""
-        if self._pending_queue and not self._current_bubble:
-            item = self._pending_queue.pop(0)
-            text, min_ticks, max_ticks, align, particle, source, task_id, kind = item
-            self._replace_bubble(
-                text, min_ticks, max_ticks, align, particle,
-                source=source, task_id=task_id, kind=kind,
-            )
+        if self._control.pending_queue and not self._control.current:
+            self._show_next_bubble_from_queue()
 
     def _replace_bubble(self, text: str, min_ticks: int, max_ticks: int,
                         align: str = 'center', particle: bool = True, *,
@@ -446,26 +384,22 @@ class Bubble(QWidget):
             particle: True 则在替换时对旧气泡区域触发上淡出粒子，False 则静默替换
         """
         # 若正处于淡出流程，收到新气泡时取消淡出状态，避免 tick 逻辑被永久跳过
-        if self._fading_out:
+        if self._control.fading_out:
+            self._control.fading_out = False
             self._fading_out = False
 
         # 在调整尺寸前快照当前气泡区域（全局坐标），用于粒子生成
         # 仅当气泡已可见且允许粒子时触发
         if self._visible and particle:
-            pre_rect = self.geometry()
+            pre_rect = self._host.geometry_rect()
             self._event_center.publish(Event(EventType.PARTICLE_REQUEST, {
                 'particle_id': 'up_fade',
                 'area_type': 'rect',
-                'area_data': (
-                    pre_rect.x(),
-                    pre_rect.y(),
-                    pre_rect.x() + pre_rect.width(),
-                    pre_rect.y() + pre_rect.height()
-                )
+                'area_data': _area_data(pre_rect),
             }))
 
         # 创建新的气泡信息
-        self._current_bubble = BubbleInfo(
+        self._control.current = BubbleInfo(
             text, min_ticks, max_ticks, align,
             source=source, task_id=task_id, kind=kind,
         )
@@ -481,7 +415,7 @@ class Bubble(QWidget):
             # 如果已经显示，更新位置（文字长度可能变化）
             self._update_position()
             # 触发重绘
-            self.update()
+            self._host.update()
 
     def hide_bubble(self):
         """隐藏气泡"""
@@ -493,28 +427,35 @@ class Bubble(QWidget):
             return
 
         self._visible = False
-        self._anchor_available = False  # 锚点不可用
+        self._control.visible = False
+        self._control.anchor_available = False  # 锚点不可用
         self._fading_out = True  # 标记正在淡出
+        self._control.fading_out = True
 
         # 在隐藏之前保存几何位置
-        rect = self.geometry()
+        rect = self._host.geometry_rect()
 
         # 发布粒子申请事件（使用保存的位置）
         particle_event = Event(EventType.PARTICLE_REQUEST, {
             'particle_id': 'right_fade',
             'area_type': 'rect',
-            'area_data': (rect.x(), rect.y(), rect.x() + rect.width(), rect.y() + rect.height())
+            'area_data': _area_data(rect),
         })
         self._event_center.publish(particle_event)
 
         # 启动淡出动画，完成后隐藏窗口并清空气泡
         # 注意：不能在动画启动前清空 _current_bubble，否则 paintEvent() 会提前返回
-        self._animate(0.0, on_finished=self._on_fade_out_complete)
+        self._host.fade_to(
+            apply_ui_opacity(0.0),
+            duration_ms=200,
+            fade_out=True,
+        )
 
     def _on_clickthrough_toggle(self, event: Event) -> None:
         """穿透模式开启/关闭时同步自身鼠标透传状态。"""
-        self.setAttribute(Qt.WA_TransparentForMouseEvents,
-                          event.data.get('enabled', False))
+        enabled = bool(event.data.get('enabled', False))
+        self._control.clickthrough = enabled
+        self._host.set_clickthrough(enabled)
 
     def _on_fade_out_complete(self):
         """淡出动画完成时的回调"""
@@ -523,10 +464,11 @@ class Bubble(QWidget):
             return
 
         # 动画完成后，清空当前气泡信息
-        self._current_bubble = None
+        self._control.current = None
 
         self._fading_out = False  # 清除淡出标志
-        self.hide()
+        self._control.fading_out = False
+        self._host.hide()
 
         # 检查队列是否有待显示的气泡
         self._try_show_next_in_queue()
@@ -539,15 +481,13 @@ class Bubble(QWidget):
 
         # 新气泡到来时取消旧淡出状态
         self._fading_out = False
-
-        # 停止任何正在进行的动画
-        self._anim.stop()
+        self._control.fading_out = False
 
         self._visible = True
-        self._anchor_available = True  # 锚点可用
+        self._control.visible = True
+        self._control.anchor_available = True  # 锚点可用
 
         # 直接计算初始锚点位置（参考 command_dialog.py 的逻辑）
-        from config.config import ANIMATION
         pet_width = ANIMATION['pet_size'][0]
         pet_height = ANIMATION['pet_size'][1]
 
@@ -558,135 +498,81 @@ class Bubble(QWidget):
             # 参考 command_dialog.py 的逻辑：主宠核心位置是窗口左上角坐标
             # 所以我们需要计算 pet_window 的左上角位置，然后基于此计算 top 锚点
             screen_geom = get_screen_geometry_for_point(
-                point=QCursor.pos(),
-                fallback_widget=self,
+                point=pointer_position(),
+                fallback_widget=self._host,
             )
             pet_x = int(screen_geom.center.x) - pet_width // 2
             pet_y = int(screen_geom.center.y) - pet_height // 2
             # 计算 top 锚点位置
-            self._anchor_point = QPoint(
+            self._control.set_anchor_point(Point(
                 pet_x + pet_width // 2,  # top 锚点的 X 坐标（水平中心）
                 pet_y  # top 锚点的 Y 坐标（顶部）
-            )
+            ))
 
         # 直接更新位置
         self._update_position()
 
         # 确保窗口已显示
-        if not self.isVisible():
-            self.show()
+        if not self._host.isVisible():
+            self._host.show()
 
         # 发布 UI 创建请求，用于后续更新（不阻塞显示）
         create_event = Event(EventType.UI_CREATE, {
-            'window_id': self._target_ui_id,
-            'anchor_id': self._target_anchor_id,
-            'ui_id': self._ui_id
+            'window_id': self._control.target_ui_id,
+            'anchor_id': self._control.target_anchor_id,
+            'ui_id': self._control.ui_id
         })
         self._event_center.publish(create_event)
 
         # 启动淡入动画（不需要回调）
         self._animate(1.0)
 
-    def _animate(self, target: float, on_finished=None):
-        """执行透明度动画"""
-        self._anim.stop()
-        if self._anim_finished_handler is not None:
-            try:
-                self._anim.finished.disconnect(self._anim_finished_handler)
-            except (TypeError, RuntimeError):
-                pass
-            self._anim_finished_handler = None
-
-        current_opacity = self._opacity.opacity()
+    def _animate(self, target: float):
+        """执行透明度动画（时长按淡入/淡出区分）。"""
+        current = self._host.opacity
         scaled_target = apply_ui_opacity(target)
-        self._anim.setStartValue(current_opacity)
-        self._anim.setEndValue(scaled_target)
-
-        # 根据目标值设置不同的动画持续时间
-        # 淡入时使用配置的 ui_fade_duration，淡出时使用 200ms
-        if scaled_target > current_opacity:
-            # 淡入
-            self._anim.setDuration(UI['ui_fade_duration'])
-        else:
-            # 淡出 - 使用 200ms
-            self._anim.setDuration(200)
-
-        # 动画完成回调（在 start() 之后连接）
-        if on_finished is not None:
-            def on_anim_finished():
-                handler = self._anim_finished_handler
-                self._anim_finished_handler = None
-                if handler is not None:
-                    try:
-                        self._anim.finished.disconnect(handler)
-                    except (TypeError, RuntimeError):
-                        pass
-                on_finished()
-
-            self._anim_finished_handler = on_anim_finished
-            self._anim.finished.connect(on_anim_finished)
-
-        self._anim.start()
+        fade_out = scaled_target < current
+        self._host.fade_to(
+            scaled_target,
+            duration_ms=200 if fade_out else UI['ui_fade_duration'],
+            fade_out=fade_out,
+        )
 
     def clear_queue(self):
         """清空当前气泡和待显示队列"""
-        self._pending_queue.clear()
+        self._control.clear_queue()
         if self._visible:
             self.hide_bubble()
 
-    @staticmethod
-    def _metadata_matches(
-        source: str,
-        task_id: str,
-        kind: str,
-        *,
-        item_source: str,
-        item_task_id: str,
-        item_kind: str,
-    ) -> bool:
-        return (
-            (not source or item_source == str(source))
-            and (not task_id or item_task_id == str(task_id))
-            and (not kind or item_kind == str(kind))
-        )
-
     def remove_bubbles(self, *, source: str = '', task_id: str = '', kind: str = '') -> None:
         """按元数据撤销气泡，不影响其它来源的消息。"""
-        self._pending_queue = [
-            item for item in self._pending_queue
-            if not self._metadata_matches(
-                source,
-                task_id,
-                kind,
-                item_source=item[5],
-                item_task_id=item[6],
-                item_kind=item[7],
-            )
-        ]
-        current = self._current_bubble
-        if current is None or not self._metadata_matches(
-            source,
-            task_id,
-            kind,
-            item_source=current.source,
-            item_task_id=current.task_id,
-            item_kind=current.kind,
-        ):
+        matched = self._control.drop_matching(
+            source=source, task_id=task_id, kind=kind,
+        )
+        if not matched:
             return
         if self._visible:
             self.hide_bubble()
         else:
-            self._current_bubble = None
+            self._control.current = None
             self._try_show_next_in_queue()
 
-    def mousePressEvent(self, event):
-        """鼠标点击事件 - 左键关闭，右键复制并关闭"""
-        from lib.script.ui._particle_helper import publish_click_particle
-        publish_click_particle(self, event)
-        if event.button() == Qt.LeftButton:
-            self.hide_bubble()
-        elif event.button() == Qt.RightButton:
-            if self._current_bubble:
-                QApplication.clipboard().setText(self._current_bubble.text)
-            self.hide_bubble()
-        event.accept()
+    def isVisible(self) -> bool:
+        """后端窗口当前是否可见。"""
+        return bool(self._host.isVisible())
+
+    def hide(self) -> None:
+        """立即隐藏（不播淡出动画），供关机清理路径使用。"""
+        self._visible = False
+        self._control.visible = False
+        self._control.anchor_available = False
+        self._fading_out = False
+        self._control.fading_out = False
+        self._host.hide()
+
+    def close(self):
+        """关闭并释放后端窗口。"""
+        self._host.cleanup()
+
+
+__all__ = ["Bubble", "BubbleInfo"]

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from PyQt5.QtCore import QPoint, Qt
-from PyQt5.QtGui import QPainter
+from PyQt5.QtGui import QCursor, QPainter
 
 from lib.core.render.visuals.types import Point, Rect, coerce_point
 
@@ -21,6 +21,12 @@ def to_qpoint(value: object) -> QPoint:
     if point is None:
         raise TypeError(f"cannot convert to QPoint: {value!r}")
     return point
+
+
+def pointer_core_position() -> Point:
+    """当前指针位置，翻译成核心 `Point`（仅 Windows 光标事实在 Qt 侧）。"""
+    position = QCursor.pos()
+    return Point(float(position.x()), float(position.y()))
 
 
 def move_widget(widget, position: Point | object) -> None:

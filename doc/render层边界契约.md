@@ -4,7 +4,7 @@
 
 本文档定义 `lib/core/render/` 的目标结构与依赖边界。它不是阶段计划，而是结构改建完成后必须成立的规则。
 
-**状态：第 6 节迁移顺序 1、2（目录切分）、3 已执行；`contract.py` 协议抽取仅覆盖 `lib/script/ui` 之外的部分，视觉/平台能力的注入式收敛仍在进行。** 目录与引用规则以本文档为准；改建前的事实源是 [Qt 边界契约](Qt边界契约.md) 与 [跨后端视觉表现契约](视觉表现契约.md)，那两份文档继续负责“哪些内容算视觉逻辑”和“什么算无 Qt”。第一章描述的是最终目标：`lib/script` 当前仍有约 80 个文件以具体路径引用后端。
+**状态：第 6 节迁移顺序 1、2（目录切分）、3 已执行；后端中立协议与统一数据类型已落地（第 11 节），控件层“描述 + 后端渲染”的首个产品控件已迁移（第 12 节）。** 目录与引用规则以本文档为准；改建前的事实源是 [Qt 边界契约](Qt边界契约.md) 与 [跨后端视觉表现契约](视觉表现契约.md)，那两份文档继续负责“哪些内容算视觉逻辑”和“什么算无 Qt”。第一章描述的是最终目标；产品控件面（`lib/script/ui` 直接 `import PyQt5`）仍需逐个控件迁移，滚动清单见第 12 节。
 
 本文只新增目录与引用规则，不改变任何视觉语义、数值来源或渲染结果。改建过程中出现分歧时，以 [视觉表现契约](视觉表现契约.md) 和当前 Qt 基准为事实源。
 
@@ -35,7 +35,7 @@ lib/core/render/
     qt/
       drawing/           命令到 QPainter 的执行 + 绘制期渲染事实（presentation、text_metrics）
       runtime/           窗口、输入、调度、字体、屏幕、托盘、播放器
-      widgets/           产品页面共享的 QWidget 基类（页面、锚点助手）
+      widgets/           产品页面 QWidget 基类与控件窗口宿主（页面、锚点、control_host）
     dx/                  未切分的实验实现，available=False
     vulkan/              占位注册项，不提前建抽象
 ```
@@ -72,11 +72,17 @@ Vulkan 在本文档生效时只是 `registry.py` 里的一条未启用描述符�
 - DX 的 `lib/core/render/backends/dx/application_ui.py`、`lib/core/render/backends/dx/speaker_search.py`、`lib/core/render/backends/dx/speaker_playlist.py`、`lib/core/render/backends/dx/command_hint.py`、`lib/core/render/backends/dx/announcement.py` 属于后端专属窗口实现，不得被 `lib/script/ui` 或业务层引用；
 - 它们消费 `visuals/` 的描述，不得重新决定面板填充、颜色或文字排版。
 
-**档位 D：产品共享控件件（`backends/qt/widgets/`）**
+**档位 D：产品共享控件件与控件窗口宿主（`backends/qt/widgets/`）**
 
-- 放的是"产品页面要继承/调用的 QWidget 骨架"：工具页基类、锚点助手；
-- `lib/script/ui` 允许直接继承，因为产品页面本身就是 QWidget 子类——这不是平台能力，
+- 放两类东西：
+  1. “产品页面要继承/调用的 QWidget 骨架”——工具页基类、锚点助手；
+  2. “渲染一个控件描述的后端窗口宿主”——`control_host.py`，把
+     `lib/core/render/visuals/controls.py` 的描述渲染成真实顶层窗口；
+- `lib/script/ui` 允许直接继承页面基类，因为产品页面本身就是 QWidget 子类——这不是平台能力，
   抽象成协议只会得到带 Qt 返回值的协议，等于把耦合从路径挪到类型；
+- 控件窗口宿主**不得**静态引用档位 A（`drawing/`）：`DrawBackend` 与 `PresentationHost`
+  必须由 `render_bridge` 注入。档位 D 是“控件工具包事实”的落点，档位 A 是“像素执行”的落点，
+  混在一个文件会让档位 A 的引用清单再次失守；
 - 不得被 `lib/script` 下 `ui/` 以外的模块引用，也不得反向引用 `lib/script`。
 
 一句话概括：**绘制实现不得共享，能力经协议共享，产物控件只被产品层继承。**
@@ -137,7 +143,8 @@ Vulkan 在本文档生效时只是 `registry.py` 里的一条未启用描述符�
 - `lib/core/render/backends/*/drawing/` 只被 `router.py`、后端自带窗口与 `lib/script/ui/render_bridge.py` 引用；
 - `lib/core/render/` 整体不得导入 `lib.script`，`visuals/` 还不得导入 `PyQt5` 或任一 `backends`；
 - `lib/core/render/backends/*/runtime/` 不得被 `lib/script` 以具体路径导入：`lib/script/ui` 的两份冻结清单现在都是空的；
-- 唯一允许的后端路径例外是 `backends/qt/widgets/`（产品页面基类，档位 D）。
+- 唯一允许的后端路径例外是 `backends/qt/widgets/`（产品页面基类 + 控件窗口宿主，档位 D）；
+- 已迁移的产品控件不再出现在 `frozen_ui_qt_importers` 里，且不得再继承任何 Qt 基类。
 - `lib/core` 内不得出现 `QPainter` / `QPainterPath` / `QPixmap` / `QImage` / `Widget` 类型；
 - 现有跨后端一致性测试保持通过：`tests.test_visual_presenters`、`tests.test_graphics_primitives_parity`、`tests.test_visual_backend_parity`。
 
@@ -292,6 +299,75 @@ DX 保持未切分：DX 仍是 `available=False` 的实验实现，没有第二�
 
 **仍未完成（下一轮的输入）**
 
-控件仍 `import PyQt5`（控件的 QWidget/QPainter 事实）。真正压缩这一面需要让产品控件不再
-继承 `QWidget`，那是"控件层换实现"级别的改动，不是引用路径收敛。本轮已把可协议化的部分
-（屏幕几何、字体、文本度量）全部协议化，剩下的 Qt 面是控件本体。
+本轮之后控件仍 `import PyQt5`（73 个文件；控件的 QWidget/QPainter 事实）。真正压缩这一面
+需要让产品控件不再继承 `QWidget`，那是"控件层换实现"级别的改动，不是引用路径收敛。
+本轮已把可协议化的部分（屏幕几何、字体、文本度量）全部协议化，剩下的 Qt 面是控件本体——
+第 12 节开始按控件逐个迁移。
+
+## 12. 第五轮执行记录（控件层：描述 + 后端渲染）
+
+前四轮把“平台能力”协议化后，`lib/script/ui` 对 `backends/qt/runtime/` 与 `drawing/` 的引用都归零，
+但仍有 72 个控件直接 `import PyQt5`。原因不是落点没收干净，而是这些控件**本身是 `QWidget` 子类**：
+再抽一层协议只会得到“返回 `QRect` 的协议”，把耦合从路径挪到类型。本轮因此改的是控件层形状本身。
+本轮只迁一个控件作为样板（气泡框），把模式钉死后再滚动铺开。
+
+**新增共享描述层（`lib/core/render/visuals/controls.py`，后端中立）**
+
+- `BubbleControl`：气泡的可见性、当前消息、待显示队列、`min/max` tick 状态机、锚点解算、
+  透明度目标与绘制批次。`on_tick()` 返回 `TICK_*` 动作码，`add()` 返回替换/排队决定，
+  `click_intent()` 返回产品意图——控件宿主只执行，不判断。
+- `BubbleInfo` / `PointerEvent` / `PointerClick` / `AnchorPlacement`：消息、指针事件、
+  指针意图与锚点解算结果的中立数据类型。绘制事实源仍是 `build_bubble_visual` 的批次，
+  两个后端共用同一份。
+- 本模块不 import `PyQt5`，也不 import 任何 `backends/*`：可以在没有桌面后端的进程里
+  完成排版、排队与点击判定（`tests/test_control_layer_descriptions.py` 用屏蔽 `PyQt5`
+  的子进程验证这一点）。
+
+**新增控件窗口宿主（`backends/qt/widgets/control_host.py`，档位 D）**
+
+- `QtControlHost` 持有真实顶层窗口：窗口标志、透明度动画、绘制批次执行、指针事件翻译、
+  剪贴板与 z-order 注册。它**不静态引用档位 A**：`DrawBackend` 与 `PresentationHost`
+  由 `render_bridge.create_control_host()` 注入，档位 A 的引用清单因此保持不变。
+- 淡出回调只在动画真正播完时触发（`stop_animation()` 打断即取消），与迁移前的
+  “新气泡打断旧淡出”语义一致。
+
+**产品控件迁移（`lib/script/ui/bubble.py`）**
+
+- `Bubble` 不再是 `QWidget` 子类，也不再 import `PyQt5`：它订阅事件、维护队列，
+  把 `BubbleControl` 的描述交给宿主渲染。为兼容既有调用方保留了 `adjust_size_to_text`、
+  `fade_in`、`hide_bubble`、`clear_queue`、`remove_bubbles`、`get_text_size`、
+  `get_anchor_point`、`isVisible`、`hide`、`close`，并继续用属性视图转发
+  `_current_bubble` / `_pending_queue` / `_anchor_point` / `_anchor_available`。
+- 点击产物（左键关闭、右键复制并关闭、点击粒子）改由描述层判定；粒子发射走
+  `_particle_helper.publish_click_particle_at()`，Qt 控件与无 Qt 控件共用同一份映射。
+
+**新增的三项中立取用（仍走 `render_bridge` 落点）**
+
+- `create_control_host(**kwargs)`：控件窗口宿主的唯一构造口；
+- `pointer_position()`：当前指针位置，返回核心 `Point`（Qt 事实留在 `drawing/window.py`）；
+- `QtControlHost.geometry_rect()`：窗口几何，返回核心 `Rect` 而不是 `QRect`。
+
+**结果（2026-10-01）**
+
+- `frozen_ui_qt_importers`：73 → **72**，`lib/script/ui/bubble.py` 已移出；新增断言要求它
+  既不 import `PyQt5` 也不继承任何 Qt 基类。
+- 档位 A 的直接引用清单**不新增条目**：控件窗口宿主通过注入满足档位 A 规则。
+- 像素基准不变：`test_bubble_visual` 的四项断言（换行与尺寸、逐像素批次、富文本推进量）
+  全部保持通过；新增 `test_control_layer_descriptions` 另外验证“宿主画出的像素与直接画
+  批次逐字节一致”，以及指针事件 → 中立事件 → 产品意图的翻译链路。
+
+验证：
+
+- `py -3 -m unittest discover -s tests -p "test_*.py" -q`：2051 通过、10 跳过。
+- `py -3 -m unittest discover -s tests/dx -p "test_*.py" -q`：122 通过、7 跳过。
+- `py -3 -m ruff check lib config scripts tests` 归零；`py -3 -m compileall -q config lib scripts tests` 通过。
+
+**滚动清单（下一个控件）**
+
+模式已固定为三步：把控件状态搬进 `visuals/controls.py`（或同级新模块）→ 控件本体删掉
+`QWidget` 基类与 `PyQt5` → 从 `frozen_ui_qt_importers` 删除条目。建议顺序：
+
+1. `tooltip_panel.py`（同属“纯绘制 + 自动隐藏”，已有 `test_tooltip_panel_opacity`）；
+2. `clickthrough_button.py` / `rect_action_button_style.py`（无子控件、只有绘制与点击）；
+3. 其余顶层浮窗控件；带子控件树与 `exec_()` 的对话框（`confirm_dialog`、`update_dialog`、
+   `forum_*`、`office_*`）放最后，它们需要宿主先支持子控件与模态，属于下一轮的结构扩展。
