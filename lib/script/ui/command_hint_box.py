@@ -19,7 +19,6 @@ from PyQt5.QtGui import QPainter
 
 from config.config import UI
 from config.tooltip_config import TOOLTIPS
-from lib.core.render.backends.qt.runtime.font import get_digit_font, get_ui_font
 from lib.core.render.visuals.application_visuals import (
     COMMAND_HINT_DEFAULT_ITEMS,
     COMMAND_HINT_PAGE_SIZE,
@@ -28,17 +27,11 @@ from lib.core.render.visuals.application_visuals import (
     command_hint_side_font_size,
 )
 from lib.core.render.visuals.types import Rect
-from lib.core.render.backends.qt.runtime.text_metrics import QtTextMetrics
-from lib.script.ui.render_bridge import create_draw_backend, qpoint_from_point
+from lib.script.ui.render_bridge import create_draw_backend, qpoint_from_point, clamp_rect_position, digit_font as get_digit_font, move_widget_to_global, text_metrics as QtTextMetrics, ui_font as get_ui_font, widget_global_rect
 from config.scale import scale_px
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.hash_cmd_registry import get_hash_cmd_registry
 from lib.core.unified_draw import Layer, get_layer_manager
-from lib.core.render.backends.qt.runtime.screen import (
-    clamp_rect_position,
-    move_widget_to_global,
-    widget_global_rect,
-)
 from lib.core.anchor_utils import apply_ui_opacity
 from lib.script.ui.page_turn_buttons import make_page_buttons, update_page_buttons_position
 
@@ -224,7 +217,7 @@ class CommandHintBox(QWidget):
         self._event_center.publish(Event(EventType.PARTICLE_REQUEST, {
             'particle_id': 'right_fade',
             'area_type':   'rect',
-            'area_data':   (rect.x(), rect.y(), rect.x() + rect.width(), rect.y() + rect.height()),
+            'area_data':   (int(rect.x), int(rect.y), int(rect.x) + int(rect.width), int(rect.y) + int(rect.height)),
         }))
         self._anim.finished.connect(self._on_fade_out_done)
         self._animate(0.0)

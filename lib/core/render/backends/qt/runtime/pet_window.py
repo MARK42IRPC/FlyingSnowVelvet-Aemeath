@@ -5,7 +5,7 @@ from lib.core.pet_window import PetWindow
 from lib.core.render.backends.qt.runtime.input import get_cursor_position
 from lib.core.render.backends.qt.runtime.pet_widget import QtPetWidget
 from lib.core.render.backends.qt.runtime.scheduler import QtScheduler
-from lib.core.render.backends.qt.runtime.widget_anchors import publish_widget_anchor_response
+from lib.core.render.backends.qt.widgets.anchors import publish_widget_anchor_response
 from lib.core.render.backends.qt.drawing.window import move_widget, set_pet_window_clickthrough
 from lib.core.render.backends.qt.runtime.window_setup import (
     finalize_pet_window_startup,

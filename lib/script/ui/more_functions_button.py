@@ -7,19 +7,14 @@ from PyQt5.QtCore import Qt, QPropertyAnimation, QEasingCurve, QPoint
 from PyQt5.QtGui import QPainter
 
 from config.config import UI
-from lib.core.render.backends.qt.runtime.font import get_ui_font
 from config.scale import scale_px
 from config.tooltip_config import TOOLTIPS
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.desktop_actions import request_tray_menu
 from lib.core.unified_draw import Layer, get_layer_manager
-from lib.core.render.backends.qt.runtime.screen import (
-    clamp_rect_position,
-    move_widget_to_global,
-    widget_global_rect,
-)
 from lib.core.anchor_utils import apply_ui_opacity
 from lib.script.ui.rect_action_button_style import paint_rect_action_button
+from lib.script.ui.render_bridge import clamp_rect_position, move_widget_to_global, ui_font as get_ui_font, widget_global_rect
 
 
 class MoreFunctionsButton(QWidget):
@@ -79,8 +74,8 @@ class MoreFunctionsButton(QWidget):
         if not self._launch_wuwa_button or not self._launch_wuwa_button.isVisible():
             return
         target_rect = widget_global_rect(self._launch_wuwa_button)
-        btn_x = target_rect.x()
-        btn_y = target_rect.y()
+        btn_x = int(target_rect.x)
+        btn_y = int(target_rect.y)
         new_x = btn_x
         new_y = btn_y - self.HEIGHT
         x, y, _ = clamp_rect_position(
@@ -115,7 +110,7 @@ class MoreFunctionsButton(QWidget):
         self._event_center.publish(Event(EventType.PARTICLE_REQUEST, {
             'particle_id': 'right_fade',
             'area_type': 'rect',
-            'area_data': (rect.x(), rect.y(), rect.x() + rect.width(), rect.y() + rect.height())
+            'area_data': (int(rect.x), int(rect.y), int(rect.x) + int(rect.width), int(rect.y) + int(rect.height))
         }))
 
     def _on_fade_out_complete(self) -> None:

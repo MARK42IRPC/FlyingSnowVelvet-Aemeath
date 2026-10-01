@@ -4,7 +4,7 @@ from __future__ import annotations
 from lib.core.render.visuals.types import Point, Rect, coerce_point
 from lib.core.render.backends.qt.runtime.entity_widget import QtEntityWidget
 from lib.core.render.backends.qt.runtime.input import keyboard_input_from_qt, mouse_input_from_qt
-from lib.core.render.backends.qt.runtime.widget_anchors import get_anchor_point as resolve_anchor_point
+from lib.core.render.backends.qt.widgets.anchors import get_anchor_point as resolve_anchor_point
 from lib.core.render.backends.qt.drawing.window import render_draw_core
 
 

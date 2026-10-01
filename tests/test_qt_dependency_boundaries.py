@@ -728,61 +728,18 @@ class QtDependencyBoundaryTests(unittest.TestCase):
         repo_root = Path(__file__).resolve().parents[1]
         runtime_prefix = "lib.core.render.backends.qt.runtime"
 
-        frozen_ui_runtime_importers = {
-            "lib/script/ui/ai_settings_panel.py",
-            "lib/script/ui/announcement_dialog.py",
-            "lib/script/ui/bubble.py",
-            "lib/script/ui/bug_tracker_window.py",
-            "lib/script/ui/chat_mode_button.py",
-            "lib/script/ui/clickthrough_button.py",
-            "lib/script/ui/close_button.py",
-            "lib/script/ui/cmd_window.py",
-            "lib/script/ui/command_dialog.py",
-            "lib/script/ui/command_hint_box.py",
-            "lib/script/ui/forum_account.py",
-            "lib/script/ui/forum_board.py",
-            "lib/script/ui/forum_color_control.py",
-            "lib/script/ui/forum_window.py",
-            "lib/script/ui/game_manager_window.py",
-            "lib/script/ui/game_runtime.py",
-            "lib/script/ui/help_window.py",
-            "lib/script/ui/interaction_mode_button.py",
-            "lib/script/ui/launch_wuwa_button.py",
-            "lib/script/ui/mic_stt_indicator.py",
-            "lib/script/ui/more_functions_button.py",
-            "lib/script/ui/office_approval_dialog.py",
-            "lib/script/ui/office_chat_view.py",
-            "lib/script/ui/office_manager_card.py",
-            "lib/script/ui/office_mode_page.py",
-            "lib/script/ui/office_page.py",
-            "lib/script/ui/office_style.py",
-            "lib/script/ui/page_turn_buttons.py",
-            "lib/script/ui/playlist_panel.py",
-            "lib/script/ui/progress_panel.py",
-            "lib/script/ui/qr_dialog_base.py",
-            "lib/script/ui/rect_action_button_style.py",
-            "lib/script/ui/restore_button.py",
-            "lib/script/ui/scale_button.py",
-            "lib/script/ui/speaker_control_buttons.py",
-            "lib/script/ui/speaker_menu_style.py",
-            "lib/script/ui/speaker_search_dialog.py",
-            "lib/script/ui/speaker_search_result_box.py",
-            "lib/script/ui/tooltip_panel.py",
-            "lib/script/ui/tray_menu.py",
-            "lib/script/ui/update_dialog.py",
-            "lib/script/ui/voice_package_installer.py",
-            "lib/script/ui/workbench_components.py",
-            "lib/script/ui/workbench_settings_layout.py",
-            "lib/script/ui/workbench_window.py",
-            "lib/script/ui/world_objects/clock.py",
-            "lib/script/ui/world_objects/motor.py",
-            "lib/script/ui/world_objects/snow_pile.py",
-            "lib/script/ui/world_objects/snowball.py",
-            "lib/script/ui/world_objects/sofa.py",
-            "lib/script/ui/world_objects/speaker.py",
-        }
+        #: `lib/script/ui` 已全部改走 `render_bridge`，清单保持为空才是目标状态。
+        #: 与档位 A 同样保留空集合，让「只减不增」的清理断言继续有落点。
+        frozen_ui_runtime_importers: set[str] = set()
+        #: 与档位 A 同一个 UI 侧落点：控件向它要屏幕几何、字体与文本度量，
+        #: 由它转调后端注入的实现（未注入时回退 Qt）。产品页面共享的 QWidget 基类
+        #: 另有 `lib.core.render.backends.qt.widgets/`，见下面的 widgets 断言。
+        allowed_seams = {"lib/script/ui/render_bridge.py"}
 
         offenders = []
+        referencing = set()
+        widgets_prefix = "lib.core.render.backends.qt.widgets"
+        widgets_referencing = set()
         for path in sorted((repo_root / "lib" / "script").rglob("*.py")):
             relative = path.relative_to(repo_root).as_posix()
             if not relative.startswith("lib/script/ui/"):
@@ -796,12 +753,63 @@ class QtDependencyBoundaryTests(unittest.TestCase):
                 else:
                     continue
                 for name in names:
+                    if name.startswith(widgets_prefix):
+                        widgets_referencing.add(relative)
                     if name == runtime_prefix or name.startswith(runtime_prefix + "."):
-                        if relative not in frozen_ui_runtime_importers:
-                            offenders.append(f"{relative}:{node.lineno}:{name}")
+                        referencing.add(relative)
+                        if relative in frozen_ui_runtime_importers:
+                            continue
+                        if relative in allowed_seams:
+                            continue
+                        offenders.append(f"{relative}:{node.lineno}:{name}")
 
+        #: 落点之外还有人写死 runtime 路径就会失败；`render_bridge.py` 现在是唯一允许的
+        #: 转发点，`widgets/` 只承载产品页面要继承的 QWidget 骨架。
         self.assertEqual(offenders, [], "业务层新引入具体后端运行时路径；请经后端中立协议获取能力")
-        self.assertGreater(len(frozen_ui_runtime_importers), 20)
+        for relative in sorted(referencing - allowed_seams):
+            raise AssertionError(f"{relative} 直接引用了 runtime/，请改走 render_bridge")
+        #: `widgets/` 是产品页面共享的 QWidget 基类（页面继承页面），
+        #: 允许 `lib/script/ui` 直接继承；但它必须真的在用，否则这层就该删掉。
+        self.assertTrue(
+            widgets_referencing,
+            "没有任何控件继承 widgets/ 的页面基类，落点清单已失效")
+        self.assertEqual(
+            sorted((frozen_ui_runtime_importers | allowed_seams) - referencing),
+            [],
+            "基线或落点里的文件已不再引用 runtime/；请从清单中删除它",
+        )
+        self.assertEqual(
+            frozen_ui_runtime_importers,
+            set(),
+            "档位 B 的目标是 `lib/script/ui` 零直接引用；重新引入必须先改契约文档并说明理由",
+        )
+
+    def test_retired_qt_runtime_shims_are_not_named_by_business_code(self):
+        """已迁走的 `runtime.workbench_page` / `runtime.text_metrics` 不得再被业务层引用。
+
+        两者分别去 `backends/qt/widgets/`（共享控件基类）与 `backends/qt/drawing/`
+        （绘制期文本度量）。保留的转发模块只服务于后端内部与历史测试路径。
+        """
+        repo_root = Path(__file__).resolve().parents[1]
+        retired = (
+            "lib.core.render.backends.qt.runtime.workbench_page",
+            "lib.core.render.backends.qt.runtime.text_metrics",
+        )
+        offenders = []
+        for path in sorted((repo_root / "lib" / "script").rglob("*.py")):
+            relative = path.relative_to(repo_root).as_posix()
+            tree = ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    names = [alias.name for alias in node.names]
+                elif isinstance(node, ast.ImportFrom):
+                    names = [node.module or ""]
+                else:
+                    continue
+                for name in names:
+                    if name in retired:
+                        offenders.append(f"{relative}:{node.lineno}:{name}")
+        self.assertEqual(offenders, [])
 
     def test_qt_package_has_no_wildcard_reexport(self):
         """`backends/qt/__init__.py` 不得用通配符聚合并导出子模块。

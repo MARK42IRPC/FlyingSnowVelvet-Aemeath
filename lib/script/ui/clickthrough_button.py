@@ -4,28 +4,22 @@ from PyQt5.QtCore import Qt, QPropertyAnimation, QEasingCurve, QPoint
 from PyQt5.QtGui import QColor, QPainter
 
 from config.config import UI, TIMEOUTS
-from lib.core.render.backends.qt.runtime.font import get_ui_font
 from config.scale import scale_px
 from config.tooltip_config import TOOLTIPS
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.render.visuals.types import Point
 from lib.core.unified_draw import Layer, get_layer_manager
-from lib.core.render.backends.qt.runtime.screen import (
-    clamp_rect_position,
-    move_widget_to_global,
-    widget_global_rect,
-)
 from lib.script.voice.ams_clickthrough_reminder import AmsClickthroughReminderSound
 from lib.core.anchor_utils import (
     animate_opacity,
     refresh_last_activity,
 )
-from lib.core.render.backends.qt.runtime.widget_anchors import (
+from lib.script.ui.render_bridge import qpoint_from_point, clamp_rect_position, move_widget_to_global, ui_font as get_ui_font, widget_global_rect
+from lib.script.ui.rect_action_button_style import paint_rect_action_button
+from lib.core.render.backends.qt.widgets.anchors import (
     get_anchor_point as resolve_anchor_point,
     publish_widget_anchor_response,
 )
-from lib.script.ui.render_bridge import qpoint_from_point
-from lib.script.ui.rect_action_button_style import paint_rect_action_button
 
 
 def _hex(color: QColor) -> str:
@@ -277,7 +271,7 @@ class ClickThroughButton(QWidget):
         particle_event = Event(EventType.PARTICLE_REQUEST, {
             'particle_id': 'right_fade',
             'area_type': 'rect',
-            'area_data': (rect.x(), rect.y(), rect.x() + rect.width(), rect.y() + rect.height())
+            'area_data': (int(rect.x), int(rect.y), int(rect.x) + int(rect.width), int(rect.y) + int(rect.height))
         })
         self._event_center.publish(particle_event)
 

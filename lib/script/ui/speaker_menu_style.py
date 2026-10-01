@@ -12,8 +12,7 @@ from lib.core.render.visuals.panel_visuals import (
     panel_shell_commands,
 )
 from lib.core.render.visuals.types import Rect
-from lib.script.ui.render_bridge import create_draw_backend, qt_color
-from lib.core.render.backends.qt.runtime.font import get_ui_font
+from lib.script.ui.render_bridge import create_draw_backend, qt_color, ui_font as get_ui_font
 from config.scale import scale_px
 from lib.core.unified_draw import Layer, get_layer_manager
 

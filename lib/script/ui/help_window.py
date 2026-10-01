@@ -29,11 +29,10 @@ from lib.core.anchor_utils import apply_ui_opacity
 from lib.core.event.center import EventType, get_event_center
 from lib.core.render.visuals.announcement_visuals import get_announcement_colors
 from lib.core.logger import get_logger
-from lib.core.render.backends.qt.runtime.font import get_ui_font
-from lib.core.render.backends.qt.runtime.screen import clamp_rect_position, get_screen_geometry_for_point
 from lib.core.unified_draw import Layer, get_layer_manager
 from lib.script.ui.workbench_floating import WorkbenchFloatingWindow
 from lib.script.ui.workbench_settings_layout import SmoothScrollArea
+from lib.script.ui.render_bridge import clamp_rect_position, screen_rect_for_point as get_screen_geometry_for_point, ui_font as get_ui_font
 
 logger = get_logger(__name__)
 
@@ -237,8 +236,8 @@ class DesktopPetHelpDialog(WorkbenchFloatingWindow):
     def _center_on_screen(self) -> None:
         cursor_pos = QCursor.pos()
         screen = get_screen_geometry_for_point(point=cursor_pos, fallback_widget=self)
-        target_x = screen.x() + (screen.width() - self.width()) // 2
-        target_y = screen.y() + (screen.height() - self.height()) // 2
+        target_x = int(screen.x) + (int(screen.width) - self.width()) // 2
+        target_y = int(screen.y) + (int(screen.height) - self.height()) // 2
         x, y, _ = clamp_rect_position(
             target_x,
             target_y,

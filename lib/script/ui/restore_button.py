@@ -5,13 +5,12 @@ from PyQt5.QtGui import QColor
 from config.scale import scale_px
 from config.tooltip_config import TOOLTIPS
 from lib.core.event.center import get_event_center, EventType, Event
-from lib.core.render.backends.qt.runtime.screen import clamp_rect_position
-from lib.core.render.backends.qt.runtime.widget_anchors import (
+from lib.script.ui.render_bridge import qpoint_from_point, clamp_rect_position
+from lib.script.ui.rect_action_button_style import RectActionButton
+from lib.core.render.backends.qt.widgets.anchors import (
     get_anchor_point as resolve_anchor_point,
     publish_widget_anchor_response,
 )
-from lib.script.ui.render_bridge import qpoint_from_point
-from lib.script.ui.rect_action_button_style import RectActionButton
 
 
 def _hex(color: QColor) -> str:

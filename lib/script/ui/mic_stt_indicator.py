@@ -9,11 +9,10 @@ import time
 
 from config.config import UI
 from lib.core.render.visuals.application_visuals import build_mic_stt_indicator_visual
-from lib.script.ui.render_bridge import create_draw_backend
+from lib.script.ui.render_bridge import create_draw_backend, clamp_rect_position
 from config.scale import scale_px
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.unified_draw import Layer, get_layer_manager
-from lib.core.render.backends.qt.runtime.screen import clamp_rect_position
 from lib.core.anchor_utils import apply_ui_opacity
 
 

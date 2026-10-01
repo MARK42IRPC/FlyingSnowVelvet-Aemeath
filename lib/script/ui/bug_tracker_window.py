@@ -26,14 +26,14 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
-from lib.core.render.backends.qt.runtime.font import get_digit_font, get_ui_font
 from config.scale import scale_px
 from lib.core.layer import Layer
-from lib.core.render.backends.qt.runtime.workbench_page import QtWorkbenchToolPage
 from lib.core.unified_draw import get_layer_manager
 from lib.script.app.startup_probe import load_saved_watermark_payload
 from lib.script.bug_tracker.storage import BugInstanceInfo, BugRecord, BugTrackerLogStore
 from lib.script.workbench.theme import get_workbench_colors
+from lib.script.ui.render_bridge import digit_font as get_digit_font, ui_font as get_ui_font
+from lib.core.render.backends.qt.widgets.workbench_page import QtWorkbenchToolPage
 
 
 def _set_theme_colors() -> None:

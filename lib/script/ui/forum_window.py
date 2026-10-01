@@ -59,8 +59,6 @@ from lib.core.forum_filter import (
 from lib.core.forum_colors import build_color_tokens, text_colors
 from lib.core.forum_session import ForumSessionStore, is_logged_in
 from lib.core.logger import get_logger
-from lib.core.render.backends.qt.runtime.font import get_ui_font
-from lib.core.render.backends.qt.runtime.workbench_page import QtWorkbenchToolPage
 from lib.script.ui.forum_style import (
     FORUM_ACCENT_LABELS,
     FORUM_CARD_RADIUS,
@@ -89,6 +87,8 @@ from lib.script.ui.forum_sticker import ForumSticker, sticker_paths
 from lib.script.ui.forum_text import MarkupText
 from lib.script.ui.workbench_components import create_window_button
 from lib.script.ui.workbench_settings_layout import SmoothScrollArea
+from lib.script.ui.render_bridge import ui_font as get_ui_font
+from lib.core.render.backends.qt.widgets.workbench_page import QtWorkbenchToolPage
 
 COLUMN_COUNT = 3
 WALL_MARGIN = scale_px(16, min_abs=13)

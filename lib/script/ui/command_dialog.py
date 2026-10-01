@@ -5,7 +5,6 @@ from PyQt5.QtCore import Qt, QPoint, QPropertyAnimation, QEasingCurve, QEvent
 from PyQt5.QtGui import QPainter, QCursor
 
 from config.config import UI, COMMAND_DIALOG, ANIMATION
-from lib.core.render.backends.qt.runtime.font import get_cmd_font
 from config.scale import scale_px, scale_style_px
 from config.tooltip_config import TOOLTIPS
 from lib.script.ui.command_dialog_handler import CommandDialogEventHandler
@@ -16,16 +15,11 @@ from lib.core.render.visuals.visuals import (
     resolve_command_panel_geometry,
 )
 from lib.core.unified_draw import Layer, get_layer_manager
-from lib.core.render.backends.qt.runtime.screen import (
-    get_screen_geometry_for_point,
-    move_widget_to_global,
-    widget_global_rect,
-)
-from lib.script.ui.render_bridge import create_draw_backend, qt_color_name, qpoint_from_point
+from lib.script.ui.render_bridge import create_draw_backend, qt_color_name, qpoint_from_point, cmd_font as get_cmd_font, move_widget_to_global, screen_rect_for_point as get_screen_geometry_for_point, widget_global_rect
 from lib.core.anchor_utils import (
     animate_opacity,
 )
-from lib.core.render.backends.qt.runtime.widget_anchors import (
+from lib.core.render.backends.qt.widgets.anchors import (
     get_anchor_point as resolve_anchor_point,
     publish_widget_anchor_response,
 )
@@ -278,7 +272,7 @@ class CommandDialog(QWidget):
             particle_event = Event(EventType.PARTICLE_REQUEST, {
                 'particle_id': 'right_fade',
                 'area_type': 'rect',
-                'area_data': (rect.x(), rect.y(), rect.x() + rect.width(), rect.y() + rect.height())
+                'area_data': (int(rect.x), int(rect.y), int(rect.x) + int(rect.width), int(rect.y) + int(rect.height))
             })
             self._event_center.publish(particle_event)
         else:
@@ -459,7 +453,7 @@ class CommandDialog(QWidget):
         resolved = resolve_command_panel_geometry(
             Rect(pet_pos.x(), pet_pos.y(), pet_w, pet_h),
             (self.width(), self.height()),
-            Rect(screen.x(), screen.y(), screen.width(), screen.height()),
+            Rect(int(screen.x), int(screen.y), int(screen.width), int(screen.height)),
             offset_x=self._offset_x,
             offset_y=self._offset_y,
         )
@@ -635,8 +629,8 @@ class CommandDialog(QWidget):
                 if not widget.isVisible():
                     continue
                 center = widget_global_rect(widget).center()
-                dx = mouse.x() - center.x()
-                dy = mouse.y() - center.y()
+                dx = mouse.x() - int(center.x)
+                dy = mouse.y() - int(center.y)
                 dist_sq = dx * dx + dy * dy
                 if nearest_sq is None or dist_sq < nearest_sq:
                     nearest_sq = dist_sq

@@ -37,8 +37,6 @@ from config.scale import scale_px
 from lib.core.event.center import EventType, get_event_center
 from lib.core.logger import get_logger
 from lib.core.particle_utils import spawn_particle_at_point
-from lib.core.render.backends.qt.runtime.font import get_ui_font
-from lib.core.render.backends.qt.runtime.workbench_page import QtWorkbenchToolPage
 from lib.script.office.contracts import ACTIVE_TASK_STATUSES, DEFAULT_REASONING_EFFORT
 from lib.script.office.ipc import OfficeFileIpc
 from lib.script.office.workspace import DEFAULT_WORKSPACE_NAME, resolve_desktop_dir
@@ -59,6 +57,8 @@ from lib.script.ui.workbench_settings_layout import (
     SettingsSection,
 )
 from lib.script.workbench.theme import get_workbench_colors
+from lib.script.ui.render_bridge import ui_font as get_ui_font
+from lib.core.render.backends.qt.widgets.workbench_page import QtWorkbenchToolPage
 
 
 logger = get_logger(__name__)

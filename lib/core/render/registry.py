@@ -16,12 +16,15 @@ from lib.core.render.backends.base import (
     DeferredCall,
     DesktopBackendBundle,
     DrawBackendFactory,
+    FontProvider,
     OverlayFactory,
+    PresentationHost,
     PetWindowFactory,
     SchedulerFactory,
     ScreenCaptureFactory,
     ScreenCaptureProvider,
     ScreenForPointProvider,
+    TextMetricsFactory,
     VirtualScreenProvider,
 )
 from lib.core.application_ui import ApplicationUiHostFactory
@@ -38,6 +41,9 @@ __all__ = [
     "get_deferred_call",
     "get_desktop_backend_bundle",
     "get_draw_backend_factory",
+    "get_font_provider",
+    "get_presentation_host",
+    "get_text_metrics_factory",
     "get_effect_overlay_factory",
     "get_event_pump_factory",
     "get_layer_window_host_factory",
@@ -57,6 +63,8 @@ __all__ = [
 
 _bundle: DesktopBackendBundle | None = None
 _installation_owner: object | None = None
+_presentation_host: PresentationHost | None = None
+_font_provider: FontProvider | None = None
 _logger = get_logger(__name__)
 
 
@@ -119,6 +127,35 @@ def get_desktop_backend_bundle() -> DesktopBackendBundle | None:
 
 def get_draw_backend_factory() -> DrawBackendFactory | None:
     return None if _bundle is None else _bundle.draw_backend_factory
+
+
+def get_presentation_host() -> PresentationHost | None:
+    """呈现几何（屏幕归属、夹取、全局坐标换算）；未注入时返回 None。
+
+    实现实例按 bundle 缓存：这两条读取入口在每帧路径上被调用（世界对象与面板
+    定位），每次新建一个无状态宿主只会白烧分配。安装新 bundle 时缓存失效。
+    """
+    global _presentation_host
+    if _bundle is None or _bundle.presentation_host_factory is None:
+        return None
+    if _presentation_host is None:
+        _presentation_host = _bundle.presentation_host_factory()
+    return _presentation_host
+
+
+def get_font_provider() -> FontProvider | None:
+    """后端字体取用入口；未注入时返回 None，由调用方走后端中立回退。"""
+    global _font_provider
+    if _bundle is None or _bundle.font_provider_factory is None:
+        return None
+    if _font_provider is None:
+        _font_provider = _bundle.font_provider_factory()
+    return _font_provider
+
+
+def get_text_metrics_factory() -> TextMetricsFactory | None:
+    """文本度量工厂（调用时传入后端自己的字体对象）；未注入时返回 None。"""
+    return None if _bundle is None else _bundle.text_metrics_factory
 
 
 def get_application_runtime_factory() -> ApplicationRuntimeFactory | None:
@@ -197,10 +234,12 @@ def install_desktop_backend_bundle(
     repeat install is a no-op that keeps the original bundle, so hosts built
     from the first install never end up drawing through a second backend.
     """
-    global _bundle, _installation_owner
+    global _bundle, _installation_owner, _presentation_host, _font_provider
     if _bundle is None:
         _bundle = bundle
         _installation_owner = owner
+        _presentation_host = None
+        _font_provider = None
         return
     if owner is not None and owner is _installation_owner:
         _logger.debug("桌面后端已由同一 owner 安装，重复安装按空操作处理")
@@ -222,8 +261,10 @@ def uninstall_desktop_backend_bundle(owner: object) -> None:
     a backend that has already been torn down and refuse to start, turning a
     recoverable backend failure into a startup failure.
     """
-    global _bundle, _installation_owner
+    global _bundle, _installation_owner, _presentation_host, _font_provider
     if _bundle is None or _installation_owner is not owner:
         return
     _bundle = None
     _installation_owner = None
+    _presentation_host = None
+    _font_provider = None

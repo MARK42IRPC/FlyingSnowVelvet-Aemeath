@@ -31,6 +31,14 @@
   东西，把像素比对测试的回归伪装成通过（本轮真的踩到过一次）。控件直接 `import PyQt5` 的名单另有一份
   只减不增的冻结清单，避免 UI 的 Qt 面在无人留意时长回来。主题色事实源仍是共享色板，本层只做
   `Color -> QColor` 的边界转换。
+- 渲染后端协议化与统一数据类型：新增 `PresentationHost` / `FontProvider` / `TextMetrics`
+  三个后端中立协议（`lib/core/render/backends/base.py`），由组合入口注入、经
+  `lib/script/ui/render_bridge.py` 取用。屏幕归属、位置夹取、控件全局矩形现在返回核心
+  `Rect`/`Point` 而不是 `QRect`/`QPoint`（`Rect` 补了 `center`/`right`/`bottom`）；
+  字体与文本度量按后端自己的对象提供。`lib/script/ui` 对具体后端运行时路径的直接引用
+  从 51 个文件降到 0，两份冻结清单（`drawing/`、`runtime/`）现在都是空的。
+  产品页面共享的 QWidget 基类与锚点助手另立 `backends/qt/widgets/`，`runtime/text_metrics.py`
+  迁入 `drawing/`，三条旧路径的转发模块一并删除。
 
 ### Fixed
 - 修复安装器在非空残留目录上必然失败：目标文件改用 `CREATE_ALWAYS`，残留文件/目录冲突

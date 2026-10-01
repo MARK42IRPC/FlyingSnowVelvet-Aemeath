@@ -7,6 +7,11 @@ from lib.core.render.backends.qt.drawing.draw_backend import QtDrawBackend
 from lib.core.render.backends.qt.runtime.event_pump import create_event_pump
 from lib.core.render.backends.qt.runtime.scheduler import call_later, create_scheduler
 from lib.core.render.backends.qt.runtime.screen_capture import QtScreenCapture, capture_primary_screen_png
+from lib.core.render.backends.qt.drawing.presentation import create_qt_presentation_host
+from lib.core.render.backends.qt.runtime.providers import (
+    create_qt_font_provider,
+    create_qt_text_metrics,
+)
 from lib.core.render.backends.qt.runtime.screen import (
     get_screen_rect_for_point,
     get_virtual_screen_rect,
@@ -53,6 +58,9 @@ def configure_qt_desktop_backend(
             layer_window_host_factory=create_qt_layer_window_host,
             screen_capture_provider=capture_primary_screen_png,
             window_host_factory=create_qt_window_host,
+            presentation_host_factory=create_qt_presentation_host,
+            font_provider_factory=create_qt_font_provider,
+            text_metrics_factory=create_qt_text_metrics,
         ),
         owner=configure_qt_desktop_backend,
     )

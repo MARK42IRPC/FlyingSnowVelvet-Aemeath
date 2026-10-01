@@ -249,6 +249,11 @@ class CodeStructureBoundaryTests(unittest.TestCase):
     def test_qt_drawing_tier_stays_out_of_the_runtime_tier(self):
         """`backends/qt/drawing/` 的模块集合是显式的，不随每次搬迁漂移。
 
+        `presentation.py` 与 `text_metrics.py` 是后端中立协议
+        （`PresentationHost` / `TextMetrics`）的 Qt 实现：它们返回/消费的核心类型
+        以外只剩绘制期渲染事实（屏幕归属、字形推进量），因此属于档位 A 而不是
+        `runtime/`。
+
         档位 A 的判定依赖「哪些文件算绘制执行」有一个可枚举的答案；把 runtime
         的模块塞进 drawing（或反过来）会让边界测试的清单失去意义。
         """
@@ -259,7 +264,16 @@ class CodeStructureBoundaryTests(unittest.TestCase):
 
         self.assertEqual(
             drawing,
-            {"__init__.py", "draw_backend.py", "render_core.py", "gif_loader.py", "colors.py", "window.py"},
+            {
+                "__init__.py",
+                "colors.py",
+                "draw_backend.py",
+                "gif_loader.py",
+                "presentation.py",
+                "render_core.py",
+                "text_metrics.py",
+                "window.py",
+            },
         )
         #: 两档不得有重叠模块；`__init__.py` 是包标记，不算归属。
         self.assertEqual((drawing & runtime) - {"__init__.py"}, set())

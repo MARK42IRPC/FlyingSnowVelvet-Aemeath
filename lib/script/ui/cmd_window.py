@@ -27,10 +27,9 @@ from PyQt5.QtWidgets import (
 )
 
 from config.config import UI
-from lib.core.render.backends.qt.runtime.font import get_cmd_font, get_ui_font, get_digit_font
 from lib.core.render.visuals.panel_visuals import build_panel_shell_visual
 from lib.core.render.visuals.types import Rect
-from lib.script.ui.render_bridge import create_draw_backend, qt_color
+from lib.script.ui.render_bridge import create_draw_backend, qt_color, cmd_font as get_cmd_font, digit_font as get_digit_font, ui_font as get_ui_font
 from config.scale import scale_px, scale_style_px
 from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import get_event_center, EventType, Event

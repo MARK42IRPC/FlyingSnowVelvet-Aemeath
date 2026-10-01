@@ -23,12 +23,10 @@ from PyQt5.QtWidgets import (
 )
 
 from config.config import UI
-from lib.core.render.backends.qt.runtime.font import get_ui_font
 from config.scale import scale_px
 from lib.core.anchor_utils import apply_ui_opacity
 from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import Event, EventType, get_event_center
-from lib.core.render.backends.qt.runtime.screen import clamp_rect_position, get_screen_geometry_for_point
 from lib.core.unified_draw import Layer, get_layer_manager
 from lib.script.gsvmove.package_manager import (
     VoiceInstallResult,
@@ -47,6 +45,7 @@ from lib.script.ui.workbench_floating import (
     floating_window_stylesheet,
 )
 from lib.script.workbench.theme import get_workbench_colors
+from lib.script.ui.render_bridge import clamp_rect_position, screen_rect_for_point as get_screen_geometry_for_point, ui_font as get_ui_font
 
 
 _WIDTH = scale_px(470, min_abs=420)
@@ -914,8 +913,8 @@ class VoicePackageInstallerDialog(WorkbenchFloatingWindow):
     def _center_on_screen(self) -> None:
         cursor = QCursor.pos()
         screen = get_screen_geometry_for_point(point=cursor, fallback_widget=self)
-        x = screen.x() + (screen.width() - self.width()) // 2
-        y = screen.y() + (screen.height() - self.height()) // 2
+        x = int(screen.x) + (int(screen.width) - self.width()) // 2
+        y = int(screen.y) + (int(screen.height) - self.height()) // 2
         x, y, _ = clamp_rect_position(
             x, y, self.width(), self.height(), point=cursor, fallback_widget=self
         )

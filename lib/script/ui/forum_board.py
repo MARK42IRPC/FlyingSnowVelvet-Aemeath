@@ -83,7 +83,6 @@ from lib.core.forum_markdown import (
 )
 from lib.core.forum_session import ForumSessionStore, is_logged_in
 from lib.core.logger import get_logger
-from lib.core.render.backends.qt.runtime.font import get_ui_font
 from lib.script.ui.forum_color_control import ForumColorControl, format_button_font
 from lib.script.ui.forum_markup import (
     FORMAT_BY_KEY,
@@ -100,6 +99,7 @@ from lib.script.ui.forum_style import (
 )
 from lib.script.ui.forum_text import MarkupText
 from lib.script.ui.workbench_settings_layout import SmoothScrollArea
+from lib.script.ui.render_bridge import ui_font as get_ui_font
 
 logger = get_logger(__name__)
 

@@ -7,11 +7,10 @@ from PyQt5.QtCore import Qt, QPropertyAnimation, QEasingCurve
 from PyQt5.QtGui import QPainter
 
 from config.config import UI
-from lib.core.render.backends.qt.runtime.font import get_ui_font
 from lib.core.anchor_utils import animate_opacity, apply_ui_opacity
 from lib.core.render.visuals.application_visuals import build_rect_action_button_visual
 from lib.core.render.visuals.types import FontSpec
-from lib.script.ui.render_bridge import create_draw_backend
+from lib.script.ui.render_bridge import create_draw_backend, ui_font as get_ui_font
 from lib.core.unified_draw import Layer, get_layer_manager
 
 

@@ -20,8 +20,6 @@ from PyQt5.QtWidgets import (
 )
 
 from config.scale import scale_px
-from lib.core.render.backends.qt.runtime.font import get_ui_font
-from lib.core.render.backends.qt.runtime.screen import clamp_rect_position, get_screen_geometry_for_point
 from lib.script.ui.office_icons import (
     office_allow_icon,
     office_allow_task_icon,
@@ -31,6 +29,7 @@ from lib.script.ui.office_icons import (
 from lib.script.ui.office_style import create_office_accent_bar, office_stylesheet
 from lib.script.ui.workbench_components import create_window_button
 from lib.script.workbench.theme import get_workbench_colors
+from lib.script.ui.render_bridge import clamp_rect_position, screen_rect_for_point as get_screen_geometry_for_point, ui_font as get_ui_font
 
 
 _OFFICE_ICON_PATH = Path(__file__).resolve().parents[3] / "resc" / "icon.ico"
@@ -227,8 +226,8 @@ class OfficeApprovalDialog(QDialog):
             point = reference.center()
         else:
             geometry = get_screen_geometry_for_point(fallback_widget=self)
-            x = geometry.x() + (geometry.width() - self.width()) // 2
-            y = geometry.y() + (geometry.height() - self.height()) // 2
+            x = int(geometry.x) + (int(geometry.width) - self.width()) // 2
+            y = int(geometry.y) + (int(geometry.height) - self.height()) // 2
         x, y, _ = clamp_rect_position(
             x,
             y,

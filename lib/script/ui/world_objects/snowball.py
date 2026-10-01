@@ -12,10 +12,9 @@ from lib.core.clickthrough_state  import is_clickthrough_enabled
 from lib.core.physics             import get_physics_world, PhysicsBody
 from lib.core.unified_draw import Layer, get_layer_manager
 from lib.script.voice.snowball_sound import SnowballSound
-from lib.core.render.backends.qt.runtime.screen import get_screen_geometry_for_point
 from lib.core.render.visuals.resources import ImageResource
 from lib.core.render.visuals.visuals import build_world_object_batch
-from lib.script.ui.render_bridge import create_draw_backend
+from lib.script.ui.render_bridge import create_draw_backend, screen_rect_for_point as get_screen_geometry_for_point
 from lib.core.services.world_object_physics import resolve_world_object_physics
 
 # ── 产品物理参数由 lib/core/services 唯一解析，与沙发保持一致 ──────────
@@ -123,7 +122,7 @@ class Snowball(QWidget):
         w, h = size
         spawn_center = QPoint(position.x() + w // 2, position.y() + h // 2)
         screen_geom  = get_screen_geometry_for_point(spawn_center)
-        ground_y = screen_geom.y() + screen_geom.height() * _GROUND_Y_PCT - h
+        ground_y = int(screen_geom.y) + int(screen_geom.height) * _GROUND_Y_PCT - h
 
         self._physics_body = PhysicsBody(
             x           = float(position.x()),
@@ -324,7 +323,7 @@ class Snowball(QWidget):
         body.invalidate_pending_updates()
         center = QPoint(self.x() + self.width() // 2, self.y() + self.height() // 2)
         screen_geom = get_screen_geometry_for_point(center)
-        body.ground_y = screen_geom.y() + screen_geom.height() * _GROUND_Y_PCT - self.height()
+        body.ground_y = int(screen_geom.y) + int(screen_geom.height) * _GROUND_Y_PCT - self.height()
         body.x = float(self.x())
         body.y = float(self.y())
         body.prev_x = body.x

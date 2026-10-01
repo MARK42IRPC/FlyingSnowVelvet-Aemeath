@@ -17,10 +17,6 @@ from PyQt5.QtGui import QPainter
 
 from config.config import UI, SPEAKER_SEARCH_UI
 from config.tooltip_config import TOOLTIPS
-from lib.core.render.backends.qt.runtime.font import (
-    get_digit_font,
-    get_ui_font,
-)
 from lib.core.render.visuals.media_panel_visuals import (
     SEARCH_RESULT_PAGE_SIZE as _PAGE_SIZE,
     SEARCH_RESULT_ROW_HEIGHT as _ROW_H,
@@ -28,12 +24,10 @@ from lib.core.render.visuals.media_panel_visuals import (
     search_result_panel_size,
 )
 from lib.core.render.visuals.types import Size
-from lib.script.ui.render_bridge import create_draw_backend, qpoint_from_point
-from lib.core.render.backends.qt.runtime.text_metrics import QtTextMetrics
+from lib.script.ui.render_bridge import create_draw_backend, qpoint_from_point, clamp_rect_position, digit_font as get_digit_font, text_metrics as QtTextMetrics, ui_font as get_ui_font
 from config.scale import scale_px
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.unified_draw import Layer, get_layer_manager
-from lib.core.render.backends.qt.runtime.screen import clamp_rect_position
 from lib.core.anchor_utils import apply_ui_opacity
 from lib.script.ui.page_turn_buttons import make_page_buttons, update_page_buttons_position
 from lib.script.ui.speaker_menu_style import (

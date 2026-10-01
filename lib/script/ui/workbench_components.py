@@ -17,10 +17,10 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
-from lib.core.render.backends.qt.runtime.font import get_ui_font
 from config.scale import scale_px
 from lib.script.ui.speaker_menu_style import paint_speaker_action_button
 from lib.script.workbench.theme import get_workbench_colors
+from lib.script.ui.render_bridge import ui_font as get_ui_font
 
 
 def create_window_button(

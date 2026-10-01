@@ -29,7 +29,6 @@ from PyQt5.QtWidgets import (
 )
 
 from config.scale import scale_px
-from lib.core.render.backends.qt.runtime.font import get_ui_font
 from lib.script.ui.forum_color_picker import (
     MAX_LIGHTNESS,
     MIN_LIGHTNESS,
@@ -39,6 +38,7 @@ from lib.script.ui.forum_color_picker import (
     hue_gradient_stops,
 )
 from lib.script.ui.forum_style import forum_card_text_color
+from lib.script.ui.render_bridge import ui_font as get_ui_font
 
 
 def format_button_font(key: str):

@@ -12,13 +12,12 @@ from PyQt5.QtCore import QPoint, Qt, QSize, QRect
 from PyQt5.QtCore import QPropertyAnimation, QEasingCurve
 
 from config.config import UI
-from lib.core.render.backends.qt.runtime.font import get_ui_font, get_digit_font
 from config.scale import scale_px
 from lib.core.anchor_utils import apply_ui_opacity
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.unified_draw import Layer, get_layer_manager
 from lib.script.ui.tooltip_panel import get_tooltip_panel
-from lib.script.ui.render_bridge import qt_color
+from lib.script.ui.render_bridge import qt_color, digit_font as get_digit_font, ui_font as get_ui_font
 
 
 _TRAY_MENU_STYLE_FLAG = '_fxr_tray_menu_style'

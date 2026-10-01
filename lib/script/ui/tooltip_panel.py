@@ -14,13 +14,10 @@ from PyQt5.QtGui import QPainter, QCursor
 
 from config.config import UI
 from lib.core.render.visuals.application_visuals import build_tooltip_visual
-from lib.script.ui.render_bridge import create_draw_backend
-from lib.core.render.backends.qt.runtime.font import get_ui_font, get_digit_font
-from lib.core.render.backends.qt.runtime.text_metrics import QtTextMetrics
+from lib.script.ui.render_bridge import create_draw_backend, clamp_rect_position, digit_font as get_digit_font, screen_rect_for_point as get_screen_geometry_for_point, text_metrics as QtTextMetrics, ui_font as get_ui_font
 from config.scale import scale_px
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.unified_draw import Layer, get_layer_manager
-from lib.core.render.backends.qt.runtime.screen import clamp_rect_position, get_screen_geometry_for_point
 from lib.core.anchor_utils import apply_ui_opacity
 
 # ── 布局常量 ──────────────────────────────────────────────────────────
@@ -247,7 +244,7 @@ class TooltipPanel(QWidget):
         screen = get_screen_geometry_for_point(point=cursor_pos, fallback_widget=self)
         x = cursor_pos.x() + _CURSOR_GAP
         y = cursor_pos.y()
-        if x + self.width() > screen.x() + screen.width():
+        if x + self.width() > int(screen.x) + int(screen.width):
             x = cursor_pos.x() - self.width() - _CURSOR_GAP
         x, y, _ = clamp_rect_position(
             x,

@@ -42,8 +42,7 @@ from PyQt5.QtGui import QPainter, QPixmap
 from config.config import ANIMATION, UI
 from lib.core.render.visuals.settings_panel_visuals import build_ai_settings_panel_visual
 from lib.core.render.visuals.types import Size
-from lib.script.ui.render_bridge import create_draw_backend, qt_color_name
-from lib.core.render.backends.qt.runtime.font import get_ui_font, get_digit_font
+from lib.script.ui.render_bridge import create_draw_backend, qt_color_name, digit_font as get_digit_font, ui_font as get_ui_font
 from lib.core.render.router import get_backend_descriptors
 from config.general_user_settings import save_general_values
 from config.ollama_config import (

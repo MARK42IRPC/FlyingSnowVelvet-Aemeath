@@ -36,7 +36,6 @@ from PyQt5.QtWidgets import (
 )
 
 from config.config import UI
-from lib.core.render.backends.qt.runtime.font import apply_ui_font_tree, get_ui_font
 from config.general_user_settings import save_general_values
 from config.scale import scale_px
 from lib.core.anchor_utils import apply_ui_opacity
@@ -52,6 +51,7 @@ from lib.script.workbench.page_registry import (
     default_page_spec,
 )
 from lib.script.workbench.theme import get_workbench_colors, workbench_stylesheet
+from lib.script.ui.render_bridge import apply_ui_font_tree, ui_font as get_ui_font
 
 
 _GROUP_ORDER = (

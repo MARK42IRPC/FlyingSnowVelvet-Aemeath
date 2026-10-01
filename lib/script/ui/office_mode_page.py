@@ -22,7 +22,6 @@ from PyQt5.QtWidgets import QPushButton
 
 from config.scale import scale_px
 from lib.core.logger import get_logger
-from lib.core.render.backends.qt.runtime.workbench_page import QtWorkbenchToolPage
 from lib.script.ui.ai_settings_defaults import AI_DEFAULT_VALUES
 from lib.script.ui.ai_settings_storage import load_ai_values, save_office_values
 from lib.script.ui.office_manager_card import OfficeManagerCard
@@ -37,6 +36,7 @@ from lib.script.ui.workbench_settings_layout import (
     SettingsPageScaffold,
     create_settings_form,
 )
+from lib.core.render.backends.qt.widgets.workbench_page import QtWorkbenchToolPage
 
 logger = get_logger(__name__)
 

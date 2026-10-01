@@ -182,6 +182,18 @@ class Rect:
     def size(self) -> Size:
         return Size(self.width, self.height)
 
+    @property
+    def center(self) -> Point:
+        return Point(self.x + self.width / 2.0, self.y + self.height / 2.0)
+
+    @property
+    def right(self) -> float:
+        return self.x + self.width
+
+    @property
+    def bottom(self) -> float:
+        return self.y + self.height
+
 
 def coerce_rect(value: object) -> Rect | None:
     """Convert a rectangle-like value without depending on a GUI toolkit."""

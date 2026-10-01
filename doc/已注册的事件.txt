@@ -373,7 +373,7 @@
 - lib/script/ui/scale_button.py -> self._on_anchor_response
 - lib/script/ui/speaker_control_buttons.py -> self._on_anchor_response [has unsubscribe]
 - lib/script/ui/speaker_search_result_box.py -> self._on_anchor_response
-  发布方: lib/core/pet_window.py, lib/core/render/backends/qt/runtime/widget_anchors.py, lib/script/ui/clickthrough_button.py, lib/script/ui/command_dialog.py, lib/script/ui/scale_button.py, lib/script/ui/speaker_search_dialog.py
+  发布方: lib/core/pet_window.py, lib/core/render/backends/qt/widgets/anchors.py, lib/script/ui/clickthrough_button.py, lib/script/ui/command_dialog.py, lib/script/ui/scale_button.py, lib/script/ui/speaker_search_dialog.py
 
 [UI_CLICKTHROUGH_TOGGLE]
 - lib/core/pet_window.py -> self._handle_clickthrough_toggle
@@ -787,7 +787,7 @@
 
 [UI_ANCHOR_RESPONSE]
 - lib/core/pet_window.py
-- lib/core/render/backends/qt/runtime/widget_anchors.py
+- lib/core/render/backends/qt/widgets/anchors.py
 - lib/script/ui/clickthrough_button.py
 - lib/script/ui/command_dialog.py
 - lib/script/ui/scale_button.py

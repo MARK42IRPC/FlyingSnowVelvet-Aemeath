@@ -17,10 +17,10 @@ from PyQt5.QtWidgets import (
 )
 
 from config.scale import scale_px
-from lib.core.render.backends.qt.runtime.font import get_ui_font
 from lib.script.ui.office_style import OFFICE_BUBBLE_PAD_H
 from lib.script.ui.workbench_settings_layout import SETTINGS_FONT_SIZE
 from lib.script.workbench.theme import get_workbench_colors
+from lib.script.ui.render_bridge import ui_font as get_ui_font
 
 _SENDER_LABELS = {"user": "你", "assistant": "助手", "system": "系统"}
 _CODE_FONT = "Consolas"

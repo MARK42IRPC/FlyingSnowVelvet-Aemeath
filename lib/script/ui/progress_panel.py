@@ -18,13 +18,10 @@ from PyQt5.QtGui import QPainter
 
 from config.config import UI, FONT
 from lib.core.render.visuals.media_panel_visuals import build_progress_panel_visual
-from lib.core.render.backends.qt.runtime.font import get_digit_font, get_ui_font
-from lib.script.ui.render_bridge import create_draw_backend
-from lib.core.render.backends.qt.runtime.text_metrics import QtTextMetrics
+from lib.script.ui.render_bridge import create_draw_backend, clamp_rect_position, digit_font as get_digit_font, text_metrics as QtTextMetrics, ui_font as get_ui_font
 from config.scale import scale_px
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.unified_draw import Layer, get_layer_manager
-from lib.core.render.backends.qt.runtime.screen import clamp_rect_position
 from lib.core.anchor_utils import apply_ui_opacity
 
 

@@ -29,8 +29,8 @@ from PyQt5.QtWidgets import (
 
 from config.scale import scale_px
 from lib.core.logger import get_logger
-from lib.core.render.backends.qt.runtime.font import get_ui_font
 from lib.script.ui.workbench_settings_layout import SETTINGS_FONT_SIZE, SettingsSection
+from lib.script.ui.render_bridge import ui_font as get_ui_font
 
 logger = get_logger(__name__)
 

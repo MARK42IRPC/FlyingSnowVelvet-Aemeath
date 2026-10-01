@@ -25,7 +25,7 @@ from PyQt5.QtWidgets import QApplication, QWidget
 
 from config.scale import scale_px
 from config.config import UI
-from lib.core.render.backends.qt.runtime.workbench_page import QtWorkbenchToolPage
+from lib.core.render.backends.qt.widgets.workbench_page import QtWorkbenchToolPage
 from lib.script.ui import bug_tracker_window as bug_tracker_module
 from lib.script.ui import game_manager_window as game_manager_module
 from lib.script.workbench.builtin_pages import builtin_tool_page_specs

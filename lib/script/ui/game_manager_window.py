@@ -23,11 +23,11 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
-from lib.core.render.backends.qt.runtime.font import get_digit_font, get_ui_font
 from config.scale import scale_px
-from lib.core.render.backends.qt.runtime.workbench_page import QtWorkbenchToolPage
 from lib.script.gemes.MAIN.game_packages import InstalledGame, get_game_package_service
 from lib.script.workbench.theme import get_workbench_colors
+from lib.script.ui.render_bridge import digit_font as get_digit_font, ui_font as get_ui_font
+from lib.core.render.backends.qt.widgets.workbench_page import QtWorkbenchToolPage
 
 if TYPE_CHECKING:
     from lib.script.ui.game_runtime import GameRuntime

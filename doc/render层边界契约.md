@@ -27,20 +27,23 @@
 
 ```text
 lib/core/render/
-  contract.py            后端中立协议：窗口宿主、能力声明、字体度量、屏幕与输入请求
   router.py              按配置选择后端并装配；跨后端判定的唯一位置
-  registry.py            后端注册表与描述符
-  visuals/               现 lib/core/render/visuals 内容，原样迁入并重新导出
+  registry.py            后端注册表与服务读取入口
+  visuals/               共享视觉事实源（后端中立类型、presenter、色板、屏幕算法）
   backends/
-    base.py              后端共同接口
+    base.py              后端共同接口：DesktopBackendBundle 与后端中立协议
     qt/
-      drawing/           命令到 QPainter 的执行
-      runtime/           窗口、输入、调度、字体度量、屏幕、托盘、播放器
-    dx/
-      drawing/
-      runtime/
+      drawing/           命令到 QPainter 的执行 + 绘制期渲染事实（presentation、text_metrics）
+      runtime/           窗口、输入、调度、字体、屏幕、托盘、播放器
+      widgets/           产品页面共享的 QWidget 基类（页面、锚点助手）
+    dx/                  未切分的实验实现，available=False
     vulkan/              占位注册项，不提前建抽象
 ```
+
+后端中立协议定义在 `backends/base.py` 而不是单独的 `contract.py`：它们只在"一个后端
+装进进程"这一件事上有意义，和 `DesktopBackendBundle` 是同一个装配面的两面，拆成两个
+文件只会让接线点分裂。`registry.py` 提供读取入口（`get_presentation_host`、
+`get_font_provider`、`get_text_metrics_factory`）。
 
 `visuals/` 是共享事实源，不是“Qt 的 visuals”。它必须能被 Qt、DX 和 Vulkan 同等引用，因此不得出现在任何单个后端子树之下。
 
@@ -69,7 +72,14 @@ Vulkan 在本文档生效时只是 `registry.py` 里的一条未启用描述符�
 - DX 的 `lib/core/render/backends/dx/application_ui.py`、`lib/core/render/backends/dx/speaker_search.py`、`lib/core/render/backends/dx/speaker_playlist.py`、`lib/core/render/backends/dx/command_hint.py`、`lib/core/render/backends/dx/announcement.py` 属于后端专属窗口实现，不得被 `lib/script/ui` 或业务层引用；
 - 它们消费 `visuals/` 的描述，不得重新决定面板填充、颜色或文字排版。
 
-一句话概括：**绘制实现不得共享，能力经协议共享。**
+**档位 D：产品共享控件件（`backends/qt/widgets/`）**
+
+- 放的是"产品页面要继承/调用的 QWidget 骨架"：工具页基类、锚点助手；
+- `lib/script/ui` 允许直接继承，因为产品页面本身就是 QWidget 子类——这不是平台能力，
+  抽象成协议只会得到带 Qt 返回值的协议，等于把耦合从路径挪到类型；
+- 不得被 `lib/script` 下 `ui/` 以外的模块引用，也不得反向引用 `lib/script`。
+
+一句话概括：**绘制实现不得共享，能力经协议共享，产物控件只被产品层继承。**
 
 ## 4. 已删除的 `core/render` 不得复活
 
@@ -114,7 +124,7 @@ Vulkan 在本文档生效时只是 `registry.py` 里的一条未启用描述符�
 顺序不能颠倒，否则规则无法断言。
 
 1. 先切档位：把 `runtime` 从 `drawing` 中分出来，两个 bridge 内部先分目录，路径暂不变。
-2. 再建 `contract.py`：把业务层对 `font`、`screen`、`text_metrics`、`window` 的需求收敛成协议，注入点放在组合入口。
+2. ~~再建 `contract.py`~~：已执行，但协议落在 `backends/base.py`（见第 2 节说明）。业务层对 `font`、`screen`、`text_metrics` 的需求已收敛为 `FontProvider` / `PresentationHost` / `TextMetrics`，由组合入口注入、经 `lib/script/ui/render_bridge.py` 取用。
 3. 然后搬目录：`qt_bridge` / `dx_bridge` 移入 `backends/`，`graphics` 移入 `visuals/`，保持对外重新导出。
 4. 最后改断言与文档：测试白名单、`doc/维护手册.md`、`doc/Qt边界契约.md`、本索引同步更新。
 
@@ -122,11 +132,12 @@ Vulkan 在本文档生效时只是 `registry.py` 里的一条未启用描述符�
 
 ## 7. 验证
 
-以下断言是**目标**，不是当前已全部成立的事实。第二轮执行后的实际符合度见第 9 节：前两条已经是硬断言，第三、四条以「冻结基线，只减不增」的清单形式落地，因为 `lib/script/ui` 里仍有一批控件直接构造绘制实现、并以具体路径引用 Qt 平台能力。
+以下断言已是硬断言（第四轮执行后，见第 11 节）：
 
-- `lib/core/render/backends/*/drawing/` 不得被 `router.py` 之外的模块导入；
+- `lib/core/render/backends/*/drawing/` 只被 `router.py`、后端自带窗口与 `lib/script/ui/render_bridge.py` 引用；
 - `lib/core/render/` 整体不得导入 `lib.script`，`visuals/` 还不得导入 `PyQt5` 或任一 `backends`；
-- `lib/core/render/backends/*/runtime/` 不得被 `lib/script` 以具体路径导入，只允许经 `contract.py`；
+- `lib/core/render/backends/*/runtime/` 不得被 `lib/script` 以具体路径导入：`lib/script/ui` 的两份冻结清单现在都是空的；
+- 唯一允许的后端路径例外是 `backends/qt/widgets/`（产品页面基类，档位 D）。
 - `lib/core` 内不得出现 `QPainter` / `QPainterPath` / `QPixmap` / `QImage` / `Widget` 类型；
 - 现有跨后端一致性测试保持通过：`tests.test_visual_presenters`、`tests.test_graphics_primitives_parity`、`tests.test_visual_backend_parity`。
 
@@ -226,3 +237,61 @@ DX 保持未切分：DX 仍是 `available=False` 的实验实现，没有第二�
 - `py -3 -m unittest discover -s tests -p "test_*.py" -q`：2035 通过、10 跳过。
 - `py -3 -m unittest discover -s tests/dx -p "test_*.py" -q`：122 通过、7 跳过。
 - `py -3 -m ruff check lib config scripts tests` 归零；`py -3 -m compileall -q config lib scripts tests` 通过。
+
+## 11. 第四轮执行记录（后端中立协议与统一数据类型）
+
+本轮把"控件彻底不依赖 Qt"从口号变成结构：控件不再需要 Qt 类型参与布局算术，Qt 只
+出现在控件自身必然要用到的边界上。
+
+**新增后端中立协议（`backends/base.py`）**
+
+- `PresentationHost`：屏幕归属、位置夹取、控件全局矩形/点、按屏幕坐标移动控件。
+  返回与接收的都是核心 `Rect` / `Point`，不是 `QRect` / `QPoint`。Qt 实现位于
+  `backends/qt/drawing/presentation.py`（屏幕归属是绘制期渲染事实）。
+- `FontProvider`：`ui_font` / `digit_font` / `cmd_font` / `ui_font_family` /
+  `apply_ui_font_tree`。返回后端自己的字体对象——控件是工具包控件，收敛的是"从哪里取"。
+- `TextMetrics`：presenter 决定换行、省略号与基线，后端只报告推进量与该文本实际使用的
+  基线高度。Qt 实现 `QtTextMetrics` 随本轮从 `runtime/` 迁入 `backends/qt/drawing/`
+  （它由绘制期 `QFontMetrics` / `QTextLayout` 驱动，属于档位 A）。
+
+三个协议都是 `DesktopBackendBundle` 上的可选工厂：DX 尚未接线时留空，`render_bridge`
+回退到 Qt 与核心算法，而不是崩溃。这是排期问题，不是契约缺口。
+
+**统一数据类型**
+
+- `visuals/types.py::Rect` 补 `center` / `right` / `bottom` 属性（此前只有 `top_left` /
+  `size`），使 `QRect` 上最常见的三个只读用法有中立对应物。
+- 51 个控件里 `clamp_rect_position` / `get_screen_geometry_for_point` /
+  `widget_global_rect` / `move_widget_to_global` 的返回值由 Qt 类型改为核心类型。
+  控件侧因此出现一批 `int(rect.x)` 改写（原来是 `rect.x()`）——这正是本轮要实现的效果：
+  布局算术语义不再绑定 Qt。`clamp_rect_position` 保持 `x, y, _ = ...` 三元解包形状不变。
+- 更新 `backends/qt/drawing/window.py::coerce_qpoint` 的 8 个引用方：锚点载荷转 `QPoint`
+  的调用现经 `render_bridge.qpoint_from_point`，语义仍是事件总线要求的整数 `QPoint`。
+
+**目录调整**
+
+- 新增 `backends/qt/widgets/`（档位 D）：`workbench_page.py`（工具页基类，5 个窗口继承）
+  与 `anchors.py`（QWidget 锚点助手，7 个控件使用）从 `runtime/` 迁出。它们是"产品页面
+  要继承/调用的 QWidget 骨架"，不是可被协议抽象的平台能力。
+- `runtime/text_metrics.py` 删除（迁入 `drawing/text_metrics.py`），`runtime/widget_anchors.py`
+  与 `runtime/workbench_page.py` 删除（迁入 `widgets/`）。三条旧路径不保留转发模块。
+
+**结果（2026-10-01）**
+
+- `lib/script/ui` 对 `backends/qt/runtime/` 的直接引用：51 个文件 → **0**；`frozen_ui_runtime_importers`
+  随之清空并断言保持为空。
+- `lib/script/ui` 允许残留的后端路径只剩 `backends/qt/widgets/`（12 个文件，档位 D）。
+- 新增断言 `test_retired_qt_runtime_shims_are_not_named_by_business_code`：已迁走的三条
+  旧路径不得再被 `lib/script` 引用。
+
+验证：
+
+- `py -3 -m unittest discover -s tests -p "test_*.py" -q`：2036 通过、10 跳过。
+- `py -3 -m unittest discover -s tests/dx -p "test_*.py" -q`：122 通过、7 跳过。
+- `py -3 -m ruff check lib config scripts tests` 归零；`py -3 -m compileall -q config lib scripts tests` 通过。
+
+**仍未完成（下一轮的输入）**
+
+控件仍 `import PyQt5`（控件的 QWidget/QPainter 事实）。真正压缩这一面需要让产品控件不再
+继承 `QWidget`，那是"控件层换实现"级别的改动，不是引用路径收敛。本轮已把可协议化的部分
+（屏幕几何、字体、文本度量）全部协议化，剩下的 Qt 面是控件本体。

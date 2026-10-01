@@ -18,12 +18,21 @@
 同一份理由适用于这里的颜色与坐标转换：色板事实源在 `visuals/palette.py`，但 QWidget
 要的是 `QColor`，锚点计算要的是 `QPoint`。把这两件 Qt 事实也收进本模块，控件就不必
 为了一个 `UI_THEME['mid']` 或一次 `coerce_qpoint` 去直接 import 绘制档。
+
+平台能力（档位 B：屏幕几何、字体、文本度量）走同一层但方向相反：本模块不构造实现，
+而是把 registry 里后端注入的服务转出来。控件拿到的屏幕几何是核心 `Rect`，字体与
+度量则是后端自己的对象——控件本身是工具包控件，这一步收敛的是"从哪里取"。
 """
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from lib.core.render.registry import get_draw_backend_factory
+from lib.core.render.registry import (
+    get_draw_backend_factory,
+    get_font_provider,
+    get_presentation_host,
+    get_text_metrics_factory,
+)
 
 if TYPE_CHECKING:
     from PyQt5.QtCore import QPoint
@@ -87,3 +96,138 @@ def qpoint_from_point(value: object) -> QPoint | None:
     from lib.core.render.backends.qt.drawing.window import coerce_qpoint
 
     return coerce_qpoint(value)
+
+
+# ── 平台能力（档位 B）的后端中立取用 ────────────────────────────────────────
+#
+# 控件不必 `import lib.core.render.backends.qt.runtime.*` 就能拿到屏幕几何、字体与
+# 文本度量。后端未注入时（隔离 helper、无后端的单元测试）回退到 Qt 实现与核心算法，
+# 而不是抛错：控件仍然要能构造、能布局，只是拿不到平台特有能力。
+
+
+def presentation_host():
+    """当前后端的呈现几何实现；未注入时用 Qt 实现。"""
+    host = get_presentation_host()
+    if host is None:
+        from lib.core.render.backends.qt.drawing.presentation import QtPresentationHost
+
+        host = QtPresentationHost()
+    return host
+
+
+def screen_rect_for_point(point=None, fallback_widget=None):
+    """控件所在屏幕的核心 `Rect`。
+
+    屏幕归属是平台事实（Qt 看 `windowHandle()`，Win32 看 `MonitorFromPoint`），
+    选择与夹取算法在 `lib/core/render/visuals/screen.py`。两个后端都返回核心
+    `Rect`，控件不再需要 `QRect` 参与布局算术。
+    """
+    rect = presentation_host().screen_rect_for_widget(fallback_widget, point=point)
+    if rect is not None:
+        return rect
+    from lib.core.render.visuals.screen import virtual_screen_rect
+
+    return virtual_screen_rect(())
+
+
+def clamp_rect_position(
+    x: int,
+    y: int,
+    width: int,
+    height: int,
+    point=None,
+    fallback_widget=None,
+):
+    """把窗口左上角夹取到屏幕内，返回 `(x, y, screen)`。
+
+    第三个值是核心 `Rect`（此前是 Qt 的 `QRect`）；控件普遍写 `x, y, _ =`，
+    形状保持不变，只是类型换成后端中立几何。取不到屏幕信息时原样返回，
+    静默挪窗口比不挪更难排查。
+    """
+    host = presentation_host()
+    screen = screen_rect_for_point(point=point, fallback_widget=fallback_widget)
+    clamped = host.clamp_position(
+        x, y, width, height, widget=fallback_widget, point=point
+    )
+    if clamped is None:
+        return int(x), int(y), screen
+    return clamped[0], clamped[1], screen
+
+
+def widget_global_rect(widget):
+    """控件在屏幕坐标系中的核心 `Rect`。"""
+    return presentation_host().widget_global_rect(widget)
+
+
+def widget_global_point(widget, point):
+    """控件本地坐标点换算成屏幕坐标点（核心 `Point`）。"""
+    return presentation_host().widget_global_point(widget, point)
+
+
+def move_widget_to_global(widget, x: int, y: int) -> None:
+    """按屏幕坐标移动控件；宿主分层时由后端换算成宿主本地坐标。"""
+    presentation_host().move_widget_to_global(widget, int(x), int(y))
+
+
+def ui_font(size: int | None = None):
+    """当前后端的 UI 字体对象（Qt 下是 `QFont`）。"""
+    provider = get_font_provider()
+    if provider is not None:
+        return provider.ui_font(size)
+    from lib.core.render.backends.qt.runtime.font import get_ui_font
+
+    return get_ui_font(size)
+
+
+def digit_font(size: int | None = None):
+    """数字与拉丁字形字体对象。"""
+    provider = get_font_provider()
+    if provider is not None:
+        return provider.digit_font(size)
+    from lib.core.render.backends.qt.runtime.font import get_digit_font
+
+    return get_digit_font(size)
+
+
+def cmd_font(size: int | None = None):
+    """命令框字体对象。"""
+    provider = get_font_provider()
+    if provider is not None:
+        return provider.cmd_font(size)
+    from lib.core.render.backends.qt.runtime.font import get_cmd_font
+
+    return get_cmd_font(size)
+
+
+def ui_font_family() -> str:
+    """已注册的 UI 字体族名。"""
+    provider = get_font_provider()
+    if provider is not None:
+        return provider.ui_font_family()
+    from lib.core.render.backends.qt.runtime.font import get_ui_font_family
+
+    return get_ui_font_family()
+
+
+def apply_ui_font_tree(widget) -> None:
+    """把已注册的 UI 字体族刷到整棵控件树上。"""
+    provider = get_font_provider()
+    if provider is not None:
+        provider.apply_ui_font_tree(widget)
+        return
+    from lib.core.render.backends.qt.runtime.font import apply_ui_font_tree as apply
+
+    apply(widget)
+
+
+def text_metrics(default_font, digit_font=None, *, side_font=None):
+    """按后端自己的字体对象构造文本度量。
+
+    presenter 决定换行、省略与基线，后端只提供推进量与该文本实际使用的基线高度。
+    """
+    factory = get_text_metrics_factory()
+    if factory is not None:
+        return factory(default_font, digit_font, side_font=side_font)
+    from lib.core.render.backends.qt.drawing.text_metrics import QtTextMetrics
+
+    return QtTextMetrics(default_font, digit_font, side_font=side_font)

@@ -8,13 +8,12 @@ from PyQt5.QtGui     import QPainter
 
 from lib.core.render.visuals.resources import ImageResource
 from lib.core.render.visuals.visuals import build_world_object_batch
-from lib.script.ui.render_bridge import create_draw_backend
+from lib.script.ui.render_bridge import create_draw_backend, screen_rect_for_point as get_screen_geometry_for_point
 from lib.core.unified_draw import Layer, get_layer_manager
 from lib.core.event.center     import get_event_center, EventType, Event
 from lib.core.clickthrough_state import is_clickthrough_enabled
 from lib.core.physics          import get_physics_world, PhysicsBody
 from lib.core.particle_utils   import spawn_particle_at_point
-from lib.core.render.backends.qt.runtime.screen import get_screen_geometry_for_point
 from lib.script.voice.gear       import GearSound
 from lib.script.voice.ring       import RingSound
 from lib.core.world_objects import (
@@ -109,7 +108,7 @@ class Clock(QWidget):
         w, h     = size
         spawn_center = QPoint(position.x() + w // 2, position.y() + h // 2)
         screen_geom = get_screen_geometry_for_point(spawn_center)
-        ground_y = screen_geom.y() + screen_geom.height() * _GROUND_Y_PCT - h  # 窗口左上角落地 Y
+        ground_y = int(screen_geom.y) + int(screen_geom.height) * _GROUND_Y_PCT - h  # 窗口左上角落地 Y
 
         self._physics_body = PhysicsBody(
             x           = float(position.x()),
@@ -425,7 +424,7 @@ class Clock(QWidget):
         body.invalidate_pending_updates()
         center = QPoint(self.x() + self._size[0] // 2, self.y() + self._size[1] // 2)
         screen_geom = get_screen_geometry_for_point(center)
-        body.ground_y = screen_geom.y() + screen_geom.height() * _GROUND_Y_PCT - self._size[1]
+        body.ground_y = int(screen_geom.y) + int(screen_geom.height) * _GROUND_Y_PCT - self._size[1]
         body.x = float(self.x())
         body.y = float(self.y())
         body.prev_x = body.x

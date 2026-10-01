@@ -1,4 +1,8 @@
-"""QWidget anchor helpers backed by core geometry calculations."""
+"""QWidget 锚点助手：核心几何算法 + QWidget 取值。
+
+属于共享控件件（`backends/qt/widgets/`）：返回值与入参都是 QWidget 自身的事实
+（`widget.rect()` / `widget.move()`），与"产品页面继承 QWidget 基类"同类。
+"""
 from __future__ import annotations
 
 from PyQt5.QtCore import QPoint

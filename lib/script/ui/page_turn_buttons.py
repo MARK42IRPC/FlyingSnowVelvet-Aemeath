@@ -16,16 +16,12 @@ from PyQt5.QtGui import QPainter, QPolygonF
 
 from config.scale import scale_px
 from lib.core.event.center import get_event_center, EventType
-from lib.core.render.backends.qt.runtime.screen import (
-    clamp_rect_position,
-    move_widget_to_global,
-    widget_global_rect,
-)
 from lib.core.anchor_utils import apply_ui_opacity
 from lib.script.ui.speaker_menu_style import (
     SpeakerActionButtonMixin,
     _C_ACTION_TEXT,
 )
+from lib.script.ui.render_bridge import clamp_rect_position, move_widget_to_global, widget_global_rect
 
 # ── 尺寸 ──────────────────────────────────────────────────────────────
 BTN_W  = scale_px(120, min_abs=1)  # 宽度（px）
@@ -171,10 +167,10 @@ def update_page_buttons_position(
     """
     # 面板可能是“右键 UI 一层”里的子控件，统一按屏幕坐标计算。
     panel_rect = widget_global_rect(panel)
-    panel_x = panel_rect.x()
-    panel_y = panel_rect.y()
-    panel_b = panel_y + panel_rect.height()   # 面板底部 y
-    anchor_point = panel_rect.center()
+    panel_x = int(panel_rect.x)
+    panel_y = int(panel_rect.y)
+    panel_b = panel_y + int(panel_rect.height)   # 面板底部 y
+    anchor_point = panel_rect.center
 
     # 上一页：左上对齐面板左下
     px, py, _ = clamp_rect_position(
@@ -189,7 +185,7 @@ def update_page_buttons_position(
 
     # 下一页：右上对齐面板右下（right_top.x = panel.right - BTN_W）
     nx, _, _ = clamp_rect_position(
-        panel_x + panel_rect.width() - BTN_W,
+        panel_x + int(panel_rect.width) - BTN_W,
         py,
         BTN_W,
         BTN_H,

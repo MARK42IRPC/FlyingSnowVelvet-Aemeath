@@ -8,16 +8,11 @@ from lib.core.render.visuals.speaker_band_visuals import BAND_SLIDER_GAP
 from config.scale import scale_px
 from config.tooltip_config import TOOLTIPS
 from lib.core.event.center import get_event_center, EventType, Event
-from lib.core.render.backends.qt.runtime.screen import clamp_rect_position
 from lib.script.music import get_music_service
 from lib.core.anchor_utils import (
     animate_opacity,
 )
-from lib.core.render.backends.qt.runtime.widget_anchors import (
-    get_anchor_point as resolve_anchor_point,
-    publish_widget_anchor_response,
-)
-from lib.script.ui.render_bridge import qpoint_from_point
+from lib.script.ui.render_bridge import qpoint_from_point, clamp_rect_position
 from lib.script.ui.speaker_menu_style import (
     _C_ACTION_TEXT,
     SpeakerActionButtonMixin,
@@ -30,6 +25,10 @@ from lib.script.ui.speaker_band_slider import (
 from lib.script.ui.speaker_volume_slider import (
     DEFAULT_HEIGHT as _VOLUME_SLIDER_HEIGHT,
     SpeakerVolumeSlider,
+)
+from lib.core.render.backends.qt.widgets.anchors import (
+    get_anchor_point as resolve_anchor_point,
+    publish_widget_anchor_response,
 )
 
 # ── 尺寸 ──────────────────────────────────────────────────────────────

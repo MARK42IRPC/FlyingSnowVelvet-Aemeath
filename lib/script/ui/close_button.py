@@ -7,20 +7,15 @@ from config.scale import scale_px
 from config.tooltip_config import TOOLTIPS
 from lib.script.ui.close_button_handler import CloseButtonEventHandler
 from lib.core.event.center import get_event_center, EventType, Event
-from lib.core.render.backends.qt.runtime.screen import (
-    clamp_rect_position,
-    move_widget_to_global,
-    widget_global_rect,
-)
 from lib.core.anchor_utils import (
     refresh_last_activity,
 )
-from lib.core.render.backends.qt.runtime.widget_anchors import (
+from lib.script.ui.render_bridge import qpoint_from_point, clamp_rect_position, move_widget_to_global, widget_global_rect
+from lib.script.ui.rect_action_button_style import RectActionButton
+from lib.core.render.backends.qt.widgets.anchors import (
     get_anchor_point as resolve_anchor_point,
     publish_widget_anchor_response,
 )
-from lib.script.ui.render_bridge import qpoint_from_point
-from lib.script.ui.rect_action_button_style import RectActionButton
 
 
 def _hex(color: QColor) -> str:
@@ -238,7 +233,7 @@ class CloseButton(RectActionButton):
         particle_event = Event(EventType.PARTICLE_REQUEST, {
             'particle_id': 'right_fade',
             'area_type': 'rect',
-            'area_data': (rect.x(), rect.y(), rect.x() + rect.width(), rect.y() + rect.height())
+            'area_data': (int(rect.x), int(rect.y), int(rect.x) + int(rect.width), int(rect.y) + int(rect.height))
         })
         self._event_center.publish(particle_event)
 
