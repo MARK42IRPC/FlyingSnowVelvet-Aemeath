@@ -115,7 +115,8 @@ Vulkan 在本文档生效时只是 `registry.py` 里的一条未启用描述符�
 - 已收敛的控件不得再调用 `render_bridge.clamp_rect_position()`：自己夹取屏幕等于把档位 1 的
   算术又抄回控件层；
 - 唯一允许的例外是仍需 Qt 专属操作的控件（如 `right_click_ui_layer.py` 的 `adopt()` /
-  `setParent()` 子窗口收编），在宿主支持“收编子窗口”后并入档位 1；
+  `setParent()` 子窗口收编），在宿主支持“收编子窗口”后并入档位 1；`right_click_ui_layer.py`
+  本身不参与落位解算，它是宿主窗口的并集几何，不受该例外之外的规则约束；
 - `visuals/layout.py` 的引用规则与 `visuals/` 其余模块相同：可被 `lib/script/ui`、
   `backends/*` 与同目录 presenter 引用；自身不得 import `PyQt5`、任一 `backends/*`、
   `lib.script` 或 `config.config_ui`，也不得落在任何单个后端子树下。
@@ -587,23 +588,44 @@ DX 保持未切分：DX 仍是 `available=False` 的实验实现，没有第二�
 - `resolve_placement()` / `place_at_point()` / `centered_placement()`：控件侧唯一取用入口，
   转发给 `visuals/layout.py`。桥本身仍属解析/转发层，不新增 Qt 事实。
 
-**已收敛的 15 个落位点（控件侧不再自己夹取屏幕）**
+**已收敛的落位点（`lib/script/ui` 下 `clamp_rect_position` 调用清零）**
 
 - 命令框附属按钮 7 个：`clickthrough_button`、`close_button`、`restore_button`、
   `launch_wuwa_button`、`more_functions_button`、`chat_mode_button`、`interaction_mode_button`；
 - `scale_button.py` 两个按钮类（放大贴穿透按钮右锚点、缩小贴放大按钮右锚点）；
 - `mic_stt_indicator`（主宠左上角 + 固定偏移）；
-- 居中浮窗 4 个：`announcement_dialog`、`update_dialog`、`help_window`、
-  `voice_package_installer`（`resolve_centered`）与 `office_approval_dialog`
+- 点锚点 + 偏移：`command_hint_box`、`speaker_search_result_box`；
+- 面板锚点：`page_turn_buttons`（两个翻页按钮）、`speaker_control_buttons`（六个按钮，
+  锚点矩形取零尺寸、偏移沿用原显式坐标）、`playlist_panel` 的删除/立即播放按钮；
+- 左右翻转族（右侧优先、受阻翻左，翻转判定留在业务侧）：`speaker_search_dialog`、`playlist_panel`；
+- 居中浮窗：`announcement_dialog`、`update_dialog`、`help_window`、`voice_package_installer`、
+  `qr_dialog_base`（`resolve_centered`），以及 `office_approval_dialog`
   （参考父窗或屏幕中心，`center` 对 `center`）。
 
 这些都是**同形不同值**的落位：目标锚点、自身锚点、偏移三个数不同，五步算术完全相同。
+守卫是 `tests/test_render_layout_algorithms.py::test_no_ui_control_clamps_its_own_window_position`：
+`lib/script/ui` 下除 `render_bridge.py` 外的任何文件出现 `clamp_rect_position` 都会失败。
+
+**同轮追加：剩余 8 处落位并入（第二批提交）**
+
+- 第一批之后仍在自己夹取屏幕的控件这次一次收完：`command_hint_box`（命令框左下锚点）、
+  `speaker_search_result_box`（搜索框左下锚点）、`qr_dialog_base`（居中）、
+  `page_turn_buttons` 的两个翻页按钮、`speaker_control_buttons` 的六个按钮、
+  `playlist_panel` 的删除/立即播放按钮，以及左右翻转族
+  `speaker_search_dialog` 与 `playlist_panel`。
+- 翻转族的做法值得记一笔：**“右侧放不下就翻到左侧”这个判定留在业务侧**，
+  只有两次候选位置的解算与夹取走 `PlacementSpec`。把判定也搬进 render 层会引入
+  “翻转策略”这种带产品选择的配置，超出“落位算术”的范围；档位 2 的 `AnchorGraph`
+  才是它的归宿。
+- `speaker_control_buttons` 的六个按钮原先各自夹取屏幕，但目标本来就是面板左上锚点这一
+  个点：改成零尺寸锚点矩形 + 显式偏移后，六个按钮共享一次 `screen_rect_for_point()`。
+- `lib/script/ui` 下的 `clamp_rect_position` 调用至此清零，只剩 `render_bridge.py` 自身；
+  守卫从“逐文件登记”升级为全目录断言，并把 21 个已收敛控件登记进 `MIGRATED_LEAF_CONTROLS`。
 
 **本轮没动的部分（后续档位）**
 
-- `right_click_ui_layer.py` 的 `adopt()` / `setParent()` 子窗口收编、`command_hint_box`、
-  `speaker_*`、`playlist_panel`、`page_turn_buttons`、`qr_dialog_base` 仍在档位 1 之外；
-  它们的落位要么依赖宿主收编，要么与面板自身尺寸联动更紧，等宿主支持后一并收。
+- `right_click_ui_layer.py` 的 `adopt()` / `setParent()` 子窗口收编仍不参与落位解算
+  （它是宿主并集几何，不是锚点对齐），等宿主支持“收编子窗口”后再谈是否并入。
 - 档位 2（`AnchorGraph`）与档位 3（Qt 复用 `resolve_command_action_panel_layout`）需要改事件协议
   或窗口宿主，另起一轮。
 
