@@ -12,7 +12,8 @@ from lib.script.music import get_music_service
 from lib.core.anchor_utils import (
     animate_opacity,
 )
-from lib.script.ui.render_bridge import qpoint_from_point, clamp_rect_position
+from lib.script.ui.render_bridge import qpoint_from_point, resolve_placement, screen_rect_for_point
+from lib.core.render.visuals.types import Rect
 from lib.script.ui.speaker_menu_style import (
     _C_ACTION_TEXT,
     SpeakerActionButtonMixin,
@@ -802,71 +803,66 @@ class SpeakerControlButtons:
         # 其余按钮整体上移到滑条之上，避免与滑条重叠
         buttons_bottom_y = slider_y - _VOLUME_SLIDER_GAP
 
-        # ── 搜索优先级按钮：左下锚点对齐搜索框左上锚点 ────────────────
-        search_priority_x, search_priority_y, _ = clamp_rect_position(
-            self._anchor_point.x(),
-            buttons_bottom_y - _BTN_HEIGHT,
-            _BTN_PLAYLIST_W,
-            _BTN_HEIGHT,
-            point=self._anchor_point,
-            fallback_widget=self._search_priority_btn,
+        # 六个按钮的落位都解算自「面板左上锚点」这一点（档位 1）：
+        # 锚点矩形是零尺寸，偏移沿用各自原来的显式坐标。
+        anchor_rect = Rect(
+            self._anchor_point.x(), self._anchor_point.y(), 0.0, 0.0
         )
+        screen = screen_rect_for_point(point=self._anchor_point, fallback_widget=self._search_priority_btn)
+
+        # ── 搜索优先级按钮：左下锚点对齐搜索框左上锚点 ────────────────
+        placement = resolve_placement(
+            (_BTN_PLAYLIST_W, _BTN_HEIGHT), anchor_rect, screen,
+            target_anchor_id='top_left', self_anchor_id='top_left',
+            offset_y=buttons_bottom_y - _BTN_HEIGHT - self._anchor_point.y(),
+        )
+        search_priority_x, search_priority_y = placement.x, placement.y
         self._search_priority_btn.move(search_priority_x, search_priority_y)
 
         # ── 暂停/播放按钮：左下锚点对齐搜索优先级按钮左上锚点 ──────────
-        play_pause_x, play_pause_y, _ = clamp_rect_position(
-            search_priority_x,
-            search_priority_y - _BTN_HEIGHT,
-            _BTN_WIDTH,
-            _BTN_HEIGHT,
-            point=self._anchor_point,
-            fallback_widget=self._play_pause_btn,
+        placement = resolve_placement(
+            (_BTN_WIDTH, _BTN_HEIGHT), Rect(search_priority_x, search_priority_y, 0.0, 0.0), screen,
+            target_anchor_id='top_left', self_anchor_id='bottom_left',
         )
+        play_pause_x, play_pause_y = placement.x, placement.y
         self._play_pause_btn.move(play_pause_x, play_pause_y)
 
         # ── 下一曲按钮：左锚点对齐暂停播放按钮的右锚点 ──────────────
-        next_track_x, next_track_y, _ = clamp_rect_position(
-            play_pause_x + _BTN_WIDTH,
-            play_pause_y,
-            _BTN_WIDTH,
-            _BTN_HEIGHT,
-            point=self._anchor_point,
-            fallback_widget=self._next_track_btn,
+        placement = resolve_placement(
+            (_BTN_WIDTH, _BTN_HEIGHT),
+            Rect(play_pause_x + _BTN_WIDTH, play_pause_y + _BTN_HEIGHT // 2, 0.0, 0.0), screen,
+            target_anchor_id='center', self_anchor_id='left',
         )
+        next_track_x, next_track_y = placement.x, placement.y
         self._next_track_btn.move(next_track_x, next_track_y)
 
         # ── 登录音乐按钮：左锚点对齐搜索优先级按钮右锚点 ───────────────
-        login_x, login_y, _ = clamp_rect_position(
-            search_priority_x + _BTN_PLAYLIST_W,
-            search_priority_y,
-            _BTN_PLAYLIST_W,
-            _BTN_HEIGHT,
-            point=self._anchor_point,
-            fallback_widget=self._music_login_btn,
+        placement = resolve_placement(
+            (_BTN_PLAYLIST_W, _BTN_HEIGHT),
+            Rect(search_priority_x + _BTN_PLAYLIST_W, search_priority_y, 0.0, 0.0), screen,
+            target_anchor_id='top_left', self_anchor_id='top_left',
         )
+        login_x, login_y = placement.x, placement.y
         self._music_login_btn.move(login_x, login_y)
 
         # ── 播放列表按钮：右下锚点对齐"搜索歌曲"按钮右上锚点 ─────────
         # "搜索歌曲"按钮右上角 = (dialog_left + dialog_width, dialog_top)
-        playlist_x, playlist_y, _ = clamp_rect_position(
-            self._anchor_point.x() + dialog_width - _BTN_PLAYLIST_W,
-            buttons_bottom_y - _BTN_HEIGHT,
-            _BTN_PLAYLIST_W,
-            _BTN_HEIGHT,
-            point=self._anchor_point,
-            fallback_widget=self._playlist_btn,
+        placement = resolve_placement(
+            (_BTN_PLAYLIST_W, _BTN_HEIGHT), anchor_rect, screen,
+            target_anchor_id='top_left', self_anchor_id='top_left',
+            offset_x=dialog_width - _BTN_PLAYLIST_W,
+            offset_y=buttons_bottom_y - _BTN_HEIGHT - self._anchor_point.y(),
         )
+        playlist_x, playlist_y = placement.x, placement.y
         self._playlist_btn.move(playlist_x, playlist_y)
 
         # ── 模式按钮：左下锚点对齐"播放列表"按钮左上锚点 ───────────────
-        mode_x, mode_y, _ = clamp_rect_position(
-            playlist_x,
-            playlist_y - _BTN_HEIGHT,
-            _BTN_PLAYLIST_W,
-            _BTN_HEIGHT,
-            point=QPoint(playlist_x, playlist_y),
-            fallback_widget=self._platform_mode_btn,
+        placement = resolve_placement(
+            (_BTN_PLAYLIST_W, _BTN_HEIGHT),
+            Rect(playlist_x, playlist_y, 0.0, 0.0), screen,
+            target_anchor_id='top_left', self_anchor_id='bottom_left',
         )
+        mode_x, mode_y = placement.x, placement.y
         self._platform_mode_btn.move(mode_x, mode_y)
 
     def fade_in(self):

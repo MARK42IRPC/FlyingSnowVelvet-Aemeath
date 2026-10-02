@@ -364,31 +364,51 @@ class ControlPlacementDelegationTests(unittest.TestCase):
             PlacementSpec(offset_y=-2.0).resolve_placement((240, 20), playlist, screen),
         )
 
-    def test_migrated_leaf_controls_stop_calling_clamp_rect_position(self):
-        """这些控件的落位已收进共享解算，不得再自己夹取屏幕。"""
-        migrated = (
-            "clickthrough_button.py",
-            "close_button.py",
-            "restore_button.py",
-            "launch_wuwa_button.py",
-            "more_functions_button.py",
-            "chat_mode_button.py",
-            "interaction_mode_button.py",
-            "scale_button.py",
-            "mic_stt_indicator.py",
-            "announcement_dialog.py",
-            "update_dialog.py",
-            "help_window.py",
-            "voice_package_installer.py",
-        )
-        for name in migrated:
-            with self.subTest(control=name):
-                source = (_REPO_ROOT / "lib" / "script" / "ui" / name).read_text(encoding="utf-8-sig")
-                self.assertNotIn("clamp_rect_position", source)
+    #: 已把窗口落位收进共享解算的控件文件。落位算术（目标锚点、自身锚点、偏移、
+    #: 屏幕夹取）现在只有 `visuals/layout.py` 一份；这里逐个登记，任何一边回退都会红。
+    MIGRATED_LEAF_CONTROLS = (
+        "clickthrough_button.py",
+        "close_button.py",
+        "restore_button.py",
+        "launch_wuwa_button.py",
+        "more_functions_button.py",
+        "chat_mode_button.py",
+        "interaction_mode_button.py",
+        "scale_button.py",
+        "mic_stt_indicator.py",
+        "command_hint_box.py",
+        "page_turn_buttons.py",
+        "qr_dialog_base.py",
+        "speaker_search_dialog.py",
+        "speaker_search_result_box.py",
+        "speaker_control_buttons.py",
+        "playlist_panel.py",
+        "announcement_dialog.py",
+        "update_dialog.py",
+        "help_window.py",
+        "voice_package_installer.py",
+        "office_approval_dialog.py",
+    )
+
+    def test_no_ui_control_clamps_its_own_window_position(self):
+        """`lib/script/ui` 里不得再出现 `clamp_rect_position` 调用。
+
+        该函数只剩 `render_bridge` 自身作为转发层保留；任何控件重新自己夹取屏幕，
+        都意味着档位 1 的算术又被抄回业务层。
+        """
+        offenders = []
+        ui_root = _REPO_ROOT / "lib" / "script" / "ui"
+        for path in sorted(ui_root.rglob("*.py")):
+            if path.name == "render_bridge.py":
+                continue
+            source = path.read_text(encoding="utf-8-sig")
+            if "clamp_rect_position" in source:
+                offenders.append(path.relative_to(_REPO_ROOT).as_posix())
+        self.assertEqual(offenders, [])
 
     def test_migrated_leaf_controls_use_the_render_bridge_placement_seam(self):
         seam_names = ("place_at_point", "centered_placement", "resolve_placement")
-        for name in ("clickthrough_button.py", "close_button.py", "restore_button.py", "mic_stt_indicator.py"):
+        for name in self.MIGRATED_LEAF_CONTROLS:
             with self.subTest(control=name):
                 source = (_REPO_ROOT / "lib" / "script" / "ui" / name).read_text(encoding="utf-8-sig")
                 self.assertTrue(any(seam in source for seam in seam_names), name)

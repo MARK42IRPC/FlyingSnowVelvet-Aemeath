@@ -22,7 +22,7 @@ from config.scale import scale_px, scale_style_px
 from config.tooltip_config import TOOLTIPS
 from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import get_event_center, EventType, Event
-from lib.core.render.visuals.types import Point
+from lib.core.render.visuals.types import Point, Rect
 from lib.core.world_objects import WorldObjectInstance
 from lib.core.unified_draw import Layer, get_layer_manager
 from lib.core.anchor_utils import apply_ui_opacity
@@ -35,7 +35,7 @@ from lib.script.ui.speaker_menu_style import (
     paint_speaker_menu_panel,
     paint_speaker_action_button,
 )
-from lib.script.ui.render_bridge import clamp_rect_position, ui_font as get_ui_font
+from lib.script.ui.render_bridge import resolve_placement, screen_rect_for_point, ui_font as get_ui_font
 
 _SEARCH_MODE_ORDER = ('song', 'artist', 'album', 'playlist')
 _SEARCH_MODE_LABELS = {
@@ -365,26 +365,20 @@ class SpeakerSearchDialog(QWidget):
         right_x = int(round(geometry.x + geometry.width)) + _GAP
         left_x = int(round(geometry.x)) - _TOTAL_W - _GAP
 
-        # 先尝试右侧
-        x, y, _ = clamp_rect_position(
-            right_x,
-            new_y,
-            _TOTAL_W,
-            _HEIGHT,
-            point=anchor_point,
-            fallback_widget=self,
+        # 右侧优先、受阻翻左：解算与夹取都在 visuals/layout.py（档位 1）。
+        screen = screen_rect_for_point(point=anchor_point, fallback_widget=self)
+        placement = resolve_placement(
+            (_TOTAL_W, _HEIGHT), Rect(right_x, new_y, _TOTAL_W, _HEIGHT), screen,
+            target_anchor_id='top_left', self_anchor_id='top_left',
         )
+        x, y = placement.x, placement.y
 
-        # 右侧受阻时翻到左侧
         if x != right_x:
-            fx, fy, _ = clamp_rect_position(
-                left_x,
-                new_y,
-                _TOTAL_W,
-                _HEIGHT,
-                point=anchor_point,
-                fallback_widget=self,
+            placement = resolve_placement(
+                (_TOTAL_W, _HEIGHT), Rect(left_x, new_y, _TOTAL_W, _HEIGHT), screen,
+                target_anchor_id='top_left', self_anchor_id='top_left',
             )
+            fx, fy = placement.x, placement.y
             if fx == left_x or abs(fx - left_x) < abs(x - right_x):
                 x, y = fx, fy
 

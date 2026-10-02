@@ -27,7 +27,7 @@ from lib.core.render.visuals.application_visuals import (
     command_hint_side_font_size,
 )
 from lib.core.render.visuals.types import Rect
-from lib.script.ui.render_bridge import create_draw_backend, qpoint_from_point, clamp_rect_position, digit_font as get_digit_font, move_widget_to_global, text_metrics as QtTextMetrics, ui_font as get_ui_font, widget_global_rect
+from lib.script.ui.render_bridge import create_draw_backend, qpoint_from_point, digit_font as get_digit_font, move_widget_to_global, place_at_point, screen_rect_for_point, text_metrics as QtTextMetrics, ui_font as get_ui_font, widget_global_rect
 from config.scale import scale_px
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.hash_cmd_registry import get_hash_cmd_registry
@@ -269,17 +269,16 @@ class CommandHintBox(QWidget):
         """将自身左上角对齐到 CommandDialog bottom_left + _GAP_Y 偏移。"""
         if not self._anchor_point:
             return
-        new_x = self._anchor_point.x()
-        new_y = self._anchor_point.y() + _GAP_Y
-        x, y, _ = clamp_rect_position(
-            new_x,
-            new_y,
-            self.width(),
-            self.height(),
-            point=self._anchor_point,
-            fallback_widget=self,
+        # 左上锚点对齐 CommandDialog 的 bottom_left 锚点 + _GAP_Y。
+        placement = place_at_point(
+            (self.width(), self.height()),
+            self._anchor_point,
+            screen_rect_for_point(point=self._anchor_point, fallback_widget=self),
+            target_anchor_id='bottom_left',
+            self_anchor_id='top_left',
+            offset_y=_GAP_Y,
         )
-        move_widget_to_global(self, x, y)
+        move_widget_to_global(self, placement.x, placement.y)
         update_page_buttons_position(self, self._prev_btn, self._next_btn, self._has_pages())
 
     # ==================================================================

@@ -24,7 +24,7 @@ from lib.core.render.visuals.media_panel_visuals import (
     search_result_panel_size,
 )
 from lib.core.render.visuals.types import Size
-from lib.script.ui.render_bridge import create_draw_backend, qpoint_from_point, clamp_rect_position, digit_font as get_digit_font, text_metrics as QtTextMetrics, ui_font as get_ui_font
+from lib.script.ui.render_bridge import create_draw_backend, qpoint_from_point, digit_font as get_digit_font, place_at_point, screen_rect_for_point, text_metrics as QtTextMetrics, ui_font as get_ui_font
 from config.scale import scale_px
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.unified_draw import Layer, get_layer_manager
@@ -232,17 +232,16 @@ class SpeakerSearchResultBox(QWidget):
         """将自身左上角对齐到搜索框底部 + _GAP_Y 偏移。"""
         if not self._anchor_point:
             return
-        new_x = self._anchor_point.x()
-        new_y = self._anchor_point.y() + _GAP_Y
-        x, y, _ = clamp_rect_position(
-            new_x,
-            new_y,
-            self.width(),
-            self.height(),
-            point=self._anchor_point,
-            fallback_widget=self,
+        # 左上锚点对齐搜索框的 bottom_left 锚点 + _GAP_Y。
+        placement = place_at_point(
+            (self.width(), self.height()),
+            self._anchor_point,
+            screen_rect_for_point(point=self._anchor_point, fallback_widget=self),
+            target_anchor_id='bottom_left',
+            self_anchor_id='top_left',
+            offset_y=_GAP_Y,
         )
-        self.move(x, y)
+        self.move(placement.x, placement.y)
         update_page_buttons_position(self, self._prev_btn, self._next_btn, self._has_pages())
 
     def _animate(self, target: float) -> None:

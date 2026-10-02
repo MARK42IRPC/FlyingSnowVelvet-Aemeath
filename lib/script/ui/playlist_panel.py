@@ -21,11 +21,11 @@ from PyQt5.QtGui import QPainter, QPen, QPolygonF, QCursor
 
 from config.config import UI
 from lib.core.render.visuals.media_panel_visuals import build_playlist_panel_visual
-from lib.script.ui.render_bridge import create_draw_backend, clamp_rect_position, digit_font as get_digit_font, screen_rect_for_point as get_screen_geometry_for_point, text_metrics as QtTextMetrics, ui_font as get_ui_font
+from lib.script.ui.render_bridge import create_draw_backend, digit_font as get_digit_font, resolve_placement, screen_rect_for_point as get_screen_geometry_for_point, text_metrics as QtTextMetrics, ui_font as get_ui_font
 from config.scale import scale_px
 from config.tooltip_config import TOOLTIPS
 from lib.core.event.center import get_event_center, EventType, Event
-from lib.core.render.visuals.types import Point
+from lib.core.render.visuals.types import Point, Rect
 from lib.core.input.types import Key
 from lib.core.unified_draw import Layer, get_layer_manager
 from lib.core.anchor_utils import apply_ui_opacity
@@ -578,26 +578,21 @@ class PlaylistPanel(QWidget):
         left_x = int(round(geometry.x)) - _WIDTH - _GAP
         reserve_w = _WIDTH + _REMOVE_BTN_W * 2
 
-        # 先尝试右侧
-        x, y, _ = clamp_rect_position(
-            right_x,
-            anchor_y,
-            reserve_w,
-            self.height(),
-            point=anchor,
-            fallback_widget=self,
+        # 右侧优先、受阻翻左：解算与夹取都在 visuals/layout.py（档位 1）。
+        screen = get_screen_geometry_for_point(point=anchor, fallback_widget=self)
+        panel_h = self.height()
+        placement = resolve_placement(
+            (reserve_w, panel_h), Rect(right_x, anchor_y, reserve_w, panel_h), screen,
+            target_anchor_id='top_left', self_anchor_id='top_left',
         )
+        x, y = placement.x, placement.y
 
-        # 右侧受阻时翻到左侧
         if x != right_x:
-            fx, fy, _ = clamp_rect_position(
-                left_x,
-                anchor_y,
-                reserve_w,
-                self.height(),
-                point=anchor,
-                fallback_widget=self,
+            placement = resolve_placement(
+                (reserve_w, panel_h), Rect(left_x, anchor_y, reserve_w, panel_h), screen,
+                target_anchor_id='top_left', self_anchor_id='top_left',
             )
+            fx, fy = placement.x, placement.y
             if fx == left_x or abs(fx - left_x) < abs(x - right_x):
                 x, y = fx, fy
 
@@ -631,22 +626,20 @@ class PlaylistPanel(QWidget):
 
         base_y = self.y() + _BORDER + row * _ROW_H + (_ROW_H - _REMOVE_BTN_H) // 2
         base_x = self.x() + self.width()
-        remove_x, remove_y, _ = clamp_rect_position(
-            base_x,
-            base_y,
-            _REMOVE_BTN_W,
-            _REMOVE_BTN_H,
-            point=self.geometry().center(),
-            fallback_widget=self,
+        screen = get_screen_geometry_for_point(
+            point=self.geometry().center(), fallback_widget=self
         )
-        play_x, play_y, _ = clamp_rect_position(
-            base_x + _REMOVE_BTN_W,
-            base_y,
-            _REMOVE_BTN_W,
-            _REMOVE_BTN_H,
-            point=self.geometry().center(),
-            fallback_widget=self,
+        placement = resolve_placement(
+            (_REMOVE_BTN_W, _REMOVE_BTN_H), Rect(base_x, base_y, 0.0, 0.0), screen,
+            target_anchor_id='top_left', self_anchor_id='top_left',
         )
+        remove_x, remove_y = placement.x, placement.y
+        placement = resolve_placement(
+            (_REMOVE_BTN_W, _REMOVE_BTN_H),
+            Rect(base_x + _REMOVE_BTN_W, base_y, 0.0, 0.0), screen,
+            target_anchor_id='top_left', self_anchor_id='top_left',
+        )
+        play_x, play_y = placement.x, placement.y
 
         self._remove_btn.move(remove_x, remove_y)
         self._play_now_btn.move(play_x, play_y)
