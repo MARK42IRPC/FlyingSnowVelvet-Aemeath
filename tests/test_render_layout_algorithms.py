@@ -414,5 +414,104 @@ class ControlPlacementDelegationTests(unittest.TestCase):
                 self.assertTrue(any(seam in source for seam in seam_names), name)
 
 
+class QtActionButtonChainTests(unittest.TestCase):
+    """档位 3 的迁移 oracle：Qt 按钮链的锚点语义必须收敛到同一份共享布局。
+
+    `lib/script/ui` 的 8 个右键按钮通过锚点事件彼此串联落位（穿透 → 缩放/启动 →
+    聊天/更多 → 交互），而 `resolve_command_action_panel_layout()` 是同一组按钮的
+    第二份事实源。这里把那条**事件链的锚点语义**用共享解算独立重放一遍，再断言它与
+    共享布局逐格相等：两者一旦分歧，Qt 改为直接消费共享布局就不再是等价重构。
+
+    重放不构造任何 Qt 控件，`target_anchor_id` / `self_anchor_id` / 偏移逐项抄自
+    各按钮的 `_target_anchor_id` / `_self_anchor_id` / `_offset_*` 与它们的
+    `_update_position()`；改这些值时本测试会先红。
+    """
+
+    COMMAND = Rect(100, 200, 240, 36)
+    SCREEN = Rect(0, 0, 1920, 1080)
+
+    def _place(self, size, target_rect, *, target_anchor, self_anchor, off_x=0.0, off_y=0.0):
+        return PlacementSpec(
+            target_anchor_id=target_anchor,
+            self_anchor_id=self_anchor,
+            offset_x=off_x,
+            offset_y=off_y,
+        ).resolve_placement(size, target_rect, self.SCREEN)
+
+    def _as_lists(self, layout):
+        return {name: [int(r.x), int(r.y), int(r.width), int(r.height)] for name, r in layout.rects}
+
+    def test_the_anchor_event_chain_reproduces_the_shared_panel_layout(self):
+        shared = self._as_lists(resolve_command_action_panel_layout(self.COMMAND))
+
+        # 1. 穿透按钮：bottom_left 对齐命令框 top_left（偏移 -2px）。
+        clickthrough = self._place(
+            (80, 32), self.COMMAND,
+            target_anchor="top_left", self_anchor="bottom_left", off_y=-2,
+        )
+        # 2/3. 放大、缩小：各自 left 贴上游 right（同一行）。
+        scale_up = self._place(
+            (40, 32), Rect(clickthrough.x, clickthrough.y, 80, 32),
+            target_anchor="right", self_anchor="left",
+        )
+        scale_down = self._place(
+            (40, 32), Rect(scale_up.x, scale_up.y, 40, 32),
+            target_anchor="right", self_anchor="left",
+        )
+        # 4. 关闭按钮：bottom_right 对齐命令框 top_right（偏移 -2px）。
+        close = self._place(
+            (80, 32), self.COMMAND,
+            target_anchor="top_right", self_anchor="bottom_right", off_y=-2,
+        )
+        # 5. 启动鸣潮：bottom_left 对齐穿透按钮 top_left。
+        launch = self._place(
+            (80, 32), Rect(clickthrough.x, clickthrough.y, 80, 32),
+            target_anchor="top_left", self_anchor="bottom_left",
+        )
+        # 6. 聊天模式：top_left 对齐启动鸣潮 top_right。
+        chat = self._place(
+            (80, 32), Rect(launch.x, launch.y, 80, 32),
+            target_anchor="top_right", self_anchor="top_left",
+        )
+        # 7. 交互模式：left 对齐聊天模式 right。
+        interaction = self._place(
+            (80, 32), Rect(chat.x, chat.y, 80, 32),
+            target_anchor="right", self_anchor="left",
+        )
+        # 8. 更多功能：bottom_left 对齐启动鸣潮 top_left。
+        more = self._place(
+            (80, 32), Rect(launch.x, launch.y, 80, 32),
+            target_anchor="top_left", self_anchor="bottom_left",
+        )
+
+        replayed = {
+            "clickthrough": [clickthrough.x, clickthrough.y, 80, 32],
+            "scale_up": [scale_up.x, scale_up.y, 40, 32],
+            "scale_down": [scale_down.x, scale_down.y, 40, 32],
+            "close": [close.x, close.y, 80, 32],
+            "launch_wuwa": [launch.x, launch.y, 80, 32],
+            "chat_mode": [chat.x, chat.y, 80, 32],
+            "interaction_mode": [interaction.x, interaction.y, 80, 32],
+            "more_functions": [more.x, more.y, 80, 32],
+        }
+        self.assertEqual(replayed, shared)
+
+    def test_the_chain_is_stable_after_an_edge_flip(self):
+        """命令框翻到左侧后，按钮链仍与共享布局一致（布局随 command_rect 平移）。"""
+        flipped_command = Rect(600, 200, 240, 36)
+        shared = self._as_lists(resolve_command_action_panel_layout(flipped_command))
+
+        clickthrough = self._place(
+            (80, 32), flipped_command,
+            target_anchor="top_left", self_anchor="bottom_left", off_y=-2,
+        )
+        launch = self._place(
+            (80, 32), Rect(clickthrough.x, clickthrough.y, 80, 32),
+            target_anchor="top_left", self_anchor="bottom_left",
+        )
+        self.assertEqual([clickthrough.x, clickthrough.y, 80, 32], shared["clickthrough"])
+        self.assertEqual([launch.x, launch.y, 80, 32], shared["launch_wuwa"])
+
+
 if __name__ == "__main__":
     unittest.main()
