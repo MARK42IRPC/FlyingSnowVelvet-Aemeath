@@ -13,6 +13,7 @@ from config.font_config import FONT, get_digit_font_family, get_ui_font_family
 from config.scale import scale_px
 from lib.core.layer import Layer
 
+from .anchor_graph import COMMAND_ACTION_GRAPH
 from .commands import (
     DrawBatch,
     EllipseCommand,
@@ -116,6 +117,14 @@ def build_mic_stt_indicator_visual(
     )
     return ApplicationPanelVisual(Size(side, side), DrawBatch(commands))
 
+
+#: 命令框附属按钮族三行布局的逻辑几何（相对命令框左上角，1080p 基准）。
+#: 这是 ``COMMAND_ACTION_GRAPH`` 与 ``resolve_command_action_panel_layout()`` 共用的
+#: 事实源：按钮名/宽高与链路拓扑各写一遍，任何一边单方面改动都会让守卫失败。
+COMMAND_ACTION_ROW_TOP = -34
+COMMAND_ACTION_ROW_MIDDLE = -66
+COMMAND_ACTION_ROW_BOTTOM = -98
+COMMAND_ACTION_BUTTON_HEIGHT = 32
 
 COMMAND_ACTION_BUTTONS = (
     ("clickthrough", "鼠标穿透", 80, 32),
@@ -1425,20 +1434,25 @@ def build_rect_action_button_visual(
     return ApplicationPanelVisual(Size(width, height), DrawBatch(tuple(commands)))
 
 
-def resolve_command_action_panel_layout(command_rect: Rect) -> CommandActionPanelLayout:
-    """Resolve the Qt-baseline three-row action panel around the command box."""
-    x = float(command_rect.x)
-    y = float(command_rect.y)
-    top = y - 34
-    upper = (("clickthrough", 0, 80), ("scale_up", 80, 40),
-             ("scale_down", 120, 40), ("close", 160, 80))
-    middle = (("launch_wuwa", 0, 80), ("chat_mode", 80, 80),
-              ("interaction_mode", 160, 80))
-    rects = [(name, Rect(x + offset, top, width, 32)) for name, offset, width in upper]
-    rects.extend((name, Rect(x + offset, y - 66, width, 32)) for name, offset, width in middle)
-    rects.append(("more_functions", Rect(x, y - 98, 80, 32)))
-    width = max((rect.x + rect.width for _, rect in rects), default=x) - x
-    return CommandActionPanelLayout(Size(width, 96), tuple(rects))
+def resolve_command_action_panel_layout(
+    command_rect: Rect,
+    *,
+    scale: float = 1.0,
+) -> CommandActionPanelLayout:
+    """Resolve the Qt-baseline three-row action panel around the command box.
+
+    Geometry comes from ``COMMAND_ACTION_GRAPH``（档位 2 的唯一链路声明）；本函数只负责
+    按 ``COMMAND_ACTION_BUTTONS`` 的声明顺序取值并把尺寸行高汇总成面板尺寸，不再手抄
+    一份绝对偏移。``scale`` 把逻辑几何整体放大（Qt 侧按绘制缩放消费）。
+    """
+    factor = max(0.0, float(scale))
+    resolved = COMMAND_ACTION_GRAPH.resolve(command_rect, scale=factor)
+    rects = tuple((name, resolved[name]) for name, _text, _w, _h in COMMAND_ACTION_BUTTONS)
+    width = max((rect.x + rect.width for _, rect in rects), default=0.0) - float(command_rect.x)
+    height = int(round(
+        (COMMAND_ACTION_ROW_TOP + COMMAND_ACTION_BUTTON_HEIGHT - COMMAND_ACTION_ROW_BOTTOM) * factor
+    ))
+    return CommandActionPanelLayout(Size(width, height), rects)
 
 
 def build_command_action_panel_visual(

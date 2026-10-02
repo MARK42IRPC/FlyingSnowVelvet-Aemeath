@@ -16,9 +16,15 @@ from PyQt5.QtCore import QRect, Qt
 from PyQt5.QtGui import QRegion
 from PyQt5.QtWidgets import QWidget
 
-from lib.core.event.center import EventType, get_event_center
+from lib.core.event.center import Event, EventType, get_event_center
 from lib.core.layer import Layer
 from lib.core.unified_draw import get_layer_manager
+from lib.script.ui.render_bridge import (
+    command_action_graph,
+    move_widget_to_global,
+    screen_rect_for_point,
+    widget_global_rect,
+)
 
 
 class RightClickUiLayer(QWidget):
@@ -38,6 +44,9 @@ class RightClickUiLayer(QWidget):
 
         self._event_center = get_event_center()
         self._members: list[QWidget] = []
+        # 命令框附属按钮族的声明式锚点图（档位 2）：由本层一次解算，不再逐控件收发锚点事件。
+        self._family_nodes: dict[str, QWidget] = {}
+        self._family_graph = command_action_graph()
         self._visible = False
         self._region = QRegion()
         self._event_center.subscribe(EventType.FRAME, self._on_frame)
@@ -78,6 +87,14 @@ class RightClickUiLayer(QWidget):
     def members(self) -> tuple[QWidget, ...]:
         return tuple(self._members)
 
+    def register_family_node(self, node_id: str, widget) -> None:
+        """登记按钮族里的一个节点控件；``node_id`` 见 ``visuals/anchor_graph.py``。"""
+        if widget is not None:
+            self._family_nodes[str(node_id)] = widget
+
+    def family_nodes(self) -> dict[str, object]:
+        return dict(self._family_nodes)
+
     @staticmethod
     def _unsubscribe_frame(widget: QWidget) -> None:
         """宿主统一驱动帧刷新，子控件不再各自响应 FRAME。"""
@@ -95,6 +112,8 @@ class RightClickUiLayer(QWidget):
     def show_layer(self) -> None:
         """显示整组控件：先同步几何，再一次性显示并申明置顶。"""
         self._visible = True
+        # 先按锚点图解算一次整族落位，避免首次显示时按钮停在默认位置。
+        self._resolve_family()
         self._sync_geometry()
         self.show()
         try:
@@ -114,6 +133,7 @@ class RightClickUiLayer(QWidget):
     def _on_frame(self, event=None) -> None:
         if not self._visible:
             return
+        self._resolve_family()
         for member in self._members:
             update = getattr(member, "_update_position", None)
             if update is None:
@@ -123,6 +143,52 @@ class RightClickUiLayer(QWidget):
             except RuntimeError:
                 continue
         self._sync_geometry()
+
+    def _family_rects(self) -> dict[str, object] | None:
+        """按声明式锚点图一次解算按钮族矩形；命令框不在场时返回 ``None``。"""
+        command = self._family_nodes.get("command_dialog")
+        if command is None:
+            return None
+        graph = self._family_graph or command_action_graph()
+        root_rect = widget_global_rect(command)
+        sizes = {
+            node_id: (widget.width(), widget.height())
+            for node_id, widget in self._family_nodes.items()
+            if node_id != graph.root_id
+        }
+        screen = screen_rect_for_point(point=root_rect.center, fallback_widget=self)
+        return graph.resolve(root_rect, sizes=sizes, screen=screen)
+
+    def family_rects(self) -> dict[str, object] | None:
+        """按钮族当前的屏幕矩形（按声明式锚点图一次解算），供节点控件查询落位。"""
+        return self._family_rects()
+
+    def _resolve_family(self) -> None:
+        """整族一次解算：命令框发一次全局锚点，八个按钮按图落位。"""
+        command = self._family_nodes.get("command_dialog")
+        if command is None:
+            return
+        root_rect = widget_global_rect(command)
+        resolved = self._family_rects()
+        if resolved is None:
+            return
+        for node_id, widget in self._family_nodes.items():
+            if node_id == "command_dialog":
+                continue
+            rect = resolved.get(node_id)
+            if rect is None:
+                continue
+            try:
+                move_widget_to_global(widget, int(rect.x), int(rect.y))
+            except RuntimeError:
+                continue
+        # 命令框发一次全局锚点：提示框、麦克风指示器等族外跟随者仍按既有协议跟随。
+        self._event_center.publish(Event(EventType.UI_ANCHOR_RESPONSE, {
+            "window_id": "command_dialog",
+            "anchor_id": "all",
+            "anchor_point": root_rect.top_left,
+            "ui_id": "all",
+        }))
 
     def _visible_member_rects(self) -> list[QRect]:
         rects: list[QRect] = []

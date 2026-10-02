@@ -8,8 +8,6 @@ from config.scale import scale_px
 from config.tooltip_config import TOOLTIPS
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.desktop_actions import adjust_desktop_scale
-from lib.core.render.visuals.anchors import get_anchor_point as rect_anchor_point
-from lib.core.render.visuals.types import Point
 from lib.core.unified_draw import Layer, get_layer_manager
 from config.user_scale_config import get_user_scale_config
 from lib.core.anchor_utils import (
@@ -17,11 +15,8 @@ from lib.core.anchor_utils import (
     refresh_last_activity,
 )
 from lib.script.ui.rect_action_button_style import paint_rect_action_button
-from lib.script.ui.render_bridge import move_widget_to_global, place_at_point, screen_rect_for_point, ui_font as get_ui_font, widget_global_rect
-from lib.core.render.backends.qt.widgets.anchors import (
-    get_anchor_point as resolve_anchor_point,
-    publish_widget_anchor_response,
-)
+from lib.script.ui.render_bridge import family_placement, move_widget_to_global, ui_font as get_ui_font, widget_global_rect
+from lib.core.render.backends.qt.widgets.anchors import get_anchor_point as resolve_anchor_point
 
 
 class ScaleUpButton(QWidget):
@@ -67,16 +62,9 @@ class ScaleUpButton(QWidget):
 
         # UI 组件 ID
         self._ui_id = 'scale_up_button'
-        self._target_ui_id = 'clickthrough_button'
 
-        # 订阅帧事件用于位置刷新
+        # 帧事件用于位置刷新；按钮族落位统一由 RightClickUiLayer 的锚点图解算（档位 2）。
         self._event_center.subscribe(EventType.FRAME, self._on_frame)
-
-        # 订阅锚点响应事件（用于即时跟随）
-        self._event_center.subscribe(EventType.UI_ANCHOR_RESPONSE, self._on_anchor_response)
-
-        # 订阅 UI 创建事件
-        self._event_center.subscribe(EventType.UI_CREATE, self._on_ui_create)
 
         # 字体设置
         self._font = get_ui_font()
@@ -105,76 +93,18 @@ class ScaleUpButton(QWidget):
         if self._visible:
             self._update_position()
 
-    def _on_ui_create(self, event):
-        """UI ?????? - ???????"""
-        target_ui_id = event.data.get('ui_id')
-        request_anchor_id = event.data.get('anchor_id')
-
-        if target_ui_id == self._ui_id:
-            publish_widget_anchor_response(
-                self._event_center,
-                self,
-                window_id=self._ui_id,
-                anchor_id=request_anchor_id,
-                ui_id=target_ui_id,
-            )
-
-    def _on_anchor_response(self, event):
-        """锚点响应事件处理 - 上游按钮移动时立即跟随"""
-        if not self._visible:
-            return
-
-        ui_id = event.data.get('ui_id')
-        window_id = event.data.get('window_id')
-        anchor_id = event.data.get('anchor_id')
-
-        # 处理两种情况：
-        # 1. 专门针对此 UI 的锚点响应（fade_in 时主动请求）
-        # 2. 上游 clickthrough_button 移动时的全局锚点更新
-        if ui_id == self._ui_id and window_id == self._target_ui_id:
-            self._update_position()
-        elif ui_id == 'all' and window_id == self._target_ui_id and anchor_id == 'all':
-            self._update_position()
-
     def _update_position(self):
-        """更新窗口位置 - 左锚点对齐到 clickthrough_button 的右锚点"""
-        if not self._clickthrough_button:
+        """更新窗口位置 - 由 RightClickUiLayer 的锚点图给出整族矩形。"""
+        rect = family_placement(self, 'scale_up')
+        if rect is None:
             return
-
-        # 左锚点对齐 clickthrough_button 右锚点；解算在 visuals/layout.py。
-        target_rect = widget_global_rect(self._clickthrough_button)
-        anchor = rect_anchor_point(target_rect, 'right')
-        placement = place_at_point(
-            (self.WIDTH, self.HEIGHT),
-            anchor,
-            screen_rect_for_point(point=anchor, fallback_widget=self),
-            target_anchor_id='right',
-            self_anchor_id='left',
-        )
-        x, y = placement.x, placement.y
-
-        move_widget_to_global(self, x, y)
-        # 广播自身位置变化，供下游 UI（缩小按钮）即时跟随
-        anchor_update_event = Event(EventType.UI_ANCHOR_RESPONSE, {
-            'window_id': self._ui_id,
-            'anchor_id': 'all',
-            'anchor_point': Point(x, y),
-            'ui_id': 'all'
-        })
-        self._event_center.publish(anchor_update_event)
+        move_widget_to_global(self, int(rect.x), int(rect.y))
 
     def fade_in(self):
         if self._visible:
             return
         self._visible = True
         self.show()
-        self._update_position()
-        create_event = Event(EventType.UI_CREATE, {
-            'window_id': self._target_ui_id,
-            'anchor_id': 'right',
-            'ui_id': self._ui_id
-        })
-        self._event_center.publish(create_event)
         self._animate(1.0)
         self._reset_idle_timer()
 
@@ -280,16 +210,9 @@ class ScaleDownButton(QWidget):
 
         # UI 组件 ID
         self._ui_id = 'scale_down_button'
-        self._target_ui_id = 'scale_up_button'
 
-        # 订阅帧事件用于位置刷新
+        # 帧事件用于位置刷新；按钮族落位统一由 RightClickUiLayer 的锚点图解算（档位 2）。
         self._event_center.subscribe(EventType.FRAME, self._on_frame)
-
-        # 订阅锚点响应事件（用于即时跟随）
-        self._event_center.subscribe(EventType.UI_ANCHOR_RESPONSE, self._on_anchor_response)
-
-        # 订阅 UI 创建事件
-        self._event_center.subscribe(EventType.UI_CREATE, self._on_ui_create)
 
         # 字体设置
         self._font = get_ui_font()
@@ -318,55 +241,12 @@ class ScaleDownButton(QWidget):
         if self._visible:
             self._update_position()
 
-    def _on_ui_create(self, event):
-        """UI ?????? - ???????"""
-        target_ui_id = event.data.get('ui_id')
-        request_anchor_id = event.data.get('anchor_id')
-
-        if target_ui_id == self._ui_id:
-            publish_widget_anchor_response(
-                self._event_center,
-                self,
-                window_id=self._ui_id,
-                anchor_id=request_anchor_id,
-                ui_id=target_ui_id,
-            )
-
-    def _on_anchor_response(self, event):
-        """锚点响应事件处理 - 上游按钮移动时立即跟随"""
-        if not self._visible:
-            return
-
-        ui_id = event.data.get('ui_id')
-        window_id = event.data.get('window_id')
-        anchor_id = event.data.get('anchor_id')
-
-        # 处理两种情况：
-        # 1. 专门针对此 UI 的锚点响应（fade_in 时主动请求）
-        # 2. 上游 scale_up_button 移动时的全局锚点更新
-        if ui_id == self._ui_id and window_id == self._target_ui_id:
-            self._update_position()
-        elif ui_id == 'all' and window_id == self._target_ui_id and anchor_id == 'all':
-            self._update_position()
-
     def _update_position(self):
-        """更新窗口位置 - 左锚点对齐到 scale_up_button 的右锚点"""
-        if not self._scale_up_button:
+        """更新窗口位置 - 由 RightClickUiLayer 的锚点图给出整族矩形。"""
+        rect = family_placement(self, 'scale_down')
+        if rect is None:
             return
-
-        # 左锚点对齐 scale_up_button 右锚点；解算在 visuals/layout.py。
-        target_rect = widget_global_rect(self._scale_up_button)
-        anchor = rect_anchor_point(target_rect, 'right')
-        placement = place_at_point(
-            (self.WIDTH, self.HEIGHT),
-            anchor,
-            screen_rect_for_point(point=anchor, fallback_widget=self),
-            target_anchor_id='right',
-            self_anchor_id='left',
-        )
-        x, y = placement.x, placement.y
-
-        move_widget_to_global(self, x, y)
+        move_widget_to_global(self, int(rect.x), int(rect.y))
 
     def fade_in(self):
         if self._visible:
@@ -374,12 +254,6 @@ class ScaleDownButton(QWidget):
         self._visible = True
         self.show()
         self._update_position()
-        create_event = Event(EventType.UI_CREATE, {
-            'window_id': self._target_ui_id,
-            'anchor_id': 'right',
-            'ui_id': self._ui_id
-        })
-        self._event_center.publish(create_event)
         self._animate(1.0)
         self._reset_idle_timer()
 
@@ -419,7 +293,7 @@ class ScaleDownButton(QWidget):
         animate_opacity(self._anim, self._opacity, target)
 
     def click(self):
-        """处理点击事件 - 缩小桌宠"""
+        """处理点击事件 - 放大桌宠"""
         adjust_desktop_scale(self.SCALE_DELTA)
 
         self.update()

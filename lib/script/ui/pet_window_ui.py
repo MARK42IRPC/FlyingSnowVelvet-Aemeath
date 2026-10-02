@@ -78,6 +78,18 @@ def create_pet_window_ui(owner, on_close):
         getattr(hint_box, "_next_btn", None),
     )
 
+    # 命令框附属按钮族的声明式锚点图（档位 2）：登记节点后由宿主一帧一次解算整族落位，
+    # 按钮不再各自收发 UI_ANCHOR_RESPONSE / UI_CREATE 锚点事件。命令框是族的根节点。
+    layer.register_family_node("command_dialog", cmd)
+    layer.register_family_node("clickthrough", clickthrough_btn)
+    layer.register_family_node("scale_up", scale_up_btn)
+    layer.register_family_node("scale_down", scale_down_btn)
+    layer.register_family_node("close", close_btn)
+    layer.register_family_node("launch_wuwa", launch_wuwa_btn)
+    layer.register_family_node("chat_mode", chat_mode_btn)
+    layer.register_family_node("interaction_mode", interaction_mode_btn)
+    layer.register_family_node("more_functions", more_functions_btn)
+
     return {
         "_right_click_ui_layer": layer,
         "_close_btn": close_btn,

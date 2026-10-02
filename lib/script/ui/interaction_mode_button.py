@@ -11,9 +11,8 @@ from config.scale import scale_px
 from lib.core.anchor_utils import apply_ui_opacity
 from lib.core.event.center import Event, EventType, get_event_center
 from lib.core.unified_draw import Layer, get_layer_manager
-from lib.core.render.visuals.anchors import get_anchor_point
 from lib.script.ui.rect_action_button_style import paint_rect_action_button
-from lib.script.ui.render_bridge import move_widget_to_global, place_at_point, screen_rect_for_point, ui_font as get_ui_font, widget_global_rect
+from lib.script.ui.render_bridge import family_placement, move_widget_to_global, ui_font as get_ui_font, widget_global_rect
 
 
 class InteractionModeButton(QWidget):
@@ -45,9 +44,9 @@ class InteractionModeButton(QWidget):
 
         self._font = get_ui_font()
         self._font.setBold(True)
+        self._ui_id = 'interaction_mode_button'
         self._event_center = get_event_center()
         self._event_center.subscribe(EventType.FRAME, self._on_frame)
-        self._event_center.subscribe(EventType.UI_ANCHOR_RESPONSE, self._on_anchor_response)
         self._event_center.subscribe(EventType.UI_CLICKTHROUGH_TOGGLE, self._on_clickthrough_toggle)
         self._event_center.subscribe(EventType.INTERACTION_MODE_CHANGED, self._on_mode_changed)
 
@@ -59,33 +58,23 @@ class InteractionModeButton(QWidget):
         if self._visible:
             self._update_position()
 
-    def _on_anchor_response(self, event: Event) -> None:
-        if self._visible and (event.data or {}).get("ui_id") in ("all", "chat_mode_button"):
-            self._update_position()
-
-    def _on_clickthrough_toggle(self, event: Event) -> None:
-        self.setAttribute(Qt.WA_TransparentForMouseEvents, bool((event.data or {}).get("enabled")))
-
     def _on_mode_changed(self, event: Event) -> None:
         mode = str((event.data or {}).get("mode", ""))
         if mode in {"companion", "office"} and mode != self._mode:
             self._mode = mode
             self.update()
 
-    def _update_position(self) -> None:
-        button = self._anchor_button
-        if button is None or not button.isVisible():
+    def _on_clickthrough_toggle(self, event: Event) -> None:
+        """穿透模式开启/关闭时同步自身鼠标透传状态。"""
+        self.setAttribute(Qt.WA_TransparentForMouseEvents,
+                          event.data.get('enabled', False))
+
+    def _update_position(self):
+        """更新窗口位置 - 由 RightClickUiLayer 的锚点图给出整族矩形。"""
+        rect = family_placement(self, 'interaction_mode')
+        if rect is None:
             return
-        target_rect = widget_global_rect(button)
-        anchor = get_anchor_point(target_rect, 'right')
-        placement = place_at_point(
-            (self.WIDTH, self.HEIGHT),
-            anchor,
-            screen_rect_for_point(point=anchor, fallback_widget=self),
-            target_anchor_id='right',
-            self_anchor_id='left',
-        )
-        move_widget_to_global(self, placement.x, placement.y)
+        move_widget_to_global(self, int(rect.x), int(rect.y))
 
     def fade_in(self) -> None:
         if self._visible:
@@ -159,7 +148,6 @@ class InteractionModeButton(QWidget):
 
     def closeEvent(self, event) -> None:
         self._event_center.unsubscribe(EventType.FRAME, self._on_frame)
-        self._event_center.unsubscribe(EventType.UI_ANCHOR_RESPONSE, self._on_anchor_response)
         self._event_center.unsubscribe(EventType.UI_CLICKTHROUGH_TOGGLE, self._on_clickthrough_toggle)
         self._event_center.unsubscribe(EventType.INTERACTION_MODE_CHANGED, self._on_mode_changed)
         super().closeEvent(event)

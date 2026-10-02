@@ -15,11 +15,10 @@ from config.scale import scale_px
 from config.tooltip_config import TOOLTIPS
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.unified_draw import Layer, get_layer_manager
-from lib.core.render.visuals.anchors import get_anchor_point
 from lib.core.anchor_utils import apply_ui_opacity
 from lib.script.ui.rect_action_button_style import paint_rect_action_button
 from lib.script.app.wuwa_launcher import get_wuthering_waves_launcher
-from lib.script.ui.render_bridge import move_widget_to_global, place_at_point, screen_rect_for_point, ui_font as get_ui_font, widget_global_rect
+from lib.script.ui.render_bridge import family_placement, move_widget_to_global, ui_font as get_ui_font, widget_global_rect
 
 
 class LaunchWutheringWavesButton(QWidget):
@@ -67,7 +66,6 @@ class LaunchWutheringWavesButton(QWidget):
         self._cached_exe_path: str | None = None
         self._cached_app_id: str | None = None
         self._ui_id = 'launch_wuwa_button'
-        self._target_ui_id = 'clickthrough_button'
 
         self._opacity = QGraphicsOpacityEffect(self)
         self._opacity.setOpacity(0.0)
@@ -81,8 +79,8 @@ class LaunchWutheringWavesButton(QWidget):
         self._font.setBold(True)
 
         self._event_center = get_event_center()
+        # 按钮族落位统一由 RightClickUiLayer 的锚点图解算（档位 2）。
         self._event_center.subscribe(EventType.FRAME, self._on_frame)
-        self._event_center.subscribe(EventType.UI_ANCHOR_RESPONSE, self._on_anchor_response)
         self._event_center.subscribe(EventType.UI_CLICKTHROUGH_TOGGLE, self._on_clickthrough_toggle)
 
     def paintEvent(self, event):
@@ -93,37 +91,12 @@ class LaunchWutheringWavesButton(QWidget):
         if self._visible:
             self._update_position()
 
-    def _on_anchor_response(self, event):
-        """锚点响应事件处理 - 上游按钮移动时立即跟随，避免可见滞后。"""
-        if not self._visible:
-            return
-
-        ui_id = event.data.get('ui_id')
-        window_id = event.data.get('window_id')
-        anchor_id = event.data.get('anchor_id')
-
-        if ui_id == self._ui_id and window_id == self._target_ui_id:
-            self._update_position()
-        elif ui_id == 'all' and window_id == self._target_ui_id and anchor_id == 'all':
-            self._update_position()
-
     def _update_position(self):
-        if not self._clickthrough_button:
+        """更新窗口位置 - 由 RightClickUiLayer 的锚点图给出整族矩形。"""
+        rect = family_placement(self, 'launch_wuwa')
+        if rect is None:
             return
-
-        target_rect = widget_global_rect(self._clickthrough_button)
-        anchor = get_anchor_point(target_rect, 'top_left')
-
-        # 左下锚点对齐 clickthrough_button 左上锚点（解算在 visuals/layout.py）。
-        placement = place_at_point(
-            (self.WIDTH, self.HEIGHT),
-            anchor,
-            screen_rect_for_point(point=anchor, fallback_widget=self),
-            target_anchor_id='top_left',
-            self_anchor_id='bottom_left',
-        )
-
-        move_widget_to_global(self, placement.x, placement.y)
+        move_widget_to_global(self, int(rect.x), int(rect.y))
 
     def fade_in(self):
         if self._visible:
@@ -166,7 +139,6 @@ class LaunchWutheringWavesButton(QWidget):
 
     def closeEvent(self, event):
         self._event_center.unsubscribe(EventType.FRAME, self._on_frame)
-        self._event_center.unsubscribe(EventType.UI_ANCHOR_RESPONSE, self._on_anchor_response)
         self._event_center.unsubscribe(EventType.UI_CLICKTHROUGH_TOGGLE, self._on_clickthrough_toggle)
         super().closeEvent(event)
 

@@ -232,6 +232,39 @@ class PetWindowUiIntegrationTests(unittest.TestCase):
                 msg=name,
             )
 
+    def test_family_rects_match_the_shared_action_panel_layout(self):
+        """档位 2/3：宿主解算的整族矩形与共享布局逐格相等（Qt 与 DX 共用同一份）。"""
+        from lib.core.render.visuals.application_visuals import (
+            resolve_command_action_panel_layout,
+        )
+        from lib.script.ui.render_bridge import widget_global_rect
+
+        pet = _PetStub(600, 400)
+        self.ui["_cmd"].toggle(pet)
+        self.layer._on_frame()
+
+        resolved = self.layer.family_rects()
+        self.assertIsNotNone(resolved)
+        root_rect = widget_global_rect(self.ui["_cmd"])
+        shared = dict(resolve_command_action_panel_layout(root_rect).rects)
+
+        for node_id, want in shared.items():
+            got = resolved[node_id]
+            self.assertEqual(
+                (int(got.x), int(got.y), int(got.width), int(got.height)),
+                (int(want.x), int(want.y), int(want.width), int(want.height)),
+                msg=node_id,
+            )
+        # 每个按钮都真的落在图给出的位置上（不是只算不用）。
+        for node_id in shared:
+            widget = self.layer.family_nodes()[node_id]
+            told = resolved[node_id]
+            self.assertEqual(
+                self._global_pos(widget),
+                QPoint(int(told.x), int(told.y)),
+                msg=node_id,
+            )
+
     def test_hiding_group_hides_layer(self):
         pet = _PetStub(500, 300)
         cmd = self.ui["_cmd"]

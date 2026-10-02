@@ -27,6 +27,13 @@ from lib.core.render.visuals.application_visuals import (
     resolve_command_action_panel_layout,
     resolve_qr_panel_layout,
 )
+from lib.core.render.visuals.anchor_graph import (
+    COMMAND_ACTION_GRAPH,
+    COMMAND_ACTION_UI_IDS,
+    AnchorGraph,
+    AnchorNode,
+    command_action_node,
+)
 from lib.core.render.visuals.controls import RectActionButtonControl
 from lib.core.render.visuals.layout import AnchorPlacement, PlacementSpec, resolve_placement
 from lib.core.render.visuals.types import Point, Rect, Size
@@ -331,6 +338,87 @@ class PlacementSpecTests(unittest.TestCase):
             PlacementSpec().resolve_placement((10, 10), None, Rect(0, 0, 800, 600))
 
 
+class AnchorGraphTests(unittest.TestCase):
+    """档位 2：声明式锚点图是按钮族唯一链路，且与共享布局逐格一致。"""
+
+    COMMAND = Rect(100, 200, 240, 36)
+    SCREEN = Rect(0, 0, 1920, 1080)
+
+    def test_graph_reproduces_the_shared_action_panel_layout(self):
+        resolved = COMMAND_ACTION_GRAPH.resolve(self.COMMAND)
+        shared = dict(resolve_command_action_panel_layout(self.COMMAND).rects)
+
+        self.assertEqual(set(resolved), set(shared))
+        for node_id, want in shared.items():
+            got = resolved[node_id]
+            self.assertEqual(
+                (got.x, got.y, got.width, got.height),
+                (want.x, want.y, want.width, want.height),
+                msg=node_id,
+            )
+
+    def test_root_is_excluded_from_the_result(self):
+        resolved = COMMAND_ACTION_GRAPH.resolve(self.COMMAND)
+        self.assertNotIn(COMMAND_ACTION_GRAPH.root_id, resolved)
+
+    def test_scale_grows_sizes_offsets_and_spacing(self):
+        resolved = COMMAND_ACTION_GRAPH.resolve(self.COMMAND, scale=2.0)
+        self.assertEqual(
+            (resolved["clickthrough"].x, resolved["clickthrough"].y),
+            (100.0, 200.0 - 68.0),  # 偏移 -2 与行高 34 都翻倍
+        )
+        self.assertEqual(
+            (resolved["clickthrough"].width, resolved["clickthrough"].height),
+            (160.0, 64.0),
+        )
+        self.assertEqual(resolved["scale_up"].x, 100.0 + 160.0)
+
+    def test_size_override_propagates_downstream(self):
+        resolved = COMMAND_ACTION_GRAPH.resolve(
+            self.COMMAND, sizes={"clickthrough": (100, 40)}
+        )
+        self.assertEqual(resolved["scale_up"].x, self.COMMAND.x + 100)
+        # launch_wuwa 贴 clickthrough 顶部（自身高 32），上游加高只抬高它的起点。
+        self.assertEqual(resolved["launch_wuwa"].y, self.COMMAND.y - 40 - 2 - 32)
+
+    def test_screen_is_clamped_when_requested(self):
+        screen = Rect(0, 0, 200, 120)
+        resolved = COMMAND_ACTION_GRAPH.resolve(self.COMMAND, screen=screen)
+        for rect in resolved.values():
+            self.assertGreaterEqual(rect.x, screen.x)
+            self.assertGreaterEqual(rect.y, screen.y)
+
+    def test_out_of_order_nodes_are_skipped_not_guessed(self):
+        graph = AnchorGraph(nodes=(
+            AnchorNode("b", "a", "right", "left", (10, 10)),
+            AnchorNode("a", "root", "top_left", "top_left", (10, 10)),
+        ), root_id="root")
+        resolved = graph.resolve(Rect(0, 0, 10, 10))
+        self.assertNotIn("b", resolved)  # 上游还没出现，静默跳过
+        self.assertEqual((resolved["a"].x, resolved["a"].y), (0.0, 0.0))
+
+    def test_root_rect_must_be_rect_like(self):
+        with self.assertRaises(TypeError):
+            COMMAND_ACTION_GRAPH.resolve(None)
+
+    def test_toolkit_ui_ids_and_node_names_are_declared_together(self):
+        graph_ids = {node.node_id for node in COMMAND_ACTION_GRAPH.nodes}
+        self.assertEqual(graph_ids, set(COMMAND_ACTION_UI_IDS))
+        for node_id, ui_id in COMMAND_ACTION_UI_IDS.items():
+            node = command_action_node(ui_id)
+            self.assertIsNotNone(node, ui_id)
+            self.assertEqual(node.node_id, node_id)
+        self.assertIsNone(command_action_node("no_such_ui"))
+
+    def test_every_node_ui_id_is_the_literal_in_its_qt_button_file(self):
+        for node_id, ui_id in COMMAND_ACTION_UI_IDS.items():
+            with self.subTest(node=node_id):
+                source = (
+                    _REPO_ROOT / "lib" / "script" / "ui" / _QT_BUTTON_FILES[node_id]
+                ).read_text(encoding="utf-8-sig")
+                self.assertIn(f"_ui_id = '{ui_id}'", source)
+
+
 class ControlPlacementDelegationTests(unittest.TestCase):
     """档位 1：已收敛的控件与按钮族必须走共享解算。"""
 
@@ -407,11 +495,13 @@ class ControlPlacementDelegationTests(unittest.TestCase):
         self.assertEqual(offenders, [])
 
     def test_migrated_leaf_controls_use_the_render_bridge_placement_seam(self):
-        seam_names = ("place_at_point", "centered_placement", "resolve_placement")
+        #: 档位 1 的单窗口解算（``place_at_point`` 等）与档位 2 的整族解算
+        #: （``family_placement``）都是允许的 render_bridge 落位入口。
+        seam_calls = ("place_at_point(", "centered_placement(", "resolve_placement(", "family_placement(")
         for name in self.MIGRATED_LEAF_CONTROLS:
             with self.subTest(control=name):
                 source = (_REPO_ROOT / "lib" / "script" / "ui" / name).read_text(encoding="utf-8-sig")
-                self.assertTrue(any(seam in source for seam in seam_names), name)
+                self.assertTrue(any(seam in source for seam in seam_calls), name)
 
 
 class QtActionButtonChainTests(unittest.TestCase):

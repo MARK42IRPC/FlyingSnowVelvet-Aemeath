@@ -209,6 +209,44 @@ def centered_placement(self_size, screen):
     return PlacementSpec().resolve_centered(self_size, screen)
 
 
+def resolve_anchor_graph(graph, root_rect, *, sizes=None, scale: float = 1.0):
+    """一次解算一批窗口的落位（《render 层边界契约》档位 2）。
+
+    右键按钮族不再逐控件收发锚点事件，而是把命令框矩形交给 ``visuals/anchor_graph.py``
+    的声明式锚点图，一次拿到整族的屏幕矩形。本函数是控件侧唯一取用入口，与
+    ``resolve_placement`` 同属档位 1/2 的中立转发面。
+    """
+    return graph.resolve(root_rect, sizes=sizes, scale=scale)
+
+
+def command_action_graph():
+    """右键按钮族的共享锚点图（逻辑尺寸，1080p 基准）。"""
+    from lib.core.render.visuals.anchor_graph import COMMAND_ACTION_GRAPH
+
+    return COMMAND_ACTION_GRAPH
+
+
+def command_action_node(ui_id: str):
+    """按 Qt 控件 ``_ui_id`` 取该控件在按钮族里的链路声明。"""
+    from lib.core.render.visuals.anchor_graph import command_action_node as lookup
+
+    return lookup(ui_id)
+
+
+def family_placement(widget, node_id: str):
+    """右键按钮族里某节点控件的目标屏幕矩形（档位 2 的统一落位入口）。
+
+    节点控件不再自己取上游几何、算锚点：它向所在的 ``RightClickUiLayer`` 要一次整族
+    解算的结果。返回核心 ``Rect``，宿主缺席时返回 ``None``。
+    """
+    host = getattr(widget, "_layer_host", None)
+    getter = getattr(host, "family_rects", None)
+    if not callable(getter):
+        return None
+    rects = getter()
+    return None if rects is None else rects.get(node_id)
+
+
 def widget_global_rect(widget):
     """控件在屏幕坐标系中的核心 `Rect`。"""
     return presentation_host().widget_global_rect(widget)

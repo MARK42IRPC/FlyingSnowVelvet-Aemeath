@@ -7,19 +7,15 @@ from config.config import UI, TIMEOUTS
 from config.scale import scale_px
 from config.tooltip_config import TOOLTIPS
 from lib.core.event.center import get_event_center, EventType, Event
-from lib.core.render.visuals.types import Point
 from lib.core.unified_draw import Layer, get_layer_manager
 from lib.script.voice.ams_clickthrough_reminder import AmsClickthroughReminderSound
 from lib.core.anchor_utils import (
     animate_opacity,
     refresh_last_activity,
 )
-from lib.script.ui.render_bridge import move_widget_to_global, place_at_point, qpoint_from_point, screen_rect_for_point, ui_font as get_ui_font, widget_global_rect
+from lib.script.ui.render_bridge import family_placement, move_widget_to_global, ui_font as get_ui_font, widget_global_rect
 from lib.script.ui.rect_action_button_style import paint_rect_action_button
-from lib.core.render.backends.qt.widgets.anchors import (
-    get_anchor_point as resolve_anchor_point,
-    publish_widget_anchor_response,
-)
+from lib.core.render.backends.qt.widgets.anchors import get_anchor_point as resolve_anchor_point
 
 
 def _hex(color: QColor) -> str:
@@ -69,29 +65,9 @@ class ClickThroughButton(QWidget):
         # UI 组件 ID
         self._ui_id = 'clickthrough_button'
 
-        # 锚点配置：对齐到 command_dialog 的左上锚点
-        self._target_ui_id = 'command_dialog'
-        self._target_anchor_id = 'top_left'
-        self._self_anchor_id = 'bottom_left'  # 使用左下锚点对齐
-
-        # 位置偏移：往上偏移 2 像素
-        self._offset_x = 0
-        self._offset_y = scale_px(-2, min_abs=1)
-
-        # 订阅帧事件用于位置刷新
+        # 帧事件用于位置刷新；按钮族落位统一由 RightClickUiLayer 的锚点图解算，
+        # 本控件不再收发 UI_ANCHOR_RESPONSE / UI_CREATE 锚点事件（档位 2）。
         self._event_center.subscribe(EventType.FRAME, self._on_frame)
-
-        # 订阅锚点响应事件
-        self._event_center.subscribe(EventType.UI_ANCHOR_RESPONSE, self._on_anchor_response)
-
-        # 订阅 UI 创建事件，返回自己的坐标
-        self._event_center.subscribe(EventType.UI_CREATE, self._on_ui_create)
-
-        # 当前锚点位置
-        self._anchor_point = None
-
-        # 锚点是否可用（当锚点物体消失时设为False）
-        self._anchor_available = False
 
         # 字体设置
         self._font = get_ui_font()
@@ -128,116 +104,21 @@ class ClickThroughButton(QWidget):
 
     def _on_frame(self, event):
         """帧事件处理 - 刷新位置"""
-        if self._visible and self._anchor_available and self._anchor_point:
-            # 只有在锚点可用时才跟随
+        if self._visible:
             self._update_position()
 
-    def _on_anchor_response(self, event):
-        """锚点响应事件处理"""
-        # 如果锚点不可用，不处理锚点更新
-        if not self._anchor_available:
-            return
-
-        ui_id = event.data.get('ui_id')
-        window_id = event.data.get('window_id')
-        anchor_id = event.data.get('anchor_id')
-
-        # 处理两种情况：
-        # 1. 专门针对此 UI 组件的锚点响应（来自 command_dialog）
-        # 2. command_dialog 移动时的全局锚点更新（ui_id='all'）
-        if ui_id == self._ui_id:
-            # 专门针对此 UI 组件的锚点响应
-            # event.data.get('anchor_point') 已经是 command_dialog top_left 锚点的全局坐标
-            # 直接使用，不需要再计算
-            new_anchor_point = qpoint_from_point(event.data.get('anchor_point'))
-            if new_anchor_point is None:
-                return
-            # 只在锚点位置改变时更新
-            if self._anchor_point != new_anchor_point:
-                self._anchor_point = new_anchor_point
-                self._update_position()
-        elif ui_id == 'all' and window_id == self._target_ui_id:
-            # command_dialog 移动时的全局锚点更新
-            # 需要根据当前锚点 ID 计算新的锚点位置
-            if anchor_id == 'all':
-                # command_dialog 的新位置（左上角坐标）
-                cmd_pos = qpoint_from_point(event.data.get('anchor_point'))
-                if cmd_pos is None:
-                    return
-                # command_dialog 的锚点就是自己的左上角
-                # 计算 top_left 锚点位置（就是左上角）
-                new_anchor_point = QPoint(
-                    cmd_pos.x(),  # top_left 锚点的 X 坐标
-                    cmd_pos.y()  # top_left 锚点的 Y 坐标
-                )
-                # 只在锚点位置改变时更新
-                if self._anchor_point != new_anchor_point:
-                    self._anchor_point = new_anchor_point
-                    self._update_position()
-
-    def _on_ui_create(self, event):
-        """UI ?????? - ???????"""
-        target_ui_id = event.data.get('ui_id')
-        request_anchor_id = event.data.get('anchor_id')
-
-        if target_ui_id == self._ui_id:
-            publish_widget_anchor_response(
-                self._event_center,
-                self,
-                window_id=self._ui_id,
-                anchor_id=request_anchor_id,
-                ui_id=target_ui_id,
-            )
-
     def _update_position(self):
-        """更新窗口位置 - 左下锚点对齐到 command_dialog 的左上锚点"""
-        if not self._anchor_point:
+        """更新窗口位置 - 由 RightClickUiLayer 的锚点图给出整族矩形。"""
+        rect = family_placement(self, 'clickthrough')
+        if rect is None:
             return
-
-        # self._anchor_point 是全局坐标（command_dialog top_left 锚点的全局坐标）
-        # top_left 锚点的位置：(cmd_x, cmd_y)
-        # ClickThroughButton 是独立窗口，使用全局坐标
-
-        # 左下锚点对齐 command_dialog 左上锚点；解算在 visuals/layout.py。
-        anchor = self._anchor_point
-        placement = place_at_point(
-            (self.WIDTH, self.HEIGHT),
-            anchor,
-            screen_rect_for_point(point=anchor, fallback_widget=self),
-            target_anchor_id='top_left',
-            self_anchor_id='bottom_left',
-            offset_x=self._offset_x,
-            offset_y=self._offset_y,
-        )
-        x, y = placement.x, placement.y
-
-        move_widget_to_global(self, x, y)
-        # 广播自身位置变化，供下游 UI（如缩放按钮）即时跟随
-        anchor_update_event = Event(EventType.UI_ANCHOR_RESPONSE, {
-            'window_id': self._ui_id,
-            'anchor_id': 'all',
-            'anchor_point': Point(x, y),
-            'ui_id': 'all'
-        })
-        self._event_center.publish(anchor_update_event)
+        move_widget_to_global(self, int(rect.x), int(rect.y))
 
     def fade_in(self):
         if self._visible:
             return
         self._visible = True
-        self._anchor_available = True  # 锚点可用
-
-        # 直接显示窗口（位置会在 _on_anchor_response 中更新）
         self.show()
-
-        # 发布 UI 创建请求（用于后续更新）
-        create_event = Event(EventType.UI_CREATE, {
-            'window_id': self._target_ui_id,
-            'anchor_id': self._target_anchor_id,
-            'ui_id': self._ui_id
-        })
-        self._event_center.publish(create_event)
-
         self._animate(1.0)
 
         # 重置空闲计时器
@@ -247,7 +128,6 @@ class ClickThroughButton(QWidget):
         if not self._visible:
             return
         self._visible = False
-        self._anchor_available = False  # 锚点不可用，停止跟随
 
         # 在隐藏之前保存几何位置
         rect = widget_global_rect(self)

@@ -4,7 +4,7 @@
 
 本文档定义 `lib/core/render/` 的目标结构与依赖边界。它不是阶段计划，而是结构改建完成后必须成立的规则。
 
-**状态：第 6 节迁移顺序 1、2（目录切分）、3 已执行；后端中立协议与统一数据类型已落地（第 11 节），控件层“描述 + 后端渲染”已滚动迁移气泡框（第 12 节）、说明书、语音指示器与播放进度条（第 13 节）；排布解算已收敛到 `visuals/` 并由 `PlacementSpec` 统一解算（第 14 节，档位 0/1）。** 目录与引用规则以本文档为准；改建前的事实源是 [Qt 边界契约](Qt边界契约.md) 与 [跨后端视觉表现契约](视觉表现契约.md)，那两份文档继续负责“哪些内容算视觉逻辑”和“什么算无 Qt”。第一章描述的是最终目标；产品控件面（`lib/script/ui` 直接 `import PyQt5`）仍需逐个控件迁移，当前待迁清单以 `tests/test_qt_dependency_boundaries.py` 的 `frozen_ui_qt_importers` 为准，滚动顺序见第 13 节末尾。
+**状态：第 6 节迁移顺序 1、2（目录切分）、3 已执行；后端中立协议与统一数据类型已落地（第 11 节），控件层“描述 + 后端渲染”已滚动迁移气泡框（第 12 节）、说明书、语音指示器与播放进度条（第 13 节）；排布解算已收敛到 `visuals/` 并由 `PlacementSpec` 统一解算（第 14 节，档位 0/1），右键按钮族的逐控件锚点事件链已收敛为声明式 `AnchorGraph` 且 Qt 改为消费共享布局（第 15 节，档位 2/3）。** 目录与引用规则以本文档为准；改建前的事实源是 [Qt 边界契约](Qt边界契约.md) 与 [跨后端视觉表现契约](视觉表现契约.md)，那两份文档继续负责“哪些内容算视觉逻辑”和“什么算无 Qt”。第一章描述的是最终目标；产品控件面（`lib/script/ui` 直接 `import PyQt5`）仍需逐个控件迁移，当前待迁清单以 `tests/test_qt_dependency_boundaries.py` 的 `frozen_ui_qt_importers` 为准，滚动顺序见第 13 节末尾。
 
 本文只新增目录与引用规则，不改变任何视觉语义、数值来源或渲染结果。改建过程中出现分歧时，以 [视觉表现契约](视觉表现契约.md) 和当前 Qt 基准为事实源。
 
@@ -29,7 +29,7 @@
 lib/core/render/
   router.py              按配置选择后端并装配；跨后端判定的唯一位置
   registry.py            后端注册表与服务读取入口
-  visuals/               共享视觉事实源（后端中立类型、presenter、色板、屏幕/锚点算法、布局解算）
+  visuals/               共享视觉事实源（后端中立类型、presenter、色板、屏幕/锚点算法、布局/链路解算）
   backends/
     base.py              后端共同接口：DesktopBackendBundle 与后端中立协议
     qt/
@@ -55,6 +55,11 @@ Vulkan 在本文档生效时只是 `registry.py` 里的一条未启用描述符�
 （上游只给出一个全局锚点）用 `resolve_from_point()`，屏幕居中用 `resolve_centered()`。
 `anchors.py`（矩形取锚点）与 `screen.py`（屏幕夹取）是它的下层纯函数；三者同属 `visuals/`，
 可互相导入，且都不得触及任何后端。
+
+`visuals/anchor_graph.py` 是**一族窗口链路解算的唯一共享入口**（档位 2）：`AnchorNode` 描述
+“本节点贴到哪个上游节点的哪个锚点”，`AnchorGraph.resolve()` 按声明顺序一次解出整族矩形。
+`COMMAND_ACTION_GRAPH` 是右键按钮族链路的唯一声明，`resolve_command_action_panel_layout()`
+由它派生，Qt 与 DX 因此消费同一份链路。与 `layout.py` 同样只依赖后端中立几何。
 
 ## 3. 档位规则
 
@@ -116,14 +121,32 @@ Vulkan 在本文档生效时只是 `registry.py` 里的一条未启用描述符�
   算术又抄回控件层；
 - 唯一允许的例外是仍需 Qt 专属操作的控件（如 `right_click_ui_layer.py` 的 `adopt()` /
   `setParent()` 子窗口收编），在宿主支持“收编子窗口”后并入档位 1；`right_click_ui_layer.py`
-  本身不参与落位解算，它是宿主窗口的并集几何，不受该例外之外的规则约束；
+  现在同时是按钮族的档位 2 解算点（`family_rects()` / `_resolve_family()`），但仍只做 Qt 事实
+  （子窗口收编、并集几何、mask），落位算术全部来自 `visuals/`；
 - `visuals/layout.py` 的引用规则与 `visuals/` 其余模块相同：可被 `lib/script/ui`、
   `backends/*` 与同目录 presenter 引用；自身不得 import `PyQt5`、任一 `backends/*`、
   `lib.script` 或 `config.config_ui`，也不得落在任何单个后端子树下。
 
-**档位 2–3（尚未执行）**：档位 2 把“逐控件收发锚点事件”改成 render 层一次解算一批窗口的
-`AnchorGraph`；档位 3 让 Qt 也消费 `resolve_command_action_panel_layout()`，与 DX 共用同一份
-右键按钮族布局。两者都会改动事件协议或窗口宿主，属于后续独立一轮，不在本轮范围。
+**档位 2：整族一次解算（`visuals/anchor_graph.py` 的 `AnchorGraph`）**
+
+- 一族窗口的相互锚点关系必须声明成 `AnchorNode` 列表（贴到哪个上游节点、各自的锚点、
+  偏移、逻辑尺寸），由 `AnchorGraph.resolve()` 一次解算；`RightClickUiLayer` 是右键按钮族
+  的唯一解算点，八个按钮不再各自订阅 `UI_ANCHOR_RESPONSE` / `UI_CREATE` 算落位；
+- 节点控件通过 `render_bridge.family_placement()` 向宿主索取整族结果，宿主缺席时该端口
+  返回 `None`（`AnchorGraphTests` 用纯几何断言 `resolve()` 与共享布局逐格相等）；
+- `COMMAND_ACTION_GRAPH` 是右键按钮族链路的唯一声明：`resolve_command_action_panel_layout()`
+  现在由它派生，不再手抄一份绝对偏移；节点名、宽高、按钮文件名三者的对应由
+  `COMMAND_ACTION_UI_IDS` 与 `tests/test_render_layout_algorithms.py` 交叉钉住；
+- `visuals/anchor_graph.py` 的引用规则与 `visuals/layout.py` 相同：只依赖后端中立几何。
+
+**档位 3：Qt 消费共享布局**
+
+- Qt 的 `RightClickUiLayer` 从 `command_dialog` 的全局矩形出发，用 `COMMAND_ACTION_GRAPH`
+  解出整族矩形；命令框仍发一次 `UI_ANCHOR_RESPONSE`（`window_id='command_dialog'`），
+  提示框、麦克风指示器等族外跟随者按既有协议跟随，事件协议对族外保持不变；
+- 按钮族的“同一份事实”只剩一条链路：`COMMAND_ACTION_GRAPH` → `resolve_command_action_panel_layout()`
+  → Qt/DX 两个宿主的真实矩形；`tests/test_right_click_ui_layer.py` 断言宿主解算的整族矩形与
+  共享布局逐格相等。
 
 ## 4. 已删除的 `core/render` 不得复活
 
@@ -187,7 +210,11 @@ Vulkan 在本文档生效时只是 `registry.py` 里的一条未启用描述符�
   矩形/整体尺寸、气泡偏移与四角夹取（含负原点的屏幕）、命令框左右翻转与夹取、二维码面板五块
   矩形；`COMMAND_ACTION_BUTTONS` 与 `lib/script/ui/*_button.py` 的 `WIDTH`/`HEIGHT` 必须一致；
 - 档位 1 的落位解算由同一测试钉住：`PlacementSpec` 的四种解算形态、`RectActionButtonControl`
-  与 `MediaProgressControl` 走共享解算，且已收敛的叶控件不再出现 `clamp_rect_position`。
+  与 `MediaProgressControl` 走共享解算，且已收敛的叶控件不再出现 `clamp_rect_position`；
+- 档位 2/3 的链路由 `AnchorGraphTests` 与 `tests/test_right_click_ui_layer.py` 钉住：
+  `COMMAND_ACTION_GRAPH.resolve()` 与 `resolve_command_action_panel_layout()` 逐格相等，
+  `RightClickUiLayer.family_rects()` 与共享布局逐格相等，节点控件的真实全局位置等于图的解；
+  `COMMAND_ACTION_UI_IDS` 的每个 `_ui_id` 必须在对应 `lib/script/ui/*_button.py` 里是字面量。
 - `lib/core` 内不得出现 `QPainter` / `QPainterPath` / `QPixmap` / `QImage` / `Widget` 类型；
 - 现有跨后端一致性测试保持通过：`tests.test_visual_presenters`、`tests.test_graphics_primitives_parity`、`tests.test_visual_backend_parity`。
 
@@ -632,5 +659,42 @@ DX 保持未切分：DX 仍是 `available=False` 的实验实现，没有第二�
 验证：
 
 - `py -3 -m unittest discover -s tests -p "test_*.py" -q`：2083 通过、10 跳过。
+- `py -3 -m unittest discover -s tests/dx -p "test_*.py" -q`：122 通过、7 跳过。
+- `py -3 -m ruff check lib config scripts tests` 归零；`py -3 -m compileall -q config lib scripts tests` 通过。
+
+## 15. 第八轮执行记录（档位 2/3：右键按钮族链路收敛）
+
+本轮把右键按钮族从“两条互不相干的事实”收敛成一条。
+
+**档位 2：新增 `lib/core/render/visuals/anchor_graph.py`**
+
+- `AnchorNode` 声明一个节点贴到哪个上游节点的哪个锚点、自身锚点、偏移与逻辑尺寸；
+  `AnchorGraph.resolve()` 按声明顺序做一次拓扑解算，返回 `node_id -> 屏幕矩形`，
+  可选 `scale` 放大逻辑几何、可选 `screen` 夹取回屏幕；
+- `COMMAND_ACTION_GRAPH` 是八个按钮的唯一链路声明（穿透 → 缩放/启动 → 聊天/更多 → 交互），
+  与 `COMMAND_ACTION_BUTTONS` 的名称/宽高同源；`COMMAND_ACTION_UI_IDS` 记录节点名到
+  Qt 控件 `_ui_id` 的对应；
+- `resolve_command_action_panel_layout()` 改为由该图派生：逻辑几何常量（行顶 `-34/-66/-98`、
+  行高 `32`）与图同源，函数只负责按声明顺序取值并汇总面板尺寸，不再手抄绝对偏移；
+  这样 Qt 与 DX 消费的是同一份链路（档位 3 的前置）。
+
+**档位 3：Qt 宿主改为消费共享布局**
+
+- `RightClickUiLayer` 新增 `register_family_node()` / `family_rects()` / `_resolve_family()`：
+  登记命令框与八个按钮后，每帧按 `COMMAND_ACTION_GRAPH` 一次解出整族矩形并落位，
+  命令框只发一次 `UI_ANCHOR_RESPONSE` 供族外跟随者使用；
+- 八个按钮删除各自的 `_on_anchor_response` / `_on_ui_create` / `_target_ui_id` / `_self_anchor_id` /
+  `_offset_*` 与逐控件 `place_at_point()`；`_update_position()` 改为
+  `render_bridge.family_placement(self, node_id)`，即向宿主要整族结果；
+- `pet_window_ui.py` 在 `adopt()` 之后登记九个节点，声明“谁是族的根、谁贴谁”。
+
+**本轮没动的部分**
+
+- 提示框、麦克风指示器、播放列表等族外控件仍按既有 `UI_ANCHOR_RESPONSE` 协议跟随命令框；
+  它们只有一个上游，不构成“一族”，不需要锚点图。
+
+验证：
+
+- `py -3 -m unittest discover -s tests -p "test_*.py" -q`：2095 通过、10 跳过。
 - `py -3 -m unittest discover -s tests/dx -p "test_*.py" -q`：122 通过、7 跳过。
 - `py -3 -m ruff check lib config scripts tests` 归零；`py -3 -m compileall -q config lib scripts tests` 通过。

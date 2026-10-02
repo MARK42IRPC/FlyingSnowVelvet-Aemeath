@@ -171,6 +171,9 @@ UI_ANCHOR_RESPONSE
 - 用途：发布窗口或 UI 锚点的全局桌面坐标
 - 字段：`window_id`、`anchor_id`、`ui_id`、`anchor_point`
 - `anchor_point` 固定使用 `lib.core.render.visuals.types.Point`；Qt 控件只在事件消费边界转换为 `QPoint`
+- 右键按钮族（命令框 + 八个附属按钮）已不靠本事件互相跟随：宿主按
+  `lib.core.render.visuals.anchor_graph.COMMAND_ACTION_GRAPH` 一次解算整族落位；命令框仍会发一次
+  `ui_id='all'` / `window_id='command_dialog'` 的广播，供命令提示框、麦克风指示器等族外跟随者使用
 
 ENTITY_POSITION_RESPONSE / ENTITY_STATE_RESPONSE
 - `ENTITY_POSITION_RESPONSE.position` 固定使用 `Point`，`size` 为 `(width, height)` 数值元组
