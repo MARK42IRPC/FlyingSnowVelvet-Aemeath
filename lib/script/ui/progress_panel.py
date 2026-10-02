@@ -1,91 +1,70 @@
 """播放进度条 - 显示当前音乐播放进度
 
-布局：
-  - 左下锚点对齐播放列表的左上锚点
-  - 绘制风格与主宠物UI一致：2px 黑色外框 + 2px 青色中框 + 粉色内背景
-  - 固定宽度 240px：左侧 174px 为进度滑条，5px 青色分隔线，右侧 57px 显示剩余时长
+功能：
+  - 左下锚点对齐播放列表左上锚点
+  - 绘制风格与其它 UI 一致：2px 黑色外框 + 2px 青色中框 + 黑色内背景
+  - 固定宽度 240px，其中 174px 为进度滑块区、5px 黑色分隔线，右侧 57px 显示剩余时间
 
 交互：
-  - 拖动滑块或点击滑条位置可修改当前播放进度
-  - 已播放部分为青色填充，滑块为黑色竖线
-"""
+  - 按住滑块拖动或点击位置可修改当前播放进度
+  - 已播放部分为灰色填充，其余为黑色背景
 
+本类不再继承 ``QWidget``：进度、剩余时长、拖动与命中区域都在描述层
+（``lib/core/render/visuals/controls.py`` 的 ``MediaProgressControl``）里，真实窗口与透明度动画由后端窗口宿主持有。
+"""
 from __future__ import annotations
 
-from PyQt5.QtWidgets import QWidget, QGraphicsOpacityEffect
-from PyQt5.QtCore import Qt, QRect, QPropertyAnimation, QEasingCurve
-from PyQt5.QtGui import QPainter
-
 from config.config import UI, FONT
-from lib.core.render.visuals.media_panel_visuals import build_progress_panel_visual
-from lib.script.ui.render_bridge import create_draw_backend, clamp_rect_position, digit_font as get_digit_font, text_metrics as QtTextMetrics, ui_font as get_ui_font
+from lib.core.render.visuals import controls
+from lib.core.render.visuals.types import Rect
+from lib.script.ui.render_bridge import (
+    create_control_host,
+    digit_font as get_digit_font,
+    pointer_position,
+    screen_rect_for_point,
+    text_metrics as QtTextMetrics,
+    ui_font as get_ui_font,
+)
 from config.scale import scale_px
 from lib.core.event.center import get_event_center, EventType, Event
-from lib.core.unified_draw import Layer, get_layer_manager
-from lib.core.anchor_utils import apply_ui_opacity
+from lib.core.unified_draw import Layer
 
 
-# ── 布局常量 ──────────────────────────────────────────────────────────
-_WIDTH    = scale_px(240, min_abs=1)  # 固定宽度（px）
-_HEIGHT   = scale_px(20, min_abs=1)   # 固定高度（px），与 playlist 行高一致
-_LAYER    = scale_px(2, min_abs=1)
-_BORDER   = _LAYER * 2  # 单侧边框总厚度（2px 黑 + 2px 青）
-_SEP_W    = scale_px(5, min_abs=1)    # 滑条与时间区域之间的青色分隔线宽度（px）
-_SEP_BK_W = scale_px(1, min_abs=1)    # 分隔线中的黑色细线宽度（px）
-_TIME_W   = scale_px(57, min_abs=1)   # 时间显示区域宽度（px）
-_PAD_X    = scale_px(4, min_abs=1)    # 文字水平内边距（px）
-# 滑条区域宽度 = 总宽 - 两侧边框 - 分隔线 - 时间区域
-_SLIDER_W = _WIDTH - _BORDER * 2 - _SEP_W - _TIME_W
+# ── 布局常量 ──────────────────────────────────────────────────────
+_WIDTH  = scale_px(240, min_abs=1)  # 固定宽度（px）
+_HEIGHT = scale_px(20, min_abs=1)   # 固定高度（px），与 playlist 中的一致
+_GAP    = scale_px(2, min_abs=1)    # 距播放列表上沿的间距
 
 
-class ProgressPanel(QWidget):
-    """
-    播放进度条（全局单例）。
-
-    - 显示当前音乐的播放进度
-    - 左下锚点对齐播放列表的左上锚点
-    - 支持鼠标拖动和点击调整播放进度
-    - 淡入淡出动画
-    """
+class ProgressPanel:
+    """播放进度条（全局单例）。"""
 
     def __init__(self) -> None:
-        super().__init__()
-        self.setWindowFlags(
-            Qt.Tool
-            | Qt.FramelessWindowHint
-            | Qt.WindowStaysOnTopHint
-        )
-        self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setFocusPolicy(Qt.NoFocus)
-        get_layer_manager().register(self, Layer.PANEL)
-
-        # ── 字体 ─────────────────────────────────────────────────────
         self._font = get_ui_font(FONT['ui_size'] - 1)
         self._font.setBold(True)
         self._time_font = get_digit_font(FONT['ui_size'] - 1)
         self._text_metrics = QtTextMetrics(self._font, self._time_font)
-        self._draw_backend = create_draw_backend()
 
-        # ── 状态 ──────────────────────────────────────────────────────
-        self._visible: bool       = False
-        self._progress: float     = 0.0    # 播放进度 0.0 - 1.0
-        self._remaining: int      = 0      # 剩余时长（秒）
-        self._is_playing: bool    = False
-        self._is_paused: bool     = False
-        self._dragging: bool      = False  # 是否正在拖动滑块
-        self._drag_progress: float = 0.0   # 拖动时的临时进度
-        self._tick_counter: int = 0        # tick 计数器（用于每20tick请求进度）
+        self._control = controls.MediaProgressControl(
+            self._text_metrics,
+            width=_WIDTH,
+            height=_HEIGHT,
+            gap=_GAP,
+            paint_layer=int(Layer.PANEL),
+            opacity_scale=controls.ui_opacity_scale,
+        )
 
-        # ── 透明度动画 ───────────────────────────────────────────────
-        self._opacity = QGraphicsOpacityEffect(self)
-        self._opacity.setOpacity(0.0)
-        self.setGraphicsEffect(self._opacity)
+        self._host = create_control_host(
+            paint_batch=self._paint_batch,
+            on_pointer=self._on_pointer,
+            on_pointer_release=self._on_pointer_release,
+            on_fade_out_finished=self._on_fade_out_done,
+            layer=Layer.PANEL,
+            fade_duration_ms=UI['ui_fade_duration'],
+            fade_out_duration_ms=UI['ui_fade_duration'],
+        )
+        self._host.apply_size(_WIDTH, _HEIGHT)
 
-        self._anim = QPropertyAnimation(self._opacity, b'opacity', self)
-        self._anim.setDuration(UI['ui_fade_duration'])
-        self._anim.setEasingCurve(QEasingCurve.InOutQuad)
-
-        # ── 事件订阅 ──────────────────────────────────────────────────
         self._event_center = get_event_center()
         self._event_center.subscribe(EventType.FRAME, self._on_frame)
         self._event_center.subscribe(EventType.TICK, self._on_tick)
@@ -94,7 +73,57 @@ class ProgressPanel(QWidget):
         self._event_center.subscribe(EventType.MUSIC_SONG_END, self._on_song_end)
         self._event_center.subscribe(EventType.UI_CLICKTHROUGH_TOGGLE, self._on_clickthrough_toggle)
 
-        self.setFixedSize(_WIDTH, _HEIGHT)
+    # ==================================================================
+    # 状态视图（测试与内部逻辑读取的稳定入口）
+    # ==================================================================
+    @property
+    def _visible(self) -> bool:
+        return self._control.visible
+
+    @_visible.setter
+    def _visible(self, value: bool) -> None:
+        self._control.visible = bool(value)
+
+    @property
+    def _progress(self) -> float:
+        return self._control.progress
+
+    @_progress.setter
+    def _progress(self, value: float) -> None:
+        self._control.progress = value
+
+    @property
+    def _remaining(self) -> int:
+        return self._control.remaining
+
+    @_remaining.setter
+    def _remaining(self, value: int) -> None:
+        self._control.remaining = value
+
+    @property
+    def _dragging(self) -> bool:
+        return self._control.dragging
+
+    @_dragging.setter
+    def _dragging(self, value: bool) -> None:
+        self._control.dragging = bool(value)
+
+    @property
+    def _drag_progress(self) -> float:
+        return self._control.drag_progress
+
+    @_drag_progress.setter
+    def _drag_progress(self, value: float) -> None:
+        self._control.drag_progress = value
+
+    def width(self) -> int:
+        return self._host.width()
+
+    def height(self) -> int:
+        return self._host.height()
+
+    def isVisible(self) -> bool:
+        return bool(self._host.isVisible())
 
     # ==================================================================
     # 公开接口
@@ -102,42 +131,26 @@ class ProgressPanel(QWidget):
 
     def show_panel(self) -> None:
         """显示进度条。"""
-        if self._visible:
-            self.update()
+        if self._control.visible:
+            self._host.update()
             return
-        self._visible = True
-        try:
-            self._anim.finished.disconnect(self._on_fade_out_done)
-        except (RuntimeError, TypeError):
-            pass
-        self.show()
+        self._control.visible = True
+        self._host.show()
         self._animate(1.0)
 
     def hide_panel(self) -> None:
         """隐藏进度条。"""
-        if not self._visible:
+        if not self._control.visible:
             return
-        self._visible = False
-        self._anim.finished.connect(self._on_fade_out_done)
+        self._control.visible = False
         self._animate(0.0)
 
-    def set_position_below_playlist(self, playlist_rect: QRect) -> None:
-        """
-        设置位置：左下锚点对齐播放列表的左上锚点。
-
-        即：进度条的左上角 = 播放列表的左上角
-        """
-        x = playlist_rect.x()
-        y = playlist_rect.y() - _HEIGHT - scale_px(2, min_abs=1)  # 在播放列表上方
-        x, y, _ = clamp_rect_position(
-            x,
-            y,
-            _WIDTH,
-            _HEIGHT,
-            point=playlist_rect.center(),
-            fallback_widget=self,
-        )
-        self.move(x, y)
+    def set_position_below_playlist(self, playlist_rect) -> None:
+        """左下锚点对齐播放列表的左上锚点（进度条在播放列表上方）。"""
+        cursor = pointer_position()
+        screen = screen_rect_for_point(point=cursor, fallback_widget=self._host)
+        placement = self._control.placement(_core_rect(playlist_rect), screen)
+        self._host.move_to(placement.x, placement.y)
 
     # ==================================================================
     # 私有：进度更新
@@ -145,105 +158,56 @@ class ProgressPanel(QWidget):
 
     def _on_music_progress(self, event: Event) -> None:
         """处理播放进度事件（由音乐管理器响应请求后发布）。"""
-        if self._dragging or not self._visible:
+        if self._control.dragging or not self._control.visible:
             return
-
-        # 从事件中获取进度百分比和剩余时间
-        progress = event.data.get('progress', 0.0)
-        remaining = event.data.get('remaining', 0)
-
-        self._progress = progress
-        self._remaining = remaining
-        self.update()
+        self._control.apply_progress(
+            event.data.get('progress', 0.0),
+            event.data.get('remaining', 0),
+        )
+        self._host.update()
 
     def _on_song_end(self, event: Event) -> None:
         """处理歌曲播放结束事件。"""
-        # 重置状态
-        self._progress = 0.0
-        self._remaining = 0
-        self.update()
+        self._control.reset_progress()
+        self._host.update()
 
     # ==================================================================
-    # 私有：尺寸与位置
-    # ==================================================================
-
-    def _get_slider_rect(self) -> QRect:
-        """获取滑条区域矩形（不含分隔线和时间区域）。"""
-        return QRect(_BORDER, _BORDER, _SLIDER_W, _HEIGHT - _BORDER * 2)
-
-    def _get_sep_rect(self) -> QRect:
-        """获取滑条与时间区域之间的分隔线矩形。"""
-        return QRect(_BORDER + _SLIDER_W, 0, _SEP_W, _HEIGHT)
-
-    def _get_time_rect(self) -> QRect:
-        """获取时间显示区域矩形。"""
-        return QRect(_BORDER + _SLIDER_W + _SEP_W, _BORDER, _TIME_W, _HEIGHT - _BORDER * 2)
-
-    def _progress_to_x(self, progress: float) -> int:
-        """将进度值转换为滑条X坐标。"""
-        slider_rect = self._get_slider_rect()
-        return int(slider_rect.x() + progress * slider_rect.width())
-
-    def _x_to_progress(self, x: int) -> float:
-        """将滑条X坐标转换为进度值。"""
-        slider_rect = self._get_slider_rect()
-        # 限制在滑条范围内
-        clamped_x = max(slider_rect.x(), min(x, slider_rect.x() + slider_rect.width()))
-        progress = (clamped_x - slider_rect.x()) / slider_rect.width()
-        return max(0.0, min(1.0, progress))
-
-    # ==================================================================
-    # 私有：动画
+    # 私有：动画与命中区
     # ==================================================================
 
     def _animate(self, target: float) -> None:
-        self._anim.stop()
-        self._anim.setStartValue(self._opacity.opacity())
-        self._anim.setEndValue(apply_ui_opacity(target))
-        self._anim.start()
+        self._host.fade_to(
+            self._control.scaled_opacity(target),
+            duration_ms=UI['ui_fade_duration'],
+            fade_out=not self._control.visible,
+        )
 
     def _on_fade_out_done(self) -> None:
-        try:
-            self._anim.finished.disconnect(self._on_fade_out_done)
-        except (RuntimeError, TypeError):
-            pass
-        if not self._visible:
-            self.hide()
+        if not self._control.visible:
+            self._host.hide()
 
     # ==================================================================
-    # 鼠标事件
+    # 鼠标事件（由宿主翻译成中立事件）
     # ==================================================================
 
-    def mousePressEvent(self, event) -> None:
-        """鼠标按下：开始拖动或跳转到点击位置。"""
-        if event.button() != Qt.LeftButton:
+    def _on_pointer(self, event):
+        if self._control.dragging:
+            self._control.update_drag(event.local.x)
+            self._host.update()
+            return controls.PointerClick()
+
+        self._control.begin_drag(event.local.x)
+        self._host.update()
+        return controls.PointerClick()
+
+    def _on_pointer_release(self) -> None:
+        if not self._control.dragging:
             return
-
-        # 点击整个进度条区域都可以调整进度
-        self._dragging = True
-        self._drag_progress = self._x_to_progress(event.x())
-        self.update()
-
-    def mouseMoveEvent(self, event) -> None:
-        """鼠标移动：拖动滑块。"""
-        if self._dragging:
-            self._drag_progress = self._x_to_progress(event.x())
-            self.update()
-
-    def mouseReleaseEvent(self, event) -> None:
-        """鼠标释放：发布进度百分比事件。"""
-        if event.button() != Qt.LeftButton:
-            return
-
-        if self._dragging:
-            self._dragging = False
-            self._progress = self._drag_progress
-
-            # 发布进度百分比事件，由音乐模块计算实际位置
-            self._event_center.publish(Event(EventType.MUSIC_SEEK, {
-                'progress': self._progress,
-            }))
-            self.update()
+        progress = self._control.end_drag()
+        self._event_center.publish(Event(EventType.MUSIC_SEEK, {
+            'progress': progress,
+        }))
+        self._host.update()
 
     # ==================================================================
     # 事件响应
@@ -251,69 +215,48 @@ class ProgressPanel(QWidget):
 
     def _on_frame(self, event: Event) -> None:
         """帧事件处理：仅负责位置跟随播放列表。"""
-        if not self._visible:
+        if not self._control.visible:
             return
-        # 跟随播放列表位置
         from lib.script.ui.playlist_panel import get_playlist_panel
         playlist_panel = get_playlist_panel()
         if playlist_panel and playlist_panel.is_visible:
             self.set_position_below_playlist(playlist_panel.geometry())
         else:
-            # 播放列表不可见时隐藏进度条
             self.hide_panel()
-            return
 
     def _on_tick(self, event: Event) -> None:
         """Tick 事件处理：固定节奏请求音乐进度。"""
-        if not self._visible or self._dragging:
-            return
-        self._tick_counter += 1
-        if self._tick_counter < 20:
-            return
-        self._tick_counter = 0
-        self._event_center.publish(Event(EventType.MUSIC_PROGRESS_REQUEST, {}))
+        if self._control.advance_tick(20):
+            self._event_center.publish(Event(EventType.MUSIC_PROGRESS_REQUEST, {}))
 
     def _on_music_status(self, event: Event) -> None:
         """播放状态变化时更新。"""
-        self._is_playing = event.data.get('playing', False)
-        self._is_paused = event.data.get('paused', False)
+        self._control.playing = bool(event.data.get('playing', False))
+        self._control.paused = bool(event.data.get('paused', False))
 
     def _on_clickthrough_toggle(self, event: Event) -> None:
-        self.setAttribute(Qt.WA_TransparentForMouseEvents,
-                          event.data.get('enabled', False))
+        self._host.set_clickthrough(bool(event.data.get('enabled', False)))
 
     # ==================================================================
-    # 绘制
+    # 绘制与生命周期
     # ==================================================================
 
-    def paintEvent(self, event) -> None:
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing, True)
-        self._draw_backend.render(self._build_visual().batch, painter)
-        painter.end()
+    def _paint_batch(self):
+        return self._control.build_visual().batch
 
     def _build_visual(self):
-        """解析共享进度条视觉（业务状态 -> 后端无关描述）。"""
-        progress = self._drag_progress if self._dragging else self._progress
-        if self._dragging:
-            # 拖动时：根据当前进度反推剩余时间
-            # 假设 remaining 对应的是 (1 - _progress) 的比例
-            # 那么 total = remaining / (1 - _progress)，拖动后剩余 = total * (1 - _drag_progress)
-            if self._progress > 0 and self._progress < 1.0:
-                total_time = self._remaining / (1 - self._progress)
-                remaining = int(total_time * (1 - self._drag_progress))
-            else:
-                remaining = self._remaining
-        else:
-            remaining = self._remaining
-        minutes = remaining // 60
-        seconds = remaining % 60
-        time_text = f"{minutes}:{seconds:02d}"
-        return build_progress_panel_visual(
-            progress=progress,
-            time_text=time_text,
-            metrics=self._text_metrics,
-        )
+        return self._control.build_visual()
+
+    def update(self) -> None:
+        self._host.update()
+
+    def hide(self) -> None:
+        self._host.stop_animation()
+        self._control.visible = False
+        self._host.hide()
+
+    def close(self) -> None:
+        self._host.cleanup()
 
     def cleanup(self) -> None:
         try:
@@ -327,17 +270,38 @@ class ProgressPanel(QWidget):
             pass
 
 
-# ── 全局单例 ──────────────────────────────────────────────────────────
+def _core_rect(value) -> Rect:
+    """把核心 ``Rect`` 或 Qt 取值对象统一成核心 ``Rect``。"""
+    if isinstance(value, Rect):
+        return value
+    return Rect(
+        float(value.x()) if callable(getattr(value, "x", None)) else float(getattr(value, "x", 0)),
+        float(value.y()) if callable(getattr(value, "y", None)) else float(getattr(value, "y", 0)),
+        float(value.width()) if callable(getattr(value, "width", None)) else float(getattr(value, "width", 0)),
+        float(value.height()) if callable(getattr(value, "height", None)) else float(getattr(value, "height", 0)),
+    )
+
+
+def _contains(rect: Rect, point) -> bool:
+    if point is None:
+        return False
+    return bool(
+        rect.x <= point.x < rect.x + rect.width
+        and rect.y <= point.y < rect.y + rect.height
+    )
+
+
+# ── 全局单例 ──────────────────────────────────────────────────────
 _instance: 'ProgressPanel | None' = None
 
 
 def get_progress_panel() -> 'ProgressPanel | None':
-    """获取全局进度条单例（未初始化时返回 None）。"""
+    """获取全局进度条（未初始化时返回 None）。"""
     return _instance
 
 
 def init_progress_panel() -> 'ProgressPanel':
-    """初始化并返回全局进度条单例，需在 Qt 主线程中调用。"""
+    """初始化并返回全局进度条（必须在 Qt 主线程中调用）。"""
     global _instance
     if _instance is None:
         _instance = ProgressPanel()

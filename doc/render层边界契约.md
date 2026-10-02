@@ -1,10 +1,10 @@
 # Render 层边界契约
 
-更新时间：2026-10-01
+更新时间：2026-10-02
 
 本文档定义 `lib/core/render/` 的目标结构与依赖边界。它不是阶段计划，而是结构改建完成后必须成立的规则。
 
-**状态：第 6 节迁移顺序 1、2（目录切分）、3 已执行；后端中立协议与统一数据类型已落地（第 11 节），控件层“描述 + 后端渲染”的首个产品控件已迁移（第 12 节）。** 目录与引用规则以本文档为准；改建前的事实源是 [Qt 边界契约](Qt边界契约.md) 与 [跨后端视觉表现契约](视觉表现契约.md)，那两份文档继续负责“哪些内容算视觉逻辑”和“什么算无 Qt”。第一章描述的是最终目标；产品控件面（`lib/script/ui` 直接 `import PyQt5`）仍需逐个控件迁移，滚动清单见第 12 节。
+**状态：第 6 节迁移顺序 1、2（目录切分）、3 已执行；后端中立协议与统一数据类型已落地（第 11 节），控件层“描述 + 后端渲染”已滚动迁移气泡框（第 12 节）、说明书、语音指示器与播放进度条（第 13 节）；排布解算已收敛到 `visuals/` 并由 `PlacementSpec` 统一解算（第 14 节，档位 0/1）。** 目录与引用规则以本文档为准；改建前的事实源是 [Qt 边界契约](Qt边界契约.md) 与 [跨后端视觉表现契约](视觉表现契约.md)，那两份文档继续负责“哪些内容算视觉逻辑”和“什么算无 Qt”。第一章描述的是最终目标；产品控件面（`lib/script/ui` 直接 `import PyQt5`）仍需逐个控件迁移，当前待迁清单以 `tests/test_qt_dependency_boundaries.py` 的 `frozen_ui_qt_importers` 为准，滚动顺序见第 13 节末尾。
 
 本文只新增目录与引用规则，不改变任何视觉语义、数值来源或渲染结果。改建过程中出现分歧时，以 [视觉表现契约](视觉表现契约.md) 和当前 Qt 基准为事实源。
 
@@ -29,7 +29,7 @@
 lib/core/render/
   router.py              按配置选择后端并装配；跨后端判定的唯一位置
   registry.py            后端注册表与服务读取入口
-  visuals/               共享视觉事实源（后端中立类型、presenter、色板、屏幕算法）
+  visuals/               共享视觉事实源（后端中立类型、presenter、色板、屏幕/锚点算法、布局解算）
   backends/
     base.py              后端共同接口：DesktopBackendBundle 与后端中立协议
     qt/
@@ -49,9 +49,17 @@ lib/core/render/
 
 Vulkan 在本文档生效时只是 `registry.py` 里的一条未启用描述符。没有第二个真实实现之前不为它设计抽象。
 
-## 3. 三档规则
+`visuals/layout.py` 是**排布解算的唯一共享入口**：`PlacementSpec` 描述“把自身 `self_anchor_id`
+对到目标矩形的 `target_anchor_id`，加偏移，再夹取回屏幕”，`AnchorPlacement` 是解算产物
+（窗口左上角 + 所在屏幕）。控件层不再各写一份锚点算术，只声明 `PlacementSpec`；点目标
+（上游只给出一个全局锚点）用 `resolve_from_point()`，屏幕居中用 `resolve_centered()`。
+`anchors.py`（矩形取锚点）与 `screen.py`（屏幕夹取）是它的下层纯函数；三者同属 `visuals/`，
+可互相导入，且都不得触及任何后端。
 
-规则的粒度是档位，不是“整个后端不得被外部引用”。
+## 3. 档位规则
+
+规则的粒度是档位，不是“整个后端不得被外部引用”。档位前缀区分两类含义：**档位 A–D 是引用边界**
+（谁可以 import 谁），**档位 0–3 是布局收敛的迁移次序**。
 
 **档位 A：绘制执行（`backends/*/drawing/`）**
 
@@ -86,6 +94,35 @@ Vulkan 在本文档生效时只是 `registry.py` 里的一条未启用描述符�
 - 不得被 `lib/script` 下 `ui/` 以外的模块引用，也不得反向引用 `lib/script`。
 
 一句话概括：**绘制实现不得共享，能力经协议共享，产物控件只被产品层继承。**
+
+### 档位 0–3：布局收敛的迁移次序
+
+**档位 0：排布解算的事实源（`lib/core/render/visuals/` 的 `resolve_*_layout` / `resolve_*_geometry`）**
+
+- 命令框、气泡、右键按钮族、二维码面板的几何必须先在这里解析为纯几何结果；Qt 与 DX 只执行
+  同一份结果，不得各自重算；
+- 数值以迁移前的 Qt 基准为准，由 `tests/test_render_layout_algorithms.py` 逐项钉住，不是
+  “当前实现恰好如此”；
+- `COMMAND_ACTION_BUTTONS` 的名称与宽高必须与 `lib/script/ui/*_button.py` 的 `WIDTH`/`HEIGHT`
+  一致，两者是同一份事实的两个落点，任一边单方面改动都会让守卫失败；
+- 改动这些数值属于契约改动：必须同时改断言与本文档。
+
+**档位 1：叶控件窗口落位（`visuals/layout.py` 的 `PlacementSpec`）**
+
+- 顶层浮窗控件声明目标锚点、自身锚点与偏移，落位由 `PlacementSpec.resolve_placement()` 统一
+  解算并夹取；`lib/script/ui/render_bridge.py` 的 `resolve_placement()` / `place_at_point()` /
+  `centered_placement()` 是控件侧唯一取用入口；
+- 已收敛的控件不得再调用 `render_bridge.clamp_rect_position()`：自己夹取屏幕等于把档位 1 的
+  算术又抄回控件层；
+- 唯一允许的例外是仍需 Qt 专属操作的控件（如 `right_click_ui_layer.py` 的 `adopt()` /
+  `setParent()` 子窗口收编），在宿主支持“收编子窗口”后并入档位 1；
+- `visuals/layout.py` 的引用规则与 `visuals/` 其余模块相同：可被 `lib/script/ui`、
+  `backends/*` 与同目录 presenter 引用；自身不得 import `PyQt5`、任一 `backends/*`、
+  `lib.script` 或 `config.config_ui`，也不得落在任何单个后端子树下。
+
+**档位 2–3（尚未执行）**：档位 2 把“逐控件收发锚点事件”改成 render 层一次解算一批窗口的
+`AnchorGraph`；档位 3 让 Qt 也消费 `resolve_command_action_panel_layout()`，与 DX 共用同一份
+右键按钮族布局。两者都会改动事件协议或窗口宿主，属于后续独立一轮，不在本轮范围。
 
 ## 4. 已删除的 `core/render` 不得复活
 
@@ -144,7 +181,12 @@ Vulkan 在本文档生效时只是 `registry.py` 里的一条未启用描述符�
 - `lib/core/render/` 整体不得导入 `lib.script`，`visuals/` 还不得导入 `PyQt5` 或任一 `backends`；
 - `lib/core/render/backends/*/runtime/` 不得被 `lib/script` 以具体路径导入：`lib/script/ui` 的两份冻结清单现在都是空的；
 - 唯一允许的后端路径例外是 `backends/qt/widgets/`（产品页面基类 + 控件窗口宿主，档位 D）；
-- 已迁移的产品控件不再出现在 `frozen_ui_qt_importers` 里，且不得再继承任何 Qt 基类。
+- 已迁移的产品控件不再出现在 `frozen_ui_qt_importers` 里，且不得再继承任何 Qt 基类；
+- 排布解算的数值基线由 `tests/test_render_layout_algorithms.py` 钉住：命令框按钮族名称/逐按钮
+  矩形/整体尺寸、气泡偏移与四角夹取（含负原点的屏幕）、命令框左右翻转与夹取、二维码面板五块
+  矩形；`COMMAND_ACTION_BUTTONS` 与 `lib/script/ui/*_button.py` 的 `WIDTH`/`HEIGHT` 必须一致；
+- 档位 1 的落位解算由同一测试钉住：`PlacementSpec` 的四种解算形态、`RectActionButtonControl`
+  与 `MediaProgressControl` 走共享解算，且已收敛的叶控件不再出现 `clamp_rect_position`。
 - `lib/core` 内不得出现 `QPainter` / `QPainterPath` / `QPixmap` / `QImage` / `Widget` 类型；
 - 现有跨后端一致性测试保持通过：`tests.test_visual_presenters`、`tests.test_graphics_primitives_parity`、`tests.test_visual_backend_parity`。
 
@@ -316,9 +358,10 @@ DX 保持未切分：DX 仍是 `available=False` 的实验实现，没有第二�
 - `BubbleControl`：气泡的可见性、当前消息、待显示队列、`min/max` tick 状态机、锚点解算、
   透明度目标与绘制批次。`on_tick()` 返回 `TICK_*` 动作码，`add()` 返回替换/排队决定，
   `click_intent()` 返回产品意图——控件宿主只执行，不判断。
-- `BubbleInfo` / `PointerEvent` / `PointerClick` / `AnchorPlacement`：消息、指针事件、
-  指针意图与锚点解算结果的中立数据类型。绘制事实源仍是 `build_bubble_visual` 的批次，
-  两个后端共用同一份。
+- `BubbleInfo` / `PointerEvent` / `PointerClick`：消息、指针事件与指针意图的中立数据类型。
+  绘制事实源仍是 `build_bubble_visual` 的批次，两个后端共用同一份。
+- `AnchorPlacement` 现已定义在 `visuals/layout.py`（见第 14 节），`controls.py` 只重新导出以保持
+  既有调用面；锚点算术的事实源随之从 `controls.py` 移到 `layout.py`。
 - 本模块不 import `PyQt5`，也不 import 任何 `backends/*`：可以在没有桌面后端的进程里
   完成排版、排队与点击判定（`tests/test_control_layer_descriptions.py` 用屏蔽 `PyQt5`
   的子进程验证这一点）。
@@ -380,12 +423,192 @@ DX 保持未切分：DX 仍是 `available=False` 的实验实现，没有第二�
   真的构造命令框与右键层、驱动 TICK，并盯住事件中心的错误日志——事件中心会吞掉回调异常，
   只看「有没有抛异常」等于没断言。
 
+## 13. 第六轮执行记录（控件层滚动迁移：说明书 / 语音指示器 / 播放进度条）
+
+第五轮把模式钉死后，本轮按同一套三步开始滚动铺开。只迁一个控件，但这一轮把**宿主
+的通用能力**补齐了，后面的控件不必再各拉一套：两个迁完的控件都在用同一个 `QtControlHost`。
+
+**控件窗口宿主新增的三项通用能力（`backends/qt/widgets/control_host.py`，档位 D）**
+
+- `auto_hide_ms` / `on_auto_hide` 与 `start_auto_hide()` / `stop_auto_hide()`：可选的单次
+  自动隐藏计时器。不给构造参数就不创建 `QTimer`，`start_auto_hide()` 是空操作——气泡框
+  因此不承担一个用不到的定时器；说明书则拿到"显示 5 秒后自动收起"这条产品行为。
+- `description_at(global_pos, restricted_names=())`：Qt 命中测试（`widgetAt` → `parent()`
+  链 → `topLevelWidgets` 兜底），返回光标下控件声明的 `_description`。**产品策略不进宿主**：
+  "哪些窗口算受限面板"由调用方以名字传入，宿主只负责"受限面板只有在真正激活时才放行"
+  这条 Qt 语义，并永远跳过自己。
+- 宿主依旧不静态引用档位 A：`DrawBackend` / `PresentationHost` 仍由 `render_bridge` 注入。
+
+**描述层新增（`lib/core/render/visuals/controls.py`，后端中立）**
+
+- `TOOLTIP_IDLE` / `TOOLTIP_SHOW` / `TOOLTIP_HIDE` 动作码；`scaled_opacity()` 从
+  `BubbleControl` 里提出来成为模块级函数，两个控件共用同一份夹取规则。
+- `TooltipHoverState`：悬停计时。光标位置是屏幕事实，但"静止够久了没有"是产品判定——
+  位置喂进来，动作码给出去。`advance()` 只在**刚**达到阈值那一 tick 返回 `TOOLTIP_SHOW`，
+  移动时返回 `TOOLTIP_HIDE`；`initial_position` 是构造时的光标快照，静止计数从它起算。
+- `TooltipControl`：文本、换行、尺寸、位置解算与透明度目标。排版事实源仍是共享
+  `build_tooltip_visual`，Qt 与 DirectX 两个后端产出同一份批次。
+- 该模块依旧不 import `PyQt5`、不 import 任何 `backends/*`，新增的说明书逻辑也一并
+  在屏蔽 `PyQt5` 的子进程里被验证。
+
+**产品控件迁移（`lib/script/ui/tooltip_panel.py`）**
+
+- `TooltipPanel` 不再是 `QWidget`：保留 `width()` / `height()` / `isVisible()` / `hide_now()`
+  等既有调用面（`shutdown.py`、`tray_menu.py`、`app/qt_application_ui.py` 无需改动），
+  同时保留 `_wrap_text` / `_build_visual` / `_reposition` / `_stationary_ticks` 等内部
+  读法，方便既有测试与调试继续使用。
+- Qt 命中测试整段搬进宿主：控件层只剩 `_RESTRICTED_DESCRIPTION_WINDOWS` 这一条产品策略。
+
+**新增的中立取用（仍走 `render_bridge` 落点）**
+
+- `pointer_cursor()`：当前指针的原始 Qt 位置。说明书需要把同一个位置既用于夹取算术、
+  又交给 Qt 做命中测试，`pointer_position()` 返回核心 `Point` 会丢掉这层身份。
+- `screen_rect_for_cursor(cursor, fallback_widget=None)`：光标对象所在屏幕的核心 `Rect`。
+
+**结果（2026-10-01）**
+
+- `frozen_ui_qt_importers`：72 → **71**，`lib/script/ui/tooltip_panel.py` 已移出。
+- 档位 A / 档位 B 的直接引用清单**均不新增条目**：新能力都由宿主与 `render_bridge` 提供。
+- `test_visual_presenters` 的"宿主只执行共享视觉"名单同步收缩为仍未迁移的 Qt 宿主。
+
+**迁移过程中被运行期测试抓住的两个坑（已钉进守卫）**
+
+它们都只在真的把控件跑起来时才暴露，静态断言看不见：
+
+- `initial_position` 没喂进描述层时，"静止满 20 tick"会整体晚一拍——首帧被当成基线
+  而不是计数起点。
+- 淡出没有标记 `fade_out=True` 时，窗口会淡到全透明却**仍然可见**，继续拦截鼠标；
+  这个坑在离屏平台上看不出来（平台不报错），只有断言"淡出结束后 `isVisible()` 为假"
+  才会失败。
+
+新增 `TooltipPanelBehaviorTests::test_hover_shows_then_moves_hide_the_panel`：真的构造
+面板与一个带 `_description` 的 Qt 窗口，驱动 TICK 走完"静止 → 显示 → 移动 → 淡出 → 收起"，
+并盯住事件中心的错误日志（事件中心会吞掉回调异常，只看"有没有抛异常"等于没断言）。
+
+验证：
+
+- `py -3 -m unittest discover -s tests -p "test_*.py" -q`：2056 通过、10 跳过。
+- `py -3 -m unittest discover -s tests/dx -p "test_*.py" -q`：122 通过、7 跳过。
+- `py -3 -m ruff check lib config scripts tests` 归零；`py -3 -m compileall -q config lib scripts tests` 通过。
+
+**同轮追加：语音指示器（`lib/script/ui/mic_stt_indicator.py`）**
+
+第二个迁完的控件，验证"三步模式"可以连续复用。
+
+- 描述层新增 `MicSttControl` 与 `HOVER_NONE` / `HOVER_SHOW` / `HOVER_HIDE` 动作码：
+  可见性、监听中/语音活跃状态、悬停半径判定与"离开超过 `hide_delay` 才收起"都在这里。
+  距离用的是**矩形中心**到指针的平方距离，与迁移前逐字一致；`update_hover()` 只在
+  "靠近且正在监听"时返回 `HOVER_SHOW`，避免每帧重复要求显示。
+- 控件保留 `_visible` / `_listening` / `_speech_active` 属性视图、`width()` / `height()` /
+  `update()` / `hide()` / `close()`，`pet_window_ui` 与关机清理路径无需改动。
+- 宿主新增 `pointing_cursor=True`：指示器原来手工 `setCursor(Qt.PointingHandCursor)`，
+  现在由构造参数表达。
+- `frozen_ui_qt_importers`：71 → **70**。
+
+**第二个只有运行期才暴露的坑（已钉进守卫）**
+
+`QWidget.setFixedSize(SIZE, SIZE)` 换成宿主之后，窗口尺寸**不会自己出现**：没调
+`apply_size()` 时宿主是 640x480 的默认值，位置与悬停命中判定会一起算错，而构造期、
+导入期与静态断言都看不出来。守卫是
+`MicSttIndicatorBehaviorTests::test_indicator_follows_state_hover_and_clickthrough`：
+真构造指示器与宿主，断言 `width()/height()` 等于 `SIZE`，再走完
+"开始监听 → 靠近保持 → 离开未超时仍可见 → 超过延时收起 → 停止监听 → 穿透开关"
+整条链路。
+
+**同轮追加：播放进度条（`lib/script/ui/progress_panel.py`）**
+
+第三个迁完的控件，也是第一个有**拖动**交互的控件。
+
+- 描述层新增 `MediaProgressControl`：进度、剩余时长、拖动状态、"拖动时按当前进度反推
+  剩余时间"的算术、tick 节奏（每 20 tick 请求一次进度）与位置解算。滑条区域直接读
+  共享 presenter 的 `visual.slider_rect`，x ↔ 进度的换算不再抄第二份版面参数。
+- **宿主新增 `on_pointer_release`**：这是本轮唯一的结构扩展。原控件在
+  `mouseReleaseEvent` 里提交进度并发布 `MUSIC_SEEK`；宿主此前只有 press 回调，
+  少了"松手"这一环时进度会永远停在拖动中、seek 永远发不出去——而这在构造期与
+  静态断言里都看不见（见下面的守卫）。
+- 控件保留 `_visible` / `_progress` / `_remaining` / `_dragging` / `_drag_progress`
+  等属性视图，`playlist_panel` 的 `set_position_below_playlist(self.geometry())` 调用面不变。
+- `frozen_ui_qt_importers`：70 → **69**。
+
 **滚动清单（下一个控件）**
 
 模式已固定为三步：把控件状态搬进 `visuals/controls.py`（或同级新模块）→ 控件本体删掉
 `QWidget` 基类与 `PyQt5` → 从 `frozen_ui_qt_importers` 删除条目。建议顺序：
 
-1. `tooltip_panel.py`（同属“纯绘制 + 自动隐藏”，已有 `test_tooltip_panel_opacity`）；
-2. `clickthrough_button.py` / `rect_action_button_style.py`（无子控件、只有绘制与点击）；
-3. 其余顶层浮窗控件；带子控件树与 `exec_()` 的对话框（`confirm_dialog`、`update_dialog`、
-   `forum_*`、`office_*`）放最后，它们需要宿主先支持子控件与模态，属于下一轮的结构扩展。
+1. `rect_action_button_style.py` 一族（`close_button` / `restore_button` /
+   `clickthrough_button` / `launch_wuwa_button` / `scale_button` / `chat_mode_button` /
+   `interaction_mode_button` / `more_functions_button`）。描述层的共享基类
+   `RectActionButtonControl`（文字、锚点解算、透明度、点击粒子）**已经就位**，但这一族
+   有一个前置结构问题：其中八个按钮由 `right_click_ui_layer.py` 用 `adopt()` 收进
+   同一个宿主窗口（每帧只移动一个原生窗口）。那一步需要 `setParent()`，是 Qt 专属操作，
+   `QtControlHost` 得先支持"把控件窗口收编成宿主子窗口"，否则会退回"每个按钮一个顶层
+   窗口 + 每帧各自 `move()`"的老样子。这是本族迁移的**前置项**。
+2. 其余顶层浮窗控件（`command_hint_box.py`、`speaker_search_result_box.py`、
+   `speaker_band_slider.py`、`speaker_volume_slider.py` 等）。拖动交互现在有了
+   `on_pointer_release`，滑块类控件可以直接迁。
+3. 带子控件树与 `exec_()` 的对话框（`confirm_dialog`、`update_dialog`、`forum_*`、
+   `office_*`）放最后，它们需要宿主先支持子控件与模态，属于下一轮的结构扩展。
+4. `world_objects/*.py`（时钟、沙发、雪球等）与 `game_runtime.py` 是另一类长尾，
+   它们更多是"动画 + 命中"，可在控件族收干净后单独一轮处理。
+
+## 14. 第七轮执行记录（档位 0/1：布局解算收敛）
+
+本轮不改视觉语义，只把“窗口落在哪”的事实源从各控件收进 `visuals/`。前六轮解决的是
+“画什么”（命令批次）与“状态在哪”（控件描述）；这一轮解决的是“贴在哪一边”。
+
+**档位 0：先把既有解算钉死（`tests/test_render_layout_algorithms.py`，新增）**
+
+收敛布局之前，`resolve_*_layout` / `resolve_*_geometry` 已经存在且被 DX 使用，Qt 侧却
+另有逐控件锚点算术，两者没有任何测试同时盯住。本轮先补确定性守卫：
+
+- 命令框按钮族：8 个按钮的**名称、顺序、逐按钮矩形、整体尺寸**；并额外断言
+  `COMMAND_ACTION_BUTTONS` 的宽高与 `lib/script/ui/*_button.py` 里定义 `WIDTH`/`HEIGHT` 的
+  常量字面量逐项相等（用 AST 取值，不 import Qt 控件），名称与控件里的按钮文字也对齐。
+  这份布局此前是一份“手抄”，两份事实源没有任何断言相连，任一边改动都不会被发现。
+- 气泡：偏移是否**先于**夹取生效、四角夹取、以及原点为负的第二块屏幕（多屏场景）。
+- 命令框：右侧放得下就贴右、放不下翻左、两侧都放不下时夹取、纵向夹取。
+- 二维码面板：默认 `320x430` 与内部五块矩形，以及放大到 `420x560` 时居中块的变化。
+
+**档位 1：新增 `lib/core/render/visuals/layout.py`（共享事实源）**
+
+- `AnchorPlacement` 从 `visuals/controls.py` 迁到这里，`controls.py` 重新导出以保持既有
+  调用面（`bubble.py` / `progress_panel.py` / `tooltip_panel.py` 与宿主都不用改）。
+- `PlacementSpec`：`(target_anchor_id, self_anchor_id, offset_x, offset_y)` 的声明，加三种解算
+  形态——`resolve_placement()`（解完夹取，返回 `AnchorPlacement`）、`resolve_point()`（只解不夹，
+  保留 `RectActionButtonControl.anchored_top_left()` 的旧语义）、`resolve_from_point()`（目标只有
+  一个全局锚点）、`resolve_centered()`（屏幕居中）。
+- 它泛化的是 `RectActionButtonControl` 早就存在的参数面（`anchored_top_left` / `placement`），
+  不是另造第二套 API：`controls.py` 里那三个方法现在只是转调 `PlacementSpec`。
+- `MediaProgressControl.placement()` 的“播放列表正上方”也改由同一 spec 表达
+  （`self_anchor=bottom_left` + `offset_y=-gap`），`clamp_rect_position` 调用从 `controls.py` 移除。
+
+**`lib/script/ui/render_bridge.py` 新增档位 1 端口**
+
+- `resolve_placement()` / `place_at_point()` / `centered_placement()`：控件侧唯一取用入口，
+  转发给 `visuals/layout.py`。桥本身仍属解析/转发层，不新增 Qt 事实。
+
+**已收敛的 15 个落位点（控件侧不再自己夹取屏幕）**
+
+- 命令框附属按钮 7 个：`clickthrough_button`、`close_button`、`restore_button`、
+  `launch_wuwa_button`、`more_functions_button`、`chat_mode_button`、`interaction_mode_button`；
+- `scale_button.py` 两个按钮类（放大贴穿透按钮右锚点、缩小贴放大按钮右锚点）；
+- `mic_stt_indicator`（主宠左上角 + 固定偏移）；
+- 居中浮窗 4 个：`announcement_dialog`、`update_dialog`、`help_window`、
+  `voice_package_installer`（`resolve_centered`）与 `office_approval_dialog`
+  （参考父窗或屏幕中心，`center` 对 `center`）。
+
+这些都是**同形不同值**的落位：目标锚点、自身锚点、偏移三个数不同，五步算术完全相同。
+
+**本轮没动的部分（后续档位）**
+
+- `right_click_ui_layer.py` 的 `adopt()` / `setParent()` 子窗口收编、`command_hint_box`、
+  `speaker_*`、`playlist_panel`、`page_turn_buttons`、`qr_dialog_base` 仍在档位 1 之外；
+  它们的落位要么依赖宿主收编，要么与面板自身尺寸联动更紧，等宿主支持后一并收。
+- 档位 2（`AnchorGraph`）与档位 3（Qt 复用 `resolve_command_action_panel_layout`）需要改事件协议
+  或窗口宿主，另起一轮。
+
+验证：
+
+- `py -3 -m unittest discover -s tests -p "test_*.py" -q`：2083 通过、10 跳过。
+- `py -3 -m unittest discover -s tests/dx -p "test_*.py" -q`：122 通过、7 跳过。
+- `py -3 -m ruff check lib config scripts tests` 归零；`py -3 -m compileall -q config lib scripts tests` 通过。

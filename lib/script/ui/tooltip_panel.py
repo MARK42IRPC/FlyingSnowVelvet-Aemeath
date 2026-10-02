@@ -5,22 +5,35 @@
 鼠标移动时立即淡出（无粒子特效）。
 
 绘制风格：1px 黑边 + 1px 蓝色内框 + 粉色背景。
+
+本类不再继承 ``QWidget``：悬停计数、文本排版与位置解算在
+``lib/core/render/visuals/controls.py`` 的 ``TooltipControl`` / ``TooltipHoverState`` 里，
+真实窗口（窗口标志、透明度动画、自动隐藏计时、绘制执行）由后端窗口宿主
+（``backends/qt/widgets/control_host.py``）持有。控件自身只负责事件订阅、把描述交给宿主，
+以及"光标下面到底是哪个控件"这层 Qt 查询。
 """
 from __future__ import annotations
 
-from PyQt5.QtWidgets import QWidget, QApplication, QGraphicsOpacityEffect
-from PyQt5.QtCore import Qt, QPoint, QPropertyAnimation, QEasingCurve, QTimer
-from PyQt5.QtGui import QPainter, QCursor
-
 from config.config import UI
-from lib.core.render.visuals.application_visuals import build_tooltip_visual
-from lib.script.ui.render_bridge import create_draw_backend, clamp_rect_position, digit_font as get_digit_font, screen_rect_for_point as get_screen_geometry_for_point, text_metrics as QtTextMetrics, ui_font as get_ui_font
+from lib.core.render.visuals.controls import (
+    TOOLTIP_HIDE,
+    TOOLTIP_SHOW,
+    TooltipControl,
+)
+from lib.script.ui.render_bridge import (
+    create_control_host,
+    digit_font as get_digit_font,
+    pointer_cursor,
+    screen_rect_for_point as get_screen_geometry_for_point,
+    text_metrics as QtTextMetrics,
+    ui_font as get_ui_font,
+)
 from config.scale import scale_px
 from lib.core.event.center import get_event_center, EventType, Event
-from lib.core.unified_draw import Layer, get_layer_manager
+from lib.core.unified_draw import Layer
 from lib.core.anchor_utils import apply_ui_opacity
 
-# ── 布局常量 ──────────────────────────────────────────────────────────
+# ── 布局常量 ───────────────────────────────────────────────────────────
 _LAYER       = scale_px(1, min_abs=1)
 _BORDER      = _LAYER * 2  # 1px 黑边 + 1px 蓝边
 _PAD_X       = scale_px(6, min_abs=1)   # 文字水平内边距
@@ -39,255 +52,204 @@ def _tooltip_target_opacity() -> float:
     return max(0.0, min(1.0, value))
 
 
-class TooltipPanel(QWidget):
+class TooltipPanel:
     """鼠标悬停说明书面板 —— 全局单例。"""
 
     def __init__(self):
-        super().__init__()
-        self.setWindowFlags(
-            Qt.Tool
-            | Qt.FramelessWindowHint
-            | Qt.WindowStaysOnTopHint
-        )
-        self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setAttribute(Qt.WA_TransparentForMouseEvents)   # 不拦截鼠标
-        self.setAttribute(Qt.WA_ShowWithoutActivating)       # 不抢焦点
-        get_layer_manager().register(self, Layer.TOOLTIP)
+        # ── 悬停起点：描述层以构造时的光标位置为静止计数起点 ────────
+        self._last_pos = pointer_cursor()
 
-        # ── 透明度动画 ────────────────────────────────────────────────
-        self._opacity = QGraphicsOpacityEffect(self)
-        self._opacity.setOpacity(0.0)
-        self.setGraphicsEffect(self._opacity)
-
-        self._anim = QPropertyAnimation(self._opacity, b'opacity', self)
-        self._anim.setDuration(UI['ui_fade_duration'])
-        self._anim.setEasingCurve(QEasingCurve.InOutQuad)
-        self._anim.finished.connect(self._on_anim_finished)
-        self._hide_timer = QTimer(self)
-        self._hide_timer.setSingleShot(True)
-        self._hide_timer.setInterval(_AUTO_HIDE_MS)
-        self._hide_timer.timeout.connect(self._hide)
-
-        # ── 字体 ─────────────────────────────────────────────────────
+        # ── 字体与描述层 ──────────────────────────────────────────
         self._font = get_ui_font()
         self._font.setBold(True)
         self._digit_font = get_digit_font()
         self._text_metrics = QtTextMetrics(self._font, self._digit_font)
-        self._draw_backend = create_draw_backend()
-        self._visual = None
+        self._control = TooltipControl(
+            self._text_metrics,
+            max_text_width=_MAX_TEXT_W,
+            padding_x=_PAD_X,
+            padding_y=_PAD_Y,
+            border_width=_LAYER,
+            cursor_gap=_CURSOR_GAP,
+            min_text_width=scale_px(40, min_abs=1),
+            paint_layer=int(Layer.TOOLTIP),
+            opacity_scale=lambda: apply_ui_opacity(1.0),
+            hover_ticks=_HOVER_TICKS,
+            auto_hide_ms=_AUTO_HIDE_MS,
+            initial_position=self._last_pos,
+        )
 
-        # ── 悬停状态 ─────────────────────────────────────────────────
-        self._visible          = False
-        self._last_pos: QPoint = QCursor.pos()
-        self._stationary_ticks = 0
-        self._current_text     = ''
+        # ── 宿主（真实窗口）───────────────────────────────────────
+        self._host = create_control_host(
+            paint_batch=self._paint_batch,
+            on_fade_out_finished=self._on_fade_out_finished,
+            auto_hide_ms=_AUTO_HIDE_MS,
+            on_auto_hide=self._hide,
+            layer=Layer.TOOLTIP,
+            fade_duration_ms=UI['ui_fade_duration'],
+            fade_out_duration_ms=UI['ui_fade_duration'],
+            transparent_for_mouse=True,     # 不拦截鼠标
+            show_without_activating=True,   # 不抢焦点
+        )
+        self._description = ''
 
-        # ── 事件订阅 ─────────────────────────────────────────────────
+        # ── 悬停状态（描述层共享）─────────────────────────────────
+        self._visible = False
+        self._current_text = ''
+
+        # ── 事件订阅 ───────────────────────────────────────────────
         self._ec = get_event_center()
         self._ec.subscribe(EventType.TICK, self._on_tick)
+
+    # ==================================================================
+    # 描述状态（测试与内部逻辑读取的稳定入口）
+    # ==================================================================
+    @property
+    def _stationary_ticks(self) -> int:
+        return self._control.hover.stationary_ticks
+
+    @_stationary_ticks.setter
+    def _stationary_ticks(self, value: int) -> None:
+        self._control.hover.stationary_ticks = int(value)
+
+    def width(self) -> int:
+        return self._host.width()
+
+    def height(self) -> int:
+        return self._host.height()
+
+    def isVisible(self) -> bool:
+        return bool(self._host.isVisible())
+
+    def hide(self) -> None:
+        """立即隐藏（不播淡出动画），供关机清理路径调用。"""
+        self._host.stop_auto_hide()
+        self._host.stop_animation()
+        self._visible = False
+        self._control.visible = False
+        self._host.hide()
+
+    def update(self) -> None:
+        """请求重绘；真实窗口在宿主手上。"""
+        self._host.update()
+
+    def close(self) -> None:
+        """关闭并释放后端窗口（关机清理及单例回收路径）。"""
+        self._host.cleanup()
 
     # ==================================================================
     # Tick 驱动的悬停检测
     # ==================================================================
 
     def _on_tick(self, event: Event) -> None:
-        current_pos = QCursor.pos()
-
-        if current_pos != self._last_pos:
+        current = pointer_cursor()
+        action = self._control.on_tick(current)
+        if action == TOOLTIP_HIDE:
             # 鼠标移动 → 重置计数，隐藏面板
-            self._last_pos         = current_pos
-            self._stationary_ticks = 0
+            self._last_pos = current
             if self._visible:
                 self._hide()
-        else:
-            # 鼠标静止 → 累计
-            if self._stationary_ticks < _HOVER_TICKS:
-                self._stationary_ticks += 1
-            if self._stationary_ticks == _HOVER_TICKS and not self._visible:
-                desc = self._find_description(current_pos)
-                if desc:
-                    self._show(desc, current_pos)
+        elif action == TOOLTIP_SHOW:
+            self._last_pos = current
+            desc = self._find_description(current)
+            if desc:
+                self._show(desc, current)
 
     # ==================================================================
     # 查找说明字段
     # ==================================================================
 
-    def _find_description(self, global_pos: QPoint) -> str:
-        """从光标下的 widget 开始查找 _description。
+    #: 这些窗口的说明书只在它们真正激活时才显示（避免背景面板投影）。
+    _RESTRICTED_DESCRIPTION_WINDOWS = ("AISettingsPanel", "WorkbenchWindow")
 
-        策略：
-        1. widgetAt 找到鼠标下的 widget
-        2. 向上遍历 parent() 链（处理子 widget 情况）
-        3. 若 parent() 链断裂（PyQt5 有时返回 C++ 包装而非 Python 实例），
-           改为遍历所有顶层窗口，检查哪个窗口包含该 widget，
-           直接在顶层窗口上查找 _description
+    def _find_description(self, global_pos) -> str:
+        """交给后端宿主做 Qt 命中测试，取光标下控件声明的说明。
+
+        命中策略（``widgetAt`` → ``parent()`` 链 → 顶层窗口兜底）与限制规则都在后端宿主里；
+        控件只声明"哪些窗口算受限面板"这个产品策略。
         """
-        widget = QApplication.widgetAt(global_pos)
-
-        # 无焦点时 widgetAt 可能返回 None，手动从顶层窗口做命中测试
-        if widget is None:
-            for top in reversed(QApplication.topLevelWidgets()):
-                if top is self or not top.isVisible():
-                    continue
-                local = top.mapFromGlobal(global_pos)
-                hit = top.childAt(local)
-                if hit is not None:
-                    widget = hit
-                    break
-                if top.rect().contains(local):
-                    widget = top
-                    break
-
-        if widget is None:
-            return ''
-
-        top = widget.window()
-        if self._is_restricted_panel_window(top) and not self._is_active_panel_window(top):
-            return ''
-
-        # 先尝试 parent() 链（widget 本身 → 父级 → 祖父级 …）
-        cur = widget
-        while cur is not None:
-            if cur is self:
-                break
-            desc = getattr(cur, '_description', None)
-            if desc:
-                return str(desc)
-            cur = cur.parent()
-
-        # parent() 链未找到时，回退到遍历顶层窗口：
-        # 找到包含 widget 的那个顶层窗口，直接在其上查找 _description
-        for top in QApplication.topLevelWidgets():
-            if top is self or not top.isVisible():
-                continue
-            # 判断 widget 是否属于这个顶层窗口
-            local = top.mapFromGlobal(global_pos)
-            if top.rect().contains(local):
-                desc = getattr(top, '_description', None)
-                if desc:
-                    return str(desc)
-
-        return ''
-
-    @staticmethod
-    def _is_restricted_panel_window(window) -> bool:
-        if window is None:
-            return False
-        class_name = window.__class__.__name__
-        object_name = str(window.objectName() or '')
-        return class_name in {"AISettingsPanel", "WorkbenchWindow"} or object_name in {
-            "AISettingsPanel",
-            "WorkbenchWindow",
-        }
-
-    @staticmethod
-    def _is_active_panel_window(window) -> bool:
-        if window is None or not window.isVisible():
-            return False
-        active = QApplication.activeWindow()
-        return bool(window.isActiveWindow() or active is window)
+        return self._host.description_at(
+            global_pos,
+            restricted_names=self._RESTRICTED_DESCRIPTION_WINDOWS,
+        )
 
     # ==================================================================
     # 显示 / 隐藏
     # ==================================================================
 
-    def _show(self, text: str, cursor_pos: QPoint) -> None:
+    def _show(self, text: str, cursor) -> None:
         self._current_text = text
-        self._recalc_size()
-        self._reposition(cursor_pos)
-        self.show()
+        screen = get_screen_geometry_for_point(point=cursor, fallback_widget=self._host)
+        placement = self._control.show(text, cursor, screen)
+        self._apply_visual_size()
+        self._host.move_to(placement.x, placement.y)
+        self._host.show()
         self._visible = True
-        self._hide_timer.start(_AUTO_HIDE_MS)
+        self._host.start_auto_hide()
         self._animate(1.0)
 
     def _hide(self) -> None:
-        self._hide_timer.stop()
+        self._host.stop_auto_hide()
         self._visible = False
         self._animate(0.0)
 
     def hide_now(self, *, reset_hover: bool = True) -> None:
         """立即隐藏提示框，并可选重置悬停计时状态。"""
-        self._anim.stop()
-        self._hide_timer.stop()
+        self._host.stop_auto_hide()
+        self._host.stop_animation()
         self._visible = False
-        self.hide()
-        self._opacity.setOpacity(0.0)
+        self._host.hide()
+        self._host.set_opacity(0.0)
         if reset_hover:
-            self._stationary_ticks = 0
-            self._last_pos = QCursor.pos()
+            self._control.hover.reset(pointer_cursor())
+            self._last_pos = pointer_cursor()
 
     def _animate(self, target: float) -> None:
-        self._anim.stop()
-        self._anim.setStartValue(float(self._opacity.opacity()))
-        self._anim.setEndValue(apply_ui_opacity(target * _tooltip_target_opacity()))
-        self._anim.start()
+        # 淡出的判定取自控件自己的可见状态（``_show`` 先置一、``_hide`` 先置零），
+        # 不能靠"目标小于当前透明度"推断：淡入还没播完时它们可能相等。
+        # 宿主只有在淡出真正播完后才隐藏窗口，否则会留在屏幕上继续拦鼠标。
+        self._host.fade_to(
+            self._control.scaled_opacity(target * _tooltip_target_opacity()),
+            duration_ms=UI['ui_fade_duration'],
+            fade_out=not self._visible,
+        )
 
-    def _on_anim_finished(self) -> None:
+    def _on_fade_out_finished(self) -> None:
         """淡出完成后隐藏窗口，避免占用 z-order。"""
         if not self._visible:
-            self.hide()
+            self._host.hide()
 
     # ==================================================================
     # 布局计算
     # ==================================================================
 
-    def _recalc_size(self) -> None:
+    def _apply_visual_size(self) -> None:
         """依据文本内容重新计算面板尺寸。"""
-        visual = self._build_visual()
-        self.setFixedSize(
-            int(visual.size.width),
-            int(visual.size.height),
-        )
+        size = self._control.logical_size()
+        self._host.apply_size(int(size.width), int(size.height))
 
-    def _reposition(self, cursor_pos: QPoint) -> None:
+    def _reposition(self, cursor) -> None:
         """将面板放在光标右侧；超出屏幕右/下边界时自动镜像。"""
-        screen = get_screen_geometry_for_point(point=cursor_pos, fallback_widget=self)
-        x = cursor_pos.x() + _CURSOR_GAP
-        y = cursor_pos.y()
-        if x + self.width() > int(screen.x) + int(screen.width):
-            x = cursor_pos.x() - self.width() - _CURSOR_GAP
-        x, y, _ = clamp_rect_position(
-            x,
-            y,
-            self.width(),
-            self.height(),
-            point=cursor_pos,
-            fallback_widget=self,
-        )
-        self.move(x, y)
+        screen = get_screen_geometry_for_point(point=cursor, fallback_widget=self._host)
+        placement = self._control.place(cursor, screen)
+        self._host.move_to(placement.x, placement.y)
 
     def _wrap_text(self, text: str) -> list[str]:
         """按 _MAX_TEXT_W 像素宽度对文本进行自动换行。"""
-        return list(self._build_visual(text).lines)
+        return self._control.wrapped_lines(text)
 
     def _build_visual(self, text: str | None = None):
         """Resolve the shared tooltip visual for the current text."""
-        visual = build_tooltip_visual(
-            self._current_text if text is None else text,
-            self._text_metrics,
-            max_text_width=_MAX_TEXT_W,
-            padding_x=_PAD_X,
-            padding_y=_PAD_Y,
-            border_width=_LAYER,
-            opacity=1.0,
-            min_text_width=scale_px(40, min_abs=1),
-        )
-        if text is None:
-            self._visual = visual
-        return visual
+        return self._control.build_visual(text)
 
     # ==================================================================
     # 绘制
     # ==================================================================
 
-    def paintEvent(self, event) -> None:
+    def _paint_batch(self):
         if not self._current_text:
-            return
-        visual = self._build_visual()
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing, False)
-        self._draw_backend.render(visual.batch, painter)
-        painter.end()
+            return None
+        return self._control.build_visual().batch
 
 
 # ==================================================================
@@ -313,10 +275,8 @@ def cleanup_tooltip_panel() -> None:
     global _instance
     if _instance is not None:
         try:
-            _instance._hide_timer.stop()
             _instance._ec.unsubscribe(EventType.TICK, _instance._on_tick)
-            get_layer_manager().unregister(_instance)
-            _instance.close()
+            _instance._host.cleanup()
         except Exception:
             pass
         _instance = None

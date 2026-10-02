@@ -90,6 +90,92 @@ _DESCRIPTION_SCRIPT = textwrap.dedent(
     assert control.drop_matching(source="bbb") is False
     assert control.pending_queue == []
 
+    # 说明书：悬停计数、排版与位置解算同样不碰 Qt。
+    from lib.core.render.visuals.controls import (
+        TOOLTIP_HIDE,
+        TOOLTIP_IDLE,
+        TOOLTIP_SHOW,
+        TooltipControl,
+    )
+    from lib.core.render.visuals.screen import virtual_screen_rect
+
+    screen = virtual_screen_rect([__import__(
+        "lib.core.render.visuals.types", fromlist=["Rect"]
+    ).Rect(0, 0, 1920, 1080)])
+
+    tooltip = TooltipControl(
+        create_portable_bubble_text_metrics(),
+        max_text_width=220,
+        padding_x=6,
+        padding_y=3,
+        border_width=1,
+        cursor_gap=10,
+        min_text_width=40,
+        paint_layer=4,
+        hover_ticks=20,
+    )
+    visual = tooltip.set_text("压成两行的说明文字 " * 8)
+    assert int(visual.size.width) > 0 and visual.batch.commands
+    assert len(tooltip.wrapped_lines()) > 1, "长文本没有被换行"
+
+    # 静止满 hover_ticks 才提示；中途移动立刻请求隐藏。
+    origin = (100, 100)
+    assert tooltip.on_tick(origin) == TOOLTIP_IDLE
+    for _ in range(19):
+        assert tooltip.on_tick(origin) == TOOLTIP_IDLE
+    assert tooltip.on_tick(origin) == TOOLTIP_SHOW
+    # 面板显示之后：继续静止不再重复触发；一旦移动就要求隐藏。
+    tooltip.visible = True
+    assert tooltip.on_tick(origin) == TOOLTIP_IDLE
+    assert tooltip.on_tick((140, 100)) == TOOLTIP_HIDE
+
+    placement = tooltip.place((1800, 40), screen)
+    assert placement.x + int(tooltip.logical_size().width) <= screen.x + screen.width
+    assert placement.x < 1800, "越界时应镜像到光标左侧"
+
+    # 面板上的文本是排版事实源，重复解算必须是同一份结果。
+    assert tooltip.build_visual().lines == tooltip.build_visual().lines
+
+    # 语音指示器：靠近才显示，离开超过延时才收起。
+    from lib.core.render.visuals.controls import (
+        HOVER_HIDE,
+        HOVER_NONE,
+        HOVER_SHOW,
+        MicSttControl,
+    )
+    from lib.core.render.visuals.types import Point, Rect
+
+    mic = MicSttControl(size=24, hover_radius=120, hide_delay=2.0, paint_layer=7)
+    area = Rect(100, 100, 24, 24)
+    assert mic.update_hover(Point(2000, 2000), area, now=0.0) == HOVER_NONE
+    mic.listening = True
+    assert mic.update_hover(Point(105, 105), area, now=0.0) == HOVER_SHOW
+    mic.visible = True
+    assert mic.update_hover(Point(2000, 2000), area, now=1.0) == HOVER_NONE
+    assert mic.update_hover(Point(2000, 2000), area, now=5.0) == HOVER_HIDE
+    assert mic.scaled_opacity(2.0) == 1.0
+
+    # 进度条：拖动算术、剩余时间反推与 tick 节奏同样不碰 Qt。
+    from lib.core.render.visuals.controls import MediaProgressControl
+    from lib.core.render.visuals.types import Rect as _Rect
+
+    prog = MediaProgressControl(
+        create_portable_bubble_text_metrics(),
+        width=240, height=20, gap=2, paint_layer=6,
+    )
+    prog.apply_progress(0.25, 120)
+    assert prog.time_text() == "2:00"
+    slider = prog.slider_rect()
+    assert slider.width > 0
+    prog.begin_drag(slider.x + slider.width)
+    assert prog.dragging and prog.drag_progress == 1.0
+    assert prog.x_to_progress(slider.x) == 0.0
+    assert prog.end_drag() == 1.0 and prog.progress == 1.0
+    placed = prog.placement(_Rect(400, 600, 300, 200), _Rect(0, 0, 1920, 1080))
+    assert (placed.x, placed.y) == (400, 578)
+    prog.visible = True
+    assert [prog.advance_tick(20) for _ in range(20)] == [False] * 19 + [True]
+
     assert [name for name in sys.modules if name.startswith("PyQt5")] == []
     """
 )
@@ -108,31 +194,46 @@ class ControlDescriptionLayerTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
 
-    def test_product_control_does_not_import_or_subclass_qt(self):
-        """气泡框已不是 QWidget：不得 import PyQt5，也不得继承任何 Qt 基类。"""
-        path = _REPO_ROOT / "lib/script/ui/bubble.py"
-        tree = ast.parse(path.read_text(encoding="utf-8-sig"))
+    def test_product_controls_do_not_import_or_subclass_qt(self):
+        """已迁移的控件都不再是 QWidget：不得 import PyQt5，也不得继承 Qt 基类。
 
-        imported = []
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                names = [alias.name for alias in node.names]
-            elif isinstance(node, ast.ImportFrom):
-                names = [node.module or ""]
-            else:
-                continue
-            imported.extend(
-                name for name in names
-                if name == "PyQt5" or name.startswith("PyQt5.")
-            )
-        self.assertEqual(imported, [])
-
-        bubble_class = next(
-            node for node in tree.body
-            if isinstance(node, ast.ClassDef) and node.name == "Bubble"
+        每迁完一个控件就在这里加一行；`frozen_ui_qt_importers` 的收缩与这份名单
+        是同一件事的两个视角。
+        """
+        migrated = (
+            ("lib/script/ui/bubble.py", "Bubble"),
+            ("lib/script/ui/tooltip_panel.py", "TooltipPanel"),
+            ("lib/script/ui/mic_stt_indicator.py", "MicSttIndicator"),
+            ("lib/script/ui/progress_panel.py", "ProgressPanel"),
         )
-        bases = [ast.unparse(base) for base in bubble_class.bases]
-        self.assertEqual(bases, [], f"Bubble 仍继承 {bases}；控件层应只描述状态")
+        for relative, class_name in migrated:
+            with self.subTest(control=relative):
+                tree = ast.parse(
+                    (_REPO_ROOT / relative).read_text(encoding="utf-8-sig")
+                )
+
+                imported = []
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.Import):
+                        names = [alias.name for alias in node.names]
+                    elif isinstance(node, ast.ImportFrom):
+                        names = [node.module or ""]
+                    else:
+                        continue
+                    imported.extend(
+                        name for name in names
+                        if name == "PyQt5" or name.startswith("PyQt5.")
+                    )
+                self.assertEqual(imported, [])
+
+                control_class = next(
+                    node for node in tree.body
+                    if isinstance(node, ast.ClassDef) and node.name == class_name
+                )
+                bases = [ast.unparse(base) for base in control_class.bases]
+                self.assertEqual(
+                    bases, [], f"{class_name} 仍继承 {bases}；控件层应只描述状态"
+                )
 
     def test_description_layer_owns_no_window_facts(self):
         """窗口标志、透明度动画与光标属于后端宿主，不得出现在描述层代码里。"""
@@ -331,6 +432,57 @@ class QtControlHostTests(unittest.TestCase):
             bubble.close()
             cleanup_event_center()
 
+    def test_tooltip_host_paints_the_description_batch_pixel_for_pixel(self):
+        """说明书面板的宿主要逐像素画出共享批次，而不是自己重排一遍。
+
+        版面事实源是 `build_tooltip_visual`；控件层只决定文本与位置。这条断言守住
+        「迁移没有把绘制偷回控件」——换后端时两个后端画出的是同一份批次。
+        """
+        from PyQt5.QtCore import Qt
+        from PyQt5.QtGui import QImage, QPainter
+
+        from lib.core.render.backends.qt.drawing.draw_backend import QtDrawBackend
+        from lib.core.render.visuals.controls import TooltipControl
+        from lib.core.render.visuals.types import Rect
+        from lib.script.ui.render_bridge import digit_font, text_metrics, ui_font
+
+        ui = ui_font()
+        ui.setBold(True)
+        control = TooltipControl(
+            text_metrics(ui, digit_font()),
+            max_text_width=220,
+            padding_x=6,
+            padding_y=3,
+            border_width=1,
+            cursor_gap=10,
+            paint_layer=4,
+        )
+        visual = control.set_text("说明文字 with ASCII 123")
+        width, height = int(visual.size.width), int(visual.size.height)
+        self.assertEqual(
+            (control.logical_size().width, control.logical_size().height),
+            (float(width), float(height)),
+        )
+
+        host = self._host(batch=visual.batch, auto_hide_ms=500, on_auto_hide=lambda: None)
+        try:
+            host.apply_size(width, height)
+            host.set_opacity(1.0)
+            through_host = QImage(width, height, QImage.Format_RGBA8888)
+            through_host.fill(Qt.transparent)
+            host.render(through_host)
+
+            direct = QImage(width, height, QImage.Format_RGBA8888)
+            direct.fill(Qt.transparent)
+            painter = QPainter(direct)
+            painter.setRenderHint(QPainter.Antialiasing, False)
+            QtDrawBackend().render(visual.batch, painter, Rect(0, 0, width, height))
+            painter.end()
+
+            self.assertEqual(self._bytes(through_host), self._bytes(direct))
+        finally:
+            host.cleanup()
+
     def test_host_applies_size_geometry_and_clickthrough(self):
         from PyQt5.QtCore import Qt
 
@@ -355,6 +507,332 @@ class QtControlHostTests(unittest.TestCase):
         finally:
             host.cleanup()
 
+
+
+class TooltipPanelBehaviorTests(unittest.TestCase):
+    """说明书控件真的走"描述 → 宿主"那条路，而且会自己收尾。
+
+    迁移过程中冒出过两个只在运行期暴露的问题，单元断言都看不见：
+    ``initial_position`` 没喂进去会让"静止 20 tick"晚一拍；淡出没有标记
+    ``fade_out=True`` 会让窗口淡到透明后仍留在屏幕上继续拦鼠标。这条端到端
+    断言同时钉住两者，并盯住事件中心有没有吞掉回调异常。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        import PyQt5
+
+        root = os.path.dirname(PyQt5.__file__)
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        os.environ.setdefault(
+            "QT_QPA_PLATFORM_PLUGIN_PATH",
+            os.path.join(root, "Qt5", "plugins", "platforms"),
+        )
+        os.environ.setdefault("QT_PLUGIN_PATH", os.path.join(root, "Qt5", "plugins"))
+
+        from PyQt5.QtWidgets import QApplication
+
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_hover_shows_then_moves_hide_the_panel(self):
+        import logging
+
+        from PyQt5.QtCore import QPoint
+        from PyQt5.QtWidgets import QWidget
+
+        from lib.core.event.center import (
+            Event,
+            EventType,
+            cleanup_event_center,
+            get_event_center,
+        )
+        import lib.script.ui.tooltip_panel as tooltip_panel
+
+        records = []
+
+        class _Capture(logging.Handler):
+            def emit(self, record):
+                records.append(record.getMessage())
+
+        handler = _Capture()
+        event_logger = logging.getLogger("lib.core.event.center")
+        event_logger.addHandler(handler)
+
+        target = QWidget()
+        target.setGeometry(300, 200, 300, 200)
+        target._description = "测试说明书"
+        target.show()
+        self.app.processEvents()
+
+        original_cursor = tooltip_panel.pointer_cursor
+        cursor = [QPoint(350, 250)]
+        tooltip_panel.pointer_cursor = lambda: cursor[0]
+
+        panel = tooltip_panel.TooltipPanel()
+        center = get_event_center()
+        try:
+            for _ in range(19):
+                center.publish(Event(EventType.TICK, {}))
+                self.app.processEvents()
+            self.assertFalse(panel.isVisible(), "静止未满 20 tick 就弹了说明书")
+
+            center.publish(Event(EventType.TICK, {}))
+            self.app.processEvents()
+            self.assertTrue(panel.isVisible(), "静止满 20 tick 后说明书没有出现")
+            self.assertEqual(panel._current_text, "测试说明书")
+            self.assertGreater(panel.width(), 1)
+
+            # 进入淡出：动画播完后窗口必须真的收起，而不是留在屏幕上拦鼠标。
+            cursor[0] = QPoint(500, 250)
+            center.publish(Event(EventType.TICK, {}))
+            self.app.processEvents()
+            self.assertEqual(panel._stationary_ticks, 0, "移动后静止计数没有归零")
+            panel._host._on_animation_finished()
+            self.app.processEvents()
+            self.assertFalse(panel.isVisible(), "淡出结束后说明书窗口仍然可见")
+
+            # 立即隐藏会同时重置悬停计数，下一次要重新静止满 20 tick。
+            panel._show("再次", cursor[0])
+            self.app.processEvents()
+            panel.hide_now()
+            self.app.processEvents()
+            self.assertFalse(panel.isVisible())
+            self.assertEqual(panel._stationary_ticks, 0)
+
+            # `shutdown.py` 的通用关机清理会对每个单例调 hide()/close()/update()；
+            # 面板不再是 QWidget 之后，这条路径必须仍然可用。
+            panel.update()
+            panel.hide()
+            self.app.processEvents()
+            self.assertFalse(panel.isVisible())
+            self.assertTrue(callable(panel.close))
+
+            self.assertEqual(
+                [text for text in records if "Event handler error" in text],
+                [],
+            )
+        finally:
+            event_logger.removeHandler(handler)
+            panel.close()
+            tooltip_panel.pointer_cursor = original_cursor
+            target.close()
+            cleanup_event_center()
+
+
+class MicSttIndicatorBehaviorTests(unittest.TestCase):
+    """语音指示器迁移后仍按"靠近显示、离开超时才收起"工作。
+
+    这条断言守着一个只有运行期才暴露的坑：`QWidget.setFixedSize` 换成宿主之后，
+    窗口尺寸不会自己出现；没调 `apply_size` 时窗口是 640x480 的默认值，
+    位置与命中判定会一起算错。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        import PyQt5
+
+        root = os.path.dirname(PyQt5.__file__)
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        os.environ.setdefault(
+            "QT_QPA_PLATFORM_PLUGIN_PATH",
+            os.path.join(root, "Qt5", "plugins", "platforms"),
+        )
+        os.environ.setdefault("QT_PLUGIN_PATH", os.path.join(root, "Qt5", "plugins"))
+
+        from PyQt5.QtWidgets import QApplication
+
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_indicator_follows_state_hover_and_clickthrough(self):
+        import logging
+
+        from PyQt5.QtCore import Qt
+        from PyQt5.QtWidgets import QWidget
+
+        from lib.core.event.center import (
+            Event,
+            EventType,
+            cleanup_event_center,
+            get_event_center,
+        )
+        from lib.core.render.visuals.types import Point
+        import lib.script.ui.mic_stt_indicator as indicator_module
+
+        records = []
+
+        class _Capture(logging.Handler):
+            def emit(self, record):
+                records.append(record.getMessage())
+
+        handler = _Capture()
+        event_logger = logging.getLogger("lib.core.event.center")
+        event_logger.addHandler(handler)
+
+        owner = QWidget()
+        owner.setGeometry(500, 400, 200, 200)
+        owner.show()
+        self.app.processEvents()
+
+        original_pointer = indicator_module.pointer_position
+        cursor = [Point(505.0, 405.0)]
+        indicator_module.pointer_position = lambda: cursor[0]
+
+        center = get_event_center()
+        indicator = indicator_module.MicSttIndicator(owner)
+        try:
+            # 固定边长必须在构造期就落到窗口上，否则位置与命中判定全会偏。
+            self.assertEqual((indicator.width(), indicator.height()),
+                             (indicator.SIZE, indicator.SIZE))
+
+            center.publish(Event(EventType.MIC_STT_STATE_CHANGE, {
+                "is_listening": True, "speech_active": True, "status": "识别中",
+            }))
+            self.app.processEvents()
+            self.assertTrue(indicator._visible)
+            self.assertIn("识别中", indicator._description)
+
+            # 指针在半径内：持续保持可见。
+            center.publish(Event(EventType.FRAME, {}))
+            self.app.processEvents()
+            self.assertTrue(indicator._visible)
+
+            # 离开但未超过 hide_delay：仍可见。
+            cursor[0] = Point(4000.0, 4000.0)
+            center.publish(Event(EventType.FRAME, {}))
+            self.app.processEvents()
+            self.assertTrue(indicator._visible, "刚离开就收起了，未尊重 hide_delay")
+
+            # 超过 hide_delay：收起。
+            indicator._control.last_pointer_inside_ts -= 5.0
+            center.publish(Event(EventType.FRAME, {}))
+            self.app.processEvents()
+            self.assertFalse(indicator._visible)
+            indicator._host._on_animation_finished()
+            self.app.processEvents()
+            self.assertFalse(indicator._host.isVisible())
+
+            # 停止监听：不再显示。
+            center.publish(Event(EventType.MIC_STT_STATE_CHANGE, {"is_listening": False}))
+            self.app.processEvents()
+            self.assertFalse(indicator._visible)
+
+            # 穿透开关落到真实窗口属性上。
+            center.publish(Event(EventType.UI_CLICKTHROUGH_TOGGLE, {"enabled": True}))
+            self.app.processEvents()
+            self.assertTrue(indicator._host.testAttribute(Qt.WA_TransparentForMouseEvents))
+            center.publish(Event(EventType.UI_CLICKTHROUGH_TOGGLE, {"enabled": False}))
+            self.app.processEvents()
+            self.assertFalse(indicator._host.testAttribute(Qt.WA_TransparentForMouseEvents))
+
+            self.assertEqual(
+                [text for text in records if "Event handler error" in text],
+                [],
+            )
+        finally:
+            event_logger.removeHandler(handler)
+            indicator.close()
+            indicator_module.pointer_position = original_pointer
+            owner.close()
+            cleanup_event_center()
+
+
+class ProgressPanelBehaviorTests(unittest.TestCase):
+    """进度条迁移后仍按"压在滑条上拖动 -> 松手发 seek"工作。
+
+    这条断言守着拖动链路：`QWidget` 的 press/move/release 三个回调换成宿主之后，
+    少了"松手"这一环时进度会一直停在拖动中、seek 永远发不出去，而构造期与静态
+    断言都看不出来。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        import PyQt5
+
+        root = os.path.dirname(PyQt5.__file__)
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        os.environ.setdefault(
+            "QT_QPA_PLATFORM_PLUGIN_PATH",
+            os.path.join(root, "Qt5", "plugins", "platforms"),
+        )
+        os.environ.setdefault("QT_PLUGIN_PATH", os.path.join(root, "Qt5", "plugins"))
+
+        from PyQt5.QtWidgets import QApplication
+
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_drag_press_release_publishes_seek(self):
+        import logging
+
+        from PyQt5.QtCore import QRect
+
+        from lib.core.event.center import (
+            Event,
+            EventType,
+            cleanup_event_center,
+            get_event_center,
+        )
+        from lib.core.render.visuals.controls import BUTTON_LEFT, PointerEvent
+        from lib.core.render.visuals.types import Point
+        from lib.script.ui.progress_panel import ProgressPanel
+
+        records = []
+
+        class _Capture(logging.Handler):
+            def emit(self, record):
+                records.append(record.getMessage())
+
+        handler = _Capture()
+        event_logger = logging.getLogger("lib.core.event.center")
+        event_logger.addHandler(handler)
+
+        center = get_event_center()
+        seeks = []
+        center.subscribe(EventType.MUSIC_SEEK, lambda event: seeks.append(event.data))
+
+        panel = ProgressPanel()
+        try:
+            # 固定尺寸必须在构造期就落到窗口上，位置算术才有意义。
+            self.assertEqual((panel.width(), panel.height()), (240, 20))
+
+            panel.set_position_below_playlist(QRect(400, 600, 300, 200))
+            self.assertEqual((panel._host.x(), panel._host.y()), (400, 578))
+
+            panel.show_panel()
+            self.app.processEvents()
+            self.assertTrue(panel.isVisible())
+
+            center.publish(Event(EventType.MUSIC_PROGRESS, {"progress": 0.25, "remaining": 120}))
+            self.app.processEvents()
+            self.assertEqual(panel._control.time_text(), "2:00")
+
+            # 按住滑条 -> 拖动 -> 松手：必须发出一次 seek，并停在非拖动状态。
+            panel._on_pointer(PointerEvent(button=BUTTON_LEFT, local=Point(100, 10)))
+            self.assertTrue(panel._control.dragging)
+            panel._on_pointer(PointerEvent(button=BUTTON_LEFT, local=Point(120, 10)))
+            panel._on_pointer_release()
+            self.assertFalse(panel._control.dragging, "松手后仍在拖动")
+            self.assertEqual(len(seeks), 1)
+            self.assertAlmostEqual(seeks[0]["progress"], panel._control.progress)
+
+            # 歌曲结束重置，隐藏后窗口真的收起。
+            center.publish(Event(EventType.MUSIC_SONG_END, {}))
+            self.app.processEvents()
+            self.assertEqual((panel._control.progress, panel._control.remaining), (0.0, 0))
+
+            panel.hide_panel()
+            self.app.processEvents()
+            panel._host._on_animation_finished()
+            self.app.processEvents()
+            self.assertFalse(panel.isVisible())
+
+            self.assertEqual(
+                [text for text in records if "Event handler error" in text],
+                [],
+            )
+        finally:
+            event_logger.removeHandler(handler)
+            panel.close()
+            cleanup_event_center()
 
 
 #: 返回核心几何（`Rect` / `Point` / `Size`）的共享入口。这些返回值用**属性面试**

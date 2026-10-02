@@ -15,6 +15,8 @@ class QtDependencyBoundaryTests(unittest.TestCase):
     #: 鼓励扩散，而是为了让「UI 的 Qt 面到底有多大」有一个可审计的答案——新增控件直接
     #: 写 `PyQt5` 会被 `test_repository_qt_imports_stay_in_explicit_toolkit_boundaries`
     #: 叫停，必须在这里显式登记并说明理由；条目在文件不再 import Qt 后也必须删掉。
+    #: 条目数不是指标（`doc/README.md` 明确不写会失效的总数）：这份名单本身就是当前
+    #: 待迁清单，收缩由「stale」断言强制——文件不再 import Qt 就必须出列。
     #: 真正会随架构演进缩小的是同文件里「直接引用 `drawing/`」的那份清单，它现在是空的。
     frozen_ui_qt_importers = frozenset({
             "lib/script/ui/_particle_helper.py",
@@ -45,7 +47,6 @@ class QtDependencyBoundaryTests(unittest.TestCase):
             "lib/script/ui/help_window.py",
             "lib/script/ui/interaction_mode_button.py",
             "lib/script/ui/launch_wuwa_button.py",
-            "lib/script/ui/mic_stt_indicator.py",
             "lib/script/ui/more_functions_button.py",
             "lib/script/ui/office_approval_controller.py",
             "lib/script/ui/office_approval_dialog.py",
@@ -60,7 +61,6 @@ class QtDependencyBoundaryTests(unittest.TestCase):
             "lib/script/ui/page_turn_buttons.py",
             "lib/script/ui/playlist_panel.py",
             "lib/script/ui/preloader.py",
-            "lib/script/ui/progress_panel.py",
             "lib/script/ui/qr_dialog_base.py",
             "lib/script/ui/rect_action_button_style.py",
             "lib/script/ui/render_bridge.py",
@@ -73,7 +73,6 @@ class QtDependencyBoundaryTests(unittest.TestCase):
             "lib/script/ui/speaker_search_dialog.py",
             "lib/script/ui/speaker_search_result_box.py",
             "lib/script/ui/speaker_volume_slider.py",
-            "lib/script/ui/tooltip_panel.py",
             "lib/script/ui/tray_icon.py",
             "lib/script/ui/tray_menu.py",
             "lib/script/ui/update_dialog.py",

@@ -168,6 +168,47 @@ def clamp_rect_position(
     return clamped[0], clamped[1], screen
 
 
+def resolve_placement(self_size, target_rect, screen, *, target_anchor_id="top_left",
+                      self_anchor_id="bottom_left", offset_x=0.0, offset_y=0.0):
+    """控件窗口落位的唯一共享入口（《render 层边界契约》档位 1）。
+
+    控件此前各自写「取目标锚点、取自身锚点、相减、加偏移、夹取屏幕」，算术其实
+    只有一份；这里把它转发给 ``visuals/layout.py`` 的 ``PlacementSpec``，控件只声明
+    锚点与偏移。返回值是 ``AnchorPlacement``（窗口左上角 + 所在屏幕）。
+    """
+    from lib.core.render.visuals.layout import resolve_placement as resolve
+
+    return resolve(
+        self_size,
+        target_rect,
+        screen,
+        target_anchor_id=target_anchor_id,
+        self_anchor_id=self_anchor_id,
+        offset_x=offset_x,
+        offset_y=offset_y,
+    )
+
+
+def place_at_point(self_size, anchor_point, screen, *, target_anchor_id="top_left",
+                    self_anchor_id="bottom_left", offset_x=0.0, offset_y=0.0):
+    """目标只有一个全局锚点（而不是矩形）时的窗口落位。"""
+    from lib.core.render.visuals.layout import PlacementSpec
+
+    return PlacementSpec(
+        target_anchor_id=target_anchor_id,
+        self_anchor_id=self_anchor_id,
+        offset_x=offset_x,
+        offset_y=offset_y,
+    ).resolve_from_point(self_size, anchor_point, screen)
+
+
+def centered_placement(self_size, screen):
+    """在 ``screen`` 里居中的窗口落位（公告 / 更新 / 帮助 / 语音包浮窗共用）。"""
+    from lib.core.render.visuals.layout import PlacementSpec
+
+    return PlacementSpec().resolve_centered(self_size, screen)
+
+
 def widget_global_rect(widget):
     """控件在屏幕坐标系中的核心 `Rect`。"""
     return presentation_host().widget_global_rect(widget)
@@ -188,6 +229,23 @@ def pointer_position():
     from lib.core.render.backends.qt.drawing.window import pointer_core_position
 
     return pointer_core_position()
+
+
+def pointer_cursor():
+    """当前指针的原始 Qt 光标对象。
+
+    少数控件（说明书面板）需要把同一个光标对象既当命中测试的输入，又当
+    `QWidget` 的坐标参数；`pointer_position()` 返回核心 `Point` 会丢掉这层身份。
+    挡位 A 的规则不变：Qt 事实仍只在本模块这一处落点被取出。
+    """
+    from lib.core.render.backends.qt.drawing.window import pointer_cursor as cursor
+
+    return cursor()
+
+
+def screen_rect_for_cursor(cursor, fallback_widget=None):
+    """光标对象所在屏幕的核心 `Rect`（不是 `QRect`）。"""
+    return screen_rect_for_point(point=cursor, fallback_widget=fallback_widget)
 
 
 def ui_font(size: int | None = None):

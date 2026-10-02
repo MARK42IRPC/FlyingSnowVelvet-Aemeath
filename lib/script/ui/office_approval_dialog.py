@@ -29,7 +29,7 @@ from lib.script.ui.office_icons import (
 from lib.script.ui.office_style import create_office_accent_bar, office_stylesheet
 from lib.script.ui.workbench_components import create_window_button
 from lib.script.workbench.theme import get_workbench_colors
-from lib.script.ui.render_bridge import clamp_rect_position, screen_rect_for_point as get_screen_geometry_for_point, ui_font as get_ui_font
+from lib.script.ui.render_bridge import resolve_placement, screen_rect_for_point as get_screen_geometry_for_point, ui_font as get_ui_font
 
 
 _OFFICE_ICON_PATH = Path(__file__).resolve().parents[3] / "resc" / "icon.ico"
@@ -216,27 +216,26 @@ class OfficeApprovalDialog(QDialog):
         self._center_on_reference()
 
     def _center_on_reference(self) -> None:
-        """有可见父窗就居中于父窗，否则居中于光标所在屏幕（与公告窗一致）。"""
+        """有可见父窗就居中于父窗，否则居中于光标所在屏幕（与公告窗一致）。
+
+        「中心对中心再夹取」是共享落位的一种取值，算术在 ``visuals/layout.py``。
+        """
         parent = self.parentWidget()
-        point = None
         if parent is not None and parent.isVisible():
             reference = parent.frameGeometry()
-            x = reference.x() + (reference.width() - self.width()) // 2
-            y = reference.y() + (reference.height() - self.height()) // 2
             point = reference.center()
         else:
-            geometry = get_screen_geometry_for_point(fallback_widget=self)
-            x = int(geometry.x) + (int(geometry.width) - self.width()) // 2
-            y = int(geometry.y) + (int(geometry.height) - self.height()) // 2
-        x, y, _ = clamp_rect_position(
-            x,
-            y,
-            self.width(),
-            self.height(),
-            point=point,
-            fallback_widget=self,
+            reference = get_screen_geometry_for_point(fallback_widget=self)
+            point = None
+        screen = get_screen_geometry_for_point(point=point, fallback_widget=self)
+        placement = resolve_placement(
+            (self.width(), self.height()),
+            reference,
+            screen,
+            target_anchor_id="center",
+            self_anchor_id="center",
         )
-        self.move(x, y)
+        self.move(placement.x, placement.y)
 
     def _resolve(self, decision: str) -> None:
         if self._resolved:

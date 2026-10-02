@@ -35,7 +35,7 @@ from lib.script.update_manager import (
     UpdateManager,
     UpdateResult,
 )
-from lib.script.ui.render_bridge import clamp_rect_position, screen_rect_for_point as get_screen_geometry_for_point, ui_font as get_ui_font
+from lib.script.ui.render_bridge import centered_placement, screen_rect_for_point as get_screen_geometry_for_point, ui_font as get_ui_font
 
 _WIDTH = scale_px(360, min_abs=320)
 _HEIGHT = scale_px(248, min_abs=220)
@@ -240,19 +240,11 @@ class DesktopPetUpdateDialog(WorkbenchFloatingWindow):
             self.hide()
 
     def _center_on_screen(self) -> None:
+        # 居中算术与夹取统一在 visuals/layout.py（档位 1）。
         cursor_pos = QCursor.pos()
         screen = get_screen_geometry_for_point(point=cursor_pos, fallback_widget=self)
-        target_x = int(screen.x) + (int(screen.width) - self.width()) // 2
-        target_y = int(screen.y) + (int(screen.height) - self.height()) // 2
-        x, y, _ = clamp_rect_position(
-            target_x,
-            target_y,
-            self.width(),
-            self.height(),
-            point=cursor_pos,
-            fallback_widget=self,
-        )
-        self.move(x, y)
+        placement = centered_placement((self.width(), self.height()), screen)
+        self.move(placement.x, placement.y)
 
     def _set_actions(
         self,

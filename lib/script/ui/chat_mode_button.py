@@ -3,16 +3,17 @@
 from __future__ import annotations
 
 from PyQt5.QtWidgets import QWidget, QGraphicsOpacityEffect
-from PyQt5.QtCore import Qt, QPropertyAnimation, QEasingCurve, QPoint
+from PyQt5.QtCore import Qt, QPropertyAnimation, QEasingCurve
 from PyQt5.QtGui import QPainter
 
 from config.config import UI
 from config.scale import scale_px
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.unified_draw import Layer, get_layer_manager
+from lib.core.render.visuals.anchors import get_anchor_point
 from lib.core.anchor_utils import apply_ui_opacity
 from lib.script.ui.rect_action_button_style import paint_rect_action_button
-from lib.script.ui.render_bridge import clamp_rect_position, move_widget_to_global, ui_font as get_ui_font, widget_global_rect
+from lib.script.ui.render_bridge import move_widget_to_global, place_at_point, screen_rect_for_point, ui_font as get_ui_font, widget_global_rect
 
 
 class ChatModeButton(QWidget):
@@ -96,17 +97,15 @@ class ChatModeButton(QWidget):
         if geom is None:
             return
         target_rect = geom
-        new_x = int(target_rect.x) + int(target_rect.width)
-        new_y = int(target_rect.y)
-        x, y, _ = clamp_rect_position(
-            new_x,
-            new_y,
-            self.WIDTH,
-            self.HEIGHT,
-            point=QPoint(new_x, new_y),
-            fallback_widget=self
+        anchor = get_anchor_point(target_rect, 'top_right')
+        placement = place_at_point(
+            (self.WIDTH, self.HEIGHT),
+            anchor,
+            screen_rect_for_point(point=anchor, fallback_widget=self),
+            target_anchor_id='top_right',
+            self_anchor_id='top_left',
         )
-        move_widget_to_global(self, x, y)
+        move_widget_to_global(self, placement.x, placement.y)
 
     def fade_in(self) -> None:
         if self._visible:

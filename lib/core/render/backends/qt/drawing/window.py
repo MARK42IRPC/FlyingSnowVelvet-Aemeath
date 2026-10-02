@@ -29,6 +29,15 @@ def pointer_core_position() -> Point:
     return Point(float(position.x()), float(position.y()))
 
 
+def pointer_cursor():
+    """当前指针的原始 Qt 光标位置（`QPoint`）。
+
+    `pointer_core_position()` 把它翻译成核心 `Point` 供布局算术使用；需要把同一个
+    位置再交给 Qt（`mapFromGlobal` / 命中测试）的控件则用本函数取原始对象。
+    """
+    return QCursor.pos()
+
+
 def move_widget(widget, position: Point | object) -> None:
     """Move a QWidget using a backend-neutral position."""
     widget.move(to_qpoint(position))

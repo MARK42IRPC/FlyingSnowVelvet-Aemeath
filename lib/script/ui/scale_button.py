@@ -8,6 +8,7 @@ from config.scale import scale_px
 from config.tooltip_config import TOOLTIPS
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.desktop_actions import adjust_desktop_scale
+from lib.core.render.visuals.anchors import get_anchor_point as rect_anchor_point
 from lib.core.render.visuals.types import Point
 from lib.core.unified_draw import Layer, get_layer_manager
 from config.user_scale_config import get_user_scale_config
@@ -16,7 +17,7 @@ from lib.core.anchor_utils import (
     refresh_last_activity,
 )
 from lib.script.ui.rect_action_button_style import paint_rect_action_button
-from lib.script.ui.render_bridge import clamp_rect_position, move_widget_to_global, ui_font as get_ui_font, widget_global_rect
+from lib.script.ui.render_bridge import move_widget_to_global, place_at_point, screen_rect_for_point, ui_font as get_ui_font, widget_global_rect
 from lib.core.render.backends.qt.widgets.anchors import (
     get_anchor_point as resolve_anchor_point,
     publish_widget_anchor_response,
@@ -140,35 +141,17 @@ class ScaleUpButton(QWidget):
         if not self._clickthrough_button:
             return
 
-        # 获取 clickthrough_button 的位置和尺寸
+        # 左锚点对齐 clickthrough_button 右锚点；解算在 visuals/layout.py。
         target_rect = widget_global_rect(self._clickthrough_button)
-        btn_x = int(target_rect.x)
-        btn_y = int(target_rect.y)
-        btn_width = int(target_rect.width)
-        btn_height = int(target_rect.height)
-
-        # clickthrough_button 的 right 锚点（全局坐标）
-        # right 锚点 = (btn_x + btn_width, btn_y + btn_height // 2)
-        target_right_x = btn_x + btn_width
-        target_right_y = btn_y + btn_height // 2
-
-        # 自己的 left 锚点 = (x, y + height // 2)
-        # 我们要让自己的 left 锚点对齐到目标按钮的 right 锚点
-        # 所以: x = target_right_x
-        #      y + height // 2 = target_right_y  =>  y = target_right_y - height // 2
-
-        new_x = target_right_x
-        new_y = target_right_y - self.HEIGHT // 2
-
-        # 边界检查（多屏：按目标按钮所在屏幕裁剪）
-        x, y, _ = clamp_rect_position(
-            new_x,
-            new_y,
-            self.WIDTH,
-            self.HEIGHT,
-            point=QPoint(target_right_x, target_right_y),
-            fallback_widget=self,
+        anchor = rect_anchor_point(target_rect, 'right')
+        placement = place_at_point(
+            (self.WIDTH, self.HEIGHT),
+            anchor,
+            screen_rect_for_point(point=anchor, fallback_widget=self),
+            target_anchor_id='right',
+            self_anchor_id='left',
         )
+        x, y = placement.x, placement.y
 
         move_widget_to_global(self, x, y)
         # 广播自身位置变化，供下游 UI（缩小按钮）即时跟随
@@ -371,30 +354,17 @@ class ScaleDownButton(QWidget):
         if not self._scale_up_button:
             return
 
-        # 获取 scale_up_button 的位置和尺寸
+        # 左锚点对齐 scale_up_button 右锚点；解算在 visuals/layout.py。
         target_rect = widget_global_rect(self._scale_up_button)
-        btn_x = int(target_rect.x)
-        btn_y = int(target_rect.y)
-        btn_width = int(target_rect.width)
-        btn_height = int(target_rect.height)
-
-        # scale_up_button 的 right 锚点（全局坐标）
-        target_right_x = btn_x + btn_width
-        target_right_y = btn_y + btn_height // 2
-
-        # 自己的 left 锚点对齐到目标按钮的 right 锚点
-        new_x = target_right_x
-        new_y = target_right_y - self.HEIGHT // 2
-
-        # 边界检查（多屏：按目标按钮所在屏幕裁剪）
-        x, y, _ = clamp_rect_position(
-            new_x,
-            new_y,
-            self.WIDTH,
-            self.HEIGHT,
-            point=QPoint(target_right_x, target_right_y),
-            fallback_widget=self,
+        anchor = rect_anchor_point(target_rect, 'right')
+        placement = place_at_point(
+            (self.WIDTH, self.HEIGHT),
+            anchor,
+            screen_rect_for_point(point=anchor, fallback_widget=self),
+            target_anchor_id='right',
+            self_anchor_id='left',
         )
+        x, y = placement.x, placement.y
 
         move_widget_to_global(self, x, y)
 

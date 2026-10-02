@@ -5,7 +5,7 @@ from PyQt5.QtGui import QColor
 from config.scale import scale_px
 from config.tooltip_config import TOOLTIPS
 from lib.core.event.center import get_event_center, EventType, Event
-from lib.script.ui.render_bridge import qpoint_from_point, clamp_rect_position
+from lib.script.ui.render_bridge import place_at_point, qpoint_from_point, screen_rect_for_point
 from lib.script.ui.rect_action_button_style import RectActionButton
 from lib.core.render.backends.qt.widgets.anchors import (
     get_anchor_point as resolve_anchor_point,
@@ -252,30 +252,18 @@ class RestoreButton(RectActionButton):
         # bottom 锚点的位置：(pet_x + pet_width // 2, pet_y + pet_height)
         # RestoreButton 是独立窗口，使用全局坐标
 
-        # 计算新的窗口位置
-        # 我们要让自己的 top 锚点对齐到 pet_window 的 bottom 锚点
-        # self._anchor_point.x() 已经是 pet_window 下中锚点的全局 X 坐标
-        # self._anchor_point.y() 已经是 pet_window 下中锚点的全局 Y 坐标
-        # 按钮的 top 相对于按钮左上角的坐标是 (width // 2, 0)
-        # 所以按钮的左上角应该在：(锚点.x() - width // 2, 锚点.y())
-
-        # X 轴：pet_window 下中锚点 X 坐标 - 按钮宽度一半 + 偏移量
-        new_x = self._anchor_point.x() - self.WIDTH // 2 + self._offset_x
-
-        # Y 轴：pet_window 下中锚点 Y 坐标 + 偏移量
-        new_y = self._anchor_point.y() + self._offset_y
-
-        # 边界检查（多屏：按锚点所在屏幕裁剪）
-        x, y, _ = clamp_rect_position(
-            new_x,
-            new_y,
-            self.WIDTH,
-            self.HEIGHT,
-            point=self._anchor_point,
-            fallback_widget=self,
+        # 上中锚点对齐 pet_window 下中锚点；解算在 visuals/layout.py。
+        anchor = self._anchor_point
+        placement = place_at_point(
+            (self.WIDTH, self.HEIGHT),
+            anchor,
+            screen_rect_for_point(point=anchor, fallback_widget=self),
+            target_anchor_id='bottom',
+            self_anchor_id='top',
+            offset_x=self._offset_x,
+            offset_y=self._offset_y,
         )
-
-        self.move(x, y)
+        self.move(placement.x, placement.y)
 
     def click(self):
         """处理点击事件 - 取消鼠标穿透并淡出"""

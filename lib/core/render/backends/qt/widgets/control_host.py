@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from PyQt5.QtCore import QEasingCurve, QPoint, QPropertyAnimation, Qt
+from PyQt5.QtCore import QEasingCurve, QPoint, QPropertyAnimation, Qt, QTimer
 from PyQt5.QtGui import QPainter
 from PyQt5.QtWidgets import QApplication, QGraphicsOpacityEffect, QWidget
 
@@ -44,6 +44,8 @@ class QtControlHost(QWidget):
     注入的回调：
 
     - ``paint_batch``：返回当前要绘制的 ``DrawBatch``（``None`` 表示跳过本帧）。
+    - ``auto_hide_ms`` / ``on_auto_hide``：可选的自动隐藏计时（说明书面板用）；
+      不给就不创建定时器，`start_auto_hide()` 成为空操作。
     - ``on_pointer``：把中立指针事件交给控件，返回它要执行的产品意图。
     - ``on_fade_out_finished``：淡出动画正常结束时回调（被打断时不回调）。
     """
@@ -57,17 +59,30 @@ class QtControlHost(QWidget):
         on_pointer: Callable[[PointerEvent], PointerClick] | None = None,
         on_hide_requested: Callable[[], None] | None = None,
         on_fade_out_finished: Callable[[], None] | None = None,
+        on_hover_changed: Callable[[bool], None] | None = None,
+        on_pointer_release: Callable[[], None] | None = None,
         layer=None,
         fade_duration_ms: int = 200,
         fade_out_duration_ms: int = 200,
+        auto_hide_ms: int | None = None,
+        on_auto_hide: Callable[[], None] | None = None,
         transparent_for_mouse: bool = False,
         show_without_activating: bool = False,
+        pointing_cursor: bool = False,
     ) -> None:
         super().__init__()
+        self._auto_hide = None
+        if auto_hide_ms and on_auto_hide is not None:
+            self._auto_hide = QTimer(self)
+            self._auto_hide.setSingleShot(True)
+            self._auto_hide.setInterval(max(0, int(auto_hide_ms)))
+            self._auto_hide.timeout.connect(on_auto_hide)
         self._paint_batch = paint_batch
         self._on_pointer = on_pointer
         self._on_hide_requested = on_hide_requested
         self._on_fade_out_finished = on_fade_out_finished
+        self._on_hover_changed = on_hover_changed
+        self._on_pointer_release = on_pointer_release
         self._awaiting_fade_out = False
         self._fade_duration_ms = max(0, int(fade_duration_ms))
         self._fade_out_duration_ms = max(0, int(fade_out_duration_ms))
@@ -85,7 +100,7 @@ class QtControlHost(QWidget):
             self.setAttribute(Qt.WA_ShowWithoutActivating)
         if transparent_for_mouse:
             self.setAttribute(Qt.WA_TransparentForMouseEvents)
-        self.setCursor(Qt.ArrowCursor)
+        self.setCursor(Qt.PointingHandCursor if pointing_cursor else Qt.ArrowCursor)
         if layer is not None:
             get_layer_manager().register(self, layer)
 
@@ -137,6 +152,19 @@ class QtControlHost(QWidget):
                 self.hide()
         event.accept()
 
+    def mouseReleaseEvent(self, event) -> None:
+        if self._on_pointer_release is not None:
+            self._on_pointer_release()
+        event.accept()
+
+    def enterEvent(self, event) -> None:
+        if self._on_hover_changed is not None:
+            self._on_hover_changed(True)
+
+    def leaveEvent(self, event) -> None:
+        if self._on_hover_changed is not None:
+            self._on_hover_changed(False)
+
     # ── 尺寸、位置与命令 ───────────────────────────────────────────
     def apply_size(self, width: int, height: int) -> None:
         width, height = max(1, int(width)), max(1, int(height))
@@ -160,6 +188,82 @@ class QtControlHost(QWidget):
 
     def set_clickthrough(self, enabled: bool) -> None:
         self.setAttribute(Qt.WA_TransparentForMouseEvents, bool(enabled))
+
+    # ── 命中测试：光标下的产品说明书 ───────────────────────────────
+    def description_at(self, global_pos, *, restricted_names=()) -> str:
+        """返回光标下那个控件声明的 ``_description``；没有就返回空串。
+
+        这是纯 Qt 事实（``widgetAt`` / ``parent()`` 链 / ``topLevelWidgets`` 兜底），
+        但**产品策略不在这里**：哪些窗口算受限面板由调用方以名字传入，本方法只负责
+        "受限面板只有在真正激活时才放行"这条 Qt 语义。说明书面板本身永远被跳过。
+
+        - 传入的 ``global_pos`` 是原始 Qt 坐标对象（面板需要把同一个位置再交给 Qt）。
+        - 子控件若有 ``_description`` 优先；没有就沿 ``parent()`` 链向上找。
+        """
+        restricted = {str(name) for name in restricted_names if name}
+        widget = QApplication.widgetAt(global_pos)
+
+        # 无焦点时 widgetAt 可能返回 None，手动从顶层窗口做命中测试
+        if widget is None:
+            for top in reversed(QApplication.topLevelWidgets()):
+                if top is self or not top.isVisible():
+                    continue
+                local = top.mapFromGlobal(global_pos)
+                hit = top.childAt(local)
+                if hit is not None:
+                    widget = hit
+                    break
+                if top.rect().contains(local):
+                    widget = top
+                    break
+
+        if widget is None:
+            return ""
+
+        window = widget.window()
+        if self._is_restricted_window(window, restricted) and not self._window_is_active(window):
+            return ""
+
+        # 先尝试 parent() 链（widget 本身 → 父级 → 祖父级 …）
+        current = widget
+        while current is not None:
+            if current is self:
+                break
+            description = getattr(current, "_description", None)
+            if description:
+                return str(description)
+            try:
+                current = current.parent()
+            except Exception:
+                current = None
+
+        # parent() 链断裂时（PyQt5 有时返回 C++ 包装而非 Python 实例），
+        # 回退到遍历顶层窗口，直接在包含光标的那个窗口上查找 _description
+        for top in QApplication.topLevelWidgets():
+            if top is self or not top.isVisible():
+                continue
+            local = top.mapFromGlobal(global_pos)
+            if top.rect().contains(local):
+                description = getattr(top, "_description", None)
+                if description:
+                    return str(description)
+
+        return ""
+
+    @staticmethod
+    def _is_restricted_window(window, restricted_names) -> bool:
+        if window is None:
+            return False
+        if window.__class__.__name__ in restricted_names:
+            return True
+        return str(window.objectName() or "") in restricted_names
+
+    @staticmethod
+    def _window_is_active(window) -> bool:
+        if window is None or not window.isVisible():
+            return False
+        active = QApplication.activeWindow()
+        return bool(window.isActiveWindow() or active is window)
 
     # ── 透明度动画 ─────────────────────────────────────────────────
     def fade_to(self, target: float, *, duration_ms: int | None = None, fade_out: bool = False) -> None:
@@ -201,8 +305,25 @@ class QtControlHost(QWidget):
             pass
         super().closeEvent(event)
 
+    def start_auto_hide(self, duration_ms: int | None = None) -> None:
+        """（重新）启动自动隐藏计时；未配置计时器的宿主是空操作。"""
+        if self._auto_hide is None:
+            return
+        if duration_ms is not None:
+            self._auto_hide.setInterval(max(0, int(duration_ms)))
+        self._auto_hide.start()
+
+    def stop_auto_hide(self) -> None:
+        if self._auto_hide is not None:
+            self._auto_hide.stop()
+
     def cleanup(self) -> None:
         self._closing = True
+        try:
+            if self._auto_hide is not None:
+                self._auto_hide.stop()
+        except Exception:
+            pass
         try:
             self._anim.stop()
         except Exception:

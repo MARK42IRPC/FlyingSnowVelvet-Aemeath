@@ -10,7 +10,7 @@ from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.anchor_utils import (
     refresh_last_activity,
 )
-from lib.script.ui.render_bridge import qpoint_from_point, clamp_rect_position, move_widget_to_global, widget_global_rect
+from lib.script.ui.render_bridge import move_widget_to_global, place_at_point, qpoint_from_point, screen_rect_for_point, widget_global_rect
 from lib.script.ui.rect_action_button_style import RectActionButton
 from lib.core.render.backends.qt.widgets.anchors import (
     get_anchor_point as resolve_anchor_point,
@@ -168,30 +168,18 @@ class CloseButton(RectActionButton):
         # top_right 锚点的位置：(cmd_x + cmd_width, cmd_y)
         # CloseButton 是独立窗口，使用全局坐标
 
-        # 计算新的窗口位置
-        # 我们要让自己的 bottom_right 锚点对齐到 command_dialog 的 top_right 锚点
-        # self._anchor_point.x() 已经是 command_dialog 右上角的全局 X 坐标
-        # self._anchor_point.y() 已经是 command_dialog 右上角的全局 Y 坐标
-        # 按钮的 bottom_right 相对于按钮左上角的坐标是 (WIDTH, HEIGHT)
-        # 所以按钮的左上角应该在：(锚点.x() - WIDTH, 锚点.y() - HEIGHT)
-
-        # X 轴：command_dialog 右上角 X 坐标 - 按钮宽度 + 偏移量
-        new_x = self._anchor_point.x() - self.WIDTH + self._offset_x
-
-        # Y 轴：command_dialog 右上角 Y 坐标 - 按钮高度 + 偏移量
-        new_y = self._anchor_point.y() - self.HEIGHT + self._offset_y
-
-        # 边界检查（多屏：按锚点所在屏幕裁剪）
-        x, y, _ = clamp_rect_position(
-            new_x,
-            new_y,
-            self.WIDTH,
-            self.HEIGHT,
-            point=self._anchor_point,
-            fallback_widget=self,
+        # 右下锚点对齐 command_dialog 右上锚点；解算在 visuals/layout.py。
+        anchor = self._anchor_point
+        placement = place_at_point(
+            (self.WIDTH, self.HEIGHT),
+            anchor,
+            screen_rect_for_point(point=anchor, fallback_widget=self),
+            target_anchor_id='top_right',
+            self_anchor_id='bottom_right',
+            offset_x=self._offset_x,
+            offset_y=self._offset_y,
         )
-
-        move_widget_to_global(self, x, y)
+        move_widget_to_global(self, placement.x, placement.y)
 
     def fade_in(self):
         if self._visible:

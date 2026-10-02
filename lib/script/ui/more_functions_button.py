@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from PyQt5.QtWidgets import QWidget, QGraphicsOpacityEffect
-from PyQt5.QtCore import Qt, QPropertyAnimation, QEasingCurve, QPoint
+from PyQt5.QtCore import Qt, QPropertyAnimation, QEasingCurve
 from PyQt5.QtGui import QPainter
 
 from config.config import UI
@@ -12,9 +12,10 @@ from config.tooltip_config import TOOLTIPS
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.desktop_actions import request_tray_menu
 from lib.core.unified_draw import Layer, get_layer_manager
+from lib.core.render.visuals.anchors import get_anchor_point
 from lib.core.anchor_utils import apply_ui_opacity
 from lib.script.ui.rect_action_button_style import paint_rect_action_button
-from lib.script.ui.render_bridge import clamp_rect_position, move_widget_to_global, ui_font as get_ui_font, widget_global_rect
+from lib.script.ui.render_bridge import move_widget_to_global, place_at_point, screen_rect_for_point, ui_font as get_ui_font, widget_global_rect
 
 
 class MoreFunctionsButton(QWidget):
@@ -74,19 +75,15 @@ class MoreFunctionsButton(QWidget):
         if not self._launch_wuwa_button or not self._launch_wuwa_button.isVisible():
             return
         target_rect = widget_global_rect(self._launch_wuwa_button)
-        btn_x = int(target_rect.x)
-        btn_y = int(target_rect.y)
-        new_x = btn_x
-        new_y = btn_y - self.HEIGHT
-        x, y, _ = clamp_rect_position(
-            new_x,
-            new_y,
-            self.WIDTH,
-            self.HEIGHT,
-            point=QPoint(btn_x, btn_y),
-            fallback_widget=self,
+        anchor = get_anchor_point(target_rect, 'top_left')
+        placement = place_at_point(
+            (self.WIDTH, self.HEIGHT),
+            anchor,
+            screen_rect_for_point(point=anchor, fallback_widget=self),
+            target_anchor_id='top_left',
+            self_anchor_id='bottom_left',
         )
-        move_widget_to_global(self, x, y)
+        move_widget_to_global(self, placement.x, placement.y)
 
     def fade_in(self) -> None:
         if self._visible:

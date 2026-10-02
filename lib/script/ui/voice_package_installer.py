@@ -45,7 +45,7 @@ from lib.script.ui.workbench_floating import (
     floating_window_stylesheet,
 )
 from lib.script.workbench.theme import get_workbench_colors
-from lib.script.ui.render_bridge import clamp_rect_position, screen_rect_for_point as get_screen_geometry_for_point, ui_font as get_ui_font
+from lib.script.ui.render_bridge import centered_placement, screen_rect_for_point as get_screen_geometry_for_point, ui_font as get_ui_font
 
 
 _WIDTH = scale_px(470, min_abs=420)
@@ -913,12 +913,8 @@ class VoicePackageInstallerDialog(WorkbenchFloatingWindow):
     def _center_on_screen(self) -> None:
         cursor = QCursor.pos()
         screen = get_screen_geometry_for_point(point=cursor, fallback_widget=self)
-        x = int(screen.x) + (int(screen.width) - self.width()) // 2
-        y = int(screen.y) + (int(screen.height) - self.height()) // 2
-        x, y, _ = clamp_rect_position(
-            x, y, self.width(), self.height(), point=cursor, fallback_widget=self
-        )
-        self.move(x, y)
+        placement = centered_placement((self.width(), self.height()), screen)
+        self.move(placement.x, placement.y)
 
     def cleanup(self) -> None:
         self._cleaned_up = True
