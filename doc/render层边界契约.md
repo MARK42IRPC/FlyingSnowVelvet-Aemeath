@@ -751,3 +751,33 @@ lib/core/render/layers/
 - `py -3 -m unittest discover -s tests -p "test_*.py" -q`：2101 通过、10 跳过。
 - `py -3 -m unittest discover -s tests/dx -p "test_*.py" -q`：122 通过、7 跳过。
 - `py -3 -m ruff check lib config scripts tests` 归零；`py -3 -m compileall -q config lib scripts tests` 通过。
+
+## 17. 第十轮执行记录（宿主激活语义与契约一致化）
+
+本轮修掉一条从 `lib/core/window_host.py` 迁入 `layers/` 起就存在的契约错位，不改变目录结构。
+
+**问题**
+
+- `PassiveWindowHost.activate()` 只在 `is_visible()` 且未开穿透时置 `_active = True`，
+  但 `set_clickthrough(True)` 不会撤销已有的激活态；于是「先 `activate()` 再开穿透」的
+  时序下 `is_active()` 仍为 `True`，与 Qt 后端「穿透时 `activateWindow()` 直接 early-return」
+  的焦点策略相反，也与 `doc/DX后端实现方案.md` 的「装饰窗口才 `WS_EX_NOACTIVATE`，
+  可编辑窗口正常激活」不一致。
+
+**改动**
+
+- `layers/hosts.py` 的 `PassiveWindowHost.set_clickthrough()` 在开启穿透时清掉 `_active`，
+  统一为「穿透窗口不持有激活」；`activate()` 的守卫不变，仍描述「按后端焦点策略请求激活」。
+- `tests/test_window_host_contract.py` 把断言拆成两段：`activate()` 后断言 `is_active()`，
+  开穿透后再断言 `not is_active()`，让被动宿主的时序语义显式可见，而不是靠一次快照蒙对。
+
+**边界**
+
+- 只动 passive 宿主的测试替身语义；Qt/DX 真实后端不迁移、不改 ABI，`_active` 对生产代码
+  仍非读取路径（生产代码只读 `is_clickthrough_enabled()`）。
+
+验证：
+
+- `py -3 -m unittest discover -s tests -p "test_*.py" -q`：2102 通过、10 跳过。
+- `py -3 -m unittest discover -s tests/dx -p "test_*.py" -q`：122 通过、7 跳过。
+- `py -3 -m ruff check lib config scripts tests` 归零；`py -3 -m compileall -q config lib scripts tests` 通过。

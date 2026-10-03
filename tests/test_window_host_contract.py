@@ -17,14 +17,17 @@ def test_passive_window_host_tracks_lifecycle_and_geometry():
     host.show()
     host.activate()
     host.capture_mouse()
-    host.set_clickthrough(True)
     host.request_repaint(Rect(0, 0, 5, 6))
 
     assert host.get_geometry() == Rect(10, 20, 30, 40)
     assert host.is_visible()
-    assert not host.is_active()
+    assert host.is_active()
     assert host.has_mouse_capture()
+
+    host.set_clickthrough(True)
+
     assert host.is_clickthrough_enabled()
+    assert not host.is_active()
 
     host.release_mouse()
     host.hide()

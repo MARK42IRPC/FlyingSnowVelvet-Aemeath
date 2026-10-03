@@ -95,6 +95,12 @@
   `APP_MAIN` 发布、托盘图标、运行期 UI 四个阶段各自做异常隔离，任一阶段抛错只记录该阶段
   的堆栈并继续执行后续阶段。此前任意一处异常（例如某个已安装游戏的扩展 import 失败）
   都会连带吞掉托盘图标、托盘菜单和主界面，用户只看到「宠物窗口出来了但右键音响没反应」。
+- 修复 `WindowHost v1` 的激活语义与契约文档不一致：`PassiveWindowHost.set_clickthrough(True)`
+  现在会撤销已持有的激活态，`show()/activate()` 之后再由点击穿透接手时，`is_active()` 不再
+  停留在 `True`。Qt 后端本来就以 `self._clickthrough` 拦截 `activateWindow()`，passive 宿主现在
+  与它对齐——「点击穿透的窗口不持有激活」，但仍允许可编辑窗口正常激活和 IME z-order。
+  `tests/test_window_host_contract.py` 顺带改为显式断言「激活 → 开穿透后失活」的时序，
+  不再依赖一次调用的隐含结果。
 
 ## [LTS1.0.7pre5] - 2026-09-16
 

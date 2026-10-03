@@ -209,6 +209,8 @@ class PassiveWindowHost(PassiveLayerWindowHost):
     def set_clickthrough(self, enabled: bool) -> None:
         if self.is_alive():
             self._clickthrough = bool(enabled)
+            if self._clickthrough:
+                self._active = False
 
     def is_clickthrough_enabled(self) -> bool:
         return self._clickthrough
