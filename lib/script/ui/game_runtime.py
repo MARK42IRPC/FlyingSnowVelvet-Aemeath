@@ -20,7 +20,7 @@ from lib.core.game_obstacles import (
 from lib.core.render.visuals.types import Rect
 from lib.core.hash_cmd_registry import get_hash_cmd_registry
 from lib.core.logger import get_logger
-from lib.core.render.layers import Layer, get_layer_manager, WindowLayer
+from lib.core.render.layers import Layer
 from lib.script.ui.render_bridge import create_component_layer, create_component_layer_request, screen_rect_for_point as get_screen_geometry_for_point, ui_font as get_ui_font
 from lib.script.voice.ams_open_lahai_tetris import AmsOpenLahaiTetrisSound
 from lib.script.gemes.MAIN.game_packages import (
@@ -105,15 +105,11 @@ class GameRuntimePanel(QWidget):
 
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowFlags(
-            Qt.Tool
-            | Qt.FramelessWindowHint
-            | Qt.NoDropShadowWindowHint
-            | Qt.WindowStaysOnTopHint
-        )
+        # 普通窗口 + 无边框：优先级与工作台窗口一致，既不置顶、也不进 LayerManager。
+        # 游戏窗口因此不会把粒子/特效覆盖层压在下面，也不会被强制重申层级打断。
+        self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint | Qt.NoDropShadowWindowHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFocusPolicy(Qt.StrongFocus)
-        get_layer_manager().register(self, WindowLayer.PANEL)
 
         self._render_core = create_component_layer()
         request = create_component_layer_request(
@@ -204,10 +200,8 @@ class GameRuntimePanel(QWidget):
         elif hasattr(self._game_widget, "on_runtime_activated"):
             self._game_widget.on_runtime_activated()
         self._game_widget.show()
-        get_layer_manager().bring_to_front(self)
         self.activateWindow()
         self._game_widget.setFocus(Qt.ActiveWindowFocusReason)
-        get_layer_manager().enforce_burst()
 
     def deactivate(self) -> None:
         if self._game_widget is not None and hasattr(self._game_widget, "deactivate"):
@@ -223,8 +217,6 @@ class GameRuntimePanel(QWidget):
         self._allow_hide_once = False
         self.setWindowOpacity(0.0)
         self.show()
-        get_layer_manager().bring_to_front(self)
-        get_layer_manager().enforce_burst()
         self._opacity_anim.setStartValue(0.0)
         self._opacity_anim.setEndValue(apply_ui_opacity(1.0))
         self._opacity_anim.start()
@@ -266,7 +258,6 @@ class GameRuntimePanel(QWidget):
         self.update()
         if self._game_widget is not None:
             self._game_widget.setFocus(Qt.ActiveWindowFocusReason)
-        get_layer_manager().bring_to_front(self)
 
     def exit_fullscreen(self) -> None:
         if not self._fullscreen_active:
@@ -283,7 +274,6 @@ class GameRuntimePanel(QWidget):
         self.update()
         if self._game_widget is not None:
             QTimer.singleShot(0, lambda: self._game_widget.setFocus(Qt.ActiveWindowFocusReason))
-        get_layer_manager().bring_to_front(self)
 
     def _current_aspect_width(self) -> int:
         return max(1, int(self._manifest.aspect_width if self._manifest is not None else self._ASPECT_WIDTH))

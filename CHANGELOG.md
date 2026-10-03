@@ -65,6 +65,11 @@
   全部通过。其余控件按渲染层边界契约文档第 12 节的滚动清单逐个迁移。
 
 ### Fixed
+- 修复游戏窗口压住粒子与特效：游戏宿主窗口原先用 `Qt.Tool | Qt.WindowStaysOnTopHint`
+  并注册到 `WindowLayer.PANEL`，因此落进置顶窗口带；被点击激活后 Windows 会把它抬到同带顶部，
+  反过来盖住 `WA_ShowWithoutActivating` 的粒子/特效覆盖层。现在按工作台窗口处理：
+  普通窗口 + 无边框，既不置顶也不进 `LayerManager`，粒子与特效覆盖层始终画在游戏画面之上。
+  窗口内的自绘仍按 `Layer.PANEL` 参与各自画布内的排序，视觉结果不变。
 - 修复控件层迁移后的一处越界回归：`command_dialog._is_mouse_far_from_family()` 仍在把核心
   `Rect` 当 `QRect` 用（`widget_global_rect(widget).center()`），命令框自动隐藏的 TICK 分支因此抛
   `TypeError: 'Point' object is not callable`，而事件中心会把回调异常吞成一条日志——所以它既不崩界面
