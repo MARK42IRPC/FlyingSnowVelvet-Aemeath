@@ -132,7 +132,7 @@
         发布方白名单由 tests/test_shell_execution_allowlist.py 锁定。
 
 [INPUT_HASH]
-- lib/core/cmd_center.py -> self._on_input_hash [has unsubscribe; 内置 #图层、#后端 dx/qt]
+- lib/core/cmd_center.py -> self._on_input_hash [has unsubscribe; 内置 #后端 dx/qt]
 - lib/script/obj-摩托/manager.py -> self._on_hash_command [has unsubscribe]
 - lib/script/obj-沙发/manager.py -> self._on_hash_command [has unsubscribe]
 - lib/script/obj-闹钟/manager.py -> self._on_hash_command [has unsubscribe]

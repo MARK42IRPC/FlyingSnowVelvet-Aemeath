@@ -39,6 +39,7 @@ GENERAL_CONFIG_FILES = {
     "TIMEOUTS": "config_timeouts.py",
     "DRAW": "config_runtime.py",
     "STARTUP": "config_runtime.py",
+    "LAYER_VALUES": "config_layer.py",
 }
 
 _EXCLUDED_KEYS = {

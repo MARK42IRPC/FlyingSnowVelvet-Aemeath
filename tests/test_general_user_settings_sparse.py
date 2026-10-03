@@ -49,6 +49,22 @@ class GeneralUserSettingsSparseTests(unittest.TestCase):
             self.assertTrue(payload["overrides"]["general"]["UI"]["workbench_light_theme"])
         config_module.UI["workbench_light_theme"] = original_theme
 
+    def test_layer_order_is_a_sparse_persisted_int_section(self):
+        defaults = get_general_setting_defaults()
+        self.assertIn('LAYER_VALUES', defaults)
+        self.assertEqual(defaults['LAYER_VALUES']['MAIN_PET'], 850)
+        original = config_module.LAYER_VALUES['MAIN_PET']
+        with tempfile.TemporaryDirectory() as tmpdir:
+            settings_path = Path(tmpdir) / "settings.json"
+            with patch.object(user_settings, "get_user_settings_path", return_value=settings_path):
+                save_general_values({"LAYER_VALUES": {"MAIN_PET": 700}})
+            payload = json.loads(settings_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                payload["overrides"]["general"]["LAYER_VALUES"]["MAIN_PET"],
+                700,
+            )
+        config_module.LAYER_VALUES['MAIN_PET'] = original
+
     def test_render_backend_is_a_sparse_persisted_choice(self):
         defaults = get_general_setting_defaults()
         self.assertEqual(defaults["UI"]["render_backend"], "qt")

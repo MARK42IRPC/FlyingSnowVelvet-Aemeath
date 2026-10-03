@@ -10,11 +10,11 @@ except (ImportError, TypeError, ValueError):
 _DEFAULT_LAYER_VALUES = {
     'BACKGROUND': 0,
     'WORLD_OBJECT': 100,
-    'MAIN_PET': 200,
+    'MAIN_PET': 850,
     'PET_EFFECT_BELOW': 250,
     'PARTICLE': 650,
     'EFFECT': 660,
-    'PET_UI': 500,
+    'PET_UI': 640,
     'PANEL': 600,
     'DIALOG': 700,
     'TOOLTIP': 800,

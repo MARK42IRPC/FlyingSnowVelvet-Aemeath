@@ -48,7 +48,6 @@ class CmdCenter:
         self._event_center.subscribe(EventType.INPUT_COMMAND, self._on_input_command)
         self._event_center.subscribe(EventType.INPUT_HASH,    self._on_input_hash)
         # INPUT_CHAT 由 ChatHandler 处理，此处不再订阅
-        get_hash_cmd_registry().register('图层', '', '查看当前窗口图层快照')
         get_hash_cmd_registry().register(
             '后端',
             '[dx/qt]',
@@ -113,17 +112,6 @@ class CmdCenter:
 
         # 调试日志
         logger.debug('[CmdCenter] #%s', text)
-
-        if text == '图层':
-            from lib.core.layer_manager import get_layer_manager
-
-            self._event_center.publish(Event(EventType.INFORMATION, {
-                'text': get_layer_manager().describe_snapshot(),
-                'min': 10,
-                'max': 160,
-                'align': 'left',
-            }))
-            return
 
         parts = text.split(None, 1)
         command = parts[0]
@@ -233,7 +221,6 @@ class CmdCenter:
         self._event_center.unsubscribe(EventType.INPUT_COMMAND, self._on_input_command)
         self._event_center.unsubscribe(EventType.INPUT_HASH,    self._on_input_hash)
         registry = get_hash_cmd_registry()
-        registry.unregister('图层')
         registry.unregister('后端')
 
 

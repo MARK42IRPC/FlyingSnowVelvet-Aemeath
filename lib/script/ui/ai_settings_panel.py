@@ -40,6 +40,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtGui import QPainter, QPixmap
 
 from config.config import ANIMATION, UI
+from config.config_layer import LAYER_VALUES
 from lib.core.render.visuals.settings_panel_visuals import build_ai_settings_panel_visual
 from lib.core.render.visuals.types import Size
 from lib.script.ui.render_bridge import create_draw_backend, qt_color_name, digit_font as get_digit_font, ui_font as get_ui_font
@@ -277,6 +278,12 @@ _SECTION_HELP_TEXTS: dict[tuple[str, str], str] = {
         "「确保桌面快捷方式」会在每次启动时检查并补回缺失的快捷方式，"
         "同时负责开机启动项的迁移；关掉之后不会再自动维护这些入口。"
     ),
+    ("system_dispatch", "LAYER_VALUES"): (
+        "全局绘制层级的顺序。\n\n"
+        "数值越大越靠前：两个窗口/元素同时出现时，层的数值大的那一方显示在上面。"
+        "同一层且 z 相同时，后生成的排在上面；改完保存后都需要重启程序才会生效。\n\n"
+        "不确定时不要动，调到相同数值会让先后顺序变得不稳定。"
+    ),
 }
 
 
@@ -437,6 +444,19 @@ _CATEGORY_KEY_ALLOWLIST = {
         "DRAW": {
             "scale",
         },
+        "LAYER_VALUES": {
+            "BACKGROUND",
+            "WORLD_OBJECT",
+            "MAIN_PET",
+            "PET_EFFECT_BELOW",
+            "PARTICLE",
+            "EFFECT",
+            "PET_UI",
+            "PANEL",
+            "DIALOG",
+            "TOOLTIP",
+            "SYSTEM_MODAL",
+        },
         "STARTUP": {
             "ensure_desktop_shortcut",
             "log_retention_count",
@@ -525,6 +545,17 @@ _GENERAL_NUMERIC_RULES: dict[tuple[str, str], tuple[str, float, float]] = {
     ("TIMEOUTS", "cmd_exec"): ("int", 1, 600),
     ("TIMEOUTS", "idle_close_ms"): ("int", 100, 3600000),
     ("DRAW", "scale"): ("number", 0.1, 8.0),
+    ("LAYER_VALUES", "BACKGROUND"): ("int", -1000000, 1000000),
+    ("LAYER_VALUES", "WORLD_OBJECT"): ("int", -1000000, 1000000),
+    ("LAYER_VALUES", "MAIN_PET"): ("int", -1000000, 1000000),
+    ("LAYER_VALUES", "PET_EFFECT_BELOW"): ("int", -1000000, 1000000),
+    ("LAYER_VALUES", "PARTICLE"): ("int", -1000000, 1000000),
+    ("LAYER_VALUES", "EFFECT"): ("int", -1000000, 1000000),
+    ("LAYER_VALUES", "PET_UI"): ("int", -1000000, 1000000),
+    ("LAYER_VALUES", "PANEL"): ("int", -1000000, 1000000),
+    ("LAYER_VALUES", "DIALOG"): ("int", -1000000, 1000000),
+    ("LAYER_VALUES", "TOOLTIP"): ("int", -1000000, 1000000),
+    ("LAYER_VALUES", "SYSTEM_MODAL"): ("int", -1000000, 1000000),
     ("STARTUP", "log_retention_count"): ("int", 1, 200),
 }
 
@@ -717,6 +748,7 @@ _GENERAL_CONFIG_DEFAULTS: dict[str, dict[str, object]] = {
     "DRAW": {
         "scale": 1.0,
     },
+    "LAYER_VALUES": dict(LAYER_VALUES),
     "STARTUP": {
         "ensure_desktop_shortcut": True,
         "log_retention_count": 20,
@@ -759,6 +791,7 @@ _DICT_FRIENDLY_NAME = {
     "TIMEOUTS": "超时",
     "TOOL_DISPATCHER": "工具调度",
     "DRAW": "绘制",
+    "LAYER_VALUES": "图层顺序",
     "STARTUP": "启动",
 }
 
@@ -959,6 +992,19 @@ _KEY_FRIENDLY_NAME = {
         "screen_width": "屏幕宽度",
         "screen_height": "屏幕高度",
         "scale_rule": "缩放规则",
+    },
+    "LAYER_VALUES": {
+        "BACKGROUND": "背景",
+        "WORLD_OBJECT": "世界物体",
+        "MAIN_PET": "桌宠本体",
+        "PET_EFFECT_BELOW": "桌宠底层特效",
+        "PARTICLE": "粒子",
+        "EFFECT": "特效",
+        "PET_UI": "桌宠界面",
+        "PANEL": "面板",
+        "DIALOG": "对话框",
+        "TOOLTIP": "提示框",
+        "SYSTEM_MODAL": "系统模态窗",
     },
 }
 
@@ -4139,6 +4185,8 @@ class AISettingsPanel(QWidget):
                 message = f"{meta.get('title', '配置')}已保存。"
                 if "render_backend" in values.get("UI", {}):
                     message += " 渲染后端将在重启后生效。"
+                if "LAYER_VALUES" in values:
+                    message += " 图层顺序将在重启后生效。"
                 self._emit_info(message)
 
             return self._submit_save_task(persist, completed)

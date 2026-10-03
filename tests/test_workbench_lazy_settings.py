@@ -18,6 +18,7 @@ os.environ.setdefault('QT_PLUGIN_PATH', os.path.join(_QT_ROOT, 'Qt5', 'plugins')
 
 from PyQt5.QtWidgets import QApplication
 
+from config.config_layer import LAYER_VALUES
 from lib.script.ui import ai_settings_panel as panel_module
 from lib.script.ui.ai_settings_panel import AISettingsPanel
 from lib.script.ui.announcement_dialog import AnnouncementPreferences
@@ -72,6 +73,30 @@ class WorkbenchLazySettingsTests(unittest.TestCase):
         combo.setCurrentIndex(combo.findData('vulkan'))
         values = panel._collect_config_category_values('ui_anim')
         self.assertEqual(values['UI']['render_backend'], 'vulkan')
+
+        page.deleteLater()
+        panel.deleteLater()
+        self.app.processEvents()
+
+    def test_system_dispatch_page_exposes_editable_layer_order(self):
+        with patch.object(AISettingsPanel, '_refresh_hardware_watermark_async', lambda self: None):
+            panel = AISettingsPanel(lazy_workbench_pages=True)
+            page = panel.create_workbench_page('system_dispatch')
+
+        fields = {
+            field.get('key'): field
+            for field in panel._config_tab_meta['system_dispatch']['fields']
+            if field.get('dict_name') == 'LAYER_VALUES'
+        }
+        self.assertEqual(set(fields), set(LAYER_VALUES))
+        for key, default in LAYER_VALUES.items():
+            editor = fields[key]['editor']
+            self.assertIsInstance(editor, panel_module.QLineEdit)
+            self.assertEqual(int(editor.text()), int(default))
+
+        fields['MAIN_PET']['editor'].setText('700')
+        values = panel._collect_config_category_values('system_dispatch')
+        self.assertEqual(values['LAYER_VALUES']['MAIN_PET'], 700)
 
         page.deleteLater()
         panel.deleteLater()

@@ -4,6 +4,7 @@ from concurrent.futures import Future
 from unittest.mock import patch
 
 from lib.core.cmd_center import CmdCenter
+from lib.core.hash_cmd_registry import get_hash_cmd_registry
 from lib.core.event.center import Event, EventCenter, EventType
 from tests.timing_fakes import FakePump
 
@@ -76,6 +77,31 @@ class CmdCenterEventBridgeTests(unittest.TestCase):
         }))
 
         self.assertEqual(self.compute_hub.calls, [])
+
+    def test_layer_hash_command_is_not_registered(self):
+        names = {name for name, _usage, _description in get_hash_cmd_registry().get_all()}
+
+        self.assertNotIn('图层', names)
+
+    def test_layer_hash_input_falls_back_to_unknown_command_hint(self):
+        information = []
+        self.event_center.subscribe(
+            EventType.INFORMATION,
+            lambda event: information.append(event.data),
+        )
+
+        self.event_center.publish(Event(EventType.INPUT_HASH, {
+            'text': '图层',
+        }))
+
+        self.assertTrue(information)
+        self.assertIn('未知命令', information[-1]['text'])
+
+    def test_cleanup_still_unregisters_remaining_builtin_command(self):
+        self.center.cleanup()
+
+        names = {name for name, _usage, _description in get_hash_cmd_registry().get_all()}
+        self.assertNotIn('后端', names)
 
     def test_backend_hash_command_persists_directx_and_requests_restart(self):
         saved = []
