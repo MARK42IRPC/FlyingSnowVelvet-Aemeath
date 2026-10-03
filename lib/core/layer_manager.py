@@ -5,7 +5,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from lib.core.render.registry import get_deferred_call, get_layer_window_host_factory
-from lib.core.layer import Layer, draw_order_key, layer_name, normalize_layer
+from lib.core.layer import Layer, draw_order_key, normalize_layer
 from lib.core.window_host import (
     LayerWindowHost,
     LayerWindowHostFactory,
@@ -190,17 +190,6 @@ class LayerManager:
         self._windows = alive
         return result
 
-    def describe_snapshot(self) -> str:
-        """返回适合气泡/日志展示的层级快照文本。"""
-        rows = self.snapshot()
-        if not rows:
-            return "当前没有已注册图层窗口"
-
-        lines = ["图层快照："]
-        for layer, z, seq, name, visible in rows:
-            state = "显示" if visible else "隐藏"
-            lines.append(f"{layer_name(layer)} z={z} #{seq} {state} {name}")
-        return "\n".join(lines)
 
     def _sorted_records(self) -> list[LayerWindow]:
         return sorted(
