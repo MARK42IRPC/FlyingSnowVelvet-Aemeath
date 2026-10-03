@@ -64,6 +64,14 @@
   `get_text_size` / `get_anchor_point` / `isVisible` / `hide` / `close`）保持不变，像素基准四条断言
   全部通过。其余控件按渲染层边界契约文档第 12 节的滚动清单逐个迁移。
 
+- 控件层「描述 + 后端渲染」滚动迁移继续：音响右键 UI 的音量与频段两条滑条
+  （`speaker_volume_slider.py` / `speaker_band_slider.py`）不再继承 `QWidget`、不再 `import PyQt5`，
+  改为描述层状态机（`visuals/controls.py` 的 `RectSliderControl` / `BandSliderControl`）+ 后端窗口宿主，
+  `frozen_ui_qt_importers` 由 70 项降到 68 项。这是首批**被动拖动**控件：宿主新增
+  `on_pointer_move` 移动回调与 `capture_on_press`（`grabMouse`/`releaseMouse`，防止指针移出窄窗口后
+  拖动断流），拖动提交（音量 `MUSIC_VOLUME`、频段提示）仍在控件侧。对外接口与
+  `speaker_control_buttons.py` 调用面不变。
+
 ### Fixed
 - 修复游戏窗口压住粒子与特效：游戏宿主窗口原先用 `Qt.Tool | Qt.WindowStaysOnTopHint`
   并注册到 `WindowLayer.PANEL`，因此落进置顶窗口带；被点击激活后 Windows 会把它抬到同带顶部，

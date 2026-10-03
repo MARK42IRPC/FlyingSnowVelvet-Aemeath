@@ -8,30 +8,25 @@
     中心按 10Hz 吸附，所以拖出来的总是 10Hz 整数倍的区间
   - 松手时提示当前频段
 
-位置由 ``SpeakerControlButtons`` 统一管理；频段本身按世界对象实例存在
-``lib.core.speaker_band`` 里，音响每帧按自己的频段取强度，互不影响。
+本类不再继承 ``QWidget``：频段读数、拖动与命中都在描述层
+（``lib/core/render/visuals/controls.py`` 的 ``BandSliderControl``）里，真实窗口、透明度
+动画与拖动捕获由后端窗口宿主持有。位置由 ``SpeakerControlButtons`` 统一管理。
 """
 
 from __future__ import annotations
 
-from PyQt5.QtWidgets import QWidget, QGraphicsOpacityEffect
-from PyQt5.QtCore import Qt, QPropertyAnimation, QEasingCurve
-from PyQt5.QtGui import QPainter
-
 from config.config import SPEAKER_SEARCH_UI, UI
 from config.scale import scale_px
 from config.tooltip_config import TOOLTIPS
-from lib.core.anchor_utils import apply_ui_opacity
 from lib.core.event.center import get_event_center, Event, EventType
+from lib.core.render.visuals import controls
 from lib.core.render.visuals.speaker_band_visuals import (
     BAND_SLIDER_WIDTH,
-    BandSliderVisual,
     band_hit_test,
     band_ratio_at,
-    build_band_slider_visual,
 )
 from lib.core.render.visuals.speaker_visuals import SPEAKER_SEARCH_Y
-from lib.script.ui.render_bridge import create_draw_backend
+from lib.script.ui.render_bridge import create_control_host
 from lib.core.speaker_band import (
     band_from_center_ratio,
     band_label,
@@ -39,7 +34,7 @@ from lib.core.speaker_band import (
     get_speaker_band,
     set_speaker_band,
 )
-from lib.core.render.layers import Layer, get_layer_manager, WindowLayer
+from lib.core.render.layers import Layer
 
 
 DEFAULT_WIDTH = BAND_SLIDER_WIDTH
@@ -47,79 +42,104 @@ DEFAULT_WIDTH = BAND_SLIDER_WIDTH
 DEFAULT_HEIGHT = SPEAKER_SEARCH_Y + int(SPEAKER_SEARCH_UI.get('height', scale_px(36, min_abs=1)))
 
 
-class SpeakerBandSlider(QWidget):
+class SpeakerBandSlider:
     """音响右键 UI 的动感响应频段滑条（竖向、单块，全局单例的附属控件）。"""
 
     def __init__(self, width: int = DEFAULT_WIDTH, height: int = DEFAULT_HEIGHT) -> None:
-        super().__init__()
-        self.setWindowFlags(
-            Qt.Tool
-            | Qt.FramelessWindowHint
-            | Qt.WindowStaysOnTopHint
+        self._control = controls.BandSliderControl(
+            width=int(width),
+            height=int(height),
+            band=default_band(),
+            paint_layer=int(Layer.PET_UI),
+            opacity_scale=controls.ui_opacity_scale,
         )
-        self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setFixedSize(int(width), int(height))
-        self.setCursor(Qt.PointingHandCursor)
-        get_layer_manager().register(self, WindowLayer.PET_UI)
-
-        self._draw_backend = create_draw_backend()
         self._event_center = get_event_center()
-        self._description = TOOLTIPS.get('speaker_band_slider', '拖动调节音响的动感响应频段')
+        self._last_local_y = 0.0
 
-        self._visible = False
-        self._speaker = None
-        self._band = default_band()
-        self._dragging = ''
-        self._visual: BandSliderVisual | None = None
-
-        self._opacity = QGraphicsOpacityEffect(self)
-        self._opacity.setOpacity(0.0)
-        self.setGraphicsEffect(self._opacity)
-        self._anim = QPropertyAnimation(self._opacity, b'opacity', self)
-        self._anim.setDuration(UI['ui_fade_duration'])
-        self._anim.setEasingCurve(QEasingCurve.InOutQuad)
-        self._anim.finished.connect(self._on_anim_finished)
+        self._host = create_control_host(
+            paint_batch=self._paint_batch,
+            on_pointer=self._on_pointer,
+            on_pointer_move=self._on_pointer_move,
+            on_pointer_release=self._on_pointer_release,
+            on_fade_out_finished=self._on_fade_out_finished,
+            layer=Layer.PET_UI,
+            fade_duration_ms=UI['ui_fade_duration'],
+            fade_out_duration_ms=UI['ui_fade_duration'],
+            capture_on_press=True,
+            pointing_cursor=True,
+        )
+        self._host.apply_size(int(width), int(height))
+        self._host._description = TOOLTIPS.get('speaker_band_slider', '拖动调节音响的动感响应频段')
 
         self._event_center.subscribe(EventType.UI_CLICKTHROUGH_TOGGLE,
                                      self._on_clickthrough_toggle)
 
     # ==================================================================
-    # 状态
+    # 状态视图
     # ==================================================================
-
     @property
     def band(self) -> tuple[float, float]:
-        return self._band
+        return self._control.band
 
     @property
     def is_visible(self) -> bool:
-        return self._visible
+        return self._control.visible
+
+    @property
+    def _visible(self) -> bool:
+        return self._control.visible
+
+    @_visible.setter
+    def _visible(self, value: bool) -> None:
+        self._control.visible = bool(value)
+
+    @property
+    def _dragging(self) -> str:
+        return self._control.dragging
+
+    @_dragging.setter
+    def _dragging(self, value) -> None:
+        self._control.dragging = str(value or '')
 
     @property
     def bound_speaker(self):
-        return self._speaker
+        return self._control.speaker
+
+    def width(self) -> int:
+        return self._host.width()
+
+    def height(self) -> int:
+        return self._host.height()
+
+    def x(self) -> int:
+        return self._host.x()
+
+    def y(self) -> int:
+        return self._host.y()
+
+    def isVisible(self) -> bool:
+        return bool(self._host.isVisible())
 
     def set_speaker(self, speaker) -> None:
         """绑定（或解绑）当前锚定的音响，并同步它的响应频段。"""
-        self._speaker = speaker
-        self._band = self._read_band()
+        self._control.speaker = speaker
+        self._control.band = self._read_band()
         self.invalidate()
 
     def apply_geometry(self, x: int, y: int, height: int) -> None:
         """由按钮组给出的位置与高度（上下对齐菜单上半部分）。"""
         target_height = max(1, int(height))
-        if self.height() != target_height:
-            self.setFixedSize(self.width(), target_height)
-            self._visual = None
-        self.move(int(x), int(y))
+        self._host.apply_size(self.width(), target_height)
+        if self._control.height != target_height:
+            self._control.height = float(target_height)
+        self._host.move_to(int(x), int(y))
 
     def invalidate(self) -> None:
         """频段或尺寸变化后丢弃缓存的绘制批次。"""
-        self._visual = None
-        self.update()
+        self._host.update()
 
     def _read_band(self) -> tuple[float, float]:
-        speaker = self._speaker
+        speaker = self._control.speaker
         if speaker is None:
             return default_band()
         try:
@@ -128,57 +148,56 @@ class SpeakerBandSlider(QWidget):
             return default_band()
 
     def _write_band(self) -> None:
-        speaker = self._speaker
+        speaker = self._control.speaker
         if speaker is None:
             return
         try:
             set_speaker_band(
                 speaker.backend_id,
                 speaker.instance_id,
-                self._band[0],
-                self._band[1],
+                self._control.band[0],
+                self._control.band[1],
             )
         except Exception:
             pass
 
     def _publish_band_bubble(self) -> None:
         self._event_center.publish(Event(EventType.INFORMATION, {
-            'text': f'响应频段 {band_label(self._band)}',
+            'text': f'响应频段 {band_label(self._control.band)}',
             'min': 0,
         }))
 
     # ==================================================================
     # 显示 / 隐藏
     # ==================================================================
-
     def fade_in(self) -> None:
-        if self._visible:
+        if self._control.visible:
             return
-        self._visible = True
-        self._band = self._read_band()
+        self._control.visible = True
+        self._control.band = self._read_band()
         self.invalidate()
-        self.show()
+        self._host.show()
         self._animate(1.0)
 
     def fade_out(self) -> None:
-        if not self._visible:
+        if not self._control.visible:
             return
-        self._visible = False
-        self._animate(0.0)
+        self._control.visible = False
+        self._animate(0.0, fade_out=True)
 
-    def _animate(self, target: float) -> None:
-        self._anim.stop()
-        self._anim.setStartValue(self._opacity.opacity())
-        self._anim.setEndValue(apply_ui_opacity(target))
-        self._anim.start()
+    def _animate(self, target: float, *, fade_out: bool = False) -> None:
+        self._host.fade_to(
+            self._control.scaled_opacity(target),
+            duration_ms=UI['ui_fade_duration'],
+            fade_out=fade_out,
+        )
 
-    def _on_anim_finished(self) -> None:
-        if not self._visible:
-            self.hide()
+    def _on_fade_out_finished(self) -> None:
+        if not self._control.visible:
+            self._host.hide()
 
     def _on_clickthrough_toggle(self, event: Event) -> None:
-        self.setAttribute(Qt.WA_TransparentForMouseEvents,
-                          event.data.get('enabled', False))
+        self._host.set_clickthrough(bool(event.data.get('enabled', False)))
 
     def cleanup(self) -> None:
         try:
@@ -186,93 +205,71 @@ class SpeakerBandSlider(QWidget):
                                            self._on_clickthrough_toggle)
         except Exception:
             pass
-        try:
-            self.close()
-        except Exception:
-            pass
+        self._host.cleanup()
+
+    def close(self) -> None:
+        self._host.cleanup()
+
+    def deleteLater(self) -> None:
+        self._host.cleanup()
 
     # ==================================================================
     # 绘制
     # ==================================================================
+    def _build_visual(self):
+        return self._control.build_visual()
 
-    def _build_visual(self) -> BandSliderVisual:
-        return build_band_slider_visual(
-            band=self._band,
-            width=self.width(),
-            height=self.height(),
-            layer=int(Layer.PET_UI),
-        )
+    def _ensure_visual(self):
+        return self._control.build_visual()
 
-    def _ensure_visual(self) -> BandSliderVisual:
-        if self._visual is None:
-            self._visual = self._build_visual()
-        return self._visual
-
-    def paintEvent(self, event) -> None:
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing, False)
-        self._draw_backend.render(self._ensure_visual().batch, painter)
-        painter.end()
+    def _paint_batch(self):
+        return self._control.build_visual().batch
 
     # ==================================================================
     # 鼠标交互
     # ==================================================================
-
     def _apply_y(self, y: float) -> None:
         """把块拖到指针所在的频率：频段随之变成「中心 ±10Hz」。"""
-        if not self._dragging:
+        if not self._control.dragging:
             return
-        visual = self._ensure_visual()
+        visual = self._control.build_visual()
         ratio = band_ratio_at(visual.track_rect, y)
         band = band_from_center_ratio(ratio)
-        if band == self._band:
+        if band == self._control.band:
             return
-        self._band = band
+        self._control.band = band
         self._write_band()
         self.invalidate()
 
-    def mousePressEvent(self, event) -> None:
-        if event.button() != Qt.LeftButton:
-            super().mousePressEvent(event)
-            return
-        visual = self._ensure_visual()
+    def _on_pointer(self, event):
+        if event.button != controls.BUTTON_LEFT:
+            return controls.PointerClick()
+        visual = self._control.build_visual()
         action = band_hit_test(
             visual.track_rect,
             visual.center_rect,
-            event.x(),
-            event.y(),
+            event.local.x,
+            event.local.y,
         )
         if not action:
-            super().mousePressEvent(event)
-            return
-        from lib.script.ui._particle_helper import publish_click_particle
-        publish_click_particle(self, event)
-        self._dragging = action
-        try:
-            self.grabMouse()
-        except RuntimeError:
-            pass
-        self._apply_y(event.y())
-        super().mousePressEvent(event)
+            return controls.PointerClick()
+        self._last_local_y = event.local.y
+        self._control.dragging = str(action)
+        self._apply_y(event.local.y)
+        return controls.PointerClick(particle_id='click')
 
-    def mouseMoveEvent(self, event) -> None:
-        if self._dragging:
-            self._apply_y(event.y())
-        super().mouseMoveEvent(event)
-
-    def mouseReleaseEvent(self, event) -> None:
-        if not self._dragging:
-            super().mouseReleaseEvent(event)
+    def _on_pointer_move(self, event) -> None:
+        if not self._control.dragging:
             return
-        self._apply_y(event.y())
-        self._dragging = ''
-        try:
-            if self.mouseGrabber() is self:
-                self.releaseMouse()
-        except RuntimeError:
-            pass
+        self._last_local_y = event.local.y
+        self._apply_y(event.local.y)
+
+    def _on_pointer_release(self) -> None:
+        if not self._control.dragging:
+            return
+        self._apply_y(self._last_local_y)
+        self._control.dragging = ''
         self._publish_band_bubble()
-        super().mouseReleaseEvent(event)
 
 
 __all__ = [

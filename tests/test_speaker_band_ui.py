@@ -16,8 +16,7 @@ os.environ.setdefault(
 )
 os.environ.setdefault("QT_PLUGIN_PATH", os.path.join(_QT_ROOT, "Qt5", "plugins"))
 
-from PyQt5.QtCore import QEvent, QPoint, QPointF, Qt
-from PyQt5.QtGui import QMouseEvent
+from PyQt5.QtCore import QPoint
 from PyQt5.QtWidgets import QApplication
 
 from lib.core.event.center import EventType, cleanup_event_center, get_event_center
@@ -220,20 +219,14 @@ class SpeakerBandSliderWidgetTests(unittest.TestCase):
 
     def _slider(self) -> SpeakerBandSlider:
         slider = SpeakerBandSlider()
-        self.addCleanup(slider.deleteLater)
-        slider.show()
-        self.app.processEvents()
+        self.addCleanup(slider.cleanup)
         return slider
 
     @staticmethod
-    def _mouse(kind, widget, x: float, y: float) -> QMouseEvent:
-        return QMouseEvent(
-            kind,
-            QPointF(x, y),
-            Qt.LeftButton,
-            Qt.LeftButton,
-            Qt.NoModifier,
-        )
+    def _pointer(button, x: float, y: float):
+        from lib.core.render.visuals.controls import PointerEvent
+        from lib.core.render.visuals.types import Point as CorePoint
+        return PointerEvent(button=button, local=CorePoint(x, y), screen=CorePoint(x, y))
 
     def test_unbound_slider_shows_the_default_band(self):
         slider = self._slider()
@@ -251,7 +244,7 @@ class SpeakerBandSliderWidgetTests(unittest.TestCase):
         slider = self._slider()
         slider.set_speaker(_speaker('qt', 7))
 
-        track = slider._ensure_visual().track_rect
+        track = slider._control.build_visual().track_rect
         slider._dragging = 'band'
         slider._apply_y(track.y + track.height * 0.75)
 
@@ -266,7 +259,7 @@ class SpeakerBandSliderWidgetTests(unittest.TestCase):
         slider = self._slider()
         slider.set_speaker(_speaker('qt', 7))
 
-        track = slider._ensure_visual().track_rect
+        track = slider._control.build_visual().track_rect
         slider._dragging = 'band'
         slider._apply_y(track.y - 500)
 
@@ -280,7 +273,7 @@ class SpeakerBandSliderWidgetTests(unittest.TestCase):
         slider = self._slider()
         slider.set_speaker(_speaker('qt', 7))
 
-        track = slider._ensure_visual().track_rect
+        track = slider._control.build_visual().track_rect
         slider._dragging = 'band'
         slider._apply_y(track.y + track.height + 500)
 
@@ -289,30 +282,35 @@ class SpeakerBandSliderWidgetTests(unittest.TestCase):
         self.assertLessEqual(band[1], band_max_hz())
 
     def test_press_on_the_bar_starts_a_block_drag(self):
+        from lib.core.render.visuals.controls import BUTTON_LEFT
+
         set_speaker_band('qt', 7, 40.0, 900.0)
         slider = self._slider()
         slider.set_speaker(_speaker('qt', 7))
 
-        visual = slider._ensure_visual()
+        visual = slider._control.build_visual()
         middle_x = visual.track_rect.x + visual.track_rect.width / 2
         block = visual.center_rect
         y = block.y + block.height / 2
-        slider.mousePressEvent(self._mouse(QEvent.MouseButtonPress, slider, middle_x, y))
+        slider._on_pointer(self._pointer(BUTTON_LEFT, middle_x, y))
         self.assertEqual(slider._dragging, 'band')
-        slider.mouseReleaseEvent(self._mouse(QEvent.MouseButtonRelease, slider, middle_x, y))
+        slider._on_pointer_release()
         self.assertEqual(slider._dragging, '')
 
     def test_press_outside_the_bar_does_not_start_a_drag(self):
+        from lib.core.render.visuals.controls import BUTTON_LEFT
+
         slider = self._slider()
         slider.set_speaker(_speaker('qt', 7))
-        visual = slider._ensure_visual()
-        slider.mousePressEvent(self._mouse(
-            QEvent.MouseButtonPress, slider, visual.track_rect.x - 50,
-            visual.track_rect.y + 2,
+        visual = slider._control.build_visual()
+        slider._on_pointer(self._pointer(
+            BUTTON_LEFT, visual.track_rect.x - 50, visual.track_rect.y + 2,
         ))
         self.assertEqual(slider._dragging, '')
 
     def test_release_publishes_the_band_bubble(self):
+        from lib.core.render.visuals.controls import BUTTON_LEFT
+
         set_speaker_band('qt', 7, 60.0, 250.0)
         slider = self._slider()
         slider.set_speaker(_speaker('qt', 7))
@@ -321,13 +319,13 @@ class SpeakerBandSliderWidgetTests(unittest.TestCase):
             EventType.INFORMATION, lambda event: seen.append(str(event.data.get('text', ''))),
         )
 
-        visual = slider._ensure_visual()
+        visual = slider._control.build_visual()
         middle_x = visual.track_rect.x + visual.track_rect.width / 2
         block = visual.center_rect
         y = block.y + block.height / 2
-        slider.mousePressEvent(self._mouse(QEvent.MouseButtonPress, slider, middle_x, block.y + 20))
-        slider.mouseMoveEvent(self._mouse(QEvent.MouseMove, slider, middle_x, y))
-        slider.mouseReleaseEvent(self._mouse(QEvent.MouseButtonRelease, slider, middle_x, y))
+        slider._on_pointer(self._pointer(BUTTON_LEFT, middle_x, block.y + 20))
+        slider._on_pointer_move(self._pointer(BUTTON_LEFT, middle_x, y))
+        slider._on_pointer_release()
 
         self.assertEqual(len(seen), 1)
         self.assertTrue(seen[0].startswith('响应频段'))

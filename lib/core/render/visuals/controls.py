@@ -32,7 +32,18 @@ from lib.core.render.visuals.application_visuals import (
 )
 from lib.core.render.visuals.anchors import get_anchor_point
 from lib.core.render.visuals.layout import AnchorPlacement, PlacementSpec
-from lib.core.render.visuals.media_panel_visuals import build_progress_panel_visual
+from lib.core.render.visuals.media_panel_visuals import (
+    SLIDER_TICK_COUNT,
+    build_progress_panel_visual,
+    build_slider_visual,
+    slider_ratio_at,
+    snap_slider_ratio,
+)
+from lib.core.render.visuals.speaker_band_visuals import (
+    band_hit_test,
+    band_ratio_at,
+    build_band_slider_visual,
+)
 from lib.core.render.visuals.screen import clamp_rect_position
 from lib.core.render.visuals.types import Point, Rect, Size
 
@@ -47,6 +58,8 @@ __all__ = [
     "MediaProgressControl",
     "MicSttControl",
     "RectActionButtonControl",
+    "RectSliderControl",
+    "BandSliderControl",
     "BubbleControl",
     "BubbleInfo",
     "PointerClick",
@@ -870,6 +883,122 @@ class MediaProgressControl:
             return False
         self.tick_counter = 0
         return True
+
+    def scaled_opacity(self, target: float) -> float:
+        return scaled_opacity(self._opacity_scale, target)
+
+
+class RectSliderControl:
+    """共享水平滑条的后端中立状态（音量滑条的描述层）。
+
+    形状、刻度与手柄来自共享 presenter（``build_slider_visual``），比例<->横坐标换算走
+    ``media_panel_visuals`` 的同一份算术。控件只保留"当前比例、是否在拖动"，真实窗口
+    与拖动捕获由后端窗口宿主持有。
+    """
+
+    def __init__(
+        self,
+        *,
+        width: float,
+        height: float,
+        ticks: int = SLIDER_TICK_COUNT,
+        paint_layer: int = 0,
+        opacity_scale=1.0,
+    ) -> None:
+        self.width = max(1.0, float(width))
+        self.height = max(1.0, float(height))
+        self.ticks = max(1, int(ticks))
+        self.paint_layer = int(paint_layer)
+        self._opacity_scale = opacity_scale
+
+        self.visible = False
+        self.ratio = 0.0
+        self.dragging = False
+
+    # ── 绘制数据 ───────────────────────────────────────────────────
+    def logical_size(self) -> Size:
+        return Size(self.width, self.height)
+
+    def build_visual(self):
+        return build_slider_visual(
+            ratio=self.ratio,
+            width=int(round(self.width)),
+            height=int(round(self.height)),
+            ticks=self.ticks,
+            layer=self.paint_layer,
+        )
+
+    def track_rect(self) -> Rect:
+        return build_slider_visual(
+            ratio=self.ratio,
+            width=int(round(self.width)),
+            height=int(round(self.height)),
+            ticks=self.ticks,
+            layer=self.paint_layer,
+        ).track_rect
+
+    # ── 拖动：x <-> 比例 ───────────────────────────────────────────
+    def snap(self, ratio: float) -> float:
+        return snap_slider_ratio(ratio, self.ticks)
+
+    def ratio_from_x(self, x: float) -> float:
+        return slider_ratio_at(self.track_rect(), x)
+
+    def set_ratio(self, ratio: float) -> tuple[float, bool]:
+        """吸附到刻度并记录；返回 ``(新比例, 是否变化)``。"""
+        snapped = self.snap(ratio)
+        changed = abs(snapped - self.ratio) > 1e-9
+        self.ratio = snapped
+        return snapped, changed
+
+    def scaled_opacity(self, target: float) -> float:
+        return scaled_opacity(self._opacity_scale, target)
+
+
+class BandSliderControl:
+    """音响响应频段竖向滑条的后端中立状态。
+
+    频段读数、拖动命中与"块跟随指针"的算术都在这里；频段本身按世界对象实例存在
+    ``lib.core.speaker_band`` 里，通过 ``speaker`` 句柄读写。真实窗口与拖动捕获由后端
+    窗口宿主持有。
+    """
+
+    def __init__(
+        self,
+        *,
+        width: float,
+        height: float,
+        band: tuple[float, float],
+        paint_layer: int = 0,
+        opacity_scale=1.0,
+    ) -> None:
+        self.width = max(1.0, float(width))
+        self.height = max(1.0, float(height))
+        self.band = band
+        self.paint_layer = int(paint_layer)
+        self._opacity_scale = opacity_scale
+
+        self.visible = False
+        self.dragging = ""
+        self.speaker = None
+
+    def logical_size(self) -> Size:
+        return Size(self.width, self.height)
+
+    def build_visual(self):
+        return build_band_slider_visual(
+            band=self.band,
+            width=int(round(self.width)),
+            height=int(round(self.height)),
+            layer=self.paint_layer,
+        )
+
+    def hit_test(self, x: float, y: float) -> str:
+        visual = self.build_visual()
+        return band_hit_test(visual.track_rect, visual.center_rect, x, y)
+
+    def ratio_at(self, y: float) -> float:
+        return band_ratio_at(self.build_visual().track_rect, y)
 
     def scaled_opacity(self, target: float) -> float:
         return scaled_opacity(self._opacity_scale, target)

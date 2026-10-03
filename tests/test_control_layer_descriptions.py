@@ -205,6 +205,8 @@ class ControlDescriptionLayerTests(unittest.TestCase):
             ("lib/script/ui/tooltip_panel.py", "TooltipPanel"),
             ("lib/script/ui/mic_stt_indicator.py", "MicSttIndicator"),
             ("lib/script/ui/progress_panel.py", "ProgressPanel"),
+            ("lib/script/ui/speaker_volume_slider.py", "SpeakerVolumeSlider"),
+            ("lib/script/ui/speaker_band_slider.py", "SpeakerBandSlider"),
         )
         for relative, class_name in migrated:
             with self.subTest(control=relative):

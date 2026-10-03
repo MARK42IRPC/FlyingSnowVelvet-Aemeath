@@ -6,29 +6,23 @@
   - 20 个小刻度，拖动时吸附到 1/20 档，形成颗粒手感
   - 点击或拖动发布 ``MUSIC_VOLUME {'volume': ratio}``，松开时提示当前百分比
 
-定位由 ``SpeakerControlButtons`` 统一管理：滑条贴在搜索框上方，其余按钮整体上移。
+本类不再继承 ``QWidget``：比例、拖动与吸附都在描述层
+（``lib/core/render/visuals/controls.py`` 的 ``RectSliderControl``）里，真实窗口、透明度
+动画与拖动捕获由后端窗口宿主持有。定位由 ``SpeakerControlButtons`` 统一管理。
 """
 
 from __future__ import annotations
 
-from PyQt5.QtWidgets import QWidget, QGraphicsOpacityEffect
-from PyQt5.QtCore import Qt, QPropertyAnimation, QEasingCurve
-from PyQt5.QtGui import QPainter
-
 from config.config import UI, SPEAKER_SEARCH_UI
 from config.scale import scale_px
-from lib.core.anchor_utils import apply_ui_opacity
 from lib.core.event.center import get_event_center, Event, EventType
+from lib.core.render.visuals import controls
 from lib.core.render.visuals.media_panel_visuals import (
     PROGRESS_PANEL_HEIGHT,
     SLIDER_TICK_COUNT,
-    build_slider_visual,
-    slider_ratio_at,
-    slider_track_rect,
-    snap_slider_ratio,
 )
-from lib.script.ui.render_bridge import create_draw_backend
-from lib.core.render.layers import Layer, get_layer_manager, WindowLayer
+from lib.script.ui.render_bridge import create_control_host
+from lib.core.render.layers import Layer
 from lib.script.music import get_music_service
 
 
@@ -49,79 +43,116 @@ def _music_volume_ratio() -> float | None:
 
 def snap_ratio(ratio: float) -> float:
     """把任意比例吸附到 1/20 档（滑条颗粒手感）。"""
-    return snap_slider_ratio(ratio, SLIDER_TICK_COUNT)
+    return controls.snap_slider_ratio(ratio, SLIDER_TICK_COUNT)
 
 
-class SpeakerVolumeSlider(QWidget):
+class SpeakerVolumeSlider:
     """音响右键 UI 的音量滑条（全局单例的附属控件）。"""
 
     def __init__(self, width: int = DEFAULT_WIDTH, height: int = DEFAULT_HEIGHT) -> None:
-        super().__init__()
-        self.setWindowFlags(
-            Qt.Tool
-            | Qt.FramelessWindowHint
-            | Qt.WindowStaysOnTopHint
+        self._control = controls.RectSliderControl(
+            width=int(width),
+            height=int(height),
+            ticks=SLIDER_TICK_COUNT,
+            paint_layer=int(Layer.PET_UI),
+            opacity_scale=controls.ui_opacity_scale,
         )
-        self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setFixedSize(int(width), int(height))
-        self.setCursor(Qt.PointingHandCursor)
-        get_layer_manager().register(self, WindowLayer.PET_UI)
-
-        self._draw_backend = create_draw_backend()
         self._event_center = get_event_center()
-        self._description = '拖动调节音乐音量'
-
-        self._visible = False
-        self._ratio = 0.0
-        self._dragging = False
+        self._last_local_x = 0.0
         self._tick_counter = 0
 
-        self._opacity = QGraphicsOpacityEffect(self)
-        self._opacity.setOpacity(0.0)
-        self.setGraphicsEffect(self._opacity)
-        self._anim = QPropertyAnimation(self._opacity, b'opacity', self)
-        self._anim.setDuration(UI['ui_fade_duration'])
-        self._anim.setEasingCurve(QEasingCurve.InOutQuad)
-        self._anim.finished.connect(self._on_anim_finished)
+        self._host = create_control_host(
+            paint_batch=self._paint_batch,
+            on_pointer=self._on_pointer,
+            on_pointer_move=self._on_pointer_move,
+            on_pointer_release=self._on_pointer_release,
+            on_fade_out_finished=self._on_fade_out_finished,
+            layer=Layer.PET_UI,
+            fade_duration_ms=UI['ui_fade_duration'],
+            fade_out_duration_ms=UI['ui_fade_duration'],
+            capture_on_press=True,
+            pointing_cursor=True,
+        )
+        self._host.apply_size(int(width), int(height))
+        self._host._description = '拖动调节音乐音量'
 
         self._event_center.subscribe(EventType.TICK, self._on_tick)
         self._event_center.subscribe(EventType.UI_CLICKTHROUGH_TOGGLE,
                                      self._on_clickthrough_toggle)
 
     # ==================================================================
-    # 状态
+    # 状态视图（测试与内部逻辑读取的稳定入口）
     # ==================================================================
 
     @property
     def ratio(self) -> float:
-        return self._ratio
+        return self._control.ratio
 
     @property
     def is_visible(self) -> bool:
-        return self._visible
+        return self._control.visible
+
+    @property
+    def _visible(self) -> bool:
+        return self._control.visible
+
+    @_visible.setter
+    def _visible(self, value: bool) -> None:
+        self._control.visible = bool(value)
+
+    @property
+    def _ratio(self) -> float:
+        return self._control.ratio
+
+    @_ratio.setter
+    def _ratio(self, value: float) -> None:
+        self._control.ratio = float(value)
+
+    @property
+    def _dragging(self) -> bool:
+        return self._control.dragging
+
+    @_dragging.setter
+    def _dragging(self, value: bool) -> None:
+        self._control.dragging = bool(value)
+
+    def width(self) -> int:
+        return self._host.width()
+
+    def height(self) -> int:
+        return self._host.height()
+
+    def x(self) -> int:
+        return self._host.x()
+
+    def y(self) -> int:
+        return self._host.y()
+
+    def isVisible(self) -> bool:
+        return bool(self._host.isVisible())
+
+    def move(self, x: int, y: int) -> None:
+        self._host.move_to(int(x), int(y))
 
     def track_rect(self):
-        return slider_track_rect(width=self.width(), height=self.height())
+        return self._control.track_rect()
 
     def ratio_from_x(self, x: float) -> float:
         """把控件内横坐标换算成 0.0-1.0 的比例。"""
-        return slider_ratio_at(self.track_rect(), x)
+        return self._control.ratio_from_x(x)
 
     def _sync_from_service(self) -> None:
         ratio = _music_volume_ratio()
         if ratio is None:
             return
-        snapped = snap_ratio(ratio)
-        if abs(snapped - self._ratio) > 1e-9:
-            self._ratio = snapped
-            self.update()
+        snapped, changed = self._control.set_ratio(ratio)
+        if changed:
+            self._host.update()
 
     def set_ratio(self, ratio: float, *, emit: bool = False, notify: bool = False) -> None:
-        snapped = snap_ratio(ratio)
-        changed = abs(snapped - self._ratio) > 1e-9
-        self._ratio = snapped
+        snapped, changed = self._control.set_ratio(ratio)
         if changed:
-            self.update()
+            self._host.update()
         if emit and changed:
             self._event_center.publish(Event(EventType.MUSIC_VOLUME, {'volume': snapped}))
         if notify:
@@ -129,7 +160,7 @@ class SpeakerVolumeSlider(QWidget):
 
     def _publish_volume_bubble(self) -> None:
         ratio = _music_volume_ratio()
-        percent = int(round((self._ratio if ratio is None else ratio) * 100))
+        percent = int(round((self._control.ratio if ratio is None else ratio) * 100))
         self._event_center.publish(Event(EventType.INFORMATION, {
             'text': f'音量 {percent}%',
             'min': 0,
@@ -140,35 +171,35 @@ class SpeakerVolumeSlider(QWidget):
     # ==================================================================
 
     def fade_in(self) -> None:
-        if self._visible:
+        if self._control.visible:
             return
-        self._visible = True
+        self._control.visible = True
         self._sync_from_service()
-        self.show()
+        self._host.show()
         self._animate(1.0)
 
     def fade_out(self) -> None:
-        if not self._visible:
+        if not self._control.visible:
             return
-        self._visible = False
-        self._animate(0.0)
+        self._control.visible = False
+        self._animate(0.0, fade_out=True)
 
-    def _animate(self, target: float) -> None:
-        self._anim.stop()
-        self._anim.setStartValue(self._opacity.opacity())
-        self._anim.setEndValue(apply_ui_opacity(target))
-        self._anim.start()
+    def _animate(self, target: float, *, fade_out: bool = False) -> None:
+        self._host.fade_to(
+            self._control.scaled_opacity(target),
+            duration_ms=UI['ui_fade_duration'],
+            fade_out=fade_out,
+        )
 
-    def _on_anim_finished(self) -> None:
-        if not self._visible:
-            self.hide()
+    def _on_fade_out_finished(self) -> None:
+        if not self._control.visible:
+            self._host.hide()
 
     def _on_clickthrough_toggle(self, event: Event) -> None:
-        self.setAttribute(Qt.WA_TransparentForMouseEvents,
-                          event.data.get('enabled', False))
+        self._host.set_clickthrough(bool(event.data.get('enabled', False)))
 
     def _on_tick(self, event: Event) -> None:
-        if not self._visible or self._dragging:
+        if not self._control.visible or self._control.dragging:
             return
         self._tick_counter += 1
         if self._tick_counter < 20:
@@ -183,65 +214,50 @@ class SpeakerVolumeSlider(QWidget):
                                            self._on_clickthrough_toggle)
         except Exception:
             pass
-        try:
-            self.close()
-        except Exception:
-            pass
+        self._host.cleanup()
+
+    def close(self) -> None:
+        self._host.cleanup()
 
     # ==================================================================
     # 绘制
     # ==================================================================
 
     def _build_visual(self):
-        return build_slider_visual(
-            ratio=self._ratio,
-            width=self.width(),
-            height=self.height(),
-            ticks=SLIDER_TICK_COUNT,
-            layer=int(Layer.PET_UI),
-        )
+        return self._control.build_visual()
 
-    def paintEvent(self, event) -> None:
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing, False)
-        self._draw_backend.render(self._build_visual().batch, painter)
-        painter.end()
+    def _paint_batch(self):
+        return self._control.build_visual().batch
 
     # ==================================================================
     # 鼠标交互
     # ==================================================================
 
-    def mousePressEvent(self, event) -> None:
-        if event.button() != Qt.LeftButton:
-            super().mousePressEvent(event)
-            return
-        from lib.script.ui._particle_helper import publish_click_particle
-        publish_click_particle(self, event)
-        self._dragging = True
-        try:
-            self.grabMouse()
-        except RuntimeError:
-            pass
-        self.set_ratio(self.ratio_from_x(event.x()), emit=True)
-        super().mousePressEvent(event)
+    def _on_pointer(self, event) -> None:
+        if event.button != controls.BUTTON_LEFT:
+            return controls.PointerClick()
+        self._last_local_x = event.local.x
+        self._control.dragging = True
+        snapped, changed = self._control.set_ratio(self.ratio_from_x(event.local.x))
+        if changed:
+            self._event_center.publish(Event(EventType.MUSIC_VOLUME, {'volume': snapped}))
+        self._host.update()
+        return controls.PointerClick(particle_id='click')
 
-    def mouseMoveEvent(self, event) -> None:
-        if self._dragging:
-            self.set_ratio(self.ratio_from_x(event.x()), emit=True)
-        super().mouseMoveEvent(event)
-
-    def mouseReleaseEvent(self, event) -> None:
-        if not self._dragging:
-            super().mouseReleaseEvent(event)
+    def _on_pointer_move(self, event) -> None:
+        if not self._control.dragging:
             return
-        self._dragging = False
-        try:
-            if self.mouseGrabber() is self:
-                self.releaseMouse()
-        except RuntimeError:
-            pass
-        self.set_ratio(self.ratio_from_x(event.x()), emit=True, notify=True)
-        super().mouseReleaseEvent(event)
+        self._last_local_x = event.local.x
+        snapped, changed = self._control.set_ratio(self.ratio_from_x(event.local.x))
+        if changed:
+            self._event_center.publish(Event(EventType.MUSIC_VOLUME, {'volume': snapped}))
+        self._host.update()
+
+    def _on_pointer_release(self) -> None:
+        if not self._control.dragging:
+            return
+        self._control.dragging = False
+        self.set_ratio(self.ratio_from_x(self._last_local_x), emit=True, notify=True)
 
 
 __all__ = [

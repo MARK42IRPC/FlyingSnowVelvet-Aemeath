@@ -4,7 +4,7 @@
 
 本文档定义 `lib/core/render/` 的目标结构与依赖边界。它不是阶段计划，而是结构改建完成后必须成立的规则。
 
-**状态：第 6 节迁移顺序 1、2（目录切分）、3 已执行；图层能力已收敛到 `lib/core/render/layers/`（第 16 节）；后端中立协议与统一数据类型已落地（第 11 节），控件层“描述 + 后端渲染”已滚动迁移气泡框（第 12 节）、说明书、语音指示器与播放进度条（第 13 节）；排布解算已收敛到 `visuals/` 并由 `PlacementSpec` 统一解算（第 14 节，档位 0/1），右键按钮族的逐控件锚点事件链已收敛为声明式 `AnchorGraph` 且 Qt 改为消费共享布局（第 15 节，档位 2/3）；`WindowHost` 的被动宿主激活语义已与 Qt/DX 焦点策略对齐（第 17 节）。** 目录与引用规则以本文档为准；改建前的事实源是 [Qt 边界契约](Qt边界契约.md) 与 [跨后端视觉表现契约](视觉表现契约.md)，那两份文档继续负责“哪些内容算视觉逻辑”和“什么算无 Qt”。第一章描述的是最终目标；产品控件面（`lib/script/ui` 直接 `import PyQt5`）仍需逐个控件迁移，当前待迁清单以 `tests/test_qt_dependency_boundaries.py` 的 `frozen_ui_qt_importers` 为准，滚动顺序见第 13 节末尾。
+**状态：第 6 节迁移顺序 1、2（目录切分）、3 已执行；图层能力已收敛到 `lib/core/render/layers/`（第 16 节）；后端中立协议与统一数据类型已落地（第 11 节），控件层“描述 + 后端渲染”已滚动迁移气泡框（第 12 节）、说明书、语音指示器与播放进度条（第 13 节）、音响音量/频段双滑条（第 18 节）；排布解算已收敛到 `visuals/` 并由 `PlacementSpec` 统一解算（第 14 节，档位 0/1），右键按钮族的逐控件锚点事件链已收敛为声明式 `AnchorGraph` 且 Qt 改为消费共享布局（第 15 节，档位 2/3）；`WindowHost` 的被动宿主激活语义已与 Qt/DX 焦点策略对齐（第 17 节）。** 目录与引用规则以本文档为准；改建前的事实源是 [Qt 边界契约](Qt边界契约.md) 与 [跨后端视觉表现契约](视觉表现契约.md)，那两份文档继续负责“哪些内容算视觉逻辑”和“什么算无 Qt”。第一章描述的是最终目标；产品控件面（`lib/script/ui` 直接 `import PyQt5`）仍需逐个控件迁移，当前待迁清单以 `tests/test_qt_dependency_boundaries.py` 的 `frozen_ui_qt_importers` 为准，滚动顺序见第 13 节末尾。
 
 本文只新增目录与引用规则，不改变任何视觉语义、数值来源或渲染结果。改建过程中出现分歧时，以 [视觉表现契约](视觉表现契约.md) 和当前 Qt 基准为事实源。
 
@@ -581,9 +581,9 @@ DX 保持未切分：DX 仍是 `available=False` 的实验实现，没有第二�
    同一个宿主窗口（每帧只移动一个原生窗口）。那一步需要 `setParent()`，是 Qt 专属操作，
    `QtControlHost` 得先支持"把控件窗口收编成宿主子窗口"，否则会退回"每个按钮一个顶层
    窗口 + 每帧各自 `move()`"的老样子。这是本族迁移的**前置项**。
-2. 其余顶层浮窗控件（`command_hint_box.py`、`speaker_search_result_box.py`、
-   `speaker_band_slider.py`、`speaker_volume_slider.py` 等）。拖动交互现在有了
-   `on_pointer_release`，滑块类控件可以直接迁。
+2. 其余顶层浮窗控件（`command_hint_box.py`、`speaker_search_result_box.py` 等）。
+   音响双滑条（`speaker_volume_slider.py` / `speaker_band_slider.py`）已于第十一轮迁出
+   （见第 18 节）；拖动类控件现在有 `on_pointer_move` + 拖动捕获与 `on_pointer_release` 可用。
 3. 带子控件树与 `exec_()` 的对话框（`confirm_dialog`、`update_dialog`、`forum_*`、
    `office_*`）放最后，它们需要宿主先支持子控件与模态，属于下一轮的结构扩展。
 4. `world_objects/*.py`（时钟、沙发、雪球等）与 `game_runtime.py` 是另一类长尾，
@@ -790,3 +790,57 @@ lib/core/render/layers/
 - `py -3 -m unittest discover -s tests -p "test_*.py" -q`：2102 通过、10 跳过。
 - `py -3 -m unittest discover -s tests/dx -p "test_*.py" -q`：122 通过、7 跳过。
 - `py -3 -m ruff check lib config scripts tests` 归零；`py -3 -m compileall -q config lib scripts tests` 通过。
+
+## 18. 第十一轮执行记录（音响音量 / 频段双滑条收敛）
+
+本轮把音响右键 UI 里的两条滑条收进「描述 + 后端渲染」，都是第一个**被动拖动**类控件
+（前几轮的拖动只有播放进度条的「按下—松手」提交）。
+
+**描述层（`lib/core/render/visuals/controls.py`）**
+
+- `RectSliderControl`：水平音量滑条的比例、刻度吸附、`x ↔ 比例` 换算、拖动标记与
+  透明度缩放。形状、刻度、手柄与 `track_rect` 全部取自共享 presenter 的
+  `build_slider_visual()`，`ratio_from_x()` 只是 `slider_ratio_at(track_rect(), x)` 的转发，
+  版面参数不再抄第二份。`set_ratio()` 返回 `(吸附后比例, 是否变化)`，是否发事件由控件决定。
+- `BandSliderControl`：竖向频段滑条，频段读数经 `speaker` 句柄读写
+  `lib.core.speaker_band`；命中（`band_hit_test`）与 `y ↔ 比例`（`band_ratio_at`）沿用
+  `speaker_band_visuals` 的既有算术。
+- 两个类都进 `controls.__all__`，与 `BubbleControl` / `MicSttControl` / `MediaProgressControl`
+  同处一个事实源。
+
+**宿主扩展（`lib/core/render/backends/qt/widgets/control_host.py`）**
+
+- 新增 `on_pointer_move` 回调与 `mouseMoveEvent` 转发：拖动过程中「块跟随指针」需要每一次
+  移动都回到描述层重算，之前宿主只在按下/松手各回调一次。
+- 新增 `capture_on_press`：按下时 `grabMouse()`、松手时 `releaseMouse()`。滑条窗口很窄，
+  指针移出窗口后原来的 `mouseMoveEvent` 会断流——这是本轮唯一的结构扩展，且是通用能力，
+  不是滑条专属分支。两个回调都做了 `RuntimeError` 兜底（宿主已析构时静默）。
+
+**控件本体**
+
+- `speaker_volume_slider.py` / `speaker_band_slider.py` 删除 `QWidget` 基类与 `PyQt5` 引用，
+  改为持有描述层对象 + `create_control_host()`；对外接口
+  （`move` / `apply_geometry` / `set_speaker` / `width` / `height` / `x` / `y` / `isVisible` /
+  `fade_in` / `fade_out` / `cleanup` / `close` / `deleteLater` / `band` / `is_visible` /
+  `bound_speaker`）保持不变，`speaker_control_buttons.py` 的调用面不动。
+- 拖动提交仍在控件侧：音量松手发 `MUSIC_VOLUME` 并提示百分比，频段松手提示当前频段，
+  与迁移前一致。
+
+**守卫**
+
+- `tests/test_control_layer_descriptions.py` 的已迁移清单加入两个控件（不得再继承 Qt 基类）。
+- `tests/test_qt_dependency_boundaries.py` 的 `frozen_ui_qt_importers` 移除两个条目。
+- `tests/test_speaker_band_ui.py` 的交互测试改为直接驱动宿主回调
+  （`_on_pointer` / `_on_pointer_move` / `_on_pointer_release`），并断言 `build_visual()` 的
+  版面，不再伪造 `QMouseEvent`。
+
+验证：
+
+- `py -3 -m unittest discover -s tests -p "test_*.py" -q`：2102 通过、10 跳过。
+- `py -3 -m unittest discover -s tests/dx -p "test_*.py" -q`：122 通过、7 跳过。
+- `py -3 -m ruff check lib config scripts tests` 归零；`py -3 -m compileall -q config lib scripts tests` 通过。
+
+**本轮没动的部分**
+
+- `frozen_ui_qt_importers`：70 → **68**（本轮两个条目移出）。
+- `rect_action_button_style.py` 一族仍卡在「宿主收编子窗口」前置项上，未动；见第 13 节清单第 1 项。

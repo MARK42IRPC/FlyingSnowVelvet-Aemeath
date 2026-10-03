@@ -61,6 +61,8 @@ class QtControlHost(QWidget):
         on_fade_out_finished: Callable[[], None] | None = None,
         on_hover_changed: Callable[[bool], None] | None = None,
         on_pointer_release: Callable[[], None] | None = None,
+        on_pointer_move: Callable[[PointerEvent], None] | None = None,
+        capture_on_press: bool = False,
         layer=None,
         fade_duration_ms: int = 200,
         fade_out_duration_ms: int = 200,
@@ -83,6 +85,8 @@ class QtControlHost(QWidget):
         self._on_fade_out_finished = on_fade_out_finished
         self._on_hover_changed = on_hover_changed
         self._on_pointer_release = on_pointer_release
+        self._on_pointer_move = on_pointer_move
+        self._capture_on_press = bool(capture_on_press)
         self._awaiting_fade_out = False
         self._fade_duration_ms = max(0, int(fade_duration_ms))
         self._fade_out_duration_ms = max(0, int(fade_out_duration_ms))
@@ -142,6 +146,11 @@ class QtControlHost(QWidget):
     def mousePressEvent(self, event) -> None:
         if self._on_pointer is None:
             return
+        if self._capture_on_press:
+            try:
+                self.grabMouse()
+            except RuntimeError:
+                pass
         intent = self._on_pointer(self.pointer_event(event))
         if intent.copy_text is not None:
             QApplication.clipboard().setText(intent.copy_text)
@@ -152,7 +161,18 @@ class QtControlHost(QWidget):
                 self.hide()
         event.accept()
 
+    def mouseMoveEvent(self, event) -> None:
+        if self._on_pointer_move is not None:
+            self._on_pointer_move(self.pointer_event(event))
+        event.accept()
+
     def mouseReleaseEvent(self, event) -> None:
+        if self._capture_on_press:
+            try:
+                if self.mouseGrabber() is self:
+                    self.releaseMouse()
+            except RuntimeError:
+                pass
         if self._on_pointer_release is not None:
             self._on_pointer_release()
         event.accept()
