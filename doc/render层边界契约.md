@@ -844,3 +844,17 @@ lib/core/render/layers/
 
 - `frozen_ui_qt_importers`：70 → **68**（本轮两个条目移出）。
 - `rect_action_button_style.py` 一族仍卡在「宿主收编子窗口」前置项上，未动；见第 13 节清单第 1 项。
+
+**同轮追加：迁出后的族内几何读取回归**
+
+两条滑条上线后暴露了一处迁移期没发现的读取：`speaker_search_dialog` 与 `playlist_panel`
+的 `_is_mouse_far_from_family()` 仍在读 `widget.geometry().center()`，而这两族里的滑条与播放
+进度条已经迁出 `QWidget`。点到音响/打开播放列表后，自动隐藏的 TICK 分支会抛
+`AttributeError`，事件中心把它吞成一条日志，所以界面"看起来正常、只是不收起"。两处改为
+`widget_global_rect(widget).center`（核心 `Rect` 属性，与第 13 节 `command_dialog` 那次同源）。
+
+守卫加了两道：静态扫描 `lib/script/ui` 里对控件变量取 `.geometry()`（只登记"跨控件测量"
+这一种写法，宿主窗口自己读 `self.geometry()` 合法）；运行期真构造音响搜索 UI、让族内滑块
+可见后驱动 `_is_mouse_far_from_family()`，再盯事件中心错误日志。第一条断言第一版漏了
+"跳过不可见控件"这条分支，回归躲过去了——补上可见性前置后才复现出
+`AttributeError: 'SpeakerVolumeSlider' object has no attribute 'geometry'`。

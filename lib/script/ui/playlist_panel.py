@@ -21,7 +21,15 @@ from PyQt5.QtGui import QPainter, QPen, QPolygonF, QCursor
 
 from config.config import UI
 from lib.core.render.visuals.media_panel_visuals import build_playlist_panel_visual
-from lib.script.ui.render_bridge import create_draw_backend, digit_font as get_digit_font, resolve_placement, screen_rect_for_point as get_screen_geometry_for_point, text_metrics as QtTextMetrics, ui_font as get_ui_font
+from lib.script.ui.render_bridge import (
+    create_draw_backend,
+    digit_font as get_digit_font,
+    resolve_placement,
+    screen_rect_for_point as get_screen_geometry_for_point,
+    text_metrics as QtTextMetrics,
+    ui_font as get_ui_font,
+    widget_global_rect,
+)
 from config.scale import scale_px
 from config.tooltip_config import TOOLTIPS
 from lib.core.event.center import get_event_center, EventType, Event
@@ -855,9 +863,11 @@ class PlaylistPanel(QWidget):
             try:
                 if not widget.isVisible():
                     continue
-                center = widget.geometry().center()
-                dx = mouse.x() - center.x()
-                dy = mouse.y() - center.y()
+                # `widget_global_rect` 返回核心 `Rect`：center/x/y 是属性，不是方法。
+                # 族里的 `progress_panel` 已迁出 QWidget，没有 `geometry()`。
+                center = widget_global_rect(widget).center
+                dx = mouse.x() - int(center.x)
+                dy = mouse.y() - int(center.y)
                 dist_sq = dx * dx + dy * dy
                 if nearest_sq is None or dist_sq < nearest_sq:
                     nearest_sq = dist_sq

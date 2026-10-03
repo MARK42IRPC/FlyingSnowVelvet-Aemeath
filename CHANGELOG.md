@@ -72,6 +72,14 @@
   拖动断流），拖动提交（音量 `MUSIC_VOLUME`、频段提示）仍在控件侧。对外接口与
   `speaker_control_buttons.py` 调用面不变。
 
+- 修复音响双滑条迁移后丢条件漏掉的族内几何读取：`speaker_search_dialog._is_mouse_far_from_family()`
+  与 `playlist_panel._is_mouse_far_from_family()` 仍在读 `widget.geometry().center()`，而这两族里
+  的滑条 / 播放进度条已经迁出 `QWidget`、没有 `geometry()`。点到音响弹出搜索 UI 后，自动隐藏的
+  TICK 分支会抛 `AttributeError`，事件中心把回调异常吞成一条日志，表现是"鼠标离远不收起"。
+  两处改为 `widget_global_rect(widget).center`（核心 `Rect` 属性），并补两道守卫：静态扫描
+  「`lib/script/ui` 里对控件变量取 `.geometry()`」，以及真构造音响搜索 UI、让族内滑块可见后驱动
+  `_is_mouse_far_from_family()` 并盯事件中心错误日志的运行期断言。
+
 ### Fixed
 - 修复游戏窗口压住粒子与特效：游戏宿主窗口原先用 `Qt.Tool | Qt.WindowStaysOnTopHint`
   并注册到 `WindowLayer.PANEL`，因此落进置顶窗口带；被点击激活后 Windows 会把它抬到同带顶部，

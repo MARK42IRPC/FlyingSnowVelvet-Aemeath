@@ -35,7 +35,12 @@ from lib.script.ui.speaker_menu_style import (
     paint_speaker_menu_panel,
     paint_speaker_action_button,
 )
-from lib.script.ui.render_bridge import resolve_placement, screen_rect_for_point, ui_font as get_ui_font
+from lib.script.ui.render_bridge import (
+    resolve_placement,
+    screen_rect_for_point,
+    ui_font as get_ui_font,
+    widget_global_rect,
+)
 
 _SEARCH_MODE_ORDER = ('song', 'artist', 'album', 'playlist')
 _SEARCH_MODE_LABELS = {
@@ -430,9 +435,11 @@ class SpeakerSearchDialog(QWidget):
             try:
                 if not widget.isVisible():
                     continue
-                center = widget.geometry().center()
-                dx = mouse.x() - center.x()
-                dy = mouse.y() - center.y()
+                # `widget_global_rect` 返回核心 `Rect`：center/x/y 是属性，不是方法。
+                # 不能再读 `widget.geometry()`：已迁移到描述 + 宿主的控件没有该方法。
+                center = widget_global_rect(widget).center
+                dx = mouse.x() - int(center.x)
+                dy = mouse.y() - int(center.y)
                 dist_sq = dx * dx + dy * dy
                 if nearest_sq is None or dist_sq < nearest_sq:
                     nearest_sq = dist_sq

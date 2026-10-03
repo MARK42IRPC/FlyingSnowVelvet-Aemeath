@@ -1085,5 +1085,175 @@ class CommandDialogGeometryIntegrationTests(unittest.TestCase):
             self.app.processEvents()
 
 
+#: 已迁移的「描述 + 后端渲染」控件：文件 → 类名。它们不再是 `QWidget`，
+#: 也没有 `geometry()` / `pos()` / `size()`，但继续被族内跟随者当作窗口测量。
+#: 下游读它们时必须走 `widget_global_rect()`（核心 `Rect`）与 `isVisible()` 契约。
+_MIGRATED_UI_CONTROLS = {
+    "lib/script/ui/bubble.py": "Bubble",
+    "lib/script/ui/tooltip_panel.py": "TooltipPanel",
+    "lib/script/ui/mic_stt_indicator.py": "MicSttIndicator",
+    "lib/script/ui/progress_panel.py": "ProgressPanel",
+    "lib/script/ui/speaker_volume_slider.py": "SpeakerVolumeSlider",
+    "lib/script/ui/speaker_band_slider.py": "SpeakerBandSlider",
+}
+
+
+class MigratedControlWindowSurfaceTests(unittest.TestCase):
+    """迁移后的控件不能再被当作 `QWidget` 测量。
+
+    真实回归：音响双滑条迁到描述 + 宿主后丢掉了 `geometry()`，而
+    `speaker_search_dialog._is_mouse_far_from_family()` 仍在读
+    `widget.geometry().center()`——点击音响弹出搜索 UI 后，自动隐藏的 TICK 分支
+    会抛 `AttributeError`，而事件中心把回调异常吞成一条日志，界面看起来"什么都没发生"。
+    构造期、导入期与静态几何扫描都看不见它，只有这条运行期路径会走到。
+    """
+
+    _WINDOW_API = {"geometry", "pos", "size", "frameGeometry", "rect", "move"}
+
+    def test_migrated_controls_keep_the_window_surface_their_family_reads(self):
+        """族内跟随者只许读 `isVisible()` 与 `widget_global_rect()`。"""
+        for relative, class_name in _MIGRATED_UI_CONTROLS.items():
+            with self.subTest(control=relative):
+                tree = ast.parse(
+                    (_REPO_ROOT / relative).read_text(encoding="utf-8-sig")
+                )
+                klass = next(
+                    (
+                        node
+                        for node in tree.body
+                        if isinstance(node, ast.ClassDef) and node.name == class_name
+                    ),
+                    None,
+                )
+                self.assertIsNotNone(klass, f"{relative} 缺少类 {class_name}")
+                for forbidden in ("geometry", "pos", "frameGeometry"):
+                    self.assertNotIn(
+                        forbidden,
+                        {node.name for node in klass.body if isinstance(node, ast.FunctionDef)},
+                        f"{class_name} 不该再暴露 QWidget 的 {forbidden}()",
+                    )
+
+    def test_no_ui_code_measures_a_widget_with_geometry(self):
+        """`lib/script/ui` 里读窗口几何一律走 `widget_global_rect()`。
+
+        `QWidget.geometry()` 对已是描述 + 宿主的控件不存在；在宿主窗口（如
+        `RightClickUiLayer` 自己）上则是合法的，因此只扫描跨控件取值这一种写法。
+        """
+        offenders = []
+        ui_root = _REPO_ROOT / "lib" / "script" / "ui"
+        for path in sorted(ui_root.rglob("*.py")):
+            relative = path.relative_to(_REPO_ROOT).as_posix()
+            source = path.read_text(encoding="utf-8-sig")
+            if "geometry()" not in source:
+                continue
+            tree = ast.parse(source)
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                func = node.func
+                if not isinstance(func, ast.Attribute) or func.attr != "geometry":
+                    continue
+                receiver = func.value
+                # `self.geometry()` / `dialog.geometry()` 之外，只盯"控件变量"命名。
+                if isinstance(receiver, ast.Attribute):
+                    name = receiver.attr
+                elif isinstance(receiver, ast.Name):
+                    name = receiver.id
+                else:
+                    name = ""
+                if name.startswith("widget") or name.endswith("_box") or name.endswith("_slider"):
+                    offenders.append(f"{relative}:{node.lineno}:{name}.geometry()")
+        self.assertEqual(offenders, [])
+
+
+class SpeakerSearchDialogGeometryIntegrationTests(unittest.TestCase):
+    """音响搜索 UI 的 TICK 分支真的读到核心几何；构造期与导入期都不会触发。"""
+
+    @classmethod
+    def setUpClass(cls):
+        import PyQt5
+
+        root = os.path.dirname(PyQt5.__file__)
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        os.environ.setdefault(
+            "QT_QPA_PLATFORM_PLUGIN_PATH",
+            os.path.join(root, "Qt5", "plugins", "platforms"),
+        )
+        os.environ.setdefault("QT_PLUGIN_PATH", os.path.join(root, "Qt5", "plugins"))
+
+        from PyQt5.QtWidgets import QApplication
+
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_mouse_distance_check_runs_over_migrated_controls(self):
+        """族内测量必须走 `widget_global_rect()`：点到迁出 QWidget 的滑条也不许炸。
+
+        `_is_mouse_far_from_family()` 会跳过 `isVisible()` 为假的对象，所以被测控件的
+        可见性必须先钉住（窗口 show 在 offscreen 下也返回 True）；否则路径会被跳过，
+        回归就藏起来了——这正是第一次写这条断言时踩到的坑。
+        """
+        from lib.script.ui.speaker_search_dialog import SpeakerSearchDialog
+
+        dialog = SpeakerSearchDialog()
+        sliders = []
+        buttons = []
+        try:
+            dialog.show()
+            dialog._control_buttons.fade_in()
+            self.app.processEvents()
+
+            sliders = [
+                getattr(dialog._control_buttons, name, None)
+                for name in ("_volume_slider", "_band_slider")
+            ]
+            buttons = list(dialog._control_buttons._buttons)
+            self.assertTrue(all(slider is not None for slider in sliders))
+            self.assertTrue(all(bool(w.isVisible()) for w in (dialog, *buttons, *sliders)))
+
+            # 直接命中回归点：族内逐个 `widget_global_rect(widget).center`。
+            self.assertIsInstance(dialog._is_mouse_far_from_family(), bool)
+        finally:
+            dialog._control_buttons.cleanup()
+            for widget in (dialog, *buttons, *sliders):
+                try:
+                    widget.deleteLater()
+                except Exception:
+                    pass
+            self.app.processEvents()
+
+    def test_tick_branch_stays_quiet_in_the_event_log(self):
+        import logging
+
+        from lib.core.event.center import Event, EventType, get_event_center
+        from lib.script.ui.speaker_search_dialog import SpeakerSearchDialog
+
+        dialog = SpeakerSearchDialog()
+        dialog._visible = True
+        records = []
+
+        class _Capture(logging.Handler):
+            def emit(self, record):
+                records.append(record.getMessage())
+
+        handler = _Capture()
+        event_logger = logging.getLogger("lib.core.event.center")
+        event_logger.addHandler(handler)
+        center = get_event_center()
+        try:
+            for _ in range(3):
+                center.publish(Event(EventType.TICK, {}))
+                self.app.processEvents()
+        finally:
+            event_logger.removeHandler(handler)
+            dialog._control_buttons.cleanup()
+            dialog.deleteLater()
+            self.app.processEvents()
+
+        self.assertEqual(
+            [text for text in records if "Event handler error" in text],
+            [],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
