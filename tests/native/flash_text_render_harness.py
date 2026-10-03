@@ -32,7 +32,7 @@ from PyQt5.QtWidgets import QApplication
 from lib.core.render.visuals.commands import DrawBatch, TextCommand
 from lib.core.render.visuals.types import Color, Rect
 from lib.core.render.visuals.visuals import build_effect_batch, resolve_effect_font
-from lib.core.layer import Layer
+from lib.core.render.layers import Layer
 from lib.core.render.backends.qt.drawing.draw_backend import QtDrawBackend
 from lib.core.render.backends.qt.runtime.effect_system import _prepare_effect_backend_state
 from lib.script.effects.flash_text_effect import FlashTextEffectScript

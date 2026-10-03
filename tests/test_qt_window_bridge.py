@@ -5,7 +5,7 @@ from PyQt5.QtCore import QPoint, QRect, Qt
 from PyQt5.QtGui import QImage
 
 from lib.core.render.visuals.types import Point, Rect
-from lib.core.layer import Layer
+from lib.core.render.layers import Layer
 from lib.core.pet_window import PetWindow
 from lib.core.render.backends.qt.drawing.window import (
     coerce_qpoint,

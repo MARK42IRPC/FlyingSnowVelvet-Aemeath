@@ -30,7 +30,7 @@ from lib.core.render.visuals.commands import (
 )
 from lib.core.render.visuals.resources import RasterFrame
 from lib.core.render.visuals.types import Color, FontSpec, Point, Rect
-from lib.core.layer import Layer
+from lib.core.render.layers import Layer
 from config import font_config
 
 

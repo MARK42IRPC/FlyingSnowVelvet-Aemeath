@@ -11,7 +11,7 @@ from config.scale import scale_px
 from config.tooltip_config import TOOLTIPS
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.desktop_actions import request_tray_menu
-from lib.core.unified_draw import Layer, get_layer_manager
+from lib.core.render.layers import get_layer_manager, WindowLayer
 from lib.core.anchor_utils import apply_ui_opacity
 from lib.script.ui.rect_action_button_style import paint_rect_action_button
 from lib.script.ui.render_bridge import family_placement, move_widget_to_global, ui_font as get_ui_font, widget_global_rect
@@ -33,7 +33,7 @@ class MoreFunctionsButton(QWidget):
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFixedSize(self.WIDTH, self.HEIGHT)
         self.setCursor(Qt.PointingHandCursor)
-        get_layer_manager().register(self, Layer.PET_UI)
+        get_layer_manager().register(self, WindowLayer.PET_UI)
 
         self._launch_wuwa_button = launch_wuwa_button
         self._visible = False

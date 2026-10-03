@@ -30,7 +30,7 @@ from lib.core.render.backends.base import (
 from lib.core.application_ui import ApplicationUiHostFactory
 from lib.core.event.pump import EventPumpFactory
 from lib.core.tray_host import TrayHostFactory
-from lib.core.window_host import LayerWindowHostFactory, WindowHostFactory
+from lib.core.render.layers import LayerWindowHostFactory, WindowHostFactory
 
 __all__ = [
     "BackendAlreadyConfiguredError",

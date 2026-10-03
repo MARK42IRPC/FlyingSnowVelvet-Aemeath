@@ -27,7 +27,7 @@ from lib.script.ui.render_bridge import (
 )
 from config.scale import scale_px
 from lib.core.event.center import get_event_center, EventType, Event
-from lib.core.unified_draw import Layer
+from lib.core.render.layers import Layer
 
 
 # ── 布局常量 ──────────────────────────────────────────────────────

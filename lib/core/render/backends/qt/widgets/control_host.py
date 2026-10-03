@@ -26,7 +26,7 @@ from lib.core.render.visuals.controls import (
     PointerEvent,
 )
 from lib.core.render.visuals.types import Point, Rect
-from lib.core.unified_draw import get_layer_manager
+from lib.core.render.layers import get_layer_manager
 
 _QPAINT_TO_CORE = {
     Qt.LeftButton: BUTTON_LEFT,

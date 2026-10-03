@@ -23,7 +23,7 @@ from config.scale import scale_px
 from lib.core.anchor_utils import apply_ui_opacity
 from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import Event, EventType, get_event_center
-from lib.core.unified_draw import Layer, get_layer_manager
+from lib.core.render.layers import get_layer_manager, WindowLayer
 from lib.script.ui.workbench_floating import WorkbenchFloatingWindow
 from lib.script.workbench.theme import get_workbench_colors
 from lib.script.update_manager import (
@@ -60,7 +60,7 @@ class DesktopPetUpdateDialog(WorkbenchFloatingWindow):
         self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFixedSize(_WIDTH, _HEIGHT)
-        get_layer_manager().register(self, Layer.DIALOG)
+        get_layer_manager().register(self, WindowLayer.DIALOG)
 
         self._visible = False
         self._busy = False
@@ -220,7 +220,7 @@ class DesktopPetUpdateDialog(WorkbenchFloatingWindow):
         self._center_on_screen()
         # closeEvent unregisters hidden dialogs; restore the record before
         # showing so a later update check is included in the z-order chain.
-        get_layer_manager().register(self, Layer.DIALOG)
+        get_layer_manager().register(self, WindowLayer.DIALOG)
         if not self._visible:
             self._visible = True
             self.show()

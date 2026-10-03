@@ -36,7 +36,7 @@
 - `DrawBackend.render(batch, target, viewport)` 的 target 由后端宿主持有；Qt 使用 `QPainter`，DX `DxWindowHost` 持有 DComp 交换链并消费同一 `DrawBatch`。产品尺寸必须来自命令的显式 `target_size`，不能由 viewport 或 swap-chain 反推。
 - 跨后端 `RenderRequest/RenderItem/PaintCallback` 已删除；两个明确的 Qt 游戏控件使用 `lib.core.render.backends.qt.render_core.QtRenderCore` 本地回调，尚未迁移为声明式命令。
 - `WorldObjectBackend` 使用纯 `ImageResource` 和整数实例句柄；Qt 与 DX 均已实现七类世界对象，sprite、动画帧、透明度、翻转、中心缩放、闹钟倒计时、摩托抖动和音响 EMA/指数缩放均由 `lib.core.render.visuals.visuals` 与 `world_objects` 的共享函数决定，专属音效和部分独有交互仍需继续收敛。
-- `LayerManager` 已只依赖最小 `LayerWindowHost`，Qt 可见性、前置、原生句柄和 `SetWindowPos` 已迁入 `lib.core.render.backends.qt.window_host`；后端无关 `WindowHost v1` 协议、passive/Qt/DX 实现、`DxPetWindow` 组合和 DX factory 注册均已落地。
+- `LayerManager` 已只依赖最小 `LayerWindowHost`，Qt 可见性、前置、原生句柄和 `SetWindowPos` 已迁入 `lib.core.render.backends.qt.runtime.window_host`；后端无关 `WindowHost v1` 协议、passive/Qt/DX 实现、`DxPetWindow` 组合和 DX factory 注册均已落地。
 - `DxLoopContext`、`DxScheduler`、`DxEventPump` 和 `DxApplicationRuntime` 已在完整 DX bundle 中由 owner 线程驱动定时任务、后台事件投递、注册窗口轮询和退出确认；当前使用 `threading.Event` 唤醒加短间隔原生轮询，尚未替代完整 Win32 消息等待。
 - `DxScreenProvider` 每次查询重新枚举 Win32 monitors，虚拟桌面和按点选屏不缓存旧拓扑；`DxScreenCapture` 用 GDI 读取主屏 BGRA 并只向业务返回 PNG bytes。`DxPetWindow` 已把 `PetWindow` 纯控制器接到 DX host，覆盖初始几何、锚点、移动、穿透、重绘和关闭清理，但仍是诊断组合。
 - 工作台、设置对话框、游戏窗口和媒体播放器仍是 Qt UI。
@@ -133,7 +133,7 @@ GIF 帧时长和逻辑尺寸已经进入纯帧数据；循环方式和缩放策�
 
 第一步已落地后端无关 `LayerWindowHost`：稳定 identity 用于注册和注销，`is_alive/is_visible` 用于过滤窗口，`stack_window` 返回后端原生整数 token，原生堆叠不可用时通过 `raise_window` 回退。`LayerManager` 只负责 `layer/z/order` 排序和触发时机，不再识别 QWidget、HWND 或 `SetWindowPos`。Qt 适配器弱持有 QWidget，桌面后端通过工厂注册；未配置后端时使用无副作用宿主保证核心可独立运行。
 
-后端无关 `WindowHost v1` 已在 `lib/core/window_host.py` 定义并由 `DesktopBackendBundle.window_host_factory` 暴露，至少覆盖：
+后端无关 `WindowHost v1` 已在 `lib/core/render/layers/hosts.py` 定义并由 `DesktopBackendBundle.window_host_factory` 暴露，至少覆盖：
 
 - 创建、显示、隐藏、关闭透明无边框窗口；
 - 读取和设置 `Point/Rect`、DPI 和所属屏幕；

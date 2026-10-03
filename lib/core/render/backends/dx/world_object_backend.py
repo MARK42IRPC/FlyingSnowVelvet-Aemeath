@@ -18,8 +18,8 @@ from lib.core.render.visuals.visuals import (
     update_speaker_intensity,
 )
 from lib.core.input.types import Key, KeyboardInput, MouseButton, MouseButtons
-from lib.core.layer import Layer
-from lib.core.layer_manager import get_layer_manager
+from lib.core.render.layers import WindowLayer
+from lib.core.render.layers import get_layer_manager
 from lib.core.physics import PhysicsBody, get_physics_world
 from lib.core.services.world_object_physics import (
     DEFAULT_DRAG_TRAIL_WINDOW_SEC,
@@ -163,7 +163,7 @@ class _DxWorldObject:
             self._context.register_poller(self.host)
             get_layer_manager().register(
                 self.host,
-                Layer.WORLD_OBJECT,
+                WindowLayer.WORLD_OBJECT,
                 name=f"DxWorldObject:{self.object_type}:{self.instance_id}",
             )
             host_geometry = self.host.get_geometry()

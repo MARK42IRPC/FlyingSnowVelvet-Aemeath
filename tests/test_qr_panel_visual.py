@@ -25,7 +25,7 @@ from lib.core.render.visuals.application_visuals import (
 )
 from lib.core.render.visuals.commands import TextCommand
 from lib.core.render.visuals.workbench_tokens import get_workbench_token_colors
-from lib.core.layer_manager import cleanup_layer_manager
+from lib.core.render.layers import cleanup_layer_manager
 from lib.script.ui.qr_dialog_base import BaseQrDialog
 
 

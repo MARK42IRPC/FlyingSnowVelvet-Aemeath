@@ -5,8 +5,7 @@ from collections.abc import Callable
 
 from lib.core.render.visuals.commands import DrawBatch
 from lib.core.render.visuals.types import Rect
-from lib.core.layer import Layer
-from lib.core.layer_manager import get_layer_manager
+from lib.core.render.layers import WindowLayer, get_layer_manager
 
 from .loop import DxLoopContext
 from .screen import DxScreenProvider
@@ -19,7 +18,7 @@ class DxOverlayWindow:
     def __init__(
         self,
         context: DxLoopContext,
-        layer: Layer,
+        layer: WindowLayer,
         *,
         name: str,
         screen_provider: DxScreenProvider | None = None,

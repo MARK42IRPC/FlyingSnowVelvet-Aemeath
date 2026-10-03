@@ -30,6 +30,15 @@
   托盘、播放器等平台能力）。`lib/core/backend_router.py` 与 `lib/core/desktop_backend.py` 迁入根层，
   旧路径不保留兼容壳。业务层与 `lib/script/ui` 对后端的引用面按「冻结基线，只减不增」的测试清单锁定，
   新增直接引用会失败。DX 仍是 `available=False` 的实验实现，暂不切分 `drawing/`、`runtime/`。
+- 图层能力收敛到 `lib/core/render/layers/`：`lib/core/layer.py`（绘制层枚举与排序）、
+  `lib/core/layer_manager.py`（顶层窗口 z-order）、`lib/core/window_host.py`（后端中立窗口宿主协议）
+  与 `lib/core/render/visuals/ordering.py` 合并成一个包，旧路径不保留兼容壳。包内按职责分文件：
+  `spec.py`（`Layer`）、`order.py`（排序原语）、`draws.py`（层内 `z` 槽 `BASE`..`OVERLAY_THIRD`）、
+  `hosts.py`（宿主协议）、`windows.py`（`WindowLayer` / `WindowsLayerManager`）、`scene.py`。
+  同时把「画布绘制层」与「顶层窗口层级」拆成两个枚举：窗口注册统一走 `WindowLayer`，
+  绘制批次继续用 `Layer`，两者共享 `config/config_layer.py` 的同一份数值。presenter 里手写的
+  `z=1..7` 字面量改为 `layers.draws` 的具名槽，渲染结果逐字节不变
+  （`tests/test_unified_draw_order.py` 与像素比对测试为准）。
 - 绘制落点收敛：新增 `lib/script/ui/render_bridge.py`，作为控件取绘制实现、主题色与坐标转换的唯一
   UI 侧入口。`lib/script/ui` 里直接 import `lib/core/render/backends/qt/drawing/` 的文件从 31 个降到 0，
   新增引用会被测试叫停。未配置后端时它回退到真实 Qt 实现而不是空实现——空实现会让控件静默画不出

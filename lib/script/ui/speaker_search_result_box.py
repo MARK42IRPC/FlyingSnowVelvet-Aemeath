@@ -27,7 +27,7 @@ from lib.core.render.visuals.types import Size
 from lib.script.ui.render_bridge import create_draw_backend, qpoint_from_point, digit_font as get_digit_font, place_at_point, screen_rect_for_point, text_metrics as QtTextMetrics, ui_font as get_ui_font
 from config.scale import scale_px
 from lib.core.event.center import get_event_center, EventType, Event
-from lib.core.unified_draw import Layer, get_layer_manager
+from lib.core.render.layers import get_layer_manager, WindowLayer
 from lib.core.anchor_utils import apply_ui_opacity
 from lib.script.ui.page_turn_buttons import make_page_buttons, update_page_buttons_position
 from lib.script.ui.speaker_menu_style import (
@@ -58,7 +58,7 @@ class SpeakerSearchResultBox(QWidget):
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFocusPolicy(Qt.NoFocus)
         self.setMouseTracking(True)
-        get_layer_manager().register(self, Layer.PET_UI)
+        get_layer_manager().register(self, WindowLayer.PET_UI)
 
         # ── 字体 ────────────────────────────────────────────────────
         self._font = get_ui_font()

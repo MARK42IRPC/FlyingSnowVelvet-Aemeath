@@ -18,7 +18,7 @@ from lib.core.render.visuals.controls import (
     PointerEvent,
 )
 from lib.core.render.visuals.types import Point
-from lib.core.unified_draw import Layer
+from lib.core.render.layers import Layer
 from lib.script.ui._particle_helper import publish_click_particle_at
 from lib.script.ui.render_bridge import (
     create_control_host,

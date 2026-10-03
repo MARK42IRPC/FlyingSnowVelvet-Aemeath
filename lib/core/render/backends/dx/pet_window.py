@@ -7,8 +7,8 @@ from config.config import ANIMATION
 from lib.core.event.center import Event, EventType
 from lib.core.render.visuals.anchors import get_anchor_point as get_rect_anchor_point
 from lib.core.render.visuals.types import Point, Rect
-from lib.core.layer import Layer
-from lib.core.layer_manager import get_layer_manager
+from lib.core.render.layers import WindowLayer
+from lib.core.render.layers import get_layer_manager
 from lib.core.pet_window import PetWindow
 
 from .loop import DxLoopContext
@@ -113,7 +113,7 @@ class DxPetWindow(PetWindow):
     def _host_finalize_startup(self) -> None:
         host = self._require_window_host()
         layer_manager = get_layer_manager()
-        layer_manager.register(host, Layer.MAIN_PET, name="DxPetWindow")
+        layer_manager.register(host, WindowLayer.MAIN_PET, name="DxPetWindow")
         host.show()
         layer_manager.enforce_burst()
         self._startup_voice_sound.play()

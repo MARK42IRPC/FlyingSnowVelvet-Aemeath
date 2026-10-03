@@ -56,7 +56,7 @@ from lib.core.render.visuals.settings_panel_visuals import (
     build_ai_settings_panel_visual,
 )
 from lib.core.render.visuals.types import FontSpec, Rect, Size
-from lib.core.layer import Layer
+from lib.core.render.layers import Layer
 
 
 class _Metrics:

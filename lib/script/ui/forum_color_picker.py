@@ -25,7 +25,7 @@ from lib.core.render.visuals.media_panel_visuals import (
 )
 from lib.core.render.visuals.panel_visuals import UI_THEME, slider_handle_commands
 from lib.core.render.visuals.types import Rect
-from lib.core.layer import Layer
+from lib.core.render.layers import Layer
 from lib.core.render.visuals.backend import DrawBackend
 from lib.script.ui.render_bridge import create_draw_backend
 from lib.script.ui.forum_style import forum_picker_track_color

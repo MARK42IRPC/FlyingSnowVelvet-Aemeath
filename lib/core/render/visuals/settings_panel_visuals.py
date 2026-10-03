@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from config.font_config import get_digit_font_family
 from config.scale import scale_px
-from lib.core.layer import Layer
+from lib.core.render.layers import Layer, MIDDLE
 
 from .commands import DrawBatch, TextAlignment, TextCommand
 from .palette import UI_THEME
@@ -68,7 +68,7 @@ def build_ai_settings_panel_visual(
         alignment=int(TextAlignment.HCENTER | TextAlignment.TOP),
         alpha=alpha,
         layer=layer,
-        z=3,
+        z=MIDDLE,
     ))
 
     # Bottom-left watermark: two thirds of the design size.
@@ -93,7 +93,7 @@ def build_ai_settings_panel_visual(
         alignment=int(TextAlignment.LEFT | TextAlignment.BOTTOM),
         alpha=alpha,
         layer=layer,
-        z=3,
+        z=MIDDLE,
     ))
 
     return SettingsPanelVisual(

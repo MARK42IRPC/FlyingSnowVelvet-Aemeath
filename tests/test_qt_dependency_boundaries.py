@@ -415,8 +415,8 @@ class QtDependencyBoundaryTests(unittest.TestCase):
     def test_layer_manager_only_uses_backend_neutral_window_hosts(self):
         repo_root = Path(__file__).resolve().parents[1]
         contract_paths = (
-            repo_root / "lib" / "core" / "layer_manager.py",
-            repo_root / "lib" / "core" / "window_host.py",
+            repo_root / "lib" / "core" / "render" / "layers" / "windows.py",
+            repo_root / "lib" / "core" / "render" / "layers" / "hosts.py",
         )
         forbidden_tokens = (
             "QWidget",
@@ -457,7 +457,7 @@ class QtDependencyBoundaryTests(unittest.TestCase):
             from lib.core.render.visuals.commands import DrawRequest
             from lib.core.render.visuals.gif_loader import GifLoader
             from lib.core.render.visuals.resources import ImageResource, RasterFrame
-            from lib.core.layer_manager import LayerManager
+            from lib.core.render.layers import LayerManager
             from lib.core.pet_window import PetWindow
             from lib.core.physics import PhysicsWorld
             from lib.core.screen_utils import get_virtual_screen_rect

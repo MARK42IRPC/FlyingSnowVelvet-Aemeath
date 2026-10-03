@@ -17,8 +17,8 @@ from PyQt5.QtGui import QRegion
 from PyQt5.QtWidgets import QWidget
 
 from lib.core.event.center import Event, EventType, get_event_center
-from lib.core.layer import Layer
-from lib.core.unified_draw import get_layer_manager
+from lib.core.render.layers import WindowLayer
+from lib.core.render.layers import get_layer_manager
 from lib.script.ui.render_bridge import (
     command_action_graph,
     move_widget_to_global,
@@ -40,7 +40,7 @@ class RightClickUiLayer(QWidget):
         self.setAttribute(Qt.WA_TranslucentBackground)
         # 显式给出初始尺寸，避免 Qt 在 show() 时按子控件自动调整宿主窗口。
         self.resize(1, 1)
-        get_layer_manager().register(self, Layer.PET_UI)
+        get_layer_manager().register(self, WindowLayer.PET_UI)
 
         self._event_center = get_event_center()
         self._members: list[QWidget] = []

@@ -8,7 +8,7 @@ from PyQt5.QtGui     import QPainter
 from lib.core.event.center        import get_event_center, EventType, Event
 from lib.core.clickthrough_state  import is_clickthrough_enabled
 from lib.core.physics             import get_physics_world, PhysicsBody
-from lib.core.unified_draw import Layer, get_layer_manager
+from lib.core.render.layers import get_layer_manager, WindowLayer
 from lib.script.voice.snow          import SnowSound
 from lib.core.render.visuals.resources import ImageResource
 from lib.core.render.visuals.visuals import build_world_object_batch
@@ -88,7 +88,7 @@ class SnowLeopard(QWidget):
         self.setAttribute(Qt.WA_TransparentForMouseEvents, is_clickthrough_enabled())
         self.setFixedSize(*size)
         self.setCursor(Qt.ArrowCursor)
-        get_layer_manager().register(self, Layer.WORLD_OBJECT)
+        get_layer_manager().register(self, WindowLayer.WORLD_OBJECT)
 
         # ── 物理体 ────────────────────────────────────────────────
         w, h = size

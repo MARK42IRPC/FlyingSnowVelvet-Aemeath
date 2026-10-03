@@ -1,10 +1,10 @@
 # Render 层边界契约
 
-更新时间：2026-10-02
+更新时间：2026-10-03
 
 本文档定义 `lib/core/render/` 的目标结构与依赖边界。它不是阶段计划，而是结构改建完成后必须成立的规则。
 
-**状态：第 6 节迁移顺序 1、2（目录切分）、3 已执行；后端中立协议与统一数据类型已落地（第 11 节），控件层“描述 + 后端渲染”已滚动迁移气泡框（第 12 节）、说明书、语音指示器与播放进度条（第 13 节）；排布解算已收敛到 `visuals/` 并由 `PlacementSpec` 统一解算（第 14 节，档位 0/1），右键按钮族的逐控件锚点事件链已收敛为声明式 `AnchorGraph` 且 Qt 改为消费共享布局（第 15 节，档位 2/3）。** 目录与引用规则以本文档为准；改建前的事实源是 [Qt 边界契约](Qt边界契约.md) 与 [跨后端视觉表现契约](视觉表现契约.md)，那两份文档继续负责“哪些内容算视觉逻辑”和“什么算无 Qt”。第一章描述的是最终目标；产品控件面（`lib/script/ui` 直接 `import PyQt5`）仍需逐个控件迁移，当前待迁清单以 `tests/test_qt_dependency_boundaries.py` 的 `frozen_ui_qt_importers` 为准，滚动顺序见第 13 节末尾。
+**状态：第 6 节迁移顺序 1、2（目录切分）、3 已执行；图层能力已收敛到 `lib/core/render/layers/`（第 16 节）；后端中立协议与统一数据类型已落地（第 11 节），控件层“描述 + 后端渲染”已滚动迁移气泡框（第 12 节）、说明书、语音指示器与播放进度条（第 13 节）；排布解算已收敛到 `visuals/` 并由 `PlacementSpec` 统一解算（第 14 节，档位 0/1），右键按钮族的逐控件锚点事件链已收敛为声明式 `AnchorGraph` 且 Qt 改为消费共享布局（第 15 节，档位 2/3）。** 目录与引用规则以本文档为准；改建前的事实源是 [Qt 边界契约](Qt边界契约.md) 与 [跨后端视觉表现契约](视觉表现契约.md)，那两份文档继续负责“哪些内容算视觉逻辑”和“什么算无 Qt”。第一章描述的是最终目标；产品控件面（`lib/script/ui` 直接 `import PyQt5`）仍需逐个控件迁移，当前待迁清单以 `tests/test_qt_dependency_boundaries.py` 的 `frozen_ui_qt_importers` 为准，滚动顺序见第 13 节末尾。
 
 本文只新增目录与引用规则，不改变任何视觉语义、数值来源或渲染结果。改建过程中出现分歧时，以 [视觉表现契约](视觉表现契约.md) 和当前 Qt 基准为事实源。
 
@@ -29,6 +29,7 @@
 lib/core/render/
   router.py              按配置选择后端并装配；跨后端判定的唯一位置
   registry.py            后端注册表与服务读取入口
+  layers/                图层能力的唯一落点（绘制层 / 排序 / 层内 z 槽 / 顶层窗口层级）
   visuals/               共享视觉事实源（后端中立类型、presenter、色板、屏幕/锚点算法、布局/链路解算）
   backends/
     base.py              后端共同接口：DesktopBackendBundle 与后端中立协议
@@ -696,5 +697,55 @@ DX 保持未切分：DX 仍是 `available=False` 的实验实现，没有第二�
 验证：
 
 - `py -3 -m unittest discover -s tests -p "test_*.py" -q`：2095 通过、10 跳过。
+- `py -3 -m unittest discover -s tests/dx -p "test_*.py" -q`：122 通过、7 跳过。
+- `py -3 -m ruff check lib config scripts tests` 归零；`py -3 -m compileall -q config lib scripts tests` 通过。
+
+## 16. 第九轮执行记录（图层能力收敛到 `lib/core/render/layers/`）
+
+本轮把散落在 `lib/core/` 顶层的图层能力收成一个包，并把「画布绘制层」与「顶层窗口层级」掰开。
+
+**目录落点**
+
+```text
+lib/core/render/layers/
+  __init__.py    唯一入口：顶层立即导出 spec/order/draws，窗口与宿主按需惰性导出
+  spec.py        Layer：一处画布内部的绘制层枚举（值来自 config/config_layer.py）
+  order.py       normalize_layer / layer_name / draw_order_key / order_render_values
+  draws.py       层内 z 槽：BASE..OVERLAY_THIRD 一条递增阶梯
+  hosts.py       LayerWindowHost / WindowHost 协议与 passive 实现
+  windows.py     WindowLayer / LayerWindow / WindowsLayerManager / get_layer_manager
+```
+
+- 旧路径 `lib/core/layer.py`、`lib/core/layer_manager.py`、`lib/core/window_host.py` 与
+  `lib/core/render/visuals/ordering.py` 全部删除，不保留兼容壳；
+- 引用规则：业务层与 `visuals/` 只从 `lib.core.render.layers` 取图层能力，
+  不再各引一处；`visuals/` 只依赖 `spec` / `order` / `draws` 三块纯数据，
+  窗口管理器与宿主协议因反向依赖 `visuals.types` 改为惰性取值，避免
+  `visuals -> layers -> windows -> registry -> visuals` 在导入期成环。
+
+**两个枚举**
+
+- `Layer`：一处 `DrawBatch` 内部的绘制层，绘制命令与 `DrawScene` / `DrawRequest` 继续用它；
+- `WindowLayer`：顶层窗口整块的桌面 z-order，`get_layer_manager().register(...)` 一律用它；
+- 两者共享 `config/config_layer.py` 的同一份 `LAYER_VALUES`，
+  数值相同但语义与使用方不同，不再混用同一个名字。
+
+**层内 z 槽**
+
+- presenter 里手写的 `z=1..7` 字面量改为 `layers.draws` 的具名槽
+  （`BASE` / `FRAME` / `INNER` / `MIDDLE` / `CONTENT` / `OVERLAY` / `OVERLAY_SECOND` / `OVERLAY_THIRD`）；
+- 数值与迁移前逐项一致，渲染结果逐字节不变，`tests/test_unified_draw_order.py`
+  与像素比对测试是基线。
+
+**守卫**
+
+- `tests/test_code_structure_boundaries.py::test_layer_capabilities_live_only_under_the_layers_package`
+  钉住 `layers/` 的文件清单与四条旧路径不复活；
+- `tests/test_qt_dependency_boundaries.py::test_layer_manager_only_uses_backend_neutral_window_hosts`
+  的检查目标改为 `layers/windows.py` 与 `layers/hosts.py`。
+
+验证：
+
+- `py -3 -m unittest discover -s tests -p "test_*.py" -q`：2101 通过、10 跳过。
 - `py -3 -m unittest discover -s tests/dx -p "test_*.py" -q`：122 通过、7 跳过。
 - `py -3 -m ruff check lib config scripts tests` 归零；`py -3 -m compileall -q config lib scripts tests` 通过。

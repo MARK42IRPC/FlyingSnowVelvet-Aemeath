@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from lib.core.layer import Layer, draw_order_key, normalize_layer
+from lib.core.render.layers import Layer, draw_order_key, normalize_layer
 
 
 QtPaintCallback = Callable[[object, object | None], None]

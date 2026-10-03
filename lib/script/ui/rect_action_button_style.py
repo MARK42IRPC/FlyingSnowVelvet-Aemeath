@@ -11,7 +11,7 @@ from lib.core.anchor_utils import animate_opacity, apply_ui_opacity
 from lib.core.render.visuals.application_visuals import build_rect_action_button_visual
 from lib.core.render.visuals.types import FontSpec
 from lib.script.ui.render_bridge import create_draw_backend, ui_font as get_ui_font
-from lib.core.unified_draw import Layer, get_layer_manager
+from lib.core.render.layers import get_layer_manager, WindowLayer
 
 
 _DRAW_BACKEND = create_draw_backend()
@@ -42,7 +42,7 @@ class RectActionButton(QWidget):
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFixedSize(width, height)
         self.setCursor(Qt.PointingHandCursor)
-        get_layer_manager().register(self, Layer.PET_UI)
+        get_layer_manager().register(self, WindowLayer.PET_UI)
 
         self._opacity = QGraphicsOpacityEffect(self)
         self._opacity.setOpacity(0.0)

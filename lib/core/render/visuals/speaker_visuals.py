@@ -8,7 +8,7 @@ from config.config_music import SPEAKER_SEARCH_UI
 from .palette import COLORS, UI_THEME
 from config.font_config import FONT, get_ui_font_family
 from config.scale import scale_px
-from lib.core.layer import Layer
+from lib.core.render.layers import BASE, CONTENT, Layer, MIDDLE, OVERLAY
 from lib.core.speaker_band import default_band
 
 from .commands import DrawBatch, RectCommand, TextAlignment, TextCommand
@@ -228,7 +228,7 @@ def build_speaker_search_visual(
         height=slider_height,
         ticks=SLIDER_TICK_COUNT,
         layer=layer,
-        z=0,
+        z=BASE,
     )
     band_rect = Rect(
         total_width + BAND_SLIDER_GAP, 0, BAND_SLIDER_WIDTH, band_height,
@@ -240,19 +240,19 @@ def build_speaker_search_visual(
         width=band_rect.width,
         height=band_rect.height,
         layer=layer,
-        z=0,
+        z=BASE,
     )
     commands: list[object] = list(slider_visual.batch.commands)
     commands.extend(band_visual.batch.commands)
     for name, rect in controls:
         state = "pressed" if pressed == name and hovered == name else "hover" if hovered == name else "normal"
-        commands.extend(_button_commands(rect, labels[name], font, state=state, layer=layer, z=0))
-    commands.extend(_panel_commands(input_panel, layer=layer, z=0))
+        commands.extend(_button_commands(rect, labels[name], font, state=state, layer=layer, z=BASE))
+    commands.extend(_panel_commands(input_panel, layer=layer, z=BASE))
     commands.extend((
-        RectCommand(entry_rect, fill=COLORS["pink"], layer=layer, z=3),
+        RectCommand(entry_rect, fill=COLORS["pink"], layer=layer, z=MIDDLE),
         RectCommand(
             Rect(entry_rect.x + 2, entry_rect.y + 2, entry_rect.width - 4, entry_rect.height - 4),
-            fill=SPEAKER_SEARCH_UI.get("entry_bg_color", (255, 255, 255)), layer=layer, z=4,
+            fill=SPEAKER_SEARCH_UI.get("entry_bg_color", (255, 255, 255)), layer=layer, z=CONTENT,
         ),
         TextCommand(
             (str(input_text or "") + str(composition or "")) or "输入歌曲名搜索...",
@@ -262,32 +262,32 @@ def build_speaker_search_visual(
             alignment=int(TextAlignment.LEFT | TextAlignment.VCENTER),
             alpha=0.45 if not input_text and not composition else 1.0,
             layer=layer,
-            z=5,
+            z=OVERLAY,
         ),
     ))
     search_state = "pressed" if pressed == "search" and hovered == "search" else "hover" if hovered == "search" else "normal"
-    commands.extend(_button_commands(search_rect, labels["search"], font, state=search_state, layer=layer, z=0))
+    commands.extend(_button_commands(search_rect, labels["search"], font, state=search_state, layer=layer, z=BASE))
 
     result_panel = Rect(0, result_y, result_width, result_height)
-    commands.extend(_panel_commands(result_panel, layer=layer, z=0))
+    commands.extend(_panel_commands(result_panel, layer=layer, z=BASE))
     row_rects: list[Rect] = []
     y = result_y + border
     if searching or not page_items:
         text_rect = Rect(border + padding_x, y, result_width - border * 2 - padding_x * 2, row_height)
         commands.append(TextCommand(
             display_items[0], font, COLORS["black"], text_rect,
-            alignment=int(TextAlignment.LEFT | TextAlignment.VCENTER), layer=layer, z=4,
+            alignment=int(TextAlignment.LEFT | TextAlignment.VCENTER), layer=layer, z=CONTENT,
         ))
     else:
         for index, text in enumerate(page_items):
             row_rect = Rect(border, y, result_width - border * 2, row_height)
             row_rects.append(row_rect)
             if index == selected:
-                commands.append(RectCommand(row_rect, fill=UI_THEME["highlight"], layer=layer, z=3))
+                commands.append(RectCommand(row_rect, fill=UI_THEME["highlight"], layer=layer, z=MIDDLE))
             text_rect = Rect(row_rect.x + padding_x, y, row_rect.width - padding_x * 2, row_height)
             commands.append(TextCommand(
                 _elide(text, text_rect.width, metrics), font, COLORS["black"], text_rect,
-                alignment=int(TextAlignment.LEFT | TextAlignment.VCENTER), layer=layer, z=4,
+                alignment=int(TextAlignment.LEFT | TextAlignment.VCENTER), layer=layer, z=CONTENT,
             ))
             y += row_height
     page_rect = None
@@ -295,7 +295,7 @@ def build_speaker_search_visual(
         page_rect = Rect(border, y, result_width - border * 2, row_height)
         commands.append(TextCommand(
             f"◀ {page + 1}/{max_page + 1} ▶", font, COLORS["black"], page_rect,
-            alignment=int(TextAlignment.HCENTER | TextAlignment.VCENTER), layer=layer, z=4,
+            alignment=int(TextAlignment.HCENTER | TextAlignment.VCENTER), layer=layer, z=CONTENT,
         ))
     return SpeakerSearchVisualDescription(
         Size(width, height), entry_rect, search_rect, controls,

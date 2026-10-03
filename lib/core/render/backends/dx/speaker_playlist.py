@@ -18,8 +18,8 @@ from lib.core.render.visuals.speaker_playlist_visuals import (
 )
 from lib.core.render.visuals.types import Point, Rect
 from lib.core.input.types import Key, MouseButton, MouseButtons
-from lib.core.layer import Layer
-from lib.core.layer_manager import get_layer_manager
+from lib.core.render.layers import Layer, WindowLayer
+from lib.core.render.layers import get_layer_manager
 from lib.core.logger import get_logger
 from lib.core.world_objects import WorldObjectInstance
 
@@ -280,7 +280,7 @@ class DxSpeakerPlaylistWindow:
         )
         try:
             self._context.register_poller(host)
-            get_layer_manager().register(host, Layer.PANEL, name="DxSpeakerPlaylist")
+            get_layer_manager().register(host, WindowLayer.PANEL, name="DxSpeakerPlaylist")
         except Exception:
             self._context.unregister_poller(host)
             host.cleanup()

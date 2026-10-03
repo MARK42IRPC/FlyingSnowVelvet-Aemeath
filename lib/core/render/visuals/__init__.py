@@ -36,7 +36,6 @@ from .image_loader import (
     resize_image_resource_to_height,
     resize_image_resource_to_width,
 )
-from .ordering import order_render_values
 from .resources import ImageResource, RasterFrame
 from .scene import DrawScene
 from .screen import clamp_rect_position, screen_for_point, virtual_screen_rect
@@ -95,7 +94,6 @@ __all__ = [
     "Point",
     "Rect",
     "ImageResource",
-    "order_render_values",
     "RasterFrame",
     "resize_image_resource",
     "resize_image_resource_to_height",

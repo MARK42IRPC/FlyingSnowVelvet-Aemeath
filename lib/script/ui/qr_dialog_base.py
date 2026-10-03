@@ -20,7 +20,7 @@ from lib.core.render.visuals.application_visuals import (
 from lib.core.render.visuals.image_loader import load_image_resource
 from lib.core.render.visuals.resources import ImageResource
 from lib.script.ui.render_bridge import centered_placement, create_draw_backend, screen_rect_for_point as get_screen_geometry_for_point
-from lib.core.unified_draw import Layer, get_layer_manager
+from lib.core.render.layers import Layer, get_layer_manager, WindowLayer
 from lib.script.ui.workbench_floating import WorkbenchFloatingWindow
 
 
@@ -47,7 +47,7 @@ class BaseQrDialog(WorkbenchFloatingWindow):
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFocusPolicy(Qt.NoFocus)
         self.setFixedSize(*qr_panel_size())
-        get_layer_manager().register(self, Layer.DIALOG)
+        get_layer_manager().register(self, WindowLayer.DIALOG)
 
         self._visible = False
         self._title = str(title or "").strip()

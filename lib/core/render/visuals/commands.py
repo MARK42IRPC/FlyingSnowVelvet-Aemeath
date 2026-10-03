@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from dataclasses import replace
 from enum import IntFlag
 
-from lib.core.layer import Layer, normalize_layer
+from lib.core.render.layers import Layer, normalize_layer
 from .resources import RasterFrame
 from .types import (
     Color, FontSpec, Point, Rect, Size, coerce_color, coerce_point,

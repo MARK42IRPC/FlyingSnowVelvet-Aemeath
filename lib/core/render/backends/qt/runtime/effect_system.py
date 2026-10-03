@@ -17,8 +17,8 @@ from PyQt5.QtGui import QFont, QFontMetrics, QPainter
 from PyQt5.QtWidgets import QWidget
 
 from lib.core.event.center import Event, EventType, get_event_center
-from lib.core.layer import Layer
-from lib.core.layer_manager import get_layer_manager
+from lib.core.render.layers import Layer, WindowLayer
+from lib.core.render.layers import get_layer_manager
 from lib.core.logger import get_logger
 from lib.core.render.visuals.resources import ImageResource
 from lib.core.render.visuals.visuals import build_effect_batch, load_effect_resource, resolve_effect_font
@@ -114,7 +114,7 @@ class EffectOverlay(QWidget):
         self._no_activate_applied = False
         self.setStyleSheet("background: transparent;")
         self._layer_manager = get_layer_manager()
-        self._layer_manager.register(self, Layer.EFFECT, name='EffectOverlay')
+        self._layer_manager.register(self, WindowLayer.EFFECT, name='EffectOverlay')
 
         self._effects = []
         self._paused = False

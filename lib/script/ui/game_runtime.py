@@ -20,7 +20,7 @@ from lib.core.game_obstacles import (
 from lib.core.render.visuals.types import Rect
 from lib.core.hash_cmd_registry import get_hash_cmd_registry
 from lib.core.logger import get_logger
-from lib.core.unified_draw import Layer, get_layer_manager
+from lib.core.render.layers import Layer, get_layer_manager, WindowLayer
 from lib.script.ui.render_bridge import create_component_layer, create_component_layer_request, screen_rect_for_point as get_screen_geometry_for_point, ui_font as get_ui_font
 from lib.script.voice.ams_open_lahai_tetris import AmsOpenLahaiTetrisSound
 from lib.script.gemes.MAIN.game_packages import (
@@ -113,7 +113,7 @@ class GameRuntimePanel(QWidget):
         )
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFocusPolicy(Qt.StrongFocus)
-        get_layer_manager().register(self, Layer.PANEL)
+        get_layer_manager().register(self, WindowLayer.PANEL)
 
         self._render_core = create_component_layer()
         request = create_component_layer_request(

@@ -4,7 +4,7 @@ import math
 import random
 
 from config.config import ANIMATION, BEHAVIOR, UI
-from lib.core.layer_manager import get_layer_manager
+from lib.core.render.layers import get_layer_manager
 from lib.core.input.click import ClickHandler
 from lib.core.input.key import KeyHandler
 from lib.core.input.types import KeyboardInput, MouseButton, MouseInput
@@ -19,7 +19,7 @@ _logger = get_logger(__name__)
 from lib.core.event.key_handler import KeyEventHandler
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.draw_core import DrawRequest, get_draw_core
-from lib.core.layer import Layer, normalize_layer
+from lib.core.render.layers import Layer, normalize_layer
 from lib.core.render.visuals.types import Point, Size, coerce_point
 from lib.core.action import Actions
 from lib.core.timing import register_timing_manager

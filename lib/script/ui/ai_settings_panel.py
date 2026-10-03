@@ -74,8 +74,8 @@ from lib.script.ui.ai_settings_tabs import (
 from lib.core.anchor_utils import animate_opacity
 from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import get_event_center, EventType, Event
-from lib.core.layer import Layer
-from lib.core.layer_manager import get_layer_manager
+from lib.core.render.layers import WindowLayer
+from lib.core.render.layers import get_layer_manager
 from lib.core.logger import get_logger
 from lib.script.app.startup_probe import load_saved_watermark_payload as _load_saved_watermark_payload
 from lib.script.SEanima.clip import (
@@ -1725,7 +1725,7 @@ class AISettingsPanel(QWidget):
         self.setWindowTitle("控制面板")
         self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
-        get_layer_manager().register(self, Layer.PANEL, name='AISettingsPanel')
+        get_layer_manager().register(self, WindowLayer.PANEL, name='AISettingsPanel')
         self.setMinimumWidth(int(round(scale_px(520) * _PANEL_SCALE)))
         self._layer = scale_px(2, min_abs=1)
         self._border = self._layer * 2

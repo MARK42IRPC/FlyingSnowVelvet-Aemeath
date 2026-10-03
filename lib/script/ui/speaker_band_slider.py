@@ -39,7 +39,7 @@ from lib.core.speaker_band import (
     get_speaker_band,
     set_speaker_band,
 )
-from lib.core.unified_draw import Layer, get_layer_manager
+from lib.core.render.layers import Layer, get_layer_manager, WindowLayer
 
 
 DEFAULT_WIDTH = BAND_SLIDER_WIDTH
@@ -60,7 +60,7 @@ class SpeakerBandSlider(QWidget):
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFixedSize(int(width), int(height))
         self.setCursor(Qt.PointingHandCursor)
-        get_layer_manager().register(self, Layer.PET_UI)
+        get_layer_manager().register(self, WindowLayer.PET_UI)
 
         self._draw_backend = create_draw_backend()
         self._event_center = get_event_center()

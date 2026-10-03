@@ -281,5 +281,60 @@ class CodeStructureBoundaryTests(unittest.TestCase):
 
 
 
+    def test_layer_capabilities_live_only_under_the_layers_package(self):
+        """图层能力的唯一落点是 `lib/core/render/layers/`。
+
+        这次迁移把 `lib/core/layer.py`、`lib/core/layer_manager.py`、
+        `lib/core/window_host.py` 与 `visuals/ordering.py` 全部并入 `layers/`。
+        旧路径复活意味着系统里又出现第二份层事实源，因此直接钉死。
+        """
+        repo_root = Path(__file__).resolve().parents[1]
+        layers = repo_root / "lib" / "core" / "render" / "layers"
+
+        for relative in (
+            "__init__.py",
+            "spec.py",
+            "order.py",
+            "draws.py",
+            "hosts.py",
+            "windows.py",
+        ):
+            self.assertTrue((layers / relative).is_file(), relative)
+
+        for retired in (
+            "lib/core/layer.py",
+            "lib/core/layer_manager.py",
+            "lib/core/window_host.py",
+            "lib/core/render/visuals/ordering.py",
+        ):
+            self.assertFalse(
+                (repo_root / retired).exists(),
+                f"旧路径 {retired} 不得恢复；图层能力已并入 lib/core/render/layers/",
+            )
+
+        retired_modules = {
+            "lib.core.layer",
+            "lib.core.layer_manager",
+            "lib.core.window_host",
+            "lib.core.render.visuals.ordering",
+        }
+        violations = []
+        for path in sorted((repo_root / "lib").rglob("*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    names = [alias.name for alias in node.names]
+                elif isinstance(node, ast.ImportFrom):
+                    names = [node.module or ""]
+                else:
+                    continue
+                for name in names:
+                    if name in retired_modules:
+                        violations.append(
+                            f"{path.relative_to(repo_root).as_posix()}:{node.lineno}:{name}"
+                        )
+        self.assertEqual(violations, [], "先前的图层模块路径不得再被导入")
+
+
 if __name__ == "__main__":
     unittest.main()

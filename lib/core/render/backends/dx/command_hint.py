@@ -18,8 +18,8 @@ from lib.core.render.visuals.screen import clamp_rect_position
 from lib.core.render.visuals.types import Point, Rect
 from lib.core.hash_cmd_registry import get_hash_cmd_registry
 from lib.core.input.types import Key, MouseButton
-from lib.core.layer import Layer
-from lib.core.layer_manager import get_layer_manager
+from lib.core.render.layers import Layer, WindowLayer
+from lib.core.render.layers import get_layer_manager
 
 from .loop import DxLoopContext
 from .opacity import DxOpacityAnimator
@@ -120,7 +120,7 @@ class DxCommandHintWindow:
         )
         try:
             self._context.register_poller(host)
-            get_layer_manager().register(host, Layer.PET_UI, name="DxCommandHint")
+            get_layer_manager().register(host, WindowLayer.PET_UI, name="DxCommandHint")
         except Exception:
             self._context.unregister_poller(host)
             host.cleanup()

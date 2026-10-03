@@ -14,7 +14,7 @@ from lib.core.render.visuals.visuals import (
     build_command_shell_batch,
     resolve_command_panel_geometry,
 )
-from lib.core.unified_draw import Layer, get_layer_manager
+from lib.core.render.layers import Layer, get_layer_manager, WindowLayer
 from lib.script.ui.render_bridge import create_draw_backend, qt_color_name, qpoint_from_point, cmd_font as get_cmd_font, move_widget_to_global, screen_rect_for_point as get_screen_geometry_for_point, widget_global_rect
 from lib.core.anchor_utils import (
     animate_opacity,
@@ -43,7 +43,7 @@ class CommandDialog(QWidget):
         )
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFixedSize(UI['cmd_window_width'], UI['cmd_window_height'])
-        get_layer_manager().register(self, Layer.PET_UI)
+        get_layer_manager().register(self, WindowLayer.PET_UI)
 
         self._on_command = on_command
         self._close_button = close_button  # 引用关闭按钮

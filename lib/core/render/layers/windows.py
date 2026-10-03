@@ -1,21 +1,43 @@
-"""统一绘制层级管理器。"""
+"""顶层窗口的 z-order 管理器。
+
+和 `spec.Layer`（一处画布内部的绘制层）不同，本模块管的是"每个顶层窗口整块
+排在桌面上的第几层"。窗口彼此不共享画布，只能靠后端原生的堆叠能力排序，
+因此这里只依赖 `hosts.LayerWindowHost` 的存活 / 可见 / 前置 / 原生堆叠。
+"""
 from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from enum import IntEnum
 
-from lib.core.render.registry import get_deferred_call, get_layer_window_host_factory
-from lib.core.layer import Layer, draw_order_key, normalize_layer
-from lib.core.window_host import (
+from .hosts import (
     LayerWindowHost,
     LayerWindowHostFactory,
     create_passive_layer_window_host,
 )
+from .order import draw_order_key, normalize_layer
+from .spec import Layer
+
+
+class WindowLayer(IntEnum):
+    """顶层窗口层级：数值越大越靠前，取值与 `Layer` 共享同一份配置。"""
+
+    BACKGROUND = int(Layer.BACKGROUND)
+    WORLD_OBJECT = int(Layer.WORLD_OBJECT)
+    MAIN_PET = int(Layer.MAIN_PET)
+    PET_EFFECT_BELOW = int(Layer.PET_EFFECT_BELOW)
+    PARTICLE = int(Layer.PARTICLE)
+    EFFECT = int(Layer.EFFECT)
+    PET_UI = int(Layer.PET_UI)
+    PANEL = int(Layer.PANEL)
+    DIALOG = int(Layer.DIALOG)
+    TOOLTIP = int(Layer.TOOLTIP)
+    SYSTEM_MODAL = int(Layer.SYSTEM_MODAL)
 
 
 @dataclass
 class LayerWindow:
-    """注册到 LayerManager 的窗口记录。"""
+    """注册到 WindowsLayerManager 的窗口记录。"""
 
     layer: int
     z: int
@@ -24,7 +46,7 @@ class LayerWindow:
     name: str
 
 
-class LayerManager:
+class WindowsLayerManager:
     """集中管理项目全部顶层窗口的 z-order。"""
 
     def __init__(
@@ -43,7 +65,7 @@ class LayerManager:
     def register(
         self,
         window: object,
-        layer=Layer.PET_UI,
+        layer=WindowLayer.PET_UI,
         *,
         z: int = 0,
         name: str | None = None,
@@ -142,7 +164,12 @@ class LayerManager:
                 self._defer_call(delay, self.enforce_now)
 
     def _defer_call(self, delay_ms: int, callback: Callable[[], None]) -> None:
-        defer = self._defer or get_deferred_call()
+        defer = self._defer
+        if defer is None:
+            # 延迟到调用时再取注册表，理由同 `get_layer_manager`。
+            from lib.core.render.registry import get_deferred_call
+
+            defer = get_deferred_call()
         if defer is None:
             callback()
             return
@@ -217,18 +244,30 @@ class LayerManager:
                 return
 
 
-_INSTANCE: LayerManager | None = None
+_INSTANCE: WindowsLayerManager | None = None
 
 
-def get_layer_manager() -> LayerManager:
-    """返回全局 LayerManager 单例。"""
+def get_layer_manager() -> WindowsLayerManager:
+    """返回全局 WindowsLayerManager 单例。"""
     global _INSTANCE
     if _INSTANCE is None:
-        _INSTANCE = LayerManager(host_factory=get_layer_window_host_factory())
+        # 延迟到调用时再取注册表，避免 `layers -> windows -> registry -> visuals` 在导入期成环。
+        from lib.core.render.registry import get_layer_window_host_factory
+
+        _INSTANCE = WindowsLayerManager(host_factory=get_layer_window_host_factory())
     return _INSTANCE
 
 
 def cleanup_layer_manager() -> None:
-    """清理全局 LayerManager。"""
+    """清理全局 WindowsLayerManager。"""
     global _INSTANCE
     _INSTANCE = None
+
+
+__all__ = [
+    'WindowLayer',
+    'LayerWindow',
+    'WindowsLayerManager',
+    'get_layer_manager',
+    'cleanup_layer_manager',
+]

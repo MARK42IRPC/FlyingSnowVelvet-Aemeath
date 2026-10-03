@@ -30,7 +30,7 @@ from lib.core.render.visuals.image_loader import load_image_resource, resize_ima
 from lib.core.render.visuals.resources import ImageResource, RasterFrame
 from lib.core.render.visuals.screen import clamp_rect_position
 from lib.core.render.visuals.types import Color, FontSpec, Point, Rect, Size
-from lib.core.layer import Layer, normalize_layer
+from lib.core.render.layers import BASE, CONTENT, FRAME, INNER, MIDDLE, Layer, normalize_layer
 from lib.core.world_objects import format_clock_countdown
 
 
@@ -288,7 +288,7 @@ def build_command_shell_batch(
             ),
             fill=_color(COLORS.get("cyan")),
             layer=layer,
-            z=1,
+            z=FRAME,
         ),
         RectCommand(
             Rect(
@@ -299,7 +299,7 @@ def build_command_shell_batch(
             ),
             fill=_color(COLORS.get("pink")),
             layer=layer,
-            z=2,
+            z=INNER,
         ),
     ))
 
@@ -340,7 +340,7 @@ def build_command_panel_batch(
             stroke=_color(COLORS.get("pink")),
             stroke_width=border_layer,
             layer=layer,
-            z=3,
+            z=MIDDLE,
         ),
         TextCommand(
             value,
@@ -354,7 +354,7 @@ def build_command_panel_batch(
             ),
             alignment=int(TextAlignment.LEFT | TextAlignment.VCENTER),
             layer=layer,
-            z=4,
+            z=CONTENT,
         ),
     ))
     return DrawBatch(tuple(commands))
@@ -431,7 +431,7 @@ def build_world_object_batch(
             flipped=flipped,
             scale=1.0,
             layer=int(Layer.WORLD_OBJECT),
-            z=0,
+            z=BASE,
             order=order,
             target_size=Size(*resource.size),
         ))
@@ -448,7 +448,7 @@ def build_world_object_batch(
             alignment=int(TextAlignment.HCENTER | TextAlignment.VCENTER),
             alpha=alpha,
             layer=int(Layer.WORLD_OBJECT),
-            z=1,
+            z=FRAME,
             order=order,
         ))
     return DrawBatch(tuple(commands), (ResourceRevision(resource.resource_id, 1),))

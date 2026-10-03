@@ -27,7 +27,7 @@ from config.scale import scale_px
 from lib.core.anchor_utils import apply_ui_opacity
 from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import Event, EventType, get_event_center
-from lib.core.unified_draw import Layer, get_layer_manager
+from lib.core.render.layers import get_layer_manager, WindowLayer
 from lib.script.gsvmove.package_manager import (
     VoiceInstallResult,
     VoicePackageCancelled,
@@ -94,7 +94,7 @@ class _VoiceDriveComboBox(QComboBox):
         layer_manager = get_layer_manager()
         layer_manager.register(
             popup,
-            Layer.DIALOG,
+            WindowLayer.DIALOG,
             z=1,
             name="VoicePackageDriveDropdown",
         )
@@ -307,7 +307,7 @@ class VoicePackageManagementBar(QFrame):
             """
         )
         layer_manager = get_layer_manager()
-        layer_manager.register(box, Layer.DIALOG, z=1, name="VoicePackageRemovalConfirmation")
+        layer_manager.register(box, WindowLayer.DIALOG, z=1, name="VoicePackageRemovalConfirmation")
         try:
             return box.exec_() == QMessageBox.Yes
         finally:
@@ -403,7 +403,7 @@ class VoicePackageInstallerDialog(WorkbenchFloatingWindow):
         self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFixedSize(_WIDTH, _HEIGHT)
-        get_layer_manager().register(self, Layer.DIALOG, name="VoicePackageInstallerDialog")
+        get_layer_manager().register(self, WindowLayer.DIALOG, name="VoicePackageInstallerDialog")
         self._visible = False
         self._busy = False
         self._completed = False
@@ -545,7 +545,7 @@ class VoicePackageInstallerDialog(WorkbenchFloatingWindow):
         # it before every subsequent display, including a backgrounded task.
         get_layer_manager().register(
             self,
-            Layer.DIALOG,
+            WindowLayer.DIALOG,
             name="VoicePackageInstallerDialog",
         )
         self._visible = True

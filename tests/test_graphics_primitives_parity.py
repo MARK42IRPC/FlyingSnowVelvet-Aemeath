@@ -63,7 +63,7 @@ from lib.core.render.visuals.commands import (
     build_polygon_path,
 )
 from lib.core.render.visuals.types import Color, Point, Rect
-from lib.core.layer import Layer
+from lib.core.render.layers import Layer
 from lib.core.render.backends.qt.drawing.draw_backend import QtDrawBackend
 
 #: Maximum coverage delta accepted for a pixel whose centre sits on an edge.

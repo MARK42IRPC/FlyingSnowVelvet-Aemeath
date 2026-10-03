@@ -22,7 +22,7 @@ from config.scale import scale_px
 from lib.core.event.center import Event, EventType, get_event_center
 from lib.core.effect_utils import spawn_flash_text_effect, spawn_smooth_image_effect
 from lib.core.particle_utils import spawn_particle_at_point, spawn_particle_in_rect
-from lib.core.unified_draw import Layer
+from lib.core.render.layers import Layer
 from lib.core.render.backends.qt.drawing.render_core import QtRenderCore, QtRenderRequest
 from lib.script.voice.ams_lahai_break_ams_record import AmsLahaiBreakAmsRecordSound
 from lib.script.voice.ams_lahai_combo_over_five import AmsLahaiComboOverFiveSound

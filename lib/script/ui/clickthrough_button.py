@@ -7,7 +7,7 @@ from config.config import UI, TIMEOUTS
 from config.scale import scale_px
 from config.tooltip_config import TOOLTIPS
 from lib.core.event.center import get_event_center, EventType, Event
-from lib.core.unified_draw import Layer, get_layer_manager
+from lib.core.render.layers import get_layer_manager, WindowLayer
 from lib.script.voice.ams_clickthrough_reminder import AmsClickthroughReminderSound
 from lib.core.anchor_utils import (
     animate_opacity,
@@ -41,7 +41,7 @@ class ClickThroughButton(QWidget):
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFixedSize(self.WIDTH, self.HEIGHT)
         self.setCursor(Qt.PointingHandCursor)
-        get_layer_manager().register(self, Layer.PET_UI)
+        get_layer_manager().register(self, WindowLayer.PET_UI)
 
         # 透明度效果
         self._opacity = QGraphicsOpacityEffect(self)

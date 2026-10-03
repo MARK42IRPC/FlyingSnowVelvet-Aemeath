@@ -4,8 +4,8 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QApplication
 
 from config.config import ANIMATION
-from lib.core.layer import Layer
-from lib.core.layer_manager import get_layer_manager
+from lib.core.render.layers import WindowLayer
+from lib.core.render.layers import get_layer_manager
 
 
 def setup_pet_window(owner) -> None:
@@ -32,7 +32,7 @@ def setup_pet_window(owner) -> None:
 def finalize_pet_window_startup(owner) -> None:
     """显示主窗口并完成启动后的 UI 预热。"""
     layer_manager = get_layer_manager()
-    layer_manager.register(owner, Layer.MAIN_PET, name='PetWindow')
+    layer_manager.register(owner, WindowLayer.MAIN_PET, name='PetWindow')
     owner.show()
     layer_manager.enforce_burst()
     owner._startup_voice_sound.play()

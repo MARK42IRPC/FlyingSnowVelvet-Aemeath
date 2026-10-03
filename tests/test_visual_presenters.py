@@ -44,7 +44,7 @@ from lib.core.render.visuals.visuals import (
     build_world_object_batch,
     update_speaker_intensity,
 )
-from lib.core.layer import Layer
+from lib.core.render.layers import Layer
 from lib.core.render.visuals.palette import COLORS as CORE_COLORS, UI_THEME as CORE_UI_THEME
 from lib.core.render.visuals.workbench_tokens import get_workbench_token_colors
 

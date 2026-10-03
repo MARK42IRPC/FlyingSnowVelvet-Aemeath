@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from config.font_config import FONT, get_ui_font_family
 from config.scale import scale_px
 from lib.core.announcement import AnnouncementDocument
-from lib.core.layer import Layer
+from lib.core.render.layers import BASE, CONTENT, FRAME, Layer, MIDDLE, OVERLAY_SECOND
 
 from .commands import DrawBatch, RectCommand, TextAlignment, TextCommand
 from .speaker_visuals import SpeakerTextMetrics
@@ -151,16 +151,16 @@ def _button(
         border = colors["pink_hover"] if is_primary else colors["cyan"]
     elif state == "pressed":
         fill = colors["cyan"] if is_primary else colors["border_strong"]
-    commands = [RectCommand(rect, fill=border, layer=layer, z=0)]
+    commands = [RectCommand(rect, fill=border, layer=layer, z=BASE)]
     inset = scale_px(1, min_abs=1)
     content = Rect(rect.x + inset, rect.y + inset, rect.width - inset * 2, rect.height - inset * 2)
-    commands.append(RectCommand(content, fill=fill, layer=layer, z=1))
+    commands.append(RectCommand(content, fill=fill, layer=layer, z=FRAME))
     commands.append(TextCommand(
         label,
         font,
         colors["canvas"] if is_primary else colors["text"],
         content,
-        alignment=int(TextAlignment.HCENTER | TextAlignment.VCENTER), layer=layer, z=4,
+        alignment=int(TextAlignment.HCENTER | TextAlignment.VCENTER), layer=layer, z=CONTENT,
     ))
     return commands
 
@@ -200,10 +200,10 @@ def build_announcement_visual(
     commands.extend(_panel(Rect(0, 0, width, height), layer))
     commands.extend((
         RectCommand(Rect(horizontal_margin, top_margin, scale_px(3, min_abs=2), scale_px(42, min_abs=36)),
-                    fill=colors["pink"], layer=layer, z=3),
+                    fill=colors["pink"], layer=layer, z=MIDDLE),
         RectCommand(Rect(horizontal_margin + scale_px(3, min_abs=2), top_margin,
                          scale_px(1, min_abs=1), scale_px(42, min_abs=36)),
-                    fill=colors["cyan"], layer=layer, z=3),
+                    fill=colors["cyan"], layer=layer, z=MIDDLE),
     ))
     title = document.title if document is not None and mode == "document" else "桌宠公告"
     commands.extend((
@@ -211,16 +211,16 @@ def build_announcement_visual(
             title, title_font, colors["text"],
             Rect(horizontal_margin + scale_px(16, min_abs=12), top_margin,
                  width - horizontal_margin * 2 - 56, 30),
-            alignment=int(TextAlignment.LEFT | TextAlignment.VCENTER), layer=layer, z=4,
+            alignment=int(TextAlignment.LEFT | TextAlignment.VCENTER), layer=layer, z=CONTENT,
         ),
         TextCommand(
             "SYSTEM BROADCAST  /  FSV", body_font, colors["text_dim"],
             Rect(horizontal_margin + scale_px(16, min_abs=12), top_margin + 27,
                  width - horizontal_margin * 2, 18),
-            alignment=int(TextAlignment.LEFT | TextAlignment.VCENTER), alpha=0.65, layer=layer, z=4,
+            alignment=int(TextAlignment.LEFT | TextAlignment.VCENTER), alpha=0.65, layer=layer, z=CONTENT,
         ),
     ))
-    commands.extend(_panel(body_rect, layer, z=3, raised=True))
+    commands.extend(_panel(body_rect, layer, z=MIDDLE, raised=True))
 
     content_width = body_rect.width - scale_px(32, min_abs=24)
     pages: list[tuple[tuple[str, str], ...]] = []
@@ -252,14 +252,14 @@ def build_announcement_visual(
             Rect(body_rect.x + scale_px(16, min_abs=12), y, content_width, line_height),
             alignment=int(TextAlignment.LEFT | TextAlignment.VCENTER),
             layer=layer,
-            z=6,
+            z=OVERLAY_SECOND,
         ))
         y += line_height
     if page_count > 1:
         commands.append(TextCommand(
             f"{page + 1}/{page_count}", body_font, colors["text_dim"],
             Rect(body_rect.x, body_rect.y + body_rect.height - 24, body_rect.width, 20),
-            alignment=int(TextAlignment.HCENTER | TextAlignment.VCENTER), layer=layer, z=6,
+            alignment=int(TextAlignment.HCENTER | TextAlignment.VCENTER), layer=layer, z=OVERLAY_SECOND,
         ))
 
     if page_count == 1:
@@ -275,7 +275,7 @@ def build_announcement_visual(
             ),
             alignment=int(TextAlignment.LEFT | TextAlignment.VCENTER),
             layer=layer,
-            z=4,
+            z=CONTENT,
         ))
 
     close_rect = Rect(width - horizontal_margin - 30, top_margin, 30, 30)

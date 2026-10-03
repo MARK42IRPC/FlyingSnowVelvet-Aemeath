@@ -31,7 +31,7 @@ from lib.script.ui.render_bridge import create_draw_backend, qpoint_from_point, 
 from config.scale import scale_px
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.hash_cmd_registry import get_hash_cmd_registry
-from lib.core.unified_draw import Layer, get_layer_manager
+from lib.core.render.layers import get_layer_manager, WindowLayer
 from lib.core.anchor_utils import apply_ui_opacity
 from lib.script.ui.page_turn_buttons import make_page_buttons, update_page_buttons_position
 
@@ -67,7 +67,7 @@ class CommandHintBox(QWidget):
         self.setFocusPolicy(Qt.NoFocus)
         # 启用鼠标追踪，支持悬停高亮
         self.setMouseTracking(True)
-        get_layer_manager().register(self, Layer.PET_UI)
+        get_layer_manager().register(self, WindowLayer.PET_UI)
 
         # ── 字体（粗体）────────────────────────────────────────────────
         self._font = get_ui_font()

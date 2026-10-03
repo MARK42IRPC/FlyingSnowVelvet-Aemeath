@@ -27,8 +27,8 @@ from PyQt5.QtWidgets import (
 )
 
 from config.scale import scale_px
-from lib.core.layer import Layer
-from lib.core.unified_draw import get_layer_manager
+from lib.core.render.layers import WindowLayer
+from lib.core.render.layers import get_layer_manager
 from lib.script.app.startup_probe import load_saved_watermark_payload
 from lib.script.bug_tracker.storage import BugInstanceInfo, BugRecord, BugTrackerLogStore
 from lib.script.workbench.theme import get_workbench_colors
@@ -149,7 +149,7 @@ class BugTrackerWindow(QtWorkbenchToolPage):
             self.setAttribute(Qt.WA_TranslucentBackground)
             self.setMinimumSize(scale_px(1040, min_abs=940), scale_px(660, min_abs=580))
             self.resize(scale_px(1180, min_abs=1020), scale_px(760, min_abs=640))
-            get_layer_manager().register(self, Layer.PANEL, name="BugTrackerWindow")
+            get_layer_manager().register(self, WindowLayer.PANEL, name="BugTrackerWindow")
 
         self._store = BugTrackerLogStore()
         self._records: list[BugRecord] = []
@@ -491,7 +491,7 @@ class BugTrackerWindow(QtWorkbenchToolPage):
             self._watermark_overlay.setVisible(not self._embedded)
 
     def _before_standalone_show(self) -> None:
-        get_layer_manager().register(self, Layer.PANEL, name='BugTrackerWindow')
+        get_layer_manager().register(self, WindowLayer.PANEL, name='BugTrackerWindow')
 
     def _after_standalone_hide(self) -> None:
         self._poll_timer.stop()

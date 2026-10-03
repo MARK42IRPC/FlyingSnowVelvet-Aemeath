@@ -1,4 +1,8 @@
-"""Backend-neutral window hosts used by core window ordering."""
+"""后端中立的窗口宿主协议：`WindowsLayerManager` 只依赖这一组最小能力。
+
+它们是「一个真实窗口」的最小抽象：存活、可见、前置与原生堆叠。具体的
+桌面窗口实现由各后端注入，这里只描述协议本身，不引入任何工具包类型。
+"""
 from __future__ import annotations
 
 import weakref
@@ -9,7 +13,7 @@ from lib.core.render.visuals.types import Rect
 
 
 class LayerWindowHost(Protocol):
-    """Minimal window surface required by ``LayerManager``."""
+    """Minimal window surface required by ``WindowsLayerManager``."""
 
     @property
     def identity(self) -> int:

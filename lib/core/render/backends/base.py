@@ -22,7 +22,7 @@ from lib.core.render.visuals.capture import ScreenCapture
 from lib.core.render.visuals.types import Point, Rect
 from lib.core.timing.scheduler import Scheduler
 from lib.core.tray_host import TrayHostFactory
-from lib.core.window_host import LayerWindowHostFactory, WindowHostFactory
+from lib.core.render.layers import LayerWindowHostFactory, WindowHostFactory
 
 
 class PresentationHost(Protocol):

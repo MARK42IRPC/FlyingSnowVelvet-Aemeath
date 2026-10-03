@@ -15,7 +15,7 @@ from config.config import UI
 from config.scale import scale_px
 from lib.core.anchor_utils import apply_ui_opacity
 from lib.core.event.center import get_event_center, EventType, Event
-from lib.core.unified_draw import Layer, get_layer_manager
+from lib.core.render.layers import get_layer_manager, WindowLayer
 from lib.script.ui.tooltip_panel import get_tooltip_panel
 from lib.script.ui.render_bridge import qt_color, digit_font as get_digit_font, ui_font as get_ui_font
 
@@ -247,7 +247,7 @@ class TrayContextMenu(QMenu):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._layer_manager = get_layer_manager()
-        self._layer_manager.register(self, Layer.DIALOG, name='TrayContextMenu')
+        self._layer_manager.register(self, WindowLayer.DIALOG, name='TrayContextMenu')
         self._menu_style = None
         self._fading_out = False
         self._allow_hide_once = False

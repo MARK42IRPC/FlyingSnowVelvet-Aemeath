@@ -34,7 +34,7 @@ from PyQt5.QtWidgets import (
 from config.scale import scale_px
 from lib.script.ui.workbench_settings_layout import create_settings_form
 from lib.core.compute_hub import get_compute_hub
-from lib.core.layer_manager import get_layer_manager
+from lib.core.render.layers import get_layer_manager
 from lib.core.logger import get_logger
 
 logger = get_logger(__name__)

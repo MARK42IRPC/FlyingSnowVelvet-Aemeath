@@ -28,7 +28,7 @@ from lib.core.render.visuals.commands import (
 )
 from lib.core.render.visuals.resources import RasterFrame
 from lib.core.render.visuals.types import Color, Point, Rect, Size
-from lib.core.layer import Layer
+from lib.core.render.layers import Layer
 from lib.core.render.backends.qt.drawing.draw_backend import QtDrawBackend
 
 

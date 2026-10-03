@@ -13,7 +13,7 @@ from PIL import Image
 
 from lib.core.render.visuals.commands import TextCommand
 from lib.core.render.visuals.visuals import build_effect_batch, estimate_text_advance
-from lib.core.layer import Layer
+from lib.core.render.layers import Layer
 
 # The real skill announcements rendered by the Lahai Tetris flash effect.
 _FLASH_TEXTS = (

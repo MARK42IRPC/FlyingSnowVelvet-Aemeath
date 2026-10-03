@@ -10,7 +10,7 @@ from config.scale import scale_px
 from lib.core.render.visuals.panel_visuals import build_tab_bar_visual
 from lib.core.render.visuals.types import Size
 from lib.script.ui.render_bridge import create_draw_backend, qt_color
-from lib.core.unified_draw import Layer, get_layer_manager
+from lib.core.render.layers import get_layer_manager, WindowLayer
 
 
 class TabBarWidget(QWidget):
@@ -57,7 +57,7 @@ def attach_ai_settings_tabs(panel, general_categories) -> None:
     )
     get_layer_manager().register(
         panel._tab_floating,
-        Layer.PANEL,
+        WindowLayer.PANEL,
         z=1,
         name='AISettingsTabBar',
     )

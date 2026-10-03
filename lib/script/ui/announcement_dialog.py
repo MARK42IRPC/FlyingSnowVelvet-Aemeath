@@ -49,7 +49,7 @@ __all__ = [
 from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import EventType, get_event_center
 from lib.core.render.visuals.announcement_visuals import ANNOUNCEMENT_SIZE, get_announcement_colors
-from lib.core.unified_draw import Layer, get_layer_manager
+from lib.core.render.layers import get_layer_manager, WindowLayer
 from lib.script.ui.workbench_floating import WorkbenchFloatingWindow
 from lib.script.ui.render_bridge import centered_placement, screen_rect_for_point as get_screen_geometry_for_point, ui_font as get_ui_font, ui_font_family as get_ui_font_family
 
@@ -108,7 +108,7 @@ class DesktopPetAnnouncementDialog(WorkbenchFloatingWindow):
         self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFixedSize(_WIDTH, _HEIGHT)
-        get_layer_manager().register(self, Layer.DIALOG, name="DesktopPetAnnouncementDialog")
+        get_layer_manager().register(self, WindowLayer.DIALOG, name="DesktopPetAnnouncementDialog")
 
         self._requested_visible = False
         self._closing_animation = False

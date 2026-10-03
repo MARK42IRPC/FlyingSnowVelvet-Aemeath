@@ -14,7 +14,7 @@ from lib.core.render.visuals.panel_visuals import (
 from lib.core.render.visuals.types import Rect
 from lib.script.ui.render_bridge import create_draw_backend, qt_color, ui_font as get_ui_font
 from config.scale import scale_px
-from lib.core.unified_draw import Layer, get_layer_manager
+from lib.core.render.layers import get_layer_manager, WindowLayer
 
 _C_BORDER = qt_color('border')
 _C_MID = qt_color('mid')
@@ -83,7 +83,7 @@ class SpeakerActionButtonMixin:
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFixedSize(width, height)
         self.setCursor(Qt.PointingHandCursor)
-        get_layer_manager().register(self, Layer.PET_UI)
+        get_layer_manager().register(self, WindowLayer.PET_UI)
         self._hovered = False
         self._pressed = False
         self._label_font = get_ui_font()

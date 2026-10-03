@@ -14,8 +14,8 @@ from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.render.visuals.types import Color, FontSpec
 from lib.core.render.visuals.visuals import build_particle_batch
-from lib.core.layer import Layer, normalize_layer
-from lib.core.layer_manager import get_layer_manager
+from lib.core.render.layers import Layer, normalize_layer, WindowLayer
+from lib.core.render.layers import get_layer_manager
 from lib.core.logger import get_logger
 from lib.core.render.backends.qt.runtime.screen import get_virtual_screen_geometry
 from lib.core.render.backends.qt.drawing.draw_backend import QtDrawBackend
@@ -350,7 +350,7 @@ class ParticleOverlay(QWidget):
         self._no_activate_applied = False
         self.setStyleSheet("background: transparent;")
         self._layer_manager = get_layer_manager()
-        self._layer_manager.register(self, Layer.PARTICLE, name='ParticleOverlay')
+        self._layer_manager.register(self, WindowLayer.PARTICLE, name='ParticleOverlay')
 
         self._particles = []
         self._spatial_index = _ParticleSpatialIndex()

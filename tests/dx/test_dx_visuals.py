@@ -16,7 +16,7 @@ from lib.core.render.visuals.commands import DrawBatch, LineCommand, RectCommand
 from lib.core.render.visuals.resources import ImageResource, RasterFrame
 from lib.core.render.visuals.types import Color, FontSpec, Point, Rect, Size
 from lib.core.event.center import Event, EventType
-from lib.core.layer import Layer
+from lib.core.render.layers import Layer
 from lib.core.render.backends.dx.offscreen import DxOffscreenTarget, find_dx_library
 
 

@@ -9,7 +9,7 @@ from PyQt5 import sip
 from PyQt5.QtCore import QRect, Qt
 
 from lib.core.render.visuals.types import Rect
-from lib.core.window_host import LayerWindowHost, WindowHost
+from lib.core.render.layers import LayerWindowHost, WindowHost
 
 
 SetWindowPosApi = Callable[[int, int, int, int, int, int, int], object]

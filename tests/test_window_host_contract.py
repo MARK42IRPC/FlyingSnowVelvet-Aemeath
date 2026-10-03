@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from lib.core.render.visuals.types import Point, Rect
-from lib.core.window_host import PassiveWindowHost
+from lib.core.render.layers import PassiveWindowHost
 
 
 def test_passive_window_host_tracks_lifecycle_and_geometry():

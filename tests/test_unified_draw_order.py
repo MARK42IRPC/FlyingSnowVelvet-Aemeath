@@ -1,7 +1,7 @@
 from config.config_layer import LAYER_VALUES
-from lib.core.render.visuals.ordering import order_render_values
-from lib.core.layer import Layer, draw_order_key
-from lib.core.layer_manager import LayerManager
+from lib.core.render.layers import order_render_values
+from lib.core.render.layers import Layer, draw_order_key
+from lib.core.render.layers import LayerManager
 from lib.core.render.backends.qt.drawing.render_core import QtRenderCore, QtRenderRequest
 
 

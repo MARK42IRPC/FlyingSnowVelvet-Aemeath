@@ -29,8 +29,8 @@ from lib.core.speaker_band import (
     get_speaker_band,
     set_speaker_band,
 )
-from lib.core.layer import Layer
-from lib.core.layer_manager import get_layer_manager
+from lib.core.render.layers import Layer, WindowLayer
+from lib.core.render.layers import get_layer_manager
 from lib.core.logger import get_logger
 from lib.core.world_objects import WorldObjectInstance
 
@@ -251,7 +251,7 @@ class DxSpeakerSearchWindow:
         )
         try:
             self._context.register_poller(host)
-            get_layer_manager().register(host, Layer.PET_UI, name="DxSpeakerSearch")
+            get_layer_manager().register(host, WindowLayer.PET_UI, name="DxSpeakerSearch")
         except Exception:
             self._context.unregister_poller(host)
             host.cleanup()

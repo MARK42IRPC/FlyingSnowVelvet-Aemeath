@@ -36,8 +36,8 @@ from lib.core.render.visuals.visuals import (
     resolve_command_panel_geometry,
 )
 from lib.core.input.types import Key, MouseButton
-from lib.core.layer import Layer
-from lib.core.layer_manager import get_layer_manager
+from lib.core.render.layers import Layer, WindowLayer
+from lib.core.render.layers import get_layer_manager
 from lib.core.logger import get_logger
 from lib.core.desktop_actions import dispatch_desktop_action
 from lib.core.world_objects import WorldObjectInstance
@@ -126,7 +126,7 @@ class _DxTooltipWindow:
             logical_content=True,
         )
         self._context.register_poller(host)
-        get_layer_manager().register(host, Layer.TOOLTIP, name="DxTooltip")
+        get_layer_manager().register(host, WindowLayer.TOOLTIP, name="DxTooltip")
         self._host = host
         native_metrics = create_directwrite_text_metrics(host)
         if native_metrics is not None:
@@ -280,7 +280,7 @@ class _DxBubbleWindow:
             logical_content=True,
         )
         self._context.register_poller(host)
-        get_layer_manager().register(host, Layer.PET_UI, name="DxBubble")
+        get_layer_manager().register(host, WindowLayer.PET_UI, name="DxBubble")
         self._host = host
         native_metrics = create_directwrite_text_metrics(host)
         if native_metrics is not None:
@@ -596,7 +596,7 @@ class _DxCommandActionPanel:
             logical_content=True,
         )
         self._context.register_poller(host)
-        get_layer_manager().register(host, Layer.PET_UI, name="DxCommandActionPanel")
+        get_layer_manager().register(host, WindowLayer.PET_UI, name="DxCommandActionPanel")
         self._host = host
         return host
 
@@ -752,7 +752,7 @@ class _DxPanelWindow:
         screen_provider: DxScreenProvider,
         *,
         name: str,
-        layer: Layer,
+        layer: WindowLayer,
         size: tuple[int, int],
         interactive: bool,
         window_host_factory: Callable[..., DxWindowHost],
@@ -1309,7 +1309,7 @@ class _DxMicSttIndicator:
             logical_content=True,
         )
         self._context.register_poller(host)
-        get_layer_manager().register(host, Layer.PET_UI, name="DxMicSttIndicator")
+        get_layer_manager().register(host, WindowLayer.PET_UI, name="DxMicSttIndicator")
         self._host = host
         return host
 
@@ -1717,7 +1717,7 @@ class DxApplicationUiHost:
         self,
         panel_id: str,
         *,
-        layer: Layer,
+        layer: WindowLayer,
         size: tuple[int, int],
         interactive: bool,
         on_submit: Callable[[str], None] | None = None,
@@ -1761,7 +1761,7 @@ class DxApplicationUiHost:
     def _notice_panel(self) -> _DxPanelWindow:
         return self._panel(
             "notice",
-            layer=Layer.TOOLTIP,
+            layer=WindowLayer.TOOLTIP,
             size=notice_panel_size(),
             interactive=False,
         )
@@ -1769,7 +1769,7 @@ class DxApplicationUiHost:
     def _command_panel(self) -> _DxPanelWindow:
         return self._panel(
             "command",
-            layer=Layer.DIALOG,
+            layer=WindowLayer.DIALOG,
             size=(
                 int(UI.get("cmd_window_width", 240)),
                 int(UI.get("cmd_window_height", 36)),
@@ -1868,7 +1868,7 @@ class DxApplicationUiHost:
         )
         return self._panel(
             panel_id,
-            layer=Layer.DIALOG,
+            layer=WindowLayer.DIALOG,
             size=qr_panel_size(),
             interactive=True,
             action_text=qr_panel_action_text(panel_id),

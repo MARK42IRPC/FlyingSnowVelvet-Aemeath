@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from config.scale import scale_px
-from lib.core.layer import Layer
+from lib.core.render.layers import Layer
 from lib.core.speaker_band import band_center_ratio, band_ratios
 
 from .commands import DrawBatch, RectCommand

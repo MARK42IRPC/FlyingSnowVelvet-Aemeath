@@ -9,7 +9,7 @@ from lib.core.event.center import Event, EventType, get_event_center
 from lib.core.render.visuals.commands import DrawBatch
 from lib.core.render.visuals.resources import ImageResource
 from lib.core.render.visuals.visuals import build_effect_batch as _build_effect_batch, load_effect_resource
-from lib.core.layer import Layer
+from lib.core.render.layers import Layer
 from lib.core.logger import get_logger
 
 from .loop import DxLoopContext

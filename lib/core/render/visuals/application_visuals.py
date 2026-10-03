@@ -11,7 +11,16 @@ from PIL import Image
 from .palette import COLORS, UI_THEME
 from config.font_config import FONT, get_digit_font_family, get_ui_font_family
 from config.scale import scale_px
-from lib.core.layer import Layer
+from lib.core.render.layers import (
+    CONTENT,
+    FRAME,
+    INNER,
+    Layer,
+    MIDDLE,
+    OVERLAY,
+    OVERLAY_SECOND,
+    OVERLAY_THIRD,
+)
 
 from .anchor_graph import COMMAND_ACTION_GRAPH
 from .commands import (
@@ -462,9 +471,9 @@ def build_tooltip_visual(
             fill=_theme_color("deep_cyan", Color(129, 198, 221)),
             alpha=alpha,
             layer=layer,
-            z=1,
+            z=FRAME,
         ),
-        RectCommand(inner, fill=COLORS["pink"], alpha=alpha, layer=layer, z=2),
+        RectCommand(inner, fill=COLORS["pink"], alpha=alpha, layer=layer, z=INNER),
     ]
     max_ascent = max(float(metrics.default_ascent), float(metrics.digit_ascent))
     max_descent = max(float(metrics.default_descent), float(metrics.digit_descent))
@@ -486,7 +495,7 @@ def build_tooltip_visual(
                 alignment=int(TextAlignment.LEFT | TextAlignment.VCENTER),
                 alpha=alpha,
                 layer=layer,
-                z=3,
+                z=MIDDLE,
             ))
             x += segment_width
     return BubbleVisualDescription(
@@ -577,9 +586,9 @@ def build_bubble_visual_rich(
             Rect(border_width, border_width, width - border_width * 2, height - border_width * 2),
             fill=middle,
             layer=layer,
-            z=1,
+            z=FRAME,
         ),
-        RectCommand(content, fill=background, layer=layer, z=2),
+        RectCommand(content, fill=background, layer=layer, z=INNER),
     ]
 
     total_height = sum(line_heights)
@@ -610,7 +619,7 @@ def build_bubble_visual_rich(
                     Rect(round(x), seg_top, seg_width, segment_height),
                     fill=Color(*segment.background_color),
                     layer=layer,
-                    z=3,
+                    z=MIDDLE,
                 ))
 
             commands.append(TextCommand(
@@ -620,7 +629,7 @@ def build_bubble_visual_rich(
                 Rect(round(x), seg_top, seg_width, segment_height),
                 alignment=int(TextAlignment.LEFT | TextAlignment.VCENTER),
                 layer=layer,
-                z=4,
+                z=CONTENT,
             ))
             x += seg_width
         line_top += line_height
@@ -696,9 +705,9 @@ def build_bubble_visual(
             Rect(border_width, border_width, width - border_width * 2, height - border_width * 2),
             fill=middle,
             layer=layer,
-            z=1,
+            z=FRAME,
         ),
-        RectCommand(content, fill=background, layer=layer, z=2),
+        RectCommand(content, fill=background, layer=layer, z=INNER),
     ]
 
     total_height = len(lines) * line_height
@@ -725,7 +734,7 @@ def build_bubble_visual(
                 Rect(round(x), part_top, part_width, line_height),
                 alignment=int(TextAlignment.LEFT | TextAlignment.VCENTER),
                 layer=layer,
-                z=3,
+                z=MIDDLE,
             ))
             x += part_width
 
@@ -788,9 +797,9 @@ def build_qr_panel_visual(
             Rect(border_width, border_width, width - border_width * 2, height - border_width * 2),
             fill=middle,
             layer=layer,
-            z=1,
+            z=FRAME,
         ),
-        RectCommand(layout.inner_rect, fill=background, layer=layer, z=2),
+        RectCommand(layout.inner_rect, fill=background, layer=layer, z=INNER),
         TextCommand(
             str(title or ""),
             FontSpec(family, font_size, True),
@@ -798,7 +807,7 @@ def build_qr_panel_visual(
             layout.title_rect,
             alignment=int(TextAlignment.HCENTER | TextAlignment.VCENTER),
             layer=layer,
-            z=3,
+            z=MIDDLE,
         ),
     ]
     if qr_background:
@@ -806,7 +815,7 @@ def build_qr_panel_visual(
             layout.qr_rect,
             fill=Color(255, 255, 255),
             layer=layer,
-            z=3,
+            z=MIDDLE,
         ))
     revisions = []
     if qr_resource is not None:
@@ -840,7 +849,7 @@ def build_qr_panel_visual(
             layout.qr_rect,
             alignment=int(TextAlignment.HCENTER | TextAlignment.VCENTER),
             layer=layer,
-            z=4,
+            z=CONTENT,
         ))
     commands.append(TextCommand(
         str(status or ""),
@@ -851,7 +860,7 @@ def build_qr_panel_visual(
             TextAlignment.HCENTER | TextAlignment.VCENTER | TextAlignment.WORD_WRAP
         ),
         layer=layer,
-        z=4,
+        z=CONTENT,
     ))
     action_text = str(action_text or "").strip()
     if action_text:
@@ -878,8 +887,8 @@ def build_qr_panel_visual(
             max(0, layout.action_rect.height - action_inset * 2),
         )
         commands.extend((
-            RectCommand(layout.action_rect, fill=action_border, layer=layer, z=5),
-            RectCommand(action_content, fill=action_fill, layer=layer, z=6),
+            RectCommand(layout.action_rect, fill=action_border, layer=layer, z=OVERLAY),
+            RectCommand(action_content, fill=action_fill, layer=layer, z=OVERLAY_SECOND),
             TextCommand(
                 action_text,
                 FontSpec(family, font_size, True),
@@ -888,7 +897,7 @@ def build_qr_panel_visual(
                 alignment=int(TextAlignment.HCENTER | TextAlignment.VCENTER),
                 alpha=0.55 if state == "disabled" else 1.0,
                 layer=layer,
-                z=7,
+                z=OVERLAY_THIRD,
             ),
         ))
     return ApplicationPanelVisual(
@@ -923,13 +932,13 @@ def build_notice_panel_visual(
             Rect(border_width, border_width, width - border_width * 2, height - border_width * 2),
             fill=middle,
             layer=layer,
-            z=1,
+            z=FRAME,
         ),
         RectCommand(
             Rect(inset, inset, width - inset * 2, height - inset * 2),
             fill=background,
             layer=layer,
-            z=2,
+            z=INNER,
         ),
         TextCommand(
             str(title or ""),
@@ -938,7 +947,7 @@ def build_notice_panel_visual(
             Rect(inset + 10, inset + 6, width - (inset + 10) * 2, 24),
             alignment=int(TextAlignment.LEFT | TextAlignment.VCENTER),
             layer=layer,
-            z=3,
+            z=MIDDLE,
         ),
         TextCommand(
             str(text or ""),
@@ -947,7 +956,7 @@ def build_notice_panel_visual(
             Rect(inset + 10, inset + 32, width - (inset + 10) * 2, height - inset - 40),
             alignment=int(TextAlignment.LEFT | TextAlignment.TOP | TextAlignment.WORD_WRAP),
             layer=layer,
-            z=3,
+            z=MIDDLE,
         ),
     ))
     return ApplicationPanelVisual(Size(width, height), batch)
@@ -1235,13 +1244,13 @@ def build_command_hint_visual(
             Rect(layer_width, layer_width, width - layer_width * 2, height - layer_width * 2),
             fill=middle,
             layer=layer,
-            z=1,
+            z=FRAME,
         ),
         RectCommand(
             Rect(border, border, width - border * 2, height - border * 2),
             fill=background,
             layer=layer,
-            z=2,
+            z=INNER,
         ),
     ]
     content_width = width - border * 2
@@ -1252,7 +1261,7 @@ def build_command_hint_visual(
             row_rect = Rect(border, y, content_width, row_height)
             row_rects.append(row_rect)
             if index == selected:
-                commands.append(RectCommand(row_rect, fill=middle, layer=layer, z=3))
+                commands.append(RectCommand(row_rect, fill=middle, layer=layer, z=MIDDLE))
             side_rect = Rect(
                 border + content_width - scale_px(6, min_abs=1) - side_label_width,
                 y,
@@ -1272,7 +1281,7 @@ def build_command_hint_visual(
                 text_rect,
                 alignment=int(TextAlignment.LEFT | TextAlignment.VCENTER),
                 layer=layer,
-                z=4,
+                z=CONTENT,
             ))
             commands.append(TextCommand(
                 _COMMAND_HINT_SIDE_LABEL_HIGHLIGHT if index == selected else _COMMAND_HINT_SIDE_LABEL,
@@ -1283,7 +1292,7 @@ def build_command_hint_visual(
                 side_rect,
                 alignment=int(TextAlignment.RIGHT | TextAlignment.VCENTER),
                 layer=layer,
-                z=4,
+                z=CONTENT,
             ))
             y += row_height
             if index < len(all_items) - 1:
@@ -1291,14 +1300,14 @@ def build_command_hint_visual(
                     Rect(border, y, content_width, separator_height),
                     fill=middle,
                     layer=layer,
-                    z=3,
+                    z=MIDDLE,
                 ))
                 black_y = y + (separator_height - separator_black_height) // 2
                 commands.append(RectCommand(
                     Rect(0, black_y, width, separator_black_height),
                     fill=outer,
                     layer=layer,
-                    z=4,
+                    z=CONTENT,
                 ))
                 y += separator_height
     else:
@@ -1307,7 +1316,7 @@ def build_command_hint_visual(
             row_rect = Rect(border, y, content_width, row_height)
             row_rects.append(row_rect)
             if page_items and index == selected:
-                commands.append(RectCommand(row_rect, fill=middle, layer=layer, z=3))
+                commands.append(RectCommand(row_rect, fill=middle, layer=layer, z=MIDDLE))
             text_rect = Rect(
                 border + padding_x,
                 y,
@@ -1324,7 +1333,7 @@ def build_command_hint_visual(
                 text_color,
                 centered=False,
                 layer=layer,
-                z=4,
+                z=CONTENT,
             )
             y += row_height
 
@@ -1344,7 +1353,7 @@ def build_command_hint_visual(
             text_color,
             centered=True,
             layer=layer,
-            z=4,
+            z=CONTENT,
         )
 
     return CommandHintVisualDescription(
@@ -1379,7 +1388,7 @@ def build_rect_action_button_visual(
     )
     commands: list[object] = [
         RectCommand(outer, fill=COLORS["black"], layer=layer),
-        RectCommand(middle_rect, fill=COLORS["cyan"], layer=layer, z=1),
+        RectCommand(middle_rect, fill=COLORS["cyan"], layer=layer, z=FRAME),
     ]
     if hovered:
         hover_rect = Rect(
@@ -1392,7 +1401,7 @@ def build_rect_action_button_visual(
             hover_rect,
             fill=_theme_color("deep_pink", Color(255, 149, 164)),
             layer=layer,
-            z=2,
+            z=INNER,
         ))
         content_rect = Rect(
             inset * 3,
@@ -1400,7 +1409,7 @@ def build_rect_action_button_visual(
             max(0, width - inset * 6),
             max(0, height - inset * 6),
         )
-        content_z = 3
+        content_z = MIDDLE
     else:
         content_rect = Rect(
             inset * 2,
@@ -1408,7 +1417,7 @@ def build_rect_action_button_visual(
             max(0, width - inset * 4),
             max(0, height - inset * 4),
         )
-        content_z = 2
+        content_z = INNER
     if not enabled:
         content_fill = _theme_color("mid", Color(173, 216, 230))
         text_alpha = 0.55

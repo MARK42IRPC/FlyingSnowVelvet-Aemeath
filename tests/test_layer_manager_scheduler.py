@@ -1,7 +1,7 @@
 import unittest
 
-from lib.core.layer import Layer
-from lib.core.layer_manager import LayerManager
+from lib.core.render.layers import Layer
+from lib.core.render.layers import LayerManager
 
 
 class _Window:

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from .palette import COLORS, UI_THEME
 from config.font_config import FONT, get_ui_font_family
 from config.scale import scale_px
-from lib.core.layer import Layer
+from lib.core.render.layers import CONTENT, Layer, MIDDLE
 
 from .commands import DrawBatch, RectCommand, TextAlignment, TextCommand
 from .panel_visuals import panel_shell_commands, slider_handle_commands
@@ -92,7 +92,7 @@ def _button_commands(
             content,
             fill=UI_THEME["highlight"] if state == "pressed" else UI_THEME["deep_pink"],
             layer=layer,
-            z=3,
+            z=MIDDLE,
         ))
     commands.append(TextCommand(
         label,
@@ -101,7 +101,7 @@ def _button_commands(
         content,
         alignment=int(TextAlignment.HCENTER | TextAlignment.VCENTER),
         layer=layer,
-        z=4,
+        z=CONTENT,
     ))
     return commands
 
@@ -191,14 +191,14 @@ def build_speaker_playlist_visual(
     if fill_width > 0:
         commands.append(RectCommand(
             Rect(slider_rect.x, slider_rect.y, fill_width, slider_rect.height),
-            fill=COLORS["cyan"], layer=layer, z=3,
+            fill=COLORS["cyan"], layer=layer, z=MIDDLE,
         ))
     handle_commands, _handle_rect = slider_handle_commands(
         slider_rect.x + fill_width,
         slider_rect,
         UI_THEME["deep_pink"],
         layer=layer,
-        z=4,
+        z=CONTENT,
     )
     commands.extend(handle_commands)
     time_rect = Rect(
@@ -214,7 +214,7 @@ def build_speaker_playlist_visual(
         time_rect,
         alignment=int(TextAlignment.HCENTER | TextAlignment.VCENTER),
         layer=layer,
-        z=4,
+        z=CONTENT,
     ))
 
     panel_rect = Rect(0, _PANEL_Y, _MAIN_WIDTH, panel_height)
@@ -226,7 +226,7 @@ def build_speaker_playlist_visual(
         commands.append(TextCommand(
             "（队列为空）", font, COLORS["black"],
             Rect(_BORDER + padding, y, _MAIN_WIDTH - _BORDER * 2 - padding * 2, _ROW_HEIGHT),
-            alignment=int(TextAlignment.LEFT | TextAlignment.VCENTER), layer=layer, z=4,
+            alignment=int(TextAlignment.LEFT | TextAlignment.VCENTER), layer=layer, z=CONTENT,
         ))
     else:
         for row, (_track_ref, display) in enumerate(page_items):
@@ -235,15 +235,15 @@ def build_speaker_playlist_visual(
             row_rects.append(rect)
             is_current = absolute_index == current_index
             if is_current:
-                commands.append(RectCommand(rect, fill=COLORS["cyan"], layer=layer, z=3))
+                commands.append(RectCommand(rect, fill=COLORS["cyan"], layer=layer, z=MIDDLE))
             elif row == selected:
-                commands.append(RectCommand(rect, fill=UI_THEME["highlight"], layer=layer, z=3))
+                commands.append(RectCommand(rect, fill=UI_THEME["highlight"], layer=layer, z=MIDDLE))
             prefix = "> " if row == selected else ""
             label = prefix + (("♪ " + display) if is_current else display)
             text_rect = Rect(rect.x + padding, rect.y, rect.width - padding * 2, rect.height)
             commands.append(TextCommand(
                 _elide(label, text_rect.width, metrics), font, COLORS["black"], text_rect,
-                alignment=int(TextAlignment.LEFT | TextAlignment.VCENTER), layer=layer, z=4,
+                alignment=int(TextAlignment.LEFT | TextAlignment.VCENTER), layer=layer, z=CONTENT,
             ))
             y += _ROW_HEIGHT
     page_rect = None
@@ -251,7 +251,7 @@ def build_speaker_playlist_visual(
         page_rect = Rect(_BORDER, y, _MAIN_WIDTH - _BORDER * 2, _ROW_HEIGHT)
         commands.append(TextCommand(
             f"◀ {page + 1}/{max_page + 1} ▶", font, COLORS["black"], page_rect,
-            alignment=int(TextAlignment.HCENTER | TextAlignment.VCENTER), layer=layer, z=4,
+            alignment=int(TextAlignment.HCENTER | TextAlignment.VCENTER), layer=layer, z=CONTENT,
         ))
 
     remove_rect = play_rect = None

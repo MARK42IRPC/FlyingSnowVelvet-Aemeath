@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from lib.core.layer import Layer, draw_order_key, normalize_layer
+from lib.core.render.layers import Layer, draw_order_key, normalize_layer
 from .commands import DrawBatch, DrawRequest, ResourceRevision, SpriteCommand
 from .resources import ImageResource, RasterFrame
 from .types import coerce_point

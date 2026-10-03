@@ -15,8 +15,8 @@ from PyQt5.QtWidgets import QMessageBox, QWidget
 
 from config.font_config import get_ui_font_family
 from config.scale import scale_px
-from lib.core.layer import Layer
-from lib.core.layer_manager import get_layer_manager
+from lib.core.render.layers import WindowLayer
+from lib.core.render.layers import get_layer_manager
 from lib.script.workbench.theme import get_workbench_colors
 
 #: 与办公页确认框同名的对象名，供 QSS 与测试定位。
@@ -119,7 +119,7 @@ def _apply_style(dialog: QMessageBox) -> None:
 
 def _register(dialog: QMessageBox, layer_name: str) -> None:
     """Put the box on the dialog layer so it cannot end up behind the workbench."""
-    get_layer_manager().register(dialog, Layer.DIALOG, z=1, name=layer_name)
+    get_layer_manager().register(dialog, WindowLayer.DIALOG, z=1, name=layer_name)
 
 
 def _release(dialog: QMessageBox, layer_name: str) -> None:

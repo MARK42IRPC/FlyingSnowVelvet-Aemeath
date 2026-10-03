@@ -10,7 +10,7 @@ from lib.core.draw_core import cleanup_draw_core
 from lib.core.event.center import EventType, cleanup_event_center, get_event_center
 from lib.core.render.visuals.resources import ImageResource, RasterFrame
 from lib.core.render.visuals.types import Point, Rect
-from lib.core.layer_manager import cleanup_layer_manager
+from lib.core.render.layers import cleanup_layer_manager
 from lib.core.timing import register_timing_manager
 from lib.core.render.backends.dx.loop import DxLoopContext
 from lib.core.render.backends.dx.pet_window import DxPetWindow, create_pet_window_factory

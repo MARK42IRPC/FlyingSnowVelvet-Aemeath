@@ -8,7 +8,7 @@ from config.scale import scale_px
 from config.tooltip_config import TOOLTIPS
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.desktop_actions import adjust_desktop_scale
-from lib.core.unified_draw import Layer, get_layer_manager
+from lib.core.render.layers import get_layer_manager, WindowLayer
 from config.user_scale_config import get_user_scale_config
 from lib.core.anchor_utils import (
     animate_opacity,
@@ -38,7 +38,7 @@ class ScaleUpButton(QWidget):
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFixedSize(self.WIDTH, self.HEIGHT)
         self.setCursor(Qt.PointingHandCursor)
-        get_layer_manager().register(self, Layer.PET_UI)
+        get_layer_manager().register(self, WindowLayer.PET_UI)
 
         self._clickthrough_button = clickthrough_button
         self._scale_config = get_user_scale_config()
@@ -186,7 +186,7 @@ class ScaleDownButton(QWidget):
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFixedSize(self.WIDTH, self.HEIGHT)
         self.setCursor(Qt.PointingHandCursor)
-        get_layer_manager().register(self, Layer.PET_UI)
+        get_layer_manager().register(self, WindowLayer.PET_UI)
 
         self._scale_up_button = scale_up_button
         self._scale_config = get_user_scale_config()

@@ -22,7 +22,7 @@ from PyQt5.QtWidgets import QApplication, QWidget
 
 from config.config import UI
 from lib.core.event.center import Event, EventType, get_event_center
-from lib.core.layer_manager import cleanup_layer_manager
+from lib.core.render.layers import cleanup_layer_manager
 from lib.script.ui.announcement_dialog import DesktopPetAnnouncementDialog
 from lib.script.ui.qr_dialog_base import BaseQrDialog
 from lib.script.ui.update_dialog import DesktopPetUpdateDialog

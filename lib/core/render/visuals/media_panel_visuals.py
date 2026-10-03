@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from config.scale import scale_px
-from lib.core.layer import Layer
+from lib.core.render.layers import CONTENT, FRAME, INNER, Layer, MIDDLE, OVERLAY
 
 from .commands import (
     ClipPop,
@@ -200,10 +200,10 @@ def build_progress_panel_visual(
     # the first pixel stays covered by the frame instead of bleeding into it.
     commands: list[object] = [
         RectCommand(
-            inset_rect(outer, inset), fill=COLORS["cyan"], layer=layer, z=1, alpha=alpha,
+            inset_rect(outer, inset), fill=COLORS["cyan"], layer=layer, z=FRAME, alpha=alpha,
         ),
         RectCommand(
-            inset_rect(outer, border), fill=COLORS["pink"], layer=layer, z=2, alpha=alpha,
+            inset_rect(outer, border), fill=COLORS["pink"], layer=layer, z=INNER, alpha=alpha,
         ),
     ]
 
@@ -216,7 +216,7 @@ def build_progress_panel_visual(
             fill=UI_THEME["deep_cyan"],
             alpha=alpha,
             layer=layer,
-            z=3,
+            z=MIDDLE,
         ))
 
     handle_commands, handle_rect = slider_handle_commands(
@@ -224,19 +224,19 @@ def build_progress_panel_visual(
         slider,
         UI_THEME["deep_pink"],
         layer=layer,
-        z=4,
+        z=CONTENT,
         alpha=alpha,
     )
     commands.extend(handle_commands)
 
     separator = Rect(border + slider_width, inset, separator_width, height - inset * 2)
     commands.append(RectCommand(
-        separator, fill=COLORS["cyan"], alpha=alpha, layer=layer, z=3,
+        separator, fill=COLORS["cyan"], alpha=alpha, layer=layer, z=MIDDLE,
     ))
     line_x = separator.x + (separator.width - separator_line_width) // 2
     commands.append(RectCommand(
         Rect(line_x, border, separator_line_width, height - border * 2),
-        fill=COLORS["black"], alpha=alpha, layer=layer, z=3,
+        fill=COLORS["black"], alpha=alpha, layer=layer, z=MIDDLE,
     ))
 
     time_rect = Rect(
@@ -253,9 +253,9 @@ def build_progress_panel_visual(
         alignment=int(TextAlignment.HCENTER | TextAlignment.VCENTER),
         alpha=alpha,
         layer=layer,
-        z=3,
+        z=MIDDLE,
     ))
-    commands.extend(panel_frame_commands(outer, inset=inset, layer=layer, z=5, alpha=alpha))
+    commands.extend(panel_frame_commands(outer, inset=inset, layer=layer, z=OVERLAY, alpha=alpha))
 
     return ProgressPanelVisual(
         Size(width, height),
@@ -453,7 +453,7 @@ def build_playlist_panel_visual(
             alignment=int(TextAlignment.LEFT | TextAlignment.VCENTER),
             alpha=alpha,
             layer=layer,
-            z=4,
+            z=CONTENT,
         ))
     else:
         page_offset = page * page_size
@@ -464,11 +464,11 @@ def build_playlist_panel_visual(
             is_current = page_offset + row == current_index
             if row == selected and not is_current:
                 commands.append(RectCommand(
-                    row_rect, fill=UI_THEME["highlight"], alpha=alpha, layer=layer, z=3,
+                    row_rect, fill=UI_THEME["highlight"], alpha=alpha, layer=layer, z=MIDDLE,
                 ))
             if is_current:
                 commands.append(RectCommand(
-                    row_rect, fill=COLORS["cyan"], alpha=alpha, layer=layer, z=3,
+                    row_rect, fill=COLORS["cyan"], alpha=alpha, layer=layer, z=MIDDLE,
                 ))
             prefix = "> " if row == selected else ""
             label = prefix + ("♪ " + display if is_current else display)
@@ -478,7 +478,7 @@ def build_playlist_panel_visual(
                 metrics,
                 color=COLORS["text"],
                 layer=layer,
-                z=4,
+                z=CONTENT,
                 alpha=alpha,
             ))
             y += row_height
@@ -491,7 +491,7 @@ def build_playlist_panel_visual(
                 alignment=int(TextAlignment.HCENTER | TextAlignment.VCENTER),
                 color=COLORS["text"],
                 layer=layer,
-                z=4,
+                z=CONTENT,
                 alpha=alpha,
             ))
 
@@ -608,7 +608,7 @@ def build_search_result_panel_visual(
             alignment=int(TextAlignment.LEFT | TextAlignment.VCENTER),
             alpha=alpha,
             layer=layer,
-            z=4,
+            z=CONTENT,
         ))
     elif not items:
         text_rect = Rect(content_x + padding, y, content_width - padding * 2, row_height)
@@ -620,7 +620,7 @@ def build_search_result_panel_visual(
             alignment=int(TextAlignment.LEFT | TextAlignment.VCENTER),
             alpha=alpha,
             layer=layer,
-            z=4,
+            z=CONTENT,
         ))
     else:
         for row, (_ref, display) in enumerate(_search_result_page_items(items, page, page_size)):
@@ -629,7 +629,7 @@ def build_search_result_panel_visual(
             text_rect = Rect(content_x + padding, y, content_width - padding * 2, row_height)
             if row == selected:
                 commands.append(RectCommand(
-                    row_rect, fill=UI_THEME["highlight"], alpha=alpha, layer=layer, z=3,
+                    row_rect, fill=UI_THEME["highlight"], alpha=alpha, layer=layer, z=MIDDLE,
                 ))
             commands.extend(mixed_text_commands(
                 text_rect,
@@ -637,7 +637,7 @@ def build_search_result_panel_visual(
                 metrics,
                 color=UI_THEME["text"],
                 layer=layer,
-                z=4,
+                z=CONTENT,
                 alpha=alpha,
             ))
             y += row_height
@@ -651,7 +651,7 @@ def build_search_result_panel_visual(
                 alignment=int(TextAlignment.HCENTER | TextAlignment.VCENTER),
                 color=UI_THEME["text"],
                 layer=layer,
-                z=4,
+                z=CONTENT,
                 alpha=alpha,
             ))
 

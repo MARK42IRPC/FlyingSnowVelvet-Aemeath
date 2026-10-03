@@ -4,7 +4,7 @@ from __future__ import annotations
 
 
 from lib.core.event.center import Event, EventType, get_event_center
-from lib.core.layer_manager import get_layer_manager
+from lib.core.render.layers import get_layer_manager
 from lib.core.logger import get_logger
 from lib.core.physics import get_physics_world
 

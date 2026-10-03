@@ -24,7 +24,7 @@ from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.render.visuals.types import Point, Rect
 from lib.core.world_objects import WorldObjectInstance
-from lib.core.unified_draw import Layer, get_layer_manager
+from lib.core.render.layers import get_layer_manager, WindowLayer
 from lib.core.anchor_utils import apply_ui_opacity
 from lib.script.music import get_music_service
 from lib.script.music.track_text import first_artist_from_list, format_duration_text
@@ -84,7 +84,7 @@ class SpeakerSearchDialog(QWidget):
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFixedSize(_TOTAL_W, _HEIGHT)
         self.setMouseTracking(True)
-        get_layer_manager().register(self, Layer.PANEL)
+        get_layer_manager().register(self, WindowLayer.PANEL)
 
         # ── 输入框 ──────────────────────────────────────────────────
         self._entry = QLineEdit(self)
