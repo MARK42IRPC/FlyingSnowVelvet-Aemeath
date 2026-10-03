@@ -559,6 +559,15 @@ DX 保持未切分：DX 仍是 `available=False` 的实验实现，没有第二�
   等属性视图，`playlist_panel` 的 `set_position_below_playlist(self.geometry())` 调用面不变。
 - `frozen_ui_qt_importers`：70 → **69**。
 
+**勘误（2026-10-03）**
+
+第 12、13 节里 `frozen_ui_qt_importers` 的每一步都比真实值少 1：迁移前实际是 **74**，
+四步后的当前值是 **70**（`74 → 73 → 72 → 71 → 70`）。例如第 12 节写的「73 → 72」，
+真实是「74 → 73」；本节写的「70 → 69」，真实是「71 → 70」。清单本身没有腐烂——当前
+70 项与仓库里真实 `import PyQt5` 的 70 个 `lib/script/ui/*.py` 逐条一致（见
+`tests/test_qt_dependency_boundaries.py` 的 stale 断言）。上面的执行记录保留原样以免
+改写历史，以本节勘误与 `HEAD` 的清单为准。
+
 **滚动清单（下一个控件）**
 
 模式已固定为三步：把控件状态搬进 `visuals/controls.py`（或同级新模块）→ 控件本体删掉
