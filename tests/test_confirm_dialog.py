@@ -17,6 +17,7 @@ os.environ.setdefault("QT_PLUGIN_PATH", os.path.join(_QT_ROOT, "Qt5", "plugins")
 
 from PyQt5.QtWidgets import QApplication, QMessageBox
 
+from lib.core.render.backends.qt.widgets import message_box_host
 from lib.script.ui import confirm_dialog
 from lib.script.ui.confirm_dialog import (
     CONFIRM_DIALOG_OBJECT_NAME,
@@ -58,33 +59,38 @@ class ConfirmDialogBehaviourTests(unittest.TestCase):
 
     @staticmethod
     def _spy(created):
-        """记录真实构造出来的对话框，同时保留原来的构造行为。
+        """记录真实构造出来的宿主，同时保留原来的构造行为。
 
-        ``exec_`` 是实例方法，直接用 ``side_effect`` 会先绑上实例，拿不到窗口本身。
+        ``exec_modal`` 在宿主上执行；这里替换 ``_build_dialog`` 才能拿到宿主本身，
+        再用 ``widget()`` 读底层 ``QMessageBox`` 做按钮语义断言。
         """
         original = confirm_dialog._build_dialog
 
         def build(*args, **kwargs):
-            dialog = original(*args, **kwargs)
-            created.append(dialog)
-            return dialog
+            host = original(*args, **kwargs)
+            created.append(host)
+            return host
 
         return build
 
     def test_confirmation_reports_the_confirm_button(self):
-        with patch.object(confirm_dialog.QMessageBox, "exec_", return_value=QMessageBox.Yes):
+        with patch.object(
+            message_box_host.QMessageBox, "exec_", return_value=QMessageBox.Yes
+        ):
             self.assertTrue(
                 ask_confirmation(None, title="卸载桌宠", text="确定卸载桌宠吗？")
             )
 
     def test_confirmation_reports_cancel(self):
-        with patch.object(confirm_dialog.QMessageBox, "exec_", return_value=QMessageBox.Cancel):
+        with patch.object(
+            message_box_host.QMessageBox, "exec_", return_value=QMessageBox.Cancel
+        ):
             self.assertFalse(ask_confirmation(None, title="卸载桌宠", text="确定卸载桌宠吗？"))
 
     def test_destructive_confirmation_marks_the_button_and_escapes_to_cancel(self):
         created = []
         with patch.object(confirm_dialog, "_build_dialog", self._spy(created)), patch.object(
-            confirm_dialog.QMessageBox, "exec_", return_value=QMessageBox.Cancel
+            message_box_host.QMessageBox, "exec_", return_value=QMessageBox.Cancel
         ):
             ask_confirmation(
                 None,
@@ -94,7 +100,7 @@ class ConfirmDialogBehaviourTests(unittest.TestCase):
                 destructive=True,
             )
 
-        box = created[0]
+        box = created[0].widget()
         try:
             confirm_button = box.button(QMessageBox.Yes)
             self.assertEqual(confirm_button.text(), "卸载")
@@ -109,13 +115,13 @@ class ConfirmDialogBehaviourTests(unittest.TestCase):
             self.app.processEvents()
 
     def test_confirmation_returns_false_when_closed_without_a_choice(self):
-        with patch.object(confirm_dialog.QMessageBox, "exec_", return_value=0):
+        with patch.object(message_box_host.QMessageBox, "exec_", return_value=0):
             self.assertFalse(ask_confirmation(None, title="卸载桌宠", text="确定卸载桌宠吗？"))
 
     def test_confirmation_releases_its_layer_registration(self):
         registered = []
         with patch.object(
-            confirm_dialog,
+            message_box_host,
             "get_layer_manager",
             side_effect=lambda: type(
                 "Stub",
@@ -125,7 +131,9 @@ class ConfirmDialogBehaviourTests(unittest.TestCase):
                     "unregister": lambda _self, box: registered.remove(box),
                 },
             )(),
-        ), patch.object(confirm_dialog.QMessageBox, "exec_", return_value=QMessageBox.Cancel):
+        ), patch.object(
+            message_box_host.QMessageBox, "exec_", return_value=QMessageBox.Cancel
+        ):
             ask_confirmation(None, title="卸载桌宠", text="确定卸载桌宠吗？")
 
         self.assertEqual(registered, [])
@@ -133,11 +141,11 @@ class ConfirmDialogBehaviourTests(unittest.TestCase):
     def test_notice_uses_a_single_primary_button(self):
         created = []
         with patch.object(confirm_dialog, "_build_dialog", self._spy(created)), patch.object(
-            confirm_dialog.QMessageBox, "exec_", return_value=QMessageBox.Ok
+            message_box_host.QMessageBox, "exec_", return_value=QMessageBox.Ok
         ):
             show_message(None, title="提示", text="源码工作区没有安装版卸载程序。")
 
-        box = created[0]
+        box = created[0].widget()
         try:
             self.assertEqual(box.text(), "源码工作区没有安装版卸载程序。")
             ok_button = box.button(QMessageBox.Ok)

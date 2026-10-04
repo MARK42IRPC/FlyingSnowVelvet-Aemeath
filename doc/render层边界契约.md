@@ -4,7 +4,7 @@
 
 本文档定义 `lib/core/render/` 的目标结构与依赖边界。它不是阶段计划，而是结构改建完成后必须成立的规则。
 
-**状态：第 6 节迁移顺序 1、2（目录切分）、3 已执行；图层能力已收敛到 `lib/core/render/layers/`（第 16 节）；后端中立协议与统一数据类型已落地（第 11 节），控件层“描述 + 后端渲染”已滚动迁移气泡框（第 12 节）、说明书、语音指示器与播放进度条（第 13 节）、音响音量/频段双滑条、搜索结果框与命令提示框（第 18 节）、右键矩形动作按钮一族八个按钮（第 19 节）；排布解算已收敛到 `visuals/` 并由 `PlacementSpec` 统一解算（第 14 节，档位 0/1），右键按钮族的逐控件锚点事件链已收敛为声明式 `AnchorGraph` 且 Qt 改为消费共享布局（第 15 节，档位 2/3）；`WindowHost` 的被动宿主激活语义已与 Qt/DX 焦点策略对齐（第 17 节）。** 目录与引用规则以本文档为准；改建前的事实源是 [Qt 边界契约](Qt边界契约.md) 与 [跨后端视觉表现契约](视觉表现契约.md)，那两份文档继续负责“哪些内容算视觉逻辑”和“什么算无 Qt”。第一章描述的是最终目标；产品控件面（`lib/script/ui` 直接 `import PyQt5`）仍需逐个控件迁移，当前待迁清单以 `tests/test_qt_dependency_boundaries.py` 的 `frozen_ui_qt_importers` 为准，滚动顺序见第 13 节末尾。
+**状态：第 6 节迁移顺序 1、2（目录切分）、3 已执行；图层能力已收敛到 `lib/core/render/layers/`（第 16 节）；后端中立协议与统一数据类型已落地（第 11 节），控件层“描述 + 后端渲染”已滚动迁移气泡框（第 12 节）、说明书、语音指示器与播放进度条（第 13 节）、音响音量/频段双滑条、搜索结果框与命令提示框（第 18 节）、右键矩形动作按钮一族八个按钮（第 19 节）、确认/提示框（第 20 节，首个模态宿主）；排布解算已收敛到 `visuals/` 并由 `PlacementSpec` 统一解算（第 14 节，档位 0/1），右键按钮族的逐控件锚点事件链已收敛为声明式 `AnchorGraph` 且 Qt 改为消费共享布局（第 15 节，档位 2/3）；`WindowHost` 的被动宿主激活语义已与 Qt/DX 焦点策略对齐（第 17 节）。** 目录与引用规则以本文档为准；改建前的事实源是 [Qt 边界契约](Qt边界契约.md) 与 [跨后端视觉表现契约](视觉表现契约.md)，那两份文档继续负责“哪些内容算视觉逻辑”和“什么算无 Qt”。第一章描述的是最终目标；产品控件面（`lib/script/ui` 直接 `import PyQt5`）仍需逐个控件迁移，当前待迁清单以 `tests/test_qt_dependency_boundaries.py` 的 `frozen_ui_qt_importers` 为准，滚动顺序见第 13 节末尾。
 
 本文只新增目录与引用规则，不改变任何视觉语义、数值来源或渲染结果。改建过程中出现分歧时，以 [视觉表现契约](视觉表现契约.md) 和当前 Qt 基准为事实源。
 
@@ -1003,3 +1003,53 @@ lib/core/render/layers/
 - `frozen_ui_qt_importers`：66 → **57**（一族九个文件一次移出）。
 - 滚动清单第 2 项（其余顶层浮窗）、第 3 项（带子控件树与 `exec_()` 的对话框）、第 4 项
   （`world_objects/*` 与 `game_runtime`）仍未动。
+
+## 20. 第十五轮执行记录（模态宿主：确认/提示框收敛）
+
+第 13 节滚动清单第 3 项的结构前置项：`exec_()` 类对话框需要"宿主支持模态"。本轮先补
+这一层，并用共享的确认/提示框验证它——它是全应用模态对话的公共入口，行为已被
+`tests/test_confirm_dialog.py` 钉住。
+
+**新增后端宿主（`lib/core/render/backends/qt/widgets/message_box_host.py`）**
+
+- `QtMessageBoxHost`：一个真实 `QMessageBox` 的持有者与模态执行器，属档位 D。它只做
+  Qt 事实：构造、图标、标准按钮组合、按钮文字/对象名、默认键与逃逸键、样式表应用、
+  `WindowLayer.DIALOG` 注册与 `exec_()` 模态循环。返回值翻译回后端中立名
+  （`yes` / `ok` / `no` / `cancel` / `escape`）。
+- 图标用后端中立名（`information` / `warning` / `question` / `critical`）传入，由宿主
+  翻译成 `QMessageBox.Icon`。换后端时替换的是这一层，不是确认框语义。
+
+**解析/转发层（`lib/script/ui/render_bridge.py`）**
+
+- 新增 `create_message_box_host(parent, *, object_name="")`，与 `create_control_host`
+  同属档位 A：控件只声明"问什么、有哪些按钮、用哪种配色"，真实对话框由后端提供。
+
+**控件（`lib/script/ui/confirm_dialog.py`）**
+
+- 删除 `PyQt5` 引用与 `QMessageBox`/`QWidget` 依赖，改由 `render_bridge` 拿宿主。
+  样式表生成、对象名常量、按钮语义（破坏性按钮用 danger 色、取消键为默认与逃逸键）
+  逐字保留；`ask_confirmation(...) -> bool` 与 `show_message(...) -> None` 调用面不变，
+  `ai_settings_panel` / `tray_icon` 等调用方无需改动。
+- 新增图标常量 `ICON_INFORMATION` / `ICON_WARNING` / `ICON_QUESTION` / `ICON_CRITICAL`
+  进 `__all__`，替代原先引用 `QMessageBox.Icon` 的调用面。
+
+**守卫**
+
+- `tests/test_confirm_dialog.py` 改为经 `_build_dialog` 拿到宿主、用 `host.widget()` 读
+  底层 `QMessageBox` 断言按钮语义；`exec_` 的补丁落在宿主模块上，不再依赖控件模块
+  暴露 `QMessageBox`。
+- `tests/test_qt_dependency_boundaries.py` 的 `frozen_ui_qt_importers` 移除
+  `confirm_dialog.py`（57 → 56）。
+
+验证：
+
+- `py -3 -m unittest discover -s tests -p "test_*.py" -q`：2115 通过、10 跳过。
+- `py -3 -m unittest discover -s tests/dx -p "test_*.py" -q`：122 通过、7 跳过。
+- `py -3 -m ruff check lib config scripts tests` 归零；`py -3 -m compileall -q config lib scripts tests` 通过。
+
+**本轮没动的部分**
+
+- `frozen_ui_qt_importers`：57 → **56**（本轮移出确认框一项）。
+- 第 3 项里其余 `exec_()` 对话框（`update_dialog`、`voice_package_installer`、
+  `game_manager_window` 的确认框、`office_*`）与第 4 项（`world_objects/*`、
+  `game_runtime`）仍未动；模态宿主已就位，它们可按同一模式逐个迁出。

@@ -6,17 +6,17 @@ its body text with the wrong colour, so it looked nothing like the rest of the
 application's dialogs.  Everything that needs a confirmation or a notice box goes
 through this module instead, which reuses the same background, button geometry and
 accent colours as the workbench theme.
+
+本模块不再 ``import PyQt5``：它只声明"问什么、有哪些按钮、哪一色"，真实
+``QMessageBox`` 与模态循环由 ``lib/script/ui/render_bridge.py`` 的
+``create_message_box_host()`` 提供（Qt 下是 ``QtMessageBoxHost``）。
 """
 
 from __future__ import annotations
 
-from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import QMessageBox, QWidget
-
 from config.font_config import get_ui_font_family
 from config.scale import scale_px
-from lib.core.render.layers import WindowLayer
-from lib.core.render.layers import get_layer_manager
+from lib.script.ui import render_bridge
 from lib.script.workbench.theme import get_workbench_colors
 
 #: 与办公页确认框同名的对象名，供 QSS 与测试定位。
@@ -28,6 +28,12 @@ PRIMARY_BUTTON_OBJECT_NAME = "WorkbenchConfirmPrimary"
 
 #: 与语音包删除框一致的正文最小宽度，避免长句被折成很窄的一条。
 DIALOG_TEXT_MIN_WIDTH = scale_px(330, min_abs=300)
+
+#: 图标的后端中立名（``QtMessageBoxHost`` 再翻译回 QMessageBox 图标）。
+ICON_INFORMATION = "information"
+ICON_WARNING = "warning"
+ICON_QUESTION = "question"
+ICON_CRITICAL = "critical"
 
 
 def confirm_dialog_stylesheet(mode: str | None = None) -> str:
@@ -88,48 +94,26 @@ def confirm_dialog_stylesheet(mode: str | None = None) -> str:
 
 
 def _build_dialog(
-    parent: QWidget | None,
+    parent,
     *,
     title: str,
     text: str,
     informative_text: str = "",
-    icon: QMessageBox.Icon = QMessageBox.Information,
-) -> QMessageBox:
-    dialog = QMessageBox(parent)
-    dialog.setObjectName(CONFIRM_DIALOG_OBJECT_NAME)
-    dialog.setWindowTitle(title)
-    dialog.setIcon(icon)
-    dialog.setText(text)
-    if informative_text:
-        dialog.setInformativeText(informative_text)
-    dialog.setWindowFlag(Qt.WindowStaysOnTopHint, True)
-    return dialog
-
-
-def _apply_style(dialog: QMessageBox) -> None:
-    """把 QSS 刷到对话框上，必须在标准按钮都建好之后再调用。
-
-    ``setStandardButtons`` 之前设的样式表不会生效到之后才创建的按钮上：实测先设样式
-    再建按钮时，卸载按钮停在默认的 ``surface_raised`` 底色，只有 ``:default`` 那条
-    规则碰巧命中取消按钮。所以统一在建好按钮、改完文字与对象名之后再设样式表——
-    ``VoicePackageManagementBar._confirm_removal`` 也是这个顺序。
-    """
-    dialog.setStyleSheet(confirm_dialog_stylesheet())
-
-
-def _register(dialog: QMessageBox, layer_name: str) -> None:
-    """Put the box on the dialog layer so it cannot end up behind the workbench."""
-    get_layer_manager().register(dialog, WindowLayer.DIALOG, z=1, name=layer_name)
-
-
-def _release(dialog: QMessageBox, layer_name: str) -> None:
-    layer_manager = get_layer_manager()
-    layer_manager.unregister(dialog)
-    dialog.deleteLater()
+    icon: str = ICON_INFORMATION,
+):
+    """按共享外观契约构造一个模态消息框宿主（不含按钮组合）。"""
+    host = render_bridge.create_message_box_host(
+        parent, object_name=CONFIRM_DIALOG_OBJECT_NAME
+    )
+    host.set_title(title)
+    host.set_icon(icon)
+    host.set_text(text)
+    host.set_informative_text(informative_text)
+    return host
 
 
 def ask_confirmation(
-    parent: QWidget | None,
+    parent,
     *,
     title: str,
     text: str,
@@ -137,7 +121,7 @@ def ask_confirmation(
     confirm_text: str = "确定",
     cancel_text: str = "取消",
     destructive: bool = False,
-    icon: QMessageBox.Icon = QMessageBox.Warning,
+    icon: str = ICON_WARNING,
     layer_name: str = "WorkbenchConfirmation",
 ) -> bool:
     """Ask for confirmation with the shared dialog language.
@@ -145,68 +129,60 @@ def ask_confirmation(
     ``destructive`` paints the confirm button in the theme's danger colour; the
     cancel button stays the default so Enter never triggers the destructive path.
     """
-    dialog = _build_dialog(
+    host = _build_dialog(
         parent,
         title=title,
         text=text,
         informative_text=informative_text,
         icon=icon,
     )
-    dialog.setStandardButtons(QMessageBox.Yes | QMessageBox.Cancel)
-    confirm_button = dialog.button(QMessageBox.Yes)
-    if confirm_button is not None:
-        confirm_button.setText(confirm_text)
-        confirm_button.setObjectName(
-            DESTRUCTIVE_BUTTON_OBJECT_NAME if destructive else PRIMARY_BUTTON_OBJECT_NAME
-        )
-    cancel_button = dialog.button(QMessageBox.Cancel)
-    if cancel_button is not None:
-        cancel_button.setText(cancel_text)
-        dialog.setEscapeButton(cancel_button)
-    dialog.setDefaultButton(QMessageBox.Cancel)
-    _apply_style(dialog)
-    _register(dialog, layer_name)
-    try:
-        return dialog.exec_() == QMessageBox.Yes
-    finally:
-        _release(dialog, layer_name)
+    host.set_standard_buttons(("yes", "cancel"))
+    host.set_button_text("yes", confirm_text)
+    host.set_button_object_name(
+        "yes",
+        DESTRUCTIVE_BUTTON_OBJECT_NAME if destructive else PRIMARY_BUTTON_OBJECT_NAME,
+    )
+    host.set_button_text("cancel", cancel_text)
+    host.set_escape_button("cancel")
+    # 默认键落在取消：Enter 永远不触发破坏性路径。
+    host.set_default_button("cancel")
+    host.apply_stylesheet(confirm_dialog_stylesheet)
+    return host.exec_modal(layer_name=layer_name) == "yes"
 
 
 def show_message(
-    parent: QWidget | None,
+    parent,
     *,
     title: str,
     text: str,
     informative_text: str = "",
     ok_text: str = "知道了",
-    icon: QMessageBox.Icon = QMessageBox.Information,
+    icon: str = ICON_INFORMATION,
     layer_name: str = "WorkbenchNotice",
 ) -> None:
     """Show a styled notice box; the single button is the themed primary one."""
-    dialog = _build_dialog(
+    host = _build_dialog(
         parent,
         title=title,
         text=text,
         informative_text=informative_text,
         icon=icon,
     )
-    dialog.setStandardButtons(QMessageBox.Ok)
-    ok_button = dialog.button(QMessageBox.Ok)
-    if ok_button is not None:
-        ok_button.setText(ok_text)
-        ok_button.setObjectName(PRIMARY_BUTTON_OBJECT_NAME)
-    dialog.setDefaultButton(QMessageBox.Ok)
-    _apply_style(dialog)
-    _register(dialog, layer_name)
-    try:
-        dialog.exec_()
-    finally:
-        _release(dialog, layer_name)
+    host.set_standard_buttons(("ok",))
+    host.set_button_text("ok", ok_text)
+    host.set_button_object_name("ok", PRIMARY_BUTTON_OBJECT_NAME)
+    host.set_default_button("ok")
+    host.apply_stylesheet(confirm_dialog_stylesheet)
+    host.exec_modal(layer_name=layer_name)
 
 
 __all__ = [
     "CONFIRM_DIALOG_OBJECT_NAME",
     "DESTRUCTIVE_BUTTON_OBJECT_NAME",
+    "ICON_CRITICAL",
+    "ICON_INFORMATION",
+    "ICON_QUESTION",
+    "ICON_WARNING",
     "PRIMARY_BUTTON_OBJECT_NAME",
     "ask_confirmation",
     "confirm_dialog_stylesheet",

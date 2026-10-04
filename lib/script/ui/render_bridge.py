@@ -63,6 +63,17 @@ def create_control_host(**kwargs):
     return QtControlHost(**kwargs)
 
 
+def create_message_box_host(parent=None, *, object_name: str = ""):
+    """创建模态消息框宿主（Qt 下是 ``QtMessageBoxHost``）。
+
+    与 ``create_control_host`` 同属档位 A 的解析/转发层：确认/提示框只声明"问什么、
+    有哪些按钮、用哪种配色"，真实 ``QMessageBox`` 与模态循环由后端提供。
+    """
+    from lib.core.render.backends.qt.widgets.message_box_host import QtMessageBoxHost
+
+    return QtMessageBoxHost(parent, object_name=object_name)
+
+
 def create_component_layer():
     """创建控件自用的绘制回调层（排序与注册是后端无关的，只有回调是 Qt）。"""
     from lib.core.render.backends.qt.drawing.render_core import QtComponentLayer

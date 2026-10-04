@@ -18,6 +18,13 @@
   搬进设置界面，按「数值越大越靠前」给出中文说明，保存走稀疏用户配置、与 GUI 源值共享同一份默认，
   和其它设置一样重启后完整生效。原先只能用 `#图层` 命令查看图层快照，现在直接在这里调。
 ### Changed
+- 控件层「描述 + 后端渲染」新增模态宿主：`lib/core/render/backends/qt/widgets/message_box_host.py`
+  的 `QtMessageBoxHost` 持有真实 `QMessageBox` 与 `exec_()` 模态循环，图标/按钮组合/文字/
+  默认键/逃逸键/层级注册都由调用方以后端中立参数声明；`render_bridge` 新增
+  `create_message_box_host()` 作为控件侧唯一落点。共享确认/提示框（`confirm_dialog.py`）
+  据此迁出 Qt、删除 `PyQt5` 依赖，`frozen_ui_qt_importers` 57 → 56；`ask_confirmation` /
+  `show_message` 调用面不变。这也补上了 `exec_()` 类对话框迁移的"宿主支持模态"前置项。
+### Changed
 - 自动更新包覆盖提速：覆盖阶段不再对每个文件读两遍内容，只比同名文件的大小（字节正确性
   已由资源包的 SHA-256 在下载时兜住），拷贝并发发起。真实 733 MiB / 17,195 文件的资源包
   实测从 690 秒降到 29 秒，同一份包重跑 8 秒。待补装（`apply_pending_overlay`）仍然比对
