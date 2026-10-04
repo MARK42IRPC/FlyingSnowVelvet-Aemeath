@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from PyQt5.QtGui import QColor
-
 from config.font_config import get_ui_font_family
 from config.scale import scale_px
 from lib.core.forum import FORUM_ACCENTS
@@ -108,25 +106,36 @@ def _is_light(mode: str | None) -> bool:
     return resolve_workbench_mode(mode) == "light"
 
 
+def _hex_rgb(value: str) -> tuple[int, int, int] | None:
+    """解析 `#rrggbb` 为三元组；非法输入返回 None。"""
+    text = str(value or "").strip().lstrip("#")
+    if len(text) != 6:
+        return None
+    try:
+        return int(text[0:2], 16), int(text[2:4], 16), int(text[4:6], 16)
+    except ValueError:
+        return None
+
+
 def forum_texture_color(mode: str | None = None, accent: str | None = None) -> str:
     """卡片底纹的颜色：主题中性色（深色白 / 浅色黑）掺上卡片 accent。
 
     深色主题从白出发、浅色主题从黑出发，再按 `FORUM_TEXTURE_TINT_RATIO` 混入 accent，
     底纹于是带上卡片自己的色调，和描边是同一套配色；透明度另有 `CARD_TEXTURE_ALPHA_RANGE`
     约束，所以底纹仍然比描边和正文弱。不带 accent 时退回纯中性色。
+
+    纯十六进制整数混色，不依赖 `QColor`——因此本模块不再 import PyQt5。
     """
-    neutral = QColor("#000000" if _is_light(mode) else "#ffffff")
+    neutral_hex = "#000000" if _is_light(mode) else "#ffffff"
     if not str(accent or "").strip():
-        return neutral.name()
-    tint = QColor(forum_accent_color(accent, mode))
-    if not tint.isValid():
-        return neutral.name()
+        return neutral_hex
+    neutral = _hex_rgb(neutral_hex)
+    tint = _hex_rgb(forum_accent_color(accent, mode))
+    if neutral is None or tint is None:
+        return neutral_hex
     ratio = max(0.0, min(1.0, FORUM_TEXTURE_TINT_RATIO))
-    return QColor(
-        round(neutral.red() * (1.0 - ratio) + tint.red() * ratio),
-        round(neutral.green() * (1.0 - ratio) + tint.green() * ratio),
-        round(neutral.blue() * (1.0 - ratio) + tint.blue() * ratio),
-    ).name()
+    channels = tuple(round(n * (1.0 - ratio) + t * ratio) for n, t in zip(neutral, tint))
+    return "#{:02x}{:02x}{:02x}".format(*channels)
 
 
 def forum_picker_track_color(mode: str | None = None) -> str:

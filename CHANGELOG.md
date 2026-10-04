@@ -41,6 +41,9 @@
   `render_bridge.pointer_button_name()` 翻译，粒子 ID 用 `visuals/controls.py` 的
   `BUTTON_PARTICLES` 共享映射；`frozen_ui_qt_importers` 55 → 54，调用面不变。新增
   `tests/test_particle_helper.py` 覆盖左右键映射与事件载荷。
+- 论坛样式去 Qt：`forum_style.py` 的底纹混色 `forum_texture_color()` 改为纯十六进制
+  整数混色（与 `QColor` 逐通道 `round()` 结果逐字节一致），删除 `QColor` 依赖，
+  `frozen_ui_qt_importers` 54 → 53；新增 `tests/test_forum_style.py` 钉死 14 组混色输出。
 ### Changed
 - 自动更新包覆盖提速：覆盖阶段不再对每个文件读两遍内容，只比同名文件的大小（字节正确性
   已由资源包的 SHA-256 在下载时兜住），拷贝并发发起。真实 733 MiB / 17,195 文件的资源包
