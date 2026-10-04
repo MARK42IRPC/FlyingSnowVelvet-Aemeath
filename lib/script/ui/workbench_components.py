@@ -4,42 +4,25 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 
-from PyQt5.QtCore import QSize, Qt
+from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor, QPainter
 from PyQt5.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
     QPushButton,
-    QStyle,
     QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
 from config.scale import scale_px
+from lib.core.render.backends.qt.widgets.window_buttons import (
+    create_window_button as create_window_button,
+)
 from lib.script.ui.speaker_menu_style import paint_speaker_action_button
 from lib.script.workbench.theme import get_workbench_colors
 from lib.script.ui.render_bridge import ui_font as get_ui_font
-
-
-def create_window_button(
-    parent: QWidget,
-    standard_icon: QStyle.StandardPixmap,
-    tooltip: str,
-    callback: Callable[[], None],
-    *,
-    danger: bool = False,
-) -> QToolButton:
-    button = QToolButton(parent)
-    button.setObjectName("WorkbenchWindowButton")
-    button.setProperty("danger", danger)
-    button.setAutoRaise(True)
-    button.setIcon(parent.style().standardIcon(standard_icon))
-    button.setIconSize(QSize(scale_px(15, min_abs=13), scale_px(15, min_abs=13)))
-    button.setToolTip(tooltip)
-    button.clicked.connect(callback)
-    return button
 
 
 class WorkbenchPetAboutButton(QToolButton):

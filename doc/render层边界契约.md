@@ -4,7 +4,7 @@
 
 本文档定义 `lib/core/render/` 的目标结构与依赖边界。它不是阶段计划，而是结构改建完成后必须成立的规则。
 
-**状态：第 6 节迁移顺序 1、2（目录切分）、3 已执行；图层能力已收敛到 `lib/core/render/layers/`（第 16 节）；后端中立协议与统一数据类型已落地（第 11 节），控件层“描述 + 后端渲染”已滚动迁移气泡框（第 12 节）、说明书、语音指示器与播放进度条（第 13 节）、音响音量/频段双滑条、搜索结果框与命令提示框（第 18 节）、右键矩形动作按钮一族八个按钮（第 19 节）、确认/提示框（第 20 节，首个模态宿主）；排布解算已收敛到 `visuals/` 并由 `PlacementSpec` 统一解算（第 14 节，档位 0/1），右键按钮族的逐控件锚点事件链已收敛为声明式 `AnchorGraph` 且 Qt 改为消费共享布局（第 15 节，档位 2/3）；`WindowHost` 的被动宿主激活语义已与 Qt/DX 焦点策略对齐（第 17 节）。** 目录与引用规则以本文档为准；改建前的事实源是 [Qt 边界契约](Qt边界契约.md) 与 [跨后端视觉表现契约](视觉表现契约.md)，那两份文档继续负责“哪些内容算视觉逻辑”和“什么算无 Qt”。第一章描述的是最终目标；产品控件面（`lib/script/ui` 直接 `import PyQt5`）仍需逐个控件迁移，当前待迁清单以 `tests/test_qt_dependency_boundaries.py` 的 `frozen_ui_qt_importers` 为准，滚动顺序见第 13 节末尾。
+**状态：第 6 节迁移顺序 1、2（目录切分）、3 已执行；图层能力已收敛到 `lib/core/render/layers/`（第 16 节）；后端中立协议与统一数据类型已落地（第 11 节），控件层“描述 + 后端渲染”已滚动迁移气泡框（第 12 节）、说明书、语音指示器与播放进度条（第 13 节）、音响音量/频段双滑条、搜索结果框与命令提示框（第 18 节）、右键矩形动作按钮一族八个按钮（第 19 节）、确认/提示框（第 20 节，首个模态宿主）；浮窗外壳（样式/主题判定/拖拽策略/窗口按钮）已从 `lib/script/ui` 下沉到渲染层（第 21 节）；排布解算已收敛到 `visuals/` 并由 `PlacementSpec` 统一解算（第 14 节，档位 0/1），右键按钮族的逐控件锚点事件链已收敛为声明式 `AnchorGraph` 且 Qt 改为消费共享布局（第 15 节，档位 2/3）；`WindowHost` 的被动宿主激活语义已与 Qt/DX 焦点策略对齐（第 17 节）。** 目录与引用规则以本文档为准；改建前的事实源是 [Qt 边界契约](Qt边界契约.md) 与 [跨后端视觉表现契约](视觉表现契约.md)，那两份文档继续负责“哪些内容算视觉逻辑”和“什么算无 Qt”。第一章描述的是最终目标；产品控件面（`lib/script/ui` 直接 `import PyQt5`）仍需逐个控件迁移，当前待迁清单以 `tests/test_qt_dependency_boundaries.py` 的 `frozen_ui_qt_importers` 为准，滚动顺序见第 13 节末尾。
 
 本文只新增目录与引用规则，不改变任何视觉语义、数值来源或渲染结果。改建过程中出现分歧时，以 [视觉表现契约](视觉表现契约.md) 和当前 Qt 基准为事实源。
 
@@ -1053,3 +1053,59 @@ lib/core/render/layers/
 - 第 3 项里其余 `exec_()` 对话框（`update_dialog`、`voice_package_installer`、
   `game_manager_window` 的确认框、`office_*`）与第 4 项（`world_objects/*`、
   `game_runtime`）仍未动；模态宿主已就位，它们可按同一模式逐个迁出。
+
+## 21. 第二十一轮执行记录：浮窗外壳抽到渲染层
+
+问题：`lib/script/ui/workbench_floating.py`（358 行）同时是"浮窗外壳事实源"和"Qt 实现"。
+它的 QSS 生成、主题变更判定、拖拽策略与窗口按钮工厂要么与 `QWidget` 无关，要么可拆，
+却被 5 个浮窗（二维码登录 / 更新 / 下载 / 公告 / 帮助）、主工作台窗口与测试共同依赖。
+
+拆法沿用第 19/20 轮的套路：**后端中立数据进 `visuals/`，Qt 实现在 `backends/qt/widgets/`**。
+
+**后端中立（`lib/core/render/visuals/workbench_chrome.py`）**
+
+- `floating_window_stylesheet(mode=None)`：接收显式模式（`None` 走实时 UI 配置），
+  只依赖 `visuals/workbench_tokens` 的 token 映射与 `config.scale` / `config.font_config`。
+- `is_workbench_theme_change(event)`：纯数据判定。
+- `FLOATING_WINDOW_OBJECT_NAME`。
+
+它不 import Qt、也不 import `lib.script`——所以"同一套浮窗样式"能被 DX 宿主共用。
+
+**Qt 落点（`lib/core/render/backends/qt/widgets/`）**
+
+- `floating_window.py`：`QtWorkbenchFloatingWindow`（原 `WorkbenchFloatingWindow` 本体）、
+  `FloatingDragFilter`、`FloatingWindowThemeWatcher`。
+- `window_buttons.py`：`create_window_button()`（原生标准图标的最小化/关闭按钮工厂），
+  此前散在 `workbench_components.py`，现在是主窗口与浮窗共用的一份。
+
+**产品侧**
+
+- `lib/script/ui/workbench_floating.py` 358 → 39 行，改为再导出垫片：
+  `WorkbenchFloatingWindow` 是 `QtWorkbenchFloatingWindow` 的历史别名，
+  `create_window_button` / `floating_window_stylesheet` / `is_workbench_theme_change`
+  同样从渲染层再导出，既有导入路径不变。
+- `lib/script/ui/workbench_components.py` 只保留产品部件（`WorkbenchPetAboutButton`、
+  `WorkbenchOverviewPage`），窗口按钮工厂改从 `widgets/window_buttons` 取。
+
+**一处必须记下的等价性**：中立层不得 import `lib.script`（`test_code_structure_boundaries`
+的 render 纯净性断言），而窗口按钮 QSS 助手住在 `lib.script.workbench.theme`。于是
+中立层内联了 `_window_button_stylesheet(mode)`，用同一份 `WORKBENCH_*_TOKENS` 复现；
+`tests/test_workbench_chrome.py` 钉死它与 `window_button_stylesheet(mode)` 逐字符一致，
+任何一键位/取值漂移都会立刻失败。浮窗整体 QSS 与收敛前逐字符相同。
+
+**新增测试**：`tests/test_workbench_chrome.py` —— 中立层无 Qt / 无 `lib.script`、样式是模式
+的纯函数、内联按钮 QSS 与共享助手一致、浮窗 QSS 覆盖工作台 token、旧导入名与 Qt 宿主是
+同一实现、主题变更判定语义。
+
+验证：
+
+- `py -3 -m unittest discover -s tests -p "test_*.py" -q`：2115 通过（含新增 7 项），10 跳过
+- `py -3 -m unittest discover -s tests/dx -p "test_*.py" -q`：122 通过，7 跳过
+- `py -3 -m ruff check lib config scripts tests` 干净；`py -3 -m compileall -q config lib scripts tests` 通过
+
+**本轮没动的部分**
+
+- `frozen_ui_qt_importers` 计数不变（56）：`workbench_floating.py` / `workbench_components.py`
+  仍是 Qt 之上的产品部件，只是把可复用外壳事实下沉。
+- 第 3 项其余 `exec_()` 对话框与第 4 项（`world_objects/*`、`game_runtime`）仍未动。
+

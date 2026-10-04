@@ -24,6 +24,13 @@
   `create_message_box_host()` 作为控件侧唯一落点。共享确认/提示框（`confirm_dialog.py`）
   据此迁出 Qt、删除 `PyQt5` 依赖，`frozen_ui_qt_importers` 57 → 56；`ask_confirmation` /
   `show_message` 调用面不变。这也补上了 `exec_()` 类对话框迁移的"宿主支持模态"前置项。
+- 渲染层继续下沉浮窗外壳：`lib/script/ui/workbench_floating.py` 的样式生成、主题变更判定
+  与拖拽/窗口按钮策略，可拆的部分抽到后端中立的 `lib/core/render/visuals/workbench_chrome.py`
+  （不 import Qt、不 import `lib.script`），真实 `QWidget` 宿主与窗口按钮工厂落到
+  `lib/core/render/backends/qt/widgets/floating_window.py` 与 `window_buttons.py`；`workbench_floating.py`
+  358 → 39 行，改为保留历史导入名的再导出垫片，二维码登录/更新/下载/公告/帮助浮窗与主
+  工作台窗口共用同一份外壳实现。浮窗 QSS 与收敛前逐字符一致（新增测试
+  `tests/test_workbench_chrome.py` 钉死内联按钮样式与工作台 token 的一致性）。
 ### Changed
 - 自动更新包覆盖提速：覆盖阶段不再对每个文件读两遍内容，只比同名文件的大小（字节正确性
   已由资源包的 SHA-256 在下载时兜住），拷贝并发发起。真实 733 MiB / 17,195 文件的资源包
