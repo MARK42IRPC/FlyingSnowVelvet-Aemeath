@@ -60,12 +60,14 @@ def create_pet_window_ui(owner, on_close):
     )
     mic_stt_indicator = MicSttIndicator(owner)
 
-    # 右键 UI 合并为一层：命令框、提示框与全部附属按钮共用同一个顶层窗口，
+    # 右键 UI 合并为一层：命令框与全部附属按钮共用同一个顶层窗口，
     # 拖动桌宠时每个帧只移动一次原生窗口，也不再各自重复裁剪/重绘。
     layer = RightClickUiLayer()
+    # 命令提示框已迁为“描述 + 后端渲染”（不再是 QWidget），不能走 adopt 的 setParent；
+    # 它自己带一个顶层宿主窗口，落位仍由锚点事件驱动。翻页按钮暂留为 QWidget，
+    # 与提示框一起在 adopt 之后单独补齐落位。
     layer.adopt(
         cmd,
-        hint_box,
         close_btn,
         clickthrough_btn,
         scale_up_btn,

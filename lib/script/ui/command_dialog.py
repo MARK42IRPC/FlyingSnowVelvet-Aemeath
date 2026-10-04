@@ -484,7 +484,8 @@ class CommandDialog(QWidget):
         - ←（游标在行首）→ 上一页
         - →（游标在行尾）→ 下一页
         """
-        if obj is self._entry and event.type() == QEvent.KeyPress and self._hint_box:
+        entry = getattr(self, '_entry', None)
+        if entry is not None and obj is entry and event.type() == QEvent.KeyPress and self._hint_box:
             key = event.key()
             if key == Qt.Key_Tab:
                 completion = self._hint_box.get_completion()
@@ -505,6 +506,37 @@ class CommandDialog(QWidget):
                 self._hint_box.turn_page(1)
                 return True
         return super().eventFilter(obj, event)
+
+    def closeEvent(self, event):
+        """关闭时摘掉事件过滤器、焦点回调与事件订阅，避免残留槽继续被投递。"""
+        self._dispose()
+        super().closeEvent(event)
+
+    def _dispose(self) -> None:
+        if getattr(self, '_disposed', False):
+            return
+        self._disposed = True
+        try:
+            self._entry.removeEventFilter(self)
+        except Exception:
+            pass
+        try:
+            QApplication.instance().focusChanged.disconnect(self._on_focus_changed)
+        except Exception:
+            pass
+        for event_type, callback in (
+            (EventType.TICK, self._on_tick),
+            (EventType.FRAME, self._on_frame),
+            (EventType.UI_ANCHOR_RESPONSE, self._on_anchor_response),
+            (EventType.UI_CREATE, self._on_ui_create),
+            (EventType.UI_COMMAND_TOGGLE, self._on_command_toggle),
+            (EventType.UI_HINT_PICK, self._on_hint_pick),
+            (EventType.UI_CLICKTHROUGH_TOGGLE, self._on_clickthrough_toggle),
+        ):
+            try:
+                self._event_center.unsubscribe(event_type, callback)
+            except Exception:
+                pass
 
     def _animate(self, target: float):
         """执行淡入淡出动画"""

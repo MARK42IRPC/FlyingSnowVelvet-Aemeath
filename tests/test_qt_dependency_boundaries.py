@@ -31,7 +31,6 @@ class QtDependencyBoundaryTests(unittest.TestCase):
             "lib/script/ui/cloudmusic_login_dialog.py",
             "lib/script/ui/cmd_window.py",
             "lib/script/ui/command_dialog.py",
-            "lib/script/ui/command_hint_box.py",
             "lib/script/ui/confirm_dialog.py",
             "lib/script/ui/forum_account.py",
             "lib/script/ui/forum_board.py",

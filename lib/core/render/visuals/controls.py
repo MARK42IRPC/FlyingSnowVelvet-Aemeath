@@ -26,7 +26,9 @@ from typing import TYPE_CHECKING
 
 from lib.core.render.visuals.application_visuals import (
     BubbleVisualDescription,
+    CommandHintVisualDescription,
     build_bubble_visual,
+    build_command_hint_visual,
     build_tooltip_visual,
     resolve_bubble_geometry,
 )
@@ -64,6 +66,7 @@ __all__ = [
     "RectSliderControl",
     "BandSliderControl",
     "SearchResultListControl",
+    "CommandHintControl",
     "BubbleControl",
     "BubbleInfo",
     "PointerClick",
@@ -1118,6 +1121,140 @@ class SearchResultListControl:
             if rect.y <= y < rect.y + rect.height:
                 return index
         return -1
+
+    def scaled_opacity(self, target: float) -> float:
+        return scaled_opacity(self._opacity_scale, target)
+
+
+#: ``CommandHintControl.mode`` 的两个取值。
+COMMAND_HINT_DEFAULT = "default"
+COMMAND_HINT_HASH = "hash"
+
+
+class CommandHintControl:
+    """命令提示框的后端中立状态与绘制描述。
+
+    - ``default`` 模式显示几条静态说明行；``hash`` 模式显示 ``#`` 命令过滤结果；
+    - 翻页（循环）、选中行、``Tab`` 补全串都在这里；
+    - 尺寸与逐行矩形来自共享 ``build_command_hint_visual``，命中行由 ``row_at_y`` 用
+      ``visual.row_rects`` 反查，控件不再自己算行高。
+    """
+
+    def __init__(
+        self,
+        metrics: "TextMetrics",
+        *,
+        default_items: tuple[str, ...] = (),
+        page_size: int,
+        paint_layer: int = 0,
+        opacity_scale=1.0,
+    ) -> None:
+        self.metrics = metrics
+        self.default_items = tuple(default_items)
+        self.page_size = max(1, int(page_size))
+        self.paint_layer = int(paint_layer)
+        self._opacity_scale = opacity_scale
+
+        self.mode = COMMAND_HINT_DEFAULT
+        self.all_items: list = []
+        self.selected = -1
+        self.page = 0
+        self.visible = False
+        self.anchor_available = False
+        self.visual: CommandHintVisualDescription | None = None
+        self.set_default_mode()
+
+    # ── 模式 ───────────────────────────────────────────────────────
+    def set_default_mode(self) -> None:
+        self.mode = COMMAND_HINT_DEFAULT
+        self.all_items = list(self.default_items)
+        self.selected = 0 if self.all_items else -1
+        self.page = 0
+
+    def set_hash_mode(self, items) -> None:
+        self.mode = COMMAND_HINT_HASH
+        self.all_items = list(items)
+        self.selected = 0 if self.all_items else -1
+        self.page = 0
+
+    # ── 分页与选中 ─────────────────────────────────────────────────
+    def page_items(self) -> list:
+        start = self.page * self.page_size
+        return self.all_items[start: start + self.page_size]
+
+    def has_pages(self) -> bool:
+        return len(self.all_items) > self.page_size
+
+    def max_page(self) -> int:
+        return max(0, (len(self.all_items) - 1) // self.page_size)
+
+    def navigate(self, direction: int) -> bool:
+        if self.mode != COMMAND_HINT_HASH:
+            return False
+        items = self.page_items()
+        if not items:
+            return False
+        new_selected = self.selected + direction
+        if 0 <= new_selected < len(items):
+            self.selected = new_selected
+            return True
+        return False
+
+    def turn_page(self, direction: int) -> bool:
+        if self.mode != COMMAND_HINT_HASH or not self.all_items:
+            return False
+        max_page = self.max_page()
+        if max_page == 0:
+            return False
+        new_page = self.page + direction
+        # 循环翻页：超出范围时跳转到另一端
+        if new_page < 0:
+            new_page = max_page
+        elif new_page > max_page:
+            new_page = 0
+        self.page = new_page
+        self.selected = 0
+        return True
+
+    def completion(self) -> str:
+        """当前选中命令的补全串（含 ``#`` 前缀与尾部空格）；无选中时返回空串。"""
+        if self.mode != COMMAND_HINT_HASH or self.selected < 0:
+            return ""
+        items = self.page_items()
+        if 0 <= self.selected < len(items):
+            return f"#{items[self.selected][0]} "
+        return ""
+
+    # ── 尺寸、绘制与命中 ───────────────────────────────────────────
+    def build_visual(self) -> CommandHintVisualDescription:
+        self.visual = build_command_hint_visual(
+            self.mode,
+            self.all_items,
+            self.selected,
+            self.page,
+            self.metrics,
+            layer=self.paint_layer,
+        )
+        return self.visual
+
+    def ensure_visual(self) -> CommandHintVisualDescription:
+        return self.visual if self.visual is not None else self.build_visual()
+
+    def row_at_y(self, y: float) -> int:
+        visual = self.visual
+        if visual is None:
+            return -1
+        for index, rect in enumerate(visual.row_rects):
+            if rect.y <= y < rect.y + rect.height:
+                return index
+        return -1
+
+    def page_indicator_contains(self, y: float) -> bool:
+        visual = self.visual
+        if visual is None or visual.page_indicator_rect is None:
+            return False
+        rect = visual.page_indicator_rect
+        return rect.y <= y < rect.y + rect.height
 
     def scaled_opacity(self, target: float) -> float:
         return scaled_opacity(self._opacity_scale, target)

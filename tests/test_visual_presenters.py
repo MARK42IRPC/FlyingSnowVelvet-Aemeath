@@ -412,27 +412,6 @@ class VisualPresenterTests(unittest.TestCase):
                 violations.append(f"{relative}:{node.lineno}:{name}")
         self.assertEqual(violations, [])
 
-    def test_qt_command_hint_only_measures_and_executes_shared_visual(self):
-        relative = "lib/script/ui/command_hint_box.py"
-        path = Path(__file__).resolve().parents[1] / relative
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        forbidden = {
-            "Color",
-            "RectCommand",
-            "TextCommand",
-            "drawText",
-            "draw_mixed_text",
-            "fillRect",
-        }
-        violations = []
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
-                continue
-            name = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
-            if name in forbidden:
-                violations.append(f"{relative}:{node.lineno}:{name}")
-        self.assertEqual(violations, [])
-
     def test_qt_rect_action_style_only_executes_shared_visual(self):
         relative = "lib/script/ui/rect_action_button_style.py"
         path = Path(__file__).resolve().parents[1] / relative

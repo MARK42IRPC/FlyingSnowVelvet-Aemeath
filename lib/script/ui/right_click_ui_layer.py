@@ -266,6 +266,21 @@ class RightClickUiLayer(QWidget):
             except Exception:
                 pass
         self.hide()
+        self._dispose()
+
+    def _dispose(self) -> None:
+        """摘掉事件订阅，避免图层销毁后仍被投递回调。"""
+        if getattr(self, '_disposed', False):
+            return
+        self._disposed = True
+        for event_type, callback in (
+            (EventType.FRAME, self._on_frame),
+            (EventType.UI_CLICKTHROUGH_TOGGLE, self._on_clickthrough_toggle),
+        ):
+            try:
+                self._event_center.unsubscribe(event_type, callback)
+            except Exception:
+                pass
 
 
 __all__ = ["RightClickUiLayer"]

@@ -208,6 +208,7 @@ class ControlDescriptionLayerTests(unittest.TestCase):
             ("lib/script/ui/speaker_volume_slider.py", "SpeakerVolumeSlider"),
             ("lib/script/ui/speaker_band_slider.py", "SpeakerBandSlider"),
             ("lib/script/ui/speaker_search_result_box.py", "SpeakerSearchResultBox"),
+            ("lib/script/ui/command_hint_box.py", "CommandHintBox"),
         )
         for relative, class_name in migrated:
             with self.subTest(control=relative):
@@ -1097,6 +1098,7 @@ _MIGRATED_UI_CONTROLS = {
     "lib/script/ui/speaker_volume_slider.py": "SpeakerVolumeSlider",
     "lib/script/ui/speaker_band_slider.py": "SpeakerBandSlider",
     "lib/script/ui/speaker_search_result_box.py": "SpeakerSearchResultBox",
+    "lib/script/ui/command_hint_box.py": "CommandHintBox",
 }
 
 
@@ -1255,6 +1257,179 @@ class SpeakerSearchDialogGeometryIntegrationTests(unittest.TestCase):
             [text for text in records if "Event handler error" in text],
             [],
         )
+
+
+
+class CommandHintControlTests(unittest.TestCase):
+    """命令提示框的描述层：模式、补全、翻页、命中都不依赖 Qt。"""
+
+    def _control(self, *, default_items=("/a", "#b", "c"), page_size=5):
+        from lib.core.render.visuals.application_visuals import (
+            create_portable_command_hint_metrics,
+        )
+        from lib.core.render.visuals.controls import CommandHintControl
+
+        return CommandHintControl(
+            create_portable_command_hint_metrics(),
+            default_items=default_items,
+            page_size=page_size,
+        )
+
+    def test_default_mode_lists_the_hint_rows(self):
+        control = self._control()
+        self.assertEqual(control.mode, "default")
+        self.assertEqual(control.selected, 0)
+        self.assertEqual(len(control.build_visual().row_rects), 3)
+        self.assertEqual(control.completion(), "")
+
+    @staticmethod
+    def _hash_items(count: int = 12):
+        # ``#`` 命令在注册中心里是 (name, usage, description) 三元组。
+        return tuple((f"cmd{i:02d}", f"[arg{i}]", f"desc{i}") for i in range(count))
+
+    def test_hash_mode_completion_navigation_and_cycling_pages(self):
+        items = self._hash_items()
+        control = self._control(default_items=items)
+        control.set_hash_mode(control.all_items)
+
+        self.assertEqual(control.mode, "hash")
+        self.assertTrue(control.has_pages())
+        self.assertEqual(control.max_page(), 2)
+        self.assertEqual(control.completion(), f"#{items[0][0]} ")
+
+        self.assertTrue(control.navigate(1))
+        self.assertEqual(control.selected, 1)
+        self.assertEqual(control.completion(), f"#{items[1][0]} ")
+        # 已在最后一页可见行时再往下走不越界。
+        for _ in range(10):
+            control.navigate(1)
+        self.assertEqual(control.selected, control.page_size - 1)
+
+        self.assertTrue(control.turn_page(1))
+        self.assertEqual((control.page, control.selected), (1, 0))
+        # 循环翻页：从最后一页再往前一页回到第一页。
+        control.turn_page(-1)
+        self.assertEqual(control.page, 0)
+
+    def test_navigation_is_a_no_op_without_items(self):
+        control = self._control()
+        control.set_hash_mode(())
+        self.assertFalse(control.navigate(1))
+        self.assertFalse(control.turn_page(1))
+        self.assertEqual(control.completion(), "")
+
+    def test_row_and_indicator_hit_testing_uses_the_shared_visual(self):
+        control = self._control(default_items=self._hash_items())
+        control.set_hash_mode(control.all_items)
+        visual = control.build_visual()
+
+        for index, rect in enumerate(visual.row_rects):
+            self.assertEqual(control.row_at_y(rect.y + rect.height / 2), index)
+        self.assertEqual(control.row_at_y(visual.size.height + 50), -1)
+
+        indicator = visual.page_indicator_rect
+        self.assertIsNotNone(indicator)
+        self.assertTrue(control.page_indicator_contains(indicator.y + indicator.height / 2))
+
+
+
+class CommandHintBoxIntegrationTests(unittest.TestCase):
+    """提示框迁出 QWidget 后，点击/悬停/翻页链路仍驱动描述层并发布预期事件。"""
+
+    @classmethod
+    def setUpClass(cls):
+        import PyQt5
+
+        root = os.path.dirname(PyQt5.__file__)
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        os.environ.setdefault(
+            "QT_QPA_PLATFORM_PLUGIN_PATH",
+            os.path.join(root, "Qt5", "plugins", "platforms"),
+        )
+        os.environ.setdefault("QT_PLUGIN_PATH", os.path.join(root, "Qt5", "plugins"))
+
+        from PyQt5.QtWidgets import QApplication
+
+        cls.app = QApplication.instance() or QApplication([])
+
+    def setUp(self):
+        from lib.core.hash_cmd_registry import get_hash_cmd_registry
+        from lib.script.ui.command_hint_box import CommandHintBox
+
+        self.registry = get_hash_cmd_registry()
+        self._registered = []
+        for index in range(12):
+            name = f"hinttest{index:02d}"
+            self.registry.register(name, f"[arg{index}]", f"desc{index}")
+            self._registered.append(name)
+
+        self.hint = CommandHintBox()
+
+        self.seen: dict[str, list] = {"picks": [], "hash": []}
+        from lib.core.event.center import EventType, get_event_center
+
+        self.center = get_event_center()
+        self.center.subscribe(
+            EventType.UI_HINT_PICK, lambda e: self.seen["picks"].append(e.data.get("text"))
+        )
+        self.center.subscribe(
+            EventType.INPUT_HASH, lambda e: self.seen["hash"].append(e.data.get("text"))
+        )
+
+    def tearDown(self):
+        for name in self._registered:
+            self.registry.unregister(name)
+        # 提示框持有真实顶层窗口宿主：在 QApplication 还活着时把它彻底销毁。
+        host = self.hint._host
+        self.hint.close()
+        host.hide()
+        host.deleteLater()
+        for _ in range(3):
+            self.app.processEvents()
+
+    def _pointer_at_rect(self, rect, *, button=None):
+        from lib.core.render.visuals.controls import BUTTON_LEFT, PointerEvent
+        from lib.core.render.visuals.types import Point
+
+        x = rect.x + rect.width / 2
+        y = rect.y + rect.height / 2
+        return PointerEvent(
+            button=BUTTON_LEFT if button is None else button,
+            local=Point(x, y),
+            screen=Point(x + 1000, y + 1000),
+        )
+
+    def test_hash_mode_completion_and_paging(self):
+        self.hint.update_input("#hinttest")
+        self.assertEqual(self.hint._mode, "hash")
+        self.assertTrue(self.hint._has_pages())
+        self.assertEqual(self.hint.get_completion(), "#hinttest00 ")
+
+        self.hint.navigate(1)
+        self.assertEqual(self.hint._selected, 1)
+        self.hint.turn_page(1)
+        self.assertEqual((self.hint._page, self.hint._selected), (1, 0))
+        # 第二页仍有 5 行（12 条共 3 页）。
+        self.assertEqual(len(self.hint._control.build_visual().row_rects), 5)
+
+    def test_clicking_a_hash_row_publishes_input_hash(self):
+        self.hint.update_input("#hinttest")
+        rect = self.hint._control.build_visual().row_rects[0]
+        self.hint._on_pointer(self._pointer_at_rect(rect))
+        self.assertEqual(self.seen["hash"], ["hinttest00"])
+
+    def test_default_mode_row_click_fills_the_prefix(self):
+        self.hint.update_input("")
+        rects = self.hint._control.build_visual().row_rects
+        self.assertEqual(len(rects), 3)
+        self.hint._on_pointer(self._pointer_at_rect(rects[1]))
+        self.assertEqual(self.seen["picks"], ["#"])
+
+    def test_hover_updates_the_highlighted_row(self):
+        self.hint.update_input("")
+        rect = self.hint._control.build_visual().row_rects[2]
+        self.hint._on_pointer_move(self._pointer_at_rect(rect))
+        self.assertEqual(self.hint._selected, 2)
 
 
 if __name__ == "__main__":

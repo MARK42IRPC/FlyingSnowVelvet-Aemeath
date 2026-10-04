@@ -150,9 +150,9 @@ class _PetStub:
 class PetWindowUiIntegrationTests(unittest.TestCase):
     """整组右键控件确实落在同一个顶层窗口里，并且随桌宠整体移动。"""
 
+    #: 命令提示框已迁为“描述 + 后端渲染”（自带顶层宿主），不再是被 adopt 的成员。
     _MEMBERS = (
         "_cmd",
-        "_hint_box",
         "_close_btn",
         "_clickthrough_btn",
         "_scale_up_btn",

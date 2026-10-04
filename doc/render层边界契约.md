@@ -4,7 +4,7 @@
 
 本文档定义 `lib/core/render/` 的目标结构与依赖边界。它不是阶段计划，而是结构改建完成后必须成立的规则。
 
-**状态：第 6 节迁移顺序 1、2（目录切分）、3 已执行；图层能力已收敛到 `lib/core/render/layers/`（第 16 节）；后端中立协议与统一数据类型已落地（第 11 节），控件层“描述 + 后端渲染”已滚动迁移气泡框（第 12 节）、说明书、语音指示器与播放进度条（第 13 节）、音响音量/频段双滑条与搜索结果框（第 18 节）；排布解算已收敛到 `visuals/` 并由 `PlacementSpec` 统一解算（第 14 节，档位 0/1），右键按钮族的逐控件锚点事件链已收敛为声明式 `AnchorGraph` 且 Qt 改为消费共享布局（第 15 节，档位 2/3）；`WindowHost` 的被动宿主激活语义已与 Qt/DX 焦点策略对齐（第 17 节）。** 目录与引用规则以本文档为准；改建前的事实源是 [Qt 边界契约](Qt边界契约.md) 与 [跨后端视觉表现契约](视觉表现契约.md)，那两份文档继续负责“哪些内容算视觉逻辑”和“什么算无 Qt”。第一章描述的是最终目标；产品控件面（`lib/script/ui` 直接 `import PyQt5`）仍需逐个控件迁移，当前待迁清单以 `tests/test_qt_dependency_boundaries.py` 的 `frozen_ui_qt_importers` 为准，滚动顺序见第 13 节末尾。
+**状态：第 6 节迁移顺序 1、2（目录切分）、3 已执行；图层能力已收敛到 `lib/core/render/layers/`（第 16 节）；后端中立协议与统一数据类型已落地（第 11 节），控件层“描述 + 后端渲染”已滚动迁移气泡框（第 12 节）、说明书、语音指示器与播放进度条（第 13 节）、音响音量/频段双滑条、搜索结果框与命令提示框（第 18 节）；排布解算已收敛到 `visuals/` 并由 `PlacementSpec` 统一解算（第 14 节，档位 0/1），右键按钮族的逐控件锚点事件链已收敛为声明式 `AnchorGraph` 且 Qt 改为消费共享布局（第 15 节，档位 2/3）；`WindowHost` 的被动宿主激活语义已与 Qt/DX 焦点策略对齐（第 17 节）。** 目录与引用规则以本文档为准；改建前的事实源是 [Qt 边界契约](Qt边界契约.md) 与 [跨后端视觉表现契约](视觉表现契约.md)，那两份文档继续负责“哪些内容算视觉逻辑”和“什么算无 Qt”。第一章描述的是最终目标；产品控件面（`lib/script/ui` 直接 `import PyQt5`）仍需逐个控件迁移，当前待迁清单以 `tests/test_qt_dependency_boundaries.py` 的 `frozen_ui_qt_importers` 为准，滚动顺序见第 13 节末尾。
 
 本文只新增目录与引用规则，不改变任何视觉语义、数值来源或渲染结果。改建过程中出现分歧时，以 [视觉表现契约](视觉表现契约.md) 和当前 Qt 基准为事实源。
 
@@ -581,11 +581,10 @@ DX 保持未切分：DX 仍是 `available=False` 的实验实现，没有第二�
    同一个宿主窗口（每帧只移动一个原生窗口）。那一步需要 `setParent()`，是 Qt 专属操作，
    `QtControlHost` 得先支持"把控件窗口收编成宿主子窗口"，否则会退回"每个按钮一个顶层
    窗口 + 每帧各自 `move()`"的老样子。这是本族迁移的**前置项**。
-2. 其余顶层浮窗控件（`command_hint_box.py` 等）。音响双滑条
-   （`speaker_volume_slider.py` / `speaker_band_slider.py`）与音响搜索结果框
-   （`speaker_search_result_box.py`）已于第十一轮迁出（见第 18 节）；拖动类控件现在有
-   `on_pointer_move` + 拖动捕获与 `on_pointer_release` 可用，列表类控件可用描述层
-   `row_rects` 反查命中行。
+2. 其余顶层浮窗控件。音响双滑条（`speaker_volume_slider.py` / `speaker_band_slider.py`）、
+   音响搜索结果框（`speaker_search_result_box.py`）与命令提示框（`command_hint_box.py`）
+   已于第十一 / 十二轮迁出（见第 18 节）；拖动类控件现在有 `on_pointer_move` + 拖动捕获与
+   `on_pointer_release` 可用，列表类控件可用描述层 `row_rects` 反查命中行。
 3. 带子控件树与 `exec_()` 的对话框（`confirm_dialog`、`update_dialog`、`forum_*`、
    `office_*`）放最后，它们需要宿主先支持子控件与模态，属于下一轮的结构扩展。
 4. `world_objects/*.py`（时钟、沙发、雪球等）与 `game_runtime.py` 是另一类长尾，
@@ -878,3 +877,42 @@ lib/core/render/layers/
 - 点击粒子仍是“先发后判”：左/右键在控件内任意位置都发射 `click` / `pink_click`，
   未命中行时不发播放/入队事件——与迁移前逐字一致。
 - `frozen_ui_qt_importers`：70 → **67**（本轮双滑条 + 结果框三项）。
+
+**同轮追加三：命令提示框（`lib/script/ui/command_hint_box.py`）**
+
+第 13 节清单第 2 项里的最后一只顶层浮窗控件，与搜索结果框同批推进。
+
+- 描述层新增 `CommandHintControl`：默认三行提示与 `#` 命令列表两种模式、每页 5 行、
+  循环翻页、选中行、`get_completion()` 补全串与尺寸自适应；命中行改用共享
+  `visual.row_rects` 反查 `row_at_y()`，页指示器命中走 `page_indicator_contains()`，
+  行高与边框不再在控件里抄第二份。
+- 控件本体删除 `QWidget` 基类与 `PyQt5` 引用，改为 `create_control_host()`；
+  `width()` / `height()` / `x()` / `y()` / `isVisible()` / `update()` / `hide()` / `close()`
+  转发宿主。对外接口（`update_input` / `get_completion` / `navigate` / `turn_page` /
+  `fade_in` / `fade_out`）与 `CommandDialog` 调用面不变。
+- 提示框已不是 `QWidget`，`pet_window_ui` 不再把它 `adopt()` 进右键图层；它自己持有顶层
+  宿主，靠 `UI_CREATE` / `UI_ANCHOR_RESPONSE` 锚到命令框 `bottom_left` + `_GAP_Y`，
+  页翻按钮仍是 `QWidget`，继续由图层 `adopt`。
+- `frozen_ui_qt_importers`：67 → **66**（本轮双滑条 + 结果框 + 提示框四项移出）。
+
+**同轮追加四：命令框与右键图层的事件订阅释放（teardown 崩溃根因修复）**
+
+迁出提示框后单独跑 `test_control_layer_descriptions.py` 会在全部用例通过后以
+`0xC0000409` 退出，报一条 `AttributeError: 'CommandDialog' object has no attribute
+'_entry'`（`command_dialog.eventFilter`）。根因是 `CommandDialog` 与 `RightClickUiLayer`
+都只订阅、不释放：命令框订阅了 `TICK` / `FRAME` / `UI_ANCHOR_RESPONSE` / `UI_CREATE` /
+`UI_COMMAND_TOGGLE` / `UI_HINT_PICK` / `UI_CLICKTHROUGH_TOGGLE`，并挂了 `focusChanged`
+与 `_entry.installEventFilter(self)`；右键图层订阅了 `FRAME` /
+`UI_CLICKTHROUGH_TOGGLE`。事件中心的监听表持有强引用回调，测试销毁控件后这些槽仍在，
+继续把 Qt 事件投回一个已析构的 Python 包装上——`eventFilter` 里的 `self._entry` 因包装的
+`__dict__` 已被清空而抛异常，PyQt 的“槽内未捕获异常”路径随即 `abort()`。修复：
+`CommandDialog.closeEvent` → `_dispose()` 摘掉事件过滤器、断开 `focusChanged`、注销全部
+事件订阅；`RightClickUiLayer.close_layer()` → `_dispose()` 注销 `FRAME` /
+`UI_CLICKTHROUGH_TOGGLE`；`eventFilter` 内再补一道 `getattr(self, '_entry', None)` 兜底，
+防已进入队列的陈旧事件重新踩到同一处。
+
+验证：
+
+- `py -3 -m unittest discover -s tests -p "test_*.py" -q`：2113 通过、10 跳过。
+- `py -3 -m unittest discover -s tests/dx -p "test_*.py" -q`：122 通过、7 跳过。
+- `py -3 -m ruff check lib config scripts tests` 归零；`py -3 -m compileall -q config lib scripts tests` 通过。

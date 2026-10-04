@@ -88,7 +88,22 @@
   位置仍由 `SpeakerSearchDialog` 通过 `UI_ANCHOR_RESPONSE` 驱动，`clear_results` /
   `set_results` / `set_searching` / `navigate` / `turn_page` / `fade_in` / `fade_out` 调用面不变。
 
+- 控件层「描述 + 后端渲染」滚动迁移继续：命令提示框（`command_hint_box.py`）不再继承
+  `QWidget`、不再 `import PyQt5`，改为描述层状态机（`visuals/controls.py` 的
+  `CommandHintControl`）+ 后端窗口宿主，`frozen_ui_qt_importers` 由 70 项降到 66 项
+  （本轮共移出双滑条、结果框与提示框四项）。默认三行提示与 `#` 命令列表两种模式、
+  循环翻页、选中行与补全都在描述层，命中行改用共享 `visual.row_rects` 反查；
+  提示框不再是 `QWidget`，改由自身顶层宿主靠锚点事件贴到命令框左下，
+  `update_input` / `get_completion` / `navigate` / `turn_page` / `fade_in` / `fade_out`
+  调用面不变。
+
 ### Fixed
+- 修复控件层迁移暴露的一处 teardown 崩溃：`CommandDialog` 与 `RightClickUiLayer` 原来
+  只订阅、不释放事件（命令框还挂了 `focusChanged` 与输入框事件过滤器），控件销毁后事件
+  中心仍持有强引用回调，陈旧事件投回已析构的 Python 包装会抛 `AttributeError`，PyQt 槽内
+  未捕获异常直接 `abort()`（单独跑 `test_control_layer_descriptions.py` 会以 `0xC0000409`
+  退出）。现在命令框 `closeEvent`、右键图层 `close_layer()` 各自注销订阅，`eventFilter`
+  再补一道取 `_entry` 的兜底。
 - 修复游戏窗口压住粒子与特效：游戏宿主窗口原先用 `Qt.Tool | Qt.WindowStaysOnTopHint`
   并注册到 `WindowLayer.PANEL`，因此落进置顶窗口带；被点击激活后 Windows 会把它抬到同带顶部，
   反过来盖住 `WA_ShowWithoutActivating` 的粒子/特效覆盖层。现在按工作台窗口处理：
