@@ -29,6 +29,7 @@ from lib.core.render.visuals.application_visuals import (
     CommandHintVisualDescription,
     build_bubble_visual,
     build_command_hint_visual,
+    build_rect_action_button_visual,
     build_tooltip_visual,
     resolve_bubble_geometry,
 )
@@ -685,6 +686,20 @@ class RectActionButtonControl:
     def label(self) -> str:
         """按钮文字；子类可覆盖成动态文本（模式名、'+' / '-' 等）。"""
         return self.text
+
+    def build_visual(self, font):
+        """共享绘制批次：形状、边框、悬停/按下态都来自 ``application_visuals``。
+
+        ``font`` 是后端无关的 ``FontSpec``；宿主只负责把批次交给绘制后端。
+        """
+        return build_rect_action_button_visual(
+            self.width,
+            self.height,
+            self.label(),
+            font,
+            hovered=self.hovered,
+            layer=self.paint_layer,
+        )
 
     # ── 锚点解算 ───────────────────────────────────────────────────
     def anchor_local(self, anchor_id: str) -> Point:

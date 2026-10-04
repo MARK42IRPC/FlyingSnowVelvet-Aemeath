@@ -633,19 +633,25 @@ class CommandDialog(QWidget):
         self.setAttribute(Qt.WA_TransparentForMouseEvents,
                           event.data.get('enabled', False))
 
+    @staticmethod
+    def _family_window(button):
+        """按钮迁出 QWidget 后真正占屏幕的是它的后端宿主窗口。"""
+        runtime = getattr(button, '_runtime', None)
+        return getattr(runtime, 'host', None) or button
+
     def _iter_family_widgets(self):
         widgets = [
             self,
             self._entry,
             self._hint_box,
-            self._close_button,
-            self._clickthrough_button,
-            self._scale_up_button,
-            self._scale_down_button,
-            self._launch_wuwa_button,
-            self._chat_mode_button,
-            self._interaction_mode_button,
-            self._more_functions_button,
+            self._family_window(self._close_button),
+            self._family_window(self._clickthrough_button),
+            self._family_window(self._scale_up_button),
+            self._family_window(self._scale_down_button),
+            self._family_window(self._launch_wuwa_button),
+            self._family_window(self._chat_mode_button),
+            self._family_window(self._interaction_mode_button),
+            self._family_window(self._more_functions_button),
         ]
         if self._hint_box is not None:
             widgets.append(getattr(self._hint_box, '_prev_btn', None))

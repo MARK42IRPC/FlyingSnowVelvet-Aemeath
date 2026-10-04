@@ -104,6 +104,9 @@ class QtControlHost(QWidget):
             self.setAttribute(Qt.WA_ShowWithoutActivating)
         if transparent_for_mouse:
             self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        # 悬停回调需要未按下时的移动事件；Qt 默认只在按键按下时投递 mouseMoveEvent。
+        if on_pointer_move is not None:
+            self.setMouseTracking(True)
         self.setCursor(Qt.PointingHandCursor if pointing_cursor else Qt.ArrowCursor)
         if layer is not None:
             get_layer_manager().register(self, layer)

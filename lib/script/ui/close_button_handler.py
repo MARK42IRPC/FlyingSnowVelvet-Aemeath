@@ -17,16 +17,29 @@ class CloseButtonEventHandler:
         self._event_center.subscribe(EventType.MOUSE_LEAVE, self._on_mouse_leave)
         self._event_center.subscribe(EventType.MOUSE_PRESS, self._on_mouse_press)
 
+    def _owner_window(self):
+        """按钮所属的原生窗口。
+
+        按钮迁出 QWidget 后不再有 ``parent()``，它真正的窗口是后端宿主；这里
+        统一取宿主，未迁移的控件仍回退到 Qt 的 ``parent()``。
+        """
+        runtime = getattr(self._button, '_runtime', None)
+        host = getattr(runtime, 'host', None)
+        if host is not None:
+            return host
+        parent = getattr(self._button, 'parent', None)
+        return parent() if callable(parent) else None
+
     def _on_mouse_enter(self, event: Event):
         """处理鼠标进入"""
         pet = event.data.get('pet')
-        if pet == self._button.parent():
+        if pet == self._owner_window():
             self._button.fade_in()
 
     def _on_mouse_leave(self, event: Event):
         """处理鼠标离开"""
         pet = event.data.get('pet')
-        if pet == self._button.parent():
+        if pet == self._owner_window():
             self._button.fade_out()
 
     def _on_mouse_press(self, event: Event):
@@ -41,9 +54,11 @@ class CloseButtonEventHandler:
 
         # 只处理左键点击
         if button == MouseButton.LEFT and global_pos is not None:
-            # 检查点击是否在按钮上
-            button_rect = self._button.geometry()
-            button_global_pos = self._button.mapToGlobal(self._button.rect().topLeft())
+            # 检查点击是否在按钮上；控件已不是 QWidget，几何从后端宿主取。
+            runtime = getattr(self._button, '_runtime', None)
+            host = getattr(runtime, 'host', None) or self._button
+            button_rect = host.geometry()
+            button_global_pos = host.mapToGlobal(host.rect().topLeft())
 
             if (button_global_pos.x() <= global_pos.x <= button_global_pos.x() + button_rect.width() and
                 button_global_pos.y() <= global_pos.y <= button_global_pos.y() + button_rect.height()):

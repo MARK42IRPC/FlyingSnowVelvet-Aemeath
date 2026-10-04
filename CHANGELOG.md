@@ -97,7 +97,27 @@
   `update_input` / `get_completion` / `navigate` / `turn_page` / `fade_in` / `fade_out`
   调用面不变。
 
+- 控件层「描述 + 后端渲染」滚动迁移收掉最后一个成规模控件族：右键矩形动作按钮一族八个按钮
+  （鼠标穿透 / 放大 / 缩小 / 关闭 / 启动鸣潮 / 聊天模式 / 交互模式 / 更多功能）连同共享基类
+  `rect_action_button_style.py` 一并迁出，该文件删除，`frozen_ui_qt_importers` 由 66 项降到
+  57 项（一族九个文件一次移出）。八个按钮改为 `lib/script/ui/rect_action_button_runtime.py` 的
+  `RectActionButtonRuntime`（描述 + 宿主装配），差异只剩「文字、节点 id、点下去做什么」；
+  `ScaleUpButton` / `ScaleDownButton` 现在是两个各自独立的类。右键图层原有的 `adopt()`
+  直接收编各按钮宿主，仍然每帧只移动一个原生窗口；`launch_wuwa_button` 的启动动作收口到共享
+  `lib/script/app/wuwa_launcher.py`。对外接口不变。
+
 ### Fixed
+- 修复右键动作按钮迁移夹带的两处回归：关闭按钮的鼠标进入/离开原先读 `_button.parent()`，
+  按钮迁出 `QWidget` 后没有这个方法，每次进出都抛 `AttributeError` 被事件中心吞成日志，
+  关闭按钮不再自动淡入/淡出——改为统一取后端宿主 `_runtime.host`（未迁移控件仍回退
+  `parent()`）。八个动作按钮旧实现里的 `_idle_timeout` 是死代码（赋值后从不读取），迁移
+  时若接成宿主空闲计时，按钮会在命令框打开约 `idle_close_ms` 后各自消失；现在不再给按钮
+  设空闲计时，族内自动隐藏仍只由命令框的鼠标距离守卫负责。
+- 修复命令列表高亮不跟随鼠标：提示框与搜索结果框原先在各自 `QWidget` 里
+  `setMouseTracking(True)`，迁到共享控件宿主后宿主没打开鼠标跟踪，Qt 只在按住按键时才
+  投递 `mouseMoveEvent`，"移动鼠标高亮不动、按下才跟着跳"。宿主现在在传入移动回调时
+  自行开启鼠标跟踪，命令提示框、搜索结果框与两条音响滑条一起恢复。三处回归各补一条
+  运行期守卫。
 - 修复控件层迁移暴露的一处 teardown 崩溃：`CommandDialog` 与 `RightClickUiLayer` 原来
   只订阅、不释放事件（命令框还挂了 `focusChanged` 与输入框事件过滤器），控件销毁后事件
   中心仍持有强引用回调，陈旧事件投回已析构的 Python 包装会抛 `AttributeError`，PyQt 槽内

@@ -15,6 +15,7 @@ import os
 import subprocess
 import sys
 import textwrap
+import time
 import unittest
 from pathlib import Path
 
@@ -209,6 +210,15 @@ class ControlDescriptionLayerTests(unittest.TestCase):
             ("lib/script/ui/speaker_band_slider.py", "SpeakerBandSlider"),
             ("lib/script/ui/speaker_search_result_box.py", "SpeakerSearchResultBox"),
             ("lib/script/ui/command_hint_box.py", "CommandHintBox"),
+            ("lib/script/ui/clickthrough_button.py", "ClickThroughButton"),
+            ("lib/script/ui/close_button.py", "CloseButton"),
+            ("lib/script/ui/scale_button.py", "ScaleUpButton"),
+            ("lib/script/ui/scale_button.py", "ScaleDownButton"),
+            ("lib/script/ui/chat_mode_button.py", "ChatModeButton"),
+            ("lib/script/ui/interaction_mode_button.py", "InteractionModeButton"),
+            ("lib/script/ui/more_functions_button.py", "MoreFunctionsButton"),
+            ("lib/script/ui/launch_wuwa_button.py", "LaunchWutheringWavesButton"),
+            ("lib/script/ui/restore_button.py", "RestoreButton"),
         )
         for relative, class_name in migrated:
             with self.subTest(control=relative):
@@ -1086,6 +1096,68 @@ class CommandDialogGeometryIntegrationTests(unittest.TestCase):
             pet_window_ui.shutdown_pet_window_ui(owner)
             self.app.processEvents()
 
+    def test_action_buttons_do_not_idle_out_on_their_own(self):
+        """八个动作按钮的自动收起只由命令框的鼠标距离守卫决定。
+
+        每个按钮曾各有一个 ``_idle_timeout``（旧实现里是死代码：赋值后从不读取），
+        迁移时若把它接成宿主的 ``auto_hide_ms``，八个按钮会在命令框打开约
+        `idle_close_ms` 后自己消失——鼠标明明还在旁边。这里把 ``idle_close_ms``
+        压到 300ms，打开命令框后只跑事件循环（不发 TICK，排除鼠标距离守卫），
+        断言按钮仍然全部可见。
+        """
+        from unittest.mock import patch
+
+        from PyQt5.QtWidgets import QWidget
+
+        from lib.core.render.visuals.types import Point
+        from lib.script.ui import pet_window_ui
+
+        class _PetStub:
+            def __init__(self, x, y):
+                self._position = Point(x, y)
+
+            def get_core_position(self):
+                return self._position
+
+        owner = QWidget()
+        owner.resize(200, 200)
+        with patch.dict("config.config_timeouts.TIMEOUTS", {"idle_close_ms": 300}):
+            ui = pet_window_ui.create_pet_window_ui(owner, on_close=lambda: None)
+        layer = ui["_right_click_ui_layer"]
+        try:
+            command = ui["_cmd"]
+            command.toggle(_PetStub(600, 400))
+            self.app.processEvents()
+
+            button_names = (
+                "_close_btn",
+                "_clickthrough_btn",
+                "_scale_up_btn",
+                "_scale_down_btn",
+                "_launch_wuwa_btn",
+                "_chat_mode_btn",
+                "_interaction_mode_btn",
+                "_more_functions_btn",
+            )
+            # 只跑事件循环：这段时间足以让 300ms 的空闲计时器全部到点。
+            deadline = time.monotonic() + 0.9
+            while time.monotonic() < deadline:
+                self.app.processEvents()
+                time.sleep(0.02)
+
+            still_visible = {
+                name: ui[name].isVisible() for name in button_names
+            }
+            self.assertEqual(
+                still_visible,
+                {name: True for name in button_names},
+                "动作按钮不该各自超时收起；族内自动隐藏只由命令框的鼠标距离守卫负责",
+            )
+        finally:
+            layer.close_layer()
+            pet_window_ui.shutdown_pet_window_ui(owner)
+            self.app.processEvents()
+
 
 #: 已迁移的「描述 + 后端渲染」控件：文件 → 类名。它们不再是 `QWidget`，
 #: 也没有 `geometry()` / `pos()` / `size()`，但继续被族内跟随者当作窗口测量。
@@ -1099,6 +1171,14 @@ _MIGRATED_UI_CONTROLS = {
     "lib/script/ui/speaker_band_slider.py": "SpeakerBandSlider",
     "lib/script/ui/speaker_search_result_box.py": "SpeakerSearchResultBox",
     "lib/script/ui/command_hint_box.py": "CommandHintBox",
+    "lib/script/ui/clickthrough_button.py": "ClickThroughButton",
+    "lib/script/ui/close_button.py": "CloseButton",
+    "lib/script/ui/scale_button.py": "ScaleUpButton",
+    "lib/script/ui/chat_mode_button.py": "ChatModeButton",
+    "lib/script/ui/interaction_mode_button.py": "InteractionModeButton",
+    "lib/script/ui/more_functions_button.py": "MoreFunctionsButton",
+    "lib/script/ui/launch_wuwa_button.py": "LaunchWutheringWavesButton",
+    "lib/script/ui/restore_button.py": "RestoreButton",
 }
 
 
@@ -1429,6 +1509,41 @@ class CommandHintBoxIntegrationTests(unittest.TestCase):
         self.hint.update_input("")
         rect = self.hint._control.build_visual().row_rects[2]
         self.hint._on_pointer_move(self._pointer_at_rect(rect))
+        self.assertEqual(self.hint._selected, 2)
+
+    def test_host_enables_mouse_tracking_for_hover_controls(self):
+        """悬停类控件的宿主必须开启鼠标跟踪。
+
+        提示框与搜索结果框原先在各自 ``QWidget`` 里 `setMouseTracking(True)`；
+        迁到共享宿主后，若宿主不打开鼠标跟踪，Qt 只在按住按键时才投递
+        ``mouseMoveEvent``——表现是"移动鼠标时高亮不动、按下才跟着跳"。
+
+        这里再补一条真实事件投递：直接给宿主发一个不按键的 ``QMouseEvent``，
+        断言高亮行真的跟着变了（``QTest.mouseMove`` 会命中光标下的窗口，多窗口
+        重叠时不确定，故直接 ``sendEvent``）。
+        """
+        from PyQt5.QtCore import QEvent, QPoint, Qt
+        from PyQt5.QtGui import QMouseEvent
+
+        self.hint.update_input("")
+        self.hint.fade_in()
+        self.app.processEvents()
+        host = self.hint._host
+        self.assertTrue(
+            host.hasMouseTracking(), "宿主必须开启鼠标跟踪才能收到未按下的移动事件"
+        )
+
+        rect = self.hint._control.build_visual().row_rects[2]
+        target = QPoint(int(rect.x + rect.width / 2), int(rect.y + rect.height / 2))
+        move = QMouseEvent(
+            QEvent.MouseMove,
+            target,
+            host.mapToGlobal(target),
+            Qt.NoButton,
+            Qt.NoButton,
+            Qt.NoModifier,
+        )
+        self.app.sendEvent(host, move)
         self.assertEqual(self.hint._selected, 2)
 
 

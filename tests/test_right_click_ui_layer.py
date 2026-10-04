@@ -150,7 +150,7 @@ class _PetStub:
 class PetWindowUiIntegrationTests(unittest.TestCase):
     """整组右键控件确实落在同一个顶层窗口里，并且随桌宠整体移动。"""
 
-    #: 命令提示框已迁为“描述 + 后端渲染”（自带顶层宿主），不再是被 adopt 的成员。
+    #: 命令提示框与八个动作按钮已迁为“描述 + 后端渲染”，被 adopt 的是它们各自的后端宿主。
     _MEMBERS = (
         "_cmd",
         "_close_btn",
@@ -177,6 +177,12 @@ class PetWindowUiIntegrationTests(unittest.TestCase):
         self.layer.deleteLater()
         self.app.processEvents()
 
+    def _member_window(self, name):
+        """动作按钮迁出 QWidget 后，占屏幕的是它的后端宿主窗口。"""
+        control = self.ui[name]
+        runtime = getattr(control, "_runtime", None)
+        return getattr(runtime, "host", None) or control
+
     @staticmethod
     def _global_pos(widget) -> QPoint:
         origin = widget.mapToGlobal(QPoint(0, 0))
@@ -187,7 +193,7 @@ class PetWindowUiIntegrationTests(unittest.TestCase):
 
         self.assertEqual(len(members), len(self._MEMBERS) + 2)
         for name in self._MEMBERS:
-            widget = self.ui[name]
+            widget = self._member_window(name)
             self.assertIs(widget.parent(), self.layer)
             self.assertFalse(widget.isWindow())
             self.assertTrue(widget in members)
@@ -205,7 +211,7 @@ class PetWindowUiIntegrationTests(unittest.TestCase):
         self.assertFalse(self.layer.mask_region().isEmpty())
         before = {}
         for name in self._MEMBERS:
-            widget = self.ui[name]
+            widget = self._member_window(name)
             position = self._global_pos(widget)
             self.assertTrue(layer_geometry.contains(QRect(position, widget.size())))
             before[name] = position
@@ -227,7 +233,7 @@ class PetWindowUiIntegrationTests(unittest.TestCase):
         self.assertEqual(cmd.pos(), cmd_local)
         for name in self._MEMBERS:
             self.assertEqual(
-                self._global_pos(self.ui[name]),
+                self._global_pos(self._member_window(name)),
                 before[name] + move,
                 msg=name,
             )

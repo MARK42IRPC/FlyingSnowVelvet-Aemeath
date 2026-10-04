@@ -63,19 +63,18 @@ def create_pet_window_ui(owner, on_close):
     # 右键 UI 合并为一层：命令框与全部附属按钮共用同一个顶层窗口，
     # 拖动桌宠时每个帧只移动一次原生窗口，也不再各自重复裁剪/重绘。
     layer = RightClickUiLayer()
-    # 命令提示框已迁为“描述 + 后端渲染”（不再是 QWidget），不能走 adopt 的 setParent；
-    # 它自己带一个顶层宿主窗口，落位仍由锚点事件驱动。翻页按钮暂留为 QWidget，
-    # 与提示框一起在 adopt 之后单独补齐落位。
+    # 八个矩形动作按钮已迁为“描述 + 后端渲染”（不再是 QWidget），它们各自的顶层宿主
+    # 才是被 adopt 的窗口；命令框与提示框翻页按钮仍是 QWidget，一并收进同一层。
     layer.adopt(
         cmd,
-        close_btn,
-        clickthrough_btn,
-        scale_up_btn,
-        scale_down_btn,
-        launch_wuwa_btn,
-        chat_mode_btn,
-        interaction_mode_btn,
-        more_functions_btn,
+        close_btn._runtime.host,
+        clickthrough_btn._runtime.host,
+        scale_up_btn._runtime.host,
+        scale_down_btn._runtime.host,
+        launch_wuwa_btn._runtime.host,
+        chat_mode_btn._runtime.host,
+        interaction_mode_btn._runtime.host,
+        more_functions_btn._runtime.host,
         getattr(hint_box, "_prev_btn", None),
         getattr(hint_box, "_next_btn", None),
     )
@@ -83,14 +82,14 @@ def create_pet_window_ui(owner, on_close):
     # 命令框附属按钮族的声明式锚点图（档位 2）：登记节点后由宿主一帧一次解算整族落位，
     # 按钮不再各自收发 UI_ANCHOR_RESPONSE / UI_CREATE 锚点事件。命令框是族的根节点。
     layer.register_family_node("command_dialog", cmd)
-    layer.register_family_node("clickthrough", clickthrough_btn)
-    layer.register_family_node("scale_up", scale_up_btn)
-    layer.register_family_node("scale_down", scale_down_btn)
-    layer.register_family_node("close", close_btn)
-    layer.register_family_node("launch_wuwa", launch_wuwa_btn)
-    layer.register_family_node("chat_mode", chat_mode_btn)
-    layer.register_family_node("interaction_mode", interaction_mode_btn)
-    layer.register_family_node("more_functions", more_functions_btn)
+    layer.register_family_node("clickthrough", clickthrough_btn._runtime.host)
+    layer.register_family_node("scale_up", scale_up_btn._runtime.host)
+    layer.register_family_node("scale_down", scale_down_btn._runtime.host)
+    layer.register_family_node("close", close_btn._runtime.host)
+    layer.register_family_node("launch_wuwa", launch_wuwa_btn._runtime.host)
+    layer.register_family_node("chat_mode", chat_mode_btn._runtime.host)
+    layer.register_family_node("interaction_mode", interaction_mode_btn._runtime.host)
+    layer.register_family_node("more_functions", more_functions_btn._runtime.host)
 
     return {
         "_right_click_ui_layer": layer,

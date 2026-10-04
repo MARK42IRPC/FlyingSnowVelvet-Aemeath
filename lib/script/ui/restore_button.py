@@ -1,330 +1,217 @@
-"""恢复穿透按钮类"""
-from PyQt5.QtCore import Qt, QPoint
-from PyQt5.QtGui import QColor
+"""恢复穿透按钮类。
 
+在穿透模式下按鼠标距离动态调整透明度，上中锚点对齐到 pet_window 的下中锚点。
+按钮始终存在，鼠标靠近时逐渐显示、远离时逐渐透明。
+"""
+from config.config import ANIMATION
 from config.scale import scale_px
 from config.tooltip_config import TOOLTIPS
 from lib.core.event.center import get_event_center, EventType, Event
-from lib.script.ui.render_bridge import place_at_point, qpoint_from_point, screen_rect_for_point
-from lib.script.ui.rect_action_button_style import RectActionButton
-from lib.core.render.backends.qt.widgets.anchors import (
-    get_anchor_point as resolve_anchor_point,
-    publish_widget_anchor_response,
+from lib.core.render.visuals import controls
+from lib.core.render.visuals.types import Point, coerce_point
+from lib.script.ui import render_bridge
+from lib.script.ui.rect_action_button_runtime import (
+    RectActionButtonRuntime,
+    emit_click_particle,
 )
 
 
-def _hex(color: QColor) -> str:
-    return color.name()
-
-
-class RestoreButton(RectActionButton):
-    """
-    恢复穿透按钮，在穿透模式下根据鼠标距离动态调整透明度，对齐到主窗口下中锚点。
-    鼠标靠近时逐渐显示，远离时逐渐透明，按钮始终存在。
-    """
+class RestoreButton:
+    """恢复穿透按钮。"""
 
     WIDTH = scale_px(80, min_abs=1)
     HEIGHT = scale_px(32, min_abs=1)
 
     def __init__(self, pet_widget=None):
-        super().__init__(self.WIDTH, self.HEIGHT, TOOLTIPS['restore_button'])
-
-        # 事件中心
-        self._event_center = get_event_center()
-
-        # UI 组件 ID
         self._ui_id = 'restore_button'
-
-        # 锚点配置：对齐到 pet_window 的下中锚点
         self._target_ui_id = 'pet_window'
-        self._target_anchor_id = 'bottom'
-        self._self_anchor_id = 'top'  # 使用上中锚点对齐
-
-        # 位置偏移：往下偏移 4 像素
-        self._offset_x = 0
-        self._offset_y = scale_px(4, min_abs=1)
-
-        # 鼠标靠近阈值（像素）
-        self._proximity_threshold = scale_px(100, min_abs=1)
-        # 渐变距离：超出阈值后逐渐透明的距离
-        self._fade_distance = scale_px(50, min_abs=1)
-
-        # 鼠标穿透模式标志
-        self._clickthrough_enabled = False
-
-        # 鼠标位置
-        self._mouse_pos = None
-
-        # 当前透明度
-        self._current_opacity = 1.0
-        self._target_opacity = 1.0
-
-        # 动画进行中标志
-        self._animating = False
-
-        # 当前锚点位置
         self._anchor_point = None
-
-        # 锚点是否可用
         self._anchor_available = True
+        self._clickthrough_enabled = False
+        self._mouse_pos = None
+        self._proximity_threshold = scale_px(100, min_abs=1)
+        self._fade_distance = scale_px(50, min_abs=1)
+        self._event_center = get_event_center()
+        self._runtime = RectActionButtonRuntime(
+            width=self.WIDTH,
+            height=self.HEIGHT,
+            text="恢复穿透",
+            description=TOOLTIPS["restore_button"],
+            on_pointer=self._on_pointer,
+            on_clickthrough=self._on_clickthrough_state,
+        )
 
-        # 如果提供了 pet_widget，直接计算初始锚点位置
         if pet_widget is not None:
-            from config.config import ANIMATION
-            pet_width = ANIMATION['pet_size'][0]
-            pet_height = ANIMATION['pet_size'][1]
+            pet_width = ANIMATION["pet_size"][0]
+            pet_height = ANIMATION["pet_size"][1]
             pet_pos = pet_widget.get_core_position()
-
-            # 计算主窗口的 bottom 锚点位置
-            self._anchor_point = QPoint(
+            self._anchor_point = Point(
                 int(pet_pos.x) + pet_width // 2,
-                int(pet_pos.y) + pet_height
+                int(pet_pos.y) + pet_height,
             )
-
-            # 直接更新位置
             self._update_position()
+            self._event_center.publish(Event(EventType.UI_CREATE, {
+                "window_id": self._target_ui_id,
+                "anchor_id": "bottom",
+                "ui_id": self._ui_id,
+            }))
 
-            # 发布 UI 创建请求（用于后续更新）
-            create_event = Event(EventType.UI_CREATE, {
-                'window_id': self._target_ui_id,
-                'anchor_id': self._target_anchor_id,
-                'ui_id': self._ui_id
-            })
-            self._event_center.publish(create_event)
-
-        # 按钮始终显示，通过透明度控制可见性
-        self.fade_in()
-
-        # 订阅帧事件用于位置刷新和鼠标距离检测
+        self._runtime.fade_in()
         self._event_center.subscribe(EventType.FRAME, self._on_frame)
-
-        # 订阅鼠标移动事件
         self._event_center.subscribe(EventType.MOUSE_MOVE, self._on_mouse_move)
-
-        # 订阅锚点响应事件
         self._event_center.subscribe(EventType.UI_ANCHOR_RESPONSE, self._on_anchor_response)
-
-        # 订阅 UI 创建事件，返回自己的坐标
         self._event_center.subscribe(EventType.UI_CREATE, self._on_ui_create)
-
-        # 订阅鼠标穿透模式切换事件
         self._event_center.subscribe(EventType.UI_CLICKTHROUGH_TOGGLE, self._on_clickthrough_toggle)
 
-    def get_anchor_point(self, anchor_id: str) -> QPoint:
-        """
-        获取指定锚点的位置
-
-        Args:
-            anchor_id: 锚点 ID ('top', 'bottom', 'left', 'right',
-                        'top_left', 'top_right', 'bottom_left', 'bottom_right', 'center')
-
-        Returns:
-            锚点位置（相对于窗口的坐标）
-        """
-        return resolve_anchor_point(self, anchor_id)
-
-    def _button_text(self) -> str:
-        return '恢复穿透'
-
+    # ── 锚点 / 位置 ───────────────────────────────────────────────
     def _on_frame(self, event):
-        """帧事件处理 - 刷新位置和根据鼠标距离调整透明度"""
-        # 刷新位置（始终刷新）
         if self._anchor_available and self._anchor_point:
             self._update_position()
+        self._refresh_proximity()
 
-        # 动画进行中时不设置透明度，避免冲突
-        if self._animating:
-            return
-
-        # 鼠标距离检测 - 靠近时alpha提升，远离时alpha降低
+    def _refresh_proximity(self):
         if self._anchor_point is None:
-            # 锚点未初始化，完全显示且可交互
-            self._target_opacity = 1.0
-            self.setAttribute(Qt.WA_TransparentForMouseEvents, False)
-        elif self._mouse_pos is None:
-            # 鼠标位置未获取，完全显示且可交互
-            self._target_opacity = 1.0
-            self.setAttribute(Qt.WA_TransparentForMouseEvents, False)
+            self._runtime.set_direct_opacity(1.0)
+            return
+        if self._mouse_pos is None:
+            return
+        distance = ((self._mouse_pos.x - self._anchor_point.x) ** 2
+                    + (self._mouse_pos.y - self._anchor_point.y) ** 2) ** 0.5
+        if distance <= self._proximity_threshold:
+            self._runtime.set_direct_opacity(1.0)
         else:
-            # 计算鼠标与锚点的距离
-            distance = ((self._mouse_pos.x() - self._anchor_point.x()) ** 2 +
-                       (self._mouse_pos.y() - self._anchor_point.y()) ** 2) ** 0.5
-
-            # 根据距离计算目标透明度
-            if distance <= self._proximity_threshold:
-                # 在阈值内，完全显示且可交互
-                self._target_opacity = 1.0
-                self.setAttribute(Qt.WA_TransparentForMouseEvents, False)
-            elif distance <= self._proximity_threshold + self._fade_distance:
-                # 在渐变范围内，逐渐透明但仍可交互
-                fade_progress = (distance - self._proximity_threshold) / self._fade_distance
-                self._target_opacity = 1.0 - fade_progress
-                self.setAttribute(Qt.WA_TransparentForMouseEvents, False)
-            else:
-                # 超出渐变范围，半透明显示且鼠标穿透
-                self._target_opacity = 0.3
-                self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-
-        # 直接设置透明度
-        self.set_direct_opacity(self._target_opacity)
+            fade_span = max(1.0, float(self._fade_distance))
+            ratio = max(0.0, min(1.0, 1.0 - (distance - self._proximity_threshold) / fade_span))
+            self._runtime.set_direct_opacity(ratio)
 
     def _on_mouse_move(self, event):
-        """处理鼠标移动事件 - 追踪鼠标位置"""
-        self._mouse_pos = qpoint_from_point(event.data.get('global_pos'))
+        point = coerce_point(event.data.get("global_pos"))
+        self._mouse_pos = (
+            None if point is None
+            else Point(int(round(point.x)), int(round(point.y)))
+        )
 
     def _on_anchor_response(self, event):
-        """锚点响应事件处理"""
-        ui_id = event.data.get('ui_id')
-        window_id = event.data.get('window_id')
-        anchor_id = event.data.get('anchor_id')
-        new_anchor_point = qpoint_from_point(event.data.get('anchor_point'))
-
-        # 只处理来自 pet_window 的锚点响应事件
-        if window_id != self._target_ui_id:
-            return
-
-        # 如果锚点不可用，不处理锚点更新
-        if not self._anchor_available:
-            return
-
-        # 处理两种情况：
-        # 1. 专门针对此 UI 组件的锚点响应（来自 pet_window）
-        # 2. pet_window 移动时的全局锚点更新（ui_id='all'）
-        if ui_id == self._ui_id:
-            # 专门针对此 UI 组件的锚点响应
-            # event.data.get('anchor_point') 已经是 pet_window bottom 锚点的全局坐标
-            # 直接使用，不需要再计算
-            # 只在锚点位置改变时更新
-            if self._anchor_point != new_anchor_point:
-                self._anchor_point = new_anchor_point
-                self._update_position()
-        elif ui_id == 'all' and window_id == self._target_ui_id:
-            # pet_window 移动时的全局锚点更新
-            # 需要根据当前锚点 ID 计算新的锚点位置
-            if anchor_id == 'all':
-                # pet_window 的新位置（左上角坐标）
-                pet_pos = qpoint_from_point(event.data.get('anchor_point'))
+        pet_width = ANIMATION["pet_size"][0]
+        pet_height = ANIMATION["pet_size"][1]
+        if event.data.get("ui_id") == self._ui_id:
+            point = coerce_point(event.data.get("anchor_point"))
+            if point is None:
+                return
+            self._anchor_point = Point(
+                point.x - pet_width // 2,
+                point.y - pet_height,
+            )
+            self._update_position()
+        elif event.data.get("ui_id") == "all" and event.data.get("window_id") == self._target_ui_id:
+            if event.data.get("anchor_id") == "all":
+                pet_pos = coerce_point(event.data.get("anchor_point"))
                 if pet_pos is None:
                     return
-                # 获取 pet_window 的尺寸来计算 bottom 锚点
-                from config.config import ANIMATION
-                pet_width = ANIMATION['pet_size'][0]
-                pet_height = ANIMATION['pet_size'][1]
-                # 计算 bottom 锚点位置
-                new_anchor_point = QPoint(
-                    pet_pos.x() + pet_width // 2,  # bottom 锚点的 X 坐标
-                    pet_pos.y() + pet_height  # bottom 锚点的 Y 坐标
-                )
-                # 只在锚点位置改变时更新
-                if self._anchor_point != new_anchor_point:
-                    self._anchor_point = new_anchor_point
+                new_point = Point(pet_pos.x + pet_width // 2, pet_pos.y + pet_height)
+                if self._anchor_point != new_point:
+                    self._anchor_point = new_point
                     self._update_position()
 
     def _on_ui_create(self, event):
-        """UI ?????? - ???????"""
-        target_ui_id = event.data.get('ui_id')
-        request_anchor_id = event.data.get('anchor_id')
-
-        if target_ui_id == self._ui_id:
-            publish_widget_anchor_response(
-                self._event_center,
-                self,
-                window_id=self._ui_id,
-                anchor_id=request_anchor_id,
-                ui_id=target_ui_id,
-            )
+        if event.data.get("ui_id") == self._ui_id:
+            self._event_center.publish(Event(EventType.UI_ANCHOR_RESPONSE, {
+                "window_id": self._ui_id,
+                "anchor_id": event.data.get("anchor_id"),
+                "anchor_point": self._anchor_point,
+                "ui_id": self._ui_id,
+            }))
 
     def _on_clickthrough_toggle(self, event):
-        """处理鼠标穿透模式切换事件"""
-        enabled = event.data.get('enabled', False)
-        self._clickthrough_enabled = enabled
+        self._clickthrough_enabled = bool(event.data.get("enabled", False))
+        if self._clickthrough_enabled:
+            self._anchor_point = None
 
-        if enabled:
-            # 穿透模式启用，重置锚点
+    def _on_clickthrough_state(self, enabled):
+        self._clickthrough_enabled = bool(enabled)
+        if self._clickthrough_enabled:
             self._anchor_point = None
 
     def _update_position(self):
-        """更新窗口位置 - 上中锚点对齐到 pet_window 的下中锚点"""
         if not self._anchor_point:
             return
-
-        # self._anchor_point 是全局坐标（pet_window bottom 锚点的全局坐标）
-        # bottom 锚点的位置：(pet_x + pet_width // 2, pet_y + pet_height)
-        # RestoreButton 是独立窗口，使用全局坐标
-
-        # 上中锚点对齐 pet_window 下中锚点；解算在 visuals/layout.py。
-        anchor = self._anchor_point
-        placement = place_at_point(
+        placement = render_bridge.place_at_point(
             (self.WIDTH, self.HEIGHT),
-            anchor,
-            screen_rect_for_point(point=anchor, fallback_widget=self),
-            target_anchor_id='bottom',
-            self_anchor_id='top',
-            offset_x=self._offset_x,
-            offset_y=self._offset_y,
+            self._anchor_point,
+            render_bridge.screen_rect_for_point(
+                point=self._anchor_point, fallback_widget=self._runtime.host
+            ),
+            target_anchor_id="bottom",
+            self_anchor_id="top",
+            offset_y=scale_px(4, min_abs=1),
         )
-        self.move(placement.x, placement.y)
+        render_bridge.move_widget_to_global(
+            self._runtime.host, int(placement.x), int(placement.y)
+        )
 
+    # ── 点击 ──────────────────────────────────────────────────────
     def click(self):
-        """处理点击事件 - 取消鼠标穿透并淡出"""
-        # 发布关闭穿透模式事件
-        toggle_event = Event(EventType.UI_CLICKTHROUGH_TOGGLE, {
-            'enabled': False
-        })
-        self._event_center.publish(toggle_event)
-
-        # 发布信息气泡事件
-        info_event = Event(EventType.INFORMATION, {
-            'text': '鼠标穿透已关闭',
-            'min': 0,    # 最小显示 0 tick
-            'max': 60    # 最大显示 60 tick
-        })
-        self._event_center.publish(info_event)
-
-        # 淡出按钮
+        self._event_center.publish(Event(EventType.UI_CLICKTHROUGH_TOGGLE, {"enabled": False}))
+        self._event_center.publish(Event(EventType.INFORMATION, {
+            "text": "鼠标穿透已关闭", "min": 0, "max": 60,
+        }))
         self.fade_out()
 
-    def mousePressEvent(self, event):
-        """处理鼠标点击事件"""
-        from lib.script.ui._particle_helper import publish_click_particle
-        publish_click_particle(self, event)
-        if event.button() == Qt.LeftButton:
+    def _on_pointer(self, event):
+        emit_click_particle(self._runtime.control, event)
+        if event.button == controls.BUTTON_LEFT:
             self.click()
-
-    def fade_in(self):
-        """淡入按钮"""
-        # 显示窗口
-        self.show()
-
-        # 启动淡入动画
-        self._animate(1.0)
+        return controls.PointerClick()
 
     def fade_out(self):
-        """淡出按钮"""
-        # 在隐藏之前保存几何位置
-        rect = self.geometry()
+        self._runtime.fade_out_with_particle(self._event_center)
 
-        # 发布粒子申请事件（使用保存的位置）
-        particle_event = Event(EventType.PARTICLE_REQUEST, {
-            'particle_id': 'right_fade',
-            'area_type': 'rect',
-            'area_data': (rect.x(), rect.y(), rect.x() + rect.width(), rect.y() + rect.height())
-        })
-        self._event_center.publish(particle_event)
+    # ── 视图（宿主转发）───────────────────────────────────────────
+    @property
+    def _visible(self):
+        return self._runtime.control.visible
 
-        # 启动淡出动画，完成后隐藏窗口
-        self._animate(0.0, on_finished=self.hide)
+    @_visible.setter
+    def _visible(self, value):
+        self._runtime.control.visible = bool(value)
 
-    def _animate(self, target: float, on_finished=None):
-        """执行淡入淡出动画"""
-        super()._animate(target)
-        self._animating = True
+    def width(self):
+        return self._runtime.width_()
 
-        # 动画完成回调
-        def on_anim_finished():
-            self._animating = False
-            self._anim.finished.disconnect(on_anim_finished)
-            if on_finished:
-                on_finished()
+    def height(self):
+        return self._runtime.height_()
 
-        self._anim.finished.connect(on_anim_finished)
+    def x(self):
+        return self._runtime.x()
+
+    def y(self):
+        return self._runtime.y()
+
+    def isVisible(self):
+        return self._runtime.is_visible()
+
+    def update(self):
+        self._runtime.update()
+
+    def move(self, x, y):
+        self._runtime.host.move(int(x), int(y))
+
+    def hide(self):
+        self._runtime.hide()
+
+    def close(self):
+        for event_type, handler in (
+            (EventType.FRAME, self._on_frame),
+            (EventType.MOUSE_MOVE, self._on_mouse_move),
+            (EventType.UI_ANCHOR_RESPONSE, self._on_anchor_response),
+            (EventType.UI_CREATE, self._on_ui_create),
+            (EventType.UI_CLICKTHROUGH_TOGGLE, self._on_clickthrough_toggle),
+        ):
+            try:
+                self._event_center.unsubscribe(event_type, handler)
+            except Exception:
+                pass
+        self._runtime.cleanup()
+
+    def fade_in(self):
+        self._runtime.fade_in()

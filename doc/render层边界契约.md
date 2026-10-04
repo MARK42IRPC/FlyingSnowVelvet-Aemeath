@@ -1,10 +1,10 @@
 # Render 层边界契约
 
-更新时间：2026-10-03
+更新时间：2026-10-04
 
 本文档定义 `lib/core/render/` 的目标结构与依赖边界。它不是阶段计划，而是结构改建完成后必须成立的规则。
 
-**状态：第 6 节迁移顺序 1、2（目录切分）、3 已执行；图层能力已收敛到 `lib/core/render/layers/`（第 16 节）；后端中立协议与统一数据类型已落地（第 11 节），控件层“描述 + 后端渲染”已滚动迁移气泡框（第 12 节）、说明书、语音指示器与播放进度条（第 13 节）、音响音量/频段双滑条、搜索结果框与命令提示框（第 18 节）；排布解算已收敛到 `visuals/` 并由 `PlacementSpec` 统一解算（第 14 节，档位 0/1），右键按钮族的逐控件锚点事件链已收敛为声明式 `AnchorGraph` 且 Qt 改为消费共享布局（第 15 节，档位 2/3）；`WindowHost` 的被动宿主激活语义已与 Qt/DX 焦点策略对齐（第 17 节）。** 目录与引用规则以本文档为准；改建前的事实源是 [Qt 边界契约](Qt边界契约.md) 与 [跨后端视觉表现契约](视觉表现契约.md)，那两份文档继续负责“哪些内容算视觉逻辑”和“什么算无 Qt”。第一章描述的是最终目标；产品控件面（`lib/script/ui` 直接 `import PyQt5`）仍需逐个控件迁移，当前待迁清单以 `tests/test_qt_dependency_boundaries.py` 的 `frozen_ui_qt_importers` 为准，滚动顺序见第 13 节末尾。
+**状态：第 6 节迁移顺序 1、2（目录切分）、3 已执行；图层能力已收敛到 `lib/core/render/layers/`（第 16 节）；后端中立协议与统一数据类型已落地（第 11 节），控件层“描述 + 后端渲染”已滚动迁移气泡框（第 12 节）、说明书、语音指示器与播放进度条（第 13 节）、音响音量/频段双滑条、搜索结果框与命令提示框（第 18 节）、右键矩形动作按钮一族八个按钮（第 19 节）；排布解算已收敛到 `visuals/` 并由 `PlacementSpec` 统一解算（第 14 节，档位 0/1），右键按钮族的逐控件锚点事件链已收敛为声明式 `AnchorGraph` 且 Qt 改为消费共享布局（第 15 节，档位 2/3）；`WindowHost` 的被动宿主激活语义已与 Qt/DX 焦点策略对齐（第 17 节）。** 目录与引用规则以本文档为准；改建前的事实源是 [Qt 边界契约](Qt边界契约.md) 与 [跨后端视觉表现契约](视觉表现契约.md)，那两份文档继续负责“哪些内容算视觉逻辑”和“什么算无 Qt”。第一章描述的是最终目标；产品控件面（`lib/script/ui` 直接 `import PyQt5`）仍需逐个控件迁移，当前待迁清单以 `tests/test_qt_dependency_boundaries.py` 的 `frozen_ui_qt_importers` 为准，滚动顺序见第 13 节末尾。
 
 本文只新增目录与引用规则，不改变任何视觉语义、数值来源或渲染结果。改建过程中出现分歧时，以 [视觉表现契约](视觉表现契约.md) 和当前 Qt 基准为事实源。
 
@@ -573,14 +573,11 @@ DX 保持未切分：DX 仍是 `available=False` 的实验实现，没有第二�
 模式已固定为三步：把控件状态搬进 `visuals/controls.py`（或同级新模块）→ 控件本体删掉
 `QWidget` 基类与 `PyQt5` → 从 `frozen_ui_qt_importers` 删除条目。建议顺序：
 
-1. `rect_action_button_style.py` 一族（`close_button` / `restore_button` /
-   `clickthrough_button` / `launch_wuwa_button` / `scale_button` / `chat_mode_button` /
-   `interaction_mode_button` / `more_functions_button`）。描述层的共享基类
-   `RectActionButtonControl`（文字、锚点解算、透明度、点击粒子）**已经就位**，但这一族
-   有一个前置结构问题：其中八个按钮由 `right_click_ui_layer.py` 用 `adopt()` 收进
-   同一个宿主窗口（每帧只移动一个原生窗口）。那一步需要 `setParent()`，是 Qt 专属操作，
-   `QtControlHost` 得先支持"把控件窗口收编成宿主子窗口"，否则会退回"每个按钮一个顶层
-   窗口 + 每帧各自 `move()`"的老样子。这是本族迁移的**前置项**。
+1. ~~`rect_action_button_style.py` 一族~~ **已于第十四轮迁出**（见第 19 节）：八个按钮
+   改为 `lib/script/ui/rect_action_button_runtime.py` 的 `RectActionButtonRuntime`（描述 +
+   宿主装配），`rect_action_button_style.py` 已删除，`frozen_ui_qt_importers` 66 → 57。
+   原前置项不是问题：`QtControlHost` 本身是 `QWidget`，右键图层原有的 `adopt()`（内部
+   `setParent()`）直接收编各按钮宿主即可，无需新增"收编子窗口"能力。
 2. 其余顶层浮窗控件。音响双滑条（`speaker_volume_slider.py` / `speaker_band_slider.py`）、
    音响搜索结果框（`speaker_search_result_box.py`）与命令提示框（`command_hint_box.py`）
    已于第十一 / 十二轮迁出（见第 18 节）；拖动类控件现在有 `on_pointer_move` + 拖动捕获与
@@ -844,7 +841,7 @@ lib/core/render/layers/
 **本轮没动的部分**
 
 - `frozen_ui_qt_importers`：70 → **67**（本轮双滑条 + 结果框三项移出）。
-- `rect_action_button_style.py` 一族仍卡在「宿主收编子窗口」前置项上，未动；见第 13 节清单第 1 项。
+- `rect_action_button_style.py` 一族当时仍卡在「宿主收编子窗口」前置项上，未动（该项已于第十四轮迁出，见第 19 节）。
 
 **同轮追加：迁出后的族内几何读取回归**
 
@@ -916,3 +913,93 @@ lib/core/render/layers/
 - `py -3 -m unittest discover -s tests -p "test_*.py" -q`：2113 通过、10 跳过。
 - `py -3 -m unittest discover -s tests/dx -p "test_*.py" -q`：122 通过、7 跳过。
 - `py -3 -m ruff check lib config scripts tests` 归零；`py -3 -m compileall -q config lib scripts tests` 通过。
+
+## 19. 第十四轮执行记录（右键矩形动作按钮族收敛）
+
+第 13 节滚动清单第 1 项：`rect_action_button_style.py` 一族的八个按钮（鼠标穿透 / 放大 /
+缩小 / 关闭 / 启动鸣潮 / 聊天模式 / 交互模式 / 更多功能）连同它们的共享基类文件一并收进
+「描述 + 后端渲染」。这是最后一个成规模的产品控件族，收完后 `frozen_ui_qt_importers`
+从 **66 降到 57**，`rect_action_button_style.py` 删除。
+
+**新增共享运行时（`lib/script/ui/rect_action_button_runtime.py`）**
+
+- `RectActionButtonRuntime`：一个矩形动作按钮的「描述 + 宿主」装配。构造时建
+  `RectActionButtonControl`（形状 / 文字 / 透明度 / hover / 点击粒子都在描述层）、建
+  `create_control_host()` 宿主，并把悬停、指针、淡出结束三类回调接回控件自己的产品意图。
+  八个按钮的差异只剩「文字、节点 id、点下去做什么」，装配代码只有这一份。
+- `emit_click_particle(control, event)`：把描述层给的 `click_particle_id` 翻成
+  `publish_click_particle_at`，与迁移前逐字一致。
+- 淡出粒子在宿主旧几何处发 `right_fade`（`PARTICLE_REQUEST`）。按钮不再各设空闲计时，
+  组的自动隐藏仍只由命令框的鼠标距离守卫负责（见下「迁移期修复的两处回归」）。
+
+**描述层（`lib/core/render/visuals/controls.py`）**
+
+- `RectActionButtonControl.build_visual(font)` 收口到共享 presenter
+  `build_rect_action_button_visual()`，控件侧只提供 `FontSpec`，不再自己拼 `DrawBatch`。
+
+**重写后的八个按钮**
+
+- `clickthrough_button.py` / `close_button.py` / `scale_button.py`（`ScaleUpButton` /
+  `ScaleDownButton` 现在是两个各自独立的类，不再互相继承）/ `chat_mode_button.py` /
+  `interaction_mode_button.py` / `more_functions_button.py` / `launch_wuwa_button.py` /
+  `restore_button.py` 全部删除 `QWidget` 基类与 `PyQt5` 引用，各持一个 `RectActionButtonRuntime`。
+  对外接口（`fade_in` / `fade_out` / `move` / `width` / `height` / `x` / `y` / `isVisible` /
+  `update` / `hide` / `close`）不变，`_ui_id` 仍是文件里的字面量。
+- `chat_mode_button` / `interaction_mode_button` 的动态文字经 `runtime.control.text = ...`
+  后 `update()`，与旧 `setText` + `update` 等价。
+- `launch_wuwa_button` 的启动动作收口到共享的 `lib/script/app/wuwa_launcher.py`，删掉了旧的
+  400 行路径自动发现子类。
+- `restore_button` 是族外顶层浮窗：自己持有宿主，靠锚点事件贴位，不再由右键图层 `adopt`。
+
+**宿主与消费者**
+
+- `QtControlHost` 不需要新增「收编子窗口」能力——它本身就是 `QWidget`，右键图层原有的
+  `adopt()`（内部 `setParent()`）直接收编八个按钮的 `_runtime.host`，仍然每帧只移动一个
+  原生窗口。第 13 节一度设想的「宿主得先支持把控件窗口收编成子窗口」前置项因此不存在。
+- `pet_window_ui` 的 `layer.adopt(...)` 与 `register_family_node(...)` 改为传各按钮的
+  `_runtime.host`；`command_dialog._iter_family_widgets` 经 `_family_window(button)` 取宿主；
+  `close_button_handler` 的点击命中改用宿主几何。
+
+**守卫（与迁移同一提交更新）**
+
+- `tests/test_control_layer_descriptions.py`：已迁移清单加入八个按钮（含
+  `scale_button.py` 的 `ScaleUpButton` / `ScaleDownButton` 两条），要求均无基类、不得出现
+  `geometry` / `pos` / `frameGeometry`。
+- `tests/test_qt_dependency_boundaries.py`：`frozen_ui_qt_importers` 移除八个按钮文件与
+  `rect_action_button_style.py`（66 → 57，清单仍与仓库真实 `import PyQt5` 逐条一致）。
+- `tests/test_right_click_ui_layer.py`：族内集成测试改经 `_member_window(name)` 命中宿主。
+- `tests/test_visual_presenters.py` 删除只针对旧 `rect_action_button_style.py` 的用例；
+  `tests/test_ui_input_event_consumers.py` 的还原按钮用例改读核心 `Point` 属性。
+
+**迁移期修复的三处回归**
+
+- 关闭按钮的鼠标进入/离开：`close_button_handler` 一直用 `self._button.parent()` 判
+  "进/出的是不是主人窗口那一侧"，而 `CloseButton` 已不是 `QWidget`、没有 `parent()`，
+  于是每次鼠标进出都抛 `AttributeError` 被事件中心吞成日志（表现为关闭按钮不再自动
+  淡入/淡出）。改为统一取 `_runtime.host`，未迁移控件仍回退 `parent()`。
+- 八个动作按钮的自动收起：旧实现的 `_idle_timeout` / `_last_activity_time` 是死代码
+  （赋值后从不读取），真正的自动隐藏只由 `CommandDialog` 的鼠标距离守卫在 TICK 时负责。
+  迁移时若把它接成宿主的 `auto_hide_ms`，八个按钮会在命令框打开约 `idle_close_ms` 后
+  各自消失，与"鼠标还在旁边"相矛盾。现在不再给按钮设空闲计时，`_reset_idle_timer`
+  转发一并移除。
+- 命令列表高亮不跟随鼠标：提示框与搜索结果框原先在各自 `QWidget` 里
+  `setMouseTracking(True)`，迁到共享 `QtControlHost` 后宿主没打开鼠标跟踪，Qt 便只在
+  按住按键时才投递 `mouseMoveEvent`——表现是"移动鼠标时高亮不动、按下才跟着跳"。
+  `QtControlHost` 现在在传入 `on_pointer_move` 时自行 `setMouseTracking(True)`，四个悬停
+  类控件（命令提示框、搜索结果框、音量/频段滑条）一起恢复。
+- 三道守卫：`tests/test_ui_input_event_consumers.py` 用带 `_runtime.host` 的探针驱动
+  MOUSE_ENTER/MOUSE_LEAVE 并断言事件日志无异常；`tests/test_control_layer_descriptions.py`
+  一条把 `idle_close_ms` 压到 300ms、打开命令框后只跑事件循环（不发 TICK）断言八个按钮
+  仍全部可见，另一条断言宿主开启了鼠标跟踪并向它投递真实 `QMouseEvent` 后高亮行跟着变。
+
+验证：
+
+- `py -3 -m unittest discover -s tests -p "test_*.py" -q`：2115 通过、10 跳过
+- `py -3 -m unittest discover -s tests/dx -p "test_*.py" -q`：122 通过、7 跳过。
+- `py -3 -m ruff check lib config scripts tests` 归零；`py -3 -m compileall -q config lib scripts tests` 通过。
+
+**本轮没动的部分**
+
+- `frozen_ui_qt_importers`：66 → **57**（一族九个文件一次移出）。
+- 滚动清单第 2 项（其余顶层浮窗）、第 3 项（带子控件树与 `exec_()` 的对话框）、第 4 项
+  （`world_objects/*` 与 `game_runtime`）仍未动。

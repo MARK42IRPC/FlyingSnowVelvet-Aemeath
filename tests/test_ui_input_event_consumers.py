@@ -123,7 +123,54 @@ class UiInputEventConsumerTests(unittest.TestCase):
             Event(EventType.MOUSE_MOVE, {"global_pos": Point(12.4, 33.6)}),
         )
 
-        self.assertEqual((probe._mouse_pos.x(), probe._mouse_pos.y()), (12, 34))
+        self.assertEqual((probe._mouse_pos.x, probe._mouse_pos.y), (12, 34))
+
+    def test_close_button_handler_reads_the_host_not_qt_parent(self):
+        """控件迁出 QWidget 后 `_button.parent()` 不再存在。
+
+        关闭按钮已是「描述 + 后端渲染」，它真正的窗口是 ``_runtime.host``。
+        鼠标进入/离开若仍读 `parent()` 会抛 `AttributeError`，而事件中心把它吞成
+        一条日志——表现只是"点击时按钮已经被销毁"，肉眼几乎看不出来。
+        """
+        class _Host:
+            def __init__(self):
+                self.fade_in = 0
+                self.fade_out = 0
+
+            def isVisible(self):
+                return True
+
+        class _Runtime:
+            def __init__(self, host):
+                self.host = host
+
+        class _ProbeButton:
+            def __init__(self, host):
+                self._runtime = _Runtime(host)
+                self.fades = []
+
+            def fade_in(self):
+                self.fades.append("in")
+
+            def fade_out(self):
+                self.fades.append("out")
+
+        center = EventCenter(pump_factory=lambda callback: FakePump(callback))
+        host = _Host()
+        button = _ProbeButton(host)
+        handler = CloseButtonEventHandler.__new__(CloseButtonEventHandler)
+        handler._button = button
+        handler._event_center = center
+
+        with patch("lib.core.event.center.logger.exception") as log_exception:
+            center.subscribe(EventType.MOUSE_ENTER, handler._on_mouse_enter)
+            center.subscribe(EventType.MOUSE_LEAVE, handler._on_mouse_leave)
+            center.publish(Event(EventType.MOUSE_ENTER, {"pet": host}))
+            center.publish(Event(EventType.MOUSE_LEAVE, {"pet": host}))
+
+        log_exception.assert_not_called()
+        self.assertEqual(button.fades, ["in", "out"])
+        center.cleanup()
 
     def test_input_event_handlers_do_not_import_pyqt(self):
         repo_root = Path(__file__).resolve().parents[1]
