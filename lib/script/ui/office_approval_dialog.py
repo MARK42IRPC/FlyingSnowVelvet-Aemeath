@@ -24,12 +24,11 @@ from lib.script.ui.office_icons import (
     office_allow_icon,
     office_allow_task_icon,
     office_reject_icon,
-    office_warning_icon,
 )
 from lib.script.ui.office_style import create_office_accent_bar, office_stylesheet
 from lib.script.ui.workbench_components import create_window_button
 from lib.script.workbench.theme import get_workbench_colors
-from lib.script.ui.render_bridge import resolve_placement, screen_rect_for_point as get_screen_geometry_for_point, ui_font as get_ui_font
+from lib.script.ui.render_bridge import resolve_placement, screen_rect_for_point as get_screen_geometry_for_point, ui_font as get_ui_font, render_office_icon_pixmap
 
 
 _OFFICE_ICON_PATH = Path(__file__).resolve().parents[3] / "resc" / "icon.ico"
@@ -261,7 +260,7 @@ class OfficeApprovalDialog(QDialog):
         colors = get_workbench_colors()
         icon_size = scale_px(24, min_abs=21)
         self._icon_label.setPixmap(
-            office_warning_icon(colors.warning).pixmap(icon_size, icon_size)
+            render_office_icon_pixmap("warning", colors.warning, icon_size)
         )
         self.findChild(QPushButton, "OfficeApprovalReject").setIcon(
             office_reject_icon(colors.text)

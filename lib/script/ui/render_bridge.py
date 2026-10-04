@@ -63,6 +63,26 @@ def create_control_host(**kwargs):
     return QtControlHost(**kwargs)
 
 
+def render_office_icon(name: str, color: str):
+    """渲染一枚办公线性图标（Qt 返回 `QIcon`）。
+
+    图形事实（SVG 文本与尺寸）在后端中立的 `visuals/office_icons.py`，本函数只是
+    控件取的唯一落点。将来其它后端按同一份规格渲染，控件调用面不变。
+    """
+    from lib.core.render.backends.qt.widgets.office_icons import render_office_icon as render
+
+    return render(name, color)
+
+
+def render_office_icon_pixmap(name: str, color: str, pixel_size: int):
+    """渲染办公图标并取指定像素尺寸的位图（Qt 返回 `QPixmap`）。"""
+    from lib.core.render.backends.qt.widgets.office_icons import (
+        render_office_icon_pixmap as render,
+    )
+
+    return render(name, color, pixel_size)
+
+
 def create_message_box_host(parent=None, *, object_name: str = ""):
     """创建模态消息框宿主（Qt 下是 ``QtMessageBoxHost``）。
 

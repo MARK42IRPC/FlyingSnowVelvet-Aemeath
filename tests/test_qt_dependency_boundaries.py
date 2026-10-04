@@ -44,7 +44,6 @@ class QtDependencyBoundaryTests(unittest.TestCase):
             "lib/script/ui/office_approval_dialog.py",
             "lib/script/ui/office_chat_view.py",
             "lib/script/ui/office_effort_slider.py",
-            "lib/script/ui/office_icons.py",
             "lib/script/ui/office_manager_card.py",
             "lib/script/ui/office_mode_page.py",
             "lib/script/ui/office_mode_settings.py",

@@ -31,6 +31,12 @@
   358 → 39 行，改为保留历史导入名的再导出垫片，二维码登录/更新/下载/公告/帮助浮窗与主
   工作台窗口共用同一份外壳实现。浮窗 QSS 与收敛前逐字符一致（新增测试
   `tests/test_workbench_chrome.py` 钉死内联按钮样式与工作台 token 的一致性）。
+- 办公线性图标抽成后端中立规格：九段 SVG 与逻辑尺寸落到
+  `lib/core/render/visuals/office_icons.py`，Qt 的 `QSvgRenderer` 渲染落到
+  `lib/core/render/backends/qt/widgets/office_icons.py`，`render_bridge` 新增
+  `render_office_icon()` / `render_office_icon_pixmap()` 落点。`lib/script/ui/office_icons.py`
+  改为门面垫片、不再 `import PyQt5`，`frozen_ui_qt_importers` 56 → 55；办公页与审批
+  对话框的图标调用面不变。新增 `tests/test_office_icons.py` 逐字符钉死每个图标的成品 SVG。
 ### Changed
 - 自动更新包覆盖提速：覆盖阶段不再对每个文件读两遍内容，只比同名文件的大小（字节正确性
   已由资源包的 SHA-256 在下载时兜住），拷贝并发发起。真实 733 MiB / 17,195 文件的资源包
