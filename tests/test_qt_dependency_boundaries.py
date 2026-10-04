@@ -19,7 +19,6 @@ class QtDependencyBoundaryTests(unittest.TestCase):
     #: 待迁清单，收缩由「stale」断言强制——文件不再 import Qt 就必须出列。
     #: 真正会随架构演进缩小的是同文件里「直接引用 `drawing/`」的那份清单，它现在是空的。
     frozen_ui_qt_importers = frozenset({
-            "lib/script/ui/_particle_helper.py",
             "lib/script/ui/ai_settings_panel.py",
             "lib/script/ui/ai_settings_tabs.py",
             "lib/script/ui/animation_player.py",

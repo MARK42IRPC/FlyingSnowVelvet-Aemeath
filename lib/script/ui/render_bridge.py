@@ -39,6 +39,27 @@ if TYPE_CHECKING:
     from PyQt5.QtGui import QColor
 
 
+def pointer_button_name(event) -> str:
+    """把 Qt 鼠标事件的按钮翻译成后端中立名（`left` / `right` / `middle` / `none`）。
+
+    产品层（如点击粒子）只需要"哪个键"，不需要 Qt；本函数是档位 A 的翻译落点。
+    """
+    from PyQt5.QtCore import Qt
+
+    from lib.core.render.visuals.controls import (
+        BUTTON_LEFT,
+        BUTTON_MIDDLE,
+        BUTTON_NONE,
+        BUTTON_RIGHT,
+    )
+
+    return {
+        Qt.LeftButton: BUTTON_LEFT,
+        Qt.RightButton: BUTTON_RIGHT,
+        Qt.MiddleButton: BUTTON_MIDDLE,
+    }.get(event.button(), BUTTON_NONE)
+
+
 def create_draw_backend():
     """返回当前后端的绘制实现；没有已配置后端时返回 Qt 实现。"""
     factory = get_draw_backend_factory()

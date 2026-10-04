@@ -37,6 +37,10 @@
   `render_office_icon()` / `render_office_icon_pixmap()` 落点。`lib/script/ui/office_icons.py`
   改为门面垫片、不再 `import PyQt5`，`frozen_ui_qt_importers` 56 → 55；办公页与审批
   对话框的图标调用面不变。新增 `tests/test_office_icons.py` 逐字符钉死每个图标的成品 SVG。
+- 点击粒子辅助去 Qt：`_particle_helper.py` 不再 import `PyQt5`，按钮名改经
+  `render_bridge.pointer_button_name()` 翻译，粒子 ID 用 `visuals/controls.py` 的
+  `BUTTON_PARTICLES` 共享映射；`frozen_ui_qt_importers` 55 → 54，调用面不变。新增
+  `tests/test_particle_helper.py` 覆盖左右键映射与事件载荷。
 ### Changed
 - 自动更新包覆盖提速：覆盖阶段不再对每个文件读两遍内容，只比同名文件的大小（字节正确性
   已由资源包的 SHA-256 在下载时兜住），拷贝并发发起。真实 733 MiB / 17,195 文件的资源包

@@ -4,7 +4,7 @@
 
 本文档定义 `lib/core/render/` 的目标结构与依赖边界。它不是阶段计划，而是结构改建完成后必须成立的规则。
 
-**状态：第 6 节迁移顺序 1、2（目录切分）、3 已执行；图层能力已收敛到 `lib/core/render/layers/`（第 16 节）；后端中立协议与统一数据类型已落地（第 11 节），控件层“描述 + 后端渲染”已滚动迁移气泡框（第 12 节）、说明书、语音指示器与播放进度条（第 13 节）、音响音量/频段双滑条、搜索结果框与命令提示框（第 18 节）、右键矩形动作按钮一族八个按钮（第 19 节）、确认/提示框（第 20 节，首个模态宿主）；浮窗外壳（样式/主题判定/拖拽策略/窗口按钮）已从 `lib/script/ui` 下沉到渲染层（第 21 节）；办公线性图标的 SVG 规格也已抽成后端中立事实源（第 22 节）；排布解算已收敛到 `visuals/` 并由 `PlacementSpec` 统一解算（第 14 节，档位 0/1），右键按钮族的逐控件锚点事件链已收敛为声明式 `AnchorGraph` 且 Qt 改为消费共享布局（第 15 节，档位 2/3）；`WindowHost` 的被动宿主激活语义已与 Qt/DX 焦点策略对齐（第 17 节）。** 目录与引用规则以本文档为准；改建前的事实源是 [Qt 边界契约](Qt边界契约.md) 与 [跨后端视觉表现契约](视觉表现契约.md)，那两份文档继续负责“哪些内容算视觉逻辑”和“什么算无 Qt”。第一章描述的是最终目标；产品控件面（`lib/script/ui` 直接 `import PyQt5`）仍需逐个控件迁移，当前待迁清单以 `tests/test_qt_dependency_boundaries.py` 的 `frozen_ui_qt_importers` 为准，滚动顺序见第 13 节末尾。
+**状态：第 6 节迁移顺序 1、2（目录切分）、3 已执行；图层能力已收敛到 `lib/core/render/layers/`（第 16 节）；后端中立协议与统一数据类型已落地（第 11 节），控件层“描述 + 后端渲染”已滚动迁移气泡框（第 12 节）、说明书、语音指示器与播放进度条（第 13 节）、音响音量/频段双滑条、搜索结果框与命令提示框（第 18 节）、右键矩形动作按钮一族八个按钮（第 19 节）、确认/提示框（第 20 节，首个模态宿主）；浮窗外壳（样式/主题判定/拖拽策略/窗口按钮）已从 `lib/script/ui` 下沉到渲染层（第 21 节）；办公线性图标的 SVG 规格也已抽成后端中立事实源（第 22 节）；点击粒子辅助的按钮翻译改经 `render_bridge`、`_particle_helper.py` 出列（第 23 节）；排布解算已收敛到 `visuals/` 并由 `PlacementSpec` 统一解算（第 14 节，档位 0/1），右键按钮族的逐控件锚点事件链已收敛为声明式 `AnchorGraph` 且 Qt 改为消费共享布局（第 15 节，档位 2/3）；`WindowHost` 的被动宿主激活语义已与 Qt/DX 焦点策略对齐（第 17 节）。** 目录与引用规则以本文档为准；改建前的事实源是 [Qt 边界契约](Qt边界契约.md) 与 [跨后端视觉表现契约](视觉表现契约.md)，那两份文档继续负责“哪些内容算视觉逻辑”和“什么算无 Qt”。第一章描述的是最终目标；产品控件面（`lib/script/ui` 直接 `import PyQt5`）仍需逐个控件迁移，当前待迁清单以 `tests/test_qt_dependency_boundaries.py` 的 `frozen_ui_qt_importers` 为准，滚动顺序见第 13 节末尾。
 
 本文只新增目录与引用规则，不改变任何视觉语义、数值来源或渲染结果。改建过程中出现分歧时，以 [视觉表现契约](视觉表现契约.md) 和当前 Qt 基准为事实源。
 
@@ -1152,5 +1152,36 @@ lib/core/render/layers/
 **本轮没动的部分**
 
 - `frozen_ui_qt_importers`：56 → **55**（本轮移出 `office_icons.py` 一项，累计 73 → 55）。
+- 第 3 项其余 `exec_()` 对话框与第 4 项（`world_objects/*`、`game_runtime`）仍未动。
+
+## 23. 第二十三轮执行记录：点击粒子辅助改走后端中立按钮名
+
+问题：`lib/script/ui/_particle_helper.py` 只为拿到"按的是左键还是右键"而 import `PyQt5`，
+于是这份与工具包无关的按钮映射被拖进冻结清单。
+
+拆法（最小、不新增落点）：
+
+- `visuals/controls.py` 的 `BUTTON_LEFT` / `BUTTON_RIGHT` / `BUTTON_PARTICLES` 已是产品事实。
+- `render_bridge` 新增 `pointer_button_name(event)`：把 `Qt.LeftButton` / `RightButton` /
+  `MiddleButton` 翻译成中立名。它是档位 A 的既定翻译落点，不是新的越界面。
+- `_particle_helper.py` 改为 `BUTTON_PARTICLES.get(pointer_button_name(event))`，
+  删除 `from PyQt5.QtCore import Qt`；`publish_click_particle_at` 本就是中立的。
+  （它的 5 个调用方仍是未迁的 Qt 控件，但它们只是传入一个 Qt 鼠标事件，调用面不变。）
+
+**关于一处被否掉的方案**：曾尝试把音响右键菜单族样式（`speaker_menu_style.py`）整体下沉到
+`backends/qt/widgets/`，但该文件既画 `DrawBatch`（`drawing/` 的能力）又是按钮 Qt 混入（`scripts`
+产品部件）——放进 `widgets/` 会命中"widgets 不得引用 drawing"与"render 不得 import lib.script"
+两条硬边界。若要真正迁它，需要先在档位 A 增加一个中立的"执行绘制批次"宿主能力，属后续专轮，本轮
+不做。
+
+验证：
+
+- `py -3 -m unittest discover -s tests -p "test_*.py" -q`：2132 通过（含新增 4 项），10 跳过
+- `py -3 -m unittest discover -s tests/dx -p "test_*.py" -q`：122 通过，7 跳过
+- `py -3 -m ruff check lib config scripts tests` 干净；`py -3 -m compileall -q config lib scripts tests` 通过
+
+**本轮没动的部分**
+
+- `frozen_ui_qt_importers`：55 → **54**（本轮移出 `_particle_helper.py`；累计 73 → 54）。
 - 第 3 项其余 `exec_()` 对话框与第 4 项（`world_objects/*`、`game_runtime`）仍未动。
 
