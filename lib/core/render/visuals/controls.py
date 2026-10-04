@@ -33,9 +33,12 @@ from lib.core.render.visuals.application_visuals import (
 from lib.core.render.visuals.anchors import get_anchor_point
 from lib.core.render.visuals.layout import AnchorPlacement, PlacementSpec
 from lib.core.render.visuals.media_panel_visuals import (
+    SEARCH_RESULT_PAGE_SIZE,
     SLIDER_TICK_COUNT,
     build_progress_panel_visual,
+    build_search_result_panel_visual,
     build_slider_visual,
+    search_result_panel_size,
     slider_ratio_at,
     snap_slider_ratio,
 )
@@ -60,6 +63,7 @@ __all__ = [
     "RectActionButtonControl",
     "RectSliderControl",
     "BandSliderControl",
+    "SearchResultListControl",
     "BubbleControl",
     "BubbleInfo",
     "PointerClick",
@@ -999,6 +1003,121 @@ class BandSliderControl:
 
     def ratio_at(self, y: float) -> float:
         return band_ratio_at(self.build_visual().track_rect, y)
+
+    def scaled_opacity(self, target: float) -> float:
+        return scaled_opacity(self._opacity_scale, target)
+
+
+
+class SearchResultListControl:
+    """音响搜索结果列表的后端中立状态与绘制描述。
+
+    - 列表数据、翻页、选中行、搜索中标记；
+    - 窗口尺寸来自 ``search_result_panel_size``（按最宽混排行自适应）；
+    - 悬停/点击的行由 ``row_at_y`` 用共享 ``visual.row_rects`` 反查，不再自己手算
+      ``(y - border) // row_height``；
+    - 绘制批次由 ``build_visual`` 产出，宿主只执行它。
+    """
+
+    def __init__(
+        self,
+        metrics: "TextMetrics",
+        *,
+        page_size: int = SEARCH_RESULT_PAGE_SIZE,
+        paint_layer: int = 0,
+        opacity_scale=1.0,
+    ) -> None:
+        self.metrics = metrics
+        self.page_size = max(1, int(page_size))
+        self.paint_layer = int(paint_layer)
+        self._opacity_scale = opacity_scale
+
+        self.items: list[tuple[object, str]] = []
+        self.page = 0
+        self.selected = -1
+        self.searching = False
+        self.visible = False
+        self.width = 1
+        self.height = 1
+
+    # ── 数据 ───────────────────────────────────────────────────────
+    def page_items(self) -> list[tuple[object, str]]:
+        start = self.page * self.page_size
+        return self.items[start: start + self.page_size]
+
+    def has_pages(self) -> bool:
+        return len(self.items) > self.page_size
+
+    def max_page(self) -> int:
+        return max(0, (len(self.items) - 1) // self.page_size)
+
+    def clear(self) -> None:
+        self.items = []
+        self.selected = -1
+        self.page = 0
+
+    def set_items(self, items) -> None:
+        self.items = list(items)
+        self.selected = 0 if self.items else -1
+        self.page = 0
+
+    def navigate(self, direction: int) -> bool:
+        if self.searching or not self.items:
+            return False
+        items = self.page_items()
+        new_selected = self.selected + direction
+        if 0 <= new_selected < len(items):
+            self.selected = new_selected
+            return True
+        return False
+
+    def turn_page(self, direction: int) -> bool:
+        if self.searching or not self.items:
+            return False
+        max_page = self.max_page()
+        if max_page == 0:
+            return False
+        new_page = self.page + direction
+        # 循环翻页：超出范围时跳转到另一端
+        if new_page < 0:
+            new_page = max_page
+        elif new_page > max_page:
+            new_page = 0
+        self.page = new_page
+        self.selected = 0
+        return True
+
+    # ── 尺寸与绘制 ─────────────────────────────────────────────────
+    def refresh_size(self) -> tuple[int, int]:
+        size = search_result_panel_size(
+            tuple(self.items),
+            self.metrics,
+            page=self.page,
+            page_size=self.page_size,
+            searching=self.searching,
+        )
+        self.width, self.height = int(size.width), int(size.height)
+        return self.width, self.height
+
+    def build_visual(self):
+        return build_search_result_panel_visual(
+            Size(self.width, self.height),
+            tuple(self.items),
+            self.metrics,
+            page=self.page,
+            page_size=self.page_size,
+            selected=self.selected,
+            searching=self.searching,
+            layer=self.paint_layer,
+        )
+
+    def row_at_y(self, y: float) -> int:
+        """悬停/点击的行号；不在任何一行上时返回 -1。"""
+        visual = self.build_visual()
+        for index, rect in enumerate(visual.row_rects):
+            if rect.y <= y < rect.y + rect.height:
+                return index
+        return -1
 
     def scaled_opacity(self, target: float) -> float:
         return scaled_opacity(self._opacity_scale, target)

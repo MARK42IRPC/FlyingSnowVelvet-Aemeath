@@ -161,7 +161,9 @@ class SpeakerSearchDialog(QWidget):
         # ── 输入框信号 ───────────────────────────────────────────────
         self._entry.returnPressed.connect(self._trigger_search)
         self._entry.installEventFilter(self)
-        self._result_box.installEventFilter(self)
+        # 结果框已迁为“描述 + 后端渲染”，不再是 QWidget，无法安装事件过滤器；
+        # 方向键在输入框有焦点时由 eventFilter 处理（见 eventFilter）。
+
 
     # ==================================================================
     # 公开接口

@@ -512,7 +512,6 @@ class VisualPresenterTests(unittest.TestCase):
             "lib/script/ui/ai_settings_tabs.py",
             "lib/script/ui/ai_settings_panel.py",
             "lib/script/ui/playlist_panel.py",
-            "lib/script/ui/speaker_search_result_box.py",
             "lib/script/ui/speaker_menu_style.py",
             "lib/script/ui/cmd_window.py",
         )

@@ -4,7 +4,7 @@
 
 本文档定义 `lib/core/render/` 的目标结构与依赖边界。它不是阶段计划，而是结构改建完成后必须成立的规则。
 
-**状态：第 6 节迁移顺序 1、2（目录切分）、3 已执行；图层能力已收敛到 `lib/core/render/layers/`（第 16 节）；后端中立协议与统一数据类型已落地（第 11 节），控件层“描述 + 后端渲染”已滚动迁移气泡框（第 12 节）、说明书、语音指示器与播放进度条（第 13 节）、音响音量/频段双滑条（第 18 节）；排布解算已收敛到 `visuals/` 并由 `PlacementSpec` 统一解算（第 14 节，档位 0/1），右键按钮族的逐控件锚点事件链已收敛为声明式 `AnchorGraph` 且 Qt 改为消费共享布局（第 15 节，档位 2/3）；`WindowHost` 的被动宿主激活语义已与 Qt/DX 焦点策略对齐（第 17 节）。** 目录与引用规则以本文档为准；改建前的事实源是 [Qt 边界契约](Qt边界契约.md) 与 [跨后端视觉表现契约](视觉表现契约.md)，那两份文档继续负责“哪些内容算视觉逻辑”和“什么算无 Qt”。第一章描述的是最终目标；产品控件面（`lib/script/ui` 直接 `import PyQt5`）仍需逐个控件迁移，当前待迁清单以 `tests/test_qt_dependency_boundaries.py` 的 `frozen_ui_qt_importers` 为准，滚动顺序见第 13 节末尾。
+**状态：第 6 节迁移顺序 1、2（目录切分）、3 已执行；图层能力已收敛到 `lib/core/render/layers/`（第 16 节）；后端中立协议与统一数据类型已落地（第 11 节），控件层“描述 + 后端渲染”已滚动迁移气泡框（第 12 节）、说明书、语音指示器与播放进度条（第 13 节）、音响音量/频段双滑条与搜索结果框（第 18 节）；排布解算已收敛到 `visuals/` 并由 `PlacementSpec` 统一解算（第 14 节，档位 0/1），右键按钮族的逐控件锚点事件链已收敛为声明式 `AnchorGraph` 且 Qt 改为消费共享布局（第 15 节，档位 2/3）；`WindowHost` 的被动宿主激活语义已与 Qt/DX 焦点策略对齐（第 17 节）。** 目录与引用规则以本文档为准；改建前的事实源是 [Qt 边界契约](Qt边界契约.md) 与 [跨后端视觉表现契约](视觉表现契约.md)，那两份文档继续负责“哪些内容算视觉逻辑”和“什么算无 Qt”。第一章描述的是最终目标；产品控件面（`lib/script/ui` 直接 `import PyQt5`）仍需逐个控件迁移，当前待迁清单以 `tests/test_qt_dependency_boundaries.py` 的 `frozen_ui_qt_importers` 为准，滚动顺序见第 13 节末尾。
 
 本文只新增目录与引用规则，不改变任何视觉语义、数值来源或渲染结果。改建过程中出现分歧时，以 [视觉表现契约](视觉表现契约.md) 和当前 Qt 基准为事实源。
 
@@ -581,9 +581,11 @@ DX 保持未切分：DX 仍是 `available=False` 的实验实现，没有第二�
    同一个宿主窗口（每帧只移动一个原生窗口）。那一步需要 `setParent()`，是 Qt 专属操作，
    `QtControlHost` 得先支持"把控件窗口收编成宿主子窗口"，否则会退回"每个按钮一个顶层
    窗口 + 每帧各自 `move()`"的老样子。这是本族迁移的**前置项**。
-2. 其余顶层浮窗控件（`command_hint_box.py`、`speaker_search_result_box.py` 等）。
-   音响双滑条（`speaker_volume_slider.py` / `speaker_band_slider.py`）已于第十一轮迁出
-   （见第 18 节）；拖动类控件现在有 `on_pointer_move` + 拖动捕获与 `on_pointer_release` 可用。
+2. 其余顶层浮窗控件（`command_hint_box.py` 等）。音响双滑条
+   （`speaker_volume_slider.py` / `speaker_band_slider.py`）与音响搜索结果框
+   （`speaker_search_result_box.py`）已于第十一轮迁出（见第 18 节）；拖动类控件现在有
+   `on_pointer_move` + 拖动捕获与 `on_pointer_release` 可用，列表类控件可用描述层
+   `row_rects` 反查命中行。
 3. 带子控件树与 `exec_()` 的对话框（`confirm_dialog`、`update_dialog`、`forum_*`、
    `office_*`）放最后，它们需要宿主先支持子控件与模态，属于下一轮的结构扩展。
 4. `world_objects/*.py`（时钟、沙发、雪球等）与 `game_runtime.py` 是另一类长尾，
@@ -836,13 +838,13 @@ lib/core/render/layers/
 
 验证：
 
-- `py -3 -m unittest discover -s tests -p "test_*.py" -q`：2102 通过、10 跳过。
+- `py -3 -m unittest discover -s tests -p "test_*.py" -q`：2106 通过、10 跳过。
 - `py -3 -m unittest discover -s tests/dx -p "test_*.py" -q`：122 通过、7 跳过。
 - `py -3 -m ruff check lib config scripts tests` 归零；`py -3 -m compileall -q config lib scripts tests` 通过。
 
 **本轮没动的部分**
 
-- `frozen_ui_qt_importers`：70 → **68**（本轮两个条目移出）。
+- `frozen_ui_qt_importers`：70 → **67**（本轮双滑条 + 结果框三项移出）。
 - `rect_action_button_style.py` 一族仍卡在「宿主收编子窗口」前置项上，未动；见第 13 节清单第 1 项。
 
 **同轮追加：迁出后的族内几何读取回归**
@@ -858,3 +860,21 @@ lib/core/render/layers/
 可见后驱动 `_is_mouse_far_from_family()`，再盯事件中心错误日志。第一条断言第一版漏了
 "跳过不可见控件"这条分支，回归躲过去了——补上可见性前置后才复现出
 `AttributeError: 'SpeakerVolumeSlider' object has no attribute 'geometry'`。
+
+**同轮追加二：音响搜索结果框（`lib/script/ui/speaker_search_result_box.py`）**
+
+第 13 节清单第 2 项里的另一只顶层浮窗控件，与滑条同批推进。
+
+- 描述层新增 `SearchResultListControl`：列表数据、翻页（循环）、选中行、搜索中标记、
+  尺寸自适应（`search_result_panel_size`）与绘制批次；`row_at_y()` 用共享
+  `visual.row_rects` 反查命中行，替换掉控件里手算的 `(y - border) // 行高`——行高与边框
+  现在只有 `media_panel_visuals` 一份事实。
+- 控件本体删除 `QWidget` 基类与 `PyQt5` 引用，改为 `create_control_host()`；`width()` /
+  `height()` / `x()` / `y()` / `isVisible()` 转发宿主。对外接口
+  （`clear_results` / `set_results` / `set_searching` / `navigate` / `turn_page` /
+  `fade_in(dialog)` / `fade_out` / `hide` / `close` / `update`）不变。
+- `SpeakerSearchDialog` 不再给结果框 `installEventFilter`（它已不是 `QWidget`）；方向键导航
+  在输入框有焦点时仍由输入框的事件过滤器处理。
+- 点击粒子仍是“先发后判”：左/右键在控件内任意位置都发射 `click` / `pink_click`，
+  未命中行时不发播放/入队事件——与迁移前逐字一致。
+- `frozen_ui_qt_importers`：70 → **67**（本轮双滑条 + 结果框三项）。

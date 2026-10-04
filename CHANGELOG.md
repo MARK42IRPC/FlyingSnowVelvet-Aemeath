@@ -80,6 +80,14 @@
   「`lib/script/ui` 里对控件变量取 `.geometry()`」，以及真构造音响搜索 UI、让族内滑块可见后驱动
   `_is_mouse_far_from_family()` 并盯事件中心错误日志的运行期断言。
 
+- 控件层「描述 + 后端渲染」滚动迁移继续：音响搜索结果框（`speaker_search_result_box.py`）
+  不再继承 `QWidget`、不再 `import PyQt5`，改为描述层状态机（`visuals/controls.py` 的
+  `SearchResultListControl`）+ 后端窗口宿主，`frozen_ui_qt_importers` 由 70 项降到 67 项
+  （本轮共移出双滑条与结果框三项）。翻页、选中行、搜索中标记与绘制批次都在描述层，
+  悬停/点击命中改用共享 `visual.row_rects` 反查行号（不再手算 `(y-border)//行高`）；
+  位置仍由 `SpeakerSearchDialog` 通过 `UI_ANCHOR_RESPONSE` 驱动，`clear_results` /
+  `set_results` / `set_searching` / `navigate` / `turn_page` / `fade_in` / `fade_out` 调用面不变。
+
 ### Fixed
 - 修复游戏窗口压住粒子与特效：游戏宿主窗口原先用 `Qt.Tool | Qt.WindowStaysOnTopHint`
   并注册到 `WindowLayer.PANEL`，因此落进置顶窗口带；被点击激活后 Windows 会把它抬到同带顶部，

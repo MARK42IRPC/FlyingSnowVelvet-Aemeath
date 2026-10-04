@@ -70,7 +70,6 @@ class QtDependencyBoundaryTests(unittest.TestCase):
             "lib/script/ui/speaker_control_buttons.py",
             "lib/script/ui/speaker_menu_style.py",
             "lib/script/ui/speaker_search_dialog.py",
-            "lib/script/ui/speaker_search_result_box.py",
             "lib/script/ui/tray_icon.py",
             "lib/script/ui/tray_menu.py",
             "lib/script/ui/update_dialog.py",
