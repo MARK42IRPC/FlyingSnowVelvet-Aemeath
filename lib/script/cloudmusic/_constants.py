@@ -61,6 +61,16 @@ _CONTENT_TYPE_EXT_MAP = {
 
 _LOCAL_TRACK_PREFIX = "local::"
 
+# Windows MCI 原生只认得 MP3/WAV/WMA 等少数容器，FLAC / M4A(AAC) / OGG / Opus
+# 打开会直接失败。这些格式扫描得到却播不了，正是"本地音乐有时候打不开"的来源。
+# 这里登记需要先解码成 WAV 再交给 MCI 的扩展名，其余交给 MCI 直接吞。
+_LOCAL_MCI_PASSTHROUGH_EXTS = frozenset({".mp3", ".wav", ".wma", ".mid", ".midi", ".rmi"})
+
+
+def local_audio_needs_decode(file_path: str | Path) -> bool:
+    """返回该本地音乐是否要先解码成 WAV 才能交给 MCI 播放。"""
+    return Path(file_path).suffix.lower() not in _LOCAL_MCI_PASSTHROUGH_EXTS
+
 
 def make_local_track_ref(file_path: str | Path) -> str:
     """将本地音乐路径编码为队列 track_ref。"""

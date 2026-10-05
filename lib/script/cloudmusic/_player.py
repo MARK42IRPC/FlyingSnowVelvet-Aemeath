@@ -14,9 +14,12 @@ Windows MCI 命令参考：
 import ctypes
 import threading
 import uuid
+from pathlib import Path
 from typing import Callable, Optional
 
 from lib.core.logger import get_logger
+from ._constants import local_audio_needs_decode
+from ._decoder import ensure_decoded_wav
 
 logger = get_logger(__name__)
 
@@ -113,16 +116,29 @@ class MciMusicPlayer:
             volume:     音量 0.0-1.0
             generation: 播放代数，回调原样带回，供订阅方丢弃过期结果
         """
+        source = Path(file_path)
+        play_path = str(source)
+        if local_audio_needs_decode(source):
+            decoded = ensure_decoded_wav(source)
+            if decoded is None:
+                self._emit(
+                    "error",
+                    int(generation),
+                    f"本地音乐解码失败（缺少解码器或文件损坏）: {source.name}",
+                )
+                return
+            play_path = str(decoded)
+
         failed = False
         with self._lock:
             self._close_locked()                               # 先停掉上一首
 
             alias = "cm_" + uuid.uuid4().hex[:8]
-            ret = _mci(f'open "{file_path}" type MPEGAudio alias {alias}')
-            logger.debug("[MciMusicPlayer] open %s: ret=%s, file=%s", alias, ret, file_path)
+            ret = _mci(f'open "{play_path}" type mpegvideo alias {alias}')
+            logger.debug("[MciMusicPlayer] open %s: ret=%s, file=%s", alias, ret, play_path)
             if ret != 0:
-                logger.debug("[MciMusicPlayer] open 失败，尝试使用 mpegvideo")
-                ret = _mci(f'open "{file_path}" type mpegvideo alias {alias}')
+                logger.debug("[MciMusicPlayer] mpegvideo 打开失败，尝试不带 type")
+                ret = _mci(f'open "{play_path}" alias {alias}')
             if ret != 0:
                 failed = True
             else:
@@ -145,7 +161,7 @@ class MciMusicPlayer:
                 self._stop_flag  = stop_flag
 
         if failed:
-            self._emit("error", int(generation), f"MCI 无法打开音频文件: {file_path}")
+            self._emit("error", int(generation), f"MCI 无法打开音频文件: {play_path}")
             return
 
         threading.Thread(

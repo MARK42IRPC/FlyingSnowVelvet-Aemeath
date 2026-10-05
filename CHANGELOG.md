@@ -141,6 +141,15 @@
   `lib/script/app/wuwa_launcher.py`。对外接口不变。
 
 ### Fixed
+- 修复本地音乐有时打不开：`MciMusicPlayer` 走 Windows MCI，只会尝试 `type MPEGAudio` 和
+  `type mpegvideo`，而扫描目录时收录的 FLAC / M4A(AAC) / OGG / Opus / WebM 容器 MCI 都
+  打不开（返回 263/277），用户看到的就是“有些本地音乐打不开”。新增
+  `lib/script/cloudmusic/_decoder.py` 与 `_constants.local_audio_needs_decode()`：非
+  MCI 原生格式先解码成 16bit PCM WAV 再交给 MCI，解码优先用 `soundfile`（libsndfile，
+  随发行版打包），M4A/AAC 回退到可选的 `av`（PyAV）；结果按“路径+大小+mtime”哈希缓存在
+  用户缓存目录 `music/decoded/` 下，重复播放命中缓存。MCI 打开也改为先 `type mpegvideo`
+  再回退“不带 type”，不再依赖 MPEGAudio 别名。失败时给出“解码失败/文件损坏或缺少解码器”
+  的明确提示，而不是静默无声。新增 `tests/test_local_music_decode.py`。
 - 修复右键动作按钮迁移夹带的两处回归：关闭按钮的鼠标进入/离开原先读 `_button.parent()`，
   按钮迁出 `QWidget` 后没有这个方法，每次进出都抛 `AttributeError` 被事件中心吞成日志，
   关闭按钮不再自动淡入/淡出——改为统一取后端宿主 `_runtime.host`（未迁移控件仍回退
