@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-from PyQt5.QtCore import Qt, QTimer
-
 from lib.core.event.center import Event, EventType, get_event_center
 from lib.core.render.visuals.application_visuals import qr_panel_action_text
-from lib.core.render.layers import get_layer_manager
 from lib.script.ui.qr_dialog_base import BaseQrDialog
 
 
@@ -14,16 +11,13 @@ class CloudMusicLoginDialog(BaseQrDialog):
     """显示网易云扫码登录二维码的独立浮窗。"""
 
     def __init__(self) -> None:
-        flags = Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
-        if hasattr(Qt, "WindowDoesNotAcceptFocus"):
-            flags |= Qt.WindowDoesNotAcceptFocus
         super().__init__(
             title="音乐扫码登录",
             status="请使用音乐App扫码登录",
             action_text=qr_panel_action_text("music-login"),
             placeholder_text="二维码加载中...",
             qr_background=True,
-            window_flags=flags,
+            window_flags="login",
         )
         self._refresh_left: int | None = None
         self._allow_hide_once = False
@@ -50,7 +44,7 @@ class CloudMusicLoginDialog(BaseQrDialog):
             self._allow_hide_once = False
             return
         if self._visible:
-            QTimer.singleShot(0, self._restore_if_needed)
+            self.restore_soon()
 
     def closeEvent(self, event) -> None:
         if self._allow_close_once:
@@ -59,18 +53,9 @@ class CloudMusicLoginDialog(BaseQrDialog):
             return
         if self._visible:
             event.ignore()
-            QTimer.singleShot(0, self._restore_if_needed)
+            self.restore_soon()
             return
         super().closeEvent(event)
-
-    def _restore_if_needed(self) -> None:
-        if not self._visible:
-            return
-        try:
-            self.show()
-            get_layer_manager().bring_to_front(self)
-        except Exception:
-            return
 
     def _on_qr_show(self, event: Event) -> None:
         self.show_dialog(
@@ -96,7 +81,7 @@ class CloudMusicLoginDialog(BaseQrDialog):
         self.hide_dialog()
 
     def _on_clickthrough_toggle(self, event: Event) -> None:
-        self.setAttribute(Qt.WA_TransparentForMouseEvents, event.data.get("enabled", False))
+        self.set_clickthrough(event.data.get("enabled", False))
 
     def _on_action_clicked(self) -> None:
         self._event_center.publish(Event(EventType.MUSIC_LOGIN_CANCEL_REQUEST, {}))

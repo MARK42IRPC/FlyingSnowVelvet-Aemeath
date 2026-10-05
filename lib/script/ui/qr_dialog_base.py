@@ -37,12 +37,18 @@ class BaseQrDialog(WorkbenchFloatingWindow):
         qr_background: bool = True,
         status_font_size: int | None = None,
         status_bold: bool = True,
-        window_flags: int | None = None,
+        window_flags: "int | str | None" = None,
     ) -> None:
         super().__init__()
-        flags = window_flags if window_flags is not None else (
-            Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
-        )
+        if window_flags == "login":
+            # 登录浮窗不进任务栏、也不抢焦点：与网易云/元宝扫码窗一致（后者原先各写一份）。
+            flags = Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
+            if hasattr(Qt, "WindowDoesNotAcceptFocus"):
+                flags |= Qt.WindowDoesNotAcceptFocus
+        elif window_flags is not None:
+            flags = int(window_flags)
+        else:
+            flags = Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
         self.setWindowFlags(flags)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFocusPolicy(Qt.NoFocus)
@@ -197,6 +203,19 @@ class BaseQrDialog(WorkbenchFloatingWindow):
     def set_clickthrough(self, enabled: bool) -> None:
         """穿透模式切换：QR 登录浮窗共享的同一条宿主行为。"""
         self.setAttribute(Qt.WA_TransparentForMouseEvents, bool(enabled))
+
+    def restore_soon(self) -> None:
+        """下一轮事件循环把窗口重新置前：用于"禁止收起"的浮窗被系统隐藏后的自愈。"""
+        QTimer.singleShot(0, self._restore_if_needed)
+
+    def _restore_if_needed(self) -> None:
+        if not self._visible:
+            return
+        try:
+            self.show()
+            get_layer_manager().bring_to_front(self)
+        except Exception:
+            return
 
     def _on_fade_out_done(self) -> None:
         self._disconnect_fade_out_done()

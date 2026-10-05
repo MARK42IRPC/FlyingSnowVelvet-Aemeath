@@ -19,6 +19,7 @@ os.environ.setdefault("QT_PLUGIN_PATH", os.path.join(_QT_ROOT, "Qt5", "plugins")
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QApplication
 
+from lib.script.ui.cloudmusic_login_dialog import CloudMusicLoginDialog
 from lib.script.ui.yuanbao_login_dialog import YuanbaoLoginDialog
 from lib.script.ui.qr_dialog_base import BaseQrDialog
 
@@ -65,3 +66,39 @@ class YuanbaoLoginDialogTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CloudMusicLoginDialogTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_login_window_flags_are_resolved_by_the_base(self):
+        dialog = CloudMusicLoginDialog()
+        try:
+            # BaseQrDialog 的 "login" 预设：不进任务栏、不抢焦点。
+            flags = dialog.windowFlags()
+            self.assertTrue(flags & Qt.FramelessWindowHint)
+            # Qt.Window 预设下 Tool 位可能被平台插件补上，这里只断言关键位。
+            if hasattr(Qt, "WindowDoesNotAcceptFocus"):
+                self.assertTrue(flags & Qt.WindowDoesNotAcceptFocus)
+        finally:
+            dialog.close()
+
+    def test_clickthrough_toggle_uses_the_shared_helper(self):
+        dialog = CloudMusicLoginDialog()
+        try:
+            dialog._on_clickthrough_toggle(_FakeEvent(True))
+            self.assertTrue(dialog.testAttribute(Qt.WA_TransparentForMouseEvents))
+            dialog._on_clickthrough_toggle(_FakeEvent(False))
+            self.assertFalse(dialog.testAttribute(Qt.WA_TransparentForMouseEvents))
+        finally:
+            dialog.close()
+
+    def test_base_restores_the_window_from_a_deferred_call(self):
+        dialog = CloudMusicLoginDialog()
+        try:
+            self.assertTrue(hasattr(dialog, "restore_soon"))
+            dialog.restore_soon()  # 不得抛异常
+        finally:
+            dialog.close()

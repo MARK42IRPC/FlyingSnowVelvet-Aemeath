@@ -4,7 +4,7 @@
 
 本文档定义 `lib/core/render/` 的目标结构与依赖边界。它不是阶段计划，而是结构改建完成后必须成立的规则。
 
-**状态：第 6 节迁移顺序 1、2（目录切分）、3 已执行；图层能力已收敛到 `lib/core/render/layers/`（第 16 节）；后端中立协议与统一数据类型已落地（第 11 节），控件层“描述 + 后端渲染”已滚动迁移气泡框（第 12 节）、说明书、语音指示器与播放进度条（第 13 节）、音响音量/频段双滑条、搜索结果框与命令提示框（第 18 节）、右键矩形动作按钮一族八个按钮（第 19 节）、确认/提示框（第 20 节，首个模态宿主）；浮窗外壳（样式/主题判定/拖拽策略/窗口按钮）已从 `lib/script/ui` 下沉到渲染层（第 21 节）；办公线性图标的 SVG 规格也已抽成后端中立事实源（第 22 节）；点击粒子辅助的按钮翻译改经 `render_bridge`、`_particle_helper.py` 出列（第 23 节）；论坛样式的底纹混色改为纯十六进制实现、`forum_style.py` 出列（第 24 节）；二维码登录浮窗的自动收起/穿透能力下沉到基类、`yuanbao_login_dialog.py` 出列（第 25 节）；排布解算已收敛到 `visuals/` 并由 `PlacementSpec` 统一解算（第 14 节，档位 0/1），右键按钮族的逐控件锚点事件链已收敛为声明式 `AnchorGraph` 且 Qt 改为消费共享布局（第 15 节，档位 2/3）；`WindowHost` 的被动宿主激活语义已与 Qt/DX 焦点策略对齐（第 17 节）。** 目录与引用规则以本文档为准；改建前的事实源是 [Qt 边界契约](Qt边界契约.md) 与 [跨后端视觉表现契约](视觉表现契约.md)，那两份文档继续负责“哪些内容算视觉逻辑”和“什么算无 Qt”。第一章描述的是最终目标；产品控件面（`lib/script/ui` 直接 `import PyQt5`）仍需逐个控件迁移，当前待迁清单以 `tests/test_qt_dependency_boundaries.py` 的 `frozen_ui_qt_importers` 为准，滚动顺序见第 13 节末尾。
+**状态：第 6 节迁移顺序 1、2（目录切分）、3 已执行；图层能力已收敛到 `lib/core/render/layers/`（第 16 节）；后端中立协议与统一数据类型已落地（第 11 节），控件层“描述 + 后端渲染”已滚动迁移气泡框（第 12 节）、说明书、语音指示器与播放进度条（第 13 节）、音响音量/频段双滑条、搜索结果框与命令提示框（第 18 节）、右键矩形动作按钮一族八个按钮（第 19 节）、确认/提示框（第 20 节，首个模态宿主）；浮窗外壳（样式/主题判定/拖拽策略/窗口按钮）已从 `lib/script/ui` 下沉到渲染层（第 21 节）；办公线性图标的 SVG 规格也已抽成后端中立事实源（第 22 节）；点击粒子辅助的按钮翻译改经 `render_bridge`、`_particle_helper.py` 出列（第 23 节）；论坛样式的底纹混色改为纯十六进制实现、`forum_style.py` 出列（第 24 节）；二维码登录浮窗的自动收起/穿透/窗口标志/自愈能力下沉到基类，`yuanbao_login_dialog.py` 与 `cloudmusic_login_dialog.py` 出列（第 25、26 节）；排布解算已收敛到 `visuals/` 并由 `PlacementSpec` 统一解算（第 14 节，档位 0/1），右键按钮族的逐控件锚点事件链已收敛为声明式 `AnchorGraph` 且 Qt 改为消费共享布局（第 15 节，档位 2/3）；`WindowHost` 的被动宿主激活语义已与 Qt/DX 焦点策略对齐（第 17 节）。** 目录与引用规则以本文档为准；改建前的事实源是 [Qt 边界契约](Qt边界契约.md) 与 [跨后端视觉表现契约](视觉表现契约.md)，那两份文档继续负责“哪些内容算视觉逻辑”和“什么算无 Qt”。第一章描述的是最终目标；产品控件面（`lib/script/ui` 直接 `import PyQt5`）仍需逐个控件迁移，当前待迁清单以 `tests/test_qt_dependency_boundaries.py` 的 `frozen_ui_qt_importers` 为准，滚动顺序见第 13 节末尾。
 
 本文只新增目录与引用规则，不改变任何视觉语义、数值来源或渲染结果。改建过程中出现分歧时，以 [视觉表现契约](视觉表现契约.md) 和当前 Qt 基准为事实源。
 
@@ -1244,5 +1244,32 @@ lib/core/render/layers/
 - `frozen_ui_qt_importers`：54 → **52**（本轮移出 `yuanbao_login_dialog.py`；累计 73 → 52）。
   同类可继续：`cloudmusic_login_dialog.py` 的自动收起/停表可复用同一基类能力（其另有
   `WindowDoesNotAcceptFocus` 标志与 hide/close 的"禁止收起"拦截面，属其自身行为）。
+- 第 3 项其余 `exec_()` 对话框与第 4 项（`world_objects/*`、`game_runtime`）仍未动。
+
+## 26. 第二十六轮执行记录：网易云登录浮窗去 Qt
+
+问题：`cloudmusic_login_dialog.py` 仍 import `PyQt5`，只为三件事：登录窗标志
+（`Window | FramelessWindowHint | WindowStaysOnTopHint | WindowDoesNotAcceptFocus`）、
+两处 `QTimer.singleShot(0, _restore_if_needed)` 自愈、以及一处穿透 `setAttribute`。
+
+拆法（继续把共用宿主行为上收到 `BaseQrDialog`）：
+
+- `window_flags` 参数接受新哨兵 `"login"`：由基类解析出登录窗标志（不进任务栏、不抢焦点），
+  子类不再拼 `Qt.*`；整型 flags 仍照旧透传。
+- 基类新增 `restore_soon()` / `_restore_if_needed()`：下轮事件循环把窗口重新置前，
+  用于"禁止收起"浮窗被系统隐藏后的自愈。
+- 穿透复用上一轮的 `set_clickthrough()`。
+- `cloudmusic_login_dialog.py` 删除 `from PyQt5.QtCore import Qt, QTimer` 与自带的
+  `_restore_if_needed`、`get_layer_manager` 导入；`frozen_ui_qt_importers` 52 → 51。
+
+验证：
+
+- `py -3 -m unittest discover -s tests -p "test_*.py" -q`：2141 通过（含 `tests/test_yuanbao_login_dialog.py` 追加 3 项），10 跳过
+- `py -3 -m unittest discover -s tests/dx -p "test_*.py" -q`：122 通过，7 跳过
+- `py -3 -m ruff check lib config scripts tests` 干净；`py -3 -m compileall -q config lib scripts tests` 通过
+
+**本轮没动的部分**
+
+- `frozen_ui_qt_importers`：53 → **51**（本轮移出 `cloudmusic_login_dialog.py`；累计 73 → 51）。
 - 第 3 项其余 `exec_()` 对话框与第 4 项（`world_objects/*`、`game_runtime`）仍未动。
 

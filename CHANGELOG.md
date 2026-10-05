@@ -47,6 +47,10 @@
 - 二维码登录浮窗宿主能力下沉：`BaseQrDialog` 提供单次自动收起 `QTimer`、`hide_dialog()`
   停表与 `set_clickthrough()`；`yuanbao_login_dialog.py` 改为复用、不再 import `PyQt5`，
   `frozen_ui_qt_importers` 53 → 52。新增 `tests/test_yuanbao_login_dialog.py`。
+- 网易云二维码登录面板去 Qt：`BaseQrDialog` 的 `window_flags` 新增 `"login"` 预设
+  （不进任务栏/不抢焦点）并提供 `restore_soon()` 自愈；`cloudmusic_login_dialog.py`
+  改用共享的窗口标志、自愈与 `set_clickthrough()`，不再 import `PyQt5`，
+  `frozen_ui_qt_importers` 52 → 51。
 ### Changed
 - 自动更新包覆盖提速：覆盖阶段不再对每个文件读两遍内容，只比同名文件的大小（字节正确性
   已由资源包的 SHA-256 在下载时兜住），拷贝并发发起。真实 733 MiB / 17,195 文件的资源包
