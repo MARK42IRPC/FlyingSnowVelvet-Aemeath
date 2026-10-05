@@ -71,7 +71,6 @@ class QtDependencyBoundaryTests(unittest.TestCase):
             "lib/script/ui/world_objects/snowball.py",
             "lib/script/ui/world_objects/sofa.py",
             "lib/script/ui/world_objects/speaker.py",
-            "lib/script/ui/yuanbao_login_dialog.py",
     })
 
     @staticmethod

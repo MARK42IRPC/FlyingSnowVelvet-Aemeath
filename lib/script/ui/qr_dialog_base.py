@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt5.QtCore import Qt, QRect, QPropertyAnimation, QEasingCurve, QEvent
+from PyQt5.QtCore import Qt, QRect, QPropertyAnimation, QEasingCurve, QEvent, QTimer
 from PyQt5.QtGui import QCursor, QPainter
 from PyQt5.QtWidgets import QGraphicsOpacityEffect, QPushButton, QStyle
 
@@ -89,6 +89,10 @@ class BaseQrDialog(WorkbenchFloatingWindow):
         self._anim = QPropertyAnimation(self._opacity, b"opacity", self)
         self._anim.setDuration(UI["ui_fade_duration"])
         self._anim.setEasingCurve(QEasingCurve.InOutQuad)
+        # QR 登录成功后自动收起的单次定时器；基类提供，子类按需 start/stop。
+        self._auto_close_timer = QTimer(self)
+        self._auto_close_timer.setSingleShot(True)
+        self._auto_close_timer.timeout.connect(self.hide_dialog)
         self._layout_controls()
         self.install_floating_chrome()
 
@@ -179,6 +183,7 @@ class BaseQrDialog(WorkbenchFloatingWindow):
         self.update()
 
     def hide_dialog(self) -> None:
+        self._auto_close_timer.stop()
         if not self._visible:
             return
         self._visible = False
@@ -188,6 +193,10 @@ class BaseQrDialog(WorkbenchFloatingWindow):
 
     def _before_hide_widget(self) -> None:
         """子类可在真正 hide 前注入行为。"""
+
+    def set_clickthrough(self, enabled: bool) -> None:
+        """穿透模式切换：QR 登录浮窗共享的同一条宿主行为。"""
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, bool(enabled))
 
     def _on_fade_out_done(self) -> None:
         self._disconnect_fade_out_done()

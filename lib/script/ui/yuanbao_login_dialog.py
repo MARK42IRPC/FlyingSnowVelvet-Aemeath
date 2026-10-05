@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from PyQt5.QtCore import Qt, QTimer
-
 from lib.core.event.center import Event, EventType, get_event_center
 from lib.core.render.visuals.application_visuals import qr_panel_action_text
 from lib.script.ui.qr_dialog_base import BaseQrDialog
@@ -20,10 +18,6 @@ class YuanbaoLoginDialog(BaseQrDialog):
             placeholder_text="二维码准备中...",
             qr_background=True,
         )
-        self._auto_close_timer = QTimer(self)
-        self._auto_close_timer.setSingleShot(True)
-        self._auto_close_timer.timeout.connect(self.hide_dialog)
-
         self._event_center = get_event_center()
         self._event_center.subscribe(EventType.YUANBAO_LOGIN_QR_SHOW, self._on_qr_show)
         self._event_center.subscribe(EventType.YUANBAO_LOGIN_QR_STATUS, self._on_qr_status)
@@ -37,9 +31,7 @@ class YuanbaoLoginDialog(BaseQrDialog):
         self._set_dialog_status(status)
         self._show_dialog()
 
-    def hide_dialog(self) -> None:
-        self._auto_close_timer.stop()
-        super().hide_dialog()
+    # 自动收起定时器与 hide 时的停表都由 BaseQrDialog 提供，这里不再覆写 hide_dialog。
 
     def _on_qr_show(self, event: Event) -> None:
         self.show_dialog(
@@ -73,7 +65,7 @@ class YuanbaoLoginDialog(BaseQrDialog):
         self.hide_dialog()
 
     def _on_clickthrough_toggle(self, event: Event) -> None:
-        self.setAttribute(Qt.WA_TransparentForMouseEvents, event.data.get("enabled", False))
+        self.set_clickthrough(event.data.get("enabled", False))
 
     def _on_action_clicked(self) -> None:
         self._event_center.publish(Event(EventType.YUANBAO_LOGIN_QR_HIDE, {}))
