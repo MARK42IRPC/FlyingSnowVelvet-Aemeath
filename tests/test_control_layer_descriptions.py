@@ -221,6 +221,7 @@ class ControlDescriptionLayerTests(unittest.TestCase):
             ("lib/script/ui/more_functions_button.py", "MoreFunctionsButton"),
             ("lib/script/ui/launch_wuwa_button.py", "LaunchWutheringWavesButton"),
             ("lib/script/ui/restore_button.py", "RestoreButton"),
+            ("lib/script/ui/office_approval_dialog.py", "OfficeApprovalDialog"),
         )
         for relative, class_name in migrated:
             with self.subTest(control=relative):

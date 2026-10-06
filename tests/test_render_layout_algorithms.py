@@ -475,7 +475,6 @@ class ControlPlacementDelegationTests(unittest.TestCase):
         "update_dialog.py",
         "help_window.py",
         "voice_package_installer.py",
-        "office_approval_dialog.py",
     )
 
     def test_no_ui_control_clamps_its_own_window_position(self):

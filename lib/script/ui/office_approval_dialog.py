@@ -1,273 +1,210 @@
-"""Qt permission decision dialog for office tasks."""
+"""办公权限许可弹窗：审批状态 → 后端中立的窗口描述 → 后端宿主。
+
+本模块不再 ``import PyQt5``、也不再是 ``QDialog`` 子类。它只做三件事：
+
+1. 从审批载荷收集状态（标题、原因、命令预览、窗口图标、尺寸档）；
+2. 用 ``lib/core/render/visuals/window_specs.py`` 的装配件产出一棵 ``WindowSpec``；
+3. 把语义回调（``reject`` / ``allow`` / ``allow_task``）翻译成 ``decision_made``。
+
+真实控件树由 ``render_bridge.create_spec_window()`` 交给 Qt 宿主
+（``lib/core/render/backends/qt/widgets/spec_host.py``）搭建。换后端时替换的是那一层，
+不是审批语义。
+
+为兼容既有调用方（``office_approval_controller``）与测试，本类保留原 ``QDialog`` 的
+属性面：``approval_id`` / ``decision_made`` / ``dismiss_without_decision()`` /
+``close()`` / ``findChild()`` / ``open()`` / ``raise_()`` / ``activateWindow()`` /
+``destroyed``，其中 ``findChild`` 与 ``destroyed`` 转发到底层 ``QWidget``，调用方
+因此不需要知道自己拿到的不再是 ``QDialog``。
+"""
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
 
-from PyQt5.QtCore import QEvent, QPoint, Qt, pyqtSignal
-from PyQt5.QtGui import QIcon
-from PyQt5.QtWidgets import (
-    QDialog,
-    QFrame,
-    QHBoxLayout,
-    QLabel,
-    QPlainTextEdit,
-    QPushButton,
-    QStyle,
-    QVBoxLayout,
-    QWidget,
-)
-
 from config.scale import scale_px
-from lib.script.ui.office_icons import (
-    office_allow_icon,
-    office_allow_task_icon,
-    office_reject_icon,
+from lib.core.render.visuals.window_specs import (
+    APPROVAL_ALLOW,
+    APPROVAL_ALLOW_TASK,
+    APPROVAL_REJECT,
+    office_approval_window_spec,
 )
-from lib.script.ui.office_style import create_office_accent_bar, office_stylesheet
-from lib.script.ui.workbench_components import create_window_button
-from lib.script.workbench.theme import get_workbench_colors
-from lib.script.ui.render_bridge import resolve_placement, screen_rect_for_point as get_screen_geometry_for_point, ui_font as get_ui_font, render_office_icon_pixmap
+from lib.script.ui import render_bridge
+from lib.script.ui.office_style import office_stylesheet
 
 
 _OFFICE_ICON_PATH = Path(__file__).resolve().parents[3] / "resc" / "icon.ico"
 
+#: 语义 id → 产品决策名。三个按钮与关闭按钮共用一张表。
+_DECISIONS = {
+    APPROVAL_REJECT: "reject",
+    APPROVAL_ALLOW: "allow",
+    APPROVAL_ALLOW_TASK: "allow_task",
+}
 
-class OfficeApprovalDialog(QDialog):
-    decision_made = pyqtSignal(str, str)
+#: 反查表：产品决策名 → 描述层的语义 id（`_resolve` 与测试用）。
+_SEMANTIC_BY_DECISION = {decision: semantic for semantic, decision in _DECISIONS.items()}
 
-    def __init__(self, approval: dict, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
+
+class _ApprovalDecisionSignal:
+    """``pyqtSignal(str, str)`` 的后端中立替身：只保留 ``connect`` / ``emit``。"""
+
+    def __init__(self) -> None:
+        self._slots: list = []
+
+    def connect(self, slot) -> None:
+        if slot not in self._slots:
+            self._slots.append(slot)
+
+    def disconnect(self, slot=None) -> None:
+        if slot is None:
+            self._slots.clear()
+            return
+        try:
+            self._slots.remove(slot)
+        except ValueError:
+            pass
+
+    def emit(self, *args) -> None:
+        for slot in tuple(self._slots):
+            slot(*args)
+
+
+class OfficeApprovalDialog:
+    """一个按窗口描述装配出来的办公审批弹窗。"""
+
+    def __init__(self, approval: dict, parent=None) -> None:
         self._approval = dict(approval or {})
         self._approval_id = str(self._approval.get("approval_id", ""))
-        self._resolved = False
-        self._drag_targets: set[QWidget] = set()
-        self._dragging = False
-        self._drag_offset = QPoint()
-        self._placed = False
-
-        self.setObjectName("OfficeApprovalDialog")
-        self.setWindowTitle("办公权限许可")
-        # 工作台是同款无窗眉自绘外壳，这里不再保留 Windows 原生标题栏。
-        self.setWindowFlags(
-            Qt.Dialog | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
+        self.decision_made = _ApprovalDecisionSignal()
+        self._spec = self._build_spec()
+        self._window = render_bridge.create_spec_window(
+            self._spec,
+            parent=parent,
+            on_semantic=self._on_semantic,
         )
-        self.setWindowModality(Qt.WindowModal if parent is not None else Qt.ApplicationModal)
-        self.setAttribute(Qt.WA_StyledBackground, True)
-        self.setMinimumWidth(scale_px(500, min_abs=460))
-        self.setMaximumWidth(scale_px(680, min_abs=620))
-        self.setAttribute(Qt.WA_DeleteOnClose, True)
-        if _OFFICE_ICON_PATH.is_file():
-            self.setWindowIcon(QIcon(str(_OFFICE_ICON_PATH)))
 
-        root = QVBoxLayout(self)
-        root.setContentsMargins(
-            scale_px(22, min_abs=18),
-            scale_px(20, min_abs=16),
-            scale_px(22, min_abs=18),
-            scale_px(18, min_abs=15),
+    # ── 描述 ─────────────────────────────────────────────────────────
+
+    def _build_spec(self):
+        approval = self._approval
+        command = approval.get("command")
+        return office_approval_window_spec(
+            title=str(approval.get("tool_name") or "执行受限操作"),
+            reason=str(approval.get("reason") or "需要用户许可"),
+            command_text=(
+                json.dumps(command, ensure_ascii=False, indent=2)
+                if command is not None
+                else ""
+            ),
+            accent_height=scale_px(5, min_abs=4),
+            icon_size=scale_px(24, min_abs=21),
+            root_margin=(
+                scale_px(22, min_abs=18),
+                scale_px(20, min_abs=16),
+                scale_px(22, min_abs=18),
+                scale_px(18, min_abs=15),
+            ),
+            root_spacing=scale_px(12, min_abs=9),
+            header_margin=(
+                scale_px(12, min_abs=10),
+                scale_px(10, min_abs=8),
+                scale_px(12, min_abs=10),
+                scale_px(10, min_abs=8),
+            ),
+            header_spacing=scale_px(10, min_abs=8),
+            title_column_spacing=scale_px(3, min_abs=2),
+            actions_margin=(0, scale_px(4, min_abs=3), 0, 0),
+            actions_spacing=scale_px(8, min_abs=6),
+            kicker_size=scale_px(10, min_abs=9),
+            title_size=scale_px(15, min_abs=13),
+            reason_size=scale_px(11, min_abs=10),
+            command_size=scale_px(10, min_abs=9),
+            command_max_height=scale_px(150, min_abs=120),
+            min_width=scale_px(500, min_abs=460),
+            max_width=scale_px(680, min_abs=620),
+            stylesheet=office_stylesheet(),
+            window_icon_path=str(_OFFICE_ICON_PATH),
         )
-        root.setSpacing(scale_px(12, min_abs=9))
 
-        self._accent_bar = create_office_accent_bar(self)
-        root.addWidget(self._accent_bar)
+    # ── 语义与生命周期 ───────────────────────────────────────────────
 
-        header = QFrame(self)
-        header.setObjectName("OfficeApprovalHeader")
-        header.setCursor(Qt.OpenHandCursor)
-        self._install_drag_target(header)
-        header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(
-            scale_px(12, min_abs=10),
-            scale_px(10, min_abs=8),
-            scale_px(12, min_abs=10),
-            scale_px(10, min_abs=8),
-        )
-        header_layout.setSpacing(scale_px(10, min_abs=8))
-        icon_label = QLabel(header)
-        icon_label.setObjectName("OfficeApprovalIcon")
-        icon_label.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
-        self._icon_label = icon_label
-        header_layout.addWidget(icon_label)
+    def _on_semantic(self, semantic: str) -> None:
+        decision = _DECISIONS.get(str(semantic))
+        if decision is None:
+            return
+        self.decision_made.emit(self._approval_id, decision)
 
-        title_column = QVBoxLayout()
-        title_column.setContentsMargins(0, 0, 0, 0)
-        title_column.setSpacing(scale_px(3, min_abs=2))
-        kicker = QLabel("办公模式 · 权限许可", header)
-        kicker.setObjectName("OfficeApprovalKicker")
-        kicker.setFont(get_ui_font(size=scale_px(10, min_abs=9)))
-        title_column.addWidget(kicker)
-        title = QLabel(str(self._approval.get("tool_name") or "执行受限操作"), header)
-        title.setObjectName("OfficeApprovalTitle")
-        title_font = get_ui_font(size=scale_px(15, min_abs=13))
-        title_font.setBold(True)
-        title.setFont(title_font)
-        title.setWordWrap(True)
-        title_column.addWidget(title)
-        header_layout.addLayout(title_column, 1)
+    def _resolve(self, decision: str) -> None:
+        """按产品决策名给出决定（既有调用方与测试的入口，语义等价于点按钮）。"""
 
-        close_button = create_window_button(
-            header,
-            QStyle.SP_TitleBarCloseButton,
-            "关闭（视为拒绝）",
-            lambda: self._resolve("reject"),
-            danger=True,
-        )
-        close_button.setObjectName("OfficeApprovalClose")
-        header_layout.addWidget(close_button, 0, Qt.AlignTop)
-        root.addWidget(header)
+        semantic = _SEMANTIC_BY_DECISION.get(str(decision))
+        if semantic is None:
+            return
+        self._window.resolve_with(semantic)
 
-        reason = str(self._approval.get("reason") or "需要用户许可")
-        reason_label = QLabel(reason, self)
-        reason_label.setObjectName("OfficeApprovalReason")
-        reason_label.setFont(get_ui_font(size=scale_px(11, min_abs=10)))
-        reason_label.setWordWrap(True)
-        reason_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        root.addWidget(reason_label)
+    def apply_theme(self) -> None:
+        """按当前工作台主题重刷样式表与图标色（主题切换后调用）。"""
 
-        command = self._approval.get("command")
-        if command:
-            command_label = QLabel("请求内容", self)
-            command_label.setObjectName("OfficeApprovalCommandLabel")
-            root.addWidget(command_label)
-            self._command_view = QPlainTextEdit(self)
-            self._command_view.setObjectName("OfficeApprovalCommand")
-            self._command_view.setReadOnly(True)
-            self._command_view.setMaximumHeight(scale_px(150, min_abs=120))
-            self._command_view.setPlainText(json.dumps(command, ensure_ascii=False, indent=2))
-            self._command_view.setFont(get_ui_font(size=scale_px(10, min_abs=9)))
-            root.addWidget(self._command_view)
-        else:
-            self._command_view = None
-
-        scope_label = QLabel("“始终允许”仅对当前任务有效，任务结束后自动失效。", self)
-        scope_label.setObjectName("OfficeApprovalScope")
-        scope_label.setWordWrap(True)
-        root.addWidget(scope_label)
-
-        actions = QHBoxLayout()
-        actions.setContentsMargins(0, scale_px(4, min_abs=3), 0, 0)
-        actions.setSpacing(scale_px(8, min_abs=6))
-        reject_button = QPushButton("拒绝", self)
-        reject_button.setObjectName("OfficeApprovalReject")
-        reject_button.clicked.connect(lambda: self._resolve("reject"))
-        actions.addWidget(reject_button)
-
-        actions.addStretch(1)
-
-        allow_button = QPushButton("允许", self)
-        allow_button.setObjectName("OfficeApprovalAllow")
-        allow_button.clicked.connect(lambda: self._resolve("allow"))
-        actions.addWidget(allow_button)
-
-        allow_task_button = QPushButton("始终允许", self)
-        allow_task_button.setObjectName("OfficeApprovalAllowTask")
-        allow_task_button.clicked.connect(lambda: self._resolve("allow_task"))
-        actions.addWidget(allow_task_button)
-
-        root.addLayout(actions)
-
-        self._apply_theme()
+        self._spec = self._build_spec()
+        self._window.apply_theme(self._spec)
 
     @property
     def approval_id(self) -> str:
         return self._approval_id
 
-    def _install_drag_target(self, widget: QWidget) -> None:
-        """窗眉区域拖动整窗（无原生标题栏，沿用工作台的做法）。"""
-        widget.installEventFilter(self)
-        self._drag_targets.add(widget)
-
-    def eventFilter(self, watched, event):
-        if watched in self._drag_targets:
-            if (
-                event.type() == QEvent.MouseButtonPress
-                and event.button() == Qt.LeftButton
-            ):
-                self._dragging = True
-                self._drag_offset = event.globalPos() - self.frameGeometry().topLeft()
-                event.accept()
-                return True
-            if (
-                event.type() == QEvent.MouseMove
-                and self._dragging
-                and (event.buttons() & Qt.LeftButton)
-            ):
-                self.move(event.globalPos() - self._drag_offset)
-                event.accept()
-                return True
-            if (
-                event.type() == QEvent.MouseButtonRelease
-                and event.button() == Qt.LeftButton
-            ):
-                self._dragging = False
-                event.accept()
-                return True
-        return super().eventFilter(watched, event)
-
-    def showEvent(self, event) -> None:
-        super().showEvent(event)
-        if self._placed:
-            return
-        self._placed = True
-        self.adjustSize()
-        self._center_on_reference()
-
-    def _center_on_reference(self) -> None:
-        """有可见父窗就居中于父窗，否则居中于光标所在屏幕（与公告窗一致）。
-
-        「中心对中心再夹取」是共享落位的一种取值，算术在 ``visuals/layout.py``。
-        """
-        parent = self.parentWidget()
-        if parent is not None and parent.isVisible():
-            reference = parent.frameGeometry()
-            point = reference.center()
-        else:
-            reference = get_screen_geometry_for_point(fallback_widget=self)
-            point = None
-        screen = get_screen_geometry_for_point(point=point, fallback_widget=self)
-        placement = resolve_placement(
-            (self.width(), self.height()),
-            reference,
-            screen,
-            target_anchor_id="center",
-            self_anchor_id="center",
-        )
-        self.move(placement.x, placement.y)
-
-    def _resolve(self, decision: str) -> None:
-        if self._resolved:
-            return
-        self._resolved = True
-        self.decision_made.emit(self._approval_id, decision)
-        self.accept()
-
     def dismiss_without_decision(self) -> None:
-        if self._resolved:
-            return
-        self._resolved = True
-        self.reject()
+        """不发决定地收起（审批请求已被上游撤销）。"""
 
-    def closeEvent(self, event) -> None:
-        if not self._resolved:
-            self._resolved = True
-            self.decision_made.emit(self._approval_id, "reject")
-        super().closeEvent(event)
+        self._window.dismiss_without_decision()
 
-    def _apply_theme(self) -> None:
-        self.setStyleSheet(office_stylesheet())
-        colors = get_workbench_colors()
-        icon_size = scale_px(24, min_abs=21)
-        self._icon_label.setPixmap(
-            render_office_icon_pixmap("warning", colors.warning, icon_size)
-        )
-        self.findChild(QPushButton, "OfficeApprovalReject").setIcon(
-            office_reject_icon(colors.text)
-        )
-        self.findChild(QPushButton, "OfficeApprovalAllow").setIcon(
-            office_allow_icon(colors.canvas)
-        )
-        self.findChild(QPushButton, "OfficeApprovalAllowTask").setIcon(
-            office_allow_task_icon(colors.canvas)
-        )
+    # ── 底层窗口的属性面（调用方按原 QDialog 用法）───────────────────
+
+    def widget(self):
+        """底层真实窗口，供诊断与需要 ``QWidget`` 的调用方取用。"""
+
+        return self._window.widget
+
+    @property
+    def destroyed(self):
+        return self._window.widget.destroyed
+
+    def findChild(self, *args, **kwargs):  # noqa: N802 - 沿用 Qt 命名
+        return self._window.widget.findChild(*args, **kwargs)
+
+    def styleSheet(self) -> str:  # noqa: N802 - 沿用 Qt 命名
+        return self._window.widget.styleSheet()
+
+    def windowFlags(self):  # noqa: N802 - 沿用 Qt 命名
+        return self._window.widget.windowFlags()
+
+    def testAttribute(self, attribute) -> bool:  # noqa: N802 - 沿用 Qt 命名
+        return self._window.widget.testAttribute(attribute)
+
+    def open(self) -> None:
+        widget = self._window.widget
+        opener = getattr(widget, "open", None)
+        if callable(opener):
+            opener()
+        else:
+            widget.show()
+
+    def show(self) -> None:
+        self._window.widget.show()
+
+    def close(self) -> None:
+        self._window.widget.close()
+
+    def raise_(self) -> None:
+        self._window.widget.raise_()
+
+    def activateWindow(self) -> None:  # noqa: N802 - 沿用 Qt 命名
+        self._window.widget.activateWindow()
+
+
+__all__ = [
+    "APPROVAL_ALLOW",
+    "APPROVAL_ALLOW_TASK",
+    "APPROVAL_REJECT",
+    "OfficeApprovalDialog",
+]

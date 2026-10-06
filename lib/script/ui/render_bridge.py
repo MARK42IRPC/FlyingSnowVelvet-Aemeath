@@ -183,6 +183,37 @@ def create_message_box_host(parent=None, *, object_name: str = ""):
     return QtMessageBoxHost(parent, object_name=object_name)
 
 
+def create_spec_window(
+    spec,
+    *,
+    on_semantic=None,
+    on_destroyed=None,
+    dialog: bool = True,
+    parent=None,
+):
+    """按后端中立的窗口描述（``visuals/window_spec.py``）装配一个真实窗口。
+
+    这是"窗口级描述 + 后端渲染"的控件侧唯一落点，与 ``create_control_host`` /
+    ``create_message_box_host`` 同类：产品窗口只交一棵 ``WindowSpec`` 与语义回调，
+    真实控件树由后端宿主（Qt 下是 ``widgets/spec_host.py``）搭建。字体经本模块注入，
+    档位 D 因此不静态引用档位 A。
+
+    ``on_destroyed`` 对应产品窗口此前直接连 ``destroyed`` 的做法：迁移后产品窗口不再
+    是 ``QObject``，生命周期回调经本入口回填。
+    """
+    from lib.core.render.backends.qt.widgets.spec_host import build_spec_window
+
+    return build_spec_window(
+        spec,
+        font_factory=ui_font,
+        presentation_host=presentation_host(),
+        on_semantic=on_semantic,
+        on_destroyed=on_destroyed,
+        dialog=dialog,
+        parent=parent,
+    )
+
+
 def create_component_layer():
     """创建控件自用的绘制回调层（排序与注册是后端无关的，只有回调是 Qt）。"""
     from lib.core.render.backends.qt.drawing.render_core import QtComponentLayer

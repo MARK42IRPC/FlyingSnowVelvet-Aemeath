@@ -58,9 +58,7 @@ class OfficeApprovalController(QObject):
             self._shown_ids = {approval_id}
         dialog = OfficeApprovalDialog(approval, self._dialog_parent)
         dialog.decision_made.connect(self._on_decision)
-        dialog.destroyed.connect(
-            lambda _obj=None, owned=dialog: self._clear_dialog(owned)
-        )
+        dialog.destroyed.connect(self._on_dialog_destroyed)
         self._dialog = dialog
         dialog.open()
         dialog.raise_()
@@ -76,9 +74,15 @@ class OfficeApprovalController(QObject):
         if dialog is not None and dialog.approval_id == approval_id:
             self._dialog = None
 
-    def _clear_dialog(self, dialog: OfficeApprovalDialog) -> None:
-        if self._dialog is dialog:
-            self._dialog = None
+    def _on_dialog_destroyed(self, _obj=None) -> None:
+        """弹窗被 Qt 销毁后清掉引用。
+
+        这里连**绑定方法**而不是闭包：Qt 对 QObject 接收者只持弱引用，控件销毁即自动
+        断开；闭包则会一直攥住 `self`，一旦 `_poll` 的帧先被回收，回调里的 `self`
+        就成了空单元格。
+        """
+
+        self._dialog = None
 
     def cleanup(self) -> None:
         if self._cleaned:
