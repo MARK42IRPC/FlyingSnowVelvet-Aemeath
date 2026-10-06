@@ -49,7 +49,9 @@ class LocalAudioDecodeTests(unittest.TestCase):
             source.write_bytes(_MINIMAL_WAV)
             target = tmp / "cache" / "out.wav"
             target.parent.mkdir(parents=True, exist_ok=True)
-            self.assertTrue(_decoder._decode_soundfile(source, target))
+            decoded = _decoder._decode_soundfile(source)
+            self.assertIsNotNone(decoded)
+            self.assertTrue(_decoder._write_wav(decoded, target))
             with wave.open(str(target), "rb") as handle:
                 self.assertEqual(handle.getnchannels(), 1)
                 self.assertEqual(handle.getsampwidth(), 2)
@@ -145,6 +147,99 @@ class LocalAudioDecodeTests(unittest.TestCase):
             check=False,
         )
         self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+
+
+class LocalAudioFidelityTests(unittest.TestCase):
+    """解码目标是「MCI 认得的容器」，不是「省空间的中间格式」。
+
+    早期实现把结果固定成单声道 22.05kHz：无损音源过一次就被砍掉一半采样率、立体声
+    也被压成单声道。这一组断言把「源采样率与声道数原样保留」钉死，并确认极端参数只会
+    退到安全档，不会悄悄降级本可播放的音源。
+    """
+
+    @staticmethod
+    def _stereo_tone(path: Path, *, rate: int, seconds: float = 0.1) -> None:
+        """写一段左右声道频率不同的立体声无损音频，用来区分是否真的保留了双声道。"""
+
+        import numpy as np
+        import soundfile as sf
+
+        frames = max(1, int(rate * seconds))
+        timeline = np.arange(frames) / float(rate)
+        left = (0.5 * np.sin(2 * np.pi * 440.0 * timeline) * 32767).astype("int16")
+        right = (0.5 * np.sin(2 * np.pi * 880.0 * timeline) * 32767).astype("int16")
+        sf.write(
+            str(path),
+            np.stack([left, right], axis=1),
+            rate,
+            format="FLAC",
+            subtype="PCM_16",
+        )
+
+    def test_stereo_flac_keeps_its_channels_and_sample_rate(self):
+        import soundfile  # noqa: F401 - 环境缺少解码器时应直接报错而不是静默跳过
+
+        from lib.script.cloudmusic import _decoder
+
+        with _TempDir() as tmp:
+            source = tmp / "stereo.flac"
+            self._stereo_tone(source, rate=44100)
+            with patch.object(_decoder, "decoded_cache_root", return_value=tmp / "cache"):
+                decoded_path = _decoder.ensure_decoded_wav(source)
+
+            self.assertIsNotNone(decoded_path)
+            with wave.open(str(decoded_path), "rb") as handle:
+                self.assertEqual(handle.getnchannels(), 2)
+                self.assertEqual(handle.getsampwidth(), 2)
+                self.assertEqual(handle.getframerate(), 44100)
+
+    def test_48khz_mono_source_is_not_downsampled(self):
+        import numpy as np
+        import soundfile as sf
+
+        from lib.script.cloudmusic import _decoder
+
+        with _TempDir() as tmp:
+            source = tmp / "tone48.flac"
+            frames = 4800
+            timeline = np.arange(frames) / 48000.0
+            sf.write(
+                str(source),
+                (0.4 * np.sin(2 * np.pi * 1000.0 * timeline) * 32767).astype("int16"),
+                48000,
+                format="FLAC",
+                subtype="PCM_16",
+            )
+            with patch.object(_decoder, "decoded_cache_root", return_value=tmp / "cache"):
+                decoded_path = _decoder.ensure_decoded_wav(source)
+
+            self.assertIsNotNone(decoded_path)
+            with wave.open(str(decoded_path), "rb") as handle:
+                self.assertEqual(handle.getframerate(), 48000)
+                self.assertEqual(handle.getnchannels(), 1)
+
+    def test_sample_rate_is_clamped_only_beyond_the_supported_range(self):
+        from lib.script.cloudmusic import _decoder
+
+        self.assertEqual(_decoder._clamp_sample_rate(44100), 44100)
+        self.assertEqual(_decoder._clamp_sample_rate(96000), 96000)
+        self.assertEqual(_decoder._clamp_sample_rate(0), 44100)
+        self.assertEqual(_decoder._clamp_sample_rate(4000), _decoder._MIN_SAMPLE_RATE)
+        self.assertEqual(_decoder._clamp_sample_rate(384000), _decoder._MAX_SAMPLE_RATE)
+
+    def test_cache_stamp_changes_when_the_decode_revision_changes(self):
+        """口径版本进了指纹：改了输出格式就必须让旧缓存失效，用户不必手动清。"""
+
+        from lib.script.cloudmusic import _decoder
+
+        with _TempDir() as tmp:
+            source = tmp / "tone.flac"
+            source.write_bytes(_MINIMAL_WAV)
+            current = _decoder._cache_stamp(source)
+            with patch.object(_decoder, "_DECODE_REVISION", _decoder._DECODE_REVISION + 1):
+                bumped = _decoder._cache_stamp(source)
+            self.assertNotEqual(current, bumped, "解码口径版本没有进缓存指纹")
+            self.assertEqual(current, _decoder._cache_stamp(source))
 
 
 class MciMusicPlayerThreadAffinityTests(unittest.TestCase):

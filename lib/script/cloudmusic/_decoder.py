@@ -9,6 +9,16 @@ FLAC / M4A(AAC) / OGG / Opus 等格式，但这类文件 `open ... type mpegvide
 （PyAV，自带 FFmpeg，仅当运行环境已安装时使用）。两条路径都失败时返回 None，
 由调用方给出明确的失败提示，而不是静默无声。
 
+**保真约束**：解码目标是「MCI 认得的容器」，不是「省空间的中间格式」，因此采样率
+与声道数一律照抄源文件。此前两条解码路径各丢一半：`soundfile` 把结果统一混成了
+单声道，`av` 更把目标写死成单声道 22.05kHz（48kHz 音源直接对半砍）。那是可被
+听出来的实质损伤，不是体积优化——本地 FLAC / M4A 比在线音源明显更差就来自这里。
+只有 MCI 明确不接受的极端参数（超范围采样率、零声道）才会退到安全档。
+
+注意缓存按 `源文件 + 大小 + mtime` 分目录，因此改口径后旧缓存不会被复用；但两者
+指纹相同时「旧解码结果」仍可能被认成有效缓存。所以指纹里带一个解码口径版本号：
+口径一改就递增，旧目录自然失效，用户不必手动清缓存。
+
 解码结果按 `源文件路径 + 大小 + mtime` 缓存到用户缓存目录的 `decoded/` 下，
 换源或改文件会重新解码，重复播放直接命中缓存。所有函数都不导入 Qt。
 """
@@ -20,14 +30,38 @@ import logging
 import threading
 import wave
 from pathlib import Path
+from typing import NamedTuple
 
 logger = logging.getLogger(__name__)
 
-#: 解码目标参数：单声道 22.05kHz，足够音乐播放且体积可控。
-_DECODE_SAMPLE_RATE = 22050
-_DECODE_CHANNELS = 1
+#: MCI 能接受的采样率区间；超出则退到最近的边界档（极端参数源很少见）。
+_MIN_SAMPLE_RATE = 8000
+_MAX_SAMPLE_RATE = 192000
+#: MCI 实际能混出的通道上限：多于两声道时混成双声道，而不是压成单声道。
+_MAX_OUTPUT_CHANNELS = 2
+#: 解码口径版本号。改动输出格式（采样率 / 声道策略）时必须 +1：指纹随之变化，
+#: 旧的 cache 目录不再命中，用户不会继续听到按旧口径导出的降级音频。
+_DECODE_REVISION = 2
 _CACHE_LOCK = threading.Lock()
 _WARNED_ENGINES: set[str] = set()
+
+
+class _DecodedAudio(NamedTuple):
+    """一次解码的结果：交错排列的 16bit PCM 与它自己的格式描述。"""
+
+    samples: bytes
+    channels: int
+    sample_rate: int
+    frames: int
+
+
+def _clamp_sample_rate(rate: int) -> int:
+    """把采样率夹到 MCI 可接受区间；拿不到有效值时退回 CD 档而不是砍半。"""
+
+    value = int(rate or 0)
+    if value <= 0:
+        return 44100
+    return max(_MIN_SAMPLE_RATE, min(_MAX_SAMPLE_RATE, value))
 
 
 def decoded_cache_root() -> Path:
@@ -39,7 +73,9 @@ def decoded_cache_root() -> Path:
 
 def _cache_stamp(file_path: Path) -> str:
     stat = file_path.stat()
-    payload = f"{file_path}|{stat.st_size}|{stat.st_mtime_ns}".encode("utf-8", "surrogatepass")
+    payload = (
+        f"{_DECODE_REVISION}|{file_path}|{stat.st_size}|{stat.st_mtime_ns}"
+    ).encode("utf-8", "surrogatepass")
     return hashlib.sha256(payload).hexdigest()[:20]
 
 
@@ -67,11 +103,13 @@ def _warn_once(engine: str, message: str, exc: object) -> None:
     logger.warning("[LocalDecode] %s 不可用，相关格式回退到下一引擎: %s", message, exc)
 
 
-def _decode_soundfile(file_path: Path, target: Path) -> bool:
+def _decode_soundfile(file_path: Path) -> _DecodedAudio | None:
+    """用 libsndfile 解码，保持源采样率与声道数（>2 声道混成双声道）。"""
+
     soundfile = _load_soundfile()
     if soundfile is None:
         _warn_once("soundfile-import", "soundfile", "未安装")
-        return False
+        return None
     try:
         data, sample_rate = soundfile.read(
             str(file_path),
@@ -81,69 +119,99 @@ def _decode_soundfile(file_path: Path, target: Path) -> bool:
         )
     except Exception as exc:
         logger.debug("[LocalDecode] soundfile 解码失败 %s: %s", file_path, exc)
-        return False
+        return None
 
     channels = int(data.shape[1]) if data.ndim > 1 else 1
     if channels <= 0:
-        return False
-    if channels > 1:
-        # 多声道按整数均值混成单声道，先累加再除，避免逐样本截断。
-        accumulator = data[:, 0].astype("int64")
-        for channel in range(1, channels):
-            accumulator += data[:, channel]
-        mono = (accumulator // channels).astype("<i2")
+        return None
+    if channels == 1:
+        # MCI 对单声道 WAV 支持良好，原样保留。
+        interleaved = data.astype("<i2")
+    elif channels == 2:
+        interleaved = data.astype("<i2")
     else:
-        mono = data[:, 0].astype("<i2")
+        # 环绕声按整数均值混成双声道（左组 / 右组交替），先累加再除，避免逐样本截断。
+        accumulator = data.astype("int64")
+        pairs = accumulator[:, : channels - (channels % 2)].reshape(-1, channels // 2, 2)
+        mixed = (pairs.sum(axis=1) // (channels // 2)).astype("<i2")
+        interleaved = mixed
+        channels = 2
+    return _DecodedAudio(
+        interleaved.tobytes(),
+        channels,
+        _clamp_sample_rate(int(sample_rate)),
+        int(interleaved.shape[0]),
+    )
 
-    with wave.open(str(target), "wb") as handle:
-        handle.setnchannels(1)
-        handle.setsampwidth(2)
-        handle.setframerate(int(sample_rate))
-        handle.writeframes(mono.tobytes())
-    return True
 
+def _decode_av(file_path: Path) -> _DecodedAudio | None:
+    """用 PyAV（FFmpeg）解码，保持源采样率与声道数。"""
 
-def _decode_av(file_path: Path, target: Path) -> bool:
     av = _load_av()
     if av is None:
         _warn_once("av-import", "PyAV", "未安装")
-        return False
+        return None
     try:
         import numpy as np
     except Exception as exc:
         _warn_once("numpy-import", "numpy", exc)
-        return False
+        return None
 
     try:
         with av.open(str(file_path)) as container:
             streams = [stream for stream in container.streams if stream.type == "audio"]
             if not streams:
-                return False
+                return None
             stream = streams[0]
+            layout = getattr(stream, "layout", None)
+            if layout is None:
+                return None
             resampler = av.AudioResampler(
-                format="s16",
-                layout="mono",
-                rate=_DECODE_SAMPLE_RATE,
+                format="s16p",
+                layout=layout,
+                rate=int(getattr(stream, "rate", 0) or 0) or None,
             )
             chunks = []
             for frame in container.decode(stream):
-                for resampled in resampler.resample(frame):
-                    chunks.append(resampled.to_ndarray())
+                chunks.extend(resampler.resample(frame))
             # AudioResampler 在流尾可能还有残留帧。
-            for resampled in resampler.resample(None):
-                chunks.append(resampled.to_ndarray())
+            chunks.extend(resampler.resample(None))
     except Exception as exc:
         logger.debug("[LocalDecode] PyAV 解码失败 %s: %s", file_path, exc)
-        return False
+        return None
 
     if not chunks:
+        return None
+    # 平面格式得到 (声道, 采样数)；转置后按帧交错，才是 WAV 要的排列。
+    planar = np.concatenate([chunk.to_ndarray() for chunk in chunks], axis=1).astype("<i2")
+    channels = int(planar.shape[0])
+    if channels <= 0:
+        return None
+    if channels > _MAX_OUTPUT_CHANNELS:
+        # 环绕声压成双声道（前半 / 后半各取一组），不压成单声道。
+        half = channels // 2
+        accumulator = planar.astype("int64")
+        planar = (
+            (accumulator[:half] + accumulator[half:half * 2]) // 2
+        ).astype("<i2")
+        channels = _MAX_OUTPUT_CHANNELS
+    interleaved = np.ascontiguousarray(planar.T)
+    sample_rate = _clamp_sample_rate(int(chunks[0].sample_rate or 0))
+    return _DecodedAudio(interleaved.tobytes(), channels, sample_rate, int(interleaved.shape[0]))
+
+
+def _write_wav(decoded: _DecodedAudio, target: Path) -> bool:
+    """把解码结果写成 16bit PCM WAV。"""
+
+    try:
+        with wave.open(str(target), "wb") as handle:
+            handle.setnchannels(int(decoded.channels))
+            handle.setsampwidth(2)
+            handle.setframerate(int(decoded.sample_rate))
+            handle.writeframes(decoded.samples)
+    except (OSError, wave.Error) as exc:
+        logger.debug("[LocalDecode] 写入 WAV 失败 %s: %s", target, exc)
         return False
-    data = np.concatenate(chunks, axis=1).astype("<i2")
-    with wave.open(str(target), "wb") as handle:
-        handle.setnchannels(_DECODE_CHANNELS)
-        handle.setsampwidth(2)
-        handle.setframerate(_DECODE_SAMPLE_RATE)
-        handle.writeframes(data.tobytes())
     return True
 
 
@@ -177,12 +245,17 @@ def ensure_decoded_wav(file_path: str | Path) -> Path | None:
     _remove_quietly(partial)
     for decode in (_decode_soundfile, _decode_av):
         try:
-            if decode(source, partial):
-                partial.replace(target)
-                logger.info("[LocalDecode] %s 已解码为 WAV 缓存: %s", source.name, target)
-                return target
+            decoded = decode(source)
         except Exception as exc:
+            decoded = None
             logger.debug("[LocalDecode] %s 解码异常: %s", decode.__name__, exc)
+        if isinstance(decoded, _DecodedAudio) and _write_wav(decoded, partial):
+            partial.replace(target)
+            logger.info(
+                "[LocalDecode] %s 已解码为 WAV 缓存: %s (%dHz/%dch)",
+                source.name, target, decoded.sample_rate, decoded.channels,
+            )
+            return target
         _remove_quietly(partial)
 
     logger.warning("[LocalDecode] 无法解码本地音乐，已跳过: %s", source)
