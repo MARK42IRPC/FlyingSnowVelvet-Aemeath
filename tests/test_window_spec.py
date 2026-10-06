@@ -64,7 +64,10 @@ _DESCRIPTION_SCRIPT = textwrap.dedent(
         iter_specs,
         retarget_text,
     )
-    from lib.core.render.visuals.window_specs import office_approval_window_spec
+    from lib.core.render.visuals.window_specs import (
+        help_window_spec,
+        office_approval_window_spec,
+    )
 
     spec = office_approval_window_spec(
         title="shell",
@@ -96,6 +99,28 @@ _DESCRIPTION_SCRIPT = textwrap.dedent(
     assert find_spec(changed, "reason").text == "换过了"
     assert find_spec(spec, "reason").text == "需要执行命令"
     assert changed.content.children[0] is spec.content.children[0]
+
+    help_spec = help_window_spec(
+        title="帮助",
+        text="正文",
+        width=440,
+        height=380,
+        empty_text="兜底",
+        stylesheet="QWidget#DesktopPetHelpDialog { color: {color:text}; }",
+    )
+    assert help_spec.object_name == "DesktopPetHelpDialog"
+    assert help_spec.kind == "tool"
+    assert help_spec.fixed_size == (440, 380)
+    assert help_spec.layer == "dialog" and help_spec.fade is True
+    assert help_spec.hide_semantics == ("close",)
+    assert help_spec.border_frame is True
+    assert find_spec(help_spec, "body").text == "正文"
+    assert find_spec(help_spec, "body").plain_text is True
+    assert find_spec(help_spec, "body_area").scroll is True
+    assert find_spec(help_spec, "header").text == "帮助"
+    assert find_spec(help_spec, "close").tool_button is True
+    # 空正文走兜底文案，不会开出一片空白。
+    assert find_spec(help_window_spec(title="t", text="  ", empty_text="兜底"), "body").text == "兜底"
 
     assert [name for name in sys.modules if name.startswith("PyQt5")] == []
     """
@@ -297,6 +322,135 @@ class WindowSpecMigrationGuardTests(unittest.TestCase):
             _REPO_ROOT / "tests" / "test_control_layer_descriptions.py"
         ).read_text(encoding="utf-8")
         self.assertIn(entry, migrated)
+
+
+class HelpWindowSpecTests(unittest.TestCase):
+    """帮助浮窗已迁到「描述 + 后端渲染」：工具窗标志、滚动视口、淡入淡出与关闭语义
+    都由窗口描述产出，产品模块只收集「标题 + 正文」。"""
+
+    @classmethod
+    def setUpClass(cls):
+        from PyQt5.QtWidgets import QApplication
+
+        cls.app = QApplication.instance() or QApplication([])
+
+    def _make(self):
+        from lib.script.ui.help_window import DesktopPetHelpDialog
+
+        dialog = DesktopPetHelpDialog()
+        self.addCleanup(dialog.cleanup)
+        return dialog
+
+    def test_tool_window_flags_and_fixed_size_come_from_the_description(self):
+        from PyQt5.QtCore import Qt
+
+        dialog = self._make()
+        dialog.show_help("\u6807\u9898", "\u6b63\u6587")
+        flags = dialog.widget().windowFlags()
+        self.assertTrue(flags & Qt.Tool)
+        self.assertTrue(flags & Qt.FramelessWindowHint)
+        self.assertTrue(flags & Qt.WindowStaysOnTopHint)
+        self.assertTrue(dialog.widget().testAttribute(Qt.WA_TranslucentBackground))
+        self.assertEqual(dialog.widget().width(), dialog.widget().minimumWidth())
+        self.assertEqual(
+            (dialog.widget().width(), dialog.widget().height()),
+            (dialog._spec.fixed_size[0], dialog._spec.fixed_size[1]),
+        )
+
+    def test_body_is_plain_text_and_the_tree_comes_from_the_description(self):
+        from PyQt5.QtCore import Qt
+        from PyQt5.QtWidgets import QLabel, QScrollArea
+
+        dialog = self._make()
+        dialog.show_help("\u7b2c\u4e00\u8282", "<b>\u4e0d\u662f\u5bcc\u6587\u672c</b>")
+        self.assertEqual(dialog._body.textFormat(), Qt.PlainText)
+        self.assertEqual(dialog._body.text(), "<b>\u4e0d\u662f\u5bcc\u6587\u672c</b>")
+        scroll = dialog.widget().findChild(QScrollArea, "HelpScroll")
+        self.assertIsNotNone(scroll)
+        self.assertIs(dialog._scroll, scroll)
+        self.assertIsNotNone(dialog.widget().findChild(QLabel, "HelpBody"))
+        self.assertIsNotNone(dialog.widget().findChild(QLabel, "HelpHeader"))
+
+    def test_empty_text_falls_back_to_the_placeholder(self):
+        from lib.script.ui.help_window import HELP_EMPTY_TEXT
+
+        dialog = self._make()
+        dialog.show_help("\u53ea\u6709\u6807\u9898", "   ")
+        self.assertEqual(dialog._body.text(), HELP_EMPTY_TEXT)
+
+    def test_close_button_hides_the_window_instead_of_ending_it(self):
+        dialog = self._make()
+        dialog.show_help("\u6807\u9898", "\u6b63\u6587")
+        self.assertTrue(dialog.wants_visible())
+        dialog._close_button.click()
+        self.app.processEvents()
+        self.assertFalse(dialog.wants_visible())
+        # 窗口本体仍在（清理只由 cleanup() 负责），再次换内容会重新淡入。
+        dialog.show_help("\u6807\u9898", "\u65b0\u6b63\u6587")
+        self.assertTrue(dialog.wants_visible())
+        self.assertEqual(dialog._body.text(), "\u65b0\u6b63\u6587")
+
+    def test_shell_layout_matches_the_pre_migration_widget(self):
+        """迁移 oracle：壳层几何逐项对齐收敛前的 `help_window.py`。
+
+        这几条关系式取自收敛前 Qt 控件实测的几何（`HEAD` 版本），跑偏即失败：
+        窗眉是固定高的整行、关闭按钮贴着窗眉顶、accent 竖条在窗眉里垂直居中、
+        正文住在滚动视口里而不是直接挂在窗口上。
+        """
+        from PyQt5.QtWidgets import QFrame, QToolButton, QWidget
+
+        dialog = self._make()
+        dialog.show_help("\u6807\u9898", "\u6b63\u6587")
+        widget = dialog.widget()
+
+        header_row = widget.findChild(QWidget, "HelpHeaderRow")
+        accent = widget.findChild(QFrame, "HelpHeaderAccent")
+        close = widget.findChild(QToolButton, "HelpCloseButton")
+        host = widget.findChild(QWidget, "HelpScrollHost")
+        self.assertIsNotNone(header_row)
+        self.assertIsNotNone(accent)
+        self.assertIsNotNone(close)
+        self.assertIsNotNone(host)
+
+        # 窗眉：固定高度，关闭按钮贴顶，accent 竖条居中。
+        self.assertEqual(header_row.minimumHeight(), header_row.maximumHeight())
+        self.assertEqual(close.geometry().top(), 0)
+        self.assertEqual(
+            accent.geometry().top() + accent.geometry().height() // 2,
+            header_row.height() // 2,
+        )
+        # accent 在关闭按钮左侧，标题列被推到 accent 右边。
+        self.assertLess(accent.geometry().left(), close.geometry().left())
+        # 正文住在滚动视口的内部承载控件里。
+        self.assertIs(dialog._body.parent(), host)
+        self.assertIs(dialog._scroll.widget(), host)
+
+    def test_window_registers_into_the_dialog_layer(self):
+        from lib.core.render.layers import get_layer_manager
+
+        dialog = self._make()
+        dialog.show_help("\u6807\u9898", "\u6b63\u6587")
+        names = [entry[3] for entry in get_layer_manager().snapshot()]
+        self.assertIn("DesktopPetHelpDialog", names)
+
+    def test_cleanup_unregisters_the_layer_and_is_safe_to_repeat(self):
+        from lib.core.render.layers import get_layer_manager
+
+        dialog = self._make()
+        dialog.show_help("\u6807\u9898", "\u6b63\u6587")
+        dialog.cleanup()
+        dialog.cleanup()
+        self.app.processEvents()
+        names = [entry[3] for entry in get_layer_manager().snapshot()]
+        self.assertNotIn("DesktopPetHelpDialog", names)
+
+
+class HelpWindowMigrationGuardTests(unittest.TestCase):
+    def test_help_window_left_the_leaf_control_placement_list(self):
+        source = (
+            _REPO_ROOT / "tests" / "test_render_layout_algorithms.py"
+        ).read_text(encoding="utf-8")
+        self.assertNotIn('"help_window.py",', source)
 
 
 if __name__ == "__main__":

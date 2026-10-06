@@ -23,6 +23,9 @@ WINDOW_DIALOG = "dialog"
 WINDOW_TOOL = "tool"
 WINDOW_WINDOW = "window"
 
+# ── 顶层窗口层级（宿主按名字注册到 `LayerManager`）────────────────────────
+LAYER_DIALOG = "dialog"
+
 # ── 排布方向 ─────────────────────────────────────────────────────────────
 LAYOUT_ROW = "row"
 LAYOUT_COLUMN = "column"
@@ -77,6 +80,8 @@ class LabelSpec:
     bold: bool = False
     word_wrap: bool = False
     selectable: bool = False
+    #: 按纯文本渲染（``Qt.PlainText``）：帮助正文一类的说明文字不该被当成富文本。
+    plain_text: bool = False
     align: str = ""
     valign: str = ""
 
@@ -129,6 +134,14 @@ class ButtonSpec:
     tooltip: str = ""
     font_size: int = 0
     bold: bool = False
+    #: 无障碍名（读屏与自动化测试用的可读标签）。
+    accessible_name: str = ""
+    #: 固定尺寸档（0 表示不设）；窗眉里的关闭按钮靠它定宽高。
+    fixed_size: tuple[int, int] = (0, 0)
+    #: 本按钮在父布局里的对齐（``ALIGN_TOP`` 等）。
+    valign: str = ""
+    #: 用 ``QToolButton`` 而不是 ``QPushButton`` 承载（QSS 的 ``QToolButton#Name`` 选择器需要它）。
+    tool_button: bool = False
     #: 用标准窗眉字形（``close`` / ``minimize`` 一类）而不是产品图标；非空时忽略 ``icon``。
     window_icon: str = ""
 
@@ -147,6 +160,19 @@ class LayoutSpec:
     top_margin: int = 0
     #: 用 ``QFrame`` 而不是裸 ``QWidget`` 承载（QSS 的 ``QFrame#Name`` 选择器需要它）。
     frame: bool = False
+    #: 本容器作为一个整体在父布局里的对齐（``LayoutSpec`` 也能当孩子，理由同 ``LabelSpec``）。
+    align: str = ""
+    valign: str = ""
+    #: 固定尺寸档（0 表示不设）；窗眉里的横条 / 竖条靠它定宽高。
+    fixed_width: int = 0
+    fixed_height: int = 0
+    #: 让本容器的孩子住进一个平滑滚动视口（长正文用）。
+    scroll: bool = False
+    #: 滚动视口与内部承载控件的对象名（QSS 选择器用）。
+    scroll_object_name: str = ""
+    scroll_host_object_name: str = ""
+    #: 滚动视口内部承载控件的内边距。
+    scroll_margin: _MARGIN = (0, 0, 0, 0)
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,6 +199,17 @@ class WindowSpec:
     drag_handle_ids: tuple[str, ...] = ()
     #: 关闭按钮语义（点它等于选哪个动作）；空串表示不拦截关闭。
     close_semantic: str = ""
+    #: 顶层窗口层级名（``LAYER_*``）；空串表示不进 `LayerManager`。
+    layer: str = ""
+    #: 固定尺寸（0 表示不设）；两个方向都给值时等价于 ``setFixedSize()``。
+    fixed_size: tuple[int, int] = (0, 0)
+    #: 显示/隐藏走 ``windowOpacity`` 淡入淡出（时长由宿主取共享的 UI 淡入时长）。
+    fade: bool = False
+    #: 这几个语义只收起窗口（淡出后 ``hide()``），不结束窗口生命周期。
+    hide_semantics: tuple[str, ...] = ()
+    #: 用 ``paintEvent`` 画一层描边外壳（外描边色 + 内容底色），与公告 / 更新浮窗一致。
+    border_frame: bool = False
+    border_width: int = 0
 
     def with_text(self, node_id: str, text: str) -> "WindowSpec":
         """返回把 `node_id` 文本换成 `text` 的新描述（见 `retarget_text`）。"""
@@ -257,6 +294,7 @@ __all__ = [
     "COLOR_TEXT",
     "COLOR_WARNING",
     "IconSpec",
+    "LAYER_DIALOG",
     "LAYOUT_COLUMN",
     "LAYOUT_ROW",
     "LabelSpec",

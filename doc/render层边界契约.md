@@ -4,7 +4,7 @@
 
 本文档定义 `lib/core/render/` 的目标结构与依赖边界。它不是阶段计划，而是结构改建完成后必须成立的规则。
 
-**状态：第 6 节迁移顺序 1、2（目录切分）、3 已执行；图层能力已收敛到 `lib/core/render/layers/`（第 16 节）；后端中立协议与统一数据类型已落地（第 11 节），控件层“描述 + 后端渲染”已滚动迁移气泡框（第 12 节）、说明书、语音指示器与播放进度条（第 13 节）、音响音量/频段双滑条、搜索结果框与命令提示框（第 18 节）、右键矩形动作按钮一族八个按钮（第 19 节）、确认/提示框（第 20 节，首个模态宿主）；浮窗外壳（样式/主题判定/拖拽策略/窗口按钮）已从 `lib/script/ui` 下沉到渲染层（第 21 节）；办公线性图标的 SVG 规格也已抽成后端中立事实源（第 22 节）；点击粒子辅助的按钮翻译改经 `render_bridge`、`_particle_helper.py` 出列（第 23 节）；论坛样式的底纹混色改为纯十六进制实现、`forum_style.py` 出列（第 24 节）；二维码登录浮窗的自动收起/穿透/窗口标志/自愈能力下沉到基类，`yuanbao_login_dialog.py` 与 `cloudmusic_login_dialog.py` 出列（第 25、26 节）；排布解算已收敛到 `visuals/` 并由 `PlacementSpec` 统一解算（第 14 节，档位 0/1），右键按钮族的逐控件锚点事件链已收敛为声明式 `AnchorGraph` 且 Qt 改为消费共享布局（第 15 节，档位 2/3）；`WindowHost` 的被动宿主激活语义已与 Qt/DX 焦点策略对齐（第 17 节）。** 目录与引用规则以本文档为准；改建前的事实源是 [Qt 边界契约](Qt边界契约.md) 与 [跨后端视觉表现契约](视觉表现契约.md)，那两份文档继续负责“哪些内容算视觉逻辑”和“什么算无 Qt”。第一章描述的是最终目标；产品控件面（`lib/script/ui` 直接 `import PyQt5`）仍需逐个控件迁移，当前待迁清单以 `tests/test_qt_dependency_boundaries.py` 的 `frozen_ui_qt_importers` 为准，滚动顺序见第 13 节末尾；翻页按钮族已于第二十七轮迁出（第 27 节）；音响菜单控制按钮族已于第二十八轮迁出（第 28 节）；音响菜单族共享样式已于第二十九轮出列（第 29 节，档位 D 新增 `QtPainterHost` 绘制宿主）；办公面样式与控件树辅助已于第三十轮出列（第 30 节）；窗口级描述与审批弹窗已于第三十一轮出列（第 31 节，档位 D 新增窗口描述宿主与 isuals/window_spec*.py 两级描述层）。
+**状态：第 6 节迁移顺序 1、2（目录切分）、3 已执行；图层能力已收敛到 `lib/core/render/layers/`（第 16 节）；后端中立协议与统一数据类型已落地（第 11 节），控件层“描述 + 后端渲染”已滚动迁移气泡框（第 12 节）、说明书、语音指示器与播放进度条（第 13 节）、音响音量/频段双滑条、搜索结果框与命令提示框（第 18 节）、右键矩形动作按钮一族八个按钮（第 19 节）、确认/提示框（第 20 节，首个模态宿主）；浮窗外壳（样式/主题判定/拖拽策略/窗口按钮）已从 `lib/script/ui` 下沉到渲染层（第 21 节）；办公线性图标的 SVG 规格也已抽成后端中立事实源（第 22 节）；点击粒子辅助的按钮翻译改经 `render_bridge`、`_particle_helper.py` 出列（第 23 节）；论坛样式的底纹混色改为纯十六进制实现、`forum_style.py` 出列（第 24 节）；二维码登录浮窗的自动收起/穿透/窗口标志/自愈能力下沉到基类，`yuanbao_login_dialog.py` 与 `cloudmusic_login_dialog.py` 出列（第 25、26 节）；排布解算已收敛到 `visuals/` 并由 `PlacementSpec` 统一解算（第 14 节，档位 0/1），右键按钮族的逐控件锚点事件链已收敛为声明式 `AnchorGraph` 且 Qt 改为消费共享布局（第 15 节，档位 2/3）；`WindowHost` 的被动宿主激活语义已与 Qt/DX 焦点策略对齐（第 17 节）。** 目录与引用规则以本文档为准；改建前的事实源是 [Qt 边界契约](Qt边界契约.md) 与 [跨后端视觉表现契约](视觉表现契约.md)，那两份文档继续负责“哪些内容算视觉逻辑”和“什么算无 Qt”。第一章描述的是最终目标；产品控件面（`lib/script/ui` 直接 `import PyQt5`）仍需逐个控件迁移，当前待迁清单以 `tests/test_qt_dependency_boundaries.py` 的 `frozen_ui_qt_importers` 为准，滚动顺序见第 13 节末尾；翻页按钮族已于第二十七轮迁出（第 27 节）；音响菜单控制按钮族已于第二十八轮迁出（第 28 节）；音响菜单族共享样式已于第二十九轮出列（第 29 节，档位 D 新增 `QtPainterHost` 绘制宿主）；办公面样式与控件树辅助已于第三十轮出列（第 30 节）；窗口级描述与审批弹窗已于第三十一轮出列（第 31 节，档位 D 新增窗口描述宿主与 isuals/window_spec*.py 两级描述层）；帮助浮窗已于第三十二轮出列（第 32 节，窗口描述宿主补齐工具窗 / 滚动正文 / 淡入淡出 / 描边外壳）。
 
 本文只新增目录与引用规则，不改变任何视觉语义、数值来源或渲染结果。改建过程中出现分歧时，以 [视觉表现契约](视觉表现契约.md) 和当前 Qt 基准为事实源。
 
@@ -596,6 +596,9 @@ DX 保持未切分：DX 仍是 `available=False` 的实验实现，没有第二�
    前置项已于第十五轮（模态宿主，第 20 节）与第三十一轮（窗口描述宿主，第 31 节）补齐：
    `confirm_dialog` 与 `office_approval_dialog` 已迁出，其余带树对话框可按同一模式逐个
    搬走；办公面其余 `office_*` 文件是 `QWidget` 页面而不是带树对话框，不属本项。
+   工具类浮窗（淡入淡出 + `LayerManager` 层级 + 滚动正文 + 描边外壳）同属本项的落点，
+   宿主能力已于第三十二轮补齐，`help_window` 已迁出（第 32 节），`update_dialog` /
+   `announcement_dialog` 是同一形状的下一批。
 4. `world_objects/*.py`（时钟、沙发、雪球等）与 `game_runtime.py` 是另一类长尾，
    它们更多是"动画 + 命中"，可在控件族收干净后单独一轮处理。
    其中 `game_runtime.py` 的宿主窗口按工作台窗口处理：普通窗口 + 无边框，既不置顶
@@ -1622,4 +1625,67 @@ Qt 对接收者只持弱引用，而闭包会一直攥住 `self`；一旦 `_poll
 - `office_*` 其余文件（`office_page` / `office_mode_page` / `office_mode_settings` /
   `office_manager_card` / `office_chat_view` / `office_effort_slider`）是 `QWidget` 页面，
   不是带树对话框，属滚动清单第 4 项的长尾。
+- `world_objects/*` 与 `game_runtime.py` 仍未动。
+## 32. 第三十二轮执行记录：帮助浮窗去 Qt（窗口描述宿主补工具窗能力）
+
+第三十一轮把「一个窗口长什么样」抽成了两级描述，但只验证了**模态对话框**那一种形状。
+本轮补上浮窗系（淡入淡出、`LayerManager` 层级、滚动正文、描边外壳），并用帮助浮窗验证它。
+顺便把设置页 / 论坛 / 帮助共用的平滑滚动容器从产品模块下沉到后端控件宿主。
+
+**描述层新增的窗口能力（`lib/core/render/visuals/`）**
+
+- `WindowSpec` 新增：`kind`（`WINDOW_TOOL` 走 `Qt.Tool` 而不是 `Qt.Dialog`）、`layer`
+  （顶层层级名，宿主据此注册 `LayerManager`）、`fixed_size`、`fade`（`windowOpacity` 淡入淡出）、
+  `hide_semantics`（只收起窗口、不结束生命周期的语义 id）、`border_frame` / `border_width`
+  （`paintEvent` 描边外壳）。
+- 词汇节点补齐浮窗要件：`LabelSpec.plain_text`、`ButtonSpec.tool_button` /
+  `fixed_size` / `accessible_name` / `valign`、`LayoutSpec.frame` 之外的 `fixed_width` /
+  `fixed_height` / `align` / `valign` / `scroll` / `scroll_object_name` /
+  `scroll_host_object_name` / `scroll_margin`。
+- `window_specs.py` 新增 `help_window_spec()`：窗眉（accent 竖条 + 标题 + 来源）、可滚动正文、
+  关闭按钮的对象名与结构全部由描述给出；空正文走调用方传入的兜底文案。
+
+**后端宿主（档位 D，`backends/qt/widgets/spec_host.py`）**
+
+- 工具窗：`kind == WINDOW_TOOL` 时用 `QtSpecWidget` + `Qt.Tool`（不进任务栏、不抢焦点），
+  `windowOpacity` 动画时长取共享的 `lib/core/services/ui_presentation.ui_fade_duration_ms()`。
+- 层级：`show_window()` 首次显示时按 `spec.layer` 注册 `LayerManager`，`cleanup()` /
+  原生关闭时注销；`hide_dialog()` 收起但不销毁，`close` 一类的 `hide_semantics` 因此不会
+  触发 `accept()`（工具窗没有「决定」这一说）。
+- 滚动：`LayoutSpec.scroll` 让容器孩子住进新下沉的
+  `backends/qt/widgets/smooth_scroll.py`（`SmoothScrollArea`，原
+  `lib/script/ui/workbench_settings_layout.py` 的私有类），设置页 / 论坛 / 帮助因此共用同一份
+  滚动手感；QSS 选择器仍是 `QScrollArea#HelpScroll, QWidget#HelpScrollHost`。
+- 描边外壳：`border_frame` 让承载窗口的 `paintEvent` 先画「外描边 + 内容底色」两层矩形，
+  与公告 / 更新浮窗的既有画法一致；颜色在**每次重绘时**取 token，主题切换自动跟随。
+- 另一个既有偏差：对话框里按钮从不带父布局对齐，导致「贴顶的关闭按钮」变成垂直居中
+  （窗眉里偏移半行高）。`ButtonSpec.valign` 与 `_build_widget` 的对齐回填修掉了它。
+
+**产品窗口（`lib/script/ui/help_window.py`，418 → 364 行）**
+
+- 不再是 `QWidget` 子类、不再 import 任何 `PyQt5` 窗口/控件符号：只订阅事件、收集
+  「标题 + 正文」、把 `close` 语义翻译成 `hide_dialog()`。为兼容既有调用方与测试，保留
+  `_header_label` / `_body` / `_scroll` / `_close_button` 属性面与 `show_help()` /
+  `wants_visible()` / `hide_dialog()` / `cleanup()` / `widget()`。
+- `HelpWindowController` 仍是 `QObject`（`_dispatch_requested` 用 `Qt.QueuedConnection`），
+  与并列的 `office_approval_controller.py` 同一理由，因此 `help_window.py` 仍在
+  `frozen_ui_qt_importers` 里并写明原因；它同时已从 `MIGRATED_LEAF_CONTROLS` 出列
+  （不再自己夹取屏幕，落位交给描述宿主）。
+
+**验证（2026-10-06）**
+
+- 迁移 oracle：迁移后的壳层与收敛前的 `HEAD` 版本**逐像素相等**——两种主题各一张
+  440×380 全图比对，差异像素 0（收敛过程中先测出 112 像素差异，定位到关闭按钮对齐后归零）。
+- `tests/test_window_spec.py` 17 → **25** 条断言：新增工具窗标志与固定尺寸、纯文本正文与
+  滚动视口、空正文兜底、关闭只收起不销毁、`DIALOG` 层级注册与 `cleanup()` 注销、
+  壳层几何关系（窗眉固定高 / 关闭贴顶 / accent 居中 / 正文住滚动视口）。
+- 全量 `unittest` 2197 → **2204** 通过 / 10 跳过；`tests/dx` 122 通过 / 7 跳过；
+  `ruff check .` 归零；`compileall` 通过；`git diff --check` 干净。
+
+**本轮没动的部分**
+
+- `update_dialog` / `announcement_dialog` / `speaker_search_dialog` / `playlist_panel` /
+  `voice_package_installer` / `qr_dialog_base` / `cmd_window` / `command_dialog` 仍是 Qt
+  页面与控件；浮窗系的宿主能力已就位，可按同一模式逐个搬走（`update_dialog` /
+  `announcement_dialog` 与帮助浮窗同形，是最直接的下一批）。
 - `world_objects/*` 与 `game_runtime.py` 仍未动。

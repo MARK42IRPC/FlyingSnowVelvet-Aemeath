@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from .window_spec import (
     ALIGN_TOP,
+    ALIGN_VCENTER,
     COLOR_CANVAS,
     COLOR_TEXT,
     COLOR_WARNING,
@@ -21,12 +22,15 @@ from .window_spec import (
     IconSpec,
     LAYOUT_COLUMN,
     LAYOUT_ROW,
+    LAYER_DIALOG,
     LabelSpec,
     LayoutSpec,
     ROLE_DANGER,
+    ROLE_GHOST,
     TextAreaSpec,
     StretchSpec,
     WINDOW_DIALOG,
+    WINDOW_TOOL,
     WindowSpec,
 )
 
@@ -35,6 +39,9 @@ from .window_spec import (
 APPROVAL_REJECT = "reject"
 APPROVAL_ALLOW = "allow"
 APPROVAL_ALLOW_TASK = "allow_task"
+
+#: 帮助浮窗里关闭按钮的语义 id。
+HELP_CLOSE = "close"
 
 
 def office_approval_window_spec(
@@ -226,9 +233,148 @@ def office_approval_window_spec(
     )
 
 
+def help_window_spec(
+    *,
+    title: str,
+    text: str,
+    width: int = 0,
+    height: int = 0,
+    border_width: int = 0,
+    header_height: int = 0,
+    accent_width: int = 0,
+    accent_height: int = 0,
+    close_size: int = 0,
+    root_margin: tuple[int, int, int, int] = (0, 0, 0, 0),
+    root_spacing: int = 0,
+    header_spacing: int = 0,
+    body_margin: tuple[int, int, int, int] = (0, 0, 0, 0),
+    header_size: int = 0,
+    source_size: int = 0,
+    body_size: int = 0,
+    close_size_font: int = 0,
+    stylesheet: str = "",
+    empty_text: str = "",
+    source_text: str = "HELP  /  FSV",
+    close_tooltip: str = "关闭帮助",
+) -> WindowSpec:
+    """帮助浮窗的窗口描述：窗眉（accent + 标题 + 来源）+ 可滚动正文 + 关闭。
+
+    结构此前长在 ``help_window.py`` 的构造函数里；搬到这里之后，产品模块只收集
+    「标题 + 正文」两个状态，控件树与语义 id 都由这份中立描述产出。
+    """
+
+    body_text = str(text or "").strip() or str(empty_text or "")
+    header_children = (
+        LayoutSpec(
+            id="header_accent",
+            object_name="HelpHeaderAccent",
+            frame=True,
+            fixed_width=accent_width,
+            fixed_height=accent_height,
+            valign=ALIGN_VCENTER,
+        ),
+        LayoutSpec(
+            id="header_text",
+            direction=LAYOUT_COLUMN,
+            spacing=0,
+            stretch=1,
+            children=(
+                LabelSpec(
+                    text=title,
+                    id="header",
+                    object_name="HelpHeader",
+                    font_size=header_size,
+                    bold=True,
+                ),
+                LabelSpec(
+                    text=source_text,
+                    id="source",
+                    object_name="HelpSource",
+                    font_size=source_size,
+                ),
+            ),
+        ),
+        ButtonSpec(
+            text="×",
+            semantic=HELP_CLOSE,
+            id="close",
+            object_name="HelpCloseButton",
+            role=ROLE_GHOST,
+            tooltip=close_tooltip,
+            accessible_name=close_tooltip,
+            font_size=close_size_font,
+            tool_button=True,
+            fixed_size=(close_size, close_size),
+            valign=ALIGN_TOP,
+        ),
+    )
+
+    content = LayoutSpec(
+        id="root",
+        direction=LAYOUT_COLUMN,
+        margin=root_margin,
+        spacing=root_spacing,
+        children=(
+            LayoutSpec(
+                id="header_row",
+                object_name="HelpHeaderRow",
+                direction=LAYOUT_ROW,
+                spacing=header_spacing,
+                fixed_height=header_height,
+                children=header_children,
+            ),
+            LayoutSpec(
+                id="body_area",
+                direction=LAYOUT_COLUMN,
+                stretch=1,
+                scroll=True,
+                scroll_object_name="HelpScroll",
+                scroll_host_object_name="HelpScrollHost",
+                scroll_margin=body_margin,
+                children=(
+                    LabelSpec(
+                        text=body_text,
+                        id="body",
+                        object_name="HelpBody",
+                        font_size=body_size,
+                        word_wrap=True,
+                        plain_text=True,
+                        align="left",
+                        valign=ALIGN_TOP,
+                    ),
+                ),
+            ),
+        ),
+    )
+
+    return WindowSpec(
+        content=content,
+        object_name="DesktopPetHelpDialog",
+        title="帮助",
+        kind=WINDOW_TOOL,
+        frameless=True,
+        stay_on_top=True,
+        modal=False,
+        translucent=True,
+        styled_background=True,
+        fixed_size=(width, height),
+        stylesheet=stylesheet,
+        center_on_parent=False,
+        center_on_cursor_screen=True,
+        drag_handle_ids=("header_row", "header_text", "header.source"),
+        layer=LAYER_DIALOG,
+        fade=True,
+        hide_semantics=(HELP_CLOSE,),
+        border_frame=True,
+        border_width=border_width,
+    )
+
+
 __all__ = [
     "APPROVAL_ALLOW",
     "APPROVAL_ALLOW_TASK",
     "APPROVAL_REJECT",
+    "HELP_CLOSE",
+    "help_window_spec",
     "office_approval_window_spec",
 ]

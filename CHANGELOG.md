@@ -103,6 +103,20 @@
   `SpeakerMenuStyleFacadeTests` 的非零原点逐字节对照（含面板壳，修前必红）与
   `test_search_button_paints_to_the_right_of_the_input_box` 整窗像素断言（修前必红）。
 - 控件层「描述 + 后端渲染」补上窗口级描述：前几轮收敛的是单个叶控件（`visuals/controls.py`），带子控件树的对话框一直缺一级描述。本轮新增`lib/core/render/visuals/window_spec.py`（窗口描述的词汇：文本/图标/accent bar/输入区/按钮/空隙 + 行列容器 + `WindowSpec`）与 `window_specs.py`（按窗口语义组装的产品共享装配件），以及档位 D 的后端宿主 `lib/core/render/backends/qt/widgets/spec_host.py`（`QtSpecWindow` 按描述装配真实控件树，并把按钮点击、关闭按钮、Esc/窗口管理器关窗收敛成同一个决定）。屏幕归属与绘制实现由 `render_bridge.create_spec_window()` 注入，宿主不静态引用档位 A。办公审批弹窗（`office_approval_dialog.py`）据此迁出 Qt、不再继承 `QDialog`，只收审批状态、产出窗口描述、翻译 `reject`/`allow`/`allow_task` 语义，`frozen_ui_qt_importers` 47 → 46，调用面（`approval_id` / `decision_made` / `dismiss_without_decision()` / `findChild()` / `destroyed`）不变。顺手修掉`office_approval_controller` 用闭包连 `destroyed` 导致弹窗销毁时抛 `NameError: cannot access free variable 'self'` 的既有缺陷（改为连绑定方法）。新增 `tests/test_window_spec.py` 十条断言：描述层在 PyQt5 被屏蔽的进程里独立工作、中立模块不 import Qt/`lib.script`/任一后端、窗口宿主不越档、审批弹窗的控件树与语义逐项由描述产出。
+- 帮助浮窗去 Qt，窗口描述宿主补齐工具窗能力：`lib/script/ui/help_window.py` 不再 import
+  `PyQt5` 的窗口/控件符号、也不再是 `QWidget` 子类（同文件的 `HelpWindowController` 仍是
+  `QObject`，与并列的 `office_approval_controller.py` 同理，故该文件仍在
+  `frozen_ui_qt_importers` 里并注明理由）。控件树、窗口标志（无边框 `Qt.Tool` + 置顶 + 半透明）、
+  固定尺寸、`LayerManager` 的 `DIALOG` 层级注册、`windowOpacity` 淡入淡出与 ``paintEvent``
+  描边外壳全部由 `visuals/window_specs.py` 的 `help_window_spec()` 描述、
+  `backends/qt/widgets/spec_host.py` 装配；滚动正文用新下沉的
+  `backends/qt/widgets/smooth_scroll.py`（原 `workbench_settings_layout.SmoothScrollArea`，
+  设置页 / 论坛 / 帮助共用的同一份手感）。描述层新增 `kind` / `layer` / `fade` /
+  `hide_semantics` / `border_frame` / `fixed_size` 等窗口字段与 `LayoutSpec.scroll`，
+  「关闭」这类只收起窗口的语义不会结束窗口生命周期。迁移 oracle：迁移后的壳层与收敛前
+  `HEAD` 版本**逐像素相等**（两种主题各 440×380 全图比对），并顺手修掉过程中暴露的
+  关闭按钮垂直居中（应为贴顶）偏差。`tests/test_window_spec.py` 17 → **25** 条断言；
+  `MIGRATED_LEAF_CONTROLS` 移出 `help_window.py`（它已不再自己落位，改由窗口描述宿主负责）。
 - 办公面样式去 Qt：`office_style.py` 整份文件曾因为两个控件树辅助函数而 import `PyQt5`，
   但那 600 行里约 500 行是把工作台 token 拼成 QSS 的纯字符串逻辑。本轮拆开：整份 QSS、
   五档推理强度档位色、气泡内边距与设置页字号档下沉到后端中立的

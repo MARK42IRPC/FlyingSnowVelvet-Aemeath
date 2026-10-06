@@ -4,35 +4,25 @@
 （`lib/core/event/center.py`）事件；本模块订阅这个事件并开窗。事件驱动而不是直接
 调用，是因为触发方（设置页）与展示方（浮窗）分属不同模块，只有事件这一条公开契约。
 
-同时只允许存在一个帮助窗口：再次触发会先销毁已有窗口。窗口本体是无边框
-`Qt.Tool` 浮窗，外壳沿用公告窗口那一套（无边框 + 可拖标题区 + 淡入淡出 +
-`Layer.DIALOG`），但正文用普通 `QLabel` 而不是富文本浏览器——帮助内容是纯文本，
-不需要链接，段落式排版在窄窗口里更好读。
+窗口本体不再是 `QWidget`：控件树、窗口标志、滚动视口、淡入淡出与层级注册都由
+``lib/core/render/visuals/window_specs.py`` 的 ``help_window_spec()`` 描述，
+``render_bridge.create_spec_window()`` 交给 Qt 宿主
+（``lib/core/render/backends/qt/widgets/spec_host.py``）装配。本模块只做三件事：
+订阅事件、收集「标题 + 正文」、把语义回调翻译成产品动作。
+
+同时只允许存在一个帮助窗口：再次触发会先销毁已有窗口。
 """
 
 from __future__ import annotations
 
-from PyQt5.QtCore import QEasingCurve, QObject, QPropertyAnimation, Qt, pyqtSignal
-from PyQt5.QtGui import QColor, QCursor, QPainter
-from PyQt5.QtWidgets import (
-    QFrame,
-    QHBoxLayout,
-    QLabel,
-    QToolButton,
-    QVBoxLayout,
-    QWidget,
-)
+from PyQt5.QtCore import QObject, Qt, pyqtSignal
 
-from config.config import UI
 from config.scale import scale_px
-from lib.core.anchor_utils import apply_ui_opacity
 from lib.core.event.center import EventType, get_event_center
-from lib.core.render.visuals.announcement_visuals import get_announcement_colors
 from lib.core.logger import get_logger
-from lib.core.render.layers import get_layer_manager, WindowLayer
-from lib.script.ui.workbench_floating import WorkbenchFloatingWindow
-from lib.script.ui.workbench_settings_layout import SmoothScrollArea
-from lib.script.ui.render_bridge import centered_placement, screen_rect_for_point as get_screen_geometry_for_point, ui_font as get_ui_font
+from lib.core.render.visuals.announcement_visuals import get_announcement_colors
+from lib.core.render.visuals.window_specs import HELP_CLOSE, help_window_spec
+from lib.script.ui import render_bridge
 
 logger = get_logger(__name__)
 
@@ -46,6 +36,26 @@ HELP_DEFAULT_TITLE = "帮助"
 _BORDER = scale_px(1, min_abs=1)
 _HEADER_HEIGHT = scale_px(56, min_abs=48)
 _ACCENT_WIDTH = scale_px(3, min_abs=2)
+_HEADER_SIZE = scale_px(16, min_abs=13)
+_SOURCE_SIZE = scale_px(9, min_abs=8)
+_BODY_SIZE = scale_px(13, min_abs=11)
+_CLOSE_SIZE_FONT = scale_px(16, min_abs=14)
+_CLOSE_SIZE = scale_px(28, min_abs=24)
+_ACCENT_HEIGHT = scale_px(32, min_abs=26)
+_HEADER_SPACING = scale_px(10, min_abs=8)
+_ROOT_SPACING = scale_px(12, min_abs=9)
+_BODY_MARGIN = (
+    scale_px(14, min_abs=11),
+    scale_px(12, min_abs=10),
+    scale_px(14, min_abs=11),
+    scale_px(12, min_abs=10),
+)
+_ROOT_MARGIN = (
+    _BORDER + scale_px(18, min_abs=14),
+    _BORDER + scale_px(15, min_abs=12),
+    _BORDER + scale_px(18, min_abs=14),
+    _BORDER + scale_px(15, min_abs=12),
+)
 
 
 def _color_name(key: str) -> str:
@@ -66,203 +76,139 @@ def parse_help_payload(data) -> tuple[str, str]:
     return title, text
 
 
-class DesktopPetHelpDialog(WorkbenchFloatingWindow):
-    """紧凑的帮助浮窗：标题 + 可滚动正文 + 关闭。"""
+class DesktopPetHelpDialog:
+    """紧凑的帮助浮窗：标题 + 可滚动正文 + 关闭。
 
-    # 主题事件由控制器订阅，窗口自己不去重复订阅。
+    属性面沿用原 `QWidget` 用法（``_header_label`` / ``_body`` / ``_scroll`` /
+    ``show_help()`` / ``hide_dialog()`` / ``cleanup()`` / ``wants_visible()``），
+    调用方不需要知道自己拿到的不再是 `QWidget`。
+    """
+
+    #: 主题事件由控制器订阅，窗口自己不去重复订阅（与原浮窗语义一致）。
     follows_workbench_theme = False
 
     def __init__(self, parent=None) -> None:
-        super().__init__(parent)
-        self.setObjectName("DesktopPetHelpDialog")
-        self.setWindowTitle("帮助")
-        self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
-        self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setFixedSize(HELP_WINDOW_WIDTH, HELP_WINDOW_HEIGHT)
-        get_layer_manager().register(self, WindowLayer.DIALOG, name="DesktopPetHelpDialog")
-
-        self._requested_visible = False
-        self._closing_animation = False
-
-        self._header_accent = QFrame(self)
-        self._header_accent.setObjectName("HelpHeaderAccent")
-        self._header_accent.setFixedSize(_ACCENT_WIDTH, scale_px(32, min_abs=26))
-
-        self._header_label = QLabel(HELP_DEFAULT_TITLE, self)
-        self._header_label.setObjectName("HelpHeader")
-        header_font = get_ui_font(size=scale_px(16, min_abs=13))
-        header_font.setBold(True)
-        self._header_label.setFont(header_font)
-
-        self._source_label = QLabel("HELP  /  FSV", self)
-        self._source_label.setObjectName("HelpSource")
-        self._source_label.setFont(get_ui_font(size=scale_px(9, min_abs=8)))
-
-        self._close_button = QToolButton(self)
-        self._close_button.setObjectName("HelpCloseButton")
-        self._close_button.setText("×")
-        self._close_button.setToolTip("关闭帮助")
-        self._close_button.setAccessibleName("关闭帮助")
-        self._close_button.setFixedSize(scale_px(28, min_abs=24), scale_px(28, min_abs=24))
-        self._close_button.clicked.connect(self.hide_dialog)
-
-        header_text = QVBoxLayout()
-        header_text.setContentsMargins(0, 0, 0, 0)
-        header_text.setSpacing(0)
-        header_text.addWidget(self._header_label)
-        header_text.addWidget(self._source_label)
-
-        header_row = QHBoxLayout()
-        header_row.setContentsMargins(0, 0, 0, 0)
-        header_row.setSpacing(scale_px(10, min_abs=8))
-        header_row.addWidget(self._header_accent, 0, Qt.AlignVCenter)
-        header_row.addLayout(header_text, 1)
-        header_row.addWidget(self._close_button, 0, Qt.AlignTop)
-
-        self._header = QWidget(self)
-        self._header.setFixedHeight(_HEADER_HEIGHT)
-        self._header.setLayout(header_row)
-        self.attach_floating_drag_handle(self._header, self._header_label, self._source_label)
-
-        self._body = QLabel(self)
-        self._body.setObjectName("HelpBody")
-        self._body.setWordWrap(True)
-        self._body.setTextFormat(Qt.PlainText)
-        self._body.setAlignment(Qt.AlignTop | Qt.AlignLeft)
-        self._body.setFont(get_ui_font(size=scale_px(13, min_abs=11)))
-
-        # 帮助正文可能比窗口高，复用设置页那套平滑滚动，滚动手感与工作台一致。
-        self._scroll = SmoothScrollArea(self)
-        self._scroll.setObjectName("HelpScroll")
-        self._scroll.setWidgetResizable(True)
-        self._scroll.setFrameShape(QFrame.NoFrame)
-        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        holder = QWidget(self._scroll)
-        holder.setObjectName("HelpScrollHost")
-        holder_layout = QVBoxLayout(holder)
-        holder_layout.setContentsMargins(
-            scale_px(14, min_abs=11),
-            scale_px(12, min_abs=10),
-            scale_px(14, min_abs=11),
-            scale_px(12, min_abs=10),
+        self._title = HELP_DEFAULT_TITLE
+        self._text = ""
+        self._spec = self._build_spec()
+        self._window = render_bridge.create_spec_window(
+            self._spec,
+            on_semantic=self._on_semantic,
+            dialog=False,
+            parent=parent,
         )
-        holder_layout.setSpacing(0)
-        holder_layout.addWidget(self._body, 0)
-        holder_layout.addStretch(1)
-        self._scroll.setWidget(holder)
+        self._header_label = self._window.find("header")
+        self._source_label = self._window.find("source")
+        self._body = self._window.find("body")
+        self._scroll = self._window.find("body_area")
+        self._close_button = self._window.find("close")
 
-        content = QVBoxLayout(self)
-        content.setContentsMargins(
-            _BORDER + scale_px(18, min_abs=14),
-            _BORDER + scale_px(15, min_abs=12),
-            _BORDER + scale_px(18, min_abs=14),
-            _BORDER + scale_px(15, min_abs=12),
+    # ── 描述 ─────────────────────────────────────────────────────────
+
+    def _build_spec(self):
+        return help_window_spec(
+            title=self._title,
+            text=self._text,
+            width=HELP_WINDOW_WIDTH,
+            height=HELP_WINDOW_HEIGHT,
+            border_width=_BORDER,
+            header_height=_HEADER_HEIGHT,
+            accent_width=_ACCENT_WIDTH,
+            accent_height=_ACCENT_HEIGHT,
+            close_size=_CLOSE_SIZE,
+            close_size_font=_CLOSE_SIZE_FONT,
+            root_margin=_ROOT_MARGIN,
+            root_spacing=_ROOT_SPACING,
+            header_spacing=_HEADER_SPACING,
+            body_margin=_BODY_MARGIN,
+            header_size=_HEADER_SIZE,
+            source_size=_SOURCE_SIZE,
+            body_size=_BODY_SIZE,
+            stylesheet=_help_stylesheet(),
+            empty_text=HELP_EMPTY_TEXT,
         )
-        content.setSpacing(scale_px(12, min_abs=9))
-        content.addWidget(self._header)
-        content.addWidget(self._scroll, 1)
-
-        self.install_floating_chrome()
-
-        self._opacity_animation = QPropertyAnimation(self, b"windowOpacity", self)
-        self._opacity_animation.setDuration(int(UI.get("ui_fade_duration", 180)))
-        self._opacity_animation.setEasingCurve(QEasingCurve.InOutQuad)
-        self._opacity_animation.finished.connect(self._on_animation_finished)
 
     # ── 内容 ─────────────────────────────────────────────────────────
 
     def show_help(self, title: str, text: str) -> None:
         """换上新内容并淡入；同一窗口被复用时会整段替换，不留上一条的残影。"""
+
         self.refresh_workbench_theme()
-        self._header_label.setText(str(title or "").strip() or HELP_DEFAULT_TITLE)
-        body = str(text or "").strip()
-        self._body.setText(body if body else HELP_EMPTY_TEXT)
-        self._scroll.verticalScrollBar().setValue(0)
-        self._show_dialog()
+        self._title = str(title or "").strip() or HELP_DEFAULT_TITLE
+        self._text = str(text or "").strip()
+        body = self._text or HELP_EMPTY_TEXT
+        if self._header_label is not None:
+            self._header_label.setText(self._title)
+        if self._body is not None:
+            self._body.setText(body)
+        if self._scroll is not None:
+            self._scroll.verticalScrollBar().setValue(0)
+        self._window.show_window()
 
     def wants_visible(self) -> bool:
-        return self._requested_visible
+        return self._window.is_requested_visible()
 
     # ── 主题 ─────────────────────────────────────────────────────────
 
     def refresh_workbench_theme(self) -> None:
-        self.refresh_floating_theme()
-
-    def floating_stylesheet(self) -> str:
-        return self._widget_stylesheet()
+        self._spec = self._build_spec()
+        self._window.apply_theme(self._spec)
 
     # ── 显示与隐藏 ───────────────────────────────────────────────────
 
     def hide_dialog(self) -> None:
-        if not self._requested_visible:
-            return
-        self._requested_visible = False
-        self._closing_animation = True
-        self._animate_to(0.0)
+        self._window.hide_dialog()
 
     def cleanup(self) -> None:
-        self._opacity_animation.stop()
-        self._requested_visible = False
-        self._closing_animation = False
-        self.cleanup_floating_chrome()
-        self.hide()
-        get_layer_manager().unregister(self)
-        self.deleteLater()
+        self._window.cleanup()
 
-    def _show_dialog(self) -> None:
-        self._center_on_screen()
-        was_visible = self._requested_visible
-        self._requested_visible = True
-        self._closing_animation = False
-        if not was_visible:
-            self.setWindowOpacity(0.0)
-            self.show()
-        get_layer_manager().bring_to_front(self)
-        self.raise_()
-        self.activateWindow()
-        self._animate_to(apply_ui_opacity(1.0))
+    # ── 语义与生命周期 ───────────────────────────────────────────────
 
-    def _animate_to(self, target: float) -> None:
-        self._opacity_animation.stop()
-        self._opacity_animation.setStartValue(float(self.windowOpacity()))
-        self._opacity_animation.setEndValue(float(target))
-        self._opacity_animation.start()
+    def _on_semantic(self, semantic: str) -> None:
+        if str(semantic) == HELP_CLOSE:
+            self.hide_dialog()
 
-    def _on_animation_finished(self) -> None:
-        if self._closing_animation and not self._requested_visible:
-            self._closing_animation = False
-            self.hide()
+    # ── 底层窗口的属性面（调用方按原 QWidget 用法）────────────────────
 
-    def _center_on_screen(self) -> None:
-        # 居中算术与夹取统一在 visuals/layout.py（档位 1）。
-        cursor_pos = QCursor.pos()
-        screen = get_screen_geometry_for_point(point=cursor_pos, fallback_widget=self)
-        placement = centered_placement((self.width(), self.height()), screen)
-        self.move(placement.x, placement.y)
+    def widget(self):
+        """底层真实窗口，供诊断与需要 ``QWidget`` 的调用方取用。"""
 
-    def paintEvent(self, event) -> None:
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing, False)
-        painter.fillRect(self.rect(), QColor(_color_name("border_strong")))
-        painter.fillRect(
-            self.rect().adjusted(_BORDER, _BORDER, -_BORDER, -_BORDER),
-            QColor(_color_name("canvas")),
-        )
-        painter.end()
+        return self._window.widget
 
-    @staticmethod
-    def _widget_stylesheet() -> str:
-        canvas = _color_name("canvas")
-        surface = _color_name("surface")
-        surface_hover = _color_name("surface_hover")
-        border = _color_name("border")
-        border_strong = _color_name("border_strong")
-        text = _color_name("text")
-        text_muted = _color_name("text_muted")
-        text_dim = _color_name("text_dim")
-        cyan = _color_name("cyan")
-        pink = _color_name("pink")
-        return f"""
+    def move(self, *args) -> None:
+        self._window.widget.move(*args)
+
+    def show(self) -> None:
+        self._window.widget.show()
+
+    def hide(self) -> None:
+        self._window.widget.hide()
+
+    def raise_(self) -> None:
+        self._window.widget.raise_()
+
+    def activateWindow(self) -> None:  # noqa: N802 - 沿用 Qt 命名
+        self._window.widget.activateWindow()
+
+    def width(self) -> int:
+        return self._window.widget.width()
+
+    def height(self) -> int:
+        return self._window.widget.height()
+
+
+def _help_stylesheet() -> str:
+    canvas = _color_name("canvas")
+    surface = _color_name("surface")
+    surface_hover = _color_name("surface_hover")
+    border = _color_name("border")
+    border_strong = _color_name("border_strong")
+    text = _color_name("text")
+    text_muted = _color_name("text_muted")
+    text_dim = _color_name("text_dim")
+    cyan = _color_name("cyan")
+    pink = _color_name("pink")
+    return f"""
             QWidget#DesktopPetHelpDialog {{
                 color: {text};
             }}

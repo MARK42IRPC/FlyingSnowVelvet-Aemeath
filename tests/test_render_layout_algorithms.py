@@ -473,7 +473,6 @@ class ControlPlacementDelegationTests(unittest.TestCase):
         "playlist_panel.py",
         "announcement_dialog.py",
         "update_dialog.py",
-        "help_window.py",
         "voice_package_installer.py",
     )
 

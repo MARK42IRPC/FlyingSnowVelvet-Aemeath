@@ -17,7 +17,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import QEasingCurve, QPropertyAnimation, Qt
+from PyQt5.QtGui import QColor, QPainter
 from PyQt5.QtWidgets import (
     QDialog,
     QFrame,
@@ -26,14 +27,19 @@ from PyQt5.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QStyle,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
 from config.scale import scale_px
+from lib.core.anchor_utils import apply_ui_opacity
+from lib.core.render.backends.qt.widgets.smooth_scroll import SmoothScrollArea
 from lib.core.render.backends.qt.widgets.floating_window import FloatingDragFilter
 from lib.core.render.backends.qt.widgets.office_icons import render_office_icon
 from lib.core.render.backends.qt.widgets.window_buttons import create_window_button
+from lib.core.render.layers import WindowLayer, get_layer_manager
+from lib.core.services.ui_presentation import ui_fade_duration_ms
 from lib.core.render.visuals.layout import PlacementSpec
 from lib.core.render.visuals.window_spec import (
     ALIGN_BOTTOM,
@@ -46,6 +52,8 @@ from lib.core.render.visuals.window_spec import (
     COLOR_DANGER,
     COLOR_TEXT,
     COLOR_WARNING,
+    LAYER_DIALOG,
+    WINDOW_TOOL,
     AccentBarSpec,
     ButtonSpec,
     IconSpec,
@@ -182,6 +190,14 @@ class QtSpecWindow:
         self._resolved = False
         self._closed_by_widget = False
         self._drag_filter = FloatingDragFilter(widget)
+        self._scroll_by_id: dict[str, QWidget] = {}
+        self._layer_registered = False
+        self._fade = bool(getattr(spec, "fade", False))
+        self._requested_visible = False
+        self._closing_animation = False
+        self._opacity_animation: QPropertyAnimation | None = None
+        self._border_width = 0
+        self._setup_fade()
         self._build(spec)
         self._install_drag_handles(spec)
         if on_destroyed is not None:
@@ -223,11 +239,46 @@ class QtSpecWindow:
             widget.setMinimumWidth(int(spec.min_width))
         if spec.max_width:
             widget.setMaximumWidth(int(spec.max_width))
+        if spec.fixed_size:
+            width, height = (int(value) for value in spec.fixed_size)
+            if width and height:
+                widget.setFixedSize(width, height)
+            elif width:
+                widget.setFixedWidth(width)
+            elif height:
+                widget.setFixedHeight(height)
+        self._setup_border_frame(spec)
 
         layout = self._build_layout(spec.content, widget)
         widget.setLayout(layout)
         self._root_layout = layout
         self.apply_theme()
+
+    def _setup_border_frame(self, spec: WindowSpec) -> None:
+        """描边外壳：外描边 + 内容底色两层矩形（公告 / 更新浮窗同款）。"""
+
+        if not spec.border_frame:
+            return
+        self._border_width = max(1, int(spec.border_width) or 1)
+
+    def paint_border_frame(self, event) -> bool:
+        """描边外壳的绘制；未启用时返回 False，由承载窗口走默认绘制。
+
+        颜色在**每次重绘时**取，与公告 / 更新浮窗一样跟着工作台主题走。
+        """
+
+        if not self._border_width:
+            return False
+        painter = QPainter(self.widget)
+        painter.setRenderHint(QPainter.Antialiasing, False)
+        painter.fillRect(self.widget.rect(), QColor(resolve_token_color("border_strong")))
+        inset = self._border_width
+        painter.fillRect(
+            self.widget.rect().adjusted(inset, inset, -inset, -inset),
+            QColor(resolve_token_color("canvas")),
+        )
+        painter.end()
+        return True
 
     def _build_layout(self, spec: LayoutSpec, parent: QWidget):
         layout = QHBoxLayout(parent) if spec.direction == LAYOUT_ROW else QVBoxLayout(parent)
@@ -248,12 +299,12 @@ class QtSpecWindow:
     def _add_child(self, layout, child, parent: QWidget) -> None:
         stretch = max(0, int(getattr(child, "stretch", 0)))
         if isinstance(child, LayoutSpec):
-            container = QFrame(parent) if child.frame else QWidget(parent)
-            if child.object_name:
-                container.setObjectName(child.object_name)
-            self._build_layout(child, container)
-            self._register(child.id, container)
-            layout.addWidget(container, stretch)
+            container = self._build_container(child, parent)
+            alignment = _qt_alignment(child)
+            if alignment:
+                layout.addWidget(container, stretch, alignment)
+            else:
+                layout.addWidget(container, stretch)
             return
         if isinstance(child, StretchSpec):
             layout.addStretch(max(0, int(round(child.weight))))
@@ -269,6 +320,40 @@ class QtSpecWindow:
         else:
             layout.addWidget(widget, stretch)
 
+    def _build_container(self, spec: LayoutSpec, parent: QWidget) -> QWidget:
+        """把一个 ``LayoutSpec`` 装成容器；``scroll`` 时外套一层平滑滚动视口。"""
+
+        container = QFrame(parent) if spec.frame else QWidget(parent)
+        if spec.object_name:
+            container.setObjectName(spec.object_name)
+        if spec.fixed_width:
+            container.setFixedWidth(int(spec.fixed_width))
+        if spec.fixed_height:
+            container.setFixedHeight(int(spec.fixed_height))
+        if spec.scroll:
+            scroll = SmoothScrollArea(parent)
+            if spec.scroll_object_name:
+                scroll.setObjectName(spec.scroll_object_name)
+            scroll.setWidgetResizable(True)
+            scroll.setFrameShape(QFrame.NoFrame)
+            scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            holder = QWidget(scroll)
+            if spec.scroll_host_object_name:
+                holder.setObjectName(spec.scroll_host_object_name)
+            holder_layout = QVBoxLayout(holder)
+            holder_layout.setContentsMargins(*(int(v) for v in spec.scroll_margin))
+            holder_layout.setSpacing(0)
+            for child in spec.children:
+                self._add_child(holder_layout, child, holder)
+            holder_layout.addStretch(1)
+            scroll.setWidget(holder)
+            self._scroll_by_id[spec.id] = scroll
+            self._register(spec.id, scroll)
+            return scroll
+        self._build_layout(spec, container)
+        self._register(spec.id, container)
+        return container
+
     def _build_widget(self, child, parent: QWidget):
         if isinstance(child, LabelSpec):
             return self._build_label(child, parent), _qt_alignment(child)
@@ -279,7 +364,7 @@ class QtSpecWindow:
         if isinstance(child, TextAreaSpec):
             return self._build_text_area(child, parent), 0
         if isinstance(child, ButtonSpec):
-            return self._build_button(child, parent), 0
+            return self._build_button(child, parent), _qt_alignment(child)
         return None, 0
 
     def _build_label(self, spec: LabelSpec, parent: QWidget) -> QLabel:
@@ -293,6 +378,8 @@ class QtSpecWindow:
             label.setFont(font)
         if spec.word_wrap:
             label.setWordWrap(True)
+        if spec.plain_text:
+            label.setTextFormat(Qt.PlainText)
         if spec.selectable:
             label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         alignment = _qt_alignment(spec)
@@ -351,9 +438,17 @@ class QtSpecWindow:
                 danger=spec.role == "danger",
             )
         else:
-            button = QPushButton(str(spec.text), parent)
+            button = (
+                QToolButton(parent)
+                if spec.tool_button
+                else QPushButton(str(spec.text), parent)
+            )
+            if spec.tool_button:
+                button.setText(str(spec.text))
             if spec.tooltip:
                 button.setToolTip(str(spec.tooltip))
+            if spec.accessible_name:
+                button.setAccessibleName(str(spec.accessible_name))
             if spec.bold or spec.font_size:
                 font = self._font_factory(int(spec.font_size) if spec.font_size else 0)
                 if spec.bold:
@@ -363,6 +458,10 @@ class QtSpecWindow:
                 button.clicked.connect(
                     lambda _=False, key=spec.semantic: self.resolve_with(key)
                 )
+        if spec.fixed_size:
+            width, height = (int(value) for value in spec.fixed_size)
+            if width and height:
+                button.setFixedSize(width, height)
         if spec.object_name:
             button.setObjectName(spec.object_name)
         self._register(spec.id, button)
@@ -397,6 +496,10 @@ class QtSpecWindow:
         widget = self.widget
         if self._resolved:
             return
+        if str(semantic) in self._hide_semantics:
+            self._emit(semantic)
+            self.hide_dialog()
+            return
         self._resolved = True
         self._emit(semantic)
         accept = getattr(widget, "accept", None)
@@ -429,6 +532,111 @@ class QtSpecWindow:
         self._resolved = True
         if self.spec.close_semantic:
             self._emit(self.spec.close_semantic)
+        self._unregister_layer()
+        self._requested_visible = False
+
+    def closed_by_widget_should_hide(self) -> bool:
+        """工具类浮窗被原生关闭路径收起时只隐藏，不结束窗口生命周期。"""
+
+        return self._fade and not self.spec.delete_on_close and bool(self._layer_name)
+
+    # ── 显示、淡入淡出与收尾（浮窗语义）──────────────────────────────
+
+    def _setup_fade(self) -> None:
+        """给需要淡入淡出的窗口配一条 ``windowOpacity`` 动画。"""
+
+        self._hide_semantics = tuple(getattr(self.spec, "hide_semantics", ()) or ())
+        self._layer_name = str(getattr(self.spec, "layer", "") or "")
+        if not self._fade:
+            return
+        animation = QPropertyAnimation(self.widget, b"windowOpacity", self.widget)
+        animation.setDuration(int(ui_fade_duration_ms()))
+        animation.setEasingCurve(QEasingCurve.InOutQuad)
+        animation.finished.connect(self._on_animation_finished)
+        self._opacity_animation = animation
+
+    def _register_layer(self) -> None:
+        """按描述把窗口注册进 `LayerManager`（只注册一次）。"""
+
+        if self._layer_registered or not self._layer_name:
+            return
+        self._layer_registered = True
+        if self._layer_name == LAYER_DIALOG:
+            layer = WindowLayer.DIALOG
+        else:
+            layer = WindowLayer.PANEL
+        get_layer_manager().register(
+            self.widget, layer, name=self.spec.object_name or "SpecWindow"
+        )
+
+    def _unregister_layer(self) -> None:
+        if not self._layer_registered:
+            return
+        self._layer_registered = False
+        try:
+            get_layer_manager().unregister(self.widget)
+        except Exception:
+            pass
+
+    def show_window(self) -> None:
+        """显示窗口：居中落位、注册层级、前置并淡入。"""
+
+        self._register_layer()
+        was_visible = self._requested_visible
+        self._requested_visible = True
+        self._closing_animation = False
+        if not was_visible:
+            if self._fade:
+                self.widget.setWindowOpacity(0.0)
+            self.widget.show()
+        get_layer_manager().bring_to_front(self.widget)
+        self.widget.raise_()
+        self.widget.activateWindow()
+        if self._fade:
+            self._animate_to(apply_ui_opacity(1.0))
+
+    def hide_dialog(self) -> None:
+        """收起窗口：淡出后 ``hide()``；不结束窗口生命周期。"""
+
+        if not self._requested_visible:
+            return
+        self._requested_visible = False
+        if self._fade:
+            self._closing_animation = True
+            self._animate_to(0.0)
+        else:
+            self.widget.hide()
+
+    def is_requested_visible(self) -> bool:
+        """窗口是否处于「请求可见」状态（淡出过程中即为 False）。"""
+
+        return self._requested_visible
+
+    def cleanup(self) -> None:
+        """停掉动画、注销层级并销毁底层窗口（幂等）。"""
+
+        if self._opacity_animation is not None:
+            self._opacity_animation.stop()
+        self._requested_visible = False
+        self._closing_animation = False
+        self._drag_filter.detach()
+        self.widget.hide()
+        self._unregister_layer()
+        self.widget.deleteLater()
+
+    def _animate_to(self, target: float) -> None:
+        animation = self._opacity_animation
+        if animation is None:
+            return
+        animation.stop()
+        animation.setStartValue(float(self.widget.windowOpacity()))
+        animation.setEndValue(float(target))
+        animation.start()
+
+    def _on_animation_finished(self) -> None:
+        if self._closing_animation and not self._requested_visible:
+            self._closing_animation = False
+            self.widget.hide()
 
     def center_on(self, reference_rect=None) -> None:
         """把窗口居中到 `reference_rect`，缺省则居中到光标所在屏幕。
@@ -452,7 +660,14 @@ class QtSpecWindow:
                 )
             else:
                 reference_rect = None
-                screen = self._presentation.screen_rect_for_widget(widget)
+                cursor_point = None
+                if self.spec.center_on_cursor_screen:
+                    from PyQt5.QtGui import QCursor
+
+                    cursor_point = QCursor.pos()
+                screen = self._presentation.screen_rect_for_widget(
+                    widget, point=cursor_point
+                )
         if screen is None:
             return
         if reference_rect is None:
@@ -541,8 +756,18 @@ class _SpecWidgetMixin:
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt 事件名
         window = self._spec_window
         if window is not None:
+            if window.closed_by_widget_should_hide():
+                event.ignore()
+                window.hide_dialog()
+                return
             window.note_widget_closed()
         super().closeEvent(event)
+
+    def paintEvent(self, event) -> None:  # noqa: N802 - Qt 事件名
+        window = self._spec_window
+        if window is not None and window.paint_border_frame(event):
+            return
+        super().paintEvent(event)
 
 
 class QtSpecDialog(_SpecWidgetMixin, QDialog):
@@ -581,13 +806,16 @@ def build_spec_window(
 def _make_widget(spec: WindowSpec, *, dialog: bool, parent: QWidget | None) -> QWidget:
     """构造承载窗口并设好窗口标志、模态与窗口图标。"""
 
-    widget = QtSpecDialog(parent) if dialog else QtSpecWidget(parent)
+    tool_window = spec.kind == WINDOW_TOOL
+    widget = QtSpecWidget(parent) if tool_window else QtSpecDialog(parent)
     flags = Qt.Window
+    if tool_window:
+        flags |= Qt.Tool
     if spec.frameless:
         flags |= Qt.FramelessWindowHint
     if spec.stay_on_top:
         flags |= Qt.WindowStaysOnTopHint
-    if dialog:
+    if dialog and not tool_window:
         flags |= Qt.Dialog
     widget.setWindowFlags(flags)
     if spec.modal and dialog:

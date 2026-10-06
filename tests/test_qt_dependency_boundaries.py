@@ -36,6 +36,8 @@ class QtDependencyBoundaryTests(unittest.TestCase):
             "lib/script/ui/forum_window.py",
             "lib/script/ui/game_manager_window.py",
             "lib/script/ui/game_runtime.py",
+            # 帮助浮窗本体已去 Qt；同文件的 `HelpWindowController` 仍是 `QObject`
+            # （订阅事件 + Qt 计时器），与同列的 `office_approval_controller.py` 一样。
             "lib/script/ui/help_window.py",
             "lib/script/ui/office_approval_controller.py",
             "lib/script/ui/office_chat_view.py",
