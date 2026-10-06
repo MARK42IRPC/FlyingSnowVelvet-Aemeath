@@ -210,6 +210,8 @@ class ControlDescriptionLayerTests(unittest.TestCase):
             ("lib/script/ui/speaker_band_slider.py", "SpeakerBandSlider"),
             ("lib/script/ui/speaker_search_result_box.py", "SpeakerSearchResultBox"),
             ("lib/script/ui/command_hint_box.py", "CommandHintBox"),
+            ("lib/script/ui/page_turn_buttons.py", "_PageTurnButton"),
+            ("lib/script/ui/speaker_control_buttons.py", "SpeakerControlButton"),
             ("lib/script/ui/clickthrough_button.py", "ClickThroughButton"),
             ("lib/script/ui/close_button.py", "CloseButton"),
             ("lib/script/ui/scale_button.py", "ScaleUpButton"),
@@ -849,6 +851,140 @@ class ProgressPanelBehaviorTests(unittest.TestCase):
             cleanup_event_center()
 
 
+class MigratedControlHostViewTests(unittest.TestCase):
+    """迁出 `QWidget` 的控件必须保住它对外承诺的"视图"方法。
+
+    这组断言守着一次真实运行期崩溃：`progress_panel` 从 `QWidget` 改成"描述 + 宿主"
+    之后只保留了 `width/height/isVisible` 三个转发，`playlist_panel` 仍在调
+    `progress_panel.x()` / `.y()`（迁移前那是 `QWidget.x()`）。于是 `show_for() ->
+    _show_progress_panel() -> _update_progress_panel_position() ->
+    _update_control_buttons_position() -> progress_panel.x()` 直接抛 `AttributeError`，
+    而 **异常发生在 `_set_control_buttons_visible(True)` 之前**，所以整族控制按钮
+    （含搜索按钮）跟着一起没出现——症状看起来像"搜索按钮消失了"，根因却在进度条视图。
+
+    构造期、导入期与 `ProgressPanel` 自己的测试都看不到它：只有
+    `playlist_panel._update_control_buttons_position()` 这一条调用链会踩到。
+    """
+
+    #: 同族控件对外的视图方法：迁移前全部来自 `QWidget`，迁移后必须由转发补齐。
+    _VIEW_METHODS = ("width", "height", "x", "y", "isVisible")
+
+    @classmethod
+    def setUpClass(cls):
+        import PyQt5
+
+        root = os.path.dirname(PyQt5.__file__)
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        os.environ.setdefault(
+            "QT_QPA_PLATFORM_PLUGIN_PATH",
+            os.path.join(root, "Qt5", "plugins", "platforms"),
+        )
+        os.environ.setdefault("QT_PLUGIN_PATH", os.path.join(root, "Qt5", "plugins"))
+
+        from PyQt5.QtWidgets import QApplication
+
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_migrated_controls_expose_the_qwidget_view_methods_their_peers_call(self):
+        from lib.core.render.visuals.types import Rect
+        from lib.script.ui.progress_panel import ProgressPanel
+
+        panel = ProgressPanel()
+        try:
+            missing = [name for name in self._VIEW_METHODS if not callable(getattr(panel, name, None))]
+            self.assertEqual(missing, [], f"ProgressPanel 缺少视图方法: {missing}")
+            # 位置必须在落位后真的对上宿主，而不是硬编码 0。
+            panel.set_position_below_playlist(Rect(400, 600, 300, 200))
+            self.assertEqual((panel.x(), panel.y()), (400, 578))
+            self.assertEqual((panel.width(), panel.height()), (240, 20))
+        finally:
+            panel.close()
+
+    def test_peer_control_modules_do_not_call_qwidget_view_methods_on_migrated_controls(self):
+        """同族模块之间不得对"已迁出 QWidget 的控件"调用 QWidget 视图方法。
+
+        这一条是上面那次崩溃的静态面：`playlist_panel` 调 `progress_panel.x()` 时，
+        两边都是"描述 + 宿主"控件，谁都不该假设对方还是 `QWidget`。允许的调用面只有
+        各控件自己显式转发出来的那几个名字。
+        """
+        import ast as _ast
+
+        repo_root = _REPO_ROOT
+        #: 已迁出 `QWidget`、且被同族模块按名字引用的控件。
+        migrated = ("progress_panel", "self._prev_btn", "self._next_btn")
+        #: `QWidget` 上有、但这些控件没有转发的几何方法：调用即崩溃。
+        not_forwarded = ("geometry", "pos", "rect", "size", "frameGeometry", "mapToGlobal")
+
+        findings = []
+        for name in migrated:
+            for path in sorted((repo_root / "lib" / "script" / "ui").rglob("*.py")):
+                tree = _ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
+                for node in _ast.walk(tree):
+                    if not isinstance(node, _ast.Call) or not isinstance(node.func, _ast.Attribute):
+                        continue
+                    receiver = node.func.value
+                    label = None
+                    if isinstance(receiver, _ast.Name) and receiver.id == name:
+                        label = f"{receiver.id}.{node.func.attr}()"
+                    elif (
+                        isinstance(receiver, _ast.Attribute)
+                        and isinstance(receiver.value, _ast.Name)
+                        and receiver.value.id == "self"
+                        and f"self.{receiver.attr}" == name
+                    ):
+                        label = f"{name}.{node.func.attr}()"
+                    if label is None:
+                        continue
+                    if node.func.attr in not_forwarded:
+                        findings.append(f"{path.relative_to(repo_root).as_posix()}:{node.lineno}:{label}")
+        self.assertEqual(findings, [], "对已迁出 QWidget 的控件调用了未转发的 QWidget 方法")
+
+    def test_playlist_panel_progress_position_chain_runs_without_raising(self):
+        """`_update_control_buttons_position()` 这条链必须在真实控件上跑得通。
+
+        它是崩溃现场：把进度条换成非 `QWidget` 后，这里既取 `progress_panel.x()`
+        又用 `self.geometry()`。断言"不抛异常"就已经覆盖了整条链，再顺带钉住
+        控制按钮确实被摆了位置（而不是被静默跳过）。
+        """
+        from lib.script.ui.progress_panel import cleanup_progress_panel, init_progress_panel
+        from lib.script.ui.playlist_panel import PlaylistPanel
+
+        # 单例要真的接上：`_update_control_buttons_position()` 是靠
+        # `get_progress_panel()` 拿进度条的，没接上它会提前 return，按钮停在 (0, 0)
+        # 却依然"不抛异常"——那样测试就盖不住崩溃现场了。
+        import lib.script.ui.playlist_panel as playlist_module
+        import lib.script.ui.progress_panel as progress_module
+        from lib.core.render.visuals.types import Rect
+
+        panel = init_progress_panel()
+        playlist = PlaylistPanel()
+        # 离屏平台的屏幕矩形是退化的（0×0），整段落位会被夹取到 0，看不出按钮摆到了哪。
+        # 两个模块都用 `from ... import` 绑了本地名字，必须分别替换。
+        screen = Rect(0, 0, 1920, 1080)
+        originals = {
+            playlist_module: playlist_module.get_screen_geometry_for_point,
+            progress_module: progress_module.screen_rect_for_point,
+        }
+        playlist_module.get_screen_geometry_for_point = lambda **kwargs: screen
+        progress_module.screen_rect_for_point = lambda **kwargs: screen
+        try:
+            playlist._visible = True
+            # 离屏平台上播放列表默认落在原点，落位会被夹取到 (0, 0) 而看不出结果；
+            # 挪到屏幕内一个非零位置，断言才能观察到真实摆放。
+            playlist.move(400, 600)
+            playlist._update_progress_panel_position()
+            placed = playlist._play_pause_btn.x(), playlist._play_pause_btn.y()
+            self.assertNotEqual(placed, (0, 0), "控制按钮没有被摆位")
+            # 暂停按钮应压在进度条上方同一列。
+            self.assertEqual(placed[0], panel.x())
+            self.assertLess(placed[1], panel.y())
+        finally:
+            playlist_module.get_screen_geometry_for_point = originals[playlist_module]
+            progress_module.screen_rect_for_point = originals[progress_module]
+            playlist.close()
+            cleanup_progress_panel()
+
+
 #: 返回核心几何（`Rect` / `Point` / `Size`）的共享入口。这些返回值用**属性面试**
 #: （`rect.x`），与 Qt 的**方法面试**（`QRect.x()`）不同名同形，混用只会在运行时炸。
 _CORE_GEOMETRY_PRODUCERS = {
@@ -1171,6 +1307,8 @@ _MIGRATED_UI_CONTROLS = {
     "lib/script/ui/speaker_band_slider.py": "SpeakerBandSlider",
     "lib/script/ui/speaker_search_result_box.py": "SpeakerSearchResultBox",
     "lib/script/ui/command_hint_box.py": "CommandHintBox",
+    "lib/script/ui/page_turn_buttons.py": "_PageTurnButton",
+    "lib/script/ui/speaker_control_buttons.py": "SpeakerControlButton",
     "lib/script/ui/clickthrough_button.py": "ClickThroughButton",
     "lib/script/ui/close_button.py": "CloseButton",
     "lib/script/ui/scale_button.py": "ScaleUpButton",
@@ -1268,6 +1406,64 @@ class SpeakerSearchDialogGeometryIntegrationTests(unittest.TestCase):
         from PyQt5.QtWidgets import QApplication
 
         cls.app = QApplication.instance() or QApplication([])
+
+    def test_search_button_paints_to_the_right_of_the_input_box(self):
+        """搜索框整窗渲染：按钮必须落在 ``x = _INPUT_W`` 右侧，不能盖住输入区。
+
+        真实回归：控件收敛把按钮配方下沉到描述层时丢了 ``QRect`` 的原点，按钮被画到
+        ``x = 0.._BTN_W``，正好压在输入区上——搜索按钮"看起来消失了"。门面级的逐字节
+        测试只用了 ``QRect(0, 0, w, h)``，所以这里补一条端到端像素断言。
+
+        窗口带 ``QGraphicsOpacityEffect``，抓图会带上窗口透明度，因此断言只比通道关系
+        与"有没有被画"，不钉绝对色值。
+
+        注意：``QWidget.render()`` 对淡入前的窗口会跳过 ``paintEvent``，必须先 show
+        并让它真的画过一帧，否则抓到的是空图，回归会藏起来。
+        """
+        from lib.script.ui import speaker_search_dialog as dialog_module
+        from lib.script.ui.speaker_search_dialog import SpeakerSearchDialog
+
+        input_w = dialog_module._INPUT_W
+        button_w = dialog_module._BTN_W
+        height = dialog_module._HEIGHT
+
+        dialog = SpeakerSearchDialog()
+        try:
+            dialog._opacity.setOpacity(1.0)
+            dialog.show()
+            self.app.processEvents()
+            dialog.update()
+            self.app.processEvents()
+
+            image = dialog.grab().toImage()
+            self.assertEqual(image.width(), input_w + button_w)
+            self.assertEqual(image.height(), height)
+
+            center_y = height // 2
+            right_edge = image.pixel(input_w + button_w - 1, center_y)
+            self.assertEqual(right_edge >> 24, 0xFF, "按钮区右边缘没有被绘制（原点被丢弃）")
+
+            button_center = image.pixel(input_w + button_w // 2, center_y)
+            red, green, blue = (
+                (button_center >> 16) & 0xFF,
+                (button_center >> 8) & 0xFF,
+                button_center & 0xFF,
+            )
+            self.assertGreater(red, green + 40, "按钮中心不是共享配色的粉色")
+            self.assertGreater(red, blue + 40, "按钮中心不是共享配色的粉色")
+
+            input_center = image.pixel(button_w // 2, center_y)
+            self.assertNotEqual(
+                input_center & 0xFFFFFF, button_center & 0xFFFFFF, "按钮被画到了输入区上"
+            )
+
+            left_frame = image.pixel(input_w + 1, center_y)
+            right_frame = image.pixel(input_w + button_w - 2, center_y)
+            self.assertEqual(left_frame, right_frame, "按钮左右两侧不是同一层外框")
+        finally:
+            dialog.hide()
+            dialog.deleteLater()
+            self.app.processEvents()
 
     def test_mouse_distance_check_runs_over_migrated_controls(self):
         """族内测量必须走 `widget_global_rect()`：点到迁出 QWidget 的滑条也不许炸。
@@ -1545,6 +1741,332 @@ class CommandHintBoxIntegrationTests(unittest.TestCase):
         )
         self.app.sendEvent(host, move)
         self.assertEqual(self.hint._selected, 2)
+
+
+class PageTurnButtonBehaviorTests(unittest.TestCase):
+    """翻页按钮迁出 QWidget 后，点击判定与悬停外观仍走描述层。
+
+    这条断言守着"只有运行期才暴露"的一类回归：按钮不再是 ``QWidget`` 之后，
+    迁移前的 ``self.rect().contains(event.pos())`` 无法直译——松手时的提交判定
+    必须由描述层记录的指针位置决定。若照搬"按宿主几何夹取"，只要点了按钮就永远
+    提交，"按下后拖出按钮再松手取消翻页"这条路径会静默失效。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        import PyQt5
+
+        root = os.path.dirname(PyQt5.__file__)
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        os.environ.setdefault(
+            "QT_QPA_PLATFORM_PLUGIN_PATH",
+            os.path.join(root, "Qt5", "plugins", "platforms"),
+        )
+        os.environ.setdefault("QT_PLUGIN_PATH", os.path.join(root, "Qt5", "plugins"))
+
+        from PyQt5.QtWidgets import QApplication
+
+        cls.app = QApplication.instance() or QApplication([])
+
+    def setUp(self):
+        from lib.script.ui.page_turn_buttons import make_page_buttons
+
+        self.calls = []
+        self.prev, self.next = make_page_buttons(
+            lambda: self.calls.append("prev"),
+            lambda: self.calls.append("next"),
+        )
+        self.host = self.prev._host
+
+    def tearDown(self):
+        for button in (self.prev, self.next):
+            button.close()
+            button._host.deleteLater()
+        for _ in range(3):
+            self.app.processEvents()
+
+    def _event(self, kind, x, y, *, buttons=None):
+        from PyQt5.QtCore import QPoint, Qt
+        from PyQt5.QtGui import QMouseEvent
+
+        return QMouseEvent(
+            kind,
+            QPoint(int(x), int(y)),
+            Qt.LeftButton,
+            Qt.LeftButton if buttons is None else buttons,
+            Qt.NoModifier,
+        )
+
+    def test_click_inside_fires_and_drag_out_cancels(self):
+        from PyQt5.QtCore import QEvent, Qt
+
+        self.host.move_to(300, 300)
+        self.app.processEvents()
+
+        self.host.mousePressEvent(self._event(QEvent.MouseButtonPress, 5, 5))
+        self.host.mouseReleaseEvent(
+            self._event(QEvent.MouseButtonRelease, 5, 5, buttons=Qt.NoButton)
+        )
+        self.app.processEvents()
+        self.assertEqual(self.calls, ["prev"])
+
+        # 按下后拖出按钮再松手：迁移前会因 `rect().contains()` 为假而取消。
+        self.host.mousePressEvent(self._event(QEvent.MouseButtonPress, 5, 5))
+        self.host.mouseMoveEvent(
+            self._event(QEvent.MouseMove, 400, 5, buttons=Qt.LeftButton)
+        )
+        self.host.mouseReleaseEvent(
+            self._event(QEvent.MouseButtonRelease, 400, 5, buttons=Qt.NoButton)
+        )
+        self.app.processEvents()
+        self.assertEqual(self.calls, ["prev"], "拖出按钮后松手不应触发翻页")
+
+        # 拖出去又拖回来：恢复可提交。
+        self.host.mousePressEvent(self._event(QEvent.MouseButtonPress, 5, 5))
+        self.host.mouseMoveEvent(
+            self._event(QEvent.MouseMove, 400, 5, buttons=Qt.LeftButton)
+        )
+        self.host.mouseMoveEvent(
+            self._event(QEvent.MouseMove, 5, 5, buttons=Qt.LeftButton)
+        )
+        self.host.mouseReleaseEvent(
+            self._event(QEvent.MouseButtonRelease, 5, 5, buttons=Qt.NoButton)
+        )
+        self.app.processEvents()
+        self.assertEqual(self.calls, ["prev", "prev"])
+
+    def test_press_state_swaps_the_shared_visual_state(self):
+        from PyQt5.QtCore import QEvent
+
+        control = self.prev._control
+        self.assertEqual(control.state(), "normal")
+
+        self.host.mousePressEvent(self._event(QEvent.MouseButtonPress, 5, 5))
+        self.assertEqual(control.state(), "pressed_flat")
+
+        self.host.mouseMoveEvent(self._event(QEvent.MouseMove, 5, 5))
+        self.assertEqual(control.state(), "pressed")
+
+        self.host.mouseMoveEvent(self._event(QEvent.MouseMove, 400, 5))
+        self.assertEqual(control.state(), "pressed_flat")
+
+    def test_buttons_do_not_steal_keyboard_focus(self):
+        from PyQt5.QtCore import Qt
+
+        self.assertEqual(self.host.focusPolicy(), Qt.NoFocus)
+        self.assertEqual(self.next._host.focusPolicy(), Qt.NoFocus)
+
+    def test_host_paints_the_shared_page_turn_batch(self):
+        from PyQt5.QtCore import Qt
+        from PyQt5.QtGui import QImage, QPainter
+
+        from lib.core.render.backends.qt.drawing.draw_backend import QtDrawBackend
+        from lib.core.render.visuals.types import Rect
+
+        visual = self.prev._control.build_visual()
+        width, height = int(visual.size.width), int(visual.size.height)
+        self.host.apply_size(width, height)
+        self.host.set_opacity(1.0)
+        through_host = QImage(width, height, QImage.Format_RGBA8888)
+        through_host.fill(Qt.transparent)
+        self.host.render(through_host)
+
+        direct = QImage(width, height, QImage.Format_RGBA8888)
+        direct.fill(Qt.transparent)
+        painter = QPainter(direct)
+        painter.setRenderHint(QPainter.Antialiasing, False)
+        QtDrawBackend().render(visual.batch, painter, Rect(0, 0, width, height))
+        painter.end()
+
+        def bits(image):
+            buffer = image.constBits()
+            buffer.setsize(image.byteCount())
+            return bytes(buffer)
+
+        self.assertEqual(bits(through_host), bits(direct))
+        self.assertTrue(any(pixel for pixel in bits(through_host)), "按钮画成了全透明")
+
+
+class SpeakerControlButtonBehaviorTests(unittest.TestCase):
+    """音响控制按钮迁出 QWidget 后，图标状态、标签与点击判定仍走描述层。
+
+    守着与翻页按钮同类、只有运行期才暴露的回归：按下后拖出按钮再松手必须取消提交，
+    暂停/播放图标必须随播放状态在"播放三角 / 暂停双竖线"之间切换，动态文字按钮的
+    标签必须逐帧从子类读出来（而不是构造期固化）。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        import PyQt5
+
+        root = os.path.dirname(PyQt5.__file__)
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        os.environ.setdefault(
+            "QT_QPA_PLATFORM_PLUGIN_PATH",
+            os.path.join(root, "Qt5", "plugins", "platforms"),
+        )
+        os.environ.setdefault("QT_PLUGIN_PATH", os.path.join(root, "Qt5", "plugins"))
+
+        from PyQt5.QtWidgets import QApplication
+
+        cls.app = QApplication.instance() or QApplication([])
+
+    def setUp(self):
+        from lib.script.ui.speaker_control_buttons import (
+            NextTrackButton,
+            SearchPriorityButton,
+        )
+
+        self.next_track = NextTrackButton()
+        self.priority = SearchPriorityButton()
+
+    def tearDown(self):
+        for button in (self.next_track, self.priority):
+            try:
+                button.cleanup()
+                button._host.deleteLater()
+            except Exception:
+                pass
+        for _ in range(3):
+            self.app.processEvents()
+
+    def _event(self, kind, x, y, *, buttons=None):
+        from PyQt5.QtCore import QPoint, Qt
+        from PyQt5.QtGui import QMouseEvent
+
+        return QMouseEvent(
+            kind,
+            QPoint(int(x), int(y)),
+            Qt.LeftButton,
+            Qt.LeftButton if buttons is None else buttons,
+            Qt.NoModifier,
+        )
+
+    def test_click_inside_fires_and_drag_out_cancels(self):
+        from PyQt5.QtCore import QEvent, Qt
+
+        calls = []
+        self.next_track.on_clicked = lambda: calls.append("next")
+        host = self.next_track._host
+        host.move_to(300, 300)
+        self.app.processEvents()
+
+        host.mousePressEvent(self._event(QEvent.MouseButtonPress, 5, 5))
+        host.mouseReleaseEvent(
+            self._event(QEvent.MouseButtonRelease, 5, 5, buttons=Qt.NoButton)
+        )
+        self.app.processEvents()
+        self.assertEqual(calls, ["next"])
+
+        # 按下后拖出按钮再松手：迁移前 `rect().contains()` 为假，取消提交。
+        host.mousePressEvent(self._event(QEvent.MouseButtonPress, 5, 5))
+        host.mouseMoveEvent(
+            self._event(QEvent.MouseMove, 400, 5, buttons=Qt.LeftButton)
+        )
+        host.mouseReleaseEvent(
+            self._event(QEvent.MouseButtonRelease, 400, 5, buttons=Qt.NoButton)
+        )
+        self.app.processEvents()
+        self.assertEqual(calls, ["next"], "拖出按钮后松手不应触发点击")
+
+    def test_press_state_swaps_the_shared_visual_state(self):
+        from PyQt5.QtCore import QEvent
+
+        control = self.next_track._control
+        self.assertEqual(control.state(), "normal")
+
+        self.next_track._host.mousePressEvent(
+            self._event(QEvent.MouseButtonPress, 5, 5)
+        )
+        self.assertEqual(control.state(), "pressed_flat")
+
+        self.next_track._host.mouseMoveEvent(self._event(QEvent.MouseMove, 5, 5))
+        self.assertEqual(control.state(), "pressed")
+
+        self.next_track._host.mouseMoveEvent(self._event(QEvent.MouseMove, 400, 5))
+        self.assertEqual(control.state(), "pressed_flat")
+
+    def test_play_pause_swaps_between_play_and_pause_glyphs(self):
+        from lib.core.render.visuals import controls
+        from lib.script.ui.speaker_control_buttons import PlayPauseButton
+
+        button = PlayPauseButton()
+        try:
+            button._playing = False
+            button._control.glyph = button._glyph
+            self.assertEqual(button._control.glyph, controls.SPEAKER_GLYPH_PLAY)
+            button.set_playing(True)
+            self.assertEqual(button._control.glyph, controls.SPEAKER_GLYPH_PAUSE)
+            # 图标按钮不画文字：批次里只有底壳 + 几何图标命令。
+            batch = button.paint_batch()
+            self.assertFalse(any(type(command).__name__ == "TextCommand" for command in batch.commands))
+        finally:
+            button.cleanup()
+            button._host.deleteLater()
+            self.app.processEvents()
+
+    def test_text_buttons_read_their_label_each_frame(self):
+        from lib.script.ui.speaker_control_buttons import (
+            HistoryQueueButton,
+            PlaylistButton,
+            SearchPriorityButton,
+        )
+
+        history = HistoryQueueButton()
+        playlist = PlaylistButton()
+        try:
+            self.assertEqual(history.paint_batch().commands[-1].text, "一键历史")
+            self.assertEqual(playlist.paint_batch().commands[-1].text, "播放列表")
+
+            # 动态标签：切优先级后逐帧读到新值，而不是构造期固化。
+            self.priority._label = "歌手优先"
+            self.assertEqual(self.priority.paint_batch().commands[-1].text, "歌手优先")
+            self.assertIsInstance(self.priority, SearchPriorityButton)
+        finally:
+            for button in (history, playlist):
+                button.cleanup()
+                button._host.deleteLater()
+            self.app.processEvents()
+
+    def test_buttons_do_not_steal_keyboard_focus(self):
+        from PyQt5.QtCore import Qt
+
+        self.assertEqual(self.next_track._host.focusPolicy(), Qt.NoFocus)
+        self.assertEqual(self.priority._host.focusPolicy(), Qt.NoFocus)
+
+    def test_host_paints_the_shared_speaker_batch(self):
+        from PyQt5.QtCore import Qt
+        from PyQt5.QtGui import QImage, QPainter
+
+        from lib.core.render.backends.qt.drawing.draw_backend import QtDrawBackend
+        from lib.core.render.visuals.types import Rect
+
+        visual = self.next_track._control.build_visual(None)
+        width, height = int(visual.size.width), int(visual.size.height)
+        self.next_track._host.apply_size(width, height)
+        self.next_track._host.set_opacity(1.0)
+        through_host = QImage(width, height, QImage.Format_RGBA8888)
+        through_host.fill(Qt.transparent)
+        self.next_track._host.render(through_host)
+
+        direct = QImage(width, height, QImage.Format_RGBA8888)
+        direct.fill(Qt.transparent)
+        painter = QPainter(direct)
+        painter.setRenderHint(QPainter.Antialiasing, False)
+        QtDrawBackend().render(visual.batch, painter, Rect(0, 0, width, height))
+        painter.end()
+
+        def bits(image):
+            buffer = image.constBits()
+            buffer.setsize(image.byteCount())
+            return bytes(buffer)
+
+        self.assertEqual(bits(through_host), bits(direct))
+        self.assertTrue(any(pixel for pixel in bits(through_host)), "按钮画成了全透明")
+
+
+if __name__ == "__main__":
+    unittest.main()
 
 
 if __name__ == "__main__":

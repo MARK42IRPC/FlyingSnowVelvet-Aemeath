@@ -26,11 +26,21 @@ from .anchor_graph import COMMAND_ACTION_GRAPH
 from .commands import (
     DrawBatch,
     EllipseCommand,
+    LineCommand,
+    PathCommand,
     RectCommand,
     ResourceRevision,
     SpriteCommand,
+    StrokeCap,
     TextAlignment,
     TextCommand,
+    build_polygon_path,
+)
+from .panel_visuals import (
+    action_button_commands,
+    inset_rect,
+    panel_inset,
+    panel_shell_commands,
 )
 from .resources import ImageResource, RasterFrame
 from .rich_text_parser import TextSegment, contains_rich_text, parse_rich_text
@@ -53,7 +63,12 @@ class QrPanelLayout:
 class ApplicationPanelVisual:
     size: Size
     batch: DrawBatch
-    action_rect: Rect | None = None
+    content_rect: Rect | None = None
+
+    @property
+    def action_rect(self) -> Rect | None:
+        """兼容别名：``content_rect`` 迁移前叫 ``action_rect``（二维码面板在用）。"""
+        return self.content_rect
 
 
 def build_mic_stt_indicator_visual(
@@ -1443,6 +1458,55 @@ def build_rect_action_button_visual(
     return ApplicationPanelVisual(Size(width, height), DrawBatch(tuple(commands)))
 
 
+def build_page_turn_button_visual(
+    width: float,
+    height: float,
+    *,
+    direction: int,
+    state: str = "normal",
+    layer: int = int(Layer.PET_UI),
+    z: int = 0,
+    alpha: float = 1.0,
+) -> ApplicationPanelVisual:
+    """Build the shared page-turn button look (panel shell + centered glyph).
+
+    The shell is the speaker-menu action-button recipe (black frame -> cyan mid ->
+    pink background, with the same hover/pressed swaps), and the icon is the
+    directional solid triangle the two ``lib/script/ui/page_turn_buttons.py``
+    hosts used to draw with ``QPainter.drawPolygon``. Both are emitted as
+    backend-neutral commands so a non-Qt host renders the identical pixels.
+    """
+    rect = Rect(0, 0, max(1.0, float(width)), max(1.0, float(height)))
+    inset = panel_inset()
+    commands, content = action_button_commands(
+        rect,
+        None,
+        state=state,
+        inset=inset,
+        layer=layer,
+        z=z,
+        alpha=alpha,
+    )
+    size = min(content.width, content.height) * 0.35
+    center_x, center_y = glyph_center(content)
+    #: 箭头指向：上一页朝左、下一页朝右（与迁移前 Qt 绘制的 `_direction` 语义一致）。
+    sign = -1.0 if int(direction) < 0 else 1.0
+    commands.append(PathCommand(
+        tuple(build_polygon_path((
+            Point(center_x - sign * size * 0.4, center_y - size * 0.7),
+            Point(center_x - sign * size * 0.4, center_y + size * 0.7),
+            Point(center_x + sign * size * 0.4, center_y),
+        ))),
+        fill=COLORS["black"],
+        antialias=True,
+        alpha=alpha,
+        layer=layer,
+        z=z + 4,
+    ))
+    return ApplicationPanelVisual(Size(rect.width, rect.height), DrawBatch(tuple(commands)))
+
+
+
 def resolve_command_action_panel_layout(
     command_rect: Rect,
     *,
@@ -1505,7 +1569,6 @@ def build_command_action_panel_visual(
             commands.append(command)
     return CommandActionPanelVisual(layout, DrawBatch(tuple(commands)))
 
-
 __all__ = [
     "ApplicationPanelVisual",
     "BubbleTextMetrics",
@@ -1523,6 +1586,7 @@ __all__ = [
     "command_hint_default_pick",
     "build_notice_panel_visual",
     "build_qr_panel_visual",
+    "build_page_turn_button_visual",
     "build_rect_action_button_visual",
     "COMMAND_ACTION_BUTTONS",
     "CommandActionPanelLayout",
@@ -1538,4 +1602,261 @@ __all__ = [
     "command_hint_side_font_size",
     "create_portable_command_hint_metrics",
     "create_portable_bubble_text_metrics",
+    "build_speaker_cross_glyph_visual",
+    "build_speaker_panel_visual",
+    "speaker_action_button_content_rect",
 ]
+
+def _panel_content_rect(width: float, height: float, inset: int) -> Rect:
+    return Rect(inset * 2, inset * 2, max(0.0, width - inset * 4), max(0.0, height - inset * 4))
+
+
+def glyph_center(content: Rect) -> tuple[float, float]:
+    """QRect 语义的几何中心：`(x + (w - 1) // 2, y + (h - 1) // 2)`。
+
+    迁移前的图标锚点来自 ``QRect.center()``，它不是 ``x + w / 2``：``QRect(4, 4, 32, 24)``
+    的中心是 ``(19, 15)`` 而不是 ``(20, 16)``。差一个像素时几何图标会整体偏移，
+    因此这里保留 Qt 的取值语义。
+    """
+    return content.x + (int(content.width) - 1) // 2, content.y + (int(content.height) - 1) // 2
+
+
+def _is_action_pressed(hovered: bool, pressed: bool) -> bool:
+    return bool(hovered) and bool(pressed)
+
+
+def _action_button_state(hovered: bool, pressed: bool) -> str:
+    if hovered:
+        return "pressed" if pressed else "hover"
+    return "pressed_flat" if pressed else "normal"
+
+
+def append_speaker_pause_glyph(
+    commands: list[object],
+    content: Rect,
+    *,
+    layer: int,
+    z: int,
+    alpha: float = 1.0,
+) -> None:
+    """两条竖线暂停图标（与 ``QPainter.drawRect`` 的 float 尺寸逐字一致）。"""
+    cx, cy = glyph_center(content)
+    size = min(content.width, content.height) * 0.4 * 0.85
+    bar_width = size * 0.3
+    bar_height = size * 1.4
+    gap = size * 0.4
+    for x in (cx - gap - bar_width, cx + gap):
+        commands.append(RectCommand(
+            Rect(x, cy - bar_height // 2, bar_width, bar_height),
+            fill=COLORS["black"], antialias=True, alpha=alpha, layer=layer, z=z,
+        ))
+
+
+def append_speaker_play_glyph(
+    commands: list[object],
+    content: Rect,
+    *,
+    layer: int,
+    z: int,
+    alpha: float = 1.0,
+) -> None:
+    """播放三角图标（缩小到 0.85，与迁移前的 ``QPolygonF`` 三顶点逐字一致）。"""
+    cx, cy = glyph_center(content)
+    size = min(content.width, content.height) * 0.4 * 0.85
+    commands.append(PathCommand(
+        tuple(build_polygon_path((
+            Point(cx - size * 0.3, cy - size * 0.6),
+            Point(cx - size * 0.3, cy + size * 0.6),
+            Point(cx + size * 0.5, cy),
+        ))),
+        fill=COLORS["black"], antialias=True, alpha=alpha, layer=layer, z=z,
+    ))
+
+
+def append_speaker_next_track_glyph(
+    commands: list[object],
+    content: Rect,
+    *,
+    layer: int,
+    z: int,
+    alpha: float = 1.0,
+) -> None:
+    """下一曲图标：播放三角 + 右侧竖线。"""
+    cx, cy = glyph_center(content)
+    size = min(content.width, content.height) * 0.4
+    commands.append(PathCommand(
+        tuple(build_polygon_path((
+            Point(cx - size * 0.4, cy - size * 0.5),
+            Point(cx - size * 0.4, cy + size * 0.5),
+            Point(cx + size * 0.2, cy),
+        ))),
+        fill=COLORS["black"], antialias=True, alpha=alpha, layer=layer, z=z,
+    ))
+    bar_width = size * 0.25
+    bar_height = size * 1.2
+    commands.append(RectCommand(
+        Rect(cx + size * 0.3, cy - bar_height // 2, bar_width, bar_height),
+        fill=COLORS["black"], antialias=True, alpha=alpha, layer=layer, z=z,
+    ))
+
+
+def build_speaker_action_button_visual(
+    width: float,
+    height: float,
+    label: str | None,
+    font: FontSpec | None,
+    *,
+    hovered: bool = False,
+    pressed: bool = False,
+    glyph: str | None = None,
+    layer: int = int(Layer.PET_UI),
+    z: int = 0,
+    alpha: float = 1.0,
+    origin: Point | None = None,
+) -> ApplicationPanelVisual:
+    """Build the shared speaker-menu action button (shell + centered label or glyph).
+
+    The shell is the speaker-menu recipe (black frame -> cyan mid -> pink background,
+    with the hover / pressed swaps); ``glyph`` selects one of the built-in geometric
+    icons (``pause`` / ``play`` / ``next_track``); otherwise ``label`` is centered with
+    ``font``. Everything is emitted as backend-neutral commands so a non-Qt host
+    renders identical pixels.
+
+    ``origin`` places the button inside the caller's own coordinate system. A caller
+    that paints several widgets onto one painter (the search dialog paints the input
+    panel and the button side by side) must pass it, otherwise the button lands on
+    top of its neighbour and looks like it disappeared. Defaults to the origin, which
+    is what single-widget hosts want.
+    """
+    width = max(1, int(round(float(width))))
+    height = max(1, int(round(float(height))))
+    inset = scale_px(2, min_abs=1)
+    state = _action_button_state(hovered, pressed)
+    rect = Rect(
+        0.0 if origin is None else float(origin.x),
+        0.0 if origin is None else float(origin.y),
+        width,
+        height,
+    )
+    commands, content = action_button_commands(
+        rect,
+        None,
+        state=state,
+        inset=inset,
+        layer=layer,
+        z=z,
+        alpha=alpha,
+    )
+    glyph_z = z + 4
+    if glyph == "pause":
+        append_speaker_pause_glyph(commands, content, layer=layer, z=glyph_z, alpha=alpha)
+    elif glyph == "play":
+        append_speaker_play_glyph(commands, content, layer=layer, z=glyph_z, alpha=alpha)
+    elif glyph == "next_track":
+        append_speaker_next_track_glyph(commands, content, layer=layer, z=glyph_z, alpha=alpha)
+    elif label is not None:
+        commands.append(TextCommand(
+            label,
+            font,
+            COLORS["black"],
+            content,
+            alignment=int(TextAlignment.HCENTER | TextAlignment.VCENTER),
+            alpha=alpha,
+            layer=layer,
+            z=glyph_z,
+        ))
+    return ApplicationPanelVisual(
+        Size(float(width), float(height)),
+        DrawBatch(tuple(commands)),
+        content_rect=content,
+    )
+
+def build_speaker_panel_visual(
+    width: float,
+    height: float,
+    *,
+    layer: int = int(Layer.PET_UI),
+    z: int = 0,
+    alpha: float = 1.0,
+    origin: Point | None = None,
+) -> ApplicationPanelVisual:
+    """Build the speaker-menu shared panel shell (black frame -> cyan mid -> pink).
+
+    The menu family (search dialog, playlist action buttons, workbench about button)
+    all paint the same three-layer shell. The recipe lives here so a non-Qt host
+    renders identical pixels instead of re-deriving it from the Qt code.
+
+    ``origin`` is the shell's top-left inside the caller's coordinate system; see
+    ``build_speaker_action_button_visual`` for why a multi-widget painter needs it.
+    """
+    inset = scale_px(2, min_abs=1)
+    rect = Rect(
+        0.0 if origin is None else float(origin.x),
+        0.0 if origin is None else float(origin.y),
+        max(1.0, float(width)),
+        max(1.0, float(height)),
+    )
+    commands, content = panel_shell_commands(rect, inset=inset, layer=layer, z=z, alpha=alpha)
+    return ApplicationPanelVisual(
+        Size(rect.width, rect.height),
+        DrawBatch(tuple(commands)),
+        content_rect=content,
+    )
+
+def speaker_action_button_content_rect(width: float, height: float, *, inset: int | None = None) -> Rect:
+    """Return the content rect of a speaker action button at ``width`` x ``height``.
+
+    The re-inset after the hover ring is what makes ``content`` depend on the
+    hover/pressed state; callers that only need the resting geometry (the queue
+    remove/play-now glyphs) use this helper so the two facts do not drift.
+    """
+    inset = panel_inset() if inset is None else max(1, int(inset))
+    return inset_rect(Rect(0, 0, float(width), float(height)), inset * 2)
+
+
+def build_speaker_cross_glyph_visual(
+    width: float,
+    height: float,
+    *,
+    layer: int = int(Layer.PET_UI),
+    z: int = 0,
+    alpha: float = 1.0,
+) -> ApplicationPanelVisual:
+    """Build the queue-remove "x" glyph (two round-capped diagonals).
+
+    The panel shell is *not* included: the menu family composes it separately so
+    both Qt and a future host share one geometry for the cross. The two strokes
+    are emitted as backend-neutral ``LineCommand``s with the round cap the
+    pre-migration ``QPainter`` code used.
+    """
+    inset = panel_inset()
+    content = speaker_action_button_content_rect(width, height, inset=inset)
+    icon = inset_rect(content, inset)
+    corner = Point(icon.x, icon.y)
+    opposite = Point(icon.x + icon.width, icon.y + icon.height)
+    return ApplicationPanelVisual(
+        Size(float(width), float(height)),
+        DrawBatch((
+            LineCommand(
+                corner,
+                opposite,
+                COLORS["black"],
+                width=float(inset),
+                cap=int(StrokeCap.ROUND),
+                alpha=alpha,
+                layer=layer,
+                z=z,
+            ),
+            LineCommand(
+                Point(icon.x + icon.width, icon.y),
+                Point(icon.x, icon.y + icon.height),
+                COLORS["black"],
+                width=float(inset),
+                cap=int(StrokeCap.ROUND),
+                alpha=alpha,
+                layer=layer,
+                z=z,
+            ),
+        )),
+        content_rect=content,
+    )

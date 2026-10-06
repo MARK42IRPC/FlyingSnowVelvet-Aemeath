@@ -25,11 +25,15 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from lib.core.render.visuals.application_visuals import (
+    ApplicationPanelVisual,
     BubbleVisualDescription,
     CommandHintVisualDescription,
     build_bubble_visual,
     build_command_hint_visual,
+    build_page_turn_button_visual,
     build_rect_action_button_visual,
+    build_speaker_action_button_visual,
+    build_speaker_panel_visual,
     build_tooltip_visual,
     resolve_bubble_geometry,
 )
@@ -61,7 +65,17 @@ __all__ = [
     "HOVER_NONE",
     "HOVER_SHOW",
     "AnchorPlacement",
+    "PAGE_TURN_NEXT",
+    "PAGE_TURN_PREVIOUS",
     "MediaProgressControl",
+    "PageTurnButtonControl",
+    "SPEAKER_GLYPH_NEXT_TRACK",
+    "SPEAKER_GLYPH_NONE",
+    "SPEAKER_GLYPH_PAUSE",
+    "SPEAKER_GLYPH_PLAY",
+    "SpeakerActionButtonSpec",
+    "SpeakerPanelSpec",
+    "SpeakerActionButtonControl",
     "MicSttControl",
     "RectActionButtonControl",
     "RectSliderControl",
@@ -1271,5 +1285,216 @@ class CommandHintControl:
         rect = visual.page_indicator_rect
         return rect.y <= y < rect.y + rect.height
 
+    @staticmethod
+    def click_particle_id(event: PointerEvent) -> str | None:
+        """左键 / 右键各自的点击粒子；其它按键不发射。"""
+        return BUTTON_PARTICLES.get(event.button)
+
     def scaled_opacity(self, target: float) -> float:
         return scaled_opacity(self._opacity_scale, target)
+
+
+#: ``PageTurnButtonControl.direction`` 的两个取值（上一页 / 下一页）。
+PAGE_TURN_PREVIOUS = -1
+PAGE_TURN_NEXT = 1
+
+
+class PageTurnButtonControl:
+    """翻页按钮（上一页 / 下一页）的后端中立状态与绘制描述。
+
+    两个按钮形状完全一致，差异只有"箭头朝哪边、点下去翻哪一页"，因此状态、悬停/
+    按下外观与绘制批次收在这里，产品控件只保留"点下去做什么"。真实窗口、透明度
+    动画与指针捕获由后端窗口宿主持有（Qt 见 ``control_host.py``）。
+    """
+
+    def __init__(
+        self,
+        *,
+        direction: int,
+        width: float,
+        height: float,
+        fade_duration_ms: int = 150,
+        paint_layer: int = 0,
+        opacity_scale=1.0,
+    ) -> None:
+        self.direction = PAGE_TURN_PREVIOUS if int(direction) < 0 else PAGE_TURN_NEXT
+        self.width = max(1.0, float(width))
+        self.height = max(1.0, float(height))
+        self.fade_duration_ms = int(fade_duration_ms)
+        self.paint_layer = int(paint_layer)
+        self._opacity_scale = opacity_scale
+
+        self.visible = False
+        self.hovered = False
+        self.pressed = False
+
+    # ── 绘制数据 ───────────────────────────────────────────────────
+    def logical_size(self) -> Size:
+        return Size(self.width, self.height)
+
+    def visual_rect(self) -> Rect:
+        return Rect(0.0, 0.0, self.width, self.height)
+
+    def state(self) -> str:
+        """共享外观状态名（``normal`` / ``hover`` / ``pressed`` / ``pressed_flat``）。
+
+        与迁移前的 Qt 绘制逐字一致：按住时指针已经离开按钮，退回"按下但不扩张"
+        的 ``pressed_flat``，而不是普通态。
+        """
+        if self.pressed:
+            return "pressed" if self.hovered else "pressed_flat"
+        return "hover" if self.hovered else "normal"
+
+    def build_visual(self) -> ApplicationPanelVisual:
+        return build_page_turn_button_visual(
+            self.width,
+            self.height,
+            direction=self.direction,
+            state=self.state(),
+            layer=self.paint_layer,
+        )
+
+    @staticmethod
+    def click_particle_id(event: PointerEvent) -> str | None:
+        """左键 / 右键各自的点击粒子；其它按键不发射。"""
+        return BUTTON_PARTICLES.get(event.button)
+
+    def scaled_opacity(self, target: float) -> float:
+        return scaled_opacity(self._opacity_scale, target)
+
+
+#: ``SpeakerActionButtonControl.glyph`` 的取值（几何图标按钮）；``None`` 表示画文字标签。
+SPEAKER_GLYPH_NONE = None
+SPEAKER_GLYPH_PAUSE = "pause"
+SPEAKER_GLYPH_PLAY = "play"
+SPEAKER_GLYPH_NEXT_TRACK = "next_track"
+
+
+class SpeakerActionButtonControl:
+    """音响菜单族动作按钮的后端中立状态（图标按钮与文字按钮共用）。
+
+    一族按钮形状一致：固定宽高、淡入淡出、悬停高亮、按下换色、点击发事件。差异只有
+    "画什么（几何图标 / 文字）、点下去做什么"，因此状态、外观名与绘制批次收在这里，
+    各产品控件只保留自己的点击语义与动态文案。真实窗口、透明度动画与指针翻译由后端
+    窗口宿主持有（Qt 见 ``control_host.py``）。
+    """
+
+    def __init__(
+        self,
+        *,
+        width: float,
+        height: float,
+        glyph: str | None = None,
+        text: str = "",
+        fade_duration_ms: int = 200,
+        paint_layer: int = 0,
+        opacity_scale=1.0,
+    ) -> None:
+        self.width = max(1.0, float(width))
+        self.height = max(1.0, float(height))
+        self.glyph = glyph
+        self.text = str(text or "")
+        self.fade_duration_ms = int(fade_duration_ms)
+        self.paint_layer = int(paint_layer)
+        self._opacity_scale = opacity_scale
+
+        self.visible = False
+        self.hovered = False
+        self.pressed = False
+        self.clickthrough = False
+
+    # ── 绘制数据 ───────────────────────────────────────────────────
+    def logical_size(self) -> Size:
+        return Size(self.width, self.height)
+
+    def visual_rect(self) -> Rect:
+        return Rect(0.0, 0.0, self.width, self.height)
+
+    def label(self) -> str | None:
+        """要画的文字；几何图标按钮返回 ``None``。"""
+        return None if self.glyph else self.text
+
+    def state(self) -> str:
+        """共享外观状态名（``normal`` / ``hover`` / ``pressed`` / ``pressed_flat``）。
+
+        与迁移前的 Qt 绘制逐字一致：按住时指针已经离开按钮，退回"按下但不扩张"的
+        ``pressed_flat``，而不是普通态。
+        """
+        if self.hovered:
+            return "pressed" if self.pressed else "hover"
+        return "pressed_flat" if self.pressed else "normal"
+
+    def build_visual(self, font):
+        """共享绘制批次；``font`` 是后端无关的 ``FontSpec``（图标按钮不需要）。"""
+        return build_speaker_action_button_visual(
+            self.width,
+            self.height,
+            self.label(),
+            font,
+            hovered=self.hovered,
+            pressed=self.pressed,
+            glyph=self.glyph,
+            layer=self.paint_layer,
+        )
+
+    # ── 透明度与指针 ───────────────────────────────────────────────
+    def scaled_opacity(self, target: float) -> float:
+        return scaled_opacity(self._opacity_scale, target)
+
+    @staticmethod
+    def click_particle_id(event: PointerEvent) -> str | None:
+        """左键 / 右键各自的点击粒子；其它按键不发射。"""
+        return BUTTON_PARTICLES.get(event.button)
+
+@dataclass(frozen=True, slots=True)
+class SpeakerPanelSpec:
+    """音响菜单族共享面板壳的后端中立绘制描述（只含绘制数据，不含 Qt 事实）。"""
+
+    width: float
+    height: float
+    layer: int = 0
+    z: int = 0
+    opacity: float = 1.0
+    origin: Point | None = None
+
+    def build_visual(self) -> ApplicationPanelVisual:
+        return build_speaker_panel_visual(
+            self.width,
+            self.height,
+            layer=self.layer,
+            z=self.z,
+            alpha=self.opacity,
+            origin=self.origin,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class SpeakerActionButtonSpec:
+    """音响菜单族动作按钮的后端中立绘制描述（底壳 + 图标/文字）。"""
+
+    width: float
+    height: float
+    label: str | None = None
+    font: object | None = None
+    glyph: str | None = SPEAKER_GLYPH_NONE
+    hovered: bool = False
+    pressed: bool = False
+    layer: int = 0
+    z: int = 0
+    opacity: float = 1.0
+    origin: Point | None = None
+
+    def build_visual(self) -> ApplicationPanelVisual:
+        return build_speaker_action_button_visual(
+            self.width,
+            self.height,
+            self.label,
+            self.font,
+            hovered=self.hovered,
+            pressed=self.pressed,
+            glyph=self.glyph,
+            layer=self.layer,
+            z=self.z,
+            alpha=self.opacity,
+            origin=self.origin,
+        )

@@ -14,7 +14,7 @@ from concurrent.futures import Future
 
 from PyQt5.QtWidgets import QWidget, QLineEdit, QGraphicsOpacityEffect
 from PyQt5.QtCore import Qt, QPoint, QPropertyAnimation, QEasingCurve, QObject, QRect, QEvent
-from PyQt5.QtGui import QColor, QPainter, QCursor
+from PyQt5.QtGui import QPainter, QCursor
 from PyQt5.QtCore import pyqtSignal
 
 from config.config import UI, SPEAKER_SEARCH_UI, CLOUD_MUSIC
@@ -35,6 +35,7 @@ from lib.script.ui.speaker_menu_style import (
     paint_speaker_menu_panel,
     paint_speaker_action_button,
 )
+from lib.script.ui import render_bridge
 from lib.script.ui.render_bridge import (
     resolve_placement,
     screen_rect_for_point,
@@ -52,8 +53,9 @@ _SEARCH_MODE_LABELS = {
 _MAX_SEARCH_RESULTS = int(CLOUD_MUSIC.get('search_result_limit', 128))
 
 
-def _hex(color: QColor) -> str:
-    return color.name()
+def _hex(value) -> str:
+    """核心 ``Color`` / 通道元组 → QSS 要的 ``#rrggbb`` 文本。"""
+    return render_bridge.create_painter_host().color_name(value)
 
 
 # ── 从配置文件读取尺寸参数 ───────────────────────────────────────────
@@ -499,7 +501,7 @@ class SpeakerSearchDialog(QWidget):
         # 按钮文字
         font = get_ui_font()
         font.setBold(True)
-        p.setPen(_C_ACTION_TEXT)
+        p.setPen(render_bridge.painter_color(_C_ACTION_TEXT))
         p.setFont(font)
         btn_label = '搜索中...' if self._searching else '搜索歌曲'
         p.drawText(

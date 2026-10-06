@@ -21,6 +21,7 @@ from PyQt5.QtGui import QPainter, QPen, QPolygonF, QCursor
 
 from config.config import UI
 from lib.core.render.visuals.media_panel_visuals import build_playlist_panel_visual
+from lib.script.ui import render_bridge
 from lib.script.ui.render_bridge import (
     create_draw_backend,
     digit_font as get_digit_font,
@@ -82,7 +83,14 @@ class _QueueRemoveButton(SpeakerActionButtonMixin, QWidget):
         self._pressed = False
         self._visible = False
         self._description = ''
-        self._init_speaker_action_button(_REMOVE_BTN_W, _REMOVE_BTN_H)
+        self.setWindowFlags(
+            Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
+        )
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setFixedSize(_REMOVE_BTN_W, _REMOVE_BTN_H)
+        self.setCursor(Qt.PointingHandCursor)
+        get_layer_manager().register(self, WindowLayer.PET_UI)
+        self._init_speaker_action_button_state()
         self.setFocusPolicy(Qt.NoFocus)
 
         self._opacity = QGraphicsOpacityEffect(self)
@@ -150,7 +158,7 @@ class _QueueRemoveButton(SpeakerActionButtonMixin, QWidget):
 
         p.setRenderHint(QPainter.Antialiasing, True)
         icon = content.adjusted(_LAYER, _LAYER, -_LAYER, -_LAYER)
-        pen = QPen(_C_ACTION_TEXT)
+        pen = QPen(render_bridge.painter_color(_C_ACTION_TEXT))
         pen.setWidth(_LAYER)
         pen.setCapStyle(Qt.RoundCap)
         p.setPen(pen)
@@ -168,7 +176,7 @@ class _QueuePlayNowButton(_QueueRemoveButton):
 
         p.setRenderHint(QPainter.Antialiasing, True)
         p.setPen(Qt.NoPen)
-        p.setBrush(_C_ACTION_TEXT)
+        p.setBrush(render_bridge.painter_color(_C_ACTION_TEXT))
         cx = content.center().x()
         cy = content.center().y()
         half_w = max(3, content.width() // 4)

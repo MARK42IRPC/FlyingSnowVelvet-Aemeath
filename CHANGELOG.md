@@ -51,6 +51,57 @@
   （不进任务栏/不抢焦点）并提供 `restore_soon()` 自愈；`cloudmusic_login_dialog.py`
   改用共享的窗口标志、自愈与 `set_clickthrough()`，不再 import `PyQt5`，
   `frozen_ui_qt_importers` 52 → 51。
+- 翻页按钮（上一页 / 下一页）去 Qt：`page_turn_buttons.py` 的 `_PageTurnButton` 改为
+  「描述 + 宿主装配」，共享绘制新增 `application_visuals.build_page_turn_button_visual()`、
+  共享状态新增 `visuals/controls.py` 的 `PageTurnButtonControl`；`QtControlHost` 新增
+  `accepts_focus=False`，附属控件不再抢键盘焦点。删除 `PyQt5` 依赖，
+  `frozen_ui_qt_importers` 51 → 50。
+- 音响菜单控制按钮族去 Qt：`speaker_control_buttons.py`（暂停/播放、下一曲、登录音乐、
+  平台模式、播放模式、搜索优先级、播放列表、一键历史/清空/本地/喜欢、音量加减共 12 个按钮
+  与组管理器）改为「描述 + 宿主装配」。共享绘制新增
+  `application_visuals.build_speaker_action_button_visual()`（面板底壳复用
+  `panel_visuals.action_button_commands()`；几何图标与文字居中），共享状态新增
+  `visuals/controls.py` 的 `SpeakerActionButtonControl`；`render_bridge` 新增
+  `local_anchor_point()` / `core_point()` 两个后端中立落位助手。删除 `PyQt5` 依赖，
+  `frozen_ui_qt_importers` 50 → 49。新增 `SpeakerControlButtonBehaviorTests` 与
+  `SpeakerActionButtonVisualTests`（含逐像素核对几何图标中心取自 Qt `QRect.center()` 的
+  `x + (w - 1) // 2`）。同时修掉翻页按钮族第二十七轮遗留的两处偏差：共享三角形的
+  图标中心曾按 `x + w / 2` 取值（差一个像素），且上一页/下一页箭头方向与迁移前 Qt
+  绘制相反。
+- 音响菜单族样式去 Qt：`speaker_menu_style.py` 的 `_C_*` 常量从 `QColor` 改成核心
+  `Color`（共享色板唯一事实源），面板壳与动作按钮的配方下沉到
+  `application_visuals.build_speaker_panel_visual()` /
+  `build_speaker_action_button_visual()`，新增描述层的 `SpeakerPanelSpec` /
+  `SpeakerActionButtonSpec`。控件是 `QWidget` 子类、`paintEvent` 必须自己起
+  `QPainter`，因此新增档位 D 宿主
+  `backends/qt/widgets/control_painter_host.py`（`QtPainterHost`）与
+  `render_bridge.create_painter_host()` / `painter_color()`：控件只交一份批次、
+  由注入的绘制实现落像素。删除 `PyQt5` 依赖，`frozen_ui_qt_importers` 49 → 48；
+  `SpeakerActionButtonMixin` 不再设置窗口标志/尺寸/光标/图层（那些由使用它的
+  `QWidget` 自己调）。新增 `SpeakerMenuStyleFacadeTests`：30 组面板/按钮状态与
+  迁移前 Qt 绘制**逐字节相等**，队列删除/立即播放按钮与工作台「关于」按钮三只真实
+  控件改前/改后像素也逐字节相等。本轮同时真实修掉 `painter_color` 把 `#rrggbb`
+  主题令牌当通道元组拆开的回归（工作台「关于」按钮曾在 `int('#', 10)` 上炸掉），
+  并钉死该边界对核心 `Color` / 通道元组 / 十六进制文本三种输入的取值。
+- 修复进度条迁移遗留的运行期崩溃：`progress_panel` 从 `QWidget` 改成"描述 + 宿主"
+  后只保留了 `width/height/isVisible` 三个转发，同族的 `playlist_panel` 仍在调
+  `progress_panel.x()` / `.y()`（迁移前那是 `QWidget.x()`），于是
+  `show_for() -> _show_progress_panel() -> _update_progress_panel_position() ->
+  _update_control_buttons_position() -> progress_panel.x()` 抛 `AttributeError`。
+  异常发生在 `_set_control_buttons_visible(True)` **之前**，整族控制按钮（含搜索
+  按钮）跟着一起不出现，症状看起来像"搜索按钮消失了"。`ProgressPanel` 补回
+  `x()` / `y()` 转发，与 `page_turn_buttons` / `speaker_control_buttons` 的对外
+  视图面一致。新增 `MigratedControlHostViewTests` 三条断言：视图方法齐全、
+  `_update_control_buttons_position()` 整条链在真实控件上跑通并真的摆了九个按钮、
+  以及同族模块不得对已迁出 `QWidget` 的控件调用未转发的几何方法（静态回归面）。
+- 修复音响搜索框「搜索歌曲」按钮落位错误：`speaker_menu_style` 的门面在第三轮收敛时
+  把 `QRect` 交给描述层，却只传了宽高、丢掉了原点（构建器硬编码 `Rect(0, 0, w, h)`）。
+  搜索框在同一个 painter 上并排画输入区（`x = 0`）与按钮（`x = _INPUT_W`），于是按钮
+  被画到 `0.._BTN_W`、整块压在输入区上——看起来就是"搜索按钮消失了"。`SpeakerPanelSpec` /
+  `SpeakerActionButtonSpec` 与 `build_speaker_panel_visual` / `build_speaker_action_button_visual`
+  新增可选 `origin`（默认原点，单控件宿主调用面不变），门面把真实原点传下去。新增
+  `SpeakerMenuStyleFacadeTests` 的非零原点逐字节对照（含面板壳，修前必红）与
+  `test_search_button_paints_to_the_right_of_the_input_box` 整窗像素断言（修前必红）。
 ### Changed
 - 自动更新包覆盖提速：覆盖阶段不再对每个文件读两遍内容，只比同名文件的大小（字节正确性
   已由资源包的 SHA-256 在下载时兜住），拷贝并发发起。真实 733 MiB / 17,195 文件的资源包

@@ -4,7 +4,7 @@
 
 本文档定义 `lib/core/render/` 的目标结构与依赖边界。它不是阶段计划，而是结构改建完成后必须成立的规则。
 
-**状态：第 6 节迁移顺序 1、2（目录切分）、3 已执行；图层能力已收敛到 `lib/core/render/layers/`（第 16 节）；后端中立协议与统一数据类型已落地（第 11 节），控件层“描述 + 后端渲染”已滚动迁移气泡框（第 12 节）、说明书、语音指示器与播放进度条（第 13 节）、音响音量/频段双滑条、搜索结果框与命令提示框（第 18 节）、右键矩形动作按钮一族八个按钮（第 19 节）、确认/提示框（第 20 节，首个模态宿主）；浮窗外壳（样式/主题判定/拖拽策略/窗口按钮）已从 `lib/script/ui` 下沉到渲染层（第 21 节）；办公线性图标的 SVG 规格也已抽成后端中立事实源（第 22 节）；点击粒子辅助的按钮翻译改经 `render_bridge`、`_particle_helper.py` 出列（第 23 节）；论坛样式的底纹混色改为纯十六进制实现、`forum_style.py` 出列（第 24 节）；二维码登录浮窗的自动收起/穿透/窗口标志/自愈能力下沉到基类，`yuanbao_login_dialog.py` 与 `cloudmusic_login_dialog.py` 出列（第 25、26 节）；排布解算已收敛到 `visuals/` 并由 `PlacementSpec` 统一解算（第 14 节，档位 0/1），右键按钮族的逐控件锚点事件链已收敛为声明式 `AnchorGraph` 且 Qt 改为消费共享布局（第 15 节，档位 2/3）；`WindowHost` 的被动宿主激活语义已与 Qt/DX 焦点策略对齐（第 17 节）。** 目录与引用规则以本文档为准；改建前的事实源是 [Qt 边界契约](Qt边界契约.md) 与 [跨后端视觉表现契约](视觉表现契约.md)，那两份文档继续负责“哪些内容算视觉逻辑”和“什么算无 Qt”。第一章描述的是最终目标；产品控件面（`lib/script/ui` 直接 `import PyQt5`）仍需逐个控件迁移，当前待迁清单以 `tests/test_qt_dependency_boundaries.py` 的 `frozen_ui_qt_importers` 为准，滚动顺序见第 13 节末尾。
+**状态：第 6 节迁移顺序 1、2（目录切分）、3 已执行；图层能力已收敛到 `lib/core/render/layers/`（第 16 节）；后端中立协议与统一数据类型已落地（第 11 节），控件层“描述 + 后端渲染”已滚动迁移气泡框（第 12 节）、说明书、语音指示器与播放进度条（第 13 节）、音响音量/频段双滑条、搜索结果框与命令提示框（第 18 节）、右键矩形动作按钮一族八个按钮（第 19 节）、确认/提示框（第 20 节，首个模态宿主）；浮窗外壳（样式/主题判定/拖拽策略/窗口按钮）已从 `lib/script/ui` 下沉到渲染层（第 21 节）；办公线性图标的 SVG 规格也已抽成后端中立事实源（第 22 节）；点击粒子辅助的按钮翻译改经 `render_bridge`、`_particle_helper.py` 出列（第 23 节）；论坛样式的底纹混色改为纯十六进制实现、`forum_style.py` 出列（第 24 节）；二维码登录浮窗的自动收起/穿透/窗口标志/自愈能力下沉到基类，`yuanbao_login_dialog.py` 与 `cloudmusic_login_dialog.py` 出列（第 25、26 节）；排布解算已收敛到 `visuals/` 并由 `PlacementSpec` 统一解算（第 14 节，档位 0/1），右键按钮族的逐控件锚点事件链已收敛为声明式 `AnchorGraph` 且 Qt 改为消费共享布局（第 15 节，档位 2/3）；`WindowHost` 的被动宿主激活语义已与 Qt/DX 焦点策略对齐（第 17 节）。** 目录与引用规则以本文档为准；改建前的事实源是 [Qt 边界契约](Qt边界契约.md) 与 [跨后端视觉表现契约](视觉表现契约.md)，那两份文档继续负责“哪些内容算视觉逻辑”和“什么算无 Qt”。第一章描述的是最终目标；产品控件面（`lib/script/ui` 直接 `import PyQt5`）仍需逐个控件迁移，当前待迁清单以 `tests/test_qt_dependency_boundaries.py` 的 `frozen_ui_qt_importers` 为准，滚动顺序见第 13 节末尾；翻页按钮族已于第二十七轮迁出（第 27 节）；音响菜单控制按钮族已于第二十八轮迁出（第 28 节）；音响菜单族共享样式已于第二十九轮出列（第 29 节，档位 D 新增 `QtPainterHost` 绘制宿主）。
 
 本文只新增目录与引用规则，不改变任何视觉语义、数值来源或渲染结果。改建过程中出现分歧时，以 [视觉表现契约](视觉表现契约.md) 和当前 Qt 基准为事实源。
 
@@ -97,6 +97,11 @@ Vulkan 在本文档生效时只是 `registry.py` 里的一条未启用描述符�
 - 控件窗口宿主**不得**静态引用档位 A（`drawing/`）：`DrawBackend` 与 `PresentationHost`
   必须由 `render_bridge` 注入。档位 D 是“控件工具包事实”的落点，档位 A 是“像素执行”的落点，
   混在一个文件会让档位 A 的引用清单再次失守；
+- 同一约束适用于“在调用方自己的 `QPainter` 上执行批次”的宿主（`control_painter_host.py`
+  的 `QtPainterHost`）：产品控件本身就是 `QWidget`，`paintEvent` 起 `QPainter` 是工具包事实，
+  不属于档位 A 的“又一个绘制实现”。判定看**它怎么活下来**：持有 `QWidget.rect()` / `QPainter`、
+  且绘制实现由 `render_bridge` 注入的是档位 D；自己构造 `QtDrawBackend()`、自己做窗口枚举的
+  才是档位 A；
 - 不得被 `lib/script` 下 `ui/` 以外的模块引用，也不得反向引用 `lib/script`。
 
 一句话概括：**绘制实现不得共享，能力经协议共享，产物控件只被产品层继承。**
@@ -1273,3 +1278,212 @@ lib/core/render/layers/
 - `frozen_ui_qt_importers`：53 → **51**（本轮移出 `cloudmusic_login_dialog.py`；累计 73 → 51）。
 - 第 3 项其余 `exec_()` 对话框与第 4 项（`world_objects/*`、`game_runtime`）仍未动。
 
+## 27. 第二十七轮执行记录：翻页按钮去 Qt
+
+滚动清单第 2 项的最后一个纯浮窗控件：`lib/script/ui/page_turn_buttons.py` 的
+`_PageTurnButton`（上一页 / 下一页）。它原来同时是 `QWidget` 与 `SpeakerActionButtonMixin`，
+只用 Qt 做四件事：面板底壳、居中三角形图标、透明度动画、`rect().contains()` 的点内判定。
+
+拆法：
+
+- 共享绘制新增 `application_visuals.build_page_turn_button_visual()`：面板底壳复用
+  `panel_visuals.action_button_commands()`（黑框 → 青中框 → 粉底 + 悬停/按下换色），
+  居中三角形用核心 `PathCommand` + `build_polygon_path()` 生成。两个后端拿到同一份批次，
+  箭头不再由宿主用 `QPainter.drawPolygon` 各画一遍。
+- 描述层新增 `PageTurnButtonControl`（`visuals/controls.py`）：箭头方向、悬停/按下状态与
+  `state()`（`normal` / `hover` / `pressed` / `pressed_flat`，与迁移前的
+  `hovered`/`pressed` 组合逐字一致）、绘制批次与点击粒子名。底色取自
+  `visuals/palette.py` 的 `COLORS["black"]`，与迁移前 `qt_color('black')` 同源。
+- 产品控件改为"描述 + 宿主装配"：`create_control_host()` 建窗口，落位仍走
+  `resolve_placement()` / `widget_global_rect()`。对外接口（`show_btn` / `hide_btn` /
+  `move` / `width` / `height` / `x` / `y` / `isVisible` / `close`）不变。
+- 宿主新增一项通用能力 `accepts_focus=False`（`QtControlHost`）：翻页按钮一类的附属控件
+  不该抢键盘焦点，迁移前各写一遍的 `setFocusPolicy(Qt.NoFocus)` 收到宿主参数里。
+
+**点击判定的等价性（唯一需要宿主新语义的地方）**
+
+迁移前的 `mouseReleaseEvent` 用 `self.rect().contains(event.pos())` 决定"这次松手算不算提交"。
+控件不再是 `QWidget` 后没有 `rect()`，而**不能用宿主几何代替**：宿主窗口就是按钮本体，
+按几何夹取会让"按下后拖出按钮再松手"永远提交。现在由描述层旁的控件保存最近一次指针是否
+仍在按钮矩形内（`QtControlHost` 只在按下时投递 `mouseMoveEvent`，与 Qt 原语义一致），
+`tests/test_control_layer_descriptions.py::PageTurnButtonBehaviorTests` 覆盖
+"点内提交 / 拖出取消 / 拖回再提交"三条路径。
+
+**消费者与收编**
+
+- `pet_window_ui` 的 `layer.adopt(...)` 与 `speaker_search_dialog._iter_family_widgets()`
+  原先直接收编按钮本体（`QWidget`）并用 `widget_global_rect()` 量它；现在改为收编托管宿主
+  `_prev_btn._host`，两个后者的调用面不变。
+- `playlist_panel` / `command_hint_box` / `speaker_search_result_box` 的
+  `make_page_buttons` / `update_page_buttons_position` / `hide_btn()` 调用面全部保持。
+
+**本轮没动的部分**
+
+- `frozen_ui_qt_importers`：51 → **50**（本轮移出 `page_turn_buttons.py`；累计 73 → 50）。
+- 第 3 项其余 `exec_()` 对话框与第 4 项（`world_objects/*`、`game_runtime`）仍未动。
+
+## 28. 第二十八轮执行记录：音响菜单控制按钮族去 Qt
+
+滚动清单里的最大一族：`lib/script/ui/speaker_control_buttons.py`（暂停/播放、下一曲、
+登录音乐、平台模式、播放模式、搜索优先级、播放列表、一键历史 / 清空 / 本地 / 喜欢、
+音量加 / 减共 12 个按钮，加一个负责落位的 `SpeakerControlButtons` 管理器）。它们是
+典型的"状态机 + `QWidget`"控件：形状、悬停/按下、几何图标、文字、淡入淡出、点击判定
+与窗口标志混在一个类里。第 23 节曾把它的共享样式（`speaker_menu_style.py`）记为
+**受阻**——需要先有"执行绘制批次 + 主题色"的中立宿主，该宿主在第二十七轮落成
+（`QtControlHost` + `render_bridge.create_control_host()`），本轮据此把它迁出。
+
+拆法：
+
+- 共享绘制新增 `application_visuals.build_speaker_action_button_visual()`：面板底壳直接
+  复用 `panel_visuals.action_button_commands()`（黑框 → 青中框 → 粉底 + 悬停/按下换色，
+  与迁移前 `speaker_menu_style.paint_speaker_action_button` 同一份配方），中位内容按
+  `glyph` 画几何图标（`pause` / `play` / `next_track`：`RectCommand` 竖条 +
+  `PathCommand` + `build_polygon_path()` 三角）或居中文字；三枚图标合成器
+  `append_speaker_pause_glyph()` / `append_speaker_play_glyph()` /
+  `append_speaker_next_track_glyph()` 独立成器，供后续需要同一枚图标的控件（如播放列表
+  把文字标签换成图标）直接复用。
+- 描述层新增 `SpeakerActionButtonControl`（`visuals/controls.py`）：图标名、文字、悬停 /
+  按下状态与 `state()`（`normal` / `hover` / `pressed` / `pressed_flat`，与迁移前的
+  `hovered`/`pressed` 组合逐字一致）、绘制批次与点击粒子名。文字按钮与图标按钮共用同一个
+  描述，差异只有 `glyph` 与 `label()`。
+- 产品控件改为"描述 + 宿主装配"：`create_control_host()` 建窗口，落位仍走
+  `resolve_placement()` / `screen_rect_for_point()`。动态文案（登录态、平台模式名、
+  播放模式、搜索优先级）改为每帧从子类 `label()` 读出，不再由子类各写一份 `_draw_icon`。
+- 锚点回答不再经过 Qt 控件：播放/暂停按钮响应 `UI_CREATE` 时用它自己的核心几何 + 新的
+  中立助手 `render_bridge.local_anchor_point(anchor_id, width, height)` 直接产出
+  `QPoint` 语义的整数全局锚点（`render_bridge.core_point()` 负责把载荷归一化成核心
+  `Point`）。这一改动同时让 `speaker_control_buttons.py` 不再需要
+  `backends/qt/widgets/anchors.py` 的 `publish_widget_anchor_response()`。
+
+**顺手修掉的两处同源偏差**
+
+第二十七轮的共享翻页三角形是在"抄一遍"里落地的，逐像素对照迁移前的 Qt 绘制后暴露
+两处偏差，本轮一并修正（现由测试钉死）：
+
+- 图标中心：迁移前用 `QRect.center()`，它是 `x + (w - 1) // 2`，不是 `x + w / 2`。
+  `QRect(4, 4, 32, 24)` 的中心是 `(19, 15)` 而非 `(20, 16)`；差一个像素时整枚几何图标
+  会偏移。共享事实源新增 `application_visuals.glyph_center()`，暂停 / 播放 / 下一曲 /
+  翻页四枚图标全部改读它。
+- 箭头方向：上一页 `_direction == -1` 在 Qt 里画的是**朝左**的三角，共享实现曾按相反的
+  符号展开，上一页/下一页的箭头左右互换了。本轮改正，并由
+  `tests/test_speaker_playlist_visuals.py::SpeakerActionButtonVisualTests` 断言
+  "上一页箭头尖落在图标中心左侧、下一页落在右侧、两侧对称"。
+
+几何图标整段绘制在迁移前都跑在 `QPainter.Antialiasing(True)` 下，因此暂停双竖线与下一曲
+竖条的共享命令也标 `antialias=True`（文字与面板底壳仍是 `False`）——这一条同样由逐像素
+对照确定。
+
+**点击判定的等价性**
+
+与第二十七轮同源：迁移前 `mouseReleaseEvent` 用 `self.rect().contains(event.pos())` 决定
+"这次松手算不算提交"，迁出 `QWidget` 后由控件记录最近一次指针是否仍在按钮矩形内
+（`QtControlHost` 只在按下时投递 `mouseMoveEvent`，与原语义一致）。
+`tests/test_control_layer_descriptions.py::SpeakerControlButtonBehaviorTests` 覆盖
+"点内提交 / 拖出取消 / 悬停与按下换态 / 图标换形 / 动态标签逐帧读取 / 不抢焦点"。
+
+**验证（2026-10-06）**
+
+- 逐像素对照：13 组音响按钮（图标 × 悬停/按下 × 文字）与 8 组翻页按钮（两向 × 四态）
+  的宿主渲染结果与迁移前的 `QPainter` 代码**逐字节相等**。
+- `frozen_ui_qt_importers`：50 → **49**（本轮移出 `speaker_control_buttons.py`；
+  累计 73 → 49）。
+
+**本轮没动的部分**
+
+- `speaker_menu_style.py` 仍是 Qt 混入（`workbench_components.py` / `speaker_search_dialog.py` /
+  `playlist_panel.py` 继续用它画底壳），但它的绘制配方已由共享
+  `action_button_commands()` 提供——把 `paint_*` 助手改成 shim 属下一轮。
+- 第 3 项其余 `exec_()` 对话框与第 4 项（`world_objects/*`、`game_runtime`）仍未动。
+
+
+## 29. 第二十九轮执行记录：音响菜单族样式去 Qt
+
+第二十八轮留下的尾巴：`lib/script/ui/speaker_menu_style.py`。它当时是唯一还 import
+`PyQt5` 的"共享样式"模块，被 `workbench_components.py`（工作台「关于」按钮）、
+`speaker_search_dialog.py`（搜索框 + 搜索按钮）与 `playlist_panel.py`（队列删除 /
+立即播放按钮）三处共用。它同时是 Qt 混入与一个**自建执行器**——模块顶部
+`_DRAW_BACKEND = create_draw_backend()`，这是第二十八轮已经消掉、这里是最后一处
+"控件自己造绘制实现"的残留。
+
+拆法与第 27 / 28 轮同源，但多了一个此前没有的缺口：
+
+- 颜色：`_C_*` 从 `QColor` 改成核心 `Color`（`UI_THEME` / `COLORS` / `Color(*entry_bg)`）。
+  QSS 要的 `#rrggbb` 文本由新增的 `render_bridge.qt_color_name()` 给出，
+  `speaker_search_dialog` 的 `_hex()` 改为经 `render_bridge.create_painter_host().color_name()`。
+  共享色板仍是唯一事实源，`_C_*` 只是它的命名视图。
+- 绘制：面板壳与动作按钮的配方下沉到 `application_visuals.build_speaker_panel_visual()`
+  （直接复用 `panel_visuals.panel_shell_commands()`）与既有的
+  `build_speaker_action_button_visual()`；描述层新增 `SpeakerPanelSpec` /
+  `SpeakerActionButtonSpec` 两个纯数据描述（`width/height/hovered/pressed/layer/opacity`）。
+  两者的状态名与 `SpeakerActionButtonControl.state()` 逐字一致，避免"门面一套状态、描述层
+  另一套"的双份事实。
+- **缺口**：控件本身是 `QWidget` 子类，它的 `paintEvent` 必须自己起 `QPainter`。
+  第二十八轮之前的控件都改成了"非 QWidget + 窗口宿主"，没有这个问题；这一族不行。
+  解决方式是新增档位 D 宿主 `backends/qt/widgets/control_painter_host.py` 的
+  `QtPainterHost`：在**调用方给的** `QPainter` 上执行批次，并提供
+  `color()` / `color_name()` / `rect()` / `qrect()` / `font()` 五个边界转换。
+  绘制实现与字体从外面注入（`render_bridge.create_painter_host()`），因此档位 D
+  没有静态引用档位 A。`render_bridge` 同时补 `painter_color()`，
+  供控件在 `paintEvent` 里给 `QPen` / `setBrush` 取 Qt 颜色值。
+
+`ApplicationPanelVisual` 的第三个字段 `action_rect` 改名为 `content_rect`
+（"内容区"才是它的含义；`action_rect` 只被 `test_qr_panel_visual` 引用），并保留同名
+只读属性作为兼容别名，二维码面板的调用面不变。
+
+**顺手修掉的回归（本轮真实踩到）**
+
+`painter_color()` 最初只认核心 `Color` 与通道元组。工作台主题令牌
+（`get_workbench_colors().text`）给的是 `#rrggbb` **文本**，于是它的第一个字符 `'#'`
+被当成通道值送去 `int()`，工作台「关于」按钮在绘制时抛 `ValueError`。全量测试因此
+红了一次。现在 `QtPainterHost.color()` 按输入形态分派：核心 `Color` / 通道元组 /
+`#rgb|#rrggbb|#rrggbbaa|#aarrggbb` 文本 / `QColor`，非法文本显式 `ValueError`，
+并由 `test_painter_host_colour_boundary_accepts_tokens_hex_and_colours` 钉死四种输入。
+
+**验证（2026-10-06）**
+
+- 逐字节对照：6 组面板尺寸 × 1 态 + 6 组尺寸 × 4 态按钮，共 **30 组**门面渲染结果与
+  迁移前（`HEAD` 版本）的 `QPainter` 代码**逐字节相等**，内容区也逐项相等；
+  另加 **20 组（含 `x`/`y` 非零的 4 组）** 原点对照，同样逐字节相等（这组才是拦住
+  "丢原点"的那条，见下）。
+- 真实控件改前 / 改后像素对照：队列删除按钮、队列立即播放按钮、工作台「关于」按钮
+  三只控件在 `QWidget.render()` 下的 ARGB32 字节完全一致（1600 / 1600 / 9520 字节，
+  差异 0 字节）。
+- `frozen_ui_qt_importers`：49 → **48**（本轮移出 `speaker_menu_style.py`；累计 73 → 48）。
+  全量 `unittest` 2171 通过 / 10 跳过；`tests/dx` 122 通过 / 7 跳过；ruff + compileall 干净。
+
+**同轮修掉的进度条视图缺口**
+
+跑真实交互时暴露：`progress_panel` 迁出 `QWidget` 时只转发了 `width/height/isVisible`，
+而同族的 `playlist_panel` 仍在调 `progress_panel.x()` / `.y()`（迁移前那是 `QWidget.x()`）。
+崩溃点在 `_update_control_buttons_position()`，异常发生在
+`_set_control_buttons_visible(True)` **之前**，所以整族控制按钮（含搜索按钮）一起没出现——
+症状看着像"搜索按钮消失"，根因在进度条的对外视图面。
+
+`ProgressPanel` 补回 `x()` / `y()` 转发，与 `page_turn_buttons` / `speaker_control_buttons`
+的对外视图面统一；`MigratedControlHostViewTests` 三条断言钉死：视图方法齐全
+（`width/height/x/y/isVisible`）、`_update_control_buttons_position()` 整条链在真实控件上
+跑通并真的摆了九个控制按钮、同族模块不得对已迁出 `QWidget` 的控件调用未转发的几何方法。
+这是一类**只在运行期、只在特定调用链上**才出现的缺口——构造期、导入期与控件自身的测试
+都看不到它。
+
+**同轮修掉的按钮落位缺口（比上一条更隐蔽）**
+
+进度条崩溃修完、按钮族"出现了"，但「搜索歌曲」按钮仍然不在它该在的位置：本轮把门面
+`paint_speaker_action_button()` / `paint_speaker_menu_panel()` 从"直接把 `QRect` 交给
+`panel_visuals` 的共享配方"改成"只把宽高交给描述层"，而 `SpeakerActionButtonSpec` /
+`SpeakerPanelSpec` 与两个 `build_*` 构建器都硬编码 `Rect(0, 0, w, h)`——**原点在换手时丢了**。
+搜索框的 `paintEvent` 在同一个 painter 上并排画输入区（`x = 0`）与按钮（`x = _INPUT_W`），
+按钮因此被画到 `0.._BTN_W`、"整块压在输入区上"，看起来就是搜索按钮消失。
+
+之所以没被拦住：此前的逐字节对照全部用 `QRect(0, 0, w, h)`，原点恒为零时"丢原点"和
+"保留原点"是同一份像素。修法是给 `SpeakerPanelSpec` / `SpeakerActionButtonSpec` 与两个
+构建器加可选 `origin`（默认原点，单控件宿主的调用面不变），门面把真实原点传下去；并补
+两条**修前必红**的断言：非零原点的面板/按钮逐字节对照（`SpeakerMenuStyleFacadeTests`），
+以及整个搜索框抓到 `QImage` 后按钮区必须落在 `x = _INPUT_W` 右侧、输入区不得被覆盖
+（`test_search_button_paints_to_the_right_of_the_input_box`）。
+
+**本轮没动的部分**
+
+- `speaker_search_dialog.py` / `playlist_panel.py` / `workbench_components.py` 仍是
+  `QWidget` 页面或控件，本轮只改它们的取色与画法，未动窗口生命周期与交互。
+- 第 3 项其余 `exec_()` 对话框与第 4 项（`world_objects/*`、`game_runtime`）仍未动。

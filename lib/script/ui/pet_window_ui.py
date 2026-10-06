@@ -63,8 +63,8 @@ def create_pet_window_ui(owner, on_close):
     # 右键 UI 合并为一层：命令框与全部附属按钮共用同一个顶层窗口，
     # 拖动桌宠时每个帧只移动一次原生窗口，也不再各自重复裁剪/重绘。
     layer = RightClickUiLayer()
-    # 八个矩形动作按钮已迁为“描述 + 后端渲染”（不再是 QWidget），它们各自的顶层宿主
-    # 才是被 adopt 的窗口；命令框与提示框翻页按钮仍是 QWidget，一并收进同一层。
+    # 八个矩形动作按钮与提示框翻页按钮都已迁为“描述 + 后端渲染”（不再是 QWidget），
+    # 它们各自的顶层宿主才是被 adopt 的窗口；命令框仍是 QWidget，一并收进同一层。
     layer.adopt(
         cmd,
         close_btn._runtime.host,
@@ -75,8 +75,8 @@ def create_pet_window_ui(owner, on_close):
         chat_mode_btn._runtime.host,
         interaction_mode_btn._runtime.host,
         more_functions_btn._runtime.host,
-        getattr(hint_box, "_prev_btn", None),
-        getattr(hint_box, "_next_btn", None),
+        getattr(hint_box, "_prev_btn", None)._host,
+        getattr(hint_box, "_next_btn", None)._host,
     )
 
     # 命令框附属按钮族的声明式锚点图（档位 2）：登记节点后由宿主一帧一次解算整族落位，

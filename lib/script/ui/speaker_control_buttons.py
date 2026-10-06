@@ -1,23 +1,28 @@
-"""音响控制按钮类 - 暂停/播放、下一曲"""
-from PyQt5.QtWidgets import QWidget, QGraphicsOpacityEffect
-from PyQt5.QtCore import Qt, QPropertyAnimation, QEasingCurve, QPoint, QPointF, QRectF
-from PyQt5.QtGui import QPainter, QPolygonF
+"""音响控制按钮族 - 暂停/播放、下一曲、登录、平台模式、搜索优先级、播放列表等。
+
+本模块不再继承 ``QWidget``：按钮形状、悬停/按下状态、几何图标与文字绘制都在描述层
+（``lib/core/render/visuals/controls.py`` 的 ``SpeakerActionButtonControl``，绘制事实源是
+``application_visuals.build_speaker_action_button_visual``），真实窗口、透明度动画与指针
+翻译由后端窗口宿主持有。族内六个按钮的落位仍走 ``visuals/layout.py`` 的共享解算。
+
+对外接口保持迁移前的形状（``fade_in`` / ``fade_out`` / ``move`` / ``width`` / ``height`` /
+``x`` / ``y`` / ``isVisible`` / ``close`` / ``cleanup``），族内跟随者继续用
+``widget_global_rect()`` 与 ``isVisible()`` 测量它们。
+"""
+
+from __future__ import annotations
 
 from config.config import SPEAKER_SEARCH_UI
 from lib.core.render.visuals.speaker_band_visuals import BAND_SLIDER_GAP
 from config.scale import scale_px
 from config.tooltip_config import TOOLTIPS
 from lib.core.event.center import get_event_center, EventType, Event
+from lib.core.render.layers import Layer
+from lib.core.render.visuals import controls
+from lib.core.render.visuals.types import FontSpec, Point, Rect, coerce_point
+from lib.script.ui._particle_helper import publish_click_particle_at
 from lib.script.music import get_music_service
-from lib.core.anchor_utils import (
-    animate_opacity,
-)
-from lib.script.ui.render_bridge import qpoint_from_point, resolve_placement, screen_rect_for_point
-from lib.core.render.visuals.types import Rect
-from lib.script.ui.speaker_menu_style import (
-    _C_ACTION_TEXT,
-    SpeakerActionButtonMixin,
-)
+from lib.script.ui import render_bridge
 from lib.script.ui.speaker_band_slider import (
     DEFAULT_HEIGHT as _BAND_SLIDER_HEIGHT,
     DEFAULT_WIDTH as _BAND_SLIDER_WIDTH,
@@ -26,10 +31,6 @@ from lib.script.ui.speaker_band_slider import (
 from lib.script.ui.speaker_volume_slider import (
     DEFAULT_HEIGHT as _VOLUME_SLIDER_HEIGHT,
     SpeakerVolumeSlider,
-)
-from lib.core.render.backends.qt.widgets.anchors import (
-    get_anchor_point as resolve_anchor_point,
-    publish_widget_anchor_response,
 )
 
 # ── 尺寸 ──────────────────────────────────────────────────────────────
@@ -40,6 +41,15 @@ _SEARCH_DIALOG_W  = SPEAKER_SEARCH_UI.get('input_width', scale_px(160, min_abs=1
 _SEARCH_DIALOG_H  = int(SPEAKER_SEARCH_UI.get('height', scale_px(36, min_abs=1)))  # 搜索框高度
 _VOLUME_SLIDER_GAP = scale_px(2, min_abs=1)  # 滑条与搜索框/按钮之间的间隙
 _BAND_SLIDER_GAP  = BAND_SLIDER_GAP         # 频段滑条与菜单主体之间的水平间隙
+
+_BUTTON_LAYER = int(Layer.PET_UI)
+_FADE_MS = 200
+_UI_OPACITY_SCALE = controls.ui_opacity_scale
+
+
+def _font_spec(font) -> FontSpec:
+    """把后端 UI 字体对象压成后端无关的 ``FontSpec``（与旧 paint 逐字一致）。"""
+    return FontSpec(font.family(), font.pixelSize(), font.bold())
 
 
 def _safe_music_service():
@@ -116,108 +126,240 @@ def _publish_volume_bubble(event_center) -> None:
     }))
 
 
-class SpeakerControlButton(SpeakerActionButtonMixin, QWidget):
-    """
-    音响控制按钮基类。
+def _anchor_point_of(widget, anchor_id: str) -> Point:
+    """控件锚点的屏幕坐标（核心 ``Point``）：本地锚点 + 宿主屏幕原点。"""
+    rect = render_bridge.widget_global_rect(widget)
+    local = render_bridge.local_anchor_point(anchor_id, widget.width(), widget.height())
+    return Point(rect.x + local.x, rect.y + local.y)
 
-    按钮样式：
-      - 2px 黑色外框
-      - 2px 灰白色中框
-      - 棕色背景
-      - 白色几何图标
+class SpeakerControlButton:
+    """音响控制按钮基类（描述 + 宿主装配）。
+
+    按钮样式：2px 黑色外框 + 2px 灰白色中框 + 棕色背景 + 黑色几何图标 / 文字。
     """
+
+    #: 几何图标名（``pause`` / ``play`` / ``next_track``）；文字按钮保持 ``None``。
+    _GLYPH = None
+    #: 文字按钮的静态标签；动态文案由 ``label()`` 覆盖。
+    _TEXT = ''
 
     def __init__(self, width: int = _BTN_WIDTH, height: int = _BTN_HEIGHT):
-        super().__init__()
-        self._width = width
-        self._height = height
-        self._init_speaker_action_button(width, height)
-
-        # 透明度效果
-        self._opacity = QGraphicsOpacityEffect(self)
-        self._opacity.setOpacity(0.0)
-        self.setGraphicsEffect(self._opacity)
-
-        # 淡入淡出动画
-        self._anim = QPropertyAnimation(self._opacity, b'opacity', self)
-        self._anim.setDuration(200)
-        self._anim.setEasingCurve(QEasingCurve.InOutQuad)
-
-        self._visible = False
-        self._pressed = False
+        self._width = int(width)
+        self._height = int(height)
         self._description = ''   # 由各子类覆盖
-
-        # 事件中心
         self._event_center = get_event_center()
+        self._font = render_bridge.ui_font()
+        self._font.setBold(True)
+
+        self._control = controls.SpeakerActionButtonControl(
+            width=self._width,
+            height=self._height,
+            glyph=self._GLYPH,
+            text=self.label(),
+            fade_duration_ms=_FADE_MS,
+            paint_layer=_BUTTON_LAYER,
+            opacity_scale=_UI_OPACITY_SCALE,
+        )
+
+        self._host = render_bridge.create_control_host(
+            paint_batch=self._paint_batch,
+            on_pointer=self._on_pointer,
+            on_pointer_move=self._on_pointer_move,
+            on_pointer_release=self._on_pointer_release,
+            on_hover_changed=self._on_hover_changed,
+            on_fade_out_finished=self._on_fade_out_finished,
+            layer=Layer.PET_UI,
+            fade_duration_ms=_FADE_MS,
+            fade_out_duration_ms=_FADE_MS,
+            # 按钮不抢键盘焦点：点到它们时搜索输入框必须保住焦点。
+            accepts_focus=False,
+            pointing_cursor=True,
+        )
+        self._host.apply_size(self._width, self._height)
+        self._host._description = self._description
+
+        #: 指针是否还在按钮矩形内。Qt 只在按下时投递 mouseMoveEvent，因此这就是
+        #: 迁移前 ``self.rect().contains(event.pos())`` 的等价判定。
+        self._pointer_inside = False
         self._event_center.subscribe(EventType.UI_CLICKTHROUGH_TOGGLE, self._on_clickthrough_toggle)
 
-    def get_anchor_point(self, anchor_id: str) -> QPoint:
-        """获取指定锚点的位置"""
-        return resolve_anchor_point(self, anchor_id)
-
-    def paintEvent(self, event):
-        """绘制按钮"""
-        painter = QPainter(self)
-        content_rect = self._paint_action_button_shell(painter)
-
-        # 绘制几何图标（由子类实现）
-        painter.setRenderHint(QPainter.Antialiasing, True)
-        self._draw_icon(painter, content_rect)
-
-    def _draw_icon(self, painter, rect):
-        """子类重写此方法绘制几何图标"""
-        pass
-
-    def fade_in(self):
-        if self._visible:
-            return
-        self._visible = True
-        self.show()
-        self._animate(1.0)
-
-    def fade_out(self):
-        self._cancel_action_press()
-        if not self._visible:
-            return
-        self._visible = False
-        self._anim.finished.connect(self._on_fade_out_complete)
-        self._animate(0.0)
-
-    def _on_fade_out_complete(self):
-        self._anim.finished.disconnect(self._on_fade_out_complete)
-        self.hide()
-
-    def _animate(self, target: float):
-        animate_opacity(self._anim, self._opacity, target)
-
-    def _on_clickthrough_toggle(self, event: Event) -> None:
-        self.setAttribute(Qt.WA_TransparentForMouseEvents,
-                          event.data.get('enabled', False))
-
-    def mousePressEvent(self, event):
-        from lib.script.ui._particle_helper import publish_click_particle
-        publish_click_particle(self, event)
-        if event.button() == Qt.LeftButton:
-            self._begin_action_press()
-
-    def mouseReleaseEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            commit = self.rect().contains(event.pos())
-            if self._finish_action_press(commit=commit):
-                self.on_clicked()
+    # ── 子类接口 ───────────────────────────────────────────────────
+    def label(self) -> str:
+        """要画的文字（文字按钮覆盖；几何图标按钮不读它）。"""
+        return str(self._TEXT or '')
 
     def on_clicked(self):
         """子类重写此方法实现点击逻辑"""
         pass
 
+    # ── 状态视图 ───────────────────────────────────────────────────
+    @property
+    def _visible(self) -> bool:
+        return self._control.visible
+
+    @_visible.setter
+    def _visible(self, value: bool) -> None:
+        self._control.visible = bool(value)
+
+    @property
+    def _hovered(self) -> bool:
+        return self._control.hovered
+
+    @_hovered.setter
+    def _hovered(self, value: bool) -> None:
+        self._control.hovered = bool(value)
+
+    @property
+    def _pressed(self) -> bool:
+        return self._control.pressed
+
+    @_pressed.setter
+    def _pressed(self, value: bool) -> None:
+        self._control.pressed = bool(value)
+
+    @property
+    def _label_font(self):
+        return self._font
+
+    def get_anchor_point(self, anchor_id: str) -> Point:
+        """获取指定锚点在本控件内的位置（核心 ``Point``）。"""
+        return render_bridge.local_anchor_point(anchor_id, self.width(), self.height())
+
+    def paint_batch(self):
+        """当前帧的绘制批次（测试与调试可见；宿主每帧调用 ``_paint_batch``）。"""
+        self._control.text = self.label()
+        return self._control.build_visual(_font_spec(self._font)).batch
+
+    # ── 绘制 / 指针 ────────────────────────────────────────────────
+    def _paint_batch(self):
+        return self.paint_batch()
+
+    def _on_hover_changed(self, hovered: bool) -> None:
+        if self._control.hovered != bool(hovered):
+            self._control.hovered = bool(hovered)
+            self._host.update()
+
+    def _begin_action_press(self) -> None:
+        if self._control.pressed:
+            return
+        self._control.pressed = True
+        self._host.update()
+
+    def _finish_action_press(self, *, commit: bool) -> bool:
+        was_pressed = self._control.pressed
+        self._control.pressed = False
+        self._host.update()
+        return was_pressed and commit
+
+    def _cancel_action_press(self) -> None:
+        self._finish_action_press(commit=False)
+
+    def _on_pointer(self, event):
+        particle_id = self._control.click_particle_id(event)
+        if particle_id:
+            publish_click_particle_at(
+                particle_id, int(event.screen.x), int(event.screen.y)
+            )
+        if event.button == controls.BUTTON_LEFT:
+            self._pointer_inside = True
+            self._begin_action_press()
+        return controls.PointerClick()
+
+    def _on_pointer_move(self, event) -> None:
+        self._pointer_inside = (
+            0.0 <= event.local.x < self._control.width
+            and 0.0 <= event.local.y < self._control.height
+        )
+        if self._pointer_inside != self._control.hovered:
+            self._control.hovered = self._pointer_inside
+            self._host.update()
+
+    def _on_pointer_release(self) -> None:
+        if not self._control.pressed:
+            return
+        if self._finish_action_press(commit=self._pointer_inside):
+            self.on_clicked()
+
+    def _on_clickthrough_toggle(self, event: Event) -> None:
+        self._control.clickthrough = bool(event.data.get('enabled', False))
+        self._host.set_clickthrough(self._control.clickthrough)
+
+    # ── 淡入 / 淡出 ────────────────────────────────────────────────
+    def fade_in(self):
+        if self._control.visible:
+            return
+        self._control.visible = True
+        self._host.show()
+        self._animate(1.0)
+
+    def fade_out(self):
+        self._cancel_action_press()
+        if not self._control.visible:
+            return
+        self._control.visible = False
+        self._animate(0.0, fade_out=True)
+
+    def _animate(self, target: float, *, fade_out: bool = False):
+        self._host.fade_to(
+            self._control.scaled_opacity(target),
+            duration_ms=_FADE_MS,
+            fade_out=fade_out,
+        )
+
+    def _on_fade_out_finished(self) -> None:
+        if not self._control.visible:
+            self._host.hide()
+
+    # ── 尺寸 / 位置 / 可见性视图（宿主转发）───────────────────────
+    def width(self) -> int:
+        return int(self._host.width())
+
+    def height(self) -> int:
+        return int(self._host.height())
+
+    def x(self) -> int:
+        return int(self._host.x())
+
+    def y(self) -> int:
+        return int(self._host.y())
+
+    def isVisible(self) -> bool:
+        return bool(self._host.isVisible())
+
+    def move(self, x: int, y: int) -> None:
+        self._host.move_to(int(x), int(y))
+
+    def update(self) -> None:
+        self._host.update()
+
+    def hide(self) -> None:
+        self._cancel_action_press()
+        self._control.visible = False
+        self._host.hide()
+
+    def close(self) -> None:
+        self.cleanup()
+
+    def cleanup(self) -> None:
+        try:
+            self._event_center.unsubscribe(
+                EventType.UI_CLICKTHROUGH_TOGGLE, self._on_clickthrough_toggle
+            )
+        except Exception:
+            pass
+        self._host.cleanup()
+
 
 class PlayPauseButton(SpeakerControlButton):
     """暂停/播放按钮 - 使用几何形状绘制"""
+
+    _GLYPH = controls.SPEAKER_GLYPH_PLAY
 
     def __init__(self):
         super().__init__(_BTN_WIDTH, _BTN_HEIGHT)
         self._playing     = False
         self._description = TOOLTIPS['speaker_play_pause']
+        self._host._description = self._description
 
         # 订阅播放状态变化事件
         self._event_center.subscribe(EventType.MUSIC_STATUS_CHANGE, self._on_status_change)
@@ -225,46 +367,29 @@ class PlayPauseButton(SpeakerControlButton):
         # 初始化时主动获取当前播放状态
         self._sync_playing_state()
 
+    @property
+    def _glyph(self) -> str:
+        return (
+            controls.SPEAKER_GLYPH_PAUSE
+            if self._playing
+            else controls.SPEAKER_GLYPH_PLAY
+        )
+
     def _sync_playing_state(self):
-        """??????????????"""
+        """从音乐服务读取当前播放状态。"""
         self.set_playing(_music_is_playing())
 
     def set_playing(self, playing: bool):
         """设置播放状态，更新图标"""
         if self._playing != playing:
             self._playing = playing
+            self._control.glyph = self._glyph
             self.update()
 
     def _on_status_change(self, event: Event):
         """处理播放状态变化事件"""
         playing = event.data.get('playing', False)
         self.set_playing(playing)
-
-    def _draw_icon(self, painter, rect):
-        """绘制播放/暂停几何图标"""
-        cx = rect.center().x()
-        cy = rect.center().y()
-        size = min(rect.width(), rect.height()) * 0.4 * 0.85  # 缩小到 0.85
-
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(_C_ACTION_TEXT)
-
-        if self._playing:
-            # 暂停图标：两条竖线
-            bar_width = size * 0.3
-            bar_height = size * 1.4
-            gap = size * 0.4
-
-            painter.drawRect(QRectF(cx - gap - bar_width, cy - bar_height // 2, bar_width, bar_height))
-            painter.drawRect(QRectF(cx + gap, cy - bar_height // 2, bar_width, bar_height))
-        else:
-            # 播放图标：三角形
-            triangle = QPolygonF([
-                QPointF(cx - size * 0.3, cy - size * 0.6),
-                QPointF(cx - size * 0.3, cy + size * 0.6),
-                QPointF(cx + size * 0.5, cy)
-            ])
-            painter.drawPolygon(triangle)
 
     def on_clicked(self):
         """切换播放/暂停状态"""
@@ -273,35 +398,23 @@ class PlayPauseButton(SpeakerControlButton):
             'playing': not self._playing
         }))
 
+    def cleanup(self) -> None:
+        try:
+            self._event_center.unsubscribe(EventType.MUSIC_STATUS_CHANGE, self._on_status_change)
+        except Exception:
+            pass
+        super().cleanup()
+
 
 class NextTrackButton(SpeakerControlButton):
     """下一曲按钮 - 使用几何形状绘制"""
 
+    _GLYPH = controls.SPEAKER_GLYPH_NEXT_TRACK
+
     def __init__(self):
         super().__init__(_BTN_WIDTH, _BTN_HEIGHT)
         self._description = TOOLTIPS['speaker_next']
-
-    def _draw_icon(self, painter, rect):
-        """绘制下一曲几何图标"""
-        cx = rect.center().x()
-        cy = rect.center().y()
-        size = min(rect.width(), rect.height()) * 0.4
-
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(_C_ACTION_TEXT)
-
-        # 三角形（播放图标）
-        triangle = QPolygonF([
-            QPointF(cx - size * 0.4, cy - size * 0.5),
-            QPointF(cx - size * 0.4, cy + size * 0.5),
-            QPointF(cx + size * 0.2, cy)
-        ])
-        painter.drawPolygon(triangle)
-
-        # 竖线（下一曲图标）
-        bar_width = size * 0.25
-        bar_height = size * 1.2
-        painter.drawRect(QRectF(cx + size * 0.3, cy - bar_height // 2, bar_width, bar_height))
+        self._host._description = self._description
 
     def on_clicked(self):
         """播放下一曲"""
@@ -317,6 +430,7 @@ class MusicLoginButton(SpeakerControlButton):
         self._logged_in = False
         self._provider = 'netease'
         self._description = TOOLTIPS['speaker_music_login']
+        self._host._description = self._description
         self._event_center.subscribe(EventType.MUSIC_LOGIN_STATUS_CHANGE, self._on_login_status_change)
         self._sync_login_state()
 
@@ -335,15 +449,9 @@ class MusicLoginButton(SpeakerControlButton):
             self._provider = provider
             self.update()
 
-    def _draw_icon(self, painter, rect):
-        painter.setRenderHint(QPainter.Antialiasing, False)
-        painter.setFont(self._label_font)
-        painter.setPen(_C_ACTION_TEXT)
-        try:
-            provider = self._provider
-        except Exception:
-            provider = 'netease'
-        if self._logged_in:
+    def label(self) -> str:
+        provider = getattr(self, '_provider', 'netease')
+        if getattr(self, '_logged_in', False):
             label = '已登录'
         elif provider == 'qq':
             label = '登录QQ'
@@ -351,7 +459,7 @@ class MusicLoginButton(SpeakerControlButton):
             label = '登录酷狗'
         else:
             label = '登录音乐'
-        painter.drawText(rect, Qt.AlignCenter, label)
+        return label
 
     def on_clicked(self):
         if self._logged_in:
@@ -363,6 +471,15 @@ class MusicLoginButton(SpeakerControlButton):
             return
         self._event_center.publish(Event(EventType.MUSIC_LOGIN_REQUEST, {}))
 
+    def cleanup(self) -> None:
+        try:
+            self._event_center.unsubscribe(
+                EventType.MUSIC_LOGIN_STATUS_CHANGE, self._on_login_status_change
+            )
+        except Exception:
+            pass
+        super().cleanup()
+
 
 class PlatformModeButton(SpeakerControlButton):
     """Platform music mode switch button."""
@@ -371,20 +488,18 @@ class PlatformModeButton(SpeakerControlButton):
         super().__init__(_BTN_PLAYLIST_W, _BTN_HEIGHT)
         self._mode_label = "网易模式"
         self._description = TOOLTIPS.get('speaker_platform_mode', '切换当前音乐平台模式')
+        self._host._description = self._description
         self._sync_mode_state()
 
     def _sync_mode_state(self) -> None:
         self._mode_label = _music_provider_mode_label()
 
+    def label(self) -> str:
+        return str(getattr(self, '_mode_label', self._TEXT or ''))
+
     def fade_in(self):
         self._sync_mode_state()
         super().fade_in()
-
-    def _draw_icon(self, painter, rect):
-        painter.setRenderHint(QPainter.Antialiasing, False)
-        painter.setFont(self._label_font)
-        painter.setPen(_C_ACTION_TEXT)
-        painter.drawText(rect, Qt.AlignCenter, self._mode_label)
 
     def on_clicked(self):
         service = get_music_service()
@@ -426,6 +541,7 @@ class PlayModeButton(SpeakerControlButton):
         super().__init__(_BTN_PLAYLIST_W, _BTN_HEIGHT)
         self._mode = 'list_loop'
         self._description = TOOLTIPS['speaker_play_mode']
+        self._host._description = self._description
         self._event_center.subscribe(EventType.MUSIC_STATUS_CHANGE, self._on_status_change)
         self._sync_mode_state()
 
@@ -438,15 +554,20 @@ class PlayModeButton(SpeakerControlButton):
             self._mode = mode
             self.update()
 
-    def _draw_icon(self, painter, rect):
-        painter.setRenderHint(QPainter.Antialiasing, False)
-        painter.setFont(self._label_font)
-        painter.setPen(_C_ACTION_TEXT)
-        label = self._MODE_LABELS.get(self._mode, self._MODE_LABELS['list_loop'])
-        painter.drawText(rect, Qt.AlignCenter, label)
+    def label(self) -> str:
+        return self._MODE_LABELS.get(
+            getattr(self, '_mode', 'list_loop'), self._MODE_LABELS['list_loop']
+        )
 
     def on_clicked(self):
         self._event_center.publish(Event(EventType.MUSIC_PLAY_MODE_TOGGLE, {}))
+
+    def cleanup(self) -> None:
+        try:
+            self._event_center.unsubscribe(EventType.MUSIC_STATUS_CHANGE, self._on_status_change)
+        except Exception:
+            pass
+        super().cleanup()
 
 
 class SearchPriorityButton(SpeakerControlButton):
@@ -460,6 +581,7 @@ class SearchPriorityButton(SpeakerControlButton):
         self._label_index = 0
         self._label = self._FALLBACK_LABELS[self._label_index]
         self._description = TOOLTIPS.get('speaker_search_priority', '切换搜索优先级')
+        self._host._description = self._description
 
     def set_dialog(self, dialog) -> None:
         self._dialog = dialog
@@ -469,11 +591,9 @@ class SearchPriorityButton(SpeakerControlButton):
             self._label = self._FALLBACK_LABELS[self._label_index]
         self.update()
 
-    def _draw_icon(self, painter, rect):
-        painter.setRenderHint(QPainter.Antialiasing, False)
-        painter.setFont(self._label_font)
-        painter.setPen(_C_ACTION_TEXT)
-        painter.drawText(rect, Qt.AlignCenter, self._label)
+    def label(self) -> str:
+        fallback = self._FALLBACK_LABELS[getattr(self, '_label_index', 0)]
+        return str(getattr(self, '_label', fallback))
 
     def on_clicked(self):
         if self._dialog is not None:
@@ -497,21 +617,17 @@ class PlaylistButton(SpeakerControlButton):
       2. 打开播放列表栏，锚定到当前音响右侧
     """
 
+    _TEXT = '播放列表'
+
     def __init__(self):
         super().__init__(_BTN_PLAYLIST_W, _BTN_HEIGHT)
         self._dialog      = None   # 由 SpeakerControlButtons 注入
         self._description = TOOLTIPS['speaker_playlist_toggle']
+        self._host._description = self._description
 
     def set_dialog(self, dialog) -> None:
         """注入搜索对话框引用，用于获取当前锚定音响。"""
         self._dialog = dialog
-
-    def _draw_icon(self, painter, rect):
-        """绘制文字标签（覆盖基类的图标绘制方法）。"""
-        painter.setRenderHint(QPainter.Antialiasing, False)
-        painter.setFont(self._label_font)
-        painter.setPen(_C_ACTION_TEXT)
-        painter.drawText(rect, Qt.AlignCenter, '播放列表')
 
     def on_clicked(self):
         """关闭搜索 UI，打开播放列表栏。"""
@@ -534,15 +650,12 @@ class PlaylistButton(SpeakerControlButton):
 class HistoryQueueButton(SpeakerControlButton):
     """一键历史按钮 - 将 history.json 中歌曲批量追加到播放队列末尾。"""
 
+    _TEXT = '一键历史'
+
     def __init__(self):
         super().__init__(_BTN_PLAYLIST_W, _BTN_HEIGHT)
         self._description = TOOLTIPS['speaker_history_queue']
-
-    def _draw_icon(self, painter, rect):
-        painter.setRenderHint(QPainter.Antialiasing, False)
-        painter.setFont(self._label_font)
-        painter.setPen(_C_ACTION_TEXT)
-        painter.drawText(rect, Qt.AlignCenter, '一键历史')
+        self._host._description = self._description
 
     def on_clicked(self):
         self._event_center.publish(Event(EventType.MUSIC_ENQUEUE_HISTORY, {}))
@@ -551,15 +664,12 @@ class HistoryQueueButton(SpeakerControlButton):
 class ClearQueueButton(SpeakerControlButton):
     """清空列表按钮 - 停止播放并清空当前队列。"""
 
+    _TEXT = '清空列表'
+
     def __init__(self):
         super().__init__(_BTN_PLAYLIST_W, _BTN_HEIGHT)
         self._description = TOOLTIPS.get('speaker_clear_queue', '清空列表')
-
-    def _draw_icon(self, painter, rect):
-        painter.setRenderHint(QPainter.Antialiasing, False)
-        painter.setFont(self._label_font)
-        painter.setPen(_C_ACTION_TEXT)
-        painter.drawText(rect, Qt.AlignCenter, '清空列表')
+        self._host._description = self._description
 
     def on_clicked(self):
         get_music_service().clear_queue()
@@ -568,15 +678,12 @@ class ClearQueueButton(SpeakerControlButton):
 class LocalQueueButton(SpeakerControlButton):
     """一键本地按钮 - 清空队列并载入本地音乐文件夹中的全部歌曲。"""
 
+    _TEXT = '一键本地'
+
     def __init__(self):
         super().__init__(_BTN_PLAYLIST_W, _BTN_HEIGHT)
         self._description = TOOLTIPS.get('speaker_local_queue', '加载本地音乐到队列')
-
-    def _draw_icon(self, painter, rect):
-        painter.setRenderHint(QPainter.Antialiasing, False)
-        painter.setFont(self._label_font)
-        painter.setPen(_C_ACTION_TEXT)
-        painter.drawText(rect, Qt.AlignCenter, '一键本地')
+        self._host._description = self._description
 
     def on_clicked(self):
         self._event_center.publish(Event(EventType.MUSIC_ENQUEUE_LOCAL, {}))
@@ -585,11 +692,14 @@ class LocalQueueButton(SpeakerControlButton):
 class LikedQueueButton(SpeakerControlButton):
     """一键喜欢按钮 - 清空队列并随机加载“我喜欢的音乐”最多32首。"""
 
+    _TEXT = '一键喜欢'
+
     def __init__(self):
         super().__init__(_BTN_PLAYLIST_W, _BTN_HEIGHT)
         self._logged_in = False
         self._provider = 'netease'
         self._description = TOOLTIPS['speaker_like_queue']
+        self._host._description = self._description
         self._event_center.subscribe(EventType.MUSIC_LOGIN_STATUS_CHANGE, self._on_login_status_change)
         self._sync_login_state()
 
@@ -607,31 +717,25 @@ class LikedQueueButton(SpeakerControlButton):
             return
         self._logged_in = logged_in
         self._provider = provider
-        if self._visible:
+        if self._control.visible:
             if logged_in:
-                self.show()
+                self._host.show()
                 self._animate(1.0)
             else:
-                self.hide()
-                self._opacity.setOpacity(0.0)
+                self._host.hide()
+                self._host.set_opacity(0.0)
         self.update()
 
-    def _draw_icon(self, painter, rect):
-        painter.setRenderHint(QPainter.Antialiasing, False)
-        painter.setFont(self._label_font)
-        painter.setPen(_C_ACTION_TEXT)
-        painter.drawText(rect, Qt.AlignCenter, '一键喜欢')
-
     def fade_in(self):
-        if self._visible:
+        if self._control.visible:
             return
-        self._visible = True
+        self._control.visible = True
         if self._logged_in:
-            self.show()
+            self._host.show()
             self._animate(1.0)
         else:
-            self.hide()
-            self._opacity.setOpacity(0.0)
+            self._host.hide()
+            self._host.set_opacity(0.0)
 
     def on_clicked(self):
         if not self._logged_in:
@@ -643,21 +747,26 @@ class LikedQueueButton(SpeakerControlButton):
             return
         self._event_center.publish(Event(EventType.MUSIC_ENQUEUE_LIKED, {}))
 
+    def cleanup(self) -> None:
+        try:
+            self._event_center.unsubscribe(
+                EventType.MUSIC_LOGIN_STATUS_CHANGE, self._on_login_status_change
+            )
+        except Exception:
+            pass
+        super().cleanup()
+
 
 class VolumeDownButton(SpeakerControlButton):
-    """??????"""
+    """音量减按钮。"""
 
+    _TEXT = '-'
     _STEP = -0.05
 
     def __init__(self):
         super().__init__(_BTN_WIDTH, _BTN_HEIGHT)
-        self._description = TOOLTIPS.get('speaker_volume_down', '????')
-
-    def _draw_icon(self, painter, rect):
-        painter.setRenderHint(QPainter.Antialiasing, False)
-        painter.setFont(self._label_font)
-        painter.setPen(_C_ACTION_TEXT)
-        painter.drawText(rect, Qt.AlignCenter, '-')
+        self._description = TOOLTIPS.get('speaker_volume_down', '音量减')
+        self._host._description = self._description
 
     def on_clicked(self):
         self._event_center.publish(Event(EventType.MUSIC_VOLUME, {'delta': self._STEP}))
@@ -665,19 +774,15 @@ class VolumeDownButton(SpeakerControlButton):
 
 
 class VolumeUpButton(SpeakerControlButton):
-    """??????"""
+    """音量加按钮。"""
 
+    _TEXT = '+'
     _STEP = 0.05
 
     def __init__(self):
         super().__init__(_BTN_WIDTH, _BTN_HEIGHT)
-        self._description = TOOLTIPS.get('speaker_volume_up', '????')
-
-    def _draw_icon(self, painter, rect):
-        painter.setRenderHint(QPainter.Antialiasing, False)
-        painter.setFont(self._label_font)
-        painter.setPen(_C_ACTION_TEXT)
-        painter.drawText(rect, Qt.AlignCenter, '+')
+        self._description = TOOLTIPS.get('speaker_volume_up', '音量加')
+        self._host._description = self._description
 
     def on_clicked(self):
         self._event_center.publish(Event(EventType.MUSIC_VOLUME, {'delta': self._STEP}))
@@ -722,7 +827,7 @@ class SpeakerControlButtons:
         ]
         self._visible = False
 
-        # 锚点位置
+        # 锚点位置（核心 ``Point``；不再需要 QPoint）
         self._anchor_point = None
         self._anchor_available = False
 
@@ -734,18 +839,23 @@ class SpeakerControlButtons:
         self._event_center.subscribe(EventType.UI_CREATE, self._on_ui_create)
 
     def _on_ui_create(self, event):
-        """UI?????? - ???????"""
+        """响应其他控件对播放/暂停按钮锚点的询问。"""
         target_ui_id = event.data.get('ui_id')
         request_anchor_id = event.data.get('anchor_id')
 
         if target_ui_id == 'play_pause_button':
-            publish_widget_anchor_response(
-                self._event_center,
-                self._play_pause_btn,
-                window_id='play_pause_button',
-                anchor_id=request_anchor_id,
-                ui_id=target_ui_id,
-            )
+            self._publish_anchor_response(request_anchor_id, target_ui_id)
+
+    def _publish_anchor_response(self, anchor_id: str, ui_id: str) -> None:
+        """发布播放/暂停按钮的全局锚点（与迁移前 ``publish_widget_anchor_response``
+        同为整数 ``QPoint`` 语义，只是不再经过 Qt 控件）。"""
+        point = _anchor_point_of(self._play_pause_btn, str(anchor_id or 'center'))
+        self._event_center.publish(Event(EventType.UI_ANCHOR_RESPONSE, {
+            'window_id': 'play_pause_button',
+            'anchor_id': anchor_id,
+            'anchor_point': Point(int(point.x), int(point.y)),
+            'ui_id': ui_id,
+        }))
 
     def _on_anchor_response(self, event):
         """锚点响应事件处理"""
@@ -761,11 +871,16 @@ class SpeakerControlButtons:
             # 搜索框移动时的全局锚点更新
             if anchor_id == 'all':
                 # 搜索框的新位置（左上角坐标）
-                dialog_pos = qpoint_from_point(event.data.get('anchor_point'))
-                if dialog_pos is None:
+                point = event.data.get('anchor_point')
+                if point is None:
                     return
-                # 计算 top_left 锚点位置
-                new_anchor_point = QPoint(dialog_pos.x(), dialog_pos.y())
+                try:
+                    new_anchor_point = Point(float(point.x), float(point.y))
+                except (AttributeError, TypeError, ValueError):
+                    try:
+                        new_anchor_point = Point(float(point[0]), float(point[1]))
+                    except Exception:
+                        return
                 # 只在锚点位置改变时更新
                 if self._anchor_point != new_anchor_point:
                     self._anchor_point = new_anchor_point
@@ -781,22 +896,27 @@ class SpeakerControlButtons:
 
     def _update_positions(self):
         """更新所有按钮的位置"""
-        if not self._anchor_point:
+        if self._anchor_point is None:
             return
 
         # self._anchor_point 是搜索框 top_left 锚点的全局坐标
         # 搜索框的尺寸
         dialog_width = _SEARCH_DIALOG_W
+        anchor = coerce_point(self._anchor_point)
+        if anchor is None:
+            return
+        anchor_x = int(anchor.x)
+        anchor_y = int(anchor.y)
 
         # ── 音量滑条：与搜索框整行等宽，贴在搜索框正上方 ────────────────
-        slider_y = self._anchor_point.y() - _VOLUME_SLIDER_GAP - _VOLUME_SLIDER_HEIGHT
-        self._volume_slider.move(self._anchor_point.x(), slider_y)
+        slider_y = anchor_y - _VOLUME_SLIDER_GAP - _VOLUME_SLIDER_HEIGHT
+        self._volume_slider.move(anchor_x, slider_y)
 
         # ── 响应频段滑条：菜单右侧，上下与菜单上半部分对齐 ──────────────
         self._band_slider.set_speaker(self._focused_speaker())
         self._band_slider.apply_geometry(
-            self._anchor_point.x() + dialog_width + _BAND_SLIDER_GAP,
-            self._anchor_point.y() + _SEARCH_DIALOG_H - _BAND_SLIDER_HEIGHT,
+            anchor_x + dialog_width + _BAND_SLIDER_GAP,
+            anchor_y + _SEARCH_DIALOG_H - _BAND_SLIDER_HEIGHT,
             _BAND_SLIDER_HEIGHT,
         )
 
@@ -805,22 +925,22 @@ class SpeakerControlButtons:
 
         # 六个按钮的落位都解算自「面板左上锚点」这一点（档位 1）：
         # 锚点矩形是零尺寸，偏移沿用各自原来的显式坐标。
-        anchor_rect = Rect(
-            self._anchor_point.x(), self._anchor_point.y(), 0.0, 0.0
+        anchor_rect = Rect(anchor_x, anchor_y, 0.0, 0.0)
+        screen = render_bridge.screen_rect_for_point(
+            point=anchor, fallback_widget=self._volume_slider
         )
-        screen = screen_rect_for_point(point=self._anchor_point, fallback_widget=self._search_priority_btn)
 
         # ── 搜索优先级按钮：左下锚点对齐搜索框左上锚点 ────────────────
-        placement = resolve_placement(
+        placement = render_bridge.resolve_placement(
             (_BTN_PLAYLIST_W, _BTN_HEIGHT), anchor_rect, screen,
             target_anchor_id='top_left', self_anchor_id='top_left',
-            offset_y=buttons_bottom_y - _BTN_HEIGHT - self._anchor_point.y(),
+            offset_y=buttons_bottom_y - _BTN_HEIGHT - anchor_y,
         )
         search_priority_x, search_priority_y = placement.x, placement.y
         self._search_priority_btn.move(search_priority_x, search_priority_y)
 
         # ── 暂停/播放按钮：左下锚点对齐搜索优先级按钮左上锚点 ──────────
-        placement = resolve_placement(
+        placement = render_bridge.resolve_placement(
             (_BTN_WIDTH, _BTN_HEIGHT), Rect(search_priority_x, search_priority_y, 0.0, 0.0), screen,
             target_anchor_id='top_left', self_anchor_id='bottom_left',
         )
@@ -828,7 +948,7 @@ class SpeakerControlButtons:
         self._play_pause_btn.move(play_pause_x, play_pause_y)
 
         # ── 下一曲按钮：左锚点对齐暂停播放按钮的右锚点 ──────────────
-        placement = resolve_placement(
+        placement = render_bridge.resolve_placement(
             (_BTN_WIDTH, _BTN_HEIGHT),
             Rect(play_pause_x + _BTN_WIDTH, play_pause_y + _BTN_HEIGHT // 2, 0.0, 0.0), screen,
             target_anchor_id='center', self_anchor_id='left',
@@ -837,7 +957,7 @@ class SpeakerControlButtons:
         self._next_track_btn.move(next_track_x, next_track_y)
 
         # ── 登录音乐按钮：左锚点对齐搜索优先级按钮右锚点 ───────────────
-        placement = resolve_placement(
+        placement = render_bridge.resolve_placement(
             (_BTN_PLAYLIST_W, _BTN_HEIGHT),
             Rect(search_priority_x + _BTN_PLAYLIST_W, search_priority_y, 0.0, 0.0), screen,
             target_anchor_id='top_left', self_anchor_id='top_left',
@@ -847,17 +967,17 @@ class SpeakerControlButtons:
 
         # ── 播放列表按钮：右下锚点对齐"搜索歌曲"按钮右上锚点 ─────────
         # "搜索歌曲"按钮右上角 = (dialog_left + dialog_width, dialog_top)
-        placement = resolve_placement(
+        placement = render_bridge.resolve_placement(
             (_BTN_PLAYLIST_W, _BTN_HEIGHT), anchor_rect, screen,
             target_anchor_id='top_left', self_anchor_id='top_left',
             offset_x=dialog_width - _BTN_PLAYLIST_W,
-            offset_y=buttons_bottom_y - _BTN_HEIGHT - self._anchor_point.y(),
+            offset_y=buttons_bottom_y - _BTN_HEIGHT - anchor_y,
         )
         playlist_x, playlist_y = placement.x, placement.y
         self._playlist_btn.move(playlist_x, playlist_y)
 
         # ── 模式按钮：左下锚点对齐"播放列表"按钮左上锚点 ───────────────
-        placement = resolve_placement(
+        placement = render_bridge.resolve_placement(
             (_BTN_PLAYLIST_W, _BTN_HEIGHT),
             Rect(playlist_x, playlist_y, 0.0, 0.0), screen,
             target_anchor_id='top_left', self_anchor_id='bottom_left',
@@ -907,3 +1027,22 @@ class SpeakerControlButtons:
             except Exception:
                 pass
         self._buttons.clear()
+
+
+__all__ = [
+    "ClearQueueButton",
+    "HistoryQueueButton",
+    "LikedQueueButton",
+    "LocalQueueButton",
+    "MusicLoginButton",
+    "NextTrackButton",
+    "PlatformModeButton",
+    "PlayModeButton",
+    "PlayPauseButton",
+    "PlaylistButton",
+    "SearchPriorityButton",
+    "SpeakerControlButton",
+    "SpeakerControlButtons",
+    "VolumeDownButton",
+    "VolumeUpButton",
+]

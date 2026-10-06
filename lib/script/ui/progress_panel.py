@@ -122,6 +122,12 @@ class ProgressPanel:
     def height(self) -> int:
         return self._host.height()
 
+    def x(self) -> int:
+        return int(self._host.x())
+
+    def y(self) -> int:
+        return int(self._host.y())
+
     def isVisible(self) -> bool:
         return bool(self._host.isVisible())
 

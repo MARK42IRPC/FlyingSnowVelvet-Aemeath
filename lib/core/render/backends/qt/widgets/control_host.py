@@ -71,6 +71,7 @@ class QtControlHost(QWidget):
         transparent_for_mouse: bool = False,
         show_without_activating: bool = False,
         pointing_cursor: bool = False,
+        accepts_focus: bool = True,
     ) -> None:
         super().__init__()
         self._auto_hide = None
@@ -104,6 +105,9 @@ class QtControlHost(QWidget):
             self.setAttribute(Qt.WA_ShowWithoutActivating)
         if transparent_for_mouse:
             self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        if not accepts_focus:
+            # 翻页按钮一类的附属控件不该抢键盘焦点：点到它们时输入框必须保住焦点。
+            self.setFocusPolicy(Qt.NoFocus)
         # 悬停回调需要未按下时的移动事件；Qt 默认只在按键按下时投递 mouseMoveEvent。
         if on_pointer_move is not None:
             self.setMouseTracking(True)

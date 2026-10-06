@@ -27,6 +27,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from lib.core.render.visuals.anchors import get_anchor_point as get_rect_anchor_point
+from lib.core.render.visuals.types import Rect, coerce_point
+
 from lib.core.render.registry import (
     get_draw_backend_factory,
     get_font_provider,
@@ -82,6 +85,31 @@ def create_control_host(**kwargs):
     kwargs.setdefault("draw_backend", create_draw_backend())
     kwargs.setdefault("presentation_host", presentation_host())
     return QtControlHost(**kwargs)
+
+
+def create_painter_host():
+    """创建"在调用方自己的 QPainter 上执行绘制批次"的后端宿主（档位 D）。
+
+    与 ``create_control_host`` 同属解析/转发层，但形状相反：控件窗口宿主负责"有个窗口"，
+    本宿主只负责"把批次画到 painter 上"。产品控件是 ``QWidget`` 子类，``paintEvent``
+    必须自己起 ``QPainter``，而它的包壳配方（面板三层、按钮四态、几何图标）是后端中立
+    事实，因此这里把绘制实现与 UI 字体注入进去，让控件不必 import 档位 A。
+
+    返回 ``QtPainterHost``：``render(batch, painter)`` 执行批次，``color`` / ``rect``
+    做边界类型转换，``font()`` 取后端 UI 字体。
+    """
+    from lib.core.render.backends.qt.widgets.control_painter_host import QtPainterHost
+
+    return QtPainterHost(draw_backend=create_draw_backend(), font_factory=ui_font)
+
+
+def painter_color(value):
+    """核心 ``Color`` / 通道元组 / ``QColor`` → ``QColor``。
+
+    控件在 ``paintEvent`` 里设置画笔、画刷时用它把共享色板的值换成 Qt 值，从而不必
+    自己 import 绘制档的 ``to_qcolor``。
+    """
+    return create_painter_host().color(value)
 
 
 def render_office_icon(name: str, color: str):
@@ -297,6 +325,24 @@ def family_placement(widget, node_id: str):
         return None
     rects = getter()
     return None if rects is None else rects.get(node_id)
+
+
+def core_point(value):
+    """把 Qt 的 `QPoint` / `(x, y)` / 核心 `Point` 统一成核心 `Point`；无效输入返回 `None`。
+
+    控件层做几何算术前用它把载荷归一化（锚点事件、光标位置都可能是任一形态），
+    从而不必为了取 `.x()` 而 import Qt。
+    """
+    return coerce_point(value)
+
+
+def local_anchor_point(anchor_id: str, width, height):
+    """控件本地几何里某个锚点的位置（核心 `Point`）。
+
+    与 Qt 侧 `get_anchor_point(widget, anchor_id)` 同为「窗口矩形取锚点」的一份事实，
+    只是入参从 QWidget 换成已知宽高，控件因此不需要为一次锚点算术持有 Qt 对象。
+    """
+    return get_rect_anchor_point(Rect(0.0, 0.0, float(width), float(height)), str(anchor_id))
 
 
 def widget_global_rect(widget):
