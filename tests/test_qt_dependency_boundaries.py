@@ -45,7 +45,6 @@ class QtDependencyBoundaryTests(unittest.TestCase):
             "lib/script/ui/office_mode_page.py",
             "lib/script/ui/office_mode_settings.py",
             "lib/script/ui/office_page.py",
-            "lib/script/ui/office_style.py",
 
             "lib/script/ui/playlist_panel.py",
             "lib/script/ui/preloader.py",

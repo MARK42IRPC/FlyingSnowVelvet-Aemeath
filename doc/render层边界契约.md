@@ -4,7 +4,7 @@
 
 本文档定义 `lib/core/render/` 的目标结构与依赖边界。它不是阶段计划，而是结构改建完成后必须成立的规则。
 
-**状态：第 6 节迁移顺序 1、2（目录切分）、3 已执行；图层能力已收敛到 `lib/core/render/layers/`（第 16 节）；后端中立协议与统一数据类型已落地（第 11 节），控件层“描述 + 后端渲染”已滚动迁移气泡框（第 12 节）、说明书、语音指示器与播放进度条（第 13 节）、音响音量/频段双滑条、搜索结果框与命令提示框（第 18 节）、右键矩形动作按钮一族八个按钮（第 19 节）、确认/提示框（第 20 节，首个模态宿主）；浮窗外壳（样式/主题判定/拖拽策略/窗口按钮）已从 `lib/script/ui` 下沉到渲染层（第 21 节）；办公线性图标的 SVG 规格也已抽成后端中立事实源（第 22 节）；点击粒子辅助的按钮翻译改经 `render_bridge`、`_particle_helper.py` 出列（第 23 节）；论坛样式的底纹混色改为纯十六进制实现、`forum_style.py` 出列（第 24 节）；二维码登录浮窗的自动收起/穿透/窗口标志/自愈能力下沉到基类，`yuanbao_login_dialog.py` 与 `cloudmusic_login_dialog.py` 出列（第 25、26 节）；排布解算已收敛到 `visuals/` 并由 `PlacementSpec` 统一解算（第 14 节，档位 0/1），右键按钮族的逐控件锚点事件链已收敛为声明式 `AnchorGraph` 且 Qt 改为消费共享布局（第 15 节，档位 2/3）；`WindowHost` 的被动宿主激活语义已与 Qt/DX 焦点策略对齐（第 17 节）。** 目录与引用规则以本文档为准；改建前的事实源是 [Qt 边界契约](Qt边界契约.md) 与 [跨后端视觉表现契约](视觉表现契约.md)，那两份文档继续负责“哪些内容算视觉逻辑”和“什么算无 Qt”。第一章描述的是最终目标；产品控件面（`lib/script/ui` 直接 `import PyQt5`）仍需逐个控件迁移，当前待迁清单以 `tests/test_qt_dependency_boundaries.py` 的 `frozen_ui_qt_importers` 为准，滚动顺序见第 13 节末尾；翻页按钮族已于第二十七轮迁出（第 27 节）；音响菜单控制按钮族已于第二十八轮迁出（第 28 节）；音响菜单族共享样式已于第二十九轮出列（第 29 节，档位 D 新增 `QtPainterHost` 绘制宿主）。
+**状态：第 6 节迁移顺序 1、2（目录切分）、3 已执行；图层能力已收敛到 `lib/core/render/layers/`（第 16 节）；后端中立协议与统一数据类型已落地（第 11 节），控件层“描述 + 后端渲染”已滚动迁移气泡框（第 12 节）、说明书、语音指示器与播放进度条（第 13 节）、音响音量/频段双滑条、搜索结果框与命令提示框（第 18 节）、右键矩形动作按钮一族八个按钮（第 19 节）、确认/提示框（第 20 节，首个模态宿主）；浮窗外壳（样式/主题判定/拖拽策略/窗口按钮）已从 `lib/script/ui` 下沉到渲染层（第 21 节）；办公线性图标的 SVG 规格也已抽成后端中立事实源（第 22 节）；点击粒子辅助的按钮翻译改经 `render_bridge`、`_particle_helper.py` 出列（第 23 节）；论坛样式的底纹混色改为纯十六进制实现、`forum_style.py` 出列（第 24 节）；二维码登录浮窗的自动收起/穿透/窗口标志/自愈能力下沉到基类，`yuanbao_login_dialog.py` 与 `cloudmusic_login_dialog.py` 出列（第 25、26 节）；排布解算已收敛到 `visuals/` 并由 `PlacementSpec` 统一解算（第 14 节，档位 0/1），右键按钮族的逐控件锚点事件链已收敛为声明式 `AnchorGraph` 且 Qt 改为消费共享布局（第 15 节，档位 2/3）；`WindowHost` 的被动宿主激活语义已与 Qt/DX 焦点策略对齐（第 17 节）。** 目录与引用规则以本文档为准；改建前的事实源是 [Qt 边界契约](Qt边界契约.md) 与 [跨后端视觉表现契约](视觉表现契约.md)，那两份文档继续负责“哪些内容算视觉逻辑”和“什么算无 Qt”。第一章描述的是最终目标；产品控件面（`lib/script/ui` 直接 `import PyQt5`）仍需逐个控件迁移，当前待迁清单以 `tests/test_qt_dependency_boundaries.py` 的 `frozen_ui_qt_importers` 为准，滚动顺序见第 13 节末尾；翻页按钮族已于第二十七轮迁出（第 27 节）；音响菜单控制按钮族已于第二十八轮迁出（第 28 节）；音响菜单族共享样式已于第二十九轮出列（第 29 节，档位 D 新增 `QtPainterHost` 绘制宿主）；办公面样式与控件树辅助已于第三十轮出列（第 30 节）。
 
 本文只新增目录与引用规则，不改变任何视觉语义、数值来源或渲染结果。改建过程中出现分歧时，以 [视觉表现契约](视觉表现契约.md) 和当前 Qt 基准为事实源。
 
@@ -1486,4 +1486,55 @@ lib/core/render/layers/
 
 - `speaker_search_dialog.py` / `playlist_panel.py` / `workbench_components.py` 仍是
   `QWidget` 页面或控件，本轮只改它们的取色与画法，未动窗口生命周期与交互。
+- 第 3 项其余 `exec_()` 对话框与第 4 项（`world_objects/*`、`game_runtime`）仍未动。
+
+## 30. 第三十轮执行记录：办公面样式去 Qt
+
+`lib/script/ui/office_style.py` 是"共享样式"里剩下的最后一处 Qt 依赖，形态与前几轮不同：
+它**整份文件**只 import 了 `PyQt5.QtWidgets` 的九个控件类，但那九个类只被两个辅助函数用到，
+而文件里约 500 行是把工作台 token 拼成 QSS 的纯字符串逻辑。也就是说，一条气泡内边距常量
+也拖着一份 `PyQt5`。
+
+拆法沿用第 21 轮浮窗外壳与第 24 轮论坛样式的思路——**先分清"数据"与"工具包事实"**：
+
+- 数据（后端中立）：整份 `office_stylesheet()`、`office_effort_colors()` 的档位插值、气泡
+  内边距、设置页字号档、`OFFICE_HINT_LABELS` / `OFFICE_BOLD_LABELS`，落在
+  `lib/core/render/visuals/office_chrome.py`。配色改读 `visuals/workbench_tokens.py` 的
+  token 映射，顺带去掉"`lib.script.ui.office_style` → `lib.script.workbench.theme` →
+  `lib.core.render.visuals`"这条绕回渲染层的路径。
+- 工具包事实：`apply_office_fonts()` 要遍历控件树、`create_office_accent_bar()` 要 `new`
+  出 `QWidget`，落到 `lib/core/render/backends/qt/widgets/office_widgets.py`。
+
+**两条不反向依赖的约束决定了签名**（这是本轮唯一需要留意的设计点）：
+
+1. `lib/core/render` 不得 import `lib.script`（`test_render_layer_never_imports_product_modules`），
+   于是推理强度的档位数量不能由中立模块去读 `lib.script.office.contracts`。改为调用方传参：
+   `office_effort_colors(mode, *, effort_steps)` / `office_stylesheet(..., effort_steps=...)`，
+   产品侧门面把 `len(REASONING_EFFORTS)` 喂进去。
+2. 同一条约束也让中立的 QSS 不能去 import `workbench_settings_layout` 拿字号档。处理方式与
+   `workbench_chrome` 镜像窗口按钮 QSS 一致：在 `office_chrome` 里放**中立镜像常量**，
+   由测试钉住它与产品面权威值逐值相等。
+
+`render_bridge` 新增 `apply_settings_page_fonts()` / `apply_office_widget_fonts()` /
+`create_office_accent_bar()` 三个转发落点，与 `create_control_host` / `create_painter_host` /
+`render_office_icon` 同级；`office_style.py` 改为保留历史导入名的薄门面，办公页、审批弹窗
+与既有测试的调用面不变。
+
+**验证（2026-10-06）**
+
+- 逐字节对照：三种模式（`None` / `dark` / `light`）× `standalone` 两种 × 两个页名，
+  共 **15 组** QSS 与收敛前的 `office_stylesheet()` 输出**逐字符相等**；`office_effort_colors()`
+  在三种模式下同样逐值相等。对照用迁移前的 `HEAD` 版本作为 oracle。
+- 新增 `tests/test_office_style.py` 六条断言：字号档镜像一致、档位色按模式取权威 token、
+  15 组 QSS 与中立实现一致、`effort_steps` 确实来自产品契约、门面与中立模块都不 import
+  `PyQt5`、中立模块不 import `lib.script` 与 Qt 宿主。
+- `frozen_ui_qt_importers`：48 → **47**。全量 `unittest` 2177 通过 / 10 跳过；
+  `tests/dx` 122 通过 / 7 跳过；ruff + compileall 干净。
+
+**本轮没动的部分**
+
+- `office_effort_slider.py` / `office_chat_view.py` / `office_page.py` / `office_mode_page.py` /
+  `office_mode_settings.py` / `office_manager_card.py` / `office_approval_dialog.py` /
+  `office_approval_controller.py` 仍是 `QWidget` / `QDialog` 页面与控件，本轮只改它们取样式
+  的入口。
 - 第 3 项其余 `exec_()` 对话框与第 4 项（`world_objects/*`、`game_runtime`）仍未动。

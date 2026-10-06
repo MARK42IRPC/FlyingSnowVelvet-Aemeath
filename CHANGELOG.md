@@ -102,6 +102,20 @@
   新增可选 `origin`（默认原点，单控件宿主调用面不变），门面把真实原点传下去。新增
   `SpeakerMenuStyleFacadeTests` 的非零原点逐字节对照（含面板壳，修前必红）与
   `test_search_button_paints_to_the_right_of_the_input_box` 整窗像素断言（修前必红）。
+- 办公面样式去 Qt：`office_style.py` 整份文件曾因为两个控件树辅助函数而 import `PyQt5`，
+  但那 600 行里约 500 行是把工作台 token 拼成 QSS 的纯字符串逻辑。本轮拆开：整份 QSS、
+  五档推理强度档位色、气泡内边距与设置页字号档下沉到后端中立的
+  `lib/core/render/visuals/office_chrome.py`（工作台 token 走 `visuals/workbench_tokens.py`；
+  原先经 `lib.script.workbench.theme` 再进 `lib.core.render.visuals` 的绕行也一并去掉）；
+  `apply_office_fonts()` / `create_office_accent_bar()` 这类必须真的遍历 / 构造 `QWidget`
+  的辅助落到 `lib/core/render/backends/qt/widgets/office_widgets.py`，由 `render_bridge`
+  的 `apply_settings_page_fonts()` / `apply_office_widget_fonts()` / `create_office_accent_bar()`
+  转发（与 `create_painter_host` / `render_office_icon` 同属解析/转发层）。`office_style.py`
+  改为保留历史导入名的薄门面，`frozen_ui_qt_importers` 48 → 47，调用面不变。两条不反向
+  依赖的约束决定了签名：档位数量 `effort_steps` 与设置页字号档都由产品侧门面喂进来，
+  因为 `lib/core/render` 不得 import `lib.script`。新增 `tests/test_office_style.py`：
+  15 组（三种模式 × standalone × 两个页名）QSS 与收敛前**逐字节相等**、档位色按模式取
+  权威 token 对照、字号档镜像与产品面逐值一致、门面与中立模块都不再 import `PyQt5`。
 ### Changed
 - 自动更新包覆盖提速：覆盖阶段不再对每个文件读两遍内容，只比同名文件的大小（字节正确性
   已由资源包的 SHA-256 在下载时兜住），拷贝并发发起。真实 733 MiB / 17,195 文件的资源包

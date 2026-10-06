@@ -112,6 +112,46 @@ def painter_color(value):
     return create_painter_host().color(value)
 
 
+def apply_settings_page_fonts(page) -> None:
+    """把工作台设置页的字号档铺到一页控件树上（产品面调用面不变）。"""
+    from lib.script.ui.workbench_settings_layout import apply_settings_page_fonts as apply
+
+    apply(page)
+
+
+def apply_office_widget_fonts(
+    root,
+    *,
+    settings_font_size: int | None = None,
+    settings_hint_font_size: int | None = None,
+) -> None:
+    """办公面独有的控件与标签铺字号（Qt 实现见 ``widgets/office_widgets.py``）。
+
+    与 ``create_control_host`` / ``create_painter_host`` 同属解析/转发层：办公面样式门面
+    ``office_style`` 只交一棵控件树与字号档，真实遍历由注入的 Qt 实现完成，门面因此
+    不必 import ``PyQt5``。
+    """
+    from lib.core.render.backends.qt.widgets.office_widgets import (
+        apply_office_widget_fonts as apply,
+    )
+
+    apply(
+        root,
+        font_factory=ui_font,
+        settings_font_size=settings_font_size,
+        settings_hint_font_size=settings_hint_font_size,
+    )
+
+
+def create_office_accent_bar(parent):
+    """创建办公面顶部的双色 accent bar（Qt 实现见 ``widgets/office_widgets.py``）。"""
+    from lib.core.render.backends.qt.widgets.office_widgets import (
+        create_office_accent_bar as create,
+    )
+
+    return create(parent)
+
+
 def render_office_icon(name: str, color: str):
     """渲染一枚办公线性图标（Qt 返回 `QIcon`）。
 
