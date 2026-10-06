@@ -5,6 +5,8 @@ from __future__ import annotations
 import subprocess
 import sys
 import textwrap
+import threading
+import time
 import unittest
 import wave
 from pathlib import Path
@@ -143,6 +145,140 @@ class LocalAudioDecodeTests(unittest.TestCase):
             check=False,
         )
         self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+
+
+class MciMusicPlayerThreadAffinityTests(unittest.TestCase):
+    """MCI 别名与线程强绑定：open 与后续每条命令必须落在同一个线程。
+
+    回归「本地音乐播放队列音频无限重叠」：旧实现里 play() 在调用线程 open，
+    随后在新建的 cloudmusic-poll 线程里 status mode 轮询。跨线程的 MCI 调用返回
+    错误码 263（"设备未打开"）加空串，旧代码把空串当成「播完」立即推进队列；而同一线程外
+    close 也失败，被放弃的音频继续发声。整条队列因此不断叠加播放。
+
+    本用例盯住修复的本质：open 与 status mode 必须由同一个线程发出，且轮询期间
+    mode 仍为 playing 时绝不能判定为播放完成。这里用一张按线程登记的别名表模拟 MCI
+    的线程亲和：只有 open 别名的那个线程才认得它，别的线程一律得到错误码 263 与空串。
+    """
+
+    _ERR_NOT_OPEN = 263
+
+    def _thread_affine_tools(self):
+        """构造一套模拟 MCI 线程亲和的 _mci / _mci_query / _mci_query_result。"""
+        from lib.script.cloudmusic import _player
+
+        owner: dict[str, int] = {}
+        retired: list[str] = []
+        state = {"mode": "playing"}
+        open_threads: list[int] = []
+        mode_threads: list[int] = []
+
+        def fake_mci(command, *_args, **_kwargs):
+            thread = threading.get_ident()
+            parts = command.split()
+            verb = parts[0] if parts else ""
+            alias = parts[1] if len(parts) > 1 else ""
+            if verb == "open":
+                open_threads.append(threading.get_ident())
+                owner[parts[-1]] = thread
+                return 0
+            if verb in ("stop", "close"):
+                if owner.get(alias) != thread:
+                    return self._ERR_NOT_OPEN
+                if verb == "close":
+                    owner.pop(alias, None)
+                    retired.append(alias)
+                return 0
+            if verb == "play":
+                return 0 if owner.get(alias) == thread else self._ERR_NOT_OPEN
+            return 0
+
+        def fake_query(command, *_args, **_kwargs):
+            thread = threading.get_ident()
+            parts = command.split()
+            alias = parts[1] if len(parts) > 1 else ""
+            if owner.get(alias) != thread:
+                return ""
+            return "1000" if command.endswith("length") else "500"
+
+        def fake_query_result(command, *_args, **_kwargs):
+            thread = threading.get_ident()
+            parts = command.split()
+            alias = parts[1] if len(parts) > 1 else ""
+            if owner.get(alias) != thread:
+                return self._ERR_NOT_OPEN, ""
+            if command.endswith("mode"):
+                mode_threads.append(threading.get_ident())
+                return 0, state["mode"]
+            return 0, fake_query(command)
+
+        return _player, fake_mci, fake_query, fake_query_result, open_threads, mode_threads, retired
+
+    def test_every_mci_command_runs_on_the_same_thread(self):
+        finished: list[int] = []
+        (
+            _player,
+            fake_mci,
+            fake_query,
+            fake_query_result,
+            open_threads,
+            mode_threads,
+            retired,
+        ) = self._thread_affine_tools()
+
+        player = _player.MciMusicPlayer()
+        player.set_callbacks(on_finished=lambda gen: finished.append(gen))
+        with patch.object(_player, "_mci", fake_mci), patch.object(
+            _player, "_mci_query", fake_query
+        ), patch.object(
+            _player, "_mci_query_result", fake_query_result, create=True
+        ):
+            player.play("C:/music/thread-affinity.wav", 0.5, 1)
+            time.sleep(0.8)
+            player.cleanup()
+
+        self.assertTrue(open_threads, "open 没有被调用")
+        self.assertTrue(mode_threads, "播放状态轮询没有跑起来")
+        self.assertEqual(
+            set(open_threads) | set(mode_threads),
+            {open_threads[0]},
+            "open 与 status mode 必须由同一个线程发出（MCI 别名与线程强绑定）",
+        )
+        self.assertEqual(
+            finished, [], "mode 仍为 playing 时不得判定为播放完成"
+        )
+
+    def test_an_off_thread_query_must_not_look_like_a_finished_track(self):
+        """换歌时旧别名必须真的被 close 掉，不能留下还在发声的设备。
+
+        这是「音频无限重叠」的直接断言：连放两首后，第一首的别名必须出现在被 close
+        的清单里；只要它没被关掉，两个设备就会同时出声。
+        """
+        (
+            _player,
+            fake_mci,
+            fake_query,
+            fake_query_result,
+            _open_threads,
+            _mode_threads,
+            retired,
+        ) = self._thread_affine_tools()
+
+        player = _player.MciMusicPlayer()
+        with patch.object(_player, "_mci", fake_mci), patch.object(
+            _player, "_mci_query", fake_query
+        ), patch.object(
+            _player, "_mci_query_result", fake_query_result, create=True
+        ):
+            player.play("C:/music/first.wav", 0.5, 1)
+            time.sleep(0.4)
+            player.play("C:/music/second.wav", 0.5, 2)
+            time.sleep(0.4)
+            player.cleanup()
+
+        self.assertGreaterEqual(
+            len(retired), 2,
+            f"每次换歌都要关掉上一首的设备，实际关闭: {retired}",
+        )
 
 
 class _TempDir:

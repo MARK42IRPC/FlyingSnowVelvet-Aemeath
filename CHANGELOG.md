@@ -206,6 +206,14 @@
   `lib/script/app/wuwa_launcher.py`。对外接口不变。
 
 ### Fixed
+- 修复本地音乐播放队列音频无限重叠：MCI 别名与创建它的线程强绑定，只有 `open` 该别名的
+  线程才能对它发 `play` / `status` / `setaudio` / `close`；在别的线程上执行会返回错误码
+  263（“指定的设备未打开，或不被 MCI 所识别”）并给出空串。`MciMusicPlayer` 原先在调用线程
+  `open`、却在新建的轮询线程里查 `status mode`，空串被当成“播放完成”立即推进队列，而同一
+  线程外的 `close` 也失败，被放弃的音频继续发声——整条队列因此逐首叠加播放，本地音乐越多
+  越明显。现在全部 MCI 调用收进一个常驻工作线程：命令投递过去并等待完成，播放状态由它轮询，
+  `position_ms` / `duration_ms` / `is_busy` 读它维护的缓存；轮询只在拿到错误码 0 时才依据
+  `mode` 判定播完。新增 `MciMusicPlayerThreadAffinityTests` 用按线程登记的别名表复现该约束。
 - 修复本地音乐有时打不开：`MciMusicPlayer` 走 Windows MCI，只会尝试 `type MPEGAudio` 和
   `type mpegvideo`，而扫描目录时收录的 FLAC / M4A(AAC) / OGG / Opus / WebM 容器 MCI 都
   打不开（返回 263/277），用户看到的就是“有些本地音乐打不开”。新增
