@@ -42,6 +42,8 @@ resc/node-*-win-x64/
 resc/gsvmove_update/
 resc/user/
 resc/VFX/cache/
+# ``AEMEATH_DESK_PET_HOME`` 指向临时工作区跑冒烟/端到端测试时落到这里。
+resc/temp/
 config/.shared_pending/
 musicdl_outputs/
 用户反馈/
