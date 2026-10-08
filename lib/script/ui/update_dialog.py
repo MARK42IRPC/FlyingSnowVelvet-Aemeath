@@ -1,31 +1,31 @@
-"""桌宠更新/开发版同步小窗。"""
+"""桌宠更新/开发版同步小窗（按窗口描述装配，不再 import PyQt5）。
+
+本模块不再是 `QWidget` 子类：窗眉、状态行、详情行、进度条与动作按钮都由
+`lib/core/render/visuals/window_specs.py` 的 `update_window_spec()` 描述，
+`render_bridge.create_spec_window()` 交给 Qt 宿主
+（`lib/core/render/backends/qt/widgets/spec_host.py`）装配。
+
+本模块只做三件事：收集更新/同步状态、把后台 worker 的结果投递回 UI 线程、更新描述宿主
+里的控件。为兼容既有调用方与测试，保留原 `QWidget` 的属性面（`_title_label` /
+`_status_label` / `_detail_label` / `_progress_bar` / `_primary_btn` / `_secondary_btn` /
+`_minimize_btn` / `_visible` / `_busy` / `width()` / `_show_dialog()` /
+`minimize_floating_window()` / `deleteLater()` 等）。
+"""
 
 from __future__ import annotations
 
 from datetime import datetime
 from typing import Callable
 
-from PyQt5.QtCore import Qt, QPropertyAnimation, QEasingCurve, pyqtSignal
-from PyQt5.QtGui import QColor, QCursor, QPainter
-from PyQt5.QtWidgets import (
-    QGraphicsOpacityEffect,
-    QHBoxLayout,
-    QLabel,
-    QPushButton,
-    QProgressBar,
-    QStyle,
-    QVBoxLayout,
-    QWidget,
-)
-
-from config.config import UI
 from config.scale import scale_px
-from lib.core.anchor_utils import apply_ui_opacity
 from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import Event, EventType, get_event_center
-from lib.core.render.layers import get_layer_manager, WindowLayer
-from lib.script.ui.workbench_floating import WorkbenchFloatingWindow
-from lib.script.workbench.theme import get_workbench_colors
+from lib.core.render.visuals.window_specs import (
+    UPDATE_MINIMIZE,
+    UPDATE_PRIMARY,
+    UPDATE_SECONDARY,
+    update_window_spec,
+)
 from lib.script.update_manager import (
     GitSyncCheckResult,
     GitSyncManager,
@@ -35,7 +35,9 @@ from lib.script.update_manager import (
     UpdateManager,
     UpdateResult,
 )
-from lib.script.ui.render_bridge import centered_placement, screen_rect_for_point as get_screen_geometry_for_point, ui_font as get_ui_font
+from lib.core.render.visuals.workbench_chrome import floating_window_stylesheet
+from lib.script.workbench.theme import get_workbench_colors
+from lib.script.ui import render_bridge
 
 _WIDTH = scale_px(360, min_abs=320)
 _HEIGHT = scale_px(248, min_abs=220)
@@ -43,25 +45,44 @@ _LAYER = scale_px(2, min_abs=1)
 _BORDER = _LAYER * 2
 
 
-class DesktopPetUpdateDialog(WorkbenchFloatingWindow):
-    """承载分发包更新与开发版同步的独立小窗。"""
-
-    _detail_signal = pyqtSignal(str)
-    _progress_signal = pyqtSignal(int, int, str)
-    _release_check_signal = pyqtSignal(object)
-    _release_done_signal = pyqtSignal(object)
-    _git_check_signal = pyqtSignal(object)
-    _git_done_signal = pyqtSignal(object)
-    _restart_done_signal = pyqtSignal(object)
-    _error_signal = pyqtSignal(str)
+class _UpdateSignal:
+    """`pyqtSignal(...)` 的后端中立替身：只保留 `connect` / `emit` / `disconnect`。"""
 
     def __init__(self) -> None:
-        super().__init__()
-        self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
-        self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setFixedSize(_WIDTH, _HEIGHT)
-        get_layer_manager().register(self, WindowLayer.DIALOG)
+        self._slots: list = []
 
+    def connect(self, slot) -> None:
+        if slot not in self._slots:
+            self._slots.append(slot)
+
+    def disconnect(self, slot=None) -> None:
+        if slot is None:
+            self._slots.clear()
+            return
+        try:
+            self._slots.remove(slot)
+        except ValueError:
+            pass
+
+    def emit(self, *args) -> None:
+        for slot in tuple(self._slots):
+            slot(*args)
+
+
+class DesktopPetUpdateDialog:
+    """承载分发包更新与开发版同步的独立小窗。"""
+
+    _detail_signal = _UpdateSignal()
+    _progress_signal = _UpdateSignal()
+    _release_check_signal = _UpdateSignal()
+    _release_done_signal = _UpdateSignal()
+    _git_check_signal = _UpdateSignal()
+    _git_done_signal = _UpdateSignal()
+    _restart_done_signal = _UpdateSignal()
+    _error_signal = _UpdateSignal()
+
+    def __init__(self, parent=None) -> None:
+        self._dispatcher = render_bridge.create_ui_dispatcher(parent)
         self._visible = False
         self._busy = False
         self._mode = ""
@@ -71,80 +92,25 @@ class DesktopPetUpdateDialog(WorkbenchFloatingWindow):
         self._primary_handler: Callable[[], None] | None = None
         self._secondary_handler: Callable[[], None] | None = None
 
-        self._header = QWidget(self)
-        self._title_label = QLabel(self._header)
-        self._title_label.setFont(self._build_title_font())
-        self._title_label.setAlignment(Qt.AlignCenter)
-        self._minimize_btn = self.create_floating_window_button(
-            self._header,
-            QStyle.SP_TitleBarMinButton,
-            "最小化",
-            self.minimize_floating_window,
+        self._spec = self._build_spec()
+        self._window = render_bridge.create_spec_window(
+            self._spec,
+            on_semantic=self._on_semantic,
+            parent=parent,
         )
-        self.attach_floating_drag_handle(self._header, self._title_label)
 
-        self._status_label = QLabel(self)
-        self._status_label.setFont(get_ui_font(size=scale_px(13, min_abs=10)))
-        self._status_label.setAlignment(Qt.AlignCenter)
-        self._status_label.setWordWrap(True)
+        self._title_label = self._window.find("title")
+        self._status_label = self._window.find("status")
+        self._detail_label = self._window.find("detail")
+        self._progress_bar = self._window.find("progress")
+        self._primary_btn = self._window.find("primary")
+        self._secondary_btn = self._window.find("secondary")
+        self._minimize_btn = self._window.find("minimize")
 
-        self._detail_label = QLabel(self)
-        self._detail_label.setFont(get_ui_font(size=scale_px(11, min_abs=9)))
-        self._detail_label.setAlignment(Qt.AlignCenter)
-        self._detail_label.setWordWrap(True)
-
-        self._progress_bar = QProgressBar(self)
-        self._progress_bar.setTextVisible(True)
+        self._secondary_btn.hide()
+        self._primary_btn.hide()
         self._progress_bar.setRange(0, 1)
         self._progress_bar.setValue(0)
-
-        self._secondary_btn = QPushButton(self)
-        self._secondary_btn.clicked.connect(self._on_secondary_clicked)
-        self._secondary_btn.hide()
-
-        self._primary_btn = QPushButton(self)
-        self._primary_btn.setObjectName("WorkbenchFloatingPrimary")
-        self._primary_btn.clicked.connect(self._on_primary_clicked)
-        self._primary_btn.hide()
-        self._secondary_btn.setFont(get_ui_font())
-        self._primary_btn.setFont(get_ui_font())
-
-        header_layout = QHBoxLayout(self._header)
-        header_layout.setContentsMargins(0, 0, 0, 0)
-        header_layout.setSpacing(scale_px(10, min_abs=8))
-        header_layout.addSpacing(scale_px(26, min_abs=24))
-        header_layout.addWidget(self._title_label, 1)
-        header_layout.addWidget(self._minimize_btn, 0, Qt.AlignTop)
-
-        content = QVBoxLayout(self)
-        content.setContentsMargins(
-            _BORDER + scale_px(14, min_abs=12),
-            _BORDER + scale_px(16, min_abs=14),
-            _BORDER + scale_px(14, min_abs=12),
-            _BORDER + scale_px(12, min_abs=10),
-        )
-        content.setSpacing(scale_px(12, min_abs=8))
-        content.addWidget(self._header)
-        content.addWidget(self._status_label)
-        content.addWidget(self._detail_label, 1)
-        content.addWidget(self._progress_bar)
-
-        btn_row = QHBoxLayout()
-        btn_row.setContentsMargins(0, 0, 0, 0)
-        btn_row.setSpacing(scale_px(10, min_abs=8))
-        btn_row.addStretch(1)
-        btn_row.addWidget(self._secondary_btn)
-        btn_row.addWidget(self._primary_btn)
-        content.addLayout(btn_row)
-
-        self._opacity = QGraphicsOpacityEffect(self)
-        self._opacity.setOpacity(0.0)
-        self.setGraphicsEffect(self._opacity)
-
-        self._anim = QPropertyAnimation(self._opacity, b"opacity", self)
-        self._anim.setDuration(UI.get("ui_fade_duration", 180))
-        self._anim.setEasingCurve(QEasingCurve.InOutQuad)
-        self._anim.finished.connect(self._on_anim_finished)
 
         self._detail_signal.connect(self._set_detail_text)
         self._progress_signal.connect(self._apply_progress)
@@ -154,7 +120,32 @@ class DesktopPetUpdateDialog(WorkbenchFloatingWindow):
         self._git_done_signal.connect(self._on_git_done)
         self._restart_done_signal.connect(self._on_restart_done)
         self._error_signal.connect(self._on_worker_error)
-        self.install_floating_chrome()
+
+    # ── 描述 ─────────────────────────────────────────────────────────
+
+    def _build_spec(self):
+        return update_window_spec(
+            status="",
+            detail="",
+            stylesheet=self._widget_stylesheet(),
+            width=_WIDTH,
+            height=_HEIGHT,
+            border_width=_BORDER,
+            root_margin=(
+                _BORDER + scale_px(14, min_abs=12),
+                _BORDER + scale_px(16, min_abs=14),
+                _BORDER + scale_px(14, min_abs=12),
+                _BORDER + scale_px(12, min_abs=10),
+            ),
+            root_spacing=scale_px(12, min_abs=8),
+            header_spacing=scale_px(10, min_abs=8),
+            header_lead=scale_px(26, min_abs=24),
+            title_size=scale_px(16, min_abs=12),
+            status_size=scale_px(13, min_abs=10),
+            detail_size=scale_px(11, min_abs=9),
+            minimize_size=scale_px(32, min_abs=28),
+            progress_min_height=scale_px(22, min_abs=18),
+        )
 
     def begin_release_check(self) -> bool:
         if self._busy:
@@ -200,7 +191,7 @@ class DesktopPetUpdateDialog(WorkbenchFloatingWindow):
         if not self._visible:
             return
         self._visible = False
-        self._animate(0.0)
+        self._window.hide_dialog()
 
     def _prepare_dialog(self, *, title: str, status: str, detail: str) -> None:
         self._title_label.setText(title)
@@ -217,34 +208,8 @@ class DesktopPetUpdateDialog(WorkbenchFloatingWindow):
         self._minimize_btn.setEnabled(not busy)
 
     def _show_dialog(self) -> None:
-        self._center_on_screen()
-        # closeEvent unregisters hidden dialogs; restore the record before
-        # showing so a later update check is included in the z-order chain.
-        get_layer_manager().register(self, WindowLayer.DIALOG)
-        if not self._visible:
-            self._visible = True
-            self.show()
-        get_layer_manager().bring_to_front(self)
-        get_layer_manager().enforce_burst()
-        self.activateWindow()
-        self._animate(1.0)
-
-    def _animate(self, target: float) -> None:
-        self._anim.stop()
-        self._anim.setStartValue(self._opacity.opacity())
-        self._anim.setEndValue(apply_ui_opacity(target))
-        self._anim.start()
-
-    def _on_anim_finished(self) -> None:
-        if not self._visible:
-            self.hide()
-
-    def _center_on_screen(self) -> None:
-        # 居中算术与夹取统一在 visuals/layout.py（档位 1）。
-        cursor_pos = QCursor.pos()
-        screen = get_screen_geometry_for_point(point=cursor_pos, fallback_widget=self)
-        placement = centered_placement((self.width(), self.height()), screen)
-        self.move(placement.x, placement.y)
+        self._visible = True
+        self._window.show_window()
 
     def _set_actions(
         self,
@@ -552,40 +517,94 @@ class DesktopPetUpdateDialog(WorkbenchFloatingWindow):
         if callable(self._primary_handler):
             self._primary_handler()
 
-    def closeEvent(self, event) -> None:
+    # ── 语义与生命周期 ───────────────────────────────────────────────
+
+    def _on_semantic(self, semantic: str) -> None:
+        key = str(semantic)
+        if key == UPDATE_MINIMIZE:
+            self.minimize_floating_window()
+        elif key == UPDATE_PRIMARY:
+            self._on_primary_clicked()
+        elif key == UPDATE_SECONDARY:
+            self._on_secondary_clicked()
+
+    def minimize_floating_window(self) -> None:
+        """窗眉最小化：忙碌时忽略，否则收起窗口。"""
+        self.hide_dialog()
+
+    def _on_widget_closed(self) -> None:
         if self._busy:
-            event.ignore()
             return
         self._visible = False
-        get_layer_manager().unregister(self)
-        super().closeEvent(event)
 
-    def deleteLater(self) -> None:
-        try:
-            get_layer_manager().unregister(self)
-        except (AttributeError, RuntimeError):
-            pass
-        super().deleteLater()
+    def cleanup(self) -> None:
+        self._visible = False
+        self._busy = False
+        self._dispatcher.clear()
+        self._window.cleanup()
 
-    def paintEvent(self, event) -> None:
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing, False)
-        colors = get_workbench_colors()
-        painter.fillRect(self.rect(), QColor(colors.border_strong))
-        painter.fillRect(
-            self.rect().adjusted(_LAYER, _LAYER, -_LAYER, -_LAYER),
-            QColor(colors.border),
-        )
-        painter.fillRect(
-            self.rect().adjusted(_BORDER, _BORDER, -_BORDER, -_BORDER),
-            QColor(colors.surface),
-        )
+    def deleteLater(self) -> None:  # noqa: N802 - 沿用 Qt 命名
+        self._dispatcher.clear()
+        self._window.cleanup()
+
+    # ── 底层窗口的属性面（调用方按原 QWidget 用法）────────────────────
+
+    def widget(self):
+        return self._window.widget
+
+    def findChild(self, *args, **kwargs):  # noqa: N802 - 沿用 Qt 命名
+        return self._window.widget.findChild(*args, **kwargs)
+
+    def show(self) -> None:
+        self._window.widget.show()
+
+    def hide(self) -> None:
+        self._window.widget.hide()
+
+    def close(self) -> None:
+        self._window.widget.close()
+
+    def move(self, *args) -> None:
+        self._window.widget.move(*args)
+
+    def raise_(self) -> None:
+        self._window.widget.raise_()
+
+    def activateWindow(self) -> None:  # noqa: N802 - 沿用 Qt 命名
+        self._window.widget.activateWindow()
+
+    def width(self) -> int:
+        return self._window.widget.width()
+
+    def height(self) -> int:
+        return self._window.widget.height()
+
+    def isVisible(self) -> bool:  # noqa: N802 - 沿用 Qt 命名
+        return self._window.widget.isVisible()
+
+    def styleSheet(self) -> str:  # noqa: N802 - 沿用 Qt 命名
+        return self._window.widget.styleSheet()
+
+    def grab(self):
+        return self._window.widget.grab()
 
     @staticmethod
-    def _build_title_font():
-        font = get_ui_font(size=scale_px(16, min_abs=12))
-        font.setBold(True)
-        return font
+    def _widget_stylesheet() -> str:
+        # 原窗口继承 `WorkbenchFloatingWindow`，样式来自共享的
+        # `floating_window_stylesheet()`（含 QProgressBar / QPushButton 尺寸档），
+        # 再叠加本窗的标签对象名配色。迁移后必须逐字保留同一份外壳 QSS。
+        colors = get_workbench_colors()
+        return floating_window_stylesheet() + f"""
+            QLabel#UpdateTitle {{
+                color: {colors.text};
+            }}
+            QLabel#UpdateStatus {{
+                color: {colors.text};
+            }}
+            QLabel#UpdateDetail {{
+                color: {colors.text_muted};
+            }}
+            """
 
     @staticmethod
     def _fmt_dt(value: datetime) -> str:

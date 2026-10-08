@@ -8,22 +8,8 @@ from pathlib import Path
 from typing import Callable
 
 import requests
-from PyQt5.QtCore import QEasingCurve, QObject, QPropertyAnimation, Qt, pyqtSignal
-from PyQt5.QtGui import QColor, QCursor, QPainter
-from PyQt5.QtWidgets import (
-    QFrame,
-    QHBoxLayout,
-    QLabel,
-    QPushButton,
-    QTextBrowser,
-    QToolButton,
-    QVBoxLayout,
-    QWidget,
-)
 
-from config.config import UI
 from config.scale import scale_px
-from lib.core.anchor_utils import apply_ui_opacity
 from lib.core.announcement import (
     AnnouncementBlock,
     AnnouncementDocument,
@@ -48,10 +34,19 @@ __all__ = [
 ]
 from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import EventType, get_event_center
-from lib.core.render.visuals.announcement_visuals import ANNOUNCEMENT_SIZE, get_announcement_colors
-from lib.core.render.layers import get_layer_manager, WindowLayer
-from lib.script.ui.workbench_floating import WorkbenchFloatingWindow
-from lib.script.ui.render_bridge import centered_placement, screen_rect_for_point as get_screen_geometry_for_point, ui_font as get_ui_font, ui_font_family as get_ui_font_family
+from lib.core.render.visuals.announcement_visuals import (
+    ANNOUNCEMENT_SIZE,
+    get_announcement_colors,
+)
+from lib.core.render.visuals.window_specs import (
+    ANNOUNCEMENT_CLOSE,
+    ANNOUNCEMENT_RETRY,
+    ANNOUNCEMENT_SUPPRESS_FOREVER,
+    ANNOUNCEMENT_SUPPRESS_TODAY,
+    announcement_window_spec,
+)
+from lib.script.ui import render_bridge
+from lib.script.ui.render_bridge import ui_font_family as get_ui_font_family
 
 
 def announcement_to_html(document: AnnouncementDocument) -> str:
@@ -90,159 +85,112 @@ def _color_name(key: str) -> str:
     return f"#{color.red:02x}{color.green:02x}{color.blue:02x}"
 
 
-class DesktopPetAnnouncementDialog(WorkbenchFloatingWindow):
-    """Compact, scroll-ready desktop-pet announcement window."""
+class _AnnouncementSignal:
+    """``pyqtSignal()`` 的后端中立替身：只保留 ``connect`` / ``emit`` / ``disconnect``。"""
 
-    # 公告控制器已订阅主题事件并调用 refresh_workbench_theme()。
+    def __init__(self) -> None:
+        self._slots: list = []
+
+    def connect(self, slot) -> None:
+        if slot not in self._slots:
+            self._slots.append(slot)
+
+    def disconnect(self, slot=None) -> None:
+        if slot is None:
+            self._slots.clear()
+            return
+        try:
+            self._slots.remove(slot)
+        except ValueError:
+            pass
+
+    def emit(self, *args) -> None:
+        for slot in tuple(self._slots):
+            slot(*args)
+
+
+class DesktopPetAnnouncementDialog:
+    """紧凑、可滚动的桌宠公告浮窗（按窗口描述装配）。
+
+    本类不再是 ``QWidget`` 子类、也不再 ``import PyQt5``：它只收集公告状态、产出一棵
+    ``WindowSpec``，并把语义回调翻译成产品动作。真实控件树由
+    ``render_bridge.create_spec_window()`` 交给 Qt 宿主搭建。
+
+    为兼容既有调用方与测试，保留原 ``QWidget`` 的属性面（``_header_label`` / ``_body`` /
+    ``_today_button`` 等），它们现在指向描述宿主里对应 ``id`` 的真实控件。
+    """
+
+    #: 公告控制器已订阅主题事件并调用 refresh_workbench_theme()。
     follows_workbench_theme = False
 
-    suppress_today_requested = pyqtSignal()
-    suppress_forever_requested = pyqtSignal()
-    retry_requested = pyqtSignal()
-    dismissed = pyqtSignal()
-
     def __init__(self, parent=None) -> None:
-        super().__init__(parent)
-        self.setObjectName("DesktopPetAnnouncementDialog")
-        self.setWindowTitle("桌宠公告")
-        self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
-        self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setFixedSize(_WIDTH, _HEIGHT)
-        get_layer_manager().register(self, WindowLayer.DIALOG, name="DesktopPetAnnouncementDialog")
+        self.suppress_today_requested = _AnnouncementSignal()
+        self.suppress_forever_requested = _AnnouncementSignal()
+        self.retry_requested = _AnnouncementSignal()
+        self.dismissed = _AnnouncementSignal()
 
         self._requested_visible = False
-        self._closing_animation = False
-
-        self._header_accent = QFrame(self)
-        self._header_accent.setObjectName("AnnouncementHeaderAccent")
-        self._header_accent.setFixedSize(
-            scale_px(3, min_abs=2),
-            scale_px(42, min_abs=36),
+        self._title = "桌宠公告"
+        self._html = ""
+        self._mode = "announcement"
+        self._spec = self._build_spec()
+        self._window = render_bridge.create_spec_window(
+            self._spec,
+            on_semantic=self._on_semantic,
+            parent=parent,
         )
 
-        self._header_label = QLabel("桌宠公告", self)
-        self._header_label.setObjectName("AnnouncementHeader")
-        header_font = get_ui_font(size=scale_px(17, min_abs=14))
-        header_font.setBold(True)
-        self._header_label.setFont(header_font)
+        self._header_label = self._window.find("header")
+        self._body = self._window.find("body")
+        self._today_button = self._window.find("today")
+        self._forever_button = self._window.find("forever")
+        self._retry_button = self._window.find("retry")
+        self._error_close_button = self._window.find("error_close")
+        self._minimize_button = self._window.find("minimize")
+        self._close_button = self._window.find("close")
+        self._set_action_mode("announcement")
 
-        self._source_label = QLabel("SYSTEM BROADCAST  /  FSV", self)
-        self._source_label.setObjectName("AnnouncementSource")
-        self._source_label.setFont(get_ui_font(size=scale_px(10, min_abs=9)))
+    # ── 描述 ─────────────────────────────────────────────────────────
 
-        self._close_button = QToolButton(self)
-        self._close_button.setObjectName("AnnouncementCloseButton")
-        self._close_button.setText("×")
-        self._close_button.setToolTip("关闭公告")
-        self._close_button.setAccessibleName("关闭公告")
-        self._close_button.setFixedSize(
-            scale_px(30, min_abs=26),
-            scale_px(30, min_abs=26),
-        )
-        self._close_button.clicked.connect(self._dismiss)
-
-        self._minimize_button = QToolButton(self)
-        self._minimize_button.setObjectName("AnnouncementMinimizeButton")
-        self._minimize_button.setText("—")
-        self._minimize_button.setToolTip("最小化")
-        self._minimize_button.setAccessibleName("最小化")
-        self._minimize_button.setFixedSize(
-            scale_px(30, min_abs=26),
-            scale_px(30, min_abs=26),
-        )
-        self._minimize_button.clicked.connect(self.minimize_floating_window)
-
-        header_text = QVBoxLayout()
-        header_text.setContentsMargins(0, 0, 0, 0)
-        header_text.setSpacing(0)
-        header_text.addWidget(self._header_label)
-        header_text.addWidget(self._source_label)
-
-        header_row = QHBoxLayout()
-        header_row.setContentsMargins(0, 0, 0, 0)
-        header_row.setSpacing(scale_px(12, min_abs=9))
-        header_row.addWidget(self._header_accent, 0, Qt.AlignVCenter)
-        header_row.addLayout(header_text, 1)
-        header_row.addWidget(self._minimize_button, 0, Qt.AlignTop)
-        header_row.addWidget(self._close_button, 0, Qt.AlignTop)
-
-        self._header = QWidget(self)
-        self._header.setLayout(header_row)
-        self.attach_floating_drag_handle(
-            self._header,
-            self._header_label,
-            self._source_label,
+    def _build_spec(self):
+        return announcement_window_spec(
+            title=self._title,
+            html=self._html,
+            document_stylesheet=self._document_stylesheet(),
+            stylesheet=self._widget_stylesheet(),
+            width=_WIDTH,
+            height=_HEIGHT,
+            border_width=_BORDER,
+            root_margin=(
+                _BORDER + scale_px(20, min_abs=16),
+                _BORDER + scale_px(18, min_abs=14),
+                _BORDER + scale_px(20, min_abs=16),
+                _BORDER + scale_px(17, min_abs=14),
+            ),
+            root_spacing=scale_px(15, min_abs=11),
+            header_height=0,
+            header_spacing=scale_px(12, min_abs=9),
+            accent_width=scale_px(3, min_abs=2),
+            accent_height=scale_px(42, min_abs=36),
+            header_size=scale_px(17, min_abs=14),
+            source_size=scale_px(10, min_abs=9),
+            channel_size=scale_px(9, min_abs=8),
+            body_size=scale_px(13, min_abs=11),
+            close_size=scale_px(30, min_abs=26),
+            close_size_font=scale_px(17, min_abs=15),
+            button_height=scale_px(34, min_abs=30),
+            button_row_spacing=scale_px(9, min_abs=7),
+            document_margin=scale_px(16, min_abs=12),
         )
 
-        self._body = QTextBrowser(self)
-        self._body.setObjectName("AnnouncementBody")
-        self._body.setReadOnly(True)
-        self._body.setOpenExternalLinks(False)
-        self._body.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self._body.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self._body.setFont(get_ui_font(size=scale_px(13, min_abs=11)))
-        self._body.document().setDocumentMargin(scale_px(16, min_abs=12))
-        self._body.document().setDefaultStyleSheet(self._document_stylesheet())
-
-        self._today_button = QPushButton("今日不再显示", self)
-        self._today_button.setObjectName("AnnouncementTodayButton")
-        self._today_button.clicked.connect(self.suppress_today_requested.emit)
-        self._forever_button = QPushButton("永远不再显示", self)
-        self._forever_button.setObjectName("AnnouncementForeverButton")
-        self._forever_button.clicked.connect(self.suppress_forever_requested.emit)
-        self._error_close_button = QPushButton("关闭", self)
-        self._error_close_button.clicked.connect(self._dismiss)
-        self._retry_button = QPushButton("重新加载", self)
-        self._retry_button.setObjectName("AnnouncementRetryButton")
-        self._retry_button.clicked.connect(self.retry_requested.emit)
-
-        self._channel_label = QLabel("REMOTE CHANNEL  /  01", self)
-        self._channel_label.setObjectName("AnnouncementChannel")
-        self._channel_label.setFont(get_ui_font(size=scale_px(9, min_abs=8)))
-
-        for button in (
-            self._today_button,
-            self._forever_button,
-            self._error_close_button,
-            self._retry_button,
-        ):
-            button.setFont(get_ui_font())
-            button.setMinimumHeight(scale_px(34, min_abs=30))
-
-        button_row = QHBoxLayout()
-        button_row.setContentsMargins(0, 0, 0, 0)
-        button_row.setSpacing(scale_px(9, min_abs=7))
-        button_row.addWidget(self._channel_label)
-        button_row.addStretch(1)
-        button_row.addWidget(self._error_close_button)
-        button_row.addWidget(self._retry_button)
-        button_row.addWidget(self._today_button)
-        button_row.addWidget(self._forever_button)
-
-        content = QVBoxLayout(self)
-        content.setContentsMargins(
-            _BORDER + scale_px(20, min_abs=16),
-            _BORDER + scale_px(18, min_abs=14),
-            _BORDER + scale_px(20, min_abs=16),
-            _BORDER + scale_px(17, min_abs=14),
-        )
-        content.setSpacing(scale_px(15, min_abs=11))
-        content.addWidget(self._header)
-        content.addWidget(self._body, 1)
-        content.addLayout(button_row)
-
-        self.install_floating_chrome()
-
-        self._opacity_animation = QPropertyAnimation(self, b"windowOpacity", self)
-        self._opacity_animation.setDuration(int(UI.get("ui_fade_duration", 180)))
-        self._opacity_animation.setEasingCurve(QEasingCurve.InOutQuad)
-        self._opacity_animation.finished.connect(self._on_animation_finished)
+    # ── 内容 ─────────────────────────────────────────────────────────
 
     def show_document(self, document: AnnouncementDocument) -> None:
         self.refresh_workbench_theme()
-        self._body.document().setDefaultStyleSheet(self._document_stylesheet())
-        self._header_label.setText(document.title or "桌宠公告")
-        self._body.setHtml(_announcement_body_to_html(document))
+        self._title = document.title or "桌宠公告"
+        self._html = _announcement_body_to_html(document)
+        self._header_label.setText(self._title)
+        self._body.setHtml(self._html)
         self._body.verticalScrollBar().setValue(0)
         self._set_action_mode("announcement")
         self._show_dialog()
@@ -252,7 +200,7 @@ class DesktopPetAnnouncementDialog(WorkbenchFloatingWindow):
         self._header_label.setText("桌宠公告")
         self._body.setHtml(
             '<div class="status"><h2>正在获取公告</h2>'
-            '<p>正在连接公告服务器，请稍候。</p></div>'
+            "<p>正在连接公告服务器，请稍候。</p></div>"
         )
         self._set_action_mode("loading")
         self._show_dialog()
@@ -262,7 +210,7 @@ class DesktopPetAnnouncementDialog(WorkbenchFloatingWindow):
         self._header_label.setText("桌宠公告")
         self._body.setHtml(
             '<div class="status"><h2>公告暂时无法加载</h2>'
-            '<p>没有可用的本地公告，请稍后重试。</p></div>'
+            "<p>没有可用的本地公告，请稍后重试。</p></div>"
         )
         self._set_action_mode("error")
         self._show_dialog()
@@ -270,83 +218,101 @@ class DesktopPetAnnouncementDialog(WorkbenchFloatingWindow):
     def wants_visible(self) -> bool:
         return self._requested_visible
 
+    # ── 主题 ─────────────────────────────────────────────────────────
+
     def refresh_workbench_theme(self) -> None:
         """Repolish the announcement when the workbench theme changes."""
-        self.refresh_floating_theme()
+        self._spec = self._build_spec()
+        self._window.apply_theme(self._spec)
 
     def floating_stylesheet(self) -> str:
         return self._widget_stylesheet()
 
-    def refresh_floating_theme(self) -> None:
-        super().refresh_floating_theme()
-        self._body.document().setDefaultStyleSheet(self._document_stylesheet())
+    # ── 显示与隐藏 ───────────────────────────────────────────────────
 
     def hide_dialog(self) -> None:
         if not self._requested_visible:
             return
         self._requested_visible = False
-        self._closing_animation = True
-        self._animate_to(0.0)
+        self._window.hide_dialog()
 
     def cleanup(self) -> None:
-        self._opacity_animation.stop()
         self._requested_visible = False
-        self._closing_animation = False
-        self.hide()
-        get_layer_manager().unregister(self)
-        self.deleteLater()
+        self._window.cleanup()
 
     def _set_action_mode(self, mode: str) -> None:
-        is_announcement = mode == "announcement"
-        is_error = mode == "error"
-        self._today_button.setVisible(is_announcement)
-        self._forever_button.setVisible(is_announcement)
-        self._error_close_button.setVisible(is_error)
-        self._retry_button.setVisible(is_error)
+        self._mode = str(mode)
+        is_announcement = self._mode == "announcement"
+        is_error = self._mode == "error"
+        for button, visible in (
+            (self._today_button, is_announcement),
+            (self._forever_button, is_announcement),
+            (self._error_close_button, is_error),
+            (self._retry_button, is_error),
+        ):
+            if button is not None:
+                button.setVisible(visible)
 
     def _show_dialog(self) -> None:
-        self._center_on_screen()
-        was_visible = self._requested_visible
         self._requested_visible = True
-        self._closing_animation = False
-        if not was_visible:
-            self.setWindowOpacity(0.0)
-            self.show()
-        get_layer_manager().bring_to_front(self)
-        self.raise_()
-        self.activateWindow()
-        self._animate_to(apply_ui_opacity(1.0))
+        self._window.show_window()
+
+    # ── 语义与生命周期 ───────────────────────────────────────────────
+
+    def _on_semantic(self, semantic: str) -> None:
+        key = str(semantic)
+        if key == ANNOUNCEMENT_SUPPRESS_TODAY:
+            self.suppress_today_requested.emit()
+        elif key == ANNOUNCEMENT_SUPPRESS_FOREVER:
+            self.suppress_forever_requested.emit()
+        elif key == ANNOUNCEMENT_RETRY:
+            self.retry_requested.emit()
+        elif key == ANNOUNCEMENT_CLOSE:
+            self._dismiss()
 
     def _dismiss(self) -> None:
         self.dismissed.emit()
         self.hide_dialog()
 
-    def _animate_to(self, target: float) -> None:
-        self._opacity_animation.stop()
-        self._opacity_animation.setStartValue(float(self.windowOpacity()))
-        self._opacity_animation.setEndValue(float(target))
-        self._opacity_animation.start()
+    # ── 底层窗口的属性面（调用方按原 QWidget 用法）────────────────────
 
-    def _on_animation_finished(self) -> None:
-        if self._closing_animation and not self._requested_visible:
-            self._closing_animation = False
-            self.hide()
+    def widget(self):
+        """底层真实窗口，供诊断与需要 ``QWidget`` 的调用方取用。"""
 
-    def _center_on_screen(self) -> None:
-        # 居中算术与夹取统一在 visuals/layout.py（档位 1）。
-        cursor_pos = QCursor.pos()
-        screen = get_screen_geometry_for_point(point=cursor_pos, fallback_widget=self)
-        placement = centered_placement((self.width(), self.height()), screen)
-        self.move(placement.x, placement.y)
+        return self._window.widget
 
-    def paintEvent(self, event) -> None:
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing, False)
-        painter.fillRect(self.rect(), QColor(_color_name("border_strong")))
-        painter.fillRect(
-            self.rect().adjusted(_BORDER, _BORDER, -_BORDER, -_BORDER),
-            QColor(_color_name("canvas")),
-        )
+    def findChild(self, *args, **kwargs):  # noqa: N802 - 沿用 Qt 命名
+        return self._window.widget.findChild(*args, **kwargs)
+
+    def show(self) -> None:
+        self._window.widget.show()
+
+    def hide(self) -> None:
+        self._window.widget.hide()
+
+    def move(self, *args) -> None:
+        self._window.widget.move(*args)
+
+    def raise_(self) -> None:
+        self._window.widget.raise_()
+
+    def activateWindow(self) -> None:  # noqa: N802 - 沿用 Qt 命名
+        self._window.widget.activateWindow()
+
+    def deleteLater(self) -> None:  # noqa: N802 - 沿用 Qt 命名
+        self._window.widget.deleteLater()
+
+    def minimumWidth(self) -> int:  # noqa: N802
+        return self._window.widget.minimumWidth()
+
+    def width(self) -> int:
+        return self._window.widget.width()
+
+    def height(self) -> int:
+        return self._window.widget.height()
+
+    def isVisible(self) -> bool:  # noqa: N802 - 沿用 Qt 命名
+        return self._window.widget.isVisible()
 
     @staticmethod
     def _document_stylesheet() -> str:
@@ -479,10 +445,8 @@ class DesktopPetAnnouncementDialog(WorkbenchFloatingWindow):
             """
 
 
-class AnnouncementController(QObject):
-    """Qt view adapter over the backend-neutral announcement service."""
-
-    _dispatch_requested = pyqtSignal(object)
+class AnnouncementController:
+    """Backend-neutral announcement view adapter over the announcement service."""
 
     def __init__(
         self,
@@ -492,10 +456,9 @@ class AnnouncementController(QObject):
         cache_path: Path | None = None,
         today_provider: Callable[[], date] = date.today,
     ) -> None:
-        super().__init__(parent)
         self._dialog: DesktopPetAnnouncementDialog | None = None
         self._closed = False
-        self._dispatch_requested.connect(lambda callback: callback())
+        self._dispatcher = render_bridge.create_ui_dispatcher(parent)
         self._event_center = get_event_center()
         self._event_center.subscribe(EventType.CONFIG_UPDATED, self._on_config_updated)
         self._service = AnnouncementService(
@@ -512,7 +475,7 @@ class AnnouncementController(QObject):
         )
 
     def _dispatch(self, callback: Callable[[], None]) -> None:
-        self._dispatch_requested.emit(callback)
+        self._dispatcher.post(callback)
 
     def _on_config_updated(self, event) -> None:
         if self._dialog is not None:
@@ -557,6 +520,7 @@ class AnnouncementController(QObject):
         self._closed = True
         self._service.cleanup()
         self._event_center.unsubscribe(EventType.CONFIG_UPDATED, self._on_config_updated)
+        self._dispatcher.clear()
         if self._dialog is not None:
             self._dialog.cleanup()
             self._dialog = None

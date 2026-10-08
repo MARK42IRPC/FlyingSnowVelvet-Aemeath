@@ -25,8 +25,10 @@ from PyQt5.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPlainTextEdit,
+    QProgressBar,
     QPushButton,
     QStyle,
+    QTextBrowser,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -60,6 +62,8 @@ from lib.core.render.visuals.window_spec import (
     LAYOUT_ROW,
     LabelSpec,
     LayoutSpec,
+    ProgressBarSpec,
+    RichTextSpec,
     SpacerSpec,
     StretchSpec,
     TextAreaSpec,
@@ -265,6 +269,8 @@ class QtSpecWindow:
         """描边外壳的绘制；未启用时返回 False，由承载窗口走默认绘制。
 
         颜色在**每次重绘时**取，与公告 / 更新浮窗一样跟着工作台主题走。
+        两层式（公告 / 帮助）是「外描边 + 内容底色」；三层式（更新浮窗）在两者之间
+        多一条 `border` 内衬线，由 `spec.border_mid` 声明。
         """
 
         if not self._border_width:
@@ -272,10 +278,18 @@ class QtSpecWindow:
         painter = QPainter(self.widget)
         painter.setRenderHint(QPainter.Antialiasing, False)
         painter.fillRect(self.widget.rect(), QColor(resolve_token_color("border_strong")))
+        mid_token = str(getattr(self.spec, "border_mid", "") or "")
+        if mid_token:
+            mid = max(1, self._border_width // 2)
+            painter.fillRect(
+                self.widget.rect().adjusted(mid, mid, -mid, -mid),
+                QColor(resolve_token_color(mid_token)),
+            )
         inset = self._border_width
+        fill_token = str(getattr(self.spec, "border_fill", "") or "") or "canvas"
         painter.fillRect(
             self.widget.rect().adjusted(inset, inset, -inset, -inset),
-            QColor(resolve_token_color("canvas")),
+            QColor(resolve_token_color(fill_token)),
         )
         painter.end()
         return True
@@ -299,6 +313,9 @@ class QtSpecWindow:
     def _add_child(self, layout, child, parent: QWidget) -> None:
         stretch = max(0, int(getattr(child, "stretch", 0)))
         if isinstance(child, LayoutSpec):
+            if getattr(child, "collapse_when_empty", False):
+                layout.addLayout(self._build_nested_layout(child, parent))
+                return
             container = self._build_container(child, parent)
             alignment = _qt_alignment(child)
             if alignment:
@@ -315,10 +332,38 @@ class QtSpecWindow:
         widget, alignment = self._build_widget(child, parent)
         if widget is None:
             return
-        if alignment:
+        stretch = max(stretch, int(getattr(child, "stretch", 0)))
+        # 带伸缩权重的控件不能用 addWidget 的 alignment 形参：Qt 会因此不拉伸它。
+        # 对齐已由控件自身的 setAlignment 承担（`_build_label` 里设置），这里只传权重。
+        if alignment and not stretch:
             layout.addWidget(widget, stretch, alignment)
         else:
             layout.addWidget(widget, stretch)
+
+    def _build_nested_layout(self, spec: LayoutSpec, parent: QWidget):
+        """把一层 ``LayoutSpec`` 直接建成子布局（不套容器控件）。
+
+        用于 ``collapse_when_empty`` 的按钮行：Qt 认为「子项全为空」的布局本身也是空项，
+        会自动收起整行连同父布局间距；若包成容控件，即便子控件全部隐藏，
+        ``QWidgetItem`` 依旧非空，父布局仍会保留一行间距（原 `QHBoxLayout` 不会）。
+        """
+
+        layout = (
+            QHBoxLayout() if spec.direction == LAYOUT_ROW else QVBoxLayout()
+        )
+        layout.setContentsMargins(*(int(v) for v in spec.margin))
+        layout.setSpacing(int(spec.spacing))
+        for child in spec.children:
+            self._add_child(layout, child, parent)
+        if spec.top_margin:
+            margins = layout.contentsMargins()
+            layout.setContentsMargins(
+                margins.left(),
+                int(spec.top_margin),
+                margins.right(),
+                margins.bottom(),
+            )
+        return layout
 
     def _build_container(self, spec: LayoutSpec, parent: QWidget) -> QWidget:
         """把一个 ``LayoutSpec`` 装成容器；``scroll`` 时外套一层平滑滚动视口。"""
@@ -356,13 +401,19 @@ class QtSpecWindow:
 
     def _build_widget(self, child, parent: QWidget):
         if isinstance(child, LabelSpec):
-            return self._build_label(child, parent), _qt_alignment(child)
+            # 标签自己 setAlignment（文本在控件内的对齐）；不把同一份对齐再交给布局，
+            # 否则 Qt 会让标签按 sizeHint 收窄、不再铺满整行。
+            return self._build_label(child, parent), 0
         if isinstance(child, IconSpec):
             return self._build_icon_label(child, parent), _qt_alignment(child)
         if isinstance(child, AccentBarSpec):
             return self._build_accent_bar(child, parent), 0
         if isinstance(child, TextAreaSpec):
             return self._build_text_area(child, parent), 0
+        if isinstance(child, RichTextSpec):
+            return self._build_rich_text(child, parent), 0
+        if isinstance(child, ProgressBarSpec):
+            return self._build_progress_bar(child, parent), 0
         if isinstance(child, ButtonSpec):
             return self._build_button(child, parent), _qt_alignment(child)
         return None, 0
@@ -428,6 +479,38 @@ class QtSpecWindow:
         self._register(spec.id, view)
         return view
 
+    def _build_rich_text(self, spec: RichTextSpec, parent: QWidget) -> QTextBrowser:
+        view = QTextBrowser(parent)
+        if spec.object_name:
+            view.setObjectName(spec.object_name)
+        view.setReadOnly(True)
+        view.setOpenExternalLinks(bool(spec.open_external_links))
+        view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        view.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        if spec.font_size:
+            view.setFont(self._font_factory(int(spec.font_size)))
+        if spec.document_margin:
+            view.document().setDocumentMargin(int(spec.document_margin))
+        if spec.document_stylesheet:
+            view.document().setDefaultStyleSheet(str(spec.document_stylesheet))
+        view.setHtml(str(spec.html))
+        self._register(spec.id, view)
+        return view
+
+    def _build_progress_bar(self, spec: ProgressBarSpec, parent: QWidget) -> QProgressBar:
+        bar = QProgressBar(parent)
+        if spec.object_name:
+            bar.setObjectName(spec.object_name)
+        bar.setTextVisible(bool(spec.text_visible))
+        bar.setRange(int(spec.minimum), int(spec.maximum))
+        bar.setValue(int(spec.value))
+        if getattr(spec, "min_height", 0):
+            bar.setMinimumHeight(int(spec.min_height))
+        if spec.fmt:
+            bar.setFormat(str(spec.fmt))
+        self._register(spec.id, bar)
+        return bar
+
     def _build_button(self, spec: ButtonSpec, parent: QWidget):
         if spec.window_icon:
             button = create_window_button(
@@ -449,8 +532,9 @@ class QtSpecWindow:
                 button.setToolTip(str(spec.tooltip))
             if spec.accessible_name:
                 button.setAccessibleName(str(spec.accessible_name))
-            if spec.bold or spec.font_size:
-                font = self._font_factory(int(spec.font_size) if spec.font_size else 0)
+            if spec.bold or spec.font_size or getattr(spec, "default_font", False):
+                # 未指定字号时传 None 取后端默认字体；传 0 会得到退化字号的空字体。
+                font = self._font_factory(int(spec.font_size) if spec.font_size else None)
                 if spec.bold:
                     font.setBold(True)
                 button.setFont(font)
@@ -462,6 +546,8 @@ class QtSpecWindow:
             width, height = (int(value) for value in spec.fixed_size)
             if width and height:
                 button.setFixedSize(width, height)
+        if getattr(spec, "min_height", 0):
+            button.setMinimumHeight(int(spec.min_height))
         if spec.object_name:
             button.setObjectName(spec.object_name)
         self._register(spec.id, button)

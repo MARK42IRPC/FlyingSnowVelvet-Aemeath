@@ -1,10 +1,19 @@
 # Qt 边界契约
 
-更新时间：2026-09-12
+更新时间：2026-10-08
 
 本文档描述当前有效的 Qt 依赖边界。历史迁移阶段和已完成清单已删除；实现状态以源码、`tests/test_qt_dependency_boundaries.py` 和 `tests/test_code_structure_boundaries.py` 为准。跨后端视觉语义见 [视觉表现契约](视觉表现契约.md)。
 
 本文只描述**已经成立**的边界，不描述待办。
+
+> **迁移次序修订（2026-10-07）：** `frozen_ui_qt_importers` 里剩余的大文件（`ai_settings_panel.py`、
+> `forum_board.py` 等）改为「先按模块拆分瘦身、再逐个收敛 Qt」。拆分只做纯移动、不得让冻结清单增长；
+> 拆分出的新文件若仍 import Qt，必须显式登记而不是放宽断言。批次划分与每轮验收门槛见
+> [Render 层边界契约](render层边界契约.md) 第 34 节，执行记录见第 35 节。
+>
+> 冻结清单当前为 42 项：第三十三轮移出 `announcement_dialog.py` / `update_dialog.py` /
+> `help_window.py` / `workbench_floating.py`，批次 1 未新增条目（拆出的
+> `ai_settings_contributions.py` 不含 Qt，不登记）。
 
 ## 1. 依赖方向
 

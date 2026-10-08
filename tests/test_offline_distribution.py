@@ -478,6 +478,7 @@ class OfflineDistributionTests(unittest.TestCase):
         from unittest import mock
 
         from lib.script.ui import ai_settings_panel
+        from lib.script.ui import ai_settings_contributions
 
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -518,8 +519,9 @@ class OfflineDistributionTests(unittest.TestCase):
 
             # Without the staged document the workbench falls back to the three
             # built-in records, which is exactly the reported regression.
-            self.assertEqual(len(ai_settings_panel._MANUAL_CONTRIBUTION_RECORDS), 3)
-            self.assertGreater(len(records), len(ai_settings_panel._MANUAL_CONTRIBUTION_RECORDS))
+            manual_records = ai_settings_contributions._MANUAL_CONTRIBUTION_RECORDS
+            self.assertEqual(len(manual_records), 3)
+            self.assertGreater(len(records), len(manual_records))
 
     def test_node_pruning_keeps_runtime_and_licenses(self):
         with tempfile.TemporaryDirectory() as tmpdir:

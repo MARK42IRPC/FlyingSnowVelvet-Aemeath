@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 from .window_spec import (
+    ALIGN_HCENTER,
     ALIGN_TOP,
     ALIGN_VCENTER,
     COLOR_CANVAS,
@@ -25,8 +26,12 @@ from .window_spec import (
     LAYER_DIALOG,
     LabelSpec,
     LayoutSpec,
+    ProgressBarSpec,
+    RichTextSpec,
     ROLE_DANGER,
+    ROLE_DEFAULT,
     ROLE_GHOST,
+    SpacerSpec,
     TextAreaSpec,
     StretchSpec,
     WINDOW_DIALOG,
@@ -42,6 +47,18 @@ APPROVAL_ALLOW_TASK = "allow_task"
 
 #: 帮助浮窗里关闭按钮的语义 id。
 HELP_CLOSE = "close"
+
+#: 更新 / 开发版同步浮窗里的动作语义 id。
+UPDATE_CLOSE = "update_close"
+UPDATE_PRIMARY = "update_primary"
+UPDATE_SECONDARY = "update_secondary"
+UPDATE_MINIMIZE = "update_minimize"
+
+#: 公告浮窗里的动作语义 id（宿主回填成产品动作）。
+ANNOUNCEMENT_CLOSE = "announcement_close"
+ANNOUNCEMENT_SUPPRESS_TODAY = "announcement_suppress_today"
+ANNOUNCEMENT_SUPPRESS_FOREVER = "announcement_suppress_forever"
+ANNOUNCEMENT_RETRY = "announcement_retry"
 
 
 def office_approval_window_spec(
@@ -370,11 +387,382 @@ def help_window_spec(
     )
 
 
+def announcement_window_spec(
+    *,
+    title: str,
+    html: str,
+    document_stylesheet: str,
+    stylesheet: str,
+    width: int,
+    height: int,
+    border_width: int,
+    root_margin: tuple[int, int, int, int],
+    root_spacing: int,
+    header_height: int,
+    header_spacing: int,
+    accent_width: int,
+    accent_height: int,
+    header_size: int,
+    source_size: int,
+    channel_size: int,
+    body_size: int,
+    close_size: int,
+    close_size_font: int,
+    button_height: int,
+    button_row_spacing: int,
+    document_margin: int,
+    source_text: str = "SYSTEM BROADCAST  /  FSV",
+    channel_text: str = "REMOTE CHANNEL  /  01",
+    today_text: str = "今日不再显示",
+    forever_text: str = "永远不再显示",
+    error_close_text: str = "关闭",
+    retry_text: str = "重新加载",
+    close_tooltip: str = "关闭公告",
+    minimize_tooltip: str = "最小化",
+    minimizable: bool = True,
+) -> WindowSpec:
+    """公告浮窗的窗口描述：窗眉（accent + 标题 + 来源 + 最小化 + 关闭）、富文本正文、动作行。
+
+    动作行里四个按钮全部由描述产出，可见性由产品面按 `show_document` / `show_error`
+    决定（``_set_action_mode``）；宿主只负责把它们建出来并回填语义 id。
+    """
+
+    header_children = [
+        LayoutSpec(
+            id="header_text",
+            direction=LAYOUT_COLUMN,
+            spacing=0,
+            stretch=1,
+            children=(
+                LabelSpec(
+                    text=title,
+                    id="header",
+                    object_name="AnnouncementHeader",
+                    font_size=header_size,
+                    bold=True,
+                ),
+                LabelSpec(
+                    text=source_text,
+                    id="source",
+                    object_name="AnnouncementSource",
+                    font_size=source_size,
+                ),
+            ),
+        ),
+    ]
+    if minimizable:
+        header_children.append(
+            ButtonSpec(
+                text="—",
+                semantic=ANNOUNCEMENT_CLOSE,  # 占位：最小化不改状态，仅收起窗口
+                id="minimize",
+                object_name="AnnouncementMinimizeButton",
+                role=ROLE_GHOST,
+                tooltip=minimize_tooltip,
+                accessible_name=minimize_tooltip,
+                font_size=close_size_font,
+                tool_button=True,
+                fixed_size=(close_size, close_size),
+                valign=ALIGN_TOP,
+            )
+        )
+    header_children.append(
+        ButtonSpec(
+            text="×",
+            semantic=ANNOUNCEMENT_CLOSE,
+            id="close",
+            object_name="AnnouncementCloseButton",
+            role=ROLE_GHOST,
+            tooltip=close_tooltip,
+            accessible_name=close_tooltip,
+            font_size=close_size_font,
+            tool_button=True,
+            fixed_size=(close_size, close_size),
+            valign=ALIGN_TOP,
+        )
+    )
+
+    # 窗眉的 accent 竖条：公告用 `QFrame#AnnouncementHeaderAccent`（粉底 + 右侧青描边）。
+    accent = LayoutSpec(
+        id="header_accent",
+        object_name="",
+        direction=LAYOUT_COLUMN,
+        spacing=0,
+        fixed_width=accent_width,
+        fixed_height=accent_height,
+        valign=ALIGN_VCENTER,
+        children=(
+            LayoutSpec(
+                id="header_accent_bar",
+                object_name="AnnouncementHeaderAccent",
+                direction=LAYOUT_COLUMN,
+                frame=True,
+                fixed_width=accent_width,
+                fixed_height=accent_height,
+            ),
+        ),
+    )
+
+    action_row = LayoutSpec(
+        id="action_row",
+        direction=LAYOUT_ROW,
+        spacing=button_row_spacing,
+        children=(
+            LabelSpec(
+                text=channel_text,
+                id="channel",
+                object_name="AnnouncementChannel",
+                font_size=channel_size,
+            ),
+            StretchSpec(weight=1.0, id="action_stretch"),
+            ButtonSpec(
+                text=error_close_text,
+                semantic=ANNOUNCEMENT_CLOSE,
+                id="error_close",
+                role=ROLE_DEFAULT,
+                font_size=0,
+                min_height=button_height,
+                default_font=True,
+            ),
+            ButtonSpec(
+                text=retry_text,
+                semantic=ANNOUNCEMENT_RETRY,
+                id="retry",
+                object_name="AnnouncementRetryButton",
+                role=ROLE_DEFAULT,
+                font_size=0,
+                min_height=button_height,
+                default_font=True,
+            ),
+            ButtonSpec(
+                text=today_text,
+                semantic=ANNOUNCEMENT_SUPPRESS_TODAY,
+                id="today",
+                object_name="AnnouncementTodayButton",
+                role=ROLE_DEFAULT,
+                font_size=0,
+                min_height=button_height,
+                default_font=True,
+            ),
+            ButtonSpec(
+                text=forever_text,
+                semantic=ANNOUNCEMENT_SUPPRESS_FOREVER,
+                id="forever",
+                object_name="AnnouncementForeverButton",
+                role=ROLE_DEFAULT,
+                font_size=0,
+                min_height=button_height,
+                default_font=True,
+            ),
+        ),
+    )
+
+    content = LayoutSpec(
+        id="root",
+        direction=LAYOUT_COLUMN,
+        margin=root_margin,
+        spacing=root_spacing,
+        children=(
+            LayoutSpec(
+                id="header_row",
+                object_name="AnnouncementHeaderRow",
+                direction=LAYOUT_ROW,
+                spacing=header_spacing,
+                fixed_height=header_height,
+                children=(accent, *header_children),
+            ),
+            RichTextSpec(
+                id="body",
+                object_name="AnnouncementBody",
+                html=html,
+                document_stylesheet=document_stylesheet,
+                font_size=body_size,
+                document_margin=document_margin,
+                open_external_links=False,
+            ),
+            action_row,
+        ),
+    )
+
+    return WindowSpec(
+        content=content,
+        object_name="DesktopPetAnnouncementDialog",
+        title="桌宠公告",
+        kind=WINDOW_TOOL,
+        frameless=True,
+        stay_on_top=True,
+        modal=False,
+        translucent=True,
+        styled_background=True,
+        fixed_size=(width, height),
+        stylesheet=stylesheet,
+        center_on_parent=False,
+        center_on_cursor_screen=True,
+        drag_handle_ids=("header_row", "header_text", "header"),
+        layer=LAYER_DIALOG,
+        fade=True,
+        hide_semantics=(),
+        border_frame=True,
+        border_width=border_width,
+    )
+
+
+def update_window_spec(
+    *,
+    status: str,
+    detail: str,
+    stylesheet: str,
+    width: int,
+    height: int,
+    border_width: int,
+    root_margin: tuple[int, int, int, int],
+    root_spacing: int,
+    header_spacing: int,
+    header_lead: int,
+    title_size: int,
+    status_size: int,
+    detail_size: int,
+    minimize_size: int,
+    progress_min_height: int = 0,
+    primary_object_name: str = "WorkbenchFloatingPrimary",
+    minimize_tooltip: str = "最小化",
+) -> WindowSpec:
+    """更新 / 开发版同步浮窗的窗口描述。
+
+    可见性、按钮文案与进度状态都是运行期状态，因此按钮与进度条先按初始值建出来，
+    由产品面（`DesktopPetUpdateDialog`）通过 ``find()`` 拿到的真实控件更新。
+    """
+
+    # 窗眉与原文一致：左留白 → 标题占满剩余宽度（居中） → 最小化按钮定宽。
+    header = LayoutSpec(
+        id="header_row",
+        direction=LAYOUT_ROW,
+        spacing=header_spacing,
+        fixed_height=0,
+        children=(
+            SpacerSpec(size=header_lead, id="header_lead"),
+            LabelSpec(
+                text="",
+                id="title",
+                object_name="UpdateTitle",
+                font_size=title_size,
+                bold=True,
+                align=ALIGN_HCENTER,
+                valign=ALIGN_VCENTER,
+                stretch=1,
+            ),
+            ButtonSpec(
+                text="—",
+                semantic=UPDATE_MINIMIZE,
+                id="minimize",
+                window_icon="minimize",
+                tooltip=minimize_tooltip,
+                accessible_name=minimize_tooltip,
+                fixed_size=(minimize_size, minimize_size),
+                valign=ALIGN_TOP,
+            ),
+        ),
+    )
+
+    content = LayoutSpec(
+        id="root",
+        direction=LAYOUT_COLUMN,
+        margin=root_margin,
+        spacing=root_spacing,
+        children=(
+            header,
+            LabelSpec(
+                text=status,
+                id="status",
+                object_name="UpdateStatus",
+                font_size=status_size,
+                word_wrap=True,
+                align=ALIGN_HCENTER,
+            ),
+            LabelSpec(
+                text=detail,
+                id="detail",
+                object_name="UpdateDetail",
+                font_size=detail_size,
+                word_wrap=True,
+                align=ALIGN_HCENTER,
+                valign=ALIGN_TOP,
+                stretch=1,
+            ),
+            ProgressBarSpec(
+                id="progress",
+                object_name="UpdateProgress",
+                text_visible=True,
+                minimum=0,
+                maximum=1,
+                value=0,
+                min_height=progress_min_height,
+            ),
+            LayoutSpec(
+                id="button_row",
+                direction=LAYOUT_ROW,
+                spacing=0,
+                collapse_when_empty=True,
+                children=(
+                    StretchSpec(weight=1.0, id="button_stretch"),
+                    ButtonSpec(
+                        text="",
+                        semantic=UPDATE_SECONDARY,
+                        id="secondary",
+                        default_font=True,
+                    ),
+                    ButtonSpec(
+                        text="",
+                        semantic=UPDATE_PRIMARY,
+                        id="primary",
+                        object_name=primary_object_name,
+                        default_font=True,
+                    ),
+                ),
+            ),
+        ),
+    )
+
+    return WindowSpec(
+        content=content,
+        object_name="DesktopPetUpdateDialog",
+        title="",
+        kind=WINDOW_TOOL,
+        frameless=True,
+        stay_on_top=True,
+        modal=False,
+        translucent=True,
+        styled_background=True,
+        fixed_size=(width, height),
+        stylesheet=stylesheet,
+        center_on_parent=False,
+        center_on_cursor_screen=True,
+        drag_handle_ids=("header_row",),
+        layer=LAYER_DIALOG,
+        fade=True,
+        hide_semantics=(),
+        border_frame=True,
+        border_width=border_width,
+        border_mid="border",
+        border_fill="surface",
+    )
+
+
 __all__ = [
+    "ANNOUNCEMENT_CLOSE",
+    "ANNOUNCEMENT_RETRY",
+    "ANNOUNCEMENT_SUPPRESS_FOREVER",
+    "ANNOUNCEMENT_SUPPRESS_TODAY",
     "APPROVAL_ALLOW",
     "APPROVAL_ALLOW_TASK",
     "APPROVAL_REJECT",
     "HELP_CLOSE",
+    "UPDATE_CLOSE",
+    "UPDATE_MINIMIZE",
+    "UPDATE_PRIMARY",
+    "UPDATE_SECONDARY",
+    "announcement_window_spec",
     "help_window_spec",
     "office_approval_window_spec",
+    "update_window_spec",
 ]

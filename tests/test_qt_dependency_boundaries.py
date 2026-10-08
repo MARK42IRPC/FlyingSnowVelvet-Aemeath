@@ -18,11 +18,16 @@ class QtDependencyBoundaryTests(unittest.TestCase):
     #: 条目数不是指标（`doc/README.md` 明确不写会失效的总数）：这份名单本身就是当前
     #: 待迁清单，收缩由「stale」断言强制——文件不再 import Qt 就必须出列。
     #: 真正会随架构演进缩小的是同文件里「直接引用 `drawing/`」的那份清单，它现在是空的。
+    #:
+    #: 大文件拆分（`doc/render层边界契约.md` 第 33 节）会制造新文件：拆出的子模块可能仍在
+    #: `lib/script/ui` 下、仍 `import PyQt5`。它们属于同一份待迁清单，登记规则不变——直接
+    #: 加进下面这个集合。断言 `frozen_ui_qt_importers <= {…startswith("lib/script/ui/")}`
+    #: 只要求条目落在该前缀下，嵌套子包（`lib/script/ui/foo/bar.py`）本就合法，无需新增
+    #: 白名单机制。拆出**不含 Qt** 的文件不要登记（登记了会被 stale 断言叫停）。
     frozen_ui_qt_importers = frozenset({
             "lib/script/ui/ai_settings_panel.py",
             "lib/script/ui/ai_settings_tabs.py",
             "lib/script/ui/animation_player.py",
-            "lib/script/ui/announcement_dialog.py",
             "lib/script/ui/bug_tracker_window.py",
             "lib/script/ui/cmd_window.py",
             "lib/script/ui/command_dialog.py",
@@ -36,9 +41,6 @@ class QtDependencyBoundaryTests(unittest.TestCase):
             "lib/script/ui/forum_window.py",
             "lib/script/ui/game_manager_window.py",
             "lib/script/ui/game_runtime.py",
-            # 帮助浮窗本体已去 Qt；同文件的 `HelpWindowController` 仍是 `QObject`
-            # （订阅事件 + Qt 计时器），与同列的 `office_approval_controller.py` 一样。
-            "lib/script/ui/help_window.py",
             "lib/script/ui/office_approval_controller.py",
             "lib/script/ui/office_chat_view.py",
             "lib/script/ui/office_effort_slider.py",
@@ -55,10 +57,8 @@ class QtDependencyBoundaryTests(unittest.TestCase):
             "lib/script/ui/speaker_search_dialog.py",
             "lib/script/ui/tray_icon.py",
             "lib/script/ui/tray_menu.py",
-            "lib/script/ui/update_dialog.py",
             "lib/script/ui/voice_package_installer.py",
             "lib/script/ui/workbench_components.py",
-            "lib/script/ui/workbench_floating.py",
             "lib/script/ui/workbench_settings_layout.py",
             "lib/script/ui/workbench_window.py",
             "lib/script/ui/world_objects/clock.py",

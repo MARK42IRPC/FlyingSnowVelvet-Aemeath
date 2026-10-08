@@ -2,6 +2,50 @@
 
 本文件记录飞行雪绒 LTS 系列的公开版本变更。版本标签与发布包名称保持一致，例如 `LTS1.0.7pre1`。
 
+## [未发布]
+
+目标版本：`LTS1.0.7pre7`（`config/version_info.py` 与 README 已抬版）。
+
+### Added
+- 控件层「描述 + 后端渲染」新增 UI 线程调度宿主：`lib/core/render/backends/qt/widgets/ui_dispatch.py`
+  的 `UiDispatcher` 把「保证回调在 UI 线程执行」收成一处（跨线程走 `QueuedConnection`、本线程
+  就地执行），`render_bridge.create_ui_dispatcher()` 是控件侧唯一落点。此前公告 / 论坛 / 帮助 /
+  办公控制器各自声明 `pyqtSignal(object)` 仅为回到 UI 线程，因而被迫继承 `QObject` 并 import
+  `PyQt5`；控制器现在只持有调度宿主，不再声明信号。
+- 窗口描述层补齐浮窗要件：`visuals/window_spec.py` 新增 `RichTextSpec`（`QTextBrowser` 只读 HTML）
+  与 `ProgressBarSpec`（`QProgressBar`），并为既有词汇补 `stretch` / `min_height` / `default_font` /
+  `collapse_when_empty` / `border_mid` / `border_fill`；`visuals/window_specs.py` 新增
+  `announcement_window_spec()` 与 `update_window_spec()`。宿主 `spec_host.py` 承接富文本、进度条、
+  嵌套布局、空行自动收起与三层描边外壳；`render_bridge` 新增 `create_floating_window_base()` /
+  `create_window_button()` / `floating_window_classes()` / `window_button_icons()` 四个转发落点。
+- 设置面板贡献名单逻辑抽成后端中立模块：新增 `lib/script/ui/ai_settings_contributions.py`
+  （不 import `PyQt5`），`ai_settings_panel.py` 的贡献名单解析/加载、路径解析、编码兜底读取、
+  手工条目常量全部下沉到此，面板只留三个委托；`ai_settings_panel.py` 5439 → 5261 行。
+  行为与旧实现逐条相等（真实 `开发贡献.txt`：解析 15 条、加载 14 条全等），
+  `frozen_ui_qt_importers` 不变。新增 `tests/test_ai_settings_contributions.py` 12 条断言。
+- 拆分登记机制固化为可回归断言：`tests/test_code_structure_boundaries.py` 新增
+  `test_split_ui_modules_are_registered_not_silently_allowed`，钉住「拆出的新文件无论嵌套多深
+  都会被扫描、两个清单都按 `lib/script/ui/` 前缀接受子包路径」。
+
+### Changed
+- 公告浮窗（`announcement_dialog.py`）与更新浮窗（`update_dialog.py`）改为「窗口描述 + 后端宿主」：
+  两个 `DesktopPet*Dialog` 不再是 `WorkbenchFloatingWindow` 子类、不再 import `PyQt5`，
+  `AnnouncementController` 不再继承 `QObject`，`pyqtSignal` 用后端中立替身 `_AnnouncementSignal` /
+  `_UpdateSignal`（只保留 `connect` / `emit` / `disconnect`）；`workbench_floating.py` 改为纯再导出
+  垫片，基类与窗眉按钮工厂经 `render_bridge` 转发。`frozen_ui_qt_importers` 46 → **42**
+  （移出 `announcement_dialog.py` / `update_dialog.py` / `help_window.py` / `workbench_floating.py`，
+  无新增）。验收门槛与执行记录见 `doc/render层边界契约.md` 第 33 节。
+- 版本基线抬到 `LTS1.0.7pre7`（`config/version_info.py`、README、安装器内置资源包 URL 同步）。
+- 控件层收敛推进次序修订：剩余 `lib/script/ui` 大文件（`ai_settings_panel.py` 5439 行、
+  `forum_board.py` 2236 行等）改为**先按模块拆分瘦身、再逐个收敛 Qt**。理由是一个改动同时承担
+  拆分与去 Qt 时，像素 oracle 报出的差异无法归因，冻结清单也会在同一文件上连续两轮被触碰。
+  新次序分四批：批次 0 先让冻结清单与 `ui -> 产品包` 耦合清单能登记拆分出的新文件；批次 1 抽离
+  纯能力（贡献名单解析、硬件探测、配置格式化等无 Qt 逻辑）；批次 2 把需跨文件共享的 Qt 宿主
+  下沉到 `lib/core/render/backends/qt/widgets/`（档位 D）；批次 3 才按 tab/页切产品页本体并与
+  去 Qt 同轮交付。拆分轮必须是"纯移动"（`git diff -M --find-copies` 逐行等价、零像素差异），
+  收敛轮沿用逐像素 oracle；`frozen_ui_qt_importers` 只减不增。次序、验收门槛与风险记于
+  `doc/render层边界契约.md` 第 34 节，执行检查表见 `doc/维护手册.md`。
+
 ## [LTS1.0.7pre6] - 2026-09-22
 
 ### Added

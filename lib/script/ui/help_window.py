@@ -15,8 +15,6 @@
 
 from __future__ import annotations
 
-from PyQt5.QtCore import QObject, Qt, pyqtSignal
-
 from config.scale import scale_px
 from lib.core.event.center import EventType, get_event_center
 from lib.core.logger import get_logger
@@ -271,22 +269,22 @@ def _help_stylesheet() -> str:
             """
 
 
-class HelpWindowController(QObject):
+class HelpWindowController:
     """订阅 `HELP_WINDOW_REQUEST`，保证全局只有一个帮助窗口。
 
     「只有一个」的做法是：每次请求都先 `_discard_dialog()` 丢掉手上那一只
     （`cleanup()` 会注销 `LayerManager` 并 `deleteLater()`），再按需新建。
     这样即便上一次的浮窗正处于淡出动画里，也不会留下一个半透明残影。
+
+    控制器本身不再是 `QObject`：它只需要"把回调投递回 Qt 事件循环"这一条 Qt 事实，
+    由 `render_bridge.create_ui_dispatcher()` 提供的宿主承接（与公告 / 论坛控制器同源）。
     """
 
-    _dispatch_requested = pyqtSignal(object)
-
     def __init__(self, parent=None) -> None:
-        super().__init__(parent)
         self._dialog: DesktopPetHelpDialog | None = None
         self._closed = False
         self._last_payload: tuple[str, str] | None = None
-        self._dispatch_requested.connect(self._run_dispatched, Qt.QueuedConnection)
+        self._dispatcher = render_bridge.create_ui_dispatcher(parent)
         self._event_center = get_event_center()
         self._event_center.subscribe(EventType.CONFIG_UPDATED, self._on_config_updated)
         self._event_center.subscribe(EventType.HELP_WINDOW_REQUEST, self._on_help_requested)
@@ -302,10 +300,7 @@ class HelpWindowController(QObject):
             self._dialog.refresh_workbench_theme()
 
     def _dispatch(self, callback) -> None:
-        self._dispatch_requested.emit(callback)
-
-    def _run_dispatched(self, callback) -> None:
-        callback()
+        self._dispatcher.post(callback)
 
     # ── 对外 ─────────────────────────────────────────────────────────
 
@@ -331,6 +326,7 @@ class HelpWindowController(QObject):
             self._event_center.unsubscribe(EventType.CONFIG_UPDATED, self._on_config_updated)
         except Exception:
             pass
+        self._dispatcher.clear()
         self._discard_dialog()
 
     # ── 内部 ─────────────────────────────────────────────────────────

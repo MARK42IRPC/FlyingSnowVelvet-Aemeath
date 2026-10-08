@@ -15,6 +15,7 @@
 | 修改主题、布局、动效或跨后端绘制语义 | [跨后端视觉表现契约](视觉表现契约.md) |
 | 审计 Qt 依赖与绘制后端边界 | [Qt 边界契约](Qt边界契约.md) |
 | 改建 `core/render` 目录结构或新增渲染后端 | [Render 层边界契约](render层边界契约.md) |
+| 拆分 `lib/script/ui` 大文件或调整 Qt 收敛次序 | [Render 层边界契约](render层边界契约.md) 第 34 节与 [维护手册](维护手册.md)「拆分 `lib/script/ui` 大模块（瘦身）」 |
 | 实现 Windows DirectX 后端 | [DirectX 后端实现方案](DX后端实现方案.md) |
 | 修改 ONNX 语音包、安装器或推理桥接 | [ONNX 语音包协议](语音包协议.md) |
 | 修改办公后端、侧车或权限协议 | [维护手册](维护手册.md)“办公模式”与 `tests/test_office_*` |

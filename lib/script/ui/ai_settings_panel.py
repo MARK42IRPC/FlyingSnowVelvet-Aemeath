@@ -9,7 +9,6 @@ import json
 import math
 import os
 import random
-import re
 import subprocess
 import sys
 import threading
@@ -54,6 +53,11 @@ from config.ollama_config import (
 from config.scale import scale_px
 from config.shared_storage_paths import get_shared_root_dir
 from lib.script.ui.ai_settings_validators import validate_ai_values
+from lib.script.ui.ai_settings_contributions import (
+    contribution_list_path as _contribution_list_path_impl,
+    load_contribution_records as _load_contribution_records_impl,
+    sponsor_author_image_path as _sponsor_author_image_path_impl,
+)
 from lib.script.ui.ai_settings_storage import load_ai_values, save_ai_values, apply_ai_runtime
 from lib.script.ui.ai_settings_defaults import AI_DEFAULT_VALUES as _DEFAULT_VALUES
 from lib.script.ui.announcement_dialog import (
@@ -294,28 +298,8 @@ _HINT_FONT_SIZE = max(scale_px(12, min_abs=9), _CONFIG_FONT_SIZE - scale_px(2, m
 _UPDATE_BUTTON_ROW_GAP = scale_px(10, min_abs=10)
 _QUARK_UPDATE_URL = "https://pan.quark.cn/s/9158e62439e2"
 _SPONSOR_AUTHOR_URL = "https://afdian.com/a/fxxrdeskpet"
-_CONTRIBUTION_IGNORED_TITLE_PARTS = {"保留所有权利"}
-_CONTRIBUTION_HIDDEN_ROLES = {"安装教程指引"}
-_MANUAL_CONTRIBUTION_RECORDS = [
-    {
-        "insert_at": 1,
-        "name": "猫咪",
-        "role": "配音（千咲，达妮娅，莫宁）",
-        "url": "https://space.bilibili.com/1838261330",
-    },
-    {
-        "insert_at": 2,
-        "name": "TDSI服务器",
-        "role": "服务器支持",
-        "url": "https://systemtemp.pages.dev/",
-    },
-    {
-        "insert_at": 999,
-        "name": "鸣潮",
-        "role": "素材/形象来源",
-        "url": "https://mc.kurogames.com/",
-    },
-]
+# 贡献名单的常量（忽略标题片段 / 隐藏角色 / 手工条目）与解析逻辑已下沉到
+# `lib/script/ui/ai_settings_contributions.py`；本文件只保留下面的路径与加载委托。
 _GENERAL_CONFIG_CATEGORIES = GENERAL_CONFIG_CATEGORIES
 
 _CATEGORY_KEY_ALLOWLIST = {
@@ -1176,182 +1160,20 @@ def _project_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
 
-def _sponsor_author_image_path() -> Path:
-    return (
-        _project_root()
-        / "doc"
-        / "贡献名单和主播的狗盆"
-        / "如果想给作者买鸡腿饭的话"
-        / "喵-感谢支持喵-欢迎工单喵.jpg"
-    )
-
-
 def _contribution_list_path() -> Path:
-    return (
-        _project_root()
-        / "doc"
-        / "贡献名单和主播的狗盆"
-        / "开发贡献.txt"
-    )
+    """委托给后端中立的贡献名单模块，root 取本文件的 `_project_root()`。
+
+    传 root 而不是让子模块自己算，是为了让既有测试继续用
+    `mock.patch.object(panel, "_project_root", ...)` 覆盖文档树位置。"""
+    return _contribution_list_path_impl(_project_root())
 
 
-def _read_text_with_fallback(path: Path) -> str:
-    for encoding in ("utf-8-sig", "utf-8", "gb18030", "cp936"):
-        try:
-            return path.read_text(encoding=encoding)
-        except Exception:
-            pass
-    return path.read_text(encoding="utf-8", errors="ignore")
-
-
-def _extract_first_url(text: str) -> str:
-    match = re.search(r"https?://\S+", str(text or ""))
-    return match.group(0).strip() if match else ""
-
-
-def _normalize_contribution_name(text: str) -> str:
-    value = str(text or "").strip()
-    value = re.sub(r"\s+", " ", value)
-    value = value.strip("-=:： \t")
-    return value
-
-
-def _guess_contribution_fallback_name(text: str) -> str:
-    candidate = _normalize_contribution_name(text)
-    if not candidate:
-        return ""
-    if len(candidate) > 20:
-        return ""
-    blocked_tokens = ("感谢", "谢谢", "喜欢", "更新", "测试版", "版权", "侵权", "删除")
-    if any(token in candidate for token in blocked_tokens):
-        return ""
-    return candidate
-
-
-def _split_contribution_header(header: str) -> tuple[str, str]:
-    text = _normalize_contribution_name(header)
-    parts = [_normalize_contribution_name(part) for part in text.split("-") if _normalize_contribution_name(part)]
-    if len(parts) < 2:
-        return text, ""
-
-    picked_index = -1
-    for index in range(len(parts) - 1, -1, -1):
-        part = parts[index]
-        if part in _CONTRIBUTION_IGNORED_TITLE_PARTS:
-            continue
-        if index == 0:
-            continue
-        picked_index = index
-        break
-
-    if picked_index < 0:
-        return text, ""
-
-    name = parts[picked_index]
-    role_parts = [
-        part
-        for index, part in enumerate(parts)
-        if index != picked_index and part not in _CONTRIBUTION_IGNORED_TITLE_PARTS
-    ]
-    role = "-".join(role_parts).strip("- ") or text
-    return role, name
-
-
-def _parse_contribution_records(text: str) -> list[dict[str, str]]:
-    records: list[dict[str, str]] = []
-    current_role = ""
-    current_default_name = ""
-    current_fallback_name = ""
-    current_has_record = False
-
-    def flush_pending() -> None:
-        nonlocal current_role, current_default_name, current_fallback_name, current_has_record
-        if current_role and not current_has_record:
-            name = current_fallback_name or current_default_name
-            if name:
-                records.append({
-                    "name": name,
-                    "role": current_role,
-                    "url": "",
-                })
-        current_role = ""
-        current_default_name = ""
-        current_fallback_name = ""
-        current_has_record = False
-
-    for raw_line in str(text or "").splitlines():
-        line = str(raw_line or "").strip()
-        if not line:
-            continue
-        if line.startswith("贡献:"):
-            flush_pending()
-            current_role, current_default_name = _split_contribution_header(line[3:].strip())
-            current_fallback_name = current_default_name
-            continue
-        if not current_role or not line.startswith("==="):
-            continue
-
-        detail = _normalize_contribution_name(line[3:].strip())
-        if not detail:
-            continue
-        url = _extract_first_url(detail)
-        if url:
-            prefix = _normalize_contribution_name(detail.split(url, 1)[0])
-            name = prefix or current_default_name or current_fallback_name or "未命名贡献者"
-            records.append({
-                "name": name,
-                "role": current_role,
-                "url": url,
-            })
-            current_has_record = True
-            continue
-
-        fallback_name = _guess_contribution_fallback_name(detail)
-        if fallback_name:
-            current_fallback_name = fallback_name
-
-    flush_pending()
-    return records
+def _sponsor_author_image_path() -> Path:
+    return _sponsor_author_image_path_impl(_project_root())
 
 
 def _load_contribution_records() -> list[dict[str, str]]:
-    path = _contribution_list_path()
-    if not path.exists():
-        records = []
-    else:
-        try:
-            records = _parse_contribution_records(_read_text_with_fallback(path))
-        except Exception as exc:
-            _logger.warning("读取贡献名单失败: %s", exc)
-            records = []
-    try:
-        filtered_records: list[dict[str, str]] = []
-        for record in records:
-            role = str(record.get("role") or "").strip()
-            if role in _CONTRIBUTION_HIDDEN_ROLES:
-                continue
-            filtered_records.append(record)
-
-        for manual in _MANUAL_CONTRIBUTION_RECORDS:
-            manual_url = str(manual.get("url") or "").strip()
-            if not manual_url:
-                continue
-            filtered_records = [
-                record for record in filtered_records
-                if str(record.get("url") or "").strip() != manual_url
-            ]
-            insert_at = int(manual.get("insert_at", len(filtered_records)))
-            insert_at = max(0, min(insert_at, len(filtered_records)))
-            filtered_records.insert(insert_at, {
-                "name": str(manual.get("name") or "未命名贡献者").strip(),
-                "role": str(manual.get("role") or "贡献者").strip(),
-                "url": manual_url,
-            })
-
-        return filtered_records
-    except Exception as exc:
-        _logger.warning("整理贡献名单失败: %s", exc)
-        return []
+    return _load_contribution_records_impl(_project_root())
 
 
 def _decode_process_output(raw: bytes) -> str:

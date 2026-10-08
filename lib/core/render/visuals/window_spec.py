@@ -84,6 +84,8 @@ class LabelSpec:
     plain_text: bool = False
     align: str = ""
     valign: str = ""
+    #: 在父布局里占的伸缩权重（原文用 ``addWidget(label, 1)`` 撑满剩余空间）。
+    stretch: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,6 +123,37 @@ class TextAreaSpec:
 
 
 @dataclass(frozen=True, slots=True)
+class RichTextSpec:
+    """富文本视图（``QTextBrowser``）：公告正文一类的只读 HTML 展示。
+
+    ``document_stylesheet`` 是 QTextDocument 层的默认样式表（不是控件 QSS），
+    调用方已经算好颜色与字号；``scroll`` 由承载它的 ``LayoutSpec`` 决定。
+    """
+
+    html: str = ""
+    id: str = ""
+    object_name: str = ""
+    document_stylesheet: str = ""
+    font_size: int = 0
+    document_margin: int = 0
+    open_external_links: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class ProgressBarSpec:
+    """一条进度条（``QProgressBar``）：更新浮窗的下载/同步进度。"""
+
+    id: str = ""
+    object_name: str = ""
+    text_visible: bool = True
+    minimum: int = 0
+    maximum: int = 1
+    value: int = 0
+    fmt: str = ""
+    min_height: int = 0
+
+
+@dataclass(frozen=True, slots=True)
 class ButtonSpec:
     """一枚按钮：`semantic` 是给宿主回填回调用的语义 id。"""
 
@@ -144,6 +177,10 @@ class ButtonSpec:
     tool_button: bool = False
     #: 用标准窗眉字形（``close`` / ``minimize`` 一类）而不是产品图标；非空时忽略 ``icon``。
     window_icon: str = ""
+    #: 最小高度档（0 表示不设）；公告动作按钮靠它对齐工作台 34px 档。
+    min_height: int = 0
+    #: 用后端 UI 字体（调用方不指定字号时的默认字体）渲染按钮文字。
+    default_font: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,6 +210,8 @@ class LayoutSpec:
     scroll_host_object_name: str = ""
     #: 滚动视口内部承载控件的内边距。
     scroll_margin: _MARGIN = (0, 0, 0, 0)
+    #: 子控件全部隐藏时自动收起本行（连同父布局间距）。
+    collapse_when_empty: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -210,6 +249,10 @@ class WindowSpec:
     #: 用 ``paintEvent`` 画一层描边外壳（外描边色 + 内容底色），与公告 / 更新浮窗一致。
     border_frame: bool = False
     border_width: int = 0
+    #: 描边外壳的中间内衬色 token（空串表示两层式；更新浮窗用 ``border``）。
+    border_mid: str = ""
+    #: 描边外壳的内容底色 token（默认 ``canvas``；更新浮窗用 ``surface``）。
+    border_fill: str = "canvas"
 
     def with_text(self, node_id: str, text: str) -> "WindowSpec":
         """返回把 `node_id` 文本换成 `text` 的新描述（见 `retarget_text`）。"""
@@ -299,6 +342,8 @@ __all__ = [
     "LAYOUT_ROW",
     "LabelSpec",
     "LayoutSpec",
+    "ProgressBarSpec",
+    "RichTextSpec",
     "ROLE_DANGER",
     "ROLE_DEFAULT",
     "ROLE_GHOST",

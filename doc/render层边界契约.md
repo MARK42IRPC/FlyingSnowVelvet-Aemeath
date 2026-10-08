@@ -4,7 +4,7 @@
 
 本文档定义 `lib/core/render/` 的目标结构与依赖边界。它不是阶段计划，而是结构改建完成后必须成立的规则。
 
-**状态：第 6 节迁移顺序 1、2（目录切分）、3 已执行；图层能力已收敛到 `lib/core/render/layers/`（第 16 节）；后端中立协议与统一数据类型已落地（第 11 节），控件层“描述 + 后端渲染”已滚动迁移气泡框（第 12 节）、说明书、语音指示器与播放进度条（第 13 节）、音响音量/频段双滑条、搜索结果框与命令提示框（第 18 节）、右键矩形动作按钮一族八个按钮（第 19 节）、确认/提示框（第 20 节，首个模态宿主）；浮窗外壳（样式/主题判定/拖拽策略/窗口按钮）已从 `lib/script/ui` 下沉到渲染层（第 21 节）；办公线性图标的 SVG 规格也已抽成后端中立事实源（第 22 节）；点击粒子辅助的按钮翻译改经 `render_bridge`、`_particle_helper.py` 出列（第 23 节）；论坛样式的底纹混色改为纯十六进制实现、`forum_style.py` 出列（第 24 节）；二维码登录浮窗的自动收起/穿透/窗口标志/自愈能力下沉到基类，`yuanbao_login_dialog.py` 与 `cloudmusic_login_dialog.py` 出列（第 25、26 节）；排布解算已收敛到 `visuals/` 并由 `PlacementSpec` 统一解算（第 14 节，档位 0/1），右键按钮族的逐控件锚点事件链已收敛为声明式 `AnchorGraph` 且 Qt 改为消费共享布局（第 15 节，档位 2/3）；`WindowHost` 的被动宿主激活语义已与 Qt/DX 焦点策略对齐（第 17 节）。** 目录与引用规则以本文档为准；改建前的事实源是 [Qt 边界契约](Qt边界契约.md) 与 [跨后端视觉表现契约](视觉表现契约.md)，那两份文档继续负责“哪些内容算视觉逻辑”和“什么算无 Qt”。第一章描述的是最终目标；产品控件面（`lib/script/ui` 直接 `import PyQt5`）仍需逐个控件迁移，当前待迁清单以 `tests/test_qt_dependency_boundaries.py` 的 `frozen_ui_qt_importers` 为准，滚动顺序见第 13 节末尾；翻页按钮族已于第二十七轮迁出（第 27 节）；音响菜单控制按钮族已于第二十八轮迁出（第 28 节）；音响菜单族共享样式已于第二十九轮出列（第 29 节，档位 D 新增 `QtPainterHost` 绘制宿主）；办公面样式与控件树辅助已于第三十轮出列（第 30 节）；窗口级描述与审批弹窗已于第三十一轮出列（第 31 节，档位 D 新增窗口描述宿主与 isuals/window_spec*.py 两级描述层）；帮助浮窗已于第三十二轮出列（第 32 节，窗口描述宿主补齐工具窗 / 滚动正文 / 淡入淡出 / 描边外壳）。
+**状态：第 6 节迁移顺序 1、2（目录切分）、3 已执行；图层能力已收敛到 `lib/core/render/layers/`（第 16 节）；后端中立协议与统一数据类型已落地（第 11 节），控件层“描述 + 后端渲染”已滚动迁移气泡框（第 12 节）、说明书、语音指示器与播放进度条（第 13 节）、音响音量/频段双滑条、搜索结果框与命令提示框（第 18 节）、右键矩形动作按钮一族八个按钮（第 19 节）、确认/提示框（第 20 节，首个模态宿主）；浮窗外壳（样式/主题判定/拖拽策略/窗口按钮）已从 `lib/script/ui` 下沉到渲染层（第 21 节）；办公线性图标的 SVG 规格也已抽成后端中立事实源（第 22 节）；点击粒子辅助的按钮翻译改经 `render_bridge`、`_particle_helper.py` 出列（第 23 节）；论坛样式的底纹混色改为纯十六进制实现、`forum_style.py` 出列（第 24 节）；二维码登录浮窗的自动收起/穿透/窗口标志/自愈能力下沉到基类，`yuanbao_login_dialog.py` 与 `cloudmusic_login_dialog.py` 出列（第 25、26 节）；排布解算已收敛到 `visuals/` 并由 `PlacementSpec` 统一解算（第 14 节，档位 0/1），右键按钮族的逐控件锚点事件链已收敛为声明式 `AnchorGraph` 且 Qt 改为消费共享布局（第 15 节，档位 2/3）；`WindowHost` 的被动宿主激活语义已与 Qt/DX 焦点策略对齐（第 17 节）。** 目录与引用规则以本文档为准；改建前的事实源是 [Qt 边界契约](Qt边界契约.md) 与 [跨后端视觉表现契约](视觉表现契约.md)，那两份文档继续负责“哪些内容算视觉逻辑”和“什么算无 Qt”。第一章描述的是最终目标；产品控件面（`lib/script/ui` 直接 `import PyQt5`）仍需逐个控件迁移，当前待迁清单以 `tests/test_qt_dependency_boundaries.py` 的 `frozen_ui_qt_importers` 为准，滚动顺序见第 13 节末尾；翻页按钮族已于第二十七轮迁出（第 27 节）；音响菜单控制按钮族已于第二十八轮迁出（第 28 节）；音响菜单族共享样式已于第二十九轮出列（第 29 节，档位 D 新增 `QtPainterHost` 绘制宿主）；办公面样式与控件树辅助已于第三十轮出列（第 30 节）；窗口级描述与审批弹窗已于第三十一轮出列（第 31 节，档位 D 新增窗口描述宿主与 isuals/window_spec*.py 两级描述层）；帮助浮窗已于第三十二轮出列（第 32 节，窗口描述宿主补齐工具窗 / 滚动正文 / 淡入淡出 / 描边外壳）；公告 / 更新浮窗已于第三十三轮出列（第 33 节，新增 UI 线程调度宿主，控制器不再被迫继承 `QObject`）。剩余大文件的推进次序已于 2026-10-07 修订为「先按模块拆分瘦身、再逐个收敛 Qt」（第 34 节），滚动清单因此改按四批推进；批次 0（拆分登记机制）与批次 1（贡献名单解析抽离）已执行（第 35 节）。
 
 本文只新增目录与引用规则，不改变任何视觉语义、数值来源或渲染结果。改建过程中出现分歧时，以 [视觉表现契约](视觉表现契约.md) 和当前 Qt 基准为事实源。
 
@@ -580,7 +580,14 @@ DX 保持未切分：DX 仍是 `available=False` 的实验实现，没有第二�
 **滚动清单（下一个控件）**
 
 模式已固定为三步：把控件状态搬进 `visuals/controls.py`（或同级新模块）→ 控件本体删掉
-`QWidget` 基类与 `PyQt5` → 从 `frozen_ui_qt_importers` 删除条目。建议顺序：
+`QWidget` 基类与 `PyQt5` → 从 `frozen_ui_qt_importers` 删除条目。
+
+> **次序修订（2026-10-07，第 34 节）：** 下面这份清单的推进次序已改。剩余文件里有若干"一个文件
+> 等于一整块页面"的大文件（`ai_settings_panel.py`、`forum_board.py` 等），继续按"一个文件一个控件"
+> 推进会让一次改动同时承担拆分与去 Qt。新次序是**先按模块拆分瘦身，再逐个收敛 Qt**，分四批
+> 推进，细节见第 34 节。清单条目本身仍然有效，只是不再是直接的执行顺序。
+
+建议顺序：
 
 1. ~~`rect_action_button_style.py` 一族~~ **已于第十四轮迁出**（见第 19 节）：八个按钮
    改为 `lib/script/ui/rect_action_button_runtime.py` 的 `RectActionButtonRuntime`（描述 +
@@ -597,8 +604,8 @@ DX 保持未切分：DX 仍是 `available=False` 的实验实现，没有第二�
    `confirm_dialog` 与 `office_approval_dialog` 已迁出，其余带树对话框可按同一模式逐个
    搬走；办公面其余 `office_*` 文件是 `QWidget` 页面而不是带树对话框，不属本项。
    工具类浮窗（淡入淡出 + `LayerManager` 层级 + 滚动正文 + 描边外壳）同属本项的落点，
-   宿主能力已于第三十二轮补齐，`help_window` 已迁出（第 32 节），`update_dialog` /
-   `announcement_dialog` 是同一形状的下一批。
+   宿主能力已于第三十二轮补齐，`help_window` 已迁出（第 32 节）；`update_dialog` /
+   `announcement_dialog` 已于第三十三轮迁出（第 33 节）。
 4. `world_objects/*.py`（时钟、沙发、雪球等）与 `game_runtime.py` 是另一类长尾，
    它们更多是"动画 + 命中"，可在控件族收干净后单独一轮处理。
    其中 `game_runtime.py` 的宿主窗口按工作台窗口处理：普通窗口 + 无边框，既不置顶
@@ -1689,3 +1696,233 @@ Qt 对接收者只持弱引用，而闭包会一直攥住 `self`；一旦 `_poll
   页面与控件；浮窗系的宿主能力已就位，可按同一模式逐个搬走（`update_dialog` /
   `announcement_dialog` 与帮助浮窗同形，是最直接的下一批）。
 - `world_objects/*` 与 `game_runtime.py` 仍未动。
+
+
+## 33. 第三十三轮执行记录：公告 / 更新浮窗去 Qt（控制器不再被迫继承 QObject）
+
+第三十一、三十二轮把「窗口描述 + 后端宿主」补齐到模态对话框与工具浮窗。本轮收掉两个
+同形的产品浮窗（公告、更新），并解决它们共同的、此前没被正视的问题：**为什么后台控制器
+要继承 `QObject`**。
+
+**问题：控制器为了"把回调挪回 UI 线程"而被迫 import PyQt5**
+
+公告 / 论坛 / 帮助 / 办公模式页的控制器都在计算线程上做后台工作，回调必须回到 UI 线程执行。
+早先的做法是每个控制器在自己的 `QObject` 上声明一个 `pyqtSignal(object)`，连
+`Qt.QueuedConnection`——**只为这一次线程切换**，控制器就背上了 `QObject` 基类与 `PyQt5` 依赖。
+这属于"把后端事实藏进业务控制器"，正是档位规则要挡住的。
+
+**新增档位 D 宿主：`backends/qt/widgets/ui_dispatch.py` 的 `UiDispatcher`**
+
+把这条 Qt 事实收成一处，语义是「保证回调在 UI 线程执行」：从其它线程调用走 `QueuedConnection`
+投递，在自身线程调用就地执行（等价直接连接，避免在无 `exec_()` 的单元测试里把回调排进永不派发
+的队列）。另有 `flush()`（同步执行尚未被事件循环取走的跨线程回调）与 `clear()`（清理时丢弃）。
+`render_bridge.create_ui_dispatcher()` 是控件侧唯一落点。控制器只持有它的返回值，不再声明信号。
+
+**描述层扩容（`lib/core/render/visuals/`）**
+
+- `window_spec.py` 新增 `RichTextSpec`（`QTextBrowser` 只读 HTML：`document_stylesheet` /
+  `font_size` / `document_margin` / `open_external_links`）与 `ProgressBarSpec`（`QProgressBar`）；
+  并为既有词汇补齐 `stretch`（在父布局里占的伸缩权重）、`min_height`（最小高度档）、
+  `default_font`（用后端 UI 字体渲染按钮）、`collapse_when_empty`（子控件全隐藏时连父布局间距
+  一起收起）、`border_mid` / `border_fill`（描边外壳的中间内衬色与内容底色 token）。
+- `window_specs.py` 新增 `announcement_window_spec()` 与 `update_window_spec()`。
+
+**后端宿主（档位 D，`backends/qt/widgets/spec_host.py`）**
+
+按新词汇装配真实控件树：富文本视图、进度条、嵌套布局（`_build_nested_layout`）、按钮行的
+"全空即收起"、描边外壳的两种画法（默认两层 / `border_mid` 内衬线的三层）。屏幕归属与绘制
+实现仍由 `render_bridge` 注入，宿主不静态引用档位 A。
+
+**`render_bridge` 新增转发（档位 D 的控件侧唯一落点）**
+
+`create_floating_window_base()` / `create_window_button()` / `create_ui_dispatcher()` /
+`floating_window_classes()` / `window_button_icons()`。`lib/script/ui` 的浮窗族要继承的
+工具包基类、窗眉按钮工厂、UI 线程调度宿主都从这里取，控件与门面不再静态 import 档位 D。
+
+**产品窗口（出列冻结清单）**
+
+- `announcement_dialog.py`（401 行改动）：`DesktopPetAnnouncementDialog` 不再是
+  `WorkbenchFloatingWindow` 子类、不再 import `PyQt5`；`AnnouncementController` 不再继承
+  `QObject`，`pyqtSignal` 用后端中立替身 `_AnnouncementSignal`（只保留 `connect` / `emit` /
+  `disconnect`）。
+- `update_dialog.py`（343 行改动）：同形改造，`_UpdateSignal` 替身。
+- `help_window.py`（18 行）：配合上述转发调整。
+- `workbench_floating.py`（40 行）：改为纯再导出垫片，基类与窗眉按钮工厂经 `render_bridge`
+  转发（不再直接 import `backends/qt`）。
+
+`frozen_ui_qt_importers`：46 → **42**（移出上述四个文件，无新增）。
+
+**验证（2026-10-08 收尾）**
+
+- `tests/test_workbench_chrome.py` / `test_workbench_floating_windows.py` /
+  `test_render_layout_algorithms.py` 同步改为断言"描述 + 宿主"形态（`_spec.stylesheet` /
+  `border_frame` / `layer`、`hide_dialog()`、`render_bridge` 转发面），不再断言
+  `isinstance(..., WorkbenchFloatingWindow)`。
+- 收尾时清掉两处收敛遗留的死导入：`spec_host.py` 的 `QEvent` / `QObject`、
+  `announcement_dialog.py` 的 `get_layer_manager` / `WindowLayer`（层级注册已移入描述宿主）。
+- `py -3 -m ruff check .` 归零；`compileall` 通过；`git diff --check` 干净。
+  定向用例（chrome / floating / layout / announcement / update / help / window_spec /
+  边界）全绿。
+
+**本轮没动的部分**
+
+- `forum_window` / `playlist_panel` / `speaker_search_dialog` / `voice_package_installer` /
+  `qr_dialog_base` / `cmd_window` / `command_dialog` 仍是 Qt 页面与控件。
+- `world_objects/*` 与 `game_runtime.py` 仍未动。
+
+
+## 34. 第 0 轮方案变更：瘦身先行，再收敛 Qt（滚动清单次序修订）
+
+更新时间：2026-10-07
+
+本节是一次**方案修订**，不改变任何既有边界规则，也不描述已完成的迁移。它修订第 13 节末尾
+「滚动清单（下一个控件）」的推进次序：**先用模块拆分给大文件瘦身，再让拆分后的模块逐个收敛
+Qt**。第 13 节开头的三步模式（状态搬进 `visuals/` → 控件删 `QWidget`/`PyQt5` → 出列冻结清单）
+仍然是每一次收敛的动作；本节改的是**一轮里对哪个文件、按什么粒度做这件事**。
+
+### 34.1 为什么要改
+
+滚动清单原来的推进方式默认「一个文件即一个控件」。当文件就是控件本身时，迁移可以整文件完成，
+像素 oracle 也只面对一个改动。但 `frozen_ui_qt_importers` 里剩下的文件已经不平整：
+
+- `lib/script/ui/ai_settings_panel.py` 一个文件承载了整块设置面板：顶部 60+ 个模块级 import，
+  6 个类、225 个 `def`、14 处外部引用点。它不是"一个控件"，而是若干页面 + 纯逻辑 + 硬件探测 +
+  贡献名单解析被塞进同一个模块。
+- `lib/script/ui/forum_board.py`（2236 行）混着图像视图族、帖子/回复行与主论坛页；
+  `playlist_panel.py`（966 行）、`forum_window.py`（976 行）同形。
+
+直接对这类文件做 Qt 收敛，会让一次改动同时承担**拆分**与**去 Qt**两件事：一旦像素 oracle 报出
+差异，无法判断来自结构调整还是来自去 Qt；反过来，拆分本身也会重新划分"谁碰 Qt"，冻结清单会在
+同一文件上被连续两轮触碰，`stale` 与"新增耦合"两条断言同时告警。**把两件事合并成一轮，等于把
+两种失败模式叠在一起。**
+
+### 34.2 修订后的次序（三类 + 四批）
+
+按"文件里有哪些东西"先分类，再决定动作：
+
+- **A 类：纯能力抽离，零风险，最先做。** 目标是"不碰 Qt、不碰 UI 装配、可被多文件共用"的逻辑，
+  抽到 `lib/core/` 或 `lib/script/workbench/`。`ai_settings_panel.py` 里的现成料：贡献名单解析
+  （`_parse_contribution_records` 一族）、硬件水印/显存探测（`_MEMORYSTATUSEX`、
+  `_query_hardware_watermark_lines`、`_gpu_pick_score`）、配置值格式化与校验、`_section_help_text`
+  文案表。它们是纯函数，抽出后主文件立即缩水，且**不改变冻结清单**——验证只需跑现有测试。
+  落点建议 `lib/script/ui/ai_settings_text.py`、`lib/script/ui/ai_settings_hardware.py`（无 Qt），
+  更彻底时进 `lib/core/services/`。
+- **B 类：需跨文件共享的 Qt 宿主，先下沉到 `backends/qt/widgets/` 再拆。** 这是解决"拆分后两个
+  新文件都想用同一个私有控件"的前置。合法落点是档位 D；本轮之前的 `UiDispatcher`、`spec_host`、
+  `smooth_scroll`、`message_box_host` 已是同型先例。对 `forum_board.py`，三个图像视图
+  （`ForumImageView`/`ForumImageThumb`/`ForumDetailImage`）应作为一个共享族落到
+  `backends/qt/widgets/forum_images.py`；`ForumPostRow`/`ForumReplyRow` 同族；`ui/` 只留
+  `ForumBoardPage`。
+- **C 类：产品页本体，做「视图 + 控制器 + 描述」切分，并与 Qt 收敛在同一轮交付。** 这是主战场。
+  `ai_settings_panel.py` 切分为 `AISettingsPanel`（视图）+ 按 tab 的 page/section 模块 + 无 Qt 的
+  设置控制器（状态、保存、校验、默认值合并）；`playlist_panel.py` 切分为队列按钮族（已在描述宿主
+  路线上）+ `PlaylistPanel` 本体 + 无 Qt 队列模型。切完后每个 page 通常能独立去 Qt，一页一轮，
+  `frozen_ui_qt_importers` 稳步下降且每轮都可提交。
+
+据此，滚动清单的推进改成四批：
+
+1. **批次 0（规则前置，不是迁移）：** 冻结清单与耦合清单的登记机制要能容纳"一个文件拆成多个"。
+   在 `tests/test_qt_dependency_boundaries.py` 与 `tests/test_code_structure_boundaries.py` 中，
+   拆分出的新文件必须能显式登记——否则拆分必然触发"新增耦合/新增 Qt 面"失败。子包路径同样要登记，
+   不能只让顶层 `lib/script/ui/*.py` 有登记位。
+2. **批次 1：A 类抽离**（`ai_settings_panel` 的纯函数族、`forum_board` 的纯辅助）。
+3. **批次 2：B 类下沉**（`forum_board` 图像族、`ForumPostRow`/`ForumReplyRow`），每下沉一族跑一次
+   `tests/test_forum_board_ui.py` 与视觉 parity。
+4. **批次 3：C 类按 tab/页逐块拆 + 同步去 Qt**，小批量多轮提交，延续既有「控件层收敛第 N 轮」节奏。
+
+### 34.3 每轮的验收门槛
+
+拆分轮与收敛轮共用同一套 oracle，但比对对象不同：
+
+- **纯移动轮（A/B 类）：** 新增文件必须逐行等价，用 `git diff -M --find-copies` 确认是 copy/move；
+  跑对应模块测试 + `ruff check` + `compileall`。本类预期**逐字节/逐像素零差异**。
+- **涉及像素的轮（C 类）：** 沿用第 32 节确立的 oracle——迁移后壳层与收敛前 `HEAD` 逐像素相等，
+  明暗两主题各一张全图比对，差异像素 0；结果写入 `CHANGELOG.md`。
+- **每轮结束**跑 `py -3 -m unittest tests.test_qt_dependency_boundaries tests.test_code_structure_boundaries -q`，
+  确保冻结清单与耦合清单同步更新。
+
+### 34.4 风险
+
+- 拆分会让"新文件里 import 了产品包"立刻触发 `test_ui_to_product_coupling_is_frozen` 失败。
+  这是设计使然，批次 0 必须先备好登记机制，否则每拆一次都要临时改测试。
+- `ai_settings_panel.py` 顶着 14 处引用点与 60+ 顶层 import，不得一次切完；按 tab 切、每个 tab 一轮。
+- 先拆后收敛会让收敛轮的像素基线变成拆分后的新文件。因此 A/B 类必须做到"纯移动、零差异"，
+  保证收敛轮的差异只有一个来源。
+
+
+## 35. 批次 0 / 批次 1 执行记录（规则前置与设置面板纯逻辑抽离）
+
+更新时间：2026-10-08
+
+本节是第 34 节四批方案的执行记录。批次 0 是规则前置，批次 1 是第一次 A 类抽离。
+
+### 35.1 批次 0：拆分登记机制（先验证，再固化）
+
+第 34 节要求"拆出的新文件必须能显式登记"。实测结论是**机制本就成立，缺的是说明与守卫**：
+
+- 两份清单都按 `rglob("*.py")` 扫描 `lib/script/ui/`，嵌套子包（`lib/script/ui/foo/bar.py`）
+  会被扫到，不会漏；
+- `frozen_ui_qt_importers <= {path for path in qt_imports if path.startswith("lib/script/ui/")}`
+  只要求前缀匹配，嵌套子包路径本就合法；
+- 用临时探针实测：拆出的同级/嵌套文件若仍 `import PyQt5`，`unexpected` 断言会列出它；
+  若 import 产品包，`test_ui_to_product_coupling_is_frozen` 的 `found - expected` 会列出它。
+  也就是说**拆分不会被迫放宽断言**——它只是要求你把新文件登记进去。
+
+据此做的改动只有两处，都是让规则可读、可回归：
+
+- `tests/test_qt_dependency_boundaries.py` 与 `tests/test_code_structure_boundaries.py`
+  各补一段注释，写明拆分场景下该登记到哪份清单、不 import Qt 的拆出文件不要登记；
+- 新增 `tests/test_code_structure_boundaries.py::test_split_ui_modules_are_registered_not_silently_allowed`：
+  钉住"扫描面覆盖子包 + 前缀判定接受子包 + 两个清单的条目都落在 `lib/script/ui/` 前缀下"。
+
+### 35.2 批次 1：贡献名单解析抽到后端中立模块
+
+第一个 A 类目标选 `ai_settings_panel.py` 的贡献名单一族，因为它是纯函数、无 Qt、无 UI 装配，
+且被 `test_offline_distribution.py` 间接覆盖，抽离后立刻可验证。
+
+- 新增 `lib/script/ui/ai_settings_contributions.py`（229 行，不 import `PyQt5`）：
+  `project_root()` / `contribution_list_path()` / `sponsor_author_image_path()` /
+  `read_text_with_fallback()` / `extract_first_url()` / `normalize_contribution_name()` /
+  `guess_contribution_fallback_name()` / `split_contribution_header()` /
+  `parse_contribution_records()` / `load_contribution_records()`，以及
+  `_CONTRIBUTION_IGNORED_TITLE_PARTS` / `_CONTRIBUTION_HIDDEN_ROLES` / `_MANUAL_CONTRIBUTION_RECORDS`。
+- `contribution_list_path()` / `sponsor_author_image_path()` / `load_contribution_records()`
+  接受可选 `root`。面板的 `_contribution_list_path()` / `_sponsor_author_image_path()` /
+  `_load_contribution_records()` 变成三个委托，`root` 传本文件的 `_project_root()`；
+  这样既有测试的 `mock.patch.object(panel, "_project_root", ...)` 覆盖点不变。
+- `_MANUAL_CONTRIBUTION_RECORDS` 不再从面板重新导出（面板内无引用）。它现在的规范位置是
+  `ai_settings_contributions._MANUAL_CONTRIBUTION_RECORDS`；`test_offline_distribution.py`
+  的引用已改到规范模块。
+- `_read_text_with_fallback` / `_extract_first_url` / `_normalize_contribution_name` /
+  `_guess_contribution_fallback_name` / `_split_contribution_header` /
+  `_parse_contribution_records` 以及两个常量从面板删除，面板顶部据此删掉已无用的 `import re`。
+
+`ai_settings_panel.py`：5439 → 5261 行（净 -178）。**冻结清单不变**——本次拆出的
+`ai_settings_contributions.py` 不含 Qt，不登记；面板仍在 `frozen_ui_qt_importers` 里。
+
+### 35.3 验证（2026-10-08）
+
+- 行为等价：用 `git show HEAD:lib/script/ui/ai_settings_panel.py` 的旧实现与工作树的
+  新模块，对真实事实源 `doc/贡献名单和主播的狗盆/开发贡献.txt` 逐条比对——
+  `parse_contribution_records` 15 条全等，`load_contribution_records` 14 条全等。
+- 新增 `tests/test_ai_settings_contributions.py` 12 条断言：角色行/URL 条目/兜底名字/
+  屏蔽词/忽略标题片段/归一化/首链接提取、真实文件的手工条目与隐藏角色、`root` 覆盖，
+  以及"模块不 import Qt"与"PyQt5 被阻断的进程里可导入并解析"。
+- `py -3 -m unittest tests.test_ai_settings_contributions`：12 通过。
+  `tests.test_offline_distribution`：26 通过。边界测试：
+  `tests.test_qt_dependency_boundaries tests.test_code_structure_boundaries` 52 通过。
+- 全量 `unittest discover -s tests`：2226 用例、1 失败（`test_dsh_office_sidecar` 的
+  DSH 外部任务超时，单独运行 2/2 通过，属环境性失败）、10 跳过。
+  `tests/dx`：122 通过 / 7 跳过。`compileall` 通过；`git diff --check` 干净。
+- 新增/修改文件 `ruff check` 归零。（工作树里既有未提交的 `spec_host.py` /
+  `announcement_dialog.py` 存在 4 处 F401，属任务开始前已有的改动，未触碰。）
+
+### 35.4 下一批
+
+- 批次 1 剩余：`forum_board.py` 的纯辅助函数；`ai_settings_panel.py` 的配置值格式化/校验、
+  `_section_help_text` 文案表。
+- 批次 2（B 类）：`forum_board.py` 的图像视图族与 `ForumPostRow`/`ForumReplyRow` 下沉
+  `backends/qt/widgets/`。
+- 一个已探明的约束：`ai_settings_panel.py` 的硬件/水印一族与 `lib/script/app/startup_probe.py`
+  是**同算法、不同 dict 键**的两份实现（前者吃 PowerShell `Name`/`AdapterRAM`，后者吃归一化
+  后的 `name`/`adapter_ram`）。要合并必须先在共享层统一键名，属行为改动，不能按"纯移动"处理。

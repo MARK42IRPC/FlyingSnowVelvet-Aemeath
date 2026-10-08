@@ -198,12 +198,15 @@ class WorkbenchFloatingChromeTests(unittest.TestCase):
             dialog.close()
 
     def test_update_dialog_shares_chrome_and_paints_workbench_tokens(self):
+        # 更新浮窗已改为"窗口描述 + 后端宿主"：不再是 QWidget 子类，
+        # 但仍共享浮窗外壳（描边、令牌配色、最小化即收起）与层注册。
         dialog = DesktopPetUpdateDialog()
         try:
-            self.assertIsInstance(dialog, WorkbenchFloatingWindow)
             self.assertEqual(dialog._minimize_btn.toolTip(), "最小化")
+            self.assertIn(get_workbench_colors().surface_raised, dialog._spec.stylesheet)
+            self.assertTrue(dialog._spec.border_frame)
+            self.assertEqual(dialog._spec.layer, "dialog")
 
-            dialog._opacity.setOpacity(1.0)
             image = dialog.grab().toImage()
             tokens = get_workbench_colors()
             self.assertEqual(image.pixelColor(0, 0).name(), tokens.border_strong)
@@ -244,15 +247,18 @@ class WorkbenchFloatingChromeTests(unittest.TestCase):
             self.app.processEvents()
 
     def test_announcement_dialog_shares_chrome_and_collapses(self):
+        # 公告浮窗本体已改为"窗口描述 + 后端宿主"：它不再是 QWidget 子类，
+        # 但仍共享浮窗外壳（描边、令牌配色、最小化即收起）与层注册。
         dialog = DesktopPetAnnouncementDialog()
         try:
-            self.assertIsInstance(dialog, WorkbenchFloatingWindow)
             self.assertEqual(dialog._minimize_button.toolTip(), "最小化")
-            self.assertIn(get_workbench_colors().canvas, dialog.styleSheet())
+            self.assertIn(get_workbench_colors().canvas, dialog._spec.stylesheet)
+            self.assertTrue(dialog._spec.border_frame)
+            self.assertEqual(dialog._spec.layer, "dialog")
 
             dialog.show_loading()
             self.assertTrue(dialog.wants_visible())
-            dialog.minimize_floating_window()
+            dialog.hide_dialog()
             self.assertFalse(dialog.wants_visible())
         finally:
             dialog.cleanup()

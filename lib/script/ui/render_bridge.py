@@ -214,6 +214,60 @@ def create_spec_window(
     )
 
 
+def create_floating_window_base(parent=None):
+    """返回浮窗外壳的 Qt 基类 ``QtWorkbenchFloatingWindow``（档位 D）。
+
+    `lib/script/ui` 的浮窗族（公告 / 更新 / 二维码 / 语音包 / 论坛）都以它为基类。
+    直接 import `lib/core/render/backends/qt/widgets/` 会命中档位 D 的引用规则，
+    因此这里和 ``create_control_host`` 一样，把"产品要继承的工具包基类"收敛成
+    一个转发落点：换后端时只有本函数需要改，产品浮窗的调用面不变。
+    """
+    from lib.core.render.backends.qt.widgets.floating_window import QtWorkbenchFloatingWindow
+
+    return QtWorkbenchFloatingWindow
+
+
+def create_window_button(parent, standard_icon, tooltip, callback, *, danger: bool = False):
+    """创建一枚窗眉控制按钮（最小化 / 最大化 / 关闭），档位 D 的唯一控件侧落点。"""
+    from lib.core.render.backends.qt.widgets.window_buttons import create_window_button as create
+
+    return create(parent, standard_icon, tooltip, callback, danger=danger)
+
+
+def create_ui_dispatcher(parent=None):
+    """创建 UI 线程调度宿主（档位 D 的 ``UiDispatcher``）。
+
+    产品控制器（公告 / 论坛 / 帮助 / 办公模式页）需要把回调投递回 Qt 事件循环，
+    此前各自声明一个 ``pyqtSignal(object)`` 并连 ``Qt.QueuedConnection``，因此被迫
+    继承 ``QObject`` 且 import ``PyQt5``。本函数是它们取用该能力的唯一落点。
+    """
+    from lib.core.render.backends.qt.widgets.ui_dispatch import UiDispatcher
+
+    return UiDispatcher(parent)
+
+
+def floating_window_classes():
+    """返回浮窗实现的三件套：拖拽过滤器、主题观察者与基类（档位 D）。
+
+    与 ``create_floating_window_base`` 同一用途，只是形态是三元组：``lib/script/ui``
+    的门面需要按名字再导出这几个类，而它自己不得静态 import 档位 D。
+    """
+    from lib.core.render.backends.qt.widgets.floating_window import (
+        FloatingDragFilter,
+        FloatingWindowThemeWatcher,
+        QtWorkbenchFloatingWindow,
+    )
+
+    return FloatingDragFilter, FloatingWindowThemeWatcher, QtWorkbenchFloatingWindow
+
+
+def window_button_icons():
+    """窗眉标准图标的语义名 → Qt 标准字形（`QStyle.SP_*`）映射。"""
+    from lib.core.render.backends.qt.widgets.spec_host import WINDOW_ICONS
+
+    return dict(WINDOW_ICONS)
+
+
 def create_component_layer():
     """创建控件自用的绘制回调层（排序与注册是后端无关的，只有回调是 Qt）。"""
     from lib.core.render.backends.qt.drawing.render_core import QtComponentLayer

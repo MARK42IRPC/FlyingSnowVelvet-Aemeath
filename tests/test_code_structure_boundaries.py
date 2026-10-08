@@ -4,6 +4,8 @@ import ast
 import unittest
 from pathlib import Path
 
+from tests.test_qt_dependency_boundaries import QtDependencyBoundaryTests
+
 
 _ROOT = Path(__file__).resolve().parents[1]
 _CORE = _ROOT / "lib" / "core"
@@ -131,6 +133,11 @@ class CodeStructureBoundaryTests(unittest.TestCase):
     def test_ui_to_product_coupling_is_frozen(self):
         """`ui/` 只能消费产品包的公开接口，且现有耦合已被清点并冻结。
 
+        大文件拆分（`doc/render层边界契约.md` 第 33 节）会把一个文件变成若干子模块：拆出的新文件若
+        仍 import `chat` / `office` / `music` / `gsvmove`，就是**新的** ui -> 产品包耦合，必须显式
+        登记进下面的 expected，不能靠改断言放行；只做纯移动、不引入产品包依赖的拆分别无需登记。
+        场景与判定见第 33 节与 `tests/test_qt_dependency_boundaries.py` 的同批注释。
+
         阶段 4 不把这些导入一刀切掉（工具页本来就是产品表现层，拆接口是另一件事），而是把它变成一份可审计的清单：
         新增耦合会叫停，清单里的条目被删掉后也会叫停（防止清单腐烂）。私有子模块一律不允许。
         """
@@ -189,6 +196,38 @@ class CodeStructureBoundaryTests(unittest.TestCase):
             item for item in found if any(part.startswith("_") for part in item[1].split(".")[3:])
         )
         self.assertEqual(private, [], "私有子模块不得被 ui 依赖")
+
+    def test_split_ui_modules_are_registered_not_silently_allowed(self):
+        """拆分 `lib/script/ui` 大文件时，登记机制必须照旧生效（第 33 节批次 0）。
+
+        这两条守卫把"拆分不改变可审计性"钉成可执行断言，而不是口头约定：
+
+        - 拆出的**新文件**（无论嵌套多深）一旦 import `chat`/`office`/`music`/`gsvmove`，
+          就是新耦合，必须登记进 `test_ui_to_product_coupling_is_frozen` 的 expected；
+          测试自身用 `rglob` 扫 `ui/`，不会漏掉子包。
+        - 拆出的文件若仍 `import PyQt5`，必须落在 `frozen_ui_qt_importers` 里；该名单与
+          耦合清单都按 `lib/script/ui/` 前缀判定，嵌套子包合法，无需新增白名单。
+
+        这里只验证"扫描面覆盖子包 + 前缀判定接受子包"，不复制另两个测试的完整规则。
+        """
+        ui_root = _SCRIPT / "ui"
+        scanned = {path.relative_to(_ROOT).as_posix() for path in ui_root.rglob("*.py")}
+        self.assertTrue(scanned, "ui/ 下应能扫到模块")
+
+        nested = "lib/script/ui/__split__/deep/module.py"
+        self.assertTrue(nested.startswith("lib/script/ui/"))
+        self.assertFalse(
+            any(part.startswith("_") for part in nested.split(".")),
+            "合法拆分路径不触发私有子模块规则（该规则只看 import 的产品模块名）",
+        )
+
+        # 两个清单的前缀判定都必须接受嵌套子包，否则拆分会被迫放宽断言。
+        frozen = QtDependencyBoundaryTests.frozen_ui_qt_importers
+        self.assertTrue(
+            {nested} <= {path for path in {nested, "lib/script/ui/x.py"} if path.startswith("lib/script/ui/")},
+            "frozen 名单的子集断言只要路径以 lib/script/ui/ 开头即可",
+        )
+        self.assertFalse(any(not p.startswith("lib/script/ui/") for p in frozen))
 
 
     def test_render_layer_has_the_documented_root_modules(self):
