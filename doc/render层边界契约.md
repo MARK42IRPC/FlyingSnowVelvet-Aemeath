@@ -4,7 +4,7 @@
 
 本文档定义 `lib/core/render/` 的目标结构与依赖边界。它不是阶段计划，而是结构改建完成后必须成立的规则。
 
-**状态：第 6 节迁移顺序 1、2（目录切分）、3 已执行；图层能力已收敛到 `lib/core/render/layers/`（第 16 节）；后端中立协议与统一数据类型已落地（第 11 节），控件层“描述 + 后端渲染”已滚动迁移气泡框（第 12 节）、说明书、语音指示器与播放进度条（第 13 节）、音响音量/频段双滑条、搜索结果框与命令提示框（第 18 节）、右键矩形动作按钮一族八个按钮（第 19 节）、确认/提示框（第 20 节，首个模态宿主）；浮窗外壳（样式/主题判定/拖拽策略/窗口按钮）已从 `lib/script/ui` 下沉到渲染层（第 21 节）；办公线性图标的 SVG 规格也已抽成后端中立事实源（第 22 节）；点击粒子辅助的按钮翻译改经 `render_bridge`、`_particle_helper.py` 出列（第 23 节）；论坛样式的底纹混色改为纯十六进制实现、`forum_style.py` 出列（第 24 节）；二维码登录浮窗的自动收起/穿透/窗口标志/自愈能力下沉到基类，`yuanbao_login_dialog.py` 与 `cloudmusic_login_dialog.py` 出列（第 25、26 节）；排布解算已收敛到 `visuals/` 并由 `PlacementSpec` 统一解算（第 14 节，档位 0/1），右键按钮族的逐控件锚点事件链已收敛为声明式 `AnchorGraph` 且 Qt 改为消费共享布局（第 15 节，档位 2/3）；`WindowHost` 的被动宿主激活语义已与 Qt/DX 焦点策略对齐（第 17 节）。** 目录与引用规则以本文档为准；改建前的事实源是 [Qt 边界契约](Qt边界契约.md) 与 [跨后端视觉表现契约](视觉表现契约.md)，那两份文档继续负责“哪些内容算视觉逻辑”和“什么算无 Qt”。第一章描述的是最终目标；产品控件面（`lib/script/ui` 直接 `import PyQt5`）仍需逐个控件迁移，当前待迁清单以 `tests/test_qt_dependency_boundaries.py` 的 `frozen_ui_qt_importers` 为准，滚动顺序见第 13 节末尾；翻页按钮族已于第二十七轮迁出（第 27 节）；音响菜单控制按钮族已于第二十八轮迁出（第 28 节）；音响菜单族共享样式已于第二十九轮出列（第 29 节，档位 D 新增 `QtPainterHost` 绘制宿主）；办公面样式与控件树辅助已于第三十轮出列（第 30 节）；窗口级描述与审批弹窗已于第三十一轮出列（第 31 节，档位 D 新增窗口描述宿主与 isuals/window_spec*.py 两级描述层）；帮助浮窗已于第三十二轮出列（第 32 节，窗口描述宿主补齐工具窗 / 滚动正文 / 淡入淡出 / 描边外壳）；公告 / 更新浮窗已于第三十三轮出列（第 33 节，新增 UI 线程调度宿主，控制器不再被迫继承 `QObject`）。剩余大文件的推进次序已于 2026-10-07 修订为「先按模块拆分瘦身、再逐个收敛 Qt」（第 34 节），滚动清单因此改按四批推进；批次 0（拆分登记机制）与批次 1（`ai_settings_panel.py` 瘦身：贡献名单解析、文案/名称表、配置 schema、删死代码）已完成（第 35–38 节）；批次 2 首轮把 `forum_board.py` 的图片视图族与列表两行下沉到档位 D 的 `backends/qt/widgets/forum_images.py`（第 39 节），续轮把 `forum_texture.py` 的底纹规格抽到 `visuals/forum_texture_visuals.py`（第 40 节）、把办公聊天的 Markdown→富文本抽到 `visuals/office_chat_rich.py`（第 41 节），三轮均为纯移动、零差异。
+**状态：第 6 节迁移顺序 1、2（目录切分）、3 已执行；图层能力已收敛到 `lib/core/render/layers/`（第 16 节）；后端中立协议与统一数据类型已落地（第 11 节），控件层“描述 + 后端渲染”已滚动迁移气泡框（第 12 节）、说明书、语音指示器与播放进度条（第 13 节）、音响音量/频段双滑条、搜索结果框与命令提示框（第 18 节）、右键矩形动作按钮一族八个按钮（第 19 节）、确认/提示框（第 20 节，首个模态宿主）；浮窗外壳（样式/主题判定/拖拽策略/窗口按钮）已从 `lib/script/ui` 下沉到渲染层（第 21 节）；办公线性图标的 SVG 规格也已抽成后端中立事实源（第 22 节）；点击粒子辅助的按钮翻译改经 `render_bridge`、`_particle_helper.py` 出列（第 23 节）；论坛样式的底纹混色改为纯十六进制实现、`forum_style.py` 出列（第 24 节）；二维码登录浮窗的自动收起/穿透/窗口标志/自愈能力下沉到基类，`yuanbao_login_dialog.py` 与 `cloudmusic_login_dialog.py` 出列（第 25、26 节）；排布解算已收敛到 `visuals/` 并由 `PlacementSpec` 统一解算（第 14 节，档位 0/1），右键按钮族的逐控件锚点事件链已收敛为声明式 `AnchorGraph` 且 Qt 改为消费共享布局（第 15 节，档位 2/3）；`WindowHost` 的被动宿主激活语义已与 Qt/DX 焦点策略对齐（第 17 节）。** 目录与引用规则以本文档为准；改建前的事实源是 [Qt 边界契约](Qt边界契约.md) 与 [跨后端视觉表现契约](视觉表现契约.md)，那两份文档继续负责“哪些内容算视觉逻辑”和“什么算无 Qt”。第一章描述的是最终目标；产品控件面（`lib/script/ui` 直接 `import PyQt5`）仍需逐个控件迁移，当前待迁清单以 `tests/test_qt_dependency_boundaries.py` 的 `frozen_ui_qt_importers` 为准，滚动顺序见第 13 节末尾；翻页按钮族已于第二十七轮迁出（第 27 节）；音响菜单控制按钮族已于第二十八轮迁出（第 28 节）；音响菜单族共享样式已于第二十九轮出列（第 29 节，档位 D 新增 `QtPainterHost` 绘制宿主）；办公面样式与控件树辅助已于第三十轮出列（第 30 节）；窗口级描述与审批弹窗已于第三十一轮出列（第 31 节，档位 D 新增窗口描述宿主与 isuals/window_spec*.py 两级描述层）；帮助浮窗已于第三十二轮出列（第 32 节，窗口描述宿主补齐工具窗 / 滚动正文 / 淡入淡出 / 描边外壳）；公告 / 更新浮窗已于第三十三轮出列（第 33 节，新增 UI 线程调度宿主，控制器不再被迫继承 `QObject`）。剩余大文件的推进次序已于 2026-10-07 修订为「先按模块拆分瘦身、再逐个收敛 Qt」（第 34 节），滚动清单因此改按四批推进；批次 0（拆分登记机制）与批次 1（`ai_settings_panel.py` 瘦身：贡献名单解析、文案/名称表、配置 schema、删死代码）已完成（第 35–38 节）；批次 2 首轮把 `forum_board.py` 的图片视图族与列表两行下沉到档位 D 的 `backends/qt/widgets/forum_images.py`（第 39 节），续轮把 `forum_texture.py` 的底纹规格抽到 `visuals/forum_texture_visuals.py`（第 40 节）、把办公聊天的 Markdown→富文本抽到 `visuals/office_chat_rich.py`（第 41 节），又把这页的 OpenAI 兼容接口解析抽到 `lib/core/services/api_endpoints.py`、顺手把 `API_TIMEOUT_SECS` 一族从产品包下沉到 `lib/core/services/network_policy.py`（第 42 节），四轮均为纯移动、零差异。
 
 本文只新增目录与引用规则，不改变任何视觉语义、数值来源或渲染结果。改建过程中出现分歧时，以 [视觉表现契约](视觉表现契约.md) 和当前 Qt 基准为事实源。
 
@@ -2188,3 +2188,66 @@ import `lib.script` 或 `config`，可直接落在 `visuals/`。`office_chat_vie
   输出逐字符相等，0 处不一致。
 - `tests/test_office_style.py`、`tests/test_office_workbench_page.py` 与两条边界测试通过（78 项）。
 - `ruff check .` 干净；`compileall` 通过；`git diff --check` 干净。
+
+## 42. 批次 2 续：办公/手动 API 解析抽到 `lib/core/services/`，并拆掉一处 core→产品包的反向依赖（A 类）
+
+更新时间：2026-10-08
+
+这一轮的目标文件是 `lib/script/ui/office_mode_settings.py`。它是批次 1 之后 `ui/` 里同时
+「碰 Qt 最多」与「混着最多纯逻辑」的一个：办公后端下拉、独立 API 表单与三个控件助手之外，
+还塞着一整套 OpenAI 兼容接口的地址补全、`/models` 端点换算、模型列表解析与一次 HTTP 探测，
+以及本机 DeepSeek Harness 的读取。
+
+### 42.1 抽走的那一半：`lib/core/services/api_endpoints.py`
+
+新增 `lib/core/services/api_endpoints.py`（122 行），承接五个函数与一份预设表：
+`MANUAL_API_PROVIDER_PRESETS`、`normalize_api_base_url`、`manual_api_models_url`、
+`parse_api_models`、`fetch_api_models`。判定依据与批次 1 一致：它们只做字符串规整、
+正则判定、字典解析与一次 `requests.get`，不碰 `QColor` / `QPaint` / 控件，
+所以是 A 类；落点选 `lib/core/services/`，与 `music_playback.py` / `ui_presentation.py`
+同层（第 3 节：后端中立的产品能力）。
+
+`office_mode_settings.py` 按原名重新导入这五个公开名（带 `# noqa: F401` 再导出），
+`ai_settings_panel.py` 现有 `from lib.script.ui.office_mode_settings import ... ` 的取用面
+一个字都不用改；`re` 与 `requests` 从该文件的顶层 import 里消失。
+
+### 42.2 顺手修掉的一处反向依赖：网络策略下沉
+
+抽离过程中暴露出一个既有问题：`API_TIMEOUT_SECS` 原先住在
+`lib/script/chat/network_policy.py`，而新落点 `lib/core/services/` 引用它就会形成
+**`lib/core` → `lib/script`** 的反向依赖，直接撞上
+`tests/test_code_structure_boundaries.py::test_core_does_not_import_product_modules`。
+它其实只是三个常量（超时 10.0s / 重试 3 次 / 总尝试 4 次），与产品包里的任何实现无关。
+
+处置：搬到 `lib/core/services/network_policy.py`（单一实现），
+`lib/script/chat/network_policy.py` 退化成一层同名重导出垫片，`welfare_api_config.py` 与
+`api_client_openai.py` 的既有导入路径继续可用。这是**纯移动 + 垫片**，没有新增耦合方向。
+
+### 42.3 留在原地的那一层：本机 DSH 探测
+
+`probe_local_dsh()` 必须 `from lib.script.office import local_dsh`（读启动期探测缓存），
+这是产品包依赖，不能进 `lib/core`。结论是它**留在 `lib/script/ui/office_mode_settings.py`**，
+并继续登记在 `test_ui_to_product_coupling_is_frozen` 的
+`("lib/script/ui/office_mode_settings.py", "lib.script.office")` 条目上——清单因此从两项
+（`lib.script.chat.network_policy`、`lib.script.office`）减到一项，而不是清零。
+
+同时修掉一处**既有脆弱点**：构造函数原写作 `probe or probe_local_dsh`，把函数对象在导入时
+就捕获进实例，测试与宿主事后替换模块属性对已建实例无效。`tests/test_office_mode_page.py`
+原有的 `_page_with_probe` 之所以看着能过，正是因为当时唯一被 patch 的 `office_mode_settings.probe_local_dsh`
+既是代理又是唯一实现；真正的实现读的是全局缓存，探针形同虚设。现改为
+`probe or (lambda: probe_local_dsh())`，走**模块全局**取值；测试改为 patch 真正的所有者，
+本机 DSH 探测分支第一次被真正驱动，构造期读到的就是测试给定的状态。
+
+### 42.4 验收（第 34.3 节「纯移动轮」）
+
+- **逐行等价**：`git show HEAD:lib/script/ui/office_mode_settings.py` 里
+  `MANUAL_API_PROVIDER_PRESETS` 与四个解析函数，AST 抽出来与 `api_endpoints.py` 中的同名定义
+  逐行相等，0 处不一致（`probe_local_dsh` 亦为逐行等价恢复）。
+- **行为等价**：15 组地址（空串 / `None` / 前后空白 / 裸域名 / 已带协议 / 带尾斜杠 /
+  `localhost:11434/v1` / `127.0.0.1:8000` / `0.0.0.0:1234` / `[::1]:9000` / `//host/v1` /
+  完整 `chat/completions` 端点 / 大小写混写）与 7 组 `/models` 载荷（正常 / 空 / 非 dict /
+  `data` 非列表 / 缺 id / `None` / 列表）在两份实现上逐字符一致，预设表 `repr` 相等。
+- 全量 `2260` 项测试通过（`10` skipped）；`ruff check .` 干净；`compileall` 通过；
+  `git diff --check` 干净。
+- 冻结清单 `frozen_ui_qt_importers` 仍为 42：`office_mode_settings.py` 的控件树还在，
+  本轮只是让它变薄。

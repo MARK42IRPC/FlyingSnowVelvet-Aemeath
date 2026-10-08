@@ -4,6 +4,8 @@
 办公模式独立成页面后两边都要用同一套字段，于是整块搬到这里：控件树、字段说明、本机 DSH
 探测与模型探测只有一份，两个入口不会再各写一份慢慢漂移。
 
+地址补全、模型列表解析与本机 DSH 探测已抽到后端中立的 `lib/core/services/api_endpoints.py`。
+
 控件直接铺进宿主分区的 `body_layout`（`SettingsSection` 或任意带 `body_layout` 的容器），
 布局结构与迁移前完全一致：QFormLayout 的隐藏行仍占行距，所以折叠的独立 API 块单独放在
 一个 QWidget 里，整块显示/隐藏才能真正释放行高。
@@ -11,10 +13,7 @@
 
 from __future__ import annotations
 
-import re
 from typing import Callable
-
-import requests
 
 from PyQt5.QtCore import QObject, Qt, pyqtSignal
 from PyQt5.QtWidgets import (
@@ -32,98 +31,23 @@ from PyQt5.QtWidgets import (
 )
 
 from config.scale import scale_px
-from lib.script.ui.workbench_settings_layout import create_settings_form
-from lib.core.compute_hub import get_compute_hub
-from lib.core.render.layers import get_layer_manager
-from lib.core.logger import get_logger
-
-logger = get_logger(__name__)
-
-#: 探测 OpenAI 兼容接口模型列表的超时（秒）。
-from lib.script.chat.network_policy import API_TIMEOUT_SECS
-#: 下拉弹层的工作台层级，和设置面板里其它下拉框保持一致。
-_DROPDOWN_POPUP_LAYER = 601
-
-#: 常用 OpenAI 兼容提供商预设；办公接口与手动接口共用同一张表。
-MANUAL_API_PROVIDER_PRESETS = (
-    ("自定义地址", ""),
-    ("OpenAI", "https://api.openai.com/v1"),
-    ("DeepSeek", "https://api.deepseek.com/v1"),
-    ("Kimi", "https://api.moonshot.cn/v1"),
-    ("智谱 AI", "https://open.bigmodel.cn/api/paas/v4"),
-    ("阿里云百炼", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
-    ("硅基流动", "https://api.siliconflow.cn/v1"),
-    ("OpenRouter", "https://openrouter.ai/api/v1"),
+from lib.core.services.api_endpoints import (  # noqa: F401
+    MANUAL_API_PROVIDER_PRESETS,
+    fetch_api_models,
+    manual_api_models_url,
+    normalize_api_base_url,
+    parse_api_models,
 )
-
-
-def normalize_api_base_url(raw_url: object) -> str:
-    """补全 OpenAI 兼容地址的协议，保留用户填写的路径。"""
-    text = str(raw_url or "").strip()
-    if not text:
-        return ""
-    if re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", text):
-        return text.rstrip("/")
-    if text.startswith("//"):
-        return f"https:{text}".rstrip("/")
-
-    host = text.split("/", 1)[0].lower()
-    is_local = (
-        host == "localhost"
-        or host.startswith("localhost:")
-        or host.startswith("127.")
-        or host.startswith("0.0.0.0")
-        or host.startswith("[::1]")
-        or host == "::1"
-    )
-    scheme = "http" if is_local else "https"
-    return f"{scheme}://{text}".rstrip("/")
-
-
-def manual_api_models_url(base_url: object) -> str:
-    """把用户填的基地址换算成 /models 端点；填了完整端点也能还原。"""
-    root = normalize_api_base_url(base_url).rstrip("/")
-    suffix = "/chat/completions"
-    if root.lower().endswith(suffix):
-        root = root[: -len(suffix)].rstrip("/")
-    return f"{root}/models" if root else ""
-
-
-def parse_api_models(payload: object) -> list[str]:
-    """解析 OpenAI 兼容的 /models 响应，缺失或形状不对就报错。"""
-    data = payload.get("data") if isinstance(payload, dict) else None
-    if not isinstance(data, list):
-        raise ValueError("接口没有返回兼容的模型列表")
-    models = {
-        str(item.get("id", "")).strip()
-        for item in data
-        if isinstance(item, dict) and str(item.get("id", "")).strip()
-    }
-    return sorted(models, key=str.casefold)
-
-
-def fetch_api_models(base_url: object, api_key: object) -> list[str]:
-    """同步探测模型列表；调用方负责放到 IO 线程里执行。"""
-    models_url = manual_api_models_url(base_url)
-    if not models_url:
-        raise ValueError("请先填写接口地址")
-    key = str(api_key or "").strip()
-    if not key:
-        raise ValueError("请先填写接口密钥")
-    response = requests.get(
-        models_url,
-        headers={"Authorization": f"Bearer {key}"},
-        timeout=API_TIMEOUT_SECS,
-    )
-    response.raise_for_status()
-    models = parse_api_models(response.json())
-    if not models:
-        raise ValueError("接口未返回可用模型")
-    return models
+from lib.script.ui.workbench_settings_layout import create_settings_form
 
 
 def probe_local_dsh() -> dict:
-    """读取启动期探测结果，没有缓存时按需只读探测；失败不影响界面。"""
+    """读取启动期探测结果，没有缓存时按需只读探测；失败不影响界面。
+
+    本机 DSH 探测必须 import 产品包（`lib.script.office`），所以它留在这一侧：地址与
+    模型解析已经住 `lib.core.services.api_endpoints`，只有这层产品耦合还留在这里，并由
+    `tests/test_code_structure_boundaries.py` 的 ui -> 产品包清单看住。
+    """
     try:
         from lib.script.office import local_dsh
 
@@ -136,6 +60,22 @@ def probe_local_dsh() -> dict:
             "available": False,
             "reason": f"探测本机 DeepSeek Harness 失败：{exc}",
         }
+
+
+from lib.core.compute_hub import get_compute_hub
+from lib.core.render.layers import get_layer_manager
+from lib.core.logger import get_logger
+
+logger = get_logger(__name__)
+
+#: 下拉弹层的工作台层级，和设置面板里其它下拉框保持一致。
+_DROPDOWN_POPUP_LAYER = 601
+
+#: 常用 OpenAI 兼容提供商预设；办公接口与手动接口共用同一张表。
+
+
+
+
 
 
 def set_widget_description(widget: QWidget | None, text: str) -> None:
@@ -303,7 +243,8 @@ class OfficeModeSettings(QObject):
     ) -> None:
         super().__init__(parent)
         self._host_parent = parent
-        self._probe = probe or probe_local_dsh
+        # 走模块全局而不是把函数对象记在实例上：测试与宿主都能在构造前替换实现。
+        self._probe = probe or (lambda: probe_local_dsh())
         self._info = info
         self._dispatch = dispatch
         self._local_dsh_status = self._probe()
@@ -614,7 +555,6 @@ class OfficeModeSettings(QObject):
 
 
 __all__ = [
-    "API_TIMEOUT_SECS",
     "ApiKeyLineEdit",
     "MANUAL_API_PROVIDER_PRESETS",
     "OfficeModeSettings",
@@ -625,6 +565,7 @@ __all__ = [
     "manual_api_models_url",
     "normalize_api_base_url",
     "parse_api_models",
+    "probe_local_dsh",
     "probe_local_dsh",
     "set_widget_description",
 ]

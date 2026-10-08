@@ -64,6 +64,16 @@
   颜色仍由产品面传参。`HEAD` 与改后对同一组 10 个用例输出逐字符相等；既有导入面不变。
   执行记录见 `doc/render层边界契约.md` 第 41 节。
 
+- 办公 / 手动 API 的纯解析逻辑抽成后端中立模块：新增 `lib/core/services/api_endpoints.py`，
+  承接 `MANUAL_API_PROVIDER_PRESETS`、`normalize_api_base_url` / `manual_api_models_url` /
+  `parse_api_models` / `fetch_api_models`；`lib/script/ui/office_mode_settings.py` 按原名再导出，
+  `ai_settings_panel.py` 的导入面零改动，`re` / `requests` 从该 UI 文件顶层消失。为此把
+  `API_TIMEOUT_SECS` / `API_RETRY_COUNT` / `API_TOTAL_ATTEMPTS` 从
+  `lib/script/chat/network_policy.py` 下沉到 `lib/core/services/network_policy.py`（原路径改成
+  重导出垫片），修掉一处 `lib/core` → `lib/script` 的反向依赖。本机 DSH 探测因需产品包仍留在
+  `office_mode_settings.py`，`ui -> 产品包` 清单由两项减到一项。逐行与逐字符比对、15 组地址 +
+  7 组载荷行为等价。执行记录见 `doc/render层边界契约.md` 第 42 节。
+
 ### Changed
 - 删除 `ai_settings_panel.py` 里已死的硬件/水印一族（`_query_hardware_watermark_lines` /
   `_gpu_pick_score` / `_format_gb_text` / `_MEMORYSTATUSEX` 等十个符号及 `ctypes` / `json`
@@ -77,6 +87,10 @@
   垫片，基类与窗眉按钮工厂经 `render_bridge` 转发。`frozen_ui_qt_importers` 46 → **42**
   （移出 `announcement_dialog.py` / `update_dialog.py` / `help_window.py` / `workbench_floating.py`，
   无新增）。验收门槛与执行记录见 `doc/render层边界契约.md` 第 33 节。
+- 办公模式设置块的构造期探测改为走模块全局：`OfficeModeSettings` 原写作 `probe or probe_local_dsh`，
+  把函数对象在导入时就捕获进实例，测试与宿主事后替换模块属性对已建实例无效
+  （`tests/test_office_mode_page.py` 原有的 patch 因此形同虚设）。现改为 `probe or (lambda: probe_local_dsh())`，
+  测试改为 patch 真正的所有者，本机 DSH 的「探测到 / 未探测到」分支第一次被真正驱动。
 - 版本基线抬到 `LTS1.0.7pre7`（`config/version_info.py`、README、安装器内置资源包 URL 同步）。
 - 控件层收敛推进次序修订：剩余 `lib/script/ui` 大文件（`ai_settings_panel.py` 5439 行、
   `forum_board.py` 2236 行等）改为**先按模块拆分瘦身、再逐个收敛 Qt**。理由是一个改动同时承担

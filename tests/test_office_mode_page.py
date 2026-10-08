@@ -70,7 +70,11 @@ class OfficeModePageTests(unittest.TestCase):
         return page
 
     def _page_with_probe(self, status: dict) -> OfficeModePage:
-        """按给定本机 DSH 探测结果建页（探测只在构造期读一次）。"""
+        """按给定本机 DSH 探测结果建页（探测只在构造期读一次）。
+
+        补丁打在 `office_mode_settings` 上：真正读本机 DSH 缓存的实现住在那里的
+        `probe_local_dsh`，构造期取的是模块全局而不是导入时捕获的函数对象。
+        """
         probe = patch.object(
             office_settings_module, "probe_local_dsh", return_value=dict(status)
         )
