@@ -51,6 +51,13 @@
   `frozen_ui_qt_importers` 不变。改前 / 改后三屏（列表 / 详情 / 发帖页，760×620）逐像素比对
   差异为 **0**。执行记录见 `doc/render层边界契约.md` 第 39 节。
 
+- 论坛卡片底纹的规格层抽成后端中立模块：新增
+  `lib/core/render/visuals/forum_texture_visuals.py`，承接花纹候选与取值范围、`CardTexture`、
+  `texture_seed()` / `card_texture()` 与绘制期几何助手；`lib/script/ui/forum_texture.py`
+  696 → 508 行，只留 `paint_card_texture()` / 纹理层缓存与各 `_paint_*`，并按原名字重新导出，
+  既有导入面不变。改前 / 改后底纹位图（四张固定卡片 × 深色主题，240×180）逐像素比差异 **0**。
+  执行记录见 `doc/render层边界契约.md` 第 40 节。
+
 ### Changed
 - 删除 `ai_settings_panel.py` 里已死的硬件/水印一族（`_query_hardware_watermark_lines` /
   `_gpu_pick_score` / `_format_gb_text` / `_MEMORYSTATUSEX` 等十个符号及 `ctypes` / `json`
