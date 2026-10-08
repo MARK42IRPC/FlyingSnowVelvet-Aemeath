@@ -74,7 +74,22 @@
   `office_mode_settings.py`，`ui -> 产品包` 清单由两项减到一项。逐行与逐字符比对、15 组地址 +
   7 组载荷行为等价。执行记录见 `doc/render层边界契约.md` 第 42 节。
 
+- 设置面板「通用配置」取值校验抽成无 Qt 模块：新增
+  `lib/script/ui/ai_settings_validation.py`，承接逐键 / 跨键 / 整段三个校验入口与
+  `get_choice_field_options` / `raise_config_value_error` / `validate_general_numeric`；
+  动画目录选项与工程根目录由面板以参数注入，新模块不 import `PyQt5` 也不 import `SEanima`，
+  失败抛 `ConfigValueError`（`ValueError` 子类）。`ai_settings_panel.py` 4158 → 3991 行，
+  六个面板方法改为转发，异常类型与消息逐字符不变。验收：把 `HEAD` 的六个方法原样摘出成
+  独立类做对照，30 组单键取值 + 5 组整段入口的异常类型与消息差异为 0。执行记录见
+  `doc/render层边界契约.md` 第 43 节。
+
 ### Changed
+- 删除 `ai_settings_panel.py` 里已死的 N 卡能力探测链路：
+  `_refresh_nvidia_acceleration_capability_async()` 已无任何调用点（两个调用位在某次重构中
+  消失），`_nvidia_gpu_present` 因此恒为 `False`，`_update_gsv_settings_visibility()` 里
+  `and nvidia_present` 的第二项恒假、N 卡开关实际上从不显示。清理掉该方法、
+  `has_nvidia_gpu` 导入与三个属性，`visible` 判断与采集只保留语音包可用性一项——
+  对外表现逐项不变，并新增断言钉住"开关只由语音包决定"。
 - 删除 `ai_settings_panel.py` 里已死的硬件/水印一族（`_query_hardware_watermark_lines` /
   `_gpu_pick_score` / `_format_gb_text` / `_MEMORYSTATUSEX` 等十个符号及 `ctypes` / `json`
   两个死导入）：该族全仓无调用点，面板的硬件水印走 `startup_probe.load_saved_watermark_payload()`。

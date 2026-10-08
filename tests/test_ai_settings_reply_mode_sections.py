@@ -405,27 +405,20 @@ class AISettingsReplyModeSectionsTests(unittest.TestCase):
 
         voice_section.setVisible.assert_called_once_with(True)
 
-    def test_nvidia_acceleration_switch_follows_driver_presence(self):
+    def test_nvidia_acceleration_switch_follows_voice_package_availability(self):
         voice_section = Mock()
         checkbox = Mock()
         panel = type("GsvPanel", (), {
             "_gsv_launcher_available": True,
             "_voice_section": voice_section,
             "_gsv_nvidia_cuda_acceleration": checkbox,
-            "_nvidia_gpu_present": True,
         })()
 
         AISettingsPanel._update_gsv_settings_visibility(panel)
         checkbox.setVisible.assert_called_once_with(True)
 
         checkbox.reset_mock()
-        panel._nvidia_gpu_present = False
-        AISettingsPanel._update_gsv_settings_visibility(panel)
-        checkbox.setVisible.assert_called_once_with(False)
-
-        checkbox.reset_mock()
         panel._gsv_launcher_available = False
-        panel._nvidia_gpu_present = True
         AISettingsPanel._update_gsv_settings_visibility(panel)
         checkbox.setVisible.assert_called_once_with(False)
 
@@ -433,45 +426,25 @@ class AISettingsReplyModeSectionsTests(unittest.TestCase):
         self.assertFalse(hasattr(self.panel, "_install_cuda_runtime_button"))
         self.assertEqual(self.panel._gsv_nvidia_cuda_acceleration.text(), "N卡加速")
 
-    def test_acceleration_capability_check_runs_only_after_settings_requests_it(self):
-        class ImmediateHub:
-            @staticmethod
-            def submit_interactive_io(func):
-                func()
-                return object()
+    def test_nvidia_switch_visibility_follows_the_voice_package_only(self):
+        """N 卡开关随语音包可见性显示。
 
+        这里钉住的是现状：面板上曾经有过一条"探测到 N 卡才显示 N 卡加速"的异步能力检查
+        （`_refresh_nvidia_acceleration_capability_async` + `_nvidia_gpu_present`），
+        实现被删掉后只留下 `has_nvidia_gpu` 导入与两个已无定义的调用点。清理时保留了同一个
+        对外表现：开关只由语音包可用性决定，采集也不再看 N 卡探测结果。
+        """
+        self.assertFalse(hasattr(AISettingsPanel, "_refresh_nvidia_acceleration_capability_async"))
+        self.assertFalse(hasattr(self.panel, "_nvidia_gpu_present"))
+
+        checkbox = self.panel._gsv_nvidia_cuda_acceleration
         self.panel._gsv_launcher_available = True
-        self.panel._nvidia_gpu_present = False
-        with patch.object(panel_module, "has_nvidia_gpu", return_value=True), patch.object(
-            panel_module, "get_compute_hub", return_value=ImmediateHub()
-        ):
-            self.panel._refresh_nvidia_acceleration_capability_async()
-            self.app.processEvents()
+        AISettingsPanel._update_gsv_settings_visibility(self.panel)
+        self.assertFalse(checkbox.isHidden())
 
-        self.assertFalse(self.panel._cuda_capability_pending)
-        self.assertTrue(self.panel._nvidia_gpu_present)
-        self.assertFalse(self.panel._gsv_nvidia_cuda_acceleration.isHidden())
-
-    def test_acceleration_capability_check_recovers_when_probe_raises(self):
-        class ImmediateHub:
-            @staticmethod
-            def submit_interactive_io(func):
-                func()
-                return object()
-
-        self.panel._gsv_launcher_available = True
-        self.panel._nvidia_gpu_present = True
-        with patch.object(
-            panel_module, "has_nvidia_gpu", side_effect=RuntimeError("probe failed")
-        ), patch.object(
-            panel_module, "get_compute_hub", return_value=ImmediateHub()
-        ):
-            self.panel._refresh_nvidia_acceleration_capability_async()
-            self.app.processEvents()
-
-        self.assertFalse(self.panel._cuda_capability_pending)
-        self.assertFalse(self.panel._nvidia_gpu_present)
-        self.assertTrue(self.panel._gsv_nvidia_cuda_acceleration.isHidden())
+        self.panel._gsv_launcher_available = False
+        AISettingsPanel._update_gsv_settings_visibility(self.panel)
+        self.assertTrue(checkbox.isHidden())
 
     def test_voice_package_install_enables_and_persists_runtime(self):
         saved_values = dict(panel_module._DEFAULT_VALUES)

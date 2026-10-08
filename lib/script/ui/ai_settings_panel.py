@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import ast
 import copy
-import math
 import os
 import random
 import subprocess
@@ -51,12 +50,7 @@ from config.shared_storage_paths import get_shared_root_dir
 from lib.script.ui.ai_settings_validators import validate_ai_values
 from lib.script.ui.ai_settings_config_schema import (
     CATEGORY_KEY_ALLOWLIST as _CATEGORY_KEY_ALLOWLIST,
-    GENERAL_BOOL_KEYS as _GENERAL_BOOL_KEYS,
-    GENERAL_CHOICE_FIELD_OPTIONS as _GENERAL_CHOICE_FIELD_OPTIONS,
     GENERAL_DECIMAL_SLIDER_SPECS as _GENERAL_DECIMAL_SLIDER_SPECS,
-    GENERAL_NUMERIC_RULES as _GENERAL_NUMERIC_RULES,
-    GENERAL_RANGE_RELATIONS as _GENERAL_RANGE_RELATIONS,
-    GENERAL_TUPLE_INT_RULES as _GENERAL_TUPLE_INT_RULES,
     VOLUME_SLIDER_FIELDS as _VOLUME_SLIDER_FIELDS,
     category_section_entries as _category_section_entries,
     choice_label_for_value as _choice_label_for_value,
@@ -65,6 +59,7 @@ from lib.script.ui.ai_settings_config_schema import (
     hardcoded_general_default as _hardcoded_general_default,
     range_pair_signature as _range_pair_signature,
 )
+from lib.script.ui import ai_settings_validation as _validation
 from lib.script.ui.ai_settings_labels import (
     animation_folder_display_name as _animation_folder_display_name,
     friendly_field_section_name as _friendly_field_section_name,
@@ -108,7 +103,6 @@ from lib.script.SEanima.clip import (
 from lib.script.SEanima.decoder import playback_duration_seconds, scan_animation_frame_files
 from lib.script.chat.ollama_registry import get_available_model_names, get_model_list_error
 from lib.script.chat.persona_storage import ensure_user_persona_file
-from lib.script.microphone_stt.push_to_talk import parse_hotkey_binding
 from lib.script.ui.update_dialog import DesktopPetUpdateDialog
 from lib.script.ui.voice_package_installer import (
     VoicePackageInstallBanner,
@@ -137,7 +131,6 @@ from lib.script.ui.office_mode_settings import (
     set_widget_description as _set_widget_description_helper,
 )
 from lib.script.gsvmove import get_voice_package_status
-from lib.core.nvidia_gpu import has_nvidia_gpu
 from lib.script.chat.handler_auto_companion import WELFARE_AUTO_COMPANION_INTERVAL_MS
 
 _logger = get_logger(__name__)
@@ -438,9 +431,6 @@ class AISettingsPanel(QWidget):
         self._update_dialog: DesktopPetUpdateDialog | None = None
         self._voice_installer_dialog: VoicePackageInstallerDialog | None = None
         self._qq_group_dialog: QQGroupDialog | None = None
-        self._nvidia_gpu_present = False
-        self._cuda_capability_pending = False
-        self._cuda_capability_generation = 0
         self._subscribe_autostart_events()
         self.setWindowTitle("控制面板")
         self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
@@ -1190,8 +1180,6 @@ class AISettingsPanel(QWidget):
         if page_title is not None:
             page_title.hide()
         self._workbench_pages[page_id] = page
-        if page_id == 'ai':
-            self._refresh_nvidia_acceleration_capability_async()
         return page
 
     def _build_config_category_panel(self, category) -> QWidget:
@@ -1943,16 +1931,18 @@ class AISettingsPanel(QWidget):
 
     @staticmethod
     def _get_choice_field_options(dict_name: str, key: str) -> list[tuple[str, str]] | None:
-        pair = (str(dict_name), str(key))
-        static_options = _GENERAL_CHOICE_FIELD_OPTIONS.get(pair)
-        if static_options is not None:
-            return static_options
-        if pair in {
-            ("ANIMATION", "start_animation_folder"),
-            ("ANIMATION", "exit_animation_folder"),
-        }:
-            return [(_animation_folder_display_name(name), name) for name in list_animation_folder_choices()]
-        return None
+        """某个字段的可选值；动画目录一类需要实时枚举，其余取静态表。"""
+        return _validation.get_choice_field_options(
+            dict_name, key, folder_options=AISettingsPanel._folder_options
+        )
+
+    @staticmethod
+    def _folder_options() -> list[tuple[str, str]]:
+        """动画目录的 `(显示名, 目录名)` 选项，供校验模块按需取用。"""
+        return [
+            (_animation_folder_display_name(name), name)
+            for name in list_animation_folder_choices()
+        ]
 
     @staticmethod
     def _volume_percent_from_value(value) -> int:
@@ -2187,40 +2177,6 @@ class AISettingsPanel(QWidget):
         self.fade_out()
         delay_ms = max(80, int(UI.get("ui_fade_duration", 180)))
         QTimer.singleShot(delay_ms, dialog.show_dialog)
-
-    def _refresh_nvidia_acceleration_capability_async(self) -> None:
-        """Detect the NVIDIA driver; the runtime needs nothing else."""
-
-        if self._cuda_capability_pending:
-            return
-        self._cuda_capability_pending = True
-        self._cuda_capability_generation += 1
-        generation = self._cuda_capability_generation
-
-        def worker() -> None:
-            nvidia_present = False
-            detail = ""
-            try:
-                nvidia_present = bool(has_nvidia_gpu())
-            except Exception as exc:
-                detail = str(exc).strip() or repr(exc)
-
-            def apply_result() -> None:
-                if generation != self._cuda_capability_generation:
-                    return
-                self._cuda_capability_pending = False
-                self._nvidia_gpu_present = bool(nvidia_present)
-                self._update_gsv_settings_visibility()
-                if detail:
-                    _logger.warning("N卡能力检测失败: %s", detail)
-
-            self._ui_thread_call.emit(apply_result)
-
-        try:
-            get_compute_hub().submit_interactive_io(worker)
-        except Exception as exc:
-            self._cuda_capability_pending = False
-            _logger.debug("N卡能力检测任务提交失败: %s", exc)
 
     def _on_voice_package_installed(self, _result=None) -> None:
         values = load_ai_values(_DEFAULT_VALUES)
@@ -2509,155 +2465,29 @@ class AISettingsPanel(QWidget):
         return {key: self._parse_text_by_template(text, template)}
 
     def _raise_config_value_error(self, dict_name: str, key: str, reason: str) -> None:
-        friendly = _friendly_key_name(dict_name, key)
-        raise ValueError(f"{dict_name}.{key}（{friendly}）{reason}")
+        _validation.raise_config_value_error(dict_name, key, reason)
 
     def _validate_general_numeric(self, dict_name: str, key: str, value, kind: str, min_val: float, max_val: float) -> None:
-        if kind == "int":
-            if isinstance(value, bool) or not isinstance(value, int):
-                self._raise_config_value_error(dict_name, key, "必须为整数")
-            if value < int(min_val) or value > int(max_val):
-                self._raise_config_value_error(dict_name, key, f"必须在 {int(min_val)}~{int(max_val)} 范围内")
-            return
-
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            self._raise_config_value_error(dict_name, key, "必须为数字")
-        try:
-            num = float(value)
-        except Exception:
-            self._raise_config_value_error(dict_name, key, "必须为数字")
-            return
-        if not math.isfinite(num):
-            self._raise_config_value_error(dict_name, key, "必须为有限数字")
-        if num < min_val or num > max_val:
-            self._raise_config_value_error(dict_name, key, f"必须在 {min_val}~{max_val} 范围内")
+        _validation.validate_general_numeric(dict_name, key, value, kind, min_val, max_val)
 
     def _validate_general_config_value(self, dict_name: str, key: str, value) -> None:
-        pair = (dict_name, key)
-
-        if pair in _GENERAL_BOOL_KEYS:
-            if not isinstance(value, bool):
-                self._raise_config_value_error(dict_name, key, "必须为开关值")
-            return
-
-        if pair in _GENERAL_TUPLE_INT_RULES:
-            min_item, max_item = _GENERAL_TUPLE_INT_RULES[pair]
-            if not isinstance(value, tuple) or len(value) != 2:
-                self._raise_config_value_error(dict_name, key, "必须为长度为 2 的整数元组")
-            left, right = value
-            if isinstance(left, bool) or not isinstance(left, int):
-                self._raise_config_value_error(dict_name, key, "左值必须为整数")
-            if isinstance(right, bool) or not isinstance(right, int):
-                self._raise_config_value_error(dict_name, key, "右值必须为整数")
-            if left < min_item or left > max_item or right < min_item or right > max_item:
-                self._raise_config_value_error(dict_name, key, f"每项必须在 {min_item}~{max_item} 范围内")
-            if left > right:
-                self._raise_config_value_error(dict_name, key, "最小值不能大于最大值")
-            return
-
-        if pair == ("CLOUD_MUSIC", "cache_dir"):
-            if not isinstance(value, str):
-                self._raise_config_value_error(dict_name, key, "必须为文本路径")
-            normalized = value.strip()
-            if not normalized:
-                self._raise_config_value_error(dict_name, key, "不能为空")
-            if Path(normalized).is_absolute():
-                self._raise_config_value_error(dict_name, key, "必须使用相对路径")
-            if "\n" in normalized or "\r" in normalized:
-                self._raise_config_value_error(dict_name, key, "路径包含非法换行字符")
-            return
-
-        if pair == ("CLOUD_MUSIC", "local_music_dir"):
-            if not isinstance(value, str):
-                self._raise_config_value_error(dict_name, key, "必须为文本路径")
-            normalized = value.strip()
-            if not normalized:
-                return
-            if "\n" in normalized or "\r" in normalized:
-                self._raise_config_value_error(dict_name, key, "路径包含非法换行字符")
-
-            candidate = Path(normalized)
-            if not candidate.is_absolute():
-                candidate = _project_root() / normalized
-            if candidate.exists() and not candidate.is_dir():
-                self._raise_config_value_error(dict_name, key, "必须指向文件夹路径")
-            return
-
-        if pair == ("CLOUD_MUSIC", "launch_wuwa_path"):
-            if not isinstance(value, str):
-                self._raise_config_value_error(dict_name, key, "必须为文本路径")
-            normalized = value.strip()
-            if not normalized:
-                return
-            if "\n" in normalized or "\r" in normalized:
-                self._raise_config_value_error(dict_name, key, "路径包含非法换行字符")
-
-            expanded = os.path.expandvars(os.path.expanduser(normalized))
-            candidate = Path(expanded)
-            if not candidate.is_absolute():
-                candidate = _project_root() / candidate
-
-            ext = candidate.suffix.lower()
-            if ext not in (".exe", ".bat", ".lnk"):
-                self._raise_config_value_error(dict_name, key, "仅支持 .exe / .bat / .lnk 文件")
-            if candidate.exists() and not candidate.is_file():
-                self._raise_config_value_error(dict_name, key, "必须指向文件路径")
-            return
-
-        if pair == ("VOICE", "microphone_push_to_talk_key"):
-            if not isinstance(value, str):
-                self._raise_config_value_error(dict_name, key, "必须为文本内容")
-            normalized = value.strip()
-            if not normalized:
-                return
-            if "\n" in normalized or "\r" in normalized:
-                self._raise_config_value_error(dict_name, key, "内容包含非法换行字符")
-            if parse_hotkey_binding(normalized) is None:
-                self._raise_config_value_error(dict_name, key, "格式无效，示例：Ctrl+Shift+V")
-            return
-
-        choice_options = self._get_choice_field_options(dict_name, key)
-        if choice_options is not None:
-            if not isinstance(value, str):
-                self._raise_config_value_error(dict_name, key, "必须为文本选项")
-            allowed_values = [option_value for _label, option_value in choice_options]
-            if value not in allowed_values:
-                joined = " / ".join(str(option_value) for option_value in allowed_values)
-                self._raise_config_value_error(dict_name, key, f"必须为以下之一：{joined}")
-            return
-
-        numeric_rule = _GENERAL_NUMERIC_RULES.get(pair)
-        if numeric_rule is not None:
-            kind, min_val, max_val = numeric_rule
-            self._validate_general_numeric(dict_name, key, value, kind, min_val, max_val)
+        _validation.validate_general_config_value(
+            dict_name,
+            key,
+            value,
+            choice_options=AISettingsPanel._get_choice_field_options,
+            project_root=_project_root(),
+        )
 
     def _validate_general_config_relations(self, values_by_dict: dict[str, dict]) -> None:
-        for dict_name, left_key, right_key in _GENERAL_RANGE_RELATIONS:
-            section = values_by_dict.get(dict_name)
-            if not isinstance(section, dict):
-                continue
-            if left_key not in section or right_key not in section:
-                continue
-            left = section[left_key]
-            right = section[right_key]
-            try:
-                left_num = float(left)
-                right_num = float(right)
-            except Exception:
-                self._raise_config_value_error(dict_name, left_key, "与关联上限比较失败")
-                return
-            if left_num > right_num:
-                left_name = _friendly_key_name(dict_name, left_key)
-                right_name = _friendly_key_name(dict_name, right_key)
-                raise ValueError(f"{dict_name} 配置无效：{left_name} 不能大于 {right_name}")
+        _validation.validate_general_config_relations(values_by_dict)
 
     def _validate_general_config_values(self, values_by_dict: dict[str, dict]) -> None:
-        for dict_name, section in values_by_dict.items():
-            if not isinstance(section, dict):
-                raise ValueError(f"{dict_name} 配置结构无效")
-            for key, value in section.items():
-                self._validate_general_config_value(str(dict_name), str(key), value)
-        self._validate_general_config_relations(values_by_dict)
+        _validation.validate_general_config_values(
+            values_by_dict,
+            choice_options=AISettingsPanel._get_choice_field_options,
+            project_root=_project_root(),
+        )
 
     def _validate_ai_values(self, values: dict) -> None:
         validate_ai_values(values)
@@ -3383,7 +3213,6 @@ class AISettingsPanel(QWidget):
     def show_centered(self) -> None:
         self.load_values()
         self._refresh_voice_package_ui()
-        self._refresh_nvidia_acceleration_capability_async()
         current_index = 0
         # 获取当前选中的标签索引（从按钮组或按钮列表）
         if hasattr(self, '_tab_button_group') and self._tab_button_group is not None:
@@ -3470,7 +3299,6 @@ class AISettingsPanel(QWidget):
             self._tick_subscribed = False
 
     def deleteLater(self) -> None:
-        self._cuda_capability_generation += 1
         self._unsubscribe_border_effect_events()
         self._unsubscribe_autostart_events()
         self._hide_floating_tab()
@@ -3686,8 +3514,7 @@ class AISettingsPanel(QWidget):
             "gsv_auto_start": bool(self._gsv_auto_start.isChecked()),
             "gsv_gpu_hybrid": bool(self._gsv_gpu_hybrid.isChecked()),
             "gsv_nvidia_cuda_acceleration": bool(
-                self._nvidia_gpu_present
-                and getattr(self, "_gsv_nvidia_cuda_acceleration", None)
+                getattr(self, "_gsv_nvidia_cuda_acceleration", None)
                 and self._gsv_nvidia_cuda_acceleration.isChecked()
             ),
             "gsv_temperature": gsv_temperature,
@@ -3787,12 +3614,18 @@ class AISettingsPanel(QWidget):
         slider.setEnabled(not locked and self._auto_companion_enabled.isChecked())
 
     def _update_gsv_settings_visibility(self) -> None:
+        """语音包不可用时整段语音设置收起，N 卡开关同进同出。
+
+        历史上这里还要 `and nvidia_present`，那条异步能力探测（第 2191 行的
+        `_refresh_nvidia_acceleration_capability_async`）在重构中已经没有调用点，
+        `_nvidia_gpu_present` 因此恒为 `False`，开关实际上从不显示。本轮把死链清掉，
+        对外表现不变：开关只由语音包可用性决定。
+        """
         voice_available = bool(self._gsv_launcher_available)
-        nvidia_present = bool(getattr(self, "_nvidia_gpu_present", False))
         self._voice_section.setVisible(voice_available)
         cuda_checkbox = getattr(self, "_gsv_nvidia_cuda_acceleration", None)
         if cuda_checkbox is not None:
-            cuda_checkbox.setVisible(voice_available and nvidia_present)
+            cuda_checkbox.setVisible(voice_available)
 
     def _update_gsv_advanced_visibility(self, *_args) -> None:
         group = getattr(self, "_gsv_advanced_group", None)
