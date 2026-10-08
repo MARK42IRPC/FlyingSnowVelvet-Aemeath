@@ -4,7 +4,7 @@
 
 本文档定义 `lib/core/render/` 的目标结构与依赖边界。它不是阶段计划，而是结构改建完成后必须成立的规则。
 
-**状态：第 6 节迁移顺序 1、2（目录切分）、3 已执行；图层能力已收敛到 `lib/core/render/layers/`（第 16 节）；后端中立协议与统一数据类型已落地（第 11 节），控件层“描述 + 后端渲染”已滚动迁移气泡框（第 12 节）、说明书、语音指示器与播放进度条（第 13 节）、音响音量/频段双滑条、搜索结果框与命令提示框（第 18 节）、右键矩形动作按钮一族八个按钮（第 19 节）、确认/提示框（第 20 节，首个模态宿主）；浮窗外壳（样式/主题判定/拖拽策略/窗口按钮）已从 `lib/script/ui` 下沉到渲染层（第 21 节）；办公线性图标的 SVG 规格也已抽成后端中立事实源（第 22 节）；点击粒子辅助的按钮翻译改经 `render_bridge`、`_particle_helper.py` 出列（第 23 节）；论坛样式的底纹混色改为纯十六进制实现、`forum_style.py` 出列（第 24 节）；二维码登录浮窗的自动收起/穿透/窗口标志/自愈能力下沉到基类，`yuanbao_login_dialog.py` 与 `cloudmusic_login_dialog.py` 出列（第 25、26 节）；排布解算已收敛到 `visuals/` 并由 `PlacementSpec` 统一解算（第 14 节，档位 0/1），右键按钮族的逐控件锚点事件链已收敛为声明式 `AnchorGraph` 且 Qt 改为消费共享布局（第 15 节，档位 2/3）；`WindowHost` 的被动宿主激活语义已与 Qt/DX 焦点策略对齐（第 17 节）。** 目录与引用规则以本文档为准；改建前的事实源是 [Qt 边界契约](Qt边界契约.md) 与 [跨后端视觉表现契约](视觉表现契约.md)，那两份文档继续负责“哪些内容算视觉逻辑”和“什么算无 Qt”。第一章描述的是最终目标；产品控件面（`lib/script/ui` 直接 `import PyQt5`）仍需逐个控件迁移，当前待迁清单以 `tests/test_qt_dependency_boundaries.py` 的 `frozen_ui_qt_importers` 为准，滚动顺序见第 13 节末尾；翻页按钮族已于第二十七轮迁出（第 27 节）；音响菜单控制按钮族已于第二十八轮迁出（第 28 节）；音响菜单族共享样式已于第二十九轮出列（第 29 节，档位 D 新增 `QtPainterHost` 绘制宿主）；办公面样式与控件树辅助已于第三十轮出列（第 30 节）；窗口级描述与审批弹窗已于第三十一轮出列（第 31 节，档位 D 新增窗口描述宿主与 isuals/window_spec*.py 两级描述层）；帮助浮窗已于第三十二轮出列（第 32 节，窗口描述宿主补齐工具窗 / 滚动正文 / 淡入淡出 / 描边外壳）；公告 / 更新浮窗已于第三十三轮出列（第 33 节，新增 UI 线程调度宿主，控制器不再被迫继承 `QObject`）。剩余大文件的推进次序已于 2026-10-07 修订为「先按模块拆分瘦身、再逐个收敛 Qt」（第 34 节），滚动清单因此改按四批推进；批次 0（拆分登记机制）与批次 1（贡献名单解析、文案/名称表抽离）已执行（第 35、36 节）。
+**状态：第 6 节迁移顺序 1、2（目录切分）、3 已执行；图层能力已收敛到 `lib/core/render/layers/`（第 16 节）；后端中立协议与统一数据类型已落地（第 11 节），控件层“描述 + 后端渲染”已滚动迁移气泡框（第 12 节）、说明书、语音指示器与播放进度条（第 13 节）、音响音量/频段双滑条、搜索结果框与命令提示框（第 18 节）、右键矩形动作按钮一族八个按钮（第 19 节）、确认/提示框（第 20 节，首个模态宿主）；浮窗外壳（样式/主题判定/拖拽策略/窗口按钮）已从 `lib/script/ui` 下沉到渲染层（第 21 节）；办公线性图标的 SVG 规格也已抽成后端中立事实源（第 22 节）；点击粒子辅助的按钮翻译改经 `render_bridge`、`_particle_helper.py` 出列（第 23 节）；论坛样式的底纹混色改为纯十六进制实现、`forum_style.py` 出列（第 24 节）；二维码登录浮窗的自动收起/穿透/窗口标志/自愈能力下沉到基类，`yuanbao_login_dialog.py` 与 `cloudmusic_login_dialog.py` 出列（第 25、26 节）；排布解算已收敛到 `visuals/` 并由 `PlacementSpec` 统一解算（第 14 节，档位 0/1），右键按钮族的逐控件锚点事件链已收敛为声明式 `AnchorGraph` 且 Qt 改为消费共享布局（第 15 节，档位 2/3）；`WindowHost` 的被动宿主激活语义已与 Qt/DX 焦点策略对齐（第 17 节）。** 目录与引用规则以本文档为准；改建前的事实源是 [Qt 边界契约](Qt边界契约.md) 与 [跨后端视觉表现契约](视觉表现契约.md)，那两份文档继续负责“哪些内容算视觉逻辑”和“什么算无 Qt”。第一章描述的是最终目标；产品控件面（`lib/script/ui` 直接 `import PyQt5`）仍需逐个控件迁移，当前待迁清单以 `tests/test_qt_dependency_boundaries.py` 的 `frozen_ui_qt_importers` 为准，滚动顺序见第 13 节末尾；翻页按钮族已于第二十七轮迁出（第 27 节）；音响菜单控制按钮族已于第二十八轮迁出（第 28 节）；音响菜单族共享样式已于第二十九轮出列（第 29 节，档位 D 新增 `QtPainterHost` 绘制宿主）；办公面样式与控件树辅助已于第三十轮出列（第 30 节）；窗口级描述与审批弹窗已于第三十一轮出列（第 31 节，档位 D 新增窗口描述宿主与 isuals/window_spec*.py 两级描述层）；帮助浮窗已于第三十二轮出列（第 32 节，窗口描述宿主补齐工具窗 / 滚动正文 / 淡入淡出 / 描边外壳）；公告 / 更新浮窗已于第三十三轮出列（第 33 节，新增 UI 线程调度宿主，控制器不再被迫继承 `QObject`）。剩余大文件的推进次序已于 2026-10-07 修订为「先按模块拆分瘦身、再逐个收敛 Qt」（第 34 节），滚动清单因此改按四批推进；批次 0（拆分登记机制）与批次 1（贡献名单解析、文案/名称表、配置 schema 抽离）已执行（第 35、36、37 节）。
 
 本文只新增目录与引用规则，不改变任何视觉语义、数值来源或渲染结果。改建过程中出现分歧时，以 [视觉表现契约](视觉表现契约.md) 和当前 Qt 基准为事实源。
 
@@ -1982,3 +1982,48 @@ Qt**。第 13 节开头的三步模式（状态搬进 `visuals/` → 控件删 `
   （`_is_supported_config_value` / `_format_config_editor_value` / `_range_pair_signature` /
   `_choice_label_for_value` / `_hardcoded_general_default` 等，仍需先做自由全局检查）。
 - 待单独一轮：删除面板里已确认死掉的硬件/水印一族。
+
+## 37. 批次 1 续：设置面板配置 schema 与取值格式化抽离
+
+更新时间：2026-10-08
+
+第 36 节抽走了文案/名称表。本轮抽第三块、也是最大的一块纯逻辑：**通用配置 schema 与取值
+格式化**——531 行、17 个符号，是 `ai_settings_panel.py` 里最大的一块无 Qt 代码。
+
+新增 `lib/script/ui/ai_settings_config_schema.py`（585 行，不 import `PyQt5`）：
+
+- schema 表：`CATEGORY_KEY_ALLOWLIST`（各分类允许哪些字典的哪些键）、`GENERAL_BOOL_KEYS`、
+  `GENERAL_NUMERIC_RULES`、`GENERAL_TUPLE_INT_RULES`、`GENERAL_RANGE_RELATIONS`、
+  `VOLUME_SLIDER_FIELDS`、`GENERAL_DECIMAL_SLIDER_SPECS`、`GENERAL_CHOICE_FIELD_OPTIONS`、
+  `GENERAL_CONFIG_DEFAULTS`、`GENERAL_MIXED_SECTION_FIELDS`；
+- 取值函数：`category_section_entries` / `choice_label_for_value` / `hardcoded_general_default` /
+  `range_pair_signature` / `friendly_range_name` / `is_supported_config_value` /
+  `format_config_editor_value`。
+
+外部依赖只有后端中立来源：`copy`、`config.config_layer.LAYER_VALUES`、
+`lib.core.render.router.get_backend_descriptors`、`SEanima.clip` 的两个默认动画目录常量，
+以及第 36 节的 `ai_settings_labels.friendly_key_name`。面板与新模块读的是同一份数据。
+
+`ai_settings_panel.py`：4862 → 4318 行（-544，含 13 行新导入）。面板里随之删掉的死导入：
+`LAYER_VALUES`、`get_backend_descriptors`、`SEanima.clip` 的两个默认动画目录常量。
+`frozen_ui_qt_importers` 不变。
+
+等价性：用 `git show HEAD` 的旧实现与新模块逐符号比对（表 + 函数共 17 项，去掉前导下划线
+后源码归一）——**全部相等**。
+
+新增 `tests/test_ai_settings_config_schema.py` 11 条断言：表结构与不变量（allowlist 的键集合
+类型、数值规则区间下界不高于上界、区间关系能解析出 min/max 签名）、取值函数行为
+（`format_config_editor_value` 对非字符串走 `repr`、`is_supported_config_value` 接受标量与
+扁平序列且拒绝 `None`/`dict`/嵌套）、以及"不 import Qt / PyQt5 被阻断时可导入"。
+
+### 37.1 验证（2026-10-08）
+
+- 全量 `unittest discover -s tests`：2260 用例、10 跳过；1 失败为 `test_dsh_office_sidecar`
+  的 DSH 外部任务超时（单独运行 2/2 通过，属环境性，与本次改动无关）。
+- 全仓 `ruff check .` 归零；`compileall` 通过；`git diff --check` 干净。
+
+### 37.2 下一批
+
+- 批次 1 的 `ai_settings_panel.py` 纯逻辑已基本抽完（贡献名单、文案/名称表、配置 schema）。
+  剩余仍是 `QWidget` 页面的本体（`AISettingsPanel` 4318 行），属批次 3。
+- 待单独一轮：删除第 36.1 节确认的死代码（面板里的硬件/水印一族）。

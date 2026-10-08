@@ -23,6 +23,12 @@
   手工条目常量全部下沉到此，面板只留三个委托；`ai_settings_panel.py` 5439 → 5261 行。
   行为与旧实现逐条相等（真实 `开发贡献.txt`：解析 15 条、加载 14 条全等），
   `frozen_ui_qt_importers` 不变。新增 `tests/test_ai_settings_contributions.py` 12 条断言。
+- 设置面板配置 schema 与取值格式化抽成后端中立模块：新增
+  `lib/script/ui/ai_settings_config_schema.py`（不 import `PyQt5`），把
+  `_CATEGORY_KEY_ALLOWLIST` 等十张 schema 表与 `_category_section_entries` /
+  `_hardcoded_general_default` / `_format_config_editor_value` 等七个取值函数下沉，
+  共 531 行、17 个符号；`ai_settings_panel.py` 4862 → 4318 行。逐符号比对与旧实现相等，
+  冻结清单不变。新增 `tests/test_ai_settings_config_schema.py` 11 条断言。
 - 设置面板文案/名称表抽成后端中立模块：新增 `lib/script/ui/ai_settings_labels.py`
   （不 import `PyQt5`），`_SECTION_HELP_TEXTS` / `_DICT_FRIENDLY_NAME` / `_KEY_FRIENDLY_NAME`
   三张表与 `section_help_text` / `friendly_*` / `animation_folder_display_name` 全部下沉，
