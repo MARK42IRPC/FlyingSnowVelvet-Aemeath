@@ -134,8 +134,6 @@ logger = get_logger(__name__)
 LOAD_MORE_THRESHOLD_PX = scale_px(160, min_abs=110)
 #: 标签条最多铺几个标签，再多会把工具栏挤成两行。
 TAG_CHIP_LIMIT = 6
-#: 列表里的摘要长度。
-EXCERPT_LENGTH = 72
 #: 四档排序的说法；键与服务端 `sort` 取值一致。
 _SORT_TOOLTIPS = {
     "new": "按发布时间从新到旧",
