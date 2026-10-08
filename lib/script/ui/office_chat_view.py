@@ -1,9 +1,11 @@
-"""Markdown chat-bubble view for office task details."""
+"""Markdown chat-bubble view for office task details.
+
+把 Markdown 翻成富文本的那一层已抽到后端中立的
+`lib/core/render/visuals/office_chat_rich.py`（`md_to_rich`），本模块只负责
+控件树、气泡宽度与主题取色。
+"""
 
 from __future__ import annotations
-
-import re
-from html import escape
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
@@ -17,118 +19,15 @@ from PyQt5.QtWidgets import (
 )
 
 from config.scale import scale_px
+from lib.core.render.visuals.office_chat_rich import md_to_rich
 from lib.script.ui.office_style import OFFICE_BUBBLE_PAD_H
 from lib.script.ui.workbench_settings_layout import SETTINGS_FONT_SIZE
 from lib.script.workbench.theme import get_workbench_colors
 from lib.script.ui.render_bridge import ui_font as get_ui_font
 
 _SENDER_LABELS = {"user": "你", "assistant": "助手", "system": "系统"}
-_CODE_FONT = "Consolas"
 _BUBBLE_PAD_H_TOTAL = 2 * OFFICE_BUBBLE_PAD_H
 _RICH_TEXT_SLACK = 4
-
-_FENCE_RE = re.compile(r"^```[a-zA-Z0-9_+.-]*\s*$")
-_BULLET_RE = re.compile(r"^[-*+]\s+(.*)$")
-_NUMBER_RE = re.compile(r"^\d+\.\s+(.*)$")
-_INLINE_CODE_RE = re.compile(r"`([^`]+)`")
-_BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
-_ITALIC_RE = re.compile(r"(?<!\*)\*([^*]+?)\*(?!\*)")
-
-
-def _code_span(text: str, bg: str, fg: str) -> str:
-    return (
-        f"<span style=\"font-family:'{_CODE_FONT}',monospace;"
-        f"background-color:{bg}; color:{fg};\">{text}</span>"
-    )
-
-
-def _fence_html(lines: list[str], bg: str, fg: str) -> str:
-    body = "\n".join(escape(line) for line in lines)
-    return (
-        f"<pre style=\"font-family:'{_CODE_FONT}',monospace;"
-        f"background-color:{bg}; color:{fg}; padding:6px;"
-        f"border-radius:4px;\">{body}</pre>"
-    )
-
-
-def _inline_md(text: str, bg: str, fg: str) -> str:
-    escaped = escape(text)
-    escaped = _INLINE_CODE_RE.sub(lambda m: _code_span(m.group(1), bg, fg), escaped)
-    escaped = _BOLD_RE.sub(r"<b>\1</b>", escaped)
-    escaped = _ITALIC_RE.sub(r"<i>\1</i>", escaped)
-    return escaped
-
-
-def _md_to_rich(text: str, bg: str, fg: str) -> str:
-    if not text:
-        return ""
-    blocks: list[str] = []
-    fence: list[str] | None = None
-    list_items: list[str] | None = None
-    paragraph: list[str] | None = None
-
-    def flush_paragraph() -> None:
-        nonlocal paragraph
-        if paragraph:
-            content = "<br/>".join(_inline_md(p, bg, fg) for p in paragraph)
-            blocks.append(f"<p>{content}</p>")
-            paragraph = None
-
-    def flush_list() -> None:
-        nonlocal list_items
-        if list_items:
-            blocks.append("<ul>" + "".join(f"<li>{item}</li>" for item in list_items) + "</ul>")
-            list_items = None
-
-    for raw in str(text).split("\n"):
-        line = raw.rstrip()
-        stripped = line.strip()
-        if fence is not None:
-            if stripped.startswith("```"):
-                blocks.append(_fence_html(fence, bg, fg))
-                fence = None
-            else:
-                fence.append(line)
-            continue
-        if _FENCE_RE.match(stripped):
-            flush_paragraph()
-            flush_list()
-            fence = []
-            continue
-        if not stripped:
-            flush_paragraph()
-            flush_list()
-            continue
-        if stripped.startswith("#"):
-            flush_paragraph()
-            flush_list()
-            heading = _inline_md(stripped.lstrip("#").strip(), bg, fg)
-            blocks.append(f"<b style='font-size:115%'>{heading}</b>")
-            continue
-        bullet = None
-        bullet_match = _BULLET_RE.match(stripped)
-        if bullet_match is not None:
-            bullet = bullet_match.group(1).strip()
-        else:
-            number_match = _NUMBER_RE.match(stripped)
-            if number_match is not None:
-                bullet = number_match.group(1).strip()
-        if bullet is not None:
-            flush_paragraph()
-            if list_items is None:
-                list_items = []
-            list_items.append(_inline_md(bullet, bg, fg))
-            continue
-        flush_list()
-        if paragraph is None:
-            paragraph = []
-        paragraph.append(line.strip())
-
-    if fence is not None:
-        blocks.append(_fence_html(fence, bg, fg))
-    flush_list()
-    flush_paragraph()
-    return "".join(blocks)
 
 
 class OfficeConversationView(QScrollArea):
@@ -263,7 +162,7 @@ class OfficeConversationView(QScrollArea):
             scrollbar.setValue(scrollbar.maximum())
 
     def _md(self, text: str) -> str:
-        return _md_to_rich(text, self._code_bg, self._code_fg)
+        return md_to_rich(text, self._code_bg, self._code_fg)
 
     def _add_message(
         self,

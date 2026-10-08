@@ -58,6 +58,12 @@
   既有导入面不变。改前 / 改后底纹位图（四张固定卡片 × 深色主题，240×180）逐像素比差异 **0**。
   执行记录见 `doc/render层边界契约.md` 第 40 节。
 
+- 办公聊天气泡的 Markdown→富文本转换抽成后端中立模块：新增
+  `lib/core/render/visuals/office_chat_rich.py`（`md_to_rich` 与正则表），
+  `lib/script/ui/office_chat_view.py` 342 → 284 行，只留控件树、气泡宽度与主题取色，
+  颜色仍由产品面传参。`HEAD` 与改后对同一组 10 个用例输出逐字符相等；既有导入面不变。
+  执行记录见 `doc/render层边界契约.md` 第 41 节。
+
 ### Changed
 - 删除 `ai_settings_panel.py` 里已死的硬件/水印一族（`_query_hardware_watermark_lines` /
   `_gpu_pick_score` / `_format_gb_text` / `_MEMORYSTATUSEX` 等十个符号及 `ctypes` / `json`
