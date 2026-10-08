@@ -38,6 +38,19 @@
   `test_split_ui_modules_are_registered_not_silently_allowed`，钉住「拆出的新文件无论嵌套多深
   都会被扫描、两个清单都按 `lib/script/ui/` 前缀接受子包路径」。
 
+- 论坛图片视图族与列表两行下沉到档位 D 宿主：新增
+  `lib/core/render/backends/qt/widgets/forum_images.py`（619 行），承接 `ForumImageView` /
+  `ForumImageThumb` / `ForumDetailImage` 与 `ForumPostRow` / `ForumReplyRow`，以及它们共用的
+  排版辅助（`_font` / `_block_alignment` / `_apply_like_state` / `_clear_layout` /
+  `_color_span_at`）与常量（`LIST_THUMB_SIZE` / `COMPOSE_THUMB_SIZE` / `BODY_WIDTH_HINT` /
+  `FORUM_IMAGE_MAX_PIXELS` 等）。为此把两处事实源上移到后端中立层：图片描边宽度
+  `FORUM_IMAGE_FRAME` 落到 `lib/core/render/visuals/forum_visuals.py`（`forum_style.py` 按原
+  名字重新导出），UI 字体入口改为可注入（默认走档位 B 的字体服务，`forum_board.py` 显式注入
+  产品面同一入口）。`lib/script/ui/forum_board.py` 2236 → 1723 行，只留 `ForumBoardPage` 并按
+  原语义重新导出上述名字，既有导入面（`forum_account.py`、测试）零改动；
+  `frozen_ui_qt_importers` 不变。改前 / 改后三屏（列表 / 详情 / 发帖页，760×620）逐像素比对
+  差异为 **0**。执行记录见 `doc/render层边界契约.md` 第 39 节。
+
 ### Changed
 - 删除 `ai_settings_panel.py` 里已死的硬件/水印一族（`_query_hardware_watermark_lines` /
   `_gpu_pick_score` / `_format_gb_text` / `_MEMORYSTATUSEX` 等十个符号及 `ctypes` / `json`

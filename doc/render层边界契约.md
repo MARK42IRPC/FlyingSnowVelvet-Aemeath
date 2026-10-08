@@ -4,7 +4,7 @@
 
 本文档定义 `lib/core/render/` 的目标结构与依赖边界。它不是阶段计划，而是结构改建完成后必须成立的规则。
 
-**状态：第 6 节迁移顺序 1、2（目录切分）、3 已执行；图层能力已收敛到 `lib/core/render/layers/`（第 16 节）；后端中立协议与统一数据类型已落地（第 11 节），控件层“描述 + 后端渲染”已滚动迁移气泡框（第 12 节）、说明书、语音指示器与播放进度条（第 13 节）、音响音量/频段双滑条、搜索结果框与命令提示框（第 18 节）、右键矩形动作按钮一族八个按钮（第 19 节）、确认/提示框（第 20 节，首个模态宿主）；浮窗外壳（样式/主题判定/拖拽策略/窗口按钮）已从 `lib/script/ui` 下沉到渲染层（第 21 节）；办公线性图标的 SVG 规格也已抽成后端中立事实源（第 22 节）；点击粒子辅助的按钮翻译改经 `render_bridge`、`_particle_helper.py` 出列（第 23 节）；论坛样式的底纹混色改为纯十六进制实现、`forum_style.py` 出列（第 24 节）；二维码登录浮窗的自动收起/穿透/窗口标志/自愈能力下沉到基类，`yuanbao_login_dialog.py` 与 `cloudmusic_login_dialog.py` 出列（第 25、26 节）；排布解算已收敛到 `visuals/` 并由 `PlacementSpec` 统一解算（第 14 节，档位 0/1），右键按钮族的逐控件锚点事件链已收敛为声明式 `AnchorGraph` 且 Qt 改为消费共享布局（第 15 节，档位 2/3）；`WindowHost` 的被动宿主激活语义已与 Qt/DX 焦点策略对齐（第 17 节）。** 目录与引用规则以本文档为准；改建前的事实源是 [Qt 边界契约](Qt边界契约.md) 与 [跨后端视觉表现契约](视觉表现契约.md)，那两份文档继续负责“哪些内容算视觉逻辑”和“什么算无 Qt”。第一章描述的是最终目标；产品控件面（`lib/script/ui` 直接 `import PyQt5`）仍需逐个控件迁移，当前待迁清单以 `tests/test_qt_dependency_boundaries.py` 的 `frozen_ui_qt_importers` 为准，滚动顺序见第 13 节末尾；翻页按钮族已于第二十七轮迁出（第 27 节）；音响菜单控制按钮族已于第二十八轮迁出（第 28 节）；音响菜单族共享样式已于第二十九轮出列（第 29 节，档位 D 新增 `QtPainterHost` 绘制宿主）；办公面样式与控件树辅助已于第三十轮出列（第 30 节）；窗口级描述与审批弹窗已于第三十一轮出列（第 31 节，档位 D 新增窗口描述宿主与 isuals/window_spec*.py 两级描述层）；帮助浮窗已于第三十二轮出列（第 32 节，窗口描述宿主补齐工具窗 / 滚动正文 / 淡入淡出 / 描边外壳）；公告 / 更新浮窗已于第三十三轮出列（第 33 节，新增 UI 线程调度宿主，控制器不再被迫继承 `QObject`）。剩余大文件的推进次序已于 2026-10-07 修订为「先按模块拆分瘦身、再逐个收敛 Qt」（第 34 节），滚动清单因此改按四批推进；批次 0（拆分登记机制）与批次 1（`ai_settings_panel.py` 瘦身：贡献名单解析、文案/名称表、配置 schema、删死代码）已完成（第 35–38 节）。
+**状态：第 6 节迁移顺序 1、2（目录切分）、3 已执行；图层能力已收敛到 `lib/core/render/layers/`（第 16 节）；后端中立协议与统一数据类型已落地（第 11 节），控件层“描述 + 后端渲染”已滚动迁移气泡框（第 12 节）、说明书、语音指示器与播放进度条（第 13 节）、音响音量/频段双滑条、搜索结果框与命令提示框（第 18 节）、右键矩形动作按钮一族八个按钮（第 19 节）、确认/提示框（第 20 节，首个模态宿主）；浮窗外壳（样式/主题判定/拖拽策略/窗口按钮）已从 `lib/script/ui` 下沉到渲染层（第 21 节）；办公线性图标的 SVG 规格也已抽成后端中立事实源（第 22 节）；点击粒子辅助的按钮翻译改经 `render_bridge`、`_particle_helper.py` 出列（第 23 节）；论坛样式的底纹混色改为纯十六进制实现、`forum_style.py` 出列（第 24 节）；二维码登录浮窗的自动收起/穿透/窗口标志/自愈能力下沉到基类，`yuanbao_login_dialog.py` 与 `cloudmusic_login_dialog.py` 出列（第 25、26 节）；排布解算已收敛到 `visuals/` 并由 `PlacementSpec` 统一解算（第 14 节，档位 0/1），右键按钮族的逐控件锚点事件链已收敛为声明式 `AnchorGraph` 且 Qt 改为消费共享布局（第 15 节，档位 2/3）；`WindowHost` 的被动宿主激活语义已与 Qt/DX 焦点策略对齐（第 17 节）。** 目录与引用规则以本文档为准；改建前的事实源是 [Qt 边界契约](Qt边界契约.md) 与 [跨后端视觉表现契约](视觉表现契约.md)，那两份文档继续负责“哪些内容算视觉逻辑”和“什么算无 Qt”。第一章描述的是最终目标；产品控件面（`lib/script/ui` 直接 `import PyQt5`）仍需逐个控件迁移，当前待迁清单以 `tests/test_qt_dependency_boundaries.py` 的 `frozen_ui_qt_importers` 为准，滚动顺序见第 13 节末尾；翻页按钮族已于第二十七轮迁出（第 27 节）；音响菜单控制按钮族已于第二十八轮迁出（第 28 节）；音响菜单族共享样式已于第二十九轮出列（第 29 节，档位 D 新增 `QtPainterHost` 绘制宿主）；办公面样式与控件树辅助已于第三十轮出列（第 30 节）；窗口级描述与审批弹窗已于第三十一轮出列（第 31 节，档位 D 新增窗口描述宿主与 isuals/window_spec*.py 两级描述层）；帮助浮窗已于第三十二轮出列（第 32 节，窗口描述宿主补齐工具窗 / 滚动正文 / 淡入淡出 / 描边外壳）；公告 / 更新浮窗已于第三十三轮出列（第 33 节，新增 UI 线程调度宿主，控制器不再被迫继承 `QObject`）。剩余大文件的推进次序已于 2026-10-07 修订为「先按模块拆分瘦身、再逐个收敛 Qt」（第 34 节），滚动清单因此改按四批推进；批次 0（拆分登记机制）与批次 1（`ai_settings_panel.py` 瘦身：贡献名单解析、文案/名称表、配置 schema、删死代码）已完成（第 35–38 节）；批次 2 首轮把 `forum_board.py` 的图片视图族与列表两行下沉到档位 D 的 `backends/qt/widgets/forum_images.py`（第 39 节，纯移动、零像素差异）。
 
 本文只新增目录与引用规则，不改变任何视觉语义、数值来源或渲染结果。改建过程中出现分歧时，以 [视觉表现契约](视觉表现契约.md) 和当前 Qt 基准为事实源。
 
@@ -2069,3 +2069,73 @@ Qt**。第 13 节开头的三步模式（状态搬进 `visuals/` → 控件删 `
 
 剩余 4159 行是 `AISettingsPanel` 本体（`QWidget` 页面），属批次 3 的"视图 + 控制器"切分与
 去 Qt，不再属于批次 1。下一批按第 34 节次序转向 `forum_board.py` 的纯辅助与图像族下沉。
+
+## 39. 批次 2：`forum_board.py` 的图片族 / 列表行下沉（档位 D 首个"控件族"宿主）
+
+更新时间：2026-10-08
+
+本节是第 34 节四批方案里**批次 2（B 类：需跨文件共享的 Qt 宿主先下沉）**的第一轮，
+也是档位 D 第一次承载"产品控件族"而不只是页面基类 / 窗口宿主。
+
+### 39.1 为什么这批只能下沉、不能先抽纯能力
+
+`forum_board.py`（2236 → 1723 行）里**没有 A 类可抽**：六个顶层 helper（`_font` /
+`_block_alignment` / `_like_mark` / `_apply_like_state` / `_clear_layout` / `_color_span_at`）
+全都直接碰 Qt（`Qt.Align*`、`QToolButton.style()`、`iter_color_tokens` + `QLabel`）。它们不是
+"恰好 import 了 Qt 的纯逻辑"，而是"控件排版策略"本身——抽到 `lib/core/` 只会把 `QToolButton`
+一起搬过去。所以本文件的正确顺序是**先按控件族下沉，再谈抽离**（第 34 节 B 类）。
+
+### 39.2 下沉边界（逐行等价，零像素差异）
+
+新增 `lib/core/render/backends/qt/widgets/forum_images.py`（619 行），承接：
+
+- **图片视图族**：`ForumImageView`（认 `image_id`、等字节、铺位图）→ `ForumImageThumb`
+  （正方形小预览，列表行与发帖页共用）→ `ForumDetailImage`（正文里就地铺开、按栏宽等比缩放、
+  `setFixedHeight()` 钉高度并挂父控件 resize 过滤器）。
+- **列表两行**：`ForumPostRow`（整行可点、点赞按钮吃掉自己的点击）、`ForumReplyRow`
+  （楼层 / 作者 / 回复与点赞）。
+- **共用的排版辅助**：`_font` / `_block_alignment` / `_like_mark` / `_apply_like_state` /
+  `_clear_layout` / `_color_span_at`，以及 `LIST_THUMB_SIZE` / `COMPOSE_THUMB_SIZE` /
+  `THUMB_MEMORY_LIMIT` / `BODY_WIDTH_HINT` / `FORUM_IMAGE_MAX_PIXELS` / `EXCERPT_LENGTH`。
+- `lib/script/ui/forum_board.py` 只留 `ForumBoardPage`（页面本体与网络回调），并把上述名字
+  **按原语义重新导出**：`forum_board.ForumPostRow` / `ForumImageThumb` 等既有导入面（含
+  `forum_account.py` 与 `tests/test_forum_board_ui.py`）一个字都不用改。
+
+判定依据是档位 D 的既有标准（第 3 节）：持有 `QWidget.rect()` / `QPixmap`、且**绘制实现不由
+本模块构造**的就是档位 D。`forum_images.py` 不 import 档位 A（`drawing/`），位图由
+`CommunityService.load_thumbnail()` 取回的字节经 `set_data()` 交进来。
+
+### 39.3 两处必须"上移"才成立的事实
+
+下沉会撞上两条既有硬约束（`test_render_layer_never_imports_product_modules`：`render/` 不得
+import `lib.script`；档位 D 不得静态引用档位 A），处理方式都是把**事实源上移**而不是加豁免：
+
+1. **图片描边宽度**：`FORUM_IMAGE_FRAME` 原先只写在产品面的 `forum_style.py`，但
+   `ForumDetailImage` 算尺寸时也要刨掉同一圈边框（算漏一步 QLabel 就会裁掉一条边）。
+   权威定义移到 `lib/core/render/visuals/forum_visuals.py`（后端中立），`forum_style.py`
+   按原名字重新导出供 QSS 使用；两边由同一份常量取值。
+2. **UI 字体入口**：`_font()` 原先直接调 `render_bridge.ui_font`。`forum_images.py` 改为持有一个
+   可注入的字体入口 `_font_factory`，默认值走**档位 B** 的字体服务
+   （`registry.get_font_provider().ui_font`，未注册时退回 `runtime/font.get_ui_font`）；
+   `forum_board.py` 导入时用 `forum_images.configure_font_factory(get_ui_font)` 显式注入产品面
+   的同一入口，因此每个控件拿到的 `QFont` 与下沉前逐字段相同，且不依赖导入顺序。
+
+### 39.4 验收门槛（第 34.3 节"纯移动轮"）
+
+- **逐像素零差异**：改前（`HEAD` = `9ac6ab8`）与改后在独立工作树里渲染同一个论坛页的
+  三屏（列表 / 详情 / 发帖页，各 760×620），逐点比对 **差异像素 0**（`QImage.pixel()` 全等）。
+- 目视复核：未登录态的点赞心跳、正文配图按栏宽铺开、缩略图描边与标签胶囊均与改前一致。
+- 目标测试：`tests/test_forum_board_ui.py`、`tests/test_forum_layout_ui.py`、
+  `tests/test_forum_community_window.py`、`tests/test_forum_account_ui.py`、
+  `tests/test_forum_window.py`、`tests/test_forum_style.py` 共 269 项通过；
+  边界测试 `test_qt_dependency_boundaries` / `test_code_structure_boundaries` / `test_window_spec`
+  同步通过（`frozen_ui_qt_importers` 不变：下沉目标是 `lib/core/render/backends/qt/widgets/`，
+  不在该清单的扫描面内，`ui/` 侧只少了不少代码、没有新增 Qt 文件）。
+- 全量 `unittest discover -s tests`：2260 用例、10 跳过，全通过；`ruff check .` 干净；
+  `compileall` 通过；`git diff --check` 干净。
+
+### 39.5 下一批
+
+`forum_board.py` 剥掉控件族后剩 1723 行，主要是 `ForumBoardPage` 本体（工具栏 / 列表 / 详情 /
+发帖四个 builder 与网络回调），属批次 3 的"视图 + 控制器 + 描述"切分与去 Qt。批次 2 的余下
+候选按第 34 节次序继续。
