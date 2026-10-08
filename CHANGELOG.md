@@ -23,6 +23,11 @@
   手工条目常量全部下沉到此，面板只留三个委托；`ai_settings_panel.py` 5439 → 5261 行。
   行为与旧实现逐条相等（真实 `开发贡献.txt`：解析 15 条、加载 14 条全等），
   `frozen_ui_qt_importers` 不变。新增 `tests/test_ai_settings_contributions.py` 12 条断言。
+- 设置面板文案/名称表抽成后端中立模块：新增 `lib/script/ui/ai_settings_labels.py`
+  （不 import `PyQt5`），`_SECTION_HELP_TEXTS` / `_DICT_FRIENDLY_NAME` / `_KEY_FRIENDLY_NAME`
+  三张表与 `section_help_text` / `friendly_*` / `animation_folder_display_name` 全部下沉，
+  面板只从新模块导入；`ai_settings_panel.py` 5261 → 4862 行。行为逐项相等，冻结清单不变。
+  新增 `tests/test_ai_settings_labels.py` 11 条断言。
 - 拆分登记机制固化为可回归断言：`tests/test_code_structure_boundaries.py` 新增
   `test_split_ui_modules_are_registered_not_silently_allowed`，钉住「拆出的新文件无论嵌套多深
   都会被扫描、两个清单都按 `lib/script/ui/` 前缀接受子包路径」。

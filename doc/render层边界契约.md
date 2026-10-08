@@ -4,7 +4,7 @@
 
 本文档定义 `lib/core/render/` 的目标结构与依赖边界。它不是阶段计划，而是结构改建完成后必须成立的规则。
 
-**状态：第 6 节迁移顺序 1、2（目录切分）、3 已执行；图层能力已收敛到 `lib/core/render/layers/`（第 16 节）；后端中立协议与统一数据类型已落地（第 11 节），控件层“描述 + 后端渲染”已滚动迁移气泡框（第 12 节）、说明书、语音指示器与播放进度条（第 13 节）、音响音量/频段双滑条、搜索结果框与命令提示框（第 18 节）、右键矩形动作按钮一族八个按钮（第 19 节）、确认/提示框（第 20 节，首个模态宿主）；浮窗外壳（样式/主题判定/拖拽策略/窗口按钮）已从 `lib/script/ui` 下沉到渲染层（第 21 节）；办公线性图标的 SVG 规格也已抽成后端中立事实源（第 22 节）；点击粒子辅助的按钮翻译改经 `render_bridge`、`_particle_helper.py` 出列（第 23 节）；论坛样式的底纹混色改为纯十六进制实现、`forum_style.py` 出列（第 24 节）；二维码登录浮窗的自动收起/穿透/窗口标志/自愈能力下沉到基类，`yuanbao_login_dialog.py` 与 `cloudmusic_login_dialog.py` 出列（第 25、26 节）；排布解算已收敛到 `visuals/` 并由 `PlacementSpec` 统一解算（第 14 节，档位 0/1），右键按钮族的逐控件锚点事件链已收敛为声明式 `AnchorGraph` 且 Qt 改为消费共享布局（第 15 节，档位 2/3）；`WindowHost` 的被动宿主激活语义已与 Qt/DX 焦点策略对齐（第 17 节）。** 目录与引用规则以本文档为准；改建前的事实源是 [Qt 边界契约](Qt边界契约.md) 与 [跨后端视觉表现契约](视觉表现契约.md)，那两份文档继续负责“哪些内容算视觉逻辑”和“什么算无 Qt”。第一章描述的是最终目标；产品控件面（`lib/script/ui` 直接 `import PyQt5`）仍需逐个控件迁移，当前待迁清单以 `tests/test_qt_dependency_boundaries.py` 的 `frozen_ui_qt_importers` 为准，滚动顺序见第 13 节末尾；翻页按钮族已于第二十七轮迁出（第 27 节）；音响菜单控制按钮族已于第二十八轮迁出（第 28 节）；音响菜单族共享样式已于第二十九轮出列（第 29 节，档位 D 新增 `QtPainterHost` 绘制宿主）；办公面样式与控件树辅助已于第三十轮出列（第 30 节）；窗口级描述与审批弹窗已于第三十一轮出列（第 31 节，档位 D 新增窗口描述宿主与 isuals/window_spec*.py 两级描述层）；帮助浮窗已于第三十二轮出列（第 32 节，窗口描述宿主补齐工具窗 / 滚动正文 / 淡入淡出 / 描边外壳）；公告 / 更新浮窗已于第三十三轮出列（第 33 节，新增 UI 线程调度宿主，控制器不再被迫继承 `QObject`）。剩余大文件的推进次序已于 2026-10-07 修订为「先按模块拆分瘦身、再逐个收敛 Qt」（第 34 节），滚动清单因此改按四批推进；批次 0（拆分登记机制）与批次 1（贡献名单解析抽离）已执行（第 35 节）。
+**状态：第 6 节迁移顺序 1、2（目录切分）、3 已执行；图层能力已收敛到 `lib/core/render/layers/`（第 16 节）；后端中立协议与统一数据类型已落地（第 11 节），控件层“描述 + 后端渲染”已滚动迁移气泡框（第 12 节）、说明书、语音指示器与播放进度条（第 13 节）、音响音量/频段双滑条、搜索结果框与命令提示框（第 18 节）、右键矩形动作按钮一族八个按钮（第 19 节）、确认/提示框（第 20 节，首个模态宿主）；浮窗外壳（样式/主题判定/拖拽策略/窗口按钮）已从 `lib/script/ui` 下沉到渲染层（第 21 节）；办公线性图标的 SVG 规格也已抽成后端中立事实源（第 22 节）；点击粒子辅助的按钮翻译改经 `render_bridge`、`_particle_helper.py` 出列（第 23 节）；论坛样式的底纹混色改为纯十六进制实现、`forum_style.py` 出列（第 24 节）；二维码登录浮窗的自动收起/穿透/窗口标志/自愈能力下沉到基类，`yuanbao_login_dialog.py` 与 `cloudmusic_login_dialog.py` 出列（第 25、26 节）；排布解算已收敛到 `visuals/` 并由 `PlacementSpec` 统一解算（第 14 节，档位 0/1），右键按钮族的逐控件锚点事件链已收敛为声明式 `AnchorGraph` 且 Qt 改为消费共享布局（第 15 节，档位 2/3）；`WindowHost` 的被动宿主激活语义已与 Qt/DX 焦点策略对齐（第 17 节）。** 目录与引用规则以本文档为准；改建前的事实源是 [Qt 边界契约](Qt边界契约.md) 与 [跨后端视觉表现契约](视觉表现契约.md)，那两份文档继续负责“哪些内容算视觉逻辑”和“什么算无 Qt”。第一章描述的是最终目标；产品控件面（`lib/script/ui` 直接 `import PyQt5`）仍需逐个控件迁移，当前待迁清单以 `tests/test_qt_dependency_boundaries.py` 的 `frozen_ui_qt_importers` 为准，滚动顺序见第 13 节末尾；翻页按钮族已于第二十七轮迁出（第 27 节）；音响菜单控制按钮族已于第二十八轮迁出（第 28 节）；音响菜单族共享样式已于第二十九轮出列（第 29 节，档位 D 新增 `QtPainterHost` 绘制宿主）；办公面样式与控件树辅助已于第三十轮出列（第 30 节）；窗口级描述与审批弹窗已于第三十一轮出列（第 31 节，档位 D 新增窗口描述宿主与 isuals/window_spec*.py 两级描述层）；帮助浮窗已于第三十二轮出列（第 32 节，窗口描述宿主补齐工具窗 / 滚动正文 / 淡入淡出 / 描边外壳）；公告 / 更新浮窗已于第三十三轮出列（第 33 节，新增 UI 线程调度宿主，控制器不再被迫继承 `QObject`）。剩余大文件的推进次序已于 2026-10-07 修订为「先按模块拆分瘦身、再逐个收敛 Qt」（第 34 节），滚动清单因此改按四批推进；批次 0（拆分登记机制）与批次 1（贡献名单解析、文案/名称表抽离）已执行（第 35、36 节）。
 
 本文只新增目录与引用规则，不改变任何视觉语义、数值来源或渲染结果。改建过程中出现分歧时，以 [视觉表现契约](视觉表现契约.md) 和当前 Qt 基准为事实源。
 
@@ -1926,3 +1926,59 @@ Qt**。第 13 节开头的三步模式（状态搬进 `visuals/` → 控件删 `
 - 一个已探明的约束：`ai_settings_panel.py` 的硬件/水印一族与 `lib/script/app/startup_probe.py`
   是**同算法、不同 dict 键**的两份实现（前者吃 PowerShell `Name`/`AdapterRAM`，后者吃归一化
   后的 `name`/`adapter_ram`）。要合并必须先在共享层统一键名，属行为改动，不能按"纯移动"处理。
+
+
+## 36. 批次 1 续：设置面板文案/名称表抽离（并确认硬件一族是死代码）
+
+更新时间：2026-10-08
+
+第 35 节批次 1 抽走了贡献名单解析。本轮继续抽 `ai_settings_panel.py` 的第二块纯逻辑：
+配置分组的帮助文案与配置字典/键的中文名。
+
+新增 `lib/script/ui/ai_settings_labels.py`（419 行，不 import `PyQt5`）：
+
+- `SECTION_HELP_TEXTS`（24 组 `(分类 id, 字典名) -> 帮助整段`）、`DICT_FRIENDLY_NAME`、
+  `KEY_FRIENDLY_NAME`（212 行键名表）；
+- `section_help_text()` / `friendly_section_name()` / `friendly_field_section_name()` /
+  `friendly_key_name()` / `animation_folder_display_name()`。
+
+这批块**自包含**：AST 检查它们引用的自由全局为零，外部（tests / scripts / lib）对这些
+私有名的引用也为零，面板内只有面板自己在用。因此是纯移动，`ai_settings_panel.py`
+5261 → 4862 行（净 -399）。`frozen_ui_qt_importers` 不变（新模块不含 Qt）。
+
+等价性：用 `git show HEAD:lib/script/ui/ai_settings_panel.py` 的旧表与旧函数，对
+`SECTION_HELP_TEXTS` 的全部 24 键、字典名表全部键、键名表全部 `(dict, key)` 组合、
+匿名目录名的多组输入逐项比对——表相等、函数输出零差异。
+
+新增 `tests/test_ai_settings_labels.py` 11 条断言：三张表的查询与兜底、`CLOUD_MUSIC`
+`launch_wuwa_path` 特例、`_anima` 后缀剥离、以及"不 import Qt / PyQt5 被阻断时可导入"。
+
+### 36.1 顺带确认：面板里的硬件/水印一族是死代码（未删除）
+
+批次 1 当初把"硬件探测"列为抽离目标之一。实测发现它们已经不是活代码：
+
+- `ai_settings_panel.py` 的硬件一族（`_query_hardware_watermark_lines`、`_gpu_pick_score`、
+  `_is_virtual_or_software_gpu`、`_format_gb_text`、`_get_total_memory_bytes`、
+  `_MEMORYSTATUSEX`、`_get_powershell_executable`、`_run_capture_text` /
+  `_decode_process_output`、`_to_int`）与 `lib/script/app/startup_probe.py` 是**同算法、
+  不同 dict 键**的两份实现：前者吃 PowerShell 原始 `Name` / `AdapterRAM`，后者吃归一化后的
+  `name` / `adapter_ram`。
+- 面板现在走 `startup_probe.load_saved_watermark_payload()`（第 84 行导入），
+  `_query_hardware_watermark_lines` 在全仓**没有任何调用点**（含字符串引用）。也就是说
+  这一族只剩 `startup_probe` 那条链路在用，面板里的副本是历史遗留。
+- 因此**不抽离**（那只会把死代码搬个地方）：正确处置是删除，属行为无关的清理，留待单独一轮
+  做，避免和"纯移动"混在一个提交里，也避免误删 `_gpu_mode_from_num_gpu` / `_num_gpu_from_mode`
+  这两个仍有调用的函数（它们与硬件探测不是同一族，必须保留）。
+
+### 36.2 验证（2026-10-08）
+
+- 全量 `unittest discover -s tests`：2249 用例、10 跳过，全通过。
+- 新增/修改文件 `ruff check` 归零，全仓 `ruff check .` 归零；`compileall` 通过；
+  `git diff --check` 干净。
+
+### 36.3 下一批
+
+- 批次 1 剩余纯逻辑：`_SECTION_HELP_TEXTS` 之外的配置值格式化/校验一族
+  （`_is_supported_config_value` / `_format_config_editor_value` / `_range_pair_signature` /
+  `_choice_label_for_value` / `_hardcoded_general_default` 等，仍需先做自由全局检查）。
+- 待单独一轮：删除面板里已确认死掉的硬件/水印一族。
