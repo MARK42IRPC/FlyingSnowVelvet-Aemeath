@@ -39,6 +39,11 @@
   都会被扫描、两个清单都按 `lib/script/ui/` 前缀接受子包路径」。
 
 ### Changed
+- 删除 `ai_settings_panel.py` 里已死的硬件/水印一族（`_query_hardware_watermark_lines` /
+  `_gpu_pick_score` / `_format_gb_text` / `_MEMORYSTATUSEX` 等十个符号及 `ctypes` / `json`
+  两个死导入）：该族全仓无调用点，面板的硬件水印走 `startup_probe.load_saved_watermark_payload()`。
+  `_gpu_mode_from_num_gpu` / `_num_gpu_from_mode` 与三个 `_GPU_MODE_*` 有真实调用，保留。
+  `ai_settings_panel.py` 4318 → 4159 行。
 - 公告浮窗（`announcement_dialog.py`）与更新浮窗（`update_dialog.py`）改为「窗口描述 + 后端宿主」：
   两个 `DesktopPet*Dialog` 不再是 `WorkbenchFloatingWindow` 子类、不再 import `PyQt5`，
   `AnnouncementController` 不再继承 `QObject`，`pyqtSignal` 用后端中立替身 `_AnnouncementSignal` /
