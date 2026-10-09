@@ -184,6 +184,85 @@ def _window_button_stylesheet(resolved_mode: str) -> str:
     """
 
 
+def voice_installer_stylesheet(mode: str | None = None) -> str:
+    """语音包安装器浮窗的分档 QSS：共享外壳 + 安装器自己的控件语言。
+
+    比 `floating_window_stylesheet()` 多出下拉框尺寸档、两条进度条各自的 chunk 配色
+    （下载走青色、解压走粉色）与三个按钮 id 的着色。颜色只从这个主题的 token 取值，
+    因此切换主题时会跟着变。
+    """
+    resolved = resolve_workbench_mode(mode)
+    c = get_workbench_tokens(resolved)
+    return floating_window_stylesheet(resolved) + f"""
+            QLabel {{ color: {c['text']}; background: transparent; }}
+            QComboBox {{
+                min-height: {scale_px(32, min_abs=28)}px;
+                padding: 0px {scale_px(42, min_abs=36)}px 0px {scale_px(9, min_abs=7)}px;
+                color: {c['text']};
+                background: {c['surface_raised']};
+                border: 1px solid {c['border']};
+                border-radius: 3px;
+            }}
+            QComboBox:focus {{ border: 2px solid {c['cyan']}; }}
+            QComboBox::drop-down {{
+                subcontrol-origin: padding;
+                subcontrol-position: top right;
+                width: {scale_px(34, min_abs=30)}px;
+                background: {c['cyan']};
+                border: none;
+                border-left: 1px solid {c['border']};
+            }}
+            QComboBox::drop-down:hover {{ background: {c['surface_hover']}; }}
+            QComboBox::down-arrow {{
+                image: url(resc/ui/combo_down_arrow.svg);
+                width: {scale_px(12, min_abs=10)}px;
+                height: {scale_px(8, min_abs=6)}px;
+            }}
+            QProgressBar {{
+                color: {c['text']};
+                background: {c['surface_raised']};
+                border: 1px solid {c['border']};
+                border-radius: 3px;
+                text-align: center;
+            }}
+            QProgressBar#VoiceDownloadProgress::chunk {{ background: {c['cyan']}; }}
+            QProgressBar#VoiceExtractProgress::chunk {{ background: {c['pink']}; }}
+            QPushButton {{
+                min-width: {scale_px(94, min_abs=82)}px;
+                min-height: {scale_px(32, min_abs=28)}px;
+                color: {c['text']};
+                background: {c['surface_raised']};
+                border: 1px solid {c['border']};
+                border-radius: 3px;
+                padding: 0px {scale_px(10, min_abs=8)}px;
+            }}
+            QPushButton:hover {{ background: {c['surface_hover']}; }}
+            QPushButton#VoiceInstallerBackground {{
+                color: {c['canvas']};
+                background: {c['cyan']};
+                font-weight: 700;
+            }}
+            QPushButton#VoiceInstallerBackground:hover {{
+                color: {c['canvas']};
+                background: {c['pink_hover']};
+            }}
+            QPushButton#VoiceInstallerPrimary {{
+                color: {c['canvas']};
+                background: {c['pink']};
+                font-weight: 700;
+            }}
+            QPushButton#VoiceInstallerPrimary:hover {{
+                color: {c['canvas']};
+                background: {c['pink_hover']};
+            }}
+            QPushButton:disabled {{
+                color: {c['text_dim']};
+                background: {c['surface_raised']};
+                border-color: {c['border']};
+            }}
+            """
+
+
 def is_workbench_theme_change(event: object) -> bool:
     """Return True when a CONFIG_UPDATED payload switched the workbench theme."""
     data = getattr(event, "data", None)
@@ -200,4 +279,5 @@ __all__ = [
     "FLOATING_WINDOW_OBJECT_NAME",
     "floating_window_stylesheet",
     "is_workbench_theme_change",
+    "voice_installer_stylesheet",
 ]

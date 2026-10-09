@@ -40,9 +40,9 @@ from lib.script.gsvmove.package_manager import (
     get_voice_package_profile,
     list_fixed_drive_roots,
 )
+from lib.core.render.visuals.workbench_chrome import voice_installer_stylesheet
 from lib.script.ui.workbench_floating import (
     WorkbenchFloatingWindow,
-    floating_window_stylesheet,
 )
 from lib.script.workbench.theme import get_workbench_colors
 from lib.script.ui.render_bridge import centered_placement, screen_rect_for_point as get_screen_geometry_for_point, ui_font as get_ui_font
@@ -994,72 +994,5 @@ class VoicePackageInstallerDialog(WorkbenchFloatingWindow):
         self._profile_combo.view().setStyleSheet(dropdown_style)
 
     def floating_stylesheet(self) -> str:
-        """共享浮窗外壳 + 语音包安装器自身的控件语言。"""
-        return floating_window_stylesheet() + f"""
-            QLabel {{ color: {_color('text')}; background: transparent; }}
-            QComboBox {{
-                min-height: {scale_px(32, min_abs=28)}px;
-                padding: 0px {scale_px(42, min_abs=36)}px 0px {scale_px(9, min_abs=7)}px;
-                color: {_color('text')};
-                background: {_color('surface_raised')};
-                border: 1px solid {_color('border')};
-                border-radius: 3px;
-            }}
-            QComboBox:focus {{ border: 2px solid {_color('cyan')}; }}
-            QComboBox::drop-down {{
-                subcontrol-origin: padding;
-                subcontrol-position: top right;
-                width: {scale_px(34, min_abs=30)}px;
-                background: {_color('cyan')};
-                border: none;
-                border-left: 1px solid {_color('border')};
-            }}
-            QComboBox::drop-down:hover {{ background: {_color('surface_hover')}; }}
-            QComboBox::down-arrow {{
-                image: url(resc/ui/combo_down_arrow.svg);
-                width: {scale_px(12, min_abs=10)}px;
-                height: {scale_px(8, min_abs=6)}px;
-            }}
-            QProgressBar {{
-                color: {_color('text')};
-                background: {_color('surface_raised')};
-                border: 1px solid {_color('border')};
-                border-radius: 3px;
-                text-align: center;
-            }}
-            QProgressBar#VoiceDownloadProgress::chunk {{ background: {_color('cyan')}; }}
-            QProgressBar#VoiceExtractProgress::chunk {{ background: {_color('pink')}; }}
-            QPushButton {{
-                min-width: {scale_px(94, min_abs=82)}px;
-                min-height: {scale_px(32, min_abs=28)}px;
-                color: {_color('text')};
-                background: {_color('surface_raised')};
-                border: 1px solid {_color('border')};
-                border-radius: 3px;
-                padding: 0px {scale_px(10, min_abs=8)}px;
-            }}
-            QPushButton:hover {{ background: {_color('surface_hover')}; }}
-            QPushButton#VoiceInstallerBackground {{
-                color: {_color('canvas')};
-                background: {_color('cyan')};
-                font-weight: 700;
-            }}
-            QPushButton#VoiceInstallerBackground:hover {{
-                color: {_color('canvas')};
-                background: {_color('pink_hover')};
-            }}
-            QPushButton#VoiceInstallerPrimary {{
-                color: {_color('canvas')};
-                background: {_color('pink')};
-                font-weight: 700;
-            }}
-            QPushButton#VoiceInstallerPrimary:hover {{
-                color: {_color('canvas')};
-                background: {_color('pink_hover')};
-            }}
-            QPushButton:disabled {{
-                color: {_color('text_dim')};
-                background: {_color('surface_raised')};
-                border-color: {_color('border')};
-            }}
-            """
+        """共享浮窗外壳 + 语音包安装器自身的控件语言（实现见 visuals/workbench_chrome）。"""
+        return voice_installer_stylesheet()

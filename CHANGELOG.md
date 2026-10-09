@@ -99,6 +99,13 @@
   `ai_settings_panel.py` 3942 → 3889 行。验收：HEAD 两方法用同名替身控件对照 36 组，差异 0。
   执行记录见 `doc/render层边界契约.md` 第 45 节。
 
+- 语音包安装器浮窗的 QSS 并入后端中立视觉层：`visuals/workbench_chrome.py` 新增
+  `voice_installer_stylesheet(mode=None)`（共享外壳 + 安装器的下拉框尺寸档、
+  两条进度条 chunk 配色与三个按钮 id 着色），与既有 `floating_window_stylesheet()` 并列；
+  `voice_package_installer.py` 的同名方法改为一行转发，文件内不再需要 `_color()` 助手。
+  验收：深 / 浅两个主题下与拆分前输出逐字符全等（各 6033 字符）。执行记录见
+  `doc/render层边界契约.md` 第 46 节。
+
 ### Changed
 - 删除 `ai_settings_panel.py` 里已死的 N 卡能力探测链路：
   `_refresh_nvidia_acceleration_capability_async()` 已无任何调用点（两个调用位在某次重构中

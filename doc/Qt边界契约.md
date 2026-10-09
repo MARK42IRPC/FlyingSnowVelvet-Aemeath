@@ -9,7 +9,7 @@
 > **迁移次序修订（2026-10-07）：** `frozen_ui_qt_importers` 里剩余的大文件（`ai_settings_panel.py`、
 > `forum_board.py` 等）改为「先按模块拆分瘦身、再逐个收敛 Qt」。拆分只做纯移动、不得让冻结清单增长；
 > 拆分出的新文件若仍 import Qt，必须显式登记而不是放宽断言。批次划分与每轮验收门槛见
-> [Render 层边界契约](render层边界契约.md) 第 34 节，执行记录见第 35–45 节。
+> [Render 层边界契约](render层边界契约.md) 第 34 节，执行记录见第 35–46 节。
 >
 > 冻结清单当前为 42 项：第三十三轮移出 `announcement_dialog.py` / `update_dialog.py` /
 > `help_window.py` / `workbench_floating.py`，批次 1 与批次 2 各轮均未新增条目——批次 1 拆出的
