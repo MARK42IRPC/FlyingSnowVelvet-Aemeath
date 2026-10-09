@@ -12,7 +12,7 @@ import webbrowser
 from pathlib import Path
 from typing import Callable
 
-from PyQt5.QtCore import Qt, QPoint, QSize, QPropertyAnimation, QEasingCurve, QTimer, pyqtSignal
+from PyQt5.QtCore import Qt, QPoint, QPropertyAnimation, QEasingCurve, QTimer, pyqtSignal
 from PyQt5.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -32,7 +32,7 @@ from PyQt5.QtWidgets import (
     QSlider,
     QMenu,
 )
-from PyQt5.QtGui import QPainter, QPixmap
+from PyQt5.QtGui import QPainter
 
 from config.config import ANIMATION, UI
 from lib.core.render.visuals.settings_panel_visuals import build_ai_settings_panel_visual
@@ -57,6 +57,7 @@ from lib.script.ui.ai_settings_config_schema import (
     hardcoded_general_default as _hardcoded_general_default,
     range_pair_signature as _range_pair_signature,
 )
+from lib.script.ui import ai_settings_about as _about
 from lib.script.ui import ai_settings_config_parse as _config_parse
 from lib.script.ui import ai_settings_descriptions as _descriptions
 from lib.script.ui import ai_settings_validation as _validation
@@ -65,6 +66,9 @@ from lib.script.ui.ai_settings_labels import (
     friendly_key_name as _friendly_key_name,
     friendly_section_name as _friendly_section_name,
     section_help_text as _section_help_text,
+)
+from lib.script.ui.ai_settings_about import (
+    _ContributionCardButton as _ContributionCardButton,
 )
 from lib.script.ui.ai_settings_contributions import (
     contribution_list_path as _contribution_list_path_impl,
@@ -116,7 +120,6 @@ from lib.script.ui.workbench_settings_layout import (
     SettingsPageScaffold,
     create_settings_form,
 )
-from lib.script.workbench.theme import get_workbench_colors
 from lib.script.ui.office_mode_settings import (
     ApiKeyLineEdit as _ApiKeyLineEdit,
     MANUAL_API_PROVIDER_PRESETS as _MANUAL_API_PROVIDER_PRESETS,
@@ -366,51 +369,6 @@ class _AnimationDurationSliderField(_DecimalSliderField):
     def set_frame_count(self, frame_count: int) -> None:
         self._frame_count = max(0, int(frame_count))
         self._sync_value_label(self._slider.value())
-
-
-class _ContributionCardButton(QPushButton):
-    """Contribution entry with a compact action hint."""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._watermark_label: QLabel | None = None
-        self._watermark_font = get_ui_font(size=max(scale_px(11, min_abs=9), _CONFIG_FONT_SIZE - scale_px(1, min_abs=1)))
-        self._watermark_font.setBold(True)
-
-    def bind_watermark_label(self, label: QLabel) -> None:
-        self._watermark_label = label
-        label.setProperty("preserveCustomFont", True)
-        self._apply_watermark(False)
-
-    def _layout_aware_size_hint(self, hint: QSize) -> QSize:
-        card_layout = self.layout()
-        if card_layout is not None:
-            hint.setHeight(max(hint.height(), card_layout.minimumSize().height()))
-        return hint
-
-    def sizeHint(self) -> QSize:
-        return self._layout_aware_size_hint(super().sizeHint())
-
-    def minimumSizeHint(self) -> QSize:
-        return self._layout_aware_size_hint(super().minimumSizeHint())
-
-    def _apply_watermark(self, hovered: bool) -> None:
-        if self._watermark_label is None:
-            return
-        colors = get_workbench_colors()
-        self._watermark_label.setFont(self._watermark_font)
-        self._watermark_label.setText("打开" if hovered else "主页")
-        self._watermark_label.setStyleSheet(
-            f"color: {colors.cyan if hovered else colors.text_dim};"
-        )
-
-    def enterEvent(self, event) -> None:
-        self._apply_watermark(True)
-        super().enterEvent(event)
-
-    def leaveEvent(self, event) -> None:
-        self._apply_watermark(False)
-        super().leaveEvent(event)
 
 
 class AISettingsPanel(QWidget):
@@ -1594,67 +1552,16 @@ class AISettingsPanel(QWidget):
         title_label: QLabel,
         hint_label: QLabel,
     ) -> QWidget:
-        section = scaffold.add_help_section(
-            "支持作者",
-            "扫描赞助码，或通过下方按钮前往爱发电。",
-            help_text=(
-                "桌宠是免费的，也不会在里面塞广告。\n\n"
-                "如果它帮到了你，可以扫赞助码或去爱发电支持一下维护工作；"
-                "赞助完全自愿，不影响任何功能的使用。"
-            ),
+        return _about.build_sponsor_author_panel(
+            panel,
+            scaffold,
+            category_title,
+            title_label,
+            hint_label,
+            self._config_tab_meta,
+            _project_root(),
+            self._show_info_message,
         )
-
-        card = QWidget(section)
-        card.setObjectName("sponsorAuthorCard")
-        card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(0, 0, 0, 0)
-        card_layout.setSpacing(scale_px(10, min_abs=8))
-
-        image_frame = QWidget(card)
-        image_frame.setObjectName("sponsorAuthorImageFrame")
-        image_frame_layout = QVBoxLayout(image_frame)
-        image_frame_layout.setContentsMargins(
-            scale_px(10, min_abs=8),
-            scale_px(10, min_abs=8),
-            scale_px(10, min_abs=8),
-            scale_px(10, min_abs=8),
-        )
-        image_frame_layout.setSpacing(0)
-        image_frame.setMaximumWidth(scale_px(380, min_abs=320))
-
-        image_label = QLabel(image_frame)
-        image_label.setObjectName("sponsorAuthorImage")
-        image_label.setAlignment(Qt.AlignCenter)
-        image_label.setWordWrap(True)
-        image_frame_layout.addWidget(image_label, 0, Qt.AlignCenter)
-        self._set_sponsor_author_image(image_label)
-
-        card_layout.addWidget(image_frame, 0, Qt.AlignHCenter)
-
-        sponsor_button = QPushButton("前往爱发电给作者买鸡腿饭", card)
-        sponsor_button.setObjectName("sponsorAuthorButton")
-        sponsor_button.setCursor(Qt.PointingHandCursor)
-        sponsor_button.setFixedHeight(scale_px(36, min_abs=32))
-        sponsor_button.setMaximumWidth(scale_px(380, min_abs=320))
-        sponsor_button.clicked.connect(self._open_sponsor_author_link)
-        card_layout.addWidget(sponsor_button, 0, Qt.AlignHCenter)
-
-        section.body_layout.addWidget(card)
-        scaffold.finish()
-
-        self._config_tab_meta["sponsor_author"] = {
-            "panel": panel,
-            "fields": [],
-            "defaults": {},
-            "title": category_title,
-            "title_label": title_label,
-            "hint_label": hint_label,
-            "section_title_labels": [section.title_label],
-            "section_hint_labels": [section.description_label],
-            "buttons": [sponsor_button],
-        }
-
-        return panel
 
     def _build_contribution_list_panel(
         self,
@@ -1664,151 +1571,25 @@ class AISettingsPanel(QWidget):
         title_label: QLabel,
         hint_label: QLabel,
     ) -> QWidget:
-        records = [
-            record
-            for record in _load_contribution_records()
-            if str(record.get("url") or "").strip()
-        ]
-        total_count = len(records)
-        section = scaffold.add_help_section(
-            f"贡献者 ({total_count})",
-            "选择条目可打开对应开发者主页。",
-            help_text=(
-                "这份名单来自仓库里的贡献者记录，按角色整理。\n\n"
-                "点条目会在浏览器里打开对应主页。名单只列已登记的贡献者，"
-                "漏掉的话可以在仓库里提 issue 补上。"
-            ),
+        return _about.build_contribution_list_panel(
+            panel,
+            scaffold,
+            category_title,
+            title_label,
+            hint_label,
+            self._config_tab_meta,
+            _project_root(),
+            self._show_info_message,
         )
 
-        buttons: list[QPushButton] = []
-        if records:
-            name_font = get_ui_font(size=max(scale_px(15, min_abs=12), _CONFIG_FONT_SIZE + scale_px(1, min_abs=1)))
-            name_font.setBold(True)
-            role_font = get_ui_font(size=max(scale_px(10, min_abs=9), _CONFIG_FONT_SIZE - scale_px(1, min_abs=1)))
-            for record in records:
-                name = str(record.get("name") or "未命名贡献者").strip()
-                role = str(record.get("role") or "贡献者").strip()
-                url = str(record.get("url") or "").strip()
-                button = _ContributionCardButton(section)
-                button.setObjectName("ContributionCardButton")
-                button.setCursor(Qt.PointingHandCursor)
-                button.setMinimumHeight(scale_px(74, min_abs=66))
-                button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-                button_layout = QHBoxLayout(button)
-                button_layout.setContentsMargins(
-                    scale_px(14, min_abs=12),
-                    scale_px(12, min_abs=10),
-                    scale_px(14, min_abs=12),
-                    scale_px(12, min_abs=10),
-                )
-                button_layout.setSpacing(scale_px(12, min_abs=10))
-
-                accent = QWidget(button)
-                accent.setObjectName("ContributionCardAccent")
-                accent.setFixedWidth(scale_px(3, min_abs=2))
-                accent.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-                button_layout.addWidget(accent, 0)
-
-                text_wrap = QWidget(button)
-                text_layout = QVBoxLayout(text_wrap)
-                text_layout.setContentsMargins(0, 0, 0, 0)
-                text_layout.setSpacing(scale_px(4, min_abs=2))
-                text_wrap.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-
-                name_label = QLabel(name, text_wrap)
-                name_label.setFont(name_font)
-                name_label.setObjectName("ContributionCardName")
-                name_label.setProperty("preserveCustomFont", True)
-                name_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-                name_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-                text_layout.addWidget(name_label, 0, Qt.AlignLeft)
-
-                role_label = QLabel(role, text_wrap)
-                role_label.setFont(role_font)
-                role_label.setObjectName("ContributionCardRole")
-                role_label.setProperty("preserveCustomFont", True)
-                role_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-                role_label.setWordWrap(True)
-                role_label.setMinimumHeight(role_label.sizeHint().height())
-                role_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-                text_layout.addWidget(role_label, 0, Qt.AlignLeft)
-
-                button_layout.addWidget(text_wrap, 1)
-
-                watermark_wrap = QWidget(button)
-                watermark_wrap.setFixedWidth(scale_px(64, min_abs=56))
-                watermark_wrap.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-                watermark_layout = QVBoxLayout(watermark_wrap)
-                watermark_layout.setContentsMargins(0, 0, 0, 0)
-                watermark_layout.setSpacing(0)
-                watermark_layout.addStretch(1)
-
-                watermark_label = QLabel("主页", watermark_wrap)
-                watermark_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-                watermark_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-                button.bind_watermark_label(watermark_label)
-                watermark_layout.addWidget(watermark_label, 0, Qt.AlignRight | Qt.AlignVCenter)
-                button_layout.addWidget(watermark_wrap, 0)
-
-                section.body_layout.addWidget(button)
-                buttons.append(button)
-                button.clicked.connect(lambda _checked=False, entry_name=name, entry_url=url: self._open_contribution_link(entry_name, entry_url))
-        else:
-            empty_label = QLabel(f"未读取到贡献名单，请检查文件是否存在：{_contribution_list_path()}", section)
-            empty_label.setWordWrap(True)
-            section.body_layout.addWidget(empty_label)
-
-        scaffold.finish()
-
-        self._config_tab_meta["contribution_list"] = {
-            "panel": panel,
-            "fields": [],
-            "defaults": {},
-            "title": category_title,
-            "title_label": title_label,
-            "hint_label": hint_label,
-            "section_title_labels": [section.title_label],
-            "section_hint_labels": [section.description_label],
-            "buttons": buttons,
-        }
-
-        return panel
-
     def _set_sponsor_author_image(self, label: QLabel) -> None:
-        image_path = _sponsor_author_image_path()
-        if not image_path.exists():
-            label.setText(f"未找到赞助图片：\n{image_path}")
-            label.setPixmap(QPixmap())
-            return
-
-        pixmap = QPixmap(str(image_path))
-        if pixmap.isNull():
-            label.setText(f"赞助图片加载失败：\n{image_path.name}")
-            label.setPixmap(QPixmap())
-            return
-
-        max_width = scale_px(340, min_abs=280)
-        scaled = pixmap.scaledToWidth(max_width, Qt.SmoothTransformation)
-        label.setPixmap(scaled)
-        label.setText("")
+        _about.set_sponsor_author_image(label, _project_root())
 
     def _open_sponsor_author_link(self) -> None:
-        try:
-            opened = webbrowser.open(_SPONSOR_AUTHOR_URL)
-        except Exception as exc:
-            self._show_info_message(f"打开爱发电链接失败：{exc}")
-            return
-        if not opened:
-            self._show_info_message(f"未能自动打开链接，请手动访问：{_SPONSOR_AUTHOR_URL}")
+        _about.open_sponsor_author_link(self._show_info_message)
 
     def _open_contribution_link(self, name: str, url: str) -> None:
-        try:
-            opened = webbrowser.open(url)
-        except Exception as exc:
-            self._show_info_message(f"打开 {name} 的主页失败：{exc}")
-            return
-        if not opened:
-            self._show_info_message(f"未能自动打开 {name} 的主页，请手动访问：{url}")
+        _about.open_contribution_link(self._show_info_message, name, url)
 
     def _show_info_message(self, message: str):
         """显示信息消息框"""
@@ -2759,7 +2540,6 @@ class AISettingsPanel(QWidget):
         bg = qt_color_name("bg")
         text = qt_color_name("text")
         highlight = qt_color_name("deep_cyan")
-        about_c = get_workbench_colors()
         menu_font = get_ui_font(size=_CONFIG_FONT_SIZE)
         menu_font.setBold(True)
         menu_font_family = str(menu_font.family() or "").replace("'", "\\'")
@@ -2787,69 +2567,7 @@ class AISettingsPanel(QWidget):
                 color: {text};
                 padding: 0px {scale_px(4, min_abs=3)}px;
                 font-weight: 700;
-            }}
-            QWidget#sponsorAuthorCard {{
-                background: transparent;
-                border: none;
-            }}
-            QWidget#sponsorAuthorImageFrame {{
-                background: {about_c.surface_raised};
-                border: 1px solid {about_c.border};
-                border-radius: {scale_px(4, min_abs=3)}px;
-            }}
-            QLabel#sponsorAuthorImage {{
-                background: transparent;
-                color: {about_c.text};
-                padding: {scale_px(6, min_abs=4)}px;
-            }}
-            QPushButton#sponsorAuthorButton {{
-                background: {about_c.cyan};
-                color: {about_c.canvas};
-                border: 1px solid {about_c.cyan};
-                border-radius: {scale_px(4, min_abs=3)}px;
-                min-height: {scale_px(34, min_abs=30)}px;
-                padding: 0px {scale_px(12, min_abs=10)}px;
-                font-weight: 700;
-            }}
-            QPushButton#sponsorAuthorButton:hover {{
-                background: {about_c.pink_hover};
-                color: {about_c.canvas};
-                border-color: {about_c.pink_hover};
-            }}
-            QPushButton#sponsorAuthorButton:pressed {{
-                background: {about_c.pink};
-                color: {about_c.canvas};
-                border-color: {about_c.pink};
-            }}
-            QPushButton#ContributionCardButton {{
-                background: {about_c.surface_raised};
-                color: {about_c.text};
-                border: 1px solid {about_c.border};
-                border-radius: {scale_px(4, min_abs=3)}px;
-                padding: 0px;
-                min-height: {scale_px(66, min_abs=58)}px;
-            }}
-            QPushButton#ContributionCardButton:hover {{
-                background: {about_c.surface_hover};
-                border-color: {about_c.cyan};
-            }}
-            QPushButton#ContributionCardButton:pressed {{
-                background: {about_c.surface};
-                border-color: {about_c.pink};
-            }}
-            QWidget#ContributionCardAccent {{
-                background: {about_c.cyan};
-                border: none;
-                border-radius: {scale_px(1, min_abs=1)}px;
-            }}
-            QLabel#ContributionCardName {{
-                background: transparent;
-                color: {about_c.text};
-            }}
-            QLabel#ContributionCardRole {{
-                background: transparent;
-                color: {about_c.text_muted};
-            }}
+            }}{_about.sponsor_author_stylesheet()}{_about.contribution_list_stylesheet()}
             QScrollArea {{
                 border: 0px;
                 background: transparent;

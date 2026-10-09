@@ -25,6 +25,7 @@ class QtDependencyBoundaryTests(unittest.TestCase):
     #: 只要求条目落在该前缀下，嵌套子包（`lib/script/ui/foo/bar.py`）本就合法，无需新增
     #: 白名单机制。拆出**不含 Qt** 的文件不要登记（登记了会被 stale 断言叫停）。
     frozen_ui_qt_importers = frozenset({
+            "lib/script/ui/ai_settings_about.py",
             "lib/script/ui/ai_settings_panel.py",
             "lib/script/ui/ai_settings_tabs.py",
             "lib/script/ui/animation_player.py",

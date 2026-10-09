@@ -106,6 +106,20 @@
   验收：深 / 浅两个主题下与拆分前输出逐字符全等（各 6033 字符）。执行记录见
   `doc/render层边界契约.md` 第 46 节。
 
+- 设置面板「支持作者 / 贡献者」两页切到新模块：新增 `lib/script/ui/ai_settings_about.py`
+  （414 行，仍在 `lib/script/ui/` 下并 import Qt），承接两类只读页的**视图**
+  （`build_sponsor_author_panel` / `build_contribution_list_panel` 与共用的
+  `_ContributionCardButton`）、**控制器**（`open_sponsor_author_link` / `open_contribution_link` /
+  `set_sponsor_author_image`，提示文案经 `show_info` 回调注入）与**描述**
+  （`sponsor_author_stylesheet` / `contribution_list_stylesheet` 两段页面 QSS）。
+  `ai_settings_panel.py` 3889 → 3607 行，四个页面/控制器方法改为按原签名转发，
+  `_ContributionCardButton` 按原名再导出（`refresh_workbench_theme` 与既有测试零改动）。
+  验收：两页与 `HEAD` 逐行等价（差异仅签名 10 / 10 / 0 行）；面板 `styleSheet()`
+  与切分前逐字符全等（9450 字符）；离屏 1000×760 宿主下两页控件树摘要全等、位图
+  SHA-256 相等（差异像素 0）。`frozen_ui_qt_importers` 42 → 43（按第 34.2 节显式登记
+  `ai_settings_about.py`，C 类目标是后续轮次逐个去 Qt 再删回）。
+  执行记录见 `doc/render层边界契约.md` 第 48 节。
+
 ### Changed
 - 删除 `ai_settings_panel.py` 里已死的 N 卡能力探测链路：
   `_refresh_nvidia_acceleration_capability_async()` 已无任何调用点（两个调用位在某次重构中
