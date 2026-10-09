@@ -156,6 +156,18 @@
   `styleSheet()` 9450 字符逐字符全等；`frozen_ui_qt_importers` 44 → 45。
   执行记录见 `doc/render层边界契约.md` 第 51 节。
 
+- 设置面板「配置分类页 + 外部配置字段族」切到新模块：新增
+  `lib/script/ui/ai_settings_config_page.py`（538 行），承接 338 行的
+  `_build_config_category_panel`（分区、表单、成对/序列/滑条/路径/布尔各分支装配与
+  `_config_tab_meta` 写入）与开机启动 / 公告永久抑制两组外部配置字段
+  （含 `_apply_external_category_fields`）。`AISettingsPanel` 改为继承 `ConfigPageMixin`，
+  `ai_settings_tabs.py` 的调用点零改动，面板 2778 → 2291 行；清掉随之下沉使用的十二个导入。
+  `tests/test_workbench_lazy_settings.py` 的两处 patch 目标改到真正的所有者
+  `ai_settings_config_page`。验收：八页控件树 / 位图零差异（差异像素 0），并额外比对
+  `_config_tab_meta` 的 `fields` / `defaults` / 按钮清单——配置页元数据零差异；
+  `styleSheet()` 9450 字符逐字符全等。`frozen_ui_qt_importers` 45 → 46。
+  执行记录见 `doc/render层边界契约.md` 第 52 节。
+
 ### Changed
 - 删除 `ai_settings_panel.py` 里已死的 N 卡能力探测链路：
   `_refresh_nvidia_acceleration_capability_async()` 已无任何调用点（两个调用位在某次重构中

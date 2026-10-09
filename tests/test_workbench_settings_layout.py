@@ -253,6 +253,34 @@ class WorkbenchSettingsLayoutTests(unittest.TestCase):
             panel.deleteLater()
             self.app.processEvents()
 
+    def test_config_page_and_external_fields_live_in_the_shared_page_module(self):
+        """配置分类页骨架与外部字段族已下沉到 `ai_settings_config_page`。
+
+        第五轮之后 `AISettingsPanel` 只是混入，导出面必须继续指向同一实现；
+        `ai_settings_tabs.py` 依赖的 `_build_config_category_panel` 也在这里。
+        """
+        import lib.script.ui.ai_settings_config_page as config_page
+
+        self.assertTrue(issubclass(AISettingsPanel, config_page.ConfigPageMixin))
+        for name in (
+            "_build_config_category_panel",
+            "_append_autostart_field",
+            "_append_announcement_suppression_field",
+            "_apply_external_category_fields",
+            "_get_autostart_enabled",
+            "_set_autostart_enabled",
+            "_subscribe_autostart_events",
+            "_unsubscribe_autostart_events",
+            "_on_autostart_status_change",
+            "_get_announcement_forever_suppressed",
+            "_set_announcement_forever_suppressed",
+        ):
+            self.assertIs(
+                getattr(AISettingsPanel, name),
+                getattr(config_page.ConfigPageMixin, name),
+                name,
+            )
+
     def test_workbench_theme_stylesheets_have_dark_and_light_palettes(self):
         dark = workbench_stylesheet("dark")
         light = workbench_stylesheet("light")

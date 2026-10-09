@@ -19,6 +19,7 @@ os.environ.setdefault('QT_PLUGIN_PATH', os.path.join(_QT_ROOT, 'Qt5', 'plugins')
 from PyQt5.QtWidgets import QApplication
 
 from config.config_layer import LAYER_VALUES
+from lib.script.ui import ai_settings_config_page as config_page_module
 from lib.script.ui import ai_settings_panel as panel_module
 from lib.script.ui.ai_settings_panel import AISettingsPanel
 from lib.script.ui.announcement_dialog import AnnouncementPreferences
@@ -121,7 +122,7 @@ class WorkbenchLazySettingsTests(unittest.TestCase):
 
     def test_ui_page_announcement_checkbox_reflects_and_saves_forever_state(self):
         with patch.object(
-            panel_module,
+            config_page_module,
             "load_announcement_preferences",
             return_value=AnnouncementPreferences(True, ""),
         ), patch.object(AISettingsPanel, '_refresh_hardware_watermark_async', lambda self: None):
@@ -147,7 +148,7 @@ class WorkbenchLazySettingsTests(unittest.TestCase):
         with patch.object(panel_module, '_save_general_config'), patch.object(
             panel_module, '_apply_general_runtime'
         ), patch.object(
-            panel_module, 'set_announcement_forever_suppressed'
+            config_page_module, 'set_announcement_forever_suppressed'
         ) as save_suppression:
             self.assertTrue(panel._on_save_config_category('ui_anim'))
 
