@@ -4,7 +4,7 @@
 
 本文档定义 `lib/core/render/` 的目标结构与依赖边界。它不是阶段计划，而是结构改建完成后必须成立的规则。
 
-**状态：第 6 节迁移顺序 1、2（目录切分）、3 已执行；图层能力已收敛到 `lib/core/render/layers/`（第 16 节）；后端中立协议与统一数据类型已落地（第 11 节），控件层“描述 + 后端渲染”已滚动迁移气泡框（第 12 节）、说明书、语音指示器与播放进度条（第 13 节）、音响音量/频段双滑条、搜索结果框与命令提示框（第 18 节）、右键矩形动作按钮一族八个按钮（第 19 节）、确认/提示框（第 20 节，首个模态宿主）；浮窗外壳（样式/主题判定/拖拽策略/窗口按钮）已从 `lib/script/ui` 下沉到渲染层（第 21 节）；办公线性图标的 SVG 规格也已抽成后端中立事实源（第 22 节）；点击粒子辅助的按钮翻译改经 `render_bridge`、`_particle_helper.py` 出列（第 23 节）；论坛样式的底纹混色改为纯十六进制实现、`forum_style.py` 出列（第 24 节）；二维码登录浮窗的自动收起/穿透/窗口标志/自愈能力下沉到基类，`yuanbao_login_dialog.py` 与 `cloudmusic_login_dialog.py` 出列（第 25、26 节）；排布解算已收敛到 `visuals/` 并由 `PlacementSpec` 统一解算（第 14 节，档位 0/1），右键按钮族的逐控件锚点事件链已收敛为声明式 `AnchorGraph` 且 Qt 改为消费共享布局（第 15 节，档位 2/3）；`WindowHost` 的被动宿主激活语义已与 Qt/DX 焦点策略对齐（第 17 节）。** 目录与引用规则以本文档为准；改建前的事实源是 [Qt 边界契约](Qt边界契约.md) 与 [跨后端视觉表现契约](视觉表现契约.md)，那两份文档继续负责“哪些内容算视觉逻辑”和“什么算无 Qt”。第一章描述的是最终目标；产品控件面（`lib/script/ui` 直接 `import PyQt5`）仍需逐个控件迁移，当前待迁清单以 `tests/test_qt_dependency_boundaries.py` 的 `frozen_ui_qt_importers` 为准，滚动顺序见第 13 节末尾；翻页按钮族已于第二十七轮迁出（第 27 节）；音响菜单控制按钮族已于第二十八轮迁出（第 28 节）；音响菜单族共享样式已于第二十九轮出列（第 29 节，档位 D 新增 `QtPainterHost` 绘制宿主）；办公面样式与控件树辅助已于第三十轮出列（第 30 节）；窗口级描述与审批弹窗已于第三十一轮出列（第 31 节，档位 D 新增窗口描述宿主与 isuals/window_spec*.py 两级描述层）；帮助浮窗已于第三十二轮出列（第 32 节，窗口描述宿主补齐工具窗 / 滚动正文 / 淡入淡出 / 描边外壳）；公告 / 更新浮窗已于第三十三轮出列（第 33 节，新增 UI 线程调度宿主，控制器不再被迫继承 `QObject`）。剩余大文件的推进次序已于 2026-10-07 修订为「先按模块拆分瘦身、再逐个收敛 Qt」（第 34 节），滚动清单因此改按四批推进；批次 0（拆分登记机制）与批次 1（`ai_settings_panel.py` 瘦身：贡献名单解析、文案/名称表、配置 schema、删死代码）已完成（第 35–38 节）；批次 2 首轮把 `forum_board.py` 的图片视图族与列表两行下沉到档位 D 的 `backends/qt/widgets/forum_images.py`（第 39 节），续轮把 `forum_texture.py` 的底纹规格抽到 `visuals/forum_texture_visuals.py`（第 40 节）、把办公聊天的 Markdown→富文本抽到 `visuals/office_chat_rich.py`（第 41 节），又把这页的 OpenAI 兼容接口解析抽到 `lib/core/services/api_endpoints.py`、顺手把 `API_TIMEOUT_SECS` 一族从产品包下沉到 `lib/core/services/network_policy.py`（第 42 节），把设置面板的「通用配置」取值校验抽到 `ui/ai_settings_validation.py`并清掉一条 N 卡能力探测死链（第 43 节）、把字段说明文本抽到 `ui/ai_settings_descriptions.py`（第 44 节）、把配置编辑器取值解析抽到 `ui/ai_settings_config_parse.py`（第 45 节）、把语音包安装器浮窗的 QSS 并入 `visuals/workbench_chrome.py`（第 46 节），八轮均为纯移动、零差异（第 43 节另含等价清理）；批次 2 的 A 类到此抽尽，下一轮转批次 3 的 C 类切分，盘点与起点建议见第 47 节；批次 3 首轮把设置面板的「支持作者 / 贡献者」两页整体切到 `ui/ai_settings_about.py`（视图 + 控制器 + 描述，第 48 节，冻结清单 42 → 43），第二轮把「桌宠更新」页切成 `ui/ai_settings_update.py`（视图 + 控制器，第 49 节，冻结清单 43 → 44）。第三轮把面板 `_apply_style()` 的整段 QSS 下沉到 `lib/core/render/visuals/ai_settings_panel_visuals.py`（第 50 节，纯移动、逐字符零差异，冻结清单仍为 44 项）。
+**状态：第 6 节迁移顺序 1、2（目录切分）、3 已执行；图层能力已收敛到 `lib/core/render/layers/`（第 16 节）；后端中立协议与统一数据类型已落地（第 11 节），控件层“描述 + 后端渲染”已滚动迁移气泡框（第 12 节）、说明书、语音指示器与播放进度条（第 13 节）、音响音量/频段双滑条、搜索结果框与命令提示框（第 18 节）、右键矩形动作按钮一族八个按钮（第 19 节）、确认/提示框（第 20 节，首个模态宿主）；浮窗外壳（样式/主题判定/拖拽策略/窗口按钮）已从 `lib/script/ui` 下沉到渲染层（第 21 节）；办公线性图标的 SVG 规格也已抽成后端中立事实源（第 22 节）；点击粒子辅助的按钮翻译改经 `render_bridge`、`_particle_helper.py` 出列（第 23 节）；论坛样式的底纹混色改为纯十六进制实现、`forum_style.py` 出列（第 24 节）；二维码登录浮窗的自动收起/穿透/窗口标志/自愈能力下沉到基类，`yuanbao_login_dialog.py` 与 `cloudmusic_login_dialog.py` 出列（第 25、26 节）；排布解算已收敛到 `visuals/` 并由 `PlacementSpec` 统一解算（第 14 节，档位 0/1），右键按钮族的逐控件锚点事件链已收敛为声明式 `AnchorGraph` 且 Qt 改为消费共享布局（第 15 节，档位 2/3）；`WindowHost` 的被动宿主激活语义已与 Qt/DX 焦点策略对齐（第 17 节）。** 目录与引用规则以本文档为准；改建前的事实源是 [Qt 边界契约](Qt边界契约.md) 与 [跨后端视觉表现契约](视觉表现契约.md)，那两份文档继续负责“哪些内容算视觉逻辑”和“什么算无 Qt”。第一章描述的是最终目标；产品控件面（`lib/script/ui` 直接 `import PyQt5`）仍需逐个控件迁移，当前待迁清单以 `tests/test_qt_dependency_boundaries.py` 的 `frozen_ui_qt_importers` 为准，滚动顺序见第 13 节末尾；翻页按钮族已于第二十七轮迁出（第 27 节）；音响菜单控制按钮族已于第二十八轮迁出（第 28 节）；音响菜单族共享样式已于第二十九轮出列（第 29 节，档位 D 新增 `QtPainterHost` 绘制宿主）；办公面样式与控件树辅助已于第三十轮出列（第 30 节）；窗口级描述与审批弹窗已于第三十一轮出列（第 31 节，档位 D 新增窗口描述宿主与 isuals/window_spec*.py 两级描述层）；帮助浮窗已于第三十二轮出列（第 32 节，窗口描述宿主补齐工具窗 / 滚动正文 / 淡入淡出 / 描边外壳）；公告 / 更新浮窗已于第三十三轮出列（第 33 节，新增 UI 线程调度宿主，控制器不再被迫继承 `QObject`）。剩余大文件的推进次序已于 2026-10-07 修订为「先按模块拆分瘦身、再逐个收敛 Qt」（第 34 节），滚动清单因此改按四批推进；批次 0（拆分登记机制）与批次 1（`ai_settings_panel.py` 瘦身：贡献名单解析、文案/名称表、配置 schema、删死代码）已完成（第 35–38 节）；批次 2 首轮把 `forum_board.py` 的图片视图族与列表两行下沉到档位 D 的 `backends/qt/widgets/forum_images.py`（第 39 节），续轮把 `forum_texture.py` 的底纹规格抽到 `visuals/forum_texture_visuals.py`（第 40 节）、把办公聊天的 Markdown→富文本抽到 `visuals/office_chat_rich.py`（第 41 节），又把这页的 OpenAI 兼容接口解析抽到 `lib/core/services/api_endpoints.py`、顺手把 `API_TIMEOUT_SECS` 一族从产品包下沉到 `lib/core/services/network_policy.py`（第 42 节），把设置面板的「通用配置」取值校验抽到 `ui/ai_settings_validation.py`并清掉一条 N 卡能力探测死链（第 43 节）、把字段说明文本抽到 `ui/ai_settings_descriptions.py`（第 44 节）、把配置编辑器取值解析抽到 `ui/ai_settings_config_parse.py`（第 45 节）、把语音包安装器浮窗的 QSS 并入 `visuals/workbench_chrome.py`（第 46 节），八轮均为纯移动、零差异（第 43 节另含等价清理）；批次 2 的 A 类到此抽尽，下一轮转批次 3 的 C 类切分，盘点与起点建议见第 47 节；批次 3 首轮把设置面板的「支持作者 / 贡献者」两页整体切到 `ui/ai_settings_about.py`（视图 + 控制器 + 描述，第 48 节，冻结清单 42 → 43），第二轮把「桌宠更新」页切成 `ui/ai_settings_update.py`（视图 + 控制器，第 49 节，冻结清单 43 → 44）。第三轮把面板 `_apply_style()` 的整段 QSS 下沉到 `lib/core/render/visuals/ai_settings_panel_visuals.py`（第 50 节，纯移动、逐字符零差异，冻结清单仍为 44 项）。第四轮把面板的「配置编辑器控件族」切到 `ui/ai_settings_editors.py`（视图控件 + 工厂，第 51 节，冻结清单 44 → 45）。
 
 本文只新增目录与引用规则，不改变任何视觉语义、数值来源或渲染结果。改建过程中出现分歧时，以 [视觉表现契约](视觉表现契约.md) 和当前 Qt 基准为事实源。
 
@@ -2657,3 +2657,71 @@ import `lib.script` 或 `config`，可直接落在 `visuals/`。`office_chat_vie
 
 - 面板的配置页族（`_build_config_category_panel` 与六个编辑器工厂、`_collect_values` /
   `_set_values_to_form`）仍在面板里，按 tab 逐轮推进。
+
+## 51. 批次 3 第四轮：设置面板「配置编辑器控件族」切分（C 类，视图控件 + 工厂）
+
+更新时间：2026-10-09
+
+前三轮把面板里三个只读页与整段 QSS 都移走了，剩下的 `AISettingsPanel` 仍拖着约 330 行
+「配置编辑器」代码：三个自定义控件类（`_NoWheelSlider` / `_DecimalSliderField` /
+`_AnimationDurationSliderField`）、六个编辑器工厂、一组字段谓词、音量百分比换算，以及
+两个「浏览目录 / 打开文件」对话框助手。它们虽然长在 `QWidget` 子类里，却只读像素档与
+schema 表，不读面板状态（不看 `_force_mode`、不碰 `_config_tab_meta`），因此是本轮切分目标。
+
+**范围（`lib/script/ui/ai_settings_editors.py`，548 行）**
+
+- **视图控件类**：`_NoWheelSlider` / `_DecimalSliderField` / `_AnimationDurationSliderField`
+  原样搬到模块级，逐行未动。
+- **`ConfigEditorMixin`**：`_create_compact_pair_editor` / `_create_config_line_edit` /
+  `_create_config_choice_editor` / `_create_form_label` / `_create_volume_slider_editor` /
+  `_create_animation_folder_duration_editor` / `_create_path_editor_with_open_button` /
+  `_create_sequence_editor` / `_wrap_field_widget` / `_set_config_editor_value` /
+  `_set_sequence_editor_values`、六个字段谓词、`_volume_percent_from_value`、
+  `_get_choice_field_options` / `_get_decimal_slider_spec`，以及三个「浏览 / 打开」助手。
+  **方法体逐行未动（缩进也未变）**，只拆掉三处对面板类的硬引用：
+  `AISettingsPanel._folder_options` → 模块级 `_folder_options()`（纯表查询）、
+  `AISettingsPanel._volume_percent_from_value` → `self._volume_percent_from_value`、
+  `_set_config_editor_value` 由 `@staticmethod` 恢复成读 `self` 的普通方法（它原本就在读面板类）。
+- **`AISettingsPanel` 改为继承 `ConfigEditorMixin`**，并按原名再导出
+  `_DecimalSliderField` / `_AnimationDurationSliderField` / `_GENERAL_DECIMAL_SLIDER_SPECS`，
+  既有导入面（`tests/test_workbench_settings_layout.py` 等）零改动。
+
+### 51.1 顺带修掉的一处真实缺陷（设置面板音量滑条无法保存）
+
+`ai_settings_config_parse.parse_editor_value(field, widget=...)` 的协议名是
+**`volume_value_from_percent`**（不带下划线），而面板历史上只定义了
+`_volume_value_from_percent`。于是 `kind == "volume_slider"` 的字段在
+`_collect_config_category_values` 里会走 `widget.volume_value_from_percent(...)` 失败，
+被包成 `ValueError: SOUND.master_volume 格式错误: type object 'AISettingsPanel' has no
+attribute 'volume_value_from_percent'`。
+
+**这是 `HEAD` 上已存在的缺陷，不是本轮引入**——用 `HEAD` 版本复现：对
+`audio_music` 页调 `_collect_config_category_values("audio_music")` 必然抛错，也就是
+「音频 / 音乐」页的音量滑条（`SOUND.master_volume` 等 5 个字段）一直存不进去。
+本轮把编辑器族下沉时，顺手补上协议别名 `volume_value_from_percent = _volume_value_from_percent`
+（同一实现、两个名字），缺陷随之消失，并加断言钉住「音量子页必须能读回 `volume_slider` 字段」。
+
+### 51.2 验收
+
+- 纯移动对照：控件类与工厂方法体与 `HEAD` 逐行等价；差异仅三处引用改写与
+  面板侧的 import / 继承 / 再导出。
+- 八页控件树 oracle（离屏 1000×760）：`ui_anim` / `behavior_physics` / `audio_music` /
+  `scene_objects` / `system_dispatch` / `contribution_list` / `sponsor_author` /
+  `desktop_pet_update` 逐控件类型 / 对象名 / 几何 / 可见性 / 文本 / 字体 / 内联样式 /
+  `workbenchEmbedded` 全等，`grab()` 位图 SHA-256 相等（差异像素 0），`_config_tab_meta`
+  键集与按钮对象名列表亦相等；面板 `styleSheet()` 逐字符全等（9450 字符）。
+- 回归：`tests/test_workbench_settings_layout.py`（新增编辑器族归属与音量保存两条断言）、
+  `tests/test_workbench_lazy_settings.py`、`tests/test_ai_settings_reply_mode_sections.py`、
+  `tests/test_ai_settings_panel_visuals.py` 全绿；全量 `unittest` 2267 通过 / 10 跳过；
+  `ruff check .` 归零；`compileall` 通过；`git diff --check` 干净；边界测试 52 条通过。
+
+**清单变化**
+
+- `frozen_ui_qt_importers`：44 → **45**（新增 `lib/script/ui/ai_settings_editors.py`；
+  按第 34.2 节 C 类规则登记，条目再随该族去 Qt 删除）。
+- `ui -> 产品包` 耦合清单不变：新模块不 import `chat` / `office` / `music` / `gsvmove`。
+
+**本轮没动的部分**
+
+- 面板的配置页骨架（`_build_config_category_panel`）与取值/回填控制器
+  （`_collect_values` / `_set_values_to_form`）仍在面板里，按 tab 逐轮推进。

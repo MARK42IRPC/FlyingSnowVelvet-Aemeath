@@ -190,6 +190,69 @@ class WorkbenchSettingsLayoutTests(unittest.TestCase):
             panel.deleteLater()
             self.app.processEvents()
 
+    def test_editor_widgets_live_in_the_shared_editor_module(self):
+        """配置编辑器族已下沉到 `ai_settings_editors`；面板只按原名转发。
+
+        第四轮把控件类与编辑器工厂切出去后，`AISettingsPanel` 必须仍是这些名字的
+        导出面（既有导入路径不变），且两类实现必须同源——面板方法就是混入方法本身。
+        """
+        import lib.script.ui.ai_settings_editors as editors
+
+        self.assertTrue(issubclass(AISettingsPanel, editors.ConfigEditorMixin))
+        self.assertIs(_AnimationDurationSliderField, editors._AnimationDurationSliderField)
+        for name in (
+            "is_text_editor",
+            "is_slider",
+            "is_decimal_field",
+            "is_check_box",
+            "is_combo_box",
+            "volume_value_from_percent",
+            "_create_volume_slider_editor",
+            "_create_animation_folder_duration_editor",
+            "_create_path_editor_with_open_button",
+            "_create_sequence_editor",
+            "_create_compact_pair_editor",
+            "_create_config_choice_editor",
+            "_create_form_label",
+            "_wrap_field_widget",
+            "_set_config_editor_value",
+            "_set_sequence_editor_values",
+            "_volume_percent_from_value",
+            "_get_choice_field_options",
+            "_get_decimal_slider_spec",
+        ):
+            self.assertIs(
+                getattr(AISettingsPanel, name),
+                getattr(editors.ConfigEditorMixin, name),
+                name,
+            )
+
+    def test_volume_slider_fields_save_through_the_protocol_name(self):
+        """音量子页的滑条字段必须能被 `_collect_config_category_values` 读回。
+
+        回归：`ai_settings_config_parse.parse_editor_value` 的协议名字是
+        `volume_value_from_percent`，而面板历史上只定义了下划线版
+        `_volume_value_from_percent`，因此 `audio_music` 页一旦有 `volume_slider`
+        字段，保存路径就会抛 `格式错误: ... has no attribute 'volume_value_from_percent'`。
+        编辑器族下沉时一并补上协议别名。
+        """
+        import lib.script.ui.ai_settings_editors as editors
+
+        self.assertTrue(callable(editors.ConfigEditorMixin.volume_value_from_percent))
+        self.assertEqual(editors.ConfigEditorMixin.volume_value_from_percent(50), 0.5)
+
+        with patch.object(AISettingsPanel, '_refresh_hardware_watermark_async', lambda self: None):
+            panel = AISettingsPanel(lazy_workbench_pages=True)
+        try:
+            panel.create_workbench_page('audio_music')
+            kinds = {field.get('kind') for field in panel._config_tab_meta['audio_music']['fields']}
+            self.assertIn('volume_slider', kinds)
+            values = panel._collect_config_category_values('audio_music')
+            self.assertIn('master_volume', values.get('SOUND', {}))
+        finally:
+            panel.deleteLater()
+            self.app.processEvents()
+
     def test_workbench_theme_stylesheets_have_dark_and_light_palettes(self):
         dark = workbench_stylesheet("dark")
         light = workbench_stylesheet("light")

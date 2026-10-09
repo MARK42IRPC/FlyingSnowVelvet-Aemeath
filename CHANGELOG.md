@@ -144,6 +144,18 @@
   控件树摘要全等、位图 SHA-256 相等（差异像素 0）；新增
   `tests/test_ai_settings_panel_visuals.py` 5 条。执行记录见 `doc/render层边界契约.md` 第 50 节。
 
+- 设置面板「配置编辑器控件族」切到新模块：新增 `lib/script/ui/ai_settings_editors.py`（548 行），
+  承接三个自定义控件类（`_NoWheelSlider` / `_DecimalSliderField` / `_AnimationDurationSliderField`，
+  逐行原样搬出）与 `ConfigEditorMixin`（六个编辑器工厂、字段谓词、音量百分比换算、序列/成对
+  编辑与两个「浏览 / 打开」助手）。`AISettingsPanel` 改为继承该 mixin 并按原名再导出
+  `_DecimalSliderField` / `_AnimationDurationSliderField` / `_GENERAL_DECIMAL_SLIDER_SPECS`，
+  面板 3234 → 2778 行。顺手修掉一处 `HEAD` 上已存在的真实缺陷：协议名
+  `volume_value_from_percent`（不带下划线）在面板上从未定义，`kind == "volume_slider"` 的字段
+  保存时抛「格式错误」，导致「音频 / 音乐」页的音量滑条（`SOUND.master_volume` 等 5 项）一直存不进去；
+  本轮补上协议别名并加断言钉住。验收：八页控件树 / 位图 / `_config_tab_meta` oracle 零差异，
+  `styleSheet()` 9450 字符逐字符全等；`frozen_ui_qt_importers` 44 → 45。
+  执行记录见 `doc/render层边界契约.md` 第 51 节。
+
 ### Changed
 - 删除 `ai_settings_panel.py` 里已死的 N 卡能力探测链路：
   `_refresh_nvidia_acceleration_capability_async()` 已无任何调用点（两个调用位在某次重构中

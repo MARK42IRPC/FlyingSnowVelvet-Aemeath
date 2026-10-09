@@ -28,7 +28,6 @@ from PyQt5.QtWidgets import (
     QGraphicsOpacityEffect,
     QScrollArea,
     QSizePolicy,
-    QFileDialog,
     QSlider,
     QMenu,
 )
@@ -37,7 +36,7 @@ from PyQt5.QtGui import QPainter
 from config.config import ANIMATION, UI
 from lib.core.render.visuals.settings_panel_visuals import build_ai_settings_panel_visual
 from lib.core.render.visuals.types import Size
-from lib.script.ui.render_bridge import create_draw_backend, digit_font as get_digit_font, ui_font as get_ui_font
+from lib.script.ui.render_bridge import create_draw_backend, ui_font as get_ui_font
 from config.general_user_settings import save_general_values
 from config.ollama_config import (
     AI_VOICE_MAX_CHARS_DEFAULT,
@@ -48,10 +47,7 @@ from config.scale import scale_px
 from lib.script.ui.ai_settings_validators import validate_ai_values
 from lib.script.ui.ai_settings_config_schema import (
     CATEGORY_KEY_ALLOWLIST as _CATEGORY_KEY_ALLOWLIST,
-    GENERAL_DECIMAL_SLIDER_SPECS as _GENERAL_DECIMAL_SLIDER_SPECS,
-    VOLUME_SLIDER_FIELDS as _VOLUME_SLIDER_FIELDS,
     category_section_entries as _category_section_entries,
-    format_config_editor_value as _format_config_editor_value,
     friendly_range_name as _friendly_range_name,
     hardcoded_general_default as _hardcoded_general_default,
     range_pair_signature as _range_pair_signature,
@@ -60,16 +56,23 @@ from lib.core.render.visuals.ai_settings_panel_visuals import ai_settings_panel_
 from lib.script.ui import ai_settings_about as _about
 from lib.script.ui import ai_settings_update as _update_page
 from lib.script.ui import ai_settings_config_parse as _config_parse
+from lib.script.ui.ai_settings_config_schema import (  # noqa: F401 - 既有导出面
+    GENERAL_DECIMAL_SLIDER_SPECS as _GENERAL_DECIMAL_SLIDER_SPECS,
+)
 from lib.script.ui import ai_settings_descriptions as _descriptions
 from lib.script.ui import ai_settings_validation as _validation
 from lib.script.ui.ai_settings_labels import (
-    animation_folder_display_name as _animation_folder_display_name,
     friendly_key_name as _friendly_key_name,
     friendly_section_name as _friendly_section_name,
     section_help_text as _section_help_text,
 )
 from lib.script.ui.ai_settings_about import (
     _ContributionCardButton as _ContributionCardButton,
+)
+from lib.script.ui.ai_settings_editors import (
+    ConfigEditorMixin as _ConfigEditorMixin,
+    _AnimationDurationSliderField as _AnimationDurationSliderField,
+    _DecimalSliderField as _DecimalSliderField,
 )
 from lib.script.ui.ai_settings_contributions import (
     contribution_list_path as _contribution_list_path_impl,
@@ -99,11 +102,8 @@ from lib.core.render.layers import WindowLayer
 from lib.core.render.layers import get_layer_manager
 from lib.core.logger import get_logger
 from lib.script.app.startup_probe import load_saved_watermark_payload as _load_saved_watermark_payload
-from lib.script.SEanima.clip import (
-    list_animation_folder_choices,
-    resolve_animation_folder_path,
-)
-from lib.script.SEanima.decoder import playback_duration_seconds, scan_animation_frame_files
+from lib.script.SEanima.clip import resolve_animation_folder_path
+from lib.script.SEanima.decoder import scan_animation_frame_files
 from lib.script.chat.ollama_registry import get_available_model_names, get_model_list_error
 from lib.script.chat.persona_storage import ensure_user_persona_file
 from lib.script.ui.update_dialog import DesktopPetUpdateDialog
@@ -124,7 +124,6 @@ from lib.script.ui.office_mode_settings import (
     ApiKeyLineEdit as _ApiKeyLineEdit,
     MANUAL_API_PROVIDER_PRESETS as _MANUAL_API_PROVIDER_PRESETS,
     WatermarkComboBox as _WatermarkComboBox,
-    create_field_row_group as _create_field_row_group_helper,
     describe_form_row as _describe_form_row_helper,
     fetch_api_models as _fetch_api_models,
     manual_api_models_url as _manual_api_models_url,
@@ -246,130 +245,7 @@ def _num_gpu_from_mode(mode: str) -> int:
     return -1
 
 
-class _NoWheelSlider(QSlider):
-    """屏蔽滚轮事件的水平滑条，避免滚动页面时误操作。"""
-
-    def wheelEvent(self, event) -> None:
-        event.ignore()
-
-
-class _DecimalSliderField(QWidget):
-    """带数值显示的小数滑块字段。"""
-
-    def __init__(
-        self,
-        minimum: float,
-        maximum: float,
-        step: float,
-        *,
-        value: float,
-        decimals: int = 2,
-        suffix: str = "",
-        parent=None,
-    ):
-        super().__init__(parent)
-        self._minimum = float(minimum)
-        self._maximum = float(maximum)
-        self._step = max(float(step), 0.0001)
-        self._decimals = max(0, int(decimals))
-        self._suffix = str(suffix or "")
-
-        total_steps = max(1, int(round((self._maximum - self._minimum) / self._step)))
-
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-
-        row = QHBoxLayout(self)
-        row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(scale_px(10))
-
-        self._slider = _NoWheelSlider(Qt.Horizontal, self)
-        self._slider.setRange(0, total_steps)
-        self._slider.setSingleStep(1)
-        self._slider.setPageStep(max(1, total_steps // 10))
-        self._slider.setTickInterval(max(1, total_steps // 10))
-        self._slider.setTickPosition(QSlider.NoTicks)
-        self._slider.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        row.addWidget(self._slider, 1)
-
-        self._value_label = QLabel(self)
-        self._value_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self._value_label.setFixedWidth(scale_px(56, min_abs=48))
-        value_font = get_digit_font(size=max(scale_px(13, min_abs=10), _CONFIG_FONT_SIZE - scale_px(1, min_abs=1)))
-        value_font.setBold(True)
-        self._value_label.setFont(value_font)
-        row.addWidget(self._value_label, 0)
-
-        self._slider.valueChanged.connect(self._sync_value_label)
-        self.setFocusProxy(self._slider)
-        self.setText(str(value))
-
-    def _clamp(self, raw_value: float) -> float:
-        return max(self._minimum, min(self._maximum, raw_value))
-
-    def _value_from_slider(self, slider_value: int) -> float:
-        return self._minimum + float(slider_value) * self._step
-
-    def _slider_from_value(self, raw_value: float) -> int:
-        value = self._clamp(raw_value)
-        slider_value = int(round((value - self._minimum) / self._step))
-        return max(self._slider.minimum(), min(self._slider.maximum(), slider_value))
-
-    def _format_value(self, raw_value: float) -> str:
-        text = f"{self._clamp(raw_value):.{self._decimals}f}"
-        formatted = text.rstrip("0").rstrip(".") if "." in text else text
-        return f"{formatted}{self._suffix}"
-
-    def _sync_value_label(self, _slider_value: int) -> None:
-        self._value_label.setText(self.text())
-
-    def value(self) -> float:
-        return self._clamp(self._value_from_slider(self._slider.value()))
-
-    def set_value(self, raw_value) -> None:
-        try:
-            numeric = float(raw_value)
-        except (TypeError, ValueError):
-            numeric = self._minimum
-        slider_value = self._slider_from_value(numeric)
-        self._slider.setValue(slider_value)
-        if self._slider.value() == slider_value:
-            self._sync_value_label(slider_value)
-
-    def text(self) -> str:
-        return self._format_value(self.value())
-
-    def setText(self, text) -> None:
-        self.set_value(text)
-
-
-class _AnimationDurationSliderField(_DecimalSliderField):
-    """动画目标时长滑块，同时显示按帧数计算出的实际播放时长。"""
-
-    def __init__(self, *args, frame_count: int, fps: int, **kwargs):
-        self._frame_count = max(0, int(frame_count))
-        self._fps = max(1, int(fps))
-        super().__init__(*args, **kwargs)
-        self._value_label.setFixedWidth(scale_px(92, min_abs=84))
-        self._sync_value_label(self._slider.value())
-
-    def _sync_value_label(self, _slider_value: int) -> None:
-        target = self.value()
-        if self._frame_count <= 0:
-            self._value_label.setText("暂无帧数据")
-            return
-        actual = playback_duration_seconds(
-            self._frame_count,
-            speed_multiplier=target,
-            fps=self._fps,
-        )
-        self._value_label.setText(f"{target:.1f}x/{actual:.1f}s")
-
-    def set_frame_count(self, frame_count: int) -> None:
-        self._frame_count = max(0, int(frame_count))
-        self._sync_value_label(self._slider.value())
-
-
-class AISettingsPanel(QWidget):
+class AISettingsPanel(_ConfigEditorMixin, QWidget):
     """托盘入口 AI 设置面板。"""
 
     _ui_thread_call = pyqtSignal(object)
@@ -426,6 +302,10 @@ class AISettingsPanel(QWidget):
         self.load_values()
         self._refresh_hardware_watermark_async()
 
+    #: 编辑器族的浏览助手经此解析项目根；覆盖为面板自己的 `_project_root`，
+    #: 让既有 `patch.object(ai_settings_panel, "_project_root", ...)` 继续生效。
+    _editor_project_root = staticmethod(lambda: _project_root())
+
     def _refresh_hardware_watermark_async(self) -> None:
         def worker() -> None:
             payload = _load_saved_watermark_payload()
@@ -477,34 +357,8 @@ class AISettingsPanel(QWidget):
         else:
             self._ui_thread_call.emit(func)
 
-    @staticmethod
-    def _create_field_row_group(spacing: int = 0):
-        return _create_field_row_group_helper(spacing)
 
-    def _create_config_line_edit(
-        self,
-        value=...,
-        *,
-        placeholder_text: str = "",
-        expanding: bool = False,
-    ) -> QLineEdit:
-        editor = QLineEdit()
-        if placeholder_text:
-            editor.setPlaceholderText(placeholder_text)
-        if value is not ...:
-            self._set_config_editor_value(editor, value)
-        if expanding:
-            editor.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        return editor
 
-    @staticmethod
-    def _create_config_choice_editor(options: list[tuple[str, str]]) -> QComboBox:
-        editor = _WatermarkComboBox()
-        editor.setView(QListView(editor))
-        editor.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        for label, value in options:
-            editor.addItem(str(label), value)
-        return editor
 
     @staticmethod
     def _description_preview_value(value, max_len: int = 72) -> str:
@@ -1496,259 +1350,6 @@ class AISettingsPanel(QWidget):
     def _show_info_message(self, message: str):
         """显示信息消息框"""
         show_message(self, title="提示", text=message)
-
-    def _create_compact_pair_editor(
-        self,
-        left_value,
-        right_value,
-        *,
-        left_hint: str = "",
-        right_hint: str = "",
-    ):
-        group, row = self._create_field_row_group(spacing=scale_px(10))
-
-        left = self._create_config_line_edit(
-            left_value,
-            placeholder_text=left_hint,
-            expanding=True,
-        )
-        row.addWidget(left, 1)
-
-        right = self._create_config_line_edit(
-            right_value,
-            placeholder_text=right_hint,
-            expanding=True,
-        )
-        row.addWidget(right, 1)
-        return left, right, group
-
-    @staticmethod
-    def _create_form_label(text: str) -> QLabel:
-        label = QLabel(text)
-        label.setObjectName('ConfigFormLabel')
-        label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        return label
-
-    @staticmethod
-    def _is_local_music_path_field(dict_name: str, key: str) -> bool:
-        pair = (str(dict_name), str(key))
-        return pair in {
-            ("CLOUD_MUSIC", "local_music_dir"),
-            ("CLOUD_MUSIC", "launch_wuwa_path"),
-        }
-
-    @staticmethod
-    def _is_launch_wuwa_path_field(dict_name: str, key: str) -> bool:
-        return str(dict_name) == "CLOUD_MUSIC" and str(key) == "launch_wuwa_path"
-
-    @staticmethod
-    def _is_volume_slider_field(dict_name: str, key: str, value) -> bool:
-        pair = (str(dict_name), str(key))
-        if pair not in _VOLUME_SLIDER_FIELDS:
-            return False
-        if isinstance(value, bool):
-            return False
-        return isinstance(value, (int, float))
-
-    @staticmethod
-    def _is_decimal_slider_field(dict_name: str, key: str, value) -> bool:
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            return False
-        pair = (str(dict_name), str(key))
-        return pair in _GENERAL_DECIMAL_SLIDER_SPECS
-
-    @staticmethod
-    def _get_decimal_slider_spec(dict_name: str, key: str, value) -> tuple[float, float, float, int] | None:
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            return None
-        return _GENERAL_DECIMAL_SLIDER_SPECS.get((str(dict_name), str(key)))
-
-    @staticmethod
-    def _get_choice_field_options(dict_name: str, key: str) -> list[tuple[str, str]] | None:
-        """某个字段的可选值；动画目录一类需要实时枚举，其余取静态表。"""
-        return _validation.get_choice_field_options(
-            dict_name, key, folder_options=AISettingsPanel._folder_options
-        )
-
-    @staticmethod
-    def _folder_options() -> list[tuple[str, str]]:
-        """动画目录的 `(显示名, 目录名)` 选项，供校验模块按需取用。"""
-        return [
-            (_animation_folder_display_name(name), name)
-            for name in list_animation_folder_choices()
-        ]
-
-    @staticmethod
-    def _volume_percent_from_value(value) -> int:
-        try:
-            v = float(value)
-        except Exception:
-            v = 0.0
-        v = max(0.0, min(1.0, v))
-        return int(round(v * 100))
-
-    @staticmethod
-    def _volume_value_from_percent(percent: int) -> float:
-        p = max(0, min(100, int(percent)))
-        # 步进按 1% 固定，避免浮点误差导致显示与落盘不一致。
-        return round(p / 100.0, 2)
-
-
-    # ── 解析模块注入的控件能力（无 Qt 模块只认这几个谓词）───────────────
-
-    @staticmethod
-    def is_text_editor(editor) -> bool:
-        return isinstance(editor, QLineEdit)
-
-    @staticmethod
-    def is_slider(editor) -> bool:
-        return isinstance(editor, QSlider)
-
-    @staticmethod
-    def is_decimal_field(editor) -> bool:
-        return isinstance(editor, _DecimalSliderField)
-
-    @staticmethod
-    def is_check_box(editor) -> bool:
-        return isinstance(editor, QCheckBox)
-
-    @staticmethod
-    def is_combo_box(editor) -> bool:
-        return isinstance(editor, QComboBox)
-
-    def _create_volume_slider_editor(self, value):
-        group = QWidget()
-        group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        row = QHBoxLayout(group)
-        row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(scale_px(8, min_abs=6))
-
-        slider = _NoWheelSlider(Qt.Horizontal)
-        slider.setRange(0, 100)
-        slider.setSingleStep(1)
-        slider.setPageStep(1)
-        slider.setTickInterval(10)
-        slider.setTickPosition(QSlider.NoTicks)
-        slider.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-
-        label = QLabel()
-        label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        label.setFixedWidth(scale_px(44, min_abs=38))
-
-        percent = self._volume_percent_from_value(value)
-        slider.setValue(percent)
-        label.setText(f"{percent}%")
-        slider.valueChanged.connect(lambda v, lbl=label: lbl.setText(f"{int(v)}%"))
-
-        row.addWidget(slider, 1)
-        row.addWidget(label, 0)
-        return slider, label, group
-
-    def _create_animation_folder_duration_editor(
-        self,
-        animation_type: str,
-        folder_value: str,
-        duration_value: float,
-    ):
-        """Keep each animation's folder and timing controls in one editor group."""
-        folder_key = f"{animation_type}_animation_folder"
-        duration_key = f"{animation_type}_animation_duration"
-        options = self._get_choice_field_options("ANIMATION", folder_key) or []
-        folder_editor = self._create_config_choice_editor(options)
-        duration_spec = self._get_decimal_slider_spec("ANIMATION", duration_key, duration_value)
-        if duration_spec is None:
-            raise ValueError(f"缺少动画时长滑块规格: {duration_key}")
-        minimum, maximum, step, decimals = duration_spec
-        frame_count = len(scan_animation_frame_files(resolve_animation_folder_path(str(folder_value))))
-        duration_editor = _AnimationDurationSliderField(
-            minimum,
-            maximum,
-            step,
-            value=float(duration_value),
-            decimals=decimals,
-            frame_count=frame_count,
-            fps=int(ANIMATION.get("frame_fps", 60) or 60),
-        )
-        folder_editor.currentIndexChanged.connect(
-            lambda _index, combo=folder_editor, timing=duration_editor: timing.set_frame_count(
-                len(scan_animation_frame_files(resolve_animation_folder_path(str(combo.currentData() or ""))))
-            )
-        )
-        group = QWidget()
-        group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        layout = QVBoxLayout(group)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(scale_px(5, min_abs=3))
-        layout.addWidget(folder_editor)
-        layout.addWidget(duration_editor)
-        return folder_editor, duration_editor, group
-
-    def _create_path_editor_with_open_button(
-        self,
-        dict_name: str,
-        key: str,
-        value,
-    ):
-        group, row = self._create_field_row_group(spacing=scale_px(8, min_abs=6))
-
-        editor = self._create_config_line_edit(value, expanding=True)
-        row.addWidget(editor, 1)
-
-        open_btn = QPushButton("浏览")
-        open_btn.setFixedWidth(scale_px(52, min_abs=46))
-        if self._is_launch_wuwa_path_field(dict_name, key):
-            open_btn.clicked.connect(lambda _=False, line=editor: self._browse_launch_wuwa_file(line))
-        elif self._is_local_music_path_field(dict_name, key):
-            open_btn.clicked.connect(lambda _=False, line=editor: self._browse_local_music_dir(line))
-        row.addWidget(open_btn, 0)
-        return editor, open_btn, group
-
-    def _browse_local_music_dir(self, editor: QLineEdit) -> None:
-        start_dir = _project_root()
-        current_text = str(editor.text() or "").strip()
-        if current_text:
-            expanded = os.path.expandvars(os.path.expanduser(current_text))
-            candidate = Path(expanded)
-            if not candidate.is_absolute():
-                candidate = _project_root() / candidate
-            if candidate.is_file():
-                candidate = candidate.parent
-            if candidate.exists() and candidate.is_dir():
-                start_dir = candidate
-            elif candidate.parent.exists() and candidate.parent.is_dir():
-                start_dir = candidate.parent
-
-        selected = QFileDialog.getExistingDirectory(
-            self,
-            "选择本地音乐文件夹",
-            str(start_dir),
-            QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks,
-        )
-        if selected:
-            editor.setText(os.path.normpath(selected))
-
-    def _browse_launch_wuwa_file(self, editor: QLineEdit) -> None:
-        start_dir = _project_root()
-        current_text = str(editor.text() or "").strip()
-        if current_text:
-            expanded = os.path.expandvars(os.path.expanduser(current_text))
-            candidate = Path(expanded)
-            if not candidate.is_absolute():
-                candidate = _project_root() / candidate
-            if candidate.exists():
-                start_dir = candidate.parent if candidate.is_file() else candidate
-            elif candidate.parent.exists() and candidate.parent.is_dir():
-                start_dir = candidate.parent
-
-        selected, _ = QFileDialog.getOpenFileName(
-            self,
-            "选择鸣潮启动文件",
-            str(start_dir),
-            "启动文件 (*.exe *.bat *.lnk);;可执行文件 (*.exe);;批处理 (*.bat);;快捷方式 (*.lnk);;所有文件 (*.*)",
-        )
-        if selected:
-            editor.setText(os.path.normpath(selected))
-
     @staticmethod
     def _open_path_with_system_default(path: Path) -> None:
         if hasattr(os, "startfile"):
@@ -1863,66 +1464,9 @@ class AISettingsPanel(QWidget):
             except Exception as exc:
                 _logger.warning("删除失败后恢复 ONNX 语音包失败: %s", exc)
         self._emit_info(f"删除 ONNX 语音包失败：{message}", min_tick=20, max_tick=180)
-
-    @staticmethod
-    @staticmethod
-    @staticmethod
-    def _wrap_field_widget(widget: QWidget) -> QWidget:
-        wrap = QWidget()
-        wrap.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        row = QHBoxLayout(wrap)
-        row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(0)
-        row.addWidget(widget, 1, Qt.AlignVCenter)
-        return wrap
-
-    def _create_sequence_editor(self, value):
-        group, row = self._create_field_row_group(spacing=scale_px(10))
-
-        items = list(value) if isinstance(value, (tuple, list)) else [value]
-        editors: list[QLineEdit] = []
-        for item in items:
-            editor = self._create_config_line_edit(item, expanding=True)
-            editors.append(editor)
-            row.addWidget(editor, 1)
-        return editors, group
-
-    @staticmethod
-    def _set_sequence_editor_values(editors, value) -> None:
-        if not isinstance(value, (tuple, list)):
-            return
-        for idx, editor in enumerate(editors):
-            if idx >= len(value):
-                break
-            if isinstance(editor, QLineEdit):
-                editor.setText(_format_config_editor_value(value[idx]))
-
     @staticmethod
     def _parse_text_by_template(text: str, template):
         return _config_parse.parse_text_by_template(text, template)
-
-    @staticmethod
-    def _set_config_editor_value(editor, value) -> None:
-        if isinstance(editor, QCheckBox):
-            editor.setChecked(bool(value))
-            return
-        if isinstance(editor, QSlider):
-            editor.setValue(AISettingsPanel._volume_percent_from_value(value))
-            return
-        if isinstance(editor, _DecimalSliderField):
-            editor.set_value(value)
-            return
-        if isinstance(editor, QComboBox):
-            index = editor.findData(value)
-            if index < 0:
-                index = editor.findText(str(value))
-            if index >= 0:
-                editor.setCurrentIndex(index)
-            elif editor.count() > 0:
-                editor.setCurrentIndex(0)
-            return
-        if isinstance(editor, QLineEdit):
-            editor.setText(_format_config_editor_value(value))
 
     @staticmethod
     def _get_autostart_enabled() -> bool:
