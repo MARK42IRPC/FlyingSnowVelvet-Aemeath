@@ -356,6 +356,35 @@ class WorkbenchSettingsLayoutTests(unittest.TestCase):
         self.assertIn("_num_gpu_from_mode", vars(page))
         self.assertIs(store_module._gpu_mode_from_num_gpu, page._gpu_mode_from_num_gpu)
 
+    def test_panel_shell_lives_in_the_shared_shell_module(self):
+        """面板外壳（窗口生命周期 + 自绘边框 + 悬浮标签栏）已下沉到 `ai_settings_shell`。
+
+        第八轮之后 `AISettingsPanel` 本体只剩多继承、项目根钩子与更新页转发；
+        外壳方法必须与 `AISettingsShellMixin` 上的实现同源，`ai_settings_tabs.py` 经由
+        面板调用的布局 / 显隐入口才继续成立。
+        """
+        import lib.script.ui.ai_settings_shell as shell
+
+        self.assertTrue(issubclass(AISettingsPanel, shell.AISettingsShellMixin))
+        for name in (
+            "__init__",
+            "_build_ui" if hasattr(shell.AISettingsShellMixin, "_build_ui") else "_invoke_ui_callable",
+            "create_workbench_page",
+            "show_centered",
+            "fade_out",
+            "_layout_top_tab_bar",
+            "_hide_floating_tab",
+            "_cache_stable_window_size",
+            "paintEvent",
+            "deleteLater",
+            "_apply_project_fonts",
+        ):
+            self.assertIs(
+                getattr(AISettingsPanel, name),
+                getattr(shell.AISettingsShellMixin, name),
+                name,
+            )
+
     def test_workbench_theme_stylesheets_have_dark_and_light_palettes(self):
         dark = workbench_stylesheet("dark")
         light = workbench_stylesheet("light")

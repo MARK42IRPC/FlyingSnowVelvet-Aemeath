@@ -185,6 +185,15 @@
   与 `_config_tab_meta` oracle 差异为 **0**，`styleSheet()` 9450 字符逐字符全等。
   执行记录见 `doc/render层边界契约.md` 第 54 节。
 
+- 设置面板「面板外壳」切到 `lib/script/ui/ai_settings_shell.py`（`AISettingsShellMixin`，702 行）：
+  `__init__` 的窗口装配、自绘 `paintEvent`、边框粒子 `TICK` 订阅、鼠标拖拽与上下文菜单、
+  项目字体、悬浮标签栏与配置面板布局转发、`show_centered` / `fade_out` 显隐动画、工作台挂载与
+  四个只读页装配整体搬出（51 个方法），窗口档位常量与 `_ui_thread_call` 信号同行。
+  `AISettingsPanel` 改为多继承本 mixin，`ai_settings_panel.py` 858 → **153 行**，
+  只剩多继承、项目根钩子、更新页转发与贡献名单委托；`frozen_ui_qt_importers` 48 → 49（第 55 节）。
+  八页控件树 / 位图 oracle 差异为 **0**，`styleSheet()` 9450 字符逐字符全等。
+  执行记录见 `doc/render层边界契约.md` 第 55 节。
+
 ### Changed
 - 删除 `ai_settings_panel.py` 里已死的 N 卡能力探测链路：
   `_refresh_nvidia_acceleration_capability_async()` 已无任何调用点（两个调用位在某次重构中

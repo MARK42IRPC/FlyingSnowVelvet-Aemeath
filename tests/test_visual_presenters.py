@@ -470,6 +470,7 @@ class VisualPresenterTests(unittest.TestCase):
         hosts = (
             "lib/script/ui/ai_settings_tabs.py",
             "lib/script/ui/ai_settings_panel.py",
+            "lib/script/ui/ai_settings_shell.py",
             "lib/script/ui/playlist_panel.py",
             "lib/script/ui/cmd_window.py",
         )

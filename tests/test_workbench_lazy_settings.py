@@ -16,12 +16,11 @@ _QT_ROOT = os.path.dirname(PyQt5.QtCore.__file__)
 os.environ.setdefault('QT_QPA_PLATFORM_PLUGIN_PATH', os.path.join(_QT_ROOT, 'Qt5', 'plugins', 'platforms'))
 os.environ.setdefault('QT_PLUGIN_PATH', os.path.join(_QT_ROOT, 'Qt5', 'plugins'))
 
-from PyQt5.QtWidgets import QApplication
+from PyQt5.QtWidgets import QApplication, QComboBox, QLabel, QLineEdit
 
 from config.config_layer import LAYER_VALUES
 from lib.script.ui import ai_settings_config_page as config_page_module
 from lib.script.ui import ai_settings_config_store as store_module
-from lib.script.ui import ai_settings_panel as panel_module
 from lib.script.ui.ai_settings_panel import AISettingsPanel
 from lib.script.ui.announcement_dialog import AnnouncementPreferences
 
@@ -63,7 +62,7 @@ class WorkbenchLazySettingsTests(unittest.TestCase):
         ]
         self.assertEqual(len(fields), 1)
         combo = fields[0]['editor']
-        self.assertIsInstance(combo, panel_module.QComboBox)
+        self.assertIsInstance(combo, QComboBox)
         self.assertEqual(
             [combo.itemData(index) for index in range(combo.count())],
             ['qt', 'directx', 'opengl', 'vulkan'],
@@ -93,7 +92,7 @@ class WorkbenchLazySettingsTests(unittest.TestCase):
         self.assertEqual(set(fields), set(LAYER_VALUES))
         for key, default in LAYER_VALUES.items():
             editor = fields[key]['editor']
-            self.assertIsInstance(editor, panel_module.QLineEdit)
+            self.assertIsInstance(editor, QLineEdit)
             self.assertEqual(int(editor.text()), int(default))
 
         fields['MAIN_PET']['editor'].setText('700')
@@ -141,7 +140,7 @@ class WorkbenchLazySettingsTests(unittest.TestCase):
         self.assertTrue(checkbox.isChecked())
         self.assertIn(
             '不显示公告',
-            [label.text() for label in page.findChildren(panel_module.QLabel)],
+            [label.text() for label in page.findChildren(QLabel)],
         )
 
         checkbox.setChecked(False)

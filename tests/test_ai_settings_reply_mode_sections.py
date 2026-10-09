@@ -18,8 +18,8 @@ from PyQt5.QtWidgets import QApplication, QComboBox, QLabel
 
 from lib.core.event.center import EventType
 from lib.script.ui import ai_settings_config_store as store_module
+from lib.script.ui import ai_settings_defaults as defaults_module
 from lib.script.ui import ai_settings_page as page_module
-from lib.script.ui import ai_settings_panel as panel_module
 from lib.core.services import api_endpoints as api_endpoints_module
 from lib.script.ui.ai_settings_panel import AISettingsPanel
 from lib.script.gsvmove.package_manager import VoicePackageStatus
@@ -450,7 +450,7 @@ class AISettingsReplyModeSectionsTests(unittest.TestCase):
         self.assertTrue(checkbox.isHidden())
 
     def test_voice_package_install_enables_and_persists_runtime(self):
-        saved_values = dict(panel_module._DEFAULT_VALUES)
+        saved_values = dict(defaults_module.AI_DEFAULT_VALUES)
         saved_values["gsv_auto_start"] = False
         service = Mock()
         self.panel._gsv_auto_start.setChecked(False)
@@ -471,7 +471,7 @@ class AISettingsReplyModeSectionsTests(unittest.TestCase):
 
         persisted = save_values.call_args.args[0]
         self.assertTrue(persisted["gsv_auto_start"])
-        apply_runtime.assert_called_once_with(persisted, panel_module._DEFAULT_VALUES)
+        apply_runtime.assert_called_once_with(persisted, defaults_module.AI_DEFAULT_VALUES)
         self.assertTrue(self.panel._gsv_auto_start.isChecked())
         service.reload_voice_package.assert_called_once_with()
 

@@ -9,9 +9,11 @@
 > **迁移次序修订（2026-10-07）：** `frozen_ui_qt_importers` 里剩余的大文件（`ai_settings_panel.py`、
 > `forum_board.py` 等）改为「先按模块拆分瘦身、再逐个收敛 Qt」。拆分只做纯移动、不得让冻结清单增长；
 > 拆分出的新文件若仍 import Qt，必须显式登记而不是放宽断言。批次划分与每轮验收门槛见
-> [Render 层边界契约](render层边界契约.md) 第 34 节，执行记录见第 35–54 节。
+> [Render 层边界契约](render层边界契约.md) 第 34 节，执行记录见第 35–55 节。
 >
-> 冻结清单当前为 48 项：批次 3 第七轮把「配置取值 / 回填 / 恢复 / 异步保存」控制器切到
+> 冻结清单当前为 49 项：批次 3 第八轮把面板外壳（窗口生命周期 + 自绘边框 + 悬浮标签栏）切到
+> `lib/script/ui/ai_settings_shell.py`（第 55 节），面板本体自此只剩 153 行（多继承 + 更新页转发）；
+> 第七轮把「配置取值 / 回填 / 恢复 / 异步保存」控制器切到
 > `lib/script/ui/ai_settings_config_store.py`（第 54 节）；第六轮把面板的 AI 主页面
 > （`_build_ui` + 取值/回填闭环）切到 `lib/script/ui/ai_settings_page.py`（第 53 节）；第五轮把「配置分类页 + 外部配置字段族」切到
 > `lib/script/ui/ai_settings_config_page.py`（第 52 节）；
