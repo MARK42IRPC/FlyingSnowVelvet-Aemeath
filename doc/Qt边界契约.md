@@ -9,10 +9,13 @@
 > **迁移次序修订（2026-10-07）：** `frozen_ui_qt_importers` 里剩余的大文件（`ai_settings_panel.py`、
 > `forum_board.py` 等）改为「先按模块拆分瘦身、再逐个收敛 Qt」。拆分只做纯移动、不得让冻结清单增长；
 > 拆分出的新文件若仍 import Qt，必须显式登记而不是放宽断言。批次划分与每轮验收门槛见
-> [Render 层边界契约](render层边界契约.md) 第 34 节，执行记录见第 35–49 节。
+> [Render 层边界契约](render层边界契约.md) 第 34 节，执行记录见第 35–50 节。
 >
-> 冻结清单当前为 44 项：批次 3 第二轮把「桌宠更新」页切到 `ai_settings_update.py`
-> （面板 3607 → 3474 行，第 49 节）；此前首轮把「支持作者 / 贡献者」两页切到
+> 冻结清单当前为 44 项：批次 3 第三轮把面板整段 QSS 下沉到
+> `lib/core/render/visuals/ai_settings_panel_visuals.py`（面板 3473 → 3234 行，第 50 节）——该文件在
+> `lib/core/render/visuals/` 下且不 import Qt，不在本清单的扫描面内，故条目数不变；
+> 第二轮把「桌宠更新」页切到 `ai_settings_update.py`
+> （面板 3607 → 3473 行，第 49 节）；此前首轮把「支持作者 / 贡献者」两页切到
 > `ai_settings_about.py`，该文件仍 import Qt 因此按规则新增登记（面板同时瘦身
 > 3889 → 3607 行，第 48 节）；C 类的目标是后续轮次逐个去 Qt 再把条目删回去。
 > 第三十三轮移出 `announcement_dialog.py` / `update_dialog.py` /

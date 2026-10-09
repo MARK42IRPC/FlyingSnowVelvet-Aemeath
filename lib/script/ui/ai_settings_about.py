@@ -10,8 +10,9 @@
   `set_sponsor_author_image` 只做「开链接 / 贴图」两件事，不读面板状态；提示文案经
   `show_info` 回调注入，因此本模块不依赖面板类型，也不 import 面板。
 - **描述**：`sponsor_author_stylesheet` / `contribution_list_stylesheet` 是两页专属的
-  QSS 片段，只读工作台主题色（`get_workbench_colors`）与像素档（`scale_px`），
-  返回的字符串与搬出前逐字符相同。
+  QSS 片段。批次 3 第三轮把这两段 QSS 的**正文**上移到
+  `lib/core/render/visuals/ai_settings_panel_visuals.py`（与整段面板样式表同一事实源），
+  这里改为从该模块导入并按原名转发，串仍然是逐字符相同的那两段。
 
 本模块仍在 `lib/script/ui/` 下、仍 import `PyQt5`（两页都是 QWidget 树），因此
 `tests/test_qt_dependency_boundaries.py` 的 `frozen_ui_qt_importers` 必须同时登记
@@ -47,6 +48,10 @@ from lib.script.ui.ai_settings_contributions import (
 )
 from lib.script.ui.render_bridge import ui_font as get_ui_font
 from lib.script.ui.workbench_settings_layout import SettingsPageScaffold
+from lib.core.render.visuals.ai_settings_panel_visuals import (
+    contribution_list_fragment,
+    sponsor_author_fragment,
+)
 from lib.script.workbench.theme import get_workbench_colors
 
 #: 与面板同一像素档：卡片与行内字号都由它派生，取值必须与搬出前一致。
@@ -334,81 +339,10 @@ def open_contribution_link(show_info: Callable[[str], None], name: str, url: str
 
 
 def sponsor_author_stylesheet() -> str:
-    """「支持作者」页专属 QSS：卡片外壳、赞助图框与爱发电按钮三态。
-
-    片段以换行开头，接在前一条规则之后插值即可得到与切分前逐字符相同的样式表；
-    占位符仍由工作台主题色（`about_c`）与像素档（`scale_px`）填充。
-    """
-    about_c = get_workbench_colors()
-    return f"""
-            QWidget#sponsorAuthorCard {{
-                background: transparent;
-                border: none;
-            }}
-            QWidget#sponsorAuthorImageFrame {{
-                background: {about_c.surface_raised};
-                border: 1px solid {about_c.border};
-                border-radius: {scale_px(4, min_abs=3)}px;
-            }}
-            QLabel#sponsorAuthorImage {{
-                background: transparent;
-                color: {about_c.text};
-                padding: {scale_px(6, min_abs=4)}px;
-            }}
-            QPushButton#sponsorAuthorButton {{
-                background: {about_c.cyan};
-                color: {about_c.canvas};
-                border: 1px solid {about_c.cyan};
-                border-radius: {scale_px(4, min_abs=3)}px;
-                min-height: {scale_px(34, min_abs=30)}px;
-                padding: 0px {scale_px(12, min_abs=10)}px;
-                font-weight: 700;
-            }}
-            QPushButton#sponsorAuthorButton:hover {{
-                background: {about_c.pink_hover};
-                color: {about_c.canvas};
-                border-color: {about_c.pink_hover};
-            }}
-            QPushButton#sponsorAuthorButton:pressed {{
-                background: {about_c.pink};
-                color: {about_c.canvas};
-                border-color: {about_c.pink};
-            }}"""
+    """「支持作者」页专属 QSS 片段；整段样式表的事实源已上移到 `visuals/`。"""
+    return sponsor_author_fragment(get_workbench_colors())
 
 
 def contribution_list_stylesheet() -> str:
-    """「贡献者」页专属 QSS：卡片三态、左侧强调条与两行文本配色。
-
-    片段以换行开头、末尾补一个换行，供面板接着写后续规则。
-    """
-    about_c = get_workbench_colors()
-    return f"""
-            QPushButton#ContributionCardButton {{
-                background: {about_c.surface_raised};
-                color: {about_c.text};
-                border: 1px solid {about_c.border};
-                border-radius: {scale_px(4, min_abs=3)}px;
-                padding: 0px;
-                min-height: {scale_px(66, min_abs=58)}px;
-            }}
-            QPushButton#ContributionCardButton:hover {{
-                background: {about_c.surface_hover};
-                border-color: {about_c.cyan};
-            }}
-            QPushButton#ContributionCardButton:pressed {{
-                background: {about_c.surface};
-                border-color: {about_c.pink};
-            }}
-            QWidget#ContributionCardAccent {{
-                background: {about_c.cyan};
-                border: none;
-                border-radius: {scale_px(1, min_abs=1)}px;
-            }}
-            QLabel#ContributionCardName {{
-                background: transparent;
-                color: {about_c.text};
-            }}
-            QLabel#ContributionCardRole {{
-                background: transparent;
-                color: {about_c.text_muted};
-            }}"""
+    """「贡献者」页专属 QSS 片段；整段样式表的事实源已上移到 `visuals/`。"""
+    return contribution_list_fragment(get_workbench_colors())

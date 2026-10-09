@@ -133,6 +133,17 @@
   改到真正的所有者 `ai_settings_update`。`frozen_ui_qt_importers` 43 → 44。
   执行记录见 `doc/render层边界契约.md` 第 49 节。
 
+- 设置面板整段 QSS 下沉到后端中立视觉层：新增
+  `lib/core/render/visuals/ai_settings_panel_visuals.py`（364 行），承接 `_apply_style()` 原地
+  拼的 243 行样式表（配置区 / 表单标签一族、`QMenu` / `QScrollArea` / `QComboBox` / `QSpinBox` /
+  `QSlider` 各态与滚动条），以及「支持作者 / 贡献者」两页的内联 QSS 片段与三个像素档常量；
+  `ai_settings_panel._apply_style()` 改为一行转发，`ai_settings_about` 的两个样式函数改为按原名
+  转发。新模块只读 `COLORS` / `UI_THEME` 与工作台 token，不 import `PyQt5`、不在
+  `frozen_ui_qt_importers` 扫描面内（仍为 44 项）。`ai_settings_panel.py` 3473 → 3234 行。
+  验收：面板 `styleSheet()` 与拆前逐字符全等（9450 字符，SHA-256 相等）；离屏 1000×760 三页
+  控件树摘要全等、位图 SHA-256 相等（差异像素 0）；新增
+  `tests/test_ai_settings_panel_visuals.py` 5 条。执行记录见 `doc/render层边界契约.md` 第 50 节。
+
 ### Changed
 - 删除 `ai_settings_panel.py` 里已死的 N 卡能力探测链路：
   `_refresh_nvidia_acceleration_capability_async()` 已无任何调用点（两个调用位在某次重构中

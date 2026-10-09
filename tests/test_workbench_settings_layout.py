@@ -178,6 +178,18 @@ class WorkbenchSettingsLayoutTests(unittest.TestCase):
         panel.deleteLater()
         self.app.processEvents()
 
+    def test_panel_stylesheet_matches_the_shared_visual_module(self):
+        """面板的整段 QSS 必须就是描述层生成的那一份（第三轮下沉后的等价断言）。"""
+        from lib.core.render.visuals.ai_settings_panel_visuals import ai_settings_panel_stylesheet
+
+        with patch.object(AISettingsPanel, '_refresh_hardware_watermark_async', lambda self: None):
+            panel = AISettingsPanel(lazy_workbench_pages=True)
+        try:
+            self.assertEqual(panel.styleSheet(), ai_settings_panel_stylesheet())
+        finally:
+            panel.deleteLater()
+            self.app.processEvents()
+
     def test_workbench_theme_stylesheets_have_dark_and_light_palettes(self):
         dark = workbench_stylesheet("dark")
         light = workbench_stylesheet("light")
