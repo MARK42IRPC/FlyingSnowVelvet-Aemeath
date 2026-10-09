@@ -45,7 +45,6 @@ from config.ollama_config import (
     AI_VOICE_MAX_CHARS_MIN,
 )
 from config.scale import scale_px
-from config.shared_storage_paths import get_shared_root_dir
 from lib.script.ui.ai_settings_validators import validate_ai_values
 from lib.script.ui.ai_settings_config_schema import (
     CATEGORY_KEY_ALLOWLIST as _CATEGORY_KEY_ALLOWLIST,
@@ -58,6 +57,7 @@ from lib.script.ui.ai_settings_config_schema import (
     range_pair_signature as _range_pair_signature,
 )
 from lib.script.ui import ai_settings_about as _about
+from lib.script.ui import ai_settings_update as _update_page
 from lib.script.ui import ai_settings_config_parse as _config_parse
 from lib.script.ui import ai_settings_descriptions as _descriptions
 from lib.script.ui import ai_settings_validation as _validation
@@ -81,8 +81,7 @@ from lib.script.ui.announcement_dialog import (
     load_announcement_preferences,
     set_announcement_forever_suppressed,
 )
-from lib.script.app.uninstall_entry import launch_uninstaller, resolve_uninstaller
-from lib.script.ui.confirm_dialog import ask_confirmation, show_message
+from lib.script.ui.confirm_dialog import show_message
 from lib.script.ui.qq_group_dialog import QQGroupDialog
 from lib.script.ui.ai_settings_tabs import (
     attach_ai_settings_tabs,
@@ -165,8 +164,6 @@ _GENERAL_HINT_TEXT = "保存后会写入本地配置文件，建议重启程序�
 
 
 _HINT_FONT_SIZE = max(scale_px(12, min_abs=9), _CONFIG_FONT_SIZE - scale_px(2, min_abs=1))
-_UPDATE_BUTTON_ROW_GAP = scale_px(10, min_abs=10)
-_QUARK_UPDATE_URL = "https://pan.quark.cn/s/9158e62439e2"
 _SPONSOR_AUTHOR_URL = "https://afdian.com/a/fxxrdeskpet"
 # 贡献名单的常量（忽略标题片段 / 隐藏角色 / 手工条目）与解析逻辑已下沉到
 # `lib/script/ui/ai_settings_contributions.py`；本文件只保留下面的路径与加载委托。
@@ -1438,111 +1435,15 @@ class AISettingsPanel(QWidget):
         title_label: QLabel,
         hint_label: QLabel,
     ) -> QWidget:
-        stable_section = scaffold.add_help_section(
-            "稳定版本",
-            "检查最新分发包。下载完成后桌宠会退出，由独立更新进程覆盖安装并重新启动。",
-            help_text=(
-                "稳定版是给所有用户用的正式版本，更新前会先核对发布清单里的校验值。\n\n"
-                "点「检查新版本」后桌宠会去发布槽取最新安装包。下载完成不会当场替换文件，"
-                "而是先退出桌宠，再由独立更新进程接管安装目录、覆盖完成之后把桌宠重新拉起来，"
-                "所以更新过程中桌面会短暂少一只桌宠，属于正常现象。\n\n"
-                "更新只覆盖程序文件，用户数据、配置和缓存都不受影响。"
-            ),
+        return _update_page.build_desktop_pet_update_panel(
+            panel,
+            scaffold,
+            category_title,
+            title_label,
+            hint_label,
+            self._config_tab_meta,
+            self._pet_update_actions(),
         )
-        stable_row = QHBoxLayout()
-        stable_row.setContentsMargins(0, 0, 0, 0)
-        stable_row.setSpacing(scale_px(8, min_abs=6))
-        check_update_btn = QPushButton("检查新版本", stable_section)
-        check_update_btn.setObjectName("checkUpdateButton")
-        check_update_btn.setProperty("primary", True)
-        check_update_btn.clicked.connect(self._on_check_updates)
-        stable_row.addWidget(check_update_btn, 1)
-        stable_section.body_layout.addLayout(stable_row)
-
-        dev_section = scaffold.add_help_section(
-            "开发版本",
-            "面向需要跟随远端代码的使用场景。同步前请先确认本地改动已妥善保存。",
-            help_text=(
-                "开发版跟随远端主干代码，比稳定版更新得更快，但也可能带着还没验证完的改动。\n\n"
-                "同步会用远端版本覆盖本地程序文件。如果你改过源码、装过额外插件，"
-                "请先确认这些改动已经妥善保存或另有备份，覆盖之后无法找回。\n\n"
-                "只想要能稳定用的版本时，请走上面的稳定版。"
-            ),
-        )
-        sync_dev_btn = QPushButton("同步开发版", dev_section)
-        sync_dev_btn.setObjectName("syncDevButton")
-        sync_dev_btn.clicked.connect(self._on_sync_dev_build)
-        dev_section.body_layout.addWidget(sync_dev_btn)
-
-        manual_section = scaffold.add_help_section(
-            "手动获取",
-            "自动更新不可用时，可通过网盘或 QQ 群获取完整安装包。",
-            help_text=(
-                "网络不通、更新服务 unavailable 或者自动更新反复失败时走这里。\n\n"
-                "网盘和 QQ 群里放的都是完整安装包，下载后直接安装即可，"
-                "不需要先卸载旧版本，安装程序会自己处理覆盖。"
-            ),
-        )
-        manual_row = QHBoxLayout()
-        manual_row.setContentsMargins(0, 0, 0, 0)
-        manual_row.setSpacing(_UPDATE_BUTTON_ROW_GAP)
-        quark_update_btn = QPushButton("打开夸克网盘", manual_section)
-        quark_update_btn.setObjectName("quarkManualUpdateButton")
-        quark_update_btn.clicked.connect(self._open_quark_manual_update)
-        manual_row.addWidget(quark_update_btn, 1)
-        qq_group_btn = QPushButton("查看 QQ 群", manual_section)
-        qq_group_btn.setObjectName("qqGroupUpdateButton")
-        qq_group_btn.clicked.connect(self._show_qq_group_qrcode)
-        manual_row.addWidget(qq_group_btn, 1)
-        manual_section.body_layout.addLayout(manual_row)
-
-        uninstall_section = scaffold.add_help_section(
-            "卸载",
-            "退出桌宠并把程序文件交给安装版卸载程序；源码工作区只能手动删除目录。",
-            help_text=(
-                "离线安装包装好的飞行雪绒自带卸载程序，就在启动器的旁边。\n\n"
-                "点「卸载桌宠」会先退出桌宠，再由卸载程序删除 app 与 runtime 下的程序文件；"
-                "用户数据、记忆、语音包默认保留，卸载界面上可以勾选一并删除。\n\n"
-                "源码工作区没有卸载程序：想移除就把当前目录整个删掉。"
-                "用户数据仍然放在共享目录里，需要时单独清理。"
-            ),
-        )
-        uninstall_btn = QPushButton("卸载桌宠", uninstall_section)
-        uninstall_btn.setObjectName("uninstallPetButton")
-        uninstall_btn.setProperty("danger", True)
-        uninstall_btn.clicked.connect(self._on_uninstall_pet)
-        uninstall_section.body_layout.addWidget(uninstall_btn)
-        scaffold.finish()
-
-        self._config_tab_meta["desktop_pet_update"] = {
-            "panel": panel,
-            "fields": [],
-            "defaults": {},
-            "title": category_title,
-            "title_label": title_label,
-            "hint_label": hint_label,
-            "section_title_labels": [
-                stable_section.title_label,
-                dev_section.title_label,
-                manual_section.title_label,
-                uninstall_section.title_label,
-            ],
-            "section_hint_labels": [
-                stable_section.description_label,
-                dev_section.description_label,
-                manual_section.description_label,
-                uninstall_section.description_label,
-            ],
-            "buttons": [
-                check_update_btn,
-                sync_dev_btn,
-                quark_update_btn,
-                qq_group_btn,
-                uninstall_btn,
-            ],
-        }
-
-        return panel
 
     def _build_sponsor_author_panel(
         self,
@@ -3415,90 +3316,55 @@ class AISettingsPanel(QWidget):
             "max": max_tick,
         }))
 
+    def _pet_update_actions(self) -> _update_page.PetUpdateActions:
+        """把更新页动作要的回调打包成显式依赖；两个对话框实例仍以面板字段为准。"""
+        return _update_page.PetUpdateActions(
+            check_updates=self._on_check_updates,
+            sync_dev_build=self._on_sync_dev_build,
+            open_quark_manual=self._open_quark_manual_update,
+            show_qq_group=self._show_qq_group_qrcode,
+            uninstall_pet=self._on_uninstall_pet,
+            show_info=self._show_info_message,
+            emit_info=self._emit_info,
+            fade_out=self.fade_out,
+            event_center=self._ec,
+            root_dir=_project_root(),
+            dialog_parent=self,
+            update_dialog=self._update_dialog,
+            qq_group_dialog=self._qq_group_dialog,
+        )
+
+    def _run_pet_update_action(self, action):
+        """跑一个更新页动作，并把动作里新建的对话框缓存回面板字段（与搬出前同一份状态）。"""
+        actions = self._pet_update_actions()
+        result = action(actions)
+        self._update_dialog = actions.update_dialog
+        self._qq_group_dialog = actions.qq_group_dialog
+        return result
+
     def _ensure_update_dialog(self) -> DesktopPetUpdateDialog:
-        if self._update_dialog is None:
-            self._update_dialog = DesktopPetUpdateDialog()
-        return self._update_dialog
+        return self._run_pet_update_action(_update_page.ensure_update_dialog)
 
     def _open_update_dialog(self, mode: str) -> None:
-        dialog = self._ensure_update_dialog()
-        if dialog.is_busy():
-            self._emit_info("更新窗口正在处理任务，请稍候。", min_tick=12, max_tick=160)
-            return
-
-        self.fade_out()
-        delay_ms = max(80, int(UI.get("ui_fade_duration", 180)))
-
-        def show_dialog() -> None:
-            started = (
-                dialog.begin_release_check()
-                if mode == "release"
-                else dialog.begin_git_sync_check()
-            )
-            if not started:
-                self._emit_info("更新窗口正在处理任务，请稍候。", min_tick=12, max_tick=160)
-
-        QTimer.singleShot(delay_ms, show_dialog)
+        self._run_pet_update_action(lambda actions: _update_page.open_update_dialog(actions, mode))
 
     def _on_check_updates(self) -> None:
-        self._open_update_dialog("release")
+        self._run_pet_update_action(_update_page.on_check_updates)
 
     def _on_sync_dev_build(self) -> None:
-        self._open_update_dialog("git")
+        self._run_pet_update_action(_update_page.on_sync_dev_build)
 
     def _ensure_qq_group_dialog(self) -> QQGroupDialog:
-        if self._qq_group_dialog is None:
-            image_path = _project_root() / "resc" / "GIF" / "QQqrc.png"
-            self._qq_group_dialog = QQGroupDialog(image_path)
-        return self._qq_group_dialog
+        return self._run_pet_update_action(_update_page.ensure_qq_group_dialog)
 
     def _open_quark_manual_update(self) -> None:
-        try:
-            opened = webbrowser.open(_QUARK_UPDATE_URL)
-        except Exception as exc:
-            self._show_info_message(f"打开夸克更新链接失败：{exc}")
-            return
-        if not opened:
-            self._show_info_message(f"未能调用系统默认浏览器，请手动打开：{_QUARK_UPDATE_URL}")
+        self._run_pet_update_action(_update_page.open_quark_manual_update)
 
     def _show_qq_group_qrcode(self) -> None:
-        self._ensure_qq_group_dialog().show_dialog()
+        self._run_pet_update_action(_update_page.show_qq_group_qrcode)
 
     def _on_uninstall_pet(self) -> None:
-        uninstaller = resolve_uninstaller(_project_root())
-        if uninstaller is None:
-            self._show_info_message(
-                "源码工作区没有安装版卸载程序。\n\n"
-                "想移除飞行雪绒，直接删除当前工作区目录即可；"
-                f"用户数据、记忆与语音包保存在 {get_shared_root_dir()} 下，需要时单独删除。"
-            )
-            return
-        confirmed = ask_confirmation(
-            self,
-            title="卸载桌宠",
-            text="确定卸载桌宠吗？",
-            informative_text=(
-                "将退出桌宠，并由卸载程序删除程序文件。\n"
-                "用户数据、记忆与语音包默认保留，可在卸载界面上勾选一并删除。\n\n"
-                "确定继续吗？"
-            ),
-            confirm_text="卸载",
-            destructive=True,
-            layer_name="UninstallPetConfirmation",
-        )
-        if not confirmed:
-            return
-        try:
-            launch_uninstaller(uninstaller)
-        except Exception as exc:
-            self._show_info_message(f"启动卸载程序失败：{exc}")
-            return
-        self._emit_info("卸载程序已启动，桌宠即将退出。", min_tick=10, max_tick=120)
-
-        def quit_for_uninstall() -> None:
-            self._ec.publish(Event(EventType.APP_QUIT, {"exit_code": 0}))
-
-        QTimer.singleShot(600, quit_for_uninstall)
+        self._run_pet_update_action(_update_page.uninstall_pet)
 
     def _on_restore_defaults(self) -> None:
         self._set_values_to_form(_DEFAULT_VALUES)

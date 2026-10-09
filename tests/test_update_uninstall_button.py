@@ -25,7 +25,9 @@ os.environ.setdefault("QT_PLUGIN_PATH", os.path.join(_QT_ROOT, "Qt5", "plugins")
 from PyQt5.QtWidgets import QApplication, QPushButton
 
 from lib.core.event.center import EventType
-from lib.script.ui import ai_settings_panel as panel_module
+# 更新页的动作（卸载/夸克/QQ 群）已下沉到 `ai_settings_update`：patch 必须打在
+# 真正的所有者上，面板的转发方法只是调用它们。
+from lib.script.ui import ai_settings_update as panel_module
 from lib.script.ui.ai_settings_panel import AISettingsPanel
 
 _PAGE_ID = "desktop_pet_update"
@@ -94,7 +96,7 @@ class UpdatePageUninstallTests(unittest.TestCase):
         with patch.object(panel_module, "resolve_uninstaller", return_value=target), patch.object(
             panel_module, "launch_uninstaller"
         ) as launcher, patch(
-            "lib.script.ui.ai_settings_panel.ask_confirmation",
+            "lib.script.ui.ai_settings_update.ask_confirmation",
             return_value=True,
         ), patch.object(
             panel_module.QTimer,
@@ -115,7 +117,7 @@ class UpdatePageUninstallTests(unittest.TestCase):
         with patch.object(panel_module, "resolve_uninstaller", return_value=target), patch.object(
             panel_module, "launch_uninstaller"
         ) as launcher, patch(
-            "lib.script.ui.ai_settings_panel.ask_confirmation",
+            "lib.script.ui.ai_settings_update.ask_confirmation",
             return_value=False,
         ):
             self.panel._on_uninstall_pet()

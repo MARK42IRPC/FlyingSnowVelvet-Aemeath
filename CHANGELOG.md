@@ -120,6 +120,19 @@
   `ai_settings_about.py`，C 类目标是后续轮次逐个去 Qt 再删回）。
   执行记录见 `doc/render层边界契约.md` 第 48 节。
 
+- 设置面板「桌宠更新」页切到新模块：新增 `lib/script/ui/ai_settings_update.py`（274 行），
+  承接**视图**（`build_desktop_pet_update_panel`：四个分区与五个按钮）与**控制器**
+  （`ensure_update_dialog` / `open_update_dialog` / `on_check_updates` / `on_sync_dev_build` /
+  `ensure_qq_group_dialog` / `open_quark_manual_update` / `show_qq_group_qrcode` / `uninstall_pet`），
+  面板状态经 `PetUpdateActions` 数据类显式注入。`ai_settings_panel.py` 3607 → 3474 行，
+  八个动作方法改成 `_run_pet_update_action()` 薄壳并把对话框实例写回面板字段（状态唯一），
+  同时清掉四个搬走后不再使用的导入与两个已下沉常量。
+  验收：视图与 `HEAD` 逐行等价（差异仅签名）；`styleSheet()` 9450 字符全等；
+  离屏 1000×760 三页控件树摘要全等、位图 SHA-256 相等（差异像素 0）、
+  `_config_tab_meta` 键集与按钮对象名相等；`test_update_uninstall_button.py` 的 patch 目标
+  改到真正的所有者 `ai_settings_update`。`frozen_ui_qt_importers` 43 → 44。
+  执行记录见 `doc/render层边界契约.md` 第 49 节。
+
 ### Changed
 - 删除 `ai_settings_panel.py` 里已死的 N 卡能力探测链路：
   `_refresh_nvidia_acceleration_capability_async()` 已无任何调用点（两个调用位在某次重构中
