@@ -20,6 +20,7 @@ from PyQt5.QtWidgets import QApplication
 
 from config.config_layer import LAYER_VALUES
 from lib.script.ui import ai_settings_config_page as config_page_module
+from lib.script.ui import ai_settings_config_store as store_module
 from lib.script.ui import ai_settings_panel as panel_module
 from lib.script.ui.ai_settings_panel import AISettingsPanel
 from lib.script.ui.announcement_dialog import AnnouncementPreferences
@@ -145,8 +146,9 @@ class WorkbenchLazySettingsTests(unittest.TestCase):
 
         checkbox.setChecked(False)
         panel._emit_info = Mock()
-        with patch.object(panel_module, '_save_general_config'), patch.object(
-            panel_module, '_apply_general_runtime'
+        # 通用配置的落盘 / 热重载助手已随保存路径下沉到 `ai_settings_config_store`。
+        with patch.object(store_module, '_save_general_config'), patch.object(
+            store_module, '_apply_general_runtime'
         ), patch.object(
             config_page_module, 'set_announcement_forever_suppressed'
         ) as save_suppression:

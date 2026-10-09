@@ -17,6 +17,7 @@ os.environ.setdefault("QT_PLUGIN_PATH", os.path.join(_QT_ROOT, "Qt5", "plugins")
 from PyQt5.QtWidgets import QApplication, QComboBox, QLabel
 
 from lib.core.event.center import EventType
+from lib.script.ui import ai_settings_config_store as store_module
 from lib.script.ui import ai_settings_page as page_module
 from lib.script.ui import ai_settings_panel as panel_module
 from lib.core.services import api_endpoints as api_endpoints_module
@@ -247,11 +248,12 @@ class AISettingsReplyModeSectionsTests(unittest.TestCase):
         self.panel._apply_all_external_config_fields = Mock()
         self.panel._emit_info = Mock()
 
-        with patch.object(panel_module, "save_ai_values") as save_ai, patch.object(
-            panel_module, "_save_general_config"
-        ) as save_general, patch.object(panel_module, "apply_ai_runtime") as apply_ai, patch.object(
-            panel_module, "_apply_general_runtime"
-        ) as apply_general, patch.object(panel_module, "get_compute_hub", return_value=hub):
+        # 保存路径已下沉：`_on_save` 现在住在 ai_settings_config_store，patch 打在真正的所有者上。
+        with patch.object(store_module, "save_ai_values") as save_ai, patch.object(
+            store_module, "_save_general_config"
+        ) as save_general, patch.object(store_module, "apply_ai_runtime") as apply_ai, patch.object(
+            store_module, "_apply_general_runtime"
+        ) as apply_general, patch.object(store_module, "get_compute_hub", return_value=hub):
             saved = self.panel._on_save(apply_runtime=False)
             self.assertTrue(saved)
             self.assertTrue(self.panel._save_task_pending)
@@ -278,7 +280,7 @@ class AISettingsReplyModeSectionsTests(unittest.TestCase):
         completion = Mock()
         self.panel._save_completion_action = completion_action
 
-        with patch.object(panel_module, "get_compute_hub", return_value=hub):
+        with patch.object(store_module, "get_compute_hub", return_value=hub):
             self.assertTrue(self.panel._submit_save_task(lambda: None, completion))
             self.assertTrue(self.panel._save_task_pending)
             completion_action.assert_not_called()
@@ -298,7 +300,7 @@ class AISettingsReplyModeSectionsTests(unittest.TestCase):
         completion_action = Mock()
         self.panel._save_completion_action = completion_action
 
-        with patch.object(panel_module, "get_compute_hub", return_value=hub):
+        with patch.object(store_module, "get_compute_hub", return_value=hub):
             self.assertTrue(self.panel._submit_save_task(lambda: None, Mock()))
             future.set_exception(RuntimeError("disk unavailable"))
 

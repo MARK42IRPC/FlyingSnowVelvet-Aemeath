@@ -27,6 +27,7 @@ class QtDependencyBoundaryTests(unittest.TestCase):
     frozen_ui_qt_importers = frozenset({
             "lib/script/ui/ai_settings_about.py",
             "lib/script/ui/ai_settings_config_page.py",
+            "lib/script/ui/ai_settings_config_store.py",
             "lib/script/ui/ai_settings_editors.py",
             "lib/script/ui/ai_settings_page.py",
             "lib/script/ui/ai_settings_panel.py",

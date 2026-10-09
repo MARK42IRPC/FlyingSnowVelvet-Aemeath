@@ -142,13 +142,13 @@ class CodeStructureBoundaryTests(unittest.TestCase):
         新增耦合会叫停，清单里的条目被删掉后也会叫停（防止清单腐烂）。私有子模块一律不允许。
         """
         expected = {
+            ("lib/script/ui/ai_settings_config_store.py", "lib.script.gsvmove"),
+            ("lib/script/ui/ai_settings_config_store.py", "lib.script.music"),
             ("lib/script/ui/ai_settings_page.py", "lib.script.chat.handler_auto_companion"),
             ("lib/script/ui/ai_settings_page.py", "lib.script.chat.ollama_registry"),
             ("lib/script/ui/ai_settings_page.py", "lib.script.chat.persona_storage"),
             ("lib/script/ui/ai_settings_page.py", "lib.script.gsvmove"),
             ("lib/script/ui/ai_settings_panel.py", "lib.script.gsvmove"),
-            ("lib/script/ui/ai_settings_panel.py", "lib.script.gsvmove"),
-            ("lib/script/ui/ai_settings_panel.py", "lib.script.music"),
             ("lib/script/ui/ai_settings_storage.py", "lib.script.chat.ollama"),
             ("lib/script/ui/game_runtime.py", "lib.script.music.service"),
             ("lib/script/ui/office_approval_controller.py", "lib.script.office.ipc"),

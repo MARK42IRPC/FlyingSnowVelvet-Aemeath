@@ -42,7 +42,7 @@ from lib.script.ui.workbench_settings_layout import (
     SETTINGS_LABEL_WIDTH,
 )
 from lib.script.workbench.theme import LIGHT_COLORS, workbench_stylesheet
-import lib.script.ui.ai_settings_panel as panel_module
+import lib.script.ui.ai_settings_config_store as store_module
 from lib.script.ui.ai_settings_panel import (
     AISettingsPanel,
     _AnimationDurationSliderField,
@@ -293,9 +293,31 @@ class WorkbenchSettingsLayoutTests(unittest.TestCase):
         import lib.script.ui.ai_settings_page as page
 
         self.assertTrue(issubclass(AISettingsPanel, page.AISettingsPageMixin))
+        import lib.script.ui.ai_settings_config_store as store
+
+        self.assertTrue(issubclass(AISettingsPanel, store.ConfigStoreMixin))
+        for name in (
+            "_load_config_tab_values",
+            "_collect_config_category_values",
+            "_ensure_config_defaults_integrity",
+            "_on_restore_config_category",
+            "_on_restore_defaults",
+            "_set_values_to_form",
+            "_validate_general_config_relations",
+            "_submit_save_task",
+            "_on_save",
+            "_on_save_config_category",
+            "_on_save_config_category_and_exit",
+            "_on_save_and_exit",
+        ):
+            self.assertIs(
+                getattr(AISettingsPanel, name),
+                getattr(store.ConfigStoreMixin, name),
+                name,
+            )
+
         for name in (
             "_build_ui",
-            "_collect_values",
             "_update_reply_mode_sections",
             "_update_gsv_settings_visibility",
             "_update_gsv_advanced_visibility",
@@ -329,11 +351,10 @@ class WorkbenchSettingsLayoutTests(unittest.TestCase):
             else:
                 self.assertIs(panel_attr, mixin_attr, name)
 
-        # GPU 档位换算只有一份实现（住在页面模块）；面板按原名转出，`_num_gpu_from_mode`
-        # 只被本页的 `_collect_values` 使用，面板不再导出。
+        # GPU 档位换算只有一份实现（住在页面模块）；`_num_gpu_from_mode` 只被本页的
+        # `_collect_values` 使用，配置存取模块按需转出 `_gpu_mode_from_num_gpu`。
         self.assertIn("_num_gpu_from_mode", vars(page))
-        self.assertIs(panel_module._gpu_mode_from_num_gpu, page._gpu_mode_from_num_gpu)
-        self.assertNotIn("_num_gpu_from_mode", vars(panel_module))
+        self.assertIs(store_module._gpu_mode_from_num_gpu, page._gpu_mode_from_num_gpu)
 
     def test_workbench_theme_stylesheets_have_dark_and_light_palettes(self):
         dark = workbench_stylesheet("dark")

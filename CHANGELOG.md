@@ -176,6 +176,15 @@
   `styleSheet()` 9450 字符逐字符全等，全量 2269 条通过（10 跳过），`ruff`、`compileall`、
   `git diff --check`、边界测试 52 条均干净。执行记录见 `doc/render层边界契约.md` 第 53 节。
 
+- 设置面板「配置取值 / 回填 / 恢复 / 异步保存」控制器切到
+  `lib/script/ui/ai_settings_config_store.py`（`ConfigStoreMixin`，436 行）：按 `_config_tab_meta`
+  取值与回填、默认值兜底与逐分类恢复、通用配置取值校验、异步保存任务调度与三个保存入口整体搬出，
+  模块级 `_save_general_config` / `_apply_general_runtime` 同行。`AISettingsPanel` 改为多继承本
+  mixin，`ai_settings_panel.py` 1237 → 858 行，并**摘掉面板对产品包的最后一处 `lib.script.music`
+  耦合**（延迟导入随函数搬走）；`frozen_ui_qt_importers` 47 → 48（第 54 节）。八页控件树 / 位图
+  与 `_config_tab_meta` oracle 差异为 **0**，`styleSheet()` 9450 字符逐字符全等。
+  执行记录见 `doc/render层边界契约.md` 第 54 节。
+
 ### Changed
 - 删除 `ai_settings_panel.py` 里已死的 N 卡能力探测链路：
   `_refresh_nvidia_acceleration_capability_async()` 已无任何调用点（两个调用位在某次重构中
