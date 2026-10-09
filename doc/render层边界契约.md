@@ -4,7 +4,7 @@
 
 本文档定义 `lib/core/render/` 的目标结构与依赖边界。它不是阶段计划，而是结构改建完成后必须成立的规则。
 
-**状态：第 6 节迁移顺序 1、2（目录切分）、3 已执行；图层能力已收敛到 `lib/core/render/layers/`（第 16 节）；后端中立协议与统一数据类型已落地（第 11 节），控件层“描述 + 后端渲染”已滚动迁移气泡框（第 12 节）、说明书、语音指示器与播放进度条（第 13 节）、音响音量/频段双滑条、搜索结果框与命令提示框（第 18 节）、右键矩形动作按钮一族八个按钮（第 19 节）、确认/提示框（第 20 节，首个模态宿主）；浮窗外壳（样式/主题判定/拖拽策略/窗口按钮）已从 `lib/script/ui` 下沉到渲染层（第 21 节）；办公线性图标的 SVG 规格也已抽成后端中立事实源（第 22 节）；点击粒子辅助的按钮翻译改经 `render_bridge`、`_particle_helper.py` 出列（第 23 节）；论坛样式的底纹混色改为纯十六进制实现、`forum_style.py` 出列（第 24 节）；二维码登录浮窗的自动收起/穿透/窗口标志/自愈能力下沉到基类，`yuanbao_login_dialog.py` 与 `cloudmusic_login_dialog.py` 出列（第 25、26 节）；排布解算已收敛到 `visuals/` 并由 `PlacementSpec` 统一解算（第 14 节，档位 0/1），右键按钮族的逐控件锚点事件链已收敛为声明式 `AnchorGraph` 且 Qt 改为消费共享布局（第 15 节，档位 2/3）；`WindowHost` 的被动宿主激活语义已与 Qt/DX 焦点策略对齐（第 17 节）。** 目录与引用规则以本文档为准；改建前的事实源是 [Qt 边界契约](Qt边界契约.md) 与 [跨后端视觉表现契约](视觉表现契约.md)，那两份文档继续负责“哪些内容算视觉逻辑”和“什么算无 Qt”。第一章描述的是最终目标；产品控件面（`lib/script/ui` 直接 `import PyQt5`）仍需逐个控件迁移，当前待迁清单以 `tests/test_qt_dependency_boundaries.py` 的 `frozen_ui_qt_importers` 为准，滚动顺序见第 13 节末尾；翻页按钮族已于第二十七轮迁出（第 27 节）；音响菜单控制按钮族已于第二十八轮迁出（第 28 节）；音响菜单族共享样式已于第二十九轮出列（第 29 节，档位 D 新增 `QtPainterHost` 绘制宿主）；办公面样式与控件树辅助已于第三十轮出列（第 30 节）；窗口级描述与审批弹窗已于第三十一轮出列（第 31 节，档位 D 新增窗口描述宿主与 isuals/window_spec*.py 两级描述层）；帮助浮窗已于第三十二轮出列（第 32 节，窗口描述宿主补齐工具窗 / 滚动正文 / 淡入淡出 / 描边外壳）；公告 / 更新浮窗已于第三十三轮出列（第 33 节，新增 UI 线程调度宿主，控制器不再被迫继承 `QObject`）。剩余大文件的推进次序已于 2026-10-07 修订为「先按模块拆分瘦身、再逐个收敛 Qt」（第 34 节），滚动清单因此改按四批推进；批次 0（拆分登记机制）与批次 1（`ai_settings_panel.py` 瘦身：贡献名单解析、文案/名称表、配置 schema、删死代码）已完成（第 35–38 节）；批次 2 首轮把 `forum_board.py` 的图片视图族与列表两行下沉到档位 D 的 `backends/qt/widgets/forum_images.py`（第 39 节），续轮把 `forum_texture.py` 的底纹规格抽到 `visuals/forum_texture_visuals.py`（第 40 节）、把办公聊天的 Markdown→富文本抽到 `visuals/office_chat_rich.py`（第 41 节），又把这页的 OpenAI 兼容接口解析抽到 `lib/core/services/api_endpoints.py`、顺手把 `API_TIMEOUT_SECS` 一族从产品包下沉到 `lib/core/services/network_policy.py`（第 42 节），把设置面板的「通用配置」取值校验抽到 `ui/ai_settings_validation.py`并清掉一条 N 卡能力探测死链（第 43 节）、把字段说明文本抽到 `ui/ai_settings_descriptions.py`（第 44 节）、把配置编辑器取值解析抽到 `ui/ai_settings_config_parse.py`（第 45 节）、把语音包安装器浮窗的 QSS 并入 `visuals/workbench_chrome.py`（第 46 节），八轮均为纯移动、零差异（第 43 节另含等价清理）。
+**状态：第 6 节迁移顺序 1、2（目录切分）、3 已执行；图层能力已收敛到 `lib/core/render/layers/`（第 16 节）；后端中立协议与统一数据类型已落地（第 11 节），控件层“描述 + 后端渲染”已滚动迁移气泡框（第 12 节）、说明书、语音指示器与播放进度条（第 13 节）、音响音量/频段双滑条、搜索结果框与命令提示框（第 18 节）、右键矩形动作按钮一族八个按钮（第 19 节）、确认/提示框（第 20 节，首个模态宿主）；浮窗外壳（样式/主题判定/拖拽策略/窗口按钮）已从 `lib/script/ui` 下沉到渲染层（第 21 节）；办公线性图标的 SVG 规格也已抽成后端中立事实源（第 22 节）；点击粒子辅助的按钮翻译改经 `render_bridge`、`_particle_helper.py` 出列（第 23 节）；论坛样式的底纹混色改为纯十六进制实现、`forum_style.py` 出列（第 24 节）；二维码登录浮窗的自动收起/穿透/窗口标志/自愈能力下沉到基类，`yuanbao_login_dialog.py` 与 `cloudmusic_login_dialog.py` 出列（第 25、26 节）；排布解算已收敛到 `visuals/` 并由 `PlacementSpec` 统一解算（第 14 节，档位 0/1），右键按钮族的逐控件锚点事件链已收敛为声明式 `AnchorGraph` 且 Qt 改为消费共享布局（第 15 节，档位 2/3）；`WindowHost` 的被动宿主激活语义已与 Qt/DX 焦点策略对齐（第 17 节）。** 目录与引用规则以本文档为准；改建前的事实源是 [Qt 边界契约](Qt边界契约.md) 与 [跨后端视觉表现契约](视觉表现契约.md)，那两份文档继续负责“哪些内容算视觉逻辑”和“什么算无 Qt”。第一章描述的是最终目标；产品控件面（`lib/script/ui` 直接 `import PyQt5`）仍需逐个控件迁移，当前待迁清单以 `tests/test_qt_dependency_boundaries.py` 的 `frozen_ui_qt_importers` 为准，滚动顺序见第 13 节末尾；翻页按钮族已于第二十七轮迁出（第 27 节）；音响菜单控制按钮族已于第二十八轮迁出（第 28 节）；音响菜单族共享样式已于第二十九轮出列（第 29 节，档位 D 新增 `QtPainterHost` 绘制宿主）；办公面样式与控件树辅助已于第三十轮出列（第 30 节）；窗口级描述与审批弹窗已于第三十一轮出列（第 31 节，档位 D 新增窗口描述宿主与 isuals/window_spec*.py 两级描述层）；帮助浮窗已于第三十二轮出列（第 32 节，窗口描述宿主补齐工具窗 / 滚动正文 / 淡入淡出 / 描边外壳）；公告 / 更新浮窗已于第三十三轮出列（第 33 节，新增 UI 线程调度宿主，控制器不再被迫继承 `QObject`）。剩余大文件的推进次序已于 2026-10-07 修订为「先按模块拆分瘦身、再逐个收敛 Qt」（第 34 节），滚动清单因此改按四批推进；批次 0（拆分登记机制）与批次 1（`ai_settings_panel.py` 瘦身：贡献名单解析、文案/名称表、配置 schema、删死代码）已完成（第 35–38 节）；批次 2 首轮把 `forum_board.py` 的图片视图族与列表两行下沉到档位 D 的 `backends/qt/widgets/forum_images.py`（第 39 节），续轮把 `forum_texture.py` 的底纹规格抽到 `visuals/forum_texture_visuals.py`（第 40 节）、把办公聊天的 Markdown→富文本抽到 `visuals/office_chat_rich.py`（第 41 节），又把这页的 OpenAI 兼容接口解析抽到 `lib/core/services/api_endpoints.py`、顺手把 `API_TIMEOUT_SECS` 一族从产品包下沉到 `lib/core/services/network_policy.py`（第 42 节），把设置面板的「通用配置」取值校验抽到 `ui/ai_settings_validation.py`并清掉一条 N 卡能力探测死链（第 43 节）、把字段说明文本抽到 `ui/ai_settings_descriptions.py`（第 44 节）、把配置编辑器取值解析抽到 `ui/ai_settings_config_parse.py`（第 45 节）、把语音包安装器浮窗的 QSS 并入 `visuals/workbench_chrome.py`（第 46 节），八轮均为纯移动、零差异（第 43 节另含等价清理）；批次 2 的 A 类到此抽尽，下一轮转批次 3 的 C 类切分，盘点与起点建议见第 47 节。
 
 本文只新增目录与引用规则，不改变任何视觉语义、数值来源或渲染结果。改建过程中出现分歧时，以 [视觉表现契约](视觉表现契约.md) 和当前 Qt 基准为事实源。
 
@@ -2416,3 +2416,60 @@ import `lib.script` 或 `config`，可直接落在 `visuals/`。`office_chat_vie
   `git diff --check` 干净。
 - 冻结清单 `frozen_ui_qt_importers` 仍为 42（`voice_package_installer.py` 的控件树还在）；
   `ui -> 产品包` 耦合清单不变。
+
+## 47. 批次 2 收尾盘点：A 类已抽尽，下一轮转 C 类（方案变更，非迁移）
+
+更新时间：2026-10-09
+
+批次 2 从第 39 节走到第 46 节，八轮全是 A 类「纯能力抽离」。本节是一次**方案盘点**，
+不含迁移动作，只回答一个问题：还能不能再抽出 A 类？
+
+### 47.1 盘点方法
+
+对 `frozen_ui_qt_importers` 全部 42 个文件做两轮 AST 扫描：
+
+1. **顶层纯函数/类**：`tree.body` 里不引用任何 `PyQt5` 名字的 `def` / `class`；
+2. **纯静态方法**：类体内既不引用 `PyQt5` 名字、也不读任何 `self.<attr>` 的方法。
+
+第 2 条是关键——**只要读了一个实例属性，它就不是纯移动**，抽出去必须连状态一起搬，
+那是 C 类的「视图 + 控制器」切分，不是本批次定义的 A 类。
+
+### 47.2 结果：剩余可抽物已不足一轮
+
+| 文件 | 行数 | 顶层纯 | 纯静态 |
+| --- | ---: | ---: | ---: |
+| `ai_settings_panel.py` | 3889 | 29 | 152 |
+| `forum_board.py` | 1726 | 0 | 23 |
+| `voice_package_installer.py` | 998 | 10 | 6 |
+| `bug_tracker_window.py` | 983 | 0 | 36 |
+| `workbench_window.py` | 982 | 3 | 40 |
+| `forum_window.py` | 976 | 27 | 0 |
+| `playlist_panel.py` | 966 | 18 | 6 |
+| `office_page.py` | 924 | 31 | 0 |
+| `cmd_window.py` | 802 | 17 | 0 |
+
+逐一看过之后，剩下的都落进三类里，没有一项够得上一轮：
+
+- **单例与生命周期打包**：`open_*_window` / `get_*` / `cleanup_*` / `init_*`
+  （`forum_window` 27 行、`office_page` 31 行、`cmd_window` 17 行、`playlist_panel` 18 行）。
+  它们靠模块级全局变量串起来，抽出去只会把全局从 A 文件挪到 B 文件，耦合不减反增。
+- **`ai_settings_panel` 的 `_collect_values` / `_set_values_to_form`**（128 + 45 行）：
+  字段集重合，但控件访问器有 30 多种、要读 `_DEFAULT_VALUES`、还必须保留取值顺序
+  （先普通字段、最后 `_force_mode` + `_update_reply_mode_sections`）。做成表驱动要先写一份
+  30+ 成员的控件适配协议，等价性对照也只能逐个属性打桩——投入产出比不如直接按 C 类切。
+- **`ai_settings_panel` 的 152 行纯静态**：单个都是 2~11 行的小助手（`_gpu_mode_from_num_gpu`、
+  `_num_gpu_from_mode`、`_strip_ansi` 一类），抽出去是一次几个符号的碎步提交，收益有限。
+
+`bug_tracker_window.py` / `workbench_window.py` / `tray_icon.py` 的纯静态行数看着可观，
+但那些方法都是 `_sync_theme_toggle`、`_control_panel_page_metadata` 一类**紧贴本窗口状态机**的
+小函数，同样属于 C 类。
+
+### 47.3 结论与下一轮起点
+
+- 批次 2（A 类/B 类下沉）到此为止：A 类抽尽，B 类在批次 2 首轮已下沉
+  `forum_images.py`（第 39 节）。
+- 下一轮转入 **批次 3：C 类「视图 + 控制器 + 描述」切分**，并按第 34.2 节要求与去 Qt 同轮交付。
+  建议起点是 `ai_settings_panel.py`：它最大（3889 行）、已经有批次 1 抽出的四个无 Qt 模块做地基
+  （`ai_settings_contributions` / `config_schema` / `labels` / `validation` + `descriptions` /
+  `config_parse`），`_collect_values` / `_set_values_to_form` 正好是「控制器」那一半的入口。
+- 每个 tab 一轮、每轮沿用第 34.3 节的门槛；`frozen_ui_qt_importers` 只减不增。
