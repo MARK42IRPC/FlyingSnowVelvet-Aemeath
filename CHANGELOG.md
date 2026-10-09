@@ -83,6 +83,14 @@
   独立类做对照，30 组单键取值 + 5 组整段入口的异常类型与消息差异为 0。执行记录见
   `doc/render层边界契约.md` 第 43 节。
 
+- 设置面板字段说明文本抽成无 Qt 模块：新增 `lib/script/ui/ai_settings_descriptions.py`，
+  承接 `build_config_single_description` / `build_config_range_description` /
+  `description_value_type` / `description_preview_value` 四个纯函数（含动画倍速与
+  `ui_cache_preload` 两处文案特例）。只读 `ai_settings_config_schema` 与 `ai_settings_labels`，
+  面板四个方法改为转发、调用点与既有断言零改动；`ai_settings_panel.py` 3991 → 3942 行。
+  验收：HEAD 四方法摘出成独立类对照，40 组输入差异 0。执行记录见
+  `doc/render层边界契约.md` 第 44 节。
+
 ### Changed
 - 删除 `ai_settings_panel.py` 里已死的 N 卡能力探测链路：
   `_refresh_nvidia_acceleration_capability_async()` 已无任何调用点（两个调用位在某次重构中

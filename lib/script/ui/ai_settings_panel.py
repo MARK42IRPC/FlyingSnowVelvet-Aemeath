@@ -53,16 +53,15 @@ from lib.script.ui.ai_settings_config_schema import (
     GENERAL_DECIMAL_SLIDER_SPECS as _GENERAL_DECIMAL_SLIDER_SPECS,
     VOLUME_SLIDER_FIELDS as _VOLUME_SLIDER_FIELDS,
     category_section_entries as _category_section_entries,
-    choice_label_for_value as _choice_label_for_value,
     format_config_editor_value as _format_config_editor_value,
     friendly_range_name as _friendly_range_name,
     hardcoded_general_default as _hardcoded_general_default,
     range_pair_signature as _range_pair_signature,
 )
+from lib.script.ui import ai_settings_descriptions as _descriptions
 from lib.script.ui import ai_settings_validation as _validation
 from lib.script.ui.ai_settings_labels import (
     animation_folder_display_name as _animation_folder_display_name,
-    friendly_field_section_name as _friendly_field_section_name,
     friendly_key_name as _friendly_key_name,
     friendly_section_name as _friendly_section_name,
     section_help_text as _section_help_text,
@@ -553,56 +552,14 @@ class AISettingsPanel(QWidget):
 
     @staticmethod
     def _description_preview_value(value, max_len: int = 72) -> str:
-        text = _format_config_editor_value(value)
-        if len(text) <= max_len:
-            return text
-        return text[: max_len - 3] + "..."
+        return _descriptions.description_preview_value(value, max_len)
 
     @staticmethod
     def _description_value_type(value) -> str:
-        if isinstance(value, bool):
-            return "布尔"
-        if isinstance(value, int):
-            return "整数"
-        if isinstance(value, float):
-            return "小数"
-        if isinstance(value, str):
-            return "文本"
-        if isinstance(value, tuple):
-            return "元组"
-        if isinstance(value, list):
-            return "列表"
-        return "配置值"
+        return _descriptions.description_value_type(value)
 
     def _build_config_single_description(self, dict_name: str, key: str, value, friendly_name: str) -> str:
-        section_name = _friendly_field_section_name(dict_name, key)
-        value_type = self._description_value_type(value)
-        preview = self._description_preview_value(value)
-        choice_label = _choice_label_for_value(dict_name, key, value)
-        if choice_label and choice_label != preview:
-            preview = f"{choice_label} ({preview})"
-        recommendation = ""
-        if (dict_name, key) in {
-            ("ANIMATION", "start_animation_duration"),
-            ("ANIMATION", "exit_animation_duration"),
-        }:
-            try:
-                preview = f"{float(value):.1f}x"
-            except (TypeError, ValueError):
-                preview = "1.0x"
-            recommendation = (
-                "，推荐3.0s"
-                if key == "start_animation_duration"
-                else "，推荐默认"
-            )
-        elif (dict_name, key) == ("STARTUP", "ui_cache_preload"):
-            recommendation = "，启动等待期预绘制常用窗口，缓存上限30MB"
-        return (
-            f"{section_name} · {friendly_name}\n"
-            f"配置键: {dict_name}.{key}\n"
-            f"类型: {value_type}\n"
-            f"默认值: {preview}{recommendation}"
-        )
+        return _descriptions.build_config_single_description(dict_name, key, value, friendly_name)
 
     def _build_config_range_description(
         self,
@@ -613,14 +570,8 @@ class AISettingsPanel(QWidget):
         right_value,
         friendly_name: str,
     ) -> str:
-        section_name = _friendly_section_name(dict_name, dict_name)
-        left_preview = self._description_preview_value(left_value)
-        right_preview = self._description_preview_value(right_value)
-        return (
-            f"{section_name} · {friendly_name}\n"
-            f"配置键: {dict_name}.{left_key} / {dict_name}.{right_key}\n"
-            f"类型: 数值范围\n"
-            f"默认值: {left_preview} ~ {right_preview}"
+        return _descriptions.build_config_range_description(
+            dict_name, left_key, right_key, left_value, right_value, friendly_name
         )
 
     def _build_ui(self) -> None:
