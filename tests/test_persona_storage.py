@@ -14,7 +14,8 @@ from lib.script.chat.persona_storage import (
     ensure_user_persona_file,
     resolve_persona_file_path,
 )
-from lib.script.ui import ai_settings_panel as ai_settings_module
+from lib.script.ui import ai_settings_page as ai_settings_page_module
+from lib.script.ui.ai_settings_panel import AISettingsPanel
 
 
 class PersonaStorageTests(unittest.TestCase):
@@ -82,12 +83,14 @@ class PersonaStorageTests(unittest.TestCase):
             _open_path_with_system_default=Mock(),
             _emit_info=Mock(),
         )
+        # `_on_open_persona_file` 已随 AI 主页面下沉到 `ai_settings_page`，
+        # 补丁必须打在真正的所有者上（同第 52 节的处理）。
         with patch.object(
-            ai_settings_module,
+            ai_settings_page_module,
             "ensure_user_persona_file",
             return_value=user_persona,
         ):
-            ai_settings_module.AISettingsPanel._on_open_persona_file(panel)
+            AISettingsPanel._on_open_persona_file(panel)
 
         panel._open_path_with_system_default.assert_called_once_with(user_persona)
         panel._emit_info.assert_called_once()

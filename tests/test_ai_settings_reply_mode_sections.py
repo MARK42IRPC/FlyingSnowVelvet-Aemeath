@@ -17,6 +17,7 @@ os.environ.setdefault("QT_PLUGIN_PATH", os.path.join(_QT_ROOT, "Qt5", "plugins")
 from PyQt5.QtWidgets import QApplication, QComboBox, QLabel
 
 from lib.core.event.center import EventType
+from lib.script.ui import ai_settings_page as page_module
 from lib.script.ui import ai_settings_panel as panel_module
 from lib.core.services import api_endpoints as api_endpoints_module
 from lib.script.ui.ai_settings_panel import AISettingsPanel
@@ -31,7 +32,7 @@ class AISettingsReplyModeSectionsTests(unittest.TestCase):
 
     def setUp(self):
         self._voice_package_probe = patch.object(
-            panel_module,
+            page_module,
             "get_voice_package_status",
             return_value=VoicePackageStatus("missing", "not installed"),
         )
@@ -452,12 +453,13 @@ class AISettingsReplyModeSectionsTests(unittest.TestCase):
         service = Mock()
         self.panel._gsv_auto_start.setChecked(False)
 
+        # 安装语音包的动作已随 AI 主页面下沉：patch 打在真正的所有者 `ai_settings_page` 上。
         with patch.object(
-            panel_module, "load_ai_values", return_value=saved_values
-        ), patch.object(panel_module, "save_ai_values") as save_values, patch.object(
-            panel_module, "apply_ai_runtime"
+            page_module, "load_ai_values", return_value=saved_values
+        ), patch.object(page_module, "save_ai_values") as save_values, patch.object(
+            page_module, "apply_ai_runtime"
         ) as apply_runtime, patch.object(
-            panel_module,
+            page_module,
             "get_voice_package_status",
             return_value=VoicePackageStatus("installed", "ok"),
         ), patch(

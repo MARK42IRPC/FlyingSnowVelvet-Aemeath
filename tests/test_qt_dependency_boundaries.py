@@ -28,6 +28,7 @@ class QtDependencyBoundaryTests(unittest.TestCase):
             "lib/script/ui/ai_settings_about.py",
             "lib/script/ui/ai_settings_config_page.py",
             "lib/script/ui/ai_settings_editors.py",
+            "lib/script/ui/ai_settings_page.py",
             "lib/script/ui/ai_settings_panel.py",
             "lib/script/ui/ai_settings_tabs.py",
             "lib/script/ui/ai_settings_update.py",

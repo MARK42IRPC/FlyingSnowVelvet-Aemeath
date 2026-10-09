@@ -168,6 +168,14 @@
   `styleSheet()` 9450 字符逐字符全等。`frozen_ui_qt_importers` 45 → 46。
   执行记录见 `doc/render层边界契约.md` 第 52 节。
 
+- 设置面板 AI 主页面切到 `lib/script/ui/ai_settings_page.py`（`AISettingsPageMixin`，1179 行）：
+  508 行的 `_build_ui` 与本页专属的取值/回填闭环（`_collect_values`、Ollama 与手动 API 模型刷新、
+  `_update_*_visibility` 一族）以及页面动作（恢复默认 / 保存 / 保存并重启）整体搬出。
+  `AISettingsPanel` 改为多继承本 mixin，`ai_settings_panel.py` 2291 → 1237 行；
+  `frozen_ui_qt_importers` 46 → 47（第 53 节）。八页控件树 / 位图 oracle 差异为 **0**，
+  `styleSheet()` 9450 字符逐字符全等，全量 2269 条通过（10 跳过），`ruff`、`compileall`、
+  `git diff --check`、边界测试 52 条均干净。执行记录见 `doc/render层边界契约.md` 第 53 节。
+
 ### Changed
 - 删除 `ai_settings_panel.py` 里已死的 N 卡能力探测链路：
   `_refresh_nvidia_acceleration_capability_async()` 已无任何调用点（两个调用位在某次重构中

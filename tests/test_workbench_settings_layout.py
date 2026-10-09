@@ -42,6 +42,7 @@ from lib.script.ui.workbench_settings_layout import (
     SETTINGS_LABEL_WIDTH,
 )
 from lib.script.workbench.theme import LIGHT_COLORS, workbench_stylesheet
+import lib.script.ui.ai_settings_panel as panel_module
 from lib.script.ui.ai_settings_panel import (
     AISettingsPanel,
     _AnimationDurationSliderField,
@@ -280,6 +281,59 @@ class WorkbenchSettingsLayoutTests(unittest.TestCase):
                 getattr(config_page.ConfigPageMixin, name),
                 name,
             )
+
+    def test_ai_page_and_its_value_round_trip_live_in_the_shared_page_module(self):
+        """AI 主页面的装配与取值/回填闭环已下沉到 `ai_settings_page`。
+
+        第六轮把 508 行的 `_build_ui` 与本页专属的取值（`_collect_values`）、模型刷新、
+        可见性联动、页面动作一起切走。`AISettingsPanel` 只多继承本 mixin，因此下面这些
+        名字必须与 `AISettingsPageMixin` 上的实现同源——既有导入路径与直接调用
+        （`AISettingsPanel._probe_manual_api_models` 一类）才继续成立。
+        """
+        import lib.script.ui.ai_settings_page as page
+
+        self.assertTrue(issubclass(AISettingsPanel, page.AISettingsPageMixin))
+        for name in (
+            "_build_ui",
+            "_collect_values",
+            "_update_reply_mode_sections",
+            "_update_gsv_settings_visibility",
+            "_update_gsv_advanced_visibility",
+            "_refresh_ollama_model_choices",
+            "_refresh_ollama_model_dropdown",
+            "_normalize_manual_api_base_url",
+            "_normalize_manual_api_base_url_input",
+            "_manual_api_models_url",
+            "_parse_manual_api_models",
+            "_probe_manual_api_models",
+            "_refresh_manual_api_model_choices",
+            "_on_probe_manual_api_models",
+            "_on_open_persona_file",
+            "_open_path_with_system_default",
+            "_on_voice_package_installed",
+            "_on_voice_package_removal_failed",
+            "_parse_editor_value",
+            "_validate_general_config_values",
+            "_validate_ai_values",
+            "_collect_all_general_config_values",
+            "_apply_all_external_config_fields",
+            "_on_restore_ai_defaults",
+            "_on_save_ai_action",
+            "_on_save_and_restart",
+        ):
+            panel_attr = getattr(AISettingsPanel, name)
+            mixin_attr = getattr(page.AISettingsPageMixin, name)
+            if isinstance(panel_attr, classmethod) or hasattr(panel_attr, "__func__"):
+                # classmethod 经属性访问会各自绑定到具体类，比底层函数。
+                self.assertIs(panel_attr.__func__, mixin_attr.__func__, name)
+            else:
+                self.assertIs(panel_attr, mixin_attr, name)
+
+        # GPU 档位换算只有一份实现（住在页面模块）；面板按原名转出，`_num_gpu_from_mode`
+        # 只被本页的 `_collect_values` 使用，面板不再导出。
+        self.assertIn("_num_gpu_from_mode", vars(page))
+        self.assertIs(panel_module._gpu_mode_from_num_gpu, page._gpu_mode_from_num_gpu)
+        self.assertNotIn("_num_gpu_from_mode", vars(panel_module))
 
     def test_workbench_theme_stylesheets_have_dark_and_light_palettes(self):
         dark = workbench_stylesheet("dark")
