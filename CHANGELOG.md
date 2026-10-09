@@ -91,6 +91,14 @@
   验收：HEAD 四方法摘出成独立类对照，40 组输入差异 0。执行记录见
   `doc/render层边界契约.md` 第 44 节。
 
+- 设置面板配置编辑器取值解析抽成无 Qt 模块：新增 `lib/script/ui/ai_settings_config_parse.py`，
+  承接 `parse_text_by_template`（文本 / 布尔 / 整数 / 小数，其余 `ast.literal_eval`）与
+  `parse_editor_value`（范围对 / 数组 / 音量滑块 / 小数滑块 / 单值按 `kind` 分派）。
+  五个控件类型判定与音量百分比换算改由面板以 `widget=` 注入（新增五个静态谓词），
+  新模块既不 import `PyQt5`、也不认识控件类；面板两个方法改为转发，
+  `ai_settings_panel.py` 3942 → 3889 行。验收：HEAD 两方法用同名替身控件对照 36 组，差异 0。
+  执行记录见 `doc/render层边界契约.md` 第 45 节。
+
 ### Changed
 - 删除 `ai_settings_panel.py` 里已死的 N 卡能力探测链路：
   `_refresh_nvidia_acceleration_capability_async()` 已无任何调用点（两个调用位在某次重构中

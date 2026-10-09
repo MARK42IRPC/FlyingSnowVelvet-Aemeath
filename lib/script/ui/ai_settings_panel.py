@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import ast
 import copy
 import os
 import random
@@ -58,6 +57,7 @@ from lib.script.ui.ai_settings_config_schema import (
     hardcoded_general_default as _hardcoded_general_default,
     range_pair_signature as _range_pair_signature,
 )
+from lib.script.ui import ai_settings_config_parse as _config_parse
 from lib.script.ui import ai_settings_descriptions as _descriptions
 from lib.script.ui import ai_settings_validation as _validation
 from lib.script.ui.ai_settings_labels import (
@@ -1910,6 +1910,29 @@ class AISettingsPanel(QWidget):
         # 步进按 1% 固定，避免浮点误差导致显示与落盘不一致。
         return round(p / 100.0, 2)
 
+
+    # ── 解析模块注入的控件能力（无 Qt 模块只认这几个谓词）───────────────
+
+    @staticmethod
+    def is_text_editor(editor) -> bool:
+        return isinstance(editor, QLineEdit)
+
+    @staticmethod
+    def is_slider(editor) -> bool:
+        return isinstance(editor, QSlider)
+
+    @staticmethod
+    def is_decimal_field(editor) -> bool:
+        return isinstance(editor, _DecimalSliderField)
+
+    @staticmethod
+    def is_check_box(editor) -> bool:
+        return isinstance(editor, QCheckBox)
+
+    @staticmethod
+    def is_combo_box(editor) -> bool:
+        return isinstance(editor, QComboBox)
+
     def _create_volume_slider_editor(self, value):
         group = QWidget()
         group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
@@ -2193,15 +2216,7 @@ class AISettingsPanel(QWidget):
 
     @staticmethod
     def _parse_text_by_template(text: str, template):
-        if isinstance(template, str):
-            return text
-        if isinstance(template, bool):
-            return bool(text.lower() in ("1", "true", "yes", "on"))
-        if isinstance(template, int):
-            return int(text)
-        if isinstance(template, float):
-            return float(text)
-        return ast.literal_eval(text)
+        return _config_parse.parse_text_by_template(text, template)
 
     @staticmethod
     def _set_config_editor_value(editor, value) -> None:
@@ -2345,75 +2360,7 @@ class AISettingsPanel(QWidget):
         })
 
     def _parse_editor_value(self, field: dict) -> dict[str, object]:
-        kind = str(field.get("kind") or "single")
-        if kind in _EXTERNAL_CONFIG_FIELD_KINDS:
-            return {}
-        if kind == "range_pair":
-            keys = field.get("keys") or []
-            editors = field.get("editors") or []
-            templates = field.get("templates") or []
-            if len(keys) != 2 or len(editors) != 2 or len(templates) != 2:
-                raise ValueError("范围配置结构无效")
-            result = {}
-            for idx in range(2):
-                editor = editors[idx]
-                if not isinstance(editor, QLineEdit):
-                    raise ValueError("范围配置编辑控件无效")
-                text = editor.text().strip()
-                result[str(keys[idx])] = self._parse_text_by_template(text, templates[idx])
-            return result
-
-        if kind == "sequence":
-            key = str(field.get("key") or "")
-            editors = field.get("editors") or []
-            template = field.get("template")
-            if not isinstance(template, (tuple, list)):
-                raise ValueError("数组配置模板无效")
-            if len(editors) != len(template):
-                raise ValueError("数组配置长度不一致")
-            parsed_items = []
-            for idx, editor in enumerate(editors):
-                if not isinstance(editor, QLineEdit):
-                    raise ValueError("数组配置编辑控件无效")
-                text = editor.text().strip()
-                parsed_items.append(self._parse_text_by_template(text, template[idx]))
-            if isinstance(template, tuple):
-                return {key: tuple(parsed_items)}
-            return {key: list(parsed_items)}
-
-        if kind == "volume_slider":
-            key = str(field.get("key") or "")
-            editor = field.get("editor")
-            if not isinstance(editor, QSlider):
-                raise ValueError("音量滑块控件无效")
-            return {key: self._volume_value_from_percent(editor.value())}
-
-        if kind == "decimal_slider":
-            key = str(field.get("key") or "")
-            editor = field.get("editor")
-            template = field.get("template")
-            if not isinstance(editor, _DecimalSliderField):
-                raise ValueError("小数滑块控件无效")
-            return {key: self._parse_text_by_template(editor.text().strip(), template)}
-
-        key = str(field.get("key") or "")
-        editor = field.get("editor")
-        template = field.get("template")
-        if isinstance(editor, QCheckBox):
-            return {key: bool(editor.isChecked())}
-        if isinstance(editor, QComboBox):
-            selected = editor.currentData()
-            if selected is None:
-                selected = editor.currentText().strip()
-            if isinstance(template, str):
-                return {key: str(selected)}
-            if template is not None and isinstance(selected, type(template)):
-                return {key: selected}
-            return {key: self._parse_text_by_template(str(selected), template)}
-        if not isinstance(editor, QLineEdit):
-            raise ValueError("不支持的配置编辑控件")
-        text = editor.text().strip()
-        return {key: self._parse_text_by_template(text, template)}
+        return _config_parse.parse_editor_value(field, widget=type(self))
 
     def _raise_config_value_error(self, dict_name: str, key: str, reason: str) -> None:
         _validation.raise_config_value_error(dict_name, key, reason)
