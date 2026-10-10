@@ -39,7 +39,6 @@ from config.scale import scale_px
 from lib.core.forum_api import (
     FORUM_DEFAULT_SORT,
     FORUM_IMAGES_PER_POST,
-    FORUM_REPLY_MAX,
     FORUM_SORT_LABELS,
     ForumImage,
     ForumPost,
@@ -50,34 +49,16 @@ from lib.core.forum_api import (
     format_timestamp,
     image_markdown,
 )
-from lib.core.forum_colors import ForumTextRun
 from lib.core.forum_community import CommunityService
-from lib.core.forum_markdown import (
-    BLOCK_CODE,
-    BLOCK_DIVIDER,
-    BLOCK_HEADING,
-    BLOCK_LIST,
-    BLOCK_QUOTE,
-    ForumImageToken,
-    render_blocks,
-    split_images,
-)
 from lib.core.forum_session import ForumSessionStore, is_logged_in
 from lib.core.logger import get_logger
 from lib.script.ui.forum_composer import (
     FORUM_SIZE_STEPS as FORUM_SIZE_STEPS,  # noqa: F401 - 既有导入面
     ForumComposerMixin as _ForumComposerMixin,
 )
-from lib.script.ui.forum_markup import (
-    escape_text,
-    to_html,
-)
-from lib.script.ui.forum_style import (
-    forum_card_text_color,
-    forum_muted_text_color,
-)
+from lib.script.ui.forum_detail import ForumDetailMixin as _ForumDetailMixin
+from lib.script.ui.forum_body import ForumBodyMixin as _ForumBodyMixin
 
-from lib.script.ui.forum_text import MarkupText
 from lib.script.ui.render_bridge import ui_font as get_ui_font
 from lib.script.ui.workbench_settings_layout import SmoothScrollArea
 
@@ -129,7 +110,7 @@ _BLOCK_FONT_DEFAULT = 13
 _HEADING_FONT_SIZES = {1: 18, 2: 16, 3: 15, 4: 14, 5: 14, 6: 13}
 
 
-class ForumBoardPage(_ForumComposerMixin, QWidget):
+class ForumBoardPage(_ForumComposerMixin, _ForumDetailMixin, _ForumBodyMixin, QWidget):
     """主论坛子页面；自己管网络协调器，窗口只负责切页与生命周期。"""
 
     _dispatch_requested = pyqtSignal(object)
@@ -324,150 +305,6 @@ class ForumBoardPage(_ForumComposerMixin, QWidget):
         self._more_button.clicked.connect(lambda: self._service.load_more_posts())
         layout.addWidget(self._more_button, 0)
         return page
-
-    def _build_detail(self) -> QWidget:
-        page = QWidget(self)
-        layout = QVBoxLayout(page)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-
-        bar = QFrame(page)
-        bar.setObjectName("ForumToolbar")
-        bar_layout = QHBoxLayout(bar)
-        bar_layout.setContentsMargins(
-            scale_px(16, min_abs=13),
-            scale_px(8, min_abs=6),
-            scale_px(16, min_abs=13),
-            scale_px(8, min_abs=6),
-        )
-        bar_layout.setSpacing(scale_px(8, min_abs=6))
-        self._back_button = QPushButton("← 返回列表", bar)
-        self._back_button.setObjectName("ForumGhostButton")
-        self._back_button.setFont(_font(11))
-        self._back_button.clicked.connect(self.show_list)
-        bar_layout.addWidget(self._back_button, 0)
-        self._detail_hint = QLabel("", bar)
-        self._detail_hint.setObjectName("ForumHint")
-        self._detail_hint.setFont(_font(11))
-        bar_layout.addWidget(self._detail_hint, 1)
-        layout.addWidget(bar, 0)
-
-        self._detail_scroll = SmoothScrollArea(page)
-        self._detail_scroll.setObjectName("ForumScroll")
-        self._detail_scroll.setWidgetResizable(True)
-        self._detail_scroll.setFrameShape(QFrame.NoFrame)
-        self._detail_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-
-        host = QWidget(self._detail_scroll)
-        host.setObjectName("ForumDetailHost")
-        self._detail_host = host
-        detail_layout = QVBoxLayout(host)
-        detail_layout.setContentsMargins(
-            scale_px(16, min_abs=13),
-            scale_px(12, min_abs=10),
-            scale_px(26, min_abs=21),
-            scale_px(12, min_abs=10),
-        )
-        detail_layout.setSpacing(scale_px(7, min_abs=5))
-
-        self._detail_title = QLabel("", host)
-        self._detail_title.setObjectName("ForumDetailTitle")
-        self._detail_title.setFont(_font(17, bold=True))
-        self._detail_title.setWordWrap(True)
-        detail_layout.addWidget(self._detail_title)
-
-        self._detail_meta = QLabel("", host)
-        self._detail_meta.setObjectName("ForumPostMeta")
-        self._detail_meta.setFont(_font(10))
-        self._detail_meta.setWordWrap(True)
-        detail_layout.addWidget(self._detail_meta)
-
-        self._detail_actions = QHBoxLayout()
-        self._detail_actions.setContentsMargins(0, 0, 0, 0)
-        self._detail_actions.setSpacing(scale_px(8, min_abs=6))
-        self._detail_like = QToolButton(host)
-        self._detail_like.setObjectName("ForumLikeButton")
-        self._detail_like.setCursor(Qt.PointingHandCursor)
-        self._detail_like.setFont(_font(11))
-        self._detail_like.clicked.connect(self._on_detail_like)
-        self._detail_actions.addWidget(self._detail_like, 0)
-        self._detail_login_hint = QLabel("登录后可以点赞与回复", host)
-        self._detail_login_hint.setObjectName("ForumHint")
-        self._detail_login_hint.setFont(_font(10))
-        self._detail_actions.addWidget(self._detail_login_hint, 0)
-        self._detail_actions.addStretch(1)
-        detail_layout.addLayout(self._detail_actions)
-
-        self._detail_body = QVBoxLayout()
-        self._detail_body.setContentsMargins(0, 0, 0, 0)
-        self._detail_body.setSpacing(scale_px(5, min_abs=4))
-        detail_layout.addLayout(self._detail_body)
-
-        self._replies_title = QLabel("回复", host)
-        self._replies_title.setObjectName("ForumSectionTitle")
-        self._replies_title.setFont(_font(13, bold=True))
-        detail_layout.addWidget(self._replies_title)
-
-        self._replies_host = QWidget(host)
-        self._replies_layout = QVBoxLayout(self._replies_host)
-        self._replies_layout.setContentsMargins(0, 0, 0, 0)
-        self._replies_layout.setSpacing(scale_px(6, min_abs=5))
-        detail_layout.addWidget(self._replies_host)
-        # 空态提示**常驻**：它和回复行挤在同一个布局里，但 `_clear_reply_rows()` 会跳过它。
-        # 早先它跟着行一起被删掉，`self._empty_hint` 就成了指向已销毁 QLabel 的野引用，
-        # 下一次 `_sync_replies_state()`（或 `on_reply_posted()`）在 `setVisible` 上抛
-        # 「wrapped C/C++ object of type QLabel has been deleted」，整个回调当场中断——
-        # 用户看到的就是「回复列表不显示」（2026-09-16 线上日志实测，看第二篇帖子必现）。
-        self._empty_hint = self._empty_reply_hint()
-        self._empty_hint.setVisible(False)
-
-        self._more_replies = QPushButton("加载更多回复", host)
-        self._more_replies.setObjectName("ForumGhostButton")
-        self._more_replies.setFont(_font(11))
-        self._more_replies.setVisible(False)
-        self._more_replies.clicked.connect(lambda: self._service.load_more_replies())
-        detail_layout.addWidget(self._more_replies)
-
-        composer = QFrame(host)
-        composer.setObjectName("ForumReplyComposer")
-        composer_layout = QHBoxLayout(composer)
-        composer_layout.setContentsMargins(
-            scale_px(10, min_abs=8),
-            scale_px(8, min_abs=6),
-            scale_px(10, min_abs=8),
-            scale_px(8, min_abs=6),
-        )
-        composer_layout.setSpacing(scale_px(8, min_abs=6))
-        self._reply_target_label = QLabel("", composer)
-        self._reply_target_label.setObjectName("ForumHint")
-        self._reply_target_label.setFont(_font(10))
-        self._reply_target_label.setVisible(False)
-        composer_layout.addWidget(self._reply_target_label, 0)
-        self._reply_input = QLineEdit(composer)
-        self._reply_input.setObjectName("ForumReplyInput")
-        self._reply_input.setPlaceholderText(f"写下你的回复…（最多 {FORUM_REPLY_MAX} 字）")
-        self._reply_input.setMaxLength(FORUM_REPLY_MAX)
-        self._reply_input.setFont(_font(12))
-        self._reply_input.returnPressed.connect(self._on_send_reply)
-        self._reply_input.textChanged.connect(lambda _text: self._sync_composer())
-        composer_layout.addWidget(self._reply_input, 1)
-        self._reply_send = QPushButton("回复", composer)
-        self._reply_send.setObjectName("ForumSend")
-        self._reply_send.setFont(_font(12))
-        self._reply_send.clicked.connect(self._on_send_reply)
-        composer_layout.addWidget(self._reply_send, 0)
-        self._reply_login = QPushButton("去登录", composer)
-        self._reply_login.setFont(_font(12))
-        self._reply_login.setVisible(False)
-        self._reply_login.clicked.connect(self.login_requested.emit)
-        composer_layout.addWidget(self._reply_login, 0)
-        detail_layout.addWidget(composer)
-        detail_layout.addStretch(1)
-
-        self._detail_scroll.setWidget(host)
-        layout.addWidget(self._detail_scroll, 1)
-        return page
-    # ── 发帖页：行内标记、颜色与图片 ─────────────────────────────────
 
     # ── 对外 ─────────────────────────────────────────────────────────
 
@@ -808,225 +645,6 @@ class ForumBoardPage(_ForumComposerMixin, QWidget):
             self._list_layout.insertWidget(self._list_layout.count() - 1, row)
         self._refresh_thumbs()
         return row
-
-    def _render_body(self, post: ForumPost) -> None:
-        self._clear_detail_body()
-        blocks = render_blocks(post.content)
-        if not blocks:
-            self._add_body_label("（这篇帖子没有正文）", "ForumPostText", 12)
-            return
-        #: 正文里已经就地铺出来的图片 id：最底下那行兜底缩略图据此跳过它们，同一张图不铺两遍。
-        inlined: set[str] = set()
-        for block in blocks:
-            if block.kind == BLOCK_DIVIDER:
-                line = QFrame(self._detail_host)
-                line.setObjectName("ForumDivider")
-                line.setFrameShape(QFrame.HLine)
-                line.setFixedHeight(scale_px(1, min_abs=1))
-                self._detail_body.addWidget(line)
-            elif block.kind == BLOCK_HEADING:
-                size = _HEADING_FONT_SIZES.get(int(block.level or 1), 14)
-                inlined |= self._add_body_source(
-                    block, block.raw, "ForumPostHeading", block.size or size, bold=True
-                )
-            elif block.kind == BLOCK_QUOTE:
-                inlined |= self._add_body_source(
-                    block,
-                    block.raw,
-                    "ForumPostQuote",
-                    block.size or 12,
-                    prefix="“",
-                    suffix="”",
-                    color=forum_muted_text_color(),
-                )
-            elif block.kind == BLOCK_CODE:
-                # 代码块里的图片 Markdown 就是要原样显示，不做就地替换。
-                self._add_body_label(block.text, "ForumPostCode", 11)
-            elif block.kind == BLOCK_LIST:
-                marker = f"{block.marker} " if block.marker else ""
-                indent = "　" * max(0, int(block.level))
-                inlined |= self._add_body_source(
-                    block,
-                    block.raw,
-                    "ForumPostText",
-                    block.size or _BLOCK_FONT_DEFAULT,
-                    prefix=f"{indent}{marker}",
-                )
-            else:
-                inlined |= self._add_body_source(
-                    block,
-                    block.raw,
-                    "ForumPostText",
-                    block.size or _BLOCK_FONT_DEFAULT,
-                )
-        self._add_body_images(post, inlined)
-
-    def _add_body_source(
-        self,
-        block,
-        source: str,
-        name: str,
-        size: int,
-        *,
-        bold: bool = False,
-        prefix: str = "",
-        suffix: str = "",
-        color: str = "",
-    ) -> set[str]:
-        """铺正文的一块，块里的图片 Markdown 就地换成真图；返回换掉的图片 id。
-
-        整块没有可取图片（外站地址也算没有）时走原来那条纯文字路径——一个 QLabel 或一个
-        `MarkupText`，观感与以前一字不差。图前 / 图后的文字段是**原文**（行内标记还在），
-        得逐段再跑一遍 `render_blocks()` 才能把标记解释成富文本；列表的项目符号与引用的书名号
-        只挂在第一段 / 最后一段文字上（整块就一张图时它们没地方挂，也就不显示了）。
-        """
-        parts = split_images(source)
-        if len(parts) == 1 and isinstance(parts[0], str):
-            self._add_body_label(
-                f"{prefix}{block.text}{suffix}",
-                name,
-                size,
-                bold=bold,
-                block=block,
-                prefix=prefix,
-                suffix=suffix,
-                color=color,
-            )
-            return set()
-        texts = [part for part in parts if isinstance(part, str) and part.strip()]
-        inlined: set[str] = set()
-        text_index = 0
-        for part in parts:
-            if isinstance(part, ForumImageToken):
-                self._add_body_image(part.image_id)
-                inlined.add(part.image_id)
-                continue
-            text = part.strip()
-            if not text:
-                continue
-            first = text_index == 0
-            last = text_index == len(texts) - 1
-            text_index += 1
-            pieces = render_blocks(text)
-            for index, piece in enumerate(pieces):
-                head = prefix if first and index == 0 else ""
-                tail = suffix if last and index == len(pieces) - 1 else ""
-                self._add_body_label(
-                    f"{head}{piece.text}{tail}",
-                    name,
-                    size,
-                    bold=bold,
-                    block=piece,
-                    prefix=head,
-                    suffix=tail,
-                    color=color,
-                )
-        return inlined
-
-    def _add_body_image(self, image_id: str) -> None:
-        """正文里的一句图片 Markdown 就地铺成整幅图。
-
-        占位符在哪，图就在哪；宽度跟着正文栏走、只等比缩放（`ForumDetailImage`），所以图在栏内
-        尽可能大，又不会被拉伸或旋转。
-        """
-        image = ForumDetailImage(image_id, width_hint=BODY_WIDTH_HINT, parent=self._detail_host)
-        self._detail_body.addWidget(image, 0, Qt.AlignLeft)
-        self._refresh_thumbs()
-
-    def _add_body_label(
-        self,
-        text: str,
-        name: str,
-        size: int,
-        *,
-        bold: bool = False,
-        block=None,
-        prefix: str = "",
-        suffix: str = "",
-        color: str = "",
-    ) -> None:
-        """正文的一段。
-
-        纯文字段用 QLabel（样式表管字体与颜色，最省事）；带行内标记或颜色令牌的段换成
-        `MarkupText`——QLabel 的富文本能给文字上色，但给不出**描边**，而描边色是发帖页的
-        一个按钮，漏掉它就成了「发了带描边的帖子，看起来却没有描边」。两条路径的字体、字号
-        与颜色取自同一处，观感一致。
-        """
-        if block is not None and self._block_needs_rich(block):
-            self._add_body_rich(
-                block, name, size, bold=bold, prefix=prefix, suffix=suffix, color=color
-            )
-            return
-        label = QLabel(text, self._detail_host)
-        label.setObjectName(name)
-        label.setFont(_font(size, bold=bold))
-        label.setWordWrap(True)
-        label.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        self._detail_body.addWidget(label, 0, _block_alignment(block))
-
-    @staticmethod
-    def _block_needs_rich(block) -> bool:
-        """这一段光靠 QLabel 显示不出原样吗（有颜色令牌、行内标记，或段落排版令牌）。"""
-        if block.kind == BLOCK_CODE:
-            # 代码块里的 `**` 就是要原样显示，别当成格式解释。
-            return False
-        if getattr(block, "size", 0) or getattr(block, "align", ""):
-            # 字号要写进字符格式、对齐要跟块格式一起铺，QLabel 做不到这两件事。
-            return True
-        if any(run.color or run.outline for run in block.runs):
-            return True
-        html = to_html(block.raw)
-        return bool(html) and html != escape_text(block.text)
-
-    def _add_body_rich(
-        self, block, name: str, size: int, *, bold: bool, prefix: str, suffix: str, color: str
-    ) -> None:
-        """带标记 / 带颜色的段：交给 `MarkupText` 逐段着色（连描边一起）。
-
-        前缀（列表的项目符号与缩进、引用的书名号）不进 `block.runs`，所以要自己补一段没有
-        颜色的 run，段的边界才对得上——`MarkupText` 是按累计字符数定位的。
-        """
-        runs = block.runs
-        if prefix or suffix:
-            runs = (ForumTextRun(prefix),) + runs + (ForumTextRun(suffix),)
-        widget = MarkupText(
-            escape_text(prefix) + to_html(block.raw) + escape_text(suffix),
-            font=_font(size, bold=bold),
-            color=color or forum_card_text_color(),
-            width_hint=BODY_WIDTH_HINT,
-            runs=runs,
-            align=_block_alignment(block),
-            size=getattr(block, "size", 0),
-            object_name="ForumBodyText",
-            parent=self._detail_host,
-        )
-        widget.setProperty("forumBlock", name)
-        self._detail_body.addWidget(widget)
-
-    def _add_body_images(self, post: ForumPost, inlined: set[str] | None = None) -> None:
-        """兜底：这一帖挂了图、正文里却没能就地铺出来的，在正文底下补一行小缩略图。
-
-        正文里认得出的图片已经铺成整幅图了（`_add_body_image()`），`inlined` 就是那些 id；
-        这里只收漏网之鱼（正文没写图片 Markdown、或者写的是外站地址），同一张图不铺第二遍。
-        """
-        shown = inlined or set()
-        rest = [
-            image.id
-            for image in post.images[:FORUM_IMAGES_PER_POST]
-            if image.id not in shown
-        ]
-        if not rest:
-            return
-        strip = QHBoxLayout()
-        strip.setContentsMargins(0, scale_px(3, min_abs=2), 0, 0)
-        strip.setSpacing(scale_px(6, min_abs=5))
-        for ident in rest:
-            strip.addWidget(
-                ForumImageThumb(ident, size=LIST_THUMB_SIZE, parent=self._detail_host), 0
-            )
-        strip.addStretch(1)
-        self._detail_body.addLayout(strip)
-        self._refresh_thumbs()
 
     def _clear_detail_body(self) -> None:
         while self._detail_body.count():

@@ -13,23 +13,33 @@
   - 悬浮提示使用项目 _description 属性系统
 """
 
-import re
 import os
 import threading
 import subprocess
 from collections import deque
 
 from PyQt5.QtCore import Qt, QPoint, QRect, QPropertyAnimation, QEasingCurve, QEvent, QTimer
-from PyQt5.QtGui import QColor, QPainter, QPen, QCursor, QTextCursor
+from PyQt5.QtGui import QPainter, QCursor, QTextCursor
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QTextEdit, QLineEdit, QApplication,
-    QGraphicsOpacityEffect, QLabel, QHBoxLayout, QPushButton,
+    QGraphicsOpacityEffect, QLabel, QHBoxLayout,
 )
 
 from config.config import UI
 from lib.core.render.visuals.panel_visuals import build_panel_shell_visual
 from lib.core.render.visuals.types import Rect
 from lib.script.ui.render_bridge import create_draw_backend, qt_color, cmd_font as get_cmd_font, digit_font as get_digit_font, ui_font as get_ui_font
+#: ANSI 清洗、边缘命中与标题按钮已抽到 `cmd_window_widgets`；这里按原名重新导出，调用点不变。
+from lib.script.ui.cmd_window_widgets import (  # noqa: F401 - 既有导入面
+    _CloseButton,
+    _EDGE_CURSORS,
+    _StreamDoneEvent,
+    _StreamLineEvent,
+    _TitleButton,
+    _hex,
+    _hit_edge,
+    _strip_ansi,
+)
 from config.scale import scale_px, scale_style_px
 from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import get_event_center, EventType, Event
@@ -40,134 +50,9 @@ from lib.core.render.layers import get_layer_manager, WindowLayer
 # 工具函数
 # ---------------------------------------------------------------------------
 
-def _hex(color: QColor) -> str:
-    return color.name()
-
-
-_ANSI_RE = re.compile(r'\x1b\[[0-9;]*[A-Za-z]|\x1b\][^\x07]*\x07|\x1b.')
-
-
-def _strip_ansi(text: str) -> str:
-    """剥离 ANSI 转义序列（颜色、光标移动等）。"""
-    return _ANSI_RE.sub('', text)
-
-
-# 边缘拖拽缩放参数
-_EDGE = scale_px(6)
-
-# 边缘 → 光标映射
-_EDGE_CURSORS = {
-    'l':  Qt.SizeHorCursor,
-    'r':  Qt.SizeHorCursor,
-    'b':  Qt.SizeVerCursor,
-    'bl': Qt.SizeBDiagCursor,
-    'br': Qt.SizeFDiagCursor,
-}
-
-
-def _hit_edge(pos: QPoint, w: int, h: int) -> str | None:
-    """返回鼠标命中的边缘方向（不含顶部，由标题栏拖拽处理）。"""
-    x, y = pos.x(), pos.y()
-    e = _EDGE
-    left   = x < e
-    right  = x > w - e
-    bottom = y > h - e
-    if bottom and left:  return 'bl'
-    if bottom and right: return 'br'
-    if left:             return 'l'
-    if right:            return 'r'
-    if bottom:           return 'b'
-    return None
-
-
-# ---------------------------------------------------------------------------
 # 自定义 QEvent 子类（线程→主线程安全传递）
 # ---------------------------------------------------------------------------
 
-class _StreamLineEvent(QEvent):
-    """后台线程每读取一行输出就投递此事件。"""
-    _TYPE = QEvent.Type(QEvent.registerEventType())
-
-    def __init__(self, line: str):
-        super().__init__(_StreamLineEvent._TYPE)
-        self.line = line
-
-
-class _StreamDoneEvent(QEvent):
-    """命令执行完毕（或失败）时投递此事件。"""
-    _TYPE = QEvent.Type(QEvent.registerEventType())
-
-    def __init__(self, success: bool, msg: str = ''):
-        super().__init__(_StreamDoneEvent._TYPE)
-        self.success = success
-        self.msg = msg
-
-
-# ---------------------------------------------------------------------------
-# 标题栏无边框按钮
-# ---------------------------------------------------------------------------
-
-class _TitleButton(QPushButton):
-    """标题栏小按钮：无边框，hover 变色，黑色边框，支持自定义字体。"""
-
-    def __init__(self, text: str, hover_bg: QColor, parent=None, custom_font=None):
-        super().__init__(text, parent)
-        self._hover_bg   = hover_bg
-        self._normal_bg  = qt_color('pink')
-        self._hovered    = False
-        font = custom_font if custom_font is not None else get_ui_font(size=scale_px(9))
-        self.setFont(font)
-        self.setCursor(Qt.PointingHandCursor)
-        self.setFixedSize(scale_px(28), scale_px(18))
-        self.setFocusPolicy(Qt.NoFocus)
-        self._refresh_style(False)
-
-    def _refresh_style(self, hovered: bool):
-        bg     = _hex(self._hover_bg) if hovered else _hex(self._normal_bg)
-        border = qt_color('black').name()          # ← 黑色边框
-        self.setStyleSheet(
-            f"QPushButton {{"
-            f"  background: {bg};"
-            f"  color: {qt_color('black').name()};"
-            f"  border: {scale_px(1, min_abs=1)}px solid {border};"
-            f"  padding: 0px;"
-            f"}}"
-        )
-
-    def enterEvent(self, event):
-        self._hovered = True
-        self._refresh_style(True)
-        super().enterEvent(event)
-
-    def leaveEvent(self, event):
-        self._hovered = False
-        self._refresh_style(False)
-        super().leaveEvent(event)
-
-
-# ---------------------------------------------------------------------------
-# 绘制型关闭按钮（QPainter 对角线 × 符号，比字符更粗醒目）
-# ---------------------------------------------------------------------------
-
-class _CloseButton(_TitleButton):
-    """关闭按钮：覆盖 paintEvent，用 QPainter 粗线绘制 × 号。"""
-
-    def __init__(self, hover_bg: QColor, parent=None):
-        super().__init__('', hover_bg, parent)     # 文本为空，完全靠绘制
-        self.setFixedSize(scale_px(22), scale_px(18))
-
-    def paintEvent(self, event):
-        super().paintEvent(event)                  # 先画背景 + 黑色边框
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing, True)
-        pen_w = max(2, scale_px(2, min_abs=2))
-        pen = QPen(qt_color('black'), pen_w, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
-        painter.setPen(pen)
-        m = max(5, scale_px(5, min_abs=5))
-        r = self.rect().adjusted(m, m, -m, -m)
-        painter.drawLine(r.topLeft(), r.bottomRight())
-        painter.drawLine(r.topRight(), r.bottomLeft())
-        painter.end()
 
 
 # ---------------------------------------------------------------------------

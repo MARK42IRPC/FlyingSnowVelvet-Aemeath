@@ -59,6 +59,7 @@ ignore = [
 "lib/script/obj-雪豹/manager.py" = ["E741"]
 "lib/script/obj-雪球/manager.py" = ["E702"]
 "lib/script/ui/cmd_window.py" = ["E701"]
+"lib/script/ui/cmd_window_widgets.py" = ["E701"]  # 同 cmd_window.py：菱形边缘判定表
 "lib/core/movement_controller.py" = ["E7"]
 "lib/script/gemes/packages/official/lahai_tetris/code/lahai_tetris_pkg/render.py" = ["W191"]
 

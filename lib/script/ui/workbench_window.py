@@ -15,11 +15,10 @@ from PyQt5.QtCore import (
     Qt,
     QVariantAnimation,
 )
-from PyQt5.QtGui import QColor, QIcon, QPainter
+from PyQt5.QtGui import QIcon
 from PyQt5.QtWidgets import (
     QApplication,
     QButtonGroup,
-    QCheckBox,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -52,6 +51,12 @@ from lib.script.workbench.page_registry import (
 )
 from lib.script.workbench.theme import get_workbench_colors, workbench_stylesheet
 from lib.script.ui.render_bridge import apply_ui_font_tree, ui_font as get_ui_font
+get_workbench_colors = get_workbench_colors  # noqa: PLW0127 - 既有导入面（保留供外部取用）
+#: 淡入淡出遮罩与明暗开关已抽到 `workbench_widgets`；这里按原名重新导出，调用点不变。
+from lib.script.ui.workbench_widgets import (  # noqa: E402,F401 - 既有导入面
+    _WorkbenchFadeOverlay,
+    _WorkbenchThemeToggle,
+)
 
 
 _GROUP_ORDER = (
@@ -70,76 +75,6 @@ _WORKBENCH_ICON_PATH = Path(__file__).resolve().parents[3] / "resc" / "icon.ico"
 def _overview_page_link(page_id: str) -> tuple[str, str]:
     spec = default_page_spec(page_id)
     return spec.page_id, spec.title
-
-
-class _WorkbenchFadeOverlay(QWidget):
-    """Paint-only fade cover that does not alter child widget composition."""
-
-    def __init__(self, parent=None) -> None:
-        super().__init__(parent)
-        self._opacity = 0.0
-        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-        self.hide()
-
-    def set_opacity(self, value: float) -> None:
-        self._opacity = max(0.0, min(1.0, float(value)))
-        self.update()
-
-    def paintEvent(self, _event) -> None:
-        if self._opacity <= 0.0:
-            return
-        painter = QPainter(self)
-        color = QColor(get_workbench_colors().canvas)
-        color.setAlphaF(self._opacity)
-        painter.fillRect(self.rect(), color)
-
-
-class _WorkbenchThemeToggle(QCheckBox):
-    """紧凑的粉青色明暗主题开关。"""
-
-    def __init__(self, parent=None) -> None:
-        super().__init__(parent)
-        self.setObjectName("WorkbenchThemeToggle")
-        self.setText("")
-        self.setCursor(Qt.PointingHandCursor)
-        self.setFocusPolicy(Qt.NoFocus)
-        self.setFixedSize(scale_px(52, min_abs=46), scale_px(28, min_abs=25))
-        self.setAccessibleName("工作台明暗主题")
-
-    def hitButton(self, pos: QPoint) -> bool:
-        """让自绘轨道的整个区域都能响应点击。"""
-        return self.rect().contains(pos)
-
-    def paintEvent(self, _event) -> None:
-        colors = get_workbench_colors()
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-
-        track = self.rect().adjusted(
-            scale_px(1, min_abs=1),
-            scale_px(4, min_abs=3),
-            -scale_px(1, min_abs=1),
-            -scale_px(4, min_abs=3),
-        )
-        radius = track.height() / 2.0
-        active = self.isChecked()
-        painter.setPen(QColor(colors.cyan if active else colors.border_strong))
-        painter.setBrush(QColor(colors.pink if active else colors.surface_raised))
-        painter.drawRoundedRect(track, radius, radius)
-
-        knob_diameter = max(scale_px(16, min_abs=14), track.height() - scale_px(4, min_abs=3))
-        knob_x = (
-            track.right() - knob_diameter - scale_px(2, min_abs=1)
-            if active
-            else track.left() + scale_px(2, min_abs=1)
-        )
-        knob_y = track.center().y() - knob_diameter / 2.0
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(QColor(colors.cyan if active else colors.pink))
-        painter.drawEllipse(int(knob_x), int(knob_y), knob_diameter, knob_diameter)
-
-        # The switch is self-painted; a Qt focus frame would look like an
-        # extra border and flash during rapid toggles.
 
 
 class WorkbenchWindow(QWidget):

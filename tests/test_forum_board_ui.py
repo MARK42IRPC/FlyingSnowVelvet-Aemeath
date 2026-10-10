@@ -42,6 +42,7 @@ from lib.core.forum_session import ForumSessionStore
 from lib.core.forum_markdown import IMAGE_PLACEHOLDER
 from lib.script.ui import forum_board as forum_board_module
 from lib.script.ui import forum_composer as forum_composer_module
+from lib.script.ui import forum_detail as forum_detail_module
 from lib.script.ui.forum_board import (
     FORUM_IMAGE_MAX_PIXELS,
     TAG_CHIP_LIMIT,
@@ -720,12 +721,27 @@ class ComposerModuleSplitTests(BoardPageTestCase):
     def test_size_steps_are_re_exported_under_the_old_path(self) -> None:
         self.assertIs(forum_board_module.FORUM_SIZE_STEPS, forum_composer_module.FORUM_SIZE_STEPS)
 
-    def test_the_remaining_board_keeps_list_and_detail(self) -> None:
-        """取走的是发帖屏，列表 / 详情与调度必须还在看板上。"""
+    def test_the_detail_screen_lives_in_its_own_module(self) -> None:
+        """详情屏已出列到 `forum_detail`（第 57 节）。
+
+        拆分只做纯移动：详情屏的装配必须与 `ForumDetailMixin` 同源，
+        `ForumBoardPage` 只是多继承本 mixin。
+        """
+        self.assertTrue(issubclass(ForumBoardPage, forum_detail_module.ForumDetailMixin))
+        for name in (
+            "_build_detail",
+        ):
+            self.assertIs(
+                getattr(ForumBoardPage, name),
+                getattr(forum_detail_module.ForumDetailMixin, name),
+                name,
+            )
+
+    def test_the_remaining_board_keeps_list_and_scheduling(self) -> None:
+        """取走的是发帖 / 详情两屏，列表与调度必须还在看板上。"""
         for name in (
             "_build_toolbar",
             "_build_list",
-            "_build_detail",
             "subtitle",
             "open_composer",
             "on_thread_posted",

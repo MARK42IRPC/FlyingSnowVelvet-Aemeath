@@ -161,12 +161,14 @@ class CodeStructureBoundaryTests(unittest.TestCase):
             ("lib/script/ui/office_page.py", "lib.script.office.workspace"),
             ("lib/script/ui/office_style.py", "lib.script.office.contracts"),
             ("lib/script/ui/playlist_panel.py", "lib.script.music"),
+            ("lib/script/ui/speaker_button_shell.py", "lib.script.music"),
             ("lib/script/ui/speaker_control_buttons.py", "lib.script.music"),
             ("lib/script/ui/speaker_search_dialog.py", "lib.script.music"),
             ("lib/script/ui/speaker_search_dialog.py", "lib.script.music.track_text"),
             ("lib/script/ui/speaker_volume_slider.py", "lib.script.music"),
             ("lib/script/ui/voice_package_installer.py", "lib.script.gsvmove"),
             ("lib/script/ui/voice_package_installer.py", "lib.script.gsvmove.package_manager"),
+            ("lib/script/ui/voice_package_widgets.py", "lib.script.gsvmove.package_manager"),
         }
         product_packages = ("chat", "office", "music", "gsvmove")
         found = set()

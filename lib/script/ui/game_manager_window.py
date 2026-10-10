@@ -27,6 +27,8 @@ from config.scale import scale_px
 from lib.script.gemes.MAIN.game_packages import InstalledGame, get_game_package_service
 from lib.script.workbench.theme import get_workbench_colors
 from lib.script.ui.render_bridge import digit_font as get_digit_font, ui_font as get_ui_font
+#: 游戏卡片控件已抽到 `game_manager_widgets`；这里按原名重新导出，调用点不变。
+from lib.script.ui.game_manager_widgets import _GameCardWidget  # noqa: F401 - 既有导入面
 from lib.core.render.backends.qt.widgets.workbench_page import QtWorkbenchToolPage
 
 if TYPE_CHECKING:
@@ -58,66 +60,6 @@ _set_theme_colors()
 
 def _rgb(color: QColor) -> str:
     return f"rgb({color.red()}, {color.green()}, {color.blue()})"
-
-
-class _GameCardWidget(QFrame):
-    def __init__(self, record: InstalledGame, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setObjectName("GameCard")
-        self.setAttribute(Qt.WA_StyledBackground, True)
-        self.setProperty("selected", False)
-
-        title = QLabel(record.manifest.name, self)
-        title_font = get_ui_font(size=scale_px(14, min_abs=12))
-        title_font.setBold(True)
-        title.setFont(title_font)
-        title.setObjectName("GameCardTitle")
-
-        badge = QLabel("官方示例" if record.manifest.official else "开发者包", self)
-        badge_font = get_ui_font(size=scale_px(10, min_abs=9))
-        badge_font.setBold(True)
-        badge.setFont(badge_font)
-        badge.setAlignment(Qt.AlignCenter)
-        badge.setObjectName("GameCardBadge")
-        badge.setProperty("official", record.manifest.official)
-        self._badge = badge
-
-        meta = QLabel(f"v{record.manifest.version}   {record.manifest.game_id}", self)
-        meta.setFont(get_ui_font(size=scale_px(12, min_abs=10)))
-        meta.setObjectName("GameCardMeta")
-
-        summary = QLabel(record.manifest.summary or "暂无简介", self)
-        summary.setFont(get_ui_font(size=scale_px(12, min_abs=10)))
-        summary.setWordWrap(True)
-        summary.setObjectName("GameCardSummary")
-
-        ext = QLabel(
-            f"粒子 {len(record.manifest.particle_extensions)}  ·  特效 {len(record.manifest.effect_extensions)}",
-            self,
-        )
-        ext.setFont(get_ui_font(size=scale_px(11, min_abs=9)))
-        ext.setObjectName("GameCardExt")
-
-        top = QHBoxLayout()
-        top.setContentsMargins(0, 0, 0, 0)
-        top.setSpacing(scale_px(8, min_abs=6))
-        top.addWidget(title, 1)
-        top.addWidget(badge, 0, Qt.AlignTop)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(scale_px(12, min_abs=10), scale_px(10, min_abs=8), scale_px(12, min_abs=10), scale_px(10, min_abs=8))
-        layout.setSpacing(scale_px(5, min_abs=4))
-        layout.addLayout(top)
-        layout.addWidget(meta)
-        layout.addWidget(summary)
-        layout.addWidget(ext)
-
-    def set_selected(self, selected: bool) -> None:
-        self.setProperty("selected", bool(selected))
-        self.style().unpolish(self)
-        self.style().polish(self)
-        self.style().unpolish(self._badge)
-        self.style().polish(self._badge)
 
 
 class GameManagerWindow(QtWorkbenchToolPage):
