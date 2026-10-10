@@ -272,6 +272,44 @@ def workbench_overlay_classes():
     return _WorkbenchFadeOverlay, _WorkbenchThemeToggle
 
 
+def bug_tracker_watermark_overlay_class():
+    """返回故障跟踪窗口的水印覆盖层类（档位 D）。
+
+    与 ``workbench_overlay_classes`` 同一用途：``lib/script/ui`` 的垫片要按名字再导出这个类，
+    而它自己不得静态 import 档位 D。宿主只读宿主窗口上的 ``_watermark_*`` 文本并自绘。
+    """
+    from lib.core.render.backends.qt.widgets.bug_tracker_widgets import (
+        _BugTrackerWatermarkOverlay,
+    )
+
+    return _BugTrackerWatermarkOverlay
+
+
+def configure_bug_tracker_watermark_font(factory) -> None:
+    """把水印覆盖层的字体取用入口接到 ``digit_font``（与 ``forum_board`` 同形）。"""
+    from lib.core.render.backends.qt.widgets import bug_tracker_widgets
+
+    bug_tracker_widgets.configure_font_factory(factory)
+
+
+def game_card_widget_class():
+    """返回游戏管理窗口的卡片控件基类（档位 D）。
+
+    宿主不得 import ``lib.script``，因此它不认 ``InstalledGame``；产品侧垫片在
+    ``lib/script/ui/game_manager_widgets.py`` 里包一层补回原签名。
+    """
+    from lib.core.render.backends.qt.widgets.game_manager_widgets import _GameCardWidget
+
+    return _GameCardWidget
+
+
+def configure_game_card_font(factory) -> None:
+    """把卡片控件的字体取用入口接到 ``ui_font``（与 ``forum_board`` 同形）。"""
+    from lib.core.render.backends.qt.widgets import game_manager_widgets
+
+    game_manager_widgets.configure_font_factory(factory)
+
+
 def floating_window_classes():
     """返回浮窗实现的三件套：拖拽过滤器、主题观察者与基类（档位 D）。
 
