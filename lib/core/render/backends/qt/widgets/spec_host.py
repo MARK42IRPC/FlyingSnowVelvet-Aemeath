@@ -667,6 +667,9 @@ class QtSpecWindow:
     def show_window(self) -> None:
         """显示窗口：居中落位、注册层级、前置并淡入。"""
 
+        # 重新显示 = 新一次交互会话：解除上一次决定的闃锁。`hide_semantics` 的浮窗只收起窗口、不结束生命周期，
+        # 若不重置，第二次打开后所有按钮会静默失效。
+        self._resolved = False
         self._register_layer()
         was_visible = self._requested_visible
         self._requested_visible = True

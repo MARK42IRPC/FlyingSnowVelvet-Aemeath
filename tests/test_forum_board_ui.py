@@ -40,7 +40,8 @@ from lib.core.forum_api import (
 )
 from lib.core.forum_session import ForumSessionStore
 from lib.core.forum_markdown import IMAGE_PLACEHOLDER
-from lib.script.ui import forum_board
+from lib.script.ui import forum_board as forum_board_module
+from lib.script.ui import forum_composer as forum_composer_module
 from lib.script.ui.forum_board import (
     FORUM_IMAGE_MAX_PIXELS,
     TAG_CHIP_LIMIT,
@@ -683,6 +684,57 @@ class BackFromDetailTests(unittest.TestCase):
         self.assertEqual(self.page._stack.currentIndex(), 0)
 
 
+class ComposerModuleSplitTests(BoardPageTestCase):
+    """发帖屏已出列到 `forum_composer`（第 56 节）。
+
+    拆分只做纯移动：发帖屏的 27 个方法与 `FORUM_SIZE_STEPS` 必须与
+    `ForumComposerMixin` 同源，`forum_board.FORUM_SIZE_STEPS` 则作为既有导入面
+    重新导出（`tests/test_forum_layout_ui.py` 依赖它）。
+    """
+
+    def test_the_composer_screen_lives_in_its_own_module(self) -> None:
+        self.assertTrue(issubclass(ForumBoardPage, forum_composer_module.ForumComposerMixin))
+        for name in (
+            "_build_composer",
+            "_build_compose_tools",
+            "_build_compose_layout",
+            "_build_compose_colors",
+            "_body_text",
+            "_set_body_text",
+            "_toggle_body_format",
+            "_write_body_layout",
+            "_toggle_body_color",
+            "_insert_body_text",
+            "_on_add_image",
+            "_sync_compose_images",
+            "_on_publish_thread",
+            "_sync_thread_counter",
+            "_sync_composer",
+        ):
+            self.assertIs(
+                getattr(ForumBoardPage, name),
+                getattr(forum_composer_module.ForumComposerMixin, name),
+                name,
+            )
+
+    def test_size_steps_are_re_exported_under_the_old_path(self) -> None:
+        self.assertIs(forum_board_module.FORUM_SIZE_STEPS, forum_composer_module.FORUM_SIZE_STEPS)
+
+    def test_the_remaining_board_keeps_list_and_detail(self) -> None:
+        """取走的是发帖屏，列表 / 详情与调度必须还在看板上。"""
+        for name in (
+            "_build_toolbar",
+            "_build_list",
+            "_build_detail",
+            "subtitle",
+            "open_composer",
+            "on_thread_posted",
+            "_sync_session",
+            "_dispatch",
+        ):
+            self.assertIn(name, vars(ForumBoardPage))
+
+
 class ComposerToolsTests(BoardPageTestCase):
     """发帖页的辅助：行内标记、文字色 / 描边色、图片上传。"""
 
@@ -775,7 +827,10 @@ class ComposerToolsTests(BoardPageTestCase):
         target = pathlib.Path(self._tmp.name) / "封面.png"
         target.write_bytes(PNG_1PX)
         with patch.object(
-            forum_board.QFileDialog, "getOpenFileName", return_value=(str(target), "")
+            # 发帖屏已出列到 `forum_composer`（第 56 节），文件选择框的 patch 跟着真正的所有者走。
+            forum_composer_module.QFileDialog,
+            "getOpenFileName",
+            return_value=(str(target), ""),
         ):
             self.page._on_add_image()
         self.assertEqual([name for name, _ in self.service.calls], ["upload_image"])

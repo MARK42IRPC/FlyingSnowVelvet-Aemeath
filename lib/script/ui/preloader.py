@@ -192,16 +192,37 @@ class UiPreloader(QObject):
             _logger.exception('[ui.preload] failed to release evicted UI: %s', key)
 
     @staticmethod
-    def _warm_paint(widget) -> None:
+    def _paint_target(widget):
+        """取控件背后真正能离屏渲染的 Qt 窗口；没有就返回 None。
+
+        控件层已迁出的控件（如 `progress_panel`）不再是 `QWidget`：它们只持有
+        描述层状态，真实窗口在描述宿主（`_host`）里；窗口描述控件（浮窗）则在 `widget()`。
+        这里只做极小的适配，不为预热反向要求控件暴露额外接口。
+        """
+
+        if callable(getattr(widget, "render", None)):
+            return widget
+        for attr in ("widget", "_host"):
+            candidate = getattr(widget, attr, None)
+            if candidate is not None and callable(getattr(candidate, "render", None)):
+                return candidate
+        return None
+
+    @classmethod
+    def _warm_paint(cls, widget) -> None:
         """离屏渲染一次，让共享视觉层、绘制后端和字形缓存提前就绪。"""
         try:
-            width = min(PRECACHE_IMAGE_LIMIT, max(1, int(widget.width())))
-            height = min(PRECACHE_IMAGE_LIMIT, max(1, int(widget.height())))
+            target = cls._paint_target(widget)
+            if target is None:
+                # 无真实 Qt 窗口可画（如后端中立控件的轻量替身），预热跳过即可。
+                return
+            width = min(PRECACHE_IMAGE_LIMIT, max(1, int(target.width())))
+            height = min(PRECACHE_IMAGE_LIMIT, max(1, int(target.height())))
             image = QImage(width, height, QImage.Format_ARGB32_Premultiplied)
             image.fill(0)
             painter = QPainter(image)
             try:
-                widget.render(painter)
+                target.render(painter)
             finally:
                 painter.end()
         except Exception:

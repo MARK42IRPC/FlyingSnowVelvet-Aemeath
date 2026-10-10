@@ -194,6 +194,14 @@
   八页控件树 / 位图 oracle 差异为 **0**，`styleSheet()` 9450 字符逐字符全等。
   执行记录见 `doc/render层边界契约.md` 第 55 节。
 
+- 论坛发帖屏切到 `lib/script/ui/forum_composer.py`（`ForumComposerMixin`，642 行）：
+  发帖屏的装配（`_build_composer` 与字号 / 对齐 / 颜色三个控件族助手）、正文编辑区的一整套行内操作
+  （行内标记 / 字号 / 对齐 / 文字色 / 描边色 / 插入文本与插图）、发布与字数计数器联动整体搬出，共 27 个方法；
+  `FORUM_SIZE_STEPS` 与 `ForumColorControl` 别名同行。`ForumBoardPage` 改为多继承本 mixin（置首），
+  `forum_board.py` 1726 → 1150 行，只留列表 / 详情 / 会话与调度，并按原名重新导出 `FORUM_SIZE_STEPS`；
+  `frozen_ui_qt_importers` 49 → 50（第 56 节）。改前 / 改后列表 / 详情 / 发帖（空白与填写）五个阶段
+  的控件树与 `grab()` 位图 SHA-256 差异均为 **0**。执行记录见 `doc/render层边界契约.md` 第 56 节。
+
 ### Changed
 - 删除 `ai_settings_panel.py` 里已死的 N 卡能力探测链路：
   `_refresh_nvidia_acceleration_capability_async()` 已无任何调用点（两个调用位在某次重构中
@@ -227,6 +235,17 @@
   去 Qt 同轮交付。拆分轮必须是"纯移动"（`git diff -M --find-copies` 逐行等价、零像素差异），
   收敛轮沿用逐像素 oracle；`frozen_ui_qt_importers` 只减不增。次序、验收门槛与风险记于
   `doc/render层边界契约.md` 第 34 节，执行检查表见 `doc/维护手册.md`。
+
+### Fixed
+- 修复公告浮窗重新打开后按钮全部失效的问题：`QtSpecWindow` 的“已给出决定”标志
+  从未在 `show_window()` 里重置，而修改后的公告 / 更新浮窗只收起窗口（不结束生命周期），
+  因此首次点任意关闭按钮（标题栏× / 最小化 / 今日不再显示 / 永远不再显示 / 关闭）后，
+  再打开时 `resolve_with()` 会直接 return，所有按钮都静默失效。现在重新显示视为新一次交互，
+  重置该标志；两轮打开 / 关闭的回归测试已针对此固定。
+- 修复启动预热（“启动期预绘制缓存”）在 `progress_panel` 上报
+  `AttributeError: 'ProgressPanel' object has no attribute 'render'` 的问题：控件层迁出后
+  `ProgressPanel` 不再是 `QWidget`，离屏预热应画它的描述宿主（`_host`）而非自身；
+  `_warm_paint` 现会在窗口描述控件上自动选择可画目标，实在无法画时静默跳过。
 
 ## [LTS1.0.7pre6] - 2026-09-22
 

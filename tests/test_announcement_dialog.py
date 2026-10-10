@@ -20,7 +20,9 @@ os.environ.setdefault("QT_PLUGIN_PATH", os.path.join(_QT_ROOT, "Qt5", "plugins")
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QApplication, QMenu
+from PyQt5.QtTest import QTest
 
+from lib.core.services.ui_presentation import ui_fade_duration_ms
 from lib.script.ui.tray_icon import TrayIcon
 from lib.core.tray_host import TrayCommand
 from lib.script.ui.announcement_dialog import (
@@ -308,6 +310,33 @@ class AnnouncementQtTests(unittest.TestCase):
             self.assertEqual(dialog._header_label.text(), "唯一标题")
             self.assertNotIn("唯一标题", dialog._body.toPlainText())
             self.assertIn("正文", dialog._body.toPlainText())
+        finally:
+            dialog.cleanup()
+            self.app.processEvents()
+
+    def test_reopening_the_dialog_keeps_the_close_buttons_working(self):
+        """浮窗只收起窗口、不结束生命周期：第二次打开后关闭按钮必须还能关。
+
+        `QtSpecWindow` 的决定闃锁在首次关闭后一直为真，若重新显示时不重置，
+        所有按钮都会静默失效（用户看到的就是“点不动”）。
+        """
+        dialog = DesktopPetAnnouncementDialog()
+        try:
+            document = AnnouncementDocument(
+                title="重开测试", blocks=(AnnouncementBlock("text", "正文"),)
+            )
+            for round_index in (1, 2):
+                dialog.show_document(document)
+                self.app.processEvents()
+                self.assertTrue(dialog.isVisible(), f"第 {round_index} 次打开未显示")
+
+                dialog._close_button.click()
+                # 收起走淡出动画：必须真等动画时长过去，`processEvents()` 不会推进它。
+                QTest.qWait(ui_fade_duration_ms() + 150)
+                self.assertFalse(
+                    dialog.isVisible(), f"第 {round_index} 次点关闭后窗口仍在"
+                )
+                self.assertFalse(dialog.wants_visible(), f"第 {round_index} 次关闭未落回不可见")
         finally:
             dialog.cleanup()
             self.app.processEvents()

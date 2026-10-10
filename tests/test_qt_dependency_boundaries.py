@@ -42,6 +42,7 @@ class QtDependencyBoundaryTests(unittest.TestCase):
             "lib/script/ui/forum_board.py",
             "lib/script/ui/forum_color_control.py",
             "lib/script/ui/forum_color_picker.py",
+            "lib/script/ui/forum_composer.py",
             "lib/script/ui/forum_sticker.py",
             "lib/script/ui/forum_text.py",
             "lib/script/ui/forum_texture.py",

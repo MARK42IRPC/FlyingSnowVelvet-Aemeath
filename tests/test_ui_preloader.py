@@ -55,6 +55,44 @@ def drain(preloader):
     preloader.stop()
 
 
+class BackendNeutralPanel:
+    """已迁出的控件不再是 `QWidget`：只有描述层状态，真实窗口在描述宿主里。
+
+    `progress_panel` 就是这个形状（`_host.render`）；预热必须能认出它并画宿主，
+    而不是把 `AttributeError` 当成“预热失败”吞掉。
+    """
+
+    def __init__(self, name, *, width=100, height=50, visible=False):
+        self.name = name
+        self._visible = visible
+        self._host = FakeWidget(name + "-host", width=width, height=height, visible=visible)
+
+    def width(self):
+        return self._host.width()
+
+    def height(self):
+        return self._host.height()
+
+    def isVisible(self):
+        return self._visible
+
+
+class NoPaintTargetPanel:
+    """既没有 `render` 也没有描述宿主：预热应当静默跳过。"""
+
+    def __init__(self, name):
+        self.name = name
+
+    def width(self):
+        return 10
+
+    def height(self):
+        return 10
+
+    def isVisible(self):
+        return False
+
+
 class UiPreloaderTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -166,6 +204,24 @@ class UiPreloaderTests(unittest.TestCase):
 
         self.assertEqual(preloader.pool.keys, ("progress_panel",))
         self.assertEqual(released, ["playlist_panel"])
+
+    def test_warm_paint_uses_the_description_host_when_the_panel_has_no_render(self):
+        """控件层已迁出的控件（如 `progress_panel`）的预热应画它的描述宿主。"""
+        panel = BackendNeutralPanel("progress")
+        with patch("lib.script.ui.preloader._logger") as logger:
+            UiPreloader._warm_paint(panel)
+
+        self.assertEqual(panel._host.paints, 1)
+        logger.debug.assert_not_called()
+
+    def test_warm_paint_skips_silently_without_any_paint_target(self):
+        """没有可画窗口时不能报警，也不能把预热当成失败。"""
+        panel = NoPaintTargetPanel("mystery")
+        with patch("lib.script.ui.preloader._logger") as logger:
+            UiPreloader._warm_paint(panel)
+
+        logger.debug.assert_not_called()
+        logger.exception.assert_not_called()
 
     def test_release_all_keeps_visible_widgets_and_drops_hidden_ones(self):
         hidden = FakeWidget("playlist")
