@@ -157,6 +157,33 @@ def settings_layout_primitives():
     )
 
 
+def forum_text_primitives():
+    """论坛卡片正文富文本控件的解析/转发落点（档位 D）。
+
+    `MarkupText` 是纯 `QTextEdit` 子类、无产品包耦合，原先住在
+    `lib/script/ui/forum_text.py`，现移至
+    `lib/core/render/backends/qt/widgets/forum_text.py`。产品垫片按名字再导出四个描边常量、
+    `bold_outline_width()` 与 `MarkupText`，而它自己不得静态 import 档位 D，因此由这里解析。
+    """
+    from lib.core.render.backends.qt.widgets.forum_text import (
+        BOLD_OUTLINE_MAX_PX,
+        BOLD_OUTLINE_MIN_PX,
+        BOLD_OUTLINE_RATIO,
+        MESSAGE_OUTLINE_BOLD_GAIN,
+        MarkupText,
+        bold_outline_width,
+    )
+
+    return (
+        BOLD_OUTLINE_RATIO,
+        BOLD_OUTLINE_MIN_PX,
+        BOLD_OUTLINE_MAX_PX,
+        MESSAGE_OUTLINE_BOLD_GAIN,
+        bold_outline_width,
+        MarkupText,
+    )
+
+
 def configure_settings_layout_font(factory) -> None:
     """把设置页宿主的字体取用入口接到 `ui_font`（与 `forum_board` / `workbench_widgets` 同形）。"""
     from lib.core.render.backends.qt.widgets import workbench_settings_layout
