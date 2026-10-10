@@ -92,7 +92,7 @@ Qt 应用组合入口      -> Qt 产品 UI + Qt bridge
 
 Qt 后端由 `lib/script/app/qt_backend_bootstrap.py` 注册。Qt 产品 UI 位于 `lib/script/ui`；`lib/core/render/backends/qt` 只完成原生对象转换、低级绘制和生命周期适配，不拥有产品页面。
 
-工作台的元数据和 schema 位于 `lib/script/workbench`，QWidget 布局位于 `lib/script/ui/workbench_components.py` 与 `workbench_settings_layout.py`。游戏的公开入口 `lib/script/gemes/MAIN/runtime.py` 是无 Qt 惰性门面，真正的 QWidget 运行时位于 `lib/script/ui/game_runtime.py`。音乐播放器的后端中立协议在 `lib/core/services/music_playback.py` 的 `MusicPlayerProtocol`：命令是普通方法调用，结果走 `set_callbacks()` 注册的回调，不得再用 Qt 信号表达。Qt 实现在 `lib/core/render/backends/qt/runtime/music_player.py`，无 Qt 实现在 `lib/script/cloudmusic/_player.py` 的 `MciMusicPlayer`；两个后端的组合入口各自注入一个，`CloudMusicManager` 只驱动注入的那一个。
+工作台的元数据和 schema 位于 `lib/script/workbench`；QWidget 布局的实现位于档位 D 的 `lib/core/render/backends/qt/widgets/workbench_settings_layout.py`（设置页共享原语，产品面只做再导出）与 `lib/script/ui/workbench_components.py`。游戏的公开入口 `lib/script/gemes/MAIN/runtime.py` 是无 Qt 惰性门面，真正的 QWidget 运行时位于 `lib/script/ui/game_runtime.py`。音乐播放器的后端中立协议在 `lib/core/services/music_playback.py` 的 `MusicPlayerProtocol`：命令是普通方法调用，结果走 `set_callbacks()` 注册的回调，不得再用 Qt 信号表达。Qt 实现在 `lib/core/render/backends/qt/runtime/music_player.py`，无 Qt 实现在 `lib/script/cloudmusic/_player.py` 的 `MciMusicPlayer`；两个后端的组合入口各自注入一个，`CloudMusicManager` 只驱动注入的那一个。
 
 DirectX 主进程不得加载 PyQt。需要控制面板时只启动隔离工作台 helper；未迁移的复杂 Qt UI 不应被包装成伪跨后端控件。
 

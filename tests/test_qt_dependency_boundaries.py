@@ -75,7 +75,6 @@ class QtDependencyBoundaryTests(unittest.TestCase):
             "lib/script/ui/voice_package_installer.py",
             "lib/script/ui/voice_package_widgets.py",
             "lib/script/ui/workbench_components.py",
-            "lib/script/ui/workbench_settings_layout.py",
             "lib/script/ui/workbench_window.py",
             "lib/script/ui/world_objects/clock.py",
             "lib/script/ui/world_objects/motor.py",

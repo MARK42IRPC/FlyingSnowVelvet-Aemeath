@@ -124,6 +124,57 @@ def painter_color(value):
     return create_painter_host().color(value)
 
 
+def settings_layout_primitives():
+    """工作台设置页共享布局原语的解析/转发落点（档位 D）。
+
+    `SettingsFormLayout` / `SettingsPageHeader` / `SettingsSection` / `SettingsActionBar` /
+    `SettingsPageScaffold` / `apply_settings_page_fonts` 与三个字号档常量住进了
+    `lib/core/render/backends/qt/widgets/workbench_settings_layout.py`。产品面垫片按名字
+    再导出它们，而它自己不得静态 import 档位 D，因此由这里解析。
+    """
+    from lib.core.render.backends.qt.widgets.workbench_settings_layout import (
+        SETTINGS_FONT_SIZE,
+        SETTINGS_HINT_FONT_SIZE,
+        SETTINGS_LABEL_WIDTH,
+        SettingsActionBar,
+        SettingsFormLayout,
+        SettingsPageHeader,
+        SettingsPageScaffold,
+        SettingsSection,
+        apply_settings_page_fonts as apply_fonts,
+    )
+
+    return (
+        SettingsFormLayout,
+        SettingsPageHeader,
+        SettingsSection,
+        SettingsActionBar,
+        SettingsPageScaffold,
+        apply_fonts,
+        SETTINGS_LABEL_WIDTH,
+        SETTINGS_FONT_SIZE,
+        SETTINGS_HINT_FONT_SIZE,
+    )
+
+
+def configure_settings_layout_font(factory) -> None:
+    """把设置页宿主的字体取用入口接到 `ui_font`（与 `forum_board` / `workbench_widgets` 同形）。"""
+    from lib.core.render.backends.qt.widgets import workbench_settings_layout
+
+    workbench_settings_layout.configure_font_factory(factory)
+
+
+def smooth_scroll_classes():
+    """设置页/论坛滚动区的平滑滚动实现（档位 D）。
+
+    与 `workbench_overlay_classes()` 同级：垫片按名字再导出，`scroll_factory=` 的既有
+    调用形态不变，产品面不必静态 import 档位 D。
+    """
+    from lib.core.render.backends.qt.widgets.smooth_scroll import SmoothScrollArea
+
+    return SmoothScrollArea
+
+
 def apply_settings_page_fonts(page) -> None:
     """把工作台设置页的字号档铺到一页控件树上（产品面调用面不变）。"""
     from lib.script.ui.workbench_settings_layout import apply_settings_page_fonts as apply
