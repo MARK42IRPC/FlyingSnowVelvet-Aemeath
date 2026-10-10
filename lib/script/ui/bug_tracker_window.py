@@ -78,6 +78,8 @@ class BugTrackerWindow(BugTrackerDataMixin, QtWorkbenchToolPage):
         self._records: list[BugRecord] = []
         self._instances: list[BugInstanceInfo] = []
         self._instance_filter = ""
+        #: 列表项承载记录序号的 Qt 角色：只在这里读一次，数据混入只消费这个整数。
+        self._record_row_role = int(Qt.UserRole)
         self._selected_record_key = ""
         self._snapshot_token = None
         self._level_filters = {
@@ -374,8 +376,14 @@ class BugTrackerWindow(BugTrackerDataMixin, QtWorkbenchToolPage):
         self._reload_watermark_texts()
         self._reload_snapshot()
 
-    def _level_color(self, name: str) -> QColor:
-        """等级配色的真正依据：模块级主题色全局（由 `_set_theme_colors()` 刷新）。"""
+    def _color_for_level(self, levelno: int) -> QColor:
+        """把数据混入给出的语义等级色名翻译成模块级主题色全局（`_set_theme_colors()` 刷新）。"""
+
+        name = {
+            "danger": "_DANGER",
+            "warning": "_WARNING",
+            "cyan": "_CYAN",
+        }[self._level_color_name(levelno)]
         return globals()[name]
 
     def refresh_workbench_theme(self) -> None:

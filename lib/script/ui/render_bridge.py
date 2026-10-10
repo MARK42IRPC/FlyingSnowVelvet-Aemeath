@@ -63,6 +63,18 @@ def pointer_button_name(event) -> str:
     }.get(event.button(), BUTTON_NONE)
 
 
+def set_widget_clickthrough(widget, enabled: bool) -> None:
+    """把“鼠标穿透”开关落到一个控件上（档位 A 的翻译落点）。
+
+    控件控制器（如游戏运行时）只需要“这一层收不收鼠标”这个语义，不需要知道 Qt 用
+    ``WA_TransparentForMouseEvents`` 表达它。把这件 Qt 事实收进本模块，与
+    ``pointer_button_name`` 同级——两者都只是把产品语义翻译成工具包事实。
+    """
+    from PyQt5.QtCore import Qt
+
+    widget.setAttribute(Qt.WA_TransparentForMouseEvents, bool(enabled))
+
+
 def create_draw_backend():
     """返回当前后端的绘制实现；没有已配置后端时返回 Qt 实现。"""
     factory = get_draw_backend_factory()

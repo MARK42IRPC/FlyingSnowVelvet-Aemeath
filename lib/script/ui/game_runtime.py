@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from PyQt5.QtCore import Qt
-
 from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import Event, EventType, get_event_center
 from lib.core.game_obstacles import (
@@ -26,6 +24,7 @@ from lib.script.gemes.MAIN.runtime import build_game_hash_commands
 from lib.script.music.service import get_music_service
 from lib.script.ui.game_manager_window import GameManagerWindow
 
+from lib.script.ui.render_bridge import set_widget_clickthrough
 from lib.script.ui.game_runtime_panel import (  # noqa: F401 - 既有导入面
     GameRuntimePanel,
     aspect_resize_geometry,
@@ -72,8 +71,8 @@ class GameRuntime:
 
     def _on_clickthrough_toggle(self, event: Event) -> None:
         enabled = event.data.get("enabled", False)
-        self._panel.setAttribute(Qt.WA_TransparentForMouseEvents, enabled)
-        self._manager.setAttribute(Qt.WA_TransparentForMouseEvents, enabled)
+        set_widget_clickthrough(self._panel, enabled)
+        set_widget_clickthrough(self._manager, enabled)
 
     def _iter_game_commands(self):
         entries = build_game_hash_commands(self._package_service.list_installed_games())

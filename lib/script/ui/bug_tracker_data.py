@@ -5,22 +5,20 @@
 `_record_matches_level_filters`）、模块键与时间 / 级别格式化、级别配色、详情文本渲染，
 以及「当前选中记录」。窗口本体只保留控件装配、信号回调与导出 / 打开源码等动作。
 
-切分保持逐行等价：`BugTrackerDataMixin` 的方法体与搬出前一致（缩进也未变），
-`BugTrackerWindow` 只是多继承本 mixin。`_color_for_level` 依赖模块级主题色全局
-（`_DANGER` / `_WARNING` / `_CYAN`），为避免复制两份主题状态，混入方法经 `self` 的
-工厂钩子 `_level_color(name)` 取色；该钩子由窗口本体实现，返回的就是本模块全局的同一批
-`QColor`。其余方法按 `self` 解析 `_records` / `_error_list` 等窗口状态。
+本模块不再 `import PyQt5`：两处原本夹带的工具包事实改为注入或留给宿主翻译。
 
-本模块仍在 `lib/script/ui/` 下、仍 `import PyQt5`，按第 34.2 节规则登记
-`frozen_ui_qt_importers`。
+- “列表项把记录序号藏在哪个角色里”是 Qt 事实。窗口在构造时读一次 `int(Qt.UserRole)`
+  并交给 `self._record_row_role`，本模块只读这个整数。
+- 等级配色依赖窗口模块的主题色全局（`_DANGER` / `_WARNING` / `_CYAN`）。本模块只回答
+  “这条记录属于哪个语义等级”（`_level_color_name` → `danger` / `warning` / `cyan`），
+  由窗口本体把它翻译成 `QColor`。
+
+其余方法按 `self` 解析 `_records` / `_error_list` 等窗口状态。
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-
-from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QColor
 
 from lib.script.bug_tracker.storage import BugRecord
 
@@ -28,15 +26,14 @@ from lib.script.bug_tracker.storage import BugRecord
 class BugTrackerDataMixin:
     """故障跟踪窗口的筛选与渲染；由 `BugTrackerWindow` 混入。"""
 
-    def _level_color(self, name: str) -> QColor:  # pragma: no cover - 由宿主覆盖
-        raise NotImplementedError
+    def _level_color_name(self, levelno: int) -> str:
+        """记录的语义等级色名（`danger` / `warning` / `cyan`），由宿主翻译成颜色。"""
 
-    def _color_for_level(self, levelno: int) -> QColor:
         if levelno >= 40:
-            return self._level_color("_DANGER")
+            return "danger"
         if levelno >= 30:
-            return self._level_color("_WARNING")
-        return self._level_color("_CYAN")
+            return "warning"
+        return "cyan"
 
     def _filtered_records(self) -> list[BugRecord]:
         records = self._records
@@ -97,7 +94,7 @@ class BugTrackerDataMixin:
         current = self._error_list.currentItem()
         if current is None:
             return None
-        idx = int(current.data(Qt.UserRole) or 0)
+        idx = int(current.data(self._record_row_role) or 0)
         records = self._filtered_records()
         if 0 <= idx < len(records):
             return records[idx]
