@@ -351,6 +351,30 @@ class WorkbenchSettingsLayoutTests(unittest.TestCase):
             else:
                 self.assertIs(panel_attr, mixin_attr, name)
 
+        # 第四轮把 508 行的 `_build_ui` 装配脚本按设置区块切成 8 个方法，落到
+        # `ai_settings_page_sections.AISettingsPageSectionsMixin`；`AISettingsPageMixin` 改为
+        # 继承它，因此这些「区块构建方法」必须与 sections 模块上的实现同源，页面装配顺序与
+        # 联动行为才继续成立。
+        import lib.script.ui.ai_settings_page_sections as sections
+
+        self.assertTrue(issubclass(page.AISettingsPageMixin, sections.AISettingsPageSectionsMixin))
+        self.assertTrue(issubclass(AISettingsPanel, sections.AISettingsPageSectionsMixin))
+        for name in (
+            "_build_reply_mode_section",
+            "_build_welfare_section",
+            "_build_manual_api_section",
+            "_build_ollama_section",
+            "_build_generation_section",
+            "_build_reply_mode_sync",
+            "_build_voice_section",
+            "_build_memory_section",
+        ):
+            self.assertIs(
+                getattr(AISettingsPanel, name),
+                getattr(sections.AISettingsPageSectionsMixin, name),
+                name,
+            )
+
         # GPU 档位换算只有一份实现（住在页面模块）；`_num_gpu_from_mode` 只被本页的
         # `_collect_values` 使用，配置存取模块按需转出 `_gpu_mode_from_num_gpu`。
         self.assertIn("_num_gpu_from_mode", vars(page))
