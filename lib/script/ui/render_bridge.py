@@ -258,6 +258,20 @@ def create_ui_dispatcher(parent=None):
     return UiDispatcher(parent)
 
 
+def workbench_overlay_classes():
+    """返回工作台自绘件二件套：淡入淡出遮罩与明暗主题开关（档位 D）。
+
+    与 ``floating_window_classes`` 同一用途：``lib/script/ui`` 的垫片要按名字再导出这两
+    个类，而它自己不得静态 import 档位 D。两者只依赖尺寸助手与工作台主题色，不看窗口状态。
+    """
+    from lib.core.render.backends.qt.widgets.workbench_widgets import (
+        _WorkbenchFadeOverlay,
+        _WorkbenchThemeToggle,
+    )
+
+    return _WorkbenchFadeOverlay, _WorkbenchThemeToggle
+
+
 def floating_window_classes():
     """返回浮窗实现的三件套：拖拽过滤器、主题观察者与基类（档位 D）。
 
