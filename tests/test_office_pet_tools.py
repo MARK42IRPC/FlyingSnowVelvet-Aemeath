@@ -73,6 +73,7 @@ class PetToolDispatchTests(unittest.TestCase):
             ("open_browser", {"url": "https://example.test"}),
             ("inspect_screen", {}),
             ("recall_memory", {"topic": "昨天"}),
+            ("musiclist", {}),
             ("teleport_pet", {"x": 0.5}),
             ("set_volume", {}),
             ("change_volume", {}),

@@ -40,10 +40,14 @@ PET_TOOL_NAMES: tuple[str, ...] = (
 )
 
 # 刻意不开放的原生桌宠工具，留在这里是为了让「每个原生工具都被显式取舍过」可被测试断言。
+# `musiclist` 也在其中：它把曲库内容重投回陪伴聊天流、由模型再跟进一次播放调用，
+# 而办公侧车只有「一次工具调用、一次结果回传」，这条两跳链路在办公侧车不存在，
+# 所以曲库推荐是陪伴模式的能力，不进办公工具面。
 EXCLUDED_PET_TOOL_NAMES: tuple[str, ...] = (
     "recall_memory",
     "inspect_screen",
     "open_browser",
+    "musiclist",
 )
 
 _PET_TOOL_NAME_SET = frozenset(PET_TOOL_NAMES)

@@ -20,6 +20,12 @@ def get_user_persona_path() -> Path:
     return get_user_root_dir() / "persona.txt"
 
 
+def get_user_musiclist_path() -> Path:
+    """音乐推荐曲库：AI 的「曲目推荐」工具从这里读可选曲目。"""
+
+    return get_user_root_dir() / "musiclist.txt"
+
+
 def get_user_secrets_dir(*parts: str) -> Path:
     return get_user_root_dir().joinpath("secrets", *parts)
 

@@ -326,6 +326,64 @@ class ToolDispatcherTests(unittest.TestCase):
         info = next(event for event in events if event.type == EventType.INFORMATION)
         self.assertIn('未能打开', info.data['text'])
 
+    def test_musiclist_tool_feeds_the_library_back_to_the_model(self):
+        """曲库工具只负责「读曲库 + 投递候选」，选曲交给模型，因此允许模型跟进调用播放。"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            library = Path(tmpdir) / 'musiclist.txt'
+            library.write_text(
+                '# 注释行\n\n纸飞机 - 鸣潮\n碎花\n// 注释行\n纸飞机 - 鸣潮\n逆潮\n',
+                encoding='utf-8',
+            )
+            self.center.published.clear()
+            with patch.object(dispatcher_module, 'get_user_musiclist_path', return_value=library):
+                handled = self.dispatcher.execute_command('曲库', '')
+
+        self.assertTrue(handled)
+        input_events = [event for event in self.center.published if event.type == EventType.INPUT_CHAT]
+        self.assertEqual(len(input_events), 1)
+        data = input_events[0].data
+        self.assertEqual(data['source'], 'tool_musiclist')
+        self.assertEqual(data['raw'], '###曲库###')
+        self.assertTrue(data['allow_tool_commands'])
+        self.assertIn('纸飞机 - 鸣潮', data['text'])
+        self.assertIn('逆潮', data['text'])
+        self.assertIn('1. 纸飞机 - 鸣潮', data['text'])
+        # 重复曲目只保留一次，注释与空行不算候选。
+        self.assertEqual(data['text'].count('纸飞机 - 鸣潮'), 1)
+        self.assertNotIn('# 注释行', data['text'])
+        info = next(event for event in self.center.published if event.type == EventType.INFORMATION)
+        self.assertIn('3 首', info.data['text'])
+
+    def test_musiclist_tool_reports_an_empty_library_without_dispatching(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            library = Path(tmpdir) / 'musiclist.txt'
+            library.write_text('# 只有注释\n\n', encoding='utf-8')
+            self.center.published.clear()
+            with patch.object(dispatcher_module, 'get_user_musiclist_path', return_value=library):
+                handled = self.dispatcher.execute_command('曲库', '')
+
+        self.assertTrue(handled)
+        self.assertEqual(
+            [event.type for event in self.center.published],
+            [EventType.INFORMATION],
+        )
+        self.assertIn('曲库为空', self.center.published[0].data['text'])
+
+    def test_musiclist_tool_falls_back_to_the_bundled_library(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            missing = Path(tmpdir) / 'musiclist.txt'
+            with patch.object(dispatcher_module, 'get_user_musiclist_path', return_value=missing):
+                entries = self.dispatcher._read_musiclist_entries()
+
+        self.assertTrue(entries)
+        self.assertEqual(entries[0], '纸飞机 - 鸣潮')
+        self.assertNotIn('纸飞机 - 鸣潮\n', entries)
+
+    def test_musiclist_command_resolves_from_native_and_alias_forms(self):
+        self.assertEqual(_extract_tool_invocation('###曲库###'), ('曲库', ''))
+        self.assertEqual(_extract_tool_invocation('###musiclist###'), ('曲库', ''))
+        self.assertEqual(_extract_tool_invocation('###推荐曲目###'), ('曲库', ''))
+
     def test_persona_no_longer_teaches_the_legacy_command_markers(self):
         persona = (Path(__file__).resolve().parents[1] / 'resc' / 'persona.txt').read_text(encoding='utf-8')
         self.assertNotIn('###', persona)

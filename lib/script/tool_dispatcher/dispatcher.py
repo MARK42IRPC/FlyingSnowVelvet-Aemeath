@@ -18,6 +18,7 @@
     音量 <值>    →  调整音量（+N 增加，-N 减少，N 设为绝对值，范围 0.0-1.0）
     瞬移 <x y>   →  瞬移主宠物（1=屏幕左/上，0=屏幕右/下）
     浏览器 <网址> →  使用系统默认浏览器打开指定链接
+    曲库         →  读取用户 musiclist.txt 曲库，把可选曲目发给大模型供其推荐
 
 事件依赖：
   订阅：STREAM_FINAL          （流式消息最终完整文本，由 ChatHandler 发布）
@@ -45,7 +46,10 @@ from lib.core.logger import get_logger
 from lib.script.chat.native_tools import native_tool_to_dispatch, split_music_queries
 from lib.script.music import get_music_service
 from config.config import TOOL_DISPATCHER, DRAW, ANIMATION
-from config.user_storage_paths import get_user_state_dir
+from config.user_storage_paths import (
+    get_user_musiclist_path,
+    get_user_state_dir,
+)
 
 logger = get_logger(__name__)
 
@@ -66,7 +70,7 @@ except re.error as e:
 _TOOL_MARKER_PATTERN = re.compile(r'###(.*?)###', re.S)
 _PLAY_INDEX = TOOL_DISPATCHER.get('play_index', 0)
 _AUTO_SPAWN_COUNT = TOOL_DISPATCHER.get('auto_spawn_speaker_count', 1)
-_SUPPORTED_COMMANDS = {'音乐', '下一曲', '暂停', '雪豹', '沙发', '摩托', '闹钟', '计时', '音量', '瞬移', '回忆', '浏览器', '窥屏'}
+_SUPPORTED_COMMANDS = {'音乐', '下一曲', '暂停', '雪豹', '沙发', '摩托', '闹钟', '计时', '音量', '瞬移', '回忆', '浏览器', '窥屏', '曲库'}
 _SUPPORTED_COMMANDS_SORTED = tuple(sorted(_SUPPORTED_COMMANDS, key=len, reverse=True))
 _COMMAND_ALIASES = {
     '音乐': ('播放音乐', '播放', 'play_music', 'music', 'play', '音乐'),
@@ -81,6 +85,7 @@ _COMMAND_ALIASES = {
     '沙发': ('生成沙发', 'spawn_sofa', '沙发'),
     '摩托': ('生成摩托', 'spawn_motorcycle', '摩托'),
     '瞬移': ('传送', 'teleport_pet', 'teleport', '瞬移'),
+    '曲库': ('music_list', 'musiclist', '曲库', '推荐曲目'),
 }
 _ALIAS_TO_COMMAND = {
     alias.casefold().replace(' ', ''): command
@@ -133,6 +138,9 @@ _SCREEN_PEEK_PROMPT = (
     '直接用自然语言描述你观察到的内容并回应，不要输出任何 ###命令###。'
 )
 _DEFAULT_TOPIC = '日常'
+_DEFAULT_MUSICLIST_PATH = Path(__file__).resolve().parents[3] / 'resc' / 'musiclist.txt'
+_MUSICLIST_MAX_ITEMS = 60
+_MUSICLIST_REDISPATCH_DELAY_SEC = 1.0
 _DATETIME_RANGE_PATTERN = re.compile(
     r'\d{4}[-/]\d{1,2}[-/]\d{1,2}[ T]\d{1,2}:\d{1,2}:\d{1,2}'
 )
@@ -534,6 +542,9 @@ class ToolDispatcher:
         elif cmd == '浏览器':
             self._handle_browser_request(arg, mode_generation=mode_generation)
 
+        elif cmd == '曲库':
+            self._handle_musiclist_request(arg, mode_generation=mode_generation)
+
         else:
             logger.warning("[ToolDispatcher] 未知指令: %s", cmd)
             return False
@@ -723,6 +734,100 @@ class ToolDispatcher:
                 }))
 
         get_compute_hub().submit_io(_open)
+
+    def _musiclist_path(self) -> Path:
+        """用户可编辑曲库优先；用户还没建立曲库时回退到仓库内内置曲库。"""
+        try:
+            user_path = get_user_musiclist_path()
+        except Exception:
+            user_path = None
+        if user_path is not None and user_path.exists():
+            return user_path
+        return _DEFAULT_MUSICLIST_PATH
+
+    def _seed_musiclist_if_missing(self) -> None:
+        """首次使用曲库时，把内置曲库复制成用户可编辑副本，之后不再覆盖。"""
+        try:
+            user_path = get_user_musiclist_path()
+        except Exception:
+            return
+        if user_path.exists() or not _DEFAULT_MUSICLIST_PATH.is_file():
+            return
+        try:
+            content = _DEFAULT_MUSICLIST_PATH.read_text(encoding='utf-8-sig')
+            user_path.parent.mkdir(parents=True, exist_ok=True)
+            with user_path.open('x', encoding='utf-8', newline='') as handle:
+                handle.write(content)
+            logger.info("[ToolDispatcher] 已初始化用户曲库: %s", user_path)
+        except OSError:
+            logger.warning("[ToolDispatcher] 初始化用户曲库失败: %s", user_path)
+
+    def _read_musiclist_entries(self) -> list[str]:
+        """读取曲库：忽略空行、# 与 // 注释，按原顺序去重。"""
+        path = self._musiclist_path()
+        try:
+            text = path.read_text(encoding='utf-8-sig')
+        except OSError:
+            logger.warning("[ToolDispatcher] 读取曲库失败: %s", path)
+            return []
+        entries: list[str] = []
+        seen: set[str] = set()
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith('#') or line.startswith('//'):
+                continue
+            key = line.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            entries.append(line)
+        return entries
+
+    def _handle_musiclist_request(self, arg: str, *, mode_generation: int | None = None) -> None:
+        """曲库工具：把 musiclist.txt 的候选曲目转交大模型挑选。
+
+        调度器只负责读取与投递，选曲交给模型；模型随后可直接调用播放工具。
+        """
+        if not self._accepts_mode_generation(mode_generation):
+            return
+        self._seed_musiclist_if_missing()
+        entries = self._read_musiclist_entries()
+        if not entries:
+            self._ec.publish(Event(EventType.INFORMATION, {
+                'text': f'曲库为空：请编辑 {get_user_musiclist_path()}，每行一首曲目',
+                'min': 14,
+                'max': 120,
+            }))
+            return
+
+        limited = entries[:_MUSICLIST_MAX_ITEMS]
+        listing = '\n'.join(f'{index}. {title}' for index, title in enumerate(limited, start=1))
+        prompt = (
+            '这是“曲库工具”读取到的可选曲目清单。请结合对话语境，只从下面列出的曲目里挑选合适的：\n'
+            f'{listing}\n'
+            '选好后直接调用播放工具播放，不要用文字复述选曲过程。'
+        )
+        self._ec.publish(Event(EventType.INFORMATION, {
+            'text': f'曲库 {len(limited)} 首，交给大模型挑选',
+            'min': 10,
+            'max': 80,
+        }))
+
+        def _dispatch_musiclist():
+            if not self._accepts_mode_generation(mode_generation):
+                return
+            self._ec.publish(Event(EventType.INPUT_CHAT, {
+                'text': prompt,
+                'raw': '###曲库###',
+                'source': 'tool_musiclist',
+                'allow_tool_commands': True,
+                'mode_generation': mode_generation,
+            }))
+
+        self._defer_call(
+            int(_MUSICLIST_REDISPATCH_DELAY_SEC * 1000),
+            _dispatch_musiclist,
+        )
 
     def _search_music(self, keyword: str):
         """

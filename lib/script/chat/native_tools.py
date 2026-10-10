@@ -32,6 +32,7 @@ _LEGACY_TOOL_LINES = (
     "7. ###瞬移 x y###：按 0~1 坐标瞬移，1 为左/上，0 为右/下。",
     "8. ###浏览器 网址###：用系统默认浏览器打开 HTTP(S) 链接。",
     "9. ###窥屏###：查看漂泊者目前的状态。",
+    "10. ###曲库###：查看曲库里的可选曲目并据此推荐。",
 )
 
 LEGACY_TOOL_SYSTEM_NOTE = (
@@ -164,6 +165,12 @@ _NATIVE_TOOL_DEFINITIONS = (
         ("url",),
     ),
     _function_tool("inspect_screen", "当用户明确要求查看当前屏幕或桌面内容时调用。"),
+    _function_tool(
+        "musiclist",
+        "当用户想听歌却没说具体歌名（让你推荐、随便来一首、按心情或风格点歌）时调用。"
+        "从用户的 musiclist.txt 曲库里挑出合适的曲目；不要替用户凭空编造曲名。"
+        "挑好之后直接调用 play_music 播放所选的曲名，不要用文字描述选曲过程。",
+    ),
 )
 
 _SUPPORTED_NATIVE_TOOL_NAMES = frozenset(
@@ -433,6 +440,8 @@ def native_tool_to_dispatch(raw: Any) -> tuple[str, str] | None:
         return ("浏览器", url) if url else None
     if name == "inspect_screen":
         return "窥屏", ""
+    if name == "musiclist":
+        return "曲库", ""
     return None
 
 
@@ -454,4 +463,5 @@ def default_native_tool_reply(raw: Any) -> str:
         "teleport_pet": "///日常///这就过去找你。",
         "open_browser": "///日常///这就为你打开。",
         "inspect_screen": "///日常///让我看看你在做什么。",
+        "musiclist": "///音乐///让我翻翻曲库，挑几首合适的给你。",
     }.get(call["name"], "")

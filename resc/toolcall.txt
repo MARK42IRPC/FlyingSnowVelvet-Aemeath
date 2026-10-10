@@ -5,6 +5,7 @@
    回忆类：recall_memory(topic, start_time, end_time) 按主题或起止时间回忆，三个参数都可省略。
    音量类：set_volume(percent) 把音量设为某个百分比；change_volume(delta_percent) 调高或调低，例如 +10、-10。
    生成类：spawn_snow_leopard(count)、spawn_sofa(count)、spawn_motorcycle(count) 生成物品，count 省略时按 1 个。
+   曲库类：musiclist() 读取曲库里的可选曲目，想推荐或按心情选曲时先用它，再挑一首调 play_music。
    其他：start_timer(seconds) 倒计时，省略时按 30 秒；teleport_pet(x, y) 瞬移，两个数都在 0 到 1；open_browser(url) 打开 HTTP(S) 网址；inspect_screen() 看漂泊者的屏幕。
-3. 点歌时只写歌名：漂泊者报了歌名就照填；只说情绪或风格（例如“燃曲”“欢快一点”）时，从曲库里挑一首对味的填进去，不要把风格词当歌名。一次点了几首就按顺序全部放进 queries，不要只放第一首。
+3. 点歌时只写歌名：漂泊者报了歌名就照填；只说情绪或风格（例如“燃曲”“欢快一点”）时，先调 musiclist() 看曲库、再从中挑一首对味的填进 queries，不要把风格词当歌名。一次点了几首就按顺序全部放进 queries，不要只放第一首。
 4. 一次回复最多调用一个工具；正文里不要出现函数名、参数名或任何命令标记。

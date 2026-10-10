@@ -102,6 +102,15 @@ class NativeToolCallingTests(unittest.TestCase):
         self.assertIn("你是爱弥斯。", runtime)
         self.assertNotIn("###", runtime)
 
+    def test_musiclist_schema_is_a_parameterless_recommendation_tool(self):
+        tools = {item["function"]["name"]: item for item in get_native_tool_definitions()}
+        musiclist = tools["musiclist"]["function"]
+
+        self.assertEqual(musiclist["parameters"]["properties"], {})
+        self.assertFalse(musiclist["parameters"]["additionalProperties"])
+        self.assertIn("musiclist.txt", musiclist["description"])
+        self.assertEqual(native_tool_to_dispatch({"name": "musiclist", "arguments": {}}), ("曲库", ""))
+
     def test_play_music_schema_exposes_the_multi_song_field(self):
         tools = {item["function"]["name"]: item for item in get_native_tool_definitions()}
         properties = tools["play_music"]["function"]["parameters"]["properties"]
