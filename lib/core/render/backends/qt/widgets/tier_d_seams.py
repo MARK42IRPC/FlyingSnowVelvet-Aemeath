@@ -14,17 +14,18 @@ from __future__ import annotations
 
 _font_factory = None
 _digit_font_factory = None
+_cmd_font_factory = None
 _draw_backend_factory = None
 _color_factory = None
 _color_name_factory = None
 _text_metrics_factory = None
 
 
-def install(*, ui_font=None, digit_font=None, draw_backend=None, color=None, color_name=None,
-            text_metrics=None) -> None:
+def install(*, ui_font=None, digit_font=None, cmd_font=None, draw_backend=None, color=None,
+            color_name=None, text_metrics=None) -> None:
     """安装一批注入物；传 None 的项保持原值（便于分模块各自注入）。"""
-    global _font_factory, _digit_font_factory, _draw_backend_factory, _color_factory, _color_name_factory
-    global _text_metrics_factory
+    global _font_factory, _digit_font_factory, _cmd_font_factory, _draw_backend_factory
+    global _color_factory, _color_name_factory, _text_metrics_factory
     if ui_font is not None:
         _font_factory = ui_font
     if digit_font is not None:
@@ -76,6 +77,20 @@ def digit_font(size: int | None = None):
     from lib.core.render.backends.qt.runtime.font import get_digit_font
 
     return get_digit_font(size)
+
+
+def cmd_font(size: int | None = None):
+    """命令框字体：与 `ui_font` 同源的注入路径（未注入时退回后端字体提供者）。"""
+    if _cmd_font_factory is not None:
+        return _cmd_font_factory(size)
+    from lib.core.render.registry import get_font_provider
+
+    provider = get_font_provider()
+    if provider is not None:
+        return provider.cmd_font(size)
+    from lib.core.render.backends.qt.runtime.font import get_cmd_font
+
+    return get_cmd_font(size)
 
 
 def create_draw_backend():

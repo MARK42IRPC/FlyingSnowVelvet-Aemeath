@@ -472,7 +472,7 @@ class VisualPresenterTests(unittest.TestCase):
             "lib/script/ui/ai_settings_panel.py",
             "lib/script/ui/ai_settings_shell.py",
             "lib/script/ui/playlist_panel.py",
-            "lib/script/ui/cmd_window.py",
+            "lib/core/render/backends/qt/widgets/cmd_window.py",
         )
         forbidden = {
             "Color",

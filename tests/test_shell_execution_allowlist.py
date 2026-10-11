@@ -17,7 +17,7 @@ _SCAN_DIRS = ("lib", "config", "scripts")
 # shell=True 的合法落点：文件 -> 承载的函数
 _ALLOWED_SHELL_CALLS = {
     "lib/core/cmd_center.py": "_run_command",
-    "lib/script/ui/cmd_window.py": "_stream_command",
+    "lib/core/render/backends/qt/widgets/cmd_window.py": "_stream_command",
 }
 
 # INPUT_COMMAND / UI_OPEN_CMD_WINDOW_WITH_COMMAND 的发布方必须都在这个白名单内，
