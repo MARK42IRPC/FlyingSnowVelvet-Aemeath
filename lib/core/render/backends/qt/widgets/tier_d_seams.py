@@ -308,3 +308,10 @@ def screen_rect_for_point(point=None, fallback_widget=None):
     from lib.core.render.visuals.screen import virtual_screen_rect
 
     return virtual_screen_rect(())
+
+
+def centered_placement(self_size, screen):
+    """在 `screen` 里居中的窗口落位（档位 1 的共享解算）。"""
+    from lib.core.render.visuals.layout import PlacementSpec
+
+    return PlacementSpec().resolve_centered(self_size, screen)
