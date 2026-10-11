@@ -140,7 +140,7 @@ class PetEventPayloadTests(unittest.TestCase):
             "lib/script/obj-雪堆/manager.py",
             "lib/script/obj-雪球/manager.py",
             "lib/script/obj-音响/manager.py",
-            "lib/script/ui/command_dialog.py",
+            "lib/core/render/backends/qt/widgets/command_dialog.py",
             "lib/script/ui/restore_button.py",
         )
 

@@ -24,7 +24,7 @@ _ALLOWED_SHELL_CALLS = {
 # 它们全部由用户在命令框（Qt 或 DX 命令面板）敲键盘触发。
 _ALLOWED_COMMAND_PUBLISHERS = {
     "lib/core/render/backends/dx/application_ui.py",
-    "lib/script/ui/command_dialog.py",
+    "lib/core/render/backends/qt/widgets/command_dialog.py",
 }
 
 
