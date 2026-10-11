@@ -164,7 +164,7 @@ class UiPreloaderTests(unittest.TestCase):
             ("broken", boom, lambda: None),
             *preloader._steps,
         )
-        with patch("lib.script.ui.preloader._logger"):
+        with patch("lib.core.render.backends.qt.widgets.preloader._logger"):
             drain(preloader)
 
         self.assertTrue(preloader.finished)
@@ -208,7 +208,7 @@ class UiPreloaderTests(unittest.TestCase):
     def test_warm_paint_uses_the_description_host_when_the_panel_has_no_render(self):
         """控件层已迁出的控件（如 `progress_panel`）的预热应画它的描述宿主。"""
         panel = BackendNeutralPanel("progress")
-        with patch("lib.script.ui.preloader._logger") as logger:
+        with patch("lib.core.render.backends.qt.widgets.preloader._logger") as logger:
             UiPreloader._warm_paint(panel)
 
         self.assertEqual(panel._host.paints, 1)
@@ -217,7 +217,7 @@ class UiPreloaderTests(unittest.TestCase):
     def test_warm_paint_skips_silently_without_any_paint_target(self):
         """没有可画窗口时不能报警，也不能把预热当成失败。"""
         panel = NoPaintTargetPanel("mystery")
-        with patch("lib.script.ui.preloader._logger") as logger:
+        with patch("lib.core.render.backends.qt.widgets.preloader._logger") as logger:
             UiPreloader._warm_paint(panel)
 
         logger.debug.assert_not_called()

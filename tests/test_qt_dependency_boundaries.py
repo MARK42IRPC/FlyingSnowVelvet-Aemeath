@@ -34,7 +34,6 @@ class QtDependencyBoundaryTests(unittest.TestCase):
             "lib/script/ui/game_runtime_panel.py",
             "lib/script/ui/playlist_panel.py",
             "lib/script/ui/playlist_queue_buttons.py",
-            "lib/script/ui/preloader.py",
             "lib/script/ui/qr_dialog_base.py",
             "lib/script/ui/render_bridge.py",
             "lib/script/ui/speaker_search_dialog.py",
