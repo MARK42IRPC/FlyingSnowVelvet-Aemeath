@@ -77,7 +77,7 @@ def _imported_names(path: Path) -> list[str]:
 
 class AISettingsFamilyTests(unittest.TestCase):
     def test_product_shims_are_not_qt_or_tier_d_implementations(self):
-        for name in _PRODUCT_FILES:
+        for name in _PRODUCT_FILES + ("ai_settings_panel.py",):
             with self.subTest(module=name):
                 path = _PRODUCT / name
                 self.assertTrue(path.is_file(), name)
@@ -120,7 +120,7 @@ class AISettingsFamilyTests(unittest.TestCase):
         self.assertIs(product_cfg.ConfigPageMixin, host_cfg.ConfigPageMixin)
 
     def test_panel_keeps_its_mixin_inheritance(self):
-        from lib.script.ui.ai_settings_panel import AISettingsPanel
+        from lib.core.render.backends.qt.widgets.ai_settings_panel import AISettingsPanel
 
         mro = [cls.__name__ for cls in AISettingsPanel.__mro__]
         for name in (
