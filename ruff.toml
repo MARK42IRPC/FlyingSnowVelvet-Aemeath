@@ -42,7 +42,7 @@ ignore = [
 # 这两个窗口在模块顶部用 `globals().update({...})` 铺 `_TEXT` / `_BG` 一类主题色常量，
 # 静态分析看不到，是 F821 的假阳性。真缺陷（如 obj-摩托 的 logger）不在此列，仍会报。
 "lib/script/ui/bug_tracker_window.py" = ["F821"]
-"lib/script/ui/game_manager_window.py" = ["F821"]
+"lib/core/render/backends/qt/widgets/game_manager_window.py" = ["F821"]
 
 # ── 「导入即生效」的副作用导入 ──────────────────────────────────────
 # config_runtime 在被导入时解析屏幕分辨率并 set_draw_scale()，随后的 `from config.scale

@@ -28,7 +28,6 @@ class QtDependencyBoundaryTests(unittest.TestCase):
             "lib/script/ui/bug_tracker_window.py",
             "lib/script/ui/cmd_window.py",
             "lib/script/ui/command_dialog.py",
-            "lib/script/ui/game_manager_window.py",
             "lib/script/ui/render_bridge.py",
             "lib/script/ui/workbench_window.py",
     })
