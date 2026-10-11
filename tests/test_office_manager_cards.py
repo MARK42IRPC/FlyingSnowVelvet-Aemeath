@@ -147,7 +147,7 @@ class OfficeManagerCardTests(unittest.TestCase):
         card.list_widget().setCurrentRow(1)
         self.assertTrue(card.delete_button.isEnabled())
         with patch(
-            "lib.script.ui.office_manager_card.QMessageBox.exec_",
+            "lib.core.render.backends.qt.widgets.office_manager_card.QMessageBox.exec_",
             return_value=QMessageBox.Yes,
         ):
             self.assertTrue(card.remove_selected())
@@ -158,7 +158,7 @@ class OfficeManagerCardTests(unittest.TestCase):
         card = self._card([_Entry("fsv-user")], remover=removed.append)
 
         with patch(
-            "lib.script.ui.office_manager_card.QMessageBox.exec_",
+            "lib.core.render.backends.qt.widgets.office_manager_card.QMessageBox.exec_",
             return_value=QMessageBox.No,
         ):
             self.assertFalse(card.remove_selected())
@@ -185,7 +185,7 @@ class OfficeManagerCardTests(unittest.TestCase):
 
         card = self._card([_Entry("fsv-old")], installer=installer)
         with patch(
-            "lib.script.ui.office_manager_card.QMessageBox.exec_",
+            "lib.core.render.backends.qt.widgets.office_manager_card.QMessageBox.exec_",
             return_value=QMessageBox.Ok,
         ):
             self.assertIsNone(card.install_from(Path("C:/tmp/bad")))
@@ -247,7 +247,7 @@ class OfficeSkillCardTests(unittest.TestCase):
             self.assertTrue(card.selected_entry().removable)
 
             with patch(
-                "lib.script.ui.office_manager_card.QMessageBox.exec_",
+                "lib.core.render.backends.qt.widgets.office_manager_card.QMessageBox.exec_",
                 return_value=QMessageBox.Yes,
             ):
                 self.assertTrue(card.remove_selected())
@@ -292,7 +292,7 @@ class OfficePluginCardTests(unittest.TestCase):
             self.assertIn("fsv-test-plugin", office_plugins.registered_bundles())
 
             with patch(
-                "lib.script.ui.office_manager_card.QMessageBox.exec_",
+                "lib.core.render.backends.qt.widgets.office_manager_card.QMessageBox.exec_",
                 return_value=QMessageBox.Yes,
             ):
                 self.assertTrue(card.remove_selected())

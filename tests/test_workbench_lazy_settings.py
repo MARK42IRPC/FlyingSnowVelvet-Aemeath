@@ -19,8 +19,8 @@ os.environ.setdefault('QT_PLUGIN_PATH', os.path.join(_QT_ROOT, 'Qt5', 'plugins')
 from PyQt5.QtWidgets import QApplication, QComboBox, QLabel, QLineEdit
 
 from config.config_layer import LAYER_VALUES
+from lib.core.render.backends.qt.widgets import ai_settings_config_store as store_module
 from lib.script.ui import ai_settings_config_page as config_page_module
-from lib.script.ui import ai_settings_config_store as store_module
 from lib.script.ui.ai_settings_panel import AISettingsPanel
 from lib.script.ui.announcement_dialog import AnnouncementPreferences
 

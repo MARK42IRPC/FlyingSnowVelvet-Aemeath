@@ -17,9 +17,9 @@ os.environ.setdefault("QT_PLUGIN_PATH", os.path.join(_QT_ROOT, "Qt5", "plugins")
 from PyQt5.QtWidgets import QApplication, QComboBox, QLabel
 
 from lib.core.event.center import EventType
-from lib.script.ui import ai_settings_config_store as store_module
+from lib.core.render.backends.qt.widgets import ai_settings_config_store as store_module
+from lib.core.render.backends.qt.widgets import ai_settings_page as page_module
 from lib.script.ui import ai_settings_defaults as defaults_module
-from lib.script.ui import ai_settings_page as page_module
 from lib.core.services import api_endpoints as api_endpoints_module
 from lib.script.ui.ai_settings_panel import AISettingsPanel
 from lib.script.gsvmove.package_manager import VoicePackageStatus
@@ -105,12 +105,15 @@ class AISettingsReplyModeSectionsTests(unittest.TestCase):
         """福利 API 模式下间隔固定 6 分钟：滑条与标签一起收起，不显示任何说明。"""
         field = self.panel._auto_companion_interval_minutes
         form = self.panel._reply_mode_form
+        pinned = page_module._welfare_auto_companion_interval_minutes()
 
         self._select_mode("1")
-        self.assertEqual(field.value(), 6)
+        self.assertEqual(field.value(), pinned)
         self.assertTrue(field.isHidden())
         self.assertTrue(form.labelForField(field).isHidden())
-        self.assertEqual(self.panel._collect_values()["auto_companion_interval_minutes"], 6)
+        self.assertEqual(
+            self.panel._collect_values()["auto_companion_interval_minutes"], pinned
+        )
 
         self._select_mode("0")
         self.assertFalse(field.isHidden())
@@ -131,15 +134,16 @@ class AISettingsReplyModeSectionsTests(unittest.TestCase):
         )
 
     def test_welfare_mode_keeps_the_interval_pinned_after_a_slider_write(self):
-        """收回福利档后滑条值必须回到 6，否则保存会写进一个用户改不到的数。"""
+        """收回福利档后滑条值必须回到固定间隔，否则保存会写进一个用户改不到的数。"""
         field = self.panel._auto_companion_interval_minutes
+        pinned = page_module._welfare_auto_companion_interval_minutes()
 
         self._select_mode("0")
         field.set_value(17)
         self._select_mode("2")
         self.assertEqual(field.value(), 17)
         self._select_mode("1")
-        self.assertEqual(field.value(), 6)
+        self.assertEqual(field.value(), pinned)
 
     def test_collect_values_includes_auto_companion_interval(self):
         self.panel._auto_companion_interval_minutes.set_value(13)
@@ -455,21 +459,27 @@ class AISettingsReplyModeSectionsTests(unittest.TestCase):
         service = Mock()
         self.panel._gsv_auto_start.setChecked(False)
 
-        # 安装语音包的动作已随 AI 主页面下沉：patch 打在真正的所有者 `ai_settings_page` 上。
+        # 安装语音包的动作已随 AI 主页面下沉：状态与存储入口都改经 seam 注入。
+        from lib.core.render.backends.qt.widgets import ai_settings_page as host_page
+
+        save_values = Mock()
+        apply_runtime = Mock()
+
         with patch.object(
-            page_module, "load_ai_values", return_value=saved_values
-        ), patch.object(page_module, "save_ai_values") as save_values, patch.object(
-            page_module, "apply_ai_runtime"
-        ) as apply_runtime, patch.object(
-            page_module,
-            "get_voice_package_status",
+            host_page, "get_voice_package_status",
             return_value=VoicePackageStatus("installed", "ok"),
-        ), patch(
-            "lib.script.gsvmove.get_gsvmove_service", return_value=service
+        ), patch.object(
+            host_page.tier_d_seams, "hook",
+            side_effect=lambda name: {
+                "ai_storage_load": lambda *a: dict(saved_values),
+                "ai_storage_save": save_values,
+                "ai_storage_apply_runtime": apply_runtime,
+                "gsvmove_service": lambda: service,
+            }.get(name),
         ):
             self.panel._on_voice_package_installed()
 
-        persisted = save_values.call_args.args[0]
+        persisted = save_values.call_args.args[0]  # noqa: F841 - 见下方断言
         self.assertTrue(persisted["gsv_auto_start"])
         apply_runtime.assert_called_once_with(persisted, defaults_module.AI_DEFAULT_VALUES)
         self.assertTrue(self.panel._gsv_auto_start.isChecked())

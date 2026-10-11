@@ -1,94 +1,40 @@
-"""Qt owner for office approval dialogs in main and helper processes."""
+"""办公审批弹窗的 Qt 控制器（产品侧装配垫片）。
+
+`OfficeApprovalController` 已按《render 层边界契约》第 3 节下沉到
+`lib/core/render/backends/qt/widgets/office_approval_controller.py`。这里按原名再导出，并把
+宿主需要的两处产品入口经共享 seam 注入（`office_file_ipc_factory` /
+`office_approval_dialog_class`）；既有导入面不变。
+
+注入物是**惰性解析器**：每次调用都重新读本模块的 `OfficeFileIpc` / `OfficeApprovalDialog`，
+所以测试对本模块属性的 patch 照旧生效。
+"""
 
 from __future__ import annotations
 
-from PyQt5.QtCore import QObject, QTimer
-from PyQt5.QtWidgets import QWidget
+from lib.script.office.ipc import OfficeFileIpc  # noqa: F401 - 宿主经本模块属性惰性解析
+from lib.script.ui import render_bridge
+from lib.script.ui.office_approval_dialog import (  # noqa: F401 - 宿主经本模块属性惰性解析
+    OfficeApprovalDialog,
+)
 
-from lib.script.office.ipc import OfficeFileIpc
-from lib.script.ui.office_approval_dialog import OfficeApprovalDialog
+
+def _office_file_ipc():
+    from lib.script.ui import office_approval_controller as shim
+
+    return shim.OfficeFileIpc()
 
 
-class OfficeApprovalController(QObject):
-    POLL_INTERVAL_MS = 200
+def _office_approval_dialog():
+    from lib.script.ui import office_approval_controller as shim
 
-    def __init__(
-        self,
-        *,
-        ipc: OfficeFileIpc | None = None,
-        parent: QWidget | None = None,
-    ) -> None:
-        super().__init__(parent)
-        self._ipc = ipc or OfficeFileIpc()
-        self._dialog_parent = parent
-        self._dialog: OfficeApprovalDialog | None = None
-        self._shown_ids: set[str] = set()
-        self._cleaned = False
-        self._timer = QTimer(self)
-        self._timer.setInterval(self.POLL_INTERVAL_MS)
-        self._timer.timeout.connect(self._poll)
+    return shim.OfficeApprovalDialog
 
-    @property
-    def active_dialog(self) -> OfficeApprovalDialog | None:
-        return self._dialog
 
-    def start(self) -> None:
-        if self._cleaned:
-            return
-        self._poll()
-        self._timer.start()
+render_bridge.install_tier_d_hook("office_file_ipc_factory", _office_file_ipc)
+render_bridge.install_tier_d_hook("office_approval_dialog_class", _office_approval_dialog)
 
-    def _poll(self) -> None:
-        if self._cleaned:
-            return
-        state = self._ipc.read_state()
-        pending = state.get("pending_approval")
-        approval = pending if isinstance(pending, dict) else None
-        approval_id = str((approval or {}).get("approval_id") or "")
+(OfficeApprovalController, ) = render_bridge.tier_d_reexports(
+    "office_approval_controller", ("OfficeApprovalController",)
+)
 
-        dialog = self._dialog
-        if dialog is not None and dialog.approval_id != approval_id:
-            dialog.dismiss_without_decision()
-            self._dialog = None
-        if not approval_id or approval_id in self._shown_ids:
-            return
-
-        self._shown_ids.add(approval_id)
-        if len(self._shown_ids) > 200:
-            self._shown_ids = {approval_id}
-        dialog = OfficeApprovalDialog(approval, self._dialog_parent)
-        dialog.decision_made.connect(self._on_decision)
-        dialog.destroyed.connect(self._on_dialog_destroyed)
-        self._dialog = dialog
-        dialog.open()
-        dialog.raise_()
-        dialog.activateWindow()
-
-    def _on_decision(self, approval_id: str, decision: str) -> None:
-        self._ipc.submit(
-            "approval",
-            approval_id=approval_id,
-            decision=decision,
-        )
-        dialog = self._dialog
-        if dialog is not None and dialog.approval_id == approval_id:
-            self._dialog = None
-
-    def _on_dialog_destroyed(self, _obj=None) -> None:
-        """弹窗被 Qt 销毁后清掉引用。
-
-        这里连**绑定方法**而不是闭包：Qt 对 QObject 接收者只持弱引用，控件销毁即自动
-        断开；闭包则会一直攥住 `self`，一旦 `_poll` 的帧先被回收，回调里的 `self`
-        就成了空单元格。
-        """
-
-        self._dialog = None
-
-    def cleanup(self) -> None:
-        if self._cleaned:
-            return
-        self._cleaned = True
-        self._timer.stop()
-        dialog, self._dialog = self._dialog, None
-        if dialog is not None:
-            dialog.dismiss_without_decision()
+__all__ = ["OfficeApprovalController"]

@@ -1,0 +1,17 @@
+Qt 收敛第 76~78 轮：批次 1~3 一次出列（frozen 56 -> 21）
+
+批次 1（第 76 节，论坛族）：15 个文件出列，纯逻辑 forum_markup / forum_style /
+forum_wall_layout 进 visuals/，Qt 控件族 12 个进 backends/qt/widgets/（56 -> 44）。
+
+批次 2（第 77 节，AI 设置族）：10 个文件出列，8 个纯逻辑件下沉 lib/core/ai_settings/，
+Qt 件进 backends/qt/widgets/，产品侧只留再导出垫片（44 -> 34）。
+
+批次 3（第 78 节，办公族 + 世界对象）：13 项出列——办公 Qt 件（审批控制器 / 聊天气泡视图 /
+推理强度滑条 / 管理卡片 / 配置页 / 任务页）与七个世界对象整体下沉 backends/qt/widgets/，
+世界对象声音统一收进产品侧 world_objects/_sounds.py，新增 tier_d_seams 世界对象 seam 一族
+与 render_bridge.install_world_object_seams 转发（34 -> 21）。
+
+- 新增守卫 tests/test_tier_d_forum_family.py（批 1）、tests/test_tier_d_ai_settings_family.py（批 2）、
+  tests/test_tier_d_office_family.py（批 3）。
+- 全量：2331 项通过（skipped=67）；ruff check . 与 compileall 干净。
+- doc/render层边界契约.md 补第 76~78 节并更新第 7 行状态段。

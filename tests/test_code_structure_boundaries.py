@@ -154,6 +154,7 @@ class CodeStructureBoundaryTests(unittest.TestCase):
             ("lib/script/ui/office_approval_controller.py", "lib.script.office.ipc"),
             ("lib/script/ui/office_effort_slider.py", "lib.script.office.contracts"),
             ("lib/script/ui/office_mode_page.py", "lib.script.office"),
+            ("lib/script/ui/office_mode_page.py", "lib.script.office.contracts"),
             ("lib/script/ui/office_mode_settings.py", "lib.script.office"),
             ("lib/script/ui/office_page.py", "lib.script.office.contracts"),
             ("lib/script/ui/office_page.py", "lib.script.office.ipc"),

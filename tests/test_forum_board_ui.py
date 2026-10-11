@@ -40,9 +40,9 @@ from lib.core.forum_api import (
 )
 from lib.core.forum_session import ForumSessionStore
 from lib.core.forum_markdown import IMAGE_PLACEHOLDER
-from lib.script.ui import forum_board as forum_board_module
-from lib.script.ui import forum_composer as forum_composer_module
-from lib.script.ui import forum_detail as forum_detail_module
+from lib.core.render.backends.qt.widgets import forum_board as forum_board_module
+from lib.core.render.backends.qt.widgets import forum_composer as forum_composer_module
+from lib.core.render.backends.qt.widgets import forum_detail as forum_detail_module
 from lib.script.ui.forum_board import (
     FORUM_IMAGE_MAX_PIXELS,
     TAG_CHIP_LIMIT,

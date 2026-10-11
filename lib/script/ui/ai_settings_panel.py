@@ -1,4 +1,10 @@
-"""AI 设置面板：编辑并保存 config/ollama_config.py。"""
+"""AI 设置面板：编辑并保存 config/ollama_config.py（产品侧总装垫片）。
+
+面板外壳、AI 主页面、配置分类页、配置存取与配置编辑器五个 mixin 已按《render 层边界契约》第 3 节
+分别下沉到 `lib/core/render/backends/qt/widgets/ai_settings_*.py`。这里按原名再导出（经
+`render_bridge.tier_d_reexports()` 解析，垫片本身不得静态 import 档位 D），并保留产品侧总装与
+需要读产品状态的两处入口（语音包状态、桌宠更新页动作装箱）。
+"""
 
 from __future__ import annotations
 
@@ -6,54 +12,67 @@ from pathlib import Path
 
 from PyQt5.QtWidgets import QWidget
 
+from lib.core.logger import get_logger
+from lib.script.gsvmove import get_voice_package_status
 from lib.script.ui import ai_settings_update as _update_page
-from lib.script.ui.ai_settings_config_schema import (  # noqa: F401 - 既有导出面
-    GENERAL_DECIMAL_SLIDER_SPECS as _GENERAL_DECIMAL_SLIDER_SPECS,
-)
+#: 面板总装经 `tier_d_reexports` 直接解析档位 D 宿主；先导入同批垫片，确保它们各自在导入时
+#: 完成的 seam 注入（字体 / 绘制后端 / 主题色 / 动画目录 / 各产品钩子）已经就位。
+from lib.script.ui import ai_settings_about  # noqa: F401 - 导入即注入
+from lib.script.ui import ai_settings_config_page  # noqa: F401 - 导入即注入
+from lib.script.ui import ai_settings_config_store  # noqa: F401 - 导入即注入
+from lib.script.ui import ai_settings_editors  # noqa: F401 - 导入即注入
+from lib.script.ui import ai_settings_page  # noqa: F401 - 导入即注入
+from lib.script.ui import ai_settings_shell  # noqa: F401 - 导入即注入
+from lib.script.ui import ai_settings_tabs  # noqa: F401 - 导入即注入
+from lib.script.ui import render_bridge
 from lib.script.ui.ai_settings_about import (
     _ContributionCardButton as _ContributionCardButton,
 )
-from lib.script.ui.ai_settings_config_page import (
-    ConfigPageMixin as _ConfigPageMixin,
-)
-from lib.script.ui.ai_settings_config_store import (
-    ConfigStoreMixin as _ConfigStoreMixin,
-)
-from lib.script.ui.ai_settings_shell import (
-    AISettingsShellMixin as _AISettingsShellMixin,
-)
-from lib.script.ui.ai_settings_page import (
-    AISettingsPageMixin as _AISettingsPageMixin,
-)
-from lib.script.ui.ai_settings_editors import (
-    ConfigEditorMixin as _ConfigEditorMixin,
-    _AnimationDurationSliderField as _AnimationDurationSliderField,
+from lib.script.ui.ai_settings_config_schema import (  # noqa: F401 - 既有导出面
+    GENERAL_DECIMAL_SLIDER_SPECS as _GENERAL_DECIMAL_SLIDER_SPECS,
 )
 from lib.script.ui.ai_settings_contributions import (
     contribution_list_path as _contribution_list_path_impl,
     load_contribution_records as _load_contribution_records_impl,
     sponsor_author_image_path as _sponsor_author_image_path_impl,
 )
-from lib.core.logger import get_logger
 from lib.script.ui.qq_group_dialog import QQGroupDialog
 from lib.script.ui.update_dialog import DesktopPetUpdateDialog
 from lib.script.workbench.settings import GENERAL_CONFIG_CATEGORIES
-from lib.script.gsvmove import get_voice_package_status
+
+(_AISettingsShellMixin,) = render_bridge.tier_d_reexports(
+    "ai_settings_shell", ("AISettingsShellMixin",)
+)
+(_AISettingsPageMixin,) = render_bridge.tier_d_reexports(
+    "ai_settings_page", ("AISettingsPageMixin",)
+)
+(_ConfigStoreMixin,) = render_bridge.tier_d_reexports(
+    "ai_settings_config_store", ("ConfigStoreMixin",)
+)
+(_ConfigPageMixin,) = render_bridge.tier_d_reexports(
+    "ai_settings_config_page", ("ConfigPageMixin",)
+)
+(_ConfigEditorMixin,) = render_bridge.tier_d_reexports(
+    "ai_settings_editors", ("ConfigEditorMixin",)
+)
+(_AnimationDurationSliderField,) = render_bridge.tier_d_reexports(
+    "ai_settings_editors", ("_AnimationDurationSliderField",)
+)
 
 
 _logger = get_logger(__name__)
 
 _DROPDOWN_POPUP_LAYER = 601
 
-#: AI 主页面的装配与取值/回填闭环已下沉到 `lib/script/ui/ai_settings_page.py`
-#: （`AISettingsPageMixin`，第 53 节）、配置存取到 `ai_settings_config_store.py`（第 54 节）、
-#: 面板外壳到 `ai_settings_shell.py`（第 55 节）；本文件只做组合与更新页转发。
+#: AI 主页面的装配与取值 / 回填闭环已下沉到 `lib/core/render/backends/qt/widgets/ai_settings_page.py`
+#: （第 53 节）、配置存取到 `ai_settings_config_store.py`（第 54 节）、面板外壳到
+#: `ai_settings_shell.py`（第 55 节）；本文件只做组合与更新页转发。
 _EXTERNAL_CONFIG_FIELD_KINDS = {
     "external_autostart",
     "external_announcement_suppression",
 }
 # 贡献名单的常量（忽略标题片段 / 隐藏角色 / 手工条目）与解析逻辑已下沉到
-# `lib/script/ui/ai_settings_contributions.py`；本文件只保留下面的路径与加载委托。
+# `lib/core/ai_settings/contributions.py`；本文件只保留下面的路径与加载委托。
 _GENERAL_CONFIG_CATEGORIES = GENERAL_CONFIG_CATEGORIES
 
 
@@ -102,7 +121,7 @@ class AISettingsPanel(
         self._voice_package_management.set_package_status(status)
         self._update_gsv_settings_visibility()
 
-    def _pet_update_actions(self) -> _update_page.PetUpdateActions:
+    def _pet_update_actions(self):
         """把更新页动作要的回调打包成显式依赖；两个对话框实例仍以面板字段为准。"""
         return _update_page.PetUpdateActions(
             check_updates=self._on_check_updates,

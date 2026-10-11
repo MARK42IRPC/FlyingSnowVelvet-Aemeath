@@ -1,0 +1,185 @@
+"""AI 设置面板 tabs 组装辅助（档位 D 宿主）。"""
+
+from __future__ import annotations
+
+from PyQt5.QtCore import QPoint, Qt
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QButtonGroup
+from PyQt5.QtGui import QPainter
+
+from config.scale import scale_px
+from lib.core.render.visuals.panel_visuals import build_tab_bar_visual
+from lib.core.render.visuals.types import Size
+from lib.core.render.backends.qt.widgets import tier_d_seams
+from lib.core.render.layers import get_layer_manager, WindowLayer
+
+
+class TabBarWidget(QWidget):
+    """自定义标签栏控件，绘制与面板一致的多层边框"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._layer = scale_px(2, min_abs=1)
+        self._border = self._layer * 2
+        self._draw_backend = tier_d_seams.create_draw_backend()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        rect = self.rect()
+        if rect.width() <= 0 or rect.height() <= 0:
+            return
+        visual = build_tab_bar_visual(
+            Size(rect.width(), rect.height()),
+            inset=self._layer,
+        )
+        self._draw_backend.render(visual.batch, painter)
+
+
+def attach_ai_settings_tabs(panel, general_categories) -> None:
+    # 获取主题颜色
+    mid_color = tier_d_seams.color("mid")
+    highlight_color = tier_d_seams.color("deep_cyan")
+    text_color = tier_d_seams.color("text")
+    # 高亮向左扩展距离
+    highlight_expand_left = scale_px(6, min_abs=4)
+
+    panel._tab_pages = [panel._ai_panel]
+    for category in general_categories:
+        page = panel._build_config_category_panel(category)
+        page.hide()
+        panel._tab_pages.append(page)
+
+    # 创建独立的垂直标签栏窗口（放在面板外部）
+    panel._tab_floating = TabBarWidget(
+        panel.parent() if panel.parent() else None,
+    )
+    panel._tab_floating.setWindowFlags(
+        Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.NoDropShadowWindowHint
+    )
+    get_layer_manager().register(
+        panel._tab_floating,
+        WindowLayer.PANEL,
+        z=1,
+        name='AISettingsTabBar',
+    )
+    panel._tab_floating.setAttribute(Qt.WA_ShowWithoutActivating)
+
+    # 设置标签栏容器宽度（背景和边框由 paintEvent 绘制）
+    panel._tab_floating.setFixedWidth(scale_px(108, min_abs=88))
+
+    # 创建垂直布局
+    tab_layout = QVBoxLayout(panel._tab_floating)
+    tab_layout.setContentsMargins(0, scale_px(8), 0, scale_px(8))
+    tab_layout.setSpacing(scale_px(2))
+
+    # 创建按钮组
+    panel._tab_button_group = QButtonGroup(panel._tab_floating)
+    panel._tab_button_group.setExclusive(True)
+
+    # 创建标签按钮
+    tab_names = ["AI设置"] + [category.tab_title for category in general_categories]
+    panel._tab_buttons = []
+
+    for i, name in enumerate(tab_names):
+        btn = QPushButton(name, panel._tab_floating)
+        btn.setCheckable(True)
+        btn.setFixedHeight(scale_px(32, min_abs=28))
+
+        # 设置按钮样式 - 垂直标签栏
+        btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: transparent;
+                color: {text_color.name()};
+                border: none;
+                font-weight: bold;
+                text-align: center;
+                padding: 0;
+                margin: 0px;
+                min-height: {scale_px(32, min_abs=28)}px;
+            }}
+            QPushButton:checked {{
+                background-color: {mid_color.name()};
+                margin-left: -{highlight_expand_left}px;
+                padding-left: {highlight_expand_left}px;
+            }}
+            QPushButton:hover {{
+                background-color: {highlight_color.name()};
+            }}
+        """)
+
+        btn.clicked.connect(lambda checked, idx=i: panel._on_top_tab_changed(idx))
+        panel._tab_button_group.addButton(btn, i)
+        tab_layout.addWidget(btn)
+        panel._tab_buttons.append(btn)
+
+    # 默认选中第一个标签
+    if panel._tab_buttons:
+        panel._tab_buttons[0].setChecked(True)
+
+    tab_layout.addStretch(1)
+
+    layout_ai_settings_tab_bar(panel)
+    layout_ai_settings_tab_panels(panel)
+
+
+def layout_ai_settings_tab_bar(panel) -> None:
+    if not hasattr(panel, "_tab_floating") or panel._tab_floating is None:
+        return
+
+    # 计算标签栏位置：右上角对齐面板的左上角
+    panel_global_pos = panel.mapToGlobal(QPoint(0, 0))
+
+    # 标签栏宽度固定
+    tab_width = panel._tab_floating.width()
+
+    # 标签栏的右上角 (x + width) 应该对齐面板的左上角 x
+    # 所以标签栏的 x = 面板x - 标签栏宽度
+    # 向左偏移2像素更靠近面板
+    tab_x = panel_global_pos.x() - tab_width - scale_px(2, min_abs=1)
+    tab_y = panel_global_pos.y()
+
+    # 设置标签栏位置和高度
+    tab_height = panel.height()
+    panel._tab_floating.setGeometry(tab_x, tab_y, tab_width, tab_height)
+
+
+def show_ai_settings_tab_bar(panel) -> None:
+    if panel._tab_floating is None:
+        return
+    layout_ai_settings_tab_bar(panel)
+    panel._tab_floating.show()
+    get_layer_manager().enforce_burst()
+
+
+def hide_ai_settings_tab_bar(panel) -> None:
+    if panel._tab_floating is None:
+        return
+    panel._tab_floating.hide()
+
+
+def layout_ai_settings_tab_panels(panel) -> None:
+    if not hasattr(panel, "_ai_panel") or panel._ai_panel is None:
+        return
+
+    geometry = panel._ai_panel.geometry()
+    for page in panel._tab_pages[1:]:
+        if page is None:
+            continue
+        page.setGeometry(geometry)
+    if panel._tab_floating is not None and panel._tab_floating.isVisible():
+        get_layer_manager().enforce_burst()
+
+
+def set_active_ai_settings_tab(panel, index: int) -> None:
+    if not panel._tab_pages:
+        return
+
+    target_index = max(0, min(index, len(panel._tab_pages) - 1))
+    for page_index, page in enumerate(panel._tab_pages):
+        if page is not None:
+            page.setVisible(page_index == target_index)
+
+    layout_ai_settings_tab_panels(panel)
+    if 0 <= target_index < len(panel._tab_pages):
+        panel._tab_pages[target_index].raise_()
+    if panel._tab_floating is not None and panel._tab_floating.isVisible():
+        get_layer_manager().enforce_burst()

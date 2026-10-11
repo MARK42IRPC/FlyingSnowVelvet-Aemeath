@@ -14,7 +14,9 @@ from lib.script.chat.persona_storage import (
     ensure_user_persona_file,
     resolve_persona_file_path,
 )
-from lib.script.ui import ai_settings_page as ai_settings_page_module
+from lib.core.render.backends.qt.widgets import (
+    ai_settings_page as ai_settings_page_module,
+)
 from lib.script.ui.ai_settings_panel import AISettingsPanel
 
 

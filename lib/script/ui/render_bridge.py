@@ -157,6 +157,276 @@ def settings_layout_primitives():
     )
 
 
+def forum_account_sections_primitives():
+    """主论坛账号页区块的解析/转发落点（档位 D）。
+
+    `ForumAccountSectionsMixin` 住进了
+    `lib/core/render/backends/qt/widgets/forum_account_sections.py`。产品垫片按名字再导出，
+    而它自己不得静态 import 档位 D，因此由这里解析。
+    """
+    from lib.core.render.backends.qt.widgets.forum_account_sections import (
+        ForumAccountSectionsMixin,
+    )
+
+    return ForumAccountSectionsMixin
+
+
+def configure_forum_account_sections_font(factory) -> None:
+    """把账号页区块的字体取用入口接到 `ui_font`（与 `forum_board` 同形）。"""
+    from lib.core.render.backends.qt.widgets import forum_account_sections
+
+    forum_account_sections.configure_font_factory(factory)
+
+
+def forum_window_primitives():
+    """雪绒论坛独立窗口的解析/转发落点（档位 D）。
+
+    `ForumWindow` / `ForumCard` 与取窗 / 开窗 / 清理入口住进了
+    `lib/core/render/backends/qt/widgets/forum_window.py`。产品垫片按名字再导出，
+    而它自己不得静态 import 档位 D，因此由这里解析。
+    """
+    from lib.core.render.backends.qt.widgets.forum_window import (
+        FORUM_DEFAULT_PAGE,
+        FORUM_PAGES,
+        ForumCard,
+        ForumWindow,
+        cleanup_forum_window,
+        get_forum_window,
+        open_forum_window,
+    )
+
+    return (
+        FORUM_DEFAULT_PAGE,
+        FORUM_PAGES,
+        ForumCard,
+        ForumWindow,
+        cleanup_forum_window,
+        get_forum_window,
+        open_forum_window,
+    )
+
+
+def configure_forum_window_font(factory) -> None:
+    """把论坛窗口的字体取用入口接到 `ui_font`（与 `forum_board` 同形）。"""
+    from lib.core.render.backends.qt.widgets import forum_window
+
+    forum_window.configure_font_factory(factory)
+
+
+def forum_board_primitives():
+    """主论坛子页面的解析/转发落点（档位 D）。
+
+    `ForumBoardPage` 住进了 `lib/core/render/backends/qt/widgets/forum_board.py`。
+    产品垫片按名字再导出，而它自己不得静态 import 档位 D，因此由这里解析。
+    """
+    from lib.core.render.backends.qt.widgets.forum_board import ForumBoardPage
+
+    return ForumBoardPage
+
+
+def configure_forum_board_font(factory) -> None:
+    """把主论坛页的字体取用入口接到 `ui_font`（与 `forum_images` 同形）。"""
+    from lib.core.render.backends.qt.widgets import forum_board
+
+    forum_board.configure_font_factory(factory)
+
+
+def forum_wall_primitives():
+    """主论坛整页外壳的解析/转发落点（档位 D）。
+
+    `ForumWallMixin` 住进了 `lib/core/render/backends/qt/widgets/forum_wall.py`。
+    产品垫片按名字再导出，而它自己不得静态 import 档位 D，因此由这里解析。
+    """
+    from lib.core.render.backends.qt.widgets.forum_wall import ForumWallMixin
+
+    return ForumWallMixin
+
+
+def configure_forum_wall_font(factory) -> None:
+    """把留言墙的字体取用入口接到 `ui_font`（与 `forum_board` 同形）。"""
+    from lib.core.render.backends.qt.widgets import forum_wall
+
+    forum_wall.configure_font_factory(factory)
+
+
+def forum_sticker_primitives():
+    """卡片效果贴图控件的解析/转发落点（档位 D）。
+
+    `ForumSticker` 与令牌/尺寸/解码辅助住进了
+    `lib/core/render/backends/qt/widgets/forum_sticker.py`。产品垫片按名字再导出，
+    而它自己不得静态 import 档位 D，因此由这里解析。
+    """
+    from lib.core.render.backends.qt.widgets.forum_sticker import (
+        FORUM_STICKER_ASSETS,
+        STICKER_HEIGHT,
+        ForumSticker,
+        ink_bounds,
+        release_subscription,
+        sticker_frames,
+        sticker_paths,
+    )
+
+    return (
+        FORUM_STICKER_ASSETS,
+        STICKER_HEIGHT,
+        ForumSticker,
+        ink_bounds,
+        release_subscription,
+        sticker_frames,
+        sticker_paths,
+    )
+
+
+def configure_forum_sticker_raster_converter(converter) -> None:
+    """把贴图宿主的栅格帧转换入口接到 `qimage_from_raster_frame`（与后端 seam 同形）。"""
+    from lib.core.render.backends.qt.widgets import forum_sticker
+
+    forum_sticker.configure_raster_converter(converter)
+
+
+def forum_color_picker_primitives():
+    """留言墙取色滑条的解析/转发落点（档位 D）。
+
+    `ForumColorSlider` 与三个颜色换算函数 / 三个范围常量住进了
+    `lib/core/render/backends/qt/widgets/forum_color_picker.py`。产品垫片按名字再导出，
+    而它自己不得静态 import 档位 D，因此由这里解析。
+    """
+    from lib.core.render.backends.qt.widgets.forum_color_picker import (
+        MAX_LIGHTNESS,
+        MIN_LIGHTNESS,
+        ForumColorSlider,
+        SLIDER_HEIGHT,
+        color_to_hsl,
+        hsl_color,
+        hue_gradient_stops,
+    )
+
+    return (
+        ForumColorSlider,
+        SLIDER_HEIGHT,
+        MIN_LIGHTNESS,
+        MAX_LIGHTNESS,
+        hsl_color,
+        color_to_hsl,
+        hue_gradient_stops,
+    )
+
+
+def configure_forum_color_picker_backend(factory) -> None:
+    """把取色滑条宿主的绘制后端取用入口接到 `create_draw_backend`（与字体 seam 同形）。"""
+    from lib.core.render.backends.qt.widgets import forum_color_picker
+
+    forum_color_picker.configure_backend_factory(factory)
+
+
+def forum_color_control_primitives():
+    """论坛取色控件（复选框 + 两条滑条）的解析/转发落点（档位 D）。
+
+    `ForumColorControl` / `ForumColorToggle` / `format_button_font` 住进了
+    `lib/core/render/backends/qt/widgets/forum_color_control.py`。产品垫片按名字再导出，
+    而它自己不得静态 import 档位 D，因此由这里解析。
+    """
+    from lib.core.render.backends.qt.widgets.forum_color_control import (
+        ForumColorControl,
+        ForumColorToggle,
+        format_button_font,
+    )
+
+    return ForumColorControl, ForumColorToggle, format_button_font
+
+
+def configure_forum_color_control_font(factory) -> None:
+    """把取色控件的字体取用入口接到 `ui_font`（与 `forum_board` 同形）。"""
+    from lib.core.render.backends.qt.widgets import forum_color_control
+
+    forum_color_control.configure_font_factory(factory)
+
+
+def configure_forum_window_violation_sound() -> None:
+    """给论坛窗口宿主接上违规提示语音工厂（延迟 import，宿主本身不 import 产品包）。"""
+    from lib.core.render.backends.qt.widgets import forum_window
+
+    def _make():
+        from lib.script.voice.forum_violation import ForumViolationSound
+
+        return ForumViolationSound()
+
+    forum_window.configure_violation_sound_factory(_make)
+
+
+def install_tier_d_seams(**kwargs) -> None:
+    """把产品侧的字体 / 绘制 / 颜色入口装到档位 D 的共享 seam（`tier_d_seams`）上。
+
+    同族宿主控件共用这一处注入点，避免每个文件各写一份 `_font_factory` 样板；与
+    `configure_settings_layout_font()` 同形。未传的项保持原值。
+    """
+    from lib.core.render.backends.qt.widgets import tier_d_seams
+
+    tier_d_seams.install(**kwargs)
+
+
+def install_tier_d_hook(name: str, factory) -> None:
+    """登记一个档位 D 宿主要调用的产品侧可调用对象（跨层回调的装配点）。
+
+    档位 D 宿主不得 import `lib.script`，凡是要调一个产品包函数 / 取一个产品包单例的地方，
+    都由产品垫片在导入时用这里登记，宿主按稳定的契约名字取用（`tier_d_seams.hook(name)`）。
+    """
+    from lib.core.render.backends.qt.widgets import tier_d_seams
+
+    tier_d_seams.register_hook(name, factory)
+
+
+def install_tier_d_anim_folders(*, choices=None, resolve_path=None) -> None:
+    """把动画目录枚举 / 路径解析装到档位 D 的共享 seam（`tier_d_seams`）。
+
+    与 `install_tier_d_seams()` / `install_tier_d_hook()` 同属转发层：产品垫片不得静态 import
+    档位 D，因此这两项文件系统事实的注入点也经这里转发（两参数都是纯文件系统事实，无 Qt）。
+    """
+    from lib.core.render.backends.qt.widgets import tier_d_seams
+
+    tier_d_seams.install_anim_folders(choices=choices, resolve_path=resolve_path)
+
+
+def install_world_object_seams(**kwargs) -> None:
+    """把世界对象宿主所需的注入物（声音工厂 / 屏幕几何 / 粒子）装到 `tier_d_seams`。
+
+    与 `install_tier_d_seams()` 同属转发层：产品垫片不得静态 import 档位 D，世界对象产品面
+    控件（声音、屏幕几何、粒子）因此经这里转发。未传的项保持原值。
+    """
+    from lib.core.render.backends.qt.widgets import tier_d_seams
+
+    tier_d_seams.install_world_object_seams(**kwargs)
+
+
+def tier_d_color(token: str):
+    """主题色 token → Qt 颜色（档位 D 宿主经 seam 取色的转发签名）。"""
+    return qt_color(token)
+
+
+def tier_d_reexports(module: str, names):
+    """从档位 D 的 `backends/qt/widgets/<module>.py` 按名字取一批对象（解析/转发落点）。
+
+    产品垫片只按原名再导出、不得静态 import 档位 D；本体改名 / 搬迁 / 合并到别的宿主上时，
+    这里一并换掉即可，垫片的导入面与调用方都不动。与 `forum_text_primitives()` 等同形，
+    只是把「取哪几个名字」交给调用方列出来——同族的页面垫片因此不必各写一个转发函数。
+    """
+    from importlib import import_module
+
+    host = import_module(f"lib.core.render.backends.qt.widgets.{module}")
+    return tuple(getattr(host, name) for name in names)
+
+
+def tier_d_reexports_module(module: str):
+    """取档位 D 的 `backends/qt/widgets/<module>.py` 宿主模块本身。
+
+    少数垫片的调用方用 `import ... as _about; _about.X` 取用宿主符号；这类垫片需要拿到宿主
+    模块对象再按名转发，因此这里给出模块级解析入口，与 `tier_d_reexports()` 同属转发层。
+    """
+    from importlib import import_module
+
+    return import_module(f"lib.core.render.backends.qt.widgets.{module}")
+
+
 def forum_text_primitives():
     """论坛卡片正文富文本控件的解析/转发落点（档位 D）。
 

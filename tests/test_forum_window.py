@@ -970,7 +970,7 @@ class ForumWindowTests(unittest.TestCase):
             self.app.processEvents()
 
     def test_open_forum_window_reuses_one_singleton(self):
-        from lib.script.ui import forum_window as forum_module
+        from lib.core.render.backends.qt.widgets import forum_window as forum_module
 
         forum_module.cleanup_forum_window()
         fake = ForumWindow()

@@ -22,8 +22,8 @@ from PyQt5.QtWidgets import QApplication
 
 from lib.core.forum_api import ForumSession, ForumUser
 from lib.core.forum_session import ForumSessionStore, session_path
-from lib.script.ui import forum_account as forum_account_module
-from lib.script.ui import forum_board as forum_board_module
+from lib.core.render.backends.qt.widgets import forum_account as forum_account_module
+from lib.core.render.backends.qt.widgets import forum_board as forum_board_module
 from lib.script.ui.forum_window import FORUM_DEFAULT_PAGE, FORUM_PAGES, ForumWindow
 
 

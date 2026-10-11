@@ -499,7 +499,7 @@ class OfficeWorkbenchPageTests(unittest.TestCase):
             page.refresh_workbench_page()
 
             self.assertTrue(page._delete_task_button.isEnabled())
-            with patch("lib.script.ui.office_page.QMessageBox.exec_", return_value=QMessageBox.Yes):
+            with patch("lib.core.render.backends.qt.widgets.office_page.QMessageBox.exec_", return_value=QMessageBox.Yes):
                 page._delete_selected_task()
 
             commands = ipc.consume()
