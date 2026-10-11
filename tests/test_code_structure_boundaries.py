@@ -142,6 +142,8 @@ class CodeStructureBoundaryTests(unittest.TestCase):
         新增耦合会叫停，清单里的条目被删掉后也会叫停（防止清单腐烂）。私有子模块一律不允许。
         """
         expected = {
+            ("lib/script/ui/speaker_search_dialog.py", "lib.script.music"),
+            ("lib/script/ui/speaker_search_dialog.py", "lib.script.music.track_text"),
             ("lib/script/ui/ai_settings_config_store.py", "lib.script.gsvmove"),
             ("lib/script/ui/ai_settings_config_store.py", "lib.script.music"),
             ("lib/script/ui/ai_settings_page.py", "lib.script.chat.handler_auto_companion"),
@@ -164,8 +166,6 @@ class CodeStructureBoundaryTests(unittest.TestCase):
             ("lib/script/ui/playlist_panel.py", "lib.script.music"),
             ("lib/script/ui/speaker_button_shell.py", "lib.script.music"),
             ("lib/script/ui/speaker_control_buttons.py", "lib.script.music"),
-            ("lib/script/ui/speaker_search_dialog.py", "lib.script.music"),
-            ("lib/script/ui/speaker_search_dialog.py", "lib.script.music.track_text"),
             ("lib/script/ui/speaker_volume_slider.py", "lib.script.music"),
             ("lib/script/ui/voice_package_installer.py", "lib.script.gsvmove"),
             ("lib/script/ui/voice_package_installer.py", "lib.script.gsvmove.package_manager"),
