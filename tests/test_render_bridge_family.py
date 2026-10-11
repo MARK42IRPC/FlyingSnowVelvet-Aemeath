@@ -83,7 +83,7 @@ class RenderBridgeFamilyTests(unittest.TestCase):
         self.assertEqual(offenders, set())
 
     def test_product_shims_are_neither_qt_nor_tier_paths(self):
-        for name in ("render_bridge.py", "_render_bridge_forwarder.py"):
+        for name in ("render_bridge.py",):
             with self.subTest(module=name):
                 names = _imported_names(_UI / name)
                 self.assertEqual(
@@ -102,7 +102,10 @@ class RenderBridgeFamilyTests(unittest.TestCase):
             [n for n in names if n == "lib.script" or n.startswith("lib.script.")], []
         )
 
-    def test_forwarded_names_resolve_to_the_core_implementation(self):
+    def test_forwarded_names_are_the_core_objects(self):
+        """转发是"同一函数对象"的别名，不是包装器：签名与来源必须与核心一致。"""
+        import inspect
+
         from lib.core.render import qt_bridge
         from lib.script.ui import render_bridge
 
@@ -110,21 +113,27 @@ class RenderBridgeFamilyTests(unittest.TestCase):
                      "tier_d_reexports", "qt_color"):
             with self.subTest(name=name):
                 self.assertTrue(hasattr(render_bridge, name), name)
-        # 对象身份：垫片导出的是转发函数，但行为与核心一致。
-        self.assertEqual(render_bridge.qt_color_name("text"), qt_bridge.qt_color_name("text"))
-        self.assertIsInstance(render_bridge.__all__, list)
+                # 别名而非包装：对象身份相同，签名 / 文档 / 模块也随之相同。
+                self.assertIs(getattr(render_bridge, name), getattr(qt_bridge, name), name)
+        # 具名转发只可能是包装器才会吞掉的签名，这里必须与核心逐字一致。
+        self.assertEqual(
+            str(inspect.signature(render_bridge.create_spec_window)),
+            str(inspect.signature(qt_bridge.create_spec_window)),
+        )
         self.assertEqual(len(render_bridge.__all__), len(qt_bridge.__all__) + 2)
 
-    def test_module_attribute_access_uses_pep562_without_caching(self):
-        """`getattr` 形态必须走 PEP 562（不缓存），才能与 `patch.object` 共存。"""
+    def test_getattr_fallback_does_not_shadow_patched_attributes(self):
+        """`__all__` 内的名字在模块命名空间里，补丁只改垫片、不泄漏到核心层。"""
         from unittest import mock
 
+        from lib.core.render import qt_bridge
         from lib.script.ui import render_bridge
 
         sentinel = object()
         with mock.patch.object(render_bridge, "ui_font", sentinel):
             self.assertIs(render_bridge.ui_font, sentinel)
-        self.assertIsNot(render_bridge.ui_font, sentinel)
+            self.assertIsNot(qt_bridge.ui_font, sentinel)
+        self.assertIs(render_bridge.ui_font, qt_bridge.ui_font)
 
     def test_manual_members_stay_on_the_product_side(self):
         """两个要 import 产品包的成员留在垫片，而不是核心层。"""

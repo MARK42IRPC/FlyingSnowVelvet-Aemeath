@@ -477,15 +477,13 @@ class ControlPlacementDelegationTests(unittest.TestCase):
     def test_no_ui_control_clamps_its_own_window_position(self):
         """`lib/script/ui` 里不得再出现 `clamp_rect_position` 调用。
 
-        该函数只剩 render 层的 `qt_bridge` 自身作为转发层保留；任何控件重新自己夹取屏幕，
+        该函数只剩 `render_bridge` 自身作为转发层保留；任何控件重新自己夹取屏幕，
         都意味着档位 1 的算术又被抄回业务层。
         """
         offenders = []
         ui_root = _REPO_ROOT / "lib" / "script" / "ui"
         for path in sorted(ui_root.rglob("*.py")):
-            # `render_bridge.py` 是转发垫片、`_render_bridge_forwarder.py` 是它的零 Qt
-            # 实现心脏：两者都不含落位算术，这里只是把它们排除在"控件"之外。
-            if path.name in ("render_bridge.py", "_render_bridge_forwarder.py"):
+            if path.name == "render_bridge.py":
                 continue
             source = path.read_text(encoding="utf-8-sig")
             if "clamp_rect_position" in source:

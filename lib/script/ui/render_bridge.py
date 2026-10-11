@@ -5,16 +5,17 @@
 边界契约》的最终目标「只有 `lib/core/render/` 内存在 Qt 导入」，那份实现已整体搬进 render 层
 （`lib/core/render/qt_bridge.py`），本模块只保留历史导入面。
 
-形态说明：
+**转发形态：同一函数对象，不生成包装器。** 核心 `qt_bridge.__all__` 里的公开名字在导入时
+原样搬进本模块（`globals()[name] = getattr(core, name)`），因此：
 
-- **具名转发**：`from lib.script.ui.render_bridge import ui_font` 这类调用面（99 个文件）由
-  `_render_bridge_forwarder.bind()` 在导入时按核心公开名字铺出，等价于直接 import 核心层。
-- **模块 `__getattr__`**：`from lib.script.ui import render_bridge; render_bridge.ui_font(...)` 这类
-  模块属性访问由 PEP 562 的 `__getattr__` 兜底，不缓存结果（测试常用
-  `patch.object(render_bridge, "ui_font", ...)`，缓存绑定会让补丁与转发分叉）。
-- 产品侧全部 seam 注入（`install_tier_d_seams` / `install_tier_d_hook` / `tier_d_reexports` …）
-  同样由 `__getattr__` 转发。本文件因此**零 PyQt5、零档位 D 静态 import**，
-  不再出现在 `frozen_ui_qt_importers` 里。
+- `inspect.signature` / `inspect.getsource` / `__doc__` / `__module__` 与下沉前一致——
+  包装器会吞掉真实签名，这里是刻意避开的坑；
+- `patch.object(render_bridge, "ui_font", ...)` 照旧只改本模块属性，不影响核心层；
+- 产品垫片捕获的名字（`from ...render_bridge import ui_font`）与核心是同一个对象，
+  既有的 `assertIs(host._font_factory, render_bridge.ui_font)` 一类断言继续成立。
+
+`__getattr__`（PEP 562）只作为兜底：`__all__` 之外的名字仍转发给核心层。
+本文件因此**零 PyQt5、零档位 A/B/D 路径字面量**，不再出现在 `frozen_ui_qt_importers` 里。
 
 两个手工成员留在垫片：`apply_settings_page_fonts()` 原实现经产品侧
 `lib.script.ui.workbench_settings_layout` 取宿主实现，与"本模块不得反向 import 产品包"冲突，
@@ -25,9 +26,21 @@
 
 from __future__ import annotations
 
-from lib.script.ui import _render_bridge_forwarder as _forwarder
+from importlib import import_module
 
-_forwarded = _forwarder.bind(globals(), __name__)
+CORE_MODULE = "lib.core.render.qt_bridge"
+
+
+def _core_bridge():
+    """取核心转发层模块；惰性 import，避免垫片导入期就拉起 render 层。"""
+    return import_module(CORE_MODULE)
+
+
+#: 核心层的公开转发面（`__all__` 是唯一事实源）。
+_CORE = _core_bridge()
+for _name in _CORE.__all__:
+    globals()[_name] = getattr(_CORE, _name)
+del _name
 
 
 def apply_settings_page_fonts(page) -> None:
@@ -39,7 +52,7 @@ def apply_settings_page_fonts(page) -> None:
 
 def configure_forum_window_violation_sound() -> None:
     """给论坛窗口宿主接上违规提示语音工厂（延迟 import，宿主本身不 import 产品包）。"""
-    forum_window = _forwarder._default_bridge().tier_d_reexports_module("forum_window")
+    forum_window = _core_bridge().tier_d_reexports_module("forum_window")
 
     def _make():
         from lib.script.voice.forum_violation import ForumViolationSound
@@ -49,12 +62,13 @@ def configure_forum_window_violation_sound() -> None:
     forum_window.configure_violation_sound_factory(_make)
 
 
-__all__ = list(_forwarded) + [
+__all__ = [
+    *_CORE.__all__,
     "apply_settings_page_fonts",
     "configure_forum_window_violation_sound",
 ]
 
 
 def __getattr__(name):
-    """PEP 562：把模块属性访问转发给核心转发层（不缓存，补丁友好）。"""
-    return getattr(_forwarder._default_bridge(), name)
+    """PEP 562 兜底：`__all__` 之外的名字转发给核心转发层。"""
+    return getattr(_core_bridge(), name)
