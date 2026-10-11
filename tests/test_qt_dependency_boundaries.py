@@ -24,9 +24,9 @@ class QtDependencyBoundaryTests(unittest.TestCase):
     #: 加进下面这个集合。断言 `frozen_ui_qt_importers <= {…startswith("lib/script/ui/")}`
     #: 只要求条目落在该前缀下，嵌套子包（`lib/script/ui/foo/bar.py`）本就合法，无需新增
     #: 白名单机制。拆出**不含 Qt** 的文件不要登记（登记了会被 stale 断言叫停）。
-    frozen_ui_qt_importers = frozenset({
-            "lib/script/ui/render_bridge.py",
-    })
+    #: 已清零：`lib/script/ui` 下不再有直接 `import PyQt5` 的产品控件。清单保留为空集，
+    #: 让「只减不增」的 stale 断言继续有落点（将来有人先加白名单再引 Qt 会被叫停）。
+    frozen_ui_qt_importers: frozenset[str] = frozenset()
 
     @staticmethod
     def _qt_import_violations(repo_root: Path, paths) -> list[str]:
@@ -55,11 +55,15 @@ class QtDependencyBoundaryTests(unittest.TestCase):
         repo_root = Path(__file__).resolve().parents[1]
         roots = (repo_root / "config", repo_root / "lib" / "core")
         excluded = repo_root / "lib" / "core" / "render" / "backends" / "qt"
+        #: `lib/core/render/qt_bridge.py` 是 render 层内唯一的「产品侧 Qt 适配落点」：
+        #: 它由原 `lib/script/ui/render_bridge.py` 整体搬入，按需惰性 import 档位
+        #: A/B/D。它是 render 层的一部分（不是产品层），因此在这里显式豁免。
+        seams = {repo_root / "lib" / "core" / "render" / "qt_bridge.py"}
 
         violations = []
         for root in roots:
             for path in root.rglob("*.py"):
-                if excluded in path.parents:
+                if excluded in path.parents or path in seams:
                     continue
                 tree = ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
                 for node in ast.walk(tree):
@@ -136,10 +140,16 @@ class QtDependencyBoundaryTests(unittest.TestCase):
             "lib/script/app/workbench_helper_entry.py",
         }
 
+        #: `lib/core/render/qt_bridge.py` 是 render 层内唯一的"产品侧 Qt 适配落点"：
+        #: 它把 Quatre 工具的解析/转发从 `lib/script/ui/render_bridge.py` 搬进 render 层，
+        #: 使产品侧零 `import PyQt5`（本文件冻结清单因此清零）。它必须显式列出，
+        #: 而不是靠放宽前缀判定。
+        toolkit_seams = {"lib/core/render/qt_bridge.py"}
         unexpected = sorted(
             path
             for path in qt_imports
             if not path.startswith("lib/core/render/backends/qt/")
+            and path not in toolkit_seams
             and path not in frozen_ui_qt_importers
             and path not in allowed_files
         )
@@ -582,8 +592,8 @@ class QtDependencyBoundaryTests(unittest.TestCase):
         """档位 A：`backends/qt/drawing/` 的允许引用面。
 
         `drawing/` 是把声明式命令变成 QPainter 像素的地方。它只应被三处引用：
-        `lib/core/render/router.py`、后端自带窗口，以及 `lib/script/ui/render_bridge.py`
-        这个唯一的 UI 侧落点——控件要绘制能力就向它要，而不是自己 import 绘制档。
+        `lib/core/render/router.py`、后端自带窗口，以及 `lib/core/render/qt_bridge.py`
+        这个唯一的 render 侧落点——产品垫片要绘制能力就向它要，而不是自己 import 绘制档。
 
         `lib/script/ui` 的直接引用已清零，基线集合保持为空；任何新文件出现对 `drawing/`
         的引用都会失败。官方游戏包 v1 的控件沿用 Qt 页面约定，是文档化的既有例外。
@@ -599,10 +609,11 @@ class QtDependencyBoundaryTests(unittest.TestCase):
         frozen_other_importers = {
             "lib/script/gemes/packages/official/lahai_tetris/code/lahai_tetris_pkg/widget.py",
         }
-        #: 刻意保留的唯一 UI 侧落点：控件通过它拿绘制能力，而不是各自 import 本档。
+        #: 唯一的 render 侧落点：`lib/core/render/qt_bridge.py`。控件继续向 `render_bridge`
+        #: 垫片要能力，垫片按需转给它；`lib/script/ui` 因此零直接引用本档。
         #: 当前实现会在未配置后端时回退到 Qt（见文件内注释）；这是产品事实的收敛，
         #: 不是又一次绕过。它必须保持最小：只暴露控件真正需要的能力。
-        allowed_seams = {"lib/script/ui/render_bridge.py"}
+        allowed_seams = {"lib/core/render/qt_bridge.py"}
 
         def _drawing_refs(path):
             tree = ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
@@ -666,18 +677,24 @@ class QtDependencyBoundaryTests(unittest.TestCase):
         #: `lib/script/ui` 已全部改走 `render_bridge`，清单保持为空才是目标状态。
         #: 与档位 A 同样保留空集合，让「只减不增」的清理断言继续有落点。
         frozen_ui_runtime_importers: set[str] = set()
-        #: 与档位 A 同一个 UI 侧落点：控件向它要屏幕几何、字体与文本度量，
-        #: 由它转调后端注入的实现（未注入时回退 Qt）。产品页面共享的 QWidget 基类
-        #: 另有 `lib.core.render.backends.qt.widgets/`，见下面的 widgets 断言。
-        allowed_seams = {"lib/script/ui/render_bridge.py"}
+        #: 与档位 A 同一个 render 侧落点：`lib/core/render/qt_bridge.py`。产品垫片向
+        #: `render_bridge` 要屏幕几何、字体与文本度量，由它转调后端注入的实现
+        #: （未注入时回退 Qt）。产品页面共享的 QWidget 基类另有
+        #: `lib.core.render.backends.qt.widgets/`，见下面的 widgets 断言。
+        allowed_seams = {"lib/core/render/qt_bridge.py"}
 
         offenders = []
         referencing = set()
         widgets_prefix = "lib.core.render.backends.qt.widgets"
         widgets_referencing = set()
-        for path in sorted((repo_root / "lib" / "script").rglob("*.py")):
+        scanned = sorted((repo_root / "lib" / "script").rglob("*.py"))
+        scanned.append(repo_root / "lib" / "core" / "render" / "qt_bridge.py")
+        for path in scanned:
             relative = path.relative_to(repo_root).as_posix()
-            if not relative.startswith("lib/script/ui/"):
+            if not (
+                relative.startswith("lib/script/ui/")
+                or relative == "lib/core/render/qt_bridge.py"
+            ):
                 continue
             tree = ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
             for node in ast.walk(tree):
@@ -698,16 +715,24 @@ class QtDependencyBoundaryTests(unittest.TestCase):
                             continue
                         offenders.append(f"{relative}:{node.lineno}:{name}")
 
-        #: 落点之外还有人写死 runtime 路径就会失败；`render_bridge.py` 现在是唯一允许的
-        #: 转发点，`widgets/` 只承载产品页面要继承的 QWidget 骨架。
+        #: 落点之外还有人写死 runtime 路径就会失败；`lib/core/render/qt_bridge.py` 现在是
+        #: 唯一允许的转发点（产品垫片转给它），`widgets/` 只承载产品页面要继承的 QWidget 骨架。
         self.assertEqual(offenders, [], "业务层新引入具体后端运行时路径；请经后端中立协议获取能力")
         for relative in sorted(referencing - allowed_seams):
             raise AssertionError(f"{relative} 直接引用了 runtime/，请改走 render_bridge")
-        #: `widgets/` 是产品页面共享的 QWidget 基类（页面继承页面），
-        #: 允许 `lib/script/ui` 直接继承；但它必须真的在用，否则这层就该删掉。
+        #: **迁移后的不变量**：产品垫片（`lib/script/ui`）已零直接引用 runtime/，
+        #: 也零直接引用 widgets/——"产品页面继承 QWidget 基类"这件事全部改走
+        #: `render_bridge.tier_d_reexports()` 解析（垫片里连类名都不是静态名字）。
+        #: 唯一的落点 `lib/core/render/qt_bridge.py` 必须真的在引用两档，否则这层就该删掉。
+        self.assertEqual(
+            widgets_referencing - allowed_seams,
+            set(),
+            "产品垫片又静态引用了 widgets/ 具体路径；请改走 render_bridge 垫片",
+        )
         self.assertTrue(
-            widgets_referencing,
-            "没有任何控件继承 widgets/ 的页面基类，落点清单已失效")
+            referencing,
+            "唯一落点 lib/core/render/qt_bridge.py 未引用 runtime/，落点已失效",
+        )
         self.assertEqual(
             sorted((frozen_ui_runtime_importers | allowed_seams) - referencing),
             [],

@@ -4,7 +4,7 @@
 
 本文档定义 `lib/core/render/` 的目标结构与依赖边界。它不是阶段计划，而是结构改建完成后必须成立的规则。
 
-**状态：第 6 节迁移顺序 1、2（目录切分）、3 已执行；图层能力已收敛到 `lib/core/render/layers/`（第 16 节）；后端中立协议与统一数据类型已落地（第 11 节），控件层“描述 + 后端渲染”已滚动迁移气泡框（第 12 节）、说明书、语音指示器与播放进度条（第 13 节）、音响音量/频段双滑条、搜索结果框与命令提示框（第 18 节）、右键矩形动作按钮一族八个按钮（第 19 节）、确认/提示框（第 20 节，首个模态宿主）；浮窗外壳（样式/主题判定/拖拽策略/窗口按钮）已从 `lib/script/ui` 下沉到渲染层（第 21 节）；办公线性图标的 SVG 规格也已抽成后端中立事实源（第 22 节）；点击粒子辅助的按钮翻译改经 `render_bridge`、`_particle_helper.py` 出列（第 23 节）；论坛样式的底纹混色改为纯十六进制实现、`forum_style.py` 出列（第 24 节）；二维码登录浮窗的自动收起/穿透/窗口标志/自愈能力下沉到基类，`yuanbao_login_dialog.py` 与 `cloudmusic_login_dialog.py` 出列（第 25、26 节）；排布解算已收敛到 `visuals/` 并由 `PlacementSpec` 统一解算（第 14 节，档位 0/1），右键按钮族的逐控件锚点事件链已收敛为声明式 `AnchorGraph` 且 Qt 改为消费共享布局（第 15 节，档位 2/3）；`WindowHost` 的被动宿主激活语义已与 Qt/DX 焦点策略对齐（第 17 节）。** 目录与引用规则以本文档为准；改建前的事实源是 [Qt 边界契约](Qt边界契约.md) 与 [跨后端视觉表现契约](视觉表现契约.md)，那两份文档继续负责“哪些内容算视觉逻辑”和“什么算无 Qt”。第一章描述的是最终目标；产品控件面（`lib/script/ui` 直接 `import PyQt5`）仍需逐个控件迁移，当前待迁清单以 `tests/test_qt_dependency_boundaries.py` 的 `frozen_ui_qt_importers` 为准，滚动顺序见第 13 节末尾；翻页按钮族已于第二十七轮迁出（第 27 节）；音响菜单控制按钮族已于第二十八轮迁出（第 28 节）；音响菜单族共享样式已于第二十九轮出列（第 29 节，档位 D 新增 `QtPainterHost` 绘制宿主）；办公面样式与控件树辅助已于第三十轮出列（第 30 节）；窗口级描述与审批弹窗已于第三十一轮出列（第 31 节，档位 D 新增窗口描述宿主与 isuals/window_spec*.py 两级描述层）；帮助浮窗已于第三十二轮出列（第 32 节，窗口描述宿主补齐工具窗 / 滚动正文 / 淡入淡出 / 描边外壳）；公告 / 更新浮窗已于第三十三轮出列（第 33 节，新增 UI 线程调度宿主，控制器不再被迫继承 `QObject`）。剩余大文件的推进次序已于 2026-10-07 修订为「先按模块拆分瘦身、再逐个收敛 Qt」（第 34 节），滚动清单因此改按四批推进；批次 0（拆分登记机制）与批次 1（`ai_settings_panel.py` 瘦身：贡献名单解析、文案/名称表、配置 schema、删死代码）已完成（第 35–38 节）；批次 2 首轮把 `forum_board.py` 的图片视图族与列表两行下沉到档位 D 的 `backends/qt/widgets/forum_images.py`（第 39 节），续轮把 `forum_texture.py` 的底纹规格抽到 `visuals/forum_texture_visuals.py`（第 40 节）、把办公聊天的 Markdown→富文本抽到 `visuals/office_chat_rich.py`（第 41 节），又把这页的 OpenAI 兼容接口解析抽到 `lib/core/services/api_endpoints.py`、顺手把 `API_TIMEOUT_SECS` 一族从产品包下沉到 `lib/core/services/network_policy.py`（第 42 节），把设置面板的「通用配置」取值校验抽到 `ui/ai_settings_validation.py`并清掉一条 N 卡能力探测死链（第 43 节）、把字段说明文本抽到 `ui/ai_settings_descriptions.py`（第 44 节）、把配置编辑器取值解析抽到 `ui/ai_settings_config_parse.py`（第 45 节）、把语音包安装器浮窗的 QSS 并入 `visuals/workbench_chrome.py`（第 46 节），八轮均为纯移动、零差异（第 43 节另含等价清理）；批次 2 的 A 类到此抽尽，下一轮转批次 3 的 C 类切分，盘点与起点建议见第 47 节；批次 3 首轮把设置面板的「支持作者 / 贡献者」两页整体切到 `ui/ai_settings_about.py`（视图 + 控制器 + 描述，第 48 节，冻结清单 42 → 43），第二轮把「桌宠更新」页切成 `ui/ai_settings_update.py`（视图 + 控制器，第 49 节，冻结清单 43 → 44）。第三轮把面板 `_apply_style()` 的整段 QSS 下沉到 `lib/core/render/visuals/ai_settings_panel_visuals.py`（第 50 节，纯移动、逐字符零差异，冻结清单仍为 44 项）。第四轮把面板的「配置编辑器控件族」切到 `ui/ai_settings_editors.py`（视图控件 + 工厂，第 51 节，冻结清单 44 → 45）。第五轮把「配置分类页骨架 + 外部配置字段族」切到 `ui/ai_settings_config_page.py`（第 52 节，冻结清单 45 → 46）。第六轮把面板的 AI 主页面（`_build_ui` + 取值/回填闭环）切到 `ui/ai_settings_page.py`（第 53 节，冻结清单 46 → 47）；第七轮把「配置取值 / 回填 / 恢复 / 异步保存」控制器切到 `ui/ai_settings_config_store.py`（第 54 节，冻结清单 47 → 48）；第八轮把面板外壳（窗口生命周期 + 自绘边框 + 悬浮标签栏）切到 `ui/ai_settings_shell.py`（第 55 节，冻结清单 48 → 49）。第九轮转回 `forum_board.py`，把发帖屏（装配 + 正文编辑操作 + 发布与计数器）整体切到 `ui/forum_composer.py`（第 56 节，冻结清单 49 → 50）。本次续作（2026-10-10）接着把 `forum_account_sections`（第 57 节，50 → 51）、`forum_detail`（第 58 节，51 → 52）、`forum_wall` + `forum_wall_layout`（第 59 节，52 → 53）、`bug_tracker_data`（第 60 节，53 → 54）、`voice_package_widgets`（第 61 节，54 → 55）、`workbench_widgets`（第 62 节，55 → 56）、`playlist_queue_buttons`（第 63 节，56 → 57）、`cmd_window_widgets`（第 64 节，57 → 58）、`forum_body`（第 65 节，58 → 59）、`game_manager_widgets`（第 66 节，59 → 60）、`speaker_button_shell`（第 67 节，无 `import PyQt5`，不入册）、`bug_tracker_widgets`（第 68 节，60 → 61）、`game_runtime_panel`（第 69 节，61 → 62）逐一切出，均为纯移动（方法/类体对 `HEAD` 逐字节相同）。第 70 节起进入「非纯移动」轮：`ai_settings_page.py` 的 508 行 `_build_ui` 按设置区块切成 `ui/ai_settings_page_sections.py`（1179 → 728 行，62 → 63；以语句序列 oracle 判定等价）。第 71 节起开始实际去 Qt：`game_runtime.py` 与 `bug_tracker_data.py` 出列（63 → 61），Qt 事实收进既有 `render_bridge` 落点；目标是最终只有 `lib/core/render/` 内存在 Qt 导入。第 72 节做 B 类首个下沉：工作台自绘件（遮罩 + 明暗开关）进 `backends/qt/widgets/workbench_widgets.py`（61 → 60，产品侧只留再导出垫片，10 组离屏像素对照逐字节相同）。第 73 节收尾 B 类的点名三族：游戏管理卡片与故障跟踪水印覆盖层下沉到 `backends/qt/widgets/game_manager_widgets.py` / `bug_tracker_widgets.py`（60 → 58，字体入口按 `forum_images` 同形改成档位 D 的注入 seam，卡片记录改为鸭子类型，10 组离屏像素对照逐字节相同）。第 74 节把设置页共享布局原语整模块下沉 `backends/qt/widgets/workbench_settings_layout.py`（58 → 57）：B 类五族收口，9 组离屏像素对照 + 27 控件树逐项相同。第 75 节转入 C 类首轮：论坛卡片正文富文本控件 `forum_text`（纯 `QTextEdit` 子类、无产品包耦合）整模块下沉档位 D 的 `backends/qt/widgets/forum_text.py`（57 → 56），产品垫片按原名再导出四个描边常量、`bold_outline_width()` 与 `MarkupText`，6 组控件文档片段 + 4 组离屏像素 + 4 档宽度量高逐项相同。第 76 节起按家族分批收尾剩余 56 项（明细见第 76~80 节）：批次 1 把论坛族 15 个文件（12 项在冻结清单内）一次出列——纯逻辑 `forum_markup`/`forum_style`/`forum_wall_layout` 进 `visuals/`，Qt 控件族 12 个进 `backends/qt/widgets/`（56 → 44）。第 77 节为批次 2：AI 设置族 10 个文件整体出列——8 个纯逻辑件下沉后端中立的 `lib/core/ai_settings/`（配置 schema / 文案 / 解析 / 校验 / 默认值 / 贡献名单 / 描述），Qt 件（外壳 / 主页面 / 配置分类页 / 配置存取 / 编辑器 / 更新页 / 依赖共享的 `ai_settings_tabs`）进 `backends/qt/widgets/`，产品侧只留再导出垫片（44 → 34）。第 78 节为批次 3：办公族 6 项 + 世界对象 7 项一次出列——办公 Qt 件（审批控制器 / 聊天气泡视图 / 推理强度滑条 / 管理卡片 / 配置页 / 任务页）与世界对象（闹钟 / 摩托 / 雪豹 / 雪堆 / 雪球 / 沙发 / 音响）整体下沉 `backends/qt/widgets/`，世界对象声音统一收进产品侧 `world_objects/_sounds.py`，产品侧只留再导出垫片（34 → 21）。
+**状态：第 6 节迁移顺序 1、2（目录切分）、3 已执行；图层能力已收敛到 `lib/core/render/layers/`（第 16 节）；后端中立协议与统一数据类型已落地（第 11 节），控件层“描述 + 后端渲染”已滚动迁移气泡框（第 12 节）、说明书、语音指示器与播放进度条（第 13 节）、音响音量/频段双滑条、搜索结果框与命令提示框（第 18 节）、右键矩形动作按钮一族八个按钮（第 19 节）、确认/提示框（第 20 节，首个模态宿主）；浮窗外壳（样式/主题判定/拖拽策略/窗口按钮）已从 `lib/script/ui` 下沉到渲染层（第 21 节）；办公线性图标的 SVG 规格也已抽成后端中立事实源（第 22 节）；点击粒子辅助的按钮翻译改经 `render_bridge`、`_particle_helper.py` 出列（第 23 节）；论坛样式的底纹混色改为纯十六进制实现、`forum_style.py` 出列（第 24 节）；二维码登录浮窗的自动收起/穿透/窗口标志/自愈能力下沉到基类，`yuanbao_login_dialog.py` 与 `cloudmusic_login_dialog.py` 出列（第 25、26 节）；排布解算已收敛到 `visuals/` 并由 `PlacementSpec` 统一解算（第 14 节，档位 0/1），右键按钮族的逐控件锚点事件链已收敛为声明式 `AnchorGraph` 且 Qt 改为消费共享布局（第 15 节，档位 2/3）；`WindowHost` 的被动宿主激活语义已与 Qt/DX 焦点策略对齐（第 17 节）。** 目录与引用规则以本文档为准；改建前的事实源是 [Qt 边界契约](Qt边界契约.md) 与 [跨后端视觉表现契约](视觉表现契约.md)，那两份文档继续负责“哪些内容算视觉逻辑”和“什么算无 Qt”。第一章描述的是最终目标；产品控件面（`lib/script/ui` 直接 `import PyQt5`）仍需逐个控件迁移，当前待迁清单以 `tests/test_qt_dependency_boundaries.py` 的 `frozen_ui_qt_importers` 为准，滚动顺序见第 13 节末尾；翻页按钮族已于第二十七轮迁出（第 27 节）；音响菜单控制按钮族已于第二十八轮迁出（第 28 节）；音响菜单族共享样式已于第二十九轮出列（第 29 节，档位 D 新增 `QtPainterHost` 绘制宿主）；办公面样式与控件树辅助已于第三十轮出列（第 30 节）；窗口级描述与审批弹窗已于第三十一轮出列（第 31 节，档位 D 新增窗口描述宿主与 isuals/window_spec*.py 两级描述层）；帮助浮窗已于第三十二轮出列（第 32 节，窗口描述宿主补齐工具窗 / 滚动正文 / 淡入淡出 / 描边外壳）；公告 / 更新浮窗已于第三十三轮出列（第 33 节，新增 UI 线程调度宿主，控制器不再被迫继承 `QObject`）。剩余大文件的推进次序已于 2026-10-07 修订为「先按模块拆分瘦身、再逐个收敛 Qt」（第 34 节），滚动清单因此改按四批推进；批次 0（拆分登记机制）与批次 1（`ai_settings_panel.py` 瘦身：贡献名单解析、文案/名称表、配置 schema、删死代码）已完成（第 35–38 节）；批次 2 首轮把 `forum_board.py` 的图片视图族与列表两行下沉到档位 D 的 `backends/qt/widgets/forum_images.py`（第 39 节），续轮把 `forum_texture.py` 的底纹规格抽到 `visuals/forum_texture_visuals.py`（第 40 节）、把办公聊天的 Markdown→富文本抽到 `visuals/office_chat_rich.py`（第 41 节），又把这页的 OpenAI 兼容接口解析抽到 `lib/core/services/api_endpoints.py`、顺手把 `API_TIMEOUT_SECS` 一族从产品包下沉到 `lib/core/services/network_policy.py`（第 42 节），把设置面板的「通用配置」取值校验抽到 `ui/ai_settings_validation.py`并清掉一条 N 卡能力探测死链（第 43 节）、把字段说明文本抽到 `ui/ai_settings_descriptions.py`（第 44 节）、把配置编辑器取值解析抽到 `ui/ai_settings_config_parse.py`（第 45 节）、把语音包安装器浮窗的 QSS 并入 `visuals/workbench_chrome.py`（第 46 节），八轮均为纯移动、零差异（第 43 节另含等价清理）；批次 2 的 A 类到此抽尽，下一轮转批次 3 的 C 类切分，盘点与起点建议见第 47 节；批次 3 首轮把设置面板的「支持作者 / 贡献者」两页整体切到 `ui/ai_settings_about.py`（视图 + 控制器 + 描述，第 48 节，冻结清单 42 → 43），第二轮把「桌宠更新」页切成 `ui/ai_settings_update.py`（视图 + 控制器，第 49 节，冻结清单 43 → 44）。第三轮把面板 `_apply_style()` 的整段 QSS 下沉到 `lib/core/render/visuals/ai_settings_panel_visuals.py`（第 50 节，纯移动、逐字符零差异，冻结清单仍为 44 项）。第四轮把面板的「配置编辑器控件族」切到 `ui/ai_settings_editors.py`（视图控件 + 工厂，第 51 节，冻结清单 44 → 45）。第五轮把「配置分类页骨架 + 外部配置字段族」切到 `ui/ai_settings_config_page.py`（第 52 节，冻结清单 45 → 46）。第六轮把面板的 AI 主页面（`_build_ui` + 取值/回填闭环）切到 `ui/ai_settings_page.py`（第 53 节，冻结清单 46 → 47）；第七轮把「配置取值 / 回填 / 恢复 / 异步保存」控制器切到 `ui/ai_settings_config_store.py`（第 54 节，冻结清单 47 → 48）；第八轮把面板外壳（窗口生命周期 + 自绘边框 + 悬浮标签栏）切到 `ui/ai_settings_shell.py`（第 55 节，冻结清单 48 → 49）。第九轮转回 `forum_board.py`，把发帖屏（装配 + 正文编辑操作 + 发布与计数器）整体切到 `ui/forum_composer.py`（第 56 节，冻结清单 49 → 50）。本次续作（2026-10-10）接着把 `forum_account_sections`（第 57 节，50 → 51）、`forum_detail`（第 58 节，51 → 52）、`forum_wall` + `forum_wall_layout`（第 59 节，52 → 53）、`bug_tracker_data`（第 60 节，53 → 54）、`voice_package_widgets`（第 61 节，54 → 55）、`workbench_widgets`（第 62 节，55 → 56）、`playlist_queue_buttons`（第 63 节，56 → 57）、`cmd_window_widgets`（第 64 节，57 → 58）、`forum_body`（第 65 节，58 → 59）、`game_manager_widgets`（第 66 节，59 → 60）、`speaker_button_shell`（第 67 节，无 `import PyQt5`，不入册）、`bug_tracker_widgets`（第 68 节，60 → 61）、`game_runtime_panel`（第 69 节，61 → 62）逐一切出，均为纯移动（方法/类体对 `HEAD` 逐字节相同）。第 70 节起进入「非纯移动」轮：`ai_settings_page.py` 的 508 行 `_build_ui` 按设置区块切成 `ui/ai_settings_page_sections.py`（1179 → 728 行，62 → 63；以语句序列 oracle 判定等价）。第 71 节起开始实际去 Qt：`game_runtime.py` 与 `bug_tracker_data.py` 出列（63 → 61），Qt 事实收进既有 `render_bridge` 落点；目标是最终只有 `lib/core/render/` 内存在 Qt 导入。第 72 节做 B 类首个下沉：工作台自绘件（遮罩 + 明暗开关）进 `backends/qt/widgets/workbench_widgets.py`（61 → 60，产品侧只留再导出垫片，10 组离屏像素对照逐字节相同）。第 73 节收尾 B 类的点名三族：游戏管理卡片与故障跟踪水印覆盖层下沉到 `backends/qt/widgets/game_manager_widgets.py` / `bug_tracker_widgets.py`（60 → 58，字体入口按 `forum_images` 同形改成档位 D 的注入 seam，卡片记录改为鸭子类型，10 组离屏像素对照逐字节相同）。第 74 节把设置页共享布局原语整模块下沉 `backends/qt/widgets/workbench_settings_layout.py`（58 → 57）：B 类五族收口，9 组离屏像素对照 + 27 控件树逐项相同。第 75 节转入 C 类首轮：论坛卡片正文富文本控件 `forum_text`（纯 `QTextEdit` 子类、无产品包耦合）整模块下沉档位 D 的 `backends/qt/widgets/forum_text.py`（57 → 56），产品垫片按原名再导出四个描边常量、`bold_outline_width()` 与 `MarkupText`，6 组控件文档片段 + 4 组离屏像素 + 4 档宽度量高逐项相同。第 76 节起按家族分批收尾剩余 56 项（明细见第 76~80 节）：批次 1 把论坛族 15 个文件（12 项在冻结清单内）一次出列——纯逻辑 `forum_markup`/`forum_style`/`forum_wall_layout` 进 `visuals/`，Qt 控件族 12 个进 `backends/qt/widgets/`（56 → 44）。第 77 节为批次 2：AI 设置族 10 个文件整体出列——8 个纯逻辑件下沉后端中立的 `lib/core/ai_settings/`（配置 schema / 文案 / 解析 / 校验 / 默认值 / 贡献名单 / 描述），Qt 件（外壳 / 主页面 / 配置分类页 / 配置存取 / 编辑器 / 更新页 / 依赖共享的 `ai_settings_tabs`）进 `backends/qt/widgets/`，产品侧只留再导出垫片（44 → 34）。第 78 节为批次 3：办公族 6 项 + 世界对象 7 项一次出列——办公 Qt 件（审批控制器 / 聊天气泡视图 / 推理强度滑条 / 管理卡片 / 配置页 / 任务页）与世界对象（闹钟 / 摩托 / 雪豹 / 雪堆 / 雪球 / 沙发 / 音响）整体下沉 `backends/qt/widgets/`，世界对象声音统一收进产品侧 `world_objects/_sounds.py`，产品侧只留再导出垫片（34 → 21）。第 79 节为批次 4（总装层收尾，21 → 0）：`preloader` / `animation_player` / `ai_settings_panel` / `playlist_queue_buttons` / `voice_package_widgets` / `qr_dialog_base` / `game_runtime_panel` / `speaker_search_dialog` / `playlist_panel` / `voice_package_installer` / `tray_icon` / `game_manager_window` / `bug_tracker_window` / `cmd_window` / `command_dialog` / `workbench_window` 16 个产品控件下沉档位 D；最后把 `render_bridge.py` 的转发面整体搬进 render 层的 `lib/core/render/qt_bridge.py`，产品侧只留零 Qt 薄垫片 `lib/script/ui/render_bridge.py` + `_render_bridge_forwarder.py`。`lib/script/ui` 至此零 `import PyQt5`、零档位 A/B/D 静态引用，全仓仅 `lib/core/render/` 内存在 Qt 导入（外加 5 个文档化的入口 / 构建例外）。
 
 本文只新增目录与引用规则，不改变任何视觉语义、数值来源或渲染结果。改建过程中出现分歧时，以 [视觉表现契约](视觉表现契约.md) 和当前 Qt 基准为事实源。
 
@@ -4142,3 +4142,83 @@ import `chat.ollama`）继续留在 `test_ui_to_product_coupling_is_frozen` 清�
 
 冻结清单 21 项，办公族与世界对象族不再出现在清单里。下一批（第 79 节）转入批次 4（总装层 11 项），
 其后批次 5 收尾媒体 / 游戏 / 跟踪族与 `render_bridge`，目标是最终只有 `lib/core/render/` 内存在 Qt 导入。
+
+## 79. 批次 4：总装层与 `render_bridge` 收敛 Qt（第 79 轮，frozen 21 → 0）
+
+**目标**：把 `frozen_ui_qt_importers` 里剩余的总装层 16 个文件一次出列，并处理最后一项
+`lib/script/ui/render_bridge.py`，使清单归零、`lib/script/ui` 整体零 Qt。实际落点分两段：
+
+### 79.1 下沉落点（总装层 16 项 → 档位 D）
+
+- 首段 4 件：`tray_menu` / `right_click_ui_layer` / `workbench_components` /
+  `cmd_window_widgets`（第 21 → 17 步）。
+- 续段 12 件：`preloader` / `animation_player` / `ai_settings_panel` / `playlist_queue_buttons` /
+  `voice_package_widgets` / `qr_dialog_base` / `game_runtime_panel` / `speaker_search_dialog` /
+  `playlist_panel` / `voice_package_installer` / `tray_icon` / `game_manager_window` /
+  `bug_tracker_window` / `cmd_window` / `command_dialog` / `workbench_window`（21 → 1）。
+- 全部沿用既有档位 D 形态：产品事实（服务单例、控制器类、数据混入、样式表、页面规约、
+  主题色、字体）经 `tier_d_seams.hook("...")` / `install_tier_d_seams(...)` 注入；宿主零
+  `lib.script`、零档位 A/B 静态引用。测试补丁点（`patch("lib.script.ui.<name>.X")`）经
+  宿主里的 `_product()` seam 原样生效。
+
+### 79.2 `render_bridge` 的下沉（最后一项，1 → 0）
+
+`render_bridge.py` 原先就是"UI 侧唯一 Qt 落点"：函数体内惰性 import
+`backends/qt/{drawing,runtime,widgets}` 并把结果转给产品控件。只要它留在 `lib/script/ui/` 下，
+边界测试的 AST 判定就必然把它算作违规——所以消掉这两行 `TYPE_CHECKING` 之外的引用是不够的，
+**整份实现要搬进 render 层**：
+
+- **新增 `lib/core/render/qt_bridge.py`（973 行）**：`render_bridge` 的全部转发函数原样搬入，
+  按需惰性 import 档位 A/B/D；末尾新增 `__all__`（79 个公开名字）作为转发面的唯一事实源。
+  两个函数例外：`apply_settings_page_fonts` 与 `configure_forum_window_violation_sound`
+  原实现要 import 产品侧模块（`workbench_settings_layout` / `voice.forum_violation`），
+  留在了产品垫片里，核心层因此保持"不反向 import 产品"。
+- **`lib/script/ui/render_bridge.py` 变为零 Qt 薄垫片（66 行）**：
+  `from lib.script.ui import _render_bridge_forwarder` 取转发器，`bind()` 按核心 `__all__`
+  把 79 个名字铺成**具名转发函数**写进模块；另装 PEP 562 `__getattr__` 覆盖模块属性访问与
+  动态名字。转发**不缓存**（测试常 `patch.object(render_bridge, "ui_font", ...)`），
+  `from lib.script.ui.render_bridge import X` 这 61 个具名导入面与模块属性调用面全部不变。
+- **新增 `lib/script/ui/_render_bridge_forwarder.py`（59 行）**：具名转发生成器 + `bind()`；
+  文件里没有任何后端路径或函数名字面量。
+
+### 79.3 边界规则收紧
+
+- `frozen_ui_qt_importers` 从 `{render_bridge.py}` 变为**空集**，`stale` 与子集断言继续有落点。
+- 档位 A / 档位 B 的 `allowed_seams` 从 `{lib/script/ui/render_bridge.py}` 改为
+  `{lib/core/render/qt_bridge.py}`：垫片转给它、它再惰性 import 两档；
+  `widgets_referencing` 断言改为"产品垫片零直接引用 widgets/"，并要求 `qt_bridge` 真的在引用。
+- `test_config_and_core_do_not_import_qt_or_qt_bridge` 与
+  `test_repository_qt_imports_stay_in_explicit_toolkit_boundaries` 显式列出
+  `lib/core/render/qt_bridge.py` 作为 render 层内的 Qt 适配落点（不做前缀放宽）。
+- `tests/test_render_layout_algorithms.py` 的 `clamp_rect_position` 扫描同时排除
+  `render_bridge.py` 与 `_render_bridge_forwarder.py`；`tests/test_workbench_chrome.py` 的
+  实现位置断言从垫片源码改指核心 `qt_bridge`。
+
+### 79.4 验证
+
+- **边界**：`test_qt_dependency_boundaries`（20 条）+ `test_code_structure_boundaries` 通过；
+  `lib/script/ui` 与 `_render_bridge_forwarder.py` 的 AST 扫描零 `PyQt5`、零档位 A/B/D。
+- **新增 `tests/test_render_bridge_family.py`（8 条）**：`lib/script/ui` 整包零 `PyQt5`、
+  全仓 Qt 导入只剩 render 层内 + 7 个文档化例外、垫片与转发器零档位路径、核心转发层不反向
+  import 产品包、具名导入与模块属性访问两条路径都解析到核心实现、`getattr` 不缓存
+  （`patch.object` 兼容）、两个手工成员留在产品侧且违规语音 seam 真能取到宿主工厂。
+- **回归**：`test_workbench_chrome` / `test_office_style` / `test_office_icons` /
+  `test_speaker_playlist_visuals` / `test_right_click_ui_layer` / `test_particle_helper` /
+  `test_bug_tracker_neutral_data` / `test_render_layout_algorithms` / `test_window_spec` 全绿。
+- 全量：**2339 项通过（skipped=67）**；`ruff check .` 与 `compileall` 干净。
+- **终局核对**：全仓扫描 `import PyQt5` 只剩 `lib/core/render/` 内 + 5 个文档化例外
+  （`lib/script/app/workbench_helper_entry.py`、`lib/script/bug_tracker/__main__.py`、
+  官方游戏包 `lahai_tetris_pkg/{render,widget}.py`、`scripts/payload_selftest.py`）。
+
+**清单变化**
+
+- `frozen_ui_qt_importers`：21 → **0**（总装层 16 项 + `render_bridge` 出列）。
+- 新增档位 D 宿主 16 个、核心转发层 `lib/core/render/qt_bridge.py`、产品侧转发器
+  `lib/script/ui/_render_bridge_forwarder.py`。
+- 档位 A/B 的允许落点从 UI 垫片改指核心 `qt_bridge`；产品垫片零档位 D 静态引用。
+
+**本轮之后的状态**
+
+冻结清单为空，`lib/script/ui` 不再直接 `import PyQt5`，Qt 导入只存在于
+`lib/core/render/` 内（外加 5 个文档化例外）。「先按模块拆分瘦身、再逐个收敛 Qt」的四批
+滚动迁移至此收口。

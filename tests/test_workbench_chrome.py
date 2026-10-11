@@ -101,7 +101,11 @@ class WorkbenchChromeSeamTests(unittest.TestCase):
         import inspect
 
         self.assertIs(inspect.unwrap(workbench_floating.create_window_button), workbench_floating.create_window_button)
-        self.assertIn("window_buttons", inspect.getsource(render_bridge.create_window_button))
+        # 实现已按《render 层边界契约》搬进 render 层；产品垫片是具名转发，实现位置
+        # 改由核心 `qt_bridge` 的源码钉住（此处只断言落点仍是同一个工厂）。
+        from lib.core.render import qt_bridge
+
+        self.assertIn("window_buttons", inspect.getsource(qt_bridge.create_window_button))
         # 旧路径仍然导出历史名，避免既有导入方静默失效。
         self.assertIs(
             workbench_floating.floating_window_stylesheet,
