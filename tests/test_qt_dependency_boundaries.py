@@ -26,7 +26,6 @@ class QtDependencyBoundaryTests(unittest.TestCase):
     #: 白名单机制。拆出**不含 Qt** 的文件不要登记（登记了会被 stale 断言叫停）。
     frozen_ui_qt_importers = frozenset({
             "lib/script/ui/ai_settings_panel.py",
-            "lib/script/ui/animation_player.py",
             "lib/script/ui/bug_tracker_window.py",
             "lib/script/ui/cmd_window.py",
             "lib/script/ui/command_dialog.py",

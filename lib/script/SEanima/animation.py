@@ -48,10 +48,10 @@ class StartExitAnimation:
         """
         import subprocess
 
-        # 创建动画播放脚本
+        # 创建动画播放脚本（档位 D 的进程入口）
         player_script = os.path.join(
             os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))),
-            'lib', 'script', 'ui', 'animation_player.py'
+            'lib', 'core', 'render', 'backends', 'qt', 'widgets', 'animation_player_main.py'
         )
 
         # 启动子进程播放动画（流式加载）
