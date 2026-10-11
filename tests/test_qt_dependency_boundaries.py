@@ -29,7 +29,6 @@ class QtDependencyBoundaryTests(unittest.TestCase):
             "lib/script/ui/animation_player.py",
             "lib/script/ui/bug_tracker_window.py",
             "lib/script/ui/cmd_window.py",
-            "lib/script/ui/cmd_window_widgets.py",
             "lib/script/ui/command_dialog.py",
             "lib/script/ui/game_manager_window.py",
             "lib/script/ui/game_runtime_panel.py",
@@ -38,13 +37,10 @@ class QtDependencyBoundaryTests(unittest.TestCase):
             "lib/script/ui/preloader.py",
             "lib/script/ui/qr_dialog_base.py",
             "lib/script/ui/render_bridge.py",
-            "lib/script/ui/right_click_ui_layer.py",
             "lib/script/ui/speaker_search_dialog.py",
             "lib/script/ui/tray_icon.py",
-            "lib/script/ui/tray_menu.py",
             "lib/script/ui/voice_package_installer.py",
             "lib/script/ui/voice_package_widgets.py",
-            "lib/script/ui/workbench_components.py",
             "lib/script/ui/workbench_window.py",
     })
 

@@ -1,119 +1,37 @@
-"""Shared widgets used by the unified workbench shell."""
+"""工作台共享控件（产品侧再导出垫片）。
+
+`WorkbenchPetAboutButton` / `WorkbenchOverviewPage` / `paint_speaker_action_button` 已按
+《render 层边界契约》第 3 节下沉到
+`lib/core/render/backends/qt/widgets/workbench_components.py`。本模块按原名再导出，既有导入面
+不变。
+"""
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
-
-from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QPainter
-from PyQt5.QtWidgets import (
-    QFrame,
-    QHBoxLayout,
-    QLabel,
-    QPushButton,
-    QToolButton,
-    QVBoxLayout,
-    QWidget,
-)
-
-from config.scale import scale_px
-from lib.core.render.backends.qt.widgets.window_buttons import (
-    create_window_button as create_window_button,
-)
-from lib.script.ui.speaker_menu_style import paint_speaker_action_button
 from lib.script.ui import render_bridge
-from lib.script.workbench.theme import get_workbench_colors
-from lib.script.ui.render_bridge import ui_font as get_ui_font
 
+(
+    WorkbenchOverviewPage,
+    WorkbenchPetAboutButton,
+    paint_speaker_action_button,
+) = render_bridge.tier_d_reexports(
+    "workbench_components",
+    ("WorkbenchOverviewPage", "WorkbenchPetAboutButton", "paint_speaker_action_button"),
+)
 
-class WorkbenchPetAboutButton(QToolButton):
-    """About menu trigger painted with the desktop pet action-button style."""
+(create_window_button,) = render_bridge.tier_d_reexports("window_buttons", ("create_window_button",))
 
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setObjectName("WorkbenchAboutButton")
-        self.setText("关于")
-        self.setCursor(Qt.PointingHandCursor)
-        self.setFocusPolicy(Qt.NoFocus)
-        self.setFixedSize(scale_px(70, min_abs=64), scale_px(34, min_abs=30))
-        self._hovered = False
-        self._label_font = get_ui_font(size=scale_px(11, min_abs=10))
-        self._label_font.setBold(True)
+# 动作按钮底壳在 `paintEvent` 里经 `tier_d_seams` 取绘制宿主；绘制实现与字体必须先注入，
+# 否则缺省 `create_draw_backend()` 会抛异常、在 Qt 虚函数回调里表现为 0xC0000409 崩溃。
+render_bridge.install_tier_d_seams(
+    draw_backend=render_bridge.create_draw_backend,
+    color=render_bridge.qt_color,
+    color_name=render_bridge.qt_color_name,
+)
 
-    def paintEvent(self, event) -> None:
-        del event
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing, False)
-        content_rect = paint_speaker_action_button(
-            painter,
-            self.rect(),
-            hovered=self._hovered or bool(self.property("active")),
-            pressed=self.isDown(),
-        )
-        painter.setPen(render_bridge.painter_color(get_workbench_colors().text))
-        painter.setFont(self._label_font)
-        painter.drawText(content_rect, Qt.AlignCenter, self.text())
-
-    def enterEvent(self, event) -> None:
-        self._hovered = True
-        self.update()
-        super().enterEvent(event)
-
-    def leaveEvent(self, event) -> None:
-        self._hovered = False
-        self.update()
-        super().leaveEvent(event)
-
-
-class WorkbenchOverviewPage(QWidget):
-    def __init__(
-        self,
-        navigate: Callable[[str], None],
-        sections: Iterable[tuple[str, Iterable[tuple[str, str]]]],
-        parent: QWidget | None = None,
-    ) -> None:
-        super().__init__(parent)
-        self.setObjectName("WorkbenchOverviewPage")
-
-        root = QVBoxLayout(self)
-        root.setContentsMargins(
-            scale_px(28, min_abs=22),
-            scale_px(24, min_abs=20),
-            scale_px(28, min_abs=22),
-            scale_px(24, min_abs=20),
-        )
-        root.setSpacing(scale_px(16, min_abs=12))
-
-        for section_title, actions in sections:
-            section = QFrame(self)
-            section.setObjectName("WorkbenchOverviewSection")
-            section_layout = QVBoxLayout(section)
-            section_layout.setContentsMargins(
-                scale_px(16, min_abs=13),
-                scale_px(14, min_abs=12),
-                scale_px(16, min_abs=13),
-                scale_px(16, min_abs=13),
-            )
-            section_layout.setSpacing(scale_px(9, min_abs=7))
-
-            section_label = QLabel(section_title, section)
-            section_label.setObjectName("WorkbenchOverviewSectionTitle")
-            section_font = get_ui_font(size=scale_px(14, min_abs=12))
-            section_font.setBold(True)
-            section_label.setFont(section_font)
-            section_layout.addWidget(section_label)
-
-            action_row = QHBoxLayout()
-            action_row.setContentsMargins(0, 0, 0, 0)
-            action_row.setSpacing(scale_px(8, min_abs=6))
-            for page_id, label in actions:
-                button = QPushButton(label, section)
-                button.setObjectName("WorkbenchQuickAction")
-                button.setFont(get_ui_font(size=scale_px(12, min_abs=10)))
-                button.clicked.connect(lambda _checked=False, target=page_id: navigate(target))
-                action_row.addWidget(button, 1)
-            action_row.addStretch(0)
-            section_layout.addLayout(action_row)
-            root.addWidget(section)
-
-        root.addStretch(1)
+__all__ = [
+    "WorkbenchOverviewPage",
+    "WorkbenchPetAboutButton",
+    "create_window_button",
+    "paint_speaker_action_button",
+]

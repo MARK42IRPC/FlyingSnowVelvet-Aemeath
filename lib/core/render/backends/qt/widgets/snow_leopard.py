@@ -4,7 +4,7 @@
 - 声音工厂：经共享 seam `tier_d_seams.world_object_sound(name)` 取产品侧
   voice Sound 实例；未注入时得到静音对象。
 - 绘制后端：`tier_d_seams.create_draw_backend()`。
-- 屏幕几何：`tier_d_seams.screen_rect_for_point(point)`（返回核心 `Rect`）。
+- 屏幕几何：`tier_d_seams.world_object_screen_rect(point)`（返回核心 `Rect`）。
 - 碰撞粒子：`tier_d_seams.spawn_particle(x, y, particle_id)`。
 """
 import random

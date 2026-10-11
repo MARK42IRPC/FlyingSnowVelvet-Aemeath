@@ -387,6 +387,13 @@ def install_tier_d_anim_folders(*, choices=None, resolve_path=None) -> None:
     tier_d_seams.install_anim_folders(choices=choices, resolve_path=resolve_path)
 
 
+def install_tier_d_presentation_host(factory) -> None:
+    """把呈现几何宿主装到 `tier_d_seams`（档位 D 控件取屏幕几何的唯一注入点）。"""
+    from lib.core.render.backends.qt.widgets import tier_d_seams
+
+    tier_d_seams.install_presentation_host(factory)
+
+
 def install_world_object_seams(**kwargs) -> None:
     """把世界对象宿主所需的注入物（声音工厂 / 屏幕几何 / 粒子）装到 `tier_d_seams`。
 

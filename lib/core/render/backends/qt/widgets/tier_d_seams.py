@@ -152,7 +152,7 @@ def resolve_animation_folder_path(folder_name: str) -> str:
 # QWidget，落在档位 D；它们需要的三件事都经这里注入：
 #
 # - 声音工厂（`world_object_sound(name)`）：产品侧 `lib.script.voice.*` 的 Sound 类；
-# - 屏幕几何（`screen_rect_for_point(point)`）：返回核心 `Rect`；
+# - 屏幕几何（`world_object_screen_rect(point)`）：返回核心 `Rect`；
 # - 拖拽结束时召唤的粒子（`particle_spawn(x, y, particle_id)`）。
 #
 # 三者未注入时给出惰性缺省：声音退化为无声对象，屏幕几何按虚拟屏幕，粒子不动。
@@ -192,8 +192,13 @@ def world_object_sound(name: str):
     return factory(str(name))
 
 
-def screen_rect_for_point(point=None):
-    """世界对象所在屏幕的核心 `Rect`；缺省按虚拟屏幕。"""
+def world_object_screen_rect(point=None):
+    """世界对象所在屏幕的核心 `Rect`；缺省按虚拟屏幕。
+
+    与右键 UI 层的 `screen_rect_for_point()` 区分：后者经呈现宿主解析（含 fallback 控件），
+    世界对象只需要「点落在哪块屏」。产品侧 `lib/script/ui/world_objects/*` 注入的实现是
+    `render_bridge.screen_rect_for_point`（后端中立屏幕 provider）。
+    """
     if _screen_geometry_factory is not None:
         return _screen_geometry_factory(point)
     from lib.core.render.visuals.screen import virtual_screen_rect
@@ -205,3 +210,101 @@ def spawn_particle(x, y, particle_id) -> None:
     """在屏幕坐标点召唤一枚粒子；产品侧注入 `spawn_particle_at_point`。"""
     if _particle_spawn_factory is not None:
         _particle_spawn_factory(int(x), int(y), str(particle_id))
+
+# ── 画布宿主：在调用方自己的 QPainter 上执行绘制批次 ─────────────────────────
+_painter_host = None
+
+
+def create_painter_host():
+    """当前绘制批次宿主；绘制实现与字体缺省时用后端注入物。"""
+    global _painter_host
+    from lib.core.render.backends.qt.widgets.control_painter_host import QtPainterHost
+
+    if _painter_host is None:
+        _painter_host = QtPainterHost(
+            draw_backend=create_draw_backend(),
+            font_factory=ui_font,
+        )
+    return _painter_host
+
+
+def painter_color(value):
+    """边界颜色 → `QColor`。"""
+    return create_painter_host().color(value)
+
+# ── 呈现几何宿主（档位 B 能力）的取用 ───────────────────────────────────────
+#
+# 右键 UI 层需要「控件全局矩形 / 按屏幕坐标移动控件 / 所在屏幕矩形」这三件事，它们由后端
+# 呈现宿主提供。宿主（档位 D）不得静态引用档位 A，因此经产品侧注入；缺省退回 Qt 实现。
+_presentation_host = None
+
+
+class _FallbackPresentationHost:
+    """档位 D 的缺省呈现几何宿主（后端未注入且注册表为空时的兜底）。
+
+    与档位 A 的 `drawing/presentation.py::QtPresentationHost` 同义，但落在档位 D 并复用
+    档位 B（`runtime/screen.py`）的 Qt 查询，因此不构成对档位 A 的静态引用。正常运行时产品
+    垫片总会经 `install_presentation_host()` 注入真正的宿主，这里只服务隔离构造的控件测试。
+    """
+
+    def screen_rect_for_widget(self, widget=None, point=None):
+        from lib.core.render.backends.qt.runtime.screen import get_screen_rect_for_point
+
+        return get_screen_rect_for_point(point=point, fallback_widget=widget)
+
+    def widget_global_rect(self, widget):
+        from lib.core.render.backends.qt.runtime.screen import widget_global_rect as _rect
+        from lib.core.render.visuals.types import Rect
+
+        rect = _rect(widget)
+        return Rect(rect.x(), rect.y(), rect.width(), rect.height())
+
+    def widget_global_point(self, widget, point):
+        from lib.core.render.visuals.types import Point, coerce_point
+
+        core = coerce_point(point) or Point()
+        rect = self.widget_global_rect(widget)
+        return Point(rect.x + core.x, rect.y + core.y)
+
+    def move_widget_to_global(self, widget, x, y) -> None:
+        from lib.core.render.backends.qt.runtime.screen import move_widget_to_global as _move
+
+        _move(widget, int(x), int(y))
+
+
+def install_presentation_host(host) -> None:
+    """注入呈现几何宿主（产品侧 `render_bridge.presentation_host()`）。"""
+    global _presentation_host
+    _presentation_host = host
+
+
+def presentation_host():
+    """当前呈现几何宿主；先取注入物，再取后端注册表，最后退回档位 D 缺省实现。"""
+    if _presentation_host is not None:
+        return _presentation_host()
+    from lib.core.render.registry import get_presentation_host
+
+    host = get_presentation_host()
+    if host is not None:
+        return host
+    return _FallbackPresentationHost()
+
+
+def widget_global_rect(widget):
+    """控件在屏幕坐标系中的核心 `Rect`。"""
+    return presentation_host().widget_global_rect(widget)
+
+
+def move_widget_to_global(widget, x: int, y: int) -> None:
+    """按屏幕坐标移动控件；宿主分层时由后端换算成宿主本地坐标。"""
+    presentation_host().move_widget_to_global(widget, int(x), int(y))
+
+
+def screen_rect_for_point(point=None, fallback_widget=None):
+    """控件所在屏幕的核心 `Rect`。"""
+    rect = presentation_host().screen_rect_for_widget(fallback_widget, point=point)
+    if rect is not None:
+        return rect
+    from lib.core.render.visuals.screen import virtual_screen_rect
+
+    return virtual_screen_rect(())
