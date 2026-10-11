@@ -955,20 +955,20 @@ class MigratedControlHostViewTests(unittest.TestCase):
         # 单例要真的接上：`_update_control_buttons_position()` 是靠
         # `get_progress_panel()` 拿进度条的，没接上它会提前 return，按钮停在 (0, 0)
         # 却依然"不抛异常"——那样测试就盖不住崩溃现场了。
-        import lib.script.ui.playlist_panel as playlist_module
+        import lib.core.render.backends.qt.widgets.playlist_panel as playlist_host
         import lib.script.ui.progress_panel as progress_module
         from lib.core.render.visuals.types import Rect
 
         panel = init_progress_panel()
         playlist = PlaylistPanel()
         # 离屏平台的屏幕矩形是退化的（0×0），整段落位会被夹取到 0，看不出按钮摆到了哪。
-        # 两个模块都用 `from ... import` 绑了本地名字，必须分别替换。
+        # 面板已下沉到档位 D，屏幕几何是宿主模块级函数，补丁点随之迁到宿主。
         screen = Rect(0, 0, 1920, 1080)
         originals = {
-            playlist_module: playlist_module.get_screen_geometry_for_point,
+            playlist_host: playlist_host.get_screen_geometry_for_point,
             progress_module: progress_module.screen_rect_for_point,
         }
-        playlist_module.get_screen_geometry_for_point = lambda **kwargs: screen
+        playlist_host.get_screen_geometry_for_point = lambda **kwargs: screen
         progress_module.screen_rect_for_point = lambda **kwargs: screen
         try:
             playlist._visible = True
@@ -982,7 +982,7 @@ class MigratedControlHostViewTests(unittest.TestCase):
             self.assertEqual(placed[0], panel.x())
             self.assertLess(placed[1], panel.y())
         finally:
-            playlist_module.get_screen_geometry_for_point = originals[playlist_module]
+            playlist_host.get_screen_geometry_for_point = originals[playlist_host]
             progress_module.screen_rect_for_point = originals[progress_module]
             playlist.close()
             cleanup_progress_panel()

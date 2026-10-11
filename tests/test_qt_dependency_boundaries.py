@@ -29,7 +29,6 @@ class QtDependencyBoundaryTests(unittest.TestCase):
             "lib/script/ui/cmd_window.py",
             "lib/script/ui/command_dialog.py",
             "lib/script/ui/game_manager_window.py",
-            "lib/script/ui/playlist_panel.py",
             "lib/script/ui/render_bridge.py",
             "lib/script/ui/tray_icon.py",
             "lib/script/ui/voice_package_installer.py",

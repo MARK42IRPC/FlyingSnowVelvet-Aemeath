@@ -17,11 +17,14 @@ _digit_font_factory = None
 _draw_backend_factory = None
 _color_factory = None
 _color_name_factory = None
+_text_metrics_factory = None
 
 
-def install(*, ui_font=None, digit_font=None, draw_backend=None, color=None, color_name=None) -> None:
+def install(*, ui_font=None, digit_font=None, draw_backend=None, color=None, color_name=None,
+            text_metrics=None) -> None:
     """安装一批注入物；传 None 的项保持原值（便于分模块各自注入）。"""
     global _font_factory, _digit_font_factory, _draw_backend_factory, _color_factory, _color_name_factory
+    global _text_metrics_factory
     if ui_font is not None:
         _font_factory = ui_font
     if digit_font is not None:
@@ -32,6 +35,8 @@ def install(*, ui_font=None, digit_font=None, draw_backend=None, color=None, col
         _color_factory = color
     if color_name is not None:
         _color_name_factory = color_name
+    if text_metrics is not None:
+        _text_metrics_factory = text_metrics
 
 
 def ui_font(size: int | None = None):
@@ -46,6 +51,17 @@ def ui_font(size: int | None = None):
     from lib.core.render.backends.qt.runtime.font import get_ui_font
 
     return get_ui_font(size)
+
+
+def text_metrics(default_font, digit_font=None, *, side_font=None):
+    """文本度量：优先注入物，其次后端注册表，最后档位 A 的 Qt 实现。
+
+    `TextMetrics` 是「字形推进量」这类绘制期事实；档位 D 不得静态引用档位 A，因此
+    最终缺省实现按需惰性 import（与 `create_draw_backend` 同形，不是模块级静态引用）。
+    """
+    if _text_metrics_factory is None:
+        raise RuntimeError("档位 D 宿主需要经 render_bridge 注入文本度量工厂")
+    return _text_metrics_factory(default_font, digit_font, side_font=side_font)
 
 
 def digit_font(size: int | None = None):

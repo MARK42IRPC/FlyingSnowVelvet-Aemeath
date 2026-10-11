@@ -1,0 +1,886 @@
+"""播放列表栏（档位 D 宿主）。
+
+本模块原住在 `lib/script/ui/playlist_panel.py`，按《render 层边界契约》第 3 节下沉到档位 D：
+`PlaylistPanel`（显示音乐运行时队列、跟随锚定音响、带进度条/控制按钮/翻页/删除一族）与它
+的窗口级几何与事件链。
+
+宿主不得 import `lib.script`：音乐服务、控制按钮族、进度条面板、翻页按钮、点击粒子与说明
+文本一律经 `tier_d_seams.hook(name)` 取（`playlist_panel:*` 一族），落位解算走档位 1 的
+`resolve_placement`，屏幕几何/字体/绘制后端走 `tier_d_seams`。尺寸常量与两个自绘小按钮来自
+同族宿主 `playlist_queue_buttons`（档位 D 内部，不算跨层）。
+
+产品侧 `lib/script/ui/playlist_panel.py` 只做再导出，既有导入面不变。
+"""
+
+from __future__ import annotations
+
+from PyQt5.QtCore import QEasingCurve, QPropertyAnimation, Qt
+from PyQt5.QtGui import QCursor, QPainter
+from PyQt5.QtWidgets import QGraphicsOpacityEffect, QWidget
+
+from config.config import UI
+from config.scale import scale_px
+from lib.core.anchor_utils import apply_ui_opacity
+from lib.core.event.center import Event, EventType, get_event_center
+from lib.core.input.types import Key
+from lib.core.render.backends.qt.widgets import tier_d_seams
+from lib.core.render.backends.qt.widgets.playlist_queue_buttons import (
+    _AUTO_HIDE_MOUSE_DISTANCE,
+    _BORDER,
+    _GAP,
+    _PAGE_SIZE,
+    _QueuePlayNowButton,
+    _QueueRemoveButton,
+    _REMOVE_BTN_H,
+    _REMOVE_BTN_W,
+    _ROW_H,
+    _WIDTH,
+)
+from lib.core.render.layers import WindowLayer, get_layer_manager
+from lib.core.render.visuals.media_panel_visuals import build_playlist_panel_visual
+from lib.core.render.visuals.types import Point, Rect
+from lib.core.world_objects import WorldObjectInstance
+
+
+def _hook(name):
+    return tier_d_seams.hook(name)
+
+
+def _music_service():
+    hook = _hook("playlist_panel:music_service")
+    if hook is None:
+        raise RuntimeError("播放列表栏需要经 render_bridge 注入音乐服务")
+    return hook()
+
+
+def _control_buttons():
+    """控制按钮族：返回 `(按钮类映射, 尺寸常量)`；由产品垫片注入宿主模块。"""
+    hook = _hook("playlist_panel:control_buttons_module")
+    if hook is None:
+        raise RuntimeError("播放列表栏需要经 render_bridge 注入控制按钮族")
+    return hook()
+
+
+def _page_buttons():
+    """翻页按钮助手：`make_page_buttons` / `update_page_buttons_position`。"""
+    hook = _hook("playlist_panel:page_buttons_module")
+    if hook is None:
+        raise RuntimeError("播放列表栏需要经 render_bridge 注入翻页按钮助手")
+    return hook()
+
+
+def _progress_panel_getter():
+    hook = _hook("playlist_panel:progress_panel_getter")
+    return hook() if hook is not None else None
+
+
+def _tooltips():
+    hook = _hook("playlist_panel:tooltips")
+    if hook is None:
+        raise RuntimeError("播放列表栏需要经 render_bridge 注入说明文本表")
+    return hook()
+
+
+def _publish_click_particle(widget, event) -> None:
+    hook = _hook("click_particle")
+    if hook is not None:
+        hook(widget, event)
+
+
+def _resolve_placement(self_size, target_rect, screen, **kwargs):
+    from lib.core.render.visuals.layout import resolve_placement as resolve
+
+    return resolve(self_size, target_rect, screen, **kwargs)
+
+
+def get_music_service():
+    return _music_service()
+
+
+def resolve_placement(self_size, target_rect, screen, **kwargs):
+    return _resolve_placement(self_size, target_rect, screen, **kwargs)
+
+
+def get_screen_geometry_for_point(point=None, fallback_widget=None):
+    return tier_d_seams.screen_rect_for_point(point=point, fallback_widget=fallback_widget)
+
+
+def widget_global_rect(widget):
+    return tier_d_seams.widget_global_rect(widget)
+
+
+def get_ui_font(size: int | None = None):
+    return tier_d_seams.ui_font(size)
+
+
+def get_digit_font(size: int | None = None):
+    return tier_d_seams.digit_font(size)
+
+
+def create_draw_backend():
+    return tier_d_seams.create_draw_backend()
+
+
+def QtTextMetrics(default_font, digit_font=None, *, side_font=None):
+    return tier_d_seams.text_metrics(default_font, digit_font, side_font=side_font)
+
+
+def make_page_buttons(*args, **kwargs):
+    return _page_buttons().make_page_buttons(*args, **kwargs)
+
+
+def update_page_buttons_position(*args, **kwargs):
+    return _page_buttons().update_page_buttons_position(*args, **kwargs)
+
+
+class PlaylistPanel(QWidget):
+    """
+    播放列表栏（全局单例）。
+
+    - 显示音乐运行时队列中的所有歌曲
+    - 当前播放行：青色背景高亮 + "♪ " 前缀
+    - 使用事件驱动更新，避免每帧轮询
+    - 跟随锚定音响的右侧位置移动；音响消失时自动关闭
+    - 淡入淡出动画 + right_fade 粒子消散特效
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setWindowFlags(
+            Qt.Tool
+            | Qt.FramelessWindowHint
+            | Qt.WindowStaysOnTopHint
+        )
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.setMouseTracking(True)
+        get_layer_manager().register(self, WindowLayer.PANEL)
+
+        # ── 字体（粗体，与命令提示框一致）──────────────────────────────
+        self._font = get_ui_font()
+        self._font.setBold(True)
+        self._digit_font = get_digit_font()
+        self._text_metrics = QtTextMetrics(self._font, self._digit_font)
+        self._draw_backend = create_draw_backend()
+
+        # ── 状态 ──────────────────────────────────────────────────────
+        self._visible: bool      = False
+        self._description        = _tooltips()['playlist_panel']
+        self._focused_speaker    = None       # 当前锚定的 Speaker 实例
+        self._queue: list        = []         # [(song_id, display), ...]
+        self._current_index: int = -1         # 正在播放的行索引
+        self._page: int          = 0          # 当前页码（0-based）
+        self._selected: int      = -1         # 当前页高亮行（0-based）
+
+        # ── 翻页按钮 ──────────────────────────────────────────────────
+        self._prev_btn, self._next_btn = make_page_buttons(
+            lambda: self._turn_page(-1),
+            lambda: self._turn_page(1),
+        )
+        self._remove_btn = _QueueRemoveButton(self._remove_selected_song)
+        self._remove_btn._description = _tooltips()['playlist_remove_song']
+        self._play_now_btn = _QueuePlayNowButton(self._play_selected_song)
+        self._play_now_btn._description = _tooltips()['playlist_play_now']
+
+        # ── 透明度动画 ───────────────────────────────────────────────
+        self._opacity = QGraphicsOpacityEffect(self)
+        self._opacity.setOpacity(0.0)
+        self.setGraphicsEffect(self._opacity)
+
+        self._anim = QPropertyAnimation(self._opacity, b'opacity', self)
+        self._anim.setDuration(UI['ui_fade_duration'])
+        self._anim.setEasingCurve(QEasingCurve.InOutQuad)
+
+        # ── 事件订阅 ──────────────────────────────────────────────────
+        self._event_center = get_event_center()
+        self._event_center.subscribe(EventType.TICK,                   self._on_tick)
+        self._event_center.subscribe(EventType.FRAME,                  self._on_frame)
+        self._event_center.subscribe(EventType.MUSIC_STATUS_CHANGE,    self._on_music_status)
+        self._event_center.subscribe(EventType.MUSIC_SONG_END,         self._on_song_end)
+        self._event_center.subscribe(EventType.UI_CLICKTHROUGH_TOGGLE, self._on_clickthrough_toggle)
+        self._event_center.subscribe(EventType.KEY_PRESS,              self._on_global_key_press)
+
+        # ── 控制按钮（暂停/播放 + 下一曲 + 音量加/减 + 播放模式）────────
+        buttons = _control_buttons()
+        self._play_pause_btn  = buttons.PlayPauseButton()
+        self._next_track_btn  = buttons.NextTrackButton()
+        self._history_queue_btn = buttons.HistoryQueueButton()
+        self._clear_queue_btn = buttons.ClearQueueButton()
+        self._local_queue_btn = buttons.LocalQueueButton()
+        self._liked_queue_btn = buttons.LikedQueueButton()
+        self._volume_up_btn   = buttons.VolumeUpButton()
+        self._volume_down_btn = buttons.VolumeDownButton()
+        self._play_mode_btn   = buttons.PlayModeButton()
+
+        self._refresh_size()
+
+    # ==================================================================
+    # 公开接口
+    # ==================================================================
+
+    def _iter_control_buttons(self):
+        return [
+            self._play_pause_btn,
+            self._next_track_btn,
+            self._history_queue_btn,
+            self._clear_queue_btn,
+            self._local_queue_btn,
+            self._liked_queue_btn,
+            self._volume_up_btn,
+            self._volume_down_btn,
+            self._play_mode_btn,
+        ]
+
+    def _set_control_buttons_visible(self, visible: bool) -> None:
+        for button in self._iter_control_buttons():
+            if visible:
+                button.fade_in()
+            else:
+                button.fade_out()
+
+    def show_for(self, speaker) -> None:
+        """打开面板并锚定到指定音响。若已对同一音响显示则仅刷新。"""
+        if not isinstance(speaker, WorldObjectInstance):
+            raise TypeError("playlist panel requires a WorldObjectInstance")
+        self._focused_speaker = speaker
+        self._refresh_content()
+        self._refresh_size()
+        self._update_position()
+        if self._visible:
+            self.update()
+            self._update_progress_panel_position()
+            self._update_remove_button_position()
+            self.setFocus(Qt.ActiveWindowFocusReason)
+            return
+        self._visible = True
+        try:
+            self._anim.finished.disconnect(self._on_fade_out_done)
+        except (RuntimeError, TypeError):
+            pass
+        self.show()
+        self.setFocus(Qt.ActiveWindowFocusReason)
+        self._animate(1.0)
+        # 显示进度条
+        self._show_progress_panel()
+        # 显示控制按钮
+        self._set_control_buttons_visible(True)
+        self._update_control_buttons_position()
+        self._update_remove_button_position()
+
+    def hide_panel(self) -> None:
+        """淡出隐藏，发射 right_fade 粒子消散特效。"""
+        if not self._visible:
+            return
+        self._visible        = False
+        self._focused_speaker = None
+        rect = self.geometry()
+        self._event_center.publish(Event(EventType.PARTICLE_REQUEST, {
+            'particle_id': 'right_fade',
+            'area_type':   'rect',
+            'area_data':   (rect.x(), rect.y(),
+                            rect.x() + rect.width(), rect.y() + rect.height()),
+        }))
+        self._anim.finished.connect(self._on_fade_out_done)
+        self._animate(0.0)
+        # 隐藏进度条
+        self._hide_progress_panel()
+        # 隐藏控制按钮
+        self._set_control_buttons_visible(False)
+        self._prev_btn.hide_btn()
+        self._next_btn.hide_btn()
+        self._remove_btn.hide_btn()
+        self._play_now_btn.hide_btn()
+
+    @property
+    def is_visible(self) -> bool:
+        """返回面板是否可见。"""
+        return self._visible
+
+    # ==================================================================
+    # 鼠标事件
+    # ==================================================================
+
+    def mouseMoveEvent(self, event) -> None:
+        row = self._row_from_pos(event.pos().y())
+        if row != -1 and row != self._selected:
+            self._selected = row
+            self._update_remove_button_position()
+            self.update()
+        super().mouseMoveEvent(event)
+
+    def mousePressEvent(self, event) -> None:
+        _publish_click_particle(self, event)
+        self.setFocus(Qt.MouseFocusReason)
+        row = self._row_from_pos(event.pos().y())
+        if row != -1 and row != self._selected:
+            self._selected = row
+            self._update_remove_button_position()
+            self.update()
+        if row != -1:
+            if event.button() == Qt.LeftButton:
+                self.move_selected_by_key(-1)
+                return
+            if event.button() == Qt.RightButton:
+                self.move_selected_by_key(1)
+                return
+        super().mousePressEvent(event)
+
+    def keyPressEvent(self, event) -> None:
+        key = event.key()
+        if key == Qt.Key_Left:
+            self.move_selected_by_key(-1)
+            event.accept()
+            return
+        if key == Qt.Key_Right:
+            self.move_selected_by_key(1)
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def _on_global_key_press(self, event: Event) -> None:
+        if not self._visible:
+            return
+        key = event.data.get('key')
+        if key not in (Key.LEFT, Key.RIGHT):
+            return
+        direction = -1 if key == Key.LEFT else 1
+        if self.move_selected_by_key(direction):
+            event.mark_handled()
+
+    def move_selected_by_key(self, direction: int) -> bool:
+        """
+        供键盘路由调用：移动当前高亮歌曲。
+
+        Args:
+            direction: -1 上移，+1 下移。
+
+        Returns:
+            True 表示已处理该按键（包含被规则拦截的情况）。
+        """
+        if direction not in (-1, 1):
+            return False
+        if not self._visible:
+            return False
+        self._move_selected(direction)
+        return True
+
+    # ==================================================================
+    # 私有：数据刷新
+    # ==================================================================
+
+    def _refresh_content(self, reset_page: bool = True, preferred_index: int | None = None) -> None:
+        """从音乐运行时读取最新队列状态并同步页码/选中项。"""
+        old_selected_abs = self._selected_abs_index()
+        service = get_music_service()
+        self._queue = service.queue_snapshot()
+        self._current_index = service.current_index()
+
+        if not self._queue:
+            self._page = 0
+            self._selected = -1
+            return
+
+        max_page = (len(self._queue) - 1) // _PAGE_SIZE
+
+        if preferred_index is not None:
+            preferred_index = max(0, min(preferred_index, len(self._queue) - 1))
+            self._page = preferred_index // _PAGE_SIZE
+            self._selected = preferred_index % _PAGE_SIZE
+            return
+
+        if reset_page:
+            self._page = 0
+            self._selected = self._default_selected_row()
+            return
+
+        self._page = max(0, min(self._page, max_page))
+        if old_selected_abs >= 0:
+            old_selected_abs = min(old_selected_abs, len(self._queue) - 1)
+            self._page = old_selected_abs // _PAGE_SIZE
+            self._selected = old_selected_abs % _PAGE_SIZE
+        else:
+            self._selected = self._default_selected_row()
+
+    # ==================================================================
+    # 私有：尺寸与位置
+    # ==================================================================
+
+    def _refresh_size(self) -> None:
+        """??????????????? 1 ??????? _WIDTH?"""
+        items  = self._page_items()
+        n_rows = max(1, len(items))
+        if self._has_pages():
+            n_rows += 1   # ??????
+        self.setFixedSize(_WIDTH, _BORDER * 2 + n_rows * _ROW_H)
+
+    def _refresh_view_state(
+        self,
+        *,
+        refresh_content: bool = False,
+        reset_page: bool = True,
+        preferred_index: int | None = None,
+        reposition: bool = False,
+        update_remove_button: bool = False,
+    ) -> None:
+        if refresh_content:
+            self._refresh_content(reset_page=reset_page, preferred_index=preferred_index)
+        self._refresh_size()
+        if reposition:
+            self._update_position()
+        elif update_remove_button:
+            self._update_remove_button_position()
+        self.update()
+
+    def _page_items(self) -> list:
+        if not self._queue:
+            return []
+        start = self._page * _PAGE_SIZE
+        return self._queue[start: start + _PAGE_SIZE]
+
+    def _has_pages(self) -> bool:
+        return len(self._queue) > _PAGE_SIZE
+
+    def _selected_abs_index(self) -> int:
+        """返回当前高亮行在全队列中的绝对索引。"""
+        if self._selected < 0:
+            return -1
+        idx = self._page * _PAGE_SIZE + self._selected
+        if 0 <= idx < len(self._queue):
+            return idx
+        return -1
+
+    def _default_selected_row(self) -> int:
+        """
+        默认选中当前页的第一首非正在播放歌曲；
+        若本页只有当前播放项，则回退到第 0 行。
+        """
+        items = self._page_items()
+        if not items:
+            return -1
+        page_offset = self._page * _PAGE_SIZE
+        for i in range(len(items)):
+            if page_offset + i != self._current_index:
+                return i
+        return 0
+
+    def _row_from_pos(self, y_pos: int) -> int:
+        """根据鼠标 y 坐标计算当前页行号（不在歌曲行返回 -1）。"""
+        if not self._queue:
+            return -1
+        y_in = y_pos - _BORDER
+        if y_in < 0:
+            return -1
+        row = y_in // _ROW_H
+        items = self._page_items()
+        if 0 <= row < len(items):
+            return row
+        return -1
+
+    def _move_selected(self, direction: int) -> None:
+        """?????????????-1 ?? / +1 ????"""
+        if not self._queue:
+            return
+
+        src = self._selected_abs_index()
+        if src < 0:
+            self._selected = self._default_selected_row()
+            self.update()
+            return
+
+        dst = src + direction
+        if not (0 <= dst < len(self._queue)):
+            return
+
+        # ?????????????????????????
+        if src == self._current_index or dst == self._current_index:
+            self._event_center.publish(Event(EventType.INFORMATION, {
+                'text': '??????????????',
+                'min': 0,
+                'max': 60,
+            }))
+            return
+
+        new_index = get_music_service().move_queue_item(src, direction)
+        if new_index < 0:
+            return
+
+        self._refresh_view_state(
+            refresh_content=True,
+            reset_page=False,
+            preferred_index=new_index,
+            reposition=True,
+        )
+
+    def _turn_page(self, direction: int) -> None:
+        if not self._has_pages():
+            return
+        max_page = (len(self._queue) - 1) // _PAGE_SIZE
+        new_page = self._page + direction
+        if new_page < 0:
+            new_page = max_page
+        elif new_page > max_page:
+            new_page = 0
+        self._page = new_page
+        self._selected = self._default_selected_row()
+        self._refresh_view_state(reposition=True)
+
+    def _update_position(self) -> None:
+        """始终优先放在音响右侧；右侧受阻时翻到左侧。"""
+        if not self._focused_speaker:
+            return
+        geometry = self._focused_speaker.get_geometry()
+        anchor = Point(
+            geometry.x + geometry.width / 2.0,
+            geometry.y + geometry.height / 2.0,
+        )
+        anchor_y = int(round(anchor.y - self.height() / 2.0))
+        right_x = int(round(geometry.x + geometry.width)) + _GAP
+        left_x = int(round(geometry.x)) - _WIDTH - _GAP
+        reserve_w = _WIDTH + _REMOVE_BTN_W * 2
+
+        # 右侧优先、受阻翻左：解算与夹取都在 visuals/layout.py（档位 1）。
+        screen = get_screen_geometry_for_point(point=anchor, fallback_widget=self)
+        panel_h = self.height()
+        placement = resolve_placement(
+            (reserve_w, panel_h), Rect(right_x, anchor_y, reserve_w, panel_h), screen,
+            target_anchor_id='top_left', self_anchor_id='top_left',
+        )
+        x, y = placement.x, placement.y
+
+        if x != right_x:
+            placement = resolve_placement(
+                (reserve_w, panel_h), Rect(left_x, anchor_y, reserve_w, panel_h), screen,
+                target_anchor_id='top_left', self_anchor_id='top_left',
+            )
+            fx, fy = placement.x, placement.y
+            if fx == left_x or abs(fx - left_x) < abs(x - right_x):
+                x, y = fx, fy
+
+        self.move(x, y)
+        # 更新进度条位置
+        self._update_progress_panel_position()
+        # 更新翻页按钮位置
+        update_page_buttons_position(self, self._prev_btn, self._next_btn, self._has_pages())
+        # 更新删除按钮位置
+        self._update_remove_button_position()
+
+    def _update_remove_button_position(self) -> None:
+        """更新队列操作按钮位置（删除 + 立即播放）。"""
+        if not self._visible:
+            self._remove_btn.hide_btn()
+            self._play_now_btn.hide_btn()
+            return
+
+        selected_abs = self._selected_abs_index()
+        if selected_abs < 0:
+            self._remove_btn.hide_btn()
+            self._play_now_btn.hide_btn()
+            return
+
+        row = selected_abs - self._page * _PAGE_SIZE
+        items = self._page_items()
+        if not (0 <= row < len(items)):
+            self._remove_btn.hide_btn()
+            self._play_now_btn.hide_btn()
+            return
+
+        base_y = self.y() + _BORDER + row * _ROW_H + (_ROW_H - _REMOVE_BTN_H) // 2
+        base_x = self.x() + self.width()
+        screen = get_screen_geometry_for_point(
+            point=self.geometry().center(), fallback_widget=self
+        )
+        placement = resolve_placement(
+            (_REMOVE_BTN_W, _REMOVE_BTN_H), Rect(base_x, base_y, 0.0, 0.0), screen,
+            target_anchor_id='top_left', self_anchor_id='top_left',
+        )
+        remove_x, remove_y = placement.x, placement.y
+        placement = resolve_placement(
+            (_REMOVE_BTN_W, _REMOVE_BTN_H),
+            Rect(base_x + _REMOVE_BTN_W, base_y, 0.0, 0.0), screen,
+            target_anchor_id='top_left', self_anchor_id='top_left',
+        )
+        play_x, play_y = placement.x, placement.y
+
+        self._remove_btn.move(remove_x, remove_y)
+        self._play_now_btn.move(play_x, play_y)
+        self._remove_btn.show_btn()
+        self._play_now_btn.show_btn()
+
+    def _remove_selected_song(self) -> None:
+        """???????????????????????????"""
+        idx = self._selected_abs_index()
+        if not (0 <= idx < len(self._queue)):
+            self._update_remove_button_position()
+            return
+
+        song_id, _ = self._queue[idx]
+        service = get_music_service()
+
+        removed = False
+        if idx == self._current_index:
+            service.remove_song_from_history(song_id)
+            service.next_track()
+            removed = True
+        else:
+            removed = service.remove_queue_item(idx)
+            if removed:
+                service.remove_song_from_history(song_id)
+
+        if not removed:
+            return
+
+        self._refresh_view_state(
+            refresh_content=True,
+            reset_page=False,
+            preferred_index=idx,
+            reposition=True,
+        )
+
+    def _play_selected_song(self) -> None:
+        """立即播放当前高亮歌曲。"""
+        idx = self._selected_abs_index()
+        if not (0 <= idx < len(self._queue)):
+            self._update_remove_button_position()
+            return
+        self._event_center.publish(Event(EventType.MUSIC_PLAY_QUEUE_INDEX, {
+            'index': idx,
+        }))
+
+    # ==================================================================
+    # 私有：动画
+    # ==================================================================
+
+    def _animate(self, target: float) -> None:
+        self._anim.stop()
+        self._anim.setStartValue(self._opacity.opacity())
+        self._anim.setEndValue(apply_ui_opacity(target))
+        self._anim.start()
+
+    def _on_fade_out_done(self) -> None:
+        try:
+            self._anim.finished.disconnect(self._on_fade_out_done)
+        except (RuntimeError, TypeError):
+            pass
+        if not self._visible:
+            self.hide()
+
+    # ==================================================================
+    # 私有：进度条管理
+    # ==================================================================
+
+    def _show_progress_panel(self) -> None:
+        """显示进度条。"""
+        getter = _progress_panel_getter()
+        progress_panel = getter() if getter is not None else None
+        if progress_panel:
+            self._update_progress_panel_position()
+            progress_panel.show_panel()
+
+    def _hide_progress_panel(self) -> None:
+        """隐藏进度条。"""
+        getter = _progress_panel_getter()
+        progress_panel = getter() if getter is not None else None
+        if progress_panel:
+            progress_panel.hide_panel()
+
+    def _update_progress_panel_position(self) -> None:
+        """更新进度条位置：左下锚点对齐播放列表的左上锚点（进度条在播放列表上方）。"""
+        getter = _progress_panel_getter()
+        progress_panel = getter() if getter is not None else None
+        if progress_panel and self._visible:
+            progress_panel.set_position_below_playlist(self.geometry())
+        self._update_control_buttons_position()
+
+    def _update_control_buttons_position(self) -> None:
+        """更新控制按钮位置。"""
+        if not self._visible:
+            return
+        getter = _progress_panel_getter()
+        progress_panel = getter() if getter is not None else None
+        if not progress_panel:
+            return
+        buttons = _control_buttons()
+        screen = get_screen_geometry_for_point(point=self.geometry().center(), fallback_widget=self)
+        sx = int(screen.x)
+        sy = int(screen.y)
+        sw = int(screen.width)
+        sh = int(screen.height)
+
+        def _clamp(v: int, minimum: int, maximum: int) -> int:
+            if maximum < minimum:
+                return minimum
+            return max(minimum, min(v, maximum))
+
+        px = progress_panel.x()
+        py = progress_panel.y()
+        # 暂停按钮：左下锚点对齐进度条左上锚点，再上移2px
+        pp_x = _clamp(px, sx, sx + sw - buttons._BTN_WIDTH)
+        pp_y = _clamp(py - buttons._BTN_HEIGHT - scale_px(2, min_abs=1), sy, sy + sh - buttons._BTN_HEIGHT)
+        self._play_pause_btn.move(pp_x, pp_y)
+        # 下一曲按钮：左锚点对齐暂停按钮右锚点
+        nt_x = _clamp(pp_x + buttons._BTN_WIDTH, sx, sx + sw - buttons._BTN_WIDTH)
+        self._next_track_btn.move(nt_x, pp_y)
+        # 一键历史按钮：80px 宽，左锚点对齐下一曲按钮右锚点
+        hq_x = _clamp(nt_x + buttons._BTN_WIDTH, sx, sx + sw - buttons._BTN_PLAYLIST_W)
+        self._history_queue_btn.move(hq_x, pp_y)
+        # 清空列表按钮：左下锚点对齐暂停按钮左上锚点
+        cq_x = _clamp(pp_x, sx, sx + sw - buttons._BTN_PLAYLIST_W)
+        cq_y = _clamp(pp_y - buttons._BTN_HEIGHT, sy, sy + sh - buttons._BTN_HEIGHT)
+        self._clear_queue_btn.move(cq_x, cq_y)
+        # 一键本地按钮：左下锚点对齐一键历史按钮左上锚点
+        lcl_x = _clamp(hq_x, sx, sx + sw - buttons._BTN_PLAYLIST_W)
+        lcl_y = _clamp(pp_y - buttons._BTN_HEIGHT, sy, sy + sh - buttons._BTN_HEIGHT)
+        self._local_queue_btn.move(lcl_x, lcl_y)
+        # 一键喜欢按钮：左下锚点对齐一键本地按钮左上锚点
+        lq_x = _clamp(lcl_x, sx, sx + sw - buttons._BTN_PLAYLIST_W)
+        lq_y = _clamp(lcl_y - buttons._BTN_HEIGHT, sy, sy + sh - buttons._BTN_HEIGHT)
+        self._liked_queue_btn.move(lq_x, lq_y)
+        # 音量减按钮：右下锚点对齐进度条右上锚点，上移2px
+        vd_x = _clamp(px + progress_panel.width() - buttons._BTN_WIDTH, sx, sx + sw - buttons._BTN_WIDTH)
+        vd_y = pp_y
+        self._volume_down_btn.move(vd_x, vd_y)
+        # 音量加按钮：右锚点对齐音量减按钮左锚点
+        vu_x = _clamp(vd_x - buttons._BTN_WIDTH, sx, sx + sw - buttons._BTN_WIDTH)
+        self._volume_up_btn.move(vu_x, vd_y)
+        # 播放模式按钮：右下锚点对齐音量减按钮右上锚点
+        pm_x = _clamp(vd_x + buttons._BTN_WIDTH - buttons._BTN_PLAYLIST_W, sx, sx + sw - buttons._BTN_PLAYLIST_W)
+        pm_y = _clamp(vd_y - buttons._BTN_HEIGHT, sy, sy + sh - buttons._BTN_HEIGHT)
+        self._play_mode_btn.move(pm_x, pm_y)
+
+    # ==================================================================
+    # 事件响应
+    # ==================================================================
+
+    def _on_tick(self, event: Event) -> None:
+        """Tick 事件处理：自动隐藏与轻量状态守卫。"""
+        if not self._visible or not self._focused_speaker:
+            return
+        if not self._focused_speaker.is_alive():
+            self.hide_panel()
+            return
+        if self._is_mouse_far_from_family():
+            self.hide_panel()
+            return
+
+    def _on_frame(self, event: Event) -> None:
+        """帧事件处理：仅更新位置，不再轮询队列状态。"""
+        if not self._visible or not self._focused_speaker:
+            return
+        # 仅更新位置（不再每帧轮询队列）
+        self._update_position()
+
+    def _on_music_status(self, event: Event) -> None:
+        """????????????????/???????????"""
+        if not self._visible:
+            return
+        self._refresh_view_state(
+            refresh_content=True,
+            reset_page=False,
+            update_remove_button=True,
+        )
+
+    def _on_song_end(self, event: Event) -> None:
+        """??????????????"""
+        if not self._visible:
+            return
+        self._refresh_view_state(
+            refresh_content=True,
+            reset_page=False,
+            update_remove_button=True,
+        )
+
+    def _on_clickthrough_toggle(self, event: Event) -> None:
+        self.setAttribute(Qt.WA_TransparentForMouseEvents,
+                          event.data.get('enabled', False))
+
+    def _iter_family_widgets(self):
+        widgets = [
+            self,
+            self._prev_btn,
+            self._next_btn,
+            self._remove_btn,
+            self._play_now_btn,
+            *self._iter_control_buttons(),
+        ]
+        getter = _progress_panel_getter()
+        progress_panel = getter() if getter is not None else None
+        if progress_panel is not None:
+            widgets.append(progress_panel)
+        return [w for w in widgets if w is not None]
+
+    def _is_mouse_far_from_family(self) -> bool:
+        mouse = QCursor.pos()
+        limit_sq = _AUTO_HIDE_MOUSE_DISTANCE * _AUTO_HIDE_MOUSE_DISTANCE
+        nearest_sq = None
+        for widget in self._iter_family_widgets():
+            try:
+                if not widget.isVisible():
+                    continue
+                # `widget_global_rect` 返回核心 `Rect`：center/x/y 是属性，不是方法。
+                # 族里的 `progress_panel` 已迁出 QWidget，没有 `geometry()`。
+                center = widget_global_rect(widget).center
+                dx = mouse.x() - int(center.x)
+                dy = mouse.y() - int(center.y)
+                dist_sq = dx * dx + dy * dy
+                if nearest_sq is None or dist_sq < nearest_sq:
+                    nearest_sq = dist_sq
+            except RuntimeError:
+                continue
+        if nearest_sq is None:
+            return False
+        return nearest_sq > limit_sq
+
+    # ==================================================================
+    # 绘制
+    # ==================================================================
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, False)
+        visual = build_playlist_panel_visual(
+            tuple(self._queue),
+            self._text_metrics,
+            page=self._page,
+            selected=self._selected,
+            current_index=self._current_index,
+        )
+        self._draw_backend.render(visual.batch, painter)
+        painter.end()
+
+    def closeEvent(self, event) -> None:
+        try:
+            self._event_center.unsubscribe(EventType.TICK, self._on_tick)
+        except Exception:
+            pass
+        try:
+            self._event_center.unsubscribe(EventType.FRAME, self._on_frame)
+        except Exception:
+            pass
+        try:
+            self._event_center.unsubscribe(EventType.MUSIC_STATUS_CHANGE, self._on_music_status)
+        except Exception:
+            pass
+        try:
+            self._event_center.unsubscribe(EventType.MUSIC_SONG_END, self._on_song_end)
+        except Exception:
+            pass
+        try:
+            self._event_center.unsubscribe(EventType.UI_CLICKTHROUGH_TOGGLE, self._on_clickthrough_toggle)
+        except Exception:
+            pass
+        try:
+            self._event_center.unsubscribe(EventType.KEY_PRESS, self._on_global_key_press)
+        except Exception:
+            pass
+        try:
+            self._remove_btn.close()
+        except Exception:
+            pass
+        try:
+            self._play_now_btn.close()
+        except Exception:
+            pass
+        super().closeEvent(event)
+
+
+__all__ = ["PlaylistPanel"]
