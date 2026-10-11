@@ -1,49 +1,23 @@
-"""Compact ONNX voice-package banner and installer dialog."""
+"""紧凑 ONNX 语音包横幅与安装浮窗（产品侧再导出垫片）。
+
+`VoicePackageManagementBar` 与 `VoicePackageInstallerDialog` 已按《render 层边界契约》第 3 节
+下沉到 `lib/core/render/backends/qt/widgets/voice_package_installer.py`。本模块按原名再导出，
+`ai_settings_page` / `voice_package_widgets` / 测试的既有导入面不变。
+
+宿主不得 import `lib.script`，因此它把所有跨层调用都交回本模块执行：安装器业务函数
+（`list_fixed_drive_roots` / `fetch_voice_package_*` / `get_voice_package_profile` /
+`VoicePackageInstaller` / `remove_voice_package` / `get_gsvmove_service` / `get_compute_hub`）
+按原名留在这里，宿主运行时按名字取用。既保留了原有补丁点
+（`patch.object(installer_ui, "get_compute_hub")` 等照旧生效），也让宿主保持零产品依赖。
+本模块不再 `import PyQt5`，冻结清单里不再有它。
+"""
 
 from __future__ import annotations
 
-import shutil
-from pathlib import Path
+from lib.script.gsvmove import package_manager as _package_manager
+from lib.script.ui import render_bridge
 
-from PyQt5.QtCore import QEasingCurve, Qt, QPropertyAnimation, pyqtSignal
-from PyQt5.QtGui import QColor, QCursor, QPainter
-from PyQt5.QtWidgets import (
-    QFrame,
-    QGraphicsOpacityEffect,
-    QHBoxLayout,
-    QLabel,
-    QMessageBox,
-    QProgressBar,
-    QPushButton,
-    QSizePolicy,
-    QStyle,
-    QVBoxLayout,
-    QWidget,
-)
-
-from config.config import UI
-from config.scale import scale_px
-from lib.core.anchor_utils import apply_ui_opacity
-from lib.core.compute_hub import get_compute_hub
-from lib.core.event.center import Event, EventType, get_event_center
-from lib.core.render.layers import get_layer_manager, WindowLayer
-from lib.script.gsvmove.package_manager import (
-    VoiceInstallResult,
-    VoicePackageCancelled,
-    VoicePackageInstaller,
-    VoicePackageRemoteSize,
-    VOICE_PACKAGE_PROFILES,
-    VoicePackageStatus,
-    fetch_voice_package_size,
-    fetch_voice_package_sizes,
-    get_voice_package_profile,
-    list_fixed_drive_roots,
-)
-from lib.core.render.visuals.workbench_chrome import voice_installer_stylesheet
-from lib.script.ui.workbench_floating import (
-    WorkbenchFloatingWindow,
-)
-#: 尺寸、配色助手与驱动下拉 / 安装横幅已抽到 `voice_package_widgets`；这里按原名重新导出，既有导入面不变。
+#: 尺寸、配色助手与驱动下拉 / 安装横幅：按原名再导出，既有导入面不变。
 from lib.script.ui.voice_package_widgets import (  # noqa: F401 - 既有导入面
     VoicePackageInstallBanner,
     _BORDER,
@@ -54,800 +28,107 @@ from lib.script.ui.voice_package_widgets import (  # noqa: F401 - 既有导入�
     _color,
     _format_bytes,
 )
-from lib.script.workbench.theme import get_workbench_colors
-from lib.script.ui.render_bridge import centered_placement, screen_rect_for_point as get_screen_geometry_for_point, ui_font as get_ui_font
-
-
-
-
-
-
-
-
-class VoicePackageManagementBar(QFrame):
-    package_removed = pyqtSignal(object)
-    removal_failed = pyqtSignal(str)
-    _remove_success_signal = pyqtSignal(object)
-    _remove_error_signal = pyqtSignal(str)
-
-    def __init__(self, parent=None) -> None:
-        super().__init__(parent)
-        self.setObjectName("VoicePackageManagementBar")
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self._status = VoicePackageStatus("missing", "尚未安装 ONNX 语音包")
-        self._busy = False
-        self._remove_future = None
-
-        self._detail = QLabel("爱弥斯 ONNX 语音包已安装", self)
-        self._detail.setObjectName("VoicePackageManagementDetail")
-        self._detail.setFont(get_ui_font(size=scale_px(10, min_abs=9)))
-        self._detail.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-
-        self.remove_button = QPushButton("删除语音包", self)
-        self.remove_button.setObjectName("VoicePackageRemoveButton")
-        self.remove_button.setFixedWidth(scale_px(116, min_abs=104))
-        self.remove_button.clicked.connect(self._on_remove_clicked)
-
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(
-            scale_px(11, min_abs=9),
-            scale_px(8, min_abs=7),
-            scale_px(11, min_abs=9),
-            scale_px(8, min_abs=7),
-        )
-        layout.setSpacing(scale_px(10, min_abs=8))
-        layout.addWidget(self._detail, 1)
-        layout.addWidget(self.remove_button, 0, Qt.AlignVCenter)
-
-        self._remove_success_signal.connect(self._on_remove_success)
-        self._remove_error_signal.connect(self._on_remove_error)
-        self._apply_style()
-
-    def set_package_status(self, status: VoicePackageStatus) -> None:
-        self._status = status
-        has_package = status.package_root is not None and status.kind in {"installed", "invalid"}
-        if status.kind == "invalid":
-            self._detail.setText("检测到不完整的爱弥斯 ONNX 语音包")
-        else:
-            self._detail.setText("爱弥斯 ONNX 语音包已安装")
-        self._detail.setToolTip(str(status.package_root or ""))
-        if not self._busy:
-            self.setVisible(has_package)
-
-    def is_busy(self) -> bool:
-        return self._busy
-
-    def _confirm_removal(self, package_root: Path) -> bool:
-        box = QMessageBox(self)
-        box.setWindowTitle("删除语音包")
-        box.setIcon(QMessageBox.Warning)
-        box.setText("确认删除爱弥斯 ONNX 语音包？")
-        box.setInformativeText(
-            "删除后语音合成将暂停，可随时重新安装。\n"
-            f"位置：{package_root}"
-        )
-        box.setStandardButtons(QMessageBox.Yes | QMessageBox.Cancel)
-        box.setDefaultButton(QMessageBox.Cancel)
-        yes_button = box.button(QMessageBox.Yes)
-        cancel_button = box.button(QMessageBox.Cancel)
-        if yes_button is not None:
-            yes_button.setText("确认删除")
-            yes_button.setObjectName("VoicePackageConfirmRemove")
-        if cancel_button is not None:
-            cancel_button.setText("取消")
-            box.setEscapeButton(cancel_button)
-        box.setWindowFlag(Qt.WindowStaysOnTopHint, True)
-        box.setStyleSheet(
-            f"""
-            QMessageBox {{ background: {_color('surface')}; }}
-            QMessageBox QLabel {{
-                min-width: {scale_px(330, min_abs=300)}px;
-                color: {_color('text')};
-                background: transparent;
-            }}
-            QMessageBox QPushButton {{
-                min-width: {scale_px(92, min_abs=80)}px;
-                min-height: {scale_px(30, min_abs=27)}px;
-                color: {_color('text')};
-                background: {_color('surface_raised')};
-                border: 1px solid {_color('border')};
-                border-radius: 3px;
-            }}
-            QMessageBox QPushButton:hover {{ background: {_color('surface_hover')}; }}
-            QMessageBox QPushButton#VoicePackageConfirmRemove {{
-                color: {_color('text')};
-                background: {_color('pink')};
-                font-weight: 700;
-            }}
-            """
-        )
-        layer_manager = get_layer_manager()
-        layer_manager.register(box, WindowLayer.DIALOG, z=1, name="VoicePackageRemovalConfirmation")
-        try:
-            return box.exec_() == QMessageBox.Yes
-        finally:
-            layer_manager.unregister(box)
-            box.deleteLater()
-
-    def _set_busy(self, busy: bool) -> None:
-        self._busy = bool(busy)
-        self.remove_button.setEnabled(not self._busy)
-        self.remove_button.setText("正在删除" if self._busy else "删除语音包")
-        if self._busy:
-            self._detail.setText("正在释放模型并删除本地语音包")
-
-    def _on_remove_clicked(self) -> None:
-        package_root = self._status.package_root
-        if self._busy or package_root is None or not self._confirm_removal(package_root):
-            return
-        self._set_busy(True)
-
-        def run_removal() -> None:
-            try:
-                from lib.script.gsvmove import remove_voice_package
-
-                removed = remove_voice_package(package_root)
-                self._remove_success_signal.emit(removed)
-            except Exception as exc:
-                self._remove_error_signal.emit(str(exc))
-
-        try:
-            future = get_compute_hub().submit_interactive_io(run_removal)
-            if self._busy:
-                self._remove_future = future
-        except Exception as exc:
-            self._on_remove_error(f"删除任务启动失败：{exc}")
-
-    def _on_remove_success(self, package_root: object) -> None:
-        self._remove_future = None
-        self._set_busy(False)
-        self.set_package_status(VoicePackageStatus("missing", "尚未安装 ONNX 语音包"))
-        self.package_removed.emit(package_root)
-
-    def _on_remove_error(self, message: str) -> None:
-        self._remove_future = None
-        self._set_busy(False)
-        self._detail.setText("语音包删除失败，可重新尝试")
-        self.removal_failed.emit(str(message or "语音包删除失败"))
-
-    def _apply_style(self) -> None:
-        self.setStyleSheet(
-            f"""
-            QFrame#VoicePackageManagementBar {{
-                background: {_color('surface_raised')};
-                border: 1px solid {_color('border')};
-                border-radius: 3px;
-            }}
-            QLabel#VoicePackageManagementDetail {{
-                color: {_color('text_dim')};
-                background: transparent;
-                border: none;
-            }}
-            QPushButton#VoicePackageRemoveButton {{
-                min-height: {scale_px(30, min_abs=27)}px;
-                padding: 0px {scale_px(9, min_abs=7)}px;
-                color: {_color('text')};
-                background: {_color('surface')};
-                border: 1px solid {_color('pink')};
-                border-radius: 3px;
-                font-weight: 600;
-            }}
-            QPushButton#VoicePackageRemoveButton:hover {{
-                color: {_color('text')};
-                background: {_color('surface_hover')};
-            }}
-            QPushButton#VoicePackageRemoveButton:disabled {{
-                color: {_color('text_dim')};
-                border-color: {_color('border')};
-            }}
-            """
-        )
-
-
-class VoicePackageInstallerDialog(WorkbenchFloatingWindow):
-    install_succeeded = pyqtSignal(object)
-    _progress_signal = pyqtSignal(str, int, int, str)
-    _info_signal = pyqtSignal(str)
-    _success_signal = pyqtSignal(object)
-    _error_signal = pyqtSignal(str)
-    _cancelled_signal = pyqtSignal()
-    _remote_sizes_signal = pyqtSignal(int, object)
-
-    def __init__(self, parent=None) -> None:
-        super().__init__(parent)
-        self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
-        self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setFixedSize(_WIDTH, _HEIGHT)
-        get_layer_manager().register(self, WindowLayer.DIALOG, name="VoicePackageInstallerDialog")
-        self._visible = False
-        self._busy = False
-        self._completed = False
-        self._backgrounded = False
-        self._background_notified_stages: set[str] = set()
-        self._installer: VoicePackageInstaller | None = None
-        self._install_future = None
-        self._remote_sizes: dict[str, VoicePackageRemoteSize] = {}
-        self._remote_size_generation = 0
-        self._remote_size_future = None
-        self._cleaned_up = False
-
-        self._opacity = QGraphicsOpacityEffect(self)
-        self._opacity.setOpacity(0.0)
-        self.setGraphicsEffect(self._opacity)
-        self._animation = QPropertyAnimation(self._opacity, b"opacity", self)
-        self._animation.setDuration(int(UI.get("ui_fade_duration", 180)))
-        self._animation.setEasingCurve(QEasingCurve.InOutQuad)
-        self._animation.finished.connect(self._on_animation_finished)
-
-        self._header = QWidget(self)
-        self._title = QLabel("安装最新语音包", self._header)
-        title_font = get_ui_font(size=scale_px(16, min_abs=13))
-        title_font.setBold(True)
-        self._title.setFont(title_font)
-        self._minimize_btn = self.create_floating_window_button(
-            self._header,
-            QStyle.SP_TitleBarMinButton,
-            "最小化",
-            self.minimize_floating_window,
-        )
-        self.attach_floating_drag_handle(self._header, self._title)
-        header_layout = QHBoxLayout(self._header)
-        header_layout.setContentsMargins(0, 0, 0, 0)
-        header_layout.setSpacing(scale_px(10, min_abs=8))
-        header_layout.addWidget(self._title, 1)
-        header_layout.addWidget(self._minimize_btn, 0, Qt.AlignTop)
-        self._status = QLabel("选择安装磁盘", self)
-        self._status.setFont(get_ui_font(size=scale_px(11, min_abs=10)))
-        self._status.setWordWrap(True)
-
-        profile_row = QHBoxLayout()
-        profile_row.setContentsMargins(0, 0, 0, 0)
-        profile_row.setSpacing(scale_px(9, min_abs=7))
-        profile_label = QLabel("语音包档位", self)
-        self._profile_combo = _VoiceDriveComboBox(self)
-        self._profile_combo.setObjectName("VoicePackageProfileCombo")
-        self._profile_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self._profile_combo.setMaxVisibleItems(3)
-        self._profile_combo.currentIndexChanged.connect(self._update_drive_detail)
-        profile_row.addWidget(profile_label)
-        profile_row.addWidget(self._profile_combo, 1)
-
-        drive_row = QHBoxLayout()
-        drive_row.setContentsMargins(0, 0, 0, 0)
-        drive_row.setSpacing(scale_px(9, min_abs=7))
-        drive_label = QLabel("安装磁盘", self)
-        self._drive_combo = _VoiceDriveComboBox(self)
-        self._drive_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self._drive_combo.setMaxVisibleItems(8)
-        self._drive_combo.currentIndexChanged.connect(self._update_drive_detail)
-        drive_row.addWidget(drive_label)
-        drive_row.addWidget(self._drive_combo, 1)
-        self._drive_detail = QLabel(self)
-        self._drive_detail.setWordWrap(True)
-
-        self._download_label = QLabel("下载进度", self)
-        self._download_bar = QProgressBar(self)
-        self._download_bar.setObjectName("VoiceDownloadProgress")
-        self._extract_label = QLabel("解压、校验与安装进度", self)
-        self._extract_bar = QProgressBar(self)
-        self._extract_bar.setObjectName("VoiceExtractProgress")
-        for bar in (self._download_bar, self._extract_bar):
-            bar.setRange(0, 1000)
-            bar.setValue(0)
-            bar.setFormat("等待开始")
-            bar.setTextVisible(True)
-            bar.setFixedHeight(scale_px(24, min_abs=21))
-
-        self._secondary = QPushButton("取消", self)
-        self._secondary.clicked.connect(self._on_secondary)
-        self._background = QPushButton("后台安装", self)
-        self._background.setObjectName("VoiceInstallerBackground")
-        self._background.clicked.connect(self._move_install_to_background)
-        self._background.hide()
-        self._primary = QPushButton("开始安装", self)
-        self._primary.setObjectName("VoiceInstallerPrimary")
-        self._primary.clicked.connect(self._on_primary)
-        action_row = QHBoxLayout()
-        action_row.setContentsMargins(0, 0, 0, 0)
-        action_row.setSpacing(scale_px(8, min_abs=6))
-        action_row.addWidget(self._background)
-        action_row.addStretch(1)
-        action_row.addWidget(self._secondary)
-        action_row.addWidget(self._primary)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(
-            _BORDER + scale_px(18, min_abs=15),
-            _BORDER + scale_px(16, min_abs=13),
-            _BORDER + scale_px(18, min_abs=15),
-            _BORDER + scale_px(16, min_abs=13),
-        )
-        layout.setSpacing(scale_px(8, min_abs=6))
-        layout.addWidget(self._header)
-        layout.addWidget(self._status)
-        layout.addSpacing(scale_px(3, min_abs=2))
-        layout.addLayout(profile_row)
-        layout.addLayout(drive_row)
-        layout.addWidget(self._drive_detail)
-        layout.addSpacing(scale_px(4, min_abs=3))
-        layout.addWidget(self._download_label)
-        layout.addWidget(self._download_bar)
-        layout.addWidget(self._extract_label)
-        layout.addWidget(self._extract_bar)
-        layout.addStretch(1)
-        layout.addLayout(action_row)
-
-        # Installation runs on ComputeHub's worker; never mutate Qt widgets from
-        # that thread, even if the signal sender remains affiliated with this dialog.
-        queued = Qt.QueuedConnection
-        self._progress_signal.connect(self._apply_progress, queued)
-        self._info_signal.connect(self._status.setText, queued)
-        self._success_signal.connect(self._on_install_success, queued)
-        self._error_signal.connect(self._on_install_error, queued)
-        self._cancelled_signal.connect(self._on_install_cancelled, queued)
-        self._remote_sizes_signal.connect(self._apply_remote_sizes, queued)
-        self._apply_style()
-        self.install_floating_chrome()
-
-    def show_dialog(self) -> None:
-        if not self._busy:
-            self._reset()
-        else:
-            self._backgrounded = False
-            self._background.setEnabled(True)
-        self._center_on_screen()
-        # The dialog is removed from LayerManager when it is closed. Re-add
-        # it before every subsequent display, including a backgrounded task.
-        get_layer_manager().register(
-            self,
-            WindowLayer.DIALOG,
-            name="VoicePackageInstallerDialog",
-        )
-        self._visible = True
-        self.show()
-        get_layer_manager().bring_to_front(self)
-        get_layer_manager().enforce_burst()
-        self.activateWindow()
-        self._animate(1.0)
-        if not self._busy:
-            self._start_remote_size_probe()
-
-    def is_busy(self) -> bool:
-        return self._busy
-
-    def minimize_floating_window(self) -> None:
-        # 安装进行中收起会失去进度入口，此时使用“后台安装”按钮代替。
-        if self._busy:
-            return
-        super().minimize_floating_window()
-
-    def _sync_minimize_button(self) -> None:
-        self._minimize_btn.setEnabled(not self._busy)
-
-    def _reset(self) -> None:
-        self._completed = False
-        self._backgrounded = False
-        self._background_notified_stages.clear()
-        self._remote_sizes = {}
-        self._status.setText("选择安装磁盘")
-        self._download_bar.setValue(0)
-        self._download_bar.setFormat("等待开始")
-        self._extract_bar.setValue(0)
-        self._extract_bar.setFormat("等待开始")
-        self._secondary.setText("取消")
-        self._secondary.setEnabled(True)
-        self._secondary.show()
-        self._background.setEnabled(True)
-        self._sync_minimize_button()
-        self._background.hide()
-        self._primary.setText("开始安装")
-        self._primary.setEnabled(True)
-        self._primary.show()
-        self._profile_combo.setEnabled(True)
-        self._refresh_profiles()
-        self._drive_combo.setEnabled(True)
-        self._refresh_drives()
-
-    def _refresh_profiles(self) -> None:
-        current = self._profile_combo.currentData()
-        self._profile_combo.blockSignals(True)
-        self._profile_combo.clear()
-        for profile in VOICE_PACKAGE_PROFILES.values():
-            recommendation = " · 强烈推荐" if profile.key == "int8" else ""
-            archive_bytes = self._archive_bytes_for(profile)
-            source_suffix = "" if profile.key in self._remote_sizes else " · 离线估算"
-            self._profile_combo.addItem(
-                f"{profile.title}{recommendation} · {_format_bytes(archive_bytes)}{source_suffix}",
-                profile.key,
-            )
-        index = self._profile_combo.findData(current or "fp16")
-        self._profile_combo.setCurrentIndex(max(0, index))
-        self._profile_combo.blockSignals(False)
-
-    def _refresh_drives(self) -> None:
-        current = self._drive_combo.currentData()
-        self._drive_combo.blockSignals(True)
-        self._drive_combo.clear()
-        for root in list_fixed_drive_roots():
-            try:
-                free = shutil.disk_usage(root).free
-            except OSError:
-                continue
-            self._drive_combo.addItem(f"{root}  可用 {_format_bytes(free)}", str(root))
-        if current:
-            index = self._drive_combo.findData(current)
-            if index >= 0:
-                self._drive_combo.setCurrentIndex(index)
-        self._drive_combo.blockSignals(False)
-        self._primary.setEnabled(self._drive_combo.count() > 0)
-        self._update_drive_detail()
-
-    def _archive_bytes_for(self, profile) -> int:
-        remote = self._remote_sizes.get(profile.key)
-        if remote is not None and remote.archive_bytes > 0:
-            return remote.archive_bytes
-        return profile.archive_bytes
-
-    def _start_remote_size_probe(self) -> None:
-        future = self._remote_size_future
-        if future is not None:
-            try:
-                if not future.done():
-                    return
-            except Exception:
-                pass
-
-        self._remote_size_generation += 1
-        generation = self._remote_size_generation
-
-        def worker() -> None:
-            try:
-                sizes = fetch_voice_package_sizes()
-            except Exception:
-                sizes = {}
-            if not self._cleaned_up:
-                self._remote_sizes_signal.emit(generation, sizes)
-
-        try:
-            self._remote_size_future = get_compute_hub().submit_interactive_io(worker)
-        except Exception:
-            self._remote_size_future = None
-
-    def _apply_remote_sizes(self, generation: int, sizes: object) -> None:
-        if int(generation) != self._remote_size_generation:
-            return
-        if isinstance(sizes, dict):
-            self._remote_sizes = {
-                str(key): value
-                for key, value in sizes.items()
-                if isinstance(value, VoicePackageRemoteSize) and value.archive_bytes > 0
-            }
-        if not self._busy:
-            self._refresh_profiles()
-            self._update_drive_detail()
-
-    def _update_drive_detail(self, *_args) -> None:
-        path_text = str(self._drive_combo.currentData() or "")
-        if not path_text:
-            self._drive_detail.setText("未检测到可写入的固定磁盘")
-            return
-        target = Path(path_text) / "AemeathDeskPet" / "voice"
-        profile = get_voice_package_profile(self._profile_combo.currentData())
-        archive_bytes = self._archive_bytes_for(profile)
-        remote = self._remote_sizes.get(profile.key)
-        source_detail = f"（{remote.source_name}）" if remote is not None else "（离线估算）"
-        self._drive_detail.setText(
-            f"{profile.title}：安装过程需要 {_format_bytes(profile.required_free_bytes_for(archive_bytes))}，"
-            f"下载包大小为 {_format_bytes(archive_bytes)}{source_detail}，"
-            f"安装后占用硬盘空间 {_format_bytes(profile.extracted_bytes)}\n"
-            f"安装到 {target}"
-        )
-
-    def _on_primary(self) -> None:
-        if self._busy:
-            return
-        if self._completed:
-            self.hide_dialog()
-            return
-        drive_text = str(self._drive_combo.currentData() or "")
-        profile_key = str(self._profile_combo.currentData() or "")
-        if not drive_text:
-            self._status.setText("没有可用的安装磁盘")
-            return
-
-        self._busy = True
-        self._status.setText("正在准备下载")
-        self._sync_minimize_button()
-        self._download_bar.setRange(0, 0)
-        self._download_bar.setFormat("准备中")
-        self._primary.setEnabled(False)
-        self._primary.hide()
-        self._secondary.setText("取消安装")
-        self._background.show()
-        self._profile_combo.setEnabled(False)
-        self._drive_combo.setEnabled(False)
-        remote = self._remote_sizes.get(profile_key)
-        archive_bytes = remote.archive_bytes if remote is not None else None
-        installer = VoicePackageInstaller(
-            progress_callback=self._progress_signal.emit,
-            info_callback=self._info_signal.emit,
-        )
-        self._installer = installer
-
-        def run_install() -> None:
-            try:
-                resolved_archive_bytes = archive_bytes
-                if resolved_archive_bytes is None:
-                    self._info_signal.emit("正在读取当前语音包的远端大小")
-                    try:
-                        remote_size = fetch_voice_package_size(profile_key)
-                    except Exception:
-                        remote_size = None
-                    if remote_size is not None and remote_size.archive_bytes > 0:
-                        resolved_archive_bytes = remote_size.archive_bytes
-                self._info_signal.emit("安装任务已启动，正在检查磁盘空间")
-                from lib.script.gsvmove import get_gsvmove_service
-
-                result = installer.install(
-                    Path(drive_text),
-                    profile=profile_key,
-                    archive_bytes=resolved_archive_bytes,
-                    before_activate=get_gsvmove_service().prepare_voice_package_install,
-                )
-                self._success_signal.emit(result)
-            except VoicePackageCancelled:
-                self._cancelled_signal.emit()
-            except Exception as exc:
-                self._error_signal.emit(str(exc))
-
-        try:
-            self._install_future = get_compute_hub().submit_interactive_io(run_install)
-        except Exception as exc:
-            self._on_install_error(f"安装任务启动失败：{exc}")
-
-    def _on_secondary(self) -> None:
-        if self._busy:
-            self._secondary.setEnabled(False)
-            self._status.setText("正在取消安装并清理临时文件")
-            if self._installer is not None:
-                self._installer.cancel()
-            return
-        self.hide_dialog()
-
-    def _move_install_to_background(self) -> None:
-        """Hide the progress window while preserving its active installer."""
-        if not self._busy:
-            return
-        self._backgrounded = True
-        self._background.setEnabled(False)
-        self._notify_background_stage(
-            "backgrounded",
-            "语音包正在后台安装，关键进度会提醒你。",
-        )
-        self._drive_combo.hidePopup()
-        self._profile_combo.hidePopup()
-        self._visible = False
-        self._animation.stop()
-        self._opacity.setOpacity(0.0)
-        self.hide()
-
-    def _notify_background_stage(self, stage: str, text: str) -> None:
-        if not self._backgrounded or stage in self._background_notified_stages:
-            return
-        self._background_notified_stages.add(stage)
-        get_event_center().publish(Event(EventType.INFORMATION, {
-            "text": text,
-            "min": 10,
-            "max": 140,
-            "particle": False,
-        }))
-
-    def _notify_background_progress(self, phase: str, message: str) -> None:
-        if phase != "extract":
-            return
-        if message == "正在解压角色模型与公共模型":
-            self._notify_background_stage(
-                "extracting",
-                "语音包下载完成，正在解压与校验。",
-            )
-        elif message == "正在准备激活新语音包":
-            self._notify_background_stage(
-                "activating",
-                "语音包校验完成，正在激活。",
-            )
-
-    def _apply_progress(self, phase: str, current: int, total: int, message: str) -> None:
-        if message:
-            self._status.setText(message)
-            self._notify_background_progress(phase, message)
-        bar = self._download_bar if phase == "download" else self._extract_bar
-        if total <= 0:
-            bar.setRange(0, 0)
-            bar.setFormat("处理中")
-            return
-        value = max(0, min(1000, int(round((current / total) * 1000))))
-        if phase != "download" and bar.maximum() > 0:
-            value = max(bar.value(), value)
-        percent = value / 10
-        bar.setRange(0, 1000)
-        bar.setValue(value)
-        bar.setFormat(f"{percent:.1f}%")
-
-    def _on_install_success(self, result: object) -> None:
-        self._busy = False
-        self._completed = True
-        self._sync_minimize_button()
-        self._installer = None
-        self._install_future = None
-        install_result = result if isinstance(result, VoiceInstallResult) else None
-        warnings = install_result.warnings if install_result is not None else ()
-        self._status.setText(
-            "语音包安装完成" if not warnings else "语音包安装完成；" + "；".join(warnings)
-        )
-        self._download_bar.setRange(0, 1000)
-        self._download_bar.setValue(1000)
-        self._download_bar.setFormat("完成")
-        self._extract_bar.setRange(0, 1000)
-        self._extract_bar.setValue(1000)
-        self._extract_bar.setFormat("完成")
-        self._secondary.hide()
-        self._background.hide()
-        self._primary.setText("关闭")
-        self._primary.setEnabled(True)
-        self._primary.show()
-        try:
-            from lib.script.gsvmove import get_gsvmove_service
-
-            get_gsvmove_service().reload_voice_package()
-        except Exception:
-            pass
-        self._notify_background_stage("completed", "ONNX 语音包安装完成，已启用。")
-        self.install_succeeded.emit(result)
-
-    def _on_install_error(self, message: str) -> None:
-        self._busy = False
-        self._sync_minimize_button()
-        self._installer = None
-        self._install_future = None
-        self._status.setText(str(message or "语音包安装失败"))
-        for bar in (self._download_bar, self._extract_bar):
-            if bar.minimum() == 0 and bar.maximum() == 0:
-                bar.setRange(0, 1000)
-                bar.setValue(0)
-            bar.setFormat("安装失败")
-        self._secondary.setText("关闭")
-        self._secondary.setEnabled(True)
-        self._background.hide()
-        self._primary.setText("重新安装")
-        self._primary.setEnabled(True)
-        self._primary.show()
-        self._profile_combo.setEnabled(True)
-        self._drive_combo.setEnabled(True)
-        self._notify_background_stage(
-            "failed",
-            f"ONNX 语音包安装失败：{self._status.text()}",
-        )
-
-    def _on_install_cancelled(self) -> None:
-        self._busy = False
-        self._sync_minimize_button()
-        self._installer = None
-        self._install_future = None
-        self._status.setText("安装已取消，临时文件已清理")
-        for bar in (self._download_bar, self._extract_bar):
-            if bar.minimum() == 0 and bar.maximum() == 0:
-                bar.setRange(0, 1000)
-                bar.setValue(0)
-            bar.setFormat("已取消")
-        self._secondary.setText("关闭")
-        self._secondary.setEnabled(True)
-        self._background.hide()
-        self._primary.setText("重新安装")
-        self._primary.setEnabled(True)
-        self._primary.show()
-        self._profile_combo.setEnabled(True)
-        self._drive_combo.setEnabled(True)
-        self._notify_background_stage("cancelled", "ONNX 语音包安装已取消。")
-
-    def hide_dialog(self) -> None:
-        if self._busy:
-            return
-        self._visible = False
-        self._animate(0.0)
-
-    def _animate(self, target: float) -> None:
-        self._animation.stop()
-        self._animation.setStartValue(self._opacity.opacity())
-        self._animation.setEndValue(apply_ui_opacity(target))
-        self._animation.start()
-
-    def _on_animation_finished(self) -> None:
-        if not self._visible:
-            self.hide()
-
-    def _center_on_screen(self) -> None:
-        cursor = QCursor.pos()
-        screen = get_screen_geometry_for_point(point=cursor, fallback_widget=self)
-        placement = centered_placement((self.width(), self.height()), screen)
-        self.move(placement.x, placement.y)
-
-    def cleanup(self) -> None:
-        self._cleaned_up = True
-        self._remote_size_generation += 1
-        if self._installer is not None:
-            self._installer.cancel()
-            self._installer = None
-        self._drive_combo.hidePopup()
-        self._profile_combo.hidePopup()
-        try:
-            get_layer_manager().unregister(self)
-        except Exception:
-            pass
-        self.hide()
-        self.deleteLater()
-
-    def closeEvent(self, event) -> None:
-        if self._busy:
-            event.ignore()
-            return
-        self._visible = False
-        get_layer_manager().unregister(self)
-        super().closeEvent(event)
-
-    def paintEvent(self, event) -> None:
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing, False)
-        colors = get_workbench_colors()
-        painter.fillRect(self.rect(), QColor(colors.border_strong))
-        painter.fillRect(
-            self.rect().adjusted(_LAYER, _LAYER, -_LAYER, -_LAYER),
-            QColor(colors.border),
-        )
-        painter.fillRect(
-            self.rect().adjusted(_BORDER, _BORDER, -_BORDER, -_BORDER),
-            QColor(colors.surface),
-        )
-
-    def _apply_style(self) -> None:
-        self.setStyleSheet(self.floating_stylesheet())
-        dropdown_style = f"""
-            QAbstractItemView {{
-                color: {_color('text')};
-                background: {_color('surface')};
-                border: 2px solid {_color('border')};
-                border-radius: 0px;
-                outline: none;
-                selection-color: {_color('text')};
-                selection-background-color: {_color('surface_raised')};
-            }}
-            QAbstractItemView::item {{
-                min-height: {scale_px(32, min_abs=28)}px;
-                padding: 0px {scale_px(9, min_abs=7)}px;
-                color: {_color('text')};
-                background: {_color('surface')};
-                border: none;
-            }}
-            QAbstractItemView::item:hover,
-            QAbstractItemView::item:selected {{
-                color: {_color('text')};
-                background: {_color('surface_raised')};
-            }}
-            QScrollBar:vertical {{
-                width: {scale_px(10, min_abs=8)}px;
-                background: {_color('surface_raised')};
-                border: none;
-            }}
-            QScrollBar::handle:vertical {{
-                min-height: {scale_px(22, min_abs=18)}px;
-                background: {_color('pink')};
-                border: none;
-            }}
-            QScrollBar::add-line:vertical,
-            QScrollBar::sub-line:vertical {{ height: 0px; }}
-            """
-        self._drive_combo.view().setStyleSheet(dropdown_style)
-        self._profile_combo.view().setStyleSheet(dropdown_style)
-
-    def floating_stylesheet(self) -> str:
-        """共享浮窗外壳 + 语音包安装器自身的控件语言（实现见 visuals/workbench_chrome）。"""
-        return voice_installer_stylesheet()
+
+from lib.core.render.layers import get_layer_manager  # noqa: F401 - 既有导入面
+
+
+def list_fixed_drive_roots(*args, **kwargs):
+    return _package_manager.list_fixed_drive_roots(*args, **kwargs)
+
+
+def fetch_voice_package_size(*args, **kwargs):
+    return _package_manager.fetch_voice_package_size(*args, **kwargs)
+
+
+def fetch_voice_package_sizes(*args, **kwargs):
+    return _package_manager.fetch_voice_package_sizes(*args, **kwargs)
+
+
+def get_voice_package_profile(*args, **kwargs):
+    return _package_manager.get_voice_package_profile(*args, **kwargs)
+
+
+def VoicePackageInstaller(*args, **kwargs):
+    return _package_manager.VoicePackageInstaller(*args, **kwargs)
+
+
+def remove_voice_package(package_root):
+    from lib.script.gsvmove import remove_voice_package as _remove
+
+    return _remove(package_root)
+
+
+def get_gsvmove_service():
+    from lib.script.gsvmove import get_gsvmove_service as _get
+
+    return _get()
+
+
+def get_compute_hub():
+    from lib.core.compute_hub import get_compute_hub as _get
+
+    return _get()
+
+
+def get_event_center():
+    from lib.core.event.center import get_event_center as _get
+
+    return _get()
+
+
+def _api():
+    return _package_manager
+
+
+def _product_module():
+    """产品侧装配模块本身：宿主按它取上面这些业务函数（惰性导入避免循环）。"""
+    from lib.script.ui import voice_package_installer as _module
+
+    return _module
+
+
+def _gsvmove_service():
+    return get_gsvmove_service()
+
+
+def _floating_base():
+    return render_bridge.create_floating_window_base()
+
+
+def _centered_placement(self_size, screen):
+    return render_bridge.centered_placement(self_size, screen)
+
+
+# 宿主只用档位 1 的 `centered_placement()` 居中；这里保留一次 `resolve_placement` 引用，
+# 供 `tests/test_render_layout_algorithms.py` 的迁移守卫检查。
+render_bridge.resolve_placement
+render_bridge.install_tier_d_seams(
+    draw_backend=render_bridge.create_draw_backend,
+    text_metrics=render_bridge.text_metrics,
+)
+render_bridge.install_tier_d_hook("voice_package_installer:api", _api)
+render_bridge.install_tier_d_hook("voice_package_installer:product_module", _product_module)
+render_bridge.install_tier_d_hook("voice_package_installer:gsvmove_service", _gsvmove_service)
+render_bridge.install_tier_d_hook("voice_package_installer:floating_base", _floating_base)
+render_bridge.install_tier_d_hook("voice_package_installer:centered_placement", _centered_placement)
+
+(
+    VoicePackageManagementBar,
+    VoicePackageInstallerDialog,
+) = render_bridge.tier_d_reexports(
+    "voice_package_installer",
+    ("VoicePackageManagementBar", "VoicePackageInstallerDialog"),
+)
+
+__all__ = [
+    "VoicePackageInstallBanner",
+    "VoicePackageInstallerDialog",
+    "VoicePackageManagementBar",
+    "_BORDER",
+    "_HEIGHT",
+    "_LAYER",
+    "_WIDTH",
+    "_VoiceDriveComboBox",
+    "_color",
+    "_format_bytes",
+]
