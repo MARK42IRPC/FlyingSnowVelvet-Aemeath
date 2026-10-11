@@ -79,6 +79,19 @@ def digit_font(size: int | None = None):
     return get_digit_font(size)
 
 
+def apply_ui_font_tree(widget) -> None:
+    """把 UI 字体铺到一棵控件树：走后端字体提供者（档位 B）。"""
+    from lib.core.render.registry import get_font_provider
+
+    provider = get_font_provider()
+    if provider is not None:
+        provider.apply_ui_font_tree(widget)
+        return
+    from lib.core.render.backends.qt.runtime.font import apply_ui_font_tree as _apply
+
+    _apply(widget)
+
+
 def cmd_font(size: int | None = None):
     """命令框字体：与 `ui_font` 同源的注入路径（未注入时退回后端字体提供者）。"""
     if _cmd_font_factory is not None:
