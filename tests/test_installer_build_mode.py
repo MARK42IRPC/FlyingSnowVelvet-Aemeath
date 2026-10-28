@@ -12,7 +12,6 @@ import re
 import tempfile
 import unittest
 from pathlib import Path
-
 from scripts import build_offline_installer as installer
 
 
@@ -83,6 +82,72 @@ class InstallerBuildModeTests(unittest.TestCase):
                 installer._write_payload_info_header(
                     payload, None, root / "wrong-offline.h", online=False
                 )
+
+    def test_online_header_is_independent_of_the_payload(self) -> None:
+        # 在线 EXE 只内嵌 bootstrap marker；清单在安装时解析。它的头部因此不能
+        # 带版本、文件数或体积，否则每发一版都得重编在线安装器。
+        with tempfile.TemporaryDirectory(prefix="fsv-payload-info-") as temporary:
+            root = Path(temporary)
+            headers = []
+            for name, files in (
+                ("one", {"app/a.txt": b"a"}),
+                ("many", {"app/a.txt": b"a" * 4096, "app/nested/b.bin": b"b" * 8192}),
+            ):
+                payload = root / name / "payload"
+                for relative, content in files.items():
+                    path = payload / relative
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(content)
+                header = root / f"{name}.h"
+                installer._write_payload_info_header(
+                    payload, None, header, online=True
+                )
+                headers.append(header.read_text(encoding="ascii"))
+
+            self.assertEqual(headers[0], headers[1])
+            self.assertIn(
+                "#define FSV_PAYLOAD_FILE_COUNT ((ULONGLONG)0ULL)", headers[0]
+            )
+            self.assertIn(
+                "#define FSV_PAYLOAD_UNCOMPRESSED_BYTES ((ULONGLONG)0ULL)",
+                headers[0],
+            )
+
+    def test_online_resources_header_has_no_payload_version(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="fsv-resource-urls-") as temporary:
+            header = Path(temporary) / "resource_urls.h"
+            installer._write_resource_urls_header(header)
+            text = header.read_text(encoding="ascii")
+            self.assertIn("FSV_RESOURCE_BASE_HF", text)
+            self.assertIn("FSV_RESOURCE_BASE_MODELSCOPE", text)
+            self.assertNotIn("Resources.zip", text)
+            self.assertNotIn("LTS", text)
+
+    def test_online_installer_default_name_is_version_independent(self) -> None:
+        self.assertEqual(
+            installer.default_installer_name("LTS1.0.7pre7", online=True),
+            "FlyingSnowVelvet-Online-Installer.exe",
+        )
+        self.assertEqual(
+            installer.default_installer_name("LTS1.0.7pre7", online=False),
+            "FlyingSnowVelvet-LTS1.0.7pre7-Offline-Installer.exe",
+        )
+
+    def test_online_bootstrap_does_not_hardcode_a_resource_archive_name(self) -> None:
+        source = self.native_source()
+        self.assertIn('FSV_UPDATE_MANIFEST_PATH L"updates/latest.json"', source)
+        self.assertNotRegex(source, r"FlyingSnowVelvet-LTS[^\"\\s]*-Resources\\.zip")
+        self.assertNotIn("RESOURCE_URLS", source)
+
+    def test_download_progress_uses_the_embedded_archive_flag(self) -> None:
+        # 在线版 archive_size 来自 latest.json，不等于 0；不能拿它当“内置归档”判据。
+        source = self.native_source()
+        self.assertIn(
+            "g_context.has_embedded_archive ? 100 : 0", source
+        )
+        self.assertNotIn(
+            "g_context.archive_size == FSV_PAYLOAD_ARCHIVE_BYTES", source
+        )
 
     def test_visible_copy_follows_the_compiled_build_mode(self) -> None:
         source = self.native_source()

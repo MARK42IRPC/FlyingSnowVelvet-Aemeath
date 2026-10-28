@@ -22,12 +22,14 @@ os.environ.setdefault(
 )
 os.environ.setdefault("QT_PLUGIN_PATH", os.path.join(_QT_ROOT, "Qt5", "plugins"))
 
-from PyQt5.QtCore import QPoint, Qt
+from PyQt5.QtCore import QPoint, QPointF, Qt
 from PyQt5.QtGui import QMouseEvent
 from PyQt5.QtWidgets import QApplication
+from unittest.mock import patch
 
 from lib.core.event.center import EventType, cleanup_event_center, get_event_center
 from lib.core.render.visuals.resources import ImageResource, RasterFrame
+from lib.core.render.visuals.types import Rect
 from lib.script.ui.world_objects.snow_pile import SnowPile
 
 
@@ -57,6 +59,19 @@ def _right_click(pile: SnowPile) -> None:
         Qt.NoModifier,
     )
     pile.mousePressEvent(event)
+
+
+def _drag(pile: SnowPile, global_x: int) -> None:
+    position = QPoint(pile.width() // 2, pile.height() // 2)
+    event = QMouseEvent(
+        QMouseEvent.MouseMove,
+        position,
+        QPointF(global_x, pile.mapToGlobal(position).y()),
+        Qt.NoButton,
+        Qt.LeftButton,
+        Qt.NoModifier,
+    )
+    pile.mouseMoveEvent(event)
 
 
 class SnowPileSpawnTests(unittest.TestCase):
@@ -107,6 +122,22 @@ class SnowPileSpawnTests(unittest.TestCase):
         pile = _pile()
         try:
             self.assertFalse(hasattr(pile, "_spawn_cb"))
+        finally:
+            pile.close()
+
+    def test_drag_uses_core_rect_fields_for_screen_bounds(self):
+        pile = _pile()
+        try:
+            pile._drag_offset_x = pile.width() // 2
+
+            # screen_rect_for_point 返回核心 Rect，不是 Qt QRect：x/width 是字段。
+            with patch(
+                "lib.core.render.backends.qt.widgets.snow_pile.get_screen_geometry_for_point",
+                return_value=Rect(100, 0, 300, 200),
+            ):
+                _drag(pile, 10_000)
+
+            self.assertEqual(pile.x(), 100 + 300 - pile.width())
         finally:
             pile.close()
 

@@ -22,8 +22,9 @@ os.environ.setdefault(
 )
 os.environ.setdefault("QT_PLUGIN_PATH", os.path.join(_QT_ROOT, "Qt5", "plugins"))
 
-from PyQt5.QtWidgets import QApplication, QPushButton
+from PyQt5.QtWidgets import QApplication, QLabel, QPushButton
 
+from config.version_info import APP_VERSION
 from lib.core.event.center import EventType
 # 更新页的动作（卸载/夸克/QQ 群）已下沉到档位 D 的 `ai_settings_update` 宿主：patch 必须
 # 打在真正的所有者上，面板的转发方法只是调用它们；产品垫片只做再导出。
@@ -62,6 +63,12 @@ class UpdatePageUninstallTests(unittest.TestCase):
         self.assertIn(button, meta["buttons"])
         self.assertEqual(len(meta["section_title_labels"]), 4)
         self.assertEqual(len(meta["section_hint_labels"]), 4)
+
+    def test_update_page_shows_current_version(self):
+        label = self.page.findChild(QLabel, "DesktopPetCurrentVersion")
+
+        self.assertIsNotNone(label, "the stable section must show the running version")
+        self.assertEqual(label.text(), f"当前版本：{APP_VERSION}")
 
     def test_uninstall_without_a_packaged_install_explains_the_manual_step(self):
         with patch.object(panel_module, "resolve_uninstaller", return_value=None), patch.object(

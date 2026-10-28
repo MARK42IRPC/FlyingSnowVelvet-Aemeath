@@ -155,8 +155,8 @@ class SnowLeopard(QWidget):
         """返回雪豹锚点的全局屏幕坐标（水平居中，垂直中心按配置偏移）。"""
         anchor_offset_y = _WORLD_PHYSICS.snow_leopard_anchor_offset_y
         return QPoint(
-            self.x() + self._size[0] // 2,
-            self.y() + self._size[1] // 2 + anchor_offset_y,
+            int(self.x() + self._size[0] // 2),
+            int(self.y() + self._size[1] // 2 + anchor_offset_y),
         )
 
     def is_alive(self) -> bool:

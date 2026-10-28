@@ -13,7 +13,11 @@ from lib.script.app.update_installer import (
     OFFLINE_INSTALLER_TRAILER_FORMAT,
     validate_update_installer,
 )
-from scripts.publish_offline_installer import _old_update_paths, prepare_release
+from scripts.publish_offline_installer import (
+    _old_update_paths,
+    prepare_release,
+    prepare_resource_release,
+)
 
 
 def _write_installer(path: Path) -> None:
@@ -109,6 +113,35 @@ class PublishOfflineInstallerTests(unittest.TestCase):
                     output_dir=root / "publish",
                     manifest=manifest,
                 )
+
+    def test_prepare_resource_release_records_install_estimate(self):
+        # 在线安装器在下载前先读这两个字段做磁盘空间预估；资源 ZIP 的真实
+        # 目录结构由原生解压器在下载后复核。
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            resource = root / "FlyingSnowVelvet-LTS2-Resources.zip"
+            with zipfile.ZipFile(resource, "w") as archive:
+                archive.writestr("app/a.txt", "alpha")
+                archive.writestr("runtime/b.bin", b"bravo" * 16)
+                archive.writestr("empty/", b"")
+
+            target, metadata_path = prepare_resource_release(
+                resource,
+                version="LTS2",
+                revision="commit-123",
+                published_at="2026-09-06T00:00:00Z",
+                output_dir=root / "publish",
+            )
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+
+            self.assertEqual(metadata["kind"], "resources")
+            self.assertEqual(metadata["asset_path"], "updates/" + target.name)
+            self.assertEqual(metadata["file_count"], 2)
+            self.assertEqual(metadata["uncompressed_bytes"], 5 + 80)
+            self.assertEqual(metadata["size"], target.stat().st_size)
+            self.assertEqual(
+                metadata["sha256"], hashlib.sha256(target.read_bytes()).hexdigest()
+            )
 
 
 if __name__ == "__main__":

@@ -18,6 +18,11 @@
 同一 revision 和同一 ZIP SHA-256；更新器只接受清单指定的单文件安装器 ZIP，不接受模型仓库的
 源码归档或其它 ZIP。
 
+在线安装器本身与版本无关：`dist/FlyingSnowVelvet-Online-Installer.exe` 只内嵌发布槽地址，
+安装时读取 `updates/latest.json` 并下载 `asset_path` 指定的资源 ZIP。发新版本时只需发布
+`updates/FlyingSnowVelvet-<version>-Resources.zip` 并更新 `latest.json`，无需重新构建在线
+安装器；只有安装器原生逻辑或发布槽地址变化时才重建一次。
+
 ## 本地构建
 
 构建机需要 Windows、Python 3.11 64 位、Visual Studio 2022 C 工具链，以及网络
@@ -56,6 +61,19 @@ CUDA、NVIDIA、TensorRT 或 `onnxruntime-gpu`。
 & $python scripts/build_offline_installer.py `
   --workspace (Join-Path $build 'workspace') `
   --version (Get-Content config/version_info.py | Select-String 'APP_VERSION' | ForEach-Object { $_.Line.Split('"')[1] })
+```
+
+只重建与版本无关的在线 bootstrap（不需要 payload 工作区）：
+
+```powershell
+& $python scripts/build_offline_installer.py --online
+```
+
+发布在线资源包（资源 ZIP 仍按版本命名，并写入 `latest.json` 的文件数、未压缩体积与 SHA-256）：
+
+```powershell
+& $python scripts/publish_offline_installer.py --resource dist/FlyingSnowVelvet-<version>-Resources.zip `
+  --version <version> --output-dir build/voice-package-publication
 ```
 
 `build_offline_distribution.py` 会把当前仓库源码、Vosk 中英文模型、
@@ -98,7 +116,9 @@ payload；`build_offline_installer.py` 再把内置归档按 4 路固态 LZMA2 �
 
 1. 第一步显示默认目录；选择非空目录时自动创建 `飞行雪绒` 空子目录。
 2. 第二步显示目标空间、归档文件数和可用空间。
-3. 第三步实时显示当前文件、百分比、已解压文件/字节数和 ETA（按最近 2 秒完成的
+3. 在线版在进入第三步前解析 `updates/latest.json`；下载条从 0 开始，按清单的 `size` 校验
+   长度并以 `sha256` 校验内容，随后由归档目录复核文件数与未压缩体积。第三步实时显示当前
+   文件、百分比、已解压文件/字节数和 ETA（按最近 2 秒完成的
    文件数取平均速率估算，每 2 秒刷新一次）；校验达到 100% 后
    必须继续进入原生解压阶段，不得卡在“正在启动自解压”。青色下载条在 100%
    （离线包为内置资源）时居中显示“已完成”，粉色解压条居中显示百分比。解压期间

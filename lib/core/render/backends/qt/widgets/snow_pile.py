@@ -337,8 +337,8 @@ class SnowPile(QWidget):
         if (event.buttons() & Qt.LeftButton) and self._drag_offset_x is not None:
             self._screen_geom = get_screen_geometry_for_point(event.globalPos())
             new_x = event.globalPos().x() - self._drag_offset_x
-            min_x = self._screen_geom.x()
-            max_x = self._screen_geom.x() + self._screen_geom.width() - self._size[0]
+            min_x = int(self._screen_geom.x)
+            max_x = int(self._screen_geom.x + self._screen_geom.width - self._size[0])
             if max_x < min_x:
                 max_x = min_x
             new_x = max(min_x, min(new_x, max_x))

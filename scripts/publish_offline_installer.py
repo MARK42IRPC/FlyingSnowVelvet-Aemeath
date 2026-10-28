@@ -213,11 +213,16 @@ def prepare_resource_release(
     if not _VERSION_RE.fullmatch(version):
         raise SystemExit(f"版本号不能用于发布文件名：{version!r}")
     with zipfile.ZipFile(source) as archive:
+        file_count = 0
+        uncompressed_bytes = 0
         for member in archive.infolist():
             normalized = str(member.filename or "").replace("\\", "/")
             path = Path(normalized)
             if path.is_absolute() or ".." in path.parts:
                 raise SystemExit(f"资源包包含不安全路径：{member.filename}")
+            if not member.is_dir():
+                file_count += 1
+                uncompressed_bytes += int(member.file_size)
     output_dir = Path(output_dir).resolve()
     target = output_dir / "updates" / f"FlyingSnowVelvet-{version}-Resources.zip"
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -233,6 +238,11 @@ def prepare_resource_release(
         "asset_path": target.relative_to(output_dir).as_posix(),
         "size": target.stat().st_size,
         "sha256": _sha256(target),
+        # The online bootstrap uses these two counters for its disk-space
+        # estimate before the ZIP is downloaded.  Older manifests may omit
+        # them; the native installer then falls back to the archive itself.
+        "file_count": file_count,
+        "uncompressed_bytes": uncompressed_bytes,
         "kind": "resources",
     }
     metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

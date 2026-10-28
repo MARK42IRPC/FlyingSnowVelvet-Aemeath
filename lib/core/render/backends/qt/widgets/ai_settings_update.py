@@ -22,6 +22,7 @@ from PyQt5.QtWidgets import QHBoxLayout, QLabel, QPushButton, QWidget
 from config.config import UI
 from config.scale import scale_px
 from config.shared_storage_paths import get_shared_root_dir
+from config.version_info import APP_VERSION
 from lib.core.event.center import Event, EventType
 from lib.core.render.backends.qt.widgets import tier_d_seams
 from lib.core.render.backends.qt.widgets.workbench_settings_layout import SettingsPageScaffold
@@ -111,6 +112,10 @@ def build_desktop_pet_update_panel(
             "更新只覆盖程序文件，用户数据、配置和缓存都不受影响。"
         ),
     )
+    current_version_label = QLabel(f"当前版本：{APP_VERSION}", stable_section)
+    current_version_label.setObjectName("DesktopPetCurrentVersion")
+    current_version_label.setWordWrap(True)
+    stable_section.body_layout.addWidget(current_version_label)
     stable_row = QHBoxLayout()
     stable_row.setContentsMargins(0, 0, 0, 0)
     stable_row.setSpacing(scale_px(8, min_abs=6))

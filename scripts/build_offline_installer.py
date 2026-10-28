@@ -141,12 +141,17 @@ def _write_installer_theme_header(output: Path) -> None:
         )
     output.write_text("\n".join(lines) + "\n", encoding="ascii")
 
-def _write_resource_urls_header(output: Path, version: str) -> None:
-    name = f"FlyingSnowVelvet-{version}-Resources.zip"
+def _write_resource_urls_header(output: Path) -> None:
+    """Write the two version-agnostic release-slot bases.
+
+    The online installer resolves ``updates/latest.json`` at install time and
+    downloads whichever resource ZIP that manifest names, so the EXE no longer
+    carries the version of the payload it was built beside.
+    """
     output.write_text(
         "#pragma once\n"
-        f'#define FSV_RESOURCE_URL_HF L"https://huggingface.co/Mark42IRP/Aemeath_onnx_GSV_model/resolve/main/updates/{name}"\n'
-        f'#define FSV_RESOURCE_URL_MODELSCOPE L"https://www.modelscope.cn/models/Mark42IRPC/GSV_onnx_Aemeath_Pack/resolve/master/updates/{name}"\n',
+        '#define FSV_RESOURCE_BASE_HF L"https://huggingface.co/Mark42IRP/Aemeath_onnx_GSV_model/resolve/main/"\n'
+        '#define FSV_RESOURCE_BASE_MODELSCOPE L"https://www.modelscope.cn/models/Mark42IRPC/GSV_onnx_Aemeath_Pack/resolve/master/"\n',
         encoding="ascii",
     )
 
@@ -870,7 +875,7 @@ def compile_payload_binaries(
 
 
 def _write_payload_info_header(
-    payload: Path,
+    payload: Path | None,
     archive: Path | None,
     output: Path,
     *,
@@ -879,28 +884,38 @@ def _write_payload_info_header(
     """烘焙安装器要用的 payload 常量。
 
     ``archive`` 只有在离线版才是那个内置的完整归档：在线版 EXE 里只有几百字节的 bootstrap
-    marker，完整资源包是安装时另外下的，所以 ``FSV_PAYLOAD_ARCHIVE_BYTES`` 写成哨兵 0。
-    原生安装器只拿它把「归档就在 EXE 里」与「归档要另外下载」分开（``set_payload`` 与下载
-    进度条的初值），真值由 ``FSV_ONLINE_BUILD`` 决定。文件数与未压缩字节数两种模式都要：
-    它们决定磁盘空间预估与解压进度。
+    marker，完整资源包由安装器按 ``updates/latest.json`` 在安装时下载。在线版的三个 payload
+    常量都写成 0，EXE 因此与具体版本、payload 文件数都无关，可以打一次长期复用；文件数、
+    压缩大小与未压缩字节数由安装器读取清单后填入，用于空间预估与解压进度。
     """
     if online and archive is not None:
         raise SystemExit("在线版不带内置归档，不该传 archive")
+    if online:
+        output.write_text(
+            "#pragma once\n\n"
+            "#define FSV_PAYLOAD_ARCHIVE_BYTES ((ULONGLONG)0ULL)\n"
+            "#define FSV_PAYLOAD_FILE_COUNT ((ULONGLONG)0ULL)\n"
+            "#define FSV_PAYLOAD_UNCOMPRESSED_BYTES ((ULONGLONG)0ULL)\n"
+            "#define FSV_ONLINE_BUILD 1\n",
+            encoding="ascii",
+        )
+        return
+    if payload is None:
+        raise SystemExit("离线版必须提供 payload")
     if not online and archive is None:
         raise SystemExit("离线版必须提供内置归档")
     entries = _archive_entries(payload)
     total_bytes = sum(source.stat().st_size for source, _ in entries)
-    archive_bytes = 0 if archive is None else archive.stat().st_size
     output.write_text(
         "#pragma once\n\n"
-        f"#define FSV_PAYLOAD_ARCHIVE_BYTES ((ULONGLONG){archive_bytes}ULL)\n"
+        f"#define FSV_PAYLOAD_ARCHIVE_BYTES ((ULONGLONG){archive.stat().st_size}ULL)\n"
         f"#define FSV_PAYLOAD_FILE_COUNT ((ULONGLONG){len(entries)}ULL)\n"
         f"#define FSV_PAYLOAD_UNCOMPRESSED_BYTES ((ULONGLONG){total_bytes}ULL)\n"
         # The build mode is baked in rather than derived from the payload size:
         # the wizard paints its first page before it reads the trailer, so a
         # size comparison showed the online wording on the offline installer's
         # opening screen.
-        f"#define FSV_ONLINE_BUILD {1 if online else 0}\n",
+        "#define FSV_ONLINE_BUILD 0\n",
         encoding="ascii",
     )
 
@@ -930,9 +945,8 @@ def _compile_zlib(zlib_root: Path, vsdevcmd: Path, compile_root: Path) -> Path:
 
 
 def compile_installer(
-    payload: Path,
+    payload: Path | None,
     archive: Path | None,
-    version: str,
     installer_source: Path,
     icon_source: Path,
     vsdevcmd: Path,
@@ -960,7 +974,7 @@ def compile_installer(
     create_installer_font_subset(installer_font)
     shutil.copy2(installer_font, compile_root / "HarmonyOS_Sans_SC_Bold.ttf")
     _write_installer_theme_header(compile_root / "installer_theme.h")
-    _write_resource_urls_header(compile_root / "resource_urls.h", version)
+    _write_resource_urls_header(compile_root / "resource_urls.h")
     _write_payload_info_header(
         payload, archive, compile_root / "payload_info.h", online=online
     )
@@ -1037,7 +1051,7 @@ def create_online_marker_archive(archive: Path) -> None:
 
 
 def _package_once(
-    payload: Path,
+    payload: Path | None,
     output: Path,
     *,
     version: str,
@@ -1055,38 +1069,42 @@ def _package_once(
     的排序决定，打包自己生成的文件按 ``PACKAGED_FILE_MTIME`` 写归档条目；调用方用两次
     产物的哈希比对来证明这一点（见 ``_verify_reproducible``）。
     """
-    workspace = payload.parent
-    compile_payload_binaries(
-        payload,
-        installer_source,
-        icon_source,
-        vsdevcmd,
-        compile_root / "payload-binaries",
-    )
-    ensure_payload_marker(workspace, payload)
+    workspace = None if payload is None else payload.parent
+    if payload is not None:
+        compile_payload_binaries(
+            payload,
+            installer_source,
+            icon_source,
+            vsdevcmd,
+            compile_root / "payload-binaries",
+        )
+        ensure_payload_marker(workspace, payload)
     # 在线版不带内置归档，只塞一个几百字节的 bootstrap marker，所以完全不建分片归档：
     # 那一步要把整份 payload 压一遍（发行构建里最长的一段），在线版压完就丢。
     archive = None
-    if not online:
+    if not online and payload is not None:
         archive = workspace / "build" / "payload.zip"
         create_archive(payload, archive)
     base_executable = compile_installer(
         payload,
         archive,
-        version,
         installer_source,
         icon_source,
         vsdevcmd,
         compile_root / "installer",
         online=online,
     )
-    # The online build deliberately carries only a tiny marker archive.  Full
-    # desktop/runtime files are distributed through the resource ZIP produced
-    # alongside this executable.
     if online:
-        online_archive = workspace / "build" / "online-marker.zip"
+        # The online build carries only a tiny marker archive.  Full
+        # desktop/runtime files are distributed through the resource ZIP
+        # produced alongside this executable, or by the per-release resource
+        # build when this is a standalone bootstrap rebuild.
+        marker_workspace = workspace if workspace is not None else output.parent
+        online_archive = marker_workspace / "build" / "online-marker.zip"
         create_online_marker_archive(online_archive)
         append_payload(base_executable, online_archive, output)
+        if payload is None:
+            return (output,)
         resource = output.parent / f"FlyingSnowVelvet-{version}-Resources.zip"
         create_resource_archive(payload, resource, sharded=resource_sharded)
         return (output, resource)
@@ -1122,9 +1140,24 @@ def _verify_reproducible(
     return digests
 
 
+def default_installer_name(version: str, *, online: bool) -> str:
+    """Return the release-slot installer filename for the requested mode.
+
+    The online bootstrap resolves the payload version from ``latest.json`` at
+    install time, so its name must not change from one release to the next.
+    """
+    if online:
+        return "FlyingSnowVelvet-Online-Installer.exe"
+    return f"FlyingSnowVelvet-{version}-Offline-Installer.exe"
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--workspace", type=Path, required=True)
+    parser.add_argument(
+        "--workspace",
+        type=Path,
+        help="payload 工作区；在线版可省略，只重建一个与版本无关的 bootstrap",
+    )
     parser.add_argument("--output", type=Path)
     parser.add_argument(
         "--version",
@@ -1165,15 +1198,19 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    workspace = args.workspace.resolve()
-    payload = workspace / "payload"
-    compile_root = workspace / "build" / ".installer-compile"
-    try:
-        workspace_manifest = json.loads((workspace / "manifest.json").read_text(encoding="utf-8"))
-    except (OSError, TypeError, ValueError) as exc:
-        raise SystemExit(f"发行版 manifest 无效：{workspace / 'manifest.json'}") from exc
-    manifest_version = str(workspace_manifest.get("version") or "").strip()
+    workspace = args.workspace.resolve() if args.workspace else None
+    payload = None
+    manifest_version = ""
+    if workspace is not None:
+        payload = workspace / "payload"
+        try:
+            workspace_manifest = json.loads((workspace / "manifest.json").read_text(encoding="utf-8"))
+        except (OSError, TypeError, ValueError) as exc:
+            raise SystemExit(f"发行版 manifest 无效：{workspace / 'manifest.json'}") from exc
+        manifest_version = str(workspace_manifest.get("version") or "").strip()
     version = str(args.version or manifest_version).strip()
+    if args.online and not version:
+        version = "Online"
     if not version or not re.fullmatch(r"[A-Za-z0-9._+-]+", version):
         raise SystemExit(f"发行版本不能用于安装器文件名：{version!r}")
     if manifest_version and version != manifest_version:
@@ -1181,15 +1218,23 @@ def main(argv: list[str] | None = None) -> int:
             "命令行版本与 workspace manifest 不一致："
             f"{version!r} != {manifest_version!r}"
         )
-    suffix = "Online-Installer" if args.online else "Offline-Installer"
-    output = (args.output or PRODUCT_ROOT / "dist" / f"FlyingSnowVelvet-{version}-{suffix}.exe").resolve()
+    output = (
+        args.output
+        or PRODUCT_ROOT / "dist" / default_installer_name(version, online=args.online)
+    ).resolve()
     installer_source = args.installer_source.resolve()
     icon_source = args.icon.resolve()
-    if not payload.is_dir():
+    if payload is not None and not payload.is_dir():
         raise SystemExit(f"缺少 payload：{payload}")
+    if args.online and payload is None:
+        # Reusing the online bootstrap must not depend on a staged payload.
+        # It embeds only the marker; releases ship the resource ZIP separately.
+        args.skip_launch_check = True
+    if not args.online and payload is None:
+        raise SystemExit("离线版必须提供 --workspace 与其中的 payload")
     if not icon_source.is_file():
         raise SystemExit(f"缺少程序图标：{icon_source}")
-    if not args.skip_launch_check:
+    if not args.skip_launch_check and workspace is not None:
         # 打包之前先让 payload 自己跑一遍：真实启动 + 工作台、办公窗口、论坛、粒子与
         # 各项服务。它比逐文件哈希更能说明这份包能不能用。
         if str(PRODUCT_ROOT) not in sys.path:
@@ -1201,6 +1246,11 @@ def main(argv: list[str] | None = None) -> int:
         verify_payload_runtime(workspace, log=print)
     _prepare_native_sources(installer_source)
     vsdevcmd = find_vsdevcmd(args.vsdevcmd.resolve() if args.vsdevcmd else None)
+    compile_root = (
+        workspace / "build" / ".installer-compile"
+        if workspace is not None
+        else PRODUCT_ROOT / "build" / "online-installer-compile"
+    )
     if compile_root.exists():
         shutil.rmtree(compile_root)
     compile_root.mkdir(parents=True)

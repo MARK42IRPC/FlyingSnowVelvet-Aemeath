@@ -75,11 +75,27 @@ Qt/Node 子树。纯 Python `jieba`、`jieba_fast` 的关键词抽取与 SWIG �
 但更早的客户端只会把分片归档里的占位条目解成空文件。等所有在用客户端都升级到读得懂分片的
 版本后，构建时加 `--resource-sharded` 即可让资源包改用同一套 LZMA2 分片布局。
 
-在线版 EXE 不生成这份分片归档：它内嵌的只是一个几百字节的 bootstrap marker
-（`.fsv-online-resource-required` + `.fsv-install-root`），完整资源包由安装器按内置镜像 URL
-另下，所以打包时不再把整份 payload 压一遍。烘焙给原生安装器的 `FSV_PAYLOAD_ARCHIVE_BYTES`
-在在线版写成哨兵 `0`，`main.c` 只拿它把「归档就在 EXE 里」与「归档要另外下载」分开
-（离线版写入真实归档大小）；文件数与未压缩字节数两种模式都会写，它们决定空间预估与解压进度。
+在线版 EXE 不生成这份分片归档，也不绑定版本：它内嵌的只是一个几百字节的 bootstrap marker
+（`.fsv-online-resource-required` + `.fsv-install-root`），安装时从两个固定发布槽读取
+`updates/latest.json`，再按清单里的 `asset_path`、`size` 与 `sha256` 下载当前资源包。
+因此同一份 `dist/FlyingSnowVelvet-Online-Installer.exe` 可跨版本复用；新增版本只需发布新的
+`updates/FlyingSnowVelvet-<version>-Resources.zip` 并把 `latest.json` 指向它。
+
+在线版的 `payload_info.h` 把 `FSV_PAYLOAD_ARCHIVE_BYTES`、`FSV_PAYLOAD_FILE_COUNT` 和
+`FSV_PAYLOAD_UNCOMPRESSED_BYTES` 全部写成 `0`，`resource_urls.h` 也只含发布槽根地址，
+不含版本或文件名。原生安装器用 `FSV_ONLINE_BUILD` 而不是这些常量判断构建模式：在线模式在
+进入向导第二步时解析清单，用 `file_count` / `uncompressed_bytes` 做空间预估（旧清单可缺省，
+下载后由 `fsv_zip_get_statistics()` 按真实目录复核）；下载完成后再校验长度与 SHA-256。
+发布脚本 `scripts/publish_offline_installer.py --resource` 会写入这两个统计字段。
+
+需要单独重建在线 bootstrap 时，不必准备 payload 工作区：
+
+```powershell
+python scripts/build_offline_installer.py --online
+```
+
+默认输出 `dist/FlyingSnowVelvet-Online-Installer.exe`；带 `--workspace` 时仍会顺带生成
+该版本的资源包，供发布脚本使用。离线版继续按版本命名并内置完整归档。
 
 原生安装器执行顺序：
 
@@ -89,6 +105,8 @@ Qt/Node 子树。纯 Python `jieba`、`jieba_fast` 的关键词抽取与 SWIG �
 3. 工作线程复制并校验内置归档，调用内置 ZIP/Deflate/LZMA2/Zip64 解压器，实时报告当前
    文件、百分比、已解压文件/字节数和 ETA。校验进度达到 100% 后仍会继续进入解压阶段，
    不启动外部自解压程序。
+   在线版先下载并 SHA-256 校验 `latest.json` 指定的资源包，再走同一解压器；青色下载条
+   从 0 开始，离线版因归档内置而直接显示“已完成”。
 4. 在同一卷临时目录完成 marker、Python、启动器、卸载器校验后原子切换目录；失败时
    清理本次临时目录并保留旧安装。
 5. 显示“安装完成”，只有用户点击“退出安装并启动飞行雪绒”才启动包内 launcher。

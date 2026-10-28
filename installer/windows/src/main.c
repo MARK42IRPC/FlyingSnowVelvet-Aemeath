@@ -31,9 +31,9 @@
 #include "resource_urls.h"
 #endif
 #endif
-#ifndef FSV_RESOURCE_URL_HF
-#define FSV_RESOURCE_URL_HF L"https://huggingface.co/Mark42IRP/Aemeath_onnx_GSV_model/resolve/main/updates/FlyingSnowVelvet-LTS1.0.7pre7-Resources.zip"
-#define FSV_RESOURCE_URL_MODELSCOPE L"https://www.modelscope.cn/models/Mark42IRPC/GSV_onnx_Aemeath_Pack/resolve/master/updates/FlyingSnowVelvet-LTS1.0.7pre7-Resources.zip"
+#ifndef FSV_RESOURCE_BASE_HF
+#define FSV_RESOURCE_BASE_HF L"https://huggingface.co/Mark42IRP/Aemeath_onnx_GSV_model/resolve/main/"
+#define FSV_RESOURCE_BASE_MODELSCOPE L"https://www.modelscope.cn/models/Mark42IRPC/GSV_onnx_Aemeath_Pack/resolve/master/"
 #endif
 #include "zip_extract.h"
 
@@ -63,10 +63,13 @@ static wchar_t g_log_path[FSV_PATH_CAPACITY];
 #define FSV_CLIENT_WIDTH 880
 #define FSV_CLIENT_HEIGHT 568
 
-/* Keep both mirrors version agnostic: the release slot's latest manifest is
- * resolved by the updater, while the online bootstrap uses the current asset
- * name injected by the build through resource URLs below. */
-static const wchar_t RESOURCE_URLS[][FSV_PATH_CAPACITY] = { FSV_RESOURCE_URL_HF, FSV_RESOURCE_URL_MODELSCOPE };
+/* Both mirrors are release-slot roots.  The online bootstrap resolves
+ * ``updates/latest.json`` at install time and downloads whatever resource ZIP
+ * it names, so one EXE keeps working across application versions. */
+static const wchar_t RESOURCE_BASE_URLS[][FSV_PATH_CAPACITY] = { FSV_RESOURCE_BASE_HF, FSV_RESOURCE_BASE_MODELSCOPE };
+#define FSV_UPDATE_MANIFEST_PATH L"updates/latest.json"
+#define FSV_RESOURCE_MANIFEST_CAPACITY 65536U
+#define FSV_RESOURCE_NAME_CAPACITY 256U
 
 #define IDC_PATH_EDIT 1001
 #define IDC_CUSTOM 1002
@@ -121,6 +124,12 @@ typedef struct InstallContext {
     ULONGLONG required_bytes;
     ULONGLONG total_files;
     ULONGLONG total_bytes;
+    /* Present only in the version-agnostic online bootstrap: the resource ZIP
+       chosen by updates/latest.json and its expected digest. */
+    char resource_path[FSV_RESOURCE_NAME_CAPACITY + 40];
+    BYTE resource_sha256[32];
+    BOOL resource_resolved;
+    BOOL has_embedded_archive;
     BOOL installed;
     BOOL installing;
     BOOL completed;
@@ -891,38 +900,323 @@ static BOOL payload_marker_ready(const wchar_t *staging) {
         is_regular_file(launcher) && is_regular_file(uninstaller);
 }
 
-static BOOL download_resource_archive(const wchar_t *archive_path) {
+static BOOL read_json_string(const char *json, const char *key, char *output, size_t capacity) {
+    char pattern[64];
+    const char *cursor;
+    size_t used = 0;
+    if (FAILED(StringCchPrintfA(pattern, ARRAYSIZE(pattern), "\"%s\"", key))) {
+        return FALSE;
+    }
+    cursor = strstr(json, pattern);
+    if (cursor == NULL) return FALSE;
+    cursor += strlen(pattern);
+    while (*cursor == ' ' || *cursor == '\t' || *cursor == '\r' || *cursor == '\n') ++cursor;
+    if (*cursor != ':') return FALSE;
+    ++cursor;
+    while (*cursor == ' ' || *cursor == '\t' || *cursor == '\r' || *cursor == '\n') ++cursor;
+    if (*cursor != '"') return FALSE;
+    ++cursor;
+    while (*cursor != '\0' && *cursor != '"') {
+        if ((unsigned char)*cursor < 0x20 || (unsigned char)*cursor > 0x7e || used + 1 >= capacity) {
+            return FALSE;
+        }
+        output[used++] = *cursor++;
+    }
+    if (*cursor != '"' || used == 0) return FALSE;
+    output[used] = '\0';
+    return TRUE;
+}
+
+static BOOL join_url(const wchar_t *base, const char *relative, wchar_t *output, size_t capacity) {
+    size_t length = wcslen(base);
+    wchar_t wide_relative[FSV_PATH_CAPACITY];
+    if (length > 0 && (base[length - 1] == L'\\' || base[length - 1] == L'/')) {
+        --length;
+    }
+    if (MultiByteToWideChar(CP_UTF8, 0, relative, -1, wide_relative, ARRAYSIZE(wide_relative)) <= 0) {
+        SetLastError(ERROR_NO_UNICODE_TRANSLATION);
+        return FALSE;
+    }
+    return SUCCEEDED(StringCchPrintfW(output, capacity, L"%.*ls/%ls", (int)length, base, wide_relative));
+}
+
+static BOOL read_json_u64(const char *json, const char *key, ULONGLONG *value) {
+    char pattern[64];
+    const char *cursor;
+    char *end = NULL;
+    if (FAILED(StringCchPrintfA(pattern, ARRAYSIZE(pattern), "\"%s\"", key))) {
+        return FALSE;
+    }
+    cursor = strstr(json, pattern);
+    if (cursor == NULL) return FALSE;
+    cursor += strlen(pattern);
+    while (*cursor == ' ' || *cursor == '\t' || *cursor == '\r' || *cursor == '\n') ++cursor;
+    if (*cursor != ':') return FALSE;
+    ++cursor;
+    while (*cursor == ' ' || *cursor == '\t' || *cursor == '\r' || *cursor == '\n') ++cursor;
+    if (*cursor < '0' || *cursor > '9') return FALSE;
+    *value = _strtoui64(cursor, &end, 10);
+    return end != NULL && end != cursor;
+}
+
+static BOOL parse_sha256(const char *text, BYTE hash[32]) {
+    size_t index;
+    if (strlen(text) != 64) return FALSE;
+    for (index = 0; index < 32; ++index) {
+        int high = text[index * 2];
+        int low = text[index * 2 + 1];
+        if (high >= '0' && high <= '9') high -= '0';
+        else if (high >= 'a' && high <= 'f') high = high - 'a' + 10;
+        else if (high >= 'A' && high <= 'F') high = high - 'A' + 10;
+        else return FALSE;
+        if (low >= '0' && low <= '9') low -= '0';
+        else if (low >= 'a' && low <= 'f') low = low - 'a' + 10;
+        else if (low >= 'A' && low <= 'F') low = low - 'A' + 10;
+        else return FALSE;
+        hash[index] = (BYTE)((high << 4) | low);
+    }
+    return TRUE;
+}
+
+static BOOL asset_name_is_resource(const char *name) {
+    static const char prefix[] = "FlyingSnowVelvet-";
+    static const char suffix[] = "-Resources.zip";
+    size_t name_length = strlen(name);
+    size_t prefix_length = sizeof(prefix) - 1;
+    size_t suffix_length = sizeof(suffix) - 1;
+    size_t index;
+    if (name_length <= prefix_length + suffix_length ||
+        strncmp(name, prefix, prefix_length) != 0 ||
+        strcmp(name + name_length - suffix_length, suffix) != 0) {
+        return FALSE;
+    }
+    for (index = prefix_length; index < name_length - suffix_length; ++index) {
+        char character = name[index];
+        if (!((character >= '0' && character <= '9') ||
+              (character >= 'A' && character <= 'Z') ||
+              (character >= 'a' && character <= 'z') ||
+              character == '.' || character == '_' || character == '+' || character == '-')) {
+            return FALSE;
+        }
+    }
+    return TRUE;
+}
+
+static BOOL resource_path_matches(const char *path, const char *name) {
+    static const char prefix[] = "updates/";
+    size_t path_length = strlen(path);
+    size_t name_length = strlen(name);
+    size_t prefix_length = sizeof(prefix) - 1;
+    size_t index;
+    if (path_length != prefix_length + name_length ||
+        strncmp(path, prefix, prefix_length) != 0 ||
+        strcmp(path + prefix_length, name) != 0) {
+        return FALSE;
+    }
+    for (index = prefix_length; index < path_length; ++index) {
+        if (path[index] == '\\' || path[index] == ':') {
+            return FALSE;
+        }
+    }
+    return TRUE;
+}
+
+static BOOL fetch_manifest_url(const wchar_t *url, char *buffer, size_t capacity, size_t *length) {
+    HINTERNET internet = NULL;
+    HINTERNET request = NULL;
+    DWORD status = 0;
+    DWORD status_size = sizeof(status);
+    DWORD content_length = 0;
+    DWORD content_size = sizeof(content_length);
+    DWORD timeout = 4000;
+    size_t used = 0;
+    BOOL success = FALSE;
+    buffer[0] = '\0';
+    internet = InternetOpenW(L"FlyingSnowVelvetInstaller/1.0", INTERNET_OPEN_TYPE_PRECONFIG, NULL, NULL, 0);
+    if (internet == NULL) return FALSE;
+    InternetSetOptionW(internet, INTERNET_OPTION_CONNECT_TIMEOUT, &timeout, sizeof(timeout));
+    InternetSetOptionW(internet, INTERNET_OPTION_RECEIVE_TIMEOUT, &timeout, sizeof(timeout));
+    request = InternetOpenUrlW(internet, url, NULL, 0,
+        INTERNET_FLAG_RELOAD | INTERNET_FLAG_NO_CACHE_WRITE | INTERNET_FLAG_RESYNCHRONIZE, 0);
+    if (request == NULL) goto cleanup;
+    if (!HttpQueryInfoW(request, HTTP_QUERY_STATUS_CODE | HTTP_QUERY_FLAG_NUMBER, &status, &status_size, NULL) ||
+        status < 200 || status >= 300) {
+        SetLastError(ERROR_HTTP_INVALID_SERVER_RESPONSE);
+        goto cleanup;
+    }
+    if (HttpQueryInfoW(request, HTTP_QUERY_CONTENT_LENGTH | HTTP_QUERY_FLAG_NUMBER,
+                       &content_length, &content_size, NULL) &&
+        content_length >= capacity) {
+        SetLastError(ERROR_FILE_TOO_LARGE);
+        goto cleanup;
+    }
+    for (;;) {
+        DWORD read = 0;
+        if (!InternetReadFile(request, buffer + used, (DWORD)(capacity - 1 - used), &read)) goto cleanup;
+        if (read == 0) break;
+        used += read;
+        if (used + 1 >= capacity) {
+            SetLastError(ERROR_FILE_TOO_LARGE);
+            goto cleanup;
+        }
+    }
+    buffer[used] = '\0';
+    *length = used;
+    success = TRUE;
+cleanup:
+    if (request != NULL) InternetCloseHandle(request);
+    if (internet != NULL) InternetCloseHandle(internet);
+    return success;
+}
+
+static BOOL resolve_online_resource(
+    char *asset_path,
+    size_t path_capacity,
+    ULONGLONG *archive_size,
+    ULONGLONG *file_count,
+    ULONGLONG *uncompressed_bytes,
+    BYTE expected_hash[32]
+) {
+    char *buffer = (char *)HeapAlloc(GetProcessHeap(), 0, FSV_RESOURCE_MANIFEST_CAPACITY);
+    size_t mirror;
+    BOOL success = FALSE;
+    if (buffer == NULL) {
+        SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+        return FALSE;
+    }
+    for (mirror = 0; mirror < ARRAYSIZE(RESOURCE_BASE_URLS); ++mirror) {
+        wchar_t url[FSV_PATH_CAPACITY];
+        char name[FSV_RESOURCE_NAME_CAPACITY];
+        char path[FSV_RESOURCE_NAME_CAPACITY + 16];
+        char digest[80];
+        size_t length = 0;
+        ULONGLONG size = 0;
+        ULONGLONG files = 0;
+        ULONGLONG bytes = 0;
+        if (!join_url(RESOURCE_BASE_URLS[mirror], "updates/latest.json", url, ARRAYSIZE(url))) {
+            continue;
+        }
+        SetLastError(ERROR_SUCCESS);
+        if (!fetch_manifest_url(url, buffer, FSV_RESOURCE_MANIFEST_CAPACITY, &length)) {
+            installer_log_error(L"读取更新清单失败", GetLastError());
+            continue;
+        }
+        if (!read_json_string(buffer, "asset_name", name, ARRAYSIZE(name)) ||
+            !read_json_string(buffer, "asset_path", path, ARRAYSIZE(path)) ||
+            !read_json_string(buffer, "sha256", digest, ARRAYSIZE(digest)) ||
+            !asset_name_is_resource(name) ||
+            !read_json_u64(buffer, "size", &size) || size == 0 ||
+            !resource_path_matches(path, name) ||
+            !parse_sha256(digest, expected_hash)) {
+            installer_log(L"更新清单内容无效");
+            continue;
+        }
+        if (strlen(path) >= path_capacity) {
+            SetLastError(ERROR_BUFFER_OVERFLOW);
+            continue;
+        }
+        read_json_u64(buffer, "file_count", &files);
+        read_json_u64(buffer, "uncompressed_bytes", &bytes);
+        StringCchCopyA(asset_path, path_capacity, path);
+        *archive_size = size;
+        *file_count = files;
+        *uncompressed_bytes = bytes;
+        installer_log(L"已解析更新清单");
+        success = TRUE;
+        break;
+    }
+    if (!success) {
+        SetLastError(ERROR_HTTP_INVALID_SERVER_RESPONSE);
+    }
+    HeapFree(GetProcessHeap(), 0, buffer);
+    return success;
+}
+
+static BOOL sha256_file_matches(const wchar_t *path, const BYTE expected_hash[32]) {
+    BCRYPT_ALG_HANDLE algorithm = NULL;
+    BCRYPT_HASH_HANDLE hash = NULL;
+    PUCHAR hash_object = NULL;
+    DWORD hash_object_size = 0;
+    DWORD ignored_size = 0;
+    NTSTATUS status;
+    HANDLE file = INVALID_HANDLE_VALUE;
+    BYTE *buffer = NULL;
+    BYTE actual_hash[32];
+    BOOL success = FALSE;
+    file = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (file == INVALID_HANDLE_VALUE) return FALSE;
+    if (BCryptOpenAlgorithmProvider(&algorithm, BCRYPT_SHA256_ALGORITHM, NULL, 0) != 0 ||
+        BCryptGetProperty(algorithm, BCRYPT_OBJECT_LENGTH, (PUCHAR)&hash_object_size,
+                          sizeof(hash_object_size), &ignored_size, 0) != 0) {
+        SetLastError(ERROR_DLL_INIT_FAILED);
+        goto cleanup;
+    }
+    hash_object = (PUCHAR)HeapAlloc(GetProcessHeap(), 0, hash_object_size);
+    buffer = (BYTE *)HeapAlloc(GetProcessHeap(), 0, ARCHIVE_BUFFER_SIZE);
+    if (hash_object == NULL || buffer == NULL ||
+        BCryptCreateHash(algorithm, &hash, hash_object, hash_object_size, NULL, 0, 0) != 0) {
+        SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+        goto cleanup;
+    }
+    for (;;) {
+        DWORD read = 0;
+        if (!ReadFile(file, buffer, ARCHIVE_BUFFER_SIZE, &read, NULL)) goto cleanup;
+        if (read == 0) break;
+        if (BCryptHashData(hash, buffer, read, 0) != 0) goto cleanup;
+    }
+    status = BCryptFinishHash(hash, actual_hash, sizeof(actual_hash), 0);
+    if (status != 0 || memcmp(actual_hash, expected_hash, sizeof(actual_hash)) != 0) {
+        SetLastError(ERROR_CRC);
+        goto cleanup;
+    }
+    success = TRUE;
+cleanup:
+    if (file != INVALID_HANDLE_VALUE) CloseHandle(file);
+    if (hash != NULL) BCryptDestroyHash(hash);
+    if (algorithm != NULL) BCryptCloseAlgorithmProvider(algorithm, 0);
+    if (hash_object != NULL) HeapFree(GetProcessHeap(), 0, hash_object);
+    if (buffer != NULL) HeapFree(GetProcessHeap(), 0, buffer);
+    return success;
+}
+
+static BOOL download_resource_archive(const char *asset_path, ULONGLONG expected_bytes, const wchar_t *archive_path) {
     DWORD index;
     BOOL success = FALSE;
     DWORD last_error = ERROR_INTERNET_CANNOT_CONNECT;
     /* Interleave mirrors across four bounded timeout rounds: 2s, 4s, 8s,
        16s. A failed fast mirror immediately gives the other mirror a turn. */
-    for (index = 0; index < ARRAYSIZE(RESOURCE_URLS) * 4; ++index) {
-        DWORD mirror_index = index % ARRAYSIZE(RESOURCE_URLS);
-        DWORD attempt = index / ARRAYSIZE(RESOURCE_URLS);
+    for (index = 0; index < ARRAYSIZE(RESOURCE_BASE_URLS) * 4; ++index) {
+        DWORD mirror_index = index % ARRAYSIZE(RESOURCE_BASE_URLS);
+        DWORD attempt = index / ARRAYSIZE(RESOURCE_BASE_URLS);
         HINTERNET internet = NULL;
         HINTERNET request = NULL;
         HANDLE output = INVALID_HANDLE_VALUE;
         wchar_t detail[FSV_PATH_CAPACITY + 128];
+        wchar_t url[FSV_PATH_CAPACITY];
         DWORD timeout = 2000u << attempt;
         DWORD receive_timeout = 2000u << attempt;
         DWORD status = 0;
         DWORD status_size = sizeof(status);
         DWORD content_length = 0;
         DWORD content_size = sizeof(content_length);
+        ULONGLONG expected_length = expected_bytes;
         ULONGLONG received = 0;
         ULONGLONG last_reported = 0;
         DWORD started_ms = GetTickCount();
         BYTE *buffer = NULL;
         installer_log(L"资源下载开始");
-        StringCchPrintfW(detail, ARRAYSIZE(detail), L"镜像 %lu，第 %lu 轮：%ls", mirror_index + 1, attempt + 1, RESOURCE_URLS[mirror_index]);
+        if (!join_url(RESOURCE_BASE_URLS[mirror_index], asset_path, url, ARRAYSIZE(url))) {
+            last_error = ERROR_BUFFER_OVERFLOW;
+            continue;
+        }
+        StringCchPrintfW(detail, ARRAYSIZE(detail), L"镜像 %lu，第 %lu 轮：%ls", mirror_index + 1, attempt + 1, url);
         installer_log(detail);
         DeleteFileW(archive_path);
         internet = InternetOpenW(L"FlyingSnowVelvetInstaller/1.0", INTERNET_OPEN_TYPE_PRECONFIG, NULL, NULL, 0);
         if (internet == NULL) { last_error = GetLastError(); installer_log_error(L"InternetOpenW 失败", last_error); continue; }
         InternetSetOptionW(internet, INTERNET_OPTION_CONNECT_TIMEOUT, &timeout, sizeof(timeout));
         InternetSetOptionW(internet, INTERNET_OPTION_RECEIVE_TIMEOUT, &receive_timeout, sizeof(receive_timeout));
-        request = InternetOpenUrlW(internet, RESOURCE_URLS[mirror_index], NULL, 0, INTERNET_FLAG_RELOAD | INTERNET_FLAG_NO_CACHE_WRITE | INTERNET_FLAG_RESYNCHRONIZE, 0);
+        request = InternetOpenUrlW(internet, url, NULL, 0, INTERNET_FLAG_RELOAD | INTERNET_FLAG_NO_CACHE_WRITE | INTERNET_FLAG_RESYNCHRONIZE, 0);
         if (request == NULL) { last_error = GetLastError(); installer_log_error(L"InternetOpenUrlW 失败", last_error); InternetCloseHandle(internet); continue; }
         if (!HttpQueryInfoW(request, HTTP_QUERY_STATUS_CODE | HTTP_QUERY_FLAG_NUMBER, &status, &status_size, NULL) || status < 200 || status >= 300) {
             last_error = status ? ERROR_HTTP_INVALID_SERVER_RESPONSE : GetLastError();
@@ -930,6 +1224,19 @@ static BOOL download_resource_archive(const wchar_t *archive_path) {
             InternetCloseHandle(request); InternetCloseHandle(internet); continue;
         }
         HttpQueryInfoW(request, HTTP_QUERY_CONTENT_LENGTH | HTTP_QUERY_FLAG_NUMBER, &content_length, &content_size, NULL);
+        if (expected_length == 0 && content_length > 0) {
+            expected_length = content_length;
+        }
+        if (content_length > 0 && expected_length > 0 && content_length != expected_length) {
+            /* A proxy or a stale mirror response must never stand in for the
+               manifest's authoritative length.  Reject early instead of
+               downloading a different revision. */
+            last_error = ERROR_HANDLE_EOF;
+            installer_log_error(L"资源长度与更新清单不一致", last_error);
+            InternetCloseHandle(request);
+            InternetCloseHandle(internet);
+            continue;
+        }
         output = CreateFileW(archive_path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
         buffer = (BYTE *)HeapAlloc(GetProcessHeap(), 0, ARCHIVE_BUFFER_SIZE);
         if (output == INVALID_HANDLE_VALUE || buffer == NULL) {
@@ -942,31 +1249,41 @@ static BOOL download_resource_archive(const wchar_t *archive_path) {
             if (read == 0) break;
             if (!WriteFile(output, buffer, read, &written, NULL) || written != read) { last_error = GetLastError(); installer_log_error(L"写入资源临时文件失败", last_error); goto download_cleanup; }
             received += read;
-            if (content_length > 0) {
+            if (expected_length > 0) {
                 DWORD elapsed_ms = GetTickCount() - started_ms;
-                DWORD percent = (DWORD)((received * 100) / content_length);
+                DWORD percent = (DWORD)((received * 100) / expected_length);
                 if (percent > 100) percent = 100;
                 PostMessageW(g_context.window, WM_FSV_PROGRESS, (WPARAM)percent, 0);
-                if (received == content_length || received - last_reported >= 4 * 1024 * 1024) {
+                if (received == expected_length || received - last_reported >= 4 * 1024 * 1024) {
                     wchar_t progress_text[256];
                     double speed = elapsed_ms > 0 ? ((double)received / 1048576.0) / ((double)elapsed_ms / 1000.0) : 0.0;
-                    StringCchPrintfW(progress_text, ARRAYSIZE(progress_text), L"正在下载资源：%lu%%    已下载 %.1f / %.1f MB    速度 %.1f MB/s", percent, (double)received / 1048576.0, (double)content_length / 1048576.0, speed);
+                    StringCchPrintfW(progress_text, ARRAYSIZE(progress_text), L"正在下载资源：%lu%%    已下载 %.1f / %.1f MB    速度 %.1f MB/s", percent, (double)received / 1048576.0, (double)expected_length / 1048576.0, speed);
                     post_status(progress_text);
                     last_reported = received;
                 }
             }
         }
-        if (content_length > 0 && received != content_length) { last_error = ERROR_HANDLE_EOF; installer_log_error(L"资源下载长度不完整", last_error); goto download_cleanup; }
-        success = TRUE;
-        installer_log(L"资源下载完成");
+        if (expected_length > 0 && received != expected_length) {
+            last_error = ERROR_HANDLE_EOF;
+            installer_log_error(L"资源下载长度不完整", last_error);
+            goto download_cleanup;
+        }
 download_cleanup:
         if (output != INVALID_HANDLE_VALUE) CloseHandle(output);
         if (buffer != NULL) HeapFree(GetProcessHeap(), 0, buffer);
         if (request != NULL) InternetCloseHandle(request);
         if (internet != NULL) InternetCloseHandle(internet);
+        /* Only a complete body with the manifest length may reach the hash
+           check.  The file is closed first so a rejected attempt can be
+           deleted and the next mirror can start from a clean path. */
+        if (expected_length > 0 && received == expected_length &&
+            is_regular_file(archive_path)) {
+            success = TRUE;
+            installer_log(L"资源下载完成");
+        }
         if (success && is_regular_file(archive_path)) return TRUE;
         DeleteFileW(archive_path);
-        if (success) success = FALSE;
+        success = FALSE;
     }
     SetLastError(last_error);
     installer_log_error(L"所有资源镜像均下载失败", last_error);
@@ -1157,6 +1474,7 @@ static void cleanup_orphan_staging_directories(const wchar_t *install_directory)
 
 static DWORD WINAPI install_worker(void *parameter) {
     InstallContext *context = (InstallContext *)parameter;
+    BOOL online = FSV_ONLINE_BUILD ? TRUE : FALSE;
     wchar_t executable_path[FSV_PATH_CAPACITY];
     wchar_t staging[FSV_PATH_CAPACITY];
     wchar_t archive_path[FSV_PATH_CAPACITY];
@@ -1182,6 +1500,25 @@ static DWORD WINAPI install_worker(void *parameter) {
     if (executable == INVALID_HANDLE_VALUE || !read_payload_trailer(executable, &trailer, &archive_offset)) {
         set_install_error_win32(context, L"安装器内置 payload 无效或已损坏", GetLastError());
         goto cleanup;
+    }
+    if (online && !context->resource_resolved) {
+        post_status(L"正在读取最新资源清单...");
+        if (!resolve_online_resource(
+                context->resource_path,
+                ARRAYSIZE(context->resource_path),
+                &context->archive_size,
+                &context->total_files,
+                &context->total_bytes,
+                context->resource_sha256)) {
+            set_install_error_win32(context, L"无法读取在线更新清单", GetLastError());
+            goto cleanup;
+        }
+        context->resource_resolved = TRUE;
+        context->required_bytes = context->total_bytes + context->archive_size;
+        if (context->required_bytes < context->total_bytes ||
+            context->required_bytes < context->archive_size) {
+            context->required_bytes = ~(ULONGLONG)0;
+        }
     }
     if (!query_available_space(context->install_directory, &available_bytes)) {
         set_install_error_win32(context, L"无法读取目标磁盘可用空间", GetLastError());
@@ -1243,9 +1580,37 @@ static DWORD WINAPI install_worker(void *parameter) {
         if (join_path(staging, L".fsv-online-resource-required", online_marker, ARRAYSIZE(online_marker)) &&
             is_regular_file(online_marker)) {
             post_status(L"正在连接资源镜像，准备下载资源包...");
-            if (!download_resource_archive(archive_path)) {
+            if (!context->resource_resolved) {
+                set_install_error(context, L"在线更新清单尚未解析完成，请返回后重试。" );
+                goto cleanup;
+            }
+            if (!download_resource_archive(
+                    context->resource_path,
+                    context->archive_size,
+                    archive_path)) {
                 set_install_error_win32(context, L"在线资源包下载或解压失败", GetLastError());
                 goto cleanup;
+            }
+            if (!sha256_file_matches(archive_path, context->resource_sha256)) {
+                set_install_error_win32(context, L"在线资源包 SHA-256 校验失败", GetLastError());
+                goto cleanup;
+            }
+            /* latest.json is an estimate; the archive directory is the truth.
+               Older manifests may omit both counters altogether. */
+            {
+                ULONGLONG actual_files = 0;
+                ULONGLONG actual_bytes = 0;
+                if (fsv_zip_get_statistics(archive_path, &actual_files, &actual_bytes)) {
+                    context->total_files = actual_files;
+                    context->total_bytes = actual_bytes;
+                    context->required_bytes = context->total_bytes + context->archive_size;
+                    if (context->required_bytes < context->total_bytes ||
+                        !query_available_space(context->install_directory, &available_bytes) ||
+                        available_bytes < context->required_bytes) {
+                        set_install_error(context, L"目标磁盘可用空间不足，请返回后选择其他位置。" );
+                        goto cleanup;
+                    }
+                }
             }
             post_status(L"资源下载完成，正在解压资源包...");
             /* The marker archive is only a bootstrap. The full resource ZIP
@@ -1472,20 +1837,28 @@ static BOOL read_embedded_space_info(void) {
     if (executable == INVALID_HANDLE_VALUE || !read_payload_trailer(executable, &trailer, &offset)) {
         goto cleanup;
     }
-    /* Offline builds embed the full payload archive and bake its size into
-       FSV_PAYLOAD_ARCHIVE_BYTES; online builds embed only a tiny bootstrap
-       marker and bake the sentinel 0 there, so the two can never collide. */
-    if (trailer.archive_size == FSV_PAYLOAD_ARCHIVE_BYTES) {
-        g_context.archive_size = FSV_PAYLOAD_ARCHIVE_BYTES;
-        g_context.total_files = FSV_PAYLOAD_FILE_COUNT;
-        g_context.total_bytes = FSV_PAYLOAD_UNCOMPRESSED_BYTES;
+    if (FSV_ONLINE_BUILD) {
+        /* The bootstrap embeds only a marker archive; sizes belong to whatever
+           resource ZIP updates/latest.json currently points at. */
+        if (!resolve_online_resource(
+                g_context.resource_path,
+                ARRAYSIZE(g_context.resource_path),
+                &g_context.archive_size,
+                &g_context.total_files,
+                &g_context.total_bytes,
+                g_context.resource_sha256)) {
+            goto cleanup;
+        }
+        g_context.resource_resolved = TRUE;
+        g_context.has_embedded_archive = FALSE;
     } else {
         g_context.archive_size = trailer.archive_size;
         g_context.total_files = FSV_PAYLOAD_FILE_COUNT;
         g_context.total_bytes = FSV_PAYLOAD_UNCOMPRESSED_BYTES;
+        g_context.has_embedded_archive = TRUE;
     }
-    g_context.required_bytes = g_context.total_bytes + trailer.archive_size;
-    if (g_context.required_bytes < g_context.total_bytes || g_context.required_bytes < trailer.archive_size) {
+    g_context.required_bytes = g_context.total_bytes + g_context.archive_size;
+    if (g_context.required_bytes < g_context.total_bytes || g_context.required_bytes < g_context.archive_size) {
         g_context.required_bytes = ~(ULONGLONG)0;
     }
     success = TRUE;
@@ -2206,7 +2579,7 @@ static LRESULT CALLBACK wizard_window_proc(HWND window, UINT message, WPARAM wpa
             EnableWindow(g_back_button, FALSE);
             SendMessageW(g_progress, PBM_SETPOS, 0, 0);
             SendMessageW(g_download_progress, PBM_SETPOS,
-                g_context.archive_size == FSV_PAYLOAD_ARCHIVE_BYTES ? 100 : 0, 0);
+                g_context.has_embedded_archive ? 100 : 0, 0);
             g_last_progress_percent = 0;
             SetWindowTextW(g_status, L"正在准备安装..." );
             SetWindowTextW(g_current_file, L"当前文件：正在读取安装器..." );

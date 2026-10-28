@@ -203,6 +203,16 @@
   的控件树与 `grab()` 位图 SHA-256 差异均为 **0**。执行记录见 `doc/render层边界契约.md` 第 56 节。
 
 ### Changed
+- 版本基线抬到 `LTS1.0.7pre7`（发布日期 `2026-10-28`，`config/version_info.py` 与 README 同步）；
+  设置面板「桌宠更新」页的稳定版本区在按钮上方显示只读的「当前版本」，实际版本直接读
+  `config.version_info.APP_VERSION`，以后抬版不需要再改页面。
+- 在线安装器解除版本锁定：EXE 只内嵌两个固定发布槽根地址，安装时读取
+  `updates/latest.json` 再下载当前 `FlyingSnowVelvet-<version>-Resources.zip`，因此一次构建
+  可跨版本复用。在线构建的 `payload_info.h` 把归档字节、文件数和未压缩体积全部写成 0，
+  默认产物改名为 `dist/FlyingSnowVelvet-Online-Installer.exe`，且 `--workspace` 可省略。
+  `scripts/publish_offline_installer.py --resource` 现在把 `file_count` 与
+  `uncompressed_bytes` 写入 `latest.json`，供安装器在下载前做空间预估；旧清单缺少这两项时
+  仍按下载后的归档统计复核。离线安装器继续按版本命名并内置完整 payload。
 - 删除 `ai_settings_panel.py` 里已死的 N 卡能力探测链路：
   `_refresh_nvidia_acceleration_capability_async()` 已无任何调用点（两个调用位在某次重构中
   消失），`_nvidia_gpu_present` 因此恒为 `False`，`_update_gsv_settings_visibility()` 里
@@ -225,7 +235,7 @@
   把函数对象在导入时就捕获进实例，测试与宿主事后替换模块属性对已建实例无效
   （`tests/test_office_mode_page.py` 原有的 patch 因此形同虚设）。现改为 `probe or (lambda: probe_local_dsh())`，
   测试改为 patch 真正的所有者，本机 DSH 的「探测到 / 未探测到」分支第一次被真正驱动。
-- 版本基线抬到 `LTS1.0.7pre7`（`config/version_info.py`、README、安装器内置资源包 URL 同步）。
+- 版本基线由 `LTS1.0.6` 系列抬到 `LTS1.0.7pre7`（README 与 `config/version_info.py` 同步）。
 - 控件层收敛推进次序修订：剩余 `lib/script/ui` 大文件（`ai_settings_panel.py` 5439 行、
   `forum_board.py` 2236 行等）改为**先按模块拆分瘦身、再逐个收敛 Qt**。理由是一个改动同时承担
   拆分与去 Qt 时，像素 oracle 报出的差异无法归因，冻结清单也会在同一文件上连续两轮被触碰。
