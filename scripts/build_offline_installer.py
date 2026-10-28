@@ -759,11 +759,13 @@ def _prepare_native_sources(installer_source: Path) -> tuple[Path, Path, Path]:
         source_root / "zip_extract.h",
         source_root / "launcher.c",
         source_root / "uninstaller.c",
+        source_root / "updater.c",
         source_root / "resource.rc",
         source_root / "resource.h",
         source_root / "installer.manifest",
         source_root / "launcher.manifest",
         source_root / "uninstaller.manifest",
+        source_root / "updater.manifest",
         HARMONY_FONT_SOURCE,
         zlib_root / "zlib.h",
         *(zlib_root / name for name in ZLIB_SOURCES),
@@ -786,6 +788,22 @@ def _write_resource_script(path: Path, manifest_name: str, *, include_font: bool
     path.write_text(text + f'1 RT_MANIFEST "{manifest_name}"\n', encoding="ascii")
 
 
+def _prepare_native_dependencies(source_root: Path, compile_root: Path) -> tuple[Path, Path]:
+    """Copy zlib/LZMA headers next to an updater build and return their sources."""
+    zlib_root = source_root.parent / "third_party" / "zlib-1.3.1"
+    lzma_root = source_root.parent / LZMA_DIRECTORY
+    zlib_copy = compile_root / "zlib"
+    lzma_copy = compile_root / "lzma"
+    zlib_copy.mkdir(parents=True, exist_ok=True)
+    lzma_copy.mkdir(parents=True, exist_ok=True)
+    for name in zlib_root.iterdir():
+        if name.is_file():
+            shutil.copy2(name, zlib_copy / name.name)
+    for name in (*LZMA_HEADERS, *LZMA_SOURCES):
+        shutil.copy2(lzma_root / name, lzma_copy / name)
+    return zlib_root, lzma_root
+
+
 def _compile_payload_binary(
     *,
     source_root: Path,
@@ -796,14 +814,28 @@ def _compile_payload_binary(
     manifest_name: str,
     output_name: str,
     embed_font: bool = False,
+    extra_sources: tuple[str, ...] = (),
+    native_dependencies: bool = False,
 ) -> Path:
     compile_root.mkdir(parents=True, exist_ok=True)
-    for name in (source_name, manifest_name, "resource.h"):
+    for name in (source_name, manifest_name, "resource.h", *extra_sources):
         shutil.copy2(source_root / name, compile_root / name)
     shutil.copy2(icon_source, compile_root / "icon.ico")
     _write_installer_theme_header(compile_root / "installer_theme.h")
     if embed_font:
         create_installer_font_subset(compile_root / "HarmonyOS_Sans_SC_Bold.ttf")
+    native_arguments: list[str] = []
+    if native_dependencies:
+        zlib_root, lzma_root = _prepare_native_dependencies(source_root, compile_root)
+        _compile_zlib(zlib_root, vsdevcmd, compile_root)
+        native_arguments.extend([
+            "/DZ_SOLO",
+            '/I"zlib"',
+            '/I"lzma"',
+            '"zlibstatic.lib"',
+            '"lzma\\LzmaDec.c"',
+            '"lzma\\Lzma2Dec.c"',
+        ])
     _write_resource_script(compile_root / "native.rc", manifest_name, include_font=embed_font)
     run_vs_command(vsdevcmd, 'rc.exe /nologo /fo"native.res" "native.rc"', compile_root)
     run_vs_command(
@@ -818,6 +850,8 @@ def _compile_payload_binary(
             "/utf-8",
             f'/Fe:"{output_name}"',
             f'"{source_name}"',
+            *(f'"{name}"' for name in extra_sources if Path(name).suffix.casefold() == ".c"),
+            *native_arguments,
             '"native.res"',
             "/Brepro",
             "/link",
@@ -864,14 +898,27 @@ def compile_payload_binaries(
         output_name="FlyingSnowVelvetUninstaller.exe",
         embed_font=True,
     )
+    updater = _compile_payload_binary(
+        source_root=source_root,
+        icon_source=icon_source,
+        vsdevcmd=vsdevcmd,
+        compile_root=compile_root / "updater",
+        source_name="updater.c",
+        manifest_name="updater.manifest",
+        output_name="FSVUpdater.exe",
+        extra_sources=("zip_extract.c", "zip_extract.h"),
+        native_dependencies=True,
+    )
     app_root = payload / "app"
     app_root.mkdir(parents=True, exist_ok=True)
-    # The package ships exactly two executables: the launcher and the
-    # uninstaller. No batch entry point is generated for the offline package.
+    # The offline package ships the launcher, the uninstaller and the
+    # stand-alone updater. No batch entry point is generated.
     shutil.copy2(launcher, app_root / "启动飞行雪绒.exe")
     shutil.copy2(uninstaller, app_root / "卸载飞行雪绒.exe")
+    shutil.copy2(updater, app_root / "FSVUpdater.exe")
     pin_packaged_mtime(app_root / "启动飞行雪绒.exe")
     pin_packaged_mtime(app_root / "卸载飞行雪绒.exe")
+    pin_packaged_mtime(app_root / "FSVUpdater.exe")
 
 
 def _write_payload_info_header(

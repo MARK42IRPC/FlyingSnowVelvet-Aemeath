@@ -80,7 +80,8 @@ CUDA、NVIDIA、TensorRT 或 `onnxruntime-gpu`。
 `resc/GIF/SEanima/` 文件夹、固定 Node 和 DSH production `node_modules` 收集到
 payload；`build_offline_installer.py` 再把内置归档按 4 路固态 LZMA2 分片重打
 （ZIP 条目只保留路径与真实大小，`--online` 资源包仍用 Deflate），编译原生安装器并追加
-归档与 SHA-256 尾记录。
+归档与 SHA-256 尾记录。payload 的 `app/` 同时发布启动器、卸载器和独立更新器
+`FSVUpdater.exe`；安装版资源更新由它提权接管安装目录、原子切换并自动重启。
 最终 payload 不包含 `SEanima.zip`、构建脚本、测试目录、用户状态或开发缓存。
 构建机上存在 `build/cuda_voice_runtime/Release/fsv_cuda_voice_runtime.dll`（自研 CUDA
 极简推理端的构建产物）时，同一条命令会把它放进 `runtime/cuda-voice/`，安装后“N卡加速”

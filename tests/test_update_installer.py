@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import os
 import struct
 import tempfile
 import unittest
@@ -477,6 +478,170 @@ class UpdateInstallerTests(unittest.TestCase):
             self.assertIn("1 个占用安装目录的后台进程", result.notes[0])
             restart.assert_not_called()
 
+
+    def test_resource_handoff_stages_updater_and_requests_exit(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            install_root = root / "install"
+            (install_root / "app").mkdir(parents=True)
+            (install_root / "runtime" / "python311").mkdir(parents=True)
+            (install_root / "runtime" / "python311" / "python.exe").write_bytes(b"python")
+            (install_root / ".fsv-install-root").write_bytes(
+                b"FSV-OFFLINE-PAYLOAD-2\n"
+            )
+            (install_root / "app" / "FSVUpdater.exe").write_bytes(b"MZupdater")
+            (install_root / "app" / "启动飞行雪绒.exe").write_bytes(b"MZlauncher")
+            state_path = install_root / "app" / "resc" / "user" / "update_state.json"
+            payload = b"resource payload" * 32
+            digest = hashlib.sha256(payload).hexdigest()
+            published = datetime(2026, 10, 28, tzinfo=timezone.utc)
+            release = ReleaseInfo(
+                "LTS1.0.7pre7",
+                published,
+                "FlyingSnowVelvet-LTS1.0.7pre7-Resources.zip",
+                "download",
+                "HF",
+                "rev",
+                0.1,
+                (),
+                digest,
+                "resources",
+            )
+            manager = UpdateManager(state_path=state_path)
+
+            def download(_release, destination):
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_bytes(payload)
+                return digest
+
+            with (
+                patch("lib.script.update_manager._STAGING_ROOT", root / "stage"),
+                patch("lib.script.update_manager._PROJECT_ROOT", install_root),
+                patch.object(manager, "_download_release", side_effect=download),
+                patch(
+                    "lib.script.app.update_installer.prepare_update_handoff",
+                    wraps=update_installer.prepare_update_handoff,
+                ) as prepare,
+                patch(
+                    "lib.script.app.update_installer.install_resource_bundle"
+                ) as overlay,
+                patch(
+                    "lib.script.app.update_installer.launch_update_handoff"
+                ) as launch,
+            ):
+                with patch(
+                    "lib.script.app.update_installer._updater_workspace_root",
+                    return_value=root / "handoff",
+                ):
+                    result = manager.install_release(release)
+
+            overlay.assert_not_called()
+            prepare.assert_called_once()
+            launch.assert_called_once()
+            command = launch.call_args.args[0]
+            self.assertEqual(result.reason, "update_handoff")
+            self.assertEqual(command[1:3], ["--update-mode", "update"])
+            self.assertIn(str(install_root.resolve()), command)
+            self.assertEqual(command[command.index("--update-parent") + 1], str(os.getpid()))
+            self.assertEqual(
+                command[command.index("--update-sha256") + 1], digest
+            )
+            self.assertTrue(Path(command[0]).name.endswith("FSVUpdater.exe"))
+            self.assertTrue(Path(command[command.index("--update-resource") + 1]).is_file())
+            self.assertTrue(
+                Path(command[command.index("--update-state-source") + 1]).is_file()
+            )
+
+    def test_handoff_launch_uses_uac_runas_instead_of_popen(self):
+        import ctypes
+
+        command = [str(Path(tempfile.gettempdir()) / "FSVUpdater.exe"), "--update-mode", "update"]
+        shell = Mock()
+        seen: dict[str, object] = {}
+
+        def fake_shell_execute(info):
+            fields = info.contents
+            seen["verb"] = fields.lpVerb
+            seen["file"] = fields.lpFile
+            seen["parameters"] = fields.lpParameters
+            return 1
+
+        shell.ShellExecuteExW.side_effect = fake_shell_execute
+        with (
+            patch.object(update_installer.os, "name", "nt"),
+            patch.object(ctypes, "WinDLL", return_value=shell),
+            patch.object(update_installer.subprocess, "Popen") as popen,
+        ):
+            update_installer.launch_update_handoff(command)
+
+        popen.assert_not_called()
+        shell.ShellExecuteExW.assert_called_once()
+        self.assertEqual(seen["verb"], "runas")
+        self.assertTrue(str(seen["file"]).endswith("FSVUpdater.exe"))
+        self.assertIn("--update-mode", str(seen["parameters"]))
+
+    def test_updater_restores_user_data_before_deleting_staging(self):
+        source = (Path(__file__).resolve().parents[1] / "installer" / "windows" / "src" / "updater.c").read_text(encoding="utf-8")
+        failure = source.split("failure:\n", 1)[1]
+        rollback = failure.index("rollback_preserved_user(")
+        cleanup = failure.index("delete_tree(staging)")
+        self.assertLess(rollback, cleanup)
+        self.assertIn("SetCurrentDirectoryW(options.workspace)", source)
+        rename = source.index("move_directory_with_retry(target, backup)")
+        marker = source.index("write_backup_marker(backup)")
+        self.assertLess(rename, marker)
+        self.assertIn("is_regular_file(marker)", source)
+
+    def test_startup_cleanup_removes_only_idle_updater_workspaces(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            idle = root / "idle"
+            idle.mkdir()
+            (idle / "Resources.zip").write_bytes(b"payload")
+            kept = root / "kept"
+            kept.mkdir()
+            with patch.object(update_installer, "_updater_workspace_root", return_value=root):
+                update_installer.cleanup_update_workspaces(keep=kept)
+            self.assertFalse(idle.exists())
+            self.assertTrue(kept.exists())
+
+    def test_handoff_rejects_a_missing_digest_before_launching(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            install_root = root / "install"
+            (install_root / "app").mkdir(parents=True)
+            (install_root / ".fsv-install-root").write_bytes(b"FSV-OFFLINE-PAYLOAD-2\n")
+            resource = root / "Resources.zip"
+            resource.write_bytes(b"archive")
+            with self.assertRaisesRegex(ValueError, "SHA-256"):
+                update_installer.prepare_update_handoff(
+                    resource,
+                    install_root,
+                    install_root / "app" / "resc" / "user" / "update_state.json",
+                    {"tag": "PACK"},
+                    archive_sha256="",
+                    install_root=install_root,
+                )
+
+    def test_handoff_rejects_a_state_path_outside_the_install_root(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            install_root = root / "install"
+            (install_root / "app").mkdir(parents=True)
+            (install_root / ".fsv-install-root").write_bytes(b"FSV-OFFLINE-PAYLOAD-2\n")
+            (install_root / "app" / "FSVUpdater.exe").write_bytes(b"MZupdater")
+            (install_root / "app" / "启动飞行雪绒.exe").write_bytes(b"MZlauncher")
+            resource = root / "Resources.zip"
+            resource.write_bytes(b"archive")
+            with self.assertRaisesRegex(ValueError, "安装目录"):
+                update_installer.prepare_update_handoff(
+                    resource,
+                    install_root,
+                    root / "outside.json",
+                    {"tag": "PACK"},
+                    archive_sha256="a" * 64,
+                    install_root=install_root,
+                )
     def test_dialog_offers_native_installer_after_download(self):
         from lib.script.ui.update_dialog import DesktopPetUpdateDialog
 
@@ -535,6 +700,42 @@ class UpdateInstallerTests(unittest.TestCase):
         self.assertEqual(dialog._status_label.setText.call_args.args[0], "资源包已安装")
         dialog._set_actions.assert_called_once_with(None, ("关闭", dialog.hide_dialog))
 
+
+    def test_dialog_requests_quit_after_starting_the_updater(self):
+        from lib.script.ui.update_dialog import DesktopPetUpdateDialog
+
+        published = datetime(2026, 10, 28, tzinfo=timezone.utc)
+        result = UpdateResult(
+            True,
+            InstalledState("LTS1.0.7pre7", published, "rev"),
+            ReleaseInfo(
+                "LTS1.0.7pre7",
+                published,
+                "FlyingSnowVelvet-LTS1.0.7pre7-Resources.zip",
+                "download",
+                "HF",
+                "rev",
+                kind="resources",
+            ),
+            reason="update_handoff",
+        )
+        dialog = SimpleNamespace(
+            _status_label=Mock(),
+            _detail_label=Mock(),
+            _set_busy=Mock(),
+            _set_progress_done=Mock(),
+            _set_actions=Mock(),
+            _fmt_dt=lambda value: value.isoformat(),
+        )
+        center = Mock()
+        with patch("lib.script.ui.update_dialog.get_event_center", return_value=center):
+            DesktopPetUpdateDialog._on_release_done(dialog, result)
+
+        dialog._set_actions.assert_called_once_with(None, None)
+        center.publish.assert_called_once()
+        event = center.publish.call_args.args[0]
+        self.assertEqual(event.type, EventType.APP_QUIT)
+        self.assertEqual(event.data, {"exit_code": 0})
     def test_native_installer_launch_requests_app_quit(self):
         from lib.script.ui.update_dialog import DesktopPetUpdateDialog
 

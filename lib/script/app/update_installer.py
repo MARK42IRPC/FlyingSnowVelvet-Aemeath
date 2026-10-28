@@ -10,7 +10,9 @@ import os
 import shutil
 import subprocess
 import struct
+import tempfile
 import time
+import uuid
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -893,3 +895,206 @@ def launch_update_installer(
             command,
             **_detached_kwargs(include_breakaway=False),
         )
+
+
+# 独立更新器随 payload 发布在 <install>/app 下，但更新时必须先从安装目录复制出去：
+# 它要切换（重命名）整个安装目录，自己若仍在安装目录里运行，目录就会被自己锁住。
+UPDATER_EXE_NAME = "FSVUpdater.exe"
+UPDATER_WORKSPACE_NAME = "updates"
+
+
+def _updater_workspace_root() -> Path:
+    return Path(tempfile.gettempdir()) / "FlyingSnowVelvet" / UPDATER_WORKSPACE_NAME
+
+
+def cleanup_update_workspaces(*, keep: Path | None = None) -> None:
+    """删除已结束的更新器工作目录。
+
+    交接目录里有一份完整的资源 ZIP；更新器退出后它就不再需要。启动时清理一次，
+    避免用户每更新一次都在 ``%TEMP%`` 多留几百兆。``keep`` 用于测试或调用方想保留
+    当前工作区时跳过该目录。
+    """
+    root = _updater_workspace_root()
+    if not root.is_dir():
+        return
+    kept = Path(keep).resolve() if keep is not None else None
+    for child in root.iterdir():
+        if not child.is_dir():
+            continue
+        try:
+            if kept is not None and child.resolve() == kept:
+                continue
+            updater = child / UPDATER_EXE_NAME
+            if updater.is_file():
+                try:
+                    with updater.open("ab"):
+                        pass
+                except OSError:
+                    # A live updater holds its own EXE.  Never delete a workspace
+                    # whose process is still replacing the install directory.
+                    continue
+            shutil.rmtree(child, ignore_errors=True)
+        except OSError:
+            continue
+
+
+def updater_executable(install_root: Path | None = None) -> Path:
+    """返回当前安装的独立更新器路径（未安装时为不存在路径）。"""
+    root = (
+        Path(install_root).resolve()
+        if install_root is not None
+        else _installation_root(_PROJECT_ROOT)
+    )
+    return root / "app" / UPDATER_EXE_NAME
+
+
+def can_hand_off_to_updater(install_root: Path | None = None) -> bool:
+    """能否把更新交给独立更新器：需要安装标记与更新器本体都在。
+
+    源码工作区既没有 ``.fsv-install-root`` 也没有 `FSVUpdater.exe`，调用方此时应回退到
+    旧的就地覆盖流程，而不是让用户以为更新已经开始。
+    """
+    root = (
+        Path(install_root).resolve()
+        if install_root is not None
+        else _installation_root(_PROJECT_ROOT)
+    )
+    return (root / RESOURCE_ARCHIVE_MARKER).is_file() and (
+        root / "app" / UPDATER_EXE_NAME
+    ).is_file()
+
+
+def prepare_update_handoff(
+    bundle_path: Path,
+    project_root: Path,
+    state_path: Path,
+    release: dict,
+    *,
+    archive_sha256: str,
+    install_root: Path | None = None,
+) -> tuple[Path, list[str]]:
+    """把资源包、更新器和待写状态复制进更新器私有工作目录。
+
+    返回 ``(工作目录, 启动参数)``。工作目录位于 ``%TEMP%\\FlyingSnowVelvet\\updates``，
+    与安装目录不同卷也没关系：更新器先从那里解压到安装卷的暂存目录，再原子切换。
+    ``archive_sha256`` 必须是发布清单里的哈希，更新器会用它再校验一次落盘副本。
+    """
+    digest = str(archive_sha256 or "").strip().casefold()
+    if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
+        raise ValueError("更新清单缺少有效的 SHA-256，无法交给独立更新器")
+    bundle = Path(bundle_path).resolve()
+    if not bundle.is_file():
+        raise ValueError("资源包不存在，请重新下载。")
+    root = (
+        Path(install_root).resolve()
+        if install_root is not None
+        else _installation_root(Path(project_root))
+    )
+    if not (root / RESOURCE_ARCHIVE_MARKER).is_file():
+        raise ValueError("当前目录不是安装版，无法使用独立更新器。")
+    source_updater = root / "app" / UPDATER_EXE_NAME
+    if not source_updater.is_file():
+        raise ValueError("安装目录缺少独立更新器，请重新安装发行版。")
+    restart_launcher = root / "app" / "启动飞行雪绒.exe"
+    if not restart_launcher.is_file():
+        raise ValueError("安装目录缺少启动器，无法自动重启。")
+    state_destination = Path(state_path).resolve()
+    try:
+        state_destination.relative_to(root)
+    except ValueError as exc:
+        raise ValueError("更新状态文件必须位于安装目录内") from exc
+
+    cleanup_update_workspaces()
+    workspace = _updater_workspace_root() / uuid.uuid4().hex
+    workspace.mkdir(parents=True, exist_ok=False)
+    resource_copy = workspace / "Resources.zip"
+    updater_copy = workspace / UPDATER_EXE_NAME
+    shutil.copyfile(bundle, resource_copy)
+    shutil.copy2(source_updater, updater_copy)
+    pending_state = workspace / "pending_release.json"
+    _write_pending_release(pending_state, release)
+    command = [
+        str(updater_copy),
+        "--update-mode",
+        "update",
+        "--update-target",
+        str(root),
+        "--update-parent",
+        str(os.getpid()),
+        "--update-resource",
+        str(resource_copy),
+        "--update-restart",
+        str(restart_launcher),
+        "--update-state",
+        str(state_destination),
+        "--update-state-source",
+        str(pending_state),
+        "--update-sha256",
+        digest,
+    ]
+    return workspace, command
+
+
+def _launch_elevated_updater(command: Sequence[str]) -> None:
+    """用 UAC ``runas`` 启动更新器。
+
+    更新器清单是 ``requireAdministrator``：安装目录默认位于 ``Program Files``，
+    重命名整个安装根需要管理员令牌。``subprocess.Popen`` 直接运行带提权清单的
+    EXE 会得到 WinError 740，因此这里必须走 ``ShellExecuteExW``。
+    """
+    if os.name != "nt":
+        raise OSError("独立更新器仅支持 Windows")
+    import ctypes
+    from ctypes import wintypes
+
+    arguments = [str(item) for item in command]
+    if not arguments:
+        raise ValueError("更新器启动参数为空")
+
+    class ShellExecuteInfoW(ctypes.Structure):
+        _fields_ = [
+            ("cbSize", wintypes.DWORD),
+            ("fMask", ctypes.c_ulong),
+            ("hwnd", wintypes.HWND),
+            ("lpVerb", wintypes.LPCWSTR),
+            ("lpFile", wintypes.LPCWSTR),
+            ("lpParameters", wintypes.LPCWSTR),
+            ("lpDirectory", wintypes.LPCWSTR),
+            ("nShow", ctypes.c_int),
+            ("hInstApp", wintypes.HINSTANCE),
+            ("lpIDList", ctypes.c_void_p),
+            ("lpClass", wintypes.LPCWSTR),
+            ("hkeyClass", wintypes.HKEY),
+            ("dwHotKey", wintypes.DWORD),
+            ("hIcon", wintypes.HANDLE),
+            ("hProcess", wintypes.HANDLE),
+        ]
+
+    executable = Path(arguments[0]).resolve()
+    parameters = subprocess.list2cmdline(arguments[1:])
+    info = ShellExecuteInfoW()
+    info.cbSize = ctypes.sizeof(ShellExecuteInfoW)
+    info.fMask = 0x00000040  # SEE_MASK_NOCLOSEPROCESS
+    info.lpVerb = "runas"
+    info.lpFile = str(executable)
+    info.lpParameters = parameters
+    info.lpDirectory = str(executable.parent)
+    info.nShow = 1  # SW_SHOWNORMAL
+    shell32 = ctypes.WinDLL("shell32", use_last_error=True)
+    shell32.ShellExecuteExW.argtypes = [ctypes.POINTER(ShellExecuteInfoW)]
+    shell32.ShellExecuteExW.restype = wintypes.BOOL
+    if not shell32.ShellExecuteExW(ctypes.pointer(info)):
+        error = ctypes.get_last_error()
+        if error == 1223:  # ERROR_CANCELLED：用户拒绝 UAC
+            raise OSError(error, "用户取消了管理员授权，更新未开始")
+        raise OSError(error, f"无法启动独立更新器（错误代码 {error}）")
+    if info.hProcess:
+        ctypes.WinDLL("kernel32", use_last_error=True).CloseHandle(info.hProcess)
+
+
+def launch_update_handoff(command: Sequence[str]) -> None:
+    """以提权方式启动独立更新器，成功后桌宠应立即退出。"""
+    arguments = [str(item) for item in command]
+    if not arguments:
+        raise ValueError("更新器启动参数为空")
+    _launch_elevated_updater(arguments)

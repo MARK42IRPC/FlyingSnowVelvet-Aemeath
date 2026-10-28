@@ -381,6 +381,18 @@ class DesktopPetUpdateDialog:
         self._set_busy(False)
         self._pending_update = update
         notes = "\n".join(str(note) for note in update.notes if str(note).strip())
+        if update.reason == "update_handoff":
+            self._status_label.setText("更新器已启动")
+            detail = (
+                f"已准备 {update.release_info.tag}（{self._fmt_dt(update.release_info.published_at)}）\n"
+                "桌宠即将退出，独立更新器会解除安装目录占用、完成替换与校验，然后自动重新启动。"
+            )
+            self._detail_label.setText(f"{detail}\n{notes}" if notes else detail)
+            self._set_progress_done()
+            self._set_actions(None, None)
+            self._set_busy(True)
+            get_event_center().publish(Event(EventType.APP_QUIT, {"exit_code": 0}))
+            return
         if update.release_info.kind == "resources":
             self._status_label.setText("资源包已安装")
             detail = (

@@ -255,14 +255,14 @@ class PackagingVerificationTests(unittest.TestCase):
             # 钉住的时刻同时决定归档条目的时间戳，两次打包才会得到同样的字节。
             self.assertEqual(installer.PACKAGED_FILE_MTIME, 1_700_000_000.0)
 
-    def test_compile_payload_binaries_pins_the_two_executables(self):
+    def test_compile_payload_binaries_pins_the_shipped_executables(self):
         with tempfile.TemporaryDirectory(prefix="fsv-pin-bins-") as temporary:
             root = Path(temporary)
             payload = root / "payload"
             payload.mkdir()
             built = root / "built"
             built.mkdir()
-            for name in ("FSVLauncher.exe", "FlyingSnowVelvetUninstaller.exe"):
+            for name in ("FSVLauncher.exe", "FlyingSnowVelvetUninstaller.exe", "FSVUpdater.exe"):
                 (built / name).write_bytes(name.encode("ascii"))
             with mock.patch.object(
                 installer, "_prepare_native_sources", return_value=(root, root, root)
@@ -272,7 +272,7 @@ class PackagingVerificationTests(unittest.TestCase):
                 side_effect=lambda **kwargs: built / kwargs["output_name"],
             ):
                 installer.compile_payload_binaries(payload, root, root, root, root)
-            for name in ("启动飞行雪绒.exe", "卸载飞行雪绒.exe"):
+            for name in ("启动飞行雪绒.exe", "卸载飞行雪绒.exe", "FSVUpdater.exe"):
                 with self.subTest(name=name):
                     target = payload / "app" / name
                     self.assertTrue(target.is_file())

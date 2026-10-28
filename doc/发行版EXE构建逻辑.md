@@ -129,13 +129,18 @@ python scripts/build_offline_installer.py --online
   `FSV-<pid>-<tid>-<tick>` 形状、持有者进程已死的暂存目录（每个几百兆），先腾出空间再装。
   只认这个精确形状，`FSV-` 开头的无关目录不动。
 
-离线 payload 的 `app/` 只放两个可执行文件：`启动飞行雪绒.exe` 与
-`卸载飞行雪绒.exe`。安装包不再生成 `启动程序.bat`，也不提供 ASCII 别名：
+离线 payload 的 `app/` 放三个可执行文件：`启动飞行雪绒.exe`、
+`卸载飞行雪绒.exe` 与 `FSVUpdater.exe`。安装包不再生成 `启动程序.bat`，也不提供 ASCII 别名：
 安装完成、桌面快捷方式和开机启动都直接指向包内启动 exe，避免 cmd.exe 按系统代码页
 解析 UTF-8 中文路径，也避免启动时闪现控制台窗口。
 
-更新器把现有安装目录通过 `--update-target` 传给同一个 EXE；安装成功后写回
-`app/resc/user/update_state.json`。卸载器采用与安装器一致的工作台亮色界面（品牌头、
+在线资源更新由独立 `FSVUpdater.exe` 完成：桌宠先把它和资源 ZIP 复制到
+`%TEMP%\FlyingSnowVelvet\updates\<uuid>`，用 UAC `runas` 启动后退出。更新器等待父进程
+退出，接管安装根内所有残留进程，校验 ZIP 的 SHA-256，解压到同卷暂存目录并校验安装
+标记，再以 `target -> backup`、`staging -> target` 的两次重命名原子切换。旧
+`app/resc/user` 先移入暂存目录，失败时先回滚它再删除暂存；成功后写回
+`app/resc/user/update_state.json` 并自动启动新 `app\启动飞行雪绒.exe`。更新器清单要求
+管理员权限，自身从临时目录运行并切换 CWD，避免锁住安装根。卸载器采用与安装器一致的工作台亮色界面（品牌头、
 白卡片、鸿蒙内嵌字体），提供“删除语音包”和“删除用户数据”两个默认不勾选的复选框；
 确认后由独立临时 helper 删除安装目录，并按选项清理 `C:\AemeathDeskPet` 下的语音包、
 推理运行时、记忆/配置/Apikey/日志与桌面办公区。可选清理带前缀护栏，永不删除安装

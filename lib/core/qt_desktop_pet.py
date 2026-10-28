@@ -94,6 +94,12 @@ if __name__ == '__main__':
             sys.exit(1)
     try:
         _apply_pending_update_overlay()
+        try:
+            from lib.script.app.update_installer import cleanup_update_workspaces
+
+            cleanup_update_workspaces()
+        except Exception:
+            pass
         _preload_optional_onnx_runtime()
         from lib.script.app.qt_backend_bootstrap import configure_selected_desktop_backend
 

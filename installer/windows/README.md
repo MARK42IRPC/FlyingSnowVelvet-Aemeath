@@ -1,6 +1,7 @@
 # Windows 原生离线安装器
 
-`src/main.c`、`src/zip_extract.c`、`src/launcher.c` 和 `src/uninstaller.c` 组成
+`src/main.c`、`src/zip_extract.c`、`src/launcher.c`、`src/uninstaller.c` 和
+`src/updater.c` 组成
 发行版的原生入口。构建脚本 `scripts/build_offline_installer.py` 使用 VS2022
 `cl.exe /MT` 编译，不依赖用户机器上的 Python、Node、PowerShell 或 `tar.exe`。
 
@@ -52,12 +53,21 @@
 安装成功后显示“安装完成”，用户点击“退出安装并启动飞行雪绒”才启动
 `app\启动飞行雪绒.exe`。启动器设置绝对的包内 Python 3.11、Node 24.13.0 和 Qt
 路径，并清理外部 `PYTHONPATH`、`PYTHONHOME`、`NODE_PATH`、Qt/OpenSSL 等覆盖。
-`app\` 只包含 `启动飞行雪绒.exe` 与 `卸载飞行雪绒.exe` 两个可执行文件，不再生成
-`启动程序.bat` 或 ASCII 别名；快捷方式、开机启动和应用内重启都直接复用启动 exe。
+`app\` 只包含 `启动飞行雪绒.exe`、`卸载飞行雪绒.exe` 与 `FSVUpdater.exe` 三个可执行
+文件，不再生成 `启动程序.bat` 或 ASCII 别名；快捷方式、开机启动和应用内重启都直接复用
+启动 exe。
 
-更新器从对应 ONNX 语音包的 Hugging Face / ModelScope 仓库下载外层 ZIP，解包后校验其中唯一的
-离线安装器 EXE，并可通过 `--update-target` 预填现有安装目录；成功切换后将状态文件复制到
-`app\resc\user\update_state.json`。
+应用内资源更新会先把下载好的资源 ZIP、`FSVUpdater.exe` 和待写状态复制到
+`%TEMP%\FlyingSnowVelvet\updates\<uuid>`，再用 `runas` 启动独立更新器并退出桌宠。
+更新器清单是 `requireAdministrator`：安装目录默认在 `Program Files`，重命名整个安装根
+需要管理员令牌。更新器先等待 `--update-parent` 退出，再对镜像路径位于安装根内的进程
+发 `WM_CLOSE`，宽限期结束仍在的进程用 `TerminateProcess` 收掉；随后校验 ZIP 的
+SHA-256、解压到同卷 `FSV-<pid>-<tid>-<tick>` 暂存目录、校验安装标记，再执行
+`target -> backup`、`staging -> target` 的两次同卷重命名。旧安装的 `app\resc\user`
+先移到暂存目录（资源包自带默认文件时按旧文件优先合并），失败先回滚用户数据再清理暂存；
+切换成功后写回 `app\resc\user\update_state.json`，并启动新 `app\启动飞行雪绒.exe`。
+更新器自身从临时工作目录运行并切换 CWD，绝不把安装根当作当前目录。交接目录在下次启动
+时清理；仍被运行中的更新器占用的工作区会跳过。
 
 `app\卸载飞行雪绒.exe` 与安装器共用同一套工作台亮色令牌、品牌头和鸿蒙内嵌字体，
 中部提供两个自绘复选框：“删除语音包”（`C:\AemeathDeskPet\voice`、`models\vosk`

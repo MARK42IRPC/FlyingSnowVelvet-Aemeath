@@ -371,10 +371,13 @@ class UpdateManager(_UpdateBase):
         restart_command: list[str] | None = None,
     ) -> UpdateResult:
         from lib.script.app.update_installer import (
+            can_hand_off_to_updater,
             defer_overlay_leftovers,
             extract_update_installer_bundle,
             install_resource_bundle,
+            launch_update_handoff,
             launch_update_installer,
+            prepare_update_handoff,
             validate_update_installer,
         )
         from lib.script.app.update_locks import release_install_directory_locks
@@ -402,50 +405,64 @@ class UpdateManager(_UpdateBase):
                 raise UpdateError("更新包缺少可校验的 SHA-256，已取消更新")
             if digest.casefold() != release.archive_sha256.casefold():
                 raise UpdateError("更新安装器压缩包 SHA-256 校验失败")
+            release_payload = {
+                "tag": release.tag,
+                "published_at": _isoformat(release.published_at),
+                "revision": release.revision,
+                "source": release.source,
+            }
             if release.kind == "resources":
                 archive_path = download_path
-                # Resource overlays are applied while the app is running; no
-                # native installer/EXE is downloaded or executed.
-                released = release_install_directory_locks(
-                    _PROJECT_ROOT, info=self._info
-                )
-                if released.processes:
-                    notes.append(
-                        f"已结束 {len(released.processes)} 个占用安装目录的后台进程。"
+                # 安装版优先交给独立更新器：它会在桌宠退出后接管整个安装目录，
+                # 先解除全部占用，再解压、校验、原子切换并自动重启。旧的就地覆盖
+                # 在桌宠仍占用 pythonw/DLL 时注定要处理“文件被占用”，也只适用于
+                # 源码工作区这种没有安装标记的场景。
+                if can_hand_off_to_updater(_PROJECT_ROOT):
+                    workspace, command = prepare_update_handoff(
+                        archive_path,
+                        _PROJECT_ROOT,
+                        self._state_path,
+                        release_payload,
+                        archive_sha256=release.archive_sha256,
                     )
-                outcome = install_resource_bundle(
-                    archive_path,
-                    _PROJECT_ROOT,
-                    progress=lambda text: self._progress(0, 0, text),
-                )
-                if outcome.locked:
-                    deferred = defer_overlay_leftovers(
-                        outcome,
-                        outcome.target_root or _PROJECT_ROOT,
-                        release={
-                            "tag": release.tag,
-                            "published_at": _isoformat(release.published_at),
-                            "revision": release.revision,
-                            "source": release.source,
-                        },
+                    launch_update_handoff(command)
+                    self._info("独立更新器已启动，等待桌宠退出后完成替换")
+                else:
+                    released = release_install_directory_locks(
+                        _PROJECT_ROOT, info=self._info
                     )
-                    if deferred:
-                        preview = "、".join(deferred[:3])
-                        more = "" if len(deferred) <= 3 else f" 等 {len(deferred)} 个文件"
+                    if released.processes:
                         notes.append(
-                            f"{len(deferred)} 个文件正在使用中，已登记为下次启动时替换：{preview}{more}"
+                            f"已结束 {len(released.processes)} 个占用安装目录的后台进程。"
                         )
-                if released.workbench_helper_pid is not None:
-                    # 覆盖安装做完再开窗：提前打开会把刚腾出来的文件重新锁上。
-                    _restart_workbench_window()
-                self._save_installed_state(
-                    InstalledState(
-                        release.tag,
-                        release.published_at,
-                        release.revision,
-                        release.source,
+                    outcome = install_resource_bundle(
+                        archive_path,
+                        _PROJECT_ROOT,
+                        progress=lambda text: self._progress(0, 0, text),
                     )
-                )
+                    if outcome.locked:
+                        deferred = defer_overlay_leftovers(
+                            outcome,
+                            outcome.target_root or _PROJECT_ROOT,
+                            release=release_payload,
+                        )
+                        if deferred:
+                            preview = "、".join(deferred[:3])
+                            more = "" if len(deferred) <= 3 else f" 等 {len(deferred)} 个文件"
+                            notes.append(
+                                f"{len(deferred)} 个文件正在使用中，已登记为下次启动时替换：{preview}{more}"
+                            )
+                    if released.workbench_helper_pid is not None:
+                        # 覆盖安装做完再开窗：提前打开会把刚腾出来的文件重新锁上。
+                        _restart_workbench_window()
+                    self._save_installed_state(
+                        InstalledState(
+                            release.tag,
+                            release.published_at,
+                            release.revision,
+                            release.source,
+                        )
+                    )
             else:
                 # 下载文件就是清单里的那一份，SHA-256 已经覆盖了安装器内置归档的全部
                 # 字节，这里只做 PE 尾记录与 ZIP 目录的结构检查。
@@ -457,12 +474,6 @@ class UpdateManager(_UpdateBase):
                 # 走到这里 archive_sha256 一定非空（上面的守卫已拒绝缺哈希的清单），
                 # 下载流哈希已经覆盖了安装器内置归档的全部字节，无需再重哈希一遍。
                 validate_update_installer(archive_path)
-            release_payload = {
-                "tag": release.tag,
-                "published_at": _isoformat(release.published_at),
-                "revision": release.revision,
-                "source": release.source,
-            }
             if launch_installer and release.kind != "resources":
                 # 这里不重开控制面板：桌宠马上要退出，任何还活着的自有进程都会
                 # 挡住原生安装器切换安装目录。
@@ -492,10 +503,23 @@ class UpdateManager(_UpdateBase):
             release.revision,
             release.source,
         )
-        reason = "resources_installed" if release.kind == "resources" else ("install_scheduled" if launch_installer else "download_ready")
-        message = "离线安装器已启动，桌宠将在退出后完成更新。" if launch_installer else "离线安装器已下载并通过校验，请启动安装器完成更新。"
-        if release.kind == "resources":
-            message = "资源包已安装，后续启动将使用最新资源。"
+        resource_handoff = release.kind == "resources" and can_hand_off_to_updater(_PROJECT_ROOT)
+        reason = (
+            "update_handoff"
+            if resource_handoff
+            else "resources_installed"
+            if release.kind == "resources"
+            else ("install_scheduled" if launch_installer else "download_ready")
+        )
+        message = (
+            "独立更新器已启动，桌宠将退出并完成替换。"
+            if resource_handoff
+            else "离线安装器已启动，桌宠将在退出后完成更新。"
+            if launch_installer
+            else "离线安装器已下载并通过校验，请启动安装器完成更新。"
+        )
+        if release.kind == "resources" and not resource_handoff:
+            message = "资源包已更新，后续启动将使用最新资源。"
         self._progress(1, 1, message)
         return UpdateResult(
             True,
