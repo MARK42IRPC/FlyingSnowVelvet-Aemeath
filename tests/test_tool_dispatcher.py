@@ -380,8 +380,8 @@ class ToolDispatcherTests(unittest.TestCase):
         self.assertNotIn('纸飞机 - 鸣潮\n', entries)
         # 分组标题走注释、曲目一行一首，不能把「标题：」或「、」带进候选。
         self.assertTrue(all('：' not in entry and not entry.endswith('、') for entry in entries))
-        self.assertIn('繁星', entries)
-        self.assertIn('新生，与你Astrum', entries)
+        self.assertIn('繁星，新生，与你Astrum', entries)
+        self.assertNotIn('繁星', entries)
 
     def test_musiclist_command_resolves_from_native_and_alias_forms(self):
         self.assertEqual(_extract_tool_invocation('###曲库###'), ('曲库', ''))
