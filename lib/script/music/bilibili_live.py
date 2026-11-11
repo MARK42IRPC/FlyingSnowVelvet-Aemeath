@@ -7,7 +7,6 @@ zlib 解包与 ``DANMU_MSG`` 提取都在这里，便于离线单测。
 from __future__ import annotations
 
 import json
-import re
 import struct
 import zlib
 from dataclasses import dataclass

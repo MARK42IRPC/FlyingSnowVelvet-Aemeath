@@ -478,7 +478,6 @@ class OfflineDistributionTests(unittest.TestCase):
         from unittest import mock
 
         from lib.script.ui import ai_settings_panel
-        from lib.script.ui import ai_settings_contributions
 
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

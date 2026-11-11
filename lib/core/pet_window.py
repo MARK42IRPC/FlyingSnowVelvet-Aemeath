@@ -21,7 +21,6 @@ from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.draw_core import DrawRequest, get_draw_core
 from lib.core.render.layers import Layer, normalize_layer
 from lib.core.render.visuals.types import Point, Size, coerce_point
-from lib.core.action import Actions
 from lib.core.timing import register_timing_manager
 from lib.core.clickthrough_state import set_clickthrough_enabled
 from config.scale import scale_px

@@ -13,11 +13,9 @@ from __future__ import annotations
 
 from config.actions import (
     ACTION,
-    ACTIONS,
     BASE,
     INTERRUPT_ANY,
     INTERRUPT_EVENT,
-    INTERRUPT_NONE,
     TRANSIENT,
     ActionSpec,
     action_spec,

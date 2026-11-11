@@ -1,6 +1,5 @@
 import os
 import unittest
-from unittest.mock import patch
 
 from lib.core.render.backends.qt.widgets import animation_player_main
 
