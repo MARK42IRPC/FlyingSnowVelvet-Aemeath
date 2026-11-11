@@ -689,8 +689,12 @@ class ForumWindowTests(unittest.TestCase):
             )
             # 颜色写在字符格式里（粗体描边要用同一个颜色），换主题要显式重刷。
             light = get_workbench_colors("light")
+            # 取色实现在后端中立的 `lib.core.render.visuals.forum_style`，产品垫片只是
+            # 再导出；patch 打在垫片上不会影响真正的调用方，这条断言就会一直读到
+            # 旧主题色。
             with patch(
-                "lib.script.ui.forum_style.get_workbench_colors", return_value=light
+                "lib.core.render.visuals.forum_style.get_workbench_colors",
+                return_value=light,
             ):
                 plain.refresh_theme()
             self.assertEqual(
