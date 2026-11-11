@@ -21,3 +21,4 @@ webrtcvad-wheels>=2.0.14
 soundfile>=0.12
 soxr>=0.5
 vosk>=0.3.45
+websocket-client>=1.8,<2

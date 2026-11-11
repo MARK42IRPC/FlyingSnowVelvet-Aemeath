@@ -1,7 +1,7 @@
 """AI 设置面板的「桌宠更新」页（视图 + 控制器，档位 D 宿主）。
 
-只读页：没有配置字段、不参与 `_collect_values` / `_set_values_to_form`。带五个动作——检查更新 /
-同步开发版、打开夸克网盘、显示 QQ 群二维码、卸载桌宠——动作反馈到面板（淡出、信息气泡、退出事件），
+只读页：没有配置字段、不参与 `_collect_values` / `_set_values_to_form`。带四个动作——检查更新 /
+打开夸克网盘、显示 QQ 群二维码、卸载桌宠——动作反馈到面板（淡出、信息气泡、退出事件），
 因此按「控制器」口径切成模块函数，面板状态经 `PetUpdateActions` 显式注入。
 
 落进档位 D 后解耦掉的产品依赖（宿主不得 import `lib.script`）：卸载入口（`uninstall_entry`）经
@@ -60,14 +60,14 @@ def QQGroupDialog(*args, **kwargs):  # noqa: N802 - 保持与原类同名的取�
     hook = tier_d_seams.hook("qq_group_dialog_class")
     if hook is None:
         raise RuntimeError("QQ 群窗类未注入")
-    return hook(*args, **kwargs)
+    return hook()(*args, **kwargs)
 
 
 def DesktopPetUpdateDialog(*args, **kwargs):  # noqa: N802 - 保持与原类同名的取用形态
     hook = tier_d_seams.hook("update_dialog_class")
     if hook is None:
         raise RuntimeError("更新窗类未注入")
-    return hook(*args, **kwargs)
+    return hook()(*args, **kwargs)
 
 UPDATE_BUTTON_ROW_GAP = scale_px(10, min_abs=10)
 QUARK_UPDATE_URL = "https://pan.quark.cn/s/9158e62439e2"
@@ -78,7 +78,6 @@ class PetUpdateActions:
     """更新页动作所需的显式依赖；面板在绑定与建页时填充。"""
 
     check_updates: Callable[[], None]
-    sync_dev_build: Callable[[], None]
     open_quark_manual: Callable[[], None]
     show_qq_group: Callable[[], None]
     uninstall_pet: Callable[[], None]
@@ -125,21 +124,6 @@ def build_desktop_pet_update_panel(
     check_update_btn.clicked.connect(actions.check_updates)
     stable_row.addWidget(check_update_btn, 1)
     stable_section.body_layout.addLayout(stable_row)
-
-    dev_section = scaffold.add_help_section(
-        "开发版本",
-        "面向需要跟随远端代码的使用场景。同步前请先确认本地改动已妥善保存。",
-        help_text=(
-            "开发版跟随远端主干代码，比稳定版更新得更快，但也可能带着还没验证完的改动。\n\n"
-            "同步会用远端版本覆盖本地程序文件。如果你改过源码、装过额外插件，"
-            "请先确认这些改动已经妥善保存或另有备份，覆盖之后无法找回。\n\n"
-            "只想要能稳定用的版本时，请走上面的稳定版。"
-        ),
-    )
-    sync_dev_btn = QPushButton("同步开发版", dev_section)
-    sync_dev_btn.setObjectName("syncDevButton")
-    sync_dev_btn.clicked.connect(actions.sync_dev_build)
-    dev_section.body_layout.addWidget(sync_dev_btn)
 
     manual_section = scaffold.add_help_section(
         "手动获取",
@@ -190,19 +174,16 @@ def build_desktop_pet_update_panel(
         "hint_label": hint_label,
         "section_title_labels": [
             stable_section.title_label,
-            dev_section.title_label,
             manual_section.title_label,
             uninstall_section.title_label,
         ],
         "section_hint_labels": [
             stable_section.description_label,
-            dev_section.description_label,
             manual_section.description_label,
             uninstall_section.description_label,
         ],
         "buttons": [
             check_update_btn,
-            sync_dev_btn,
             quark_update_btn,
             qq_group_btn,
             uninstall_btn,
@@ -218,7 +199,7 @@ def ensure_update_dialog(actions: PetUpdateActions) -> DesktopPetUpdateDialog:
     return actions.update_dialog
 
 
-def open_update_dialog(actions: PetUpdateActions, mode: str) -> None:
+def open_update_dialog(actions: PetUpdateActions) -> None:
     dialog = ensure_update_dialog(actions)
     if dialog.is_busy():
         actions.emit_info("更新窗口正在处理任务，请稍候。", min_tick=12, max_tick=160)
@@ -228,23 +209,14 @@ def open_update_dialog(actions: PetUpdateActions, mode: str) -> None:
     delay_ms = max(80, int(UI.get("ui_fade_duration", 180)))
 
     def show_dialog() -> None:
-        started = (
-            dialog.begin_release_check()
-            if mode == "release"
-            else dialog.begin_git_sync_check()
-        )
-        if not started:
+        if not dialog.begin_release_check():
             actions.emit_info("更新窗口正在处理任务，请稍候。", min_tick=12, max_tick=160)
 
     QTimer.singleShot(delay_ms, show_dialog)
 
 
 def on_check_updates(actions: PetUpdateActions) -> None:
-    open_update_dialog(actions, "release")
-
-
-def on_sync_dev_build(actions: PetUpdateActions) -> None:
-    open_update_dialog(actions, "git")
+    open_update_dialog(actions)
 
 
 def ensure_qq_group_dialog(actions: PetUpdateActions) -> QQGroupDialog:

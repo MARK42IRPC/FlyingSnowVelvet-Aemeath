@@ -23,6 +23,7 @@ FSDX_EVENT_FLAG_CHECKED = 0x00000100
 FSDX_TRAY_MENU_STATE_GAME_MODE = 0x00000001
 FSDX_TRAY_MENU_STATE_CLICKTHROUGH = 0x00000002
 FSDX_TRAY_MENU_STATE_AUTOSTART = 0x00000004
+FSDX_TRAY_MENU_STATE_LIVE_STREAM = 0x00000008
 FSDX_TRAY_COMMAND_ANNOUNCEMENT = int(TrayCommand.ANNOUNCEMENT)
 FSDX_TRAY_COMMAND_QUIT = int(TrayCommand.QUIT)
 FSDX_TRAY_COMMAND_OPEN_SETTINGS = int(TrayCommand.OPEN_SETTINGS)
@@ -34,6 +35,7 @@ _CHECKABLE_COMMANDS = {
     TrayCommand.TOGGLE_GAME_MODE,
     TrayCommand.TOGGLE_CLICKTHROUGH,
     TrayCommand.TOGGLE_AUTOSTART,
+    TrayCommand.TOGGLE_LIVE_STREAM,
 }
 
 _logger = get_logger(__name__)
@@ -169,6 +171,8 @@ class DxTrayHost:
             flags |= FSDX_TRAY_MENU_STATE_CLICKTHROUGH
         if state.autostart_enabled:
             flags |= FSDX_TRAY_MENU_STATE_AUTOSTART
+        if state.live_stream_enabled:
+            flags |= FSDX_TRAY_MENU_STATE_LIVE_STREAM
         return flags
 
     def set_menu_state(self, state: TrayMenuState) -> None:

@@ -461,6 +461,23 @@ def quote_cmd(path: Path) -> str:
     return f'"{path}"'
 
 
+def _vs_installer_dir() -> str:
+    """VS Installer 目录（`vswhere.exe` 所在处）；找不到时返回空串。
+
+    `VsDevCmd.bat` 依赖 `vswhere.exe` 定位 MSVC 组件，而 vswhere 只随 Installer 安装、
+    默认不在 PATH 上。这里按 Installer 的标准位置找一遍，交给调用方补进 PATH。
+    """
+    program_files_x86 = Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"))
+    program_files = Path(os.environ.get("ProgramFiles", r"C:\Program Files"))
+    for candidate in (
+        program_files_x86 / "Microsoft Visual Studio" / "Installer",
+        program_files / "Microsoft Visual Studio" / "Installer",
+    ):
+        if (candidate / "vswhere.exe").is_file():
+            return str(candidate)
+    return ""
+
+
 def find_vsdevcmd(explicit: Path | None) -> Path:
     candidates = [explicit] if explicit else []
     program_files = Path(os.environ.get("ProgramFiles", r"C:\Program Files"))
@@ -486,10 +503,15 @@ def _load_vs_environment(vsdevcmd: Path) -> dict[str, str]:
         environment_file = Path(temporary) / "environment.txt"
         batch.write_text(
             "@echo off\n"
+            # `VsDevCmd.bat` 内部靠 `vswhere.exe` 定位 MSVC 组件，而 vswhere 住在
+            # VS Installer 目录里、默认不在 PATH 上。不补这一行时它会在 `for /f`
+            # 里读到「'vswhere.exe' 不是内部或外部命令」，整个 VsDevCmd 以非 0 退出，
+            # 编译类用例因此全被记成 error。
+            f'set "PATH={_vs_installer_dir()};%PATH%"\n'
             f"call {quote_cmd(vsdevcmd)} -arch=x64 -host_arch=x64 >nul\n"
             "if errorlevel 1 exit /b %errorlevel%\n"
             f"set > {quote_cmd(environment_file)}\n",
-            encoding="utf-8-sig",
+            encoding="mbcs",
         )
         subprocess.run(
             ["cmd.exe", "/d", "/u", "/c", "call", str(batch)],
@@ -521,7 +543,9 @@ def run_vs_command(vsdevcmd: Path, command: str, cwd: Path) -> None:
     batch.write_text(f"@echo off\n{command}\n", encoding="utf-8-sig")
     try:
         subprocess.run(
-            ["cmd.exe", "/d", "/c", "call", batch.name],
+            # 必须带 `.\`：cmd 的 `call` 只按 PATH 找命令，裸文件名不会落在当前目录上，
+            # 会报「'.fsv-vs-command-xxx.cmd' 不是内部或外部命令」。
+            ["cmd.exe", "/d", "/c", "call", f".\\{batch.name}"],
             cwd=cwd,
             env=_load_vs_environment(vsdevcmd),
             check=True,

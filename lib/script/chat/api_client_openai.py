@@ -331,6 +331,7 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
         full_text = ""
         line_count = 0
         piece_count = 0
+        reasoning_piece_count = 0
         pending_data = ""
         last_data_sample = ""
         first_piece_at: float | None = None
@@ -338,9 +339,11 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
 
         def consume_chunk(chunk: dict) -> bool:
             """处理单个已解析 JSON chunk，返回是否应结束流。"""
-            nonlocal full_text, piece_count
+            nonlocal full_text, piece_count, reasoning_piece_count
 
             tool_calls.consume_openai_chunk(chunk)
+            if self._extract_openai_chunk_reasoning(chunk):
+                reasoning_piece_count += 1
             piece = self._extract_openai_chunk_text(chunk)
             if piece:
                 nonlocal first_piece_at
@@ -430,9 +433,19 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
             except Exception as cb_err:
                 logger.warning("[APIClient] on_tool_call 回调异常，已忽略: %s", cb_err)
 
+        #: 记录本轮是否「只有思考、没有正文」：快捷福利 API 据此把该模型换掉，
+        #: 而不是把一个空回复当成成功（见 `api_client_quick_welfare`）。
+        self._last_stream_reasoning_only = bool(piece_count == 0 and reasoning_piece_count > 0)
         if piece_count == 0 and native_tool_call is None:
-            logger.warning("[APIClient] 流式结束但未解析到文本: lines=%d chars=%d sample=%r",
-                           line_count, len(full_text), last_data_sample[:120])
+            if reasoning_piece_count > 0:
+                logger.warning(
+                    "[APIClient] 流式结束但只有思考内容、没有正文: reasoning_pieces=%d lines=%d",
+                    reasoning_piece_count,
+                    line_count,
+                )
+            else:
+                logger.warning("[APIClient] 流式结束但未解析到文本: lines=%d chars=%d sample=%r",
+                               line_count, len(full_text), last_data_sample[:120])
         elif request_started_at is not None and first_piece_at is not None:
             logger.debug(
                 "[APIClient] 流式阶段耗时: endpoint=%s stream=%.3fs total=%.3fs",
@@ -451,12 +464,19 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
                          request_id: int | None = None,
                          config_override: dict | None = None,
                          allow_tools: bool = True,
-                         on_tool_call=None) -> str:
+                         on_tool_call=None,
+                         retry_attempts: int | None = None,
+                         timeout_secs: float | None = None) -> str:
         """
         POST /chat/completions（OpenAI 兼容 API 格式）。
 
         on_chunk_emit: 可选回调，每累积到新内容时从后台线程调用 on_chunk_emit(accumulated_text)
         images: 可选的图片字节数组列表（多模态支持，内部会转换为 base64）
+        retry_attempts: 覆盖单端点的重试次数；None 表示沿用 `API_TOTAL_ATTEMPTS`。
+        timeout_secs: 覆盖连接/读取超时秒数；None 表示沿用 `API_TIMEOUT_SECS`。
+
+        覆盖项只给「一次请求要连试多个目标」的调用方用（快捷福利 API 的模型轮询）：
+        它必须能在有限的总预算里换下一个小目标，而不是在同一个目标上把重试耗光。
         """
         # 从模块级变量读取（通过 self 间接访问，在 OllamaManager 中定义）
         from config.ollama_config import OLLAMA
@@ -467,9 +487,9 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
 
         raw_retry_backoff = OLLAMA.get('api_retry_backoff', 0.8)
         raw_disable_env_proxy = OLLAMA.get('api_disable_env_proxy', True)
-        api_connect_timeout = API_TIMEOUT_SECS
-        api_read_timeout = API_TIMEOUT_SECS
-        api_retry_times = API_TOTAL_ATTEMPTS
+        api_connect_timeout = float(API_TIMEOUT_SECS if timeout_secs is None else timeout_secs)
+        api_read_timeout = api_connect_timeout
+        api_retry_times = max(1, int(API_TOTAL_ATTEMPTS if retry_attempts is None else retry_attempts))
         try:
             api_retry_backoff = float(raw_retry_backoff)
         except (TypeError, ValueError):

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 # 当前应用版本（与 README / 发布标签保持一致）
 APP_VERSION = "LTS1.0.7pre7"
 # 版本发布日期（ISO 日期字符串，便于比较）
@@ -19,6 +21,42 @@ VOICE_PACKAGE_HUGGINGFACE_REPO = "Mark42IRP/Aemeath_onnx_GSV_model"
 VOICE_PACKAGE_MODELSCOPE_REPO = "Mark42IRPC/GSV_onnx_Aemeath_Pack"
 OFFLINE_UPDATE_FORMAT = "fsv-offline-installer-v1"
 OFFLINE_UPDATE_METADATA_PATH = "updates/latest.json"
+
+
+_VERSION_RE = re.compile(
+    r"^(?:lts|v)?\s*(?P<release>\d+(?:\.\d+)*)"
+    r"(?:[-\s]?(?P<pre>[A-Za-z][A-Za-z0-9.]*))?$",
+    re.IGNORECASE,
+)
+
+
+def _prerelease_key(tag: str) -> tuple[tuple[int, int, str], ...]:
+    """预发布标记的稳定排序键：数字段按数值、字母段按字典序。"""
+    chunks = re.findall(r"\d+|[A-Za-z]+", tag or "")
+    return tuple(
+        (1, int(chunk), "") if chunk.isdigit() else (0, 0, chunk.lower())
+        for chunk in chunks
+    )
+
+
+def version_key(value: str) -> tuple[tuple[int, ...], int, tuple[tuple[int, int, str], ...]] | None:
+    """把 `LTS1.0.7pre7` / `v1.0.7` / `1.0.7-rc1` 解析成可比较的键；无法解析时返回 None。"""
+    match = _VERSION_RE.match(str(value or "").strip())
+    if match is None:
+        return None
+    release = tuple(int(part) for part in match.group("release").split("."))
+    padded = tuple(release) + (0,) * (4 - len(release)) if len(release) < 4 else release
+    prerelease = match.group("pre") or ""
+    return padded, 0 if prerelease else 1, _prerelease_key(prerelease)
+
+
+def is_newer_version(candidate: str, current: str = APP_VERSION) -> bool:
+    """`candidate` 是否严格新于 `current`；任一侧无法解析时一律返回 False。"""
+    candidate_key = version_key(candidate)
+    current_key = version_key(current)
+    if candidate_key is None or current_key is None:
+        return False
+    return candidate_key > current_key
 
 
 def as_dict() -> dict[str, str]:

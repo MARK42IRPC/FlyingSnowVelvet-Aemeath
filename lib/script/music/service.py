@@ -11,6 +11,7 @@ from typing import Optional
 
 from config.config import CLOUD_MUSIC
 from config.general_user_settings import save_general_values
+from lib.core.event.center import Event, EventType, get_event_center
 from lib.core.logger import get_logger
 
 from .provider import MusicProvider
@@ -275,6 +276,36 @@ class MusicService:
 
     def get_volume_percent(self) -> int:
         return int(round(self.get_volume() * 100))
+
+    def enqueue_track(self, track: MusicTrack, *, silent: bool = True, autoplay: bool = True) -> bool:
+        """Append one normalized track to the end of the playback queue.
+
+        This is the public seam for non-UI callers (live requests, automation).
+        It deliberately reuses ``MUSIC_ENQUEUE`` so queue placement and provider
+        normalization stay in one implementation. ``autoplay=False`` keeps a
+        request from replacing an idle player's current track.
+        """
+        if track is None:
+            return False
+        track_ref = str(getattr(track, "track_id", "") or "").strip()
+        if not track_ref:
+            return False
+        # ``MUSIC_ENQUEUE`` 只有活动后端会消费。直播点歌可能发生在用户尚未
+        # 打开音响、后端还没懒初始化的时候；先确保后端存在，避免事件静默丢失。
+        backend = self._get_backend_manager()
+        if backend is None:
+            logger.warning("[MusicService] 当前平台没有播放后端，无法入队: %s", self._provider_name)
+            return False
+        display = self.format_track_display(track, include_provider=True)
+        get_event_center().publish(Event(EventType.MUSIC_ENQUEUE, {
+            "song_id": track_ref,
+            "track_ref": track_ref,
+            "display": display,
+            "silent": bool(silent),
+            "autoplay": bool(autoplay),
+        }))
+        logger.info("[MusicService] 已请求入队: track_ref=%s", track_ref)
+        return True
 
     def queue_snapshot(self) -> list:
         mgr = self._get_backend_manager()

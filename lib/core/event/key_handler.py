@@ -1,7 +1,7 @@
 """键盘事件处理器 - 处理键盘相关的具体逻辑"""
 import random
 
-from config.config import BEHAVIOR
+from config.actions import actions_in_group
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.input.types import Key
 
@@ -26,10 +26,12 @@ class KeyEventHandler:
         """处理键盘按下"""
         key = event.data.get('key')
 
-        # 空格键：触发随机动作
+        # 空格键：触发随机互动动作
         if key == Key.SPACE:
             if not self._entity.is_moving():
-                state = random.choice(BEHAVIOR['random_states'])
-                self._entity.play_animation(state, duration=random.randint(2000, 4000))
+                candidates = actions_in_group("click")
+                if candidates:
+                    state = random.choice(candidates)
+                    self._entity.play_animation(state, duration=random.randint(2000, 4000))
 
         # 方向键不再驱动主宠移动；仅由各 UI 组件按需处理。

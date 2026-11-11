@@ -557,7 +557,7 @@ class QtDependencyBoundaryTests(unittest.TestCase):
             from lib.core.game_obstacles import get_game_obstacle_rect
             from lib.core.render.visuals.types import Point, Rect
             from lib.core.input.types import Key
-            from lib.script.mainpet.state import StateMachine
+            from lib.script.mainpet.director import BehaviorDirector
 
             class Entity:
                 def get_core_geometry(self): return Rect(0, 0, 20, 20)
@@ -566,10 +566,10 @@ class QtDependencyBoundaryTests(unittest.TestCase):
                 def play_animation(self, *_args, **_kwargs): pass
 
             entity = Entity()
-            state = StateMachine.__new__(StateMachine)
-            state._entity = entity
+            director = BehaviorDirector.__new__(BehaviorDirector)
+            director._entity = entity
             assert get_game_obstacle_rect() is None
-            assert state._is_wander_target_blocked_by_lahai(Point(80, 40)) is False
+            assert director._is_wander_target_blocked_by_lahai(Point(80, 40)) is False
 
             handler = KeyEventHandler.__new__(KeyEventHandler)
             handler._entity = entity

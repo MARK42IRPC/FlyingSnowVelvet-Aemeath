@@ -21,7 +21,15 @@ class OllamaBootstrapMixin:
         if self._use_api_key:
             self._is_running     = True
             self._selected_model = self._active_config.get('model')
-            logger.info("[OllamaManager] API Key 模式就绪，模型: %s", self._selected_model)
+            if getattr(self, "_quick_welfare_mode", False):
+                model_count = len(self._active_config.get('models') or ())
+                logger.info(
+                    "[OllamaManager] 快捷福利 API 模式就绪，免费池 %d 个模型，本轮起点: %s",
+                    model_count,
+                    self._selected_model,
+                )
+            else:
+                logger.info("[OllamaManager] API Key 模式就绪，模型: %s", self._selected_model)
             return
         if self._rule_reply_mode:
             self._is_running = False

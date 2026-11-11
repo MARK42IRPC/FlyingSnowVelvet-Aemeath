@@ -517,11 +517,9 @@ class OfflineDistributionTests(unittest.TestCase):
                 self.assertTrue(ai_settings_panel._sponsor_author_image_path().is_file())
                 records = ai_settings_panel._load_contribution_records()
 
-            # Without the staged document the workbench falls back to the three
-            # built-in records, which is exactly the reported regression.
-            manual_records = ai_settings_contributions._MANUAL_CONTRIBUTION_RECORDS
-            self.assertEqual(len(manual_records), 3)
-            self.assertGreater(len(records), len(manual_records))
+            # 条目全部来自暂存的文档树，不再有内置硬编码名单。
+            self.assertTrue(records)
+            self.assertTrue(any("Mark42" in record["name"] for record in records))
 
     def test_node_pruning_keeps_runtime_and_licenses(self):
         with tempfile.TemporaryDirectory() as tmpdir:

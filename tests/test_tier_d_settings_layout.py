@@ -17,8 +17,22 @@
 from __future__ import annotations
 
 import ast
+import os
 import unittest
 from pathlib import Path
+
+# 本文件在 `setUpClass` 里建 `QApplication`，所以必须像其它 Qt 用例那样先把平台插件
+# 钉到 offscreen：单独运行这个文件时没人替它设置环境，Qt 会去初始化真实的 Windows
+# 平台插件，找不到插件就弹系统错误框并让进程以非 0 码退出（看起来像用例失败）。
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+import PyQt5.QtCore
+
+_QT_ROOT = os.path.dirname(PyQt5.QtCore.__file__)
+os.environ.setdefault(
+    "QT_QPA_PLATFORM_PLUGIN_PATH",
+    os.path.join(_QT_ROOT, "Qt5", "plugins", "platforms"),
+)
+os.environ.setdefault("QT_PLUGIN_PATH", os.path.join(_QT_ROOT, "Qt5", "plugins"))
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _PRODUCT = _REPO_ROOT / "lib" / "script" / "ui" / "workbench_settings_layout.py"

@@ -62,7 +62,10 @@ class QtApplicationUiHost:
 
         self._office_approval_controller = OfficeApprovalController()
         self._office_approval_controller.start()
-        self._announcement_controller = AnnouncementController(application)
+        self._announcement_controller = AnnouncementController(
+            application,
+            update_opener=self.open_update,
+        )
         self._help_window_controller = HelpWindowController(application)
         if self._preloader is None:
             self._preloader = preload_runtime_ui()
@@ -71,6 +74,15 @@ class QtApplicationUiHost:
     def open_announcement(self) -> None:
         if self._announcement_controller is not None:
             self._announcement_controller.open_from_tray()
+
+    def open_update(self) -> None:
+        """公告里的「立即更新」：打开「桌宠更新」页并直接开始检查新版本。"""
+        from lib.script.ui.tray_icon import get_tray_icon
+
+        tray = get_tray_icon()
+        if tray is None or not tray.initialize():
+            raise RuntimeError('Qt 托盘不可用')
+        tray.check_for_updates()
 
     def open_settings(self) -> None:
         from lib.script.ui.tray_icon import get_tray_icon

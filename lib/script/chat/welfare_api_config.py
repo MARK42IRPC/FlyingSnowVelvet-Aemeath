@@ -21,15 +21,18 @@ _CACHED_CONFIG: dict[str, object] | None = None
 WELFARE_STANDARD_MODEL = "agnes-2.0-flash"
 WELFARE_BOOST_MODEL = "agnes-2.5-flash"
 WELFARE_MODELS = (WELFARE_STANDARD_MODEL, WELFARE_BOOST_MODEL)
+#: 能接受图片输入的模型（2026-11-11 实测：2.5 能看图，2.0 在免费额度下频繁 429、
+#: 未取到有效答复，因此不列入）。带图请求会优先选这里面的模型。
+WELFARE_VISION_MODELS = frozenset({WELFARE_BOOST_MODEL})
 
 
 def _parse_welfare_config(text: str) -> dict[str, object]:
     lines = [line.strip().lstrip("\ufeff") for line in str(text or "").splitlines() if line.strip()]
     if len(lines) < 2:
-        raise ValueError("福利 API 配置至少需要密钥和接口地址")
+        raise ValueError("备用福利 API 配置至少需要密钥和接口地址")
     api_key, base_url = lines[:2]
     if not api_key or not base_url.startswith(("http://", "https://")):
-        raise ValueError("福利 API 配置格式无效")
+        raise ValueError("备用福利 API 配置格式无效")
     return {
         "api_key": api_key,
         "base_url": base_url.rstrip("/"),
@@ -45,11 +48,25 @@ def _download_source(url: str) -> tuple[float, dict[str, object]]:
     return time.monotonic() - started_at, config
 
 
-def select_welfare_model(models: tuple[str, ...] | list[str], intelligence_boost: bool) -> str:
+def select_welfare_model(
+    models: tuple[str, ...] | list[str],
+    intelligence_boost: bool,
+    *,
+    needs_vision: bool = False,
+) -> str:
+    """按「是否开启智力提升 / 这次要不要看图」选模型。
+
+    带图请求优先选能看图的模型：否则图片会被上游直接拒掉，用户只能拿到一段
+    完全没看图的自言自语。能看图的模型不在清单里时才退回原首选（由上游报错说明）。
+    """
     preferred = WELFARE_BOOST_MODEL if intelligence_boost else WELFARE_STANDARD_MODEL
     available = {str(model or "").strip() for model in models}
+    if needs_vision:
+        for model in (WELFARE_BOOST_MODEL, WELFARE_STANDARD_MODEL):
+            if model in WELFARE_VISION_MODELS and model in available:
+                return model
     if preferred not in available:
-        raise RuntimeError(f"福利 API 当前未提供模型 {preferred}")
+        raise RuntimeError(f"备用福利 API 当前未提供模型 {preferred}")
     return preferred
 
 
@@ -67,7 +84,7 @@ def _resolve_once() -> dict[str, object]:
         except Exception as exc:
             errors.append(f"{url}: {exc}")
     if not candidates:
-        raise RuntimeError("；".join(errors) or "福利 API 配置源均不可用")
+        raise RuntimeError("；".join(errors) or "备用福利 API 配置源均不可用")
     elapsed, source_url, config = min(candidates, key=lambda item: item[0])
     return {
         **config,
@@ -93,7 +110,7 @@ def resolve_welfare_api_config(*, force_refresh: bool = False) -> dict[str, obje
                 return dict(resolved)
             except Exception as exc:
                 last_error = exc
-        raise RuntimeError(f"福利 API 配置获取失败，已重试 {API_RETRY_COUNT} 次：{last_error}") from last_error
+        raise RuntimeError(f"备用福利 API 配置获取失败，已重试 {API_RETRY_COUNT} 次：{last_error}") from last_error
 
 
 def clear_welfare_api_config_cache() -> None:

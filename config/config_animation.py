@@ -20,21 +20,13 @@ ANIMATION = {
     'exit_shadow_strength': 255,  # 退出动画阴影强度（0~255，0=关闭）
     'exit_shadow_blur_radius': 30,  # 退出动画阴影模糊半径（像素）
     'exit_shadow_offset_direction': 'center',  # 退出动画阴影偏移方向（如 down / up / left / right / center）
+    # 主宠动作 GIF 所在目录。动作文件名与动作 id 的对应关系见 config/actions.py
+    'gif_dir': 'resc/GIF/MainAemeath',
 }
-GIF_FILES = [
-    'resc/GIF/boring.gif',
-    'resc/GIF/happy.gif',
-    'resc/GIF/idle.gif',
-    'resc/GIF/jumping.gif',
-    'resc/GIF/moving.gif',
-    'resc/GIF/play.gif',
-    'resc/GIF/wave.gif',
-]
 BEHAVIOR = {
     'auto_behavior_interval': (10000, 20000),  # 自动行为间隔（毫秒）
-    'auto_wander_interval':   (5000, 5000),    # 自动漫游间隔（毫秒）
+    'auto_wander_interval':   (5000, 20000),   # 自动漫游间隔（毫秒，5~20 秒）
     'wander_near_speaker_radius': 150,
-    'random_states': ['boring', 'happy', 'wave', 'play', 'jumping'],
     'double_click_ticks': 4,   # 双击判定间隔（tick，1 tick = 50ms，默认 4 tick = 200ms）
     # 移动加速/减速参数
     'move_min_speed': 2.5,  # 最低速度（上一版默认值的三分之一）

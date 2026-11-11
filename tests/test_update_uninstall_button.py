@@ -61,14 +61,67 @@ class UpdatePageUninstallTests(unittest.TestCase):
         self.assertTrue(button.property("danger"), "the uninstall entry keeps the danger accent")
         meta = self.panel._config_tab_meta[_PAGE_ID]
         self.assertIn(button, meta["buttons"])
-        self.assertEqual(len(meta["section_title_labels"]), 4)
-        self.assertEqual(len(meta["section_hint_labels"]), 4)
+        self.assertEqual(len(meta["section_title_labels"]), 3)
+        self.assertEqual(len(meta["section_hint_labels"]), 3)
 
     def test_update_page_shows_current_version(self):
         label = self.page.findChild(QLabel, "DesktopPetCurrentVersion")
 
         self.assertIsNotNone(label, "the stable section must show the running version")
         self.assertEqual(label.text(), f"当前版本：{APP_VERSION}")
+
+    def test_check_updates_drives_a_dialog_instance(self):
+        """更新窗类经 seam 注入的是类本身，动作层必须自己实例化后再查忙闲。"""
+        with patch.object(panel_module.QTimer, "singleShot", lambda _delay, callback: callback()), patch.object(
+            panel_module, "DesktopPetUpdateDialog"
+        ) as dialog_cls, patch.object(self.panel, "fade_out"), patch.object(
+            self.panel, "_emit_info"
+        ):
+            dialog = dialog_cls.return_value
+            dialog.is_busy.return_value = False
+            dialog.begin_release_check.return_value = True
+
+            self.panel._on_check_updates()
+
+        dialog_cls.assert_called_once_with()
+        dialog.is_busy.assert_called_once_with()
+        dialog.begin_release_check.assert_called_once_with()
+        self.assertIs(self.panel._update_dialog, dialog)
+
+    def test_seam_injected_dialog_classes_are_instantiated(self):
+        """类型 seam 必须自己实例化：直接把类当实例用会报 `missing 'self'`。"""
+        from lib.core.render.backends.qt.widgets import tier_d_seams
+
+        class _FakeDialog:
+            def __init__(self):
+                self.busy_checks = 0
+
+            def is_busy(self):
+                self.busy_checks += 1
+                return False
+
+        original = tier_d_seams.hook("update_dialog_class")
+        tier_d_seams.register_hook("update_dialog_class", lambda: _FakeDialog)
+        try:
+            actions = panel_module.PetUpdateActions(
+                check_updates=lambda: None,
+                open_quark_manual=lambda: None,
+                show_qq_group=lambda: None,
+                uninstall_pet=lambda: None,
+                show_info=lambda _message: None,
+                emit_info=lambda *_args, **_kwargs: None,
+                fade_out=lambda: None,
+                event_center=None,
+                root_dir=Path(_TEST_HOME),
+                dialog_parent=None,
+            )
+            dialog = panel_module.ensure_update_dialog(actions)
+        finally:
+            tier_d_seams.register_hook("update_dialog_class", original)
+
+        self.assertIsInstance(dialog, _FakeDialog)
+        self.assertFalse(dialog.is_busy())
+        self.assertEqual(dialog.busy_checks, 1)
 
     def test_uninstall_without_a_packaged_install_explains_the_manual_step(self):
         with patch.object(panel_module, "resolve_uninstaller", return_value=None), patch.object(

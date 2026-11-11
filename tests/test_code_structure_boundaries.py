@@ -146,6 +146,7 @@ class CodeStructureBoundaryTests(unittest.TestCase):
             ("lib/script/ui/speaker_search_dialog.py", "lib.script.music.track_text"),
             ("lib/script/ui/ai_settings_config_store.py", "lib.script.gsvmove"),
             ("lib/script/ui/ai_settings_config_store.py", "lib.script.music"),
+            ("lib/script/ui/ai_settings_config_page.py", "lib.script.music.live"),
             ("lib/script/ui/ai_settings_page.py", "lib.script.chat.handler_auto_companion"),
             ("lib/script/ui/ai_settings_page.py", "lib.script.chat.ollama_registry"),
             ("lib/script/ui/ai_settings_page.py", "lib.script.chat.persona_storage"),

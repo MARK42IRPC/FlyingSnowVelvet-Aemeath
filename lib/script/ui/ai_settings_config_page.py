@@ -11,6 +11,7 @@ from lib.script.SEanima.clip import resolve_animation_folder_path
 from lib.script.SEanima.decoder import scan_animation_frame_files
 from lib.script.app.autostart import is_autostart_enabled
 from lib.script.app.tray_actions import set_autostart_enabled
+from lib.script.music.live import probe_live_room
 from lib.script.ui import render_bridge
 
 (ConfigPageMixin,) = render_bridge.tier_d_reexports(
@@ -37,10 +38,16 @@ def _autostart_set_enabled(enabled: bool):
     return set_autostart_enabled(bool(enabled))
 
 
+def _probe_live_room(room_id: str):
+    """直播页「测试直播间」：阻塞探测，调用方负责丢到 IO 线程。"""
+    return probe_live_room(str(room_id))
+
+
 render_bridge.install_tier_d_anim_folders(resolve_path=resolve_animation_folder_path)
 render_bridge.install_tier_d_hook("scan_animation_frame_files", _scan_animation_frame_files)
 render_bridge.install_tier_d_hook("autostart_is_enabled", _autostart_is_enabled)
 render_bridge.install_tier_d_hook("autostart_set_enabled", _autostart_set_enabled)
+render_bridge.install_tier_d_hook("live_probe_room", _probe_live_room)
 render_bridge.install_tier_d_hook(
     "announcement_load_preferences",
     lambda *a, **k: load_announcement_preferences(*a, **k),

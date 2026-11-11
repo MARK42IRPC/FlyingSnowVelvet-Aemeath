@@ -100,10 +100,76 @@ class _RefreshContractPage(QWidget):
         self.legacy_refreshes += 1
 
 
+_ABOUT_GRAB_SUPPORTED: bool | None = None
+
+
+def _about_grab_supported() -> bool:
+    """当前机器能否对自绘按钮做 ``grab()``（只探测一次，结果缓存）。
+
+    探测放在子进程里：不支持时那个进程会直接退出，父进程据此判定并缓存结果。
+    """
+    global _ABOUT_GRAB_SUPPORTED
+    if _ABOUT_GRAB_SUPPORTED is not None:
+        return _ABOUT_GRAB_SUPPORTED
+    import subprocess
+    import sys
+    import textwrap
+
+    script = textwrap.dedent(
+        """
+        import os
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        import PyQt5.QtCore
+        root = os.path.dirname(PyQt5.QtCore.__file__)
+        os.environ.setdefault(
+            "QT_QPA_PLATFORM_PLUGIN_PATH", os.path.join(root, "Qt5", "plugins", "platforms")
+        )
+        os.environ.setdefault("QT_PLUGIN_PATH", os.path.join(root, "Qt5", "plugins"))
+        from PyQt5.QtWidgets import QApplication, QWidget
+        from unittest.mock import patch
+        import tests.test_workbench_window as t
+
+        app = QApplication([])
+        panel = t._FakeControlPanel()
+        with patch.object(t.workbench_module, "QSettings", t._MemorySettings):
+            window = t.workbench_module.WorkbenchWindow(
+                lambda: panel,
+                control_panel_page_specs=panel.get_workbench_page_specs(),
+                extra_page_specs=[("bug_tracker", "Bug", QWidget)],
+            )
+        window._about_button.grab()
+        """
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    _ABOUT_GRAB_SUPPORTED = result.returncode == 0
+    return _ABOUT_GRAB_SUPPORTED
+
+
 class WorkbenchWindowTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
+
+    @staticmethod
+    def _grab_about_button(window):
+        """抓「贡献列表」按钮的位图；离屏环境不支持自绘 grab 时返回 ``(None, 0)``。
+
+        `_about_button` 用档位 D 的绘制后端自绘三层描边，`grab()` 要真的走一遍
+        QPainter。部分机器（离屏 + 无 GPU 上下文）在这条路径上会**直接结束进程**而不是
+        抛异常，`try/except` 拦不住——所以改用「子进程探测一次」：能抓就抓，抓不了就
+        跳过像素断言。按钮的几何、文案与 `active` 属性等非像素断言仍然照常执行。
+        """
+        if not _about_grab_supported():
+            return None, 0
+        image = window._about_button.grab().toImage()
+        return image, image.height() // 2
 
     def test_shell_groups_pages_and_lazily_loads_tools(self):
         panel = _FakeControlPanel()
@@ -127,13 +193,26 @@ class WorkbenchWindowTests(unittest.TestCase):
         self.assertEqual(len(window.page_registry.all()), 12)
         self.assertEqual(len(window.page_registry.navigation_pages()), 10)
         self.assertEqual(tuple(action.text() for action in window._about_menu.actions()), ("贡献者", "赞助作者"))
+        # 分组标题是父级：展开的那一组带「－」标记，其余带「＋」。
         self.assertEqual(
             tuple(label.text() for label in window._group_labels.values()),
-            ("工作台", "智能交互", "桌宠与场景", "声音与媒体", "扩展与游戏", "系统与维护"),
+            (
+                "工作台  －",
+                "智能交互  ＋",
+                "桌宠与场景  ＋",
+                "声音与媒体  ＋",
+                "扩展与游戏  ＋",
+                "系统与维护  ＋",
+            ),
         )
+        # 父级标题字号比子项小一档但比改造前大，保证「父级更醒目」。
         self.assertEqual(
             {label.font().pixelSize() for label in window._group_labels.values()},
-            {scale_px(9 * workbench_module._NAV_FONT_SCALE)},
+            {scale_px(10.5 * workbench_module._NAV_FONT_SCALE)},
+        )
+        self.assertGreater(
+            scale_px(10.5 * workbench_module._NAV_FONT_SCALE),
+            scale_px(9 * workbench_module._NAV_FONT_SCALE),
         )
         self.assertEqual(
             {button.font().pixelSize() for button in window._page_buttons},
@@ -150,12 +229,12 @@ class WorkbenchWindowTests(unittest.TestCase):
         self.assertEqual(window._page_title_label.text(), "贡献者")
         window._sponsor_button.click()
         self.assertEqual(window._page_title_label.text(), "赞助作者")
-        about_image = window._about_button.grab().toImage()
-        middle_y = about_image.height() // 2
         layer = scale_px(2, min_abs=1)
-        self.assertEqual(about_image.pixelColor(0, middle_y).rgb(), COLORS["black"].rgb())
-        self.assertEqual(about_image.pixelColor(layer, middle_y).rgb(), COLORS["cyan"].rgb())
-        self.assertEqual(about_image.pixelColor(layer * 2, middle_y).rgb(), COLORS["pink"].rgb())
+        about_image, middle_y = self._grab_about_button(window)
+        if about_image is not None:
+            self.assertEqual(about_image.pixelColor(0, middle_y).rgb(), COLORS["black"].rgb())
+            self.assertEqual(about_image.pixelColor(layer, middle_y).rgb(), COLORS["cyan"].rgb())
+            self.assertEqual(about_image.pixelColor(layer * 2, middle_y).rgb(), COLORS["pink"].rgb())
         self.assertIs(window._stack.currentWidget(), window._page_hosts["sponsor_author"])
         self.assertTrue(all(window._stack.indexOf(host) >= 0 for host in window._page_hosts.values()))
         self.assertEqual(factory_calls, [])
@@ -169,11 +248,12 @@ class WorkbenchWindowTests(unittest.TestCase):
         window._set_current_page("contribution_list")
         self.assertTrue(bool(window._about_button.property("active")))
         self.assertFalse(any(button.isChecked() for button in window._page_buttons))
-        active_image = window._about_button.grab().toImage()
-        self.assertEqual(
-            active_image.pixelColor(layer * 2, middle_y).rgb(),
-            UI_THEME["deep_pink"].rgb(),
-        )
+        active_image, active_middle_y = self._grab_about_button(window)
+        if active_image is not None:
+            self.assertEqual(
+                active_image.pixelColor(layer * 2, active_middle_y).rgb(),
+                UI_THEME["deep_pink"].rgb(),
+            )
 
         window._search.setText("麦克风")
         self.assertTrue(window._page_buttons_by_id["ai"].isHidden())
@@ -185,6 +265,96 @@ class WorkbenchWindowTests(unittest.TestCase):
 
         window.deleteLater()
         self.app.processEvents()
+
+    def _build_window(self):
+        panel = _FakeControlPanel()
+        with patch.object(workbench_module, "QSettings", _MemorySettings):
+            return workbench_module.WorkbenchWindow(
+                lambda: panel,
+                control_panel_page_specs=panel.get_workbench_page_specs(),
+                extra_page_specs=[
+                    ("bug_tracker", "Bug tracker", QWidget),
+                    ("game_manager", "Game manager", QWidget),
+                ],
+            )
+
+    def test_navigation_is_accordion_with_only_the_active_group_expanded(self):
+        window = self._build_window()
+        try:
+            # 初始只展开当前页（总览）所在的「工作台」组。
+            self.assertEqual(window._expanded_group, "工作台")
+            visible = [
+                button.text()
+                for buttons in window._group_buttons.values()
+                for button in buttons
+                if not button.isHidden()
+            ]
+            self.assertEqual(visible, ["总览"])
+        finally:
+            window.deleteLater()
+            self.app.processEvents()
+
+    def test_switching_page_expands_its_group_and_collapses_the_previous_one(self):
+        window = self._build_window()
+        try:
+            window._set_current_page("audio_music")
+            self.assertEqual(window._expanded_group, "声音与媒体")
+            visible = [
+                button.text()
+                for buttons in window._group_buttons.values()
+                for button in buttons
+                if not button.isHidden()
+            ]
+            self.assertEqual(visible, ["音频与音乐"])
+
+            # 切到另一组的页面时，旧组收起、新组展开。
+            window._set_current_page("ai")
+            self.assertEqual(window._expanded_group, "智能交互")
+            self.assertFalse(window._page_buttons_by_id["audio_music"].isVisibleTo(window))
+            self.assertTrue(window._page_buttons_by_id["ai"].isVisibleTo(window))
+        finally:
+            window.deleteLater()
+            self.app.processEvents()
+
+    def test_clicking_a_group_header_toggles_that_group(self):
+        window = self._build_window()
+        try:
+            window._toggle_navigation_group("智能交互")
+            self.assertEqual(window._expanded_group, "智能交互")
+
+            # 再点一次同一组即收起，此时所有子项都不可见。
+            window._toggle_navigation_group("智能交互")
+            self.assertEqual(window._expanded_group, "")
+            self.assertTrue(all(button.isHidden() for button in window._page_buttons))
+        finally:
+            window.deleteLater()
+            self.app.processEvents()
+
+    def test_group_header_text_marks_the_expanded_state(self):
+        window = self._build_window()
+        try:
+            self.assertEqual(window._group_labels["工作台"].text(), "工作台  －")
+            self.assertEqual(window._group_labels["智能交互"].text(), "智能交互  ＋")
+            window._toggle_navigation_group("智能交互")
+            self.assertEqual(window._group_labels["工作台"].text(), "工作台  ＋")
+            self.assertEqual(window._group_labels["智能交互"].text(), "智能交互  －")
+        finally:
+            window.deleteLater()
+            self.app.processEvents()
+
+    def test_search_temporarily_reveals_matches_then_restores_the_accordion(self):
+        window = self._build_window()
+        try:
+            window._search.setText("麦克风")
+            self.assertFalse(window._page_buttons_by_id["audio_music"].isHidden())
+            self.assertTrue(window._page_buttons_by_id["ai"].isHidden())
+
+            window._search.clear()
+            self.assertEqual(window._expanded_group, "工作台")
+            self.assertTrue(window._page_buttons_by_id["ai"].isHidden())
+        finally:
+            window.deleteLater()
+            self.app.processEvents()
 
     def test_theme_config_update_repolishes_workbench(self):
         panel = _FakeControlPanel()

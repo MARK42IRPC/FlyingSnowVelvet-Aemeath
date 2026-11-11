@@ -12,7 +12,7 @@ class QtApplicationUiHostTests(unittest.TestCase):
             pass
 
         class AnnouncementController:
-            def __init__(self, application):
+            def __init__(self, application, update_opener=None):
                 calls.append(("announcement_init", application))
 
             def start(self):
@@ -120,7 +120,7 @@ class QtApplicationUiHostTests(unittest.TestCase):
             return Preloader()
 
         class AnnouncementController:
-            def __init__(self, application):
+            def __init__(self, application, update_opener=None):
                 pass
 
             def start(self):
@@ -189,7 +189,7 @@ class QtApplicationUiHostTests(unittest.TestCase):
                 calls.append("release")
 
         class AnnouncementController:
-            def __init__(self, application):
+            def __init__(self, application, update_opener=None):
                 pass
 
             def start(self):

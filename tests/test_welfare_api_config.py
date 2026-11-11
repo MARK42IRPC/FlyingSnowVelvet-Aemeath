@@ -57,6 +57,35 @@ class WelfareApiConfigTests(unittest.TestCase):
         self.assertEqual(config.select_welfare_model(models, False), config.WELFARE_STANDARD_MODEL)
         self.assertEqual(config.select_welfare_model(models, True), config.WELFARE_BOOST_MODEL)
 
+    def test_image_request_prefers_a_vision_capable_model(self):
+        """带图请求优先选能看图的模型：否则图片会被不吃图的模型直接拒掉。"""
+        models = (config.WELFARE_STANDARD_MODEL, config.WELFARE_BOOST_MODEL)
+
+        # 没开智力提升、但这次带图：仍要选能看图的 2.5。
+        self.assertEqual(
+            config.select_welfare_model(models, False, needs_vision=True),
+            config.WELFARE_BOOST_MODEL,
+        )
+
+    def test_image_request_uses_the_only_vision_model_even_if_it_is_not_preferred(self):
+        self.assertEqual(
+            config.select_welfare_model((config.WELFARE_BOOST_MODEL,), False, needs_vision=True),
+            config.WELFARE_BOOST_MODEL,
+        )
+
+    def test_image_request_without_any_vision_model_reports_the_missing_preferred_one(self):
+        """清单里一个能看图的都没有时，报的仍是原本要选的那个模型，便于排查。"""
+        with self.assertRaisesRegex(RuntimeError, config.WELFARE_STANDARD_MODEL):
+            config.select_welfare_model(("other-model",), False, needs_vision=True)
+
+    def test_text_request_keeps_the_configured_model(self):
+        models = (config.WELFARE_STANDARD_MODEL, config.WELFARE_BOOST_MODEL)
+
+        self.assertEqual(
+            config.select_welfare_model(models, False, needs_vision=False),
+            config.WELFARE_STANDARD_MODEL,
+        )
+
     def test_model_selection_rejects_missing_requested_model(self):
         with self.assertRaisesRegex(RuntimeError, config.WELFARE_BOOST_MODEL):
             config.select_welfare_model((config.WELFARE_STANDARD_MODEL,), True)

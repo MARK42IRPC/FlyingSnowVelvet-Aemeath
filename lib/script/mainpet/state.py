@@ -1,32 +1,34 @@
-"""状态机模块 - 管理宠物动画状态与行为。"""
-import math
-import random
+"""主宠状态机：只负责「状态迁移判定」与「迁移副作用」。
 
-from config.config import BEHAVIOR
-from lib.core.event.center import get_event_center, EventType, Event
-from lib.core.action import Actions
-from lib.core.logger import get_logger
-from lib.core.render.visuals.collision import (
-    adjust_rect,
-    rects_intersect,
-    segment_intersects_rect,
+行为决策（漫游目标选择、保护半径、游戏区避让）在
+`lib/script/mainpet/director.py`；动作清单与迁移规则的事实源在
+`config/actions.py`。
+
+对外接口：
+- `request(action_id, by_event=...)`  请求切换（内部走 STATE_CHANGE_REQUEST 事件）
+- `current()`                         当前动作 id
+- `on_animation_complete()`           由 GIF 循环完成事件驱动
+"""
+from __future__ import annotations
+
+from config.actions import (
+    ACTION,
+    ACTIONS,
+    BASE,
+    INTERRUPT_ANY,
+    INTERRUPT_EVENT,
+    INTERRUPT_NONE,
+    TRANSIENT,
+    ActionSpec,
+    action_spec,
+    is_special_idle,
+    pick_idle_action,
 )
-from lib.core.game_obstacles import get_game_obstacle_rect
-from lib.core.render.visuals.types import Point, Rect, coerce_point
-from lib.core.input.types import MouseButton
-from lib.core.screen_utils import get_screen_rect_for_point, get_virtual_screen_rect
+from lib.core.event.center import get_event_center, EventType, Event
+from lib.core.logger import get_logger
+
 
 _logger = get_logger(__name__)
-_MOVE_MAX_DURATION_MS = 5000
-_MOVE_SOURCE = "mainpet_state"
-_MOVE_TRACK_LEOPARD_ID = "mainpet_track_leopard"
-_MOVE_TRACK_LEOPARD_TYPE = "track_leopard"
-_MOVE_LOCK_SOFA_ID = "mainpet_lock_sofa"
-_MOVE_LOCK_SOFA_TYPE = "lock_sofa"
-_MOVE_NEAR_SPEAKER_ID = "mainpet_near_speaker"
-_MOVE_NEAR_SPEAKER_TYPE = "near_speaker"
-_MOVE_WANDER_RANDOM_ID = "mainpet_wander_random"
-_MOVE_WANDER_RANDOM_TYPE = "wander_random"
 
 
 def log(msg):
@@ -34,8 +36,35 @@ def log(msg):
     # _logger.debug("[StateMachine] %s", msg)
 
 
+# ── 迁移矩阵 ──────────────────────────────────────────────────────────────
+# 键是 (当前层, 目标层)，值是允许条件：
+#   "always"              直接允许
+#   "on_event"            只允许事件级打断（by_event=True）
+#   "if_interruptible"    当前动作的 interrupt 设置决定
+#   "never"               禁止
+#
+# 两条无条件放行规则（与旧实现的语义一致）：
+#   1. 进入 base 层永远放行：动作播完、被拖拽、移动队列清空都要能回等待态。
+#      移动运行时会用 `by_event=False` 请求 moving -> idle，若此处要求事件级，
+#      状态机会停在 moving 而移动控制器已停止，表现为“原地播放移动动画”。
+#   2. idle 池内的动作之间互相放行：idle 池是同一层级的待机选择，
+#      动作播完后要能直接切到池内下一个，不能被上一个的 `interrupt=none` 卡住。
+# 其余情况才按当前动作的 interrupt 判定。
+TRANSITIONS: dict[tuple[str, str], str] = {
+    (BASE, BASE): "always",
+    (BASE, ACTION): "if_interruptible",
+    (BASE, TRANSIENT): "if_interruptible",
+    (ACTION, BASE): "always",
+    (ACTION, ACTION): "if_idle_pool_peer",
+    (ACTION, TRANSIENT): "if_interruptible",
+    (TRANSIENT, BASE): "always",
+    (TRANSIENT, ACTION): "never",
+    (TRANSIENT, TRANSIENT): "never",
+}
+
+
 class StateMachine:
-    """宠物状态机（基于事件驱动）。"""
+    """宠物状态机（事件驱动，动作表驱动）。"""
 
     def __init__(self, entity, timing_manager=None, *, defer=None):
         """
@@ -46,7 +75,7 @@ class StateMachine:
             timing_manager: 计时器管理器
         """
         self._entity = entity
-        self._current_state = 'idle'
+        self._current_state = "idle"
         self._timing_manager = timing_manager
         self._defer = defer
         self._event_center = get_event_center()
@@ -54,638 +83,318 @@ class StateMachine:
         # 当前动作已播放循环次数
         self._current_loop_count = 0
 
-        # 是否正在动态追踪雪豹（漫游目标为活动雪豹时为 True）
-        self._is_tracking_leopard = False
+        # 后台音乐是否在播放；决定 idle 池是否包含唱歌动作
+        self._music_playing = False
+        # 上一次进入 idle 时抽到的是否为特殊待机（用于阻止连续特殊）
+        self._last_idle_was_special = False
 
-        # 是否因保护半径而暂停漫游计时器
-        self._paused_by_sofa = False
-
-        # 保护半径检测请求聚合状态
-        self._protection_check_seq = 0
-        self._pending_protection_request_id = None
-        self._pending_protection_any = False
-
-        # 订阅保护半径检测响应事件
-        self._event_center.subscribe(EventType.PROTECTION_RESPONSE, self._on_protection_response)
-        self._event_center.subscribe(EventType.PET_MOVE_DONE, self._on_pet_move_done)
-
-        # 订阅相关事件
-        self._event_center.subscribe(EventType.TIMER, self._on_timer_event)
-        self._event_center.subscribe(EventType.GIF_LOOP_COMPLETED, self._on_gif_loop_completed)
-        self._event_center.subscribe(EventType.MOUSE_PRESS, self._on_mouse_press)
+        # 事件订阅
         self._event_center.subscribe(EventType.STATE_CHANGE_REQUEST, self._on_state_change_request)
-        self._event_center.subscribe(EventType.TICK, self._on_tick_tracking)
+        self._event_center.subscribe(EventType.GIF_LOOP_COMPLETED, self._on_gif_loop_completed)
+        self._event_center.subscribe(EventType.PET_MOVE_DONE, self._on_pet_move_done)
+        self._event_center.subscribe(EventType.MUSIC_STATUS_CHANGE, self._on_music_status_change)
+
+        # 行为导演：漫游、保护半径、游戏区避让都归它
+        from lib.script.mainpet.director import BehaviorDirector
+
+        self._director = BehaviorDirector(
+            entity=entity,
+            request_action=self._request_from_director,
+            on_wander_pause=self._pause_wander,
+            on_wander_resume=self._resume_wander,
+            defer=defer,
+        )
 
         log("StateMachine initialized")
 
-        # 启动定时任务
         if self._timing_manager:
-            self._schedule_behavior()
-            self._schedule_wander()
+            self._director.start(self._timing_manager)
 
-    def _on_timer_event(self, event):
-        """处理计时器事件。"""
-        task_id = event.data.get('task_id')
-        if task_id == self._behavior_task_id:
-            self._trigger_behavior()
-        elif task_id == self._wander_task_id:
-            log("Timer event: wander triggered")
-            self._trigger_wander()
+        # 动作表自检：有问题时打警告但不阻断启动
+        problems = self._validation_problems()
+        if problems:
+            for problem in problems:
+                _logger.warning("[StateMachine] 动作表问题: %s", problem)
 
-    def _on_gif_loop_completed(self, event):
-        """处理 GIF 循环完成事件。"""
-        state = event.data.get('state')
+    # ── 查询 ──────────────────────────────────────────────────────────
 
-        # 只处理当前状态对应的回调
-        if state != self._current_state:
-            return
+    def current(self) -> str:
+        """当前动作 id。"""
+        return self._current_state
 
+    # 历史接口别名
+    get_current_state = current
+
+    def current_spec(self) -> ActionSpec | None:
+        return action_spec(self._current_state)
+
+    def _request_from_director(self, action_id: str) -> None:
+        """导演请求——按「非事件打断」处理，保证动作完整播放。"""
+        self.request(action_id, by_event=False)
+
+    # ── 请求入口 ──────────────────────────────────────────────────────
+
+    def request(self, action_id: str, *, by_event: bool = True) -> None:
+        """发布状态切换请求事件（经事件中心回到 `_apply`）。"""
+        self._event_center.publish(Event(EventType.STATE_CHANGE_REQUEST, {
+            "new_state": action_id,
+            "by_event": by_event,
+        }))
+
+    def on_animation_complete(self) -> None:
+        """动画播完一轮。达到 loops 后由状态机自己请求回到 base。"""
         self._current_loop_count += 1
-
-        # 获取当前动作定义
-        current_action = Actions.get_action(self._current_state)
-        if not current_action:
+        spec = self.current_spec()
+        if spec is None:
             return
+        if spec.loops > 0 and self._current_loop_count >= spec.loops:
+            self._return_to_base(by_event=False)
 
-        # 检查是否达到播放次数
-        if current_action.repeat_count > 0 and self._current_loop_count >= current_action.repeat_count:
-            log("Reached repeat count, switching to idle")
-            # 发布回到 idle 的请求
-            self._publish_state_change_request('idle', by_event=False)
-
-    def _on_mouse_press(self, event):
-        """处理鼠标按下事件。"""
-        button = event.data.get('button')
-        was_moving = bool(event.data.get('was_moving', False))
-
-        # 该点击发生时若处于移动中，已在输入层完成 stop_move 并切回 idle；
-        # 这里直接触发随机 action，形成“点击打断 move 并进入随机动作”。
-        if was_moving:
-            action = Actions.get_random_action_from_group("action1")
-            if action:
-                self._publish_state_change_request(action.name, by_event=False)
-            return
-
-        if button == MouseButton.LEFT:
-            # 左键点击：随机触发 action1 组动作
-            if not self._entity.is_moving():
-                action = Actions.get_random_action_from_group("action1")
-
-                if action:
-                    # 发布状态切换请求
-                    self._publish_state_change_request(action.name, by_event=False)
+    # ── 事件处理 ──────────────────────────────────────────────────────
 
     def _on_state_change_request(self, event):
-        """处理状态切换请求事件。"""
-        new_state = event.data.get('new_state')
-        by_event = event.data.get('by_event', True)
-
+        new_state = event.data.get("new_state")
+        by_event = event.data.get("by_event", True)
         if new_state:
-            self._process_state_change(new_state, by_event)
+            self._apply(str(new_state), by_event)
 
-    def _publish_state_change_request(self, new_state: str, by_event: bool = True):
-        """发布状态切换请求事件。"""
-        event = Event(EventType.STATE_CHANGE_REQUEST, {
-            'new_state': new_state,
-            'by_event': by_event
-        })
-        self._event_center.publish(event)
+    def _on_gif_loop_completed(self, event):
+        state = event.data.get("state")
+        if state != self._current_state:
+            return
+        self.on_animation_complete()
 
-    def _process_state_change(self, new_state: str, by_event: bool = True):
-        """处理状态切换逻辑。"""
-        log(f"Process state change: {self._current_state} -> {new_state}, by_event={by_event}")
+    def _on_pet_move_done(self, event: Event) -> None:
+        if event.data.get("source") != "mainpet_state":
+            return
+        result = str(event.data.get("result") or "").strip().lower()
+        if result != "timeout":
+            return
+        log("Move timeout, forcing random action")
+        self._director.force_random_action()
 
-        # 获取新动作定义
-        new_action = Actions.get_action(new_state)
-        if not new_action:
+    def _on_music_status_change(self, event: Event) -> None:
+        """跟踪后台音乐播放状态，供 idle 池决定是否纳入唱歌动作。"""
+        self._music_playing = bool(event.data.get("playing", False))
+
+    # ── 迁移核心 ──────────────────────────────────────────────────────
+
+    def _apply(self, new_state: str, by_event: bool = True) -> None:
+        """判定并执行一次状态迁移。
+
+        请求 `idle` 时不是直接播 idle.gif，而是从 idle 池按权重抽一个动作。
+        池内候选若不可切入（例如刚播完不可打断的动作），依次剔除后重抽。
+        """
+        from_idle_pool = new_state == "idle"
+        if from_idle_pool:
+            chosen = self._pick_idle_target(by_event)
+            if chosen is None:
+                log("No idle action available")
+                return
+            new_state = chosen
+
+        new_spec = action_spec(new_state)
+        if new_spec is None:
             log(f"Action not found: {new_state}")
             return
 
-        # 获取当前动作定义
-        current_action = Actions.get_action(self._current_state)
+        current_spec = self.current_spec()
 
-        # 特殊规则：
-        # 1) moving 只允许从 idle 进入
-        # 2) idle 可被随时切回
-        # 3) 非 idle -> 非 idle 需要当前动作可打断
-        if new_state == 'moving' and self._current_state != 'idle':
-            log("Moving can only interrupt idle")
+        if not self._can_transition(
+            current_spec, new_spec, by_event, from_idle_pool=from_idle_pool
+        ):
+            log(f"Transition rejected: {self._current_state} -> {new_state} (by_event={by_event})")
             return
 
-        if self._current_state != 'idle' and new_state != 'idle':
-            if current_action and not Actions.is_interruptible(current_action, by_event):
-                log("Cannot interrupt current action")
-                return
-
-        # 切换状态
+        previous = self._current_state
         self._current_state = new_state
+        self._current_loop_count = 0
 
-        # 处理漫游计时器暂停/恢复
-        if new_state == 'idle':
-            # 回到 idle 时恢复计时器；若当前处于保护态则跳过
-            if self._timing_manager and not self._paused_by_sofa:
-                log("Resuming wander timer")
-                self._timing_manager.resume_task(self._wander_task_id)
-        elif new_state == 'moving':
-            # 进入 moving 时暂停计时器
-            if self._timing_manager:
-                log("Pausing wander timer (moving)")
-                self._timing_manager.pause_task(self._wander_task_id)
-        elif not Actions.is_stay_action(new_action):
-            # 进入普通动作时暂停计时器
-            if self._timing_manager:
-                log(f"Pausing wander timer (action: {new_state})")
-                self._timing_manager.pause_task(self._wander_task_id)
+        self._on_enter(previous, new_state, new_spec)
+        self._entity.change_state(new_state, new_spec.resource_id)
+        log(f"State changed: {previous} -> {new_state}")
 
-        # 发布动作开始事件（非 stay 动作）
-        if not Actions.is_stay_action(new_action):
-            self._publish_action_event(EventType.ACTION_START, new_state)
-            self._current_loop_count = 0
+    def _pick_idle_target(self, by_event: bool) -> str | None:
+        """从 idle 池抽一个当前可切入的动作。
 
-            # 如需在动作开始时触发粒子效果，立即发布
-            if new_action.has_particle_effect() and new_action.particle_config.get('trigger') == 'start':
-                self._spawn_particle_effect(new_action.particle_config)
-
-        # 通知实体切换状态
-        self._entity.change_state(new_state)
-        log(f"State changed to: {self._current_state}")
-
-    def _publish_action_event(self, event_type: EventType, action_name: str):
-        """发布动作事件。"""
-        event = Event(event_type, {
-            'action_name': action_name,
-            'loop_count': self._current_loop_count
-        })
-        self._event_center.publish(event)
-
-    def _spawn_particle_effect(self, particle_config: dict):
+        抽取完全由权重决定（允许抽到当前正在播的动作，基础 idle 可以连续循环）。
+        抽到的候选若因迁移规则不可切入，才剔除它重抽；全部候选都不可切入时
+        退回 `idle` 本身，保证状态机能落地。
         """
-        触发粒子效果。
+        current = self.current_spec()
+        attempted: set[str] = set()
+        for _ in range(8):
+            candidate = pick_idle_action(
+                music_playing=self._music_playing,
+                last_was_special=self._last_idle_was_special,
+            )
+            if candidate is None or candidate in attempted:
+                break
+            attempted.add(candidate)
+            spec = action_spec(candidate)
+            if spec is not None and self._can_transition(
+                current, spec, by_event, from_idle_pool=True
+            ):
+                self._last_idle_was_special = is_special_idle(candidate)
+                return candidate
+        # 兜底：回到纯 idle（idle 本身总是可以进入）
+        self._last_idle_was_special = False
+        return "idle"
 
-        Args:
-            particle_config: 粒子配置
+    def _can_transition(
+        self,
+        current: ActionSpec | None,
+        target: ActionSpec,
+        by_event: bool,
+        *,
+        from_idle_pool: bool = False,
+    ) -> bool:
+        """按迁移矩阵判定是否允许这次切换。
+
+        `from_idle_pool` 标记目标动作是由 idle 池抽出的：池内轮转是同级
+        选择，不受上一个待机动作 `interrupt=none` 的限制。
         """
-        particle_id = particle_config.get('particle_id', 'scatter_fall')
-        area_type = particle_config.get('area_type', 'point')
+        if current is None:
+            return True
 
-        # 获取实体位置作为粒子生成位置
+        # enter_from 约束（如 moving 只能从 idle 进入）。
+        # 这里比较的是「是否处于等待态」而不是字面动作 id：idle 池会抽出
+        # boring / tape 等动作，它们的层同样是 base 语义上的等待态，
+        # 若按字面 id 比较，抽中待机变体后 move 就永远进不来了。
+        if target.enter_from and not self._in_waiting_state(target.enter_from):
+            return False
+
+        # idle 池轮转：池内动作互为同级选择，可以从任何当前动作切过去，
+        # 不受上一个动作 `interrupt=none` 的限制。互动动作播完回池正是走这条。
+        if from_idle_pool and current.layer == ACTION:
+            return True
+
+        # 离开「可自由切出」的常驻动作不受其 interrupt 限制：
+        # idle 是等待态，移动/自动行为都必须能把它切走，否则 moving 永远进不来。
+        if self._leaves_freely(current):
+            return True
+
+        # 目标就是当前动作：允许重播（重置帧），但同样受打断规则约束
+        if target is current:
+            return self._interrupt_allows(current, by_event)
+
+        rule = TRANSITIONS.get((current.layer, target.layer), "never")
+        if rule == "never":
+            return False
+        if rule == "always":
+            return True
+        if rule == "on_event":
+            return by_event
+        if rule == "if_idle_pool_peer" and from_idle_pool:
+            # idle 池内的动作互为同级候选：池内轮转不受上一个动作的
+            # `interrupt=none` 限制，否则动作播完就抽不到下一个。
+            return True
+        return self._interrupt_allows(current, by_event)
+
+    def _in_waiting_state(self, allowed: tuple[str, ...]) -> bool:
+        """当前状态是否属于 `allowed` 描述的等待态。
+
+        `enter_from=("idle",)` 的语义是「处于待机状态时」，而待机状态在
+        idle 池机制下可能表现为 boring / tape / spinning 等动作 id。
+        因此只要当前动作的层是 base（常驻层），且它属于 idle 池或就是 idle，
+        就视为满足。
+        """
+        if self._current_state in allowed:
+            return True
+        current = self.current_spec()
+        if current is None:
+            return False
+        if "idle" not in allowed:
+            return False
+        # 常驻层 = 等待态；idle 池动作播完也会回到等待态
+        return current.layer == BASE or "idle" in current.groups
+
+    def _leaves_freely(self, spec: ActionSpec) -> bool:
+        """当前动作是否允许被任意请求切走（不要求 by_event）。
+
+        `idle` 是等待态而不是「正在播放的动作」，任何请求都应能离开它；
+        这与旧实现里 `if self._current_state != 'idle' and ...` 的语义一致。
+        """
+        return spec.layer == BASE and self._current_state == "idle"
+
+    @staticmethod
+    def _interrupt_allows(spec: ActionSpec, by_event: bool) -> bool:
+        if spec.interrupt == INTERRUPT_ANY:
+            return True
+        if spec.interrupt == INTERRUPT_EVENT:
+            return by_event
+        return False
+
+    def _on_enter(self, previous: str, new_state: str, spec: ActionSpec) -> None:
+        """迁移副作用：漫游计时器、动作事件、粒子。"""
+        # 漫游计时器：只有 base 层恢复，离开 base 层一律暂停
+        if spec.layer == BASE:
+            self._director.on_enter_base(new_state)
+        else:
+            self._director.on_leave_base()
+
+        # 动作开始事件与粒子（仅非 base 层）
+        if spec.layer != BASE:
+            self._publish_action_start(new_state)
+            if spec.has_particle_effect() and (spec.particle or {}).get("trigger") == "start":
+                self._spawn_particle_effect(spec.particle or {})
+
+    def _return_to_base(self, by_event: bool = False) -> None:
+        """动作播完，回到 base 层（优先 idle）。"""
+        self.request("idle", by_event=by_event)
+
+    # ── 导演回调 ──────────────────────────────────────────────────────
+
+    def _request_from_director(self, action_id: str) -> None:
+        self.request(action_id, by_event=False)
+
+    def _pause_wander(self) -> None:
+        if self._timing_manager:
+            self._timing_manager.pause_task(self._director.wander_task_id)
+
+    def _resume_wander(self) -> None:
+        if self._timing_manager:
+            self._timing_manager.resume_task(self._director.wander_task_id)
+
+    # ── 事件发布 ──────────────────────────────────────────────────────
+
+    def _publish_action_start(self, action_name: str) -> None:
+        self._event_center.publish(Event(EventType.ACTION_START, {
+            "action_name": action_name,
+            "loop_count": self._current_loop_count,
+        }))
+
+    def _spawn_particle_effect(self, particle_config: dict) -> None:
+        """按配置在主宠位置触发粒子效果。"""
+        particle_id = particle_config.get("particle_id", "scatter_fall")
+        area_type = particle_config.get("area_type", "point")
+
         pos = self._entity.get_core_position()
         rect = self._entity.get_core_geometry()
 
-        # 鏍规嵁鍖哄煙绫诲瀷鐢熸垚绮掑瓙
-        if area_type == 'point':
-            # 使用实体中心点
-            center_x = pos.x + rect.width // 2
-            center_y = pos.y + rect.height // 2
-            area_data = (center_x, center_y)
-        elif area_type == 'rect':
-            # 使用实体边界
+        if area_type == "point":
+            area_data = (pos.x + rect.width // 2, pos.y + rect.height // 2)
+        elif area_type == "rect":
             area_data = (pos.x, pos.y, pos.x + rect.width, pos.y + rect.height)
-        elif area_type == 'circle':
-            # 使用实体中心点和半径
-            center_x = pos.x + rect.width // 2
-            center_y = pos.y + rect.height // 2
-            radius = min(rect.width, rect.height) // 2
-            area_data = (center_x, center_y, radius)
-        else:
-            return
-
-        # 发布粒子请求事件
-        particle_event = Event(EventType.PARTICLE_REQUEST, {
-            'particle_id': particle_id,
-            'area_type': area_type,
-            'area_data': area_data
-        })
-        self._event_center.publish(particle_event)
-
-    def get_current_state(self) -> str:
-        """获取当前状态。"""
-        return self._current_state
-
-    # ==================================================================
-    # 琛屼负璋冨害
-    # ==================================================================
-
-    def _schedule_behavior(self):
-        lo, hi = BEHAVIOR['auto_behavior_interval']
-        interval = random.randint(lo, hi)
-        self._behavior_task_id = self._timing_manager.add_task(
-            interval,
-            repeat=True
-        )
-
-    def _trigger_behavior(self):
-        """触发自动行为切换。"""
-        # 仅在非 moving 状态下触发
-        if not self._entity.is_moving() and self._current_state != 'moving':
-            state = random.choice(BEHAVIOR['random_states'])
-            # 非事件打断，确保动作完整播放
-            self._publish_state_change_request(state, by_event=False)
-
-    def _schedule_wander(self):
-        lo, hi = BEHAVIOR['auto_wander_interval']
-        interval = random.randint(lo, hi)
-        log(f"Scheduling wander timer: interval={interval}ms")
-        self._wander_task_id = self._timing_manager.add_task(
-            interval,
-            repeat=True
-        )
-
-    def _trigger_wander(self):
-        """Trigger wander movement.
-
-        Priority:
-        1) active snow leopard (dynamic tracking)
-        2) alive sofa
-        3) random point near speaker
-        4) fully random screen point
-        """
-        log(f"Wander triggered, current_state={self._current_state}, is_moving={self._entity.is_moving()}")
-
-        # Sofa protection has higher priority than all wander target selection.
-        if self._paused_by_sofa:
-            log("Wander skipped: in sofa protection")
-            return
-
-        if not self._entity.is_moving():
-            # 1) nearest active snow leopard
-            target = self._get_nearest_leopard_pos()
-            if target is not None:
-                self._is_tracking_leopard = True
-                log(f"Leopard tracking target: ({target.x}, {target.y})")
-                self._enqueue_move(
-                    target,
-                    event_id=_MOVE_TRACK_LEOPARD_ID,
-                    move_type=_MOVE_TRACK_LEOPARD_TYPE,
-                    radius=self._default_move_radius(),
-                    timeout_ms=_MOVE_MAX_DURATION_MS,
-                )
-            else:
-                self._is_tracking_leopard = False
-                # 2) nearest sofa
-                target = self._get_nearest_sofa_pos()
-                if target is not None:
-                    log(f"Sofa target: ({target.x}, {target.y})")
-                    self._enqueue_move(
-                        target,
-                        event_id=_MOVE_LOCK_SOFA_ID,
-                        move_type=_MOVE_LOCK_SOFA_TYPE,
-                        radius=self._default_move_radius(),
-                        timeout_ms=_MOVE_MAX_DURATION_MS,
-                    )
-                else:
-                    # 3) random point around speaker
-                    target = self._get_random_pos_near_speaker()
-                    if target is not None:
-                        log(f"Speaker-near target: ({target.x}, {target.y})")
-                        self._enqueue_move(
-                            target,
-                            event_id=_MOVE_NEAR_SPEAKER_ID,
-                            move_type=_MOVE_NEAR_SPEAKER_TYPE,
-                            radius=self._default_move_radius(),
-                            timeout_ms=_MOVE_MAX_DURATION_MS,
-                        )
-                    else:
-                        # 4) random point on screen
-                        screen = get_virtual_screen_rect()
-                        min_x = int(screen.x + 100)
-                        max_x = int(screen.x + screen.width - 200)
-                        min_y = int(screen.y + 100)
-                        max_y = int(screen.y + screen.height - 200)
-                        if max_x < min_x:
-                            min_x = max_x = int(screen.x)
-                        if max_y < min_y:
-                            min_y = max_y = int(screen.y)
-                        target = Point(
-                            random.randint(min_x, max_x),
-                            random.randint(min_y, max_y),
-                        )
-                        if self._is_wander_target_blocked_by_lahai(target):
-                            log(
-                                f"Wander target skipped by Lahai game area filter: "
-                                f"({target.x}, {target.y})"
-                            )
-                            return
-                        self._enqueue_move(
-                            target,
-                            event_id=_MOVE_WANDER_RANDOM_ID,
-                            move_type=_MOVE_WANDER_RANDOM_TYPE,
-                            radius=self._default_move_radius(),
-                            timeout_ms=_MOVE_MAX_DURATION_MS,
-                        )
-
-    def _on_tick_tracking(self, event):
-        """
-        每个 TICK（50ms）执行：
-        1. 刷新雪豹动态追踪目标（仅在追踪中）
-        2. 检测保护半径并统一更新漫游计时器状态
-        """
-        # 雪豹动态追踪
-        if self._is_tracking_leopard:
-            if not self._entity.is_moving():
-                # 已到达目标或被中断，解除追踪
-                self._is_tracking_leopard = False
-            else:
-                latest = self._get_nearest_leopard_pos()
-                if latest is not None:
-                    self._enqueue_move(
-                        latest,
-                        event_id=_MOVE_TRACK_LEOPARD_ID,
-                        move_type=_MOVE_TRACK_LEOPARD_TYPE,
-                        radius=self._default_move_radius(),
-                        timeout_ms=_MOVE_MAX_DURATION_MS,
-                    )
-                else:
-                    # 追踪目标消失（如淡出），解除追踪
-                    self._is_tracking_leopard = False
-                    log("追踪目标雪豹已消失，解除动态追踪")
-
-        # 保护半径检测（始终执行）
-        self._check_sofa_protection()
-
-    def _on_pet_move_done(self, event: Event) -> None:
-        """处理主宠物移动队列完成事件。"""
-        if event.data.get('source') != _MOVE_SOURCE:
-            return
-
-        move_type = event.data.get('type')
-        result = str(event.data.get('result') or '').strip().lower()
-        if move_type == _MOVE_TRACK_LEOPARD_TYPE:
-            self._is_tracking_leopard = False
-
-        if result != 'timeout':
-            return
-
-        self._is_tracking_leopard = False
-        log("Move timeout from queue manager, forcing random action")
-        action = Actions.get_random_action_from_group("action1")
-        if action:
-            self._publish_state_change_request(action.name, by_event=False)
-
-    def _get_nearest_leopard_pos(self) -> Point | None:
-        """
-        查询最近活动雪豹中心坐标，并转换为宠物窗口左上角目标坐标。
-        管理器不存在或无活动雪豹时返回 None。
-        """
-        from lib.script.plugin_registry import get_manager
-
-        manager = get_manager('snow_leopard')
-        if manager is None:
-            return None
-
-        pet_pos = self._entity.get_core_position()
-        nearest = manager.get_nearest_leopard_pos(pet_pos)
-        nearest = coerce_point(nearest)
-        if nearest is None:
-            return None
-
-        # 将目标中心转换为宠物左上角移动目标
-        pet_geom = self._entity.get_core_geometry()
-        if pet_geom is None:
-            return None
-
-        return Point(
-            nearest.x - pet_geom.width // 2,
-            nearest.y - pet_geom.height // 2,
-        )
-
-    def _get_nearest_sofa_pos(self) -> Point | None:
-        """
-        查询最近存活沙发中心坐标，并转换为宠物窗口左上角目标坐标。
-        管理器不存在或无存活沙发时返回 None。
-        """
-        from lib.script.plugin_registry import get_manager
-
-        manager = get_manager('sofa')
-        if manager is None:
-            return None
-
-        pet_pos = self._entity.get_core_position()
-        nearest = manager.get_nearest_sofa_pos(pet_pos)
-        nearest = coerce_point(nearest)
-        if nearest is None:
-            return None
-
-        # 将目标中心转换为宠物左上角移动目标
-        pet_geom = self._entity.get_core_geometry()
-        if pet_geom is None:
-            return None
-
-        return Point(
-            nearest.x - pet_geom.width // 2,
-            nearest.y - pet_geom.height // 2,
-        )
-
-    def _get_random_pos_near_speaker(self) -> Point | None:
-        """
-        If speakers exist, return a random target near the nearest speaker.
-        Returns the pet window top-left target position; None when unavailable.
-        """
-        from lib.script.plugin_registry import get_manager
-
-        manager = get_manager('speaker')
-        if manager is None:
-            return None
-
-        speaker_points = manager.get_speaker_centers()
-        if not speaker_points:
-            return None
-
-        pet_pos = self._entity.get_core_position()
-        nearest = min(
-            speaker_points,
-            key=lambda point: (
-                (point.x - pet_pos.x) ** 2
-                + (point.y - pet_pos.y) ** 2
+        elif area_type == "circle":
+            area_data = (
+                pos.x + rect.width // 2,
+                pos.y + rect.height // 2,
+                min(rect.width, rect.height) // 2,
             )
-        )
-        speaker_center = nearest
-
-        raw_radius = BEHAVIOR.get('wander_near_speaker_radius', 300)
-        try:
-            radius = max(1, int(raw_radius))
-        except (TypeError, ValueError):
-            radius = 300
-
-        # Uniform sample in a disk.
-        angle = random.uniform(0.0, 2.0 * math.pi)
-        distance = int(radius * (random.random() ** 0.5))
-        target_center_x = speaker_center.x + int(math.cos(angle) * distance)
-        target_center_y = speaker_center.y + int(math.sin(angle) * distance)
-
-        pet_geom = self._entity.get_core_geometry()
-        if pet_geom is None:
-            return None
-
-        screen_geom = get_screen_rect_for_point(speaker_center)
-
-        target_x = target_center_x - pet_geom.width // 2
-        target_y = target_center_y - pet_geom.height // 2
-
-        min_x = screen_geom.x
-        min_y = screen_geom.y
-        max_x = screen_geom.x + screen_geom.width - pet_geom.width
-        max_y = screen_geom.y + screen_geom.height - pet_geom.height
-        if max_x < min_x:
-            max_x = min_x
-        if max_y < min_y:
-            max_y = min_y
-        target_x = max(min_x, min(target_x, max_x))
-        target_y = max(min_y, min(target_y, max_y))
-
-        return Point(target_x, target_y)
-
-    def _check_sofa_protection(self):
-        """
-        每个 tick 发起一次保护半径检测请求。
-        将多个管理器响应聚合后，再统一更新保护状态，避免同一 tick 内抖动。
-        """
-        # 计算宠物中心坐标
-        pet_pos = self._entity.get_core_position()
-        pet_geom = self._entity.get_core_geometry()
-        pet_cx = pet_pos.x + pet_geom.width // 2
-        pet_cy = pet_pos.y + pet_geom.height // 2
-
-        self._protection_check_seq += 1
-        request_id = f"protection-{self._protection_check_seq}"
-        self._pending_protection_request_id = request_id
-        self._pending_protection_any = False
-
-        # 发布保护半径检测请求（携带 request_id 用于聚合）
-        self._event_center.publish(Event(EventType.PROTECTION_CHECK, {
-            'pet_position': Point(pet_cx, pet_cy),
-            'current_in_protection': self._paused_by_sofa,
-            'request_id': request_id,
-        }))
-        self._defer_call(0, lambda rid=request_id: self._finalize_protection_check(rid))
-
-    def _defer_call(self, delay_ms: int, callback) -> None:
-        if self._defer is not None:
-            self._defer(delay_ms, callback)
-            return
-        from lib.core.render.registry import get_deferred_call
-
-        deferred_call = get_deferred_call()
-        if deferred_call is not None:
-            deferred_call(delay_ms, callback)
         else:
-            callback()
-
-    def _on_protection_response(self, event: Event):
-        """处理保护半径检测响应（先聚合，不立即切状态）。"""
-        request_id = event.data.get('request_id')
-        if not request_id or request_id != self._pending_protection_request_id:
-            return
-        self._pending_protection_any = self._pending_protection_any or bool(
-            event.data.get('in_protection', False)
-        )
-
-    def _finalize_protection_check(self, request_id: str):
-        """在当前请求的响应处理后，统一应用保护状态。"""
-        if request_id != self._pending_protection_request_id:
             return
 
-        in_protection = bool(self._pending_protection_any)
-        self._pending_protection_request_id = None
-        self._pending_protection_any = False
-
-        if in_protection and not self._paused_by_sofa:
-            self._paused_by_sofa = True
-            if self._entity.is_moving():
-                self._pass_move(scope='current')
-            if self._timing_manager:
-                self._timing_manager.pause_task(self._wander_task_id)
-            log("主宠物进入保护半径，漫游计时器已暂停")
-        elif not in_protection and self._paused_by_sofa:
-            self._paused_by_sofa = False
-            if self._timing_manager:
-                self._timing_manager.resume_task(self._wander_task_id)
-            log("主宠物离开保护半径，漫游计时器已恢复")
-
-    def _is_wander_target_blocked_by_lahai(self, target: Point) -> bool:
-        """
-        当默认漫游目标会遮挡拉海洛方块游戏区域的横向中间三分之一时，返回 True。
-
-        拦截两种情况：
-        1. 目标矩形本身会压到游戏区
-        2. 从当前位置到目标位置的移动线段会横跨游戏区
-        """
-        pet_geom = self._entity.get_core_geometry()
-        if pet_geom is None:
-            return False
-
-        try:
-            blocked_rect = get_game_obstacle_rect()
-        except Exception:
-            return False
-
-        if not isinstance(blocked_rect, Rect) or blocked_rect.width <= 0 or blocked_rect.height <= 0:
-            return False
-
-        target_rect = Rect(
-            target.x,
-            target.y,
-            pet_geom.width,
-            pet_geom.height,
-        )
-        if rects_intersect(target_rect, blocked_rect):
-            return True
-
-        current_pos = self._entity.get_core_position()
-        current_center = Point(
-            current_pos.x + pet_geom.width // 2,
-            current_pos.y + pet_geom.height // 2,
-        )
-        target_center = Point(
-            target.x + pet_geom.width // 2,
-            target.y + pet_geom.height // 2,
-        )
-
-        # 将游戏危险区按桌宠半尺寸向外扩一圈。
-        # 这样即使仅移动轨迹中心线擦过，桌宠实体本身也不会横跨遮挡到下落区。
-        expanded_blocked = adjust_rect(
-            blocked_rect,
-            -int(pet_geom.width) // 2,
-            -int(pet_geom.height) // 2,
-            int(pet_geom.width) // 2,
-            int(pet_geom.height) // 2,
-        )
-        return segment_intersects_rect(current_center, target_center, expanded_blocked)
-
-    def _default_move_radius(self) -> int:
-        raw_value = BEHAVIOR.get('move_arrival_radius', 12)
-        try:
-            return max(1, int(raw_value))
-        except (TypeError, ValueError):
-            return 12
-
-    def _enqueue_move(
-        self,
-        target: Point,
-        *,
-        event_id: str,
-        move_type: str,
-        radius: int,
-        timeout_ms: int,
-    ) -> None:
-        self._event_center.publish(Event(EventType.PET_MOVE_ENQUEUE, {
-            'event_id': event_id,
-            'source': _MOVE_SOURCE,
-            'type': move_type,
-            'position': Point(round(target.x), round(target.y)),
-            'radius': radius,
-            'timeout_ms': timeout_ms,
+        self._event_center.publish(Event(EventType.PARTICLE_REQUEST, {
+            "particle_id": particle_id,
+            "area_type": area_type,
+            "area_data": area_data,
         }))
 
-    def _pass_move(self, *, scope: str = 'current', move_type: str | None = None) -> None:
-        payload = {
-            'scope': scope,
-            'source': _MOVE_SOURCE,
-            'result': 'cancelled',
-        }
-        if move_type:
-            payload['type'] = move_type
-        self._event_center.publish(Event(EventType.PET_MOVE_PASS, payload))
+    # ── 自检 ──────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _validation_problems() -> list[str]:
+        from config.actions import validate
 
-
+        return validate()

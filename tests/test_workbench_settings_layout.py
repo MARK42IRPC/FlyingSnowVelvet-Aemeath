@@ -66,6 +66,7 @@ class WorkbenchSettingsLayoutTests(unittest.TestCase):
                 "audio_music",
                 "scene_objects",
                 "system_dispatch",
+                "live_stream",
                 "desktop_pet_update",
                 "contribution_list",
                 "sponsor_author",
@@ -250,6 +251,228 @@ class WorkbenchSettingsLayoutTests(unittest.TestCase):
             self.assertIn('volume_slider', kinds)
             values = panel._collect_config_category_values('audio_music')
             self.assertIn('master_volume', values.get('SOUND', {}))
+        finally:
+            panel.deleteLater()
+            self.app.processEvents()
+
+    def test_live_stream_page_round_trips_typed_values(self):
+        """直播设置页保存时必须得到 bool/int/str，而不是全为字符串。"""
+        with patch.object(AISettingsPanel, '_refresh_hardware_watermark_async', lambda self: None):
+            panel = AISettingsPanel(lazy_workbench_pages=True)
+        try:
+            panel.create_workbench_page('live_stream')
+            values = panel._collect_config_category_values('live_stream')['LIVE_STREAM']
+            self.assertIsInstance(values['enabled'], bool)
+            self.assertIsInstance(values['room_id'], str)
+            for key in (
+                'request_cooldown_seconds',
+                'duplicate_window_seconds',
+                'pending_limit',
+                'max_queue_size',
+                'song_title_max_length',
+                'artist_max_length',
+            ):
+                self.assertIsInstance(values[key], int, key)
+        finally:
+            panel.deleteLater()
+            self.app.processEvents()
+
+    def test_live_stream_page_splits_room_card_from_song_request_card(self):
+        """直播页拆成「直播间设置」与「弹幕点歌」两张卡片，字段各归其位。
+
+        「启用弹幕点歌」是总开关：勾上才显示点歌参数那张卡片，关掉时整张收起。
+        两张卡片的字段都必须写回同一份 `LIVE_STREAM` 配置。
+        """
+        with patch.object(AISettingsPanel, '_refresh_hardware_watermark_async', lambda self: None):
+            panel = AISettingsPanel(lazy_workbench_pages=True)
+        try:
+            panel.create_workbench_page('live_stream')
+            meta = panel._config_tab_meta['live_stream']
+            live_meta = meta['live_stream']
+
+            room_section = live_meta['room_section']
+            song_section = live_meta['song_section']
+            self.assertIsNotNone(room_section)
+            self.assertIsNotNone(song_section)
+            self.assertEqual(room_section.title_label.text(), '直播间设置')
+            self.assertEqual(song_section.title_label.text(), '弹幕点歌')
+
+            keys_by_section = {}
+            for field in meta['fields']:
+                editor = field.get('editor')
+                section = None
+                parent = editor.parentWidget() if editor is not None else None
+                while parent is not None:
+                    if parent is room_section or parent is song_section:
+                        section = parent
+                        break
+                    parent = parent.parentWidget()
+                if section is None:
+                    continue
+                key = str(field.get('key') or '')
+                if not key:
+                    # 「测试直播间」只有按钮、不带配置键，不属于任何一侧的字段集合。
+                    continue
+                keys_by_section.setdefault(id(section), set()).add(key)
+
+            self.assertEqual(
+                keys_by_section.get(id(room_section), set()),
+                {'enabled', 'room_id'},
+            )
+            self.assertEqual(
+                keys_by_section.get(id(song_section), set()),
+                {
+                    'command_prefix',
+                    'request_cooldown_seconds',
+                    'duplicate_window_seconds',
+                    'pending_limit',
+                    'max_queue_size',
+                    'song_title_max_length',
+                    'artist_max_length',
+                    'notify_on_enqueue',
+                },
+            )
+
+            # 两张卡片读的是同一个配置字典，保存路径不需要额外合并。
+            # 礼物提醒是与点歌平行的独立分区，写的是自己的 GIFT_ALERT。
+            values = panel._collect_config_category_values('live_stream')
+            self.assertEqual(set(values.keys()), {'LIVE_STREAM', 'GIFT_ALERT'})
+            self.assertIn('room_id', values['LIVE_STREAM'])
+            self.assertIn('command_prefix', values['LIVE_STREAM'])
+            self.assertEqual(
+                set(values['GIFT_ALERT']),
+                {'enabled', 'template', 'min_price', 'notify_in_chat', 'speak'},
+            )
+
+            enabled_editor = live_meta['enabled_editor']
+            self.assertIsInstance(enabled_editor, QCheckBox)
+            # 页面本身是隐藏的（懒加载面板），所以看的是分区自己的隐藏标记。
+            enabled_editor.setChecked(False)
+            self.assertTrue(song_section.isHidden())
+            enabled_editor.setChecked(True)
+            self.assertFalse(song_section.isHidden())
+        finally:
+            panel.deleteLater()
+            self.app.processEvents()
+
+    def test_live_stream_probe_button_reports_result_without_touching_config(self):
+        """「测试直播间」把当前房间号交给产品探测入口，并把结果写在同一张卡片里。"""
+        fake_result = type('Probe', (), {'ok': True, 'room_id': '123', 'message': '已连接直播间 123'})()
+        seen = []
+
+        def fake_probe(room_id):
+            seen.append(room_id)
+            return fake_result
+
+        import lib.core.render.backends.qt.widgets.ai_settings_config_page as config_page
+
+        with patch.object(AISettingsPanel, '_refresh_hardware_watermark_async', lambda self: None), \
+                patch.object(config_page, 'probe_live_room', fake_probe):
+            panel = AISettingsPanel(lazy_workbench_pages=True)
+            try:
+                panel.create_workbench_page('live_stream')
+                meta = panel._config_tab_meta['live_stream']
+                live_meta = meta['live_stream']
+                room_editor = next(
+                    field['editor'] for field in meta['fields']
+                    if field.get('key') == 'room_id'
+                )
+                room_editor.setText('https://live.bilibili.com/123')
+
+                button = live_meta['probe_button']
+                label = live_meta['probe_label']
+                self.assertEqual(button.text(), '测试直播间')
+                # 结果行初始不显示；空房间号探测时才由 `_show_live_probe_result` 拉起。
+                self.assertFalse(label.isVisibleTo(panel))
+                label.setText('')
+                label.setVisible(True)
+
+                before = panel._collect_config_category_values('live_stream')
+                button.click()
+                deadline = time.monotonic() + 5.0
+                while time.monotonic() < deadline and not seen:
+                    time.sleep(0.01)
+                self.assertEqual(seen, ['https://live.bilibili.com/123'])
+                while time.monotonic() < deadline and not label.text().startswith('✓'):
+                    self.app.processEvents()
+                    time.sleep(0.01)
+                self.assertIn('已连接直播间 123', label.text())
+                self.assertTrue(button.isEnabled(), '探测结束后按钮要恢复可点')
+
+                after = panel._collect_config_category_values('live_stream')
+                self.assertEqual(before, after, '测试直播间不能改动任何配置值')
+            finally:
+                panel.deleteLater()
+                self.app.processEvents()
+
+    def test_live_stream_probe_requires_a_room_id_before_dispatching(self):
+        """没填房间号时只在卡片里提示，不发起网络探测。"""
+        calls = []
+
+        import lib.core.render.backends.qt.widgets.ai_settings_config_page as config_page
+
+        with patch.object(AISettingsPanel, '_refresh_hardware_watermark_async', lambda self: None), \
+                patch.object(config_page, 'probe_live_room', lambda room_id: calls.append(room_id)):
+            panel = AISettingsPanel(lazy_workbench_pages=True)
+            try:
+                panel.create_workbench_page('live_stream')
+                meta = panel._config_tab_meta['live_stream']
+                room_editor = next(
+                    field['editor'] for field in meta['fields']
+                    if field.get('key') == 'room_id'
+                )
+                room_editor.setText('')
+                live_meta = meta['live_stream']
+                live_meta['probe_button'].click()
+                self.assertEqual(calls, [])
+                self.assertIn('直播间 ID', live_meta['probe_label'].text())
+            finally:
+                panel.deleteLater()
+                self.app.processEvents()
+
+    def test_settings_panel_text_context_menu_is_copy_paste_select_all_everywhere(self):
+        """设置面板（含各配置页的文本框）右键只提供复制 / 粘贴 / 全选。"""
+        with patch.object(AISettingsPanel, '_refresh_hardware_watermark_async', lambda self: None):
+            panel = AISettingsPanel(lazy_workbench_pages=True)
+        try:
+            panel.create_workbench_page('live_stream')
+            panel.create_workbench_page('ui_anim')
+            panel.create_workbench_page('audio_music')
+
+            edits = panel.findChildren(QLineEdit)
+            self.assertTrue(edits, '设置页应当有至少一个文本输入框')
+            # 可编辑下拉框内部的 `QLineEdit` 不单独挂菜单：菜单挂在 `QComboBox` 上，
+            # 点击时再取它当前的编辑框（下拉框换模型时会重建那个控件）。
+            standalone = [edit for edit in edits if not isinstance(edit.parentWidget(), QComboBox)]
+            self.assertTrue(standalone, '设置页应当有至少一个独立文本框')
+            for edit in standalone:
+                self.assertEqual(edit.contextMenuPolicy(), PyQt5.QtCore.Qt.CustomContextMenu)
+                self.assertTrue(getattr(edit, '_cn_text_context_menu_bound', False))
+
+            combos = [combo for combo in panel.findChildren(QComboBox) if combo.isEditable()]
+            self.assertTrue(combos, '设置页应当有可编辑下拉框')
+            for combo in combos:
+                self.assertEqual(combo.contextMenuPolicy(), PyQt5.QtCore.Qt.CustomContextMenu)
+                self.assertTrue(getattr(combo, '_cn_text_context_menu_combo_bound', False))
+
+            target = standalone[0]
+            target.setText('hello world')
+            target.setSelection(0, 5)
+            self.app.clipboard().setText('粘贴内容')
+            captured = {}
+
+            def capture_menu(menu, *_args):
+                captured['menu'] = menu
+                return None
+
+            from PyQt5.QtWidgets import QMenu
+
+            with patch.object(QMenu, 'exec_', capture_menu):
+                panel._show_line_edit_context_menu(target, PyQt5.QtCore.QPoint(0, 0))
+
+            actions = captured['menu'].actions()
+            self.assertEqual([action.text() for action in actions], ['复制', '粘贴', '全选'])
+            self.assertTrue(all(action.isEnabled() for action in actions))
         finally:
             panel.deleteLater()
             self.app.processEvents()

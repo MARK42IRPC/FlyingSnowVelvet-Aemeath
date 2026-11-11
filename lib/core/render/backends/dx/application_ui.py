@@ -1433,7 +1433,7 @@ class DxApplicationUiHost:
         window_host_factory: Callable[..., DxWindowHost] | None = None,
         warp: bool = False,
         announcement_opener: Callable[[str], object] | None = None,
-        workbench_opener: Callable[[str], bool] | None = None,
+        workbench_opener: Callable[..., bool] | None = None,
         launch_wuwa: Callable[[], object] | None = None,
         animation_factory: Callable[[], object] | None = None,
         animation_cleanup: Callable[[], None] | None = None,
@@ -2015,9 +2015,24 @@ class DxApplicationUiHost:
                 self._screen_provider,
                 window_host_factory=self._window_host_factory,
                 warp=self._warp,
+                update_opener=self._open_update_flow,
             )
             self._announcement = window
         return window
+
+    def _open_update_flow(self) -> None:
+        """公告里的「立即更新」：交给工作台 helper 的桌宠更新页。"""
+        try:
+            self.open_update()
+        except Exception:
+            self._context.post(self._report_update_open_failure)
+
+    def _report_update_open_failure(self) -> None:
+        self._event_center.publish(Event(EventType.INFORMATION, {
+            "text": "打开更新页面失败，请从控制面板的「桌宠更新」手动检查。",
+            "min": 12,
+            "max": 120,
+        }))
 
     def open_announcement(self) -> None:
         self._announcement_window().open_manual()
@@ -2026,9 +2041,17 @@ class DxApplicationUiHost:
         if not self._open_workbench_helper("overview"):
             raise RuntimeError('Qt 工作台 helper 启动失败')
 
-    def _open_workbench_helper(self, initial_page: str) -> bool:
+    def open_update(self) -> None:
+        if not self._open_workbench_helper("desktop_pet_update", action="check_updates"):
+            raise RuntimeError('Qt 工作台 helper 启动失败')
+
+    def _open_workbench_helper(self, initial_page: str, *, action: str = "") -> bool:
         if self._workbench_opener is None:
             return False
+        # 只有带动作的请求才传 `action`：既有 opener 只接受页面参数，
+        # 无条件传空动作会让它们直接 TypeError。
+        if action:
+            return bool(self._workbench_opener(initial_page, action=action))
         return bool(self._workbench_opener(initial_page))
 
     def begin_shutdown(self) -> None:

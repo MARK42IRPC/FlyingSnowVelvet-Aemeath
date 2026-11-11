@@ -17,11 +17,13 @@ import copy
 from PyQt5.QtWidgets import (
     QCheckBox,
     QFormLayout,
+    QLabel,
     QPushButton,
     QWidget,
 )
 
 from config.config import ANIMATION
+from config.scale import scale_px
 from lib.core.ai_settings.config_schema import (
     CATEGORY_KEY_ALLOWLIST as _CATEGORY_KEY_ALLOWLIST,
     category_section_entries as _category_section_entries,
@@ -34,6 +36,7 @@ from lib.core.ai_settings.labels import (
     friendly_section_name as _friendly_section_name,
     section_help_text as _section_help_text,
 )
+from lib.core.compute_hub import get_compute_hub
 from lib.core.announcement import (
     load_announcement_preferences as _core_load_announcement_preferences,
     set_announcement_forever_suppressed as _core_set_announcement_forever_suppressed,
@@ -94,6 +97,18 @@ def _set_autostart(enabled: bool):
         return SimpleNamespace(enabled=bool(enabled), success=True, message="")
     return hook(bool(enabled))
 
+def probe_live_room(room_id: str):
+    """「测试直播间」的产品入口：解析房间号、取弹幕 token 并试连弹幕服务器。
+
+    档位 D 不得 import `lib.script`，实际探测由产品垫片经 `tier_d_seams` 注入
+    （键名 `live_probe_room`）。未注入时返回 None，页面据此提示不可用。
+    """
+    hook = tier_d_seams.hook("live_probe_room")
+    if hook is None:
+        return None
+    return hook(str(room_id))
+
+
 #: 分类页没有自带说明时的兜底提示，与面板同源同值。
 _GENERAL_HINT_TEXT = "保存后会写入本地配置文件，建议重启程序后完整生效"
 
@@ -146,6 +161,7 @@ class ConfigPageMixin:
 
         fields: list[dict] = []
         defaults: dict[str, dict] = {}
+        sections: dict[str, object] = {}
         category_allow_map = _CATEGORY_KEY_ALLOWLIST.get(category_id, {})
 
         for section_spec in category.sections:
@@ -159,6 +175,7 @@ class ConfigPageMixin:
                 _friendly_section_name(str(dict_name), str(section_title)),
                 help_text=_section_help_text(category_id, str(dict_name)),
             )
+            sections[str(dict_name)] = section
             section_label = section.title_label
             self._set_widget_description(
                 section_label,
@@ -414,6 +431,10 @@ class ConfigPageMixin:
                 self._append_announcement_suppression_field(form, fields)
                 section_fields_added = True
 
+            if category_id == "live_stream" and str(dict_name) == "LIVE_STREAM":
+                self._append_live_probe_field(form, fields)
+                section_fields_added = True
+
             if section_fields_added:
                 section.body_layout.addLayout(form)
             else:
@@ -430,6 +451,10 @@ class ConfigPageMixin:
             primary=True,
         )
 
+        live_meta = None
+        if category_id == "live_stream":
+            live_meta = self._wire_live_stream_sections(sections, fields)
+
         self._config_tab_meta[category_id] = {
             "panel": panel,
             "fields": fields,
@@ -438,7 +463,159 @@ class ConfigPageMixin:
             "title_label": title_label,
             "hint_label": hint_label,
         }
+        if live_meta is not None:
+            self._config_tab_meta[category_id]["live_stream"] = live_meta
         return panel
+
+    # ── 直播页：房间卡片 / 点歌卡片 ───────────────────────────────────
+
+    def _append_live_probe_field(self, form: QFormLayout, fields: list[dict]) -> None:
+        """在「直播间设置」卡片里追加「测试直播间」按钮与结果行（不写配置）。"""
+        button = QPushButton("测试直播间")
+        button.setObjectName("LiveStreamProbeButton")
+        result_label = QLabel("")
+        result_label.setObjectName("SettingsHintLabel")
+        result_label.setWordWrap(True)
+        result_label.setVisible(False)
+
+        group, row = self._create_field_row_group(spacing=scale_px(8, min_abs=6))
+        row.addWidget(button, 0)
+        row.addWidget(result_label, 1)
+        row.addStretch(0)
+        # 「测试直播间」行没有任何可见编辑控件；无行高时 Qt 会把按钮行折成 0 高。
+        group.setMinimumHeight(scale_px(30, min_abs=26))
+        probe_label_row = self._create_form_label("连接检查")
+        form.addRow(probe_label_row, group)
+
+        description = (
+            "按当前填写的直播间 ID 做一次连通性检查：解析房间号、获取弹幕 token 并试建连接。"
+            "只探测，不改开关状态，也不影响正在运行的连接。"
+        )
+        label = probe_label_row
+        self._set_widget_description(label, description)
+        self._set_widget_description(group, description)
+        self._set_widget_description(button, description)
+        self._set_widget_description(result_label, description)
+
+        button.clicked.connect(lambda _checked=False: self._on_test_live_room(button, result_label))
+        fields.append({
+            "kind": "live_probe",
+            "dict_name": "LIVE_STREAM",
+            "key": "",
+            "editor": button,
+            "template": None,
+            "label": result_label,
+        })
+
+    def _wire_live_stream_sections(self, sections, fields: list[dict]) -> dict:
+        """「启用弹幕点歌」关掉时整张「弹幕点歌」卡片收起；返回给 `_config_tab_meta` 的引用。"""
+        room_section = sections.get("LIVE_STREAM")
+        song_section = sections.get("LIVE_STREAM_SONG")
+        enabled_editor = None
+        for field in fields:
+            if (
+                str(field.get("dict_name") or "") == "LIVE_STREAM"
+                and str(field.get("key") or "") == "enabled"
+                and isinstance(field.get("editor"), QCheckBox)
+            ):
+                enabled_editor = field["editor"]
+                break
+
+        probe_button = None
+        probe_label = None
+        for field in fields:
+            if str(field.get("kind") or "") == "live_probe":
+                probe_button = field.get("editor")
+                probe_label = field.get("label")
+                break
+
+        def sync(checked: bool) -> None:
+            if song_section is not None:
+                song_section.setVisible(bool(checked))
+
+        if enabled_editor is not None and song_section is not None:
+            enabled_editor.toggled.connect(sync)
+            sync(enabled_editor.isChecked())
+
+        return {
+            "enabled_editor": enabled_editor,
+            "room_section": room_section,
+            "song_section": song_section,
+            "probe_button": probe_button,
+            "probe_label": probe_label,
+            "sync": sync,
+        }
+
+    def _on_test_live_room(self, button: QPushButton, result_label: QLabel) -> None:
+        """按钮点击：把探测丢到 IO 线程，结果回 UI 线程再上屏。"""
+        meta = self._config_tab_meta.get("live_stream") or {}
+        room_editor = None
+        for field in meta.get("fields", []):
+            if (
+                str(field.get("dict_name") or "") == "LIVE_STREAM"
+                and str(field.get("key") or "") == "room_id"
+            ):
+                room_editor = field.get("editor")
+                break
+        room_id = str(room_editor.text() if hasattr(room_editor, "text") else "").strip()
+
+        if not str(room_id):
+            self._show_live_probe_result(result_label, ok=False, message="请先填写直播间 ID")
+            return
+
+        button.setEnabled(False)
+        result_label.setVisible(True)
+        result_label.setText("正在连接…")
+
+        def worker():
+            try:
+                return probe_live_room(room_id)
+            except Exception as exc:  # 兜底：产品入口自身抛错也要能显示
+                return {"ok": False, "message": f"测试失败：{exc}"}
+
+        def done(future) -> None:
+            try:
+                result = future.result()
+            except Exception as exc:
+                result = {"ok": False, "message": f"测试失败：{exc}"}
+
+            def apply_result() -> None:
+                button.setEnabled(True)
+                if result is None:
+                    self._show_live_probe_result(
+                        result_label, ok=False, message="直播探测入口未就绪，请重启程序后重试"
+                    )
+                    return
+                ok = bool(getattr(result, "ok", False))
+                message = str(getattr(result, "message", "") or "")
+                if not message:
+                    message = "连接正常" if ok else "连接失败"
+                self._show_live_probe_result(result_label, ok=ok, message=message)
+
+            self._dispatch_to_ui(apply_result)
+
+        try:
+            future = get_compute_hub().submit_interactive_io(worker)
+        except Exception as exc:
+            button.setEnabled(True)
+            self._show_live_probe_result(result_label, ok=False, message=f"测试失败：{exc}")
+            return
+        future.add_done_callback(done)
+
+    @staticmethod
+    def _show_live_probe_result(result_label, *, ok: bool, message: str) -> None:
+        prefix = "✓ " if ok else "✗ "
+        result_label.setText(f"{prefix}{message}")
+        result_label.setToolTip(message)
+        result_label.setVisible(True)
+
+    def _dispatch_to_ui(self, func) -> None:
+        """回到 UI 线程执行；宿主提供 `_run_on_ui_thread`（面板），否则直接调用。"""
+        runner = getattr(self, "_run_on_ui_thread", None)
+        if callable(runner):
+            runner(func)
+            return
+        func()
 
     @staticmethod
     def _get_autostart_enabled() -> bool:

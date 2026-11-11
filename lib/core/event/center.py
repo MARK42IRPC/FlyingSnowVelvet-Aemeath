@@ -90,6 +90,7 @@ class EventType(Enum):
     GAME_MODE_EXIT = "game_mode_exit"                    # 请求退出游戏模式
     GAME_MODE_STATUS_CHANGE = "game_mode_status_change"  # 游戏模式状态变化
     CONFIG_UPDATED = "config_updated"                    # 运行时配置已更新
+    LIVE_SONG_STATUS_CHANGE = "live_song_status_change"  # 直播点歌状态变化
 
     # 信息气泡事件
     INFORMATION = "information"                          # 信息气泡事件：text, min, max

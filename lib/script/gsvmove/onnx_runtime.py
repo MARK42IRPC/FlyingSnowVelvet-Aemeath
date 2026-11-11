@@ -161,6 +161,48 @@ def _find_genie_tts_package() -> tuple[Path, str, Path]:
     )
 
 
+def _diagnose_roberta(root: Path) -> str:
+    """复现 RoBERTa 加载并返回可读的失败原因。
+
+    genie-tts 的 `load_roberta_model()` 会把 InferenceSession / Tokenizer 的异常
+    吞掉只返回 False。语音初始化失败时，用户只能看到「无法加载」而无法判断是
+    onnxruntime provider 不匹配、模型文件损坏还是 tokenizer 缺失。
+    """
+    model_path = root / "RoBERTa" / "RoBERTa.onnx"
+    tokenizer_path = root / "RoBERTa" / "roberta_tokenizer" / "tokenizer.json"
+    problems: list[str] = []
+    if not model_path.is_file():
+        problems.append(f"缺少模型 {model_path}")
+    if not tokenizer_path.is_file():
+        problems.append(f"缺少 tokenizer {tokenizer_path}")
+
+    try:
+        import onnxruntime
+
+        problems.append("providers=" + ",".join(onnxruntime.get_available_providers()))
+    except Exception as exc:  # pragma: no cover - 仅诊断路径
+        problems.append(f"onnxruntime 不可用: {exc}")
+        return "；".join(problems)
+
+    if model_path.is_file():
+        try:
+            session = onnxruntime.InferenceSession(str(model_path), providers=["CPUExecutionProvider"])
+            problems.append(f"InferenceSession 可用, 输入={len(session.get_inputs())}")
+        except Exception as exc:
+            problems.append(f"InferenceSession 失败: {exc}")
+
+    if tokenizer_path.is_file():
+        try:
+            from tokenizers import Tokenizer
+
+            Tokenizer.from_file(str(tokenizer_path))
+            problems.append("tokenizer 可用")
+        except Exception as exc:
+            problems.append(f"tokenizer 失败: {exc}")
+
+    return "；".join(problems)
+
+
 def _make_genie_package_module(package_root: Path) -> types.ModuleType:
     """Install a package shell without executing its GUI-heavy __init__.py."""
     package_spec = importlib.machinery.ModuleSpec(
@@ -238,7 +280,9 @@ def _load_isolated_genie_frontend(common_dir: Path):
         if model_manager is None or not callable(getattr(model_manager, "load_roberta_model", None)):
             raise RuntimeError("Genie ModelManager 不完整")
         if not model_manager.load_roberta_model():
-            raise RuntimeError("内置 Chinese RoBERTa 模型无法加载")
+            # load_roberta_model() 内部会吞掉 ONNX/tokenizer 异常只返回 False，
+            # 这里独立复现一次加载，把真实原因带出去，否则只会看到「无法加载」。
+            raise RuntimeError("内置 Chinese RoBERTa 模型无法加载：" + _diagnose_roberta(root))
         get_phones = getattr(frontend_module, "get_phones_and_bert", None)
         if not callable(get_phones):
             raise RuntimeError("Genie 双语前端缺少 get_phones_and_bert")

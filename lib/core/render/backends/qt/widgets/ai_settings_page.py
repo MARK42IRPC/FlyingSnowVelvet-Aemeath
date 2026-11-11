@@ -122,7 +122,7 @@ def _voice_package_widgets():
     return hook() if hook is not None else (None, None, None)
 
 
-#: 福利 API 模式下自动陪伴固定 6 分钟；真源在注入物 `welfare_auto_companion_interval_ms`。
+#: 备用福利 API 模式下自动陪伴固定 6 分钟；真源在注入物 `welfare_auto_companion_interval_ms`。
 def _welfare_auto_companion_interval_ms():
     hook = tier_d_seams.hook("welfare_auto_companion_interval_ms")
     return hook() if hook is not None else (0, 0)
@@ -135,7 +135,7 @@ _GPU_MODE_GPU = "gpu"
 _GPU_MODE_AUTO = "auto"
 
 def _welfare_auto_companion_interval_minutes() -> int:
-    """福利 API 模式下自动陪伴的固定间隔（分钟）。
+    """备用福利 API 模式下自动陪伴的固定间隔（分钟）。
 
     真源在注入物 `welfare_auto_companion_interval_ms`（产品侧
     `chat.handler_auto_companion`）；这里只取它的分钟数用于预填滑条与校验，避免两处各写一个 6。
@@ -239,6 +239,7 @@ class AISettingsPageMixin(AISettingsPageSectionsMixin):
         scaffold.content_layout.addWidget(self._voice_package_management)
 
         self._build_reply_mode_section(scaffold)
+        self._build_quick_welfare_section(scaffold)
         self._build_welfare_section(scaffold)
         self._build_manual_api_section(scaffold)
         self._build_ollama_section(scaffold)
@@ -404,7 +405,7 @@ class AISettingsPageMixin(AISettingsPageSectionsMixin):
 
     def _collect_values(self) -> dict:
         force_mode = str(self._force_mode.currentData() or "").strip()
-        if force_mode not in ("0", "1", "2", "3", "4"):
+        if force_mode not in ("0", "1", "2", "3", "4", "5"):
             raise ValueError("回复模式值无效")
 
         gpu_mode = str(self._gpu_mode.currentData() or _GPU_MODE_AUTO)
@@ -532,18 +533,23 @@ class AISettingsPageMixin(AISettingsPageSectionsMixin):
         return values
 
     def _update_reply_mode_sections(self, *_args) -> None:
-        mode = str(self._force_mode.currentData() or "1").strip()
+        mode = str(self._force_mode.currentData() or "5").strip()
+        self._quick_welfare_section.setVisible(mode == "5")
         self._welfare_section.setVisible(mode == "1")
         self._manual_api_section.setVisible(mode == "0")
         self._ollama_section.setVisible(mode == "2")
         self._update_auto_companion_interval_row()
 
     def _welfare_interval_locked(self) -> bool:
-        """福利 API 模式下自动陪伴间隔固定为 6 分钟。"""
-        return str(self._force_mode.currentData() or "1").strip() == "1"
+        """备用福利 API 模式下自动陪伴间隔固定为 6 分钟。
+
+        快捷福利 API 不在这条限制里：它在免费池里轮着换模型，而用户选这个档时对
+        响应速度本来就有预期，陪伴间隔仍旧按用户自己的滑块走。
+        """
+        return str(self._force_mode.currentData() or "5").strip() == "1"
 
     def _update_auto_companion_interval_row(self, *_args) -> None:
-        """福利 API 时收起间隔滑条；其余模式按开关状态启用滑条。
+        """备用福利 API 时收起间隔滑条；其余模式按开关状态启用滑条。
 
         Qt5 的 ``QFormLayout`` 没有 ``setRowVisible``，所以整行收起只能把这一行的
         标签与字段一起隐藏：两个都不可见时该行高度归零。

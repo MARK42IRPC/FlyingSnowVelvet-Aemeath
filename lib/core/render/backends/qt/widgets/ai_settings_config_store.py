@@ -23,6 +23,7 @@ from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import Event, EventType, get_event_center
 from lib.core.logger import get_logger
 from lib.core.ai_settings import validation as _validation
+from lib.core.ai_settings.config_parse import NON_CONFIG_FIELD_KINDS as _NON_CONFIG_FIELD_KINDS
 from lib.core.ai_settings.config_schema import (
     hardcoded_general_default as _hardcoded_general_default,
 )
@@ -120,6 +121,8 @@ class ConfigStoreMixin:
                     if isinstance(editor, QCheckBox):
                         editor.setChecked(self._get_announcement_forever_suppressed())
                     continue
+                if kind in _NON_CONFIG_FIELD_KINDS:
+                    continue
 
                 dict_name = str(field.get("dict_name") or "")
                 section = getattr(cc, dict_name, None)
@@ -183,6 +186,8 @@ class ConfigStoreMixin:
                 if kind == "external_announcement_suppression":
                     field.setdefault("default", False)
                     continue
+                if kind in _NON_CONFIG_FIELD_KINDS:
+                    continue
                 if not dict_name:
                     continue
                 bucket = defaults.setdefault(dict_name, {})
@@ -220,6 +225,8 @@ class ConfigStoreMixin:
                 editor = field.get("editor")
                 if isinstance(editor, QCheckBox):
                     editor.setChecked(bool(field.get("default", False)))
+                continue
+            if kind in _NON_CONFIG_FIELD_KINDS:
                 continue
 
             dict_name = str(field.get("dict_name") or "")

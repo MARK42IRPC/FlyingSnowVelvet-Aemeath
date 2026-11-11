@@ -135,6 +135,39 @@ class WorkbenchHelperLauncherTests(unittest.TestCase):
             self.assertEqual(workbench_helper.read_workbench_helper_request(), {})
 
 
+    def test_check_updates_action_round_trips_through_the_helper_request(self):
+        process = _Process()
+        with tempfile.TemporaryDirectory() as tmpdir, patch.object(
+            workbench_helper,
+            "_helper_request_path",
+            return_value=Path(tmpdir) / "request.json",
+        ), patch.object(
+            workbench_helper.subprocess,
+            "Popen",
+            return_value=process,
+        ):
+            self.assertTrue(workbench_helper.launch_workbench_helper(
+                "desktop_pet_update",
+                action="check_updates",
+            ))
+            request = workbench_helper.read_workbench_helper_request()
+
+        self.assertEqual(request["version"], 3)
+        self.assertEqual(request["page_id"], "desktop_pet_update")
+        self.assertEqual(request["action"], "check_updates")
+
+    def test_unknown_helper_action_is_dropped(self):
+        with tempfile.TemporaryDirectory() as tmpdir, patch.object(
+            workbench_helper,
+            "_helper_request_path",
+            return_value=Path(tmpdir) / "request.json",
+        ):
+            payload = workbench_helper._publish_helper_request(
+                "desktop_pet_update", action="rm -rf /"
+            )
+
+        self.assertEqual(payload["action"], "")
+
     def test_helper_without_pyqt_reports_recoverable_error(self):
         """缺 PyQt5 时 helper 必须给可恢复提示，而不是裸 traceback。
 

@@ -12,7 +12,7 @@ from pathlib import Path
 from config.user_storage_paths import get_user_state_dir
 
 
-_HELPER_REQUEST_VERSION = 2
+_HELPER_REQUEST_VERSION = 3
 _HELPER_LOCK = threading.RLock()
 _helper_process: subprocess.Popen | None = None
 
@@ -45,6 +45,11 @@ def normalize_game_action(action: object) -> str:
     } else ""
 
 
+def normalize_workbench_action(action: object) -> str:
+    value = str(action or "").strip().lower()
+    return value if value in {"check_updates"} else ""
+
+
 def _helper_request_path() -> Path:
     return get_user_state_dir("workbench-helper", "request.json")
 
@@ -54,6 +59,7 @@ def _publish_helper_request(
     *,
     game_id: str = "",
     game_action: str = "",
+    action: str = "",
 ) -> dict:
     path = _helper_request_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -63,6 +69,7 @@ def _publish_helper_request(
         "page_id": normalize_workbench_page(page_id),
         "game_id": normalize_game_id(game_id),
         "game_action": normalize_game_action(game_action),
+        "action": normalize_workbench_action(action),
     }
     temporary = path.with_name(
         f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp"
@@ -97,6 +104,7 @@ def read_workbench_helper_request() -> dict:
         "page_id": normalize_workbench_page(payload.get("page_id")),
         "game_id": normalize_game_id(payload.get("game_id")),
         "game_action": normalize_game_action(payload.get("game_action")),
+        "action": normalize_workbench_action(payload.get("action")),
     }
 
 
@@ -123,6 +131,7 @@ def relaunch_workbench_helper() -> bool:
             str(request.get("page_id") or "overview"),
             game_id=str(request.get("game_id") or ""),
             game_action=str(request.get("game_action") or ""),
+            action=str(request.get("action") or ""),
         )
     )
 
@@ -132,6 +141,7 @@ def launch_workbench_helper(
     *,
     game_id: str = "",
     game_action: str = "",
+    action: str = "",
 ) -> bool:
     global _helper_process
 
@@ -164,6 +174,7 @@ def launch_workbench_helper(
                 page_id,
                 game_id=game_id,
                 game_action=game_action,
+                action=action,
             )
         except OSError:
             return False

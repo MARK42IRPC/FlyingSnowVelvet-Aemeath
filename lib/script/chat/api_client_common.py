@@ -280,6 +280,30 @@ class _ApiClientCommonMixin:
         return ""
 
     @staticmethod
+    def _extract_openai_chunk_reasoning(chunk: dict) -> str:
+        """从流式 chunk 中提取「思考文本」（``reasoning`` / ``reasoning_content``）。
+
+        有些模型（如 NVIDIA Nemotron VL 系）把绝大部分输出预算花在思考上，正文要到很晚
+        才出现；一旦 ``max_tokens`` 在思考阶段就用完，整条流**一个正文字符都没有**。
+        调用方据此判断「该模型其实答了，只是没写出正文」，从而换模型而不是报失败。
+        """
+        if not isinstance(chunk, dict):
+            return ""
+        choices = chunk.get("choices")
+        if isinstance(choices, list) and choices:
+            first = choices[0] if isinstance(choices[0], dict) else {}
+            delta = first.get("delta") if isinstance(first, dict) else {}
+            message = first.get("message") if isinstance(first, dict) else {}
+            for container in (delta, message):
+                if not isinstance(container, dict):
+                    continue
+                for key in ("reasoning_content", "reasoning", "reasoning_details"):
+                    text = _ApiClientCommonMixin._normalize_openai_content(container.get(key))
+                    if text:
+                        return text
+        return ""
+
+    @staticmethod
     def _extract_openai_chunk_text(chunk: dict) -> str:
         """从流式 chunk 中提取文本，兼容多种 OpenAI 兼容实现。"""
         if not isinstance(chunk, dict):

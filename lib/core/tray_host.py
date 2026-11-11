@@ -17,6 +17,7 @@ class TrayCommand(IntEnum):
     TOGGLE_GAME_MODE = 4
     TOGGLE_CLICKTHROUGH = 5
     TOGGLE_AUTOSTART = 6
+    TOGGLE_LIVE_STREAM = 12
     CLEANUP_DESKTOP = 7
     CLEANUP_CACHE = 8
     CLEANUP_HISTORY = 9
@@ -30,6 +31,7 @@ class TrayMenuState:
     game_mode_enabled: bool = False
     clickthrough_enabled: bool = False
     autostart_enabled: bool = False
+    live_stream_enabled: bool = False
 
 
 TrayCommandCallback = Callable[[TrayCommand, bool | None], None]

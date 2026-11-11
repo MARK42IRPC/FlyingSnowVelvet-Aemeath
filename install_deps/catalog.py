@@ -55,6 +55,7 @@ DEPENDENCIES = [
     ("sounddevice", "microphone capture for speech-to-text", ("sounddevice",)),
     ("webrtcvad-wheels", "lightweight speech endpoint detection", ("webrtcvad",)),
     ("vosk", "offline speech-to-text engine", ("vosk",)),
+    ("websocket-client", "Bilibili live danmaku websocket", ("websocket",)),
 ]
 
 TOTAL_STEPS = 10

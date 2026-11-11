@@ -40,6 +40,7 @@ class DxAnnouncementWindow:
         cache_path: Path | None = None,
         submit_io: Callable[..., Future] | None = None,
         request_get: Callable[..., object] | None = None,
+        update_opener: Callable[[], None] | None = None,
     ) -> None:
         self._context = context
         self._screen_provider = screen_provider
@@ -54,6 +55,7 @@ class DxAnnouncementWindow:
         self._hovered = ""
         self._pressed = ""
         self._cleanup_done = False
+        self._update_opener = update_opener
         self._visual = self._build_visual()
         self._event_center = get_event_center()
         self._opacity = DxOpacityAnimator(context, self._request_repaint)
@@ -196,6 +198,11 @@ class DxAnnouncementWindow:
         if action == "close":
             self._service.dismiss()
             self.hide()
+        elif action == "update":
+            self._service.dismiss()
+            self.hide()
+            if self._update_opener is not None:
+                self._update_opener()
         elif action == "retry":
             self._service.retry()
         elif action == "suppress_today":

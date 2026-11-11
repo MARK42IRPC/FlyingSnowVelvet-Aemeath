@@ -85,10 +85,21 @@ SETTINGS_PAGE_SPECS = (
         ),
     ),
     SettingsPageSpec(
+        "live_stream",
+        "直播设置",
+        "直播设置",
+        "连接 B 站直播间，让观众用弹幕点歌并排队播放。",
+        (
+            SettingsSectionSpec("LIVE_STREAM", "直播间设置"),
+            SettingsSectionSpec("LIVE_STREAM_SONG", "弹幕点歌"),
+            SettingsSectionSpec("GIFT_ALERT", "礼物提醒"),
+        ),
+    ),
+    SettingsPageSpec(
         "desktop_pet_update",
         "桌宠更新",
         "桌宠更新管理",
-        "检查稳定版本、同步开发版本，或手动获取完整安装包。",
+        "检查稳定版本，或通过网盘、QQ 群手动获取完整安装包。",
     ),
     SettingsPageSpec(
         "contribution_list",

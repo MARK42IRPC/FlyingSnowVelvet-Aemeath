@@ -4223,3 +4223,62 @@ import `chat.ollama`）继续留在 `test_ui_to_product_coupling_is_frozen` 清�
 冻结清单为空，`lib/script/ui` 不再直接 `import PyQt5`，Qt 导入只存在于
 `lib/core/render/` 内（外加 5 个文档化例外）。「先按模块拆分瘦身、再逐个收敛 Qt」的四批
 滚动迁移至此收口。
+
+## 80. 更新页收敛开发版入口 + 公告「立即更新」打通（第 80 轮）
+
+更新时间：2026-11-01
+
+**开发版入口移除（第 49 节记录的是当时的五个按钮，现以本节为准）**
+
+- `lib/core/render/backends/qt/widgets/ai_settings_update.py`：删除「开发版本」分区与
+  `syncDevButton`，`PetUpdateActions` 去掉 `sync_dev_build` 字段，`on_sync_dev_build` 删除；
+  `open_update_dialog(actions)` 去掉 `mode` 参数（更新窗只剩稳定版一种流程），
+  页面现在固定为三个分区、四个按钮（`checkUpdateButton` / `quarkManualUpdateButton` /
+  `qqGroupUpdateButton` / `uninstallPetButton`）。面板新增公开入口 `check_for_updates()`。
+- `lib/script/ui/update_dialog.py`：同步删除 Git 检查/同步状态机、`_git_*` 信号与 `_mode`；
+  `lib/script/update_manager.py`：`GitSyncManager` 及三个结果类型整体删除，模块只剩
+  Hugging Face / ModelScope 分发更新管理器。
+- `lib/core/settings_schema/schema.py`：更新页描述改为「检查稳定版本，或通过网盘、QQ 群
+  手动获取完整安装包」。
+
+**公告版本比对与「立即更新」**
+
+- 版本事实集中到 `config/version_info.py`：`version_key()` 把 `LTS1.0.7pre7` / `v1.0.8` /
+  `1.0.8-rc1` 折成可比较键（发布号补零到四段、正式版优先于预发布、预发布段按数字/字母分块），
+  `is_newer_version()` 任一侧无法解析时返回 `False`。
+- `lib/core/announcement.py`：解析新增可选 `version` 字段，`AnnouncementDocument.has_update()`
+  用上述函数与 `APP_VERSION` 比较；无 `version` 的公告永不显示更新入口。
+- 描述层：`visuals/window_specs.py` 新增 `ANNOUNCEMENT_UPDATE` 语义与 `update` 按钮
+  （`AnnouncementUpdateButton`，排在 `forever` 之后）；`visuals/announcement_visuals.py` 的
+  `_button()` 改用 `accent="pink" | "cyan"` 表达主/次层级，DX 动作行在
+  `document.has_update()` 时插入 `("update", "立即更新", 96)`。
+- Qt 产品面：`lib/script/ui/announcement_dialog.py` 的对话框新增 `update_requested` 与
+  `_update_available`，`_set_action_mode()` 只在文档模式且版本更新时显示该按钮；
+  `AnnouncementController` 新增 `update_opener` 注入，点击后先收起公告再转交产品流程。
+- 产品路由：`ApplicationUiHost.open_update()` 成为唯一入口。Qt 侧
+  `tray_icon.check_for_updates()` 打开 `desktop_pet_update` 页并调用面板的
+  `check_for_updates()`；DX 侧经 `workbench_opener` 发 `action="check_updates"`，
+  由 `workbench_helper` 把请求协议抬到版本 3 并转发给已运行的 helper 窗口。
+  `_open_workbench_helper()` 只在 `action` 非空时传该关键字，保持既有只收页面参数的
+  opener 兼容。
+
+**seam 缺陷修复（第 49 节遗留）**
+
+- `QQGroupDialog` / `DesktopPetUpdateDialog` 包装层原写作 `hook(*args, **kwargs)`，而 seam
+  登记的是类本身，`ensure_update_dialog()` 因此缓存到类对象并触发
+  `TypeError: missing 1 required positional argument: 'self'`。两处改为
+  `hook()(*args, **kwargs)`；同时审计了其余类/命名空间型 seam（`bug_tracker_window:data_mixin`、
+  `command_dialog:event_handler`、`office_approval_dialog_class`、`qr_dialog_floating_base`、
+  `playlist_queue_buttons:action_button_mixin`、`speaker_search_dialog:*`、
+  `voice_package_installer:floating_base`、`voice_package_status_class`），调用点均已自行实例化，
+  无同类缺陷。
+
+**验证**
+
+- `tests/test_announcement_dialog.py` 新增版本解析/比对、按钮可见性、点击发信号与
+  controller 转交；`tests/dx/test_dx_announcement.py` 新增动作行与 `update` 分发；
+  `tests/test_workbench_helper.py` 新增协议 v3 往返与非法动作丢弃；
+  `tests/dx/test_dx_desktop_backend.py` 新增 helper 打开与失败提示；
+  `tests/test_update_uninstall_button.py` 新增 seam 类实例化回归。
+- 全量 `py -3 -m unittest <231 个 tests.test_*>`：2270 项通过（跳过 3）；
+  `tests/dx` 全量 124 项通过（跳过 7）。

@@ -15,6 +15,7 @@ import requests
 
 from config.shared_storage_io import write_bytes_atomic
 from config.user_storage_paths import get_user_cache_dir, get_user_state_dir
+from config.version_info import APP_VERSION, is_newer_version
 from lib.core.compute_hub import get_compute_hub
 from lib.core.logger import get_logger
 
@@ -27,7 +28,7 @@ ANNOUNCEMENT_REQUEST_TIMEOUT = (5.0, 12.0)
 ANNOUNCEMENT_MAX_BYTES = 1024 * 1024
 
 _FIELD_START_RE = re.compile(
-    r'^\s*(title|subtitle|text)\s*:\s*"(.*)$',
+    r'^\s*(title|subtitle|text|version)\s*:\s*"(.*)$',
     re.IGNORECASE,
 )
 _logger = get_logger(__name__)
@@ -43,6 +44,12 @@ class AnnouncementBlock:
 class AnnouncementDocument:
     title: str
     blocks: tuple[AnnouncementBlock, ...]
+    #: 公告声明的目标版本（缺省为空：不参与「有新版本」判定）。
+    version: str = ""
+
+    def has_update(self, current_version: str = APP_VERSION) -> bool:
+        """公告声明的版本是否严格新于当前运行的版本。"""
+        return is_newer_version(self.version, current_version)
 
 
 @dataclass(frozen=True)
@@ -79,6 +86,7 @@ def parse_announcement(raw_text: str) -> AnnouncementDocument:
             index += 1
         fields.append((key, "\n".join(value_lines).strip()))
     title = next((value for key, value in fields if key == "title" and value), "")
+    version = next((value for key, value in fields if key == "version" and value), "")
     blocks = tuple(
         AnnouncementBlock(key, value)
         for key, value in fields
@@ -90,7 +98,7 @@ def parse_announcement(raw_text: str) -> AnnouncementDocument:
         title = "桌宠公告"
     if not blocks and not raw.strip():
         raise ValueError("公告内容为空")
-    return AnnouncementDocument(title=title, blocks=blocks)
+    return AnnouncementDocument(title=title, blocks=blocks, version=version)
 
 
 def load_announcement_preferences(path: Path | None = None) -> AnnouncementPreferences:

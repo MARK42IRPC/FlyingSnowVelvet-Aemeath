@@ -1,4 +1,4 @@
-本项目得以完成，离不开以下个人、粉丝与社区的支持：
+﻿本项目得以完成，离不开以下个人、粉丝与社区的支持：
 
 【支持】
 
@@ -44,15 +44,25 @@
 贡献:素材/形象来源-鸣潮
 ===https://mc.kurogames.com/
 
-ai平台技术支持:
-===claude-CODE		(核心架构)
-===IFLOW心流平台		(代码协助)
-===Openai-codeX		(代码协助)
-===deepseek深度求索	(日常帮助)
-===ollama				(本地部署)
-===GPT-SoVITs			(语音合成模块)
-===deepseek harness	(办公核心)
-部分使用到的ai模型:opus/sonnet4.6/4.7,gml5/gml5.1,gml4.7,GPT-5.3/5.4/5.5/5.6/6-codeX,deepseek-v3.2/v4pro/v4flash/v4.1flash,qwen2.5 
+AI平台技术支持:Anthropic
+===Claude系列		(核心架构)
+===Claude Code		(代码协助)
+
+AI平台技术支持:Google
+===Gemini系列		(模型支持)
+
+AI平台技术支持:OpenAI
+===GPT系列			(模型支持)
+===Codex系列		(代码协助)
+
+AI平台技术支持:深度求索
+===DeepSeek系列		(日常帮助)
+
+AI平台技术支持:Ollama
+===Ollama				(本地部署)
+
+AI平台技术支持:GPT-SoVITS
+===GPT-SoVITS		(语音合成模块)
 
 音乐模块支持:网易云音乐/QQ音乐/酷狗音乐(非官方,仅供学习交流)
 由于aip官方版权限制,默认模块推荐:网易云音乐

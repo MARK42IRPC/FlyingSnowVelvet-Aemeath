@@ -47,10 +47,10 @@ class ContributionParsingTests(unittest.TestCase):
         )
 
     def test_short_bare_line_becomes_fallback_name_on_flush(self):
-        # 角色行没有 URL 条目时，flush 用兜底名字成条（url 为空）。
+        # 角色行本身没给出名字时，段内短文本作为兜底名字成条（url 为空）。
         text = "\n".join(
             (
-                "贡献:测试-A",
+                "贡献:测试",
                 "===某位贡献者",
             )
         )
@@ -59,6 +59,16 @@ class ContributionParsingTests(unittest.TestCase):
             records,
             [{"name": "某位贡献者", "role": "测试", "url": ""}],
         )
+
+    def test_role_default_name_wins_over_bare_line(self):
+        text = "\n".join(
+            (
+                "贡献:测试-A",
+                "===某位贡献者",
+            )
+        )
+        records = contributions.parse_contribution_records(text)
+        self.assertEqual(records[0]["name"], "A")
 
     def test_url_entry_prefers_role_default_name_over_fallback(self):
         # 有 URL 时名字取角色行默认名，兜底名字不覆盖它。
@@ -86,15 +96,16 @@ class ContributionParsingTests(unittest.TestCase):
         self.assertEqual(records[0]["name"], "A")
 
     def test_header_without_dash_keeps_single_name(self):
-        self.assertEqual(contributions.split_contribution_header("只有一个人"), ("只有一个人", ""))
+        # 无分隔符时整段当角色，名字交给段内 `===` 行；返回 (role, "")。
+        self.assertEqual(contributions._parse_contribution_header("只有一个人"), ("只有一个人", ""))
 
-    def test_ignored_title_parts_stay_out_of_the_role(self):
-        role, name = contributions.split_contribution_header("开发者-保留所有权利-某人")
+    def test_header_splits_role_and_name_on_last_dash(self):
+        role, name = contributions._parse_contribution_header("开发者-某人")
         self.assertEqual(name, "某人")
-        self.assertNotIn("保留所有权利", role)
+        self.assertEqual(role, "开发者")
 
     def test_normalize_collapses_whitespace_and_strips_separators(self):
-        self.assertEqual(contributions.normalize_contribution_name("  a   b -=:：  "), "a b")
+        self.assertEqual(contributions.normalize_text("  a   b -=:：  "), "a b")
 
     def test_extract_first_url_returns_empty_without_url(self):
         self.assertEqual(contributions.extract_first_url("没有链接"), "")
@@ -105,16 +116,25 @@ class ContributionParsingTests(unittest.TestCase):
 
 
 class ContributionRecordsAgainstRealFileTests(unittest.TestCase):
-    def test_real_document_parses_and_manual_entries_are_inserted(self):
+    def test_real_document_parses_without_duplicates(self):
         path = contributions.contribution_list_path()
         self.assertTrue(path.is_file(), f"缺失贡献名单事实源：{path}")
         records = contributions.load_contribution_records()
-        urls = [record["url"] for record in records]
-        # 手工条目按 URL 去重后仍在结果里。
-        for manual in contributions._MANUAL_CONTRIBUTION_RECORDS:
-            self.assertIn(manual["url"], urls)
-        # 隐藏角色不出现在结果里。
-        self.assertNotIn("安装教程指引", {record["role"] for record in records})
+        self.assertGreater(len(records), 10)
+        names = [record["name"] for record in records]
+        self.assertEqual(len(names), len(set(names)), "贡献名单不应有重复条目")
+        # 名单里的每个有链接条目都必须来自文件本身。
+        urls = [record["url"] for record in records if record["url"]]
+        self.assertTrue(urls)
+
+    def test_ai_platform_section_is_parsed(self):
+        platforms = contributions.load_ai_platform_records()
+        self.assertTrue(platforms, "AI 平台段应解析出条目")
+        vendors = {item["vendor"] for item in platforms}
+        self.assertIn("Anthropic", vendors)
+        # 只写系列名，不带具体版本号
+        for item in platforms:
+            self.assertNotRegex(item["name"], r"\d+\.\d+")
 
     def test_root_argument_overrides_document_root(self):
         custom = contributions.contribution_list_path(Path("/tmp/does-not-exist-root"))

@@ -15,6 +15,21 @@ import logging
 import os
 import sys
 import time
+from importlib import import_module
+
+
+def _ensure_project_root_on_path() -> None:
+    """把仓库根加入 ``sys.path``。
+
+    该文件以绝对脚本路径启动时，``sys.path[0]`` 是 ``.../qt/widgets``，
+    直接导入 ``lib.core...`` 会失败，播放器窗口一闪即退。
+    """
+    file_path = os.path.abspath(__file__)
+    marker = os.sep + os.path.join("lib", "core", "render")
+    index = file_path.find(marker)
+    project_root = file_path[:index] if index > 0 else os.path.dirname(file_path)
+    if project_root and project_root not in sys.path:
+        sys.path.insert(0, project_root)
 
 
 def _ensure_qt_platform_plugins() -> None:
@@ -45,10 +60,15 @@ def main(argv=None) -> int:
     logger = logging.getLogger(__name__)
     logger.info("[AnimationPlayer] 启动流式解码播放器: %s", animation_type)
 
+    _ensure_project_root_on_path()
     _ensure_qt_platform_plugins()
 
     from PyQt5.QtWidgets import QApplication
 
+    # 产品侧垫片负责把 SEanima 的四个解码入口登记进 tier_d_seams；
+    # 不加载它，AnimationWindow 只能构造空窗口。这里按模块名在运行时装配，
+    # 避免 render 层对产品包形成静态 import。
+    import_module("lib.script.ui.animation_player")
     from lib.core.render.backends.qt.widgets.animation_player import AnimationWindow
 
     t0 = time.time()

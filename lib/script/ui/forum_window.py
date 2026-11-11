@@ -173,6 +173,13 @@ render_bridge.configure_forum_window_font(render_bridge.ui_font)
 
 render_bridge.configure_forum_window_violation_sound()
 
+# 卡片底部的效果贴图（`[雪豹]` 这类令牌）要走档位 A 的栅格帧转换，而档位 D 的
+# `forum_sticker` 自己不得引用档位 A。注入原本只写在 `lib/script/ui/forum_sticker.py`
+# 的模块级代码里，但生产代码没有任何地方 import 那个垫片（只有测试 import 它），于是
+# 应用里一遇到带令牌的留言就抛 `RuntimeError`。论坛窗口是打开留言墙的唯一入口，
+# 这里补一次：与上面的字体、违规音同形，都是本垫片在导入期做的装配。
+render_bridge.configure_forum_sticker_raster_converter(render_bridge.qimage_from_raster_frame)
+
 __all__ = [
     "QEvent",
     "QRectF",

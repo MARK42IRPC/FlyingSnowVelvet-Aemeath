@@ -43,6 +43,7 @@ from lib.core.render.visuals.window_specs import (
     ANNOUNCEMENT_RETRY,
     ANNOUNCEMENT_SUPPRESS_FOREVER,
     ANNOUNCEMENT_SUPPRESS_TODAY,
+    ANNOUNCEMENT_UPDATE,
     announcement_window_spec,
 )
 from lib.script.ui import render_bridge
@@ -127,12 +128,14 @@ class DesktopPetAnnouncementDialog:
         self.suppress_today_requested = _AnnouncementSignal()
         self.suppress_forever_requested = _AnnouncementSignal()
         self.retry_requested = _AnnouncementSignal()
+        self.update_requested = _AnnouncementSignal()
         self.dismissed = _AnnouncementSignal()
 
         self._requested_visible = False
         self._title = "桌宠公告"
         self._html = ""
         self._mode = "announcement"
+        self._update_available = False
         self._spec = self._build_spec()
         self._window = render_bridge.create_spec_window(
             self._spec,
@@ -144,6 +147,7 @@ class DesktopPetAnnouncementDialog:
         self._body = self._window.find("body")
         self._today_button = self._window.find("today")
         self._forever_button = self._window.find("forever")
+        self._update_button = self._window.find("update")
         self._retry_button = self._window.find("retry")
         self._error_close_button = self._window.find("error_close")
         self._minimize_button = self._window.find("minimize")
@@ -189,6 +193,7 @@ class DesktopPetAnnouncementDialog:
         self.refresh_workbench_theme()
         self._title = document.title or "桌宠公告"
         self._html = _announcement_body_to_html(document)
+        self._update_available = document.has_update()
         self._header_label.setText(self._title)
         self._body.setHtml(self._html)
         self._body.verticalScrollBar().setValue(0)
@@ -197,6 +202,7 @@ class DesktopPetAnnouncementDialog:
 
     def show_loading(self) -> None:
         self.refresh_workbench_theme()
+        self._update_available = False
         self._header_label.setText("桌宠公告")
         self._body.setHtml(
             '<div class="status"><h2>正在获取公告</h2>'
@@ -207,6 +213,7 @@ class DesktopPetAnnouncementDialog:
 
     def show_error(self) -> None:
         self.refresh_workbench_theme()
+        self._update_available = False
         self._header_label.setText("桌宠公告")
         self._body.setHtml(
             '<div class="status"><h2>公告暂时无法加载</h2>'
@@ -247,6 +254,7 @@ class DesktopPetAnnouncementDialog:
         for button, visible in (
             (self._today_button, is_announcement),
             (self._forever_button, is_announcement),
+            (self._update_button, is_announcement and self._update_available),
             (self._error_close_button, is_error),
             (self._retry_button, is_error),
         ):
@@ -265,6 +273,8 @@ class DesktopPetAnnouncementDialog:
             self.suppress_today_requested.emit()
         elif key == ANNOUNCEMENT_SUPPRESS_FOREVER:
             self.suppress_forever_requested.emit()
+        elif key == ANNOUNCEMENT_UPDATE:
+            self.update_requested.emit()
         elif key == ANNOUNCEMENT_RETRY:
             self.retry_requested.emit()
         elif key == ANNOUNCEMENT_CLOSE:
@@ -455,9 +465,11 @@ class AnnouncementController:
         state_path: Path | None = None,
         cache_path: Path | None = None,
         today_provider: Callable[[], date] = date.today,
+        update_opener: Callable[[], None] | None = None,
     ) -> None:
         self._dialog: DesktopPetAnnouncementDialog | None = None
         self._closed = False
+        self._update_opener = update_opener
         self._dispatcher = render_bridge.create_ui_dispatcher(parent)
         self._event_center = get_event_center()
         self._event_center.subscribe(EventType.CONFIG_UPDATED, self._on_config_updated)
@@ -493,8 +505,15 @@ class AnnouncementController:
             self._dialog.suppress_today_requested.connect(self._service.suppress_today)
             self._dialog.suppress_forever_requested.connect(self._service.suppress_forever)
             self._dialog.retry_requested.connect(self._service.retry)
+            self._dialog.update_requested.connect(self._open_update)
             self._dialog.dismissed.connect(self._service.dismiss)
         return self._dialog
+
+    def _open_update(self) -> None:
+        """「立即更新」：收起公告并转交产品侧更新流程。"""
+        self._hide_dialog()
+        if self._update_opener is not None:
+            self._update_opener()
 
     def _show_loading(self) -> None:
         self._ensure_dialog().show_loading()

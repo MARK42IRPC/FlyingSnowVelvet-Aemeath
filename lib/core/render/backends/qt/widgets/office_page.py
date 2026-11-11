@@ -35,7 +35,6 @@ from PyQt5.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMessageBox,
-    QMenu,
     QPlainTextEdit,
     QPushButton,
     QSizeGrip,
@@ -56,6 +55,10 @@ from lib.core.render.backends.qt.widgets.office_chat_view import OfficeConversat
 from lib.core.render.backends.qt.widgets.office_effort_slider import OfficeEffortSlider
 from lib.core.render.backends.qt.widgets.office_icons import render_office_icon
 from lib.core.render.backends.qt.widgets.office_widgets import apply_office_widget_fonts
+from lib.core.render.backends.qt.widgets.text_context_menu import (
+    install_text_context_menu,
+    show_text_context_menu,
+)
 from lib.core.render.backends.qt.widgets.window_buttons import create_window_button
 from lib.core.render.backends.qt.widgets.workbench_page import QtWorkbenchToolPage
 from lib.core.render.backends.qt.widgets.workbench_settings_layout import (
@@ -510,36 +513,13 @@ class OfficeWorkbenchPage(QtWorkbenchToolPage):
         return view
 
     def _install_text_context_menu(self, edit: QLineEdit | QPlainTextEdit) -> None:
-        edit.setContextMenuPolicy(Qt.CustomContextMenu)
-        edit.customContextMenuRequested.connect(
-            lambda pos, target=edit: self._show_text_context_menu(target, pos)
-        )
+        """办公页文本框与设置页共用同一份右键菜单（复制 / 粘贴 / 全选）。"""
+        install_text_context_menu(edit)
 
     @staticmethod
     def _show_text_context_menu(edit: QLineEdit | QPlainTextEdit, pos) -> None:
-        menu = QMenu(edit)
-        action_copy = menu.addAction("复制")
-        action_paste = menu.addAction("粘贴")
-        action_cut = menu.addAction("剪切")
+        show_text_context_menu(edit, pos)
 
-        can_edit = not bool(edit.isReadOnly())
-        has_selection = (
-            bool(edit.textCursor().hasSelection())
-            if isinstance(edit, QPlainTextEdit)
-            else bool(edit.hasSelectedText())
-        )
-        can_paste = can_edit and bool(QApplication.clipboard().text())
-        action_copy.setEnabled(has_selection)
-        action_paste.setEnabled(can_paste)
-        action_cut.setEnabled(can_edit and has_selection)
-
-        chosen = menu.exec_(edit.mapToGlobal(pos))
-        if chosen is action_copy:
-            edit.copy()
-        elif chosen is action_paste:
-            edit.paste()
-        elif chosen is action_cut:
-            edit.cut()
     def refresh_workbench_page(self) -> None:
         self._poll_state(force=True)
         if self.isVisible() and not self._poll_timer.isActive():

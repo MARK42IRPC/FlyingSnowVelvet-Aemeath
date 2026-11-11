@@ -62,6 +62,7 @@ class DxTrayHostTests(unittest.TestCase):
             TrayCommand.TOGGLE_GAME_MODE,
             TrayCommand.TOGGLE_CLICKTHROUGH,
             TrayCommand.TOGGLE_AUTOSTART,
+            TrayCommand.TOGGLE_LIVE_STREAM,
             TrayCommand.OPEN_CMD,
             TrayCommand.CLEANUP_DESKTOP,
             TrayCommand.CLEANUP_CACHE,
@@ -72,7 +73,7 @@ class DxTrayHostTests(unittest.TestCase):
             self.assertTrue(post(hwnd, 0x0111, int(command), 0))
 
         events = self.host.poll_events()
-        self.assertEqual(events, (FSDX_EVENT_TRAY_COMMAND,) * 11)
+        self.assertEqual(events, (FSDX_EVENT_TRAY_COMMAND,) * 12)
         self.assertEqual(received, ["announcement", "quit"])
         self.assertEqual(
             commands,
@@ -80,6 +81,7 @@ class DxTrayHostTests(unittest.TestCase):
                 (TrayCommand.TOGGLE_GAME_MODE, True),
                 (TrayCommand.TOGGLE_CLICKTHROUGH, True),
                 (TrayCommand.TOGGLE_AUTOSTART, True),
+                (TrayCommand.TOGGLE_LIVE_STREAM, True),
                 (TrayCommand.OPEN_CMD, None),
                 (TrayCommand.CLEANUP_DESKTOP, None),
                 (TrayCommand.CLEANUP_CACHE, None),
@@ -90,9 +92,14 @@ class DxTrayHostTests(unittest.TestCase):
         )
 
     def test_menu_state_is_forwarded_to_native_tray(self):
-        self.host.set_menu_state(TrayMenuState(game_mode_enabled=True, autostart_enabled=True))
+        self.host.set_menu_state(TrayMenuState(
+            game_mode_enabled=True,
+            autostart_enabled=True,
+            live_stream_enabled=True,
+        ))
         self.assertEqual(self.host._menu_state.game_mode_enabled, True)
         self.assertEqual(self.host._menu_state.autostart_enabled, True)
+        self.assertEqual(self.host._menu_state.live_stream_enabled, True)
 
 
 if __name__ == "__main__":

@@ -118,5 +118,55 @@ class DxAnnouncementTests(unittest.TestCase):
                 window.cleanup()
 
 
+    def test_update_button_is_rendered_only_for_a_newer_declared_version(self):
+        from lib.core.render.visuals.announcement_visuals import build_announcement_visual
+        from lib.core.render.visuals.application_visuals import create_portable_command_hint_metrics
+
+        metrics = create_portable_command_hint_metrics()
+        plain = build_announcement_visual(
+            metrics,
+            mode="document",
+            document=AnnouncementDocument("公告", (AnnouncementBlock("text", "正文"),)),
+        )
+        newer = build_announcement_visual(
+            metrics,
+            mode="document",
+            document=AnnouncementDocument(
+                "公告", (AnnouncementBlock("text", "正文"),), version="LTS99.0.0"
+            ),
+        )
+
+        self.assertNotIn("update", [action for action, _rect in plain.action_rects])
+        self.assertIn("update", [action for action, _rect in newer.action_rects])
+
+    def test_update_action_dismisses_and_hands_off_to_the_opener(self):
+        opened = []
+        with patch(
+            "lib.core.render.backends.dx.announcement.get_layer_manager",
+            return_value=_LayerManager(),
+        ):
+            window = DxAnnouncementWindow(
+                DxLoopContext(),
+                DxScreenProvider(monitor_loader=lambda: (), fallback=Rect(0, 0, 1200, 800)),
+                window_host_factory=_Host,
+                warp=True,
+                submit_io=_immediate_submit,
+                request_get=lambda *args, **kwargs: _Response(b"text:\"x\""),
+                update_opener=lambda: opened.append(True),
+            )
+            try:
+                window.show_document(
+                    AnnouncementDocument(
+                        "公告", (AnnouncementBlock("text", "正文"),), version="LTS99.0.0"
+                    ),
+                    False,
+                )
+                window._dispatch_action("update")
+                self.assertFalse(window.is_visible())
+                self.assertEqual(opened, [True])
+            finally:
+                window.cleanup()
+
+
 if __name__ == "__main__":
     unittest.main()

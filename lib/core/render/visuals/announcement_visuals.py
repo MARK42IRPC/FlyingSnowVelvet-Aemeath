@@ -141,11 +141,13 @@ def _button(
     *,
     state: str,
     layer: int,
+    accent: str = "",
 ) -> list[object]:
     colors = get_announcement_colors()
-    is_primary = label == "今日不再显示"
+    is_primary = accent == "pink"
+    is_accent = accent == "cyan"
     fill = colors["pink"] if is_primary else colors["surface_raised"]
-    border = colors["pink"] if is_primary else colors["border"]
+    border = colors["pink"] if is_primary else colors["cyan"] if is_accent else colors["border"]
     if state == "hover":
         fill = colors["pink_hover"] if is_primary else colors["surface_hover"]
         border = colors["pink_hover"] if is_primary else colors["cyan"]
@@ -283,6 +285,8 @@ def build_announcement_visual(
     if mode == "document":
         if page_count > 1:
             action_specs.extend((("page_prev", "上一页", 72), ("page_next", "下一页", 72)))
+        if document is not None and document.has_update():
+            action_specs.append(("update", "立即更新", 96))
         action_specs.extend((("suppress_today", "今日不再显示", 112), ("suppress_forever", "永远不再显示", 126)))
     elif mode == "error":
         action_specs.extend((("retry", "重新加载", 92),))
@@ -298,7 +302,15 @@ def build_announcement_visual(
         rect = Rect(x, height - bottom_margin - button_height, action_width, button_height)
         action_rects.append((action, rect))
         state = "pressed" if pressed == action and hovered == action else "hover" if hovered == action else "normal"
-        commands.extend(_button(rect, label, button_font, state=state, layer=layer))
+        accent = "cyan" if action == "update" else "pink" if action == "suppress_today" else ""
+        commands.extend(_button(
+            rect,
+            label,
+            button_font,
+            state=state,
+            layer=layer,
+            accent=accent,
+        ))
         x -= button_gap
     return AnnouncementVisualDescription(
         ANNOUNCEMENT_SIZE,

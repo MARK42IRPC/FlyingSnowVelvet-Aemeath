@@ -5,7 +5,8 @@ import threading
 import time
 from dataclasses import replace
 
-from config.config import GIF_FILES, DRAW, ANIMATION
+from config.config import DRAW, ANIMATION
+from config.actions import gif_files as action_gif_files
 from lib.core.application_runtime import ApplicationRuntime
 from lib.core.application_ui import ApplicationUiHost
 from lib.core.render.router import BackendSelection, get_active_backend_selection
@@ -39,6 +40,10 @@ from lib.script.microphone_stt import (
     cleanup_microphone_stt_service,
     get_microphone_push_to_talk_manager,
     get_microphone_stt_service,
+)
+from lib.script.music import (
+    cleanup_live_song_request_service,
+    get_live_song_request_service,
 )
 from lib.script.voice.handler import get_voice_request_handler, cleanup_voice_request_handler
 from lib.script.app.game_mode_service import get_game_mode_service, cleanup_game_mode_service
@@ -111,9 +116,11 @@ class ApplicationState:
         self._tray_menu_state = TrayMenuState(
             game_mode_enabled=bool(getattr(self._game_mode, 'is_enabled', lambda: False)()),
             clickthrough_enabled=bool(is_clickthrough_enabled()),
+            live_stream_enabled=bool(get_live_song_request_service().is_enabled),
         )
         self._tray_action_lock = threading.Lock()
         self._pending_tray_actions: set[TrayCommand] = set()
+        self._live_stream_last_error = ""
         # 工作目录
         self._script_dir = None
         # 初始化完成标志
@@ -172,6 +179,7 @@ class ApplicationState:
         self._event_center.subscribe(EventType.GAME_MODE_STATUS_CHANGE, self._on_game_mode_status_change)
         self._event_center.subscribe(EventType.UI_CLICKTHROUGH_TOGGLE, self._on_clickthrough_status_change)
         self._event_center.subscribe(EventType.AUTOSTART_STATUS_CHANGE, self._on_autostart_status_change)
+        self._event_center.subscribe(EventType.LIVE_SONG_STATUS_CHANGE, self._on_live_song_status_change)
         self._events_subscribed = True
 
     def _publish_event(self, event_type: EventType, data: dict = None):
@@ -264,6 +272,11 @@ class ApplicationState:
         self._tool_dispatcher = get_tool_dispatcher(mode_service=self._interaction_mode)
 
         self._game_mode.configure_runtime(self._pet, self._particles, self._effects)
+
+        try:
+            get_live_song_request_service().reload_from_config()
+        except Exception as exc:
+            logger.warning("初始化直播点歌失败: %s", exc)
 
     def _init_stage_publish_main(self) -> None:
         """准备运行时就绪并发布 ``APP_MAIN``，进入 main 状态。
@@ -365,6 +378,16 @@ class ApplicationState:
         data = event.data if isinstance(event.data, dict) else {}
         self._set_tray_menu_state(autostart_enabled=bool(data.get('enabled', False)))
 
+    def _on_live_song_status_change(self, event: Event) -> None:
+        data = event.data if isinstance(event.data, dict) else {}
+        enabled = bool(data.get('enabled', False))
+        self._set_tray_menu_state(live_stream_enabled=enabled)
+        error = str(data.get('last_error') or "").strip()
+        if error != self._live_stream_last_error:
+            self._live_stream_last_error = error
+            if error and not enabled and data.get('source') in {'tray_menu', 'manual'}:
+                self._publish_information(error)
+
     def _submit_tray_action(self, command: TrayCommand, worker) -> None:
         with self._tray_action_lock:
             if command in self._pending_tray_actions:
@@ -427,6 +450,12 @@ class ApplicationState:
         elif command == TrayCommand.TOGGLE_AUTOSTART:
             target = bool(checked) if checked is not None else not self._tray_menu_state.autostart_enabled
             self._submit_tray_action(command, lambda: set_autostart_enabled(target))
+        elif command == TrayCommand.TOGGLE_LIVE_STREAM:
+            target = bool(checked) if checked is not None else not self._tray_menu_state.live_stream_enabled
+            self._submit_tray_action(
+                command,
+                lambda: self._toggle_live_stream(target),
+            )
         elif command == TrayCommand.CLEANUP_DESKTOP:
             self._publish_event(EventType.INPUT_HASH, {'text': '清理'})
         elif command == TrayCommand.CLEANUP_CACHE:
@@ -435,6 +464,32 @@ class ApplicationState:
             self._submit_tray_action(command, cleanup_music_history)
         elif command == TrayCommand.OPEN_AUTHOR_PAGE:
             self._submit_tray_action(command, open_author_page)
+
+    def _toggle_live_stream(self, target: bool) -> None:
+        service = get_live_song_request_service()
+        changed = service.set_enabled(target, source="tray_menu")
+        if changed:
+            self._persist_live_stream_enabled(target)
+            self._publish_event(EventType.INFORMATION, {
+                'text': '直播模式已开启' if target else '直播模式已关闭',
+                'min': 0,
+                'max': 90,
+            })
+
+    @staticmethod
+    def _persist_live_stream_enabled(enabled: bool) -> None:
+        """把托盘切换的直播开关写回用户配置。
+
+        托盘只改运行时状态时，关掉直播在下次启动会被 `reload_from_config()` 按落盘的
+        `enabled=True` 重新打开——用户看到的就是「关了也还是开着」。这里只写 `enabled`，
+        其余直播参数（房间号、点歌前缀等）沿用当前值，不覆盖用户在设置页的改动。
+        """
+        try:
+            from config.general_user_settings import save_general_values
+
+            save_general_values({"LIVE_STREAM": {"enabled": bool(enabled)}})
+        except Exception as exc:
+            logger.warning("保存直播开关失败: %s", exc)
 
     def _on_app_quit(self, event: Event):
         """统一接管 APP_QUIT，避免组件直接强退 Qt 事件循环。"""
@@ -506,8 +561,8 @@ class ApplicationState:
 
         self._application_ui.prepare_application(self._app)
 
-        # 加载 GIF
-        loader = GifLoader(GIF_FILES)
+        # 加载主宠动作 GIF（清单来自 config/actions.py 的动作表）
+        loader = GifLoader(action_gif_files())
         self._gifs = loader.load_all()
 
         # 粒子覆盖层（全局单例）
@@ -718,6 +773,7 @@ class ApplicationState:
 
         cleanup_steps = (
             ("application_ui", self._application_ui.stop_runtime),
+            ("live_song_requests", cleanup_live_song_request_service),
             ("plugin_managers", self._cleanup_plugin_managers),
             ("cleanup_handler", self._cleanup_registered_handler),
             ("chat_handler", cleanup_chat_handler),
@@ -855,6 +911,7 @@ class ApplicationState:
             (EventType.GAME_MODE_STATUS_CHANGE, self._on_game_mode_status_change),
             (EventType.UI_CLICKTHROUGH_TOGGLE, self._on_clickthrough_status_change),
             (EventType.AUTOSTART_STATUS_CHANGE, self._on_autostart_status_change),
+            (EventType.LIVE_SONG_STATUS_CHANGE, self._on_live_song_status_change),
         )
         for event_type, callback in subscriptions:
             self._event_center.unsubscribe(event_type, callback)

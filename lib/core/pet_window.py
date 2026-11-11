@@ -105,6 +105,7 @@ class PetWindow(BaseEntity):
         # ── 核心运行状态 ──────────────────────────────────────────────
         self._event_center = get_event_center()
         self._state = 'idle'
+        self._resource_id = 'idle'
 
         # ── 移动运行时 ──────────────────────────────────────────────────
         self._movement = PetMovementRuntime(
@@ -201,16 +202,27 @@ class PetWindow(BaseEntity):
         self._move_task_id = None  # 移动任务需要时才添加
 
         # 初始状态和绘制
-        # 启动时使用随机 action 而不是 idle
-        random_action = Actions.get_random_action_from_group("action1")
-        if random_action:
+        # 启动时播放欢迎动作而不是 idle；动作清单来自 config/actions.py。
+        # 只有资源确实已加载时才使用欢迎动作，否则直接进入 idle
+        # （裁剪资源、DX 桩状态机等场景不会消费 STATE_CHANGE_REQUEST）。
+        initial = None
+        from config.actions import action_spec, actions_in_group
+
+        loaded = self._gifs.keys() if hasattr(self._gifs, "keys") else ()
+        for action_id in actions_in_group("wake"):
+            spec = action_spec(action_id)
+            if spec is not None and spec.resource_id in loaded:
+                initial = action_id
+                break
+
+        if initial is not None:
             # 通过事件系统触发状态切换，确保状态机正确处理
-            event = Event(EventType.STATE_CHANGE_REQUEST, {
-                'new_state': random_action.name,
+            self._event_center.publish(Event(EventType.STATE_CHANGE_REQUEST, {
+                'new_state': initial,
                 'by_event': False
-            })
-            self._event_center.publish(event)
+            }))
         else:
+            # 无可用欢迎动作时直接绘制 idle，不依赖状态机响应
             self._change_state('idle')
         self._host_finalize_startup()
 
@@ -299,21 +311,29 @@ class PetWindow(BaseEntity):
 
         self._host_set_clickthrough(enabled)
 
-    def _change_state(self, new_state: str):
-        """切换状态"""
+    def _change_state(self, new_state: str, resource_id: str | None = None):
+        """切换状态。
+
+        `new_state` 是动作 id，`resource_id` 是 DrawCore 资源 id（GIF 文件名去扩展名）。
+        两者在动作表里可以不同，状态机负责传入正确的资源 id。
+        """
         self._state = new_state
+        if resource_id is None:
+            resource_id = self._resource_id_for(new_state)
+        # 动作 id 与 DrawCore 资源 id 解耦：状态名进日志/事件，资源 id 用于取帧和绘制
+        self._resource_id = resource_id
 
         # 如果不是 moving 状态，重置翻转状态
         if new_state != 'moving':
             self._movement.flipped = False
 
         # 重置 DrawCore 的帧索引
-        self._draw_core.reset_frame(new_state)
+        self._draw_core.reset_frame(resource_id)
 
         # 发布绘制请求事件: [资源id, 资源帧[如有], 绘制位置]
         # clear_others=True 确保清除之前的绘制请求，避免重叠
         draw_event = Event(EventType.DRAW_REQUEST, {
-            'resource_id': new_state,
+            'resource_id': resource_id,
             'frame_index': -1,  # 使用当前帧
             'position': None,   # 使用默认位置
             'alpha': _get_main_pet_opacity(),
@@ -323,13 +343,21 @@ class PetWindow(BaseEntity):
         })
         self._event_center.publish(draw_event)
 
+    @staticmethod
+    def _resource_id_for(action_id: str) -> str:
+        """动作 id -> DrawCore 资源 id；未知动作回退为动作 id 本身。"""
+        from config.actions import action_spec
+
+        spec = action_spec(action_id)
+        return spec.resource_id if spec is not None else action_id
+
     # ==================================================================
     # BaseEntity 接口实现
     # ==================================================================
 
-    def change_state(self, state: str):
-        """切换到指定状态"""
-        self._change_state(state)
+    def change_state(self, state: str, resource_id: str | None = None):
+        """切换到指定状态（`state` 是动作 id）"""
+        self._change_state(state, resource_id)
 
     def get_current_state(self) -> str:
         """获取当前状态"""
@@ -468,7 +496,7 @@ class PetWindow(BaseEntity):
 
     def prepare_render(self):
         """更新绘制状态并将 DrawCore 交给窗口后端。"""
-        self._draw_core.set_request_alpha(self._state, _get_main_pet_opacity())
+        self._draw_core.set_request_alpha(self._resource_id, _get_main_pet_opacity())
         return self._draw_core
 
     def handle_pointer_enter(self) -> None:
@@ -514,7 +542,7 @@ class PetWindow(BaseEntity):
     def _on_direction_change(self, flipped: bool):
         """方向改变回调"""
         # 同步更新 DrawCore 的翻转状态
-        self._draw_core.set_request_flipped(self._state, flipped)
+        self._draw_core.set_request_flipped(self._resource_id, flipped)
 
     def _track_move_particles(self, new_pos: Point) -> None:
         """累计主宠物移动距离，每 30px 触发一次 flicker_data 粒子。"""
@@ -692,14 +720,14 @@ class PetWindow(BaseEntity):
 
     def _handle_gif_frame_event(self, event):
         """处理GIF帧事件 - 用于动画播放"""
-        self._draw_core.set_request_alpha(self._state, _get_main_pet_opacity())
-        # 更新 DrawCore 的帧
-        result = self._draw_core.next_frame(self._state)
+        self._draw_core.set_request_alpha(self._resource_id, _get_main_pet_opacity())
+        # 更新 DrawCore 的帧（用资源 id，动作 id 可以与之不同）
+        result = self._draw_core.next_frame(self._resource_id)
 
         if result:
             frame, loop_completed = result
             if loop_completed:
-                # 发布GIF循环完成事件
+                # 发布GIF循环完成事件；payload 用动作 id，状态机按它过滤
                 loop_event = Event(EventType.GIF_LOOP_COMPLETED, {
                     'state': self._state
                 })

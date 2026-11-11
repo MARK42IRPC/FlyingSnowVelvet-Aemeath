@@ -202,7 +202,59 @@
   `frozen_ui_qt_importers` 49 → 50（第 56 节）。改前 / 改后列表 / 详情 / 发帖（空白与填写）五个阶段
   的控件树与 `grab()` 位图 SHA-256 差异均为 **0**。执行记录见 `doc/render层边界契约.md` 第 56 节。
 
+- 公告弹窗新增版本比对与「立即更新」入口：公告文件可选的 `version:"..."` 字段与
+  `config.version_info.APP_VERSION` 比较（`version_key()` / `is_newer_version()`，支持
+  `LTS1.0.7pre7`、`v1.0.8`、`1.0.8-rc1` 形态），仅在严格更新时才在动作行出现「立即更新」。
+  点击后收起公告并走 `ApplicationUiHost.open_update()`：Qt 侧经 workbench helper 的
+  `action="check_updates"`（请求协议版本 2 → 3）打开「桌宠更新」页并自动检查；DX 侧同样只拉起
+  隔离 Qt helper，失败时以 `INFORMATION` 事件提示从控制面板手动检查。Qt 与 DX 两个后端共用
+  同一份公告描述与版本判定，`window_specs.ANNOUNCEMENT_UPDATE` 是按钮语义 id。
 ### Changed
+- 主宠状态机拆成「动作表 / 状态机 / 行为导演」三层，新增动作不再需要改状态机代码：
+  - **动作表** `config/actions.py`（新增）是唯一事实源，`ACTIONS` 里每条 `ActionSpec` 声明
+    GIF、层（`base` / `action` / `transient`）、循环次数、打断模式、语义分组和可选 `enter_from`。
+    新增 `click` / `idle` / `wake` 三个分组，取代此前并行维护的 `BEHAVIOR['random_states']` 与
+    从未被引用的 `ACTION_GROUPS` 两份名单（`random_states` 已删除，不在用户可覆盖的配置项内）。
+    `ANIMATION['gif_dir']` 新增，主宠 GIF 统一放在 `resc/GIF/MainAemeath/`，`GIF_FILES` 常量
+    删除，加载清单由 `config.actions.gif_files()` 派生。
+  - **状态机** `lib/script/mainpet/state.py` 693 → 292 行，只保留迁移判定与迁移副作用。
+    原来按 `idle` / `moving` 写死的 if 链换成层到层的 `TRANSITIONS` 矩阵，`moving` 只能从
+    `idle` 进入的约束改由 `ActionSpec.enter_from` 表达。对外接口收敛为 `request()` /
+    `current()` / `on_animation_complete()`。
+  - **行为导演** `lib/script/mainpet/director.py`（新增）承接漫游目标优先级、沙发保护半径聚合、
+    拉海游戏区避让和自动行为定时器。它只做决策，通过回调请求动作，不直接改状态。
+  - `lib/core/action.py` 改为动作表的向后兼容适配层（`Actions` 门面保留），`gif` 与 `resource_id`
+    解耦，`PetWindow.change_state()` 改为同时接受动作 id 与资源 id。
+  - 空格键 / 左键点击 / 启动欢迎动作统一从 `actions_in_group()` 取，不再各自读取配置。
+  - 新增待机动作：`tape`（看磁带）、`spinning`（转圈）、`singing1` / `singing2`（唱歌），
+    均为 200×200 像素风 GIF（tape/spinning 83 帧 @16fps，singing 241 帧 @16fps），
+    绿幕抠除后量化到 200 色；贴到画布边缘的特效按 `EDGE_FADE_PX` 做阶梯渐隐，
+    避免音符/光环被裁成硬边色块。
+  - **idle 池**：进入待机时不再固定播 `idle.gif`，而是按权重从 `idle` 组抽取。
+    `idle` / `boring` / `play` 属 `ordinary_idle`（各 30），`wave` / `happy` / `jumping` /
+    `tape` / `spinning` 属 `special_idle`（各 5），`singing1` / `singing2` 仅在后台音乐
+    播放时参与。抽取完全由权重决定，允许连续抽到同一个动作（基础 idle 可以一直循环）；
+    唯一的例外是「上一次抽到特殊待机」时本次强制抽普通待机，保证特殊动画不会连续出现。
+    `idle` 的 `loops` 由 -1 改为 4，播完重新抽池，否则抽中后会永久停留。
+  - 自动漫游间隔改为 5~20 秒随机（原固定 5 秒）。
+  - 新增 `tests/test_action_table.py`（39 条断言）：动作表结构、层约束、文件存在性、迁移矩阵、
+    逐项迁移判定、idle 池权重分布与「特殊待机不连续」；`tests/test_mainpet_state_geometry.py` 与
+    `tests/test_qt_dependency_boundaries.py` 的调用面同步迁到 `director`。
+
+- 直播设置页拆成两张卡片：「直播间设置」（启用弹幕点歌 + 直播间 ID + 测试直播间）与
+  「弹幕点歌」（指令前缀、冷却、去重、队列与长度参数）。只有「启用弹幕点歌」勾选时才显示
+  「弹幕点歌」卡片；两张卡片仍写回同一份 `LIVE_STREAM` 配置，保存语义与字段路由不变。
+  新增「测试直播间」按钮：经产品 seam（`live_probe_room`）在 IO 线程做一次只读连通性检查
+  （解析房间号 → 取弹幕 token → 试建弹幕连接），结果以 ✓/✗ 显示在同一张卡片里；探测不改开关、
+  不动配置，也不影响正在运行的连接（`probe_live_room()` 是新增的产品栈入口，`_danmu_info` /
+  `_resolved_room_id` 复用同一组 helper）。
+- 设置面板所有页面的文本右键菜单统一为「复制 / 粘贴 / 全选」：新增
+  `lib/core/render/backends/qt/widgets/text_context_menu.py`（档位 D，零产品 import），
+  AI 设置面板 `_apply_project_fonts()` 与逐页创建时挂载；可编辑下拉框把菜单挂在 `QComboBox`
+  本体（其内部 `QLineEdit` 会被重建）；办公任务页从「复制 / 粘贴 / 剪切」改为同一份菜单。
+- 更新审计：配置分类页宿主（`ai_settings_config_page.py`）此前未 `QMenu` 自定义菜单，
+  其 `QLineEdit` 全部由面板 `_install_line_edit_context_menus()` 统一覆盖，本次拆页后逐页
+  再挂一次；跨层扫描无「页面绕过面板直接挂菜单」的残留。
 - 版本基线抬到 `LTS1.0.7pre7`（发布日期 `2026-10-28`，`config/version_info.py` 与 README 同步）；
   设置面板「桌宠更新」页的稳定版本区在按钮上方显示只读的「当前版本」，实际版本直接读
   `config.version_info.APP_VERSION`，以后抬版不需要再改页面。
@@ -245,8 +297,59 @@
   去 Qt 同轮交付。拆分轮必须是"纯移动"（`git diff -M --find-copies` 逐行等价、零像素差异），
   收敛轮沿用逐像素 oracle；`frozen_ui_qt_importers` 只减不增。次序、验收门槛与风险记于
   `doc/render层边界契约.md` 第 34 节，执行检查表见 `doc/维护手册.md`。
+- 两条福利车道带图片时优先选能看图的模型：快捷福利 API 的清单现在同时解析上游
+  `architecture.input_modalities`（`fetch_free_models()` 返回「免费模型 + 其中支持图片的模型」），
+  `turn_models(needs_vision=True)` 把视觉模型稳定分区到最前；某个模型拒图时优先换下一个能看图的
+  继续带图重试，池里没有看图模型了才退回纯文本（不再一开始就丢掉图片）。备用福利 API 的
+  `select_welfare_model(..., needs_vision=True)` 在带图时切到能看图的 `agnes-2.5-flash`，
+  由 `OllamaSessionMixin._welfare_vision_config_override()` 在请求期覆盖模型。实测免费池 12 个免费
+  模型中有 5 个声明支持图片输入。新增 `tests/test_quick_welfare_api.py` 4 条、
+  `tests/test_welfare_api_config.py` 3 条断言。
+- AI 回复模式新增**快捷福利 API**并设为默认档（配置值 `5`，下拉文案「快捷福利 API（可能响应较慢且不稳定）」）：
+  把 GitHub `Ebony-Vinyl/dsh-our-free-model` 的 Kilo 免费车道搬成一条顺序兜底车道。新增
+  `lib/script/chat/quick_welfare_api.py`（清单 / 冷却 / 轮转顺序）与
+  `lib/script/chat/api_client_quick_welfare.py`（逐模型发请求）：`GET
+  https://ai-gateway.kilo.ai/api/v1/models` 取 `isFree` 切片并缓存 6 小时（失败 15 分钟后重试、
+  拉不到用内置 12 条静态清单）；一次请求最多换 3 个模型，单模型 20 秒超时且不重试，失败冷却
+  10 分钟、连续失败 30 分钟、成功清零并提到下一轮起点；已流出正文就不再换模型，图片被拒时先在
+  同一模型上退成纯文本。`_openai_chat_api()` 为此新增 `retry_attempts` / `timeout_secs` 覆盖项，
+  只有这条车道用。该网关对任何非空 `Authorization` 回 401，`api_key` 因此固定为空。
+  `FORCE_REPLY_MODE` 默认值改为 `5`；已存盘的 `force_reply_mode=1` 由
+  `_migrate_reply_mode_to_quick_welfare()` 在导入期一次性迁移到 `5`，其余模式不动。设置面板新增
+  「快捷福利 API 配置」说明分区（无配置项），办公模式对这条公共车道与备用福利 API 一样拒绝。
+  新增 `tests/test_quick_welfare_api.py` 23 条断言。
+- 原「福利 API」整体更名为「备用福利 API（当福利 API 无法使用时选我）」（配置值仍是 `1`）：
+  下拉文案、分区标题与说明、校验与错误文案、README、维护手册同步改动，`1` 一档的 6 分钟陪伴
+  间隔与「智力提升」行为不变。
 
 ### Fixed
+- 修复打开雪绒论坛后、留言卡片带 `[雪豹]` 令牌时必崩的问题：贴图宿主的栅格帧转换器
+  （`render_bridge.configure_forum_sticker_raster_converter()`）原本只在产品垫片
+  `lib/script/ui/forum_sticker.py` 的模块级代码里注入，而生产代码从不 import 那个垫片
+  （只有 `tests/test_forum_window.py` import 它），于是用例一直绿、真实应用一渲染令牌卡片就抛
+  `RuntimeError: forum_sticker 宿主需要经 render_bridge 注入栅格帧转换入口`。现改由论坛窗口
+  垫片 `lib/script/ui/forum_window.py`（托盘打开留言墙的唯一入口）在导入期补上这次装配，与同处
+  的字体、违规提示音注入同形。新增 `test_production_entry_injects_the_raster_converter`：
+  在干净子进程里只导入生产入口并构造一张贴图，撤掉修复即复现上述 `RuntimeError`。
+- 修复设置面板贡献列表空白的问题：`ai_settings_shell.py` 的 `_shell_project_root()` 用
+  `Path(__file__).parents[3]` 定位仓库根，但该文件位于 `lib/core/render/backends/qt/widgets/`，
+  `parents[3]` 实际指向 `lib/core/render`，于是 `doc/贡献名单和主播的狗盆/开发贡献.txt`
+  永远找不到。现改为委托 `contributions.project_root()`（按自身位置解析的唯一事实源）。
+- 贡献名单解析重写：原实现只认 `贡献:` 段，`ai平台技术支持:` 段（全角冒号）被整段丢弃；
+  同时 `_MANUAL_CONTRIBUTION_RECORDS` 硬编码 3 条并按 URL 覆盖文件内容，`安装教程指引`
+  被 `_CONTRIBUTION_HIDDEN_ROLES` 整条隐藏。现在所有条目完全来自 txt：
+  `贡献:` 段产出人物条目，`AI平台技术支持:` 段产出平台条目（公司 + 产品线 + 用途），
+  支持表格形式的多行条目（`名字<TAB>URL`），并修复了 `===https://...` 被误判为段头的缺陷。
+  `开发贡献.txt` 同步整理：AI 平台段移到鸣潮之后，只写公司名，模型只写系列（不带版本号）。
+- 修复主宠移动动画不播放 / 状态卡在 `moving` 的问题：移动运行时用 `by_event=False`
+  请求 `moving -> idle`，而迁移矩阵对 `(base, base)` 套用了当前动作的 `interrupt` 判定，
+  `moving` 是 event 级因此被拒，状态机停在 moving 但移动控制器已停止，表现为原地播放。
+  现在进入 base 层无条件放行。
+- 修复 `moving` 无法从待机变体触发的问题：`enter_from=("idle",)` 原先按字面动作 id 比较，
+  而 idle 池会抽出 `boring` / `tape` 等动作，导致抽中后 move 再也进不来。现改为按
+  「是否处于等待态」判定（`_in_waiting_state`）。
+- 修复基础 `idle.gif` 从不播放的问题：`idle` 原先不在 idle 池内，池抽到的都是其它动作。
+  现在 `idle` 作为 `ordinary_idle` 成员参与抽取。
 - 修复公告浮窗重新打开后按钮全部失效的问题：`QtSpecWindow` 的“已给出决定”标志
   从未在 `show_window()` 里重置，而修改后的公告 / 更新浮窗只收起窗口（不结束生命周期），
   因此首次点任意关闭按钮（标题栏× / 最小化 / 今日不再显示 / 永远不再显示 / 关闭）后，
@@ -256,6 +359,20 @@
   `AttributeError: 'ProgressPanel' object has no attribute 'render'` 的问题：控件层迁出后
   `ProgressPanel` 不再是 `QWidget`，离屏预热应画它的描述宿主（`_host`）而非自身；
   `_warm_paint` 现会在窗口描述控件上自动选择可画目标，实在无法画时静默跳过。
+
+- 修复「检查新版本」在注入类 seam 上直接崩溃的问题：`ai_settings_update` 的
+  `QQGroupDialog` / `DesktopPetUpdateDialog` 包装层原先写成 `hook(*args, **kwargs)`，而 seam
+  登记的是**类本身**，于是 `ensure_update_dialog()` 缓存到的是类对象，随后
+  `dialog.is_busy()` 抛出 `TypeError: missing 1 required positional argument: 'self'`。
+  两个包装层改为 `hook()(*args, **kwargs)`，并新增 seam 实例化回归测试。审计了其余 60 余个
+  类/命名空间型 seam 调用点，均已自行实例化，无同类缺陷。
+
+### Removed
+
+- 移除「同步开发版」入口：更新页不再提供 Git 同步按钮，`PetUpdateActions` 去掉 `sync_dev_build`，
+  `on_sync_dev_build` 与 `GitSyncManager`（含 `GitSyncSnapshot` / `GitSyncCheckResult` /
+  `GitSyncResult`）整体删除，更新窗只剩稳定版检查 / 网盘 / QQ 群 / 卸载四个动作。
+  更新页说明同步改为「检查稳定版本，或通过网盘、QQ 群手动获取完整安装包」。
 
 ## [LTS1.0.7pre6] - 2026-09-22
 

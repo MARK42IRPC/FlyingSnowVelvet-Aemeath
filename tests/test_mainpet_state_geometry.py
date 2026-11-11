@@ -7,6 +7,7 @@ from lib.core.game_obstacles import (
     reset_game_obstacle_provider,
 )
 from lib.core.render.visuals.types import Point, Rect
+from lib.script.mainpet.director import BehaviorDirector
 from lib.script.mainpet.state import StateMachine
 
 
@@ -33,63 +34,79 @@ class _EventSink:
         self.events.append(event)
 
 
+def _make_director(entity: _Entity, *, event_center: _EventSink) -> BehaviorDirector:
+    director = BehaviorDirector.__new__(BehaviorDirector)
+    director._entity = entity
+    director._request_action = lambda action_id: None
+    director._on_wander_pause = lambda: None
+    director._on_wander_resume = lambda: None
+    director._event_center = event_center
+    director._paused_by_sofa = False
+    director._protection_check_seq = 0
+    director._pending_protection_request_id = None
+    director._pending_protection_any = False
+    director._defer = None
+    return director
+
+
 class MainPetStateGeometryTests(unittest.TestCase):
     def tearDown(self):
         reset_game_obstacle_provider()
 
     def test_state_module_has_no_explicit_pyqt_dependency(self):
-        source = (
-            Path(__file__).resolve().parents[1]
-            / "lib"
-            / "script"
-            / "mainpet"
-            / "state.py"
-        ).read_text(encoding="utf-8")
-
-        self.assertNotIn("PyQt5", source)
-        self.assertNotIn("lib.script.gemes", source)
+        module_dir = Path(__file__).resolve().parents[1] / "lib" / "script" / "mainpet"
+        for name in ("state.py", "director.py"):
+            source = (module_dir / name).read_text(encoding="utf-8")
+            self.assertNotIn("PyQt5", source)
+            self.assertNotIn("lib.script.gemes", source)
 
     def test_lahai_filter_uses_core_rect_and_segment_collision(self):
-        state = StateMachine.__new__(StateMachine)
-        state._entity = _Entity(position=Point(0, 40), geometry=Rect(0, 0, 20, 20))
+        director = _make_director(
+            _Entity(position=Point(0, 40), geometry=Rect(0, 0, 20, 20)),
+            event_center=_EventSink(),
+        )
         configure_game_obstacle_provider(lambda: Rect(40, 40, 20, 40))
 
-        self.assertTrue(state._is_wander_target_blocked_by_lahai(Point(80, 40)))
-        self.assertFalse(state._is_wander_target_blocked_by_lahai(Point(0, 100)))
+        self.assertTrue(director._is_wander_target_blocked_by_lahai(Point(80, 40)))
+        self.assertFalse(director._is_wander_target_blocked_by_lahai(Point(0, 100)))
 
     def test_lahai_filter_is_inactive_without_a_desktop_game_host(self):
-        state = StateMachine.__new__(StateMachine)
-        state._entity = _Entity(position=Point(0, 40), geometry=Rect(0, 0, 20, 20))
+        director = _make_director(
+            _Entity(position=Point(0, 40), geometry=Rect(0, 0, 20, 20)),
+            event_center=_EventSink(),
+        )
 
-        self.assertFalse(state._is_wander_target_blocked_by_lahai(Point(80, 40)))
+        self.assertFalse(director._is_wander_target_blocked_by_lahai(Point(80, 40)))
 
     def test_protection_request_and_move_queue_payloads_use_core_points(self):
-        state = StateMachine.__new__(StateMachine)
-        state._entity = _Entity(position=Point(10, 20), geometry=Rect(0, 0, 40, 60))
-        state._event_center = _EventSink()
-        state._paused_by_sofa = False
-        state._protection_check_seq = 0
-        state._pending_protection_request_id = None
-        state._pending_protection_any = False
+        sink = _EventSink()
+        director = _make_director(
+            _Entity(position=Point(10, 20), geometry=Rect(0, 0, 40, 60)),
+            event_center=sink,
+        )
         deferred = []
-        state._defer = lambda delay, callback: deferred.append((delay, callback))
+        director._defer = lambda delay, callback: deferred.append((delay, callback))
 
-        state._check_sofa_protection()
-        state._enqueue_move(
+        director._check_sofa_protection()
+        director._enqueue_move(
             Point(12.4, 33.6),
             event_id="move",
             move_type="wander",
             radius=12,
-            timeout_ms=5000,
         )
 
-        protection = state._event_center.events[0]
-        movement = state._event_center.events[1]
+        protection = sink.events[0]
+        movement = sink.events[1]
         self.assertIs(protection.type, EventType.PROTECTION_CHECK)
         self.assertEqual(protection.data["pet_position"], Point(30, 50))
         self.assertEqual(deferred[0][0], 0)
         self.assertIs(movement.type, EventType.PET_MOVE_ENQUEUE)
         self.assertEqual(movement.data["position"], Point(12, 34))
+
+    def test_state_machine_exposes_request_and_current(self):
+        self.assertTrue(hasattr(StateMachine, "request"))
+        self.assertTrue(hasattr(StateMachine, "current"))
+        self.assertTrue(hasattr(StateMachine, "on_animation_complete"))
 
 
 if __name__ == "__main__":

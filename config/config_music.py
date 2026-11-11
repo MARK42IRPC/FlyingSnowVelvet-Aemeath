@@ -16,6 +16,29 @@ SOUND = {
     # 游戏物体音效音量系数（0.0-1.0）
     'game_object_volume': 0.9,
 }
+LIVE_STREAM = {
+    'enabled': False,
+    'room_id': '',
+    'command_prefix': '点歌',
+    'request_cooldown_seconds': 10,
+    'duplicate_window_seconds': 120,
+    'pending_limit': 10,
+    'max_queue_size': 200,
+    'song_title_max_length': 50,
+    'artist_max_length': 30,
+    'notify_on_enqueue': True,
+}
+#: 礼物提醒：与直播点歌平行的一条功能，共用同一条弹幕连接。
+#: 文案里的占位符在发送前替换：``<gift>`` 礼物名、``<number>`` 数量、``<name>`` 送礼人。
+#: ``min_price`` 是触发阈值（礼物单价，单位与 B 站 ``SEND_GIFT.price`` 一致，即金瓜子）；
+#: 0 表示任何礼物都响应。
+GIFT_ALERT = {
+    'enabled': False,
+    'template': '感谢<name>送出的<number>个<gift>',
+    'min_price': 0,
+    'notify_in_chat': True,
+    'speak': True,
+}
 SPEAKER_AUDIO = {
     'scale_range':   0.1,    # 缩放范围：[1.0 - scale_range, 1.0 + scale_range]
     'scale_exp':     2.0,    # 指数映射：freq_intensity^scale_exp

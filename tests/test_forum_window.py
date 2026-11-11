@@ -1,5 +1,9 @@
 import os
+import subprocess
+import sys
+import textwrap
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -1043,6 +1047,47 @@ class ForumStickerTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
+
+    def test_production_entry_injects_the_raster_converter(self):
+        """只导入生产入口也必须完成注入，否则真实应用一遇到令牌卡片就崩。
+
+        这段注入原先只写在 `lib/script/ui/forum_sticker.py` 的模块级代码里，而生产代码
+        从不 import 那个垫片——只有测试 import 它，于是用例一直绿、应用里却抛
+        `RuntimeError`。这里用干净子进程只导入论坛窗口垫片（托盘打开留言墙的唯一入口），
+        复现真实启动路径。
+        """
+        repo_root = Path(__file__).resolve().parents[1]
+        script = textwrap.dedent(
+            """
+            import os
+            os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+            import PyQt5.QtCore
+            qt_root = os.path.dirname(PyQt5.QtCore.__file__)
+            os.environ.setdefault(
+                "QT_QPA_PLATFORM_PLUGIN_PATH", os.path.join(qt_root, "Qt5", "plugins", "platforms")
+            )
+            os.environ.setdefault("QT_PLUGIN_PATH", os.path.join(qt_root, "Qt5", "plugins"))
+
+            from PyQt5.QtWidgets import QApplication, QWidget
+
+            app = QApplication([])
+            # 生产唯一入口：托盘「雪绒论坛」走这里，不经过 forum_sticker 垫片。
+            from lib.script.ui import forum_window  # noqa: F401
+            from lib.core.render.backends.qt.widgets.forum_sticker import ForumSticker
+
+            sticker = ForumSticker("resc/GIF/snow_leopard.gif", QWidget())
+            assert sticker.sizeHint().height() > 0, "贴图没有拿到任何帧"
+            """
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
 
     def test_only_token_cards_get_a_sticker_at_the_bottom(self):
         plain = ForumCard(message(1, content="今天没有令牌"))

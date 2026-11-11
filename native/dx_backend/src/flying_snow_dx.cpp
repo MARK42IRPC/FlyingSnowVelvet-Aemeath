@@ -581,8 +581,11 @@ void queue_tray_command(NativeTray* tray, uint32_t command) {
     else if (command == FSDX_TRAY_COMMAND_TOGGLE_AUTOSTART) {
         state_flag = FSDX_TRAY_MENU_STATE_AUTOSTART;
     }
+    else if (command == FSDX_TRAY_COMMAND_TOGGLE_LIVE_STREAM) {
+        state_flag = FSDX_TRAY_MENU_STATE_LIVE_STREAM;
+    }
     else if (command < FSDX_TRAY_COMMAND_ANNOUNCEMENT ||
-        command > FSDX_TRAY_COMMAND_OPEN_SETTINGS) {
+        command > FSDX_TRAY_COMMAND_TOGGLE_LIVE_STREAM) {
         return;
     }
     if (state_flag != 0) {
@@ -621,6 +624,12 @@ void show_tray_menu(NativeTray* tray) {
         tray_menu_flags(tray, FSDX_TRAY_MENU_STATE_CLICKTHROUGH),
         FSDX_TRAY_COMMAND_TOGGLE_CLICKTHROUGH,
         L"\u9f20\u6807\u7a7f\u900f"
+    );
+    AppendMenuW(
+        menu,
+        tray_menu_flags(tray, FSDX_TRAY_MENU_STATE_LIVE_STREAM),
+        FSDX_TRAY_COMMAND_TOGGLE_LIVE_STREAM,
+        L"\u76f4\u64ad\u6a21\u5f0f"
     );
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(
@@ -3410,7 +3419,8 @@ FSDX_API fsdx_status fsdx_set_tray_menu_state(
     constexpr uint32_t supported_flags =
         FSDX_TRAY_MENU_STATE_GAME_MODE |
         FSDX_TRAY_MENU_STATE_CLICKTHROUGH |
-        FSDX_TRAY_MENU_STATE_AUTOSTART;
+        FSDX_TRAY_MENU_STATE_AUTOSTART |
+        FSDX_TRAY_MENU_STATE_LIVE_STREAM;
     if ((flags & ~supported_flags) != 0) {
         return fail(FSDX_STATUS_INVALID_ARGUMENT, "tray menu state flags are invalid");
     }

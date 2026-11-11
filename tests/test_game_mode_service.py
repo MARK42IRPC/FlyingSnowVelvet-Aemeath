@@ -12,10 +12,10 @@ from lib.script.chat.handler_auto_companion import _get_effective_auto_companion
 
 
 def _manual_reply_mode():
-    """把这些用例固定在非福利档。
+    """把这些用例固定在非备用福利档。
 
-    福利 API 一档把自动陪伴钉死在 6 分钟并且忽略游戏模式覆盖（见
-    ``WELFARE_AUTO_COMPANION_INTERVAL_MS``），而默认配置就是福利档；这里要测的是
+    备用福利 API 一档把自动陪伴钉死在 6 分钟并且忽略游戏模式覆盖（见
+    ``WELFARE_AUTO_COMPANION_INTERVAL_MS``），而默认配置就是备用福利档；这里要测的是
     「游戏模式覆盖」本身，所以显式切到手动 API。
     """
     return patch("config.ollama_config.FORCE_REPLY_MODE", "0")
@@ -140,7 +140,7 @@ class GameModeServiceTests(unittest.TestCase):
                 self.assertEqual(_get_effective_auto_companion_interval_ms(), (1200000, 1200000))
 
     def test_welfare_mode_pins_the_interval_above_the_game_mode_override(self) -> None:
-        """福利 API 档固定 6 分钟：游戏模式的覆盖不参与这一档。"""
+        """备用福利 API 档固定 6 分钟：游戏模式的覆盖不参与这一档。"""
         with patch("config.ollama_config.FORCE_REPLY_MODE", "1"):
             service = GameModeService()
             try:

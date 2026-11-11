@@ -6,7 +6,12 @@ import os
 from pathlib import Path
 
 from config.shared_storage_paths import get_shared_config_path, get_shared_root_dir
-from config.user_settings import load_section, migrate_section_once
+from config.user_settings import (
+    get_section_overrides,
+    load_section,
+    migrate_section_once,
+    save_section,
+)
 from config.user_storage_paths import get_user_secrets_dir
 
 # Ollama / OpenAI 兼容 API 配置文件
@@ -101,10 +106,11 @@ API_KEY = _LOCAL_SECRET_OVERRIDES.get('api_key', '')
 
 # 回复模式：选择哪个来源就只使用哪个来源，不做跨来源回退。
 # 0: 手动 OpenAI 兼容 API
-# 1: 福利 API
+# 1: 备用福利 API（界面名「备用福利 API（当福利 API 无法使用时选我）」）
 # 2: 本地 Ollama
 # 3: 规则回复
-FORCE_REPLY_MODE = '1'
+# 5: 快捷福利 API（Kilo 公共免费池，多模型顺序兜底；可能响应较慢且不稳定）
+FORCE_REPLY_MODE = '5'
 WELFARE_INTELLIGENCE_BOOST = False
 
 # OpenAI 兼容 API 基础地址（使用 API Key 时生效）
@@ -424,6 +430,25 @@ migrate_section_once(
     _legacy_ai_setting_values(),
     _AI_SETTING_DEFAULTS,
 )
+
+
+def _migrate_reply_mode_to_quick_welfare() -> None:
+    """把已存盘的「备用福利 API」(`1`) 一次性切到「快捷福利 API」(`5`)。
+
+    只改显式的 `1`：用户自己选过手动 API / Ollama / 规则回复的，不能因为这次改默认
+    档就被静默换掉；`5` 已经是新默认值，`compact_overrides` 会把「等于默认值」的项
+    从稀疏存储里去掉，所以这次迁移之后配置里不会再留一条多余的 `force_reply_mode`。
+    """
+    overrides = get_section_overrides('ai')
+    if str(overrides.get('force_reply_mode', '')) != '1':
+        return
+    effective = load_section('ai', _AI_SETTING_DEFAULTS)
+    effective['force_reply_mode'] = '5'
+    save_section('ai', effective, _AI_SETTING_DEFAULTS)
+
+
+_migrate_reply_mode_to_quick_welfare()
+
 _apply_ai_setting_values(load_section('ai', _AI_SETTING_DEFAULTS))
 
 # ============================================================
@@ -436,9 +461,9 @@ def is_api_key_configured() -> bool:
 
 
 def _normalize_force_mode(value) -> str:
-    """将回复模式归一化到五个确定来源。"""
+    """将回复模式归一化到六个确定来源。"""
     text = '' if value is None else str(value).strip()
-    return text if text in ('0', '1', '2', '3', '4') else '1'
+    return text if text in ('0', '1', '2', '3', '4', '5') else '5'
 
 
 def _build_openai_config(
@@ -463,7 +488,7 @@ def _build_openai_config(
 
 
 def _build_welfare_config(force_mode: str) -> dict:
-    """从测速选出的发布源构造福利 API 配置。"""
+    """从测速选出的发布源构造备用福利 API 配置。"""
     from lib.script.chat.welfare_api_config import resolve_welfare_api_config, select_welfare_model
 
     resolved = resolve_welfare_api_config()
@@ -478,6 +503,32 @@ def _build_welfare_config(force_mode: str) -> dict:
         base_url=str(resolved['base_url']),
         model=model,
     )
+
+
+def _build_quick_welfare_config(force_mode: str) -> dict:
+    """构造快捷福利 API 配置：Kilo 公共免费池，多模型顺序兜底。
+
+    `model` 只是当前轮转起点的展示值，真正发请求时由
+    `lib/script/chat/api_client_quick_welfare.py` 逐个模型换着试。
+    """
+    from lib.script.chat.quick_welfare_api import (
+        QUICK_WELFARE_BASE_URL,
+        get_quick_welfare_router,
+    )
+
+    models = get_quick_welfare_router().models()
+    return {
+        'api_type': 'quick_welfare',
+        'base_url': QUICK_WELFARE_BASE_URL,
+        #: 免费池没有密钥，而且网关见到非空 Bearer 会直接 401（见 quick_welfare_api）。
+        'api_key': '',
+        'model': models[0] if models else '',
+        'models': tuple(models),
+        'key_source': 'quick_welfare',
+        'force_mode': force_mode,
+        'strict_mode': True,
+        'error': '',
+    }
 
 
 def _build_ollama_config(force_mode: str) -> dict:
@@ -544,6 +595,11 @@ def get_active_config() -> dict:
         and str(API_MODEL or '').strip()
     )
 
+    if force_mode == '5':
+        try:
+            return _build_quick_welfare_config(force_mode)
+        except Exception as exc:
+            return _build_error_config(force_mode, str(exc))
     if force_mode == '1':
         try:
             return _build_welfare_config(force_mode)
@@ -576,10 +632,12 @@ def get_active_config() -> dict:
 # 办公模式 API 路由
 # ============================================================
 
-OFFICE_API_WELFARE_REJECTED = (
-    "办公模式不支持福利 API。请在工作台把回复模式切换到「手动 API」，"
+OFFICE_API_PUBLIC_LANE_REJECTED = (
+    "办公模式不支持备用福利 API / 快捷福利 API。请在工作台把回复模式切换到「手动 API」，"
     "填写接口地址、密钥和模型后再试。"
 )
+#: 旧名字：办公拒绝曾经只针对备用福利 API，测试与调用方仍按这个名字取。
+OFFICE_API_WELFARE_REJECTED = OFFICE_API_PUBLIC_LANE_REJECTED
 OFFICE_API_INCOMPLETE_TEMPLATE = (
     "办公模式独立 API 配置不完整：缺少{missing}，请在工作台补齐后再试。"
 )
@@ -601,7 +659,7 @@ def get_office_active_config() -> dict:
     """返回办公模式实际使用的接口配置，出错时不回退到其他来源。
 
     办公任务会写入用户磁盘，因此这里不做事来源回退：开启“办公模式独立 api”
-    时配置不完整直接报错；关闭时复用当前回复模式，但福利 API 不是用户自有的
+    时配置不完整直接报错；关闭时复用当前回复模式，但备用福利 API 不是用户自有的
     接口，必须拒绝。调用方以 ``api_type != 'openai_compatible'`` 作为拒绝条件，
     并把 ``error`` 展示给用户。
     """
@@ -631,6 +689,8 @@ def get_office_active_config() -> dict:
         )
 
     active = get_active_config()
-    if str(active.get('key_source') or '') == 'welfare_api':
-        return _build_error_config(force_mode, OFFICE_API_WELFARE_REJECTED)
+    # 两条公共车道都不是用户自有的接口：备用福利 API 由项目发布源下发密钥，
+    # 快捷福利 API 是 Kilo 的公共免费池，同样不能给会写盘的办公任务用。
+    if str(active.get('key_source') or '') in ('welfare_api', 'quick_welfare'):
+        return _build_error_config(force_mode, OFFICE_API_PUBLIC_LANE_REJECTED)
     return active

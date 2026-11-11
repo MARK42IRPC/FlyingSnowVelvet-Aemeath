@@ -74,12 +74,15 @@ class TrayIcon(QObject):
         self._autostart_action = None
         self._clickthrough_action = None
         self._game_mode_action = None
+        self._live_stream_action = None
         self._clickthrough_enabled = False
         self._game_mode_enabled = False
         self._autostart_enabled = False
+        self._live_stream_enabled = False
         self._menu_state_initialized = False
         self._clickthrough_status_subscribed = False
         self._game_mode_status_subscribed = False
+        self._live_stream_status_subscribed = False
         self._ai_settings_panel = None
         self._workbench_window = None
         self._icon = None
@@ -102,6 +105,7 @@ class TrayIcon(QObject):
         """
         self._subscribe_clickthrough_events()
         self._subscribe_game_mode_events()
+        self._subscribe_live_stream_events()
 
         if self._initialized:
             return True
@@ -313,6 +317,15 @@ class TrayIcon(QObject):
         self._game_mode_action.triggered.connect(self._on_toggle_game_mode)
         self._menu.addAction(self._game_mode_action)
 
+        # 直播模式动作（可勾选）
+        self._live_stream_action = QAction('直播模式', self._menu)
+        self._live_stream_action.setCheckable(True)
+        self._set_live_stream_action_checked(self._live_stream_enabled)
+        self._live_stream_action.setToolTip(TOOLTIPS['tray_live_stream'])
+        self._live_stream_action.setStatusTip(TOOLTIPS['tray_live_stream'])
+        self._live_stream_action.triggered.connect(self._on_toggle_live_stream)
+        self._menu.addAction(self._live_stream_action)
+
         # 鼠标穿透动作（可勾选）
         self._clickthrough_action = QAction('鼠标穿透', self._menu)
         self._clickthrough_action.setCheckable(True)
@@ -511,6 +524,19 @@ class TrayIcon(QObject):
     def open_settings(self):
         self._on_ai_settings()
 
+    def check_for_updates(self):
+        """打开「桌宠更新」页并立即开始检查新版本。"""
+        try:
+            self.preload_workbench().show_page('desktop_pet_update')
+            self.preload_ai_settings_panel().check_for_updates()
+        except Exception as e:
+            _logger.error('检查新版本失败: %s', e)
+            self._event_center.publish(Event(EventType.INFORMATION, {
+                'text': f'检查新版本失败: {e}',
+                'min': 12,
+                'max': 120,
+            }))
+
     def _on_forum(self):
         """打开雪绒论坛窗口（工作台式三列卡片墙）。"""
         try:
@@ -529,6 +555,13 @@ class TrayIcon(QObject):
         self._game_mode_enabled = target
         self._set_game_mode_action_checked(target)
         self._emit_command(TrayCommand.TOGGLE_GAME_MODE, target)
+
+    def _on_toggle_live_stream(self, checked: bool):
+        """处理直播模式切换动作。"""
+        target = bool(checked)
+        self._live_stream_enabled = target
+        self._set_live_stream_action_checked(target)
+        self._emit_command(TrayCommand.TOGGLE_LIVE_STREAM, target)
 
     def _on_office_page(self):
         """打开独立办公页面（工作台式自绘外壳）。"""
@@ -581,6 +614,44 @@ class TrayIcon(QObject):
             self._game_mode_action.setChecked(target)
         finally:
             self._game_mode_action.blockSignals(blocked)
+
+    def _set_live_stream_action_checked(self, enabled: bool):
+        """同步托盘直播模式动作的勾选状态。"""
+        if self._live_stream_action is None:
+            return
+        target = bool(enabled)
+        if self._live_stream_action.isChecked() == target:
+            return
+        blocked = self._live_stream_action.blockSignals(True)
+        try:
+            self._live_stream_action.setChecked(target)
+        finally:
+            self._live_stream_action.blockSignals(blocked)
+
+    def _subscribe_live_stream_events(self):
+        """订阅直播点歌状态，托盘勾选始终跟随服务真实开关。"""
+        if self._live_stream_status_subscribed:
+            return
+        self._event_center.subscribe(
+            EventType.LIVE_SONG_STATUS_CHANGE,
+            self._on_live_stream_status_change,
+        )
+        self._live_stream_status_subscribed = True
+
+    def _unsubscribe_live_stream_events(self):
+        if not self._live_stream_status_subscribed:
+            return
+        self._event_center.unsubscribe(
+            EventType.LIVE_SONG_STATUS_CHANGE,
+            self._on_live_stream_status_change,
+        )
+        self._live_stream_status_subscribed = False
+
+    def _on_live_stream_status_change(self, event: Event):
+        data = event.data if isinstance(event.data, dict) else {}
+        enabled = bool(data.get('enabled', False))
+        self._live_stream_enabled = enabled
+        self._set_live_stream_action_checked(enabled)
 
     def _on_toggle_clickthrough(self, checked: bool):
         """处理鼠标穿透开关动作。"""
@@ -678,10 +749,12 @@ class TrayIcon(QObject):
         self._game_mode_enabled = bool(state.game_mode_enabled)
         self._clickthrough_enabled = bool(state.clickthrough_enabled)
         self._autostart_enabled = bool(state.autostart_enabled)
+        self._live_stream_enabled = bool(state.live_stream_enabled)
         self._menu_state_initialized = True
         self._set_game_mode_action_checked(self._game_mode_enabled)
         self._set_clickthrough_action_checked(self._clickthrough_enabled)
         self._set_autostart_action_checked(self._autostart_enabled)
+        self._set_live_stream_action_checked(self._live_stream_enabled)
 
     def show_message(self, title: str, message: str,
                      icon: QSystemTrayIcon.MessageIcon = QSystemTrayIcon.Information,
@@ -729,6 +802,7 @@ class TrayIcon(QObject):
         )
         self._unsubscribe_clickthrough_events()
         self._unsubscribe_game_mode_events()
+        self._unsubscribe_live_stream_events()
         self._stop_retry()
         self._teardown_tray_icon()
         if self._menu:
@@ -748,9 +822,11 @@ class TrayIcon(QObject):
         self._autostart_action = None
         self._clickthrough_action = None
         self._game_mode_action = None
+        self._live_stream_action = None
         self._clickthrough_enabled = False
         self._game_mode_enabled = False
         self._autostart_enabled = False
+        self._live_stream_enabled = False
         self._menu_state_initialized = False
         self._initialized = False
         _logger.info('系统托盘图标已清理')

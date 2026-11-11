@@ -900,6 +900,27 @@ class DxApplicationUiHostTests(unittest.TestCase):
 
         launch.assert_called_once_with("office")
 
+    def test_open_update_requests_the_update_page_check_action(self):
+        launch = Mock(return_value=True)
+        self.ui._workbench_opener = launch
+
+        self.ui.open_update()
+
+        launch.assert_called_once_with("desktop_pet_update", action="check_updates")
+
+    def test_open_update_reports_failure_instead_of_raising(self):
+        self.ui._workbench_opener = Mock(return_value=False)
+        received = []
+        get_event_center().subscribe(
+            EventType.INFORMATION, lambda event: received.append(event.data["text"])
+        )
+
+        self.ui._open_update_flow()
+        self.ui._context.run_once()
+
+        self.assertEqual(len(received), 1)
+        self.assertIn("桌宠更新", received[0])
+
     def test_game_command_runtime_follows_ui_lifecycle(self):
         runtimes = []
 

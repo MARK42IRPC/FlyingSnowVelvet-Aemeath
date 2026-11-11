@@ -56,6 +56,7 @@ UPDATE_MINIMIZE = "update_minimize"
 
 #: 公告浮窗里的动作语义 id（宿主回填成产品动作）。
 ANNOUNCEMENT_CLOSE = "announcement_close"
+ANNOUNCEMENT_UPDATE = "announcement_update"
 ANNOUNCEMENT_SUPPRESS_TODAY = "announcement_suppress_today"
 ANNOUNCEMENT_SUPPRESS_FOREVER = "announcement_suppress_forever"
 ANNOUNCEMENT_RETRY = "announcement_retry"
@@ -415,6 +416,7 @@ def announcement_window_spec(
     channel_text: str = "REMOTE CHANNEL  /  01",
     today_text: str = "今日不再显示",
     forever_text: str = "永远不再显示",
+    update_text: str = "立即更新",
     error_close_text: str = "关闭",
     retry_text: str = "重新加载",
     close_tooltip: str = "关闭公告",
@@ -549,6 +551,16 @@ def announcement_window_spec(
                 semantic=ANNOUNCEMENT_SUPPRESS_FOREVER,
                 id="forever",
                 object_name="AnnouncementForeverButton",
+                role=ROLE_DEFAULT,
+                font_size=0,
+                min_height=button_height,
+                default_font=True,
+            ),
+            ButtonSpec(
+                text=update_text,
+                semantic=ANNOUNCEMENT_UPDATE,
+                id="update",
+                object_name="AnnouncementUpdateButton",
                 role=ROLE_DEFAULT,
                 font_size=0,
                 min_height=button_height,
@@ -753,6 +765,7 @@ __all__ = [
     "ANNOUNCEMENT_RETRY",
     "ANNOUNCEMENT_SUPPRESS_FOREVER",
     "ANNOUNCEMENT_SUPPRESS_TODAY",
+    "ANNOUNCEMENT_UPDATE",
     "APPROVAL_ALLOW",
     "APPROVAL_ALLOW_TASK",
     "APPROVAL_REJECT",

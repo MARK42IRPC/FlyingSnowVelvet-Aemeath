@@ -239,8 +239,17 @@ class OllamaSessionMixin:
         chunk_fn = emit_chunk if streaming else None
 
         if self._use_api_key:
+            chat_api = (
+                self._quick_welfare_chat_api
+                if getattr(self, "_quick_welfare_mode", False)
+                else self._openai_chat_api
+            )
+            # 备用福利 API 只有一个固定模型，而模型是在 `get_active_config()` 时就定下的，
+            # 那时还不知道这次要不要看图。带图请求在这里按图片能力重选一次模型，
+            # 否则图片会被不吃图的那个模型直接拒掉。
+            image_config_override = self._welfare_vision_config_override() if images else None
             try:
-                full_text = self._openai_chat_api(
+                full_text = chat_api(
                     message,
                     persona,
                     on_chunk_emit=chunk_fn,
@@ -249,6 +258,7 @@ class OllamaSessionMixin:
                     request_id=request_id,
                     allow_tools=allow_tools,
                     on_tool_call=capture_tool_call,
+                    **({"config_override": image_config_override} if image_config_override else {}),
                 )
             except requests.HTTPError as e:
                 err    = self._extract_error(e)
@@ -256,7 +266,7 @@ class OllamaSessionMixin:
                 if images and is_image_input_error(err):
                     logger.warning("[OllamaManager] OpenAI 多模态失败，回退纯文本重试: %s", err)
                     try:
-                        full_text = self._openai_chat_api(
+                        full_text = chat_api(
                             message,
                             persona,
                             on_chunk_emit=chunk_fn,
@@ -362,6 +372,32 @@ class OllamaSessionMixin:
         if dispatcher is None:
             return
         dispatcher.dispatch(callback, *args)
+
+    def _welfare_vision_config_override(self) -> dict | None:
+        """带图请求时，若当前选中的备用福利模型不吃图，换成能吃图的那个。
+
+        只对备用福利 API 生效：手动 API 与快捷福利 API 各自有自己的模型选择逻辑，
+        这里不能替用户改。换不了（清单里没有看图模型）时返回 None，让原模型照常报错，
+        而不是静默把图片丢掉。
+        """
+        active = self._active_config or {}
+        if str(active.get("key_source") or "") != "welfare_api":
+            return None
+        try:
+            from .welfare_api_config import select_welfare_model
+
+            models = tuple(active.get("models") or ())
+            if not models:
+                return None
+            current = str(active.get("model") or "")
+            chosen = select_welfare_model(models, True, needs_vision=True)
+        except Exception as exc:
+            logger.debug("[OllamaManager] 带图请求重选备用福利模型失败: %s", exc)
+            return None
+        if not chosen or chosen == current:
+            return None
+        logger.info("[OllamaManager] 本次请求带图片，备用福利模型 %s -> %s", current, chosen)
+        return {**active, "model": chosen}
 
     def _get_models_to_try(self) -> list[str]:
         """

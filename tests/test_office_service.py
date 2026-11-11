@@ -46,7 +46,7 @@ class _Runtime:
 
 
 # 办公输入在 submit_text/submit_default_text 里才读取接口配置，只在构造 OfficeService
-# 时打桩会让用例随开发机的密钥文件变化：CI 上没有本地密钥、默认回复模式又是福利 API，
+# 时打桩会让用例随开发机的密钥文件变化：CI 上没有本地密钥、默认回复模式又是备用福利 API，
 # 办公输入会被整体拒绝。这里改为整个用例期间注入可用配置。
 USABLE_OFFICE_CONFIG = {
     "api_type": "openai_compatible",

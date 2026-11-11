@@ -31,7 +31,9 @@ class OllamaManager(_ApiClientMixin, OllamaBootstrapMixin, OllamaStateMixin, Oll
         self._force_mode = str(self._active_config.get('force_mode', '') or '')
         self._strict_mode = bool(self._active_config.get('strict_mode', False))
         self._mode_error = str(self._active_config.get('error', '') or '').strip()
-        self._use_api_key = self._api_type == 'openai_compatible'
+        #: 快捷福利 API 走 OpenAI 兼容请求，只是每次要在免费池里换模型。
+        self._quick_welfare_mode = self._api_type == 'quick_welfare'
+        self._use_api_key = self._api_type in ('openai_compatible', 'quick_welfare')
         self._rule_reply_mode = self._api_type == 'rule_reply'
 
         self._is_running:        bool      = False
@@ -87,7 +89,9 @@ class OllamaManager(_ApiClientMixin, OllamaBootstrapMixin, OllamaStateMixin, Oll
         self._force_mode = str(self._active_config.get('force_mode', '') or '')
         self._strict_mode = bool(self._active_config.get('strict_mode', False))
         self._mode_error = str(self._active_config.get('error', '') or '').strip()
-        self._use_api_key = self._api_type == 'openai_compatible'
+        #: 快捷福利 API 走 OpenAI 兼容请求，只是每次要在免费池里换模型。
+        self._quick_welfare_mode = self._api_type == 'quick_welfare'
+        self._use_api_key = self._api_type in ('openai_compatible', 'quick_welfare')
         self._rule_reply_mode = self._api_type == 'rule_reply'
 
         if self._use_api_key:

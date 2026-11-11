@@ -80,6 +80,27 @@ class GeneralUserSettingsSparseTests(unittest.TestCase):
             )
         config_module.UI["render_backend"] = original_backend
 
+    def test_live_stream_is_a_sparse_persisted_section(self):
+        defaults = get_general_setting_defaults()
+        self.assertIn("LIVE_STREAM", defaults)
+        self.assertEqual(defaults["LIVE_STREAM"]["command_prefix"], "点歌")
+        original_room = config_module.LIVE_STREAM["room_id"]
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                settings_path = Path(tmpdir) / "settings.json"
+                with patch.object(user_settings, "get_user_settings_path", return_value=settings_path):
+                    sparse = save_general_values({
+                        "LIVE_STREAM": {"room_id": "123", "request_cooldown_seconds": 20}
+                    })
+                self.assertEqual(sparse["LIVE_STREAM"]["room_id"], "123")
+                payload = json.loads(settings_path.read_text(encoding="utf-8"))
+                self.assertEqual(
+                    payload["overrides"]["general"]["LIVE_STREAM"]["room_id"],
+                    "123",
+                )
+        finally:
+            config_module.LIVE_STREAM["room_id"] = original_room
+
 
 if __name__ == "__main__":
     unittest.main()

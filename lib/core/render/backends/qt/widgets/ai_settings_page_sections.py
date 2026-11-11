@@ -15,6 +15,7 @@ from __future__ import annotations
 from PyQt5.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QLabel,
     QLineEdit,
     QListView,
     QPushButton,
@@ -56,8 +57,11 @@ class AISettingsPageSectionsMixin:
             help_text=(
                 "决定桌宠聊天时去哪拿回复。选中的来源失败时不会自动换一个，"
                 "而是直接把失败报出来，所以你看到问题就知道该改哪一项。\n\n"
-                "福利 API 走项目提供的公共接口，不用自己填密钥；手动 API 需要你自己填"
-                "密钥和地址；本地 Ollama 全部在本机跑，不联网但吃显卡；"
+                "快捷福利 API 走 Kilo 的公共免费池，不用自己填密钥，会在池子里按顺序"
+                "换模型重试，所以能用的模型多、但个别模型响应很慢，偶尔还会失败；"
+                "备用福利 API 只有一个固定模型，稳定一些，福利 API 无法使用时选它；"
+                "手动 API 需要你自己填密钥和地址；"
+                "本地 Ollama 全部在本机跑，不联网但吃显卡；"
                 "规则回复完全不调用模型，只按关键词给固定回应。"
             ),
         )
@@ -67,7 +71,8 @@ class AISettingsPageSectionsMixin:
 
         self._force_mode = _WatermarkComboBox()
         self._force_mode.setView(QListView(self._force_mode))
-        self._force_mode.addItem('福利 API', '1')
+        self._force_mode.addItem('快捷福利 API（可能响应较慢且不稳定）', '5')
+        self._force_mode.addItem('备用福利 API（当福利 API 无法使用时选我）', '1')
         self._force_mode.addItem('手动 API', '0')
         self._force_mode.addItem('本地 Ollama', '2')
         self._force_mode.addItem('规则回复', '3')
@@ -119,14 +124,42 @@ class AISettingsPageSectionsMixin:
         self._set_widget_description(self._open_persona_file_btn, "使用系统默认程序打开当前生效的人格 txt。")
 
 
+    def _build_quick_welfare_section(self, scaffold) -> None:
+        """装配「快捷福利 API」说明区块。
+
+        这条车道没有可调的配置项：模型清单跟着上游免费池走，密钥本来就不需要。
+        这里只把「它在做什么、慢在哪」讲清楚，免得用户把它当成故障去排查。
+        """
+
+        self._quick_welfare_section = scaffold.add_help_section(
+            "快捷福利 API 配置",
+            "仅在回复模式选择快捷福利 API 时显示。",
+            help_text=(
+                "走 Kilo 的公共免费池，不需要登录、密钥或配额。\n\n"
+                "程序每次会从池子里挑几个模型按顺序问：前一个失败就换下一个，"
+                "所以能用的模型比备用福利 API 多，代价是个别模型会很慢，"
+                "一轮下来最坏要等几十秒。\n\n"
+                "已经在免费池里失败过的模型会被短暂跳过，过一会儿再放回来。"
+                "想更稳一点就换到备用福利 API 或手动 API。"
+            ),
+        )
+        detail = QLabel(
+            "模型清单跟随 Kilo 公共免费池自动刷新，没有可调项；"
+            "发送前请不要带上敏感内容，免费池的提示词可能被上游记录用于改进服务。"
+        )
+        detail.setObjectName("SettingsSectionDescription")
+        detail.setWordWrap(True)
+        self._quick_welfare_section.body_layout.addWidget(detail)
+
+
     def _build_welfare_section(self, scaffold) -> None:
-        """装配「福利 API 开关」区块。"""
+        """装配「备用福利 API 开关」区块。"""
 
         self._welfare_section = scaffold.add_help_section(
-            "福利 API 配置",
-            "仅在回复模式选择福利 API 时显示。",
+            "备用福利 API 配置",
+            "仅在回复模式选择备用福利 API 时显示。",
             help_text=(
-                "公共接口的开关，只在回复模式选「福利 API」时才有意义。\n\n"
+                "公共接口的开关，只在回复模式选「备用福利 API（当福利 API 无法使用时选我）」时才有意义。\n\n"
                 "「智力提升」打开后会换成能力更强的模型，回复更聪明但更慢，"
                 "也更容易触发公共接口的限流。只是日常闲聊的话关着就够用。"
             ),

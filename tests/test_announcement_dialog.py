@@ -118,6 +118,26 @@ class AnnouncementFormatTests(unittest.TestCase):
             self.assertEqual(load_announcement_preferences(path), disabled)
 
 
+    def test_parser_reads_declared_version_and_flags_newer_builds(self):
+        document = parse_announcement(
+            'title:"\n有新版\n"\n'
+            'version:"LTS1.0.8"\n'
+            'text:"\n正文\n"\n'
+        )
+
+        self.assertEqual(document.version, "LTS1.0.8")
+        self.assertTrue(document.has_update("LTS1.0.7pre7"))
+        self.assertFalse(document.has_update("LTS1.0.8"))
+        self.assertFalse(document.has_update("LTS1.1.0"))
+
+    def test_announcement_without_version_never_offers_an_update(self):
+        document = parse_announcement('title:"\n普通公告\n"\ntext:"正文"\n')
+
+        self.assertEqual(document.version, "")
+        self.assertFalse(document.has_update("LTS1.0.7pre7"))
+        self.assertFalse(document.has_update("LTS0.0.1"))
+
+
 class AnnouncementControllerTests(unittest.TestCase):
     def test_start_does_not_download_when_forever_suppressed(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -260,6 +280,42 @@ class AnnouncementControllerTests(unittest.TestCase):
                 controller.cleanup()
 
 
+    def test_update_request_hides_the_dialog_and_calls_the_product_opener(self):
+        dialog = Mock()
+        opened = []
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            controller = AnnouncementController(
+                state_path=root / "announcement.json",
+                cache_path=root / "announcement.txt",
+                update_opener=lambda: opened.append(True),
+            )
+            controller._dialog = dialog
+            try:
+                controller._open_update()
+            finally:
+                controller.cleanup()
+
+        dialog.hide_dialog.assert_called_once_with()
+        self.assertEqual(opened, [True])
+
+    def test_update_request_without_an_opener_still_dismisses_the_dialog(self):
+        dialog = Mock()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            controller = AnnouncementController(
+                state_path=root / "announcement.json",
+                cache_path=root / "announcement.txt",
+            )
+            controller._dialog = dialog
+            try:
+                controller._open_update()
+            finally:
+                controller.cleanup()
+
+        dialog.hide_dialog.assert_called_once_with()
+
+
 class AnnouncementQtTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -337,6 +393,54 @@ class AnnouncementQtTests(unittest.TestCase):
                     dialog.isVisible(), f"第 {round_index} 次点关闭后窗口仍在"
                 )
                 self.assertFalse(dialog.wants_visible(), f"第 {round_index} 次关闭未落回不可见")
+        finally:
+            dialog.cleanup()
+            self.app.processEvents()
+
+    def test_update_button_only_appears_for_a_newer_declared_version(self):
+        dialog = DesktopPetAnnouncementDialog()
+        try:
+            dialog.show_document(
+                AnnouncementDocument(
+                    title="旧版公告",
+                    blocks=(AnnouncementBlock("text", "正文"),),
+                )
+            )
+            self.app.processEvents()
+            self.assertFalse(dialog._update_button.isVisible())
+            self.assertFalse(dialog._update_available)
+
+            dialog.show_document(
+                AnnouncementDocument(
+                    title="新版公告",
+                    blocks=(AnnouncementBlock("text", "正文"),),
+                    version="LTS99.0.0",
+                )
+            )
+            self.app.processEvents()
+            self.assertTrue(dialog._update_button.isVisible())
+            self.assertEqual(dialog._update_button.text(), "立即更新")
+            self.assertTrue(dialog._update_available)
+        finally:
+            dialog.cleanup()
+            self.app.processEvents()
+
+    def test_clicking_the_update_button_emits_the_update_request(self):
+        dialog = DesktopPetAnnouncementDialog()
+        received = []
+        dialog.update_requested.connect(lambda: received.append(True))
+        try:
+            dialog.show_document(
+                AnnouncementDocument(
+                    title="新版公告",
+                    blocks=(AnnouncementBlock("text", "正文"),),
+                    version="LTS99.0.0",
+                )
+            )
+            self.app.processEvents()
+            dialog._update_button.click()
+            self.app.processEvents()
+            self.assertEqual(received, [True])
         finally:
             dialog.cleanup()
             self.app.processEvents()

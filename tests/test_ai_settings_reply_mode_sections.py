@@ -64,7 +64,8 @@ class AISettingsReplyModeSectionsTests(unittest.TestCase):
             for index in range(self.panel._force_mode.count())
         ]
         self.assertEqual(items, [
-            ("福利 API", "1"),
+            ("快捷福利 API（可能响应较慢且不稳定）", "5"),
+            ("备用福利 API（当福利 API 无法使用时选我）", "1"),
             ("手动 API", "0"),
             ("本地 Ollama", "2"),
             ("规则回复", "3"),
@@ -87,7 +88,7 @@ class AISettingsReplyModeSectionsTests(unittest.TestCase):
     def test_auto_companion_interval_slider_uses_minute_limits(self):
         field = self.panel._auto_companion_interval_minutes
 
-        # 默认是福利 API：这一档把间隔钉死在 6 分钟，滑条整行收起。
+        # 默认档是快捷福利 API；这里显式切到手动档，滑条可调。
         self._select_mode("0")
         field.set_value(1)
         self.assertEqual(field.value(), 1)
@@ -102,7 +103,7 @@ class AISettingsReplyModeSectionsTests(unittest.TestCase):
         self.assertTrue(field.isEnabled())
 
     def test_welfare_mode_pins_the_auto_companion_interval_and_hides_the_slider(self):
-        """福利 API 模式下间隔固定 6 分钟：滑条与标签一起收起，不显示任何说明。"""
+        """备用福利 API 模式下间隔固定 6 分钟：滑条与标签一起收起，不显示任何说明。"""
         field = self.panel._auto_companion_interval_minutes
         form = self.panel._reply_mode_form
         pinned = page_module._welfare_auto_companion_interval_minutes()
@@ -120,7 +121,7 @@ class AISettingsReplyModeSectionsTests(unittest.TestCase):
         self.assertFalse(form.labelForField(field).isHidden())
 
     def test_welfare_mode_does_not_add_an_explanatory_note(self):
-        """福利档收起滑条即可，不再补一行说明文字。"""
+        """备用福利档收起滑条即可，不再补一行说明文字。"""
         self.assertFalse(hasattr(self.panel, "_auto_companion_interval_note"))
 
         texts = [
@@ -130,11 +131,11 @@ class AISettingsReplyModeSectionsTests(unittest.TestCase):
         ]
         self.assertFalse(
             [text for text in texts if "福利" in text and "自动陪伴" in text],
-            f"福利档不应再显示说明行，找到: {texts}",
+            f"备用福利档不应再显示说明行，找到: {texts}",
         )
 
     def test_welfare_mode_keeps_the_interval_pinned_after_a_slider_write(self):
-        """收回福利档后滑条值必须回到固定间隔，否则保存会写进一个用户改不到的数。"""
+        """收回备用福利档后滑条值必须回到固定间隔，否则保存会写进一个用户改不到的数。"""
         field = self.panel._auto_companion_interval_minutes
         pinned = page_module._welfare_auto_companion_interval_minutes()
 
@@ -194,18 +195,27 @@ class AISettingsReplyModeSectionsTests(unittest.TestCase):
         self.assertNotIn("gsv_max_steps", values)
 
     def test_mode_specific_sections_are_hidden_until_selected(self):
+        self._select_mode("5")
+        self.assertFalse(self.panel._quick_welfare_section.isHidden())
+        self.assertTrue(self.panel._welfare_section.isHidden())
+        self.assertTrue(self.panel._manual_api_section.isHidden())
+        self.assertTrue(self.panel._ollama_section.isHidden())
+
         self._select_mode("1")
         self.assertFalse(self.panel._welfare_section.isHidden())
+        self.assertTrue(self.panel._quick_welfare_section.isHidden())
         self.assertTrue(self.panel._manual_api_section.isHidden())
         self.assertTrue(self.panel._ollama_section.isHidden())
 
         self._select_mode("0")
         self.assertTrue(self.panel._welfare_section.isHidden())
+        self.assertTrue(self.panel._quick_welfare_section.isHidden())
         self.assertFalse(self.panel._manual_api_section.isHidden())
         self.assertTrue(self.panel._ollama_section.isHidden())
 
         self._select_mode("2")
         self.assertTrue(self.panel._welfare_section.isHidden())
+        self.assertTrue(self.panel._quick_welfare_section.isHidden())
         self.assertTrue(self.panel._manual_api_section.isHidden())
         self.assertFalse(self.panel._ollama_section.isHidden())
 

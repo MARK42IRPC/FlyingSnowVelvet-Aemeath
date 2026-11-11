@@ -102,7 +102,6 @@ class AISettingsPanel(
         actions_cls = _update_page().PetUpdateActions
         return actions_cls(
             check_updates=self._on_check_updates,
-            sync_dev_build=self._on_sync_dev_build,
             open_quark_manual=self._open_quark_manual_update,
             show_qq_group=self._show_qq_group_qrcode,
             uninstall_pet=self._on_uninstall_pet,
@@ -127,14 +126,12 @@ class AISettingsPanel(
     def _ensure_update_dialog(self):
         return self._run_pet_update_action(_update_page().ensure_update_dialog)
 
-    def _open_update_dialog(self, mode: str) -> None:
-        self._run_pet_update_action(lambda actions: _update_page().open_update_dialog(actions, mode))
-
     def _on_check_updates(self) -> None:
         self._run_pet_update_action(_update_page().on_check_updates)
 
-    def _on_sync_dev_build(self) -> None:
-        self._run_pet_update_action(_update_page().on_sync_dev_build)
+    def check_for_updates(self) -> None:
+        """公开的「检查新版本」入口：托盘、公告与 helper 请求共用同一动作。"""
+        self._on_check_updates()
 
     def _ensure_qq_group_dialog(self):
         return self._run_pet_update_action(_update_page().ensure_qq_group_dialog)

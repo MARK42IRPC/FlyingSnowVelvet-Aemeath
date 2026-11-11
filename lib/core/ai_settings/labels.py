@@ -82,6 +82,30 @@ SECTION_HELP_TEXTS: dict[tuple[str, str], str] = {
         "登录信息保存在本机，清理登录数据会一并清掉。\n\n"
         "音质这一项只在账号有对应权限时才会真正生效，没有权限时会自动回退到可用的档位。"
     ),
+    ("live_stream", "LIVE_STREAM"): (
+        "直播间连接。\n\n"
+        "打开弹幕点歌后，桌宠会以游客身份连接 B 站直播间的弹幕服务器，不需要登录账号；"
+        "关掉即断开连接，托盘右键的「直播模式」与这里的总开关是同一个状态。\n\n"
+        "「直播间 ID」可以填房间号，也可以直接粘贴 live.bilibili.com 的地址；"
+        "离开输入框或保存后按新房间号重连。\n\n"
+        "「测试直播间」只做一次连通性检查：解析房间号、取弹幕 token，并确认能建立弹幕连接，"
+        "不改动开关状态，也不会把测试结果当成点歌。"
+    ),
+    ("live_stream", "GIFT_ALERT"): (
+        "直播间有人送礼物时，桌宠按你写的文案说一句话。\n\n"
+        "文案里可以写三个占位符：<gift> 礼物名、<number> 数量、<name> 送礼人。"
+        "默认是「感谢<name>送出的<number>个<gift>」。\n\n"
+        "「触发阈值」按这一批礼物的总价判定（单价 × 数量），填 0 表示所有礼物都响应。\n\n"
+        "「发送消息气泡」与「语音播报」可以单独关掉，比如只想让桌宠念出来、不弹气泡。"
+    ),
+    ("live_stream", "LIVE_STREAM_SONG"): (
+        "弹幕里怎么点歌。\n\n"
+        "观众发送「点歌-歌名（歌手）」即可把歌曲追加到播放队列末尾，歌手可以省略；"
+        "「点歌」前缀、横线和括号都支持全角。\n\n"
+        "冷却限制同一个观众两次点歌的最小间隔；去重窗口内同一首歌不会重复入队；"
+        "待处理上限约束同时进行的搜索请求；队列达到上限后会拒绝新的点歌。"
+        "点歌只排队，不会打断当前正在播放的歌曲。"
+    ),
     ("scene_objects", "SNOW_LEOPARD"): (
         "雪豹的生成与交互参数。\n\n"
         "「生成高度」用屏幕高度的百分比表示，两条一起决定它可能出现的高度范围。\n\n"
@@ -166,6 +190,7 @@ DICT_FRIENDLY_NAME = {
     "VOICE": "语音",
     "SPEAKER_AUDIO": "音频可视化",
     "CLOUD_MUSIC": "云音乐",
+    "LIVE_STREAM": "直播点歌",
     "SNOW_LEOPARD": "雪豹",
     "SNOW_PILE": "雪堆",
     "SOFA": "沙发",
@@ -290,6 +315,25 @@ KEY_FRIENDLY_NAME = {
         "cache_dir": "缓存目录",
         "local_music_dir": "本地音乐文件夹",
         "launch_wuwa_path": "启动鸣潮路径文件",
+    },
+    "LIVE_STREAM": {
+        "enabled": "启用弹幕点歌",
+        "room_id": "直播间 ID",
+        "command_prefix": "点歌指令前缀",
+        "request_cooldown_seconds": "同一观众冷却(秒)",
+        "duplicate_window_seconds": "同曲去重(秒)",
+        "pending_limit": "待处理点歌上限",
+        "max_queue_size": "播放队列上限(首)",
+        "song_title_max_length": "歌名最大长度",
+        "artist_max_length": "歌手最大长度",
+        "notify_on_enqueue": "入队提示",
+    },
+    "GIFT_ALERT": {
+        "enabled": "启用礼物提醒",
+        "template": "提醒文案",
+        "min_price": "触发阈值",
+        "notify_in_chat": "发送消息气泡",
+        "speak": "语音播报",
     },
     "SNOW_LEOPARD": {
         "gif_file": "GIF资源路径",

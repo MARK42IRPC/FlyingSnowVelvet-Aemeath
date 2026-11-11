@@ -9,7 +9,9 @@
 （`tests/test_exit_animation_shadow_config.py` 从这里取），既有导入面不变。
 
 子进程入口见 `lib/core/render/backends/qt/widgets/animation_player_main.py`
-（`SEanima/animation.py` 启动的就是它）。
+（`SEanima/animation.py` 启动的就是它）。该入口会先把仓库根加入 `sys.path`，
+再按模块名加载本垫片完成解码入口注入；否则独立进程会因 `lib.core` 不可导入
+或 seam 未注册而播出空窗口。
 """
 
 from __future__ import annotations

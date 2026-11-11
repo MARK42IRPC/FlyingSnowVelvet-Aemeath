@@ -213,7 +213,8 @@ class _EventsMixin:
         if not event.data.get('silent', False):
             self._show_info("已加入播放队列")
 
-        if not self._is_playing and self._current_index == -1:
+        should_autoplay = bool(event.data.get("autoplay", True))
+        if should_autoplay and not self._is_playing and self._current_index == -1:
             self._current_index = 0
             self._play_current()
 

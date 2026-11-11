@@ -114,7 +114,7 @@ class SettingsFormLayout(QFormLayout):
             label.setFixedWidth(SETTINGS_LABEL_WIDTH)
         elif label is None and isinstance(field, QWidget) and not self._field_spans_row(field):
             # ``addRow("", widget)`` registers no label item at all, so a form made
-            # only of label-less rows (the 福利 API 配置 section is exactly that)
+            # only of label-less rows (the 备用福利 API 配置 section is exactly that)
             # gets no label column: Qt then drops the reserved width and the
             # control sits ~176px left of every other section's fields.  An
             # explicit spacer keeps the column so those switches line up.

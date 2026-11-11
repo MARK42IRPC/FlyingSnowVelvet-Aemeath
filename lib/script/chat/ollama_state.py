@@ -108,8 +108,13 @@ class OllamaStateMixin:
 
     @property
     def use_api_key_mode(self) -> bool:
-        """是否处于外部 API（API Key）模式。"""
+        """是否处于外部 API 模式（含快捷福利 API 的公共池车道）。"""
         return self._use_api_key
+
+    @property
+    def quick_welfare_mode(self) -> bool:
+        """是否处于快捷福利 API 模式（免费池多模型顺序兜底）。"""
+        return bool(getattr(self, "_quick_welfare_mode", False))
 
     @property
     def strict_mode_enabled(self) -> bool:

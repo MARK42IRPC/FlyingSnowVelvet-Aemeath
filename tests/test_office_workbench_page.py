@@ -410,7 +410,7 @@ class OfficeWorkbenchPageTests(unittest.TestCase):
                 page._show_text_context_menu(page._prompt_edit, QPoint(0, 0))
 
             actions = captured["menu"].actions()
-            self.assertEqual([action.text() for action in actions], ["复制", "粘贴", "剪切"])
+            self.assertEqual([action.text() for action in actions], ["复制", "粘贴", "全选"])
             self.assertTrue(all(action.isEnabled() for action in actions))
 
     def test_read_only_text_context_menu_disables_editing_actions(self):
@@ -429,10 +429,11 @@ class OfficeWorkbenchPageTests(unittest.TestCase):
                 page._show_text_context_menu(page._reasoning_view, QPoint(0, 0))
 
             actions = captured["menu"].actions()
-            self.assertEqual([action.text() for action in actions], ["复制", "粘贴", "剪切"])
+            self.assertEqual([action.text() for action in actions], ["复制", "粘贴", "全选"])
             self.assertTrue(actions[0].isEnabled())
             self.assertFalse(actions[1].isEnabled())
-            self.assertFalse(actions[2].isEnabled())
+            # 只读视图仍然可以全选，复制走选区，不提供剪切。
+            self.assertTrue(actions[2].isEnabled())
 
     def test_new_revision_switches_page_to_a_blank_draft(self):
         with tempfile.TemporaryDirectory() as tmpdir:

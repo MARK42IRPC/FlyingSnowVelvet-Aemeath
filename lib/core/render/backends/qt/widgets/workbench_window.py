@@ -169,6 +169,10 @@ class WorkbenchWindow(QWidget):
         self._page_hosts: dict[str, QFrame] = {}
         self._page_buttons_by_id: dict[str, QPushButton] = {}
         self._group_labels: dict[str, QLabel] = {}
+        #: 手风琴导航：分组标题 -> 该组子项按钮，以及当前展开的分组名。
+        #: 同一时刻只展开一组，切页时自动跟随，用户点标题也能手动展开/收起。
+        self._group_buttons: dict[str, list[QPushButton]] = {}
+        self._expanded_group: str = ""
         self._external_page_slots: dict[str, tuple[QFrame, QVBoxLayout, Callable[[], object]]] = {}
         self._external_pages: dict[str, QWidget] = {}
         self._stale_external_theme_pages: set[str] = set()
@@ -481,10 +485,27 @@ class WorkbenchWindow(QWidget):
         overview = WorkbenchOverviewPage(
             self._set_current_page,
             (
-                ("常用设置", (("ai", "AI 与对话"), ("ui_anim", "界面与动画"), ("audio_music", "声音与媒体"))),
+                (
+                    "常用设置",
+                    (
+                        _overview_page_link("ai"),
+                        _overview_page_link("ui_anim"),
+                        _overview_page_link("audio_music"),
+                        _overview_page_link("behavior_physics"),
+                    ),
+                ),
+                (
+                    "桌宠与场景",
+                    (
+                        _overview_page_link("scene_objects"),
+                        _overview_page_link("live_stream"),
+                    ),
+                ),
                 (
                     "运行与维护",
                     (
+                        _overview_page_link("system_dispatch"),
+                        _overview_page_link("office"),
                         _overview_page_link("game_manager"),
                         _overview_page_link("desktop_pet_update"),
                         _overview_page_link("bug_tracker"),
@@ -613,13 +634,20 @@ class WorkbenchWindow(QWidget):
             grouped.setdefault(spec.group, []).append(spec)
 
         for group, pages in grouped.items():
+            # 分组标题就是父级：比子项字号大一点、可点击，点一下展开/收起该组。
+            # 用 QLabel 而不是 QPushButton：这条导航的 QSS 只给 `WorkbenchNavButton`
+            # 定了按钮样式，无样式的 QPushButton 在 polish 时会走到未定义的边框分支。
             group_label = QLabel(group, self._button_group.parent())
             group_label.setObjectName("WorkbenchNavGroup")
-            group_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-            group_label.setMinimumHeight(scale_px(34, min_abs=30))
-            group_label.setFont(get_ui_font(size=scale_px(9 * _NAV_FONT_SCALE, min_abs=10)))
+            group_label.setCursor(Qt.PointingHandCursor)
+            group_label.setMinimumHeight(scale_px(38, min_abs=34))
+            group_label.setFont(get_ui_font(size=scale_px(10.5 * _NAV_FONT_SCALE, min_abs=12)))
+            group_label.mousePressEvent = (
+                lambda _event, target=group: self._toggle_navigation_group(target)
+            )
             self._navigation_layout.addWidget(group_label)
             self._group_labels[group] = group_label
+            self._group_buttons[group] = []
 
             for spec in pages:
                 button = QPushButton(spec.title, self._button_group.parent())
@@ -635,8 +663,46 @@ class WorkbenchWindow(QWidget):
                 self._navigation_layout.addWidget(button)
                 self._page_buttons_by_id[spec.page_id] = button
                 self._page_buttons.append(button)
+                self._group_buttons[group].append(button)
 
         self._navigation_layout.addStretch(1)
+        # 初始只展开当前页所在分组；其余分组收起成一行父级标题。
+        self._apply_navigation_expansion(self._group_of_page(self._active_page_id))
+
+    def _group_of_page(self, page_id: str) -> str:
+        """页面所属分组；页面不存在时返回空串（此时不展开任何一组）。"""
+        try:
+            return self._registry.require(page_id).group
+        except Exception:
+            return ""
+
+    def _toggle_navigation_group(self, group: str) -> None:
+        """点父级标题：收起已展开的组，或展开被点的那一组（手风琴，一次只开一组）。"""
+        target = "" if group == self._expanded_group else group
+        self._apply_navigation_expansion(target)
+
+    def _apply_navigation_expansion(self, group: str) -> None:
+        """只显示 ``group`` 的子项，其余分组只留父级标题。
+
+        搜索过滤也走这里：`_on_search_text_changed()` 会先记下命中的分组，再调用本方法
+        逐个设置可见性，所以两边不会互相覆盖。
+        """
+        self._expanded_group = group if group in self._group_buttons else ""
+        for name, buttons in self._group_buttons.items():
+            expanded = name == self._expanded_group
+            for button in buttons:
+                button.setVisible(expanded)
+            label = self._group_labels.get(name)
+            if label is not None:
+                # 展开态给父级标题一个视觉标记，收起时只显示分类名。
+                label.setProperty("expanded", expanded)
+                style = label.style()
+                if style is not None:
+                    style.unpolish(label)
+                    style.polish(label)
+                # 用纯文本标记而不是 ▾/▸：这两枚字符在部分中文字体里缺字，
+                # 会显示成方块或干脆不显示，展开态就看不出来了。
+                label.setText(f"{name}  －" if expanded else f"{name}  ＋")
 
     def _ordered_navigation_specs(self) -> tuple[WorkbenchPageSpec, ...]:
         specs = self._registry.navigation_pages()
@@ -754,6 +820,9 @@ class WorkbenchWindow(QWidget):
         button = self._page_buttons_by_id.get(spec.page_id)
         if button is not None:
             button.setChecked(True)
+            # 切页时自动把新页所在分组展开、旧分组收起，用户不用先手动找位置。
+            if spec.group != self._expanded_group:
+                self._apply_navigation_expansion(spec.group)
         else:
             self._clear_navigation_selection()
 
@@ -778,9 +847,11 @@ class WorkbenchWindow(QWidget):
         self._button_group.setExclusive(True)
 
     def _on_search_text_changed(self, query: str) -> None:
+        """搜索时临时忽略手风琴折叠：命中项必须都能看见，否则搜到了也点不到。"""
         matched_ids = {
             spec.page_id for spec in self._registry.search(query, navigation_only=True)
         }
+        searching = bool(str(query or "").strip())
         for page_id, button in self._page_buttons_by_id.items():
             button.setVisible(page_id in matched_ids)
         for group, label in self._group_labels.items():
@@ -791,6 +862,9 @@ class WorkbenchWindow(QWidget):
                     if self._registry.require(page_id).group == group
                 )
             )
+        if not searching:
+            # 清空搜索后回到手风琴状态：只展开当前页所在分组。
+            self._apply_navigation_expansion(self._group_of_page(self._active_page_id))
 
     def _activate_search_result(self) -> None:
         matches = self._registry.search(self._search.text(), navigation_only=True)

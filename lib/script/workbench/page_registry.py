@@ -129,6 +129,12 @@ _PAGE_PRESENTATION: dict[str, dict] = {
         "description": "音量、麦克风、语音、云音乐与音频可视化",
         "keywords": ("音量", "麦克风", "语音", "音乐", "音响"),
     },
+    "live_stream": {
+        "title": "直播设置",
+        "group": "声音与媒体",
+        "description": "B 站直播间弹幕点歌与入队参数",
+        "keywords": ("直播", "B站", "点歌", "弹幕", "房间"),
+    },
     "game_manager": {
         "title": "游戏包",
         "group": "扩展与游戏",

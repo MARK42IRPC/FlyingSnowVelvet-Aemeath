@@ -1,11 +1,11 @@
-"""桌宠更新/开发版同步小窗（按窗口描述装配，不再 import PyQt5）。
+"""桌宠更新小窗（按窗口描述装配，不再 import PyQt5）。
 
 本模块不再是 `QWidget` 子类：窗眉、状态行、详情行、进度条与动作按钮都由
 `lib/core/render/visuals/window_specs.py` 的 `update_window_spec()` 描述，
 `render_bridge.create_spec_window()` 交给 Qt 宿主
 （`lib/core/render/backends/qt/widgets/spec_host.py`）装配。
 
-本模块只做三件事：收集更新/同步状态、把后台 worker 的结果投递回 UI 线程、更新描述宿主
+本模块只做三件事：收集更新状态、把后台 worker 的结果投递回 UI 线程、更新描述宿主
 里的控件。为兼容既有调用方与测试，保留原 `QWidget` 的属性面（`_title_label` /
 `_status_label` / `_detail_label` / `_progress_bar` / `_primary_btn` / `_secondary_btn` /
 `_minimize_btn` / `_visible` / `_busy` / `width()` / `_show_dialog()` /
@@ -27,9 +27,6 @@ from lib.core.render.visuals.window_specs import (
     update_window_spec,
 )
 from lib.script.update_manager import (
-    GitSyncCheckResult,
-    GitSyncManager,
-    GitSyncResult,
     ReleaseCheckResult,
     UpdateError,
     UpdateManager,
@@ -70,14 +67,12 @@ class _UpdateSignal:
 
 
 class DesktopPetUpdateDialog:
-    """承载分发包更新与开发版同步的独立小窗。"""
+    """承载分发包更新的独立小窗。"""
 
     _detail_signal = _UpdateSignal()
     _progress_signal = _UpdateSignal()
     _release_check_signal = _UpdateSignal()
     _release_done_signal = _UpdateSignal()
-    _git_check_signal = _UpdateSignal()
-    _git_done_signal = _UpdateSignal()
     _restart_done_signal = _UpdateSignal()
     _error_signal = _UpdateSignal()
 
@@ -85,9 +80,7 @@ class DesktopPetUpdateDialog:
         self._dispatcher = render_bridge.create_ui_dispatcher(parent)
         self._visible = False
         self._busy = False
-        self._mode = ""
         self._release_check: ReleaseCheckResult | None = None
-        self._git_check: GitSyncCheckResult | None = None
         self._pending_update: UpdateResult | None = None
         self._primary_handler: Callable[[], None] | None = None
         self._secondary_handler: Callable[[], None] | None = None
@@ -116,8 +109,6 @@ class DesktopPetUpdateDialog:
         self._progress_signal.connect(self._apply_progress)
         self._release_check_signal.connect(self._on_release_checked)
         self._release_done_signal.connect(self._on_release_done)
-        self._git_check_signal.connect(self._on_git_checked)
-        self._git_done_signal.connect(self._on_git_done)
         self._restart_done_signal.connect(self._on_restart_done)
         self._error_signal.connect(self._on_worker_error)
 
@@ -150,9 +141,7 @@ class DesktopPetUpdateDialog:
     def begin_release_check(self) -> bool:
         if self._busy:
             return False
-        self._mode = "release"
         self._release_check = None
-        self._git_check = None
         self._prepare_dialog(
             title="检查新版本",
             status="正在获取更新包",
@@ -164,22 +153,6 @@ class DesktopPetUpdateDialog:
         self._set_busy(True)
         self._show_dialog()
         self._start_worker(self._run_release_check, "release-update-check")
-        return True
-
-    def begin_git_sync_check(self) -> bool:
-        if self._busy:
-            return False
-        self._mode = "git"
-        self._release_check = None
-        self._git_check = None
-        self._prepare_dialog(
-            title="同步开发版",
-            status="正在通过 Git 检查开发版最新改动",
-            detail="请稍候，正在拉取远端提交信息。",
-        )
-        self._set_busy(True)
-        self._show_dialog()
-        self._start_worker(self._run_git_check, "git-dev-sync-check")
         return True
 
     def is_busy(self) -> bool:
@@ -311,40 +284,6 @@ class DesktopPetUpdateDialog:
             return
         self._restart_done_signal.emit(result)
 
-    def _run_git_check(self) -> None:
-        manager = GitSyncManager(
-            info_callback=self._detail_signal.emit,
-            progress_callback=self._progress_signal.emit,
-        )
-        try:
-            result = manager.check_for_updates()
-        except UpdateError as exc:
-            self._error_signal.emit(str(exc))
-            return
-        except Exception as exc:
-            self._error_signal.emit(f"同步开发版失败：{exc}")
-            return
-        self._git_check_signal.emit(result)
-
-    def _run_git_sync(self) -> None:
-        check = self._git_check
-        if check is None:
-            self._error_signal.emit("缺少待同步的开发版信息，请重新检查。")
-            return
-        manager = GitSyncManager(
-            info_callback=self._detail_signal.emit,
-            progress_callback=self._progress_signal.emit,
-        )
-        try:
-            result = manager.sync_to_remote(check.snapshot)
-        except UpdateError as exc:
-            self._error_signal.emit(str(exc))
-            return
-        except Exception as exc:
-            self._error_signal.emit(f"同步开发版失败：{exc}")
-            return
-        self._git_done_signal.emit(result)
-
     def _on_release_checked(self, result: object) -> None:
         check = result if isinstance(result, ReleaseCheckResult) else None
         if check is None:
@@ -416,53 +355,9 @@ class DesktopPetUpdateDialog:
             ("启动安装器并退出", self._start_release_launch),
         )
 
-    def _on_git_checked(self, result: object) -> None:
-        check = result if isinstance(result, GitSyncCheckResult) else None
-        if check is None:
-            self._on_worker_error("同步开发版失败：返回结果无效。")
-            return
-        self._git_check = check
-        self._set_busy(False)
-        snapshot = check.snapshot
-        if check.update_available:
-            self._status_label.setText("检测到新的开发版提交")
-            self._detail_label.setText(
-                f"本地提交：{self._fmt_dt(snapshot.local_committed_at)}\n"
-                f"远端提交：{self._fmt_dt(snapshot.remote_committed_at)}\n"
-                f"差异文件：{len(snapshot.changed_files)} 个"
-            )
-            self._progress_bar.hide()
-            self._set_actions(
-                ("稍后同步", self.hide_dialog),
-                ("开始同步", self._start_git_sync),
-            )
-            return
-
-        self._status_label.setText("当前开发版已是最新")
-        self._detail_label.setText(
-            f"本地提交时间：{self._fmt_dt(snapshot.local_committed_at)}"
-        )
-        self._set_progress_done()
-        self._set_actions(None, ("关闭", self.hide_dialog))
-
-    def _on_git_done(self, result: object) -> None:
-        sync_result = result if isinstance(result, GitSyncResult) else None
-        if sync_result is None:
-            self._on_worker_error("同步开发版失败：返回结果无效。")
-            return
-        self._set_busy(False)
-        self._status_label.setText("开发版同步完成")
-        self._detail_label.setText(
-            f"当前分支：{sync_result.snapshot.branch}\n"
-            f"最新提交时间：{self._fmt_dt(sync_result.snapshot.local_committed_at)}"
-        )
-        self._set_progress_done()
-        self._set_actions(None, ("关闭", self.hide_dialog))
-
     def _on_worker_error(self, message: str) -> None:
         self._set_busy(False)
-        prefix = "同步失败" if self._mode == "git" else "更新失败"
-        self._status_label.setText(prefix)
+        self._status_label.setText("更新失败")
         self._detail_label.setText(str(message or "").strip() or "未知错误")
         self._progress_bar.hide()
         self._set_actions(None, ("关闭", self.hide_dialog))
@@ -493,16 +388,6 @@ class DesktopPetUpdateDialog:
         self._set_busy(True)
         self._set_actions(None, None)
         get_event_center().publish(Event(EventType.APP_QUIT, {"exit_code": 0}))
-
-    def _start_git_sync(self) -> None:
-        if self._busy:
-            return
-        self._status_label.setText("正在同步开发版")
-        self._detail_label.setText("准备覆盖本地差异文件，请稍候。")
-        self._set_progress_busy()
-        self._set_busy(True)
-        self._set_actions(None, None)
-        self._start_worker(self._run_git_sync, "git-dev-sync-apply")
 
     def _set_detail_text(self, text: str) -> None:
         detail = str(text or "").strip()

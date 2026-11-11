@@ -85,6 +85,11 @@ def _run_workbench_helper(initial_page: str = "overview") -> int:
         requested_page = normalize_workbench_page(request.get("page_id"))
         game_id = str(request.get("game_id") or "")
         game_action = str(request.get("game_action") or "")
+        action = str(request.get("action") or "")
+        if action == "check_updates":
+            window.show_page("desktop_pet_update")
+            panel.check_for_updates()
+            return
         if game_action == "open_manager":
             window.show_page("game_manager")
             return

@@ -22,6 +22,9 @@ from typing import Protocol
 #: 外部维护的配置字段（自动启动、公告抑制）不由本模块取值。
 EXTERNAL_CONFIG_FIELD_KINDS = ("external_autostart", "external_announcement_suppression")
 
+#: 只执行动作、不读写配置的字段种类（如直播页的「测试直播间」按钮）。
+NON_CONFIG_FIELD_KINDS = ("live_probe",)
+
 
 class EditorWidgets(Protocol):
     """面板注入的控件能力：只做类型判定与一次百分比换算。"""
@@ -37,6 +40,7 @@ class EditorWidgets(Protocol):
 __all__ = [
     "EditorWidgets",
     "EXTERNAL_CONFIG_FIELD_KINDS",
+    "NON_CONFIG_FIELD_KINDS",
     "parse_editor_value",
     "parse_text_by_template",
 ]
@@ -55,7 +59,7 @@ def parse_text_by_template(text: str, template):
 
 def parse_editor_value(field: dict, *, widget: EditorWidgets) -> dict[str, object]:
     kind = str(field.get("kind") or "single")
-    if kind in EXTERNAL_CONFIG_FIELD_KINDS:
+    if kind in EXTERNAL_CONFIG_FIELD_KINDS or kind in NON_CONFIG_FIELD_KINDS:
         return {}
     if kind == "range_pair":
         keys = field.get("keys") or []

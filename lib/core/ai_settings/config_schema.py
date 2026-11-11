@@ -176,6 +176,7 @@ CATEGORY_KEY_ALLOWLIST = {
             "ui_cache_preload",
         },
     },
+    "live_stream": {},  # 直播设置 - 字段由 LIVE_STREAM 分组自动生成
     "desktop_pet_update": {},  # 桌宠更新标签页 - 没有配置字段，只有按钮
 }
 
@@ -185,6 +186,11 @@ GENERAL_BOOL_KEYS: set[tuple[str, str]] = {
     ("MORTOR", "bgm_enabled"),
     ("STARTUP", "ensure_desktop_shortcut"),
     ("STARTUP", "ui_cache_preload"),
+    ("LIVE_STREAM", "enabled"),
+    ("LIVE_STREAM", "notify_on_enqueue"),
+    ("GIFT_ALERT", "enabled"),
+    ("GIFT_ALERT", "notify_in_chat"),
+    ("GIFT_ALERT", "speak"),
 }
 
 GENERAL_NUMERIC_RULES: dict[tuple[str, str], tuple[str, float, float]] = {
@@ -248,6 +254,13 @@ GENERAL_NUMERIC_RULES: dict[tuple[str, str], tuple[str, float, float]] = {
     ("VOICE", "microphone_silence_timeout_secs"): ("number", 0.5, 10.0),
     ("VOICE", "microphone_speech_rms_threshold"): ("int", 50, 8000),
     ("VOICE", "microphone_noise_gate_threshold"): ("int", 0, 4000),
+    ("GIFT_ALERT", "min_price"): ("int", 0, 1000000),
+    ("LIVE_STREAM", "request_cooldown_seconds"): ("int", 0, 600),
+    ("LIVE_STREAM", "duplicate_window_seconds"): ("int", 0, 86400),
+    ("LIVE_STREAM", "pending_limit"): ("int", 1, 100),
+    ("LIVE_STREAM", "max_queue_size"): ("int", 1, 5000),
+    ("LIVE_STREAM", "song_title_max_length"): ("int", 1, 200),
+    ("LIVE_STREAM", "artist_max_length"): ("int", 0, 200),
     ("CLOUD_MUSIC", "default_volume"): ("number", 0.0, 1.0),
     ("CLOUD_MUSIC", "particle_interval"): ("int", 1, 1000),
     ("CLOUD_MUSIC", "search_result_limit"): ("int", 1, 128),
@@ -442,6 +455,18 @@ GENERAL_CONFIG_DEFAULTS: dict[str, dict[str, object]] = {
         "microphone_denoise_strength": 0.65,
         "microphone_noise_gate_threshold": 180,
     },
+    "LIVE_STREAM": {
+        "enabled": False,
+        "room_id": "",
+        "command_prefix": "点歌",
+        "request_cooldown_seconds": 10,
+        "duplicate_window_seconds": 120,
+        "pending_limit": 10,
+        "max_queue_size": 200,
+        "song_title_max_length": 50,
+        "artist_max_length": 30,
+        "notify_on_enqueue": True,
+    },
     "CLOUD_MUSIC": {
         "provider": "netease",
         "default_volume": 0.3,
@@ -469,6 +494,32 @@ GENERAL_CONFIG_DEFAULTS: dict[str, dict[str, object]] = {
     },
 }
 
+#: 「一个分区只取同一个配置字典里的部分键」的路由表：`分区名 -> (字典名, 该分区的键)`。
+#: 直播页把 `LIVE_STREAM` 拆成两张卡片——「直播间设置」（总开关 + 房间号）与「弹幕点歌」
+#: （点歌参数），两者仍写回同一份 `LIVE_STREAM` 配置，保存语义不变。
+GENERAL_SECTION_KEY_ROUTES: dict[str, tuple[str, tuple[str, ...]]] = {
+    "LIVE_STREAM": ("LIVE_STREAM", ("enabled", "room_id")),
+    "LIVE_STREAM_SONG": (
+        "LIVE_STREAM",
+        (
+            "command_prefix",
+            "request_cooldown_seconds",
+            "duplicate_window_seconds",
+            "pending_limit",
+            "max_queue_size",
+            "song_title_max_length",
+            "artist_max_length",
+            "notify_on_enqueue",
+        ),
+    ),
+    #: 礼物提醒与直播点歌平行，但用的是独立配置字典 `GIFT_ALERT`。
+    "GIFT_ALERT": (
+        "GIFT_ALERT",
+        ("enabled", "template", "min_price", "notify_in_chat", "speak"),
+    ),
+}
+
+
 GENERAL_MIXED_SECTION_FIELDS: dict[str, list[tuple[str, str]]] = {
     "AUDIO_VOLUMES": [
         ("SOUND", "master_volume"),
@@ -482,6 +533,22 @@ GENERAL_MIXED_SECTION_FIELDS: dict[str, list[tuple[str, str]]] = {
 
 
 def category_section_entries(category_id: str, section_name: str, cc_module, category_allow_map: dict) -> list[tuple[str, str, object]]:
+    route = GENERAL_SECTION_KEY_ROUTES.get(str(section_name))
+    if route is not None:
+        dict_name, routed_keys = route
+        section_obj = getattr(cc_module, str(dict_name), None)
+        if not isinstance(section_obj, dict):
+            return []
+        entries: list[tuple[str, str, object]] = []
+        for key in routed_keys:
+            if key not in section_obj:
+                continue
+            value = section_obj.get(key)
+            if not is_supported_config_value(value):
+                continue
+            entries.append((str(dict_name), str(key), value))
+        return entries
+
     mixed_fields = GENERAL_MIXED_SECTION_FIELDS.get(str(section_name))
     if mixed_fields is not None:
         entries: list[tuple[str, str, object]] = []

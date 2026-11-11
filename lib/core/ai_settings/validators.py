@@ -53,10 +53,10 @@ def validate_ai_values(values: dict) -> None:
     memory_context_limit = values.get("memory_context_limit")
     memory_recall_count = values.get("memory_recall_count")
 
-    if force_mode not in ("0", "1", "2", "3", "4"):
+    if force_mode not in ("0", "1", "2", "3", "4", "5"):
         raise ValueError("回复模式值无效")
     if not isinstance(welfare_intelligence_boost, bool):
-        raise ValueError("福利 API 智力提升开关无效")
+        raise ValueError("备用福利 API 智力提升开关无效")
 
     if force_mode == "0":
         if not str(values.get("api_key", "") or "").strip():

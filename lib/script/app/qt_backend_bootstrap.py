@@ -59,10 +59,10 @@ def _product_runtime_factories():
     }
 
 
-def _open_workbench(initial_page: str) -> bool:
+def _open_workbench(initial_page: str, *, action: str = "") -> bool:
     from lib.script.app.workbench_helper import launch_workbench_helper
 
-    return bool(launch_workbench_helper(initial_page=initial_page))
+    return bool(launch_workbench_helper(initial_page=initial_page, action=action))
 
 
 def _open_game_helper(action: str, game_id: str) -> bool:

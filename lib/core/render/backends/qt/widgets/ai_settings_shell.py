@@ -33,7 +33,6 @@ from PyQt5.QtWidgets import (
     QLabel,
     QLineEdit,
     QListView,
-    QMenu,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -51,6 +50,10 @@ from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import Event, EventType, get_event_center
 from lib.core.logger import get_logger
 from lib.core.render.backends.qt.widgets import tier_d_seams
+from lib.core.render.backends.qt.widgets.text_context_menu import (
+    install_text_context_menus,
+    show_text_context_menu,
+)
 from lib.core.render.backends.qt.widgets.ai_settings_about import (
     _ContributionCardButton,
     build_contribution_list_panel,
@@ -80,9 +83,19 @@ _logger = get_logger(__name__)
 
 #: 项目根目录解析器；宿主（`AISettingsPanel`）覆盖它，让既有
 #: `patch.object(ai_settings_panel, "_project_root", ...)` 继续生效（同第 51 / 53 / 54 节）。
-_shell_project_root: "Callable[[], Path]" = staticmethod(
-    lambda: Path(__file__).resolve().parents[3]
-)
+def _default_project_root() -> Path:
+    """仓库根目录。
+
+    本文件位于 `lib/core/render/backends/qt/widgets/`，往上 7 级才是仓库根；
+    层级随目录搬迁会变，因此统一委托给 `contributions.project_root()`
+    （它按自身位置解析，是本仓唯一的事实源）。
+    """
+    from lib.core.ai_settings.contributions import project_root
+
+    return project_root()
+
+
+_shell_project_root: "Callable[[], Path]" = staticmethod(_default_project_root)
 
 #: 面板自身的像素档常量；切分前定义在 `ai_settings_panel.py`，只有外壳在用。
 _WATERMARK_TEXT = "Aemeath\nAIsetting"
@@ -283,6 +296,9 @@ class AISettingsShellMixin:
             self._load_config_tab_values()
             self._ensure_config_defaults_integrity()
 
+        # 面板初始化时这些页面还不存在，逐页补挂统一右键菜单（复制 / 粘贴 / 全选）。
+        install_text_context_menus(page)
+
         page.hide()
         page.setProperty('workbenchEmbedded', True)
         page.setMinimumSize(0, 0)
@@ -364,43 +380,12 @@ class AISettingsShellMixin:
         _show_info_message_via_seam(self, message)
 
     def _install_line_edit_context_menus(self) -> None:
-        for edit in self.findChildren(QLineEdit):
-            if bool(getattr(edit, "_cn_context_menu_bound", False)):
-                continue
-            edit.setContextMenuPolicy(Qt.CustomContextMenu)
-            edit.customContextMenuRequested.connect(
-                lambda pos, target=edit: self._show_line_edit_context_menu(target, pos)
-            )
-            setattr(edit, "_cn_context_menu_bound", True)
+        """把设置面板里所有文本框的右键菜单统一成「复制 / 粘贴 / 全选」。"""
+        install_text_context_menus(self)
 
     def _show_line_edit_context_menu(self, edit: QLineEdit, pos: QPoint) -> None:
-        if not isinstance(edit, QLineEdit):
-            return
-
-        menu = QMenu(edit)
-        font = get_ui_font(size=_CONFIG_FONT_SIZE)
-        font.setBold(True)
-        menu.setFont(font)
-
-        can_edit = not bool(edit.isReadOnly())
-        has_selection = bool(edit.hasSelectedText())
-        can_paste = can_edit and bool(QApplication.clipboard().text())
-
-        action_cut = menu.addAction("剪切")
-        action_copy = menu.addAction("复制")
-        action_paste = menu.addAction("粘贴")
-
-        action_cut.setEnabled(can_edit and has_selection)
-        action_copy.setEnabled(has_selection)
-        action_paste.setEnabled(can_paste)
-
-        chosen = menu.exec_(edit.mapToGlobal(pos))
-        if chosen is action_cut:
-            edit.cut()
-        elif chosen is action_copy:
-            edit.copy()
-        elif chosen is action_paste:
-            edit.paste()
+        """单控件入口，保持既有调用面（测试与旧代码都指向这里）。"""
+        show_text_context_menu(edit, pos)
 
     def _apply_project_fonts(self) -> None:
         """将面板及子控件字体统一为项目字体。"""

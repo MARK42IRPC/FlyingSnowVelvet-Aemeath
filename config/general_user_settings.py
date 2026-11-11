@@ -33,6 +33,8 @@ GENERAL_CONFIG_FILES = {
     "SPEAKER_AUDIO": "config_music.py",
     "SPEAKER_SEARCH_UI": "config_music.py",
     "CLOUD_MUSIC": "config_music.py",
+    "LIVE_STREAM": "config_music.py",
+    "GIFT_ALERT": "config_music.py",
     "CHAT": "config_voice.py",
     "VOICE": "config_voice.py",
     "TOOL_DISPATCHER": "config_timeouts.py",
