@@ -264,13 +264,21 @@ class WorkbenchWindowTests(unittest.TestCase):
         self.assertEqual(window._page_title_label.text(), "音频与音乐")
         self.assertIs(window._stack.currentWidget(), window._page_hosts["audio_music"])
 
-        window.deleteLater()
-        self.app.processEvents()
+        self._dispose_window(window)
 
-    def _build_window(self):
+    def _build_window(self, *, shown: bool = False):
+        """建一个工作台窗口。
+
+        ``shown=True`` 会真的 ``show()`` 一次，让布局跑起来、容器拥有真实高度——
+        抽屉高度断言的用例必须走这条路，否则所有容器高度恒为 0。
+
+        离屏环境下自绘的「贡献列表 / 赞助按钮」会在 paint 里直接结束进程（见
+        `_about_grab_supported`），所以显示时把它们的 paintEvent 换成空实现；
+        本文件不依赖这两个按钮的像素。
+        """
         panel = _FakeControlPanel()
         with patch.object(workbench_module, "QSettings", _MemorySettings):
-            return workbench_module.WorkbenchWindow(
+            window = workbench_module.WorkbenchWindow(
                 lambda: panel,
                 control_panel_page_specs=panel.get_workbench_page_specs(),
                 extra_page_specs=[
@@ -278,21 +286,28 @@ class WorkbenchWindowTests(unittest.TestCase):
                     ("game_manager", "Game manager", QWidget),
                 ],
             )
+        if shown:
+            with self._safe_show_context():
+                window.show()
+                self.app.processEvents()
+        return window
 
     def _wait_for_nav_animation(self, window) -> None:
-        """等侧边栏展开/收起动画落位。
+        """等侧边栏抽屉动画落位。
 
         不用 `QTest.qWait()`：它会跑完整事件循环，离屏环境里会顺带触发自绘控件的
         `grab()` 路径，实测直接段错误。这里只反复 `processEvents()` 直到动画结束，
         再补一个固定时长兜底。
+
+        动画挂在每组的抽屉容器上（不是按钮）：按钮自带 `minimumHeight`，对按钮做
+        `maximumHeight` 动画会被 min > max 的规则夹成常量，那正是此前「看不到动效」的根因。
         """
         deadline = time.monotonic() + 1.0
         while time.monotonic() < deadline:
             self.app.processEvents()
             animations = [
-                getattr(button, "_nav_height_anim", None)
-                for buttons in getattr(window, "_group_buttons", {}).values()
-                for button in buttons
+                getattr(container, "_nav_height_anim", None)
+                for container in getattr(window, "_group_containers", {}).values()
             ]
             if not any(
                 animation is not None and animation.state() == QPropertyAnimation.Running
@@ -301,6 +316,21 @@ class WorkbenchWindowTests(unittest.TestCase):
                 return
             time.sleep(0.01)
 
+    @staticmethod
+    def _nav_visible_titles(window):
+        """导航上真正可见（可点）的子项标题。
+
+        手风琴把每组子项收进抽屉容器，隐藏的是**容器**，子按钮自身的 hidden 标志
+        不再反映「这一组是否收起」，所以判定要同时看容器和按钮。
+        """
+        visible = []
+        for group, buttons in window._group_buttons.items():
+            container = window._group_containers.get(group)
+            if container is not None and container.isHidden():
+                continue
+            visible.extend(button.text() for button in buttons if not button.isHidden())
+        return visible
+
     def test_navigation_is_accordion_with_only_the_active_group_expanded(self):
         window = self._build_window()
         try:
@@ -308,16 +338,9 @@ class WorkbenchWindowTests(unittest.TestCase):
             self.assertEqual(window._expanded_group, "工作台")
             # 展开/收起是高度动画，等它落位再读可见性。
             self._wait_for_nav_animation(window)
-            visible = [
-                button.text()
-                for buttons in window._group_buttons.values()
-                for button in buttons
-                if not button.isHidden()
-            ]
-            self.assertEqual(visible, ["总览"])
+            self.assertEqual(self._nav_visible_titles(window), ["总览"])
         finally:
-            window.deleteLater()
-            self.app.processEvents()
+            self._dispose_window(window)
 
     def test_switching_page_expands_its_group_and_collapses_the_previous_one(self):
         window = self._build_window()
@@ -325,25 +348,16 @@ class WorkbenchWindowTests(unittest.TestCase):
             window._set_current_page("audio_music")
             self.assertEqual(window._expanded_group, "声音与媒体")
             self._wait_for_nav_animation(window)
-            visible = [
-                button.text()
-                for buttons in window._group_buttons.values()
-                for button in buttons
-                if not button.isHidden()
-            ]
-            self.assertEqual(visible, ["音频与音乐"])
+            self.assertEqual(self._nav_visible_titles(window), ["音频与音乐"])
 
             # 切到另一组的页面时，旧组收起、新组展开。
             window._set_current_page("ai")
             self.assertEqual(window._expanded_group, "智能交互")
             self._wait_for_nav_animation(window)
-            # 用 isHidden() 而不是 isVisibleTo()：后者在父控件也隐藏时会返回 False，
-            # 无法区分「这一项被收起」和「整条导航都不可见」。
-            self.assertTrue(window._page_buttons_by_id["audio_music"].isHidden())
-            self.assertFalse(window._page_buttons_by_id["ai"].isHidden())
+            self.assertNotIn("音频与音乐", self._nav_visible_titles(window))
+            self.assertIn("AI 与对话", self._nav_visible_titles(window))
         finally:
-            window.deleteLater()
-            self.app.processEvents()
+            self._dispose_window(window)
 
     def test_clicking_a_group_header_toggles_that_group(self):
         window = self._build_window()
@@ -355,12 +369,13 @@ class WorkbenchWindowTests(unittest.TestCase):
             # 收起是「高度动画到 0 再隐藏」，所以断言可见性前必须等动画结束。
             window._toggle_navigation_group("智能交互")
             self.assertEqual(window._expanded_group, "")
-            # 收起动画默认 180 ms；留足余量再断言可见性。
             self._wait_for_nav_animation(window)
-            self.assertTrue(all(button.isHidden() for button in window._page_buttons))
+            self.assertEqual(self._nav_visible_titles(window), [])
+            self.assertTrue(
+                all(container.isHidden() for container in window._group_containers.values())
+            )
         finally:
-            window.deleteLater()
-            self.app.processEvents()
+            self._dispose_window(window)
 
     def test_group_header_text_marks_the_expanded_state(self):
         window = self._build_window()
@@ -371,8 +386,7 @@ class WorkbenchWindowTests(unittest.TestCase):
             self.assertEqual(window._group_labels["工作台"].text(), "工作台  ＋")
             self.assertEqual(window._group_labels["智能交互"].text(), "智能交互  －")
         finally:
-            window.deleteLater()
-            self.app.processEvents()
+            self._dispose_window(window)
 
     def test_search_temporarily_reveals_matches_then_restores_the_accordion(self):
         window = self._build_window()
@@ -385,10 +399,10 @@ class WorkbenchWindowTests(unittest.TestCase):
             self.assertEqual(window._expanded_group, "工作台")
             # 清空搜索会重新套用手风琴折叠，收起同样是异步高度动画。
             self._wait_for_nav_animation(window)
-            self.assertTrue(window._page_buttons_by_id["ai"].isHidden())
+            self.assertNotIn("AI 与对话", self._nav_visible_titles(window))
+            self.assertEqual(self._nav_visible_titles(window), ["总览"])
         finally:
-            window.deleteLater()
-            self.app.processEvents()
+            self._dispose_window(window)
 
     def test_theme_config_update_repolishes_workbench(self):
         panel = _FakeControlPanel()
@@ -414,8 +428,7 @@ class WorkbenchWindowTests(unittest.TestCase):
             self.assertTrue(window._theme_toggle.isChecked())
         finally:
             UI["workbench_light_theme"] = original_theme
-            window.deleteLater()
-            self.app.processEvents()
+            self._dispose_window(window)
 
     def test_external_page_uses_shared_refresh_contract(self):
         panel = _FakeControlPanel()
@@ -432,8 +445,7 @@ class WorkbenchWindowTests(unittest.TestCase):
 
         self.assertEqual(page.shared_refreshes, 1)
         self.assertEqual(page.legacy_refreshes, 0)
-        window.deleteLater()
-        self.app.processEvents()
+        self._dispose_window(window)
 
     def test_external_theme_refresh_is_deferred_and_visible_page_only(self):
         panel = _FakeControlPanel()
@@ -477,8 +489,7 @@ class WorkbenchWindowTests(unittest.TestCase):
             self.assertEqual(pages["bug_tracker"].theme_refreshes, 1)
         finally:
             UI["workbench_light_theme"] = original_theme
-            window.deleteLater()
-            self.app.processEvents()
+            self._dispose_window(window)
 
     def test_page_transition_keeps_page_visible_without_graphics_effect(self):
         panel = _FakeControlPanel()
@@ -489,10 +500,11 @@ class WorkbenchWindowTests(unittest.TestCase):
             )
 
         try:
-            window.show_page("overview")
-            self.app.processEvents()
-            window._set_current_page("ui_anim")
-            self.app.processEvents()
+            with self._safe_show_context():
+                window.show_page("overview")
+                self.app.processEvents()
+                window._set_current_page("ui_anim")
+                self.app.processEvents()
 
             host = window._page_hosts["ui_anim"]
             page = panel.pages["ui_anim"]
@@ -502,6 +514,121 @@ class WorkbenchWindowTests(unittest.TestCase):
             self.assertEqual(page.windowOpacity(), 1.0)
             self.assertFalse(window._page_transition_overlay.isHidden())
         finally:
+            self._dispose_window(window)
+
+    def test_page_transition_overlay_ends_up_above_the_incoming_page(self):
+        """切页遮罩必须压在新页之上。
+
+        `QStackedLayout.setCurrentWidget()` 会 `raise()` 新页面。此前的实现先把遮罩
+        `raise_()` 再切页，遮罩被压回页面下面，opacity 照常在 1.0→0 地跑，但整段动画
+        都在页面底下——用户看到的就是硬切。这条断言直接挡住该回归。
+        """
+        panel = _FakeControlPanel()
+        with patch.object(workbench_module, "QSettings", _MemorySettings):
+            window = workbench_module.WorkbenchWindow(
+                lambda: panel,
+                control_panel_page_specs=panel.get_workbench_page_specs(),
+            )
+
+        try:
+            with self._safe_show_context():
+                window.show()
+                self.app.processEvents()
+                window._set_current_page("ui_anim")
+                self.app.processEvents()
+            children = window._stack.children()
+            overlay_index = children.index(window._page_transition_overlay)
+            page_index = children.index(window._stack.currentWidget())
+            self.assertGreater(
+                overlay_index,
+                page_index,
+                "遮罩被新页面盖住了，切页动画不可见",
+            )
+            self.assertEqual(window._page_transition_anim.state(), QPropertyAnimation.Running)
+        finally:
+            self._dispose_window(window)
+
+    def test_group_drawer_actually_changes_height_while_animating(self):
+        """抽屉展开时容器高度必须真的变大。
+
+        对按钮的 `maximumHeight` 做动画时，按钮的 `minimumHeight` 会把结果夹成常量
+        （min > max 取 min），动画每帧写值而高度一帧不变。这条用例在动画中途采样
+        容器高度，防止再次退化回「静止 180ms 然后瞬间消失」。
+        """
+        window = self._build_window(shown=True)
+        try:
+            container = window._group_containers["智能交互"]
+            self.assertEqual(container.height(), 0)
+            window._toggle_navigation_group("智能交互")
+            self.app.processEvents()
+            mid_heights = []
+            deadline = time.monotonic() + 0.6
+            while time.monotonic() < deadline:
+                self.app.processEvents()
+                mid_heights.append(container.height())
+                animation = getattr(container, "_nav_height_anim", None)
+                if animation is None or animation.state() != QPropertyAnimation.Running:
+                    break
+                time.sleep(0.01)
+            self.assertGreater(
+                len({height for height in mid_heights if height > 0}),
+                1,
+                f"抽屉高度在动画过程中没有变化：{mid_heights}",
+            )
+            self._wait_for_nav_animation(window)
+            self.assertGreater(container.height(), 0)
+        finally:
+            self._dispose_window(window)
+
+    def test_search_reveals_matches_without_leaving_zero_height_drawers(self):
+        """搜索绕开折叠：命中项所在容器必须真的展开，不能「可见但零高」。"""
+        window = self._build_window()
+        try:
+            window._search.setText("麦克风")
+            self.app.processEvents()
+            container = window._group_containers["声音与媒体"]
+            self.assertFalse(container.isHidden())
+            self.assertGreater(container.maximumHeight(), 0)
+            self.assertFalse(window._page_buttons_by_id["audio_music"].isHidden())
+
+            window._search.clear()
+            self._wait_for_nav_animation(window)
+            # 回到手风琴：非当前页所在组重新收起。
+            self.assertTrue(window._group_containers["声音与媒体"].isHidden())
+        finally:
+            self._dispose_window(window)
+
+    @staticmethod
+    def _safe_show_context():
+        """显示窗口时屏蔽离屏会致死的自绘件。
+
+        离屏 + 无 GPU 上下文时，工作台里几个自绘控件会在 paint 里直接结束进程
+        （见 `_about_grab_supported` 的探测）；`try/except` 拦不住，会带走整个测试
+        进程。本文件所有显示型用例都不断言这些控件的像素，换成空实现即可安全走真实布局。
+
+        这条限制是仓库既有问题：在本次改动之前的基线上，同一个用例同样以退出码 127
+        结束（无 traceback），全量 `test_workbench_window` 也因此跑不完。
+        """
+        from contextlib import ExitStack
+
+        from lib.core.render.backends.qt.widgets import workbench_components, workbench_widgets
+
+        stack = ExitStack()
+        for cls in (
+            workbench_components.WorkbenchPetAboutButton,
+            workbench_widgets._WorkbenchThemeToggle,
+            workbench_widgets._WorkbenchFadeOverlay,
+        ):
+            stack.enter_context(patch.object(cls, "paintEvent", lambda self, event: None))
+        return stack
+
+    def _dispose_window(self, window) -> None:
+        """销毁窗口，且让销毁期间的重绘也落在安全上下文里。
+
+        `deleteLater()` 之后那次 `processEvents()` 仍会重绘窗口，若此时自绘件没有被
+        屏蔽，离屏环境会直接结束进程（无 traceback）。所有显示过窗口的用例都走这里。
+        """
+        with self._safe_show_context():
             window.deleteLater()
             self.app.processEvents()
 
@@ -515,20 +642,23 @@ class WorkbenchWindowTests(unittest.TestCase):
             )
 
         try:
-            window.show_page("ui_anim")
-            self.app.processEvents()
-            shell_geometry = window._shell.geometry()
-            host_geometry = window._page_hosts["ui_anim"].geometry()
-            page_geometry = panel.pages["ui_anim"].geometry()
+            # 主题热切换会启动整壳淡出遮罩，之后每次 `processEvents()`（包括收尾的
+            # `deleteLater()`）都会重绘它。整个生命周期都得留在安全上下文里。
+            with self._safe_show_context():
+                window.show_page("ui_anim")
+                self.app.processEvents()
+                shell_geometry = window._shell.geometry()
+                host_geometry = window._page_hosts["ui_anim"].geometry()
+                page_geometry = panel.pages["ui_anim"].geometry()
 
-            UI["workbench_light_theme"] = not bool(original_theme)
-            window._on_config_updated(
-                workbench_module.Event(
-                    workbench_module.EventType.CONFIG_UPDATED,
-                    {"values": {"UI": {"workbench_light_theme": UI["workbench_light_theme"]}}},
+                UI["workbench_light_theme"] = not bool(original_theme)
+                window._on_config_updated(
+                    workbench_module.Event(
+                        workbench_module.EventType.CONFIG_UPDATED,
+                        {"values": {"UI": {"workbench_light_theme": UI["workbench_light_theme"]}}},
+                    )
                 )
-            )
-            self.app.processEvents()
+                self.app.processEvents()
 
             self.assertIsNone(window._shell.graphicsEffect())
             self.assertEqual(window._shell.geometry(), shell_geometry)
@@ -536,8 +666,9 @@ class WorkbenchWindowTests(unittest.TestCase):
             self.assertEqual(panel.pages["ui_anim"].geometry(), page_geometry)
         finally:
             UI["workbench_light_theme"] = original_theme
-            window.deleteLater()
-            self.app.processEvents()
+            with self._safe_show_context():
+                window.deleteLater()
+                self.app.processEvents()
 
     def test_workbench_is_normal_window_without_frame_limit_or_pin_control(self):
         panel = _FakeControlPanel()
@@ -546,8 +677,9 @@ class WorkbenchWindowTests(unittest.TestCase):
                 lambda: panel,
                 control_panel_page_specs=panel.get_workbench_page_specs(),
             )
-            window.show_page("overview")
-            self.app.processEvents()
+            with self._safe_show_context():
+                window.show_page("overview")
+                self.app.processEvents()
             window.hide_immediately()
             self.app.processEvents()
 
@@ -558,8 +690,7 @@ class WorkbenchWindowTests(unittest.TestCase):
         self.assertNotIn("set_frame_fps_limit", source)
         self.assertNotIn("get_layer_manager", source)
         self.assertNotIn("WorkbenchPinToggle", window.styleSheet())
-        window.deleteLater()
-        self.app.processEvents()
+        self._dispose_window(window)
 
     def test_workbench_uses_project_icon(self):
         panel = _FakeControlPanel()
@@ -573,8 +704,7 @@ class WorkbenchWindowTests(unittest.TestCase):
         self.assertTrue(workbench_module._WORKBENCH_ICON_PATH.is_file())
         self.assertFalse(window.windowIcon().isNull())
         self.assertFalse(window.windowIcon().pixmap(32, 32).isNull())
-        window.deleteLater()
-        self.app.processEvents()
+        self._dispose_window(window)
 
     def test_theme_toggle_is_left_of_search_and_persists_choice(self):
         panel = _FakeControlPanel()
@@ -604,8 +734,7 @@ class WorkbenchWindowTests(unittest.TestCase):
             self.assertIn("#fff8fb", window.styleSheet())
         finally:
             UI["workbench_light_theme"] = original_theme
-            window.deleteLater()
-            self.app.processEvents()
+            self._dispose_window(window)
 
     def test_theme_toggle_clicks_from_anywhere_on_custom_track(self):
         panel = _FakeControlPanel()
@@ -619,17 +748,21 @@ class WorkbenchWindowTests(unittest.TestCase):
         try:
             UI["workbench_light_theme"] = False
             window._sync_theme_toggle()
-            window.show()
-            self.app.processEvents()
-            center = window._theme_toggle.rect().center()
-            QTest.mouseClick(window._theme_toggle, Qt.LeftButton, pos=center)
-            self.app.processEvents()
+            # 显示、点击、收尾必须都在同一个上下文里：`deleteLater()` 之后的那次
+            # `processEvents()` 仍会重绘窗口，patch 提前撤销就会在离屏环境触发段错误。
+            with self._safe_show_context():
+                window.show()
+                self.app.processEvents()
+                center = window._theme_toggle.rect().center()
+                QTest.mouseClick(window._theme_toggle, Qt.LeftButton, pos=center)
+                self.app.processEvents()
             self.assertTrue(window._theme_toggle.isChecked())
             self.assertTrue(UI["workbench_light_theme"])
         finally:
             UI["workbench_light_theme"] = original_theme
-            window.deleteLater()
-            self.app.processEvents()
+            with self._safe_show_context():
+                window.deleteLater()
+                self.app.processEvents()
 
 
 if __name__ == "__main__":

@@ -19,14 +19,16 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtGui import QPainter
 
 from config.scale import scale_px
+from lib.core.render.visuals import motion
 from lib.core.render.visuals.panel_visuals import build_tab_bar_visual
 from lib.core.render.visuals.types import Size
 from lib.core.render.backends.qt.widgets import tier_d_seams
 from lib.core.render.layers import get_layer_manager, WindowLayer
 
-#: 分区入场动画的基础时长与相邻分区的错峰步长（毫秒）。
-_PAGE_SECTION_DURATION_MS = 180
-_PAGE_SECTION_STAGGER_MS = 28
+#: 分区入场动画的错峰参数由后端中立的 `visuals/motion` 统一定义；
+#: 这里保留旧名字只为兼容既有导入面。
+_PAGE_SECTION_DURATION_MS = motion.SECTION_ENTER_RANGE[0]
+_PAGE_SECTION_STAGGER_MS = motion.SECTION_STAGGER_MS
 
 
 class TabBarWidget(QWidget):
@@ -186,18 +188,8 @@ def layout_ai_settings_tab_panels(panel) -> None:
 
 
 def _page_fade_duration() -> int:
-    """切页淡入时长：跟面板整体的淡入淡出同一个档，但收得更短一点。
-
-    整页切换比「面板出现」更频繁，用同一个时长会显得拖沓；这里取 60% 并夹在
-    90~180 ms 之间，既看得出过渡又不挡手。
-    """
-    try:
-        from config.config import UI
-
-        base = int(UI.get("ui_fade_duration", 180))
-    except Exception:
-        base = 180
-    return max(90, min(180, int(base * 0.6)))
+    """切页淡入时长：与工作台切页同一份后端中立参数。"""
+    return motion.page_transition_ms()
 
 
 def _page_opacity_effect(page: QWidget) -> QGraphicsOpacityEffect:
@@ -248,13 +240,13 @@ def _animate_sections_in(page: QWidget) -> None:
     if not sections:
         return
     group = QParallelAnimationGroup(page)
-    for order, section in enumerate(sections[:8]):
+    for order, section in enumerate(sections[: motion.SECTION_STAGGER_LIMIT]):
         effect = _page_opacity_effect(section)
         effect.setOpacity(0.0)
         anim = QPropertyAnimation(effect, b"opacity")
-        # 错峰靠延长时长实现：第 order 个分区的动画时长 = 基础时长 + order × 28 ms，
+        # 错峰靠延长时长实现：第 order 个分区的动画时长更长，
         # 起始值仍是 0，所以它看起来「晚一点开始淡入」。QPropertyAnimation 没有 delay。
-        anim.setDuration(_PAGE_SECTION_DURATION_MS + order * _PAGE_SECTION_STAGGER_MS)
+        anim.setDuration(motion.section_enter_ms(order))
         anim.setEasingCurve(QEasingCurve.OutCubic)
         anim.setStartValue(0.0)
         anim.setEndValue(1.0)

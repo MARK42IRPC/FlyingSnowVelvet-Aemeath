@@ -35,11 +35,23 @@ def _workbench_palette(mode: str | None = None) -> dict[str, str]:
 
 
 class _WorkbenchFadeOverlay(QWidget):
-    """Paint-only fade cover that does not alter child widget composition."""
+    """Paint-only fade cover that does not alter child widget composition.
+
+    两种用法共用同一个控件：
+
+    - 主题热切换：纯色（工作台 canvas）从全不透明淡出，让新配色「盖着亮起来」；
+    - 切页：先 ``set_snapshot()`` 抓一张旧页位图，再淡出——旧页逐渐消失、新页在下面
+      透出来，是真正的交叉淡化而不是「先黑一下再亮」。快照缺席（抓取失败、尺寸不符）
+      时退回纯色，行为与主题切换一致。
+
+    不挂 ``QGraphicsEffect``：那会破坏页面里 ``QLineEdit`` 光标、``QComboBox`` 弹层等
+    子控件的原生合成（`test_page_transition_keeps_page_visible_without_graphics_effect`）。
+    """
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._opacity = 0.0
+        self._snapshot = None
         self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         self.hide()
 
@@ -47,10 +59,23 @@ class _WorkbenchFadeOverlay(QWidget):
         self._opacity = max(0.0, min(1.0, float(value)))
         self.update()
 
+    def set_snapshot(self, pixmap) -> None:
+        """记录旧页快照；``None`` 表示下一次淡出退回纯色。"""
+        self._snapshot = pixmap
+        self.update()
+
+    def clear_snapshot(self) -> None:
+        self.set_snapshot(None)
+
     def paintEvent(self, _event) -> None:
         if self._opacity <= 0.0:
             return
         painter = QPainter(self)
+        pixmap = self._snapshot
+        if pixmap is not None and not pixmap.isNull() and pixmap.size() == self.size():
+            painter.setOpacity(self._opacity)
+            painter.drawPixmap(0, 0, pixmap)
+            return
         color = QColor(_workbench_palette()["canvas"])
         color.setAlphaF(self._opacity)
         painter.fillRect(self.rect(), color)

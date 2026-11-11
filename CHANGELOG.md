@@ -323,6 +323,27 @@
   间隔与「智力提升」行为不变。
 
 ### Fixed
+- 修复工作台切页与侧边栏手风琴「完全没有动效」的问题。两处动画都在跑，只是不可见/不生效：
+  切页遮罩的 `raise_()` 写在 `QStackedWidget.setCurrentWidget()` **之前**，而 `QStackedLayout`
+  切换当前页时会 `raise()` 新页面，遮罩被压回页面底下，整段 1.0→0 的淡出都发生在页面下方
+  （实测 `_stack.children()` 里遮罩索引 11 → 10）；侧边栏对每个按钮的 `maximumHeight` 做
+  0↔`sizeHint()` 的动画，但按钮自带 `minimumHeight`，Qt 在 min > max 时取 min，动画每帧写值而
+  按钮高度恒为 42px，finished 时才 `setVisible(False)`——表现就是「静止一段然后瞬间消失」。
+  现在遮罩在切页之后才抬到顶层；抽屉改为对每组的容器做高度动画（容器
+  `QVBoxLayout.setSizeConstraint(SetNoConstraint)` + `minimumHeight(0)`），并叠加内容透明度淡入。
+  切页过渡同时升级为交叉淡化：切换前抓一张旧页位图交给遮罩，旧页逐渐消失、新页透出来；
+  `offscreen` / `minimal` 等无真实合成表面的平台跳过抓取并退回纯色淡出。
+- 修复上一条暴露的离屏测试段错误：`tests/test_workbench_window.py` 在离屏环境显示窗口时，
+  自绘的贡献/赞助按钮与主题开关会在 `paint` 里直接结束进程（无 traceback，退出码 127），
+  此前整套用例跑到 `test_page_transition_keeps_page_visible_without_graphics_effect` 就中断、
+  后续 8 条从未执行。现统一经 `_safe_show_context()` / `_dispose_window()` 兜住显示与销毁期间
+  的重绘，整套 18 条可完整跑完。
+- 动效时长收口到后端中立事实源：新增 `lib/core/render/visuals/motion.py`，由共享的
+  `ui_fade_duration` 派生切页过渡、侧边栏抽屉与设置页分区错峰的时长/缓动名，并夹在有界区间内。
+  工作台与 `ai_settings_tabs` 不再各写一份 `UI.get("ui_fade_duration", 180)`（与
+  `ui_presentation.ui_fade_duration_ms()` 的回退 200 长期分歧）。新增 `tests/test_motion_parameters.py`。
+- 侧边栏分组标题补上展开态样式（`QLabel#WorkbenchNavGroup[expanded="true"]`，左侧粉色强调条 +
+  提升的表面色），此前只有文本里的「－/＋」在变。
 - 修复打开雪绒论坛后、留言卡片带 `[雪豹]` 令牌时必崩的问题：贴图宿主的栅格帧转换器
   （`render_bridge.configure_forum_sticker_raster_converter()`）原本只在产品垫片
   `lib/script/ui/forum_sticker.py` 的模块级代码里注入，而生产代码从不 import 那个垫片

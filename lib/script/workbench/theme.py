@@ -130,6 +130,14 @@ def workbench_stylesheet(mode: str | None = None) -> str:
         margin-top: {scale_px(7, min_abs=5)}px;
         font-weight: 700;
     }}
+    /* 展开态：左侧粉条 + 提亮的表面色。文本里的「－/＋」是字面标记，
+       这条规则让「哪一组是开的」在余光里也能一眼看出来。 */
+    QLabel#WorkbenchNavGroup[expanded="true"] {{
+        background: {c.surface_raised};
+        color: {c.text};
+        border-left: {scale_px(3, min_abs=2)}px solid {c.pink};
+        border-top-color: {c.border_strong};
+    }}
     QPushButton#WorkbenchNavButton {{
         background: transparent;
         color: {c.text_muted};
