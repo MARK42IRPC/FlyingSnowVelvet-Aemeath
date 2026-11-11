@@ -250,6 +250,11 @@ void fsv_graph_set_capture(struct fsv_graph_handle* handle, int enabled) {
 
 /* Declares the {output, input} pairs whose value stays on the card between
    runs. Names are flat: out0, in0, out1, in1, ... */
+void fsv_graph_reset_resident(struct fsv_graph_handle* handle) {
+    if (!handle) return;
+    handle->runtime.reset_resident();
+}
+
 void fsv_graph_set_resident(struct fsv_graph_handle* handle,
                             const char* const* names, int pair_count) {
     if (!handle || !names || pair_count <= 0) return;

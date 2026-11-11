@@ -53,6 +53,11 @@ FSV_CUDA_API void fsv_graph_set_capture(struct fsv_graph_handle* handle, int ena
    retained buffer. Autoregressive KV caches are what this exists for. */
 FSV_CUDA_API void fsv_graph_set_resident(
     struct fsv_graph_handle* handle, const char* const* names, int pair_count);
+/* Drops the retained values (KV caches) while keeping the resident
+   declaration. Call between utterances: otherwise the cache of a finished
+   sentence keeps its device buffer until a later run overwrites the same
+   name, and VRAM creeps up with every sentence. */
+FSV_CUDA_API void fsv_graph_reset_resident(struct fsv_graph_handle* handle);
 /* Host bytes of a retained output, for a caller that really wants to read it. */
 FSV_CUDA_API int fsv_graph_read_resident(
     struct fsv_graph_handle* handle, const char* name, fsv_graph_output* output);

@@ -498,7 +498,7 @@ GENERAL_CONFIG_DEFAULTS: dict[str, dict[str, object]] = {
 #: 直播页把 `LIVE_STREAM` 拆成两张卡片——「直播间设置」（总开关 + 房间号）与「弹幕点歌」
 #: （点歌参数），两者仍写回同一份 `LIVE_STREAM` 配置，保存语义不变。
 GENERAL_SECTION_KEY_ROUTES: dict[str, tuple[str, tuple[str, ...]]] = {
-    "LIVE_STREAM": ("LIVE_STREAM", ("enabled", "room_id")),
+
     "LIVE_STREAM_SONG": (
         "LIVE_STREAM",
         (
@@ -512,15 +512,24 @@ GENERAL_SECTION_KEY_ROUTES: dict[str, tuple[str, tuple[str, ...]]] = {
             "notify_on_enqueue",
         ),
     ),
-    #: 礼物提醒与直播点歌平行，但用的是独立配置字典 `GIFT_ALERT`。
+    #: 礼物提醒与直播点歌平行，用的是独立配置字典 `GIFT_ALERT`。
+    #: 总开关 `enabled` 放在「直播间设置」卡片里（与「启用弹幕点歌」同一处），
+    #: 这张卡片只放启用后才需要看的参数。
     "GIFT_ALERT": (
         "GIFT_ALERT",
-        ("enabled", "template", "min_price", "notify_in_chat", "speak"),
+        ("template", "min_price", "notify_in_chat", "speak"),
     ),
 }
 
 
 GENERAL_MIXED_SECTION_FIELDS: dict[str, list[tuple[str, str]]] = {
+    #: 「直播间设置」卡片同时放直播总开关、房间号，以及礼物提醒总开关——
+    #: 礼物提醒是直播的从属功能，开关与直播开关放在同一处更符合直觉。
+    "LIVE_STREAM": [
+        ("LIVE_STREAM", "enabled"),
+        ("LIVE_STREAM", "room_id"),
+        ("GIFT_ALERT", "enabled"),
+    ],
     "AUDIO_VOLUMES": [
         ("SOUND", "master_volume"),
         ("SOUND", "main_pet_volume"),

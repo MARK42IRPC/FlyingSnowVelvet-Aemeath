@@ -35,6 +35,24 @@ _LANGUAGE_TOKEN_PATTERN = re.compile(
 )
 
 
+def _release_resident_caches(engine) -> None:
+    """尽力清掉引擎里所有会话的常驻 KV 缓存；任何失败都不影响合成。
+
+    原生运行时与 ONNX Runtime 两条路径的会话对象不同，这里按能力探测：
+    有 `reset_resident()` 的调它，其余交给下一句自然覆盖。
+    """
+    for attribute in ("session", "_session", "graph", "_graph", "sessions"):
+        holder = getattr(engine, attribute, None)
+        targets = holder if isinstance(holder, (list, tuple)) else (holder,)
+        for target in targets:
+            reset = getattr(target, "reset_resident", None)
+            if callable(reset):
+                try:
+                    reset()
+                except Exception:
+                    pass
+
+
 class OnnxVoiceRuntimeError(RuntimeError):
     pass
 
@@ -802,6 +820,10 @@ class OnnxVoiceRuntime:
         engine = self._engine
         if engine is None:
             raise OnnxVoiceRuntimeError("ONNX 语音引擎未就绪")
+
+        # 每句合成前清掉上一句留下的常驻 KV 缓存。不清的话，旧缓存要等某次
+        # 推理恰好覆盖同名张量才释放，表现为「每说一句话显存涨一点」。
+        _release_resident_caches(engine)
 
         segments = (
             ((request.text, request.language),)

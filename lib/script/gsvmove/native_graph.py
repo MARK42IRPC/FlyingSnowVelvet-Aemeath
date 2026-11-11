@@ -27,7 +27,10 @@ from pathlib import Path
 
 import numpy as np
 
+from lib.core.logger import get_logger
 from lib.core.voice_runtime_contract import resolve_cuda_voice_runtime_path
+
+logger = get_logger(__name__)
 
 
 class NativeGraphError(RuntimeError):
@@ -249,6 +252,9 @@ def load_native_library(library_path=None) -> ctypes.CDLL:
             ctypes.c_void_p,
         )
         _optional_binding(library, "fsv_graph_release_device", [ctypes.c_void_p], None)
+        #: 可选：清掉上一次语句留下的常驻 KV 缓存。老 DLL 没有这个符号时跳过，
+        #: 行为退回到「等下次同名覆盖」，不会因此报错。
+        _optional_binding(library, "fsv_graph_reset_resident", [ctypes.c_void_p], None)
         _optional_binding(
             library,
             "fsv_graph_import_device",
@@ -493,6 +499,7 @@ class NativeGraphSession:
         self._set_retained = getattr(library, "fsv_graph_set_retained", None)
         self._borrow_device = getattr(library, "fsv_graph_borrow_device", None)
         self._release_device = getattr(library, "fsv_graph_release_device", None)
+        self._reset_resident = getattr(library, "fsv_graph_reset_resident", None)
         self._import_device = getattr(library, "fsv_graph_import_device", None)
         self._retained_outputs = (
             _retained_outputs(self._resident_pairs, self._output_names)
@@ -541,6 +548,21 @@ class NativeGraphSession:
             if handle is None or self._borrow_device is None:
                 return None
             return self._borrow_device(handle, str(name).encode("utf-8")) or None
+
+    def reset_resident(self) -> None:
+        """丢掉上一次语句留下的常驻 KV 缓存（保留「哪些名字常驻」的声明）。
+
+        不调用它时，上一句的缓存要等某次 run 恰好覆盖同名张量才释放，表现为
+        「每说一句话显存涨一点」。老 DLL 没有这个符号时静默跳过。
+        """
+        reset = getattr(self, "_reset_resident", None)
+        handle = getattr(self, "_handle", None)
+        if reset is None or not handle:
+            return
+        try:
+            reset(handle)
+        except Exception as exc:  # 释放失败不该打断合成
+            logger.debug("重置常驻 KV 缓存失败: %s", exc)
 
     def release_device(self, borrowed) -> None:
         """Give a borrowed device buffer back; see :meth:`borrow_device`."""

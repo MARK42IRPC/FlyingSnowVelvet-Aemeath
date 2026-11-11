@@ -243,6 +243,22 @@ class QuickWelfareTurnTests(unittest.TestCase):
 
         self.assertEqual(stub.calls[0][0], "m0:free")
 
+    def test_verified_vision_models_come_before_merely_declared_ones(self):
+        """带图时先试实测能答的模型，只声明支持图片的排后面。
+
+        实测（2026-11-11）dots / nemotron-super-vl 只吐 reasoning、inkling 持续 429，
+        它们仍可用作纯文本，但不该占用带图请求的第一个名额。
+        """
+        stub = _StubQuickWelfare(
+            ["ok", "ok", "ok", "ok"],
+            vision_models={"m0:free", "m1:free", "m2:free"},
+        )
+        with patch.object(qw, "QUICK_WELFARE_VERIFIED_VISION_MODELS", frozenset({"m2:free"})):
+            with patch.object(qw_client, "get_quick_welfare_router", return_value=stub._router):
+                stub._quick_welfare_chat_api("hello", "persona", images=[b"png"])
+
+        self.assertEqual(stub.calls[0][0], "m2:free")
+
     def test_image_rejection_moves_to_another_vision_model_before_dropping_the_image(self):
         """池里还有看图模型时，换它继续带图，而不是把图片丢掉只发文字。"""
         stub = _StubQuickWelfare(["ok-text-only", "ok"], vision_models={"m0:free", "m1:free"})

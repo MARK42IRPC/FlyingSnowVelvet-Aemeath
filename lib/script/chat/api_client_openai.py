@@ -20,6 +20,32 @@ from .native_tools import (
 
 logger = get_logger(__name__)
 
+#: 纯文本请求的输出预算；带图请求抬高一档，因为思考型模型看图时思考更长。
+_MAX_OUTPUT_TOKENS_TEXT = 1024
+_MAX_OUTPUT_TOKENS_VISION = 2048
+
+
+def _resolve_max_output_tokens(has_images: bool, image_count: int = 0) -> int:
+    """本次请求下发多少输出预算。
+
+    可被配置 `OLLAMA['api_max_output_tokens']` 覆盖（0 表示不限制、沿用上游默认）。
+    默认值刻意给足：思考型模型（Nemotron VL、Dots 系）带图时 reasoning 能吃掉
+    上千 token，预算太小就只剩思考、没有正文。多图时按张数递增，上限 4096。
+    """
+    try:
+        from config.ollama_config import OLLAMA
+
+        raw = OLLAMA.get("api_max_output_tokens", None)
+        if raw is not None and str(raw).strip() != "":
+            value = int(raw)
+            return 0 if value <= 0 else value
+    except Exception:
+        pass
+    if not has_images:
+        return _MAX_OUTPUT_TOKENS_TEXT
+    extra = max(0, int(image_count) - 1) * 512
+    return min(4096, _MAX_OUTPUT_TOKENS_VISION + extra)
+
 
 class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
     @staticmethod
@@ -164,7 +190,8 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
                                        include_user_field: bool = True,
                                        include_systemless_fallback: bool = False,
                                        include_relaxed_multimodal_variants: bool = True,
-                                       include_input_multimodal_variants: bool = True) -> list[dict]:
+                                       include_input_multimodal_variants: bool = True,
+                                       max_output_tokens: int | None = None) -> list[dict]:
         """
         生成 OpenAI 兼容请求体候选（多模态自动回退）。
 
@@ -213,8 +240,12 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
             # - temperature: 采样温度，适度调高可提升表达多样性
             # - enable_thinking: 控制是否输出 reasoning_content
             # - thinking_budget: 限制思考 token 上限（可选）
+            # - max_tokens: 输出预算。不给时由上游定，思考型模型会把默认预算全烧在
+            #   reasoning 上、正文一个字都写不出来（实测 Nemotron / Dots 系带图时必现）。
             if temperature is not None:
                 payload["temperature"] = float(temperature)
+            if max_output_tokens is not None and max_output_tokens > 0:
+                payload["max_tokens"] = int(max_output_tokens)
             if include_reasoning_extensions:
                 if enable_thinking is not None:
                     payload["enable_thinking"] = bool(enable_thinking)
@@ -537,6 +568,10 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
             request_user = f"snowrol-{threading.get_ident()}-{int(time.time() * 1000)}"
 
         payload_images = images
+        #: 输出预算。思考型模型（Nemotron / Dots 等）在带图时会把上游默认预算全部
+        #: 花在 reasoning 上，正文一个 token 都拿不到；显式给一个够用的预算，
+        #: 让正文至少有地方写。带图请求再抬高一档，因为图片本身也吃输入预算。
+        max_output_tokens = _resolve_max_output_tokens(bool(payload_images), len(payload_images or ()))
 
         endpoint_candidates = self._openai_endpoint_candidates(base_url)
         prepared_image_blocks = images_to_openai_content(payload_images) if payload_images else None
@@ -556,6 +591,7 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
             include_systemless_fallback=bool(payload_images) and is_gemini_target,
             include_relaxed_multimodal_variants=True,
             include_input_multimodal_variants=True,
+            max_output_tokens=max_output_tokens,
         )
         # 兼容兜底：仅在多模态请求下追加保守变体（禁用扩展字段+禁用 user 字段）。
         if payload_images:
@@ -575,6 +611,7 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
                 include_systemless_fallback=False,
                 include_relaxed_multimodal_variants=True,
                 include_input_multimodal_variants=True,
+                max_output_tokens=max_output_tokens,
             )
             payload_candidates.extend(conservative_payloads)
         native_tools_enabled = allow_tools and self._native_tools_available(base_url, model)

@@ -116,6 +116,10 @@ public:
        buffer instead; a caller that does feed it wins, which is how the first
        step of a decode loop seeds the cache. */
     void set_resident(const std::vector<std::pair<std::string, std::string>>& pairs);
+    /* Drops retained values (KV caches) without forgetting the resident
+       declaration; called between utterances so a finished sentence's
+       cache does not keep its device buffer alive. */
+    void reset_resident();
     /* True when the named output was declared resident, so the caller should
        expect an empty host payload and read the device buffer instead. */
     bool resident_output(const std::string& name) const;

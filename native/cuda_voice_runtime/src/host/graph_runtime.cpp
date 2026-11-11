@@ -4231,6 +4231,16 @@ void GraphRuntime::set_resident(
     }
 }
 
+void GraphRuntime::reset_resident() {
+    /* Drop the retained values without forgetting which names are resident:
+       the declaration belongs to the archive, the buffers belong to the last
+       utterance. Without this, a longer cache from a previous sentence keeps
+       its device buffer alive until the next run happens to overwrite the same
+       name, which reads as "VRAM grows by a little with every sentence". */
+    resident_.clear();
+    device_feeds_.clear();
+}
+
 bool GraphRuntime::resident_output(const std::string& name) const {
     return std::find(resident_names_.begin(), resident_names_.end(), name) !=
            resident_names_.end();

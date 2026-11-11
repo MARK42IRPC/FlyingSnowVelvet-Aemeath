@@ -529,21 +529,44 @@ class ConfigPageMixin:
                 probe_label = field.get("label")
                 break
 
+        gift_section = sections.get("GIFT_ALERT")
+        gift_enabled_editor = None
+        for field in fields:
+            if (
+                str(field.get("dict_name") or "") == "GIFT_ALERT"
+                and str(field.get("key") or "") == "enabled"
+                and isinstance(field.get("editor"), QCheckBox)
+            ):
+                gift_enabled_editor = field["editor"]
+                break
+
         def sync(checked: bool) -> None:
             if song_section is not None:
                 song_section.setVisible(bool(checked))
+
+        def sync_gift(checked: bool) -> None:
+            # 礼物提醒卡片只在启用后才展开：没开的时候那几个参数没有意义。
+            if gift_section is not None:
+                gift_section.setVisible(bool(checked))
 
         if enabled_editor is not None and song_section is not None:
             enabled_editor.toggled.connect(sync)
             sync(enabled_editor.isChecked())
 
+        if gift_enabled_editor is not None and gift_section is not None:
+            gift_enabled_editor.toggled.connect(sync_gift)
+            sync_gift(gift_enabled_editor.isChecked())
+
         return {
             "enabled_editor": enabled_editor,
             "room_section": room_section,
             "song_section": song_section,
+            "gift_section": gift_section,
+            "gift_enabled_editor": gift_enabled_editor,
             "probe_button": probe_button,
             "probe_label": probe_label,
             "sync": sync,
+            "sync_gift": sync_gift,
         }
 
     def _on_test_live_room(self, button: QPushButton, result_label: QLabel) -> None:

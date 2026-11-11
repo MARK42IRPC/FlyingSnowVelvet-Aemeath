@@ -17,6 +17,9 @@ from lib.core.logger import get_logger
 
 _logger = get_logger(__name__)
 from lib.core.event.key_handler import KeyEventHandler
+from lib.core.action import Actions  # noqa: F401 - 既有补丁点：
+#   `tests/dx/test_dx_pet_window.py` 按 `lib.core.pet_window.Actions` 打桩，
+#   删掉这个导入会让 DX 用例在 setUp 阶段报 AttributeError。
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.draw_core import DrawRequest, get_draw_core
 from lib.core.render.layers import Layer, normalize_layer

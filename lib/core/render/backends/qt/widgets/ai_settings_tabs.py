@@ -2,8 +2,20 @@
 
 from __future__ import annotations
 
-from PyQt5.QtCore import QPoint, Qt
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QButtonGroup
+from PyQt5.QtCore import (
+    QEasingCurve,
+    QParallelAnimationGroup,
+    QPoint,
+    QPropertyAnimation,
+    Qt,
+)
+from PyQt5.QtWidgets import (
+    QButtonGroup,
+    QGraphicsOpacityEffect,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
 from PyQt5.QtGui import QPainter
 
 from config.scale import scale_px
@@ -11,6 +23,10 @@ from lib.core.render.visuals.panel_visuals import build_tab_bar_visual
 from lib.core.render.visuals.types import Size
 from lib.core.render.backends.qt.widgets import tier_d_seams
 from lib.core.render.layers import get_layer_manager, WindowLayer
+
+#: 分区入场动画的基础时长与相邻分区的错峰步长（毫秒）。
+_PAGE_SECTION_DURATION_MS = 180
+_PAGE_SECTION_STAGGER_MS = 28
 
 
 class TabBarWidget(QWidget):
@@ -169,17 +185,106 @@ def layout_ai_settings_tab_panels(panel) -> None:
         get_layer_manager().enforce_burst()
 
 
-def set_active_ai_settings_tab(panel, index: int) -> None:
+def _page_fade_duration() -> int:
+    """切页淡入时长：跟面板整体的淡入淡出同一个档，但收得更短一点。
+
+    整页切换比「面板出现」更频繁，用同一个时长会显得拖沓；这里取 60% 并夹在
+    90~180 ms 之间，既看得出过渡又不挡手。
+    """
+    try:
+        from config.config import UI
+
+        base = int(UI.get("ui_fade_duration", 180))
+    except Exception:
+        base = 180
+    return max(90, min(180, int(base * 0.6)))
+
+
+def _page_opacity_effect(page: QWidget) -> QGraphicsOpacityEffect:
+    """取（必要时创建）某一页的透明度效果。
+
+    每页各挂一个：切页时只动画新页那一份，不会连带把整个面板（以及它的浮动标签栏）
+    一起淡掉。effect 挂在页面上而不是面板上，面板自己的淡入淡出互不干扰。
+    """
+    effect = page.graphicsEffect()
+    if isinstance(effect, QGraphicsOpacityEffect):
+        return effect
+    effect = QGraphicsOpacityEffect(page)
+    page.setGraphicsEffect(effect)
+    return effect
+
+
+def _animate_page_in(panel, page: QWidget) -> None:
+    """把新页从半透明淡到完全不透明；没有动画环境时直接落到终值。"""
+    effect = _page_opacity_effect(page)
+    effect.setOpacity(0.0)
+    anim = getattr(panel, "_tab_page_anim", None)
+    if anim is None:
+        anim = QPropertyAnimation(panel)
+        anim.setEasingCurve(QEasingCurve.OutCubic)
+        panel._tab_page_anim = anim
+    anim.stop()
+    # 目标对象与属性必须成对设置，且要在 start() 前完成；只换 targetObject 而不
+    # 重新 setPropertyName 时，动画会找不到可写的属性、静默停在起始值。
+    anim.setTargetObject(effect)
+    anim.setPropertyName(b"opacity")
+    anim.setDuration(_page_fade_duration())
+    anim.setStartValue(0.0)
+    anim.setEndValue(1.0)
+    anim.start()
+
+
+def _animate_sections_in(page: QWidget) -> None:
+    """页面里的分区依次淡入（轻微错峰），让整页出现时有层次而不是「啪」地出现。
+
+    只动画每个 `SettingsSection` 自己的透明度效果：它们互不重叠，错峰 28 ms 在
+    200 ms 内全部落位，肉眼看到的是「内容顺次浮现」而不是延迟。
+    """
+    sections = [
+        child
+        for child in page.findChildren(QWidget)
+        if child.objectName() == "SettingsSection"
+    ]
+    if not sections:
+        return
+    group = QParallelAnimationGroup(page)
+    for order, section in enumerate(sections[:8]):
+        effect = _page_opacity_effect(section)
+        effect.setOpacity(0.0)
+        anim = QPropertyAnimation(effect, b"opacity")
+        # 错峰靠延长时长实现：第 order 个分区的动画时长 = 基础时长 + order × 28 ms，
+        # 起始值仍是 0，所以它看起来「晚一点开始淡入」。QPropertyAnimation 没有 delay。
+        anim.setDuration(_PAGE_SECTION_DURATION_MS + order * _PAGE_SECTION_STAGGER_MS)
+        anim.setEasingCurve(QEasingCurve.OutCubic)
+        anim.setStartValue(0.0)
+        anim.setEndValue(1.0)
+        group.addAnimation(anim)
+    # 用 `panel` 持有 group，避免它作为局部变量被回收导致动画停在半途。
+    page._section_enter_anim = group
+    group.start()
+
+
+def set_active_ai_settings_tab(panel, index: int, *, animate: bool = True) -> None:
     if not panel._tab_pages:
         return
 
     target_index = max(0, min(index, len(panel._tab_pages) - 1))
+    # 初始页（第一个标签）在装配时就已经可见，所以把「上一次的页」默认成它：
+    # 否则用户第一次切页时 `previous_index` 是 None，动画会被当成首次显示跳过，
+    # 表现就是「第一次切换没有过渡、之后才有」。
+    previous_index = getattr(panel, "_active_tab_index", 0)
+    panel._active_tab_index = target_index
     for page_index, page in enumerate(panel._tab_pages):
         if page is not None:
             page.setVisible(page_index == target_index)
 
     layout_ai_settings_tab_panels(panel)
     if 0 <= target_index < len(panel._tab_pages):
-        panel._tab_pages[target_index].raise_()
+        target_page = panel._tab_pages[target_index]
+        target_page.raise_()
+        # 只有真的换了页才动画；面板尚未显示时不动画（它自己会整体淡入）。
+        if animate and previous_index != target_index:
+            _animate_page_in(panel, target_page)
+            _animate_sections_in(target_page)
     if panel._tab_floating is not None and panel._tab_floating.isVisible():
         get_layer_manager().enforce_burst()

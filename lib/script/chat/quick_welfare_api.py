@@ -47,15 +47,24 @@ QUICK_WELFARE_MAX_MODELS_PER_TURN = 3
 QUICK_WELFARE_SHORT_COOLDOWN_SECS = 10 * 60
 QUICK_WELFARE_LONG_COOLDOWN_SECS = 30 * 60
 
-#: 内置兜底清单里支持图片输入的模型（`architecture.input_modalities` 含 `image`）。
-#: 拉不到清单时靠它决定「带图请求该优先排谁」；清单拉到了就以清单为准。
-QUICK_WELFARE_FALLBACK_VISION_MODELS = frozenset({
-    "nvidia/nemotron-3.5-super-vl:free",
-    "thinkingmachines/inkling-2-small:free",
-    "dots-studio/dots-3-note-preview:free",
+#: 实测可用的看图模型（2026-11-11 逐模型验证，图片含可核对的颜色/形状/文字）。
+#:
+#: 上游声明的 `input_modalities` 只说明「模型接受图片」，不说明「真的会看图作答」。
+#: 实测中被排除的三个都能收图、但给不出可用回复：
+#: - `dots-studio/dots-3-note-preview:free`：只输出 reasoning，正文为空；
+#: - `nvidia/nemotron-3.5-super-vl:free`：同样只输出 reasoning，且要 37 秒；
+#: - `thinkingmachines/inkling-2-small:free`：持续 429。
+#: 它们仍留在普通轮转里（纯文本可用），只是不再被「带图请求」优先选中。
+QUICK_WELFARE_VERIFIED_VISION_MODELS = frozenset({
     "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
     "openrouter/free",
 })
+
+#: 带图请求的视觉优先顺序：先挑实测能答的，再退回到「声明支持图片」的其余模型。
+QUICK_WELFARE_VISION_PRIORITY = (
+    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+    "openrouter/free",
+)
 
 #: 内置兜底清单：`GET /models` 的 `isFree` 切片（2026-11-11 实测）。顺序有意从
 #: 「未知质量」的自动路由排到最后——自动路由让上游替我们挑模型，延迟不受控。
@@ -100,7 +109,7 @@ class QuickWelfareRouter:
         self._lock = threading.Lock()
         self._models: tuple[str, ...] = tuple(QUICK_WELFARE_FALLBACK_MODELS)
         #: 能看图的模型集合：拉不到清单时用内置兜底，拉到清单后按上游声明的能力刷新。
-        self._vision_models: frozenset[str] = QUICK_WELFARE_FALLBACK_VISION_MODELS
+        self._vision_models: frozenset[str] = QUICK_WELFARE_VERIFIED_VISION_MODELS
         self._listing_fetched_at = 0.0
         self._listing_failed_at = 0.0
         self._health: dict[str, _ModelHealth] = {}
@@ -187,9 +196,14 @@ class QuickWelfareRouter:
         cooled.sort()
         order = healthy + [model for _until, model in cooled]
         if needs_vision:
-            #: 稳定分区：两组内部都保持轮转顺序，只有「能看图 / 不能看图」的先后被提到前面。
+            #: 三级稳定分区（组内保持轮转顺序）：
+            #: 1. 实测能看图作答的模型；
+            #: 2. 其余「声明支持图片」的模型（可能只吐思考，作为后备）；
+            #: 3. 纯文本模型（最后才用，带图时基本拿不到有用回复）。
+            verified = set(QUICK_WELFARE_VERIFIED_VISION_MODELS)
             order = (
-                [model for model in order if model in vision_models]
+                [model for model in order if model in verified]
+                + [model for model in order if model in vision_models and model not in verified]
                 + [model for model in order if model not in vision_models]
             )
         #: 去重保序：清单刷新前后可能短暂出现重复项。
