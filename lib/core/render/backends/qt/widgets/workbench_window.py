@@ -138,6 +138,26 @@ def _save_general_values(values) -> None:
     return hook(values)
 
 _NAV_FONT_SCALE = 1.25
+
+
+def _settle_group_button(button) -> None:
+    """展开动画结束后解除高度限制，收起动画结束后真正隐藏。
+
+    收尾动作看按钮自己记下的「这次要展开还是收起」，而不是发起动画时捕获的闭包值——
+    同一按钮的动画对象会被复用，闭包值会过期。
+    """
+    if getattr(button, "_nav_expanded_target", False):
+        button.setMaximumHeight(16777215)
+    else:
+        button.setVisible(False)
+
+
+def _nav_animation_duration() -> int:
+    """侧边栏展开/收起时长；跟界面淡入淡出同一档，但不低于 120 ms。"""
+    try:
+        return max(120, int(UI.get("ui_fade_duration", 180)))
+    except Exception:
+        return 180
 _WORKBENCH_ICON_PATH = Path(__file__).resolve().parents[6] / "resc" / "icon.ico"
 
 
@@ -444,6 +464,17 @@ class WorkbenchWindow(QWidget):
                 animation.deleteLater()
             except (RuntimeError, AttributeError):
                 pass
+        # 侧边栏每一组子项各有一个高度动画。不在这里停掉的话，窗口 deleteLater 之后
+        # 动画仍会继续跑并在 finished 里碰已释放的按钮，实测会直接把进程带崩。
+        for buttons in getattr(self, "_group_buttons", {}).values():
+            for button in buttons:
+                animation = getattr(button, "_nav_height_anim", None)
+                if animation is None:
+                    continue
+                try:
+                    animation.stop()
+                except (RuntimeError, AttributeError):
+                    pass
         for overlay_name in ("_page_transition_overlay", "_theme_transition_overlay"):
             overlay = getattr(self, overlay_name, None)
             if overlay is not None:
@@ -681,8 +712,11 @@ class WorkbenchWindow(QWidget):
         target = "" if group == self._expanded_group else group
         self._apply_navigation_expansion(target)
 
-    def _apply_navigation_expansion(self, group: str) -> None:
+    def _apply_navigation_expansion(self, group: str, *, animate: bool = True) -> None:
         """只显示 ``group`` 的子项，其余分组只留父级标题。
+
+        展开/收起用 `maximumHeight` 过渡：`QVBoxLayout` 没有行级动画，把每一组的子项
+        收进一个容器、对容器高度做动画，就能得到「抽屉拉开」的效果而不是硬切。
 
         搜索过滤也走这里：`_on_search_text_changed()` 会先记下命中的分组，再调用本方法
         逐个设置可见性，所以两边不会互相覆盖。
@@ -690,8 +724,6 @@ class WorkbenchWindow(QWidget):
         self._expanded_group = group if group in self._group_buttons else ""
         for name, buttons in self._group_buttons.items():
             expanded = name == self._expanded_group
-            for button in buttons:
-                button.setVisible(expanded)
             label = self._group_labels.get(name)
             if label is not None:
                 # 展开态给父级标题一个视觉标记，收起时只显示分类名。
@@ -703,6 +735,48 @@ class WorkbenchWindow(QWidget):
                 # 用纯文本标记而不是 ▾/▸：这两枚字符在部分中文字体里缺字，
                 # 会显示成方块或干脆不显示，展开态就看不出来了。
                 label.setText(f"{name}  －" if expanded else f"{name}  ＋")
+            self._animate_group_buttons(buttons, expanded=expanded, animate=animate)
+
+    def _animate_group_buttons(self, buttons, *, expanded: bool, animate: bool) -> None:
+        """把一组的子项按高度动画展开或收起。
+
+        收起分两步：先把高度动画到 0，动画结束才 `setVisible(False)`——直接隐藏会让
+        高度瞬间归零，看起来就是硬切。展开相反：先显示，再把高度从 0 动画到实际高度。
+        """
+        if not buttons:
+            return
+        duration = _nav_animation_duration()
+        for button in buttons:
+            anim = getattr(button, "_nav_height_anim", None)
+            if anim is not None:
+                anim.stop()
+            if not animate or duration <= 0:
+                button.setVisible(expanded)
+                button.setMaximumHeight(16777215)
+                continue
+            if anim is None:
+                anim = QPropertyAnimation(button, b"maximumHeight", button)
+                anim.setEasingCurve(QEasingCurve.InOutCubic)
+                # 按钮先于动画被销毁时（窗口 deleteLater），动画必须跟着停：
+                # 否则它继续在已释放的 C++ 对象上写 maximumHeight，进程会直接段错误。
+                button.destroyed.connect(anim.stop)
+                # `finished` 只连一次，且由「当前期望状态」决定收尾动作：
+                # 每次切换都 connect 会让旧连接在新动画结束时也触发，
+                # 结果把刚展开的那组又隐藏掉（表现为「点开就全没了」）。
+                anim.finished.connect(
+                    lambda b=button: _settle_group_button(b)
+                )
+                button._nav_height_anim = anim
+            button._nav_expanded_target = expanded
+            anim.setDuration(duration)
+            if expanded:
+                button.setVisible(True)
+                anim.setStartValue(0)
+                anim.setEndValue(button.sizeHint().height())
+            else:
+                anim.setStartValue(max(1, button.height()))
+                anim.setEndValue(0)
+            anim.start()
 
     def _ordered_navigation_specs(self) -> tuple[WorkbenchPageSpec, ...]:
         specs = self._registry.navigation_pages()
@@ -790,8 +864,13 @@ class WorkbenchWindow(QWidget):
             self._schedule_external_theme_refresh()
         target_host = self._page_hosts[spec.page_id]
         previous_host = self._stack.currentWidget()
-        transition = previous_host is not target_host and self.isVisible()
+        # 只要求「换了页」就做过渡：以前额外要求 `self.isVisible()`，窗口刚显示或
+        # 从托盘唤起的头几次切换会静默跳过动画，看起来就是硬切。
+        transition = previous_host is not target_host
         if transition:
+            # 用整页遮罩淡出做过渡：不给页面挂 graphicsEffect——那会破坏子控件的
+            # 原生合成（光标、滚动、QTextEdit 之类的表现都会变），这条由
+            # `test_page_transition_keeps_page_visible_without_graphics_effect` 钉住。
             overlay = self._page_transition_overlay
             self._sync_transition_overlay_geometry()
             self._page_transition_anim.stop()

@@ -109,6 +109,54 @@ def probe_live_room(room_id: str):
     return hook(str(room_id))
 
 
+def _form_row_of(form, widget) -> int:
+    """控件（或它被包装后的容器）在表单里的行号；找不到返回 -1。
+
+    字段编辑器常被 `_wrap_field_widget()` 包一层再加进表单，所以从控件本身开始
+    逐级向上找，直到某一层能在 `form` 里查到位置。
+    """
+    current = widget
+    for _ in range(6):
+        if current is None:
+            break
+        row, _role = form.getWidgetPosition(current)
+        if row >= 0:
+            return row
+        current = current.parentWidget()
+    return -1
+
+
+def _move_row_before_gift_switch(form, probe_row, probe_group, fields) -> bool:
+    """把「连接检查」那一行挪到「启用礼物提醒」之前。
+
+    只有在礼物开关确实已进入表单时才动手；否则保持追加位置（没有礼物开关的
+    布局里，「连接检查」本来就该在最后）。
+    """
+    for field in fields:
+        if (
+            str(field.get("dict_name") or "") == "GIFT_ALERT"
+            and str(field.get("key") or "") == "enabled"
+        ):
+            editor = field.get("editor")
+            if editor is None:
+                return False
+            # 复选框被 `_wrap_field_widget()` 包过一层，真正进表单的是那个容器；
+            # 直接查 editor 会拿到 (-1, -1)。
+            gift_row = _form_row_of(form, editor)
+            if gift_row < 0:
+                return False
+            # 先摘掉追加在末尾的那一行，再插到礼物开关之前。必须用 `takeRow()` 而不是
+            # `removeRow()`：后者会销毁行内控件，接着 insertRow 就会拿到已删除的 QLabel。
+            probe_row_index = _form_row_of(form, probe_row)
+            if probe_row_index < 0:
+                return False
+            taken = form.takeRow(probe_row_index)
+            target = gift_row - 1 if probe_row_index < gift_row else gift_row
+            form.insertRow(max(0, target), taken.labelItem.widget(), taken.fieldItem.widget())
+            return True
+    return False
+
+
 #: 分类页没有自带说明时的兜底提示，与面板同源同值。
 _GENERAL_HINT_TEXT = "保存后会写入本地配置文件，建议重启程序后完整生效"
 
@@ -432,7 +480,10 @@ class ConfigPageMixin:
                 section_fields_added = True
 
             if category_id == "live_stream" and str(dict_name) == "LIVE_STREAM":
-                self._append_live_probe_field(form, fields)
+                probe_row, probe_group = self._append_live_probe_field(form, fields)
+                # 「连接检查」要排在「启用礼物提醒」之前。追加时礼物开关可能还没进表单，
+                # 所以等这一轮字段都加完再按行号把它挪上去——此时两行的行号都可靠。
+                _move_row_before_gift_switch(form, probe_row, probe_group, fields)
                 section_fields_added = True
 
             if section_fields_added:
@@ -469,8 +520,11 @@ class ConfigPageMixin:
 
     # ── 直播页：房间卡片 / 点歌卡片 ───────────────────────────────────
 
-    def _append_live_probe_field(self, form: QFormLayout, fields: list[dict]) -> None:
-        """在「直播间设置」卡片里追加「测试直播间」按钮与结果行（不写配置）。"""
+    def _append_live_probe_field(self, form: QFormLayout, fields: list[dict]):
+        """在「直播间设置」卡片里追加「测试直播间」按钮与结果行（不写配置）。
+
+        返回 `(标签, 控件组)`，供调用方把这一行挪到别的位置。
+        """
         button = QPushButton("测试直播间")
         button.setObjectName("LiveStreamProbeButton")
         result_label = QLabel("")
@@ -486,6 +540,7 @@ class ConfigPageMixin:
         group.setMinimumHeight(scale_px(30, min_abs=26))
         probe_label_row = self._create_form_label("连接检查")
         form.addRow(probe_label_row, group)
+        added_row = (probe_label_row, group)
 
         description = (
             "按当前填写的直播间 ID 做一次连通性检查：解析房间号、获取弹幕 token 并试建连接。"
@@ -506,6 +561,7 @@ class ConfigPageMixin:
             "template": None,
             "label": result_label,
         })
+        return added_row
 
     def _wire_live_stream_sections(self, sections, fields: list[dict]) -> dict:
         """「启用弹幕点歌」关掉时整张「弹幕点歌」卡片收起；返回给 `_config_tab_meta` 的引用。"""

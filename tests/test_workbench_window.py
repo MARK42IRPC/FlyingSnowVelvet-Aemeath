@@ -2,6 +2,7 @@ import atexit
 import os
 import shutil
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -20,7 +21,7 @@ os.environ.setdefault(
 )
 os.environ.setdefault("QT_PLUGIN_PATH", os.path.join(_QT_ROOT, "Qt5", "plugins"))
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import QPropertyAnimation, Qt
 from PyQt5.QtTest import QTest
 from PyQt5.QtWidgets import QApplication, QWidget
 
@@ -278,11 +279,35 @@ class WorkbenchWindowTests(unittest.TestCase):
                 ],
             )
 
+    def _wait_for_nav_animation(self, window) -> None:
+        """等侧边栏展开/收起动画落位。
+
+        不用 `QTest.qWait()`：它会跑完整事件循环，离屏环境里会顺带触发自绘控件的
+        `grab()` 路径，实测直接段错误。这里只反复 `processEvents()` 直到动画结束，
+        再补一个固定时长兜底。
+        """
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            self.app.processEvents()
+            animations = [
+                getattr(button, "_nav_height_anim", None)
+                for buttons in getattr(window, "_group_buttons", {}).values()
+                for button in buttons
+            ]
+            if not any(
+                animation is not None and animation.state() == QPropertyAnimation.Running
+                for animation in animations
+            ):
+                return
+            time.sleep(0.01)
+
     def test_navigation_is_accordion_with_only_the_active_group_expanded(self):
         window = self._build_window()
         try:
             # 初始只展开当前页（总览）所在的「工作台」组。
             self.assertEqual(window._expanded_group, "工作台")
+            # 展开/收起是高度动画，等它落位再读可见性。
+            self._wait_for_nav_animation(window)
             visible = [
                 button.text()
                 for buttons in window._group_buttons.values()
@@ -299,6 +324,7 @@ class WorkbenchWindowTests(unittest.TestCase):
         try:
             window._set_current_page("audio_music")
             self.assertEqual(window._expanded_group, "声音与媒体")
+            self._wait_for_nav_animation(window)
             visible = [
                 button.text()
                 for buttons in window._group_buttons.values()
@@ -310,8 +336,11 @@ class WorkbenchWindowTests(unittest.TestCase):
             # 切到另一组的页面时，旧组收起、新组展开。
             window._set_current_page("ai")
             self.assertEqual(window._expanded_group, "智能交互")
-            self.assertFalse(window._page_buttons_by_id["audio_music"].isVisibleTo(window))
-            self.assertTrue(window._page_buttons_by_id["ai"].isVisibleTo(window))
+            self._wait_for_nav_animation(window)
+            # 用 isHidden() 而不是 isVisibleTo()：后者在父控件也隐藏时会返回 False，
+            # 无法区分「这一项被收起」和「整条导航都不可见」。
+            self.assertTrue(window._page_buttons_by_id["audio_music"].isHidden())
+            self.assertFalse(window._page_buttons_by_id["ai"].isHidden())
         finally:
             window.deleteLater()
             self.app.processEvents()
@@ -323,8 +352,11 @@ class WorkbenchWindowTests(unittest.TestCase):
             self.assertEqual(window._expanded_group, "智能交互")
 
             # 再点一次同一组即收起，此时所有子项都不可见。
+            # 收起是「高度动画到 0 再隐藏」，所以断言可见性前必须等动画结束。
             window._toggle_navigation_group("智能交互")
             self.assertEqual(window._expanded_group, "")
+            # 收起动画默认 180 ms；留足余量再断言可见性。
+            self._wait_for_nav_animation(window)
             self.assertTrue(all(button.isHidden() for button in window._page_buttons))
         finally:
             window.deleteLater()
@@ -351,6 +383,8 @@ class WorkbenchWindowTests(unittest.TestCase):
 
             window._search.clear()
             self.assertEqual(window._expanded_group, "工作台")
+            # 清空搜索会重新套用手风琴折叠，收起同样是异步高度动画。
+            self._wait_for_nav_animation(window)
             self.assertTrue(window._page_buttons_by_id["ai"].isHidden())
         finally:
             window.deleteLater()
