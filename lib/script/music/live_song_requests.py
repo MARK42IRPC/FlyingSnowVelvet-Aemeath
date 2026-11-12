@@ -57,7 +57,9 @@ _HEARTBEAT_SECONDS = 30.0
 _RECONNECT_DELAYS = (1.0, 2.0, 5.0, 10.0, 30.0)
 
 _DEFAULT_COMMAND_PREFIXES = ("点歌", "點歌")
-_COMMAND_SEPARATOR = r"[-－—–]"
+#: 分隔符允许连写：观众常手打「点歌——歌名」（两个全角破折号）或「点歌--歌名」。
+#: 只吃一个会把多余的横线留在歌名里，搜索出来是另一首歌。
+_COMMAND_SEPARATOR = r"[-－—–]+"
 _BRACKET_RE = re.compile(r"^(.*?)\s*[（(]\s*([^（）()]*?)\s*[）)]\s*$")
 
 
@@ -77,7 +79,12 @@ class SongRequest:
 
 @dataclass
 class LiveStatus:
-    """对外可见的直播点歌状态快照。"""
+    """对外可见的直播点歌状态快照。
+
+    ``enabled`` 是总开关（直播模式）的运行时状态；``song_enabled`` 是弹幕点歌自己的开关。
+    托盘与设置页的「直播模式」只认 ``enabled``——礼物提醒与点歌共用同一条连接，
+    总开关关掉时两者都不工作。
+    """
 
     enabled: bool = False
     connected: bool = False
@@ -85,6 +92,8 @@ class LiveStatus:
     last_error: str = ""
     queued_count: int = 0
     skipped_count: int = 0
+    song_enabled: bool = False
+    live_status: int = -1
 
 
 def parse_song_request(
@@ -142,8 +151,22 @@ class LiveProbeResult:
     message: str = ""
 
 
-def _fetch_real_room_id(raw_room_id) -> str:
-    """把短号/URL 解析成真实房间号；连不上或不是合法直播间都抛 RuntimeError。"""
+#: `room_init` 的已知错误码：房间号根本不存在时 B 站回 60004。
+_ROOM_NOT_FOUND_CODES = {60004}
+
+
+def _fetch_room_state(raw_room_id) -> tuple[str, int]:
+    """解析真实房间号并带上开播状态（``0`` 未开播 / ``1`` 直播中 / ``2`` 轮播）。
+
+    **必须看 ``code`` 与 ``live_status``**：``room_init`` 对不存在的房间返回
+    ``code=60004`` + ``data=[]``，旧实现直接沿用原房间号，于是「测试直播间」把
+    不存在的房间报成 ✓ 已连接。旧版 `Danmu/getConf` 对任何房间（含不存在、
+    未开播）都发得出 token，WebSocket 也会回 ``{"code":0}``，所以那两处拦不住，
+    校验只能在解析房间号这一步做完。
+
+    返回值里的 ``live_status`` 是 ``-1``（接口没给）或 B 站原始整数，供调用方决定
+    「未开播」要不要当作错误——探测与真正的连接对它的要求不同。
+    """
     configured = normalize_room_id(raw_room_id)
     if not configured:
         raise RuntimeError("请先填写直播间 ID（房间号或 live.bilibili.com 地址）")
@@ -155,11 +178,36 @@ def _fetch_real_room_id(raw_room_id) -> str:
     )
     response.raise_for_status()
     payload = response.json()
-    data = payload.get("data") if isinstance(payload, dict) else None
-    real_id = normalize_room_id((data or {}).get("room_id", configured))
+    if not isinstance(payload, dict):
+        raise RuntimeError("直播间解析失败：接口返回格式异常")
+    code = payload.get("code")
+    if code not in (0, None):
+        message = str(payload.get("msg") or payload.get("message") or "").strip()
+        if code in _ROOM_NOT_FOUND_CODES:
+            raise RuntimeError(f"直播间 {configured} 不存在")
+        detail = f"（code={code}{'，' + message if message else ''}）"
+        raise RuntimeError(f"直播间解析失败{detail}")
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        # code=0 却没有 data：只可能是房间号被服务端拒了，不能沿用原号蒙混过去。
+        raise RuntimeError(f"直播间 {configured} 不存在")
+    real_id = normalize_room_id(data.get("room_id", configured))
     if not real_id:
         raise RuntimeError("直播间 ID 无效")
-    return real_id
+    try:
+        live_status = int(data.get("live_status", -1))
+    except (TypeError, ValueError):
+        live_status = -1
+    return real_id, live_status
+
+
+def _live_status_hint(live_status: int) -> str:
+    """把 B 站的 ``live_status`` 翻成一句人话；未知值返回空串。"""
+    if live_status == 0:
+        return "该直播间当前未开播"
+    if live_status == 2:
+        return "该直播间正在轮播（非直播中）"
+    return ""
 
 
 def _fetch_danmaku_endpoint(room_id: str) -> tuple[str, list[dict]]:
@@ -257,9 +305,19 @@ def probe_live_room(raw_room_id) -> LiveProbeResult:
             ok=False, message="请先填写直播间 ID（房间号或 live.bilibili.com 地址）"
         )
     try:
-        room_id = _fetch_real_room_id(room_id)
+        room_id, live_status = _fetch_room_state(room_id)
     except Exception as exc:
         return LiveProbeResult(ok=False, room_id=room_id, message=f"直播间解析失败：{exc}")
+    # 未开播/轮播时弹幕服务器仍会正常发 token 并接受认证，但房间里不会有弹幕推送。
+    # 探测的用途是「这个房间能不能用」，所以这时必须报失败，否则用户看到 ✓ 之后
+    # 一直等不到弹幕，只会以为程序坏了。
+    offline_hint = _live_status_hint(live_status)
+    if offline_hint:
+        return LiveProbeResult(
+            ok=False,
+            room_id=room_id,
+            message=f"{offline_hint}，暂时收不到弹幕",
+        )
     try:
         token, hosts = _fetch_danmaku_endpoint(room_id)
     except Exception as exc:
@@ -291,7 +349,7 @@ def probe_live_room(raw_room_id) -> LiveProbeResult:
                 socket.close()
             except Exception:
                 pass
-    return LiveProbeResult(ok=True, room_id=room_id, message=f"已连接直播间 {room_id}")
+    return LiveProbeResult(ok=True, room_id=room_id, message=f"已连接直播间 {room_id}（直播中）")
 
 
 class LiveSongRequestService:
@@ -299,11 +357,13 @@ class LiveSongRequestService:
 
     def __init__(self) -> None:
         self._lock = threading.RLock()
-        self._status = LiveStatus()
+        # 构造时按当前配置落一次点歌开关，避免「配置里开着、服务里看着是关的」。
+        self._status = LiveStatus(song_enabled=bool(LIVE_STREAM.get("enabled", False)))
         self._worker_stop: threading.Event | None = None
         self._configured_room_id = ""
         self._thread: threading.Thread | None = None
-        self._search_lock = threading.Lock()
+        # 可重入：完成回调可能从提交线程同步进来，普通 Lock 会自死锁。
+        self._search_lock = threading.RLock()
         self._pending: set[Future] = set()
         self._active_socket = None
         self._recent: dict[str, float] = {}
@@ -329,10 +389,16 @@ class LiveSongRequestService:
                 last_error=self._status.last_error,
                 queued_count=self._status.queued_count,
                 skipped_count=self._status.skipped_count,
+                song_enabled=self._status.song_enabled,
+                live_status=self._status.live_status,
             )
 
     def set_enabled(self, enabled: bool, *, source: str = "manual") -> bool:
-        """打开/关闭直播点歌；返回状态是否真的发生变化。"""
+        """打开/关闭直播模式（弹幕连接总开关）；返回状态是否真的发生变化。
+
+        总开关只管「要不要连弹幕服务器」：礼物提醒与弹幕点歌共用这条连接，
+        各自还有自己的开关（`LIVE_STREAM.enabled` 管点歌）。托盘菜单用的是这个方法。
+        """
         target = bool(enabled)
         with self._lock:
             if target == self._status.enabled:
@@ -353,23 +419,43 @@ class LiveSongRequestService:
         logger.info("[LiveSong] enabled=%s source=%s", target, source)
         return True
 
+    def set_song_enabled(self, enabled: bool, *, source: str = "manual") -> bool:
+        """打开/关闭弹幕点歌；返回状态是否真的发生变化。
+
+        它只影响「收到弹幕要不要解析点歌」，不断开连接——连接由 `set_enabled` 负责。
+        点歌开关打开但总开关关着时，`_handle_payload` 不解析点歌，状态里也能看出来。
+        """
+        target = bool(enabled)
+        with self._lock:
+            if target == self._status.song_enabled:
+                return False
+            self._status.song_enabled = target
+        self._publish_status(source=source)
+        logger.info("[LiveSong] song_enabled=%s source=%s", target, source)
+        return True
+
     def reload_from_config(self) -> None:
         """配置保存后按新开关/房间号热重载。"""
         with self._lock:
-            enabled = bool(LIVE_STREAM.get("enabled", False))
+            live_enabled = bool(LIVE_STREAM.get("live_mode_enabled", False))
+            self._status.song_enabled = bool(LIVE_STREAM.get("enabled", False))
             room_id = normalize_room_id(LIVE_STREAM.get("room_id"))
             changed_room = room_id != self._configured_room_id
             self._configured_room_id = room_id
             if changed_room:
                 self._status.room_id = room_id
-        if not enabled:
-            self.set_enabled(False, source="config")
+        if not live_enabled:
+            # 总开关关掉时也要把点歌开关的状态同步给 UI，但先停掉连接。
+            changed = self.set_enabled(False, source="config")
+            if not changed:
+                self._publish_status(source="config")
             return
         if self._thread is None or changed_room:
             self.set_enabled(False, source="config")
             self.set_enabled(True, source="config")
         else:
             self.set_enabled(True, source="config")
+            self._publish_status(source="config")
 
     def _on_config_updated(self, event: Event) -> None:
         """只响应包含 ``LIVE_STREAM`` 的配置保存，避免无关保存触发重连。"""
@@ -396,6 +482,7 @@ class LiveSongRequestService:
         self._event_center.unsubscribe(EventType.CONFIG_UPDATED, self._on_config_updated)
         with self._lock:
             self._status.enabled = False
+            self._status.song_enabled = False
             self._status.connected = False
 
     # ------------------------------------------------------------------
@@ -522,10 +609,16 @@ class LiveSongRequestService:
         configured = normalize_room_id(LIVE_STREAM.get("room_id"))
         if not configured:
             raise RuntimeError("直播间 ID 未配置")
-        real_id = _fetch_real_room_id(configured)
+        real_id, live_status = _fetch_room_state(configured)
         with self._lock:
             if self._worker_stop is stop_event:
                 self._status.room_id = real_id
+                self._status.live_status = live_status
+        # 未开播/轮播不重连失败，但要连上并留着等开播（房间号不会变）。只在日志里留痕，
+        # 避免界面在“已连接”和“未开播”之间反复跳；`last_error` 留给真正的连接错误。
+        hint = _live_status_hint(live_status)
+        if hint:
+            logger.info("[LiveSong] %s（room=%s），仍会保持连接等待弹幕", hint, real_id)
         return real_id
 
     def _danmu_info(self, room_id: str) -> tuple[str, list[dict]]:
@@ -551,6 +644,11 @@ class LiveSongRequestService:
         # 每收到一条弹幕都留一行：这是判断「链路到底通不通」最直接的证据。
         # 直播间没人发言时一条都不会有，那和「读不到弹幕」在日志上一眼可分。
         logger.info("[LiveSong] 收到弹幕 %s: %s", message.username or "?", message.text)
+        # 礼物提醒已经在上方处理过；点歌有自己的开关，关掉时只记日志不解析命令。
+        with self._lock:
+            song_enabled = bool(self._status.song_enabled)
+        if not song_enabled:
+            return
         request = parse_song_request(
             message.text,
             prefix=str(LIVE_STREAM.get("command_prefix", "点歌") or "点歌"),
@@ -580,7 +678,12 @@ class LiveSongRequestService:
                 logger.warning("[LiveSong] 提交点歌任务失败: %s", exc)
                 return
             self._pending.add(future)
-            future.add_done_callback(self._discard_pending)
+            # 注册必须在**释放 `_search_lock` 之后**：`Future.add_done_callback` 对已完成
+            # 的任务会当场同步执行回调，而 `_discard_pending` 要拿同一把锁（它是普通
+            # `Lock`，不可重入）。搜索很快（或线程池空闲）时就会在持锁状态下自死锁，
+            # 而这里跑在弹幕接收线程上——卡住后不再 recv、也不再发心跳，表现是
+            # 「连接看着正常，却一条弹幕都没有」。见 `tests/test_live_song_requests.py`。
+        future.add_done_callback(self._discard_pending)
 
     def _discard_pending(self, future: Future) -> None:
         with self._search_lock:
@@ -643,6 +746,8 @@ class LiveSongRequestService:
             "last_error": snapshot.last_error,
             "queued_count": snapshot.queued_count,
             "skipped_count": snapshot.skipped_count,
+            "song_enabled": snapshot.song_enabled,
+            "live_status": snapshot.live_status,
             "source": source,
         }))
 

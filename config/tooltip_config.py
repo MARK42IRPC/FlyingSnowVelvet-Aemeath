@@ -59,7 +59,7 @@ TOOLTIPS: dict[str, str] = {
     'tray_office':              '打开办公页面：新建办公任务、查看对话、推理与工具记录',
     'tray_game_mode':           '切换游戏模式：暂停粒子/特效/物理/层级刷新，并将桌宠帧率降至 30fps',
     'tray_clickthrough':        '切换鼠标穿透模式',
-    'tray_live_stream':         '直播模式：观众发送 点歌-歌名（歌手） 加入播放队列',
+    'tray_live_stream':         '直播模式：连接直播间弹幕；弹幕点歌与礼物提醒共用这条连接',
     'tray_restore_clickthrough':'关闭鼠标穿透模式，恢复正常交互',
     'tray_follow_author':       '打开作者 B 站主页',
     'tray_quit':                '退出程序',

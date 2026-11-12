@@ -43,8 +43,8 @@
 - lib/core/render/backends/qt/widgets/tray_icon.py -> self._on_live_stream_status_change [has unsubscribe]
 - lib/script/main.py -> self._on_live_song_status_change
   发布方: lib/script/music/live_song_requests.py
-  载荷: `enabled`、`connected`、`room_id`、`last_error`、`queued_count`、`skipped_count`、`source`
-  直播点歌开关、房间号与连接状态的唯一运行时事实源；托盘与主程序只读该事件同步 UI。
+  载荷: `enabled`（直播模式总开关）、`song_enabled`（弹幕点歌子开关）、`connected`、`room_id`、`last_error`、`queued_count`、`skipped_count`、`live_status`、`source`
+  直播总开关、点歌子开关、房间号与连接状态的唯一运行时事实源；托盘与主程序只读该事件同步 UI。
 
 [APP_QUIT]
 - lib/core/event/app_handler.py -> self._on_app_quit

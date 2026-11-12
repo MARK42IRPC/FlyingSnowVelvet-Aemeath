@@ -17,6 +17,10 @@ SOUND = {
     'game_object_volume': 0.9,
 }
 LIVE_STREAM = {
+    # 总开关：是否连接直播间弹幕服务器（托盘「直播模式」与设置页是同一份运行时状态）。
+    # 关掉时弹幕点歌与礼物提醒都不工作；打开后两者各自的 `enabled` 才生效。
+    'live_mode_enabled': False,
+    # 弹幕点歌开关，从属于 `live_mode_enabled`。
     'enabled': False,
     'room_id': '',
     'command_prefix': '点歌',

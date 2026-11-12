@@ -90,7 +90,7 @@ class ApplicationTrayRoutingTests(unittest.TestCase):
         ):
             self.state._toggle_live_stream(False)
 
-        self.assertEqual(saved, [{"LIVE_STREAM": {"enabled": False}}])
+        self.assertEqual(saved, [{"LIVE_STREAM": {"live_mode_enabled": False}}])
 
     def test_tray_live_stream_toggle_without_change_does_not_write(self):
         """状态没变就不写盘，避免每次点一下都改一次用户配置。"""
@@ -104,7 +104,7 @@ class ApplicationTrayRoutingTests(unittest.TestCase):
         save.assert_not_called()
 
     def test_persisting_the_live_stream_flag_keeps_other_settings(self):
-        """只写 enabled，不能把用户填的房间号一起覆盖回默认值。"""
+        """只写总开关，不能把用户填的房间号或点歌开关一起覆盖回默认值。"""
         saved = []
         with patch(
             "config.general_user_settings.save_general_values",
@@ -112,7 +112,7 @@ class ApplicationTrayRoutingTests(unittest.TestCase):
         ):
             self.state._persist_live_stream_enabled(False)
 
-        self.assertEqual(saved, [{"LIVE_STREAM": {"enabled": False}}])
+        self.assertEqual(saved, [{"LIVE_STREAM": {"live_mode_enabled": False}}])
 
 
 if __name__ == "__main__":

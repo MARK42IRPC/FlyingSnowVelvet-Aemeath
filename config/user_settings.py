@@ -229,6 +229,24 @@ def save_section(
             return deepcopy(sparse)
 
 
+def run_migration_once(migration_id: str, apply, *, path: Path | None = None) -> bool:
+    """在文件锁内执行一次结构性迁移并写下标记。
+
+    ``migrate_section_once`` 只能整段导入旧值；这里给需要就地改写某个 override
+    字段的迁移用：``apply(document)`` 直接修改文档，写完再落盘。
+    """
+    settings_path = path or get_user_settings_path()
+    with _LOCK:
+        with _file_lock(settings_path):
+            document = _read_document(settings_path)
+            if document["migrations"].get(migration_id):
+                return False
+            apply(document)
+            document["migrations"][migration_id] = True
+            _write_document(settings_path, document)
+            return True
+
+
 def migrate_section_once(
     migration_id: str,
     section: str,

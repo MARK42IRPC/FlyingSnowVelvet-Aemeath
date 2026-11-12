@@ -101,6 +101,65 @@ class GeneralUserSettingsSparseTests(unittest.TestCase):
         finally:
             config_module.LIVE_STREAM["room_id"] = original_room
 
+    def test_live_mode_switch_migrates_from_the_old_song_switch(self):
+        """老配置只有 `enabled`，升级后总开关要继承它，否则直播会静默失效。
+
+        新增 `live_mode_enabled` 默认 False；如果不管旧配置，升级后弹幕连接不再建立，
+        用户看到的是「更新之后直播点歌突然不工作了」。
+        """
+        import config.general_user_settings as gus
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            settings_path = Path(tmpdir) / "settings.json"
+            settings_path.write_text(json.dumps({
+                "migrations": {},
+                "overrides": {"general": {"LIVE_STREAM": {"enabled": True, "room_id": "23466627"}}},
+                "schema_version": 1,
+            }), encoding="utf-8")
+            with patch.object(user_settings, "get_user_settings_path", return_value=settings_path):
+                gus._migrate_live_mode_switch()
+                payload = json.loads(settings_path.read_text(encoding="utf-8"))
+                live_values = payload["overrides"]["general"]["LIVE_STREAM"]
+                self.assertTrue(live_values["live_mode_enabled"])
+                self.assertEqual(live_values["room_id"], "23466627")
+                self.assertTrue(payload["migrations"]["live_mode_switch_v1"])
+
+                # 迁移只做一次：之后用户手动关掉总开关，重启不会又被改回来。
+                live_values["live_mode_enabled"] = False
+                user_settings.save_section(
+                    "general",
+                    payload["overrides"]["general"],
+                    gus.get_general_setting_defaults(),
+                    path=settings_path,
+                )
+                gus._migrate_live_mode_switch()
+                # 稀疏存储会把「等于默认值」的键省掉，所以按生效值核对而不是原始 JSON。
+                effective = user_settings.load_section(
+                    "general", gus.get_general_setting_defaults()
+                )
+                self.assertFalse(effective["LIVE_STREAM"]["live_mode_enabled"])
+
+    def test_live_mode_migration_respects_an_explicit_switch(self):
+        """用户已经在面板里设过总开关时，迁移不能覆盖他的选择。"""
+        import config.general_user_settings as gus
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            settings_path = Path(tmpdir) / "settings.json"
+            settings_path.write_text(json.dumps({
+                "migrations": {},
+                "overrides": {"general": {"LIVE_STREAM": {
+                    "enabled": True,
+                    "live_mode_enabled": False,
+                }}},
+                "schema_version": 1,
+            }), encoding="utf-8")
+            with patch.object(user_settings, "get_user_settings_path", return_value=settings_path):
+                gus._migrate_live_mode_switch()
+                payload = json.loads(settings_path.read_text(encoding="utf-8"))
+                self.assertFalse(
+                    payload["overrides"]["general"]["LIVE_STREAM"]["live_mode_enabled"]
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

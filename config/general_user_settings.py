@@ -7,6 +7,7 @@ from copy import deepcopy
 from pathlib import Path
 
 import config.config as config_module
+import config.user_settings as user_settings
 from config.shared_storage_paths import get_shared_config_path
 from config.user_settings import get_section_overrides, load_section, migrate_section_once, save_section
 
@@ -167,6 +168,27 @@ def _migrate_previous_movement_defaults() -> None:
     save_section("general", effective, _GENERAL_DEFAULTS)
 
 
+def _migrate_live_mode_switch() -> None:
+    """把旧的「启用弹幕点歌」升级成新的「直播模式」总开关。
+
+    `LIVE_STREAM.live_mode_enabled` 是后加的总开关，默认 False。老用户配置里只有
+    `enabled=True`（弹幕点歌），如果不管它，升级后总开关默认关闭、弹幕连接不再建立，
+    表现就是「更新之后直播点歌突然不工作了」。这里一次性把旧开关的状态复制到总开关，
+    之后两者各自独立；已经在配置里写过 `live_mode_enabled` 的用户不动。
+    """
+
+    def apply(document: dict) -> None:
+        overrides = document["overrides"].get("general")
+        if not isinstance(overrides, dict):
+            return
+        live_values = overrides.get("LIVE_STREAM")
+        if not isinstance(live_values, dict) or "live_mode_enabled" in live_values:
+            return
+        live_values["live_mode_enabled"] = bool(live_values.get("enabled", False))
+
+    user_settings.run_migration_once("live_mode_switch_v1", apply)
+
+
 def initialize_general_user_settings() -> None:
     migrate_section_once(
         "legacy_general_python_v1",
@@ -175,4 +197,5 @@ def initialize_general_user_settings() -> None:
         _GENERAL_DEFAULTS,
     )
     _migrate_previous_movement_defaults()
+    _migrate_live_mode_switch()
     apply_general_values(load_section("general", _GENERAL_DEFAULTS))

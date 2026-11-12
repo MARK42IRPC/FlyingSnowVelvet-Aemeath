@@ -466,6 +466,7 @@ class ApplicationState:
             self._submit_tray_action(command, open_author_page)
 
     def _toggle_live_stream(self, target: bool) -> None:
+        """托盘「直播模式」：切换弹幕连接总开关，并同步写盘。"""
         service = get_live_song_request_service()
         changed = service.set_enabled(target, source="tray_menu")
         if changed:
@@ -478,16 +479,17 @@ class ApplicationState:
 
     @staticmethod
     def _persist_live_stream_enabled(enabled: bool) -> None:
-        """把托盘切换的直播开关写回用户配置。
+        """把托盘切换的直播总开关写回用户配置。
 
         托盘只改运行时状态时，关掉直播在下次启动会被 `reload_from_config()` 按落盘的
-        `enabled=True` 重新打开——用户看到的就是「关了也还是开着」。这里只写 `enabled`，
-        其余直播参数（房间号、点歌前缀等）沿用当前值，不覆盖用户在设置页的改动。
+        `live_mode_enabled=True` 重新打开——用户看到的就是「关了也还是开着」。这里只写
+        总开关，其余直播参数（房间号、点歌前缀等）沿用当前值，不覆盖用户在设置页的改动；
+        `LIVE_STREAM.enabled`（弹幕点歌）是独立开关，托盘不动它。
         """
         try:
             from config.general_user_settings import save_general_values
 
-            save_general_values({"LIVE_STREAM": {"enabled": bool(enabled)}})
+            save_general_values({"LIVE_STREAM": {"live_mode_enabled": bool(enabled)}})
         except Exception as exc:
             logger.warning("保存直播开关失败: %s", exc)
 
