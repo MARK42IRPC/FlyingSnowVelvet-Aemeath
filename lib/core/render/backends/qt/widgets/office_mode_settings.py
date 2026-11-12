@@ -46,6 +46,7 @@ from lib.core.services.api_endpoints import (  # noqa: F401
 )
 from lib.core.compute_hub import get_compute_hub
 from lib.core.render.backends.qt.widgets import tier_d_seams
+from lib.core.render.backends.qt.widgets.section_collapse import set_section_visible
 from lib.core.render.backends.qt.widgets.workbench_settings_layout import create_settings_form
 from lib.core.render.layers import get_layer_manager
 from lib.core.logger import get_logger
@@ -407,7 +408,7 @@ class OfficeModeSettings(QObject):
         """
         group = getattr(self, "independent_api_group", None)
         if group is not None:
-            group.setVisible(bool(self.use_independent_api.isChecked()))
+            set_section_visible(group, bool(self.use_independent_api.isChecked()), host=self)
 
     def ensure_local_dsh_item(self, *, saved_backend: str | None = None) -> None:
         """按启动期探测结果决定是否列出「本机 DeepSeek Harness」。

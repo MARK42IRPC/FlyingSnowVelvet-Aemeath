@@ -45,6 +45,7 @@ from lib.core.logger import get_logger
 from lib.core.render.backends.qt.widgets import tier_d_seams
 from lib.core.render.backends.qt.widgets.ai_settings_page_sections import AISettingsPageSectionsMixin
 from lib.core.render.backends.qt.widgets.ai_settings_tabs import attach_ai_settings_tabs
+from lib.core.render.backends.qt.widgets.section_collapse import set_section_visible
 from lib.core.render.backends.qt.widgets.office_mode_settings import (
     describe_form_row as _describe_form_row_helper,
     fetch_api_models as _fetch_api_models,
@@ -534,10 +535,11 @@ class AISettingsPageMixin(AISettingsPageSectionsMixin):
 
     def _update_reply_mode_sections(self, *_args) -> None:
         mode = str(self._force_mode.currentData() or "5").strip()
-        self._quick_welfare_section.setVisible(mode == "5")
-        self._welfare_section.setVisible(mode == "1")
-        self._manual_api_section.setVisible(mode == "0")
-        self._ollama_section.setVisible(mode == "2")
+        # 卡片出现/消失走滑入滑出：模式一换就是整组卡片互换，硬切会让下方内容瞬间跳位。
+        set_section_visible(self._quick_welfare_section, mode == "5", host=self)
+        set_section_visible(self._welfare_section, mode == "1", host=self)
+        set_section_visible(self._manual_api_section, mode == "0", host=self)
+        set_section_visible(self._ollama_section, mode == "2", host=self)
         self._update_auto_companion_interval_row()
 
     def _welfare_interval_locked(self) -> bool:
@@ -577,7 +579,7 @@ class AISettingsPageMixin(AISettingsPageSectionsMixin):
         对外表现不变：开关只由语音包可用性决定。
         """
         voice_available = bool(self._gsv_launcher_available)
-        self._voice_section.setVisible(voice_available)
+        set_section_visible(self._voice_section, voice_available, host=self)
         cuda_checkbox = getattr(self, "_gsv_nvidia_cuda_acceleration", None)
         if cuda_checkbox is not None:
             cuda_checkbox.setVisible(voice_available)
@@ -587,7 +589,7 @@ class AISettingsPageMixin(AISettingsPageSectionsMixin):
         toggle = getattr(self, "_gsv_advanced_toggle", None)
         if group is None or toggle is None:
             return
-        group.setVisible(bool(toggle.isChecked()))
+        set_section_visible(group, bool(toggle.isChecked()), host=self)
 
     def _ollama_model_placeholder_message(self) -> str:
         error = get_model_list_error()

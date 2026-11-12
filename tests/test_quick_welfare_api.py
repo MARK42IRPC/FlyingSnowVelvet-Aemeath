@@ -140,6 +140,7 @@ class _StubQuickWelfare(QuickWelfareMixin):
     def __init__(self, outcomes, vision_models=()):
         self._outcomes = outcomes
         self.calls: list[tuple[str, bool]] = []
+        self.output_budgets: list[int | None] = []
         self._router = qw.QuickWelfareRouter()
         self._router._models = tuple(f"m{index}:free" for index in range(len(outcomes)))
         self._router._vision_models = frozenset(vision_models)
@@ -152,8 +153,11 @@ class _StubQuickWelfare(QuickWelfareMixin):
     def _openai_chat_api(self, message, persona, on_chunk_emit=None, images=None,
                          history=None, request_id=None, config_override=None,
                          allow_tools=True, on_tool_call=None,
-                         retry_attempts=None, timeout_secs=None):
+                         retry_attempts=None, timeout_secs=None,
+                         max_output_tokens_override=None):
         model = config_override["model"]
+        # 免费池必须显式下发高输出预算：1024 会被思考吃光、正文为空。
+        self.output_budgets.append(max_output_tokens_override)
         self.calls.append((model, images is not None))
         outcome = self._outcomes[int(model[1])]
         self._last_stream_reasoning_only = outcome == "reasoning-only"
@@ -195,6 +199,23 @@ class QuickWelfareTurnTests(unittest.TestCase):
 
         self.assertEqual(self._run(stub), "正文")
         self.assertEqual([model for model, _images in stub.calls], ["m0:free", "m1:free"])
+
+    def test_every_turn_requests_the_large_free_tier_output_budget(self):
+        """免费池不按 token 计费，必须显式要一份远大于付费默认的输出预算。
+
+        默认的 1024 会被思考型模型的 reasoning 整个吃光：实测 Nemotron VL 在
+        `finish_reason=length` 下 content 长度为 0，表现就是「只看到思考、没有正文」。
+        """
+        stub = _StubQuickWelfare(["ok"])
+
+        self._run(stub)
+
+        self.assertTrue(stub.output_budgets, "必须把预算传下去")
+        self.assertEqual(
+            set(stub.output_budgets),
+            {qw.QUICK_WELFARE_MAX_OUTPUT_TOKENS},
+        )
+        self.assertGreater(qw.QUICK_WELFARE_MAX_OUTPUT_TOKENS, 4096)
 
     def test_turn_gives_up_after_the_configured_model_budget(self):
         stub = _StubQuickWelfare(["fail", "fail", "fail", "ok"])

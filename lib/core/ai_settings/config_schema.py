@@ -523,12 +523,14 @@ GENERAL_SECTION_KEY_ROUTES: dict[str, tuple[str, tuple[str, ...]]] = {
 
 
 GENERAL_MIXED_SECTION_FIELDS: dict[str, list[tuple[str, str]]] = {
-    #: 「直播间设置」卡片同时放直播总开关、房间号，以及礼物提醒总开关——
-    #: 礼物提醒是直播的从属功能，开关与直播开关放在同一处更符合直觉。
+    #: 「直播间设置」卡片的行序：房间号 → 礼物提醒总开关 → 直播点歌总开关。
+    #: 礼物提醒排在被它约束的「启用弹幕点歌」之前——先决定要不要提醒什么，再决定
+    #: 要不要点歌，两个开关的从属关系才看得出来（两者共用同一条弹幕连接）。
+    #: 「连接检查」按钮行由页面在礼物开关之后插入，见 `_move_row_before_gift_switch`。
     "LIVE_STREAM": [
-        ("LIVE_STREAM", "enabled"),
         ("LIVE_STREAM", "room_id"),
         ("GIFT_ALERT", "enabled"),
+        ("LIVE_STREAM", "enabled"),
     ],
     "AUDIO_VOLUMES": [
         ("SOUND", "master_volume"),

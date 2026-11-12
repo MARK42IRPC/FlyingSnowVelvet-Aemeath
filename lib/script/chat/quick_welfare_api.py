@@ -306,10 +306,19 @@ def fetch_free_models(timeout: float = QUICK_WELFARE_LISTING_TIMEOUT_SECS) -> tu
     return _fetch_free_models_impl(timeout)
 
 
+#: 免费池的输出预算。这条车道按请求数而非 token 计费，因此可以给得远比付费接口宽松：
+#: 实测 1024 的纯文本预算会被思考型模型的 reasoning 整个吃光（Nemotron VL 在
+#: `finish_reason=length` 下 content 长度为 0，表现就是「只看到思考、没有正文」）；
+#: 抬到 16384 后同一问题能完整答完（content 4127、finish=stop）。
+#: 取 16384 而不是无上限：个别网关对超大 max_tokens 直接 400。
+QUICK_WELFARE_MAX_OUTPUT_TOKENS = 16384
+
+
 def quick_welfare_config(model: str) -> dict:
     """构造单个免费池模型的 OpenAI 兼容运行时配置。
 
     `api_key` 固定为空：这条车道的网关见到非空 Bearer 会回 401（见模块说明）。
+    `max_output_tokens` 随配置一起带下去，由 API 客户端在解析预算时优先采用。
     """
     return {
         "api_type": "openai_compatible",
@@ -320,6 +329,7 @@ def quick_welfare_config(model: str) -> dict:
         "force_mode": "5",
         "strict_mode": True,
         "error": "",
+        "max_output_tokens": QUICK_WELFARE_MAX_OUTPUT_TOKENS,
     }
 
 

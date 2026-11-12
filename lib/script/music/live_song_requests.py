@@ -454,6 +454,7 @@ class LiveSongRequestService:
 
     def _connect_once(self, stop_event: threading.Event) -> None:
         room_id = self._resolved_room_id(stop_event)
+        logger.info("[LiveSong] 正在连接直播间 %s", room_id)
         token, hosts = self._danmu_info(room_id)
         url = _danmaku_url(hosts)
         import websocket  # 延迟导入：扩展依赖缺失时不影响主程序启动
@@ -481,12 +482,16 @@ class LiveSongRequestService:
                 if self._worker_stop is stop_event:
                     self._status.connected = True
                     self._status.last_error = ""
+            # 连接成功必须留痕：此前成功路径完全不写日志，用户看到「没有任何输出」
+            # 就以为弹幕没在读，实际上只是直播间暂时没人发言。
+            logger.info("[LiveSong] 弹幕连接已建立 room=%s host=%s", room_id, url)
             self._publish_status(source="worker")
             last_heartbeat = time.monotonic()
             while not stop_event.is_set():
                 if time.monotonic() - last_heartbeat >= _HEARTBEAT_SECONDS:
                     ws.send_binary(build_heartbeat_packet())
                     last_heartbeat = time.monotonic()
+                    logger.debug("[LiveSong] 已发送心跳")
                 try:
                     raw = ws.recv()
                 except Exception as exc:
@@ -543,6 +548,9 @@ class LiveSongRequestService:
         message = parse_danmaku(payload)
         if message is None:
             return
+        # 每收到一条弹幕都留一行：这是判断「链路到底通不通」最直接的证据。
+        # 直播间没人发言时一条都不会有，那和「读不到弹幕」在日志上一眼可分。
+        logger.info("[LiveSong] 收到弹幕 %s: %s", message.username or "?", message.text)
         request = parse_song_request(
             message.text,
             prefix=str(LIVE_STREAM.get("command_prefix", "点歌") or "点歌"),

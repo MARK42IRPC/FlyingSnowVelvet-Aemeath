@@ -25,13 +25,26 @@ _MAX_OUTPUT_TOKENS_TEXT = 1024
 _MAX_OUTPUT_TOKENS_VISION = 2048
 
 
-def _resolve_max_output_tokens(has_images: bool, image_count: int = 0) -> int:
+def _resolve_max_output_tokens(
+    has_images: bool,
+    image_count: int = 0,
+    override: int | None = None,
+) -> int:
     """本次请求下发多少输出预算。
 
-    可被配置 `OLLAMA['api_max_output_tokens']` 覆盖（0 表示不限制、沿用上游默认）。
+    优先级：``override``（调用方按车道指定）> 配置 `OLLAMA['api_max_output_tokens']`
+    > 内置默认。``0`` 表示不限制、沿用上游默认。
+
     默认值刻意给足：思考型模型（Nemotron VL、Dots 系）带图时 reasoning 能吃掉
     上千 token，预算太小就只剩思考、没有正文。多图时按张数递增，上限 4096。
+
+    ``override`` 存在的原因：免费池（快捷福利）里这类模型的思考尾巴更长，1024 的
+    纯文本预算经常被 reasoning 整个吃光、正文长度为 0（实测 Nemotron VL 在
+    ``finish_reason=length`` 下 content 为空）。那条车道不按 token 计费，可以给得
+    远比付费接口宽松，因此由它自己指定，而不是把全局默认一起抬高。
     """
+    if override is not None and int(override) > 0:
+        return int(override)
     try:
         from config.ollama_config import OLLAMA
 
@@ -497,7 +510,8 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
                          allow_tools: bool = True,
                          on_tool_call=None,
                          retry_attempts: int | None = None,
-                         timeout_secs: float | None = None) -> str:
+                         timeout_secs: float | None = None,
+                         max_output_tokens_override: int | None = None) -> str:
         """
         POST /chat/completions（OpenAI 兼容 API 格式）。
 
@@ -505,6 +519,8 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
         images: 可选的图片字节数组列表（多模态支持，内部会转换为 base64）
         retry_attempts: 覆盖单端点的重试次数；None 表示沿用 `API_TOTAL_ATTEMPTS`。
         timeout_secs: 覆盖连接/读取超时秒数；None 表示沿用 `API_TIMEOUT_SECS`。
+        max_output_tokens: 覆盖输出预算；None 表示按图数/配置解析。免费池车道用它把
+            预算抬到远超付费默认，避免思考把预算吃光后正文为空。
 
         覆盖项只给「一次请求要连试多个目标」的调用方用（快捷福利 API 的模型轮询）：
         它必须能在有限的总预算里换下一个小目标，而不是在同一个目标上把重试耗光。
@@ -571,8 +587,11 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
         #: 输出预算。思考型模型（Nemotron / Dots 等）在带图时会把上游默认预算全部
         #: 花在 reasoning 上，正文一个 token 都拿不到；显式给一个够用的预算，
         #: 让正文至少有地方写。带图请求再抬高一档，因为图片本身也吃输入预算。
-        max_output_tokens = _resolve_max_output_tokens(bool(payload_images), len(payload_images or ()))
-
+        max_output_tokens = _resolve_max_output_tokens(
+            bool(payload_images),
+            len(payload_images or ()),
+            override=max_output_tokens_override,
+        )
         endpoint_candidates = self._openai_endpoint_candidates(base_url)
         prepared_image_blocks = images_to_openai_content(payload_images) if payload_images else None
         payload_candidates = self._build_openai_payload_variants(

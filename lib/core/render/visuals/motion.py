@@ -26,6 +26,8 @@ EASING_SECTION_ENTER = "out_cubic"
 PAGE_TRANSITION_RANGE = (150, 320)
 GROUP_COLLAPSE_RANGE = (140, 260)
 SECTION_ENTER_RANGE = (120, 240)
+#: 页面内卡片联动（出现/消失）的区间；比整页切换更短，避免挡手。
+SECTION_REVEAL_RANGE = (160, 280)
 
 #: 分区错峰：相邻卡片之间额外等待的毫秒数，以及最多参与错峰的分区数。
 SECTION_STAGGER_MS = 32
@@ -33,6 +35,9 @@ SECTION_STAGGER_LIMIT = 8
 
 #: 抽屉展开时组内容的最终透明度；从它淡到 1.0，避免整块内容「啪」地出现。
 GROUP_CONTENT_MIN_OPACITY = 0.35
+
+#: 卡片滑入/滑出时内容的最小透明度，与 `GROUP_CONTENT_MIN_OPACITY` 同一档。
+SECTION_CONTENT_MIN_OPACITY = 0.35
 
 
 def _clamp(value: int, bounds: tuple[int, int]) -> int:
@@ -66,6 +71,15 @@ def section_enter_ms(order: int, fade_ms: int | None = None) -> int:
     return base + max(0, int(order)) * SECTION_STAGGER_MS
 
 
+def section_reveal_ms(fade_ms: int | None = None) -> int:
+    """页面内卡片滑入/滑出的时长。
+
+    开关联动的频率比切页高得多，用切页那一档会显得拖沓；这里按共享时长的 85%
+    取档并夹在 `SECTION_REVEAL_RANGE` 内。
+    """
+    return _clamp(int(round(_fade_ms(fade_ms) * 0.85)), SECTION_REVEAL_RANGE)
+
+
 __all__ = [
     "EASING_GROUP_COLLAPSE",
     "EASING_PAGE_TRANSITION",
@@ -73,10 +87,13 @@ __all__ = [
     "GROUP_COLLAPSE_RANGE",
     "GROUP_CONTENT_MIN_OPACITY",
     "PAGE_TRANSITION_RANGE",
+    "SECTION_CONTENT_MIN_OPACITY",
     "SECTION_ENTER_RANGE",
+    "SECTION_REVEAL_RANGE",
     "SECTION_STAGGER_LIMIT",
     "SECTION_STAGGER_MS",
     "group_collapse_ms",
     "page_transition_ms",
     "section_enter_ms",
+    "section_reveal_ms",
 ]

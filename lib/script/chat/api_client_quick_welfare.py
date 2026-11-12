@@ -23,6 +23,7 @@ from lib.core.logger import get_logger
 from ._multimodal import is_image_input_error
 from .quick_welfare_api import (
     QUICK_WELFARE_MAX_MODELS_PER_TURN,
+    QUICK_WELFARE_MAX_OUTPUT_TOKENS,
     get_quick_welfare_router,
     quick_welfare_config,
 )
@@ -84,6 +85,7 @@ class QuickWelfareMixin:
                     on_tool_call=on_tool_call,
                     retry_attempts=QUICK_WELFARE_TURN_RETRY_ATTEMPTS,
                     timeout_secs=QUICK_WELFARE_TURN_TIMEOUT_SECS,
+                    max_output_tokens_override=QUICK_WELFARE_MAX_OUTPUT_TOKENS,
                 )
             except requests.HTTPError as exc:
                 error_text = self._extract_error(exc) if hasattr(self, "_extract_error") else str(exc)
@@ -121,6 +123,7 @@ class QuickWelfareMixin:
                             on_tool_call=on_tool_call,
                             retry_attempts=QUICK_WELFARE_TURN_RETRY_ATTEMPTS,
                             timeout_secs=QUICK_WELFARE_TURN_TIMEOUT_SECS,
+                            max_output_tokens_override=QUICK_WELFARE_MAX_OUTPUT_TOKENS,
                         )
                     except Exception as retry_exc:
                         last_error = retry_exc

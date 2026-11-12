@@ -47,6 +47,7 @@ from lib.core.render.backends.qt.widgets.ai_settings_editors import (
     _AnimationDurationSliderField,
     _DecimalSliderField,
 )
+from lib.core.render.backends.qt.widgets.section_collapse import set_section_visible
 from lib.core.render.backends.qt.widgets.workbench_settings_layout import (
     SettingsPageScaffold,
     SmoothScrollArea,
@@ -597,13 +598,14 @@ class ConfigPageMixin:
                 break
 
         def sync(checked: bool) -> None:
+            # 「弹幕点歌」整张卡片跟着总开关滑入/滑出，下方「礼物提醒」卡片随之平滑重排。
             if song_section is not None:
-                song_section.setVisible(bool(checked))
+                set_section_visible(song_section, bool(checked), host=self)
 
         def sync_gift(checked: bool) -> None:
             # 礼物提醒卡片只在启用后才展开：没开的时候那几个参数没有意义。
             if gift_section is not None:
-                gift_section.setVisible(bool(checked))
+                set_section_visible(gift_section, bool(checked), host=self)
 
         if enabled_editor is not None and song_section is not None:
             enabled_editor.toggled.connect(sync)
