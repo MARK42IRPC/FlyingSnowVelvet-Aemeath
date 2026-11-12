@@ -323,6 +323,105 @@
   间隔与「智力提升」行为不变。
 
 ### Fixed
+### Changed
+- 快捷福利 API 改为**按智力排序**轮转，优先使用高智力模型。新增
+  `QUICK_WELFARE_INTELLIGENCE_ORDER` 作为唯一事实源，依据三层：本地实测 12 道客观题
+  （算术 / 时间推算 / 逻辑 / JSON 结构 / 计数 / 鸡兔同笼 / 反事实 / 否定语义 / 工具选择 /
+  格式遵从 / 代码 / 简述）、上游 `kilo-auto/free` 的 `autoRouting.models` 白名单、参数量与
+  上下文。实测（关思考档）：`nemotron-3-ultra-550b` 与 `nemotron-3.5-super-vl` 各 10/12，
+  `kilo-auto` 9/12、`ernie-5.5-flash` 7/12、`glyph-cluster` 5/12、`lfm-3-1.7b` 2/12。
+  线上 `/models` 拉到后由 `sort_by_intelligence()` 重排（只排序不增删，未实测的新模型
+  垫底）。同时修掉两处会把弱模型顶到首位的旧行为：轮转起点不再对全表轮转（现在只在前
+  三名内移动），`report_success()` 不再把成功模型设为起点。`kilo-auto/free` 与
+  `openrouter/free` 明确排在最后——前者让上游挑模型、延迟不受控，后者
+  `max_completion_tokens` 上报为 0 且强制思考关不掉。
+- 免费池配额耗尽不再伪装成「三个模型都失败」。实测该池有 **IP 级**配额
+  （`429 PROMOTION_MODEL_LIMIT_REACHED`），一出现则池内所有模型同时不可用，换模型毫无
+  意义却会让界面等满三个超时才报错。新增 `is_quota_exhausted()`，命中即整轮结束并如实
+  上报「免费额度已用完」。
+- 沙发的碰撞粒子改成与音响、闹钟一致的白粉色方块粒子。此前沙发单独用的是通用
+  `collision` 粒子（另一套配色），同一台桌面上两种弹跳反馈肉眼可辨。粒子 id 收敛为
+  `lib/core/services/world_object_physics.py` 的 `WORLD_OBJECT_COLLISION_PARTICLE`，
+  Qt 的沙发 / 音响 / 闹钟与 DX 后端四个落点都从这里取，不再各自硬编码；新增守卫断言
+  钉住「三者同源、且不允许再写回字面量」。
+- 修复网络层故障让快捷福利 API「一直重试、不切换也不报错」。`_openai_chat_api()` 的
+  重试/变体遍历是「端点 × payload 变体 × attempt」三层循环，而 TLS 层失败（实测
+  `SSLError(SSLEOFError(8, 'EOF occurred in violation of protocol'))`）与请求体形状无关：
+  一次故障会在 12 个多模态变体上各撞一次、每次约 19 秒，单个免费模型要耗 **3 分半**才
+  轮到换模型，期间聊天队列一直被占着（自动陪伴只能「跳过：当前有聊天请求进行中」）。
+  新增 `_is_transport_failure()`（SSL / 读超时 / 连接重置 / RemoteDisconnected / broken pipe），
+  命中即整轮收手并把异常抛回上层换模型；`ConnectTimeout` 不在其列，仍重试一次。
+  实测同一次 SSL 故障现在只发 1 次请求、0.2 秒内交回上层。
+- 修复音响右键菜单完全打不开。根因在启动期预绘制缓存的钩子调用方式：
+  `lib/core/render/backends/qt/widgets/preloader.py` 的 `_hook_step()` 把产品侧工厂函数**本身**
+  当成构造结果返回，`_run_next()` 于是把一个函数当控件缓存——取尺寸失败被记成 1x1、预热找不到
+  `render()` 静默跳过，日志照样打印 `speaker_search_dialog ready in 0.0 ms`。后果是五个懒加载
+  窗口一个都没被创建，`SpeakerSearchDialog` 的单例恒为 `None`，而它是
+  `SPEAKER_SEARCH_TOGGLE_REQUEST` 的唯一订阅者：`Speaker.mousePressEvent` 右键发布的事件没有
+  任何监听者，右键因此毫无反应也不报错。现在 `_hook_step()` 返回「取钩子 + 调用」的闭包，
+  `_run_next()` 再用 `_is_ui_payload()` 拒收函数/模块这类非控件对象并记 warning，同类回归会
+  在日志里显形而不是假装成功。新增两条回归：真实 `_PRELOAD_STEPS` + 假钩子断言「钩子被调用、
+  缓存里是控件」、可调用对象被拒收。
+- 快捷福利 API 不再截断模型输出，思考写完自然接正文。此前该车道把 `max_tokens` 抬到 16384
+  只是缓解：请求一复杂（长人格 + 18k token 截图），思考照样能吃穿预算，`finish_reason=length`、
+  正文 0 字，日志里 33 次「只有思考内容、没有正文」对上 25 次成功。免费池按请求数计费，截断
+  没有收益，因此 `QUICK_WELFARE_MAX_OUTPUT_TOKENS` 改为 `0`（不下发 `max_tokens`），流式总时长
+  上限也一并放开（读取超时仍生效，卡死连接照旧断开）。设置页「启用思考模式」现在对这条车道
+  生效：关闭时下发 `reasoning: {"enabled": false}`，网关若强制思考（`400 Reasoning is mandatory`）
+  则记住该目标、去掉字段重发一次且不占重试预算。思考期间每 3 秒刷新一次「思考中...」气泡
+  （流式层 1 秒节流 → `stream_chat(on_reasoning=...)` → `ChatHandler`），正文到达即停。
+- 修复直播点歌在「第一条点歌」时把弹幕接收线程锁死的问题。`_handle_payload()` 在
+  `with self._search_lock` 内部注册 `future.add_done_callback(self._discard_pending)`，而
+  `Future.add_done_callback` 对**已完成**的任务会当场同步执行回调；搜索很快（或线程池空闲）时，
+  `_discard_pending` 就会在持锁线程里再去拿同一把不可重入的 `Lock`，直接自死锁。这段代码跑在
+  弹幕接收线程上，卡住后不再 `recv()`、也不再发心跳，表现为「连接看着正常，却一条弹幕都没有」，
+  只能重启程序恢复——平时普通弹幕照常显示，一旦有观众发合法 `点歌-xxx` 就整体静默，非常难排查。
+  现在改为先退出 `with` 再注册回调，`_search_lock` 同时改为 `RLock` 兜住同步回调。新增
+  `test_finished_task_does_not_deadlock_the_danmaku_thread`（用返回已完成 Future 的假 hub 复现；
+  回退修复时该用例会直接卡死，而非只是断言失败）。
+- 修复直播间有效性完全不校验导致的「假连接」。`_fetch_real_room_id()` 此前只看 `room_init` 的
+  HTTP 状态码，不读响应体里的 `code`：不存在的房间（`code=60004` + `data=[]`）会直接沿用原房间号，
+  「测试直播间」显示「✓ 已连接」，后台连接日志也写着「弹幕连接已建立」，实际永远收不到任何弹幕。
+  旧接口 `room/v1/Danmu/getConf` 对**任何**房间（含不存在、未开播）都发得出 token，WebSocket 认证
+  也回 `{"code":0}`，这两层都拦不住，校验只能在解析房间号这一步做完。新增 `_fetch_room_state()`
+  同时返回真实房间号与 `live_status`，「测试直播间」对未开播（`0`）与轮播（`2`）直接报失败并说明
+  原因；后台连接仍保持长连等待开播，只在日志留痕，避免界面在「已连接 / 未开播」之间反复跳。
+- 修复弹幕点歌对连续横线的解析：`点歌——纸飞机`（两个全角破折号，观众最常见的打法）此前只吃掉
+  一个分隔符，歌名被解析成「—纸飞机」，搜出来是另一首歌。分隔符改为 `[-－—–]+`。
+- 修复「直播模式」在设置面板里没有入口的问题，并把它与「启用弹幕点歌」拆成总开关和子开关：
+  `LIVE_STREAM` 新增 `live_mode_enabled`（总开关，托盘「直播模式」与面板同一个状态），
+  `LIVE_STREAM.enabled` 降为「弹幕点歌」子开关，礼物提醒是另一个子开关。总开关关掉时两个子开关
+  置灰、两张参数卡片收起，连接不建立；关掉点歌不影响连接（礼物提醒还要用）。设置页行序变为
+  直播模式 → 直播间 ID → 连接检查 → 礼物提醒 → 弹幕点歌。托盘写盘改只写总开关。
+  `LIVE_SONG_STATUS_CHANGE` 载荷新增 `song_enabled` 与 `live_status`。
+- 直播总开关新增一次性配置迁移：老用户的稀疏配置里只有 `enabled`，不迁移的话升级后总开关默认
+  `False`，弹幕连接不再建立，表现为「更新之后直播点歌突然不工作了」。`_migrate_live_mode_switch()`
+  经 `user_settings.run_migration_once("live_mode_switch_v1")` 把旧值复制到总开关，只跑一次；
+  已显式写过 `live_mode_enabled` 的用户不受影响。
+- 修复「自动检查更新完成后桌宠无报错闪退」。更新浮窗在去 Qt 的第三十三轮里把 `pyqtSignal` 换成了
+  纯 Python 的 `_UpdateSignal`，但替身的 `emit()` 是**就地调用槽**——`pyqtSignal` 原本会自动把跨线程
+  `emit` 排队到接收者线程，这条保护在替换时丢了。`check_for_updates()` 跑在 `compute_interactive_io`
+  线程，于是 `_on_release_checked()` 在工作线程里直接 `setText` / `setRange` / `setEnabled` 改
+  `spec_host` 装配出的整套控件；Qt 不允许跨线程操作控件，实测进程直接结束、连 traceback 都不留，
+  日志里只剩正常退出前那几行。现在 `_UpdateSignal.emit()` 经 `UiDispatcher.post()` 回到 UI 线程再
+  派发；信号同时从类级改成**实例级**（类级会让多个更新窗共用一张槽表，第二个窗口把自己接到第一个
+  窗口的控件上）；`cleanup()` / `deleteLater()` 之后到达或已排队未执行的回调一律丢弃，避免落到
+  已销毁的控件上。设置面板销毁时也补上对更新窗的 `cleanup()`。新增
+  `tests/test_update_dialog_threading.py` 5 条回归（跨线程回到 UI 线程、实例级信号、清理后丢弃、
+  排队中作废、端到端改文案）。
+- 修复设置页卡片联动的滑入/滑出动画从未播放的问题。`section_collapse._should_animate()` 判的是
+  传进来的 `host`（`AISettingsPanel`）是否可见，而托盘打开设置的真实路径是工作台把设置页从面板
+  壳里摘进 `WorkbenchPageHost`——页面显示得好好的，`host` 却恒为隐藏。于是每一条联动都走了
+  「宿主不可见」的兜底分支，`setVisible()` 硬切，动画一帧都没跑；`offscreen` 测试里 host 恰好
+  可见，所以用例一直是绿的。现在改为沿卡片的父链判定**所在页面**是否真的显示（逐层查
+  `isHidden()`，到窗口层查 `isVisible()`，并跳过会在收起后隐藏自身的裁切容器）。实测工作台内
+  直播页「礼物提醒」「弹幕点歌」卡片重新逐帧展开/收起。新增 `EmbeddedSectionAnimationTests`
+  两条回归（宿主隐藏仍要播、页面真的隐藏时仍落终态）。
+- 修复设置页卡片联动在**子布局**里完全不生效的问题。裁切容器原本只按 `parent.layout()` 找槽位，
+  而办公页「独立 api」整块、语音页高级设置都是 `body_layout.addWidget(...)` 放进分区的子布局：
+  `indexOf()` 返回 -1，容器拿不到位置、永远进不了布局，动画照样在改 `maximumHeight`，却没有任何
+  排版跟着它变（实测办公页 `outer.geometry()` 全程为 0 高）。现在递归找到真正容纳卡片的布局层，
+  槽位连同布局一起记录。新增 `SectionInsideNestedLayoutTests` 两条回归。
 - 直播间弹幕链路补齐可观测性：`lib/script/music/live_song_requests.py` 此前只在出错时写日志，
   连接成功、心跳、收到弹幕全都不留痕。用户在日志里搜不到任何 `[LiveSong]` 记录，会误以为
   「弹幕读不到、相关逻辑都没触发」，实际常常只是该直播间当时没人发言。现在连接建立、每条
