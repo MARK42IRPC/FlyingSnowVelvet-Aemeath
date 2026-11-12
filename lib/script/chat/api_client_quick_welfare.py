@@ -25,7 +25,9 @@ from .quick_welfare_api import (
     QUICK_WELFARE_MAX_MODELS_PER_TURN,
     QUICK_WELFARE_MAX_OUTPUT_TOKENS,
     get_quick_welfare_router,
+    is_quota_exhausted,
     quick_welfare_config,
+    quick_welfare_reasoning_enabled,
 )
 
 logger = get_logger(__name__)
@@ -57,8 +59,13 @@ class QuickWelfareMixin:
                                 history: list[dict] | None = None,
                                 request_id: int | None = None,
                                 allow_tools: bool = True,
-                                on_tool_call=None) -> str:
-        """在免费池里按轮转顺序逐个模型尝试，返回第一个成功的回复。"""
+                                on_tool_call=None,
+                                on_reasoning_emit=None) -> str:
+        """在免费池里按轮转顺序逐个模型尝试，返回第一个成功的回复。
+
+        ``on_reasoning_emit`` 只在「模型已经开始思考、但还没写正文」时被调用，
+        上层据此每隔几秒提示一次「思考中…」，避免长思考看起来像卡死。
+        """
         router = get_quick_welfare_router()
         models = router.turn_models(
             QUICK_WELFARE_MAX_MODELS_PER_TURN,
@@ -86,9 +93,23 @@ class QuickWelfareMixin:
                     retry_attempts=QUICK_WELFARE_TURN_RETRY_ATTEMPTS,
                     timeout_secs=QUICK_WELFARE_TURN_TIMEOUT_SECS,
                     max_output_tokens_override=QUICK_WELFARE_MAX_OUTPUT_TOKENS,
+                    reasoning_enabled_override=quick_welfare_reasoning_enabled(),
+                    on_reasoning_emit=on_reasoning_emit,
                 )
             except requests.HTTPError as exc:
                 error_text = self._extract_error(exc) if hasattr(self, "_extract_error") else str(exc)
+                # 免费池配额耗尽（`429 PROMOTION_MODEL_LIMIT_REACHED`）是 IP 级的：池里
+                # 所有模型会同时回同一个 429，换模型只是把同一个错误再撞三遍，还会让
+                # 界面等满三个超时才报错。这种情况整轮直接结束，如实上报。
+                if is_quota_exhausted(error_text):
+                    logger.warning(
+                        "[QuickWelfare] 免费池配额已耗尽（%s），本轮不再换模型: %s",
+                        error_text[:80],
+                        model,
+                    )
+                    raise RuntimeError(
+                        f"快捷福利 API 的免费额度已用完：{error_text[:160]}"
+                    ) from exc
                 if images and is_image_input_error(error_text):
                     # 带图请求优先保住图片：只要后面还有能看图的模型，就换它继续带图试，
                     # 而不是在当前这个不吃图的模型上把图片丢掉——用户要的是「看图回答」，
@@ -124,6 +145,8 @@ class QuickWelfareMixin:
                             retry_attempts=QUICK_WELFARE_TURN_RETRY_ATTEMPTS,
                             timeout_secs=QUICK_WELFARE_TURN_TIMEOUT_SECS,
                             max_output_tokens_override=QUICK_WELFARE_MAX_OUTPUT_TOKENS,
+                            reasoning_enabled_override=quick_welfare_reasoning_enabled(),
+                            on_reasoning_emit=on_reasoning_emit,
                         )
                     except Exception as retry_exc:
                         last_error = retry_exc

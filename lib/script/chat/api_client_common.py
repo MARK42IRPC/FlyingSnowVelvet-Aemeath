@@ -16,6 +16,10 @@ _SESSION_LOCK = threading.Lock()
 _SESSION_CACHE: dict[bool, requests.Session] = {}
 _NATIVE_TOOL_CAPABILITY_LOCK = threading.Lock()
 _NATIVE_TOOL_UNSUPPORTED_TARGETS: set[tuple[str, str]] = set()
+#: 明确拒绝关闭思考的目标：`(base_url, model)`。这类模型会回
+#: `400 Reasoning is mandatory for this endpoint and cannot be disabled`，
+#: 记住之后不再给它带关闭字段，省掉一次必然失败的往返。
+_REASONING_MANDATORY_TARGETS: set[tuple[str, str]] = set()
 
 
 UPLOAD_COOLDOWN_SECONDS = 5.0
@@ -131,6 +135,32 @@ class _ApiClientCommonMixin:
             was_new = key not in _NATIVE_TOOL_UNSUPPORTED_TARGETS
             _NATIVE_TOOL_UNSUPPORTED_TARGETS.add(key)
         return was_new
+
+    @staticmethod
+    def _reasoning_can_be_disabled(target: str, model: str) -> bool:
+        """该目标是否接受「关闭思考」字段（已知强制思考的返回 False）。"""
+        key = (str(target or "").strip().lower(), str(model or "").strip().lower())
+        with _NATIVE_TOOL_CAPABILITY_LOCK:
+            return key not in _REASONING_MANDATORY_TARGETS
+
+    @staticmethod
+    def _mark_reasoning_mandatory(target: str, model: str) -> bool:
+        """记住「该模型不允许关闭思考」；返回是否为首次观察。"""
+        key = (str(target or "").strip().lower(), str(model or "").strip().lower())
+        with _NATIVE_TOOL_CAPABILITY_LOCK:
+            was_new = key not in _REASONING_MANDATORY_TARGETS
+            _REASONING_MANDATORY_TARGETS.add(key)
+        return was_new
+
+    @staticmethod
+    def _is_reasoning_mandatory_error(error_text: str) -> bool:
+        """网关拒绝关闭思考时的报错（Kilo / OpenRouter 系措辞）。"""
+        text = str(error_text or "").lower()
+        if not text:
+            return False
+        if "reasoning is mandatory" in text:
+            return True
+        return "cannot be disabled" in text and "reasoning" in text
 
     @staticmethod
     def _normalize_history_items(history: list[dict] | None) -> list[dict[str, str]]:

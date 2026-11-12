@@ -177,8 +177,10 @@ class ChatHandlerAutoCompanionMixin:
         mode_generation: int | None = None,
     ) -> None:
         if not self._accepts_companion_generation(mode_generation):
+            self._stop_thinking_hint()
             return
         if not native_tool_call and self._is_auto_companion_failure_text(reply_text):
+            self._stop_thinking_hint()
             self._record_auto_companion_failure(reply_text)
             return
         self._reset_auto_companion_failures()

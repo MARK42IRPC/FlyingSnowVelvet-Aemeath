@@ -47,47 +47,118 @@ QUICK_WELFARE_MAX_MODELS_PER_TURN = 3
 QUICK_WELFARE_SHORT_COOLDOWN_SECS = 10 * 60
 QUICK_WELFARE_LONG_COOLDOWN_SECS = 30 * 60
 
-#: 实测可用的看图模型（2026-11-11 逐模型验证，图片含可核对的颜色/形状/文字）。
+#: 第一梯队大小：轮转起点只在这个范围内移动。
+#:
+#: 全表轮转会让 1.7B 的小模型轮流当首位；完全固定又会让同一个模型被持续压满配额
+#: （实测免费池有 IP 级配额）。取前三名做轮转，正好都是实测最强、且被上游自动路由
+#: 收录的那一档。
+_PREFERRED_TIER_SIZE = 3
+
+#: 免费池的**账号/IP 级**配额耗尽（实测 `429 PROMOTION_MODEL_LIMIT_REACHED`）。
+#:
+#: 这与「某个模型挂了」有本质区别：它一出现，池子里**所有**模型都会同时回同一个错误，
+#: 冷却单个模型毫无意义，继续换模型只是把同一个 429 再撞三遍。识别出来后整轮直接结束，
+#: 把拒绝原因如实告诉上层，而不是伪装成「三个模型都失败了」。
+#:
+#: 实测触发条件很宽松：一次 11 模型 × 13 题的并发评测就能打满；恢复前所有模型持续 429。
+QUICK_WELFARE_QUOTA_MARKERS = (
+    "promotion_model_limit_reached",
+    "rate_limit_exceeded",
+    "sign up for free to continue",
+)
+
+
+def is_quota_exhausted(error_text) -> bool:
+    """该错误是否为免费池整体配额耗尽（而非单个模型故障）。"""
+    text = str(error_text or "").lower()
+    if not text:
+        return False
+    return any(marker in text for marker in QUICK_WELFARE_QUOTA_MARKERS)
+
+#: 实测能看图作答的模型（2026-11-12 逐模型验证，图片含可核对的颜色/形状）。
 #:
 #: 上游声明的 `input_modalities` 只说明「模型接受图片」，不说明「真的会看图作答」。
-#: 实测中被排除的三个都能收图、但给不出可用回复：
-#: - `dots-studio/dots-3-note-preview:free`：只输出 reasoning，正文为空；
-#: - `nvidia/nemotron-3.5-super-vl:free`：同样只输出 reasoning，且要 37 秒；
-#: - `thinkingmachines/inkling-2-small:free`：持续 429。
-#: 它们仍留在普通轮转里（纯文本可用），只是不再被「带图请求」优先选中。
+#: 早先这份名单只有两个模型，是因为思考型模型（dots / nemotron-vl）当时被
+#: `max_tokens` 截断、正文永远为空，看起来像「不会看图」。现在这条车道不截断输出、
+#: 且可按设置关掉思考，四个看图模型实测都能正常作答，因此全部纳入。
+#: `thinkingmachines/inkling-2-small:free` 持续 429，仍不列入。
 QUICK_WELFARE_VERIFIED_VISION_MODELS = frozenset({
     "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
     "openrouter/free",
+    "dots-studio/dots-3-note-preview:free",
+    "nvidia/nemotron-3.5-super-vl:free",
 })
 
 #: 带图请求的视觉优先顺序：先挑实测能答的，再退回到「声明支持图片」的其余模型。
 QUICK_WELFARE_VISION_PRIORITY = (
     "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
     "openrouter/free",
+    "dots-studio/dots-3-note-preview:free",
+    "nvidia/nemotron-3.5-super-vl:free",
 )
 
-#: 内置兜底清单：`GET /models` 的 `isFree` 切片（2026-11-11 实测）。顺序有意从
-#: 「未知质量」的自动路由排到最后——自动路由让上游替我们挑模型，延迟不受控。
-QUICK_WELFARE_FALLBACK_MODELS = (
-    "liquid/lfm-3-1.7b:free",
-    "cohere/north-mini-code:free",
-    "nvidia/nemotron-3.5-lightning:free",
-    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
-    "thinkingmachines/inkling-2-small:free",
-    "dots-studio/dots-3-note-preview:free",
-    "baidu/ernie-5.5-flash-preview:free",
-    "nvidia/nemotron-3-ultra-550b-a55b:free",
-    "nvidia/nemotron-3.5-super-vl:free",
-    "stealth/glyph-cluster",
+#: 免费池的**智力排序**：越靠前越先被尝试。
+#:
+#: 排序依据三层，从强到弱：
+#: 1. 本地实测（12 道客观题：算术 / 时间推算 / 逻辑 / JSON 结构 / 计数 / 鸡兔同笼 /
+#:    反事实 / 否定语义 / 工具选择 / 格式遵从 / 代码 / 简述）。关闭思考档实测：
+#:    ultra 550B **10/12**、super-vl **10/12**、kilo-auto 9/12、ernie 7/12、
+#:    glyph-cluster 5/12、lfm-3 2/12。
+#: 2. 网关自己的 `kilo-auto/free` → `autoRouting.models`：上游自动路由只会在这 5 个
+#:    「够用」的模型里挑，等于上游给出的质量白名单（实测确实覆盖了前 5 名中的 4 个）。
+#: 3. 参数规模 / 上下文：`nemotron-3-ultra` 是 55B active / 550B total 的前沿推理模型，
+#:    `super-vl` 12B/120B 且吃图，`dots-3` 16B/280B，`lightning` 与 `north-mini` 是
+#:    3B active 的轻量档，`lfm-3` 只有 1.7B。
+#:
+#: 刻意排在最后的两个：
+#: - `kilo-auto/free`：上游替我们挑模型，延迟与质量都不受控（实测 9/12 但首字延迟
+#:   波动最大），只在前面都不可用时兜底。
+#: - `openrouter/free`：`max_completion_tokens` 上报为 0，且强制思考（关不掉），
+#:   长回复与格式题表现明显更差（试点 5/12，其中一半是 400 强制思考）。
+QUICK_WELFARE_INTELLIGENCE_ORDER = (
+    # ── 第一梯队：实测最强，且被上游自动路由收录 ──────────────────────
+    "nvidia/nemotron-3-ultra-550b-a55b:free",              # 10/12，550B MoE
+    "nvidia/nemotron-3.5-super-vl:free",                    # 10/12，多模态 12B/120B
+    "dots-studio/dots-3-note-preview:free",                 # 16B/280B，带图
+    "baidu/ernie-5.5-flash-preview:free",                   # 7/12，280B，超长上下文
+    "stealth/glyph-cluster",                                # 5/12，长上下文推理
+    # ── 第二梯队：能答但明显更弱，或只能纯文本 ────────────────────────
+    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",   # 30B，四模态，但偏慢
+    "cohere/north-mini-code:free",                          # 3B active，偏代码
+    "nvidia/nemotron-3.5-lightning:free",                    # 3B active，高吞吐档
+    "liquid/lfm-3-1.7b:free",                               # 2/12，1.7B，最弱
+    # ── 兜底：质量/延迟不受控，只在前面全不可用时用 ──────────────────
     "kilo-auto/free",
     "openrouter/free",
 )
+
+#: 内置兜底清单（= 上面的智力序）。拉不到线上清单时用它，顺序即优先级。
+QUICK_WELFARE_FALLBACK_MODELS = QUICK_WELFARE_INTELLIGENCE_ORDER
 
 #: 与上游自己的客户端一致的归属头：网关按 referrer 给来源计数，这里不伪装成编辑器。
 _ATTRIBUTION_HEADERS = {
     "http-referer": "https://kilo.ai/",
     "x-title": "FlyingSnowVelvet",
 }
+
+#: 已知模型的智力名次：`model -> rank`。不在表里的模型排到最后（还没实测过）。
+_INTELLIGENCE_RANK = {
+    model: rank for rank, model in enumerate(QUICK_WELFARE_INTELLIGENCE_ORDER)
+}
+
+
+def sort_by_intelligence(models) -> tuple[str, ...]:
+    """按智力序排列一份模型清单（稳定：未知模型保持原有相对顺序，排在已知模型之后）。
+
+    上游 `/models` 的返回顺序是注册顺序，与质量无关；直接用它当轮转顺序，等于把
+    1.7B 的小模型和高智力的 550B 前沿模型等概率地放到首位。
+    """
+    ranked: list[tuple[int, int, str]] = []
+    for index, model in enumerate(models):
+        rank = _INTELLIGENCE_RANK.get(str(model))
+        ranked.append((0 if rank is not None else 1, rank if rank is not None else index, str(model)))
+    ranked.sort()
+    return tuple(model for _known, _rank, model in ranked)
 
 
 @dataclass
@@ -141,7 +212,10 @@ class QuickWelfareRouter:
             logger.warning("[QuickWelfare] 免费池清单为空，沿用当前清单")
             return
         with self._lock:
-            self._models = models
+            #: 线上清单也要按智力序重排：上游 `/models` 的返回顺序是注册顺序，与质量
+            #: 无关。只排序不增删——新上架的模型排在已知模型之后（源码里的顺序靠后
+            #: 意味着还没有实测数据，不该抢在前面），下架的模型自然消失。
+            self._models = sort_by_intelligence(models)
             self._vision_models = frozenset(vision_models)
             self._listing_fetched_at = time.monotonic()
             self._listing_failed_at = 0.0
@@ -169,8 +243,15 @@ class QuickWelfareRouter:
     ) -> list[str]:
         """给出这一轮请求要按顺序尝试的模型。
 
-        顺序规则：先把不在冷却里的模型按轮转起点排一圈，再把冷却中的模型按冷却到期
-        时间垫在最后——全部模型都在冷却时，这一轮仍然照常发出去，而不是直接判死。
+        顺序规则（自上而下即优先级）：
+
+        1. **智力优先**：清单本身已按 `QUICK_WELFARE_INTELLIGENCE_ORDER` 排序，
+           高智力模型天然在前面。这里不再对全表做「轮转起点」——那会把 1.7B 的
+           小模型也轮到首位，用户体感就是「同一个问题有时答得很好、有时莫名其妙」。
+        2. **冷却**：失败过的模型按冷却到期时间垫到后面；全都在冷却时仍照常发出，
+           而不是直接判死。
+        3. **轻量负载分散**：只在**第一梯队内部**轮转起点（`_PREFERRED_TIER_SIZE`），
+           既避免每次都死磕同一个模型把它的配额压满，又不会把弱模型提到首位。
 
         ``needs_vision`` 为真时（这次请求带图片），能看图的模型整体排在前面：否则
         大概率第一个就撞上纯文本模型，白白浪费一次请求、还多等一个超时。看图的模型
@@ -182,9 +263,12 @@ class QuickWelfareRouter:
         now = time.monotonic()
         with self._lock:
             vision_models = self._vision_models
-            start = self._cursor % len(models)
-            self._cursor = (start + 1) % len(models)
-            rotated = list(models[start:]) + list(models[:start])
+            #: 只在第一梯队内轮转起点：`[a, b, c] + [d, e, ...]`，
+            #: 而不是 `[d, e, ..., a, b, c]` 这种把弱模型顶到最前的结果。
+            tier = min(_PREFERRED_TIER_SIZE, len(models))
+            offset = self._cursor % tier
+            self._cursor = (offset + 1) % tier
+            rotated = list(models[offset:tier]) + list(models[:offset]) + list(models[tier:])
             cooled: list[tuple[float, str]] = []
             healthy: list[str] = []
             for model in rotated:
@@ -217,12 +301,14 @@ class QuickWelfareRouter:
         return unique[: max(1, int(limit))]
 
     def report_success(self, model: str) -> None:
-        """某个模型答成功了：清掉冷却，并把它提到下一轮的起点。"""
-        models = self.models()
+        """某个模型答成功了：清掉冷却。
+
+        只动健康度，**不动轮转起点**。早先这里把 cursor 设为成功模型的下标，一旦
+        成功的恰好是第二梯队的模型（例如长上下文落到了 3B 小模型），下一轮就会从它
+        开始，把高智力模型挤到后面——正好和「智力优先」相反。
+        """
         with self._lock:
             self._health.pop(model, None)
-            if model in models:
-                self._cursor = models.index(model)
 
     def report_failure(self, model: str) -> None:
         """某个模型失败了：连续失败越多，冷却越久。"""
@@ -306,19 +392,42 @@ def fetch_free_models(timeout: float = QUICK_WELFARE_LISTING_TIMEOUT_SECS) -> tu
     return _fetch_free_models_impl(timeout)
 
 
-#: 免费池的输出预算。这条车道按请求数而非 token 计费，因此可以给得远比付费接口宽松：
-#: 实测 1024 的纯文本预算会被思考型模型的 reasoning 整个吃光（Nemotron VL 在
-#: `finish_reason=length` 下 content 长度为 0，表现就是「只看到思考、没有正文」）；
-#: 抬到 16384 后同一问题能完整答完（content 4127、finish=stop）。
-#: 取 16384 而不是无上限：个别网关对超大 max_tokens 直接 400。
-QUICK_WELFARE_MAX_OUTPUT_TOKENS = 16384
+#: 免费池的输出预算。``0`` = **不限制**：请求里不下发 `max_tokens`，由上游自己决定。
+#:
+#: 这条车道按请求数而非 token 计费，截断没有任何收益，代价却是实打实的：思考型模型
+#: （Nemotron / Dots 系）会先把思考写完再写正文，预算一旦在思考阶段耗尽，`finish_reason`
+#: 就是 `length`、正文长度为 0——用户看到的就是「只有思考、没有正文」。实测同一个
+#: 复杂问题，1024 → 正文 0 字、4096 → 1065 字、16384 → 4127 字，都是 `length` 截出来的；
+#: 不设上限时思考写完会自然接上正文并 `finish=stop`。
+#:
+#: 设置页的「启用思考模式」仍然生效：关掉时请求带 `reasoning: {"enabled": false}`，
+#: 模型不思考、正文更快出来；开着就让模型把思考走完再答。
+QUICK_WELFARE_MAX_OUTPUT_TOKENS = 0
+
+
+def quick_welfare_reasoning_enabled() -> bool:
+    """设置页「启用思考模式」的当前值（快捷福利车道直接照它下发）。
+
+    读的是运行时配置 `OLLAMA['api_enable_thinking']`，与设置页开关同一份事实源：
+    关掉时请求带 `reasoning: {"enabled": false}`，思考型模型立刻开始写正文；
+    打开时不下发该字段，让模型把思考走完再答——上层会每 3 秒提示一次「思考中…」。
+    """
+    try:
+        from config.ollama_config import OLLAMA
+
+        raw = OLLAMA.get("api_enable_thinking", False)
+    except Exception:
+        return False
+    if isinstance(raw, str):
+        return raw.strip().lower() in ("1", "true", "yes", "on")
+    return bool(raw)
 
 
 def quick_welfare_config(model: str) -> dict:
     """构造单个免费池模型的 OpenAI 兼容运行时配置。
 
     `api_key` 固定为空：这条车道的网关见到非空 Bearer 会回 401（见模块说明）。
-    `max_output_tokens` 随配置一起带下去，由 API 客户端在解析预算时优先采用。
+    `max_output_tokens` 随配置一起带下去（``0`` 表示不下发 `max_tokens`）。
     """
     return {
         "api_type": "openai_compatible",

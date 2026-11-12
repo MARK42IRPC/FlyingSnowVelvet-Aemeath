@@ -215,6 +215,10 @@ class ChatHandlerStreamPresenterMixin:
             return
 
         self._stream_mode_generation = mode_generation
+        # 正文已经开始：思考提示到此为止，否则「思考中…」会和正文抢同一个气泡。
+        stop_thinking = getattr(self, "_stop_thinking_hint", None)
+        if callable(stop_thinking):
+            stop_thinking()
 
         display_text = _strip_tool_commands_for_display(accumulated_text)
         is_status_text = _is_non_ai_status_text(display_text)
@@ -290,6 +294,9 @@ class ChatHandlerStreamPresenterMixin:
         """
         if not _companion_generation_is_current(self, mode_generation):
             return
+        stop_thinking = getattr(self, "_stop_thinking_hint", None)
+        if callable(stop_thinking):
+            stop_thinking()
         if self._stream_flush_timer.active:
             self._stream_flush_timer.stop()
         if self._stream_pending_raw:
@@ -386,6 +393,9 @@ class ChatHandlerStreamPresenterMixin:
         """
         if not _companion_generation_is_current(self, mode_generation):
             return
+        stop_thinking = getattr(self, "_stop_thinking_hint", None)
+        if callable(stop_thinking):
+            stop_thinking()
         raw_text = text or default_native_tool_reply(native_tool_call)
         from_ai = bool(raw_text)
         if not raw_text:

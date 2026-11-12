@@ -126,6 +126,37 @@ class ChatSchedulerTests(unittest.TestCase):
         self.assertEqual(len(ollama.calls), 1)
         self.assertEqual(screen_capture.calls, 1)
 
+    def test_thinking_hint_repeats_every_three_seconds_until_text_starts(self):
+        """思考期间每 3 秒提示一次；正文一到就停。
+
+        思考型模型（Nemotron / Dots 系）先写几百上千片 reasoning 才吐正文，这期间
+        没有任何正文分片，界面若不提示看起来就是卡死。
+        """
+        handler, center, ollama, scheduler, _ = self._create_handler()
+        thinking_timer = scheduler.timers[2]
+
+        handler._on_input_chat(Event(EventType.INPUT_CHAT, {
+            "text": "hello",
+            "mode_generation": 0,
+        }))
+        request = ollama.calls[-1]
+        center.published.clear()
+
+        request["on_reasoning"]()
+        self.assertTrue(thinking_timer.active)
+        self.assertEqual(thinking_timer.interval_ms, 3000)
+        self.assertEqual(center.published[-1].data["text"], "思考中...")
+
+        # 节流窗口内的第二次 tick 不再刷屏。
+        handler._thinking_last_emit = 0.0
+        thinking_timer.fire()
+        hints = [e for e in center.published if e.data.get("text") == "思考中..."]
+        self.assertEqual(len(hints), 2)
+
+        # 正文到达后提示表停止，气泡交给正文。
+        request["on_chunk"]("正文")
+        self.assertFalse(thinking_timer.active)
+
     def test_cleanup_is_idempotent_and_releases_scheduler(self):
         handler, center, _, scheduler, _ = self._create_handler()
 

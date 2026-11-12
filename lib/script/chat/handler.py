@@ -1,5 +1,6 @@
 """聊天输入处理与模型请求调度。"""
 
+import time
 from collections import deque
 from typing import TYPE_CHECKING
 
@@ -15,10 +16,20 @@ from .handler_stream_presenter import (
     ChatHandlerStreamPresenterMixin,
     BUBBLE_MIN_TICKS,
     BUBBLE_MAX_TICKS,
+    _companion_generation_is_current,
     _should_capture_screen,
 )
 
 logger = get_logger(__name__)
+
+#: 思考提示：模型思考期间每 3 秒刷新一次「思考中…」气泡。
+#: 只影响提示频率，不影响思考本身——思考不截断，让模型写完再出正文。
+THINKING_HINT_INTERVAL_SECS = 3.0
+THINKING_HINT_INTERVAL_MS = int(THINKING_HINT_INTERVAL_SECS * 1000)
+THINKING_HINT_TEXT = "思考中..."
+#: 提示气泡的停留时长（tick，50ms/tick）：min 取满一个节流窗口，避免被下一条立刻顶掉。
+THINKING_HINT_MIN_TICKS = int(THINKING_HINT_INTERVAL_SECS * 20)
+THINKING_HINT_MAX_TICKS = 120
 
 if TYPE_CHECKING:
     from lib.script.office.mode import InteractionModeService
@@ -48,6 +59,14 @@ class ChatHandler(ChatHandlerPersonaMixin, ChatHandlerAutoCompanionMixin, ChatHa
         self._auto_timer: PeriodicTimer = self._scheduler.create_periodic_timer(
             self._on_auto_companion_tick
         )
+        #: 思考提示节流：模型在思考时每 3 秒刷新一次「思考中…」气泡。
+        #: 思考型模型先写几百到上千片 reasoning 才吐正文，这期间界面必须给反馈。
+        self._thinking_timer: PeriodicTimer = self._scheduler.create_periodic_timer(
+            self._on_thinking_tick
+        )
+        self._thinking_active: bool = False
+        self._thinking_last_emit: float = 0.0
+        self._thinking_generation: int | None = None
 
         self._event_center.subscribe(EventType.INPUT_CHAT, self._on_input_chat)
         self._event_center.subscribe(EventType.APP_MAIN, self._on_app_main)
@@ -80,6 +99,7 @@ class ChatHandler(ChatHandlerPersonaMixin, ChatHandlerAutoCompanionMixin, ChatHa
         if str(data.get("mode", "")) == "office":
             self._auto_timer.stop()
             self._stream_flush_timer.stop()
+            self._stop_thinking_hint()
             self._stream_pending_raw = ""
             self._stream_last_display = ""
             self._stream_first_chunk = True
@@ -185,10 +205,67 @@ class ChatHandler(ChatHandlerPersonaMixin, ChatHandlerAutoCompanionMixin, ChatHa
                 accumulated_text,
                 mode_generation=request_generation,
             ),
+            on_reasoning=lambda request_generation=generation: self._on_reasoning_started(
+                request_generation,
+            ),
             images=images,
             history=context_history,
             allow_tools=allow_tool_commands,
         )
+
+    # ==================================================================
+    # 思考提示
+    # ==================================================================
+
+    def _on_reasoning_started(self, mode_generation: int | None = None) -> None:
+        """模型开始思考：起一个 3 秒节流计时器，持续刷新「思考中…」气泡。
+
+        思考型模型（Nemotron / Dots 系）在免费池里要写几百到上千片 reasoning 才吐
+        正文；这期间既没有正文分片，等待气泡又早已被替换，界面看起来就是卡死。
+        这里只负责起表，真正发布由 `_on_thinking_tick` 按 3 秒节流完成。
+        """
+        if not _companion_generation_is_current(self, mode_generation):
+            return
+        self._thinking_active = True
+        self._thinking_generation = mode_generation
+        # 立即提示一次，不用等第一个 3 秒窗口。
+        self._thinking_last_emit = 0.0
+        self._publish_thinking_bubble(mode_generation)
+        if not self._thinking_timer.active:
+            self._thinking_timer.start(THINKING_HINT_INTERVAL_MS)
+
+    def _on_thinking_tick(self) -> None:
+        """思考节流表：每 3 秒刷新一次提示；正文到达或请求结束即停。"""
+        if not self._thinking_active:
+            self._thinking_timer.stop()
+            return
+        if not _companion_generation_is_current(self, self._thinking_generation):
+            self._stop_thinking_hint()
+            return
+        self._publish_thinking_bubble(self._thinking_generation)
+
+    def _publish_thinking_bubble(self, mode_generation: int | None) -> None:
+        now = time.monotonic()
+        # 阈值略小于节流表间隔：定时器实际触发总比 3000ms 早一点（或与窗口边界对齐），
+        # 用相等比较会让每隔一次 tick 被吞掉，用户看到的就是 6 秒才刷一次。
+        if now - self._thinking_last_emit < THINKING_HINT_INTERVAL_SECS * 0.9:
+            return
+        self._thinking_last_emit = now
+        self._event_center.publish(Event(EventType.INFORMATION, {
+            "text": THINKING_HINT_TEXT,
+            "min":  THINKING_HINT_MIN_TICKS,
+            "max":  THINKING_HINT_MAX_TICKS,
+            "particle": False,
+            "force_replace": True,
+            "mode_generation": mode_generation,
+        }))
+
+    def _stop_thinking_hint(self) -> None:
+        """正文开始 / 请求结束：收起思考提示。"""
+        if self._thinking_timer.active:
+            self._thinking_timer.stop()
+        self._thinking_active = False
+        self._thinking_generation = None
 
     def cleanup(self):
         """取消事件订阅并释放独占调度器。"""
@@ -202,6 +279,7 @@ class ChatHandler(ChatHandlerPersonaMixin, ChatHandlerAutoCompanionMixin, ChatHa
         self._event_center.unsubscribe(EventType.INTERACTION_MODE_CHANGED, self._on_interaction_mode_changed)
         self._stream_flush_timer.stop()
         self._auto_timer.stop()
+        self._stop_thinking_hint()
         self._stream_pending_raw = ""
         self._scheduler.cleanup()
 

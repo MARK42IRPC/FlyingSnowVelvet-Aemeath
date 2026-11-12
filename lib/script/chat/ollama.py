@@ -49,6 +49,8 @@ class OllamaManager(_ApiClientMixin, OllamaBootstrapMixin, OllamaStateMixin, Oll
         self._chat_state_lock = threading.Lock()
         self._chat_callbacks: dict[int, object] = {}
         self._chat_chunk_callbacks: dict[int, object] = {}
+        #: 模型「正在思考、正文未开始」的提示回调（每请求一份，结束即清理）。
+        self._chat_reasoning_callbacks: dict[int, object] = {}
         self._api_rate_lock = threading.Lock()
         self._api_request_timestamps: deque[float] = deque()
 

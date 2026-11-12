@@ -267,6 +267,7 @@ class OllamaBootstrapMixin:
         with self._chat_state_lock:
             self._chat_callbacks.clear()
             self._chat_chunk_callbacks.clear()
+            self._chat_reasoning_callbacks.clear()
         with self._api_rate_lock:
             self._api_request_timestamps.clear()
 

@@ -136,7 +136,8 @@ class OllamaSessionMixin:
     def stream_chat(self, message: str, persona: str, callback, on_chunk=None,
                     images: list[bytes] = None, quiet_throttled: bool = False,
                     history: list[dict] | None = None,
-                    allow_tools: bool = True):
+                    allow_tools: bool = True,
+                    on_reasoning=None):
         """
         发起流式聊天请求（后台线程），收集完整回复后通过 callback 传回主线程。
 
@@ -151,6 +152,9 @@ class OllamaSessionMixin:
             on_chunk: 可选，每收到一个流式 chunk 时调用 on_chunk(accumulated_text: str)
             images:   可选，图片字节数组列表（多模态支持）
             quiet_throttled: 超限时是否静默丢弃（True=不回调；False=回调提示文本）
+            on_reasoning: 可选，模型「正在思考、正文还没开始」时回调 on_reasoning()。
+                思考型模型先写几百到上千片 reasoning 才吐正文，界面靠这个回调
+                定期提示「思考中…」，否则长思考看起来像卡死。
         """
         if (
             self._api_type in ('rule_reply', 'error')
@@ -181,6 +185,12 @@ class OllamaSessionMixin:
             self._chat_callbacks[request_id] = callback
             if on_chunk is not None:
                 self._chat_chunk_callbacks[request_id] = on_chunk
+            if on_reasoning is not None:
+                reasoning_callbacks = getattr(self, "_chat_reasoning_callbacks", None)
+                if reasoning_callbacks is None:
+                    reasoning_callbacks = {}
+                    self._chat_reasoning_callbacks = reasoning_callbacks
+                reasoning_callbacks[request_id] = on_reasoning
 
         try:
             future = get_compute_hub().submit_io(
@@ -238,6 +248,16 @@ class OllamaSessionMixin:
 
         chunk_fn = emit_chunk if streaming else None
 
+        def emit_reasoning(_piece_count: int = 0) -> None:
+            """模型在思考、正文还没开始时转发一次（上层自行节流成「思考中…」）。
+
+            只在本次请求登记了思考回调时才派发；没登记就不必跨线程打扰 UI。
+            """
+            with self._chat_state_lock:
+                wants = request_id in getattr(self, "_chat_reasoning_callbacks", {})
+            if wants:
+                self._dispatch_callback(self._on_reasoning_ready, request_id)
+
         if self._use_api_key:
             chat_api = (
                 self._quick_welfare_chat_api
@@ -248,6 +268,8 @@ class OllamaSessionMixin:
             # 那时还不知道这次要不要看图。带图请求在这里按图片能力重选一次模型，
             # 否则图片会被不吃图的那个模型直接拒掉。
             image_config_override = self._welfare_vision_config_override() if images else None
+            # 两条 OpenAI 兼容车道都接受思考提示回调；本地 Ollama 车道没有这个信号。
+            reasoning_kwargs = {"on_reasoning_emit": emit_reasoning}
             try:
                 full_text = chat_api(
                     message,
@@ -258,6 +280,7 @@ class OllamaSessionMixin:
                     request_id=request_id,
                     allow_tools=allow_tools,
                     on_tool_call=capture_tool_call,
+                    **reasoning_kwargs,
                     **({"config_override": image_config_override} if image_config_override else {}),
                 )
             except requests.HTTPError as e:
@@ -421,10 +444,20 @@ class OllamaSessionMixin:
         if chunk_cb:
             chunk_cb(text)
 
+    def _on_reasoning_ready(self, request_id: int):
+        """Qt 主线程：模型开始思考（正文未开始）；按 request_id 路由。"""
+        with self._chat_state_lock:
+            reasoning_cb = getattr(self, "_chat_reasoning_callbacks", {}).get(request_id)
+        if reasoning_cb:
+            reasoning_cb()
+
     def _on_chat_ready(self, request_id: int, text: str, native_tool_call=None):
         """Qt 主线程：回复就绪；按 request_id 路由并清理该请求回调。"""
         with self._chat_state_lock:
             self._chat_chunk_callbacks.pop(request_id, None)
+            reasoning_callbacks = getattr(self, "_chat_reasoning_callbacks", None)
+            if reasoning_callbacks is not None:
+                reasoning_callbacks.pop(request_id, None)
             callback = self._chat_callbacks.pop(request_id, None)
         if callback:
             try:

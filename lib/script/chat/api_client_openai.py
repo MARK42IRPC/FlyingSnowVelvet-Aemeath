@@ -25,6 +25,40 @@ _MAX_OUTPUT_TOKENS_TEXT = 1024
 _MAX_OUTPUT_TOKENS_VISION = 2048
 
 
+def _is_transport_failure(error: BaseException) -> bool:
+    """该异常是否属于「连接本身不通」，与请求体形状无关。
+
+    这类失败换 payload 变体（image_url 宽松格式、input_* 格式、systemless……）或换
+    端点路径都不可能好转：TCP/TLS 层就没建起来。实测网关一次 TLS EOF 会在 12 个
+    变体上各撞一次、每次约 19 秒，单个模型耗掉 3 分半，期间聊天队列一直被占着。
+    读超时（`ReadTimeout`）同理：模型还没开始回，换请求体也无济于事。
+
+    连接超时（`ConnectTimeout`）不算——那更像上游某一跳暂时不可达，重试一次仍有意义。
+    """
+    if isinstance(error, requests.exceptions.SSLError):
+        return True
+    if isinstance(error, requests.exceptions.ReadTimeout):
+        return True
+    if isinstance(error, requests.exceptions.ConnectTimeout):
+        return False
+    if isinstance(error, requests.exceptions.ConnectionError):
+        # `ConnectionError` 会把 SSLError / 读超时包在里面，按根因判断。
+        text = f"{type(error).__name__} {error}".lower()
+        return any(
+            token in text
+            for token in (
+                "ssl",
+                "eof occurred in violation of protocol",
+                "connection reset",
+                "connection aborted",
+                "remotedisconnected",
+                "broken pipe",
+                "read timed out",
+            )
+        )
+    return False
+
+
 def _resolve_max_output_tokens(
     has_images: bool,
     image_count: int = 0,
@@ -40,11 +74,14 @@ def _resolve_max_output_tokens(
 
     ``override`` 存在的原因：免费池（快捷福利）里这类模型的思考尾巴更长，1024 的
     纯文本预算经常被 reasoning 整个吃光、正文长度为 0（实测 Nemotron VL 在
-    ``finish_reason=length`` 下 content 为空）。那条车道不按 token 计费，可以给得
-    远比付费接口宽松，因此由它自己指定，而不是把全局默认一起抬高。
+    ``finish_reason=length`` 下 content 为空）。
+
+    ``override`` 显式给 ``0`` 表示**不限制**（不下发 `max_tokens`）：思考型模型会先把
+    思考写完再写正文，砍预算等于把思考截断、正文永远轮不到。免费池按请求数计费，
+    这条车道因此走「不截断」而不是「给一个更大的上限」。
     """
-    if override is not None and int(override) > 0:
-        return int(override)
+    if override is not None:
+        return max(0, int(override))
     try:
         from config.ollama_config import OLLAMA
 
@@ -204,7 +241,8 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
                                        include_systemless_fallback: bool = False,
                                        include_relaxed_multimodal_variants: bool = True,
                                        include_input_multimodal_variants: bool = True,
-                                       max_output_tokens: int | None = None) -> list[dict]:
+                                       max_output_tokens: int | None = None,
+                                       reasoning_enabled: bool | None = None) -> list[dict]:
         """
         生成 OpenAI 兼容请求体候选（多模态自动回退）。
 
@@ -251,7 +289,8 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
         def with_extra_options(payload: dict) -> dict:
             # 部分 OpenAI 兼容网关支持的扩展参数：
             # - temperature: 采样温度，适度调高可提升表达多样性
-            # - enable_thinking: 控制是否输出 reasoning_content
+            # - enable_thinking: 控制是否输出 reasoning_content（Qwen 生态）
+            # - reasoning: OpenAI/OpenRouter/Kilo 通用的思考开关（{"enabled": bool}）
             # - thinking_budget: 限制思考 token 上限（可选）
             # - max_tokens: 输出预算。不给时由上游定，思考型模型会把默认预算全烧在
             #   reasoning 上、正文一个字都写不出来（实测 Nemotron / Dots 系带图时必现）。
@@ -264,6 +303,10 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
                     payload["enable_thinking"] = bool(enable_thinking)
                 if thinking_budget is not None and thinking_budget > 0:
                     payload["thinking_budget"] = int(thinking_budget)
+            # 通用的「关闭思考」字段：Kilo / OpenRouter 这类网关按 `reasoning.enabled`
+            # 判定，`enable_thinking` 对它们无效。开启思考时不写，沿用上游默认。
+            if reasoning_enabled is False:
+                payload["reasoning"] = {"enabled": False}
             # OpenAI 兼容字段：用户标识。使用请求级唯一值可降低网关串会话风险。
             if include_user_field and request_user:
                 payload["user"] = str(request_user)
@@ -370,8 +413,14 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
         request_started_at: float | None = None,
         endpoint: str = "",
         on_tool_call=None,
+        on_reasoning_emit=None,
     ) -> str:
-        """消费 OpenAI 兼容流，兼容 SSE / NDJSON / 非标准 chunk 内容。"""
+        """消费 OpenAI 兼容流，兼容 SSE / NDJSON / 非标准 chunk 内容。
+
+        ``on_reasoning_emit`` 在收到思考分片、但正文还没开始时被调用。上层用它把
+        「模型还在思考」告诉用户：思考型模型先写几百到上千片 reasoning 才吐正文，
+        这段时间界面若不提示，看起来就是卡死了。
+        """
         full_text = ""
         line_count = 0
         piece_count = 0
@@ -379,15 +428,29 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
         pending_data = ""
         last_data_sample = ""
         first_piece_at: float | None = None
+        last_reasoning_emit_at = 0.0
         tool_calls = NativeToolCallAccumulator()
 
         def consume_chunk(chunk: dict) -> bool:
             """处理单个已解析 JSON chunk，返回是否应结束流。"""
-            nonlocal full_text, piece_count, reasoning_piece_count
+            nonlocal full_text, piece_count, reasoning_piece_count, last_reasoning_emit_at
 
             tool_calls.consume_openai_chunk(chunk)
             if self._extract_openai_chunk_reasoning(chunk):
                 reasoning_piece_count += 1
+                # 思考分片能有上千条，这里按 1 秒节流后再跨线程通知；
+                # 上层（handler）还会再按 3 秒节流成「思考中…」气泡。
+                now = time.monotonic()
+                if (
+                    on_reasoning_emit is not None
+                    and piece_count == 0
+                    and now - last_reasoning_emit_at >= 1.0
+                ):
+                    last_reasoning_emit_at = now
+                    try:
+                        on_reasoning_emit(reasoning_piece_count)
+                    except Exception as cb_err:
+                        logger.warning("[APIClient] on_reasoning_emit 回调异常，已忽略: %s", cb_err)
             piece = self._extract_openai_chunk_text(chunk)
             if piece:
                 nonlocal first_piece_at
@@ -511,7 +574,9 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
                          on_tool_call=None,
                          retry_attempts: int | None = None,
                          timeout_secs: float | None = None,
-                         max_output_tokens_override: int | None = None) -> str:
+                         max_output_tokens_override: int | None = None,
+                         reasoning_enabled_override: bool | None = None,
+                         on_reasoning_emit=None) -> str:
         """
         POST /chat/completions（OpenAI 兼容 API 格式）。
 
@@ -519,8 +584,13 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
         images: 可选的图片字节数组列表（多模态支持，内部会转换为 base64）
         retry_attempts: 覆盖单端点的重试次数；None 表示沿用 `API_TOTAL_ATTEMPTS`。
         timeout_secs: 覆盖连接/读取超时秒数；None 表示沿用 `API_TIMEOUT_SECS`。
-        max_output_tokens: 覆盖输出预算；None 表示按图数/配置解析。免费池车道用它把
-            预算抬到远超付费默认，避免思考把预算吃光后正文为空。
+        max_output_tokens_override: 覆盖输出预算；``0`` 表示不限制（不下发 `max_tokens`），
+            None 表示按图数/配置解析。免费池车道用 ``0``：思考型模型要先写完思考才写
+            正文，砍预算等于永远拿不到正文。
+        reasoning_enabled_override: 覆盖「思考模式」开关；None 表示沿用设置页的
+            `OLLAMA['api_enable_thinking']`。快捷福利车道显式传 False 关思考，
+            关不掉时（网关强制思考）会自动退回不写该字段。
+        on_reasoning_emit: 收到思考分片（且正文尚未开始）时的回调。
 
         覆盖项只给「一次请求要连试多个目标」的调用方用（快捷福利 API 的模型轮询）：
         它必须能在有限的总预算里换下一个小目标，而不是在同一个目标上把重试耗光。
@@ -537,6 +607,10 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
         api_connect_timeout = float(API_TIMEOUT_SECS if timeout_secs is None else timeout_secs)
         api_read_timeout = api_connect_timeout
         api_retry_times = max(1, int(API_TOTAL_ATTEMPTS if retry_attempts is None else retry_attempts))
+        #: 免费池车道（`max_output_tokens_override == 0`）不设流式总时长上限：
+        #: 这条车道的约定是「让模型把思考写完再答」，思考不截断，就不该再被一个
+        #: 固定的秒数砍掉。读取超时仍然生效（`api_read_timeout`），卡死的连接照旧断开。
+        unbounded_stream = max_output_tokens_override == 0
         try:
             api_retry_backoff = float(raw_retry_backoff)
         except (TypeError, ValueError):
@@ -553,12 +627,14 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
             api_temperature = 0.8
         api_temperature = max(0.0, min(2.0, api_temperature))
         # Qwen3.5 系列默认会先输出 reasoning_content，若只消费 content 会表现为"无流式"。
-        # 默认关闭思考模式，确保聊天与工具指令都能稳定从 content 流中实时到达。
+        # 设置页「启用思考模式」决定默认值；调用方（快捷福利）可显式覆盖。
         raw_enable_thinking = OLLAMA.get('api_enable_thinking', False)
         if isinstance(raw_enable_thinking, str):
             api_enable_thinking = raw_enable_thinking.strip().lower() in ("1", "true", "yes", "on")
         else:
             api_enable_thinking = bool(raw_enable_thinking)
+        if reasoning_enabled_override is not None:
+            api_enable_thinking = bool(reasoning_enabled_override)
         raw_thinking_budget = OLLAMA.get('api_thinking_budget', 0)
         api_thinking_budget = int(raw_thinking_budget) if str(raw_thinking_budget).strip() else 0
 
@@ -568,6 +644,14 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
         model     = active_config['model']
         is_gemini_target = self._is_gemini_compatible_target(base_url, model)
         allow_reasoning_extensions = self._supports_reasoning_extensions(base_url, model)
+        #: 关闭思考要同时满足三件事：调用方显式要求关、该目标没被证实「强制思考」、
+        #: 且设置页的开关确实是关的。只有显式传入覆盖值时才下发 `reasoning` 字段——
+        #: 手工 API 车道沿用旧行为（只发 `enable_thinking`），避免给不认识该字段的
+        #: 网关平白塞一个 400。
+        reasoning_disabled = (
+            reasoning_enabled_override is False
+            and self._reasoning_can_be_disabled(base_url, model)
+        )
 
         headers = {
             "Content-Type":  "application/json",
@@ -611,6 +695,7 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
             include_relaxed_multimodal_variants=True,
             include_input_multimodal_variants=True,
             max_output_tokens=max_output_tokens,
+            reasoning_enabled=False if reasoning_disabled else None,
         )
         # 兼容兜底：仅在多模态请求下追加保守变体（禁用扩展字段+禁用 user 字段）。
         if payload_images:
@@ -631,6 +716,7 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
                 include_relaxed_multimodal_variants=True,
                 include_input_multimodal_variants=True,
                 max_output_tokens=max_output_tokens,
+                reasoning_enabled=False if reasoning_disabled else None,
             )
             payload_candidates.extend(conservative_payloads)
         native_tools_enabled = allow_tools and self._native_tools_available(base_url, model)
@@ -652,12 +738,23 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
 
         last_http_error: requests.HTTPError | None = None
         last_exception: Exception | None = None
+        #: 传输层故障（SSL / 连接被拒 / 读超时）一旦出现，整轮立即收手：它和 payload
+        #: 形状、端点路径都无关，继续换变体只是在同一个故障上反复等待。
+        transport_aborted = False
 
         for endpoint in endpoint_candidates:
+            if transport_aborted:
+                break
             for payload in payload_candidates:
+                if transport_aborted:
+                    break
                 if "tools" in payload and not self._native_tools_available(base_url, model):
                     continue
-                for attempt in range(1, api_retry_times + 1):
+                attempt = 1
+                #: 关思考被拒时在同一端点上重发一次（去掉 `reasoning` 字段）。
+                #: 这一跳不能占重试预算：免费池车道的 `retry_attempts` 就是 1。
+                reasoning_retry_used = False
+                while attempt <= api_retry_times:
                     resp = None
                     try:
                         request_started_at = time.monotonic()
@@ -680,7 +777,11 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
                         if not resp.ok:
                             resp.content
                         resp.raise_for_status()
-                        deadline = time.monotonic() + _STREAM_MAX_SECS
+                        deadline = (
+                            float("inf")
+                            if unbounded_stream
+                            else time.monotonic() + _STREAM_MAX_SECS
+                        )
                         result = self._consume_openai_stream(
                             resp,
                             on_chunk_emit,
@@ -688,15 +789,42 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
                             request_started_at=request_started_at,
                             endpoint=endpoint,
                             on_tool_call=on_tool_call,
+                            on_reasoning_emit=on_reasoning_emit,
                         )
                         return result
                     except requests.HTTPError as e:
                         last_http_error = e
                         status = e.response.status_code if e.response is not None else 0
                         try:
-                            error_detail = self._extract_error(e).lower()
+                            error_detail = self._extract_error(e)
                         except Exception:
-                            error_detail = str(e).lower()
+                            error_detail = str(e)
+                        if (
+                            not reasoning_retry_used
+                            and status in (400, 422)
+                            and "reasoning" in payload
+                            and self._is_reasoning_mandatory_error(error_detail)
+                        ):
+                            # 该模型强制思考：记住它，并把这次请求的 `reasoning` 字段去掉
+                            # 后重发一次——同一次对话没必要因为一个开关整轮失败。
+                            # 不消耗 attempt，否则免费池（重试预算为 1）会直接放弃。
+                            reasoning_retry_used = True
+                            if self._mark_reasoning_mandatory(base_url, model):
+                                logger.info(
+                                    "[APIClient] %s 强制思考、无法关闭，后续请求不再带该字段",
+                                    model,
+                                )
+                            payload = {
+                                key: value for key, value in payload.items()
+                                if key != "reasoning"
+                            }
+                            logger.debug(
+                                "[APIClient] 去掉 reasoning 字段后重试: endpoint=%s model=%s",
+                                endpoint,
+                                model,
+                            )
+                            continue
+                        error_detail = error_detail.lower()
                         rejected_tools = any(
                             token in error_detail
                             for token in ("tools", "tool_choice", "function calling", "function_call")
@@ -719,6 +847,7 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
                             )
                             if api_retry_backoff > 0:
                                 time.sleep(api_retry_backoff * attempt)
+                            attempt += 1
                             continue
                         try:
                             err = self._extract_error(e)
@@ -728,19 +857,32 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
                         break
                     except (requests.Timeout, requests.ConnectionError) as e:
                         last_exception = e
-                        if attempt < api_retry_times:
+                        # 传输层失败与 payload 形状无关：换下一个 payload 变体、换下一个
+                        # 端点只会把同一个故障重演一遍。实测一次 SSLError 在 12 个变体
+                        # 上各撞一次、每次约 19 秒，单个模型要耗 3 分半才轮到换模型，
+                        # 期间还一直占着聊天队列。这里直接结束本模型，把「换目标」的
+                        # 决定交回上层（快捷福利车道会立刻换下一个免费模型）。
+                        if _is_transport_failure(e) or attempt >= api_retry_times:
+                            transport_aborted = _is_transport_failure(e)
                             logger.warning(
-                                "[APIClient] OpenAI网络超时/连接失败，准备重试: endpoint=%s attempt=%d/%d err=%s",
+                                "[APIClient] OpenAI网络异常，放弃本次目标: endpoint=%s attempt=%d/%d err=%s",
                                 endpoint,
                                 attempt,
                                 api_retry_times,
                                 e,
                             )
-                            if api_retry_backoff > 0:
-                                time.sleep(api_retry_backoff * attempt)
-                            continue
-                        logger.debug("[APIClient] OpenAI兼容请求异常 endpoint=%s: %s", endpoint, e)
-                        break
+                            break
+                        logger.warning(
+                            "[APIClient] OpenAI网络超时/连接失败，准备重试: endpoint=%s attempt=%d/%d err=%s",
+                            endpoint,
+                            attempt,
+                            api_retry_times,
+                            e,
+                        )
+                        if api_retry_backoff > 0:
+                            time.sleep(api_retry_backoff * attempt)
+                        attempt += 1
+                        continue
                     except Exception as e:
                         last_exception = e
                         if attempt < api_retry_times:
@@ -753,6 +895,7 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
                             )
                             if api_retry_backoff > 0:
                                 time.sleep(api_retry_backoff * attempt)
+                            attempt += 1
                             continue
                         logger.debug("[APIClient] OpenAI兼容请求异常 endpoint=%s: %s", endpoint, e)
                         break
