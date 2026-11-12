@@ -77,16 +77,46 @@ def estimate_widget_bytes(widget) -> int:
     return width * height * 4 + WIDGET_FIXED_OVERHEAD_BYTES
 
 
-def _hook_step(name: str) -> Callable[[], object | None] | None:
-    """取一个产品侧注入的预加载入口；未注入时返回 None（该步骤静默跳过）。"""
-    factory = tier_d_seams.hook(name)
-    return factory if factory is not None else None
+def _hook_step(name: str) -> Callable[[], object | None]:
+    """构造一个预加载步骤：执行时取产品侧工厂并**真正调用**它。
+
+    这里必须返回「取钩子 + 调用」的闭包，而不是钩子本身。回归事故：早先直接
+    `return tier_d_seams.hook(name)`，`_run_next()` 拿到的 `widget` 其实是
+    `<function _init_speaker_search_dialog>`——取尺寸失败被记成 1x1、预热找不到
+    `render()` 静默跳过、日志照样打 `ready in 0.0 ms`，缓存里躺着一个函数。结果是
+    懒加载窗口一个都没被创建（音响搜索框连单例都是 None，右键发出去的事件没有订阅者），
+    而启动日志看起来完全正常。
+
+    钩子在**执行时**解析而不是构造时，产品垫片晚于预加载器导入也能取到。
+    """
+
+    def run() -> object | None:
+        factory = tier_d_seams.hook(name)
+        if factory is None:
+            return None
+        return factory()
+
+    return run
 
 
 def _release_hook(name: str) -> Callable[[], None]:
-    """取一个产品侧注入的释放入口；未注入时给出空操作。"""
-    factory = tier_d_seams.hook(name)
-    return factory if factory is not None else (lambda: None)
+    """构造一个释放步骤：执行时取产品侧释放入口；未注入时什么也不做。"""
+
+    def run() -> None:
+        factory = tier_d_seams.hook(name)
+        if factory is not None:
+            factory()
+
+    return run
+
+
+def _is_ui_payload(widget: object) -> bool:
+    """该对象能否作为「预加载好的控件」进缓存池。
+
+    缓存池只关心尺寸与可见性，所以判据就是这两件事拿得到。函数、模块这类对象
+    没有 `width()`，混进来只会让整条预热静默失效。
+    """
+    return callable(getattr(widget, "width", None))
 
 
 class UiPreloader(QObject):
@@ -111,11 +141,7 @@ class UiPreloader(QObject):
         self._steps: tuple[
             tuple[str, Callable[[], object | None], Callable[[], None]], ...
         ] = tuple(
-            (
-                key,
-                (lambda hook_name=hook: _hook_step(hook_name) or (lambda: None)),
-                (lambda hook_name=release: _release_hook(hook_name)),
-            )
+            (key, _hook_step(hook), _release_hook(release))
             for key, hook, release in _PRELOAD_STEPS
         )
         self._step_index = 0
@@ -167,6 +193,14 @@ class UiPreloader(QObject):
             widget = preload()
             if widget is None:
                 _logger.debug('[ui.preload] %s unavailable', name)
+            elif not _is_ui_payload(widget):
+                # 钩子没被调用、或注入了非控件对象：绝不能当成「预热成功」收下。
+                # 早先这一步会把工厂函数缓存进去，日志照打 ready，真实窗口却从未创建。
+                _logger.warning(
+                    '[ui.preload] %s returned %s, expected a UI payload; skipped',
+                    name,
+                    type(widget).__name__,
+                )
             else:
                 self._warm_paint(widget)
                 size_bytes = estimate_widget_bytes(widget)

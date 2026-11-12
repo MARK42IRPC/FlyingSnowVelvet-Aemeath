@@ -245,6 +245,55 @@ class UiPreloaderTests(unittest.TestCase):
         finally:
             preloader.stop()
 
+    def test_registered_hooks_are_called_and_the_widget_is_cached(self):
+        """真实 `_PRELOAD_STEPS` 必须**调用**钩子，缓存里躺的必须是控件。
+
+        回归自真实故障：`_hook_step()` 曾把工厂函数本身当成构造结果返回，于是五个
+        懒加载窗口一个都没创建（音响搜索框的单例恒为 None，右键发出去的事件没有订阅
+        者，右键菜单永远打不开），而启动日志照样打印 `ready in 0.0 ms`。这里的断言
+        走真实步骤表与真实钩子注册，不再用 `_build()` 换掉 `_steps`。
+        """
+        from lib.core.render.backends.qt.widgets import tier_d_seams
+        from lib.core.render.backends.qt.widgets.preloader import _PRELOAD_STEPS
+
+        created = []
+        widgets = {}
+        for key, init_hook, cleanup_hook in _PRELOAD_STEPS:
+            widget = FakeWidget(key)
+            widgets[key] = widget
+
+            def factory(widget=widget, key=key):
+                created.append(key)
+                return widget
+
+            tier_d_seams.register_hook(init_hook, factory)
+            tier_d_seams.register_hook(cleanup_hook, lambda: None)
+        try:
+            preloader = UiPreloader()
+            drain(preloader)
+        finally:
+            for _key, init_hook, cleanup_hook in _PRELOAD_STEPS:
+                tier_d_seams.register_hook(init_hook, None)
+                tier_d_seams.register_hook(cleanup_hook, None)
+
+        self.assertEqual(created, [key for key, _init, _cleanup in _PRELOAD_STEPS])
+        self.assertEqual(preloader.pool.keys, tuple(created))
+        for key in created:
+            self.assertIs(preloader.pool.get(key), widgets[key])
+
+    def test_callable_payload_is_rejected_instead_of_cached(self):
+        """钩子没被调用时拿到的是函数：必须报警并跳过，不能当成预热成功。"""
+        preloader, _released = self._build([])
+        preloader._steps = (
+            ("speaker_search_dialog", lambda: lambda: None, lambda: None),
+        )
+        with patch("lib.core.render.backends.qt.widgets.preloader._logger") as logger:
+            drain(preloader)
+
+        self.assertEqual(preloader.pool.keys, ())
+        logger.warning.assert_called_once()
+        logger.debug.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
