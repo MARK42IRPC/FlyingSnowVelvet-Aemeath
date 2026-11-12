@@ -331,7 +331,7 @@ class DxWorldObjectBackendTests(unittest.TestCase):
         instance._on_physics_position_change(body)
         self.assertTrue(instance._flipped)
 
-    def test_sofa_uses_qt_collision_particle(self):
+    def test_sofa_shares_the_speaker_collision_particle(self):
         received = []
         center = get_event_center()
         callback = lambda event: received.append(event.data["particle_id"])
@@ -344,7 +344,8 @@ class DxWorldObjectBackendTests(unittest.TestCase):
         finally:
             center.unsubscribe(EventType.PARTICLE_REQUEST, callback)
 
-        self.assertEqual(received, ["collision", "collision"])
+        # 沙发与音响/闹钟共用同一个白粉色碰撞粒子。
+        self.assertEqual(received, ["white_pink_collision"] * 2)
 
     def test_snow_pile_clicks_match_qt_sound_and_drift_effects(self):
         received = []

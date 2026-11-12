@@ -23,6 +23,7 @@ from lib.core.render.layers import get_layer_manager
 from lib.core.physics import PhysicsBody, get_physics_world
 from lib.core.services.world_object_physics import (
     DEFAULT_DRAG_TRAIL_WINDOW_SEC,
+    WORLD_OBJECT_COLLISION_PARTICLE,
     resolve_world_object_physics,
 )
 from lib.core.world_objects import (
@@ -330,8 +331,10 @@ class _DxWorldObject:
             self._update_speaker_flip()
         if self.object_type in {"clock", "sofa", "speaker"}:
             x = body.x if side == "left" else body.x + body.width
-            particle = "collision" if self.object_type == "sofa" else "white_pink_collision"
-            self._spawn_particle(particle, Point(x, body.y + body.height / 2.0))
+            self._spawn_particle(
+                WORLD_OBJECT_COLLISION_PARTICLE,
+                Point(x, body.y + body.height / 2.0),
+            )
         if self.object_type != "snow_leopard":
             self._play_sound("impact")
 
@@ -340,7 +343,7 @@ class _DxWorldObject:
             self._frozen = True
         if self.object_type in {"clock", "sofa", "speaker"}:
             self._spawn_particle(
-                "collision" if self.object_type == "sofa" else "white_pink_collision",
+                WORLD_OBJECT_COLLISION_PARTICLE,
                 Point(body.x + body.width / 2.0, body.y + body.height),
             )
         elif self.object_type in {"snowball", "snow_leopard"}:

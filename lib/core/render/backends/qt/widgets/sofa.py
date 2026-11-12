@@ -21,7 +21,10 @@ from lib.core.physics          import get_physics_world, PhysicsBody
 from lib.core.render.visuals.resources import ImageResource
 from lib.core.render.visuals.visuals import build_world_object_batch
 
-from lib.core.services.world_object_physics import resolve_world_object_physics
+from lib.core.services.world_object_physics import (
+    WORLD_OBJECT_COLLISION_PARTICLE,
+    resolve_world_object_physics,
+)
 
 from lib.core.render.backends.qt.widgets import tier_d_seams
 
@@ -240,14 +243,14 @@ class Sofa(QWidget):
         # 在碰墙接触边的中点生成碰撞粒子
         cx = int(body.x) if side == 'left' else int(body.x + body.width)
         cy = int(body.y + body.height / 2)
-        spawn_particle_at_point(cx, cy, 'collision')
+        spawn_particle_at_point(cx, cy, WORLD_OBJECT_COLLISION_PARTICLE)
         self._sofa_sound.play()
 
     def _on_physics_ground_bounce(self, body: PhysicsBody, stopped: bool) -> None:
         """触地时在沙发底部中心生成碰撞粒子并播放弹跳音效。"""
         cx = int(body.x + body.width  / 2)
         cy = int(body.y + body.height)
-        spawn_particle_at_point(cx, cy, 'collision')
+        spawn_particle_at_point(cx, cy, WORLD_OBJECT_COLLISION_PARTICLE)
         self._sofa_sound.play()
 
     # ==================================================================

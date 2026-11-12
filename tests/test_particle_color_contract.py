@@ -121,5 +121,45 @@ class ParticleColorContractTests(unittest.TestCase):
         self.assertEqual(snow._ground_y, 1074.0)
 
 
+    def test_bouncing_world_objects_share_one_collision_particle(self):
+        """音响 / 闹钟 / 沙发撞墙与触地时用的是同一个白粉色粒子。
+
+        这三者都是同一类「抛来抛去」的实体，落点反馈理应一致。回归自真实反馈：
+        沙发单独用的是通用 `collision` 粒子（另一套配色），同一台桌面上两种弹跳
+        反馈肉眼可辨。粒子 id 现在由 `WORLD_OBJECT_COLLISION_PARTICLE` 唯一给出，
+        两个渲染后端都从这里取。
+        """
+        from lib.core.services.world_object_physics import (
+            WORLD_OBJECT_COLLISION_PARTICLE,
+        )
+
+        self.assertEqual(WORLD_OBJECT_COLLISION_PARTICLE, "white_pink_collision")
+
+        repo_root = Path(__file__).resolve().parents[1]
+        sources = {
+            "qt_sofa": repo_root / "lib/core/render/backends/qt/widgets/sofa.py",
+            "qt_speaker": repo_root / "lib/core/render/backends/qt/widgets/speaker.py",
+            "qt_clock": repo_root / "lib/core/render/backends/qt/widgets/clock.py",
+            "dx": repo_root / "lib/core/render/backends/dx/world_object_backend.py",
+        }
+        for name, path in sources.items():
+            text = path.read_text(encoding="utf-8")
+            self.assertIn(
+                "WORLD_OBJECT_COLLISION_PARTICLE",
+                text,
+                f"{name} 必须从共享常量取碰撞粒子",
+            )
+            self.assertNotIn(
+                "'collision'",
+                text,
+                f"{name} 不该再硬编码通用 collision 粒子",
+            )
+            self.assertNotIn(
+                "'white_pink_collision'",
+                text,
+                f"{name} 不该再硬编码粒子 id",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

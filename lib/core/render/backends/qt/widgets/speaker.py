@@ -28,7 +28,10 @@ from lib.core.render.visuals.visuals import (
     update_speaker_intensity,
 )
 
-from lib.core.services.world_object_physics import resolve_world_object_physics
+from lib.core.services.world_object_physics import (
+    WORLD_OBJECT_COLLISION_PARTICLE,
+    resolve_world_object_physics,
+)
 
 from lib.core.render.backends.qt.widgets import tier_d_seams
 
@@ -237,13 +240,13 @@ class Speaker(QWidget):
         self._update_flip()
         cx = int(body.x) if side == 'left' else int(body.x + body.width)
         cy = int(body.y + body.height / 2)
-        spawn_particle_at_point(cx, cy, 'white_pink_collision')
+        spawn_particle_at_point(cx, cy, WORLD_OBJECT_COLLISION_PARTICLE)
         self._sofa_sound.play()
 
     def _on_physics_ground_bounce(self, body: PhysicsBody, stopped: bool) -> None:
         cx = int(body.x + body.width  / 2)
         cy = int(body.y + body.height)
-        spawn_particle_at_point(cx, cy, 'white_pink_collision')
+        spawn_particle_at_point(cx, cy, WORLD_OBJECT_COLLISION_PARTICLE)
         self._sofa_sound.play()
 
     # ==================================================================

@@ -61,6 +61,13 @@ FADE_TICK_MS = 50
 #: The clock's countdown-end push is this many times the jump impulse.
 CLOCK_UP_FORCE_MULTIPLIER = 2.0
 
+#: 可拖拽世界对象碰到墙/地面时统一的碰撞粒子 id（白粉色方块粒子）。
+#:
+#: 音响、闹钟与沙发共用这一个粒子：它们都是同一类「抛来抛去」的实体，落点反馈
+#: 理应一致。此前沙发单独用的是通用 `collision` 粒子（另一套配色），同一台桌面上
+#: 两种弹跳反馈肉眼可辨。两个渲染后端都从这里取，避免再各自硬编码一份。
+WORLD_OBJECT_COLLISION_PARTICLE = "white_pink_collision"
+
 
 def _float(value: object, fallback: float) -> float:
     """Coerce a config value, falling back on anything unusable.
@@ -253,4 +260,5 @@ __all__ = [
     "FADE_TICK_MS",
     "WorldObjectPhysics",
     "resolve_world_object_physics",
+    "WORLD_OBJECT_COLLISION_PARTICLE",
 ]

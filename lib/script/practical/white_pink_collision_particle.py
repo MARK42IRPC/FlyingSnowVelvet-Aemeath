@@ -1,4 +1,4 @@
-"""白粉色碰撞反弹粒子效果脚本 - 音响专属"""
+"""白粉色碰撞反弹粒子效果脚本 - 可拖拽世界对象（音响 / 闹钟 / 沙发）共用"""
 import random
 import math
 from typing import Tuple
@@ -34,7 +34,7 @@ _DRAG    = 0.912673
 
 @register_particle("white_pink_collision")
 class WhitePinkCollisionParticleScript(BaseParticleScript):
-    """白粉色碰撞粒子脚本 - 音响专属，方形单点粒子，与屏幕边缘弹跳，淡出消退"""
+    """白粉色碰撞粒子脚本 - 音响 / 闹钟 / 沙发共用，方形单点粒子，与屏幕边缘弹跳，淡出消退"""
 
     PARTICLE_ID = "white_pink_collision"
 
