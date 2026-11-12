@@ -186,6 +186,7 @@ GENERAL_BOOL_KEYS: set[tuple[str, str]] = {
     ("MORTOR", "bgm_enabled"),
     ("STARTUP", "ensure_desktop_shortcut"),
     ("STARTUP", "ui_cache_preload"),
+    ("LIVE_STREAM", "live_mode_enabled"),
     ("LIVE_STREAM", "enabled"),
     ("LIVE_STREAM", "notify_on_enqueue"),
     ("GIFT_ALERT", "enabled"),
@@ -456,6 +457,7 @@ GENERAL_CONFIG_DEFAULTS: dict[str, dict[str, object]] = {
         "microphone_noise_gate_threshold": 180,
     },
     "LIVE_STREAM": {
+        "live_mode_enabled": False,
         "enabled": False,
         "room_id": "",
         "command_prefix": "点歌",
@@ -523,11 +525,12 @@ GENERAL_SECTION_KEY_ROUTES: dict[str, tuple[str, tuple[str, ...]]] = {
 
 
 GENERAL_MIXED_SECTION_FIELDS: dict[str, list[tuple[str, str]]] = {
-    #: 「直播间设置」卡片的行序：房间号 → 礼物提醒总开关 → 直播点歌总开关。
-    #: 礼物提醒排在被它约束的「启用弹幕点歌」之前——先决定要不要提醒什么，再决定
-    #: 要不要点歌，两个开关的从属关系才看得出来（两者共用同一条弹幕连接）。
+    #: 「直播间设置」卡片的行序：直播模式 → 房间号 → 礼物提醒 → 直播点歌。
+    #: 「直播模式」是连接总开关，礼物提醒与弹幕点歌共用同一条弹幕连接，
+    #: 两个子开关都排在它后面，从属关系才看得出来。
     #: 「连接检查」按钮行由页面在礼物开关之后插入，见 `_move_row_before_gift_switch`。
     "LIVE_STREAM": [
+        ("LIVE_STREAM", "live_mode_enabled"),
         ("LIVE_STREAM", "room_id"),
         ("GIFT_ALERT", "enabled"),
         ("LIVE_STREAM", "enabled"),

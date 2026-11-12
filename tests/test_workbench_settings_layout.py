@@ -317,7 +317,7 @@ class WorkbenchSettingsLayoutTests(unittest.TestCase):
 
             self.assertEqual(
                 keys_by_section.get(id(room_section), set()),
-                {'enabled', 'room_id'},
+                {'live_mode_enabled', 'enabled', 'room_id'},
             )
             self.assertEqual(
                 keys_by_section.get(id(song_section), set()),
@@ -346,7 +346,22 @@ class WorkbenchSettingsLayoutTests(unittest.TestCase):
 
             enabled_editor = live_meta['enabled_editor']
             self.assertIsInstance(enabled_editor, QCheckBox)
-            # 页面本身是隐藏的（懒加载面板），所以看的是分区自己的隐藏标记。
+            live_mode_editor = live_meta['live_mode_editor']
+            self.assertIsInstance(live_mode_editor, QCheckBox)
+            # 复选框本身不带文字：行标签由表单左侧的 QLabel 提供，取友好名核对。
+            from lib.core.ai_settings.labels import KEY_FRIENDLY_NAME
+
+            self.assertEqual(KEY_FRIENDLY_NAME['LIVE_STREAM']['live_mode_enabled'], '直播模式')
+
+            # 总开关关着时子开关不可点、卡片收起；打开总开关后子开关恢复可点。
+            live_mode_editor.setChecked(False)
+            self.assertFalse(enabled_editor.isEnabled())
+            enabled_editor.setChecked(True)
+            self.assertTrue(song_section.isHidden(), '总开关关着时点歌卡片不能展开')
+
+            live_mode_editor.setChecked(True)
+            self.assertTrue(enabled_editor.isEnabled())
+            self.assertFalse(song_section.isHidden())
             enabled_editor.setChecked(False)
             self.assertTrue(song_section.isHidden())
             enabled_editor.setChecked(True)

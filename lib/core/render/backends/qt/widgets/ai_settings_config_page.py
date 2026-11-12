@@ -565,18 +565,26 @@ class ConfigPageMixin:
         return added_row
 
     def _wire_live_stream_sections(self, sections, fields: list[dict]) -> dict:
-        """「启用弹幕点歌」关掉时整张「弹幕点歌」卡片收起；返回给 `_config_tab_meta` 的引用。"""
+        """串起直播页的开关联动；返回给 `_config_tab_meta` 的引用。
+
+        「直播模式」（`live_mode_enabled`）是连接总开关，「启用弹幕点歌」
+        （`LIVE_STREAM.enabled`）与「启用礼物提醒」（`GIFT_ALERT.enabled`）从属于它：
+        总开关关掉时两张参数卡片都收起，两个子开关也置灰——连接不存在，子功能无从谈起。
+        """
         room_section = sections.get("LIVE_STREAM")
         song_section = sections.get("LIVE_STREAM_SONG")
+        live_mode_editor = None
         enabled_editor = None
         for field in fields:
-            if (
-                str(field.get("dict_name") or "") == "LIVE_STREAM"
-                and str(field.get("key") or "") == "enabled"
-                and isinstance(field.get("editor"), QCheckBox)
-            ):
+            if not isinstance(field.get("editor"), QCheckBox):
+                continue
+            if str(field.get("dict_name") or "") != "LIVE_STREAM":
+                continue
+            key = str(field.get("key") or "")
+            if key == "live_mode_enabled":
+                live_mode_editor = field["editor"]
+            elif key == "enabled":
                 enabled_editor = field["editor"]
-                break
 
         probe_button = None
         probe_label = None
@@ -598,24 +606,39 @@ class ConfigPageMixin:
                 break
 
         def sync(checked: bool) -> None:
-            # 「弹幕点歌」整张卡片跟着总开关滑入/滑出，下方「礼物提醒」卡片随之平滑重排。
+            # 「弹幕点歌」整张卡片跟着它自己的开关滑入/滑出，下方卡片随之平滑重排。
+            # 总开关关着时即使子开关为开，卡片也保持收起（连接不存在，参数没有意义）。
+            live_on = live_mode_editor.isChecked() if live_mode_editor is not None else True
             if song_section is not None:
-                set_section_visible(song_section, bool(checked), host=self)
+                set_section_visible(song_section, bool(checked) and live_on, host=self)
 
         def sync_gift(checked: bool) -> None:
             # 礼物提醒卡片只在启用后才展开：没开的时候那几个参数没有意义。
+            live_on = live_mode_editor.isChecked() if live_mode_editor is not None else True
             if gift_section is not None:
-                set_section_visible(gift_section, bool(checked), host=self)
+                set_section_visible(gift_section, bool(checked) and live_on, host=self)
+
+        def sync_live_mode(checked: bool) -> None:
+            """总开关：控制两个子开关是否可点，并重算两张参数卡片的展开状态。"""
+            live_on = bool(checked)
+            for editor in (enabled_editor, gift_enabled_editor):
+                if editor is not None:
+                    editor.setEnabled(live_on)
+            if enabled_editor is not None:
+                sync(enabled_editor.isChecked())
+            if gift_enabled_editor is not None:
+                sync_gift(gift_enabled_editor.isChecked())
 
         if enabled_editor is not None and song_section is not None:
             enabled_editor.toggled.connect(sync)
-            sync(enabled_editor.isChecked())
-
         if gift_enabled_editor is not None and gift_section is not None:
             gift_enabled_editor.toggled.connect(sync_gift)
-            sync_gift(gift_enabled_editor.isChecked())
+        if live_mode_editor is not None:
+            live_mode_editor.toggled.connect(sync_live_mode)
+        sync_live_mode(live_mode_editor.isChecked() if live_mode_editor is not None else True)
 
         return {
+            "live_mode_editor": live_mode_editor,
             "enabled_editor": enabled_editor,
             "room_section": room_section,
             "song_section": song_section,
@@ -625,6 +648,7 @@ class ConfigPageMixin:
             "probe_label": probe_label,
             "sync": sync,
             "sync_gift": sync_gift,
+            "sync_live_mode": sync_live_mode,
         }
 
     def _on_test_live_room(self, button: QPushButton, result_label: QLabel) -> None:

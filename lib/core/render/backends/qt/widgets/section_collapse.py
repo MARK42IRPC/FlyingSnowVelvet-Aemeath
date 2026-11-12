@@ -82,48 +82,58 @@ def _wrap_section(widget: QWidget) -> _SectionClipState:
     return state
 
 
-#: 布局槽位：`("index", i)` 表示普通布局的第 i 项，`("form", row, role)` 表示表单行。
+#: 布局槽位：`("form", layout, row, role)` 表示表单行，`("index", layout, i)` 表示普通布局的第 i 项。
+#: 槽位里必须带着**真正容纳卡片的那个布局**：设置页的卡片常常挂在 `SettingsSection.body_layout`
+#: 这样的子布局里，`parent.layout()` 只是它的祖先，`indexOf()` 会一律返回 -1。
 _Slot = tuple
 
 
+def _iter_layouts(layout):
+    """深度优先枚举一个布局及其所有子布局。"""
+    if layout is None:
+        return
+    yield layout
+    for index in range(layout.count()):
+        item = layout.itemAt(index)
+        nested = item.layout() if item is not None else None
+        if nested is not None:
+            yield from _iter_layouts(nested)
+
+
 def _capture_slot(widget: QWidget, parent: QWidget | None) -> _Slot | None:
-    """在 reparent 之前记录卡片在父布局里的位置。"""
+    """在 reparent 之前记录卡片所在的布局与位置。
+
+    卡片不一定直接挂在 `parent.layout()` 上——办公页的「独立 api」整块与语音页的高级设置
+    都是放进分区的 `body_layout`（一个子布局）。这里递归找真正容纳它的那一层，否则槽位拿不到，
+    裁切容器永远进不了布局，动画改了 `maximumHeight` 也没人会照着排版。
+    """
     from PyQt5.QtWidgets import QFormLayout
 
     if parent is None:
         return None
-    layout = parent.layout()
-    if layout is None:
-        return None
-    if isinstance(layout, QFormLayout):
-        row, role = layout.getWidgetPosition(widget)
-        return ("form", row, role) if row >= 0 else None
-    index = layout.indexOf(widget)
-    return ("index", index) if index >= 0 else None
+    for layout in _iter_layouts(parent.layout()):
+        if isinstance(layout, QFormLayout):
+            row, role = layout.getWidgetPosition(widget)
+            if row >= 0:
+                return ("form", layout, row, role)
+            continue
+        index = layout.indexOf(widget)
+        if index >= 0:
+            return ("index", layout, index)
+    return None
 
 
 def _apply_slot(widget: QWidget, outer: QWidget, slot: _Slot | None) -> None:
-    """把容器放回卡片原来的位置。"""
-    from PyQt5.QtWidgets import QFormLayout
-
+    """把容器放回卡片原来的布局位置。"""
     if slot is None:
         return
-    kind = slot[0]
+    kind, layout = slot[0], slot[1]
     if kind == "form":
-        layout = outer.parentWidget().layout() if outer.parentWidget() else None
-        if isinstance(layout, QFormLayout):
-            layout.setWidget(slot[1], slot[2], outer)
-        return
-    layout = outer.parentWidget().layout() if outer.parentWidget() else None
-    if layout is None:
-        return
-    if isinstance(layout, QFormLayout):
-        # 卡片原先不在表单里，但父布局换成了表单：退回追加。
-        layout.addRow(outer)
+        layout.setWidget(slot[2], slot[3], outer)
         return
     if layout.indexOf(widget) >= 0:
         layout.removeWidget(widget)
-    layout.insertWidget(max(0, min(slot[1], layout.count())), outer)
+    layout.insertWidget(max(0, min(slot[2], layout.count())), outer)
 
 
 def _measure(state: _SectionClipState) -> int:
@@ -134,30 +144,50 @@ def _measure(state: _SectionClipState) -> int:
     return hint if hint > 0 else max(1, state.outer.height())
 
 
+#: 裁切容器的对象名。它在祖先链上**不能**代表「页面是否显示」：卡片收起后容器自己
+#: 就是隐藏的，而卡片所在的页面依旧正常展示着。判定可见性时必须跳过它。
+_CLIP_OBJECT_NAME = "SettingsSectionClip"
+
+
+def _is_displayed(widget: QWidget) -> bool:
+    """卡片所在的页面此刻是否真的会被画出来。
+
+    判定从卡片的**父级**开始，而不是卡片自己：`show_section()` 要滑入的卡片本来就处于
+    隐藏状态。祖先链上任意一层被显式隐藏（标签页没选中、工作台当前显示的是别的页），
+    这次联动就没人看得见。裁切容器自己会因为收起而隐藏，跳过它——否则一张卡片收起过
+    一次之后，再也播不了展开动画。
+
+    顶层按窗口的 `isVisible()` 判定：窗口还没显示（页面构造期、离屏构建、工作台尚未
+    打开）时 Qt 不会推进动画，「先播动画再收尾」等于把卡片永久留在中间态。
+    """
+    current = widget.parentWidget()
+    while current is not None:
+        try:
+            if current.objectName() != _CLIP_OBJECT_NAME and current.isHidden():
+                return False
+            if current.isWindow():
+                return bool(current.isVisible())
+        except RuntimeError:
+            return False
+        current = current.parentWidget()
+    return False
+
+
 def _should_animate(widget: QWidget, host: QWidget | None, animate: bool) -> bool:
     """是否真的需要播动画。
 
-    宿主还没显示时（页面构造阶段、离屏构建、工作台尚未打开）Qt 不会推进动画，
-    此时「先播动画再收尾」等于把卡片永久留在中间态。这类情况下直接落到终态，
-    与侧边栏抽屉在未显示窗口里 `animate=False` 的处理一致。
+    只看**卡片所在页面**是否真的显示着。以前这里判的是 `host` 的可见性，而工作台把设置页
+    嵌进 `WorkbenchPageHost` 之后，`host`（`AISettingsPanel`）自身是隐藏的——页面被搬进了
+    工作台窗口，面板壳不再是它的祖先。于是真实使用路径（托盘 → 工作台 → 设置页）里
+    每一次卡片联动都走了「不播动画」的分支，这正是「卡片联动过渡从未播放」的原因。
 
-    `host` 只用于判断宿主是否可见，可能是一个只提供少量方法的产品对象（测试替身）；
-    拿不到 Qt 可见性时按「不播动画」处理——那样仍会走到终态，行为可预期。
+    `host` 只作为动画的持有者，不再参与可见性判定；测试替身不再需要提供 `isVisible`。
     """
     if not animate:
         return False
     if motion.section_reveal_ms() <= 0:
         return False
-    target = host if host is not None else None
-    if target is None:
-        target = widget.parentWidget()
-    is_visible = getattr(target, "isVisible", None)
-    if not callable(is_visible):
-        return False
-    try:
-        return bool(is_visible())
-    except (RuntimeError, AttributeError):
-        return False
+    return _is_displayed(widget)
 
 
 def _is_qt_widget(widget) -> bool:

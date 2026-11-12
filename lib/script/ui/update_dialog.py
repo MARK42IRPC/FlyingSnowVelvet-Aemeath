@@ -43,10 +43,27 @@ _BORDER = _LAYER * 2
 
 
 class _UpdateSignal:
-    """`pyqtSignal(...)` 的后端中立替身：只保留 `connect` / `emit` / `disconnect`。"""
+    """`pyqtSignal(...)` 的后端中立替身：只保留 `connect` / `emit` / `disconnect`。
+
+    **`emit()` 必须回到 UI 线程再派发槽**，这和 `pyqtSignal` 的语义一致。后台 worker
+    跑在 `compute_interactive_io` 线程里，槽直接就地执行就会在工作线程上改 Qt 控件
+    （`setText` / `setRange` / 建对话框），Qt 不允许跨线程操作控件，实测进程直接结束、
+    连 traceback 都没有——正是「自动检查更新完成后桌宠无报错闪退」的形状。旧实现靠
+    `pyqtSignal` 的自动排队躲过这一点，换成纯 Python 回调后这条保护就丢了。
+
+    调度器由对话框在构造时注入（`render_bridge.create_ui_dispatcher()`）：在 UI 线程
+    调用就地执行，跨线程则排队回 UI 线程。没有调度器时（单元测试）退回直接执行。
+    """
 
     def __init__(self) -> None:
         self._slots: list = []
+        self._dispatcher = None
+        #: `close()` 之后不再派发：worker 可能比窗口活得久。
+        self._closed = False
+
+    def bind_dispatcher(self, dispatcher) -> None:
+        """注入 UI 线程调度宿主（对话框构造时调用一次）。"""
+        self._dispatcher = dispatcher
 
     def connect(self, slot) -> None:
         if slot not in self._slots:
@@ -61,23 +78,65 @@ class _UpdateSignal:
         except ValueError:
             pass
 
+    def close(self) -> None:
+        """窗口清理时调用：此后到达的回调一律丢弃。
+
+        检查更新是异步的，窗口可能在结果回来之前就被关掉（用户点了关闭、程序正在退出）。
+        那时再往已 `deleteLater()` 的控件上写属性就是访问已释放的 Qt 对象。
+        """
+        self._closed = True
+        self._slots.clear()
+
+    def _dispatch(self, callback: Callable[[], None]) -> None:
+        if self._closed:
+            return
+
+        def guarded() -> None:
+            # 排队期间窗口可能已被清理：跨线程投递的回调在 UI 线程真正执行前再判一次，
+            # 否则 `dispatcher.clear()` 之前就已入队的那个回调仍会落到已销毁的控件上。
+            if self._closed:
+                return
+            callback()
+
+        dispatcher = self._dispatcher
+        post = getattr(dispatcher, "post", None) if dispatcher is not None else None
+        if callable(post):
+            post(guarded)
+            return
+        guarded()
+
     def emit(self, *args) -> None:
-        for slot in tuple(self._slots):
-            slot(*args)
+        if self._closed:
+            return
+        slots = tuple(self._slots)
+        if not slots:
+            return
+        self._dispatch(lambda: [slot(*args) for slot in slots])
 
 
 class DesktopPetUpdateDialog:
     """承载分发包更新的独立小窗。"""
 
-    _detail_signal = _UpdateSignal()
-    _progress_signal = _UpdateSignal()
-    _release_check_signal = _UpdateSignal()
-    _release_done_signal = _UpdateSignal()
-    _restart_done_signal = _UpdateSignal()
-    _error_signal = _UpdateSignal()
-
     def __init__(self, parent=None) -> None:
         self._dispatcher = render_bridge.create_ui_dispatcher(parent)
+        # 信号必须是**实例级**的：写成类属性时所有对话框共用同一张槽表，第二个实例会把
+        # 自己接到第一个实例的窗口上——第一个实例销毁后，回调就落到已释放的控件。
+        self._detail_signal = _UpdateSignal()
+        self._progress_signal = _UpdateSignal()
+        self._release_check_signal = _UpdateSignal()
+        self._release_done_signal = _UpdateSignal()
+        self._restart_done_signal = _UpdateSignal()
+        self._error_signal = _UpdateSignal()
+        for signal in (
+            self._detail_signal,
+            self._progress_signal,
+            self._release_check_signal,
+            self._release_done_signal,
+            self._restart_done_signal,
+            self._error_signal,
+        ):
+            # 后台 worker 的 emit 必须排队回 UI 线程再碰控件。
+            signal.bind_dispatcher(self._dispatcher)
         self._visible = False
         self._busy = False
         self._release_check: ReleaseCheckResult | None = None
@@ -434,13 +493,27 @@ class DesktopPetUpdateDialog:
             return
         self._visible = False
 
+    def _close_signals(self) -> None:
+        """关掉所有信号：worker 比窗口活得久，结果回来时不能再往已销毁的控件上写。"""
+        for signal in (
+            self._detail_signal,
+            self._progress_signal,
+            self._release_check_signal,
+            self._release_done_signal,
+            self._restart_done_signal,
+            self._error_signal,
+        ):
+            signal.close()
+
     def cleanup(self) -> None:
         self._visible = False
         self._busy = False
+        self._close_signals()
         self._dispatcher.clear()
         self._window.cleanup()
 
     def deleteLater(self) -> None:  # noqa: N802 - 沿用 Qt 命名
+        self._close_signals()
         self._dispatcher.clear()
         self._window.cleanup()
 

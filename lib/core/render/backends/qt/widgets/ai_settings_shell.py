@@ -588,7 +588,7 @@ class AISettingsShellMixin:
         self._unsubscribe_border_effect_events()
         self._unsubscribe_autostart_events()
         self._hide_floating_tab()
-        for attr_name in ("_voice_installer_dialog",):
+        for attr_name in ("_voice_installer_dialog", "_update_dialog"):
             dialog = getattr(self, attr_name, None)
             if dialog is not None:
                 try:

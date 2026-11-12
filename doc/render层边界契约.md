@@ -1718,6 +1718,16 @@ Qt 对接收者只持弱引用，而闭包会一直攥住 `self`；一旦 `_poll
 的队列）。另有 `flush()`（同步执行尚未被事件循环取走的跨线程回调）与 `clear()`（清理时丢弃）。
 `render_bridge.create_ui_dispatcher()` 是控件侧唯一落点。控制器只持有它的返回值，不再声明信号。
 
+**把 `pyqtSignal` 换成后端中立替身时，必须自己补回排队语义**
+
+`pyqtSignal` 跨线程 `emit` 会自动排队到接收者线程；照着它的接口面写的纯 Python 替身
+（`_AnnouncementSignal` / `_UpdateSignal`）默认是**就地调用槽**。槽里只要碰了 Qt 控件
+（`setText` / `setRange` / 建对话框），就等于在工作线程操作控件树，Windows 上表现为进程直接结束、
+不留 traceback——更新浮窗「自动检查完成后无报错闪退」就是这么来的：`check_for_updates()` 跑在
+`compute_interactive_io` 线程，完成回调在工作线程里改了一整套控件。替身因此必须做到三件事：
+`emit()` 经 `UiDispatcher.post()` 派发、信号是**实例级**（类级信号会让所有实例共用一张槽表）、
+以及清理后（含已排队但未执行的回调）一律丢弃。回归见 `tests/test_update_dialog_threading.py`。
+
 **描述层扩容（`lib/core/render/visuals/`）**
 
 - `window_spec.py` 新增 `RichTextSpec`（`QTextBrowser` 只读 HTML：`document_stylesheet` /
