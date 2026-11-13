@@ -68,13 +68,12 @@ jobs:
 
   capture-unit-test-log:
     runs-on: windows-latest
+    if: always()
     env:
       PYTHONIOENCODING: utf-8
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          ref: ci-log-capture
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -86,14 +85,16 @@ jobs:
           python -m pip install --upgrade pip
           pip install --upgrade -r requirements-dev.txt
 
-      - name: Run unit tests and commit the raw log
+      - name: Run unit tests and capture the raw log
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Continue'
           python -m unittest discover -s tests -p "test_*.py" -v *> unit-tests-raw.log
           "exit code: $LASTEXITCODE" | Out-File -Append unit-tests-raw.log
-          git config user.name "ci-log-capture"
-          git config user.email "ci-log-capture@users.noreply.github.com"
-          git add unit-tests-raw.log
-          git commit -m "ci: raw unit test log"
-          git push origin HEAD:ci-log-capture
+          exit 0
+
+      - name: Upload raw log
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-tests-raw
+          path: unit-tests-raw.log
