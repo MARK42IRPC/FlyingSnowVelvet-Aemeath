@@ -193,6 +193,10 @@ EXCLUDED_PARTS = {
     "native/dx_backend",
     "resc/playwright",
     "resc/GIF/SEanima.zip",
+    #: 待处理素材的暂存目录（用户把待剪辑/待压缩的原始视频丢在这里）。它不是运行期
+    #: 资源，`music.png` 之类真正用到的图会先加工进 `resc/GIF/` 再被引用；把这些
+    #: 原始文件打进包只会白占体积。
+    "resc/GIF/需要处理",
     "resc/node-24.13.0-win-x64",
     "services/dsh-office-runtime/node_modules",
     "services/bundles",
