@@ -180,13 +180,21 @@ class QuickWelfareMixin:
             # 有些模型把全部输出预算花在思考上，正文一个字符都没写出来（Nemotron VL 系
             # 尤其明显）。这种情况不能当成功返回——上层会把它显示成「当前模式不可用」，
             # 而实际上只要换一个模型就能答。已经吐出过正文的不受影响。
-            if not str(text or "").strip() and getattr(self, "_last_stream_reasoning_only", False):
+            if not str(text or "").strip():
+                # 空正文不是成功：思考耗尽预算、网关吞了分片都会走到这里。
+                # 只在调用方已经看到正文（probe.emitted）时保留，避免把半截回复接上
+                # 另一个模型的续写；否则换下一个模型。
                 router.report_failure(model)
                 if probe.emitted:
-                    logger.error("[QuickWelfare] %s 已流出正文后只剩思考内容，不再换模型", model)
+                    logger.error("[QuickWelfare] %s 已流出正文但最终为空，不再换模型", model)
                     return text
-                logger.warning("[QuickWelfare] %s 只有思考内容、没有正文，换下一个模型", model)
-                last_error = RuntimeError(f"{model} 只输出了思考内容，没有正文")
+                reason = (
+                    "只输出了思考内容"
+                    if getattr(self, "_last_stream_reasoning_only", False)
+                    else "没有解析到正文"
+                )
+                logger.warning("[QuickWelfare] %s %s，换下一个模型", model, reason)
+                last_error = RuntimeError(f"{model} {reason}")
                 continue
 
             router.report_success(model)

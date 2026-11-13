@@ -501,6 +501,11 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
             if line.startswith("event:"):
                 # 兼容 SSE 事件名行
                 continue
+            if line.startswith(":"):
+                # SSE 注释行（如 Kilo 网关的 ``: KILO PROCESSING``）不是数据。
+                # 以前它被拼进 pending_data，后面每个 JSON chunk 都解析失败，
+                # 整条流会被当成「0 字正文」。
+                continue
             if line.startswith('data:'):
                 data = line[5:].lstrip()
             else:
@@ -543,6 +548,8 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
         #: 记录本轮是否「只有思考、没有正文」：快捷福利 API 据此把该模型换掉，
         #: 而不是把一个空回复当成成功（见 `api_client_quick_welfare`）。
         self._last_stream_reasoning_only = bool(piece_count == 0 and reasoning_piece_count > 0)
+        #: 本轮是否解析出了任何非空正文；快捷福利用它区分「模型没答」与「网关/分片没解析出来」。
+        self._last_stream_text_seen = bool(piece_count > 0)
         if piece_count == 0 and native_tool_call is None:
             if reasoning_piece_count > 0:
                 logger.warning(
