@@ -267,7 +267,8 @@ class OllamaBootstrapMixin:
         with self._chat_state_lock:
             self._chat_callbacks.clear()
             self._chat_chunk_callbacks.clear()
-            self._chat_reasoning_callbacks.clear()
+            # 推理回调在会话侧按需创建，没建过的实例清理时也要能走完。
+            getattr(self, "_chat_reasoning_callbacks", {}).clear()
         with self._api_rate_lock:
             self._api_request_timestamps.clear()
 
