@@ -31,7 +31,7 @@ jobs:
       - name: Lint (ruff)
         shell: pwsh
         run: |
-          $output = (& python -m ruff check --output-format concise lib config scripts tests 2>&1 | Out-String)
+          $output = (& python -m ruff check --output-format concise lib config scripts tests-ng tests_ng 2>&1 | Out-String)
           $exitCode = $LASTEXITCODE
           $output | Write-Host
           if ($exitCode -ne 0) {
@@ -46,7 +46,7 @@ jobs:
       - name: Unit tests
         shell: pwsh
         run: |
-          $output = (& python -m unittest discover -s tests -p "test_*.py" -v --failfast 2>&1 | Out-String)
+          $output = (& python scripts/run_tests.py -v 2>&1 | Out-String)
           $exitCode = $LASTEXITCODE
           $output | Write-Host
           if ($exitCode -ne 0) {
@@ -63,4 +63,4 @@ jobs:
           }
 
       - name: Offline release configuration tests
-        run: python -m unittest tests.test_offline_distribution tests.test_update_manager_release_selection tests.test_update_installer -q
+        run: python -m unittest legacy_tests.test_offline_distribution legacy_tests.test_update_manager_release_selection legacy_tests.test_update_installer -q

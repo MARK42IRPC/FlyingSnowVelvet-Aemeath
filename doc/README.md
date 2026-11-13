@@ -18,7 +18,7 @@
 | 拆分 `lib/script/ui` 大文件或调整 Qt 收敛次序 | [Render 层边界契约](render层边界契约.md) 第 34 节与 [维护手册](维护手册.md)「拆分 `lib/script/ui` 大模块（瘦身）」 |
 | 实现 Windows DirectX 后端 | [DirectX 后端实现方案](DX后端实现方案.md) |
 | 修改 ONNX 语音包、安装器或推理桥接 | [ONNX 语音包协议](语音包协议.md) |
-| 修改办公后端、侧车或权限协议 | [维护手册](维护手册.md)“办公模式”与 `tests/test_office_*` |
+| 修改办公后端、侧车或权限协议 | [维护手册](维护手册.md)“办公模式”与 `tests-ng/test_qt_office_window.py` |
 | 开发或维护自研 CUDA 极简语音推理端 | [自研 CUDA 极简推理端](自研CUDA极简推理端.md) |
 | 开发或维护游戏扩展包 | [游戏包格式](游戏包格式.md) 与 [游戏模式说明](游戏模式说明.txt) |
 | 准备发行版 | 根目录 `RELEASING.md` |
@@ -35,7 +35,7 @@
 - 游戏包服务：`lib/script/gemes/MAIN/game_packages.py`
 - 发布入口：`scripts/build_offline_distribution.py`、`scripts/build_offline_installer.py`
 - 共享发布逻辑：`scripts/release_common.py`
-- 自动化测试：`tests/test_*.py`
+- 自动化测试：`tests-ng/`（分层运行器 `scripts/run_tests.py`）；旧 `tests/` 已归档为 `legacy_tests/`，只供追溯。
 
 ## 文档分层
 

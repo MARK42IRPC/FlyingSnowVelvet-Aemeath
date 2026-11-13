@@ -14,6 +14,9 @@ rg --files
 
 然后阅读 `doc/README.md`、`doc/维护手册.md` 以及任务相关的专项文档和测试。
 
+新增或修改测试一律写在 `tests-ng/`：`test_pure_*` 不导入 Qt，`test_static_*` 只读源码，
+`test_qt_*` 每个测试类单独子解释器。`tests/` 已归档为 `legacy_tests/`，不再扩展或并入 CI。
+
 默认所有既有未提交改动都属于其他参与者。不得用 checkout、reset、覆盖写入或批量格式化清除它们。
 
 ## 2. 任务拆分原则

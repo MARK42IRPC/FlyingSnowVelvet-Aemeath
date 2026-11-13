@@ -171,7 +171,6 @@ class OfficeModePageTests(unittest.TestCase):
 
         self.assertEqual(page._open_button.text(), "打开办公页面")
         self.assertEqual(page._open_button.toolTip(), OPEN_OFFICE_HINT)
-        self.addCleanup(office_page.cleanup_office_window)
 
         page._open_button.click()
 
@@ -182,6 +181,12 @@ class OfficeModePageTests(unittest.TestCase):
         self.assertEqual(window.windowTitle(), "办公页面")
         self.assertTrue(window.isVisible())
         self.assertTrue(window._poll_timer.isActive())
+
+        # 办公窗口是产品级单例：测试结束时必须真正关掉。只随 `deleteLater()` 排队时，
+        # 它会以透明窗口的身份留到下一个模块，下一次托盘/工作台再调 `show()` 时
+        # Qt 会在动画计时器里原生 abort（CI 上表现为整个单测进程无摘要退出）。
+        office_page.cleanup_office_window()
+        self.assertIsNone(office_page.get_office_window())
 
     def test_saving_writes_only_the_office_fields(self):
         page = self._page()

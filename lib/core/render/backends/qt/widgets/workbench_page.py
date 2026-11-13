@@ -93,6 +93,14 @@ class QtWorkbenchToolPage(QWidget):
 
     def hide(self) -> None:
         if self._allow_hide_once or self._fading_out or not self.isVisible():
+            # 直接隐藏（调用方接管、淡出已完成、本就没显示）时不能带着运行中的
+            # 透明度动画离场：隐藏窗口后 Qt 仍会推进它，下一次重建页面就会 abort。
+            if self._opacity_anim.state() == QPropertyAnimation.Running:
+                self._opacity_anim.stop()
+                self._fading_out = False
+                self.setWindowOpacity(apply_ui_opacity(1.0))
+            # 动画停下后必须真的隐藏：只复位透明度会让窗口以「看不见但仍在显示」
+            # 的状态留在桌面上，下一次 show() 走不到 showEvent 的初始化。
             super().hide()
             return
         self.fade_out()
