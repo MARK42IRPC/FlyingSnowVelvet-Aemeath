@@ -566,12 +566,19 @@ def _distribution_source(
     roots = _coerce_site_packages(site_packages)
     candidates: list[Path] = []
     try:
-        candidates.append(Path(dist.locate_file(PurePosixPath(relative.as_posix()))))
+        located = Path(dist.locate_file(PurePosixPath(relative.as_posix())))
+        # ``locate_file`` 按发行包自己的目录拼路径；覆盖层里只有同名导入包、
+        # 没有对应 ``dist-info`` 时（例如合并层里的 genie_tts），它会指向不
+        # 存在的文件，下面的逐层回退才找得到真正的元数据。
+        if located.is_file():
+            candidates.append(located)
     except (AttributeError, OSError, TypeError, ValueError):
         pass
     candidates.extend(root / relative for root in roots)
     for candidate in candidates:
-        resolved = candidate.resolve()
+        # 边界用不回溯目录联接的绝对路径判断：覆盖层常用 junction 共享依赖，
+        # ``resolve()`` 会把链接目标改写成另一层，合法文件因此被判成越界。
+        resolved = candidate.absolute()
         if not any(
             resolved == root or root in resolved.parents
             for root in roots

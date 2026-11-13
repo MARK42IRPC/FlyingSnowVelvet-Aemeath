@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import ast
 import importlib
+import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -12,6 +14,7 @@ from unittest.mock import patch
 from config import version_info
 from lib.core.services import api_endpoints, network_policy, ui_presentation
 from scripts import release_common
+from scripts import build_offline_distribution as distribution
 from scripts.build_offline_distribution import PRODUCT_ROOT, excluded
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -102,6 +105,67 @@ class ReleasePayloadBoundaryTests(unittest.TestCase):
         ):
             with self.subTest(relative=relative):
                 self.assertExcluded(relative)
+
+
+class OverlayDistributionSourceTests(unittest.TestCase):
+    """Metadata lookup must survive junction-based overlay merges.
+
+    A locally merged site-packages tree can hold an import package from one
+    layer and its ``dist-info`` from another.  ``Distribution.locate_file``
+    then points at a path that only resolves through the link; an earlier
+    version rejected it as out of bounds, so the payload silently lost the
+    metadata required by the installer completeness check.
+    """
+
+    def test_metadata_is_found_through_a_linked_overlay(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "overlay"
+            base = Path(temporary) / "base"
+            (root / "samplepkg").mkdir(parents=True)
+            (root / "samplepkg" / "__init__.py").write_text("", encoding="utf-8")
+            dist_info = base / "samplepkg-1.0.dist-info"
+            dist_info.mkdir(parents=True)
+            (dist_info / "METADATA").write_text(
+                "Metadata-Version: 2.1\nName: samplepkg\nVersion: 1.0\n",
+                encoding="utf-8",
+            )
+            record = "samplepkg-1.0.dist-info/METADATA,,\n"
+            (dist_info / "RECORD").write_text(record, encoding="utf-8")
+            _link_directory(dist_info, root / "samplepkg-1.0.dist-info")
+            try:
+                dist = distribution.collect_distributions(root, ("samplepkg",))[
+                    distribution.normalize_name("samplepkg")
+                ]
+                staged = Path(temporary) / "staged"
+                distribution.copy_distribution_metadata(dist, root, staged)
+                self.assertTrue((staged / "samplepkg-1.0.dist-info" / "METADATA").is_file())
+            finally:
+                _unlink_directory(root / "samplepkg-1.0.dist-info")
+
+
+def _link_directory(target: Path, link: Path) -> None:
+    if os.name == "nt":
+        made = subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(link), str(target)],
+            capture_output=True,
+        )
+        if made.returncode:
+            raise unittest.SkipTest(f"directory junctions unavailable: {made.stderr}")
+    else:
+        link.symlink_to(target, target_is_directory=True)
+
+
+def _unlink_directory(link: Path) -> None:
+    if os.name == "nt" and link.is_dir() and not hasattr(os.path, "isjunction"):
+        # Python < 3.12 cannot detect junctions; they are removable directories.
+        os.rmdir(link)
+        return
+    if not link.exists():
+        return
+    if os.name == "nt" and hasattr(os.path, "isjunction") and os.path.isjunction(link):
+        os.rmdir(link)
+    elif link.is_symlink():
+        link.unlink()
 
 
 class SharedPresentationNumbersTests(unittest.TestCase):

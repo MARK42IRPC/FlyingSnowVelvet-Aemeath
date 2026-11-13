@@ -14,7 +14,6 @@ from importlib import metadata
 import hashlib
 import json
 import lzma
-import locale
 from pathlib import Path
 import shutil
 import struct
@@ -498,9 +497,12 @@ def _load_vs_environment(vsdevcmd: Path) -> dict[str, str]:
     if cached is not None:
         return cached.copy()
 
+    # 环境直接用 `cmd /u` 的 UTF-16 标准输出读回，不再写临时的 `set >` 输出文件：
+    # 输出文件按 ANSI 代码页写，用户目录含中文时 `set > <path>` 会失败；`/u`
+    # 的管道不受代码页影响。逐条命令各占一行，避免 `&` 拼接被 `VsDevCmd` 的
+    # 参数解析吞掉。
     with tempfile.TemporaryDirectory(prefix="fsv-vs-env-") as temporary:
         batch = Path(temporary) / "environment.cmd"
-        environment_file = Path(temporary) / "environment.txt"
         batch.write_text(
             "@echo off\n"
             # `VsDevCmd.bat` 内部靠 `vswhere.exe` 定位 MSVC 组件，而 vswhere 住在
@@ -510,23 +512,16 @@ def _load_vs_environment(vsdevcmd: Path) -> dict[str, str]:
             f'set "PATH={_vs_installer_dir()};%PATH%"\n'
             f"call {quote_cmd(vsdevcmd)} -arch=x64 -host_arch=x64 >nul\n"
             "if errorlevel 1 exit /b %errorlevel%\n"
-            f"set > {quote_cmd(environment_file)}\n",
+            "set\n",
             encoding="mbcs",
         )
-        subprocess.run(
+        completed = subprocess.run(
             ["cmd.exe", "/d", "/u", "/c", "call", str(batch)],
             check=True,
-            stdout=subprocess.DEVNULL,
+            cwd=temporary,
+            stdout=subprocess.PIPE,
         )
-        raw_environment = environment_file.read_bytes()
-        looks_utf16 = (
-            len(raw_environment) >= 2
-            and raw_environment[1::2].count(0) > len(raw_environment) // 8
-        )
-        environment_lines = raw_environment.decode(
-            "utf-16-le" if looks_utf16 else locale.getpreferredencoding(False),
-            errors="replace",
-        ).splitlines()
+        environment_lines = completed.stdout.decode("utf-16-le", errors="replace").splitlines()
     environment = {key.upper(): value for key, value in os.environ.items()}
     for line in environment_lines:
         key, separator, value = line.partition("=")
