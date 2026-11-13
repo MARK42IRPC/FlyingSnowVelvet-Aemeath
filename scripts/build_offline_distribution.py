@@ -204,6 +204,9 @@ EXCLUDED_PARTS = {
     "services/dsh-office-runtime/node_modules",
     "services/bundles",
     "resc/user",
+    #: 素材加工的临时工作区（GIF 切帧、调色草稿），`.gitignore` 已忽略；构建脚本
+    #: 不读 `.gitignore`，漏在这里会把几百兆中间产物原样打进安装器。
+    "resc/temp",
 }
 EXCLUDED_PATH_SEQUENCES = tuple(
     tuple(part.lower() for part in PurePosixPath(value).parts)

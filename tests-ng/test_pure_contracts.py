@@ -106,6 +106,13 @@ class ReleasePayloadBoundaryTests(unittest.TestCase):
             with self.subTest(relative=relative):
                 self.assertExcluded(relative)
 
+    def test_git_ignored_asset_scratch_stays_out_of_the_payload(self):
+        # ``resc/temp`` is the GIF/asset processing scratch area.  It is ignored
+        # by ``.gitignore`` but the builder does not read that file, so an
+        # empty or stale tool cache must never reach the installer payload.
+        self.assertExcluded("resc/temp/gifwork/final/idle.gif")
+        self.assertExcluded("resc/temp")
+
 
 class OverlayDistributionSourceTests(unittest.TestCase):
     """Metadata lookup must survive junction-based overlay merges.
