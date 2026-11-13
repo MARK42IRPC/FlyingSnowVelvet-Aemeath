@@ -46,7 +46,7 @@ jobs:
       - name: Unit tests
         shell: pwsh
         run: |
-          $output = (& python -m unittest discover -s tests -p "test_*.py" -v 2>&1 | Out-String)
+          $output = (& python -m unittest discover -s tests -p "test_*.py" -v --failfast 2>&1 | Out-String)
           $exitCode = $LASTEXITCODE
           $output | Write-Host
           if ($exitCode -ne 0) {
