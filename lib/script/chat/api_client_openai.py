@@ -582,6 +582,8 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
                          retry_attempts: int | None = None,
                          timeout_secs: float | None = None,
                          max_output_tokens_override: int | None = None,
+                         temperature_override: float | None = None,
+                         image_max_size_override: tuple[int, int] | None = None,
                          reasoning_enabled_override: bool | None = None,
                          on_reasoning_emit=None) -> str:
         """
@@ -627,7 +629,11 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
             api_disable_env_proxy = raw_disable_env_proxy.strip().lower() in ("1", "true", "yes", "on")
         else:
             api_disable_env_proxy = bool(raw_disable_env_proxy)
-        raw_api_temperature = OLLAMA.get('api_temperature', 0.8)
+        raw_api_temperature = (
+            OLLAMA.get('api_temperature', 0.8)
+            if temperature_override is None
+            else temperature_override
+        )
         try:
             api_temperature = float(raw_api_temperature)
         except (TypeError, ValueError):
@@ -684,7 +690,14 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
             override=max_output_tokens_override,
         )
         endpoint_candidates = self._openai_endpoint_candidates(base_url)
-        prepared_image_blocks = images_to_openai_content(payload_images) if payload_images else None
+        prepared_image_blocks = (
+            images_to_openai_content(
+                payload_images,
+                max_size=image_max_size_override,
+            )
+            if payload_images
+            else None
+        )
         payload_candidates = self._build_openai_payload_variants(
             model=model,
             persona=persona,

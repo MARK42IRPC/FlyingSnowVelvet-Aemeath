@@ -24,7 +24,10 @@ from ._multimodal import is_image_input_error
 from .quick_welfare_api import (
     QUICK_WELFARE_MAX_MODELS_PER_TURN,
     QUICK_WELFARE_MAX_OUTPUT_TOKENS,
+    QUICK_WELFARE_TEMPERATURE,
+    QUICK_WELFARE_VISION_MAX_SIZE,
     get_quick_welfare_router,
+    is_degenerate_reply,
     is_quota_exhausted,
     quick_welfare_config,
     quick_welfare_reasoning_enabled,
@@ -93,6 +96,8 @@ class QuickWelfareMixin:
                     retry_attempts=QUICK_WELFARE_TURN_RETRY_ATTEMPTS,
                     timeout_secs=QUICK_WELFARE_TURN_TIMEOUT_SECS,
                     max_output_tokens_override=QUICK_WELFARE_MAX_OUTPUT_TOKENS,
+                    temperature_override=QUICK_WELFARE_TEMPERATURE,
+                    image_max_size_override=QUICK_WELFARE_VISION_MAX_SIZE,
                     reasoning_enabled_override=quick_welfare_reasoning_enabled(),
                     on_reasoning_emit=on_reasoning_emit,
                 )
@@ -145,6 +150,8 @@ class QuickWelfareMixin:
                             retry_attempts=QUICK_WELFARE_TURN_RETRY_ATTEMPTS,
                             timeout_secs=QUICK_WELFARE_TURN_TIMEOUT_SECS,
                             max_output_tokens_override=QUICK_WELFARE_MAX_OUTPUT_TOKENS,
+                            temperature_override=QUICK_WELFARE_TEMPERATURE,
+                            image_max_size_override=QUICK_WELFARE_VISION_MAX_SIZE,
                             reasoning_enabled_override=quick_welfare_reasoning_enabled(),
                             on_reasoning_emit=on_reasoning_emit,
                         )
@@ -195,6 +202,19 @@ class QuickWelfareMixin:
                 )
                 logger.warning("[QuickWelfare] %s %s，换下一个模型", model, reason)
                 last_error = RuntimeError(f"{model} {reason}")
+                continue
+
+            if not probe.emitted and is_degenerate_reply(text):
+                # 单个模型在窥屏这类长图请求上偶尔会吐跨语言碎片/随机符号串。
+                # 这类输出尚未流出，可以安全地换模型；若已经流出过正文，仍按
+                # 「不拼接半截回复」的规则保留，避免 UI 先显示一段再被覆盖。
+                router.report_failure(model)
+                logger.warning(
+                    "[QuickWelfare] %s 返回疑似崩坏正文，换下一个模型: %r",
+                    model,
+                    str(text)[:120],
+                )
+                last_error = RuntimeError(f"{model} 返回疑似崩坏正文")
                 continue
 
             router.report_success(model)

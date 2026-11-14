@@ -75,6 +75,57 @@ def is_quota_exhausted(error_text) -> bool:
         return False
     return any(marker in text for marker in QUICK_WELFARE_QUOTA_MARKERS)
 
+
+def is_degenerate_reply(text: str) -> bool:
+    """是否像模型崩坏后的伪文本，而不是可展示的回复。
+
+    免费池里个别视觉模型在高温、原图、长思考同时出现时会吐跨语言碎片或随机
+    符号串（实测 ``super-vl`` 的窥屏回复混入 ``阿拉偕奴夢`` 与 ``uma昂nfat``）。
+    这类输出不是「答得不好」，而是模型已经失去了语言结构；把它当成功播出会让
+    下一次窥屏继续优先选中同一个模型，因为 ``report_success`` 会清掉冷却。
+
+    判定刻意保守：只识别**同一 token 内中文与日文假名/韩文无空格混拼**、
+    **多个全角符号夹在汉字与拉丁字母之间**，以及 ``$``/反引号/尖括号这类代码
+    符号密集混入中文这三类结构上几乎不可能是正常回复的形态；代码、Markdown、
+    链接、书名号、颜文字与「用VSCode写Python」这类中文夹英文都放行。真正需要
+    语义判断的「答非所问」不在这里处理。
+    """
+    value = str(text or "").strip()
+    if not value:
+        return False
+
+    # 代码、链接、Markdown 与正常中英混排本来就含大量符号/拉丁字母，不能按
+    # 单类字符比例判定；中文里不带空格夹英文单词（「用VSCode写Python」）也是
+    # 正常写法。真正语义上不可能的，是中日韩文字与日文假名以外的文字体系
+    # 在同一 token 内无空格拼接。
+    tokens = value.split()
+    for token in tokens:
+        if len(token) < 8:
+            continue
+        has_cjk = any("\u3400" <= ch <= "\u9fff" for ch in token)
+        has_kana = any("\u3040" <= ch <= "\u30ff" for ch in token)
+        has_hangul = any("\uac00" <= ch <= "\ud7af" for ch in token)
+        if has_cjk and (has_kana or has_hangul):
+            return True
+        # 汉字与拉丁字母之间夹着多个全角符号（如「夢￣ε￣*uma」）同样是随机
+        # 碎片，而不是正常标点：正常回复不会在一段词中间连续插入全角符号。
+        fullwidth_symbols = sum(
+            1 for ch in token
+            if "\uff00" <= ch <= "\uffef" and not ch.isalnum()
+        )
+        has_latin = any("a" <= ch.lower() <= "z" for ch in token)
+        if has_cjk and has_latin and fullwidth_symbols >= 2:
+            return True
+
+    # 第二类：代码符号与中文密集混排。正常回复里 `code`、`<tag>`、`$PATH`
+    # 会出现在英文/代码语境中；崩坏输出则会把它们随机撒进中文句子。
+    code_symbols = set("$`<>{}[]|\\^~")
+    cjk_count = sum(1 for ch in value if "\u3400" <= ch <= "\u9fff")
+    symbol_count = sum(1 for ch in value if ch in code_symbols)
+    if cjk_count >= 8 and symbol_count >= 4 and symbol_count / max(1, cjk_count) >= 0.15:
+        return True
+    return False
+
 #: 实测能看图作答的模型（2026-11-12 逐模型验证，图片含可核对的颜色/形状）。
 #:
 #: 上游声明的 `input_modalities` 只说明「模型接受图片」，不说明「真的会看图作答」。
@@ -284,9 +335,18 @@ class QuickWelfareRouter:
             #: 1. 实测能看图作答的模型；
             #: 2. 其余「声明支持图片」的模型（可能只吐思考，作为后备）；
             #: 3. 纯文本模型（最后才用，带图时基本拿不到有用回复）。
-            verified = set(QUICK_WELFARE_VERIFIED_VISION_MODELS)
+            #:
+            #: 第一组必须按 `QUICK_WELFARE_VISION_PRIORITY` 的显式顺序排，而不是按
+            #: 集合成员判断后的清单顺序：后者会让 `super-vl` 这类后加入的模型
+            #: 意外排到 `nano-omni` 与 `openrouter` 前面。两份名单因此容易漂移。
+            priority = {model: index for index, model in enumerate(QUICK_WELFARE_VISION_PRIORITY)}
+            verified = [
+                model for model in order
+                if model in QUICK_WELFARE_VERIFIED_VISION_MODELS
+            ]
+            verified.sort(key=lambda model: priority.get(model, len(priority)))
             order = (
-                [model for model in order if model in verified]
+                verified
                 + [model for model in order if model in vision_models and model not in verified]
                 + [model for model in order if model not in vision_models]
             )
@@ -403,6 +463,13 @@ def fetch_free_models(timeout: float = QUICK_WELFARE_LISTING_TIMEOUT_SECS) -> tu
 #: 设置页的「启用思考模式」仍然生效：关掉时请求带 `reasoning: {"enabled": false}`，
 #: 模型不思考、正文更快出来；开着就让模型把思考走完再答。
 QUICK_WELFARE_MAX_OUTPUT_TOKENS = 0
+
+QUICK_WELFARE_TEMPERATURE = 1.0
+
+#: 快捷福利车道的图片分辨率上限（横图 1920x1080、竖图 1080x1920）。
+#: 窥屏图通常远高于这个尺寸；固定上限既不随设置页的「模型视力」变化，也能把
+#: 图片 token 从整屏原图的量级压下来，减少长图请求对视觉模型输出的干扰。
+QUICK_WELFARE_VISION_MAX_SIZE = (1920, 1080)
 
 
 def quick_welfare_reasoning_enabled() -> bool:

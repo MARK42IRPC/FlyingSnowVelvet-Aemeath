@@ -24,18 +24,24 @@ except AttributeError:
 
 def _fit_size_to_720p(width: int, height: int) -> tuple[int, int]:
     """按图片方向缩放到 720p 边界框内，保持纵横比。"""
+    return _fit_size_to_bounds(width, height, _MAX_WIDTH_720P, _MAX_HEIGHT_720P)
+
+
+def _fit_size_to_bounds(width: int, height: int,
+                        max_width: int, max_height: int) -> tuple[int, int]:
+    """按图片方向缩放到给定边界框内，保持纵横比且从不放大。"""
     if width <= 0 or height <= 0:
         return width, height
 
     if width >= height:
-        max_width, max_height = _MAX_WIDTH_720P, _MAX_HEIGHT_720P
+        orientation_width, orientation_height = max_width, max_height
     else:
-        max_width, max_height = _MAX_HEIGHT_720P, _MAX_WIDTH_720P
+        orientation_width, orientation_height = max_height, max_width
 
-    if width <= max_width and height <= max_height:
+    if width <= orientation_width and height <= orientation_height:
         return width, height
 
-    ratio = min(max_width / float(width), max_height / float(height))
+    ratio = min(orientation_width / float(width), orientation_height / float(height))
     new_width = max(1, int(width * ratio))
     new_height = max(1, int(height * ratio))
     return new_width, new_height
@@ -83,9 +89,10 @@ def _to_rgb_without_alpha(image: Image.Image) -> Image.Image:
         return image.convert("RGB")
     return image
 
-def _prepare_image_payload(image_data: bytes) -> tuple[bytes, str] | None:
+def _prepare_image_payload(image_data: bytes,
+                           max_size: tuple[int, int] | None = None) -> tuple[bytes, str] | None:
     """
-    根据模型视力设置处理图片载荷。
+    根据模型视力或显式分辨率上限处理图片载荷。
 
     返回:
         (图片字节, MIME 类型)；若输入非可识别图片则返回 None。
@@ -99,15 +106,20 @@ def _prepare_image_payload(image_data: bytes) -> tuple[bytes, str] | None:
             image.load()
             src_w, src_h = image.size
             source_mime = _detect_image_mime(image)
-            model_vision = _get_model_vision()
-            dst_w, dst_h = _fit_size_by_model_vision(src_w, src_h, model_vision)
+            if max_size is not None:
+                size_label = f"上限{max_size[0]}x{max_size[1]}"
+                dst_w, dst_h = _fit_size_to_bounds(src_w, src_h, *max_size)
+            else:
+                model_vision = _get_model_vision()
+                size_label = f"模型视力={model_vision}"
+                dst_w, dst_h = _fit_size_by_model_vision(src_w, src_h, model_vision)
 
             if (dst_w, dst_h) != (src_w, src_h):
                 image = image.resize((dst_w, dst_h), _RESAMPLE_LANCZOS)
             else:
                 logger.debug(
-                    "[Vision] 模型视力=%d，保持原图发送: %dx%d, %d bytes",
-                    model_vision,
+                    "[Vision] %s，保持原图发送: %dx%d, %d bytes",
+                    size_label,
                     src_w,
                     src_h,
                     source_size,
@@ -126,8 +138,8 @@ def _prepare_image_payload(image_data: bytes) -> tuple[bytes, str] | None:
             )
             result = output.getvalue()
             logger.debug(
-                "[Vision] 图片压缩完成(模型视力=%d): %dx%d -> %dx%d, %d -> %d bytes",
-                model_vision,
+                "[Vision] 图片压缩完成(%s): %dx%d -> %dx%d, %d -> %d bytes",
+                size_label,
                 src_w,
                 src_h,
                 rgb_image.width,
@@ -163,13 +175,14 @@ def _decode_base64_payload(text: str) -> bytes | None:
         except (binascii.Error, ValueError):
             return None
 
-def _compress_base64_payload(text: str) -> str | None:
-    """按模型视力处理 base64 图片，成功返回新的 base64。"""
+def _compress_base64_payload(text: str,
+                             max_size: tuple[int, int] | None = None) -> str | None:
+    """按模型视力或显式分辨率上限处理 base64 图片，成功返回新的 base64。"""
     raw = _decode_base64_payload(text)
     if raw is None:
         return None
 
-    prepared = _prepare_image_payload(raw)
+    prepared = _prepare_image_payload(raw, max_size=max_size)
     if prepared is None:
         return None
     compressed, _mime = prepared
@@ -208,7 +221,8 @@ def _estimate_image_tokens(width: int, height: int) -> int:
     """按 14x14 像素块估算图片 token 数。"""
     return ((max(1, int(width)) + 13) // 14) * ((max(1, int(height)) + 13) // 14)
 
-def image_to_base64(image_data: bytes) -> str:
+def image_to_base64(image_data: bytes,
+                    max_size: tuple[int, int] | None = None) -> str:
     """
     按模型视力处理图片字节数据并转换为 base64 字符串（用于多模态请求）。
 
@@ -218,11 +232,12 @@ def image_to_base64(image_data: bytes) -> str:
     Returns:
         base64 编码字符串
     """
-    encoded, _mime = image_to_base64_with_mime(image_data)
+    encoded, _mime = image_to_base64_with_mime(image_data, max_size=max_size)
     return encoded
 
-def image_to_base64_with_mime(image_data: bytes) -> tuple[str, str]:
-    prepared = _prepare_image_payload(image_data)
+def image_to_base64_with_mime(image_data: bytes,
+                              max_size: tuple[int, int] | None = None) -> tuple[str, str]:
+    prepared = _prepare_image_payload(image_data, max_size=max_size)
     if prepared is None:
         payload = image_data
         mime = "image/png"
@@ -230,8 +245,9 @@ def image_to_base64_with_mime(image_data: bytes) -> tuple[str, str]:
         payload, mime = prepared
     return base64.b64encode(payload).decode("utf-8"), mime
 
-def image_to_data_url(image_data: bytes) -> str:
-    encoded, mime = image_to_base64_with_mime(image_data)
+def image_to_data_url(image_data: bytes,
+                      max_size: tuple[int, int] | None = None) -> str:
+    encoded, mime = image_to_base64_with_mime(image_data, max_size=max_size)
     return f"data:{mime};base64,{encoded}"
 
 def images_to_ollama_payload(images: list | None) -> list[str]:
@@ -312,7 +328,8 @@ def images_to_ollama_payload(images: list | None) -> list[str]:
 
     return result
 
-def images_to_openai_content(images: list | None) -> list[dict]:
+def images_to_openai_content(images: list | None,
+                             max_size: tuple[int, int] | None = None) -> list[dict]:
     """
     将图片列表转换为 OpenAI 兼容 content 块列表。
     支持 bytes/base64/data-url/http(s) URL。
@@ -329,7 +346,7 @@ def images_to_openai_content(images: list | None) -> list[dict]:
     for item in images:
         encoded_payload_for_stat: str | None = None
         if isinstance(item, (bytes, bytearray)):
-            url = image_to_data_url(bytes(item))
+            url = image_to_data_url(bytes(item), max_size=max_size)
             encoded_payload_for_stat = _extract_data_url_payload(url)
         elif isinstance(item, str):
             text = item.strip()
@@ -340,7 +357,7 @@ def images_to_openai_content(images: list | None) -> list[dict]:
                 url = text
             elif text.startswith("data:image/"):
                 raw_payload = _extract_data_url_payload(text)
-                compressed = _compress_base64_payload(raw_payload)
+                compressed = _compress_base64_payload(raw_payload, max_size=max_size)
                 if compressed:
                     url = f"data:image/jpeg;base64,{compressed}"
                     encoded_payload_for_stat = compressed
@@ -349,7 +366,7 @@ def images_to_openai_content(images: list | None) -> list[dict]:
                     encoded_payload_for_stat = raw_payload
             else:
                 # 视为裸 base64 字符串，尝试压缩
-                compressed = _compress_base64_payload(text)
+                compressed = _compress_base64_payload(text, max_size=max_size)
                 if compressed:
                     url = f"data:image/jpeg;base64,{compressed}"
                     encoded_payload_for_stat = compressed
