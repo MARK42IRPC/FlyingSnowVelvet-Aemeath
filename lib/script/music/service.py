@@ -277,13 +277,18 @@ class MusicService:
     def get_volume_percent(self) -> int:
         return int(round(self.get_volume() * 100))
 
-    def enqueue_track(self, track: MusicTrack, *, silent: bool = True, autoplay: bool = True) -> bool:
+    def enqueue_track(
+        self, track: MusicTrack, *, silent: bool = True, autoplay: bool = True,
+        request_is_current: Callable[[], bool] | None = None,
+    ) -> bool:
         """Append one normalized track to the end of the playback queue.
 
         This is the public seam for non-UI callers (live requests, automation).
         It deliberately reuses ``MUSIC_ENQUEUE`` so queue placement and provider
         normalization stay in one implementation. ``autoplay=False`` keeps a
         request from replacing an idle player's current track.
+        ``request_is_current`` is an optional host-process guard checked when
+        the queue event is consumed; it is never persisted or used over IPC.
         """
         if track is None:
             return False
@@ -297,13 +302,16 @@ class MusicService:
             logger.warning("[MusicService] 当前平台没有播放后端，无法入队: %s", self._provider_name)
             return False
         display = self.format_track_display(track, include_provider=True)
-        get_event_center().publish(Event(EventType.MUSIC_ENQUEUE, {
+        payload = {
             "song_id": track_ref,
             "track_ref": track_ref,
             "display": display,
             "silent": bool(silent),
             "autoplay": bool(autoplay),
-        }))
+        }
+        if request_is_current is not None:
+            payload["request_is_current"] = request_is_current
+        get_event_center().publish(Event(EventType.MUSIC_ENQUEUE, payload))
         logger.info("[MusicService] 已请求入队: track_ref=%s", track_ref)
         return True
 

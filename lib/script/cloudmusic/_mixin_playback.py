@@ -582,6 +582,11 @@ class _PlaybackMixin:
 
     def _play_current(self):
         """播放当前队列中的歌曲（在后台线程中执行，避免阻塞主线程）。"""
+        with self._state_lock:
+            if self._is_paused:
+                return
+            self._paused_file = None
+            generation = self._play_gen
         if not self._queue or self._current_index >= len(self._queue):
             logger.warning("[CloudMusic] 队列为空，无歌曲可播放")
             with self._state_lock:
@@ -592,14 +597,20 @@ class _PlaybackMixin:
 
         song_id, display = self._queue[self._current_index]
         logger.info("[CloudMusic] 准备播放: song_id=%s, display=%s", song_id, display)
-        get_compute_hub().submit_io(
+        self._playback_future = get_compute_hub().submit_io(
             self._play_current_worker,
             song_id,
             display,
+            generation,
         )
 
-    def _play_current_worker(self, song_id, display: str):
+    def _play_current_worker(self, song_id, display: str, generation: int | None = None):
         """后台线程：执行实际的播放逻辑。"""
+        with self._state_lock:
+            if generation is None:
+                generation = self._play_gen
+            if generation != self._play_gen:
+                return
         if is_local_track_ref(song_id):
             local_path = local_track_path_from_ref(song_id)
             if local_path is None or not local_path.is_file():
@@ -607,38 +618,40 @@ class _PlaybackMixin:
                 self._play_next()
                 return
             logger.info("[CloudMusic] 播放本地歌曲: %s", local_path)
-            self._play_file(local_path, display)
+            self._play_file(local_path, display, generation=generation)
             return
 
         cached = self._find_cached_audio(song_id)
         if cached and cached.exists():
             logger.info("[CloudMusic] 已缓存，直接播放: %s", cached)
-            self._play_file(cached, display)
+            self._play_file(cached, display, generation=generation)
         else:
             logger.info("[CloudMusic] 未缓存，开始下载: song_id=%s", song_id)
-            self._download_and_play(song_id, display)
+            self._download_and_play(song_id, display, generation=generation)
 
     # ------------------------------------------------------------------
     # 下载
     # ------------------------------------------------------------------
 
-    def _download_and_play(self, song_id, display: str):
+    def _download_and_play(self, song_id, display: str, generation: int | None = None):
         """下载歌曲并播放。"""
-        if self._download_thread is not None and not self._download_thread.done():
-            self._download_cancel.set()
+        with self._state_lock:
+            if generation is not None and generation != self._play_gen:
+                return
+            if self._download_thread is not None and not self._download_thread.done():
+                self._download_cancel.set()
 
-        # 每次下载使用独立取消令牌，避免复用同一个 Event 导致竞态。
-        cancel_event = threading.Event()
-        self._download_cancel = cancel_event
-
+            # Keep validation and token admission together: a late old lookup
+            # must not cancel or replace the newer phase's download token.
+            cancel_event = threading.Event()
+            self._download_cancel = cancel_event
+            self._download_thread = get_compute_hub().submit_io(
+                self._download_worker,
+                song_id,
+                display,
+                cancel_event,
+            )
         self._show_info(f"♪ 获取中: {display or song_id}")
-
-        self._download_thread = get_compute_hub().submit_io(
-            self._download_worker,
-            song_id,
-            display,
-            cancel_event,
-        )
 
     def _download_worker(self, song_id, display: str, cancel_event: threading.Event):
         """后台下载线程。"""
@@ -1033,11 +1046,19 @@ class _PlaybackMixin:
     # 播放器回调
     # ------------------------------------------------------------------
 
-    def _play_file(self, path: Path, display: str):
+    def _play_file(self, path: Path, display: str, generation: int | None = None):
         logger.debug("[CloudMusic] 请求播放文件: %s", path)
         with self._state_lock:
+            if generation is not None and generation != self._play_gen:
+                return
+            if self._is_paused:
+                # Cache/download work may finish after the game closes. Keep
+                # its result for an explicit resume without starting audio.
+                self._paused_file = (path, display)
+                return
             self._current_duration_ms = 0
             gen = self._play_gen
+            self._player_start_pending = True
         self._pending_play_display = display
         self._pending_play_path = str(path)
         if self._queue and 0 <= self._current_index < len(self._queue):
@@ -1057,10 +1078,16 @@ class _PlaybackMixin:
             if self._play_gen != gen:
                 return
             self._is_playing = True
-            self._is_paused = False
+            self._player_start_pending = False
+            paused = self._is_paused
+        if paused:
+            # A native play request can already be queued when pause arrives.
+            # Its late callback must not clear the user's pause intention.
+            self._music_player.pause()
         self._current_duration_ms = self._music_player.duration_ms() or self._current_duration_ms
         display = self._pending_play_display
-        self._show_info(f"正在播放: {display}")
+        if not paused:
+            self._show_info(f"正在播放: {display}")
         self._publish_status()
 
         if self._queue and 0 <= self._current_index < len(self._queue):
@@ -1113,14 +1140,14 @@ class _PlaybackMixin:
             if self._play_gen != gen:
                 return
             self._is_playing = False
-            self._is_paused = False
+            self._player_start_pending = False
         logger.error("[CloudMusic] 播放失败: %s", message)
         self._show_error(f"播放失败: {message}")
         self._publish_status()
 
     def _on_player_finished(self, gen: int) -> None:
         with self._state_lock:
-            if self._play_gen != gen:
+            if self._play_gen != gen or self._is_paused:
                 return
 
             mode = getattr(self, "_play_mode", "list_loop")
@@ -1171,6 +1198,8 @@ class _PlaybackMixin:
 
         with self._state_lock:
             self._play_gen += 1
+            self._player_start_pending = False
+            self._paused_file = None
             if self._queue:
                 removed = self._queue.pop(0)
                 logger.debug("[CloudMusic] 移除歌曲: %s", removed)
@@ -1198,6 +1227,8 @@ class _PlaybackMixin:
         with self._state_lock:
             self._is_playing    = False
             self._is_paused     = False
+            self._player_start_pending = False
+            self._paused_file = None
             self._current_index = -1
             self._play_gen     += 1  # 使所有旧监控线程失效
         self._publish_status()

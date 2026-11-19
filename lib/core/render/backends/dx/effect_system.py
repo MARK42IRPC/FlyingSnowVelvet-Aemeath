@@ -6,6 +6,10 @@ from collections.abc import Callable
 from pathlib import Path
 
 from lib.core.event.center import Event, EventType, get_event_center
+from lib.core.services.feedback_scene import (
+    create_effect_instances, instance_alive, interpolate_effects,
+    prepare_effects, update_instances,
+)
 from lib.core.render.visuals.commands import DrawBatch
 from lib.core.render.visuals.resources import ImageResource
 from lib.core.render.visuals.visuals import build_effect_batch as _build_effect_batch, load_effect_resource
@@ -22,11 +26,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[5]
 
 
 def _effect_alive(effect: object) -> bool:
-    alive = getattr(effect, "alive", True)
-    try:
-        return bool(alive() if callable(alive) else alive)
-    except Exception:
-        return False
+    return instance_alive(effect)
 
 
 def _resolve_path(value: object) -> Path:
@@ -98,27 +98,8 @@ class DxEffectOverlay:
         if self._paused or self._cleanup_done:
             return
         self._drain_requests()
-        alive = []
-        for effect in self._effects:
-            effect._tick_prev_age = float(getattr(effect, "age", 0.0))
-            effect._tick_prev_x = float(getattr(effect, "_render_x", getattr(effect, "x", 0.0)))
-            effect._tick_prev_y = float(getattr(effect, "_render_y", getattr(effect, "y", 0.0)))
-            effect._tick_prev_opacity = float(getattr(
-                effect, "_render_opacity", getattr(effect, "opacity", 1.0)
-            ))
-            effect._tick_prev_scale = float(getattr(
-                effect, "_render_scale", getattr(effect, "scale", 1.0)
-            ))
-            effect._tick_prev_rotation = float(getattr(
-                effect, "_render_rotation", getattr(effect, "rotation", 0.0)
-            ))
-            try:
-                effect.update()
-            except Exception:
-                continue
-            if _effect_alive(effect):
-                alive.append(effect)
-        self._effects = alive
+        prepare_effects(self._effects)
+        self._effects = update_instances(self._effects)
         if not self._effects:
             self._window.flush_immediately()
 
@@ -127,22 +108,7 @@ class DxEffectOverlay:
             return
         data = event.data if isinstance(event.data, dict) else {}
         alpha = max(0.0, min(1.0, float(data.get("tick_alpha", 1.0) or 0.0)))
-        for effect in self._effects:
-            apply_interpolation = getattr(effect, "apply_frame_interpolation", None)
-            if callable(apply_interpolation):
-                try:
-                    apply_interpolation(alpha)
-                    continue
-                except Exception:
-                    pass
-            for field in ("x", "y", "opacity", "scale", "rotation"):
-                previous = float(getattr(
-                    effect,
-                    f"_tick_prev_{field}",
-                    getattr(effect, field, 0.0),
-                ))
-                current = float(getattr(effect, field, previous))
-                setattr(effect, f"_render_{field}", previous + (current - previous) * alpha)
+        interpolate_effects(self._effects, alpha)
         self._window.submit(build_effect_batch(self._effects))
 
     def _drain_requests(self) -> None:
@@ -181,19 +147,11 @@ class DxEffectOverlay:
             anchor_type = request["anchor_type"]
             anchor_data = request["anchor_data"]
             try:
-                if anchor_type == "rect" and len(anchor_data) >= 4:
-                    local_anchor = tuple(float(v) for v in anchor_data[:4])
-                    local_anchor = (local_anchor[0] - offset_x, local_anchor[1] - offset_y, local_anchor[2] - offset_x, local_anchor[3] - offset_y)
-                elif anchor_type == "circle" and len(anchor_data) >= 3:
-                    local_anchor = (float(anchor_data[0]) - offset_x, float(anchor_data[1]) - offset_y, float(anchor_data[2]))
-                elif anchor_type == "point" and len(anchor_data) >= 2:
-                    local_anchor = (float(anchor_data[0]) - offset_x, float(anchor_data[1]) - offset_y)
-                else:
-                    local_anchor = anchor_data
-                effects = script.create_effects(
+                effects = create_effect_instances(
+                    self._effect_manager, request['effect_id'],
                     anchor_type=anchor_type,
-                    anchor_data=local_anchor,
-                    effect_options=options,
+                    anchor_data=anchor_data,
+                    options=options,
                     request_context={"offset_x": offset_x, "offset_y": offset_y, "project_root": str(_PROJECT_ROOT)},
                 )
             except Exception:

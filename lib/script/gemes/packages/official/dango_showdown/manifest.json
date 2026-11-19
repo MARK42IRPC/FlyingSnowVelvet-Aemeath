@@ -1,0 +1,31 @@
+{
+  "package_type": "game",
+  "package_format_version": 1,
+  "runtime_api_version": 1,
+  "game_id": "dango_showdown",
+  "name": "团子大决战",
+  "version": "0.1.0",
+  "summary": "选人押注，看两只团子在决斗区里碰撞出胜负。",
+  "description": "官方游戏包：玩家选人与押注，团子自动碰撞对战，记录连续押胜。",
+  "official": true,
+  "author": "Flying Snow Velvet",
+  "command_aliases": [
+    "团子大决战"
+  ],
+  "entry_module": "dango_showdown_pkg.entry",
+  "entry_class": "DangoShowdownGame",
+  "bgm_keyword": "",
+  "bgm_artist": "",
+  "window": {
+    "default_width": 1080,
+    "default_height": 720,
+    "minimum_width": 810,
+    "minimum_height": 540,
+    "aspect_width": 3,
+    "aspect_height": 2
+  },
+  "extensions": {
+    "particles": [],
+    "effects": []
+  }
+}

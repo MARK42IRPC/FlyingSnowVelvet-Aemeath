@@ -21,6 +21,7 @@ from lib.script.gemes.MAIN.game_packages import (
     get_game_package_service,
 )
 from lib.script.gemes.MAIN.runtime import build_game_hash_commands
+from lib.script.gemes.MAIN.game_bgm import GameBgmController
 from lib.script.music.service import get_music_service
 from lib.script.ui.game_manager_window import GameManagerWindow
 
@@ -49,16 +50,18 @@ class GameRuntime:
         self._active_game_id = ""
         self._active_manifest: GamePackageManifest | None = None
         self._active_entry: Any | None = None
-        self._bgm_track_ref = ""
-        self._bgm_display = ""
-        self._bgm_started_by_game = False
-        self._bgm_keyword = ""
-        self._bgm_artist = ""
+        self._bgm_widget = None
+        self._bgm = GameBgmController(
+            music_service=get_music_service,
+            submit=lambda fn, *args: get_compute_hub().submit_interactive_io(fn, *args),
+            publish=self._event_center.publish,
+        )
         self._open_generation = 0
         self._obstacle_provider = self.get_lahai_game_middle_third_rect_global
 
         self._event_center.subscribe(EventType.INPUT_HASH, self._on_hash_command)
         self._event_center.subscribe(EventType.UI_CLICKTHROUGH_TOGGLE, self._on_clickthrough_toggle)
+        self._event_center.subscribe(EventType.TICK, self._on_bgm_tick)
 
         get_hash_cmd_registry().register("游戏", "[打开/关闭/列表]", "打开游戏列表管理器")
         self.refresh_available_games()
@@ -158,11 +161,11 @@ class GameRuntime:
             raise GamePackageError(f"{installed.manifest.game_id} 入口未实现 create_widget(parent)")
 
         widget = entry.create_widget(self._panel)
+        self._detach_bgm_widget()
+        self._bgm.activate()
         self._active_entry = entry
         self._active_game_id = installed.game_id
         self._active_manifest = installed.manifest
-        self._bgm_keyword = installed.manifest.bgm_keyword
-        self._bgm_artist = installed.manifest.bgm_artist
 
         self._open_generation += 1
         self._panel.configure_game(installed.manifest, widget, self.close_active_game)
@@ -170,9 +173,21 @@ class GameRuntime:
         self._panel.fade_in()
         self._panel.activate()
 
+        self._bgm_widget = widget
+        setter = getattr(widget, "set_bgm_callback", None)
+        if callable(setter):
+            generation = self._open_generation
+
+            def request_bgm(keyword: str, artist: str = "", *, track_ref: str = "") -> None:
+                if generation == self._open_generation and self._active_game_id:
+                    self._bgm.request(keyword, artist, track_ref=track_ref, force=True, exclusive=True)
+
+            setter(request_bgm)
+        else:
+            self._bgm.request(installed.manifest.bgm_keyword, installed.manifest.bgm_artist)
+
         if installed.game_id == "lahai_tetris":
             self._open_lahai_sound.play()
-        self._play_game_bgm(self._open_generation)
         self._event_center.publish(Event(EventType.INFORMATION, {
             "text": f"{installed.manifest.name} 已打开",
             "min": 0,
@@ -188,17 +203,14 @@ class GameRuntime:
         if not self._active_game_id:
             return
         self._open_generation += 1
+        self._detach_bgm_widget()
+        self._bgm.close()
         closing_name = self._active_manifest.name if self._active_manifest is not None else "游戏"
         self._panel.deactivate()
         self._panel.fade_out()
         self._active_entry = None
         self._active_game_id = ""
         self._active_manifest = None
-        self._bgm_keyword = ""
-        self._bgm_artist = ""
-        if self._bgm_started_by_game:
-            self._event_center.publish(Event(EventType.MUSIC_PLAY_PAUSE, {"playing": False}))
-            self._bgm_started_by_game = False
         self._event_center.publish(Event(EventType.INFORMATION, {
             "text": f"{closing_name} 已关闭",
             "min": 0,
@@ -221,78 +233,26 @@ class GameRuntime:
             "max": 200,
         }))
 
-    def _play_game_bgm(self, open_generation: int) -> None:
-        if not self._bgm_keyword:
-            return
-        if self._bgm_track_ref and self._bgm_display:
-            self._publish_game_bgm_if_current(open_generation, self._bgm_track_ref, self._bgm_display)
-            return
-        future = get_compute_hub().submit_latest(
-            "game_runtime_bgm_search",
-            self._resolve_game_bgm,
-            open_generation,
-            executor="io",
-        )
-        if future is None:
-            log("游戏 BGM 搜索任务已在进行中")
+    def _detach_bgm_widget(self) -> None:
+        widget, self._bgm_widget = self._bgm_widget, None
+        setter = getattr(widget, "set_bgm_callback", None)
+        if callable(setter):
+            try:
+                setter(None)
+            except RuntimeError:
+                pass
 
-    def _resolve_game_bgm(self, open_generation: int) -> None:
-        try:
-            tracks = get_music_service().search(self._bgm_keyword, mode="song", limit=20)
-        except Exception as exc:
-            log(f"搜索游戏 BGM 失败: {exc}")
-            return
-        if not tracks:
-            log("搜索游戏 BGM 无结果")
-            return
-
-        keyword_lower = self._bgm_keyword.lower()
-        artist_hint = self._bgm_artist
-
-        def _priority(track) -> tuple[int, int]:
-            title = str(getattr(track, "title", "") or "").strip().lower()
-            artist = str(getattr(track, "artist", "") or "").strip()
-            exact_title = title == keyword_lower
-            artist_match = artist_hint and artist_hint in artist
-            if exact_title and artist_match:
-                rank = 0
-            elif artist_match:
-                rank = 1
-            elif exact_title:
-                rank = 2
-            else:
-                rank = 3
-            return rank, len(title)
-
-        tracks.sort(key=_priority)
-        track = tracks[0]
-        track_ref = str(getattr(track, "track_id", "") or "").strip()
-        if not track_ref:
-            log("游戏 BGM 搜索结果缺少 track_id")
-            return
-        display = get_music_service().format_track_display(track, include_provider=False)
-        self._bgm_track_ref = track_ref
-        self._bgm_display = display
-        self._publish_game_bgm_if_current(open_generation, track_ref, display)
-
-    def _publish_game_bgm_if_current(self, open_generation: int, track_ref: str, display: str) -> None:
-        if open_generation != self._open_generation or not self._panel.isVisible():
-            log("游戏 BGM 结果已过期，跳过自动播放")
-            return
-        if not self._bgm_started_by_game and not get_music_service().can_takeover_for_bgm():
-            log("当前已有音乐播放，跳过游戏 BGM 自动播放")
-            return
-        self._event_center.publish(Event(EventType.MUSIC_PLAY_TOP, {
-            "song_id": track_ref,
-            "track_ref": track_ref,
-            "display": display,
-        }))
-        self._bgm_started_by_game = True
+    def _on_bgm_tick(self, _event: Event) -> None:
+        self._bgm.drain(can_play=bool(self._active_game_id) and self._panel.isVisible())
 
     def cleanup(self) -> None:
+        self._open_generation += 1
+        self._detach_bgm_widget()
+        self._bgm.close()
         reset_game_obstacle_provider(self._obstacle_provider)
         self._event_center.unsubscribe(EventType.INPUT_HASH, self._on_hash_command)
         self._event_center.unsubscribe(EventType.UI_CLICKTHROUGH_TOGGLE, self._on_clickthrough_toggle)
+        self._event_center.unsubscribe(EventType.TICK, self._on_bgm_tick)
         try:
             self._panel.close()
         except Exception:

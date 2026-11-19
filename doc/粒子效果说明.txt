@@ -8,7 +8,7 @@
 - 更新机制：`tick` 推进真实状态，`frame` 仅负责插值绘制
 - 运行语义：practical 粒子已统一切到 `tick/秒` 语义，不再依赖运行时 `frame_fps`
 
-当前已注册粒子：18 个
+当前内置粒子见以下列表。
 
 二、已注册粒子列表
 
@@ -89,6 +89,10 @@
   方向速度与布朗抖动由脚本自己的 `speed_range` / `brownian` / `brownian_drag` 兜底，
   调用方一般只给前六项，全部省略即需求默认观感
 
+19. `frost_snowflake`
+- 文件：`frost_snowflake_particle.py`
+- 作用：环斩等冷色爆发后的六臂霜晶飘散；共享形状、请求参数与随机数隔离见第七节。
+
 三、统一事件格式
 ```python
 Event(EventType.PARTICLE_REQUEST, {
@@ -102,6 +106,19 @@ Event(EventType.PARTICLE_REQUEST, {
 - `point`: `(x, y)`
 - `rect`: `(x1, y1, x2, y2)`
 - `circle`: `(x, y, radius)`
+
+`particle_options` 为可选字典，传给脚本的 `set_request_options()`，只影响本次创建。
+例如 `burst_line` 接受 `rgb` / `count_range`，`star_streak` 接受颜色、数量、寿命和方向，
+`floating_text` 接受文本、字体、颜色、目标位置和漂移。使用前按脚本实际支持的字段传参，不修改默认配置。
+上述事件是桌面覆盖层入口，区域与文字目标位置均属于同一全局屏幕坐标空间。
+
+窗口内反馈使用 `lib/core/services/feedback_scene.py::FeedbackScene`，注入既有脚本管理器，
+直接复用粒子实例及共享 `build_particle_batch`，不用往包内复制粒子类或重写更新算法。
+场景使用局部坐标，按 20Hz 逻辑 tick 更新、frame 插值，绘制批次由调用方放入本窗口裁剪区。
+暂停/隐藏停止推进，重置/关闭只清理此场景；不得为清理游戏而清空全局粒子覆盖层。
+同一共享生命周期 helper 也用于 Qt/DX 覆盖层，桌面全局请求与局部场景的坐标不得混用。
+实例创建由 `create_particle_instances` 统一处理参数与坐标，`target_x` / `target_y` 和出生位置
+在全局请求转局部时减去相同覆盖层原点，包含负原点显示器；请求选项在创建后复位，避免污染下一批。
 
 四、覆盖层与绘制性能
 - 粒子实例的 `color`、`font` 使用 `lib.core.render.visuals.types.Color`、`FontSpec`；脚本不得保存 `QColor`、`QFont`、`QPixmap`、`QPainter` 等 Qt 对象，也不得实现接收 painter 的自定义绘制方法。Qt 后端创建并缓存字体，计算文字宽高和基线；新增视觉形状通过纯数据属性表达，由 Qt 或未来其他后端负责绘制。
@@ -119,3 +136,29 @@ Event(EventType.PARTICLE_REQUEST, {
 - 需要说明触发场景时，优先写“业务用途”而不是只写视觉形态
 - 若粒子公开协议发生变化，请检查 `doc/README.md` 是否需要更新入口说明
 - 若修改粒子时序，优先保持 `tick` 更新、`frame` 插值，不再回退到逐帧逻辑
+
+六、共享图片的旋转与环绕
+- `smooth_image_show` 可选 `rotation`（初始角度，度）、`angular_velocity`（度/秒，可正负）。
+  图片旋转与位置都按同一插值后的 age 采样，不在360度处取模，避免整圈挥转在接缝处倒转。
+- 可选 `angular_duration`（秒）限制旋转/环绕运动的时长，省略时沿用整个生命周期持续旋转。
+  到达该时长后角度与环绕位置固定，淡出与生命时间继续，可表达“瞬间挥斩，然后残影消散”。
+- `orbit_offset=(x,y)` 为图片中心相对锚点的局部像素向量，`orbit_start_angle` 为其初始旋转角（度）。
+  向量随 angular_velocity 旋转，再加到原有三阶段位置上；向量不减桌面原点，只有位置坐标做全局转局部。
+  可据“图片中心减柄端pivot”的差向量设置柄端挥转，图片尺寸缩放应由调用方换算进该向量。
+- 全部字段默认0，旧图片展示、静态rotation和淡入淡出兼容；非有限/无效可选数值回落到0。
+  调用方只提供锚点和参数，轨迹、生命周期、插值与绘制继续由桌宠共享效果和共享批次处理，
+  游戏包不得复制一套图片或粒子更新器。跟随对象时可更新三阶段锚点；暂停/重置沿用共享场景语义。
+
+七、霜晶飘散粒子
+- ID：`frost_snowflake`，脚本 `lib/script/practical/frost_snowflake_particle.py`，由桌宠粒子管理器自动发现，
+  供桌面事件及窗口局部 `FeedbackScene` 共同使用，不是游戏包私有扩展。
+- 实例只保存纯数据，外形由共享 `build_particle_batch` 的 `is_snowflake` 分支生成六条主臂与十二条短枝，
+  使用后端中立 `LineCommand`；Qt 与 DirectX 消费同一批次，没有 painter 私有路径。
+- 请求可选 `count`（默认14，上限128）、`rgb`（三通道，省略时白/青配色）、
+  `life`（秒或区间，默认0.55–0.9）、`speed`（像素/秒或区间，默认35–90）、
+  `size`（直径像素或区间，默认8–14）与 `seed`。支持 point / rect / circle 出生区域。
+- 粒子先短距离散开，再减速缓落、轻旋并淡出；随机数来自私有 `random.Random(seed)`，
+  不消费比赛 RNG 或进程全局随机数。请求选项由共享工厂在创建后复位。
+- 共享粒子 helper 对声明 `rotation` 的实例额外保存逻辑前一角度，并与位置同步插值；
+  角度不在360度取模，没有 rotation 字段的既有粒子保持原行为。`size` 沿用普通粒子的直径语义，
+  使桌面覆盖层既有包围盒包含完整六臂。

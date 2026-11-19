@@ -203,6 +203,23 @@ def build_particle_batch(particles: list[object]) -> DrawBatch:
             ))
             continue
 
+        if bool(getattr(particle, "is_snowflake", False)):
+            radius = max(0.0, float(getattr(particle, "size", 0.0))) / 2
+            rotation = math.radians(float(getattr(particle, "_render_rotation", getattr(particle, "rotation", 0.0))))
+            width = max(.7, min(1.3, radius * .17))
+            for arm in range(6):
+                angle = rotation + arm * math.tau / 6
+                end = Point(x + math.cos(angle) * radius, y + math.sin(angle) * radius)
+                commands.append(LineCommand(Point(x, y), end, color, width=width,
+                                            alpha=alpha, layer=layer, z=z, order=order))
+                joint = Point(x + math.cos(angle) * radius * .55, y + math.sin(angle) * radius * .55)
+                for offset in (-.72, .72):
+                    tip = Point(joint.x + math.cos(angle + offset) * radius * .34,
+                                joint.y + math.sin(angle + offset) * radius * .34)
+                    commands.append(LineCommand(joint, tip, color, width=width * .8,
+                                                alpha=alpha, layer=layer, z=z, order=order))
+            continue
+
         if bool(getattr(particle, "is_line", False)):
             length = float(getattr(particle, "length", 0.0))
             if length > 0.5:
@@ -548,6 +565,32 @@ def load_effect_resource(path: str | Path, options: dict | None = None) -> Image
     return ImageResource(f"{resource.resource_id}@feather:{ratio:.4f}", tuple(feathered_frames))
 
 
+def sample_effect_frame(resource: ImageResource, effect: object) -> tuple[int, RasterFrame]:
+    """Sample an opted-in animated image using the effect's shared clock.
+
+    Static image callers retain frame zero. Animated effects use decoded
+    per-frame durations, including variable-duration GIFs; a non-looping
+    image holds its final frame until the enclosing effect fades away.
+    """
+    if not bool(getattr(effect, "animate", False)) or len(resource.frames) == 1:
+        return 0, resource.frames[0]
+    age = max(0.0, float(getattr(effect, "animation_seconds",
+                                getattr(effect, "_render_age", getattr(effect, "age", 0.0)))))
+    rate = max(0.0, float(getattr(effect, "playback_rate", 1.0)))
+    durations = tuple(max(1, frame.duration_ms) for frame in resource.frames)
+    elapsed = age * rate * 1000.0
+    total = sum(durations)
+    if bool(getattr(effect, "animation_loop", True)):
+        elapsed %= total
+    elif elapsed >= total:
+        return len(resource.frames) - 1, resource.frames[-1]
+    for index, duration in enumerate(durations):
+        if elapsed < duration:
+            return index, resource.frames[index]
+        elapsed -= duration
+    return len(resource.frames) - 1, resource.frames[-1]
+
+
 def build_effect_batch(effects: list[object]) -> DrawBatch:
     """Resolve image/text effects into one immutable declaration batch."""
     commands = []
@@ -564,7 +607,7 @@ def build_effect_batch(effects: list[object]) -> DrawBatch:
         order = int(getattr(effect, "_draw_order", 0))
         resource = getattr(effect, "_visual_resource", getattr(effect, "_dx_resource", None))
         if isinstance(resource, ImageResource):
-            frame = resource.frames[0]
+            frame_index, frame = sample_effect_frame(resource, effect)
             scale = max(0.001, float(
                 getattr(effect, "_render_scale", getattr(effect, "scale", 1.0))
             ))
@@ -589,7 +632,7 @@ def build_effect_batch(effects: list[object]) -> DrawBatch:
             commands.append(SpriteCommand(
                 resource.resource_id,
                 1,
-                0,
+                frame_index,
                 frame,
                 position,
                 opacity,
@@ -668,5 +711,6 @@ __all__ = [
     "resolve_speaker_scale",
     "resolve_command_panel_geometry",
     "sample_motor_jitter",
+    "sample_effect_frame",
     "update_speaker_intensity",
 ]

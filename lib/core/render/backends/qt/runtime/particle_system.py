@@ -11,6 +11,10 @@ from PyQt5.QtGui import QColor, QFont, QFontMetrics, QPainter, QRegion
 
 from config.config import PARTICLES
 from lib.core.compute_hub import get_compute_hub
+from lib.core.services.feedback_scene import (
+    create_particle_instances, instance_alive, interpolate_particles,
+    prepare_particles, update_instances,
+)
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.render.visuals.types import Color, FontSpec
 from lib.core.render.visuals.visuals import build_particle_batch
@@ -48,24 +52,12 @@ def _to_qfont(value: object) -> QFont:
 
 def _particle_alive(particle) -> bool:
     """兼容 alive 属性/方法，异常时按死亡处理。"""
-    alive = getattr(particle, 'alive', True)
-    try:
-        return bool(alive() if callable(alive) else alive)
-    except Exception:
-        return False
+    return instance_alive(particle)
 
 
 def _update_particles_batch(particles: list) -> list:
     """后台更新粒子并返回存活粒子列表。"""
-    alive_particles = []
-    for particle in particles:
-        try:
-            particle.update()
-        except Exception:
-            continue
-        if _particle_alive(particle):
-            alive_particles.append(particle)
-    return alive_particles
+    return update_instances(particles)
 
 
 def _clone_particle_for_update(particle):
@@ -88,9 +80,7 @@ def _snapshot_particles_for_update(particles: list) -> list:
 
 def _prepare_particles_for_inplace_update(particles: list) -> None:
     """在原地更新前保存逻辑坐标，作为本次 tick 的插值起点。"""
-    for particle in particles:
-        particle._tick_prev_x = float(getattr(particle, 'x', 0.0))
-        particle._tick_prev_y = float(getattr(particle, 'y', 0.0))
+    prepare_particles(particles)
 
 
 def _can_use_async_updates() -> bool:
@@ -537,13 +527,7 @@ class ParticleOverlay(QWidget):
             return
         alpha = float((event.data or {}).get('tick_alpha', 1.0) or 0.0)
         alpha = max(0.0, min(1.0, alpha))
-        for particle in self._particles:
-            prev_x = float(getattr(particle, '_tick_prev_x', getattr(particle, 'x', 0.0)))
-            prev_y = float(getattr(particle, '_tick_prev_y', getattr(particle, 'y', 0.0)))
-            cur_x = float(getattr(particle, 'x', prev_x))
-            cur_y = float(getattr(particle, 'y', prev_y))
-            particle._render_x = prev_x + (cur_x - prev_x) * alpha
-            particle._render_y = prev_y + (cur_y - prev_y) * alpha
+        interpolate_particles(self._particles, alpha)
         self._refresh_spatial_grid(reindex=False)
 
     def _apply_pending_updates(self) -> None:
@@ -604,26 +588,10 @@ class ParticleOverlay(QWidget):
             area_data = request['area_data']
             particle_options = request['particle_options']
 
-            script = self._particle_manager.get_script(particle_id)
-            if not script:
-                continue
-            if hasattr(script, 'set_request_options'):
-                try:
-                    script.set_request_options(dict(particle_options))
-                except Exception:
-                    pass
-
-            if area_type == 'rect':
-                x1, y1, x2, y2 = area_data
-                local_area_data = (x1 - offset_x, y1 - offset_y, x2 - offset_x, y2 - offset_y)
-            elif area_type == 'circle':
-                x, y, radius = area_data
-                local_area_data = (x - offset_x, y - offset_y, radius)
-            else:
-                x, y = area_data
-                local_area_data = (x - offset_x, y - offset_y)
-
-            new_particles = script.create_particles(area_type, local_area_data)
+            new_particles = create_particle_instances(
+                self._particle_manager, particle_id, area_type, area_data, particle_options,
+                offset_x=offset_x, offset_y=offset_y,
+            )
             if not new_particles:
                 continue
 

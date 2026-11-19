@@ -5,6 +5,10 @@ from collections import deque
 from collections.abc import Callable
 
 from lib.core.event.center import Event, EventType, get_event_center
+from lib.core.services.feedback_scene import (
+    create_particle_instances, instance_alive, interpolate_particles,
+    prepare_particles, update_instances,
+)
 from lib.core.render.visuals.commands import DrawBatch
 from lib.core.render.visuals.visuals import build_particle_batch as _build_particle_batch
 from lib.core.render.layers import Layer, normalize_layer
@@ -19,11 +23,7 @@ _logger = get_logger(__name__)
 
 
 def _particle_alive(particle: object) -> bool:
-    alive = getattr(particle, "alive", True)
-    try:
-        return bool(alive() if callable(alive) else alive)
-    except Exception:
-        return False
+    return instance_alive(particle)
 
 
 def build_particle_batch(particles: list[object]) -> DrawBatch:
@@ -86,17 +86,8 @@ class DxParticleOverlay:
         if self._paused or self._cleanup_done:
             return
         self._drain_requests()
-        alive = []
-        for particle in self._particles:
-            particle._tick_prev_x = float(getattr(particle, "x", 0.0))
-            particle._tick_prev_y = float(getattr(particle, "y", 0.0))
-            try:
-                particle.update()
-            except Exception:
-                continue
-            if _particle_alive(particle):
-                alive.append(particle)
-        self._particles = alive
+        prepare_particles(self._particles)
+        self._particles = update_instances(self._particles)
         if not self._particles:
             self._window.flush_immediately()
 
@@ -105,11 +96,7 @@ class DxParticleOverlay:
             return
         data = event.data if isinstance(event.data, dict) else {}
         alpha = max(0.0, min(1.0, float(data.get("tick_alpha", 1.0) or 0.0)))
-        for particle in self._particles:
-            prev_x = float(getattr(particle, "_tick_prev_x", getattr(particle, "x", 0.0)))
-            prev_y = float(getattr(particle, "_tick_prev_y", getattr(particle, "y", 0.0)))
-            particle._render_x = prev_x + (float(getattr(particle, "x", prev_x)) - prev_x) * alpha
-            particle._render_y = prev_y + (float(getattr(particle, "y", prev_y)) - prev_y) * alpha
+        interpolate_particles(self._particles, alpha)
         self._window.submit(build_particle_batch(self._particles))
 
     def _drain_requests(self) -> None:
@@ -119,27 +106,14 @@ class DxParticleOverlay:
         offset_x, offset_y = geometry.x, geometry.y
         while self._pending_requests:
             request = self._pending_requests.popleft()
-            script = self._particle_manager.get_script(request["particle_id"])
-            if script is None:
-                continue
             options = request["particle_options"]
-            setter = getattr(script, "set_request_options", None)
-            if callable(setter):
-                try:
-                    setter(dict(options))
-                except Exception:
-                    pass
             area_type = request["area_type"]
             values = request["area_data"]
             try:
-                if area_type == "rect":
-                    local = tuple(float(v) for v in values[:4])
-                    local = (local[0] - offset_x, local[1] - offset_y, local[2] - offset_x, local[3] - offset_y)
-                elif area_type == "circle":
-                    local = (float(values[0]) - offset_x, float(values[1]) - offset_y, float(values[2]))
-                else:
-                    local = (float(values[0]) - offset_x, float(values[1]) - offset_y)
-                particles = script.create_particles(area_type, local)
+                particles = create_particle_instances(
+                    self._particle_manager, request['particle_id'], area_type, values, options,
+                    offset_x=offset_x, offset_y=offset_y,
+                )
             except Exception:
                 _logger.exception("DX particle creation failed for %s", request["particle_id"])
                 continue

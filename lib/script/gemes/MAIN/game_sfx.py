@@ -7,9 +7,26 @@ import shutil
 import struct
 import wave
 from pathlib import Path
+from typing import Callable
 
 from config.user_storage_paths import get_user_cache_dir
 from lib.core.event.center import Event, EventType, get_event_center
+
+
+DEFAULT_VOLUMES = {
+    "move": 0.28,
+    "fall": 0.18,
+    "rotate": 0.34,
+    "lock": 0.36,
+    "drop_start": 0.34,
+    "drop_impact": 0.48,
+    "clear": 0.46,
+    "skill_press": 0.22,
+    "skill_cast": 0.30,
+    "skill_release": 0.54,
+    "partner_burst": 0.40,
+    "game_over": 0.46,
+}
 
 
 class GameSfx:
@@ -18,10 +35,13 @@ class GameSfx:
     _RATE = 22050
     _AMP = 0.40
 
-    def __init__(self) -> None:
+    def __init__(
+        self, cache_dir: Path | None = None,
+        emit: Callable[[str, str, float], None] | None = None,
+    ) -> None:
         root = Path(__file__).resolve().parents[4]
-        self._dir = get_user_cache_dir("game_sfx")
-        if not self._dir.exists():
+        self._dir = Path(cache_dir) if cache_dir is not None else get_user_cache_dir("game_sfx")
+        if cache_dir is None and not self._dir.exists():
             for legacy_dir in (
                 get_user_cache_dir("music", "game_sfx"),
                 root / "resc" / "user" / "temp" / "game_sfx",
@@ -34,7 +54,8 @@ class GameSfx:
                 except OSError:
                     continue
         self._dir.mkdir(parents=True, exist_ok=True)
-        self._ec = get_event_center()
+        self._emit_callback = emit
+        self._ec = get_event_center() if emit is None else None
         self._files = {
             "move": self._ensure_wave("lahai_move.wav", self._build_move),
             "fall": self._ensure_wave("lahai_fall.wav", self._build_fall),
@@ -65,12 +86,26 @@ class GameSfx:
         path = self._files.get(key)
         if not path:
             return
+        if self._emit_callback is not None:
+            self._emit_callback(key, path, volume)
+            return
         self._ec.publish(Event(EventType.SOUND_REQUEST, {
             "audio_type": "game_sfx",
             "source": path,
             "volume_gain": volume,
             "interruptible": True,
         }))
+
+    def play(self, key: str, *, volume_gain: float | None = None) -> None:
+        """Request an existing cue, optionally overriding its event gain.
+
+        The same catalog, cached WAVs and SOUND_REQUEST route back the legacy
+        ``play_*`` helpers and games using semantic cue mappings.
+        """
+        if key not in self._files:
+            return
+        volume = DEFAULT_VOLUMES[key] if volume_gain is None else max(0.0, min(1.0, float(volume_gain)))
+        self._emit(key, volume)
 
     @classmethod
     def _pack(cls, samples: list[float]) -> bytes:
@@ -220,37 +255,37 @@ class GameSfx:
         return self._mix(lead, bass, undertone, ([0.0] * (len(lead) - len(tail_noise)) + tail_noise) if len(lead) >= len(tail_noise) else tail_noise)
 
     def play_move(self) -> None:
-        self._emit("move", 0.28)
+        self.play("move")
 
     def play_fall(self) -> None:
-        self._emit("fall", 0.18)
+        self.play("fall")
 
     def play_rotate(self) -> None:
-        self._emit("rotate", 0.34)
+        self.play("rotate")
 
     def play_lock(self) -> None:
-        self._emit("lock", 0.36)
+        self.play("lock")
 
     def play_drop_start(self) -> None:
-        self._emit("drop_start", 0.34)
+        self.play("drop_start")
 
     def play_drop_impact(self) -> None:
-        self._emit("drop_impact", 0.48)
+        self.play("drop_impact")
 
     def play_clear(self) -> None:
-        self._emit("clear", 0.46)
+        self.play("clear")
 
     def play_skill_press(self) -> None:
-        self._emit("skill_press", 0.22)
+        self.play("skill_press")
 
     def play_skill_cast(self) -> None:
-        self._emit("skill_cast", 0.30)
+        self.play("skill_cast")
 
     def play_skill_release(self) -> None:
-        self._emit("skill_release", 0.54)
+        self.play("skill_release")
 
     def play_partner_burst(self) -> None:
-        self._emit("partner_burst", 0.40)
+        self.play("partner_burst")
 
     def play_game_over(self) -> None:
-        self._emit("game_over", 0.46)
+        self.play("game_over")

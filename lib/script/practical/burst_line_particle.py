@@ -157,7 +157,17 @@ class BurstLineParticleScript(BaseParticleScript):
                 custom.darker(110),
             ]
 
-        count = random.randint(*config['count_range'])
+        # Callers may request a heavier burst (skill finales); an explicit
+        # ``count_range`` scales this spawn only and is not stored in config.
+        count_range = tuple(config['count_range'])
+        override = self._request_options.get("count_range")
+        if isinstance(override, (list, tuple)) and len(override) >= 2:
+            count_range = (int(override[0]), int(override[1]))
+        if len(count_range) >= 2:
+            count = random.randint(int(count_range[0]), int(count_range[1]))
+        else:
+            count = 8
+        count = max(1, min(160, count))
         # 均匀角度分布 + 整体随机旋转（每次效果略有不同）
         base_step = (2.0 * math.pi) / count
         offset = random.uniform(0.0, base_step)

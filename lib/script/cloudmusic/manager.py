@@ -20,6 +20,7 @@
 import threading
 from collections.abc import Callable
 from concurrent.futures import Future
+from pathlib import Path
 
 from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import get_event_center, EventType, Event
@@ -111,6 +112,9 @@ class CloudMusicManager(_LoginMixin, _CacheMixin, _PlaybackMixin, _EventsMixin):
             logger.error("[CloudMusic] 本地播放器不可用，音乐将只能进行队列与搜索")
         self._pending_play_display = ""
         self._pending_play_path = ""
+        self._playback_future: Future | None = None
+        self._player_start_pending = False
+        self._paused_file: tuple[Path, str] | None = None
 
         # 音符粒子控制
         self._particle_timer = 0   # 粒子生成计时器（帧数）
@@ -319,14 +323,18 @@ class CloudMusicManager(_LoginMixin, _CacheMixin, _PlaybackMixin, _EventsMixin):
         self._show_info("已清空列表")
 
     def pause(self):
-        """暂停播放。"""
+        """Pause the current item, including download and native startup."""
         with self._state_lock:
-            if not self._is_playing or self._is_paused:
+            if self._is_paused:
                 return
+            if not self._is_playing and not (0 <= self._current_index < len(self._queue)):
+                return
+            # Record intent before touching the player: download completion
+            # and a late native started callback must retain this pause.
+            self._is_paused = True
         try:
-            self._music_player.pause()
-            with self._state_lock:
-                self._is_paused = True
+            if self._music_player is not None:
+                self._music_player.pause()
             self._publish_brief_info("已暂停")
             self._publish_status()
         except Exception as e:
@@ -337,11 +345,24 @@ class CloudMusicManager(_LoginMixin, _CacheMixin, _PlaybackMixin, _EventsMixin):
         with self._state_lock:
             if not self._is_paused:
                 return
+            started = self._is_playing
+            starting = getattr(self, "_player_start_pending", False)
+            deferred = getattr(self, "_paused_file", None)
+            self._paused_file = None
+            playback = getattr(self, "_playback_future", None)
+            downloading = getattr(self, "_download_thread", None)
+            waiting = any(future is not None and not future.done() for future in (playback, downloading))
+            self._is_paused = False
         try:
-            self._music_player.resume()
-            with self._state_lock:
-                self._is_paused  = False
-                self._is_playing = True
+            if deferred is not None:
+                self._play_file(*deferred)
+            elif started or starting:
+                # Keep the native player's current position for an ordinary
+                # pause, or let its already queued startup finish once.
+                if self._music_player is not None:
+                    self._music_player.resume()
+            elif not waiting:
+                self._play_current()
             self._publish_brief_info("继续播放")
             self._publish_status()
         except Exception as e:

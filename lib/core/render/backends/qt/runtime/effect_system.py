@@ -17,6 +17,10 @@ from PyQt5.QtGui import QFont, QFontMetrics, QPainter
 from PyQt5.QtWidgets import QWidget
 
 from lib.core.event.center import Event, EventType, get_event_center
+from lib.core.services.feedback_scene import (
+    create_effect_instances, instance_alive, interpolate_effects,
+    prepare_effects, update_instances,
+)
 from lib.core.render.layers import Layer, WindowLayer
 from lib.core.render.layers import get_layer_manager
 from lib.core.logger import get_logger
@@ -36,21 +40,11 @@ _RESOURCE_CACHE: "OrderedDict[tuple, ImageResource]" = OrderedDict()
 
 
 def _effect_alive(effect) -> bool:
-    alive = getattr(effect, "alive", True)
-    try:
-        return bool(alive() if callable(alive) else alive)
-    except Exception:
-        return False
+    return instance_alive(effect)
 
 
 def _prepare_effects_for_inplace_update(effects: list) -> None:
-    for effect in effects:
-        effect._tick_prev_age = float(getattr(effect, "age", 0.0))
-        effect._tick_prev_x = float(getattr(effect, "_render_x", getattr(effect, "x", 0.0)))
-        effect._tick_prev_y = float(getattr(effect, "_render_y", getattr(effect, "y", 0.0)))
-        effect._tick_prev_opacity = float(getattr(effect, "_render_opacity", getattr(effect, "opacity", 1.0)))
-        effect._tick_prev_scale = float(getattr(effect, "_render_scale", getattr(effect, "scale", 1.0)))
-        effect._tick_prev_rotation = float(getattr(effect, "_render_rotation", getattr(effect, "rotation", 0.0)))
+    prepare_effects(effects)
 
 
 def _prepare_effect_backend_state(effect) -> None:
@@ -174,16 +168,7 @@ class EffectOverlay(QWidget):
 
         _prepare_effects_for_inplace_update(self._effects)
 
-        alive_effects = []
-        for effect in self._effects:
-            try:
-                effect.update()
-            except Exception:
-                continue
-            if _effect_alive(effect):
-                alive_effects.append(effect)
-
-        self._effects = alive_effects
+        self._effects = update_instances(self._effects)
         if not self._effects:
             self._schedule_hide()
 
@@ -195,29 +180,7 @@ class EffectOverlay(QWidget):
 
         alpha = float((event.data or {}).get("tick_alpha", 1.0) or 0.0)
         alpha = max(0.0, min(1.0, alpha))
-        for effect in self._effects:
-            if hasattr(effect, "apply_frame_interpolation"):
-                try:
-                    effect.apply_frame_interpolation(alpha)
-                    continue
-                except Exception:
-                    pass
-            prev_x = float(getattr(effect, "_tick_prev_x", getattr(effect, "x", 0.0)))
-            prev_y = float(getattr(effect, "_tick_prev_y", getattr(effect, "y", 0.0)))
-            prev_opacity = float(getattr(effect, "_tick_prev_opacity", getattr(effect, "opacity", 1.0)))
-            prev_scale = float(getattr(effect, "_tick_prev_scale", getattr(effect, "scale", 1.0)))
-            prev_rotation = float(getattr(effect, "_tick_prev_rotation", getattr(effect, "rotation", 0.0)))
-            cur_x = float(getattr(effect, "x", prev_x))
-            cur_y = float(getattr(effect, "y", prev_y))
-            cur_opacity = float(getattr(effect, "opacity", prev_opacity))
-            cur_scale = float(getattr(effect, "scale", prev_scale))
-            cur_rotation = float(getattr(effect, "rotation", prev_rotation))
-
-            effect._render_x = prev_x + (cur_x - prev_x) * alpha
-            effect._render_y = prev_y + (cur_y - prev_y) * alpha
-            effect._render_opacity = prev_opacity + (cur_opacity - prev_opacity) * alpha
-            effect._render_scale = prev_scale + (cur_scale - prev_scale) * alpha
-            effect._render_rotation = prev_rotation + (cur_rotation - prev_rotation) * alpha
+        interpolate_effects(self._effects, alpha)
 
         self.update()
 
@@ -265,23 +228,12 @@ class EffectOverlay(QWidget):
                     continue
                 effect_options["resolved_resource_path"] = resolved_path
 
-            if anchor_type == "rect" and isinstance(anchor_data, (list, tuple)) and len(anchor_data) >= 4:
-                x1, y1, x2, y2 = anchor_data
-                local_anchor_data = (x1 - offset_x, y1 - offset_y, x2 - offset_x, y2 - offset_y)
-            elif anchor_type == "circle" and isinstance(anchor_data, (list, tuple)) and len(anchor_data) >= 3:
-                x, y, radius = anchor_data
-                local_anchor_data = (x - offset_x, y - offset_y, radius)
-            elif anchor_type == "point" and isinstance(anchor_data, (list, tuple)) and len(anchor_data) >= 2:
-                x, y = anchor_data
-                local_anchor_data = (x - offset_x, y - offset_y)
-            else:
-                local_anchor_data = anchor_data
-
             try:
-                new_effects = script.create_effects(
+                new_effects = create_effect_instances(
+                    self._effect_manager, effect_id,
                     anchor_type=anchor_type,
-                    anchor_data=local_anchor_data,
-                    effect_options=effect_options,
+                    anchor_data=anchor_data,
+                    options=effect_options,
                     request_context={
                         "offset_x": offset_x,
                         "offset_y": offset_y,

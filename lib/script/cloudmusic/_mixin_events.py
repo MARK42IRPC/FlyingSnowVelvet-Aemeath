@@ -20,6 +20,23 @@ _LIKED_ENQUEUE_LIMIT = 32
 class _EventsMixin:
     """非登录事件处理：队列操作、播放控制、喜欢列表。"""
 
+    @staticmethod
+    def _music_request_is_current(data: dict) -> bool:
+        """Optional host-process guard, evaluated when a queued command runs.
+
+        This callable is transient request state, never persisted or sent
+        over IPC. Ordinary music commands omit it and retain their behavior.
+        """
+        if "request_is_current" not in data:
+            return True
+        guard = data["request_is_current"]
+        if not callable(guard):
+            return False
+        try:
+            return bool(guard())
+        except Exception:
+            return False
+
     def _build_song_display(self, title: str, artist: str, duration_ms: int | None = None) -> str:
         duration = format_duration_text(duration_ms)
         clean_title = str(title or "").strip() or "未知歌曲"
@@ -199,6 +216,8 @@ class _EventsMixin:
         `silent` 为真时不再弹「已加入播放队列」气泡：一次投递多首的批量点歌由
         调度器统一给一条汇总提示，逐首弹会连成一串同文案的气泡。
         """
+        if not self._music_request_is_current(event.data or {}):
+            return
         song_ref = event.data.get('track_ref', event.data.get('song_id'))
         song_id = self._normalize_track_ref(song_ref)
         display = event.data.get('display', '')
@@ -262,6 +281,8 @@ class _EventsMixin:
 
     def _on_play_queue_index(self, event: Event):
         """处理 MUSIC_PLAY_QUEUE_INDEX：将指定队列项置顶并立即播放。"""
+        if not self._music_request_is_current(event.data or {}):
+            return
         index_raw = event.data.get('index', -1)
         try:
             index = int(index_raw)
@@ -695,6 +716,9 @@ class _EventsMixin:
         - 切换语义：未提供 playing 时，自动在“暂停/播放”之间切换。
         """
         data = event.data or {}
+
+        if not self._music_request_is_current(data):
+            return
 
         with self._state_lock:
             is_playing = self._is_playing

@@ -84,6 +84,8 @@ PARTICLE_REQUEST
   - `particle_id`
   - `area_type`
   - `area_data`
+  - 可选 `particle_options`：由对应已注册粒子脚本解析的本次请求参数，不能修改脚本默认配置
+- 这是桌面覆盖层入口，`area_data` 使用全局屏幕坐标；窗口内部的反馈通过共享 `FeedbackScene` 直接复用同一脚本与批次，使用窗口局部坐标，不再把场内粒子发到全局覆盖层
 
 EFFECT_REQUEST
 - 用途：申请覆盖层特效
@@ -91,14 +93,16 @@ EFFECT_REQUEST
 - `anchor_data` 与 `effect_options` 只能包含 `None`、字符串、数值、布尔值、列表、元组和字符串键字典；发布工具会递归复制载荷并拒绝不透明后端对象
 - 图片特效通过 `effect_options.resource_path` 传递资源路径，文字特效传递文本、颜色数组和字体参数；不得传入 `QPixmap/QImage/QColor/QFont/QPainter` 等 toolkit 对象
 - 当前由所选桌面后端的特效宿主消费；共享视觉层负责资源解码/缩放/羽化和文字效果命令，后端只负责资源上传缓存、字形栅格化与 `DrawBatch` 执行
+- 全局覆盖层请求的坐标使用全局屏幕坐标；局部 `FeedbackScene` 中的图片与文字效果使用场景坐标，二者不能混传
 
 SOUND_REQUEST
 - 用途：请求播放音频文件
 - 字段：
-  - `audio_class`
-  - `file_path`
-  - `volume`
+  - `audio_type`：如 `game_sfx`、`world_sfx`、`voice`
+  - `source`：可读取的音频文件路径
+  - `volume_gain`：乘在该音频类别配置音量上的增益，默认 `1.0`
   - `interruptible`
+- `lib/core/voice/core.py` 是播放与频道管理的唯一消费者；游戏音效复用 `GameSfx` 的现有 cue 与此事件，不在包内另建播放器或波形合成器
 
 VOICE_REQUEST
 - 用途：语音播放抽象层入口
@@ -145,6 +149,9 @@ MUSIC_*
 - 播放控制、登录状态、进度同步、队列操作都在 `MUSIC_*` 命名空间
 - 统一由音乐服务和 UI 组件解耦协作
 - `MUSIC_ENQUEUE` 支持可选 `silent=true`：一次点多首时调度器逐首追加队列不再各弹一次「已加入播放队列」，由 `MUSIC_PLAY_TOP` 前的一条汇总气泡交代
+- `MUSIC_ENQUEUE` 的 `autoplay=false` 只追加不抢播；游戏 BGM 先确认歌曲已进入共享队列，再用 `MUSIC_PLAY_QUEUE_INDEX.index` 选择实际位置，同一当前曲目不重复切换，暂停恢复走 `MUSIC_PLAY_PAUSE{playing:true}`。
+- `MUSIC_ENQUEUE` / `MUSIC_PLAY_QUEUE_INDEX` / `MUSIC_PLAY_PAUSE` 支持宿主进程内的可选 `request_is_current` 无参回调，真正消费命令前检查代次、目标歌曲或队列位置；返回假、不可调用或抛错时丢弃命令。它只供本进程异步请求防过期，不持久化、不经 IPC 传输；不传该字段的原有命令语义不变。`MusicService.enqueue_track(..., request_is_current=...)` 可将同一守卫传给入队事件。
+- 显式暂停也适用于当前歌曲下载中或等待播放器启动的阶段，保留共享队列，完成的下载不自动开播，迟到启动回调不能取消暂停。
 
 MANAGER_SPAWN_REQUEST
 - 用途：请求对象管理器生成实体
