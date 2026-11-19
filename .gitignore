@@ -75,3 +75,8 @@ oprate/
 # cannot commit it by accident.
 local_pages/
 .localpage/
+
+# 本地排查产物：补丁工具残留、探测脚本与日志、待加工素材收件箱，都不进库。
+.codex-patch.txt
+/cache/
+resc/GIF/需要处理/
