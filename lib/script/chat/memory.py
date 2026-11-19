@@ -18,6 +18,8 @@ from config.user_storage_paths import get_user_state_dir
 from lib.core.event.center import Event, EventType, get_event_center
 from lib.core.logger import get_logger
 
+from .context_markers import AUTO_COMPANION_SOURCE, tag_auto_companion_text
+
 logger = get_logger(__name__)
 
 if TYPE_CHECKING:
@@ -220,6 +222,8 @@ class StreamMemory:
             self._suppress_next_response = False
             return
         text = event.data.get("text", "")
+        if str(event.data.get("source", "")).strip() == AUTO_COMPANION_SOURCE:
+            text = tag_auto_companion_text(text)
         topic, lines = self._extract_topic_and_lines(text)
         if not lines:
             return

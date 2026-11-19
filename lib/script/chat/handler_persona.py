@@ -6,6 +6,7 @@ from lib.core.logger import get_logger
 
 from .handler_stream_presenter import _strip_tool_commands_for_display
 from .native_tools import strip_legacy_tool_protocol
+from .context_markers import AUTO_COMPANION_SOURCE, is_auto_companion_topic
 from .persona_storage import resolve_persona_file_path
 
 logger = get_logger(__name__)
@@ -45,6 +46,8 @@ class ChatHandlerPersonaMixin:
             if not content:
                 continue
             topic = str(item.get("topic") or "").strip()
+            if is_auto_companion_topic(topic):
+                continue
             role = str(item.get("role") or "").strip().lower()
             role_label = "用户" if role == "user" else "你" if role in ("you", "assistant") else "记录"
             prefix = f"[{topic}][{role_label}]" if topic else f"[{role_label}]"
@@ -100,9 +103,13 @@ class ChatHandlerPersonaMixin:
             logger.debug("[ChatHandler] 已附带 %s 条 recent memory 到 persona", self._memory_context_limit())
         return '\n\n'.join(section for section in sections if section)
 
-    def _append_recent_context(self, role: str, text: str):
+    def _append_recent_context(self, role: str, text: str, *, source: str | None = None):
         normalized_role = str(role or '').strip().lower()
         if normalized_role not in ('user', 'assistant'):
+            return
+        if source == AUTO_COMPANION_SOURCE:
+            # 自动陪伴不是用户发起的对话：只用主题标记写进记忆，不能进入模型历史，
+            # 否则固定提问与固定回复会互相强化成复读。
             return
         cleaned = _strip_tool_commands_for_display(str(text or '')) if normalized_role == 'assistant' else str(text or '').strip()
         if not cleaned:
@@ -113,5 +120,9 @@ class ChatHandlerPersonaMixin:
         })
 
     def _get_recent_context_snapshot(self) -> list[dict[str, str]]:
-        return [dict(item) for item in self._recent_context if item.get('content')]
+        return [
+            dict(item)
+            for item in self._recent_context
+            if item.get('content') and item.get('source') != AUTO_COMPANION_SOURCE
+        ]
 

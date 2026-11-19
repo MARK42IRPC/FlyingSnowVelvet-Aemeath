@@ -44,6 +44,7 @@ from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import get_event_center, EventType, Event
 from lib.core.logger import get_logger
 from lib.script.chat.native_tools import native_tool_to_dispatch, split_music_queries
+from lib.script.chat.context_markers import is_auto_companion_topic
 from lib.script.music import get_music_service
 from config.config import TOOL_DISPATCHER, DRAW, ANIMATION
 from config.user_storage_paths import (
@@ -1073,7 +1074,7 @@ class ToolDispatcher:
                 scored = self._score_recall_items(entries, topic_filter)
                 selected = [item for _, item in scored[:limit]]
             else:
-                selected = entries[-limit:]
+                selected = [item for item in entries if not is_auto_companion_topic(item[1])][-limit:]
             scope_text = '最近'
             if topic_filter:
                 scope_text += f' / 主题:{topic_filter}'
@@ -1089,7 +1090,11 @@ class ToolDispatcher:
             if end_dt < start_dt:
                 start_dt, end_dt = end_dt, start_dt
 
-            pool = [item for item in entries if start_dt <= item[0] <= end_dt]
+            pool = [
+                item for item in entries
+                if start_dt <= item[0] <= end_dt
+                and (topic_filter or not is_auto_companion_topic(item[1]))
+            ]
             limit = _get_memory_recall_range_count()
             if topic_filter:
                 scored = self._score_recall_items(pool, topic_filter)

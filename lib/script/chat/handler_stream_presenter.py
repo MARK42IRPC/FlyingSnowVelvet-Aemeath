@@ -9,6 +9,7 @@ from lib.core.render.visuals.rich_text_parser import rich_text_to_plain_text
 from lib.core.logger import get_logger
 from lib.script.chat import bot_reply
 from .native_tools import default_native_tool_reply, native_tool_to_dispatch
+from .context_markers import AUTO_COMPANION_SOURCE, tag_auto_companion_text
 from .handler_auto_companion import AUTO_COMPANION_PROMPT
 
 logger = get_logger(__name__)
@@ -428,18 +429,19 @@ class ChatHandlerStreamPresenterMixin:
         if include_history and from_ai and not is_status_text:
             effective_user = str(user_text or AUTO_COMPANION_PROMPT or '').strip()
             if effective_user:
-                self._append_recent_context('user', effective_user)
+                self._append_recent_context('user', effective_user, source=AUTO_COMPANION_SOURCE)
                 try:
                     from .memory import get_stream_memory
-                    get_stream_memory().record_user_input(effective_user)
+                    get_stream_memory().record_user_input(tag_auto_companion_text(effective_user))
                 except Exception as exc:
                     logger.debug("[ChatHandler] 自动陪伴写入用户侧记忆失败: %s", exc)
-            self._append_recent_context('assistant', raw_text)
+            self._append_recent_context('assistant', raw_text, source=AUTO_COMPANION_SOURCE)
         if not is_status_text:
             self._event_center.publish(Event(EventType.STREAM_FINAL, {
                 "text": raw_text,
                 "tool_call": native_tool_call,
                 "mode_generation": mode_generation,
+                "source": AUTO_COMPANION_SOURCE,
             }))
         logger.debug("[ChatHandler] 自动陪伴回复（%d 字，min=%d）: %s",
                      len(display_text), final_min_ticks, display_text[:60])
