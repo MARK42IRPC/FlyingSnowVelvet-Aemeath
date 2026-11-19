@@ -10,10 +10,8 @@ from lib.script.chat import native_tools as native_tools_module
 from lib.script.chat.api_client_ollama import _ApiClientOllamaMixin
 from lib.script.chat.api_client_openai import _ApiClientOpenAIMixin
 from lib.script.chat.native_tools import (
-    LEGACY_TOOL_SYSTEM_NOTE,
     NATIVE_TOOL_SYSTEM_NOTE,
     NativeToolCallAccumulator,
-    add_legacy_tool_instruction,
     add_native_tool_instruction,
     get_native_tool_definitions,
     native_tool_to_dispatch,
@@ -52,15 +50,10 @@ class NativeToolCallingTests(unittest.TestCase):
         self.assertIn("inspect_screen", names)
         self.assertTrue(all(name.isascii() for name in names))
 
-    def test_legacy_fallback_instruction_replaces_the_persona_markers(self):
-        messages = [{"role": "system", "content": "persona"}]
-
-        injected = add_legacy_tool_instruction(messages)
-
-        self.assertEqual(messages[0]["content"], "persona")
-        self.assertTrue(injected[0]["content"].startswith("persona"))
-        self.assertIn(LEGACY_TOOL_SYSTEM_NOTE, injected[0]["content"])
-        self.assertIn("###音乐", injected[0]["content"])
+    def test_legacy_text_command_fallback_is_gone(self):
+        """文本命令协议已下线：请求侧不再注入 ###指令### 说明。"""
+        self.assertFalse(hasattr(native_tools_module, "LEGACY_TOOL_SYSTEM_NOTE"))
+        self.assertFalse(hasattr(native_tools_module, "add_legacy_tool_instruction"))
 
     def test_legacy_persona_block_is_stripped_at_request_time(self):
         legacy = "\n".join((
@@ -148,18 +141,8 @@ class NativeToolCallingTests(unittest.TestCase):
 
         self.assertEqual(injected[0]["content"], f"persona\n\n{NATIVE_TOOL_SYSTEM_NOTE}")
 
-    def test_openai_legacy_payloads_keep_the_plain_gateway_fallback(self):
-        payloads = [{
-            "model": "test",
-            "messages": [{"role": "system", "content": "persona"}],
-            "stream": True,
-        }]
-
-        variants = _ApiClientOpenAIMixin._append_legacy_tool_payloads(payloads)
-
-        self.assertIn("###音乐", variants[0]["messages"][0]["content"])
-        self.assertNotIn("tools", variants[0])
-        self.assertEqual(variants[-1]["messages"][0]["content"], "persona")
+    def test_openai_client_no_longer_builds_text_command_payloads(self):
+        self.assertFalse(hasattr(_ApiClientOpenAIMixin, "_append_legacy_tool_payloads"))
 
     def test_openai_fragments_are_merged_into_one_validated_call(self):
         accumulator = NativeToolCallAccumulator()

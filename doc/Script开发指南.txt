@@ -93,7 +93,7 @@
 - `#后端 qt`：把持久化绘制后端切换为 `qt`，保存成功后走统一退出链重启。
 - 该实验性入口不依赖控制面板；只修改后端选择，不在命令中心导入或初始化具体绘制后端。
 
-AI 工具调度位于 `lib/script/tool_dispatcher/dispatcher.py`。`STREAM_FINAL.tool_call` 携带已校验的原生 Function Calling 调用时优先执行；没有结构化调用时，才从 `text` 中提取兼容格式 `###指令###`。工具 schema 与映射统一定义在 `lib/script/chat/native_tools.py`。
+AI 工具调度位于 `lib/script/tool_dispatcher/dispatcher.py`。`STREAM_FINAL.tool_call` 携带已校验的原生 Function Calling 调用时执行；没有结构化调用就什么也不做，正文里的 `###指令###` 文本协议已经下线。工具 schema 与映射统一定义在 `lib/script/chat/native_tools.py`。
 
 七、配置项落地链路
 如果新增 AI 控制面板配置，至少同步以下文件：

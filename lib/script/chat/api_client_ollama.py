@@ -12,7 +12,6 @@ from ._multimodal import images_to_ollama_payload
 from .api_client_common import _ApiClientCommonMixin, multimodal_cooldown
 from .api_client_error import _ApiClientErrorMixin
 from .native_tools import (
-    LEGACY_TOOL_SYSTEM_NOTE,
     NativeToolCallAccumulator,
     get_native_tool_definitions,
     native_tool_system_note,
@@ -85,8 +84,6 @@ class _ApiClientOllamaMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
         if native_tools_enabled:
             payload["messages"][0]["content"] = f"{persona.rstrip()}\n\n{native_tool_system_note()}"
             payload["tools"] = get_native_tool_definitions()
-        elif allow_tools:
-            payload["messages"][0]["content"] = f"{persona.rstrip()}\n\n{LEGACY_TOOL_SYSTEM_NOTE}"
         resp = requests.post(
             f"{OLLAMA_BASE_URL}/api/chat",
             json=payload,
@@ -111,7 +108,7 @@ class _ApiClientOllamaMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
                 if native_tools_enabled and status in (400, 422) and rejected_tools:
                     if self._mark_native_tools_unsupported(OLLAMA_BASE_URL, model):
                         logger.info(
-                            "[OllamaManager] 当前 Ollama 模型不接受原生 tools，后续使用文本协议: %s",
+                            "[OllamaManager] 当前 Ollama 模型不接受原生 tools，后续请求不再携带 tools: %s",
                             model,
                         )
                 raise
@@ -164,8 +161,6 @@ class _ApiClientOllamaMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
         name    = self._extract_character_name(persona)
         history_prompt = self._build_generate_history_prompt(history, name)
         prompt_parts = [persona]
-        if allow_tools:
-            prompt_parts.append(LEGACY_TOOL_SYSTEM_NOTE)
         if history_prompt:
             prompt_parts.append(f"[最近对话]\n{history_prompt}")
         prompt_parts.append(f"用户：{message}\n{name}：")

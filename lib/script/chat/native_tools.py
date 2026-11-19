@@ -11,7 +11,7 @@ from typing import Any
 
 NATIVE_TOOL_SYSTEM_NOTE = (
     "当前请求提供原生函数工具。需要执行工具时必须直接调用对应函数，"
-    "不要在正文中输出任何 ###指令###；不需要工具时只返回正常正文。"
+    "正文只写要对用户说的话；不需要工具时只返回正常正文。"
 )
 
 # 工具用法放在独立提示词文件里、请求期拼接：人格词是用户文件（升级不覆盖），
@@ -19,37 +19,14 @@ NATIVE_TOOL_SYSTEM_NOTE = (
 TOOLCALL_PROMPT_RELATIVE_PATH = "resc/toolcall.txt"
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
-# Gateways that reject the OpenAI ``tools`` field fall back to the historical
-# text protocol. The syntax lives here instead of the user-facing persona so the
-# character prompt no longer teaches the marker format.
-_LEGACY_TOOL_LINES = (
-    "1. ###音乐 歌名###：召唤音响并播放音乐；多首用顿号连写，如 ###音乐 纸飞机、逆潮###。",
-    "2. ###下一曲###：播放下一首；###暂停###：播放/暂停切换。",
-    "3. ###回忆 主题### 或 ###回忆 开始时间 到 结束时间 主题###：回忆历史内容。",
-    "4. ###雪豹 数量### / ###沙发 数量### / ###摩托 数量###：生成对应物品。",
-    "5. ###闹钟 秒### 或 ###计时 秒###：生成倒计时闹钟（默认30秒）。",
-    "6. ###音量 值###：调音量（+10 / -10 / 50）。",
-    "7. ###瞬移 x y###：按 0~1 坐标瞬移，1 为左/上，0 为右/下。",
-    "8. ###浏览器 网址###：用系统默认浏览器打开 HTTP(S) 链接。",
-    "9. ###窥屏###：查看漂泊者目前的状态。",
-    "10. ###曲库###：查看曲库里的可选曲目并据此推荐。",
-)
-
-LEGACY_TOOL_SYSTEM_NOTE = (
-    "当前请求不支持原生函数工具，请改用文本命令协议：\n"
-    "1. 需要工具时，在整句末尾追加一个 ###命令 参数###，每次回复最多一个。\n"
-    "2. 不需要工具时只返回正常正文，不要在正文出现任何 ### 标记。\n"
-    "可用命令：\n" + "\n".join(_LEGACY_TOOL_LINES)
-)
-
-# Closed markers such as ###音乐 纸飞机### are the retired text protocol.
-# Markdown headings ("### 标题") have no closing marker and stay untouched.
+# 文本命令协议已经下线，工具只走原生 Function Calling。人格词是用户文件，老版本留下的
+# ``###指令###`` 教学行仍在安装目录里，请求期统一丢掉，避免模型学着输出无意义的标记。
 _LEGACY_MARKER_LINE = re.compile(r"###[^#\n]{1,60}###")
 _LEGACY_SECTION_HEADER = "[工具清单]"
 
 
 def strip_legacy_tool_protocol(text: str) -> str:
-    """Drop persona lines that still teach the retired ###指令### protocol.
+    """Drop persona lines that still teach the retired text-command protocol.
 
     Personas are user-owned files, so an installation that predates native
     function calling keeps its old ``[工具清单]`` block until the user edits it.
@@ -205,10 +182,6 @@ def native_tool_system_note() -> str:
     return "\n\n".join(section for section in sections if section)
 
 
-def add_legacy_tool_instruction(messages: list[dict]) -> list[dict]:
-    """Clone messages and add the text-command fallback for gateways without tools."""
-    return _add_tool_instruction(messages, LEGACY_TOOL_SYSTEM_NOTE)
-
 
 def _add_tool_instruction(messages: list[dict], note: str) -> list[dict]:
     cloned = deepcopy(messages)
@@ -340,7 +313,7 @@ def _plain_string(value: Any) -> str:
 
 
 # 一次点多首时，原生调用要把歌名列表塞进既有的 (指令, 参数) 契约。
-# 原生调用由工具层用换行拼装；文本回退协议（###音乐###）里模型习惯用顿号分隔，
+# 原生调用由工具层用换行拼装；模型习惯用顿号分隔多个歌名，
 # 两种写法都拆开，旧的单首调用保持不变。
 MUSIC_QUERY_SEPARATOR = "\n"
 _MUSIC_QUERY_SPLIT_PATTERN = re.compile(r"[\n、]+")
@@ -450,18 +423,18 @@ def default_native_tool_reply(raw: Any) -> str:
     if call is None:
         return ""
     return {
-        "play_music": "///音乐///这就播放给你听。",
-        "next_track": "///音乐///好，换下一首。",
-        "toggle_play_pause": "///音乐///好，交给我。",
-        "recall_memory": "///回忆///让我认真想想。",
-        "spawn_snow_leopard": "///日常///这就召唤雪豹。",
-        "spawn_sofa": "///日常///这就放好沙发。",
-        "spawn_motorcycle": "///日常///摩托马上就到。",
-        "start_timer": "///计时///倒计时交给我。",
-        "set_volume": "///音乐///音量已经交给我。",
-        "change_volume": "///音乐///好，我来调整音量。",
-        "teleport_pet": "///日常///这就过去找你。",
-        "open_browser": "///日常///这就为你打开。",
-        "inspect_screen": "///日常///让我看看你在做什么。",
-        "musiclist": "///音乐///让我翻翻曲库，挑几首合适的给你。",
+        "play_music": "[音乐]这就播放给你听。",
+        "next_track": "[音乐]好，换下一首。",
+        "toggle_play_pause": "[音乐]好，交给我。",
+        "recall_memory": "[回忆]让我认真想想。",
+        "spawn_snow_leopard": "[日常]这就召唤雪豹。",
+        "spawn_sofa": "[日常]这就放好沙发。",
+        "spawn_motorcycle": "[日常]摩托马上就到。",
+        "start_timer": "[计时]倒计时交给我。",
+        "set_volume": "[音乐]音量已经交给我。",
+        "change_volume": "[音乐]好，我来调整音量。",
+        "teleport_pet": "[日常]这就过去找你。",
+        "open_browser": "[日常]这就为你打开。",
+        "inspect_screen": "[日常]让我看看你在做什么。",
+        "musiclist": "[音乐]让我翻翻曲库，挑几首合适的给你。",
     }.get(call["name"], "")

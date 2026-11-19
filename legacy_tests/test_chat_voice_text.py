@@ -141,7 +141,13 @@ class ChatVoiceTextTests(unittest.TestCase):
                 {"name": "inspect_screen", "arguments": {}},
             )
         )
-        self.assertTrue(_voice_waits_for_tool_result("让我想想。###回忆 刚刚###"))
+        self.assertTrue(
+            _voice_waits_for_tool_result(
+                "让我想想。",
+                {"name": "recall_memory", "arguments": {}},
+            )
+        )
+        self.assertFalse(_voice_waits_for_tool_result("让我想想。【日常】好的"))
         self.assertFalse(
             _voice_waits_for_tool_result(
                 "打开计时器。",

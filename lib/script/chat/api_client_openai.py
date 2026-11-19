@@ -13,7 +13,6 @@ from .api_client_common import _ApiClientCommonMixin, multimodal_cooldown
 from .api_client_error import _ApiClientErrorMixin
 from .native_tools import (
     NativeToolCallAccumulator,
-    add_legacy_tool_instruction,
     add_native_tool_instruction,
     get_native_tool_definitions,
 )
@@ -216,16 +215,6 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
             cloned["tool_choice"] = "auto"
             native_payloads.append(cloned)
         return _ApiClientOpenAIMixin._dedupe_payload_variants(native_payloads + payloads)
-
-    @staticmethod
-    def _append_legacy_tool_payloads(payloads: list[dict]) -> list[dict]:
-        """Keep the text protocol available when a gateway rejects native tools."""
-        legacy_payloads: list[dict] = []
-        for payload in payloads:
-            cloned = dict(payload)
-            cloned["messages"] = add_legacy_tool_instruction(payload.get("messages") or [])
-            legacy_payloads.append(cloned)
-        return _ApiClientOpenAIMixin._dedupe_payload_variants(legacy_payloads + payloads)
 
     @staticmethod
     def _build_openai_payload_variants(model: str, persona: str, message: str,
@@ -742,8 +731,6 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
         native_tools_enabled = allow_tools and self._native_tools_available(base_url, model)
         if native_tools_enabled:
             payload_candidates = self._prepend_native_tool_payloads(payload_candidates)
-        elif allow_tools:
-            payload_candidates = self._append_legacy_tool_payloads(payload_candidates)
         payload_candidates = self._dedupe_payload_variants(payload_candidates)
         if not endpoint_candidates:
             raise RuntimeError('OpenAI 兼容请求失败：未生成可用端点，请检查 API_BASE_URL')
@@ -852,7 +839,7 @@ class _ApiClientOpenAIMixin(_ApiClientCommonMixin, _ApiClientErrorMixin):
                         if "tools" in payload and status in (400, 422) and rejected_tools:
                             if self._mark_native_tools_unsupported(base_url, model):
                                 logger.info(
-                                    "[APIClient] 当前 OpenAI 兼容目标不接受原生 tools，后续使用文本协议: %s %s",
+                                    "[APIClient] 当前 OpenAI 兼容目标不接受原生 tools，后续请求不再携带 tools: %s %s",
                                     base_url,
                                     model,
                                 )

@@ -2,7 +2,7 @@
 
 职责：
 - 订阅流式消息的最终回调事件（STREAM_FINAL）
-- 检测回复文本中是否包含 ###指令### 或 ###指令 参数### 格式的工具调用标记
+- 只消费 STREAM_FINAL.tool_call 里已校验的原生 Function Calling 调用；正文不再解析命令标记
 - 当前支持的指令：
     音乐 <歌名>  →  搜索并播放歌曲，场上无音响时自动生成；
                      多个歌名（换行或、分隔）时按顺序播放首首、追加其余到队列
@@ -35,7 +35,6 @@ import random
 import threading
 import webbrowser
 from datetime import datetime
-from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Optional, TYPE_CHECKING
 from urllib.parse import urlparse
@@ -57,43 +56,8 @@ logger = get_logger(__name__)
 if TYPE_CHECKING:
     from lib.script.office.mode import InteractionModeService
 
-# 从配置读取参数
-# 格式：###指令###、###指令 参数###，并兼容 ### 指令 参数 ### / ###指令：参数### 等常见变体。
-_TOOL_PATTERN_RAW = TOOL_DISPATCHER.get('tool_pattern', r'###\s*(\S+?)(?:[\s：:，,;；]+(.+?))?\s*###')
-try:
-    # re.S 允许参数跨行，兼容模型输出：
-    # ###音乐
-    # 纸飞机###
-    _TOOL_PATTERN = re.compile(_TOOL_PATTERN_RAW, re.S)
-except re.error as e:
-    logger.warning("[ToolDispatcher] tool_pattern 无效，使用默认模式: %s", e)
-    _TOOL_PATTERN = re.compile(r'###\s*(\S+?)(?:[\s：:，,;；]+(.+?))?\s*###', re.S)
-_TOOL_MARKER_PATTERN = re.compile(r'###(.*?)###', re.S)
 _PLAY_INDEX = TOOL_DISPATCHER.get('play_index', 0)
 _AUTO_SPAWN_COUNT = TOOL_DISPATCHER.get('auto_spawn_speaker_count', 1)
-_SUPPORTED_COMMANDS = {'音乐', '下一曲', '暂停', '雪豹', '沙发', '摩托', '闹钟', '计时', '音量', '瞬移', '回忆', '浏览器', '窥屏', '曲库'}
-_SUPPORTED_COMMANDS_SORTED = tuple(sorted(_SUPPORTED_COMMANDS, key=len, reverse=True))
-_COMMAND_ALIASES = {
-    '音乐': ('播放音乐', '播放', 'play_music', 'music', 'play', '音乐'),
-    '下一曲': ('下一首', 'next_track', 'next', '下一曲'),
-    '暂停': ('暂停播放', 'pause', 'toggle_play_pause', '暂停'),
-    '回忆': ('记忆', 'recall_memory', 'recall', '回忆'),
-    '窥屏': ('查看屏幕', '屏幕截图', 'inspect_screen', 'screen', '窥屏'),
-    '计时': ('倒计时', '闹钟', 'start_timer', 'timer', '计时'),
-    '音量': ('声音', '音量', 'set_volume', 'change_volume', 'volume'),
-    '浏览器': ('打开网页', '打开浏览器', 'open_browser', 'browser', '浏览器'),
-    '雪豹': ('生成雪豹', 'spawn_snow_leopard', '雪豹'),
-    '沙发': ('生成沙发', 'spawn_sofa', '沙发'),
-    '摩托': ('生成摩托', 'spawn_motorcycle', '摩托'),
-    '瞬移': ('传送', 'teleport_pet', 'teleport', '瞬移'),
-    '曲库': ('music_list', 'musiclist', '曲库', '推荐曲目'),
-}
-_ALIAS_TO_COMMAND = {
-    alias.casefold().replace(' ', ''): command
-    for command, aliases in _COMMAND_ALIASES.items()
-    for alias in aliases
-}
-_FUZZY_ALIASES = tuple(_ALIAS_TO_COMMAND.items())
 _DEFAULT_MUSIC_CHOICES = ('靛青宇宙', '碎花', '纸飞机', '小小奇迹', '星炬不息')
 # 音乐搜索结果重排权重：歌名像不像 > 作者是不是鸣潮，平手时保持接口热度顺序。
 _SONG_SCORE_EXACT_NAME = 2
@@ -136,7 +100,7 @@ def _get_memory_recall_range_count() -> int:
 _MEMORY_RECALL_REDISPATCH_DELAY_SEC = 5.0
 _SCREEN_PEEK_PROMPT = (
     '这是“窥屏工具”刚刚截取的当前主屏幕。请结合截图和已有对话上下文，'
-    '直接用自然语言描述你观察到的内容并回应，不要输出任何 ###命令###。'
+    '直接用自然语言描述你观察到的内容并回应，不要在正文里写命令标记。'
 )
 _DEFAULT_TOPIC = '日常'
 _DEFAULT_MUSICLIST_PATH = Path(__file__).resolve().parents[3] / 'resc' / 'musiclist.txt'
@@ -270,9 +234,6 @@ def _split_recall_arg(arg: str) -> tuple[str, str]:
     return 'recent', text
 
 
-def _normalize_tool_text(text: str) -> str:
-    return str(text or '').replace('＃', '#').replace('\r\n', '\n').replace('\u3000', ' ')
-
 
 def _normalize_url_arg(raw: str) -> str:
     text = str(raw or '').strip()
@@ -307,76 +268,6 @@ def _parse_spawn_count(arg: str) -> int:
     except ValueError:
         count = 1
     return max(1, min(_MAX_SPAWN_COUNT, count))
-
-
-def _parse_tool_candidate(raw_cmd: str, raw_arg: str = '') -> tuple[str, str] | None:
-    cmd_text = str(raw_cmd or '').strip().strip('`*')
-    arg_text = re.sub(r'^[：:，,;；\s]+', '', str(raw_arg or '').strip()).strip()
-    if cmd_text in _SUPPORTED_COMMANDS:
-        return cmd_text, arg_text
-
-    merged = f'{cmd_text} {arg_text}'.strip()
-    if not merged:
-        return None
-
-    # 模型有时会输出英文函数名、口语别名或把命令和参数塞进同一字段。
-    # 先按最长别名匹配，避免“播放音乐”被截成“播放”；再对短命令做高阈值纠错。
-    for alias, command in sorted(_ALIAS_TO_COMMAND.items(), key=lambda item: len(item[0]), reverse=True):
-        if not merged.casefold().replace(' ', '').startswith(alias):
-            continue
-        remainder = merged[len(alias):]
-        if remainder and not re.match(r'^[\s：:，,;；]', remainder):
-            continue
-        arg = re.sub(r'^[：:，,;；\s]+', '', remainder).strip()
-        return command, arg
-
-    candidate = cmd_text
-    if not arg_text:
-        split = re.split(r'[\s：:，,;；]+', cmd_text, maxsplit=1)
-        candidate = split[0]
-        if len(split) == 2:
-            arg_text = split[1].strip()
-    normalized_candidate = candidate.casefold().replace(' ', '')
-    best_command = None
-    best_score = 0.0
-    for alias, command in _FUZZY_ALIASES:
-        if len(normalized_candidate) < 2 or len(alias) < 2:
-            continue
-        score = SequenceMatcher(None, normalized_candidate, alias).ratio()
-        if score > best_score:
-            best_command, best_score = command, score
-    if best_command is not None and best_score >= (0.82 if len(normalized_candidate) <= 3 else 0.72):
-        return best_command, arg_text
-
-    for command in _SUPPORTED_COMMANDS_SORTED:
-        if not merged.startswith(command):
-            continue
-        remain = merged[len(command):]
-        if remain and not re.match(r'^[\s：:，,;；]', remain):
-            continue
-        arg = re.sub(r'^[：:，,;；\s]+', '', remain).strip()
-        return command, arg
-    return None
-
-
-def _extract_tool_invocation(text: str) -> tuple[str, str] | None:
-    normalized = _normalize_tool_text(text)
-
-    for match in _TOOL_PATTERN.finditer(normalized):
-        parsed = _parse_tool_candidate(match.group(1), match.group(2))
-        if parsed is not None:
-            return parsed
-
-    fallback_matches = list(_TOOL_MARKER_PATTERN.finditer(normalized))
-    for match in fallback_matches:
-        parsed = _parse_tool_candidate(match.group(1))
-        if parsed is not None:
-            return parsed
-
-    if fallback_matches:
-        sample = str(fallback_matches[0].group(1) or '').strip().replace('\n', ' ')
-        logger.warning('[ToolDispatcher] 检测到工具标记但无法解析: %s', sample[:80])
-    return None
 
 
 def _normalize_song_text(text) -> str:
@@ -432,11 +323,10 @@ class ToolDispatcher:
     # ------------------------------------------------------------------
 
     def _on_stream_final(self, event: Event):
-        """
-        处理流式消息最终完整文本。
+        """执行 STREAM_FINAL 携带的原生工具调用。
 
-        识别格式：###指令### 或 ###指令 参数###
-        当前支持的指令：音乐、下一曲、暂停、回忆、雪豹、沙发、摩托、闹钟、计时、音量、瞬移、浏览器、窥屏
+        工具只走 OpenAI 兼容的 Function Calling：正文里不再解析命令标记，没有 ``tool_call``
+        就什么也不做，模型少写一个标记也不会被执行成别的意思。
         """
         accepted, mode_generation = self._event_mode_generation(event)
         if not accepted:
@@ -445,23 +335,15 @@ class ToolDispatcher:
             return
 
         native_tool_call = event.data.get('tool_call')
-        if native_tool_call is not None:
-            parsed = native_tool_to_dispatch(native_tool_call)
-            if parsed is None:
-                logger.warning("[ToolDispatcher] 忽略无效原生工具调用: %r", native_tool_call)
-                return
-        else:
-            text = event.data.get('text', '')
-            if not text:
-                return
-            parsed = _extract_tool_invocation(text)
+        if native_tool_call is None:
+            return
+        parsed = native_tool_to_dispatch(native_tool_call)
         if parsed is None:
+            logger.warning("[ToolDispatcher] 忽略无效原生工具调用: %r", native_tool_call)
             return
 
         cmd, arg = parsed
-
-        source = "native" if native_tool_call is not None else "legacy"
-        logger.info("[ToolDispatcher] 工具调用: source=%s cmd=%s arg=%s", source, cmd, arg or '<无>')
+        logger.info("[ToolDispatcher] 工具调用: cmd=%s arg=%s", cmd, arg or '<无>')
 
         self.execute_command(cmd, arg, mode_generation=mode_generation)
 
@@ -557,7 +439,7 @@ class ToolDispatcher:
             return
         self._ec.publish(Event(EventType.INPUT_CHAT, {
             'text': _SCREEN_PEEK_PROMPT,
-            'raw': '###窥屏###',
+            'raw': '窥屏',
             'source': 'tool_screen_peek',
             'capture_screen': True,
             'allow_tool_commands': False,
@@ -819,7 +701,7 @@ class ToolDispatcher:
                 return
             self._ec.publish(Event(EventType.INPUT_CHAT, {
                 'text': prompt,
-                'raw': '###曲库###',
+                'raw': '曲库',
                 'source': 'tool_musiclist',
                 'allow_tool_commands': True,
                 'mode_generation': mode_generation,
@@ -971,7 +853,7 @@ class ToolDispatcher:
             remain = re.sub(r'^[\s,，。;；:：~\-到至]+|[\s,，。;；:：~\-到至]+$', '', remain)
             return start_dt, end_dt, remain
 
-        # 兼容单时间点：###回忆 时间 主题###
+        # 兼容单时间点：只给一个时间（主题可选）
         if len(matches) == 1:
             only = _parse_datetime_loose(matches[0])
             remain = text.replace(matches[0], '', 1).strip()
@@ -1035,7 +917,7 @@ class ToolDispatcher:
             f"回忆范围：{scope}\n"
             "回忆内容：\n"
             f"{chr(10).join(lines)}\n"
-            "请直接输出自然语言，不要输出任何 ###命令###。"
+            "请直接输出自然语言。"
         )
 
     def _handle_memory_recall(
@@ -1046,8 +928,8 @@ class ToolDispatcher:
     ):
         """
         回忆工具：
-        - ###回忆 刚刚 主题###
-        - ###回忆 时间 主题###
+        - topic：最近某个主题
+        - start_time/end_time：起止时间
         """
         arg_text = str(arg or '').strip().strip('#').strip()
         arg_text = arg_text.rstrip('。！？!?；;，,').strip()
@@ -1082,7 +964,7 @@ class ToolDispatcher:
             start_dt, end_dt, topic_filter = self._parse_recall_range(mode_arg)
             if start_dt is None or end_dt is None:
                 self._ec.publish(Event(EventType.INFORMATION, {
-                    'text': '回忆参数无效：请使用 ###回忆 刚刚 主题### 或 ###回忆 时间 主题###',
+                    'text': '回忆参数无效：请说明要回忆的主题或时间范围',
                     'min': 12,
                     'max': 120,
                 }))
@@ -1106,7 +988,7 @@ class ToolDispatcher:
                 scope_text += f' / 主题:{topic_filter}'
         else:
             self._ec.publish(Event(EventType.INFORMATION, {
-                'text': '回忆参数无效：请使用 ###回忆 刚刚 主题### 或 ###回忆 时间 主题###',
+                'text': '回忆参数无效：请说明要回忆的主题或时间范围',
                 'min': 12,
                 'max': 120,
             }))
@@ -1132,7 +1014,7 @@ class ToolDispatcher:
                 return
             self._ec.publish(Event(EventType.INPUT_CHAT, {
                 'text': message,
-                'raw': f'###回忆 {arg_text or "刚刚"}###',
+                'raw': f'回忆 {arg_text or "刚刚"}',
                 'source': 'tool_recall',
                 'allow_tool_commands': False,
                 'mode_generation': mode_generation,
@@ -1193,7 +1075,7 @@ class ToolDispatcher:
         if pos is None:
             logger.warning("[ToolDispatcher] 瞬移参数无效: %s", arg)
             self._ec.publish(Event(EventType.INFORMATION, {
-                'text': '瞬移参数无效，格式应为：###瞬移 x y###（x/y 取 0~1）',
+                'text': '瞬移参数无效：需要 x/y 两个 0~1 的坐标',
                 'min': 10,
                 'max': 100,
             }))

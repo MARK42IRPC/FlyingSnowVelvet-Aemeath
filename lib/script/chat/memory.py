@@ -3,7 +3,7 @@
 职责：
 - 订阅 INPUT_CHAT / STREAM_FINAL 事件
 - 将用户输入与模型回复按日期分文件写入 user/state/chat/memory/ 目录
-- 写入前移除 ###指令### 标记，并解析 ///主题///
+- 解析回复开头的 [主题] 标记（兼容旧人格词的 ///主题///），正文按行落盘
 - 格式：[YYYY-MM-DD HH:MM:SS][主题][user:]内容 / [YYYY-MM-DD HH:MM:SS][主题][you:]内容
 """
 
@@ -19,14 +19,13 @@ from lib.core.event.center import Event, EventType, get_event_center
 from lib.core.logger import get_logger
 
 from .context_markers import AUTO_COMPANION_SOURCE, tag_auto_companion_text
+from .topic_markers import split_topic_marker
 
 logger = get_logger(__name__)
 
 if TYPE_CHECKING:
     from lib.script.office.mode import InteractionModeService
 
-_TOOL_MARKER_PATTERN = re.compile(r"###.*?###", re.S)
-_TOPIC_MARKER_PATTERN = re.compile(r"^\s*///\s*([^/\r\n]{1,32}?)\s*///\s*", re.S)
 _MEMORY_LINE_PATTERN = re.compile(
     r"^\[(?P<timestamp>[^\]]*)\]\[(?P<topic>[^\]]*)\]\[(?P<role>[^\]:]*):\](?P<content>.*)$"
 )
@@ -164,19 +163,10 @@ class StreamMemory:
             .replace("\r\n", "\n")
             .replace("\r", "\n")
         )
-        cleaned = _TOOL_MARKER_PATTERN.sub("", normalized)
-
-        tail_marker = cleaned.rfind("###")
-        if tail_marker >= 0:
-            cleaned = cleaned[:tail_marker]
-
         topic = _DEFAULT_TOPIC
-        marker_match = _TOPIC_MARKER_PATTERN.match(cleaned)
-        if marker_match:
-            parsed = (marker_match.group(1) or "").strip()
-            if parsed:
-                topic = parsed
-            cleaned = cleaned[marker_match.end():]
+        parsed_topic, cleaned = split_topic_marker(normalized)
+        if parsed_topic:
+            topic = parsed_topic
         topic = str(topic).replace("[", "").replace("]", "").strip() or _DEFAULT_TOPIC
 
         lines: list[str] = []

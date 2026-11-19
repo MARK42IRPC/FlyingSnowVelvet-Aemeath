@@ -10,6 +10,7 @@ from lib.core.logger import get_logger
 from lib.script.chat import bot_reply
 from .native_tools import default_native_tool_reply, native_tool_to_dispatch
 from .context_markers import AUTO_COMPANION_SOURCE, tag_auto_companion_text
+from .topic_markers import split_topic_marker
 from .handler_auto_companion import AUTO_COMPANION_PROMPT
 
 logger = get_logger(__name__)
@@ -18,12 +19,7 @@ BUBBLE_MIN_TICKS = BUBBLE_CONFIG.get('default_min_ticks', 2)
 BUBBLE_MAX_TICKS = BUBBLE_CONFIG.get('default_max_ticks', 100)
 STREAM_FINAL_MIN_PER_CHAR = 3
 STREAM_FINAL_MIN_CAP = 300
-TOOL_MARKER_PATTERN = re.compile(r'###.*?###', re.S)
-FOLLOWUP_TOOL_MARKER_PATTERN = re.compile(
-    r'###\s*(?:回忆|窥屏)(?:[\s：:][^#]*)?###',
-    re.S,
-)
-TOPIC_MARKER_PATTERN = re.compile(r'^\s*///\s*([^/\r\n]{1,32}?)\s*//(?:/)?\s*', re.S)
+
 VOICE_SENTENCE_SPLIT_PATTERN = re.compile(r'(?<=[。！？!?…；;.!?])')
 _VOICE_CJK_PATTERN = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
 _VOICE_LATIN_PATTERN = re.compile(r"[A-Za-z]")
@@ -75,10 +71,10 @@ def _should_capture_screen(text: str) -> bool:
     return False
 
 def _strip_tool_commands_for_display(text: str) -> str:
-    """
-    移除模型回复中的工具命令标记，避免用户看到 ###命令###。
+    """把模型回复压成可直接展示的正文。
 
-    仅用于气泡显示；工具调度仍应使用原始文本。
+    工具调用只走原生 Function Calling，正文里不该再出现命令标记；这里负责剥掉开头的
+    ``[主题]`` 标记和 LaTeX 包裹，并在流式分片还没吐出 ``]`` 时先不展示，避免闪烁。
     """
     if not text:
         return ""
@@ -90,26 +86,17 @@ def _strip_tool_commands_for_display(text: str) -> str:
     normalized = normalized.replace('\\(', '').replace('\\)', '')
     normalized = normalized.replace('\\[', '').replace('\\]', '')
 
-    normalized = normalized.replace('＃', '#').replace('／', '/')
-    cleaned = TOOL_MARKER_PATTERN.sub('', normalized)
-
-    # 流式场景下可能出现未闭合命令片段（尾部 "###..."），直接截断尾部。
-    tail_marker = cleaned.rfind('###')
-    if tail_marker >= 0:
-        cleaned = cleaned[:tail_marker]
-
-    # 消除主题标记：模型可输出 ///主题///正文；气泡仅展示正文。
-    topic_match = TOPIC_MARKER_PATTERN.match(cleaned)
-    if topic_match:
-        cleaned = cleaned[topic_match.end():]
-    else:
+    topic, cleaned = split_topic_marker(normalized)
+    if not topic:
         stripped = cleaned.lstrip()
-        if stripped.startswith('///'):
-            # 流式首段可能暂时未闭合 ///主题///，在闭合前不展示，避免闪烁。
-            closed_at = stripped.find('///', 3)
-            broken_closed_at = stripped.find('//', 3)
-            if closed_at < 0 and broken_closed_at < 0:
-                return ''
+        if stripped.startswith('[') and ']' not in stripped:
+            return ''
+        if stripped.startswith('【') and '】' not in stripped:
+            return ''
+        if stripped.startswith('///') and not any(
+            delimiter in stripped[3:] for delimiter in ('///', '//', '###')
+        ):
+            return ''
 
     cleaned = re.sub(r'[ \t]{2,}', ' ', cleaned)
     cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
@@ -178,14 +165,14 @@ def _voice_waits_for_tool_result(
     *,
     allow_tool_commands: bool = True,
 ) -> bool:
-    """Return whether a tool will produce the response that should be spoken."""
-    if not allow_tool_commands:
+    """Return whether a tool will produce the response that should be spoken.
+
+    工具只由原生 Function Calling 触发，正文里不再解析命令标记，所以这里只看结构化调用。
+    """
+    if not allow_tool_commands or native_tool_call is None:
         return False
-    if native_tool_call is not None:
-        parsed = native_tool_to_dispatch(native_tool_call)
-        return parsed is not None and parsed[0] in {"回忆", "窥屏"}
-    normalized = str(text or '').replace('＃', '#')
-    return bool(FOLLOWUP_TOOL_MARKER_PATTERN.search(normalized))
+    parsed = native_tool_to_dispatch(native_tool_call)
+    return parsed is not None and parsed[0] in {"回忆", "窥屏"}
 
 
 def _companion_generation_is_current(owner, mode_generation: int | None) -> bool:
@@ -389,7 +376,7 @@ class ChatHandlerStreamPresenterMixin:
                                native_tool_call: dict | None = None,
                                mode_generation: int | None = None):
         """
-        自动陪伴回调：显示气泡，并复用 STREAM_FINAL 管道识别 ###工具指令###。
+        自动陪伴回调：显示气泡，并把原生工具调用交给 STREAM_FINAL 管道。
         使用与流式回复结束相同的 min_ticks 计算逻辑（按字数计算，防顶出保护）。
         """
         if not _companion_generation_is_current(self, mode_generation):

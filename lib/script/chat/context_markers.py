@@ -10,7 +10,7 @@ from __future__ import annotations
 AUTO_COMPANION_SOURCE = "auto_companion"
 AUTO_COMPANION_TOPIC = "自动观察"
 
-_TOPIC_MARKER = f"///{AUTO_COMPANION_TOPIC}///"
+_TOPIC_MARKER = f"[{AUTO_COMPANION_TOPIC}]"
 
 
 def tag_auto_companion_text(text: object) -> str:

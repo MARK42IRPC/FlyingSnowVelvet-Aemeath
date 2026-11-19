@@ -416,7 +416,6 @@ KEY_FRIENDLY_NAME = {
         "idle_close_ms": "空闲关闭(ms)",
     },
     "TOOL_DISPATCHER": {
-        "tool_pattern": "工具触发正则",
         "play_index": "搜索结果播放索引",
         "auto_spawn_speaker_count": "自动生成音响数量",
     },
