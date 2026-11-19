@@ -119,9 +119,9 @@ class AISettingsPageSectionsMixin:
         self._set_form_row_description(
             form,
             persona_row,
-            "使用系统默认程序打开当前生效的人格 txt，直接编辑系统 prompt。",
+            "使用系统默认程序打开当前生效的人格 txt，编辑人设部分；工具协议段由程序维护，不在该文件内。",
         )
-        self._set_widget_description(self._open_persona_file_btn, "使用系统默认程序打开当前生效的人格 txt。")
+        self._set_widget_description(self._open_persona_file_btn, "使用系统默认程序打开当前生效的人格 txt（只含可编辑的人设部分）。")
 
 
     def _build_quick_welfare_section(self, scaffold) -> None:

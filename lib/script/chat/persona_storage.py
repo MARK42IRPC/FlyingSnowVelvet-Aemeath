@@ -80,8 +80,47 @@ def ensure_user_persona_file() -> Path:
     return user_path
 
 
+PERSONA_CONTRACT_RELATIVE_PATH = "resc/persona_contract.txt"
+
+#: 人格词里由项目维护、设置页不展示的段落标题。用户人格文件若还留着旧版本里的这些段落，
+#: 运行时先切掉，再由 `load_persona_contract()` 统一追加，避免同一段出现两次。
+MANAGED_PERSONA_SECTION_HEADERS = (
+    "[工具调用]",
+    "[工具使用规则]",
+    "[使用musiclist工具",
+    "[执行前自检]",
+)
+
+
+def resolve_persona_contract_path() -> Path:
+    return _PROJECT_ROOT / PERSONA_CONTRACT_RELATIVE_PATH
+
+
+def load_persona_contract() -> str:
+    """读取项目维护的人格词协议段；文件缺失时返回空串，不阻塞对话。"""
+    try:
+        return resolve_persona_contract_path().read_text(encoding="utf-8-sig").strip()
+    except OSError:
+        return ""
+
+
+def strip_managed_persona_sections(text: str) -> str:
+    """切掉人格词里由项目维护的尾部段落，只留用户可编辑的人设部分。"""
+    kept: list[str] = []
+    for line in str(text or "").splitlines():
+        if line.strip().startswith(MANAGED_PERSONA_SECTION_HEADERS):
+            break
+        kept.append(line)
+    return "\n".join(kept).rstrip()
+
+
 __all__ = [
+    "MANAGED_PERSONA_SECTION_HEADERS",
+    "PERSONA_CONTRACT_RELATIVE_PATH",
     "ensure_user_persona_file",
+    "load_persona_contract",
     "persona_file_candidates",
+    "resolve_persona_contract_path",
     "resolve_persona_file_path",
+    "strip_managed_persona_sections",
 ]
