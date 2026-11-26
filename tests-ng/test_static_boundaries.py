@@ -105,6 +105,28 @@ class LayerBoundaryTests(unittest.TestCase):
                     violations.append(f"{path.relative_to(ROOT)}: {marker}")
         self.assertEqual(violations, [])
 
+    def test_button_feedback_has_one_of_two_explicit_render_paths(self):
+        """按钮反馈只能是共享模态消息框或 INFORMATION 气泡，不得新造裸提醒窗口。"""
+        host = CORE / "render" / "backends" / "qt" / "widgets" / "message_box_host.py"
+        host_source = host.read_text(encoding="utf-8-sig")
+        self.assertIn("class QtMessageBoxHost", host_source)
+        self.assertIn("def show_message(", host_source)
+        message_box = (CORE / "render" / "visuals" / "message_box.py").read_text(encoding="utf-8-sig")
+        self.assertNotIn("announcement_style", message_box)
+        self.assertIn("button_height = scale_px(34", message_box)
+        bubble = SCRIPT / "ui" / "bubble.py"
+        bubble_source = bubble.read_text(encoding="utf-8-sig")
+        self.assertIn("EventType.INFORMATION", bubble_source)
+
+        violations = []
+        for path in (CORE / "render" / "backends" / "qt" / "widgets").rglob("*.py"):
+            if path == host:
+                continue
+            source = path.read_text(encoding="utf-8-sig")
+            if "QMessageBox" in source:
+                violations.append(str(path.relative_to(ROOT)))
+        self.assertEqual(violations, [])
+
 
 class PayloadBoundaryTests(unittest.TestCase):
     def test_offline_payload_excludes_sources_that_only_help_development(self):

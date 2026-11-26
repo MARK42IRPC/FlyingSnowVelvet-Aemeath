@@ -531,7 +531,7 @@ def create_message_box_host(parent=None, *, object_name: str = ""):
 
 
 def message_box_stylesheet(mode: str | None = None) -> str:
-    """返回共享确认/提示框样式（Qt 宿主与产品侧均经此 render 入口取用）。"""
+    """返回与公告浮窗一致的共享确认/提示框样式。"""
     from lib.core.render.visuals.message_box import message_box_stylesheet as build
 
     return build(mode)

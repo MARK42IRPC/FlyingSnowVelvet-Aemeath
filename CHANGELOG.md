@@ -334,7 +334,8 @@
 - 游戏管理器、办公任务/技能/插件与语音包的确认/提示弹窗统一经
   `lib/core/render/backends/qt/widgets/message_box_host.py` 和
   `lib/core/render/visuals/message_box.py` 提供，统一工作台配色、中文按钮、危险色确认键、
-  默认取消/Esc 语义与 `Layer.DIALOG` 注册；业务控件不再直接构造或复制 `QMessageBox` 样式。
+  默认取消/Esc 语义与 `Layer.DIALOG` 注册；业务控件不再直接构造或复制 `QMessageBox` 样式。按钮后的
+  短状态反馈继续统一走 `EventType.INFORMATION` 气泡队列，不与需要用户操作的模态提醒混用。
 
 ### Fixed
 ### Changed

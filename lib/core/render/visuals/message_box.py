@@ -18,14 +18,14 @@ DIALOG_TEXT_MIN_WIDTH = scale_px(330, min_abs=300)
 
 
 def message_box_stylesheet(mode: str | None = None) -> str:
-    """返回共享确认/提示框 QSS；颜色随工作台明暗主题变化。"""
+    """返回与公告浮窗一致的共享确认/提示框 QSS。"""
     colors = get_workbench_tokens(mode)
     font_family = get_ui_font_family().replace("'", "\\'")
     border = scale_px(1, min_abs=1)
     radius = scale_px(4, min_abs=3)
-    button_height = scale_px(31, min_abs=27)
+    button_height = scale_px(34, min_abs=30)
     button_width = scale_px(92, min_abs=80)
-    horizontal_padding = scale_px(14, min_abs=11)
+    horizontal_padding = scale_px(13, min_abs=10)
     return f"""
         QMessageBox#{MESSAGE_BOX_OBJECT_NAME} {{
             background: {colors['canvas']};

@@ -89,7 +89,7 @@ def ask_confirmation(
     host.set_escape_button("cancel")
     # 默认键落在取消：Enter 永远不触发破坏性路径。
     host.set_default_button("cancel")
-    host.apply_stylesheet(confirm_dialog_stylesheet)
+    host.apply_stylesheet(render_bridge.message_box_stylesheet)
     return host.exec_modal(layer_name=layer_name) == "yes"
 
 
