@@ -1072,9 +1072,9 @@ lib/core/render/layers/
 **本轮没动的部分**
 
 - `frozen_ui_qt_importers`：57 → **56**（本轮移出确认框一项）。
-- 第 3 项里其余 `exec_()` 对话框（`update_dialog`、`voice_package_installer`、
-  `game_manager_window` 的确认框、`office_*`）与第 4 项（`world_objects/*`、
-  `game_runtime`）仍未动；模态宿主已就位，它们可按同一模式逐个迁出。
+- `update_dialog` 与办公审批窗已经使用窗口描述/后端宿主；确认/提示类 `voice_package_installer`、
+  `game_manager_window`、`office_*` 已统一收敛到 `message_box_host`，业务宿主不再直接构造
+  `QMessageBox`。原生文件选择器仍保留在 Qt 后端，它们不是确认/提示框，不纳入消息框迁移。
 
 ## 21. 第二十一轮执行记录：浮窗外壳抽到渲染层
 
@@ -4039,7 +4039,7 @@ C 类首件落地：`forum_text` 这类「纯控件、无产品包耦合」的�
 | `ai_storage_load` / `ai_storage_save` / `ai_storage_apply_runtime` | `ai_settings_storage` 三入口 | 外壳 / 主页面 / 存取控制器 |
 | `welfare_auto_companion_interval_ms` | `chat.handler_auto_companion.WELFARE_AUTO_COMPANION_INTERVAL_MS` | 主页面固定间隔 |
 | `voice_package_status` / `gsvmove_service` / `voice_package_widgets` | `gsvmove` 与语音包安装控件 | 主页面 GSV 面 |
-| `ollama_available_model_names` / `ollama_model_list_error` / `ensure_user_persona_file` | `chat.ollama_registry` / `chat.persona_storage` | 主页面模型与人格 |
+| `ollama_available_model_names` / `ollama_model_list_error` / `ensure_user_persona_file` / `reset_user_persona_file` | `chat.ollama_registry` / `chat.persona_storage` | 主页面模型与人格（打开 / 重置） |
 | `gpu_mode_from_num_gpu` | 主页面换算函数 | 存取控制器 |
 | `music_set_provider` / `gsvmove_cleanup_audio_cache` | `music` / `gsvmove` 服务 | 存取控制器 |
 | `scan_animation_frame_files` / `playback_duration_seconds` / `animation_folder_display_name` | `SEanima.decoder` / `labels` | 编辑器控件族 |

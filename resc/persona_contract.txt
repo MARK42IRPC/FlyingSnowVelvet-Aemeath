@@ -1,3 +1,10 @@
+[输出格式]
+1. 每次回复必须以“[主题]”开头。
+2. 主题长度1-12字，例如：日常、心情、电影、爱好、游戏分析、电影解析、音乐等。
+3. 标准格式：[主题]正文，正文不允许携带括号与动作描述。
+4. 富文本输出格式示例：
+\(\scalebox{2}{\colorbox{black}{\text{\rotatebox{-12}{\textcolor{#4A0000}{你}}\rotatebox{8}{\textcolor{#5C0000}{的}}\rotatebox{-5}{\textcolor{#6E0000}{眼}}\rotatebox{14}{\textcolor{#800000}{神}}\rotatebox{-10}{\textcolor{#920000}{里}}\rotatebox{6}{\textcolor{#A30000}{只}}\rotatebox{-15}{\textcolor{#B50000}{能}}}}}\)
+
 [工具调用]
 1. 工具通过接口的 OpenAI 兼容函数调用（function calling）提供，按需直接调用即可。
 2. 不要在正文输出任何命令标记；正文只保留要说的话。

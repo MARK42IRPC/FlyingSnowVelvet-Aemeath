@@ -95,6 +95,22 @@ def ensure_user_persona_file():
     return hook()
 
 
+def reset_user_persona_file(*, stamp=None):
+    """把用户人格恢复成内置默认（注入物：产品侧 `chat.persona_storage`）。"""
+    hook = tier_d_seams.hook("reset_user_persona_file")
+    if hook is None:
+        raise RuntimeError("人格重置入口未注入")
+    return hook(stamp=stamp)
+
+
+def ask_confirmation(*args, **kwargs):
+    """共享确认框（注入物：产品侧 `confirm_dialog.ask_confirmation`）。"""
+    hook = tier_d_seams.hook("confirm_dialog_ask")
+    if hook is None:
+        return False
+    return hook(*args, **kwargs)
+
+
 def _gsvmove_service():
     hook = tier_d_seams.hook("gsvmove_service")
     return hook() if hook is not None else None
@@ -283,6 +299,35 @@ class AISettingsPageMixin(AISettingsPageSectionsMixin):
         except Exception as e:
             _logger.error("打开人格文件失败: %s", e)
             self._emit_info(f"打开人格文件失败: {e}", min_tick=20, max_tick=180)
+
+    def _on_reset_persona_file(self) -> None:
+        """「重置人格词」：确认后把用户人格恢复成内置默认，旧文件自动备份。"""
+        confirmed = ask_confirmation(
+            self,
+            title="重置人格词",
+            text="确定把人设恢复成内置默认吗？",
+            informative_text=(
+                "当前用户人格会先整份备份为 persona_backup_<时间戳>.txt，再写入内置默认人设。\n"
+                "工具协议段由程序维护，不受影响；重置后新对话立即使用默认人设。"
+            ),
+            confirm_text="重置",
+            destructive=True,
+            layer_name="ResetPersonaConfirmation",
+        )
+        if not confirmed:
+            return
+        try:
+            _user_path, backup_path = reset_user_persona_file()
+        except Exception as e:
+            _logger.error("重置人格词失败: %s", e)
+            self._emit_info(f"重置人格词失败：{e}", min_tick=20, max_tick=180)
+            return
+        if backup_path is None:
+            self._emit_info("已写入内置默认人设（此前没有用户人格文件）。", min_tick=10, max_tick=90)
+        else:
+            self._emit_info(
+                f"已重置人格词，旧文件备份为 {backup_path.name}", min_tick=10, max_tick=120
+            )
 
     def _on_open_ollama_app(self) -> None:
         candidates: list[Path] = []

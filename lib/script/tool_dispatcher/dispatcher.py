@@ -686,9 +686,9 @@ class ToolDispatcher:
         limited = entries[:_MUSICLIST_MAX_ITEMS]
         listing = '\n'.join(f'{index}. {title}' for index, title in enumerate(limited, start=1))
         prompt = (
-            '这是“曲库工具”读取到的可选曲目清单。请结合对话语境，只从下面列出的曲目里挑选合适的：\n'
+            '以上是歌单，现在挑一首歌使用音乐工具直接播放：\n'
             f'{listing}\n'
-            '选好后直接调用播放工具播放，不要用文字复述选曲过程。'
+            '这就是全部可选曲目。只通过音乐工具调用播放，不要在正文里复述选曲过程。'
         )
         self._ec.publish(Event(EventType.INFORMATION, {
             'text': f'曲库 {len(limited)} 首，交给大模型挑选',

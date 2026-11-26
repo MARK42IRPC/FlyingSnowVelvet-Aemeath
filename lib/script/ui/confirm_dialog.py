@@ -14,20 +14,15 @@ accent colours as the workbench theme.
 
 from __future__ import annotations
 
-from config.font_config import get_ui_font_family
-from config.scale import scale_px
+from lib.core.render.visuals.message_box import (
+    DESTRUCTIVE_BUTTON_OBJECT_NAME,
+    MESSAGE_BOX_OBJECT_NAME,
+    PRIMARY_BUTTON_OBJECT_NAME,
+)
 from lib.script.ui import render_bridge
-from lib.script.workbench.theme import get_workbench_colors
 
-#: 与办公页确认框同名的对象名，供 QSS 与测试定位。
-CONFIRM_DIALOG_OBJECT_NAME = "WorkbenchConfirmDialog"
-
-#: 主按钮对象名：破坏性操作（卸载、删除）用 danger 色，其余用主题粉。
-DESTRUCTIVE_BUTTON_OBJECT_NAME = "WorkbenchConfirmDestructive"
-PRIMARY_BUTTON_OBJECT_NAME = "WorkbenchConfirmPrimary"
-
-#: 与语音包删除框一致的正文最小宽度，避免长句被折成很窄的一条。
-DIALOG_TEXT_MIN_WIDTH = scale_px(330, min_abs=300)
+#: 历史名称保留给既有调用方；真实对象名由 render 层共享规格维护。
+CONFIRM_DIALOG_OBJECT_NAME = MESSAGE_BOX_OBJECT_NAME
 
 #: 图标的后端中立名（``QtMessageBoxHost`` 再翻译回 QMessageBox 图标）。
 ICON_INFORMATION = "information"
@@ -38,59 +33,7 @@ ICON_CRITICAL = "critical"
 
 def confirm_dialog_stylesheet(mode: str | None = None) -> str:
     """Return the QSS shared by every workbench confirm/notice box."""
-    c = get_workbench_colors(mode)
-    font_family = get_ui_font_family().replace("'", "\\'")
-    border = scale_px(1, min_abs=1)
-    radius = scale_px(4, min_abs=3)
-    button_height = scale_px(31, min_abs=27)
-    button_width = scale_px(92, min_abs=80)
-    horizontal_padding = scale_px(14, min_abs=11)
-    return f"""
-        QMessageBox#{CONFIRM_DIALOG_OBJECT_NAME} {{
-            background: {c.canvas};
-            color: {c.text};
-            font-family: '{font_family}';
-        }}
-        QMessageBox#{CONFIRM_DIALOG_OBJECT_NAME} QLabel {{
-            min-width: {DIALOG_TEXT_MIN_WIDTH}px;
-            color: {c.text};
-            background: transparent;
-        }}
-        QMessageBox#{CONFIRM_DIALOG_OBJECT_NAME} QPushButton {{
-            min-width: {button_width}px;
-            min-height: {button_height}px;
-            padding: 0px {horizontal_padding}px;
-            color: {c.text};
-            background: {c.surface_raised};
-            border: {border}px solid {c.border};
-            border-radius: {radius}px;
-            font-weight: 600;
-        }}
-        QMessageBox#{CONFIRM_DIALOG_OBJECT_NAME} QPushButton:hover {{
-            background: {c.surface_hover};
-            border-color: {c.cyan};
-        }}
-        QMessageBox#{CONFIRM_DIALOG_OBJECT_NAME} QPushButton:default,
-        QMessageBox#{CONFIRM_DIALOG_OBJECT_NAME} QPushButton#{PRIMARY_BUTTON_OBJECT_NAME} {{
-            color: {c.canvas};
-            background: {c.pink};
-            border-color: {c.pink};
-        }}
-        QMessageBox#{CONFIRM_DIALOG_OBJECT_NAME} QPushButton:default:hover,
-        QMessageBox#{CONFIRM_DIALOG_OBJECT_NAME} QPushButton#{PRIMARY_BUTTON_OBJECT_NAME}:hover {{
-            background: {c.pink_hover};
-            border-color: {c.pink_hover};
-        }}
-        QMessageBox#{CONFIRM_DIALOG_OBJECT_NAME} QPushButton#{DESTRUCTIVE_BUTTON_OBJECT_NAME} {{
-            color: {c.canvas};
-            background: {c.danger};
-            border-color: {c.danger};
-        }}
-        QMessageBox#{CONFIRM_DIALOG_OBJECT_NAME} QPushButton#{DESTRUCTIVE_BUTTON_OBJECT_NAME}:hover {{
-            background: {c.pink_hover};
-            border-color: {c.pink_hover};
-        }}
-    """
+    return render_bridge.message_box_stylesheet(mode)
 
 
 def _build_dialog(

@@ -26,7 +26,6 @@ from PyQt5.QtWidgets import (
     QGraphicsOpacityEffect,
     QHBoxLayout,
     QLabel,
-    QMessageBox,
     QProgressBar,
     QPushButton,
     QSizePolicy,
@@ -52,6 +51,7 @@ from lib.core.render.backends.qt.widgets.voice_package_widgets import (
 from lib.core.render.layers import WindowLayer, get_layer_manager
 from lib.core.render.visuals.workbench_chrome import voice_installer_stylesheet
 from lib.core.render.visuals.workbench_theme import get_workbench_colors
+from lib.core.render.backends.qt.widgets.message_box_host import ask_confirmation
 
 
 def _installer_api():
@@ -192,56 +192,19 @@ class VoicePackageManagementBar(QFrame):
         return self._busy
 
     def _confirm_removal(self, package_root: Path) -> bool:
-        box = QMessageBox(self)
-        box.setWindowTitle("删除语音包")
-        box.setIcon(QMessageBox.Warning)
-        box.setText("确认删除爱弥斯 ONNX 语音包？")
-        box.setInformativeText(
-            "删除后语音合成将暂停，可随时重新安装。\n"
-            f"位置：{package_root}"
+        return ask_confirmation(
+            self,
+            title="删除语音包",
+            text="确认删除爱弥斯 ONNX 语音包？",
+            informative_text=(
+                "删除后语音合成将暂停，可随时重新安装。\n"
+                f"位置：{package_root}"
+            ),
+            confirm_text="确认删除",
+            cancel_text="取消",
+            destructive=True,
+            layer_name="VoicePackageRemovalConfirmation",
         )
-        box.setStandardButtons(QMessageBox.Yes | QMessageBox.Cancel)
-        box.setDefaultButton(QMessageBox.Cancel)
-        yes_button = box.button(QMessageBox.Yes)
-        cancel_button = box.button(QMessageBox.Cancel)
-        if yes_button is not None:
-            yes_button.setText("确认删除")
-            yes_button.setObjectName("VoicePackageConfirmRemove")
-        if cancel_button is not None:
-            cancel_button.setText("取消")
-            box.setEscapeButton(cancel_button)
-        box.setWindowFlag(Qt.WindowStaysOnTopHint, True)
-        box.setStyleSheet(
-            f"""
-            QMessageBox {{ background: {_color('surface')}; }}
-            QMessageBox QLabel {{
-                min-width: {scale_px(330, min_abs=300)}px;
-                color: {_color('text')};
-                background: transparent;
-            }}
-            QMessageBox QPushButton {{
-                min-width: {scale_px(92, min_abs=80)}px;
-                min-height: {scale_px(30, min_abs=27)}px;
-                color: {_color('text')};
-                background: {_color('surface_raised')};
-                border: 1px solid {_color('border')};
-                border-radius: 3px;
-            }}
-            QMessageBox QPushButton:hover {{ background: {_color('surface_hover')}; }}
-            QMessageBox QPushButton#VoicePackageConfirmRemove {{
-                color: {_color('text')};
-                background: {_color('pink')};
-                font-weight: 700;
-            }}
-            """
-        )
-        layer_manager = get_layer_manager()
-        layer_manager.register(box, WindowLayer.DIALOG, z=1, name="VoicePackageRemovalConfirmation")
-        try:
-            return box.exec_() == QMessageBox.Yes
-        finally:
-            layer_manager.unregister(box)
-            box.deleteLater()
 
     def _set_busy(self, busy: bool) -> None:
         self._busy = bool(busy)

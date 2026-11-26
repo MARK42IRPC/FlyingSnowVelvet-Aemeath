@@ -530,6 +530,13 @@ def create_message_box_host(parent=None, *, object_name: str = ""):
     return QtMessageBoxHost(parent, object_name=object_name)
 
 
+def message_box_stylesheet(mode: str | None = None) -> str:
+    """返回共享确认/提示框样式（Qt 宿主与产品侧均经此 render 入口取用）。"""
+    from lib.core.render.visuals.message_box import message_box_stylesheet as build
+
+    return build(mode)
+
+
 def create_spec_window(
     spec,
     *,
@@ -1011,6 +1018,7 @@ __all__ = [
     "render_office_icon",
     "render_office_icon_pixmap",
     "create_message_box_host",
+    "message_box_stylesheet",
     "create_spec_window",
     "create_floating_window_base",
     "create_window_button",

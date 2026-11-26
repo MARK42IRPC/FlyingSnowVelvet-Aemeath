@@ -317,3 +317,15 @@ def cleanup_chat_handler():
     if _chat_handler is not None:
         _chat_handler.cleanup()
         _chat_handler = None
+
+
+def reload_chat_handler_persona() -> bool:
+    """让人格文件的新内容立即进入已存在的聊天处理器。
+
+    设置页重置/编辑人格后调用；处理器尚未创建时返回 False（下次创建自然会读新文件）。
+    """
+    handler = _chat_handler
+    if handler is None:
+        return False
+    handler.reload_persona()
+    return True

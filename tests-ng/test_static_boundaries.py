@@ -74,6 +74,37 @@ class LayerBoundaryTests(unittest.TestCase):
                     violations.append(f"{path.relative_to(ROOT)}:{line}: {module}")
         self.assertEqual(violations, [])
 
+    def test_message_boxes_are_owned_by_render_host(self):
+        """业务 Qt 宿主不得各自复制 QMessageBox；只允许消息框 render host 直接构造。"""
+        allowed = {
+            CORE / "render" / "backends" / "qt" / "widgets" / "message_box_host.py",
+        }
+        violations = []
+        for path in (CORE / "render" / "backends" / "qt" / "widgets").rglob("*.py"):
+            if path in allowed:
+                continue
+            source = path.read_text(encoding="utf-8-sig")
+            if "QMessageBox" in source:
+                violations.append(str(path.relative_to(ROOT)))
+        self.assertEqual(violations, [])
+
+    def test_shared_message_box_palette_is_not_duplicated_in_business_qss(self):
+        """确认/提示框颜色与按钮尺寸只由 message_box 视觉规格维护。"""
+        forbidden = (
+            "QMessageBox#OfficeConfirmDialog",
+            "QMessageBox#VoicePackageConfirmRemove",
+            "QMessageBox QPushButton#VoicePackageConfirmRemove",
+        )
+        violations = []
+        for path in (CORE / "render").rglob("*.py"):
+            if path == CORE / "render" / "visuals" / "message_box.py":
+                continue
+            source = path.read_text(encoding="utf-8-sig")
+            for marker in forbidden:
+                if marker in source:
+                    violations.append(f"{path.relative_to(ROOT)}: {marker}")
+        self.assertEqual(violations, [])
+
 
 class PayloadBoundaryTests(unittest.TestCase):
     def test_offline_payload_excludes_sources_that_only_help_development(self):

@@ -114,14 +114,21 @@ class AISettingsPageSectionsMixin:
         self._open_persona_file_btn.setFixedWidth(scale_px(110, min_abs=92))
         self._open_persona_file_btn.clicked.connect(self._on_open_persona_file)
         persona_layout.addWidget(self._open_persona_file_btn, 0)
+        self._reset_persona_file_btn = QPushButton("重置人格词")
+        self._reset_persona_file_btn.setObjectName("ResetPersonaButton")
+        self._reset_persona_file_btn.setProperty("danger", True)
+        self._reset_persona_file_btn.setFixedWidth(scale_px(110, min_abs=92))
+        self._reset_persona_file_btn.clicked.connect(self._on_reset_persona_file)
+        persona_layout.addWidget(self._reset_persona_file_btn, 0)
         persona_layout.addStretch(1)
         form.addRow("人格配置", persona_row)
         self._set_form_row_description(
             form,
             persona_row,
-            "使用系统默认程序打开当前生效的人格 txt，编辑人设部分；工具协议段由程序维护，不在该文件内。",
+            "「设置人格词」打开当前生效的人格 txt 编辑人设部分；「重置人格词」把用户人设恢复成内置默认并自动备份旧文件。工具协议段由程序维护，不在该文件内。",
         )
         self._set_widget_description(self._open_persona_file_btn, "使用系统默认程序打开当前生效的人格 txt（只含可编辑的人设部分）。")
+        self._set_widget_description(self._reset_persona_file_btn, "把用户人设恢复成内置默认，旧文件会先备份成 persona_backup_<时间戳>.txt。")
 
 
     def _build_quick_welfare_section(self, scaffold) -> None:

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from lib.script.chat.handler_auto_companion import WELFARE_AUTO_COMPANION_INTERVAL_MS
 from lib.script.chat.ollama_registry import get_available_model_names, get_model_list_error
-from lib.script.chat.persona_storage import ensure_user_persona_file
+from lib.script.chat.persona_storage import ensure_user_persona_file, reset_user_persona_file
 from lib.script.gsvmove import get_gsvmove_service, get_voice_package_status
 from lib.script.ui import render_bridge
 from lib.script.ui.ai_settings_storage import (
@@ -32,6 +32,19 @@ def _welfare_auto_companion_interval_ms():
     return WELFARE_AUTO_COMPANION_INTERVAL_MS
 
 
+def _reset_user_persona_file(*, stamp=None):
+    """重置用户人格，并让运行中的聊天处理器立刻重新读取新文件。"""
+    path, backup = reset_user_persona_file(stamp=stamp)
+    try:
+        from lib.script.chat.handler import reload_chat_handler_persona
+
+        reload_chat_handler_persona()
+    except Exception:
+        # 处理器还没创建（或正在退出）时不影响文件重置本身，下次创建会读新人格。
+        pass
+    return path, backup
+
+
 def _voice_package_widgets():
     return (VoicePackageInstallBanner, VoicePackageInstallerDialog, VoicePackageManagementBar)
 
@@ -40,6 +53,7 @@ render_bridge.install_tier_d_hook("voice_package_status", get_voice_package_stat
 render_bridge.install_tier_d_hook("ollama_available_model_names", get_available_model_names)
 render_bridge.install_tier_d_hook("ollama_model_list_error", get_model_list_error)
 render_bridge.install_tier_d_hook("ensure_user_persona_file", ensure_user_persona_file)
+render_bridge.install_tier_d_hook("reset_user_persona_file", _reset_user_persona_file)
 render_bridge.install_tier_d_hook("gsvmove_service", get_gsvmove_service)
 render_bridge.install_tier_d_hook("ai_storage_load", load_ai_values)
 render_bridge.install_tier_d_hook("ai_storage_save", save_ai_values)

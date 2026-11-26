@@ -89,6 +89,10 @@ class ChatHandlerPersonaMixin:
 
         return ""
 
+    def reload_persona(self) -> None:
+        """重新从人格文件加载 system prompt（设置页重置人格后无需重启即可生效）。"""
+        self._persona = self._load_persona()
+
     def _build_runtime_persona(self, *, skip_memory_block: bool = False) -> str:
         """
         生成本次请求使用的人格词，并附带当前时间（精确到秒）。

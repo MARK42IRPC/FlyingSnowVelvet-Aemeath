@@ -28,7 +28,6 @@ from PyQt5.QtWidgets import (
     QLabel,
     QListWidget,
     QListWidgetItem,
-    QMessageBox,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -39,6 +38,10 @@ from lib.core.render.backends.qt.widgets import tier_d_seams
 from lib.core.render.backends.qt.widgets.game_manager_widgets import _GameCardWidget
 from lib.core.render.backends.qt.widgets.workbench_page import QtWorkbenchToolPage
 from lib.core.render.visuals.workbench_theme import get_workbench_colors
+from lib.core.render.backends.qt.widgets.message_box_host import (
+    ask_confirmation,
+    show_message,
+)
 
 
 def _ui_font(*args, **kwargs):
@@ -691,14 +694,17 @@ class GameManagerWindow(QtWorkbenchToolPage):
         if record is None:
             self._show_info("请先选择要卸载的游戏。")
             return
-        answer = QMessageBox.question(
+        confirmed = ask_confirmation(
             self,
-            "卸载游戏",
-            f"确定卸载 {record.manifest.name} {record.manifest.version} 吗？\n这不会删除 {record.data_root} 内的存档。",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No,
+            title="卸载游戏",
+            text=f"确定卸载 {record.manifest.name} {record.manifest.version} 吗？",
+            informative_text=f"这不会删除 {record.data_root} 内的存档。",
+            confirm_text="卸载",
+            cancel_text="取消",
+            destructive=True,
+            layer_name="GameUninstallConfirmation",
         )
-        if answer != QMessageBox.Yes:
+        if not confirmed:
             return
         try:
             self._runtime.close_game(record.game_id)
@@ -715,7 +721,18 @@ class GameManagerWindow(QtWorkbenchToolPage):
         self._status.setText(text)
 
     def _show_info(self, text: str) -> None:
-        QMessageBox.information(self, "游戏管理器", text)
+        show_message(
+            self,
+            title="游戏管理器",
+            text=text,
+            layer_name="GameManagerNotice",
+        )
 
     def _show_error(self, text: str) -> None:
-        QMessageBox.critical(self, "游戏管理器", text)
+        show_message(
+            self,
+            title="游戏管理器",
+            text=text,
+            icon="critical",
+            layer_name="GameManagerError",
+        )

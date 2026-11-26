@@ -24,7 +24,6 @@ from PyQt5.QtWidgets import (
     QLabel,
     QListWidget,
     QListWidgetItem,
-    QMessageBox,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -36,6 +35,10 @@ from lib.core.render.backends.qt.widgets import tier_d_seams
 from lib.core.render.backends.qt.widgets.workbench_settings_layout import (
     SETTINGS_FONT_SIZE,
     SettingsSection,
+)
+from lib.core.render.backends.qt.widgets.message_box_host import (
+    ask_confirmation,
+    show_message,
 )
 
 get_ui_font = tier_d_seams.ui_font
@@ -288,31 +291,24 @@ class OfficeManagerCard(SettingsSection):
         return True
 
     def _confirm_remove(self, name: str) -> bool:
-        dialog = QMessageBox(self)
-        dialog.setObjectName("OfficeConfirmDialog")
-        dialog.setWindowTitle(f"删除{self._kind}")
-        dialog.setIcon(QMessageBox.Warning)
-        dialog.setText(f"确定删除{self._kind}“{name}”？")
-        dialog.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-        confirm = dialog.button(QMessageBox.Yes)
-        if confirm is not None:
-            confirm.setText("删除")
-            confirm.setObjectName("OfficeConfirmDelete")
-        cancel = dialog.button(QMessageBox.No)
-        if cancel is not None:
-            cancel.setText("取消")
-            cancel.setObjectName("OfficeConfirmCancel")
-        dialog.setDefaultButton(QMessageBox.No)
-        return dialog.exec_() == QMessageBox.Yes
+        return ask_confirmation(
+            self,
+            title=f"删除{self._kind}",
+            text=f"确定删除{self._kind}“{name}”？",
+            confirm_text="删除",
+            cancel_text="取消",
+            destructive=True,
+            layer_name="OfficeManagerRemoveConfirmation",
+        )
 
     def _warn(self, title: str, text: str) -> None:
-        dialog = QMessageBox(self)
-        dialog.setObjectName("OfficeConfirmDialog")
-        dialog.setWindowTitle(title)
-        dialog.setIcon(QMessageBox.Warning)
-        dialog.setText(text)
-        dialog.setStandardButtons(QMessageBox.Ok)
-        dialog.exec_()
+        show_message(
+            self,
+            title=title,
+            text=text,
+            icon="warning",
+            layer_name="OfficeManagerNotice",
+        )
 
 
 __all__ = ["OfficeManagerCard", "VISIBLE_ROWS"]

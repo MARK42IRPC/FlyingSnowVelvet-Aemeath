@@ -2,11 +2,11 @@
 
 这是控件层"描述 + 后端渲染"结构里的后端那一半，与 ``control_host.py`` 同类（档位 D）。
 它只做 Qt 事实：``QMessageBox`` 的构造、图标/按钮/默认键/逃逸键、样式表应用、层级注册
-与 ``exec_()`` 模态循环。哪些按钮出现、按钮写什么字、底色是什么、破坏性按钮用哪一色，
-全部由调用方（``lib/script/ui/confirm_dialog.py``）以参数给出。
+与 ``exec_()`` 模态循环。确认/提示的公共按钮语义和工作台 QSS 也集中在本模块的两个
+helper 中，业务控件不得再复制原生消息框。
 
-因此 ``confirm_dialog`` 不必再 ``import PyQt5``：它只声明"问什么、有哪些按钮、用哪种
-配色"，真实窗口由本模块持有。换后端时替换的是这一层，不是确认框语义。
+因此产品侧 ``lib.script.ui`` 不需要导入 PyQt；它只经 ``render_bridge`` 声明"问什么、
+有哪些按钮、用哪种配色"，真实窗口由本模块持有。换后端时替换的是这一层，不是确认框语义。
 """
 from __future__ import annotations
 
@@ -17,6 +17,12 @@ from PyQt5.QtWidgets import QMessageBox, QWidget
 
 from lib.core.render.layers import WindowLayer
 from lib.core.render.layers import get_layer_manager
+from lib.core.render.visuals.message_box import (
+    DESTRUCTIVE_BUTTON_OBJECT_NAME,
+    MESSAGE_BOX_OBJECT_NAME,
+    PRIMARY_BUTTON_OBJECT_NAME,
+    message_box_stylesheet,
+)
 
 
 #: 与 ``QMessageBox`` 图标一一对应的后端中立名。
@@ -62,7 +68,7 @@ class QtMessageBoxHost:
         self._box.setIcon(_ICON_MAP.get(str(icon), QMessageBox.Information))
 
     def set_standard_buttons(self, names) -> None:
-        """按后端中立名设置标准按钮组合（``ok`` / ``yes`` / ``cancel``）。"""
+        """按后端中立名设置标准按钮组合（``ok`` / ``yes`` / ``no`` / ``cancel``）。"""
         flags = QMessageBox.NoButton
         for name in names:
             flags |= _STANDARD_BUTTONS.get(str(name), QMessageBox.NoButton)
@@ -124,6 +130,82 @@ class QtMessageBoxHost:
         return self._box
 
 
+def _build_dialog(
+    parent,
+    *,
+    title: str,
+    text: str,
+    informative_text: str = "",
+    icon: str = ICON_INFORMATION,
+) -> QtMessageBoxHost:
+    host = QtMessageBoxHost(parent, object_name=MESSAGE_BOX_OBJECT_NAME)
+    host.set_title(title)
+    host.set_icon(icon)
+    host.set_text(text)
+    host.set_informative_text(informative_text)
+    return host
+
+
+def ask_confirmation(
+    parent,
+    *,
+    title: str,
+    text: str,
+    informative_text: str = "",
+    confirm_text: str = "确定",
+    cancel_text: str = "取消",
+    destructive: bool = False,
+    icon: str = ICON_WARNING,
+    layer_name: str = "WorkbenchConfirmation",
+) -> bool:
+    """显示统一工作台确认框；Enter/Esc 都落在取消，避免误触危险操作。"""
+    host = _build_dialog(
+        parent,
+        title=title,
+        text=text,
+        informative_text=informative_text,
+        icon=icon,
+    )
+    host.set_standard_buttons(("yes", "cancel"))
+    host.set_button_text("yes", confirm_text)
+    host.set_button_object_name(
+        "yes",
+        DESTRUCTIVE_BUTTON_OBJECT_NAME if destructive else PRIMARY_BUTTON_OBJECT_NAME,
+    )
+    host.set_button_text("cancel", cancel_text)
+    host.set_escape_button("cancel")
+    host.set_default_button("cancel")
+    host.apply_stylesheet(message_box_stylesheet)
+    return host.exec_modal(layer_name=layer_name) == "yes"
+
+
+def show_message(
+    parent,
+    *,
+    title: str,
+    text: str,
+    informative_text: str = "",
+    ok_text: str = "知道了",
+    icon: str = ICON_INFORMATION,
+    layer_name: str = "WorkbenchNotice",
+) -> None:
+    """显示统一工作台提示框；单按钮同时显式绑定默认键与 Esc。"""
+    host = _build_dialog(
+        parent,
+        title=title,
+        text=text,
+        informative_text=informative_text,
+        icon=icon,
+    )
+    host.set_standard_buttons(("ok",))
+    host.set_button_text("ok", ok_text)
+    host.set_button_object_name("ok", PRIMARY_BUTTON_OBJECT_NAME)
+    host.set_default_button("ok")
+    host.set_escape_button("ok")
+    host.apply_stylesheet(message_box_stylesheet)
+    host.exec_modal(layer_name=layer_name)
+
+
 _STANDARD_BUTTONS = {
     "ok": QMessageBox.Ok,
     "yes": QMessageBox.Yes,
@@ -147,4 +229,6 @@ __all__ = [
     "ICON_QUESTION",
     "ICON_WARNING",
     "QtMessageBoxHost",
+    "ask_confirmation",
+    "show_message",
 ]

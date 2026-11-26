@@ -34,7 +34,6 @@ from PyQt5.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
-    QMessageBox,
     QPlainTextEdit,
     QPushButton,
     QSizeGrip,
@@ -69,6 +68,7 @@ from lib.core.render.backends.qt.widgets.workbench_settings_layout import (
 )
 from lib.core.render.visuals.office_chrome import office_stylesheet
 from lib.core.render.visuals.workbench_theme import get_workbench_colors
+from lib.core.render.backends.qt.widgets.message_box_host import ask_confirmation
 
 logger = get_logger(__name__)
 
@@ -885,25 +885,18 @@ class OfficeWorkbenchPage(QtWorkbenchToolPage):
 
         title = str(task.get("title") or "未命名任务")
         workspace = str(task.get("workspace") or "")
-        dialog = QMessageBox(self)
-        dialog.setObjectName("OfficeConfirmDialog")
-        dialog.setWindowTitle("删除办公任务")
-        dialog.setIcon(QMessageBox.Warning)
-        dialog.setText(f"确定删除任务“{title}”？")
-        if workspace:
-            dialog.setInformativeText(f"工作目录：{workspace}")
-        dialog.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-        confirm_button = dialog.button(QMessageBox.Yes)
-        if confirm_button is not None:
-            confirm_button.setText("删除")
-            confirm_button.setObjectName("OfficeConfirmDelete")
-        cancel_button = dialog.button(QMessageBox.No)
-        if cancel_button is not None:
-            cancel_button.setText("取消")
-            cancel_button.setObjectName("OfficeConfirmCancel")
-        dialog.setDefaultButton(QMessageBox.No)
-        dialog.setStyleSheet(office_stylesheet(effort_steps=_effort_steps()))
-        if dialog.exec_() != QMessageBox.Yes:
+        informative_text = f"工作目录：{workspace}" if workspace else ""
+        confirmed = ask_confirmation(
+            self,
+            title="删除办公任务",
+            text=f"确定删除任务“{title}”？",
+            informative_text=informative_text,
+            confirm_text="删除",
+            cancel_text="取消",
+            destructive=True,
+            layer_name="OfficeTaskDeleteConfirmation",
+        )
+        if not confirmed:
             logger.info("[OfficePage] 删除被取消：弹窗未确认 task_id=%s", task_id)
             return
         logger.info(

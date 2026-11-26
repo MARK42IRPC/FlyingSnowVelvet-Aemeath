@@ -152,39 +152,6 @@ def office_stylesheet(
             color: {c.text};
             border: {border}px solid {c.border_strong};
         }}
-        QMessageBox#OfficeConfirmDialog {{
-            background: {c.canvas};
-            color: {c.text};
-        }}
-        QMessageBox#OfficeConfirmDialog QLabel {{ color: {c.text}; }}
-        QMessageBox#OfficeConfirmDialog QPushButton {{
-            min-height: {control_height}px;
-            padding: 0px {horizontal_padding}px;
-            background: {c.surface_raised};
-            color: {c.text};
-            border: {border}px solid {c.border};
-            border-radius: {radius}px;
-            font-weight: 600;
-        }}
-        QMessageBox#OfficeConfirmDialog QPushButton:hover {{
-            background: {c.surface_hover};
-            border-color: {c.cyan};
-        }}
-        QMessageBox#OfficeConfirmDialog QPushButton:default {{
-            background: {c.pink};
-            color: {c.canvas};
-            border-color: {c.pink};
-        }}
-        QMessageBox#OfficeConfirmDialog QPushButton#OfficeConfirmDelete {{
-            background: {c.danger};
-            color: {c.canvas};
-            border-color: {c.danger};
-        }}
-        QMessageBox#OfficeConfirmDialog QPushButton#OfficeConfirmDelete:hover {{
-            background: {c.pink_hover};
-            color: {c.canvas};
-            border-color: {c.pink_hover};
-        }}
         QWidget#OfficeAccentBar {{
             background: {c.border_strong};
             border: {border}px solid {c.border_strong};
