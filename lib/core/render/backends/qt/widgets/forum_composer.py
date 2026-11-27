@@ -22,7 +22,6 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QTextCursor  # noqa: F401 - 既有导出面
 from PyQt5.QtWidgets import (
     QComboBox,
-    QFileDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -52,6 +51,7 @@ from lib.core.forum_layout import (
     parse_layout_tokens,
     set_layout_tokens,
 )
+from lib.core.render.backends.qt.widgets.file_picker import pick_open_file
 from lib.core.render.backends.qt.widgets.forum_images import (
     COMPOSE_THUMB_SIZE,
     ForumImageThumb,
@@ -537,7 +537,7 @@ class ForumComposerMixin:
         if len(self._compose_images) >= FORUM_IMAGES_PER_POST:
             self._compose_error(f"一个帖子最多挂 {FORUM_IMAGES_PER_POST} 张图，先摘掉一张再传")
             return
-        path, _selected = QFileDialog.getOpenFileName(
+        path = pick_open_file(
             self, "选一张图片", "", "图片 (*.png *.jpg *.jpeg *.gif *.webp);;所有文件 (*)"
         )
         if not path:

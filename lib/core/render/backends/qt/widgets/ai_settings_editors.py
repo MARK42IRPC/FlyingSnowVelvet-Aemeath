@@ -24,7 +24,6 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
     QCheckBox,
     QComboBox,
-    QFileDialog,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -45,6 +44,7 @@ from lib.core.ai_settings.config_schema import (
     format_config_editor_value as _format_config_editor_value,
 )
 from lib.core.render.backends.qt.widgets import tier_d_seams
+from lib.core.render.backends.qt.widgets.file_picker import pick_directory, pick_open_file
 from lib.core.render.backends.qt.widgets.office_mode_settings import (
     WatermarkComboBox as _WatermarkComboBox,
     create_field_row_group as _create_field_row_group_helper,
@@ -466,11 +466,11 @@ class ConfigEditorMixin:
             elif candidate.parent.exists() and candidate.parent.is_dir():
                 start_dir = candidate.parent
 
-        selected = QFileDialog.getExistingDirectory(
+        selected = pick_directory(
             self,
             "选择本地音乐文件夹",
             str(start_dir),
-            QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks,
+            resolve_symlinks=False,
         )
         if selected:
             editor.setText(os.path.normpath(selected))
@@ -488,7 +488,7 @@ class ConfigEditorMixin:
             elif candidate.parent.exists() and candidate.parent.is_dir():
                 start_dir = candidate.parent
 
-        selected, _ = QFileDialog.getOpenFileName(
+        selected = pick_open_file(
             self,
             "选择鸣潮启动文件",
             str(start_dir),

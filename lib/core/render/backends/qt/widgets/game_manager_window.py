@@ -21,7 +21,6 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import (
     QAbstractItemView,
-    QFileDialog,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -35,6 +34,7 @@ from PyQt5.QtWidgets import (
 
 from config.scale import scale_px
 from lib.core.render.backends.qt.widgets import tier_d_seams
+from lib.core.render.backends.qt.widgets.file_picker import pick_open_file, pick_save_file
 from lib.core.render.backends.qt.widgets.game_manager_widgets import _GameCardWidget
 from lib.core.render.backends.qt.widgets.workbench_page import QtWorkbenchToolPage
 from lib.core.render.visuals.workbench_theme import get_workbench_colors
@@ -642,7 +642,7 @@ class GameManagerWindow(QtWorkbenchToolPage):
         self._set_status(f"已打开 {record.manifest.name}。")
 
     def _install_zip(self) -> None:
-        zip_path, _ = QFileDialog.getOpenFileName(
+        zip_path = pick_open_file(
             self,
             "选择游戏 ZIP",
             str(Path.home()),
@@ -673,11 +673,12 @@ class GameManagerWindow(QtWorkbenchToolPage):
             self._show_info("请先选择要打包导出的游戏。")
             return
         default_name = f"{record.manifest.game_id}-{record.manifest.version}.zip"
-        output_path, _ = QFileDialog.getSaveFileName(
+        output_path = pick_save_file(
             self,
             "导出游戏包",
             str(Path.home() / "Desktop" / default_name),
             "Game Packages (*.zip)",
+            default_suffix="zip",
         )
         if not output_path:
             return

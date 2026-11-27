@@ -27,7 +27,6 @@ from PyQt5.QtGui import QCursor
 from PyQt5.QtWidgets import (
     QButtonGroup,
     QApplication,
-    QFileDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -50,6 +49,7 @@ from config.scale import scale_px
 from lib.core.event.center import EventType, get_event_center
 from lib.core.logger import get_logger
 from lib.core.render.backends.qt.widgets import tier_d_seams
+from lib.core.render.backends.qt.widgets.file_picker import pick_directory
 from lib.core.render.backends.qt.widgets.office_chat_view import OfficeConversationView
 from lib.core.render.backends.qt.widgets.office_effort_slider import OfficeEffortSlider
 from lib.core.render.backends.qt.widgets.office_icons import render_office_icon
@@ -771,7 +771,7 @@ class OfficeWorkbenchPage(QtWorkbenchToolPage):
         self._ipc.submit("set_mode", mode=mode)
 
     def _choose_workspace(self) -> None:
-        selected = QFileDialog.getExistingDirectory(
+        selected = pick_directory(
             self,
             "选择工作目录",
             self._workspace_edit.text().strip() or str(_resolve_desktop_dir()),

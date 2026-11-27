@@ -19,7 +19,6 @@ from typing import Callable, Sequence
 from PyQt5.QtCore import QSize, Qt, pyqtSignal
 from PyQt5.QtGui import QFontMetrics
 from PyQt5.QtWidgets import (
-    QFileDialog,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -32,6 +31,7 @@ from PyQt5.QtWidgets import (
 from config.scale import scale_px
 from lib.core.logger import get_logger
 from lib.core.render.backends.qt.widgets import tier_d_seams
+from lib.core.render.backends.qt.widgets.file_picker import pick_directory
 from lib.core.render.backends.qt.widgets.workbench_settings_layout import (
     SETTINGS_FONT_SIZE,
     SettingsSection,
@@ -250,7 +250,7 @@ class OfficeManagerCard(SettingsSection):
     # ── 安装 / 删除 ──────────────────────────────────────────────────
 
     def _choose_install_source(self) -> None:
-        directory = QFileDialog.getExistingDirectory(self, self._pick_title)
+        directory = pick_directory(self, self._pick_title)
         if not directory:
             return
         self.install_from(Path(directory))
