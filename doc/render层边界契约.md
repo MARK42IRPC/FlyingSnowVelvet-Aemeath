@@ -4292,3 +4292,26 @@ import `chat.ollama`）继续留在 `test_ui_to_product_coupling_is_frozen` 清�
   `tests/test_update_uninstall_button.py` 新增 seam 类实例化回归。
 - 全量 `py -3 -m unittest <231 个 tests.test_*>`：2270 项通过（跳过 3）；
   `tests/dx` 全量 124 项通过（跳过 7）。
+
+## 81. 第八十一轮执行记录：全部可控弹窗收敛到公告基准共享实现
+
+**目标**：项目自己绘制的普通弹窗（公告、确认/提示、帮助、更新、办公审批、文件/目录选择器、语音包安装、二维码登录）不再各自实现外壳与 QSS，统一以公告窗口为视觉基准；Qt 引用继续只留在 `lib/core/render/`，DX/Win32 复用同一份几何与色板事实。
+
+**共享事实源**
+
+- `lib/core/render/popup_design.py`：纯标准库、96 DPI 基准的 `PopupChrome` 尺寸表、`WORKBENCH_LIGHT_TOKENS`/`WORKBENCH_DARK_TOKENS` 与 `POPUP_ACTION_TOKENS`（角色×状态→填充/描边/文字，`None` 表示透明）。
+- `lib/core/render/visuals/announcement_chrome.py`：唯一的公告外壳与 QSS。`announcement_shell_spec()` 产 `WindowSpec`；`announcement_body/plain_body/panel_body/fields_body/approval_body/update_body` 产正文；`resolve_popup_geometry()` 与 `build_popup_draw_chrome()` 把同一套边距、动作排布、角色配色转成 DrawBatch，供 DX 与原生绘制复用。`get_popup_chrome()` 只在 UI 缩放后暴露尺寸，Win32 直接用 `popup_chrome_dimensions()` 的 96 DPI 基线。
+- `lib/core/render/backends/qt/widgets/spec_host.py`：所有普通弹窗唯一的 Qt 宿主。`build_spec_window(spec, widget=...)` 可把自定义 `QtSpecWidget` 子类装入描述；`show_window(activate=...)`、`hide_dialog(immediate=...)`、`set_html(id, html)`（保留原文供主题重绘）与 `windowProgressRole/ windowActionRole` 动态属性由宿主统一处理。
+- `lib/core/render/backends/qt/widgets/message_box_host.py`：`ask_confirmation`（默认键为取消、破坏性主按钮走 danger）、`show_message`、`post_message`（模型态常驻提示，不阻塞回调线程）。
+- `lib/core/render/backends/qt/widgets/file_picker.py`：唯一文件/目录选择器，替换 7 处平台 `QFileDialog`；保留起始路径、过滤器、符号链接与 `.lnk` 语义，写入前不落盘，拒绝覆盖时留在选择器。
+
+**分类与例外**
+
+- 弹窗：公告、确认、提示（含非阻塞失败提示）、帮助、更新、办公审批、文件/目录选择器、语音包安装、二维码登录——全部使用共享外壳。
+- 非弹窗：主窗口、嵌入面板、挂接在桌宠上的命令输入/附属按钮/音响覆盖层保留各自的交互与几何契约，不套用弹窗外壳。
+- 系统拥有 UI：UAC、Windows `IFileDialog`（COM）等无法重宿主，保留系统外观；Python UI 尚未启动前的极端失败改用 `installer/windows/src/native_notice.c` 的 GDI 提示，`启动飞行雪绒.exe --show-startup-notice` 只从受限 stdin 读取标题/正文。
+- 独立 CMD 终端是实时控制台工具面（流式输出、spinner、自由边缘缩放），按“非弹窗工具面”处理，保留其控制台正文字色；其窗口装饰已不再复制确认/提示语义。
+
+**公告修复**：`AnnouncementController` 恢复可位置传入的 application 参数（原 `TypeError` 的根因），移除对不存在 `dialog.tick()` 的 TICK 订阅，弹窗不再把 application 当 QWidget 父级；`hide_semantics` 与 `non_closing_actions` 让关闭/最小化与业务动作各自归位；工具浮窗保留 `fade=not modal` 淡入淡出，并在显示/隐藏时按主题重刷而不重建控件树。
+
+**语音包失败提示**：安装后端以协作式 `request_cancel()` 取消，异常经 `voice_package_error_message()` 仅暴露安全阶段与受控错误、不透传原始异常/本机路径；完成回调按 generation 丢弃过期事件，前台与后台失败都经 `post_message` 给出同款非阻塞提示，取消与退出不弹失败提示。
