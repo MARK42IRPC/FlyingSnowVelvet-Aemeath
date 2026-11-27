@@ -12,7 +12,6 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 import uuid
@@ -32,7 +31,7 @@ from config.version_info import (
 )
 from lib.core.logger import get_logger
 from lib.core.process_utils import hidden_process_kwargs
-from lib.script.gsvmove.rar_backend import ensure_bundled_unrar
+from lib.script.gsvmove.rar_backend import RarBackendError, ensure_bundled_unrar
 
 
 logger = get_logger(__name__)
@@ -139,11 +138,55 @@ class VoicePackageCancelled(VoicePackageError):
     """Raised when the user cancels an active installation."""
 
 
+class _VoicePackageDetailError(VoicePackageError):
+    """Installer-authored detail containing only fixed copy or numeric codes."""
+
+
+class _VoicePackageStageError(_VoicePackageDetailError):
+    """A public-safe failure already labeled with its installation stage."""
+
+
+def _public_error_detail(exc: Exception) -> str:
+    """Never copy third-party exception strings, archive paths or command output."""
+    if isinstance(exc, _VoicePackageDetailError):
+        return str(exc)
+    if isinstance(exc, RarBackendError):
+        return "随程序提供的 UnRAR.exe 缺失或校验失败，请重新解压桌宠程序包"
+    if isinstance(exc, requests.HTTPError) and exc.response is not None:
+        code = exc.response.status_code
+        if isinstance(code, int):
+            return f"HTTP {code}"
+    if isinstance(exc, requests.Timeout):
+        return "网络请求超时"
+    if isinstance(exc, requests.ConnectionError):
+        return "网络连接失败"
+    if isinstance(exc, OSError):
+        detail = "权限不足或文件被占用" if isinstance(exc, PermissionError) else "系统读写出错"
+        code = getattr(exc, "winerror", None)
+        if isinstance(code, int):
+            return f"{detail}（WinError {code}）"
+        if isinstance(exc.errno, int):
+            return f"{detail}（errno {exc.errno}）"
+        return detail
+    return "安装过程中出现异常"
+
+
+def voice_package_error_message(exc: Exception, *, stage: str = "安装语音包") -> str:
+    """Format an install failure for both UI and logs using a caller-owned stage label."""
+    if isinstance(exc, _VoicePackageStageError):
+        return str(exc)
+    if isinstance(exc, VoicePackageCancelled):
+        return "安装已取消"
+    return f"{stage}失败：{_public_error_detail(exc)}"
+
+
 @dataclass(frozen=True)
 class VoicePackageValidation:
     valid: bool
     reason: str
     manifest: dict | None = None
+    # Detailed validation can identify a package member; install notices must not.
+    public_reason: str = ""
 
 
 @dataclass(frozen=True)
@@ -377,8 +420,9 @@ def _fetch_remote_archive_size(
                 )
             errors.append(f"{source_name}: response did not include archive size")
         except Exception as exc:
-            errors.append(f"{source_name}: {exc}")
-            logger.debug("语音包大小探测失败 [%s]: %s", source_name, exc)
+            detail = _public_error_detail(exc)
+            errors.append(f"{source_name}: {detail}")
+            logger.debug("语音包大小探测失败 [%s]: %s", source_name, detail)
     logger.debug("无法读取语音包远端大小 [%s]: %s", profile.key, "；".join(errors))
     return None
 
@@ -567,7 +611,7 @@ def _safe_relative_path(raw_path: str) -> Path:
         or ".." in pure.parts
         or re.match(r"^[A-Za-z]:", normalized)
     ):
-        raise VoicePackageError(f"压缩包包含不安全路径：{raw_path}")
+        raise _VoicePackageDetailError("压缩包包含不安全路径")
     return Path(*pure.parts)
 
 
@@ -601,8 +645,12 @@ def validate_voice_package(
     try:
         manifest_path = root / "manifest.json"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except Exception as exc:
-        return VoicePackageValidation(False, f"manifest.json 无法读取：{exc}")
+    except OSError as exc:
+        return VoicePackageValidation(False, f"manifest.json 无法读取：{_public_error_detail(exc)}")
+    except ValueError:
+        return VoicePackageValidation(False, "manifest.json 格式无效")
+    if not isinstance(manifest, dict):
+        return VoicePackageValidation(False, "manifest.json 格式无效")
 
     if manifest.get("format") != VOICE_PACKAGE_FORMAT:
         return VoicePackageValidation(False, "语音包格式标识不匹配", manifest)
@@ -636,9 +684,12 @@ def validate_voice_package(
         try:
             path = root / _safe_relative_path(relative)
             if not path.is_file() or path.stat().st_size <= 0:
-                return VoicePackageValidation(False, f"语音包缺少必要文件：{relative}", manifest)
+                return VoicePackageValidation(
+                    False, f"语音包缺少必要文件：{relative}", manifest, "语音包缺少必要文件",
+                )
         except OSError as exc:
-            return VoicePackageValidation(False, f"检查语音包文件失败：{exc}", manifest)
+            detail = _public_error_detail(exc)
+            return VoicePackageValidation(False, f"检查语音包文件失败：{detail}", manifest)
 
     if not verify_hashes:
         return VoicePackageValidation(True, "语音包可用", manifest)
@@ -651,7 +702,7 @@ def validate_voice_package(
             match = re.fullmatch(r"([0-9a-fA-F]{64})\s+(.+)", line.strip())
             if match is None:
                 if line.strip():
-                    raise VoicePackageError("SHA256SUMS.txt 包含无效行")
+                    raise _VoicePackageDetailError("SHA256SUMS.txt 包含无效行")
                 continue
             relative_text = match.group(2).replace("\\", "/")
             relative = _safe_relative_path(relative_text)
@@ -660,12 +711,15 @@ def validate_voice_package(
             if not path.is_file():
                 if relative_text.startswith(_OPTIONAL_CHECKSUM_PREFIXES):
                     continue
-                raise VoicePackageError(f"校验清单中的文件缺失：{relative_text}")
+                raise _VoicePackageDetailError("SHA-256 清单引用的文件缺失")
             checksum_entries.append((relative_text, path, match.group(1).lower()))
 
         for required in required_files:
             if required not in checksummed_paths and required != "SHA256SUMS.txt":
-                raise VoicePackageError(f"必要文件未纳入 SHA-256 清单：{required}")
+                return VoicePackageValidation(
+                    False, f"必要文件未纳入 SHA-256 清单：{required}", manifest,
+                    "必要文件未纳入 SHA-256 清单",
+                )
 
         total = sum(path.stat().st_size for _, path, _ in checksum_entries)
         current = 0
@@ -681,9 +735,13 @@ def validate_voice_package(
                     if progress_callback is not None:
                         progress_callback(current, total)
             if digest.hexdigest().lower() != expected:
-                raise VoicePackageError(f"语音包文件校验失败：{relative_text}")
+                return VoicePackageValidation(
+                    False, f"语音包文件校验失败：{relative_text}", manifest, "语音包文件校验失败",
+                )
+    except VoicePackageCancelled:
+        raise
     except Exception as exc:
-        return VoicePackageValidation(False, str(exc), manifest)
+        return VoicePackageValidation(False, _public_error_detail(exc), manifest)
 
     return VoicePackageValidation(True, "语音包校验通过", manifest)
 
@@ -848,14 +906,15 @@ def _list_archive_members(archive: Path, unrar_path: Path) -> tuple[str, ...]:
         rarfile.UNRAR_TOOL = str(unrar_path)
         with rarfile.RarFile(archive) as rar:
             if rar.needs_password():
-                raise VoicePackageError("语音包归档不应包含密码")
+                raise _VoicePackageDetailError("语音包归档不应包含密码")
             members = tuple(info.filename for info in rar.infolist())
     except VoicePackageError:
         raise
     except Exception as exc:
-        raise VoicePackageError(f"无法读取语音包归档：{exc}") from exc
+        detail = _public_error_detail(exc) if isinstance(exc, OSError) else "归档格式无效或读取失败"
+        raise _VoicePackageDetailError(f"无法读取语音包归档：{detail}") from exc
     if not members:
-        raise VoicePackageError("语音包中没有可解压文件")
+        raise _VoicePackageDetailError("语音包中没有可解压文件")
     for member in members:
         _safe_relative_path(member)
     return members
@@ -950,8 +1009,12 @@ class VoicePackageInstaller:
         self._active_sessions: dict[object, set[requests.Session]] = {}
         self._profile = get_voice_package_profile()
 
-    def cancel(self) -> None:
+    def request_cancel(self) -> None:
+        """Signal cooperative cancellation without waiting for I/O or processes."""
         self._cancel_event.set()
+
+    def cancel(self) -> None:
+        self.request_cancel()
         with self._process_lock:
             proc = self._active_process
         if proc is not None:
@@ -982,6 +1045,13 @@ class VoicePackageInstaller:
             ratio = max(0.0, min(1.0, float(current) / float(total)))
             value = int(round(start + ((end - start) * ratio)))
         self._report("extract", value, _INSTALL_PROGRESS_TOTAL, message)
+
+    def _report_validation_progress(self, current: int, total: int) -> None:
+        self._check_cancelled()
+        self._report_install_stage(
+            current, total, _INSTALL_EXTRACT_END, _INSTALL_VERIFY_END,
+            "正在执行 SHA-256 完整性校验",
+        )
 
     def _register_download_session(self, token: object, session: requests.Session) -> None:
         with self._network_lock:
@@ -1051,7 +1121,7 @@ class VoicePackageInstaller:
                         )
             with partial_path.open("rb") as stream:
                 if stream.read(8) != b"Rar!\x1a\x07\x01\x00":
-                    raise VoicePackageError("下载文件不是有效的 RAR5 语音包")
+                    raise _VoicePackageDetailError("下载文件不是有效的 RAR5 语音包")
             partial_path.replace(final_path)
             return final_path
         finally:
@@ -1090,9 +1160,11 @@ class VoicePackageInstaller:
             except VoicePackageCancelled:
                 raise
             except Exception as exc:
-                errors.append(f"{source_name}: {exc}")
-                logger.warning("语音包镜像下载失败 [%s]: %s", source_name, exc)
-        raise VoicePackageError("所有语音包下载源均失败：" + "；".join(errors))
+                self._check_cancelled()
+                detail = _public_error_detail(exc)
+                errors.append(f"{source_name}: {detail}")
+                logger.warning("语音包镜像下载失败 [%s]: %s", source_name, detail)
+        raise _VoicePackageStageError("下载语音包失败：" + "；".join(errors))
 
     def _prepare_backend_and_download(
         self,
@@ -1110,14 +1182,23 @@ class VoicePackageInstaller:
                     download_future.result()
                 except Exception:
                     pass
-                raise VoicePackageError(f"准备桌宠 RAR 解压后端失败：{exc}") from exc
+                if isinstance(exc, VoicePackageCancelled):
+                    raise
+                detail = _public_error_detail(exc)
+                raise _VoicePackageStageError(f"准备桌宠 RAR 解压后端失败：{detail}") from exc
             self._info_callback("内置 RAR 解压后端已就绪，语音包正在下载")
             source_name, archive = download_future.result()
         return unrar_path, source_name, archive
 
     def _extract(self, unrar_path: Path, archive: Path, extract_root: Path) -> None:
-        _list_archive_members(archive, unrar_path)
-        command = _extract_command(unrar_path, archive, extract_root)
+        self._info_callback("下载完成，正在检查语音包归档")
+        try:
+            _list_archive_members(archive, unrar_path)
+        except VoicePackageCancelled:
+            raise
+        except Exception as exc:
+            raise _VoicePackageStageError(f"检查语音包归档失败：{_public_error_detail(exc)}") from exc
+        self._check_cancelled()
         self._info_callback("正在解压语音包")
         # A solid archive writes a growing tree of large model files. Walking that
         # tree during each polling interval competes with UnRAR's metadata I/O and
@@ -1129,6 +1210,30 @@ class VoicePackageInstaller:
             0,
             "正在解压角色模型与公共模型",
         )
+        returncode = self._run_unrar_extract(unrar_path, archive, extract_root)
+        if returncode == 9 and os.name == "nt":
+            staged_unrar = self._stage_unrar_copy(unrar_path, extract_root.parent)
+            if staged_unrar is not None:
+                logger.warning(
+                    "内置 UnRAR 返回文件创建错误 (9)，改用安装暂存目录副本重试解压"
+                )
+                returncode = self._run_unrar_extract(staged_unrar, archive, extract_root)
+        if returncode == 9:
+            raise _VoicePackageDetailError(
+                "解压器无法在目标目录创建文件（错误代码 9），请检查目标磁盘写入权限或安全软件拦截"
+            )
+        if returncode != 0:
+            raise _VoicePackageDetailError(f"解压器返回错误代码 {returncode}")
+        self._report_install_stage(
+            self._profile.extracted_bytes,
+            self._profile.extracted_bytes,
+            0,
+            _INSTALL_EXTRACT_END,
+            "语音包解压完成，正在校验",
+        )
+
+    def _run_unrar_extract(self, unrar_path: Path, archive: Path, extract_root: Path) -> int:
+        command = _extract_command(unrar_path, archive, extract_root)
         proc = subprocess.Popen(
             command,
             cwd=str(archive.parent),
@@ -1143,19 +1248,33 @@ class VoicePackageInstaller:
             while proc.poll() is None:
                 self._check_cancelled()
                 time.sleep(0.2)
-            if proc.returncode != 0:
-                raise VoicePackageError(f"解压器返回错误代码 {proc.returncode}")
+            self._check_cancelled()
+            return int(proc.returncode or 0)
+        except VoicePackageCancelled:
+            _terminate_process(proc)
+            raise
         finally:
             with self._process_lock:
                 if self._active_process is proc:
                     self._active_process = None
-        self._report_install_stage(
-            self._profile.extracted_bytes,
-            self._profile.extracted_bytes,
-            0,
-            _INSTALL_EXTRACT_END,
-            "语音包解压完成，正在校验",
-        )
+
+    @staticmethod
+    def _stage_unrar_copy(unrar_path: Path, stage_root: Path) -> Path | None:
+        """Copy the verified UnRAR binary into stage_root so it inherits the target ACL.
+
+        If the app directory carries a Windows Low Mandatory Integrity Label (for
+        example after running inside a sandbox), executing UnRAR directly from
+        the app directory drops the child process to Low Integrity and blocks
+        file creation (exit code 9) in Medium-integrity target directories.
+        """
+        if not unrar_path.is_file() or not stage_root.is_dir():
+            return None
+        staged = stage_root / "UnRAR.exe"
+        try:
+            shutil.copyfile(unrar_path, staged)
+        except OSError:
+            return None
+        return staged
 
     @staticmethod
     def _locate_extracted_package(extract_root: Path) -> Path:
@@ -1171,7 +1290,7 @@ class VoicePackageInstaller:
         ]
         if len(candidates) == 1:
             return candidates[0]
-        raise VoicePackageError("解压结果中未找到唯一的 ONNX_aimisiV2 目录")
+        raise _VoicePackageDetailError("解压结果中未找到唯一的 ONNX_aimisiV2 目录")
 
     def _ensure_runtime_dependencies(self, package_root: Path) -> None:
         missing = missing_runtime_modules()
@@ -1202,36 +1321,35 @@ class VoicePackageInstaller:
             "-r", str(package_root / "requirements.txt"),
         ]
         started_at = time.monotonic()
-        with tempfile.TemporaryFile() as output:
-            proc = subprocess.Popen(
-                command,
-                stdin=subprocess.DEVNULL,
-                stdout=output,
-                stderr=subprocess.STDOUT,
-                **hidden_process_kwargs(),
-            )
-            with self._process_lock:
-                self._active_process = proc
-            try:
-                while proc.poll() is None:
-                    self._check_cancelled()
-                    if time.monotonic() - started_at >= 1200:
-                        _terminate_process(proc)
-                        raise VoicePackageError("ONNX 推理组件安装超时")
-                    time.sleep(0.2)
+        proc = subprocess.Popen(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            **hidden_process_kwargs(),
+        )
+        with self._process_lock:
+            self._active_process = proc
+        try:
+            while proc.poll() is None:
                 self._check_cancelled()
-            finally:
-                with self._process_lock:
-                    if self._active_process is proc:
-                        self._active_process = None
-
+                if time.monotonic() - started_at >= 1200:
+                    _terminate_process(proc)
+                    raise _VoicePackageDetailError("pip 安装超时")
+                time.sleep(0.2)
+            self._check_cancelled()
             if proc.returncode != 0:
-                output.seek(0)
-                detail = output.read().decode("utf-8", errors="replace").strip()
-                raise VoicePackageError(f"ONNX 推理组件安装失败：{detail[-500:]}")
+                raise _VoicePackageDetailError(f"pip 返回错误代码 {proc.returncode}")
+        except VoicePackageCancelled:
+            _terminate_process(proc)
+            raise
+        finally:
+            with self._process_lock:
+                if self._active_process is proc:
+                    self._active_process = None
         still_missing = missing_runtime_modules()
         if still_missing:
-            raise VoicePackageError("ONNX 推理组件仍然缺失：" + ", ".join(still_missing))
+            raise _VoicePackageDetailError("仍然缺少模块：" + ", ".join(still_missing))
         self._report(
             "extract",
             _INSTALL_RUNTIME_END,
@@ -1244,16 +1362,20 @@ class VoicePackageInstaller:
         target_root.parent.mkdir(parents=True, exist_ok=True)
         backup = target_root.with_name(f".{target_root.name}.previous-{uuid.uuid4().hex}")
         moved_old = False
+        moved_new = False
         activated = False
         try:
             if target_root.exists():
                 target_root.replace(backup)
                 moved_old = True
             source_root.replace(target_root)
+            moved_new = True
             _write_install_state(target_root, manifest)
             activated = True
         except Exception:
-            if target_root.exists():
+            # The old package is still at target_root when its first move fails.
+            # Only remove target_root after the new package was moved into place.
+            if moved_new and target_root.exists():
                 shutil.rmtree(target_root, ignore_errors=True)
             if moved_old and backup.exists():
                 backup.replace(target_root)
@@ -1270,48 +1392,63 @@ class VoicePackageInstaller:
         archive_bytes: int | None = None,
         before_activate: Callable[[], None] | None = None,
     ) -> VoiceInstallResult:
-        selected_profile = get_voice_package_profile(profile)
-        if archive_bytes is not None:
-            try:
-                remote_size = int(archive_bytes)
-            except (TypeError, ValueError):
-                remote_size = 0
-            if remote_size > 0:
-                selected_profile = replace(selected_profile, archive_bytes=remote_size)
-        self._profile = selected_profile
-        drive = Path(drive_root)
-        if not drive.is_dir():
-            raise VoicePackageError(f"所选磁盘不可用：{drive}")
-        free_bytes = shutil.disk_usage(drive).free
-        if free_bytes < self._profile.required_free_bytes:
-            free_gib = free_bytes / (1024 ** 3)
-            required_gib = self._profile.required_free_bytes / (1024 ** 3)
-            raise VoicePackageError(
-                f"磁盘空间不足：{self._profile.title}安装时约需 {required_gib:.1f} GiB，"
-                f"当前可用 {free_gib:.1f} GiB"
-            )
-
-        self._info_callback("磁盘空间检查完成，正在创建安装目录")
-        if importlib.util.find_spec("rarfile") is None:
-            raise VoicePackageError("缺少轻量 RAR 解析依赖，请先运行安装依赖脚本")
-        install_base = drive / "AemeathDeskPet" / "voice"
-        target_root = install_base / VOICE_PACKAGE_DIR_NAME
-        stage_root = install_base / f".voice-install-{uuid.uuid4().hex}"
-        download_dir = stage_root / "downloads"
-        extract_root = stage_root / "extract"
-        download_dir.mkdir(parents=True, exist_ok=False)
-        extract_root.mkdir(parents=True, exist_ok=False)
-
+        stage = "检查安装参数"
+        stage_root: Path | None = None
         try:
+            self._check_cancelled()
+            try:
+                selected_profile = get_voice_package_profile(profile)
+            except ValueError as exc:
+                raise _VoicePackageDetailError("所选语音包档位无效") from exc
+            if archive_bytes is not None:
+                try:
+                    remote_size = int(archive_bytes)
+                except (TypeError, ValueError):
+                    remote_size = 0
+                if remote_size > 0:
+                    selected_profile = replace(selected_profile, archive_bytes=remote_size)
+            self._profile = selected_profile
+
+            stage = "检查安装磁盘"
+            drive = Path(drive_root)
+            if not drive.is_dir():
+                raise _VoicePackageDetailError("所选磁盘不可用")
+            free_bytes = shutil.disk_usage(drive).free
+            if free_bytes < self._profile.required_free_bytes:
+                free_gib = free_bytes / (1024 ** 3)
+                required_gib = self._profile.required_free_bytes / (1024 ** 3)
+                raise _VoicePackageDetailError(
+                    f"磁盘空间不足：安装时约需 {required_gib:.1f} GiB，"
+                    f"当前可用 {free_gib:.1f} GiB"
+                )
+
+            stage = "创建安装目录"
+            self._info_callback("磁盘空间检查完成，正在创建安装目录")
+            install_base = drive / "AemeathDeskPet" / "voice"
+            target_root = install_base / VOICE_PACKAGE_DIR_NAME
+            staging_dir = install_base / f".voice-install-{uuid.uuid4().hex}"
+            staging_dir.mkdir(parents=True, exist_ok=False)
+            stage_root = staging_dir
+            download_dir = stage_root / "downloads"
+            extract_root = stage_root / "extract"
+            download_dir.mkdir()
+            extract_root.mkdir()
+
+            stage = "准备 RAR 解压后端与下载语音包"
+            if importlib.util.find_spec("rarfile") is None:
+                raise _VoicePackageDetailError("缺少轻量 RAR 解析依赖，请先运行安装依赖脚本")
             unrar_path, source_name, archive = self._prepare_backend_and_download(
                 download_dir,
                 self._profile,
             )
             self._check_cancelled()
+            stage = "解压语音包"
             self._extract(unrar_path, archive, extract_root)
             self._check_cancelled()
 
+            stage = "检查解压结果"
             package_root = self._locate_extracted_package(extract_root)
+            stage = "SHA-256 完整性校验"
             self._info_callback("正在执行 SHA-256 完整性校验")
             self._report(
                 "extract",
@@ -1322,25 +1459,21 @@ class VoicePackageInstaller:
             validation = validate_voice_package(
                 package_root,
                 verify_hashes=True,
-                progress_callback=lambda current, total: self._report_install_stage(
-                    current,
-                    total,
-                    _INSTALL_EXTRACT_END,
-                    _INSTALL_VERIFY_END,
-                    "正在执行 SHA-256 完整性校验",
-                ),
+                progress_callback=self._report_validation_progress,
             )
             if not validation.valid or validation.manifest is None:
-                raise VoicePackageError(validation.reason)
+                raise _VoicePackageDetailError(validation.public_reason or validation.reason)
             self._report(
                 "extract",
                 _INSTALL_VERIFY_END,
                 _INSTALL_PROGRESS_TOTAL,
                 "语音包完整性校验通过",
             )
+            stage = "准备 ONNX 推理组件"
             self._ensure_runtime_dependencies(package_root)
             self._check_cancelled()
 
+            stage = "激活新语音包"
             self._report(
                 "extract",
                 _INSTALL_RUNTIME_END,
@@ -1349,6 +1482,7 @@ class VoicePackageInstaller:
             )
             if before_activate is not None:
                 before_activate()
+            self._check_cancelled()
             self._activate_package(package_root, target_root, validation.manifest)
             self._info_callback("新语音包已激活，正在清理已记录的旧运行时")
             self._report(
@@ -1357,14 +1491,15 @@ class VoicePackageInstaller:
                 _INSTALL_PROGRESS_TOTAL,
                 "新语音包已激活，正在清理已记录的旧运行时",
             )
-            legacy_root, legacy_root_file = resolve_legacy_gsvmove_root(
-                scan_search_bases=False
-            )
-            warnings = remove_legacy_gsvmove_runtime(
-                legacy_root,
-                target_root,
-                legacy_root_file,
-            )
+            try:
+                legacy_root, legacy_root_file = resolve_legacy_gsvmove_root(scan_search_bases=False)
+                warnings = remove_legacy_gsvmove_runtime(legacy_root, target_root, legacy_root_file)
+            except Exception as exc:
+                # Voice package activation is already committed. Legacy cleanup
+                # must not turn a usable new package into an apparent failure.
+                warning = f"清理旧运行时失败：{_public_error_detail(exc)}"
+                logger.warning("%s", warning)
+                warnings = (warning,)
             self._report(
                 "extract",
                 _INSTALL_CLEANUP_END,
@@ -1378,6 +1513,11 @@ class VoicePackageInstaller:
                 "ONNX 语音包安装完成",
             )
             return VoiceInstallResult(target_root, source_name, warnings)
+        except (VoicePackageCancelled, _VoicePackageStageError):
+            raise
+        except Exception as exc:
+            raise _VoicePackageStageError(voice_package_error_message(exc, stage=stage)) from exc
         finally:
-            shutil.rmtree(stage_root, ignore_errors=True)
+            if stage_root is not None:
+                shutil.rmtree(stage_root, ignore_errors=True)
             self._close_download_sessions()
