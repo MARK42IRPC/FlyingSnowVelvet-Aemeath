@@ -21,6 +21,7 @@ from config.scale import scale_px
 from lib.core.compute_hub import get_compute_hub
 from lib.core.event.center import Event, EventType, get_event_center
 from lib.core.render.visuals.window_specs import (
+    UPDATE_CLOSE,
     UPDATE_MINIMIZE,
     UPDATE_PRIMARY,
     UPDATE_SECONDARY,

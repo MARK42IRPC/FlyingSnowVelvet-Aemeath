@@ -175,6 +175,42 @@ class AnnouncementLifecycleTests(unittest.TestCase):
         self.assertIsNotNone(window._opacity_animation)
         self.assertGreater(float(window._opacity_animation.endValue()), 0.0)
 
+    def test_update_dialog_close_and_minimize_semantics_respect_busy_state(self):
+        """Clicking close/minimize on DesktopPetUpdateDialog must work when idle and be blocked when busy."""
+        from lib.script.ui.update_dialog import DesktopPetUpdateDialog
+
+        dialog = DesktopPetUpdateDialog()
+        self.addCleanup(dialog.cleanup)
+        dialog._prepare_dialog(title="检查新版本", status="已完成", detail="当前已是最新")
+        dialog._set_actions(None, ("关闭", dialog.hide_dialog))
+        dialog._show_dialog()
+        self._pump()
+        self.assertTrue(dialog._window.is_requested_visible())
+
+        # Busy state disables close/minimize and ignores semantic close.
+        dialog._set_busy(True)
+        self.assertFalse(dialog._close_btn.isEnabled())
+        self.assertFalse(dialog._minimize_btn.isEnabled())
+        dialog._window.resolve_with("update_close")
+        self._pump()
+        self.assertTrue(dialog._window.is_requested_visible())
+
+        # Idle state hides via both close and minimize buttons without NameError.
+        dialog._set_busy(False)
+        self.assertTrue(dialog._close_btn.isEnabled())
+        self.assertTrue(dialog._minimize_btn.isEnabled())
+        dialog._close_btn.click()
+        self._pump()
+        self.assertFalse(dialog._window.is_requested_visible())
+
+        # Re-open and hide via primary action.
+        dialog._show_dialog()
+        self._pump()
+        self.assertTrue(dialog._window.is_requested_visible())
+        dialog._primary_btn.click()
+        self._pump()
+        self.assertFalse(dialog._window.is_requested_visible())
+
 
 if __name__ == "__main__":
     unittest.main()
