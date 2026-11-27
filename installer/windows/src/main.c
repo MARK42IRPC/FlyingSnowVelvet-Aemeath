@@ -26,6 +26,7 @@
 #include "resource.h"
 #include "payload_info.h"
 #include "installer_theme.h"
+#include "native_notice.h"
 #if defined(__has_include)
 #if __has_include("resource_urls.h")
 #include "resource_urls.h"
@@ -180,7 +181,6 @@ static HFONT g_heading_font;
 static HFONT g_body_font;
 static HFONT g_meta_font;
 static HANDLE g_embedded_font;
-static DWORD g_embedded_font_count;
 static HBRUSH g_canvas_brush;
 static HBRUSH g_surface_brush;
 static HBRUSH g_raised_brush;
@@ -210,25 +210,6 @@ static LRESULT CALLBACK wizard_window_proc(HWND window, UINT message, WPARAM wpa
 static LRESULT CALLBACK button_subclass_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam, UINT_PTR subclass_id, DWORD_PTR reference_data);
 static LRESULT CALLBACK progress_subclass_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam, UINT_PTR subclass_id, DWORD_PTR reference_data);
 static void prepare_progress_visual(HWND window, ProgressVisualState *state, COLORREF track_color, COLORREF fill_color, BOOL show_percent, const wchar_t *complete_text);
-
-static BOOL load_embedded_harmony_font(void) {
-    HINSTANCE instance = GetModuleHandleW(NULL);
-    HRSRC resource = FindResourceW(instance, MAKEINTRESOURCEW(IDR_HARMONY_FONT), RT_RCDATA);
-    HGLOBAL loaded;
-    DWORD size;
-    void *data;
-    if (resource == NULL) {
-        return FALSE;
-    }
-    size = SizeofResource(instance, resource);
-    loaded = LoadResource(instance, resource);
-    data = loaded == NULL ? NULL : LockResource(loaded);
-    if (size == 0 || data == NULL) {
-        return FALSE;
-    }
-    g_embedded_font = AddFontMemResourceEx(data, size, NULL, &g_embedded_font_count);
-    return g_embedded_font != NULL;
-}
 
 static BOOL copy_command_value(const wchar_t *value, wchar_t *output, size_t capacity) {
     if (value == NULL || *value == L'\0' || FAILED(StringCchCopyW(output, capacity, value))) {
@@ -2045,7 +2026,8 @@ static BOOL layout_controls(void) {
 
 static BOOL create_controls(void) {
     size_t index;
-    if (!load_embedded_harmony_font()) {
+    g_embedded_font = fsv_register_embedded_ui_font();
+    if (g_embedded_font == NULL) {
         installer_log_error(L"安装器特供字体加载失败，回退系统字体", GetLastError());
     }
     g_icon = create_label(NULL, IDC_PRODUCT_ICON, SS_ICON);
@@ -2565,7 +2547,7 @@ static LRESULT CALLBACK wizard_window_proc(HWND window, UINT message, WPARAM wpa
                     ARRAYSIZE(error),
                     L"无法准备安装目录或读取内置归档信息（错误代码 %lu）。",
                     GetLastError());
-                MessageBoxW(window, error, L"飞行雪绒安装器", MB_OK | MB_ICONERROR);
+                fsv_notice_error(window, L"安装目录不可用", error);
             }
             return 0;
         }
@@ -2596,7 +2578,7 @@ static LRESULT CALLBACK wizard_window_proc(HWND window, UINT message, WPARAM wpa
         }
         if (id == IDC_FINISH && HIWORD(wparam) == BN_CLICKED) {
             if (g_context.installed && !launch_installed_app(g_context.install_directory)) {
-                MessageBoxW(window, L"启动飞行雪绒失败，请手动运行安装目录中的“启动飞行雪绒.exe”。", L"飞行雪绒安装器", MB_OK | MB_ICONWARNING);
+                fsv_notice_error(window, L"启动失败", L"启动飞行雪绒失败，请手动运行安装目录中的“启动飞行雪绒.exe”。");
                 return 0;
             }
             DestroyWindow(window);
@@ -2637,12 +2619,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, 
     g_dpi = GetDpiForSystem();
     set_install_error(&g_context, FSV_ONLINE_BUILD ? L"在线安装未完成。" : L"离线安装未完成。" );
     if (!parse_update_arguments(command_line)) {
-        MessageBoxW(NULL, L"安装器启动参数无效。", L"飞行雪绒安装器", MB_OK | MB_ICONERROR);
+        fsv_notice_error(NULL, L"飞行雪绒安装器", L"安装器启动参数无效。");
         return 1;
     }
     com_result = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
     if (FAILED(com_result)) {
-        MessageBoxW(NULL, L"无法初始化 Windows 安装组件。", L"飞行雪绒安装器", MB_OK | MB_ICONERROR);
+        fsv_notice_error(NULL, L"飞行雪绒安装器", L"无法初始化 Windows 安装组件。");
         return 1;
     }
     controls.dwSize = sizeof(controls);
@@ -2654,17 +2636,17 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, 
     if (g_has_requested_directory) {
         if (!canonicalize_path(g_requested_directory, g_context.install_directory, ARRAYSIZE(g_context.install_directory))) {
             CoUninitialize();
-            MessageBoxW(NULL, L"更新目标目录无效。", L"飞行雪绒安装器", MB_OK | MB_ICONERROR);
+            fsv_notice_error(NULL, L"飞行雪绒安装器", L"更新目标目录无效。");
             return 1;
         }
     } else if (!get_default_directory(g_context.install_directory, ARRAYSIZE(g_context.install_directory))) {
         CoUninitialize();
-        MessageBoxW(NULL, L"无法确定默认安装目录。", L"飞行雪绒安装器", MB_OK | MB_ICONERROR);
+        fsv_notice_error(NULL, L"飞行雪绒安装器", L"无法确定默认安装目录。");
         return 1;
     }
     if (!create_wizard_window() || !create_controls()) {
         CoUninitialize();
-        MessageBoxW(NULL, L"无法创建安装器窗口。", L"飞行雪绒安装器", MB_OK | MB_ICONERROR);
+        fsv_notice_error(NULL, L"飞行雪绒安装器", L"无法创建安装器窗口。");
         return 1;
     }
     g_context.window = g_window;

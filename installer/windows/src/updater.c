@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include "native_notice.h"
 #include "zip_extract.h"
 
 #pragma comment(lib, "bcrypt.lib")
@@ -835,9 +836,9 @@ static BOOL launch_restart_helper(const UpdateOptions *options) {
 
 static void show_failure(const wchar_t *message, DWORD error) {
     wchar_t text[1024];
-    StringCchPrintfW(text, ARRAYSIZE(text), L"%ls\n\n错误代码：%lu\n日志：%ls",
+    StringCchPrintfW(text, ARRAYSIZE(text), L"%ls\r\n\r\n错误代码：%lu\r\n日志：%ls",
                      message, error, g_log_path);
-    MessageBoxW(NULL, text, L"飞行雪绒更新失败", MB_OK | MB_ICONERROR);
+    fsv_notice_error(NULL, L"飞行雪绒更新失败", text);
 }
 
 static BOOL launch_installed_app(const wchar_t *install_root) {
@@ -878,7 +879,7 @@ static int run_update(PWSTR command_line) {
     DWORD error = ERROR_INSTALL_FAILURE;
 
     if (!parse_options(command_line, &options)) {
-        MessageBoxW(NULL, L"更新器启动参数无效。", L"飞行雪绒更新失败", MB_OK | MB_ICONERROR);
+        fsv_notice_error(NULL, L"飞行雪绒更新失败", L"更新器启动参数无效。");
         return 1;
     }
     if (GetModuleFileNameW(NULL, module, ARRAYSIZE(module)) == 0 ||
@@ -895,7 +896,7 @@ static int run_update(PWSTR command_line) {
        whole install root busy when rename() runs.  Move to the private
        workspace before touching anything else. */
     if (!SetCurrentDirectoryW(options.workspace)) {
-        MessageBoxW(NULL, L"无法切换到更新工作目录。", L"飞行雪绒更新失败", MB_OK | MB_ICONERROR);
+        fsv_notice_error(NULL, L"飞行雪绒更新失败", L"无法切换到更新工作目录。");
         return 1;
     }
     updater_log(L"独立更新器启动");

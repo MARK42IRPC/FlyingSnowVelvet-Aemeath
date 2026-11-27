@@ -15,6 +15,7 @@
 
 #include "resource.h"
 #include "installer_theme.h"
+#include "native_notice.h"
 
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "gdi32.lib")
@@ -69,7 +70,6 @@ static HFONT g_title_font;
 static HFONT g_body_font;
 static HFONT g_meta_font;
 static HANDLE g_embedded_font;
-static DWORD g_embedded_font_count;
 static HBRUSH g_canvas_brush;
 static HBRUSH g_surface_brush;
 static HBRUSH g_raised_brush;
@@ -740,28 +740,6 @@ static BOOL launch_cleanup_helper(const wchar_t *install_root, BOOL delete_voice
     return TRUE;
 }
 
-static BOOL load_embedded_harmony_font(void) {
-    HINSTANCE instance = GetModuleHandleW(NULL);
-    HRSRC resource = FindResourceW(instance, MAKEINTRESOURCEW(IDR_HARMONY_FONT), RT_RCDATA);
-    HGLOBAL loaded;
-    DWORD size;
-    const void *data;
-    if (resource == NULL) {
-        return FALSE;
-    }
-    size = SizeofResource(instance, resource);
-    loaded = LoadResource(instance, resource);
-    if (size == 0 || loaded == NULL) {
-        return FALSE;
-    }
-    data = LockResource(loaded);
-    if (data == NULL) {
-        return FALSE;
-    }
-    g_embedded_font = AddFontMemResourceEx((void *)data, size, NULL, &g_embedded_font_count);
-    return g_embedded_font != NULL;
-}
-
 static COLORREF mix_color(COLORREF from, COLORREF to, int amount) {
     int inverse = 100 - amount;
     return RGB(
@@ -1419,9 +1397,9 @@ static LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LP
                 delete_voice ? L"同时删除语音包与语音推理运行时。\r\n" : L"语音包将保留。\r\n",
                 delete_data ? L"同时删除记忆、用户配置、APikey 与桌面办公区。" : L"用户数据将保留。"
             );
-            if (MessageBoxW(window, confirm, L"确认卸载飞行雪绒", MB_OKCANCEL | MB_ICONWARNING | MB_DEFBUTTON2) == IDOK) {
+            if (fsv_notice_show(window, L"确认卸载飞行雪绒", confirm, L"卸载飞行雪绒", TRUE)) {
                 if (!launch_cleanup_helper(g_cleanup.install_root, delete_voice, delete_data)) {
-                    MessageBoxW(window, L"无法启动内置卸载清理程序。", L"卸载飞行雪绒", MB_OK | MB_ICONERROR);
+                    fsv_notice_error(window, L"卸载启动失败", L"无法启动内置卸载清理程序。");
                 } else {
                     DestroyWindow(window);
                 }
@@ -1449,7 +1427,8 @@ static LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LP
 
 static BOOL initialize_ui(void) {
     INITCOMMONCONTROLSEX controls;
-    if (!load_embedded_harmony_font()) {
+    g_embedded_font = fsv_register_embedded_ui_font();
+    if (g_embedded_font == NULL) {
         OutputDebugStringW(L"uninstaller: embedded font unavailable, falling back to system font\n");
     }
     g_canvas_brush = CreateSolidBrush(FSV_COLOR_CANVAS);
@@ -1507,7 +1486,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, 
     g_dpi = GetDpiForSystem();
     com_result = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
     if (FAILED(com_result)) {
-        MessageBoxW(NULL, L"无法初始化 Windows 卸载组件。", L"卸载飞行雪绒", MB_OK | MB_ICONERROR);
+        fsv_notice_error(NULL, L"卸载飞行雪绒", L"无法初始化 Windows 卸载组件。");
         return 1;
     }
     controls.dwSize = sizeof(controls);
@@ -1523,7 +1502,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, 
             !marker_is_valid(g_cleanup.install_root)) {
             LocalFree(argv);
             CoUninitialize();
-            MessageBoxW(NULL, L"拒绝清理：安装目录标记无效。", L"卸载飞行雪绒", MB_OK | MB_ICONERROR);
+            fsv_notice_error(NULL, L"卸载飞行雪绒", L"拒绝清理：安装目录标记无效。");
             return 1;
         }
         parsed_pid = wcstoul(argv[3], &end, 10);
@@ -1541,7 +1520,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, 
             } else {
                 LocalFree(argv);
                 CoUninitialize();
-                MessageBoxW(NULL, L"拒绝清理：未知的清理参数。", L"卸载飞行雪绒", MB_OK | MB_ICONERROR);
+                fsv_notice_error(NULL, L"卸载飞行雪绒", L"拒绝清理：未知的清理参数。");
                 return 1;
             }
         }
@@ -1555,14 +1534,14 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, 
     } else if (argv != NULL && argc > 1) {
         LocalFree(argv);
         CoUninitialize();
-        MessageBoxW(NULL, L"卸载器启动参数无效。", L"卸载飞行雪绒", MB_OK | MB_ICONERROR);
+        fsv_notice_error(NULL, L"卸载飞行雪绒", L"卸载器启动参数无效。");
         return 1;
     } else if (!resolve_install_root(g_cleanup.install_root, ARRAYSIZE(g_cleanup.install_root))) {
         if (argv != NULL) {
             LocalFree(argv);
         }
         CoUninitialize();
-        MessageBoxW(NULL, L"安装目录不完整，卸载器已拒绝执行。", L"卸载飞行雪绒", MB_OK | MB_ICONERROR);
+        fsv_notice_error(NULL, L"卸载飞行雪绒", L"安装目录不完整，卸载器已拒绝执行。");
         return 1;
     }
     if (argv != NULL) {
@@ -1570,7 +1549,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, 
     }
     if (!initialize_ui()) {
         CoUninitialize();
-        MessageBoxW(NULL, L"无法创建卸载器窗口。", PRODUCT_NAME, MB_OK | MB_ICONERROR);
+        fsv_notice_error(NULL, PRODUCT_NAME, L"无法创建卸载器窗口。");
         return 1;
     }
     ShowWindow(g_window, SW_SHOWNORMAL);

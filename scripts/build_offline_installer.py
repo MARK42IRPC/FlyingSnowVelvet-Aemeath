@@ -10,6 +10,7 @@ is performed.
 from __future__ import annotations
 
 import argparse
+from dataclasses import fields
 from importlib import metadata
 import hashlib
 import json
@@ -29,6 +30,8 @@ PRODUCT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_INSTALLER_SOURCE = PRODUCT_ROOT / "installer" / "windows"
 HARMONY_FONT_SOURCE = PRODUCT_ROOT / "resc" / "FRONTS" / "HarmonyOS_Sans_SC_Bold.ttf"
 HARMONY_FONT_SUBSET_NAME = "FlyingSnowVelvet-Installer-HarmonyOS-Sans-SC-Subset.ttf"
+NATIVE_NOTICE_SOURCES = ("native_notice.c", "native_notice.h")
+NATIVE_UI_SOURCES = ("main.c", "uninstaller.c", "launcher.c", "updater.c", NATIVE_NOTICE_SOURCES[0])
 MAGIC = b"FSV-OFFLINE-PAYLOAD-2"
 TRAILER_FORMAT = "<24sQ32s"
 TRAILER_SIZE = struct.calcsize(TRAILER_FORMAT)
@@ -86,16 +89,18 @@ ARCHIVE_ENTRY_DATE_TIME = (1980, 1, 1, 0, 0, 0)
 _VS_ENVIRONMENTS: dict[str, dict[str, str]] = {}
 
 
-def create_installer_font_subset(output: Path, source: Path = HARMONY_FONT_SOURCE) -> Path:
-    """Create the small font used only by the native installer UI."""
+def create_installer_font_subset(
+    output: Path,
+    source: Path = HARMONY_FONT_SOURCE,
+    *,
+    source_root: Path = DEFAULT_INSTALLER_SOURCE / "src",
+) -> Path:
+    """Create the small font for the native Windows entry points."""
     from fontTools import subset
     from fontTools.ttLib import TTFont
     source_text = "\n".join(
-        path.read_text(encoding="utf-8", errors="ignore")
-        for path in (
-            PRODUCT_ROOT / "installer" / "windows" / "src" / "main.c",
-            PRODUCT_ROOT / "installer" / "windows" / "src" / "uninstaller.c",
-        )
+        (source_root / name).read_text(encoding="utf-8-sig")
+        for name in NATIVE_UI_SOURCES
     )
     chars = set(chr(code) for code in range(0x20, 0x7F))
     for literal in re.findall(r'L\"((?:\\.|[^\"])*)\"', source_text):
@@ -128,17 +133,33 @@ def create_installer_font_subset(output: Path, source: Path = HARMONY_FONT_SOURC
 
 
 def _write_installer_theme_header(output: Path) -> None:
-    """Compile the announcement's light palette into the standalone native UI."""
+    """Project the shared announcement palette and 96-DPI metrics into C."""
     if str(PRODUCT_ROOT) not in sys.path:
         sys.path.insert(0, str(PRODUCT_ROOT))
-    from lib.core.render.visuals.announcement_visuals import ANNOUNCEMENT_LIGHT_COLORS
+    from lib.core.render.popup_design import (
+        POPUP_ACTION_TOKENS,
+        POPUP_DISABLED_TOKENS,
+        WORKBENCH_LIGHT_TOKENS,
+        popup_chrome_dimensions,
+    )
 
-    lines = ["#pragma once", ""]
-    for name, color in ANNOUNCEMENT_LIGHT_COLORS.items():
-        lines.append(
-            f"#define FSV_COLOR_{name.upper()} RGB({color.red}, {color.green}, {color.blue})"
-        )
+    lines = ["#pragma once", "", "/* Generated from lib/core/render/popup_design.py. */"]
+    for name, color in WORKBENCH_LIGHT_TOKENS.items():
+        red, green, blue = (int(color[index:index + 2], 16) for index in (1, 3, 5))
+        lines.append(f"#define FSV_COLOR_{name.upper()} RGB({red}, {green}, {blue})")
+    lines.append("")
+    chrome = popup_chrome_dimensions()
+    for field in fields(chrome):
+        lines.append(f"#define FSV_POPUP_{field.name.upper()} {getattr(chrome, field.name)}")
+    lines.append("")
+    for role, states in POPUP_ACTION_TOKENS.items():
+        for state, tokens in states.items():
+            colors = ", ".join(f"FSV_COLOR_{token.upper()}" if token else "CLR_INVALID" for token in tokens)
+            lines.append(f"#define FSV_POPUP_ACTION_{role.upper()}_{state.upper()} {{{colors}}}")
+    disabled = ", ".join(f"FSV_COLOR_{token.upper()}" for token in POPUP_DISABLED_TOKENS)
+    lines.append(f"#define FSV_POPUP_ACTION_DISABLED {{{disabled}}}")
     output.write_text("\n".join(lines) + "\n", encoding="ascii")
+
 
 def _write_resource_urls_header(output: Path) -> None:
     """Write the two version-agnostic release-slot bases.
@@ -778,6 +799,7 @@ def _prepare_native_sources(installer_source: Path) -> tuple[Path, Path, Path]:
         source_root / "zip_extract.h",
         source_root / "launcher.c",
         source_root / "uninstaller.c",
+        *(source_root / name for name in NATIVE_NOTICE_SOURCES),
         source_root / "updater.c",
         source_root / "resource.rc",
         source_root / "resource.h",
@@ -832,17 +854,17 @@ def _compile_payload_binary(
     source_name: str,
     manifest_name: str,
     output_name: str,
-    embed_font: bool = False,
+    font_subset: Path,
     extra_sources: tuple[str, ...] = (),
     native_dependencies: bool = False,
 ) -> Path:
     compile_root.mkdir(parents=True, exist_ok=True)
-    for name in (source_name, manifest_name, "resource.h", *extra_sources):
+    sources = (*NATIVE_NOTICE_SOURCES, *extra_sources)
+    for name in (source_name, manifest_name, "resource.h", *sources):
         shutil.copy2(source_root / name, compile_root / name)
     shutil.copy2(icon_source, compile_root / "icon.ico")
     _write_installer_theme_header(compile_root / "installer_theme.h")
-    if embed_font:
-        create_installer_font_subset(compile_root / "HarmonyOS_Sans_SC_Bold.ttf")
+    shutil.copy2(font_subset, compile_root / "HarmonyOS_Sans_SC_Bold.ttf")
     native_arguments: list[str] = []
     if native_dependencies:
         zlib_root, lzma_root = _prepare_native_dependencies(source_root, compile_root)
@@ -855,7 +877,7 @@ def _compile_payload_binary(
             '"lzma\\LzmaDec.c"',
             '"lzma\\Lzma2Dec.c"',
         ])
-    _write_resource_script(compile_root / "native.rc", manifest_name, include_font=embed_font)
+    _write_resource_script(compile_root / "native.rc", manifest_name, include_font=True)
     run_vs_command(vsdevcmd, 'rc.exe /nologo /fo"native.res" "native.rc"', compile_root)
     run_vs_command(
         vsdevcmd,
@@ -869,7 +891,7 @@ def _compile_payload_binary(
             "/utf-8",
             f'/Fe:"{output_name}"',
             f'"{source_name}"',
-            *(f'"{name}"' for name in extra_sources if Path(name).suffix.casefold() == ".c"),
+            *(f'"{name}"' for name in sources if Path(name).suffix.casefold() == ".c"),
             *native_arguments,
             '"native.res"',
             "/Brepro",
@@ -898,6 +920,7 @@ def compile_payload_binaries(
     compile_root: Path,
 ) -> None:
     source_root, _, _ = _prepare_native_sources(installer_source)
+    font_subset = create_installer_font_subset(compile_root / HARMONY_FONT_SUBSET_NAME, source_root=source_root)
     launcher = _compile_payload_binary(
         source_root=source_root,
         icon_source=icon_source,
@@ -906,6 +929,7 @@ def compile_payload_binaries(
         source_name="launcher.c",
         manifest_name="launcher.manifest",
         output_name="FSVLauncher.exe",
+        font_subset=font_subset,
     )
     uninstaller = _compile_payload_binary(
         source_root=source_root,
@@ -915,7 +939,7 @@ def compile_payload_binaries(
         source_name="uninstaller.c",
         manifest_name="uninstaller.manifest",
         output_name="FlyingSnowVelvetUninstaller.exe",
-        embed_font=True,
+        font_subset=font_subset,
     )
     updater = _compile_payload_binary(
         source_root=source_root,
@@ -925,6 +949,7 @@ def compile_payload_binaries(
         source_name="updater.c",
         manifest_name="updater.manifest",
         output_name="FSVUpdater.exe",
+        font_subset=font_subset,
         extra_sources=("zip_extract.c", "zip_extract.h"),
         native_dependencies=True,
     )
@@ -1029,6 +1054,7 @@ def compile_installer(
         "resource.rc",
         "resource.h",
         "installer.manifest",
+        *NATIVE_NOTICE_SOURCES,
     ):
         shutil.copy2(source_root / name, compile_root / name)
     lzma_compile_root = compile_root / "lzma"
@@ -1037,7 +1063,7 @@ def compile_installer(
         shutil.copy2(lzma_root / name, lzma_compile_root / name)
     shutil.copy2(icon_source, compile_root / "icon.ico")
     installer_font = compile_root / HARMONY_FONT_SUBSET_NAME
-    create_installer_font_subset(installer_font)
+    create_installer_font_subset(installer_font, source_root=source_root)
     shutil.copy2(installer_font, compile_root / "HarmonyOS_Sans_SC_Bold.ttf")
     _write_installer_theme_header(compile_root / "installer_theme.h")
     _write_resource_urls_header(compile_root / "resource_urls.h")
@@ -1061,6 +1087,7 @@ def compile_installer(
             '/I"lzma"',
             "/Fe:FlyingSnowVelvetInstaller.base.exe",
             '"main.c"',
+            '"native_notice.c"',
             '"zip_extract.c"',
             '"lzma\\LzmaDec.c"',
             '"lzma\\Lzma2Dec.c"',
