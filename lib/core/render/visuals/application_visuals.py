@@ -4,7 +4,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass, replace
 from io import BytesIO
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from PIL import Image
 
@@ -17,9 +17,6 @@ from lib.core.render.layers import (
     INNER,
     Layer,
     MIDDLE,
-    OVERLAY,
-    OVERLAY_SECOND,
-    OVERLAY_THIRD,
 )
 
 from .anchor_graph import COMMAND_ACTION_GRAPH
@@ -48,6 +45,9 @@ from .screen import clamp_rect_position
 from .types import Color, FontSpec, Point, Rect, Size
 from .workbench_tokens import get_workbench_token_colors
 
+if TYPE_CHECKING:
+    from .announcement_chrome import PopupAction
+
 
 @dataclass(frozen=True, slots=True)
 class QrPanelLayout:
@@ -57,6 +57,7 @@ class QrPanelLayout:
     qr_rect: Rect
     status_rect: Rect
     action_rect: Rect
+    chrome: object | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -263,43 +264,54 @@ def qr_panel_action_text(panel_kind: str) -> str:
     return "退出扫码" if str(panel_kind or "").strip() == "music-login" else "关闭窗口"
 
 
-def resolve_qr_panel_layout(size: tuple[float, float] | None = None) -> QrPanelLayout:
-    width, height = size or qr_panel_size()
-    width = max(1, int(round(float(width))))
-    height = max(1, int(round(float(height))))
-    layer = scale_px(2, min_abs=1)
-    border = layer * 2
-    title_height = scale_px(36, min_abs=1)
-    qr_size = scale_px(240, min_abs=1)
-    button_width = scale_px(132, min_abs=1)
-    button_height = scale_px(30, min_abs=1)
-    button_bottom = scale_px(12, min_abs=1)
-    status_gap = scale_px(8, min_abs=1)
+def qr_image_side() -> int:
+    """QR image size at the standard dialog size and UI scale."""
+    return scale_px(240, min_abs=1)
 
-    inner = Rect(border, border, max(0, width - border * 2), max(0, height - border * 2))
-    title = Rect(inner.x, inner.y, inner.width, title_height)
-    qr_x = inner.x + (inner.width - qr_size) / 2.0
-    qr_y = title.y + title.height + scale_px(10, min_abs=1)
-    qr = Rect(qr_x, qr_y, qr_size, qr_size)
-    action = Rect(
-        inner.x + (inner.width - button_width) / 2.0,
-        inner.y + inner.height - button_bottom - button_height,
-        button_width,
-        button_height,
+
+def _qr_popup_action(text: str = "", *, state: str = "normal") -> PopupAction:
+    from .announcement_chrome import PopupAction
+
+    return PopupAction("action", text, width=scale_px(132, min_abs=1), state=state)
+
+
+def _qr_popup_size(size: tuple[float, float] | None) -> Size:
+    width, height = size or qr_panel_size()
+    return Size(max(1, int(round(width))), max(1, int(round(height))))
+
+
+def _qr_body_rects(body: Rect) -> tuple[Rect, Rect]:
+    padding = scale_px(5, min_abs=1)
+    gap = scale_px(8, min_abs=2)
+    status_height = scale_px(28, min_abs=1)
+    side = max(
+        0,
+        min(
+            qr_image_side(),
+            body.width - 2 * padding,
+            body.height - 2 * padding - gap - status_height,
+        ),
     )
-    status_top = qr.y + qr.height + scale_px(10, min_abs=1)
-    status_bottom = action.y - status_gap
-    status_height = max(
-        scale_px(24, min_abs=1),
-        min(scale_px(80, min_abs=1), status_bottom - status_top),
-    )
+    qr = Rect(body.x + (body.width - side) / 2, body.y + padding, side, side)
+    status_y = qr.bottom + gap
     status = Rect(
-        inner.x + scale_px(10, min_abs=1),
-        status_top,
-        max(0, inner.width - scale_px(20, min_abs=1)),
-        max(0, status_height),
+        body.x + padding,
+        status_y,
+        max(0, body.width - 2 * padding),
+        max(0, body.bottom - padding - status_y),
     )
-    return QrPanelLayout(Size(width, height), inner, title, qr, status, action)
+    return qr, status
+
+
+def resolve_qr_panel_layout(size: tuple[float, float] | None = None) -> QrPanelLayout:
+    """Native QR panel layout, including the shared popup action hit rectangle."""
+    from .announcement_chrome import resolve_popup_geometry
+
+    panel_size = _qr_popup_size(size)
+    chrome = resolve_popup_geometry(panel_size, actions=(_qr_popup_action(),))
+    qr, status = _qr_body_rects(chrome.body)
+    return QrPanelLayout(panel_size, chrome.body, chrome.header, qr, status,
+                         dict(chrome.action_rects)["action"], chrome)
 
 
 def decode_panel_image(payload: bytes, *, resource_prefix: str = "panel-image") -> ImageResource | None:
@@ -778,6 +790,56 @@ def resolve_bubble_geometry(
     return Rect(x, y, width, height)
 
 
+def build_qr_image_batch(
+    rect: Rect,
+    placeholder: str,
+    resource: ImageResource | None = None,
+    *,
+    layer: int = int(Layer.DIALOG),
+    qr_background: bool = True,
+) -> DrawBatch:
+    """Present the scannable image or loading placeholder inside a popup body."""
+    commands = []
+    if resource is None:
+        # The placeholder is text only; the body card supplies the backdrop.
+        colors = get_workbench_token_colors("light" if qr_background else None)
+        commands.append(TextCommand(
+            str(placeholder or ""),
+            FontSpec(get_ui_font_family(), max(1, int(FONT.get("ui_size", 12)))),
+            colors["text_dim"],
+            rect,
+            alignment=int(TextAlignment.HCENTER | TextAlignment.VCENTER),
+            layer=layer,
+            z=CONTENT,
+        ))
+        return DrawBatch(tuple(commands))
+
+    if qr_background:
+        commands.append(RectCommand(rect, fill=Color(255, 255, 255), layer=layer, z=MIDDLE))
+    frame = resource.frames[0]
+    scale = min(rect.width / frame.width, rect.height / frame.height)
+    target = Size(max(1, frame.width * scale), max(1, frame.height * scale))
+    position = Point(
+        rect.x + (rect.width - target.width) / 2.0,
+        rect.y + (rect.height - target.height) / 2.0,
+    )
+    commands.append(SpriteCommand(
+        resource.resource_id,
+        1,
+        0,
+        frame,
+        position,
+        1.0,
+        False,
+        1.0,
+        layer,
+        CONTENT,
+        4,
+        target_size=target,
+    ))
+    return DrawBatch(tuple(commands), (ResourceRevision(resource.resource_id, 1),))
+
+
 def build_qr_panel_visual(
     title: str,
     status: str,
@@ -793,132 +855,31 @@ def build_qr_panel_visual(
     action_state: str = "normal",
     action_enabled: bool = True,
 ) -> ApplicationPanelVisual:
-    layout = resolve_qr_panel_layout(size)
-    width = layout.size.width
-    height = layout.size.height
-    border_width = scale_px(2, min_abs=1)
-    font_size = max(1, int(FONT.get("ui_size", 12)))
-    family = get_ui_font_family()
-    # 浮窗跟随工作台明暗主题，色板只从共享 token 表读取。
+    """Compose the native QR body with the same shell used by desktop announcements."""
+    from .announcement_chrome import build_popup_draw_chrome
+
+    panel_size = _qr_popup_size(size)
+    state = str(action_state or "normal").strip().lower() if action_enabled else "disabled"
+    action_text = str(action_text or "").strip()
+    actions = (_qr_popup_action(action_text, state=state),) if action_text else ()
+    chrome = build_popup_draw_chrome(panel_size, title=title, actions=actions, layer=layer)
+    qr_rect, status_rect = _qr_body_rects(chrome.body)
+    image = build_qr_image_batch(qr_rect, placeholder, qr_resource, layer=layer,
+                                 qr_background=qr_background)
     tokens = get_workbench_token_colors()
-    border = tokens["border_strong"]
-    middle = tokens["border"]
-    background = tokens["surface"]
-    text_color = tokens["text"]
-    muted_text_color = tokens["text_muted"]
-    commands = [
-        RectCommand(Rect(0, 0, width, height), fill=border, layer=layer),
-        RectCommand(
-            Rect(border_width, border_width, width - border_width * 2, height - border_width * 2),
-            fill=middle,
-            layer=layer,
-            z=FRAME,
-        ),
-        RectCommand(layout.inner_rect, fill=background, layer=layer, z=INNER),
-        TextCommand(
-            str(title or ""),
-            FontSpec(family, font_size, True),
-            text_color,
-            layout.title_rect,
-            alignment=int(TextAlignment.HCENTER | TextAlignment.VCENTER),
-            layer=layer,
-            z=MIDDLE,
-        ),
-    ]
-    if qr_background:
-        commands.append(RectCommand(
-            layout.qr_rect,
-            fill=Color(255, 255, 255),
-            layer=layer,
-            z=MIDDLE,
-        ))
-    revisions = []
-    if qr_resource is not None:
-        frame = qr_resource.frames[0]
-        scale = min(layout.qr_rect.width / frame.width, layout.qr_rect.height / frame.height)
-        target = Size(max(1, frame.width * scale), max(1, frame.height * scale))
-        position = Point(
-            layout.qr_rect.x + (layout.qr_rect.width - target.width) / 2.0,
-            layout.qr_rect.y + (layout.qr_rect.height - target.height) / 2.0,
-        )
-        commands.append(SpriteCommand(
-            qr_resource.resource_id,
-            1,
-            0,
-            frame,
-            position,
-            1.0,
-            False,
-            1.0,
-            layer,
-            4,
-            4,
-            target_size=target,
-        ))
-        revisions.append(ResourceRevision(qr_resource.resource_id, 1))
-    else:
-        commands.append(TextCommand(
-            str(placeholder or ""),
-            FontSpec(family, font_size),
-            tokens["text_dim"],
-            layout.qr_rect,
-            alignment=int(TextAlignment.HCENTER | TextAlignment.VCENTER),
-            layer=layer,
-            z=CONTENT,
-        ))
-    commands.append(TextCommand(
+    status_text = TextCommand(
         str(status or ""),
-        FontSpec(family, status_font_size or font_size, status_bold),
-        muted_text_color,
-        layout.status_rect,
-        alignment=int(
-            TextAlignment.HCENTER | TextAlignment.VCENTER | TextAlignment.WORD_WRAP
-        ),
+        FontSpec(get_ui_font_family(), status_font_size or max(1, int(FONT.get("ui_size", 12))), status_bold),
+        tokens["text"],
+        status_rect,
+        alignment=int(TextAlignment.HCENTER | TextAlignment.VCENTER | TextAlignment.WORD_WRAP),
         layer=layer,
         z=CONTENT,
-    ))
-    action_text = str(action_text or "").strip()
-    if action_text:
-        state = str(action_state or "normal").strip().lower()
-        if not action_enabled:
-            state = "disabled"
-        if state not in {"normal", "hover", "pressed", "disabled"}:
-            state = "normal"
-        # 与浮窗 QSS 的按钮语言保持一致：常态面、悬浮面、按下描边、禁用面。
-        action_border = tokens["cyan"] if state == "hover" else tokens["border"]
-        if state == "hover":
-            action_fill = tokens["surface_hover"]
-        elif state == "pressed":
-            action_fill = tokens["border"]
-        elif state == "disabled":
-            action_fill = tokens["surface"]
-        else:
-            action_fill = tokens["surface_raised"]
-        action_inset = scale_px(2, min_abs=1)
-        action_content = Rect(
-            layout.action_rect.x + action_inset,
-            layout.action_rect.y + action_inset,
-            max(0, layout.action_rect.width - action_inset * 2),
-            max(0, layout.action_rect.height - action_inset * 2),
-        )
-        commands.extend((
-            RectCommand(layout.action_rect, fill=action_border, layer=layer, z=OVERLAY),
-            RectCommand(action_content, fill=action_fill, layer=layer, z=OVERLAY_SECOND),
-            TextCommand(
-                action_text,
-                FontSpec(family, font_size, True),
-                tokens["text_dim"] if state == "disabled" else text_color,
-                action_content,
-                alignment=int(TextAlignment.HCENTER | TextAlignment.VCENTER),
-                alpha=0.55 if state == "disabled" else 1.0,
-                layer=layer,
-                z=OVERLAY_THIRD,
-            ),
-        ))
+    )
     return ApplicationPanelVisual(
-        layout.size,
-        DrawBatch(tuple(commands), tuple(revisions)),
-        layout.action_rect,
+        panel_size,
+        DrawBatch((*chrome.batch.commands, *image.commands, status_text), image.resource_revisions),
+        dict(chrome.action_rects).get("action"),
     )
 
 
@@ -1585,6 +1546,7 @@ __all__ = [
     "build_command_hint_visual",
     "command_hint_default_pick",
     "build_notice_panel_visual",
+    "build_qr_image_batch",
     "build_qr_panel_visual",
     "build_page_turn_button_visual",
     "build_rect_action_button_visual",
@@ -1595,6 +1557,7 @@ __all__ = [
     "build_command_action_panel_visual",
     "decode_panel_image",
     "notice_panel_size",
+    "qr_image_side",
     "qr_panel_size",
     "qr_panel_action_text",
     "resolve_bubble_geometry",

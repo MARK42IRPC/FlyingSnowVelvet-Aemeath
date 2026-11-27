@@ -56,8 +56,7 @@ class YuanbaoLoginDialog(BaseQrDialog):
             if not self._visible:
                 self.show_dialog(qr_png=event.data.get("qr_png"), status=self._status, title=self._title)
             self._auto_close_timer.start(1200)
-        if self._visible:
-            self.update()
+        self._refresh_status()
 
     def _on_qr_hide(self, event: Event) -> None:
         if self._auto_close_timer.isActive():
@@ -75,6 +74,7 @@ class YuanbaoLoginDialog(BaseQrDialog):
         self._event_center.unsubscribe(EventType.YUANBAO_LOGIN_QR_STATUS, self._on_qr_status)
         self._event_center.unsubscribe(EventType.YUANBAO_LOGIN_QR_HIDE, self._on_qr_hide)
         self._event_center.unsubscribe(EventType.UI_CLICKTHROUGH_TOGGLE, self._on_clickthrough_toggle)
+        super().cleanup()
 
 
 _instance: "YuanbaoLoginDialog | None" = None
@@ -96,7 +96,6 @@ def cleanup_yuanbao_login_dialog() -> None:
     if _instance is not None:
         try:
             _instance.cleanup()
-            _instance.close()
         except Exception:
             pass
         _instance = None

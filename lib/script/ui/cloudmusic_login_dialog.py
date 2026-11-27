@@ -20,8 +20,6 @@ class CloudMusicLoginDialog(BaseQrDialog):
             window_flags="login",
         )
         self._refresh_left: int | None = None
-        self._allow_hide_once = False
-        self._allow_close_once = False
 
         self._event_center = get_event_center()
         self._event_center.subscribe(EventType.MUSIC_LOGIN_QR_SHOW, self._on_qr_show)
@@ -35,22 +33,12 @@ class CloudMusicLoginDialog(BaseQrDialog):
         self._set_dialog_status(status)
         self._show_dialog()
 
-    def _before_hide_widget(self) -> None:
-        self._allow_hide_once = True
-
     def hideEvent(self, event) -> None:
         super().hideEvent(event)
-        if self._allow_hide_once:
-            self._allow_hide_once = False
-            return
         if self._visible:
             self.restore_soon()
 
     def closeEvent(self, event) -> None:
-        if self._allow_close_once:
-            self._allow_close_once = False
-            super().closeEvent(event)
-            return
         if self._visible:
             event.ignore()
             self.restore_soon()
@@ -74,8 +62,7 @@ class CloudMusicLoginDialog(BaseQrDialog):
                 self._refresh_left = max(0, int(refresh_left))
             except Exception:
                 self._refresh_left = None
-        if self._visible:
-            self.update()
+        self._refresh_status()
 
     def _on_qr_hide(self, event: Event) -> None:
         self.hide_dialog()
@@ -96,6 +83,7 @@ class CloudMusicLoginDialog(BaseQrDialog):
         self._event_center.unsubscribe(EventType.MUSIC_LOGIN_QR_STATUS, self._on_qr_status)
         self._event_center.unsubscribe(EventType.MUSIC_LOGIN_QR_HIDE, self._on_qr_hide)
         self._event_center.unsubscribe(EventType.UI_CLICKTHROUGH_TOGGLE, self._on_clickthrough_toggle)
+        super().cleanup()
 
 
 _instance: "CloudMusicLoginDialog | None" = None
@@ -117,8 +105,6 @@ def cleanup_cloudmusic_login_dialog() -> None:
     if _instance is not None:
         try:
             _instance.cleanup()
-            _instance._allow_close_once = True
-            _instance.close()
         except Exception:
             pass
         _instance = None

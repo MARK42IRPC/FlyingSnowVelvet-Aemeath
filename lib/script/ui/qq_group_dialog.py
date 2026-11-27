@@ -25,7 +25,7 @@ class QQGroupDialog(BaseQrDialog):
         self._load_pixmap()
 
     def _load_pixmap(self) -> None:
-        self._set_qr_pixmap_from_path(self._image_path, clear_when_missing=True)
+        self._set_qr_pixmap_from_path(self._image_path)
 
     def show_dialog(self) -> None:
         self._load_pixmap()
