@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# ruff: noqa: E402 - Qt plugin variables must be set before PyQt imports.
+
 import atexit
 import os
 import shutil
@@ -24,15 +26,15 @@ os.environ.setdefault("QT_PLUGIN_PATH", os.path.join(_QT_ROOT, "Qt5", "plugins")
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
     QApplication,
-    QLabel,
     QPlainTextEdit,
     QToolButton,
     QWidget,
 )
 
+from lib.core.render.visuals.announcement_chrome import announcement_stylesheet
+from lib.core.render.visuals.window_spec import find_spec
 from lib.script.office.ipc import OfficeFileIpc
 from lib.script.ui.office_approval_controller import OfficeApprovalController
-from lib.script.ui.office_style import office_stylesheet
 from lib.script.workbench.theme import get_workbench_colors
 
 
@@ -108,9 +110,8 @@ class OfficeApprovalControllerTests(unittest.TestCase):
             self.assertTrue(dialog.windowFlags() & Qt.FramelessWindowHint)
             self.assertTrue(dialog.testAttribute(Qt.WA_StyledBackground))
 
-            close_button = dialog.findChild(QToolButton, "OfficeApprovalClose")
+            close_button = dialog.findChild(QToolButton, "AnnouncementCloseButton")
             self.assertIsNotNone(close_button)
-            self.assertIn("OfficeApprovalClose", dialog.styleSheet())
             self.assertIn(get_workbench_colors().danger, dialog.styleSheet())
 
             # 无窗眉时关闭按钮承担“拒绝”语义，点一下要真的提交拒绝。
@@ -128,15 +129,15 @@ class OfficeApprovalControllerTests(unittest.TestCase):
             controller.start()
             dialog = controller.active_dialog
 
-            self.assertEqual(dialog.styleSheet(), office_stylesheet())
+            self.assertEqual(dialog.styleSheet(), announcement_stylesheet())
             self.assertIn(get_workbench_colors().pink, dialog.styleSheet())
             self.assertIn(get_workbench_colors().cyan, dialog.styleSheet())
-            self.assertIsNotNone(dialog.findChild(QWidget, "OfficeAccentBar"))
+            self.assertIsNotNone(dialog.findChild(QWidget, "AnnouncementHeaderAccent"))
             self.assertIsNotNone(
-                dialog.findChild(QPlainTextEdit, "OfficeApprovalCommand")
+                dialog.findChild(QPlainTextEdit, "AnnouncementCode")
             )
-            scope = dialog.findChild(QLabel, "OfficeApprovalScope")
-            self.assertIn("当前任务", scope.text())
+            scope = find_spec(dialog._spec, "scope")
+            self.assertIn("当前任务", scope.text)
 
 
 if __name__ == "__main__":

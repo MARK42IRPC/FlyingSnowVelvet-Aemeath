@@ -5,6 +5,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+# ruff: noqa: E402 - Qt plugin variables must be set before PyQt imports.
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import PyQt5.QtCore
@@ -156,8 +158,10 @@ class VoicePackageInstallerUiTests(unittest.TestCase):
                 style = dialog.styleSheet()
                 colors = get_workbench_colors()
                 self.assertIn("QComboBox::down-arrow", style)
-                self.assertIn("QPushButton#VoiceInstallerPrimary", style)
-                self.assertIn("QPushButton#VoiceInstallerBackground", style)
+                self.assertIn('QPushButton[windowActionRole="primary"]', style)
+                self.assertIn('QPushButton[windowActionRole="accent"]', style)
+                self.assertEqual(dialog._primary.property("windowActionRole"), "primary")
+                self.assertEqual(dialog._background.property("windowActionRole"), "accent")
                 self.assertIn(f"color: {colors.text}", style)
                 self.assertIn(f"color: {colors.canvas}", style)
                 self.assertIn(f"background: {colors.pink}", style)

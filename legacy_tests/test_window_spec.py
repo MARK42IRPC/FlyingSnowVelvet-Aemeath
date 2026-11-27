@@ -12,6 +12,8 @@
 """
 from __future__ import annotations
 
+# ruff: noqa: E402 - Qt plugin variables must be set before PyQt imports.
+
 import ast
 import atexit
 import os
@@ -78,7 +80,7 @@ _DESCRIPTION_SCRIPT = textwrap.dedent(
     )
     assert isinstance(spec, WindowSpec)
     assert spec.object_name == "OfficeApprovalDialog"
-    assert spec.drag_handle_ids == ("header",)
+    assert spec.drag_handle_ids == ("header_row", "header_text", "header")
     assert spec.close_semantic == "reject"
 
     # 条件子控件是描述层的一等公民：有命令才有预览区。
@@ -89,7 +91,7 @@ _DESCRIPTION_SCRIPT = textwrap.dedent(
 
     # 遍历与查询在后端中立层完成。
     ids = [node.id for node in iter_specs(spec) if getattr(node, "id", "")]
-    assert ids[0] == "root" and "accent_bar" in ids and "actions" in ids
+    assert ids[0] == "root" and "header_accent_bar" in ids and "action_row" in ids
     assert [button.semantic for button in button_specs(spec.content)] == [
         "reject", "reject", "allow", "allow_task"
     ]
@@ -225,22 +227,22 @@ class OfficeApprovalSpecTests(unittest.TestCase):
     def test_dialog_tree_comes_from_the_window_description(self):
         from PyQt5.QtWidgets import QLabel, QPlainTextEdit, QToolButton, QWidget
 
+        from lib.core.render.visuals.announcement_chrome import announcement_stylesheet
         from lib.core.render.visuals.window_spec import find_spec
-        from lib.script.ui.office_style import office_stylesheet
 
         dialog = self._make()
         widget = dialog.widget()
         self.assertEqual(widget.objectName(), "OfficeApprovalDialog")
-        self.assertIsNotNone(widget.findChild(QWidget, "OfficeAccentBar"))
-        self.assertIsNotNone(widget.findChild(QToolButton, "OfficeApprovalClose"))
-        self.assertIsNotNone(widget.findChild(QLabel, "OfficeApprovalTitle"))
+        self.assertIsNotNone(widget.findChild(QWidget, "AnnouncementHeaderAccent"))
+        self.assertIsNotNone(widget.findChild(QToolButton, "AnnouncementCloseButton"))
+        self.assertIsNotNone(widget.findChild(QLabel, "AnnouncementHeader"))
         self.assertEqual(
-            widget.findChild(QLabel, "OfficeApprovalTitle").text(), "shell"
+            widget.findChild(QLabel, "AnnouncementHeader").text(), "shell"
         )
-        command = widget.findChild(QPlainTextEdit, "OfficeApprovalCommand")
+        command = widget.findChild(QPlainTextEdit, "AnnouncementCode")
         self.assertIsNotNone(command)
         self.assertEqual(command.toPlainText(), '{\n  "command": "npm test"\n}')
-        self.assertEqual(widget.styleSheet(), office_stylesheet())
+        self.assertEqual(widget.styleSheet(), announcement_stylesheet())
         # 命令预览是描述里的可选节点，去掉载荷就不该出现。
         self.assertIsNotNone(find_spec(dialog._spec, "command"))
 
@@ -251,23 +253,21 @@ class OfficeApprovalSpecTests(unittest.TestCase):
         approval.pop("command")
         dialog = self._make(approval)
         self.assertIsNone(
-            dialog.widget().findChild(QPlainTextEdit, "OfficeApprovalCommand")
+            dialog.widget().findChild(QPlainTextEdit, "AnnouncementCode")
         )
 
     def test_buttons_emit_the_three_decisions_through_the_description(self):
-        from PyQt5.QtWidgets import QPushButton
-
-        for object_name, expected in (
-            ("OfficeApprovalReject", "reject"),
-            ("OfficeApprovalAllow", "allow"),
-            ("OfficeApprovalAllowTask", "allow_task"),
+        for node_id, expected in (
+            ("reject", "reject"),
+            ("allow", "allow"),
+            ("allow_task", "allow_task"),
         ):
-            with self.subTest(button=object_name):
+            with self.subTest(button=node_id):
                 dialog = self._make()
                 seen: list[tuple[str, str]] = []
                 dialog.decision_made.connect(lambda a, d: seen.append((a, d)))
-                button = dialog.findChild(QPushButton, object_name)
-                self.assertIsNotNone(button, object_name)
+                button = dialog._window.find(node_id)
+                self.assertIsNotNone(button, node_id)
                 button.click()
                 self.app.processEvents()
                 self.assertEqual(seen, [("approval-1", expected)])
@@ -314,12 +314,12 @@ class OfficeApprovalSpecTests(unittest.TestCase):
 class WindowSpecMigrationGuardTests(unittest.TestCase):
     def test_approval_dialog_left_the_frozen_qt_importers(self):
         source = (
-            _REPO_ROOT / "tests" / "test_qt_dependency_boundaries.py"
+            _REPO_ROOT / "legacy_tests" / "test_qt_dependency_boundaries.py"
         ).read_text(encoding="utf-8")
         self.assertNotIn('"lib/script/ui/office_approval_dialog.py"', source)
         entry = '("lib/script/ui/office_approval_dialog.py", "OfficeApprovalDialog")'
         migrated = (
-            _REPO_ROOT / "tests" / "test_control_layer_descriptions.py"
+            _REPO_ROOT / "legacy_tests" / "test_control_layer_descriptions.py"
         ).read_text(encoding="utf-8")
         self.assertIn(entry, migrated)
 
@@ -365,11 +365,11 @@ class HelpWindowSpecTests(unittest.TestCase):
         dialog.show_help("\u7b2c\u4e00\u8282", "<b>\u4e0d\u662f\u5bcc\u6587\u672c</b>")
         self.assertEqual(dialog._body.textFormat(), Qt.PlainText)
         self.assertEqual(dialog._body.text(), "<b>\u4e0d\u662f\u5bcc\u6587\u672c</b>")
-        scroll = dialog.widget().findChild(QScrollArea, "HelpScroll")
+        scroll = dialog.widget().findChild(QScrollArea, "AnnouncementScroll")
         self.assertIsNotNone(scroll)
         self.assertIs(dialog._scroll, scroll)
-        self.assertIsNotNone(dialog.widget().findChild(QLabel, "HelpBody"))
-        self.assertIsNotNone(dialog.widget().findChild(QLabel, "HelpHeader"))
+        self.assertIsNotNone(dialog.widget().findChild(QLabel, "AnnouncementBodyLabel"))
+        self.assertIsNotNone(dialog.widget().findChild(QLabel, "AnnouncementHeader"))
 
     def test_empty_text_falls_back_to_the_placeholder(self):
         from lib.script.ui.help_window import HELP_EMPTY_TEXT
@@ -403,25 +403,21 @@ class HelpWindowSpecTests(unittest.TestCase):
         dialog.show_help("\u6807\u9898", "\u6b63\u6587")
         widget = dialog.widget()
 
-        header_row = widget.findChild(QWidget, "HelpHeaderRow")
-        accent = widget.findChild(QFrame, "HelpHeaderAccent")
-        close = widget.findChild(QToolButton, "HelpCloseButton")
-        host = widget.findChild(QWidget, "HelpScrollHost")
+        header_row = widget.findChild(QWidget, "AnnouncementHeaderRow")
+        accent = widget.findChild(QFrame, "AnnouncementHeaderAccent")
+        close = widget.findChild(QToolButton, "AnnouncementCloseButton")
+        host = widget.findChild(QWidget, "AnnouncementScrollHost")
         self.assertIsNotNone(header_row)
         self.assertIsNotNone(accent)
         self.assertIsNotNone(close)
         self.assertIsNotNone(host)
 
-        # 窗眉：固定高度，关闭按钮贴顶，accent 竖条居中。
-        self.assertEqual(header_row.minimumHeight(), header_row.maximumHeight())
+        # 统一壳的几何事实：accent 竖条定尺、关闭按钮定尺且贴顶、正文在滚动视口里。
+        self.assertEqual(accent.width(), accent.maximumWidth())
+        self.assertEqual(accent.height(), accent.maximumHeight())
+        self.assertEqual(close.width(), close.maximumWidth())
         self.assertEqual(close.geometry().top(), 0)
-        self.assertEqual(
-            accent.geometry().top() + accent.geometry().height() // 2,
-            header_row.height() // 2,
-        )
-        # accent 在关闭按钮左侧，标题列被推到 accent 右边。
         self.assertLess(accent.geometry().left(), close.geometry().left())
-        # 正文住在滚动视口的内部承载控件里。
         self.assertIs(dialog._body.parent(), host)
         self.assertIs(dialog._scroll.widget(), host)
 
@@ -448,7 +444,7 @@ class HelpWindowSpecTests(unittest.TestCase):
 class HelpWindowMigrationGuardTests(unittest.TestCase):
     def test_help_window_left_the_leaf_control_placement_list(self):
         source = (
-            _REPO_ROOT / "tests" / "test_render_layout_algorithms.py"
+            _REPO_ROOT / "legacy_tests" / "test_render_layout_algorithms.py"
         ).read_text(encoding="utf-8")
         self.assertNotIn('"help_window.py",', source)
 

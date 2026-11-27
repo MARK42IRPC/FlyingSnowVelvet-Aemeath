@@ -14,7 +14,6 @@ from pathlib import Path
 from lib.core.event.center import Event, EventType
 from lib.core.render.visuals import workbench_chrome
 from lib.core.render.visuals.workbench_chrome import (
-    FLOATING_WINDOW_OBJECT_NAME,
     floating_window_stylesheet,
     is_workbench_theme_change,
 )
@@ -57,11 +56,15 @@ class WorkbenchChromeIsBackendNeutralTests(unittest.TestCase):
 
 
 class WorkbenchChromeMatchesTheLiveThemeTests(unittest.TestCase):
-    def test_floating_qss_carries_the_window_button_block(self):
-        # 浮窗 QSS 里嵌的窗口按钮样式必须与工作台实时 token 生成的一致。
+    def test_floating_qss_is_the_shared_popup_qss(self):
+        # 浮窗与公告/确认/帮助/更新/审批共用同一份 QSS：不再各自拼样式。
+        from lib.core.render.visuals.announcement_chrome import announcement_stylesheet
+
         for mode in ("dark", "light"):
             with self.subTest(mode=mode):
-                self.assertIn(window_button_stylesheet(mode), floating_window_stylesheet(mode))
+                self.assertEqual(
+                    floating_window_stylesheet(mode), announcement_stylesheet(mode)
+                )
 
     def test_inlined_button_helper_matches_the_shared_helper(self):
         for mode in ("dark", "light"):
@@ -72,13 +75,15 @@ class WorkbenchChromeMatchesTheLiveThemeTests(unittest.TestCase):
                 )
 
     def test_floating_qss_paints_the_workbench_surface(self):
+        from lib.core.render.visuals.announcement_chrome import announcement_stylesheet
+
         for mode in ("dark", "light"):
             with self.subTest(mode=mode):
                 colors = get_workbench_colors(mode)
                 qss = floating_window_stylesheet(mode)
+                self.assertEqual(qss, announcement_stylesheet(mode))
                 self.assertIn(colors.surface_raised, qss)
                 self.assertIn(colors.text, qss)
-                self.assertIn(FLOATING_WINDOW_OBJECT_NAME, qss)
 
 
 class WorkbenchChromeSeamTests(unittest.TestCase):
