@@ -42,6 +42,7 @@ ALIGN_RIGHT = "right"
 ROLE_DEFAULT = "default"
 ROLE_PRIMARY = "primary"
 ROLE_DANGER = "danger"
+ROLE_ACCENT = "accent"
 ROLE_GHOST = "ghost"
 
 # ── 颜色语义（宿主按当前主题解析成具体颜色）───────────────────────────────
@@ -151,6 +152,8 @@ class ProgressBarSpec:
     value: int = 0
     fmt: str = ""
     min_height: int = 0
+    #: 进度条色调档（``"accent"`` 青色、``"highlight"`` 粉色，空串用默认青色）。
+    tone: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -253,6 +256,15 @@ class WindowSpec:
     border_mid: str = ""
     #: 描边外壳的内容底色 token（默认 ``canvas``；更新浮窗用 ``surface``）。
     border_fill: str = "canvas"
+    #: 模态窗口的初始默认键，按按钮节点 id 选取。
+    default_button_id: str = ""
+    #: 这些语义只回填动作，窗口的显隐由调用方管理。
+    non_closing_actions: tuple[str, ...] = ()
+    #: 可缩放窗口使用初始尺寸。固定尺寸和初始尺寸互斥。
+    initial_size: tuple[int, int] = (0, 0)
+    #: 公告壳的样式和正文随工作台配色刷新。显式配色用于设计和测试。
+    shared_popup: bool = False
+    theme_mode: str | None = None
 
     def with_text(self, node_id: str, text: str) -> "WindowSpec":
         """返回把 `node_id` 文本换成 `text` 的新描述（见 `retarget_text`）。"""

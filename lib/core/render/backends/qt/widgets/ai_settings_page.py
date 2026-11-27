@@ -308,7 +308,7 @@ class AISettingsPageMixin(AISettingsPageSectionsMixin):
             text="确定把人设恢复成内置默认吗？",
             informative_text=(
                 "当前用户人格会先整份备份为 persona_backup_<时间戳>.txt，再写入内置默认人设。\n"
-                "工具协议段由程序维护，不受影响；重置后新对话立即使用默认人设。"
+                "输出格式与工具协议段由程序维护，不受影响；重置后新对话立即使用默认人设。"
             ),
             confirm_text="重置",
             destructive=True,

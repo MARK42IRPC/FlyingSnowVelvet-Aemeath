@@ -32,14 +32,10 @@ from lib.script.update_manager import (
     UpdateManager,
     UpdateResult,
 )
-from lib.core.render.visuals.workbench_chrome import floating_window_stylesheet
-from lib.script.workbench.theme import get_workbench_colors
 from lib.script.ui import render_bridge
 
 _WIDTH = scale_px(360, min_abs=320)
 _HEIGHT = scale_px(248, min_abs=220)
-_LAYER = scale_px(2, min_abs=1)
-_BORDER = _LAYER * 2
 
 
 class _UpdateSignal:
@@ -151,13 +147,14 @@ class DesktopPetUpdateDialog:
             parent=parent,
         )
 
-        self._title_label = self._window.find("title")
+        self._title_label = self._window.find("header")
         self._status_label = self._window.find("status")
         self._detail_label = self._window.find("detail")
         self._progress_bar = self._window.find("progress")
         self._primary_btn = self._window.find("primary")
         self._secondary_btn = self._window.find("secondary")
         self._minimize_btn = self._window.find("minimize")
+        self._close_btn = self._window.find("close")
 
         self._secondary_btn.hide()
         self._primary_btn.hide()
@@ -174,28 +171,7 @@ class DesktopPetUpdateDialog:
     # ── 描述 ─────────────────────────────────────────────────────────
 
     def _build_spec(self):
-        return update_window_spec(
-            status="",
-            detail="",
-            stylesheet=self._widget_stylesheet(),
-            width=_WIDTH,
-            height=_HEIGHT,
-            border_width=_BORDER,
-            root_margin=(
-                _BORDER + scale_px(14, min_abs=12),
-                _BORDER + scale_px(16, min_abs=14),
-                _BORDER + scale_px(14, min_abs=12),
-                _BORDER + scale_px(12, min_abs=10),
-            ),
-            root_spacing=scale_px(12, min_abs=8),
-            header_spacing=scale_px(10, min_abs=8),
-            header_lead=scale_px(26, min_abs=24),
-            title_size=scale_px(16, min_abs=12),
-            status_size=scale_px(13, min_abs=10),
-            detail_size=scale_px(11, min_abs=9),
-            minimize_size=scale_px(32, min_abs=28),
-            progress_min_height=scale_px(22, min_abs=18),
-        )
+        return update_window_spec(status="", detail="", width=_WIDTH, height=_HEIGHT)
 
     def begin_release_check(self) -> bool:
         if self._busy:
@@ -238,6 +214,8 @@ class DesktopPetUpdateDialog:
         self._primary_btn.setEnabled(not busy)
         # 安装/下载中不允许收起，避免用户失去进度入口。
         self._minimize_btn.setEnabled(not busy)
+        if self._close_btn is not None:
+            self._close_btn.setEnabled(not busy)
 
     def _show_dialog(self) -> None:
         self._visible = True
@@ -477,7 +455,7 @@ class DesktopPetUpdateDialog:
 
     def _on_semantic(self, semantic: str) -> None:
         key = str(semantic)
-        if key == UPDATE_MINIMIZE:
+        if key in (UPDATE_CLOSE, UPDATE_MINIMIZE):
             self.minimize_floating_window()
         elif key == UPDATE_PRIMARY:
             self._on_primary_clicked()
@@ -557,24 +535,6 @@ class DesktopPetUpdateDialog:
 
     def grab(self):
         return self._window.widget.grab()
-
-    @staticmethod
-    def _widget_stylesheet() -> str:
-        # 原窗口继承 `WorkbenchFloatingWindow`，样式来自共享的
-        # `floating_window_stylesheet()`（含 QProgressBar / QPushButton 尺寸档），
-        # 再叠加本窗的标签对象名配色。迁移后必须逐字保留同一份外壳 QSS。
-        colors = get_workbench_colors()
-        return floating_window_stylesheet() + f"""
-            QLabel#UpdateTitle {{
-                color: {colors.text};
-            }}
-            QLabel#UpdateStatus {{
-                color: {colors.text};
-            }}
-            QLabel#UpdateDetail {{
-                color: {colors.text_muted};
-            }}
-            """
 
     @staticmethod
     def _fmt_dt(value: datetime) -> str:

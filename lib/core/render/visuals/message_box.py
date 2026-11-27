@@ -1,84 +1,71 @@
-"""共享工作台确认/提示框的后端中立视觉规格。
-
-按钮语义和模态执行由 ``message_box_host.py`` 承接；本模块只生成依赖工作台 token
-的 QSS 文本，避免游戏管理器、办公页和语音包控件各自复制一套弹窗颜色与尺寸。
-"""
+"""Confirmation and notice descriptions built with the announcement shell."""
 
 from __future__ import annotations
 
-from config.font_config import get_ui_font_family
-from config.scale import scale_px
-from lib.core.render.visuals.workbench_tokens import get_workbench_tokens
-
+from lib.core.render.visuals.announcement_chrome import (
+    announcement_body,
+    announcement_shell_spec,
+    announcement_stylesheet,
+    get_popup_chrome,
+    text_paragraph,
+)
+from lib.core.render.visuals.window_spec import ButtonSpec, WindowSpec
 
 MESSAGE_BOX_OBJECT_NAME = "WorkbenchConfirmDialog"
 DESTRUCTIVE_BUTTON_OBJECT_NAME = "WorkbenchConfirmDestructive"
 PRIMARY_BUTTON_OBJECT_NAME = "WorkbenchConfirmPrimary"
-DIALOG_TEXT_MIN_WIDTH = scale_px(330, min_abs=300)
+
+ICON_INFORMATION = "information"
+ICON_WARNING = "warning"
+ICON_QUESTION = "question"
+ICON_CRITICAL = "critical"
+
+
+def message_box_window_spec(
+    *,
+    title: str,
+    text: str,
+    informative_text: str = "",
+    primary_text: str,
+    cancel_text: str | None = None,
+    destructive: bool = False,
+    icon: str = ICON_INFORMATION,
+    modal: bool = True,
+) -> WindowSpec:
+    """Use one shell for confirmations and one-button notices."""
+    primary_name = DESTRUCTIVE_BUTTON_OBJECT_NAME if destructive else PRIMARY_BUTTON_OBJECT_NAME
+    primary_role = "danger" if destructive else "primary"
+    primary = ButtonSpec(primary_text, "accept", id="primary", object_name=primary_name, role=primary_role)
+    actions = (primary,)
+    dismiss_action = "accept"
+    default_button_id = "primary"
+    if cancel_text is not None:
+        actions = (ButtonSpec(cancel_text, "cancel", id="cancel"), primary)
+        dismiss_action = "cancel"
+        default_button_id = "cancel"
+
+    chrome = get_popup_chrome()
+    tag = "h2" if informative_text else "p"
+    html = text_paragraph(text, tag)
+    if informative_text:
+        html += text_paragraph(informative_text)
+    return announcement_shell_spec(
+        object_name=MESSAGE_BOX_OBJECT_NAME,
+        title=title,
+        source_text={ICON_WARNING: "请留意", ICON_CRITICAL: "操作失败"}.get(icon, "")
+        if cancel_text is None else "",
+        body=announcement_body(html),
+        actions=actions,
+        width=chrome.notice_width,
+        height=chrome.notice_height,
+        close_action=dismiss_action,
+        close_tooltip="取消" if cancel_text is not None else "关闭",
+        modal=modal,
+        delete_on_close=not modal,
+        default_button_id=default_button_id,
+    )
 
 
 def message_box_stylesheet(mode: str | None = None) -> str:
-    """返回与公告浮窗一致的共享确认/提示框 QSS。"""
-    colors = get_workbench_tokens(mode)
-    font_family = get_ui_font_family().replace("'", "\\'")
-    border = scale_px(1, min_abs=1)
-    radius = scale_px(4, min_abs=3)
-    button_height = scale_px(34, min_abs=30)
-    button_width = scale_px(92, min_abs=80)
-    horizontal_padding = scale_px(13, min_abs=10)
-    return f"""
-        QMessageBox#{MESSAGE_BOX_OBJECT_NAME} {{
-            background: {colors['canvas']};
-            color: {colors['text']};
-            font-family: '{font_family}';
-        }}
-        QMessageBox#{MESSAGE_BOX_OBJECT_NAME} QLabel {{
-            min-width: {DIALOG_TEXT_MIN_WIDTH}px;
-            color: {colors['text']};
-            background: transparent;
-        }}
-        QMessageBox#{MESSAGE_BOX_OBJECT_NAME} QPushButton {{
-            min-width: {button_width}px;
-            min-height: {button_height}px;
-            padding: 0px {horizontal_padding}px;
-            color: {colors['text']};
-            background: {colors['surface_raised']};
-            border: {border}px solid {colors['border']};
-            border-radius: {radius}px;
-            font-weight: 600;
-        }}
-        QMessageBox#{MESSAGE_BOX_OBJECT_NAME} QPushButton:hover {{
-            background: {colors['surface_hover']};
-            border-color: {colors['cyan']};
-        }}
-        QMessageBox#{MESSAGE_BOX_OBJECT_NAME} QPushButton:default,
-        QMessageBox#{MESSAGE_BOX_OBJECT_NAME} QPushButton#{PRIMARY_BUTTON_OBJECT_NAME} {{
-            color: {colors['canvas']};
-            background: {colors['pink']};
-            border-color: {colors['pink']};
-        }}
-        QMessageBox#{MESSAGE_BOX_OBJECT_NAME} QPushButton:default:hover,
-        QMessageBox#{MESSAGE_BOX_OBJECT_NAME} QPushButton#{PRIMARY_BUTTON_OBJECT_NAME}:hover {{
-            background: {colors['pink_hover']};
-            border-color: {colors['pink_hover']};
-        }}
-        QMessageBox#{MESSAGE_BOX_OBJECT_NAME} QPushButton#{DESTRUCTIVE_BUTTON_OBJECT_NAME} {{
-            color: {colors['canvas']};
-            background: {colors['danger']};
-            border-color: {colors['danger']};
-        }}
-        QMessageBox#{MESSAGE_BOX_OBJECT_NAME} QPushButton#{DESTRUCTIVE_BUTTON_OBJECT_NAME}:hover {{
-            color: {colors['canvas']};
-            background: {colors['danger']};
-            border-color: {colors['danger']};
-        }}
-    """
-
-
-__all__ = [
-    "DIALOG_TEXT_MIN_WIDTH",
-    "DESTRUCTIVE_BUTTON_OBJECT_NAME",
-    "MESSAGE_BOX_OBJECT_NAME",
-    "PRIMARY_BUTTON_OBJECT_NAME",
-    "message_box_stylesheet",
-]
+    """Shared announcement stylesheet used by every confirmation/notice."""
+    return announcement_stylesheet(mode)

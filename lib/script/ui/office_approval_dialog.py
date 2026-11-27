@@ -20,7 +20,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 from config.scale import scale_px
 from lib.core.render.visuals.window_specs import (
@@ -30,10 +29,7 @@ from lib.core.render.visuals.window_specs import (
     office_approval_window_spec,
 )
 from lib.script.ui import render_bridge
-from lib.script.ui.office_style import office_stylesheet
 
-
-_OFFICE_ICON_PATH = Path(__file__).resolve().parents[3] / "resc" / "icon.ico"
 
 #: 语义 id → 产品决策名。三个按钮与关闭按钮共用一张表。
 _DECISIONS = {
@@ -89,42 +85,17 @@ class OfficeApprovalDialog:
     def _build_spec(self):
         approval = self._approval
         command = approval.get("command")
+        command_text = (
+            json.dumps(command, ensure_ascii=False, indent=2)
+            if command is not None
+            else ""
+        )
         return office_approval_window_spec(
             title=str(approval.get("tool_name") or "执行受限操作"),
             reason=str(approval.get("reason") or "需要用户许可"),
-            command_text=(
-                json.dumps(command, ensure_ascii=False, indent=2)
-                if command is not None
-                else ""
-            ),
-            accent_height=scale_px(5, min_abs=4),
-            icon_size=scale_px(24, min_abs=21),
-            root_margin=(
-                scale_px(22, min_abs=18),
-                scale_px(20, min_abs=16),
-                scale_px(22, min_abs=18),
-                scale_px(18, min_abs=15),
-            ),
-            root_spacing=scale_px(12, min_abs=9),
-            header_margin=(
-                scale_px(12, min_abs=10),
-                scale_px(10, min_abs=8),
-                scale_px(12, min_abs=10),
-                scale_px(10, min_abs=8),
-            ),
-            header_spacing=scale_px(10, min_abs=8),
-            title_column_spacing=scale_px(3, min_abs=2),
-            actions_margin=(0, scale_px(4, min_abs=3), 0, 0),
-            actions_spacing=scale_px(8, min_abs=6),
-            kicker_size=scale_px(10, min_abs=9),
-            title_size=scale_px(15, min_abs=13),
-            reason_size=scale_px(11, min_abs=10),
-            command_size=scale_px(10, min_abs=9),
-            command_max_height=scale_px(150, min_abs=120),
-            min_width=scale_px(500, min_abs=460),
-            max_width=scale_px(680, min_abs=620),
-            stylesheet=office_stylesheet(),
-            window_icon_path=str(_OFFICE_ICON_PATH),
+            command_text=command_text,
+            width=scale_px(560, min_abs=500),
+            height=scale_px(390 if command_text else 310, min_abs=270),
         )
 
     # ── 语义与生命周期 ───────────────────────────────────────────────
@@ -187,10 +158,10 @@ class OfficeApprovalDialog:
         if callable(opener):
             opener()
         else:
-            widget.show()
+            self._window.show_window()
 
     def show(self) -> None:
-        self._window.widget.show()
+        self._window.show_window()
 
     def close(self) -> None:
         self._window.widget.close()

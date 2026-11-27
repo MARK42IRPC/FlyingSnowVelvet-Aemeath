@@ -105,15 +105,66 @@ class LayerBoundaryTests(unittest.TestCase):
                     violations.append(f"{path.relative_to(ROOT)}: {marker}")
         self.assertEqual(violations, [])
 
+    def test_popup_styles_have_a_single_source(self):
+        """所有弹窗共用公告壳：样式只能由 announcement_chrome 产出。"""
+        chrome = (CORE / "render" / "visuals" / "announcement_chrome.py").read_text(
+            encoding="utf-8-sig"
+        )
+        self.assertIn("def announcement_stylesheet(", chrome)
+        self.assertIn("def announcement_shell_spec(", chrome)
+
+        specs = (CORE / "render" / "visuals" / "window_specs.py").read_text(
+            encoding="utf-8-sig"
+        )
+        for forbidden in ("office_stylesheet", "floating_window_stylesheet", "stylesheet="):
+            self.assertNotIn(forbidden, specs)
+
+        # 产品窗口不得各自拼 QSS，也不得再引用旧窗口样式工厂。
+        for relative in (
+            "lib/script/ui/announcement_dialog.py",
+            "lib/script/ui/help_window.py",
+            "lib/script/ui/update_dialog.py",
+            "lib/script/ui/office_approval_dialog.py",
+        ):
+            source = (ROOT / relative).read_text(encoding="utf-8-sig")
+            for forbidden in (
+                "office_stylesheet",
+                "floating_window_stylesheet",
+                "announcement_stylesheet(",
+            ):
+                self.assertNotIn(forbidden, f"{relative}: {source}")
+
+    def test_message_box_styles_delegate_to_the_shared_shell(self):
+        message_box = (CORE / "render" / "visuals" / "message_box.py").read_text(
+            encoding="utf-8-sig"
+        )
+        self.assertIn("return announcement_stylesheet(mode)", message_box)
+
     def test_button_feedback_has_one_of_two_explicit_render_paths(self):
         """按钮反馈只能是共享模态消息框或 INFORMATION 气泡，不得新造裸提醒窗口。"""
         host = CORE / "render" / "backends" / "qt" / "widgets" / "message_box_host.py"
         host_source = host.read_text(encoding="utf-8-sig")
-        self.assertIn("class QtMessageBoxHost", host_source)
+        self.assertIn("def ask_confirmation(", host_source)
         self.assertIn("def show_message(", host_source)
+        dialog_module = (SCRIPT / "ui" / "confirm_dialog.py").read_text(encoding="utf-8-sig")
+        bridge_source = (SCRIPT / "ui" / "render_bridge.py").read_text(encoding="utf-8-sig")
+        self.assertIn("from lib.script.ui.render_bridge import ask_confirmation, show_message", dialog_module)
+        self.assertIn("def ask_confirmation(", bridge_source)
+        announcement_module = (SCRIPT / "ui" / "announcement_dialog.py").read_text(encoding="utf-8-sig")
+        self.assertIn("AnnouncementService(", announcement_module)
+        self.assertIn("on_loading=self._on_loading", announcement_module)
+        self.assertIn("on_document=self._on_document", announcement_module)
+        self.assertIn("announcement_requested.connect(self.open_from_tray)", announcement_module)
         message_box = (CORE / "render" / "visuals" / "message_box.py").read_text(encoding="utf-8-sig")
-        self.assertNotIn("announcement_style", message_box)
-        self.assertIn("button_height = scale_px(34", message_box)
+        self.assertIn("announcement_shell_spec", message_box)
+        self.assertIn("announcement_stylesheet", message_box)
+        announcement_chrome = (
+            CORE / "render" / "visuals" / "announcement_chrome.py"
+        ).read_text(encoding="utf-8-sig")
+        self.assertIn("fade=not modal", announcement_chrome)
+        popup_design = (CORE / "render" / "popup_design.py").read_text(encoding="utf-8-sig")
+        self.assertIn("px(34, 30)", popup_design)
+        self.assertIn("QPushButton[windowActionRole=\"danger\"]", announcement_chrome)
         bubble = SCRIPT / "ui" / "bubble.py"
         bubble_source = bubble.read_text(encoding="utf-8-sig")
         self.assertIn("EventType.INFORMATION", bubble_source)

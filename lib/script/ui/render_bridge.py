@@ -43,6 +43,14 @@ for _name in _CORE.__all__:
 del _name
 
 
+def ask_confirmation(parent=None, **kwargs) -> bool:
+    return _core_bridge().ask_confirmation(parent, **kwargs)
+
+
+def show_message(parent=None, **kwargs) -> None:
+    _core_bridge().show_message(parent, **kwargs)
+
+
 def apply_settings_page_fonts(page) -> None:
     """把工作台设置页的字号档铺到一页控件树上（产品面调用面不变）。"""
     from lib.script.ui.workbench_settings_layout import apply_settings_page_fonts as apply
@@ -64,6 +72,8 @@ def configure_forum_window_violation_sound() -> None:
 
 __all__ = [
     *_CORE.__all__,
+    "ask_confirmation",
+    "show_message",
     "apply_settings_page_fonts",
     "configure_forum_window_violation_sound",
 ]

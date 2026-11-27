@@ -18,7 +18,6 @@ from __future__ import annotations
 from config.scale import scale_px
 from lib.core.event.center import EventType, get_event_center
 from lib.core.logger import get_logger
-from lib.core.render.visuals.announcement_visuals import get_announcement_colors
 from lib.core.render.visuals.window_specs import HELP_CLOSE, help_window_spec
 from lib.script.ui import render_bridge
 
@@ -32,33 +31,6 @@ HELP_EMPTY_TEXT = "这一项暂时还没有补充说明。"
 HELP_DEFAULT_TITLE = "帮助"
 
 _BORDER = scale_px(1, min_abs=1)
-_HEADER_HEIGHT = scale_px(56, min_abs=48)
-_ACCENT_WIDTH = scale_px(3, min_abs=2)
-_HEADER_SIZE = scale_px(16, min_abs=13)
-_SOURCE_SIZE = scale_px(9, min_abs=8)
-_BODY_SIZE = scale_px(13, min_abs=11)
-_CLOSE_SIZE_FONT = scale_px(16, min_abs=14)
-_CLOSE_SIZE = scale_px(28, min_abs=24)
-_ACCENT_HEIGHT = scale_px(32, min_abs=26)
-_HEADER_SPACING = scale_px(10, min_abs=8)
-_ROOT_SPACING = scale_px(12, min_abs=9)
-_BODY_MARGIN = (
-    scale_px(14, min_abs=11),
-    scale_px(12, min_abs=10),
-    scale_px(14, min_abs=11),
-    scale_px(12, min_abs=10),
-)
-_ROOT_MARGIN = (
-    _BORDER + scale_px(18, min_abs=14),
-    _BORDER + scale_px(15, min_abs=12),
-    _BORDER + scale_px(18, min_abs=14),
-    _BORDER + scale_px(15, min_abs=12),
-)
-
-
-def _color_name(key: str) -> str:
-    color = get_announcement_colors()[key]
-    return f"#{color.red:02x}{color.green:02x}{color.blue:02x}"
 
 
 def parse_help_payload(data) -> tuple[str, str]:
@@ -106,24 +78,9 @@ class DesktopPetHelpDialog:
     def _build_spec(self):
         return help_window_spec(
             title=self._title,
-            text=self._text,
+            text=self._text or HELP_EMPTY_TEXT,
             width=HELP_WINDOW_WIDTH,
             height=HELP_WINDOW_HEIGHT,
-            border_width=_BORDER,
-            header_height=_HEADER_HEIGHT,
-            accent_width=_ACCENT_WIDTH,
-            accent_height=_ACCENT_HEIGHT,
-            close_size=_CLOSE_SIZE,
-            close_size_font=_CLOSE_SIZE_FONT,
-            root_margin=_ROOT_MARGIN,
-            root_spacing=_ROOT_SPACING,
-            header_spacing=_HEADER_SPACING,
-            body_margin=_BODY_MARGIN,
-            header_size=_HEADER_SIZE,
-            source_size=_SOURCE_SIZE,
-            body_size=_BODY_SIZE,
-            stylesheet=_help_stylesheet(),
-            empty_text=HELP_EMPTY_TEXT,
         )
 
     # ── 内容 ─────────────────────────────────────────────────────────
@@ -193,80 +150,6 @@ class DesktopPetHelpDialog:
 
     def height(self) -> int:
         return self._window.widget.height()
-
-
-def _help_stylesheet() -> str:
-    canvas = _color_name("canvas")
-    surface = _color_name("surface")
-    surface_hover = _color_name("surface_hover")
-    border = _color_name("border")
-    border_strong = _color_name("border_strong")
-    text = _color_name("text")
-    text_muted = _color_name("text_muted")
-    text_dim = _color_name("text_dim")
-    cyan = _color_name("cyan")
-    pink = _color_name("pink")
-    return f"""
-            QWidget#DesktopPetHelpDialog {{
-                color: {text};
-            }}
-            QFrame#HelpHeaderAccent {{
-                background: {cyan};
-                border: none;
-                border-right: {scale_px(1, min_abs=1)}px solid {pink};
-            }}
-            QLabel#HelpHeader {{
-                color: {text};
-                font-weight: 700;
-            }}
-            QLabel#HelpSource {{
-                color: {text_dim};
-                font-weight: 500;
-            }}
-            QToolButton#HelpCloseButton {{
-                background: transparent;
-                color: {text_muted};
-                border: {scale_px(1, min_abs=1)}px solid transparent;
-                border-radius: {scale_px(4, min_abs=3)}px;
-                font-size: {scale_px(16, min_abs=14)}px;
-                font-weight: 500;
-                padding: 0px;
-            }}
-            QToolButton#HelpCloseButton:hover {{
-                background: {surface_hover};
-                color: {text};
-                border-color: {border};
-            }}
-            QScrollArea#HelpScroll, QWidget#HelpScrollHost {{
-                background: {canvas};
-                border: none;
-            }}
-            QLabel#HelpBody {{
-                background: transparent;
-                color: {text_muted};
-                border: none;
-                padding: 0px;
-            }}
-            QScrollBar:vertical {{
-                background: {surface};
-                width: {scale_px(8, min_abs=7)}px;
-                border: none;
-            }}
-            QScrollBar::handle:vertical {{
-                background: {border_strong};
-                min-height: {scale_px(28, min_abs=22)}px;
-                border: none;
-                border-radius: {scale_px(3, min_abs=2)}px;
-            }}
-            QScrollBar::handle:vertical:hover {{ background: {cyan}; }}
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
-                height: 0px;
-                border: none;
-            }}
-            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
-                background: transparent;
-            }}
-            """
 
 
 class HelpWindowController:

@@ -8,6 +8,7 @@ colours, and so the floating panels follow the workbench theme automatically.
 
 from __future__ import annotations
 
+from lib.core.render.popup_design import WORKBENCH_DARK_TOKENS, WORKBENCH_LIGHT_TOKENS
 from lib.core.render.visuals.types import Color
 
 #: Token order is the public contract used by both QSS generation and presenters.
@@ -28,43 +29,6 @@ WORKBENCH_TOKEN_NAMES = (
     "warning",
     "danger",
 )
-
-WORKBENCH_DARK_TOKENS = {
-    "canvas": "#0d0f12",
-    "navigation": "#121419",
-    "surface": "#17191f",
-    "surface_raised": "#1e2128",
-    "surface_hover": "#272b33",
-    "border": "#353a45",
-    "border_strong": "#4a515f",
-    "text": "#f4f5f7",
-    "text_muted": "#a8adb7",
-    "text_dim": "#777e8b",
-    "pink": "#ff95bc",
-    "pink_hover": "#ffb1cf",
-    "cyan": "#8cd2ff",
-    "warning": "#f1cf76",
-    "danger": "#ff7a92",
-}
-
-WORKBENCH_LIGHT_TOKENS = {
-    "canvas": "#fff8fb",
-    "navigation": "#fff0f5",
-    "surface": "#ffffff",
-    "surface_raised": "#fff5f8",
-    "surface_hover": "#ffe7f0",
-    "border": "#e7c5d2",
-    "border_strong": "#c99eb0",
-    "text": "#20344d",
-    "text_muted": "#344863",
-    "text_dim": "#4f627b",
-    "pink": "#e9689d",
-    "pink_hover": "#f58db7",
-    "cyan": "#91bdd8",
-    "warning": "#a97c36",
-    "danger": "#d95e78",
-}
-
 
 def resolve_workbench_mode(mode: str | None = None) -> str:
     """Resolve ``dark``/``light`` from an explicit value or the live UI config."""

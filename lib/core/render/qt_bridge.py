@@ -519,15 +519,18 @@ def render_office_icon_pixmap(name: str, color: str, pixel_size: int):
     return render(name, color, pixel_size)
 
 
-def create_message_box_host(parent=None, *, object_name: str = ""):
-    """创建模态消息框宿主（Qt 下是 ``QtMessageBoxHost``）。
+def ask_confirmation(parent=None, **message) -> bool:
+    """运行由 render 层提供的公告式确认窗口。"""
+    from lib.core.render.backends.qt.widgets.message_box_host import ask_confirmation as ask
 
-    与 ``create_control_host`` 同属档位 A 的解析/转发层：确认/提示框只声明"问什么、
-    有哪些按钮、用哪种配色"，真实 ``QMessageBox`` 与模态循环由后端提供。
-    """
-    from lib.core.render.backends.qt.widgets.message_box_host import QtMessageBoxHost
+    return ask(parent, **message)
 
-    return QtMessageBoxHost(parent, object_name=object_name)
+
+def show_message(parent=None, **message) -> None:
+    """显示由 render 层提供的公告式提示窗口。"""
+    from lib.core.render.backends.qt.widgets.message_box_host import show_message as show
+
+    show(parent, **message)
 
 
 def message_box_stylesheet(mode: str | None = None) -> str:
@@ -548,7 +551,7 @@ def create_spec_window(
     """按后端中立的窗口描述（``visuals/window_spec.py``）装配一个真实窗口。
 
     这是"窗口级描述 + 后端渲染"的控件侧唯一落点，与 ``create_control_host`` /
-    ``create_message_box_host`` 同类：产品窗口只交一棵 ``WindowSpec`` 与语义回调，
+    ``ask_confirmation`` 同类：产品窗口只交一棵 ``WindowSpec`` 与语义回调，
     真实控件树由后端宿主（Qt 下是 ``widgets/spec_host.py``）搭建。字体经本模块注入，
     档位 D 因此不静态引用档位 A。
 
@@ -1017,7 +1020,8 @@ __all__ = [
     "create_office_accent_bar",
     "render_office_icon",
     "render_office_icon_pixmap",
-    "create_message_box_host",
+    "ask_confirmation",
+    "show_message",
     "message_box_stylesheet",
     "create_spec_window",
     "create_floating_window_base",
