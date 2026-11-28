@@ -29,7 +29,10 @@ class QtFilePickerTests(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
-        self.root = Path(tmp.name)
+        # QFileSystemModel returns the long spelling for existing Windows paths;
+        # normalize tempfile's base too because CI may create it through USERPROFILE's
+        # short 8.3 alias, otherwise Path equality compares two spellings of one path.
+        self.root = file_picker._normalize_windows_case(Path(tmp.name))
         self.folder = self.root / "目录"
         self.folder.mkdir()
         self.zip = self.root / "中文包.zip"
