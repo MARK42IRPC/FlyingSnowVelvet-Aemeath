@@ -4330,6 +4330,6 @@ import `chat.ollama`）继续留在 `test_ui_to_product_coupling_is_frozen` 清�
 
 GitHub Windows runner 中 `Path.home()/tempfile` 有时以短 8.3 用户目录 `C:\\Users\\RUNNER~1\\...` 暴露，而 `QFileSystemModel/QDir` 返回长路径 `C:\\Users\\runneradmin\\...`。Windows 文件系统把两者视为同一对象，但 `pathlib.Path` 的比较不会解析 8.3 目录别名，导致文件选择器目录模式结果比较与 remembered last directory 断言失败。
 
-`lib/core/render/backends/qt/widgets/file_picker.py::_normalize_windows_case()` 现在在 Windows 上找到最长已存在父路径，用 `GetLongPathNameW` 转成文件系统规范长路径，再拼回不存在的文件名后缀；`_absolute_path()`、`_go_to()`、符号链接解析结果均统一经过该规范化。其它平台只执行 `abspath`，不改变符号链接的 keep/resolve 选择语义。
+`lib/core/render/backends/qt/widgets/file_picker.py::_normalize_windows_case()` 现在在 Windows 上找到最长已存在父路径，用 `GetLongPathNameW` 转成文件系统规范长路径，再拼回不存在的文件名后缀；`_absolute_path()`、`_go_to()`、`_index_path()`（QFileSystemModel 返回边界）、符号链接解析结果及 `_complete()` 对外返回均统一经过该规范化。其它平台只执行 `abspath`，不改变符号链接的 keep/resolve 选择语义。
 
 `tests-ng/test_qt_file_picker.py` 的 Windows 专项用例覆盖 runner 的 8.3 alias，原始 12 条文件选择器交互断言保持不变。最近 CI `windows-smoke` run 249 已由 Actions annotations 证实有 9 条 file-picker 断言因该 Windows 路径别名失败；本地 Windows 全套选择器与 pure/static/Qt 套件均已回归通过。

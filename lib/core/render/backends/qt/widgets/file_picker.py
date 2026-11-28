@@ -396,7 +396,7 @@ class _FilePicker(QObject):
                     self._filename.clear()
 
     def _index_path(self, index) -> Path:
-        return Path(self._model.filePath(index))
+        return _normalize_windows_case(Path(self._model.filePath(index)))
 
     def _activate_index(self, index) -> None:
         if not index.isValid():
@@ -426,7 +426,7 @@ class _FilePicker(QObject):
         self._go_to(folder)
 
     def _complete(self, path: Path) -> None:
-        self.result = str(path)
+        self.result = str(_normalize_windows_case(path))
         self._window.resolve_with("accepted")
 
     def _on_action(self, semantic: str) -> None:

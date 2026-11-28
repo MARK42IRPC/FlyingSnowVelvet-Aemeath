@@ -111,6 +111,20 @@ class QtFilePickerTests(unittest.TestCase):
         QTimer.singleShot(0, lambda: picker._activate_index(index))
         self.assertEqual(Path(picker.exec()), self.other)
 
+    def test_selected_model_paths_and_return_values_are_normalized(self):
+        picker = self._picker(file_picker._OPEN)
+        model_path = self.root / "RUNNER~1" / "tmp" / "中文包.zip"
+        index = picker._model.index(self.zip.as_posix())
+        with patch.object(
+            file_picker,
+            "_normalize_windows_case",
+            side_effect=lambda path: self.zip if Path(path) == model_path else Path(path),
+        ):
+            with patch.object(picker._model, "filePath", return_value=str(model_path)):
+                self.assertEqual(picker._index_path(index), self.zip)
+            picker._complete(model_path)
+        self.assertEqual(Path(picker.result), self.zip)
+
     def test_open_shortcut_keeps_the_filename_for_the_launcher(self):
         shortcut = self.root / "Launcher.lnk"
         shortcut.touch()
