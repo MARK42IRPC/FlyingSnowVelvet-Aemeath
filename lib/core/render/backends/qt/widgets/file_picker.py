@@ -52,7 +52,44 @@ def _name_filters(filters: str) -> list[tuple[str, tuple[str, ...]]]:
 def _absolute_path(text: str, base: Path) -> Path:
     if len(text) >= 2 and text.startswith('"') and text.endswith('"'):
         text = text[1:-1]
-    return Path(os.path.abspath(base / os.path.expanduser(text)))
+    path = Path(os.path.abspath(base / os.path.expanduser(text)))
+    return _normalize_windows_case(path)
+
+
+def _normalize_windows_case(path: Path) -> Path:
+    """Normalize an existing Windows prefix to its long/canonical spelling.
+
+    GitHub's Windows runner may expose ``USERPROFILE`` through a short 8.3
+    alias while ``QFileSystemModel`` returns the long name. Walk up to the
+    longest existing ancestor, ask Win32 for that path's long spelling, then
+    append any missing suffix components unchanged.
+    """
+    absolute = Path(os.path.abspath(path))
+    if os.name != "nt":
+        return absolute
+
+    missing: list[str] = []
+    existing = absolute
+    while not existing.exists() and not existing.is_symlink():
+        if existing.parent == existing:
+            return absolute
+        missing.append(existing.name)
+        existing = existing.parent
+
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        get_long = ctypes.windll.kernel32.GetLongPathNameW
+        get_long.argtypes = (wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD)
+        get_long.restype = wintypes.DWORD
+        buffer = ctypes.create_unicode_buffer(32768)
+        length = get_long(str(existing), buffer, len(buffer))
+        if length and length < len(buffer):
+            existing = Path(buffer.value)
+    except (AttributeError, OSError, ValueError):
+        pass
+    return existing.joinpath(*reversed(missing))
 
 
 def _start_location(start_path: str) -> tuple[Path, str]:
@@ -296,15 +333,17 @@ class _FilePicker(QObject):
 
     def _resolved_path(self, path: Path) -> Path:
         if not self._resolve_symlinks:
-            return path
+            # Keep the selected symlink itself, but normalize Windows 8.3 aliases
+            # so paths from QFileSystemModel compare with caller-supplied long paths.
+            return _normalize_windows_case(path)
         # QFileInfo also understands Windows shortcuts, which pathlib does not resolve.
         target = QFileInfo(str(path)).symLinkTarget()
-        return Path(target or path).resolve()
+        return _normalize_windows_case(Path(target or path).resolve())
 
     def _go_to(self, directory: Path) -> None:
         global _last_directory
         try:
-            directory = self._resolved_path(directory)
+            directory = _normalize_windows_case(self._resolved_path(directory))
             if not directory.is_dir():
                 self._display_error("找不到此目录，请检查路径。")
                 return

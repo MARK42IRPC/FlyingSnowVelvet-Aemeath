@@ -4283,7 +4283,17 @@ import `chat.ollama`）继续留在 `test_ui_to_product_coupling_is_frozen` 清�
   `voice_package_installer:floating_base`、`voice_package_status_class`），调用点均已自行实例化，
   无同类缺陷。
 
+**定位审计与统一策略**
+
+实际调用路径曾有差异：模态确认与文件选择调用 `QDialog.exec_()`，非模态提示调用 `show_window()`，帮助/审批兼容层有直接 `widget.show()/open()` 入口。前两种由共享按钮样式覆盖，但旧宿主只给非模态窗淡入淡出，模态窗口关闭后立即消失；模态窗还通过 QWidget parent 决定相对父窗定位，未传 parent 时在光标屏幕居中。
+
+本轮把模态和非模态都设置为共享 `fade=True`、`center_on_parent=True`。`exec_modal()` 的核心宿主现在先按可见调用方锚点定位（没有父锚点才回退到光标屏幕），从透明度 0 淡入；确认、拒绝、Esc、Alt+F4 与直接 `accept/reject/done` 统一截获为淡出后才结束模态循环，`ask_confirmation()` 的返回语义不变，取消仍返回 false。直接 `show()/open()/exec_()` 会经 `showEvent` 兜底执行同一定位/主题/图层/淡入流程，正常产品入口优先显式调用 `show_window()`。
+
 **验证**
+
+- 新增 `tests-ng/test_qt_popup_lifecycle.py::test_modal_confirmation_fades_on_accept_and_escape_and_uses_parent_anchor` 覆盖确认淡出、Esc 拒绝、父窗口锚点及取消返回；`test_direct_widget_show_still_triggers_fade_in` 覆盖兼容式直接显示；`test_modal_message_box_and_async_notice_both_request_fade` 钉住两种提醒都请求共享动画。
+- `tests-ng/test_qt_file_picker.py` 12 项通过；现有取消、覆盖与路径行为未变。
+- `scripts/run_tests.py`、Ruff 全集与 `ruff --select F` 均通过。
 
 - `tests/test_announcement_dialog.py` 新增版本解析/比对、按钮可见性、点击发信号与
   controller 转交；`tests/dx/test_dx_announcement.py` 新增动作行与 `update` 分发；
@@ -4293,7 +4303,7 @@ import `chat.ollama`）继续留在 `test_ui_to_product_coupling_is_frozen` 清�
 - 全量 `py -3 -m unittest <231 个 tests.test_*>`：2270 项通过（跳过 3）；
   `tests/dx` 全量 124 项通过（跳过 7）。
 
-## 81. 第八十一轮执行记录：全部可控弹窗收敛到公告基准共享实现
+## 82. 第八十二轮执行记录：模态与非模态弹窗统一淡入淡出及定位
 
 **目标**：项目自己绘制的普通弹窗（公告、确认/提示、帮助、更新、办公审批、文件/目录选择器、语音包安装、二维码登录）不再各自实现外壳与 QSS，统一以公告窗口为视觉基准；Qt 引用继续只留在 `lib/core/render/`，DX/Win32 复用同一份几何与色板事实。
 
@@ -4315,3 +4325,11 @@ import `chat.ollama`）继续留在 `test_ui_to_product_coupling_is_frozen` 清�
 **公告修复**：`AnnouncementController` 恢复可位置传入的 application 参数（原 `TypeError` 的根因），移除对不存在 `dialog.tick()` 的 TICK 订阅，弹窗不再把 application 当 QWidget 父级；`hide_semantics` 与 `non_closing_actions` 让关闭/最小化与业务动作各自归位；工具浮窗保留 `fade=not modal` 淡入淡出，并在显示/隐藏时按主题重刷而不重建控件树。
 
 **语音包失败提示**：安装后端以协作式 `request_cancel()` 取消，异常经 `voice_package_error_message()` 仅暴露安全阶段与受控错误、不透传原始异常/本机路径；完成回调按 generation 丢弃过期事件，前台与后台失败都经 `post_message` 给出同款非阻塞提示，取消与退出不弹失败提示。
+
+## 82. 第八十二轮执行记录：Windows 8.3 用户目录别名导致的选择器 CI 失败
+
+GitHub Windows runner 中 `Path.home()/tempfile` 有时以短 8.3 用户目录 `C:\\Users\\RUNNER~1\\...` 暴露，而 `QFileSystemModel/QDir` 返回长路径 `C:\\Users\\runneradmin\\...`。Windows 文件系统把两者视为同一对象，但 `pathlib.Path` 的比较不会解析 8.3 目录别名，导致文件选择器目录模式结果比较与 remembered last directory 断言失败。
+
+`lib/core/render/backends/qt/widgets/file_picker.py::_normalize_windows_case()` 现在在 Windows 上找到最长已存在父路径，用 `GetLongPathNameW` 转成文件系统规范长路径，再拼回不存在的文件名后缀；`_absolute_path()`、`_go_to()`、符号链接解析结果均统一经过该规范化。其它平台只执行 `abspath`，不改变符号链接的 keep/resolve 选择语义。
+
+`tests-ng/test_qt_file_picker.py` 的 Windows 专项用例覆盖 runner 的 8.3 alias，原始 12 条文件选择器交互断言保持不变。最近 CI `windows-smoke` run 249 已由 Actions annotations 证实有 9 条 file-picker 断言因该 Windows 路径别名失败；本地 Windows 全套选择器与 pure/static/Qt 套件均已回归通过。

@@ -64,6 +64,36 @@ class QtFilePickerTests(unittest.TestCase):
             QTest.qWait(10)
         self.assertEqual(names, expected)
 
+    def test_windows_short_8dot3_and_long_user_paths_compare_by_canonical_component_names(self):
+        if os.name != "nt":
+            self.skipTest("8.3 alias behavior is Windows-specific")
+        long_user = Path(os.environ.get("USERPROFILE", Path.home()))
+        import ctypes
+        from ctypes import wintypes
+
+        get_short = ctypes.windll.kernel32.GetShortPathNameW
+        get_short.argtypes = (wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD)
+        get_short.restype = wintypes.DWORD
+        buffer = ctypes.create_unicode_buffer(32768)
+        length = get_short(str(long_user), buffer, len(buffer))
+        if not length or length >= len(buffer):
+            self.skipTest("The runner has no short 8.3 user-profile alias")
+        short_user = Path(buffer.value)
+        expected = long_user / "AppData" / "Local" / "Temp" / "缺失目录"
+        short = short_user / "AppData" / "Local" / "Temp" / "缺失目录"
+        normalized = file_picker._normalize_windows_case(short)
+        self.assertEqual(normalized, expected)
+        self.assertEqual(file_picker._absolute_path(str(short), Path.cwd()), normalized)
+
+    def test_windows_alias_is_canonicalized_for_last_directory_and_symlink_selection(self):
+        if os.name != "nt":
+            self.skipTest("Windows path aliases are platform-specific")
+        short_temp = file_picker._normalize_windows_case(Path(os.environ["TEMP"]))
+        expected_temp = Path(os.environ["TEMP"]).resolve()
+        self.assertEqual(short_temp, expected_temp)
+        self.assertEqual(file_picker._normalize_windows_case(self.folder), self.folder)
+
+
     def test_open_uses_shared_chrome_and_filter_then_opens_existing_file(self):
         picker = self._picker(file_picker._OPEN)
         window = picker._window
@@ -110,9 +140,7 @@ class QtFilePickerTests(unittest.TestCase):
         except OSError:
             if os.name != "nt":
                 raise
-            # Windows without Developer Mode can still create NTFS junctions.
             from _winapi import CreateJunction
-
             CreateJunction(str(self.folder), str(link))
         for resolve_symlinks, expected in ((False, link), (True, self.folder)):
             with self.subTest(resolve_symlinks=resolve_symlinks):
@@ -252,3 +280,7 @@ class QtFilePickerTests(unittest.TestCase):
             forum_composer.ForumComposerMixin._on_add_image(composer)
         choose.assert_called_once_with(composer, "选一张图片", "", "图片 (*.png *.jpg *.jpeg *.gif *.webp);;所有文件 (*)")
         composer._service.upload_image.assert_not_called()
+
+
+if __name__ == "__main__":
+    unittest.main()
