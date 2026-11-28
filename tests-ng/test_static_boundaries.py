@@ -143,6 +143,8 @@ class LayerBoundaryTests(unittest.TestCase):
     def test_button_feedback_has_one_of_two_explicit_render_paths(self):
         """按钮反馈只能是共享模态消息框或 INFORMATION 气泡，不得新造裸提醒窗口。"""
         host = CORE / "render" / "backends" / "qt" / "widgets" / "message_box_host.py"
+        spec_host_path = CORE / "render" / "backends" / "qt" / "widgets" / "spec_host.py"
+        spec_host = spec_host_path.read_text(encoding="utf-8-sig")
         host_source = host.read_text(encoding="utf-8-sig")
         self.assertIn("def ask_confirmation(", host_source)
         self.assertIn("def show_message(", host_source)
@@ -161,7 +163,12 @@ class LayerBoundaryTests(unittest.TestCase):
         announcement_chrome = (
             CORE / "render" / "visuals" / "announcement_chrome.py"
         ).read_text(encoding="utf-8-sig")
-        self.assertIn("fade=not modal", announcement_chrome)
+        self.assertIn("fade=fade", announcement_chrome)
+        self.assertIn("fade=True if fade is None else bool(fade)", message_box)
+        self.assertIn("def request_modal_done", spec_host)
+        self.assertIn("_modal_loop", spec_host)
+        self.assertIn("def exec_modal(", spec_host)
+        self.assertIn("self.center_on()", spec_host)
         popup_design = (CORE / "render" / "popup_design.py").read_text(encoding="utf-8-sig")
         self.assertIn("px(34, 30)", popup_design)
         self.assertIn("QPushButton[windowActionRole=\"danger\"]", announcement_chrome)

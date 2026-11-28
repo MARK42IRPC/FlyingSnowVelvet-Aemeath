@@ -19,7 +19,7 @@ from collections.abc import Callable
 from dataclasses import replace
 
 from PyQt5 import sip
-from PyQt5.QtCore import QEasingCurve, QPropertyAnimation, Qt
+from PyQt5.QtCore import QEasingCurve, QEventLoop, QPropertyAnimation, Qt
 from PyQt5.QtGui import QColor, QPainter
 from PyQt5.QtWidgets import (
     QDialog,
@@ -207,6 +207,9 @@ class QtSpecWindow:
         self._requested_visible = False
         self._closing_animation = False
         self._opacity_animation: QPropertyAnimation | None = None
+        self._modal_done_result: int | None = None
+        self._modal_exit_complete = False
+        self._modal_loop: QEventLoop | None = None
         self._border_width = 0
         self._setup_fade()
         self._build(spec)
@@ -611,13 +614,40 @@ class QtSpecWindow:
         self._resolved = True
         self._decision = semantic
         self._emit(semantic)
-        if not self._cleaned and not sip.isdeleted(self.widget):
-            if isinstance(self.widget, QDialog):
-                self.widget.done(QDialog.Rejected if semantic == self.spec.close_semantic else QDialog.Accepted)
-            elif self._keeps_window():
-                self.hide_dialog()
-            else:
-                self.widget.close()
+        if self._cleaned or sip.isdeleted(self.widget):
+            return
+        if isinstance(self.widget, QDialog):
+            result = QDialog.Rejected if semantic == self.spec.close_semantic else QDialog.Accepted
+            if not self.request_modal_done(result):
+                self.widget.done(result)
+        elif self._keeps_window():
+            self.hide_dialog()
+        else:
+            self.widget.close()
+
+    def request_modal_done(self, result: int) -> bool:
+        """Intercept QDialog accept/reject/done until the shared fade completes."""
+        if (
+            not isinstance(self.widget, QDialog)
+            or not self.spec.modal
+            or not self._fade
+            or self._modal_exit_complete
+            or self._cleaned
+        ):
+            return False
+        if self._modal_done_result is not None:
+            return True
+        self._modal_done_result = int(result)
+        if not self._resolved:
+            # Escape/Alt+F4/QDialog.reject() must resolve to the safe close semantic.
+            self._resolved = True
+            self._decision = self.spec.close_semantic
+            if self._decision:
+                self._emit(self._decision)
+        self._requested_visible = False
+        self._closing_animation = True
+        self._animate_to(0.0)
+        return True
 
     def dismiss_without_decision(self) -> None:
         if not self._resolved and not self._cleaned:
@@ -639,7 +669,17 @@ class QtSpecWindow:
                 self._emit(self._decision)
 
     def _on_dialog_finished(self, _result: int) -> None:
-        # Escape calls reject() directly. The decision latch also covers closeEvent.
+        # An external call to accept/reject/done still participates in shared
+        # fade-out. Our own fade completion marks `_resolved` before done() to
+        # avoid starting a second transition.
+        if self.spec.modal and self._fade and not self._modal_exit_complete and not self._cleaned:
+            self._modal_done_result = int(_result)
+            self._resolved = True
+            self._requested_visible = False
+            self._closing_animation = True
+            self._animate_to(0.0)
+            return
+        self._modal_exit_complete = True
         self.note_widget_closed()
 
     def _keeps_window(self) -> bool:
@@ -647,7 +687,7 @@ class QtSpecWindow:
 
     def close_requested(self) -> bool:
         """Route native close through the same action as the displayed ×."""
-        if self._keeps_window() and self.widget.isVisible():
+        if (self._keeps_window() or self.spec.modal and self._fade) and self.widget.isVisible():
             semantic = self.spec.close_semantic
             if semantic:
                 self.resolve_with(semantic)
@@ -687,8 +727,11 @@ class QtSpecWindow:
             self.apply_theme()
             self._theme.subscribe()
         if self._fade and not self._requested_visible and not self._closing_animation:
-            # Direct widget.show()/open() bypasses show_window(); still apply the shared fade-in.
+            # Direct widget.show()/open()/exec_() bypasses show_window(); still
+            # apply shared theme, placement, layer, and fade-in.
             self._requested_visible = True
+            if self.spec.center_on_parent or self.spec.center_on_cursor_screen:
+                self.center_on()
             self.widget.setWindowOpacity(0.0)
             self._animate_to(apply_ui_opacity(1.0))
         elif not self._fade:
@@ -738,6 +781,8 @@ class QtSpecWindow:
             if self._opacity_animation is not None:
                 self._opacity_animation.stop()
             self.widget.hide()
+            if self.spec.modal and isinstance(self.widget, QDialog) and self._modal_loop is not None:
+                self._modal_loop.quit()
 
     def is_requested_visible(self) -> bool:
         return self._requested_visible
@@ -750,14 +795,38 @@ class QtSpecWindow:
             return self.spec.close_semantic
         self._resolved = False
         self._decision = ""
+        self._modal_done_result = None
+        self._modal_exit_complete = False
         self._register_layer(layer_name)
         self._requested_visible = True
+        if self.spec.center_on_parent or self.spec.center_on_cursor_screen:
+            self.center_on()
+        if self._fade:
+            self.widget.setWindowOpacity(0.0)
+        self.widget.show()
+        get_layer_manager().enforce_burst()
+        if self._fade:
+            self._animate_to(apply_ui_opacity(1.0))
         try:
-            self.widget.exec_()
+            while self._modal_done_result is None and not self._cleaned:
+                self.widget.exec_()
+                # QDialog.reject()/accept() returns immediately after starting the
+                # shared fade-out; keep the modal caller blocked until it finishes.
+                if self._closing_animation:
+                    loop = QEventLoop()
+                    self._modal_loop = loop
+                    if self._opacity_animation is not None:
+                        self._opacity_animation.finished.connect(loop.quit)
+                    loop.exec_()
+                    self._modal_loop = None
+                if self._modal_exit_complete or self._cleaned:
+                    break
             return self._decision or self.spec.close_semantic
         finally:
             self._requested_visible = False
             self.note_widget_hidden()
+            self._modal_done_result = None
+            self._modal_exit_complete = False
 
     def cleanup(self) -> None:
         """Stop animation, release the layer, and delete the underlying widget."""
@@ -784,9 +853,18 @@ class QtSpecWindow:
         animation.start()
 
     def _on_animation_finished(self) -> None:
+        # QPropertyAnimation emits `finished` for fade-in too; wait until the
+        # modal exit latch is set, otherwise QDialog would close immediately on
+        # the first completed fade-in.
         if self._closing_animation and not self._requested_visible:
             self._closing_animation = False
             self.widget.hide()
+            if self._modal_done_result is not None and isinstance(self.widget, QDialog):
+                result = self._modal_done_result
+                self._modal_done_result = None
+                self._modal_exit_complete = True
+                self.note_widget_closed()
+                self.widget.done(result)
 
     def center_on(self, reference_rect=None) -> None:
         """把窗口居中到 `reference_rect`，缺省则居中到光标所在屏幕。
@@ -943,6 +1021,12 @@ class _SpecWidgetMixin:
 
 class QtSpecDialog(_SpecWidgetMixin, QDialog):
     """承载 `WindowSpec` 的无窗眉对话框。"""
+
+    def done(self, result: int) -> None:
+        window = self._spec_window
+        if window is not None and window.request_modal_done(result):
+            return
+        super().done(result)
 
 
 class QtSpecWidget(_SpecWidgetMixin, QWidget):

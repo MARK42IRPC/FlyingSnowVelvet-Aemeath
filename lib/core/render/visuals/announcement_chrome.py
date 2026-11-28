@@ -209,6 +209,8 @@ def announcement_shell_spec(
     resizable: bool = False,
     window_icon_path: str = "",
     mode: str | None = None,
+    fade: bool = True,
+    center_on_parent: bool = True,
 ) -> WindowSpec:
     """Assemble the shared frameless chrome around any pop-up body.
 
@@ -311,13 +313,13 @@ def announcement_shell_spec(
         stylesheet=announcement_stylesheet(mode),
         shared_popup=True,
         theme_mode=mode,
-        center_on_parent=True,
+        center_on_parent=center_on_parent,
         drag_handle_ids=("header_row", "header_text", "header"),
         close_semantic=close_action,
         default_button_id=default_button_id,
         window_icon_path=window_icon_path,
         layer=LAYER_DIALOG,
-        fade=not modal,
+        fade=fade,
         hide_semantics=hide_on_actions,
         non_closing_actions=non_closing_actions,
         border_frame=True,

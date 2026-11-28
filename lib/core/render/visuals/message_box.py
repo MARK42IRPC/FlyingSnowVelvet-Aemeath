@@ -31,6 +31,8 @@ def message_box_window_spec(
     destructive: bool = False,
     icon: str = ICON_INFORMATION,
     modal: bool = True,
+    fade: bool | None = None,
+    center_on_parent: bool = True,
 ) -> WindowSpec:
     """Use one shell for confirmations and one-button notices."""
     primary_name = DESTRUCTIVE_BUTTON_OBJECT_NAME if destructive else PRIMARY_BUTTON_OBJECT_NAME
@@ -63,6 +65,8 @@ def message_box_window_spec(
         modal=modal,
         delete_on_close=not modal,
         default_button_id=default_button_id,
+        fade=True if fade is None else bool(fade),
+        center_on_parent=center_on_parent,
     )
 
 

@@ -45,6 +45,7 @@ def ask_confirmation(
     spec = message_box_window_spec(
         title=title, text=text, informative_text=informative_text, primary_text=confirm_text,
         cancel_text=cancel_text, destructive=destructive, icon=icon,
+        fade=True, center_on_parent=True,
     )
     return _run_message_box(parent, spec, layer_name=layer_name) == "accept"
 
@@ -62,6 +63,7 @@ def show_message(
     """Show an announcement-style notice with one dismissal button."""
     spec = message_box_window_spec(
         title=title, text=text, informative_text=informative_text, primary_text=ok_text, icon=icon,
+        modal=True, fade=True, center_on_parent=True,
     )
     _run_message_box(parent, spec, layer_name=layer_name)
 
@@ -79,7 +81,7 @@ def post_message(
     """Display a persistent notice from a UI callback without a nested event loop."""
     spec = message_box_window_spec(
         title=title, text=text, informative_text=informative_text,
-        primary_text=ok_text, icon=icon, modal=False,
+        primary_text=ok_text, icon=icon, modal=False, fade=True, center_on_parent=True,
     )
     window = _build_message_box(parent, spec)
     window.show_window(layer_name=layer_name)

@@ -57,6 +57,8 @@ def office_approval_window_spec(
         close_action=APPROVAL_REJECT,
         close_tooltip="关闭（视为拒绝）",
         modal=True,
+        fade=True,
+        center_on_parent=True,
         delete_on_close=True,
         default_button_id="reject",
     )
@@ -79,6 +81,8 @@ def help_window_spec(
         close_action=HELP_CLOSE,
         close_tooltip="关闭帮助",
         hide_on_actions=(HELP_CLOSE,),
+        fade=True,
+        center_on_parent=True,
     )
 
 
@@ -109,6 +113,8 @@ def announcement_window_spec(*, title, html, width=0, height=0, **_legacy) -> Wi
             ANNOUNCEMENT_SUPPRESS_FOREVER, ANNOUNCEMENT_UPDATE,
         ),
         non_closing_actions=(ANNOUNCEMENT_RETRY,),
+        fade=True,
+        center_on_parent=True,
     )
 
 
@@ -132,6 +138,8 @@ def update_window_spec(
         close_tooltip="关闭更新",
         minimize_action=UPDATE_MINIMIZE,
         non_closing_actions=(UPDATE_CLOSE, UPDATE_MINIMIZE, UPDATE_PRIMARY, UPDATE_SECONDARY),
+        fade=True,
+        center_on_parent=True,
     )
 
 
